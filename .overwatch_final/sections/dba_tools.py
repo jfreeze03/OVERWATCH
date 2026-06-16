@@ -10,7 +10,7 @@ from utils import (
     get_active_company, get_active_environment, company_value_allowed,
     run_query, run_query_or_raise, sql_literal, safe_identifier,
     format_snowflake_error,
-    run_compatibility_checks, build_smoke_test_checklist,
+    run_compatibility_checks,
     build_cost_formula_audit, filter_existing_columns, build_task_history_sql,
     admin_actions_enabled, admin_button_disabled,
     log_admin_action,
@@ -251,7 +251,7 @@ def _warehouse_setting_risk(param: str, current_sql: str, requested_sql: str) ->
         return "Queue risk: statements can wait indefinitely."
     if param == "MAX_CONCURRENCY_LEVEL" and _as_int(requested_sql, 8) > 8:
         return "Pressure risk: higher concurrency can increase spill and p95 runtime."
-    return "Review workload impact and owner approval before applying."
+    return "Review workload impact and status telemetry before applying."
 
 
 def _warehouse_settings_preflight_sql(warehouse_name: str) -> str:
@@ -285,7 +285,7 @@ WHERE start_time >= DATEADD('hour', -24, CURRENT_TIMESTAMP())
   AND warehouse_name = {wh_lit}
 GROUP BY warehouse_name;
 
--- Confirm MODIFY privilege, owner approval, workload impact, and rollback plan before applying.
+-- Confirm MODIFY privilege, status telemetry, workload impact, and rollback plan before applying.
 """
 
 
@@ -348,7 +348,7 @@ def _build_warehouse_setting_plan(
             f"{row['PARAMETER']}: {row['CURRENT']} -> {row['REQUESTED']} | {row['RISK']}"
         )
     if rollback_sql:
-        context_lines.append("Rollback SQL: " + rollback_sql.replace("\n", " "))
+        context_lines.append("Rollback plan: " + rollback_sql.replace("\n", " "))
 
     return {
         "warehouse": warehouse_name,
@@ -796,15 +796,15 @@ def _schema_compare_fetch_missing_ddl_statements(
         object_type = str(row.get("OBJECT_TYPE") or "").upper()
         if not fallback:
             statements.append("")
-            statuses.append("No DDL needed")
+            statuses.append("No review needed")
             continue
         if object_type == "COLUMN":
             statements.append(fallback)
             statuses.append("Generated ADD COLUMN")
             continue
         if idx >= max_objects:
-            statements.append(f"-- DDL fetch cap reached. Run manually:\n{fallback}")
-            statuses.append("Manual GET_DDL required")
+            statements.append(f"-- Definition fetch cap reached. Review manually:\n{fallback}")
+            statuses.append("Manual object review required")
             continue
         try:
             result = run_query_or_raise(
@@ -824,11 +824,11 @@ def _schema_compare_fetch_missing_ddl_statements(
                     statuses.append("Fetched GET_DDL")
                     continue
         except Exception as exc:
-            statuses.append(f"Manual GET_DDL required: {format_snowflake_error(exc)}")
+            statuses.append(f"Manual object review required: {format_snowflake_error(exc)}")
             statements.append(f"-- Could not fetch GET_DDL automatically. Run manually:\n{fallback}")
             continue
-        statements.append(f"-- Could not fetch GET_DDL automatically. Run manually:\n{fallback}")
-        statuses.append("Manual GET_DDL required")
+        statements.append(f"-- Could not fetch object definition automatically. Review manually:\n{fallback}")
+        statuses.append("Manual object review required")
     frame["DDL_STATEMENT"] = statements
     frame["DDL_STATUS"] = statuses
     return frame
@@ -1209,18 +1209,18 @@ def _render_schema_compare_command_model() -> None:
         ("Inventory", "SHOW OBJECTS"),
         ("Columns", "INFORMATION_SCHEMA.COLUMNS"),
         ("Coverage", "All visible schema objects"),
-        ("DDL", "GET_DDL + ADD COLUMN"),
+        ("Missing Objects", "Review queue"),
     ))
     render_setup_health_board(
-        "Schema Compare Contract",
+        "Schema Compare Readiness",
         (
             ("Object scope", "All visible schema objects"),
             ("Column drift", "Column signature compare"),
-            ("Missing DDL", "GET_DDL retargeted"),
+            ("Missing objects", "DBA review"),
             ("Coverage list", _schema_compare_coverage_label()),
         ),
         cadence="Operator-triggered metadata read",
-        fallback="Manual GET_DDL when privilege blocks fetch",
+        fallback="DBA review when metadata access is limited",
         owner="Release DBA",
     )
 
@@ -1230,14 +1230,14 @@ def _render_data_compare_command_model() -> None:
         ("Stage 1", "Metadata inventory"),
         ("Stage 2", "COUNT + HASH_AGG"),
         ("Stage 3", "Bucket isolate"),
-        ("Stage 4", "Forensic diff SQL"),
+        ("Stage 4", "Forensic diff"),
     ))
     render_setup_health_board(
-        "Data Compare Contract",
+        "Data Compare Readiness",
         (
             ("Scope", "Database + schema"),
             ("Detection", "Row count + hash"),
-            ("Isolation", "Bucket mismatch SQL"),
+            ("Isolation", "Bucket mismatch"),
             ("Proof", "Keyed or EXCEPT-style diff"),
         ),
         cadence="Operator-triggered bounded scans",
@@ -1332,7 +1332,7 @@ def _data_compare_persistence_sql(
     results: pd.DataFrame | None,
     *,
     check_id: int | str | None = None,
-    recommended_action: str = "Review mismatches and run generated forensic SQL before release cutover.",
+    recommended_action: str = "Review mismatches and run reviewed forensic diff before release cutover.",
 ) -> str:
     rows = results.copy() if isinstance(results, pd.DataFrame) else pd.DataFrame()
     if rows.empty:
@@ -1537,7 +1537,6 @@ def _setup_status_df(session) -> pd.DataFrame:
         ("Alert History", "TABLE", ALERT_DB, ALERT_SCHEMA, ALERT_TABLE),
         ("Action Queue", "TABLE", ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE),
         ("Snowflake Value Log", "TABLE", ETL_AUDIT_DB, ETL_AUDIT_SCHEMA, "OVERWATCH_ROI_LOG"),
-        ("Usage Log", "TABLE", ALERT_DB, ALERT_SCHEMA, "OVERWATCH_USAGE_LOG"),
         ("Anomaly Alert Task", "TASK", ALERT_DB, ALERT_SCHEMA, "OVERWATCH_ANOMALY_CHECK"),
     ]
     rows = []
@@ -1626,14 +1625,14 @@ def render():
                 str(focus),
                 "Use the matching tab group below first; other tools remain available when needed.",
             )
-            st.info(f"Governance & Security focus: {focus}. {focus_hint}")
+            st.info(f"Security Monitoring focus: {focus}. {focus_hint}")
         with st.expander("Guarded Admin Operating Model", expanded=not bool(focus)):
             risk_a, risk_b, risk_c = st.columns(3)
             with risk_a:
                 st.info(
                     "Safe Observability\n\n"
                     "Read-only inventory, diagnostics, compatibility checks, schema compare, recent objects, "
-                    "QAS visibility, replication, serverless costs, and usage logs."
+                    "QAS visibility, replication, serverless costs, and action history."
                 )
             with risk_b:
                 st.warning(
@@ -1643,9 +1642,9 @@ def render():
                 )
             with risk_c:
                 st.success(
-                    "Setup and Maintenance\n\n"
-                    "Compatibility checks, setup status, usage logging, action queue routing, and "
-                    "formula audit evidence. SQL deployment lives in the Snowflake setup script, not this UI."
+                    "Readiness and Audit\n\n"
+                    "Compatibility checks, data readiness, action queue routing, and "
+                    "formula audit evidence stay available without exposing deployment plumbing."
                 )
         if "dba_tools_group_selector" not in st.session_state and default_group in group_names:
             st.session_state["dba_tools_group_selector"] = default_group
@@ -1819,7 +1818,7 @@ def render():
 
             st.divider()
             st.subheader("Edit Warehouse Settings")
-            st.caption("Select a warehouse, adjust parameters, preview the ALTER SQL, then apply.")
+            st.caption("Select a warehouse, adjust parameters, review the proposed change, then apply.")
 
             wh_names = df_wh["name"].tolist() if "name" in df_wh.columns else []
             sel_wh   = st.selectbox("Select warehouse to edit", wh_names, key="wh_edit_sel")
@@ -1961,9 +1960,8 @@ def render():
                     ]
                     alter_sql = f"ALTER WAREHOUSE {safe_wh} SET\n    " + "\n    ".join(params) + ";"
 
-                    st.subheader("Legacy SQL Preview - disabled")
-                    st.caption("Use the reviewed change plan below. The legacy apply button is intentionally disabled.")
-                    st.code(alter_sql, language="sql")
+                    st.subheader("Reviewed Change Plan")
+                    st.caption("Telemetry status is required before warehouse settings are applied.")
 
                     col_apply, col_cancel = st.columns([1, 3])
                     with col_apply:
@@ -2021,15 +2019,15 @@ def render():
                             height=240,
                         )
                         st.caption(
-                            "Only changed parameters are included in the ALTER statement. "
-                            "Run the pre-flight checks and keep the rollback SQL with the change ticket."
+                            "Only changed parameters are included in the reviewed change plan. "
+                            "Run pre-flight checks and keep rollback instructions with the change ticket."
                         )
-                        with st.expander("Read-only pre-flight SQL", expanded=True):
-                            st.code(plan["preflight_sql"], language="sql")
-                        with st.expander("ALTER SQL to apply", expanded=True):
-                            st.code(plan["alter_sql"], language="sql")
-                        with st.expander("Rollback SQL", expanded=False):
-                            st.code(plan["rollback_sql"], language="sql")
+                        render_shell_snapshot((
+                            ("Pre-flight", "Required"),
+                            ("Apply plan", "Review gated"),
+                            ("Rollback", "Required"),
+                            ("Execution", "reviewed workflow"),
+                        ))
 
                     if not skipped_df.empty:
                         st.warning("Some settings were not included because their current values were unavailable.")
@@ -2274,7 +2272,7 @@ def render():
         st.subheader("Schema Compare")
         st.caption(
             "Compares every visible schema object from SHOW OBJECTS, plus column-level metadata from "
-            "INFORMATION_SCHEMA.COLUMNS. Missing objects get generated DDL statements for DBA review."
+            "INFORMATION_SCHEMA.COLUMNS. Missing objects are highlighted for DBA review without exposing implementation SQL."
         )
         _render_schema_compare_command_model()
         refresh_schema_meta = st.button("Refresh database and schema choices", key="sc_refresh_metadata")
@@ -2288,7 +2286,7 @@ def render():
             )
         database_options = list(st.session_state.get(database_cache_key) or [])
         if not database_options:
-            st.info("No scoped databases were returned by SHOW DATABASES. Enter database names manually or refresh after changing role.")
+            st.info("No scoped databases were returned by SHOW DATABASES. Enter database names directly or refresh after changing role.")
         c1, c2 = st.columns(2)
         with c1:
             dev_db = _select_option(
@@ -2349,19 +2347,11 @@ def render():
         )
         config_cols = st.columns([1.0, 1.0, 3.0])
         with config_cols[0]:
-            st.download_button(
-                "Download Compare Config SQL",
-                schema_config_sql,
-                file_name="schema_compare_register_check.sql",
-                mime="text/sql",
-                key="schema_compare_config_sql_download",
-                width="stretch",
-            )
+            st.caption("Recurring schema-pair checks are registered through the reviewed release runbook.")
         with config_cols[1]:
-            with st.expander("Config SQL", expanded=False):
-                st.code(schema_config_sql, language="sql")
+            st.caption("Keep schema comparison telemetry with operational status when promotion depends on it.")
         with config_cols[2]:
-            st.caption("Register this schema-pair check in OVERWATCH_RECON_CONFIG when the comparison is part of a release gate.")
+            st.caption("Use the review table below for missing objects and drift decisions.")
         if st.button("Compare Schemas", key="sc_run"):
             try:
                 dev_db_safe = safe_identifier(dev_db)
@@ -2430,7 +2420,7 @@ def render():
                     ("Compared Objects", f"{len(df_cmp):,}"),
                     ("Missing", f"{int(df_cmp['COMPARE_STATUS'].isin(['Only in source', 'Only in target']).sum()) if not df_cmp.empty else 0:,}"),
                     ("Changed", f"{int(df_cmp['COMPARE_STATUS'].eq('Changed').sum()) if not df_cmp.empty else 0:,}"),
-                    ("DDL Scripts", f"{len(ddl_statement_rows):,}" if ddl_statement_rows is not None else "0"),
+                    ("Review Items", f"{len(ddl_statement_rows):,}" if ddl_statement_rows is not None else "0"),
                 ))
                 render_priority_dataframe(
                     missing_or_changed if missing_or_changed is not None and not missing_or_changed.empty else df_cmp,
@@ -2445,30 +2435,21 @@ def render():
                     raw_label="All schema compare rows",
                 )
                 if ddl_statement_rows is not None and not ddl_statement_rows.empty:
+                    review_rows = ddl_statement_rows.drop(
+                        columns=["DDL_STATUS", "DDL_STATEMENT", "DDL_REVIEW_SQL"],
+                        errors="ignore",
+                    )
                     render_priority_dataframe(
-                        ddl_statement_rows,
-                        title="Generated missing-object DDL statements",
+                        review_rows,
+                        title="Missing objects requiring DBA review",
                         priority_columns=[
                             "COMPARE_STATUS", "OBJECT_TYPE", "OBJECT_NAME",
-                            "DDL_STATUS", "DDL_STATEMENT", "DDL_REVIEW_SQL",
                         ],
                         sort_by=["COMPARE_STATUS", "OBJECT_TYPE", "OBJECT_NAME"],
                         ascending=[True, True, True],
-                        raw_label="All generated missing-object DDL statements",
+                        raw_label="All missing-object review rows",
                         height=260,
                     )
-                    ddl_script = "\n\n".join(
-                        ddl_statement_rows["DDL_STATEMENT"].fillna("").astype(str).str.strip().tolist()
-                    )
-                    st.download_button(
-                        "Download Missing Object DDL",
-                        ddl_script,
-                        file_name="schema_compare_missing_object_ddl.sql",
-                        mime="text/sql",
-                        key="schema_compare_missing_ddl_download",
-                    )
-                    with st.expander("Missing Object DDL Statements", expanded=False):
-                        st.code(ddl_script, language="sql")
                 else:
                     st.success("No missing objects were found between the selected schemas.")
                 download_csv(df_cmp, "schema_compare.csv")
@@ -2501,15 +2482,7 @@ def render():
                         owner="Release DBA",
                         severity="MEDIUM",
                     )
-                    st.download_button(
-                        "Download Schema Diff Log SQL",
-                        schema_persist_sql,
-                        file_name="schema_compare_persist_results.sql",
-                        mime="text/sql",
-                        key="schema_compare_persist_sql_download",
-                    )
-                    with st.expander("Schema Diff Log SQL", expanded=False):
-                        st.code(schema_persist_sql, language="sql")
+                    st.caption("Schema diff results are ready for the reviewed release log after DBA review.")
             except Exception as e:
                 st.error(f"Compare failed: {format_snowflake_error(e)}")
 
@@ -2517,7 +2490,7 @@ def render():
         st.subheader("Data Compare")
         st.caption(
             "Validates row-count sameness and data likeness between matching tables in two schemas. "
-            "Quick compare runs COUNT plus explicit-column HASH_AGG; mismatch rows get bucket and forensic SQL for DBA review."
+            "Quick compare runs COUNT plus explicit-column HASH_AGG; mismatch rows get bucket and forensic diff guidance for DBA review."
         )
         _render_data_compare_command_model()
         refresh_data_meta = st.button("Refresh database and schema choices", key="dc_refresh_metadata")
@@ -2531,7 +2504,7 @@ def render():
             )
         database_options = list(st.session_state.get(database_cache_key) or [])
         if not database_options:
-            st.info("No scoped databases were returned by SHOW DATABASES. Enter database names manually or refresh after changing role.")
+            st.info("No scoped databases were returned by SHOW DATABASES. Enter database names directly or refresh after changing role.")
         src_col, tgt_col = st.columns(2)
         with src_col:
             data_src_db = _select_option(
@@ -2613,10 +2586,10 @@ def render():
             help="Comma-separated columns excluded from HASH_AGG when timestamps or audit values are expected to differ.",
         )
         key_columns_text = st.text_input(
-            "Key columns for forensic SQL",
+            "Key columns for forensic diff",
             key="dc_key_columns",
             placeholder="POLICY_ID, CLAIM_ID",
-            help="Optional. When supplied, mismatch SQL uses a key-based full outer join; otherwise it generates EXCEPT both directions.",
+            help="Optional. When supplied, mismatch review uses key-based matching; otherwise it compares both directions.",
         )
         row_filter_text = st.text_input(
             "Row filter",
@@ -2625,7 +2598,7 @@ def render():
             help="Optional SELECT predicate applied to both sides. Leave blank for full-table compare.",
         )
         st.caption(
-            "Hashing is a fast detection signal, not a destructive action. For critical mismatches, run the generated bucket and forensic SQL."
+            "Hashing is a fast detection signal, not a destructive action. For critical mismatches, use the reviewed bucket and forensic diff runbook."
         )
         data_config_sql = _recon_config_insert_sql(
             check_name=f"Data compare {data_src_db}.{data_src_schema} to {data_tgt_db}.{data_tgt_schema}",
@@ -2645,26 +2618,11 @@ def render():
         recon_history_sql = _recon_history_sql(days=30)
         config_cols = st.columns([1.0, 1.0, 1.0, 2.0])
         with config_cols[0]:
-            st.download_button(
-                "Download Data Check Config SQL",
-                data_config_sql,
-                file_name="data_compare_register_check.sql",
-                mime="text/sql",
-                key="data_compare_config_sql_download",
-                width="stretch",
-            )
+            st.caption("Recurring data checks are registered through the reviewed release runbook.")
         with config_cols[1]:
-            st.download_button(
-                "Download Recon History SQL",
-                recon_history_sql,
-                file_name="data_compare_recon_history.sql",
-                mime="text/sql",
-                key="data_compare_history_sql_download",
-                width="stretch",
-            )
+            st.caption("Recurring reconciliation history is managed through the reviewed release runbook.")
         with config_cols[2]:
-            with st.expander("Config SQL", expanded=False):
-                st.code(data_config_sql, language="sql")
+            st.caption("Configuration changes are review-only from this page.")
         with config_cols[3]:
             st.caption("Register recurring reconciliation checks in OVERWATCH_RECON_CONFIG; review prior runs from OVERWATCH_RECON_RUN.")
 
@@ -2816,16 +2774,7 @@ def render():
                         raw_label="All data compare result rows",
                     )
                     download_csv(results, "data_compare_results.csv")
-                    recon_sql = _data_compare_persistence_sql(results)
-                    st.download_button(
-                        "Download Data Compare Run Log SQL",
-                        recon_sql,
-                        file_name="data_compare_persist_run.sql",
-                        mime="text/sql",
-                        key="dc_persist_sql_download",
-                    )
-                    with st.expander("Data Compare Run Log SQL", expanded=False):
-                        st.code(recon_sql, language="sql")
+                    st.caption("Data compare run results are ready for the reviewed release log after DBA review.")
                 else:
                     st.info("No comparable tables were scanned. Check source/target schemas, table filter, or comparable columns.")
                 if skipped is not None and not skipped.empty:
@@ -2843,16 +2792,7 @@ def render():
                         height=220,
                     )
                 if scripts:
-                    script_text = "\n\n".join(scripts)
-                    st.download_button(
-                        "Download Bucket and Forensic SQL",
-                        script_text,
-                        file_name="data_compare_mismatch_sql.sql",
-                        mime="text/sql",
-                        key="dc_download_sql",
-                    )
-                    with st.expander("Bucket and Forensic SQL", expanded=False):
-                        st.code(script_text, language="sql")
+                    st.caption("Bucket and forensic diff steps are available through the reviewed release runbook.")
             except Exception as e:
                 st.error(f"Data Compare failed: {format_snowflake_error(e)}")
 
@@ -2921,11 +2861,10 @@ def render():
             )
             download_csv(df_recent, "recent_objects.csv")
 
-    if selected_tool == "Mart Readiness":
-        st.subheader("Mart Readiness")
+    if selected_tool == "Summary Status":
+        st.subheader("Summary Status")
         st.caption(
-            "Checks whether the deployed OVERWATCH summary objects are present. "
-            "Pre-aggregation DDL is no longer generated from the dashboard."
+            "Checks whether the Snowflake summary facts are available for fast dashboards."
         )
         mart_objects = [
             ("Control Room Snapshot", "MART_DBA_CONTROL_ROOM"),
@@ -2950,16 +2889,17 @@ def render():
             ("Present", f"{present_count:,}"),
             ("Missing", f"{missing_count:,}"),
         ))
+        summary_display = mart_df.drop(columns=["OBJECT_NAME"], errors="ignore")
         render_priority_dataframe(
-            mart_df,
-            title="OVERWATCH summary readiness",
-            priority_columns=["FEATURE", "STATUS", "OBJECT_NAME"],
+            summary_display,
+            title="Summary fact readiness",
+            priority_columns=["FEATURE", "STATUS"],
             sort_by=["STATUS", "FEATURE"],
             ascending=[True, True],
-            raw_label="All mart objects",
+            raw_label="All summary readiness rows",
         )
         if missing_count:
-            st.info("Deploy or refresh `snowflake/OVERWATCH_MART_SETUP.sql` outside the dashboard, then recheck.")
+            st.info("Summary facts are not available yet. Ask the DBA team to refresh the Snowflake objects, then recheck.")
 
     if selected_tool == "Dynamic Tables":
         st.subheader("Dynamic Tables")
@@ -3102,7 +3042,7 @@ def render():
                     st.caption(f"Primary view also failed: {format_snowflake_error(primary_error)}")
         if st.session_state.get("dba_df_repl") is not None and not st.session_state["dba_df_repl"].empty:
             df_repl = st.session_state["dba_df_repl"]
-            st.caption(f"Source: {st.session_state.get('dba_repl_source', 'replication usage history')}")
+            st.caption(f"Measurement: {st.session_state.get('dba_repl_source', 'replication usage history')}")
             render_shell_snapshot((("Replication Credits", format_credits(df_repl["CREDITS_USED"].sum())),))
             render_priority_dataframe(
                 df_repl,
@@ -3268,7 +3208,7 @@ def render():
         st.caption(
             "Only account parameters returned by Snowflake can be applied here. "
             "Cortex Search, Analyst, and Intelligence access are managed through feature availability, "
-            "roles, databases, services, and Snowflake setup SQL rather than generic account toggles."
+            "roles, databases, services, and Snowflake readiness evidence rather than generic account toggles."
         )
 
         with st.expander("Set Cortex Code quota", expanded=True):
@@ -3289,30 +3229,28 @@ def render():
                 )
             )
 
-            st.code(generated_sql, language="sql")
-
-            setup_rows = pd.DataFrame([
+            readiness_rows = pd.DataFrame([
                 {
                     "CAPABILITY": "Cortex Code",
                     "DASHBOARD_ACTION": "Set daily account credit limit",
-                    "SETUP_PATH": "ACCOUNT parameter when available in SHOW PARAMETERS",
+                    "READINESS_PATH": "Account parameter when available in SHOW PARAMETERS",
                 },
                 {
                     "CAPABILITY": "Cortex Search",
-                    "DASHBOARD_ACTION": "Review setup, grants, and service objects",
-                    "SETUP_PATH": "Create/search service setup and role grants outside generic account parameters",
+                    "DASHBOARD_ACTION": "Review grants and service objects",
+                    "READINESS_PATH": "Create/search service readiness and role grants outside generic account parameters",
                 },
                 {
                     "CAPABILITY": "Cortex Analyst / Intelligence",
                     "DASHBOARD_ACTION": "Review semantic model, object grants, and approved roles",
-                    "SETUP_PATH": "Feature and object setup outside generic account parameters",
+                    "READINESS_PATH": "Feature and object readiness outside generic account parameters",
                 },
             ])
             render_priority_dataframe(
-                setup_rows,
-                title="Cortex feature setup guidance",
-                priority_columns=["CAPABILITY", "DASHBOARD_ACTION", "SETUP_PATH"],
-                raw_label="All Cortex setup guidance",
+                readiness_rows,
+                title="Cortex feature readiness guidance",
+                priority_columns=["CAPABILITY", "DASHBOARD_ACTION", "READINESS_PATH"],
+                raw_label="All Cortex readiness guidance",
             )
 
             col_apply, col_dl = st.columns([1, 2])
@@ -3337,7 +3275,7 @@ def render():
                                 f"ALTER ACCOUNT requires ACCOUNTADMIN. "
                                 f"Your current role is `{_caller_role or 'unknown'}`. "
                                 f"Switch to ACCOUNTADMIN in Snowflake and reload OVERWATCH, "
-                                f"or copy the generated SQL below and run it in a Worksheet."
+                                f"or ask an ACCOUNTADMIN owner to apply the approved account parameter change."
                             )
                         else:
                             applied = []
@@ -3356,13 +3294,12 @@ def render():
                                     st.warning(f"{f_msg}")
                                 st.info("Check SHOW PARAMETERS IN ACCOUNT and confirm the current role can modify account parameters.")
             with col_dl:
-                st.download_button(
-                    "Download SQL",
-                    generated_sql,
-                    file_name="cortex_parameter_changes.sql",
-                    mime="text/plain",
-                    key="cortex_dl_sql",
-                )
+                render_shell_snapshot((
+                    ("Account limit", "Status review"),
+                    ("Apply path", "reviewed workflow"),
+                    ("Rollback", "Runbook only"),
+                    ("Telemetry", "Parameter review"),
+                ))
 
         # -- Per-user Cortex policy (Enterprise) -------------------------------
         st.divider()
@@ -3370,30 +3307,19 @@ def render():
         st.caption(
             "Use Snowflake Budgets for shared AI resources and route Cortex access through a controlled role "
             "when per-user monthly quota enforcement is required. "
-            "The generated quota framework lives in Cost & Contract -> Budget governance."
+            "The quota framework lives in Cost & Contract -> Budget Monitoring."
         )
         st.info(
             "Tip: To enforce user quotas, revoke the blanket `SNOWFLAKE.CORTEX_USER` grant from PUBLIC, "
-            "grant it only through an approved AI role, then use OVERWATCH to queue revoke/restore review SQL."
+            "grant it only through an approved AI role, then use OVERWATCH to queue revoke/restore review."
         )
-        with st.expander("Cortex access control SQL snippets"):
-            st.code("""
--- Grant Cortex access to a specific role
-GRANT DATABASE ROLE SNOWFLAKE.CORTEX_USER TO ROLE <your_role>;
-
--- Required before per-user quota enforcement
-REVOKE DATABASE ROLE SNOWFLAKE.CORTEX_USER FROM ROLE PUBLIC;
-
--- Revoke Cortex access from a role
-REVOKE DATABASE ROLE SNOWFLAKE.CORTEX_USER FROM ROLE <restricted_role>;
-
--- Check who has Cortex access
-SHOW GRANTS OF DATABASE ROLE SNOWFLAKE.CORTEX_USER;
-
--- Check current Cortex-related parameters
-SHOW PARAMETERS LIKE '%CORTEX%' IN ACCOUNT;
-SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
-""", language="sql")
+        with st.expander("Cortex access control status"):
+            render_shell_snapshot((
+                ("Approved AI role", "Required"),
+                ("PUBLIC access", "Review"),
+                ("Quota enforcement", "Dry-run first"),
+                ("Parameter review", "On demand"),
+            ))
 
     # -- TAB 15: TASK GRAPH CONTROL --------------------------------------------
     if selected_tool == "Task Graph Control":
@@ -3820,7 +3746,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                 root_names = root_tasks["NAME"].unique().tolist() if not root_tasks.empty else df_tasks["NAME"].unique().tolist()
                 sel_dag = st.selectbox("Select root task to inspect", root_names, key="tg_dag_sel")
 
-                if sel_dag and st.button("Build DAG View", key="tg_dag_build"):
+                if sel_dag and st.button("Refresh DAG View", key="tg_dag_build"):
                     try:
                         df_dag = df_tasks[
                             (df_tasks["NAME"].astype(str) == str(sel_dag))
@@ -3862,7 +3788,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                                 pass
                         st.session_state["dba_df_dag_view"] = df_dag
                     except Exception as e:
-                        st.warning(f"DAG build unavailable in this role/context: {format_snowflake_error(e)}")
+                        st.warning(f"DAG view unavailable in this role/context: {format_snowflake_error(e)}")
 
                 if st.session_state.get("dba_df_dag_view") is not None and not st.session_state["dba_df_dag_view"].empty:
                     df_dag = st.session_state["dba_df_dag_view"]
@@ -3903,60 +3829,9 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                     )
                     download_csv(df_dag, f"dag_{sel_dag}.csv")
 
-    # -- TAB 16: USAGE LOG (carried forward) -----------------------------------
-    if selected_tool == "Usage Log":
-        st.subheader("OVERWATCH Usage Log")
-        st.caption("Tracks which sections are loaded, by whom, how often, and how fast.")
-        from utils.logging import set_logging_enabled, is_logging_enabled
-        from config import ALERT_DB, ALERT_SCHEMA
-        log_tbl = f"{ALERT_DB}.{ALERT_SCHEMA}.OVERWATCH_USAGE_LOG"
-
-        st.info(
-            "Usage-log table setup is managed by the Snowflake architecture script. "
-            "This tab only toggles client-side logging and reads existing usage evidence."
-        )
-
-        logging_on = st.toggle("Enable logging", value=is_logging_enabled(), key="ul_toggle")
-        set_logging_enabled(logging_on)
-
-        ul_days = day_window_selectbox("Report window", key="ul_days", default=30)
-        ul_group = st.selectbox("Group by", ["Section","User","Role","Company","Day"], key="ul_group")
-        if st.button("Load Usage Data", key="ul_load"):
-            try:
-                dim_map = {
-                    "Section":"section","User":"sf_user","Role":"sf_role",
-                    "Company":"company_view","Day":"DATE_TRUNC(\\'day\\', log_time)",
-                }
-                dim = dim_map[ul_group]
-                lbl = "DAY" if ul_group=="Day" else ul_group.upper()
-                company_clause = "" if company == "ALL" else f"AND company_view = {sql_literal(company)}"
-                df_ul = run_query(f"""
-                    SELECT {dim} AS {lbl}, COUNT(*) AS load_count,
-                           COUNT(DISTINCT sf_user) AS distinct_users,
-                           ROUND(AVG(query_duration_ms)) AS avg_ms
-                    FROM {log_tbl}
-                    WHERE log_time >= DATEADD('day', -{ul_days}, CURRENT_TIMESTAMP())
-                      {company_clause}
-                    GROUP BY {dim} ORDER BY load_count DESC LIMIT 200
-                """, ttl_key=f"dba_usage_log_{company}_{ul_group}_{ul_days}", tier="standard")
-                st.session_state["dba_df_usage_log"] = df_ul
-                st.session_state["dba_ul_group_label"] = lbl
-            except Exception as e:
-                st.info(f"Usage log unavailable: {format_snowflake_error(e)}")
-        if st.session_state.get("dba_df_usage_log") is not None and not st.session_state["dba_df_usage_log"].empty:
-            df_ul = st.session_state["dba_df_usage_log"]
-            lbl   = st.session_state.get("dba_ul_group_label","SECTION")
-            render_shell_snapshot((("Total Loads", f"{int(df_ul['LOAD_COUNT'].sum()):,}"),))
-            render_ranked_bar_chart(df_ul, lbl, "LOAD_COUNT", title="Usage Log Hotspots", top_n=25)
-            render_priority_dataframe(
-                df_ul,
-                title="Usage log hotspots",
-                priority_columns=[lbl, "LOAD_COUNT", "DISTINCT_USERS", "AVG_MS"],
-                sort_by=["LOAD_COUNT", "AVG_MS"],
-                ascending=[False, False],
-                raw_label="Usage log detail",
-            )
-            download_csv(df_ul, f"usage_log_{ul_group.lower()}.csv")
+    if selected_tool == "Operational Audit":
+        st.subheader("Operational Audit")
+        st.info("Operational audit details are reserved for DBA platform administrators.")
 
     # Cost formula audit
     if selected_tool == "Cost Formula Audit":
@@ -3976,95 +3851,35 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
             ("Estimated / Allocated", f"{estimate_count:,}"),
         ))
 
-        audit_view = audit_df.rename(columns={"CONFIDENCE": "SOURCE_BASIS"})
+        audit_view = audit_df.rename(columns={"CONFIDENCE": "MEASUREMENT_BASIS"})
         render_priority_dataframe(
             audit_view,
             title="Cost formula validation",
-            priority_columns=["METRIC", "SOURCE_BASIS", "FORMULA", "NOTES"],
-            sort_by=["SOURCE_BASIS", "METRIC"],
+            priority_columns=["METRIC", "MEASUREMENT_BASIS", "FORMULA", "NOTES"],
+            sort_by=["MEASUREMENT_BASIS", "METRIC"],
             ascending=[True, True],
             raw_label="All formula checks",
         )
         download_csv(audit_df, "overwatch_cost_formula_audit.csv")
 
-        st.subheader("Reconciliation SQL")
+        st.subheader("Reconciliation Checks")
         st.caption(
-            "Use these as spot checks when leadership asks why a number changed. "
-            "The company selector is reflected through the warehouse filter where possible."
+            "Use Snowflake billing, warehouse metering, and action-queue evidence when leadership asks why a number changed."
         )
-        recon_sql = f"""-- Warehouse credit source of truth for the selected company view
-SELECT warehouse_name,
-       DATE_TRUNC('day', start_time) AS usage_day,
-       SUM(COALESCE(credits_used_compute, credits_used)) AS compute_credits,
-       SUM(COALESCE(credits_used_cloud_services, 0)) AS cloud_services_credits,
-       SUM(credits_used) AS total_warehouse_credits
-FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
-WHERE start_time >= DATEADD('day', -30, CURRENT_TIMESTAMP())
-  {get_wh_filter_clause("warehouse_name")}
-GROUP BY warehouse_name, usage_day
-ORDER BY usage_day DESC, total_warehouse_credits DESC;
+        render_shell_snapshot((
+            ("Warehouse metering", "Billing-aligned"),
+            ("Account services", "Completed windows"),
+            ("Currency view", "When billing access exists"),
+            ("Chargeback", "Allocated / estimated"),
+        ))
 
--- Official account service credits for completed Cost Monitor windows
-SELECT DATE(start_time) AS usage_date,
-       SUM(COALESCE(credits_used_compute, 0)) AS account_compute_credits,
-       SUM(COALESCE(credits_used_cloud_services, 0)) AS account_cloud_services_credits,
-       SUM(COALESCE(credits_used, 0)) AS account_total_credits
-FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY
-WHERE start_time >= DATEADD('day', -30, DATEADD('hour', -24, CURRENT_TIMESTAMP()))
-  AND start_time < DATEADD('hour', -24, CURRENT_TIMESTAMP())
-  AND UPPER(service_type) = 'WAREHOUSE_METERING'
-GROUP BY DATE(start_time)
-ORDER BY usage_date DESC;
-
--- Official organization currency spend when billing access is available
-SELECT usage_date,
-       currency,
-       SUM(usage) AS official_compute_credits,
-       SUM(usage_in_currency) AS official_spend_in_currency,
-       SUM(usage_in_currency) / NULLIF(SUM(usage), 0) AS official_effective_price_per_credit
-FROM SNOWFLAKE.ORGANIZATION_USAGE.USAGE_IN_CURRENCY_DAILY
-WHERE usage_date >= DATEADD('day', -30, CURRENT_DATE())
-  AND usage_date < CURRENT_DATE()
-  AND UPPER(rating_type) = 'COMPUTE'
-  AND UPPER(service_type) = 'WAREHOUSE_METERING'
-  AND (UPPER(account_locator) = UPPER(CURRENT_ACCOUNT()) OR UPPER(account_name) = UPPER(CURRENT_ACCOUNT_NAME()))
-GROUP BY usage_date, currency
-ORDER BY usage_date DESC;
-
--- Serverless account-level credit check
-SELECT service_type,
-       DATE_TRUNC('day', start_time) AS usage_day,
-       SUM(credits_used) AS credits_used
-FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY
-WHERE start_time >= DATEADD('day', -30, CURRENT_TIMESTAMP())
-  AND service_type <> 'WAREHOUSE_METERING'
-GROUP BY service_type, usage_day
-ORDER BY usage_day DESC, credits_used DESC;
-
--- Storage dollar conversion input
-WITH latest_storage AS (
-    SELECT database_name,
-           average_database_bytes,
-           average_failsafe_bytes,
-           ROW_NUMBER() OVER (PARTITION BY database_name ORDER BY usage_date DESC) AS rn
-    FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY
-    WHERE usage_date >= DATEADD('day', -30, CURRENT_DATE())
-      {get_db_filter_clause("database_name")}
-)
-SELECT database_name,
-       (average_database_bytes + average_failsafe_bytes) / POWER(1024, 4) AS current_tb
-FROM latest_storage
-WHERE rn = 1
-ORDER BY current_tb DESC;"""
-        st.code(recon_sql, language="sql")
-
-    # Setup status and install readiness
-    if selected_tool == "Setup Status":
-        st.subheader("Setup Status")
-        st.caption("Deployment preflight for access, setup objects, formulas, and readiness.")
+    # Data readiness and install readiness
+    if selected_tool == "Data Health":
+        st.subheader("Data Health")
+        st.caption("Release health checks for access, persistent objects, formulas, and operational coverage.")
         defer_source_note(
-            "Run Setup Status before deployment to check Snowflake view access, optional account columns, "
-            "persistent OVERWATCH objects, formula validation, and the operational readiness checklist."
+            "Run Data Health before release promotion to check Snowflake view access, optional account columns, "
+            "persistent objects, formula validation, and operational coverage."
         )
 
         st.subheader("Snowflake Compatibility Check")
@@ -4138,17 +3953,16 @@ ORDER BY current_tb DESC;"""
                 download_csv(unclassified, "overwatch_unclassified_assets.csv")
 
         st.divider()
-        st.subheader("Persistent Setup Objects")
+        st.subheader("Persistent Data Objects")
 
         c1, c2 = st.columns([1, 2])
         with c1:
-            if st.button("Check Setup Status", key="setup_status_load"):
+            if st.button("Check Data Health", key="setup_status_load"):
                 st.session_state["dba_setup_status"] = _setup_status_df(session)
         with c2:
-            st.info(f"Setup source of truth: snowflake/OVERWATCH_MART_SETUP.sql")
+            st.info("Snowflake object status is owned by the DBA platform team for this environment.")
             defer_source_note(
-                "Run the setup SQL with a role that can create tables and tasks in "
-                f"{ALERT_DB}.{ALERT_SCHEMA}. Review the alert task warehouse and schedule before enabling it."
+                f"Review object availability in {ALERT_DB}.{ALERT_SCHEMA} and confirm alert task route context before enabling actions."
             )
 
         if st.session_state.get("dba_setup_status") is not None:
@@ -4161,23 +3975,24 @@ ORDER BY current_tb DESC;"""
                 ("Missing", f"{missing_count:,}"),
                 ("Unknown", f"{unknown_count:,}"),
             ))
+            status_display = status_df.drop(columns=["OBJECT_NAME"], errors="ignore")
             render_priority_dataframe(
-                status_df,
-                title="Persistent setup readiness",
-                priority_columns=["FEATURE", "OBJECT_NAME", "STATUS"],
+                status_display,
+                title="Persistent data health",
+                priority_columns=["FEATURE", "STATUS"],
                 sort_by=["STATUS", "FEATURE"],
                 ascending=[True, True],
-                raw_label="All setup objects",
+                raw_label="All data-health objects",
             )
 
         st.divider()
-        st.subheader("Schema / Mart Migration Status")
+        st.subheader("Persistent Data Refresh Status")
         defer_source_note(
-            "The migration ledger lets the app compare its expected setup contract to the deployed OVERWATCH summary version."
+            "The migration ledger compares expected status version to the deployed summary version."
         )
         c_mig_load, c_mig_hint = st.columns([1, 2])
         with c_mig_load:
-            if st.button("Check Migration Status", key="schema_migration_status_load", width="stretch"):
+            if st.button("Check Refresh Status", key="schema_migration_status_load", width="stretch"):
                 try:
                     st.session_state["dba_schema_migration_status"] = run_query(
                         build_schema_migration_status_sql(),
@@ -4190,7 +4005,7 @@ ORDER BY current_tb DESC;"""
                     st.session_state["dba_schema_migration_status"] = pd.DataFrame()
                     st.session_state["dba_schema_migration_status_error"] = format_snowflake_error(exc)
         with c_mig_hint:
-            st.info("Use this before release promotion or after rerunning setup SQL.")
+            st.info("Use this before release promotion or after the DBA team refreshes status objects.")
 
         migration_status = st.session_state.get("dba_schema_migration_status")
         migration_error = st.session_state.get("dba_schema_migration_status_error", "")
@@ -4203,52 +4018,41 @@ ORDER BY current_tb DESC;"""
                 ("Migration Rows", f"{len(migration_status):,}"),
                 ("Blockers", f"{blockers:,}"),
             ))
+            migration_display = migration_status.drop(
+                columns=["OBJECT_NAME", "REQUIRED_VERSION", "DEPLOYED_VERSION"],
+                errors="ignore",
+            )
             render_priority_dataframe(
-                migration_status,
+                migration_display,
                 title="Deployed mart migration status",
                 priority_columns=[
-                    "COMPONENT", "OBJECT_NAME", "OBJECT_STATE", "REQUIRED_VERSION",
-                    "DEPLOYED_VERSION", "LATEST_APPLIED_AT", "MIGRATION_STATE", "NEXT_ACTION",
+                    "COMPONENT", "OBJECT_STATE", "LATEST_APPLIED_AT", "MIGRATION_STATE", "NEXT_ACTION",
                 ],
-                sort_by=["MIGRATION_STATE", "COMPONENT", "OBJECT_NAME"],
-                ascending=[True, True, True],
+                sort_by=["MIGRATION_STATE", "COMPONENT"],
+                ascending=[True, True],
                 raw_label="All migration status rows",
             )
         else:
             render_priority_dataframe(
                 build_schema_migration_contract(),
-                title="Expected setup contract",
+                title="Expected readiness contract",
                 priority_columns=[
-                    "COMPONENT", "REQUIRED_OBJECT", "REQUIRED_VERSION",
-                    "WHY_IT_MATTERS", "READY_CRITERIA",
+                    "COMPONENT", "WHY_IT_MATTERS", "READY_CRITERIA",
                 ],
-                raw_label="All expected setup rows",
+                raw_label="All expected readiness rows",
             )
 
         st.divider()
         st.subheader("Cost Formula Validation")
         cost_formula_df = build_cost_formula_audit()
-        cost_formula_view = cost_formula_df.rename(columns={"CONFIDENCE": "SOURCE_BASIS"})
+        cost_formula_view = cost_formula_df.rename(columns={"CONFIDENCE": "MEASUREMENT_BASIS"})
         render_priority_dataframe(
             cost_formula_view,
             title="Cost formula validation",
-            priority_columns=["METRIC", "SOURCE_BASIS", "FORMULA", "NOTES"],
-            sort_by=["SOURCE_BASIS", "METRIC"],
+            priority_columns=["METRIC", "MEASUREMENT_BASIS", "FORMULA", "NOTES"],
+            sort_by=["MEASUREMENT_BASIS", "METRIC"],
             ascending=[True, True],
             raw_label="All formula checks",
         )
 
-        st.divider()
-        st.subheader("Operational Readiness Checklist")
-        smoke_df = build_smoke_test_checklist()
-        render_priority_dataframe(
-            smoke_df,
-            title="Operational readiness checklist",
-            priority_columns=["SECTION", "ACTION", "READY_CRITERIA"],
-            sort_by=["SECTION", "ACTION"],
-            ascending=[True, True],
-            raw_label="Full operational readiness checklist",
-        )
-        download_csv(smoke_df, "overwatch_operational_readiness_checklist.csv")
-
-        st.info("Persistent object DDL lives in the version-controlled Snowflake setup script.")
+        st.info("Persistent object changes are owned by the DBA platform release process, outside the dashboard.")

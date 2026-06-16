@@ -46,7 +46,7 @@ PROCEDURE_SIGNAL_ROUTES = {
     ),
     "Procedure Runs Outside Task Graph": (
         "Stored procedures",
-        "Validate whether manual execution is expected; if it is a production workflow, move it into task orchestration or add an approved exception.",
+        "Validate whether on-demand execution is expected; if it is a production workflow, move it into task orchestration or document the exception.",
     ),
     "Procedure Behind Suspended Task": (
         "Task graphs",
@@ -240,9 +240,9 @@ def _build_procedure_ops_frames(
         if safe_int(row.get("SUSPENDED_TASKS")) > 0
         else "Task-managed"
         if safe_int(row.get("TASK_COUNT")) > 0
-        else "Manual CALL only"
+        else "On-demand CALL only"
         if safe_int(row.get("CALL_COUNT")) > 0
-        else "No recent execution evidence",
+        else "No recent execution telemetry",
         axis=1,
     )
     joined["OWNER_REVIEW"] = joined["ORCHESTRATION_STATUS"].apply(
@@ -252,7 +252,7 @@ def _build_procedure_ops_frames(
         lambda row: "High"
         if row.get("ORCHESTRATION_STATUS") == "Task blocked - suspended"
         else "Medium"
-        if row.get("ORCHESTRATION_STATUS") in {"Manual CALL only", "No recent execution evidence"}
+        if row.get("ORCHESTRATION_STATUS") in {"On-demand CALL only", "No recent execution telemetry"}
         else "Low",
         axis=1,
     )
@@ -319,7 +319,7 @@ def _build_procedure_ops_frames(
         "RECENT_CALLS": int(joined["CALL_COUNT"].sum()) if not joined.empty else 0,
         "ORPHAN_CANDIDATES": sum(1 for row in exceptions if row["SIGNAL"] == "Orphan Procedure Candidate"),
         "OWNER_REVIEW_REQUIRED": int((joined["OWNER_REVIEW"] == "Required").sum()) if not joined.empty else 0,
-        "MANUAL_ONLY": int((joined["ORCHESTRATION_STATUS"] == "Manual CALL only").sum()) if not joined.empty else 0,
+        "ON_DEMAND_ONLY": int((joined["ORCHESTRATION_STATUS"] == "On-demand CALL only").sum()) if not joined.empty else 0,
         "BLOCKED_BY_SUSPENDED_TASK": int((joined["ORCHESTRATION_STATUS"] == "Task blocked - suspended").sum()) if not joined.empty else 0,
     }
     exception_df = add_signal_routes(pd.DataFrame(exceptions), PROCEDURE_SIGNAL_ROUTES)
@@ -574,7 +574,7 @@ def _procedure_verification_sql(row: pd.Series, lookback_days: int = 7) -> str:
     root_query_id = str(row.get("ROOT_QUERY_ID") or "").strip()
     proc_filter = f"AND query_text ILIKE {sql_literal('%' + proc + '%', 600)}" if proc else ""
     root_filter = f"OR query_id = {sql_literal(root_query_id, 200)}" if root_query_id else ""
-    return f"""-- Stored procedure reliability proof and post-fix verification
+    return f"""-- Stored procedure reliability telemetry and post-fix status
 SELECT query_id,
        user_name,
        role_name,
@@ -596,7 +596,7 @@ WHERE start_time >= DATEADD('day', -{max(1, int(lookback_days or 7))}, CURRENT_T
 ORDER BY start_time DESC
 LIMIT 50;
 
--- Verification rule: next procedure run should return within runtime and estimated-credit baseline.
+-- Status rule: next procedure run should return within runtime and estimated-credit baseline.
 """
 
 
@@ -616,22 +616,22 @@ def _build_procedure_reliability_action(row: pd.Series, company: str, source: st
     detail = (
         f"runtime change={runtime_pct:,.1f}%, cost change={cost_pct:,.1f}%, "
         f"root_query_id={row.get('ROOT_QUERY_ID', '')}, "
-        f"orchestration={row.get('ORCHESTRATION_STATUS', '')}, owner_review={row.get('OWNER_REVIEW', '')}"
+        f"orchestration={row.get('ORCHESTRATION_STATUS', '')}, route_review={row.get('OWNER_REVIEW', '')}"
     )
     action = str(row.get("RECOMMENDED_ACTION") or "Review procedure regression and linked task graph.")
     if "verify" not in action.lower():
-        action += " Verify the next run against the baseline and attach QUERY_HISTORY evidence before closing."
-    if str(row.get("OWNER_REVIEW") or "").upper() == "REQUIRED" and "owner review" not in action.lower():
-        action += " Owner review is required before treating this procedure as production-safe."
+        action += " Confirm the next run against the baseline and record QUERY_HISTORY telemetry before closing."
+    if str(row.get("OWNER_REVIEW") or "").upper() == "REQUIRED" and "DBA review" not in action.lower():
+        action += " DBA review is required before treating this procedure as production-safe."
     generated_sql = (
         "-- Reviewed procedure reliability plan. Do not redeploy or retry blindly.\n"
         f"-- Procedure: {proc}\n"
         f"-- Signal: {signal}\n"
         f"-- Root query: {row.get('ROOT_QUERY_ID', '')}\n"
         f"-- Orchestration status: {row.get('ORCHESTRATION_STATUS', '')}\n"
-        f"-- Owner review: {row.get('OWNER_REVIEW', '')}\n"
+        f"-- DBA review: {row.get('OWNER_REVIEW', '')}\n"
         "-- Inspect child queries, recent procedure changes, warehouse size, and task graph schedule.\n"
-        "-- If code changed, redeploy through the approved release path; if runtime capacity changed, use Cost & Contract warehouse capacity evidence first."
+        "-- If code changed, redeploy through the release path; if runtime capacity changed, use Cost & Contract warehouse capacity telemetry first."
     )
     finding = f"{signal}: {proc}. {detail}"
     verification_query = _procedure_verification_sql(row)[:8000]
@@ -664,7 +664,7 @@ def _build_procedure_reliability_action(row: pd.Series, company: str, source: st
         "Owner Email": owner_context.get("OWNER_EMAIL", ""),
         "Oncall Primary": owner_context.get("ONCALL_PRIMARY", ""),
         "Oncall Secondary": owner_context.get("ONCALL_SECONDARY", ""),
-        "Approval Group": approval_group,
+        "Review Group": approval_group,
         "Escalation Target": owner_context.get("ESCALATION_TARGET", ""),
         "Owner Source": owner_context.get("OWNER_SOURCE", ""),
         "Owner Evidence": owner_context.get("OWNER_EVIDENCE", ""),
@@ -681,15 +681,14 @@ def _build_procedure_reliability_action(row: pd.Series, company: str, source: st
         "Baseline Value": baseline_value,
         "Current Value": current_value,
         "Measured Delta": measured_delta,
-        "Owner Approval Status": "Requested",
-        "Owner Approval Note": (
-            "Procedure reliability action requires owner approval, release/change context, and post-fix QUERY_HISTORY "
-            "evidence before closure."
+        "Verification Status": "Requested",
+        "Verification Note": (
+            "Procedure reliability action requires release/change context and post-fix QUERY_HISTORY telemetry before closure."
         ),
         "Recovery SLA State": recovery_state,
         "Recovery SLA Target Hours": recovery_target_hours,
         "Recovery Evidence": (
-            "Required closure evidence: owner approval, release/change ticket, successful next CALL or task run, "
+            "Required closure status: release/change reference, successful next CALL or task run, "
             "and runtime/cost values back within baseline tolerance."
         ),
         "Recovery Audit State": "Audit Required",
@@ -719,7 +718,7 @@ def _build_procedure_reliability_slo_board(summary: dict, exceptions: pd.DataFra
             "SLO": "Procedure runs",
             "STATE": "Ready" if safe_int(summary.get("RUNS")) > 0 else "Review",
             "EVIDENCE": f"{safe_int(summary.get('RUNS')):,} run(s) in the selected window.",
-            "NEXT_ACTION": "Load procedure evidence before declaring the surface healthy.",
+            "NEXT_ACTION": "Load procedure telemetry before declaring the surface healthy.",
         },
         {
             "SLO": "Runtime regressions",
@@ -734,10 +733,10 @@ def _build_procedure_reliability_slo_board(summary: dict, exceptions: pd.DataFra
             "NEXT_ACTION": "Check child-query scan volume, warehouse size, and release drift.",
         },
         {
-            "SLO": "Owner review",
+            "SLO": "DBA review",
             "STATE": "Ready" if safe_int(summary.get("OWNER_REVIEW_REQUIRED")) == 0 else "Review",
-            "EVIDENCE": f"{safe_int(summary.get('OWNER_REVIEW_REQUIRED')):,} procedure(s) require owner review.",
-            "NEXT_ACTION": "Get the owner to approve before treating the procedure as production-safe.",
+            "EVIDENCE": f"{safe_int(summary.get('OWNER_REVIEW_REQUIRED')):,} procedure(s) require DBA review.",
+            "NEXT_ACTION": "Get DBA review before treating the procedure as production-safe.",
         },
         {
             "SLO": "Suspended-task dependency",
@@ -748,14 +747,14 @@ def _build_procedure_reliability_slo_board(summary: dict, exceptions: pd.DataFra
     ]
     if exceptions is not None and not exceptions.empty:
         p1 = int(exceptions.get("SEVERITY", pd.Series(dtype=str)).astype(str).str.upper().eq("CRITICAL").sum())
-        manual_only = int(exceptions.get("ORCHESTRATION_STATUS", pd.Series(dtype=str)).astype(str).str.contains("MANUAL", case=False, na=False).sum())
+        manual_only = int(exceptions.get("ORCHESTRATION_STATUS", pd.Series(dtype=str)).astype(str).str.contains("ON-DEMAND", case=False, na=False).sum())
     else:
         p1 = 0
         manual_only = 0
     rows.append({
         "SLO": "Critical procedure path risk",
         "STATE": "Ready" if p1 == 0 and manual_only == 0 else "Review",
-        "EVIDENCE": f"Critical exceptions={p1:,}; manual-call-only procedures={manual_only:,}.",
+        "EVIDENCE": f"Critical exceptions={p1:,}; on-demand-only procedures={manual_only:,}.",
         "NEXT_ACTION": "Use the operations brief before relying on the task graph as production control.",
     })
     board = pd.DataFrame(rows)
@@ -783,7 +782,7 @@ def render():
     company = get_active_company()
 
     st.subheader("Stored Proc & UDF Cost Tracker")
-    st.caption("CALL queries plus downstream child SQL where ROOT_QUERY_ID is populated.")
+    st.caption("CALL activity plus downstream child statements where ROOT_QUERY_ID is populated.")
 
     sp_days = day_window_selectbox("Lookback", key="sp_tracker_days", default=7)
     proc_filters_plain = get_global_filter_clause(
@@ -879,7 +878,7 @@ def render():
             if safe_int(summary.get("OWNER_REVIEW_REQUIRED")) or safe_int(summary.get("BLOCKED_BY_SUSPENDED_TASK")):
                 st.caption(
                     f"Owner review required: {safe_int(summary.get('OWNER_REVIEW_REQUIRED')):,} | "
-                    f"Manual-call only: {safe_int(summary.get('MANUAL_ONLY')):,} | "
+                    f"On-demand only: {safe_int(summary.get('ON_DEMAND_ONLY')):,} | "
                     f"Blocked by suspended task: {safe_int(summary.get('BLOCKED_BY_SUSPENDED_TASK')):,}"
                 )
             sources = st.session_state.get("sp_ops_sources", {})

@@ -31,7 +31,7 @@ DBA_CONTROL_PLANE_RUBRIC = (
         "key": "performance_mart",
         "label": "Performance & Mart Strategy",
         "weight": 10,
-        "definition": "Prefers compact fast summaries, avoids surprise live scans, caches appropriately, and exposes source health.",
+        "definition": "Prefers compact fast summaries, avoids surprise live scans, caches appropriately, and exposes data readiness.",
     },
     {
         "key": "workflow_ux",
@@ -40,15 +40,9 @@ DBA_CONTROL_PLANE_RUBRIC = (
         "definition": "Organizes dense DBA evidence around observe, diagnose, act, audit, and verify without burying the first move.",
     },
     {
-        "key": "governance_ownership",
-        "label": "Governance & Ownership",
-        "weight": 10,
-        "definition": "Connects objects, warehouses, roles, users, tasks, procedures, and findings to owners and approval context.",
-    },
-    {
         "key": "tests_operability",
         "label": "Tests & Operability",
-        "weight": 5,
+        "weight": 15,
         "definition": "Has regression coverage, deployment checks, role capability checks, and clear fallback behavior.",
     },
 )
@@ -63,7 +57,6 @@ DBA_CONTROL_PLANE_SECTION_READINESS_INPUTS = {
         "admin_safety_audit": 72,
         "performance_mart": 84,
         "workflow_ux": 84,
-        "governance_ownership": 74,
         "tests_operability": 82,
     },
     "DBA Control Room": {
@@ -73,7 +66,6 @@ DBA_CONTROL_PLANE_SECTION_READINESS_INPUTS = {
         "admin_safety_audit": 74,
         "performance_mart": 78,
         "workflow_ux": 76,
-        "governance_ownership": 72,
         "tests_operability": 82,
     },
     "Alert Center": {
@@ -83,7 +75,6 @@ DBA_CONTROL_PLANE_SECTION_READINESS_INPUTS = {
         "admin_safety_audit": 76,
         "performance_mart": 82,
         "workflow_ux": 80,
-        "governance_ownership": 76,
         "tests_operability": 84,
     },
     "Workload Operations": {
@@ -93,7 +84,6 @@ DBA_CONTROL_PLANE_SECTION_READINESS_INPUTS = {
         "admin_safety_audit": 74,
         "performance_mart": 78,
         "workflow_ux": 76,
-        "governance_ownership": 72,
         "tests_operability": 82,
     },
     "Cost & Contract": {
@@ -103,17 +93,15 @@ DBA_CONTROL_PLANE_SECTION_READINESS_INPUTS = {
         "admin_safety_audit": 78,
         "performance_mart": 82,
         "workflow_ux": 80,
-        "governance_ownership": 76,
         "tests_operability": 84,
     },
-    "Governance & Security": {
+    "Security Monitoring": {
         "domain_coverage": 80,
         "data_correctness": 78,
         "actionability": 80,
         "admin_safety_audit": 76,
         "performance_mart": 76,
         "workflow_ux": 74,
-        "governance_ownership": 78,
         "tests_operability": 82,
     },
 }
@@ -121,12 +109,12 @@ DBA_CONTROL_PLANE_SECTION_READINESS_INPUTS = {
 DBA_CONTROL_PLANE_SECTION_BASELINE = DBA_CONTROL_PLANE_SECTION_READINESS_INPUTS
 
 DBA_CONTROL_PLANE_SECTION_NEXT_MOVES = {
-    "Executive Landing": "Connect executive decisions to live owner approval/status proof so routed work can show verified closure back on the landing page.",
-    "DBA Control Room": "Connect the operating board to live owner approval ticket state and execution audit writes for verified auto-close.",
-    "Alert Center": "Replace placeholder owner rows with named ALFA on-call groups, enable the approved Snowflake notification integration, and sync alert lifecycle to owner approval.",
-    "Workload Operations": "Replace placeholder owner rows with named pipeline/procedure owners and wire recovery command-board rows to the owner approval ticket lifecycle.",
-    "Cost & Contract": "Replace placeholder email/owner routes with named ALFA cost owners, owner approval approval, and verified savings auto-close.",
-    "Governance & Security": "Connect access review, schema drift, owner approval, rollback proof, and verified closure history without speculative architecture readiness surfaces.",
+    "Executive Landing": "Connect executive decisions to live monitoring status and measured closure back on the landing page.",
+    "DBA Control Room": "Connect the operating board to status writes for measured auto-close.",
+    "Alert Center": "Replace placeholder notification rows with production distribution lists and sync alert lifecycle to closure telemetry.",
+    "Workload Operations": "Wire recovery command-board rows to successful rerun telemetry.",
+    "Cost & Contract": "Replace placeholder email routes with production cost distribution lists and measured savings auto-close.",
+    "Security Monitoring": "Keep security posture focused on login risk, grant exposure, public access, data sharing, and alert telemetry.",
 }
 
 
@@ -348,22 +336,17 @@ def dba_control_plane_readiness_score(component_scores: dict) -> dict:
             "CAP": 89.0,
             "REASON": "Admin safety/audit is below 85; the section cannot be trusted as a control plane.",
         })
-    if by_key["governance_ownership"] < 80:
-        caps.append({
-            "CAP": 92.0,
-            "REASON": "Governance/ownership is below 80; findings are not consistently accountable.",
-        })
     if raw_score >= 95 and any(by_key[key] < 90 for key in DBA_CONTROL_PLANE_COMPONENTS):
         caps.append({
             "CAP": 94.0,
             "REASON": "A 95+ score requires every rubric component to be at least 90.",
         })
     if raw_score >= 95 and any(
-        by_key[key] < 95 for key in ("data_correctness", "admin_safety_audit", "governance_ownership")
+        by_key[key] < 95 for key in ("data_correctness", "admin_safety_audit", "tests_operability")
     ):
         caps.append({
             "CAP": 94.0,
-            "REASON": "A 95+ score requires data correctness, admin safety/audit, and governance/ownership to be at least 95.",
+            "REASON": "A 95+ score requires data correctness, admin safety/audit, and tests/operability to be at least 95.",
         })
 
     cap_value = min((cap["CAP"] for cap in caps), default=100.0)
@@ -429,8 +412,8 @@ def _cap_driver_label(reason: str) -> str:
         return "data correctness/scope"
     if "admin safety" in reason_lower:
         return "admin safety/audit"
-    if "governance" in reason_lower:
-        return "governance/ownership"
+    if "ownership" in reason_lower:
+        return "ownership/routing"
     if "every rubric component" in reason_lower:
         return "all components >=90"
     if "critical control-plane" in reason_lower:

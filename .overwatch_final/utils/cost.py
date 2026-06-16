@@ -654,18 +654,18 @@ def build_cost_reconciliation_sql(days_back: int = 30, prefer_query_attribution:
 
 
 def metric_confidence_label(kind: str) -> str:
-    """Small UI label explaining the source basis for a metric."""
+    """Small UI label explaining how a metric is measured."""
     labels = {
-        "exact": "Source basis: Exact",
-        "allocated": "Source basis: Allocated / estimated from exact warehouse metering",
-        "estimated": "Source basis: Estimated",
-        "forecast": "Source basis: Forecast from recent observed burn",
-        "projection": "Source basis: Projection from recent observed burn",
-        "composite": "Source basis: Composite score from weighted operational signals",
-        "account": "Source basis: Account-wide",
-        "account-wide": "Source basis: Account-wide",
+        "exact": "Measurement: Exact",
+        "allocated": "Measurement: Allocated from warehouse metering",
+        "estimated": "Measurement: Estimated",
+        "forecast": "Measurement: Forecast from recent observed burn",
+        "projection": "Measurement: Projection from recent observed burn",
+        "composite": "Measurement: Composite rollup from operational signals",
+        "account": "Measurement: Account-wide",
+        "account-wide": "Measurement: Account-wide",
     }
-    return labels.get(str(kind or "").lower(), "Source basis: Calculation depends on available account metadata")
+    return labels.get(str(kind or "").lower(), "Measurement depends on available account metadata")
 
 
 def freshness_note(source: str) -> str:

@@ -28,7 +28,7 @@ DEFAULT_SECTIONS = [
     "Alert Center",
     "Cost & Contract",
     "Workload Operations",
-    "Governance & Security",
+    "Security Monitoring",
 ]
 
 # Default live actions must match the current top-level DBA landing flow. Deep

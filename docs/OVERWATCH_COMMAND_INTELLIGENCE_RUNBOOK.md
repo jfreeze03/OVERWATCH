@@ -28,10 +28,10 @@ route work, export proof, or preview guarded SQL.
 | 6 | Fact-Grounded AI Query Diagnosis | Workload Operations | Use Cortex only with exact query/profile/object evidence and required verification SQL. |
 | 7 | OVERWATCH Self-Monitoring | Cost & Contract, Setup | Track app query cost, failures, slow sections, and tagged runtime behavior. |
 | 8 | Precomputed Mart / Dynamic Table Layer With Fallback | Setup | Keep first paint fast; make live ACCOUNT_USAGE scans explicit. |
-| 9 | Compliance Readiness Scorecard | Governance & Security, Executive Landing | Show admin grants, access spikes, dormant activity, and risky posture with owner actions. |
+| 9 | Security Monitoring Scorecard | Security Monitoring, Executive Landing | Show admin grants, access spikes, dormant activity, risky shares, and risky posture with action evidence. |
 | 10 | Multi-Account / Org View | Executive Landing, Cost & Contract | Optional org-level rollup when the Snowflake role has organization usage privileges. |
 | 11 | Data-First Navigation Contract | App shell, every primary section | Show scoped KPIs and summaries on first section click without saved-state persistence or global mode toggles. |
-| 12 | Architecture Docs and Runbooks | Repo docs, Setup & Runbook | Keep setup, privileges, failure modes, rollback, and operating rules with the code. |
+| 12 | Monitoring Docs and Runbooks | Repo docs, Setup & Runbook | Keep setup, privileges, failure modes, rollback, and operating rules with the code. |
 
 ## Automated Snowflake Value Log
 

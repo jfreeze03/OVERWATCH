@@ -55,8 +55,8 @@ def _finops_readiness_rows(
     rows.append({
         "CONTROL": "Mart/schema version",
         "STATE": "Ready" if drift == 0 and isinstance(migration, pd.DataFrame) and not migration.empty else "Blocked" if drift else "Load Needed",
-        "EVIDENCE": f"{drift:,} migration blocker(s)." if isinstance(migration, pd.DataFrame) and not migration.empty else "Migration ledger has not loaded.",
-        "NEXT_ACTION": "Rerun setup SQL or additive migrations before trusting scheduled verification.",
+        "EVIDENCE": f"{drift:,} migration blocker(s)." if isinstance(migration, pd.DataFrame) and not migration.empty else "Migration ledger is available after status refresh.",
+        "NEXT_ACTION": "Ask the DBA team to refresh status telemetry before trusting scheduled measurement.",
     })
     official = (
         formulas["CONFIDENCE"].astype(str).str.contains("Official|Metered", case=False, na=False).sum()
@@ -66,7 +66,7 @@ def _finops_readiness_rows(
     rows.append({
         "CONTROL": "Exact vs allocated labels",
         "STATE": "Ready",
-        "EVIDENCE": f"{official:,} formula row(s) identify official or metered source basis.",
+        "EVIDENCE": f"{official:,} formula row(s) identify official or metered measurement basis.",
         "NEXT_ACTION": "Keep chargeback views labeled as allocated unless Snowflake exposes exact billing grain.",
     })
     return pd.DataFrame(rows)
@@ -150,9 +150,9 @@ def render() -> None:
         )
 
     render_priority_dataframe(
-        build_schema_migration_contract(),
-        title="FinOps setup contract",
-        priority_columns=["COMPONENT", "REQUIRED_OBJECT", "REQUIRED_VERSION", "READY_CRITERIA"],
-        raw_label="All setup contract rows",
+        build_schema_migration_contract().drop(columns=["REQUIRED_OBJECT", "REQUIRED_VERSION"], errors="ignore"),
+        title="FinOps status checklist",
+        priority_columns=["COMPONENT", "READY_CRITERIA"],
+        raw_label="All status checklist rows",
         height=240,
     )

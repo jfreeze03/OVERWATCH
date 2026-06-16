@@ -107,31 +107,31 @@ def _change_route(change_type: object, category: str = "") -> tuple[str, str]:
     if "DROP" in text:
         return (
             "Change & Drift",
-            "Confirm approval, downstream dependencies, recovery path, and whether the object needs restore.",
+            "Confirm downstream dependencies, recovery path, and whether the object needs restore.",
         )
     if "OWNERSHIP" in text or "OWNER" in text or "GRANT" in text or "REVOKE" in text or "ROLE" in text:
         return (
             "Security Posture",
-            "Validate requester, approver, role hierarchy, and ownership transfer before accepting the access change.",
+            "Validate requester, reviewer, role hierarchy, and ownership transfer before accepting the access change.",
         )
     if "MASKING" in text or "TAG" in text or "ROW ACCESS" in text or "POLICY" in text:
         return (
             "Security Posture",
-            "Validate data classification, policy owner, and governance approval before leaving the policy change active.",
+            "Validate data classification, policy owner, and security review before leaving the policy change active.",
         )
     if "DRIFT" in text or "IAC" in text:
         return (
             "Change & Drift",
-            "Validate owner approval, query evidence, and rollback proof before accepting the change.",
+            "Validate query telemetry and rollback context before accepting the change.",
         )
     if "PROCEDURE" in text or "TASK" in text:
         return (
             "Workload Operations",
-            "Check task/procedure lineage and runtime impact before approving the object change.",
+            "Check task/procedure lineage and runtime impact before accepting the object change.",
         )
     return (
         "Change & Drift",
-        "Review approval, owner, dependency impact, and drift risk before accepting the change.",
+        "Review route, dependency impact, and drift risk before accepting the change.",
     )
 
 
@@ -171,9 +171,9 @@ def _queue_changes(session, df, source: str, category: str, entity_type: str, se
             "Entity": str(entity),
             "Owner": "DBA",
             "Finding": finding,
-            "Action": "Review change for approval, ownership, policy impact, and drift risk.",
+            "Action": "Review change for ownership, policy impact, and drift risk.",
             "Estimated Monthly Savings": 0.0,
-            "Generated SQL Fix": "-- Review the captured query text before reverting or approving this change.",
+            "Generated SQL Fix": "-- Review the captured query text before reverting or accepting this change.",
             "Proof Query": f"QUERY_HISTORY query_id = '{qid}'",
             "Company": company,
         })
@@ -182,7 +182,7 @@ def _queue_changes(session, df, source: str, category: str, entity_type: str, se
         st.success(f"Saved {saved} findings to the action queue.")
     except Exception as e:
         st.error(f"Could not save to action queue: {format_snowflake_error(e)}")
-        st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
+        st.info("The action queue is not available in this environment yet. Ask the DBA team to enable it, then retry this save.")
 
 
 def render():
@@ -211,13 +211,13 @@ def render():
         }
         return qh_caps
     st.subheader("Object Change Audit")
-    st.caption("DDL, grants, roles, policy changes, and owner changes. Change evidence and rollback proof are handled in Governance & Security change control.")
+    st.caption("Object changes, grants, roles, policy changes, and access changes. Change telemetry and rollback status are handled in Security Monitoring.")
 
     days = day_window_selectbox("Lookback", key="ocm_days", default=14)
     row_limit = st.slider("Max rows per scan", 100, 1000, 250, step=50, key="ocm_row_limit")
     text_filter = st.text_input("Filter query/object text", key="ocm_filter")
     if days > 30 and not text_filter:
-        st.caption("Tip: add a query/object text filter for long lookbacks so governance scans stay inexpensive.")
+        st.caption("Tip: add a query/object text filter for long lookbacks so change scans stay inexpensive.")
     filter_clause = f"AND query_text ILIKE {sql_literal('%' + text_filter + '%')}" if text_filter else ""
     company_filter = get_global_filter_clause(
         date_col=None,
@@ -344,7 +344,7 @@ def render():
             )
             download_csv(df, "object_changes.csv")
             if st.button("Save object changes to Action Queue", key="ocm_obj_queue"):
-                _queue_changes(get_session(), df, "Object Change Monitor", "Governance", "Object", "Medium")
+                _queue_changes(get_session(), df, "Object Change Monitor", "Object Monitoring", "Object", "Medium")
 
     elif active_view == "Grants & Roles":
         if st.button("Load Grant / Role Changes", key="ocm_grant_load"):
@@ -402,7 +402,7 @@ def render():
                 raw_label="All access changes",
             )
             if st.button("Save access changes to Action Queue", key="ocm_access_queue"):
-                _queue_changes(get_session(), df, "Access Change Monitor", "Security", "Grant/Role", "High")
+                _queue_changes(get_session(), df, "Access Activity Monitor", "Security", "Grant/Role", "High")
 
     elif active_view == "Policies & Tags":
         if st.button("Load Masking / Tag Policy Changes", key="ocm_policy_load"):

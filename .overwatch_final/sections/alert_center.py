@@ -1,4 +1,4 @@
-﻿# sections/alert_center.py - single alert inbox and email-first alert operations
+# sections/alert_center.py - single alert inbox and email-first alert operations
 from __future__ import annotations
 
 from datetime import datetime
@@ -55,10 +55,9 @@ ALERT_CENTER_PANES = [
     "Action Queue Routing",
     "Notifications & Remediation",
     "Control Health",
-    "Automation Readiness",
+    "Automation Health",
     "Rules & SLAs",
     "Suppression Windows",
-    "Setup & Runbook",
 ]
 
 ALERT_CENTER_PANE_LABELS = {
@@ -73,16 +72,14 @@ ALERT_CENTER_PANE_LABELS = {
     "Action Queue Routing": "Routing",
     "Notifications & Remediation": "Remediation",
     "Control Health": "Controls",
-    "Automation Readiness": "Automation",
+    "Automation Health": "Automation",
     "Rules & SLAs": "Rules",
     "Suppression Windows": "Suppressions",
-    "Setup & Runbook": "Setup",
 }
 
 ALERT_CENTER_HEALTH_DETAIL_OPTIONS = (
     "Controls",
-    "Owner Routes",
-    "Owner Directory",
+    "Routing Health",
     "Delivery & Action Queue",
 )
 
@@ -93,7 +90,7 @@ ALERT_CENTER_BRIEF_WORKFLOWS = (
     {
         "VIEW": "Command Center",
         "BUTTON_LABEL": "Open Command Center",
-        "DBA_MOVE": "Start with severity-ranked operational risk and category owners.",
+        "DBA_MOVE": "Start with severity-ranked operational risk and alert routes.",
         "WHEN": "First look, shift start, incident review",
     },
     {
@@ -106,13 +103,13 @@ ALERT_CENTER_BRIEF_WORKFLOWS = (
         "VIEW": "Detection Catalog",
         "BUTTON_LABEL": "Open Detection Catalog",
         "DBA_MOVE": "Review Snowflake-native checks before enabling or tuning alert rules.",
-        "WHEN": "Setup, audit, threshold tuning",
+        "WHEN": "Coverage review, audit, threshold tuning",
     },
     {
         "VIEW": "Issue Inbox",
         "BUTTON_LABEL": "Open Issue Inbox",
         "DBA_MOVE": "Start with the combined alert and action-queue inbox.",
-        "WHEN": "Morning triage, new alerts, owner assignment",
+        "WHEN": "Morning triage, new alerts, route assignment",
     },
     {
         "VIEW": "Triage Digest",
@@ -123,32 +120,26 @@ ALERT_CENTER_BRIEF_WORKFLOWS = (
     {
         "VIEW": "Email Delivery",
         "BUTTON_LABEL": "Open Delivery",
-        "DBA_MOVE": "Prove which alerts are email-ready or already logged.",
-        "WHEN": "Notification audit, executive proof, daily digest",
+        "DBA_MOVE": "Confirm which alerts are email-ready or already logged.",
+        "WHEN": "Notification audit, executive status, daily digest",
     },
     {
         "VIEW": "Action Queue Routing",
         "BUTTON_LABEL": "Open Queue Routing",
-        "DBA_MOVE": "Move alert evidence into accountable owner work.",
+        "DBA_MOVE": "Move alert telemetry into routed work.",
         "WHEN": "Queue closure, ticket routing, DBA follow-up",
     },
     {
         "VIEW": "Control Health",
         "BUTTON_LABEL": "Open Control Health",
-        "DBA_MOVE": "Check source readiness, owner routing, and control gaps.",
-        "WHEN": "Setup validation, route gaps, delivery issues",
+        "DBA_MOVE": "Check alert inputs, notification routing, and control gaps.",
+        "WHEN": "Control validation, route gaps, delivery issues",
     },
     {
-        "VIEW": "Automation Readiness",
+        "VIEW": "Automation Health",
         "BUTTON_LABEL": "Open Automation",
-        "DBA_MOVE": "Review alert refresh, digest delivery, owner routing, and in-app action handoff readiness.",
-        "WHEN": "Automation checks, delivery proof, owner routing",
-    },
-    {
-        "VIEW": "Setup & Runbook",
-        "BUTTON_LABEL": "Open Setup",
-        "DBA_MOVE": "Deploy alert config, events, acknowledgement, notification, and remediation audit tables.",
-        "WHEN": "Initial rollout, audit prep, privilege review",
+        "DBA_MOVE": "Review alert refresh, digest delivery, and in-app action handoff status.",
+        "WHEN": "Automation checks, delivery status",
     },
 )
 
@@ -157,17 +148,16 @@ ALERT_CENTER_SOURCES_BY_PANE = {
     "Command Center": {"alerts", "action_queue", "delivery_log", "rules"},
     "DBA Morning Brief": {"alerts", "action_queue"},
     "Detection Catalog": set(),
-    "Control Health": {"alerts", "action_queue", "delivery_log", "rules", "rule_audit", "owner_directory"},
-    "Automation Readiness": {"alerts", "action_queue", "delivery_log", "rules", "owner_directory", "automation_health"},
+    "Control Health": {"alerts", "action_queue", "delivery_log", "rules", "rule_audit"},
+    "Automation Health": {"alerts", "action_queue", "delivery_log", "rules", "automation_health"},
     "Issue Inbox": {"alerts", "action_queue"},
     "Triage Digest": {"alerts"},
     "Alert History": {"alerts"},
     "Email Delivery": {"alerts", "delivery_log"},
     "Action Queue Routing": {"alerts", "action_queue"},
-    "Notifications & Remediation": {"alerts", "delivery_log", "rules", "owner_directory"},
+    "Notifications & Remediation": {"alerts", "delivery_log", "rules"},
     "Rules & SLAs": {"alerts", "rules", "rule_audit"},
     "Suppression Windows": set(),
-    "Setup & Runbook": set(),
 }
 
 ALERT_CENTER_SOURCE_PLAN = {
@@ -180,37 +170,31 @@ ALERT_CENTER_SOURCE_PLAN = {
     "action_queue": {
         "SOURCE": "Action queue",
         "OBJECT": "Persistent DBA action queue",
-        "WHY": "Owner, ticket, due date, and proof tracking",
+        "WHY": "Route, ticket, due date, and status tracking",
         "COST_GUARDRAIL": "Limited queue read",
     },
     "delivery_log": {
         "SOURCE": "Email delivery audit",
         "OBJECT": "Alert delivery log",
-        "WHY": "Notification evidence and escalation audit",
+        "WHY": "Notification telemetry and escalation audit",
         "COST_GUARDRAIL": "Recent-window audit read",
     },
     "rules": {
         "SOURCE": "Rule catalog",
         "OBJECT": "Alert rules",
-        "WHY": "Severity, SLA, owner, route, and runbook control",
+        "WHY": "Severity, SLA, route, and runbook control",
         "COST_GUARDRAIL": "Small configuration read",
     },
     "rule_audit": {
         "SOURCE": "Rule audit",
         "OBJECT": "Alert rule audit",
-        "WHY": "Evidence for alert-rule changes",
+        "WHY": "Telemetry for alert-rule changes",
         "COST_GUARDRAIL": "Recent configuration audit read",
-    },
-    "owner_directory": {
-        "SOURCE": "Owner directory",
-        "OBJECT": "Owner/on-call routing directory",
-        "WHY": "Named owner, email, approval, and escalation readiness",
-        "COST_GUARDRAIL": "Small configuration read with built-in fallback",
     },
     "automation_health": {
         "SOURCE": "No-touch automation health",
         "OBJECT": "OVERWATCH_AUTOMATION_HEALTH_V",
-        "WHY": "Scheduled run state, digest preparation, owner routing, and action-queue freshness",
+        "WHY": "Scheduled run state, digest preparation, and action-queue freshness",
         "COST_GUARDRAIL": "Single-row health view",
     },
 }
@@ -228,11 +212,11 @@ def _alert_center_sources_for_view(view: str) -> set[str]:
 
 def _alert_center_source_summary(sources: set[str]) -> str:
     names = [
-        str(ALERT_CENTER_SOURCE_PLAN[source]["SOURCE"])
+        str(ALERT_CENTER_SOURCE_PLAN[source]["SOURCE"]).replace("sources", "inputs").replace("Sources", "Inputs")
         for source in sorted(sources)
         if source in ALERT_CENTER_SOURCE_PLAN
     ]
-    return ", ".join(names) if names else "No Snowflake sources"
+    return ", ".join(names) if names else "No Snowflake inputs"
 
 
 def _status_key(value) -> str:
@@ -259,7 +243,7 @@ def _alert_center_action_session(action: str):
         surface="Alert Center",
         offline_note=(
             "Alert Center source summaries remain available without a connection. "
-            "Alert DDL is managed in snowflake/OVERWATCH_MART_SETUP.sql."
+            "Status changes are handled by the DBA team outside this dashboard."
         ),
     )
 
@@ -336,14 +320,12 @@ def _load_center_data(
         "delivery_log": pd.DataFrame(),
         "rules": pd.DataFrame(),
         "rule_audit": pd.DataFrame(),
-        "owner_directory": pd.DataFrame(),
         "automation_health": pd.DataFrame(),
         "alerts_error": "",
         "queue_error": "",
         "delivery_error": "",
         "rule_error": "",
         "rule_audit_error": "",
-        "owner_directory_error": "",
         "automation_health_error": "",
         "loaded_at": datetime.now().isoformat(timespec="seconds"),
         "_loaded_sources": sorted(sources),
@@ -382,13 +364,6 @@ def _load_center_data(
             data["rule_audit"] = load_alert_rule_audit(section="Alert Center", limit=50)
         except Exception as exc:
             data["rule_audit_error"] = _format_snowflake_error(exc)
-    if "owner_directory" in sources:
-        try:
-            from utils import load_owner_directory
-
-            data["owner_directory"] = load_owner_directory(section="Alert Center")
-        except Exception as exc:
-            data["owner_directory_error"] = _format_snowflake_error(exc)
     if "automation_health" in sources:
         try:
             from utils import run_query_or_raise
@@ -439,7 +414,7 @@ def _render_annotations() -> None:
     pd = _pd()
     table_name = _annotation_table_name()
     st.subheader("Suppression Windows")
-    st.caption("Use suppression windows for planned maintenance, deployments, backfills, and high-volume validation windows so the hourly alert task does not create duplicate noise.")
+    st.caption("Use suppression windows for planned maintenance, backfills, and noisy operating windows so the hourly alert task does not create duplicate noise.")
 
     with st.form("alert_center_annotation_create"):
         c1, c2, c3 = st.columns(3)
@@ -523,7 +498,7 @@ def _render_annotations() -> None:
                     LIMIT 300
                 """, ttl_key="alert_center_annotations", tier="recent", section="Alert Center")
             except Exception as exc:
-                st.info(f"Suppression windows are unavailable until `snowflake/OVERWATCH_MART_SETUP.sql` is deployed. {_format_snowflake_error(exc)}")
+                st.info(f"Suppression windows are not available in this environment yet. {_format_snowflake_error(exc)}")
                 st.session_state["alert_center_annotations"] = pd.DataFrame()
     with c2:
         st.caption("Active global windows suppress every alert; entity windows suppress only the named warehouse, task, user, or alert entity.")
@@ -604,7 +579,6 @@ def _alert_center_operability_rows(
     queue = data.get("action_queue") if isinstance(data.get("action_queue"), pd.DataFrame) else pd.DataFrame()
     delivery_log = data.get("delivery_log") if isinstance(data.get("delivery_log"), pd.DataFrame) else pd.DataFrame()
     rules = data.get("rules") if isinstance(data.get("rules"), pd.DataFrame) else pd.DataFrame()
-    owner_directory = data.get("owner_directory") if isinstance(data.get("owner_directory"), pd.DataFrame) else pd.DataFrame()
     issues = data.get("issues") if isinstance(data.get("issues"), pd.DataFrame) else pd.DataFrame()
 
     rows: list[dict] = []
@@ -623,7 +597,7 @@ def _alert_center_operability_rows(
     expected_scope = (company, environment, int(days), int(limit))
     if loaded_scope and loaded_scope != expected_scope:
         add(
-            "Loaded scope freshness",
+            "Loaded scope status",
             "Scope Stale",
             "High",
             f"Loaded {loaded_scope}; current filter is {expected_scope}.",
@@ -631,35 +605,35 @@ def _alert_center_operability_rows(
         )
     else:
         add(
-            "Loaded scope freshness",
+            "Loaded scope status",
             "Ready",
             "Low",
             f"Loaded scope matches current filters: {expected_scope}.",
-            "Continue triage from the loaded evidence.",
+            "Continue triage from the loaded telemetry.",
         )
 
     alert_error = str(data.get("alerts_error") or "")
     if alert_error:
         add(
-            "Alert history source",
-            "Needs Setup",
+            "Alert history input",
+            "Needs Data",
             "High",
             alert_error,
-            "Deploy alert objects from snowflake/OVERWATCH_MART_SETUP.sql.",
+            "Enable alert history objects before relying on this monitor.",
         )
     elif alerts.empty:
         add(
-            "Alert history source",
+            "Alert history input",
             "No Rows",
             "Low",
-            "Alert source loaded successfully but returned zero rows.",
-            "If issues are expected, validate the hourly alert task and source grants.",
+            "Alert input loaded successfully but returned zero rows.",
+            "If issues are expected, validate the hourly alert task and access grants.",
         )
     else:
         open_mask = _open_alert_mask(alerts)
         overdue = int((alerts.get("SLA_STATE", pd.Series(index=alerts.index, dtype=str)).fillna("").astype(str).eq("Overdue") & open_mask).sum())
         add(
-            "Alert history source",
+            "Alert history input",
             "Ready",
             "Low" if overdue == 0 else "High",
             f"{len(alerts):,} alert row(s), {int(open_mask.sum()):,} open, {overdue:,} overdue.",
@@ -669,19 +643,19 @@ def _alert_center_operability_rows(
     queue_error = str(data.get("queue_error") or "")
     if queue_error:
         add(
-            "Action queue source",
+            "Action queue input",
             "Degraded",
             "Medium",
             queue_error,
-            "Deploy or grant action queue access before relying on alert-to-action routing.",
+            "Action queue telemetry is unavailable; keep alert routing informational until queue data loads.",
         )
     elif queue.empty:
         add(
-            "Action queue source",
+            "Action queue input",
             "No Rows",
             "Low",
-            "Action queue source loaded successfully with no rows.",
-            "Route confirmed open alerts when work needs owner, ticket, and proof tracking.",
+            "Action queue input loaded successfully with no rows.",
+            "Route confirmed open alerts when work needs route, notes, and status tracking.",
         )
     else:
         open_queue = 0
@@ -689,46 +663,46 @@ def _alert_center_operability_rows(
             open_queue_mask = ~queue["STATUS"].fillna("New").astype(str).str.title().isin(["Fixed", "Ignored"])
             open_queue = int(open_queue_mask.sum())
         add(
-            "Action queue source",
+            "Action queue input",
             "Ready",
             "Low",
             f"{len(queue):,} queue row(s) loaded; open count is {open_queue:,}.",
-            "Use queue rows to verify owner, due date, ticket, and closure evidence.",
+            "Use queue rows to confirm route, due date, ticket/reference, and closure status.",
         )
 
     delivery_error = str(data.get("delivery_error") or "")
     if delivery_error:
         add(
-            "Delivery audit source",
-            "Needs Setup",
+            "Delivery audit input",
+            "Needs Data",
             "Medium",
             delivery_error,
-            "Deploy OVERWATCH_ALERT_DELIVERY_LOG before logging digest/email evidence.",
+            "Delivery status telemetry is unavailable; keep digest/email status informational until the input loads.",
         )
     elif delivery_log.empty:
         add(
-            "Delivery audit source",
+            "Delivery audit input",
             "No Rows",
             "Low",
             "Delivery audit table loaded but has no recent rows.",
-            "Log the next digest delivery so escalations have audit evidence.",
+            "Log the next digest delivery so escalations have audit status.",
         )
     else:
         add(
-            "Delivery audit source",
+            "Delivery audit input",
             "Ready",
             "Low",
             f"{len(delivery_log):,} delivery audit row(s) loaded.",
-            "Use delivery audit rows to prove who was notified and when.",
+            "Use delivery audit rows to confirm who was notified and when.",
         )
 
     if rules.empty:
         add(
-            "Rule catalog source",
-            "Needs Setup",
+            "Rule catalog input",
+            "Needs Data",
             "Medium",
             str(data.get("rule_error") or "No alert rules were loaded."),
-            "Deploy OVERWATCH_ALERT_RULES so DBA-owned severity, SLA, route, and runbook edits are persisted.",
+            "Use built-in rules until Snowflake rule telemetry is available.",
         )
     else:
         source = rules.get("RULE_SOURCE", pd.Series(index=rules.index, dtype=str)).fillna("").astype(str)
@@ -736,47 +710,12 @@ def _alert_center_operability_rows(
         fallback = int(len(rules) - configured)
         state = "Ready" if configured else "Fallback"
         add(
-            "Rule catalog source",
+            "Rule catalog input",
             state,
             "Low" if configured else "Medium",
             f"{configured:,} database rule(s), {fallback:,} built-in fallback rule(s).",
-            "Persist rules in Snowflake before production ownership/SLA changes.",
+            "Use loaded rule telemetry before treating SLA or routing changes as authoritative.",
         )
-
-    owner_directory_error = str(data.get("owner_directory_error") or "")
-    if owner_directory_error:
-        add(
-            "Owner directory source",
-            "Degraded",
-            "Medium",
-            owner_directory_error,
-            "Deploy or grant the owner directory before trusting named route coverage.",
-        )
-    else:
-        try:
-            from utils import owner_directory_readiness_board
-
-            owner_summary, _owner_board = owner_directory_readiness_board(owner_directory)
-            placeholder_routes = int(owner_summary.get("placeholder_routes", 0))
-            tier_gaps = int(owner_summary.get("tier0_tier1_gaps", 0))
-            add(
-                "Owner directory source",
-                "Ready" if placeholder_routes == 0 else "Review",
-                "Low" if tier_gaps == 0 else "High",
-                (
-                    f"{int(owner_summary.get('total_routes', 0)):,} route(s); "
-                    f"{placeholder_routes:,} placeholder route(s); {tier_gaps:,} Tier 0/1 gap(s)."
-                ),
-                "Replace built-in placeholder rows with named ALFA owner, email, on-call, approval, and escalation routes.",
-            )
-        except Exception as exc:
-            add(
-                "Owner directory source",
-                "Review",
-                "Medium",
-                f"Could not evaluate owner directory: {_format_snowflake_error(exc)}",
-                "Review owner directory data shape and deployment.",
-            )
 
     email_targets = pd.Series(dtype=str)
     if not alerts.empty and "EMAIL_TARGET" in alerts.columns:
@@ -788,7 +727,7 @@ def _alert_center_operability_rows(
         "Ready" if missing_email == 0 else "Review",
         "Low" if missing_email == 0 else "Medium",
         f"Default recipient {_alert_email_target()}; {ready_email:,} email-ready alert(s); {missing_email:,} missing target(s).",
-        "Keep email-first delivery until the approved Snowflake notification integration is available.",
+        "Keep email-first delivery until the Snowflake notification integration is configured.",
     )
 
     generic_owners = {"", "DBA", "OVERWATCH"}
@@ -798,11 +737,11 @@ def _alert_center_operability_rows(
         open_mask = _open_alert_mask(alerts)
         generic_count = int(alerts.loc[open_mask, "OWNER"].fillna("").astype(str).str.upper().isin(generic_owners).sum())
     add(
-        "Owner route",
+        "Alert routing",
         "Ready" if generic_count == 0 else "Review",
         "Low" if generic_count == 0 else "Medium",
-        f"{generic_count:,} open alert(s) still have generic or missing owner.",
-        "Use owner directory routing before escalating high-severity alerts.",
+        f"{generic_count:,} open alert(s) still have generic or missing routes.",
+        "Route high-severity alerts before escalating outside the app.",
     )
 
     add(
@@ -821,7 +760,7 @@ def _alert_center_operability_rows(
     return result.sort_values(["_SORT", "CONTROL"]).drop(columns=["_SORT"]).reset_index(drop=True)
 
 
-def _alert_center_readiness_score(rows: pd.DataFrame) -> int:
+def _alert_center_health_score(rows: pd.DataFrame) -> int:
     if rows is None or rows.empty:
         return 0
     penalty = 0
@@ -853,15 +792,15 @@ def _alert_center_action_brief(
     rows = readiness_rows
     if rows is not None and not getattr(rows, "empty", True) and "STATE" in getattr(rows, "columns", []):
         state_text = rows["STATE"].fillna("").astype(str).str.upper()
-        blockers = rows[state_text.isin({"NEEDS SETUP", "DEGRADED", "SCOPE STALE"})]
+        blockers = rows[state_text.isin({"NEEDS DATA", "DEGRADED", "SCOPE STALE"})]
         if not blockers.empty:
             row = blockers.iloc[0]
             control = str(row.get("CONTROL") or "Alert control")
-            evidence = str(row.get("EVIDENCE") or "Control evidence needs review.")
+            evidence = str(row.get("EVIDENCE") or "Control telemetry needs review.")
             next_action = str(row.get("NEXT_ACTION") or "").strip()
             return {
                 "state": str(row.get("STATE") or "Blocked"),
-                "headline": "Restore alert control evidence.",
+                "headline": "Restore alert control telemetry.",
                 "detail": f"{control}: {next_action or evidence}".strip(": "),
                 "primary_label": "Open Health",
                 "target": "Control Health",
@@ -887,14 +826,14 @@ def _alert_center_action_brief(
         return {
             "state": "Queue",
             "headline": "Work open action queue rows.",
-            "detail": f"{open_queue:,} open queue row(s) need owner, ticket, due-date, or closure proof.",
+            "detail": f"{open_queue:,} open queue row(s) need route, ticket, due date, or closure status.",
             "primary_label": "Open Queue",
             "target": "Action Queue Routing",
         }
     if email_ready > email_logged:
         return {
-            "state": "Evidence",
-            "headline": "Log alert delivery evidence.",
+            "state": "Telemetry",
+            "headline": "Log alert delivery status.",
             "detail": f"{email_ready:,} email-ready alert(s); {email_logged:,} delivery row(s) logged in this scope.",
             "primary_label": "Open Delivery",
             "target": "Email Delivery",
@@ -903,14 +842,14 @@ def _alert_center_action_brief(
         return {
             "state": "Triage",
             "headline": "Review the consolidated issue inbox.",
-            "detail": f"{open_issues:,} issue row(s) are loaded from alert history and action queue evidence.",
+            "detail": f"{open_issues:,} issue row(s) are loaded from alert history and action queue telemetry.",
             "primary_label": "Open Inbox",
             "target": "Issue Inbox",
         }
     return {
         "state": "Clear",
         "headline": "No immediate Alert Center move.",
-        "detail": "Keep the selected window loaded for delivery proof, routing, and rule evidence when new alerts arrive.",
+        "detail": "Keep the selected window loaded for delivery status, routing, and rule telemetry when new alerts arrive.",
         "primary_label": "Open Inbox",
         "target": "Issue Inbox",
     }
@@ -920,13 +859,13 @@ def _alert_center_pending_brief(active_view: str, required_sources: set[str]) ->
     if active_view == "Alert Brief":
         return {
             "state": "Brief Ready",
-            "headline": "Choose the alert workflow before loading evidence.",
-            "detail": "Start with the issue inbox, triage digest, delivery proof, queue routing, or control health based on the operator question.",
+            "headline": "Choose the alert workflow before loading telemetry.",
+            "detail": "Start with the issue inbox, triage digest, delivery status, queue routing, or control health based on the operator question.",
         }
     return {
         "state": "Ready",
         "headline": f"Load {active_view} before routing alert work.",
-        "detail": f"Sources on load: {_alert_center_source_summary(required_sources)}.",
+        "detail": f"Inputs on load: {_alert_center_source_summary(required_sources)}.",
     }
 
 
@@ -986,7 +925,7 @@ def _render_alert_center_brief_launchpad() -> None:
 def _render_alert_center_action_brief(brief: dict) -> None:
     render_shell_status_strip(
         state=brief.get("state") or "Review",
-        headline=brief.get("headline") or "Review Alert Center evidence.",
+        headline=brief.get("headline") or "Review Alert Center telemetry.",
         detail=brief.get("detail") or "",
     )
 
@@ -1082,7 +1021,7 @@ def _render_alert_center_metric_rows(
         render_shell_kpi_row((
             ("Scope", "Company"),
             ("Window", "Selected"),
-            ("Evidence", "Load view"),
+            ("Telemetry", "Load view"),
             ("Route", "Issue Inbox"),
         ))
         return
@@ -1117,37 +1056,37 @@ def _alert_command_lanes(
         return [
             {
                 "label": "Critical / high",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Severity",
                 "detail": f"{active_view} will read: {source_text}.",
             },
             {
                 "label": "Overdue SLA",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Aging",
-                "detail": "Open alerts need owner, acknowledgement, suppression, or resolution.",
+                "detail": "Open alerts need route, acknowledgement, suppression, or resolution.",
             },
             {
                 "label": "Security risk",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Security",
                 "detail": "Failed logins, risky grants, exfiltration, and policy drift route here.",
             },
             {
                 "label": "Cost / FinOps",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Spend",
                 "detail": "Runaway spend, warehouse spikes, Cortex spend, and budget risk.",
             },
             {
                 "label": "Performance",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Queries",
                 "detail": "Long, queued, failed, spilling, and blocked query signals.",
             },
             {
                 "label": "Pipeline reliability",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Tasks",
                 "detail": "Failed, skipped, late, or suspended task/procedure paths.",
             },
@@ -1159,7 +1098,7 @@ def _alert_command_lanes(
             },
             {
                 "label": "Notification route",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Delivery",
                 "detail": "Email/webhook/native-alert delivery remains audit-backed.",
             },
@@ -1232,7 +1171,7 @@ def _alert_command_lanes(
         {
             "label": "Action queue",
             "value": f"{open_queue:,}",
-            "state": "Owner work",
+            "state": "Routes",
             "detail": f"{len(issues):,} unified issue row(s) loaded.",
         },
         {
@@ -1284,7 +1223,7 @@ def _alert_center_exception_rows(
             "High",
             int((severity.isin(["Critical", "High"]) & open_alerts).sum()),
             "Escalate",
-            "Review owner, SLA state, and delivery proof for critical/high alerts.",
+            "Review route, SLA state, and delivery status for critical/high alerts.",
             route="Triage Digest",
         )
         if "SLA_STATE" in alerts.columns:
@@ -1294,16 +1233,16 @@ def _alert_center_exception_rows(
                 "High",
                 int((sla_state.eq("Overdue") & open_alerts).sum()),
                 "Overdue",
-                "Send overdue alert rows through the digest and confirm owner response.",
+                "Send overdue alert rows through the digest and confirm route response.",
                 route="Triage Digest",
             )
         owner = alerts.get("OWNER", pd.Series(index=alerts.index, dtype=str)).fillna("").astype(str).str.upper()
         add(
-            "Generic alert owners",
+            "Generic alert routes",
             "Medium",
             int((owner.isin(["", "DBA", "OVERWATCH"]) & open_alerts).sum()),
-            "Route owner",
-            "Replace generic owners with named owner-directory routes before escalation.",
+            "Route alert",
+            "Replace generic alert routes before escalation.",
             owner="Platform DBA",
             route="Control Health",
         )
@@ -1311,11 +1250,11 @@ def _alert_center_exception_rows(
         ready_count = int(delivery_status.str.contains("EMAIL_READY").sum())
         logged_count = int(delivery_status.str.contains("EMAIL_LOGGED").sum())
         add(
-            "Delivery proof gap",
+            "Delivery status gap",
             "Medium",
             max(0, ready_count - logged_count),
             "Log delivery",
-            "Log digest/email delivery evidence for ready alerts.",
+            "Log digest/email delivery status for ready alerts.",
             route="Email Delivery",
         )
 
@@ -1327,19 +1266,19 @@ def _alert_center_exception_rows(
                 "Medium",
                 int(open_queue.sum()),
                 "Work queue",
-                "Confirm owner, due date, ticket, and closure proof on open queue rows.",
+                "Confirm route, due date, ticket, and closure status on open queue rows.",
                 owner="DBA Lead",
                 route="Action Queue Routing",
             )
 
     if readiness_rows is not None and not readiness_rows.empty and "STATE" in readiness_rows.columns:
-        blockers = readiness_rows["STATE"].fillna("").astype(str).str.upper().isin({"NEEDS SETUP", "DEGRADED", "SCOPE STALE"})
+        blockers = readiness_rows["STATE"].fillna("").astype(str).str.upper().isin({"NEEDS DATA", "DEGRADED", "SCOPE STALE"})
         add(
             "Alert control blockers",
             "High",
             int(blockers.sum()),
             "Fix control",
-            "Restore alert source, owner, route, or delivery controls before relying on automation.",
+            "Restore alert input, route, or delivery controls before relying on automation.",
             owner="Platform DBA",
             route="Control Health",
         )
@@ -1351,7 +1290,7 @@ def _alert_center_exception_rows(
             "High",
             int(severity.isin(["Critical", "High"]).sum()),
             "Review first",
-            "Open issue detail only when the exception strip needs row-level proof.",
+            "Open issue detail only when the exception strip needs row-level detail.",
             route="Issue Inbox",
         )
 
@@ -1363,7 +1302,7 @@ def _alert_center_exception_rows(
             "High",
             int(failed.sum()),
             "Retry delivery",
-            "Review failed notification attempts and route to the email integration owner.",
+            "Review failed notification attempts and route to the email integration contact.",
             owner="DBA On-Call",
             route="Email Delivery",
         )
@@ -1429,10 +1368,10 @@ def _alert_owner_route_board(alerts: pd.DataFrame, queue: pd.DataFrame) -> tuple
                 "ONCALL_PRIMARY": row.get("ONCALL_PRIMARY", ""),
                 "ESCALATION_TARGET": row.get("ESCALATION_TARGET", ""),
                 "OWNER_SOURCE": row.get("OWNER_SOURCE", ""),
-                "OWNER_ROUTE_STATE": "Needs named owner" if owner_key in generic_owners else "Named owner",
+                "OWNER_ROUTE_STATE": "Needs named route" if owner_key in generic_owners else "Named route",
                 "DELIVERY_ROUTE_STATE": "Missing email target" if not email_target else "Email target ready",
                 "ACTION_ROUTE_STATE": "Route to action queue" if route == "Alert Center" else f"Route: {route}",
-                "NEXT_ACTION": row.get("SUGGESTED_ACTION", "Review alert evidence and assign owner."),
+                "NEXT_ACTION": row.get("SUGGESTED_ACTION", "Review alert telemetry and assign route."),
             })
 
     if queue is not None and not queue.empty:
@@ -1453,8 +1392,8 @@ def _alert_owner_route_board(alerts: pd.DataFrame, queue: pd.DataFrame) -> tuple
                 "ONCALL_PRIMARY": row.get("ONCALL_PRIMARY", ""),
                 "ESCALATION_TARGET": row.get("ESCALATION_TARGET", ""),
                 "OWNER_SOURCE": row.get("OWNER_SOURCE", ""),
-                "OWNER_ROUTE_STATE": "Needs named owner" if owner_key in generic_owners else "Named owner",
-                "DELIVERY_ROUTE_STATE": "Missing owner email" if not email_target else "Owner email ready",
+                "OWNER_ROUTE_STATE": "Needs named route" if owner_key in generic_owners else "Named route",
+                "DELIVERY_ROUTE_STATE": "Missing route email" if not email_target else "Route email ready",
                 "ACTION_ROUTE_STATE": "Queued",
                 "NEXT_ACTION": row.get("RECOMMENDED_ACTION", row.get("NEXT_ACTION", "Work queued DBA action.")),
             })
@@ -1469,11 +1408,11 @@ def _alert_owner_route_board(alerts: pd.DataFrame, queue: pd.DataFrame) -> tuple
             "route_gaps": 0,
         }, board
 
-    owner_ready = board["OWNER_ROUTE_STATE"].astype(str).eq("Named owner")
+    owner_ready = board["OWNER_ROUTE_STATE"].astype(str).eq("Named route")
     email_ready = ~board["DELIVERY_ROUTE_STATE"].astype(str).str.startswith("Missing")
     oncall_ready = board["ONCALL_PRIMARY"].fillna("").astype(str).str.strip().ne("")
     route_gap = (
-        board["OWNER_ROUTE_STATE"].astype(str).ne("Named owner")
+        board["OWNER_ROUTE_STATE"].astype(str).ne("Named route")
         | ~email_ready
         | ~oncall_ready
     )
@@ -1522,17 +1461,17 @@ def _alert_lifecycle_board(alerts: pd.DataFrame, queue: pd.DataFrame) -> pd.Data
         queued = bool((alert_id and alert_id in queue_alert_ids) or (entity and entity in queue_entities))
 
         if status_key in {"FIXED", "RESOLVED", "CLOSED"}:
-            lifecycle_state = "Closed - verify evidence"
+            lifecycle_state = "Closed - confirm status"
         elif sla_state == "Overdue" and severity in {"Critical", "High"}:
             lifecycle_state = "Escalate now"
         elif not owner_ready:
-            lifecycle_state = "Assign owner"
+            lifecycle_state = "Assign route"
         elif not queued:
             lifecycle_state = "Route to action queue"
         elif not delivery_logged and email_ready:
-            lifecycle_state = "Log delivery evidence"
+            lifecycle_state = "Log delivery status"
         else:
-            lifecycle_state = "Work and verify"
+            lifecycle_state = "Work and confirm"
 
         rows.append({
             "ALERT_ID": alert_id,
@@ -1547,12 +1486,12 @@ def _alert_lifecycle_board(alerts: pd.DataFrame, queue: pd.DataFrame) -> pd.Data
             "ESCALATION_TARGET": row.get("ESCALATION_TARGET", ""),
             "DELIVERY_STATUS": row.get("DELIVERY_STATUS", ""),
             "ACTION_QUEUE_STATE": "Queued" if queued else "Not queued",
-            "CLOSURE_PROOF_REQUIRED": (
-                "ticket, owner approval, remediation note, and post-fix verification evidence"
+            "CLOSURE_STATUS_REQUIRED": (
+                "ticket/reference, remediation note, and post-fix telemetry status"
                 if status_key not in {"FIXED", "RESOLVED", "CLOSED"}
-                else "retain closure evidence and delivery/action audit"
+                else "retain closure status and delivery/action audit"
             ),
-            "NEXT_ACTION": row.get("SUGGESTED_ACTION", "Review alert evidence and update lifecycle."),
+            "NEXT_ACTION": row.get("SUGGESTED_ACTION", "Review alert telemetry and update lifecycle."),
             "ALERT_TS": row.get("ALERT_TS", ""),
         })
 
@@ -1561,11 +1500,11 @@ def _alert_lifecycle_board(alerts: pd.DataFrame, queue: pd.DataFrame) -> pd.Data
         return board
     state_rank = {
         "Escalate now": 0,
-        "Assign owner": 1,
+        "Assign route": 1,
         "Route to action queue": 2,
-        "Log delivery evidence": 3,
-        "Work and verify": 4,
-        "Closed - verify evidence": 5,
+        "Log delivery status": 3,
+        "Work and confirm": 4,
+        "Closed - confirm status": 5,
     }
     severity_rank = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
     board["_STATE_RANK"] = board["LIFECYCLE_STATE"].map(state_rank).fillna(9)
@@ -1575,11 +1514,10 @@ def _alert_lifecycle_board(alerts: pd.DataFrame, queue: pd.DataFrame) -> pd.Data
     ).reset_index(drop=True)
 
 
-def _alert_integration_readiness_board(
+def _alert_integration_health_board(
     alerts: pd.DataFrame,
     queue: pd.DataFrame,
     delivery_log: pd.DataFrame,
-    owner_summary: dict,
 ) -> pd.DataFrame:
     pd = _pd()
     alerts = alerts if isinstance(alerts, pd.DataFrame) else pd.DataFrame()
@@ -1593,17 +1531,17 @@ def _alert_integration_readiness_board(
     delivery_rows = len(delivery_log)
 
     rows.append({
-        "CONTROL": "Email delivery evidence",
-        "STATE": "Ready" if delivery_rows > 0 else "Manual",
+        "CONTROL": "Email delivery status",
+        "STATE": "Ready" if delivery_rows > 0 else "Review",
         "EVIDENCE": f"{email_ready:,} email-ready alert(s); {delivery_rows:,} delivery audit row(s).",
-        "NEXT_ACTION": "Log each digest delivery until an approved Snowflake notification integration is enabled.",
-        "OWNER": "DBA / Alert Owner",
+        "NEXT_ACTION": "Log each digest delivery until a Snowflake notification integration is enabled.",
+        "OWNER": "DBA On-Call",
     })
     rows.append({
         "CONTROL": "Snowflake notification integration",
-        "STATE": "Manual",
-        "EVIDENCE": "Email-first delivery uses a placeholder recipient until an approved Snowflake notification integration exists.",
-        "NEXT_ACTION": "Create approved email/notification integration and replace placeholder routing with production distribution lists.",
+        "STATE": "Review",
+        "EVIDENCE": "Email-first delivery uses configured recipients until a Snowflake notification integration exists.",
+        "NEXT_ACTION": "Create email/notification integration and replace placeholders with production distribution lists.",
         "OWNER": "DBA / Platform",
     })
 
@@ -1617,31 +1555,17 @@ def _alert_integration_readiness_board(
             tickets = int(queue[ticket_col].fillna("").astype(str).str.strip().ne("").sum())
     rows.append({
         "CONTROL": "Action queue lifecycle",
-        "STATE": "Manual" if tickets == 0 else "Partial",
-        "EVIDENCE": f"{open_queue:,} open queue row(s); {tickets:,} owner reference id(s) attached.",
-        "NEXT_ACTION": "Use the in-app action queue for acknowledgement, assignment, comments, suppression, and closure proof.",
-        "OWNER": "DBA / Alert Owner",
-    })
-
-    placeholder_routes = int(owner_summary.get("placeholder_routes", 0) or 0)
-    tier_gaps = int(owner_summary.get("tier0_tier1_gaps", 0) or 0)
-    rows.append({
-        "CONTROL": "Named owner routes",
-        "STATE": "Ready" if placeholder_routes == 0 else "Priority Gap" if tier_gaps else "Review",
-        "EVIDENCE": (
-            f"{int(owner_summary.get('production_ready', 0) or 0):,}/"
-            f"{int(owner_summary.get('total_routes', 0) or 0):,} route(s) production-ready; "
-            f"{tier_gaps:,} Tier 0/1 gap(s)."
-        ),
-        "NEXT_ACTION": "Replace built-in owner-directory defaults with named ALFA owner, email, on-call, approval, and escalation rows.",
-        "OWNER": "DBA Lead",
+        "STATE": "Review" if tickets == 0 else "Partial",
+        "EVIDENCE": f"{open_queue:,} open queue row(s); {tickets:,} reference id(s) attached.",
+        "NEXT_ACTION": "Use the in-app action queue for acknowledgement, routing, comments, suppression, and closure status.",
+        "OWNER": "DBA On-Call",
     })
     rows.append({
         "CONTROL": "Open alert lifecycle",
         "STATE": "Ready" if open_alert_count == 0 else "Review",
         "EVIDENCE": f"{open_alert_count:,} open alert(s) in the loaded scope.",
-        "NEXT_ACTION": "Every open alert needs owner, ticket/notes, delivery evidence, action queue state, and closure proof.",
-        "OWNER": "DBA / Alert Owner",
+        "NEXT_ACTION": "Every open alert needs route, notes, delivery status, action queue state, and closure status.",
+        "OWNER": "DBA On-Call",
     })
 
     board = pd.DataFrame(rows)
@@ -1649,7 +1573,7 @@ def _alert_integration_readiness_board(
         return board
     board["_STATE_RANK"] = board["STATE"].map({
         "Priority Gap": 0,
-        "Manual": 1,
+        "Review": 1,
         "Review": 2,
         "Partial": 3,
         "Ready": 4,
@@ -1661,7 +1585,7 @@ def _render_no_touch_automation_health(automation_health: pd.DataFrame) -> None:
     pd = _pd()
     st.markdown("**No-Touch Automation Health**")
     if automation_health is None or automation_health.empty:
-        st.info("No automation health row loaded yet. Deploy the automation task and run the Alert Center refresh.")
+        st.info("No automation health row loaded yet. Refresh Alert Center after the monitoring task runs.")
         return
 
     row = automation_health.iloc[0]
@@ -1695,13 +1619,13 @@ def _render_no_touch_automation_health(automation_health: pd.DataFrame) -> None:
         ("Last Run", run_ts),
         ("Seeded", f"{int_value('ACTION_QUEUE_SEEDED'):,}"),
         ("Open Actions", f"{open_actions:,}"),
-        ("Verified", f"{verified_actions:,}"),
+        ("Measured", f"{verified_actions:,}"),
     ))
 
     rows = [
         {
             "STATE": "Ready" if primary_state.upper() in {"READY", "PRIMARY_EVIDENCE_READY"} else "Review",
-            "CONTROL": "Primary evidence refresh",
+            "CONTROL": "Primary telemetry refresh",
             "EVIDENCE": f"{primary_state} for {run_scope}.",
             "NEXT_ACTION": text_value("NEXT_ACTION", "Review the latest automation run."),
             "OWNER": "DBA On-Call",
@@ -1710,38 +1634,38 @@ def _render_no_touch_automation_health(automation_health: pd.DataFrame) -> None:
             "STATE": "Ready" if int_value("ACTION_QUEUE_SEEDED") > 0 else "Review",
             "CONTROL": "Action queue seeding",
             "EVIDENCE": f"{int_value('ACTION_QUEUE_SEEDED'):,} row(s) seeded in the latest run.",
-            "NEXT_ACTION": "Review open action queue rows and close only after owner/proof evidence is present.",
+            "NEXT_ACTION": "Review open action queue rows and close only after telemetry status is present.",
             "OWNER": "DBA Lead",
         },
         {
             "STATE": "Ready" if int_value("OWNER_ROUTES_UPDATED") > 0 else "Review",
-            "CONTROL": "Owner route update",
-            "EVIDENCE": f"{int_value('OWNER_ROUTES_UPDATED'):,} owner route row(s) updated.",
-            "NEXT_ACTION": "Keep owner directory mapped to named teams, email routes, and approval groups.",
+            "CONTROL": "Alert routing update",
+            "EVIDENCE": f"{int_value('OWNER_ROUTES_UPDATED'):,} routing row(s) updated.",
+            "NEXT_ACTION": "Keep alert routes mapped to teams and email distribution lists.",
             "OWNER": "Platform DBA",
         },
         {
             "STATE": "Ready" if "VERIFIED" in savings_state.upper() or "SCHEDULED" in savings_state.upper() else "Review",
-            "CONTROL": "Savings verification",
+            "CONTROL": "Savings telemetry",
             "EVIDENCE": savings_state,
-            "NEXT_ACTION": "Let the verifier close savings outcomes from metering proof instead of manual notes.",
-            "OWNER": "Cost Owner",
+            "NEXT_ACTION": "Let metering telemetry close savings outcomes instead of DBA notes.",
+            "OWNER": "Cost Route",
         },
         {
             "STATE": "Ready" if "READY" in digest_state.upper() or "PREPARED" in digest_state.upper() or "SENT" in digest_state.upper() else "Review",
             "CONTROL": "Alert digest",
             "EVIDENCE": f"{digest_state}; last delivery {text_value('LAST_DIGEST_TS', 'not logged')[:19]}.",
-            "NEXT_ACTION": "Enable Snowflake email delivery only after the approved notification integration is available.",
+            "NEXT_ACTION": "Enable Snowflake email delivery after the notification integration is available.",
             "OWNER": "DBA On-Call",
         },
     ]
 
     board = pd.DataFrame(rows)
-    board["_STATE_RANK"] = board["STATE"].map({"Needs Setup": 0, "Review": 1, "Ready": 2}).fillna(9)
+    board["_STATE_RANK"] = board["STATE"].map({"Needs Data": 0, "Review": 1, "Ready": 2}).fillna(9)
     board = board.sort_values(["_STATE_RANK", "CONTROL"]).drop(columns=["_STATE_RANK"], errors="ignore")
     _render_priority_dataframe(
         board,
-        title="No-touch automation run controls",
+        title="Alert automation controls",
         priority_columns=["STATE", "CONTROL", "EVIDENCE", "NEXT_ACTION", "OWNER"],
         raw_label="All no-touch automation controls",
         height=320,
@@ -1769,8 +1693,8 @@ def _render_alert_command_center(
         render_shell_snapshot((
             ("Open Critical", f"{int(metric_lookup.get('Open critical', {}).get('VALUE', 0)):,}"),
             ("Warnings", f"{int(metric_lookup.get('Warning alerts', {}).get('VALUE', 0)):,}"),
+            ("Info", f"{int(metric_lookup.get('Info alerts', {}).get('VALUE', 0)):,}"),
             ("Resolved", f"{int(metric_lookup.get('Resolved alerts', {}).get('VALUE', 0)):,}"),
-            ("Severity Score", f"{int(summary.get('severity_score') or 0):,}"),
         ))
         _render_priority_dataframe(
             metrics,
@@ -1778,16 +1702,6 @@ def _render_alert_command_center(
             priority_columns=["METRIC", "VALUE", "STATE", "DETAIL"],
             raw_label="All command center metrics",
             height=220,
-        )
-
-    freshness = summary.get("freshness", pd.DataFrame())
-    if isinstance(freshness, pd.DataFrame) and not freshness.empty:
-        _render_priority_dataframe(
-            freshness,
-            title="Data freshness",
-            priority_columns=["SOURCE", "LAST_CHECKED", "FRESHNESS_STATE", "NOTE"],
-            raw_label="All freshness notes",
-            height=140,
         )
 
     incident_board = build_alert_incident_action_board(alerts, queue, limit=25)
@@ -1799,7 +1713,7 @@ def _render_alert_command_center(
                 "PRIORITY", "SEVERITY", "SLA_STATE", "AGE_HOURS", "CATEGORY",
                 "SIGNAL", "ENTITY", "OWNER", "BUSINESS_IMPACT",
                 "FIRST_RESPONSE", "RECOMMENDED_ACTION", "TICKET_ID",
-                "REMEDIATION_MODE", "SOURCE_FRESHNESS",
+                "REMEDIATION_MODE",
             ],
             sort_by=["PRIORITY"],
             ascending=True,
@@ -1815,7 +1729,7 @@ def _render_alert_command_center(
             title="Business-impact categories",
             priority_columns=[
                 "CATEGORY", "OPEN", "CRITICAL_HIGH", "RESOLVED",
-                "SEVERITY_SCORE", "BUSINESS_IMPACT", "RECOMMENDED_OWNER",
+                "SEVERITY_SCORE", "BUSINESS_IMPACT",
                 "RECOMMENDED_ACTION",
             ],
             sort_by=["SEVERITY_SCORE", "OPEN"],
@@ -1842,14 +1756,14 @@ def _render_alert_command_center(
     if isinstance(owner_board, pd.DataFrame) and not owner_board.empty:
         _render_priority_dataframe(
             owner_board,
-            title="Owner workload and evidence gaps",
+            title="Route workload and telemetry gaps",
             priority_columns=[
                 "OWNER", "OPEN_ALERTS", "CRITICAL_HIGH", "SLA_BREACHED",
                 "TICKETS_ATTACHED", "TOP_CATEGORY", "NEXT_ACTION", "APPROVAL_GROUP",
             ],
             sort_by=["SLA_BREACHED", "CRITICAL_HIGH", "OPEN_ALERTS"],
             ascending=[False, False, False],
-            raw_label="All owner workload rows",
+            raw_label="All route workload rows",
             height=260,
         )
 
@@ -1861,21 +1775,21 @@ def _render_alert_command_center(
             "CONTROL": "Action queue handoff",
             "STATE": "Ready" if queue_open else "No Open Queue",
             "EVIDENCE": f"{queue_open:,} open action queue row(s).",
-            "NEXT_ACTION": "Route confirmed alerts into owned action rows with ticket, approval, proof SQL, and verification state.",
+            "NEXT_ACTION": "Route confirmed alerts into action rows with ticket/reference and telemetry state.",
             "OWNER": "DBA On-Call",
         },
         {
             "CONTROL": "Rule coverage",
             "STATE": "Ready" if not rules.empty else "Fallback",
             "EVIDENCE": f"{len(rules):,} alert rule row(s) available.",
-            "NEXT_ACTION": "Persist DBA-owned severity, SLA, route, and runbook rules in Snowflake before production cutover.",
+            "NEXT_ACTION": "Use loaded rule telemetry before treating severity, SLA, route, or runbook changes as authoritative.",
             "OWNER": "Platform DBA",
         },
         {
-            "CONTROL": "Notification evidence",
-            "STATE": "Ready" if not delivery_log.empty else "Manual",
+            "CONTROL": "Notification telemetry",
+            "STATE": "Ready" if not delivery_log.empty else "Review",
             "EVIDENCE": f"{len(delivery_log):,} delivery log row(s) loaded.",
-            "NEXT_ACTION": "Log alert digests until approved Snowflake notification integration is live.",
+            "NEXT_ACTION": "Log alert digests until Snowflake notification integration is live.",
             "OWNER": "DBA On-Call",
         },
     ]
@@ -1902,7 +1816,7 @@ def _render_alert_morning_brief(alerts: pd.DataFrame, queue: pd.DataFrame) -> No
             ("Priority Items", f"{len(rows):,}"),
             ("Critical / High", f"{critical_high:,}"),
             ("Categories", f"{rows['CATEGORY'].nunique():,}"),
-            ("Owners", f"{rows['OWNER'].nunique():,}"),
+            ("Routes", f"{rows['OWNER'].nunique():,}"),
         ))
         _render_priority_dataframe(
             rows,
@@ -1941,11 +1855,11 @@ def _render_alert_morning_brief(alerts: pd.DataFrame, queue: pd.DataFrame) -> No
         if not queue_view.empty:
             _render_priority_dataframe(
                 queue_view.head(20),
-                title="Open owner work from alert routing",
+                title="Open routed work from alert routing",
                 priority_columns=[
                     "SEVERITY", "STATUS", "CATEGORY", "ENTITY_NAME", "OWNER",
-                    "ONCALL_PRIMARY", "APPROVAL_GROUP", "RECOMMENDED_ACTION",
-                    "DUE_STATE", "TICKET_ID", "EVIDENCE_GAP",
+                    "ONCALL_PRIMARY", "RECOMMENDED_ACTION",
+                    "DUE_STATE", "TICKET_ID",
                 ],
                 raw_label="All morning queue rows",
                 height=260,
@@ -1993,23 +1907,11 @@ def _render_alert_detection_catalog() -> None:
     )
     if not visible.empty:
         signal_options = visible["SIGNAL"].dropna().astype(str).tolist()
-        selected_signal = st.selectbox("Query preview", signal_options, key="alert_detection_catalog_signal")
+        selected_signal = st.selectbox("Signal detail", signal_options, key="alert_detection_catalog_signal")
         selected = visible[visible["SIGNAL"].astype(str) == selected_signal].iloc[0]
-        st.code(str(selected.get("SQL", "")), language="sql")
-    sql_catalog = build_operational_intelligence_sql_catalog()
-    if sql_catalog:
-        with st.expander("Command intelligence SQL contracts", expanded=False):
-            sql_options = [str(row["SQL_NAME"]) for row in sql_catalog]
-            selected_sql_name = st.selectbox(
-                "Command intelligence SQL preview",
-                sql_options,
-                key="alert_command_intelligence_sql_preview",
-            )
-            selected_sql = next((row for row in sql_catalog if str(row["SQL_NAME"]) == selected_sql_name), sql_catalog[0])
-            st.caption(f"{selected_sql['CAPABILITY']} | {selected_sql['TELEMETRY']}")
-            st.code(str(selected_sql["SQL"]), language="sql")
+        st.caption(str(selected.get("RECOMMENDED_ACTION") or "Review this alert signal with the owning DBA team."))
     defer_source_note(
-        "Detection Catalog is a setup preview only; these SQL templates are not executed until deployed as Snowflake ALERT/task logic."
+        "Detection Catalog is a review surface; alert logic changes remain verified."
     )
 
 
@@ -2017,7 +1919,6 @@ def _render_alert_notification_remediation(
     alerts: pd.DataFrame,
     delivery_log: pd.DataFrame,
     rules: pd.DataFrame,
-    owner_directory: pd.DataFrame,
 ) -> None:
     from utils.alerts import build_alert_optional_integrations, build_alert_remediation_contract
     from utils.operational_intelligence import build_snowflake_value_automation_rows
@@ -2042,23 +1943,16 @@ def _render_alert_notification_remediation(
         },
         {
             "CONTROL": "Email / webhook route",
-            "STATE": "Ready" if not delivery_log.empty else "Manual",
+            "STATE": "Ready" if not delivery_log.empty else "Review",
             "EVIDENCE": f"{len(delivery_log):,} delivery audit row(s); Snowflake notification integration is optional.",
-            "NEXT_ACTION": "Keep email-first dry-run until notification integration and routing owners are approved.",
+            "NEXT_ACTION": "Keep email-first dry-run until notification integration and production distribution lists are configured.",
             "OWNER": "DBA / Security",
-        },
-        {
-            "CONTROL": "Owner routing",
-            "STATE": "Ready" if not owner_directory.empty else "Needs Setup",
-            "EVIDENCE": f"{len(owner_directory):,} owner directory row(s) loaded.",
-            "NEXT_ACTION": "Route severity by owner/on-call/approval group before escalating outside the app.",
-            "OWNER": "Platform DBA",
         },
         {
             "CONTROL": "Rule catalog",
             "STATE": "Ready" if not rules.empty else "Fallback",
             "EVIDENCE": f"{len(rules):,} rules loaded.",
-            "NEXT_ACTION": "Keep severity, SLA, owner, route, and runbook DBA-configurable.",
+            "NEXT_ACTION": "Keep severity, SLA, route, and runbook DBA-configurable.",
             "OWNER": "DBA Lead",
         },
     ]
@@ -2080,22 +1974,22 @@ def _render_alert_notification_remediation(
         height=220,
     )
     if alerts.empty:
-        st.info("Load alert history to preview remediation contracts for real alert rows.")
+        st.info("Load alert history to review remediation status for real alert rows.")
         contract = build_alert_remediation_contract({})
         _render_priority_dataframe(
             pd.DataFrame([contract]),
-            title="Default remediation contract",
+            title="Default remediation status",
             priority_columns=[
                 "REMEDIATION_MODE", "DANGEROUS_ACTION", "APPROVAL_GATE",
                 "EXECUTION_BOUNDARY", "AUDIT_LOG_REQUIRED", "ROLLBACK_GUIDANCE",
             ],
-            raw_label="Default remediation contract fields",
+            raw_label="Default remediation status fields",
             height=220,
         )
         return
 
     alert_options = alerts.get("ALERT_ID", pd.Series(range(1, len(alerts) + 1), index=alerts.index)).dropna().astype(str).tolist()
-    selected_id = st.selectbox("Remediation contract alert", alert_options[:100], key="alert_remediation_contract_id")
+    selected_id = st.selectbox("Remediation status alert", alert_options[:100], key="alert_remediation_contract_id")
     if "ALERT_ID" in alerts.columns:
         selected_rows = alerts[alerts["ALERT_ID"].astype(str) == str(selected_id)]
     else:
@@ -2103,24 +1997,21 @@ def _render_alert_notification_remediation(
     contract = build_alert_remediation_contract(selected_rows.iloc[0].to_dict() if not selected_rows.empty else {})
     _render_priority_dataframe(
         pd.DataFrame([contract]),
-        title="Safe remediation contract",
+        title="Safe remediation status",
         priority_columns=[
             "REMEDIATION_MODE", "DANGEROUS_ACTION", "APPROVAL_GATE",
             "EXECUTION_BOUNDARY", "AUDIT_LOG_REQUIRED", "ROLLBACK_GUIDANCE",
             "VERIFY_NEXT",
         ],
-        raw_label="All remediation contract fields",
+        raw_label="All remediation status fields",
         height=260,
     )
-    st.code(contract["SQL_PREVIEW"], language="sql")
 
 
 def _render_alert_setup_runbook() -> None:
     from utils.alerts import (
         build_alert_command_center_runbook_markdown,
-        build_alert_command_center_setup_sql,
         build_alert_data_quality_check_seed_rows,
-        build_alert_event_materialization_sql,
         build_alert_required_privileges,
         build_alert_signal_query_catalog,
         build_alert_threshold_seed_rows,
@@ -2128,53 +2019,16 @@ def _render_alert_setup_runbook() -> None:
     from utils.operational_intelligence import (
         build_command_intelligence_runbook_markdown,
         build_capability_register_rows,
-        build_capability_setup_sql,
     )
 
     pd = _pd()
-    st.subheader("Alert Command Center Setup")
-    setup_sql = build_alert_command_center_setup_sql()
+    st.subheader("Alert Configuration")
     render_shell_snapshot((
         ("Config Tables", "8"),
         ("Default Thresholds", f"{len(build_alert_threshold_seed_rows()):,}"),
         ("Detection Families", f"{build_alert_signal_query_catalog()['CATEGORY'].nunique():,}"),
-        ("Remediation Mode", "Approval gated"),
+        ("Remediation Mode", "Review gated"),
     ))
-    st.download_button(
-        "Download Alert Command Center SQL",
-        data=setup_sql,
-        file_name="overwatch_alert_command_center_setup.sql",
-        mime="text/sql",
-        key="download_alert_command_center_sql",
-        width="stretch",
-    )
-    with st.expander("Setup SQL preview", expanded=False):
-        st.code(setup_sql, language="sql")
-
-    event_sql = build_alert_event_materialization_sql(days=7)
-    st.download_button(
-        "Download Alert Event Materialization SQL",
-        data=event_sql,
-        file_name="overwatch_alert_event_materialization.sql",
-        mime="text/sql",
-        key="download_alert_event_materialization_sql",
-        width="stretch",
-    )
-    with st.expander("Event materialization SQL preview", expanded=False):
-        st.code(event_sql, language="sql")
-
-    command_sql = build_capability_setup_sql()
-    st.download_button(
-        "Download Command Intelligence SQL",
-        data=command_sql,
-        file_name="overwatch_command_intelligence_setup.sql",
-        mime="text/sql",
-        key="download_command_intelligence_sql",
-        width="stretch",
-    )
-    with st.expander("Command intelligence SQL preview", expanded=False):
-        st.code(command_sql, language="sql")
-
     _render_priority_dataframe(
         pd.DataFrame(build_capability_register_rows()),
         title="Command intelligence rollout checklist",
@@ -2261,7 +2115,7 @@ def render() -> None:
             max_lanes=8,
         )
         _render_alert_center_brief_launchpad()
-        st.caption("Each workflow loads only the sources listed on its load button; no Alert Center data is fetched by the brief itself.")
+        st.caption("Each workflow loads only the required inputs listed on its load button; no Alert Center data is fetched by the brief itself.")
         return
 
     if active_view == "Suppression Windows":
@@ -2270,10 +2124,6 @@ def render() -> None:
 
     if active_view == "Detection Catalog":
         _render_alert_detection_catalog()
-        return
-
-    if active_view == "Setup & Runbook":
-        _render_alert_setup_runbook()
         return
 
     c1, c2, c3 = st.columns([1, 1, 2])
@@ -2297,17 +2147,17 @@ def render() -> None:
     alert_autoload_requested = consume_section_autoload_request("Alert Center")
     if (
         alert_autoload_requested
-        and active_view not in {"Suppression Windows", "Detection Catalog", "Setup & Runbook"}
+        and active_view not in {"Suppression Windows", "Detection Catalog"}
         and not current_data
     ):
         st.caption(
             "Alert Center opened the command frame without live Snowflake reads. "
-            f"Load {active_view} when fresh alert proof is needed."
+            f"Load {active_view} when fresh alert telemetry is needed."
         )
-        defer_source_note(f"Sources on load: {_alert_center_source_summary(required_sources)}")
+        defer_source_note(f"Inputs on load: {_alert_center_source_summary(required_sources)}")
     render_data_freshness(
         _alert_center_loaded_meta(data, active_view) if current_data else {},
-        source=f"{active_view} sources",
+        source=f"{active_view} inputs",
         target_minutes=60,
         delayed_note="Alert Center reads bounded alert/action sources on demand; ACCOUNT_USAGE-backed inputs can lag.",
     )
@@ -2335,7 +2185,7 @@ def render() -> None:
             max_lanes=8,
         )
         st.info(f"Load {active_view} when ready.")
-        defer_source_note(f"Sources on load: {_alert_center_source_summary(required_sources)}")
+        defer_source_note(f"Inputs on load: {_alert_center_source_summary(required_sources)}")
         return
 
     loaded_scope = st.session_state.get("alert_center_scope")
@@ -2378,8 +2228,8 @@ def render() -> None:
             _alert_command_lanes(active_view=active_view, required_sources=required_sources, loaded=False),
             max_lanes=8,
         )
-        st.info(f"Load {active_view} to fetch missing source(s).")
-        defer_source_note(f"Missing Alert Center source(s): {_alert_center_source_summary(set(missing_sources))}")
+        st.info(f"Load {active_view} to fetch missing input(s).")
+        defer_source_note(f"Missing Alert Center input(s): {_alert_center_source_summary(set(missing_sources))}")
         return
 
     pd = _pd()
@@ -2389,26 +2239,23 @@ def render() -> None:
     delivery_log = data.get("delivery_log") if isinstance(data.get("delivery_log"), pd.DataFrame) else pd.DataFrame()
     rules = data.get("rules") if isinstance(data.get("rules"), pd.DataFrame) else pd.DataFrame()
     rule_audit = data.get("rule_audit") if isinstance(data.get("rule_audit"), pd.DataFrame) else pd.DataFrame()
-    owner_directory = data.get("owner_directory") if isinstance(data.get("owner_directory"), pd.DataFrame) else pd.DataFrame()
     automation_health = data.get("automation_health") if isinstance(data.get("automation_health"), pd.DataFrame) else pd.DataFrame()
     if data.get("alerts_error"):
         st.info("Alert history unavailable.")
         defer_source_note(
-            "Deploy alert objects from snowflake/OVERWATCH_MART_SETUP.sql first.",
+            "Enable alert history objects before relying on this monitoring source.",
             data["alerts_error"],
         )
     if data.get("queue_error"):
         defer_source_note("Action queue unavailable for this role/context.", data["queue_error"])
     if data.get("delivery_error"):
-        defer_source_note("Delivery audit unavailable until snowflake/OVERWATCH_MART_SETUP.sql is deployed.", data["delivery_error"])
+        defer_source_note("Delivery audit is not available in this environment yet.", data["delivery_error"])
     if data.get("rule_error"):
-        defer_source_note("Alert rule catalog unavailable until snowflake/OVERWATCH_MART_SETUP.sql is deployed.", data["rule_error"])
+        defer_source_note("Alert rule catalog is not available in this environment yet.", data["rule_error"])
     if data.get("rule_audit_error"):
-        defer_source_note("Alert rule audit unavailable until snowflake/OVERWATCH_MART_SETUP.sql is deployed.", data["rule_audit_error"])
-    if data.get("owner_directory_error"):
-        defer_source_note("Owner directory unavailable until snowflake/OVERWATCH_MART_SETUP.sql is deployed.", data["owner_directory_error"])
+        defer_source_note("Alert rule audit is not available in this environment yet.", data["rule_audit_error"])
     if data.get("automation_health_error"):
-        defer_source_note("No-touch automation health unavailable until snowflake/OVERWATCH_MART_SETUP.sql is deployed.", data["automation_health_error"])
+        defer_source_note("Automation health is not available in this environment yet.", data["automation_health_error"])
     defer_source_note(f"Loaded {data.get('loaded_at', '')}. Email target defaults to {_alert_email_target()}.")
 
     open_alerts = _open_alert_mask(alerts)
@@ -2497,18 +2344,18 @@ def render() -> None:
         _render_alert_morning_brief(alerts, queue)
 
     elif active_view == "Notifications & Remediation":
-        _render_alert_notification_remediation(alerts, delivery_log, rules, owner_directory)
+        _render_alert_notification_remediation(alerts, delivery_log, rules)
 
     elif active_view == "Control Health":
         st.subheader("Alert Control Health")
         defer_source_note("Uses only the data loaded by the explicit Alert Center refresh; no hidden tab scans are required.")
-        blocked = int(readiness_rows["STATE"].isin(["Needs Setup", "Degraded", "Scope Stale"]).sum()) if not readiness_rows.empty else 0
+        blocked = int(readiness_rows["STATE"].isin(["Needs Data", "Degraded", "Scope Stale"]).sum()) if not readiness_rows.empty else 0
         review = int(readiness_rows["STATE"].eq("Review").sum()) if not readiness_rows.empty else 0
         ready = int(readiness_rows["STATE"].isin(["Ready", "No Rows"]).sum()) if not readiness_rows.empty else 0
         render_shell_snapshot((
             ("Ready Controls", f"{ready:,}"),
             ("Needs Review", f"{review:,}"),
-            ("Blocked / Setup", f"{blocked:,}"),
+            ("Blocked / Data", f"{blocked:,}"),
             ("Controls", f"{len(readiness_rows):,}"),
         ))
         health_detail = st.selectbox(
@@ -2520,7 +2367,7 @@ def render() -> None:
         if health_detail == "Controls":
             _render_priority_dataframe(
                 readiness_rows,
-                title="Alert source and delivery readiness",
+                title="Alert source and delivery health",
                 priority_columns=[
                     "SEVERITY", "CONTROL", "STATE", "EVIDENCE", "NEXT_ACTION", "OWNER", "SCOPE",
                 ],
@@ -2529,20 +2376,20 @@ def render() -> None:
                 raw_label="All alert control-health rows",
                 height=360,
             )
-        elif health_detail == "Owner Routes":
+        elif health_detail == "Routing Health":
             owner_summary, owner_board = _alert_owner_route_board(alerts, queue)
             render_shell_snapshot((
                 ("Open routed items", f"{owner_summary['open_items']:,}"),
-                ("Named owners", f"{owner_summary['named_owner_pct']:.0f}%"),
+                ("Routed rows", f"{owner_summary['named_owner_pct']:.0f}%"),
                 ("Email routes", f"{owner_summary['email_route_pct']:.0f}%"),
                 ("Route gaps", f"{owner_summary['route_gaps']:,}"),
             ))
             if owner_board.empty:
-                st.success("No owner route gaps found for the loaded scope.")
+                st.success("No routing gaps found for the loaded scope.")
             else:
                 _render_priority_dataframe(
                     owner_board,
-                    title="Owner/on-call route gaps",
+                    title="Alert routing gaps",
                     priority_columns=[
                         "ROUTE_READY", "ISSUE_SOURCE", "SEVERITY", "STATUS", "CATEGORY",
                         "ENTITY", "OWNER", "OWNER_ROUTE_STATE", "EMAIL_TARGET",
@@ -2551,74 +2398,39 @@ def render() -> None:
                     ],
                     sort_by=["ROUTE_READY", "SEVERITY", "ENTITY"],
                     ascending=[True, True, True],
-                    raw_label="All owner route rows",
+                    raw_label="All routing rows",
                     height=280,
                 )
-        elif health_detail == "Owner Directory":
-            from utils import owner_directory_readiness_board
-
-            directory_summary, directory_board = owner_directory_readiness_board(owner_directory)
-            st.markdown("**Owner Directory Production Readiness**")
-            render_shell_snapshot((
-                ("Route readiness", f"{directory_summary['readiness_pct']:.0f}%"),
-                (
-                    "Production routes",
-                    f"{directory_summary['production_ready']:,}/{directory_summary['total_routes']:,}",
-                ),
-                ("Placeholder routes", f"{directory_summary['placeholder_routes']:,}"),
-                ("Tier 0/1 gaps", f"{directory_summary['tier0_tier1_gaps']:,}"),
-            ))
-            if directory_board.empty:
-                st.success("No owner-directory route rows found for the loaded scope.")
-            else:
-                _render_priority_dataframe(
-                    directory_board,
-                    title="Owner directory route readiness",
-                    priority_columns=[
-                        "ROUTE_STATE", "SERVICE_TIER", "OWNER_KEY", "ENTITY_TYPE",
-                        "ENTITY_PATTERN", "OWNER_NAME", "OWNER_EMAIL", "ONCALL_PRIMARY",
-                        "APPROVAL_GROUP", "ESCALATION_TARGET", "BLOCKERS", "NEXT_ACTION",
-                    ],
-                    raw_label="All owner directory rows",
-                    height=300,
-                )
         elif health_detail == "Delivery & Action Queue":
-            from utils import owner_directory_readiness_board
-
-            directory_summary, _ = owner_directory_readiness_board(owner_directory)
-            integration_board = _alert_integration_readiness_board(
+            integration_board = _alert_integration_health_board(
                 alerts,
                 queue,
                 delivery_log,
-                directory_summary,
             )
-            st.markdown("**Notification & Action Queue Readiness**")
+            st.markdown("**Notification & Action Queue Health**")
             if integration_board.empty:
                 st.success("No delivery or action-queue blockers found for the loaded scope.")
             else:
                 _render_priority_dataframe(
                     integration_board,
-                    title="Alert integration readiness",
+                    title="Alert integration health",
                     priority_columns=["STATE", "CONTROL", "EVIDENCE", "NEXT_ACTION", "OWNER"],
                     raw_label="All alert integration controls",
                     height=220,
                 )
 
-    elif active_view == "Automation Readiness":
-        st.subheader("Alert Automation Readiness")
-        from utils import owner_directory_readiness_board
+    elif active_view == "Automation Health":
+        st.subheader("Alert Automation Health")
         from utils.alerts import build_alert_digest_summary
 
         _render_no_touch_automation_health(automation_health)
 
         digest_summary = build_alert_digest_summary(alerts)
         owner_summary, owner_board = _alert_owner_route_board(alerts, queue)
-        directory_summary, _ = owner_directory_readiness_board(owner_directory)
-        integration_board = _alert_integration_readiness_board(
+        integration_board = _alert_integration_health_board(
             alerts,
             queue,
             delivery_log,
-            directory_summary,
         )
         automation_rows = [
             {
@@ -2629,24 +2441,24 @@ def render() -> None:
                 "OWNER": "DBA On-Call",
             },
             {
-                "CONTROL": "Delivery proof",
-                "STATE": "Ready" if not delivery_log.empty else "Manual",
+                "CONTROL": "Delivery status",
+                "STATE": "Ready" if not delivery_log.empty else "Review",
                 "EVIDENCE": f"{len(delivery_log):,} delivery audit row(s) loaded.",
-                "NEXT_ACTION": "Log each digest delivery until a governed Snowflake notification integration is enabled.",
+                "NEXT_ACTION": "Log each digest delivery until a Snowflake notification integration is enabled.",
                 "OWNER": "DBA On-Call",
             },
             {
-                "CONTROL": "Owner route automation",
+                "CONTROL": "Routing automation",
                 "STATE": "Ready" if owner_summary.get("route_gaps", 0) == 0 and owner_summary.get("open_items", 0) else "Review",
-                "EVIDENCE": f"{owner_summary.get('route_gaps', 0):,} route gap(s); {owner_summary.get('named_owner_pct', 0):.0f}% named owners.",
-                "NEXT_ACTION": "Close placeholder owner/email routes before enabling unattended escalation.",
+                "EVIDENCE": f"{owner_summary.get('route_gaps', 0):,} route gap(s); {owner_summary.get('named_owner_pct', 0):.0f}% routed rows.",
+                "NEXT_ACTION": "Close missing route/email gaps before enabling unattended escalation.",
                 "OWNER": "Platform DBA",
             },
             {
                 "CONTROL": "Action queue handoff",
                 "STATE": "Ready" if int(open_queue.sum()) else "No Open Queue",
                 "EVIDENCE": f"{int(open_queue.sum()) if len(open_queue) else 0:,} open queue row(s).",
-                "NEXT_ACTION": "Route alerts into owned queue rows with SLA, approval, and verification fields.",
+            "NEXT_ACTION": "Route alerts into queue rows with SLA, route, notes, and telemetry fields.",
                 "OWNER": "DBA Lead",
             },
         ]
@@ -2655,12 +2467,12 @@ def render() -> None:
             ignore_index=True,
             sort=False,
         )
-        blocked = int(automation_board["STATE"].astype(str).isin(["Blocked", "Needs Setup"]).sum()) if not automation_board.empty else 0
-        review = int(automation_board["STATE"].astype(str).isin(["Manual", "Review"]).sum()) if not automation_board.empty else 0
+        blocked = int(automation_board["STATE"].astype(str).isin(["Blocked", "Needs Data"]).sum()) if not automation_board.empty else 0
+        review = int(automation_board["STATE"].astype(str).isin(["Review"]).sum()) if not automation_board.empty else 0
         ready = int(automation_board["STATE"].astype(str).isin(["Ready", "No Open Alerts", "No Open Queue"]).sum()) if not automation_board.empty else 0
         render_shell_snapshot((
             ("Ready Controls", f"{ready:,}"),
-            ("Manual / Review", f"{review:,}"),
+            ("Review", f"{review:,}"),
             ("Blocked", f"{blocked:,}"),
             ("Controls", f"{len(automation_board):,}"),
         ))
@@ -2676,7 +2488,7 @@ def render() -> None:
         if not owner_board.empty:
             _render_priority_dataframe(
                 owner_board,
-                title="Automation route blockers",
+            title="Automation routing blockers",
                 priority_columns=[
                     "ROUTE_READY", "ISSUE_SOURCE", "SEVERITY", "ENTITY",
                     "OWNER", "EMAIL_TARGET", "ONCALL_PRIMARY", "ESCALATION_TARGET",
@@ -2688,7 +2500,7 @@ def render() -> None:
                 height=260,
             )
         defer_source_note(
-            "Automation Readiness is deliberately email-first until a governed Snowflake notification integration is approved."
+            "Alert automation remains email-first until a Snowflake notification integration is configured."
         )
 
     elif active_view == "Issue Inbox":
@@ -2699,7 +2511,7 @@ def render() -> None:
         else:
             st.caption(
                 f"{len(visible):,} issue row(s) match the filters. "
-                "Use the exception strip first; render row-level proof only when needed."
+                "Use the exception strip first; render row-level detail only when needed."
             )
             detail_visible = bool(st.session_state.get("alert_center_issue_detail_visible"))
             detail_label = "Hide Issue Detail" if detail_visible else "Show Issue Detail"
@@ -2725,7 +2537,7 @@ def render() -> None:
     elif active_view == "Triage Digest":
         st.subheader("DBA Triage Digest")
         if alerts.empty:
-            st.info("Load alert history before building the operator digest.")
+            st.info("Load alert history before preparing the operator digest.")
         else:
             from utils.alerts import (
                 alert_escalation_candidates,
@@ -2741,7 +2553,7 @@ def render() -> None:
                 ("Critical / High", f"{digest_summary['critical_high']:,}"),
                 ("Overdue", f"{digest_summary['overdue']:,}"),
                 ("Due Soon", f"{digest_summary['due_soon']:,}"),
-                ("Needs Owner", f"{digest_summary['needs_owner']:,}"),
+                ("Needs Route", f"{digest_summary['needs_owner']:,}"),
             ))
 
             digest_subject = build_alert_digest_subject(alerts, company=company, environment=environment)
@@ -2755,7 +2567,7 @@ def render() -> None:
             st.text_input("Digest email subject", value=digest_subject, key="alert_center_digest_subject")
             st.text_area("Digest email body", value=digest_body, height=340, key="alert_center_digest_body")
             with st.expander("Log digest delivery", expanded=False):
-                st.caption("Use this after the email digest is sent or handed off. This records delivery evidence and marks included alerts as escalated.")
+                st.caption("Use this after the email digest is sent or handed off. This records delivery status and marks included alerts as escalated.")
                 with st.form("alert_center_log_digest_delivery"):
                     delivery_target = st.text_input(
                         "Delivery target",
@@ -2765,7 +2577,7 @@ def render() -> None:
                     delivery_notes = st.text_area(
                         "Delivery notes",
                         key="alert_center_digest_notes",
-                        placeholder="Example: Sent via Outlook to DBA on-call and platform owner; INC12345 opened.",
+                        placeholder="Example: Sent via Outlook to DBA on-call and platform route; INC12345 opened.",
                     )
                     submitted_delivery = st.form_submit_button("Log Digest Delivery")
                 if submitted_delivery:
@@ -2773,7 +2585,7 @@ def render() -> None:
                     if digest_alerts.empty:
                         st.warning("No open alert rows are available to log.")
                     elif len(delivery_notes.strip()) < 10:
-                        st.warning("Delivery notes are required for audit evidence.")
+                        st.warning("Delivery notes are required for audit status.")
                     else:
                         try:
                             session = _alert_center_action_session("log alert digest delivery")
@@ -2842,7 +2654,7 @@ def render() -> None:
                 render_shell_snapshot((
                     ("Lifecycle Rows", f"{len(lifecycle):,}"),
                     ("Escalate Now", f"{int(lifecycle['LIFECYCLE_STATE'].eq('Escalate now').sum()):,}"),
-                    ("Needs Owner", f"{int(lifecycle['LIFECYCLE_STATE'].eq('Assign owner').sum()):,}"),
+                    ("Needs Route", f"{int(lifecycle['LIFECYCLE_STATE'].eq('Assign route').sum()):,}"),
                     ("Not Queued", f"{int(lifecycle['ACTION_QUEUE_STATE'].eq('Not queued').sum()):,}"),
                 ))
                 _render_priority_dataframe(
@@ -2852,7 +2664,7 @@ def render() -> None:
                         "LIFECYCLE_STATE", "SLA_STATE", "SEVERITY", "STATUS",
                         "CATEGORY", "ALERT_TYPE", "ENTITY_NAME", "OWNER",
                         "ESCALATION_TARGET", "DELIVERY_STATUS", "ACTION_QUEUE_STATE",
-                        "CLOSURE_PROOF_REQUIRED", "NEXT_ACTION",
+                        "NEXT_ACTION",
                     ],
                     sort_by=["LIFECYCLE_STATE", "SEVERITY", "ALERT_TS"],
                     ascending=[True, True, False],
@@ -2894,14 +2706,14 @@ def render() -> None:
                         with c_status_2:
                             next_status = st.selectbox("New status", list(ALERT_STATUS_CHOICES), key="alert_center_next_status")
                         reason = st.text_area(
-                            "Reason / evidence",
+                            "Reason / status",
                             key="alert_center_status_reason",
-                            placeholder="Ticket, owner confirmation, remediation proof, or reason for ignore.",
+                            placeholder="Ticket, route confirmation, remediation status, or reason for ignore.",
                         )
                         submitted = st.form_submit_button("Update Alert Status")
                     if submitted:
                         if not reason.strip():
-                            st.warning("A reason or evidence note is required before changing alert status.")
+                            st.warning("A reason or status note is required before changing alert status.")
                         else:
                             try:
                                 session = _alert_center_action_session("update alert status")
@@ -2924,7 +2736,7 @@ def render() -> None:
                         ack_note = st.text_area(
                             "Acknowledgment note",
                             key="alert_center_ack_note",
-                            placeholder="Owner accepted, ticket opened, escalation recipient confirmed, or next checkpoint.",
+                            placeholder="Route accepted, ticket opened, escalation recipient confirmed, or next checkpoint.",
                         )
                         submitted_ack = st.form_submit_button("Acknowledge Escalation")
                     if submitted_ack:
@@ -2945,7 +2757,7 @@ def render() -> None:
                                 st.session_state.pop("alert_center_data", None)
                             except Exception as exc:
                                 st.error(f"Could not acknowledge escalation: {_format_snowflake_error(exc)}")
-                with st.expander("Command Center audit SQL", expanded=False):
+                with st.expander("Lifecycle audit preview", expanded=False):
                     audit_alert = st.selectbox("Audit event ID", alert_ids, key="alert_center_audit_event_id")
                     audit_status = st.selectbox(
                         "Lifecycle status",
@@ -2953,14 +2765,14 @@ def render() -> None:
                         key="alert_center_audit_status",
                     )
                     audit_owner = st.text_input(
-                        "Owner",
+                        "Route",
                         key="alert_center_audit_owner",
-                        placeholder="DBA / FinOps / Security owner",
+                        placeholder="DBA / FinOps / Security route",
                     )
                     audit_note = st.text_area(
                         "Audit note",
                         key="alert_center_audit_note",
-                        placeholder="Ticket, investigation result, owner assignment, or remediation evidence.",
+                        placeholder="Ticket, investigation result, route assignment, or remediation status.",
                     )
                     if len(str(audit_note or "").strip()) >= 5:
                         audit_sql_parts = [
@@ -2985,12 +2797,11 @@ def render() -> None:
                                 actor=_alert_actor(),
                             ),
                         ]
-                        audit_sql = "\n\n".join(audit_sql_parts)
-                        st.code(audit_sql, language="sql")
+                        st.caption("Lifecycle audit will record the selected status, note, checkpoint, and remediation log.")
                         if st.button(
                             "Record Lifecycle Audit",
                             key="alert_center_record_lifecycle_audit",
-                            help="Writes the acknowledgement and remediation-log rows shown above. No remediation SQL is executed.",
+                            help="Records the acknowledgement and remediation log. No remediation action is executed.",
                             width="stretch",
                         ):
                             try:
@@ -3004,12 +2815,12 @@ def render() -> None:
                             except Exception as exc:
                                 st.error(f"Could not record lifecycle audit: {_format_snowflake_error(exc)}")
                     else:
-                        st.caption("Enter an audit note to generate acknowledgement and remediation-log insert SQL.")
+                        st.caption("Enter an audit note to record acknowledgement and remediation-log status.")
 
     elif active_view == "Email Delivery":
         st.subheader("Email Delivery Queue")
         defer_source_note(
-            "Rows are email-ready by default; snowflake/OVERWATCH_MART_SETUP.sql includes a dry-run governed SYSTEM$SEND_EMAIL procedure for an approved Snowflake email integration."
+            "Rows are email-ready by default once the Snowflake email integration is enabled."
         )
         if alerts.empty:
             st.info("No email-ready alert rows found.")
@@ -3062,15 +2873,15 @@ def render() -> None:
             if not actions_preview.empty:
                 recovery_count = int((actions_preview.get("Category", pd.Series(dtype=str)) == "Task & Procedure Reliability").sum())
                 if recovery_count:
-                    defer_source_note(f"{recovery_count:,} task/procedure recovery action(s) include owner approval and recovery SLA evidence fields.")
+                    defer_source_note(f"{recovery_count:,} task/procedure recovery action(s) include recovery SLA and telemetry status fields.")
                 _render_priority_dataframe(
                     actions_preview,
                     title="Action queue routing preview",
                     priority_columns=[
                         "Severity", "Category", "Entity Type", "Entity", "Owner",
-                        "Oncall Primary", "Approval Group", "Owner Source",
-                        "Owner Approval Status", "Recovery SLA State", "Recovery SLA Target Hours",
-                        "Verification Status", "Action",
+                        "Oncall Primary", "Review Group",
+                        "Recovery SLA State", "Recovery SLA Target Hours",
+                        "Action",
                     ],
                     sort_by=["Severity", "Category", "Entity"],
                     ascending=[True, True, True],
@@ -3095,9 +2906,8 @@ def render() -> None:
                 title="Current action queue",
                 priority_columns=[
                     "SEVERITY", "STATUS", "CATEGORY", "ENTITY_NAME", "OWNER",
-                    "ONCALL_PRIMARY", "APPROVAL_GROUP", "OWNER_SOURCE",
-                    "FINDING", "RECOMMENDED_ACTION", "TICKET_ID", "DUE_STATE",
-                    "EVIDENCE_GAP",
+                    "ONCALL_PRIMARY", "FINDING", "RECOMMENDED_ACTION",
+                    "TICKET_ID", "DUE_STATE",
                 ],
                 sort_by=["SEVERITY", "STATUS", "UPDATED_AT"],
                 ascending=[True, True, False],
@@ -3112,7 +2922,7 @@ def render() -> None:
             title="Active alert rules",
             priority_columns=[
                 "RULE_ID", "CATEGORY", "ALERT_TYPE", "DEFAULT_SEVERITY",
-                "SLA_HOURS", "OWNER", "ROUTE", "IS_ACTIVE", "RULE_SOURCE", "RUNBOOK",
+                "SLA_HOURS", "ROUTE", "IS_ACTIVE", "RULE_SOURCE", "RUNBOOK",
             ],
             sort_by=["SLA_HOURS", "CATEGORY", "ALERT_TYPE"],
             ascending=[True, True, True],
@@ -3126,7 +2936,7 @@ def render() -> None:
                 title="Recent rule changes",
                 priority_columns=[
                     "AUDIT_TS", "RULE_ID", "ACTION", "PRIOR_DEFAULT_SEVERITY", "NEW_DEFAULT_SEVERITY",
-                    "PRIOR_SLA_HOURS", "NEW_SLA_HOURS", "PRIOR_OWNER", "NEW_OWNER",
+                    "PRIOR_SLA_HOURS", "NEW_SLA_HOURS",
                     "CHANGED_BY", "CHANGE_REASON",
                 ],
                 sort_by=["AUDIT_TS"],
@@ -3138,11 +2948,11 @@ def render() -> None:
             configured_count = int((rules["RULE_SOURCE"].astype(str) == "Database").sum()) if "RULE_SOURCE" in rules.columns else 0
             defer_source_note(
                 f"{configured_count:,} rule(s) loaded from Snowflake configuration; "
-                f"{len(rules) - configured_count:,} built-in fallback rule(s) shown for deployment readiness."
+                f"{len(rules) - configured_count:,} built-in fallback rule(s) shown for monitoring coverage."
             )
             editable_rules = rules[rules.get("RULE_SOURCE", pd.Series(index=rules.index, dtype=str)).astype(str).eq("Database")]
             if editable_rules.empty:
-                st.info("Deploy `OVERWATCH_ALERT_RULES` from `snowflake/OVERWATCH_MART_SETUP.sql` before editing alert rule ownership, SLA, and routing.")
+                st.info("Alert rule editing is not available in this environment yet. Ask the DBA team to enable it.")
             else:
                 with st.expander("Edit alert rule routing and SLA", expanded=False):
                     selected_rule = st.selectbox(
@@ -3170,8 +2980,8 @@ def render() -> None:
                                 key="alert_center_rule_sla",
                             )
                         with r3:
-                            owner = st.text_input("Owner", value=str(selected_row.get("OWNER", "DBA")), key="alert_center_rule_owner")
-                        route = st.text_input("Route", value=str(selected_row.get("ROUTE", "Alert Center")), key="alert_center_rule_route")
+                            owner = st.text_input("Escalation route", value=str(selected_row.get("OWNER", "DBA")), key="alert_center_rule_owner")
+                        route = st.text_input("Alert route", value=str(selected_row.get("ROUTE", "Alert Center")), key="alert_center_rule_route")
                         runbook = st.text_area(
                             "Runbook",
                             value=str(selected_row.get("RUNBOOK", "")),

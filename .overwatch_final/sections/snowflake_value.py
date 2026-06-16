@@ -2,20 +2,14 @@
 import streamlit as st
 
 from config import DEFAULTS, ETL_AUDIT_DB, ETL_AUDIT_SCHEMA
-from sections.shell_helpers import render_refresh_contract, render_shell_snapshot, with_loaded_at
+from sections.shell_helpers import render_shell_snapshot, with_loaded_at
 from utils import (
-    build_app_runtime_cost_sql,
-    build_snowflake_value_auto_ddl,
     build_snowflake_value_automation_health_sql,
-    build_snowflake_value_automation_rows,
     build_snowflake_value_candidate_sql,
     format_snowflake_error,
-    freshness_note,
     get_active_company,
     get_session,
-    credits_to_dollars,
     download_csv,
-    metric_confidence_label,
     render_ranked_bar_chart,
     run_query,
     safe_float,
@@ -78,23 +72,15 @@ def _load_snowflake_value_state(session, company: str, *, show_errors: bool = Tr
             ORDER BY LOGGED_DATE DESC
             LIMIT 500
         """, ttl_key=f"snowflake_value_detail_{company}", tier="historical")
-        df_app_cost = run_query(
-            build_app_runtime_cost_sql(30),
-            ttl_key=f"snowflake_value_app_cost_{company}",
-            tier="historical",
-            section="Snowflake Value",
-        )
         st.session_state["sf_value_summary"] = df_summary
         st.session_state["sf_value_detail"] = df_detail
-        st.session_state["sf_value_app_cost"] = df_app_cost
-        st.session_state["sf_value_meta"] = with_loaded_at({"company": company}, source="OVERWATCH_ROI_LOG")
+        st.session_state["sf_value_meta"] = with_loaded_at({"company": company}, source="Value ledger")
         return True
     except Exception as e:
         st.session_state["sf_value_summary"] = None
         st.session_state["sf_value_detail"] = None
-        st.session_state["sf_value_app_cost"] = None
         if show_errors:
-            st.info(f"Snowflake value table not found. Run the setup DDL first. ({format_snowflake_error(e)})")
+            st.info(f"Snowflake Value logging is not available in this environment yet. Ask the DBA team to enable it, then retry. ({format_snowflake_error(e)})")
         return False
 
 
@@ -117,7 +103,7 @@ def _load_snowflake_value_automation_state(company: str, *, show_errors: bool = 
         st.session_state["sf_value_automation_error"] = ""
         st.session_state["sf_value_automation_meta"] = with_loaded_at(
             {"company": company},
-            source="OVERWATCH_VALUE_AUTOMATION_HEALTH_V / OVERWATCH_VALUE_CANDIDATE_V",
+            source="Automated value capture",
         )
         return True
     except Exception as exc:
@@ -126,8 +112,8 @@ def _load_snowflake_value_automation_state(company: str, *, show_errors: bool = 
         st.session_state["sf_value_automation_error"] = format_snowflake_error(exc)
         if show_errors:
             st.info(
-                "Snowflake value automation views are not deployed yet. "
-                f"Run the latest setup DDL first. ({format_snowflake_error(exc)})"
+                "Automated value capture is not available in this environment yet. "
+                f"Ask the DBA team to enable it, then retry. ({format_snowflake_error(exc)})"
             )
         return False
 
@@ -137,49 +123,49 @@ def _render_value_automation_contract() -> None:
 
     st.markdown("**Automated Value Capture**")
     render_priority_dataframe(
-        pd.DataFrame(build_snowflake_value_automation_rows()),
-        title="Value signals OVERWATCH can capture without manual DBA entry",
+        pd.DataFrame([
+            {
+                "VALUE_SIGNAL": "Verified cost action",
+                "SIGNAL_SOURCE": "verified action queue",
+                "VALUE_STATE": "Verified savings",
+                "CAPTURE_RULE": "Closed actions with measured savings are eligible for value logging.",
+                "WHY_IT_MATTERS": "Keeps monthly value reporting tied to completed DBA work.",
+            },
+            {
+                "VALUE_SIGNAL": "Resolved alert with value at risk",
+                "SIGNAL_SOURCE": "Alert remediation history",
+                "VALUE_STATE": "Risk avoided",
+                "CAPTURE_RULE": "Resolved critical cost, reliability, or security alerts can be valued when impact is known.",
+                "WHY_IT_MATTERS": "Shows incident-prevention value, not just hard-dollar savings.",
+            },
+            {
+                "VALUE_SIGNAL": "Workload recovery",
+                "SIGNAL_SOURCE": "Recovery audit trail",
+                "VALUE_STATE": "Reliability value",
+                "CAPTURE_RULE": "Recovered task, procedure, and workload incidents can be logged after verification.",
+                "WHY_IT_MATTERS": "Connects operator work to avoided business interruption.",
+            },
+            {
+                "VALUE_SIGNAL": "Query optimization",
+                "SIGNAL_SOURCE": "Query diagnosis and approved actions",
+                "VALUE_STATE": "Candidate savings",
+                "CAPTURE_RULE": "Before/after query telemetry remains candidate value until confirmed.",
+                "WHY_IT_MATTERS": "Separates estimated opportunity from proven monthly value.",
+            },
+        ]),
+        title="Value signals ready for DBA review",
         priority_columns=[
-            "VALUE_SIGNAL", "EVIDENCE_SOURCE", "VALUE_STATE",
+            "VALUE_SIGNAL", "SIGNAL_SOURCE", "VALUE_STATE",
             "CAPTURE_RULE", "WHY_IT_MATTERS",
         ],
-        raw_label="All automated value sources",
+        raw_label="All value capture signals",
         height=240,
         max_rows=4,
     )
-    value_sql = build_snowflake_value_auto_ddl()
-    st.download_button(
-        "Download Value Automation SQL",
-        data=value_sql,
-        file_name="overwatch_value_automation.sql",
-        mime="text/sql",
-        key="download_snowflake_value_automation_sql",
-        width="stretch",
-    )
-    with st.expander("Value automation SQL preview", expanded=False):
-        st.code(value_sql, language="sql")
-
-
-def _render_value_setup_health() -> None:
-    meta = st.session_state.get("sf_value_automation_meta") or st.session_state.get("sf_value_meta") or {}
-    st.markdown("**Value Automation Setup Health**")
-    render_refresh_contract(
-        meta if isinstance(meta, dict) else {},
-        source="OVERWATCH_VALUE_CANDIDATE_V / OVERWATCH_ROI_LOG",
-        target_minutes=60,
-        refresh_method="Scheduled SP_OVERWATCH_AUTOMATE_VALUE_LOG task",
-        live_fallback="Explicit load only",
-    )
-    render_shell_snapshot((
-        ("Candidate View", "OVERWATCH_VALUE_CANDIDATE_V"),
-        ("Health View", "OVERWATCH_VALUE_AUTOMATION_HEALTH_V"),
-        ("Ledger", "OVERWATCH_ROI_LOG"),
-        ("Run Log", "OVERWATCH_VALUE_AUTOMATION_RUN"),
-    ))
 
 
 def _render_value_automation_health(company: str) -> None:
-    if st.button("Load Value Automation Evidence", key="sf_value_automation_load", width="stretch"):
+    if st.button("Load Value Automation Telemetry", key="sf_value_automation_load", width="stretch"):
         _load_snowflake_value_automation_state(company, show_errors=True)
 
     health = st.session_state.get("sf_value_automation_health")
@@ -187,15 +173,15 @@ def _render_value_automation_health(company: str) -> None:
     err = st.session_state.get("sf_value_automation_error", "")
     if health is None:
         render_shell_snapshot((
-            ("Candidates", "Not loaded"),
-            ("Verified Candidates", "Not loaded"),
-            ("Candidate Value", "Not loaded"),
-            ("Ledger Rows", "Not loaded"),
+            ("Candidates", "On demand"),
+            ("Verified Candidates", "On demand"),
+            ("Candidate Value", "On demand"),
+            ("Ledger Rows", "On demand"),
         ))
         if err:
-            st.caption(f"Automation evidence unavailable for this role/context: {err}")
+            st.caption(f"Automation telemetry unavailable for this role/context: {err}")
         else:
-            st.caption("Value automation health loads only when requested; scheduled Snowflake refresh owns recurring capture.")
+            st.caption("Value automation health loads only when requested; scheduled Snowflake capture owns recurring refresh.")
         return
     if health.empty:
         st.info("Value automation health view returned no rows.")
@@ -207,9 +193,25 @@ def _render_value_automation_health(company: str) -> None:
             ("Candidate Value", f"${safe_float(row.get('CANDIDATE_MONTHLY_VALUE')):,.0f}/mo"),
             ("Ledger Rows", f"{int(row.get('AUTOMATED_LEDGER_ROWS', 0) or 0):,}"),
         ))
-        st.caption(str(row.get("NEXT_ACTION") or "Review value automation health."))
+        next_action = str(row.get("NEXT_ACTION") or "Review value automation health.")
+        next_action = (
+            next_action
+            .replace("OVERWATCH_VALUE_AUTOMATION_RUN", "automation run history")
+            .replace("OVERWATCH_VALUE_CANDIDATE_V", "value candidates")
+            .replace("OVERWATCH_ROI_LOG", "value ledger")
+            .replace("SP_OVERWATCH_AUTOMATE_VALUE_LOG", "the value capture job")
+        )
+        st.caption(next_action)
+        health_display = health.copy()
+        if "NEXT_ACTION" in health_display.columns:
+            health_display["NEXT_ACTION"] = health_display["NEXT_ACTION"].astype(str).map(
+                lambda value: value.replace("OVERWATCH_VALUE_AUTOMATION_RUN", "automation run history")
+                .replace("OVERWATCH_VALUE_CANDIDATE_V", "value candidates")
+                .replace("OVERWATCH_ROI_LOG", "value ledger")
+                .replace("SP_OVERWATCH_AUTOMATE_VALUE_LOG", "the value capture job")
+            )
         render_priority_dataframe(
-            health,
+            health_display,
             title="Value automation health",
             priority_columns=[
                 "CANDIDATE_COUNT", "VERIFIED_CANDIDATE_COUNT",
@@ -222,14 +224,17 @@ def _render_value_automation_health(company: str) -> None:
             max_rows=1,
         )
     if candidates is not None and not candidates.empty:
-        render_priority_dataframe(
-            candidates,
-            title="Current automated value candidates",
-            priority_columns=[
-                "VALUE_SOURCE", "EVIDENCE_SOURCE", "EVIDENCE_ID", "CATEGORY",
-                "ENTITY", "OWNER", "SAVINGS_MONTHLY", "VALUE_STATE",
+        candidate_columns = [
+            col for col in [
+                "CATEGORY", "ENTITY", "OWNER", "SAVINGS_MONTHLY", "VALUE_STATE",
                 "BUSINESS_IMPACT",
-            ],
+            ] if col in candidates.columns
+        ]
+        candidates_display = candidates[candidate_columns].copy()
+        render_priority_dataframe(
+            candidates_display,
+            title="Current automated value candidates",
+            priority_columns=candidate_columns,
             sort_by=["VALUE_STATE", "SAVINGS_MONTHLY"],
             ascending=[False, False],
             raw_label="All value automation candidates",
@@ -245,12 +250,10 @@ def render():
 
     st.subheader("Snowflake Value")
     st.caption(
-        "Track verified Snowflake optimization, reliability, and incident-prevention wins from evidence. "
-        "Manual entries stay available, but the preferred path is automated capture from action and alert proof."
+        "Track confirmed Snowflake optimization, reliability, and incident-prevention wins from telemetry. "
+        "Scheduled Snowflake capture is the preferred path for action and alert status."
     )
 
-    st.info("Snowflake Value table setup is managed by `snowflake/OVERWATCH_MART_SETUP.sql`.")
-    _render_value_setup_health()
     _render_value_automation_contract()
     _render_value_automation_health(company)
 
@@ -261,14 +264,14 @@ def render():
     df_summary = st.session_state.get("sf_value_summary")
     if df_summary is None:
         render_shell_snapshot((
-            ("Monthly Value", "Not loaded"),
-            ("Annualized Value", "Not loaded"),
-            ("Actions Logged", "Not loaded"),
-            ("Verified Actions", "Not loaded"),
-            ("OVERWATCH Runtime Cost", "Not loaded"),
-            ("Value Multiple", "Not measured"),
+            ("Monthly Value", "On demand"),
+            ("Annualized Value", "On demand"),
+            ("Actions Logged", "On demand"),
+            ("Verified Actions", "On demand"),
+            ("Verified Rate", "On demand"),
+            ("Value Capture", "On demand"),
         ))
-        st.caption("Load Snowflake Value when ledger rows are needed. Automated capture should run in Snowflake so DBAs do not have to maintain this manually.")
+        st.caption("Load Snowflake Value when ledger rows are needed. Automated capture should run in Snowflake so DBAs do not have to maintain recurring updates.")
     else:
         if df_summary.empty:
             st.info("No Snowflake optimization value has been logged yet.")
@@ -277,34 +280,16 @@ def render():
             total_annual = float(df_summary["PROJECTED_ANNUAL_SAVINGS"].sum())
             total_actions = int(df_summary["ACTION_COUNT"].sum())
             total_verified = int(df_summary["VERIFIED_COUNT"].sum())
-            df_app_cost = st.session_state.get("sf_value_app_cost")
-            app_credits = 0.0
-            app_warehouse = "current app warehouse"
-            if df_app_cost is not None and not df_app_cost.empty:
-                app_credits = safe_float(df_app_cost.iloc[0].get("APP_CREDITS_30D"))
-                app_warehouse = str(df_app_cost.iloc[0].get("APP_WAREHOUSE") or app_warehouse)
-            monthly_app_cost = credits_to_dollars(app_credits, credit_price)
-            value_ratio = total_monthly / monthly_app_cost if monthly_app_cost > 0 else None
+            verified_rate = (total_verified / total_actions) if total_actions else 0
 
             render_shell_snapshot((
                 ("Monthly Value", f"${total_monthly:,.2f}"),
                 ("Annualized Value", f"${total_annual:,.2f}"),
                 ("Actions Logged", f"{total_actions:,}"),
                 ("Verified Actions", f"{total_verified:,}"),
-                ("OVERWATCH Runtime Cost", f"${monthly_app_cost:,.2f}"),
-                ("Value Multiple", f"{value_ratio:.1f}x" if value_ratio is not None else "Not measured"),
+                ("Verified Rate", f"{verified_rate:.0%}" if total_actions else "Not measured"),
+                ("Value Capture", "Verified" if total_verified else "Needs review"),
             ))
-            st.caption(
-                "Value Multiple = monthly logged value divided by measured 30-day OVERWATCH runtime cost "
-                f"from {app_warehouse or 'available metering components'}."
-            )
-            st.caption(
-                " | ".join([
-                    metric_confidence_label("allocated"),
-                    freshness_note("WAREHOUSE_METERING_HISTORY"),
-                    "Runtime cost uses metered OVERWATCH-tagged queries, Streamlit warehouses, Cortex, and alert-task activity. No fixed 24x7 warehouse fallback is applied.",
-                ])
-            )
             render_ranked_bar_chart(
                 df_summary,
                 "CATEGORY",
@@ -361,7 +346,7 @@ def render():
                 ],
                 key="sf_value_category",
             )
-            entity = st.text_input("Snowflake object or owner", key="sf_value_entity")
+            entity = st.text_input("Snowflake object or route", key="sf_value_entity")
             baseline = st.number_input("Baseline credits/day", min_value=0.0, value=0.0, step=0.1, key="sf_value_baseline")
             current = st.number_input("Current credits/day", min_value=0.0, value=0.0, step=0.1, key="sf_value_current")
         with f2:
@@ -370,7 +355,7 @@ def render():
                 placeholder="Example: reduced WH_ALFA_ETL auto-suspend from 600s to 60s",
                 key="sf_value_description",
             )
-            notes = st.text_area("Proof / notes", height=90, key="sf_value_notes")
+            notes = st.text_area("Notes", height=90, key="sf_value_notes")
             verified = st.checkbox("Verified in production", key="sf_value_verified")
 
         submitted = st.form_submit_button("Save Value", type="primary")
@@ -409,4 +394,4 @@ def render():
             st.rerun()
         except Exception as e:
             st.error(f"Failed to save Snowflake value: {format_snowflake_error(e)}")
-            st.info("Run the setup DDL above first.")
+            st.info("Snowflake Value logging is not available in this environment yet. Ask the DBA team to enable it, then retry.")

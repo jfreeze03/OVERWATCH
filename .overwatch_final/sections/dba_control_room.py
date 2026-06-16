@@ -1,4 +1,4 @@
-﻿"""DBA Control Room - operational landing page for OVERWATCH.
+"""DBA Control Room - operational landing page for OVERWATCH.
 
 This page is intentionally workflow-first. It summarizes exceptions that a DBA
 must triage, routes each signal to the right specialist tool, and creates
@@ -15,6 +15,7 @@ from config import DEFAULT_ENVIRONMENT, DEFAULTS, SECTION_BY_TITLE, normalize_se
 from sections.base import lazy_pandas, lazy_util as _lazy_util, lazy_util_attr
 from sections.navigation import apply_navigation_state
 from sections.shell_helpers import (
+    _clean_display_text,
     consume_section_autoload_request,
     render_data_freshness,
     render_shell_snapshot,
@@ -47,16 +48,16 @@ def get_credit_price() -> float:
 
 def metric_confidence_label(kind: str) -> str:
     labels = {
-        "exact": "Source basis: Exact",
-        "allocated": "Source basis: Allocated / estimated from exact warehouse metering",
-        "estimated": "Source basis: Estimated",
-        "forecast": "Source basis: Forecast from recent observed burn",
-        "projection": "Source basis: Projection from recent observed burn",
-        "composite": "Source basis: Composite rollup from weighted operational signals",
-        "account": "Source basis: Account-wide",
-        "account-wide": "Source basis: Account-wide",
+        "exact": "Measurement: Exact",
+        "allocated": "Measurement: Allocated from warehouse metering",
+        "estimated": "Measurement: Estimated",
+        "forecast": "Measurement: Forecast from recent observed burn",
+        "projection": "Measurement: Projection from recent observed burn",
+        "composite": "Measurement: Composite rollup from operational signals",
+        "account": "Measurement: Account-wide",
+        "account-wide": "Measurement: Account-wide",
     }
-    return labels.get(str(kind or "").lower(), "Source basis: Calculation depends on available account metadata")
+    return labels.get(str(kind or "").lower(), "Measurement depends on available account metadata")
 
 
 def freshness_note(source: str) -> str:
@@ -70,6 +71,14 @@ def freshness_note(source: str) -> str:
     if "session" in source_key:
         return "Freshness: current Streamlit session only"
     return "Freshness: depends on source view availability"
+
+
+def _gate_state_from_counts(blocked: int, review: int) -> str:
+    if safe_int(blocked):
+        return "Blocked"
+    if safe_int(review):
+        return "Review"
+    return "Ready"
 
 
 def render_operator_briefing(items: list[tuple[str, str]], *, columns: int = 4) -> None:
@@ -131,11 +140,8 @@ DBA_CONTROL_ROOM_PANES = (
     "Operations Board",
     "Triage",
     "Drill Routes",
-    "Release Gate",
-    "Source Health",
     "Service Posture",
-    "Executive Evidence",
-    "Release Compare",
+    "Report Brief",
 )
 DBA_CONTROL_ROOM_PANE_LABELS = {
     "Fast Watch": "Watch",
@@ -143,11 +149,8 @@ DBA_CONTROL_ROOM_PANE_LABELS = {
     "Operations Board": "Ops",
     "Triage": "Triage",
     "Drill Routes": "Routes",
-    "Release Gate": "Gate",
-    "Source Health": "Sources",
     "Service Posture": "Service",
-    "Executive Evidence": "Evidence",
-    "Release Compare": "Compare",
+    "Report Brief": "Brief",
 }
 DBA_CONTROL_ROOM_DETAIL_PANES = (
     "Failed Queries",
@@ -185,13 +188,13 @@ def _live_fallback_deferred_message(source: str, mart_exc: Exception | None = No
     detail = format_snowflake_error(mart_exc) if mart_exc is not None else ""
     suffix = f" Summary error: {detail}" if detail else ""
     return (
-        f"{source} evidence is unavailable for the loaded scope. "
-        f"Use the owning workflow or refresh the fast summary for this surface.{suffix}"
+        f"{source} telemetry is unavailable for the loaded scope. "
+        f"Use the guarded drilldown workflow or refresh the fast summary for this surface.{suffix}"
     )
 
 
 def _clear_dba_control_room_derived_state() -> None:
-    """Clear derived boards when the loaded evidence scope changes."""
+    """Clear derived boards when the loaded telemetry scope changes."""
     for key in DBA_CONTROL_ROOM_DERIVED_STATE_KEYS:
         st.session_state.pop(key, None)
 
@@ -290,11 +293,11 @@ def _jump(title: str, *, warehouse: str = "", user: str = "", workflow: str = ""
             st.session_state["dba_control_room_active_view"] = workflow
         elif title == "Cost & Contract":
             st.session_state["cost_contract_workflow"] = workflow
-        elif title == "Governance & Security":
+        elif title == "Security Monitoring":
             if workflow == "Security Posture":
-                st.session_state["governance_security_view"] = "Security Posture"
+                st.session_state["security_monitoring_view"] = "Security Posture"
             else:
-                st.session_state["governance_security_view"] = "Change & Drift"
+                st.session_state["security_monitoring_view"] = "Change & Drift"
                 st.session_state["change_drift_workflow"] = workflow
                 st.session_state["change_drift_requested_workflow"] = workflow
         elif title == "Security Posture":
@@ -372,7 +375,7 @@ def _dba_control_meta_matches(meta: dict | None, expected: dict | None) -> bool:
 
 
 def _dba_snapshot_scope_compatible(environment: str, state: dict | None = None) -> bool:
-    """Fast snapshot is company-level only; scoped DBA evidence needs detail load."""
+    """Fast snapshot is company-level only; scoped DBA telemetry needs detail load."""
     state = state if state is not None else st.session_state
     if str(environment or "ALL").upper() != "ALL":
         return False
@@ -389,7 +392,7 @@ def _dba_control_source_health_rows(
     include_deep_evidence: bool,
     allow_live_fallback: bool,
 ) -> pd.DataFrame:
-    """Summarize control-room evidence freshness, source mode, and actionability."""
+    """Summarize control-room telemetry freshness, source mode, and actionability."""
     if not isinstance(data, dict) or not data:
         return _empty_df()
     expected_meta = _dba_control_scope_meta(
@@ -438,7 +441,7 @@ def _dba_control_source_health_rows(
         elif err is not None and not err.empty:
             state_label = "Unavailable"
         elif not loaded:
-            state_label = "Not Loaded"
+            state_label = "On demand"
         elif not _dba_control_meta_matches(loaded_meta, expected_meta):
             state_label = "Stale"
         elif value.empty:
@@ -450,7 +453,7 @@ def _dba_control_source_health_rows(
         elif state_label == "Unavailable":
             next_action = "Deploy or refresh the summary/source before relying on this surface."
         elif state_label == "Deferred":
-            next_action = "Load deep evidence only when this source is needed for the current investigation."
+            next_action = "Load deep telemetry only when this source is needed for the current investigation."
         elif state_label == "No Rows":
             next_action = "Confirm the selected scope has relevant events or summary rows."
         elif "fallback" in mode_lower:
@@ -466,7 +469,7 @@ def _dba_control_source_health_rows(
                 "Loaded": 2,
                 "No Rows": 3,
                 "Deferred": 4,
-                "Not Loaded": 5,
+                "On demand": 5,
             }.get(state_label, 9),
             "MODE": mode,
             "ROWS": 0 if value is None or not hasattr(value, "empty") or value.empty else len(value),
@@ -636,7 +639,7 @@ def _task_failure_root_cause(error_text: object, query_text: object = "") -> dic
     ]):
         return {
             "ROOT_CAUSE_SIGNAL": "Object/RBAC drift",
-            "NEXT_ACTION": "Verify the object exists, confirm grants, then rerun the failed task before resuming schedules.",
+            "NEXT_ACTION": "Check that the object exists, confirm grants, then rerun the failed task before resuming schedules.",
             "BLOCKS_RELEASE": "Yes",
         }
     if any(token in signal for token in ["WAREHOUSE", "TIMEOUT", "TIMED OUT", "OUT OF MEMORY", "RESOURCE"]):
@@ -672,7 +675,7 @@ def _build_task_failure_root_cause_timeline(
     lookback_hours: int = 24,
     max_tasks: int = 5,
 ) -> pd.DataFrame:
-    """Build an automatic task-failure timeline from loaded Control Room evidence."""
+    """Build an automatic task-failure timeline from loaded Control Room telemetry."""
     task_failures = _frame_or_empty(data, "task_failures")
     task_sla_cost = _frame_or_empty(data, "task_sla_cost")
     object_changes = _frame_or_empty(data, "object_changes")
@@ -730,9 +733,9 @@ def _build_task_failure_root_cause_timeline(
                     "TASK_NAME": task_name,
                     "ROOT_TASK_NAME": root_task,
                     "ROOT_CAUSE_SIGNAL": diagnosis["ROOT_CAUSE_SIGNAL"],
-                    "EVIDENCE": "Release can proceed only after TASK_HISTORY shows a successful rerun and downstream marts refresh.",
-                    "NEXT_ACTION": "Verify a clean rerun before resuming or closing the release item.",
-                    "SOURCE": "Derived release gate",
+                    "EVIDENCE": "Production change can proceed only after TASK_HISTORY shows a successful rerun and downstream data refresh.",
+                    "NEXT_ACTION": "Confirm a clean rerun before resuming or closing the operational item.",
+                    "SOURCE": "Derived operational status",
                     "BLOCKS_RELEASE": "Yes" if diagnosis["BLOCKS_RELEASE"] == "Yes" else "Review",
                 },
             ])
@@ -768,7 +771,7 @@ def _build_task_failure_root_cause_timeline(
             "ROOT_TASK_NAME": "",
             "ROOT_CAUSE_SIGNAL": str(_row_value(latest, "QUERY_TYPE", "SIGNAL", default="Object change")),
             "EVIDENCE": str(_row_value(latest, "QUERY_PREVIEW", "QUERY_TEXT", "EVIDENCE", default="Recent object or grant change."))[:260],
-            "NEXT_ACTION": "Check whether this DDL/grant change touched the failed task dependency path.",
+            "NEXT_ACTION": "Check whether this object/grant change touched the failed task dependency path.",
             "SOURCE": "Object change mart",
             "BLOCKS_RELEASE": "Review",
         })
@@ -798,10 +801,10 @@ def _build_task_failure_root_cause_timeline(
             "EVENT_TS": "",
             "TASK_NAME": f"{company} / {environment}",
             "ROOT_TASK_NAME": "",
-            "ROOT_CAUSE_SIGNAL": "No loaded failure evidence",
+            "ROOT_CAUSE_SIGNAL": "No loaded failure telemetry",
             "EVIDENCE": f"No task failures or task SLA/cost regressions found in the loaded {lookback_hours}h scope.",
-            "NEXT_ACTION": "Keep monitoring; run Release Compare after product releases that change task or procedure logic.",
-            "SOURCE": "Derived release gate",
+            "NEXT_ACTION": "Keep monitoring; review workload comparison after product releases that change task or procedure logic.",
+            "SOURCE": "Derived operational status",
             "BLOCKS_RELEASE": "No",
         }])
     return pd.DataFrame(rows).sort_values("EVENT_ORDER").reset_index(drop=True)
@@ -811,30 +814,30 @@ def _build_auto_release_readiness_gate(
     data: dict,
     source_health: pd.DataFrame | None = None,
 ) -> tuple[dict, pd.DataFrame]:
-    """Return automatic release blockers from schema, source, and task evidence."""
+    """Return automatic production-change blockers from object, data, and task telemetry."""
     rows: list[dict] = []
     migration = _frame_or_empty(data, "schema_migration_status")
     migration_error = _frame_or_empty(data, "schema_migration_status_error")
     if migration.empty:
         if not migration_error.empty:
             rows.append({
-                "GATE": "Deployment contract",
+                "GATE": "Release status",
                 "STATE": "Review",
                 "SEVERITY": "Medium",
                 "EVIDENCE": str(migration_error.iloc[0].get("ERROR", "Schema migration status unavailable."))[:260],
-                "NEXT_ACTION": "Run the release remediation SQL or full setup SQL, then reload Control Room.",
+                "NEXT_ACTION": "Run the reviewed release remediation or ask the DBA on-call to refresh status telemetry, then reload Control Room.",
                 "ROUTE": "DBA Control Room",
-                "PROOF_REQUIRED": "schema migration status query returns required objects and current version",
+                "PROOF_REQUIRED": "release status telemetry is current and complete",
             })
         else:
             rows.append({
-                "GATE": "Deployment contract",
-                "STATE": "Not Loaded",
+                "GATE": "Release status",
+                "STATE": "On demand",
                 "SEVERITY": "Low",
-                "EVIDENCE": "Schema migration status was not loaded in this Control Room evidence set.",
-                "NEXT_ACTION": "Load DBA Control Room triage before approving a release.",
+                "EVIDENCE": "Release status telemetry is available after Control Room refresh.",
+                "NEXT_ACTION": "Refresh DBA Control Room triage before approving a release.",
                 "ROUTE": "DBA Control Room",
-                "PROOF_REQUIRED": "schema migration status query",
+                "PROOF_REQUIRED": "release status telemetry",
             })
     else:
         view = migration.copy()
@@ -878,9 +881,9 @@ def _build_auto_release_readiness_gate(
             "STATE": "Blocked",
             "SEVERITY": "Critical" if failure_total >= 3 else "High",
             "EVIDENCE": f"{failure_total:,} failed task run(s) across {len(failures):,} grouped task(s). {names}",
-            "NEXT_ACTION": "Use the task root-cause timeline, verify a clean rerun, then decide whether schedules can resume.",
+            "NEXT_ACTION": "Use the task root-cause timeline, confirm a clean rerun, then decide whether schedules can resume.",
             "ROUTE": "Workload Operations",
-            "PROOF_REQUIRED": "TASK_HISTORY success after the latest failure and downstream summary refresh proof",
+            "PROOF_REQUIRED": "TASK_HISTORY success after the latest failure and downstream summary refresh status",
         })
 
     task_sla_cost = _frame_or_empty(data, "task_sla_cost")
@@ -890,9 +893,9 @@ def _build_auto_release_readiness_gate(
             "STATE": "Review",
             "SEVERITY": "High",
             "EVIDENCE": f"{len(task_sla_cost):,} task runtime or cost regression candidate(s).",
-            "NEXT_ACTION": "Run Release Compare and verify task/procedure baselines before accepting the release.",
+            "NEXT_ACTION": "Run Release Compare and confirm task/procedure baselines before accepting the release.",
             "ROUTE": "Workload Operations",
-            "PROOF_REQUIRED": "before/after task graph comparison and owner-approved baseline decision",
+            "PROOF_REQUIRED": "before/after task graph comparison and baseline decision",
         })
 
     latest_runs = _frame_or_empty(data, "task_latest_runs")
@@ -907,9 +910,9 @@ def _build_auto_release_readiness_gate(
                 "STATE": "Review",
                 "SEVERITY": "High",
                 "EVIDENCE": f"{suspended:,} latest task run(s) or inventory row(s) are suspended.",
-                "NEXT_ACTION": "Confirm owner approval and dependency impact before resuming scheduled work.",
+                "NEXT_ACTION": "Confirm review status and dependency impact before resuming scheduled work.",
                 "ROUTE": "Workload Operations",
-                "PROOF_REQUIRED": "SHOW TASKS state, owner approval, and post-resume TASK_HISTORY success",
+                "PROOF_REQUIRED": "SHOW TASKS state, review status, and post-resume TASK_HISTORY success",
             })
 
     if source_health is not None and not source_health.empty and "STATE" in source_health.columns:
@@ -925,35 +928,35 @@ def _build_auto_release_readiness_gate(
                 )
             )
             rows.append({
-                "GATE": "Evidence freshness",
+            "GATE": "Telemetry status",
                 "STATE": "Blocked" if blocking_sources else "Review",
                 "SEVERITY": "High" if blocking_sources else "Medium",
                 "EVIDENCE": (
                     f"{blocking_sources:,} blocked; {review_sources:,} review; "
-                    f"score {safe_int(source_gate_summary.get('score'))}/100. {top_sources}"
+                    f"state {_gate_state_from_counts(blocking_sources, review_sources)}. {top_sources}"
                 ),
                 "NEXT_ACTION": (
-                    "Refresh unavailable core evidence before release approval."
+                    "Refresh unavailable core telemetry before release review."
                     if blocking_sources
-                    else "Reload stale source evidence or confirm the deferred deep evidence is not needed for this release."
+                    else "Reload stale data-health inputs or confirm the deferred deep checks are not needed for this release."
                 ),
-                "ROUTE": "Source Health",
-                "PROOF_REQUIRED": "current source health for the active scope and required release surfaces",
+                "ROUTE": "Data Health",
+                "PROOF_REQUIRED": "current data health for the active scope and required release surfaces",
             })
 
     if not rows:
         rows.append({
-            "GATE": "Release readiness",
+            "GATE": "Release status",
             "STATE": "Ready",
             "SEVERITY": "Low",
-            "EVIDENCE": "No deployment, source, task failure, or release-regression blockers found in loaded evidence.",
+            "EVIDENCE": "No deployment, source, task failure, or release-regression blockers found in loaded telemetry.",
             "NEXT_ACTION": "Keep monitoring and rerun release checks before production changes.",
             "ROUTE": "DBA Control Room",
             "PROOF_REQUIRED": "fresh Control Room load",
         })
 
     gate = pd.DataFrame(rows)
-    state_rank = {"Blocked": 0, "Review": 1, "Not Loaded": 2, "Ready": 4}
+    state_rank = {"Blocked": 0, "Review": 1, "On demand": 2, "Ready": 4}
     severity_rank = {"Critical": 0, "High": 1, "Medium": 2, "Low": 4}
     gate["STATE_RANK"] = gate["STATE"].map(state_rank).fillna(9)
     gate["SEVERITY_RANK"] = gate["SEVERITY"].map(severity_rank).fillna(9)
@@ -962,8 +965,8 @@ def _build_auto_release_readiness_gate(
         "blocked": int(gate["STATE"].eq("Blocked").sum()),
         "review": int(gate["STATE"].eq("Review").sum()),
         "ready": int(gate["STATE"].eq("Ready").sum()),
-        "not_loaded": int(gate["STATE"].eq("Not Loaded").sum()),
-        "score": max(0, min(100, 100 - int(gate["STATE"].eq("Blocked").sum()) * 30 - int(gate["STATE"].eq("Review").sum()) * 12 - int(gate["STATE"].eq("Not Loaded").sum()) * 6)),
+        "not_loaded": int(gate["STATE"].eq("On demand").sum()),
+        "score": max(0, min(100, 100 - int(gate["STATE"].eq("Blocked").sum()) * 30 - int(gate["STATE"].eq("Review").sum()) * 12 - int(gate["STATE"].eq("On demand").sum()) * 6)),
     }
     return summary, gate.drop(columns=["STATE_RANK", "SEVERITY_RANK"], errors="ignore")
 
@@ -973,49 +976,49 @@ def _evidence_surface_route(surface: object) -> tuple[str, str, str]:
     if "schema" in text or "migration" in text:
         return (
             "DBA Control Room",
-            "Release Gate",
-            "schema migration status and required OVERWATCH objects",
+            "Operations Board",
+            "object status and required monitoring objects",
         )
     if "task" in text or "procedure" in text:
         return (
             "Workload Operations",
             "Task and procedure reliability",
-            "TASK_HISTORY, procedure runs, and clean rerun proof",
+            "TASK_HISTORY, procedure runs, and clean rerun telemetry",
         )
     if "warehouse" in text:
         return (
             "Cost & Contract",
             "Recommendations and action queue",
-            "warehouse overview, pressure, settings, and metering evidence",
+            "warehouse overview, pressure, settings, and metering telemetry",
         )
     if "credit" in text or "cost" in text or "cortex" in text:
         return (
             "Cost & Contract",
             "Cost Cockpit",
-            "current credit, cost-driver, budget, and attribution evidence",
+            "current credit, cost-driver, budget, and attribution telemetry",
         )
     if "object" in text or "change" in text or "grant" in text:
         return (
-            "Governance & Security",
+            "Security Monitoring",
             "Object and access changes",
-            "object-change, grant-change, ticket, and blast-radius evidence",
+            "object-change, grant-change, ticket, and blast-radius telemetry",
         )
     if "login" in text or "security" in text:
         return (
-            "Governance & Security",
+            "Security Monitoring",
             "Security Posture",
-            "login, privilege, MFA, and access-review evidence",
+            "login, privilege, MFA, and access-review telemetry",
         )
     if "alert" in text or "action_queue" in text or "action queue" in text:
         return (
             "Alert Center",
             "Alert lifecycle",
-            "alert lifecycle, routing, closure, and delivery evidence",
+            "alert lifecycle, routing, closure, and delivery telemetry",
         )
     return (
         "DBA Control Room",
-        "Source Health",
-        "fresh source health for the active company, environment, lookback, budget, and filters",
+        "Data Health",
+        "fresh data health for the active company, environment, lookback, budget, and filters",
     )
 
 
@@ -1039,7 +1042,7 @@ def _evidence_freshness_core_surface(surface: object) -> bool:
 
 
 def _build_evidence_freshness_gate(source_health: pd.DataFrame | None) -> tuple[dict, pd.DataFrame]:
-    """Score loaded Control Room source health as operational evidence coverage."""
+    """Score loaded Control Room telemetry coverage."""
     if source_health is None or source_health.empty:
         return {
             "surfaces": 0,
@@ -1055,7 +1058,7 @@ def _build_evidence_freshness_gate(source_health: pd.DataFrame | None) -> tuple[
     rows: list[dict] = []
     for _, item in view.iterrows():
         surface = str(item.get("SURFACE") or "")
-        state = str(item.get("STATE") or "Not Loaded")
+        state = str(item.get("STATE") or "On demand")
         mode = str(item.get("MODE") or "")
         rows_count = safe_int(item.get("ROWS"))
         message = str(item.get("MESSAGE") or "")
@@ -1069,43 +1072,43 @@ def _build_evidence_freshness_gate(source_health: pd.DataFrame | None) -> tuple[
             severity = "High"
             release_impact = "Yes"
             rank = 0
-            action = next_action or "Refresh or deploy the missing mart/source before release approval."
+            action = next_action or "Refresh or deploy the missing data input before release review."
         elif state_upper == "UNAVAILABLE":
             gate_state = "Review"
             severity = "Medium"
             release_impact = "Review"
             rank = 2
-            action = next_action or "Refresh the unavailable evidence before relying on this specialist surface."
+            action = next_action or "Refresh the unavailable telemetry before relying on this specialist surface."
         elif state_upper == "STALE":
             gate_state = "Review"
             severity = "High" if core_surface else "Medium"
             release_impact = "Review"
             rank = 1 if core_surface else 3
-            action = next_action or "Reload evidence for the active scope before approving the release."
+            action = next_action or "Reload telemetry for the active scope before release review."
         elif state_upper == "NOT LOADED" and core_surface:
             gate_state = "Review"
             severity = "Medium"
             release_impact = "Review"
             rank = 4
-            action = next_action or "Load this core evidence surface before production signoff."
+            action = next_action or "Load this core telemetry surface before production signoff."
         elif state_upper == "DEFERRED":
             gate_state = "Deferred"
             severity = "Low"
             release_impact = "No"
             rank = 7
-            action = next_action or "Load deep evidence only if this release touches the route."
+            action = next_action or "Load deep telemetry only if this release touches the route."
         elif state_upper in {"LOADED", "NO ROWS"}:
             gate_state = "Ready"
             severity = "Low"
             release_impact = "No"
             rank = 8
-            action = next_action or "Evidence is current for the active scope."
+            action = next_action or "Telemetry is current for the active scope."
         else:
-            gate_state = "Not Loaded"
+            gate_state = "On demand"
             severity = "Low"
             release_impact = "No"
             rank = 9
-            action = next_action or "Load evidence if this source is needed for the release."
+            action = next_action or "Load telemetry if this source is needed for the release."
 
         rows.append({
             "SURFACE": surface,
@@ -1156,7 +1159,7 @@ def _control_room_snapshot_to_data(snapshot: pd.DataFrame) -> dict:
     """Convert the lightweight summary snapshot into the data shape used by the page.
 
     The summary snapshot is intentionally small: it supports the watch floor and
-    morning triage metrics, while deep evidence tables still load on demand.
+    morning triage metrics, while deep telemetry tables still load on demand.
     """
     if snapshot is None or snapshot.empty:
         return {}
@@ -1972,7 +1975,7 @@ def _load_control_room(
         source_rows.append({
             "Source": "workload_task_status",
             "Mode": "Live fallback deferred" if allow_live_fallback else "Fast summary unavailable",
-            "Message": "Snowflake TASK_HISTORY summary runs only when deep evidence and live fallback are both enabled.",
+            "Message": "Snowflake TASK_HISTORY summary runs only when deep telemetry and live fallback are both enabled.",
         })
 
     try:
@@ -1989,7 +1992,7 @@ def _load_control_room(
         source_rows.append({
             "Source": "schema_migration_status",
             "Mode": "Metadata unavailable",
-            "Message": "Release migration status unavailable; apply setup or remediation SQL before release approval.",
+            "Message": "Release migration status unavailable; complete status or remediation review before release review.",
         })
 
     if not include_deep_evidence:
@@ -2003,17 +2006,17 @@ def _load_control_room(
             {
                 "Source": "task_sla_history",
                 "Mode": "Deferred",
-                "Message": "Skipped for fast DBA Control Room triage. Use Workload Operations for task run evidence.",
+                "Message": "Skipped for fast DBA Control Room triage. Use Workload Operations for task run telemetry.",
             },
             {
                 "Source": "procedure_sla",
                 "Mode": "Deferred",
-                "Message": "Skipped for fast DBA Control Room triage. Use Workload Operations for procedure SLA/cost evidence.",
+                "Message": "Skipped for fast DBA Control Room triage. Use Workload Operations for procedure SLA/cost telemetry.",
             },
             {
                 "Source": "cortex_cost",
                 "Mode": "Deferred",
-                "Message": "Skipped for fast DBA Control Room triage. Use Cost & Contract for Cortex cost evidence.",
+                "Message": "Skipped for fast DBA Control Room triage. Use Cost & Contract for Cortex cost telemetry.",
             },
         ])
         try:
@@ -2171,23 +2174,23 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
     if safe_int(release_summary.get("blocked")):
         rows.append({
             "Severity": "High",
-            "Signal": "Release gate blocked",
+            "Signal": "Operational status blocked",
             "Evidence": (
-                f"{safe_int(release_summary.get('blocked')):,} blocked gate(s); "
+                f"{safe_int(release_summary.get('blocked')):,} blocked status item(s); "
                 f"{safe_int(release_summary.get('review')):,} review item(s)"
             ),
-            "Action": "Open Release Gate and clear deployment/task recovery blockers before production approval.",
+            "Action": "Open Operations Board and clear task recovery blockers before production change.",
             "Route": "DBA Control Room",
-            "Workflow": "Release Gate",
+            "Workflow": "Operations Board",
         })
     elif safe_int(release_summary.get("review")):
         rows.append({
             "Severity": "Medium",
-            "Signal": "Release gate needs review",
-            "Evidence": f"{safe_int(release_summary.get('review')):,} release gate review item(s)",
-            "Action": "Review source health, task timeline, owner approval, and rollback proof before release signoff.",
+            "Signal": "Operational status needs review",
+            "Evidence": f"{safe_int(release_summary.get('review')):,} operational status review item(s)",
+            "Action": "Review task timeline, telemetry status, and rollback path before production change.",
             "Route": "DBA Control Room",
-            "Workflow": "Release Gate",
+            "Workflow": "Operations Board",
         })
     failed_queries = safe_int(row.get("FAILED_QUERIES", 0))
     queued_queries = safe_int(row.get("QUEUED_QUERIES", 0))
@@ -2300,16 +2303,16 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
             "Signal": "Failed logins",
             "Evidence": f"{len(logins):,} recent failed login records",
             "Action": "Review source IPs, user posture, MFA, and client versions.",
-            "Route": "Governance & Security",
+            "Route": "Security Monitoring",
             "Workflow": "Security Posture",
         })
     if not changes.empty:
         rows.append({
             "Severity": "Medium",
             "Signal": "Object or grant changes",
-            "Evidence": f"{len(changes):,} recent DDL/access changes",
-            "Action": "Validate expected change windows and ownership.",
-            "Route": "Governance & Security",
+            "Evidence": f"{len(changes):,} recent object/access changes",
+            "Action": "Validate expected change windows and route context.",
+            "Route": "Security Monitoring",
             "Workflow": "Object and access changes",
         })
     if not queue.empty:
@@ -2320,7 +2323,7 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
                 "Severity": "Medium",
                 "Signal": "Open action queue",
                 "Evidence": f"{len(open_queue):,} open recommendations",
-                "Action": "Assign owners and move items toward fixed/ignored.",
+            "Action": "Assign routes and move items toward fixed/ignored.",
                 "Route": "Cost & Contract",
                 "Workflow": "Recommendations and action queue",
             })
@@ -2336,12 +2339,12 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
                 recovery = int(closure_blockers.get("RECOVERY_RISK_ROWS", pd.Series(dtype=int)).sum())
                 rows.append({
                     "Severity": "High" if overdue or unverified else "Medium",
-                    "Signal": "Closure evidence blockers",
+                    "Signal": "Closure status blockers",
                     "Evidence": (
                         f"{len(closure_blockers):,} route(s) blocked; {overdue:,} overdue, "
-                        f"{unverified:,} fixed without verification, {recovery:,} recovery evidence risk."
+                        f"{unverified:,} closed pending telemetry, {recovery:,} recovery status risk."
                     ),
-                    "Action": "Use DBA Command Queue Control to close proof, approval, ticket, and recovery gaps.",
+                    "Action": "Use DBA Command Queue Control to close telemetry, ticket, review, and recovery gaps.",
                     "Route": "DBA Control Room",
                     "Workflow": "Action Queue",
                 })
@@ -2367,9 +2370,9 @@ def _command_queue_route(category: object) -> str:
     if "TASK" in value or "PROCEDURE" in value or "RELIABILITY" in value:
         return "Workload Operations"
     if "SECURITY" in value or "ACCESS" in value or "GRANT" in value:
-        return "Governance & Security"
-    if "CHANGE" in value or "DRIFT" in value or "GOVERNANCE" in value:
-        return "Governance & Security"
+        return "Security Monitoring"
+    if "CHANGE" in value or "DRIFT" in value:
+        return "Security Monitoring"
     if "WAREHOUSE" in value or "CAPACITY" in value:
         return "Cost & Contract"
     return "Alert Center"
@@ -2470,7 +2473,7 @@ def _command_named_owner(row: pd.Series) -> bool:
 
 
 def _enrich_command_owner_context(view: pd.DataFrame) -> pd.DataFrame:
-    """Add shared owner-directory routing fields to command queue rows."""
+    """Add shared monitoring route fields to command queue rows."""
     if view is None or view.empty:
         return view
     enriched = view.copy()
@@ -2555,11 +2558,11 @@ def _command_closure_issue_flags(row: pd.Series) -> dict:
 
 def _command_closure_next_action(row: pd.Series | dict) -> str:
     if safe_int(row.get("OVERDUE_OPEN", 0)):
-        return "Escalate overdue work, confirm the owner, and attach ticket plus verification evidence."
+        return "Escalate overdue work, confirm the route, and add ticket plus telemetry status."
     if safe_int(row.get("FIXED_WITHOUT_VERIFICATION", 0)):
-        return "Attach verification result/notes or reopen fixed items that lack proof."
+        return "Reopen fixed items or wait for telemetry to confirm closure."
     if safe_int(row.get("RECOVERY_RISK_ROWS", 0)):
-        return "Attach recovery evidence or reopen items with breached/late closure state."
+        return "Track recovery status or reopen items with breached/late closure state."
     metadata_gaps = (
         safe_int(row.get("OWNER_GAP_ROWS", 0))
         + safe_int(row.get("TICKET_GAP_ROWS", 0))
@@ -2568,10 +2571,10 @@ def _command_closure_next_action(row: pd.Series | dict) -> str:
         + safe_int(row.get("OWNER_APPROVAL_GAP_ROWS", 0))
     )
     if metadata_gaps:
-        return "Complete owner, ticket, approver, approval, and verification metadata."
+        return "Complete route, ticket, reviewer, and telemetry metadata."
     if safe_int(row.get("OPEN_ACTIONS", 0)):
-        return "Work open actions and keep before/after proof ready for closure."
-    return "Retain verified closure evidence for audit and trend review."
+        return "Work open actions and keep before/after telemetry ready for closure."
+    return "Keep closure status visible for audit and trend review."
 
 
 def _command_queue_closure_readiness(queue: pd.DataFrame, today: str | pd.Timestamp | None = None) -> pd.DataFrame:
@@ -2622,15 +2625,15 @@ def _command_queue_closure_readiness(queue: pd.DataFrame, today: str | pd.Timest
         if totals["OVERDUE_OPEN"]:
             readiness, rank = "Overdue closure", 0
         elif totals["FIXED_WITHOUT_VERIFICATION"]:
-            readiness, rank = "Fixed without verification", 1
+            readiness, rank = "Closed pending telemetry", 1
         elif totals["RECOVERY_RISK_ROWS"]:
-            readiness, rank = "Recovery evidence risk", 2
+            readiness, rank = "Recovery status risk", 2
         elif metadata_gaps:
             readiness, rank = "Control metadata gap", 3
         elif totals["OPEN_ACTIONS"]:
             readiness, rank = "Open", 4
         elif totals["VERIFIED_CLOSURES"]:
-            readiness, rank = "Verified closure", 8
+            readiness, rank = "Closed", 8
         else:
             readiness, rank = "No recent action", 9
         latest = group.loc[latest_idx]
@@ -2670,15 +2673,15 @@ def _command_execution_metadata(row: pd.Series) -> dict:
 
     gaps: list[str] = []
     if not _command_named_owner(row):
-        gaps.append("Named owner")
+        gaps.append("Named route")
     if not route_ready:
-        gaps.append("Owner/on-call route")
+        gaps.append("On-call route")
     if not _command_value_present(row, "TICKET_ID"):
         gaps.append("Ticket/change ID")
     if not _command_value_present(row, "APPROVER"):
-        gaps.append("Approver")
+        gaps.append("Reviewer")
     if not _command_value_present(row, "VERIFICATION_QUERY", "PROOF_QUERY"):
-        gaps.append("Verification query")
+        gaps.append("Telemetry query")
     if ("COST" in category or "CHARGEBACK" in category or "TASK" in category or "PROCEDURE" in category) and (
         not _command_value_present(row, "BASELINE_VALUE")
         or not _command_value_present(row, "CURRENT_VALUE")
@@ -2687,15 +2690,15 @@ def _command_execution_metadata(row: pd.Series) -> dict:
 
     approval_blocked = requires_approval and approval_status in {"", "PENDING", "REQUESTED", "REQUIRED"}
     if approval_blocked:
-        gaps.append("Owner approval")
+        gaps.append("Review status")
 
-    metadata_missing = any(item != "Owner approval" for item in gaps)
+    metadata_missing = any(item != "Review status" for item in gaps)
     if due_state == "Overdue":
         gate = "Escalate - Overdue"
     elif metadata_missing:
         gate = "Blocked - Metadata"
     elif approval_blocked:
-        gate = "Blocked - Owner Approval"
+        gate = "Blocked - Review"
     elif severity in {"CRITICAL", "HIGH"}:
         gate = "Ready - High Risk"
     else:
@@ -2703,7 +2706,7 @@ def _command_execution_metadata(row: pd.Series) -> dict:
 
     audit_ready = gate.startswith("Ready")
     return {
-        "COMMAND_OWNER_READINESS": "Named Owner" if _command_named_owner(row) else "Owner Needed",
+        "COMMAND_OWNER_READINESS": "Named Route" if _command_named_owner(row) else "Route Needed",
         "COMMAND_ROUTE_READINESS": "Route Ready" if route_ready else "Route Needed",
         "COMMAND_AUDIT_READINESS": "Audit Ready" if audit_ready else "Audit Gaps",
         "COMMAND_EXECUTION_GATE": gate,
@@ -2787,14 +2790,14 @@ def _command_queue_summary(queue: pd.DataFrame) -> dict:
         "ready": ready if "COMMAND_EXECUTION_GATE" in queue.columns else int(evidence.eq("Ready to work").sum()),
         "control_gaps": int(evidence.ne("Ready to work").sum()),
         "owner_gaps": int(evidence_rollup.str.contains("named owner", case=False, na=False).sum()),
-        "approval_gaps": int(evidence_rollup.str.contains("approver|owner approval", case=False, na=False).sum()),
+        "approval_gaps": int(evidence_rollup.str.contains("reviewer|Review status", case=False, na=False).sum()),
         "ticket_gaps": int(evidence_rollup.str.contains("ticket|change ID", case=False, na=False).sum()),
         "high_risk": int(severity.isin(["CRITICAL", "HIGH"]).sum()),
         "execution_ready": ready,
         "audit_ready": int(audit.eq("Audit Ready").sum()),
         "route_ready": int(route.eq("Route Ready").sum()),
         "metadata_blocks": int(gate.eq("Blocked - Metadata").sum()),
-        "approval_blocks": int(gate.eq("Blocked - Owner Approval").sum()),
+        "approval_blocks": int(gate.eq("Blocked - Review").sum()),
     }
     summary["control_ready_pct"] = round((summary["execution_ready"] / summary["open"]) * 100, 1) if summary["open"] else 0.0
     return summary
@@ -2809,15 +2812,15 @@ def _command_queue_route_readiness(queue: pd.DataFrame) -> pd.DataFrame:
     for route, group in queue.groupby(route_series):
         summary = _command_queue_summary(group)
         if summary["overdue"]:
-            next_action = "Escalate overdue items and attach owner/ticket evidence."
+            next_action = "Escalate overdue items and add route/ticket status."
         elif summary["metadata_blocks"]:
-            next_action = "Complete owner, ticket, approver, and verification metadata."
+            next_action = "Complete route, ticket, reviewer, and telemetry metadata."
         elif summary["approval_blocks"]:
-            next_action = "Collect owner approval before DBA execution."
+            next_action = "Collect review status before DBA execution."
         elif summary["execution_ready"]:
-            next_action = "Work ready items, then attach verification proof before closure."
+            next_action = "Work ready items, then monitor telemetry before closure."
         else:
-            next_action = "Triage route and assign accountable DBA owner."
+            next_action = "Triage route and assign accountable DBA on-call."
         rows.append({
             "ROUTE": route,
             "OPEN_ACTIONS": summary["open"],
@@ -2838,26 +2841,26 @@ def _command_queue_route_readiness(queue: pd.DataFrame) -> pd.DataFrame:
 
 
 def _dba_section_proof_required(section: object, lowest_component: object = "") -> str:
-    """Return the minimum proof contract for a section to remain credibly 95+."""
+    """Return the minimum telemetry contract for a section to remain credibly 95+."""
     name = str(section or "").upper()
     component = str(lowest_component or "").lower()
     if "WAREHOUSE" in name:
-        return "capacity evidence, setting review snapshot, owner approval, rollback SQL, post-change verification"
+        return "capacity telemetry, setting review snapshot, review status, rollback SQL, post-change telemetry"
     if "CHANGE" in name or "DRIFT" in name:
-        return "change ticket, query_id, release-note/rollback proof, blast-radius review, closure verification"
+        return "change ticket, query_id, release-note/rollback status, blast-radius review, closure status"
     if "COST" in name:
-        return "allocated cost basis, warehouse capacity evidence, owner chargeback, savings verification, rollback SQL, finance-ready closure evidence"
+        return "allocated cost basis, warehouse capacity telemetry, cost attribution, savings telemetry, rollback SQL, finance-ready closure status"
     if "SECURITY" in name:
-        return "role/grant owner, approver, ticket, least-privilege verification, access closure proof"
+        return "role/grant route, reviewer, ticket, least-privilege telemetry, access closure status"
     if "ACCOUNT" in name:
-        return "checklist owner, hygiene evidence, approved remediation, verified closure notes"
+        return "checklist route, hygiene telemetry, reviewed remediation, closure status"
     if "ALERT" in name:
-        return "alert source health, routed owner, email evidence, suppression/acknowledgement history"
+        return "alert data health, routed contact, email status, suppression/acknowledgement history"
     if "WORKLOAD" in name:
-        return "task/procedure failure proof, owner, runbook, recovery SLA, successful retry evidence"
+        return "task/procedure failure telemetry, route, runbook, recovery SLA, successful retry status"
     if "DBA CONTROL" in name or "operability" in component:
-        return "current source health, command queue route, owner/ticket metadata, closure proof"
-    return "owner, ticket, approver, verification query, closure evidence"
+        return "current data health, command queue route, ticket metadata, closure status"
+    return "route, ticket, reviewer, telemetry query, closure status"
 
 
 def _dba_incident_type(route: object, signal: object) -> str:
@@ -2876,10 +2879,10 @@ def _dba_incident_type(route: object, signal: object) -> str:
         return "Security / Access"
     if any(token in text for token in ("CHANGE", "DRIFT", "DDL", "OBJECT")):
         return "Change Control"
-    if any(token in text for token in ("CLOSURE", "EVIDENCE", "PROOF")):
+    if any(token in text for token in ("CLOSURE", "TELEMETRY", "STATUS")):
         return "Control Closure"
     if any(token in text for token in ("SOURCE", "STALE", "UNAVAILABLE", "MART")):
-        return "Evidence Quality"
+        return "Data Quality"
     return "DBA Operations"
 
 
@@ -2899,31 +2902,31 @@ def _dba_incident_sla_target(incident_type: object, severity: object) -> str:
     if rank <= 0:
         return "Contain within 15 minutes; executive DBA update within 30 minutes."
     if rank == 1 and any(token in incident for token in ("SECURITY", "RELIABILITY", "CAPACITY")):
-        return "Contain within 30 minutes; recovery or owner-approved mitigation within 4 hours."
+        return "Contain within 30 minutes; recovery or confirmed mitigation within 4 hours."
     if rank == 1:
-        return "Contain same shift; owner-approved mitigation plan before handoff."
+        return "Contain same shift; current mitigation plan before handoff."
     if rank == 2:
-        return "Triage same business day; queue action with owner, due date, and proof."
+        return "Triage same business day; queue action with route, due date, and telemetry."
     return "Monitor during next DBA review cycle."
 
 
 def _dba_incident_containment_action(incident_type: object) -> str:
     incident = str(incident_type or "").upper()
     if "COST" in incident:
-        return "Freeze broad scaling changes, identify top cost driver, and require owner approval before mitigation."
+        return "Freeze broad scaling changes, identify top cost driver, and require review status before mitigation."
     if "WAREHOUSE" in incident:
         return "Stabilize queue/spill pressure first; route setting changes through Warehouse Settings Manager."
     if "WORKLOAD" in incident or "QUERY" in incident:
-        return "Separate failing workload from platform issue, capture query/task evidence, and protect downstream SLAs."
+        return "Separate failing workload from platform issue, capture query/task telemetry, and protect downstream SLAs."
     if "SECURITY" in incident:
-        return "Preserve evidence, validate requester/approver, and avoid grant changes until owner route is clear."
+        return "Preserve telemetry, validate requester/reviewer, and avoid grant changes until escalation route is clear."
     if "CHANGE" in incident:
-        return "Hold closure until ticket, query_id, approval, rollback, and blast-radius proof are attached."
+        return "Hold closure until ticket, query_id, review, rollback, and blast-radius status are current."
     if "CLOSURE" in incident:
-        return "Reopen or block closure until verification, recovery, and approval evidence are present."
-    if "EVIDENCE" in incident:
-        return "Refresh mart/source evidence before taking irreversible DBA action."
-    return "Assign DBA owner, capture evidence, and route to the specialist workflow."
+        return "Reopen or block closure until telemetry, recovery, and review status are present."
+    if "DATA" in incident or "TELEMETRY" in incident:
+        return "Refresh summary/source telemetry before taking irreversible DBA action."
+    return "Assign DBA on-call, capture telemetry, and route to the specialist workflow."
 
 
 def _dba_incident_investigation_path(route: object, workflow: object = "") -> str:
@@ -2989,7 +2992,7 @@ def _dba_incident_board(
                 "EVIDENCE": (
                     f"{open_actions:,} open; {overdue:,} overdue; "
                     f"{safe_int(item.get('EXECUTION_READY')):,} execution-ready; "
-                    f"{proof_blocks:,} owner/approval/metadata blocks"
+                    f"{proof_blocks:,} route/review/metadata blocks"
                 ),
                 "WORKFLOW": "",
                 "OPEN_ACTIONS": open_actions,
@@ -3008,7 +3011,7 @@ def _dba_incident_board(
         ]
         for _, item in blocked.iterrows():
             route = str(item.get("ROUTE") or "DBA Control Room")
-            signal = str(item.get("CLOSURE_READINESS") or "Closure evidence blockers")
+            signal = str(item.get("CLOSURE_READINESS") or "Closure status blockers")
             overdue = safe_int(item.get("OVERDUE_OPEN"))
             proof_blocks = safe_int(item.get("CLOSURE_BLOCKER_ROWS"))
             events.append({
@@ -3018,7 +3021,7 @@ def _dba_incident_board(
                 "SIGNAL": signal,
                 "EVIDENCE": (
                     f"{safe_int(item.get('OPEN_ACTIONS')):,} open; {overdue:,} overdue; "
-                    f"{safe_int(item.get('FIXED_WITHOUT_VERIFICATION')):,} fixed without verification; "
+                    f"{safe_int(item.get('FIXED_WITHOUT_VERIFICATION')):,} closed pending telemetry; "
                     f"{safe_int(item.get('RECOVERY_RISK_ROWS')):,} recovery-risk"
                 ),
                 "WORKFLOW": "Action Queue",
@@ -3036,15 +3039,15 @@ def _dba_incident_board(
             source_view.get("STATE", pd.Series([""] * len(source_view), index=source_view.index)).fillna("").astype(str).isin(["Unavailable", "Stale"])
         ]
         for _, item in source_blocks.iterrows():
-            surface = str(item.get("SURFACE") or "Evidence surface")
+            surface = str(item.get("SURFACE") or "Telemetry surface")
             state = str(item.get("STATE") or "Source issue")
             events.append({
-                "INCIDENT_TYPE": "Evidence Quality",
-                "ROUTE": "Source Health",
+                "INCIDENT_TYPE": "Data Quality",
+                "ROUTE": "Data Health",
                 "SEVERITY": "High" if state == "Unavailable" else "Medium",
                 "SIGNAL": f"{surface} {state}",
                 "EVIDENCE": f"{surface}; {state}; rows={safe_int(item.get('ROWS')):,}; scope={item.get('SCOPE', '')}",
-                "WORKFLOW": "Source Health",
+                "WORKFLOW": "Data Health",
                 "OPEN_ACTIONS": 0,
                 "OVERDUE": 0,
                 "PROOF_BLOCKS": 0,
@@ -3059,7 +3062,7 @@ def _dba_incident_board(
             "STATUS": "Monitor",
             "AFFECTED_ROUTES": "DBA Control Room",
             "SIGNALS": "No active incident signals",
-            "EVIDENCE": "Loaded evidence produced no exception, queue blocker, closure blocker, or stale source surface.",
+            "EVIDENCE": "Loaded telemetry produced no exception, queue blocker, closure blocker, or stale data input.",
             "OPEN_ACTIONS": 0,
             "OVERDUE": 0,
             "PROOF_BLOCKS": 0,
@@ -3086,7 +3089,7 @@ def _dba_incident_board(
             status = "Containment Required"
             rank = 0
         elif source_issues:
-            status = "Evidence Refresh Required"
+            status = "Telemetry Refresh Required"
             rank = 1
         elif _dba_incident_rank(severity) <= 1:
             status = "Investigate Now"
@@ -3126,34 +3129,34 @@ def _dba_source_health_deployment_gate(source_health: pd.DataFrame | None) -> di
     if source_health is None or source_health.empty or "STATE" not in source_health.columns:
         return {
             "score": 100,
-            "label": "Source Health",
+            "label": "Data Health",
             "reason": "",
         }
     states = source_health["STATE"].fillna("").astype(str)
     unavailable = int(states.isin(["Unavailable"]).sum())
     stale = int(states.isin(["Stale"]).sum())
-    not_loaded = int(states.isin(["Not Loaded"]).sum())
+    not_loaded = int(states.isin(["On demand"]).sum())
     if unavailable:
         return {
             "score": 86,
-            "label": "Source Health",
-            "reason": f"{unavailable:,} required source surface(s) unavailable.",
+            "label": "Data Health",
+            "reason": f"{unavailable:,} required data input(s) unavailable.",
         }
     if stale:
         return {
             "score": 90,
-            "label": "Source Health",
-            "reason": f"{stale:,} source surface(s) stale for the active scope.",
+            "label": "Data Health",
+            "reason": f"{stale:,} data input(s) stale for the active scope.",
         }
     if not_loaded:
         return {
             "score": 94,
-            "label": "Source Health",
-            "reason": f"{not_loaded:,} source surface(s) not loaded in this session.",
+            "label": "Data Health",
+            "reason": f"{not_loaded:,} signal group(s) available after refresh.",
         }
     return {
         "score": 100,
-        "label": "Source Health",
+        "label": "Data Health",
         "reason": "",
     }
 
@@ -3201,23 +3204,23 @@ def _dba_section_operability_board(
 
         if overdue:
             state, rank = "Escalate Now", 0
-            next_action = "Escalate overdue route work and attach owner, ticket, and verification evidence."
+            next_action = "Escalate overdue route work and add ticket plus telemetry status."
             closure_gate_score = 72
         elif fixed_without_verification or recovery_risk or closure_rank in {1, 2}:
-            state, rank = "Closure Evidence Blocked", 1
-            next_action = "Attach verification or recovery evidence before accepting the section as controlled."
+            state, rank = "Closure Status Pending", 1
+            next_action = "Wait for telemetry or recovery status before accepting the section as controlled."
             closure_gate_score = 82
         elif metadata_blocks:
             state, rank = "Route Metadata Blocked", 2
-            next_action = "Complete owner, ticket, approver, and verification metadata for open work."
+            next_action = "Complete route, ticket, reviewer, and telemetry metadata for open work."
             closure_gate_score = 88
         elif approval_blocks:
-            state, rank = "Approval Blocked", 3
-            next_action = "Collect owner approval before DBA execution."
+            state, rank = "Review Blocked", 3
+            next_action = "Collect review status before DBA execution."
             closure_gate_score = 90
         elif open_actions:
             state, rank = "Work Open Actions", 4
-            next_action = "Work ready actions, then retain proof for closure."
+            next_action = "Work ready actions, then retain telemetry for closure."
             closure_gate_score = 94
         elif score < 95:
             state, rank = "Build Toward 95", 6
@@ -3225,7 +3228,7 @@ def _dba_section_operability_board(
             closure_gate_score = 100
         else:
             state, rank = "95 Target", 8
-            next_action = "Maintain verified closure evidence and owner routing."
+            next_action = "Maintain closure status and route coverage."
             closure_gate_score = 100
 
         gates = {
@@ -3306,21 +3309,21 @@ def _dba_operations_priority_state(row: pd.Series | dict) -> tuple[str, str]:
     section_action = str(row.get("SECTION_NEXT_ACTION") or "").strip()
     next_99 = str(row.get("NEXT_99_MOVE") or "").strip()
     if overdue or "Containment" in incident_status:
-        return "Contain Now", incident_action or "Escalate overdue work and capture owner, ticket, approval, and verification evidence."
+        return "Contain Now", incident_action or "Escalate overdue work and capture route, ticket, and telemetry status."
     if proof_blocks or source_issues:
-        return "Restore Control Evidence", incident_action or "Refresh blocked evidence and attach proof before DBA execution."
+        return "Restore Control Telemetry", incident_action or "Refresh blocked telemetry before DBA execution."
     if metadata_blocks:
-        return "Unblock Route Metadata", "Complete owner, ticket, approver, route, and verification metadata."
+        return "Unblock Route Metadata", "Complete route, ticket, reviewer, and telemetry metadata."
     if approval_blocks:
-        return "Approval Required", "Collect owner approval before executing DBA-controlled action."
+        return "Review Required", "Collect review status before executing DBA-controlled action."
     if execution_ready:
-        return "Execute Ready Work", "Work execution-ready items, then attach before/after verification proof."
+        return "Execute Ready Work", "Work execution-ready items, then monitor before/after telemetry."
     if effective_score < section_score:
         detail = f"Resolve gate driver(s): {gate_drivers}." if gate_drivers and gate_drivers != "none" else "Resolve active deployment gate driver(s)."
         return "Deployment Gate", detail
     if effective_score < 99:
-        return "Review Route", next_99 or section_action or "Harden the lowest control component and preserve closure evidence."
-    return "Monitor", "Maintain source health, owner route, and verified closure evidence."
+        return "Review Route", next_99 or section_action or "Harden the lowest control component and preserve closure status."
+    return "Monitor", "Maintain data health, escalation route, and closure status."
 
 
 def _dba_operations_priority_index(
@@ -3331,7 +3334,7 @@ def _dba_operations_priority_index(
     *,
     max_rows: int = 9,
 ) -> pd.DataFrame:
-    """Rank DBA sections by live risk, command blockers, evidence gaps, and 99-target drift."""
+    """Rank DBA sections by live risk, command blockers, telemetry gaps, and 99-target drift."""
     board = section_board.copy() if section_board is not None and not section_board.empty else _dba_section_operability_board(
         command_queue=command_queue,
         closure_rollup=_command_queue_closure_readiness(command_queue),
@@ -3441,17 +3444,17 @@ def _dba_operations_priority_index(
         if overdue:
             reason_bits.append(f"{overdue:,} overdue")
         if proof_blocks:
-            reason_bits.append(f"{proof_blocks:,} proof/recovery blocker(s)")
+            reason_bits.append(f"{proof_blocks:,} telemetry/recovery blocker(s)")
         if metadata_blocks:
             reason_bits.append(f"{metadata_blocks:,} metadata blocker(s)")
         if approval_blocks:
-            reason_bits.append(f"{approval_blocks:,} approval blocker(s)")
+            reason_bits.append(f"{approval_blocks:,} review blocker(s)")
         if source_issue_count:
             reason_bits.append(f"{source_issue_count:,} stale/unavailable source(s)")
         if deployment_gap:
-            reason_bits.append(f"{deployment_gap:.1f} effective-readiness gate")
+            reason_bits.append(f"{deployment_gap:.1f} effective-status gate")
         if not reason_bits and target_gap:
-            reason_bits.append("route needs owner/proof hardening")
+            reason_bits.append("route needs telemetry hardening")
         row = {
             "SECTION": section,
             "PRIORITY_SCORE": priority_score,
@@ -3512,23 +3515,23 @@ def _render_operations_priority_index(priority_index: pd.DataFrame) -> None:
         "SECTION": "Route",
         "WORST_SIGNAL": "Signal",
         "OVERDUE": "Overdue",
-        "PROOF_BLOCKS": "Proof Blocks",
+        "PROOF_BLOCKS": "Telemetry Blocks",
         "METADATA_BLOCKS": "Metadata Blocks",
-        "APPROVAL_BLOCKS": "Approval Blocks",
-        "SOURCE_ISSUES": "Source Issues",
+        "APPROVAL_BLOCKS": "Review Blocks",
+        "SOURCE_ISSUES": "Input Issues",
         "WHY_NOW": "Why Now",
         "FIRST_MOVE": "First Move",
-        "PROOF_REQUIRED": "Proof Required",
+        "PROOF_REQUIRED": "Telemetry Basis",
         "PRIORITY_SCORE": "Sort Priority",
     })
     render_priority_dataframe(
         view,
         title="Operations priority board",
         priority_columns=[
-            "Route", "State", "Signal", "Overdue", "Proof Blocks", "Metadata Blocks",
-            "Approval Blocks", "Source Issues", "Why Now", "First Move", "Proof Required",
+            "Route", "State", "Signal", "Overdue", "Telemetry Blocks", "Metadata Blocks",
+            "Review Blocks", "Input Issues", "Why Now", "First Move", "Telemetry Basis",
         ],
-        sort_by=["Sort Priority", "Overdue", "Proof Blocks"],
+        sort_by=["Sort Priority", "Overdue", "Telemetry Blocks"],
         ascending=[False, False, False],
         raw_label="All operations priority rows",
         height=260,
@@ -3543,9 +3546,9 @@ def _dba_runbook_route_templates(section: object, lookback_hours: int) -> dict:
     hours = max(1, min(safe_int(lookback_hours, 24), 168))
     if "WAREHOUSE" in route:
         return {
-            "owner_route": "Warehouse owner / DBA capacity reviewer",
+            "owner_route": "Warehouse route / DBA capacity reviewer",
             "containment": "Use Cost & Contract to isolate the exact warehouse, workload, queue, spill, and dollar pattern before any setting change.",
-            "candidate": "Use Warehouse Settings Manager only after owner approval; prefer the smallest targeted setting change with rollback SQL.",
+            "candidate": "Use Warehouse Settings Manager only after review status is present; prefer the smallest targeted setting change with rollback SQL.",
             "preflight_sql": f"""SELECT warehouse_name, COUNT(*) AS queries,
        SUM(COALESCE(queued_overload_time, 0)) / 1000 AS queued_sec,
        SUM(COALESCE(bytes_spilled_to_remote_storage, 0)) / POWER(1024, 3) AS remote_spill_gb,
@@ -3560,13 +3563,13 @@ FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
 WHERE start_time >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
 GROUP BY warehouse_name
 ORDER BY credits_used DESC;""",
-            "rollback_sql": "SHOW WAREHOUSES; -- Compare current settings to the approved before-change snapshot and rollback script.",
+            "rollback_sql": "SHOW WAREHOUSES; -- Compare current settings to the reviewed before-change snapshot and rollback script.",
         }
     if "COST" in route:
         return {
-            "owner_route": "FinOps owner / DBA cost reviewer",
+            "owner_route": "FinOps route / DBA cost reviewer",
             "containment": "Freeze savings claims; isolate top company, warehouse, database, role, user, and task driver before action.",
-            "candidate": "Queue only the driver with owner, baseline/current value, finance source basis, and verification query attached.",
+            "candidate": "Queue only the driver with route, baseline/current value, finance measurement basis, and telemetry query attached.",
             "preflight_sql": f"""SELECT warehouse_name, SUM(credits_used) AS credits_used,
        MAX(end_time) AS last_metered_hour
 FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
@@ -3574,11 +3577,11 @@ WHERE start_time >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
 GROUP BY warehouse_name
 ORDER BY credits_used DESC;""",
             "verification_sql": "SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_ATTRIBUTION_HISTORY ORDER BY start_time DESC LIMIT 100;",
-            "rollback_sql": "SELECT 'Rollback is business-process rollback: restore approved warehouse/task settings and keep finance evidence.' AS rollback_boundary;",
+            "rollback_sql": "SELECT 'Rollback is business-process rollback: restore reviewed warehouse/task settings and keep finance status.' AS rollback_boundary;",
         }
     if "WORKLOAD" in route:
         return {
-            "owner_route": "Workload owner / DBA reliability reviewer",
+            "owner_route": "Workload route / DBA reliability reviewer",
             "containment": "Separate failing task, stored procedure, and query path from platform symptoms before retrying anything.",
             "candidate": "Retry or resume only after root cause, downstream blast radius, and last successful run are captured.",
             "preflight_sql": f"""SELECT name, state, scheduled_time, completed_time, error_code, error_message
@@ -3591,25 +3594,25 @@ FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
 WHERE start_time >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
 ORDER BY start_time DESC
 LIMIT 100;""",
-            "rollback_sql": "SHOW TASKS IN ACCOUNT; -- Confirm suspended/resumed state against the approved recovery plan.",
+            "rollback_sql": "SHOW TASKS IN ACCOUNT; -- Confirm suspended/resumed state against the reviewed recovery plan.",
         }
     if "SECURITY" in route:
         return {
-            "owner_route": "Security approver / DBA access reviewer",
-            "containment": "Preserve login/grant evidence and avoid grant changes until requester, approver, and least-privilege proof are clear.",
-            "candidate": "Route grant/revoke work through Governance & Security with ticket, owner, approver, and before/after role evidence.",
+            "owner_route": "Security reviewer / DBA access reviewer",
+            "containment": "Preserve login/grant telemetry and avoid grant changes until requester, reviewer, and least-privilege status are clear.",
+            "candidate": "Route grant/revoke work through Security Monitoring with ticket, reviewer, and before/after role telemetry.",
             "preflight_sql": f"""SELECT event_timestamp, user_name, client_ip, reported_client_type, error_code, error_message
 FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
 WHERE event_timestamp >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
 ORDER BY event_timestamp DESC
 LIMIT 100;""",
             "verification_sql": "SHOW GRANTS TO USERS; SHOW GRANTS TO ROLES;",
-            "rollback_sql": "SELECT 'Rollback requires approved inverse GRANT/REVOKE script and post-change access verification.' AS rollback_boundary;",
+            "rollback_sql": "SELECT 'Rollback requires reviewed inverse GRANT/REVOKE script and post-change access telemetry.' AS rollback_boundary;",
         }
     if "CHANGE" in route:
         return {
-            "owner_route": "Change owner / DBA release reviewer",
-            "containment": "Hold closure until DDL query_id, ticket, release-note/rollback, blast radius, and owner approval are attached.",
+            "owner_route": "Change route / DBA change reviewer",
+            "containment": "Hold closure until change query ID, ticket, release-note/rollback, blast radius, and review status are present.",
             "candidate": "Queue the change with object dependency impact and rollback statement before marking it controlled.",
             "preflight_sql": f"""SELECT query_id, user_name, role_name, warehouse_name, database_name, schema_name,
        query_type, start_time, LEFT(query_text, 500) AS query_preview
@@ -3620,41 +3623,32 @@ WHERE start_time >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
 ORDER BY start_time DESC
 LIMIT 100;""",
             "verification_sql": "SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.OBJECT_DEPENDENCIES LIMIT 100;",
-            "rollback_sql": "SELECT 'Rollback must reference the approved change ticket and inverse DDL/IaC patch.' AS rollback_boundary;",
+            "rollback_sql": "SELECT 'Rollback must reference the reviewed change ticket and inverse change patch.' AS rollback_boundary;",
         }
     if "ALERT" in route:
         return {
-            "owner_route": "Alert owner / DBA on-call",
+            "owner_route": "Alert route / DBA on-call",
             "containment": "Confirm the alert source and route the issue to the action queue before suppressing or closing anything.",
-            "candidate": "Suppress only with owner approval, expiry window, and a linked action queue item.",
+            "candidate": "Suppress only with review status, expiry window, and a linked action queue item.",
             "preflight_sql": "SELECT CURRENT_TIMESTAMP() AS alert_review_started_at;",
-            "verification_sql": "SELECT CURRENT_TIMESTAMP() AS alert_delivery_or_route_evidence_required;",
+            "verification_sql": "SELECT CURRENT_TIMESTAMP() AS alert_delivery_or_route_status_required;",
             "rollback_sql": "SELECT 'Rollback suppression by re-enabling the alert rule and documenting the reopened action.' AS rollback_boundary;",
         }
     if "ACCOUNT" in route:
         return {
-            "owner_route": "Account hygiene owner / DBA platform reviewer",
+            "owner_route": "Account hygiene route / DBA platform reviewer",
             "containment": "Prioritize hygiene gaps that affect authentication, ownership, recovery, or admin operability.",
-            "candidate": "Queue account hygiene work with owner, approval, proof query, and closure notes.",
+            "candidate": "Queue account hygiene work with route, telemetry query, and closure status.",
             "preflight_sql": "SHOW USERS;",
             "verification_sql": "SHOW USERS; SHOW ROLES;",
-            "rollback_sql": "SELECT 'Rollback account hygiene changes through approved identity/admin process.' AS rollback_boundary;",
-        }
-    if "ARCHITECTURE" in route:
-        return {
-            "owner_route": "Platform architecture owner / DBA lead",
-            "containment": "Keep new platform capability adoption inside the expert adoption gate until evidence and owner approval are clean.",
-            "candidate": "Advance only controlled pilots with source health, owner, approval, rollback boundary, and verification query.",
-            "preflight_sql": "SHOW DATABASES; SHOW WAREHOUSES;",
-            "verification_sql": "SELECT CURRENT_TIMESTAMP() AS architecture_evidence_reviewed_at;",
-            "rollback_sql": "SELECT 'Rollback means revoke pilot expansion and return capability to evidence-gathering state.' AS rollback_boundary;",
+            "rollback_sql": "SELECT 'Rollback account hygiene changes through reviewed identity/admin process.' AS rollback_boundary;",
         }
     return {
-        "owner_route": "On-call DBA / platform owner",
-        "containment": "Assign DBA owner, capture current evidence, and route to the specialist workflow.",
-        "candidate": "Work only the routed action with owner, ticket, approval, verification query, and closure proof.",
+        "owner_route": "On-call DBA / platform route",
+        "containment": "Assign DBA on-call, capture current telemetry, and route to the specialist workflow.",
+        "candidate": "Work only the routed action with ticket, telemetry query, and closure status.",
         "preflight_sql": f"SELECT CURRENT_TIMESTAMP() AS preflight_started_at, {hours} AS lookback_hours;",
-        "verification_sql": "SELECT CURRENT_TIMESTAMP() AS verification_required_at;",
+        "verification_sql": "SELECT CURRENT_TIMESTAMP() AS telemetry_required_at;",
         "rollback_sql": "SELECT 'Rollback boundary must be documented before execution.' AS rollback_boundary;",
     }
 
@@ -3675,7 +3669,7 @@ def _dba_template_route_for_signal(
         str(part or "")
         for part in (route, route_text, state, why_now, first_move, proof_required, source_signal, workflow)
     ).upper()
-    if route_text == "Governance & Security":
+    if route_text == "Security Monitoring":
         if any(token in context for token in (
             "CHANGE",
             "DRIFT",
@@ -3689,7 +3683,6 @@ def _dba_template_route_for_signal(
         )):
             return "Change & Drift"
         if any(token in context for token in (
-            "ARCHITECTURE",
             "PLATFORM",
             "TOPOLOGY",
             "ADOPTION",
@@ -3698,7 +3691,7 @@ def _dba_template_route_for_signal(
             "CACHE",
             "DISASTER",
         )):
-            return "Architecture Readiness"
+            return "Workload Operations"
         if any(token in context for token in (
             "SECURITY",
             "ACCESS",
@@ -3754,15 +3747,15 @@ def _dba_operator_runbook(
     priority_score = safe_float(hot.get("PRIORITY_SCORE", 0))
     scope = f"{company} / {environment} / {safe_int(lookback_hours, 24)}h"
     stop_condition = (
-        "Stop if source evidence is stale, owner/ticket/approval is missing, rollback is unclear, "
-        "or verification cannot prove before/after state."
+        "Stop if telemetry is stale, route/ticket/status is missing, rollback is unclear, "
+        "or telemetry cannot confirm before/after state."
     )
     stages = [
         (
             1,
-            "Evidence Check",
-            "Evidence current",
-            f"Confirm operations route {section}, active scope, source freshness, and impacted entity.",
+            "Telemetry Check",
+            "Telemetry current",
+            f"Confirm operations route {section}, active scope, telemetry status, and impacted entity.",
             str(hot.get("WHY_NOW") or "Operations route selected."),
             templates["preflight_sql"],
         ),
@@ -3776,9 +3769,9 @@ def _dba_operator_runbook(
         ),
         (
             3,
-            "Approval Gate",
-            "Owner and ticket attached",
-            "Attach owner, ticket/change ID, approval group, and rollback boundary before controlled execution.",
+            "Review Gate",
+            "Route and ticket present",
+            "Add route, ticket/change ID, review group, and rollback boundary before controlled execution.",
             str(hot.get("PROOF_REQUIRED") or _dba_section_proof_required(section)),
             "",
         ),
@@ -3787,23 +3780,23 @@ def _dba_operator_runbook(
             "Execution Candidate",
             "Advisory only",
             templates["candidate"],
-            "Baseline value, current value, approval status, and exact affected object or warehouse.",
-            "SELECT 'Advisory only - execute through the owning specialist workflow after approval.' AS execution_boundary;",
+            "Baseline value, current value, telemetry status, and exact affected object or warehouse.",
+            "SELECT 'Advisory only - execute through the guarded specialist workflow after review.' AS execution_boundary;",
         ),
         (
             5,
-            "Verification",
-            "Before/after proof required",
-            "Run verification and attach result text before closure or savings/recovery claim.",
-            "Verification result, query_id, before/after metric, and owner acknowledgement.",
+            "Telemetry Review",
+            "Before/after telemetry required",
+            "Refresh telemetry and record result text before closure or savings/recovery claim.",
+            "Telemetry result, query_id, before/after metric, and route acknowledgement.",
             templates["verification_sql"],
         ),
         (
             6,
             "Rollback or Escalate",
             "Rollback path known",
-            "If verification fails, rollback through approved path or escalate as an incident before handoff.",
-            "Rollback statement/path, recovery evidence, reopened action queue item if needed.",
+            "If telemetry fails, rollback through reviewed path or escalate as an incident before handoff.",
+            "Rollback statement/path, recovery status, reopened action queue item if needed.",
             templates["rollback_sql"],
         ),
     ]
@@ -3854,8 +3847,8 @@ def _build_dba_operator_runbook_markdown(
                 f"## {safe_int(row.get('PHASE_RANK'))}. {row.get('RUNBOOK_STEP', '')}",
                 f"Gate: {row.get('GO_NO_GO_GATE', '')}",
                 f"Move: {row.get('DBA_MOVE', '')}",
-                f"Evidence: {row.get('EVIDENCE_REQUIRED', '')}",
-                f"Owner route: {row.get('OWNER_ROUTE', '')}",
+                f"Telemetry: {row.get('EVIDENCE_REQUIRED', '')}",
+                f"Escalation route: {_clean_display_text(row.get('OWNER_ROUTE', ''))}",
                 f"Stop: {row.get('STOP_CONDITION', '')}",
             ])
             if proof:
@@ -3878,10 +3871,10 @@ def _render_dba_operator_runbook(plan: pd.DataFrame, markdown: str) -> None:
         "RUNBOOK_STEP": "Step",
         "GO_NO_GO_GATE": "Gate",
         "DBA_MOVE": "Move",
-        "EVIDENCE_REQUIRED": "Evidence",
-        "OWNER_ROUTE": "Owner",
+        "EVIDENCE_REQUIRED": "Telemetry",
+        "OWNER_ROUTE": "Route",
         "STOP_CONDITION": "Stop Rule",
-        "PROOF_SQL": "Proof SQL",
+        "PROOF_SQL": "Telemetry Query",
         "SECTION": "Route",
         "OPERATIONS_PRIORITY_STATE": "State",
         "PRIORITY_SCORE": "Priority",
@@ -3892,7 +3885,7 @@ def _render_dba_operator_runbook(plan: pd.DataFrame, markdown: str) -> None:
         view,
         title="Operator runbook",
         priority_columns=[
-            "Step", "Gate", "Move", "Evidence", "Owner", "Stop Rule",
+            "Step", "Gate", "Move", "Telemetry", "Route", "Stop Rule",
         ],
         sort_by=["Rank"],
         ascending=[True],
@@ -3920,7 +3913,7 @@ def _dba_escalation_priority_level(priority: float, state: object = "") -> str:
     if score >= 70 or any(token in text for token in ("REFRESH", "INVESTIGATE", "HIGH")):
         return "Same Shift"
     if score >= 40 or any(token in text for token in ("REVIEW", "APPROVAL", "TRIAGE")):
-        return "Owner Review"
+        return "Route Review"
     return "Monitor"
 
 
@@ -3928,12 +3921,12 @@ def _dba_escalation_go_no_go(level: str, source_signals: list[str]) -> str:
     signal_text = " ".join(source_signals).upper()
     level_text = str(level or "").upper()
     if "ESCALATE" in level_text or "RELEASE GATE" in signal_text:
-        return "No-Go until blocker proof is current."
+        return "No-Go until blocker telemetry is current."
     if "SOURCE HEALTH" in signal_text or "EVIDENCE" in signal_text:
-        return "No-Go for irreversible action until evidence is refreshed."
+        return "No-Go for irreversible action until telemetry is refreshed."
     if "SAME SHIFT" in level_text:
         return "Go only through the owning specialist workflow."
-    return "Go for monitoring and normal owner review."
+    return "Go for monitoring and normal DBA review."
 
 
 def _dba_escalation_packet(
@@ -3984,8 +3977,8 @@ def _dba_escalation_packet(
                 "ROUTE": route_text,
                 "PRIORITY_SCORE": incoming_priority,
                 "STATE": str(state or "Review"),
-                "WHY_NOW": str(why_now or "Loaded Control Room evidence requires owner review."),
-                "FIRST_MOVE": str(first_move or "Open the owning workflow and validate evidence."),
+                "WHY_NOW": str(why_now or "Loaded Control Room telemetry requires DBA review."),
+                "FIRST_MOVE": str(first_move or "Open the guarded drilldown workflow and validate telemetry."),
                 "PROOF_REQUIRED": str(proof_required or _dba_section_proof_required(route_text)),
                 "OWNER_ROUTE": templates["owner_route"],
                 "SCOPE": scope,
@@ -4067,16 +4060,16 @@ def _dba_escalation_packet(
         ]
         for _, item in gated.iterrows():
             route = _canonical_dba_route(item.get("ROUTE") or "DBA Control Room")
-            state = str(item.get("STATE") or "Release Gate")
+            state = str(item.get("STATE") or "Operations Review")
             upsert(
                 route,
                 priority=state_rank.get(state.upper(), 50),
-                state=f"Release Gate {state}",
+                state=f"Operational Status {state}",
                 why_now=item.get("EVIDENCE") or item.get("GATE"),
                 first_move=item.get("NEXT_ACTION"),
                 proof_required=item.get("PROOF_REQUIRED"),
-                source_signal=f"Release Gate: {item.get('GATE', '')}".strip(),
-                sla_target="Block release approval until gate evidence is current.",
+                source_signal=f"Operational Status: {item.get('GATE', '')}".strip(),
+                sla_target="Block production change until telemetry is current.",
                 workflow=item.get("WORKFLOW") or route,
             )
 
@@ -4119,7 +4112,7 @@ def _dba_escalation_packet(
         row["SOURCE_SIGNALS"] = "; ".join(signals) if signals else "Control Room"
         row["EVIDENCE_PACKET"] = (
             f"{row.get('WHY_NOW', '')} | First move: {row.get('FIRST_MOVE', '')} | "
-            f"Proof: {row.get('PROOF_REQUIRED', '')}"
+            f"Telemetry basis: {row.get('PROOF_REQUIRED', '')}"
         )
         row["AUTO_GENERATED"] = "Yes"
         result_rows.append(row)
@@ -4146,13 +4139,13 @@ def _build_dba_escalation_packet_markdown(
     environment: str,
     lookback_hours: int,
 ) -> str:
-    """Create an owner-facing escalation packet from generated escalation rows."""
+    """Create an operator-facing escalation packet from generated escalation rows."""
     rows = packet if packet is not None and not packet.empty else _empty_df()
     lines = [
         "# OVERWATCH DBA Escalation Packet",
         f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         f"Scope: {company} / {environment} / {safe_int(lookback_hours, 24)}h",
-        "Mode: Auto-generated from loaded OVERWATCH evidence",
+        "Mode: Auto-generated from loaded OVERWATCH telemetry",
         "",
         "## Escalations",
     ]
@@ -4160,20 +4153,26 @@ def _build_dba_escalation_packet_markdown(
         lines.append("- No escalation rows were available.")
     else:
         for _, row in rows.iterrows():
+            route = _clean_display_text(row.get("ROUTE", ""))
+            owner_route = _clean_display_text(row.get("OWNER_ROUTE", ""))
+            why_now = _clean_display_text(row.get("WHY_NOW", ""))
+            first_move = _clean_display_text(row.get("FIRST_MOVE", ""))
+            gate = _clean_display_text(row.get("GO_NO_GO", ""))
+            telemetry_basis = _clean_display_text(row.get("PROOF_REQUIRED", ""))
             lines.append(
                 f"- {row.get('ESCALATION_ID', '')} [{row.get('ESCALATION_LEVEL', '')}] "
-                f"{row.get('ROUTE', '')} -> {row.get('OWNER_ROUTE', '')}. "
-                f"Why: {row.get('WHY_NOW', '')}. "
-                f"Move: {row.get('FIRST_MOVE', '')}. "
-                f"Gate: {row.get('GO_NO_GO', '')}. "
-                f"Proof: {row.get('PROOF_REQUIRED', '')}."
+                f"{route} -> {owner_route}. "
+                f"Why: {why_now}. "
+                f"Move: {first_move}. "
+                f"Gate: {gate}. "
+                f"Telemetry basis: {telemetry_basis}."
             )
     lines.extend([
         "",
         "## Escalation Rules",
         "- Do not execute state-changing DBA actions from this packet alone.",
-        "- Use the owning workflow for action, approval, rollback, and verification evidence.",
-        "- Treat release-gate and source-health blockers as No-Go until refreshed proof is attached.",
+        "- Use the guarded drilldown workflow for action, rollback, and telemetry review.",
+        "- Treat deployment-review and telemetry-input blockers as No-Go until telemetry is refreshed.",
     ])
     return "\n".join(lines).strip()
 
@@ -4191,10 +4190,10 @@ def _render_dba_escalation_packet(packet: pd.DataFrame, markdown: str) -> None:
     ))
     render_priority_dataframe(
         packet,
-        title="Owner-facing DBA escalation packet",
+        title="DBA escalation packet",
         priority_columns=[
             "ESCALATION_LEVEL", "ROUTE", "OWNER_ROUTE", "STATE", "WHY_NOW",
-            "FIRST_MOVE", "GO_NO_GO", "PROOF_REQUIRED", "SOURCE_SIGNALS",
+            "FIRST_MOVE", "GO_NO_GO",
         ],
         sort_by=["PRIORITY_SCORE", "ROUTE"],
         ascending=[False, True],
@@ -4220,7 +4219,7 @@ def _dba_workload_morning_lanes(
     *,
     max_rows: int = 4,
 ) -> pd.DataFrame:
-    """Build workload-specific Morning Brief lanes from already-loaded evidence."""
+    """Build workload-specific Morning Brief lanes from already-loaded telemetry."""
     data = data or {}
     summary = data.get("summary", _empty_df())
     row = summary.iloc[0] if summary is not None and not summary.empty else {}
@@ -4260,9 +4259,9 @@ def _dba_workload_morning_lanes(
         first_move: str,
         proof_required: str,
         priority_score: float,
-        owner_route: str = "Workload owner / DBA on-call",
-        go_no_go: str = "Go only through Workload Operations after evidence is current.",
-        source_signals: str = "DBA Control Room workload evidence",
+        owner_route: str = "Workload route / DBA on-call",
+        go_no_go: str = "Go only through Workload Operations after telemetry is current.",
+        source_signals: str = "DBA Control Room workload telemetry",
         focus_context: dict[str, str] | None = None,
     ) -> None:
         focus_context = focus_context or {}
@@ -4298,10 +4297,10 @@ def _dba_workload_morning_lanes(
                 "Open Task graphs, inspect the latest TASK_HISTORY failure, confirm Snowflake task downstream state, "
                 "then protect late SLAs before retrying."
             ),
-            proof_required="TASK_HISTORY success after latest failure, Snowflake task rerun/late state, and downstream refresh proof.",
+            proof_required="TASK_HISTORY success after latest failure, Snowflake task rerun/late state, and downstream refresh status.",
             priority_score=96,
-            owner_route="Task owner / Snowflake task operator / DBA on-call",
-            go_no_go="No-Go for dependent loads until clean rerun and downstream proof are current.",
+            owner_route="Task route / Snowflake task operator / DBA on-call",
+            go_no_go="No-Go for dependent loads until clean rerun and downstream status are current.",
             source_signals="Task failures: mart/TASK_HISTORY",
         )
 
@@ -4332,7 +4331,7 @@ def _dba_workload_morning_lanes(
         elif task_status_alerts:
             state = "Scheduler Alert"
             priority = 86
-            go_no_go = "Go only after high-severity Snowflake task alert rows have owner acknowledgement."
+            go_no_go = "Go only after high-severity Snowflake task alert rows have DBA acknowledgement."
         else:
             state = "Scheduler Watch"
             priority = 74
@@ -4352,14 +4351,14 @@ def _dba_workload_morning_lanes(
             why_now=f"Snowflake TASK_HISTORY: {'; '.join(evidence_bits)}.",
             first_move=(
                 "Open Task graphs, match the Snowflake task job/run state to Snowflake TASK_HISTORY, identify downstream "
-                "SLA impact, then choose retry, reroute, or hold only with owner approval."
+                "SLA impact, then choose retry, reroute, or hold only with review status."
             ),
             proof_required=(
                 "Snowflake TASK_HISTORY run/status, downstream dependency/SLA impact, "
-                "owner approval, and recovery SLA verification."
+                "review status, and recovery SLA telemetry."
             ),
             priority_score=priority,
-            owner_route="Snowflake task operator / task owner / DBA on-call",
+            owner_route="Snowflake task operator / task route / DBA on-call",
             go_no_go=go_no_go,
             source_signals="Snowflake TASK_HISTORY summary",
         )
@@ -4372,11 +4371,11 @@ def _dba_workload_morning_lanes(
             "Task graphs",
             state="SLA Risk",
             why_now=f"{sla_count:,} runtime breach(es); {cost_count:,} cost regression candidate(s).",
-            first_move="Compare current task graph runs to baseline, isolate the changed task/query, and assign owner proof.",
-            proof_required="Task baseline comparison, latest successful run, cost/runtime delta, and owner approval for schedule changes.",
+            first_move="Compare current task graph runs to baseline, isolate the changed task/query, and assign route status.",
+            proof_required="Task baseline comparison, latest successful run, cost/runtime delta, and review status for schedule changes.",
             priority_score=90 if cost_count or sla_count >= 3 else 76,
-            owner_route="Task graph owner / DBA release reviewer",
-            source_signals="Task SLA/cost evidence",
+            owner_route="Task graph route / DBA release reviewer",
+            source_signals="Task SLA/cost telemetry",
         )
 
     if queued_queries or queued_warehouses or warehouse_count:
@@ -4402,11 +4401,11 @@ def _dba_workload_morning_lanes(
                 "Open Contention Center before resizing: check active locks, task overlap, long DML, "
                 "then separate lock waits from warehouse queueing."
             ),
-            proof_required="SHOW LOCKS/LOCK_WAIT_HISTORY, task-overlap evidence, QUERY_HISTORY blocked seconds, and WAREHOUSE_LOAD_HISTORY.",
+            proof_required="SHOW LOCKS/LOCK_WAIT_HISTORY, task-overlap telemetry, QUERY_HISTORY blocked seconds, and WAREHOUSE_LOAD_HISTORY.",
             priority_score=94 if queued_queries >= 20 or queued_warehouses else 82,
-            owner_route="DBA on-call / workload owner / warehouse owner",
+            owner_route="DBA on-call / workload route / warehouse route",
             go_no_go="No-Go for warehouse resizing until lock waits and overlapping writers are ruled out.",
-            source_signals="Warehouse pressure and queue evidence",
+            source_signals="Warehouse pressure and queue telemetry",
             focus_context=contention_context,
         )
 
@@ -4434,15 +4433,15 @@ def _dba_workload_morning_lanes(
         add_lane(
             "Query diagnosis",
             state="Query Diagnosis",
-            why_now="; ".join(reason_bits) or "Slow or failed query evidence needs diagnosis.",
+            why_now="; ".join(reason_bits) or "Slow or failed query telemetry needs diagnosis.",
             first_move=(
                 "Open Query diagnosis, load the query ID/operator stats, then use AI Query Diagnosis only after "
-                "queue/spill/scan evidence is attached."
+                "queue/spill/scan telemetry is current."
             ),
             proof_required="Query ID, warehouse/user/role/database context, operator stats, specific recommendation, and rerun comparison.",
             priority_score=88 if failed_count >= 10 or spill_count or p95_runtime >= 300 else 72,
-            owner_route="Query owner / DBA performance reviewer",
-            source_signals="Failed, spilling, or long-running query evidence",
+            owner_route="Query route / DBA performance reviewer",
+            source_signals="Failed, spilling, or long-running query telemetry",
             focus_context=query_context,
         )
 
@@ -4454,11 +4453,11 @@ def _dba_workload_morning_lanes(
             "Stored procedures",
             state="Procedure Regression",
             why_now=f"{runtime_count:,} runtime breach(es); {cost_count:,} cost regression candidate(s).",
-            first_move="Open Stored procedures, compare latest CALL duration/cost to baseline, and verify release linkage.",
-            proof_required="Procedure run baseline, latest CALL query ID, owner, ticket/change ID, and post-fix runtime/cost proof.",
+            first_move="Open Stored procedures, compare latest CALL duration/cost to baseline, and confirm release linkage.",
+            proof_required="Procedure run baseline, latest CALL query ID, route, ticket/change ID, and post-fix runtime/cost telemetry.",
             priority_score=84 if cost_count or runtime_count >= 3 else 70,
-            owner_route="Procedure owner / DBA release reviewer",
-            source_signals="Stored procedure SLA/cost evidence",
+            owner_route="Procedure route / DBA release reviewer",
+            source_signals="Stored procedure SLA/cost telemetry",
         )
 
     if not rows:
@@ -4477,7 +4476,7 @@ def _dba_morning_brief_rows(
     *,
     max_rows: int = 5,
 ) -> pd.DataFrame:
-    """Create a concise morning operating brief from loaded Control Room evidence."""
+    """Create a concise morning operating brief from loaded Control Room telemetry."""
     rows: list[dict] = []
     seen_routes: set[str] = set()
 
@@ -4510,10 +4509,10 @@ def _dba_morning_brief_rows(
             "ROUTE": route_text,
             "WORKFLOW": workflow_text,
             "STATE": str(state or "Review"),
-            "WHY_NOW": str(why_now or "Loaded Control Room evidence requires review."),
-            "FIRST_MOVE": str(first_move or "Open the owning workflow and validate evidence."),
+            "WHY_NOW": str(why_now or "Loaded Control Room telemetry requires review."),
+            "FIRST_MOVE": str(first_move or "Open the guarded drilldown workflow and validate telemetry."),
             "OWNER_ROUTE": str(owner_route or _dba_runbook_route_templates(route_text, 24)["owner_route"]),
-            "GO_NO_GO": str(go_no_go or "Go only through the owning workflow."),
+            "GO_NO_GO": str(go_no_go or "Go only through the guarded drilldown workflow."),
             "PROOF_REQUIRED": str(proof_required or _dba_section_proof_required(route_text)),
             "SOURCE_SIGNALS": str(source_signals or "Control Room"),
             "PRIORITY_SCORE": safe_float(priority_score),
@@ -4597,9 +4596,9 @@ def _dba_morning_brief_rows(
         for _, item in important.iterrows():
             lane = str(item.get("LANE") or "DBA Control Room")
             go_no_go = (
-                "No-Go until handoff blocker proof is current."
+                "No-Go until handoff blocker telemetry is current."
                 if safe_int(item.get("_MORNING_SORT"), 9) <= 1
-                else "Go for owner review through the routed workflow."
+                else "Go for DBA review through the routed workflow."
             )
             add_row(
                 lane,
@@ -4619,7 +4618,7 @@ def _dba_morning_brief_rows(
             state="Monitor",
             why_now="No loaded blocker, escalation, or handoff row for the current scope.",
             first_move="Keep Fast Watch current and review Alert Center for newly routed issues.",
-            owner_route="On-call DBA / platform owner",
+            owner_route="On-call DBA / platform route",
             go_no_go="Go for monitoring only.",
             proof_required="fresh Control Room load and current Alert Center review",
             source_signals="Morning Brief: routine watch",
@@ -4649,47 +4648,48 @@ def _dba_morning_decision_contract(row: dict | pd.Series | None) -> dict[str, st
 
     if "NO-GO" in combined or "ESCALATE NOW" in combined or score >= 95:
         decision = "No-Go / contain now"
-        sla_clock = "15 min containment; 30 min owner update"
-        next_checkpoint = "Confirm blocker owner, proof source, and containment path before lower-priority work."
-        stop_rule = "Do not release, resize, close, or retry until blocker proof is current."
+        sla_clock = "15 min containment; 30 min route update"
+        next_checkpoint = "Confirm blocker route, telemetry source, and containment path before lower-priority work."
+        stop_rule = "Do not release, resize, close, or retry until blocker telemetry is current."
     elif any(token in combined for token in ("BLOCKED", "OVERDUE", "UNAVAILABLE", "STALE")) or score >= 85:
         decision = "Contain same shift"
         sla_clock = "30 min triage; same-shift mitigation"
-        next_checkpoint = "Assign DBA owner and prove whether this is service risk, source drift, or queue backlog."
-        stop_rule = "Do not close the route until owner, ticket, and verification evidence are attached."
+        next_checkpoint = "Assign DBA route and determine whether this is service risk, source drift, or queue backlog."
+        stop_rule = "Do not close the route until ticket and telemetry status are present."
     elif any(token in combined for token in ("SLA", "RISK", "REVIEW", "DIAGNOSIS", "CONTENTION")) or score >= 70:
         decision = "Triage today"
         sla_clock = "Same business day"
-        next_checkpoint = "Load the owning workflow and attach the first evidence row before changing settings."
+        next_checkpoint = "Load the guarded drilldown workflow and inspect the first telemetry row before changing settings."
         stop_rule = "Do not make state-changing fixes from the brief alone."
     else:
         decision = "Monitor"
         sla_clock = "Next DBA review"
         next_checkpoint = "Keep Fast Watch and Alert Center current."
-        stop_rule = "Escalate only if new evidence raises the route priority."
+        stop_rule = "Escalate only if new telemetry raises the route priority."
 
     proof_l = proof.lower()
     owner_l = owner.lower()
     proof_tokens = (
-        "owner", "approval", "ticket", "verification", "query", "source",
-        "current", "fresh", "rollback", "evidence", "ledger", "ddl",
+        "route", "review", "ticket", "telemetry", "query", "source",
+        "current", "fresh", "rollback", "status", "ledger",
     )
     owner_named = bool(owner.strip()) and owner_l not in {"nan", "none", "unassigned"}
     proof_named = any(token in proof_l for token in proof_tokens)
     if owner_named and proof_named:
-        owner_proof_state = "Owner/proof named"
+        owner_proof_state = "Route/telemetry named"
     elif owner_named:
-        owner_proof_state = "Proof gap"
+        owner_proof_state = "Telemetry gap"
     elif proof_named:
-        owner_proof_state = "Owner gap"
+        owner_proof_state = "Route gap"
     else:
-        owner_proof_state = "Owner/proof gap"
+        owner_proof_state = "Route/telemetry gap"
 
-    route_action = f"Open {route}{f' / {workflow}' if workflow else ''}; keep approval, execution, rollback, and verification in the owning workflow."
+    route_action = f"Open {route}{f' / {workflow}' if workflow else ''}; keep execution, rollback, and telemetry in the guarded drilldown workflow."
     return {
         "MORNING_DECISION": decision,
         "SLA_CLOCK": sla_clock,
         "OWNER_PROOF_STATE": owner_proof_state,
+        "ROUTE_TELEMETRY_STATE": owner_proof_state,
         "ROUTE_ACTION": route_action,
         "NEXT_CHECKPOINT": next_checkpoint,
         "STOP_RULE": stop_rule,
@@ -4719,22 +4719,22 @@ def _add_dba_morning_decision_contract(brief: pd.DataFrame) -> pd.DataFrame:
 
 
 def _dba_morning_execution_contract(row: dict | pd.Series | None) -> dict[str, str]:
-    """Return approval, evidence, verification, and execution boundaries for one morning row."""
+    """Return review, telemetry, status, and execution boundaries for one morning row."""
     row = row if row is not None else {}
     route = str(_row_value(row, "ROUTE", default="DBA Control Room") or "DBA Control Room")
     workflow = str(_row_value(row, "WORKFLOW", default="") or "").strip()
     state = str(_row_value(row, "STATE", default="Review") or "Review")
-    first_move = str(_row_value(row, "FIRST_MOVE", default="Open the owning workflow and validate evidence.") or "")
-    proof = str(_row_value(row, "PROOF_REQUIRED", default="fresh source evidence") or "")
-    owner = str(_row_value(row, "OWNER_ROUTE", default="DBA owner") or "DBA owner")
+    first_move = str(_row_value(row, "FIRST_MOVE", default="Open the guarded drilldown workflow and validate telemetry.") or "")
+    proof = str(_row_value(row, "PROOF_REQUIRED", default="fresh source telemetry") or "")
+    owner = str(_row_value(row, "OWNER_ROUTE", default="DBA on-call") or "DBA on-call")
     focus_query = str(_row_value(row, "FOCUS_QUERY_ID", default="") or "").strip()
     focus_warehouse = str(_row_value(row, "FOCUS_WAREHOUSE", default="") or "").strip()
     focus_object = str(_row_value(row, "FOCUS_OBJECT", default="") or "").strip()
 
-    approval_gate = f"{owner} approval or acknowledgement before operational change."
-    evidence_package = proof or "current source evidence, owner, ticket, and verification result."
-    verify_next = "Re-open the owning workflow and verify the signal cleared before closing the row."
-    execution_boundary = "Morning Brief is routing only; execute approved changes inside the owning workflow."
+    approval_gate = f"{owner} review and telemetry status before operational change."
+    evidence_package = proof or "current source telemetry, route, ticket, and status."
+    verify_next = "Re-open the guarded drilldown workflow and confirm the signal cleared before closing the row."
+    execution_boundary = "Morning Brief is routing only; execute reviewed changes inside the guarded drilldown workflow."
 
     if workflow == "Contention Center":
         try:
@@ -4749,54 +4749,54 @@ def _dba_morning_execution_contract(row: dict | pd.Series | None) -> dict[str, s
                 "BLOCKED_SECONDS": 1 if focus_query else 0,
             }
             contract = build_contention_safe_action_contract(contention_row, "Blocked query / lock contention")
-            approval_gate = str(contract.get("APPROVAL_GATE") or approval_gate)
+            approval_gate = str(contract.get("REVIEW_GATE") or contract.get("APPROVAL_GATE") or approval_gate)
             evidence_package = str(contract.get("AUDIT_EVIDENCE_REQUIRED") or evidence_package)
             verify_next = str(contract.get("RECOVERY_PLAN") or contract.get("VERIFY_AFTER_CLEANUP") or verify_next)
             execution_boundary = str(contract.get("EXECUTION_BOUNDARY") or execution_boundary)
         except Exception:
-            approval_gate = "DBA on-call, workload owner, and incident/ticket approval before cancel/abort/schedule action."
-            evidence_package = "SHOW LOCKS, LOCK_WAIT_HISTORY, blocked query, target object, owner approval, and post-action proof."
-            verify_next = "Verify blocked seconds stop increasing and dependent workload recovers before closure."
-            execution_boundary = "No cleanup from Morning Brief; open Contention Center for manual SQL and verification."
+            approval_gate = "DBA on-call review and incident/ticket status before cancel/abort/schedule action."
+            evidence_package = "SHOW LOCKS, LOCK_WAIT_HISTORY, blocked query, target object, telemetry, and post-action status."
+            verify_next = "Confirm blocked seconds stop increasing and dependent workload recovers before closure."
+            execution_boundary = "No cleanup from Morning Brief; open Contention Center for governed SQL and telemetry review."
     elif workflow == "Task graphs":
-        approval_gate = "Task owner, Snowflake task operator, and DBA on-call approval before retry, resume, or schedule change."
+        approval_gate = "Snowflake task operator and DBA on-call review before retry, resume, or schedule change."
         evidence_package = (
-            "TASK_HISTORY failure/recovery rows, Snowflake task failed/blocked/late state, owner approval, "
-            "downstream refresh proof, and recovery SLA status."
+            "TASK_HISTORY failure/recovery rows, Snowflake task failed/blocked/late state, telemetry, "
+            "downstream refresh status, and recovery SLA status."
         )
         verify_next = (
-            "Verify next TASK_HISTORY run succeeded, Snowflake task job is closed or rerouted, and recovery SLA evidence "
-            "is attached."
+            "Confirm next TASK_HISTORY run succeeded, Snowflake task job is closed or rerouted, and recovery SLA status "
+            "is present."
         )
-        execution_boundary = "No task retry/resume from Morning Brief; use Task graphs guarded controls and typed confirmation."
+        execution_boundary = "No task retry/resume from Morning Brief; use Task graphs guarded controls and status prechecks."
     elif workflow == "Query diagnosis":
-        approval_gate = "Query owner and DBA performance reviewer approval before SQL, clustering, or warehouse changes."
+        approval_gate = "DBA performance review before SQL, clustering, or warehouse changes."
         evidence_package = (
             "Query ID, query text/profile, operator stats, warehouse/user/role/database context, and deterministic "
             "optimization finding."
         )
-        verify_next = "Compare rerun elapsed time, queue, spill, scan, and cost against the original query evidence."
-        execution_boundary = "AI Query Diagnosis is advisory; no generated SQL is executed from the brief."
+        verify_next = "Compare rerun elapsed time, queue, spill, scan, and cost against the original query telemetry."
+        execution_boundary = "AI Query Diagnosis is advisory; no query changes are executed from the brief."
     elif workflow == "Stored procedures":
-        approval_gate = "Procedure owner and DBA release reviewer approval before procedure or schedule changes."
-        evidence_package = "Procedure run baseline, latest CALL query ID, change/ticket context, owner approval, and rollback path."
-        verify_next = "Verify latest CALL returns inside runtime/cost baseline and dependent task graph remains clean."
-        execution_boundary = "Do not alter procedure code from Morning Brief; route through Stored procedures and Governance & Security."
-    elif route in {"Change & Drift", "Governance & Security"}:
-        approval_gate = "Change owner, DBA release reviewer, and ticket approval before release or schema remediation."
-        evidence_package = "Migration ledger, DDL/grant diff, ticket, reviewer, rollback SQL, and post-change verification."
-        verify_next = "Reload release gate and source health; required objects and ledger version must be Ready."
-        execution_boundary = "Do not execute DDL from Morning Brief; run approved release remediation from the governed runbook."
+        approval_gate = "Procedure route and DBA release review before procedure or schedule changes."
+        evidence_package = "Procedure run baseline, latest CALL query ID, change/ticket context, telemetry, and rollback path."
+        verify_next = "Confirm latest CALL returns inside runtime/cost baseline and dependent task graph remains clean."
+        execution_boundary = "Do not alter procedure code from Morning Brief; route through Stored procedures and Security Monitoring."
+    elif route in {"Change & Drift", "Security Monitoring"}:
+        approval_gate = "DBA change review and ticket status before object remediation."
+        evidence_package = "Migration ledger, object/grant diff, ticket, reviewer, rollback plan, and post-change telemetry."
+        verify_next = "Reload operational status; required objects and ledger version must be Ready."
+        execution_boundary = "Do not execute object changes from Morning Brief; run reviewed remediation from the reviewed runbook."
     elif route in {"Warehouse Health", "Cost & Contract"}:
-        approval_gate = "Warehouse owner and DBA capacity reviewer approval before resize, isolation, or monitor changes."
-        evidence_package = "Warehouse load, queue/spill trend, metering impact, owner approval, rollback setting, and post-change proof."
-        verify_next = "Verify queued load, spill, and cost movement after the capacity or isolation decision."
-        execution_boundary = "No warehouse DDL from Morning Brief; use Cost & Contract guarded capacity workflow."
+        approval_gate = "DBA capacity review before resize, isolation, or monitor changes."
+        evidence_package = "Warehouse load, queue/spill trend, metering impact, telemetry, rollback setting, and post-change status."
+        verify_next = "Confirm queued load, spill, and cost movement after the capacity or isolation decision."
+        execution_boundary = "No warehouse setting changes from Morning Brief; use Cost & Contract guarded capacity workflow."
 
     closure_rule = (
-        f"{state}: keep this row open until approval, evidence package, and verification are attached."
+        f"{state}: keep this row open until review telemetry package and status are current."
         if state not in {"Monitor", "Ready"}
-        else "Close only after the next DBA review confirms no new exception evidence."
+        else "Close only after the next DBA review confirms no new exception telemetry."
     )
     return {
         "APPROVAL_GATE": approval_gate,
@@ -4837,18 +4837,20 @@ def _dba_morning_command_queue(brief: pd.DataFrame | None, max_rows: int = 3) ->
         focus = _dba_morning_focus_note(row)
         rows.append({
             "MORNING_RANK": safe_int(row.get("MORNING_RANK")),
-            "MORNING_DECISION": row.get("MORNING_DECISION", ""),
-            "TARGET": f"{route} / {workflow}" if workflow else route,
-            "ACTION": row.get("FIRST_MOVE", ""),
-            "SLA_CLOCK": row.get("SLA_CLOCK", ""),
+            "MORNING_DECISION": _clean_display_text(row.get("MORNING_DECISION", "")),
+            "TARGET": _clean_display_text(f"{route} / {workflow}" if workflow else route),
+            "ACTION": _clean_display_text(row.get("FIRST_MOVE", "")),
+            "SLA_CLOCK": _clean_display_text(row.get("SLA_CLOCK", "")),
             "FOCUS": focus or "No focused query/object",
-            "GATE": row.get("GO_NO_GO") or row.get("STOP_RULE", ""),
-            "APPROVAL_GATE": row.get("APPROVAL_GATE", ""),
-            "EVIDENCE_PACKAGE": row.get("EVIDENCE_PACKAGE", ""),
-            "VERIFY_NEXT": row.get("VERIFY_NEXT", ""),
-            "EXECUTION_BOUNDARY": row.get("EXECUTION_BOUNDARY", ""),
-            "OWNER_PROOF_STATE": row.get("OWNER_PROOF_STATE", ""),
-            "SOURCE_SIGNALS": row.get("SOURCE_SIGNALS", ""),
+            "GATE": _clean_display_text(row.get("GO_NO_GO") or row.get("STOP_RULE", "")),
+            "APPROVAL_GATE": _clean_display_text(row.get("APPROVAL_GATE", "")),
+            "EVIDENCE_PACKAGE": _clean_display_text(row.get("EVIDENCE_PACKAGE", "")),
+            "VERIFY_NEXT": _clean_display_text(row.get("VERIFY_NEXT", "")),
+            "EXECUTION_BOUNDARY": _clean_display_text(row.get("EXECUTION_BOUNDARY", "")),
+            "ROUTE_TELEMETRY_STATE": _clean_display_text(
+                row.get("ROUTE_TELEMETRY_STATE", row.get("OWNER_PROOF_STATE", ""))
+            ),
+            "SOURCE_SIGNALS": _clean_display_text(row.get("SOURCE_SIGNALS", "")),
         })
     return pd.DataFrame(rows)
 
@@ -4865,44 +4867,44 @@ def _build_dba_morning_brief_markdown(
     lines = [
         "# OVERWATCH DBA Morning Brief",
         f"Scope: {company} / {environment} / {safe_int(lookback_hours, 24)}h",
-        "Mode: Evidence-ranked operating brief",
+        "Mode: Telemetry-ranked operating brief",
         "",
     ]
     if rows.empty:
         lines.append("- No morning brief rows were available.")
     else:
         for _, row in rows.sort_values("MORNING_RANK").iterrows():
-            workflow = str(row.get("WORKFLOW") or "").strip()
+            workflow = _clean_display_text(row.get("WORKFLOW", "")).strip()
             workflow_note = f" / {workflow}" if workflow else ""
             focus_note = _dba_morning_focus_note(row)
             focus_sentence = f" Focus: {focus_note}." if focus_note else ""
             lines.append(
-                f"- {safe_int(row.get('MORNING_RANK'))}. [{row.get('STATE', '')}] "
-                f"{row.get('ROUTE', '')}{workflow_note}: {row.get('FIRST_MOVE', '')} "
-                f"Decision: {row.get('MORNING_DECISION', '')}. "
-                f"SLA: {row.get('SLA_CLOCK', '')}. "
-                f"Why: {row.get('WHY_NOW', '')}. "
-                f"Gate: {row.get('GO_NO_GO', '')}. "
-                f"Proof: {row.get('PROOF_REQUIRED', '')}. "
-                f"Approval: {row.get('APPROVAL_GATE', '')}. "
-                f"Evidence package: {row.get('EVIDENCE_PACKAGE', '')}. "
-                f"Verify next: {row.get('VERIFY_NEXT', '')}. "
-                f"Boundary: {row.get('EXECUTION_BOUNDARY', '')}. "
-                f"Stop: {row.get('STOP_RULE', '')}."
+                f"- {safe_int(row.get('MORNING_RANK'))}. [{_clean_display_text(row.get('STATE', ''))}] "
+                f"{_clean_display_text(row.get('ROUTE', ''))}{workflow_note}: {_clean_display_text(row.get('FIRST_MOVE', ''))} "
+                f"Decision: {_clean_display_text(row.get('MORNING_DECISION', ''))}. "
+                f"SLA: {_clean_display_text(row.get('SLA_CLOCK', ''))}. "
+                f"Why: {_clean_display_text(row.get('WHY_NOW', ''))}. "
+                f"Gate: {_clean_display_text(row.get('GO_NO_GO', ''))}. "
+                f"Telemetry basis: {_clean_display_text(row.get('PROOF_REQUIRED', ''))}. "
+                f"Review gate: {_clean_display_text(row.get('APPROVAL_GATE', ''))}. "
+                f"Telemetry package: {_clean_display_text(row.get('EVIDENCE_PACKAGE', ''))}. "
+                f"Confirm next: {_clean_display_text(row.get('VERIFY_NEXT', ''))}. "
+                f"Boundary: {_clean_display_text(row.get('EXECUTION_BOUNDARY', ''))}. "
+                f"Stop: {_clean_display_text(row.get('STOP_RULE', ''))}."
                 f"{focus_sentence}"
             )
     lines.extend([
         "",
         "Rules:",
         "- No irreversible DBA action from the brief alone.",
-        "- Use the owning workflow for approval, execution, rollback, and verification evidence.",
-        "- Treat No-Go rows as blocked until source proof is current.",
+        "- Use the guarded drilldown workflow for execution, rollback, and telemetry review.",
+        "- Treat No-Go rows as blocked until source telemetry is current.",
     ])
     return "\n".join(lines).strip()
 
 
 def _seed_dba_morning_route_context(row: dict | pd.Series | None) -> None:
-    """Carry Morning Brief context into the owning workflow before navigation."""
+    """Carry Morning Brief context into the guarded drilldown before navigation."""
     row = row if row is not None else {}
     workflow = str(_row_value(row, "WORKFLOW", default="") or "").strip()
     query_id = str(_row_value(row, "FOCUS_QUERY_ID", default="") or "").strip()
@@ -4951,7 +4953,7 @@ def _render_dba_morning_brief(brief: pd.DataFrame, markdown: str) -> None:
         priority_columns=[
             "MORNING_RANK", "MORNING_DECISION", "TARGET", "ACTION",
             "SLA_CLOCK", "FOCUS", "APPROVAL_GATE", "VERIFY_NEXT",
-            "EXECUTION_BOUNDARY", "OWNER_PROOF_STATE",
+            "EXECUTION_BOUNDARY", "ROUTE_TELEMETRY_STATE",
         ],
         sort_by=["MORNING_RANK"],
         ascending=[True],
@@ -4972,10 +4974,10 @@ def _render_dba_morning_brief(brief: pd.DataFrame, markdown: str) -> None:
             f"SLA: {row.get('SLA_CLOCK', '')}",
             f"First move: {row.get('FIRST_MOVE', '')}",
             f"Route action: {row.get('ROUTE_ACTION', '')}",
-            f"Proof: {row.get('PROOF_REQUIRED', '')}",
-            f"Approval gate: {row.get('APPROVAL_GATE', '')}",
-            f"Evidence package: {row.get('EVIDENCE_PACKAGE', '')}",
-            f"Verify next: {row.get('VERIFY_NEXT', '')}",
+            f"Telemetry basis: {row.get('PROOF_REQUIRED', '')}",
+            f"Review gate: {row.get('APPROVAL_GATE', '')}",
+            f"Telemetry package: {row.get('EVIDENCE_PACKAGE', '')}",
+            f"Confirm next: {row.get('VERIFY_NEXT', '')}",
             f"Execution boundary: {row.get('EXECUTION_BOUNDARY', '')}",
             f"Closure rule: {row.get('CLOSURE_RULE', '')}",
             f"Stop rule: {row.get('STOP_RULE', '')}",
@@ -4991,13 +4993,21 @@ def _render_dba_morning_brief(brief: pd.DataFrame, markdown: str) -> None:
                 else:
                     _seed_dba_morning_route_context(row)
                     _jump(route, workflow=workflow)
-    with st.expander("Brief evidence detail", expanded=False):
+    with st.expander("Brief telemetry detail", expanded=False):
+        brief_view = brief.copy()
+        for column in brief_view.columns:
+            if brief_view[column].dtype == object:
+                brief_view[column] = brief_view[column].map(_clean_display_text)
+        brief_view = brief_view.rename(columns={
+            "OWNER_PROOF_STATE": "ROUTE_TELEMETRY_STATE",
+            "OWNER_ROUTE": "ESCALATION_ROUTE",
+        })
         render_priority_dataframe(
-            brief,
-            title="DBA morning brief evidence",
+            brief_view,
+            title="DBA morning brief telemetry",
             priority_columns=[
                 "MORNING_RANK", "MORNING_DECISION", "SLA_CLOCK", "ROUTE", "WORKFLOW",
-                "STATE", "WHY_NOW", "FIRST_MOVE", "OWNER_PROOF_STATE", "OWNER_ROUTE",
+                "STATE", "WHY_NOW", "FIRST_MOVE", "ROUTE_TELEMETRY_STATE", "ESCALATION_ROUTE",
                 "GO_NO_GO", "PROOF_REQUIRED", "APPROVAL_GATE", "EVIDENCE_PACKAGE",
                 "VERIFY_NEXT", "EXECUTION_BOUNDARY", "CLOSURE_RULE", "SOURCE_SIGNALS",
                 "FOCUS_QUERY_ID", "FOCUS_WAREHOUSE", "FOCUS_OBJECT",
@@ -5017,7 +5027,7 @@ def _render_dba_morning_brief(brief: pd.DataFrame, markdown: str) -> None:
             mime="text/markdown",
             width="stretch",
         )
-    download_csv(brief, "dba_morning_brief.csv")
+    download_csv(brief_view if "brief_view" in locals() else brief, "dba_morning_brief.csv")
 
 
 def _render_command_queue_control(
@@ -5030,7 +5040,7 @@ def _render_command_queue_control(
     if closure_rollup is None:
         closure_rollup = _command_queue_closure_readiness(raw_queue if raw_queue is not None else queue)
     if queue.empty and closure_rollup.empty:
-        st.success("No open action queue items or closure evidence blockers for the current company/environment scope.")
+        st.success("No open action queue items or closure status blockers for the current company/environment scope.")
         return
     closure_blockers = (
         0
@@ -5087,7 +5097,7 @@ def _render_command_queue_control(
             ],
             sort_by=["CLOSURE_RANK", "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION", "CLOSURE_BLOCKER_ROWS"],
             ascending=[True, False, False, False],
-            raw_label="All command closure readiness rows",
+            raw_label="All command closure status rows",
             height=240,
             max_rows=10,
         )
@@ -5100,7 +5110,7 @@ def _render_command_queue_control(
     if not route_readiness.empty:
         render_priority_dataframe(
             route_readiness,
-            title="Command readiness by DBA route",
+            title="Command status by DBA route",
             priority_columns=[
                 "ROUTE", "OPEN_ACTIONS", "OVERDUE", "EXECUTION_READY", "AUDIT_READY",
                 "ROUTE_READY", "OWNER_GAPS", "APPROVAL_BLOCKS", "METADATA_BLOCKS",
@@ -5108,14 +5118,14 @@ def _render_command_queue_control(
             ],
             sort_by=["OVERDUE", "METADATA_BLOCKS", "APPROVAL_BLOCKS", "OPEN_ACTIONS"],
             ascending=[False, False, False, False],
-            raw_label="All command route readiness rows",
+            raw_label="All command route status rows",
             height=220,
             max_rows=10,
         )
 
     render_priority_dataframe(
         queue,
-        title="Open queue items to assign, approve, verify, or escalate",
+        title="Open queue items to route, monitor, or escalate",
         priority_columns=[
             "SEVERITY", "DUE_STATE", "COMMAND_STATE", "COMMAND_EXECUTION_GATE",
             "COMMAND_ROUTE_READINESS", "COMMAND_AUDIT_READINESS", "CATEGORY", "ENTITY_NAME",
@@ -5133,20 +5143,15 @@ def _render_command_queue_control(
 
 def _render_dba_command_intelligence_contract() -> None:
     """Show the command intelligence layer that DBA Control Room owns."""
-    from utils.operational_intelligence import (
-        build_capability_register_rows,
-        build_detection_root_cause_sql,
-        build_precompute_contract_sql,
-        build_task_critical_path_brain_sql,
-    )
+    from utils.operational_intelligence import build_capability_register_rows
 
     focus = {
         "Detection and Root-Cause Engine",
         "Task/Pipeline Critical Path Brain",
         "Alert Lifecycle 2.0",
-        "OVERWATCH Self-Monitoring",
-        "Precomputed Mart / Dynamic Table Layer With Fallback",
-        "Architecture Docs and Runbooks",
+        "Bounded Refresh Guardrails",
+        "Fast Summary Layer With Fallback",
+        "Monitoring Docs and Runbooks",
     }
     rows = pd.DataFrame(
         [row for row in build_capability_register_rows() if row["CAPABILITY"] in focus]
@@ -5164,18 +5169,6 @@ def _render_dba_command_intelligence_contract() -> None:
         height=240,
         max_rows=6,
     )
-    with st.expander("DBA command SQL contracts", expanded=False):
-        preview = st.selectbox(
-            "Preview",
-            ["Root-cause correlation", "Task critical path", "Precompute fallback"],
-            key="dba_command_intelligence_sql_preview",
-        )
-        if preview == "Root-cause correlation":
-            st.code(build_detection_root_cause_sql(hours=24), language="sql")
-        elif preview == "Task critical path":
-            st.code(build_task_critical_path_brain_sql(hours=24), language="sql")
-        else:
-            st.code(build_precompute_contract_sql(), language="sql")
 
 
 def _control_room_score(
@@ -5220,7 +5213,7 @@ def _render_watch_floor(
     priority = _priority_exceptions(exceptions).head(3)
     st.markdown("**DBA Watch Floor**")
     if priority.empty:
-        st.success("Watch floor is clear. Use Release Compare or Source Health if you are validating a recent deployment.")
+        st.success("Watch floor is clear. Use Release Compare or Data Health if you are checking a recent release.")
         return
 
     first = priority.iloc[0]
@@ -5233,7 +5226,7 @@ def _render_watch_floor(
         workflow = str(item.get("Workflow", "") or "")
         with cols[idx]:
             st.markdown(f"**{item.get('Severity', 'Signal')}: {item.get('Signal', '')}**")
-            st.caption(str(item.get("Evidence", "")))
+            st.caption(_clean_display_text(str(item.get("Telemetry", item.get("Evidence", "")))))
             st.write(str(item.get("Action", "")))
             if route and st.button(f"Open {route}", key=f"dba_watch_floor_{idx}_{route}", width="stretch"):
                 _jump(route, workflow=workflow)
@@ -5252,19 +5245,19 @@ def _dba_action_brief(
     if release_blocks:
         return {
             "state": "Blocked",
-            "headline": "Release gate needs action before approval.",
+            "headline": "Operational status needs action before production change.",
             "detail": f"{release_blocks:,} blocker(s), {release_reviews:,} review item(s).",
-            "primary_label": "Open Gate",
-            "target": "Release Gate",
+            "primary_label": "Open Ops Board",
+            "target": "Operations Board",
             "workflow": "",
         }
     if release_reviews:
         return {
             "state": "Review",
-            "headline": "Approval evidence needs owner review.",
+            "headline": "Telemetry status needs DBA review.",
             "detail": f"{release_reviews:,} review/not-loaded item(s).",
-            "primary_label": "Open Gate",
-            "target": "Release Gate",
+            "primary_label": "Open Ops Board",
+            "target": "Operations Board",
             "workflow": "",
         }
 
@@ -5289,7 +5282,7 @@ def _dba_action_brief(
     if queued_queries:
         return {
             "state": "Watch",
-            "headline": "Queue pressure is the next route to verify.",
+            "headline": "Queue pressure is the next route to inspect.",
             "detail": f"{queued_queries:,} queued queries in the loaded window.",
             "primary_label": "Open Cost & Contract",
             "target": "Cost & Contract",
@@ -5298,7 +5291,7 @@ def _dba_action_brief(
     if failed_queries:
         return {
             "state": "Watch",
-            "headline": "Failed query evidence is ready for review.",
+            "headline": "Failed query telemetry is ready for review.",
             "detail": f"{failed_queries:,} failed queries in the loaded window.",
             "primary_label": "Open Triage",
             "target": "Triage",
@@ -5307,7 +5300,7 @@ def _dba_action_brief(
     return {
         "state": "Clear",
         "headline": "No immediate DBA blocker in this scope.",
-        "detail": "Keep Watch current or open Sources for approval and rollback evidence.",
+        "detail": "Keep Watch current or open Data Health for review and rollback status.",
         "primary_label": "Open Watch",
         "target": "Fast Watch",
         "workflow": "",
@@ -5352,37 +5345,37 @@ def _dba_command_lanes(
         return [
             {
                 "label": "Failed queries",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Reliability",
                 "detail": "Load triage or use the fast snapshot for recent failures.",
             },
             {
                 "label": "Queue pressure",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Capacity",
                 "detail": "Queue rows route to warehouse pressure and contention checks.",
             },
             {
                 "label": "Failed tasks",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Pipeline",
                 "detail": "Task graph failures drive morning recovery order.",
             },
             {
                 "label": "Credits 24h",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Cost",
                 "detail": "Cost movement stays tied to metering facts.",
             },
             {
                 "label": "Runtime regressions",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "SLA",
                 "detail": "Task/procedure drift compares latest runs to baseline.",
             },
             {
                 "label": "Cortex exceptions",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "AI",
                 "detail": "AI spend/control exceptions stay quota-aware.",
             },
@@ -5390,13 +5383,13 @@ def _dba_command_lanes(
                 "label": "Source health",
                 "value": "On demand",
                 "state": "Trust",
-                "detail": "Refresh before export or owner action.",
+                "detail": "Refresh before export or routed action.",
             },
             {
                 "label": "Command queue",
                 "value": "On demand",
-                "state": "Owner work",
-                "detail": "Owner, approval, ticket, and verification proof.",
+                "state": "Routed work",
+                "detail": "Route, ticket, and telemetry status.",
             },
         ]
     return [
@@ -5428,25 +5421,25 @@ def _dba_command_lanes(
             "label": "Runtime regressions",
             "value": f"{safe_int(regression_count):,}",
             "state": "SLA" if regression_count else "Clear",
-            "detail": "Task/procedure drift needs owner and release context.",
+            "detail": "Task/procedure drift needs route and release context.",
         },
         {
             "label": "Cortex exceptions",
             "value": f"{safe_int(cortex_exception_count):,}",
             "state": "AI" if cortex_exception_count else "Clear",
-            "detail": "Review owner, model/source, quota, and spend path.",
+            "detail": "Review route, model/source, quota, and spend path.",
         },
         {
             "label": "Source health",
             "value": f"{safe_int(source_issue_count):,}",
             "state": "Trust" if source_issue_count else "Ready",
-            "detail": "Unavailable or stale evidence blocks confident action.",
+            "detail": "Unavailable or stale telemetry blocks confident action.",
         },
         {
             "label": "Command queue",
             "value": f"{safe_int(open_actions):,}",
-            "state": "Owner work" if open_actions else "Clear",
-            "detail": "No action closes without approval and verification proof.",
+            "state": "Routed work" if open_actions else "Clear",
+            "detail": "No action closes without current telemetry status.",
         },
     ]
 
@@ -5459,7 +5452,7 @@ def _dba_handoff_rows(
     *,
     max_rows: int = 14,
 ) -> pd.DataFrame:
-    """Build an operational shift handoff from already-loaded Control Room evidence."""
+    """Build an operational shift handoff from already-loaded Control Room telemetry."""
     rows: list[dict] = []
 
     priority_exceptions = _priority_exceptions(exceptions if exceptions is not None else _empty_df())
@@ -5474,7 +5467,7 @@ def _dba_handoff_rows(
             "STATE": f"{severity} Exception",
             "EVIDENCE": str(item.get("Evidence") or item.get("DETAIL") or signal),
             "OWNER_OR_ROUTE": f"{route}{' / ' + workflow if workflow else ''}",
-            "NEXT_ACTION": str(item.get("Action") or item.get("NEXT_ACTION") or "Open the routed workflow and validate evidence."),
+            "NEXT_ACTION": str(item.get("Action") or item.get("NEXT_ACTION") or "Open the routed workflow and validate telemetry."),
             "PROOF_REQUIRED": _dba_section_proof_required(route),
             "SOURCE": "Watch Floor",
         })
@@ -5501,7 +5494,7 @@ def _dba_handoff_rows(
                 "STATE": str(item.get("COMMAND_STATE") or item.get("COMMAND_EXECUTION_GATE") or "Queued Action"),
                 "EVIDENCE": f"{entity}; due={item.get('DUE_STATE', '')}; gate={item.get('COMMAND_EXECUTION_GATE', '')}",
                 "OWNER_OR_ROUTE": owner,
-                "NEXT_ACTION": str(item.get("NEXT_ACTION") or "Complete the queue row, then attach verification before closure."),
+                "NEXT_ACTION": str(item.get("NEXT_ACTION") or "Complete the queue row, then monitor telemetry before closure."),
                 "PROOF_REQUIRED": evidence_required or _dba_section_proof_required(route),
                 "SOURCE": "Action Queue",
             })
@@ -5522,10 +5515,10 @@ def _dba_handoff_rows(
                 "EVIDENCE": (
                     f"{safe_int(item.get('OPEN_ACTIONS')):,} open; "
                     f"{safe_int(item.get('OVERDUE_OPEN')):,} overdue; "
-                    f"{safe_int(item.get('FIXED_WITHOUT_VERIFICATION')):,} fixed without verification"
+                    f"{safe_int(item.get('FIXED_WITHOUT_VERIFICATION')):,} closed pending telemetry"
                 ),
                 "OWNER_OR_ROUTE": str(item.get("OWNER") or route),
-                "NEXT_ACTION": str(item.get("NEXT_CONTROL_ACTION") or "Attach closure proof before accepting the work as done."),
+                "NEXT_ACTION": str(item.get("NEXT_CONTROL_ACTION") or "Confirm closure status before accepting the work as done."),
                 "PROOF_REQUIRED": _dba_section_proof_required(route),
                 "SOURCE": "Closure Rollup",
             })
@@ -5538,16 +5531,16 @@ def _dba_handoff_rows(
         ].head(4)
         for _, item in source_blocks.iterrows():
             state = str(item.get("STATE") or "Source Check")
-            surface = str(item.get("SURFACE") or "Evidence surface")
+            surface = str(item.get("SURFACE") or "Telemetry surface")
             rows.append({
                 "PRIORITY_RANK": 1 if state == "Unavailable" else 2,
-                "LANE": "Source Health",
+                "LANE": "Data Health",
                 "STATE": state,
                 "EVIDENCE": f"{surface}; rows={safe_int(item.get('ROWS')):,}; scope={item.get('SCOPE', '')}",
                 "OWNER_OR_ROUTE": "DBA / Platform",
-                "NEXT_ACTION": str(item.get("NEXT_ACTION") or "Reload or refresh this evidence before acting."),
-                "PROOF_REQUIRED": "current source health for active company, environment, lookback, budget, and triage filters",
-                "SOURCE": "Source Health",
+                "NEXT_ACTION": str(item.get("NEXT_ACTION") or "Reload or refresh this telemetry before acting."),
+                "PROOF_REQUIRED": "current data health for active company, environment, lookback, budget, and triage filters",
+                "SOURCE": "Data Health",
             })
 
     if not rows:
@@ -5555,7 +5548,7 @@ def _dba_handoff_rows(
             "PRIORITY_RANK": 8,
             "LANE": "DBA Control Room",
             "STATE": "Routine Watch",
-            "EVIDENCE": "No loaded exceptions, open command blockers, closure blockers, or stale evidence surfaces.",
+            "EVIDENCE": "No loaded exceptions, open command blockers, closure blockers, or stale telemetry surfaces.",
             "OWNER_OR_ROUTE": "On-call DBA",
             "NEXT_ACTION": "Keep the fast snapshot current and review Alert Center for new routed issues.",
             "PROOF_REQUIRED": "fresh Control Room load and current Alert Center review",
@@ -5593,16 +5586,16 @@ def _build_dba_shift_handoff_markdown(
         for _, row in rows.iterrows():
             lines.append(
                 f"- [{row.get('STATE', '')}] {row.get('LANE', '')}: {row.get('EVIDENCE', '')}. "
-                f"Owner/route: {row.get('OWNER_OR_ROUTE', '')}. "
-                f"Next: {row.get('NEXT_ACTION', '')}. "
-                f"Proof: {row.get('PROOF_REQUIRED', '')}."
+                f"Route: {_clean_display_text(row.get('OWNER_OR_ROUTE', ''))}. "
+                f"Next: {_clean_display_text(row.get('NEXT_ACTION', ''))}. "
+                f"Telemetry basis: {_clean_display_text(row.get('PROOF_REQUIRED', ''))}."
             )
     lines.extend([
         "",
         "## Closure Standard",
-        "- Do not mark work done unless owner, ticket/change ID, approval, verification result, and recovery evidence are present where applicable.",
-        "- Treat shared warehouse cost attribution as allocated/estimated unless verified against billing or finance evidence.",
-        "- Reload stale evidence after changing company, environment, lookback, budget, or triage filters.",
+        "- Do not mark work done unless route, ticket/change ID, telemetry status, and recovery status are present where applicable.",
+        "- Treat shared warehouse cost attribution as allocated/estimated unless confirmed against billing or finance data.",
+        "- Reload stale telemetry after changing company, environment, lookback, budget, or triage filters.",
     ])
     return "\n".join(lines)
 
@@ -5621,16 +5614,16 @@ def _render_shift_handoff_panel(
         ("Handoff Items", f"{len(handoff_rows):,}"),
         ("Escalate", f"{int((handoff_rows['PRIORITY_RANK'] <= 1).sum()):,}"),
         (
-            "Proof Blocks",
+            "Telemetry Blocks",
             f"{int(handoff_rows['STATE'].astype(str).str.contains('Blocked|Overdue|Unavailable|Stale', case=False, regex=True).sum()):,}",
         ),
-        ("Source Issues", f"{int(handoff_rows['SOURCE'].astype(str).eq('Source Health').sum()):,}"),
+        ("Input Issues", f"{int(handoff_rows['SOURCE'].astype(str).eq('Data Health').sum()):,}"),
     ))
     render_priority_dataframe(
-        handoff_rows,
+        handoff_rows.rename(columns={"OWNER_OR_ROUTE": "ROUTE"}),
         title="Incoming DBA handoff queue",
         priority_columns=[
-            "LANE", "STATE", "EVIDENCE", "OWNER_OR_ROUTE",
+            "LANE", "STATE", "EVIDENCE", "ROUTE",
             "NEXT_ACTION", "PROOF_REQUIRED", "SOURCE",
         ],
         sort_by=["PRIORITY_RANK", "LANE", "STATE"],
@@ -5670,20 +5663,27 @@ def _build_dba_incident_markdown(
         lines.append("- No incident rows were available.")
     else:
         for _, row in rows.iterrows():
+            incident_type = _clean_display_text(row.get("INCIDENT_TYPE", ""))
+            affected_routes = _clean_display_text(row.get("AFFECTED_ROUTES", ""))
+            signals = _clean_display_text(row.get("SIGNALS", ""))
+            telemetry = _clean_display_text(row.get("EVIDENCE", ""))
+            containment = _clean_display_text(row.get("CONTAINMENT_ACTION", ""))
+            sla_target = _clean_display_text(row.get("SLA_TARGET", ""))
+            telemetry_basis = _clean_display_text(row.get("PROOF_REQUIRED", ""))
             lines.append(
                 f"- {row.get('INCIDENT_ID', '')} [{row.get('SEVERITY', '')} / {row.get('STATUS', '')}] "
-                f"{row.get('INCIDENT_TYPE', '')} on {row.get('AFFECTED_ROUTES', '')}: {row.get('SIGNALS', '')}. "
-                f"Evidence: {row.get('EVIDENCE', '')}. "
-                f"Containment: {row.get('CONTAINMENT_ACTION', '')}. "
-                f"SLA: {row.get('SLA_TARGET', '')}. "
-                f"Proof: {row.get('PROOF_REQUIRED', '')}."
+                f"{incident_type} on {affected_routes}: {signals}. "
+                f"Telemetry: {telemetry}. "
+                f"Containment: {containment}. "
+                f"SLA: {sla_target}. "
+                f"Telemetry basis: {telemetry_basis}."
             )
     lines.extend([
         "",
         "## Operating Rules",
         "- Containment comes before optimization or permanent configuration changes.",
-        "- Do not close an incident until the proof requirements are attached to the action queue or change record.",
-        "- Refresh stale or unavailable evidence before taking irreversible DBA action.",
+        "- Do not close an incident until telemetry status is present in the action queue or change record.",
+        "- Refresh stale or unavailable telemetry before taking irreversible DBA action.",
     ])
     return "\n".join(lines)
 
@@ -5702,7 +5702,7 @@ def _render_incident_board_panel(
         ("Incidents", f"{len(incident_board):,}"),
         ("Containment", f"{int(incident_board['STATUS'].astype(str).eq('Containment Required').sum()):,}"),
         ("Overdue", f"{int(pd.to_numeric(incident_board['OVERDUE'], errors='coerce').fillna(0).sum()):,}"),
-        ("Evidence Issues", f"{int(pd.to_numeric(incident_board['SOURCE_ISSUES'], errors='coerce').fillna(0).sum()):,}"),
+        ("Telemetry Issues", f"{int(pd.to_numeric(incident_board['SOURCE_ISSUES'], errors='coerce').fillna(0).sum()):,}"),
     ))
     render_priority_dataframe(
         incident_board,
@@ -5748,7 +5748,7 @@ def _render_control_room_source_health(
         allow_live_fallback,
     )
     if source_health.empty:
-        st.info("No source health rows are available yet.")
+        st.info("No data health rows are available yet.")
         return source_health
     current = int(source_health["STATE"].isin(["Loaded", "No Rows"]).sum())
     stale = int(source_health["STATE"].eq("Stale").sum())
@@ -5766,16 +5766,16 @@ def _render_control_room_source_health(
         ("Unavailable", f"{unavailable:,}"),
     ))
     st.caption(
-        "Use this before acting from the Control Room. Stale rows mean evidence was loaded under a different "
+        "Use this before acting from the Control Room. Stale rows mean telemetry was loaded under a different "
         "company, environment, lookback, budget, fallback mode, or triage filter scope."
     )
     render_priority_dataframe(
         source_health,
-        title="Control-room evidence freshness and source mode",
+        title="Control-room telemetry freshness and data mode",
         priority_columns=["STATE", "SURFACE", "MODE", "ROWS", "SCOPE", "MESSAGE", "NEXT_ACTION"],
         sort_by=["STATE_RANK", "SURFACE"],
         ascending=[True, True],
-        raw_label="All control-room source health rows",
+        raw_label="All control-room data-health rows",
         height=360,
     )
     return source_health
@@ -5797,49 +5797,49 @@ def _render_release_readiness_gate(
         lookback_hours=lookback_hours,
     )
     render_shell_snapshot((
-        ("Gate Score", f"{safe_int(summary.get('score'))}/100"),
+        ("Gate State", _gate_state_from_counts(safe_int(summary.get("blocked")), safe_int(summary.get("review")))),
         ("Blocked", f"{safe_int(summary.get('blocked')):,}"),
         ("Review", f"{safe_int(summary.get('review')):,}"),
         ("Ready", f"{safe_int(summary.get('ready')):,}"),
         ("Timeline Events", f"{len(timeline):,}"),
     ))
     if safe_int(summary.get("blocked")):
-        st.error("Release gate is blocked by deployment or task recovery evidence.")
+        st.error("Change path is blocked by release or task recovery telemetry.")
     elif safe_int(summary.get("review")) or safe_int(summary.get("not_loaded")):
-        st.warning("Release gate needs review before production approval.")
+        st.warning("Change review needs status confirmation before production change.")
     else:
-        st.success("Loaded release gate evidence is clear.")
+        st.success("Loaded operational telemetry is clear.")
 
     render_priority_dataframe(
         gate,
-        title="Auto release readiness gate",
+        title="Operational status gate",
         priority_columns=["GATE", "STATE", "SEVERITY", "EVIDENCE", "NEXT_ACTION", "ROUTE", "PROOF_REQUIRED"],
         sort_by=["STATE", "SEVERITY", "GATE"],
         ascending=[True, True, True],
-        raw_label="All release gate rows",
+        raw_label="All operational status rows",
         height=300,
     )
     download_csv(gate, "overwatch_auto_release_gate.csv")
 
     source_gate_summary, source_gate = _build_evidence_freshness_gate(source_health)
     if not source_gate.empty:
-        st.markdown("**Evidence Freshness Gate**")
+        st.markdown("**Telemetry Status Gate**")
         render_shell_snapshot((
-            ("Evidence Score", f"{safe_int(source_gate_summary.get('score'))}/100"),
-            ("Blocked Sources", f"{safe_int(source_gate_summary.get('blocked')):,}"),
-            ("Review Sources", f"{safe_int(source_gate_summary.get('review')):,}"),
-            ("Deferred Sources", f"{safe_int(source_gate_summary.get('deferred')):,}"),
+            ("Telemetry State", _gate_state_from_counts(safe_int(source_gate_summary.get("blocked")), safe_int(source_gate_summary.get("review")))),
+            ("Blocked Inputs", f"{safe_int(source_gate_summary.get('blocked')):,}"),
+            ("Review Inputs", f"{safe_int(source_gate_summary.get('review')):,}"),
+            ("Deferred Inputs", f"{safe_int(source_gate_summary.get('deferred')):,}"),
         ))
         render_priority_dataframe(
             source_gate,
-            title="Operational evidence freshness by source",
+            title="Operational telemetry status by input",
             priority_columns=[
                 "SURFACE", "GATE_STATE", "SEVERITY", "SOURCE_STATE", "MODE", "ROWS",
-                "RELEASE_IMPACT", "ROUTE", "WORKFLOW", "NEXT_ACTION", "PROOF_REQUIRED",
+                "RELEASE_IMPACT", "ROUTE", "WORKFLOW", "NEXT_ACTION",
             ],
             sort_by=["GATE_RANK", "SURFACE"],
             ascending=[True, True],
-            raw_label="All operational evidence freshness rows",
+            raw_label="All operational telemetry status rows",
             height=300,
             max_rows=12,
         )
@@ -5865,12 +5865,12 @@ def _render_release_readiness_gate(
             _jump("Workload Operations", workflow="Task graphs")
             st.rerun()
     with r2:
-        if st.button("Open Governance & Security", key="dba_release_gate_open_change", width="stretch"):
-            _jump("Governance & Security", workflow="Object and access changes")
+        if st.button("Open Security Monitoring", key="dba_release_gate_open_change", width="stretch"):
+            _jump("Security Monitoring", workflow="Object and access changes")
             st.rerun()
     with r3:
-        if st.button("Open Source Health", key="dba_release_gate_open_source_health", width="stretch"):
-            st.session_state["dba_control_room_active_view"] = "Source Health"
+        if st.button("Open Operations Board", key="dba_release_gate_open_operations", width="stretch"):
+            st.session_state["dba_control_room_active_view"] = "Operations Board"
             st.rerun()
     return summary, gate, timeline
 
@@ -5935,8 +5935,9 @@ def _build_report(
         f"- Stored procedure release-regression candidates: {0 if procedure_sla_cost.empty else len(procedure_sla_cost):,}",
         f"- Cortex projected 30-day cost: ${cortex_projected:,.2f} vs ${cortex_budget:,.2f} budget",
         f"- Cortex user/source exceptions: {0 if cortex_exceptions.empty else len(cortex_exceptions):,}",
-        f"- Release gate: {safe_int(release_summary.get('blocked')):,} blocked; "
-        f"{safe_int(release_summary.get('review')):,} review; score {safe_int(release_summary.get('score'))}/100",
+        f"- Operational status: {safe_int(release_summary.get('blocked')):,} blocked; "
+        f"{safe_int(release_summary.get('review')):,} review; "
+        f"state {_gate_state_from_counts(safe_int(release_summary.get('blocked')), safe_int(release_summary.get('review')))}",
         f"- Credits: {format_credits(period_credits)} (${credits_to_dollars(period_credits, credit_price):,.2f})",
         f"- Credit change vs prior window: {credit_delta:+.1f}%",
         "",
@@ -5947,29 +5948,35 @@ def _build_report(
     else:
         for _, item in exceptions.iterrows():
             lines.append(
-                f"- {item['Severity']}: {item['Signal']} - {item['Evidence']} "
-                f"Action: {item['Action']} Route: {item['Route']}."
+                _clean_display_text(
+                    f"- {item['Severity']}: {item['Signal']} - {item['Evidence']} "
+                    f"Action: {item['Action']} Route: {item['Route']}."
+                )
             )
     if not release_gate.empty:
-        lines.extend(["", "## Auto Release Gate"])
+        lines.extend(["", "## Operational Status"])
         for _, item in release_gate.head(10).iterrows():
             lines.append(
-                f"- {item.get('STATE', '')}: {item.get('GATE', '')} - {item.get('EVIDENCE', '')} "
-                f"Next: {item.get('NEXT_ACTION', '')}"
+                _clean_display_text(
+                    f"- {item.get('STATE', '')}: {item.get('GATE', '')} - {item.get('EVIDENCE', '')} "
+                    f"Next: {item.get('NEXT_ACTION', '')}"
+                )
             )
     if not source_gate.empty:
         lines.extend([
             "",
-            "## Evidence Freshness Gate",
-            f"- Score: {safe_int(source_gate_summary.get('score'))}/100; "
+            "## Telemetry Status Gate",
+            f"- State: {_gate_state_from_counts(safe_int(source_gate_summary.get('blocked')), safe_int(source_gate_summary.get('review')))}; "
             f"blocked {safe_int(source_gate_summary.get('blocked')):,}; "
             f"review {safe_int(source_gate_summary.get('review')):,}; "
             f"deferred {safe_int(source_gate_summary.get('deferred')):,}.",
         ])
         for _, item in source_gate[source_gate["GATE_STATE"].astype(str).isin(["Blocked", "Review"])].head(10).iterrows():
             lines.append(
-                f"- {item.get('GATE_STATE', '')}: {item.get('SURFACE', '')} - "
-                f"{item.get('EVIDENCE', '')} Next: {item.get('NEXT_ACTION', '')}"
+                _clean_display_text(
+                    f"- {item.get('GATE_STATE', '')}: {item.get('SURFACE', '')} - "
+                    f"{item.get('EVIDENCE', '')} Next: {item.get('NEXT_ACTION', '')}"
+                )
             )
     if not release_timeline.empty:
         blocking = release_timeline[
@@ -6030,18 +6037,18 @@ def render() -> None:
     render_operator_briefing(
         [
             ("First move", "Use the fast snapshot for cheap triage."),
-            ("Evidence", "Load details only when a signal needs proof."),
+            ("Telemetry", "Load details only when a signal needs source detail."),
             ("Control", "Route to the specialist workflow before taking action."),
             ("Output", "Export a DBA brief for leaders without giving them the app."),
         ],
         columns=4,
     )
     if evidence_mode == TRIAGE_MODE_TRIAGE:
-        defer_section_note("Landing default keeps this page on actionable issues and report-ready proof.")
+        defer_section_note("Landing default keeps this page on actionable issues and report-ready telemetry.")
     elif evidence_mode == TRIAGE_MODE_INVESTIGATE:
-        defer_section_note("Investigation detail opens deeper root-cause evidence defaults.")
+        defer_section_note("Investigation detail opens deeper root-cause telemetry defaults.")
     elif evidence_mode == TRIAGE_MODE_ALL_EVIDENCE:
-        defer_section_note("Full proof depth opens full detail and bounded live fallback defaults.")
+        defer_section_note("Full detail depth opens bounded live fallback defaults.")
 
     cortex_budget_usd = float(
         st.session_state.get(
@@ -6102,7 +6109,7 @@ def render() -> None:
             _clear_dba_control_room_derived_state()
 
     if snapshot_scope_ok:
-        st.caption("Fast snapshot loads automatically on section navigation; use refresh when current proof matters.")
+        st.caption("Fast snapshot loads automatically on section navigation; use refresh when current telemetry matters.")
         if st.button("Check Fast Snapshot", key="dba_control_room_check_snapshot"):
             with render_load_status("Checking latest control-room summary snapshot", "Fast snapshot check ready"):
                 snapshot_result = load_latest_control_room_mart(company, max_age_hours=6)
@@ -6110,7 +6117,7 @@ def render() -> None:
                 st.session_state["dba_control_room_snapshot_result"] = snapshot_result
     if snapshot_result is not None and snapshot_result.available and not snapshot_result.data.empty:
         snapshot = snapshot_result.data.copy()
-        st.caption(f"Fast snapshot available from {snapshot_result.source}. Use it for cheap triage; load detail only for investigation.")
+        st.caption("Fast snapshot is ready. Use it for cheap triage; load detail only for investigation.")
         render_shell_snapshot(
             (
                 ("Failed Queries", f"{safe_int(snapshot['FAILED_QUERIES_24H'].sum()):,}"),
@@ -6138,11 +6145,9 @@ def render() -> None:
             _clear_dba_control_room_derived_state()
             st.rerun()
     elif snapshot_result is not None and not snapshot_result.available:
-        st.caption("Fast snapshot unavailable. Install/run OVERWATCH_MART_SETUP.sql to enable cheap control-room triage.")
+        st.caption("Fast snapshot unavailable. Ask the DBA team to enable the summary facts for cheap control-room triage.")
     elif not snapshot_scope_ok:
-        st.caption(
-            "Snapshot is company-level. Clear filters or load triage for this scoped view."
-        )
+        st.caption("Clear filters or refresh the operations board for this scoped view.")
 
     mode_default_key = "_dba_control_room_detail_defaults"
     if st.session_state.get(mode_default_key) != evidence_mode:
@@ -6159,7 +6164,7 @@ def render() -> None:
     include_deep_evidence = bool(st.session_state.get("dba_control_room_include_deep_evidence", False))
     allow_live_fallback = bool(st.session_state.get("dba_control_room_allow_live_fallback", False))
     def _load_control_room_evidence(*, status_label: str = "Loading exception signals", auto_build_ops: bool = False) -> None:
-        with render_load_status(status_label, "Control Room evidence ready"):
+        with render_load_status(status_label, "Control Room telemetry ready"):
             session = get_session()
             st.session_state["dba_control_room_data"] = _load_control_room(
                 session,
@@ -6173,9 +6178,9 @@ def render() -> None:
             st.session_state["dba_control_room_company"] = company
             st.session_state["dba_control_room_lookback"] = int(lookback_hours)
             st.session_state["dba_control_room_source_mode"] = (
-                "Deep evidence summary + limited live fallback"
+                "Deep telemetry summary + limited live fallback"
                 if include_deep_evidence and allow_live_fallback
-                else "Deep evidence summary-only"
+                else "Deep telemetry summary-only"
                 if include_deep_evidence
                 else "Fast triage summary + limited live fallback"
                 if allow_live_fallback
@@ -6257,20 +6262,20 @@ def render() -> None:
             _render_consolidated_service_posture()
             return
         if active_view == "Morning Brief":
-            st.warning("Build the DBA Morning Brief to rank today's route priority and exportable evidence.")
-            st.caption("Workflow: load triage -> route priority -> escalation proof -> owner handoff.")
-            if st.button("Build DBA Morning Brief", key="dba_control_room_build_morning_from_empty", type="primary"):
-                _load_control_room_evidence(status_label="Building DBA Morning Brief evidence", auto_build_ops=True)
+            st.warning("Refresh the DBA Morning Brief to rank today's route priority and route handoff.")
+            st.caption("Workflow: triage refresh -> route priority -> escalation status -> route handoff.")
+            if st.button("Refresh DBA Morning Brief", key="dba_control_room_build_morning_from_empty", type="primary"):
+                _load_control_room_evidence(status_label="Refreshing DBA Morning Brief", auto_build_ops=True)
                 st.rerun()
         elif active_view == "Operations Board":
-            st.warning("Load the Operations Board to see route priority, runbook, handoff, incident, and action queue detail.")
-            st.caption("Workflow: load triage -> route priority -> owner action -> closure proof.")
-            if st.button("Load Operations Board", key="dba_control_room_build_ops_from_empty", type="primary"):
-                _load_control_room_evidence(status_label="Loading Operations Board evidence", auto_build_ops=True)
+            st.warning("Refresh the Operations Board to see route priority, runbook, handoff, incident, and action queue detail.")
+            st.caption("Workflow: triage refresh -> route priority -> routed action -> closure status.")
+            if st.button("Refresh Operations Board", key="dba_control_room_build_ops_from_empty", type="primary"):
+                _load_control_room_evidence(status_label="Refreshing Operations Board", auto_build_ops=True)
                 st.rerun()
         else:
-            st.warning(f"{load_label} to see today's DBA exceptions and exportable evidence.")
-            st.caption("Workflow: snapshot -> exception -> owner action -> evidence export.")
+            st.warning(f"{load_label} to see today's DBA exceptions and exportable telemetry.")
+            st.caption("Workflow: snapshot -> exception -> routed action -> telemetry export.")
         return
 
     loaded_lookback = st.session_state.get("dba_control_room_lookback", lookback_hours)
@@ -6287,7 +6292,7 @@ def render() -> None:
     data_current = _dba_control_meta_matches(loaded_meta, expected_meta)
     if not data_current:
         st.warning(
-            "Loaded DBA Control Room evidence is stale for the active scope. Reload before taking action "
+            "Loaded DBA Control Room telemetry is stale for the active scope. Reload before taking action "
             "or exporting a brief."
         )
         _render_control_room_source_health(
@@ -6403,20 +6408,6 @@ def render() -> None:
             "Use Operations Board when you need route priority, runbook, escalation, handoff, incident, or queue detail."
         )
 
-    elif active_view == "Release Gate":
-        st.subheader("Auto Release Readiness Gate")
-        st.caption(
-            "Derived from schema migration status, source freshness, task failure facts, and task regression signals. "
-            "It prepares proof and routing; it does not execute remediation or resume tasks."
-        )
-        _render_release_readiness_gate(
-            data,
-            release_source_health,
-            company=company,
-            environment=environment,
-            lookback_hours=int(lookback_hours),
-        )
-
     elif active_view == "Service Posture":
         _render_consolidated_service_posture()
 
@@ -6437,11 +6428,11 @@ def render() -> None:
             st.session_state["dba_control_room_ops_ready"] = True
         if not st.session_state.get("dba_control_room_ops_ready"):
             if active_view == "Morning Brief":
-                st.caption("Build the DBA Morning Brief from route priority, escalation, handoff, incident, and action queue evidence.")
-                load_label = "Build DBA Morning Brief"
+                st.caption("Refresh the DBA Morning Brief from route priority, escalation, handoff, incident, and action queue telemetry.")
+                load_label = "Refresh DBA Morning Brief"
             else:
-                st.caption("Load route priority, runbook, escalation, handoff, incident, and queue detail for the current scope.")
-                load_label = "Load Operations Board"
+                st.caption("Refresh route priority, runbook, escalation, handoff, incident, and queue detail for the current scope.")
+                load_label = "Refresh Operations Board"
             if st.button(load_label, key="dba_control_room_build_ops", type="primary"):
                 st.session_state["dba_control_room_ops_ready"] = True
                 st.rerun()
@@ -6672,7 +6663,7 @@ def render() -> None:
                     _jump("Workload Operations", workflow=workflow)
         with r2:
             st.subheader("Cost and Capacity")
-            st.write("Bill explanations, contract pacing, warehouse pressure, rightsizing, recommendations, and value evidence.")
+            st.write("Bill explanations, contract pacing, warehouse pressure, rightsizing, recommendations, and value telemetry.")
             for label, title, workflow in [
                 ("Cost & Contract", "Cost & Contract", "Explain bill / attribution / contract"),
                 ("AI / Cortex Spend", "Cost & Contract", "AI and Cortex spend"),
@@ -6681,11 +6672,11 @@ def render() -> None:
                 if st.button(label, key=f"dba_control_cost_{label}", width="stretch"):
                     _jump(title, workflow=workflow)
         with r3:
-            st.subheader("Security and Governance")
+            st.subheader("Security Monitoring")
             st.write("Login posture, grants, data sharing, object changes, procedure lineage, drift checks, and admin controls.")
             for title, workflow in [("Security Posture", "Security Posture"), ("Object Changes", "Object and access changes")]:
                 if st.button(title, key=f"dba_control_security_{title}", width="stretch"):
-                    _jump("Governance & Security", workflow=workflow)
+                    _jump("Security Monitoring", workflow=workflow)
 
         st.divider()
         st.subheader("Exception Detail Samples")
@@ -6733,11 +6724,11 @@ def render() -> None:
                 ascending = [False, False, False, False, False, False]
             render_priority_dataframe(
                 display_df,
-                title=f"{key.replace('_', ' ').title()} evidence",
+                title=f"{key.replace('_', ' ').title()} detail",
                 priority_columns=priority_columns,
                 sort_by=sort_by,
                 ascending=ascending,
-                raw_label=f"All {key.replace('_', ' ')} evidence rows",
+                raw_label=f"All {key.replace('_', ' ')} detail rows",
                 height=320,
             )
         else:
@@ -6939,9 +6930,9 @@ def render() -> None:
                     key="dba_release_compare_report_download",
                 )
         else:
-            st.info("Choose release windows and run the comparison when you need post-change verification evidence.")
+            st.info("Choose release windows and run the comparison when you need post-change status.")
 
-    elif active_view == "Executive Evidence":
+    elif active_view in {"Executive Detail", "Report Brief"}:
         st.subheader("Report-Ready Brief")
         report = _build_report(
             data,
@@ -6959,30 +6950,3 @@ def render() -> None:
             mime="text/markdown",
             key="dba_control_room_brief_download",
         )
-
-    elif active_view == "Source Health":
-        st.subheader("Control Room Source Status")
-        _render_control_room_source_health(
-            data,
-            company,
-            environment,
-            int(lookback_hours),
-            safe_float(cortex_budget_usd),
-            bool(include_deep_evidence),
-            bool(allow_live_fallback),
-        )
-        snapshot_df = data.get("_mart_snapshot", _empty_df())
-        if snapshot_df is not None and not snapshot_df.empty:
-            st.subheader("Fast Snapshot Rows")
-            render_priority_dataframe(
-                snapshot_df,
-                title="Latest fast snapshot",
-                priority_columns=[
-                    "SNAPSHOT_TS", "COMPANY", "HEALTH_SCORE", "FAILED_QUERIES_24H",
-                    "FAILED_TASKS_24H", "CREDITS_24H", "CORTEX_COST_7D",
-                ],
-                sort_by=["SNAPSHOT_TS"],
-                ascending=False,
-                raw_label="All fast snapshot rows",
-                height=180,
-            )

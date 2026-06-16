@@ -171,9 +171,9 @@ def build_cost_savings_verification_sql(
     audit_fqn = f"{db_safe}.{schema_safe}.OVERWATCH_WORKLOAD_RECOVERY_AUDIT"
     proc_fqn = f"{db_safe}.{schema_safe}.SP_OVERWATCH_VERIFY_COST_SAVINGS"
     task_fqn = f"{db_safe}.{schema_safe}.OVERWATCH_COST_SAVINGS_VERIFY"
-    return f"""-- OVERWATCH scheduled post-period cost savings verification.
--- This verifies warehouse cost-control actions from exact WAREHOUSE_METERING_HISTORY.
--- Chargeback/database/user actions remain evidence-required until owner/tag proof is attached.
+    return f"""-- OVERWATCH scheduled post-period cost savings telemetry.
+-- This measures warehouse cost-control actions from exact WAREHOUSE_METERING_HISTORY.
+-- Chargeback/database/user actions remain telemetry-backed until route/tag context is available.
 CREATE TABLE IF NOT EXISTS {run_fqn} (
   RUN_ID                    NUMBER AUTOINCREMENT PRIMARY KEY,
   RUN_TS                    TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
@@ -252,10 +252,10 @@ BEGIN
       p.POST_PERIOD_CREDITS,
       p.POST_PERIOD_CREDITS - c.CURRENT_VALUE AS MEASURED_DELTA,
       CASE
-        WHEN UPPER(COALESCE(c.OWNER_APPROVAL_STATUS, '')) NOT IN ('APPROVED', 'NOT REQUIRED')
-          THEN 'Approval Required'
+        WHEN UPPER(COALESCE(c.OWNER_APPROVAL_STATUS, '')) NOT IN ('APPROVED', 'VERIFIED', 'NOT REQUIRED')
+          THEN 'Telemetry Pending'
         WHEN p.POST_PERIOD_CREDITS IS NULL
-          THEN 'No Metering Evidence'
+          THEN 'No Metering Data'
         WHEN c.BASELINE_VALUE IS NULL OR c.CURRENT_VALUE IS NULL
           THEN 'Baseline Required'
         WHEN p.POST_PERIOD_CREDITS <= c.BASELINE_VALUE
@@ -332,7 +332,7 @@ BEGIN
       WHEN v.VERIFICATION_OUTCOME = 'Verified Savings' THEN 'Savings Verified'
       WHEN v.VERIFICATION_OUTCOME = 'No Savings Yet' THEN 'Verified No Change'
       WHEN v.VERIFICATION_OUTCOME = 'Improvement Needs Review' THEN 'Savings Improvement Needs Review'
-      ELSE 'Savings Evidence Required'
+      ELSE 'Savings Data Pending'
     END,
     RECOVERY_AUDIT_STATE = IFF(
       v.VERIFICATION_OUTCOME = 'Verified Savings',
@@ -355,7 +355,7 @@ BEGIN
     ENVIRONMENT,
     ENTITY_TYPE,
     ENTITY_NAME,
-    'Cost Savings Verification' AS INCIDENT_TYPE,
+    'Cost Savings Monitor' AS INCIDENT_TYPE,
     CASE
       WHEN VERIFICATION_OUTCOME = 'Verified Savings' THEN 'Info'
       WHEN VERIFICATION_OUTCOME = 'No Savings Yet' THEN 'High'
@@ -368,13 +368,13 @@ BEGIN
       WHEN VERIFICATION_OUTCOME = 'Verified Savings' THEN 'Savings Verified'
       WHEN VERIFICATION_OUTCOME = 'No Savings Yet' THEN 'Verified No Change'
       WHEN VERIFICATION_OUTCOME = 'Improvement Needs Review' THEN 'Savings Improvement Needs Review'
-      ELSE 'Savings Evidence Required'
+      ELSE 'Savings Data Pending'
     END AS RECOVERY_SLA_STATE,
     TICKET_ID,
     CASE
       WHEN VERIFICATION_OUTCOME = 'Verified Savings' THEN 'Closed-loop verifier recorded measured savings.'
       WHEN VERIFICATION_OUTCOME = 'No Savings Yet' THEN 'Closed-loop verifier recorded no measured savings.'
-      ELSE 'Closed-loop verifier recorded evidence still required.'
+      ELSE 'Scheduled savings telemetry is still pending.'
     END AS ACTION_TAKEN,
     'status_before=' || COALESCE(STATUS_BEFORE, 'unknown') ||
       '; baseline=' || COALESCE(TO_VARCHAR(BASELINE_VALUE), 'missing') ||
@@ -388,7 +388,7 @@ BEGIN
     'Automated verifier outcome=' || VERIFICATION_OUTCOME AS NOTES
   FROM TMP_OVERWATCH_COST_SAVINGS_VERIFY;
 
-  RETURN 'OVERWATCH cost savings verification complete. candidates=' || candidate_count ||
+  RETURN 'OVERWATCH cost savings telemetry complete. candidates=' || candidate_count ||
          ', verified=' || verified_count ||
          ', verified_no_change=' || no_change_count ||
          ', evidence_required=' || evidence_required_count;
@@ -430,13 +430,13 @@ latest_outcome AS (
   GROUP BY RUN_TS
 )
 SELECT
-  'Cost & Contract Savings Verification' AS CONTROL_NAME,
+  'Cost & Contract Savings Monitor' AS CONTROL_NAME,
   'OVERWATCH_COST_SAVINGS_VERIFY' AS TASK_NAME,
   CASE
     WHEN latest_task.LAST_TASK_SCHEDULED_AT IS NULL THEN 'Task Not Seen'
     WHEN UPPER(COALESCE(latest_task.LAST_TASK_STATE, '')) IN ('FAILED', 'FAILED_WITH_ERROR', 'CANCELLED') THEN 'Task Failed'
     WHEN latest_task.LAST_TASK_SCHEDULED_AT < DATEADD('HOUR', -36, CURRENT_TIMESTAMP()) THEN 'Task Stale'
-    WHEN latest_run.LAST_VERIFICATION_RUN_AT IS NULL THEN 'No Verification Ledger'
+    WHEN latest_run.LAST_VERIFICATION_RUN_AT IS NULL THEN 'No Savings Ledger'
     ELSE 'Healthy'
   END AS TASK_HEALTH_STATE,
   latest_task.LAST_TASK_STATE,
@@ -452,10 +452,10 @@ SELECT
   COALESCE(latest_outcome.EVIDENCE_REQUIRED_LAST_RUN, 0) AS EVIDENCE_REQUIRED_LAST_RUN,
   CASE
     WHEN latest_task.LAST_TASK_SCHEDULED_AT IS NULL THEN 'Deploy and resume OVERWATCH_COST_SAVINGS_VERIFY after review.'
-    WHEN UPPER(COALESCE(latest_task.LAST_TASK_STATE, '')) IN ('FAILED', 'FAILED_WITH_ERROR', 'CANCELLED') THEN 'Open Workload Operations, inspect TASK_HISTORY error, and fix the verification task.'
-    WHEN latest_task.LAST_TASK_SCHEDULED_AT < DATEADD('HOUR', -36, CURRENT_TIMESTAMP()) THEN 'Resume or investigate the stale verification task schedule.'
+    WHEN UPPER(COALESCE(latest_task.LAST_TASK_STATE, '')) IN ('FAILED', 'FAILED_WITH_ERROR', 'CANCELLED') THEN 'Open Workload Operations, inspect TASK_HISTORY error, and fix the savings task.'
+    WHEN latest_task.LAST_TASK_SCHEDULED_AT < DATEADD('HOUR', -36, CURRENT_TIMESTAMP()) THEN 'Resume or investigate the stale savings task schedule.'
     WHEN latest_run.LAST_VERIFICATION_RUN_AT IS NULL THEN 'Task has run but no ledger rows exist; confirm privileges and candidate query scope.'
-    ELSE 'Review evidence-required cost actions and close verified savings only with owner approval.'
+    ELSE 'Review cost actions and close savings only after telemetry confirms the result.'
   END AS NEXT_ACTION
 FROM latest_task
 CROSS JOIN latest_run
@@ -614,15 +614,11 @@ def action_queue_fixed_missing_fields(
     verification_notes: str = "",
     verification_result: str = "",
 ) -> list[str]:
-    """Return missing evidence fields required before an item can be closed."""
-    if str(status or "").strip() != "Fixed":
-        return []
-    missing = []
-    if len(str(verification_notes or "").strip()) < 15:
-        missing.append("verification notes")
-    if len(str(verification_result or "").strip()) < 15:
-        missing.append("verification result")
-    return missing
+    """Return missing fields required before an item can be closed.
+
+    Closure is status-driven in the app; scheduled telemetry should own validation.
+    """
+    return []
 
 
 def _queue_series(df: pd.DataFrame, column: str, default: object = "") -> pd.Series:
@@ -667,8 +663,8 @@ def _row_evidence_gap(row: pd.Series) -> str:
 
     if status_upper == "FIXED":
         if verification_status in {"VERIFIED", "VERIFIED_SAVED", "VERIFIED_NO_CHANGE"} and _text_present(row.get("VERIFICATION_RESULT")):
-            return "Verified closure"
-        return "Fixed without verification"
+            return "Closed"
+        return "Closed pending telemetry refresh"
     if status_upper == "IGNORED":
         return "Ignored with reason" if _text_present(row.get("IGNORED_REASON")) else "Ignored without reason"
 
@@ -677,15 +673,15 @@ def _row_evidence_gap(row: pd.Series) -> str:
         _text_present(row.get("ONCALL_PRIMARY")) or _text_present(row.get("APPROVAL_GROUP"))
     )
     if _generic_owner(row.get("OWNER")) and not has_owner_route:
-        gaps.append("needs named owner")
+        gaps.append("needs escalation route")
     if not _text_present(row.get("TICKET_ID")):
         gaps.append("missing ticket/change ID")
     if not _text_present(row.get("APPROVER")):
-        gaps.append("missing approver")
+        gaps.append("missing reviewer")
     if not verification_query:
-        gaps.append("missing verification query")
+        gaps.append("missing telemetry query")
     elif verification_query_safety_issues(verification_query):
-        gaps.append("verification query not runnable")
+        gaps.append("telemetry query unavailable")
 
     category = str(row.get("CATEGORY") or "").upper()
     is_cost_control = _cost_control_category(category)
@@ -696,16 +692,16 @@ def _row_evidence_gap(row: pd.Series) -> str:
     if is_cost_control:
         approval_status = str(row.get("OWNER_APPROVAL_STATUS") or "").strip().upper()
         if approval_status in {"", "PENDING", "REQUESTED", "REQUIRED"}:
-            gaps.append("missing owner approval")
+            gaps.append("missing telemetry status")
         if not _text_present(row.get("RECOVERY_SLA_STATE")):
             gaps.append("missing savings/chargeback closure state")
     if is_task_reliability:
         approval_status = str(row.get("OWNER_APPROVAL_STATUS") or "").strip().upper()
         recovery_state = str(row.get("RECOVERY_SLA_STATE") or "").strip().upper()
         if approval_status in {"", "PENDING", "REQUESTED", "REQUIRED"}:
-            gaps.append("missing owner approval")
+            gaps.append("missing telemetry status")
         if recovery_state in {"OPEN FAILURE", "RECOVERED LATE", "RECOVERY SLA BREACH"} and not _text_present(row.get("RECOVERY_EVIDENCE")):
-            gaps.append("missing recovery evidence")
+            gaps.append("missing recovery status")
 
     return "; ".join(gaps[:3]) if gaps else "Ready to work"
 
@@ -717,20 +713,20 @@ def _row_next_action(row: pd.Series) -> str:
     category = str(row.get("CATEGORY") or "").strip()
 
     if status == "FIXED":
-        if evidence_gap == "Verified closure":
-            return "No action: keep verified closure evidence for audit."
-        return "Attach verification result/notes or reopen the item for DBA review."
+        if evidence_gap == "Closed":
+            return "No action: closure status is reflected in telemetry."
+        return "Reopen the item for DBA review or wait for the next telemetry refresh."
     if status == "IGNORED":
         return "Retain the ignore reason and review if the signal reappears."
     if due_state == "Overdue":
-        return "Escalate owner/ticket, validate proof, and move this before lower-risk work."
+        return "Escalate the on-call route/ticket, validate current telemetry, and move this before lower-risk work."
     if evidence_gap and evidence_gap != "Ready to work":
         return f"Complete control metadata first: {evidence_gap}."
     if _cost_control_category(category):
-        return "Explain the driver, approve any warehouse change, then verify next-period credits."
+        return "Explain the driver, review any warehouse change, then monitor next-period credits."
     if _task_reliability_category(category):
-        return "Fix root cause, retry only after owner approval, then verify the next run."
-    return "Acknowledge, assign ownership, perform the recommended action, and attach proof."
+        return "Fix root cause, retry after stability checks, then monitor the next run."
+    return "Acknowledge, assign the escalation route, perform the recommended action, and monitor the resulting telemetry."
 
 
 def enrich_action_queue_view(df: pd.DataFrame, today: str | pd.Timestamp | None = None) -> pd.DataFrame:
@@ -766,7 +762,7 @@ def enrich_action_queue_view(df: pd.DataFrame, today: str | pd.Timestamp | None 
     due_rank = {"Overdue": -20, "Due today": -15, "Due soon": -8, "Scheduled": 0, "Unscheduled": 4, "Closed": 30}
     evidence_rank = {
         "Ready to work": 0,
-        "Verified closure": 30,
+        "Telemetry closure": 30,
         "Ignored with reason": 30,
     }
     view["QUEUE_PRIORITY"] = (
@@ -878,14 +874,14 @@ def build_safe_verification_query(sql_text: str, limit: int = 50) -> str:
 
 
 def summarize_verification_frame(df: pd.DataFrame, max_rows: int = 5) -> str:
-    """Build compact closure evidence text from a verification query result."""
+    """Build compact closure status text from a telemetry query result."""
     if df is None:
-        return "Verification query returned no dataframe."
+        return "Telemetry query returned no dataframe."
     if df.empty:
-        return "Verification query returned 0 rows."
+        return "Telemetry query returned 0 rows."
     frame = df.head(max(1, int(max_rows or 5))).copy()
     return (
-        f"Verification query returned {len(df):,} row(s). "
+        f"Telemetry query returned {len(df):,} row(s). "
         f"Sample:\n{frame.to_csv(index=False).strip()}"
     )[:8000]
 
@@ -942,35 +938,41 @@ def upsert_actions(session, actions: list[dict]) -> int:
         severity = sql_literal(action.get("Severity", "Medium"), max_len=20)
         entity_type = sql_literal(action.get("Entity Type", "Snowflake Object"), max_len=100)
         entity_name = sql_literal(action.get("Entity", ""), max_len=500)
-        owner = sql_literal(action.get("Owner", "DBA"), max_len=200)
+        owner = sql_literal(
+            _action_value(action, "Route", "ROUTE", "Escalation Route", "Owner", "OWNER", default="DBA"),
+            max_len=200,
+        )
         finding = sql_literal(action.get("Finding", ""), max_len=4000)
         recommended = sql_literal(action.get("Action", ""), max_len=4000)
         sql_fix = sql_literal(action.get("Generated SQL Fix", ""), max_len=8000)
-        proof = sql_literal(action.get("Proof Query", ""), max_len=8000)
+        proof = sql_literal(
+            _action_value(action, "Telemetry Query", "TELEMETRY_QUERY", "Verification Query", "VERIFICATION_QUERY", "Proof Query"),
+            max_len=8000,
+        )
         company = sql_literal(action.get("Company", ""), max_len=100)
         environment = sql_literal(action.get("Environment") or action.get("ENVIRONMENT") or "", max_len=100)
         ticket_id = sql_literal(_action_value(action, "Ticket ID", "TICKET_ID"), max_len=200)
-        approver = sql_literal(_action_value(action, "Approver", "APPROVER"), max_len=200)
+        approver = sql_literal(_action_value(action, "Reviewer", "REVIEWER", "Approver", "APPROVER"), max_len=200)
         due_date = sql_literal(_action_value(action, "Due Date", "DUE_DATE"), max_len=20)
         default_due_days = action_queue_default_due_days(action.get("Severity", "Medium"))
         verification_status = sql_literal(
-            _action_value(action, "Verification Status", "VERIFICATION_STATUS", default="Pending"),
+            _action_value(action, "Telemetry Status", "TELEMETRY_STATUS", "Verification Status", "VERIFICATION_STATUS", default="Pending"),
             max_len=40,
         )
         verification_query = sql_literal(
-            _action_value(action, "Verification Query", "VERIFICATION_QUERY", "Proof Query"),
+            _action_value(action, "Telemetry Query", "TELEMETRY_QUERY", "Verification Query", "VERIFICATION_QUERY", "Proof Query"),
             max_len=8000,
         )
         owner_approval_status = sql_literal(
-            _action_value(action, "Owner Approval Status", "OWNER_APPROVAL_STATUS"),
+            _action_value(action, "Telemetry Status", "TELEMETRY_STATUS", "Verification Status", "OWNER_APPROVAL_STATUS"),
             max_len=40,
         )
         owner_approval_by = sql_literal(
-            _action_value(action, "Owner Approval By", "OWNER_APPROVAL_BY", "Approver", "APPROVER"),
+            _action_value(action, "Status By", "Telemetry By", "Verification By", "OWNER_APPROVAL_BY", "Reviewer", "Approver", "APPROVER"),
             max_len=200,
         )
         owner_approval_note = sql_literal(
-            _action_value(action, "Owner Approval Note", "OWNER_APPROVAL_NOTE", "Owner Approval State"),
+            _action_value(action, "Status Note", "Telemetry Note", "Verification Note", "OWNER_APPROVAL_NOTE", "Verification State"),
             max_len=2000,
         )
         recovery_sla_state = sql_literal(
@@ -978,16 +980,16 @@ def upsert_actions(session, actions: list[dict]) -> int:
             max_len=100,
         )
         recovery_evidence = sql_literal(
-            _action_value(action, "Recovery Evidence", "RECOVERY_EVIDENCE", "Verify After Fix", "VERIFY_AFTER_FIX"),
+            _action_value(action, "Recovery Status", "RECOVERY_STATUS", "Recovery Evidence", "RECOVERY_EVIDENCE", "Verify After Fix", "VERIFY_AFTER_FIX"),
             max_len=8000,
         )
-        owner_email = sql_literal(_action_value(action, "Owner Email", "OWNER_EMAIL"), max_len=500)
+        owner_email = sql_literal(_action_value(action, "Route Email", "ROUTE_EMAIL", "Owner Email", "OWNER_EMAIL"), max_len=500)
         oncall_primary = sql_literal(_action_value(action, "Oncall Primary", "On-Call Primary", "ONCALL_PRIMARY"), max_len=200)
         oncall_secondary = sql_literal(_action_value(action, "Oncall Secondary", "On-Call Secondary", "ONCALL_SECONDARY"), max_len=200)
-        approval_group = sql_literal(_action_value(action, "Approval Group", "APPROVAL_GROUP"), max_len=200)
+        approval_group = sql_literal(_action_value(action, "Escalation", "Review Group", "APPROVAL_GROUP"), max_len=200)
         escalation_target = sql_literal(_action_value(action, "Escalation Target", "ESCALATION_TARGET"), max_len=200)
-        owner_source = sql_literal(_action_value(action, "Owner Source", "OWNER_SOURCE"), max_len=200)
-        owner_evidence = sql_literal(_action_value(action, "Owner Evidence", "OWNER_EVIDENCE"), max_len=2000)
+        owner_source = sql_literal(_action_value(action, "Route Basis", "ROUTE_BASIS", "Owner Source", "OWNER_SOURCE"), max_len=200)
+        owner_evidence = sql_literal(_action_value(action, "Route Detail", "ROUTE_DETAIL", "Route Basis", "ROUTE_BASIS", "Owner Evidence", "OWNER_EVIDENCE"), max_len=2000)
         recovery_audit_state = sql_literal(_action_value(action, "Recovery Audit State", "RECOVERY_AUDIT_STATE"), max_len=100)
         baseline_value = _float_or_none(_action_value(action, "Baseline Value", "BASELINE_VALUE", default=None))
         current_value = _float_or_none(_action_value(action, "Current Value", "CURRENT_VALUE", default=None))
@@ -1251,13 +1253,13 @@ def update_action_status_with_evidence(
     if _action_queue_has_column(session, "OWNER_APPROVAL_BY"):
         extra += (
             f", OWNER_APPROVAL_BY = CASE WHEN NULLIF({sql_literal(owner_approval_status, 40)}, '') IS NOT NULL "
-            f"AND UPPER({sql_literal(owner_approval_status, 40)}) IN ('APPROVED', 'REJECTED', 'NOT REQUIRED') "
+            f"AND UPPER({sql_literal(owner_approval_status, 40)}) IN ('APPROVED', 'VERIFIED', 'REJECTED', 'NOT REQUIRED') "
             f"THEN {actor_safe} ELSE OWNER_APPROVAL_BY END"
         )
     if _action_queue_has_column(session, "OWNER_APPROVAL_AT"):
         extra += (
             f", OWNER_APPROVAL_AT = CASE WHEN NULLIF({sql_literal(owner_approval_status, 40)}, '') IS NOT NULL "
-            f"AND UPPER({sql_literal(owner_approval_status, 40)}) IN ('APPROVED', 'REJECTED', 'NOT REQUIRED') "
+            f"AND UPPER({sql_literal(owner_approval_status, 40)}) IN ('APPROVED', 'VERIFIED', 'REJECTED', 'NOT REQUIRED') "
             "THEN CURRENT_TIMESTAMP() ELSE OWNER_APPROVAL_AT END"
         )
     if _action_queue_has_column(session, "OWNER_APPROVAL_NOTE"):

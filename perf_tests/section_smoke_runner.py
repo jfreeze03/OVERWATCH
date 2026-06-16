@@ -25,7 +25,7 @@ DEFAULT_SECTIONS = [
     "Alert Center",
     "Workload Operations",
     "Cost & Contract",
-    "Governance & Security",
+    "Security Monitoring",
 ]
 
 

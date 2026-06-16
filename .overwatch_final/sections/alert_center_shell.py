@@ -9,14 +9,11 @@ import streamlit as st
 from config import DEFAULT_COMPANY, DEFAULT_DAY_WINDOW, DEFAULT_ENVIRONMENT, ENVIRONMENT_CONFIG
 from sections.shell_helpers import (
     full_workspace_requested,
-    render_refresh_contract,
-    render_setup_health_board,
     render_shell_kpi_row,
     render_shell_workflows,
     render_signal_lane_board,
 )
 from utils.command_board import load_or_reuse_command_board
-from utils.native_snowflake import build_alert_object_registry_sql
 
 
 _FULL_WORKSPACE_KEY = "_alert_center_full_workspace_requested"
@@ -37,7 +34,7 @@ _WORKFLOWS = (
     {
         "VIEW": "Command Center",
         "BUTTON_LABEL": "Open Command Center",
-        "MOVE": "Start with severity-ranked risk, category owners, freshness, and business impact.",
+        "MOVE": "Start with severity-ranked risk, category routes, freshness, and business impact.",
     },
     {
         "VIEW": "DBA Morning Brief",
@@ -57,37 +54,22 @@ _WORKFLOWS = (
     {
         "VIEW": "Triage Digest",
         "BUTTON_LABEL": "Open Triage Digest",
-        "MOVE": "Escalate critical, high, overdue, and owner-ready alert rows first.",
+        "MOVE": "Escalate critical, high, overdue, and route-ready alert rows first.",
     },
     {
         "VIEW": "Email Delivery",
         "BUTTON_LABEL": "Open Delivery",
-        "MOVE": "Prove which alerts are email-ready, sent, logged, or still waiting.",
+        "MOVE": "Confirm which alerts are email-ready, sent, logged, or still waiting.",
     },
     {
         "VIEW": "Action Queue Routing",
         "BUTTON_LABEL": "Open Queue Routing",
-        "MOVE": "Move alert evidence into accountable owner work and closure proof.",
-    },
-    {
-        "VIEW": "Control Health",
-        "BUTTON_LABEL": "Open Control Health",
-        "MOVE": "Check source readiness, owner routing, alert rules, and control gaps.",
-    },
-    {
-        "VIEW": "Automation Readiness",
-        "BUTTON_LABEL": "Open Automation",
-        "MOVE": "Review alert refresh, digest delivery, owner routing, and in-app action handoff readiness.",
+        "MOVE": "Move alert telemetry into routed work and closure status.",
     },
     {
         "VIEW": "Notifications & Remediation",
         "BUTTON_LABEL": "Open Remediation",
-        "MOVE": "Review notification routing and approval-gated remediation contracts before action.",
-    },
-    {
-        "VIEW": "Setup & Runbook",
-        "BUTTON_LABEL": "Open Setup",
-        "MOVE": "Deploy alert config, events, thresholds, owner routing, notification, and remediation audit tables.",
+        "MOVE": "Review notification routing and remediation checks before action.",
     },
 )
 
@@ -143,7 +125,7 @@ def _load_command_board() -> None:
 
 
 def _full_workspace_requested() -> bool:
-    """Keep Alert navigation lightweight; load command evidence only from an explicit alert workflow."""
+    """Keep Alert navigation lightweight; load command detail only from an explicit alert workflow."""
     _ = full_workspace_requested
     if st.session_state.get(_FULL_WORKSPACE_KEY):
         return True
@@ -244,13 +226,13 @@ def _alert_shell_lanes(data: dict) -> tuple[dict[str, str], ...]:
                     "label": "Critical / high",
                     "value": f"{critical_high:,}",
                     "state": "Now",
-                    "detail": "Severity-ranked alert pressure loads from the executive command mart.",
+                    "detail": "Severity-ranked alert pressure loads from the fast summary.",
                 },
                 {
                     "label": "Open actions",
                     "value": f"{open_actions:,}",
-                    "state": "Owners",
-                    "detail": "Owner-routed work should have business impact, action, and verification.",
+                    "state": "Routes",
+                    "detail": "Routed work should have business impact, action, and current status.",
                 },
                 {
                     "label": "Pipeline reliability",
@@ -268,7 +250,7 @@ def _alert_shell_lanes(data: dict) -> tuple[dict[str, str], ...]:
                     "label": "Cost / FinOps",
                     "value": spend,
                     "state": "Spend",
-                    "detail": f"Top driver: {summary.get('top_cost_driver') or 'Not loaded'}.",
+                    "detail": f"Top driver: {summary.get('top_cost_driver') or 'On demand'}.",
                 },
                 {
                     "label": "Cortex / AI",
@@ -284,59 +266,59 @@ def _alert_shell_lanes(data: dict) -> tuple[dict[str, str], ...]:
                 },
                 {
                     "label": "Remediation route",
-                    "value": "Approval gated",
+                    "value": "Review gated",
                     "state": "Safe",
-                    "detail": "Every fix needs SQL preview, approval mode, and audit logging.",
+                    "detail": "Every fix needs current alert telemetry and audit logging.",
                 },
             )
         return (
             {
                 "label": "Critical / high",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Refresh",
                 "detail": "Severity-ranked incidents should be visible on first click.",
             },
             {
                 "label": "Overdue SLA",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "SLA",
                 "detail": "Aged unresolved alerts need escalation before they become outages.",
             },
             {
                 "label": "Security risk",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Security",
                 "detail": "Login, grant, access, sharing, and policy risks get their own lane.",
             },
             {
                 "label": "Cost / FinOps",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Spend",
-                "detail": "Cost anomalies and runaway spend route to owners with savings proof.",
+                "detail": "Cost anomalies and runaway spend route with savings telemetry.",
             },
             {
                 "label": "Performance",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Workload",
                 "detail": "Queue, spill, runtime, and contention alerts are DBA-actionable.",
             },
             {
                 "label": "Pipeline reliability",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Tasks",
                 "detail": "Task graph, load, dynamic table, and SLA alerts belong here.",
             },
             {
                 "label": "Data quality",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Trust",
                 "detail": "Freshness, row count, null, duplicate, and schema checks are metadata-driven.",
             },
             {
                 "label": "Remediation route",
-                "value": "Approval gated",
+                "value": "Review gated",
                 "state": "Safe",
-                "detail": "Every fix needs SQL preview, approval mode, and audit logging.",
+                "detail": "Every fix needs current alert telemetry and audit logging.",
             },
         )
 
@@ -371,7 +353,7 @@ def _alert_shell_lanes(data: dict) -> tuple[dict[str, str], ...]:
             "label": "Cost / FinOps",
             "value": f"{cost:,}",
             "state": "Spend",
-            "detail": "Cost anomalies need forecast, driver, and owner remediation evidence.",
+            "detail": "Cost anomalies need forecast, driver, and routed remediation status.",
         },
         {
             "label": "Performance",
@@ -394,8 +376,8 @@ def _alert_shell_lanes(data: dict) -> tuple[dict[str, str], ...]:
         {
             "label": "Remediation route",
             "value": f"{_open_queue_count(data):,} open",
-            "state": "Approval",
-            "detail": "Only approved safe actions should execute; all actions log proof.",
+            "state": "Review",
+            "detail": "Only reviewed safe actions should execute; all actions log status.",
         },
     )
 
@@ -435,16 +417,16 @@ def _render_metric_board() -> None:
     render_signal_lane_board("Alert Command Board", _alert_shell_lanes(data), max_lanes=8)
     if not loaded:
         render_shell_kpi_row((
-            ("Critical / High", f"{_int_value(summary.get('critical_high_alerts')):,}" if summary else "Not loaded"),
-            ("Failed Queries", f"{_int_value(summary.get('failed_queries')):,}" if summary else "Not loaded"),
-            ("Open Actions", f"{_int_value(summary.get('open_actions')):,}" if summary else "Not loaded"),
-            ("Spend", _money(summary.get("current_cost_usd")) if summary else "Not loaded"),
+            ("Critical / High", f"{_int_value(summary.get('critical_high_alerts')):,}" if summary else "On demand"),
+            ("Failed Queries", f"{_int_value(summary.get('failed_queries')):,}" if summary else "On demand"),
+            ("Open Actions", f"{_int_value(summary.get('open_actions')):,}" if summary else "On demand"),
+            ("Spend", _money(summary.get("current_cost_usd")) if summary else "On demand"),
         ))
         render_shell_kpi_row((
-            ("Task Failures", f"{_int_value(summary.get('failed_tasks')):,}" if summary else "Not loaded"),
-            ("Cortex", _money(summary.get("cortex_cost_usd")) if summary else "Not loaded"),
-            ("Fresh Sources", f"{_int_value(summary.get('freshness_sources')):,}" if summary else "Not loaded"),
-            ("Automation", "Approval gated"),
+            ("Task Failures", f"{_int_value(summary.get('failed_tasks')):,}" if summary else "On demand"),
+            ("Cortex", _money(summary.get("cortex_cost_usd")) if summary else "On demand"),
+            ("Fresh Sources", f"{_int_value(summary.get('freshness_sources')):,}" if summary else "On demand"),
+            ("Automation", "Review gated"),
         ))
         return
 
@@ -452,7 +434,7 @@ def _render_metric_board() -> None:
         ("Critical / High", f"{_severity_count(data, ('Critical', 'High')):,}"),
         ("Warnings", f"{_severity_count(data, ('Warning', 'Medium')):,}"),
         ("Open Actions", f"{_open_queue_count(data):,}"),
-        ("Owners Ready", f"{_frame_count(data, 'owner_directory'):,}"),
+        ("Delivery Routes", f"{_frame_count(data, 'delivery_log'):,}"),
     ))
     render_shell_kpi_row((
         ("Delivery Ready", f"{_frame_count(data, 'delivery_log'):,}"),
@@ -460,13 +442,6 @@ def _render_metric_board() -> None:
         ("Rules", f"{_frame_count(data, 'rules'):,}"),
         ("Freshness", "Loaded" if data.get("_freshness_meta") else "Loaded"),
     ))
-    render_refresh_contract(
-        data.get("_freshness_meta") if isinstance(data, dict) and data.get("_freshness_meta") else _command_meta(),
-        source="MART_EXECUTIVE_OBSERVABILITY / ALERT_EVENTS / ALERT_ACTION_QUEUE",
-        target_minutes=15,
-        refresh_method="Scheduled alert sweep and owner-routing refresh",
-        live_fallback="No shell fallback",
-    )
 
 
 def _render_lifecycle_board() -> None:
@@ -487,20 +462,20 @@ def _render_lifecycle_board() -> None:
         (
             {
                 "label": "Detect",
-                "value": "ALERT_EVENTS",
+                "value": "Alert event",
                 "state": "Signal",
-                "detail": "Severity, category, source freshness, owner route, and business impact are captured once.",
+                "detail": "Severity, category, source freshness, assignment, and business impact are captured once.",
             },
             {
                 "label": "Deduplicate",
                 "value": "Alert key",
                 "state": "Noise control",
-                "detail": "Recurring symptoms attach to the same key before they become a wall of alerts.",
+                "detail": "Recurring symptoms roll into the same key before they become a wall of alerts.",
             },
             {
                 "label": "Acknowledge",
-                "value": "ALERT_ACKNOWLEDGEMENTS",
-                "state": "Owner",
+                "value": "Ack",
+                "state": "Assigned",
                 "detail": "Ack rows prove who took responsibility and when escalation can pause.",
             },
             {
@@ -511,21 +486,21 @@ def _render_lifecycle_board() -> None:
             },
             {
                 "label": "Remediate",
-                "value": "ALERT_REMEDIATION_LOG",
-                "state": "Approval",
-                "detail": "SQL/action preview, approval mode, before/after state, rollback, and verification are required.",
+                "value": "Remediation log",
+                "state": "Review",
+                "detail": "Review mode, before/after state, and rollback are tracked.",
             },
             {
                 "label": "Notify",
-                "value": "ALERT_NOTIFICATION_LOG",
+                "value": "Notification log",
                 "state": "Routed",
                 "detail": "Email/webhook-ready routing is recorded even when integrations are not enabled.",
             },
             {
                 "label": "Resolve",
-                "value": "Closure proof",
+                "value": "Closure status",
                 "state": "Verified",
-                "detail": "Resolved means the condition cleared or the owner attached evidence, not just clicked away.",
+                "detail": "Resolved means the condition cleared, not just clicked away.",
             },
             {
                 "label": "Learn",
@@ -539,69 +514,15 @@ def _render_lifecycle_board() -> None:
     render_shell_kpi_row((
         ("Acknowledge", f"{acknowledged:,}" if acknowledged else "Table ready"),
         ("Suppress", "Window table"),
-        ("Resolve", "Closure proof"),
+        ("Resolve", "Closure status"),
         ("Comments", f"{comments:,}" if comments else "Audit-ready"),
     ))
     render_shell_kpi_row((
         ("Notify", f"{notification:,}" if notification else "Integration-ready"),
-        ("Remediate", f"{remediation:,}" if remediation else "Approval gated"),
-        ("Owner Route", f"{_frame_count(data, 'owner_directory'):,}" if data else "Config table"),
+        ("Remediate", f"{remediation:,}" if remediation else "Review gated"),
+        ("Routing", f"{_frame_count(data, 'rules'):,}" if data else "Rules"),
         ("Dedup", "Alert key"),
     ))
-    render_setup_health_board(
-        "Alert Object Contract",
-        (
-            ("Events", "ALERT_EVENTS"),
-            ("Ack", "ALERT_ACKNOWLEDGEMENTS"),
-            ("Remediation", "ALERT_REMEDIATION_LOG"),
-            ("Routing", "ALERT_OWNER_ROUTING"),
-        ),
-        cadence="15 min sweep",
-        fallback="No live scan on shell",
-        owner="DBA / Security / FinOps",
-    )
-    render_setup_health_board(
-        "Alert Automation Contract",
-        (
-            ("Thresholds", "ALERT_THRESHOLDS"),
-            ("Notifications", "ALERT_NOTIFICATION_LOG"),
-            ("DQ rules", "ALERT_DATA_QUALITY_CHECKS"),
-            ("Native alerts", "OVERWATCH_NATIVE_ALERT_TEMPLATES.sql"),
-        ),
-        cadence="Native alert/task schedule",
-        fallback="In-app inbox remains available",
-        owner="DBA Lead",
-    )
-    render_signal_lane_board(
-        "Native Alert Registry",
-        (
-            {
-                "label": "Inventory",
-                "value": "SHOW ALERTS IN ACCOUNT",
-                "state": "Native",
-                "detail": "Tracks Snowflake ALERT objects, schedule, warehouse, and current state.",
-            },
-            {
-                "label": "Run proof",
-                "value": "ALERT_HISTORY",
-                "state": "Evidence",
-                "detail": "Recent alert executions, failures, and error messages prove the schedule is alive.",
-            },
-            {
-                "label": "Template",
-                "value": "OVERWATCH_NATIVE_ALERT_TEMPLATES.sql",
-                "state": "Deploy",
-                "detail": "Notification-only examples should stay approval-gated until routing is approved.",
-            },
-            {
-                "label": "SQL contract",
-                "value": "Registry ready",
-                "state": "Review",
-                "detail": build_alert_object_registry_sql().splitlines()[0],
-            },
-        ),
-        max_lanes=4,
-    )
 
 
 def _render_workflow_launchpad() -> None:

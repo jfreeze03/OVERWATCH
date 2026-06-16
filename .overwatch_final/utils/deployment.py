@@ -1,4 +1,4 @@
-# utils/deployment.py - release and mart migration readiness helpers
+# utils/deployment.py - release and mart migration status helpers
 from __future__ import annotations
 
 from pathlib import Path
@@ -195,15 +195,15 @@ def build_streamlit_deployment_decision() -> pd.DataFrame:
             "WHY_IT_MATTERS": "Keeps Community Cloud on root requirements.txt instead of Snowflake-specific environment.yml.",
         },
         {
-            "RUNTIME": "Snowflake setup",
-            "DECISION": "Run snowflake/OVERWATCH_MART_SETUP.sql for database objects",
-            "ENTRYPOINT": "snowflake/OVERWATCH_MART_SETUP.sql",
+            "RUNTIME": "Snowflake status",
+            "DECISION": "DBA-owned Snowflake objects provide summary facts",
+            "ENTRYPOINT": "Approved DBA release process",
             "MANIFEST": "utils.deployment schema contract",
-            "WAREHOUSE": "COMPUTE_WH for summary refresh tasks, OVERWATCH_WH for app runtime",
-            "EXECUTE_AS": "Setup role executing the SQL",
-            "DEPLOY_CONTEXT": "DDL and mart migrations live in setup SQL, not in Streamlit UI code.",
-            "DO_NOT_USE": "ad hoc app-generated DDL as source of truth",
-            "WHY_IT_MATTERS": "Separates UI deployment from governed Snowflake mart/schema migration readiness.",
+            "WAREHOUSE": "Dedicated summary refresh and app runtime warehouses",
+            "EXECUTE_AS": "Reviewed DBA role",
+            "DEPLOY_CONTEXT": "Data objects and migration status are owned outside the Streamlit UI.",
+            "DO_NOT_USE": "ad hoc app-generated object changes as source of truth",
+            "WHY_IT_MATTERS": "Separates UI deployment from reviewed Snowflake data-health ownership.",
         },
     ]
     return pd.DataFrame(rows)
@@ -220,18 +220,18 @@ def build_schema_migration_contract() -> pd.DataFrame:
             "READY_CRITERIA": "Version row exists and OVERWATCH_SETTINGS is queryable.",
         },
         {
-            "COMPONENT": "Action queue and closure proof",
+            "COMPONENT": "Action queue and closure status",
             "REQUIRED_VERSION": OVERWATCH_SCHEMA_VERSION,
             "REQUIRED_OBJECT": "OVERWATCH_ACTION_QUEUE",
-            "WHY_IT_MATTERS": "Keeps recommendations, alert routes, cost actions, and closure evidence auditable.",
-            "READY_CRITERIA": "Queue table exists with owner, SLA, approval, and verification columns.",
+            "WHY_IT_MATTERS": "Keeps recommendations, alert routes, cost actions, and closure status auditable.",
+            "READY_CRITERIA": "Queue table exists with route, SLA, review, and telemetry columns.",
         },
         {
             "COMPONENT": "Alert automation",
             "REQUIRED_VERSION": OVERWATCH_SCHEMA_VERSION,
             "REQUIRED_OBJECT": "OVERWATCH_ALERT_DELIVERY_LOG",
-            "WHY_IT_MATTERS": "Stores digest delivery proof, escalation acknowledgement, and email readiness history.",
-            "READY_CRITERIA": "Delivery log exists and Alert Center can write digest evidence.",
+            "WHY_IT_MATTERS": "Stores digest delivery telemetry, escalation acknowledgement, and email health history.",
+            "READY_CRITERIA": "Delivery log exists and Alert Center can write digest telemetry.",
         },
         {
             "COMPONENT": "Alert automation",
@@ -241,11 +241,11 @@ def build_schema_migration_contract() -> pd.DataFrame:
             "READY_CRITERIA": "Annotation table exists before OVERWATCH_ANOMALY_CHECK is resumed.",
         },
         {
-            "COMPONENT": "FinOps verification",
+            "COMPONENT": "Cost savings measurement",
             "REQUIRED_VERSION": OVERWATCH_SCHEMA_VERSION,
             "REQUIRED_OBJECT": "OVERWATCH_COST_SAVINGS_VERIFICATION_RUN",
-            "WHY_IT_MATTERS": "Separates estimated savings from verified savings with metering evidence.",
-            "READY_CRITERIA": "Verification table, procedure, view, and scheduled task are deployed.",
+            "WHY_IT_MATTERS": "Separates estimated savings from measured savings with metering telemetry.",
+            "READY_CRITERIA": "Measurement table, procedure, view, and scheduled task are deployed.",
         },
         {
             "COMPONENT": "No-touch automation",
@@ -255,7 +255,7 @@ def build_schema_migration_contract() -> pd.DataFrame:
             "READY_CRITERIA": "Automation run ledger, health view, refresh procedure, and task are deployed.",
         },
         {
-            "COMPONENT": "Cost proof mart",
+            "COMPONENT": "Cost telemetry mart",
             "REQUIRED_VERSION": OVERWATCH_SCHEMA_VERSION,
             "REQUIRED_OBJECT": "FACT_COST_DAILY",
             "WHY_IT_MATTERS": "Persists billed cost by Snowflake service type so the UI does not rescan daily metering views.",
@@ -272,7 +272,7 @@ def build_schema_migration_contract() -> pd.DataFrame:
             "COMPONENT": "Procedure runtime context",
             "REQUIRED_VERSION": OVERWATCH_SCHEMA_VERSION,
             "REQUIRED_OBJECT": "FACT_PROCEDURE_RUN",
-            "WHY_IT_MATTERS": "Keeps stored procedure failures, runtime spikes, and child-query evidence scoped to database and schema.",
+            "WHY_IT_MATTERS": "Keeps stored procedure failures, runtime spikes, and child-query telemetry scoped to database and schema.",
             "READY_CRITERIA": "Procedure run fact exists with DATABASE_NAME, SCHEMA_NAME, ENVIRONMENT, and PROCEDURE_NAME.",
         },
         {
@@ -292,7 +292,7 @@ def build_schema_migration_status_sql(
     schema: str = "OVERWATCH",
     required_version: str = OVERWATCH_SCHEMA_VERSION,
 ) -> str:
-    """Build a Snowflake status query for setup/migration readiness."""
+    """Build a Snowflake status query for setup/migration status."""
     db = str(database).replace('"', '""')
     sch = str(schema).replace('"', '""')
     version = str(required_version).replace("'", "''")
@@ -300,16 +300,16 @@ def build_schema_migration_status_sql(
 WITH required_objects AS (
     SELECT * FROM VALUES
         ('Core mart setup', 'OVERWATCH_SETTINGS', 'TABLE', '{version}'),
-        ('Action queue and closure proof', 'OVERWATCH_ACTION_QUEUE', 'TABLE', '{version}'),
+        ('Action queue and closure status', 'OVERWATCH_ACTION_QUEUE', 'TABLE', '{version}'),
         ('Alert automation', 'OVERWATCH_ALERT_DELIVERY_LOG', 'TABLE', '{version}'),
         ('Alert automation', 'OVERWATCH_ANNOTATIONS', 'TABLE', '{version}'),
-        ('FinOps verification', 'OVERWATCH_COST_SAVINGS_VERIFICATION_RUN', 'TABLE', '{version}'),
-        ('FinOps verification', 'OVERWATCH_COST_SAVINGS_VERIFICATION_HEALTH_V', 'VIEW', '{version}'),
+        ('Cost savings measurement', 'OVERWATCH_COST_SAVINGS_VERIFICATION_RUN', 'TABLE', '{version}'),
+        ('Cost savings measurement', 'OVERWATCH_COST_SAVINGS_VERIFICATION_HEALTH_V', 'VIEW', '{version}'),
         ('No-touch automation', 'OVERWATCH_AUTOMATION_RUN', 'TABLE', '{version}'),
         ('No-touch automation', 'OVERWATCH_AUTOMATION_HEALTH_V', 'VIEW', '{version}'),
         ('No-touch automation', 'OVERWATCH_EXECUTIVE_PACKET', 'TABLE', '{version}'),
-        ('Cost proof mart', 'FACT_COST_DAILY', 'TABLE', '{version}'),
-        ('Cost proof mart', 'FACT_COST_SOURCE_HEALTH_DAILY', 'TABLE', '{version}'),
+        ('Cost telemetry mart', 'FACT_COST_DAILY', 'TABLE', '{version}'),
+        ('Cost telemetry mart', 'FACT_COST_SOURCE_HEALTH_DAILY', 'TABLE', '{version}'),
         ('Executive observability mart', 'MART_EXECUTIVE_OBSERVABILITY', 'TABLE', '{version}'),
         ('Procedure runtime context', 'FACT_PROCEDURE_RUN', 'TABLE', '{version}'),
         ('Schema migration ledger', 'OVERWATCH_SCHEMA_MIGRATION', 'TABLE', '{version}')
@@ -348,8 +348,8 @@ SELECT
         ELSE 'Ready'
     END AS migration_state,
     CASE
-        WHEN i.object_name IS NULL THEN 'Deploy snowflake/OVERWATCH_MART_SETUP.sql.'
-        WHEN COALESCE(l.latest_version, '') <> r.required_version THEN 'Rerun setup SQL or apply the matching additive migration.'
+        WHEN i.object_name IS NULL THEN 'Ask the DBA team to refresh Snowflake status objects.'
+        WHEN COALESCE(l.latest_version, '') <> r.required_version THEN 'Ask the DBA team to apply the matching status migration.'
         ELSE 'No action.'
     END AS next_action
 FROM required_objects r
@@ -381,9 +381,9 @@ MERGE INTO OVERWATCH_SCHEMA_MIGRATION tgt
 USING (
   SELECT
     '{version}' AS MIGRATION_VERSION,
-    'Executive observability mart, cost proof, procedure context, alert automation, and migration ledger' AS MIGRATION_NAME,
+    'Executive observability mart, cost telemetry, procedure context, alert automation, and migration ledger' AS MIGRATION_NAME,
     'snowflake/OVERWATCH_MART_SETUP.sql' AS SOURCE_FILE,
-    'Baseline setup ledger row for the app release, including the executive first-paint observability mart, cost proof marts, procedure database/schema context, alert automation, and migration tracking.' AS NOTES
+    'Baseline setup ledger row for the app release, including the executive first-paint observability mart, cost telemetry marts, procedure database/schema context, alert automation, and migration tracking.' AS NOTES
 ) src
 ON tgt.MIGRATION_VERSION = src.MIGRATION_VERSION
 WHEN MATCHED THEN UPDATE SET

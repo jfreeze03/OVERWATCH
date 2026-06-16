@@ -30,7 +30,7 @@ def native_capability_lanes() -> tuple[dict[str, str], ...]:
         {
             "label": "Tag allocation",
             "value": "TAG_REFERENCES",
-            "state": "Governed",
+            "state": "reviewed",
             "detail": "Prove owner, cost center, criticality, and untagged spend risk.",
         },
         {

@@ -271,7 +271,7 @@ def _build_query_optimization_candidates(query_text: str, evidence: dict | None 
             "Lock/write contention",
             observed_evidence,
             f"Open Contention Center for {query_id or '<query_id>'}; run active locks, identify the blocker and shared target object, then serialize final writes through a single publish task or batch the DML by date/hash/batch key. Do not resize compute solely on blocked seconds.",
-            "Verify QUERY_HISTORY TRANSACTION_BLOCKED_TIME and LOCK_WAIT_HISTORY wait seconds return to zero for the query pattern; confirm task overlap is gone in TASK_HISTORY.",
+            "Check QUERY_HISTORY TRANSACTION_BLOCKED_TIME and LOCK_WAIT_HISTORY wait seconds return to zero for the query pattern; confirm task overlap is gone in TASK_HISTORY.",
         )
 
     if queued_sec >= 30:
@@ -280,14 +280,14 @@ def _build_query_optimization_candidates(query_text: str, evidence: dict | None 
             "Warehouse queue pressure",
             f"Queued overload is {queued_sec:,.1f}s.",
             "Separate compute contention from SQL shape first: open Live triage/Cost & Contract, compare active queries on the same warehouse, and check WAREHOUSE_LOAD_HISTORY before resizing or rewriting SQL.",
-            "Verify QUEUED_OVERLOAD_TIME drops for the rerun and p95 queue stays below the local SLA.",
+            "Check QUEUED_OVERLOAD_TIME drops for the rerun and p95 queue stays below the local SLA.",
         )
     if remote_spill_gb >= max(THRESHOLDS["spill_warning_gb"], 1):
         _add_query_candidate(
             candidates,
             "Remote spill",
             f"Remote spill is {remote_spill_gb:,.2f} GB.",
-            f"Use GET_QUERY_OPERATOR_STATS for {query_id or '<query_id>'} and fix the spill-heavy JOIN, SORT, or AGGREGATE step by pre-filtering {object_hint}, reducing projected columns, or pre-aggregating before the wide join. Test warehouse memory only after SQL-shape evidence is captured.",
+            f"Use GET_QUERY_OPERATOR_STATS for {query_id or '<query_id>'} and fix the spill-heavy JOIN, SORT, or AGGREGATE step by pre-filtering {object_hint}, reducing projected columns, or pre-aggregating before the wide join. Test warehouse memory only after SQL-shape telemetry is captured.",
             "Rerun and compare BYTES_SPILLED_TO_REMOTE_STORAGE plus operator-level spill in GET_QUERY_OPERATOR_STATS.",
         )
     if partition_pct >= THRESHOLDS["partition_scan_warning_pct"]:
@@ -304,7 +304,7 @@ def _build_query_optimization_candidates(query_text: str, evidence: dict | None 
             "High scan with low output",
             f"Scanned {gb_scanned:,.1f} GB for {rows_produced:,.0f} output rows.",
             "Push filters into the earliest table scans, replace wide projections with required columns, and materialize a narrow candidate set before joins or window functions.",
-            "Verify BYTES_SCANNED and ROWS_PRODUCED/GB improve for the same query pattern.",
+            "Check BYTES_SCANNED and ROWS_PRODUCED/GB improve for the same query pattern.",
         )
     if re.search(r"\bSELECT\s+\*", upper):
         _add_query_candidate(
@@ -320,7 +320,7 @@ def _build_query_optimization_candidates(query_text: str, evidence: dict | None 
             "Leading wildcard text search",
             "SQL has LIKE/ILIKE with a leading wildcard.",
             f"If this is a selective text lookup on {object_hint}, test Search Optimization on the searched text column; otherwise route to a staged search table or normalized token column instead of scanning every micro-partition.",
-            "Verify search selectivity, Search Optimization maintenance cost, and BYTES_SCANNED on the same predicate.",
+            "Check search selectivity, Search Optimization maintenance cost, and BYTES_SCANNED on the same predicate.",
         )
     if _query_uses_function_wrapped_predicate(text):
         _add_query_candidate(
@@ -337,7 +337,7 @@ def _build_query_optimization_candidates(query_text: str, evidence: dict | None 
             "Large join graph",
             f"SQL has {join_count} JOIN clauses.",
             "Identify the largest build/probe sides in operator stats, filter each base table before joining, and pre-aggregate many-to-one dimensions before the wide fact join.",
-            "Verify join operator rows, spill, and elapsed time drop in GET_QUERY_OPERATOR_STATS.",
+            "Check join operator rows, spill, and elapsed time drop in GET_QUERY_OPERATOR_STATS.",
         )
     if re.search(r"\bORDER\s+BY\b", upper) and not re.search(r"\bLIMIT\b", upper):
         _add_query_candidate(
@@ -345,7 +345,7 @@ def _build_query_optimization_candidates(query_text: str, evidence: dict | None 
             "Unbounded sort",
             "SQL sorts without a LIMIT.",
             "If this is an inspection/export query, add a LIMIT or sort only the final reduced result. If ordering is required for downstream logic, materialize the filtered result first.",
-            "Verify sort operator time and remote spill in operator stats.",
+            "Check sort operator time and remote spill in operator stats.",
         )
     if re.search(r"\bCOUNT\s*\(\s*DISTINCT\b|\bSELECT\s+DISTINCT\b", upper):
         _add_query_candidate(
@@ -353,7 +353,7 @@ def _build_query_optimization_candidates(query_text: str, evidence: dict | None 
             "Distinct-heavy aggregation",
             "SQL uses DISTINCT or COUNT(DISTINCT).",
             "Pre-aggregate at the business grain before joining, remove duplicate-generating joins, or use APPROX_COUNT_DISTINCT only when the business question allows approximation.",
-            "Verify aggregate operator time, rows before aggregate, and output accuracy.",
+            "Check aggregate operator time, rows before aggregate, and output accuracy.",
         )
     if re.search(r"\b(MERGE|UPDATE|DELETE)\b", upper):
         _add_query_candidate(
@@ -361,15 +361,15 @@ def _build_query_optimization_candidates(query_text: str, evidence: dict | None 
             "Write-path contention risk",
             "SQL is DML that can lock tables or overlap with task windows.",
             "Open Contention Center before rerun; batch by partition/date key, shorten transaction scope, and reschedule overlapping tasks that write the same target object.",
-            "Verify LOCK_WAIT_HISTORY, task overlap, and rerun duration after the schedule or batching change.",
+            "Check LOCK_WAIT_HISTORY, task overlap, and rerun duration after the schedule or batching change.",
         )
     if elapsed_sec >= 300 and not candidates:
         _add_query_candidate(
             candidates,
-            "Long runtime needs operator evidence",
+            "Long runtime needs operator telemetry",
             f"Elapsed time is {elapsed_sec:,.1f}s but no obvious SQL-shape signal was detected.",
             "Load GET_QUERY_OPERATOR_STATS and classify the dominant operator before changing SQL, clustering, or warehouse size.",
-            "Verify the dominant operator's execution-time share falls on rerun.",
+            "Check the dominant operator's execution-time share falls on rerun.",
         )
     return candidates[:8]
 
@@ -397,11 +397,11 @@ def _build_query_diagnosis_action_contract(
         evidence_line = str(item.get("EVIDENCE") or "").strip()
 
         root_cause = "SQL shape"
-        action_decision = "Tune after evidence review"
+        action_decision = "Tune after telemetry review"
         first_move = f"Load GET_QUERY_OPERATOR_STATS for {query_id} and identify the dominant operator."
         exact_change = str(item.get("SPECIFIC_RECOMMENDATION") or "").strip()
-        do_not_do = "Do not change warehouse size or rewrite SQL until the dominant evidence is named."
-        owner_handoff = "Query owner / DBA"
+        do_not_do = "Do not change warehouse size or rewrite SQL until the dominant telemetry is named."
+        owner_handoff = "Query route / DBA"
 
         if signal == "Lock/write contention":
             root_cause = "Concurrency and write lock contention"
@@ -412,10 +412,10 @@ def _build_query_diagnosis_action_contract(
             )
             exact_change = (
                 "Serialize final writes, shorten the transaction, or batch MERGE/UPDATE/DELETE work by "
-                "date/hash/key after blocker evidence is confirmed."
+                "date/hash/key after blocker telemetry is confirmed."
             )
             do_not_do = "Do not resize the warehouse or rewrite joins while blocked time is the primary wait."
-            owner_handoff = "DBA plus task/job owner"
+            owner_handoff = "DBA plus task/job route"
         elif signal == "Warehouse queue pressure":
             root_cause = "Warehouse concurrency pressure"
             action_decision = "Route to Cost & Contract"
@@ -425,10 +425,10 @@ def _build_query_diagnosis_action_contract(
             )
             exact_change = (
                 "Stagger overlapping jobs, move one workload class to separate compute, or evaluate multi-cluster/"
-                "resize only after queue evidence proves compute contention."
+                "resize only after queue telemetry shows compute contention."
             )
             do_not_do = "Do not rewrite SQL as the first fix when queued overload is the dominant signal."
-            owner_handoff = "Warehouse owner / scheduler owner"
+            owner_handoff = "Warehouse route / scheduler route"
         elif signal == "Remote spill":
             root_cause = "Memory pressure inside query operators"
             action_decision = "Inspect operator stats before rerun"
@@ -437,18 +437,18 @@ def _build_query_diagnosis_action_contract(
                 f"Pre-filter {object_hint}, project only required columns, and pre-aggregate before the widest join; "
                 "test warehouse memory only after the spill-heavy operator is named."
             )
-            do_not_do = "Do not blindly resize without preserving the before/after spill operator evidence."
-            owner_handoff = "Query owner / DBA"
+            do_not_do = "Do not blindly resize without preserving the before/after spill operator telemetry."
+            owner_handoff = "Query route / DBA"
         elif signal == "Full/high partition scan":
             root_cause = "Micro-partition pruning gap"
-            action_decision = "Fix pruning evidence"
+            action_decision = "Fix pruning telemetry"
             first_move = f"Check PARTITIONS_SCANNED/TOTAL and SYSTEM$CLUSTERING_INFORMATION for {object_hint}."
             exact_change = (
                 f"Rewrite predicates on {function_hint} so Snowflake can prune {object_hint}; evaluate CLUSTER BY "
                 "or Search Optimization only for columns used by this query."
             )
             do_not_do = "Do not add broad clustering/search optimization without proving the predicate columns and maintenance cost."
-            owner_handoff = "DBA plus data owner"
+            owner_handoff = "DBA plus data route"
         elif signal == "High scan with low output":
             root_cause = "Late filtering or over-wide scan"
             action_decision = "Push selectivity earlier"
@@ -458,14 +458,14 @@ def _build_query_diagnosis_action_contract(
                 "before high-cardinality joins."
             )
             do_not_do = "Do not optimize downstream joins before proving scan volume drops."
-            owner_handoff = "Query owner"
+            owner_handoff = "Query route"
         elif signal == "Wide SELECT star":
             root_cause = "Projection over-scan"
             action_decision = "Narrow projection"
             first_move = "List the downstream columns actually consumed by the report/job."
             exact_change = "Replace SELECT * with required columns or create a narrow view for the consumer."
             do_not_do = "Do not keep SELECT * in scheduled or BI extracts unless column drift is the explicit requirement."
-            owner_handoff = "Query owner / consuming team"
+            owner_handoff = "Query route / consuming team"
         elif signal == "Leading wildcard text search":
             root_cause = "Non-sargable text scan"
             action_decision = "Redesign text lookup"
@@ -474,8 +474,8 @@ def _build_query_diagnosis_action_contract(
                 f"For {text_hint}, test Search Optimization only if the predicate is selective; otherwise create a "
                 "normalized token/search table."
             )
-            do_not_do = "Do not enable Search Optimization across a full table without selectivity and cost proof."
-            owner_handoff = "DBA plus application owner"
+            do_not_do = "Do not enable Search Optimization across a full table without selectivity and cost telemetry."
+            owner_handoff = "DBA plus application route"
         elif signal == "Function-wrapped predicate":
             root_cause = "Predicate disables pruning"
             action_decision = "Rewrite predicate"
@@ -485,7 +485,7 @@ def _build_query_diagnosis_action_contract(
                 "that column directly."
             )
             do_not_do = "Do not tune warehouse size before proving partitions scanned drop after the predicate rewrite."
-            owner_handoff = "Query owner / data model owner"
+            owner_handoff = "Query route / data model route"
         elif signal == "Large join graph":
             root_cause = "Join shape and cardinality"
             action_decision = "Reduce join inputs"
@@ -495,14 +495,14 @@ def _build_query_diagnosis_action_contract(
                 "and remove duplicate-generating joins."
             )
             do_not_do = "Do not reorder joins by intuition without operator row counts."
-            owner_handoff = "Query owner / data model owner"
+            owner_handoff = "Query route / data model route"
         elif signal == "Unbounded sort":
             root_cause = "Sort over unreduced result"
             action_decision = "Reduce before sort"
             first_move = "Confirm whether ORDER BY is for inspection/export or required business logic."
             exact_change = "Add LIMIT for inspection, or sort only after filtering/materializing the reduced result."
             do_not_do = "Do not sort wide intermediate results if only the final reduced rowset needs ordering."
-            owner_handoff = "Query owner"
+            owner_handoff = "Query route"
         elif signal == "Distinct-heavy aggregation":
             root_cause = "High-cardinality aggregation"
             action_decision = "Pre-aggregate at business grain"
@@ -511,8 +511,8 @@ def _build_query_diagnosis_action_contract(
                 "Pre-aggregate before joins or use APPROX_COUNT_DISTINCT only when the business result allows "
                 "approximation."
             )
-            do_not_do = "Do not replace exact counts with approximations without business approval."
-            owner_handoff = "Query owner / business owner"
+            do_not_do = "Do not replace exact counts with approximations without business review."
+            owner_handoff = "Query route / business route"
         elif signal == "Write-path contention risk":
             root_cause = "DML lock and task overlap risk"
             action_decision = "Check write schedule before rerun"
@@ -522,10 +522,10 @@ def _build_query_diagnosis_action_contract(
                 "that write the same target object."
             )
             do_not_do = "Do not rerun overlapping DML until the lock window and owning job are known."
-            owner_handoff = "DBA plus scheduler owner"
-        elif signal == "Long runtime needs operator evidence":
-            root_cause = "Insufficient evidence"
-            action_decision = "Load operator evidence"
+            owner_handoff = "DBA plus scheduler route"
+        elif signal == "Long runtime needs operator telemetry":
+            root_cause = "Insufficient telemetry"
+            action_decision = "Load operator telemetry"
             first_move = f"Load GET_QUERY_OPERATOR_STATS for {query_id} before choosing SQL, clustering, or compute changes."
             exact_change = "Classify dominant operator first; then apply only the matching tuning path."
             do_not_do = "Do not ask Cortex for a final fix without query ID metrics or operator notes."
@@ -548,7 +548,7 @@ def _build_query_diagnosis_action_contract(
 
 def _summarize_operator_stats(df, *, limit: int = 12) -> str:
     if df is None or getattr(df, "empty", True):
-        return "Operator stats not loaded."
+        return "Operator stats available after refresh."
     rows = []
     for row in df.head(limit).to_dict("records"):
         rows.append(
@@ -563,7 +563,7 @@ def _summarize_operator_stats(df, *, limit: int = 12) -> str:
 
 def _format_ai_evidence_for_prompt(evidence: dict) -> str:
     if not evidence:
-        return "No ACCOUNT_USAGE evidence loaded. Use SQL text and operator notes only."
+        return "No ACCOUNT_USAGE telemetry loaded. Use SQL text and operator notes only."
     ordered_keys = (
         "QUERY_ID", "USER_NAME", "ROLE_NAME", "WAREHOUSE_NAME", "WAREHOUSE_SIZE",
         "DATABASE_NAME", "SCHEMA_NAME", "EXECUTION_STATUS", "START_TIME",
@@ -576,16 +576,16 @@ def _format_ai_evidence_for_prompt(evidence: dict) -> str:
         value = evidence.get(key)
         if value not in (None, ""):
             lines.append(f"- {key}: {value}")
-    return "\n".join(lines) if lines else "No structured evidence loaded."
+    return "\n".join(lines) if lines else "No structured telemetry loaded."
 
 
 def _format_candidates_for_prompt(candidates: list[dict]) -> str:
     if not candidates:
-        return "No deterministic candidate was detected; ask for query ID evidence before making tuning claims."
+        return "No deterministic candidate was detected; ask for query ID telemetry before making tuning claims."
     return "\n".join(
         (
-            f"{item['PRIORITY']}. {item['SIGNAL']} | Evidence: {item['EVIDENCE']} | "
-            f"Recommendation: {item['SPECIFIC_RECOMMENDATION']} | Verify: {item['VERIFY_AFTER_FIX']}"
+            f"{item['PRIORITY']}. {item['SIGNAL']} | Telemetry: {item['EVIDENCE']} | "
+            f"Recommendation: {item['SPECIFIC_RECOMMENDATION']} | Status check: {item['VERIFY_AFTER_FIX']}"
         )
         for item in candidates
     )
@@ -599,7 +599,7 @@ def _format_action_contract_for_prompt(action_contract: list[dict]) -> str:
             f"{item['PRIORITY']}. {item['SIGNAL']} | Decision: {item['ACTION_DECISION']} | "
             f"Root cause: {item['ROOT_CAUSE_CLASS']} | First move: {item['FIRST_OPERATOR_MOVE']} | "
             f"Exact change: {item['EXACT_CHANGE']} | Do not do: {item['DO_NOT_DO']} | "
-            f"Verify: {item['VERIFY_AFTER_FIX']}"
+            f"Status check: {item['VERIFY_AFTER_FIX']}"
         )
         for item in action_contract
     )
@@ -614,25 +614,25 @@ def _build_ai_query_diagnosis_prompt(
     action_contract = _build_query_diagnosis_action_contract(candidates, evidence, query_text)
     return f"""You are OVERWATCH's Snowflake DBA query optimization model.
 
-Your job is to produce specific, evidence-bound optimization recommendations for one Snowflake query.
+Your job is to produce specific, telemetry-bound optimization recommendations for one Snowflake query.
 
 Hard rules:
-- Every recommendation must cite exact evidence from the query text, ACCOUNT_USAGE metrics, operator stats, or deterministic candidates below.
+- Every recommendation must cite exact telemetry from the query text, ACCOUNT_USAGE metrics, operator stats, or deterministic candidates below.
 - Use the Query diagnosis action contract below as the priority order and do not skip a higher-priority contention or queueing signal.
 - Do not recommend indexes. Snowflake does not use traditional indexes for this tuning path.
-- Do not say generic phrases such as "optimize the query", "review joins", or "improve performance" unless you name the exact join/filter/sort/aggregate evidence.
+- Do not say generic phrases such as "optimize the query", "review joins", or "improve performance" unless you name the exact join/filter/sort/aggregate telemetry.
 - Separate warehouse contention from SQL-shape problems. If QUEUED_SEC is high, say that SQL tuning may not fix the bottleneck.
 - If BLOCKED_SEC or TRANSACTION_BLOCKED_TIME is present, prioritize lock/write contention fixes before SQL rewrites or warehouse resize.
-- Include Snowflake-specific syntax only when it fits the evidence, such as GET_QUERY_OPERATOR_STATS, SYSTEM$CLUSTERING_INFORMATION, CLUSTER BY, Search Optimization, QUALIFY, or a rewritten predicate.
-- Do not invent table names, column names, warehouses, owners, query IDs, or tasks that are not present in the SQL text or evidence; say "unknown" and request the missing evidence.
-- If evidence is missing, say what to load next instead of guessing.
+- Include Snowflake-specific syntax only when it fits the telemetry, such as GET_QUERY_OPERATOR_STATS, SYSTEM$CLUSTERING_INFORMATION, CLUSTER BY, Search Optimization, QUALIFY, or a rewritten predicate.
+- Do not invent table names, column names, warehouses, routes, query IDs, or tasks that are not present in the SQL text or telemetry; say "unknown" and request the missing telemetry.
+- If telemetry is missing, say what to load next instead of guessing.
 
 Return this exact structure:
 1. DBA verdict: one sentence.
-2. Priority table with columns: Priority | Evidence | Root cause | Action decision | Exact change | Verification.
-3. Safe rollout notes: risk, owner handoff, and rollback/verification.
+2. Priority table with columns: Priority | Telemetry | Root cause | Action decision | Exact change | Status check.
+3. Safe rollout notes: risk, team handoff, rollback, and status check.
 
-Structured evidence:
+Structured telemetry:
 {_format_ai_evidence_for_prompt(evidence)}
 
 Deterministic candidates:
@@ -653,10 +653,10 @@ SQL:
 def _render_ai_evidence_snapshot(evidence: dict) -> None:
     if not evidence:
         render_shell_snapshot((
-            ("Evidence", "Paste SQL"),
+            ("Telemetry", "Paste SQL"),
             ("Query ID", "Optional"),
             ("Operator Stats", "Optional"),
-            ("Cortex", "Manual"),
+            ("Cortex", "On demand"),
         ))
         return
     render_shell_snapshot((
@@ -939,18 +939,18 @@ def render():
     # AI diagnosis
     elif active_view == "AI Diagnosis":
         st.subheader("AI Query Diagnosis")
-        st.caption("Use query evidence and Cortex to generate proof-backed Snowflake tuning recommendations.")
+        st.caption("Use query telemetry and Cortex to generate Snowflake tuning recommendations.")
 
         qid_input = st.text_input("Query ID (optional)", key="ai_query_id")
         load_query_evidence = st.button(
-            "Load Query Evidence",
+            "Load Query Telemetry",
             key="ai_load_query_evidence",
             help="Loads ACCOUNT_USAGE query metrics and GET_QUERY_OPERATOR_STATS for this query ID.",
             disabled=not bool(qid_input),
             width="stretch",
         )
         if load_query_evidence:
-            with render_load_status("Loading AI query evidence", "AI query evidence ready"):
+            with render_load_status("Loading AI query telemetry", "AI query telemetry ready"):
                 try:
                     query_key = _safe_query_key(qid_input)
                     df_evidence = run_query(
@@ -978,7 +978,7 @@ def render():
                         st.info(f"Operator stats unavailable for this query ID: {format_snowflake_error(op_exc)}")
                 except Exception as e:
                     st.session_state["ai_query_evidence"] = {}
-                    st.warning(f"Query evidence unavailable: {format_snowflake_error(e)}")
+                    st.warning(f"Query telemetry unavailable: {format_snowflake_error(e)}")
 
         evidence = dict(st.session_state.get("ai_query_evidence") or {})
         operator_stats = st.session_state.get("ai_query_operator_stats")
@@ -1021,10 +1021,10 @@ def render():
                 ],
                 raw_label="Full query diagnosis action contract",
             )
-            with st.expander("Evidence details for Cortex", expanded=False):
+            with st.expander("Telemetry details for Cortex", expanded=False):
                 render_priority_dataframe(
                     pd.DataFrame(candidates),
-                    title="Evidence-bound optimization candidates",
+                    title="Telemetry-bound optimization candidates",
                     priority_columns=[
                         "PRIORITY", "SIGNAL", "EVIDENCE",
                         "SPECIFIC_RECOMMENDATION", "VERIFY_AFTER_FIX",
@@ -1050,8 +1050,8 @@ def render():
             "Diagnose with Cortex",
             key="ai_diagnose",
             help=(
-                "Runs one throttled Cortex completion against loaded query evidence, operator stats, and deterministic "
-                "candidates. Identical evidence reuses the cached answer. Telemetry stores feature, timing, and "
+                "Runs one throttled Cortex completion against loaded query telemetry, operator stats, and deterministic "
+                "candidates. Identical telemetry reuses the cached answer. Telemetry stores feature, timing, and "
                 "prompt hash only; prompt text is not stored."
             ),
             disabled=not bool(query_text),

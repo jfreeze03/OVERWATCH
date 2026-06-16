@@ -18,7 +18,6 @@ from config import (  # noqa: E402
     ALFA_DEV_DATABASES,
     ALFA_PROD_DATABASES,
     ALFA_WAREHOUSES,
-    ARCHITECTURE_OBJECTIVES,
     DAY_WINDOW_OPTIONS,
     DEFAULT_DAY_WINDOW,
     NAV_GROUPS,
@@ -75,7 +74,7 @@ class NavigationIntegrityTests(unittest.TestCase):
             "loaded_at": (datetime.now() - timedelta(minutes=95)).isoformat(timespec="seconds"),
         }
 
-        self.assertEqual(freshness_state({}, target_minutes=60)[0], "On demand")
+        self.assertEqual(freshness_state({}, target_minutes=60), ("", ""))
         self.assertEqual(freshness_state(current_meta, target_minutes=60)[0], "Current")
         stale_state, stale_detail = freshness_state(stale_meta, target_minutes=30)
         self.assertEqual(stale_state, "Stale")
@@ -97,7 +96,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertFalse(PRIMARY_NAV_HIDDEN_SECTIONS)
         self.assertEqual(
             list(NAV_GROUPS),
-            ["COMMAND CENTER", "FINANCIAL CONTROL", "OPERATIONS", "GOVERNANCE"],
+            ["COMMAND CENTER", "FINANCIAL CONTROL", "OPERATIONS", "SECURITY"],
         )
         self.assertEqual(set(ALL_SECTIONS), set(SECTION_MODULES))
         self.assertEqual(
@@ -177,8 +176,8 @@ class NavigationIntegrityTests(unittest.TestCase):
             for section, module_path in SECTION_MODULES.items()
             if module_path.endswith("_shell")
         }
-        self.assertEqual(set(shell_modules), set(ALL_SECTIONS) - {"Governance & Security"})
-        self.assertEqual(SECTION_MODULES["Governance & Security"], "sections.governance_security")
+        self.assertEqual(set(shell_modules), set(ALL_SECTIONS) - {"Security Monitoring"})
+        self.assertEqual(SECTION_MODULES["Security Monitoring"], "sections.security_monitoring")
         helper_text = (APP_ROOT / "sections" / "shell_helpers.py").read_text(encoding="utf-8")
         self.assertIn("def full_workspace_requested", helper_text)
         self.assertIn("def render_signal_lane_board", helper_text)
@@ -251,9 +250,9 @@ class NavigationIntegrityTests(unittest.TestCase):
                     self.assertLess(render_body.index(first_data_call), render_body.index("_render_workflow_launchpad()"))
                 if "render_refresh_contract(" in shell_text and "_render_cost_source_contract()" in render_body:
                     self.assertLess(render_body.index(first_data_call), render_body.index("_render_cost_source_contract()"))
-        governance_text = (APP_ROOT / "sections" / "governance_security.py").read_text(encoding="utf-8")
+        governance_text = (APP_ROOT / "sections" / "security_monitoring.py").read_text(encoding="utf-8")
         self.assertIn("render_signal_lane_board", governance_text)
-        self.assertIn("Governance Command Board", governance_text)
+        self.assertIn("Security Monitoring Command Board", governance_text)
 
     def test_shell_evidence_label_reflects_loaded_state(self):
         keys = ("loaded_frame", "loaded_error")
@@ -274,7 +273,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(action_state_label({"loaded_frame": object()}, keys), "Loaded")
         self.assertEqual(evidence_caption({}, keys, "Load on demand."), "Load on demand.")
         self.assertIn(
-            "continue from the saved proof",
+            "continue from the saved status",
             evidence_caption({"loaded_frame": object()}, keys, "Load on demand."),
         )
 
@@ -346,7 +345,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("_FULL_WORKSPACE_KEY", shell_text)
         self.assertIn("_FULL_WORKSPACE_STATE_KEYS", shell_text)
         self.assertNotIn("import pandas", shell_import_block)
-        self.assertIn("from utils.command_board import board_rows, load_or_reuse_command_board, load_setup_readiness", shell_import_block)
+        self.assertIn("from utils.command_board import board_rows, load_or_reuse_command_board", shell_import_block)
+        self.assertNotIn("load_setup_readiness", shell_import_block)
         self.assertNotIn("from utils import", shell_import_block)
         self.assertNotIn("import utils", shell_import_block)
         self.assertIn("def _render_kpis", shell_text)
@@ -360,15 +360,15 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Daily burn rate", shell_text)
         self.assertIn("Open critical/high alerts", shell_text)
         self.assertIn("Pipeline SLA compliance", shell_text)
-        self.assertIn("Platform Operating Score", shell_text)
+        self.assertIn("Platform risk signals", shell_text)
         self.assertIn("Active issues in queue", shell_text)
         self.assertIn("Executive Glance KPIs", shell_text)
         self.assertIn("7-Day Spend Trend", shell_text)
         self.assertIn("Observability Summary", shell_text)
         self.assertIn("Snowflake Observability Wall", shell_text)
         self.assertIn("Top 5 Action Items", shell_text)
-        self.assertIn("Setup Readiness", shell_text)
-        self.assertIn("MART_EXECUTIVE_OBSERVABILITY", shell_text)
+        self.assertNotIn("Setup Readiness", shell_text)
+        self.assertNotIn("MART_EXECUTIVE_OBSERVABILITY", shell_text)
         self.assertIn("load_or_reuse_command_board(", shell_text)
         self.assertIn("Copy Executive Summary", shell_text)
         self.assertNotIn('st.markdown("**Platform Operating Score**")', shell_text)
@@ -416,15 +416,15 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("def _apply_fast_entry_default", shell_text)
         self.assertIn("_FAST_ENTRY_VERSION = 2", shell_text)
         self.assertIn("st.session_state[_FULL_WORKSPACE_KEY] = False", shell_text)
-        self.assertIn("render_refresh_contract(", shell_text)
+        self.assertNotIn("render_refresh_contract(", shell_text)
         self.assertIn("DBA Command Snapshot", shell_text)
         self.assertIn("Morning Route Board", shell_text)
-        self.assertIn("DBA Mart Contract", shell_text)
-        self.assertIn("MART_DBA_CONTROL_ROOM", shell_text)
-        self.assertIn("MART_EXECUTIVE_OBSERVABILITY", shell_text)
+        self.assertNotIn("DBA Mart Contract", shell_text)
+        self.assertNotIn("MART_DBA_CONTROL_ROOM", shell_text)
+        self.assertNotIn("MART_EXECUTIVE_OBSERVABILITY", shell_text)
         self.assertIn("def _load_command_board", shell_text)
         self.assertIn("load_or_reuse_command_board(", shell_text)
-        self.assertIn("Explicit DBA route", shell_text)
+        self.assertIn("open the heavy workspace only from a selected DBA route", shell_text)
         self.assertIn("st.session_state.setdefault(_BRIEF_MODE_KEY, True)", shell_text)
         self.assertNotIn("def _render_operating_snapshot", shell_text)
         self.assertIn("def _render_workflow_launchpad", shell_text)
@@ -434,11 +434,12 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Open Fast Watch", shell_text)
         self.assertIn("Open Morning Brief", shell_text)
         self.assertIn("Open Ops Board", shell_text)
-        self.assertIn("Open Release Gate", shell_text)
-        self.assertIn("Open Source Health", shell_text)
+        self.assertIn("Open Triage", shell_text)
+        self.assertNotIn("Open Release Gate", shell_text)
+        self.assertNotIn("Open Compare", shell_text)
+        self.assertNotIn("Open Telemetry Inputs", shell_text)
         self.assertIn("Open Service Posture", shell_text)
         self.assertIn("Open Brief Export", shell_text)
-        self.assertIn("Open Compare", shell_text)
         self.assertIn("render_shell_workflows(", shell_text)
         self.assertNotIn("More DBA Workflows", shell_text)
         self.assertIn("dba_control_room_active_view", shell_text)
@@ -454,7 +455,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('"Morning Brief"', full_workspace_text)
         self.assertIn('"Morning Brief": "Morning"', full_workspace_text)
         self.assertIn('elif active_view in {"Operations Board", "Morning Brief"}:', full_workspace_text)
-        self.assertIn('load_label = "Build DBA Morning Brief"', full_workspace_text)
+        self.assertIn('load_label = "Refresh DBA Morning Brief"', full_workspace_text)
         self.assertIn('st.session_state["dba_operations_board_detail"] = ops_detail', full_workspace_text)
         self.assertIn('"Service Posture"', full_workspace_text)
         self.assertIn('from sections import service_health', full_workspace_text)
@@ -494,10 +495,10 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("def _render_metric_board", shell_text)
         self.assertIn("Alert Command Board", shell_text)
         self.assertIn("Alert Lifecycle Board", shell_text)
-        self.assertIn("Alert Object Contract", shell_text)
-        self.assertIn("render_refresh_contract(", shell_text)
-        self.assertIn("ALERT_EVENTS / ALERT_ACTION_QUEUE", shell_text)
-        self.assertIn("MART_EXECUTIVE_OBSERVABILITY", shell_text)
+        self.assertNotIn("Alert Object Contract", shell_text)
+        self.assertNotIn("render_refresh_contract(", shell_text)
+        self.assertNotIn("ALERT_EVENTS / ALERT_ACTION_QUEUE", shell_text)
+        self.assertNotIn("MART_EXECUTIVE_OBSERVABILITY", shell_text)
         self.assertIn("critical_high_alerts", shell_text)
         self.assertIn("current_cost_usd", shell_text)
         self.assertIn("cortex_cost_usd", shell_text)
@@ -513,45 +514,42 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Open Triage Digest", shell_text)
         self.assertIn("Open Delivery", shell_text)
         self.assertIn("Open Queue Routing", shell_text)
-        self.assertIn("Open Control Health", shell_text)
-        self.assertIn("Open Automation", shell_text)
+        self.assertNotIn("Open Automation", shell_text)
         self.assertIn("Open Remediation", shell_text)
-        self.assertIn("Open Setup", shell_text)
+        self.assertNotIn("Open Setup", shell_text)
         self.assertIn("alert_center_requested_view", shell_text)
         self.assertIn("ALERT_CENTER_PANES", full_workspace_text)
 
-    def test_governance_security_consolidates_security_and_change_surfaces(self):
-        self.assertEqual(SECTION_MODULES["Governance & Security"], "sections.governance_security")
-        wrapper_text = (APP_ROOT / "sections" / "governance_security.py").read_text(encoding="utf-8")
+    def test_security_monitoring_keeps_security_surface_narrow(self):
+        self.assertEqual(SECTION_MODULES["Security Monitoring"], "sections.security_monitoring")
+        wrapper_text = (APP_ROOT / "sections" / "security_monitoring.py").read_text(encoding="utf-8")
         security_text = (APP_ROOT / "sections" / "security_posture.py").read_text(encoding="utf-8")
-        change_text = (APP_ROOT / "sections" / "change_drift.py").read_text(encoding="utf-8")
 
-        self.assertIn('VIEWS = ("Security Posture", "Change & Drift")', wrapper_text)
-        self.assertIn('module_name = "sections.change_drift"', wrapper_text)
-        self.assertIn('"sections.security_posture"', wrapper_text)
-        self.assertIn("governance_security_view", wrapper_text)
+        self.assertIn('VIEWS = ("Security Posture",)', wrapper_text)
+        self.assertIn('importlib.import_module("sections.security_posture")', wrapper_text)
+        self.assertIn("security_monitoring_view", wrapper_text)
         self.assertIn("def _apply_fast_entry_default", wrapper_text)
         self.assertIn("_FAST_ENTRY_VERSION = 1", wrapper_text)
         self.assertNotIn("def _render_status_strip", wrapper_text)
         self.assertNotIn("def _render_kpi_row", wrapper_text)
         self.assertNotIn("render_shell_status_strip(", wrapper_text)
         self.assertIn("def _render_metric_board", wrapper_text)
-        self.assertIn("Governance Command Board", wrapper_text)
-        self.assertIn("Privilege & Setup Readiness", wrapper_text)
-        self.assertIn("Snowflake Role Contract", wrapper_text)
-        self.assertIn("load_setup_readiness", wrapper_text)
-        self.assertIn("OVERWATCH_MONITOR", wrapper_text)
-        self.assertIn("OVERWATCH_OPERATOR", wrapper_text)
-        self.assertIn("render_refresh_contract(", wrapper_text)
-        self.assertIn("Governance Investigation Lanes", wrapper_text)
-        self.assertIn("Open Security", wrapper_text)
-        self.assertIn("Open Change Control", wrapper_text)
+        self.assertIn("Security Monitoring Command Board", wrapper_text)
+        self.assertIn("Security Monitoring Detail", wrapper_text)
+        self.assertNotIn("sections.change_drift", wrapper_text)
+        self.assertNotIn("Change & Drift", wrapper_text)
+        self.assertNotIn("Privilege & Setup Readiness", wrapper_text)
+        self.assertNotIn("Snowflake Role Contract", wrapper_text)
+        self.assertNotIn("load_setup_readiness", wrapper_text)
+        self.assertNotIn("OVERWATCH_MONITOR", wrapper_text)
+        self.assertNotIn("OVERWATCH_OPERATOR", wrapper_text)
+        self.assertNotIn("render_refresh_contract(", wrapper_text)
+        self.assertIn("Security Monitoring Detail", wrapper_text)
+        self.assertIn("Open Security Detail", wrapper_text)
         self.assertIn("st.session_state.setdefault(_BRIEF_MODE_KEY, True)", wrapper_text)
         self.assertIn("render_shell_workflows(", wrapper_text)
         self.assertIn("_security_posture_full_workspace_requested", wrapper_text)
-        self.assertIn("_change_drift_full_workspace_requested", wrapper_text)
         self.assertIn("SECURITY_POSTURE_VIEWS", security_text)
-        self.assertIn("CHANGE_DRIFT_VIEWS", change_text)
 
     def test_workload_operations_uses_fast_shell_module(self):
         self.assertEqual(SECTION_MODULES["Workload Operations"], "sections.workload_operations_shell")
@@ -574,8 +572,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Workload Command Board", shell_text)
         self.assertIn("Contention Solution Board", shell_text)
         self.assertIn("Contention Answer Model", shell_text)
-        self.assertIn("render_refresh_contract(", shell_text)
-        self.assertIn("MART_EXECUTIVE_OBSERVABILITY", shell_text)
+        self.assertIn("Safe Fix Status", shell_text)
+        self.assertNotIn("render_refresh_contract(", shell_text)
+        self.assertNotIn("MART_EXECUTIVE_OBSERVABILITY", shell_text)
         self.assertIn("_load_command_board()", shell_text)
         self.assertIn("load_or_reuse_command_board(", shell_text)
         self.assertIn('st.session_state.setdefault(_BRIEF_MODE_KEY, True)', shell_text)
@@ -624,14 +623,14 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Cost Command Board", shell_text)
         self.assertIn("Cost Signals", shell_text)
         self.assertIn("Cost Executive Flow", shell_text)
-        self.assertIn("Cost Mart Contract", shell_text)
-        self.assertIn("render_refresh_contract(", shell_text)
-        self.assertIn("FACT_COST_DAILY / FACT_CORTEX_DAILY", shell_text)
-        self.assertIn("MART_EXECUTIVE_OBSERVABILITY", shell_text)
+        self.assertNotIn("Cost Mart Contract", shell_text)
+        self.assertNotIn("render_refresh_contract(", shell_text)
+        self.assertNotIn("FACT_COST_DAILY / FACT_CORTEX_DAILY", shell_text)
+        self.assertNotIn("MART_EXECUTIVE_OBSERVABILITY", shell_text)
         self.assertIn("load_or_reuse_command_board(", shell_text)
-        self.assertIn('("Current Spend", "Awaiting mart")', shell_text)
-        self.assertIn('("30d Forecast", "Awaiting mart")', shell_text)
-        self.assertIn('("Open Est. Savings", _money(board.get("est_savings")) if board["loaded"] else "Awaiting mart")', shell_text)
+        self.assertIn('("Current Spend", "Awaiting data")', shell_text)
+        self.assertIn('("30d Forecast", "Awaiting data")', shell_text)
+        self.assertIn('("Open Est. Savings", _money(board.get("est_savings")) if board["loaded"] else "Awaiting data")', shell_text)
         self.assertNotIn("def _render_operating_snapshot", shell_text)
         self.assertIn("Cost Investigation Workflows", shell_text)
         self.assertIn("Open Cost Overview", shell_text)
@@ -663,7 +662,7 @@ class NavigationIntegrityTests(unittest.TestCase):
                 self.assertNotIn("Account Health", sections)
         self.assertIn("Workload Operations", ROLE_SECTIONS["ANALYST"])
         self.assertIn("Workload Operations", ROLE_SECTIONS["MANAGER"])
-        self.assertIn("Governance & Security", ROLE_SECTIONS["ANALYST"])
+        self.assertIn("Security Monitoring", ROLE_SECTIONS["ANALYST"])
         self.assertNotIn("Security Posture", ROLE_SECTIONS["ANALYST"])
         self.assertNotIn("Change & Drift", ROLE_SECTIONS["ANALYST"])
         self.assertEqual(ROLE_SECTIONS["MANAGER"], primary_sections)
@@ -722,13 +721,13 @@ class NavigationIntegrityTests(unittest.TestCase):
         )
         self.assertEqual(SECTION_ALIASES["Credit Contract"], SECTION_BY_TITLE["Cost & Contract"])
         self.assertEqual(SECTION_ALIASES["Cost Center"], SECTION_BY_TITLE["Cost & Contract"])
-        self.assertEqual(SECTION_ALIASES["Security & Access"], SECTION_BY_TITLE["Governance & Security"])
-        self.assertEqual(SECTION_ALIASES["DBA Tools"], SECTION_BY_TITLE["Governance & Security"])
+        self.assertEqual(SECTION_ALIASES["Security & Access"], SECTION_BY_TITLE["Security Monitoring"])
+        self.assertEqual(SECTION_ALIASES["DBA Tools"], SECTION_BY_TITLE["Workload Operations"])
         self.assertEqual(SECTION_ALIASES["Optimization"], SECTION_BY_TITLE["Cost & Contract"])
         self.assertEqual(SECTION_ALIASES["Warehouse Health"], SECTION_BY_TITLE["Cost & Contract"])
-        self.assertEqual(SECTION_ALIASES["Architecture"], SECTION_BY_TITLE["Governance & Security"])
-        self.assertEqual(SECTION_ALIASES["Architecture Readiness"], SECTION_BY_TITLE["Governance & Security"])
-        self.assertEqual(SECTION_ALIASES["Disaster Recovery"], SECTION_BY_TITLE["Governance & Security"])
+        self.assertNotIn("Architecture", SECTION_ALIASES)
+        self.assertNotIn("Architecture Readiness", SECTION_ALIASES)
+        self.assertNotIn("Disaster Recovery", SECTION_ALIASES)
         self.assertEqual(SECTION_ALIASES["Executive Briefing"], SECTION_BY_TITLE["Executive Landing"])
         self.assertNotIn("LEGACY_SECTION_ALIASES", (APP_ROOT / "config.py").read_text(encoding="utf-8"))
 
@@ -742,7 +741,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("ROLE_EXPERIENCE_VIEWS", config_text)
         self.assertIn("resolve_allowed_experience_views", config_text)
         self.assertIn("default_experience_view_for_role", config_text)
-        self.assertIn("Experience View", app_text)
+        self.assertIn("Navigation View", app_text)
         self.assertIn("def _apply_role_based_defaults", app_text)
         self.assertIn("exceptions_only_mode", app_text)
         self.assertIn("def _allowed_experience_options", app_text)
@@ -755,7 +754,7 @@ class NavigationIntegrityTests(unittest.TestCase):
                 self.assertLessEqual(set(sections), set(ALL_SECTIONS))
         self.assertIn("Executive Landing", EXPERIENCE_VIEW_SECTIONS["Executive"])
         self.assertIn("Cost & Contract", EXPERIENCE_VIEW_SECTIONS["FinOps"])
-        self.assertIn("Governance & Security", EXPERIENCE_VIEW_SECTIONS["Security"])
+        self.assertIn("Security Monitoring", EXPERIENCE_VIEW_SECTIONS["Security"])
         for profile, sections in EXPERIENCE_VIEW_SECTIONS.items():
             with self.subTest(hidden_section_experience=profile):
                 self.assertNotIn("Account Health", sections)
@@ -770,14 +769,14 @@ class NavigationIntegrityTests(unittest.TestCase):
         executive_text = (APP_ROOT / "sections" / "executive_landing.py").read_text(encoding="utf-8")
 
         self.assertIn("_source_health_rows", executive_text)
-        self.assertIn("Executive source health", executive_text)
-        self.assertIn('"alert_center_active_view": "Automation Readiness"', executive_text)
+        self.assertIn("Executive Data Health", executive_text)
+        self.assertIn('"alert_center_active_view": "Automation Health"', executive_text)
         self.assertIn('workflow_key="cost_contract_workflow"', executive_text)
         self.assertIn('workflow="FinOps Control Center"', executive_text)
         self.assertIn('workflow_key="change_drift_workflow"', executive_text)
         self.assertIn('workflow="Controlled DBA actions"', executive_text)
-        self.assertIn('"dba_tools_group_selector": "Cost & Setup"', executive_text)
-        self.assertIn('"dba_tools_tool_selector_Cost & Setup": "Setup Status"', executive_text)
+        self.assertIn('"dba_tools_group_selector": "Cost & Health"', executive_text)
+        self.assertIn('"dba_tools_tool_selector_Cost & Health": "Data Health"', executive_text)
 
     def test_section_alias_literal_has_no_duplicate_keys(self):
         config_tree = ast.parse((APP_ROOT / "config.py").read_text(encoding="utf-8"))
@@ -812,7 +811,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("_render_top_priority_brief", app_text)
         self.assertIn("build_top_priority_brief_cards(", ask_text)
         self.assertIn('"rec_automation_board"', ask_text)
-        self.assertIn('"arch_futures_board"', ask_text)
+        self.assertNotIn('"arch_futures_board"', ask_text)
         self.assertNotIn('"account_health_morning_exceptions"', app_text)
         self.assertIn('"account_health_morning_exceptions"', ask_text)
         self.assertNotIn('"account_health_operator_gates"', app_text)
@@ -831,7 +830,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Alert Center", visible_titles)
         self.assertIn("Workload Operations", visible_titles)
         self.assertIn("Cost & Contract", visible_titles)
-        self.assertIn("Governance & Security", visible_titles)
+        self.assertIn("Security Monitoring", visible_titles)
         for retired_title in (
             "Account Health",
             "Warehouse Health",
@@ -933,26 +932,6 @@ class NavigationIntegrityTests(unittest.TestCase):
             with self.subTest(pattern=pattern):
                 self.assertIn(pattern, gitignore)
 
-    def test_architecture_objectives_cover_alfa_prod_dev_and_execution_warehouse(self):
-        objectives = {
-            (row["ENTITY_TYPE"], row["ENTITY_PATTERN"]): row
-            for row in ARCHITECTURE_OBJECTIVES
-        }
-        self.assertEqual(objectives[("DATABASE", "ALFA_EDW_PROD")]["EXPECTED_ENVIRONMENT"], "PROD")
-        self.assertEqual(objectives[("DATABASE", "ALFA_EDW_DEV")]["EXPECTED_ENVIRONMENT"], "DEV_ALL")
-        self.assertEqual(objectives[("WAREHOUSE", "OVERWATCH_WH")]["WORKLOAD_CLASS"], "OVERWATCH app execution compute")
-        self.assertIn("Dedicated Streamlit app execution warehouse", objectives[("WAREHOUSE", "OVERWATCH_WH")]["ISOLATION_POLICY"])
-        self.assertEqual(objectives[("WAREHOUSE", "COMPUTE_WH")]["WORKLOAD_CLASS"], "OVERWATCH summary refresh and utility compute")
-        self.assertIn("monitor cost separately", objectives[("WAREHOUSE", "COMPUTE_WH")]["ISOLATION_POLICY"])
-        for database in TREXIS_PROD_DATABASES:
-            self.assertEqual(objectives[("DATABASE", database)]["EXPECTED_ENVIRONMENT"], "PROD")
-        for database in TREXIS_DEV_DATABASES:
-            self.assertEqual(objectives[("DATABASE", database)]["EXPECTED_ENVIRONMENT"], "DEV_ALL")
-        self.assertEqual(len([db for db in TREXIS_DATABASES if ("DATABASE", db) in objectives]), len(TREXIS_DATABASES))
-        for warehouse in TREXIS_WAREHOUSES:
-            self.assertEqual(objectives[("WAREHOUSE", warehouse)]["WORKLOAD_CLASS"], "Trexis workload compute")
-        self.assertNotIn(("WAREHOUSE", "WH_TRXS_%"), objectives)
-
     def test_workflow_hubs_expose_expected_subworkflows(self):
         from sections import change_drift, cost_contract, dba_control_room, query_analysis, security_posture, task_management, workload_operations
 
@@ -993,7 +972,7 @@ class NavigationIntegrityTests(unittest.TestCase):
             (
                 "Explain bill / attribution / contract",
                 "Storage cost and retention",
-                "Budget governance",
+                "Budget Monitoring",
                 "Recommendations and action queue",
                 "FinOps Control Center",
             ),
@@ -1001,15 +980,18 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Recommendations and action queue", cost_contract.WORKFLOWS)
         self.assertIn("Storage cost and retention", cost_contract.WORKFLOWS)
         self.assertEqual(cost_contract.WORKFLOW_MODULES["Storage cost and retention"], "sections.storage_monitor")
-        self.assertIn("Budget governance", cost_contract.WORKFLOWS)
-        self.assertEqual(cost_contract.WORKFLOW_MODULES["Budget governance"], "sections.budget_governance")
+        self.assertIn("Budget Monitoring", cost_contract.WORKFLOWS)
+        self.assertEqual(cost_contract.WORKFLOW_MODULES["Budget Monitoring"], "sections.budget_monitoring")
         self.assertEqual(cost_contract.WORKFLOW_MODULES["AI and Cortex spend"], "sections.cortex_monitor")
-        budget_governance_text = (APP_ROOT / "sections" / "budget_governance.py").read_text(encoding="utf-8")
-        self.assertIn("display_inventory = apply_operator_status_labels", budget_governance_text)
-        self.assertIn("add_cost_companion_columns(prioritize_context_columns(inventory))", budget_governance_text)
-        self.assertIn("from sections.shell_helpers import render_shell_snapshot", budget_governance_text)
-        self.assertIn('"Native Ready"', budget_governance_text)
-        self.assertNotIn(".metric(", budget_governance_text)
+        budget_monitoring_text = (APP_ROOT / "sections" / "budget_monitoring.py").read_text(encoding="utf-8")
+        self.assertIn("display_inventory = apply_operator_status_labels", budget_monitoring_text)
+        self.assertIn("add_cost_companion_columns(prioritize_context_columns(inventory))", budget_monitoring_text)
+        self.assertIn("from sections.shell_helpers import render_shell_snapshot", budget_monitoring_text)
+        self.assertIn('"Tracked Signals"', budget_monitoring_text)
+        self.assertNotIn("_build_native_budget_sql", budget_monitoring_text)
+        self.assertNotIn("_build_per_user_quota_sql", budget_monitoring_text)
+        self.assertNotIn("_build_budget_custom_action_sql", budget_monitoring_text)
+        self.assertNotIn(".metric(", budget_monitoring_text)
         self.assertEqual(SECTION_ALIASES["Alerts"], SECTION_BY_TITLE["Alert Center"])
         self.assertIn("Access posture", security_posture.WORKFLOWS)
         self.assertIn("Privilege sprawl", security_posture.WORKFLOWS)
@@ -1166,7 +1148,6 @@ class NavigationIntegrityTests(unittest.TestCase):
             '"pipe_"',
             '"qw_"',
             '"sf_value_"',
-            '"arch_"',
             '"change_drift_summary"',
             '"security_posture_summary"',
         ):
@@ -1321,7 +1302,7 @@ class NavigationIntegrityTests(unittest.TestCase):
                 self.assertNotIn("best practice", " ".join(guide.values()).lower())
         self.assertIn("Database-attributed cost is Allocated/Estimated", SECTION_OPERATING_GUIDE["Cost & Contract"]["guardrail"])
         self.assertIn("Email is the active channel", SECTION_OPERATING_GUIDE["Alert Center"]["guardrail"])
-        self.assertIn("Do not revoke access", SECTION_OPERATING_GUIDE["Governance & Security"]["guardrail"])
+        self.assertIn("Do not change access from summary rows", SECTION_OPERATING_GUIDE["Security Monitoring"]["guardrail"])
         self.assertIn(".ow-section-guide", theme_text)
         self.assertIn(".ow-workload-lane-card", theme_text)
         self.assertIn(".ow-workload-lane-state", theme_text)
@@ -1358,11 +1339,11 @@ class NavigationIntegrityTests(unittest.TestCase):
         )
         self.assertIn("Email-first", SECTION_EVIDENCE_CONTRACT["Alert Center"][1]["confidence"])
         self.assertIn("Do not split exact spend by database", SECTION_EVIDENCE_CONTRACT["Cost & Contract"][0]["invalid_use"])
-        governance_invalid_uses = " ".join(
-            row["invalid_use"] for row in SECTION_EVIDENCE_CONTRACT["Governance & Security"]
+        security_invalid_uses = " ".join(
+            row["invalid_use"] for row in SECTION_EVIDENCE_CONTRACT["Security Monitoring"]
         )
-        self.assertIn("Do not revoke access", governance_invalid_uses)
-        self.assertIn("Do not assume unmatched drift is approved", governance_invalid_uses)
+        self.assertIn("Do not revoke access", security_invalid_uses)
+        self.assertIn("Do not treat delayed account metadata as real-time enforcement", security_invalid_uses)
         self.assertIn(".ow-evidence-contract", theme_text)
         self.assertIn("lru_cache", guidance_text)
         self.assertIn("@lru_cache(maxsize=16)", guidance_text)
@@ -1414,7 +1395,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('st.button("Show full detail"', workflows_text)
         self.assertIn('CONTEXT_PRIORITY_COLUMNS = ("ENVIRONMENT", "DATABASE_NAME", "SCHEMA_NAME")', workflows_text)
         self.assertIn("def prioritize_context_columns", workflows_text)
-        self.assertIn("prioritize_context_columns(df)", workflows_text)
+        self.assertIn("prioritize_context_columns(view)", workflows_text)
         self.assertIn("from .workflows import add_cost_companion_columns, prioritize_context_columns", display_text)
         self.assertIn("from .workflows import apply_operator_status_labels", display_text)
         self.assertIn("grid_df = add_cost_companion_columns", display_text)
@@ -1442,7 +1423,10 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('st.button("Back to chart"', display_text)
         self.assertIn("def add_cost_companion_columns", workflows_text)
         self.assertIn("view = add_cost_companion_columns(view)", workflows_text)
-        self.assertIn("display_view = apply_operator_status_labels(view)", workflows_text)
+        self.assertIn(
+            "display_view = clean_operator_display_text(apply_operator_status_labels(view))",
+            workflows_text,
+        )
 
     def test_ranked_chart_frame_orders_metrics_descending(self):
         from utils.display import rank_chart_frame
@@ -1516,1611 +1500,12 @@ class NavigationIntegrityTests(unittest.TestCase):
             ("workload_operations.py", 'st.header("Workload Operations")'),
             ("security_posture.py", 'st.header("Security Posture")'),
             ("change_drift.py", 'st.header("Change & Drift")'),
-            ("architecture_readiness.py", 'st.header("Architecture Readiness")'),
-            ("architecture_readiness.py", 'st.header("Snowflake Architecture Readiness")'),
             ("account_health.py", 'st.header("Account Health - Command Center")'),
         ]
         for filename, marker in duplicate_headers:
             with self.subTest(filename=filename):
                 section_text = (APP_ROOT / "sections" / filename).read_text(encoding="utf-8")
                 self.assertNotIn(marker, section_text)
-
-    def test_app_performance_hot_paths_are_deferred_or_cached(self):
-        app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
-        query_text = (APP_ROOT / "utils" / "query.py").read_text(encoding="utf-8")
-        session_text = (APP_ROOT / "utils" / "session.py").read_text(encoding="utf-8")
-        logging_text = (APP_ROOT / "utils" / "logging.py").read_text(encoding="utf-8")
-        metadata_text = (APP_ROOT / "utils" / "metadata.py").read_text(encoding="utf-8")
-        display_text = (APP_ROOT / "utils" / "display.py").read_text(encoding="utf-8")
-        cache_text = (APP_ROOT / "utils" / "cache.py").read_text(encoding="utf-8")
-        cost_center_text = (APP_ROOT / "sections" / "cost_center.py").read_text(encoding="utf-8")
-        cost_contract_text = (APP_ROOT / "sections" / "cost_contract.py").read_text(encoding="utf-8")
-        executive_landing_text = (APP_ROOT / "sections" / "executive_landing.py").read_text(encoding="utf-8")
-        cortex_text = (APP_ROOT / "sections" / "cortex_monitor.py").read_text(encoding="utf-8")
-        account_health_text = (APP_ROOT / "sections" / "account_health.py").read_text(encoding="utf-8")
-        warehouse_health_text = (APP_ROOT / "sections" / "warehouse_health.py").read_text(encoding="utf-8")
-        change_drift_text = (APP_ROOT / "sections" / "change_drift.py").read_text(encoding="utf-8")
-        alert_center_text = (APP_ROOT / "sections" / "alert_center.py").read_text(encoding="utf-8")
-        dba_control_text = (APP_ROOT / "sections" / "dba_control_room.py").read_text(encoding="utf-8")
-        service_health_text = (APP_ROOT / "sections" / "service_health.py").read_text(encoding="utf-8")
-        security_posture_text = (APP_ROOT / "sections" / "security_posture.py").read_text(encoding="utf-8")
-        security_posture_import_block = security_posture_text.split("SECURITY_POSTURE_VIEWS", 1)[0]
-        security_access_text = (APP_ROOT / "sections" / "security_access.py").read_text(encoding="utf-8")
-        recommendations_text = (APP_ROOT / "sections" / "recommendations.py").read_text(encoding="utf-8")
-        live_monitor_text = (APP_ROOT / "sections" / "live_monitor.py").read_text(encoding="utf-8")
-        query_analysis_text = (APP_ROOT / "sections" / "query_analysis.py").read_text(encoding="utf-8")
-        query_workbench_text = (APP_ROOT / "sections" / "query_workbench.py").read_text(encoding="utf-8")
-        detailed_diagnosis_text = (APP_ROOT / "sections" / "detailed_diagnosis.py").read_text(encoding="utf-8")
-        contention_center_text = (APP_ROOT / "sections" / "contention_center.py").read_text(encoding="utf-8")
-        query_search_text = (APP_ROOT / "sections" / "query_search.py").read_text(encoding="utf-8")
-        pipeline_health_text = (APP_ROOT / "sections" / "pipeline_health.py").read_text(encoding="utf-8")
-        workload_operations_text = (APP_ROOT / "sections" / "workload_operations.py").read_text(encoding="utf-8")
-        workload_operations_import_block = workload_operations_text.split("WORKLOAD_OPERATIONS_VIEWS", 1)[0]
-        snowflake_value_text = (APP_ROOT / "sections" / "snowflake_value.py").read_text(encoding="utf-8")
-        spcs_text = (APP_ROOT / "sections" / "spcs_tracker.py").read_text(encoding="utf-8")
-        data_sharing_text = (APP_ROOT / "sections" / "data_sharing.py").read_text(encoding="utf-8")
-        object_change_text = (APP_ROOT / "sections" / "object_change_monitor.py").read_text(encoding="utf-8")
-        adoption_text = (APP_ROOT / "sections" / "adoption_analytics.py").read_text(encoding="utf-8")
-        platform_text = (APP_ROOT / "sections" / "platform_topology.py").read_text(encoding="utf-8")
-        architecture_text = (APP_ROOT / "sections" / "architecture_readiness.py").read_text(encoding="utf-8")
-        usage_overview_text = (APP_ROOT / "sections" / "usage_overview.py").read_text(encoding="utf-8")
-        optimization_text = (APP_ROOT / "utils" / "optimization_advisor.py").read_text(encoding="utf-8")
-        downloads_text = (APP_ROOT / "utils" / "downloads.py").read_text(encoding="utf-8")
-        helpers_text = (APP_ROOT / "utils" / "helpers.py").read_text(encoding="utf-8")
-        dba_tool_catalog_text = (APP_ROOT / "utils" / "dba_tool_catalog.py").read_text(encoding="utf-8")
-        dba_tools_text = (APP_ROOT / "sections" / "dba_tools.py").read_text(encoding="utf-8")
-        config_text = (APP_ROOT / "config.py").read_text(encoding="utf-8")
-        task_management_text = (APP_ROOT / "sections" / "task_management.py").read_text(encoding="utf-8")
-        storage_text = (APP_ROOT / "sections" / "storage_monitor.py").read_text(encoding="utf-8")
-        theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")
-        data_text = (APP_ROOT / "utils" / "data.py").read_text(encoding="utf-8")
-        top_import_block = app_text.split("def _dev_reload_helpers_enabled", 1)[0]
-
-        self.assertNotIn("Query activity summaries are rendered on demand", app_text)
-        self.assertNotIn('st.button("Render query activity summary"', app_text)
-        self.assertNotIn("from utils.ask_overwatch import build_top_priority_brief_cards", top_import_block)
-        self.assertNotIn("from utils.ask_overwatch import build_top_priority_brief_cards", app_text)
-        self.assertNotIn("from utils.bookmarks import (", top_import_block)
-        self.assertNotIn("def _load_bookmark_helpers", app_text)
-        self.assertNotIn("import utils.display as display_module", top_import_block)
-        self.assertNotIn("import utils.workflows as workflows_module", top_import_block)
-        self.assertNotIn("from utils.metadata import", top_import_block)
-        self.assertIn("static_warehouse_options", app_text)
-        self.assertIn("static_database_options", app_text)
-        warehouse_options_block = app_text.split("def _ensure_global_warehouse_options", 1)[1].split(
-            "def _ensure_global_database_options",
-            1,
-        )[0]
-        database_options_block = app_text.split("def _ensure_global_database_options", 1)[1].split(
-            "def _render_global_environment_control",
-            1,
-        )[0]
-        schema_options_block = app_text.split("selected_database = str", 1)[1].split(
-            "global_schema_options = list",
-            1,
-        )[0]
-        self.assertIn("static_warehouse_options(company)", warehouse_options_block)
-        self.assertIn("static_database_options(", database_options_block)
-        self.assertNotIn("get_session", warehouse_options_block)
-        self.assertNotIn("load_warehouse_options", warehouse_options_block)
-        self.assertNotIn("get_session", database_options_block)
-        self.assertNotIn("load_database_options", database_options_block)
-        self.assertNotIn("get_session", schema_options_block)
-        self.assertNotIn("load_schema_options", schema_options_block)
-        self.assertIn("def _maybe_reload_dev_helpers", app_text)
-        self.assertIn('st.session_state.get("_overwatch_dev_reload_helpers", False)', app_text)
-        self.assertIn('st.session_state["_logging_enabled"] = False', app_text)
-        self.assertNotIn('"Record section runtime"', app_text)
-        self.assertNotIn('"Record query activity"', app_text)
-        self.assertIn("section_render_started = time.perf_counter()", app_text)
-        self.assertIn("log_section_load(active_section, duration_ms)", app_text)
-        self.assertIn('st.session_state["_detailed_query_tags_enabled"] = True', app_text)
-        self.assertNotIn('"Detailed Snowflake query tags"', app_text)
-        self.assertNotIn("import threading", query_text)
-        self.assertNotIn("_QUERY_CACHE_LOCK_STRIPE_COUNT", query_text)
-        self.assertNotIn("_QUERY_CACHE_LOCK_STRIPES", query_text)
-        self.assertNotIn("_QUERY_CACHE_LOCKS: dict", query_text)
-        self.assertNotIn("def _get_query_cache_lock", query_text)
-        self.assertNotIn("with _get_query_cache_lock", query_text)
-        self.assertIn('CACHE_TIERS["standard"]', query_text)
-        self.assertIn("STATEMENT_TIMEOUTS_SECONDS", query_text)
-        self.assertIn("max_queries_per_render", query_text)
-        self.assertIn("def _cached_raise_historical", query_text)
-        self.assertIn("def _cached_raise_standard", query_text)
-        self.assertIn("_RAISE_TIER_FN", query_text)
-        self.assertIn("use_cache: bool = True", query_text)
-        self.assertIn("fn = _RAISE_TIER_FN.get(tier, _cached_raise_recent)", query_text)
-        self.assertIn("st.session_state.get(_ENABLED_KEY, False)", logging_text)
-        self.assertIn("if not is_query_logging_enabled():", logging_text)
-        self.assertNotIn("not is_logging_enabled() or not is_query_logging_enabled()", logging_text)
-        self.assertIn("_overwatch_show_statement_cache", metadata_text)
-        self.assertIn("_SHOW_CACHE_TTL_SECONDS = 300", metadata_text)
-        self.assertIn("force_refresh: bool = False", metadata_text)
-        self.assertIn("return frame.copy()", metadata_text)
-        self.assertIn("force_refresh=bool(refresh_wh)", dba_tools_text)
-        self.assertIn("force_inventory_refresh=True", task_management_text)
-        self.assertIn("def load_live_task_runs", metadata_text)
-        self.assertIn("INFORMATION_SCHEMA.TASK_HISTORY", metadata_text)
-        self.assertIn("TASK_NAME =>", metadata_text)
-        self.assertIn("session.sql(sql).collect()", metadata_text)
-        self.assertIn("pd.DataFrame([row.as_dict() for row in rows])", metadata_text)
-        self.assertIn("load_live_task_runs(session, tl, hours_back=6)", task_management_text)
-        self.assertIn("load_live_task_runs(session, df_tasks, hours_back=6)", dba_tools_text)
-        self.assertIn('st.form(f"tm_cancel_query_form_{selected_query}")', task_management_text)
-        self.assertIn('st.form(f"tm_cancel_graph_form_{selected_graph}")', task_management_text)
-        self.assertIn('st.form(f"tg_cancel_run_query_form_{sel_qid}")', dba_tools_text)
-        self.assertIn('st.form(f"tg_cancel_graph_form_{sel_graph}")', dba_tools_text)
-        self.assertIn("_task_management_execution_context_cache", task_management_text)
-        self.assertIn("_EXECUTION_CONTEXT_CACHE_TTL_SECONDS = 300", task_management_text)
-        self.assertIn("def _require_typed_confirmation", dba_tools_text)
-        self.assertIn("def _require_typed_confirmation", task_management_text)
-        self.assertNotIn("disabled=admin_button_disabled(not wh_confirmed)", dba_tools_text)
-        self.assertNotIn("disabled=admin_button_disabled(not cortex_confirmed)", dba_tools_text)
-        self.assertNotIn("disabled=admin_button_disabled(not task_confirmed)", dba_tools_text)
-        self.assertNotIn("disabled=admin_button_disabled(not graph_confirmed)", dba_tools_text)
-        self.assertNotIn("disabled=admin_button_disabled(not confirmed)", task_management_text)
-        self.assertNotIn("disabled=admin_button_disabled(not exec_confirmed)", task_management_text)
-        self.assertIn("control_mode = st.selectbox(", task_management_text)
-        self.assertIn('cancel_type = st.selectbox("Cancel target"', task_management_text)
-        self.assertNotIn("control_mode = st.radio", task_management_text)
-        self.assertNotIn("cancel_type = st.radio", task_management_text)
-        self.assertIn("Preview & Apply Changes", dba_tools_text)
-        self.assertIn('"Download SQL"', dba_tools_text)
-        self.assertIn("Cortex access control SQL snippets", dba_tools_text)
-        self.assertNotIn(_chars(0x00f0, 0x0178, 0x201c, 0x2039) + " Preview & Apply Changes", dba_tools_text)
-        self.assertNotIn(_chars(0x00f0, 0x0178, 0x201c, 0x00a5) + " Download SQL", dba_tools_text)
-        self.assertNotIn(_chars(0x00f0, 0x0178, 0x201c, 0x2039) + " Cortex access control SQL snippets", dba_tools_text)
-        self.assertNotIn(_chars(0x00f0, 0x0178, 0x0178, 0x00a1), dba_tools_text)
-        self.assertNotIn(_chars(0x00f0, 0x0178, 0x201d, 0x00b4), dba_tools_text)
-        self.assertNotIn(_chars(0x00e2, 0x2020, 0x00b3), dba_tools_text)
-        self.assertIn('"Check Fast Snapshot"', dba_control_text)
-        self.assertIn("Fast snapshot loads automatically on section navigation", dba_control_text)
-        self.assertIn('consume_section_autoload_request("DBA Control Room")', dba_control_text)
-        self.assertNotIn("Fast mart snapshot lookup is on demand", dba_control_text)
-        self.assertNotIn("load_latest_control_room_mart(company, max_age_hours=6) if snapshot_scope_ok else None", dba_control_text)
-        self.assertIn('DBA_CONTROL_ROOM_PANES = (\n    "Fast Watch",\n    "Morning Brief",\n    "Operations Board"', dba_control_text)
-        self.assertIn('"Fast Watch"', dba_control_text)
-        self.assertIn('"Morning Brief"', dba_control_text)
-        self.assertIn('"Operations Board"', dba_control_text)
-        self.assertNotIn('"App Operations"', dba_control_text)
-        self.assertIn('"Load Operations Board"', dba_control_text)
-        self.assertIn("Use Operations Board when you need route priority", dba_control_text)
-        self.assertIn("render_shell_status_strip(", dba_control_text)
-        self.assertNotIn('st.markdown("**Action Brief**")', dba_control_text)
-        self.assertNotIn("def _render_loaded_operating_snapshot", dba_control_text)
-        self.assertNotIn("More loaded metrics", dba_control_text)
-        self.assertIn("render_shell_snapshot((", dba_control_text)
-        self.assertNotIn('"Cost Window"', dba_control_text)
-        self.assertIn('with render_load_status("Checking latest control-room summary snapshot"', dba_control_text)
-        self.assertIn('status_label: str = "Loading exception signals"', dba_control_text)
-        self.assertIn("with render_load_status(status_label", dba_control_text)
-        self.assertIn('with render_load_status("Comparing task graphs and stored procedure runs"', dba_control_text)
-        self.assertIn('with render_load_status("Building DBA Morning Brief"', account_health_text)
-        self.assertNotIn('with render_load_status("Collecting metrics and generating briefing via Cortex AI"', account_health_text)
-        self.assertIn('with render_load_status("Loading service posture"', service_health_text)
-        self.assertIn('with render_load_status("Building warehouse capacity brief"', warehouse_health_text)
-        for name, text in {
-            "account_health.py": account_health_text,
-            "architecture_readiness.py": architecture_text,
-            "cortex_monitor.py": cortex_text,
-            "dba_control_room.py": dba_control_text,
-            "detailed_diagnosis.py": detailed_diagnosis_text,
-            "query_analysis.py": query_analysis_text,
-            "query_workbench.py": query_workbench_text,
-            "security_access.py": security_access_text,
-            "service_health.py": service_health_text,
-            "warehouse_health.py": warehouse_health_text,
-        }.items():
-            with self.subTest(section_load_feedback=name):
-                self.assertNotIn("with st.spinner(", text)
-        self.assertNotIn("All alert history, email-ready messages, suppression windows", dba_control_text)
-        self.assertNotIn("def _render_app_performance_guardrail", dba_control_text)
-        self.assertNotIn("def _running_in_streamlit_in_snowflake", dba_control_text)
-        self.assertNotIn("External release-check files are not available inside Streamlit-in-Snowflake", dba_control_text)
-        self.assertNotIn("_latest_local_snowflake_suite_result", dba_control_text)
-        self.assertNotIn("OVERWATCH Internal Runtime Guardrail", dba_control_text)
-        self.assertNotIn("Deployment runtime gates", dba_control_text)
-        self.assertIn("dba_effective_readiness_score", dba_control_text)
-        self.assertIn('"EFFECTIVE_SCORE"', dba_control_text)
-        self.assertIn('"DEPLOYMENT_LABEL"', dba_control_text)
-        self.assertIn('"GATE_DRIVERS"', dba_control_text)
-        self.assertIn('"Severity", "Signal", "Evidence", "Action", "Route", "Workflow"', dba_control_text)
-        self.assertNotIn('"SEVERITY", "DOMAIN", "SIGNAL", "ENTITY", "DETAIL"', dba_control_text)
-        self.assertIn("_RESULT_SIZE_SAMPLE_ROWS", query_text)
-        self.assertIn("OVERWATCH_PERF_RUN_ID", query_text)
-        self.assertIn('"perf_run_id": _perf_run_id()', query_text)
-        self.assertIn("build_overwatch_query_tag(", query_text)
-        self.assertIn("apply_overwatch_query_tag(session, query_tag)", query_text)
-        self.assertNotIn("OVERWATCH:v3", query_text)
-        self.assertIn("PERF_RUN_ID", logging_text)
-        self.assertIn('_QUERY_TAG = "OVERWATCH"', session_text)
-        self.assertIn('st.session_state.get("_detailed_query_tags_enabled", True)', session_text)
-        self.assertIn("def build_overwatch_query_tag", session_text)
-        self.assertIn("def apply_overwatch_query_tag", session_text)
-        self.assertIn("def _ensure_active_section_query_tag", session_text)
-        self.assertNotIn("OVERWATCH:v3", session_text)
-        self.assertNotIn("for stmt in [", session_text)
-        self.assertIn("ALTER SESSION SET ", session_text)
-        self.assertIn("STATEMENT_TIMEOUT_IN_SECONDS", session_text)
-        self.assertIn('st.session_state["_overwatch_active_query_tag"] = _QUERY_TAG', session_text)
-        self.assertIn("from utils.cache import clear_all_cache", app_text)
-        self.assertNotIn("from utils.display import clear_all_cache", app_text)
-        self.assertIn("_overwatch_show_statement_cache", cache_text)
-        self.assertIn("_task_management_execution_context_cache", cache_text)
-        self.assertIn("from .cache import clear_all_cache", display_text)
-        self.assertIn("from .downloads import download_csv, mark_loaded, show_loaded_time", display_text)
-        self.assertNotIn("def _csv_download_payload", display_text)
-        self.assertIn("def _csv_download_payload", downloads_text)
-        self.assertNotIn("import pandas", downloads_text)
-        self.assertIn("max_entries=32", downloads_text)
-        self.assertIn('st.caption(f"Last loaded: {ts}")', downloads_text)
-        self.assertNotIn(_chars(0x00f0, 0x0178, 0x201c, 0x2026), downloads_text)
-        self.assertIn('st.button("< Prev"', helpers_text)
-        self.assertIn('st.button("Next >"', helpers_text)
-        self.assertNotIn(_chars(0x00e2, 0x2014, 0x20ac), helpers_text)
-        self.assertNotIn(_chars(0x00e2, 0x2013, 0x00b6), helpers_text)
-        self.assertIn('st.subheader("Table Storage Metrics (Top 50 by size)")', storage_text)
-        self.assertNotIn(_chars(0x00f0, 0x0178, 0x2014, 0x0192), storage_text)
-        self.assertIn('st.session_state.get("_query_logging_enabled", False)', query_text)
-        self.assertIn("_COMBINED_CSS_CACHE", theme_text)
-        self.assertIn("_has_company_scope_columns", data_text)
-        self.assertNotIn("render_section_confidence_meter(active_section, st.session_state)", app_text)
-        self.assertNotIn("render_section_operating_guide(active_section)", app_text)
-        self.assertNotIn("render_deferred_section_notes(active_section)", app_text)
-        self.assertIn('st.session_state["_overwatch_secondary_chrome_ready"] = True', app_text)
-        self.assertNotIn("render_section_confidence_meter(active_section, dict(st.session_state))", app_text)
-        self.assertNotIn("dict(state).items()", (APP_ROOT / "utils" / "section_guidance.py").read_text(encoding="utf-8"))
-        executive_landing_import_block = executive_landing_text.split("EXECUTIVE_LANDING_VERSION", 1)[0]
-        self.assertNotIn("import pandas as pd", executive_landing_import_block)
-        self.assertNotIn("from utils import (", executive_landing_import_block)
-        self.assertNotIn("from utils.workflows import render_priority_dataframe", executive_landing_import_block)
-        self.assertIn("from sections.base import lazy_pandas", executive_landing_text)
-        self.assertIn("pd = lazy_pandas()", executive_landing_text)
-        self.assertIn("def _render_executive_action_brief", executive_landing_text)
-        self.assertIn("def _render_executive_operating_snapshot", executive_landing_text)
-        self.assertIn("def _build_platform_operating_score", executive_landing_text)
-        self.assertIn("PLATFORM_SUMMARY_STATE_KEY", executive_landing_text)
-        self.assertNotIn("OBSERVABILITY_AUTOLOAD_SCOPE_KEY", executive_landing_text)
-        self.assertNotIn("should_autoload_board", executive_landing_text)
-        self.assertIn("Executive Metric Board", executive_landing_text)
-        self.assertIn("Executive Command Wall", executive_landing_text)
-        self.assertIn("Executive Pressure Index", executive_landing_text)
-        self.assertIn("Executive Mart Health", executive_landing_text)
-        self.assertIn("render_refresh_contract(", executive_landing_text)
-        self.assertIn("MART_EXECUTIVE_OBSERVABILITY", executive_landing_text)
-        self.assertIn('("Remote Spill", "Not loaded")', executive_landing_text)
-        self.assertIn('("30d Forecast", "Not loaded")', executive_landing_text)
-        self.assertIn("def _persist_platform_summary", executive_landing_text)
-        self.assertIn('st.markdown("**Platform Operating Score**")', executive_landing_text)
-        self.assertIn("Platform score drivers", executive_landing_text)
-        self.assertIn("button_help = \" \".join", executive_landing_text)
-        self.assertIn("help=button_help or None", executive_landing_text)
-        self.assertIn("render_shell_status_strip(", executive_landing_text)
-        self.assertIn("render_shell_kpi_row(metrics)", executive_landing_text)
-        self.assertNotIn('st.markdown("**Operating Snapshot**")', executive_landing_text)
-        self.assertIn('"Load Snapshot"', executive_landing_text)
-        self.assertNotIn("def _render_powerpoint_slide_pack", executive_landing_text)
-        self.assertNotIn('st.markdown("**PowerPoint Executive Snapshot**")', executive_landing_text)
-        self.assertNotIn("def _build_executive_snapshot_pptx", executive_landing_text)
-        self.assertNotIn('"Download PowerPoint"', executive_landing_text)
-        self.assertNotIn("PowerPoint support data", executive_landing_text)
-        self.assertIn('with st.expander("Executive source health"', executive_landing_text)
-        self.assertNotIn("Use this page for the first leadership question", executive_landing_text)
-        self.assertNotIn("Load the executive snapshot when you need a board-ready status view.", executive_landing_text)
-        self.assertIn("cc_user_profile_requested", cost_center_text)
-        self.assertIn('"Cost Explorer"', cost_center_text)
-        self.assertIn("COST_EXPLORER_LENSES", cost_center_text)
-        self.assertIn("build_mart_cost_explorer_sql", cost_center_text)
-        self.assertIn("FACT_CHARGEBACK_DAILY", cost_center_text)
-        self.assertIn("Cost attribution gaps", cost_center_text)
-        self.assertIn("Save cost explorer outliers to Action Queue", cost_center_text)
-        self.assertIn('st.button("Load"', cost_center_text)
-        self.assertIn("from sections.shell_helpers import render_shell_snapshot", cost_center_text)
-        self.assertIn("render_shell_snapshot(tuple(bill_metrics))", cost_center_text)
-        self.assertIn("render_chart_with_data_toggle(", cost_center_text)
-        self.assertIn("cc_explorer_", cost_center_text)
-        self.assertIn("cc_bill_movement_waterfall", cost_center_text)
-        self.assertIn("cc_burn_daily_credits", cost_center_text)
-        self.assertIn("cc_forecast_daily_credits", cost_center_text)
-        self.assertIn("cc_budget_vs_actual", cost_center_text)
-        self.assertIn("cc_contract_monthly_budget", cost_center_text)
-        self.assertIn("cc_contract_cumulative", cost_center_text)
-        self.assertIn("cc_user_cost_driver", cost_center_text)
-        self.assertIn('("Review Status", narrative["severity"])', cost_center_text)
-        self.assertNotIn("st.metric(", cost_center_text)
-        self.assertIn("_build_cost_allocation_trust_board", cost_contract_text)
-        self.assertIn("Cost Allocation Trust", cost_contract_text)
-        self.assertIn("_build_cost_drilldown_command_map", cost_contract_text)
-        self.assertIn("Cost Drilldown Command Map", cost_contract_text)
-        self.assertIn('sort_by=["COMMAND_PRIORITY", "DRILLDOWN"]', cost_contract_text)
-        self.assertIn("ACCOUNT_HEALTH_PANES", account_health_text)
-        self.assertIn("active_view = render_mode_selector(", account_health_text)
-        self.assertIn('render_mode_selector = _lazy_util("render_mode_selector")', account_health_text)
-        self.assertNotIn('st.selectbox(\n        "Account Health view"', account_health_text)
-        self.assertNotIn("st.tabs(", account_health_text)
-        self.assertIn('st.button("Load / Refresh Health"', account_health_text)
-        self.assertIn("if not refresh_health:", account_health_text)
-        self.assertNotIn("or cache_age > 300", account_health_text)
-        self.assertIn("def _render_account_health_action_brief", account_health_text)
-        self.assertIn("def _render_account_health_operating_snapshot", account_health_text)
-        self.assertIn("render_shell_status_strip(", account_health_text)
-        self.assertIn("render_shell_kpi_row((", account_health_text)
-        self.assertNotIn("Operating Snapshot", account_health_text)
-        self.assertIn("Secondary metrics and source", account_health_text)
-        self.assertIn("def _account_health_morning_exception_rows", account_health_text)
-        self.assertIn("def _render_account_health_exception_strip", account_health_text)
-        self.assertIn('st.markdown("**Morning Exceptions**")', account_health_text)
-        self.assertIn('st.session_state["account_health_morning_exceptions"]', account_health_text)
-        self.assertIn('st.button("Load Secondary Evidence"', account_health_text)
-        self.assertNotIn('st.markdown("**Exception Signals**")', account_health_text)
-        self.assertNotIn("Evidence details", account_health_text)
-        self.assertNotIn("Current Surfaces", account_health_text)
-        self.assertNotIn("Failed Login Users", account_health_text)
-        self.assertNotIn("Admin Role Reviews", account_health_text)
-        self.assertNotIn("Observed Components", account_health_text)
-        self.assertIn('"Account Health detail"', account_health_text)
-        self.assertIn('st.selectbox(\n            "Account Health detail"', account_health_text)
-        self.assertNotIn('st.radio(\n            "Account Health detail"', account_health_text)
-        self.assertIn('("Checklist", "Gates", "Interventions", "Controls", "Operability")', account_health_text)
-        self.assertNotIn("k1, k2, k3, k4, k5, k6 = st.columns(6)", account_health_text)
-        account_health_import_block = account_health_text.split("CHECKLIST_HISTORY_TABLE", 1)[0]
-        self.assertIn("from __future__ import annotations", account_health_import_block)
-        self.assertNotIn("import pandas as pd", account_health_import_block)
-        self.assertNotIn("from utils import (", account_health_import_block)
-        self.assertNotIn("from utils.workflows import", account_health_import_block)
-        self.assertIn("from sections.base import lazy_pandas", account_health_text)
-        self.assertIn("pd = lazy_pandas()", account_health_text)
-        self.assertIn('render_priority_dataframe = _lazy_util("render_priority_dataframe")', account_health_text)
-        self.assertIn("def _account_health_has_source_state", account_health_text)
-        self.assertIn("if _account_health_has_source_state(st.session_state):", account_health_text)
-        self.assertIn("from sections.shell_helpers import", account_health_text)
-        self.assertIn("render_shell_kpi_row", account_health_text)
-        self.assertIn("render_shell_snapshot(", account_health_text)
-        self.assertIn("def _build_account_health_dba_morning_brief", account_health_text)
-        self.assertIn('st.subheader("DBA Morning Brief")', account_health_text)
-        self.assertIn('st.button("Build DBA Morning Brief"', account_health_text)
-        self.assertIn("dba._render_dba_morning_brief(", account_health_text)
-        self.assertIn('"Morning Report": "DBA Morning Brief"', account_health_text)
-        self.assertNotIn('st.subheader("Morning Health Report")', account_health_text)
-        self.assertNotIn('st.button("Generate Morning Report"', account_health_text)
-        self.assertNotIn('elif active_view == "Resource Monitors"', account_health_text)
-        self.assertNotIn('elif active_view == "Executive Briefing"', account_health_text)
-        self.assertNotIn("Resource Monitor Dashboard", account_health_text)
-        self.assertNotIn("Generate Executive Briefing", account_health_text)
-        self.assertNotIn("_build_briefing_prompt", account_health_text)
-        self.assertNotIn("run_cortex_completion", account_health_text)
-        self.assertNotIn("Review Resource Monitors", account_health_text)
-        self.assertIn('("Top pressure", top_wh["WAREHOUSE_NAME"])', account_health_text)
-        self.assertIn('("Queue / queries"', account_health_text)
-        self.assertNotIn("st.metric(", account_health_text)
-        alert_center_import_block = alert_center_text.split("ALERT_CENTER_PANES", 1)[0]
-        self.assertNotIn("from utils import (", alert_center_import_block)
-        self.assertNotIn("from utils import get_active_company", alert_center_import_block)
-        self.assertIn("def get_active_company", alert_center_text)
-        self.assertIn("def get_active_environment", alert_center_text)
-        for label, section_text, split_marker in (
-            ("Warehouse Health", warehouse_health_text, "WAREHOUSE_HEALTH_VIEWS"),
-            ("Change & Drift", change_drift_text, "WORKFLOWS"),
-            ("Cost & Contract", cost_contract_text, "WORKFLOWS"),
-        ):
-            with self.subTest(lazy_pandas_section=label):
-                section_import_block = section_text.split(split_marker, 1)[0]
-                self.assertNotIn("import pandas as pd", section_import_block)
-                self.assertIn("from sections.base import lazy_pandas", section_import_block)
-                self.assertIn("pd = lazy_pandas()", section_import_block)
-        warehouse_health_import_block = warehouse_health_text.split("def _admin_audit_fqn", 1)[0]
-        self.assertNotIn("from utils import (", warehouse_health_import_block)
-        self.assertNotIn("from utils.workflows import", warehouse_health_import_block)
-        self.assertNotIn("from utils.admin import", warehouse_health_import_block)
-        self.assertIn("def _admin_audit_fqn", warehouse_health_text)
-        self.assertIn("WAREHOUSE_HEALTH_FAST_ENTRY_VERSION", warehouse_health_text)
-        self.assertIn("def _apply_warehouse_fast_entry_default", warehouse_health_text)
-        warehouse_health_render_preload = warehouse_health_text.split("def render():", 1)[1].split(
-            "if st.session_state.get(\"exceptions_only_mode\")",
-            1,
-        )[0]
-        self.assertIn("_apply_warehouse_fast_entry_default()", warehouse_health_render_preload)
-        self.assertIn(
-            'show_support_panels = bool(st.session_state.get("warehouse_health_support_panels_open"))',
-            warehouse_health_render_preload,
-        )
-        self.assertNotIn("_warehouse_support_panels_have_state()", warehouse_health_render_preload)
-        self.assertIn(
-            'if st.session_state.get("exceptions_only_mode") and warehouse_view != "Overview & Scaling":',
-            warehouse_health_text,
-        )
-        self.assertNotIn("st.stop()", warehouse_health_text)
-        self.assertNotIn("def render_workflow_selector", warehouse_health_text)
-        self.assertIn('render_workflow_selector = _lazy_util("render_workflow_selector")', warehouse_health_text)
-        self.assertIn('render_priority_dataframe = _lazy_util("render_priority_dataframe")', warehouse_health_text)
-        self.assertIn("def _change_has_source_state", change_drift_text)
-        self.assertIn("if _change_has_source_state(st.session_state):", change_drift_text)
-        change_drift_import_block = change_drift_text.split("WORKFLOWS", 1)[0]
-        self.assertNotIn("from utils import (", change_drift_import_block)
-        self.assertNotIn("from utils.workflows import", change_drift_import_block)
-        self.assertNotIn("def render_workflow_selector", change_drift_text)
-        self.assertIn('render_workflow_selector = _lazy_util("render_workflow_selector")', change_drift_text)
-        self.assertIn("def render_signal_confidence", change_drift_text)
-        self.assertIn("def render_workflow_module", change_drift_text)
-        self.assertIn('render_priority_dataframe = _lazy_util("render_priority_dataframe")', change_drift_text)
-        self.assertNotIn("return str(st.selectbox(label, list(workflows), key=key))", change_drift_text)
-        self.assertIn("def _change_action_brief", change_drift_text)
-        self.assertIn("def _render_change_action_brief", change_drift_text)
-        self.assertIn("def _render_change_operating_snapshot", change_drift_text)
-        self.assertIn("render_shell_status_strip(", change_drift_text)
-        self.assertIn("render_shell_kpi_row((", change_drift_text)
-        self.assertNotIn('st.markdown("**Operating Snapshot**")', change_drift_text)
-        self.assertIn("from sections.shell_helpers import", change_drift_text)
-        self.assertIn("render_shell_kpi_row", change_drift_text)
-        self.assertIn("render_shell_snapshot((", change_drift_text)
-        self.assertIn("def _looks_like_frame", cost_contract_text)
-        self.assertIn("data_is_frame = _looks_like_frame(data)", cost_contract_text)
-        cost_contract_import_block = cost_contract_text.split("WORKFLOWS", 1)[0]
-        self.assertNotIn("from utils import (", cost_contract_import_block)
-        self.assertNotIn("from utils.workflows import", cost_contract_import_block)
-        self.assertNotIn("from io import BytesIO", cost_contract_import_block)
-        self.assertNotIn("from pathlib import Path", cost_contract_import_block)
-        self.assertNotIn("from xml.sax.saxutils import", cost_contract_import_block)
-        self.assertNotIn("import zipfile", cost_contract_import_block)
-        self.assertNotIn("def render_workflow_selector", cost_contract_text)
-        self.assertIn('render_workflow_selector = _lazy_util("render_workflow_selector")', cost_contract_text)
-        self.assertIn("def render_signal_confidence", cost_contract_text)
-        self.assertIn("def render_workflow_module", cost_contract_text)
-        self.assertIn('render_priority_dataframe = _lazy_util("render_priority_dataframe")', cost_contract_text)
-        self.assertNotIn("return str(st.selectbox(label, list(workflows), key=key))", cost_contract_text)
-        self.assertIn("def _cost_action_brief", cost_contract_text)
-        self.assertIn("def _render_cost_action_brief", cost_contract_text)
-        self.assertIn("def _render_cost_operating_snapshot", cost_contract_text)
-        self.assertIn("def _ensure_cost_splash", cost_contract_text)
-        self.assertIn("def _render_cost_splash", cost_contract_text)
-        self.assertIn("def _maybe_autoload_cost_splash", cost_contract_text)
-        self.assertIn("full_proof: bool = True", cost_contract_text)
-        cost_autoload_block = cost_contract_text.split("def _maybe_autoload_cost_splash", 1)[1].split(
-            "def _cost_splash_summary",
-            1,
-        )[0]
-        self.assertIn("return _cached_cost_splash(company, days, credit_price)", cost_autoload_block)
-        self.assertNotIn("_ensure_cost_splash", cost_autoload_block)
-        self.assertNotIn("get_session", cost_autoload_block)
-        self.assertIn("Refresh Overview loads spend trend, full cockpit, and run-rate proof.", cost_contract_text)
-        self.assertIn("Refresh Overview loads official spend, warehouse ranking, Cortex spend", cost_contract_text)
-        self.assertIn('"cockpit": None', cost_contract_text)
-        self.assertIn('if not splash.get("loaded"):', cost_contract_text)
-        self.assertNotIn('"cockpit": pd.DataFrame()', cost_contract_text)
-        self.assertIn("def _build_cost_splash_cortex_sql", cost_contract_text)
-        self.assertIn("def _cost_spend_trend_rows", cost_contract_text)
-        self.assertIn("def _cost_warehouse_ranking_rows", cost_contract_text)
-        self.assertIn("def _render_spend_trend_chart", cost_contract_text)
-        self.assertIn("def _render_warehouse_ranking_chart", cost_contract_text)
-        self.assertIn("def _render_cost_chart_with_data_toggle", cost_contract_text)
-        self.assertIn('"Cost chart view"', cost_contract_text)
-        self.assertIn("mode = render_mode_selector(", cost_contract_text)
-        self.assertNotIn("mode = st.radio(", cost_contract_text)
-        self.assertIn('st.button("Back to chart"', cost_contract_text)
-        self.assertIn('requested_key = f"{key}_chart_data_requested"', cost_contract_text)
-        self.assertIn('st.session_state[requested_key] = "Chart"', cost_contract_text)
-        self.assertIn('"cost_contract_spend_trend"', cost_contract_text)
-        self.assertIn('"cost_contract_warehouse_ranking"', cost_contract_text)
-        self.assertIn('"cost_contract_service_movement"', cost_contract_text)
-        self.assertIn("st.altair_chart((bars + line + points)", cost_contract_text)
-        self.assertNotIn("$+,.2f", cost_contract_text)
-        self.assertNotIn("+$,.2f", cost_contract_text)
-        self.assertNotIn("Parity row details", cost_contract_text)
-        self.assertNotIn("Snowflake Cost Management Parity", cost_contract_text)
-        self.assertNotIn('st.button("Load Snowflake Cost Parity"', cost_contract_text)
-        self.assertNotIn("st.line_chart(trend_plot", cost_contract_text)
-        self.assertNotIn("st.bar_chart(ranking", cost_contract_text)
-        self.assertIn("Cost Overview", cost_contract_text)
-        self.assertIn("Cortex Spend", cost_contract_text)
-        self.assertIn("Top AI User", cost_contract_text)
-        self.assertIn("Next Cost Move", cost_contract_text)
-        self.assertIn("Open workflow", cost_contract_text)
-        self.assertIn("sql_support_board = apply_operator_status_labels", cost_contract_text)
-        self.assertIn("add_cost_companion_columns(prioritize_context_columns(mart_board))", cost_contract_text)
-        self.assertIn("def _cost_splash_next_move", cost_contract_text)
-        self.assertIn("Warehouse Ranking", cost_contract_text)
-        self.assertIn("def _render_cost_chart_with_data_toggle", cost_contract_text)
-        self.assertIn("Back to chart", cost_contract_text)
-        self.assertNotIn("Cost evidence view", cost_contract_text)
-        self.assertNotIn("Cost overview table data", cost_contract_text)
-        self.assertNotIn("PowerPoint-ready snapshot", cost_contract_text)
-        self.assertNotIn("def _render_powerpoint_snapshot_gate", cost_contract_text)
-        self.assertNotIn("_POWERPOINT_SNAPSHOT_KEY", cost_contract_text)
-        self.assertNotIn("Prepare PowerPoint Snapshot", cost_contract_text)
-        cost_splash_block = cost_contract_text.split("def _render_cost_splash", 1)[1].split(
-            "def _cost_action_brief",
-            1,
-        )[0]
-        self.assertNotIn("_render_powerpoint_snapshot_gate", cost_splash_block)
-        self.assertNotIn('with st.expander("PowerPoint-ready snapshot", expanded=False):', cost_splash_block)
-        self.assertNotIn("PowerPoint support data", cost_contract_text)
-        self.assertNotIn("PowerPoint Cost Snapshot", cost_contract_text)
-        self.assertNotIn("def _cost_snapshot_slide_brief", cost_contract_text)
-        self.assertNotIn("def _build_cost_snapshot_pptx", cost_contract_text)
-        self.assertNotIn("Download PowerPoint", cost_contract_text)
-        self.assertNotIn("application/vnd.openxmlformats-officedocument.presentationml.presentation", cost_contract_text)
-        self.assertIn("_service_lens_movement_rows", cost_contract_text)
-        self.assertIn("render_shell_status_strip(", cost_contract_text)
-        self.assertIn("render_shell_kpi_row((", cost_contract_text)
-        self.assertIn("def _render_cost_load_contract", cost_contract_text)
-        self.assertIn("Cost first paint uses", cost_contract_text)
-        self.assertNotIn('st.markdown("**Operating Snapshot**")', cost_contract_text)
-        self.assertIn("from sections.shell_helpers import", cost_contract_text)
-        self.assertIn("render_shell_kpi_row", cost_contract_text)
-        self.assertIn("render_shell_snapshot(tuple(metrics))", cost_contract_text)
-        self.assertIn('("Spend", "On demand")', cost_contract_text)
-        self.assertIn('key="cost_contract_cockpit_window"', cost_contract_text)
-        cost_watch_preload = cost_contract_text.split("def _render_cost_watch_floor", 1)[1].split(
-            "if st.button(\"Load Full Cost Proof\"",
-            1,
-        )[0]
-        self.assertIn("def _cached_cost_splash", cost_contract_text)
-        self.assertIn("Refresh Overview", cost_watch_preload)
-        self.assertIn("if refresh_overview:", cost_watch_preload)
-        self.assertIn("_maybe_autoload_cost_splash(company, int(days), credit_price)", cost_watch_preload)
-        self.assertIn("_ensure_cost_splash(company, int(days), credit_price)", cost_watch_preload)
-        self.assertIn("_COST_SPLASH_AUTOLOAD_SCOPE_KEY", cost_contract_text)
-        self.assertNotIn(
-            "splash = _ensure_cost_splash(company, int(days), credit_price)\n"
-            "    _render_cost_splash",
-            cost_watch_preload,
-        )
-        self.assertNotIn("load_action_queue(session)", cost_watch_preload)
-        for label, shell_text in (
-            ("Alert Center", alert_center_text),
-            ("Cost & Contract", cost_contract_text),
-            ("Executive Landing", executive_landing_text),
-            ("FinOps Control", (APP_ROOT / "sections" / "finops_control.py").read_text(encoding="utf-8")),
-        ):
-            with self.subTest(day_window_options=label):
-                self.assertIn("DAY_WINDOW_OPTIONS", shell_text)
-                self.assertNotIn("[1, 3, 7, 14, 30]", shell_text)
-                self.assertNotIn("[7, 14, 30]", shell_text)
-        for label, shell_text in (
-            ("Executive Landing", executive_landing_text),
-            ("Alert Center", alert_center_text),
-            ("Change & Drift", change_drift_text),
-            ("Cost & Contract", cost_contract_text),
-            ("Security Posture", security_posture_text),
-            ("Warehouse Health", warehouse_health_text),
-            ("Workload Operations", workload_operations_text),
-        ):
-            with self.subTest(first_click_placeholder=label):
-                self.assertNotIn('pending = "Pending"', shell_text)
-                self.assertNotIn("loaded else pending", shell_text)
-        self.assertIn('st.button("Load Control Summary"', account_health_text)
-        self.assertNotIn('st.button("Load Operability Mart"', account_health_text)
-        self.assertIn("_account_health_operator_next_moves", account_health_text)
-        self.assertIn("Account Health operator next-move gates", account_health_text)
-        self.assertIn("_account_health_intervention_matrix", account_health_text)
-        self.assertIn("Account Health DBA intervention matrix", account_health_text)
-        self.assertIn('sort_by=["DBA_PRIORITY", "COUNT", "SURFACE"]', account_health_text)
-        account_health_before_secondary = account_health_text.split('if active_view == "Overview":', 1)[1].split(
-            'st.button("Load Secondary Evidence"',
-            1,
-        )[0]
-        self.assertNotIn("build_mart_control_room_warehouse_pressure_sql", account_health_before_secondary)
-        account_health_render_preload = account_health_text.split("def render():", 1)[1].split(
-            "active_view = render_mode_selector",
-            1,
-        )[0]
-        self.assertIn("active_view = render_mode_selector(", account_health_text)
-        self.assertNotIn('st.radio(\n        "Account Health view"', account_health_text)
-        self.assertIn("def _account_health_action_session", account_health_text)
-        self.assertIn("get_session_for_action", account_health_text)
-        self.assertIn("def _account_query_history_capabilities", account_health_text)
-        self.assertIn("qh = _query_history_capabilities(action_session)", account_health_text)
-        self.assertNotIn("session = get_session()", account_health_render_preload)
-        self.assertNotIn("filter_existing_columns(", account_health_render_preload)
-        self.assertIn("Cost guardrail", warehouse_health_text)
-        self.assertIn("_warehouse_intervention_matrix", warehouse_health_text)
-        self.assertIn("Warehouse DBA intervention matrix", warehouse_health_text)
-        self.assertIn('sort_by=["DBA_PRIORITY", "METERED_CREDITS"]', warehouse_health_text)
-        self.assertNotIn("return str(st.selectbox(label, list(workflows), key=key))", warehouse_health_text)
-        self.assertIn('render_workflow_selector = _lazy_util("render_workflow_selector")', warehouse_health_text)
-        self.assertIn("def _warehouse_action_brief", warehouse_health_text)
-        self.assertIn("def _render_warehouse_action_brief", warehouse_health_text)
-        self.assertIn("def _render_warehouse_operating_snapshot", warehouse_health_text)
-        self.assertIn("WAREHOUSE_HEALTH_BRIEF_WORKFLOWS", warehouse_health_text)
-        self.assertIn("WAREHOUSE_HEALTH_BRIEF_FIRST_VERSION = 2", warehouse_health_text)
-        self.assertIn("Warehouse Investigation Workflows", warehouse_health_text)
-        self.assertNotIn("More Warehouse Workflows", warehouse_health_text)
-        self.assertNotIn("Hide Warehouse Workflows", warehouse_health_text)
-        self.assertIn("def _queue_warehouse_health_view", warehouse_health_text)
-        self.assertIn("def _apply_queued_warehouse_health_view", warehouse_health_text)
-        self.assertIn("def _apply_warehouse_brief_first_default", warehouse_health_text)
-        self.assertIn('st.session_state["warehouse_health_view"] = "Overview & Scaling"', warehouse_health_text)
-        self.assertIn("_apply_warehouse_brief_first_default()", warehouse_health_text)
-        self.assertIn('st.session_state["warehouse_health_requested_view"] = view', warehouse_health_text)
-        self.assertIn("_apply_queued_warehouse_health_view()", warehouse_health_text)
-        self.assertIn('if warehouse_view == "Overview & Scaling" and not _warehouse_frame_has_rows', warehouse_health_text)
-        self.assertIn("def _warehouse_global_filter_clause", warehouse_health_text)
-        self.assertIn("render_shell_status_strip(", warehouse_health_text)
-        self.assertIn("render_shell_kpi_row((", warehouse_health_text)
-        self.assertNotIn('st.markdown("**Action Brief**")', warehouse_health_text)
-        self.assertNotIn('st.markdown("**Operating Snapshot**")', warehouse_health_text)
-        self.assertIn("from sections.shell_helpers import", warehouse_health_text)
-        self.assertIn("render_shell_kpi_row", warehouse_health_text)
-        self.assertIn("render_shell_snapshot((", warehouse_health_text)
-        self.assertIn(
-            "_render_warehouse_action_brief(_warehouse_action_brief(company, environment, selected_days))",
-            warehouse_health_text,
-        )
-        self.assertIn(
-            "_render_warehouse_operating_snapshot(_warehouse_operating_snapshot(company, environment, selected_days))",
-            warehouse_health_text,
-        )
-        warehouse_action_brief = warehouse_health_text.split("def _warehouse_action_brief", 1)[1].split(
-            "def _render_warehouse_action_brief",
-            1,
-        )[0]
-        self.assertNotIn("pd.DataFrame", warehouse_action_brief)
-        warehouse_render_preload = warehouse_health_text.split("def render():", 1)[1].split(
-            "warehouse_view = render_workflow_selector",
-            1,
-        )[0]
-        self.assertNotIn("get_global_filter_clause(", warehouse_render_preload)
-        self.assertNotIn("wh_query_filters", warehouse_health_text)
-        self.assertNotIn("wh_plain_filters", warehouse_health_text)
-        warehouse_render_start = warehouse_health_text.split("def render():", 1)[1].split(
-            "render_operator_briefing",
-            1,
-        )[0]
-        live_monitor_render_preload = live_monitor_text.split("def render():", 1)[1].split(
-            'if active_view == "Active Queries":',
-            1,
-        )[0]
-        self.assertIn("RESULT_LIMIT=>100", live_monitor_text)
-        self.assertIn("QUERY_HISTORY_BY_WAREHOUSE", live_monitor_text)
-        self.assertIn("WAREHOUSE_NAME=>", live_monitor_text)
-        self.assertIn("def _query_context_expr", live_monitor_text)
-        self.assertIn("def _prioritize_query_context", live_monitor_text)
-        self.assertIn("database_name, schema_name, {query_context_expr}", live_monitor_text)
-        self.assertIn("df_live = _prioritize_query_context(df_live)", live_monitor_text)
-        self.assertIn("df_recent = _prioritize_query_context(df_recent)", live_monitor_text)
-        self.assertIn('"QUERY_CONTEXT"', live_monitor_text)
-        self.assertIn("df_tq = _prioritize_query_context(df_tq)", dba_tools_text)
-        self.assertIn("database_name, schema_name, {_query_context_expr()}", dba_tools_text)
-        self.assertIn("admin_button_disabled", live_monitor_text)
-        self.assertIn("require_admin_enabled(\"query cancellation\")", live_monitor_text)
-        self.assertIn("log_admin_action(", live_monitor_text)
-        self.assertNotIn("disabled=admin_button_disabled(not cancel_ready)", live_monitor_text)
-        self.assertIn("Type `CANCEL` exactly before cancelling this query.", live_monitor_text)
-        self.assertIn("QUERY_HISTORY_OPTIONAL_COLUMNS", live_monitor_text)
-        self.assertIn("execution_status = {sql_literal(status_filter, 40)}", live_monitor_text)
-        self.assertNotIn("execution_status = '{status_filter}'", live_monitor_text)
-        live_panel_body = live_monitor_text.split("def _live_panel():", 1)[1].split(
-            "        if refresh_live or auto_refresh:",
-            1,
-        )[0]
-        workload_render_default = workload_operations_text.split("def render() -> None:", 1)[1].split(
-            'if active_view == "Workload Brief":',
-            1,
-        )[0]
-        self.assertNotIn("filter_existing_columns(", live_panel_body)
-        self.assertNotIn("df_live = run_query_or_raise(f\"\"\"", live_panel_body)
-        self.assertIn('ttl_key=f"live_active_fallback_', live_panel_body)
-        self.assertIn('tier="live"', live_panel_body)
-        architecture_render_preload = architecture_text.split("def render():", 1)[1].split(
-            "active_pane = render_workflow_selector",
-            1,
-        )[0]
-        self.assertNotIn("_architecture_objectives_frame(", architecture_render_preload)
-        self.assertNotIn("build_forward_platform_control_register()", architecture_render_preload)
-        self.assertNotIn("_architecture_source_health_rows(", architecture_render_preload)
-        architecture_top_import_block = architecture_text.split("def build_agentic_ai_surface_scorecard", 1)[0]
-        self.assertIn("from sections.base import lazy_pandas", architecture_top_import_block)
-        self.assertIn("pd = lazy_pandas()", architecture_top_import_block)
-        self.assertNotIn("import pandas as pd", architecture_top_import_block)
-        self.assertNotIn("from utils import", architecture_top_import_block)
-        self.assertNotIn("from utils.workflows import", architecture_top_import_block)
-        self.assertNotIn("from utils.futures_governance import", architecture_top_import_block)
-        self.assertIn("def _get_valid_architecture_frame", architecture_text)
-        self.assertIn("def _get_valid_architecture_data", architecture_text)
-        for stale_architecture_read in (
-            'df = st.session_state.get("arch_iso_df")',
-            'df = st.session_state.get("arch_cluster_df")',
-            'df = st.session_state.get("arch_cache_df")',
-            'data = st.session_state.get("arch_dr_data")',
-            'df = st.session_state.get("arch_adaptive_compute")',
-            'df = st.session_state.get("arch_ai_inventory")',
-            'df = st.session_state.get("arch_ai_usage")',
-            'df = st.session_state.get("arch_ai_security_guardrails")',
-            'df = st.session_state.get("arch_openflow_usage")',
-            'df = st.session_state.get("arch_horizon_readiness")',
-            'board = st.session_state.get("arch_futures_board")',
-            'agentic_scorecard = st.session_state.get("arch_agentic_ai_scorecard")',
-        ):
-            self.assertNotIn(stale_architecture_read, architecture_text)
-        self.assertIn('"arch_futures_board_meta"', architecture_text)
-        self.assertIn('"arch_agentic_ai_meta"', architecture_text)
-        architecture_platform_futures_preload = architecture_text.split("def _render_platform_futures(company", 1)[1].split(
-            'if futures_view == "Overview":',
-            1,
-        )[0]
-        self.assertNotIn("_ensure_architecture_forward_controls_state(", architecture_platform_futures_preload)
-        self.assertNotIn("_refresh_architecture_source_health_state(", architecture_platform_futures_preload)
-        self.assertNotIn("build_agentic_ai_surface_scorecard(", architecture_platform_futures_preload)
-        security_posture_render_preload = security_posture_text.split("def render() -> None:", 1)[1].split(
-            'if st.button("Load Security Brief"',
-            1,
-        )[0]
-        security_posture_render_start = security_posture_text.split("def render() -> None:", 1)[1].split(
-            "render_signal_confidence(",
-            1,
-        )[0]
-        security_posture_default_preload = security_posture_text.split("def render() -> None:", 1)[1].split(
-            'if active_view == "Evidence Readiness":',
-            1,
-        )[0]
-        security_posture_view_preload = security_posture_text.split("def render() -> None:", 1)[1].split(
-            'if active_view == "Access Workflows":',
-            1,
-        )[0]
-        security_posture_loaded_preproof = security_posture_text.split("def render() -> None:", 1)[1].split(
-            "if not proof_tables_visible:",
-            1,
-        )[0]
-        security_posture_proof_block = security_posture_text.split("if not proof_tables_visible:", 1)[1].split(
-            "elif exceptions is not None:",
-            1,
-        )[0]
-        security_access_render_preload = security_access_text.split("def render():", 1)[1].split(
-            "def _query_history_columns",
-            1,
-        )[0]
-        change_drift_render_preload = change_drift_text.split("def render() -> None:", 1)[1].split(
-            'if st.button("Load Change & Drift Brief"',
-            1,
-        )[0]
-        change_drift_default_preload = change_drift_text.split("def render() -> None:", 1)[1].split(
-            'if active_view == "Change Workflows":',
-            1,
-        )[0]
-        object_change_render_preload = object_change_text.split("def render():", 1)[1].split(
-            "def _query_history_drift_caps",
-            1,
-        )[0]
-        self.assertIn("def _warehouse_action_session", warehouse_health_text)
-        self.assertIn("get_session_for_action", warehouse_health_text)
-        self.assertIn("def _warehouse_sql_exprs", warehouse_health_text)
-        self.assertIn("exprs = _warehouse_sql_exprs(session)", warehouse_health_text)
-        self.assertIn("def _warehouse_support_panels_have_state", warehouse_health_text)
-        self.assertIn('st.button("Evidence Panels"', warehouse_health_text)
-        self.assertIn('st.button("Show Warehouse Evidence"', warehouse_health_text)
-        self.assertIn("def _warehouse_overview_exceptions", warehouse_health_text)
-        self.assertNotIn('st.button("Support Panels"', warehouse_health_text)
-        self.assertNotIn('c2.metric("Mart-Backed"', warehouse_health_text)
-        self.assertNotIn('f1.metric("Fact Rows"', warehouse_health_text)
-        self.assertNotIn("session = get_session()", warehouse_render_start)
-        self.assertNotIn("filter_existing_columns(", warehouse_render_preload)
-        self.assertNotIn("_render_capacity_brief(", warehouse_render_preload)
-        self.assertNotIn("_render_warehouse_ownership_panel(", warehouse_render_preload)
-        self.assertNotIn("_render_warehouse_source_health(", warehouse_render_preload)
-        self.assertNotIn("get_session()", live_monitor_render_preload)
-        self.assertNotIn("render_workflow_module(", workload_render_default)
-        self.assertNotIn("get_session()", architecture_render_preload)
-        self.assertIn("from sections.base import lazy_pandas", security_posture_import_block)
-        self.assertIn("pd = lazy_pandas()", security_posture_import_block)
-        self.assertNotIn("import pandas as pd", security_posture_import_block)
-        self.assertNotIn("from utils import", security_posture_import_block)
-        self.assertNotIn("from utils.workflows import", security_posture_import_block)
-        self.assertIn("def _load_security_brief", security_posture_render_preload)
-        self.assertIn("render_data_freshness(", security_posture_render_preload)
-        self.assertNotIn("_security_posture_auto_load_attempt_scope", security_posture_render_preload)
-        self.assertNotIn("_render_privileged_grant_readiness(", security_posture_default_preload)
-        self.assertNotIn("_render_security_source_health(", security_posture_default_preload)
-        self.assertNotIn("render_workflow_module(", security_posture_view_preload)
-        self.assertIn("def _security_action_brief", security_posture_text)
-        self.assertIn("render_shell_status_strip(", security_posture_text)
-        self.assertIn("def _render_security_operating_snapshot", security_posture_text)
-        self.assertIn("render_shell_kpi_row((", security_posture_text)
-        self.assertNotIn('st.markdown("**Operating Snapshot**")', security_posture_text)
-        self.assertIn("from sections.shell_helpers import", security_posture_text)
-        self.assertIn("render_shell_kpi_row", security_posture_text)
-        self.assertIn('("Grant Changes", f"{safe_int(snapshot.get(\'grant_changes\')):,}")', security_posture_text)
-        self.assertNotIn('"Grant Chg"', security_posture_text)
-        self.assertIn("def _paint_security_brief_chrome", security_posture_text)
-        self.assertIn("brief_slot = st.empty()", security_posture_text)
-        self.assertIn("exception_slot = st.empty()", security_posture_text)
-        self.assertIn('st.markdown("**Exception Strip**")', security_posture_text)
-        self.assertNotIn("Load the security brief to populate exception signals.", security_posture_text)
-        security_render_body = security_posture_text.split("def render() -> None:", 1)[1]
-        self.assertLess(
-            security_render_body.index("render_data_freshness("),
-            security_render_body.index("_render_security_brief_launchpad()"),
-        )
-        self.assertIn('with st.expander("Load Secondary Security Evidence", expanded=False):', security_posture_text)
-        self.assertGreaterEqual(security_posture_text.count("_paint_security_brief_chrome("), 3)
-        self.assertIn("Load Security Control Facts", security_posture_text)
-        self.assertIn("Load Security Exceptions", security_posture_text)
-        self.assertIn("Security exceptions stay unloaded", security_posture_text)
-        self.assertIn("SECURITY_BRIEF_WORKFLOWS", security_posture_text)
-        self.assertIn("Security Investigation Workflows", security_posture_text)
-        self.assertIn("def _queue_security_workflow", security_posture_text)
-        self.assertIn("def _apply_queued_security_workflow", security_posture_text)
-        self.assertIn('st.session_state["security_posture_requested_view"] = "Access Workflows"', security_posture_text)
-        self.assertIn("_apply_queued_security_workflow()", security_posture_text)
-        self.assertIn('if active_view == "Security Brief":', security_posture_text)
-        security_brief_load_block = security_posture_text.split('if st.button("Load Security Brief"', 1)[1].split(
-            "_paint_security_brief_chrome(",
-            1,
-        )[0]
-        self.assertNotIn("_security_operability_fact_sql(", security_brief_load_block)
-        self.assertNotIn('st.session_state["security_operability_fact"]', security_brief_load_block)
-        self.assertNotIn('st.session_state["security_posture_exceptions"] = run_query', security_brief_load_block)
-        self.assertNotIn("security_posture_exceptions_mart", security_brief_load_block)
-        self.assertNotIn("security_posture_exceptions_live", security_brief_load_block)
-        self.assertIn("_SECURITY_PROOF_TABLES_SCOPE_KEY", security_posture_text)
-        self.assertIn('st.button("Load Security Proof Tables"', security_posture_text)
-        self.assertIn('st.button("Hide Security Proof Tables"', security_posture_text)
-        self.assertNotIn("_build_security_access_review(exceptions, environment)", security_posture_loaded_preproof)
-        self.assertNotIn("_security_control_board(", security_posture_loaded_preproof)
-        self.assertIn("_build_security_access_review(exceptions, environment)", security_posture_proof_block)
-        self.assertIn("_security_control_board(", security_posture_proof_block)
-        self.assertNotIn("get_session()", security_access_render_preload)
-        self.assertIn("def _load_change_drift_brief", change_drift_render_preload)
-        self.assertIn("render_data_freshness(", change_drift_render_preload)
-        self.assertNotIn("_change_drift_auto_load_attempt_scope", change_drift_render_preload)
-        self.assertNotIn("render_workflow_module(", change_drift_default_preload)
-        self.assertIn('st.session_state["change_drift_view"] = "Change Brief"', change_drift_text)
-        self.assertNotIn('st.session_state["change_drift_view"] = "Change Workflows"', change_drift_default_preload)
-        self.assertIn("render_shell_status_strip(", change_drift_text)
-        self.assertIn("render_shell_kpi_row((", change_drift_text)
-        self.assertNotIn('st.markdown("**Action Brief**")', change_drift_text)
-        self.assertNotIn("get_session()", object_change_render_preload)
-        self.assertIn("Recovery readiness", change_drift_text)
-        self.assertIn("CHANGE_DRIFT_VIEWS", change_drift_text)
-        self.assertIn("CHANGE_DRIFT_BRIEF_FIRST_VERSION = 2", change_drift_text)
-        self.assertIn("active_view = render_mode_selector(", change_drift_text)
-        self.assertIn('render_mode_selector = _lazy_util("render_mode_selector")', change_drift_text)
-        self.assertNotIn('st.selectbox(\n        "Change & Drift view"', change_drift_text)
-        self.assertIn('"Change Brief"', change_drift_text)
-        self.assertIn('"Change Workflows"', change_drift_text)
-        self.assertIn("_change_intervention_matrix", change_drift_text)
-        self.assertIn("Change DBA intervention matrix", change_drift_text)
-        self.assertIn("CHANGE_BRIEF_WORKFLOWS", change_drift_text)
-        self.assertIn("Change Investigation Workflows", change_drift_text)
-        self.assertNotIn("More Change Workflows", change_drift_text)
-        self.assertNotIn("Hide Change Workflows", change_drift_text)
-        self.assertIn("def _queue_change_workflow", change_drift_text)
-        self.assertIn("def _apply_queued_change_workflow", change_drift_text)
-        self.assertIn("def _apply_change_brief_first_default", change_drift_text)
-        self.assertIn("not _change_has_source_state(st.session_state)", change_drift_text)
-        self.assertIn('st.session_state["change_drift_requested_view"] = "Change Workflows"', change_drift_text)
-        self.assertIn("_apply_change_brief_first_default()", change_drift_text)
-        self.assertIn("_apply_queued_change_workflow()", change_drift_text)
-        self.assertNotIn('"Release evidence"', change_drift_text)
-        self.assertNotIn("Flyway", change_drift_text)
-        self.assertNotIn('"Owner approval evidence"', change_drift_text)
-        self.assertIn("render_chart_with_data_toggle", change_drift_text)
-        self.assertNotIn("_event_timeline", change_drift_text)
-        self.assertNotIn('mode="Deployment"', change_drift_text)
-        self.assertNotIn('mode="Owner approval"', change_drift_text)
-        self.assertNotIn("Release Evidence", change_drift_text)
-        self.assertNotIn("Owner approval Evidence", change_drift_text)
-        self.assertNotIn('"Load Release Evidence"', change_drift_text)
-        self.assertNotIn('"Load Owner approval Evidence"', change_drift_text)
-        self.assertNotIn("Owner approval & Release Evidence", change_drift_text)
-        self.assertNotIn('st.button("Load Owner approval / Release Evidence"', change_drift_text)
-        self.assertIn('sort_by=["DBA_PRIORITY", "SEVERITY", "FINDING_TYPE"]', change_drift_text)
-        self.assertIn("ALERT_CENTER_SOURCES_BY_PANE", alert_center_text)
-        self.assertIn('ALERT_CENTER_PANES = [\n    "Alert Brief",\n    "Command Center",\n    "DBA Morning Brief"', alert_center_text)
-        self.assertIn('"Detection Catalog"', alert_center_text)
-        self.assertIn('"Notifications & Remediation"', alert_center_text)
-        self.assertIn('"Setup & Runbook"', alert_center_text)
-        self.assertIn('"Automation Readiness"', alert_center_text)
-        self.assertIn('"automation_health"', alert_center_text)
-        self.assertIn("OVERWATCH_AUTOMATION_HEALTH_V", alert_center_text)
-        self.assertIn("No-Touch Automation Health", alert_center_text)
-        self.assertNotIn("Snowflake task/Owner approval/Deployment/Flyway", alert_center_text)
-        self.assertIn("action-queue freshness", alert_center_text)
-        self.assertIn("_alert_center_sources_for_view(active_view)", alert_center_text)
-        self.assertIn("ALERT_CENTER_SOURCE_PLAN", alert_center_text)
-        self.assertIn("_alert_center_source_summary(required_sources)", alert_center_text)
-        self.assertIn("Sources on load", alert_center_text)
-        self.assertIn("render_data_freshness(", alert_center_text)
-        self.assertIn("def _alert_center_loaded_meta", alert_center_text)
-        self.assertNotIn("_alert_center_auto_load_attempt_scope", alert_center_text)
-        self.assertNotIn("_alert_center_auto_load_scope", alert_center_text)
-        self.assertNotIn("_alert_center_load_plan", alert_center_text)
-        self.assertNotIn("with st.expander(\"Source plan\"", alert_center_text)
-        self.assertIn("ALERT_CENTER_PANE_LABELS", alert_center_text)
-        self.assertIn('active_view = _render_workflow_selector(', alert_center_text)
-        self.assertIn('labels=ALERT_CENTER_PANE_LABELS', alert_center_text)
-        self.assertNotIn('st.selectbox(\n        "Alert Center view"', alert_center_text)
-        self.assertNotIn('st.radio(\n        "Alert Center view"', alert_center_text)
-        self.assertNotIn("st.tabs(", alert_center_text)
-        self.assertIn('"Alert Brief"', alert_center_text)
-        self.assertIn('if active_view == "Alert Brief":', alert_center_text)
-        self.assertIn("ALERT_CENTER_BRIEF_WORKFLOWS", alert_center_text)
-        self.assertIn("Alert Command Workflows", alert_center_text)
-        self.assertNotIn("More Alert Workflows", alert_center_text)
-        self.assertNotIn("Hide Alert Workflows", alert_center_text)
-        self.assertIn("def _queue_alert_center_view", alert_center_text)
-        self.assertIn("def _apply_queued_alert_center_view", alert_center_text)
-        self.assertIn("ALERT_CENTER_BRIEF_FIRST_VERSION = 2", alert_center_text)
-        self.assertIn('ALERT_CENTER_DEFAULT_VIEW = "Command Center"', alert_center_text)
-        self.assertIn('consume_section_autoload_request("Alert Center")', alert_center_text)
-        alert_autoload_block = alert_center_text.split('alert_autoload_requested = consume_section_autoload_request("Alert Center")', 1)[1].split(
-            "render_data_freshness(",
-            1,
-        )[0]
-        self.assertIn("without live Snowflake reads", alert_autoload_block)
-        self.assertNotIn("_load_alert_center_view_data", alert_autoload_block)
-        self.assertNotIn("_alert_center_action_session", alert_autoload_block)
-        self.assertIn("def _apply_alert_center_brief_first_default", alert_center_text)
-        self.assertIn('st.session_state["alert_center_requested_view"] = view', alert_center_text)
-        self.assertIn("_apply_queued_alert_center_view()", alert_center_text)
-        self.assertIn("_apply_alert_center_brief_first_default()", alert_center_text)
-        self.assertIn("st.session_state[\"alert_center_active_view\"] = ALERT_CENTER_DEFAULT_VIEW", alert_center_text)
-        self.assertNotIn('st.session_state.get("alert_center_active_view") == "Issue Inbox"', alert_center_text)
-        self.assertIn("_alert_center_brief_first_version", alert_center_text)
-        self.assertIn("expected_scope = (company, environment, int(days), int(limit))", alert_center_text)
-        stale_alert_scope_block = alert_center_text.split("if loaded_scope != expected_scope:", 1)[1].split(
-            "loaded_sources = set(data.get",
-            1,
-        )[0]
-        self.assertIn("Reload before triaging alerts.", stale_alert_scope_block)
-        self.assertIn("return", stale_alert_scope_block)
-        alert_center_import_block = alert_center_text.split("ALERT_CENTER_PANES", 1)[0]
-        self.assertNotIn("build_alert_task_sql", alert_center_import_block)
-        self.assertNotIn("load_alert_history", alert_center_import_block)
-        self.assertNotIn("from utils.alerts import", alert_center_import_block)
-        self.assertNotIn("import pandas as pd", alert_center_import_block)
-        self.assertNotIn("from utils.workflows import", alert_center_import_block)
-        self.assertNotIn("defer_source_note,", alert_center_import_block)
-        self.assertIn("def defer_source_note", alert_center_text)
-        self.assertIn("def _pd()", alert_center_text)
-        self.assertIn("def _render_priority_dataframe", alert_center_text)
-        self.assertIn("def _alert_center_action_session", alert_center_text)
-        self.assertIn("def _alert_center_pending_brief", alert_center_text)
-        self.assertIn("def _render_alert_center_action_brief", alert_center_text)
-        self.assertIn("def _alert_center_exception_rows", alert_center_text)
-        self.assertIn('st.markdown("**Exception Strip**")', alert_center_text)
-        self.assertIn("render_shell_status_strip(", alert_center_text)
-        self.assertIn("render_shell_kpi_row((", alert_center_text)
-        self.assertNotIn('st.markdown("**Operating Snapshot**")', alert_center_text)
-        self.assertIn("from sections.shell_helpers import", alert_center_text)
-        self.assertIn("render_shell_kpi_row", alert_center_text)
-        self.assertIn("render_shell_snapshot((", alert_center_text)
-        self.assertIn("Record Lifecycle Audit", alert_center_text)
-        self.assertIn("record alert lifecycle audit", alert_center_text)
-        self.assertNotIn("row2 = st.columns(3)", alert_center_text)
-        self.assertIn("ALERT_CENTER_HEALTH_DETAIL_OPTIONS", alert_center_text)
-        self.assertIn('"Alert health detail"', alert_center_text)
-        self.assertIn('st.selectbox(\n            "Alert health detail"', alert_center_text)
-        self.assertNotIn('st.radio(\n            "Alert health detail"', alert_center_text)
-        self.assertIn("def _alert_integration_readiness_board", alert_center_text)
-        self.assertIn("Owner Directory Production Readiness", alert_center_text)
-        self.assertIn("Notification & Action Queue Readiness", alert_center_text)
-        self.assertIn("Alert Automation Readiness", alert_center_text)
-        self.assertIn("Ready Controls", alert_center_text)
-        self.assertNotIn("m1, m2, m3, m4, m5, m6, m7 = st.columns(7)", alert_center_text)
-        self.assertIn("owner_directory_readiness_board", alert_center_text)
-        self.assertIn("get_session_for_action", alert_center_text)
-        self.assertIn("snowflake_connection_known_unavailable", session_text)
-        self.assertIn("Snowflake connection is required to {action}", session_text)
-        self.assertIn('session = _alert_center_action_session(f"load {active_view}")', alert_center_text)
-        self.assertNotIn("session = _get_session()", alert_center_text.replace("return _get_session()", ""))
-        for label, section_text in {
-            "Alert Center": alert_center_text,
-            "Cost & Contract": cost_contract_text,
-            "DBA Control Room": dba_control_text,
-        }.items():
-            with self.subTest(lazy_session_section=label):
-                render_start = section_text.split("def render() -> None:", 1)[1].split("if st.button", 1)[0]
-                self.assertNotIn("session = get_session()", render_start)
-        self.assertNotIn('"Setup SQL",', alert_center_text.split("ALERT_CENTER_SOURCE_PLAN", 1)[0])
-        self.assertNotIn('if active_view == "Setup SQL":', alert_center_text)
-        self.assertNotIn("build_alert_task_sql", alert_center_text)
-        self.assertIn("snowflake/OVERWATCH_MART_SETUP.sql", alert_center_text)
-        self.assertIn('if active_view == "Suppression Windows":', alert_center_text)
-        self.assertIn('sources=required_sources', alert_center_text)
-        self.assertIn('"_loaded_sources": sorted(sources)', alert_center_text)
-        self.assertIn('st.button(detail_label, key="alert_center_toggle_issue_detail"', alert_center_text)
-        self.assertIn('"Show Issue Detail"', alert_center_text)
-        self.assertIn('"Hide Issue Detail"', alert_center_text)
-        self.assertIn("USAGE_OVERVIEW_PANES", usage_overview_text)
-        self.assertIn("active_pane = render_workflow_selector", usage_overview_text)
-        self.assertNotIn('st.radio(\n        "Usage detail view"', usage_overview_text)
-        self.assertIn('with render_load_status("Loading usage evidence"', usage_overview_text)
-        self.assertIn('with render_load_status("Loading warehouse cost drivers"', usage_overview_text)
-        self.assertIn("Awaiting filtered usage evidence.", usage_overview_text)
-        self.assertIn("render_chart_with_data_toggle", usage_overview_text)
-        self.assertIn("usage_query_mix", usage_overview_text)
-        self.assertIn('with render_load_status("Loading adoption evidence"', adoption_text)
-        self.assertIn("Awaiting filtered adoption evidence.", adoption_text)
-        self.assertIn("render_chart_with_data_toggle", adoption_text)
-        self.assertIn("adoption_trend", adoption_text)
-        self.assertIn("adoption_connected_programs", adoption_text)
-        self.assertIn('with render_load_status("Building topology evidence"', platform_text)
-        self.assertIn("Awaiting filtered topology evidence.", platform_text)
-        self.assertIn('with render_load_status("Building Cortex cost control brief"', cortex_text)
-        self.assertIn('with render_load_status("Loading Cortex Code user data"', cortex_text)
-        self.assertIn('with render_load_status("Detecting cost-per-request spikes"', cortex_text)
-        self.assertIn('with render_load_status("Loading Cortex trends"', cortex_text)
-        self.assertIn('with render_load_status("Running Cortex anomaly detection"', cortex_text)
-        self.assertIn('with render_load_status("Running predictive Cortex analysis"', cortex_text)
-        self.assertIn('with render_load_status("Loading materialized view refresh history"', cortex_text)
-        self.assertIn("render_chart_with_data_toggle", cortex_text)
-        self.assertIn("cortex_budget_daily_burn", cortex_text)
-        self.assertIn("cortex_trends_daily_credits", cortex_text)
-        self.assertIn("cortex_trends_daily_requests", cortex_text)
-        self.assertIn("cortex_trends_rolling_credits", cortex_text)
-        self.assertIn("cortex_predictive_daily_credits", cortex_text)
-        self.assertIn("AI_COST_USD", cortex_text)
-        self.assertIn("DAILY_COST_USD", cortex_text)
-        self.assertNotIn('st.header("AI & Cortex Monitor")', cortex_text)
-        self.assertNotIn('st.header("Cortex Code User Breakdown")', cortex_text)
-        self.assertNotIn('st.header("Cortex Code Daily Trends")', cortex_text)
-        self.assertNotIn('st.header("Cortex Code Anomaly Detection")', cortex_text)
-        self.assertNotIn('st.header("Predictive Cortex AI Cost Alerts")', cortex_text)
-        self.assertIn('st.subheader("Materialized View Refresh History")', cortex_text)
-        self.assertNotIn(chr(0x1F504), cortex_text)
-        self.assertNotIn("with st.spinner(", cortex_text)
-        self.assertNotIn("st.tabs(", usage_overview_text)
-        workflow_selector_sections = {
-            "adoption_analytics.py": (adoption_text, "Adoption detail view"),
-            "live_monitor.py": (live_monitor_text, "Live monitor view"),
-            "object_change_monitor.py": (object_change_text, "Object change view"),
-            "pipeline_health.py": (pipeline_health_text, "Pipeline health view"),
-            "platform_topology.py": (platform_text, "Platform topology view"),
-            "recommendations.py": (recommendations_text, "Recommendation view"),
-            "security_access.py": (security_access_text, "Security Access view"),
-        }
-        for name, (text, label) in workflow_selector_sections.items():
-            with self.subTest(workflow_selector=name):
-                self.assertIn("active_view = render_workflow_selector", text)
-                self.assertNotIn(f'st.radio(\n        "{label}"', text)
-        compact_metric_sections = {
-            "account_health.py": account_health_text,
-            "adoption_analytics.py": adoption_text,
-            "alert_center.py": alert_center_text,
-            "change_drift.py": change_drift_text,
-            "cost_center.py": cost_center_text,
-            "cost_contract.py": cost_contract_text,
-            "cortex_monitor.py": cortex_text,
-            "dba_control_room.py": dba_control_text,
-            "dba_tools.py": dba_tools_text,
-            "recommendations.py": recommendations_text,
-            "security_posture.py": security_posture_text,
-            "service_health.py": service_health_text,
-            "spcs_tracker.py": spcs_text,
-            "storage_monitor.py": storage_text,
-            "task_management.py": task_management_text,
-            "usage_overview.py": usage_overview_text,
-            "warehouse_health.py": warehouse_health_text,
-        }
-        for name, text in compact_metric_sections.items():
-            with self.subTest(compact_metric_cards=name):
-                self.assertIn("render_shell_snapshot", text)
-                self.assertNotIn(".metric(", text)
-        metric_free_paths = list((APP_ROOT / "sections").glob("*.py")) + [
-            APP_ROOT / "utils" / "display.py",
-            APP_ROOT / "utils" / "optimization_advisor.py",
-        ]
-        for path in metric_free_paths:
-            with self.subTest(no_direct_metric_widgets=path.name):
-                self.assertNotIn(".metric(", path.read_text(encoding="utf-8"))
-        for name, text in {
-            "account_health.py": account_health_text,
-            "adoption_analytics.py": adoption_text,
-            "cortex_monitor.py": cortex_text,
-            "dba_tools.py": dba_tools_text,
-            "live_monitor.py": live_monitor_text,
-            "object_change_monitor.py": object_change_text,
-            "pipeline_health.py": pipeline_health_text,
-            "platform_topology.py": platform_text,
-            "query_analysis.py": query_analysis_text,
-            "recommendations.py": recommendations_text,
-            "security_access.py": security_access_text,
-            "task_management.py": task_management_text,
-            "usage_overview.py": usage_overview_text,
-            "warehouse_health.py": warehouse_health_text,
-            "optimization_advisor.py": optimization_text,
-        }.items():
-            with self.subTest(compact_specialist_heading=name):
-                self.assertNotIn("st.header(", text)
-        for name, text in {
-            "dba_control_room.py": dba_control_text,
-            "security_access.py": security_access_text,
-            "recommendations.py": recommendations_text,
-            "live_monitor.py": live_monitor_text,
-            "query_analysis.py": query_analysis_text,
-            "pipeline_health.py": pipeline_health_text,
-            "object_change_monitor.py": object_change_text,
-            "adoption_analytics.py": adoption_text,
-            "platform_topology.py": platform_text,
-            "architecture_readiness.py": architecture_text,
-            "dba_tools.py": dba_tools_text,
-            "optimization_advisor.py": optimization_text,
-        }.items():
-            with self.subTest(active_view_file=name):
-                self.assertNotIn("st.tabs(", text)
-        self.assertIn("DBA_CONTROL_ROOM_PANES", dba_control_text)
-        self.assertIn('render_workflow_selector = _lazy_util("render_workflow_selector")', dba_control_text)
-        self.assertIn("active_view = render_workflow_selector(", dba_control_text)
-        self.assertIn("labels=DBA_CONTROL_ROOM_PANE_LABELS", dba_control_text)
-        self.assertNotIn('st.selectbox(\n        "DBA Control Room view"', dba_control_text)
-        self.assertNotIn('st.radio(\n        "DBA Control Room view"', dba_control_text)
-        self.assertNotIn('key=f"dba_control_route_{route}"', dba_control_text)
-        self.assertIn('key=f"dba_control_route_{idx}_{route}_{workflow}"', dba_control_text)
-        self.assertIn("DBA_CONTROL_ROOM_DETAIL_PANES", dba_control_text)
-        self.assertIn('if active_view == "Morning Brief":', dba_control_text)
-        self.assertIn('ops_detail = "Morning Brief"', dba_control_text)
-        self.assertIn('st.selectbox(\n                    "Operations Board detail"', dba_control_text)
-        self.assertNotIn('st.radio(\n                    "Operations Board detail"', dba_control_text)
-        self.assertIn('st.selectbox(\n            "Exception detail sample"', dba_control_text)
-        self.assertNotIn('st.radio(\n            "Exception detail sample"', dba_control_text)
-        self.assertIn("_dba_operations_priority_index", dba_control_text)
-        self.assertIn("Operations priority board", dba_control_text)
-        self.assertIn("dba_operations_priority_index", dba_control_text)
-        self.assertIn("_dba_morning_brief_rows", dba_control_text)
-        self.assertIn("_dba_morning_decision_contract", dba_control_text)
-        self.assertIn("_dba_morning_execution_contract", dba_control_text)
-        self.assertIn("_add_dba_morning_decision_contract", dba_control_text)
-        self.assertIn("_dba_morning_focus_note", dba_control_text)
-        self.assertIn("_dba_morning_command_queue", dba_control_text)
-        self.assertIn("_dba_workload_morning_lanes", dba_control_text)
-        self.assertIn("workload_morning_lanes = _dba_workload_morning_lanes(data, exceptions)", dba_control_text)
-        self.assertIn("DBA morning brief", dba_control_text)
-        self.assertIn('"MORNING_RANK", "MORNING_DECISION", "SLA_CLOCK", "ROUTE"', dba_control_text)
-        self.assertIn('st.button(label, key=f"dba_morning_open_', dba_control_text)
-        self.assertIn("help=help_text", dba_control_text)
-        self.assertIn("Morning command queue", dba_control_text)
-        self.assertIn("Brief evidence detail", dba_control_text)
-        self.assertIn("Route action: {row.get('ROUTE_ACTION', '')}", dba_control_text)
-        self.assertIn("Approval gate: {row.get('APPROVAL_GATE', '')}", dba_control_text)
-        self.assertIn("Evidence package: {row.get('EVIDENCE_PACKAGE', '')}", dba_control_text)
-        self.assertIn("Verify next: {row.get('VERIFY_NEXT', '')}", dba_control_text)
-        self.assertIn("Execution boundary: {row.get('EXECUTION_BOUNDARY', '')}", dba_control_text)
-        self.assertIn("Closure rule: {row.get('CLOSURE_RULE', '')}", dba_control_text)
-        self.assertIn("Stop rule: {row.get('STOP_RULE', '')}", dba_control_text)
-        self.assertIn('st.session_state["_workload_operations_explicit_workflow_request"] = True', dba_control_text)
-        self.assertIn('st.session_state["workload_operations_view"] = "Specialist Workflows"', dba_control_text)
-        self.assertIn('"Morning Brief", "Priority", "Runbook", "Escalations", "Handoff", "Incidents", "Queue"', dba_control_text)
-        self.assertIn('st.session_state["dba_control_room_morning_brief"]', dba_control_text)
-        self.assertIn("_dba_operator_runbook", dba_control_text)
-        self.assertIn("Operator runbook", dba_control_text)
-        self.assertIn("dba_operator_runbook", dba_control_text)
-        self.assertIn('"Step", "Gate", "Move", "Evidence", "Owner", "Stop Rule"', dba_control_text)
-        self.assertIn("No runbook steps were available.", dba_control_text)
-        self.assertNotIn("dba_autopilot_flight_plan", dba_control_text)
-        self.assertNotIn("AUTOPILOT_MODE", dba_control_text)
-        self.assertNotIn("FLIGHT_PHASE", dba_control_text)
-        self.assertIn("SECURITY_ACCESS_PANES", security_access_text)
-        self.assertIn("_query_history_columns()", security_access_text)
-        self.assertIn("_user_column_exprs()", security_access_text)
-        self.assertIn("Program Failure Rate", security_access_text)
-        self.assertIn('with render_load_status("Tracing connected programs"', security_access_text)
-        self.assertIn('with render_load_status("Loading grant evidence"', security_access_text)
-        self.assertIn('with render_load_status("Finding dormant users"', security_access_text)
-        self.assertIn('with render_load_status("Checking MFA coverage"', security_access_text)
-        self.assertIn('with render_load_status("Checking exfiltration signals"', security_access_text)
-        self.assertIn('with render_load_status("Loading access history"', security_access_text)
-        self.assertIn("RECOMMENDATION_PANES", recommendations_text)
-        self.assertIn("Proof-Ready", recommendations_text)
-        self.assertIn("Automation Readiness", recommendations_text)
-        self.assertIn("build_automation_readiness_board", recommendations_text)
-        self.assertIn("rec_automation_board", recommendations_text)
-        self.assertIn("LIVE_MONITOR_PANES", live_monitor_text)
-        self.assertIn("Live query polling is paused", live_monitor_text)
-        self.assertIn("QUERY_ANALYSIS_PANES", query_analysis_text)
-        self.assertIn("Contention Center", workload_operations_text)
-        self.assertIn("sections.contention_center", workload_operations_text)
-        self.assertIn('"History Search"', query_analysis_text)
-        self.assertIn('importlib.import_module("sections.query_search")', query_analysis_text)
-        self.assertIn("CONSOLIDATED_WORKFLOW_ALIASES", workload_operations_text)
-        self.assertIn("active_view = render_workflow_selector", query_analysis_text)
-        self.assertIn('with render_load_status("Loading query bottlenecks"', query_analysis_text)
-        self.assertIn('with render_load_status("Detecting query degradation"', query_analysis_text)
-        self.assertIn('with render_load_status("Running Cortex query analysis"', query_analysis_text)
-        self.assertIn('st.button(\n            "Load Query Evidence"', query_analysis_text)
-        self.assertIn('st.button(\n            "Diagnose with Cortex"', query_analysis_text)
-        self.assertIn("def _build_query_optimization_candidates", query_analysis_text)
-        self.assertIn("def _build_query_diagnosis_action_contract", query_analysis_text)
-        self.assertIn("def _build_ai_query_diagnosis_prompt", query_analysis_text)
-        self.assertIn("Do not recommend indexes", query_analysis_text)
-        self.assertIn("Every recommendation must cite exact evidence", query_analysis_text)
-        self.assertIn("Do not invent table names", query_analysis_text)
-        self.assertIn("Query diagnosis action contract", query_analysis_text)
-        self.assertIn("Operator action contract", query_analysis_text)
-        self.assertIn("Lock/write contention", query_analysis_text)
-        self.assertIn("TRANSACTION_BLOCKED_TIME", query_analysis_text)
-        self.assertIn("prioritize lock/write contention fixes", query_analysis_text)
-        self.assertIn("def _contention_fix_fields", contention_center_text)
-        self.assertIn("def build_live_query_incident_sql", contention_center_text)
-        self.assertIn("def build_live_task_graphs_sql", contention_center_text)
-        self.assertIn("def build_live_warehouse_load_sql", contention_center_text)
-        self.assertIn("def _live_incident_rows", contention_center_text)
-        self.assertIn("def _load_live_incident_snapshot", contention_center_text)
-        self.assertIn('"Live Incident"', contention_center_text)
-        self.assertIn('"Capture Live Incident"', contention_center_text)
-        self.assertIn("SHOW TRANSACTIONS IN ACCOUNT", contention_center_text)
-        self.assertIn("INFORMATION_SCHEMA.CURRENT_TASK_GRAPHS", contention_center_text)
-        self.assertIn("INFORMATION_SCHEMA.QUERY_HISTORY", contention_center_text)
-        self.assertIn("Contention Fix Plan", contention_center_text)
-        self.assertIn("Incident Cockpit", contention_center_text)
-        self.assertIn("_incident_cockpit_view", contention_center_text)
-        self.assertIn("Safe Cleanup Contract", contention_center_text)
-        self.assertIn("_cleanup_contract_view", contention_center_text)
-        self.assertIn("OWNER_ROUTE", contention_center_text)
-        self.assertIn("build_contention_safe_action_contract", contention_center_text)
-        self.assertIn("Manual DBA action only", contention_center_text)
-        self.assertIn("SYSTEM$ABORT_TRANSACTION", contention_center_text)
-        self.assertIn("SYSTEM$CANCEL_QUERY", contention_center_text)
-        self.assertIn("CLEANUP_DECISION", contention_center_text)
-        self.assertIn("PRECHECK_SQL", contention_center_text)
-        self.assertIn("VERIFY_SQL", contention_center_text)
-        self.assertIn("OVERLAP_POLICY = NO_OVERLAP", contention_center_text)
-        self.assertIn("do not resize solely because a query is blocked", contention_center_text)
-        self.assertIn("_open_contention_owner_route", contention_center_text)
-        self.assertIn('st.session_state["workload_operations_workflow"] = "Task graphs"', contention_center_text)
-        self.assertIn('st.session_state["workload_operations_workflow"] = "Query diagnosis"', contention_center_text)
-        self.assertIn('apply_navigation_state("Cost & Contract")', contention_center_text)
-        self.assertNotIn('st.radio(\n        "Query analysis view"', query_analysis_text)
-        self.assertNotIn(chr(0x2500), query_analysis_text)
-        self.assertNotIn(chr(0x1F50D), query_analysis_text)
-        self.assertNotIn(chr(0x1F4C9), query_analysis_text)
-        self.assertNotIn(chr(0x1F916), query_analysis_text)
-        self.assertIn('"Root-Cause Brief"', query_analysis_text)
-        self.assertIn("def _root_cause_cortex_prompt", query_workbench_text)
-        self.assertIn("def _generate_root_cause_cortex_narrative", query_workbench_text)
-        self.assertIn("def _seed_ai_query_diagnosis_from_row", query_workbench_text)
-        self.assertIn('return "AI Diagnosis"', query_workbench_text)
-        self.assertIn('return "Contention Center"', query_workbench_text)
-        self.assertIn("Lock Contention", query_workbench_text)
-        self.assertIn("contention_focus_query_id", query_workbench_text)
-        self.assertIn('st.session_state["contention_center_view"] = "Brief"', query_workbench_text)
-        self.assertIn("HANDOFF_MATCH", contention_center_text)
-        self.assertIn("def _focus_handoff_frame", contention_center_text)
-        self.assertIn("TRANSACTION_BLOCKED_TIME", query_workbench_text)
-        self.assertIn('st.session_state["query_analysis_active_view"] = "AI Diagnosis"', query_workbench_text)
-        self.assertIn('st.session_state["ai_query_evidence"] = evidence', query_workbench_text)
-        self.assertIn("Operator stats still need to be loaded for final proof", query_workbench_text)
-        self.assertIn("Generate Cortex Root-Cause Narrative", query_workbench_text)
-        self.assertIn("run_cortex_completion(", query_workbench_text)
-        self.assertIn("Runs one Cortex completion against the loaded root-cause evidence.", query_workbench_text)
-        self.assertIn('with render_load_status("Building root-cause brief"', query_workbench_text)
-        self.assertIn('with render_load_status("Generating DBA root-cause narrative"', query_workbench_text)
-        self.assertIn('with render_load_status("Loading detailed diagnosis"', detailed_diagnosis_text)
-        self.assertIn('"Detailed Diagnosis"', query_analysis_text)
-        self.assertIn('importlib.import_module("sections.query_workbench")', query_analysis_text)
-        self.assertIn('importlib.import_module("sections.detailed_diagnosis")', query_analysis_text)
-        self.assertNotIn("render_workflow_selector(", query_workbench_text)
-        self.assertNotIn("from sections import detailed_diagnosis", query_workbench_text)
-        self.assertIn("_query_history_exprs()", query_analysis_text)
-        self.assertIn("workload_operations_snapshot", workload_operations_text)
-        self.assertIn('"AI Diagnosis": ("Query diagnosis", "AI Diagnosis")', workload_operations_text)
-        self.assertIn("WORKLOAD_OPERATIONS_FAST_ENTRY_VERSION", workload_operations_text)
-        self.assertIn("def _apply_fast_entry_default", workload_operations_text)
-        self.assertIn("def _apply_workload_evidence_mode_defaults", workload_operations_text)
-        self.assertIn("_apply_fast_entry_default()", workload_render_default)
-        self.assertIn("_apply_workload_evidence_mode_defaults(evidence_mode)", workload_render_default)
-        self.assertIn("render_data_freshness(", workload_operations_text)
-        self.assertIn("Refresh Workload Snapshot", workload_operations_text)
-        self.assertIn('consume_section_autoload_request("Workload Operations")', workload_operations_text)
-        workload_autoload_block = workload_operations_text.split('workload_autoload_requested = consume_section_autoload_request("Workload Operations")', 1)[1].split(
-            'err = st.session_state.get("workload_operations_snapshot_error", "")',
-            1,
-        )[0]
-        self.assertIn("without live Snowflake reads", workload_autoload_block)
-        self.assertNotIn("_load_workload_snapshot", workload_autoload_block)
-        self.assertNotIn("_workload_operations_auto_load_attempt_scope", workload_operations_text)
-        self.assertIn('st.session_state["workload_operations_workflow"] = "Live triage"', workload_render_default)
-        self.assertIn('st.session_state["workload_operations_view"] = "Specialist Workflows"', workload_operations_text)
-        self.assertIn('st.session_state["workload_operations_workflow"] = "Contention Center"', workload_operations_text)
-        self.assertIn('st.session_state["workload_operations_workflow"] = "Query diagnosis"', workload_operations_text)
-        self.assertIn('st.session_state["query_analysis_active_view"] = "Root-Cause Brief"', workload_operations_text)
-        self.assertNotIn("from utils import", workload_operations_import_block)
-        self.assertNotIn("from utils.workflows import", workload_operations_import_block)
-        self.assertIn("def get_active_environment", workload_operations_text)
-        self.assertIn('return {"company": company, "environment": environment, "hours": int(hours)}', workload_operations_text)
-        self.assertIn("workload_operations_snapshot_{company}_{environment}_{hours}", workload_operations_text)
-        self.assertIn("build_mart_control_room_summary_sql", workload_operations_text)
-        self.assertIn("WORKLOAD_OPERATIONS_VIEWS", workload_operations_text)
-        self.assertIn("active_view = render_mode_selector(", workload_operations_text)
-        self.assertIn('render_mode_selector = _lazy_util("render_mode_selector")', workload_operations_text)
-        self.assertNotIn('st.selectbox(\n        "Workload Operations view"', workload_operations_text)
-        self.assertIn('"Workload Brief"', workload_operations_text)
-        self.assertIn('"Specialist Workflows"', workload_operations_text)
-        self.assertIn("def _render_workload_action_brief", workload_operations_text)
-        self.assertIn("def _render_workload_metric_rows", workload_operations_text)
-        self.assertIn("WORKLOAD_STATUS_LANES", workload_operations_text)
-        self.assertIn("def _workload_status_lanes", workload_operations_text)
-        self.assertIn("def _build_workload_task_status_sql", workload_operations_text)
-        self.assertIn("def _workload_task_summary", workload_operations_text)
-        self.assertIn("workload_operations_task_snapshot", workload_operations_text)
-        self.assertNotIn("OVERWATCH_EXTERNAL_CONTROL_FEED", workload_operations_text)
-        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY", workload_operations_text)
-        self.assertIn("def _render_workload_status_lanes", workload_operations_text)
-        self.assertIn("def _render_workload_lane_card", workload_operations_text)
-        self.assertNotIn("html.escape", workload_operations_text)
-        self.assertNotIn("ow-workload-lane-card", workload_operations_text)
-        self.assertNotIn("ow-workload-lane-state", workload_operations_text)
-        self.assertIn('st.caption(str(lane.get("label")', workload_operations_text)
-        self.assertIn('st.markdown(f"**{lane.get', workload_operations_text)
-        self.assertIn("Live Workload Lanes", workload_operations_text)
-        self.assertIn("Snowflake task and Snowflake task runs", workload_operations_text)
-        self.assertIn('"Task / job status"', workload_operations_text)
-        workload_lane_block = workload_operations_text.split("def _render_workload_status_lanes", 1)[1].split(
-            "def _render_workload_snapshot",
-            1,
-        )[0]
-        self.assertIn("_render_workload_lane_card(lane)", workload_lane_block)
-        self.assertIn("for start in range(0, len(lanes), columns):", workload_lane_block)
-        self.assertIn('help=str(lane.get("detail")', workload_lane_block)
-        self.assertNotIn("ow-workload-lane-detail", workload_lane_block)
-        self.assertNotIn("cols = st.columns(3)", workload_lane_block)
-        self.assertNotIn("st.metric(", workload_lane_block)
-        self.assertIn("def _build_workload_runbook_markdown", workload_operations_text)
-        self.assertIn("Runbook export", workload_operations_text)
-        self.assertIn("Download DBA runbook", workload_operations_text)
-        self.assertIn("render_shell_status_strip(", workload_operations_text)
-        self.assertIn("render_shell_kpi_row((", workload_operations_text)
-        self.assertNotIn('st.markdown("**Operating Snapshot**")', workload_operations_text)
-        self.assertIn("from sections.shell_helpers import", workload_operations_text)
-        self.assertIn("render_shell_kpi_row", workload_operations_text)
-        self.assertNotIn("render_shell_snapshot((", workload_operations_text)
-        self.assertNotIn('row2 = st.columns(2)', workload_operations_text)
-        self.assertNotIn("c1, c2, c3, c4, c5 = st.columns(5)", workload_operations_text)
-        self.assertIn("SECURITY_POSTURE_VIEWS", security_posture_text)
-        self.assertIn("active_view = render_mode_selector(", security_posture_text)
-        self.assertIn('render_mode_selector = _lazy_util("render_mode_selector")', security_posture_text)
-        self.assertNotIn('st.selectbox(\n        "Security posture view"', security_posture_text)
-        self.assertNotIn('st.radio(\n        "Security posture view"', security_posture_text)
-        self.assertIn('st.session_state["security_posture_view"] = "Security Brief"', security_posture_render_start)
-        self.assertNotIn('st.session_state["security_posture_view"] = "Access Workflows"', security_posture_render_start)
-        self.assertIn('"Security Brief"', security_posture_text)
-        self.assertIn('"Evidence Readiness"', security_posture_text)
-        self.assertIn('"Access Workflows"', security_posture_text)
-        self.assertIn('"Privilege sprawl"', security_posture_text)
-        self.assertIn("def _render_privilege_sprawl_workflow", security_posture_text)
-        self.assertIn("Load Privilege Sprawl", security_posture_text)
-        self.assertIn("_privilege_sprawl_summary", security_posture_text)
-        self.assertIn("from sections.shell_helpers import render_shell_snapshot", dba_tools_text)
-        self.assertIn("Replication Credits", dba_tools_text)
-        self.assertIn("Total Serverless Credits", dba_tools_text)
-        self.assertIn("render_chart_with_data_toggle", dba_tools_text)
-        self.assertIn("dba_serverless_credits_trend", dba_tools_text)
-        self.assertIn("Total Loads", dba_tools_text)
-        self.assertIn("from sections.shell_helpers import render_shell_snapshot", security_access_text)
-        self.assertIn("Total Grants", security_access_text)
-        self.assertIn("Access Events", security_access_text)
-        self.assertIn("render_shell_snapshot", snowflake_value_text)
-        self.assertIn("render_refresh_contract", snowflake_value_text)
-        self.assertIn("Value Automation Setup Health", snowflake_value_text)
-        self.assertIn("OVERWATCH_VALUE_CANDIDATE_V", snowflake_value_text)
-        self.assertIn("Value Multiple", snowflake_value_text)
-        self.assertIn('("Monthly Value", "Not loaded")', snowflake_value_text)
-        self.assertIn('("Candidates", "Not loaded")', snowflake_value_text)
-        self.assertIn("scheduled Snowflake refresh owns recurring capture", snowflake_value_text)
-        self.assertNotIn("sf_value_autoload_failed_meta", snowflake_value_text)
-        self.assertNotIn("sf_value_automation_autoload_failed_meta", snowflake_value_text)
-        self.assertIn("PIPELINE_HEALTH_PANES", pipeline_health_text)
-        self.assertIn('"Snowpipe Usage"', pipeline_health_text)
-        self.assertIn('"Dynamic Tables"', pipeline_health_text)
-        self.assertIn("from sections.shell_helpers import render_shell_snapshot", pipeline_health_text)
-        self.assertIn("render_shell_snapshot((", pipeline_health_text)
-        self.assertNotIn(".metric(", pipeline_health_text)
-        self.assertIn("ACCOUNT_USAGE.PIPE_USAGE_HISTORY", pipeline_health_text)
-        self.assertIn("DYNAMIC_TABLE_REFRESH_HISTORY", pipeline_health_text)
-        self.assertIn("_query_search_clause", query_search_text)
-        self.assertIn('"Exact query ID"', query_search_text)
-        self.assertIn('"Prefix starts with"', query_search_text)
-        self.assertIn('"Text contains"', query_search_text)
-        self.assertIn("Contains search is capped at 7 days", query_search_text)
-        self.assertIn("_search_date_predicate", query_search_text)
-        self.assertIn("Snowflake Search Optimization does not accelerate ACCOUNT_USAGE", query_search_text)
-        self.assertIn("Triage Filters date range", query_search_text)
-        self.assertNotIn("Global Filters date range", query_search_text)
-        self.assertIn("_load_spcs_usage", spcs_text)
-        self.assertIn("spcs_auto_attempted", spcs_text)
-        self.assertIn("render_chart_with_data_toggle", spcs_text)
-        self.assertIn("spcs_credits_by_pool", spcs_text)
-        self.assertIn("spcs_daily_trend", spcs_text)
-        self.assertIn("COST_USD", spcs_text)
-        self.assertIn("DAILY_COST_USD", spcs_text)
-        self.assertIn("render_chart_with_data_toggle", storage_text)
-        self.assertIn('"storage_trend"', storage_text)
-        self.assertIn("EST_MONTHLY_COST", storage_text)
-        self.assertIn("_load_shared_databases", data_sharing_text)
-        self.assertIn("ds_shared_auto_attempted", data_sharing_text)
-        self.assertIn("render_chart_with_data_toggle", data_sharing_text)
-        self.assertIn("data_sharing_transfer_trend", data_sharing_text)
-        self.assertIn("COST_USD", data_sharing_text)
-        self.assertIn("render_chart_with_data_toggle", live_monitor_text)
-        self.assertIn("live_query_timeline", live_monitor_text)
-        self.assertIn("render_chart_with_data_toggle", security_access_text)
-        self.assertIn("security_login_trend", security_access_text)
-        self.assertIn("alert_email_targets", app_text)
-        self.assertIn("current_alert_recipient", alert_center_text)
-        self.assertIn("dba-alerts@yourcompany.com", config_text)
-        self.assertNotIn("@yahoo.com", config_text)
-        self.assertIn("OBJECT_CHANGE_PANES", object_change_text)
-        self.assertIn("_query_history_drift_caps()", object_change_text)
-        self.assertNotIn('"Deployment Drift",', object_change_text)
-        self.assertIn(
-            "Change evidence and rollback proof are handled in Governance & Security change control",
-            object_change_text,
-        )
-        self.assertIn("ADOPTION_ANALYTICS_PANES", adoption_text)
-        self.assertIn("PLATFORM_TOPOLOGY_PANES", platform_text)
-        self.assertIn("render_chart_with_data_toggle", platform_text)
-        self.assertIn("topology_database_schema", platform_text)
-        self.assertIn("{gb_scanned_expr} AS gb_scanned", platform_text)
-        self.assertIn("ARCHITECTURE_READINESS_PANES", architecture_text)
-        self.assertIn("active_pane = render_workflow_selector(", architecture_text)
-        self.assertIn('render_workflow_selector = _lazy_util("render_workflow_selector")', architecture_text)
-        self.assertNotIn('st.selectbox(\n        "Architecture readiness view"', architecture_text)
-        self.assertNotIn('st.radio(\n        "Architecture readiness view"', architecture_text)
-        self.assertIn('"Architecture Brief"', architecture_text)
-        self.assertIn('if active_pane == "Architecture Brief":', architecture_text)
-        self.assertIn("def _architecture_operating_snapshot", architecture_text)
-        self.assertIn("def _render_architecture_action_brief", architecture_text)
-        self.assertIn("render_shell_status_strip(", architecture_text)
-        self.assertIn("def _render_architecture_operating_snapshot", architecture_text)
-        self.assertIn("render_shell_kpi_row((", architecture_text)
-        self.assertNotIn('st.markdown("**Operating Snapshot**")', architecture_text)
-        self.assertIn("render_shell_kpi_row", architecture_text)
-        self.assertIn("render_data_freshness(", architecture_text)
-        self.assertIn('("Evidence", f"{safe_int(snapshot.get(\'loaded\')):,}/{safe_int(snapshot.get(\'total\')):,}")', architecture_text)
-        self.assertIn('("Stale", f"{safe_int(snapshot.get(\'stale\')):,}")', architecture_text)
-        self.assertNotIn('metric("Loaded"', architecture_text)
-        self.assertNotIn('metric("Reload"', architecture_text)
-        self.assertIn('st.selectbox(\n        "AI platform futures view"', architecture_text)
-        self.assertNotIn('st.radio(\n        "AI platform futures view"', architecture_text)
-        self.assertIn("Objectives & Owners", architecture_text)
-        self.assertIn("AI & Platform Futures", architecture_text)
-        self.assertIn("ARCHITECTURE_OBJECTIVES", architecture_text)
-        self.assertIn("build_forward_platform_control_register", architecture_text)
-        self.assertIn("build_platform_futures_adoption_gate", architecture_text)
-        self.assertIn("build_agentic_ai_surface_scorecard", architecture_text)
-        self.assertIn("build_platform_futures_evidence_ddl", architecture_text)
-        self.assertIn("build_platform_futures_board", architecture_text)
-        self.assertIn("load_adaptive_compute_readiness", architecture_text)
-        self.assertIn("load_agent_mcp_inventory", architecture_text)
-        self.assertIn("load_ai_usage_guardrails", architecture_text)
-        self.assertIn("load_ai_security_guardrails", architecture_text)
-        self.assertIn("load_horizon_semantic_readiness", architecture_text)
-        self.assertIn("load_openflow_operations", architecture_text)
-        self.assertIn("_architecture_source_health_rows", architecture_text)
-        self.assertIn("_enrich_architecture_context", architecture_text)
-        self.assertIn('st.button("Load Isolation Matrix"', architecture_text)
-        self.assertIn('st.button("Load Clustering Candidates"', architecture_text)
-        self.assertIn('st.button("Load Cache Evidence"', architecture_text)
-        self.assertIn('st.button("Load DR Readiness"', architecture_text)
-        self.assertIn('st.button("Load Objective Register"', architecture_text)
-        self.assertIn('st.button("Load Architecture Source Health"', architecture_text)
-        self.assertIn('st.button("Load Futures Control Board"', architecture_text)
-        self.assertIn('st.button("Load Agentic AI Cockpit"', architecture_text)
-        self.assertIn('st.button("Load Control Register"', architecture_text)
-        self.assertIn('st.button("Load Agents and MCP Inventory"', architecture_text)
-        self.assertIn('st.button("Load Adaptive Compute Advisor"', architecture_text)
-        self.assertIn('st.button("Load AI Usage Guardrails"', architecture_text)
-        self.assertIn('st.button("Load AI Security Guardrails"', architecture_text)
-        self.assertIn('st.button("Load Openflow Operations"', architecture_text)
-        self.assertIn('st.button("Load Horizon and Semantic Readiness"', architecture_text)
-        self.assertIn('with render_load_status("Loading Agentic AI cockpit"', architecture_text)
-        self.assertIn('with render_load_status("Loading Adaptive Compute advisor"', architecture_text)
-        self.assertIn('with render_load_status("Loading Cortex Agent and MCP inventory"', architecture_text)
-        self.assertIn('with render_load_status("Loading AI usage guardrails"', architecture_text)
-        self.assertIn('with render_load_status("Loading AI security guardrails"', architecture_text)
-        self.assertIn('with render_load_status("Loading Openflow operations"', architecture_text)
-        self.assertIn('with render_load_status("Loading Horizon and semantic readiness"', architecture_text)
-        self.assertIn('with render_load_status("Loading database-to-warehouse isolation evidence"', architecture_text)
-        self.assertIn('with render_load_status("Loading table clustering candidates"', architecture_text)
-        self.assertIn('with render_load_status("Loading warehouse cache evidence"', architecture_text)
-        self.assertIn('with render_load_status("Loading architecture objectives"', architecture_text)
-        self.assertIn('with render_load_status("Loading architecture source health"', architecture_text)
-        self.assertIn('with render_load_status("Loading DR and replication metadata"', architecture_text)
-        self.assertNotIn("with st.spinner(", architecture_text)
-        self.assertIn("Platform futures evidence ledger setup SQL", architecture_text)
-        self.assertIn("Expert adoption gate", architecture_text)
-        self.assertIn("Agentic AI Cockpit", architecture_text)
-        self.assertIn("Agentic AI governance cockpit", architecture_text)
-        self.assertIn("Adaptive Compute transition advisor", architecture_text)
-        self.assertIn("AI security guardrails to close first", architecture_text)
-        self.assertNotIn("_render_platform_futures(get_session()", architecture_text)
-        self.assertNotIn('c2.metric("Loaded Surfaces"', architecture_text)
-        self.assertNotIn('c2.metric("Evidence Gaps"', architecture_text)
-        self.assertNotIn('c5.metric("Control Areas"', architecture_text)
-        self.assertIn("Run-Rate and YOY", cost_contract_text)
-        self.assertIn("FinOps Control Center", cost_contract_text)
-        self.assertIn('"sections.finops_control"', cost_contract_text)
-        self.assertIn("build_mart_cost_run_rate_sql", cost_contract_text)
-        self.assertIn("YOY_7D_PCT", cost_contract_text)
-        self.assertNotIn("Snowflake Cost Management Parity", cost_contract_text)
-        self.assertNotIn('st.button("Load Snowflake Cost Parity"', cost_contract_text)
-        self.assertNotIn("build_snowflake_cost_management_account_sql", cost_contract_text)
-        self.assertNotIn("build_snowflake_billed_credit_reconciliation_sql", cost_contract_text)
-        self.assertNotIn("build_snowflake_org_currency_cost_sql", cost_contract_text)
-        self.assertNotIn("build_snowflake_rate_sheet_reconciliation_sql", cost_contract_text)
-        self.assertIn("build_snowflake_service_cost_lens_sql", cost_contract_text)
-        self.assertIn("build_mart_cost_service_lens_sql", cost_contract_text)
-        self.assertIn("_build_cost_monitor_service_trend_sql", cost_contract_text)
-        self.assertIn("Official Cost Monitor: SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY", cost_contract_text)
-        self.assertIn("Cost Source Health", cost_contract_text)
-        self.assertIn("Query Attribution Gap", cost_contract_text)
-        self.assertIn("Account Service Cost Lens", cost_contract_text)
-        self.assertIn("Service Spend Movement", cost_contract_text)
-        self.assertIn("def _service_lens_movement_rows", cost_contract_text)
-        self.assertIn("def _render_service_cost_movement_chart", cost_contract_text)
-        self.assertIn("Top Service Move", cost_contract_text)
-        self.assertIn("CREDITS_BILLED_PRIOR", cost_contract_text)
-        self.assertIn("COST_DELTA_USD", cost_contract_text)
-        self.assertIn("Cortex user cost and recency", cortex_text)
-        self.assertIn('"FIRST_USAGE"', cortex_text)
-        self.assertIn('"LAST_USAGE"', cortex_text)
-        self.assertIn("QUEUE_READINESS", architecture_text)
-        self.assertIn("Owner Approval Status", architecture_text)
-        self.assertIn("RPO_MINUTES", architecture_text)
-        self.assertIn("SYSTEM$CLUSTERING_DEPTH", architecture_text)
-        self.assertIn("SHOW FAILOVER GROUPS", architecture_text)
-        self.assertIn("SHOW AGENTS IN ACCOUNT", architecture_text)
-        self.assertIn("SHOW MCP SERVERS IN ACCOUNT", architecture_text)
-        self.assertIn("SHOW GRANTS TO ROLE PUBLIC", architecture_text)
-        self.assertIn("Architecture Readiness - Cache", architecture_text)
-        self.assertIn("TASK_GRAPH_CONTROL_PANES", dba_tools_text)
-        self.assertIn("Schema / Mart Migration Status", dba_tools_text)
-        self.assertIn("build_schema_migration_status_sql", dba_tools_text)
-        self.assertIn("load_database_options", dba_tools_text)
-        self.assertIn("load_schema_options", dba_tools_text)
-        self.assertIn("Refresh database and schema choices", dba_tools_text)
-        self.assertIn("allow_current_outside_options: bool = True", dba_tools_text)
-        self.assertIn("allow_current_outside_options=False", dba_tools_text)
-        self.assertIn('scope_key = f"{get_active_company()}_{get_active_environment()}"', dba_tools_text)
-        self.assertIn('database_cache_key = f"sc_database_options_{scope_key}"', dba_tools_text)
-        self.assertIn('source_schema_cache_key = f"sc_schema_options_source_{scope_key}_{dev_db}"', dba_tools_text)
-        self.assertIn('target_schema_cache_key = f"sc_schema_options_target_{scope_key}_{prod_db}"', dba_tools_text)
-        self.assertIn("Cortex feature setup guidance", dba_tools_text)
-        self.assertIn("ALTER ACCOUNT SET CORTEX_CODE_DAILY_CREDIT_LIMIT", dba_tools_text)
-        self.assertNotIn("ENABLE_CORTEX_CODE_INLINE", dba_tools_text)
-        self.assertNotIn("ENABLE_CORTEX_SEARCH", dba_tools_text)
-        self.assertNotIn("ENABLE_SNOWFLAKE_INTELLIGENCE", dba_tools_text)
-        self.assertIn("DBA_TOOL_GROUPS", dba_tools_text)
-        self.assertIn("DBA_TOOL_GROUPS", dba_tool_catalog_text)
-        self.assertIn("Data Compare", dba_tool_catalog_text)
-        self.assertIn('if selected_tool == "Data Compare"', dba_tools_text)
-        self.assertIn("Schema Compare Contract", dba_tools_text)
-        self.assertIn("Data Compare Contract", dba_tools_text)
-        self.assertIn("SCHEMA_COMPARE_OBJECT_COVERAGE", dba_tools_text)
-        self.assertIn("DATA_COMPARE_EXECUTION_STAGES", dba_tools_text)
-        self.assertIn("def _recon_config_insert_sql", dba_tools_text)
-        self.assertIn("def _recon_history_sql", dba_tools_text)
-        self.assertIn("Download Compare Config SQL", dba_tools_text)
-        self.assertIn("Download Data Check Config SQL", dba_tools_text)
-        self.assertIn("Download Recon History SQL", dba_tools_text)
-        self.assertIn("WH_PARAM_HELP", dba_tool_catalog_text)
-        self.assertIn("selected_group = render_workflow_selector", dba_tools_text)
-        self.assertIn("task_graph_view = render_workflow_selector", dba_tools_text)
-        self.assertNotIn("selected_group = st.radio", dba_tools_text)
-        self.assertNotIn("task_graph_view = st.radio", dba_tools_text)
-        self.assertIn("OPTIMIZATION_ADVISOR_PANES", optimization_text)
-        self.assertIn("active_view = render_workflow_selector", optimization_text)
-        self.assertNotIn("active_view = st.radio", optimization_text)
-        for marker in (
-            "APPROVAL_GATE",
-            "EVIDENCE_PACKAGE",
-            "VERIFY_NEXT",
-            "EXECUTION_BOUNDARY",
-            "CLOSURE_RULE",
-        ):
-            self.assertIn(marker, optimization_text)
-            self.assertIn(marker, recommendations_text)
-        for marker in (
-            "Approval Gate",
-            "Evidence Package",
-            "Verify Next",
-            "Execution Boundary",
-            "Closure Rule",
-        ):
-            self.assertIn(marker, recommendations_text)
-        self.assertEqual(
-            sorted((APP_ROOT).rglob("*.py")),
-            sorted(path for path in (APP_ROOT).rglob("*.py") if "st.tabs(" not in path.read_text(encoding="utf-8")),
-        )
 
     def test_utils_re_exports_are_lazy(self):
         utils_text = (APP_ROOT / "utils" / "__init__.py").read_text(encoding="utf-8")
@@ -3132,18 +1517,18 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("from .mart import", utils_text)
         self.assertIn('"environment_label_for_database"', utils_text)
         self.assertIn('"get_environment_filter_or_no_database_clause"', utils_text)
-        self.assertIn('"build_platform_futures_adoption_gate"', utils_text)
+        self.assertNotIn('"build_platform_futures_adoption_gate"', utils_text)
         self.assertIn('"render_load_status"', utils_text)
-        self.assertIn('"build_agentic_ai_surface_scorecard"', utils_text)
-        self.assertIn('"AGENTIC_AI_CONTROL_AREAS"', utils_text)
-        self.assertIn('"load_adaptive_compute_readiness"', utils_text)
-        self.assertIn('"load_ai_security_guardrails"', utils_text)
+        self.assertNotIn('"build_agentic_ai_surface_scorecard"', utils_text)
+        self.assertNotIn('"AGENTIC_AI_CONTROL_AREAS"', utils_text)
+        self.assertNotIn('"load_adaptive_compute_readiness"', utils_text)
+        self.assertNotIn('"load_ai_security_guardrails"', utils_text)
         self.assertIn('"render_workflow_module"', utils_text)
         self.assertIn('"migrate_legacy_workflow_state"', utils_text)
         self.assertIn('"render_ranked_bar_chart"', utils_text)
         self.assertIn('"render_chart_with_data_toggle"', utils_text)
         self.assertIn('"rank_chart_frame"', utils_text)
-        self.assertIn('"build_platform_futures_evidence_ddl"', utils_text)
+        self.assertNotIn('"build_platform_futures_evidence_ddl"', utils_text)
         self.assertIn('"build_mart_cost_run_rate_sql"', utils_text)
         self.assertIn('"build_mart_cost_explorer_sql"', utils_text)
         self.assertIn('"load_database_options"', utils_text)

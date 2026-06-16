@@ -142,7 +142,7 @@ VIEW_SPECS: tuple[ViewSpec, ...] = (
         "Serverless costs are account-level unless a service-specific view exposes ownership.",
     ),
     ViewSpec(
-        "Governance",
+        "Security Monitoring",
         "SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS",
         ("CREATED_ON", "ROLE", "GRANTEE_NAME"),
         ("DELETED_ON", "GRANTED_BY"),

@@ -27,7 +27,7 @@ ranking logic with explicit error handling and audit logging.
 
 The Executive Landing page is the one deliberate first-paint aggregate:
 `MART_EXECUTIVE_OBSERVABILITY`. It is refreshed after the hourly load, Cortex
-load, Control Room, cost governance, and automation tasks so the first screen
+load, Control Room, cost monitoring, and automation tasks so the first screen
 can show spend, Cortex cost, runtime, queueing, spill, failures, alerts,
 actions, storage, platform score, ranked cost drivers, queries by database,
 execution status, and warehouse pressure from one compact source. The app
@@ -87,7 +87,7 @@ messages while the page still renders instantly.
 | Command Center | Executive Landing, DBA Control Room, Alert Center | Leadership summary, morning triage, incident queue, alert routing, and action closure. |
 | Financial Control | Cost & Contract | Spend explanation, warehouse/user/role attribution, Cortex spend, contract pacing, savings verification, storage, and optimization. |
 | Operations | Workload Operations | Query/task/procedure status, contention, pipeline evidence, SLA risk, schema/data compare, and runbooks. |
-| Governance | Governance & Security | MFA/login/grant posture, object changes, owner approval proof, rollback evidence, schema compare, and controlled DBA actions. |
+| Security | Security Monitoring | MFA/login/grant posture, object changes, risky shares, access evidence, rollback evidence, schema compare, and controlled DBA actions. |
 
 ## Daily Operating Model
 
@@ -122,7 +122,7 @@ that grain. Exact metering and allocated attribution are labeled separately.
 
 The Alert Center is being hardened into a proactive DBA command center rather
 than a cosmetic inbox. It now has deployable configuration, event,
-acknowledgement, notification, owner-routing, threshold, and remediation audit
+acknowledgement, notification, routing, threshold, and remediation audit
 tables:
 
 - `ALERT_CONFIG`
@@ -137,7 +137,7 @@ tables:
 
 Lifecycle actions should be written to the command-center audit tables. The app
 generates reviewable insert SQL for `ALERT_ACKNOWLEDGEMENTS` and
-`ALERT_REMEDIATION_LOG`; dangerous remediation remains approval-gated and
+`ALERT_REMEDIATION_LOG`; dangerous remediation remains review-gated and
 logged rather than silently executed.
 
 The section covers security, Cost/FinOps, performance, task and pipeline,
@@ -160,11 +160,11 @@ right item first instead of scanning a flat inbox.
 The command-intelligence hardening pass adds the ranked 12-item operating
 foundation from production review: root-cause correlation, task critical
 path, reconciliation, predictive FinOps, alert lifecycle, fact-grounded Cortex
-query diagnosis, OVERWATCH self-monitoring, optional precompute, compliance,
+query diagnosis, OVERWATCH self-monitoring, optional precompute, security monitoring,
 multi-account readiness, no-saved-state navigation, and runbooks. These are
 exposed as data-first panels and SQL contracts before deeper drilldown. The
 Platform Operating Score is evidence-based; it is computed from the current
-cost, alert, failure, owner-queue, queueing, spill, and freshness signals rather
+cost, alert, failure, action-queue, queueing, spill, and freshness signals rather
 than accepting a self-scored mart value as truth.
 
 `ALERT_DATA_QUALITY_CHECKS` is the metadata-driven table for freshness, row
@@ -172,8 +172,8 @@ count, null-rate, duplicate, volume, and schema checks. DBAs and data owners can
 tune database/schema/table/column/check type/threshold/severity/owner/channel
 without changing Streamlit code.
 
-Remediation is approval-gated by default. The app may recommend SQL or actions,
-but state-changing fixes must log trigger, approval, before/after state,
+Remediation is review-gated by default. The app may recommend SQL or actions,
+but state-changing fixes must log trigger, reviewer, before/after state,
 rollback guidance, affected object/user/warehouse/task, and verification result
 in `ALERT_REMEDIATION_LOG`.
 
@@ -185,7 +185,7 @@ the value log. Estimated value remains separate from verified value until
 post-period proof exists.
 
 Optional precompute is separated into `snowflake/PRECOMPUTE.sql`. Dynamic Tables
-must be approved for refresh lag, warehouse, ownership, and cost before use; the
+must be reviewed for refresh lag, warehouse, ownership, and cost before use; the
 same file also includes fallback views.
 
 Run `snowflake/OVERWATCH_MART_VALIDATION.sql` after setup to verify required

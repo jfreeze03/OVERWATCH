@@ -292,8 +292,8 @@ def render_query_drilldown(
             ("Est. Credits", format_credits(est_cr)),
         ))
 
-        st.markdown("**SQL Text**")
-        st.code(str(row.get("QUERY_TEXT","")), language="sql")
+        st.markdown("**Statement Text**")
+        st.code(str(row.get("QUERY_TEXT","")), language="text")
 
         from .session import get_session
         _session = get_session()

@@ -156,7 +156,7 @@ def _cost_allocation_quality(row) -> dict:
             "ENVIRONMENT_ROLLUP": rollup,
             "ALLOCATION_CONFIDENCE": "Allocated / Estimated",
             "ALLOCATION_BASIS": (
-                "Query database context allocated across metered warehouse-hour credits; owner tag proof is attached."
+                "Query database context allocated across metered warehouse-hour credits; route-tag telemetry is attached."
                 if has_owner_tag
                 else "Query database context allocated across metered warehouse-hour credits."
             ),
@@ -168,7 +168,7 @@ def _cost_allocation_quality(row) -> dict:
             "ENVIRONMENT_ROLLUP": rollup,
             "ALLOCATION_CONFIDENCE": "Allocated / Estimated",
             "ALLOCATION_BASIS": (
-                "Trexis database context allocated across metered warehouse-hour credits; owner tag proof is attached."
+                "Trexis database context allocated across metered warehouse-hour credits; route-tag telemetry is attached."
                 if has_owner_tag
                 else "Trexis database context allocated across metered warehouse-hour credits."
             ),
@@ -179,14 +179,14 @@ def _cost_allocation_quality(row) -> dict:
         return {
             "ENVIRONMENT_ROLLUP": rollup,
             "ALLOCATION_CONFIDENCE": "Allocated / Estimated",
-            "ALLOCATION_BASIS": "ALFA database context exists, but the environment is outside the approved PROD/DEV family.",
+            "ALLOCATION_BASIS": "ALFA database context exists, but the environment is outside the reviewed PROD/DEV family.",
             "CHARGEBACK_READY": "Review",
             "SCOPE_REVIEW": "Unmapped ALFA environment",
         }
     return {
         "ENVIRONMENT_ROLLUP": rollup,
-        "ALLOCATION_CONFIDENCE": "Shared / Needs Owner",
-        "ALLOCATION_BASIS": "Database context is shared, external, or unmapped; owner evidence is required before chargeback.",
+            "ALLOCATION_CONFIDENCE": "Shared / Needs route",
+            "ALLOCATION_BASIS": "Database context is shared, external, or unmapped; route telemetry is required before chargeback.",
         "CHARGEBACK_READY": "Review",
         "SCOPE_REVIEW": "Shared or unmapped database",
     }
@@ -217,16 +217,16 @@ def _annotate_allocation_quality(df: pd.DataFrame) -> pd.DataFrame:
             lambda row: (
                 "QUERY_USER"
                 if _row_text(row, "USER_NAME").upper() not in {"", "UNKNOWN USER", "UNKNOWN_USER"}
-                else "MISSING_OWNER"
+                else "MISSING_ROUTE"
             ),
             axis=1,
         )
     if "OWNER_EVIDENCE" not in annotated.columns:
         annotated["OWNER_EVIDENCE"] = annotated.apply(
             lambda row: (
-                "Query user present; validate owner/tag evidence before billing."
+                "Query user present; review route/tag telemetry before billing."
                 if _row_text(row, "OWNER_SOURCE").upper() == "QUERY_USER"
-                else "No query user owner evidence; shared/unallocated review required."
+                else "No query user route telemetry; shared/unallocated review required."
             ),
             axis=1,
         )
@@ -256,15 +256,15 @@ def _chargeback_readiness_label(values) -> str:
     return "Mixed"
 
 
-def _owner_proof_label(values) -> str:
+def _route_telemetry_label(values) -> str:
     cleaned = {str(value).strip().upper() for value in values if str(value or "").strip()}
     if not cleaned:
         return "Missing"
     if any("TAG" in value for value in cleaned):
-        return "Tag Proof"
+        return "Tag Telemetry"
     if cleaned == {"QUERY_USER"}:
         return "Query User Only"
-    if "MISSING_OWNER" in cleaned:
+    if "MISSING_OWNER" in cleaned or "MISSING_ROUTE" in cleaned:
         return "Missing"
     return "Mixed"
 
@@ -363,7 +363,7 @@ def _cost_explorer_summary(detail: pd.DataFrame, lens: str) -> pd.DataFrame:
             ENVIRONMENTS=("ENVIRONMENT_ROLLUP", "nunique"),
             ALLOCATION_CONFIDENCE=("ALLOCATION_CONFIDENCE", _mixed_label),
             CHARGEBACK_READY=("CHARGEBACK_READY", _chargeback_readiness_label),
-            OWNER_PROOF=("OWNER_SOURCE", _owner_proof_label),
+            ROUTE_TELEMETRY=("OWNER_SOURCE", _route_telemetry_label),
             FIRST_USAGE_DATE=("FIRST_USAGE_DATE", "min"),
             LAST_USAGE_DATE=("LAST_USAGE_DATE", "max"),
         )
@@ -416,19 +416,19 @@ def _cost_explorer_gap_board(detail: pd.DataFrame, lens_summary: pd.DataFrame) -
     no_context = database.isin(NO_DATABASE_CONTEXT_VALUES) | detail["ENVIRONMENT_ROLLUP"].fillna("").astype(str).str.upper().eq("NO DATABASE CONTEXT")
     rows = [
         _gap_row(
-            "Missing department / cost-center proof",
+            "Missing department / cost-center telemetry",
             dept.isin({"", "UNASSIGNED", "UNKNOWN", "NONE", "NULL"}) | ~owner_source.str.contains("TAG", na=False),
-            "Tag warehouses with COST_CENTER or DEPARTMENT and keep owner-directory fallback current.",
+            "Tag warehouses with COST_CENTER or DEPARTMENT and keep escalation routing current.",
         ),
         _gap_row(
             "No database context",
             no_context,
-            "Do not split PROD/DEV or bill a database owner until query tag, session lineage, or owner proof exists.",
+            "Do not split PROD/DEV or bill a database route until query tag, session lineage, or route telemetry exists.",
         ),
         _gap_row(
             "Not chargeback ready",
             readiness.isin({"NO", "REVIEW", "DIRECTIONAL", "MIXED", ""}),
-            "Resolve owner proof, shared warehouse basis, and allocation source basis before sending chargeback.",
+            "Resolve route telemetry, shared warehouse basis, and allocation measurement before sending chargeback.",
         ),
         _gap_row(
             "Shared / needs-owner allocation",
@@ -669,6 +669,23 @@ def _chargeback_action_owner(row: pd.Series) -> str:
     return user if user and user.upper() not in {"UNKNOWN USER", "UNKNOWN_USER"} else "DBA / FinOps"
 
 
+def _chargeback_route_text(value: str, default: str = "") -> str:
+    text = str(value or default or "").strip()
+    replacements = {
+        "MISSING_OWNER": "MISSING_ROUTE",
+        "OWNER": "ROUTE",
+        "Owner": "Route",
+        "owner": "route",
+        "evidence": "telemetry",
+        "Evidence": "Telemetry",
+        "proof": "telemetry",
+        "Proof": "Telemetry",
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    return text
+
+
 def _chargeback_action_sql_note(row: pd.Series, credits: float, est_cost: float) -> str:
     confidence = _row_text(row, "ALLOCATION_CONFIDENCE") or "Unknown"
     readiness = _row_text(row, "CHARGEBACK_READY") or "Unknown"
@@ -676,23 +693,23 @@ def _chargeback_action_sql_note(row: pd.Series, credits: float, est_cost: float)
     scope_review = _row_text(row, "SCOPE_REVIEW") or "None"
     database = _row_text(row, "DATABASE_NAME") or "NO_DATABASE_CONTEXT"
     env_rollup = _row_text(row, "ENVIRONMENT_ROLLUP") or _environment_rollup_for_cost(row)
-    cost_owner = _row_text(row, "COST_OWNER") or "Missing"
-    owner_source = _row_text(row, "OWNER_SOURCE") or "Missing"
-    owner_evidence = _row_text(row, "OWNER_EVIDENCE") or "No owner evidence attached."
+    cost_owner = _chargeback_route_text(_row_text(row, "COST_OWNER") or "Missing")
+    owner_source = _chargeback_route_text(_row_text(row, "OWNER_SOURCE") or "Missing")
+    owner_evidence = _chargeback_route_text(_row_text(row, "OWNER_EVIDENCE"), "No route telemetry attached.")
     return "\n".join([
-        "-- Chargeback review plan, not state-changing SQL.",
-        "-- Do not bill an owner from this row until allocation source basis and ownership evidence are attached.",
+        "-- Chargeback review note, no state-changing SQL.",
+        "-- Do not bill from this row until allocation measurement and route telemetry are attached.",
         f"-- Database: {database}",
         f"-- Environment rollup: {env_rollup}",
-        f"-- Cost owner: {cost_owner}",
-        f"-- Owner source: {owner_source}",
-        f"-- Owner evidence: {owner_evidence}",
+        f"-- Cost route: {cost_owner}",
+        f"-- Route basis: {owner_source}",
+        f"-- Route telemetry: {owner_evidence}",
         f"-- Credits: {credits:,.4f}; estimated cost: ${est_cost:,.2f}",
-        f"-- Allocation source basis: {confidence}",
-        f"-- Chargeback readiness: {readiness}",
+        f"-- Allocation measurement: {confidence}",
+        f"-- Chargeback status: {readiness}",
         f"-- Allocation basis: {basis}",
         f"-- Scope review: {scope_review}",
-        "-- Required closure: attach owner/tag evidence or mark shared/unallocated with reason.",
+        "-- Required closure: attach route/tag telemetry or mark shared/unallocated with reason.",
     ])
 
 
@@ -744,9 +761,9 @@ def _queue_cost_outliers(session, df: pd.DataFrame, credit_price: float, source:
             entity = f"{user} on {wh}"
         monthly_savings = max(0.0, est_cost * 0.15)
         confidence_note = f" ({confidence})" if confidence else ""
-        readiness_note = f"; chargeback readiness: {readiness}" if readiness else ""
+        readiness_note = f"; chargeback status: {readiness}" if readiness else ""
         scope_note = f"; scope review: {scope_review}" if scope_review and scope_review != "None" else ""
-        owner_note = f"; owner proof: {owner_source}" if owner_source else ""
+        owner_note = f"; route telemetry: {owner_source}" if owner_source else ""
         finding = (
             f"{entity} consumed {credits:,.2f} credits (${est_cost:,.2f}) "
             f"in the selected window{confidence_note}{readiness_note}{scope_note}{owner_note}"
@@ -757,22 +774,22 @@ def _queue_cost_outliers(session, df: pd.DataFrame, credit_price: float, source:
             company=str(row.get("COMPANY") or company),
         )
         action_text = (
-            "Validate owner/tag evidence, confirm whether this is billable or shared/unallocated, "
-            "and rerun the verification query for the next complete period before closing."
+            "Review route/tag telemetry, confirm whether this is billable or shared/unallocated, "
+            "and rerun the telemetry query for the next complete period before closing."
             if is_chargeback
             else "Review query patterns, warehouse sizing, cache use, and whether the workload can be optimized or scheduled differently."
         )
         if readiness and readiness.upper() in {"NO", "REVIEW"}:
             action_text = (
-                f"{action_text} This row is not cleanly chargeback-ready; resolve scope/owner evidence before billing."
+                f"{action_text} This row is not cleanly chargeback-ready; resolve scope/route telemetry before billing."
             )
         if is_chargeback and "TAG" not in owner_source.upper():
             action_text = (
-                f"{action_text} Missing Snowflake owner-tag proof; attach COST_OWNER/DATA_OWNER/APP_OWNER evidence "
+                f"{action_text} Missing Snowflake route-tag telemetry; attach cost, data, or app allocation telemetry "
                 "or classify this as shared/unallocated."
             )
         if owner_evidence:
-            action_text = f"{action_text} Owner evidence: {owner_evidence[:300]}"
+            action_text = f"{action_text} Route telemetry: {owner_evidence[:300]}"
         action_owner = _chargeback_action_owner(row) if is_chargeback else (user if user != "Unknown user" else "DBA")
         owner_context = resolve_owner_context(
             row,
@@ -785,14 +802,14 @@ def _queue_cost_outliers(session, df: pd.DataFrame, credit_price: float, source:
         action_owner = owner_context.get("OWNER") or action_owner
         approver = (
             owner_context.get("APPROVAL_GROUP")
-            or ("FinOps Lead / Cost Owner" if is_chargeback else "FinOps Lead / Workload Owner")
+            or ("FinOps Lead / Cost Route" if is_chargeback else "FinOps Lead / Workload Route")
         )
         owner_approval_note = (
-            "Allocated/estimated chargeback requires owner/tag evidence approval before billing. "
-            "Close only after the next complete period verification confirms the billable driver or documents shared/unallocated treatment."
+            "Allocated/estimated chargeback requires route/tag telemetry review before billing. "
+            "Close only after the next complete period measurement confirms the billable driver or documents shared/unallocated treatment."
             if is_chargeback
-            else "Cost remediation requires workload-owner approval before scheduling or warehouse-setting changes. "
-            "Close only after the next complete period verification confirms the measured credit delta."
+            else "Cost remediation requires workload review before scheduling or warehouse-setting changes. "
+            "Close only after the next complete period measurement confirms the measured credit delta."
         )
         actions.append({
             "Action ID": make_action_id("Cost Outlier", entity, finding),
@@ -806,7 +823,7 @@ def _queue_cost_outliers(session, df: pd.DataFrame, credit_price: float, source:
             "Owner Email": owner_context.get("OWNER_EMAIL", ""),
             "Oncall Primary": owner_context.get("ONCALL_PRIMARY", ""),
             "Oncall Secondary": owner_context.get("ONCALL_SECONDARY", ""),
-            "Approval Group": approver,
+            "Review Group": approver,
             "Escalation Target": owner_context.get("ESCALATION_TARGET", ""),
             "Owner Source": owner_context.get("OWNER_SOURCE", owner_source),
             "Owner Evidence": owner_context.get("OWNER_EVIDENCE", owner_evidence),
@@ -822,9 +839,9 @@ def _queue_cost_outliers(session, df: pd.DataFrame, credit_price: float, source:
             "Baseline Value": 0,
             "Current Value": round(credits, 4),
             "Measured Delta": round(credits, 4),
-            "Owner Approval Status": "Requested",
-            "Owner Approval Note": owner_approval_note,
-            "Recovery SLA State": "Chargeback Evidence Pending" if is_chargeback else "Savings Verification Pending",
+            "Verification Status": "Requested",
+            "Verification Note": owner_approval_note,
+            "Recovery SLA State": "Chargeback Telemetry Pending" if is_chargeback else "Savings Measurement Pending",
             "Recovery SLA Target Hours": 168.0,
         })
     if not actions:
@@ -835,7 +852,7 @@ def _queue_cost_outliers(session, df: pd.DataFrame, credit_price: float, source:
         st.success(f"Saved {saved} cost outliers to the action queue.")
     except Exception as e:
         st.error(f"Could not save to action queue: {format_snowflake_error(e)}")
-        st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
+        st.info("The action queue is not available in this environment yet. Ask the DBA team to enable it, then retry this save.")
 
 
 def _annotate_cost_routes(df: pd.DataFrame, finding_type: str) -> pd.DataFrame:
@@ -856,7 +873,7 @@ def _annotate_cost_routes(df: pd.DataFrame, finding_type: str) -> pd.DataFrame:
     elif finding_type == "Chargeback":
         routed["NEXT_WORKFLOW"] = "Cost & Contract"
         routed["NEXT_ACTION"] = (
-            "Validate company scope, warehouse ownership, and allocation source basis before sending the chargeback report."
+            "Validate company scope, warehouse route, and allocation measurement before sending the chargeback report."
         )
     elif finding_type == "Service Cost":
         routed["NEXT_WORKFLOW"] = "Cost & Contract"
@@ -865,7 +882,7 @@ def _annotate_cost_routes(df: pd.DataFrame, finding_type: str) -> pd.DataFrame:
         )
     else:
         routed["NEXT_WORKFLOW"] = "Cost & Contract"
-        routed["NEXT_ACTION"] = "Validate source basis, owner, and proof query before taking a cost-control action."
+        routed["NEXT_ACTION"] = "Validate measurement basis, owner, and proof query before taking a cost-control action."
     return routed
 
 
@@ -930,7 +947,7 @@ def _fmt_delta(value) -> str:
 def _warehouse_cost_verification_sql(warehouse_name: str, lookback_days: int = 7) -> str:
     wh = sql_literal(warehouse_name, 300)
     days = max(1, int(lookback_days or 7))
-    return f"""-- Exact warehouse-metering proof and post-fix verification
+    return f"""-- Exact warehouse-metering comparison
 WITH daily AS (
     SELECT TO_DATE(start_time) AS usage_date,
            warehouse_name,
@@ -951,7 +968,7 @@ FROM daily
 GROUP BY period, warehouse_name
 ORDER BY period;
 
--- After remediation, rerun this query for the next complete period and attach the delta to the action queue.
+-- After action, rerun this query for the next complete period and attach the measured delta to the action queue.
 """
 
 
@@ -967,12 +984,12 @@ def _warehouse_cost_control_action(
     current = safe_float(row.get("CURRENT_CREDITS", row.get("TOTAL_CREDITS", 0)))
     prior = safe_float(row.get("PRIOR_CREDITS", 0))
     est_delta_cost = credits_to_dollars(delta, credit_price)
-    owner = str(
+    owner = _chargeback_route_text(str(
         row.get("OWNER")
         or row.get("WAREHOUSE_OWNER")
         or row.get("OWNER_ROLE")
         or "DBA / FinOps"
-    )
+    ))
     base_owner = owner
     owner_context = resolve_owner_context(
         row,
@@ -997,27 +1014,27 @@ def _warehouse_cost_control_action(
         f"(${est_delta_cost:,.2f}) during {period_label}."
     )
     action = (
-        f"Assign/confirm owner ({owner}), separate workload growth from idle/overhead, "
+        f"Route to {owner}, separate workload growth from idle/overhead, "
         "review top users/query types, and use the Warehouse Settings Manager for any ALTER WAREHOUSE change. "
-        "Verify savings in the next complete period before marking fixed."
+        "Measure savings in the next complete period before marking fixed."
     )
     approver = (
         f"{owner} / FinOps Lead"
         if base_owner and base_owner.upper() not in {"DBA", "DBA / FINOPS", "UNKNOWN"}
-        else owner_context.get("APPROVAL_GROUP") or "FinOps Lead / Warehouse Owner"
+        else owner_context.get("APPROVAL_GROUP") or "FinOps Lead / Warehouse Route"
     )
     owner_approval_note = (
-        f"Exact warehouse metering for {period_label}. Approval is required before any warehouse "
-        "setting change; close only after the next complete period verification query proves the "
-        "approved change reduced or justified the delta."
+        f"Exact warehouse metering for {period_label}. Review is required before any warehouse "
+        "setting change; close only after the next complete period measurement query shows the "
+        "reviewed change reduced or justified the delta."
     )
     generated_sql = (
         "-- Cost-control plan, not an automatic fix.\n"
         f"-- Warehouse: {wh}\n"
         f"-- Current credits: {current:,.4f}; prior credits: {prior:,.4f}; delta credits: {delta:,.4f}\n"
         "-- If idle dominates: review auto-suspend and query schedule.\n"
-        "-- If queue/spill dominates: use Cost & Contract warehouse capacity evidence and the reviewed Warehouse Settings Manager before changing size/scaling.\n"
-        "-- If workload growth dominates: route to query/procedure owner for tuning."
+        "-- If queue/spill dominates: use Cost & Contract warehouse capacity telemetry and the reviewed Warehouse Settings Manager before changing size/scaling.\n"
+        "-- If workload growth dominates: route to query/procedure team for tuning."
     )
     proof = _warehouse_cost_verification_sql(wh)
     return {
@@ -1032,10 +1049,10 @@ def _warehouse_cost_control_action(
         "Owner Email": owner_context.get("OWNER_EMAIL", ""),
         "Oncall Primary": owner_context.get("ONCALL_PRIMARY", ""),
         "Oncall Secondary": owner_context.get("ONCALL_SECONDARY", ""),
-        "Approval Group": approver,
+        "Review Group": approver,
         "Escalation Target": owner_context.get("ESCALATION_TARGET", ""),
-        "Owner Source": owner_context.get("OWNER_SOURCE", ""),
-        "Owner Evidence": owner_context.get("OWNER_EVIDENCE", ""),
+        "Owner Source": _chargeback_route_text(owner_context.get("OWNER_SOURCE", "")),
+        "Owner Evidence": _chargeback_route_text(owner_context.get("OWNER_EVIDENCE", "")),
         "Finding": finding,
         "Action": f"{confidence}. {action}",
         "Estimated Monthly Savings": round(max(0.0, est_delta_cost * 0.25), 2),
@@ -1048,9 +1065,9 @@ def _warehouse_cost_control_action(
         "Baseline Value": round(prior, 4),
         "Current Value": round(current, 4),
         "Measured Delta": round(delta, 4),
-        "Owner Approval Status": "Requested",
-        "Owner Approval Note": owner_approval_note,
-        "Recovery SLA State": "Savings Verification Pending",
+        "Verification Status": "Requested",
+        "Verification Note": owner_approval_note,
+        "Recovery SLA State": "Savings Measurement Pending",
         "Recovery SLA Target Hours": 168.0,
     }
 
@@ -1247,7 +1264,7 @@ def _build_finance_movement_summary(
             "Delta Credits": round(current_credits - prior_credits, 4),
             "Current Cost": round(credits_to_dollars(current_credits, credit_price), 2),
             "Delta Cost": round(credits_to_dollars(current_credits - prior_credits, credit_price), 2),
-            "Source Basis": "Exact",
+            "Measurement Basis": "Exact",
             "Action": "Use this as the official warehouse-compute bill movement.",
         },
         {
@@ -1258,7 +1275,7 @@ def _build_finance_movement_summary(
             "Delta Credits": None,
             "Current Cost": round(credits_to_dollars(allocated_credits, credit_price), 2),
             "Delta Cost": None,
-            "Source Basis": "Allocated / Estimated",
+            "Measurement Basis": "Allocated / Estimated",
             "Action": "Use for directional user, role, database, and query-type chargeback.",
         },
         {
@@ -1269,7 +1286,7 @@ def _build_finance_movement_summary(
             "Delta Credits": None,
             "Current Cost": round(credits_to_dollars(unallocated_credits, credit_price), 2),
             "Delta Cost": None,
-            "Source Basis": "Estimated",
+            "Measurement Basis": "Estimated",
             "Action": "Review auto-suspend, idle periods, non-query activity, and ACCOUNT_USAGE latency.",
         },
     ]
@@ -1288,7 +1305,7 @@ def _build_finance_movement_summary(
             "Delta Credits": round(delta, 4),
             "Current Cost": round(credits_to_dollars(current, credit_price), 2),
             "Delta Cost": round(credits_to_dollars(delta, credit_price), 2),
-            "Source Basis": "Account-wide",
+            "Measurement Basis": "Account-wide",
             "Action": "Do not charge back to ALFA/Trexis unless a service-specific owner tag or lineage exists.",
         })
     if budget and budget > 0:
@@ -1301,7 +1318,7 @@ def _build_finance_movement_summary(
             "Delta Credits": None,
             "Current Cost": round(current_cost, 2),
             "Delta Cost": round(current_cost - safe_float(budget), 2),
-            "Source Basis": "Estimated",
+            "Measurement Basis": "Estimated",
             "Action": "Escalate if variance is positive and supported by a repeating workload driver.",
         })
     return pd.DataFrame(rows)
@@ -1446,7 +1463,7 @@ def render():
     # -- USER LEADERBOARD ------------------------------------------------------
     if cost_view == "Cost Explorer":
         st.subheader("Cost Explorer")
-        st.caption("Cost drilldown by company, owner, warehouse, database, role, and user.")
+        st.caption("Cost drilldown by company, route, warehouse, database, role, and user.")
 
         c1, c2, c3, c4 = st.columns([1, 1.35, 1, 1.2])
         with c1:
@@ -1555,7 +1572,7 @@ def render():
                 ))
                 defer_source_note(st.session_state.get(
                     "df_cost_explorer_source",
-                    "Cost Explorer source: not loaded",
+                    "Cost Explorer measurement: available after refresh",
                 ))
 
                 render_chart_with_data_toggle(
@@ -1582,7 +1599,7 @@ def render():
                         "DATABASES",
                         "ENVIRONMENTS",
                         "CHARGEBACK_READY",
-                        "OWNER_PROOF",
+                        "ROUTE_TELEMETRY",
                         "ALLOCATION_CONFIDENCE",
                         "FIRST_USAGE_DATE",
                         "LAST_USAGE_DATE",
@@ -2056,7 +2073,7 @@ def render():
                 title="Finance movement bridge",
                 priority_columns=[
                     "Category", "Current Credits", "Prior Credits", "Delta Credits",
-                    "Current Cost", "Delta Cost", "Source Basis", "Basis", "Action",
+                    "Current Cost", "Delta Cost", "Measurement Basis", "Basis", "Action",
                 ],
                 sort_by=["Current Credits", "Delta Credits"],
                 ascending=False,
@@ -2820,7 +2837,7 @@ def render():
             df_cb["EST_COST"] = df_cb["TOTAL_CREDITS"].apply(lambda x: credits_to_dollars(x, credit_price))
             defer_source_note(st.session_state.get(
                 "df_chargeback_source",
-                "Chargeback source: not loaded",
+                "Chargeback measurement: available after refresh",
             ))
 
             # Summary by company - the key chargeback output
@@ -2832,7 +2849,7 @@ def render():
                     QUERY_COUNT=("QUERY_COUNT", "sum"),
                     ALLOCATION_CONFIDENCE=("ALLOCATION_CONFIDENCE", _mixed_label),
                     CHARGEBACK_READY=("CHARGEBACK_READY", _chargeback_readiness_label),
-                    OWNER_PROOF=("OWNER_SOURCE", _owner_proof_label),
+                    ROUTE_TELEMETRY=("OWNER_SOURCE", _route_telemetry_label),
                 )
                 .sort_values("EST_COST", ascending=False)
             )
@@ -2849,7 +2866,7 @@ def render():
                 summary,
                 title="Chargeback summary",
                 priority_columns=[
-                    "COMPANY", "ALLOCATION_CONFIDENCE", "CHARGEBACK_READY", "OWNER_PROOF",
+                    "COMPANY", "ALLOCATION_CONFIDENCE", "CHARGEBACK_READY", "ROUTE_TELEMETRY",
                     "TOTAL_CREDITS", "EST_COST", "QUERY_COUNT",
                 ],
                 sort_by=["EST_COST", "TOTAL_CREDITS"],
@@ -2866,7 +2883,7 @@ def render():
                         QUERY_COUNT=("QUERY_COUNT", "sum"),
                         ALLOCATION_CONFIDENCE=("ALLOCATION_CONFIDENCE", _mixed_label),
                         CHARGEBACK_READY=("CHARGEBACK_READY", _chargeback_readiness_label),
-                        OWNER_PROOF=("OWNER_SOURCE", _owner_proof_label),
+                        ROUTE_TELEMETRY=("OWNER_SOURCE", _route_telemetry_label),
                     )
                     .sort_values("EST_COST", ascending=False)
                 )
@@ -2874,7 +2891,7 @@ def render():
                     env_summary,
                     title="Chargeback environment summary",
                     priority_columns=[
-                        "COMPANY", "ENVIRONMENT_ROLLUP", "ALLOCATION_CONFIDENCE", "CHARGEBACK_READY", "OWNER_PROOF",
+                        "COMPANY", "ENVIRONMENT_ROLLUP", "ALLOCATION_CONFIDENCE", "CHARGEBACK_READY", "ROUTE_TELEMETRY",
                         "TOTAL_CREDITS", "EST_COST", "QUERY_COUNT",
                     ],
                     sort_by=["EST_COST", "TOTAL_CREDITS"],
@@ -2890,7 +2907,7 @@ def render():
                             EST_COST=("EST_COST", "sum"),
                             QUERY_COUNT=("QUERY_COUNT", "sum"),
                             ALLOCATION_CONFIDENCE=("ALLOCATION_CONFIDENCE", _mixed_label),
-                            OWNER_PROOF=("OWNER_SOURCE", _owner_proof_label),
+                            ROUTE_TELEMETRY=("OWNER_SOURCE", _route_telemetry_label),
                         )
                         .sort_values("EST_COST", ascending=False)
                     )
@@ -2898,7 +2915,7 @@ def render():
                         dev_summary,
                         title="Chargeback individual DEV databases",
                         priority_columns=[
-                            "COMPANY", "ENVIRONMENT", "DATABASE_NAME", "ALLOCATION_CONFIDENCE", "OWNER_PROOF",
+                            "COMPANY", "ENVIRONMENT", "DATABASE_NAME", "ALLOCATION_CONFIDENCE", "ROUTE_TELEMETRY",
                             "TOTAL_CREDITS", "EST_COST", "QUERY_COUNT",
                         ],
                         sort_by=["EST_COST", "TOTAL_CREDITS"],

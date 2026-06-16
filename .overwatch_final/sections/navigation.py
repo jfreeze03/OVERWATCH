@@ -18,7 +18,7 @@ SECTION_WORKSPACE_STATE_KEYS = {
     "Alert Center": ("_alert_center_full_workspace_requested", "_alert_center_brief_mode"),
     "Cost & Contract": ("_cost_contract_full_workspace_requested", "_cost_contract_brief_mode"),
     "Workload Operations": ("_workload_operations_full_workspace_requested", "_workload_operations_brief_mode"),
-    "Governance & Security": ("_governance_security_full_workspace_requested", "_governance_security_brief_mode"),
+    "Security Monitoring": ("_security_monitoring_full_workspace_requested", "_security_monitoring_brief_mode"),
 }
 
 

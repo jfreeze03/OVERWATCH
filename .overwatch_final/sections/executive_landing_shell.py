@@ -12,9 +12,8 @@ from datetime import date, datetime
 import streamlit as st
 
 from config import DEFAULTS, DEFAULT_COMPANY, DEFAULT_DAY_WINDOW, DEFAULT_ENVIRONMENT, DAY_WINDOW_OPTIONS, ENVIRONMENT_CONFIG
-from sections.native_readiness import render_native_readiness_board
 from sections.shell_helpers import render_signal_lane_board
-from utils.command_board import board_rows, load_or_reuse_command_board, load_setup_readiness
+from utils.command_board import board_rows, load_or_reuse_command_board
 
 
 _BRIEF_MODE_KEY = "_executive_landing_brief_mode"
@@ -135,7 +134,7 @@ def _pipeline_sla_pct(summary: dict) -> float:
 
 def _oldest_alert_age(summary: dict) -> str:
     text = str(summary.get("oldest_alert_age") or st.session_state.get("executive_oldest_alert_age") or "").strip()
-    return text or "Not loaded"
+    return text or "On demand"
 
 
 def _executive_glance_kpis() -> tuple[dict[str, str], ...]:
@@ -148,7 +147,8 @@ def _executive_glance_kpis() -> tuple[dict[str, str], ...]:
     daily_burn = spend / days if spend else 0.0
     prior_daily = prior / days if prior else 0.0
     critical_high = _safe_int(summary.get("critical_high_alerts"))
-    health_score = _safe_int(summary.get("score"), 0)
+    failed_tasks = _safe_int(summary.get("failed_tasks"))
+    risk_signals = critical_high + failed_tasks
     open_actions = _safe_int(summary.get("open_actions"))
     high_actions = _safe_int(summary.get("high_actions"))
     sla_pct = _pipeline_sla_pct(summary)
@@ -175,21 +175,21 @@ def _executive_glance_kpis() -> tuple[dict[str, str], ...]:
         },
         {
             "label": "Pipeline SLA compliance",
-            "value": f"{sla_pct:,.1f}%" if sla_pct else "Not loaded",
+            "value": f"{sla_pct:,.1f}%" if sla_pct else "On demand",
             "state": "SLA",
-            "detail": "Percent of configured tables meeting freshness target.",
+            "detail": "Percent of configured tables meeting the service target.",
         },
         {
-            "label": "Platform Operating Score",
-            "value": f"{health_score}/100" if health_score else "Not loaded",
-            "state": str(summary.get("state") or "Evidence"),
-            "detail": str(summary.get("cap_reason") or "Weighted cost, alert, action, and freshness posture."),
+            "label": "Platform risk signals",
+            "value": f"{risk_signals:,}",
+            "state": "Review" if risk_signals else "Stable",
+            "detail": f"{critical_high:,} critical/high alert(s) and {failed_tasks:,} failed task(s).",
         },
         {
             "label": "Active issues in queue",
             "value": f"{open_actions:,}",
             "state": f"{high_actions:,} high",
-            "detail": "Owner-routed actions by severity; drill from DBA Control Room or Alert Center.",
+            "detail": "Routed actions by severity; drill from DBA Control Room or Alert Center.",
         },
     )
 
@@ -217,37 +217,37 @@ def _top_action_rows() -> list[dict[str, object]]:
         {
             "Priority": 1,
             "Action": "Resolve critical/high alert backlog",
-            "Owner": "DBA On-Call",
+            "Route": "DBA On-Call",
             "Due": "Today" if critical_high else "Watch",
             "Impact": f"{critical_high:,} critical/high open",
         },
         {
             "Priority": 2,
-            "Action": "Work active owner action queue",
-            "Owner": "DBA Lead",
+            "Action": "Work active action queue",
+            "Route": "DBA Lead",
             "Due": "Today" if high_actions else "This week",
             "Impact": f"{open_actions:,} open / {high_actions:,} high",
         },
         {
             "Priority": 3,
             "Action": "Explain spend movement",
-            "Owner": "FinOps / DBA",
+            "Route": "FinOps / DBA",
             "Due": "Today" if spend > prior and prior else "Weekly review",
             "Impact": f"{_money(spend - prior)} delta",
         },
         {
             "Priority": 4,
-            "Action": "Verify pipeline freshness SLA",
-            "Owner": "Data Engineering",
+            "Action": "Review pipeline SLA",
+            "Route": "Data Engineering",
             "Due": "Today",
-            "Impact": f"{_pipeline_sla_pct(summary):,.1f}% compliance" if _pipeline_sla_pct(summary) else "SLA mart not loaded",
+            "Impact": f"{_pipeline_sla_pct(summary):,.1f}% compliance" if _pipeline_sla_pct(summary) else "SLA data on demand",
         },
         {
             "Priority": 5,
-            "Action": "Refresh executive observability mart",
-            "Owner": "OVERWATCH Maintainer",
-            "Due": "Next refresh",
-            "Impact": "Keeps the glance page defensible",
+            "Action": "Review warehouse pressure",
+            "Route": "DBA Lead",
+            "Due": "Today" if _safe_float(summary.get("queue_seconds")) or _safe_float(summary.get("remote_spill_gb")) else "Watch",
+            "Impact": f"{_safe_float(summary.get('queue_seconds')) / 60.0:,.1f}m queued / {_safe_float(summary.get('remote_spill_gb')):,.1f} GB spill",
         },
     ]
     return rows[:5]
@@ -260,11 +260,10 @@ def _executive_summary_text() -> str:
     budget_pct = (spend / budget * 100) if budget else 0.0
     critical_high = _safe_int(summary.get("critical_high_alerts"))
     sla_pct = _pipeline_sla_pct(summary)
-    health_score = _safe_int(summary.get("score"), 0)
     return (
         f"Snowflake spend is at {_money(spend)} of {_money(budget)} budget ({budget_pct:,.0f}%). "
         f"{critical_high:,} critical/high alerts are open, oldest is {_oldest_alert_age(summary)}. "
-        f"Pipeline SLA compliance is {sla_pct:,.1f}%; platform health score is {health_score}/100."
+        f"Pipeline SLA compliance is {sla_pct:,.1f}%."
     )
 
 
@@ -282,45 +281,6 @@ def _chart_frame(panel: str, metric: str, value_column: str = "VALUE_USD"):
 
 def _render_kpis() -> None:
     render_signal_lane_board("Executive Glance KPIs", _executive_glance_kpis(), max_lanes=6)
-
-
-def _platform_score_driver_lanes() -> tuple[dict[str, str], ...]:
-    drivers = _summary().get("platform_score_drivers")
-    if not isinstance(drivers, list) or not drivers:
-        return (
-            {
-                "label": "Score basis",
-                "value": "No penalties",
-                "state": "Ready",
-                "detail": "Platform score is computed from spend, alerts, owner queue, failures, queueing, spill, and freshness.",
-            },
-        )
-    lanes: list[dict[str, str]] = []
-    for driver in drivers[:4]:
-        if not isinstance(driver, dict):
-            continue
-        impact = _safe_float(driver.get("SCORE_IMPACT"))
-        evidence = str(driver.get("EVIDENCE") or "").strip()
-        action = str(driver.get("NEXT_ACTION") or "").strip()
-        lanes.append({
-            "label": str(driver.get("DRIVER") or "Score driver"),
-            "value": f"{impact:+.1f} pts",
-            "state": str(driver.get("STATE") or "Review"),
-            "detail": " ".join(part for part in (evidence, action) if part),
-        })
-    return tuple(lanes) or (
-        {
-            "label": "Score basis",
-            "value": "No penalties",
-            "state": "Ready",
-            "detail": "Platform score has no active penalty drivers for this command-board scope.",
-        },
-    )
-
-
-def _render_platform_score_basis() -> None:
-    st.markdown("**Platform Score Basis**")
-    render_signal_lane_board("Platform Score Drivers", _platform_score_driver_lanes(), max_lanes=4)
 
 
 def _render_spend_trend() -> None:
@@ -357,13 +317,13 @@ def _render_observability_summary() -> None:
     with middle:
         st.caption("Monthly spend")
         if getattr(monthly, "empty", True):
-            st.info("Monthly spend waits on MART_EXECUTIVE_OBSERVABILITY.")
+            st.info("Monthly spend is available after the scheduled summary refresh.")
         else:
             st.bar_chart(monthly)
     with right:
         st.caption("Runtime pressure")
         if getattr(workload, "empty", True):
-            st.info("Runtime trend waits on FACT_QUERY_HOURLY.")
+            st.info("Runtime trend is available after workload facts refresh.")
         else:
             st.line_chart(workload)
 
@@ -371,25 +331,25 @@ def _render_observability_summary() -> None:
     with c1:
         st.caption("Top cost drivers")
         if getattr(drivers, "empty", True):
-            st.info("Driver ranking not loaded.")
+            st.info("Driver ranking is available after refresh.")
         else:
             st.dataframe(drivers.reset_index().head(5), hide_index=True, width="stretch")
     with c2:
         st.caption("Query mix")
         if getattr(query_types, "empty", True):
-            st.info("Query type mix not loaded.")
+            st.info("Query type mix is available after refresh.")
         else:
             st.bar_chart(query_types.head(8))
     with c3:
         st.caption("Database mix")
         if getattr(query_database, "empty", True):
-            st.info("Database mix not loaded.")
+            st.info("Database mix is available after refresh.")
         else:
             st.bar_chart(query_database.head(8))
     with c4:
         st.caption("Execution status")
         if getattr(exec_status, "empty", True):
-            st.info("Execution status not loaded.")
+            st.info("Execution status is available after refresh.")
         else:
             st.bar_chart(exec_status.head(8))
 
@@ -397,13 +357,13 @@ def _render_observability_summary() -> None:
     with p1:
         st.caption("Warehouse queue")
         if getattr(pressure, "empty", True):
-            st.info("Warehouse pressure not loaded.")
+            st.info("Warehouse pressure is available after refresh.")
         else:
             st.bar_chart(pressure.head(8))
     with p2:
         st.caption("Warehouse spill")
         if getattr(spill, "empty", True):
-            st.info("Spill pressure not loaded.")
+            st.info("Spill pressure is available after refresh.")
         else:
             st.bar_chart(spill.head(8))
 
@@ -439,13 +399,13 @@ def _observability_wall_lanes() -> tuple[dict[str, str], ...]:
             "label": "Queue time",
             "value": f"{_safe_float(summary.get('queue_seconds')) / 60.0:,.1f}m",
             "state": "Capacity",
-            "detail": f"Top queued warehouse: {summary.get('top_queue_warehouse') or 'Not loaded'}.",
+            "detail": f"Top queued warehouse: {summary.get('top_queue_warehouse') or 'On demand'}.",
         },
         {
             "label": "Remote spill",
             "value": f"{_safe_float(summary.get('remote_spill_gb')):,.1f} GB",
             "state": "Memory",
-            "detail": f"Top spill warehouse: {summary.get('top_spill_warehouse') or 'Not loaded'}.",
+            "detail": f"Top spill warehouse: {summary.get('top_spill_warehouse') or 'On demand'}.",
         },
         {
             "label": "Task failures",
@@ -463,7 +423,7 @@ def _observability_wall_lanes() -> tuple[dict[str, str], ...]:
             "label": "Open actions",
             "value": f"{_safe_int(summary.get('open_actions')):,}",
             "state": f"{_safe_int(summary.get('high_actions')):,} high",
-            "detail": "Owner-routed queue items with evidence and verification.",
+            "detail": "Routed queue items with current telemetry status.",
         },
         {
             "label": "Storage",
@@ -473,15 +433,15 @@ def _observability_wall_lanes() -> tuple[dict[str, str], ...]:
         },
         {
             "label": "Top cost driver",
-            "value": str(summary.get("top_cost_driver") or "Not loaded")[:28],
+            "value": str(summary.get("top_cost_driver") or "On demand")[:28],
             "state": _money(summary.get("top_cost_driver_usd")),
             "detail": "Largest current cost driver in the selected scope.",
         },
         {
-            "label": "Freshness",
-            "value": f"{_safe_int(summary.get('freshness_sources')):,}",
-            "state": f"{_safe_int(summary.get('stale_sources')):,} stale",
-            "detail": "Delayed telemetry is called out before action.",
+            "label": "Elapsed time",
+            "value": f"{_safe_float(summary.get('avg_runtime_sec')):,.1f}s",
+            "state": "Avg runtime",
+            "detail": "Average query elapsed time across the selected scope.",
         },
     )
 
@@ -499,65 +459,13 @@ def _render_copy_summary() -> None:
         st.code(st.session_state["executive_landing_copied_summary"], language="text")
 
 
-def _render_setup_readiness() -> None:
-    readiness = load_setup_readiness(use_live=bool(st.session_state.get("_refresh_salt_global")))
-    st.markdown("**Setup Readiness**")
-    if getattr(readiness, "empty", True):
-        st.info("Setup readiness contract is not loaded.")
-        return
-    state_col = "MIGRATION_STATE" if "MIGRATION_STATE" in readiness.columns else "STATE"
-    blocked = 0
-    drift = 0
-    ready = 0
-    try:
-        states = readiness[state_col].fillna("").astype(str).str.upper()
-        blocked = int(states.str.contains("BLOCK|MISSING|NOT CHECKED", regex=True).sum())
-        drift = int(states.str.contains("DRIFT", regex=False).sum())
-        ready = int(states.str.contains("READY", regex=False).sum())
-    except Exception:
-        pass
-    render_signal_lane_board(
-        "Snowflake Setup Health",
-        (
-            {
-                "label": "Ready contracts",
-                "value": f"{ready:,}",
-                "state": "Ready",
-                "detail": "Objects or setup contracts that match the current app expectation.",
-            },
-            {
-                "label": "Blocked / unknown",
-                "value": f"{blocked:,}",
-                "state": "Setup",
-                "detail": "Deploy or validate setup SQL before trusting production evidence.",
-            },
-            {
-                "label": "Version drift",
-                "value": f"{drift:,}",
-                "state": "Migration",
-                "detail": "Rerun matching migrations before presenting executive numbers.",
-            },
-        ),
-        max_lanes=3,
-    )
-    priority = readiness.head(8)
-    st.dataframe(priority, hide_index=True, width="stretch")
-
-
-def _render_native_snowflake_readiness() -> None:
-    render_native_readiness_board()
-
-
 def render() -> None:
     st.session_state[_BRIEF_MODE_KEY] = True
     st.session_state[_FULL_WORKSPACE_KEY] = False
     st.session_state.setdefault("executive_landing_shell_seen_at", datetime.now().isoformat(timespec="seconds"))
     _load_command_board()
     _render_kpis()
-    _render_platform_score_basis()
     _render_spend_trend()
     _render_observability_summary()
     _render_top_actions()
-    _render_setup_readiness()
-    _render_native_snowflake_readiness()
     _render_copy_summary()

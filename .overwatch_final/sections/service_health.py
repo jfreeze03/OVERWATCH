@@ -277,7 +277,7 @@ def render():
     action_map = {
         "Query Processor": ("Review failed and queued queries in Detailed Diagnosis.", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"),
         "Warehouse Availability": ("Review Cost & Contract warehouse efficiency and pressure metrics.", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY grouped by warehouse"),
-        "Login/Auth": ("Review Governance & Security login audit and MFA coverage.", "SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY"),
+        "Login/Auth": ("Review Security Monitoring login audit and MFA coverage.", "SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY"),
         "Task Service": ("Review Task Management failed jobs and DAG health.", "SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY"),
         "Data Load": ("Review Pipeline Health load failures and freshness.", "SNOWFLAKE.ACCOUNT_USAGE.COPY_HISTORY"),
     }
@@ -302,13 +302,13 @@ def render():
     render_priority_dataframe(
         service_risk_view,
         title="Service risks to work first",
-        priority_columns=["SERVICE", "RISK_VALUE", "SIGNAL", "ACTION", "PROOF"],
+        priority_columns=["SERVICE", "SIGNAL", "ACTION", "PROOF"],
         sort_by=["RISK_VALUE"],
         ascending=True,
         raw_label="All service risk rows",
         height=260,
     )
-    download_csv(services, "service_health_risk_board.csv")
+    download_csv(service_risk_view.drop(columns=["RISK_VALUE"], errors="ignore"), "service_health_risk_board.csv")
 
     st.subheader("Warehouse Pressure Detail")
     if wh_df.empty:

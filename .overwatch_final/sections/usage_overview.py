@@ -574,7 +574,7 @@ def _build_usage_change_explanation(data: dict, days: int, credit_price: float) 
         rows.append({
             "SIGNAL": "Top warehouse movement",
             "STATE": "Detail deferred",
-            "MOVEMENT": "Warehouse movement preview is not loaded from the fast summary.",
+            "MOVEMENT": "Warehouse movement preview is available after summary refresh.",
             "DOLLAR_IMPACT": "$0",
             "EVIDENCE": "Cost Driver Chart can load the detailed warehouse list on demand.",
             "NEXT_ACTION": "Load Cost Driver Chart only when the aggregate movement needs warehouse-level proof.",
@@ -649,7 +649,7 @@ def render():
         st.info("Charts are sorted largest-to-smallest and drill into recent query detail where Snowflake query history is available.")
 
     if st.button("Load Usage Overview", key="uo_load"):
-        with render_load_status("Loading usage evidence", "Usage evidence ready"):
+        with render_load_status("Loading usage telemetry", "Usage telemetry ready"):
             try:
                 st.session_state["uo_data"] = _load_overview(session, days)
             except Exception as e:
@@ -657,7 +657,7 @@ def render():
 
     data = st.session_state.get("uo_data")
     if not data:
-        st.info("Awaiting filtered usage evidence.")
+        st.info("Awaiting filtered usage telemetry.")
         return
 
     overview = data["overview"]
@@ -710,17 +710,6 @@ def render():
         raw_label="All usage movement signals",
         height=260,
     )
-
-    with st.expander("Health signal contributors"):
-        render_priority_dataframe(
-            pd.DataFrame(health["components"]).rename(columns={"SCORE": "SIGNAL_VALUE"}),
-            title="Health signal contributors",
-            priority_columns=["COMPONENT", "SIGNAL_VALUE", "WEIGHT", "DETAIL"],
-            sort_by=["SIGNAL_VALUE", "WEIGHT"],
-            ascending=[True, False],
-            raw_label="All health signal contributors",
-            height=280,
-        )
 
     render_shell_snapshot((
         ("Compute Credits", format_credits(_first_number(metering, "COMPUTE_CREDITS"))),

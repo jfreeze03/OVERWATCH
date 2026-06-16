@@ -35,12 +35,12 @@ class OperationalIntelligenceTests(unittest.TestCase):
             "Predictive FinOps and Automated Value Log",
             "Alert Lifecycle 2.0",
             "Fact-Grounded AI Query Diagnosis",
-            "OVERWATCH Self-Monitoring",
-            "Precomputed Mart / Dynamic Table Layer With Fallback",
-            "Compliance Readiness Scorecard",
+            "Bounded Refresh Guardrails",
+            "Fast Summary Layer With Fallback",
+            "Security Risk Monitoring",
             "Multi-Account / Org View",
             "Data-First Navigation Contract",
-            "Architecture Docs and Runbooks",
+            "Monitoring Docs and Runbooks",
         }:
             self.assertIn(expected, capabilities)
 
@@ -153,9 +153,9 @@ class OperationalIntelligenceTests(unittest.TestCase):
         for marker in [
             "build_capability_register_rows",
             "build_task_critical_path_brain_sql",
-            "build_predictive_finops_sql",
-            "build_snowflake_value_auto_ddl",
-            "build_overwatch_self_monitoring_sql",
+            "build_mart_cost_run_rate_sql",
+            "build_snowflake_value_automation_health_sql",
+            "Bounded Refresh Guardrails",
             "build_ai_query_diagnosis_contract_rows",
         ]:
             self.assertIn(marker, text)

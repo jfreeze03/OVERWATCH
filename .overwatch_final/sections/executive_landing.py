@@ -19,7 +19,6 @@ from sections.base import lazy_pandas, lazy_util as _lazy_util
 from sections.navigation import apply_navigation_state
 from sections.shell_helpers import (
     render_refresh_contract,
-    render_setup_health_board,
     render_shell_kpi_row,
     render_shell_snapshot,
     render_shell_status_strip,
@@ -99,6 +98,17 @@ def _platform_score_state(score: float) -> str:
     return "Executive Escalation"
 
 
+def _pressure_level(score: float) -> str:
+    score = safe_float(score)
+    if score >= 75:
+        return "Critical"
+    if score >= 40:
+        return "Review"
+    if score > 0:
+        return "Watch"
+    return "Clear"
+
+
 def _score_driver(
     driver: str,
     *,
@@ -119,7 +129,7 @@ def _score_driver(
 
 
 def _build_platform_operating_score(summary: dict, source_health: pd.DataFrame | None = None) -> dict:
-    """Strict executive score with visible drivers and hard evidence caps."""
+    """Strict executive health index with visible drivers and telemetry limits."""
     prior_credits = safe_float(summary.get("prior_credits"))
     cost_delta = safe_float(summary.get("cost_delta"))
     critical_high = safe_int(summary.get("critical_high_alerts"))
@@ -135,17 +145,17 @@ def _build_platform_operating_score(summary: dict, source_health: pd.DataFrame |
     alert_penalty = min(24.0, critical_high * 8.0)
     action_penalty = min(18.0, high_actions * 5.0 + max(0, open_actions - high_actions) * 0.5)
     deployment_penalty = min(24.0, migration_blockers * 12.0)
-    evidence_penalty = min(18.0, limited_sources * 8.0)
+    telemetry_penalty = min(18.0, limited_sources * 8.0)
 
     caps: list[tuple[int, str]] = []
     if limited_sources:
-        caps.append((82, f"{limited_sources} executive evidence source(s) are limited."))
+        caps.append((82, f"{limited_sources} executive telemetry input(s) are limited."))
     if migration_blockers:
-        caps.append((74, f"{migration_blockers} setup or migration blocker(s) cap the executive score."))
+        caps.append((74, f"{migration_blockers} readiness blocker(s) cap the executive operating state."))
     if critical_high:
-        caps.append((85, f"{critical_high} Critical/High open alert(s) cap the executive score."))
+        caps.append((85, f"{critical_high} Critical/High open alert(s) limit the executive health index."))
     if high_actions:
-        caps.append((88, f"{high_actions} high-priority open action(s) cap the executive score."))
+        caps.append((88, f"{high_actions} high-priority open action(s) limit the executive health index."))
     if cost_delta_pct >= 0.20:
         caps.append((90, f"Spend increased {cost_delta_pct:.0%} versus the prior window."))
 
@@ -165,28 +175,28 @@ def _build_platform_operating_score(summary: dict, source_health: pd.DataFrame |
             "Reliability / Alerts",
             penalty=alert_penalty,
             evidence=f"{critical_high:,} Critical/High open alert(s).",
-            next_action="Open Alert Center and confirm owner, SLA state, and escalation proof.",
+            next_action="Open Alert Center and confirm route, SLA state, and escalation status.",
             cap=85 if critical_high else None,
         ),
         _score_driver(
             "Owned Closure",
             penalty=action_penalty,
             evidence=f"{open_actions:,} open action(s), {high_actions:,} high-priority.",
-            next_action="Open DBA Control Room and work owner-ready queue rows with verification evidence.",
+            next_action="Open DBA Control Room and work routed queue rows with telemetry status.",
             cap=88 if high_actions else None,
         ),
         _score_driver(
-            "Deployment Trust",
+            "Readiness Trust",
             penalty=deployment_penalty,
-            evidence=f"{migration_blockers:,} setup or migration blocker(s).",
-            next_action="Open Setup Status and reconcile the migration ledger before leadership sign-off.",
+            evidence=f"{migration_blockers:,} readiness blocker(s).",
+            next_action="Open Data Health and reconcile persistent object status before leadership sign-off.",
             cap=74 if migration_blockers else None,
         ),
         _score_driver(
-            "Evidence Coverage",
-            penalty=evidence_penalty,
-            evidence=f"{loaded_sources}/4 executive source(s) loaded; {limited_sources} limited.",
-            next_action="Reload or route to the source section when evidence is limited.",
+            "Telemetry Coverage",
+            penalty=telemetry_penalty,
+            evidence=f"{loaded_sources}/4 executive signal group(s) ready; {limited_sources} limited.",
+            next_action="Reload or route to the owning monitoring view when telemetry is limited.",
             cap=82 if limited_sources else None,
         ),
     ])
@@ -195,7 +205,7 @@ def _build_platform_operating_score(summary: dict, source_health: pd.DataFrame |
 
     raw_score = max(
         0.0,
-        min(100.0, 100.0 - cost_penalty - alert_penalty - action_penalty - deployment_penalty - evidence_penalty),
+        min(100.0, 100.0 - cost_penalty - alert_penalty - action_penalty - deployment_penalty - telemetry_penalty),
     )
     cap_value = min((cap for cap, _reason in caps), default=100)
     cap_reason = next((reason for cap, reason in sorted(caps, key=lambda item: item[0]) if cap == cap_value), "")
@@ -266,31 +276,31 @@ def _snapshot_state(cost: pd.DataFrame, alerts: pd.DataFrame, queue: pd.DataFram
 
 
 def _default_platform_summary() -> dict:
-    """Render an honest score frame before the executive mart or snapshot is loaded."""
+    """Render an honest state frame before the executive summary is refreshed."""
     source_health = pd.DataFrame([
         {
-            "SOURCE": "Executive observability mart",
+            "SOURCE": "Executive observability summary",
             "STATE": "Limited",
-            "EVIDENCE": "Precomputed board rows are not loaded for this scope.",
-            "NEXT_ACTION": "Refresh the executive board after the OVERWATCH mart refresh completes.",
+            "EVIDENCE": "Executive board rows are available after refresh for this scope.",
+            "NEXT_ACTION": "Refresh the executive board when current leadership context is needed.",
         },
         {
             "SOURCE": "Cost summary",
             "STATE": "Limited",
-            "EVIDENCE": "Cost facts are not loaded in this executive session yet.",
-            "NEXT_ACTION": "Open Cost & Contract or refresh the executive board for spend proof.",
+            "EVIDENCE": "Cost facts are available after executive refresh.",
+            "NEXT_ACTION": "Open Cost & Contract or refresh the executive board for spend context.",
         },
         {
             "SOURCE": "Alert and action queue",
             "STATE": "Limited",
-            "EVIDENCE": "Open alert and owner-action counts are not loaded yet.",
+            "EVIDENCE": "Open alert and owner-action counts are available after refresh.",
             "NEXT_ACTION": "Open Alert Center or DBA Control Room for owner-ready triage.",
         },
         {
-            "SOURCE": "Setup and migration trust",
+            "SOURCE": "Readiness and migration trust",
             "STATE": "Limited",
-            "EVIDENCE": "Setup status is not loaded in this executive session yet.",
-            "NEXT_ACTION": "Open Governance & Security when setup proof is needed.",
+            "EVIDENCE": "Readiness status is available after refresh.",
+            "NEXT_ACTION": "Open Security Monitoring when readiness review is needed.",
         },
     ])
     return _with_platform_operating_score({
@@ -302,7 +312,7 @@ def _default_platform_summary() -> dict:
         "open_actions": 0,
         "high_actions": 0,
         "migration_blockers": 0,
-        "top_cost_driver": "Not loaded",
+        "top_cost_driver": "On demand",
     }, source_health)
 
 
@@ -312,7 +322,7 @@ def _decision_rows(summary: dict) -> pd.DataFrame:
             "PRIORITY": "1",
             "DECISION_AREA": "Operational risk",
             "SIGNAL": f"{summary['critical_high_alerts']:,} Critical/High open alert(s)",
-            "NEXT_ACTION": "Open Alert Center automation readiness and confirm owner/escalation proof.",
+            "NEXT_ACTION": "Open Alert Center automation readiness and confirm route/escalation status.",
             "WORKFLOW": "Alert Center",
         },
         {
@@ -324,16 +334,16 @@ def _decision_rows(summary: dict) -> pd.DataFrame:
         },
         {
             "PRIORITY": "3",
-            "DECISION_AREA": "Owned closure",
+            "DECISION_AREA": "Measured closure",
             "SIGNAL": f"{summary['open_actions']:,} open action(s), {summary['high_actions']:,} high-priority",
-            "NEXT_ACTION": "Work owned queue rows with approval and verification evidence.",
+            "NEXT_ACTION": "Work routed queue rows with telemetry status.",
             "WORKFLOW": "DBA Control Room",
         },
         {
             "PRIORITY": "4",
             "DECISION_AREA": "Deployment trust",
-            "SIGNAL": f"{summary['migration_blockers']:,} setup/migration blocker(s)",
-            "NEXT_ACTION": "Open Setup Status and reconcile the mart migration ledger.",
+            "SIGNAL": f"{summary['migration_blockers']:,} readiness blocker(s)",
+            "NEXT_ACTION": "Open Security Monitoring and reconcile readiness telemetry.",
             "WORKFLOW": "Change & Drift",
         },
     ]
@@ -344,12 +354,12 @@ def _executive_action_brief(summary: dict | None) -> dict[str, str]:
     if not summary:
         return {
             "state": "Ready",
-            "headline": "Open a board-ready snapshot when leadership evidence is needed.",
+            "headline": "Open a board-ready snapshot when leadership telemetry is needed.",
             "detail": "Risk, spend movement, closure work, and deployment trust stay behind one explicit load.",
         }
     if summary["critical_high_alerts"] or summary["high_actions"] or summary["migration_blockers"]:
         cap_reason = str(summary.get("cap_reason") or "")
-        cap_detail = f" Score cap: {cap_reason}" if cap_reason and cap_reason != "No hard cap applied." else ""
+        cap_detail = f" Limiter: {cap_reason}" if cap_reason and cap_reason != "No hard cap applied." else ""
         return {
             "state": str(summary["state"]),
             "headline": "Review the top exception before briefing leaders.",
@@ -1059,7 +1069,7 @@ def _format_metric_value(value: float, unit: str) -> str:
     if unit_key == "gb":
         return _format_gb(value)
     if unit_key == "score":
-        return f"{safe_int(value)}/100"
+        return _platform_score_state(value)
     if unit_key in {"queries", "tasks", "alerts", "actions"}:
         return f"{safe_int(value):,}"
     if unit_key == "tb_usd":
@@ -1077,13 +1087,13 @@ def _obs_metric_loaded(board: pd.DataFrame, metric: str) -> bool:
 
 def _obs_money_label(board: pd.DataFrame, metric: str, *, column: str = "VALUE_USD", signed: bool = False) -> str:
     if not _obs_metric_loaded(board, metric):
-        return "Not loaded"
+        return "On demand"
     return _money(_obs_value(board, metric, column=column), signed=signed)
 
 
 def _obs_count_label(board: pd.DataFrame, metric: str) -> str:
     if not _obs_metric_loaded(board, metric):
-        return "Not loaded"
+        return "On demand"
     return f"{safe_int(_obs_value(board, metric)):,}"
 
 
@@ -1092,21 +1102,21 @@ def _render_observability_source_status(board: pd.DataFrame) -> None:
     if not isinstance(statuses, pd.DataFrame) or statuses.empty:
         return
     rows = statuses[["DIMENSION", "METRIC", "UNIT"]].copy()
-    rows = rows.rename(columns={"DIMENSION": "SOURCE", "METRIC": "STATE", "UNIT": "DETAIL"})
+    rows = rows.rename(columns={"DIMENSION": "INPUT", "METRIC": "STATE", "UNIT": "DETAIL"})
     loaded = int(rows["STATE"].astype(str).eq("Loaded").sum()) if "STATE" in rows.columns else 0
     unavailable = int(rows["STATE"].astype(str).eq("Unavailable").sum()) if "STATE" in rows.columns else 0
     no_rows = int(rows["STATE"].astype(str).eq("No Rows").sum()) if "STATE" in rows.columns else 0
     with st.expander(
-        f"Executive board source status: {loaded} loaded, {unavailable} unavailable, {no_rows} no rows",
+        f"Executive board input status: {loaded} loaded, {unavailable} unavailable, {no_rows} no rows",
         expanded=unavailable > 0 and loaded == 0,
     ):
         render_priority_dataframe(
             rows,
-            title="Executive board source status",
-            priority_columns=["SOURCE", "STATE", "DETAIL"],
-            sort_by=["STATE", "SOURCE"],
+            title="Executive board input status",
+            priority_columns=["INPUT", "STATE", "DETAIL"],
+            sort_by=["STATE", "INPUT"],
             ascending=[True, True],
-            raw_label="All executive board source rows",
+            raw_label="All executive board input rows",
             height=260,
             max_rows=12,
         )
@@ -1179,7 +1189,7 @@ def _executive_priority_rows(board: pd.DataFrame, *, days: int) -> pd.DataFrame:
             "STATE": "Escalate" if critical_high else "Clear",
             "SIGNAL": f"{critical_high:,} Critical/High alert(s), {open_actions:,} open owner action(s).",
             "BUSINESS_IMPACT": "Security, reliability, or cost issue may already be visible to leadership.",
-            "NEXT_ACTION": "Open Alert Center and work owner, SLA, and remediation proof.",
+            "NEXT_ACTION": "Open Alert Center and work route, SLA, and remediation status.",
             "ROUTE": "Alert Center",
         },
         {
@@ -1283,17 +1293,17 @@ def _executive_pressure_rows(board: pd.DataFrame) -> pd.DataFrame:
     rows = [
         {
             "LANE": "Platform health",
-            "STATE": _platform_score_state(platform_health) if _obs_metric_loaded(board, "Platform Health") else "Not loaded",
-            "VALUE": f"{safe_int(platform_health)}/100" if _obs_metric_loaded(board, "Platform Health") else "Not loaded",
+            "STATE": _platform_score_state(platform_health) if _obs_metric_loaded(board, "Platform Health") else "On demand",
+            "VALUE": _platform_score_state(platform_health) if _obs_metric_loaded(board, "Platform Health") else "On demand",
             "PRESSURE_SCORE": max(0.0, 100.0 - safe_float(platform_health)) if _obs_metric_loaded(board, "Platform Health") else 0.0,
-            "WHY_IT_MATTERS": "Rolls cost, risk, workload, setup, and evidence caps into one board-level pressure signal.",
+            "WHY_IT_MATTERS": "Rolls cost, risk, workload, and telemetry quality into one board-level pressure signal.",
             "OWNER_ROUTE": "Executive Landing",
             "NEXT_ACTION": "Open the highest pressure lane below before specialist drilldown.",
         },
         {
             "LANE": "Cost movement",
             "STATE": "Rising" if spend_delta > 0 else "Flat / down",
-            "VALUE": _money(spend_delta, signed=True) if _obs_metric_loaded(board, "Spend Delta") else "Not loaded",
+            "VALUE": _money(spend_delta, signed=True) if _obs_metric_loaded(board, "Spend Delta") else "On demand",
             "PRESSURE_SCORE": capped(max(spend_delta, 0.0), max(current_spend * 0.20, 500.0)),
             "WHY_IT_MATTERS": "Leadership asks first why the bill moved and whether the increase has an owner.",
             "OWNER_ROUTE": "Cost & Contract",
@@ -1302,7 +1312,7 @@ def _executive_pressure_rows(board: pd.DataFrame) -> pd.DataFrame:
         {
             "LANE": "Cortex spend",
             "STATE": "Spend active" if cortex_spend > 0 else "No spend",
-            "VALUE": _money(cortex_spend) if _obs_metric_loaded(board, "Cortex Spend") else "Not loaded",
+            "VALUE": _money(cortex_spend) if _obs_metric_loaded(board, "Cortex Spend") else "On demand",
             "PRESSURE_SCORE": capped(cortex_spend, 500.0),
             "WHY_IT_MATTERS": "AI spend can grow without warehouse-style owner habits or quota guardrails.",
             "OWNER_ROUTE": "Cost & Contract",
@@ -1311,7 +1321,7 @@ def _executive_pressure_rows(board: pd.DataFrame) -> pd.DataFrame:
         {
             "LANE": "Queue pressure",
             "STATE": "Queued" if queue_seconds > 0 else "Clear",
-            "VALUE": _format_seconds(queue_seconds) if _obs_metric_loaded(board, "Queue Time") else "Not loaded",
+            "VALUE": _format_seconds(queue_seconds) if _obs_metric_loaded(board, "Queue Time") else "On demand",
             "PRESSURE_SCORE": capped(queue_seconds, 3600.0),
             "WHY_IT_MATTERS": "Queue time turns into missed SLAs, frustrated users, and sometimes wasteful resize decisions.",
             "OWNER_ROUTE": "DBA Control Room",
@@ -1320,7 +1330,7 @@ def _executive_pressure_rows(board: pd.DataFrame) -> pd.DataFrame:
         {
             "LANE": "Spillage",
             "STATE": "Spilling" if spill_gb > 0 else "Clear",
-            "VALUE": _format_gb(spill_gb) if _obs_metric_loaded(board, "Remote Spill") else "Not loaded",
+            "VALUE": _format_gb(spill_gb) if _obs_metric_loaded(board, "Remote Spill") else "On demand",
             "PRESSURE_SCORE": capped(spill_gb, 100.0),
             "WHY_IT_MATTERS": "Remote spill is a strong signal for poor pruning, oversized joins, and warehouse pressure.",
             "OWNER_ROUTE": "Workload Operations",
@@ -1347,7 +1357,7 @@ def _executive_pressure_rows(board: pd.DataFrame) -> pd.DataFrame:
         {
             "LANE": "Storage footprint",
             "STATE": "Track" if storage_tb > 0 else "No data",
-            "VALUE": f"{safe_float(storage_tb):,.2f} TB" if _obs_metric_loaded(board, "Storage") else "Not loaded",
+            "VALUE": f"{safe_float(storage_tb):,.2f} TB" if _obs_metric_loaded(board, "Storage") else "On demand",
             "PRESSURE_SCORE": capped(storage_tb, 50.0),
             "WHY_IT_MATTERS": "Storage, failsafe, and stages become contract noise when growth lacks lifecycle controls.",
             "OWNER_ROUTE": "Cost & Contract",
@@ -1364,35 +1374,35 @@ def _executive_pressure_placeholder_rows() -> pd.DataFrame:
         [
             {
                 "LANE": "Platform health",
-                "STATE": "Not loaded",
-                "VALUE": "Not loaded",
+                "STATE": "On demand",
+                "VALUE": "On demand",
                 "PRESSURE_SCORE": 0.0,
-                "WHY_IT_MATTERS": "Platform score needs loaded cost, workload, alert, and setup facts before it is decision-grade.",
+                "WHY_IT_MATTERS": "Platform health needs cost, workload, alert, and telemetry facts before it is decision-grade.",
                 "OWNER_ROUTE": "Executive Landing",
-                "NEXT_ACTION": "Run or verify the OVERWATCH mart refresh.",
+                "NEXT_ACTION": "Refresh the executive summary facts.",
             },
             {
                 "LANE": "Cost movement",
-                "STATE": "Not loaded",
-                "VALUE": "Not loaded",
+                "STATE": "On demand",
+                "VALUE": "On demand",
                 "PRESSURE_SCORE": 0.0,
                 "WHY_IT_MATTERS": "Spend movement is the first leadership question and must come from metering facts.",
                 "OWNER_ROUTE": "Cost & Contract",
-                "NEXT_ACTION": "Load FACT_COST_DAILY and MART_EXECUTIVE_OBSERVABILITY.",
+                "NEXT_ACTION": "Refresh the cost summary facts.",
             },
             {
                 "LANE": "Cortex spend",
-                "STATE": "Not loaded",
-                "VALUE": "Not loaded",
+                "STATE": "On demand",
+                "VALUE": "On demand",
                 "PRESSURE_SCORE": 0.0,
                 "WHY_IT_MATTERS": "AI spend needs explicit owner and quota visibility.",
                 "OWNER_ROUTE": "Cost & Contract",
-                "NEXT_ACTION": "Load FACT_CORTEX_DAILY or mark Cortex unavailable for this account.",
+                "NEXT_ACTION": "Refresh AI spend or mark Cortex unavailable for this account.",
             },
             {
                 "LANE": "Runtime and queue",
-                "STATE": "Not loaded",
-                "VALUE": "Not loaded",
+                "STATE": "On demand",
+                "VALUE": "On demand",
                 "PRESSURE_SCORE": 0.0,
                 "WHY_IT_MATTERS": "Runtime, queue, and spill show whether the platform is hurting users.",
                 "OWNER_ROUTE": "Workload Operations",
@@ -1400,8 +1410,8 @@ def _executive_pressure_placeholder_rows() -> pd.DataFrame:
             },
             {
                 "LANE": "Reliability",
-                "STATE": "Not loaded",
-                "VALUE": "Not loaded",
+                "STATE": "On demand",
+                "VALUE": "On demand",
                 "PRESSURE_SCORE": 0.0,
                 "WHY_IT_MATTERS": "Failed queries, failed tasks, and missed runs are the fastest path to incident risk.",
                 "OWNER_ROUTE": "DBA Control Room",
@@ -1409,12 +1419,12 @@ def _executive_pressure_placeholder_rows() -> pd.DataFrame:
             },
             {
                 "LANE": "Alerts and actions",
-                "STATE": "Not loaded",
-                "VALUE": "Not loaded",
+                "STATE": "On demand",
+                "VALUE": "On demand",
                 "PRESSURE_SCORE": 0.0,
                 "WHY_IT_MATTERS": "Open critical/high alerts and unowned action queue rows drive the morning command queue.",
                 "OWNER_ROUTE": "Alert Center",
-                "NEXT_ACTION": "Load ALERT_EVENTS and OVERWATCH_ACTION_QUEUE summaries.",
+                "NEXT_ACTION": "Refresh alert and action summaries.",
             },
         ]
     )
@@ -1427,49 +1437,49 @@ def _executive_summary_lanes(board: pd.DataFrame, *, days: int, credit_price: fl
         return [
             {
                 "label": "Credits used / dollars",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Mart",
                 "detail": "Load MART_EXECUTIVE_OBSERVABILITY for official/metered spend.",
             },
             {
                 "label": "Cortex dollars",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "AI",
                 "detail": "Uses Cortex fact rows where account telemetry is available.",
             },
             {
                 "label": "Monthly run rate",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Forecast",
                 "detail": "Projected from the selected board window after facts load.",
             },
             {
                 "label": "Queries / avg runtime",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Workload",
                 "detail": "Query count and runtime rollups come from hourly facts.",
             },
             {
                 "label": "P95 runtime / queue",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "SLA",
                 "detail": "Queue and p95 runtime tell leadership whether users feel pain.",
             },
             {
                 "label": "Remote spillage",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "SQL shape",
                 "detail": "Highlights memory pressure, join shape, and pruning problems.",
             },
             {
                 "label": "Alerts / failed tasks",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Reliability",
                 "detail": "Critical/high alerts and failed task facts drive the DBA queue.",
             },
             {
                 "label": "Warehouse pressure",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Capacity",
                 "detail": "Summarizes queue plus spill before anyone resizes compute.",
             },
@@ -1507,7 +1517,7 @@ def _executive_summary_lanes(board: pd.DataFrame, *, days: int, credit_price: fl
         },
         {
             "label": "Monthly run rate",
-            "value": _money(month_end_forecast) if _obs_metric_loaded(board, "Credits Used") else "Not loaded",
+            "value": _money(month_end_forecast) if _obs_metric_loaded(board, "Credits Used") else "On demand",
             "state": "Forecast",
             "detail": f"Projected from {int(days)} day(s); confirm against complete-day metering.",
         },
@@ -1527,7 +1537,7 @@ def _executive_summary_lanes(board: pd.DataFrame, *, days: int, credit_price: fl
             "label": "Remote spillage",
             "value": _format_gb(spill_gb),
             "state": "SQL shape",
-            "detail": "High spill means tune query shape or warehouse pressure evidence.",
+            "detail": "High spill means tune query shape or warehouse pressure telemetry.",
         },
         {
             "label": "Alerts / failed tasks",
@@ -1550,49 +1560,27 @@ def _render_executive_pressure_board(board: pd.DataFrame) -> None:
         rows = board.copy()
     if rows.empty:
         return
-    st.markdown("**Executive Pressure Index**")
+    st.markdown("**Executive Pressure Lanes**")
+    top_pressure = safe_float(rows.iloc[0].get("PRESSURE_SCORE"))
     render_shell_kpi_row((
         ("Highest Pressure", str(rows.iloc[0].get("LANE") or "Loaded")),
-        ("Score", f"{safe_float(rows.iloc[0].get('PRESSURE_SCORE')):,.0f}/100"),
-        ("Owner Route", str(rows.iloc[0].get("OWNER_ROUTE") or "Executive Landing")),
+        ("Pressure", _pressure_level(top_pressure)),
+        ("Escalation", str(rows.iloc[0].get("OWNER_ROUTE") or "Executive Landing")),
         ("State", str(rows.iloc[0].get("STATE") or "Review")),
     ))
-    chart_rows = rows.copy()
-    chart_rows["PRESSURE_SCORE"] = pd.to_numeric(chart_rows["PRESSURE_SCORE"], errors="coerce").fillna(0.0)
-    alt = _altair()
-    chart = (
-        alt.Chart(chart_rows)
-        .mark_bar(cornerRadiusTopRight=3, cornerRadiusBottomRight=3, color="#29B5E8")
-        .encode(
-            x=alt.X("PRESSURE_SCORE:Q", title="Pressure Score", scale=alt.Scale(domain=[0, 100])),
-            y=alt.Y(
-                "LANE:N",
-                sort=alt.SortField(field="PRESSURE_SCORE", order="descending"),
-                title=None,
-                axis=alt.Axis(labelLimit=180),
-            ),
-            tooltip=[
-                alt.Tooltip("LANE:N", title="Lane"),
-                alt.Tooltip("STATE:N", title="State"),
-                alt.Tooltip("VALUE:N", title="Value"),
-                alt.Tooltip("PRESSURE_SCORE:Q", title="Pressure", format=",.0f"),
-                alt.Tooltip("OWNER_ROUTE:N", title="Owner route"),
-                alt.Tooltip("NEXT_ACTION:N", title="Next action"),
-            ],
-        )
-        .properties(height=250)
-    )
-    st.altair_chart(chart, width="stretch")
+    display_rows = rows.copy()
+    display_rows["PRESSURE_LEVEL"] = display_rows["PRESSURE_SCORE"].map(_pressure_level)
+    display_rows = display_rows.drop(columns=["PRESSURE_SCORE"], errors="ignore")
     render_priority_dataframe(
-        rows,
+        display_rows,
         title="Executive pressure details",
         priority_columns=[
-            "LANE", "STATE", "VALUE", "PRESSURE_SCORE",
+            "LANE", "STATE", "VALUE", "PRESSURE_LEVEL",
             "OWNER_ROUTE", "WHY_IT_MATTERS", "NEXT_ACTION",
         ],
-        sort_by=["PRESSURE_SCORE", "LANE"],
-        ascending=[False, True],
-        raw_label="All executive pressure rows",
+        sort_by=["LANE"],
+        ascending=[True],
+        raw_label="All executive pressure lanes",
         height=250,
         max_rows=8,
     )
@@ -1690,45 +1678,30 @@ def _render_executive_observability_board(
     days: int,
     credit_price: float,
 ) -> None:
-    def _render_mart_health_contract() -> None:
-        render_setup_health_board(
-            "Executive Mart Health",
-            (
-                ("Executive mart", "MART_EXECUTIVE_OBSERVABILITY"),
-                ("Cost/Cortex", "FACT_COST_DAILY / FACT_CORTEX_DAILY"),
-                ("Workload", "QUERY / TASK facts"),
-                ("Alerts", "ALERT_EVENTS / action queue"),
-            ),
-            cadence="60 min scheduled refresh",
-            fallback="No live ACCOUNT_USAGE scan on first paint",
-            owner="DBA / FinOps / Security",
-        )
-
     error = str((payload or {}).get("error") or "").strip()
     if not isinstance(board, pd.DataFrame) or board.empty or not _has_observability_kpis(board):
         render_shell_status_strip(
-            state="Setup Needed" if error else "Waiting",
+            state="Refresh Needed" if error else "Waiting",
             headline="Executive observability board is ready for precomputed Snowflake facts.",
             detail=(
                 error
                 if error
-                else "Run the OVERWATCH mart refresh to populate cost, query, task, storage, alert, and Cortex facts."
+                else "Refresh executive summaries to populate cost, query, task, storage, alert, and Cortex facts."
             ),
         )
         render_shell_kpi_row((
             ("Scope", f"{company} / {get_environment_label(environment, company)}"),
             ("Window", f"{int(days)}d"),
-            ("Source", "Precomputed marts"),
+            ("Source", "Data summaries"),
             ("Status", "No rows"),
         ))
         render_refresh_contract(
             payload,
-            source="MART_EXECUTIVE_OBSERVABILITY",
+            source="Executive summary facts",
             target_minutes=60,
-            refresh_method="Scheduled OVERWATCH mart refresh",
-            live_fallback="No",
+            refresh_method="Scheduled data refresh",
+            live_fallback="On demand",
         )
-        _render_mart_health_contract()
         st.markdown("**Executive Metric Board**")
         render_signal_lane_board(
             "Executive Summary Grid",
@@ -1737,28 +1710,28 @@ def _render_executive_observability_board(
         )
         st.markdown("**Executive Command Wall**")
         render_shell_kpi_row((
-            ("Spend", "Not loaded"),
-            ("Delta", "Not loaded"),
-            ("Cortex", "Not loaded"),
-            ("30d Forecast", "Not loaded"),
+            ("Spend", "On demand"),
+            ("Delta", "On demand"),
+            ("Cortex", "On demand"),
+            ("30d Forecast", "On demand"),
         ))
         render_shell_kpi_row((
-            ("Queries", "Not loaded"),
-            ("Avg Runtime", "Not loaded"),
-            ("P95 Runtime", "Not loaded"),
-            ("Remote Spill", "Not loaded"),
+            ("Queries", "On demand"),
+            ("Avg Runtime", "On demand"),
+            ("P95 Runtime", "On demand"),
+            ("Remote Spill", "On demand"),
         ))
         render_shell_kpi_row((
-            ("Critical / High", "Not loaded"),
-            ("Failed Queries", "Not loaded"),
-            ("Failed Tasks", "Not loaded"),
-            ("Open Actions", "Not loaded"),
+            ("Critical / High", "On demand"),
+            ("Failed Queries", "On demand"),
+            ("Failed Tasks", "On demand"),
+            ("Open Actions", "On demand"),
         ))
         render_shell_kpi_row((
-            ("Queue Time", "Not loaded"),
-            ("Avg/day", "Not loaded"),
-            ("Storage", "Not loaded"),
-            ("Freshness", "Not loaded"),
+            ("Queue Time", "On demand"),
+            ("Avg/day", "On demand"),
+            ("Storage", "On demand"),
+            ("Freshness", "On demand"),
         ))
         _render_executive_pressure_board(_executive_pressure_placeholder_rows())
         _render_observability_source_status(board)
@@ -1807,12 +1780,12 @@ def _render_executive_observability_board(
         else "Snowflake observability summary loaded from precomputed OVERWATCH facts."
     )
     status_detail = (
-        "Run or verify the OVERWATCH mart refresh before using this view for leadership numbers."
+        "Run or check the OVERWATCH mart refresh before using this view for leadership numbers."
         if not has_fact_trends
         else (
             f"{int(days)}-day view: cost, Cortex, query runtime, queue pressure, spill, task health, and storage. "
-            "Alerts and action-queue counts remain Not loaded unless their secure app tables are available to this role. "
-            "Detailed proof stays in the specialist sections."
+            "Alerts and action-queue counts remain On demand unless their secure app tables are available to this role. "
+            "Detailed telemetry stays in the specialist sections."
         )
     )
     if unavailable_sources and has_fact_trends:
@@ -1825,24 +1798,23 @@ def _render_executive_observability_board(
     )
     render_refresh_contract(
         payload,
-        source="MART_EXECUTIVE_OBSERVABILITY",
+        source="Executive summary facts",
         target_minutes=60,
-        refresh_method="Scheduled OVERWATCH mart refresh",
-        live_fallback="No",
+        refresh_method="Scheduled data refresh",
+        live_fallback="On demand",
     )
-    _render_mart_health_contract()
     st.markdown("**Executive Command Wall**")
     render_shell_kpi_row((
-        ("Platform", f"{safe_int(health)}/100" if health else "Loaded"),
+        ("Platform", _platform_score_state(health) if health else "Loaded"),
         ("Spend", _obs_money_label(board, "Credits Used")),
         ("Delta", _obs_money_label(board, "Spend Delta", signed=True)),
         ("Cortex", _obs_money_label(board, "Cortex Spend")),
     ))
     render_shell_kpi_row((
         ("Queries", _obs_count_label(board, "Total Queries")),
-        ("Avg Runtime", _format_seconds(avg_runtime) if _obs_metric_loaded(board, "Avg Runtime") else "Not loaded"),
-        ("P95 Runtime", _format_seconds(p95_runtime) if _obs_metric_loaded(board, "P95 Runtime") else "Not loaded"),
-        ("Remote Spill", _format_gb(spill_gb) if _obs_metric_loaded(board, "Remote Spill") else "Not loaded"),
+        ("Avg Runtime", _format_seconds(avg_runtime) if _obs_metric_loaded(board, "Avg Runtime") else "On demand"),
+        ("P95 Runtime", _format_seconds(p95_runtime) if _obs_metric_loaded(board, "P95 Runtime") else "On demand"),
+        ("Remote Spill", _format_gb(spill_gb) if _obs_metric_loaded(board, "Remote Spill") else "On demand"),
     ))
     render_shell_kpi_row((
         ("Critical / High", _obs_count_label(board, "Critical High Alerts")),
@@ -1851,10 +1823,10 @@ def _render_executive_observability_board(
         ("Open Actions", _obs_count_label(board, "Open Actions")),
     ))
     render_shell_kpi_row((
-        ("Queue Time", _format_seconds(queue_seconds) if _obs_metric_loaded(board, "Queue Time") else "Not loaded"),
-        ("30d Forecast", _money(month_end_forecast) if _obs_metric_loaded(board, "Credits Used") else "Not loaded"),
-        ("Avg/day", _money(avg_daily_spend) if _obs_metric_loaded(board, "Credits Used") else "Not loaded"),
-        ("Storage", f"{safe_float(storage_tb):,.2f} TB / {_money(storage_cost)}" if _obs_metric_loaded(board, "Storage") else "Not loaded"),
+        ("Queue Time", _format_seconds(queue_seconds) if _obs_metric_loaded(board, "Queue Time") else "On demand"),
+        ("30d Forecast", _money(month_end_forecast) if _obs_metric_loaded(board, "Credits Used") else "On demand"),
+        ("Avg/day", _money(avg_daily_spend) if _obs_metric_loaded(board, "Credits Used") else "On demand"),
+        ("Storage", f"{safe_float(storage_tb):,.2f} TB / {_money(storage_cost)}" if _obs_metric_loaded(board, "Storage") else "On demand"),
     ))
     render_signal_lane_board(
         "Executive Summary Grid",
@@ -1948,14 +1920,14 @@ def _render_executive_observability_board(
 
     pressure = warehouse_pressure.copy()
     if not pressure.empty:
-        pressure["PRESSURE_SCORE"] = pd.to_numeric(pressure["VALUE"], errors="coerce").fillna(0)
-        pressure = pressure.groupby("DIMENSION", as_index=False, sort=False)["PRESSURE_SCORE"].sum()
+        pressure["PRESSURE_VALUE"] = pd.to_numeric(pressure["VALUE"], errors="coerce").fillna(0)
+        pressure = pressure.groupby("DIMENSION", as_index=False, sort=False)["PRESSURE_VALUE"].sum()
     _render_bar_chart(
         pressure,
         title="Warehouse Pressure: Queue + Spill",
         x_column="DIMENSION",
-        y_column="PRESSURE_SCORE",
-        x_title="Pressure Score",
+        y_column="PRESSURE_VALUE",
+        x_title="Pressure",
         color="#F97316",
         height=260,
     )
@@ -1964,11 +1936,11 @@ def _render_executive_observability_board(
     if isinstance(freshness, pd.DataFrame) and not freshness.empty:
         with st.expander("Board data freshness", expanded=False):
             rows = freshness[["DIMENSION", "PERIOD_START", "UNIT"]].copy()
-            rows = rows.rename(columns={"DIMENSION": "SOURCE", "PERIOD_START": "LATEST_LOAD", "UNIT": "TYPE"})
+            rows = rows.rename(columns={"DIMENSION": "INPUT", "PERIOD_START": "LATEST_LOAD", "UNIT": "TYPE"})
             render_priority_dataframe(
                 rows,
-                title="Precomputed source freshness",
-                priority_columns=["SOURCE", "LATEST_LOAD", "TYPE"],
+                title="Board data freshness",
+                priority_columns=["INPUT", "LATEST_LOAD", "TYPE"],
                 raw_label="All executive board freshness rows",
                 height=180,
                 max_rows=8,
@@ -2000,55 +1972,6 @@ def _render_executive_action_brief(summary: dict | None, days: int, *, show_stri
         )
 
 
-def _render_platform_operating_score(summary: dict | None) -> None:
-    if not summary:
-        return
-    drivers = summary.get("platform_score_drivers")
-    if not isinstance(drivers, pd.DataFrame):
-        drivers = pd.DataFrame()
-    cap_value = safe_int(summary.get("score_cap"), 100)
-    cap_label = "None" if cap_value >= 100 else f"{cap_value}/100"
-    st.markdown("**Platform Operating Score**")
-    render_shell_kpi_row((
-        ("Score", f"{safe_int(summary.get('score'))}/100"),
-        ("State", str(summary.get("state") or "Review")),
-        ("Raw", f"{safe_float(summary.get('raw_score')):,.1f}/100"),
-        ("Cap", cap_label),
-    ))
-    if not drivers.empty:
-        render_priority_dataframe(
-            drivers,
-            title="Platform score drivers",
-            priority_columns=["DRIVER", "STATE", "SCORE_IMPACT", "EVIDENCE", "SCORE_CAP", "NEXT_ACTION"],
-            sort_by=["SCORE_IMPACT", "DRIVER"],
-            ascending=[True, True],
-            raw_label="All platform operating score drivers",
-            height=260,
-            max_rows=5,
-        )
-
-
-def _render_command_intelligence_maturity() -> None:
-    from utils.operational_intelligence import build_capability_register_rows
-
-    rows = pd.DataFrame(build_capability_register_rows())
-    if rows.empty:
-        return
-    render_priority_dataframe(
-        rows.head(6),
-        title="Command center maturity priorities",
-        priority_columns=[
-            "RANK", "CAPABILITY", "STATUS", "WHERE_IT_LANDS",
-            "WHY_IT_MATTERS", "NEXT_ACTION",
-        ],
-        sort_by=["RANK"],
-        ascending=True,
-        raw_label="All command center maturity priorities",
-        height=240,
-        max_rows=6,
-    )
-
-
 def _render_executive_operating_snapshot(
     summary: dict | None,
     *,
@@ -2061,14 +1984,14 @@ def _render_executive_operating_snapshot(
             ("Scope", company),
             ("Window", f"{int(days)}d"),
             ("Rate", f"${safe_float(credit_price):,.2f}"),
-            ("Evidence", "On demand"),
+            ("Telemetry", "On demand"),
         )
     else:
         metrics = (
-            ("Score", f"{safe_int(summary['score'])}/100"),
+            ("State", str(summary.get("state") or _platform_score_state(summary["score"]))),
             ("Spend", f"${credits_to_dollars(summary['current_credits'], credit_price):,.0f}"),
             ("Alerts", f"{summary['critical_high_alerts']:,}"),
-            ("Deploy", f"{summary['migration_blockers']:,}"),
+            ("Data Gaps", f"{summary['migration_blockers']:,}"),
         )
     render_shell_kpi_row(metrics)
 
@@ -2082,11 +2005,11 @@ def _source_health_rows(snapshot: dict) -> pd.DataFrame:
         if matching_error:
             state = "Limited"
             evidence = matching_error.split(":", 1)[-1].strip() or matching_error
-            action = "Open the source section or Setup Status to verify access and deployment."
+            action = "Open the source section or Data Health to check access and status."
         elif isinstance(frame, pd.DataFrame) and not frame.empty:
             state = "Loaded"
             evidence = f"{len(frame):,} row(s) loaded."
-            action = "Use this evidence for executive triage and drill-through."
+            action = "Use this telemetry for executive triage and drill-through."
         else:
             state = "No Rows"
             evidence = "Source was reachable but returned no rows in scope."
@@ -2101,7 +2024,7 @@ def _source_health_rows(snapshot: dict) -> pd.DataFrame:
     return pd.DataFrame(
         [
             _state("Cost summary unavailable", "Cost cockpit", "cost"),
-            _state("Alert evidence unavailable", "Alert evidence", "alerts"),
+            _state("Alert telemetry unavailable", "Alert telemetry", "alerts"),
             _state("Action queue unavailable", "Action queue", "queue"),
             _state("Migration ledger unavailable", "Migration ledger", "migration"),
         ]
@@ -2136,7 +2059,7 @@ def _load_executive_snapshot(company: str, environment: str, days: int) -> bool:
         snapshot["alerts"] = _load_alerts(session, company, environment, int(days))
     except Exception as exc:
         snapshot["alerts"] = pd.DataFrame()
-        snapshot["errors"].append(f"Alert evidence unavailable: {format_snowflake_error(exc)}")
+        snapshot["errors"].append(f"Alert telemetry unavailable: {format_snowflake_error(exc)}")
     try:
         snapshot["queue"] = load_action_queue(session)
     except Exception as exc:
@@ -2249,7 +2172,6 @@ def render() -> None:
 
     snapshot = st.session_state.get("executive_landing_snapshot")
     if not isinstance(snapshot, dict) or not _snapshot_matches_scope(snapshot, company, environment, int(days)):
-        _render_platform_operating_score(summary)
         return
 
     for err in snapshot.get("errors", []):
@@ -2263,23 +2185,20 @@ def render() -> None:
     limited_sources = int(source_health["STATE"].eq("Limited").sum())
     no_row_sources = int(source_health["STATE"].eq("No Rows").sum())
     render_shell_snapshot((
-        ("Sources Loaded", f"{loaded_sources}/4"),
-        ("Limited Sources", f"{limited_sources}"),
-        ("No-Row Sources", f"{no_row_sources}"),
+        ("Inputs Ready", f"{loaded_sources}/4"),
+        ("Limited Inputs", f"{limited_sources}"),
+        ("No-Row Inputs", f"{no_row_sources}"),
     ))
-    with st.expander("Executive source health", expanded=False):
+    with st.expander("Executive Data Health", expanded=False):
         render_priority_dataframe(
             source_health,
-            title="Executive source health",
+            title="Executive data health",
             priority_columns=["SOURCE", "STATE", "EVIDENCE", "NEXT_ACTION"],
             sort_by=["STATE", "SOURCE"],
             ascending=[True, True],
-            raw_label="All executive source health rows",
+            raw_label="All executive data-health rows",
             height=220,
         )
-
-    _render_platform_operating_score(summary)
-    _render_command_intelligence_maturity()
 
     render_priority_dataframe(
         _decision_rows(summary),
@@ -2296,7 +2215,7 @@ def render() -> None:
         _nav_button(
             "Alert Automation",
             "Alert Center",
-            state_updates={"alert_center_active_view": "Automation Readiness"},
+            state_updates={"alert_center_active_view": "Automation Health"},
         )
     with n2:
         _nav_button("FinOps Controls", "Cost & Contract", workflow_key="cost_contract_workflow", workflow="FinOps Control Center")
@@ -2304,14 +2223,14 @@ def render() -> None:
         _nav_button("DBA Queue", "DBA Control Room")
     with n4:
         _nav_button(
-            "Setup Status",
+            "Data Health",
             "Change & Drift",
             workflow_key="change_drift_workflow",
             workflow="Controlled DBA actions",
             state_updates={
                 "dba_tools_focus": "Cost",
-                "dba_tools_group_selector": "Cost & Setup",
-                "dba_tools_tool_selector_Cost & Setup": "Setup Status",
+                "dba_tools_group_selector": "Cost & Health",
+                "dba_tools_tool_selector_Cost & Health": "Data Health",
             },
         )
 

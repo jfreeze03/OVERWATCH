@@ -23,11 +23,7 @@ from .company_filter import (
     get_active_environment,
     get_environment_db_patterns,
 )
-from .owner_directory import (
-    OWNER_DIRECTORY_VIEW,
-    default_owner_directory,
-    resolve_owner_context,
-)
+from .monitor_context import resolve_owner_context
 from .query import (
     format_snowflake_error,
     run_query,
@@ -79,17 +75,17 @@ DEFAULT_ALERT_RULES = [
         "SLA_HOURS": 24,
         "OWNER": "DBA / FinOps",
         "ROUTE": "Cost & Contract",
-        "RUNBOOK": "Explain the bill movement, identify owner-backed drivers, and route savings actions.",
+        "RUNBOOK": "Explain the bill movement, identify route-backed drivers, and route savings actions.",
     },
     {
         "RULE_ID": "COST_SAVINGS_VERIFIER_FAILURE",
         "CATEGORY": "Cost Control",
-        "ALERT_TYPE": "Cost Savings Verification Failure",
+        "ALERT_TYPE": "Cost Savings Measurement Failure",
         "DEFAULT_SEVERITY": "High",
         "SLA_HOURS": 8,
         "OWNER": "DBA / FinOps",
         "ROUTE": "Cost & Contract",
-        "RUNBOOK": "Inspect the savings verifier task, keep savings estimated, and restore ledger-backed verification before claiming value.",
+        "RUNBOOK": "Inspect the savings measurement task, keep savings estimated, and restore ledger-backed status before claiming value.",
     },
     {
         "RULE_ID": "QUERY_HIGH_ERROR_RATE",
@@ -97,9 +93,9 @@ DEFAULT_ALERT_RULES = [
         "ALERT_TYPE": "High Query Error Rate",
         "DEFAULT_SEVERITY": "High",
         "SLA_HOURS": 8,
-        "OWNER": "DBA / Workload Owner",
+        "OWNER": "DBA / Workload Route",
         "ROUTE": "Workload Operations",
-        "RUNBOOK": "Group failures by error code/query text and assign the owning team.",
+        "RUNBOOK": "Group failures by error code/query text and route the response.",
     },
     {
         "RULE_ID": "TASK_FAILURE",
@@ -107,9 +103,9 @@ DEFAULT_ALERT_RULES = [
         "ALERT_TYPE": "Task Failure",
         "DEFAULT_SEVERITY": "High",
         "SLA_HOURS": 8,
-        "OWNER": "DBA / Pipeline Owner",
+        "OWNER": "DBA / Pipeline Route",
         "ROUTE": "Workload Operations",
-        "RUNBOOK": "Review task graph impact, retry only after root cause, and verify the next run.",
+        "RUNBOOK": "Review task graph impact, retry only after root cause, and confirm the next run.",
     },
     {
         "RULE_ID": "PROCEDURE_FAILURE_OR_SPIKE",
@@ -117,9 +113,9 @@ DEFAULT_ALERT_RULES = [
         "ALERT_TYPE": "Stored Procedure Failure / Runtime Spike",
         "DEFAULT_SEVERITY": "High",
         "SLA_HOURS": 8,
-        "OWNER": "DBA / Procedure Owner",
+        "OWNER": "DBA / Procedure Route",
         "ROUTE": "Workload Operations",
-        "RUNBOOK": "Compare release windows, inspect child queries, and verify runtime/cost return to baseline.",
+        "RUNBOOK": "Compare release windows, inspect child queries, and confirm runtime/cost return to baseline.",
     },
     {
         "RULE_ID": "WAREHOUSE_PRESSURE",
@@ -129,27 +125,27 @@ DEFAULT_ALERT_RULES = [
         "SLA_HOURS": 24,
         "OWNER": "DBA / Platform",
         "ROUTE": "Warehouse Health",
-        "RUNBOOK": "Inspect queue/spill evidence and route changed-only warehouse setting recommendations.",
+        "RUNBOOK": "Inspect queue/spill telemetry and route changed-only warehouse setting recommendations.",
     },
     {
         "RULE_ID": "GRANT_REVOKE_ACTIVITY",
-        "CATEGORY": "Change Control",
+        "CATEGORY": "Change Monitoring",
         "ALERT_TYPE": "Grant/Revoke Activity",
         "DEFAULT_SEVERITY": "Medium",
         "SLA_HOURS": 24,
         "OWNER": "DBA / Security",
         "ROUTE": "Security Posture",
-        "RUNBOOK": "Verify least-privilege approval, owner, ticket, approver, and review date.",
+        "RUNBOOK": "Check least-privilege telemetry, route, reviewer, and review date.",
     },
     {
         "RULE_ID": "WAREHOUSE_SETTING_CHANGE",
-        "CATEGORY": "Change Control",
+        "CATEGORY": "Change Monitoring",
         "ALERT_TYPE": "Warehouse Setting Change",
         "DEFAULT_SEVERITY": "Medium",
         "SLA_HOURS": 24,
         "OWNER": "DBA / Platform",
         "ROUTE": "Change & Drift",
-        "RUNBOOK": "Verify changed-only SQL, approval, rollback SQL, and post-change evidence.",
+        "RUNBOOK": "Check changed-only action, rollback path, and post-change telemetry.",
     },
     {
         "RULE_ID": "SECURITY_PRIVILEGE_ESCALATION",
@@ -157,9 +153,9 @@ DEFAULT_ALERT_RULES = [
         "ALERT_TYPE": "Privileged Role Grant",
         "DEFAULT_SEVERITY": "Critical",
         "SLA_HOURS": 4,
-        "OWNER": "Security Approver",
+        "OWNER": "Security Review",
         "ROUTE": "Security Posture",
-        "RUNBOOK": "Validate ticket, approver, MFA posture, service-account purpose, and review date before accepting privileged role expansion.",
+        "RUNBOOK": "Check ticket, reviewer, MFA posture, service-account purpose, and review date before accepting privileged role expansion.",
     },
     {
         "RULE_ID": "SECURITY_SENSITIVE_EXPORT",
@@ -169,7 +165,7 @@ DEFAULT_ALERT_RULES = [
         "SLA_HOURS": 8,
         "OWNER": "DBA / Security",
         "ROUTE": "Security Posture",
-        "RUNBOOK": "Inspect source IP, role, query_id, destination stage, object access, masking policy coverage, and owner approval.",
+        "RUNBOOK": "Inspect source IP, role, query_id, destination stage, object access, masking policy coverage, and review status.",
     },
     {
         "RULE_ID": "PERF_QUERY_PRESSURE",
@@ -179,7 +175,7 @@ DEFAULT_ALERT_RULES = [
         "SLA_HOURS": 8,
         "OWNER": "DBA / Platform",
         "ROUTE": "Workload Operations",
-        "RUNBOOK": "Open Query Diagnosis or Contention Center with query_id, queue/spill/lock evidence, owner, and specific optimization path.",
+        "RUNBOOK": "Open Query Diagnosis or Contention Center with query_id, queue/spill/lock telemetry, route, and specific optimization path.",
     },
     {
         "RULE_ID": "PIPELINE_COPY_FAILURE",
@@ -197,9 +193,9 @@ DEFAULT_ALERT_RULES = [
         "ALERT_TYPE": "Freshness SLA Missed",
         "DEFAULT_SEVERITY": "High",
         "SLA_HOURS": 8,
-        "OWNER": "Data Owner",
+        "OWNER": "Data Route",
         "ROUTE": "Workload Operations",
-        "RUNBOOK": "Use configured database/schema/table/column/check threshold, prove latest update/load volume, and route to data owner.",
+        "RUNBOOK": "Use configured database/schema/table/column/check threshold, confirm latest update/load volume, and route to the data team.",
     },
     {
         "RULE_ID": "OPT_UNUSED_OR_OVERSIZED_WAREHOUSE",
@@ -209,7 +205,7 @@ DEFAULT_ALERT_RULES = [
         "SLA_HOURS": 24,
         "OWNER": "DBA / FinOps",
         "ROUTE": "Optimization Advisor",
-        "RUNBOOK": "Attach metering/query evidence, owner approval, rollback SQL, and expected savings before changing warehouse settings.",
+        "RUNBOOK": "Record metering/query telemetry, review status, rollback path, and expected savings before changing warehouse settings.",
     },
 ]
 ISSUE_COLUMNS = [
@@ -383,7 +379,7 @@ def normalize_alert_rule_frame(df: pd.DataFrame, *, source: str = "Static Defaul
         "SLA_HOURS": 24,
         "OWNER": "DBA",
         "ROUTE": "Alert Center",
-        "RUNBOOK": "Review alert evidence and route confirmed findings to the DBA action queue.",
+        "RUNBOOK": "Review alert telemetry and route confirmed findings to the DBA action queue.",
         "IS_ACTIVE": True,
         "UPDATED_AT": "",
         "UPDATED_BY": "",
@@ -554,7 +550,7 @@ def build_alert_rule_update_sql(
     if sla_int < 1 or sla_int > 168:
         raise ValueError("SLA hours must be between 1 and 168.")
     if not str(owner or "").strip():
-        raise ValueError("Owner is required.")
+        raise ValueError("Route is required.")
     if not str(route or "").strip():
         raise ValueError("Route is required.")
     if len(str(runbook or "").strip()) < 15:
@@ -794,7 +790,7 @@ def build_alert_digest_body(
         f"- Critical/high alerts: {summary['critical_high']}",
         f"- Overdue alerts: {summary['overdue']}",
         f"- Due soon alerts: {summary['due_soon']}",
-        f"- Needs named owner: {summary['needs_owner']}",
+        f"- Needs route: {summary['needs_owner']}",
         "",
         "Escalate first:",
     ]
@@ -807,13 +803,13 @@ def build_alert_digest_body(
             severity = normalize_alert_severity(_row_value(row, "SEVERITY", default="Medium"))
             sla_state = _row_value(row, "SLA_STATE", default="Within SLA")
             owner = _row_value(row, "OWNER", default="DBA")
-            action = _row_value(row, "SUGGESTED_ACTION", default="Review alert evidence and route to action queue.")
-            lines.append(f"- [{severity} / {sla_state}] {alert_type} on {entity}; owner={owner}; action={action}")
+            action = _row_value(row, "SUGGESTED_ACTION", default="Review alert telemetry and route to action queue.")
+            lines.append(f"- [{severity} / {sla_state}] {alert_type} on {entity}; route={owner}; action={action}")
     lines.extend([
         "",
         "Required operator handling:",
         "- Route confirmed alerts to the Action Queue.",
-        "- Add ticket, owner, approver, and verification evidence before closure.",
+        "- Add ticket, route, reviewer, and telemetry status before closure.",
         "- Mark false positives Ignored with reason, not silently deleted.",
     ])
     return "\n".join(lines)
@@ -953,7 +949,7 @@ def build_alert_email_body(row: pd.Series | dict, company: str = "ALFA") -> str:
     severity = normalize_alert_severity(_row_value(row, "SEVERITY", default="Medium"))
     message = _row_value(row, "MESSAGE", "DETAIL", default="No alert detail captured.")
     action = _row_value(row, "SUGGESTED_ACTION", "NEXT_ACTION", default="Review the Alert Center issue and route it through the DBA action queue.")
-    proof = _row_value(row, "PROOF_QUERY", default="No proof query captured.")
+    proof = _row_value(row, "PROOF_QUERY", default="No telemetry query captured.")
     return "\n".join([
         f"Company: {company_text}",
         f"Environment: {environment}",
@@ -967,7 +963,7 @@ def build_alert_email_body(row: pd.Series | dict, company: str = "ALFA") -> str:
         "Next action:",
         action,
         "",
-        "Proof query:",
+        "Telemetry query:",
         proof,
     ])
 
@@ -1239,7 +1235,7 @@ def normalize_control_room_issue_rows(exceptions: pd.DataFrame) -> pd.DataFrame:
     view["SIGNAL"] = _first_series(rows, "SIGNAL", "Signal", default="Control-room exception").astype(str)
     view["ENTITY"] = _first_series(rows, "ENTITY", "Entity", default="Snowflake account").astype(str)
     view["DETAIL"] = _first_series(rows, "DETAIL", "Evidence", default="").astype(str)
-    view["NEXT_ACTION"] = _first_series(rows, "NEXT_ACTION", "Action", default="Review the control-room evidence.").astype(str)
+    view["NEXT_ACTION"] = _first_series(rows, "NEXT_ACTION", "Action", default="Review the control-room telemetry.").astype(str)
     view["OWNER"] = "DBA"
     view["EMAIL_TARGET"] = DEFAULT_ALERT_RECIPIENT
     view["DELIVERY_STATUS"] = "Dashboard Signal"
@@ -1451,11 +1447,11 @@ def _alert_recovery_sql_guidance(row: pd.Series | dict, reliability_kind: str) -
     owner = _row_value(row, "OWNER", "ESCALATION_TARGET", default="DBA / owner")
     noun = "task" if reliability_kind == "task" else "stored procedure"
     return "\n".join([
-        f"-- Governed {noun} recovery for {entity}",
-        "-- Do not perform manual retry from Alert Center.",
-        f"-- Assign owner/approver: {owner}",
-        "-- Required order: prove root cause, document ticket, obtain owner approval, then recover from Workload Operations.",
-        "-- After recovery, run the read-only verification query attached to this action and paste the result into closure evidence.",
+        f"-- reviewed {noun} recovery for {entity}",
+        "-- Do not perform retry from Alert Center.",
+        f"-- Assign DBA route/reviewer: {owner}",
+        "-- Required order: confirm root cause, document ticket, complete review, then recover from Workload Operations.",
+        "-- After recovery, run the read-only status query attached to this action and record the result in closure status.",
     ])
 
 
@@ -1463,11 +1459,11 @@ def _alert_cost_verifier_sql_guidance(row: pd.Series | dict) -> str:
     entity = _row_value(row, "ENTITY_NAME", "ENTITY", default="OVERWATCH_COST_SAVINGS_VERIFY")
     owner = _row_value(row, "OWNER", "ESCALATION_TARGET", default="DBA / FinOps")
     return "\n".join([
-        f"-- Governed cost savings verifier recovery for {entity}",
-        "-- Do not claim cost savings while the verifier task is failing.",
-        f"-- Assign owner/approver: {owner}",
-        "-- Required order: inspect TASK_HISTORY, fix verifier privileges/schedule/procedure errors, document the ticket, then verify a clean ledger run.",
-        "-- If task recovery requires schedule, resume, or procedure changes, execute from the approved Workload Operations/Admin workflow with audit evidence.",
+        f"-- reviewed cost savings measurement recovery for {entity}",
+        "-- Do not claim cost savings while the measurement task is failing.",
+        f"-- Assign route/reviewer: {owner}",
+        "-- Required order: inspect TASK_HISTORY, fix measurement privileges/schedule/procedure errors, document the ticket, then confirm a clean ledger run.",
+        "-- If task recovery requires schedule, resume, or procedure changes, execute from the reviewed Workload Operations/Admin workflow with audit telemetry.",
     ])
 
 
@@ -1478,7 +1474,6 @@ def alert_history_to_actions(df_alerts: pd.DataFrame, company: str = "ALFA") -> 
 
     actions = []
     alerts = normalize_alert_frame(df_alerts, company=company)
-    owner_directory = default_owner_directory()
     for _, row in alerts.head(500).iterrows():
         alert_id = _row_value(row, "ALERT_ID", "ALERT_TS")
         category = _row_value(row, "CATEGORY", "ALERT_TYPE", default="Alert")
@@ -1488,9 +1483,9 @@ def alert_history_to_actions(df_alerts: pd.DataFrame, company: str = "ALFA") -> 
         reliability_kind = _alert_reliability_kind(row)
         is_cost_verifier = _alert_is_cost_verifier(row)
         is_recovery = reliability_kind in {"task", "procedure"}
-        governed_recovery = is_recovery or is_cost_verifier
+        reviewed_recovery = is_recovery or is_cost_verifier
         action_category = "Task & Procedure Reliability" if is_recovery else "Cost Control" if is_cost_verifier else category
-        entity_type = "Cost Verification Task" if is_cost_verifier else {
+        entity_type = "Cost Measurement Task" if is_cost_verifier else {
             "task": "Task",
             "procedure": "Stored Procedure",
         }.get(reliability_kind, "Alert Entity")
@@ -1504,7 +1499,6 @@ def alert_history_to_actions(df_alerts: pd.DataFrame, company: str = "ALFA") -> 
         owner = _row_value(row, "OWNER", default="DBA")
         owner_context = resolve_owner_context(
             row,
-            directory=owner_directory,
             entity=entity,
             entity_type=entity_type,
             owner=owner,
@@ -1521,29 +1515,29 @@ def alert_history_to_actions(df_alerts: pd.DataFrame, company: str = "ALFA") -> 
         suggested_action = _row_value(row, "SUGGESTED_ACTION", default="Review the Alert Center issue and route it through the DBA action queue.")
         if is_cost_verifier:
             suggested_action = (
-                f"{suggested_action} Keep savings estimated until the verifier task has a clean run ledger, "
+                f"{suggested_action} Keep savings estimated until the measurement task has a clean run ledger, "
                 "then re-run closure review in Cost & Contract."
             )
             sql_fix = _alert_cost_verifier_sql_guidance(row)
             recovery_evidence = (
-                "Required closure evidence: TASK_HISTORY error/root cause, owner approval, successful verifier task run, "
-                f"and refreshed savings verification ledger for {entity}. Alert detail: {message}"
+                "Required closure status: TASK_HISTORY error/root cause, successful measurement task run, "
+                f"and refreshed savings measurement ledger for {entity}. Alert detail: {message}"
             )
         elif is_recovery:
             suggested_action = (
-                f"{suggested_action} Govern recovery through the action queue: assign owner/ticket, prove root cause, "
-                "obtain owner approval before manual recovery, and verify the next run."
+                f"{suggested_action} Track recovery through the action queue: assign route/ticket, confirm root cause, "
+                "complete review before recovery, and confirm the next run."
             )
             sql_fix = _alert_recovery_sql_guidance(row, reliability_kind)
             recovery_evidence = (
-                "Required closure evidence: root cause, owner approval, recovery timestamp, and a successful next-run "
-                f"verification for {entity}. Alert detail: {message}"
+                "Required closure status: root cause, recovery timestamp, and a successful next-run "
+                f"status check for {entity}. Alert detail: {message}"
             )
         else:
-            sql_fix = "-- Review alert evidence before applying a fix."
+            sql_fix = "-- Review alert telemetry before applying a fix."
             recovery_evidence = ""
         action = {
-            "Action ID": make_action_id(action_category if governed_recovery else "Alert", entity, f"{alert_type}|{message}|{alert_id}"),
+            "Action ID": make_action_id(action_category if reviewed_recovery else "Alert", entity, f"{alert_type}|{message}|{alert_id}"),
             "Source": "Alert Center",
             "Severity": normalize_alert_severity(_row_value(row, "SEVERITY", default="Medium")),
             "Category": action_category,
@@ -1562,18 +1556,17 @@ def alert_history_to_actions(df_alerts: pd.DataFrame, company: str = "ALFA") -> 
             "Owner Email": owner_context.get("OWNER_EMAIL", ""),
             "Oncall Primary": owner_context.get("ONCALL_PRIMARY", ""),
             "Oncall Secondary": owner_context.get("ONCALL_SECONDARY", ""),
-            "Approval Group": approval_group,
+            "Review Group": approval_group,
             "Escalation Target": escalation_target,
             "Owner Source": owner_context.get("OWNER_SOURCE", ""),
             "Owner Evidence": owner_context.get("OWNER_EVIDENCE", ""),
         }
-        if governed_recovery:
+        if reviewed_recovery:
             action.update({
-                "Approver": approval_group,
-                "Owner Approval Status": "Requested",
-                "Owner Approval Note": (
+                "Verification Status": "Requested",
+                "Verification Note": (
                     "Alert routed from Alert Center; retry, recovery, or claimed savings closure requires root-cause "
-                    "owner approval and post-recovery verification."
+                    "status and post-recovery telemetry."
                 ),
                 "Recovery SLA State": _alert_recovery_sla_state(row),
                 "Recovery SLA Target Hours": float(sla_target_hours),
@@ -1709,7 +1702,7 @@ def build_alert_escalation_ack_sql(
     table: str = ALERT_TABLE,
 ) -> str:
     if len(str(note or "").strip()) < 10:
-        raise ValueError("Escalation acknowledgment requires a note with evidence or owner context.")
+        raise ValueError("Escalation acknowledgment requires a note with telemetry or route context.")
     alert_id_int = int(alert_id)
     available = {column.upper() for column in (columns or set())}
     set_parts = []
@@ -1974,7 +1967,7 @@ def build_alert_email_delivery_procedure_sql(
     proc_fqn = f"{db_safe}.{schema_safe}.SP_OVERWATCH_SEND_ALERT_DIGEST"
     integration = str(notification_integration or "OVERWATCH_EMAIL_INT").replace("'", "''")
     default_recipient = sql_literal(email_target, 500)
-    return f"""-- Optional governed email sender for Alert Center.
+    return f"""-- Optional reviewed email sender for Alert Center.
 -- Prerequisite: create and approve notification integration {integration} outside OVERWATCH.
 -- Keep P_DRY_RUN => TRUE until the integration and recipient allow-list are verified.
 CREATE OR REPLACE PROCEDURE {proc_fqn}(
@@ -2063,7 +2056,7 @@ BEGIN
         (P_COMPANY, P_ENVIRONMENT, alert_ids, alert_count, 'EMAIL', P_RECIPIENT,
          subject, body, delivery_status, CURRENT_USER(),
          IFF(P_DRY_RUN, 'Dry-run replay package prepared; SYSTEM$SEND_EMAIL was not called.',
-                       'Delivered through approved Snowflake email notification integration {integration}.'));
+                       'Delivered through Snowflake email notification integration {integration}.'));
 
     UPDATE {db_safe}.{schema_safe}.{table_safe}
     SET
@@ -2146,14 +2139,14 @@ def build_alert_triage_view_sql(
 WITH base AS (
     SELECT
         a.*,
-        COALESCE(od.OWNER_NAME, r.OWNER, a.OWNER, 'DBA') AS ROUTED_OWNER,
-        od.OWNER_EMAIL,
-        od.ONCALL_PRIMARY,
-        od.ONCALL_SECONDARY,
-        COALESCE(od.APPROVAL_GROUP, r.OWNER, a.OWNER, 'DBA Lead') AS APPROVAL_GROUP,
-        COALESCE(od.ESCALATION_TARGET, od.APPROVAL_GROUP, r.OWNER, a.OWNER, 'DBA Lead') AS OWNER_ESCALATION_TARGET,
-        CASE WHEN od.OWNER_KEY IS NOT NULL THEN 'OWNER_DIRECTORY:' || od.OWNER_KEY ELSE 'ALERT_RULE' END AS OWNER_SOURCE,
-        CASE WHEN od.OWNER_KEY IS NOT NULL THEN 'Matched ' || od.ENTITY_TYPE || ' pattern ' || od.ENTITY_PATTERN ELSE 'Matched alert rule owner' END AS OWNER_EVIDENCE,
+        COALESCE(r.OWNER, a.OWNER, 'DBA') AS ROUTED_OWNER,
+        NULL AS OWNER_EMAIL,
+        COALESCE(r.OWNER, a.OWNER, 'DBA On-Call') AS ONCALL_PRIMARY,
+        NULL AS ONCALL_SECONDARY,
+        NULL AS APPROVAL_GROUP,
+        COALESCE(r.OWNER, a.ESCALATED_TO, a.OWNER, 'DBA Lead') AS OWNER_ESCALATION_TARGET,
+        CASE WHEN r.OWNER IS NOT NULL THEN 'ALERT_RULE' ELSE 'ALERT_ROW' END AS OWNER_SOURCE,
+        CASE WHEN r.OWNER IS NOT NULL THEN 'Matched alert rule owner' ELSE 'Using alert row owner or DBA fallback' END AS OWNER_EVIDENCE,
         COALESCE(
             r.SLA_HOURS,
             CASE UPPER(COALESCE(a.SEVERITY, 'Medium'))
@@ -2170,24 +2163,9 @@ WITH base AS (
     LEFT JOIN {db}.{schema}.OVERWATCH_ALERT_RULES r
       ON UPPER(COALESCE(a.ALERT_TYPE, a.CATEGORY, '')) = UPPER(COALESCE(r.ALERT_TYPE, r.CATEGORY, ''))
      AND COALESCE(r.IS_ACTIVE, TRUE)
-    LEFT JOIN {db}.{schema}.{OWNER_DIRECTORY_VIEW} od
-      ON (
-          od.ENTITY_TYPE IN ('GLOBAL', 'ALERT')
-          OR od.ENTITY_TYPE = UPPER(COALESCE(a.CATEGORY, r.CATEGORY, ''))
-          OR (od.ENTITY_TYPE = 'COST_CONTROL' AND UPPER(COALESCE(a.CATEGORY, a.ALERT_TYPE, '')) LIKE '%COST%')
-          OR (od.ENTITY_TYPE = 'TASK' AND UPPER(COALESCE(a.ALERT_TYPE, a.CATEGORY, a.ENTITY_NAME, '')) LIKE '%TASK%')
-          OR (od.ENTITY_TYPE = 'PROCEDURE' AND UPPER(COALESCE(a.ALERT_TYPE, a.CATEGORY, a.ENTITY_NAME, '')) LIKE '%PROCEDURE%')
-          OR (od.ENTITY_TYPE = 'WAREHOUSE' AND UPPER(COALESCE(a.ALERT_TYPE, a.CATEGORY, a.ENTITY_NAME, '')) LIKE '%WAREHOUSE%')
-          OR (od.ENTITY_TYPE = 'SECURITY' AND UPPER(COALESCE(a.ALERT_TYPE, a.CATEGORY, '')) REGEXP 'GRANT|REVOKE|ROLE|SECURITY')
-      )
-     AND (
-          UPPER(COALESCE(a.ENTITY_NAME, a.ENTITY, '')) LIKE REPLACE(UPPER(od.ENTITY_PATTERN), '*', '%')
-          OR UPPER(COALESCE(a.ALERT_TYPE, a.CATEGORY, '')) LIKE REPLACE(UPPER(od.ENTITY_PATTERN), '*', '%')
-          OR od.ENTITY_PATTERN IN ('*', '%')
-     )
     QUALIFY ROW_NUMBER() OVER (
         PARTITION BY COALESCE(TO_VARCHAR(a.ALERT_ID), TO_VARCHAR(a.ALERT_TS), COALESCE(a.ENTITY_NAME, a.ENTITY, 'UNKNOWN'))
-        ORDER BY COALESCE(od.MATCH_PRIORITY, 0) DESC, od.OWNER_KEY
+        ORDER BY COALESCE(r.SLA_HOURS, 0) DESC
     ) = 1
 ),
 sla AS (
@@ -2293,7 +2271,7 @@ def build_alert_acknowledgement_insert_sql(
     """Return an insert into ALERT_ACKNOWLEDGEMENTS for auditable alert lifecycle actions."""
     note_clean = str(note or "").strip()
     if len(note_clean) < 5:
-        raise ValueError("Alert acknowledgement requires a note with owner, ticket, or investigation context.")
+        raise ValueError("Alert acknowledgement requires a note with route, ticket, or investigation context.")
     checkpoint_expr = "NULL"
     if next_checkpoint_hours is not None:
         checkpoint_expr = f"DATEADD('hour', {max(1, int(next_checkpoint_hours))}, CURRENT_TIMESTAMP())"
@@ -2341,7 +2319,9 @@ def build_alert_remediation_log_insert_sql(
     if not action_type_clean:
         raise ValueError("Alert remediation log requires an action type.")
     mode = str(remediation_mode or "RECOMMEND").upper().replace(" ", "_")
-    if mode not in {"OFF", "RECOMMEND", "APPROVAL_REQUIRED", "AUTO"}:
+    if mode in {"APPROVAL_REQUIRED", "VERIFICATION_REQUIRED"}:
+        mode = "STATUS_REVIEW"
+    if mode not in {"OFF", "RECOMMEND", "STATUS_REVIEW", "AUTO"}:
         mode = "RECOMMEND"
     approved_at_expr = "CURRENT_TIMESTAMP()" if str(approved_by or "").strip() else "NULL"
     approved_by_expr = f"NULLIF({sql_literal(approved_by, 200)}, '')"
@@ -2398,7 +2378,7 @@ def build_alert_threshold_seed_rows() -> list[dict[str, object]]:
             "THRESHOLD_VALUE": 1,
             "BASELINE_WINDOW_DAYS": 7,
             "CURRENT_WINDOW_MINUTES": 1440,
-            "OWNER": "Security Approver",
+            "OWNER": "Security Review",
             "NOTIFICATION_CHANNEL": "DBA_SECURITY",
         },
         {
@@ -2431,7 +2411,7 @@ def build_alert_threshold_seed_rows() -> list[dict[str, object]]:
             "THRESHOLD_VALUE": 1,
             "BASELINE_WINDOW_DAYS": 7,
             "CURRENT_WINDOW_MINUTES": 1440,
-            "OWNER": "DBA / Pipeline Owner",
+            "OWNER": "DBA / Pipeline Route",
             "NOTIFICATION_CHANNEL": "PIPELINE_ONCALL",
         },
         {
@@ -2442,7 +2422,7 @@ def build_alert_threshold_seed_rows() -> list[dict[str, object]]:
             "THRESHOLD_VALUE": 1,
             "BASELINE_WINDOW_DAYS": 7,
             "CURRENT_WINDOW_MINUTES": 1440,
-            "OWNER": "Data Owner",
+            "OWNER": "Data Route",
             "NOTIFICATION_CHANNEL": "DATA_QUALITY",
         },
         {
@@ -2460,7 +2440,7 @@ def build_alert_threshold_seed_rows() -> list[dict[str, object]]:
 
 
 def build_alert_data_quality_check_seed_rows() -> list[dict[str, object]]:
-    """Starter metadata-driven data-quality checks for DBA-owned configuration."""
+    """Starter metadata-driven data-quality checks for DBA-managed configuration."""
     return [
         {
             "CHECK_KEY": "DQ_ORDER_FRESHNESS",
@@ -2472,7 +2452,7 @@ def build_alert_data_quality_check_seed_rows() -> list[dict[str, object]]:
             "THRESHOLD_VALUE": 24,
             "COMPARISON_OPERATOR": ">",
             "SEVERITY": "High",
-            "OWNER": "Data Owner",
+            "OWNER": "Data Route",
             "NOTIFICATION_CHANNEL": "DATA_QUALITY",
             "ENABLED": False,
         },
@@ -2486,7 +2466,7 @@ def build_alert_data_quality_check_seed_rows() -> list[dict[str, object]]:
             "THRESHOLD_VALUE": 0,
             "COMPARISON_OPERATOR": ">",
             "SEVERITY": "Critical",
-            "OWNER": "Data Owner",
+            "OWNER": "Data Route",
             "NOTIFICATION_CHANNEL": "DATA_QUALITY",
             "ENABLED": False,
         },
@@ -2500,7 +2480,7 @@ def build_alert_data_quality_check_seed_rows() -> list[dict[str, object]]:
             "THRESHOLD_VALUE": 35,
             "COMPARISON_OPERATOR": ">",
             "SEVERITY": "High",
-            "OWNER": "Data Owner",
+            "OWNER": "Data Route",
             "NOTIFICATION_CHANNEL": "DATA_QUALITY",
             "ENABLED": False,
         },
@@ -2618,10 +2598,10 @@ USING (
       WHEN UPPER(COALESCE(a.CATEGORY, '')) LIKE '%COST%' THEN 'Potential spend or contract burn impact'
       WHEN UPPER(COALESCE(a.CATEGORY, '')) LIKE '%SECURITY%' THEN 'Potential access, data exposure, or control-plane impact'
       WHEN UPPER(COALESCE(a.CATEGORY, a.ALERT_TYPE, '')) REGEXP 'TASK|PIPELINE|PROCEDURE' THEN 'Potential production pipeline SLA impact'
-      ELSE 'Operational risk requires owner triage'
+      ELSE 'Operational risk requires route triage'
     END AS IMPACT_ESTIMATE,
     COALESCE(a.ROUTED_OWNER, a.OWNER, cfg.OWNER, 'DBA') AS OWNER,
-    COALESCE(a.SUGGESTED_ACTION, a.ALERT_RUNBOOK, 'Review alert evidence and assign owner.') AS RECOMMENDED_ACTION,
+    COALESCE(a.SUGGESTED_ACTION, a.ALERT_RUNBOOK, 'Review alert telemetry and assign route.') AS RECOMMENDED_ACTION,
     CASE
       WHEN UPPER(COALESCE(a.ALERT_TYPE, a.CATEGORY, '')) LIKE '%TASK%' THEN 'TASK'
       WHEN UPPER(COALESCE(a.ALERT_TYPE, a.CATEGORY, '')) LIKE '%WAREHOUSE%' THEN 'WAREHOUSE'
@@ -2951,7 +2931,7 @@ def build_alert_signal_query_catalog(hours: int = 24) -> pd.DataFrame:
             "FRESHNESS": "Delayed ACCOUNT_USAGE telemetry",
             "OWNER": "DBA / Security",
             "WHY_THIS_MATTERS": "Password spray, stale automation secrets, or compromised users can show up before an incident ticket exists.",
-            "RECOMMENDED_ACTION": "Group by user, source IP, client, error code, and country; lock down risky routes through IAM/security owner approval.",
+            "RECOMMENDED_ACTION": "Group by user, source IP, client, error code, and country; lock down risky routes through IAM/security review.",
             "SQL": f"""
 WITH recent AS (
   SELECT USER_NAME, CLIENT_IP, REPORTED_CLIENT_TYPE, ERROR_CODE, COUNT(*) AS FAILED_LOGINS
@@ -2989,13 +2969,13 @@ LIMIT 100;
             "SEVERITY": "Critical",
             "TELEMETRY": "SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS / GRANTS_TO_ROLES",
             "FRESHNESS": "Delayed ACCOUNT_USAGE telemetry",
-            "OWNER": "Security Approver",
+            "OWNER": "Security Review",
             "WHY_THIS_MATTERS": "ACCOUNTADMIN, SECURITYADMIN, SYSADMIN, or ORGADMIN expansion is a control-plane event, not a routine alert.",
-            "RECOMMENDED_ACTION": "Validate ticket/approver, user purpose, MFA posture, and review date before accepting the grant.",
+            "RECOMMENDED_ACTION": "Check ticket/reviewer, user purpose, MFA posture, and review date before accepting the grant.",
             "SQL": f"""
 SELECT 'SECURITY_PRIVILEGE_ESCALATION' AS ALERT_KEY, 'Security' AS CATEGORY, 'Critical' AS SEVERITY,
        GRANTEE_NAME AS ENTITY_NAME, ROLE AS ROLE_NAME, CREATED_ON AS EVENT_TS,
-       GRANTED_BY, 'Privileged role grant requires approval proof and access review date.' AS RECOMMENDED_ACTION
+       GRANTED_BY, 'Privileged role grant requires review status and access review date.' AS RECOMMENDED_ACTION
 FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS
 WHERE CREATED_ON >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
   AND DELETED_ON IS NULL
@@ -3011,14 +2991,14 @@ LIMIT 100;
             "TELEMETRY": "SNOWFLAKE.ACCOUNT_USAGE.ACCESS_HISTORY + QUERY_HISTORY",
             "FRESHNESS": "Delayed ACCOUNT_USAGE telemetry",
             "OWNER": "DBA / Security",
-            "WHY_THIS_MATTERS": "Large exports and spikes against sensitive tables are early signs of data loss or governance drift.",
-            "RECOMMENDED_ACTION": "Confirm business purpose, destination stage, role used, masking policy coverage, and downstream owner approval.",
+            "WHY_THIS_MATTERS": "Large exports and spikes against sensitive tables are early signs of data loss or security drift.",
+            "RECOMMENDED_ACTION": "Confirm business purpose, destination stage, role used, masking policy coverage, and downstream status.",
             "SQL": f"""
 SELECT 'SECURITY_SENSITIVE_EXPORT' AS ALERT_KEY, 'Security' AS CATEGORY, 'High' AS SEVERITY,
        q.USER_NAME AS ENTITY_NAME, q.ROLE_NAME, q.WAREHOUSE_NAME, q.QUERY_ID,
        q.START_TIME AS EVENT_TS, q.BYTES_SCANNED AS CURRENT_VALUE,
        LEFT(q.QUERY_TEXT, 500) AS EVIDENCE,
-       'Review query text, destination stage, access history objects, and owner approval.' AS RECOMMENDED_ACTION
+       'Review query text, destination stage, access history objects, and status.' AS RECOMMENDED_ACTION
 FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
 WHERE q.START_TIME >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
   AND (q.QUERY_TEXT ILIKE 'COPY INTO @%' OR q.QUERY_TEXT ILIKE '%COPY INTO @%')
@@ -3033,7 +3013,7 @@ LIMIT 100;
             "TELEMETRY": "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY",
             "FRESHNESS": "Finalized metering windows can lag",
             "OWNER": "DBA / FinOps",
-            "WHY_THIS_MATTERS": "Warehouse metering is the official compute source of truth; spikes need owner, workload, and contract-burn context.",
+            "WHY_THIS_MATTERS": "Warehouse metering is the official compute source of truth; spikes need route, workload, and contract-burn context.",
             "RECOMMENDED_ACTION": "Compare current credits to 30-day baseline, then inspect query drivers and warehouse setting changes.",
             "SQL": f"""
 WITH current_window AS (
@@ -3072,7 +3052,7 @@ LIMIT 100;
             "FRESHNESS": "Use INFORMATION_SCHEMA for near-real-time triage; ACCOUNT_USAGE for historical baseline",
             "OWNER": "DBA / Platform",
             "WHY_THIS_MATTERS": "Queueing, remote spill, and lock waits are the difference between noisy SQL and production contention.",
-            "RECOMMENDED_ACTION": "Open Query Diagnosis or Contention Center with the exact query_id and warehouse evidence.",
+            "RECOMMENDED_ACTION": "Open Query Diagnosis or Contention Center with the exact query_id and warehouse telemetry.",
             "SQL": f"""
 SELECT 'PERF_QUERY_PRESSURE' AS ALERT_KEY, 'Performance' AS CATEGORY,
        CASE WHEN COALESCE(TRANSACTION_BLOCKED_TIME, 0) > 0 THEN 'Critical' ELSE 'High' END AS SEVERITY,
@@ -3082,7 +3062,7 @@ SELECT 'PERF_QUERY_PRESSURE' AS ALERT_KEY, 'Performance' AS CATEGORY,
        TRANSACTION_BLOCKED_TIME AS BLOCKED_MS,
        BYTES_SPILLED_TO_REMOTE_STORAGE,
        LEFT(QUERY_TEXT, 500) AS EVIDENCE,
-       'Review warehouse pressure, query plan, lock owner, pruning, spill, and owner-approved fix.' AS RECOMMENDED_ACTION
+       'Review warehouse pressure, query plan, lock route, pruning, spill, and status result.' AS RECOMMENDED_ACTION
 FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
 WHERE START_TIME >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
   AND (
@@ -3101,14 +3081,14 @@ LIMIT 100;
             "SEVERITY": "Critical",
             "TELEMETRY": "SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY and event tables when configured",
             "FRESHNESS": "ACCOUNT_USAGE delayed; task graph error notifications can be near-real-time when configured",
-            "OWNER": "DBA / Pipeline Owner",
-            "WHY_THIS_MATTERS": "Informatica migration success depends on Snowflake task graphs having SLA, failure, retry, and owner evidence.",
+            "OWNER": "DBA / Pipeline Route",
+            "WHY_THIS_MATTERS": "Informatica migration success depends on Snowflake task graphs having SLA, failure, retry, and route telemetry.",
             "RECOMMENDED_ACTION": "Identify root task, failed child, error signature, retry count, last success, and downstream SLA risk before rerun.",
             "SQL": f"""
 SELECT 'PIPELINE_TASK_FAILURE' AS ALERT_KEY, 'Task / Pipeline' AS CATEGORY, 'Critical' AS SEVERITY,
        DATABASE_NAME, SCHEMA_NAME, NAME AS ENTITY_NAME, ROOT_TASK_ID,
        STATE, SCHEDULED_TIME AS EVENT_TS, COMPLETED_TIME, QUERY_ID, ERROR_CODE, ERROR_MESSAGE,
-       'Open task graph, isolate failed child/root task, verify owner and safe rerun conditions.' AS RECOMMENDED_ACTION
+       'Open task graph, isolate failed child/root task, confirm route and safe rerun conditions.' AS RECOMMENDED_ACTION
 FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
 WHERE SCHEDULED_TIME >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
   AND UPPER(COALESCE(STATE, '')) IN ('FAILED', 'FAILED_WITH_ERROR', 'SKIPPED', 'CANCELLED')
@@ -3165,13 +3145,13 @@ LIMIT 200;
             "SEVERITY": "High",
             "TELEMETRY": "ALERT_CONFIG / ALERT_THRESHOLDS plus table metadata checks",
             "FRESHNESS": "Near-real-time if the configured query targets INFORMATION_SCHEMA or live table metadata",
-            "OWNER": "Data Owner",
-            "WHY_THIS_MATTERS": "Freshness, volume, null, duplicate, and schema drift checks need owner-tunable thresholds without code changes.",
-            "RECOMMENDED_ACTION": "Configure table/column/check/threshold/owner in ALERT_CONFIG or ALERT_THRESHOLDS, then route failures to the data owner.",
+            "OWNER": "Data Route",
+            "WHY_THIS_MATTERS": "Freshness, volume, null, duplicate, and schema drift checks need route-tunable thresholds without code changes.",
+            "RECOMMENDED_ACTION": "Configure table/column/check/threshold/route in ALERT_CONFIG or ALERT_THRESHOLDS, then route failures to the data route.",
             "SQL": f"""
 SELECT 'DQ_CONFIG_REQUIRED' AS ALERT_KEY, 'Data Quality' AS CATEGORY, 'Medium' AS SEVERITY,
        ALERT_KEY AS ENTITY_NAME, CATEGORY || ': ' || SIGNAL_NAME AS EVIDENCE,
-       'Define database/schema/table/column/check type/threshold/owner before enabling data-quality alerts.' AS RECOMMENDED_ACTION
+       'Define database/schema/table/column/check type/threshold/route before enabling data-quality alerts.' AS RECOMMENDED_ACTION
 FROM {_command_center_fqn("ALERT_CONFIG")}
 WHERE CATEGORY = 'Data Quality'
   AND ENABLED
@@ -3186,13 +3166,13 @@ LIMIT 100;
             "TELEMETRY": "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSES / QUERY_HISTORY / TABLES",
             "FRESHNESS": "Delayed ACCOUNT_USAGE telemetry",
             "OWNER": "DBA / FinOps",
-            "WHY_THIS_MATTERS": "Optimization alerts should be evidence-ranked candidates, not generic tune-the-query advice.",
-            "RECOMMENDED_ACTION": "Route only with before/after proof, owner approval, rollback SQL, and expected savings or reliability gain.",
+            "WHY_THIS_MATTERS": "Optimization alerts should be telemetry-ranked candidates, not generic tune-the-query advice.",
+            "RECOMMENDED_ACTION": "Route only with before/after telemetry, review status, rollback path, and expected savings or reliability gain.",
             "SQL": f"""
 SELECT 'OPT_WAREHOUSE_AUTOSUSPEND' AS ALERT_KEY, 'Optimization' AS CATEGORY, 'Medium' AS SEVERITY,
        WAREHOUSE_NAME AS ENTITY_NAME, AUTO_SUSPEND AS CURRENT_VALUE,
        'Warehouse auto-suspend setting may be too high or disabled.' AS EVIDENCE,
-       'Validate workload class, owner SLA, queue/spill baseline, and changed-only warehouse setting recommendation.' AS RECOMMENDED_ACTION
+       'Validate workload class, route SLA, queue/spill baseline, and changed-only warehouse setting recommendation.' AS RECOMMENDED_ACTION
 FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSES
 WHERE DELETED IS NULL
   AND (AUTO_SUSPEND IS NULL OR AUTO_SUSPEND > 600)
@@ -3209,7 +3189,7 @@ def build_alert_required_privileges() -> pd.DataFrame:
         ("Imported privileges on SNOWFLAKE database", "ACCOUNT_USAGE views: QUERY_HISTORY, WAREHOUSE_METERING_HISTORY, LOGIN_HISTORY, ACCESS_HISTORY, TASK_HISTORY, ALERT_HISTORY, GRANTS views"),
         ("USAGE on monitored databases/schemas", "INFORMATION_SCHEMA checks and task/pipe metadata where ACCOUNT_USAGE lag is too slow"),
         ("SELECT on OVERWATCH schema tables", "ALERT_CONFIG, ALERT_EVENTS, ALERT_THRESHOLDS, ALERT_OWNER_ROUTING, notification/remediation logs"),
-        ("OPERATE or ownership for approved remediation", "Only needed for approved task/warehouse/query/user actions; detection works without it"),
+        ("OPERATE for reviewed remediation", "Only needed for reviewed task/warehouse/query/user actions; detection works without it"),
         ("Notification integration usage", "Only needed when sending Snowflake email/webhook/cloud notifications from procedures or alerts"),
     ]
     return pd.DataFrame(rows, columns=["PRIVILEGE_ASSUMPTION", "WHY_REQUIRED"])
@@ -3217,11 +3197,11 @@ def build_alert_required_privileges() -> pd.DataFrame:
 
 def build_alert_optional_integrations() -> pd.DataFrame:
     rows = [
-        ("Snowflake ALERT objects", "Periodic condition evaluation and SQL action execution", "Recommended for governed scheduled detection"),
+        ("Snowflake ALERT objects", "Periodic condition evaluation and SQL action execution", "Recommended for reviewed scheduled detection"),
         ("Email notification integration", "SYSTEM$SEND_EMAIL alert digests and escalations", "Optional but useful for DBA on-call"),
         ("Webhook / Slack / Teams integration", "External routing when account and network policies allow it", "Optional; keep payloads logged"),
         ("Event tables with LOG_LEVEL >= ERROR", "Task graph and stored procedure error events", "Recommended for near-real-time pipeline failures"),
-        ("owner approval/Owner approval/Snowflake task bridge", "Incident tickets, owner assignment, workflow handoff", "Optional; use action queue until approved"),
+        ("Status/Snowflake task bridge", "Incident tickets, route assignment, workflow handoff", "Optional; use action queue until reviewed"),
     ]
     return pd.DataFrame(rows, columns=["INTEGRATION", "CAPABILITY", "STATUS_NOTE"])
 
@@ -3258,11 +3238,11 @@ def build_alert_command_center_summary(
             "recurring": pd.DataFrame(columns=["CATEGORY", "SIGNAL", "ENTITY", "ALERTS", "SEVERITY", "OWNER", "RECOMMENDED_ACTION"]),
             "freshness": pd.DataFrame([{
                 "SOURCE": "Loaded alert data",
-                "LAST_CHECKED": "Not loaded",
+                "LAST_CHECKED": "On demand",
                 "FRESHNESS_STATE": "Load required",
                 "NOTE": "Use explicit load to avoid hidden ACCOUNT_USAGE scans.",
             }]),
-            "last_checked": "Not loaded",
+            "last_checked": "On demand",
             "severity_score": 0,
             "mttd_minutes": None,
             "mttr_hours": None,
@@ -3275,7 +3255,7 @@ def build_alert_command_center_summary(
     signal = _alert_col(df, "ALERT_TYPE", "SIGNAL", "MESSAGE", default="Alert").fillna("Alert").astype(str)
     entity = _alert_col(df, "ENTITY_NAME", "ENTITY", default="Snowflake account").fillna("Snowflake account").astype(str)
     owner = _alert_col(df, "OWNER", "ROUTED_OWNER", "ESCALATION_TARGET", default="DBA").fillna("DBA").astype(str)
-    action = _alert_col(df, "SUGGESTED_ACTION", "NEXT_ACTION", "RECOMMENDED_ACTION", default="Review alert evidence and assign owner.").fillna("Review alert evidence and assign owner.").astype(str)
+    action = _alert_col(df, "SUGGESTED_ACTION", "NEXT_ACTION", "RECOMMENDED_ACTION", default="Review alert telemetry and assign route.").fillna("Review alert telemetry and assign route.").astype(str)
     event_ts = pd.to_datetime(_alert_col(df, "ALERT_TS", "EVENT_TS", "FIRST_SEEN_AT", default=current_time), errors="coerce").fillna(current_time)
     first_seen = pd.to_datetime(_alert_col(df, "FIRST_SEEN_AT", "ALERT_TS", "EVENT_TS", default=current_time), errors="coerce").fillna(event_ts)
     detected = pd.to_datetime(_alert_col(df, "DETECTED_AT", "ALERT_TS", "EVENT_TS", default=current_time), errors="coerce").fillna(event_ts)
@@ -3315,7 +3295,7 @@ def build_alert_command_center_summary(
                 CRITICAL_HIGH=("SEVERITY", lambda values: int(pd.Series(values).isin(["Critical", "High"]).sum())),
                 SEVERITY_SCORE=("SCORE", "sum"),
                 RECOMMENDED_OWNER=("OWNER", lambda values: next((str(value) for value in values if str(value).strip()), "DBA")),
-                RECOMMENDED_ACTION=("RECOMMENDED_ACTION", lambda values: next((str(value) for value in values if str(value).strip()), "Review alert evidence and assign owner.")),
+                RECOMMENDED_ACTION=("RECOMMENDED_ACTION", lambda values: next((str(value) for value in values if str(value).strip()), "Review alert telemetry and assign route.")),
             )
             .reset_index()
         )
@@ -3340,7 +3320,7 @@ def build_alert_command_center_summary(
             ALERTS=("OPEN", "sum"),
             SEVERITY=("SEVERITY", lambda values: min(values, key=alert_severity_rank)),
             OWNER=("OWNER", lambda values: next((str(value) for value in values if str(value).strip()), "DBA")),
-            RECOMMENDED_ACTION=("RECOMMENDED_ACTION", lambda values: next((str(value) for value in values if str(value).strip()), "Review alert evidence and assign owner.")),
+            RECOMMENDED_ACTION=("RECOMMENDED_ACTION", lambda values: next((str(value) for value in values if str(value).strip()), "Review alert telemetry and assign route.")),
         )
         .reset_index()
         .sort_values(["ALERTS", "SEVERITY"], ascending=[False, True])
@@ -3366,7 +3346,6 @@ def build_alert_command_center_summary(
         {"METRIC": "Warning alerts", "VALUE": int(warning_open.sum()), "STATE": "Review" if int(warning_open.sum()) else "Clear", "DETAIL": "High/medium cost, performance, reliability, or optimization warnings."},
         {"METRIC": "Info alerts", "VALUE": int(info_open.sum()), "STATE": "Watch" if int(info_open.sum()) else "Clear", "DETAIL": "Low-severity early warnings and informational checks."},
         {"METRIC": "Resolved alerts", "VALUE": int(resolved_mask.sum()), "STATE": "Closed", "DETAIL": "Closed or ignored rows loaded in the selected window."},
-        {"METRIC": "Severity score", "VALUE": severity_score, "STATE": "Higher is worse", "DETAIL": "Critical=100, High=70, Medium=35, Low=10 across open alerts."},
     ])
     return {
         "metrics": metrics,
@@ -3388,7 +3367,7 @@ def _alert_business_impact(category: str, severity: str, provided: str = "") -> 
     category_key = str(category or "").strip().upper()
     severity_key = normalize_alert_severity(severity)
     if category_key == "SECURITY":
-        return "Breach, privilege escalation, data exposure, or governance bypass risk."
+        return "Breach, privilege escalation, data exposure, or control bypass risk."
     if category_key == "COST / FINOPS":
         return "Spend run-rate or contract burn risk before finance sees the invoice."
     if category_key == "PERFORMANCE":
@@ -3400,8 +3379,8 @@ def _alert_business_impact(category: str, severity: str, provided: str = "") -> 
     if category_key == "OPTIMIZATION":
         return "Avoidable compute, storage, or inefficient repeat work is accumulating."
     if severity_key in {"Critical", "High"}:
-        return "Open high-impact alert needs owner response and proof-backed triage."
-    return "Early warning needs owner review before it becomes operational noise."
+        return "Open high-impact alert needs route response and telemetry-backed triage."
+    return "Early warning needs route review before it becomes operational noise."
 
 
 def _alert_impact_estimate(row: pd.Series | dict, category: str, severity: str) -> str:
@@ -3421,31 +3400,31 @@ def _alert_impact_estimate(row: pd.Series | dict, category: str, severity: str) 
     if category_key == "SECURITY":
         return "Exposure risk - quantify users, roles, objects, and source IPs during triage."
     if category_key == "COST / FINOPS":
-        return "Cost risk - attach projected daily/month-end spend and top driver proof."
+        return "Cost risk - attach projected daily/month-end spend and top driver telemetry."
     if category_key == "PERFORMANCE":
         return "Service risk - attach queue time, blocked sessions, spill, and affected workload."
     if category_key == "TASK / PIPELINE":
         return "SLA risk - attach failed root/child task, late tables, and downstream consumers."
     if category_key == "DATA QUALITY":
-        return "Data trust risk - attach impacted table, freshness/volume/null proof, and consumers."
+        return "Data trust risk - attach impacted table, freshness/volume/null telemetry, and consumers."
     if severity_key == "Critical":
-        return "Critical business impact - assign owner immediately and capture containment proof."
+        return "Critical business impact - assign route immediately and capture containment telemetry."
     return "Impact estimate required before closure."
 
 
 def _alert_first_response(status: str, severity: str, remediation_mode: str) -> str:
     status_key = _status_key(status)
     if status_key in ALERT_CLOSED_STATUSES:
-        return "Verify closure proof and keep evidence for trend review."
+        return "Confirm closure status and keep telemetry for trend review."
     if status_key in {"NEW", "OPEN", "ACTIVE", "EMAIL_READY", "EMAIL_QUEUED", "PENDING"}:
         if normalize_alert_severity(severity) in {"Critical", "High"}:
-            return "Acknowledge, assign owner, capture proof SQL, and start containment."
-        return "Acknowledge or suppress if planned, then route owner action."
+            return "Acknowledge, assign route, capture telemetry SQL, and start containment."
+        return "Acknowledge or suppress if planned, then route the action."
     if status_key in {"ACKNOWLEDGED", "IN_PROGRESS"}:
-        if str(remediation_mode or "").upper() == "APPROVAL_REQUIRED":
-            return "Collect ticket, owner approval, before state, rollback, and verification SQL."
-        return "Drive recommended action to verification or documented suppression."
-    return "Review status, owner, proof, and next action before routing."
+        if str(remediation_mode or "").upper() in {"APPROVAL_REQUIRED", "VERIFICATION_REQUIRED", "STATUS_REVIEW"}:
+            return "Collect ticket, status review, before state, rollback, and telemetry SQL."
+        return "Drive recommended action to status review or documented suppression."
+    return "Review status, route, telemetry, and next action before routing."
 
 
 def _alert_sla_state(open_flag: bool, age_hours: float, sla_hours: float) -> str:
@@ -3532,7 +3511,7 @@ def build_alert_incident_action_board(
         if "SUGGESTED_ACTION" not in source.columns and "RECOMMENDED_ACTION" in source.columns:
             source["SUGGESTED_ACTION"] = source["RECOMMENDED_ACTION"]
         if "PROOF_QUERY" not in source.columns:
-            source["PROOF_QUERY"] = _alert_col(source, "VERIFICATION_SQL", "VERIFY_SQL", default="Open the action queue row and attach closure proof.")
+            source["PROOF_QUERY"] = _alert_col(source, "VERIFICATION_SQL", "VERIFY_SQL", default="Open the action queue row and record closure status.")
         if "REMEDIATION_MODE" not in source.columns:
             source["REMEDIATION_MODE"] = "RECOMMEND"
     if source is None or source.empty:
@@ -3552,8 +3531,8 @@ def build_alert_incident_action_board(
     signal = _alert_col(work, "ALERT_TYPE", "SIGNAL", "MESSAGE", default="Alert").fillna("Alert").astype(str)
     entity = _alert_col(work, "ENTITY_NAME", "ENTITY", default="Snowflake account").fillna("Snowflake account").astype(str)
     owner = _alert_col(work, "OWNER", "ROUTED_OWNER", "ESCALATION_TARGET", default="DBA").fillna("DBA").astype(str)
-    action = _alert_col(work, "SUGGESTED_ACTION", "NEXT_ACTION", "RECOMMENDED_ACTION", default="Review alert evidence and assign owner.").fillna("Review alert evidence and assign owner.").astype(str)
-    proof = _alert_col(work, "PROOF_QUERY", default="Open source telemetry and attach evidence.").fillna("Open source telemetry and attach evidence.").astype(str)
+    action = _alert_col(work, "SUGGESTED_ACTION", "NEXT_ACTION", "RECOMMENDED_ACTION", default="Review alert telemetry and assign route.").fillna("Review alert telemetry and assign route.").astype(str)
+    proof = _alert_col(work, "PROOF_QUERY", default="Open source telemetry and record status.").fillna("Open source telemetry and record status.").astype(str)
     route = _alert_col(work, "ROUTE", "WORKFLOW", default="Alert Center").fillna("Alert Center").astype(str)
     remediation_mode = _alert_col(work, "REMEDIATION_MODE", default="RECOMMEND").fillna("RECOMMEND").astype(str).str.upper().str.replace(" ", "_")
     freshness = _alert_col(work, "SOURCE_FRESHNESS", "TELEMETRY_FRESHNESS", "FRESHNESS", default="").fillna("").astype(str)
@@ -3595,13 +3574,13 @@ def build_alert_incident_action_board(
             "IMPACT_ESTIMATE": _alert_impact_estimate(row, row_category, row_severity),
             "FIRST_RESPONSE": _alert_first_response(row_status, row_severity, row_mode),
             "RECOMMENDED_ACTION": str(action.loc[idx]),
-            "PROOF_QUERY": str(proof.loc[idx]) or "Open source telemetry and attach evidence.",
+            "PROOF_QUERY": str(proof.loc[idx]) or "Open source telemetry and record status.",
             "SOURCE_FRESHNESS": _alert_source_freshness(row_category, str(freshness.loc[idx])),
-            "REMEDIATION_MODE": row_mode if row_mode in {"OFF", "RECOMMEND", "APPROVAL_REQUIRED", "AUTO"} else "RECOMMEND",
+            "REMEDIATION_MODE": row_mode if row_mode in {"OFF", "RECOMMEND", "STATUS_REVIEW", "AUTO"} else ("STATUS_REVIEW" if row_mode in {"APPROVAL_REQUIRED", "VERIFICATION_REQUIRED"} else "RECOMMEND"),
             "TICKET_ID": queue_context.get("TICKET_ID", _row_value(row, "TICKET_ID", default="")),
             "QUEUE_STATE": queue_context.get("QUEUE_STATUS", _row_value(row, "QUEUE_STATE", default="Route to action queue")),
-            "EVIDENCE_GAP": queue_context.get("EVIDENCE_GAP", _row_value(row, "EVIDENCE_GAP", default="Proof, owner, and verification evidence required.")),
-            "APPROVAL_GROUP": queue_context.get("APPROVAL_GROUP", _row_value(row, "APPROVAL_GROUP", default="DBA Approver")),
+            "EVIDENCE_GAP": queue_context.get("EVIDENCE_GAP", _row_value(row, "EVIDENCE_GAP", default="Telemetry, route, and closure status required.")),
+            "APPROVAL_GROUP": queue_context.get("APPROVAL_GROUP", _row_value(row, "APPROVAL_GROUP", default="DBA Review")),
             "ROUTE": str(route.loc[idx]),
             "_SORT_SCORE": int(score_map.get(row_severity, 15)) + (40 if breached else 0) + min(int(row_age), 24),
             "_SEVERITY_RANK": alert_severity_rank(row_severity),
@@ -3650,7 +3629,7 @@ def build_alert_owner_workload_board(
             "TICKETS_ATTACHED": int(tickets.ne("").sum()),
             "TOP_CATEGORY": str(category_counts.index[0]) if not category_counts.empty else "Alert",
             "NEXT_ACTION": str(next_action),
-            "APPROVAL_GROUP": next((str(value) for value in group["APPROVAL_GROUP"] if str(value).strip()), "DBA Approver"),
+            "APPROVAL_GROUP": next((str(value) for value in group["APPROVAL_GROUP"] if str(value).strip()), "DBA Review"),
         })
     return pd.DataFrame(rows).sort_values(["SLA_BREACHED", "CRITICAL_HIGH", "OPEN_ALERTS"], ascending=[False, False, False])[columns]
 
@@ -3687,9 +3666,9 @@ def build_alert_morning_brief_rows(alerts: pd.DataFrame, *, limit: int = 12) -> 
     severity = _alert_col(work, "SEVERITY", default="Medium").apply(normalize_alert_severity)
     entity = _alert_col(work, "ENTITY_NAME", "ENTITY", default="Snowflake account").fillna("Snowflake account").astype(str)
     signal = _alert_col(work, "ALERT_TYPE", "MESSAGE", default="Alert").fillna("Alert").astype(str)
-    action = _alert_col(work, "SUGGESTED_ACTION", "NEXT_ACTION", default="Review alert evidence and assign owner.").fillna("Review alert evidence and assign owner.").astype(str)
+    action = _alert_col(work, "SUGGESTED_ACTION", "NEXT_ACTION", default="Review alert telemetry and assign route.").fillna("Review alert telemetry and assign route.").astype(str)
     owner = _alert_col(work, "OWNER", "ESCALATION_TARGET", default="DBA").fillna("DBA").astype(str)
-    proof = _alert_col(work, "PROOF_QUERY", default="Open the alert row and attach source evidence.").fillna("Open the alert row and attach source evidence.").astype(str)
+    proof = _alert_col(work, "PROOF_QUERY", default="Open the alert row and record source telemetry.").fillna("Open the alert row and record source telemetry.").astype(str)
     event_ts = pd.to_datetime(_alert_col(work, "ALERT_TS", "EVENT_TS", default=pd.Timestamp.now()), errors="coerce").fillna(pd.Timestamp.now())
     priority_frame = pd.DataFrame({
         "CATEGORY": category,
@@ -3704,14 +3683,14 @@ def build_alert_morning_brief_rows(alerts: pd.DataFrame, *, limit: int = 12) -> 
     priority_frame["_RANK"] = priority_frame["SEVERITY"].apply(alert_severity_rank)
     priority_frame = priority_frame.sort_values(["_RANK", "EVENT_TS"], ascending=[True, False]).head(max(1, int(limit or 12))).copy()
     why_map = {
-        "Security": "Possible breach, privilege escalation, data exposure, or governance bypass.",
+        "Security": "Possible breach, privilege escalation, data exposure, or control bypass.",
         "Cost / FinOps": "Spend may exceed normal run-rate or contract burn before finance sees the invoice.",
         "Performance": "Queue, spill, long-running, or lock patterns can become an outage without intervention.",
         "Task / Pipeline": "Task graph or stored procedure failures can break the Informatica-to-Snowflake migration SLA.",
         "Data Quality": "Freshness, volume, null, duplicate, or schema drift can corrupt downstream decisions.",
         "Optimization": "The account is paying for avoidable compute, storage, or repeated inefficient patterns.",
     }
-    priority_frame["WHY_THIS_MATTERS"] = priority_frame["CATEGORY"].map(why_map).fillna("Open alert needs DBA triage and owner proof.")
+    priority_frame["WHY_THIS_MATTERS"] = priority_frame["CATEGORY"].map(why_map).fillna("Open alert needs DBA triage and route telemetry.")
     priority_frame.insert(0, "PRIORITY", range(1, len(priority_frame) + 1))
     return priority_frame[[
         "PRIORITY",
@@ -3737,32 +3716,34 @@ def build_alert_remediation_contract(row: pd.Series | dict | None = None) -> dic
         _row_value(row, "REMEDIATION_SQL", "Generated SQL Fix", default=""),
     ]).upper()
     requested_mode = _row_value(row, "REMEDIATION_MODE", default="RECOMMEND").upper().replace(" ", "_")
-    if requested_mode not in {"OFF", "RECOMMEND", "APPROVAL_REQUIRED", "AUTO"}:
+    if requested_mode in {"APPROVAL_REQUIRED", "VERIFICATION_REQUIRED"}:
+        requested_mode = "STATUS_REVIEW"
+    if requested_mode not in {"OFF", "RECOMMEND", "STATUS_REVIEW", "AUTO"}:
         requested_mode = "RECOMMEND"
-    sql_preview = _row_value(row, "REMEDIATION_SQL", "Generated SQL Fix", default="-- No remediation SQL generated. Review evidence and route owner approval first.")
+    sql_preview = _row_value(row, "REMEDIATION_SQL", "Generated SQL Fix", default="Review telemetry and route status first.")
     dangerous_terms = ("DROP ", "DELETE ", "TRUNCATE ", "REVOKE ", "DISABLE USER", "ALTER USER", "CANCEL QUERY", "SYSTEM$CANCEL_QUERY", "ALTER WAREHOUSE", "EXECUTE TASK", "RESUME TASK", "SUSPEND WAREHOUSE")
     dangerous = any(term in signal or term in str(sql_preview).upper() for term in dangerous_terms)
     if dangerous and requested_mode == "AUTO":
-        mode = "APPROVAL_REQUIRED"
+        mode = "STATUS_REVIEW"
     else:
         mode = requested_mode
     approval_gate = {
-        "OFF": "Detection only. No SQL/action can be executed from this alert.",
-        "RECOMMEND": "Show recommendation and SQL preview only; DBA executes elsewhere after review.",
-        "APPROVAL_REQUIRED": "Named owner, DBA approver, ticket, before state, rollback guidance, and verification SQL are required before execution.",
-        "AUTO": "Allowed only for explicitly approved safe actions with audit logging and automatic verification.",
+        "OFF": "Detection only. No remedial action can be executed from this alert.",
+        "RECOMMEND": "Show recommendation and review guidance only; DBA executes elsewhere after status review.",
+        "STATUS_REVIEW": "Named route, DBA reviewer, ticket, before state, rollback guidance, and telemetry status are required before execution.",
+        "AUTO": "Allowed only for explicitly reviewed safe actions with audit logging and automatic status capture.",
     }[mode]
-    if dangerous and mode != "APPROVAL_REQUIRED":
+    if dangerous and mode != "STATUS_REVIEW":
         approval_gate += " Dangerous state-changing action detected; keep this out of AUTO mode."
     entity = _row_value(row, "ENTITY_NAME", "ENTITY", default="Snowflake object")
-    verify = _row_value(row, "PROOF_QUERY", "Verification Query", default="SELECT current_timestamp() AS verification_checkpoint;")
+    verify = _row_value(row, "PROOF_QUERY", "Verification Query", default="SELECT current_timestamp() AS status_checkpoint;")
     return {
         "REMEDIATION_MODE": mode,
         "APPROVAL_GATE": approval_gate,
         "SQL_PREVIEW": sql_preview,
-        "EXECUTION_BOUNDARY": "Alert Center prepares and logs the action contract. State-changing execution must go through the approved DBA workflow for the affected object.",
-        "AUDIT_LOG_REQUIRED": "ALERT_REMEDIATION_LOG must capture trigger, actor, approval, SQL/action, before state, after state, success/failure, rollback guidance, and verification result.",
-        "ROLLBACK_GUIDANCE": f"Capture current state for {entity} before action; document exact rollback SQL or operational recovery path before approval.",
+        "EXECUTION_BOUNDARY": "Alert Center prepares and logs the action contract. State-changing execution must go through the reviewed DBA workflow for the affected object.",
+        "AUDIT_LOG_REQUIRED": "ALERT_REMEDIATION_LOG must capture trigger, actor, review, SQL/action, before state, after state, success/failure, rollback guidance, and status result.",
+        "ROLLBACK_GUIDANCE": f"Capture current state for {entity} before action; document exact rollback SQL or operational recovery path before review.",
         "VERIFY_NEXT": verify,
         "DANGEROUS_ACTION": "Yes" if dangerous else "No",
     }
@@ -3772,10 +3753,10 @@ def build_alert_command_center_runbook_markdown() -> str:
     return """# OVERWATCH Alert Command Center Runbook
 
 ## Operating Rule
-The Alert Center is a triage and governance surface. It should detect, prioritize, route, notify, and audit. It should not silently mutate Snowflake objects.
+The Alert Center is a triage and monitoring surface. It should detect, prioritize, route, notify, and audit. It should not silently mutate Snowflake objects.
 
 ## Severity
-- CRITICAL: security breach risk, runaway spend, failed production pipeline, disabled governance, privilege escalation, repeated task failures.
+- CRITICAL: security breach risk, runaway spend, failed production pipeline, disabled controls, privilege escalation, repeated task failures.
 - HIGH: major cost/performance anomaly, warehouse saturation, excessive queueing, blocked work, failed important job.
 - MEDIUM: optimization opportunity, suspicious behavior, growing costs, route gaps.
 - LOW: informational or early warning.
@@ -3783,13 +3764,13 @@ The Alert Center is a triage and governance surface. It should detect, prioritiz
 ## Daily DBA Flow
 1. Open DBA Morning Brief and work Critical/High rows first.
 2. Check Security, Cost, Performance, and Pipeline categories before optimization work.
-3. Use proof SQL and source freshness notes before declaring an incident.
-4. Acknowledge or suppress planned work with an evidence note.
-5. Route owner-backed actions to the action queue with ticket, approval, verification SQL, and closure proof.
+3. Use telemetry status and bounded detail before declaring an incident.
+4. Acknowledge or suppress planned work with a telemetry note.
+5. Route status-backed actions to the action queue with ticket, telemetry SQL, and closure status.
 
-## Telemetry Freshness
+## Telemetry Status
 ACCOUNT_USAGE views are authoritative for history but can lag. Use INFORMATION_SCHEMA table functions, task graph notifications, Snowflake ALERT objects, and event tables for near-real-time incident checks where available.
 
 ## Remediation Policy
-Default mode is RECOMMEND. AUTO is allowed only for safe, explicitly approved actions. Dangerous operations such as cancel query, revoke grant, disable user, alter warehouse, resume task, or suspend warehouse require owner approval and ALERT_REMEDIATION_LOG evidence.
+Default mode is RECOMMEND. AUTO is allowed only for safe, explicitly reviewed actions. Dangerous operations such as cancel query, revoke grant, disable user, alter warehouse, resume task, or suspend warehouse require status review and ALERT_REMEDIATION_LOG telemetry.
 """

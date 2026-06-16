@@ -1,4 +1,4 @@
-# utils/recommendation_intelligence.py - evidence-backed recommendation wording
+# utils/recommendation_intelligence.py - telemetry-backed recommendation wording
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -12,12 +12,12 @@ from .helpers import safe_float, safe_int
 
 
 AUTOMATION_LANE_ORDER = {
-    "Ready for Guided Execution": 0,
-    "Approval Required": 1,
-    "Evidence Required": 2,
-    "Auto-Close Candidate": 3,
-    "Manual Only": 4,
-    "Observe Only": 5,
+    "Ready": 0,
+    "Telemetry Pending": 1,
+    "Needs Data": 2,
+    "Resolved Candidate": 3,
+    "DBA Review": 4,
+    "Monitor": 5,
 }
 
 
@@ -83,81 +83,80 @@ def _money(value: float) -> str:
 
 
 def recommendation_execution_contract(row: Mapping | pd.Series | dict) -> dict[str, str]:
-    """Return the approval/evidence/verification boundary for one advisory row."""
+    """Return the review and telemetry boundary for one advisory row."""
     source_key = _source_key(row)
     entity = _entity(row)
-    owner = _text(row, "Owner Route", "Owner", "OWNER", default="DBA owner")
-    proof = _text(row, "Proof Required", "PROOF_REQUIRED", default="Attach verification evidence before closure.")
+    route = _text(row, "Escalation Route", "Owner Route", "Route", "Owner", "OWNER", default="DBA route")
+    proof = _text(row, "Proof Required", "PROOF_REQUIRED", default="Telemetry must show the condition cleared.")
     evidence = _text(row, "Evidence Packet", "EVIDENCE_PACKET", default="")
     generated_sql = _text(row, "Generated SQL Fix", "GENERATED_SQL_FIX")
     changes_state = _state_changing_sql(generated_sql)
 
-    approval_gate = f"{owner} acknowledgement before closure; approval required before any state-changing action."
+    review_gate = f"{route} review before operational change; telemetry should confirm the condition clears."
     evidence_package = evidence or proof
     verify_next = proof
     execution_boundary = (
-        "Recommendation is advisory only; execute approved changes through the owning workflow or governed change process."
+        "Recommendation is advisory only; execute reviewed changes through the guarded drilldown workflow."
     )
 
     if "IDLE" in source_key and "WAREHOUSE" in source_key:
-        approval_gate = "Warehouse owner and DBA capacity reviewer approval before AUTO_SUSPEND changes."
+        review_gate = "DBA capacity review and rollback boundary before AUTO_SUSPEND changes."
         evidence_package = (
-            f"{entity} idle-hour metering, zero-query hours, estimated savings, owner approval, and rollback setting."
+            f"{entity} idle-hour metering, zero-query hours, estimated savings, and rollback setting."
         )
-        verify_next = "Rerun the idle proof query after 7 days and verify idle credits/hours dropped without workload failures."
+        verify_next = "Watch the next seven days of metering for idle credits/hours and workload failures."
         execution_boundary = "Do not disable, downsize, or suspend service warehouses from the recommendation row."
     elif "SPILL" in source_key:
-        approval_gate = "Warehouse owner, query owner, and DBA performance reviewer approval before resize or isolation."
+        review_gate = "Workload review before resize or isolation."
         evidence_package = (
-            f"{entity} remote-spill rows, top spilling query IDs, query profile/operator evidence, queue trend, and cost impact."
+            f"{entity} remote-spill rows, top spilling query IDs, query profile/operator telemetry, queue trend, and cost impact."
         )
-        verify_next = "Verify remote spill, queue, elapsed time, and credits improve for the same workload after the fix."
+        verify_next = "Monitor remote spill, queue, elapsed time, and credits for the same workload after the fix."
         execution_boundary = "Do not upsize blindly; route through Query diagnosis or Cost & Contract capacity controls first."
     elif "TASK" in source_key and "FAIL" in source_key:
-        approval_gate = "Task owner, Snowflake task operator, and DBA on-call approval before retry, resume, or schedule change."
-        evidence_package = (
-            f"{entity} TASK_HISTORY failure/recovery rows, latest error signature, downstream impact, and owner approval."
-        )
-        verify_next = "Verify the next TASK_HISTORY run succeeds and downstream refresh/recovery SLA evidence is attached."
-        execution_boundary = "Do not EXECUTE TASK from a recommendation; use Task graphs guarded controls and typed confirmation."
+        review_gate = "Snowflake task operator review before retry, resume, or schedule change."
+        evidence_package = f"{entity} TASK_HISTORY failure/recovery rows, latest error signature, and downstream impact."
+        verify_next = "Monitor the next TASK_HISTORY run and downstream refresh state."
+        execution_boundary = "Do not EXECUTE TASK from a recommendation; use Task graphs guarded controls and status prechecks."
     elif "QUERY FAILURE" in source_key or ("FAILED QUER" in source_key and "WAREHOUSE" in source_key):
-        approval_gate = "Query owner and DBA reliability reviewer approval before SQL, warehouse, or schedule changes."
+        review_gate = "DBA reliability review before SQL, warehouse, or schedule changes."
         evidence_package = (
-            f"{entity} error-code grouping, sample query IDs, owner route, failure trend, and post-fix comparison."
+            f"{entity} error-code grouping, sample query IDs, escalation route, failure trend, and post-fix comparison."
         )
-        verify_next = "Verify the repeated error signature stops and attach before/after failure counts with sample query IDs."
-        execution_boundary = "Do not change warehouse size for query failures without separate queue/spill/capacity evidence."
+        verify_next = "Monitor whether the repeated error signature stops for the same query pattern."
+        execution_boundary = "Do not change warehouse size for query failures without separate queue/spill/capacity telemetry."
     elif "DUPLICATE" in source_key or "REDUNDANT" in source_key:
-        approval_gate = "Query/workload owner and DBA architecture reviewer approval before materialization or cache changes."
+        review_gate = "Workload review before materialization or cache changes."
         evidence_package = (
-            f"{entity} repeated query signature, execution count, users, wasted seconds, result-reuse proof, and owner demand."
+            f"{entity} repeated query signature, execution count, users, wasted seconds, result-reuse telemetry, and workload demand."
         )
-        verify_next = "Verify execution count, elapsed time, and cloud-services credits drop for the same query signature."
-        execution_boundary = "Do not create materialized views, dynamic tables, or cache workarounds without stable semantics proof."
+        verify_next = "Monitor execution count, elapsed time, and cloud-services credits for the same query signature."
+        execution_boundary = "Do not create materialized views, dynamic tables, or cache workarounds without stable semantics telemetry."
     elif "WAREHOUSE" in source_key and any(
         token in source_key
         for token in ("SIZING", "RIGHT-SIZING", "CAPACITY", "QUEUE", "DOWNSIZE", "OPTIMIZATION")
     ):
-        approval_gate = "Warehouse owner and DBA capacity reviewer approval before sizing, scaling, or isolation changes."
+        review_gate = "DBA capacity review and rollback boundary before sizing, scaling, or isolation changes."
         evidence_package = (
-            f"{entity} warehouse size, query count, credits, queue time, remote spill, cache, owner approval, and rollback path."
+            f"{entity} warehouse size, query count, credits, queue time, remote spill, cache, and rollback path."
         )
-        verify_next = "Verify queue, spill, runtime, failure rate, and credits against the same workload window after the change."
+        verify_next = "Monitor queue, spill, runtime, failure rate, and credits against the same workload window after the change."
         execution_boundary = "Optimization Advisor is advisory; run warehouse changes only through Cost & Contract guarded controls."
     elif changes_state:
-        approval_gate = f"{owner} and DBA approver approval before running generated SQL."
-        evidence_package = evidence or "Recommendation evidence, generated SQL, owner approval, rollback path, and proof query."
+        review_gate = f"{route} and DBA review before running the proposed change."
+        evidence_package = evidence or "Recommendation telemetry, proposed change, and rollback path."
         verify_next = proof
-        execution_boundary = "Generated SQL is a candidate only; run it only from the governed owner workflow after approval."
+        execution_boundary = "The proposed change is advisory only; run it only from the guarded drilldown workflow after review."
 
-    closure_rule = "Keep open until approval, evidence package, verification result, and owner closure note are attached."
+    closure_rule = "Keep open until telemetry shows the condition is clear."
     return {
-        "Approval Gate": approval_gate,
+        "Review Gate": review_gate,
         "Evidence Package": evidence_package,
         "Verify Next": verify_next,
         "Execution Boundary": execution_boundary,
         "Closure Rule": closure_rule,
-        "APPROVAL_GATE": approval_gate,
+        "APPROVAL_GATE": review_gate,
+        "REVIEW_GATE": review_gate,
         "EVIDENCE_PACKAGE": evidence_package,
         "VERIFY_NEXT": verify_next,
         "EXECUTION_BOUNDARY": execution_boundary,
@@ -166,7 +165,7 @@ def recommendation_execution_contract(row: Mapping | pd.Series | dict) -> dict[s
 
 
 def harden_recommendation(rec: Mapping | pd.Series | dict) -> dict:
-    """Return a recommendation with DBA decision fields and evidence guardrails."""
+    """Return a recommendation with DBA decision fields and telemetry guardrails."""
     out = dict(rec)
     source_key = _source_key(out)
     entity = _entity(out)
@@ -174,14 +173,14 @@ def harden_recommendation(rec: Mapping | pd.Series | dict) -> dict:
     savings = _num(out, "Estimated Monthly Savings", "EST_MONTHLY_SAVINGS")
     proof_query = _text(out, "Proof Query", "PROOF_QUERY", "Verification Query", "VERIFICATION_QUERY")
 
-    decision = "Triage evidence before changing settings"
-    action = _text(out, "Action", "RECOMMENDED_ACTION", default="Open the owning OVERWATCH workflow and validate the finding.")
+    decision = "Triage telemetry before changing settings"
+    action = _text(out, "Action", "RECOMMENDED_ACTION", default="Open the routed OVERWATCH workflow and validate the finding.")
     evidence = f"{finding}; estimated value {_money(savings)}."
     safe_next = action
-    proof = "Attach before/after evidence from the provided proof query before closing the action."
+    proof = "Use before/after telemetry before closing the action."
     do_not = "Do not close the item from the recommendation text alone."
-    owner_route = _text(out, "Owner", "OWNER", default="DBA")
-    confidence = "Medium - actionable finding with verification query required"
+    escalation_route = _text(out, "Escalation Route", "Route", "Owner", "OWNER", default="DBA")
+    confidence = "Medium - actionable finding with telemetry required"
     decision_gate = "Investigate"
 
     if "IDLE" in source_key and "WAREHOUSE" in source_key:
@@ -198,11 +197,11 @@ def harden_recommendation(rec: Mapping | pd.Series | dict) -> dict:
             f"{_money(savings)} estimated avoidable spend."
         )
         safe_next = (
-            f"Run the proof query, confirm zero-query metering hours, then apply AUTO_SUSPEND={suspend_minutes * 60} "
+            f"Use metering history to confirm zero-query hours, then apply AUTO_SUSPEND={suspend_minutes * 60} "
             "through DBA change control."
         )
-        proof = "After 7 days, rerun the idle proof query and close only if idle credits and idle hours dropped."
-        do_not = "Do not disable the warehouse or downsize it based only on idle-hour evidence."
+        proof = "After 7 days, telemetry should show idle credits and idle hours dropped."
+        do_not = "Do not disable the warehouse or downsize it based only on idle-hour telemetry."
         confidence = "High - direct warehouse metering joined to query activity"
         decision_gate = "Ready to change"
 
@@ -218,54 +217,59 @@ def harden_recommendation(rec: Mapping | pd.Series | dict) -> dict:
             "Open Cost & Contract > Recommendations and action queue, identify the query IDs causing spill, and decide between SQL tuning, "
             "workload isolation, or a one-step warehouse size validation."
         )
-        proof = "Show remote spill GB and queue time trend lower after the change; attach top query IDs used for diagnosis."
+        proof = "Track remote spill GB and queue time trend after the change."
         do_not = "Do not upsize blindly; remote spill can be caused by SQL shape and may just multiply cost."
-        confidence = "Medium - spill is real, but the correct fix depends on query profile evidence"
-        decision_gate = "Evidence required before change"
+        confidence = "Medium - spill is real, but the correct fix depends on query profile telemetry"
+        decision_gate = "Telemetry required before change"
 
     elif "TASK" in source_key and "FAIL" in source_key:
         failures = _num(out, "Current Value", "MEASURED_DELTA", "FAILURES")
         decision = "Open a reliability incident"
         action = (
-            f"Treat {entity} as a task reliability incident: identify the latest failure signature, confirm owner, "
+            f"Treat {entity} as a task reliability incident: identify the latest failure signature, confirm the route, "
             "fix root cause, then retry only after the blocker is cleared."
         )
         evidence = f"{entity}: {failures:,.0f} failed run(s) in the loaded window."
-        safe_next = "Open Workload Operations > Task graphs, inspect TASK_HISTORY and downstream impact, then attach owner approval."
-        proof = "Close only with a successful TASK_HISTORY run after the fix plus recovery notes in the action queue."
+        safe_next = "Open Workload Operations > Task graphs and inspect TASK_HISTORY plus downstream impact."
+        proof = "Close only after TASK_HISTORY shows the next successful run."
         do_not = "Do not EXECUTE TASK repeatedly until the failure category and dependency blocker are understood."
-        owner_route = _text(out, "Owner", "OWNER", default="Data Engineering")
-        confidence = "High - task failure count is direct operational evidence"
+        escalation_route = _text(out, "Escalation Route", "Route", "Owner", "OWNER", default="Data Engineering")
+        confidence = "High - task failure count is direct operational telemetry"
         decision_gate = "Incident"
 
     elif "QUERY FAILURE" in source_key or ("FAILED QUER" in source_key and "WAREHOUSE" in source_key):
         failures = _num(out, "Current Value", "FAILURES")
         decision = "Route repeated error signatures"
         action = (
-            f"For {entity}, group failed queries by error code and owner, then route the top repeated signature to "
-            "the owning team with sample query IDs."
+            f"For {entity}, group failed queries by error code and route, then send the top repeated signature to "
+            "the responsible team with sample query IDs."
         )
         evidence = f"{entity}: {failures:,.0f} failed query event(s) in the loaded window."
         safe_next = "Open Workload Operations > Query diagnosis filtered to this warehouse and capture the top error code."
-        proof = "Attach before/after failure counts and sample query IDs; close only after the repeated signature stops."
-        do_not = "Do not change warehouse size for failed queries unless queue/spill evidence also points to capacity pressure."
+        proof = "Track before/after failure counts and sample query IDs; close only after the repeated signature stops."
+        do_not = "Do not change warehouse size for failed queries unless queue/spill telemetry also points to capacity pressure."
         confidence = "Medium - failure count is specific, root cause requires error-code detail"
-        decision_gate = "Route owner"
+        decision_gate = "Route finding"
 
     out["Decision"] = decision
     out["Action"] = action
     out["Evidence Packet"] = evidence
+    out["Telemetry Summary"] = evidence
     out["Safe Next Action"] = safe_next
     out["Proof Required"] = proof
+    out["Telemetry Basis"] = proof
     out["Do Not Do"] = do_not
-    out["Owner Route"] = owner_route
+    out["Escalation Route"] = escalation_route
     out["Confidence"] = confidence
     out["Decision Gate"] = decision_gate
     if proof_query:
-        out["Proof Required"] = f"{proof} Proof query is attached."
+        out["Proof Required"] = f"{proof} Telemetry query is available."
+        out["Telemetry Basis"] = out["Proof Required"]
     out.setdefault("Verification Status", "Pending")
+    out.setdefault("Telemetry Status", out["Verification Status"])
     out.setdefault("Recovery Evidence", out["Proof Required"])
-    out.setdefault("Owner Evidence", out["Evidence Packet"])
+    out.setdefault("Recovery Status", out["Recovery Evidence"])
+    out.setdefault("Route Basis", out["Evidence Packet"])
     out.update(recommendation_execution_contract(out))
     return out
 
@@ -311,7 +315,7 @@ def _verification_is_proved(row: Mapping | pd.Series | dict) -> bool:
 
 
 def _approval_state(row: Mapping | pd.Series | dict) -> str:
-    return _text(row, "Owner Approval Status", "OWNER_APPROVAL_STATUS", "APPROVAL_STATE").upper()
+    return _text(row, "Verification Status", "OWNER_APPROVAL_STATUS", "APPROVAL_STATE").upper()
 
 
 def _automation_blockers(row: Mapping | pd.Series | dict, hardened: Mapping | dict) -> list[str]:
@@ -321,7 +325,7 @@ def _automation_blockers(row: Mapping | pd.Series | dict, hardened: Mapping | di
     )
     generated_sql = _text(row, "Generated SQL Fix", "GENERATED_SQL_FIX") or _text(hardened, "Generated SQL Fix")
     owner = _text(row, "Owner", "OWNER") or _text(hardened, "Owner Route", "Owner")
-    approver = _text(row, "Approver", "APPROVER", "Approval Group", "APPROVAL_GROUP")
+    approver = _text(row, "Approver", "APPROVER", "Review Group", "APPROVAL_GROUP")
     approval = _approval_state(row)
     blob = _upper_blob(
         _text(row, "Category", "CATEGORY"),
@@ -332,17 +336,17 @@ def _automation_blockers(row: Mapping | pd.Series | dict, hardened: Mapping | di
     )
 
     if not _truthy_text(proof_query):
-        blockers.append("verification query")
+        blockers.append("telemetry query")
     if not _truthy_text(owner) or str(owner).upper() in {"DBA", "UNKNOWN", "UNASSIGNED"}:
-        blockers.append("named owner route")
-    if _state_changing_sql(generated_sql) and approval not in {"APPROVED", "NOT REQUIRED"}:
-        blockers.append("owner approval")
+        blockers.append("named escalation route")
+    if _state_changing_sql(generated_sql) and approval not in {"APPROVED", "VERIFIED", "NOT REQUIRED"}:
+        blockers.append("telemetry status")
     if _state_changing_sql(generated_sql) and not _truthy_text(approver):
         blockers.append("approver")
     if any(token in blob for token in ("DROP ", "TRUNCATE", "GRANT", "REVOKE", "ALTER ROLE", "ALTER USER", "FAILOVER", "EXECUTE TASK", "CALL ")):
-        blockers.append("manual DBA review")
+        blockers.append("DBA review")
     if "CLUSTERING_DEPTH" in blob or "CLUSTERING_INFORMATION" in blob:
-        blockers.append("manual clustering proof")
+        blockers.append("clustering telemetry")
     if "NO SAFE AUTOMATIC SQL FIX" in blob:
         blockers.append("no safe SQL fix")
     return sorted(set(blockers))
@@ -371,35 +375,35 @@ def automation_readiness_for_row(row: Mapping | pd.Series | dict, *, source_surf
         score += 15
     if safe_guided:
         score += 15
-    if approval in {"APPROVED", "NOT REQUIRED"}:
+    if approval in {"APPROVED", "VERIFIED", "NOT REQUIRED"}:
         score += 10
     if _truthy_text(_text(row, "Owner", "OWNER", "Owner Route")):
         score += 5
     score -= len(blockers) * 12
 
     if closed_verified:
-        lane = "Auto-Close Candidate"
-        next_step = "Package closure evidence and move this out of the active queue if business owner agrees."
+        lane = "Resolved Candidate"
+        next_step = "The condition is closed in telemetry; keep it out of active work."
         mode = "Workflow closure"
     elif safe_guided and not blockers:
-        lane = "Ready for Guided Execution"
-        next_step = "Use Governance & Security controls or the owning workflow to run the reviewed SQL path, then execute the verification query."
+        lane = "Ready"
+        next_step = "Use the guarded drilldown workflow when action is still needed."
         mode = "Guided action"
-    elif safe_guided and set(blockers) <= {"owner approval", "approver"}:
-        lane = "Approval Required"
-        next_step = "Capture owner approval and approver, then rerun automation readiness before any SQL execution."
-        mode = "Approval-gated"
-    elif "manual DBA review" in blockers or "manual clustering proof" in blockers or "no safe SQL fix" in blockers:
-        lane = "Manual Only"
-        next_step = _text(hardened, "Safe Next Action", default="Open the owning workflow and complete manual DBA review.")
+    elif safe_guided and set(blockers) <= {"telemetry status", "approver"}:
+        lane = "Telemetry Pending"
+        next_step = "Wait for telemetry to refresh before acting."
+        mode = "Telemetry-gated"
+    elif "DBA review" in blockers or "clustering telemetry" in blockers or "no safe SQL fix" in blockers:
+        lane = "DBA Review"
+        next_step = _text(hardened, "Safe Next Action", default="Open the guarded drilldown workflow for DBA review.")
         mode = "Human-controlled"
     elif blockers:
-        lane = "Evidence Required"
-        next_step = "Fill the missing blocker fields before routing this to automation or closure."
-        mode = "Evidence-gated"
+        lane = "Needs Data"
+        next_step = "Load the missing telemetry before routing this to action or closure."
+        mode = "Data-gated"
     else:
-        lane = "Observe Only"
-        next_step = "Keep monitoring; do not create a change until severity, evidence, or owner route changes."
+        lane = "Monitor"
+        next_step = "Keep monitoring; do not create a change until severity, telemetry, or escalation route changes."
         mode = "Observation"
 
     score = max(0, min(100, score))
@@ -414,9 +418,10 @@ def automation_readiness_for_row(row: Mapping | pd.Series | dict, *, source_surf
         "AUTOMATION_SCORE": round(float(score), 1),
         "BLOCKERS": ", ".join(blockers) if blockers else "none",
         "SAFE_AUTOMATION_STEP": next_step,
-        "PROOF_REQUIRED": _text(hardened, "Proof Required", default="Attach verification evidence before closure."),
-        "DO_NOT_DO": _text(hardened, "Do Not Do", default="Do not automate without source evidence."),
+        "PROOF_REQUIRED": _text(hardened, "Proof Required", default="Telemetry must show the condition cleared."),
+        "DO_NOT_DO": _text(hardened, "Do Not Do", default="Do not automate without source telemetry."),
         "APPROVAL_GATE": contract["APPROVAL_GATE"],
+        "REVIEW_GATE": contract["REVIEW_GATE"],
         "EVIDENCE_PACKAGE": contract["EVIDENCE_PACKAGE"],
         "VERIFY_NEXT": contract["VERIFY_NEXT"],
         "EXECUTION_BOUNDARY": contract["EXECUTION_BOUNDARY"],
@@ -440,7 +445,7 @@ def build_automation_readiness_board(
     recommendations: list[dict] | pd.DataFrame | None = None,
     action_queue: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """Build a deterministic automation readiness board from loaded evidence."""
+    """Build a deterministic automation readiness board from loaded telemetry."""
     records: list[tuple[dict, str]] = []
     if isinstance(recommendations, pd.DataFrame):
         records.extend(_records_from_frame(recommendations, source_surface="Recommendations"))
@@ -470,7 +475,7 @@ def build_automation_readiness_board(
 
 
 def warehouse_sizing_decision(row: Mapping | pd.Series | dict) -> dict:
-    """Classify warehouse sizing evidence without generic upsize advice."""
+    """Classify warehouse sizing telemetry without generic upsize advice."""
     warehouse = _entity(row)
     size = _text(row, "WAREHOUSE_SIZE", "Warehouse Size", default="unknown size")
     spill = _num(row, "REMOTE_SPILL_GB", "Remote Spill GB")
@@ -492,7 +497,7 @@ def warehouse_sizing_decision(row: Mapping | pd.Series | dict) -> dict:
             "Entity Type": "Warehouse",
             "Entity": warehouse,
             "Finding": result["DECISION"],
-            "Owner": "Warehouse owner / DBA capacity reviewer",
+            "Route": "Warehouse route / DBA capacity reviewer",
             "Evidence Packet": result["EVIDENCE_PACKET"],
             "Proof Required": result["PROOF_REQUIRED"],
         })
@@ -511,7 +516,7 @@ def warehouse_sizing_decision(row: Mapping | pd.Series | dict) -> dict:
             "EVIDENCE_PACKET": evidence,
             "SAFE_NEXT_ACTION": "Capture top spilling query IDs, then run a controlled one-size-up or multi-cluster validation for the same workload window.",
             "PROOF_REQUIRED": "Queue seconds and remote spill GB both decline for the same workload class after the change.",
-            "DO_NOT_DO": "Do not leave the larger setting permanent without before/after proof.",
+            "DO_NOT_DO": "Do not leave the larger setting permanent without before/after telemetry.",
         })
     if spill > spill_threshold:
         return with_contract({
@@ -535,13 +540,13 @@ def warehouse_sizing_decision(row: Mapping | pd.Series | dict) -> dict:
             "EVIDENCE_PACKET": evidence,
             "SAFE_NEXT_ACTION": "Ask the owner whether the workload is latency-sensitive, then validate one size down during the same usage window.",
             "PROOF_REQUIRED": "Runtime and failure rate stay stable while credits drop after the validation.",
-            "DO_NOT_DO": "Do not downsize shared or SLA-sensitive warehouses without owner approval.",
+            "DO_NOT_DO": "Do not downsize shared or SLA-sensitive warehouses without telemetry.",
         })
     return with_contract({
         "DECISION": "No sizing change from this evidence",
         "EVIDENCE_PACKET": evidence,
         "SAFE_NEXT_ACTION": "Keep monitoring; route only if queue, spill, or cost deltas cross thresholds.",
-        "PROOF_REQUIRED": "No proof needed unless a future setting change is proposed.",
+    "PROOF_REQUIRED": "No telemetry action needed unless a future setting change is proposed.",
         "DO_NOT_DO": "Do not create a change ticket from a clean sizing row.",
     })
 
@@ -560,7 +565,7 @@ def duplicate_query_decision(row: Mapping | pd.Series | dict) -> dict:
         ),
         "SAFE_NEXT_ACTION": "Confirm literals and result reuse, then choose result cache hygiene, dynamic table, or materialized view.",
         "PROOF_REQUIRED": "Execution count and total elapsed seconds drop for the same query signature.",
-        "DO_NOT_DO": "Do not create a materialized view until the repeated query has stable semantics and owner demand.",
+        "DO_NOT_DO": "Do not create a materialized view until the repeated query has stable semantics and workload demand.",
     }
     contract = recommendation_execution_contract({
         "Source": "Duplicate query advisor",
@@ -568,7 +573,7 @@ def duplicate_query_decision(row: Mapping | pd.Series | dict) -> dict:
         "Entity Type": "Query",
         "Entity": signature[:120] or "query signature",
         "Finding": result["DECISION"],
-        "Owner": "Query owner / DBA architecture reviewer",
+        "Owner": "Query reviewer / DBA lead",
         "Evidence Packet": result["EVIDENCE_PACKET"],
         "Proof Required": result["PROOF_REQUIRED"],
     })

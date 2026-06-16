@@ -55,7 +55,7 @@ def _annotate_pipeline_routes(df: pd.DataFrame, finding_type: str) -> pd.DataFra
         routed["NEXT_ACTION"] = "Review refresh state, target lag, upstream changes, and the latest refresh query before changing lag or warehouse settings."
     else:
         routed["NEXT_WORKFLOW"] = "Change & drift"
-        routed["NEXT_ACTION"] = "Review owner, retention, table growth, and lifecycle policy before archive/drop or clustering changes."
+        routed["NEXT_ACTION"] = "Review route, retention, table growth, and lifecycle policy before archive/drop or clustering changes."
     return routed
 
 
@@ -126,7 +126,7 @@ def _queue_pipeline_findings(session, df: pd.DataFrame, finding_type: str) -> No
         st.success(f"Saved {saved} pipeline findings to the action queue.")
     except Exception as e:
         st.error(f"Could not save to action queue: {format_snowflake_error(e)}")
-        st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
+        st.info("The action queue is not available in this environment yet. Ask the DBA team to enable it, then retry this save.")
 
 
 def _pipe_company_filter(company: str) -> str:

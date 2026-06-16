@@ -169,8 +169,8 @@ class ContentionCenterTests(unittest.TestCase):
         self.assertIn("SYSTEM$ABORT_TRANSACTION('tx_blocker_123')", " ".join(decisions["MANUAL_ACTION_SQL"].astype(str)))
         self.assertIn("LOCK_WAIT_HISTORY", " ".join(decisions["PRECHECK_SQL"].astype(str)))
         self.assertIn("RECENT_WAIT_EVENTS", " ".join(decisions["VERIFY_SQL"].astype(str)))
-        self.assertIn("Manual DBA action only", " ".join(decisions["ACTION_GUARDRAIL"].astype(str)))
-        self.assertIn("owner approval", " ".join(decisions["APPROVAL_GATE"].astype(str)).lower())
+        self.assertIn("DBA-controlled action", " ".join(decisions["ACTION_GUARDRAIL"].astype(str)))
+        self.assertIn("scheduler review", " ".join(decisions["APPROVAL_GATE"].astype(str)).lower())
 
         cockpit = _incident_cockpit_view(decisions)
         self.assertIn("BLOCKER", cockpit.columns)
@@ -183,14 +183,14 @@ class ContentionCenterTests(unittest.TestCase):
         self.assertEqual(first["WAITER"], "query 01a")
         self.assertEqual(first["LOCKED_OBJECT"], "APP_DB.CORE.FACT_POLICY")
         self.assertIn("DBA on-call", first["INCIDENT_OWNER"])
-        self.assertIn("Run precheck SQL", first["DECISION_GATE"])
+        self.assertIn("Run the precheck", first["DECISION_GATE"])
         self.assertIn("VERIFY_SQL", cockpit.columns)
 
         top_path = build_contention_top_fix_path(decisions)
         self.assertEqual(top_path.iloc[0]["TOP_ROUTE"], "Active Locks")
         self.assertEqual(top_path.iloc[0]["TOP_SEVERITY"], "Critical")
         self.assertEqual(top_path.iloc[0]["BLOCKER"], "transaction tx_blocker_123")
-        self.assertEqual(top_path.iloc[0]["MANUAL_SQL_STATE"], "Available after approval")
+        self.assertEqual(top_path.iloc[0]["MANUAL_SQL_STATE"], "Available after review")
         self.assertIn("LOCK_WAIT_HISTORY", top_path.iloc[0]["PRECHECK_SQL"])
         self.assertIn("RECENT_WAIT_EVENTS", top_path.iloc[0]["VERIFY_SQL"])
 
@@ -261,12 +261,13 @@ class ContentionCenterTests(unittest.TestCase):
         self.assertIn("incident ticket", abort_contract["APPROVAL_GATE"])
         self.assertIn("rollback impact", abort_contract["APPROVAL_GATE"])
         self.assertIn("post-action Query History", abort_contract["AUDIT_EVIDENCE_REQUIRED"])
-        self.assertIn("approved Snowflake worksheet", abort_contract["EXECUTION_BOUNDARY"])
+        self.assertIn("Snowflake worksheet", abort_contract["EXECUTION_BOUNDARY"])
+        self.assertIn("after review", abort_contract["EXECUTION_BOUNDARY"])
 
         self.assertEqual(cancel_contract["CLEANUP_DECISION"], "Cancel blocked query candidate")
         self.assertIn("SYSTEM$CANCEL_QUERY('01blocked')", cancel_contract["MANUAL_ACTION_SQL"])
         self.assertIn("does not release the blocker lock", cancel_contract["PRECHECKS"])
-        self.assertIn("Query owner", cancel_contract["APPROVAL_GATE"])
+        self.assertIn("Query route", cancel_contract["APPROVAL_GATE"])
         self.assertIn("waiter or blocker", cancel_contract["APPROVAL_GATE"])
         self.assertIn("route retry/recovery", cancel_contract["RECOVERY_PLAN"])
         self.assertIn("QUERY_HISTORY", cancel_contract["PRECHECK_SQL"])
@@ -274,7 +275,7 @@ class ContentionCenterTests(unittest.TestCase):
         self.assertIn("LOCK_WAIT_HISTORY", cancel_contract["PRECHECK_SQL"])
         self.assertIn("QUERY_HISTORY", cancel_contract["VERIFY_SQL"])
         self.assertIn("RECENT_WAIT_EVENTS", cancel_contract["VERIFY_SQL"])
-        self.assertIn("Manual DBA action only", cancel_contract["ACTION_GUARDRAIL"])
+        self.assertIn("DBA-controlled action", cancel_contract["ACTION_GUARDRAIL"])
 
         self.assertEqual(queue_contract["CLEANUP_DECISION"], "No cancel - capacity review")
         self.assertEqual(queue_contract["MANUAL_ACTION_SQL"], "")
@@ -338,14 +339,14 @@ class ContentionCenterTests(unittest.TestCase):
             "WAREHOUSE_NAME": "WH_TRXS_LOAD",
             "CLEANUP_DECISION": "Cancel blocked query candidate",
             "CLEANUP_READINESS": "Ready for DBA review",
-            "ACTION_GUARDRAIL": "Manual DBA action only; OVERWATCH does not auto-cancel from this view.",
+            "ACTION_GUARDRAIL": "DBA-controlled action; OVERWATCH does not auto-cancel from this view.",
             "PRECHECKS": "Confirm whether this query is the blocker or the waiter.",
             "PRECHECK_SQL": "SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY WHERE QUERY_ID = '01blocked';",
             "MANUAL_ACTION_SQL": "SELECT SYSTEM$CANCEL_QUERY('01blocked');",
-            "APPROVAL_GATE": "Query owner approval required.",
-            "AUDIT_EVIDENCE_REQUIRED": "Save precheck, approval, manual SQL, and verify result.",
-            "RECOVERY_PLAN": "Watch blocker state and route retry to owner.",
-            "EXECUTION_BOUNDARY": "OVERWATCH displays manual SQL only.",
+            "APPROVAL_GATE": "Query route review required.",
+            "AUDIT_EVIDENCE_REQUIRED": "Save precheck, review status, action SQL, and result.",
+            "RECOVERY_PLAN": "Watch blocker state and route retry to the escalation route.",
+            "EXECUTION_BOUNDARY": "OVERWATCH displays reviewed action SQL only.",
             "WHEN_NOT_TO_RUN": "Do not cancel for pure warehouse queueing.",
             "VERIFY_AFTER_CLEANUP": "Query History should show the selected query canceled.",
             "VERIFY_SQL": "SELECT COUNT(*) AS RECENT_WAIT_EVENTS FROM SNOWFLAKE.ACCOUNT_USAGE.LOCK_WAIT_HISTORY;",
@@ -368,10 +369,10 @@ class ContentionCenterTests(unittest.TestCase):
         self.assertIn("QUERY_HISTORY", contract.iloc[0]["PRECHECK_SQL"])
         self.assertIn("RECENT_WAIT_EVENTS", contract.iloc[0]["VERIFY_SQL"])
 
-    def test_manual_cleanup_sql_is_display_only(self):
+    def test_cleanup_sql_is_display_only(self):
         text = (APP_ROOT / "sections" / "contention_center.py").read_text(encoding="utf-8")
 
-        self.assertIn("OVERWATCH displays manual SQL only", text)
+        self.assertIn("DBA-controlled action", text)
         self.assertNotIn("run_query(row.get(\"MANUAL_ACTION_SQL\"", text)
         self.assertNotIn("run_query(contract.get(\"MANUAL_ACTION_SQL\"", text)
         self.assertNotIn("run_query(manual_sql", text)

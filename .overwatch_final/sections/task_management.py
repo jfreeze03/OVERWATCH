@@ -56,7 +56,7 @@ TASK_CONTROL_DETAILS = {
     "Task History": "Run history, active task count, and raw task inventory.",
     "ETL Audit": "Custom ETL audit table setup and recent pipeline runs.",
     "Control Center": "Guarded suspend, resume, retry, execute, and cancel workflows.",
-    "Execute Task": "Focused manual task execution with pre-flight checks.",
+    "Execute Task": "Focused on-demand task execution with pre-flight checks.",
 }
 
 TASK_FAILURE_STATES = {"FAILED", "FAILED_WITH_ERROR"}
@@ -99,7 +99,7 @@ def _queue_task_findings(session, df: pd.DataFrame, source: str) -> None:
             "Owner Email": owner_context.get("OWNER_EMAIL", ""),
             "Oncall Primary": owner_context.get("ONCALL_PRIMARY", ""),
             "Oncall Secondary": owner_context.get("ONCALL_SECONDARY", ""),
-            "Approval Group": owner_context.get("APPROVAL_GROUP", ""),
+            "Review Group": owner_context.get("APPROVAL_GROUP", ""),
             "Escalation Target": owner_context.get("ESCALATION_TARGET", ""),
             "Owner Source": owner_context.get("OWNER_SOURCE", ""),
             "Owner Evidence": owner_context.get("OWNER_EVIDENCE", ""),
@@ -119,7 +119,7 @@ def _queue_task_findings(session, df: pd.DataFrame, source: str) -> None:
         st.success(f"Saved {saved} task reliability findings to the action queue.")
     except Exception as e:
         st.error(f"Could not save to action queue: {format_snowflake_error(e)}")
-        st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
+        st.info("The action queue is not available in this environment yet. Ask the DBA team to enable it, then retry this save.")
 
 
 def _qualified_name(*parts: str) -> str:
@@ -483,11 +483,11 @@ def _task_owner_approval_state(row: pd.Series) -> str:
     recovery_state = str(row.get("RECOVERY_STATE") or "").upper()
     signal = str(row.get("SIGNAL") or row.get("FAILURE_CATEGORY") or "").upper()
     if "OPEN" in recovery_state or "FAILED" in signal:
-        return "Root-cause owner approval required"
+        return "Root-cause review required"
     if "LATE" in recovery_state or "SLA" in signal:
-        return "DBA lead verifies recovery evidence"
+        return "DBA lead checks recovery telemetry"
     if "SUSPENDED" in signal:
-        return "Owner approval required before resume"
+        return "Review required before resume"
     if "COST" in signal or "REGRESSION" in signal:
         return "DBA release owner accepts or remediates baseline"
     return "DBA review before close"
@@ -497,7 +497,7 @@ def _task_owner_approval_status(row: pd.Series) -> str:
     state = str(row.get("OWNER_APPROVAL_STATE") or "").upper()
     if "NOT REQUIRED" in state:
         return "Not Required"
-    if "APPROVAL REQUIRED" in state or "OWNER APPROVAL" in state or "ROOT-CAUSE OWNER" in state:
+    if "APPROVAL REQUIRED" in state or "Verification" in state or "ROOT-CAUSE OWNER" in state:
         return "Requested"
     if "VERIFIES" in state or "ACCEPTS" in state:
         return "Requested"
@@ -609,7 +609,7 @@ def _build_task_recovery_sla_frame(
         row["VERIFY_AFTER_FIX"] = (
             "Latest TASK_HISTORY run succeeds after the failure and recovery time is inside the configured SLA."
             if recovery_state == "Open Failure"
-            else "Attach TASK_HISTORY evidence proving the successful recovery run and elapsed recovery time."
+            else "Record TASK_HISTORY telemetry showing the successful recovery run and elapsed recovery time."
         )
         rows.append(row)
 
@@ -798,16 +798,16 @@ def _task_recovery_command_board(exceptions: pd.DataFrame, recovery_sla: pd.Data
                 "DOWNSTREAM_TASK_COUNT": safe_int(row.get("DOWNSTREAM_TASK_COUNT")),
                 "RECOVERY_STATE": recovery_state,
                 "RECOVERY_READINESS": (
-                    "Blocked - verify successful recovery run first"
+                    "Blocked - confirm successful recovery run first"
                     if recovery_state == "Open Failure"
-                    else "Blocked - attach late recovery evidence before close"
+                    else "Blocked - record late recovery telemetry before close"
                 ),
                 "OWNER_APPROVAL_STATE": row.get("OWNER_APPROVAL_STATE", ""),
                 "ONCALL_PRIMARY": row.get("ONCALL_PRIMARY", ""),
                 "APPROVAL_GROUP": row.get("APPROVAL_GROUP", ""),
                 "NEXT_WORKFLOW": "Failure Console",
-                "NEXT_ACTION": "Attach owner-approved recovery evidence and verify the next successful task run before closure.",
-                "VERIFY_AFTER_FIX": row.get("VERIFY_AFTER_FIX", "Attach TASK_HISTORY recovery proof before closure."),
+                "NEXT_ACTION": "Record recovery telemetry and confirm the next successful task run before closure.",
+                "VERIFY_AFTER_FIX": row.get("VERIFY_AFTER_FIX", "Record TASK_HISTORY recovery telemetry before closure."),
             })
 
     board = pd.DataFrame(rows)
@@ -837,12 +837,12 @@ def _task_action_for(signal: str) -> tuple[str, str]:
     signal = str(signal or "").upper()
     if "OPEN RECOVERY" in signal:
         return (
-            "Keep the incident open until a successful recovery run is visible and owner approval is attached.",
-            "-- Verify with TASK_HISTORY before retrying or closing the incident.",
+            "Keep the incident open until a successful recovery run is visible and telemetry status is recorded.",
+            "-- Confirm with TASK_HISTORY before retrying or closing the incident.",
         )
     if "RECOVERY" in signal:
         return (
-            "Attach the recovery evidence, compare elapsed recovery time to SLA, and decide whether the task graph needs tuning.",
+            "Record the recovery telemetry, compare elapsed recovery time to SLA, and decide whether the task graph needs tuning.",
             "-- Review TASK_HISTORY failure and succeeding run timestamps.",
         )
     if "FAILED" in signal:
@@ -852,7 +852,7 @@ def _task_action_for(signal: str) -> tuple[str, str]:
         )
     if "SUSPENDED" in signal:
         return (
-            "Confirm suspension was intentional; resume only after owner approval and dependency check.",
+            "Confirm suspension was intentional; resume only after review and dependency check.",
             "ALTER TASK <db>.<schema>.<task_name> RESUME;",
         )
     if "LONG" in signal or "SLA" in signal:
@@ -866,7 +866,7 @@ def _task_action_for(signal: str) -> tuple[str, str]:
             "-- Review estimated credits, cloud services credits, warehouse size, and procedure code changes before the next scheduled run.",
         )
     return (
-        "Review graph dependency and procedure ownership before operational action.",
+        "Review graph dependency and procedure execution context before operational action.",
         "-- Inspect SHOW TASKS, TASK_HISTORY, and linked CALL history.",
     )
 
@@ -885,8 +885,8 @@ def _failure_diagnosis(error_text: object, query_text: object = "") -> dict[str,
     if any(token in combined for token in ["INSUFFICIENT PRIVILEGE", "NOT AUTHORIZED", "ACCESS DENIED", "PERMISSION", "PRIVILEGE"]):
         return {
             "CATEGORY": "Privilege / RBAC",
-            "PROBABLE_CAUSE": "The task owner role or procedure execution role lacks required privileges.",
-            "RECOMMENDED_ACTION": "Check task owner, procedure owner, EXECUTE privileges, warehouse USAGE, and object grants before retry.",
+            "PROBABLE_CAUSE": "The task execution role or procedure execution role lacks required privileges.",
+            "RECOMMENDED_ACTION": "Check task role, procedure role, EXECUTE privileges, warehouse USAGE, and object grants before retry.",
         }
     if any(token in combined for token in ["INVALID IDENTIFIER", "DOES NOT EXIST", "NOT EXIST", "OBJECT", "UNKNOWN TABLE", "UNKNOWN VIEW"]):
         return {
@@ -903,19 +903,19 @@ def _failure_diagnosis(error_text: object, query_text: object = "") -> dict[str,
     if any(token in combined for token in ["SQL COMPILATION", "SYNTAX", "UNEXPECTED", "PARSE"]):
         return {
             "CATEGORY": "SQL / Procedure Code",
-            "PROBABLE_CAUSE": "The generated SQL or stored procedure body is invalid in the current environment.",
+            "PROBABLE_CAUSE": "The task statement or stored procedure body is invalid in the current environment.",
             "RECOMMENDED_ACTION": "Open the linked query text/procedure definition, validate object names and syntax, then redeploy the procedure.",
         }
     if any(token in combined for token in ["WAREHOUSE", "STATEMENT_TIMEOUT", "TIMEOUT", "MEMORY", "SPILL", "RESOURCE"]):
         return {
             "CATEGORY": "Warehouse / Runtime Capacity",
             "PROBABLE_CAUSE": "The task may be blocked by warehouse state, timeout, memory pressure, or capacity limits.",
-            "RECOMMENDED_ACTION": "Check Cost & Contract warehouse capacity evidence for queue/spill pressure; resume or resize only after confirming workload demand.",
+            "RECOMMENDED_ACTION": "Check Cost & Contract warehouse capacity telemetry for queue/spill pressure; resume or resize only after confirming workload demand.",
         }
     if any(token in combined for token in ["LOCK", "TRANSACTION", "DEADLOCK", "BLOCKED"]):
         return {
             "CATEGORY": "Concurrency / Locking",
-            "PROBABLE_CAUSE": "The task was blocked by concurrent DML/DDL or transaction contention.",
+            "PROBABLE_CAUSE": "The task was blocked by concurrent data/object changes or transaction contention.",
             "RECOMMENDED_ACTION": "Review overlapping task windows, query blockers, and transaction timing before retrying.",
         }
     return {
@@ -1033,7 +1033,7 @@ def _failure_recovery_readiness(row: pd.Series) -> str:
         return "Blocked - warehouse or capacity review first"
     if "DATA QUALITY" in category:
         return "Blocked - data correction first"
-    return "Ready after DBA owner approval"
+    return "Ready after DBA review"
 
 
 def _verification_after_failure(row: pd.Series) -> str:
@@ -1067,13 +1067,13 @@ def _task_exception_incident_priority(row: pd.Series) -> str:
 def _task_exception_recovery_readiness(row: pd.Series) -> str:
     signal = str(row.get("SIGNAL") or "").upper()
     if "OPEN RECOVERY" in signal:
-        return "Blocked - verify successful recovery run first"
+        return "Blocked - confirm successful recovery run first"
     if "RECOVERY" in signal:
-        return "Blocked - attach late recovery evidence before close"
+        return "Blocked - record late recovery telemetry before close"
     if "FAILED" in signal:
         return "Blocked - fix failure root cause first"
     if "SUSPENDED" in signal:
-        return "Blocked - owner approval before resume"
+        return "Blocked - review before resume"
     if "LONG" in signal or "SLA" in signal:
         return "Blocked - tune or capacity-review before next release handoff"
     if "COST" in signal or "REGRESSION" in signal:
@@ -1269,18 +1269,18 @@ def _build_failure_runbook_markdown(company: str, days: int, summary: dict, fail
                 f"- Impact hints: {row.get('IMPACT_OBJECTS', '')}",
                 f"- Probable cause: {row.get('PROBABLE_CAUSE', '')}",
                 f"- Recommended action: {row.get('RECOMMENDED_ACTION', '')}",
-                f"- Recovery readiness: {row.get('RECOVERY_READINESS', '')}",
+                f"- Recovery status: {row.get('RECOVERY_READINESS', '')}",
                 f"- Recovery SLA state: {row.get('RECOVERY_STATE', '')}",
-                f"- Owner approval: {row.get('OWNER_APPROVAL_STATE', '')}",
-                f"- Verify after fix: {row.get('VERIFY_AFTER_FIX', '')}",
-                f"- Retry SQL after fix: `{row.get('RETRY_SQL', '')}`",
+                f"- Status: {row.get('OWNER_APPROVAL_STATE', '')}",
+                f"- Confirm after fix: {row.get('VERIFY_AFTER_FIX', '')}",
+                "- Retry plan after fix: reviewed runbook action",
                 "",
             ])
     lines.extend([
-        "## Evidence Limits",
+        "## Telemetry Limits",
         "- TASK_HISTORY and QUERY_HISTORY are ACCOUNT_USAGE-backed and can lag.",
         "- Procedure linkage is inferred from task definitions containing CALL statements.",
-        "- Retry SQL is generated for review; DBAs must confirm the root cause is fixed before execution.",
+        "- Retry is review-gated; DBAs must confirm the root cause is fixed before execution.",
     ])
     return "\n".join(lines)
 
@@ -1318,7 +1318,7 @@ def _task_reliability_verification_sql(row: pd.Series, lookback_days: int = 7) -
     name_filter = ""
     if task_name:
         name_filter = f"AND name = {sql_literal(task_name, 500)}"
-    return f"""-- Task reliability proof and post-fix verification
+    return f"""-- Task reliability telemetry and post-fix status
 -- Task FQN: {task_fqn or task_name or 'UNKNOWN'}
 SELECT name,
        database_name,
@@ -1335,19 +1335,19 @@ WHERE scheduled_time >= DATEADD('day', -{max(1, int(lookback_days or 7))}, CURRE
 ORDER BY scheduled_time DESC
 LIMIT 50;
 
--- Verification rule: latest run should be SUCCEEDED and runtime/credits should return inside the selected SLA baseline.
+-- Status rule: latest run should be SUCCEEDED and runtime/credits should return inside the selected SLA baseline.
 """
 
 
 def _task_reliability_proof_sql(row: pd.Series, lookback_days: int = 7) -> str:
-    """Return richer human proof text while keeping runnable verification separate."""
+    """Return richer human telemetry text while keeping runnable status SQL separate."""
     verification_sql = _task_reliability_verification_sql(row, lookback_days).strip()
     query_id = str(row.get("QUERY_ID") or "").strip()
     if not query_id:
         return verification_sql
     return f"""{verification_sql}
 
--- Linked QUERY_HISTORY evidence for root-cause review:
+-- Linked QUERY_HISTORY telemetry for root-cause review:
 SELECT query_id,
        execution_status,
        start_time,
@@ -1375,13 +1375,13 @@ def _task_reliability_generated_sql(row: pd.Series) -> str:
         "-- Reviewed recovery plan. Do not execute until root cause is fixed.\n"
         f"-- Task: {task_fqn}\n"
         f"-- Priority: {incident_priority or 'Unranked'}\n"
-        f"-- Recovery readiness: {recovery_readiness or 'DBA review required'}\n"
-        f"-- Owner approval: {owner_approval_state or 'Required before close'}\n"
+        f"-- Recovery status: {recovery_readiness or 'DBA review required'}\n"
+        f"-- Status: {owner_approval_state or 'Required before close'}\n"
         f"-- Graph role: {row.get('GRAPH_ROLE', '')}; downstream tasks: {safe_int(row.get('DOWNSTREAM_TASK_COUNT'))}\n"
         f"-- Linked procedure: {row.get('PROCEDURE_NAME', '')}\n"
         f"-- Impact objects: {row.get('IMPACT_OBJECTS', '')}\n"
         f"{retry_line}\n"
-        "-- After retry, run the verification query and attach evidence to the action queue."
+        "-- After retry, run the status query and record telemetry in the action queue."
     )
 
 
@@ -1400,8 +1400,8 @@ def _build_task_reliability_action(row: pd.Series, company: str, source: str) ->
     action_text, _ = _task_action_for(signal)
     if row.get("RECOMMENDED_ACTION"):
         action_text = str(row.get("RECOMMENDED_ACTION"))
-    if "verify" not in action_text.lower():
-        action_text += " Verify the next successful run and attach TASK_HISTORY evidence before closing."
+    if "verify" not in action_text.lower() and "confirm" not in action_text.lower():
+        action_text += " Confirm the next successful run and record TASK_HISTORY telemetry before closing."
     severity = str(row.get("SEVERITY") or ("High" if category != "Unclassified Failure" else "Medium"))
     incident_priority = str(row.get("INCIDENT_PRIORITY") or "").strip()
     recovery_readiness = str(row.get("RECOVERY_READINESS") or "").strip()
@@ -1417,9 +1417,9 @@ def _build_task_reliability_action(row: pd.Series, company: str, source: str) ->
         alert_type=signal,
     )
     if recovery_readiness and recovery_readiness.lower() not in action_text.lower():
-        action_text += f" Recovery readiness: {recovery_readiness}."
+        action_text += f" Recovery status: {recovery_readiness}."
     if owner_approval_state and owner_approval_state.lower() not in action_text.lower():
-        action_text += f" Owner approval: {owner_approval_state}."
+        action_text += f" Status: {owner_approval_state}."
     finding_prefix = f"{incident_priority}: " if incident_priority else ""
     finding = f"{finding_prefix}{signal}: {task}. {detail}".strip()
     if recovery_state:
@@ -1444,7 +1444,7 @@ def _build_task_reliability_action(row: pd.Series, company: str, source: str) ->
         "Owner Email": owner_context.get("OWNER_EMAIL", ""),
         "Oncall Primary": owner_context.get("ONCALL_PRIMARY", ""),
         "Oncall Secondary": owner_context.get("ONCALL_SECONDARY", ""),
-        "Approval Group": owner_context.get("APPROVAL_GROUP", ""),
+        "Review Group": owner_context.get("APPROVAL_GROUP", ""),
         "Escalation Target": owner_context.get("ESCALATION_TARGET", ""),
         "Owner Source": owner_context.get("OWNER_SOURCE", ""),
         "Owner Evidence": owner_context.get("OWNER_EVIDENCE", ""),
@@ -1461,8 +1461,8 @@ def _build_task_reliability_action(row: pd.Series, company: str, source: str) ->
         "Baseline Value": baseline_value,
         "Current Value": current_value,
         "Measured Delta": measured_delta,
-        "Owner Approval Status": _task_owner_approval_status(row),
-        "Owner Approval Note": owner_approval_state,
+        "Verification Status": _task_owner_approval_status(row),
+        "Verification Note": owner_approval_state,
         "Recovery SLA State": recovery_state,
         "Recovery SLA Hours": _task_metric(row, "RECOVERY_HOURS", "RECOVERY_SLA_HOURS"),
         "Recovery SLA Target Hours": _task_metric(row, "RECOVERY_SLA_TARGET_HOURS"),
@@ -1503,7 +1503,7 @@ def _build_task_ops_markdown(
         (
             "This is the Informatica Monitor replacement view: use it to find broken task graphs, "
             "failed sessions, suspended jobs, slow runs, linked procedures, and retry candidates. "
-            "It should be the first stop before manually executing, resuming task graphs, or handing "
+            "It should be the first stop before on-demand execution, resuming task graphs, or handing "
             "job status to Snowflake task."
         ),
         "",
@@ -1519,13 +1519,13 @@ def _build_task_ops_markdown(
                 f"{row.get('SIGNAL', 'Unknown')} | "
                 f"{row.get('TASK_NAME', '')} | {row.get('PROCEDURE_NAME', '')} | "
                 f"{row.get('DETAIL', '')} | Recovery: {row.get('RECOVERY_READINESS', '')} | "
-                f"SLA state: {row.get('RECOVERY_STATE', '')} | Owner approval: {row.get('OWNER_APPROVAL_STATE', '')} | "
+                f"SLA state: {row.get('RECOVERY_STATE', '')} | Status: {row.get('OWNER_APPROVAL_STATE', '')} | "
                 f"Downstream tasks: {safe_int(row.get('DOWNSTREAM_TASK_COUNT')):,} | "
                 f"Impact hints: {row.get('IMPACT_OBJECTS', '')}"
             )
     lines.extend([
         "",
-        "## Evidence Limits",
+        "## Telemetry Limits",
         "- TASK_HISTORY columns vary by Snowflake account and role; missing columns are feature-gated.",
         "- Procedure linkage is inferred from task definition CALL statements when available.",
         "- Admin actions require the global Admin actions toggle and the Snowflake task privileges.",
@@ -1873,9 +1873,9 @@ def _build_task_ops_frames(
 
 def _task_task_status_handoff_state(summary: dict) -> tuple[str, str]:
     if safe_int(summary.get("P1_INCIDENTS")) or safe_int(summary.get("LATEST_FAILED_TASKS")):
-        return "Needs Triage", "Latest task job status includes failed production evidence."
+        return "Needs Triage", "Latest task job status includes failed production telemetry."
     if safe_int(summary.get("FAILED_RUNS")) or safe_int(summary.get("BLOCKED_RECOVERIES")):
-        return "Needs Triage", "Recent failures or blocked recoveries need owner-ready proof before Snowflake task handoff."
+        return "Needs Triage", "Recent failures or blocked recoveries need route-ready telemetry before Snowflake task handoff."
     if (
         safe_int(summary.get("SUSPENDED_TASKS"))
         or safe_int(summary.get("LONG_RUNNING_TASKS"))
@@ -1971,7 +1971,7 @@ def _build_task_status_job_status_board(
                 else "No failed latest-run or exception error signatures loaded."
             ),
             "LAST_SEEN": latest_timestamp,
-            "NEXT_ACTION": "Open Failure Console, verify root cause, then attach successful TASK_HISTORY proof.",
+            "NEXT_ACTION": "Open Failure Console, confirm root cause, then record successful TASK_HISTORY telemetry.",
         },
         {
             "TASK_STATUS_VIEW": "Recovery",
@@ -1986,7 +1986,7 @@ def _build_task_status_job_status_board(
                 f"target={safe_int(summary.get('RECOVERY_SLA_TARGET_HOURS')):,}h."
             ),
             "LAST_SEEN": latest_timestamp,
-            "NEXT_ACTION": "Keep Snowflake task closure blocked until recovery evidence and owner approval are visible.",
+            "NEXT_ACTION": "Keep Snowflake task closure blocked until recovery telemetry and status are visible.",
         },
     ]
     board = pd.DataFrame(rows)
@@ -2084,7 +2084,7 @@ def _build_task_reliability_slo_board(summary: dict, exceptions: pd.DataFrame, r
             "SLO": "Open recovery",
             "STATE": "Ready" if safe_int(summary.get("OPEN_RECOVERIES")) == 0 else "Review",
             "EVIDENCE": f"{safe_int(summary.get('OPEN_RECOVERIES')):,} open recovery item(s).",
-            "NEXT_ACTION": "Close recoveries with proof, owner approval, and a successful next run.",
+            "NEXT_ACTION": "Close recoveries with telemetry, status review, and a successful next run.",
         },
         {
             "SLO": "Recovery SLA",
@@ -2270,7 +2270,7 @@ def _load_task_ops_scope(
     st.session_state[f"{ttl_prefix}_sources"] = {
         "inventory": inventory_source,
         "history": history_source,
-        "query_detail": query_detail_source if not query_details.empty else "Not loaded",
+        "query_detail": query_detail_source if not query_details.empty else "On demand",
         "critical_path": critical_path_source,
     }
     return summary, exceptions, latest, inventory, critical_paths, recovery_sla, not query_details.empty
@@ -2305,7 +2305,7 @@ def _render_task_ops_brief(session) -> None:
     st.subheader("Task Graph Operations Cockpit")
     st.caption(
         "Snowflake task handoff view for Snowflake task graphs: live job status, performance indicators, "
-        "errors, suspended tasks, recovery proof, and the next operational workflow."
+        "errors, suspended tasks, recovery telemetry, and the next operational workflow."
     )
     with st.container():
         days = day_window_selectbox("Task graph lookback", key="task_ops_days", default=7)
@@ -2356,10 +2356,10 @@ def _render_task_ops_brief(session) -> None:
             if st.session_state.get("task_ops_refresh_mode") in {None, "summary snapshot"}:
                 st.info(
                     "No task graph summary snapshot is available for this scope. "
-                    "Refresh live task job status for current Snowflake task handoff, performance, and error evidence."
+                    "Refresh live task job status for current Snowflake task handoff, performance, and error telemetry."
                 )
             else:
-                st.info("Refresh live task job status to load Snowflake task handoff, performance, and error evidence.")
+                st.info("Refresh live task job status to load Snowflake task handoff, performance, and error telemetry.")
             return
         exceptions = st.session_state.get("task_ops_exceptions", pd.DataFrame())
         latest = st.session_state.get("task_ops_latest", pd.DataFrame())
@@ -2373,11 +2373,12 @@ def _render_task_ops_brief(session) -> None:
             total_runs=safe_int(summary.get("TOTAL_RUNS")),
             total_tasks=safe_int(summary.get("TOTAL_TASKS")),
         )
+        task_state = "Critical" if score < 65 else "Review" if score < 90 else "Stable"
         render_shell_snapshot((
             ("Tasks", f"{safe_int(summary.get('TOTAL_TASKS')):,}"),
             ("Runs", f"{safe_int(summary.get('TOTAL_RUNS')):,}"),
             ("Failures", f"{safe_int(summary.get('FAILED_RUNS')):,}"),
-            ("Score", f"{score}/100"),
+            ("Operating State", task_state),
         ))
         render_shell_snapshot((
             ("Suspended", f"{safe_int(summary.get('SUSPENDED_TASKS')):,}"),
@@ -2492,11 +2493,11 @@ def _render_task_ops_brief(session) -> None:
                 ("Recovery Items", f"{len(recovery_board):,}"),
                 ("Blocked", f"{blocked:,}"),
                 ("P1 / P2", f"{p1_p2:,}"),
-                ("Owner Review", f"{owner_review:,}"),
+                ("Route Review", f"{owner_review:,}"),
             ))
             render_priority_dataframe(
                 recovery_board,
-                title="Retry and closure readiness",
+                title="Retry and closure status",
                 priority_columns=[
                     "COMMAND_STATE", "INCIDENT_PRIORITY", "SIGNAL", "TASK_NAME",
                     "ROOT_TASK_NAME", "GRAPH_ROLE", "DOWNSTREAM_TASK_COUNT",
@@ -2553,10 +2554,10 @@ def _render_task_ops_brief(session) -> None:
             )
 
         if not recovery_sla.empty:
-            st.subheader("Recovery SLA Verification")
+            st.subheader("Recovery SLA Status")
             render_priority_dataframe(
                 recovery_sla,
-                title="Failed task graph recovery proof",
+                title="Failed task graph recovery telemetry",
                 priority_columns=[
                     "INCIDENT_PRIORITY", "RECOVERY_STATE", "TASK_NAME", "ROOT_TASK_NAME",
                     "GRAPH_ROLE", "DOWNSTREAM_TASK_COUNT", "LAST_FAILURE_AT", "RECOVERY_AT",
@@ -2591,7 +2592,7 @@ def _render_task_ops_brief(session) -> None:
                     st.success(f"Saved {saved} task graph findings to the action queue.")
                 except Exception as e:
                     st.error(f"Could not save to action queue: {format_snowflake_error(e)}")
-                    st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
+                    st.info("The action queue is not available in this environment yet. Ask the DBA team to enable it, then retry this save.")
 
         if not inventory.empty:
             st.subheader("Task Graph / Procedure Map")
@@ -2860,7 +2861,7 @@ def _render_sla_cost_drift_console(session) -> None:
                 st.success(f"Saved {saved} SLA/cost drift findings to the action queue.")
             except Exception as e:
                 st.error(f"Could not save SLA/cost drift findings: {format_snowflake_error(e)}")
-                st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
+                st.info("The action queue is not available in this environment yet. Ask the DBA team to enable it, then retry this save.")
 
     with st.expander("All Latest Task Runs"):
         render_priority_dataframe(
@@ -3101,16 +3102,21 @@ def render():
                             st.write(row.get("PROBABLE_CAUSE", ""))
                             st.markdown("**Recommended Action**")
                             st.write(row.get("RECOMMENDED_ACTION", ""))
-                            st.markdown("**Recovery Readiness**")
+                            st.markdown("**Recovery Status**")
                             st.write(row.get("RECOVERY_READINESS", ""))
                             st.markdown("**Recovery SLA**")
                             st.write(row.get("RECOVERY_STATE", ""))
-                            st.markdown("**Owner Approval**")
+                            st.markdown("**Review Status**")
                             st.write(row.get("OWNER_APPROVAL_STATE", ""))
                         with c2:
-                            st.markdown("**Retry SQL After Fix**")
-                            st.code(str(row.get("RETRY_SQL") or ""), language="sql")
-                            st.markdown("**Evidence**")
+                            st.markdown("**Retry Precheck After Fix**")
+                            render_shell_snapshot((
+                                ("Retry", "Review gated"),
+                                ("Precheck", "Required"),
+                                ("Status check", "Required"),
+                                ("Execution", "Runbook only"),
+                            ))
+                            st.markdown("**Telemetry**")
                             st.caption(f"Priority: {row.get('INCIDENT_PRIORITY', '')}")
                             st.caption(f"Downstream tasks: {safe_int(row.get('DOWNSTREAM_TASK_COUNT')):,}")
                             st.caption(f"Query ID: {row.get('QUERY_ID', '')}")
@@ -3119,8 +3125,8 @@ def render():
                             st.caption(f"Signature: {row.get('ERROR_SIGNATURE', '')}")
                             st.caption(f"Verify after fix: {row.get('VERIFY_AFTER_FIX', '')}")
                         if "QUERY_TEXT" in row.index and str(row.get("QUERY_TEXT") or "").strip():
-                            with st.expander("Linked Query Text"):
-                                st.code(str(row.get("QUERY_TEXT")), language="sql")
+                            with st.expander("Linked Query Telemetry"):
+                                st.caption("Query text is available through reviewed Snowflake history for the selected incident.")
 
                 if st.button("Save Failures to Action Queue", key="tm_failure_queue"):
                     try:
@@ -3128,7 +3134,7 @@ def render():
                         st.success(f"Saved {saved} failure findings to the action queue.")
                     except Exception as e:
                         st.error(f"Could not save failure findings: {format_snowflake_error(e)}")
-                        st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
+                        st.info("The action queue is not available in this environment yet. Ask the DBA team to enable it, then retry this save.")
                 st.download_button(
                     "Download Failure Runbook",
                     _build_failure_runbook_markdown(get_active_company(), fc_days, summary, failures, patterns),
@@ -3143,8 +3149,7 @@ def render():
 
     elif task_view == "ETL Audit":
         st.subheader("ETL Audit Framework")
-        st.caption(f"Custom ETL run tracking table: `{ETL_AUDIT_FQN}`")
-        st.info("ETL audit table deployment is managed by `snowflake/OVERWATCH_MART_SETUP.sql`.")
+        st.caption("Custom ETL run tracking is optional and owned by the DBA team.")
 
         if st.button("Load ETL Audit Log", key="etl_load"):
             try:
@@ -3164,7 +3169,7 @@ def render():
                 """, ttl_key="task_management_etl_audit", tier="recent", section="Task Management")
                 st.session_state["tm_df_etl"] = df_etl
             except Exception as e:
-                st.info(f"Audit table unavailable. Deploy `snowflake/OVERWATCH_MART_SETUP.sql`, then retry. ({format_snowflake_error(e)})")
+                st.info(f"Audit history is not available in this environment yet. {format_snowflake_error(e)}")
 
         if st.session_state.get("tm_df_etl") is not None and not st.session_state["tm_df_etl"].empty:
             df_e = st.session_state["tm_df_etl"]
@@ -3199,7 +3204,7 @@ def render():
         )
         if not admin_actions_enabled():
             st.info("Read-only mode is active. Enable Admin actions in Settings before running operational controls.")
-        st.caption("Admin action audit table deployment is managed by `snowflake/OVERWATCH_MART_SETUP.sql`.")
+        st.caption("Admin action audit logging is optional and owned by the DBA team.")
         exec_context = _current_execution_context(session)
         st.caption(
             "Execution context: "
@@ -3262,9 +3267,12 @@ def render():
                     help="Retry re-executes the root task. Snowflake does not expose a native retry-last-failed graph command.",
                 )
                 sql_list = _admin_sql_for_graph(graph_tasks, root_name, action)
-                st.code(";\n".join(sql_list) + (";" if sql_list else ""), language="sql")
-                with st.expander("Read-only pre-flight checks before running this action"):
-                    st.code(build_admin_preflight_sql(root_row), language="sql")
+                render_shell_snapshot((
+                    ("Graph action", action),
+                    ("Tasks affected", f"{len(graph_tasks):,}"),
+                    ("Pre-flight", "Required"),
+                    ("Execution", "Review gated"),
+                ))
                 phrase = _confirmation_phrase(root_row, action)
                 confirmed = _typed_confirmation(
                     f"Type `{phrase}` to enable this graph action",
@@ -3308,9 +3316,12 @@ def render():
                     st.error("PROD-like task detected. Controls require the PROD confirmation phrase below.")
                 action = st.selectbox("Task action", ["EXECUTE", "RETRY", "SUSPEND", "RESUME"], key="tm_task_action")
                 sql_list = _admin_sql_for_task(row, action)
-                st.code(";\n".join(sql_list) + ";", language="sql")
-                with st.expander("Read-only pre-flight checks before running this action"):
-                    st.code(build_admin_preflight_sql(row), language="sql")
+                render_shell_snapshot((
+                    ("Task action", action),
+                    ("Pre-flight", "Required"),
+                    ("Confirmation", "Required"),
+                    ("Execution", "Review gated"),
+                ))
                 phrase = _confirmation_phrase(row, action)
                 confirmed = _typed_confirmation(
                     f"Type `{phrase}` to enable this task action",
@@ -3386,7 +3397,12 @@ def render():
                         graph_ids = cancel_runs["GRAPH_RUN_GROUP_ID"].dropna().astype(str).unique().tolist()
                         selected_graph = st.selectbox("Graph run group", graph_ids, key="tm_cancel_graph")
                         sql_text = f"SELECT SYSTEM$CANCEL_TASK_GRAPH({sql_literal(selected_graph)})"
-                        st.code(sql_text + ";", language="sql")
+                        render_shell_snapshot((
+                            ("Cancel target", "Graph run"),
+                            ("Selected", selected_graph),
+                            ("Confirmation", "Required"),
+                            ("Execution", "Review gated"),
+                        ))
                         with st.form(f"tm_cancel_graph_form_{selected_graph}"):
                             graph_confirm_text = st.text_input(
                                 "Type CANCEL GRAPH to enable cancellation",
@@ -3414,7 +3430,12 @@ def render():
                         query_ids = cancel_runs["QUERY_ID"].dropna().astype(str).unique().tolist()
                         selected_query = st.selectbox("Query ID", query_ids, key="tm_cancel_query")
                         sql_text = f"SELECT SYSTEM$CANCEL_QUERY({sql_literal(selected_query)})"
-                        st.code(sql_text + ";", language="sql")
+                        render_shell_snapshot((
+                            ("Cancel target", "Query"),
+                            ("Selected", selected_query),
+                            ("Confirmation", "Required"),
+                            ("Execution", "Review gated"),
+                        ))
                         with st.form(f"tm_cancel_query_form_{selected_query}"):
                             query_confirm_text = st.text_input(
                                 "Type CANCEL QUERY to enable cancellation",
@@ -3444,10 +3465,10 @@ def render():
     # -- EXECUTE TASK ----------------------------------------------------------
     elif task_view == "Execute Task":
         st.subheader("Execute Task On-Demand")
-        st.caption("Select and manually trigger a task. Ensure dependencies are met before running.")
+        st.caption("Select and run a task on demand. Ensure dependencies are met before running.")
         if not admin_actions_enabled():
             st.info("Read-only mode is active. Enable Admin actions in Settings before executing tasks.")
-        st.caption("Admin action audit table deployment is managed by `snowflake/OVERWATCH_MART_SETUP.sql`.")
+        st.caption("Admin action audit logging is optional and owned by the DBA team.")
         exec_context = _current_execution_context(session)
         st.caption(
             "Execution context: "
@@ -3470,8 +3491,13 @@ def render():
                     sch  = row.get("SCHEMA_NAME", "")
                     full = _qualified_name(db, sch, selected)
                     st.info(f"Task: `{full}` | State: {row.get('STATE','N/A')} | Schedule: {row.get('SCHEDULE','N/A')}")
-                    with st.expander("Read-only pre-flight checks before executing this task"):
-                        st.code(build_admin_preflight_sql(row), language="sql")
+                    with st.expander("Task Execution Precheck"):
+                        render_shell_snapshot((
+                            ("Pre-flight", "Required"),
+                            ("Confirmation", "Required"),
+                            ("Task run", "Immediate"),
+                            ("Execution", "Review gated"),
+                        ))
                     st.warning("This runs the task immediately regardless of schedule.")
 
                     exec_confirm_key = f"exec_task_confirm_{selected}"

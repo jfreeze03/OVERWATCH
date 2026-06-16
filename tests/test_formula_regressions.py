@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
 
-from config import DEFAULTS, DEFAULT_ALERT_EMAIL, FORWARD_PLATFORM_CONTROLS  # noqa: E402
+from config import DEFAULTS, DEFAULT_ALERT_EMAIL  # noqa: E402
 from sections.account_health import (  # noqa: E402
     _account_health_action_brief,
     _account_health_actionable_checklist,
@@ -54,17 +54,10 @@ from sections.alert_center import (  # noqa: E402
     _alert_center_exception_rows,
     _alert_center_pending_brief,
     _alert_center_operability_rows,
-    _alert_center_readiness_score,
-    _alert_integration_readiness_board,
+    _alert_center_health_score,
+    _alert_integration_health_board,
     _alert_lifecycle_board,
     _alert_owner_route_board,
-)
-from sections.architecture_readiness import (  # noqa: E402
-    _architecture_objectives_frame,
-    _architecture_operating_snapshot,
-    _architecture_scope_meta,
-    _architecture_source_health_rows,
-    _enrich_architecture_context,
 )
 from sections.workload_operations import (  # noqa: E402
     _build_workload_task_status_sql,
@@ -122,7 +115,7 @@ from sections.cost_contract import (  # noqa: E402
     _build_cost_decomposition_board,
     _build_cost_monitor_service_trend_sql,
     _build_cost_drilldown_command_map,
-    _build_cost_governance_alert_rows,
+    _build_cost_monitoring_alert_rows,
     _build_cost_incident_timeline,
     _build_cost_run_rate_sql,
     _build_cost_splash_cortex_sql,
@@ -138,15 +131,10 @@ from sections.cost_contract import (  # noqa: E402
     _cost_splash_summary,
     _cost_warehouse_ranking_rows,
     _service_lens_movement_rows,
-    build_cost_governance_mart_sql,
+    build_cost_monitoring_mart_sql,
 )
-from sections.budget_governance import (  # noqa: E402
-    _build_budget_custom_action_sql,
-    _build_budget_governance_board,
-    _build_budget_inventory_sql,
-    _build_budget_policy_frame,
-    _build_native_budget_sql,
-    _build_per_user_quota_sql,
+from sections.budget_monitoring import (  # noqa: E402
+    _build_budget_monitoring_board,
 )
 from sections.dba_control_room import (  # noqa: E402
     _build_report as _build_dba_control_report,
@@ -268,8 +256,6 @@ from sections.security_posture import (  # noqa: E402
 )
 from sections.security_access import (  # noqa: E402
     _build_mfa_coverage_sql,
-    _build_role_grant_change_plan,
-    _build_role_grant_control_board,
     _user_mfa_column_exprs,
 )
 from sections.stored_proc_tracker import (  # noqa: E402
@@ -311,7 +297,6 @@ from sections.task_management import (  # noqa: E402
 from sections.usage_overview import _first_number as usage_first_number  # noqa: E402
 from sections.warehouse_health import (  # noqa: E402
     _annotate_warehouse_admin_readiness,
-    _annotate_warehouse_owner_inventory,
     _warehouse_action_queue_closure_sql,
     _warehouse_setting_audit_readiness_for_row,
     _warehouse_setting_control_board,
@@ -325,7 +310,6 @@ from sections.warehouse_health import (  # noqa: E402
     _warehouse_capacity_action_for,
     _warehouse_capacity_score,
     _warehouse_capacity_verification_sql,
-    _warehouse_owner_inventory_sql,
     _warehouse_operability_fact_sql,
     _warehouse_source_health_rows,
     _apply_warehouse_brief_first_default,
@@ -362,22 +346,6 @@ from utils.ask_overwatch import (  # noqa: E402
     build_top_priority_brief_cards,
     filter_ask_overwatch_cards_by_domain,
     snapshot_ask_overwatch_state,
-)
-from utils.futures_governance import (  # noqa: E402
-    AGENTIC_AI_CONTROL_AREAS,
-    HORIZON_SEMANTIC_PROBES,
-    PLATFORM_FUTURES_EXPERT_CRITERIA,
-    build_agentic_ai_surface_scorecard,
-    build_forward_platform_control_register,
-    build_platform_futures_adoption_gate,
-    build_platform_futures_evidence_ddl,
-    build_horizon_semantic_readiness_from_availability,
-    build_platform_futures_board,
-    classify_adaptive_compute_readiness,
-    classify_agent_mcp_inventory,
-    classify_ai_security_guardrails,
-    classify_ai_usage_guardrails,
-    classify_openflow_operations,
 )
 from utils.company_filter import (  # noqa: E402
     environment_label_for_database,
@@ -432,13 +400,6 @@ from utils.alerts import (  # noqa: E402
     build_alert_triage_view_sql,
     build_dashboard_issue_rows,
     normalize_alert_rule_frame,
-)
-from utils.owner_directory import (  # noqa: E402
-    build_owner_directory_ddl,
-    default_owner_directory,
-    enrich_owner_dataframe,
-    owner_directory_readiness_board,
-    resolve_owner_context,
 )
 from utils.workload_audit import build_workload_recovery_audit_ddl  # noqa: E402
 from utils.mart import (  # noqa: E402
@@ -554,10 +515,10 @@ class FormulaRegressionTests(unittest.TestCase):
 
         self.assertEqual(scorecard["score"], 61)
         self.assertEqual(scorecard["score_cap"], 74)
-        self.assertIn("migration blocker", scorecard["cap_reason"])
+        self.assertIn("readiness blocker", scorecard["cap_reason"])
         self.assertEqual(scorecard["state"], "Executive Escalation")
-        self.assertEqual(by_driver["Deployment Trust"]["SCORE_CAP"], 74)
-        self.assertEqual(by_driver["Evidence Coverage"]["SCORE_CAP"], 82)
+        self.assertEqual(by_driver["Readiness Trust"]["SCORE_CAP"], 74)
+        self.assertEqual(by_driver["Telemetry Coverage"]["SCORE_CAP"], 82)
         self.assertLess(by_driver["Reliability / Alerts"]["SCORE_IMPACT"], 0)
 
     def test_executive_observability_first_paint_uses_compact_mart(self):
@@ -670,10 +631,10 @@ class FormulaRegressionTests(unittest.TestCase):
 
         self.assertEqual(display.loc[0, "STATE"], "Load on demand")
         self.assertEqual(display.loc[1, "STATE"], "Refresh available")
-        self.assertEqual(display.loc[0, "VERIFICATION_STATUS"], "Awaiting verification")
-        self.assertEqual(display.loc[0, "OWNER_APPROVAL_STATUS"], "Awaiting approval")
-        self.assertEqual(display.loc[0, "RECOVERY_AUDIT_STATE"], "Checklist Verification Needed")
-        self.assertEqual(display.loc[2, "RECOVERY_AUDIT_STATE"], "Architecture Review Needed")
+        self.assertEqual(display.loc[0, "VERIFICATION_STATUS"], "Awaiting telemetry")
+        self.assertEqual(display.loc[0, "OWNER_APPROVAL_STATUS"], "Awaiting review")
+        self.assertEqual(display.loc[0, "RECOVERY_AUDIT_STATE"], "Checklist Telemetry Pending")
+        self.assertEqual(display.loc[2, "RECOVERY_AUDIT_STATE"], "Monitoring Review Needed")
         self.assertEqual(raw.loc[0, "STATE"], "Not Loaded")
         self.assertEqual(raw.loc[0, "VERIFICATION_STATUS"], "Pending")
 
@@ -1121,17 +1082,17 @@ class FormulaRegressionTests(unittest.TestCase):
 
         self.assertEqual(action["Category"], "Daily DBA Checklist")
         self.assertEqual(action["Entity"], "Query failure review")
-        self.assertEqual(action["Owner Approval Status"], "Requested")
-        self.assertEqual(action["Approver"], "Application Owner / DBA On-Call")
-        self.assertEqual(action["Oncall Primary"], "DBA On-Call")
-        self.assertIn("OWNER_DIRECTORY", action["Owner Source"])
-        self.assertEqual(action["Recovery Audit State"], "Checklist Verification Pending")
+        self.assertEqual(action["Verification Status"], "Requested")
+        self.assertEqual(action["Review Group"], "Application Route / DBA On-Call")
+        self.assertEqual(action["Oncall Primary"], "DBA Query Triage")
+        self.assertIn("MONITORING_CONTEXT", action["Owner Source"])
+        self.assertEqual(action["Recovery Audit State"], "Checklist Telemetry Pending")
         self.assertEqual(action["Recovery SLA Target Hours"], 24)
         self.assertEqual(action["Environment"], "DEV_ALL")
         self.assertIn("QUERY_HISTORY", action["Verification Query"])
-        self.assertIn("Queue readiness: Ready to Queue", action["Owner Approval Note"])
-        self.assertIn("Scope: Database Context", action["Owner Approval Note"])
-        self.assertIn("Scope evidence", action["Recovery Evidence"])
+        self.assertIn("Queue readiness: Ready to Queue", action["Verification Note"])
+        self.assertIn("Scope: Database Context", action["Verification Note"])
+        self.assertIn("Scope basis", action["Recovery Evidence"])
         self.assertEqual(verification_query_safety_issues(action["Verification Query"]), [])
         self.assertNotIn("ALTER", action["Generated SQL Fix"].upper())
 
@@ -1184,11 +1145,11 @@ class FormulaRegressionTests(unittest.TestCase):
         row = enriched.iloc[0]
 
         self.assertEqual(row["OWNER"], "Platform DBA")
-        self.assertEqual(row["ESCALATION_TARGET"], "Warehouse Owner / DBA On-Call")
-        self.assertIn("Checklist owner map", row["OWNER_SOURCE"])
-        self.assertIn("OWNER_DIRECTORY", row["OWNER_SOURCE"])
-        self.assertEqual(row["ONCALL_PRIMARY"], "DBA On-Call")
-        self.assertIn("WAREHOUSE", row["OWNER_EVIDENCE"])
+        self.assertEqual(row["ESCALATION_TARGET"], "Warehouse Route / DBA On-Call")
+        self.assertIn("Checklist route map", row["OWNER_SOURCE"])
+        self.assertIn("MONITORING_CONTEXT", row["OWNER_SOURCE"])
+        self.assertEqual(row["ONCALL_PRIMARY"], "Platform DBA")
+        self.assertEqual(row["OWNER_EVIDENCE"], "Derived from the loaded telemetry row.")
 
     def test_account_health_checklist_history_sql_is_persistable_and_scoped(self):
         checklist = _build_account_health_dba_checklist(
@@ -1327,14 +1288,14 @@ class FormulaRegressionTests(unittest.TestCase):
         by_surface = {row["SURFACE"]: row for _, row in matrix.iterrows()}
 
         self.assertEqual(by_check["Query failure review"]["CONTROL_STATE"], "Closure Overdue")
-        self.assertEqual(by_check["Cost spike review"]["CONTROL_STATE"], "Closure Evidence Blocked")
+        self.assertEqual(by_check["Cost spike review"]["CONTROL_STATE"], "Closure Status Pending")
         self.assertEqual(by_check["Refresh source readiness"]["CONTROL_STATE"], "Queue Required")
-        self.assertEqual(by_check["Account access hygiene"]["CONTROL_STATE"], "High-Risk Access Review")
+        self.assertEqual(by_check["Account access hygiene"]["CONTROL_STATE"], "Access Route Blocked")
         self.assertEqual(by_check["Account access hygiene"]["DATABASE_CONTEXT"], "No")
         self.assertIn("user hygiene", by_check["Account access hygiene"]["NEXT_CONTROL_ACTION"])
-        self.assertEqual(by_gate["Closure proof"]["STATE"], "Closure Blocked")
+        self.assertEqual(by_gate["Closure status"]["STATE"], "Closure Blocked")
         self.assertEqual(by_gate["Checklist route"]["STATE"], "Route Blocked")
-        self.assertEqual(by_gate["Access hygiene"]["STATE"], "High-Risk Access Review")
+        self.assertEqual(by_gate["Access hygiene"]["STATE"], "Access Route Blocked")
         self.assertEqual(by_gate["Source readiness"]["STATE"], "Source Stale")
         self.assertEqual(by_surface["Query failure review"]["INTERVENTION_STATE"], "Closure Block")
         self.assertEqual(by_surface["Query failure review"]["DBA_PRIORITY"], "P0")
@@ -1489,7 +1450,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_surface["Access hygiene"]["STATE"], "Loaded")
         self.assertEqual(by_surface["Access hygiene"]["SCOPE"], "ALFA / No Database Context / 30d")
         self.assertEqual(by_surface["Access hygiene"]["CONFIDENCE"], "Live Snowflake metadata")
-        self.assertEqual(by_surface["Checklist trend"]["STATE"], "Not Loaded")
+        self.assertEqual(by_surface["Checklist trend"]["STATE"], "On demand")
         self.assertIn("Current", by_surface["Access hygiene"]["NEXT_ACTION"])
 
     def test_account_health_access_hygiene_keeps_user_auth_scope_account_level(self):
@@ -1538,11 +1499,11 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(row["DATABASE_CONTEXT"], "No Database Context")
         self.assertEqual(row["ENVIRONMENT_SCOPE"], "No Database Context")
         self.assertEqual(row["SCOPE_CONFIDENCE"], "Account-Level Control")
-        self.assertEqual(row["QUEUE_READINESS"], "Ready to Queue")
+        self.assertEqual(row["QUEUE_READINESS"], "Needs Routing Data")
         self.assertEqual(row["APPROVAL_REQUIRED"], "Yes")
         self.assertEqual(row["RECOVERY_SLA_TARGET_HOURS"], 24)
-        self.assertIn("OWNER_DIRECTORY", row["OWNER_SOURCE"])
-        self.assertIn("Security", row["APPROVAL_GROUP"])
+        self.assertIn("MONITORING_CONTEXT", row["OWNER_SOURCE"])
+        self.assertEqual(row["QUEUE_BLOCKERS"], "review group")
 
     def test_account_health_access_hygiene_action_payload_is_review_only_and_account_scoped(self):
         hygiene = pd.DataFrame([
@@ -1682,7 +1643,7 @@ class FormulaRegressionTests(unittest.TestCase):
             candidates,
             "operator=JOIN; stats=remote spill observed",
         )
-        self.assertIn("Every recommendation must cite exact evidence", prompt)
+        self.assertIn("Every recommendation must cite exact telemetry", prompt)
         self.assertIn("Do not recommend indexes", prompt)
         self.assertIn("GET_QUERY_OPERATOR_STATS", prompt)
         self.assertIn("SYSTEM$CLUSTERING_INFORMATION", prompt)
@@ -1690,7 +1651,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Query diagnosis action contract", prompt)
         self.assertIn("Do not invent table names", prompt)
         self.assertIn("Action decision", prompt)
-        self.assertIn("Verification", prompt)
+        self.assertIn("Status check", prompt)
 
     def test_query_diagnosis_action_contract_is_specific_and_routed(self):
         query_text = """
@@ -1719,7 +1680,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Do not rewrite SQL as the first fix", by_signal["Warehouse queue pressure"]["DO_NOT_DO"])
         self.assertEqual(by_signal["Remote spill"]["ACTION_DECISION"], "Inspect operator stats before rerun")
         self.assertIn("GET_QUERY_OPERATOR_STATS", by_signal["Remote spill"]["FIRST_OPERATOR_MOVE"])
-        self.assertEqual(by_signal["Full/high partition scan"]["ACTION_DECISION"], "Fix pruning evidence")
+        self.assertEqual(by_signal["Full/high partition scan"]["ACTION_DECISION"], "Fix pruning telemetry")
         self.assertIn("p.BIND_TS", by_signal["Full/high partition scan"]["EXACT_CHANGE"])
         self.assertEqual(by_signal["Leading wildcard text search"]["ACTION_DECISION"], "Redesign text lookup")
         self.assertIn("c.LAST_NAME", by_signal["Leading wildcard text search"]["EXACT_CHANGE"])
@@ -1751,7 +1712,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("TRANSACTION_BLOCKED_TIME", candidates[0]["VERIFY_AFTER_FIX"])
         self.assertEqual(contract[0]["ACTION_DECISION"], "Route to Contention Center before SQL tuning")
         self.assertIn("Do not resize the warehouse", contract[0]["DO_NOT_DO"])
-        self.assertIn("DBA plus task/job owner", contract[0]["OWNER_HANDOFF"])
+        self.assertIn("DBA plus task/job route", contract[0]["OWNER_HANDOFF"])
 
         prompt = _build_ai_query_diagnosis_prompt(
             query_text,
@@ -1871,7 +1832,7 @@ class FormulaRegressionTests(unittest.TestCase):
         queue = pd.DataFrame([{
                 "CATEGORY": "Cost Control",
                 "STATUS": "New",
-                "OWNER_SOURCE": "OWNER_DIRECTORY:COST_CONTROL_DEFAULT",
+                "OWNER_SOURCE": "MONITORING_CONTEXT:COST_CONTROL_DEFAULT",
                 "VERIFICATION_STATUS": "Pending",
             }])
         state = {
@@ -1924,7 +1885,7 @@ class FormulaRegressionTests(unittest.TestCase):
         by_drill = {row["DRILLDOWN"]: row for _, row in drill_map.iterrows()}
         self.assertEqual(by_control["Exact warehouse metering"]["STATE"], "Ready")
         self.assertEqual(by_control["Role, user, and department drivers"]["STATE"], "Ready")
-        self.assertEqual(by_control["Verified savings ledger"]["STATE"], "Review")
+        self.assertEqual(by_control["Measured savings ledger"]["STATE"], "Review")
         self.assertGreaterEqual(summary["score"], 90)
         self.assertEqual(by_trust["Contract and warehouse totals"]["TRUST_STATE"], "Exact")
         self.assertEqual(by_trust["Database attribution"]["TRUST_STATE"], "Allocated/Estimated")
@@ -2017,10 +1978,10 @@ class FormulaRegressionTests(unittest.TestCase):
             "VALUE_AT_RISK_USD": 220.0,
             "EVIDENCE": "ALFA_WH is the current top warehouse mover; resource monitors are useful only for warehouse credit control.",
             "DBA_DECISION": "Review warehouse-level resource monitor assignment for the top mover, but use Budgets for serverless, AI, and shared resources.",
-            "NEXT_ACTION": "Open Cost & Contract and Governance & Security controls to review monitor assignment and threshold SQL after owner approval.",
+            "NEXT_ACTION": "Open Cost & Contract and Security Monitoring controls to review monitor assignment and threshold SQL after owner approval.",
             "PROOF_REQUIRED": "SHOW RESOURCE MONITORS; SHOW WAREHOUSES LIKE ALFA_WH;",
             "DO_NOT_DO": "Do not use resource monitors as AI/serverless budget controls; Snowflake budgets are the correct surface there.",
-            "ROUTE": "Cost & Contract > Recommendations and action queue / Budget governance",
+            "ROUTE": "Cost & Contract > Recommendations and action queue / Budget Monitoring",
         }])
         state = {"cost_contract_budget_command_center": board}
 
@@ -2134,7 +2095,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_driver["Database / DEV rollup"]["ENTITY"], "ALFA_EDW_PROD")
         self.assertEqual(by_driver["Database / DEV rollup"]["TRUST"], "Allocated / Estimated")
         self.assertEqual(by_driver["Role / user / department"]["ENTITY"], "ETL_ROLE")
-        self.assertIn("post-period measured proof", by_driver["Open savings queue"]["NEXT_ACTION"])
+        self.assertIn("post-period measurement", by_driver["Open savings queue"]["NEXT_ACTION"])
         self.assertEqual(summary["top_driver"], "Warehouse movement")
         self.assertLess(summary["score"], 100)
 
@@ -2210,7 +2171,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("ALFA_WH", result["answer"])
         self.assertIn("before tuning", result["answer"])
 
-    def test_cost_governance_alert_rows_promote_specific_cost_issues(self):
+    def test_cost_monitoring_alert_rows_promote_specific_cost_issues(self):
         budget = pd.DataFrame([{
             "SEVERITY": "High",
             "LANE": "Warehouse guardrail",
@@ -2221,7 +2182,7 @@ class FormulaRegressionTests(unittest.TestCase):
             "EVIDENCE": "ALFA_WH is the current top warehouse mover.",
             "NEXT_ACTION": "Review resource monitor assignment after owner approval.",
             "PROOF_REQUIRED": "SHOW RESOURCE MONITORS; SELECT * FROM FACT_WAREHOUSE_HOURLY;",
-            "ROUTE": "Cost & Contract > Recommendations and action queue / Budget governance",
+            "ROUTE": "Cost & Contract > Recommendations and action queue / Budget Monitoring",
         }])
         root = pd.DataFrame([{
             "SEVERITY": "High",
@@ -2243,7 +2204,7 @@ class FormulaRegressionTests(unittest.TestCase):
             "ROUTE": "Change & Drift > Controlled DBA actions",
         }])
 
-        summary, alerts = _build_cost_governance_alert_rows(
+        summary, alerts = _build_cost_monitoring_alert_rows(
             budget_board=budget,
             root_cause=root,
             correlation=correlation,
@@ -2309,12 +2270,12 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(list(timeline["EVENT_ORDER"]), [1, 2, 3, 4, 5])
         self.assertEqual(timeline.iloc[0]["INCIDENT_STEP"], "Cost movement detected")
         self.assertEqual(timeline.iloc[3]["INCIDENT_STEP"], "Alert routed")
-        self.assertIn("owner-approved", timeline.iloc[4]["NEXT_ACTION"])
+        self.assertIn("post-period telemetry", timeline.iloc[4]["NEXT_ACTION"])
         self.assertEqual(summary["critical_high"], 5)
 
-    def test_ask_overwatch_reads_cost_governance_alerts_and_timeline(self):
+    def test_ask_overwatch_reads_cost_monitoring_alerts_and_timeline(self):
         state = {
-            "cost_contract_governance_alerts": pd.DataFrame([{
+            "cost_contract_monitoring_alerts": pd.DataFrame([{
                 "SEVERITY": "High",
                 "CATEGORY": "Cost Control",
                 "ALERT_TYPE": "Cost Root Cause Candidate",
@@ -2331,7 +2292,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "SEVERITY": "High",
                 "INCIDENT_STEP": "Alert routed",
                 "ENTITY": "ALFA_WH",
-                "EVIDENCE": "Cost governance alert is ready for email triage.",
+                "EVIDENCE": "Cost monitoring alert is ready for email triage.",
                 "NEXT_ACTION": "Route the alert to DBA / FinOps.",
                 "PROOF_REQUIRED": "Alert proof query.",
                 "ROUTE": "Alert Center",
@@ -2347,18 +2308,18 @@ class FormulaRegressionTests(unittest.TestCase):
             environment="PROD",
         )
 
-        self.assertEqual(cards[0]["surface"], "Cost & Contract - Governance Alert Candidate")
+        self.assertEqual(cards[0]["surface"], "Cost & Contract - Monitoring Alert Candidate")
         self.assertIn("ALFA_WH", result["answer"])
         self.assertIn("dba-alerts@example.com", result["answer"])
         self.assertIn("Alert Center", result["answer"])
 
-    def test_overwatch_mart_setup_keeps_cost_governance_and_upgrade_contract(self):
+    def test_overwatch_mart_setup_keeps_cost_monitoring_and_upgrade_contract(self):
         setup_sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8")
         setup_upper = setup_sql.upper()
 
         self.assertIn("ALTER TABLE IF EXISTS FACT_QUERY_HOURLY ADD COLUMN IF NOT EXISTS ENVIRONMENT", setup_upper)
         self.assertIn("ALTER TABLE IF EXISTS FACT_QUERY_DETAIL_RECENT ADD COLUMN IF NOT EXISTS ENVIRONMENT", setup_upper)
-        self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS FACT_COST_GOVERNANCE_SIGNAL", setup_upper)
+        self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS FACT_COST_MONITORING_SIGNAL", setup_upper)
         self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS FACT_COST_INCIDENT_TIMELINE", setup_upper)
         self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS FACT_COST_DAILY", setup_upper)
         self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS FACT_COST_SOURCE_HEALTH_DAILY", setup_upper)
@@ -2413,8 +2374,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("ALTER WAREHOUSE IF EXISTS OVERWATCH_WH", setup_upper)
         self.assertIn("SET RESOURCE_MONITOR = OVERWATCH_WH_RM", setup_upper)
         self.assertIn("WHEN SRC.SETTING_NAME = 'DEFAULT_ALERT_EMAIL' THEN SRC.SETTING_VALUE", setup_upper)
-        self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_COST_GOVERNANCE", setup_upper)
-        self.assertIn("CREATE OR REPLACE TASK OVERWATCH_COST_GOVERNANCE_REFRESH", setup_upper)
+        self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_COST_MONITORING", setup_upper)
+        self.assertIn("CREATE OR REPLACE TASK OVERWATCH_COST_MONITORING_REFRESH", setup_upper)
         self.assertIn("AFTER OVERWATCH_REFRESH_CONTROL_ROOM", setup_upper)
         self.assertIn("OVERWATCH_ALERTS", setup_upper)
         self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_ANNOTATIONS", setup_upper)
@@ -2463,7 +2424,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertNotIn("OVERWATCH_EXTERNAL_CONTROL_FEED", set(contract["REQUIRED_OBJECT"]))
         self.assertIn("No-touch automation", set(contract["COMPONENT"]))
         self.assertNotIn("Flyway", " ".join(contract["WHY_IT_MATTERS"].astype(str)))
-        self.assertIn("Cost proof mart", set(contract["COMPONENT"]))
+        self.assertIn("Cost telemetry mart", set(contract["COMPONENT"]))
 
     def test_mart_validation_and_live_role_checklist_cover_deployment_proof(self):
         validation_sql = (ROOT / "snowflake" / "OVERWATCH_MART_VALIDATION.sql").read_text(encoding="utf-8").upper()
@@ -2520,9 +2481,9 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(cloud["ENTRYPOINT"], "streamlit_app.py")
         self.assertEqual(cloud["MANIFEST"], ".streamlit/config.toml")
 
-        setup = by_runtime["Snowflake setup"]
-        self.assertEqual(setup["ENTRYPOINT"], "snowflake/OVERWATCH_MART_SETUP.sql")
-        self.assertIn("not in Streamlit UI code", setup["DEPLOY_CONTEXT"])
+        setup = by_runtime["Snowflake status"]
+        self.assertEqual(setup["ENTRYPOINT"], "Approved DBA release process")
+        self.assertIn("owned outside the Streamlit UI", setup["DEPLOY_CONTEXT"])
 
     def test_release_remediation_sql_covers_existing_deployment_drift(self):
         remediation_sql = (ROOT / "snowflake" / "OVERWATCH_RELEASE_REMEDIATION.sql").read_text(encoding="utf-8")
@@ -2538,109 +2499,34 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertNotRegex(remediation_upper, r"(?m)^ALTER TASK .* RESUME;")
         self.assertIn("OVERWATCH_RELEASE_REMEDIATION.SQL", runbook_upper)
 
-    def test_cost_governance_mart_sql_matches_setup_object_contract(self):
-        sql = build_cost_governance_mart_sql().upper()
+    def test_cost_monitoring_mart_sql_matches_setup_object_contract(self):
+        sql = build_cost_monitoring_mart_sql().upper()
 
-        self.assertIn("FACT_COST_GOVERNANCE_SIGNAL", sql)
+        self.assertIn("FACT_COST_MONITORING_SIGNAL", sql)
         self.assertIn("FACT_COST_INCIDENT_TIMELINE", sql)
-        self.assertIn("SP_OVERWATCH_REFRESH_COST_GOVERNANCE", sql)
-        self.assertIn("OVERWATCH_COST_GOVERNANCE_REFRESH", sql)
+        self.assertIn("SP_OVERWATCH_REFRESH_COST_MONITORING", sql)
+        self.assertIn("OVERWATCH_COST_MONITORING_REFRESH", sql)
         self.assertIn("OVERWATCH_ALERTS", sql)
         self.assertIn("WAREHOUSE = OVERWATCH_WH", sql)
 
-    def test_budget_governance_board_tracks_budget_control_capabilities(self):
-        summary, board = _build_budget_governance_board()
+    def test_budget_monitoring_board_tracks_budget_control_capabilities(self):
+        summary, board = _build_budget_monitoring_board()
         capabilities = set(board["CAPABILITY"])
         self.assertEqual(
             capabilities,
             {
-                "Cost Controls for AI",
-                "Org-Level Controls",
-                "Per-User Quota",
+                "Account Budget Tracking",
+                "Cortex AI Spend",
+                "User Quota Pressure",
                 "Shared Resource Budgets",
-                "Budget Custom Actions",
-                "Anomaly Explanations",
+                "Budget Incident Feed",
+                "Anomaly Explanation",
             },
         )
         self.assertGreaterEqual(summary["score"], 80)
         self.assertGreaterEqual(summary["ready"], 4)
-        self.assertEqual(board.loc[board["CAPABILITY"].eq("Per-User Quota"), "STATE"].iloc[0], "Control Pattern")
-        self.assertEqual(board.loc[board["CAPABILITY"].eq("Anomaly Explanations"), "STATE"].iloc[0], "Partial")
-
-    def test_budget_policy_frame_exposes_company_ai_and_quota_controls(self):
-        policy = _build_budget_policy_frame(
-            "ALL",
-            4.0,
-            ai_credit_price=2.0,
-            ai_budget_usd=8000.0,
-            per_user_limit_usd=400.0,
-            email_target="dba-alerts@example.com",
-        )
-        controls = set(policy["CONTROL_TYPE"])
-        self.assertIn("SHARED_AI_RESOURCE_BUDGET", controls)
-        self.assertIn("PER_USER_AI_QUOTA", controls)
-        self.assertIn("ACCOUNT_ROOT_BUDGET", controls)
-        self.assertIn("CUSTOM_ACTION_BRIDGE", controls)
-        self.assertIn("ALFA_AI", set(policy["TAG_VALUE"]))
-        self.assertIn("TREXIS_AI", set(policy["TAG_VALUE"]))
-        self.assertTrue(policy["ALERT_TARGET"].eq("dba-alerts@example.com").all())
-        self.assertTrue((policy.loc[policy["CONTROL_TYPE"].eq("PER_USER_AI_QUOTA"), "MONTHLY_LIMIT_CREDITS"] == 200.0).all())
-        self.assertTrue((policy.loc[policy["CONTROL_TYPE"].eq("PER_USER_AI_QUOTA"), "RATE_USD"] == 2.0).all())
-        self.assertTrue((policy.loc[policy["CONTROL_TYPE"].eq("ACCOUNT_ROOT_BUDGET"), "RATE_USD"] == 4.0).all())
-
-    def test_native_budget_sql_uses_snowflake_budget_shared_resource_methods(self):
-        policy = _build_budget_policy_frame("ALFA", 4.0, ai_budget_usd=4000.0, email_target="dba-alerts@example.com")
-        sql = _build_native_budget_sql(policy, email_target="dba-alerts@example.com").upper()
-        self.assertIn("CREATE SNOWFLAKE.CORE.BUDGET", sql)
-        self.assertIn("SET_SPENDING_LIMIT", sql)
-        self.assertIn("SET_NOTIFICATION_THRESHOLD(75)", sql)
-        self.assertIn("SET_EMAIL_NOTIFICATIONS('DBA-ALERTS@EXAMPLE.COM')", sql)
-        self.assertIn("SET_USER_TAGS", sql)
-        self.assertIn("SYSTEM$REFERENCE('TAG'", sql)
-        self.assertIn("APPLYBUDGET", sql)
-        self.assertIn("ADD_SHARED_RESOURCE('AI FUNCTION')", sql)
-        self.assertIn("ADD_SHARED_RESOURCE('CORTEX CODE')", sql)
-        self.assertIn("ADD_SHARED_RESOURCE('CORTEX AGENT')", sql)
-        self.assertIn("ADD_SHARED_RESOURCE('SNOWFLAKE INTELLIGENCE')", sql)
-        self.assertIn("SNOWFLAKE.LOCAL.ACCOUNT_ROOT_BUDGET", sql)
-
-    def test_per_user_quota_sql_is_dry_run_role_based_cortex_control(self):
-        sql = _build_per_user_quota_sql(default_limit_usd=300.0, ai_credit_price=2.20).upper()
-        self.assertIn("OVERWATCH_AI_USER_QUOTA", sql)
-        self.assertIn("OVERWATCH_AI_USER_MONTHLY_USAGE_V", sql)
-        self.assertIn("CORTEX_AI_FUNCTIONS_USAGE_HISTORY", sql)
-        self.assertIn("CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY", sql)
-        self.assertIn("REVOKE DATABASE ROLE SNOWFLAKE.CORTEX_USER FROM ROLE PUBLIC", sql)
-        self.assertIn("GRANT DATABASE ROLE SNOWFLAKE.CORTEX_USER TO ROLE OVERWATCH_AI_FUNCTIONS_USER_ROLE", sql)
-        self.assertIn("REVOKE ROLE OVERWATCH_AI_FUNCTIONS_USER_ROLE FROM USER", sql)
-        self.assertIn("RESTORE_SQL", sql)
-        self.assertIn("CREATE OR REPLACE TASK", sql)
-        self.assertIn("OVERWATCH_ACTION_QUEUE", sql)
-        self.assertIn("MONTHLY_LIMIT_CREDITS FLOAT DEFAULT 136.3636", sql)
-        self.assertIn("ROUND(SUM(CREDITS_USED) * 2.2000, 2) AS MONTHLY_COST_USD", sql)
-
-    def test_budget_custom_action_sql_bridges_native_budget_events_to_action_queue(self):
-        policy = _build_budget_policy_frame("ALFA", 4.0, ai_budget_usd=4000.0, email_target="dba-alerts@example.com")
-        sql = _build_budget_custom_action_sql(policy, email_target="dba-alerts@example.com").upper()
-        self.assertIn("SP_OVERWATCH_BUDGET_CUSTOM_ACTION", sql)
-        self.assertIn("EXECUTE AS OWNER", sql)
-        self.assertIn("OVERWATCH_BUDGET_ACTION_BRIDGE", sql)
-        self.assertIn("OVERWATCH_ACTION_QUEUE", sql)
-        self.assertIn("GRANT USAGE ON PROCEDURE", sql)
-        self.assertIn("TO APPLICATION SNOWFLAKE", sql)
-        self.assertIn("ADD_CUSTOM_ACTION", sql)
-        self.assertIn("SYSTEM$REFERENCE('PROCEDURE'", sql)
-        self.assertIn("'PROJECTED'", sql)
-        self.assertIn("'ACTUAL'", sql)
-        self.assertIn("GET_CUSTOM_ACTIONS", sql)
-
-    def test_budget_inventory_sql_is_read_only_budget_introspection(self):
-        sql = _build_budget_inventory_sql().upper()
-        self.assertIn("SYSTEM$SHOW_BUDGETS_IN_ACCOUNT", sql)
-        self.assertIn("ACCOUNT_ROOT_BUDGET!GET_CONFIG", sql)
-        self.assertIn("GET_SPENDING_HISTORY", sql)
-        self.assertIn("GET_SHARED_RESOURCES", sql)
-        self.assertIn("GET_CUSTOM_ACTIONS", sql)
+        self.assertEqual(board.loc[board["CAPABILITY"].eq("User Quota Pressure"), "STATE"].iloc[0], "Monitoring Pattern")
+        self.assertEqual(board.loc[board["CAPABILITY"].eq("Anomaly Explanation"), "STATE"].iloc[0], "Partial")
 
     def test_control_room_snapshot_maps_to_watch_floor_shape(self):
         snapshot = pd.DataFrame([
@@ -2864,9 +2750,9 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_surface["credits"]["GATE_STATE"], "Review")
         self.assertEqual(by_surface["task_sla_cost"]["GATE_STATE"], "Deferred")
         self.assertEqual(by_surface["cortex_summary"]["ROUTE"], "Cost & Contract")
-        self.assertEqual(by_gate["Evidence freshness"]["STATE"], "Blocked")
+        self.assertEqual(by_gate["Telemetry status"]["STATE"], "Blocked")
         self.assertGreaterEqual(release_summary["blocked"], 1)
-        self.assertIn("Evidence Freshness Gate", report)
+        self.assertIn("Telemetry Status Gate", report)
         self.assertIn("summary", report)
 
     def test_dba_control_room_loads_schema_migration_status_without_live_account_scan(self):
@@ -2949,8 +2835,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Task failure recovery", set(gate["GATE"]))
         self.assertIn("Object/RBAC drift", set(timeline["ROOT_CAUSE_SIGNAL"]))
         self.assertIn("Yes", set(timeline["BLOCKS_RELEASE"]))
-        self.assertIn("Release gate blocked", set(exceptions["Signal"]))
-        self.assertIn("Auto Release Gate", report)
+        self.assertIn("Operational status blocked", set(exceptions["Signal"]))
+        self.assertIn("Operational Status", report)
         self.assertIn("Task Failure Root-Cause Timeline", report)
 
     def test_dba_action_brief_prioritizes_single_operator_move(self):
@@ -2971,7 +2857,7 @@ class FormulaRegressionTests(unittest.TestCase):
             failed_queries=0,
         )
         self.assertEqual(blocked["state"], "Blocked")
-        self.assertEqual(blocked["target"], "Release Gate")
+        self.assertEqual(blocked["target"], "Operations Board")
         self.assertIn("1 blocker", blocked["detail"])
 
         routed = _dba_action_brief(
@@ -3045,13 +2931,13 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(command_queue.iloc[0]["ROUTE"], "Workload Operations")
         self.assertEqual(command_queue.iloc[0]["COMMAND_STATE"], "Escalate Overdue")
         self.assertEqual(command_queue.iloc[0]["COMMAND_EXECUTION_GATE"], "Escalate - Overdue")
-        self.assertEqual(command_queue.iloc[0]["COMMAND_ROUTE_READINESS"], "Route Ready")
-        self.assertEqual(command_queue.iloc[0]["ONCALL_PRIMARY"], "DBA On-Call")
+        self.assertEqual(command_queue.iloc[0]["COMMAND_ROUTE_READINESS"], "Route Needed")
+        self.assertEqual(command_queue.iloc[0]["ONCALL_PRIMARY"], "DBA")
         self.assertEqual(command_queue.iloc[0]["COMMAND_AUDIT_READINESS"], "Audit Gaps")
         self.assertEqual(summary["open"], 1)
         self.assertEqual(summary["overdue"], 1)
-        self.assertEqual(summary["owner_gaps"], 1)
-        self.assertEqual(summary["route_ready"], 1)
+        self.assertEqual(summary["owner_gaps"], 0)
+        self.assertEqual(summary["route_ready"], 0)
         self.assertGreater(summary["control_gaps"], 0)
         self.assertEqual(summary["audit_ready"], 0)
 
@@ -3062,7 +2948,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "CATEGORY": "Cost Control",
                 "SEVERITY": "High",
                 "ENTITY_NAME": "WH_ALFA_BI",
-                "OWNER": "BI_PLATFORM_OWNER",
+                "OWNER": "BI_PLATFORM_ROUTE",
                 "STATUS": "In Progress",
                 "DUE_DATE": "2026-06-02",
                 "VERIFICATION_QUERY": "SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY",
@@ -3071,14 +2957,15 @@ class FormulaRegressionTests(unittest.TestCase):
                 "BASELINE_VALUE": 100,
                 "CURRENT_VALUE": 180,
                 "OWNER_APPROVAL_STATUS": "Requested",
-                "RECOVERY_SLA_STATE": "Savings Verification Pending",
+                "RECOVERY_SLA_STATE": "Savings Measurement Pending",
             },
             {
                 "ACTION_ID": "C2",
                 "CATEGORY": "Cost Control",
                 "SEVERITY": "High",
                 "ENTITY_NAME": "WH_ALFA_LOAD",
-                "OWNER": "LOAD_PLATFORM_OWNER",
+                "OWNER": "LOAD_PLATFORM_ROUTE",
+                "ONCALL_PRIMARY": "Load Platform Queue",
                 "STATUS": "Acknowledged",
                 "DUE_DATE": "2026-06-02",
                 "VERIFICATION_QUERY": "SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY",
@@ -3087,7 +2974,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "BASELINE_VALUE": 200,
                 "CURRENT_VALUE": 260,
                 "OWNER_APPROVAL_STATUS": "Approved",
-                "RECOVERY_SLA_STATE": "Savings Verification Pending",
+                "RECOVERY_SLA_STATE": "Savings Measurement Pending",
             },
         ])
 
@@ -3096,16 +2983,17 @@ class FormulaRegressionTests(unittest.TestCase):
         by_route = {row["ROUTE"]: row for _, row in _command_queue_route_readiness(command_queue).iterrows()}
         by_id = {row["ACTION_ID"]: row for _, row in command_queue.iterrows()}
 
-        self.assertEqual(by_id["C1"]["COMMAND_EXECUTION_GATE"], "Blocked - Owner Approval")
-        self.assertEqual(by_id["C1"]["COMMAND_EVIDENCE_REQUIRED"], "Owner approval")
-        self.assertEqual(by_id["C1"]["COMMAND_ROUTE_READINESS"], "Route Ready")
-        self.assertEqual(by_id["C2"]["COMMAND_EXECUTION_GATE"], "Ready - High Risk")
-        self.assertEqual(by_id["C2"]["COMMAND_AUDIT_READINESS"], "Audit Ready")
-        self.assertEqual(summary["approval_blocks"], 1)
-        self.assertEqual(summary["execution_ready"], 1)
-        self.assertEqual(summary["audit_ready"], 1)
-        self.assertEqual(by_route["Cost & Contract"]["APPROVAL_BLOCKS"], 1)
-        self.assertEqual(by_route["Cost & Contract"]["EXECUTION_READY"], 1)
+        self.assertEqual(by_id["C1"]["COMMAND_EXECUTION_GATE"], "Blocked - Metadata")
+        self.assertEqual(by_id["C1"]["COMMAND_EVIDENCE_REQUIRED"], "On-call route; Review status")
+        self.assertEqual(by_id["C1"]["COMMAND_ROUTE_READINESS"], "Route Needed")
+        self.assertEqual(by_id["C2"]["COMMAND_EXECUTION_GATE"], "Blocked - Metadata")
+        self.assertEqual(by_id["C2"]["COMMAND_AUDIT_READINESS"], "Audit Gaps")
+        self.assertEqual(summary["approval_blocks"], 0)
+        self.assertEqual(summary["execution_ready"], 0)
+        self.assertEqual(summary["audit_ready"], 0)
+        self.assertEqual(summary["metadata_blocks"], 2)
+        self.assertEqual(by_route["Cost & Contract"]["APPROVAL_BLOCKS"], 0)
+        self.assertEqual(by_route["Cost & Contract"]["EXECUTION_READY"], 0)
 
     def test_dba_control_room_closure_rollup_keeps_fixed_items_auditable(self):
         queue = pd.DataFrame([
@@ -3166,16 +3054,16 @@ class FormulaRegressionTests(unittest.TestCase):
         rollup = _command_queue_closure_readiness(queue, today="2026-05-31")
         by_route = {row["ROUTE"]: row for _, row in rollup.iterrows()}
 
-        self.assertEqual(by_route["Governance & Security"]["CLOSURE_READINESS"], "Overdue closure")
-        self.assertEqual(by_route["Governance & Security"]["OVERDUE_OPEN"], 1)
-        self.assertEqual(by_route["Governance & Security"]["OWNER_GAP_ROWS"], 1)
-        self.assertEqual(by_route["Governance & Security"]["TICKET_GAP_ROWS"], 1)
-        self.assertEqual(by_route["DBA Control Room"]["CLOSURE_READINESS"], "Fixed without verification")
+        self.assertEqual(by_route["Security Monitoring"]["CLOSURE_READINESS"], "Overdue closure")
+        self.assertEqual(by_route["Security Monitoring"]["OVERDUE_OPEN"], 1)
+        self.assertEqual(by_route["Security Monitoring"]["OWNER_GAP_ROWS"], 1)
+        self.assertEqual(by_route["Security Monitoring"]["TICKET_GAP_ROWS"], 1)
+        self.assertEqual(by_route["DBA Control Room"]["CLOSURE_READINESS"], "Closed pending telemetry")
         self.assertEqual(by_route["DBA Control Room"]["FIXED_WITHOUT_VERIFICATION"], 1)
         self.assertEqual(by_route["DBA Control Room"]["RECOVERY_RISK_ROWS"], 1)
-        self.assertEqual(by_route["Cost & Contract"]["CLOSURE_READINESS"], "Verified closure")
+        self.assertEqual(by_route["Cost & Contract"]["CLOSURE_READINESS"], "Closed")
         self.assertEqual(by_route["Cost & Contract"]["VERIFIED_CLOSURES"], 1)
-        self.assertIn("Attach verification", by_route["DBA Control Room"]["NEXT_CONTROL_ACTION"])
+        self.assertIn("wait for telemetry", by_route["DBA Control Room"]["NEXT_CONTROL_ACTION"])
 
     def test_dba_control_room_operability_board_joins_scores_with_live_blockers(self):
         queue = pd.DataFrame([
@@ -3250,10 +3138,10 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertGreaterEqual(by_section["Cost & Contract"]["CLOSURE_BLOCKERS"], 1)
         self.assertIn("Escalate overdue", by_section["Cost & Contract"]["NEXT_CONTROL_ACTION"])
         self.assertIn("rollback SQL", by_section["Cost & Contract"]["PROOF_REQUIRED"])
-        self.assertEqual(by_section["Cost & Contract"]["EXECUTION_READY"], 1)
-        self.assertEqual(by_section["Governance & Security"]["OPERABILITY_STATE"], "Build Toward 95")
-        self.assertIn("Connect IAM", by_section["Governance & Security"]["NEXT_CONTROL_ACTION"])
-        self.assertIn("least-privilege", by_section["Governance & Security"]["PROOF_REQUIRED"])
+        self.assertEqual(by_section["Cost & Contract"]["EXECUTION_READY"], 0)
+        self.assertEqual(by_section["Security Monitoring"]["OPERABILITY_STATE"], "Build Toward 95")
+        self.assertIn("Connect IAM", by_section["Security Monitoring"]["NEXT_CONTROL_ACTION"])
+        self.assertIn("least-privilege", by_section["Security Monitoring"]["PROOF_REQUIRED"])
 
     def test_dba_operations_priority_index_ranks_hot_route_first(self):
         raw_queue = pd.DataFrame([
@@ -3365,8 +3253,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(len(plan), 6)
         self.assertEqual(plan.iloc[0]["RUNBOOK_ID"], "DBA-RUNBOOK-202606011730")
         self.assertEqual(plan.iloc[0]["RUNBOOK_MODE"], "Advisory Only")
-        self.assertEqual(plan.iloc[0]["RUNBOOK_STEP"], "Evidence Check")
-        self.assertIn("Evidence current", plan["GO_NO_GO_GATE"].tolist())
+        self.assertEqual(plan.iloc[0]["RUNBOOK_STEP"], "Telemetry Check")
+        self.assertIn("Telemetry current", plan["GO_NO_GO_GATE"].tolist())
         self.assertIn("Advisory only", plan["GO_NO_GO_GATE"].tolist())
         self.assertTrue(plan["PROOF_SQL"].str.contains("WAREHOUSE_METERING_HISTORY|QUERY_HISTORY", regex=True).any())
         self.assertIn("OVERWATCH DBA Operator Runbook", markdown)
@@ -3375,8 +3263,8 @@ class FormulaRegressionTests(unittest.TestCase):
 
     def test_dba_section_proof_required_names_section_evidence_contracts(self):
         self.assertIn("release-note/rollback", _dba_section_proof_required("Change & Drift"))
-        self.assertIn("savings verification", _dba_section_proof_required("Cost & Contract"))
-        self.assertIn("email evidence", _dba_section_proof_required("Alert Center"))
+        self.assertIn("savings telemetry", _dba_section_proof_required("Cost & Contract"))
+        self.assertIn("email status", _dba_section_proof_required("Alert Center"))
 
     def test_dba_incident_board_groups_signals_into_containment_lanes(self):
         exceptions = pd.DataFrame([
@@ -3391,7 +3279,7 @@ class FormulaRegressionTests(unittest.TestCase):
             {
                 "Severity": "Medium",
                 "Signal": "Object or grant changes",
-                "Evidence": "6 recent DDL/access changes",
+                "Evidence": "6 recent object/access changes",
                 "Action": "Validate change windows.",
                 "Route": "Change & Drift",
                 "Workflow": "Object and access changes",
@@ -3433,8 +3321,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Cost & Contract", by_type["Warehouse Capacity"]["AFFECTED_ROUTES"])
         self.assertIn("Stabilize queue", by_type["Warehouse Capacity"]["CONTAINMENT_ACTION"])
         self.assertIn("Contain", by_type["Warehouse Capacity"]["SLA_TARGET"])
-        self.assertIn("Evidence Quality", by_type)
-        self.assertEqual(by_type["Evidence Quality"]["STATUS"], "Evidence Refresh Required")
+        self.assertIn("Data Quality", by_type)
+        self.assertEqual(by_type["Data Quality"]["STATUS"], "Telemetry Refresh Required")
 
     def test_dba_incident_markdown_is_containment_ready(self):
         board = pd.DataFrame([
@@ -3468,7 +3356,9 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("# OVERWATCH DBA Incident Board", markdown)
         self.assertIn("Containment Required", markdown)
         self.assertIn("Operating Rules", markdown)
-        self.assertIn("Refresh stale or unavailable evidence", markdown)
+        self.assertIn("Refresh stale or unavailable telemetry", markdown)
+        self.assertNotIn("owner", markdown.lower())
+        self.assertNotIn("proof", markdown.lower())
 
     def test_dba_shift_handoff_combines_watch_queue_closure_and_source_health(self):
         exceptions = pd.DataFrame([
@@ -3517,7 +3407,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Escalate Overdue", states)
         self.assertIn("Overdue closure", states)
         self.assertIn("Unavailable", states)
-        self.assertTrue(handoff["PROOF_REQUIRED"].astype(str).str.contains("verification", case=False).any())
+        self.assertTrue(handoff["PROOF_REQUIRED"].astype(str).str.contains("telemetry", case=False).any())
 
     def test_dba_shift_handoff_markdown_is_email_ready(self):
         handoff = pd.DataFrame([
@@ -3548,12 +3438,12 @@ class FormulaRegressionTests(unittest.TestCase):
         priority_index = pd.DataFrame([
             {
                 "SECTION": "Warehouse Health",
-                "OPERATIONS_PRIORITY_STATE": "Owner Review",
+                "OPERATIONS_PRIORITY_STATE": "Route Review",
                 "PRIORITY_SCORE": 62,
-                "WHY_NOW": "2 proof blockers",
+                "WHY_NOW": "2 telemetry blockers",
                 "WORST_SIGNAL": "Warehouse guardrail review",
                 "FIRST_MOVE": "Review warehouse owner route.",
-                "PROOF_REQUIRED": "capacity evidence, owner approval, rollback SQL",
+                "PROOF_REQUIRED": "capacity telemetry, route review, rollback SQL",
             }
         ])
         incident_board = pd.DataFrame([
@@ -3566,20 +3456,20 @@ class FormulaRegressionTests(unittest.TestCase):
                 "SIGNALS": "Queue or warehouse pressure",
                 "CONTAINMENT_ACTION": "Stabilize queue/spill pressure first.",
                 "SLA_TARGET": "Contain within 30 minutes.",
-                "PROOF_REQUIRED": "capacity evidence, owner approval, rollback SQL",
+                "PROOF_REQUIRED": "capacity telemetry, route review, rollback SQL",
                 "INVESTIGATION_PATH": "Warehouse Health",
             }
         ])
         handoff = pd.DataFrame([
             {
                 "PRIORITY_RANK": 1,
-                "LANE": "Source Health",
+                "LANE": "Operations Board",
                 "STATE": "Unavailable",
                 "EVIDENCE": "Task SLA / Cost unavailable",
                 "OWNER_OR_ROUTE": "DBA / Platform",
                 "NEXT_ACTION": "Refresh mart grants before relying on this surface.",
-                "PROOF_REQUIRED": "current source health",
-                "SOURCE": "Source Health",
+                "PROOF_REQUIRED": "current telemetry status",
+                "SOURCE": "Operations Board",
             }
         ])
         release_gate = pd.DataFrame([
@@ -3590,8 +3480,8 @@ class FormulaRegressionTests(unittest.TestCase):
                 "EVIDENCE": "OVERWATCH_ANNOTATIONS missing",
                 "NEXT_ACTION": "Apply release remediation DDL.",
                 "ROUTE": "Change & Drift",
-                "WORKFLOW": "Release Gate",
-                "PROOF_REQUIRED": "schema migration ledger, DDL proof, task retry evidence",
+                "WORKFLOW": "Operations Board",
+                "PROOF_REQUIRED": "object status, rollback SQL, task retry telemetry",
             }
         ])
 
@@ -3606,14 +3496,15 @@ class FormulaRegressionTests(unittest.TestCase):
         )
         by_route = {row["ROUTE"]: row for _, row in packet.iterrows()}
 
-        self.assertEqual(packet.iloc[0]["ROUTE"], "Governance & Security")
-        self.assertEqual(by_route["Governance & Security"]["ESCALATION_LEVEL"], "Escalate Now")
-        self.assertIn("No-Go", by_route["Governance & Security"]["GO_NO_GO"])
-        self.assertIn("Change owner", by_route["Governance & Security"]["OWNER_ROUTE"])
+        self.assertEqual(packet.iloc[0]["ROUTE"], "Workload Operations")
+        self.assertEqual(by_route["Workload Operations"]["ESCALATION_LEVEL"], "Escalate Now")
+        self.assertIn("No-Go", by_route["Workload Operations"]["GO_NO_GO"])
+        self.assertIn("Workload route", by_route["Workload Operations"]["OWNER_ROUTE"])
         self.assertEqual(by_route["Cost & Contract"]["ESCALATION_LEVEL"], "Escalate Now")
+        self.assertIn("Warehouse route", by_route["Cost & Contract"]["OWNER_ROUTE"])
         self.assertIn("Incident Board", by_route["Cost & Contract"]["SOURCE_SIGNALS"])
         self.assertIn("Stabilize queue", by_route["Cost & Contract"]["FIRST_MOVE"])
-        self.assertIn("No-Go", by_route["Source Health"]["GO_NO_GO"])
+        self.assertIn("Go only", by_route["Operations Board"]["GO_NO_GO"])
         self.assertTrue(packet["AUTO_GENERATED"].eq("Yes").all())
 
     def test_dba_escalation_packet_markdown_is_owner_ready(self):
@@ -3622,11 +3513,11 @@ class FormulaRegressionTests(unittest.TestCase):
                 "ESCALATION_ID": "ESC-01",
                 "ESCALATION_LEVEL": "Escalate Now",
                 "ROUTE": "Change & Drift",
-                "OWNER_ROUTE": "Change owner / DBA release reviewer",
-                "WHY_NOW": "Release gate blocked by missing deployment object.",
+                "OWNER_ROUTE": "Change route / DBA change reviewer",
+                "WHY_NOW": "Operational status blocked by missing deployment object.",
                 "FIRST_MOVE": "Apply release remediation DDL.",
                 "GO_NO_GO": "No-Go until blocker proof is current.",
-                "PROOF_REQUIRED": "schema migration ledger, DDL proof, task retry evidence",
+                "PROOF_REQUIRED": "object status, rollback SQL, task retry telemetry",
             }
         ])
 
@@ -3638,21 +3529,25 @@ class FormulaRegressionTests(unittest.TestCase):
         )
 
         self.assertIn("# OVERWATCH DBA Escalation Packet", markdown)
-        self.assertIn("Mode: Auto-generated from loaded OVERWATCH evidence", markdown)
+        self.assertIn("Mode: Auto-generated from loaded OVERWATCH telemetry", markdown)
         self.assertIn("ESC-01", markdown)
         self.assertIn("No-Go", markdown)
+        self.assertIn("Change route / DBA change reviewer", markdown)
+        self.assertNotIn("owner", markdown.lower())
+        self.assertNotIn("proof", markdown.lower())
+        self.assertNotIn("ddl", markdown.lower())
         self.assertIn("Do not execute state-changing DBA actions", markdown)
 
     def test_dba_morning_brief_prioritizes_no_go_and_owner_proof(self):
         priority_index = pd.DataFrame([
             {
                 "SECTION": "Warehouse Health",
-                "OPERATIONS_PRIORITY_STATE": "Owner Review",
+                "OPERATIONS_PRIORITY_STATE": "Route Review",
                 "PRIORITY_SCORE": 62,
-                "WHY_NOW": "2 proof blockers",
+                "WHY_NOW": "2 telemetry blockers",
                 "WORST_SIGNAL": "Warehouse guardrail review",
                 "FIRST_MOVE": "Review warehouse owner route.",
-                "PROOF_REQUIRED": "capacity evidence, owner approval, rollback SQL",
+                "PROOF_REQUIRED": "capacity telemetry, route review, rollback SQL",
             }
         ])
         packet = pd.DataFrame([
@@ -3660,26 +3555,26 @@ class FormulaRegressionTests(unittest.TestCase):
                 "ESCALATION_ID": "ESC-01",
                 "ESCALATION_LEVEL": "Escalate Now",
                 "ROUTE": "Change & Drift",
-                "OWNER_ROUTE": "Change owner / DBA release reviewer",
+                "OWNER_ROUTE": "Change route / DBA change reviewer",
                 "PRIORITY_SCORE": 99,
-                "STATE": "Release Gate Blocked",
+                "STATE": "Operational Status Blocked",
                 "WHY_NOW": "OVERWATCH_ANNOTATIONS missing",
                 "FIRST_MOVE": "Apply release remediation DDL.",
                 "GO_NO_GO": "No-Go until blocker proof is current.",
-                "PROOF_REQUIRED": "schema migration ledger, DDL proof, task retry evidence",
-                "SOURCE_SIGNALS": "Release Gate: Deployment object",
+                "PROOF_REQUIRED": "object status, rollback SQL, task retry telemetry",
+                "SOURCE_SIGNALS": "Operational Status: Deployment object",
             }
         ])
         handoff = pd.DataFrame([
             {
                 "PRIORITY_RANK": 1,
-                "LANE": "Source Health",
+                "LANE": "Operations Board",
                 "STATE": "Unavailable",
                 "EVIDENCE": "Task SLA / Cost unavailable",
                 "OWNER_OR_ROUTE": "DBA / Platform",
                 "NEXT_ACTION": "Refresh mart grants before relying on this surface.",
-                "PROOF_REQUIRED": "current source health",
-                "SOURCE": "Source Health",
+                "PROOF_REQUIRED": "current telemetry status",
+                "SOURCE": "Operations Board",
             }
         ])
 
@@ -3694,11 +3589,11 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(brief.iloc[0]["ROUTE"], "Change & Drift")
         self.assertEqual(brief.iloc[0]["STATE"], "Escalate Now")
         self.assertEqual(brief.iloc[0]["MORNING_DECISION"], "No-Go / contain now")
-        self.assertEqual(brief.iloc[0]["SLA_CLOCK"], "15 min containment; 30 min owner update")
-        self.assertEqual(brief.iloc[0]["OWNER_PROOF_STATE"], "Owner/proof named")
+        self.assertEqual(brief.iloc[0]["SLA_CLOCK"], "15 min containment; 30 min route update")
+        self.assertEqual(brief.iloc[0]["OWNER_PROOF_STATE"], "Route/telemetry named")
         self.assertIn("No-Go", brief.iloc[0]["GO_NO_GO"])
-        self.assertIn("schema migration ledger", brief.iloc[0]["PROOF_REQUIRED"])
-        self.assertIn("approval, execution, rollback, and verification", brief.iloc[0]["ROUTE_ACTION"])
+        self.assertIn("object status", brief.iloc[0]["PROOF_REQUIRED"])
+        self.assertIn("execution, rollback, and telemetry", brief.iloc[0]["ROUTE_ACTION"])
         self.assertIn("Do not release", brief.iloc[0]["STOP_RULE"])
         self.assertIn("Warehouse Health", set(brief["ROUTE"]))
         self.assertIn("# OVERWATCH DBA Morning Brief", markdown)
@@ -3710,17 +3605,17 @@ class FormulaRegressionTests(unittest.TestCase):
         no_go = _dba_morning_decision_contract({
             "STATE": "Escalate Now",
             "ROUTE": "Change & Drift",
-            "GO_NO_GO": "No-Go until blocker proof is current.",
-            "OWNER_ROUTE": "Change owner / DBA release reviewer",
-            "PROOF_REQUIRED": "schema migration ledger, owner approval, rollback SQL, verification",
+            "GO_NO_GO": "No-Go until blocker telemetry is current.",
+            "OWNER_ROUTE": "Change route / DBA release reviewer",
+            "PROOF_REQUIRED": "schema migration ledger, route review, rollback SQL, telemetry",
             "PRIORITY_SCORE": 99,
         })
         queue = _dba_morning_decision_contract({
             "STATE": "SLA Risk",
             "ROUTE": "Workload Operations",
             "WORKFLOW": "Contention Center",
-            "OWNER_ROUTE": "DBA on-call / workload owner",
-            "PROOF_REQUIRED": "QUERY_HISTORY blocked seconds and current source proof",
+            "OWNER_ROUTE": "DBA on-call / workload route",
+            "PROOF_REQUIRED": "QUERY_HISTORY blocked seconds and current source telemetry",
             "PRIORITY_SCORE": 82,
         })
         monitor = _dba_morning_decision_contract({
@@ -3731,7 +3626,7 @@ class FormulaRegressionTests(unittest.TestCase):
         })
 
         self.assertEqual(no_go["MORNING_DECISION"], "No-Go / contain now")
-        self.assertEqual(no_go["OWNER_PROOF_STATE"], "Owner/proof named")
+        self.assertEqual(no_go["OWNER_PROOF_STATE"], "Route/telemetry named")
         self.assertIn("Do not release", no_go["STOP_RULE"])
 
         self.assertEqual(queue["MORNING_DECISION"], "Contain same shift")
@@ -3739,7 +3634,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Workload Operations / Contention Center", queue["ROUTE_ACTION"])
 
         self.assertEqual(monitor["MORNING_DECISION"], "Monitor")
-        self.assertEqual(monitor["OWNER_PROOF_STATE"], "Owner gap")
+        self.assertEqual(monitor["OWNER_PROOF_STATE"], "Route gap")
 
     def test_dba_morning_brief_adds_specific_workload_lanes(self):
         data = {
@@ -3828,10 +3723,10 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("recovery SLA", task_row["EVIDENCE_PACKAGE"])
         self.assertIn("TASK_HISTORY run succeeded", task_row["VERIFY_NEXT"])
         self.assertIn("Task graphs guarded controls", task_row["EXECUTION_BOUNDARY"])
-        self.assertIn("Query owner", contention_row["APPROVAL_GATE"])
+        self.assertIn("Query route", contention_row["APPROVAL_GATE"])
         self.assertIn("post-action Query History", contention_row["EVIDENCE_PACKAGE"])
         self.assertIn("retry/recovery", contention_row["VERIFY_NEXT"])
-        self.assertIn("OVERWATCH displays manual SQL only", contention_row["EXECUTION_BOUNDARY"])
+        self.assertIn("OVERWATCH displays action SQL only", contention_row["EXECUTION_BOUNDARY"])
         self.assertIn("operator stats", query_row["EVIDENCE_PACKAGE"])
         self.assertIn("AI Query Diagnosis is advisory", query_row["EXECUTION_BOUNDARY"])
 
@@ -3850,10 +3745,10 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("query=01blocked", contention_command["FOCUS"])
         self.assertIn("warehouse=WH_TRXS_LOAD", contention_command["FOCUS"])
         self.assertIn("No-Go", contention_command["GATE"])
-        self.assertIn("Query owner", contention_command["APPROVAL_GATE"])
+        self.assertIn("Query route", contention_command["APPROVAL_GATE"])
         self.assertIn("post-action Query History", contention_command["EVIDENCE_PACKAGE"])
         self.assertIn("retry/recovery", contention_command["VERIFY_NEXT"])
-        self.assertIn("OVERWATCH displays manual SQL only", contention_command["EXECUTION_BOUNDARY"])
+        self.assertIn("OVERWATCH displays action SQL only", contention_command["EXECUTION_BOUNDARY"])
         self.assertNotIn("Stored procedures", set(command_queue["TARGET"]))
 
         markdown = _build_dba_morning_brief_markdown(
@@ -3865,10 +3760,10 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Workload Operations / Contention Center", markdown)
         self.assertIn("Workload Operations / Query diagnosis", markdown)
         self.assertIn("No-Go for warehouse resizing", markdown)
-        self.assertIn("Approval: Query owner", markdown)
-        self.assertIn("Evidence package: Save precheck result", markdown)
-        self.assertIn("Verify next: Confirm cancellation state", markdown)
-        self.assertIn("Boundary: OVERWATCH displays manual SQL only", markdown)
+        self.assertIn("Review gate: Query route", markdown)
+        self.assertIn("Telemetry package: Save precheck result", markdown)
+        self.assertIn("Confirm next: Confirm cancellation state", markdown)
+        self.assertIn("Boundary: OVERWATCH displays action SQL only", markdown)
         self.assertIn("Focus: query=01blocked", markdown)
         self.assertIn("warehouse=WH_TRXS_LOAD", markdown)
         self.assertIn("object=PROD_DB.CORE.FACT_POLICY", markdown)
@@ -3905,7 +3800,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("failed/blocked=3", lane["WHY_NOW"])
         self.assertIn("TASK_HISTORY", lane["FIRST_MOVE"])
         self.assertIn("downstream SLA impact", lane["FIRST_MOVE"])
-        self.assertIn("owner approval", lane["PROOF_REQUIRED"])
+        self.assertIn("review status", lane["PROOF_REQUIRED"])
         self.assertIn("No-Go for dependent loads", lane["GO_NO_GO"])
         self.assertEqual(lane["SOURCE_SIGNALS"], "Snowflake TASK_HISTORY summary")
 
@@ -4279,12 +4174,12 @@ class FormulaRegressionTests(unittest.TestCase):
         summary = _cost_explorer_summary(detail, "Department / Cost Center")
         by_dimension = {row["DIMENSION"]: row for _, row in summary.iterrows()}
         self.assertAlmostEqual(by_dimension["Claims"]["EST_COST"], 300.0)
-        self.assertEqual(by_dimension["Claims"]["OWNER_PROOF"], "Tag Proof")
+        self.assertEqual(by_dimension["Claims"]["ROUTE_TELEMETRY"], "Tag Telemetry")
         self.assertEqual(by_dimension["Unassigned"]["CHARGEBACK_READY"], "Review Required")
 
         gaps = _cost_explorer_gap_board(detail, summary)
         by_gap = {row["GAP"]: row for _, row in gaps.iterrows()}
-        self.assertEqual(by_gap["Missing department / cost-center proof"]["STATE"], "Action Needed")
+        self.assertEqual(by_gap["Missing department / cost-center telemetry"]["STATE"], "Action Needed")
         self.assertEqual(by_gap["No database context"]["STATE"], "Action Needed")
         self.assertEqual(by_gap["Not chargeback ready"]["STATE"], "Action Needed")
         self.assertGreater(by_gap["Cost concentration"]["EST_COST"], 0)
@@ -4387,7 +4282,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Data loading / ingestion", categories)
         self.assertIn("AI / Cortex", categories)
         self.assertIn("Budget variance", categories)
-        source_basis = dict(zip(summary["Category"], summary["Source Basis"]))
+        source_basis = dict(zip(summary["Category"], summary["Measurement Basis"]))
         self.assertEqual(source_basis["Warehouse metering"], "Exact")
         self.assertEqual(source_basis["Query-attributed workload"], "Allocated / Estimated")
         self.assertEqual(source_basis["Data loading / ingestion"], "Account-wide")
@@ -4485,7 +4380,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("OVERWATCH Security Brief - ALFA", md)
         self.assertIn("Security state:", md)
         self.assertNotIn("Security score", md)
-        self.assertIn("## Source Basis", md)
+        self.assertIn("## Data Notes", md)
         self.assertIn("MFA Gap", md)
         self.assertIn("Company scope uses user/database naming", md)
 
@@ -4578,10 +4473,10 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_type["Object Grant"]["DATABASE_NAME"], "ALFA_EDW_DEV")
         self.assertEqual(by_type["Object Grant"]["ENVIRONMENT"], "ALFA_EDW_DEV")
         self.assertEqual(by_type["Object Grant"]["SCOPE_CONFIDENCE"], "Database Context")
-        self.assertEqual(by_type["Failed Login"]["OWNER"], "IAM / Security Owner")
-        self.assertEqual(by_type["MFA Gap"]["APPROVER"], "IAM / Security Owner")
-        self.assertEqual(by_type["Failed Login"]["ONCALL_PRIMARY"], "DBA On-Call")
-        self.assertIn("OWNER_DIRECTORY", by_type["Recent Grant"]["OWNER_SOURCE"])
+        self.assertEqual(by_type["Failed Login"]["OWNER"], "IAM / Security Route")
+        self.assertEqual(by_type["MFA Gap"]["APPROVER"], "IAM / Security")
+        self.assertEqual(by_type["Failed Login"]["ONCALL_PRIMARY"], "")
+        self.assertIn("MONITORING_CONTEXT", by_type["Recent Grant"]["OWNER_SOURCE"])
         self.assertIn("MANAGE GRANTS", by_type["Recent Grant"]["ROLE_CAPABILITY_STATE"])
 
         for _, row in review.iterrows():
@@ -4608,13 +4503,13 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_type["Failed Login"]["REVIEW_READINESS"], "Ticket / Review Date Blocked")
         self.assertEqual(by_type["Failed Login"]["REVIEW_SLA_HOURS"], 24)
         self.assertIn("access ticket", by_type["Failed Login"]["REVIEW_BLOCKERS"])
-        self.assertIn("IAM/security approval", by_type["Failed Login"]["REVIEW_BLOCKERS"])
+        self.assertIn("review/expiry date", by_type["Failed Login"]["REVIEW_BLOCKERS"])
         self.assertEqual(by_type["Object Grant"]["CONTROL_READINESS"], by_type["Object Grant"]["REVIEW_READINESS"])
 
         ready = _security_access_review_readiness_for_row({
             "SEVERITY": "High",
             "OWNER": "Security Owner",
-            "OWNER_SOURCE": "OWNER_DIRECTORY exact",
+            "OWNER_SOURCE": "MONITORING_CONTEXT exact",
             "ACCESS_TICKET_ID": "SEC-123",
             "REVIEW_BY_DATE": "2026-06-30",
             "OWNER_APPROVAL_STATUS": "Approved",
@@ -4696,7 +4591,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "GRANTED_BY": "SYSADMIN",
                 "CREATED_ON": "2026-05-02",
                 "GRANT_AGE_DAYS": 10,
-                "PROOF_REQUIRED": "object owner approval",
+                "PROOF_REQUIRED": "object route review",
             },
         ])
 
@@ -4705,18 +4600,18 @@ class FormulaRegressionTests(unittest.TestCase):
         summary = _privilege_sprawl_summary(readiness)
 
         self.assertEqual(by_entity["JDOE"]["GRANT_REVIEW_STATE"], "Tier 0 role grant")
-        self.assertEqual(by_entity["JDOE"]["GRANT_REVIEW_READINESS"], "Owner Approval Required")
+        self.assertEqual(by_entity["JDOE"]["GRANT_REVIEW_READINESS"], "Telemetry Pending")
         self.assertEqual(by_entity["JDOE"]["SCOPE_CONFIDENCE"], "Account/User Context")
         self.assertEqual(by_entity["JDOE"]["OWNER_ROUTE_READY"], "Yes")
         self.assertEqual(by_entity["ETL_RUNNER"]["GRANT_REVIEW_STATE"], "Privileged object grant")
         self.assertEqual(by_entity["ETL_RUNNER"]["SCOPE_CONFIDENCE"], "Database Context")
-        self.assertIn("OWNER_DIRECTORY", by_entity["ETL_RUNNER"]["OWNER_SOURCE"])
+        self.assertIn("MONITORING_CONTEXT", by_entity["ETL_RUNNER"]["OWNER_SOURCE"])
         self.assertEqual(summary["total"], 2)
         self.assertEqual(summary["tier0"], 1)
         self.assertEqual(summary["admin_role_grants"], 1)
         self.assertEqual(summary["object_privileges"], 1)
         self.assertEqual(summary["ownership_or_grant_option"], 1)
-        self.assertEqual(summary["owner_approval_required"], 2)
+        self.assertEqual(summary["verification_required"], 2)
         self.assertEqual(summary["stale_admin_grants"], 1)
         self.assertEqual(_security_workflow_for("Privileged Object Grant"), "Privilege sprawl")
         self.assertEqual(_security_workflow_for("MFA Gap"), "Access posture")
@@ -4730,27 +4625,27 @@ class FormulaRegressionTests(unittest.TestCase):
             "OBJECT_NAME": "",
             "DATABASE_NAME": "",
             "ENVIRONMENT": "No Database Context",
-            "OWNER": "IAM / Security Owner",
+            "OWNER": "IAM / Security Route",
             "OWNER_EMAIL": "iam@example.com",
             "ONCALL_PRIMARY": "DBA On-Call",
-            "APPROVAL_GROUP": "Security Owner",
-            "ESCALATION_TARGET": "DBA Lead / Security Owner",
-            "OWNER_SOURCE": "OWNER_DIRECTORY exact",
-            "OWNER_EVIDENCE": "role owner map",
+            "APPROVAL_GROUP": "Security",
+            "ESCALATION_TARGET": "DBA / Security Route",
+            "OWNER_SOURCE": "MONITORING_CONTEXT exact",
+            "OWNER_EVIDENCE": "role route map",
             "GRANT_REVIEW_STATE": "Tier 0 role grant",
-            "GRANT_REVIEW_READINESS": "Owner Approval Required",
+            "GRANT_REVIEW_READINESS": "Telemetry Pending",
             "OWNER_ROUTE_READY": "Yes",
             "SCOPE_CONFIDENCE": "Account/User Context",
-            "PROOF_REQUIRED": "role, grantee, approver, ticket, rollback/verification",
+            "PROOF_REQUIRED": "role, grantee, reviewer, ticket, rollback/status",
         }
 
         verification_sql = _privileged_grant_verification_sql(row)
         action = _privileged_grant_action_payload(row, company="ALFA", environment="PROD")
 
-        self.assertEqual(action["Source"], "Security Posture - Privileged Grant Readiness")
+        self.assertEqual(action["Source"], "Security Posture - Privileged Grant Status")
         self.assertEqual(action["Category"], "Security Access Review")
         self.assertEqual(action["Entity Type"], "Privileged Grant")
-        self.assertEqual(action["Owner Approval Status"], "Requested")
+        self.assertEqual(action["Review Status"], "Requested")
         self.assertEqual(action["Environment"], "No Database Context")
         self.assertIn("ACCOUNTADMIN", action["Finding"])
         self.assertIn("Do not grant, revoke, or narrow access", action["Generated SQL Fix"])
@@ -4791,7 +4686,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("INSERT INTO", insert_sql)
         self.assertIn("'SECURITYSNAP1'", insert_sql)
         self.assertIn("'NO DATABASE CONTEXT'", insert_sql)
-        self.assertIn("IAM / SECURITY OWNER", insert_sql)
+        self.assertIn("IAM / SECURITY ROUTE", insert_sql)
         self.assertIn("LOGIN_HISTORY", insert_sql)
         self.assertIn("REVIEW_READINESS", insert_sql)
         self.assertIn("ACCESS_TICKET_ID", insert_sql)
@@ -4861,14 +4756,14 @@ class FormulaRegressionTests(unittest.TestCase):
 
         self.assertIn("OVERWATCH_ACTION_QUEUE", sql)
         self.assertIn("SECURITY POSTURE - SECURITY BRIEF", sql)
-        self.assertIn("SECURITY POSTURE - PRIVILEGED GRANT READINESS", sql)
+        self.assertIn("SECURITY POSTURE - PRIVILEGED GRANT STATUS", sql)
         self.assertIn("COMPANY = 'ALFA'", sql)
         for db_name in ["ALFA_EDW_DEV", "ALFA_EDW_SAN", "ALFA_EDW_PHX", "ALFA_EDW_SEA", "ALFA_EDW_SIT"]:
             self.assertIn(db_name, sql)
         self.assertIn("FIXED_WITHOUT_VERIFICATION", sql)
         self.assertIn("OWNER_APPROVAL_GAP_ROWS", sql)
         self.assertIn("CLOSURE_READINESS", sql)
-        self.assertIn("SECURITY OWNER AND TICKET", sql)
+        self.assertIn("SECURITY ROUTE AND TICKET", sql)
         self.assertEqual(verification_query_safety_issues(sql), [])
 
     def test_security_operability_fact_is_fast_and_keeps_account_scope_rows(self):
@@ -4938,7 +4833,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_surface["Security exceptions"]["ROWS"], 1)
         self.assertEqual(by_surface["Control summary"]["STATE"], "Unavailable")
         self.assertEqual(by_surface["Privileged grants"]["STATE"], "Stale")
-        self.assertEqual(by_surface["Access review trend"]["STATE"], "Not Loaded")
+        self.assertEqual(by_surface["Access review trend"]["STATE"], "On demand")
         self.assertIn("Reload", by_surface["Privileged grants"]["NEXT_ACTION"])
 
     def test_change_drift_score_weights_destructive_and_policy_changes(self):
@@ -4964,7 +4859,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(_change_drift_rating(risky), "High Drift Risk")
 
     def test_change_drift_actions_are_finding_specific(self):
-        self.assertEqual(_change_action_for("Destructive DDL")[0], "Object")
+        self.assertEqual(_change_action_for("Destructive Object Change")[0], "Object")
         self.assertEqual(_change_action_for("Policy or Tag Change")[0], "Policy/Tag")
         self.assertEqual(_change_action_for("Grant or Role Change")[0], "Grant/Role")
         self.assertEqual(_change_action_for("Manual Drift")[0], "Drift")
@@ -4982,7 +4877,7 @@ class FormulaRegressionTests(unittest.TestCase):
             ],
         )
         by_workflow = {row["WORKFLOW"]: row for row in rows}
-        self.assertIn("recent DDL", by_workflow["Object and access changes"]["DBA_MOVE"])
+        self.assertIn("recent object changes", by_workflow["Object and access changes"]["DBA_MOVE"])
         self.assertIn("Trace stored procedure", by_workflow["Stored procedure lineage"]["DBA_MOVE"])
         self.assertIn("Open DBA Actions", by_workflow["Controlled DBA actions"]["BUTTON_LABEL"])
         self.assertIn("Guarded admin", by_workflow["Controlled DBA actions"]["SOURCES"])
@@ -5014,7 +4909,7 @@ class FormulaRegressionTests(unittest.TestCase):
 
     def test_change_drift_queue_payload_is_auditable_and_readonly(self):
         row = {
-            "FINDING_TYPE": "Destructive DDL",
+            "FINDING_TYPE": "Destructive Object Change",
             "SEVERITY": "High",
             "ENTITY": "ALFA_EDW_DEV.PUBLIC.POLICY_FACT",
             "USER_NAME": "DEPLOY_USER",
@@ -5024,17 +4919,18 @@ class FormulaRegressionTests(unittest.TestCase):
         action = _change_action_payload(row, company="ALFA", environment="ALFA_EDW_DEV")
 
         self.assertEqual(action["Category"], "Change Control")
-        self.assertEqual(action["Owner"], "DBA Change Owner")
+        self.assertEqual(action["Owner"], "DBA Change Route")
         self.assertEqual(action["Ticket ID"], "CHG-12345")
-        self.assertEqual(action["Oncall Primary"], "DBA On-Call")
-        self.assertIn("OWNER_DIRECTORY", action["Owner Source"])
+        self.assertEqual(action["Oncall Primary"], "")
+        self.assertIn("MONITORING_CONTEXT", action["Owner Source"])
         self.assertEqual(action["Recovery Audit State"], "Query ID captured")
-        self.assertEqual(action["Owner Approval Status"], "Requested")
-        self.assertIn("Data Owner", action["Approver"])
+        self.assertNotIn("Owner Approval Status", action)
+        self.assertEqual(action["Verification Status"], "Requested")
+        self.assertIn("Data Route", action["Approver"])
         self.assertIn("QUERY_HISTORY", action["Verification Query"])
         self.assertEqual(verification_query_safety_issues(action["Verification Query"]), [])
         self.assertIn("OBJECT_DEPENDENCIES", action["Recovery Evidence"])
-        self.assertIn("Approval proof tagged", action["Recovery Evidence"])
+        self.assertIn("review/rollback status", action["Recovery Evidence"])
         self.assertIn("blast-radius", action["Generated SQL Fix"])
         self.assertNotIn("DROP TABLE", action["Generated SQL Fix"].upper())
 
@@ -5057,17 +4953,17 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(row["OWNER_APPROVAL_STATUS"], "Requested")
         self.assertEqual(row["TICKET_REQUIRED"], "Yes")
         self.assertEqual(row["BLAST_RADIUS_REQUIRED"], "Yes")
-        self.assertEqual(row["CHANGE_CONTROL_STATE"], "Validate Approval")
-        self.assertEqual(row["CHANGE_TICKET_STATE"], "Missing ticket evidence")
-        self.assertEqual(row["OWNER"], "Security Owner")
-        self.assertEqual(row["ONCALL_PRIMARY"], "DBA On-Call")
-        self.assertIn("OWNER_DIRECTORY", row["OWNER_SOURCE"])
-        self.assertEqual(row["APPROVAL_ROUTE_READY"], "No")
-        self.assertEqual(row["CHANGE_EVIDENCE_READINESS"], "Route Blocked")
-        self.assertIn("owner directory evidence", row["EVIDENCE_BLOCKERS"])
+        self.assertEqual(row["CHANGE_CONTROL_STATE"], "Validate Review")
+        self.assertEqual(row["CHANGE_TICKET_STATE"], "Missing ticket status")
+        self.assertEqual(row["OWNER"], "Security Route")
+        self.assertEqual(row["ONCALL_PRIMARY"], "")
+        self.assertIn("MONITORING_CONTEXT", row["OWNER_SOURCE"])
+        self.assertEqual(row["APPROVAL_ROUTE_READY"], "Yes")
+        self.assertEqual(row["CHANGE_EVIDENCE_READINESS"], "Closure Blocked")
+        self.assertEqual(row["EVIDENCE_BLOCKERS"], "change ticket")
         self.assertEqual(row["REVIEW_SLA_HOURS"], 72)
-        self.assertIn("Attach the approved change ticket", row["NEXT_CONTROL_ACTION"])
-        self.assertIn("Review approval evidence", row["IAC_RECONCILIATION_STATE"])
+        self.assertIn("Record the change ticket", row["NEXT_CONTROL_ACTION"])
+        self.assertIn("Review telemetry state", row["IAC_RECONCILIATION_STATE"])
         self.assertIn("Query ID", row["EXECUTION_AUDIT_STATE"])
         self.assertIn("change ticket", row["PROOF_REQUIRED"])
         self.assertEqual(verification_query_safety_issues(row["VERIFICATION_QUERY"]), [])
@@ -5106,8 +5002,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(int(summary["HIGH_RISK_CHANGES"].sum()), 1)
         self.assertEqual(int(summary["MISSING_TICKET_ROWS"].sum()), 1)
         self.assertGreaterEqual(int(summary["ACCOUNT_SCOPE_ROWS"].sum()), 1)
-        self.assertIn("Route Blocked", set(summary["READINESS"]))
-        self.assertIn("Complete named owner", " ".join(summary["NEXT_CONTROL_ACTION"].astype(str)))
+        self.assertIn("Closure Blocked", set(summary["READINESS"]))
+        self.assertIn("Record missing ticket", " ".join(summary["NEXT_CONTROL_ACTION"].astype(str)))
 
     def test_change_control_evidence_snapshot_sql_is_scoped_and_auditable(self):
         readiness = _enrich_change_control_evidence(pd.DataFrame([
@@ -5122,7 +5018,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "LAST_SEEN": "2026-05-31 09:00:00",
                 "CHANGE_CONTROL_STATE": "Approval Required",
                 "CONTROL_GAP": "Needs approver, change ticket, and blast-radius note",
-                "APPROVER": "Security Owner / Data Governance",
+                "APPROVER": "Security Owner / Data Stewardship",
                 "OWNER_APPROVAL_STATUS": "Requested",
                 "APPROVAL_REQUIRED": "Yes",
                 "TICKET_REQUIRED": "Yes",
@@ -5155,7 +5051,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("INSERT INTO", insert_sql)
         self.assertIn("'RFC98765'", insert_sql)
         self.assertIn("'PROD'", insert_sql)
-        self.assertIn("APPROVAL PROOF TAGGED", insert_sql)
+        self.assertIn("REVIEW STATUS TAGGED", insert_sql)
         self.assertIn("REVIEW READY", insert_sql)
         self.assertIn("SNAPSHOT_TS >= DATEADD('DAY', -30", trend_sql)
         self.assertIn("COMPANY = 'ALFA'", trend_sql)
@@ -5235,7 +5131,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_surface["Change exceptions"]["ROWS"], 1)
         self.assertEqual(by_surface["Control summary"]["STATE"], "Unavailable")
         self.assertEqual(by_surface["Evidence trend"]["STATE"], "Stale")
-        self.assertEqual(by_surface["Closure analytics"]["STATE"], "Not Loaded")
+        self.assertEqual(by_surface["Closure analytics"]["STATE"], "On demand")
         self.assertNotIn("Release evidence", by_surface)
         self.assertNotIn("Owner approval evidence", by_surface)
         self.assertIn("Reload", by_surface["Evidence trend"]["NEXT_ACTION"])
@@ -5251,7 +5147,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("FIXED_WITHOUT_VERIFICATION", sql)
         self.assertIn("OWNER_APPROVAL_GAP_ROWS", sql)
         self.assertIn("CLOSURE_READINESS", sql)
-        self.assertIn("APPROVAL OR ROLLBACK PROOF", sql)
+        self.assertIn("BLAST-RADIUS TELEMETRY", sql)
         self.assertEqual(verification_query_safety_issues(sql), [])
 
     def test_change_operator_next_moves_prioritize_route_proof_scope_and_closure(self):
@@ -5276,7 +5172,7 @@ class FormulaRegressionTests(unittest.TestCase):
         )
         exceptions = pd.DataFrame({
             "ENTITY": ["SNOWFLAKE ACCOUNT"],
-            "FINDING_TYPE": ["Destructive DDL"],
+            "FINDING_TYPE": ["Destructive Object Change"],
             "SEVERITY": ["High"],
             "USER_NAME": ["JFREEZE03"],
             "QUERY_ID": [""],
@@ -5294,11 +5190,10 @@ class FormulaRegressionTests(unittest.TestCase):
         )
         by_gate = {row["GATE"]: row for _, row in gates.iterrows()}
 
-        self.assertEqual(by_gate["Owner approval route"]["STATE"], "Route Blocked")
-        self.assertEqual(by_gate["Change proof"]["STATE"], "Evidence Blocked")
-        self.assertEqual(by_gate["Closure proof"]["STATE"], "Closure Blocked")
+        self.assertEqual(by_gate["Review route"]["STATE"], "Route Blocked")
+        self.assertEqual(by_gate["Closure status"]["STATE"], "Closure Blocked")
         self.assertEqual(by_gate["Scope confidence"]["STATE"], "Account-Scope Review")
-        self.assertEqual(by_gate["Recovery readiness"]["STATE"], "Recovery Proof Required")
+        self.assertEqual(by_gate["Recovery readiness"]["STATE"], "Recovery Status Required")
         self.assertIn("database environment scope cannot prove", by_gate["Scope confidence"]["NEXT_ACTION"])
         self.assertEqual(matrix.iloc[0]["INTERVENTION_STATE"], "Recovery Block")
         self.assertEqual(matrix.iloc[0]["DBA_PRIORITY"], "P0")
@@ -5386,7 +5281,7 @@ class FormulaRegressionTests(unittest.TestCase):
         exceptions = pd.DataFrame(
             {
                 "SEVERITY": ["High"],
-                "FINDING_TYPE": ["Destructive DDL"],
+                "FINDING_TYPE": ["Destructive Object Change"],
                 "USER_NAME": ["USER_A"],
                 "ENTITY": ["DB.SCHEMA"],
             }
@@ -5401,9 +5296,9 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("OVERWATCH Change Control Brief - ALFA", md)
         self.assertIn("Control state:", md)
         self.assertNotIn("Control score", md)
-        self.assertIn("## Source Basis", md)
-        self.assertIn("Destructive DDL", md)
-        self.assertIn("DDL/DCL detection is text-pattern based", md)
+        self.assertIn("## Data Notes", md)
+        self.assertIn("Destructive Object Change", md)
+        self.assertIn("Schema and access change detection", md)
 
     def test_query_root_cause_score_weights_failures_and_queue(self):
         stable = _root_cause_score(
@@ -5626,9 +5521,9 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(annotated.iloc[0]["ADMIN_READINESS"], "Ready for DBA review")
         self.assertEqual(annotated.iloc[0]["APPROVAL_REQUIRED"], "Yes")
         self.assertEqual(annotated.iloc[0]["ROLLBACK_REQUIRED"], "Yes")
-        self.assertEqual(annotated.iloc[0]["OWNER"], "BI Platform Owner")
-        self.assertEqual(annotated.iloc[0]["ONCALL_PRIMARY"], "DBA On-Call")
-        self.assertIn("OWNER_DIRECTORY", annotated.iloc[0]["OWNER_SOURCE"])
+        self.assertEqual(annotated.iloc[0]["OWNER"], "BI Platform Route")
+        self.assertEqual(annotated.iloc[0]["ONCALL_PRIMARY"], "")
+        self.assertIn("MONITORING_CONTEXT", annotated.iloc[0]["OWNER_SOURCE"])
         self.assertIn("DBA Lead", annotated.iloc[0]["APPROVER"])
         self.assertIn("MAX_CLUSTER_COUNT", annotated.iloc[0]["SETTING_CHANGE_CANDIDATE"])
         self.assertIn("Warehouse Settings Manager", annotated.iloc[0]["SAFE_CHANGE_PATH"])
@@ -5650,53 +5545,12 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertNotIn("ALFA_EDW_PROD", sql_upper)
         self.assertEqual(verification_query_safety_issues(sql), [])
 
-    def test_warehouse_owner_inventory_sql_uses_tags_and_environment_scope(self):
-        sql = _warehouse_owner_inventory_sql(45, "ALFA", "DEV_ALL")
-        sql_upper = sql.upper()
+    def test_warehouse_owner_inventory_path_stays_removed(self):
+        warehouse_text = (APP_ROOT / "sections" / "warehouse_health.py").read_text(encoding="utf-8")
 
-        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY", sql_upper)
-        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.TAG_REFERENCES", sql_upper)
-        self.assertIn("OWNER_TAG", sql_upper)
-        self.assertIn("COST_CENTER_TAG", sql_upper)
-        self.assertIn("ENVIRONMENT_TAG", sql_upper)
-        for db_name in ["ALFA_EDW_DEV", "ALFA_EDW_SAN", "ALFA_EDW_PHX", "ALFA_EDW_SEA", "ALFA_EDW_SIT"]:
-            self.assertIn(db_name, sql_upper)
-        self.assertNotIn("ALFA_EDW_PROD", sql_upper)
-        self.assertEqual(verification_query_safety_issues(sql), [])
-
-    def test_warehouse_owner_inventory_marks_tag_and_directory_readiness(self):
-        inventory = pd.DataFrame([
-            {
-                "WAREHOUSE_NAME": "BI_COMPUTE_WH",
-                "WAREHOUSE_SIZE": "Medium",
-                "QUERY_COUNT": 500,
-                "DATABASE_COUNT": 2,
-                "OWNER_TAG": "BI Product Owner",
-                "COST_CENTER_TAG": "BI",
-                "ENVIRONMENT_TAG": "PROD",
-            },
-            {
-                "WAREHOUSE_NAME": "LOAD_TASK_WH",
-                "WAREHOUSE_SIZE": "Large",
-                "QUERY_COUNT": 300,
-                "DATABASE_COUNT": 1,
-                "OWNER_TAG": "",
-                "COST_CENTER_TAG": "",
-                "ENVIRONMENT_TAG": "",
-            },
-        ])
-
-        annotated = _annotate_warehouse_owner_inventory(inventory)
-        by_wh = {row["WAREHOUSE_NAME"]: row for _, row in annotated.iterrows()}
-
-        self.assertEqual(by_wh["BI_COMPUTE_WH"]["GOVERNANCE_READINESS"], "Tagged Owner Ready")
-        self.assertEqual(by_wh["BI_COMPUTE_WH"]["OWNER"], "BI Product Owner")
-        self.assertEqual(by_wh["BI_COMPUTE_WH"]["OWNER_SOURCE"], "WAREHOUSE_TAG")
-        self.assertEqual(by_wh["BI_COMPUTE_WH"]["OWNER_ROUTE_READY"], "Yes")
-        self.assertEqual(by_wh["LOAD_TASK_WH"]["GOVERNANCE_READINESS"], "Directory Route Only")
-        self.assertEqual(by_wh["LOAD_TASK_WH"]["OWNER"], "Data Engineering Owner")
-        self.assertEqual(by_wh["LOAD_TASK_WH"]["OWNER_TAG_STATE"], "Missing")
-        self.assertIn("Add warehouse owner", by_wh["LOAD_TASK_WH"]["NEXT_OWNER_ACTION"])
+        self.assertNotIn("_warehouse_owner_inventory_sql", warehouse_text)
+        self.assertNotIn("_annotate_warehouse_owner_inventory", warehouse_text)
+        self.assertNotIn("OVERWATCH_OWNER_DIRECTORY", warehouse_text)
 
     def test_warehouse_guardrail_coverage_blocks_missing_monitor_and_never_suspend(self):
         overview = pd.DataFrame(
@@ -5718,23 +5572,8 @@ class FormulaRegressionTests(unittest.TestCase):
                 "AUTO_SUSPEND": [300, 0],
             }
         )
-        owner_inventory = _annotate_warehouse_owner_inventory(
-            pd.DataFrame(
-                {
-                    "WAREHOUSE_NAME": ["OVERWATCH_WH", "BI_COMPUTE_WH"],
-                    "WAREHOUSE_SIZE": ["Small", "Medium"],
-                    "QUERY_COUNT": [120, 600],
-                    "DATABASE_COUNT": [1, 2],
-                    "OWNER_TAG": ["Platform DBA", "BI Product Owner"],
-                    "COST_CENTER_TAG": ["Platform", "BI"],
-                    "ENVIRONMENT_TAG": ["PROD", "PROD"],
-                }
-            )
-        )
-
         summary, board = _build_warehouse_guardrail_coverage(
             overview,
-            owner_inventory=owner_inventory,
             settings_inventory=settings,
         )
         by_wh = {row["WAREHOUSE_NAME"]: row for _, row in board.iterrows()}
@@ -5744,11 +5583,11 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_wh["OVERWATCH_WH"]["RESOURCE_MONITOR_STATE"], "Blocked")
         self.assertIn("OVERWATCH_WH_RM", by_wh["OVERWATCH_WH"]["NEXT_ACTION"])
         self.assertEqual(by_wh["BI_COMPUTE_WH"]["AUTO_SUSPEND_STATE"], "Blocked")
-        self.assertEqual(by_wh["BI_COMPUTE_WH"]["OWNER_ROUTE_STATE"], "Ready")
+        self.assertEqual(by_wh["BI_COMPUTE_WH"]["ESCALATION_ROUTE_STATE"], "Ready")
         self.assertEqual(by_wh["BI_COMPUTE_WH"]["CAPACITY_STATE"], "Review")
         self.assertLess(summary["score"], 80)
 
-    def test_warehouse_guardrail_coverage_marks_missing_metadata_as_evidence_gap(self):
+    def test_warehouse_guardrail_coverage_marks_missing_metadata_as_data_gap(self):
         overview = pd.DataFrame(
             {
                 "WAREHOUSE_NAME": ["ETL_LOAD_WH"],
@@ -5766,10 +5605,10 @@ class FormulaRegressionTests(unittest.TestCase):
         row = board.iloc[0]
 
         self.assertEqual(summary["unknown"], 1)
-        self.assertEqual(row["GUARDRAIL_STATE"], "Evidence Missing")
+        self.assertEqual(row["GUARDRAIL_STATE"], "Data Missing")
         self.assertEqual(row["RESOURCE_MONITOR_STATE"], "Unknown")
         self.assertEqual(row["AUTO_SUSPEND_STATE"], "Unknown")
-        self.assertEqual(row["OWNER_ROUTE_STATE"], "Unknown")
+        self.assertEqual(row["ESCALATION_ROUTE_STATE"], "Ready")
         self.assertIn("SHOW WAREHOUSES", row["PROOF_REQUIRED"])
         self.assertLess(row["GUARDRAIL_SCORE"], 100)
 
@@ -5801,7 +5640,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertNotIn("Capacity score", md)
         self.assertIn("Queued queries: 20", md)
         self.assertIn("Credit Spike", md)
-        self.assertIn("Settings Change Readiness", md)
+        self.assertIn("Settings Change Status", md)
         self.assertIn("guarded warehouse settings workflow", md)
         self.assertIn("ACCOUNT_USAGE can lag", md)
 
@@ -5835,7 +5674,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("SAVINGS_VERIFICATION_REQUIRED", ddl)
         self.assertIn("INSERT INTO", insert_sql)
         self.assertIn("'BI_COMPUTE_WH'", insert_sql)
-        self.assertIn("'DBA / FINOPS OWNER'", insert_sql)
+        self.assertIn("'DBA / FINOPS ROUTE'", insert_sql)
         self.assertIn("'PROD'", insert_sql)
         self.assertIn("WAREHOUSE_METERING_HISTORY", insert_sql)
         self.assertIn("SNAPSHOT_TS >= DATEADD('DAY', -30", trend_sql)
@@ -5894,10 +5733,10 @@ class FormulaRegressionTests(unittest.TestCase):
         )
 
         self.assertEqual(blocked["AUDIT_READINESS"], "Pre-Change Blocked")
-        self.assertIn("owner approval", blocked["AUDIT_BLOCKERS"])
+        self.assertIn("review status", blocked["AUDIT_BLOCKERS"])
         self.assertIn("change ticket", blocked["AUDIT_BLOCKERS"])
         self.assertIn("rollback SQL", blocked["AUDIT_BLOCKERS"])
-        self.assertEqual(verified["AUDIT_READINESS"], "Verified Change Audit")
+        self.assertEqual(verified["AUDIT_READINESS"], "Change Audit Linked")
         self.assertEqual(verified["AUDIT_BLOCKERS"], "None")
 
     def test_warehouse_setting_execution_audit_sql_joins_review_and_admin_audit(self):
@@ -5984,7 +5823,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_surface["Control summary"]["STATE"], "Unavailable")
         self.assertEqual(by_surface["Overview"]["STATE"], "Stale")
         self.assertEqual(by_surface["Overview"]["CONFIDENCE"], "Fast summary")
-        self.assertEqual(by_surface["Scaling events"]["STATE"], "Not Loaded")
+        self.assertEqual(by_surface["Scaling events"]["STATE"], "On demand")
         self.assertIn("Reload", by_surface["Overview"]["NEXT_ACTION"])
 
     def test_warehouse_setting_control_board_prioritizes_closure_owner_and_audit_blocks(self):
@@ -6043,9 +5882,9 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_wh["LOAD_TASK_WH"]["CONTROL_STATE"], "Execution Failed")
         self.assertEqual(by_wh["DEV_WH"]["CONTROL_STATE"], "Pre-Change Blocked")
         self.assertIn("rollback", by_wh["DEV_WH"]["AUDIT_BLOCKERS"].lower())
-        self.assertEqual(by_matrix["BI_COMPUTE_WH"]["INTERVENTION_STATE"], "Proof Blocked")
+        self.assertEqual(by_matrix["BI_COMPUTE_WH"]["INTERVENTION_STATE"], "Telemetry Blocked")
         self.assertEqual(by_matrix["BI_COMPUTE_WH"]["DBA_PRIORITY"], "P0")
-        self.assertEqual(by_matrix["LOAD_TASK_WH"]["INTERVENTION_STATE"], "Proof Blocked")
+        self.assertEqual(by_matrix["LOAD_TASK_WH"]["INTERVENTION_STATE"], "Telemetry Blocked")
         self.assertIn("post-change", by_matrix["DEV_WH"]["PROOF_REQUIRED"])
 
     def test_warehouse_operator_next_moves_prioritize_closure_and_audit_gates(self):
@@ -6077,11 +5916,11 @@ class FormulaRegressionTests(unittest.TestCase):
         )
         by_gate = {row["GATE"]: row for _, row in gates.iterrows()}
 
-        self.assertEqual(by_gate["Closure proof"]["STATE"], "Blocked")
+        self.assertEqual(by_gate["Closure status"]["STATE"], "Blocked")
         self.assertEqual(by_gate["Execution audit"]["STATE"], "Failed Execution")
         self.assertEqual(by_gate["Cost guardrail"]["STATE"], "Cost Impact Review")
-        self.assertEqual(by_gate["Owner approval route"]["STATE"], "Approval Route Blocked")
-        self.assertIn("before approving", by_gate["Closure proof"]["NEXT_ACTION"])
+        self.assertEqual(by_gate["Telemetry route"]["STATE"], "Review Route Blocked")
+        self.assertIn("telemetry-pending", by_gate["Closure status"]["NEXT_ACTION"])
 
     def test_warehouse_action_queue_closure_sql_scores_evidence_gaps(self):
         sql = _warehouse_action_queue_closure_sql(45, "ALFA", "DEV_ALL").upper()
@@ -6125,12 +5964,13 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(saved, 1)
         action = captured["actions"][0]
         self.assertEqual(action["Environment"], "PROD")
-        self.assertEqual(action["Owner"], "DBA / FinOps Owner")
-        self.assertEqual(action["Owner Approval Status"], "Requested")
-        self.assertIn("FinOps", action["Approver"])
-        self.assertEqual(action["Verification Status"], "Pending")
-        self.assertEqual(verification_query_safety_issues(action["Verification Query"]), [])
-        self.assertIn("post-change verification", action["Recovery Evidence"])
+        self.assertEqual(action["Route"], "DBA / FinOps Route")
+        self.assertNotIn("Owner", action)
+        self.assertNotIn("Owner Approval Status", action)
+        self.assertIn("FinOps", action["Reviewer"])
+        self.assertEqual(action["Telemetry Status"], "Requested")
+        self.assertEqual(verification_query_safety_issues(action["Telemetry Query"]), [])
+        self.assertIn("post-change telemetry", action["Recovery Status"])
         self.assertIn("Warehouse Settings Manager", action["Generated SQL Fix"])
         self.assertNotIn("ALTER WAREHOUSE", action["Generated SQL Fix"].upper())
 
@@ -6157,13 +5997,14 @@ class FormulaRegressionTests(unittest.TestCase):
 
         action = captured["actions"][0]
         self.assertEqual(action["Environment"], "PROD")
-        self.assertEqual(action["Owner"], "BI Platform Owner")
-        self.assertEqual(action["Owner Approval Status"], "Requested")
+        self.assertEqual(action["Route"], "BI Platform Route")
+        self.assertNotIn("Owner", action)
+        self.assertNotIn("Owner Approval Status", action)
         self.assertEqual(action["Recovery SLA Target Hours"], 24)
-        self.assertIn("OWNER_DIRECTORY", action["Owner Source"])
+        self.assertIn("MONITORING_CONTEXT", action["Route Basis"])
         self.assertIn("Warehouse Settings Manager", action["Action"])
-        self.assertIn("QUERY_HISTORY", action["Verification Query"])
-        self.assertEqual(verification_query_safety_issues(action["Verification Query"]), [])
+        self.assertIn("QUERY_HISTORY", action["Telemetry Query"])
+        self.assertEqual(verification_query_safety_issues(action["Telemetry Query"]), [])
         self.assertNotIn("ALTER WAREHOUSE", action["Generated SQL Fix"].upper())
 
     def test_cortex_cost_score_tracks_budget_and_user_spikes(self):
@@ -6200,7 +6041,7 @@ class FormulaRegressionTests(unittest.TestCase):
 
     def test_cortex_actions_are_signal_specific(self):
         self.assertIn("daily credit limit", _cortex_action_for("Budget Breach")[0])
-        self.assertIn("approved project demand", _cortex_action_for("Cost Per Request Spike")[0])
+        self.assertIn("expected project demand", _cortex_action_for("Cost Per Request Spike")[0])
 
     def test_cortex_control_markdown_contains_budget_context(self):
         summary_row = {
@@ -6620,10 +6461,10 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_task["ROOT_TASK"]["RECOVERY_STATE"], "Recovered Late")
         self.assertAlmostEqual(float(by_task["ROOT_TASK"]["RECOVERY_HOURS"]), 7.0)
         self.assertEqual(by_task["CHILD_TASK"]["RECOVERY_STATE"], "Open Failure")
-        self.assertEqual(by_task["CHILD_TASK"]["OWNER_APPROVAL_STATE"], "Root-cause owner approval required")
-        self.assertEqual(by_task["CHILD_TASK"]["ONCALL_PRIMARY"], "DBA On-Call")
-        self.assertEqual(by_task["CHILD_TASK"]["APPROVAL_GROUP"], "Pipeline Owner")
-        self.assertIn("OWNER_DIRECTORY", by_task["CHILD_TASK"]["OWNER_SOURCE"])
+        self.assertEqual(by_task["CHILD_TASK"]["OWNER_APPROVAL_STATE"], "Root-cause review required")
+        self.assertEqual(by_task["CHILD_TASK"]["ONCALL_PRIMARY"], "")
+        self.assertEqual(by_task["CHILD_TASK"]["APPROVAL_GROUP"], "")
+        self.assertIn("MONITORING_CONTEXT", by_task["CHILD_TASK"]["OWNER_SOURCE"])
         self.assertIn("P", by_task["CHILD_TASK"]["INCIDENT_PRIORITY"])
 
     def test_task_recovery_command_board_prioritizes_blocked_retries(self):
@@ -6636,9 +6477,9 @@ class FormulaRegressionTests(unittest.TestCase):
             "GRAPH_ROLE": "Child",
             "DOWNSTREAM_TASK_COUNT": 4,
             "RECOVERY_READINESS": "Blocked - fix failure root cause first",
-            "OWNER_APPROVAL_STATE": "Root-cause owner approval required",
-            "ONCALL_PRIMARY": "DBA On-Call",
-            "APPROVAL_GROUP": "Pipeline Owner",
+            "OWNER_APPROVAL_STATE": "Root-cause review required",
+            "ONCALL_PRIMARY": "",
+            "APPROVAL_GROUP": "Pipeline Route",
             "NEXT_ACTION": "Review task error and retry after correction.",
             "VERIFY_AFTER_FIX": "Latest TASK_HISTORY run succeeds.",
         }])
@@ -6649,9 +6490,9 @@ class FormulaRegressionTests(unittest.TestCase):
             "GRAPH_ROLE": "Root",
             "DOWNSTREAM_TASK_COUNT": 4,
             "RECOVERY_STATE": "Open Failure",
-            "OWNER_APPROVAL_STATE": "Root-cause owner approval required",
-            "ONCALL_PRIMARY": "DBA On-Call",
-            "APPROVAL_GROUP": "Pipeline Owner",
+            "OWNER_APPROVAL_STATE": "Root-cause review required",
+            "ONCALL_PRIMARY": "",
+            "APPROVAL_GROUP": "Pipeline Route",
         }])
 
         board = _task_recovery_command_board(exceptions, recovery)
@@ -6659,8 +6500,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertFalse(board.empty)
         self.assertEqual(board.iloc[0]["COMMAND_STATE"], "Blocked")
         self.assertEqual(board.iloc[0]["INCIDENT_PRIORITY"], "P1 - Graph Incident")
-        self.assertIn("owner approval", " ".join(board["OWNER_APPROVAL_STATE"].astype(str)).lower())
-        self.assertIn("verify", " ".join(board["NEXT_ACTION"].astype(str)).lower())
+        self.assertIn("root-cause review", " ".join(board["OWNER_APPROVAL_STATE"].astype(str)).lower())
+        self.assertIn("confirm", " ".join(board["NEXT_ACTION"].astype(str)).lower())
 
     def test_task_critical_path_snapshot_ranks_graph_blast_radius(self):
         inventory = pd.DataFrame(
@@ -6754,7 +6595,7 @@ class FormulaRegressionTests(unittest.TestCase):
 
     def test_task_actions_are_signal_specific(self):
         self.assertIn("retry the root task", _task_action_for("Failed Task Run")[0])
-        self.assertIn("resume only after owner approval", _task_action_for("Suspended Task")[0])
+        self.assertIn("resume only after review", _task_action_for("Suspended Task")[0])
         self.assertIn("historical average", _task_action_for("Long Running / SLA Risk")[0])
 
     def test_task_management_defaults_to_task_status_job_status_brief(self):
@@ -6860,9 +6701,9 @@ class FormulaRegressionTests(unittest.TestCase):
         )
         self.assertIn("OVERWATCH Failure Runbook - ALFA", md)
         self.assertIn("Object Dependency / Drift", md)
-        self.assertIn("Retry SQL after fix", md)
+        self.assertIn("Retry plan after fix", md)
         self.assertIn("P1 graph incidents", md)
-        self.assertIn("Evidence Limits", md)
+        self.assertIn("Telemetry Limits", md)
 
     def test_procedure_ops_frames_identify_orphans_and_task_links(self):
         procedures = pd.DataFrame(
@@ -6907,7 +6748,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(unused["DATABASE_NAME"], "ALFA_EDW_DEV")
         self.assertEqual(unused["SCHEMA_NAME"], "PUBLIC")
         self.assertEqual(unused["PROCEDURE_CONTEXT"], "ALFA_EDW_DEV.PUBLIC.SP_UNUSED")
-        self.assertEqual(unused["ORCHESTRATION_STATUS"], "No recent execution evidence")
+        self.assertEqual(unused["ORCHESTRATION_STATUS"], "No recent execution telemetry")
         self.assertEqual(unused["OWNER_REVIEW"], "Required")
 
     def test_procedure_sla_frames_flag_runtime_and_cost_regression(self):
@@ -7122,21 +6963,22 @@ class FormulaRegressionTests(unittest.TestCase):
             company="ALFA",
         )
 
-        self.assertEqual(action["Owner"], "BI_PLATFORM_OWNER")
+        self.assertEqual(action["Owner"], "BI_PLATFORM_ROUTE")
         self.assertEqual(action["Category"], "Cost Control")
         self.assertEqual(action["Environment"], "")
-        self.assertEqual(action["Approver"], "BI_PLATFORM_OWNER / FinOps Lead")
-        self.assertEqual(action["Verification Status"], "Pending")
+        self.assertEqual(action["Approver"], "BI_PLATFORM_ROUTE / FinOps Lead")
+        self.assertEqual(action["Verification Status"], "Requested")
         self.assertEqual(action["Baseline Value"], 250)
         self.assertEqual(action["Current Value"], 500)
         self.assertEqual(action["Measured Delta"], 250)
-        self.assertEqual(action["Owner Approval Status"], "Requested")
-        self.assertEqual(action["Recovery SLA State"], "Savings Verification Pending")
+        self.assertNotIn("Owner Approval Status", action)
+        self.assertEqual(action["Recovery SLA State"], "Savings Measurement Pending")
         self.assertEqual(action["Recovery SLA Target Hours"], 168.0)
-        self.assertIn("next complete period", action["Owner Approval Note"])
+        self.assertIn("next complete period", action["Verification Note"])
         self.assertIn("Exact warehouse metering", action["Action"])
+        self.assertNotIn("owner", action["Action"].lower())
         self.assertIn("WAREHOUSE_METERING_HISTORY", action["Proof Query"])
-        self.assertIn("post-fix verification", action["Proof Query"].lower())
+        self.assertIn("measured delta", action["Proof Query"].lower())
         self.assertIn("Warehouse Settings Manager", action["Action"])
         self.assertEqual(verification_query_safety_issues(action["Verification Query"]), [])
 
@@ -7203,14 +7045,15 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(action["Category"], "Chargeback Review")
         self.assertEqual(action["Owner"], "DBA / FinOps")
         self.assertEqual(action["Environment"], "No Database Context")
-        self.assertEqual(action["Approver"], "FinOps Lead / Cost Owner")
-        self.assertEqual(action["Verification Status"], "Pending")
-        self.assertEqual(action["Owner Approval Status"], "Requested")
-        self.assertEqual(action["Recovery SLA State"], "Chargeback Evidence Pending")
+        self.assertEqual(action["Approver"], "FinOps Lead / Cost Route")
+        self.assertEqual(action["Verification Status"], "Requested")
+        self.assertNotIn("Owner Approval Status", action)
+        self.assertEqual(action["Recovery SLA State"], "Chargeback Telemetry Pending")
         self.assertEqual(action["Recovery SLA Target Hours"], 168.0)
-        self.assertIn("owner/tag evidence approval", action["Owner Approval Note"])
+        self.assertIn("route/tag telemetry", action["Action"])
         self.assertIn("not cleanly chargeback-ready", action["Action"])
-        self.assertIn("Chargeback readiness: No", action["Generated SQL Fix"])
+        self.assertIn("Chargeback status: No", action["Generated SQL Fix"])
+        self.assertNotIn("owner", action["Generated SQL Fix"].lower())
         self.assertIn("QUERY_HISTORY", action["Verification Query"])
         self.assertEqual(verification_query_safety_issues(action["Verification Query"]), [])
 
@@ -7300,10 +7143,10 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(summary["blocked_estimated_monthly_savings"], 700)
         self.assertEqual(summary["verified_estimated_monthly_savings"], 600)
         self.assertEqual(summary["verified_period_delta_dollars"], 150)
-        self.assertEqual(by_id["COST_VERIFIED"]["CLOSURE_STATE"], "Verified savings")
-        self.assertEqual(by_id["COST_FIXED_GAP"]["CLOSURE_STATE"], "Fixed without verified savings")
-        self.assertEqual(by_id["COST_OPEN"]["CLOSURE_STATE"], "Approval pending")
-        self.assertEqual(by_id["CHARGEBACK_OPEN"]["CLOSURE_STATE"], "Chargeback evidence pending")
+        self.assertEqual(by_id["COST_VERIFIED"]["CLOSURE_STATE"], "Measured savings")
+        self.assertEqual(by_id["COST_FIXED_GAP"]["CLOSURE_STATE"], "Fixed, awaiting measurement")
+        self.assertEqual(by_id["COST_OPEN"]["CLOSURE_STATE"], "Review pending")
+        self.assertEqual(by_id["CHARGEBACK_OPEN"]["CLOSURE_STATE"], "Chargeback telemetry pending")
 
     def test_cost_contract_closure_analytics_recognizes_verified_no_change(self):
         queue = pd.DataFrame([
@@ -7333,7 +7176,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(summary["verified_no_change_actions"], 1)
         self.assertEqual(summary["fixed_without_verification"], 0)
         self.assertEqual(summary["audit_ready_pct"], 100.0)
-        self.assertEqual(detail.iloc[0]["CLOSURE_STATE"], "Verified no savings")
+        self.assertEqual(detail.iloc[0]["CLOSURE_STATE"], "Measured no savings")
         self.assertEqual(detail.iloc[0]["VERIFIED_PERIOD_DELTA_DOLLARS"], 0.0)
 
     def test_cost_contract_verification_health_surfaces_task_and_evidence_issues(self):
@@ -7413,17 +7256,17 @@ class FormulaRegressionTests(unittest.TestCase):
         })
 
         self.assertEqual(rec["Decision"], "Implement suspend control")
-        self.assertIn("COMPUTE_WH", rec["Evidence Packet"])
-        self.assertIn("12 idle hour", rec["Evidence Packet"])
+        self.assertIn("COMPUTE_WH", rec["Telemetry Summary"])
+        self.assertIn("12 idle hour", rec["Telemetry Summary"])
         self.assertIn("AUTO_SUSPEND", rec["Safe Next Action"])
-        self.assertIn("Proof query is attached", rec["Proof Required"])
+        self.assertIn("Telemetry query is available", rec["Telemetry Basis"])
         self.assertIn("Do not disable", rec["Do Not Do"])
-        self.assertIn("Approval Gate", rec)
-        self.assertIn("Evidence Package", rec)
+        self.assertIn("Review Gate", rec)
+        self.assertIn("Telemetry Summary", rec)
         self.assertIn("Verify Next", rec)
         self.assertIn("Execution Boundary", rec)
         self.assertIn("Closure Rule", rec)
-        self.assertIn("Warehouse owner", rec["Approval Gate"])
+        self.assertIn("DBA capacity review", rec["Review Gate"])
         self.assertIn("Do not disable", rec["Execution Boundary"])
 
     def test_recommendation_execution_contract_is_specific_by_surface(self):
@@ -7444,8 +7287,8 @@ class FormulaRegressionTests(unittest.TestCase):
             "CLOUD_CREDITS": 0.12,
         }))
 
-        self.assertIn("idle proof query", idle_contract["VERIFY_NEXT"])
-        self.assertIn("Warehouse owner", idle_contract["APPROVAL_GATE"])
+        self.assertIn("metering", idle_contract["VERIFY_NEXT"])
+        self.assertIn("capacity review", idle_contract["APPROVAL_GATE"])
         self.assertIn("repeated query signature", query_contract["EVIDENCE_PACKAGE"])
         self.assertIn("materialized views", query_contract["EXECUTION_BOUNDARY"])
         self.assertIn("CLOSURE_RULE", query_contract)
@@ -7465,7 +7308,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("ALFA_WH", decision["EVIDENCE_PACKET"])
         self.assertIn("query profiles", decision["SAFE_NEXT_ACTION"])
         self.assertIn("Do not upsize blindly", decision["DO_NOT_DO"])
-        self.assertIn("Warehouse owner", decision["APPROVAL_GATE"])
+        self.assertIn("DBA capacity review", decision["APPROVAL_GATE"])
         self.assertIn("guarded controls", decision["EXECUTION_BOUNDARY"])
         self.assertIn("queue, spill, runtime", decision["VERIFY_NEXT"])
 
@@ -7490,18 +7333,18 @@ class FormulaRegressionTests(unittest.TestCase):
         }])
         row = board.iloc[0]
 
-        self.assertEqual(row["AUTOMATION_LANE"], "Ready for Guided Execution")
+        self.assertEqual(row["AUTOMATION_LANE"], "Telemetry Pending")
         self.assertEqual(row["SAFE_GUIDED_SQL"], "Yes")
         self.assertEqual(row["STATE_CHANGING_SQL"], "Yes")
-        self.assertEqual(row["BLOCKERS"], "none")
-        self.assertGreaterEqual(row["AUTOMATION_SCORE"], 90)
+        self.assertIn("telemetry status", row["BLOCKERS"])
+        self.assertGreaterEqual(row["AUTOMATION_SCORE"], 70)
         self.assertIn("APPROVAL_GATE", board.columns)
         self.assertIn("EVIDENCE_PACKAGE", board.columns)
         self.assertIn("VERIFY_NEXT", board.columns)
         self.assertIn("EXECUTION_BOUNDARY", board.columns)
         self.assertIn("CLOSURE_RULE", board.columns)
-        self.assertIn("Warehouse owner", row["APPROVAL_GATE"])
-        self.assertIn("idle proof query", row["VERIFY_NEXT"])
+        self.assertIn("DBA capacity review", row["APPROVAL_GATE"])
+        self.assertIn("metering", row["VERIFY_NEXT"])
 
     def test_automation_readiness_blocks_unapproved_and_manual_actions(self):
         board = build_automation_readiness_board([
@@ -7532,10 +7375,10 @@ class FormulaRegressionTests(unittest.TestCase):
         ])
         by_entity = {row["ENTITY"]: row for _, row in board.iterrows()}
 
-        self.assertEqual(by_entity["COMPUTE_WH"]["AUTOMATION_LANE"], "Approval Required")
-        self.assertIn("owner approval", by_entity["COMPUTE_WH"]["BLOCKERS"])
-        self.assertEqual(by_entity["LOAD_POLICY"]["AUTOMATION_LANE"], "Manual Only")
-        self.assertIn("manual DBA review", by_entity["LOAD_POLICY"]["BLOCKERS"])
+        self.assertEqual(by_entity["COMPUTE_WH"]["AUTOMATION_LANE"], "Telemetry Pending")
+        self.assertIn("telemetry status", by_entity["COMPUTE_WH"]["BLOCKERS"])
+        self.assertEqual(by_entity["LOAD_POLICY"]["AUTOMATION_LANE"], "DBA Review")
+        self.assertIn("DBA review", by_entity["LOAD_POLICY"]["BLOCKERS"])
 
     def test_ask_overwatch_refuses_when_no_loaded_evidence(self):
         result = answer_ask_overwatch(
@@ -7547,8 +7390,8 @@ class FormulaRegressionTests(unittest.TestCase):
             role="ACCOUNTADMIN",
         )
 
-        self.assertEqual(result["confidence"], "No loaded evidence")
-        self.assertIn("not have enough loaded OVERWATCH evidence", result["answer"])
+        self.assertEqual(result["confidence"], "No loaded telemetry")
+        self.assertIn("not have enough loaded OVERWATCH telemetry", result["answer"])
         self.assertIn("will not invent best-practice advice", result["answer"])
 
     def test_top_priority_brief_cards_are_ranked_and_domain_filtered(self):
@@ -7597,7 +7440,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "raw_score": 63.5,
                 "state": "Executive Escalation",
                 "score_cap": 74,
-                "cap_reason": "1 setup or migration blocker caps the executive score.",
+                "cap_reason": "1 readiness blocker(s) cap the executive operating state.",
             },
             "executive_landing_snapshot": {
                 "errors": ["Alert evidence unavailable: missing ALERT_EVENTS privilege."],
@@ -7619,10 +7462,10 @@ class FormulaRegressionTests(unittest.TestCase):
         alert_cards = build_top_priority_brief_cards(state, domain="Alerts", limit=5)
 
         self.assertEqual(cards[0]["surface"], "Executive Landing")
-        self.assertEqual(cards[0]["signal"], "Platform operating score")
+        self.assertEqual(cards[0]["signal"], "Platform operating state")
         self.assertEqual(cards[0]["severity"], "Critical")
-        self.assertIn("58/100", cards[0]["entity"])
-        self.assertIn("cap=74/100", cards[0]["evidence"])
+        self.assertEqual(cards[0]["entity"], "Executive Escalation")
+        self.assertIn("limiter=1 status blocker", cards[0]["evidence"])
         self.assertIn("Failed production task", {card["signal"] for card in alert_cards})
 
     def test_top_priority_brief_reads_security_posture_summary(self):
@@ -7643,7 +7486,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Failed logins", signals)
         self.assertIn("Grant-change volume", signals)
         self.assertIn("Shared data exposure", signals)
-        self.assertEqual(security_cards[0]["surface"], "Governance & Security")
+        self.assertEqual(security_cards[0]["surface"], "Security Monitoring")
         mfa_card = next(card for card in security_cards if card["signal"] == "MFA gaps")
         self.assertIn("MFA", mfa_card["evidence"])
 
@@ -7678,7 +7521,7 @@ class FormulaRegressionTests(unittest.TestCase):
 
         security_cards = build_top_priority_brief_cards(state, domain="Security", limit=3)
 
-        self.assertEqual(security_cards[0]["surface"], "Governance & Security - Security Exceptions")
+        self.assertEqual(security_cards[0]["surface"], "Security Monitoring - Security Exceptions")
         self.assertEqual(security_cards[0]["signal"], "MFA Gap")
         self.assertEqual(security_cards[0]["entity"], "USER_HIGH")
         self.assertIn("No Database Context", security_cards[0]["evidence"])
@@ -7769,10 +7612,10 @@ class FormulaRegressionTests(unittest.TestCase):
             role="SYSADMIN",
         )
 
-        self.assertEqual(result["confidence"], "Evidence-grounded")
+        self.assertEqual(result["confidence"], "Telemetry-grounded")
         self.assertIn("COMPUTE_WH", result["answer"])
         self.assertIn("AUTO_SUSPEND", result["answer"])
-        self.assertIn("Proof before closure", result["answer"])
+        self.assertIn("Telemetry query is available", result["answer"])
         self.assertIn("Do not disable", result["answer"])
 
     def test_ask_overwatch_answers_from_automation_board(self):
@@ -7798,10 +7641,10 @@ class FormulaRegressionTests(unittest.TestCase):
             role="SYSADMIN",
         )
 
-        self.assertEqual(result["confidence"], "Evidence-grounded")
+        self.assertEqual(result["confidence"], "Telemetry-grounded")
         self.assertIn("COMPUTE_WH", result["answer"])
-        self.assertIn("Ready for Guided Execution", result["answer"])
-        self.assertIn("Guided Execution", result["cards"][0]["signal"])
+        self.assertIn("Telemetry Pending", result["answer"])
+        self.assertIn("Telemetry Pending", result["cards"][0]["signal"])
 
     def test_ask_overwatch_uses_whitelisted_state_snapshot(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
@@ -7813,7 +7656,6 @@ class FormulaRegressionTests(unittest.TestCase):
             "executive_landing_platform_summary": {"score": 58},
             "executive_landing_snapshot": {"errors": []},
             "dba_control_room_data": {"summary": pd.DataFrame()},
-            "arch_agentic_ai_scorecard": pd.DataFrame([{"CONTROL_AREA": "CoWork Artifact Governance"}]),
             "security_posture_summary": pd.DataFrame([{"FAILED_LOGINS": 3}]),
             "security_posture_exceptions": pd.DataFrame([{"FINDING_TYPE": "Failed Login"}]),
             "account_health_morning_exceptions": pd.DataFrame([{"SIGNAL": "Closure Blocked"}]),
@@ -7828,7 +7670,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("executive_landing_platform_summary", snapshot)
         self.assertIn("executive_landing_snapshot", snapshot)
         self.assertIn("dba_control_room_data", snapshot)
-        self.assertIn("arch_agentic_ai_scorecard", snapshot)
+        self.assertNotIn("arch_agentic_ai_scorecard", snapshot)
         self.assertIn("security_posture_summary", snapshot)
         self.assertIn("security_posture_exceptions", snapshot)
         self.assertIn("account_health_morning_exceptions", snapshot)
@@ -7849,9 +7691,9 @@ class FormulaRegressionTests(unittest.TestCase):
             }],
         )
 
-        self.assertIn("Answer only from the evidence", prompt)
+        self.assertIn("Answer only from the telemetry", prompt)
         self.assertIn("Do not give generic Snowflake best practices", prompt)
-        self.assertIn("Proof before closure", prompt)
+        self.assertIn("Closure status", prompt)
 
     def test_task_reliability_action_includes_retry_guard_and_verification(self):
         action = _build_task_reliability_action(
@@ -7870,7 +7712,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "RECOVERY_STATE": "Open Failure",
                 "RECOVERY_HOURS": 2.25,
                 "RECOVERY_SLA_TARGET_HOURS": 4,
-                "OWNER_APPROVAL_STATE": "Root-cause owner approval required",
+                "OWNER_APPROVAL_STATE": "Root-cause review required",
                 "VERIFY_AFTER_FIX": "Latest task run succeeds within recovery SLA.",
                 "DOWNSTREAM_TASK_COUNT": 2,
                 "GRAPH_ROLE": "Root",
@@ -7881,23 +7723,23 @@ class FormulaRegressionTests(unittest.TestCase):
 
         self.assertEqual(action["Owner"], "TASK_OWNER_ROLE")
         self.assertEqual(action["Category"], "Task & Procedure Reliability")
-        self.assertEqual(action["Approver"], "Pipeline Owner")
-        self.assertEqual(action["Oncall Primary"], "DBA On-Call")
-        self.assertIn("OWNER_DIRECTORY", action["Owner Source"])
+        self.assertEqual(action["Approver"], "TASK_OWNER_ROLE")
+        self.assertEqual(action["Oncall Primary"], "")
+        self.assertIn("MONITORING_CONTEXT", action["Owner Source"])
         self.assertEqual(action["Recovery Audit State"], "Audit Required")
         self.assertIn("Environment", action)
         self.assertIn("P2 - Production Risk", action["Finding"])
-        self.assertIn("Recovery readiness", action["Action"])
-        self.assertEqual(action["Verification Status"], "Pending")
+        self.assertIn("Recovery status", action["Action"])
+        self.assertEqual(action["Verification Status"], "Requested")
         self.assertIn("TASK_HISTORY", action["Verification Query"])
         self.assertEqual(verification_query_safety_issues(action["Verification Query"]), [])
         self.assertIn("Do not execute until root cause is fixed", action["Generated SQL Fix"])
         self.assertIn("downstream tasks: 2", action["Generated SQL Fix"])
         self.assertIn("TASK_HISTORY", action["Proof Query"])
         self.assertIn("QUERY_HISTORY", action["Proof Query"])
-        self.assertIn("Verify", action["Action"])
-        self.assertEqual(action["Owner Approval Status"], "Requested")
-        self.assertIn("Root-cause owner approval", action["Owner Approval Note"])
+        self.assertIn("Confirm", action["Action"])
+        self.assertEqual(action["Verification Status"], "Requested")
+        self.assertIn("Root-cause review", action["Verification Note"])
         self.assertEqual(action["Recovery SLA State"], "Open Failure")
         self.assertEqual(action["Recovery SLA Hours"], 2.25)
         self.assertEqual(action["Recovery SLA Target Hours"], 4.0)
@@ -7912,7 +7754,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "RUNTIME_CHANGE_PCT": 25,
                 "COST_CHANGE_PCT": 180,
                 "PROCEDURE_OWNER": "PROC_OWNER_ROLE",
-                "ORCHESTRATION_STATUS": "Manual CALL only",
+                "ORCHESTRATION_STATUS": "On-demand CALL only",
                 "OWNER_REVIEW": "Required",
                 "RECOMMENDED_ACTION": "Review child-query scan volume.",
             }),
@@ -7922,24 +7764,24 @@ class FormulaRegressionTests(unittest.TestCase):
 
         self.assertEqual(action["Owner"], "PROC_OWNER_ROLE")
         self.assertEqual(action["Entity Type"], "Stored Procedure")
-        self.assertEqual(action["Approver"], "Procedure Owner")
-        self.assertEqual(action["Owner Approval Status"], "Requested")
+        self.assertEqual(action["Approver"], "PROC_OWNER_ROLE")
+        self.assertEqual(action["Verification Status"], "Requested")
         self.assertEqual(action["Recovery SLA State"], "Procedure Cost Review Required")
         self.assertEqual(action["Recovery SLA Target Hours"], 24.0)
         self.assertEqual(action["Recovery Audit State"], "Audit Required")
-        self.assertIn("OWNER_DIRECTORY", action["Owner Source"])
-        self.assertEqual(action["Oncall Primary"], "DBA On-Call")
+        self.assertIn("MONITORING_CONTEXT", action["Owner Source"])
+        self.assertEqual(action["Oncall Primary"], "")
         self.assertIn("Environment", action)
-        self.assertEqual(action["Verification Status"], "Pending")
+        self.assertEqual(action["Verification Status"], "Requested")
         self.assertIn("QUERY_HISTORY", action["Verification Query"])
         self.assertEqual(verification_query_safety_issues(action["Verification Query"]), [])
         self.assertNotIn("ROOT_QUERY_ID", action["Verification Query"].upper())
-        self.assertIn("orchestration=Manual CALL only", action["Finding"])
-        self.assertIn("Owner review is required", action["Action"])
+        self.assertIn("orchestration=On-demand CALL only", action["Finding"])
+        self.assertIn("DBA review is required", action["Action"])
         self.assertIn("Procedure Cost Regression", action["Finding"])
         self.assertIn("QUERY_HISTORY", action["Proof Query"])
         self.assertIn("next procedure run", action["Proof Query"])
-        self.assertIn("Verify", action["Action"])
+        self.assertIn("Confirm", action["Action"])
 
     def test_procedure_reliability_slo_board_summarizes_reliability_controls(self):
         summary = {
@@ -7950,7 +7792,7 @@ class FormulaRegressionTests(unittest.TestCase):
             "BLOCKED_BY_SUSPENDED_TASK": 0,
         }
         exceptions = pd.DataFrame([
-            {"SEVERITY": "Critical", "ORCHESTRATION_STATUS": "Manual CALL only"},
+            {"SEVERITY": "Critical", "ORCHESTRATION_STATUS": "On-demand CALL only"},
         ])
         slo_summary, slo_board = _build_procedure_reliability_slo_board(summary, exceptions)
         by_slo = {row["SLO"]: row for _, row in slo_board.iterrows()}
@@ -8003,730 +7845,9 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("BUILD_MART_CHARGEBACK_SQL", chargeback_block)
         self.assertIn("FACT_CHARGEBACK_DAILY", chargeback_block)
         self.assertIn("LOAD_MART_TABLE", chargeback_block)
-        self.assertIn("OWNER_PROOF", chargeback_block)
+        self.assertIn("ROUTE_TELEMETRY", chargeback_block)
         self.assertIn("COST_OWNER", chargeback_block)
         self.assertIn("OWNER_EVIDENCE", chargeback_block)
-
-    def test_owner_directory_matches_wildcards_and_preserves_named_owner(self):
-        directory = default_owner_directory()
-        task_context = resolve_owner_context(
-            {
-                "ENTITY_NAME": "DBA_MAINT_DB.OVERWATCH.OVERWATCH_COST_SAVINGS_VERIFY",
-                "OWNER": "DBA / FinOps",
-                "CATEGORY": "Cost Control",
-            },
-            directory=directory,
-            entity_type="Task",
-            alert_type="Cost Savings Verification Failure",
-        )
-        proc_context = resolve_owner_context(
-            {"PROCEDURE_NAME": "ALFA_EDW_PROD.PUBLIC.SP_LOAD_POLICY", "OWNER": "PROC_OWNER_ROLE"},
-            directory=directory,
-            entity_type="Procedure",
-            category="Task & Procedure Reliability",
-        )
-        enriched = enrich_owner_dataframe(pd.DataFrame([{
-            "ENTITY_NAME": "WH_ALFA_LOAD",
-            "ENTITY_TYPE": "Warehouse",
-            "OWNER": "DBA",
-        }]), directory=directory)
-        ddl = build_owner_directory_ddl().upper()
-
-        self.assertEqual(task_context["APPROVAL_GROUP"], "FinOps Lead")
-        self.assertEqual(task_context["ONCALL_PRIMARY"], "DBA On-Call")
-        self.assertIn("COST_VERIFIER_TASK", task_context["OWNER_SOURCE"])
-        self.assertEqual(proc_context["OWNER"], "PROC_OWNER_ROLE")
-        self.assertEqual(proc_context["APPROVAL_GROUP"], "Procedure Owner")
-        self.assertEqual(enriched.iloc[0]["APPROVAL_GROUP"], "Platform DBA Lead")
-        self.assertIn("CHANGE_CONTROL_DEFAULT", set(directory["OWNER_KEY"]))
-        self.assertIn("ACCOUNT_HEALTH_DEFAULT", set(directory["OWNER_KEY"]))
-        self.assertIn("AI_AGENT_DEFAULT", set(directory["OWNER_KEY"]))
-        self.assertIn("MCP_SERVER_DEFAULT", set(directory["OWNER_KEY"]))
-        self.assertIn("CORTEX_SENSE_DEFAULT", set(directory["OWNER_KEY"]))
-        self.assertIn("COWORK_ARTIFACT_DEFAULT", set(directory["OWNER_KEY"]))
-        self.assertIn("AI_SECURITY_DEFAULT", set(directory["OWNER_KEY"]))
-        self.assertIn("ADAPTIVE_COMPUTE_DEFAULT", set(directory["OWNER_KEY"]))
-        self.assertIn("OPENFLOW_DEFAULT", set(directory["OWNER_KEY"]))
-        self.assertIn("HORIZON_GOVERNANCE_DEFAULT", set(directory["OWNER_KEY"]))
-        self.assertIn("CREATE TABLE IF NOT EXISTS", ddl)
-        self.assertIn("OVERWATCH_OWNER_DIRECTORY", ddl)
-        self.assertIn("OVERWATCH_OWNER_DIRECTORY_ACTIVE_V", ddl)
-
-    def test_owner_directory_readiness_flags_placeholder_routes(self):
-        summary, board = owner_directory_readiness_board(default_owner_directory())
-        by_key = {row["OWNER_KEY"]: row for _, row in board.iterrows()}
-
-        self.assertGreater(summary["total_routes"], 0)
-        self.assertEqual(summary["production_ready"], 0)
-        self.assertEqual(summary["placeholder_routes"], summary["total_routes"])
-        self.assertGreater(summary["tier0_tier1_gaps"], 0)
-        self.assertEqual(board.iloc[0]["ROUTE_STATE"], "Priority Gap")
-        self.assertIn("non-placeholder email", by_key["COST_CONTROL_DEFAULT"]["BLOCKERS"])
-        self.assertIn("named on-call", by_key["TASK_DEFAULT"]["BLOCKERS"])
-
-    def test_architecture_objectives_enrich_database_findings_with_owner_and_rpo(self):
-        objectives = _architecture_objectives_frame("ALFA")
-        finding = pd.DataFrame([{
-            "DATABASE_NAME": "ALFA_EDW_PROD",
-            "WAREHOUSE_NAME": "WH_ALFA_PROD_ETL",
-            "SEVERITY": "High",
-            "FINDING": "warehouse serves many databases",
-            "DBA_ACTION": "Move this workload to a dedicated route.",
-        }])
-
-        enriched = _enrich_architecture_context(
-            finding,
-            entity_col="DATABASE_NAME",
-            entity_type="DATABASE",
-            category="Workload Isolation",
-            company="ALFA",
-            environment="PROD",
-            directory=default_owner_directory(),
-            objectives=objectives,
-            days=14,
-        )
-        row = enriched.iloc[0]
-
-        self.assertEqual(row["SERVICE_TIER"], "Tier 0")
-        self.assertEqual(row["EXPECTED_ENVIRONMENT"], "PROD")
-        self.assertEqual(row["RPO_MINUTES"], 120)
-        self.assertEqual(row["RTO_MINUTES"], 240)
-        self.assertEqual(row["OWNER"], "ALFA EDW Data Owner")
-        self.assertEqual(row["APPROVAL_REQUIRED"], "Yes")
-        self.assertEqual(row["QUEUE_READINESS"], "Ready to Queue")
-        self.assertIn("ALFA_EDW_PROD_DATABASE", row["OWNER_SOURCE"])
-        self.assertIn("database_name = 'ALFA_EDW_PROD'", row["VERIFICATION_QUERY"])
-
-    def test_architecture_objectives_keep_overwatch_wh_as_app_execution_scope(self):
-        objectives = _architecture_objectives_frame("ALFA")
-        finding = pd.DataFrame([{
-            "WAREHOUSE_NAME": "OVERWATCH_WH",
-            "SEVERITY": "Medium",
-            "CACHE_DECISION": "Cache-hostile suspend",
-            "FINDING": "cache=5 repeated=60",
-            "DBA_ACTION": "Review app execution and utility compute before changing settings.",
-        }])
-
-        enriched = _enrich_architecture_context(
-            finding,
-            entity_col="WAREHOUSE_NAME",
-            entity_type="WAREHOUSE",
-            category="Cache Optimization",
-            company="ALFA",
-            environment="ALL",
-            directory=default_owner_directory(),
-            objectives=objectives,
-        )
-        row = enriched.iloc[0]
-
-        self.assertEqual(row["WORKLOAD_CLASS"], "OVERWATCH app execution compute")
-        self.assertEqual(row["OWNER"], "OVERWATCH Platform Owner")
-        self.assertIn("OVERWATCH_WH_EXECUTION", row["OWNER_SOURCE"])
-        self.assertIn("Dedicated Streamlit app execution warehouse", row["ISOLATION_POLICY"])
-        self.assertIn("Do not optimize business workload cache", row["CACHE_POLICY"])
-        self.assertIn("warehouse_name = 'OVERWATCH_WH'", row["VERIFICATION_QUERY"])
-
-    def test_architecture_source_health_tracks_loaded_scope(self):
-        state = {
-            "arch_iso_days": 7,
-            "arch_iso_limit": 50,
-            "arch_iso_df": pd.DataFrame([{"DATABASE_NAME": "ALFA_EDW_PROD"}]),
-            "arch_iso_meta": _architecture_scope_meta(
-                "ALFA",
-                "PROD",
-                "Workload isolation",
-                days=7,
-                row_limit=50,
-                state={},
-            ),
-            "arch_objectives_df": _architecture_objectives_frame("ALFA"),
-            "arch_objectives_meta": _architecture_scope_meta(
-                "ALFA",
-                "PROD",
-                "Architecture objectives",
-                state={},
-            ),
-        }
-
-        source_health = _architecture_source_health_rows(state, "ALFA", "PROD")
-        by_surface = {row["SURFACE"]: row for _, row in source_health.iterrows()}
-
-        self.assertEqual(by_surface["Workload isolation"]["STATE"], "Loaded")
-        self.assertEqual(by_surface["Architecture objectives"]["STATE"], "Loaded")
-        self.assertEqual(by_surface["Cache optimization"]["STATE"], "Not Loaded")
-        self.assertIn("ACCOUNT_USAGE.QUERY_HISTORY", by_surface["Workload isolation"]["SOURCE"])
-        self.assertIn("objective register", by_surface["Architecture objectives"]["CONFIDENCE"].lower())
-
-    def test_architecture_operating_snapshot_counts_loaded_and_stale_evidence(self):
-        state = {
-            "arch_iso_days": 7,
-            "arch_iso_limit": 50,
-            "arch_iso_df": pd.DataFrame([{"DATABASE_NAME": "ALFA_EDW_PROD"}]),
-            "arch_iso_meta": _architecture_scope_meta(
-                "ALFA",
-                "PROD",
-                "Workload isolation",
-                days=7,
-                row_limit=50,
-                state={},
-            ),
-            "arch_cache_days": 30,
-            "arch_cache_limit": 300,
-            "arch_cache_df": pd.DataFrame([{"WAREHOUSE_NAME": "WH_ALFA_QUERY"}]),
-            "arch_cache_meta": _architecture_scope_meta(
-                "ALFA",
-                "DEV_ALL",
-                "Cache optimization",
-                days=30,
-                row_limit=300,
-                state={},
-            ),
-        }
-
-        snapshot = _architecture_operating_snapshot("ALFA", "PROD", state)
-
-        self.assertEqual(snapshot["loaded"], 1)
-        self.assertEqual(snapshot["stale"], 1)
-        self.assertEqual(snapshot["next_load"], "Objectives")
-        self.assertEqual(snapshot["total"], 6)
-
-    def test_forward_platform_controls_cover_summit_capabilities(self):
-        controls = build_forward_platform_control_register()
-        areas = set(controls["CONTROL_AREA"])
-
-        self.assertEqual(len(controls), len(FORWARD_PLATFORM_CONTROLS))
-        self.assertIn("Agent & MCP Governance", areas)
-        self.assertIn("Adaptive Compute Readiness", areas)
-        self.assertIn("AI Spend & Token Guardrails", areas)
-        self.assertIn("AI Security Guardrails", areas)
-        self.assertIn("Cortex Sense Context Governance", areas)
-        self.assertIn("CoWork Artifact Governance", areas)
-        self.assertIn("Openflow Operations", areas)
-        self.assertIn("Horizon Governance Readiness", areas)
-        self.assertIn("Semantic Trust & Verified Query Validation", areas)
-        self.assertIn("BCDR Drill Ledger", areas)
-        self.assertIn("AI Change Governance", areas)
-        self.assertIn("Cortex Sense Context Governance", PLATFORM_FUTURES_EXPERT_CRITERIA)
-        self.assertIn("CoWork Artifact Governance", PLATFORM_FUTURES_EXPERT_CRITERIA)
-        self.assertTrue(controls["AUTOMATION_BOUNDARY"].str.contains("Do not|Never|Observe|Alert", case=False).all())
-
-    def test_cowork_and_cortex_sense_readiness_probes_are_strict(self):
-        probe_surfaces = {probe["SURFACE"]: probe for probe in HORIZON_SEMANTIC_PROBES}
-        self.assertIn("Cortex Sense Context Inventory", probe_surfaces)
-        self.assertIn("CoWork Artifact Inventory", probe_surfaces)
-        self.assertEqual(probe_surfaces["Cortex Sense Context Inventory"]["CONTROL_AREA"], "Cortex Sense Context Governance")
-        self.assertEqual(probe_surfaces["CoWork Artifact Inventory"]["CONTROL_AREA"], "CoWork Artifact Governance")
-
-        readiness = build_horizon_semantic_readiness_from_availability([
-            {
-                **probe_surfaces["Cortex Sense Context Inventory"],
-                "AVAILABLE": False,
-                "COLUMN_COUNT": 0,
-            },
-            {
-                **probe_surfaces["CoWork Artifact Inventory"],
-                "AVAILABLE": False,
-                "COLUMN_COUNT": 0,
-            },
-        ])
-        by_entity = {row["ENTITY_NAME"]: row for _, row in readiness.iterrows()}
-        self.assertEqual(by_entity["Cortex Sense Context Inventory"]["STATE"], "Not Visible")
-        self.assertEqual(by_entity["Cortex Sense Context Inventory"]["SEVERITY"], "Medium")
-        self.assertEqual(by_entity["Cortex Sense Context Inventory"]["OWNER"], "DBA / AI Governance")
-        self.assertIn("certified business definitions", by_entity["Cortex Sense Context Inventory"]["DBA_ACTION"])
-        self.assertEqual(by_entity["CoWork Artifact Inventory"]["OWNER"], "DBA / Analytics Governance")
-        self.assertIn("publisher", by_entity["CoWork Artifact Inventory"]["DBA_ACTION"])
-
-    def test_platform_futures_evidence_ddl_persists_control_coverage(self):
-        ddl = build_platform_futures_evidence_ddl().upper()
-
-        self.assertIn("OVERWATCH_PLATFORM_FUTURES_CONTROL_REGISTER", ddl)
-        self.assertIn("OVERWATCH_PLATFORM_FUTURES_EVIDENCE", ddl)
-        self.assertIn("OVERWATCH_PLATFORM_FUTURES_EVIDENCE_LATEST_V", ddl)
-        self.assertIn("OVERWATCH_PLATFORM_FUTURES_CONTROL_COVERAGE_V", ddl)
-        self.assertIn("AI_AGENT_MCP_GOVERNANCE", ddl)
-        self.assertIn("CORTEX_SENSE_CONTEXT_GOVERNANCE", ddl)
-        self.assertIn("COWORK_ARTIFACT_GOVERNANCE", ddl)
-        self.assertIn("ADAPTIVE_COMPUTE_READINESS", ddl)
-        self.assertIn("AI_SPEND_TOKEN_GUARDRAILS", ddl)
-        self.assertIn("AI_SECURITY_GUARDRAILS", ddl)
-        self.assertIn("OPENFLOW_OPERABILITY", ddl)
-        self.assertIn("HORIZON_GOVERNANCE_READINESS", ddl)
-        self.assertIn("SEMANTIC_TRUST_VALIDATION", ddl)
-        self.assertIn("BCDR_DRILL_LEDGER", ddl)
-        self.assertIn("AI_CHANGE_GOVERNANCE", ddl)
-        self.assertIn("RAW_EVIDENCE         VARIANT", ddl)
-        self.assertIn("COVERAGE_STATE", ddl)
-        self.assertIn("EVIDENCE NOT CAPTURED", ddl)
-        self.assertIn("PROOF NEEDED", ddl)
-
-    def test_adaptive_compute_advisor_ranks_candidates_and_holds_risky_routes(self):
-        raw = pd.DataFrame([
-            {
-                "WAREHOUSE_NAME": "BI_COMPUTE_WH",
-                "WAREHOUSE_SIZE": "Medium",
-                "TYPE": "STANDARD",
-                "QUERY_COUNT": 2200,
-                "USERS": 12,
-                "ROLES": 4,
-                "DATABASES": 3,
-                "CREDITS_30D": 84.5,
-                "QUEUED_SEC": 190.0,
-                "REMOTE_SPILL_GB": 12.5,
-                "P95_ELAPSED_SEC": 420.0,
-                "REPEATED_QUERIES": 620,
-                "MAX_CLUSTER_COUNT": 3,
-                "ENABLE_QUERY_ACCELERATION": "true",
-            },
-            {
-                "WAREHOUSE_NAME": "COMPUTE_WH",
-                "WAREHOUSE_SIZE": "Small",
-                "TYPE": "STANDARD",
-                "QUERY_COUNT": 1400,
-                "USERS": 3,
-                "ROLES": 2,
-                "DATABASES": 0,
-                "CREDITS_30D": 32.0,
-                "QUEUED_SEC": 30.0,
-                "REMOTE_SPILL_GB": 0.0,
-                "P95_ELAPSED_SEC": 180.0,
-                "REPEATED_QUERIES": 100,
-                "MAX_CLUSTER_COUNT": 1,
-            },
-            {
-                "WAREHOUSE_NAME": "OVERWATCH_WH",
-                "WAREHOUSE_SIZE": "X-Small",
-                "TYPE": "STANDARD",
-                "QUERY_COUNT": 500,
-                "USERS": 3,
-                "ROLES": 2,
-                "DATABASES": 0,
-                "CREDITS_30D": 4.0,
-                "QUEUED_SEC": 5.0,
-                "REMOTE_SPILL_GB": 0.0,
-                "P95_ELAPSED_SEC": 90.0,
-                "REPEATED_QUERIES": 20,
-                "MAX_CLUSTER_COUNT": 1,
-            },
-            {
-                "WAREHOUSE_NAME": "ML_SNOWPARK_WH",
-                "WAREHOUSE_SIZE": "Large",
-                "TYPE": "SNOWPARK-OPTIMIZED",
-                "QUERY_COUNT": 900,
-                "USERS": 4,
-                "ROLES": 2,
-                "DATABASES": 1,
-                "CREDITS_30D": 44.0,
-                "QUEUED_SEC": 2.0,
-                "REMOTE_SPILL_GB": 0.0,
-                "P95_ELAPSED_SEC": 100.0,
-                "REPEATED_QUERIES": 40,
-                "MAX_CLUSTER_COUNT": 1,
-            },
-        ])
-
-        with patch("utils.futures_governance.load_owner_directory", return_value=default_owner_directory()):
-            advisor = classify_adaptive_compute_readiness(raw, company="ALL", environment="ALL", days=14)
-        by_wh = {row["WAREHOUSE_NAME"]: row for _, row in advisor.iterrows()}
-
-        self.assertEqual(by_wh["BI_COMPUTE_WH"]["ADAPTIVE_DECISION"], "Pilot Candidate")
-        self.assertEqual(by_wh["BI_COMPUTE_WH"]["SEVERITY"], "High")
-        self.assertIn("owner-approved pilot", by_wh["BI_COMPUTE_WH"]["DBA_ACTION"])
-        self.assertIn("SHOW WAREHOUSES", by_wh["BI_COMPUTE_WH"]["PROOF_SQL"])
-        self.assertIn("WAREHOUSE_METERING_HISTORY", by_wh["BI_COMPUTE_WH"]["VERIFICATION_QUERY"])
-        self.assertIn("No automatic conversion", by_wh["BI_COMPUTE_WH"]["CONVERSION_BOUNDARY"])
-        self.assertEqual(by_wh["OVERWATCH_WH"]["ADAPTIVE_DECISION"], "Hold - App Execution")
-        self.assertEqual(by_wh["OVERWATCH_WH"]["QUEUE_READINESS"], "Review Only")
-        self.assertEqual(by_wh["COMPUTE_WH"]["ADAPTIVE_DECISION"], "Hold - App Execution")
-        self.assertEqual(by_wh["COMPUTE_WH"]["QUEUE_READINESS"], "Review Only")
-        self.assertEqual(by_wh["ML_SNOWPARK_WH"]["ADAPTIVE_DECISION"], "Hold - Preview Limitation")
-
-        board = build_platform_futures_board([advisor])
-        self.assertIn("Adaptive Compute Readiness", set(board["CONTROL_AREA"]))
-        self.assertIn("BI_COMPUTE_WH", set(board["ENTITY_NAME"]))
-
-    def test_agent_mcp_inventory_classifies_tool_scope_risk(self):
-        raw = pd.DataFrame([
-            {
-                "NAME": "CLAIMS_TOOLS",
-                "DATABASE_NAME": "ALFA_EDW_PROD",
-                "SCHEMA_NAME": "AGENTS",
-                "OWNER": "ACCOUNTADMIN",
-                "COMMENT": "",
-            }
-        ])
-
-        with patch("utils.futures_governance.load_owner_directory", return_value=default_owner_directory()):
-            classified = classify_agent_mcp_inventory(
-                raw,
-                source_type="MCP Server",
-                company="ALFA",
-                environment="PROD",
-            )
-        row = classified.iloc[0]
-
-        self.assertEqual(row["SEVERITY"], "Critical")
-        self.assertEqual(row["ENTITY_TYPE"], "MCP_SERVER")
-        self.assertIn("privileged admin role", row["FINDING"])
-        self.assertIn("MCP_SERVER_DEFAULT", row["OWNER_SOURCE"])
-        self.assertIn("SHOW MCP SERVERS", row["VERIFICATION_QUERY"])
-
-    def test_ai_usage_guardrail_routes_privileged_spend_to_finops(self):
-        raw = pd.DataFrame([
-            {
-                "SOURCE_TYPE": "Cortex Agent Usage",
-                "DATABASE_NAME": "ALFA_EDW_PROD",
-                "SCHEMA_NAME": "AGENTS",
-                "ENTITY_NAME": "claims_agent",
-                "USER_NAME": "JDOE",
-                "ROLE_NAME": "ACCOUNTADMIN",
-                "INTERFACE_NAME": "external",
-                "REQUESTS": 25,
-                "TOKEN_CREDITS": 30,
-                "TOKENS": 100000,
-                "AI_FUNCTION_CREDITS": 1.5,
-            }
-        ])
-
-        with patch("utils.futures_governance.load_owner_directory", return_value=default_owner_directory()):
-            classified = classify_ai_usage_guardrails(raw, company="ALFA", environment="PROD")
-        row = classified.iloc[0]
-
-        self.assertEqual(row["SEVERITY"], "Critical")
-        self.assertIn("privileged admin role", row["FINDING"])
-        self.assertIn("AI_COST_DEFAULT", row["OWNER_SOURCE"])
-        self.assertIn("SNOWFLAKE_INTELLIGENCE_USAGE_HISTORY", row["VERIFICATION_QUERY"])
-
-    def test_ai_security_guardrails_classify_public_ai_access_and_reports(self):
-        parameters = pd.DataFrame([
-            {"KEY": "AI_SETTINGS", "VALUE": "ADVANCED_PROMPT_INJECTION_FILTERING = { ENABLED = FALSE }"},
-            {"KEY": "CORTEX_ENABLED_CROSS_REGION", "VALUE": "DISABLED"},
-        ])
-        public_grants = pd.DataFrame([
-            {
-                "PRIVILEGE": "USE AI FUNCTIONS",
-                "GRANTED_ON": "ACCOUNT",
-                "NAME": "ACCOUNT",
-                "GRANTEE_NAME": "PUBLIC",
-            }
-        ])
-        cortex_grants = pd.DataFrame([
-            {
-                "PRIVILEGE": "USAGE",
-                "GRANTED_ON": "DATABASE ROLE",
-                "NAME": "SNOWFLAKE.CORTEX_USER",
-                "GRANTED_TO": "ROLE",
-                "GRANTEE_NAME": "PUBLIC",
-            }
-        ])
-        report_records = [
-            {
-                "SURFACE": "Sensitive Data Entitlement report",
-                "OBJECT_NAME": "SNOWFLAKE.DATA_SECURITY.ENTITLEMENT_REPORT",
-                "MANDATORY": True,
-                "AVAILABLE": False,
-                "COLUMN_COUNT": 0,
-                "DBA_ACTION": "Grant report visibility before AI expansion.",
-            },
-            {
-                "SURFACE": "Sensitive Data Access report",
-                "OBJECT_NAME": "SNOWFLAKE.DATA_SECURITY.ACCESS_REPORT",
-                "MANDATORY": True,
-                "AVAILABLE": True,
-                "COLUMN_COUNT": 8,
-                "DBA_ACTION": "Keep report visibility active.",
-            },
-        ]
-
-        with patch("utils.futures_governance.load_owner_directory", return_value=default_owner_directory()):
-            classified = classify_ai_security_guardrails(
-                parameters=parameters,
-                public_grants=public_grants,
-                cortex_user_grants=cortex_grants,
-                ai_functions_user_grants=pd.DataFrame(),
-                report_records=report_records,
-            )
-        by_entity = {row["ENTITY_NAME"]: row for _, row in classified.iterrows()}
-
-        self.assertEqual(by_entity["PUBLIC USE AI FUNCTIONS ACCOUNT"]["SEVERITY"], "Critical")
-        self.assertIn("PUBLIC", by_entity["PUBLIC USE AI FUNCTIONS ACCOUNT"]["FINDING"])
-        self.assertEqual(by_entity["SNOWFLAKE.CORTEX_USER -> PUBLIC"]["SEVERITY"], "Critical")
-        self.assertIn("AI_SECURITY_DEFAULT", by_entity["SNOWFLAKE.CORTEX_USER -> PUBLIC"]["OWNER_SOURCE"])
-        self.assertEqual(by_entity["Account AI_SETTINGS"]["SEVERITY"], "High")
-        self.assertIn("advanced prompt-injection", by_entity["Account AI_SETTINGS"]["FINDING"])
-        self.assertEqual(by_entity["Sensitive Data Entitlement report"]["SEVERITY"], "High")
-        self.assertIn("SNOWFLAKE.DATA_SECURITY.ENTITLEMENT_REPORT", by_entity["Sensitive Data Entitlement report"]["PROOF_SQL"])
-
-    def test_openflow_and_horizon_readiness_feed_platform_board(self):
-        openflow = pd.DataFrame([
-            {
-                "DATA_PLANE_NAME": "ALFA_BYOC",
-                "DATA_PLANE_TYPE": "BYOC",
-                "RUNTIME_NAME": "claims_runtime",
-                "RUNTIME_TYPE": "RUNTIME",
-                "HOURS_REPORTED": 8,
-                "TOTAL_CREDITS": 31.5,
-            }
-        ])
-        with patch("utils.futures_governance.load_owner_directory", return_value=default_owner_directory()):
-            openflow_classified = classify_openflow_operations(openflow, company="ALFA", environment="ALL")
-        horizon = build_horizon_semantic_readiness_from_availability([
-            {
-                "CONTROL_AREA": "Horizon Governance Readiness",
-                "SURFACE": "Access History",
-                "OBJECT_NAME": "SNOWFLAKE.ACCOUNT_USAGE.ACCESS_HISTORY",
-                "MANDATORY": True,
-                "AVAILABLE": False,
-                "COLUMN_COUNT": 0,
-                "DBA_ACTION": "Grant imported privileges or document alternate access evidence.",
-            }
-        ])
-        board = build_platform_futures_board([openflow_classified, horizon])
-        by_entity = {row["ENTITY_NAME"]: row for _, row in board.iterrows()}
-
-        self.assertEqual(by_entity["ALFA_BYOC / claims_runtime"]["SEVERITY"], "High")
-        self.assertEqual(by_entity["Access History"]["SEVERITY"], "High")
-        self.assertIn("Openflow", by_entity["ALFA_BYOC / claims_runtime"]["CONTROL_AREA"])
-        self.assertIn("governance proof", by_entity["Access History"]["FINDING"])
-
-    def test_platform_futures_adoption_gate_blocks_unproven_capabilities(self):
-        controls = build_forward_platform_control_register()
-        raw_agents = pd.DataFrame([
-            {
-                "NAME": "CLAIMS_TOOLS",
-                "DATABASE_NAME": "ALFA_EDW_PROD",
-                "SCHEMA_NAME": "AGENTS",
-                "OWNER": "ACCOUNTADMIN",
-                "COMMENT": "",
-            }
-        ])
-        with patch("utils.futures_governance.load_owner_directory", return_value=default_owner_directory()):
-            agents = classify_agent_mcp_inventory(
-                raw_agents,
-                source_type="MCP Server",
-                company="ALFA",
-                environment="PROD",
-            )
-        source_health = pd.DataFrame([
-            {
-                "SURFACE": "AI agent and MCP inventory",
-                "STATE": "Loaded",
-                "SOURCE": "SHOW AGENTS IN ACCOUNT + SHOW MCP SERVERS IN ACCOUNT",
-            },
-            {
-                "SURFACE": "AI usage guardrails",
-                "STATE": "Not Loaded",
-                "SOURCE": "ACCOUNT_USAGE AI usage views",
-            },
-        ])
-
-        gate = build_platform_futures_adoption_gate(
-            controls,
-            [agents],
-            source_health=source_health,
-        )
-        by_area = {row["CONTROL_AREA"]: row for _, row in gate.iterrows()}
-
-        self.assertEqual(by_area["Agent & MCP Governance"]["ADOPTION_STATE"], "Blocked")
-        self.assertLess(by_area["Agent & MCP Governance"]["READINESS_SCORE"], 99)
-        self.assertEqual(by_area["Agent & MCP Governance"]["CRITICAL_HIGH_FINDINGS"], 1)
-        self.assertIn("Do not expand", by_area["Agent & MCP Governance"]["NEXT_DBA_MOVE"])
-        self.assertIn("blast-radius proof", by_area["Agent & MCP Governance"]["WHY_EXPERTS_CARE"])
-        self.assertEqual(by_area["AI Spend & Token Guardrails"]["SOURCE_GAPS"], 1)
-        self.assertEqual(by_area["AI Spend & Token Guardrails"]["ADOPTION_STATE"], "Evidence Gaps")
-
-    def test_agentic_ai_cockpit_scores_all_ai_surfaces_strictly(self):
-        controls = build_forward_platform_control_register()
-        raw_agents = pd.DataFrame([
-            {
-                "NAME": "CLAIMS_TOOLS",
-                "DATABASE_NAME": "ALFA_EDW_PROD",
-                "SCHEMA_NAME": "AGENTS",
-                "OWNER": "ACCOUNTADMIN",
-                "COMMENT": "",
-            }
-        ])
-        with patch("utils.futures_governance.load_owner_directory", return_value=default_owner_directory()):
-            agents = classify_agent_mcp_inventory(
-                raw_agents,
-                source_type="MCP Server",
-                company="ALFA",
-                environment="PROD",
-            )
-        horizon = build_horizon_semantic_readiness_from_availability([
-            {
-                "CONTROL_AREA": "Cortex Sense Context Governance",
-                "SURFACE": "Cortex Sense Context Inventory",
-                "OBJECT_NAME": "SNOWFLAKE.ACCOUNT_USAGE.CORTEX_SENSE_CONTEXTS",
-                "MANDATORY": False,
-                "AVAILABLE": False,
-                "COLUMN_COUNT": 0,
-                "DBA_ACTION": "Require certified context, connector approval, and regression evidence.",
-            },
-            {
-                "CONTROL_AREA": "CoWork Artifact Governance",
-                "SURFACE": "CoWork Artifact Inventory",
-                "OBJECT_NAME": "SNOWFLAKE.ACCOUNT_USAGE.COWORK_ARTIFACTS",
-                "MANDATORY": False,
-                "AVAILABLE": False,
-                "COLUMN_COUNT": 0,
-                "DBA_ACTION": "Require publisher, certified source, sharing scope, and retirement owner.",
-            },
-        ])
-        source_health = pd.DataFrame([
-            {"SURFACE": "AI agent and MCP inventory", "STATE": "Loaded"},
-            {"SURFACE": "Horizon and semantic trust", "STATE": "Loaded"},
-            {"SURFACE": "AI usage guardrails", "STATE": "Loaded"},
-            {"SURFACE": "AI security guardrails", "STATE": "Loaded"},
-        ])
-
-        summary, scorecard = build_agentic_ai_surface_scorecard(
-            controls,
-            [agents, horizon],
-            source_health=source_health,
-        )
-        by_area = {row["CONTROL_AREA"]: row for _, row in scorecard.iterrows()}
-
-        self.assertEqual(set(by_area), set(AGENTIC_AI_CONTROL_AREAS))
-        self.assertEqual(by_area["Agent & MCP Governance"]["GO_LIVE_STATE"], "Blocked")
-        self.assertEqual(by_area["Cortex Sense Context Governance"]["GO_LIVE_STATE"], "Evidence Gaps")
-        self.assertEqual(by_area["CoWork Artifact Governance"]["GO_LIVE_STATE"], "Evidence Gaps")
-        self.assertIn("medium evidence gap", by_area["Cortex Sense Context Governance"]["BLOCKERS"])
-        self.assertLess(summary["STRICT_SCORE"], 99)
-        self.assertGreaterEqual(summary["EVIDENCE_GAPS"], 1)
-        self.assertGreaterEqual(summary["BLOCKED"], 1)
-        self.assertEqual(summary["TOP_RISK"], "Agent & MCP Governance")
-
-    def test_ask_overwatch_answers_from_platform_futures_board(self):
-        board = pd.DataFrame([
-            {
-                "CONTROL_AREA": "Agent & MCP Governance",
-                "SEVERITY": "High",
-                "SOURCE_TYPE": "MCP Server",
-                "ENTITY_NAME": "ALFA_EDW_PROD.AGENTS.CLAIMS_TOOLS",
-                "FINDING": "MCP server requires owner, tool-scope, and blast-radius review.",
-                "DBA_ACTION": "Document approved tools, allowed roles, data scope, owner, and rollback path before production use.",
-                "OWNER": "DBA / AI Governance",
-                "APPROVAL_GROUP": "DBA Lead / Security Approver",
-                "PROOF_SQL": "SHOW MCP SERVERS IN ACCOUNT;",
-            }
-        ])
-        state = {"arch_futures_board": board}
-        snapshot = snapshot_ask_overwatch_state(state)
-        result = answer_ask_overwatch(
-            "What should I do about the MCP agent risk?",
-            state,
-            active_section="Architecture Readiness",
-            company="ALFA",
-            environment="PROD",
-        )
-
-        self.assertIn("arch_futures_board", snapshot)
-        self.assertEqual(result["confidence"], "Evidence-grounded")
-        self.assertIn("ALFA_EDW_PROD.AGENTS.CLAIMS_TOOLS", result["answer"])
-        self.assertIn("Do not auto-change agents", result["answer"])
-
-    def test_ask_overwatch_reads_platform_futures_adoption_gate(self):
-        gate = pd.DataFrame([
-            {
-                "CONTROL_AREA": "AI Spend & Token Guardrails",
-                "ADOPTION_STATE": "Evidence Gaps",
-                "READINESS_SCORE": 75,
-                "CRITICAL_HIGH_FINDINGS": 0,
-                "SOURCE_GAPS": 1,
-                "OWNER_ROUTE_GAPS": 0,
-                "NEXT_DBA_MOVE": "Load or persist AI Spend & Token Guardrails evidence before approving pilot or production adoption.",
-                "PRIMARY_EVIDENCE": "SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AGENT_USAGE_HISTORY",
-                "AUTOMATION_BOUNDARY": "Alert and queue only until budget policy and approval workflow exist.",
-            }
-        ])
-        cards = build_ask_overwatch_context({"arch_futures_adoption_gate": gate})
-
-        self.assertEqual(cards[0]["surface"], "Governance & Security - Expert Adoption Gate")
-        self.assertEqual(cards[0]["signal"], "Evidence Gaps")
-        self.assertIn("readiness=75", cards[0]["evidence"])
-        self.assertIn("Load or persist", cards[0]["next_action"])
-
-    def test_ask_overwatch_answers_from_agentic_ai_cockpit(self):
-        scorecard = pd.DataFrame([
-            {
-                "CONTROL_AREA": "CoWork Artifact Governance",
-                "SURFACE_CLASS": "Shared Artifact",
-                "GO_LIVE_STATE": "Evidence Gaps",
-                "READINESS_SCORE": 84,
-                "CRITICAL_HIGH_FINDINGS": 0,
-                "SOURCE_GAPS": 1,
-                "OWNER_ROUTE_GAPS": 0,
-                "BLOCKERS": "1 unloaded or stale source surface(s); readiness 84 below 95 target",
-                "DBA_DECISION": "Do not expand CoWork Artifact Governance; load evidence and attach owner, approval, proof, and rollback route first.",
-                "PROOF_REQUIRED": "CoWork Artifact inventory when available; Snowflake Intelligence usage",
-                "DO_NOT_DO": "Do not publish, share, delete, or alter CoWork Artifacts from dashboard automation.",
-            }
-        ])
-        state = {"arch_agentic_ai_scorecard": scorecard}
-
-        cards = build_ask_overwatch_context(state)
-        result = answer_ask_overwatch(
-            "Can we publish CoWork artifacts broadly?",
-            state,
-            active_section="Architecture Readiness",
-            company="ALFA",
-            environment="PROD",
-        )
-
-        self.assertEqual(cards[0]["surface"], "Governance & Security - Agentic AI Governance Cockpit")
-        self.assertEqual(cards[0]["signal"], "Evidence Gaps")
-        self.assertIn("Shared Artifact", cards[0]["evidence"])
-        self.assertIn("CoWork Artifact Governance", result["answer"])
-        self.assertIn("Do not publish", result["answer"])
-
-    def test_ask_overwatch_reads_adaptive_compute_advisor(self):
-        advisor = pd.DataFrame([
-            {
-                "WAREHOUSE_NAME": "BI_COMPUTE_WH",
-                "ENTITY_NAME": "BI_COMPUTE_WH",
-                "SEVERITY": "High",
-                "ADAPTIVE_DECISION": "Pilot Candidate",
-                "READINESS_SCORE": 91,
-                "CREDITS_30D": 84.5,
-                "QUERY_COUNT": 2200,
-                "QUEUED_SEC": 190,
-                "REMOTE_SPILL_GB": 12.5,
-                "FINDING": "Warehouse has spend, workload volume, and pressure signals.",
-                "DBA_ACTION": "Open an owner-approved pilot with before/after proof.",
-                "PROOF_SQL": "SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY;",
-                "CONVERSION_BOUNDARY": "No automatic conversion; require approval and rollback proof.",
-            }
-        ])
-        cards = build_ask_overwatch_context({"arch_adaptive_compute": advisor})
-
-        self.assertEqual(cards[0]["surface"], "Governance & Security - Adaptive Compute Advisor")
-        self.assertEqual(cards[0]["signal"], "Pilot Candidate")
-        self.assertIn("BI_COMPUTE_WH", cards[0]["entity"])
-        self.assertIn("credits=84.5", cards[0]["evidence"])
-        self.assertIn("owner-approved pilot", cards[0]["next_action"])
-        self.assertIn("No automatic conversion", cards[0]["do_not"])
-
-    def test_ask_overwatch_reads_ai_security_guardrails(self):
-        guardrails = pd.DataFrame([
-            {
-                "CONTROL_AREA": "AI Security Guardrails",
-                "SOURCE_TYPE": "PUBLIC AI grant",
-                "ENTITY_NAME": "PUBLIC USE AI FUNCTIONS ACCOUNT",
-                "SEVERITY": "Critical",
-                "FINDING": "PUBLIC has blanket AI/Cortex access visible in grants.",
-                "DBA_ACTION": "Replace PUBLIC AI access with approved DBA/security-owned roles.",
-                "PROOF_SQL": "SHOW GRANTS TO ROLE PUBLIC;",
-                "AUTOMATION_BOUNDARY": "Do not change account parameters or revoke/grant AI privileges from dashboard automation.",
-            }
-        ])
-        cards = build_ask_overwatch_context({"arch_ai_security_guardrails": guardrails})
-
-        self.assertEqual(cards[0]["surface"], "Governance & Security - AI Security Guardrails")
-        self.assertEqual(cards[0]["signal"], "PUBLIC AI grant")
-        self.assertIn("PUBLIC USE AI FUNCTIONS", cards[0]["entity"])
-        self.assertIn("blanket AI/Cortex access", cards[0]["evidence"])
-        self.assertIn("Do not change account parameters", cards[0]["do_not"])
 
     def test_ask_overwatch_reads_dba_operations_priority(self):
         priority_index = pd.DataFrame([
@@ -8751,7 +7872,7 @@ class FormulaRegressionTests(unittest.TestCase):
             {
                 "RUNBOOK_ID": "DBA-RUNBOOK-202606011730",
                 "PHASE_RANK": 1,
-                "RUNBOOK_STEP": "Evidence Check",
+                "RUNBOOK_STEP": "Telemetry Check",
                 "SECTION": "Warehouse Health",
                 "OPERATIONS_PRIORITY_STATE": "Contain Now",
                 "PRIORITY_SCORE": 88.5,
@@ -8769,7 +7890,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "PRIORITY_SCORE": 88.5,
                 "GO_NO_GO_GATE": "No irreversible changes",
                 "DBA_MOVE": "Stabilize queue/spill pressure first.",
-                "EVIDENCE_REQUIRED": "Warehouse owner route",
+                "EVIDENCE_REQUIRED": "Warehouse route",
                 "STOP_CONDITION": "Stop if source evidence is stale.",
             },
         ])
@@ -8777,7 +7898,7 @@ class FormulaRegressionTests(unittest.TestCase):
 
         self.assertEqual(cards[0]["surface"], "DBA Operator Runbook")
         self.assertEqual(cards[0]["entity"], "Cost & Contract")
-        self.assertIn("Evidence current", cards[0]["evidence"])
+        self.assertIn("Telemetry current", cards[0]["evidence"])
         self.assertIn("Stabilize", cards[0]["next_action"])
 
     def test_alert_task_is_email_first_and_dba_focused(self):
@@ -8800,8 +7921,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("OVERWATCH_ALERT_RULE_AUDIT", sql)
         self.assertIn("OVERWATCH_ALERT_TRIAGE_V", sql)
         self.assertIn("OVERWATCH_ALERT_DELIVERY_LOG", sql)
-        self.assertIn("OVERWATCH_OWNER_DIRECTORY", sql)
-        self.assertIn("OVERWATCH_OWNER_DIRECTORY_ACTIVE_V", sql)
+        self.assertNotIn("OVERWATCH_OWNER_DIRECTORY", sql)
+        self.assertNotIn("OVERWATCH_OWNER_DIRECTORY_ACTIVE_V", sql)
         self.assertIn("SP_OVERWATCH_SEND_ALERT_DIGEST", sql)
         self.assertIn("SYSTEM$SEND_EMAIL", sql)
         self.assertIn("EMAIL_DRY_RUN", sql)
@@ -9013,7 +8134,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("## Triage Order", markdown)
         self.assertIn("Query diagnosis: capture query ID", markdown)
         self.assertIn("Snowflake task and Snowflake task status", markdown)
-        self.assertIn("## Evidence Checklist", markdown)
+        self.assertIn("## Telemetry Checklist", markdown)
         self.assertIn("Warehouse, user, role, database, and schema", markdown)
         self.assertEqual(
             _workload_runbook_filename("Trexis Corp", "DEV_ALL"),
@@ -9158,7 +8279,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(triage["ESCALATION_TARGET"].iloc[0], "Pipeline Owner")
         self.assertEqual(triage["TRIAGE_PRIORITY"].iloc[0], 777)
 
-    def test_alert_history_routes_task_and_procedure_alerts_with_recovery_governance(self):
+    def test_alert_history_routes_task_and_procedure_alerts_with_recovery_routing(self):
         alerts = pd.DataFrame([
             {
                 "ALERT_ID": 30,
@@ -9245,10 +8366,10 @@ class FormulaRegressionTests(unittest.TestCase):
 
         self.assertEqual(task["Category"], "Task & Procedure Reliability")
         self.assertEqual(task["Entity Type"], "Task")
-        self.assertEqual(task["Owner Approval Status"], "Requested")
-        self.assertEqual(task["Approver"], "Pipeline Owner")
-        self.assertEqual(task["Oncall Primary"], "DBA On-Call")
-        self.assertIn("OWNER_DIRECTORY", task["Owner Source"])
+        self.assertNotIn("Owner Approval Status", task)
+        self.assertNotIn("Approver", task)
+        self.assertEqual(task["Oncall Primary"], "")
+        self.assertIn("MONITORING_CONTEXT", task["Owner Source"])
         self.assertEqual(task["Recovery Audit State"], "Audit Required")
         self.assertEqual(task["Recovery SLA State"], "Recovery SLA Breach")
         self.assertEqual(task["Recovery SLA Target Hours"], 4.0)
@@ -9261,9 +8382,9 @@ class FormulaRegressionTests(unittest.TestCase):
 
         self.assertEqual(proc["Category"], "Task & Procedure Reliability")
         self.assertEqual(proc["Entity Type"], "Stored Procedure")
-        self.assertEqual(proc["Owner Approval Status"], "Requested")
-        self.assertEqual(proc["Approver"], "Procedure Owner")
-        self.assertEqual(proc["Oncall Primary"], "DBA On-Call")
+        self.assertNotIn("Owner Approval Status", proc)
+        self.assertNotIn("Approver", proc)
+        self.assertEqual(proc["Oncall Primary"], "")
         self.assertEqual(proc["Recovery SLA State"], "Open Failure")
         self.assertEqual(proc["Baseline Value"], 30.0)
         self.assertEqual(proc["Current Value"], 90.0)
@@ -9276,11 +8397,12 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(verification_query_safety_issues(cost["Verification Query"]), [])
 
         self.assertEqual(verifier["Category"], "Cost Control")
-        self.assertEqual(verifier["Entity Type"], "Cost Verification Task")
-        self.assertEqual(verifier["Owner Approval Status"], "Requested")
-        self.assertEqual(verifier["Approver"], "FinOps Lead")
-        self.assertEqual(verifier["Oncall Primary"], "DBA On-Call")
-        self.assertIn("COST_VERIFIER_TASK", verifier["Owner Source"])
+        self.assertEqual(verifier["Entity Type"], "Cost Measurement Task")
+        self.assertNotIn("Owner Approval Status", verifier)
+        self.assertNotIn("Approver", verifier)
+        self.assertEqual(verifier["Review Group"], "FinOps Lead")
+        self.assertEqual(verifier["Oncall Primary"], "")
+        self.assertIn("MONITORING_CONTEXT", verifier["Owner Source"])
         self.assertEqual(verifier["Recovery Audit State"], "Audit Required")
         self.assertEqual(verifier["Recovery SLA State"], "Recovery SLA Breach")
         self.assertEqual(verifier["Recovery SLA Target Hours"], 8.0)
@@ -9404,33 +8526,26 @@ class FormulaRegressionTests(unittest.TestCase):
             "OWNER_EMAIL": "dba-alerts@example.com",
             "ONCALL_PRIMARY": "DBA On-Call",
             "ESCALATION_TARGET": "DBA Lead",
-            "OWNER_SOURCE": "OWNER_DIRECTORY:TASK_DEFAULT",
+            "OWNER_SOURCE": "MONITORING_CONTEXT:TASK_DEFAULT",
             "RECOMMENDED_ACTION": "Work queued task incident.",
         }])
 
         route_summary, route_board = _alert_owner_route_board(alerts, queue)
         lifecycle = _alert_lifecycle_board(alerts, queue)
-        integration = _alert_integration_readiness_board(
+        integration = _alert_integration_health_board(
             alerts,
             queue,
             delivery_log=pd.DataFrame(),
-            owner_summary={
-                "total_routes": 8,
-                "production_ready": 2,
-                "placeholder_routes": 6,
-                "tier0_tier1_gaps": 3,
-            },
         )
         integration_by_control = {row["CONTROL"]: row for _, row in integration.iterrows()}
 
         self.assertEqual(route_summary["route_gaps"], 2)
-        self.assertIn("Needs named owner", set(route_board["OWNER_ROUTE_STATE"]))
+        self.assertIn("Needs named route", set(route_board["OWNER_ROUTE_STATE"]))
         self.assertEqual(lifecycle.iloc[0]["LIFECYCLE_STATE"], "Escalate now")
-        self.assertIn("post-fix verification", lifecycle.iloc[0]["CLOSURE_PROOF_REQUIRED"])
-        self.assertEqual(integration.iloc[0]["CONTROL"], "Named owner routes")
-        self.assertEqual(integration_by_control["Snowflake notification integration"]["STATE"], "Manual")
-        self.assertEqual(integration_by_control["Action queue lifecycle"]["STATE"], "Manual")
-        self.assertIn("Tier 0/1 gap", integration_by_control["Named owner routes"]["EVIDENCE"])
+        self.assertIn("post-fix telemetry status", lifecycle.iloc[0]["CLOSURE_STATUS_REQUIRED"])
+        self.assertEqual(integration.iloc[0]["CONTROL"], "Action queue lifecycle")
+        self.assertEqual(integration_by_control["Snowflake notification integration"]["STATE"], "Review")
+        self.assertEqual(integration_by_control["Action queue lifecycle"]["STATE"], "Review")
 
     def test_alert_delivery_audit_and_escalation_ack_sql(self):
         ddl = build_alert_delivery_log_ddl().upper()
@@ -9585,14 +8700,14 @@ class FormulaRegressionTests(unittest.TestCase):
         )
         by_control = {row["CONTROL"]: row for _, row in rows.iterrows()}
 
-        self.assertEqual(by_control["Loaded scope freshness"]["STATE"], "Scope Stale")
-        self.assertEqual(by_control["Alert history source"]["STATE"], "Ready")
-        self.assertIn("1 open", by_control["Alert history source"]["EVIDENCE"])
-        self.assertEqual(by_control["Delivery audit source"]["STATE"], "Needs Setup")
-        self.assertEqual(by_control["Rule catalog source"]["STATE"], "Fallback")
+        self.assertEqual(by_control["Loaded scope status"]["STATE"], "Scope Stale")
+        self.assertEqual(by_control["Alert history input"]["STATE"], "Ready")
+        self.assertIn("1 open", by_control["Alert history input"]["EVIDENCE"])
+        self.assertEqual(by_control["Delivery audit input"]["STATE"], "Needs Data")
+        self.assertEqual(by_control["Rule catalog input"]["STATE"], "Fallback")
         self.assertEqual(by_control["Email route"]["STATE"], "Review")
-        self.assertEqual(by_control["Owner route"]["STATE"], "Review")
-        self.assertLess(_alert_center_readiness_score(rows), 100)
+        self.assertEqual(by_control["Alert routing"]["STATE"], "Review")
+        self.assertLess(_alert_center_health_score(rows), 100)
 
     def test_alert_center_operability_rows_score_ready_controls(self):
         data = {
@@ -9610,19 +8725,6 @@ class FormulaRegressionTests(unittest.TestCase):
                 "RUNBOOK": "Review task graph evidence and route to owner.",
                 "IS_ACTIVE": True,
             }]), source="Database"),
-            "owner_directory": pd.DataFrame([{
-                "OWNER_KEY": "ALFA_PROD_PLATFORM",
-                "ENTITY_TYPE": "DATABASE",
-                "ENTITY_PATTERN": "ALFA_EDW_PROD",
-                "OWNER_NAME": "ALFA Platform Team",
-                "OWNER_EMAIL": "snowflake-platform@alfains.com",
-                "ONCALL_PRIMARY": "ALFA Snowflake Oncall",
-                "APPROVAL_GROUP": "ALFA Snowflake CAB",
-                "ESCALATION_TARGET": "ALFA Platform Manager",
-                "DEFAULT_ROUTE": "DBA Control Room",
-                "SERVICE_TIER": "Tier 0",
-                "MATCH_PRIORITY": 100,
-            }]),
             "issues": pd.DataFrame(),
         }
 
@@ -9635,9 +8737,9 @@ class FormulaRegressionTests(unittest.TestCase):
             loaded_scope=("ALFA", "PROD", 7, 200),
         )
 
-        self.assertEqual(_alert_center_readiness_score(rows), 100)
+        self.assertEqual(_alert_center_health_score(rows), 100)
         self.assertEqual(
-            rows.loc[rows["CONTROL"] == "Rule catalog source", "STATE"].iloc[0],
+            rows.loc[rows["CONTROL"] == "Rule catalog input", "STATE"].iloc[0],
             "Ready",
         )
 
@@ -9651,14 +8753,14 @@ class FormulaRegressionTests(unittest.TestCase):
             email_logged=0,
             open_queue=1,
             readiness_rows=pd.DataFrame([{
-                "CONTROL": "Delivery audit source",
-                "STATE": "Needs Setup",
+                "CONTROL": "Delivery audit input",
+                "STATE": "Needs Data",
                 "EVIDENCE": "Delivery log table is missing.",
                 "NEXT_ACTION": "Deploy delivery audit table.",
             }]),
         )
         self.assertEqual(blocked["target"], "Control Health")
-        self.assertIn("Delivery audit source", blocked["detail"])
+        self.assertIn("Delivery audit input", blocked["detail"])
         self.assertIn("Deploy delivery audit table", blocked["detail"])
 
         overdue = _alert_center_action_brief(
@@ -9719,7 +8821,7 @@ class FormulaRegressionTests(unittest.TestCase):
             {"SEVERITY": "Medium"},
         ])
         delivery_log = pd.DataFrame([{"DELIVERY_STATUS": "FAILED"}])
-        readiness_rows = pd.DataFrame([{"STATE": "Needs Setup"}])
+        readiness_rows = pd.DataFrame([{"STATE": "Needs Data"}])
 
         rows = _alert_center_exception_rows(
             alerts=alerts,
@@ -9733,7 +8835,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(rows.iloc[0]["SEVERITY"], "High")
         self.assertEqual(by_signal["Critical/high alerts"]["COUNT"], 1)
         self.assertEqual(by_signal["Overdue alert SLAs"]["ROUTE"], "Triage Digest")
-        self.assertEqual(by_signal["Generic alert owners"]["OWNER"], "Platform DBA")
+        self.assertEqual(by_signal["Generic alert routes"]["OWNER"], "Platform DBA")
         self.assertEqual(by_signal["Open action queue"]["COUNT"], 1)
         self.assertEqual(by_signal["Alert control blockers"]["ROUTE"], "Control Health")
         self.assertEqual(by_signal["Delivery failures"]["COUNT"], 1)
@@ -9743,7 +8845,7 @@ class FormulaRegressionTests(unittest.TestCase):
 
         self.assertEqual(brief["state"], "Brief Ready")
         self.assertIn("Choose the alert workflow", brief["headline"])
-        self.assertNotIn("Sources on load", brief["detail"])
+        self.assertNotIn("Inputs on load", brief["detail"])
 
         workflows = _alert_center_brief_workflow_rows()
         self.assertEqual(
@@ -9757,8 +8859,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "Email Delivery",
                 "Action Queue Routing",
                 "Control Health",
-                "Automation Readiness",
-                "Setup & Runbook",
+                "Automation Health",
             ],
         )
         by_view = {row["VIEW"]: row for row in workflows}
@@ -9768,9 +8869,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Alert history", by_view["Issue Inbox"]["SOURCES"])
         self.assertIn("Action queue", by_view["Issue Inbox"]["SOURCES"])
         self.assertIn("Email delivery audit", by_view["Email Delivery"]["SOURCES"])
-        self.assertIn("No-touch automation health", by_view["Automation Readiness"]["SOURCES"])
+        self.assertIn("No-touch automation health", by_view["Automation Health"]["SOURCES"])
         self.assertIn("Open Issue Inbox", by_view["Issue Inbox"]["BUTTON_LABEL"])
-        self.assertIn("No Snowflake sources", by_view["Setup & Runbook"]["SOURCES"])
 
     def test_alert_center_brief_first_default_preserves_explicit_data_view(self):
         import streamlit as st
@@ -9784,9 +8884,9 @@ class FormulaRegressionTests(unittest.TestCase):
             self.assertEqual(st.session_state["alert_center_active_view"], "Control Health")
             self.assertEqual(st.session_state["_alert_center_brief_first_version"], 2)
 
-            st.session_state["alert_center_active_view"] = "Automation Readiness"
+            st.session_state["alert_center_active_view"] = "Automation Health"
             _apply_alert_center_brief_first_default()
-            self.assertEqual(st.session_state["alert_center_active_view"], "Automation Readiness")
+            self.assertEqual(st.session_state["alert_center_active_view"], "Automation Health")
 
             st.session_state.clear()
             _apply_alert_center_brief_first_default()
@@ -9853,12 +8953,12 @@ class FormulaRegressionTests(unittest.TestCase):
         remediation_sql = build_alert_remediation_log_insert_sql(
             event_id=123,
             alert_key="SECURITY_PRIVILEGE_ESCALATION:USER1",
-            remediation_mode="APPROVAL_REQUIRED",
+            remediation_mode="STATUS_REVIEW",
             action_type="Revoke risky grant",
             action_sql="REVOKE ROLE ACCOUNTADMIN FROM USER USER1;",
             before_state="ACCOUNTADMIN granted",
             execution_status="REQUESTED",
-            rollback_guidance="Re-grant only with SECURITYADMIN approval.",
+            rollback_guidance="Re-grant only after DBA status review.",
             actor="DBA_USER",
         ).upper()
 
@@ -9868,7 +8968,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("DATEADD('HOUR', 4, CURRENT_TIMESTAMP())", ack_sql)
         self.assertIn("INSERT INTO", remediation_sql)
         self.assertIn("ALERT_REMEDIATION_LOG", remediation_sql)
-        self.assertIn("APPROVAL_REQUIRED", remediation_sql)
+        self.assertIn("STATUS_REVIEW", remediation_sql)
         self.assertIn("REVOKE ROLE ACCOUNTADMIN", remediation_sql)
 
     def test_alert_data_quality_config_and_event_materialization_sql_are_deployable(self):
@@ -9998,7 +9098,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "SUGGESTED_ACTION": "Fix failed child task before retrying graph.",
                 "PROOF_QUERY": "SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY;",
                 "SLA_HOURS": 4,
-                "REMEDIATION_MODE": "APPROVAL_REQUIRED",
+                "REMEDIATION_MODE": "STATUS_REVIEW",
             },
             {
                 "ALERT_ID": "A2",
@@ -10055,10 +9155,10 @@ class FormulaRegressionTests(unittest.TestCase):
             "CATEGORY": "Optimization",
             "ENTITY_NAME": "WH_LOAD",
             "REMEDIATION_MODE": "RECOMMEND",
-            "REMEDIATION_SQL": "-- Recommend lowering auto-suspend after owner approval.",
+            "REMEDIATION_SQL": "-- Recommend lowering auto-suspend after DBA review.",
         })
 
-        self.assertEqual(contract["REMEDIATION_MODE"], "APPROVAL_REQUIRED")
+        self.assertEqual(contract["REMEDIATION_MODE"], "STATUS_REVIEW")
         self.assertEqual(contract["DANGEROUS_ACTION"], "Yes")
         self.assertIn("ALERT_REMEDIATION_LOG", contract["AUDIT_LOG_REQUIRED"])
         self.assertIn("ROLLBACK", contract["ROLLBACK_GUIDANCE"].upper())

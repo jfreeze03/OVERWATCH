@@ -280,7 +280,7 @@ def render():
 
     days = day_window_selectbox("Lookback", key="aa_days", default=30)
     if st.button("Load Adoption Analytics", key="aa_load"):
-        with render_load_status("Loading adoption evidence", "Adoption evidence ready"):
+        with render_load_status("Loading adoption telemetry", "Adoption telemetry ready"):
             try:
                 st.session_state["aa_data"] = _load_adoption(session, days)
             except Exception as e:
@@ -288,7 +288,7 @@ def render():
 
     data = st.session_state.get("aa_data")
     if not data:
-        st.info("Awaiting filtered adoption evidence.")
+        st.info("Awaiting filtered adoption telemetry.")
         return
 
     summary = data["summary"]
@@ -376,7 +376,7 @@ def render():
         with c2:
             st.subheader("Connected Programs")
             if apps is None:
-                st.info("Program adoption is deferred in mart mode. Use Connected Programs in Security Access for full client evidence.")
+                st.info("Program adoption is deferred in fast-summary mode. Use Connected Programs in Security Access for full client telemetry.")
             elif not apps.empty:
                 alt = _altair()
                 chart = alt.Chart(apps).mark_bar().encode(

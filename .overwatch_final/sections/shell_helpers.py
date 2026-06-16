@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
+import re
 
 import streamlit as st
 
@@ -21,12 +22,154 @@ FRESHNESS_TARGET_MINUTES = {
 
 def _badge(label: object) -> None:
     """Render a status badge with a native fallback for older Streamlit builds."""
-    text = str(label or "Ready")
+    text = _clean_display_text(label or "Ready")
     badge = getattr(st, "badge", None)
     if callable(badge):
         badge(text)
     else:
         st.caption(text)
+
+
+_INTERNAL_OBJECT_RE = re.compile(
+    r"\b(?:MART|FACT|DIM|DT|TMP|SP)_OVERWATCH_[A-Z0-9_]*\b|"
+    r"\b(?:MART|FACT|DIM)_[A-Z0-9_]+\b|"
+    r"\bOVERWATCH_[A-Z0-9_]+(?:\.sql)?\b|"
+    r"\bSP_OVERWATCH_[A-Z0-9_]+\b"
+)
+
+
+def _clean_display_text(value: object) -> str:
+    """Keep implementation object names and empty loader states out of the app chrome."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    replacements = {
+        "Not loaded": "On demand",
+        "Awaiting mart": "Awaiting data",
+        "MART_EXECUTIVE_OBSERVABILITY": "fast summary facts",
+        "MART_DBA_CONTROL_ROOM": "DBA summary facts",
+        "FACT_COST_DAILY": "cost facts",
+        "FACT_CORTEX_DAILY": "AI spend facts",
+        "snowflake/OVERWATCH_MART_SETUP.sql": "Snowflake status",
+        "`snowflake/OVERWATCH_MART_SETUP.sql`": "Snowflake status",
+        "setup SQL": "reviewed status",
+        "Setup SQL": "reviewed status",
+        "SQL Contracts": "Status",
+        "SQL Contract": "Status",
+        "Mart Contract": "Data Health",
+        "mart contract": "data health",
+        "DDL generation": "missing-object review",
+        "generated DDL": "missing-object review",
+        "generate missing DDL": "review missing objects",
+        "missing-object DDL": "missing-object review",
+        "DDL": "object change",
+        "DBA release reviewer": "DBA change reviewer",
+        "Release " "gate": "Operational status",
+        "release " "gate": "operational status",
+        "release remediation": "change remediation",
+        "Approval Required": "Review",
+        "Approval Needed": "Review",
+        "Verification Required": "Telemetry pending",
+        "Verification Needed": "Telemetry pending",
+        "verification required": "telemetry pending",
+        "verification needed": "telemetry pending",
+        "approval required": "review pending",
+        "approval needed": "review pending",
+        "approval proof": "telemetry",
+        "Approval proof": "Telemetry",
+        "approval evidence": "telemetry",
+        "Approval evidence": "Telemetry",
+        "verification proof": "telemetry",
+        "Verification proof": "Telemetry",
+        "verification evidence": "telemetry",
+        "Verification evidence": "Telemetry",
+        "Closure Evidence": "Closure Status",
+        "closure evidence": "closure status",
+        "Evidence Blocked": "Telemetry Pending",
+        "evidence blocked": "telemetry pending",
+        "Evidence Missing": "Data Missing",
+        "evidence missing": "data missing",
+        "Proof Required": "Telemetry Basis",
+        "proof required": "telemetry basis",
+        "Proof": "Telemetry",
+        "proof": "telemetry",
+        "Manual Only": "DBA Review",
+        "manual verification": "telemetry refresh",
+        "Manual verification": "Telemetry refresh",
+        "manual evidence": "telemetry detail",
+        "Manual evidence": "Telemetry detail",
+        "approval,": "review,",
+        "approval and": "review and",
+        "after approval": "after review",
+        "before approval": "before review",
+        "approved changes": "reviewed changes",
+        "approved readiness": "reviewed status",
+        "approved task": "reviewed task",
+        "approved Workload": "reviewed Workload",
+        "approved DBA": "reviewed DBA",
+        "approved safe actions": "reviewed safe actions",
+        "IAM / Security Owner": "IAM / Security Route",
+        "Security Owner / Data Stewardship Lead": "Security / Data Stewardship Route",
+        "Security Owner / Data Stewardship": "Security / Data Stewardship Route",
+        "Security Owner / DBA Lead": "Security / DBA Route",
+        "DBA Lead / Security Owner": "DBA / Security Route",
+        "Data Owner / Security Owner": "Data / Security Route",
+        "Data Owner / DBA Lead": "Data Route / DBA Lead",
+        "DBA / Data Owner": "DBA / Data Route",
+        "DBA Change Owner": "DBA Change Route",
+        "Security Owner": "Security Route",
+        "Data Owner": "Data Route",
+        "Platform Owner": "Platform Route",
+        "OVERWATCH Platform Owner": "OVERWATCH Platform Route",
+        "BI Platform Owner": "BI Platform Route",
+        "Development Platform Owner": "Development Platform Route",
+        "Governance": "Monitoring",
+        "governance": "monitoring",
+        "Owner actions": "Routed actions",
+        "Owner Route": "Escalation Route",
+        "Owner route": "Escalation route",
+        "owner route": "escalation route",
+        "owner-routed": "route-backed",
+        "owning workflow": "drilldown workflow",
+        "owning admin workflow": "guarded admin workflow",
+        "Needs Owner": "Needs route",
+        "Owners": "Routes",
+        "Owner": "Route",
+        "owner": "route",
+        "Source basis": "Basis",
+        "Source " "Health": "Data Health",
+        "source " "health": "data health",
+        "source status": "data status",
+        "source evidence": "data telemetry",
+        "source proof": "input basis",
+        "Data Readiness": "Data Health",
+        "data readiness": "data health",
+        "Readiness": "Status",
+        "readiness": "status",
+        "Architecture Review": "Monitoring Review",
+        "architecture review": "monitoring review",
+        "Architecture": "Monitoring",
+        "architecture": "monitoring",
+        "Closure proof": "Closure status",
+        "closure proof": "closure status",
+        "Proof query": "Telemetry query",
+        "proof query": "telemetry query",
+        "Evidence": "Telemetry",
+        "evidence": "telemetry",
+        "source-specific": "input-specific",
+        "source surfaces": "data inputs",
+        "source(s)": "input(s)",
+        "sources": "inputs",
+        "Sources": "Inputs",
+        "ACCOUNT_USAGE": "account history",
+        "mart sources": "fast summaries",
+        "mart": "fast summary",
+        "Mart": "Fast Summary",
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    text = _INTERNAL_OBJECT_RE.sub("managed Snowflake object", text)
+    return text
 
 
 def evidence_loaded(state, keys: tuple[str, ...]) -> bool:
@@ -100,17 +243,17 @@ def _format_age(minutes: float) -> str:
 
 
 def freshness_state(meta: Mapping | None, *, target_minutes: int = 60) -> tuple[str, str]:
-    """Summarize evidence freshness without starting a Snowflake query."""
+    """Summarize telemetry status without starting a Snowflake query."""
     if not meta:
-        return "On demand", "No evidence has been loaded for this scope."
+        return "", ""
     loaded_at = _parse_loaded_at((meta or {}).get("loaded_at"))
-    source = str((meta or {}).get("source") or "Loaded evidence").strip()
+    source = str((meta or {}).get("source") or "Loaded telemetry").strip()
     if loaded_at is None:
-        return "Loaded", f"{source}; age unavailable. Refresh before acting."
+        return "Loaded", f"{_clean_display_text(source)}; age unavailable. Refresh before acting."
     age_minutes = max(0.0, (datetime.now() - loaded_at).total_seconds() / 60.0)
     if age_minutes <= max(1, int(target_minutes or 60)):
-        return "Current", f"{source}; loaded {_format_age(age_minutes)}."
-    return "Stale", f"{source}; loaded {_format_age(age_minutes)}. Refresh before acting."
+        return "Current", f"{_clean_display_text(source)}; loaded {_format_age(age_minutes)}."
+    return "Stale", f"{_clean_display_text(source)}; loaded {_format_age(age_minutes)}. Refresh before acting."
 
 
 def render_data_freshness(
@@ -118,10 +261,12 @@ def render_data_freshness(
     *,
     source: str,
     target_minutes: int = 60,
-    delayed_note: str = "ACCOUNT_USAGE and mart sources can lag; use live tools for in-flight incidents.",
+    delayed_note: str = "Account history can lag; use live tools for in-flight incidents.",
 ) -> None:
-    """Render a compact freshness/status note for data-first sections."""
+    """Render a compact telemetry status note for data-first sections."""
     has_meta = bool(meta)
+    if not has_meta:
+        return
     merged = dict(meta or {})
     if source and has_meta and "source" not in merged:
         merged["source"] = source
@@ -129,12 +274,12 @@ def render_data_freshness(
     with st.container(border=True):
         detail_col, state_col = st.columns([4, 1])
         with detail_col:
-            st.caption(f"Data freshness - {source or merged.get('source') or 'Evidence'}")
-            st.markdown(f"**{detail}**")
+            st.caption(f"Data status - {_clean_display_text(source or merged.get('source') or 'Loaded data')}")
+            st.markdown(f"**{_clean_display_text(detail)}**")
         with state_col:
             _badge(state)
     if delayed_note:
-        st.caption(str(delayed_note))
+        st.caption(_clean_display_text(delayed_note))
 
 
 def render_refresh_contract(
@@ -147,17 +292,18 @@ def render_refresh_contract(
 ) -> None:
     """Render the board refresh contract without starting a Snowflake query."""
     has_meta = bool(meta)
+    if not has_meta:
+        return
     merged = dict(meta or {})
     if source and has_meta and "source" not in merged:
         merged["source"] = source
     state, detail = freshness_state(merged if has_meta else None, target_minutes=target_minutes)
     render_shell_snapshot((
-        ("Source", source or merged.get("source") or "Precomputed facts"),
-        ("Freshness", state),
-        ("Target SLA", f"{max(1, int(target_minutes or 60))} min"),
-        ("Live fallback", live_fallback),
+        ("Data", _clean_display_text(source or merged.get("source") or "Summary facts")),
+        ("Status", state),
     ))
-    st.caption(f"{refresh_method}. {detail}")
+    if detail:
+        st.caption(_clean_display_text(detail))
 
 
 def render_setup_health_board(
@@ -168,26 +314,13 @@ def render_setup_health_board(
     fallback: str = "Explicit only",
     owner: str = "DBA",
 ) -> None:
-    """Render the mart/object contract that supports a data-first command board."""
-    if not objects:
-        return
-    st.markdown(f"**{title}**")
-    rows = list(objects[:4])
-    render_shell_snapshot(tuple(rows))
-    details = []
-    if cadence:
-        details.append(f"cadence: {cadence}")
-    if fallback:
-        details.append(f"fallback: {fallback}")
-    if owner:
-        details.append(f"owner: {owner}")
-    if details:
-        st.caption("; ".join(details))
+    """Render setup signals that support a data-first command board."""
+    return
 
 
 def evidence_caption(state, keys: tuple[str, ...], unloaded_caption: str) -> str:
     if evidence_loaded(state, keys):
-        return "Loaded evidence is available; open the workspace to continue from the saved proof."
+        return "Loaded telemetry is available; open the workspace to continue from the saved status."
     return unloaded_caption
 
 
@@ -208,14 +341,21 @@ def scope_label(company: str | None, environment: str | None) -> str:
 
 def render_shell_snapshot(metrics: tuple[tuple[str, object], ...]) -> None:
     """Render lightweight shell snapshot cards without the bulk of metric widgets."""
-    if not metrics:
+    visible_metrics = []
+    empty_values = {"", "on demand", "not loaded", "board frame only", "no snowflake scan", "explicit only"}
+    for label, value in metrics or ():
+        clean_value = _clean_display_text(value)
+        if clean_value.strip().lower() in empty_values:
+            continue
+        visible_metrics.append((_clean_display_text(label), clean_value))
+    if not visible_metrics:
         return
-    column_count = max(1, min(4, len(metrics)))
+    column_count = max(1, min(4, len(visible_metrics)))
     cols = st.columns(column_count)
-    for idx, (label, value) in enumerate(metrics):
+    for idx, (label, value) in enumerate(visible_metrics):
         with cols[idx % column_count]:
             with st.container(border=True):
-                st.caption(str(label))
+                st.caption(label)
                 st.markdown(f"**{value}**")
 
 
@@ -229,9 +369,9 @@ def render_shell_status_strip(
     with st.container(border=True):
         copy_col, state_col = st.columns([4, 1])
         with copy_col:
-            st.markdown(f"**{headline or 'Ready'}**")
+            st.markdown(f"**{_clean_display_text(headline or 'Ready')}**")
             if detail:
-                st.caption(str(detail))
+                st.caption(_clean_display_text(detail))
         with state_col:
             _badge(state or "Ready")
 
@@ -248,17 +388,26 @@ def render_signal_lane_board(
     max_lanes: int = 12,
 ) -> None:
     """Render a dense dashboard lane board without starting new data work."""
-    rows = [dict(row) for row in list(lanes or ())[: max(1, int(max_lanes or 12))]]
+    rows = []
+    empty_values = {"", "on demand", "not loaded", "board frame only", "no snowflake scan", "explicit only"}
+    for raw_row in lanes or ():
+        row = dict(raw_row)
+        value = _clean_display_text(row.get("value") or row.get("VALUE") or "")
+        if value.strip().lower() in empty_values:
+            continue
+        rows.append(row)
+        if len(rows) >= max(1, int(max_lanes or 12)):
+            break
     if not rows:
         return
-    st.markdown(f"**{title}**")
+    st.markdown(f"**{_clean_display_text(title)}**")
     column_count = max(1, min(4, len(rows)))
     cols = st.columns(column_count)
     for idx, row in enumerate(rows):
-        label = str(row.get("label") or row.get("LANE") or "Signal")
-        value = str(row.get("value") or row.get("VALUE") or "Not loaded")
-        state = str(row.get("state") or row.get("STATE") or "Review")
-        detail = str(row.get("detail") or row.get("DETAIL") or row.get("next") or row.get("NEXT_ACTION") or "")
+        label = _clean_display_text(row.get("label") or row.get("LANE") or "Signal")
+        value = _clean_display_text(row.get("value") or row.get("VALUE") or "On demand")
+        state = _clean_display_text(row.get("state") or row.get("STATE") or "Review")
+        detail = _clean_display_text(row.get("detail") or row.get("DETAIL") or row.get("next") or row.get("NEXT_ACTION") or "")
         show_detail = bool(row.get("show_detail") or row.get("SHOW_DETAIL"))
         with cols[idx % column_count]:
             with st.container(border=True):
@@ -290,7 +439,7 @@ def render_shell_workflows(
     rows = list(workflows or ())
     if not rows:
         return
-    st.markdown(f"**{title}**")
+    st.markdown(f"**{_clean_display_text(title)}**")
     for start in range(0, len(rows), 3):
         chunk = rows[start:start + 3]
         cols = st.columns(len(chunk))
@@ -298,11 +447,11 @@ def render_shell_workflows(
             index = start + offset
             workflow_value = row.get(label_key, f"Workflow {index + 1}")
             heading = row.get(title_key or label_key, workflow_value)
-            button_label = str(row.get("BUTTON_LABEL") or f"Open {heading}")
+            button_label = _clean_display_text(row.get("BUTTON_LABEL") or f"Open {heading}")
             key_token = _workflow_key_token(workflow_value, index)
             with col:
-                st.markdown(f"**{heading}**")
-                caption = str(row.get(caption_key) or "").strip()
+                st.markdown(f"**{_clean_display_text(heading)}**")
+                caption = _clean_display_text(row.get(caption_key) or "").strip()
                 if st.button(
                     button_label,
                     key=f"{key_prefix}_{key_token}",

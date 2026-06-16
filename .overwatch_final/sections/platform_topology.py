@@ -213,7 +213,7 @@ def render():
     if days > 30 and row_limit > 500:
         defer_source_note("Large topology windows can scan more ACCOUNT_USAGE history; start with KPIs and raise limits only for exports.")
     if st.button("Load Platform Topology", key="topology_load"):
-        with render_load_status("Building topology evidence", "Topology evidence ready"):
+        with render_load_status("Building topology telemetry", "Topology telemetry ready"):
             try:
                 st.session_state["topology_data"] = _load_topology(session, days, row_limit)
             except Exception as e:
@@ -221,7 +221,7 @@ def render():
 
     data = st.session_state.get("topology_data")
     if not data:
-        st.info("Awaiting filtered topology evidence.")
+        st.info("Awaiting filtered topology telemetry.")
         return
     defer_source_note(
         metric_confidence_label("estimated"),
@@ -358,7 +358,7 @@ def render():
 
     elif active_view == "Report Pack":
         st.subheader("Topology Report Pack")
-        st.caption("Use these exports for architecture reviews, access cleanups, and cost ownership conversations.")
+        st.caption("Use these exports for topology monitoring, access cleanups, and cost conversations.")
         download_csv(wh_user, "topology_report_warehouse_user.csv", "Export Warehouse/User Map")
         download_csv(db_schema, "topology_report_database_schema.csv", "Export Database/Schema Map")
         download_csv(role_users, "topology_report_role_users.csv", "Export Role/User Map")

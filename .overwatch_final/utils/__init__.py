@@ -47,11 +47,8 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "dba_effective_readiness_score", "dba_deployment_label",
         "dba_control_plane_section_scorecards", "dba_control_plane_component_rows",
     ),
-    "owner_directory": (
-        "OWNER_CONTEXT_COLUMNS", "OWNER_DIRECTORY_TABLE", "OWNER_DIRECTORY_VIEW",
-        "build_owner_directory_ddl", "default_owner_directory",
-        "enrich_owner_dataframe", "load_owner_directory", "owner_directory_fqn",
-        "owner_directory_readiness_board", "owner_directory_view_fqn", "resolve_owner_context",
+    "monitor_context": (
+        "OWNER_CONTEXT_COLUMNS", "resolve_owner_context",
     ),
     "workload_audit": (
         "WORKLOAD_RECOVERY_AUDIT_TABLE", "build_workload_recovery_audit_ddl",
@@ -155,19 +152,6 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "load_warehouse_options",
         "load_task_inventory", "load_live_task_runs", "load_warehouse_inventory",
         "build_unclassified_assets_sql",
-    ),
-    "futures_governance": (
-        "PLATFORM_FUTURES_CONTROL_TABLE", "PLATFORM_FUTURES_EVIDENCE_TABLE",
-        "PLATFORM_FUTURES_LATEST_VIEW", "PLATFORM_FUTURES_COVERAGE_VIEW",
-        "AGENTIC_AI_CONTROL_AREAS",
-        "build_platform_futures_evidence_ddl",
-        "build_forward_platform_control_register", "build_platform_futures_adoption_gate",
-        "build_agentic_ai_surface_scorecard",
-        "build_platform_futures_board",
-        "classify_adaptive_compute_readiness", "load_adaptive_compute_readiness",
-        "load_agent_mcp_inventory", "load_ai_usage_guardrails",
-        "classify_ai_security_guardrails", "load_ai_security_guardrails",
-        "load_horizon_semantic_readiness", "load_openflow_operations",
     ),
     "mart": (
         "MartResult", "mart_object_name", "load_mart_table",

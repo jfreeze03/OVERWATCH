@@ -52,32 +52,31 @@ DBA_TOOL_GROUPS = {
         "Dynamic Tables",
         "Replication",
     ],
-    "Governance": [
+    "Object Monitoring": [
         "Network & Sessions",
         "Unused Objects",
         "Schema Compare",
         "Data Compare",
         "Recent Objects",
     ],
-    "Cost & Setup": [
-        "Mart Readiness",
+    "Cost & Health": [
+        "Summary Status",
         "Serverless Costs",
         "Cost Formula Audit",
         "Cortex AI Limits",
-        "Usage Log",
-        "Setup Status",
+        "Data Health",
     ],
 }
 
 DBA_TOOL_FOCUS_HINTS = {
-    "Governance": "Start with Governance for schema compare, recent objects, unused objects, and object drift.",
+    "Object Monitoring": "Start with Object Monitoring for schema compare, recent objects, unused objects, and object drift.",
     "Data Movement": "Start with Data Movement for loads, Snowpipe, dynamic tables, and replication.",
-    "Controlled Actions": "Start with Warehouse Ops for query/task/warehouse actions, then Cost & Setup for setup/audit evidence.",
+    "Controlled Actions": "Start with Warehouse Ops for query/task/warehouse actions, then Cost & Health for audit telemetry.",
 }
 
 DBA_TOOL_FOCUS_GROUPS = {
-    "Governance": "Governance",
+    "Object Monitoring": "Object Monitoring",
     "Data Movement": "Data Movement",
     "Controlled Actions": "Warehouse Ops",
-    "Cost": "Cost & Setup",
+    "Cost": "Cost & Health",
 }

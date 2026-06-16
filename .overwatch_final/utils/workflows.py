@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+import re
 from contextlib import contextmanager
 from importlib import import_module
 from collections.abc import Mapping, Sequence
@@ -34,6 +35,230 @@ _EXACT_STATUS_DISPLAY_LABELS = {
     "Not Loaded": "Load on demand",
     "Refresh Needed": "Refresh available",
 }
+_DISPLAY_TEXT_REPLACEMENTS = (
+    (r"\bSource\s+Health\b", "Data Health"),
+    (r"\bsource\s+health\b", "data health"),
+    (r"\bsource status\b", "data status"),
+    (r"\bsource readiness\b", "data health"),
+    (r"\bsource confidence\b", "measurement confidence"),
+    (r"\bsource evidence\b", "data telemetry"),
+    (r"\bsource proof\b", "input basis"),
+    (r"\bsource-specific\b", "input-specific"),
+    (r"\bsource surface\(s\)\b", "data input(s)"),
+    (r"\bsource surfaces\b", "data inputs"),
+    (r"\bsource-state\b", "data-state"),
+    (r"\bsource state\b", "data state"),
+    (r"\bsource\(s\)", "input(s)"),
+    (r"\bsources\b", "inputs"),
+    (r"\bSources\b", "Inputs"),
+    (r"\bOVERWATCH mart\b", "fast summary"),
+    (r"\bmart contract\b", "data health"),
+    (r"\bMart Contract\b", "Data Health"),
+    (r"\bmart\b", "fast summary"),
+    (r"\bMart\b", "Fast Summary"),
+    (r"\bGenerated SQL Fix\b", "Proposed action"),
+    (r"\bGenerated SQL\b", "Proposed action"),
+    (r"\bSQL preview\b", "action preview"),
+    (r"\bSQL Preview\b", "Action Preview"),
+    (r"\bDDL\b", "object change"),
+    (r"\bDCL\b", "access change"),
+    (r"\bOwner Approval Status\b", "Telemetry Status"),
+    (r"\bOwner Approval Note\b", "Status Note"),
+    (r"\bOwner Approval By\b", "Status By"),
+    (r"\bOwner Approval At\b", "Status At"),
+    (r"\bOwner Approval\b", "Status"),
+    (r"\bowner\s+approval\b", "status"),
+    (r"\bVerification Status\b", "Telemetry Status"),
+    (r"\bVerification Note\b", "Status Note"),
+    (r"\bVerification By\b", "Status By"),
+    (r"\bVerification At\b", "Status At"),
+    (r"\bVerification Query\b", "Telemetry Query"),
+    (r"\bProof Query\b", "Telemetry Query"),
+    (r"\bApproval Required\b", "Review"),
+    (r"\bApproval Needed\b", "Review"),
+    (r"\bVerification Required\b", "Telemetry Pending"),
+    (r"\bVerification Needed\b", "Telemetry Pending"),
+    (r"\bApproval Route Ready\b", "Route Ready"),
+    (r"\bapproval required\b", "review pending"),
+    (r"\bverification required\b", "telemetry pending"),
+    (r"\bverification needed\b", "telemetry pending"),
+    (r"\bapproval proof\b", "telemetry"),
+    (r"\bapproval evidence\b", "telemetry"),
+    (r"\bverification proof\b", "telemetry"),
+    (r"\bverification evidence\b", "telemetry"),
+    (r"\bClosure Evidence\b", "Closure Status"),
+    (r"\bclosure evidence\b", "closure status"),
+    (r"\bEvidence Blocked\b", "Telemetry Pending"),
+    (r"\bEvidence Missing\b", "Data Missing"),
+    (r"\bProof Required\b", "Telemetry Basis"),
+    (r"\bData Readiness\b", "Data Health"),
+    (r"\bdata readiness\b", "data health"),
+    (r"\bReadiness\b", "Status"),
+    (r"\breadiness\b", "status"),
+    (r"\bArchitecture Review\b", "Monitoring Review"),
+    (r"\barchitecture review\b", "monitoring review"),
+    (r"\bArchitecture\b", "Monitoring"),
+    (r"\barchitecture\b", "monitoring"),
+    (r"\bclosure proof\b", "closure status"),
+    (r"\bproof query\b", "telemetry query"),
+    (r"\bProof\b", "Telemetry"),
+    (r"\bEvidence\b", "Telemetry"),
+    (r"\bproof\b", "telemetry"),
+    (r"\bevidence\b", "telemetry"),
+    (r"\bManual Only\b", "DBA Review"),
+    (r"\bmanual verification\b", "telemetry refresh"),
+    (r"\bmanual evidence\b", "telemetry detail"),
+    (r"\bapproved changes\b", "reviewed changes"),
+    (r"\bapproved action\b", "reviewed action"),
+    (r"\bapproved\b", "reviewed"),
+    (r"\bapproval\b", "review"),
+    (r"\bIAM / Security Owner\b", "IAM / Security Route"),
+    (r"\bSecurity Owner / Data Stewardship Lead\b", "Security / Data Stewardship Route"),
+    (r"\bSecurity Owner / Data Stewardship\b", "Security / Data Stewardship Route"),
+    (r"\bSecurity Owner / DBA Lead\b", "Security / DBA Route"),
+    (r"\bDBA Lead / Security Owner\b", "DBA / Security Route"),
+    (r"\bData Owner / Security Owner\b", "Data / Security Route"),
+    (r"\bData Owner / DBA Lead\b", "Data Route / DBA Lead"),
+    (r"\bDBA / Data Owner\b", "DBA / Data Route"),
+    (r"\bDBA Change Owner\b", "DBA Change Route"),
+    (r"\bSecurity Owner\b", "Security Route"),
+    (r"\bData Owner\b", "Data Route"),
+    (r"\bPlatform Owner\b", "Platform Route"),
+    (r"\bOVERWATCH Platform Owner\b", "OVERWATCH Platform Route"),
+    (r"\bBI Platform Owner\b", "BI Platform Route"),
+    (r"\bDevelopment Platform Owner\b", "Development Platform Route"),
+    (r"\bGovernance\b", "Monitoring"),
+    (r"\bgovernance\b", "monitoring"),
+    (r"\bOwner Route\b", "Escalation Route"),
+    (r"\bOwner route\b", "Escalation route"),
+    (r"\bowner route\b", "escalation route"),
+    (r"\bOwner Source\b", "Route Basis"),
+    (r"\bOwner Evidence\b", "Route Basis"),
+    (r"\bOwner actions\b", "Routed actions"),
+    (r"\bOwners\b", "Routes"),
+    (r"\bNeeds Owner\b", "Needs route"),
+    (r"\bowning workflow\b", "drilldown workflow"),
+    (r"\bOwner\b", "Route"),
+    (r"\bowner\b", "route"),
+    (r"\bVerification\b", "Telemetry"),
+    (r"\bverification\b", "telemetry"),
+    (r"\bReview Group\b", "Escalation"),
+    (r"\bReview Group\b", "escalation"),
+    (r"\bApprover\b", "Reviewer"),
+    (r"\bapprover\b", "reviewer"),
+    (r"\bSecurity Monitoring\b", "Security Monitoring"),
+)
+
+
+def _clean_operator_display_value(value):
+    if value is None:
+        return value
+    try:
+        import pandas as pd
+
+        if pd.isna(value):
+            return value
+    except Exception:
+        pass
+    if not isinstance(value, str):
+        return value
+    cleaned = value
+    for pattern, new in _DISPLAY_TEXT_REPLACEMENTS:
+        cleaned = re.sub(pattern, new, cleaned)
+    return cleaned
+
+
+def clean_operator_display_text(df):
+    """Return a display-only dataframe with implementation terms softened."""
+    if df is None or getattr(df, "empty", True):
+        return df
+    frame = df.copy()
+    frame = frame.rename(columns={
+        "SOURCE": "INPUT",
+        "OWNER": "ROUTE",
+        "OWNER_EMAIL": "ROUTE_EMAIL",
+        "OWNER_SOURCE": "ROUTE_BASIS",
+        "OWNER_EVIDENCE": "ROUTE_EVIDENCE",
+        "Owner": "Route",
+        "Owner Email": "Route Email",
+        "Owner Source": "Route Basis",
+        "Owner Evidence": "Route Basis",
+        "Owner Route": "Escalation Route",
+        "EVIDENCE": "TELEMETRY",
+        "EVIDENCE_REQUIRED": "TELEMETRY_BASIS",
+        "COMMAND_EVIDENCE_REQUIRED": "TELEMETRY_BASIS",
+        "Evidence": "Telemetry",
+        "Evidence Packet": "Telemetry Summary",
+        "Evidence Package": "Telemetry Package",
+        "Evidence Required": "Telemetry Basis",
+        "PROOF_BLOCKS": "TELEMETRY_BLOCKS",
+        "PROOF_REQUIRED": "TELEMETRY_BASIS",
+        "Proof Blocks": "Telemetry Blocks",
+        "Proof Required": "Telemetry Basis",
+        "Proof Query": "Telemetry Query",
+        "SOURCE_ISSUES": "DATA_ISSUES",
+        "FIXED_WITHOUT_VERIFICATION": "CLOSED_PENDING_TELEMETRY",
+        "VERIFICATION_QUERY_GAP_ROWS": "TELEMETRY_QUERY_GAP_ROWS",
+        "VERIFICATION_STATUS": "TELEMETRY_STATUS",
+        "VERIFICATION_QUERY": "TELEMETRY_QUERY",
+        "VERIFICATION_RESULT": "TELEMETRY_RESULT",
+        "VERIFICATION_NOTES": "STATUS_NOTES",
+        "Verification Query Gap Rows": "Telemetry Query Gap Rows",
+        "Verification Status": "Telemetry Status",
+        "Verification Query": "Telemetry Query",
+        "Verification Result": "Telemetry Result",
+        "Verification Notes": "Status Notes",
+        "OWNER_APPROVAL_STATUS": "TELEMETRY_STATUS",
+        "OWNER_APPROVAL_STATE": "TELEMETRY_STATE",
+        "OWNER_APPROVAL_NOTE": "STATUS_NOTE",
+        "OWNER_APPROVAL_BY": "STATUS_BY",
+        "OWNER_APPROVAL_AT": "STATUS_AT",
+        "OWNER_APPROVAL_GAP_ROWS": "TELEMETRY_GAP_ROWS",
+        "Owner Approval Status": "Telemetry Status",
+        "Owner Approval State": "Telemetry State",
+        "Owner Approval Note": "Status Note",
+        "Owner Approval By": "Status By",
+        "Owner Approval At": "Status At",
+        "Owner Approval Gap Rows": "Telemetry Gap Rows",
+        "PROOF_QUERY": "TELEMETRY_QUERY",
+        "RECOVERY_EVIDENCE": "RECOVERY_STATUS",
+        "Recovery Evidence": "Recovery Status",
+        "APPROVAL_GROUP": "REVIEW_GROUP",
+        "APPROVAL_REQUIRED": "REVIEW_REQUIRED",
+        "APPROVAL_STATE": "REVIEW_STATE",
+        "APPROVAL_ROUTE_READY": "ROUTE_READY",
+        "APPROVAL_REQUIRED_ROWS": "REVIEW_REQUIRED_ROWS",
+        "APPROVAL_BLOCKS": "REVIEW_BLOCKS",
+        "APPROVER_GAP_ROWS": "REVIEWER_GAP_ROWS",
+        "APPROVAL_GATE": "REVIEW_GATE",
+        "Approval Group": "Review Group",
+        "Approval Required": "Review Required",
+        "Approval State": "Review State",
+        "Approval Route Ready": "Route Ready",
+        "Approval Required Rows": "Review Required Rows",
+        "Approval Blocks": "Review Blocks",
+        "Approver Gap Rows": "Reviewer Gap Rows",
+        "Approval Gate": "Review Gate",
+        "MANUAL_SQL_STATE": "ACTION_SQL_STATE",
+        "MANUAL_ACTION_SQL": "ACTION_SQL",
+        "Manual SQL State": "Action SQL State",
+        "Manual Action SQL": "Action SQL",
+        "AUDIT_EVIDENCE_REQUIRED": "AUDIT_TELEMETRY_REQUIRED",
+        "APPROVER": "REVIEWER",
+        "Approver": "Reviewer",
+        "OWNER_GAP_ROWS": "ROUTE_GAP_ROWS",
+        "Owner Gap Rows": "Route Gap Rows",
+        "SOURCE_CONFIDENCE": "MEASUREMENT_BASIS",
+        "SOURCE_STATUS": "DATA_STATUS",
+        "Source Confidence": "Measurement Basis",
+        "Source Status": "Data Status",
+    })
+    object_columns = frame.select_dtypes(include=["object", "string"]).columns
+    for column in object_columns:
+        frame[column] = frame[column].map(_clean_operator_display_value)
+    return frame
+
+
 def prioritize_context_columns(
     df,
     *,
@@ -113,12 +338,12 @@ def _operator_status_label(value, column: str = ""):
     if text == "Pending":
         column_upper = str(column or "").upper()
         if "VERIFICATION" in column_upper:
-            return "Awaiting verification"
+            return "Awaiting telemetry"
         if "APPROVAL" in column_upper:
-            return "Awaiting approval"
+            return "Awaiting review"
         return "Awaiting action"
     if text.lower().endswith(" pending"):
-        return f"{text[:-8].rstrip()} Needed"
+        return _clean_operator_display_value(f"{text[:-8].rstrip()} Needed")
     return value
 
 
@@ -363,6 +588,92 @@ def render_priority_dataframe(
         return
 
     view = df.copy()
+    hidden_ui_columns = {
+        "Generated SQL Fix",
+        "GENERATED_SQL_FIX",
+        "Generated SQL",
+        "GENERATED_SQL",
+        "SQL",
+        "SQL_TEXT",
+        "SQL_PREVIEW",
+        "SQL_PACKAGE",
+        "QUERY_PREVIEW",
+        "Proof Query",
+        "PROOF_QUERY",
+        "Verification Query",
+        "VERIFICATION_QUERY",
+        "Telemetry Query",
+        "TELEMETRY_QUERY",
+        "DDL_STATEMENT",
+        "DDL Statement",
+        "DDL_REVIEW_SQL",
+        "DDL Review SQL",
+        "GENERATED_DDL",
+        "Generated DDL",
+        "ROLLBACK_SQL",
+        "Rollback SQL",
+        "CHANGE_SQL",
+        "Change SQL",
+        "PRECHECK_SQL",
+        "Precheck SQL",
+        "APPROVAL_GROUP",
+        "Approval Group",
+        "OWNER",
+        "Owner",
+        "OWNER_NAME",
+        "Owner Name",
+        "OWNER_EMAIL",
+        "Owner Email",
+        "APPROVER",
+        "Approver",
+        "APPROVAL_STATE",
+        "Approval State",
+        "APPROVAL_REQUIRED",
+        "Approval Required",
+        "OWNER_APPROVAL_STATUS",
+        "Owner Approval Status",
+        "OWNER_APPROVAL_STATE",
+        "Owner Approval State",
+        "OWNER_APPROVAL_NOTE",
+        "Owner Approval Note",
+        "OWNER_APPROVAL_BY",
+        "Owner Approval By",
+        "OWNER_APPROVAL_AT",
+        "Owner Approval At",
+        "OWNER_ROUTE_READY",
+        "Owner Route Ready",
+        "OWNER_ROUTE_STATE",
+        "Owner Route State",
+        "OWNER_SOURCE",
+        "Owner Source",
+        "OWNER_EVIDENCE",
+        "Owner Evidence",
+        "NEXT_OWNER_ACTION",
+        "Next Owner Action",
+    }
+
+    def _is_hidden_ui_column(column: object) -> bool:
+        text = str(column or "")
+        upper = text.upper()
+        return (
+            text in hidden_ui_columns
+            or "SQL" in upper
+            or "DDL" in upper
+            or "DCL" in upper
+            or "APPROVAL" in upper
+            or "READINESS" in upper
+            or "OWNER ROUTE" in upper
+            or upper == "OWNER"
+            or upper == "OWNER_NAME"
+            or upper == "OWNER_EMAIL"
+            or upper.startswith("OWNER_ROUTE")
+            or upper.startswith("OWNER_APPROVAL")
+            or "OWNER APPROVAL" in upper
+            or "SCORE" in upper
+            or upper == "WEIGHT"
+            or upper.endswith("_WEIGHT")
+            or upper.endswith(" WEIGHT")
+        )
     if sort_by:
         available_sort = [column for column in sort_by if column in view.columns]
         severity_rank_cols: list[str] = []
@@ -397,6 +708,8 @@ def render_priority_dataframe(
         if severity_rank_cols:
             view = view.drop(columns=severity_rank_cols, errors="ignore")
 
+    view = view.drop(columns=[column for column in view.columns if _is_hidden_ui_column(column)], errors="ignore")
+
     if priority_columns:
         priority = [column for column in priority_columns if column in view.columns]
         context_columns = [
@@ -408,10 +721,12 @@ def render_priority_dataframe(
             view = view[columns]
     view = prioritize_context_columns(view)
     view = add_cost_companion_columns(view)
-    display_view = apply_operator_status_labels(view)
+    display_view = clean_operator_display_text(apply_operator_status_labels(view))
 
     visible_rows = min(len(view), int(max_rows or 25))
-    st.markdown(f"**{title}**")
+    display_title = _clean_operator_display_value(str(title or "Priority view"))
+    display_raw_label = _clean_operator_display_value(str(raw_label or "Full detail"))
+    st.markdown(f"**{display_title}**")
     st.caption(f"Showing {visible_rows:,} of {len(df):,}")
     dataframe_kwargs = {
         "use_container_width": True,
@@ -420,10 +735,10 @@ def render_priority_dataframe(
     if height is not None:
         dataframe_kwargs["height"] = height
     default_column_config = {
-        "CONFIDENCE": st.column_config.TextColumn("Source Basis"),
-        "ALLOCATION_CONFIDENCE": st.column_config.TextColumn("Allocation Source Basis"),
+        "CONFIDENCE": st.column_config.TextColumn("Measurement Basis"),
+        "ALLOCATION_CONFIDENCE": st.column_config.TextColumn("Allocation Measurement"),
         "SCOPE_CONFIDENCE": st.column_config.TextColumn("Scope Basis"),
-        "SOURCE_CONFIDENCE": st.column_config.TextColumn("Source Basis"),
+        "SOURCE_CONFIDENCE": st.column_config.TextColumn("Measurement Basis"),
     }
     active_column_config = {
         column: config
@@ -436,7 +751,7 @@ def render_priority_dataframe(
         dataframe_kwargs["column_config"] = active_column_config
     st.dataframe(display_view.head(max_rows), **dataframe_kwargs)
     if len(df) > max_rows:
-        with st.expander(f"{raw_label} ({len(df):,} rows)", expanded=False):
+        with st.expander(f"{display_raw_label} ({len(df):,} rows)", expanded=False):
             st.caption(
                 "Full detail is loaded only when requested so page navigation stays fast."
             )
@@ -453,10 +768,11 @@ def render_priority_dataframe(
                 raw_kwargs = {"use_container_width": True, "hide_index": True}
                 if active_column_config:
                     raw_kwargs["column_config"] = active_column_config
+                raw_view = df.drop(columns=[column for column in df.columns if _is_hidden_ui_column(column)], errors="ignore")
                 st.dataframe(
-                    apply_operator_status_labels(
-                        add_cost_companion_columns(prioritize_context_columns(df))
-                    ),
+                    clean_operator_display_text(apply_operator_status_labels(
+                        add_cost_companion_columns(prioritize_context_columns(raw_view))
+                    )),
                     **raw_kwargs,
                 )
 

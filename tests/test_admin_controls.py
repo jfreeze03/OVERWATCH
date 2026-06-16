@@ -30,11 +30,6 @@ from sections.dba_tools import (  # noqa: E402
     _schema_compare_persistence_sql,
     _schema_compare_show_objects_sql,
 )
-from sections.security_access import (  # noqa: E402
-    _build_access_action_queue_record,
-    _build_role_grant_change_plan,
-    _build_role_grant_control_board,
-)
 from utils.admin import (  # noqa: E402
     ADMIN_ACTIONS_KEY,
     admin_actions_default_enabled,
@@ -58,8 +53,6 @@ from utils.action_queue import (  # noqa: E402
     update_action_status_with_evidence,
     verification_query_safety_issues,
 )
-from utils.owner_directory import build_owner_directory_ddl  # noqa: E402
-from utils.futures_governance import build_platform_futures_evidence_ddl  # noqa: E402
 from utils.workload_audit import build_workload_recovery_audit_ddl  # noqa: E402
 
 
@@ -508,123 +501,15 @@ class AdminControlTests(unittest.TestCase):
             st.session_state.clear()
             st.session_state.update(previous)
 
-    def test_role_grant_plan_builds_sql_rollback_and_preflight(self):
-        plan = _build_role_grant_change_plan(
-            "grant",
-            "app_readonly",
-            "user",
-            "etl_runner",
-            "INC12345 approved least-privilege access",
-            "ALFA Finance Data Owner",
-            "SECURITYADMIN_APPROVER",
-            "INC12345",
-            "2026-06-30",
-        )
+    def test_security_access_has_no_role_grant_change_planner(self):
+        security_access_text = (APP_ROOT / "sections" / "security_access.py").read_text(encoding="utf-8")
 
-        self.assertEqual(plan["change_sql"], 'GRANT ROLE "APP_READONLY" TO USER "ETL_RUNNER";')
-        self.assertEqual(plan["rollback_sql"], 'REVOKE ROLE "APP_READONLY" FROM USER "ETL_RUNNER";')
-        self.assertEqual(plan["confirmation_text"], "GRANT APP_READONLY TO USER ETL_RUNNER")
-        self.assertTrue(plan["metadata_complete"])
-        self.assertEqual(plan["access_owner"], "ALFA Finance Data Owner")
-        self.assertEqual(plan["approver"], "SECURITYADMIN_APPROVER")
-        self.assertEqual(plan["ticket_id"], "INC12345")
-        self.assertEqual(plan["review_by"], "2026-06-30")
-        self.assertIn('SHOW GRANTS OF ROLE "APP_READONLY"', plan["preflight_sql"])
-        self.assertIn('SHOW GRANTS TO USER "ETL_RUNNER"', plan["preflight_sql"])
-        self.assertIn("DIRECT_MANAGE_GRANTS_PRIVILEGES", plan["preflight_sql"].upper())
-        self.assertIn("blast radius is the named user only", plan["preflight_sql"])
-        self.assertIn("Post-change verification", plan["verification_sql"])
-        self.assertIn("INC12345", plan["control_context"])
-        self.assertIn("Account-role grants are account-wide", plan["control_context"])
-
-    def test_role_revoke_plan_from_role_is_high_risk_with_inverse_rollback(self):
-        plan = _build_role_grant_change_plan(
-            "REVOKE",
-            "SECURITYADMIN",
-            "ROLE",
-            "APP_SUPPORT",
-            "INC12346 cleanup inherited admin access",
-            "DBA Platform Owner",
-            "Security Director",
-            "INC12346",
-            "2026-06-15",
-        )
-
-        self.assertEqual(plan["change_sql"], 'REVOKE ROLE "SECURITYADMIN" FROM ROLE "APP_SUPPORT";')
-        self.assertEqual(plan["rollback_sql"], 'GRANT ROLE "SECURITYADMIN" TO ROLE "APP_SUPPORT";')
-        self.assertEqual(plan["risk_level"], "Critical")
-        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_ROLES", plan["preflight_sql"])
-        self.assertIn("direct_users_with_impacted_role", plan["preflight_sql"])
-        self.assertIn("Inheritance risk", plan["control_context"])
-
-    def test_role_grant_plan_rejects_database_role_scope(self):
-        with self.assertRaises(ValueError):
-            _build_role_grant_change_plan(
-                "GRANT",
-                "ALFA_EDW_PROD.PUBLIC.DB_ROLE",
-                "USER",
-                "ETL_RUNNER",
-                "Not supported yet",
-            )
-
-    def test_role_grant_plan_requires_access_accountability_metadata(self):
-        plan = _build_role_grant_change_plan(
-            "GRANT",
-            "APP_READONLY",
-            "USER",
-            "ETL_RUNNER",
-            "INC12345 approved least-privilege access",
-        )
-
-        self.assertFalse(plan["metadata_complete"])
-        self.assertIn("access owner", plan["missing_metadata"])
-        self.assertIn("approver", plan["missing_metadata"])
-        self.assertIn("ticket", plan["missing_metadata"])
-        self.assertIn("review/expiry date", plan["missing_metadata"])
-        self.assertIn("Missing accountability metadata", plan["control_context"])
-
-    def test_role_grant_control_board_reflects_required_plan_steps(self):
-        plan = _build_role_grant_change_plan(
-            "GRANT",
-            "APP_READONLY",
-            "USER",
-            "ETL_RUNNER",
-            "INC12345 approved least-privilege access",
-            "ALFA Finance Data Owner",
-            "SECURITYADMIN_APPROVER",
-            "INC12345",
-            "2026-06-30",
-        )
-        summary, board = _build_role_grant_control_board(plan)
-        by_control = {row["CONTROL"]: row for _, row in board.iterrows()}
-
-        self.assertEqual(by_control["Metadata completeness"]["STATE"], "Ready")
-        self.assertEqual(by_control["Verification SQL"]["STATE"], "Ready")
-        self.assertEqual(summary["ready"], 7)
-        self.assertGreaterEqual(summary["score"], 90)
-
-    def test_access_action_queue_record_carries_owner_ticket_and_verification(self):
-        plan = _build_role_grant_change_plan(
-            "GRANT",
-            "APP_READONLY",
-            "USER",
-            "ETL_RUNNER",
-            "INC12345 approved least-privilege access",
-            "ALFA Finance Data Owner",
-            "SECURITYADMIN_APPROVER",
-            "INC12345",
-            "2026-06-30",
-        )
-
-        action = _build_access_action_queue_record(plan, "ALFA")
-
-        self.assertEqual(action["Source"], "Security Posture - Role & Grant Change Control")
-        self.assertEqual(action["Owner"], "ALFA Finance Data Owner")
-        self.assertEqual(action["Company"], "ALFA")
-        self.assertIn("INC12345", action["Finding"])
-        self.assertIn("SECURITYADMIN_APPROVER", action["Action"])
-        self.assertIn("Post-change verification SQL", action["Proof Query"])
-        self.assertEqual(action["Generated SQL Fix"], 'GRANT ROLE "APP_READONLY" TO USER "ETL_RUNNER";')
+        self.assertNotIn("_build_role_grant_change_plan", security_access_text)
+        self.assertNotIn("_build_role_grant_control_board", security_access_text)
+        self.assertNotIn("_build_access_action_queue_record", security_access_text)
+        self.assertNotIn("Role & Grant Change Control", security_access_text)
+        self.assertNotIn("Prepare Role Grant Plan", security_access_text)
+        self.assertNotIn("Apply Access Change", security_access_text)
 
     def test_action_queue_ddl_and_filters_are_environment_aware(self):
         ddl = build_action_queue_ddl().upper()
@@ -671,16 +556,15 @@ class AdminControlTests(unittest.TestCase):
         self.assertIn("PRIVILEGED_GRANT_ROWS", setup_sql)
         self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_WORKLOAD_RECOVERY_AUDIT", setup_sql)
         self.assertIn("CREATE OR REPLACE VIEW OVERWATCH_WORKLOAD_RECOVERY_AUDIT_LATEST_V", setup_sql)
-        self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_PLATFORM_FUTURES_CONTROL_REGISTER", setup_sql)
-        self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_PLATFORM_FUTURES_EVIDENCE", setup_sql)
-        self.assertIn("CREATE OR REPLACE VIEW OVERWATCH_PLATFORM_FUTURES_EVIDENCE_LATEST_V", setup_sql)
-        self.assertIn("CREATE OR REPLACE VIEW OVERWATCH_PLATFORM_FUTURES_CONTROL_COVERAGE_V", setup_sql)
-        self.assertIn("ADAPTIVE_COMPUTE_READINESS", setup_sql)
-        self.assertIn("ADAPTIVE_COMPUTE_DEFAULT", setup_sql)
-        self.assertIn("AI_AGENT_MCP_GOVERNANCE", setup_sql)
-        self.assertIn("AI_SECURITY_GUARDRAILS", setup_sql)
-        self.assertIn("AI_SECURITY_DEFAULT", setup_sql)
-        self.assertIn("COVERAGE_STATE", setup_sql)
+        self.assertNotIn("CREATE TABLE IF NOT EXISTS OVERWATCH_PLATFORM_FUTURES_CONTROL_REGISTER", setup_sql)
+        self.assertNotIn("CREATE TABLE IF NOT EXISTS OVERWATCH_PLATFORM_FUTURES_EVIDENCE", setup_sql)
+        self.assertNotIn("CREATE OR REPLACE VIEW OVERWATCH_PLATFORM_FUTURES_EVIDENCE_LATEST_V", setup_sql)
+        self.assertNotIn("CREATE OR REPLACE VIEW OVERWATCH_PLATFORM_FUTURES_CONTROL_COVERAGE_V", setup_sql)
+        self.assertNotIn("ADAPTIVE_COMPUTE_READINESS", setup_sql)
+        self.assertNotIn("ADAPTIVE_COMPUTE_DEFAULT", setup_sql)
+        self.assertNotIn("AI_AGENT_MCP_GOVERNANCE", setup_sql)
+        self.assertNotIn("AI_SECURITY_GUARDRAILS", setup_sql)
+        self.assertNotIn("AI_SECURITY_DEFAULT", setup_sql)
         self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_COST_SAVINGS_VERIFICATION_RUN", setup_sql)
         self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_VERIFY_COST_SAVINGS", setup_sql)
         self.assertIn("CREATE OR REPLACE VIEW OVERWATCH_COST_SAVINGS_VERIFICATION_HEALTH_V", setup_sql)
@@ -746,13 +630,13 @@ class AdminControlTests(unittest.TestCase):
         self.assertIn("ALLOCATED_CREDITS", setup_sql)
         self.assertIn("OWNER_EVIDENCE", setup_sql)
         self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_OWNER_TAG_NAMES", setup_sql)
-        self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_OWNER_DIRECTORY", setup_sql)
-        self.assertIn("CREATE OR REPLACE VIEW OVERWATCH_OWNER_DIRECTORY_ACTIVE_V", setup_sql)
-        self.assertIn("OVERWATCH_WH_EXECUTION", setup_sql)
-        self.assertIn("COMPUTE_WH_EXECUTION", setup_sql)
-        self.assertIn("ALFA_EDW_PROD_DATABASE", setup_sql)
-        self.assertIn("ALFA_EDW_DEV_DATABASES", setup_sql)
-        self.assertIn("ARCHITECTURE_DEFAULT", setup_sql)
+        self.assertNotIn("CREATE TABLE IF NOT EXISTS OVERWATCH_OWNER_DIRECTORY", setup_sql)
+        self.assertNotIn("CREATE OR REPLACE VIEW OVERWATCH_OWNER_DIRECTORY_ACTIVE_V", setup_sql)
+        self.assertNotIn("OVERWATCH_WH_EXECUTION", setup_sql)
+        self.assertNotIn("COMPUTE_WH_EXECUTION", setup_sql)
+        self.assertNotIn("ALFA_EDW_PROD_DATABASE", setup_sql)
+        self.assertNotIn("ALFA_EDW_DEV_DATABASES", setup_sql)
+        self.assertNotIn("ARCHITECTURE_DEFAULT", setup_sql)
         self.assertIn("ONCALL_PRIMARY", setup_sql)
         self.assertIn("APPROVAL_GROUP", setup_sql)
         self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS DIM_COST_OWNER_TAG", setup_sql)
@@ -828,24 +712,9 @@ class AdminControlTests(unittest.TestCase):
         self.assertIn("EVIDENCE_REQUIRED_LAST_RUN", savings_health_sql)
         self.assertIn("NEXT_ACTION", savings_health_sql)
 
-        owner_sql = build_owner_directory_ddl().upper()
-        self.assertIn("OVERWATCH_OWNER_DIRECTORY", owner_sql)
-        self.assertIn("OVERWATCH_OWNER_DIRECTORY_ACTIVE_V", owner_sql)
-        self.assertIn("OVERWATCH_WH_EXECUTION", owner_sql)
-        self.assertIn("COMPUTE_WH_EXECUTION", owner_sql)
-        self.assertIn("ALFA_EDW_PROD_DATABASE", owner_sql)
-        self.assertIn("ARCHITECTURE_DEFAULT", owner_sql)
-
         recovery_audit_sql = build_workload_recovery_audit_ddl().upper()
         self.assertIn("OVERWATCH_WORKLOAD_RECOVERY_AUDIT", recovery_audit_sql)
         self.assertIn("VERIFICATION_RESULT", recovery_audit_sql)
-
-        platform_futures_sql = build_platform_futures_evidence_ddl().upper()
-        self.assertIn("OVERWATCH_PLATFORM_FUTURES_CONTROL_REGISTER", platform_futures_sql)
-        self.assertIn("OVERWATCH_PLATFORM_FUTURES_EVIDENCE", platform_futures_sql)
-        self.assertIn("OVERWATCH_PLATFORM_FUTURES_CONTROL_COVERAGE_V", platform_futures_sql)
-        self.assertIn("AI_SECURITY_GUARDRAILS", platform_futures_sql)
-        self.assertIn("RAW_EVIDENCE         VARIANT", platform_futures_sql)
 
         dev_values = action_queue_environment_values("DEV_ALL")
         self.assertIn("DEV_ALL", dev_values)
@@ -879,7 +748,7 @@ class AdminControlTests(unittest.TestCase):
                 "OVERWATCH_LOAD_HOURLY",
                 "OVERWATCH_LOAD_CORTEX",
                 "OVERWATCH_REFRESH_CONTROL_ROOM",
-                "OVERWATCH_COST_GOVERNANCE_REFRESH",
+                "OVERWATCH_COST_MONITORING_REFRESH",
                 "OVERWATCH_AUTOMATION_REFRESH",
                 "OVERWATCH_EXECUTIVE_OBSERVABILITY_REFRESH",
                 "OVERWATCH_LOAD_DAILY",
@@ -893,7 +762,7 @@ class AdminControlTests(unittest.TestCase):
                 "OVERWATCH_LOAD_HOURLY": "OVERWATCH_WH",
                 "OVERWATCH_LOAD_CORTEX": "OVERWATCH_WH",
                 "OVERWATCH_REFRESH_CONTROL_ROOM": "OVERWATCH_WH",
-                "OVERWATCH_COST_GOVERNANCE_REFRESH": "OVERWATCH_WH",
+                "OVERWATCH_COST_MONITORING_REFRESH": "OVERWATCH_WH",
                 "OVERWATCH_AUTOMATION_REFRESH": "OVERWATCH_WH",
                 "OVERWATCH_EXECUTIVE_OBSERVABILITY_REFRESH": "OVERWATCH_WH",
                 "OVERWATCH_LOAD_DAILY": "OVERWATCH_WH",
@@ -904,15 +773,14 @@ class AdminControlTests(unittest.TestCase):
             {},
         )
 
-    def test_fixed_action_status_requires_verification_evidence(self):
+    def test_fixed_action_status_does_not_require_manual_verification(self):
         missing = action_queue_fixed_missing_fields(
             status="Fixed",
             verification_notes="short",
             verification_result="",
         )
 
-        self.assertIn("verification notes", missing)
-        self.assertIn("verification result", missing)
+        self.assertEqual(missing, [])
         self.assertEqual(action_queue_fixed_missing_fields(
             status="In Progress",
             verification_notes="",
@@ -1096,10 +964,10 @@ class AdminControlTests(unittest.TestCase):
         self.assertIn("missing ticket/change ID", by_id["OVERDUE1"]["EVIDENCE_GAP"])
         self.assertIn("Escalate", by_id["OVERDUE1"]["NEXT_ACTION"])
         self.assertEqual(by_id["FIXED1"]["DUE_STATE"], "Closed")
-        self.assertEqual(by_id["FIXED1"]["EVIDENCE_GAP"], "Verified closure")
+        self.assertEqual(by_id["FIXED1"]["EVIDENCE_GAP"], "Closed")
         self.assertGreater(by_id["FIXED1"]["QUEUE_PRIORITY"], by_id["OVERDUE1"]["QUEUE_PRIORITY"])
-        self.assertIn("missing owner approval", by_id["TASKOPEN1"]["EVIDENCE_GAP"])
-        self.assertIn("missing recovery evidence", by_id["TASKOPEN1"]["EVIDENCE_GAP"])
+        self.assertIn("missing telemetry status", by_id["TASKOPEN1"]["EVIDENCE_GAP"])
+        self.assertIn("missing recovery status", by_id["TASKOPEN1"]["EVIDENCE_GAP"])
 
     def test_verification_query_runner_rejects_non_read_only_sql(self):
         self.assertEqual(verification_query_safety_issues("SELECT * FROM FOO"), [])

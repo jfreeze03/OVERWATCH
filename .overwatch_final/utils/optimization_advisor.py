@@ -39,7 +39,7 @@ def _idle_warehouse_advisor_decision(row, credit_price: float) -> dict:
         "Category": "Cost Control",
         "Entity Type": "Warehouse",
         "Entity": warehouse,
-        "Owner": "Warehouse owner / DBA capacity reviewer",
+        "Route": "Warehouse route / DBA capacity reviewer",
         "Finding": f"{warehouse} idle {idle_hours}h, wasting {format_credits(idle_credits)}",
         "Action": f"Reduce AUTO_SUSPEND to <= {THRESHOLDS['idle_warehouse_minutes']} minutes",
         "Idle Hours": idle_hours,

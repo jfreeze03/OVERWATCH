@@ -384,7 +384,7 @@ def render():
         if refresh_live or auto_refresh:
             _live_panel()
         else:
-            st.info("Live query polling is paused. Refresh once or enable auto-refresh when you need active query evidence.")
+            st.info("Live query polling is paused. Refresh once or enable auto-refresh when you need active query telemetry.")
 
     # -- TIMELINE --------------------------------------------------------------
     elif active_view == "Timeline":

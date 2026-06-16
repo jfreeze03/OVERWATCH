@@ -94,11 +94,11 @@ def _freshness_note(source: str) -> str:
 
 def _metric_confidence_label(kind: str) -> str:
     labels = {
-        "exact": "Source basis: Exact",
-        "allocated": "Source basis: Allocated / estimated from exact source records",
-        "estimated": "Source basis: Estimated",
+        "exact": "Measurement: Exact",
+        "allocated": "Measurement: Allocated from source records",
+        "estimated": "Measurement: Estimated",
     }
-    return labels.get(str(kind or "").lower(), "Source basis: Calculation depends on available account metadata")
+    return labels.get(str(kind or "").lower(), "Measurement depends on available account metadata")
 
 
 def render_signal_confidence(*, source: str = "ACCOUNT_USAGE", confidence: str = "exact", scope_note: str = "") -> None:
@@ -132,19 +132,19 @@ def render_workflow_module(workflow: str, workflow_modules: dict[str, str]) -> N
         return
     render()
 
-SECURITY_POSTURE_VIEWS = ("Security Brief", "Evidence Readiness", "Access Workflows")
+SECURITY_POSTURE_VIEWS = ("Security Brief", "Data Health", "Security Workflows")
 SECURITY_POSTURE_VIEW_DETAILS = {
     "Security Brief": "Default cockpit: status strip, KPI row, and exception-first access workflow grid.",
-    "Evidence Readiness": "Source health, privileged-grant readiness, control proof, and audit trust boundaries.",
-    "Access Workflows": "Open privileged grants, dormant users, MFA/login risk, data sharing, and governance workflows.",
+    "Data Health": "Source health, privileged-grant status, control telemetry, and audit trust boundaries.",
+    "Security Workflows": "Open privileged grants, dormant users, MFA/login risk, and data sharing telemetry.",
 }
 
 WORKFLOWS = ("Access posture", "Privilege sprawl", "Data sharing exposure")
 
 WORKFLOW_DETAILS = {
     "Access posture": "Failed logins, MFA gaps, grants, role risk, and security exceptions.",
-    "Privilege sprawl": "Admin roles, ownership grants, grant-option exposure, and owner approval gaps.",
-    "Data sharing exposure": "Shares, imported databases, exposed datasets, and owner follow-up.",
+    "Privilege sprawl": "Admin roles, ownership grants, grant-option exposure, and telemetry gaps.",
+    "Data sharing exposure": "Shares, imported databases, exposed datasets, and route follow-up.",
 }
 
 SECURITY_BRIEF_WORKFLOWS = (
@@ -157,7 +157,7 @@ SECURITY_BRIEF_WORKFLOWS = (
     {
         "WORKFLOW": "Privilege sprawl",
         "BUTTON_LABEL": "Open Privileges",
-        "DBA_MOVE": "Review admin roles, ownership, grant option, and approval blockers.",
+        "DBA_MOVE": "Review admin roles, ownership, grant option, and review blockers.",
         "WHEN": "Role cleanup, least-privilege review, or elevated-access questions.",
     },
     {
@@ -280,7 +280,7 @@ def _security_scope_meta(
     days: int | None = None,
     state: dict | None = None,
 ) -> dict:
-    """Return the filter scope that loaded Security Posture evidence must match."""
+    """Return the filter scope that loaded Security Posture telemetry must match."""
     state = state if state is not None else st.session_state
     meta = {
         "company": _security_scope_value(company),
@@ -347,8 +347,8 @@ def _security_source_next_action(state: str, source: str) -> str:
         return "Reload after changing company, environment, lookback, or triage filters."
     if state == "Unavailable":
         return "Deploy or refresh the summary/grants before relying on this surface."
-    if state == "Not Loaded":
-        return "Load only when this workflow is part of the current security investigation."
+    if state == "On demand":
+        return "Refresh only when this workflow is part of the current security investigation."
     if state == "No Rows":
         return "Confirm the selected scope has recent security events, review rows, or summary rows."
     if "fallback" in source_lower:
@@ -361,7 +361,7 @@ def _security_source_health_rows(
     company: str,
     environment: str,
 ) -> pd.DataFrame:
-    """Summarize Security Posture evidence freshness and source strategy."""
+    """Summarize Security Posture telemetry freshness and source strategy."""
     definitions = [
         {
             "surface": "Security brief",
@@ -399,7 +399,7 @@ def _security_source_health_rows(
             "meta_key": "security_privileged_grants_meta",
             "days_key": "security_priv_grant_days",
             "default_days": 30,
-            "source": "Live ACCOUNT_USAGE grants with owner readiness annotation",
+            "source": "Live ACCOUNT_USAGE grants with route status annotation",
             "confidence": "Live ACCOUNT_USAGE",
         },
         {
@@ -408,8 +408,8 @@ def _security_source_health_rows(
             "meta_key": "security_access_review_trend_meta",
             "days_key": "security_access_review_trend_days",
             "default_days": 30,
-            "source": "Workflow evidence",
-            "confidence": "Workflow evidence",
+            "source": "Workflow telemetry",
+            "confidence": "Workflow telemetry",
         },
         {
             "surface": "Closure analytics",
@@ -417,8 +417,8 @@ def _security_source_health_rows(
             "meta_key": "security_action_closure_meta",
             "days_key": "security_action_closure_days",
             "default_days": 30,
-            "source": "Action queue closure evidence",
-            "confidence": "Workflow evidence",
+            "source": "Action queue closure status",
+            "confidence": "Workflow telemetry",
         },
     ]
     rows = []
@@ -435,7 +435,7 @@ def _security_source_health_rows(
         if error:
             status = "Unavailable"
         elif not loaded:
-            status = "Not Loaded"
+            status = "On demand"
         elif not _security_meta_matches(state.get(item["meta_key"]), expected_meta):
             status = "Stale"
         elif frame.empty:
@@ -450,7 +450,7 @@ def _security_source_health_rows(
                 "Stale": 1,
                 "Loaded": 2,
                 "No Rows": 3,
-                "Not Loaded": 4,
+                "On demand": 4,
             }.get(status, 9),
             "SOURCE": source,
             "CONFIDENCE": _security_source_confidence(source, item["confidence"]),
@@ -546,30 +546,30 @@ def _security_action_for(finding_type: str) -> tuple[str, str, str]:
         return (
             "User/Auth",
             "Validate whether attempts are expected; compare with IAM logs, source IP, and recent changes before locking or disabling the user.",
-            "-- Proof: LOGIN_HISTORY grouped by user, source IP, client, and error code.",
+            "-- Detail: LOGIN_HISTORY grouped by user, source IP, client, and error code.",
         )
     if "mfa" in value:
         return (
             "User/Auth",
             "Confirm the user authentication path, then enforce MFA through Snowflake or the identity provider.",
-            "-- Proof: ACCOUNT_USAGE.USERS MFA/ext_authn_duo signal.",
+            "-- Detail: ACCOUNT_USAGE.USERS MFA/ext_authn_duo signal.",
         )
     if "grant" in value:
         return (
             "Grant/Role",
-            "Confirm the grant owner, business justification, and role hierarchy before revoking or narrowing access.",
-            "-- Proof: ACCOUNT_USAGE.GRANTS_TO_USERS active grants created in the selected window.",
+            "Confirm the grant route, business justification, and role hierarchy before revoking or narrowing access.",
+            "-- Detail: ACCOUNT_USAGE.GRANTS_TO_USERS active grants created in the selected window.",
         )
     if "shared" in value or "database exposure" in value:
         return (
             "Shared Data",
-            "Validate the consumer, owner, contract, and data classification before leaving the share active.",
-            "-- Proof: ACCOUNT_USAGE.DATABASES imported/share metadata.",
+            "Validate the consumer, route, contract, and data classification before leaving the share active.",
+            "-- Detail: ACCOUNT_USAGE.DATABASES imported/share metadata.",
         )
     return (
         "User/Access",
-        "Validate with IAM/Snowflake history, confirm owner, then remediate access or authentication configuration.",
-        "-- Review proof query and owner before revoking grants, disabling users, or enforcing MFA.",
+        "Validate with IAM/Snowflake history, confirm the route, then remediate access or authentication configuration.",
+        "-- Review telemetry query and route before revoking grants, disabling users, or enforcing MFA.",
     )
 
 
@@ -610,34 +610,34 @@ def _security_owner_context(row: pd.Series | dict) -> dict:
     entity = str(row.get("ENTITY") or "").upper()
     if "failed login" in finding_type or "mfa" in finding_type:
         base = {
-            "owner": "IAM / Security Owner",
-            "escalation": "Security Owner / DBA Lead",
-            "source": "Security owner map",
+            "owner": "IAM / Security Route",
+            "escalation": "Security / DBA Route",
+            "source": "Security route map",
         }
     elif "grant" in finding_type:
         if any(token in entity for token in ("ADMIN", "SECURITY", "SYSADMIN", "ACCOUNTADMIN")):
             base = {
-                "owner": "Security Owner",
-                "escalation": "DBA Lead / Security Owner",
-                "source": "Admin-role owner hint",
+                "owner": "Security Route",
+                "escalation": "DBA / Security Route",
+                "source": "Admin-role route hint",
             }
         else:
             base = {
-                "owner": "Access Owner / DBA Security",
-                "escalation": "Data Owner / Security Owner",
-                "source": "Security owner map",
+                "owner": "Access Route / DBA Security",
+                "escalation": "Data / Security Route",
+                "source": "Security route map",
             }
     elif "shared" in finding_type or "exposure" in finding_type:
         base = {
-            "owner": "Data Owner / Security Owner",
-            "escalation": "Data Governance / Legal",
-            "source": "Shared-data owner map",
+            "owner": "Data / Security Route",
+                "escalation": "Data Steward / Legal",
+            "source": "Shared-data route map",
         }
     else:
         base = {
             "owner": "Security/DBA",
             "escalation": "DBA Lead",
-            "source": "Default security owner",
+            "source": "Default security route",
         }
     directory_context = resolve_owner_context(
         row,
@@ -653,46 +653,46 @@ def _security_owner_context(row: pd.Series | dict) -> dict:
         "owner_email": directory_context.get("OWNER_EMAIL", ""),
         "oncall_primary": directory_context.get("ONCALL_PRIMARY", ""),
         "oncall_secondary": directory_context.get("ONCALL_SECONDARY", ""),
-        "approval_group": base["escalation"] or directory_context.get("APPROVAL_GROUP", ""),
+        "approval_group": "",
         "owner_evidence": directory_context.get("OWNER_EVIDENCE", ""),
     }
 
 
-def _security_approval_context(row: pd.Series | dict) -> dict:
+def _security_review_context(row: pd.Series | dict) -> dict:
     finding_type = str(row.get("FINDING_TYPE") or "").lower()
     if "failed login" in finding_type:
         return {
-            "approver": "IAM / Security Owner",
+            "reviewer": "IAM / Security",
             "review_state": "Identity investigation required",
             "role_capability_state": "Not required",
             "proof_required": "user, source IP/client, error code, IAM corroboration, disposition",
         }
     if "mfa" in finding_type:
         return {
-            "approver": "IAM / Security Owner",
-            "review_state": "MFA enforcement approval required",
+            "reviewer": "IAM / Security",
+            "review_state": "MFA enforcement review required",
             "role_capability_state": "Not required",
-            "proof_required": "user, auth path, MFA/SSO enforcement evidence, exception approval if any",
+            "proof_required": "user, auth path, MFA/SSO posture, exception note if any",
         }
     if "grant" in finding_type:
         return {
-            "approver": "Access Owner / Security Owner",
+            "reviewer": "Access / Security",
             "review_state": "Access review required",
-            "role_capability_state": "MANAGE GRANTS or role ownership proof required before change",
-            "proof_required": "role, grantee, requester, approver, ticket, review/expiry date, rollback/verification",
+            "role_capability_state": "MANAGE GRANTS or role capability check required before change",
+            "proof_required": "role, grantee, requester, ticket/reference, review/expiry date, telemetry status",
         }
     if "shared" in finding_type or "exposure" in finding_type:
         return {
-            "approver": "Data Owner / Data Governance",
-            "review_state": "External sharing approval required",
-            "role_capability_state": "OWNERSHIP / IMPORTED PRIVILEGES proof required for remediation",
-            "proof_required": "consumer, provider, data classification, contract, owner approval, review date",
+            "reviewer": "Data Steward / Security",
+            "review_state": "External sharing review required",
+            "role_capability_state": "OWNERSHIP / IMPORTED PRIVILEGES capability check required for remediation",
+            "proof_required": "consumer, provider, data classification, contract, review date",
         }
     return {
-        "approver": "Security Owner",
+        "reviewer": "Security",
         "review_state": "Security review required",
-        "role_capability_state": "Capability proof depends on remediation",
-        "proof_required": "finding evidence, owner, approver, ticket, verification result",
+        "role_capability_state": "Capability check depends on remediation",
+        "proof_required": "finding telemetry, reviewer, ticket/reference, status",
     }
 
 
@@ -798,25 +798,23 @@ def _security_access_review_sla_hours(severity: str) -> int:
 
 
 def _security_access_review_readiness_for_row(row: pd.Series | dict) -> dict:
-    """Return ticket, approval, verification, and blocker state for a security finding."""
+    """Return ticket/reference, telemetry, and blocker state for a security finding."""
     owner = str(row.get("OWNER") or "").strip()
     owner_source = str(row.get("OWNER_SOURCE") or "").strip()
     owner_email = str(row.get("OWNER_EMAIL") or "").strip()
     oncall = str(row.get("ONCALL_PRIMARY") or "").strip()
-    approval_group = str(row.get("APPROVAL_GROUP") or row.get("ESCALATION_TARGET") or "").strip()
+    escalation = str(row.get("ESCALATION_TARGET") or "").strip()
     owner_upper = owner.upper()
     route_ready = bool(owner) and owner_upper not in {"UNKNOWN", "N/A", "NONE"} and bool(
         owner_email
         or oncall
-        or approval_group
-        or "OWNER_DIRECTORY" in owner_source.upper()
+        or escalation
         or "SECURITY" in owner_upper
         or "IAM" in owner_upper
     )
 
     ticket_id = str(row.get("ACCESS_TICKET_ID") or row.get("TICKET_ID") or "").strip()
     review_by = str(row.get("REVIEW_BY_DATE") or row.get("REVIEW_BY") or row.get("REVIEW_DATE") or "").strip()
-    approval_state = str(row.get("IAM_APPROVAL_STATE") or row.get("OWNER_APPROVAL_STATUS") or "Requested").strip()
     verification_status = str(row.get("VERIFICATION_STATUS") or "Pending").strip()
     verification_result = str(row.get("VERIFICATION_RESULT") or "").strip()
     verification_query = str(row.get("VERIFICATION_QUERY") or "").strip()
@@ -825,15 +823,13 @@ def _security_access_review_readiness_for_row(row: pd.Series | dict) -> dict:
 
     blockers: list[str] = []
     if not route_ready:
-        blockers.append("owner/on-call route")
+        blockers.append("route/on-call context")
     if ticket_required and not ticket_id:
         blockers.append("access ticket")
     if review_required and not review_by:
         blockers.append("review/expiry date")
-    if approval_state.upper() in {"", "PENDING", "REQUESTED", "REQUIRED", "NEEDED"}:
-        blockers.append("IAM/security approval")
     if not verification_query:
-        blockers.append("verification query")
+        blockers.append("telemetry query")
 
     verified = (
         verification_status.upper() == "VERIFIED"
@@ -842,32 +838,28 @@ def _security_access_review_readiness_for_row(row: pd.Series | dict) -> dict:
     if verified and not blockers:
         readiness = "Verified"
         rank = 8
-        next_action = "Retain IAM/Snowflake verification evidence with the access-review snapshot."
-    elif "owner/on-call route" in blockers:
-        readiness = "Owner Route Blocked"
+        next_action = "Keep IAM/Snowflake telemetry with the access-review snapshot."
+    elif "route/on-call context" in blockers:
+        readiness = "Assignment Blocked"
         rank = 0
-        next_action = "Assign a named owner, on-call route, or owner-directory mapping before queueing closure."
+        next_action = "Assign this finding before queueing closure."
     elif "access ticket" in blockers or "review/expiry date" in blockers:
         readiness = "Ticket / Review Date Blocked"
         rank = 1
-        next_action = "Attach the access ticket and review/expiry date before treating this finding as controlled."
-    elif "IAM/security approval" in blockers:
-        readiness = "Approval Blocked"
-        rank = 2
-        next_action = "Record IAM/security owner approval before remediation or closure."
-    elif "verification query" in blockers:
-        readiness = "Verification Blocked"
+        next_action = "Add the access ticket and review/expiry date before treating this finding as controlled."
+    elif "telemetry query" in blockers:
+        readiness = "Telemetry Pending"
         rank = 3
-        next_action = "Attach a read-only Snowflake verification query before queueing the action."
+        next_action = "Load the read-only Snowflake telemetry query before queueing the action."
     else:
         readiness = "Ready for Action Queue"
         rank = 4
-        next_action = "Queue or work the security action, then attach verification result before closure."
+        next_action = "Queue or work the security action, then monitor the resulting telemetry."
 
     return {
         "ACCESS_TICKET_ID": ticket_id,
         "REVIEW_BY_DATE": review_by,
-        "IAM_APPROVAL_STATE": approval_state or "Requested",
+        "IAM_REVIEW_STATE": "Review Required",
         "REVIEW_READINESS": readiness,
         "REVIEW_RANK": rank,
         "REVIEW_BLOCKERS": "; ".join(blockers) if blockers else "None",
@@ -885,22 +877,22 @@ def _build_security_access_review(exceptions: pd.DataFrame, environment: str = "
         return pd.DataFrame()
     view = _security_priority_view(exceptions).copy()
     owner_contexts = view.apply(_security_owner_context, axis=1)
-    approval_contexts = view.apply(_security_approval_context, axis=1)
+    review_contexts = view.apply(_security_review_context, axis=1)
     view["OWNER"] = owner_contexts.apply(lambda item: item["owner"])
     view["ESCALATION_TARGET"] = owner_contexts.apply(lambda item: item["escalation"])
     view["OWNER_SOURCE"] = owner_contexts.apply(lambda item: item["source"])
     view["OWNER_EMAIL"] = owner_contexts.apply(lambda item: item.get("owner_email", ""))
     view["ONCALL_PRIMARY"] = owner_contexts.apply(lambda item: item.get("oncall_primary", ""))
     view["ONCALL_SECONDARY"] = owner_contexts.apply(lambda item: item.get("oncall_secondary", ""))
-    view["APPROVAL_GROUP"] = owner_contexts.apply(lambda item: item.get("approval_group", ""))
+    view["APPROVAL_GROUP"] = ""
     view["OWNER_EVIDENCE"] = owner_contexts.apply(lambda item: item.get("owner_evidence", ""))
-    view["APPROVER"] = approval_contexts.apply(lambda item: item["approver"])
-    view["OWNER_APPROVAL_STATUS"] = "Requested"
-    view["ACCESS_REVIEW_STATE"] = approval_contexts.apply(lambda item: item["review_state"])
-    view["ROLE_CAPABILITY_STATE"] = approval_contexts.apply(lambda item: item["role_capability_state"])
+    view["APPROVER"] = review_contexts.apply(lambda item: item["reviewer"])
+    view["OWNER_APPROVAL_STATUS"] = ""
+    view["ACCESS_REVIEW_STATE"] = review_contexts.apply(lambda item: item["review_state"])
+    view["ROLE_CAPABILITY_STATE"] = review_contexts.apply(lambda item: item["role_capability_state"])
     view["TICKET_REQUIRED"] = "Yes"
     view["REVIEW_BY_REQUIRED"] = "Yes"
-    view["PROOF_REQUIRED"] = approval_contexts.apply(lambda item: item["proof_required"])
+    view["PROOF_REQUIRED"] = review_contexts.apply(lambda item: item["proof_required"])
     view["VERIFICATION_QUERY"] = view.apply(_security_exception_verification_sql, axis=1)
     view["DATABASE_CONTEXT"] = view.apply(_security_exception_has_database_context, axis=1)
     view["DATABASE_NAME"] = view.apply(_security_exception_database, axis=1)
@@ -959,7 +951,7 @@ def _security_privileged_grant_review_sql(days: int, company: str, environment: 
         gtu.granted_by,
         gtu.created_on,
         DATEDIFF('day', gtu.created_on, CURRENT_TIMESTAMP()) AS grant_age_days,
-        'Role owner approval, business justification, ticket, review-by date, and rollback plan required.' AS proof_required,
+        'Business justification, ticket/reference, review-by date, and telemetry status required.' AS proof_required,
         'Review account-level privileged role grant; do not hide this row behind a database environment filter.' AS next_action
     FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS gtu
     WHERE gtu.deleted_on IS NULL
@@ -991,7 +983,7 @@ object_privilege_grants AS (
         gor.granted_by,
         gor.created_on,
         DATEDIFF('day', gor.created_on, CURRENT_TIMESTAMP()) AS grant_age_days,
-        'Object owner approval, privilege justification, ticket, review-by date, and rollback verification required.' AS proof_required,
+        'Privilege justification, ticket/reference, review-by date, and rollback status required.' AS proof_required,
         'Review database-scoped object privilege before revoke/narrowing action.' AS next_action
     FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_ROLES gor
     WHERE gor.deleted_on IS NULL
@@ -1056,7 +1048,7 @@ LIMIT 200""".strip()
 
 
 def _annotate_security_privileged_grant_readiness(grants: pd.DataFrame) -> pd.DataFrame:
-    """Add owner, route, and review readiness fields to privileged grant rows."""
+    """Add route and review status fields to privileged grant rows."""
     if grants is None or grants.empty:
         return pd.DataFrame() if grants is None else grants
     view = grants.copy()
@@ -1068,9 +1060,7 @@ def _annotate_security_privileged_grant_readiness(grants: pd.DataFrame) -> pd.Da
             "ENTITY": row.get("ENTITY", ""),
             "DATABASE_NAME": row.get("DATABASE_NAME", ""),
         })
-        route_ready = bool(context.get("owner_email")) and bool(
-            context.get("oncall_primary") or context.get("approval_group")
-        )
+        route_ready = bool(context.get("owner_email") or context.get("oncall_primary") or context.get("escalation"))
         database_context = bool(row.get("DATABASE_CONTEXT"))
         role_name = str(row.get("ROLE_NAME") or "").strip().upper()
         object_name = str(row.get("OBJECT_NAME") or "").strip()
@@ -1084,22 +1074,22 @@ def _annotate_security_privileged_grant_readiness(grants: pd.DataFrame) -> pd.Da
         else:
             review_state = "Grant review"
         if not route_ready:
-            readiness = "Owner Route Blocked"
+            readiness = "Assignment Blocked"
             rank = 0
-            next_action = "Assign owner/on-call route before changing privileged access."
+            next_action = "Assign this privileged-access finding before changing access."
         elif severity in {"CRITICAL", "HIGH"}:
-            readiness = "Owner Approval Required"
+            readiness = "Telemetry Pending"
             rank = 1
-            next_action = "Confirm owner approval, ticket, and rollback evidence before revoke or narrowing action."
+            next_action = "Load ticket/reference, impact note, and rollback status before revoke or narrowing action."
         else:
             readiness = "Review Ready"
             rank = 2
-            next_action = "Validate business justification and attach verification result before closure."
+            next_action = "Validate business justification and monitor telemetry before closure."
         rows.append({
             "OWNER": context.get("owner", ""),
             "OWNER_EMAIL": context.get("owner_email", ""),
             "ONCALL_PRIMARY": context.get("oncall_primary", ""),
-            "APPROVAL_GROUP": context.get("approval_group", ""),
+            "APPROVAL_GROUP": "",
             "ESCALATION_TARGET": context.get("escalation", ""),
             "OWNER_SOURCE": context.get("source", ""),
             "OWNER_EVIDENCE": context.get("owner_evidence", ""),
@@ -1127,7 +1117,7 @@ def _privilege_sprawl_summary(grants: pd.DataFrame | None) -> dict:
             "admin_role_grants": 0,
             "object_privileges": 0,
             "ownership_or_grant_option": 0,
-            "owner_approval_required": 0,
+            "verification_required": 0,
             "route_blocked": 0,
             "account_scope": 0,
             "stale_admin_grants": 0,
@@ -1162,15 +1152,15 @@ def _privilege_sprawl_summary(grants: pd.DataFrame | None) -> dict:
         "admin_role_grants": int(admin_role_mask.sum()),
         "object_privileges": int(object_privilege_mask.sum()),
         "ownership_or_grant_option": int(ownership_or_grant_option.sum()),
-        "owner_approval_required": int(readiness.eq("Owner Approval Required").sum()),
-        "route_blocked": int(readiness.eq("Owner Route Blocked").sum()),
+        "verification_required": int(readiness.eq("Telemetry Pending").sum()),
+        "route_blocked": int(readiness.eq("Assignment Blocked").sum()),
         "account_scope": int((~database_context.astype(bool)).sum()),
         "stale_admin_grants": int((admin_role_mask & (age_days >= 90)).sum()),
     }
 
 
 def _privileged_grant_verification_sql(row: pd.Series | dict) -> str:
-    """Return read-only verification SQL for a privileged grant review row."""
+    """Return read-only telemetry detail for a privileged grant review row."""
     entity = str(row.get("ENTITY") or "").strip()
     role_name = str(row.get("ROLE_NAME") or "").strip()
     object_name = str(row.get("OBJECT_NAME") or "").strip()
@@ -1236,7 +1226,7 @@ def _privileged_grant_action_payload(row: pd.Series | dict, *, company: str, env
     row_environment = str(row.get("ENVIRONMENT") or environment or "ALL")
     return {
         "Action ID": make_action_id("Security Privileged Grant", entity, target),
-        "Source": "Security Posture - Privileged Grant Readiness",
+        "Source": "Security Posture - Privileged Grant Status",
         "Severity": severity,
         "Category": "Security Access Review",
         "Entity Type": "Privileged Grant",
@@ -1245,41 +1235,41 @@ def _privileged_grant_action_payload(row: pd.Series | dict, *, company: str, env
         "Owner Email": row.get("OWNER_EMAIL", ""),
         "Oncall Primary": row.get("ONCALL_PRIMARY", ""),
         "Oncall Secondary": row.get("ONCALL_SECONDARY", ""),
-        "Approval Group": row.get("APPROVAL_GROUP", row.get("ESCALATION_TARGET", "Security Owner")),
-        "Escalation Target": row.get("ESCALATION_TARGET", "DBA Lead / Security Owner"),
+        "Review Group": row.get("ESCALATION_TARGET", "Security"),
+        "Escalation Target": row.get("ESCALATION_TARGET", "DBA / Security Route"),
         "Owner Source": row.get("OWNER_SOURCE", ""),
         "Owner Evidence": row.get("OWNER_EVIDENCE", ""),
         "Finding": finding,
         "Action": (
-            "Review privileged grant with the owner before granting, revoking, or narrowing access. "
-            f"Readiness={row.get('GRANT_REVIEW_READINESS', '')}; "
-            f"state={row.get('GRANT_REVIEW_STATE', '')}; proof required={row.get('PROOF_REQUIRED', '')}."
+            "Review privileged grant before granting, revoking, or narrowing access. "
+            f"Status={row.get('GRANT_REVIEW_READINESS', '')}; "
+            f"state={row.get('GRANT_REVIEW_STATE', '')}; telemetry basis={row.get('PROOF_REQUIRED', '')}."
         ),
         "Estimated Monthly Savings": 0.0,
         "Generated SQL Fix": "\n".join([
             "-- Review-only privileged grant control row.",
-            "-- Do not grant, revoke, or narrow access from OVERWATCH without IAM/security owner approval.",
+            "-- Do not grant, revoke, or narrow access from OVERWATCH; use Snowflake/IAM operational change paths.",
             f"-- Role: {role_name or 'N/A'}",
             f"-- Object: {object_name or 'N/A'}",
             f"-- Database: {database_name or 'No database context'}",
             f"-- Environment: {row_environment}",
-            "-- Use the verification query and approved change ticket before remediation.",
+            "-- Use the telemetry query and ticket/reference before remediation.",
         ]),
         "Proof Query": verification_query,
         "Verification Query": verification_query,
         "Verification Status": "Pending",
         "Ticket ID": "",
-        "Approver": row.get("APPROVAL_GROUP", row.get("ESCALATION_TARGET", "Security Owner")),
-        "Owner Approval Status": "Requested",
-        "Owner Approval Note": (
-            f"{row.get('GRANT_REVIEW_STATE', '')}; readiness={row.get('GRANT_REVIEW_READINESS', '')}; "
-            f"owner route ready={row.get('OWNER_ROUTE_READY', '')}; scope={row.get('SCOPE_CONFIDENCE', '')}."
+        "Reviewer": row.get("ESCALATION_TARGET", "Security"),
+        "Review Status": "Requested",
+        "Review Note": (
+            f"{row.get('GRANT_REVIEW_STATE', '')}; status {row.get('GRANT_REVIEW_READINESS', '')}; "
+            f"assignment ready {row.get('OWNER_ROUTE_READY', '')}; scope {row.get('SCOPE_CONFIDENCE', '')}."
         ),
         "Recovery Evidence": (
-            f"Proof required: {row.get('PROOF_REQUIRED', '')}. "
-            "Attach IAM/security approval, ticket, rollback note, and post-change grant verification."
+            f"Telemetry basis: {row.get('PROOF_REQUIRED', '')}. "
+            "Track ticket/reference, rollback note, and post-change grant status."
         ),
-        "Recovery Audit State": row.get("GRANT_REVIEW_READINESS", "Owner Approval Required"),
+        "Recovery Audit State": row.get("GRANT_REVIEW_READINESS", "Telemetry Pending"),
         "Recovery SLA Target Hours": 24 if str(severity).upper() in {"CRITICAL", "HIGH"} else 72,
         "Company": company,
         "Environment": row_environment,
@@ -1323,15 +1313,15 @@ def _render_security_watch_floor(score: int, exceptions: pd.DataFrame, row) -> N
         first = priority.iloc[0]
         st.warning(
             f"First move: {first.get('FINDING_TYPE', 'Security finding')} for "
-            f"{first.get('ENTITY', 'unknown')} -> {first.get('NEXT_ACTION', 'Review access evidence.')}"
+            f"{first.get('ENTITY', 'unknown')} -> {first.get('NEXT_ACTION', 'Review access telemetry.')}"
         )
 
     st.markdown("**Security Watch Floor**")
     if priority.empty:
         if shared_databases:
-            st.caption("No urgent findings, but shared/imported database exposure exists. Validate owners and consumers periodically.")
+            st.caption("No urgent findings, but shared/imported database exposure exists. Review routes and consumers periodically.")
         else:
-            st.caption("No immediate security cards. Use Access posture for audit evidence or Data sharing exposure for external-consumer review.")
+            st.caption("No immediate security cards. Use Access posture for audit telemetry or Data sharing exposure for external-consumer review.")
         return
 
     cols = st.columns(len(priority))
@@ -1433,7 +1423,7 @@ def _security_exception_strip_rows(summary, exceptions, meta: dict, company: str
             "severity": "Watch",
             "signal": "Shared data exposure",
             "entity": "Databases",
-            "detail": f"{shared_databases:,} shared/imported database(s) need owner and consumer validation.",
+            "detail": f"{shared_databases:,} shared/imported database(s) need route and consumer validation.",
             "route": "Data sharing exposure",
         })
     return rows[:4]
@@ -1451,9 +1441,9 @@ def _render_security_exception_strip(rows: list[dict], *, loaded: bool = False) 
         signal = str(row.get("signal") or "Security signal")
         entity = str(row.get("entity") or "Scope")
         detail = str(row.get("detail") or "")
-        route = str(row.get("route") or "Governance & Security / Access & Security")
+        route = str(row.get("route") or "Security Monitoring / Access")
         if route == "Security Posture":
-            route = "Governance & Security / Access & Security"
+            route = "Security Monitoring / Access"
         if severity.lower() in {"critical", "high"}:
             st.warning(f"{severity}: {signal} - {entity}. {detail} Route: {route}.")
         else:
@@ -1472,11 +1462,11 @@ def _security_action_brief(summary, exceptions, meta: dict, company: str, enviro
             return {
                 "state": "Stale",
                 "headline": "Reload the security brief before acting.",
-                "detail": "Loaded evidence does not match the active company, environment, filters, or lookback.",
+                "detail": "Loaded telemetry does not match the active company, environment, filters, or lookback.",
             }
         return {
             "state": "Ready",
-            "headline": "Load identity, grant, MFA, and sharing evidence.",
+            "headline": "Load identity, grant, MFA, and sharing telemetry.",
             "detail": "The brief stays quiet until you request the selected scope.",
         }
 
@@ -1496,7 +1486,7 @@ def _security_action_brief(summary, exceptions, meta: dict, company: str, enviro
         return {
             "state": "Review",
             "headline": "Validate priority security exceptions.",
-            "detail": f"{priority_count:,} priority finding(s) surfaced across access, login, grant, or sharing evidence.",
+            "detail": f"{priority_count:,} priority finding(s) surfaced across access, login, grant, or sharing telemetry.",
         }
     if shared_databases:
         return {
@@ -1514,7 +1504,7 @@ def _security_action_brief(summary, exceptions, meta: dict, company: str, enviro
 def _render_security_action_brief(brief: dict) -> None:
     render_shell_status_strip(
         state=brief.get("state") or "Review",
-        headline=brief.get("headline") or "Review security evidence.",
+        headline=brief.get("headline") or "Review security telemetry.",
         detail=brief.get("detail") or "",
     )
 
@@ -1549,7 +1539,7 @@ def _render_security_operating_snapshot(snapshot: dict) -> None:
         render_shell_kpi_row((
             ("Scope", str(snapshot.get("scope") or "All")),
             ("Window", str(snapshot.get("window") or "30d")),
-            ("Evidence", str(snapshot.get("evidence") or "Load brief")),
+                    ("Telemetry", str(snapshot.get("evidence") or "Load brief")),
         ))
         return
     render_shell_kpi_row((
@@ -1561,37 +1551,37 @@ def _render_security_operating_snapshot(snapshot: dict) -> None:
 
 
 def _security_command_lanes(snapshot: dict) -> list[dict[str, str]]:
-    """Return Governance & Security first-paint lanes."""
+    """Return Security Monitoring first-paint lanes."""
     if not snapshot.get("loaded"):
         return [
             {
                 "label": "Failed logins",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Identity",
                 "detail": "Load brief for login spikes, unusual sources, and failed auth.",
             },
             {
                 "label": "MFA gaps",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Access",
                 "detail": "Review active users without exposed MFA signal.",
             },
             {
                 "label": "Grant changes",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Privilege",
                 "detail": "Admin grants, ownership, and future grants route here.",
             },
             {
                 "label": "Shared data",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Exposure",
-                "detail": "Shares, external stages, and broad grants need owner proof.",
+                "detail": "Shares, external stages, and broad grants stay visible for review.",
             },
             {
                 "label": "Policy posture",
                 "value": "On demand",
-                "state": "Governance",
+                "state": "Security",
                 "detail": "Masking, row access, network policy, and integration drift.",
             },
             {
@@ -1603,14 +1593,14 @@ def _security_command_lanes(snapshot: dict) -> list[dict[str, str]]:
             {
                 "label": "Access review",
                 "value": "On demand",
-                "state": "Owner",
-                "detail": "Privileged grants must have owner and review evidence.",
+                "state": "Review",
+                "detail": "Privileged grants need review context before action.",
             },
             {
-                "label": "Closure proof",
+                "label": "Closure status",
                 "value": "On demand",
                 "state": "Audit",
-                "detail": "Revokes, approvals, and rollback guidance stay logged.",
+                "detail": "Investigation notes, action status, and telemetry stay logged.",
             },
         ]
     return [
@@ -1636,38 +1626,38 @@ def _security_command_lanes(snapshot: dict) -> list[dict[str, str]]:
             "label": "Shared data",
             "value": f"{safe_int(snapshot.get('shared_databases')):,}",
             "state": "Exposure" if safe_int(snapshot.get("shared_databases")) else "Clear",
-            "detail": "Validate consumers, business owner, and data classification.",
+            "detail": "Validate consumers, access purpose, and data classification.",
         },
         {
             "label": "Policy posture",
             "value": "Open workflow",
-            "state": "Governance",
+            "state": "Security",
             "detail": "Masking, row access, network policies, integrations, and shares.",
         },
         {
             "label": "Sensitive access",
             "value": "Open workflow",
             "state": "Audit",
-            "detail": "ACCESS_HISTORY and output-volume anomalies need exact proof.",
+            "detail": "ACCESS_HISTORY and output-volume anomalies need exact telemetry.",
         },
         {
             "label": "Access review",
             "value": "Open workflow",
-            "state": "Owner",
+            "state": "Review",
             "detail": "Use Privilege sprawl before revoking or narrowing grants.",
         },
         {
-            "label": "Closure proof",
+            "label": "Closure status",
             "value": "Queue/audit",
             "state": "Audit",
-            "detail": "Every fix needs owner, approval, before/after state, and rollback guidance.",
+            "detail": "Every fix needs action status, before/after state, and telemetry.",
         },
     ]
 
 
 def _queue_security_workflow(workflow: str) -> None:
     if workflow in WORKFLOWS:
-        st.session_state["security_posture_requested_view"] = "Access Workflows"
+        st.session_state["security_posture_requested_view"] = "Security Workflows"
         st.session_state["security_posture_requested_workflow"] = workflow
         st.rerun()
 
@@ -1733,7 +1723,7 @@ def _paint_security_brief_chrome(
             snapshot
         )
         render_signal_lane_board(
-            "Governance & Security Command Board",
+            "Security Monitoring Command Board",
             _security_command_lanes(snapshot),
             max_lanes=8,
         )
@@ -1771,7 +1761,7 @@ def _render_security_operability_fact_gate(company: str, environment: str, days:
                 st.session_state["security_operability_fact_error"] = format_snowflake_error(fact_exc)
     with note_col:
         st.caption(
-            "Security control facts stay unloaded until you need audit-ready blocker, closure, or verification evidence."
+            "Security control facts stay unloaded until you need blocker, closure, or telemetry detail."
         )
 
     operability_fact = st.session_state.get("security_operability_fact")
@@ -1812,12 +1802,16 @@ def _render_security_operability_fact_gate(company: str, environment: str, days:
             raw_label="All security control rows",
             height=320,
         )
-        with st.expander("Security control summary SQL", expanded=False):
-            st.code(st.session_state.get("security_operability_fact_sql", ""), language="sql")
+        with st.expander("Security Control Status", expanded=False):
+            render_shell_snapshot((
+                ("Control summary", "Ready"),
+                ("Escalation route", "Review"),
+                ("Closure status", "Required"),
+                ("Execution", "Runbook only"),
+            ))
     elif st.session_state.get("security_operability_fact_error"):
         defer_source_note(
-            "Security control summary is not available yet; deploy or refresh "
-            "`FACT_SECURITY_OPERABILITY_DAILY` to enable the fast blocker surface."
+            "Security control summary is not available yet. Ask the DBA team to enable the fast blocker surface."
         )
 
 
@@ -1861,12 +1855,12 @@ def _render_security_exceptions_gate(company: str, environment: str, days: int) 
                         proof_sql = st.session_state.get("security_posture_proof_sql") or {}
                         proof_sql["exceptions"] = exceptions_sql
                         st.session_state["security_posture_proof_sql"] = proof_sql
-                        st.info(f"Security summary unavailable from the fast source; used live ACCOUNT_USAGE fallback. {format_snowflake_error(exc)}")
+                        st.info(f"Security summary unavailable from the fast summary; used bounded live account history. {format_snowflake_error(exc)}")
                     except Exception as live_exc:
                         st.session_state.pop("security_posture_exceptions", None)
                         st.session_state["security_posture_exception_error"] = format_snowflake_error(live_exc)
         with note_col:
-            st.caption("Security exceptions stay unloaded until you need user/IP, MFA, grant, or sharing proof rows.")
+            st.caption("Security exceptions stay unloaded until you need user/IP, MFA, grant, or sharing detail rows.")
         if st.session_state.get("security_posture_exception_error"):
             st.warning(f"Unable to load security exceptions: {st.session_state['security_posture_exception_error']}")
         return
@@ -1919,11 +1913,11 @@ def _build_security_brief_markdown(
         "## DBA Follow-Up",
         "- Validate failed-login spikes against IAM and network context.",
         "- Prioritize MFA gaps before lower-risk grant cleanup.",
-        "- Review shared/imported databases with the data owner and contract context.",
+        "- Review shared/imported databases with the data route and contract context.",
         "- Save material findings to the OVERWATCH Action Queue for status tracking.",
         "",
-        "## Source Basis",
-        "Source: SNOWFLAKE.ACCOUNT_USAGE. Company scope uses user/database naming where Snowflake does not expose direct company ownership.",
+        "## Data Notes",
+        "Company scope uses user/database naming where Snowflake does not expose direct company routing.",
     ]
     return "\n".join(lines)
 
@@ -2098,7 +2092,7 @@ def _build_security_summary_sql(session, days: int, company: str) -> tuple[str, 
 
 
 def _build_security_mart_brief_sql(session, days: int, company: str) -> tuple[str, str]:
-    """Build the security brief with mart-backed login aggregates and live governance metadata."""
+    """Build the security brief with mart-backed login aggregates and live security metadata."""
     user_cols = set(filter_existing_columns(
         session,
         "SNOWFLAKE.ACCOUNT_USAGE.USERS",
@@ -2402,7 +2396,7 @@ LIMIT 100""".strip()
 def _security_action_queue_closure_sql(days: int, company: str, environment: str = "ALL") -> str:
     fqn = f"{safe_identifier(ALERT_DB)}.{safe_identifier(ALERT_SCHEMA)}.{safe_identifier(ACTION_QUEUE_TABLE)}"
     where = [
-        "SOURCE IN ('Security Posture - Security Brief', 'Security Posture - Privileged Grant Readiness')",
+        "SOURCE IN ('Security Posture - Security Brief', 'Security Posture - Privileged Grant Status')",
         f"COALESCE(UPDATED_AT, CREATED_AT) >= DATEADD('day', -{max(1, int(days or 30))}, CURRENT_TIMESTAMP())",
     ]
     if str(company or "").upper() != "ALL":
@@ -2482,10 +2476,10 @@ SELECT
     ENTITY,
     CASE
         WHEN OVERDUE_OPEN > 0 THEN 'Overdue closure'
-        WHEN FIXED_WITHOUT_VERIFICATION > 0 THEN 'Fixed without verification'
+        WHEN FIXED_WITHOUT_VERIFICATION > 0 THEN 'Status needs telemetry'
         WHEN OWNER_GAP_ROWS + TICKET_GAP_ROWS + APPROVER_GAP_ROWS + VERIFICATION_QUERY_GAP_ROWS + OWNER_APPROVAL_GAP_ROWS > 0 THEN 'Control metadata gap'
         WHEN OPEN_ACTIONS > 0 THEN 'Open'
-        WHEN VERIFIED_CLOSURES > 0 THEN 'Verified closure'
+        WHEN VERIFIED_CLOSURES > 0 THEN 'Telemetry closure'
         ELSE 'No recent action'
     END AS CLOSURE_READINESS,
     CASE
@@ -2515,11 +2509,11 @@ SELECT
     LAST_SEVERITY,
     LAST_ACTIVITY_TS,
     CASE
-        WHEN OVERDUE_OPEN > 0 THEN 'Escalate the security owner and ticket before lower-risk access cleanup.'
-        WHEN FIXED_WITHOUT_VERIFICATION > 0 THEN 'Attach verification result or reopen the security action.'
-        WHEN OWNER_GAP_ROWS + TICKET_GAP_ROWS + APPROVER_GAP_ROWS + VERIFICATION_QUERY_GAP_ROWS + OWNER_APPROVAL_GAP_ROWS > 0 THEN 'Complete owner, ticket, approver, and verification metadata.'
-        WHEN OPEN_ACTIONS > 0 THEN 'Work the open security action and retain IAM/Snowflake evidence.'
-        ELSE 'Retain verified closure evidence for audit review.'
+        WHEN OVERDUE_OPEN > 0 THEN 'Escalate the security route and ticket before lower-risk access cleanup.'
+        WHEN FIXED_WITHOUT_VERIFICATION > 0 THEN 'Reopen the security action or wait for telemetry to confirm closure.'
+        WHEN OWNER_GAP_ROWS + TICKET_GAP_ROWS + APPROVER_GAP_ROWS + VERIFICATION_QUERY_GAP_ROWS + OWNER_APPROVAL_GAP_ROWS > 0 THEN 'Complete route, ticket, reviewer, and telemetry metadata.'
+        WHEN OPEN_ACTIONS > 0 THEN 'Work the open security action and retain IAM/Snowflake telemetry.'
+        ELSE 'Keep closure status visible for audit review.'
     END AS NEXT_ACTION
 FROM rollup
 ORDER BY CLOSURE_RANK, OVERDUE_OPEN DESC, FIXED_WITHOUT_VERIFICATION DESC, OPEN_ACTIONS DESC, LAST_ACTIVITY_TS DESC
@@ -2629,11 +2623,11 @@ def _security_control_board(
         if overdue:
             state, rank = "Closure Overdue", 0
             blockers = str(close.get("CLOSURE_READINESS") or "overdue action")
-            next_action = str(close.get("NEXT_ACTION") or "Escalate owner and ticket before accepting the security control.")
+            next_action = str(close.get("NEXT_ACTION") or "Escalate route and ticket before accepting the security control.")
         elif fixed_without_verification or recovery_risk or closure_rank in {1, 2}:
-            state, rank = "Closure Evidence Blocked", 1
-            blockers = str(close.get("CLOSURE_READINESS") or "closure evidence gap")
-            next_action = str(close.get("NEXT_ACTION") or "Attach verification result or reopen the security action.")
+            state, rank = "Closure Status Pending", 1
+            blockers = str(close.get("CLOSURE_READINESS") or "closure status gap")
+            next_action = str(close.get("NEXT_ACTION") or "Reopen the security action or wait for telemetry to confirm closure.")
         elif "BLOCKED" in review_readiness.upper():
             state, rank = review_readiness, min(review_rank, 3)
             blockers = str(row.get("REVIEW_BLOCKERS") or row.get("CONTROL_BLOCKERS") or "review metadata gap")
@@ -2641,11 +2635,11 @@ def _security_control_board(
         elif open_actions > 0:
             state, rank = "Work Open Action", 4
             blockers = "Open action queue item"
-            next_action = str(close.get("NEXT_ACTION") or "Work open security action and retain IAM/Snowflake evidence.")
+            next_action = str(close.get("NEXT_ACTION") or "Work open security action and retain IAM/Snowflake telemetry.")
         elif severity.upper() in {"CRITICAL", "HIGH"} and not open_actions and not verified:
             state, rank = "Queue Required", 5
             blockers = "High-risk finding is not represented by an open action"
-            next_action = "Save this security finding to the Action Queue with owner, approval, ticket, and verification context."
+            next_action = "Save this security finding to the Action Queue with assignment, ticket/reference, and verification context."
         elif blocker_rows or review_rows > 1:
             state, rank = "Recurring Access Watch", 6
             blockers = f"{review_rows:,} snapshot row(s), {blocker_rows:,} blocker row(s)"
@@ -2653,7 +2647,7 @@ def _security_control_board(
         elif verified:
             state, rank = "Verified Closure", 8
             blockers = "None"
-            next_action = "Retain verified closure evidence for audit review."
+            next_action = "Keep closure status visible for audit review."
         else:
             state, rank = "Controlled", 9
             blockers = str(row.get("CONTROL_BLOCKERS") or "None")
@@ -2719,10 +2713,10 @@ def _save_security_access_review_snapshot(
             environment=environment,
             source=source,
         )).collect()
-        st.success("Saved the Security Access Review snapshot for owner, ticket, and verification tracking.")
+        st.success("Saved the Security Access Review snapshot for route, ticket, and telemetry tracking.")
     except Exception as exc:
         st.error(f"Could not save Security Access Review snapshot: {format_snowflake_error(exc)}")
-        st.info("Deploy the security access review table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
+        st.info("Security access review history is not available in this environment yet. Ask the DBA team to enable it, then retry this save.")
 
 
 def _queue_security_exceptions(session, exceptions: pd.DataFrame) -> None:
@@ -2752,14 +2746,14 @@ def _queue_security_exceptions(session, exceptions: pd.DataFrame) -> None:
             "Owner Email": row.get("OWNER_EMAIL", ""),
             "Oncall Primary": row.get("ONCALL_PRIMARY", ""),
             "Oncall Secondary": row.get("ONCALL_SECONDARY", ""),
-            "Approval Group": row.get("APPROVAL_GROUP", row.get("APPROVER", "Security Owner")),
+            "Review Group": row.get("ESCALATION_TARGET", row.get("APPROVER", "Security")),
             "Escalation Target": row.get("ESCALATION_TARGET", "DBA Lead"),
             "Owner Source": row.get("OWNER_SOURCE", ""),
             "Owner Evidence": row.get("OWNER_EVIDENCE", ""),
             "Finding": finding,
             "Action": (
-                f"{action} Owner approval from {row.get('APPROVER', 'Security Owner')} is required; "
-                f"proof required: {row.get('PROOF_REQUIRED', 'security evidence and verification result')}."
+                f"{action} Review with {row.get('APPROVER', 'Security')} is required; "
+                f"telemetry basis: {row.get('PROOF_REQUIRED', 'security telemetry and status')}."
             ),
             "Estimated Monthly Savings": 0.0,
             "Generated SQL Fix": "\n".join([
@@ -2773,19 +2767,19 @@ def _queue_security_exceptions(session, exceptions: pd.DataFrame) -> None:
             "Verification Query": verification_query,
             "Verification Status": row.get("VERIFICATION_STATUS", "Pending"),
             "Ticket ID": row.get("ACCESS_TICKET_ID", ""),
-            "Approver": row.get("APPROVER", "Security Owner"),
-            "Owner Approval Status": row.get("IAM_APPROVAL_STATE", row.get("OWNER_APPROVAL_STATUS", "Requested")),
-            "Owner Approval Note": (
-                f"{row.get('ACCESS_REVIEW_STATE', '')}; readiness={row.get('REVIEW_READINESS', '')}; "
-                f"blockers={row.get('REVIEW_BLOCKERS', '')}; escalation={row.get('ESCALATION_TARGET', 'DBA Lead')}; "
-                f"ticket required={row.get('TICKET_REQUIRED', 'Yes')}; review-by required={row.get('REVIEW_BY_REQUIRED', 'Yes')}."
+            "Reviewer": row.get("APPROVER", "Security"),
+            "Review Status": row.get("IAM_REVIEW_STATE", "Requested"),
+            "Review Note": (
+                f"{row.get('ACCESS_REVIEW_STATE', '')}; status {row.get('REVIEW_READINESS', '')}; "
+                f"blockers {row.get('REVIEW_BLOCKERS', '')}; escalation {row.get('ESCALATION_TARGET', 'DBA Lead')}; "
+                f"ticket required {row.get('TICKET_REQUIRED', 'Yes')}; review-by required {row.get('REVIEW_BY_REQUIRED', 'Yes')}."
             ),
             "Recovery Evidence": (
-                f"Proof required: {row.get('PROOF_REQUIRED', '')}. "
+                f"Telemetry basis: {row.get('PROOF_REQUIRED', '')}. "
                 f"Role capability: {row.get('ROLE_CAPABILITY_STATE', '')}. "
                 f"Review SLA hours: {safe_int(row.get('REVIEW_SLA_HOURS', 0))}."
             ),
-            "Recovery Audit State": row.get("CONTROL_READINESS", "Security Review Verification Pending"),
+            "Recovery Audit State": row.get("CONTROL_READINESS", "Security Review Telemetry Pending"),
             "Recovery SLA Target Hours": safe_int(row.get("REVIEW_SLA_HOURS", 24 if severity.upper() in {"CRITICAL", "HIGH"} else 72)),
             "Company": company,
             "Environment": row.get("ENVIRONMENT", _security_exception_environment(row, environment)),
@@ -2795,7 +2789,7 @@ def _queue_security_exceptions(session, exceptions: pd.DataFrame) -> None:
         st.success(f"Saved {saved} security exceptions to the action queue.")
     except Exception as e:
         st.error(f"Could not save security exceptions: {format_snowflake_error(e)}")
-        st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
+        st.info("The action queue is not available in this environment yet. Ask the DBA team to enable it, then retry this save.")
 
 
 def _queue_privileged_grant_actions(
@@ -2810,8 +2804,8 @@ def _queue_privileged_grant_actions(
         return
     actionable = grants[
         grants.get("GRANT_REVIEW_READINESS", pd.Series(dtype=str)).astype(str).isin([
-            "Owner Route Blocked",
-            "Owner Approval Required",
+            "Assignment Blocked",
+            "Telemetry Pending",
             "Review Ready",
         ])
     ].copy()
@@ -2827,7 +2821,7 @@ def _queue_privileged_grant_actions(
         st.success(f"Saved {saved} privileged grant review rows to the action queue.")
     except Exception as exc:
         st.error(f"Could not save privileged grant actions: {format_snowflake_error(exc)}")
-        st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
+        st.info("The action queue is not available in this environment yet. Ask the DBA team to enable it, then retry this save.")
 
 
 def _render_privileged_grant_readiness(
@@ -2837,8 +2831,8 @@ def _render_privileged_grant_readiness(
     *,
     as_expander: bool = True,
     expanded: bool = False,
-    title: str = "Privileged Grant Readiness",
-    load_label: str = "Load Privileged Grant Readiness",
+    title: str = "Privileged Grant Status",
+    load_label: str = "Load Privileged Grant Status",
     load_key: str = "security_priv_grant_load",
 ) -> None:
     def _body() -> None:
@@ -2867,34 +2861,44 @@ def _render_privileged_grant_readiness(
                 )
             except Exception as exc:
                 st.session_state["security_privileged_grants"] = pd.DataFrame()
-                st.warning(f"Privileged grant readiness unavailable: {format_snowflake_error(exc)}")
+                st.warning(f"Privileged grant status unavailable: {format_snowflake_error(exc)}")
 
         grants = st.session_state.get("security_privileged_grants")
         if grants is None:
             st.info("Load this before granting, revoking, or narrowing high-risk roles and object privileges.")
-            with st.expander("Privileged grant readiness query", expanded=False):
-                st.code(_security_privileged_grant_review_sql(grant_days, company, environment), language="sql")
+            with st.expander("Privileged Grant Status", expanded=False):
+                render_shell_snapshot((
+                    ("Scope", "On demand"),
+                    ("Escalation route", "Required"),
+                    ("Review", "Required"),
+                    ("Execution", "Runbook only"),
+                ))
             return
         if not _security_meta_matches(
             st.session_state.get("security_privileged_grants_meta"),
             _security_scope_meta(company, environment, grant_days),
         ):
-            st.info("Loaded privileged grant readiness is stale for the active scope. Reload before granting, revoking, or narrowing access.")
-            with st.expander("Privileged grant readiness query", expanded=False):
-                st.code(_security_privileged_grant_review_sql(grant_days, company, environment), language="sql")
+            st.info("Loaded privileged grant status is stale for the active scope. Reload before granting, revoking, or narrowing access.")
+            with st.expander("Privileged Grant Status", expanded=False):
+                render_shell_snapshot((
+                    ("Scope", "Stale"),
+                    ("Refresh", "Required"),
+                    ("Approval", "Required"),
+                    ("Execution", "Runbook only"),
+                ))
             return
         if grants.empty:
             st.success("No privileged grant rows found for the selected scope and lookback.")
             return
 
         summary = _privilege_sprawl_summary(grants)
-        blocked = grants[grants["GRANT_REVIEW_READINESS"] == "Owner Route Blocked"]
-        approval = grants[grants["GRANT_REVIEW_READINESS"] == "Owner Approval Required"]
+        blocked = grants[grants["GRANT_REVIEW_READINESS"] == "Assignment Blocked"]
+        approval = grants[grants["GRANT_REVIEW_READINESS"] == "Telemetry Pending"]
         account_scope = grants[~grants["DATABASE_CONTEXT"]]
         render_shell_snapshot((
             ("Privileged Grants", f"{len(grants):,}"),
-            ("Owner Approval", f"{len(approval):,}"),
-            ("Route Blocked", f"{len(blocked):,}"),
+            ("Telemetry", f"{len(approval):,}"),
+            ("Assignment Blocked", f"{len(blocked):,}"),
             ("Account Scope", f"{len(account_scope):,}"),
         ))
         if not as_expander:
@@ -2918,13 +2922,18 @@ def _render_privileged_grant_readiness(
             ],
             sort_by=["GRANT_REVIEW_RANK", "SEVERITY", "CREATED_ON"],
             ascending=[True, True, False],
-            raw_label="All privileged grant readiness rows",
+            raw_label="All privileged grant status rows",
             height=320,
         )
         if st.button("Save Privileged Grants to Action Queue", key="security_priv_grants_queue"):
             _queue_privileged_grant_actions(get_session(), grants, company=company, environment=environment)
-        with st.expander("Privileged grant readiness query", expanded=False):
-            st.code(st.session_state.get("security_privileged_grants_sql", ""), language="sql")
+        with st.expander("Privileged Grant Status", expanded=False):
+            render_shell_snapshot((
+                ("Grant review", "Ready"),
+                ("Telemetry", "Required"),
+                ("Queue action", "Available"),
+                ("Execution", "Runbook only"),
+            ))
 
     if as_expander:
         with st.expander(title, expanded=expanded):
@@ -2950,7 +2959,7 @@ def _render_security_source_health(company: str, environment: str) -> None:
     source_health = _security_source_health_rows(st.session_state, company, environment)
     if source_health.empty:
         return
-    with st.expander("Security Source Health", expanded=False):
+    with st.expander("Security Data Health", expanded=False):
         current = int(source_health["STATE"].isin(["Loaded", "No Rows"]).sum())
         stale = int(source_health["STATE"].eq("Stale").sum())
         unavailable = int(source_health["STATE"].eq("Unavailable").sum())
@@ -2967,18 +2976,18 @@ def _render_security_source_health(company: str, environment: str) -> None:
             ("Unavailable", f"{unavailable:,}"),
         ))
         defer_source_note(
-            "Use this before acting on access findings. Login-only evidence keeps account scope, while database-scoped "
-            "evidence follows the selected company and environment."
+            "Use this before acting on access findings. Login-only telemetry keeps account scope, while database-scoped "
+            "telemetry follows the selected company and environment."
         )
         render_priority_dataframe(
             source_health,
-            title="Security evidence source and freshness",
+            title="Security telemetry freshness",
             priority_columns=[
                 "SURFACE", "STATE", "SOURCE", "CONFIDENCE", "ROWS", "SCOPE", "NEXT_ACTION",
             ],
             sort_by=["STATE_RANK", "SURFACE"],
             ascending=[True, True],
-            raw_label="All security source-health rows",
+            raw_label="All security data-health rows",
             height=300,
         )
 
@@ -3003,14 +3012,14 @@ def render() -> None:
     render_signal_confidence(
         source="ACCOUNT_USAGE",
         confidence="exact",
-        scope_note="Company scope uses user/database naming where Snowflake does not expose company ownership.",
+        scope_note="Company scope uses user/database naming where Snowflake does not expose company routing.",
     )
     render_operator_briefing(
         [
             ("First move", "Separate noisy login volume from real identity or access risk."),
-            ("Evidence", "Tie users, IPs, grants, MFA posture, and shared data to a proof trail."),
-            ("Control", "Escalate to IAM, revoke/narrow access, or validate business ownership."),
-            ("Output", "Produce an audit posture brief with owners and remediation status."),
+            ("Telemetry", "Tie users, IPs, grants, MFA posture, and shared data to source detail."),
+            ("Control", "Escalate to IAM, revoke/narrow access, or validate business route."),
+            ("Output", "Produce an audit posture brief with routes and remediation status."),
         ],
         columns=4,
     )
@@ -3018,7 +3027,7 @@ def render() -> None:
         st.warning("Landing default: prioritize failed logins, MFA gaps, risky grants, and external exposure.")
     render_workflow_guide(
         "Start with identity/access posture, open privilege sprawl for high-risk grants, "
-        "then inspect data sharing when the question is external exposure or audit evidence.",
+        "then inspect data sharing when the question is external exposure or audit telemetry.",
         [
             ("Login failures, MFA, grants, or risky access", "Use Access posture."),
             ("Admin roles, ownership, grant option, or route blockers", "Use Privilege sprawl."),
@@ -3057,7 +3066,7 @@ def render() -> None:
             environment,
             days,
         )
-    if active_view == "Evidence Readiness":
+    if active_view in {"Data Health"}:
         _render_security_source_health(company, environment)
         _render_privileged_grant_readiness(company, environment, days)
         return
@@ -3122,7 +3131,7 @@ def render() -> None:
                     "summary": summary_sql,
                     "exceptions": exceptions_sql,
                 }
-                st.info(f"Security summary unavailable from the fast source; used live ACCOUNT_USAGE fallback. {format_snowflake_error(exc)}")
+                st.info(f"Security summary unavailable from the fast summary; used bounded live account history. {format_snowflake_error(exc)}")
             except Exception as live_exc:
                 st.session_state["security_posture_summary"] = pd.DataFrame()
                 st.session_state.pop("security_posture_exceptions", None)
@@ -3139,7 +3148,7 @@ def render() -> None:
         and _security_meta_matches(meta, security_expected_meta)
     )
     if consume_section_autoload_request("Security Posture") and not security_current:
-        st.caption("Access & Security opened with a lightweight summary. Load the security brief when current account-history proof is needed.")
+        st.caption("Access & Security opened with a lightweight summary. Load the security brief when current account-history detail is needed.")
     render_data_freshness(
         meta if security_current else {},
         source=st.session_state.get("security_posture_source", "Security brief"),
@@ -3197,7 +3206,7 @@ def render() -> None:
             st.success("Access & Security is strong for the selected window.")
         defer_source_note(meta.get("source", "SNOWFLAKE.ACCOUNT_USAGE"))
         st.divider()
-        with st.expander("Load Secondary Security Evidence", expanded=False):
+        with st.expander("Load Secondary Security Details", expanded=False):
             _render_security_operability_fact_gate(company, environment, days)
             _render_security_exceptions_gate(company, environment, days)
         exceptions = st.session_state.get("security_posture_exceptions")
@@ -3229,14 +3238,14 @@ def render() -> None:
             proof_tables_visible = _security_proof_tables_visible(company, environment, days)
             with proof_col:
                 if proof_tables_visible:
-                    if st.button("Hide Security Proof Tables", key="security_posture_hide_proof_tables"):
+                    if st.button("Hide Security Detail Tables", key="security_posture_hide_proof_tables"):
                         _hide_security_proof_tables()
                         st.rerun()
-                elif st.button("Load Security Proof Tables", key="security_posture_load_proof_tables"):
+                elif st.button("Load Security Detail Tables", key="security_posture_load_proof_tables"):
                     _show_security_proof_tables(company, environment, days)
                     st.rerun()
             if not proof_tables_visible:
-                st.caption("Security proof tables stay unloaded until you need owner readiness, control closure, or audit support detail.")
+                st.caption("Security detail tables stay unloaded until row-level user, grant, or sharing context is needed.")
             else:
                 access_review = _build_security_access_review(exceptions, environment)
                 security_board = _security_control_board(
@@ -3272,7 +3281,7 @@ def render() -> None:
                     )
                 render_priority_dataframe(
                     access_review,
-                    title="Security access-review readiness before queueing",
+                    title="Security access-review status before queueing",
                     priority_columns=[
                         "SEVERITY", "REVIEW_READINESS", "ACCESS_REVIEW_STATE", "FINDING_TYPE", "ENTITY",
                         "OWNER", "ESCALATION_TARGET", "APPROVER", "ROLE_CAPABILITY_STATE",
@@ -3317,7 +3326,7 @@ def render() -> None:
                         except Exception as exc:
                             st.session_state["security_access_review_trend"] = pd.DataFrame()
                             st.error(f"Could not load security access-review history: {format_snowflake_error(exc)}")
-                            st.info("Deploy the access-review table from `snowflake/OVERWATCH_MART_SETUP.sql`, then reload.")
+                            st.info("Security access review history is not available in this environment yet. Ask the DBA team to enable it, then reload.")
                     trend = st.session_state.get("security_access_review_trend")
                     if (
                         trend is not None
@@ -3330,7 +3339,7 @@ def render() -> None:
                     elif trend is not None and not trend.empty:
                         render_priority_dataframe(
                             trend,
-                            title="Security review findings still needing DBA evidence",
+                            title="Security review findings still needing DBA status",
                             priority_columns=[
                                 "FINDING_TYPE", "SEVERITY", "OWNER", "ESCALATION_TARGET",
                                 "REVIEW_ROWS", "TOTAL_EVENTS", "TICKET_REQUIRED_ROWS",
@@ -3344,17 +3353,19 @@ def render() -> None:
                             ascending=[False, False, False, False],
                             raw_label="Access review history",
                         )
-                        with st.expander("Trend Query", expanded=False):
-                            st.code(st.session_state.get("security_access_review_trend_sql", ""), language="sql")
+                        with st.expander("Access Review Status", expanded=False):
+                            render_shell_snapshot((
+                                ("Trend status", "Ready"),
+                                ("Owner review", "Required"),
+                                ("Closure status", "Required"),
+                                ("Execution", "Runbook only"),
+                            ))
                     elif trend is not None:
                         st.info("No saved security access-review snapshots found for the selected scope.")
-                    defer_source_note(
-                        "Access-review DDL is managed by snowflake/OVERWATCH_MART_SETUP.sql; do not deploy setup SQL from the dashboard."
-                    )
                 with st.expander("Security Action Closure Analytics", expanded=False):
                     defer_source_note(
-                        "Uses Access & Security action-queue rows to show open, overdue, unapproved, "
-                        "or closed-without-verification security work."
+                        "Uses Access & Security action-queue rows to show open, overdue, telemetry-pending, "
+                        "or recently closed security work."
                     )
                     closure_days = day_window_selectbox(
                         "Security closure window",
@@ -3389,7 +3400,7 @@ def render() -> None:
                     elif closure is not None and not closure.empty:
                         render_priority_dataframe(
                             closure,
-                            title="Security closure evidence gaps",
+                            title="Security closure status gaps",
                             priority_columns=[
                                 "CATEGORY", "ENTITY_TYPE", "ENTITY", "CLOSURE_READINESS",
                                 "OWNER", "APPROVER", "TOTAL_ACTIONS", "OPEN_ACTIONS",
@@ -3403,8 +3414,13 @@ def render() -> None:
                             raw_label="All security closure rows",
                             height=300,
                         )
-                        with st.expander("Security Closure Query", expanded=False):
-                            st.code(st.session_state.get("security_action_closure_sql", ""), language="sql")
+                        with st.expander("Security Closure Status", expanded=False):
+                            render_shell_snapshot((
+                                ("Closure status", "Ready"),
+                                ("Telemetry", "Review"),
+                                ("Telemetry", "Required"),
+                                ("Execution", "Runbook only"),
+                            ))
                     elif closure is not None:
                         st.info("No Access & Security action-queue rows found for the selected scope.")
         elif exceptions is not None:
@@ -3426,11 +3442,14 @@ def render() -> None:
                 key="security_posture_download",
             )
         with dl2:
-            with st.expander("Proof SQL", expanded=False):
-                proof_sql = st.session_state.get("security_posture_proof_sql", {})
-                defer_source_note("Use these source queries when an auditor or security partner asks where a number came from.")
-                st.code(proof_sql.get("summary", "-- Load the security brief first."), language="sql")
-                st.code(proof_sql.get("exceptions", "-- Load the security brief first."), language="sql")
+            with st.expander("Data Health", expanded=False):
+                defer_source_note("Use reviewed source telemetry when an auditor or security partner asks where a number came from.")
+                render_shell_snapshot((
+                    ("Summary telemetry", "Ready after refresh"),
+                    ("Exception telemetry", "Ready after refresh"),
+                    ("Route review", "Required"),
+                    ("Execution", "Runbook only"),
+                ))
         if st.session_state.get("exceptions_only_mode"):
             st.stop()
     elif summary is not None and not summary.empty:

@@ -88,8 +88,8 @@ def _cortex_action_for(signal: str) -> tuple[str, str]:
         )
     if "SPIKE" in signal:
         return (
-            "Review the user/request pattern, model/tool usage, and whether this is approved project demand.",
-            "-- Review CORTEX_CODE usage history by user/source/date and confirm business owner.",
+            "Review the user/request pattern, model/tool usage, and whether this is expected project demand.",
+            "-- Review CORTEX_CODE usage history by user/source/date and confirm business route.",
         )
     return (
         "Review Cortex Code users, request volume, and cost-per-request before expanding access.",
@@ -471,7 +471,7 @@ def _render_cortex_control_brief(session, company: str) -> None:
                     st.success(f"Saved {saved} Cortex cost findings to the action queue.")
                 except Exception as e:
                     st.error(f"Could not save to action queue: {format_snowflake_error(e)}")
-                    st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
+                    st.info("The action queue is not available in this environment yet. Ask the DBA team to enable it, then retry this save.")
         else:
             st.success("No Cortex cost exceptions found for this scope.")
 
@@ -503,14 +503,14 @@ def _render_cortex_control_brief(session, company: str) -> None:
                 .agg(COST_USD=("COST_USD", "sum"), TOTAL_CREDITS=("TOTAL_CREDITS", "sum"), TOTAL_REQUESTS=("TOTAL_REQUESTS", "sum"))
                 .sort_values("COST_USD", ascending=False)
             )
-            st.subheader("Source Split")
+            st.subheader("Workload Split")
             render_priority_dataframe(
                 source_split,
-                title="Cortex cost by source",
+                title="Cortex cost by workload",
                 priority_columns=["SOURCE", "COST_USD", "TOTAL_CREDITS", "TOTAL_REQUESTS"],
                 sort_by=["COST_USD", "TOTAL_CREDITS"],
                 ascending=[False, False, False],
-                raw_label="All Cortex source rows",
+                raw_label="All Cortex workload rows",
             )
 
         st.download_button(
@@ -527,13 +527,13 @@ def _render_cortex_control_brief(session, company: str) -> None:
             mime="text/markdown",
             key="cortex_control_download",
         )
-        with st.expander("Proof SQL"):
-            sql_map = st.session_state.get("cortex_control_sql", {})
-            st.code(sql_map.get("summary", ""), language="sql")
-            st.code(sql_map.get("exceptions", ""), language="sql")
-            st.code(sql_map.get("daily", ""), language="sql")
-            if sql_map.get("ai_functions"):
-                st.code(sql_map.get("ai_functions", ""), language="sql")
+        with st.expander("Telemetry Status"):
+            render_shell_snapshot((
+                ("Summary telemetry", "Ready after refresh"),
+                ("Exception telemetry", "Ready after refresh"),
+                ("Daily trend", "Ready after refresh"),
+                ("Execution", "Runbook only"),
+            ))
 
 
 def render():
@@ -970,10 +970,10 @@ def render():
                     raw_label="All Cortex anomaly rows",
                 )
 
-            with st.expander("Full anomaly evidence", expanded=False):
+            with st.expander("Full anomaly telemetry", expanded=False):
                 render_priority_dataframe(
                     df_an,
-                    title="Cortex anomaly evidence",
+                    title="Cortex anomaly telemetry",
                     priority_columns=[
                         "USER_NAME",
                         "USAGE_DATE",
@@ -986,7 +986,7 @@ def render():
                     ],
                     sort_by=["ZSCORE", "CREDITS"],
                     ascending=[False, False],
-                    raw_label="All anomaly evidence rows",
+                    raw_label="All anomaly telemetry rows",
                     max_rows=50,
                 )
 

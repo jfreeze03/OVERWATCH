@@ -3,7 +3,7 @@ import pandas as pd
 import streamlit as st
 
 from config import DEFAULTS, THRESHOLDS, ETL_AUDIT_DB, ETL_AUDIT_SCHEMA
-from sections.shell_helpers import render_shell_snapshot
+from sections.shell_helpers import _clean_display_text, render_shell_snapshot
 from utils import (
     build_idle_warehouse_sql,
     build_mart_recommendation_failed_tasks_sql,
@@ -37,12 +37,12 @@ from utils import (
     verification_query_safety_issues,
 )
 from utils.recommendation_intelligence import build_automation_readiness_board, harden_recommendation
-from utils.workflows import render_load_status, render_priority_dataframe, render_workflow_selector
+from utils.workflows import clean_operator_display_text, render_load_status, render_priority_dataframe, render_workflow_selector
 
 
 RECOMMENDATION_PANES = (
     "Recommendations",
-    "Automation Readiness",
+    "Automation Health",
     "Action Queue",
     "Anomaly Log",
 )
@@ -85,7 +85,7 @@ def _float_text_or_none(value: str):
 
 def _idle_warehouse_verification_sql(warehouse_name: str, days: int = 7) -> str:
     wh = sql_literal(warehouse_name, 300)
-    return f"""-- Idle warehouse post-fix verification
+    return f"""-- Idle warehouse post-fix telemetry
 WITH metering AS (
     SELECT DATE_TRUNC('hour', start_time) AS usage_hour,
            warehouse_name,
@@ -120,7 +120,7 @@ LIMIT 50;
 
 def _remote_spill_verification_sql(warehouse_name: str, days: int = 7) -> str:
     wh = sql_literal(warehouse_name, 300)
-    return f"""-- Remote spill post-fix verification
+    return f"""-- Remote spill post-fix telemetry
 SELECT warehouse_name,
        COUNT(*) AS spilling_queries,
        ROUND(SUM(COALESCE(bytes_spilled_to_remote_storage, 0)) / POWER(1024, 3), 2) AS remote_spill_gb,
@@ -137,7 +137,7 @@ LIMIT 50;
 
 def _task_failure_verification_sql(task_name: str, days: int = 7) -> str:
     task = sql_literal(task_name, 500)
-    return f"""-- Task failure post-fix verification
+    return f"""-- Task failure post-fix telemetry
 SELECT name,
        database_name,
        schema_name,
@@ -157,7 +157,7 @@ LIMIT 50;
 
 def _query_failure_verification_sql(warehouse_name: str, days: int = 7) -> str:
     wh = sql_literal(warehouse_name, 300)
-    return f"""-- Query failure post-fix verification
+    return f"""-- Query failure post-fix telemetry
 SELECT warehouse_name,
        error_code,
        COUNT(*) AS failures,
@@ -176,35 +176,35 @@ LIMIT 50;
 def _automation_playbook_frame() -> pd.DataFrame:
     return pd.DataFrame([
         {
-            "AUTOMATION_LANE": "Ready for Guided Execution",
-            "WHAT_IT_MEANS": "Safe SQL shape, owner route, approval, and verification query are present.",
-            "DBA_ACTION": "Execute only through the owning admin workflow, then run verification before closure.",
+            "AUTOMATION_LANE": "Ready",
+            "WHAT_IT_MEANS": "Safe SQL shape, escalation route, rollback boundary, and telemetry are present.",
+            "DBA_ACTION": "Use the guarded admin workflow when action is still needed.",
         },
         {
-            "AUTOMATION_LANE": "Approval Required",
-            "WHAT_IT_MEANS": "The action looks automatable, but owner approval or approver metadata is missing.",
-            "DBA_ACTION": "Capture approval first; do not run SQL from the recommendation text alone.",
+            "AUTOMATION_LANE": "Telemetry Pending",
+            "WHAT_IT_MEANS": "The action looks automatable, but fresh telemetry has not confirmed the state.",
+            "DBA_ACTION": "Wait for the next telemetry refresh before action.",
         },
         {
-            "AUTOMATION_LANE": "Evidence Required",
-            "WHAT_IT_MEANS": "The action lacks verification query, owner route, or proof needed for audit.",
-            "DBA_ACTION": "Complete evidence fields, then rerun the automation board.",
+            "AUTOMATION_LANE": "Needs Data",
+            "WHAT_IT_MEANS": "The action lacks enough telemetry or routing context.",
+            "DBA_ACTION": "Load the missing data before routing.",
         },
         {
-            "AUTOMATION_LANE": "Manual Only",
-            "WHAT_IT_MEANS": "The action touches security, task execution, failover, clustering proof, or unsafe SQL.",
-            "DBA_ACTION": "Keep human-controlled and use OVERWATCH only for evidence, routing, and closure tracking.",
+            "AUTOMATION_LANE": "DBA Review",
+            "WHAT_IT_MEANS": "The action touches security, task execution, failover, clustering telemetry, or unsafe SQL.",
+            "DBA_ACTION": "Keep it in the guarded DBA workflow.",
         },
         {
-            "AUTOMATION_LANE": "Auto-Close Candidate",
-            "WHAT_IT_MEANS": "The action is already fixed and has verified closure evidence.",
-            "DBA_ACTION": "Review owner agreement, then move it out of active work queues.",
+            "AUTOMATION_LANE": "Resolved Candidate",
+            "WHAT_IT_MEANS": "The action is already closed in telemetry.",
+            "DBA_ACTION": "Keep it out of active work queues.",
         },
     ])
 
 
-def _render_automation_readiness(session):
-    st.subheader("Automation Readiness")
+def _render_automation_health(session):
+    st.subheader("Automation Health")
     st.caption("DBA-safe automation lanes for recommendations and action queue items.")
     c_load, c_hint = st.columns([1, 3])
     with c_load:
@@ -213,7 +213,7 @@ def _render_automation_readiness(session):
                 try:
                     st.session_state["rec_action_queue"] = load_action_queue(session)
                 except Exception as e:
-                    st.info(f"Action queue table not found. Run the setup DDL first. ({format_snowflake_error(e)})")
+                    st.info(f"The action queue is not available in this environment yet. Ask the DBA on-call to enable it, then retry. ({format_snowflake_error(e)})")
                     st.session_state["rec_action_queue"] = pd.DataFrame()
     with c_hint:
         st.caption("Generate recommendations and/or load the action queue, then use this board to decide what can be safely packaged.")
@@ -236,18 +236,18 @@ def _render_automation_readiness(session):
         )
         return
 
-    ready = int((board["AUTOMATION_LANE"] == "Ready for Guided Execution").sum())
-    approval = int((board["AUTOMATION_LANE"] == "Approval Required").sum())
-    evidence = int((board["AUTOMATION_LANE"] == "Evidence Required").sum())
-    manual = int((board["AUTOMATION_LANE"] == "Manual Only").sum())
-    auto_close = int((board["AUTOMATION_LANE"] == "Auto-Close Candidate").sum())
+    ready = int((board["AUTOMATION_LANE"] == "Ready").sum())
+    approval = int((board["AUTOMATION_LANE"] == "Telemetry Pending").sum())
+    evidence = int((board["AUTOMATION_LANE"] == "Needs Data").sum())
+    manual = int((board["AUTOMATION_LANE"] == "DBA Review").sum())
+    auto_close = int((board["AUTOMATION_LANE"] == "Resolved Candidate").sum())
     render_shell_snapshot((
         ("Candidates", f"{len(board):,}"),
         ("Guided Ready", f"{ready:,}"),
-        ("Approval Needed", f"{approval:,}"),
-        ("Evidence Needed", f"{evidence:,}"),
-        ("Manual Only", f"{manual:,}"),
-        ("Auto-Close", f"{auto_close:,}"),
+        ("Telemetry Pending", f"{approval:,}"),
+        ("Needs Data", f"{evidence:,}"),
+        ("DBA Review", f"{manual:,}"),
+        ("Resolved", f"{auto_close:,}"),
     ))
 
     first = board.iloc[0]
@@ -257,20 +257,20 @@ def _render_automation_readiness(session):
     )
     render_priority_dataframe(
         board,
-        title="Automation readiness board",
+        title="Automation health board",
         priority_columns=[
-            "AUTOMATION_LANE", "AUTOMATION_SCORE", "SEVERITY", "CATEGORY", "ENTITY",
+            "AUTOMATION_LANE", "SEVERITY", "CATEGORY", "ENTITY",
             "DECISION", "BLOCKERS", "APPROVAL_STATE", "SAFE_GUIDED_SQL",
             "STATE_CHANGING_SQL", "SAFE_AUTOMATION_STEP", "APPROVAL_GATE",
             "EVIDENCE_PACKAGE", "VERIFY_NEXT", "EXECUTION_BOUNDARY", "CLOSURE_RULE",
             "PROOF_REQUIRED", "DO_NOT_DO",
         ],
-        sort_by=["AUTOMATION_LANE", "AUTOMATION_SCORE", "SEVERITY"],
-        ascending=[True, False, True],
-        raw_label="All automation readiness rows",
+        sort_by=["AUTOMATION_LANE", "SEVERITY"],
+        ascending=[True, True],
+        raw_label="All automation health rows",
         height=440,
     )
-    download_csv(board, "automation_readiness_board.csv")
+    download_csv(board, "automation_health_board.csv")
 
     with st.expander("Automation lane definitions", expanded=False):
         render_priority_dataframe(
@@ -286,15 +286,15 @@ def _render_automation_readiness(session):
 
 def _render_queue(session):
     st.subheader("Persistent Action Queue")
-    st.caption("Owner, status, savings, generated SQL, and proof query for every actionable finding.")
-    st.info("Action Queue setup is managed by `snowflake/OVERWATCH_MART_SETUP.sql`.")
+    st.caption("Route, status, savings, review path, and telemetry state for every actionable finding.")
+    st.info("Action queue persistence is owned by the DBA platform team for this environment.")
 
     if st.button("Load Action Queue", key="queue_load"):
         with render_load_status("Loading action queue", "Action queue ready"):
             try:
                 st.session_state["rec_action_queue"] = load_action_queue(session)
             except Exception as e:
-                st.info(f"Action queue table not found. Run the setup DDL first. ({format_snowflake_error(e)})")
+                st.info(f"The action queue is not available in this environment yet. Ask the DBA team to enable it, then retry. ({format_snowflake_error(e)})")
                 st.session_state["rec_action_queue"] = pd.DataFrame()
 
     df_queue = st.session_state.get("rec_action_queue")
@@ -312,8 +312,7 @@ def _render_queue(session):
         else pd.Series([""] * len(df_queue), index=df_queue.index)
     )
     fixed_mask = df_queue["STATUS"] == "Fixed"
-    verified_fixed_mask = fixed_mask & (verification_status == "Verified")
-    soft_fixed_mask = fixed_mask & (verification_status != "Verified")
+    closed_mask = fixed_mask
     due_state = (
         df_queue["DUE_STATE"].fillna("").astype(str)
         if "DUE_STATE" in df_queue.columns
@@ -324,18 +323,16 @@ def _render_queue(session):
         if "EVIDENCE_GAP" in df_queue.columns
         else pd.Series([""] * len(df_queue), index=df_queue.index)
     )
-    evidence_gap_mask = ~evidence_gap.isin(["Ready to work", "Verified closure", "Ignored with reason"])
+    evidence_gap_mask = ~evidence_gap.isin(["Ready to work", "Telemetry closure", "Ignored with reason"])
     overdue_mask = open_mask & (due_state == "Overdue")
     render_shell_snapshot((
         ("Open", f"{int(open_mask.sum()):,}"),
         ("High / Critical", f"{int(high_mask.sum()):,}"),
         ("Overdue", f"{int(overdue_mask.sum()):,}"),
-        ("Evidence Gaps", f"{int(evidence_gap_mask.sum()):,}"),
-        ("Verified Fixed", f"{int(verified_fixed_mask.sum()):,}"),
+        ("Control Gaps", f"{int(evidence_gap_mask.sum()):,}"),
+        ("Closed", f"{int(closed_mask.sum()):,}"),
         ("Savings Queue", f"${float(df_queue['EST_MONTHLY_SAVINGS'].fillna(0).sum()):,.0f}"),
     ))
-    if int(soft_fixed_mask.sum()):
-        st.warning(f"{int(soft_fixed_mask.sum())} fixed action(s) are missing verified closure evidence.")
 
     status_filter = st.selectbox(
         "Status filter",
@@ -352,9 +349,8 @@ def _render_queue(session):
         title="Action queue items to work first",
         priority_columns=[
             "SEVERITY", "STATUS", "DUE_STATE", "DUE_DATE", "EVIDENCE_GAP",
-            "VERIFICATION_STATUS", "CATEGORY", "ENVIRONMENT", "ENTITY_NAME",
+            "CATEGORY", "ENVIRONMENT", "ENTITY_NAME",
             "FINDING", "OWNER", "TICKET_ID", "APPROVER",
-            "OWNER_APPROVAL_STATUS", "RECOVERY_SLA_STATE", "RECOVERY_SLA_HOURS",
             "EST_MONTHLY_SAVINGS", "MEASURED_DELTA", "NEXT_ACTION", "UPDATED_AT",
         ],
         sort_by=["QUEUE_PRIORITY", "EST_MONTHLY_SAVINGS", "UPDATED_AT"],
@@ -367,187 +363,31 @@ def _render_queue(session):
     if show_df.empty:
         return
 
-    selected = st.selectbox("Update action", show_df["ACTION_ID"].astype(str).tolist(), key="queue_action_select")
+    selected = st.selectbox("Inspect action", show_df["ACTION_ID"].astype(str).tolist(), key="queue_action_select")
     row = show_df[show_df["ACTION_ID"].astype(str) == selected].iloc[0]
     st.markdown(f"**{row['ENTITY_NAME']}** - {row['FINDING']}")
-    st.code(str(row.get("GENERATED_SQL_FIX", "")), language="sql")
-    st.caption(str(row.get("PROOF_QUERY", "")))
-
-    st.subheader("Closure Evidence")
-    st.caption("Fixed items require verification notes and before/after evidence. Use the proof query as the starting point.")
-    default_query = _row_text(row, "VERIFICATION_QUERY") or _row_text(row, "PROOF_QUERY")
-    safety_issues = verification_query_safety_issues(default_query)
-    if safety_issues:
-        st.warning("Stored verification query is not runnable from the app: " + "; ".join(safety_issues))
-    elif st.button("Run stored verification query", key=f"queue_run_verification_{selected}"):
-        with render_load_status("Running verification query", "Verification evidence ready"):
-            try:
-                verification_sql = build_safe_verification_query(default_query)
-                evidence_df = run_query_or_raise(
-                    verification_sql,
-                    section="Action Queue",
-                    ttl_key=f"action_queue_verify_{selected}",
-                    tier="live",
-                )
-                st.session_state[f"queue_verification_result_prefill_{selected}"] = summarize_verification_frame(evidence_df)
-                st.session_state[f"queue_verification_query_prefill_{selected}"] = verification_sql
-                st.success("Verification query ran. Review the summarized evidence before closing the item.")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Could not run verification query: {format_snowflake_error(e)}")
-
-    verification_query_default = st.session_state.get(
-        f"queue_verification_query_prefill_{selected}",
-        default_query,
-    )
-    verification_result_default = st.session_state.get(
-        f"queue_verification_result_prefill_{selected}",
-        _row_text(row, "VERIFICATION_RESULT"),
-    )
-    with st.form(f"queue_status_evidence_form_{selected}"):
-        c_status, c_meta = st.columns([1, 2])
-        with c_status:
-            new_status = st.selectbox(
-                "New status",
-                ["Acknowledged", "In Progress", "Fixed", "Ignored", "New"],
-                key=f"queue_new_status_{selected}",
-            )
-        with c_meta:
-            reason = st.text_input(
-                "Reason / note",
-                value=_row_text(row, "IGNORED_REASON"),
-                key=f"queue_status_reason_{selected}",
-            )
-        c_ticket, c_approver, c_due = st.columns(3)
-        with c_ticket:
-            ticket_id = st.text_input("Ticket / change ID", value=_row_text(row, "TICKET_ID"), key=f"queue_ticket_id_{selected}")
-        with c_approver:
-            approver = st.text_input("Approver / reviewer", value=_row_text(row, "APPROVER"), key=f"queue_approver_{selected}")
-        with c_due:
-            due_date = st.text_input(
-                "Due date",
-                value=_row_text(row, "DUE_DATE"),
-                key=f"queue_due_date_{selected}",
-                placeholder="YYYY-MM-DD",
-            )
-
-        verification_query = st.text_area(
-            "Verification query",
-            value=verification_query_default,
-            key=f"queue_verification_query_{selected}",
-            height=150,
-        )
-        verification_result = st.text_area(
-            "Verification result",
-            value=verification_result_default,
-            key=f"queue_verification_result_{selected}",
-            placeholder="Paste summarized query result, runtime/cost delta, or task/procedure success evidence.",
+    st.caption(str(row.get("NEXT_ACTION", "Review the route and current telemetry before action.")))
+    render_shell_snapshot((
+        ("Status", _row_text(row, "STATUS") or "New"),
+        ("Severity", _row_text(row, "SEVERITY") or "Medium"),
+        ("Due", _row_text(row, "DUE_STATE") or _row_text(row, "DUE_DATE") or "Open"),
+        ("Savings", f"${safe_float(row.get('EST_MONTHLY_SAVINGS')):,.0f}"),
+    ))
+    detail_cols = [
+        column for column in [
+            "CATEGORY", "ENVIRONMENT", "ENTITY_TYPE", "ENTITY_NAME",
+            "FINDING", "NEXT_ACTION", "TICKET_ID", "UPDATED_AT",
+        ]
+        if column in row.index
+    ]
+    if detail_cols:
+        render_priority_dataframe(
+            pd.DataFrame([row[detail_cols].to_dict()]),
+            title="Selected action context",
+            priority_columns=detail_cols,
+            max_rows=1,
             height=120,
         )
-        verification_notes = st.text_area(
-            "Verification notes",
-            value=_row_text(row, "VERIFICATION_NOTES"),
-            key=f"queue_verification_notes_{selected}",
-            placeholder="What changed, who approved it, and why the finding can be closed.",
-            height=90,
-        )
-        c_base, c_current, c_delta = st.columns(3)
-        with c_base:
-            baseline_value = st.text_input(
-                "Baseline value",
-                value=_row_text(row, "BASELINE_VALUE"),
-                key=f"queue_baseline_value_{selected}",
-            )
-        with c_current:
-            current_value = st.text_input(
-                "Current value",
-                value=_row_text(row, "CURRENT_VALUE"),
-                key=f"queue_current_value_{selected}",
-            )
-        with c_delta:
-            measured_delta = st.text_input(
-                "Measured delta",
-                value=_row_text(row, "MEASURED_DELTA"),
-                key=f"queue_measured_delta_{selected}",
-            )
-        st.markdown("**Task / Procedure Reliability Evidence**")
-        c_owner_status, c_recovery_state, c_recovery_hours = st.columns(3)
-        approval_options = ["", "Requested", "Approved", "Rejected", "Not Required"]
-        current_approval = _row_text(row, "OWNER_APPROVAL_STATUS")
-        approval_lookup = {option.upper(): option for option in approval_options}
-        current_approval = approval_lookup.get(current_approval.upper(), current_approval)
-        approval_index = approval_options.index(current_approval) if current_approval in approval_options else 0
-        with c_owner_status:
-            owner_approval_status = st.selectbox(
-                "Owner approval status",
-                approval_options,
-                index=approval_index,
-                key=f"queue_owner_approval_status_{selected}",
-            )
-        with c_recovery_state:
-            recovery_sla_state = st.text_input(
-                "Recovery SLA state",
-                value=_row_text(row, "RECOVERY_SLA_STATE"),
-                key=f"queue_recovery_sla_state_{selected}",
-            )
-        with c_recovery_hours:
-            recovery_sla_hours = st.text_input(
-                "Recovery hours",
-                value=_row_text(row, "RECOVERY_SLA_HOURS"),
-                key=f"queue_recovery_sla_hours_{selected}",
-            )
-        c_recovery_target, c_owner_note = st.columns([1, 2])
-        with c_recovery_target:
-            recovery_sla_target_hours = st.text_input(
-                "Recovery target hours",
-                value=_row_text(row, "RECOVERY_SLA_TARGET_HOURS"),
-                key=f"queue_recovery_sla_target_{selected}",
-            )
-        with c_owner_note:
-            owner_approval_note = st.text_input(
-                "Owner approval note",
-                value=_row_text(row, "OWNER_APPROVAL_NOTE"),
-                key=f"queue_owner_approval_note_{selected}",
-            )
-        recovery_evidence = st.text_area(
-            "Recovery evidence",
-            value=_row_text(row, "RECOVERY_EVIDENCE"),
-            key=f"queue_recovery_evidence_{selected}",
-            placeholder="Recovery timestamp, latest successful TASK_HISTORY evidence, owner sign-off, and any remaining risk.",
-            height=90,
-        )
-        submitted = st.form_submit_button("Update action with evidence", type="primary")
-
-    if submitted:
-        try:
-            update_action_status_with_evidence(
-                session,
-                selected,
-                new_status,
-                reason=reason,
-                verification_notes=verification_notes,
-                verification_result=verification_result,
-                verification_query=verification_query,
-                ticket_id=ticket_id,
-                approver=approver,
-                due_date=due_date,
-                baseline_value=_float_text_or_none(baseline_value),
-                current_value=_float_text_or_none(current_value),
-                measured_delta=_float_text_or_none(measured_delta),
-                owner_approval_status=owner_approval_status,
-                owner_approval_note=owner_approval_note,
-                recovery_sla_state=recovery_sla_state,
-                recovery_sla_hours=_float_text_or_none(recovery_sla_hours),
-                recovery_sla_target_hours=_float_text_or_none(recovery_sla_target_hours),
-                recovery_evidence=recovery_evidence,
-            )
-            st.success("Action updated with closure evidence.")
-            st.session_state["rec_action_queue"] = load_action_queue(session)
-            st.rerun()
-        except ValueError as e:
-            st.warning(str(e))
-        except Exception as e:
-            st.error(f"Could not update action: {format_snowflake_error(e)}")
 
     if row.get("STATUS") == "Fixed" and safe_float(row.get("EST_MONTHLY_SAVINGS")) > 0:
         st.divider()
@@ -577,7 +417,7 @@ def _render_queue(session):
                 st.success(f"Logged ${monthly_savings:,.2f}/month to Snowflake Value.")
             except Exception as e:
                 st.error(f"Could not log Snowflake Value: {format_snowflake_error(e)}")
-                st.info("Run the Snowflake Value setup DDL first.")
+                st.info("Snowflake Value logging is not available in this environment yet. Ask the DBA team to enable it, then retry.")
 
 
 def render():
@@ -594,7 +434,7 @@ def render():
 
     if active_view == "Recommendations":
         st.subheader("Automated Recommendations Feed")
-        st.caption("Prioritized findings that can be saved into a persistent owner/status queue.")
+        st.caption("Prioritized findings that can be saved into a persistent route/status queue.")
 
         if st.button("Generate Recommendations", key="recs_gen"):
             recs = []
@@ -814,20 +654,14 @@ def render():
             df_recs = _recommendation_frame(recs)
             high = df_recs[df_recs["Severity"].isin(["Critical", "High"])]
             monthly = float(df_recs["Estimated Monthly Savings"].sum())
-            proof_ready = int(df_recs["Proof Query"].astype(str).str.strip().ne("").sum()) if "Proof Query" in df_recs.columns else 0
-            sql_ready = int(
-                df_recs["Generated SQL Fix"].astype(str).str.strip().ne("").sum()
-            ) if "Generated SQL Fix" in df_recs.columns else 0
-            no_auto_fix = int(
-                df_recs["Generated SQL Fix"].astype(str).str.contains("No safe automatic SQL fix", case=False, na=False).sum()
-            ) if "Generated SQL Fix" in df_recs.columns else 0
-            decisive_pct = proof_ready / max(len(df_recs), 1) * 100
+            telemetry_ready = int(df_recs["Proof Query"].astype(str).str.strip().ne("").sum()) if "Proof Query" in df_recs.columns else 0
+            decisive_pct = telemetry_ready / max(len(df_recs), 1) * 100
             render_shell_snapshot((
                 ("High / Critical", f"{len(high):,}"),
                 ("Open Findings", f"{len(df_recs):,}"),
                 ("Est. Monthly Savings", f"${monthly:,.0f}"),
-                ("Proof-Ready", f"{proof_ready:,} ({decisive_pct:.0f}%)"),
-                ("SQL Fix Candidates", f"{max(sql_ready - no_auto_fix, 0):,} ({no_auto_fix:,} manual)"),
+                ("Telemetry Ready", f"{telemetry_ready:,} ({decisive_pct:.0f}%)"),
+                ("DBA Routes", f"{len(df_recs):,}"),
             ))
             defer_source_note(
                 metric_confidence_label("estimated"),
@@ -836,8 +670,8 @@ def render():
             )
             top_rec = df_recs.iloc[0]
             st.warning(
-                f"Work first: {top_rec['Decision']} for {top_rec['Entity']}. "
-                f"{top_rec['Evidence Packet']} Next: {top_rec['Safe Next Action']}"
+                f"Work first: {_clean_display_text(top_rec['Decision'])} for {_clean_display_text(top_rec['Entity'])}. "
+                f"{_clean_display_text(top_rec['Evidence Packet'])} Next: {_clean_display_text(top_rec['Safe Next Action'])}"
             )
             source_notes = st.session_state.get("rec_recommendation_sources", [])
             if source_notes:
@@ -847,26 +681,35 @@ def render():
                 title="Recommendations to work first",
                 priority_columns=[
                     "Severity", "Decision Gate", "Decision", "Category", "Entity",
-                    "Evidence Packet", "Safe Next Action", "Approval Gate",
-                    "Evidence Package", "Verify Next", "Execution Boundary", "Closure Rule",
-                    "Proof Required", "Do Not Do", "Estimated Monthly Savings", "Owner Route", "Status",
+                    "Telemetry Summary", "Safe Next Action", "Review Gate",
+                    "Telemetry Package", "Verify Next", "Execution Boundary", "Closure Rule",
+                    "Telemetry Basis", "Do Not Do", "Estimated Monthly Savings", "Escalation Route", "Status",
                 ],
                 sort_by=["Severity", "Estimated Monthly Savings"],
                 ascending=[True, False],
                 raw_label="All recommendation rows",
                 height=420,
             )
-            download_csv(df_recs, "recommendations.csv")
+            export_recs = df_recs.drop(
+                columns=[
+                    "Generated SQL Fix", "Generated SQL", "Proof Query", "Verification Query",
+                    "APPROVAL_GATE", "PROOF_QUERY", "VERIFICATION_QUERY", "Generated DDL",
+                    "Owner", "Owner Route", "Owner Evidence", "Owner Source",
+                ],
+                errors="ignore",
+            )
+            download_csv(clean_operator_display_text(export_recs), "recommendations.csv")
 
-            with st.expander("Generated SQL fixes and proof queries"):
+            with st.expander("Action review details"):
                 for _, rec in df_recs.iterrows():
-                    st.markdown(f"**{rec['Severity']} - {rec['Decision']} - {rec['Entity']}**")
-                    st.caption(
-                        f"{rec['Evidence Packet']} | Approval: {rec['Approval Gate']} | "
-                        f"Boundary: {rec['Execution Boundary']} | {rec['Do Not Do']}"
+                    st.markdown(
+                        f"**{_clean_display_text(rec['Severity'])} - {_clean_display_text(rec['Decision'])} - {_clean_display_text(rec['Entity'])}**"
                     )
-                    st.code(rec["Generated SQL Fix"], language="sql")
-                    st.caption(f"Verify: {rec['Verify Next']} | Proof query: {rec['Proof Query']}")
+                    st.caption(
+                        f"{_clean_display_text(rec['Evidence Packet'])} | Review: {_clean_display_text(rec.get('Review Gate', rec.get('Approval Gate', '')))} | "
+                        f"Boundary: {_clean_display_text(rec['Execution Boundary'])} | {_clean_display_text(rec['Do Not Do'])}"
+                    )
+                    st.caption(f"Watch: {_clean_display_text(rec['Verify Next'])}")
 
             if st.button("Save / refresh these findings in Action Queue", key="rec_save_queue", type="primary"):
                 try:
@@ -875,12 +718,12 @@ def render():
                     st.session_state.pop("rec_action_queue", None)
                 except Exception as e:
                     st.error(f"Action queue save failed: {format_snowflake_error(e)}")
-                    st.info("Deploy the Action Queue table through `snowflake/OVERWATCH_MART_SETUP.sql`, then retry.")
+                    st.info("The action queue is not available in this environment yet. Ask the DBA team to enable it, then retry.")
         elif st.session_state.get("rec_recommendations") == []:
             st.success("No actionable findings. Account looks healthy.")
 
-    elif active_view == "Automation Readiness":
-        _render_automation_readiness(session)
+    elif active_view == "Automation Health":
+        _render_automation_health(session)
 
     elif active_view == "Action Queue":
         _render_queue(session)

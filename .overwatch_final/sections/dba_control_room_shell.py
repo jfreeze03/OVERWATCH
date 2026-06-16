@@ -9,8 +9,6 @@ import streamlit as st
 from config import DEFAULT_COMPANY, DEFAULT_DAY_WINDOW, DEFAULT_ENVIRONMENT, DEFAULTS, ENVIRONMENT_CONFIG
 from sections.shell_helpers import (
     full_workspace_requested,
-    render_refresh_contract,
-    render_setup_health_board,
     render_shell_snapshot,
     render_shell_workflows,
     render_signal_lane_board,
@@ -43,7 +41,7 @@ _WORKFLOWS = (
     {
         "VIEW": "Morning Brief",
         "BUTTON_LABEL": "Open Morning Brief",
-        "MOVE": "Build the DBA morning packet from route priority, handoff blockers, escalations, and owner proof.",
+        "MOVE": "Refresh the DBA morning packet from route priority, handoff blockers, escalations, and route status.",
     },
     {
         "VIEW": "Operations Board",
@@ -51,14 +49,14 @@ _WORKFLOWS = (
         "MOVE": "Build route priority, runbook, escalation, handoff, incident, and action queue detail.",
     },
     {
-        "VIEW": "Release Gate",
-        "BUTTON_LABEL": "Open Release Gate",
-        "MOVE": "Check deployment blockers, task recovery, schema migration, and approval evidence.",
+        "VIEW": "Triage",
+        "BUTTON_LABEL": "Open Triage",
+        "MOVE": "Work failed queries, failed tasks, security signals, cost pressure, and action queue blockers.",
     },
     {
-        "VIEW": "Source Health",
-        "BUTTON_LABEL": "Open Source Health",
-        "MOVE": "Review which evidence sources are fresh, stale, skipped, or missing for this scope.",
+        "VIEW": "Drill Routes",
+        "BUTTON_LABEL": "Open Drill Routes",
+        "MOVE": "Jump from each signal lane to the right monitoring detail without adding sidebar sprawl.",
     },
     {
         "VIEW": "Service Posture",
@@ -66,14 +64,9 @@ _WORKFLOWS = (
         "MOVE": "Review service risk across query execution, warehouses, login/auth, tasks, and data loading.",
     },
     {
-        "VIEW": "Executive Evidence",
+        "VIEW": "Report Brief",
         "BUTTON_LABEL": "Open Brief Export",
         "MOVE": "Prepare report-ready operator notes for leaders without giving them the dashboard.",
-    },
-    {
-        "VIEW": "Release Compare",
-        "BUTTON_LABEL": "Open Compare",
-        "MOVE": "Compare release windows for task, procedure, runtime, and cost regressions.",
     },
 )
 
@@ -188,7 +181,7 @@ def _load_command_board() -> None:
         days=_window_days(),
     )
     if payload.summary.get("loaded"):
-        st.session_state.setdefault("dba_control_room_source_mode", "MART_EXECUTIVE_OBSERVABILITY")
+        st.session_state.setdefault("dba_control_room_source_mode", "Fast summary")
 
 
 def _loaded_data_snapshot() -> tuple[tuple[str, object], ...]:
@@ -197,12 +190,11 @@ def _loaded_data_snapshot() -> tuple[tuple[str, object], ...]:
         failed_queries = _frame_len(data.get("failed_queries"))
         failed_tasks = _frame_len(data.get("task_failures"))
         action_rows = _frame_len(data.get("action_queue"))
-        source_rows = _frame_len(data.get("source_health"))
         return (
             ("Failed Queries", f"{failed_queries:,}"),
             ("Failed Tasks", f"{failed_tasks:,}"),
             ("Action Rows", f"{action_rows:,}"),
-            ("Sources", f"{source_rows:,}" if source_rows else "Loaded"),
+            ("Service Posture", "Loaded"),
         )
 
     snapshot_result = st.session_state.get("dba_control_room_snapshot_result")
@@ -229,7 +221,7 @@ def _loaded_data_snapshot() -> tuple[tuple[str, object], ...]:
         ("Fast Watch", "On demand"),
         ("Morning", "On demand"),
         ("Ops Board", "On demand"),
-        ("Release Gate", "On demand"),
+        ("Triage", "On demand"),
     )
 
 
@@ -239,9 +231,7 @@ def _dba_shell_lanes() -> tuple[dict[str, str], ...]:
         failed_queries = _frame_len(data.get("failed_queries"))
         failed_tasks = _frame_len(data.get("task_failures"))
         action_rows = _frame_len(data.get("action_queue"))
-        source_rows = _frame_len(data.get("source_health"))
         incident_rows = _frame_len(data.get("incident_board")) or failed_queries + failed_tasks
-        release_rows = _frame_len(data.get("release_gate"))
         return (
             {
                 "label": "Incidents",
@@ -252,26 +242,8 @@ def _dba_shell_lanes() -> tuple[dict[str, str], ...]:
             {
                 "label": "Action queue",
                 "value": f"{action_rows:,}",
-                "state": "Owners",
-                "detail": "Open work should have owner, action, evidence, and closure state.",
-            },
-            {
-                "label": "Source health",
-                "value": f"{source_rows:,}" if source_rows else "Loaded",
-                "state": "Freshness",
-                "detail": "Stale or missing sources block confident DBA decisions.",
-            },
-            {
-                "label": "Release gate",
-                "value": f"{release_rows:,}" if release_rows else "Ready",
-                "state": "Deploy",
-                "detail": "Deployment blockers and rollback proof stay visible before release.",
-            },
-            {
-                "label": "Morning route",
-                "value": "Loaded",
-                "state": "Brief",
-                "detail": "Prioritize incidents, source gaps, release blockers, then cost/control work.",
+                "state": "Routes",
+                "detail": "Open work should have route, action, and current status.",
             },
             {
                 "label": "Service posture",
@@ -280,7 +252,25 @@ def _dba_shell_lanes() -> tuple[dict[str, str], ...]:
                 "detail": "Query, warehouse, login, task, and load posture roll up here.",
             },
             {
-                "label": "Handoff proof",
+                "label": "Triage status",
+                "value": "Loaded",
+                "state": "Route",
+                "detail": "Incident, action, and service posture signals stay visible before drilldown.",
+            },
+            {
+                "label": "Morning route",
+                "value": "Loaded",
+                "state": "Brief",
+                "detail": "Prioritize incidents, action blockers, then cost/control work.",
+            },
+            {
+                "label": "Service posture",
+                "value": "Loaded",
+                "state": "Ops",
+                "detail": "Query, warehouse, login, task, and load posture roll up here.",
+            },
+            {
+                "label": "Handoff status",
                 "value": "Available",
                 "state": "Audit",
                 "detail": "Operator notes should survive shift changes and leadership review.",
@@ -333,16 +323,16 @@ def _dba_shell_lanes() -> tuple[dict[str, str], ...]:
                 "detail": "Failures become prioritized DBA work, not passive charts.",
             },
             {
-                "label": "Source health",
-                "value": "Snapshot",
-                "state": "Freshness",
-                "detail": "Refresh before acting if the control-room source is stale.",
+                "label": "Action route",
+                "value": "Ready",
+                "state": "Queue",
+                "detail": "Failures become prioritized DBA work with status and next action.",
             },
             {
-                "label": "Release gate",
+                "label": "Triage",
                 "value": "Ready",
-                "state": "Deploy",
-                "detail": "Open the gate route for pre-release proof and blockers.",
+                "state": "Route",
+                "detail": "Open triage for active failures, queue pressure, and blockers.",
             },
             {
                 "label": "Live fallback",
@@ -374,7 +364,7 @@ def _dba_shell_lanes() -> tuple[dict[str, str], ...]:
                 "label": "Queue pressure",
                 "value": f"{queue_seconds / 60.0:,.1f}m" if queue_seconds else "0m",
                 "state": "Capacity",
-                "detail": f"Top queue warehouse: {summary.get('top_queue_warehouse') or 'Not loaded'}.",
+                "detail": f"Top queue warehouse: {summary.get('top_queue_warehouse') or 'On demand'}.",
             },
             {
                 "label": "P95 runtime",
@@ -386,31 +376,31 @@ def _dba_shell_lanes() -> tuple[dict[str, str], ...]:
                 "label": "Remote spillage",
                 "value": f"{spill_gb:,.1f} GB",
                 "state": "Memory",
-                "detail": f"Top spill warehouse: {summary.get('top_spill_warehouse') or 'Not loaded'}.",
+                "detail": f"Top spill warehouse: {summary.get('top_spill_warehouse') or 'On demand'}.",
             },
             {
                 "label": "Spend",
                 "value": f"${current_cost:,.0f}",
                 "state": f"Cortex ${cortex:,.0f}",
-                "detail": f"Top cost driver: {summary.get('top_cost_driver') or 'Not loaded'}.",
+                "detail": f"Top cost driver: {summary.get('top_cost_driver') or 'On demand'}.",
             },
             {
                 "label": "Action queue",
                 "value": f"{open_actions:,}",
-                "state": "Owners",
-                "detail": "Open actions should have owner, recommendation, business impact, and verification proof.",
+                "state": "Routes",
+                "detail": "Open actions should have route, recommendation, business impact, and telemetry status.",
             },
             {
-                "label": "Source freshness",
-                "value": f"{int(_safe_float(summary.get('freshness_sources'))):,}",
-                "state": f"{int(_safe_float(summary.get('stale_sources'))):,} stale",
-                "detail": "ACCOUNT_USAGE sources can lag; use live routes for active incidents.",
+                "label": "Failed queries",
+                "value": f"{failed_queries:,}",
+                "state": "Failures",
+                "detail": "Repeated query failures drive the first DBA triage lane.",
             },
             {
-                "label": "Live fallback",
-                "value": "Guarded",
-                "state": "Safe",
-                "detail": "Live checks stay explicit to avoid surprise Snowflake cost.",
+                "label": "Failed tasks",
+                "value": f"{failed_tasks:,}",
+                "state": "Pipeline",
+                "detail": "Task failures route into Workload Operations and DBA handoff.",
             },
         )
 
@@ -419,31 +409,31 @@ def _dba_shell_lanes() -> tuple[dict[str, str], ...]:
             "label": "Fast watch",
             "value": "On demand",
             "state": "Refresh",
-            "detail": "Failed queries, tasks, credits, and source health load from the DBA mart.",
+            "detail": "Failed queries, tasks, credits, and data health load from the fast summary.",
         },
         {
             "label": "Morning brief",
             "value": "On demand",
             "state": "Route",
-            "detail": "Build the operator packet from failures, blockers, and owner actions.",
+            "detail": "Refresh the operator packet from failures, blockers, and routed actions.",
         },
         {
             "label": "Incident board",
             "value": "On demand",
             "state": "Ops",
-            "detail": "Incidents need impact, owner, next action, and verification proof.",
+            "detail": "Incidents need impact, route, next action, and telemetry status.",
         },
         {
-            "label": "Release gate",
+            "label": "Triage",
             "value": "On demand",
-            "state": "Deploy",
-            "detail": "Gate deployment on task recovery, schema migration, and rollback proof.",
+            "state": "Route",
+            "detail": "Route failed queries, tasks, cost pressure, security signals, and action blockers.",
         },
         {
-            "label": "Source health",
+            "label": "Failed queries",
             "value": "On demand",
-            "state": "Freshness",
-            "detail": "Freshness protects decisions from stale ACCOUNT_USAGE sources.",
+            "state": "Failures",
+            "detail": "Failed query counts load into the first DBA triage lane.",
         },
         {
             "label": "Service posture",
@@ -452,16 +442,16 @@ def _dba_shell_lanes() -> tuple[dict[str, str], ...]:
             "detail": "Query execution, warehouses, login/auth, tasks, and data loading.",
         },
         {
-            "label": "Handoff proof",
+            "label": "Handoff status",
             "value": "On demand",
             "state": "Audit",
             "detail": "Shift handoff should explain what happened and what to do next.",
         },
         {
-            "label": "Live fallback",
-            "value": "Guarded",
-            "state": "Safe",
-            "detail": "Live checks stay explicit to avoid surprise Snowflake cost.",
+            "label": "Failed tasks",
+            "value": "On demand",
+            "state": "Pipeline",
+            "detail": "Failed task counts load into Workload Operations and handoff.",
         },
     )
 
@@ -470,6 +460,8 @@ def _open_workspace(view: str | None = None) -> None:
     st.session_state[_BRIEF_MODE_KEY] = False
     st.session_state[_FULL_WORKSPACE_KEY] = True
     if view:
+        if view == "Telemetry Inputs":
+            view = "Operations Board"
         st.session_state["dba_control_room_active_view"] = view
     st.rerun()
 
@@ -494,52 +486,31 @@ def _render_back_to_brief_control() -> None:
 
 
 def _render_command_snapshot() -> None:
-    meta = _command_meta() or _control_room_meta()
     st.markdown("**DBA Command Snapshot**")
     render_signal_lane_board("DBA Command Board", _dba_shell_lanes(), max_lanes=8)
     render_shell_snapshot(_loaded_data_snapshot())
-    render_refresh_contract(
-        meta,
-        source=st.session_state.get("dba_control_room_source_mode", "MART_EXECUTIVE_OBSERVABILITY / MART_DBA_CONTROL_ROOM"),
-        target_minutes=30,
-        refresh_method="Scheduled command mart refresh",
-        live_fallback="Explicit DBA route",
-    )
 
 
 def _render_morning_route_board() -> None:
     data = st.session_state.get("dba_control_room_data")
-    failed_queries = failed_tasks = source_rows = action_rows = 0
+    failed_queries = failed_tasks = action_rows = queue_minutes = 0
     if isinstance(data, dict) and data:
         failed_queries = _frame_len(data.get("failed_queries"))
         failed_tasks = _frame_len(data.get("task_failures"))
-        source_rows = _frame_len(data.get("source_health"))
         action_rows = _frame_len(data.get("action_queue"))
     elif _command_summary():
         summary = _command_summary()
         failed_queries = int(_safe_float(summary.get("failed_queries")))
         failed_tasks = int(_safe_float(summary.get("failed_tasks")))
-        source_rows = int(_safe_float(summary.get("freshness_sources")))
         action_rows = int(_safe_float(summary.get("open_actions")))
+        queue_minutes = _safe_float(summary.get("queue_seconds")) / 60.0
     st.markdown("**Morning Route Board**")
     render_shell_snapshot((
         ("Incidents", f"{failed_queries + failed_tasks:,}" if failed_queries or failed_tasks else "On demand"),
         ("Action Queue", f"{action_rows:,}" if action_rows else "On demand"),
-        ("Source Health", f"{source_rows:,}" if source_rows else "On demand"),
-        ("Release Gate", "Ready"),
+        ("Queue Pressure", f"{queue_minutes:,.1f}m" if queue_minutes else "On demand"),
+        ("Triage", "Ready"),
     ))
-    render_setup_health_board(
-        "DBA Mart Contract",
-        (
-            ("Control mart", "MART_DBA_CONTROL_ROOM"),
-            ("Live fallback", "Guarded 24h cap"),
-            ("Morning brief", "Priority queue"),
-            ("Closure proof", "Action evidence"),
-        ),
-        cadence="30-60 min mart refresh",
-        fallback="Explicit DBA route",
-        owner="DBA Operations",
-    )
 
 
 def _render_workflow_launchpad() -> None:

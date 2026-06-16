@@ -9,19 +9,11 @@ import streamlit as st
 from config import DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, DEFAULTS, DEFAULT_DAY_WINDOW, DAY_WINDOW_OPTIONS, ENVIRONMENT_CONFIG
 from sections.shell_helpers import (
     full_workspace_requested,
-    render_refresh_contract,
-    render_setup_health_board,
     render_shell_kpi_row,
     render_shell_workflows,
     render_signal_lane_board,
 )
 from utils.command_board import load_or_reuse_command_board
-from utils.native_snowflake import (
-    build_executive_digest_history_sql,
-    build_org_rollup_sql,
-    build_overwatch_self_cost_sql,
-    build_tag_allocation_sql,
-)
 
 
 _FULL_WORKSPACE_KEY = "_cost_contract_full_workspace_requested"
@@ -55,12 +47,12 @@ _WORKFLOWS = (
     {
         "WORKFLOW": "Storage cost and retention",
         "BUTTON_LABEL": "Open Storage Cost",
-        "MOVE": "Review database, failsafe, stage, and table storage cost evidence from Snowflake storage usage views.",
+        "MOVE": "Review database, failsafe, stage, and table storage cost telemetry from Snowflake storage usage views.",
     },
     {
         "WORKFLOW": "FinOps Control Center",
         "BUTTON_LABEL": "Open FinOps",
-        "MOVE": "Review governance, resource monitors, verified savings, and formula trust.",
+        "MOVE": "Review resource monitors, measured savings, budget risk, and contract pace.",
     },
     {
         "WORKFLOW": "AI and Cortex spend",
@@ -68,19 +60,19 @@ _WORKFLOWS = (
         "MOVE": "Review Cortex usage, model spend, users, and runaway AI cost signals.",
     },
     {
-        "WORKFLOW": "Budget governance",
+        "WORKFLOW": "Budget Monitoring",
         "BUTTON_LABEL": "Open Budgets",
         "MOVE": "Check native Snowflake budgets, AI quota patterns, and budget actions.",
     },
     {
         "WORKFLOW": "Recommendations and action queue",
         "BUTTON_LABEL": "Open Recommendations",
-        "MOVE": "Assign owned cost fixes with proof, savings, severity, and verification.",
+        "MOVE": "Route cost fixes with savings, severity, and telemetry status.",
     },
     {
         "WORKFLOW": "Snowflake value log",
         "BUTTON_LABEL": "Open Value Log",
-        "MOVE": "Show DBA savings, avoided spend, and service-improvement evidence.",
+        "MOVE": "Show DBA savings, avoided spend, and service-improvement telemetry.",
     },
 )
 
@@ -211,15 +203,15 @@ def _loaded_cost_board() -> dict:
     forecast_credits = _float_value(_row_get(run_rate_row, "PROJECTED_30D_FROM_7D"))
     forecast = forecast_credits * _credit_price() if run_rate_row is not None else 0.0
     avg_daily_7d = _float_value(_row_get(run_rate_row, "AVG_DAILY_7D")) * _credit_price()
-    run_rate_state = str(_row_get(run_rate_row, "RUN_RATE_STATE", "") or "").strip() or "Not loaded"
+    run_rate_state = str(_row_get(run_rate_row, "RUN_RATE_STATE", "") or "").strip() or "On demand"
     if command_summary.get("loaded") and not forecast:
         avg_daily_7d = spend / max(1, int(DEFAULT_DAY_WINDOW))
         forecast = avg_daily_7d * 30
-        run_rate_state = "Mart forecast"
-    top_driver = str(_row_get(cockpit_row, "TOP_INCREASE_WAREHOUSE", "Not loaded") or "Not loaded")
+        run_rate_state = "Forecast"
+    top_driver = str(_row_get(cockpit_row, "TOP_INCREASE_WAREHOUSE", "On demand") or "On demand")
     top_delta = _float_value(_row_get(cockpit_row, "TOP_INCREASE_CREDITS")) * _credit_price()
     if not cockpit_loaded and command_summary.get("loaded"):
-        top_driver = str(command_summary.get("top_cost_driver") or "Not loaded")
+        top_driver = str(command_summary.get("top_cost_driver") or "On demand")
         top_delta = _float_value(command_summary.get("top_cost_driver_usd"))
 
     open_actions = high_actions = 0
@@ -245,7 +237,7 @@ def _loaded_cost_board() -> dict:
         loaded_at = str(cockpit_meta.get("loaded_at") or "").strip()
     return {
         "loaded": cockpit_loaded or bool(command_summary.get("loaded")),
-        "source": "cost_cockpit" if cockpit_loaded else "MART_EXECUTIVE_OBSERVABILITY",
+        "source": "Cost summary",
         "spend": spend,
         "delta_spend": delta_spend,
         "forecast": forecast,
@@ -256,9 +248,9 @@ def _loaded_cost_board() -> dict:
         "open_actions": open_actions,
         "high_actions": high_actions,
         "est_savings": est_savings,
-        "cortex": _money(command_summary.get("cortex_cost_usd")) if command_summary.get("loaded") else ("Loaded" if _is_loaded_frame(st.session_state.get("cortex_control_summary")) else "Not loaded"),
+        "cortex": _money(command_summary.get("cortex_cost_usd")) if command_summary.get("loaded") else ("Loaded" if _is_loaded_frame(st.session_state.get("cortex_control_summary")) else "On demand"),
         "budget": "Loaded" if _is_loaded_frame(st.session_state.get("cost_contract_budget_command_center")) else "On demand",
-        "freshness": "Loaded" if loaded_at or command_summary.get("loaded") else "Not loaded",
+        "status": "Loaded" if loaded_at or command_summary.get("loaded") else "On demand",
     }
 
 
@@ -268,51 +260,51 @@ def _cost_shell_lanes(board: dict | None = None) -> tuple[dict[str, str], ...]:
         return (
             {
                 "label": "Current spend",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Refresh",
                 "detail": "Official metering facts load the first-paint spend board.",
             },
             {
                 "label": "Spend movement",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Refresh",
                 "detail": "Compare current window against the prior period before explaining burn.",
             },
             {
                 "label": "30d run rate",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Forecast",
-                "detail": "Projected spend comes from the scheduled contract-burn mart.",
+                "detail": "Projected spend comes from recent burn history.",
             },
             {
                 "label": "Cortex dollars",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "AI",
                 "detail": "Cortex usage is isolated from warehouse compute for cost truth.",
             },
             {
                 "label": "Top driver",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Attribution",
                 "detail": "Warehouse, service, and user/role drivers explain movement.",
             },
             {
                 "label": "Action queue",
-                "value": "Not loaded",
-                "state": "Owners",
-                "detail": "Recommendations require owner, expected savings, and verification proof.",
+                "value": "On demand",
+                "state": "Routes",
+                "detail": "Recommendations require expected savings, action route, and telemetry status.",
             },
             {
                 "label": "Budget risk",
                 "value": "On demand",
-                "state": "Governance",
+                "state": "Budget",
                 "detail": "Budgets and quota controls load with the FinOps workflow.",
             },
             {
                 "label": "Value log",
                 "value": "Automated",
-                "state": "Proof",
-                "detail": "Candidate savings are generated from metering and action evidence.",
+                "state": "Telemetry",
+                "detail": "Candidate savings are generated from metering and action status.",
             },
         )
     delta = _float_value(board.get("delta_spend"))
@@ -332,13 +324,13 @@ def _cost_shell_lanes(board: dict | None = None) -> tuple[dict[str, str], ...]:
         },
         {
             "label": "30d run rate",
-            "value": _money(board.get("forecast")) if _float_value(board.get("forecast")) else str(board.get("run_rate_state") or "Not loaded"),
+            "value": _money(board.get("forecast")) if _float_value(board.get("forecast")) else str(board.get("run_rate_state") or "On demand"),
             "state": "Forecast",
             "detail": f"7d average daily spend: {_money(board.get('avg_daily_7d'))}.",
         },
         {
             "label": "Cortex dollars",
-            "value": str(board.get("cortex") or "Not loaded"),
+            "value": str(board.get("cortex") or "On demand"),
             "state": "AI",
             "detail": "Cortex spend uses the AI-specific metering rate and facts.",
         },
@@ -357,20 +349,20 @@ def _cost_shell_lanes(board: dict | None = None) -> tuple[dict[str, str], ...]:
         {
             "label": "Budget risk",
             "value": str(board.get("budget") or "On demand"),
-            "state": "Governance",
+            "state": "Budget",
             "detail": "Budget and resource monitor controls are routed through FinOps.",
         },
         {
-            "label": "Freshness",
-            "value": str(board.get("freshness") or "Not loaded"),
-            "state": "Source",
-            "detail": "Shell uses mart/cache facts; live scans stay behind explicit proof.",
+            "label": "Contract pace",
+            "value": "Review" if _float_value(board.get("forecast")) and _float_value(board.get("forecast")) > _float_value(board.get("spend")) else "Stable",
+            "state": "Forecast",
+            "detail": "Forecasted burn compared with current spend pace.",
         },
     )
 
 
 def _full_workspace_requested() -> bool:
-    """Keep Cost navigation lightweight; open heavy proof only from a selected cost workflow."""
+    """Keep Cost navigation lightweight; open heavy detail only from a selected cost workflow."""
     _ = full_workspace_requested
     if st.session_state.get(_FULL_WORKSPACE_KEY):
         return True
@@ -418,61 +410,37 @@ def _render_metric_board() -> None:
     st.markdown("**Cost Command Board**")
     if not board["loaded"]:
         render_shell_kpi_row((
-            ("Current Spend", "Awaiting mart"),
-            ("Delta", "Awaiting mart"),
-            ("30d Forecast", "Awaiting mart"),
-            ("Contract Pace", "Awaiting mart"),
+            ("Current Spend", "Awaiting data"),
+            ("Delta", "Awaiting data"),
+            ("30d Forecast", "Awaiting data"),
+            ("Contract Pace", "Awaiting data"),
         ))
         render_shell_kpi_row((
-            ("Cortex", "Awaiting mart"),
-            ("Top Driver", "Awaiting mart"),
+            ("Cortex", "Awaiting data"),
+            ("Top Driver", "Awaiting data"),
             ("Budget Risk", "On demand"),
-            ("Cost Freshness", "Awaiting mart"),
+            ("Open Actions", "Awaiting data"),
         ))
     else:
         render_shell_kpi_row((
             ("Current Spend", _money(board["spend"])),
             ("Delta", _money(board["delta_spend"], signed=True)),
-            ("30d Forecast", _money(board["forecast"]) if board["forecast"] else "Not loaded"),
+            ("30d Forecast", _money(board["forecast"]) if board["forecast"] else "On demand"),
             ("Contract Pace", "Review" if board["forecast"] and board["forecast"] > board["spend"] else "Stable"),
         ))
         render_shell_kpi_row((
             ("Cortex", board["cortex"]),
             ("Top Driver", str(board["top_driver"])[:28]),
             ("Driver Delta", _money(board["top_delta"], signed=True)),
-            ("Cost Freshness", board["freshness"]),
+            ("Open Actions", f"{_int_value(board.get('open_actions')):,}"),
         ))
     render_signal_lane_board("Cost Signals", _cost_shell_lanes(board), max_lanes=8)
     render_shell_kpi_row((
-        ("Open Actions", f"{_int_value(board.get('open_actions')):,}" if board["loaded"] else "Awaiting mart"),
-        ("High Priority", f"{_int_value(board.get('high_actions')):,}" if board["loaded"] else "Awaiting mart"),
-        ("Open Est. Savings", _money(board.get("est_savings")) if board["loaded"] else "Awaiting mart"),
-        ("Value Log", "Automated setup"),
+        ("Open Actions", f"{_int_value(board.get('open_actions')):,}" if board["loaded"] else "Awaiting data"),
+        ("High Priority", f"{_int_value(board.get('high_actions')):,}" if board["loaded"] else "Awaiting data"),
+        ("Open Est. Savings", _money(board.get("est_savings")) if board["loaded"] else "Awaiting data"),
+        ("Value Log", "Savings log"),
     ))
-
-
-def _render_cost_source_contract() -> None:
-    board = _loaded_cost_board()
-    meta = st.session_state.get("cost_contract_cockpit_meta") or st.session_state.get(_COMMAND_BOARD_META_KEY, {})
-    render_refresh_contract(
-        meta if board.get("loaded") and isinstance(meta, dict) else {},
-        source=str(board.get("source") or "FACT_COST_DAILY / FACT_CORTEX_DAILY"),
-        target_minutes=60,
-        refresh_method="Scheduled cost and Cortex mart refresh",
-        live_fallback="Explicit proof refresh",
-    )
-    render_setup_health_board(
-        "Cost Mart Contract",
-        (
-            ("Official metering", "FACT_COST_DAILY"),
-            ("AI spend", "FACT_CORTEX_DAILY"),
-            ("Forecast", "OVERWATCH_CONTRACT_BURN_FORECAST_V"),
-            ("Value", "OVERWATCH_VALUE_CANDIDATE_V"),
-        ),
-        cadence="60 min cost refresh",
-        fallback="Explicit proof refresh",
-        owner="FinOps / DBA",
-    )
 
 
 def _render_executive_flow_board() -> None:
@@ -480,10 +448,10 @@ def _render_executive_flow_board() -> None:
     st.markdown("**Cost Executive Flow**")
     if not board["loaded"]:
         render_shell_kpi_row((
-            ("Burn", "Awaiting mart"),
-            ("Run Rate", "Awaiting mart"),
-            ("Driver", "Awaiting mart"),
-            ("Action Queue", "Awaiting mart"),
+            ("Burn", "Awaiting data"),
+            ("Run Rate", "Awaiting data"),
+            ("Driver", "Awaiting data"),
+            ("Action Queue", "Awaiting data"),
         ))
     else:
         render_shell_kpi_row((
@@ -492,98 +460,6 @@ def _render_executive_flow_board() -> None:
             ("Driver", str(board["top_driver"])[:28]),
             ("Action Queue", f"{_int_value(board['open_actions']):,}"),
         ))
-
-
-def _render_value_automation_board() -> None:
-    st.markdown("**Snowflake Value Automation**")
-    render_signal_lane_board(
-        "No-Touch Value Capture",
-        (
-            {
-                "label": "Candidate source",
-                "value": "OVERWATCH_VALUE_CANDIDATE_V",
-                "state": "Automated",
-                "detail": "Finds fixed cost actions and resolved alert-prevention value without DBA typing.",
-            },
-            {
-                "label": "Ledger target",
-                "value": "OVERWATCH_ROI_LOG",
-                "state": "Audited",
-                "detail": "Automated entries keep evidence source, evidence id, owner, and value state.",
-            },
-            {
-                "label": "Verifier",
-                "value": "ESTIMATED -> VERIFIED",
-                "state": "Guarded",
-                "detail": "Value stays estimated until post-period proof or closure evidence is present.",
-            },
-            {
-                "label": "Run control",
-                "value": "SP_OVERWATCH_AUTOMATE_VALUE_LOG",
-                "state": "Explicit",
-                "detail": "Procedure logs candidates, inserted rows, verified rows, status, and message.",
-            },
-        ),
-        max_lanes=4,
-    )
-    render_setup_health_board(
-        "Value Log Contract",
-        (
-            ("Candidate view", "OVERWATCH_VALUE_CANDIDATE_V"),
-            ("Health view", "OVERWATCH_VALUE_AUTOMATION_HEALTH_V"),
-            ("Run log", "OVERWATCH_VALUE_AUTOMATION_RUN"),
-            ("Ledger", "OVERWATCH_ROI_LOG"),
-        ),
-        cadence="60 min value candidate refresh",
-        fallback="Manual value entry remains optional, not required",
-        owner="DBA / FinOps",
-    )
-
-
-def _render_cost_native_proof_board() -> None:
-    st.markdown("**Cost Allocation & OVERWATCH Cost Proof**")
-    render_signal_lane_board(
-        "Native Cost Proof",
-        (
-            {
-                "label": "Tag allocation",
-                "value": "TAG_REFERENCES",
-                "state": "Owner",
-                "detail": "Use owner, cost-center, and criticality tags instead of only warehouse naming rules.",
-            },
-            {
-                "label": "Self-cost",
-                "value": "QUERY_TAG",
-                "state": "App cost",
-                "detail": "OVERWATCH must prove its own queries, p95, failures, bytes scanned, and cost by section.",
-            },
-            {
-                "label": "Executive digest",
-                "value": "EXECUTIVE_DIGEST_HISTORY",
-                "state": "Push",
-                "detail": "Daily digest rows should match the Executive Landing board and owner action count.",
-            },
-            {
-                "label": "Org rollup",
-                "value": "ORGANIZATION_USAGE",
-                "state": "Optional",
-                "detail": "Only expose multi-account cost when the role has organization usage privileges.",
-            },
-        ),
-        max_lanes=4,
-    )
-    render_setup_health_board(
-        "Native Cost SQL Contracts",
-        (
-            ("Tag query", build_tag_allocation_sql().splitlines()[0]),
-            ("Self-cost", build_overwatch_self_cost_sql().splitlines()[0]),
-            ("Digest", build_executive_digest_history_sql().splitlines()[0]),
-            ("Org rollup", build_org_rollup_sql().splitlines()[0]),
-        ),
-        cadence="60 min command mart plus daily digest",
-        fallback="Single-account metering remains valid",
-        owner="FinOps / OVERWATCH Maintainer",
-    )
 
 
 def _render_workflow_launchpad() -> None:
@@ -610,7 +486,4 @@ def render() -> None:
     _load_command_board()
     _render_metric_board()
     _render_executive_flow_board()
-    _render_cost_source_contract()
     _render_workflow_launchpad()
-    _render_value_automation_board()
-    _render_cost_native_proof_board()

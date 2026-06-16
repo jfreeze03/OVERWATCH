@@ -84,7 +84,6 @@ except ImportError:
             return start_date, end_date, False, max_days
         return end_date - timedelta(days=max_days - 1), end_date, True, max_days
 import utils.section_guidance as section_guidance
-from version import BUILD_LABEL, __version__
 
 def _lazy_query_call(name: str):
     def _call(*args, **kwargs):
@@ -106,7 +105,7 @@ SECTION_WORKSPACE_STATE_KEYS = {
     "Alert Center": ("_alert_center_full_workspace_requested", "_alert_center_brief_mode"),
     "Cost & Contract": ("_cost_contract_full_workspace_requested", "_cost_contract_brief_mode"),
     "Workload Operations": ("_workload_operations_full_workspace_requested", "_workload_operations_brief_mode"),
-    "Governance & Security": ("_governance_security_full_workspace_requested", "_governance_security_brief_mode"),
+    "Security Monitoring": ("_security_monitoring_full_workspace_requested", "_security_monitoring_brief_mode"),
 }
 
 
@@ -229,7 +228,7 @@ def _apply_section_compatibility_state(section: str) -> None:
 
 
 def _request_section_board_state(section: str) -> None:
-    """Make sidebar navigation land on the section board before detailed proof."""
+    """Make sidebar navigation land on the section board before detailed telemetry."""
     target = _normalize_nav_section(section)
     state_keys = SECTION_WORKSPACE_STATE_KEYS.get(target)
     if not state_keys:
@@ -241,11 +240,9 @@ def _request_section_board_state(section: str) -> None:
         return
     st.session_state[workspace_key] = False
     st.session_state[brief_key] = True
-    if target == "Governance & Security":
+    if target == "Security Monitoring":
         st.session_state["_security_posture_full_workspace_requested"] = False
         st.session_state["_security_posture_brief_mode"] = True
-        st.session_state["_change_drift_full_workspace_requested"] = False
-        st.session_state["_change_drift_brief_mode"] = True
 
 
 def _section_requires_connection(section: str) -> bool:
@@ -321,7 +318,7 @@ def _apply_role_based_defaults() -> None:
 
 
 def _global_filter_signature() -> tuple:
-    """Return the operator filter state that makes loaded evidence stale."""
+    """Return the operator filter state that makes loaded telemetry stale."""
     date_input = st.session_state.get("_global_date_range_input", ())
     if isinstance(date_input, list):
         date_input = tuple(date_input)
@@ -339,7 +336,7 @@ def _global_filter_signature() -> tuple:
 
 
 def _metric_settings_signature() -> tuple:
-    """Return settings that change dollarized metrics and derived evidence."""
+    """Return settings that change dollarized metrics and derived telemetry."""
     return (
         float(st.session_state.get("credit_price", DEFAULTS["credit_price"])),
         float(st.session_state.get(
@@ -638,12 +635,12 @@ def _probe_snowflake_available(force: bool = False) -> bool:
 
 
 SECTION_SUBTITLES = {
-    "Executive Landing": "Board-ready risk, cost movement, action closure, and deployment trust.",
-    "DBA Control Room": "Morning triage, route readiness, source health, and release risk.",
-    "Alert Center": "Consolidated incidents, email digests, annotation history, and alert setup.",
+    "Executive Landing": "Board-ready risk, cost movement, action closure, and telemetry trust.",
+    "DBA Control Room": "Morning triage, route status, data health, and release risk.",
+    "Alert Center": "Consolidated incidents, email digests, annotation history, and control status.",
     "Workload Operations": "Query history, task graphs, stored procedures, pipeline health, and runbooks.",
     "Cost & Contract": "Spend attribution, contract utilization, chargeback, savings, and action queue.",
-    "Governance & Security": "Access risk, grant posture, schema drift, controlled DBA actions, and rollback proof.",
+    "Security Monitoring": "Login risk, privileged grants, public access, data sharing, and security alerts.",
 }
 
 
@@ -758,7 +755,7 @@ def _render_section_transition_state(section: str) -> None:
                 <div class="ow-section-transition-kicker">Switching section</div>
                 <div class="ow-section-transition-title">Loading {safe_section}</div>
                 <div class="ow-section-transition-copy">
-                    Clearing the previous view while {safe_pending} renders fresh DBA evidence.
+                    Clearing the previous view while {safe_pending} renders fresh DBA telemetry.
                 </div>
                 <div class="ow-section-transition-bar"><span></span></div>
             </div>
@@ -865,7 +862,7 @@ with st.sidebar:
     experience_options = _allowed_experience_options()
     current_experience = _current_experience_view()
     selected_experience = st.selectbox(
-        "Experience View",
+        "Navigation View",
         experience_options,
         index=experience_options.index(current_experience),
         key="overwatch_experience_view",
@@ -878,7 +875,7 @@ with st.sidebar:
     }.get(matched_profile, "#38bdf8")
     role_label = current_role[:20] or "DBA"
 
-    st.caption(f"{role_label} - {matched_profile} ROLE - {selected_experience} VIEW")
+    st.caption(f"{role_label} - {matched_profile} role - {selected_experience} view")
 
     active_section = _current_active_section(visible_sections)
 
@@ -960,7 +957,6 @@ with st.sidebar:
     st.divider()
 
     company_color = COMPANY_CONFIG.get(active_company, {}).get("color", "#38bdf8")
-    st.caption(f"OVERWATCH {__version__} - {BUILD_LABEL}")
     st.markdown(f"""
     <div style="font-size:0.65rem; color:#475569; text-align:center;">
         <div style="color:{company_color}; font-weight:700; margin-bottom:4px;">{active_company} view</div>

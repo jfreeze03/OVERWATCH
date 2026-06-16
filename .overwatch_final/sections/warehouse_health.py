@@ -116,8 +116,8 @@ WAREHOUSE_HEALTH_BRIEF_WORKFLOWS = (
     {
         "VIEW": "Optimization Advisor",
         "BUTTON_LABEL": "Open Advisor",
-        "DBA_MOVE": "Move from evidence to recommended warehouse actions.",
-        "WHEN": "After pressure evidence is loaded or a DBA change is being planned.",
+        "DBA_MOVE": "Move from telemetry to recommended warehouse actions.",
+        "WHEN": "After pressure telemetry is loaded or a DBA change is being planned.",
     },
 )
 
@@ -137,7 +137,7 @@ def _warehouse_action_session(action: str):
     return get_session_for_action(
         action,
         surface="Warehouse Health",
-        offline_note="Warehouse shell, source summaries, and cached evidence remain visible without a live connection.",
+        offline_note="Warehouse shell, source summaries, and cached telemetry remain visible without a live connection.",
     )
 
 
@@ -246,7 +246,7 @@ def _warehouse_scope_meta(
     days: int | None = None,
     state: dict | None = None,
 ) -> dict:
-    """Return the filter scope that loaded Warehouse Health evidence must match."""
+    """Return the filter scope that loaded Warehouse Health telemetry must match."""
     state = state if state is not None else st.session_state
     meta = {
         "company": _scope_value(company),
@@ -352,7 +352,7 @@ def _warehouse_action_brief(company: str, environment: str, days: int) -> dict:
         return {
             "state": "Stale",
             "headline": "Reload Warehouse Data before acting.",
-            "detail": "Loaded warehouse evidence does not match the active company, environment, lookback, or triage filters.",
+            "detail": "Loaded warehouse telemetry does not match the active company, environment, lookback, or triage filters.",
         }
     if high_risk:
         queued = 0
@@ -365,7 +365,7 @@ def _warehouse_action_brief(company: str, environment: str, days: int) -> dict:
             "state": "Capacity Review",
             "headline": "Review high-risk warehouse pressure first.",
             "detail": (
-                f"{high_risk:,} Critical/High exception(s); verify "
+                f"{high_risk:,} Critical/High exception(s); confirm "
                 f"{queued:,} queued and {spill:,} spill signal(s) before settings changes."
             ),
         }
@@ -391,7 +391,7 @@ def _warehouse_action_brief(company: str, environment: str, days: int) -> dict:
         return {
             "state": "Metadata Gap",
             "headline": "Warehouse metadata needs access before guardrails are complete.",
-            "detail": "Load overview evidence when Snowflake grants are ready; specialist workflows stay gated.",
+            "detail": "Load overview telemetry when Snowflake grants are ready; specialist workflows stay gated.",
         }
     return {
         "state": "Ready",
@@ -403,7 +403,7 @@ def _warehouse_action_brief(company: str, environment: str, days: int) -> dict:
 def _render_warehouse_action_brief(brief: dict) -> None:
     render_shell_status_strip(
         state=brief.get("state") or "Review",
-        headline=brief.get("headline") or "Review warehouse evidence.",
+        headline=brief.get("headline") or "Review warehouse telemetry.",
         detail=brief.get("detail") or "",
     )
 
@@ -437,7 +437,7 @@ def _render_warehouse_operating_snapshot(snapshot: dict) -> None:
         render_shell_kpi_row((
             ("Scope", str(snapshot.get("scope") or "All")),
             ("Window", str(snapshot.get("window") or "14d")),
-            ("Evidence", str(snapshot.get("evidence") or "Load overview")),
+            ("Telemetry", str(snapshot.get("evidence") or "Load overview")),
         ))
         return
     render_shell_kpi_row((
@@ -583,8 +583,8 @@ def _source_next_action(state: str, source: str) -> str:
         return "Reload after changing company, environment, lookback, or triage filters."
     if state == "Unavailable":
         return "Deploy or refresh the summary/grants before relying on this surface."
-    if state == "Not Loaded":
-        return "Load only when this workflow is part of the current DBA investigation."
+    if state == "On demand":
+        return "Refresh only when this workflow is part of the current DBA investigation."
     if state == "No Rows":
         return "Confirm the selected scope has recent warehouse activity or summary rows."
     if "fallback" in source_lower:
@@ -597,7 +597,7 @@ def _warehouse_source_health_rows(
     company: str,
     environment: str,
 ) -> pd.DataFrame:
-    """Summarize Warehouse Health evidence freshness and source strategy."""
+    """Summarize Warehouse Health telemetry freshness and source strategy."""
     definitions = [
         {
             "surface": "Capacity brief",
@@ -666,22 +666,13 @@ def _warehouse_source_health_rows(
             "confidence": "Live ACCOUNT_USAGE",
         },
         {
-            "surface": "Ownership readiness",
-            "frame_key": "wh_owner_inventory",
-            "meta_key": "wh_owner_inventory_meta",
-            "days_key": "wh_owner_inventory_days",
-            "default_days": 30,
-            "source": "Warehouse owner directory + tag evidence",
-            "confidence": "Governed metadata",
-        },
-        {
             "surface": "Closure analytics",
             "frame_key": "wh_action_closure",
             "meta_key": "wh_action_closure_meta",
             "days_key": "wh_action_closure_days",
             "default_days": 30,
-            "source": "Action queue closure evidence",
-            "confidence": "Workflow evidence",
+            "source": "Action queue closure status",
+            "confidence": "Workflow telemetry",
         },
         {
             "surface": "Execution audit",
@@ -689,7 +680,7 @@ def _warehouse_source_health_rows(
             "meta_key": "wh_setting_execution_audit_meta",
             "days": 30,
             "source": "Warehouse setting review + DBA admin audit",
-            "confidence": "Audit evidence",
+            "confidence": "Audit telemetry",
         },
     ]
     rows = []
@@ -706,7 +697,7 @@ def _warehouse_source_health_rows(
         if error:
             status = "Unavailable"
         elif not loaded:
-            status = "Not Loaded"
+            status = "On demand"
         elif not _warehouse_meta_matches(state.get(item["meta_key"]), expected_meta):
             status = "Stale"
         elif frame.empty:
@@ -718,7 +709,7 @@ def _warehouse_source_health_rows(
             "Stale": 1,
             "Loaded": 2,
             "No Rows": 3,
-            "Not Loaded": 4,
+            "On demand": 4,
         }.get(status, 9)
         rows.append({
             "SURFACE": item["surface"],
@@ -843,7 +834,7 @@ def _warehouse_capacity_verification_sql(
     environment: str | None = None,
     company: str | None = None,
 ) -> str:
-    """Build read-only post-change evidence for one warehouse and environment scope."""
+    """Build read-only post-change telemetry for one warehouse and environment scope."""
     wh = sql_literal(warehouse_name, 300)
     days = max(1, min(int(days or 7), 30))
     env_clause = get_environment_filter_clause(
@@ -904,133 +895,9 @@ ORDER BY metered_credits DESC
 LIMIT 50"""
 
 
-def _warehouse_owner_inventory_sql(days: int, company: str, environment: str = "ALL") -> str:
-    """Return recent warehouse usage with owner/cost/environment tag evidence."""
-    days = max(1, min(int(days or 30), 90))
-    env_clause = get_environment_filter_clause(
-        "q.database_name",
-        environment=environment,
-        company=company,
-    )
-    return f"""WITH recent_warehouse_usage AS (
-    SELECT
-        q.warehouse_name,
-        MAX(q.warehouse_size) AS warehouse_size,
-        COUNT(*) AS query_count,
-        COUNT(DISTINCT q.database_name) AS database_count,
-        LISTAGG(DISTINCT q.database_name, ', ') WITHIN GROUP (ORDER BY q.database_name) AS database_sample,
-        MAX(q.start_time) AS last_query_time
-    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
-    WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
-      AND q.warehouse_name IS NOT NULL
-      {env_clause}
-    GROUP BY q.warehouse_name
-),
-warehouse_tags AS (
-    SELECT
-        object_name AS warehouse_name,
-        MAX(IFF(
-            UPPER(tag_name) IN ('OWNER', 'BUSINESS_OWNER', 'SERVICE_OWNER', 'DATA_OWNER', 'APPLICATION_OWNER'),
-            tag_value,
-            NULL
-        )) AS owner_tag,
-        MAX(IFF(
-            UPPER(tag_name) IN ('COST_CENTER', 'COSTCENTER', 'DEPARTMENT', 'BILLING_OWNER'),
-            tag_value,
-            NULL
-        )) AS cost_center_tag,
-        MAX(IFF(
-            UPPER(tag_name) IN ('ENVIRONMENT', 'ENV', 'SNOWFLAKE_ENV'),
-            tag_value,
-            NULL
-        )) AS environment_tag,
-        COUNT(*) AS tag_count
-    FROM SNOWFLAKE.ACCOUNT_USAGE.TAG_REFERENCES
-    WHERE UPPER(COALESCE(domain, '')) = 'WAREHOUSE'
-    GROUP BY object_name
-)
-SELECT
-    u.warehouse_name,
-    u.warehouse_size,
-    u.query_count,
-    u.database_count,
-    u.database_sample,
-    COALESCE(t.owner_tag, '') AS owner_tag,
-    COALESCE(t.cost_center_tag, '') AS cost_center_tag,
-    COALESCE(t.environment_tag, '') AS environment_tag,
-    COALESCE(t.tag_count, 0) AS tag_count,
-    u.last_query_time
-FROM recent_warehouse_usage u
-LEFT JOIN warehouse_tags t
-  ON UPPER(t.warehouse_name) = UPPER(u.warehouse_name)
-ORDER BY
-    IFF(COALESCE(t.owner_tag, '') = '', 0, 1) ASC,
-    u.query_count DESC,
-    u.warehouse_name
-LIMIT 200""".strip()
-
-
-def _annotate_warehouse_owner_inventory(inventory: pd.DataFrame) -> pd.DataFrame:
-    """Add strict DBA ownership readiness to a warehouse inventory dataframe."""
-    if inventory is None or inventory.empty:
-        return pd.DataFrame() if inventory is None else inventory
-
-    view = inventory.copy()
-    view.columns = [str(col).upper() for col in view.columns]
-    rows = []
-    for _, row in view.iterrows():
-        context = _warehouse_owner_context({
-            "WAREHOUSE_NAME": row.get("WAREHOUSE_NAME", ""),
-            "SIGNAL": "Warehouse Ownership",
-        })
-        owner_tag = str(row.get("OWNER_TAG") or "").strip()
-        cost_tag = str(row.get("COST_CENTER_TAG") or "").strip()
-        env_tag = str(row.get("ENVIRONMENT_TAG") or "").strip()
-        route_ready = bool(context.get("owner_email")) and bool(
-            context.get("oncall_primary") or context.get("approval_group")
-        )
-        if owner_tag and cost_tag and env_tag and route_ready:
-            readiness = "Tagged Owner Ready"
-            rank = 0
-            next_action = "Use tagged owner plus owner-directory route before approving warehouse setting changes."
-        elif owner_tag and route_ready:
-            readiness = "Owner Tagged - Tag Gaps"
-            rank = 1
-            next_action = "Add cost-center and environment tags so finance and environment ownership survive audit."
-        elif route_ready:
-            readiness = "Directory Route Only"
-            rank = 2
-            next_action = "Add warehouse owner, cost-center, and environment tags; keep directory route as fallback."
-        else:
-            readiness = "Owner Route Blocked"
-            rank = 3
-            next_action = "Assign a named owner route before changing warehouse settings."
-        rows.append({
-            "OWNER": owner_tag or context.get("owner", ""),
-            "OWNER_EMAIL": context.get("owner_email", ""),
-            "ONCALL_PRIMARY": context.get("oncall_primary", ""),
-            "APPROVAL_GROUP": context.get("approval_group", ""),
-            "ESCALATION_TARGET": context.get("escalation", ""),
-            "OWNER_SOURCE": "WAREHOUSE_TAG" if owner_tag else context.get("source", ""),
-            "OWNER_EVIDENCE": (
-                f"owner_tag={owner_tag or 'missing'}; "
-                f"cost_center_tag={cost_tag or 'missing'}; "
-                f"environment_tag={env_tag or 'missing'}; "
-                f"{context.get('owner_evidence', '')}"
-            ).strip(),
-            "OWNER_ROUTE_READY": "Yes" if route_ready else "No",
-            "OWNER_TAG_STATE": "Tagged" if owner_tag else "Missing",
-            "COST_CENTER_TAG_STATE": "Tagged" if cost_tag else "Missing",
-            "ENVIRONMENT_TAG_STATE": "Tagged" if env_tag else "Missing",
-            "GOVERNANCE_READINESS": readiness,
-            "GOVERNANCE_RANK": rank,
-            "NEXT_OWNER_ACTION": next_action,
-        })
-    annotated = pd.concat([view.reset_index(drop=True), pd.DataFrame(rows)], axis=1)
-    return annotated.sort_values(
-        ["GOVERNANCE_RANK", "QUERY_COUNT", "WAREHOUSE_NAME"],
-        ascending=[False, False, True],
-    )
+def _route_label(value: object, default: str = "Platform DBA") -> str:
+    text = str(value or default).strip() or default
+    return text.replace("Owner", "Route").replace("owner", "route")
 
 
 def _warehouse_owner_context(row: pd.Series | dict) -> dict:
@@ -1038,33 +905,33 @@ def _warehouse_owner_context(row: pd.Series | dict) -> dict:
     signal = str(row.get("SIGNAL") or "").upper()
     if "CREDIT" in signal:
         base = {
-            "owner": "DBA / FinOps Owner",
+            "owner": "DBA / FinOps Route",
             "escalation": "FinOps Lead / DBA Lead",
-            "source": "Warehouse signal owner map",
+            "source": "Warehouse signal route map",
         }
     elif any(token in wh for token in ("ETL", "LOAD", "TASK", "PIPE", "AIRFLOW", "DBT")):
         base = {
-            "owner": "Data Engineering Owner",
-            "escalation": "Pipeline Owner / DBA On-Call",
-            "source": "Warehouse name owner hint",
+            "owner": "Data Engineering Route",
+            "escalation": "Pipeline Route / DBA On-Call",
+            "source": "Warehouse name route hint",
         }
     elif any(token in wh for token in ("BI", "REPORT", "LOOKER", "POWERBI", "TABLEAU")):
         base = {
-            "owner": "BI Platform Owner",
-            "escalation": "BI Product Owner / DBA Lead",
-            "source": "Warehouse name owner hint",
+            "owner": "BI Platform Route",
+            "escalation": "BI Product Route / DBA Lead",
+            "source": "Warehouse name route hint",
         }
     elif any(token in wh for token in ("DEV", "SAN", "SIT", "PHX", "SEA")):
         base = {
-            "owner": "Development Platform Owner",
+            "owner": "Development Platform Route",
             "escalation": "DBA Lead",
-            "source": "Warehouse name owner hint",
+            "source": "Warehouse name route hint",
         }
     else:
         base = {
             "owner": "Platform DBA",
             "escalation": "DBA Lead",
-            "source": "Default warehouse owner",
+            "source": "Default warehouse route",
         }
     directory_context = resolve_owner_context(
         row,
@@ -1074,26 +941,26 @@ def _warehouse_owner_context(row: pd.Series | dict) -> dict:
         category=signal or "Warehouse Capacity",
     )
     return {
-        "owner": directory_context.get("OWNER") or base["owner"],
+        "owner": _route_label(directory_context.get("OWNER") or base["owner"]),
         "escalation": base["escalation"] or directory_context.get("ESCALATION_TARGET", ""),
-        "source": f"{base['source']}; {directory_context.get('OWNER_SOURCE', '')}".strip("; "),
+        "source": _route_label(f"{base['source']}; {directory_context.get('OWNER_SOURCE', '')}".strip("; ")),
         "owner_email": directory_context.get("OWNER_EMAIL", ""),
         "oncall_primary": directory_context.get("ONCALL_PRIMARY", ""),
         "oncall_secondary": directory_context.get("ONCALL_SECONDARY", ""),
         "approval_group": base["escalation"] or directory_context.get("APPROVAL_GROUP", ""),
-        "owner_evidence": directory_context.get("OWNER_EVIDENCE", ""),
+        "owner_evidence": _route_label(directory_context.get("OWNER_EVIDENCE", "")),
     }
 
 
 def _warehouse_approval_for(row: pd.Series | dict) -> str:
     signal = str(row.get("SIGNAL") or "").upper()
-    owner = str(row.get("OWNER") or _warehouse_owner_context(row)["owner"])
+    owner = _route_label(row.get("OWNER") or _warehouse_owner_context(row)["owner"])
     if "CREDIT" in signal:
-        return "FinOps Lead / Warehouse Owner"
+        return "FinOps Lead / Warehouse Route"
     if "QUEUE" in signal:
         return f"{owner} / DBA Lead"
     if "SPILL" in signal:
-        return f"{owner} / Query Owner"
+        return f"{owner} / Query Route"
     return f"{owner} / DBA Lead"
 
 
@@ -1109,31 +976,31 @@ def _warehouse_setting_candidate_for(row: pd.Series) -> dict:
     if "QUEUE" in signal:
         candidate = "Review MAX_CLUSTER_COUNT, SCALING_POLICY, WAREHOUSE_SIZE, and workload routing."
         safe_path = (
-            "Use Warehouse Settings Manager to load current settings, approve any multi-cluster or size change, "
+            "Use Warehouse Settings Manager to load current settings, review any multi-cluster or size change, "
             "capture rollback SQL, then verify queue count and p95 latency."
         )
         risk = "Scaling can improve concurrency but may multiply credit burn or hide workload design problems."
     elif "SPILL" in signal:
         candidate = "Review WAREHOUSE_SIZE only after top spilling queries, clustering, and query shape are inspected."
         safe_path = (
-            "Use Query Profile evidence before resizing; if a size change is approved, capture rollback SQL and "
-            "verify spill count, p95 latency, and credits after the change."
+            "Use Query Profile telemetry before resizing; if a size change is planned, capture rollback SQL and "
+            "monitor spill count, p95 latency, and credits after the change."
         )
         risk = "Blind resizing can mask inefficient SQL and permanently raise run-rate cost."
     elif "CREDIT" in signal:
         candidate = "Review AUTO_SUSPEND, MIN_CLUSTER_COUNT, MAX_CLUSTER_COUNT, QAS, and workload schedule alignment."
         safe_path = (
-            "Use Warehouse Settings Manager to compare current settings with burn drivers, require owner approval, "
-            "save rollback SQL, then verify credits and query volume after the change."
+            "Use Warehouse Settings Manager to compare current settings with burn drivers, require review status, "
+            "save rollback SQL, then monitor credits and query volume after the change."
         )
         risk = "Cost controls can affect availability, queueing, or service-level expectations if applied broadly."
     else:
         candidate = "Review STATEMENT_TIMEOUT_IN_SECONDS, MAX_CONCURRENCY_LEVEL, WAREHOUSE_SIZE, and workload routing."
         safe_path = (
-            "Use Warehouse Settings Manager for changed-only SQL, owner approval, rollback SQL, and post-change "
-            "runtime verification."
+            "Use Warehouse Settings Manager for changed-only SQL, review status, rollback SQL, and post-change "
+            "runtime telemetry."
         )
-        risk = "Latency changes can shift failures, queueing, or user experience if applied without workload evidence."
+        risk = "Latency changes can shift failures, queueing, or user experience if applied without workload telemetry."
 
     readiness = "Ready for DBA review" if str(row.get("WAREHOUSE_NAME") or "").strip() else "Missing warehouse identity"
     owner_context = _warehouse_owner_context(row)
@@ -1179,7 +1046,7 @@ def _annotate_warehouse_admin_readiness(exceptions: pd.DataFrame) -> pd.DataFram
 
 
 def _warehouse_setting_audit_readiness_for_row(row: pd.Series | dict) -> dict:
-    """Score whether a warehouse setting change has approval, execution, and verification proof."""
+    """Score whether a warehouse setting change has review, execution, and telemetry status."""
     owner = str(row.get("OWNER") or "").strip()
     owner_source = str(row.get("OWNER_SOURCE") or "").upper()
     approver = str(row.get("APPROVER") or row.get("APPROVAL_GROUP") or "").strip()
@@ -1207,9 +1074,9 @@ def _warehouse_setting_audit_readiness_for_row(row: pd.Series | dict) -> dict:
     generic_owners = {"", "DBA", "UNKNOWN", "N/A"}
     owner_route_ready = bool(owner) and owner.upper() not in generic_owners and bool(owner_source or approver)
     if not owner_route_ready:
-        blockers.append("named owner route")
+        blockers.append("escalation route")
     if approval_required and approval_state not in {"APPROVED", "APPROVAL NOT REQUIRED", "NOT REQUIRED"}:
-        blockers.append("owner approval")
+        blockers.append("review status")
     if not ticket_id:
         blockers.append("change ticket")
     if rollback_required and not rollback_sql:
@@ -1220,49 +1087,49 @@ def _warehouse_setting_audit_readiness_for_row(row: pd.Series | dict) -> dict:
     if executed and not sql_hash:
         blockers.append("admin execution hash")
     if executed and (verification_status != "VERIFIED" or len(verification_result) < 15):
-        blockers.append("post-change verification")
+        blockers.append("post-change telemetry")
     if executed and savings_required and verified_savings <= 0:
-        blockers.append("verified savings")
+        blockers.append("savings telemetry")
 
-    route_blockers = {"named owner route"}
-    pre_change_blockers = {"owner approval", "change ticket", "rollback SQL"}
-    verification_blockers = {"admin execution hash", "post-change verification", "verified savings"}
+    route_blockers = {"escalation route"}
+    pre_change_blockers = {"review status", "change ticket", "rollback SQL"}
+    verification_blockers = {"admin execution hash", "post-change telemetry", "savings telemetry"}
 
     if failed:
         readiness = "Execution Failed"
         rank = 0
     elif any(item in route_blockers for item in blockers):
-        readiness = "Owner Route Blocked"
+        readiness = "Route Metadata Blocked"
         rank = 1
     elif any(item in pre_change_blockers for item in blockers):
         readiness = "Pre-Change Blocked"
         rank = 2
     elif any(item in verification_blockers for item in blockers):
-        readiness = "Verification Blocked"
+        readiness = "Telemetry Pending"
         rank = 3
     elif executed:
-        readiness = "Verified Change Audit"
+        readiness = "Change Audit Linked"
         rank = 8
     else:
         readiness = "Ready for Controlled Change"
         rank = 6
 
     if failed:
-        next_action = "Open the failed admin audit row, correct the setting plan, and keep rollback evidence with the ticket."
-    elif "named owner route" in blockers:
-        next_action = "Assign a named warehouse owner route before approving or executing setting changes."
-    elif "owner approval" in blockers:
-        next_action = "Capture owner approval before running ALTER WAREHOUSE."
+        next_action = "Open the failed admin audit row, correct the setting plan, and keep rollback status with the ticket."
+    elif "escalation route" in blockers:
+        next_action = "Add DBA escalation context before executing warehouse setting changes."
+    elif "review status" in blockers:
+        next_action = "Capture review status before running ALTER WAREHOUSE."
     elif "change ticket" in blockers:
-        next_action = "Attach the approved change ticket to the warehouse setting review."
+        next_action = "Add the change ticket to the warehouse setting review."
     elif "rollback SQL" in blockers:
         next_action = "Generate and retain rollback SQL from the guarded warehouse settings workflow before execution."
-    elif "post-change verification" in blockers:
-        next_action = "Run queue/spill/credit verification and attach the result before closure."
-    elif "verified savings" in blockers:
-        next_action = "Attach measured savings evidence before closing the credit-control change."
+    elif "post-change telemetry" in blockers:
+        next_action = "Refresh queue/spill/credit telemetry before closure."
+    elif "savings telemetry" in blockers:
+        next_action = "Wait for measured savings telemetry before closing the credit-control change."
     elif executed:
-        next_action = "Retain verified execution, rollback, and post-change evidence for audit."
+        next_action = "Keep execution, rollback, and post-change telemetry with the audit trail."
     else:
         next_action = "Route through the guarded warehouse settings workflow for changed-only SQL and audit logging."
 
@@ -1281,7 +1148,7 @@ def _warehouse_setting_control_board(
     closure: pd.DataFrame | None = None,
     execution_audit: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """Combine capacity findings, ownership, closure, and execution audit into one DBA board."""
+    """Combine capacity findings, closure, and execution audit into one DBA board."""
     if exceptions is None or exceptions.empty:
         return pd.DataFrame()
 
@@ -1292,8 +1159,6 @@ def _warehouse_setting_control_board(
     owners = pd.DataFrame() if owner_inventory is None else owner_inventory.copy()
     if not owners.empty:
         owners.columns = [str(col).upper() for col in owners.columns]
-        if "GOVERNANCE_READINESS" not in owners.columns:
-            owners = _annotate_warehouse_owner_inventory(owners)
     closure_view = pd.DataFrame() if closure is None else closure.copy()
     if not closure_view.empty:
         closure_view.columns = [str(col).upper() for col in closure_view.columns]
@@ -1334,8 +1199,8 @@ def _warehouse_setting_control_board(
             "VERIFIED_MONTHLY_SAVINGS": audit_row.get("VERIFIED_MONTHLY_SAVINGS", 0),
         })
 
-        governance_readiness = str(owner_row.get("GOVERNANCE_READINESS") or "Not Loaded")
-        closure_readiness = str(closure_row.get("CLOSURE_READINESS") or "Not Loaded")
+        route_readiness = str(owner_row.get("ROUTE_READINESS") or "Monitoring")
+        closure_readiness = str(closure_row.get("CLOSURE_READINESS") or "On demand")
         closure_rank = safe_int(closure_row.get("CLOSURE_RANK", 9))
         overdue = safe_int(closure_row.get("OVERDUE_OPEN", 0))
         fixed_without_verification = safe_int(closure_row.get("FIXED_WITHOUT_VERIFICATION", 0))
@@ -1344,25 +1209,25 @@ def _warehouse_setting_control_board(
 
         if overdue:
             state, rank = "Closure Overdue", 0
-            next_action = "Escalate overdue warehouse capacity action before approving more setting changes."
+            next_action = "Escalate overdue warehouse capacity action before planning more setting changes."
         elif fixed_without_verification or closure_rank in {1, 2}:
-            state, rank = "Closure Evidence Blocked", 1
-            next_action = str(closure_row.get("NEXT_ACTION") or "Attach verification proof before closing warehouse work.")
-        elif governance_readiness == "Owner Route Blocked" or audit_readiness["AUDIT_READINESS"] == "Owner Route Blocked":
-            state, rank = "Owner Route Blocked", 2
-            next_action = str(owner_row.get("NEXT_OWNER_ACTION") or audit_readiness["NEXT_CONTROL_ACTION"])
+            state, rank = "Closure Status Pending", 1
+            next_action = str(closure_row.get("NEXT_ACTION") or "Reopen warehouse work or wait for telemetry to confirm closure.")
+        elif audit_readiness["AUDIT_READINESS"] == "Route Metadata Blocked":
+            state, rank = "Route Metadata Blocked", 2
+            next_action = audit_readiness["NEXT_CONTROL_ACTION"]
         elif failed_changes:
             state, rank = "Execution Failed", 3
-            next_action = "Review failed ALTER WAREHOUSE audit rows and verify rollback or no-op state."
-        elif audit_readiness["AUDIT_READINESS"] in {"Pre-Change Blocked", "Verification Blocked"}:
+            next_action = "Review failed ALTER WAREHOUSE audit rows and confirm rollback or no-op state."
+        elif audit_readiness["AUDIT_READINESS"] in {"Pre-Change Blocked", "Telemetry Pending"}:
             state, rank = audit_readiness["AUDIT_READINESS"], audit_readiness["AUDIT_RANK"]
             next_action = audit_readiness["NEXT_CONTROL_ACTION"]
         elif audit_rows:
             state, rank = "Execution Audit Linked", 7
-            next_action = "Confirm post-change queue, spill, credit, and savings evidence remains attached."
+            next_action = "Confirm post-change queue, spill, credit, and savings telemetry remains current."
         else:
             state, rank = "Ready for Controlled Change", 6
-            next_action = "Open the guarded warehouse settings workflow, generate changed-only SQL, and capture rollback proof."
+            next_action = "Open the guarded warehouse settings workflow, generate changed-only SQL, and keep rollback status current."
 
         rows.append({
             "CONTROL_STATE": state,
@@ -1373,7 +1238,7 @@ def _warehouse_setting_control_board(
             "CAPACITY_SCORE": safe_float(row.get("CAPACITY_SCORE")),
             "METERED_CREDITS": safe_float(row.get("METERED_CREDITS")),
             "OWNER": row.get("OWNER", ""),
-            "GOVERNANCE_READINESS": governance_readiness,
+            "ROUTE_READINESS": route_readiness,
             "AUDIT_READINESS": audit_readiness["AUDIT_READINESS"],
             "AUDIT_BLOCKERS": audit_readiness["AUDIT_BLOCKERS"],
             "CLOSURE_READINESS": closure_readiness,
@@ -1382,9 +1247,9 @@ def _warehouse_setting_control_board(
             "AUDIT_ROWS": audit_rows,
             "SUCCESSFUL_CHANGES": safe_int(audit_row.get("SUCCESSFUL_CHANGES", 0)),
             "FAILED_CHANGES": failed_changes,
-            "LAST_EXECUTION_STATUS": audit_row.get("LAST_EXECUTION_STATUS", "Not Loaded"),
+            "LAST_EXECUTION_STATUS": audit_row.get("LAST_EXECUTION_STATUS", "On demand"),
             "LAST_EXECUTED_AT": audit_row.get("LAST_EXECUTED_AT", ""),
-            "APPROVAL_REQUIRED": row.get("APPROVAL_REQUIRED", "Yes"),
+            "APPROVAL_REQUIRED": row.get("APPROVAL_REQUIRED", "No"),
             "ROLLBACK_REQUIRED": row.get("ROLLBACK_REQUIRED", "Yes"),
             "SAVINGS_VERIFICATION_REQUIRED": row.get("SAVINGS_VERIFICATION_REQUIRED", "No"),
             "SETTING_CHANGE_CANDIDATE": row.get("SETTING_CHANGE_CANDIDATE", ""),
@@ -1454,18 +1319,17 @@ def _build_warehouse_guardrail_coverage(
     setting_control: pd.DataFrame | None = None,
     settings_inventory: pd.DataFrame | None = None,
 ) -> tuple[dict, pd.DataFrame]:
-    """Build an auto-derived warehouse guardrail board from loaded evidence."""
+    """Build an auto-derived warehouse guardrail board from loaded telemetry."""
+    _ = owner_inventory
     overview_view = _warehouse_upper_frame(overview)
-    owner_view = _warehouse_upper_frame(owner_inventory)
     control_view = _warehouse_upper_frame(setting_control)
     settings_view = _warehouse_upper_frame(settings_inventory)
 
     overview_by_wh = _warehouse_row_by_name(overview_view)
-    owner_by_wh = _warehouse_row_by_name(owner_view)
     settings_by_wh = _warehouse_row_by_name(settings_view, preferred_name_col="NAME")
     control_by_wh = _warehouse_row_by_name(control_view)
 
-    warehouses = sorted(set(overview_by_wh) | set(owner_by_wh) | set(settings_by_wh) | set(control_by_wh))
+    warehouses = sorted(set(overview_by_wh) | set(settings_by_wh) | set(control_by_wh))
     if not warehouses:
         return {
             "warehouses": 0,
@@ -1481,12 +1345,10 @@ def _build_warehouse_guardrail_coverage(
 
     for wh_key in warehouses:
         overview_row = overview_by_wh.get(wh_key, {})
-        owner_row = owner_by_wh.get(wh_key, {})
         settings_row = settings_by_wh.get(wh_key, {})
         control_row = control_by_wh.get(wh_key, {})
         wh_name = (
             _warehouse_text(overview_row.get("WAREHOUSE_NAME"))
-            or _warehouse_text(owner_row.get("WAREHOUSE_NAME"))
             or _warehouse_text(settings_row.get("NAME"))
             or _warehouse_text(control_row.get("WAREHOUSE_NAME"))
             or wh_key
@@ -1512,11 +1374,11 @@ def _build_warehouse_guardrail_coverage(
             monitor_deduction = 10
         elif _warehouse_setting_present(monitor_value):
             monitor_state = "Ready"
-            monitor_action = "Retain resource monitor assignment evidence with the warehouse review."
+            monitor_action = "Keep resource monitor assignment with the warehouse review."
             monitor_deduction = 0
         elif "OVERWATCH" in wh_key:
             monitor_state = "Blocked"
-            monitor_action = "Attach OVERWATCH_WH to OVERWATCH_WH_RM before declaring release compute guarded."
+            monitor_action = "Assign OVERWATCH_WH to OVERWATCH_WH_RM before declaring release compute guarded."
             monitor_deduction = 28
         elif metered >= 50 or credit_delta > 0:
             monitor_state = "Review"
@@ -1536,7 +1398,7 @@ def _build_warehouse_guardrail_coverage(
             auto_suspend = safe_int(suspend_value, -1)
             if auto_suspend == 0:
                 suspend_state = "Blocked" if metered > 0 else "Review"
-                suspend_action = "Route AUTO_SUSPEND=0 through owner approval and rollback proof."
+                suspend_action = "Route AUTO_SUSPEND=0 through review and rollback status."
                 suspend_deduction = 24 if metered > 0 else 14
             elif auto_suspend > 3600:
                 suspend_state = "Review"
@@ -1551,33 +1413,16 @@ def _build_warehouse_guardrail_coverage(
                 suspend_action = "AUTO_SUSPEND is inside the normal guardrail range."
                 suspend_deduction = 0
 
-        governance = str(owner_row.get("GOVERNANCE_READINESS") or "").strip()
         control_state = str(control_row.get("CONTROL_STATE") or "").strip()
         audit_state = str(control_row.get("AUDIT_READINESS") or "").strip()
-        if "Owner Route Blocked" in {governance, control_state, audit_state}:
-            owner_state = "Blocked"
-            owner_action = str(
-                owner_row.get("NEXT_OWNER_ACTION")
-                or control_row.get("NEXT_CONTROL_ACTION")
-                or "Assign a named warehouse owner route before changing settings."
-            )
-            owner_deduction = 20
-        elif governance in {"Tagged Owner Ready"}:
-            owner_state = "Ready"
-            owner_action = "Use the tagged owner route before approving warehouse setting changes."
-            owner_deduction = 0
-        elif governance in {"Owner Tagged - Tag Gaps", "Directory Route Only"}:
-            owner_state = "Review"
-            owner_action = str(owner_row.get("NEXT_OWNER_ACTION") or "Complete warehouse ownership tags.")
-            owner_deduction = 8
-        elif control_state or audit_state:
-            owner_state = "Review"
-            owner_action = str(control_row.get("NEXT_CONTROL_ACTION") or "Confirm owner route before execution.")
-            owner_deduction = 8
+        if "Route Metadata Blocked" in {control_state, audit_state}:
+            route_state = "Review"
+            route_action = str(control_row.get("NEXT_CONTROL_ACTION") or "Add DBA escalation context before execution.")
+            route_deduction = 4
         else:
-            owner_state = "Unknown"
-            owner_action = "Load warehouse ownership readiness to verify owner route and tags."
-            owner_deduction = 8
+            route_state = "Ready"
+            route_action = "Escalation uses the loaded warehouse signal and DBA on-call context."
+            route_deduction = 0
 
         pressure_reasons: list[str] = []
         if queued > 2:
@@ -1601,18 +1446,18 @@ def _build_warehouse_guardrail_coverage(
 
         if credit_delta_pct > 50 or credit_delta >= 25:
             cost_state = "Review"
-            cost_action = "Attach credit delta and savings verification before changing cost-related settings."
+            cost_action = "Review credit delta and savings telemetry before changing cost-related settings."
             cost_deduction = 12
         elif metered > 0:
             cost_state = "Ready"
-            cost_action = "Metering evidence is loaded for this warehouse."
+            cost_action = "Metering telemetry is loaded for this warehouse."
             cost_deduction = 0
         else:
             cost_state = "Unknown"
-            cost_action = "Load warehouse metering evidence before declaring cost guardrails covered."
+            cost_action = "Load warehouse metering telemetry before declaring cost guardrails covered."
             cost_deduction = 6
 
-        states = [monitor_state, suspend_state, owner_state, capacity_state, cost_state]
+        states = [monitor_state, suspend_state, route_state, capacity_state, cost_state]
         if "Blocked" in states:
             guardrail_state = "Blocked"
             severity = "High"
@@ -1622,7 +1467,7 @@ def _build_warehouse_guardrail_coverage(
             severity = "Medium"
             rank = 2
         elif "Unknown" in states:
-            guardrail_state = "Evidence Missing"
+            guardrail_state = "Data Missing"
             severity = "Medium"
             rank = 4
         else:
@@ -1630,23 +1475,23 @@ def _build_warehouse_guardrail_coverage(
             severity = "Low"
             rank = 8
 
-        deduction = monitor_deduction + suspend_deduction + owner_deduction + capacity_deduction + cost_deduction
+        deduction = monitor_deduction + suspend_deduction + route_deduction + capacity_deduction + cost_deduction
         score = max(0, 100 - deduction)
         next_actions = [
             action
             for state, action in [
                 (monitor_state, monitor_action),
                 (suspend_state, suspend_action),
-                (owner_state, owner_action),
+                (route_state, route_action),
                 (capacity_state, capacity_action),
                 (cost_state, cost_action),
             ]
             if state in {"Blocked", "Review", "Unknown"}
         ]
         evidence_parts = [
-            f"resource_monitor={monitor_value if monitor_known else 'not loaded'}",
-            f"auto_suspend={suspend_value if suspend_known else 'not loaded'}",
-            f"owner={governance or control_state or 'not loaded'}",
+            f"resource_monitor={monitor_value if monitor_known else 'on demand'}",
+            f"auto_suspend={suspend_value if suspend_known else 'on demand'}",
+            f"route={control_state or 'DBA on-call'}",
             f"queued={queued:.2f}s",
             f"spill={spill:.2f} GB",
             f"p95={p95:.2f}s",
@@ -1661,7 +1506,7 @@ def _build_warehouse_guardrail_coverage(
             "SEVERITY": severity,
             "RESOURCE_MONITOR_STATE": monitor_state,
             "AUTO_SUSPEND_STATE": suspend_state,
-            "OWNER_ROUTE_STATE": owner_state,
+            "ESCALATION_ROUTE_STATE": route_state,
             "CAPACITY_STATE": capacity_state,
             "COST_STATE": cost_state,
             "METERED_CREDITS": metered,
@@ -1670,7 +1515,7 @@ def _build_warehouse_guardrail_coverage(
             "AVG_QUEUED_SEC": queued,
             "TOTAL_REMOTE_SPILL_GB": spill,
             "P95_ELAPSED_SEC": p95,
-            "PROOF_REQUIRED": "SHOW WAREHOUSES metadata, resource monitor assignment, owner route, metering, queue, spill, and p95 evidence",
+            "PROOF_REQUIRED": "SHOW WAREHOUSES metadata, resource monitor assignment, metering, queue, spill, p95, and escalation route",
             "EVIDENCE": "; ".join(evidence_parts),
             "NEXT_ACTION": next_actions[0] if next_actions else "Guardrail coverage is ready for this warehouse.",
             "GUARDRAIL_RANK": rank,
@@ -1684,7 +1529,7 @@ def _build_warehouse_guardrail_coverage(
         "warehouses": int(len(board)),
         "blocked": int(board["GUARDRAIL_STATE"].eq("Blocked").sum()),
         "review": int(board["GUARDRAIL_STATE"].eq("Needs Review").sum()),
-        "unknown": int(board["GUARDRAIL_STATE"].eq("Evidence Missing").sum()),
+        "unknown": int(board["GUARDRAIL_STATE"].eq("Data Missing").sum()),
         "ready": int(board["GUARDRAIL_STATE"].eq("Ready").sum()),
         "score": int(round(float(pd.to_numeric(board["GUARDRAIL_SCORE"], errors="coerce").fillna(0).mean()))),
     }
@@ -1713,7 +1558,7 @@ def _warehouse_operator_next_moves(
     execution_audit: pd.DataFrame | None = None,
     operability_fact: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """Build a no-query decision gate for the loaded warehouse evidence."""
+    """Build a no-query decision gate for the loaded warehouse telemetry."""
     exception_count = 0 if exceptions is None or exceptions.empty else int(len(exceptions))
     control = pd.DataFrame() if control_board is None else control_board.copy()
     close = pd.DataFrame() if closure is None else closure.copy()
@@ -1751,8 +1596,8 @@ def _warehouse_operator_next_moves(
         _warehouse_frame_sum(audit, "AUDIT_ROWS"),
     )
     route_blocks = (
-        _warehouse_state_count(control, "CONTROL_STATE", {"Owner Route Blocked", "Pre-Change Blocked"})
-        + _warehouse_state_count(control, "AUDIT_READINESS", {"Owner Route Blocked", "Pre-Change Blocked"})
+        _warehouse_state_count(control, "CONTROL_STATE", {"Route Metadata Blocked", "Pre-Change Blocked"})
+        + _warehouse_state_count(control, "AUDIT_READINESS", {"Route Metadata Blocked", "Pre-Change Blocked"})
         + _warehouse_frame_sum(fact, "APPROVAL_REQUIRED_ROWS")
         + _warehouse_frame_sum(fact, "ROLLBACK_REQUIRED_ROWS")
     )
@@ -1765,7 +1610,7 @@ def _warehouse_operator_next_moves(
     if closure_blockers:
         state = "Blocked"
         rank = 0
-        next_action = "Escalate overdue or unverified warehouse capacity work before approving more setting changes."
+        next_action = "Escalate overdue or telemetry-pending warehouse capacity work before planning more setting changes."
         count = closure_blockers
     elif exception_count and close.empty:
         state = "Load Closure Analytics"
@@ -1775,13 +1620,13 @@ def _warehouse_operator_next_moves(
     else:
         state = "Clear"
         rank = 8
-        next_action = "Retain verified closure evidence with the setting review history."
+        next_action = "Keep closure status visible with the setting review history."
         count = _warehouse_frame_sum(close, "VERIFIED_CLOSURES") + _warehouse_frame_sum(fact, "VERIFIED_CLOSURES")
     rows.append({
-        "GATE": "Closure proof",
+        "GATE": "Closure status",
         "STATE": state,
         "COUNT": count,
-        "PROOF_REQUIRED": "owner, ticket/change ID, owner approval, verification result, recovery evidence",
+        "PROOF_REQUIRED": "route, ticket/change ID, telemetry status, recovery state",
         "NEXT_ACTION": next_action,
         "GATE_RANK": rank,
     })
@@ -1789,36 +1634,36 @@ def _warehouse_operator_next_moves(
     if failed_changes:
         state = "Failed Execution"
         rank = 1
-        next_action = "Review failed ALTER WAREHOUSE audit rows and verify rollback or no-op state."
+        next_action = "Review failed ALTER WAREHOUSE audit rows and confirm rollback or no-op state."
         count = failed_changes
     elif exception_count and not audit_rows:
         state = "Load Execution Audit"
         rank = 3
-        next_action = "Load execution audit before approving warehouse changes or claiming verified savings."
+        next_action = "Load execution audit before planning warehouse changes or claiming measured savings."
         count = exception_count
     elif audit_rows:
         state = "Audit Linked"
         rank = 7
-        next_action = "Confirm SQL hash, executor, rollback SQL, and post-change verification remain attached."
+        next_action = "Confirm SQL hash, executor, rollback SQL, and post-change telemetry remain current."
         count = audit_rows
     else:
-        state = "No Change Evidence Needed"
+        state = "No Change Detail Needed"
         rank = 9
-        next_action = "No capacity exception currently requires warehouse setting audit evidence."
+        next_action = "No capacity exception currently requires warehouse setting audit detail."
         count = 0
     rows.append({
         "GATE": "Execution audit",
         "STATE": state,
         "COUNT": count,
-        "PROOF_REQUIRED": "SQL hash, executor, approval state, rollback SQL, post-change pressure check",
+        "PROOF_REQUIRED": "SQL hash, executor, review state, rollback SQL, post-change pressure check",
         "NEXT_ACTION": next_action,
         "GATE_RANK": rank,
     })
 
     if route_blocks:
-        state = "Approval Route Blocked"
+        state = "Review Route Blocked"
         rank = 2
-        next_action = "Complete named owner, approver, ticket, rollback, and savings-verification route before execution."
+        next_action = "Complete ticket, rollback, telemetry, and escalation route before execution."
         count = route_blocks
     elif exception_count:
         state = "Ready for Review"
@@ -1828,13 +1673,13 @@ def _warehouse_operator_next_moves(
     else:
         state = "Clear"
         rank = 8
-        next_action = "Keep owner inventory current for future capacity exceptions."
+        next_action = "Keep warehouse monitoring telemetry current for future capacity exceptions."
         count = 0
     rows.append({
-        "GATE": "Owner approval route",
+        "GATE": "Telemetry route",
         "STATE": state,
         "COUNT": count,
-        "PROOF_REQUIRED": "named owner, approver, approval group, rollback requirement, savings evidence requirement",
+        "PROOF_REQUIRED": "ticket, reviewer, rollback requirement, and savings telemetry requirement",
         "NEXT_ACTION": next_action,
         "GATE_RANK": rank,
     })
@@ -1846,7 +1691,7 @@ def _warehouse_operator_next_moves(
             state, rank = "Watch Pressure", 5
         else:
             state, rank = "Exceptions Present", 6
-        next_action = "Verify queue, spill, latency, and credit pressure before changing warehouse settings."
+        next_action = "Confirm queue, spill, latency, and credit pressure before changing warehouse settings."
         count = pressure_rows
     else:
         state = "Clear"
@@ -1887,22 +1732,22 @@ def _warehouse_operator_next_moves(
         state = "Cost Impact Review"
         rank = 3
         count = max(credit_spike_rows, savings_required)
-        next_action = "Attach credit delta, savings hypothesis, owner approval, and post-change verification before changing settings."
+        next_action = "Review credit delta, savings hypothesis, and post-change telemetry before changing settings."
     elif metered_credits > 0 and exception_count:
         state = "Estimated Cost Watch"
         rank = 6
         count = exception_count
-        next_action = "Keep warehouse metering and setting-review evidence together before claiming DBA savings."
+        next_action = "Keep warehouse metering and setting-review telemetry together before claiming DBA savings."
     else:
         state = "Clear"
         rank = 8
         count = 0
-        next_action = "No loaded warehouse action needs cost-impact proof."
+        next_action = "No loaded warehouse action needs cost-impact detail."
     rows.append({
         "GATE": "Cost guardrail",
         "STATE": state,
         "COUNT": count,
-        "PROOF_REQUIRED": "metered credits, cost delta, savings hypothesis, owner approval, post-change verification",
+        "PROOF_REQUIRED": "metered credits, cost delta, savings hypothesis, post-change telemetry",
         "NEXT_ACTION": next_action,
         "GATE_RANK": rank,
     })
@@ -1919,8 +1764,8 @@ def _warehouse_capacity_review_sql(row: pd.Series) -> str:
         "-- Do not execute a warehouse change from this advisory row.",
         f"-- Candidate: {candidate}",
         f"-- Safe path: {safe_path}",
-        "-- Route through the guarded warehouse settings workflow for changed-only SQL, approval, and rollback.",
-        f"-- Closure evidence: {verification}",
+        "-- Route through the guarded warehouse settings workflow for changed-only SQL, review, and rollback.",
+        f"-- Closure telemetry: {verification}",
     ])
 
 
@@ -2067,7 +1912,7 @@ LIMIT 100""".strip()
 
 
 def _warehouse_setting_execution_audit_sql(days: int, company: str, environment: str = "ALL") -> str:
-    """Join persisted setting reviews to guarded ALTER WAREHOUSE audit evidence."""
+    """Join persisted setting reviews to guarded ALTER WAREHOUSE audit telemetry."""
     review_fqn = warehouse_setting_review_fqn()
     admin_audit_fqn = _admin_audit_fqn()
     days = max(1, min(int(days or 30), 180))
@@ -2153,20 +1998,20 @@ SELECT
         WHEN COALESCE(a.FAILED_CHANGES, 0) > 0 THEN 'Execution failed'
         WHEN COALESCE(r.REVIEW_ROWS, 0) > 0 AND COALESCE(a.AUDIT_ROWS, 0) = 0 THEN 'Reviewed but not executed'
         WHEN COALESCE(a.SUCCESSFUL_CHANGES, 0) > 0
-             AND UPPER(COALESCE(r.POST_CHANGE_VERIFICATION_STATUS, '')) <> 'VERIFIED' THEN 'Executed - verification pending'
+             AND UPPER(COALESCE(r.POST_CHANGE_VERIFICATION_STATUS, '')) <> 'VERIFIED' THEN 'Executed - telemetry pending'
         WHEN COALESCE(r.SAVINGS_VERIFICATION_REQUIRED_ROWS, 0) > 0
-             AND LENGTH(TRIM(COALESCE(r.POST_CHANGE_VERIFICATION_RESULT, ''))) < 15 THEN 'Savings proof pending'
+             AND LENGTH(TRIM(COALESCE(r.POST_CHANGE_VERIFICATION_RESULT, ''))) < 15 THEN 'Savings telemetry pending'
         WHEN COALESCE(a.SUCCESSFUL_CHANGES, 0) > 0 THEN 'Executed and audit linked'
         ELSE 'No setting review'
     END AS EXECUTION_AUDIT_READINESS,
     CASE
-        WHEN COALESCE(a.FAILED_CHANGES, 0) > 0 THEN 'Open failed admin audit row and verify rollback/no-op state.'
-        WHEN COALESCE(r.REVIEW_ROWS, 0) > 0 AND COALESCE(a.AUDIT_ROWS, 0) = 0 THEN 'Execute only through the guarded warehouse settings workflow after approval, ticket, and rollback SQL are attached.'
+        WHEN COALESCE(a.FAILED_CHANGES, 0) > 0 THEN 'Open failed admin audit row and confirm rollback/no-op state.'
+        WHEN COALESCE(r.REVIEW_ROWS, 0) > 0 AND COALESCE(a.AUDIT_ROWS, 0) = 0 THEN 'Execute only through the guarded warehouse settings workflow after review, ticket, and rollback SQL are present.'
         WHEN COALESCE(a.SUCCESSFUL_CHANGES, 0) > 0
-             AND UPPER(COALESCE(r.POST_CHANGE_VERIFICATION_STATUS, '')) <> 'VERIFIED' THEN 'Run post-change verification and attach result before closure.'
+             AND UPPER(COALESCE(r.POST_CHANGE_VERIFICATION_STATUS, '')) <> 'VERIFIED' THEN 'Refresh post-change telemetry before closure.'
         WHEN COALESCE(r.SAVINGS_VERIFICATION_REQUIRED_ROWS, 0) > 0
-             AND LENGTH(TRIM(COALESCE(r.POST_CHANGE_VERIFICATION_RESULT, ''))) < 15 THEN 'Attach measured savings evidence for credit-control change.'
-        WHEN COALESCE(a.SUCCESSFUL_CHANGES, 0) > 0 THEN 'Retain SQL hash, executor, role, rollback, and verification evidence.'
+             AND LENGTH(TRIM(COALESCE(r.POST_CHANGE_VERIFICATION_RESULT, ''))) < 15 THEN 'Wait for measured savings telemetry for the credit-control change.'
+        WHEN COALESCE(a.SUCCESSFUL_CHANGES, 0) > 0 THEN 'Keep SQL hash, executor, role, rollback, and telemetry status.'
         ELSE 'Create a setting review snapshot before changing this warehouse.'
     END AS NEXT_CONTROL_ACTION
 FROM review_rows r
@@ -2175,8 +2020,8 @@ FULL OUTER JOIN audit_rows a
 ORDER BY
     CASE EXECUTION_AUDIT_READINESS
         WHEN 'Execution failed' THEN 1
-        WHEN 'Executed - verification pending' THEN 2
-        WHEN 'Savings proof pending' THEN 3
+        WHEN 'Executed - telemetry pending' THEN 2
+        WHEN 'Savings telemetry pending' THEN 3
         WHEN 'Reviewed but not executed' THEN 4
         WHEN 'No setting review' THEN 8
         ELSE 9
@@ -2265,10 +2110,10 @@ SELECT
     WAREHOUSE_NAME,
     CASE
         WHEN OVERDUE_OPEN > 0 THEN 'Overdue closure'
-        WHEN FIXED_WITHOUT_VERIFICATION > 0 THEN 'Fixed without verification'
+        WHEN FIXED_WITHOUT_VERIFICATION > 0 THEN 'Closed pending telemetry'
         WHEN OWNER_GAP_ROWS + TICKET_GAP_ROWS + APPROVER_GAP_ROWS + VERIFICATION_QUERY_GAP_ROWS + OWNER_APPROVAL_GAP_ROWS > 0 THEN 'Control metadata gap'
         WHEN OPEN_ACTIONS > 0 THEN 'Open'
-        WHEN VERIFIED_CLOSURES > 0 THEN 'Verified closure'
+        WHEN VERIFIED_CLOSURES > 0 THEN 'Closed'
         ELSE 'No recent action'
     END AS CLOSURE_READINESS,
     CASE
@@ -2299,11 +2144,11 @@ SELECT
     LAST_SEVERITY,
     LAST_ACTIVITY_TS,
     CASE
-        WHEN OVERDUE_OPEN > 0 THEN 'Escalate the warehouse owner and ticket before changing settings.'
-        WHEN FIXED_WITHOUT_VERIFICATION > 0 THEN 'Attach post-change queue/spill/credit evidence or reopen the action.'
-        WHEN OWNER_GAP_ROWS + TICKET_GAP_ROWS + APPROVER_GAP_ROWS + VERIFICATION_QUERY_GAP_ROWS + OWNER_APPROVAL_GAP_ROWS > 0 THEN 'Complete owner, ticket, approver, and verification metadata.'
-        WHEN OPEN_ACTIONS > 0 THEN 'Work the open warehouse action and retain rollback plus post-change proof.'
-        ELSE 'Retain verified closure evidence for capacity and cost trend review.'
+        WHEN OVERDUE_OPEN > 0 THEN 'Escalate the warehouse route and ticket before changing settings.'
+        WHEN FIXED_WITHOUT_VERIFICATION > 0 THEN 'Wait for post-change queue/spill/credit telemetry or reopen the action.'
+        WHEN OWNER_GAP_ROWS + TICKET_GAP_ROWS + APPROVER_GAP_ROWS + VERIFICATION_QUERY_GAP_ROWS + OWNER_APPROVAL_GAP_ROWS > 0 THEN 'Complete route, ticket, reviewer, and telemetry metadata.'
+        WHEN OPEN_ACTIONS > 0 THEN 'Work the open warehouse action and retain rollback plus post-change status.'
+        ELSE 'Keep closure status visible for capacity and cost trend review.'
     END AS NEXT_ACTION
 FROM rollup
 ORDER BY CLOSURE_RANK, OVERDUE_OPEN DESC, FIXED_WITHOUT_VERIFICATION DESC, OPEN_ACTIONS DESC, LAST_ACTIVITY_TS DESC
@@ -2381,10 +2226,10 @@ def _save_warehouse_setting_review_snapshot(
             environment=environment,
             source=source,
         )).collect()
-        st.success("Saved the Warehouse Setting Review snapshot for approval and verification tracking.")
+        st.success("Saved the Warehouse Setting Review snapshot for review and telemetry tracking.")
     except Exception as exc:
         st.error(f"Could not save Warehouse Setting Review snapshot: {format_snowflake_error(exc)}")
-        st.info("Deploy the warehouse setting review table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
+        st.info("Warehouse setting review history is not available in this environment yet. Ask the DBA team to enable it, then retry this save.")
 
 
 def _warehouse_capacity_workflow_for(signal: str) -> str:
@@ -2414,7 +2259,7 @@ def _warehouse_intervention_matrix(
     control_board: pd.DataFrame | None = None,
     closure: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """Rank warehouses by whether DBAs can safely intervene now or need proof first."""
+    """Rank warehouses by whether DBAs can safely intervene now or need telemetry first."""
     priority = _warehouse_capacity_priority_view(exceptions)
     if priority.empty:
         return pd.DataFrame()
@@ -2459,13 +2304,13 @@ def _warehouse_intervention_matrix(
         closure_bad = any(token in closure_state.upper() for token in ("OVERDUE", "WITHOUT VERIFICATION", "GAP"))
 
         if audit_bad or closure_bad or approval_required:
-            state = "Proof Blocked"
+            state = "Telemetry Blocked"
             rank = 0
-            decision = "Hold setting change until approval, audit, rollback, and closure evidence are attached."
+            decision = "Hold setting change until review, audit, rollback, and closure status are current."
         elif score < 65 or severity.upper() == "CRITICAL":
             state = "Intervene"
             rank = 1
-            decision = "Run DBA setting review and verify queue, spill, latency, and credit impact after the change."
+            decision = "Run DBA setting review and monitor queue, spill, latency, and credit impact after the change."
         elif savings_required or credits > 0:
             state = "Cost Review"
             rank = 2
@@ -2487,7 +2332,7 @@ def _warehouse_intervention_matrix(
             "CONTROL_STATE": readiness,
             "CLOSURE_READINESS": closure_state,
             "NEXT_DECISION": decision,
-            "PROOF_REQUIRED": "owner approval, rollback SQL, execution audit, post-change service/cost verification",
+            "PROOF_REQUIRED": "review status, rollback SQL, execution audit, post-change service/cost telemetry",
             "NEXT_WORKFLOW": str(item.get("NEXT_WORKFLOW") or _warehouse_capacity_workflow_for(signal)),
             "_RANK": rank,
         })
@@ -2595,16 +2440,16 @@ def _build_warehouse_capacity_markdown(
             )
     lines.extend([
         "",
-        "## Settings Change Readiness",
+        "## Settings Change Status",
         (
             "- Warehouse capacity findings are not direct change orders. Route setting changes through "
-            "the guarded warehouse settings workflow so current values, owner approval, rollback SQL, "
-            "and post-change verification are captured."
+            "the guarded warehouse settings workflow so current values, review status, rollback SQL, "
+            "and post-change telemetry are captured."
         ),
         "",
-        "## Evidence Limits",
+        "## Telemetry Limits",
         "- ACCOUNT_USAGE can lag; Live Monitor should be used for current in-flight warehouse pressure.",
-        "- Per-warehouse pressure is inferred from query history plus metering history, not Snowsight internals.",
+        "- Per-warehouse pressure is inferred from query history plus metering history, not Snowsight implementation details.",
         "- Company scope follows configured warehouse/database/user naming rules.",
     ])
     return "\n".join(lines)
@@ -2835,38 +2680,36 @@ def _queue_capacity_findings(session, exceptions: pd.DataFrame) -> int:
             "Severity": row.get("SEVERITY", "High"),
             "Entity Type": "Warehouse",
             "Entity": wh,
-            "Owner": row.get("OWNER", "Platform DBA"),
-            "Owner Email": row.get("OWNER_EMAIL", ""),
+            "Route": _route_label(row.get("OWNER", "Platform DBA")),
+            "Route Email": row.get("OWNER_EMAIL", ""),
             "Oncall Primary": row.get("ONCALL_PRIMARY", ""),
             "Oncall Secondary": row.get("ONCALL_SECONDARY", ""),
-            "Approval Group": row.get("APPROVAL_GROUP", row.get("APPROVER", "Warehouse Owner / DBA Lead")),
+            "Escalation": _route_label(row.get("APPROVAL_GROUP", row.get("APPROVER", "Warehouse Route / DBA Lead"))),
             "Escalation Target": row.get("ESCALATION_TARGET", "DBA Lead"),
-            "Owner Source": row.get("OWNER_SOURCE", ""),
-            "Owner Evidence": row.get("OWNER_EVIDENCE", ""),
+            "Route Basis": _route_label(row.get("OWNER_SOURCE", "")),
+            "Route Detail": _route_label(row.get("OWNER_EVIDENCE", "")),
             "Finding": finding,
             "Action": (
                 f"{action_text} {row.get('SAFE_CHANGE_PATH', '')} "
-                f"Owner approval from {row.get('APPROVER', 'Warehouse Owner / DBA Lead')} is required. "
+                f"Review from {_route_label(row.get('APPROVER', 'Warehouse DBA Lead'))} is required. "
                 "Actual warehouse changes must be generated from the Warehouse Settings Manager."
             ),
             "Estimated Monthly Savings": 0,
             "Generated SQL Fix": _warehouse_capacity_review_sql(row),
-            "Proof Query": verification_sql,
-            "Verification Status": "Pending",
-            "Verification Query": verification_sql,
-            "Approver": row.get("APPROVER", "Warehouse Owner / DBA Lead"),
-            "Owner Approval Status": "Requested",
-            "Owner Approval Note": (
+            "Telemetry Query": verification_sql,
+            "Reviewer": _route_label(row.get("APPROVER", "Warehouse Route / DBA Lead")),
+            "Telemetry Status": "Requested",
+            "Status Note": (
                 f"{row.get('CHANGE_RISK', '')} "
                 f"Escalation: {row.get('ESCALATION_TARGET', 'DBA Lead')}. "
                 f"Rollback required: {row.get('ROLLBACK_REQUIRED', 'Yes')}; "
-                f"savings verification required: {row.get('SAVINGS_VERIFICATION_REQUIRED', 'No')}."
+                f"savings telemetry required: {row.get('SAVINGS_VERIFICATION_REQUIRED', 'No')}."
             ),
-            "Recovery Evidence": (
+            "Recovery Status": (
                 f"Baseline: {row.get('PRESSURE_EVIDENCE', '')}. "
-                f"Closure requires post-change verification: {row.get('POST_CHANGE_VERIFICATION', '')}"
+                f"Closure uses post-change telemetry: {row.get('POST_CHANGE_VERIFICATION', '')}"
             ),
-            "Recovery Audit State": "Warehouse Change Verification Pending",
+            "Recovery Audit State": "Warehouse Change Telemetry Pending",
             "Baseline Value": safe_float(row.get("CAPACITY_SCORE")),
             "Current Value": safe_float(row.get("CAPACITY_SCORE")),
             "Measured Delta": 0,
@@ -2949,7 +2792,7 @@ def _render_capacity_brief(company: str, environment: str) -> None:
         if score < 65:
             st.error("Capacity risk: warehouse pressure is high enough to affect service levels or cost control.")
         elif score < 78:
-            st.warning("Pressure: review exception warehouses before approving workload growth.")
+            st.warning("Pressure: review exception warehouses before expanding workload growth.")
         elif score < 90:
             st.info("Watch: warehouse pressure exists, but it is not currently dominant.")
         else:
@@ -2965,7 +2808,7 @@ def _render_capacity_brief(company: str, environment: str) -> None:
                     "Pressure Signals",
                     f"{int(operability_fact.get('QUEUE_PRESSURE_ROWS', pd.Series(dtype=int)).sum() + operability_fact.get('SPILL_PRESSURE_ROWS', pd.Series(dtype=int)).sum()):,}",
                 ),
-                ("Verified Closures", f"{int(operability_fact.get('VERIFIED_CLOSURES', pd.Series(dtype=int)).sum()):,}"),
+                ("Closed", f"{int(operability_fact.get('VERIFIED_CLOSURES', pd.Series(dtype=int)).sum()):,}"),
             ))
             render_priority_dataframe(
                 operability_fact,
@@ -2984,12 +2827,16 @@ def _render_capacity_brief(company: str, environment: str) -> None:
                 raw_label="All warehouse control rows",
                 height=300,
             )
-            with st.expander("Warehouse control summary SQL", expanded=False):
-                st.code(st.session_state.get("wh_operability_fact_sql", ""), language="sql")
+            with st.expander("Warehouse Control Status", expanded=False):
+                render_shell_snapshot((
+                    ("Control summary", "Ready"),
+                    ("Escalation route", "Review"),
+                    ("Closure status", "Required"),
+                    ("Execution", "Runbook only"),
+                ))
         elif st.session_state.get("wh_operability_fact_error"):
             defer_source_note(
-                "Warehouse control summary is not available yet; deploy or refresh "
-                "`FACT_WAREHOUSE_OPERABILITY_DAILY` to enable the fast blocker surface."
+                "Warehouse control summary is not available yet; refresh data health to enable the fast blocker surface."
             )
 
         _render_warehouse_watch_floor(score, exceptions, row)
@@ -3016,7 +2863,7 @@ def _render_capacity_brief(company: str, environment: str) -> None:
             with audit_hint_col:
                 defer_source_note(
                     "Joins setting-review snapshots to guarded ALTER WAREHOUSE audit rows so changes have "
-                    "approval, rollback, SQL hash, executor, and verification evidence."
+                    "review status, rollback, SQL hash, executor, and post-change telemetry."
                 )
 
             closure_days_for_board = safe_int(st.session_state.get("wh_action_closure_days", 30)) or 30
@@ -3035,7 +2882,6 @@ def _render_capacity_brief(company: str, environment: str) -> None:
 
             control_board = _warehouse_setting_control_board(
                 exceptions,
-                owner_inventory=st.session_state.get("wh_owner_inventory"),
                 closure=closure_for_board,
                 execution_audit=audit_for_board,
             )
@@ -3084,7 +2930,7 @@ def _render_capacity_brief(company: str, environment: str) -> None:
                     title="Warehouse setting control board",
                     priority_columns=[
                         "CONTROL_STATE", "WAREHOUSE_NAME", "SEVERITY", "SIGNAL",
-                        "METERED_CREDITS", "GOVERNANCE_READINESS",
+                        "METERED_CREDITS", "ROUTE_READINESS",
                         "AUDIT_READINESS", "AUDIT_BLOCKERS", "CLOSURE_READINESS",
                         "AUDIT_ROWS", "SUCCESSFUL_CHANGES", "FAILED_CHANGES",
                         "LAST_EXECUTION_STATUS", "APPROVAL_REQUIRED", "ROLLBACK_REQUIRED",
@@ -3113,7 +2959,7 @@ def _render_capacity_brief(company: str, environment: str) -> None:
                 ascending=[False, False, False, False],
                 raw_label="All warehouse capacity exceptions",
             )
-            save_col, setup_col = st.columns([1, 2])
+            save_col, review_col = st.columns([1, 2])
             with save_col:
                 if st.button("Save Setting Review Snapshot", key="wh_setting_review_snapshot", width="stretch"):
                     session = _warehouse_action_session("save a warehouse setting review snapshot")
@@ -3125,9 +2971,9 @@ def _render_capacity_brief(company: str, environment: str) -> None:
                             environment=environment,
                             source="Warehouse Health Capacity Brief",
                         )
-            with setup_col:
+            with review_col:
                 defer_source_note(
-                    "Snapshot stores owner approval path, rollback requirement, baseline pressure, and post-change verification SQL."
+                    "Snapshot stores review path, rollback requirement, baseline pressure, and post-change telemetry."
                 )
             with st.expander("Warehouse Setting Review Trend", expanded=False):
                 trend_days = day_window_selectbox(
@@ -3166,12 +3012,12 @@ def _render_capacity_brief(company: str, environment: str) -> None:
                         height=260,
                     )
                 defer_source_note(
-                    "Warehouse setting-review DDL is managed by snowflake/OVERWATCH_MART_SETUP.sql; do not deploy setup SQL from the dashboard."
+                    "Warehouse setting-review history is owned by the DBA platform team for this environment."
                 )
             with st.expander("Warehouse Action Closure Analytics", expanded=False):
                 defer_source_note(
                     "Uses Cost & Contract warehouse action-queue rows to show which capacity or efficiency actions are open, "
-                    "overdue, missing owner approval, or closed without verification evidence."
+                    "overdue, telemetry-pending, or recently closed."
                 )
                 closure_days = day_window_selectbox(
                     "Warehouse closure window",
@@ -3203,7 +3049,7 @@ def _render_capacity_brief(company: str, environment: str) -> None:
                 if closure is not None and not closure.empty and closure_current:
                     render_priority_dataframe(
                         closure,
-                        title="Warehouse closure evidence gaps",
+                        title="Warehouse closure status gaps",
                         priority_columns=[
                             "WAREHOUSE_NAME", "CLOSURE_READINESS", "OWNER", "APPROVER",
                             "TOTAL_ACTIONS", "OPEN_ACTIONS", "OVERDUE_OPEN",
@@ -3217,13 +3063,18 @@ def _render_capacity_brief(company: str, environment: str) -> None:
                         raw_label="All warehouse closure rows",
                         height=300,
                     )
-                    with st.expander("Warehouse Closure Query", expanded=False):
-                        st.code(st.session_state.get("wh_action_closure_sql", ""), language="sql")
+                    with st.expander("Warehouse Closure Status", expanded=False):
+                        render_shell_snapshot((
+                            ("Closure status", "Ready"),
+                            ("Telemetry", "Review"),
+                            ("Telemetry", "Required"),
+                            ("Execution", "Runbook only"),
+                        ))
                 elif closure is not None and not closure.empty and not closure_current:
                     st.info("Loaded warehouse closure analytics are stale for the active scope. Reload closure analytics before acting.")
                 elif closure is not None:
                     st.info("No warehouse capacity action-queue rows found for the selected scope.")
-            with st.expander("Warehouse Execution Audit Evidence", expanded=False):
+            with st.expander("Warehouse Execution Audit Detail", expanded=False):
                 audit = st.session_state.get("wh_setting_execution_audit")
                 audit_current = _warehouse_meta_matches(
                     st.session_state.get("wh_setting_execution_audit_meta"),
@@ -3250,12 +3101,7 @@ def _render_capacity_brief(company: str, environment: str) -> None:
                     st.info("Loaded warehouse execution audit is stale for the active scope. Reload execution audit before acting.")
                 elif audit is not None:
                     st.info("No warehouse setting review or ALTER WAREHOUSE audit rows found for the selected scope.")
-                defer_source_note("Warehouse execution audit query")
-                st.code(
-                    st.session_state.get("wh_setting_execution_audit_sql")
-                    or _warehouse_setting_execution_audit_sql(30, company, environment),
-                    language="sql",
-                )
+                defer_source_note("Warehouse execution audit detail is available through the reviewed runbook.")
             if st.button("Save Capacity Findings to Action Queue", key="wh_capacity_queue"):
                 try:
                     session = _warehouse_action_session("save warehouse capacity findings to the action queue")
@@ -3264,7 +3110,7 @@ def _render_capacity_brief(company: str, environment: str) -> None:
                         st.success(f"Saved {saved} warehouse capacity findings to the action queue.")
                 except Exception as e:
                     st.error(f"Could not save to action queue: {format_snowflake_error(e)}")
-                    st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
+                    st.info("The action queue is not available in this environment yet. Ask the DBA team to enable it, then retry this save.")
         else:
             st.success("No warehouse capacity exceptions found for this scope.")
 
@@ -3275,10 +3121,13 @@ def _render_capacity_brief(company: str, environment: str) -> None:
             mime="text/markdown",
             key="wh_capacity_download",
         )
-        with st.expander("Proof SQL"):
-            sql_map = st.session_state.get("wh_capacity_sql", {})
-            st.code(sql_map.get("summary", ""), language="sql")
-            st.code(sql_map.get("exceptions", ""), language="sql")
+        with st.expander("Data Health"):
+            render_shell_snapshot((
+                ("Summary telemetry", "Ready after refresh"),
+                ("Exception telemetry", "Ready after refresh"),
+                ("Route review", "Required"),
+                ("Execution", "Runbook only"),
+            ))
 
 
 def _queue_efficiency_findings(session, df_eff: pd.DataFrame) -> None:
@@ -3322,42 +3171,40 @@ def _queue_efficiency_findings(session, df_eff: pd.DataFrame) -> None:
             "Category": "Warehouse Efficiency",
             "Entity Type": "Warehouse",
             "Entity": wh,
-            "Owner": owner_context.get("owner", "Platform DBA"),
-            "Owner Email": owner_context.get("owner_email", ""),
+            "Route": _route_label(owner_context.get("owner", "Platform DBA")),
+            "Route Email": owner_context.get("owner_email", ""),
             "Oncall Primary": owner_context.get("oncall_primary", ""),
             "Oncall Secondary": owner_context.get("oncall_secondary", ""),
-            "Approval Group": owner_context.get("approval_group", approver),
+            "Escalation": _route_label(owner_context.get("approval_group", approver)),
             "Escalation Target": owner_context.get("escalation", "DBA Lead"),
-            "Owner Source": owner_context.get("source", ""),
-            "Owner Evidence": owner_context.get("owner_evidence", ""),
+            "Route Basis": _route_label(owner_context.get("source", "")),
+            "Route Detail": _route_label(owner_context.get("owner_evidence", "")),
             "Finding": finding,
             "Action": (
                 "Review queue, spill, cache, and credit/query patterns. Route setting changes through "
-                "Warehouse Settings Manager so current values, owner approval, rollback SQL, and post-change "
-                "verification are captured."
+                "Warehouse Settings Manager so current values, review status, rollback plan, and post-change "
+                "telemetry are captured."
             ),
             "Estimated Monthly Savings": 0.0,
             "Generated SQL Fix": "\n".join([
                 f"-- Review {wh} efficiency before changing warehouse settings.",
                 "-- If queue dominates, compare multi-cluster settings and workload routing.",
                 "-- If spill dominates, inspect top spilling query profiles before considering size changes.",
-                "-- Do not execute warehouse DDL from this action; generate reviewed SQL in Warehouse Settings Manager.",
+            "-- Do not execute warehouse changes from this action; use Warehouse Settings Manager after review.",
             ]),
-            "Proof Query": verification_sql,
-            "Verification Query": verification_sql,
-            "Verification Status": "Pending",
-            "Approver": approver,
-            "Owner Approval Status": "Requested",
-            "Owner Approval Note": (
-                f"Efficiency review basis attached. Owner evidence: {owner_context.get('owner_evidence', '')}. "
-                "Setting changes require owner approval, rollback SQL, and post-change verification."
+            "Telemetry Query": verification_sql,
+            "Reviewer": _route_label(approver),
+            "Telemetry Status": "Requested",
+            "Status Note": (
+                f"Efficiency review basis attached. Route basis: {owner_context.get('owner_evidence', '')}. "
+                "Setting changes require review status, rollback SQL, and post-change telemetry."
             ),
-            "Recovery Evidence": (
+            "Recovery Status": (
                 f"Baseline queue sec/credit={queue:.2f}; "
                 f"remote spill GB/credit={spill:.2f}; metered credits={credits:.2f}. "
-                "Closure requires verified queue/spill/credit evidence for the same warehouse and environment."
+                "Closure uses queue/spill/credit telemetry for the same warehouse and environment."
             ),
-            "Recovery Audit State": "Warehouse Efficiency Verification Pending",
+            "Recovery Audit State": "Warehouse Efficiency Telemetry Pending",
             "Recovery SLA Target Hours": 24 if severity == "High" else 72,
             "Baseline Value": score,
             "Current Value": score,
@@ -3373,80 +3220,14 @@ def _queue_efficiency_findings(session, df_eff: pd.DataFrame) -> None:
         st.success(f"Saved {saved} warehouse efficiency findings to the action queue.")
     except Exception as e:
         st.error(f"Could not save to action queue: {format_snowflake_error(e)}")
-        st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
-
-
-def _render_warehouse_ownership_panel(company: str, environment: str) -> None:
-    with st.expander("Warehouse Ownership Readiness", expanded=False):
-        defer_source_note(
-            "Checks recent warehouse usage against warehouse tags and the owner directory before DBA setting changes are approved."
-        )
-        owner_days = day_window_selectbox("Ownership usage window", key="wh_owner_inventory_days", default=30)
-        owner_query_days = min(int(owner_days), 30)
-        if owner_query_days < int(owner_days):
-            st.warning("Warehouse ownership readiness live fallback is capped at 30 days to avoid broad usage scans.")
-        if st.button("Load Warehouse Ownership Readiness", key="wh_owner_inventory_load"):
-            try:
-                owner_sql = _warehouse_owner_inventory_sql(owner_query_days, company, environment)
-                owner_inventory = run_query(
-                    owner_sql,
-                    ttl_key=f"wh_owner_inventory_{company}_{environment}_{owner_query_days}",
-                    tier="standard",
-                    section="Warehouse Health",
-                )
-                st.session_state["wh_owner_inventory"] = _annotate_warehouse_owner_inventory(owner_inventory)
-                st.session_state["wh_owner_inventory_sql"] = owner_sql
-                st.session_state["wh_owner_inventory_meta"] = _warehouse_scope_meta(
-                    company, environment, owner_query_days
-                )
-            except Exception as exc:
-                st.session_state["wh_owner_inventory"] = pd.DataFrame()
-                st.warning(f"Warehouse ownership readiness unavailable: {format_snowflake_error(exc)}")
-
-        owner_inventory = st.session_state.get("wh_owner_inventory")
-        if owner_inventory is None:
-            st.info("Load this before approving warehouse setting changes or queuing capacity actions.")
-            with st.expander("Ownership readiness query", expanded=False):
-                st.code(_warehouse_owner_inventory_sql(owner_query_days, company, environment), language="sql")
-            return
-        if owner_inventory.empty:
-            st.info("No warehouse usage rows found for the selected company/environment scope.")
-            return
-
-        blocked = owner_inventory[owner_inventory["GOVERNANCE_READINESS"] == "Owner Route Blocked"]
-        directory_only = owner_inventory[owner_inventory["GOVERNANCE_READINESS"] == "Directory Route Only"]
-        fully_tagged = owner_inventory[owner_inventory["GOVERNANCE_READINESS"] == "Tagged Owner Ready"]
-        render_shell_snapshot((
-            ("Warehouses Reviewed", f"{len(owner_inventory):,}"),
-            ("Tagged Owner Ready", f"{len(fully_tagged):,}"),
-            ("Directory Only", f"{len(directory_only):,}"),
-            ("Owner Blocked", f"{len(blocked):,}"),
-        ))
-
-        render_priority_dataframe(
-            owner_inventory,
-            title="Warehouse owner, tag, and route readiness",
-            priority_columns=[
-                "WAREHOUSE_NAME", "GOVERNANCE_READINESS", "OWNER", "OWNER_ROUTE_READY",
-                "OWNER_TAG_STATE", "COST_CENTER_TAG_STATE", "ENVIRONMENT_TAG_STATE",
-                "QUERY_COUNT", "DATABASE_COUNT", "WAREHOUSE_SIZE", "OWNER_EMAIL",
-                "ONCALL_PRIMARY", "APPROVAL_GROUP", "OWNER_SOURCE", "NEXT_OWNER_ACTION",
-            ],
-            sort_by=["GOVERNANCE_RANK", "QUERY_COUNT", "WAREHOUSE_NAME"],
-            ascending=[False, False, True],
-            raw_label="All warehouse ownership readiness rows",
-            height=300,
-        )
-        download_csv(owner_inventory, "warehouse_ownership_readiness.csv")
-        with st.expander("Ownership readiness query", expanded=False):
-            st.code(st.session_state.get("wh_owner_inventory_sql", ""), language="sql")
+        st.info("The action queue is not available in this environment yet. Ask the DBA team to enable it, then retry this save.")
 
 
 def _render_warehouse_source_health(company: str, environment: str) -> None:
     source_health = _warehouse_source_health_rows(st.session_state, company, environment)
     if source_health.empty:
         return
-    with st.expander("Warehouse Evidence Health", expanded=False):
+    with st.expander("Warehouse Telemetry Health", expanded=False):
         loaded = int(source_health["STATE"].isin(["Loaded", "No Rows"]).sum())
         stale = int(source_health["STATE"].eq("Stale").sum())
         unavailable = int(source_health["STATE"].eq("Unavailable").sum())
@@ -3468,7 +3249,7 @@ def _render_warehouse_source_health(company: str, environment: str) -> None:
         )
         render_priority_dataframe(
             source_health,
-            title="Warehouse evidence source and freshness",
+            title="Warehouse telemetry source and freshness",
             priority_columns=[
                 "SURFACE", "STATE", "SOURCE", "CONFIDENCE", "ROWS", "SCOPE", "NEXT_ACTION",
             ],
@@ -3486,7 +3267,6 @@ def _warehouse_support_panels_have_state() -> bool:
             "wh_capacity_summary",
             "wh_capacity_exceptions",
             "wh_operability_fact",
-            "wh_owner_inventory",
             "wh_setting_review_snapshot",
             "wh_action_closure",
         )
@@ -3574,7 +3354,7 @@ def _warehouse_overview_exceptions(df: pd.DataFrame | None) -> list[dict[str, st
                 "warehouse": warehouse,
                 "severity": "Critical" if rank == 1 else "High" if rank == 2 else "Review",
                 "signal": " | ".join(issues),
-                "next_action": "Open detailed evidence before resizing, suspending, or changing clusters.",
+                "next_action": "Open detailed telemetry before resizing, suspending, or changing clusters.",
             })
     rows.sort(key=lambda item: (safe_int(item.get("rank"), 9), item.get("warehouse", "")))
     return rows[:4]
@@ -3622,8 +3402,8 @@ def render():
     render_operator_briefing(
         [
             ("First move", "Decide whether pressure is queue, spill, latency, or cost drift."),
-            ("Evidence", "Use metering plus query history before changing size or clusters."),
-            ("Control", "Tune routing, auto-suspend, QAS, size, or multi-cluster with proof."),
+            ("Telemetry", "Use metering plus query history before changing size or clusters."),
+            ("Control", "Tune routing, auto-suspend, QAS, size, or multi-cluster with measured context."),
             ("Output", "Create a warehouse capacity brief for release or cost review."),
         ],
         columns=4,
@@ -3639,13 +3419,12 @@ def render():
         _render_warehouse_brief_launchpad()
     show_support_panels = bool(st.session_state.get("warehouse_health_support_panels_open"))
     if show_support_panels:
-        if st.button("Hide Evidence Panels", key="warehouse_health_hide_support_panels"):
+        if st.button("Hide Detail Panels", key="warehouse_health_hide_support_panels"):
             st.session_state["warehouse_health_support_panels_open"] = False
             st.rerun()
         _render_capacity_brief(company, environment)
-        _render_warehouse_ownership_panel(company, environment)
         _render_warehouse_source_health(company, environment)
-    elif st.button("Evidence Panels", key="warehouse_health_open_support_panels"):
+    elif st.button("Detail Panels", key="warehouse_health_open_support_panels"):
         st.session_state["warehouse_health_support_panels_open"] = True
         st.rerun()
     if st.session_state.get("exceptions_only_mode") and warehouse_view != "Overview & Scaling":
@@ -3739,12 +3518,12 @@ def render():
             and _warehouse_meta_matches(loaded_wh_meta, wh_expected_meta)
         )
         if consume_section_autoload_request("Warehouse Health") and not wh_current:
-            st.caption("Warehouse capacity opened with a lightweight summary. Load warehouse data when current capacity proof is needed.")
+            st.caption("Warehouse capacity opened with a lightweight summary. Load warehouse data when current capacity detail is needed.")
         render_data_freshness(
             loaded_wh_meta if wh_current else {},
             source=st.session_state.get("wh_df_wh_source", "Warehouse overview"),
             target_minutes=30,
-            delayed_note="Warehouse overview prefers fast mart evidence; live ACCOUNT_USAGE refresh is explicit.",
+            delayed_note="Warehouse overview prefers fast summary telemetry; live account history refresh is explicit.",
         )
 
         if st.button("Load Warehouse Data", key="wh_load"):
@@ -3777,10 +3556,10 @@ def render():
             detail_col, _ = st.columns([1.2, 4.0])
             with detail_col:
                 if detail_open:
-                    if st.button("Hide Warehouse Evidence", key="warehouse_health_hide_overview_evidence", width="stretch"):
+                    if st.button("Hide Warehouse Detail", key="warehouse_health_hide_overview_evidence", width="stretch"):
                         st.session_state[detail_key] = False
                         st.rerun()
-                elif st.button("Show Warehouse Evidence", key="warehouse_health_show_overview_evidence_button", width="stretch"):
+                elif st.button("Show Warehouse Detail", key="warehouse_health_show_overview_evidence_button", width="stretch"):
                     st.session_state[detail_key] = True
                     st.rerun()
             if not detail_open:
@@ -3811,34 +3590,25 @@ def render():
                 _warehouse_scope_meta(company, environment, wh_days),
             ):
                 settings_inventory = pd.DataFrame()
-            owner_inventory = st.session_state.get("wh_owner_inventory")
-            owner_days = safe_int(st.session_state.get("wh_owner_inventory_days", 30)) or 30
-            owner_query_days = min(owner_days, 30)
-            if not _warehouse_meta_matches(
-                st.session_state.get("wh_owner_inventory_meta"),
-                _warehouse_scope_meta(company, environment, owner_query_days),
-            ):
-                owner_inventory = pd.DataFrame()
 
             guardrail_summary, guardrail_board = _build_warehouse_guardrail_coverage(
                 df_w,
-                owner_inventory=owner_inventory,
                 settings_inventory=settings_inventory,
             )
             if not guardrail_board.empty:
                 st.subheader("Warehouse Guardrail Coverage")
                 render_shell_snapshot((
-                    ("Guardrail Score", f"{guardrail_summary['score']}/100"),
+                    ("Guardrail State", "Stable" if guardrail_summary["score"] >= 90 else "Review" if guardrail_summary["score"] >= 70 else "Critical"),
                     ("Blocked", f"{guardrail_summary['blocked']:,}"),
                     ("Needs Review", f"{guardrail_summary['review']:,}"),
-                    ("Evidence Missing", f"{guardrail_summary['unknown']:,}"),
+                    ("Data Missing", f"{guardrail_summary['unknown']:,}"),
                 ))
                 render_priority_dataframe(
                     guardrail_board,
                     title="Auto-derived warehouse guardrail coverage",
                     priority_columns=[
                         "WAREHOUSE_NAME", "GUARDRAIL_STATE", "GUARDRAIL_SCORE", "SEVERITY",
-                        "RESOURCE_MONITOR_STATE", "AUTO_SUSPEND_STATE", "OWNER_ROUTE_STATE",
+                        "RESOURCE_MONITOR_STATE", "AUTO_SUSPEND_STATE", "ESCALATION_ROUTE_STATE",
                         "CAPACITY_STATE", "COST_STATE", "METERED_CREDITS", "CREDIT_DELTA",
                         "AVG_QUEUED_SEC", "TOTAL_REMOTE_SPILL_GB", "P95_ELAPSED_SEC",
                         "NEXT_ACTION", "PROOF_REQUIRED",
@@ -3857,8 +3627,6 @@ def render():
                     )
                 elif settings_inventory is None or settings_inventory.empty:
                     defer_source_note("Resource-monitor and AUTO_SUSPEND checks need SHOW WAREHOUSES metadata.")
-                if owner_inventory is None or owner_inventory.empty:
-                    defer_source_note("Owner-route readiness appears after Warehouse Ownership Readiness has loaded.")
 
             render_priority_dataframe(
                 df_w,
@@ -4150,7 +3918,7 @@ def render():
         st.subheader("Workload Concurrency Heatmap")
         hm_days = day_window_selectbox("Lookback", key="hm_days", default=30)
 
-        if st.button("Build Heatmap", key="hm_build"):
+        if st.button("Refresh Heatmap", key="hm_build"):
             try:
                 mart_sql = build_mart_warehouse_heatmap_sql(
                     hm_days,
@@ -4185,7 +3953,7 @@ def render():
                         GROUP BY warehouse_name, day_of_week, hour_of_day
                         ORDER BY warehouse_name, day_of_week, hour_of_day
                     """, ttl_key=f"wh_heatmap_live_{company}_{live_days}", tier="historical")
-                    source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
+                    source = "Bounded live warehouse history"
                 st.session_state["wh_df_hm"] = df_hm
                 st.session_state["wh_df_hm_meta"] = _warehouse_scope_meta(company, environment, hm_days)
                 st.session_state["wh_df_hm_source"] = source
@@ -4199,7 +3967,7 @@ def render():
                 _warehouse_scope_meta(company, environment, hm_days),
             )
         ):
-            st.info("Loaded workload heatmap is stale for the active scope. Rebuild Heatmap before acting.")
+            st.info("Loaded workload heatmap is stale for the active scope. Refresh Heatmap before acting.")
         elif st.session_state.get("wh_df_hm") is not None and not st.session_state["wh_df_hm"].empty:
             df_hm = st.session_state["wh_df_hm"]
             whs = df_hm["WAREHOUSE_NAME"].unique()

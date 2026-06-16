@@ -1,9 +1,8 @@
 """Shared first-paint command board readers.
 
 These helpers keep the top-level sections data-first without making each shell
-hand-roll its own Snowflake query. They prefer the compact executive
-observability mart and fail closed to empty/static setup frames when the mart is
-not deployed yet.
+hand-roll its own Snowflake query. They prefer compact executive summary facts
+and fail closed to data-safe frames when the summary is not ready yet.
 """
 
 from __future__ import annotations
@@ -155,17 +154,17 @@ def _metric_value(board: pd.DataFrame, metric: str, column: str = "VALUE") -> fl
 def _top_dimension(board: pd.DataFrame, panel: str, metric: str | None = None) -> tuple[str, float, float]:
     rows = _rows(board, panel, metric)
     if rows.empty:
-        return "Not loaded", 0.0, 0.0
+        return "On demand", 0.0, 0.0
     try:
         ranked = rows.sort_values(["VALUE_USD", "VALUE"], ascending=[False, False], na_position="last")
         row = ranked.iloc[0]
         return (
-            str(row.get("DIMENSION") or "Not loaded"),
+            str(row.get("DIMENSION") or "On demand"),
             _safe_float(row.get("VALUE")),
             _safe_float(row.get("VALUE_USD")),
         )
     except Exception:
-        return "Not loaded", 0.0, 0.0
+        return "On demand", 0.0, 0.0
 
 
 def build_executive_command_board_sql(
@@ -284,10 +283,10 @@ def summarize_command_board(board: pd.DataFrame) -> dict[str, object]:
     summary.update({
         "score": score["score"],
         "raw_score": score["raw_score"],
-        "state": score["state"] if not rows.empty else "Not loaded",
+        "state": score["state"] if not rows.empty else "On demand",
         "score_cap": score["score_cap"],
         "cap_reason": score["cap_reason"] if not rows.empty else (
-            "Executive observability mart is not loaded for this scope."
+            "Executive observability summary is available after refresh for this scope."
         ),
         "platform_score_drivers": score["platform_score_drivers"],
     })
@@ -414,13 +413,13 @@ WHERE 1 = 1
 
 
 def load_setup_readiness(use_live: bool = False) -> pd.DataFrame:
-    """Return live setup readiness when available, otherwise static contract rows."""
+    """Return live data readiness when available, otherwise static contract rows."""
     if use_live:
         live = run_query(
             build_schema_migration_status_sql(),
-            ttl_key="setup_readiness_status",
+            ttl_key="data_readiness_status",
             tier="metadata",
-            section="Setup Readiness",
+            section="Data Health",
             max_rows=100,
         )
         if isinstance(live, pd.DataFrame) and not live.empty:
@@ -431,5 +430,5 @@ def load_setup_readiness(use_live: bool = False) -> pd.DataFrame:
     fallback = contract.copy()
     fallback["OBJECT_STATE"] = "Unknown"
     fallback["MIGRATION_STATE"] = "Not checked"
-    fallback["NEXT_ACTION"] = "Run the setup readiness query after Snowflake access is available."
+    fallback["NEXT_ACTION"] = "Refresh data health after Snowflake access is available."
     return fallback

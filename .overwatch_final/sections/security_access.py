@@ -2,13 +2,11 @@
 import streamlit as st
 import pandas as pd
 from utils import (
-    admin_button_disabled,
     defer_source_note,
     download_csv,
     filter_existing_columns,
     day_window_selectbox,
     get_active_company,
-    get_active_environment,
     get_db_filter_clause,
     get_global_filter_clause,
     get_session,
@@ -17,7 +15,6 @@ from utils import (
     make_action_id,
     mart_object_name,
     format_snowflake_error,
-    log_admin_action,
     render_priority_dataframe,
     render_chart_with_data_toggle,
     render_ranked_bar_chart,
@@ -448,650 +445,6 @@ def _load_grants_mart(company: str) -> pd.DataFrame:
     """, ttl_key=f"security_mart_grants_to_users_{company}", tier="standard", section="Security Access")
 
 
-_SENSITIVE_ACCOUNT_ROLES = {
-    "ACCOUNTADMIN",
-    "ORGADMIN",
-    "SECURITYADMIN",
-    "SYSADMIN",
-    "USERADMIN",
-}
-
-
-def _normalize_access_identifier(name: str, object_type: str) -> str:
-    """Normalize account role/user input while rejecting ambiguous identifiers."""
-    value = str(name or "").strip()
-    if not value:
-        raise ValueError(f"{object_type} is required.")
-    if any(ch in value for ch in [";", "\n", "\r", "\x00"]):
-        raise ValueError(f"{object_type} contains unsupported control characters.")
-    if "." in value:
-        raise ValueError(
-            f"{object_type} must be an account-level identifier. Database roles are not supported by this control yet."
-        )
-    if value.startswith('"') and value.endswith('"') and len(value) >= 2:
-        value = value[1:-1].replace('""', '"')
-    else:
-        value = value.upper()
-    if not value:
-        raise ValueError(f"{object_type} is required.")
-    return value
-
-
-def _quote_access_identifier(name: str) -> str:
-    return '"' + str(name).replace('"', '""') + '"'
-
-
-def _role_grant_risk_notes(action: str, role_name: str, grantee_type: str, grantee_name: str) -> list[str]:
-    action = str(action or "").upper()
-    role_name = str(role_name or "").upper()
-    grantee_type = str(grantee_type or "").upper()
-    grantee_name = str(grantee_name or "").upper()
-    notes = [
-        "Account-role grants are account-wide; company and environment are audit scope, not enforcement boundaries.",
-        "Confirm requester, approver, owner, ticket, and least-privilege justification before applying.",
-    ]
-    if role_name in _SENSITIVE_ACCOUNT_ROLES or role_name.endswith("ADMIN"):
-        notes.append("High risk: this role can materially change account administration or broad object access.")
-    if grantee_name in _SENSITIVE_ACCOUNT_ROLES or grantee_name.endswith("ADMIN"):
-        notes.append("High risk: the grantee is an administrative role; inherited blast radius may be broad.")
-    if grantee_type == "ROLE":
-        notes.append("Inheritance risk: role-to-role grants can expand access for many users indirectly.")
-    if action == "REVOKE":
-        notes.append("Availability risk: revoking a role can break jobs, procedures, tasks, or service users.")
-    else:
-        notes.append("Access expansion risk: granting a role may expose data, warehouses, or administrative actions.")
-    return notes
-
-
-def _role_grant_risk_level(notes: list[str]) -> str:
-    text = " ".join(notes).lower()
-    if text.count("high risk") >= 2:
-        return "Critical"
-    if "high risk" in text and "inheritance risk" in text:
-        return "Critical"
-    if "high risk" in text or "inheritance risk" in text:
-        return "High"
-    if "availability risk" in text or "access expansion risk" in text:
-        return "Medium"
-    return "Low"
-
-
-def _role_grant_usage_check_sql(role_name: str, grantee_type: str, grantee_name: str) -> str:
-    role_like = sql_literal(role_name, 300)
-    grantee_like = sql_literal(grantee_name, 300)
-    if grantee_type == "USER":
-        return f"""SELECT grantee_name,
-       role,
-       granted_to,
-       granted_by,
-       created_on,
-       deleted_on
-FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS
-WHERE role = {role_like}
-  AND grantee_name = {grantee_like}
-  AND deleted_on IS NULL
-ORDER BY created_on DESC;"""
-    return f"""SELECT grantee_name,
-       name AS role,
-       granted_on,
-       granted_by,
-       created_on,
-       deleted_on
-FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_ROLES
-WHERE granted_on = 'ROLE'
-  AND name = {role_like}
-  AND grantee_name = {grantee_like}
-  AND deleted_on IS NULL
-ORDER BY created_on DESC;"""
-
-
-def _role_grant_capability_check_sql() -> str:
-    return """SELECT CURRENT_ROLE() AS active_role,
-       COUNT_IF(privilege = 'MANAGE GRANTS' AND granted_on = 'ACCOUNT') AS direct_manage_grants_privileges
-FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_ROLES
-WHERE grantee_name = CURRENT_ROLE()
-  AND deleted_on IS NULL;
-
--- If DIRECT_MANAGE_GRANTS_PRIVILEGES is 0, confirm inherited role hierarchy or role ownership before applying.
-"""
-
-
-def _role_grant_blast_radius_sql(grantee_type: str, grantee_name: str) -> str:
-    if grantee_type != "ROLE":
-        return "-- Direct user grant/revoke: blast radius is the named user only."
-    grantee_like = sql_literal(grantee_name, 300)
-    return f"""SELECT role AS impacted_role,
-       COUNT(DISTINCT grantee_name) AS direct_users_with_impacted_role,
-       LISTAGG(DISTINCT grantee_name, ', ') WITHIN GROUP (ORDER BY grantee_name) AS sample_direct_users
-FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS
-WHERE role = {grantee_like}
-  AND deleted_on IS NULL
-GROUP BY role;
-
-SELECT grantee_name AS parent_role,
-       name AS granted_role,
-       granted_by,
-       created_on
-FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_ROLES
-WHERE grantee_name = {grantee_like}
-  AND granted_on = 'ROLE'
-  AND deleted_on IS NULL
-ORDER BY created_on DESC;
-"""
-
-
-def _role_grant_plan_signature(
-    action: str,
-    role_name: str,
-    grantee_type: str,
-    grantee_name: str,
-    justification: str,
-    access_owner: str = "",
-    approver: str = "",
-    ticket_id: str = "",
-    review_by: str = "",
-) -> str:
-    action = str(action or "").upper().strip()
-    grantee_type = str(grantee_type or "").upper().strip()
-    role = _normalize_access_identifier(role_name, "Role")
-    grantee = _normalize_access_identifier(grantee_name, grantee_type.title() if grantee_type else "Grantee")
-    return "|".join([
-        action,
-        role,
-        grantee_type,
-        grantee,
-        str(justification or "").strip(),
-        str(access_owner or "").strip(),
-        str(approver or "").strip(),
-        str(ticket_id or "").strip(),
-        str(review_by or "").strip(),
-    ])
-
-
-def _access_control_metadata(
-    *,
-    access_owner: str = "",
-    approver: str = "",
-    ticket_id: str = "",
-    review_by: str = "",
-) -> dict:
-    owner = str(access_owner or "").strip()
-    approver = str(approver or "").strip()
-    ticket = str(ticket_id or "").strip()
-    review = str(review_by or "").strip()
-    missing = []
-    if not owner:
-        missing.append("access owner")
-    if not approver:
-        missing.append("approver")
-    if not ticket:
-        missing.append("ticket")
-    if not review:
-        missing.append("review/expiry date")
-    return {
-        "access_owner": owner,
-        "approver": approver,
-        "ticket_id": ticket,
-        "review_by": review,
-        "missing": missing,
-        "complete": not missing,
-    }
-
-
-def _role_grant_preflight_sql(role_name: str, grantee_type: str, grantee_name: str) -> str:
-    role_ident = _quote_access_identifier(role_name)
-    grantee_ident = _quote_access_identifier(grantee_name)
-    role_like = sql_literal(role_name, 300)
-    grantee_like = sql_literal(grantee_name, 300)
-    target_show = (
-        f"SHOW GRANTS TO USER {grantee_ident};"
-        if grantee_type == "USER"
-        else f"SHOW GRANTS TO ROLE {grantee_ident};"
-    )
-    target_exists = (
-        f"SHOW USERS LIKE {grantee_like};"
-        if grantee_type == "USER"
-        else f"SHOW ROLES LIKE {grantee_like};"
-    )
-    usage_check = _role_grant_usage_check_sql(role_name, grantee_type, grantee_name)
-    return f"""-- Read-only pre-flight before account-role grant change
-SELECT CURRENT_USER() AS current_user,
-       CURRENT_ROLE() AS current_role,
-       CURRENT_WAREHOUSE() AS current_warehouse;
-
-SHOW ROLES LIKE {role_like};
-{target_exists}
-
-SHOW GRANTS OF ROLE {role_ident};
-{target_show}
-
--- Active-role capability check
-{_role_grant_capability_check_sql()}
-
--- Blast-radius evidence
-{_role_grant_blast_radius_sql(grantee_type, grantee_name)}
-
-{usage_check}
-
--- Confirm owner approval, change ticket, least privilege, and rollback before applying.
-"""
-
-
-def _role_grant_verification_sql(role_name: str, grantee_type: str, grantee_name: str) -> str:
-    grantee_ident = _quote_access_identifier(grantee_name)
-    target_show = (
-        f"SHOW GRANTS TO USER {grantee_ident};"
-        if grantee_type == "USER"
-        else f"SHOW GRANTS TO ROLE {grantee_ident};"
-    )
-    return f"""-- Post-change verification
-{target_show}
-
-{_role_grant_usage_check_sql(role_name, grantee_type, grantee_name)}
-
--- Attach this evidence to the access ticket and the OVERWATCH admin audit row.
-"""
-
-
-def _build_role_grant_change_plan(
-    action: str,
-    role_name: str,
-    grantee_type: str,
-    grantee_name: str,
-    justification: str = "",
-    access_owner: str = "",
-    approver: str = "",
-    ticket_id: str = "",
-    review_by: str = "",
-) -> dict:
-    """Build a guarded account-role GRANT/REVOKE plan with rollback context."""
-    action = str(action or "").upper().strip()
-    grantee_type = str(grantee_type or "").upper().strip()
-    if action not in {"GRANT", "REVOKE"}:
-        raise ValueError("Action must be GRANT or REVOKE.")
-    if grantee_type not in {"USER", "ROLE"}:
-        raise ValueError("Grantee type must be USER or ROLE.")
-
-    role = _normalize_access_identifier(role_name, "Role")
-    grantee = _normalize_access_identifier(grantee_name, grantee_type.title())
-    role_ident = _quote_access_identifier(role)
-    grantee_ident = _quote_access_identifier(grantee)
-
-    forward_join = "TO" if action == "GRANT" else "FROM"
-    inverse_action = "REVOKE" if action == "GRANT" else "GRANT"
-    inverse_join = "FROM" if action == "GRANT" else "TO"
-    change_sql = f"{action} ROLE {role_ident} {forward_join} {grantee_type} {grantee_ident};"
-    rollback_sql = f"{inverse_action} ROLE {role_ident} {inverse_join} {grantee_type} {grantee_ident};"
-
-    clean_justification = str(justification or "").strip()
-    metadata = _access_control_metadata(
-        access_owner=access_owner,
-        approver=approver,
-        ticket_id=ticket_id,
-        review_by=review_by,
-    )
-    risk_notes = _role_grant_risk_notes(action, role, grantee_type, grantee)
-    if not clean_justification:
-        risk_notes.append("Missing business justification: do not apply without a ticket or approver record.")
-    if metadata["missing"]:
-        risk_notes.append(
-            "Missing accountability metadata: " + ", ".join(metadata["missing"]) + "."
-        )
-    risk_level = _role_grant_risk_level(risk_notes)
-    confirmation_text = f"{action} {role} {forward_join} {grantee_type} {grantee}"
-    control_context_lines = [
-        f"Action: {confirmation_text}",
-        f"Risk level: {risk_level}",
-        f"Access owner: {metadata['access_owner']}",
-        f"Approver: {metadata['approver']}",
-        f"Ticket: {metadata['ticket_id']}",
-        f"Review by: {metadata['review_by']}",
-        f"Justification: {clean_justification[:800]}",
-        "Rollback SQL: " + rollback_sql,
-    ]
-    control_context_lines.extend(f"Risk: {note}" for note in risk_notes)
-
-    return {
-        "action": action,
-        "role": role,
-        "grantee_type": grantee_type,
-        "grantee": grantee,
-        "target_object": f"ROLE {role} {forward_join} {grantee_type} {grantee}",
-        "change_sql": change_sql,
-        "rollback_sql": rollback_sql,
-        "preflight_sql": _role_grant_preflight_sql(role, grantee_type, grantee),
-        "verification_sql": _role_grant_verification_sql(role, grantee_type, grantee),
-        "risk_level": risk_level,
-        "risk_notes": risk_notes,
-        "risk_df": pd.DataFrame({"RISK_LEVEL": [risk_level] * len(risk_notes), "RISK_NOTE": risk_notes}),
-        "justification": clean_justification,
-        "access_owner": metadata["access_owner"],
-        "approver": metadata["approver"],
-        "ticket_id": metadata["ticket_id"],
-        "review_by": metadata["review_by"],
-        "metadata_complete": metadata["complete"],
-        "missing_metadata": metadata["missing"],
-        "input_signature": _role_grant_plan_signature(
-            action,
-            role,
-            grantee_type,
-            grantee,
-            clean_justification,
-            metadata["access_owner"],
-            metadata["approver"],
-            metadata["ticket_id"],
-            metadata["review_by"],
-        ),
-        "confirmation_text": confirmation_text,
-        "control_context": "\n".join(control_context_lines)[:4000],
-    }
-
-
-def _build_access_action_queue_record(plan: dict, company: str) -> dict:
-    ticket = str(plan.get("ticket_id") or "NO_TICKET")
-    entity = str(plan.get("target_object") or plan.get("confirmation_text") or "")
-    finding = f"{plan.get('confirmation_text', 'Access change')} awaiting DBA approval/execution ({ticket})."
-    recommended = (
-        f"Validate requester, owner {plan.get('access_owner') or 'UNKNOWN'}, approver "
-        f"{plan.get('approver') or 'UNKNOWN'}, least privilege, and review date "
-        f"{plan.get('review_by') or 'UNKNOWN'} before applying. After execution, run the verification SQL "
-        "and attach the evidence to the ticket."
-    )
-    proof = (
-        "-- Pre-flight SQL\n"
-        + str(plan.get("preflight_sql") or "")
-        + "\n-- Post-change verification SQL\n"
-        + str(plan.get("verification_sql") or "")
-    )
-    return {
-        "Action ID": make_action_id("Access Control", entity, ticket + "|" + finding),
-        "Source": "Security Posture - Role & Grant Change Control",
-        "Severity": plan.get("risk_level", "Medium"),
-        "Category": "Security",
-        "Entity Type": "Role Grant",
-        "Entity": entity,
-        "Owner": plan.get("access_owner") or "Security/DBA",
-        "Finding": finding,
-        "Action": recommended,
-        "Estimated Monthly Savings": 0.0,
-        "Generated SQL Fix": plan.get("change_sql", ""),
-        "Proof Query": proof[:8000],
-        "Company": company,
-    }
-
-
-def _build_role_grant_control_board(plan: dict) -> tuple[dict, pd.DataFrame]:
-    """Summarize the current role-grant plan as a compact DBA control plane."""
-    rows = [
-        {
-            "CONTROL": "Risk notes",
-            "STATE": "Ready" if plan.get("risk_notes") else "Review",
-            "EVIDENCE": f"{len(plan.get('risk_notes') or []):,} note(s) flagged for DBA review.",
-            "NEXT_ACTION": "Read the notes before queueing or applying the access change.",
-        },
-        {
-            "CONTROL": "Metadata completeness",
-            "STATE": "Ready" if plan.get("metadata_complete") else "Blocked",
-            "EVIDENCE": "Owner, approver, ticket, and review/expiry date are present." if plan.get("metadata_complete") else "Owner accountability fields are missing.",
-            "NEXT_ACTION": "Fill all required accountability fields before queueing.",
-        },
-        {
-            "CONTROL": "Pre-flight SQL",
-            "STATE": "Ready" if plan.get("preflight_sql") else "Blocked",
-            "EVIDENCE": "Read-only pre-flight evidence is attached." if plan.get("preflight_sql") else "No pre-flight query generated.",
-            "NEXT_ACTION": "Run the pre-flight SQL and attach the proof.",
-        },
-        {
-            "CONTROL": "Change SQL",
-            "STATE": "Ready" if plan.get("change_sql") else "Blocked",
-            "EVIDENCE": "Forward GRANT/REVOKE SQL is prepared." if plan.get("change_sql") else "No change SQL generated.",
-            "NEXT_ACTION": "Apply only after owner approval and typed confirmation.",
-        },
-        {
-            "CONTROL": "Rollback SQL",
-            "STATE": "Ready" if plan.get("rollback_sql") else "Blocked",
-            "EVIDENCE": "Rollback SQL is attached." if plan.get("rollback_sql") else "No rollback SQL generated.",
-            "NEXT_ACTION": "Keep rollback visible before executing the access change.",
-        },
-        {
-            "CONTROL": "Verification SQL",
-            "STATE": "Ready" if plan.get("verification_sql") else "Blocked",
-            "EVIDENCE": "Post-change verification SQL is attached." if plan.get("verification_sql") else "No verification SQL generated.",
-            "NEXT_ACTION": "Run verification after execution and attach the result to the ticket.",
-        },
-        {
-            "CONTROL": "Audit trail",
-            "STATE": "Ready" if plan.get("control_context") else "Review",
-            "EVIDENCE": "Admin audit metadata is prepared for the change." if plan.get("control_context") else "No admin audit context prepared.",
-            "NEXT_ACTION": "Log STARTED, SUCCESS, and VERIFY_REQUIRED states with the admin audit table.",
-        },
-    ]
-    board = pd.DataFrame(rows)
-    state_rank = {"Blocked": 0, "Review": 1, "Ready": 2}
-    board["_RANK"] = board["STATE"].map(state_rank).fillna(9)
-    score = max(0, min(100, 100 - int((board["STATE"] == "Blocked").sum()) * 24 - int((board["STATE"] == "Review").sum()) * 10))
-    return {
-        "score": score,
-        "blocked": int((board["STATE"] == "Blocked").sum()),
-        "review": int((board["STATE"] == "Review").sum()),
-        "ready": int((board["STATE"] == "Ready").sum()),
-    }, board.sort_values(["_RANK", "CONTROL"]).drop(columns=["_RANK"], errors="ignore")
-
-
-def _render_role_grant_change_control(session, company: str) -> None:
-    st.divider()
-    st.subheader("Role & Grant Change Control")
-    st.caption(
-        "Account roles only. This prepares DBA-reviewed GRANT/REVOKE SQL with pre-flight evidence, rollback SQL, "
-        "typed confirmation, and admin audit logging."
-    )
-
-    plan_key = "sec_role_grant_plan"
-    c1, c2 = st.columns(2)
-    with c1:
-        action = st.selectbox("Action", ["GRANT", "REVOKE"], key="sec_rg_action")
-        role_name = st.text_input("Account role", key="sec_rg_role", placeholder="APP_READONLY")
-    with c2:
-        grantee_type = st.selectbox("Grantee type", ["USER", "ROLE"], key="sec_rg_grantee_type")
-        grantee_name = st.text_input("Grantee", key="sec_rg_grantee", placeholder="USER_OR_ROLE_NAME")
-    justification = st.text_area(
-        "Business justification / ticket",
-        key="sec_rg_justification",
-        placeholder="INC12345 approved by data owner for read-only ALFA support access.",
-        height=90,
-    )
-    m1, m2 = st.columns(2)
-    with m1:
-        access_owner = st.text_input("Access owner", key="sec_rg_owner", placeholder="Data owner or accountable team")
-        ticket_id = st.text_input("Ticket / request ID", key="sec_rg_ticket", placeholder="INC12345")
-    with m2:
-        approver = st.text_input("Approver", key="sec_rg_approver", placeholder="Approver name or role")
-        review_by = st.text_input("Review / expiry date", key="sec_rg_review_by", placeholder="YYYY-MM-DD")
-
-    if st.button("Build Role Grant Plan", key="sec_rg_build_plan"):
-        try:
-            st.session_state[plan_key] = _build_role_grant_change_plan(
-                action,
-                role_name,
-                grantee_type,
-                grantee_name,
-                justification,
-                access_owner,
-                approver,
-                ticket_id,
-                review_by,
-            )
-        except Exception as e:
-            st.session_state.pop(plan_key, None)
-            st.error(format_snowflake_error(e))
-
-    plan = st.session_state.get(plan_key)
-    if not plan:
-        return
-
-    st.markdown(f"**Reviewed Access Change Plan: {plan['risk_level']} Risk**")
-    board_summary, board = _build_role_grant_control_board(plan)
-    render_shell_snapshot((
-        ("Ready", f"{board_summary['ready']:,}"),
-        ("Review", f"{board_summary['review']:,}"),
-        ("Blocked", f"{board_summary['blocked']:,}"),
-    ))
-    render_priority_dataframe(
-        board,
-        title="Role grant control plane",
-        priority_columns=["STATE", "CONTROL", "EVIDENCE", "NEXT_ACTION"],
-        sort_by=["STATE", "CONTROL"],
-        ascending=[True, True],
-        raw_label="All role grant control rows",
-        height=240,
-    )
-    render_priority_dataframe(
-        plan["risk_df"],
-        title="Risk notes requiring DBA review",
-        priority_columns=["RISK_LEVEL", "RISK_NOTE"],
-        sort_by=["RISK_NOTE"],
-        ascending=True,
-        raw_label="All access-control risk notes",
-        height=220,
-    )
-    with st.expander("Read-only pre-flight SQL", expanded=True):
-        st.code(plan["preflight_sql"], language="sql")
-    with st.expander("SQL to apply", expanded=True):
-        st.code(plan["change_sql"], language="sql")
-    with st.expander("Rollback SQL", expanded=False):
-        st.code(plan["rollback_sql"], language="sql")
-    with st.expander("Post-change verification SQL", expanded=False):
-        st.code(plan["verification_sql"], language="sql")
-
-    try:
-        current_signature = _role_grant_plan_signature(
-            action,
-            role_name,
-            grantee_type,
-            grantee_name,
-            justification,
-            access_owner,
-            approver,
-            ticket_id,
-            review_by,
-        )
-    except Exception:
-        current_signature = ""
-    plan_is_current = current_signature == plan.get("input_signature")
-    if not plan_is_current:
-        st.warning("The form changed after this plan was built. Rebuild the plan before applying.")
-    if not plan.get("metadata_complete"):
-        st.warning("Owner, approver, ticket, and review/expiry date are required before queueing or applying.")
-
-    q1, q2 = st.columns([1, 3])
-    with q1:
-        if st.button(
-            "Queue Access Request",
-            key="sec_rg_queue_request",
-            disabled=not plan_is_current or not plan.get("metadata_complete") or bool(plan.get("queued")),
-        ):
-            try:
-                saved = upsert_actions(session, [_build_access_action_queue_record(plan, company)])
-                st.session_state[plan_key]["queued"] = True
-                st.success(f"Queued {saved} access request for review.")
-            except Exception as e:
-                st.error(f"Could not queue access request: {format_snowflake_error(e)}")
-    with q2:
-        st.caption(
-            "Queueing creates an OVERWATCH_ACTION_QUEUE item with owner, approver, ticket, SQL, "
-            "pre-flight proof, rollback, and verification instructions."
-        )
-
-    confirmed = st.text_input(
-        f"Type {plan['confirmation_text']} to apply this access change",
-        key="sec_rg_confirm",
-        placeholder=plan["confirmation_text"],
-    ).strip() == plan["confirmation_text"]
-    has_justification = bool(str(plan.get("justification", "") or "").strip())
-    if not has_justification:
-        st.warning("A business justification or ticket is required before applying the access change.")
-
-    apply_disabled = (
-        not confirmed
-        or not has_justification
-        or not plan_is_current
-        or not plan.get("metadata_complete")
-        or bool(plan.get("applied"))
-    )
-    if st.button(
-        "Apply Access Change",
-        type="primary",
-        key="sec_rg_apply",
-        disabled=admin_button_disabled(apply_disabled),
-    ):
-        environment = get_active_environment()
-        try:
-            log_admin_action(
-                session,
-                action_type=f"{plan['action']} ROLE",
-                target_object=plan["target_object"],
-                sql_text=plan["change_sql"],
-                result_status="STARTED",
-                result_message="Role grant change submitted from OVERWATCH.",
-                confirmation_text=plan["confirmation_text"],
-                control_context=plan["control_context"],
-                company=company,
-                environment=environment,
-            )
-            session.sql(plan["change_sql"]).collect()
-            audited = log_admin_action(
-                session,
-                action_type=f"{plan['action']} ROLE",
-                target_object=plan["target_object"],
-                sql_text=plan["change_sql"],
-                result_status="SUCCESS",
-                result_message="Role grant change completed.",
-                confirmation_text=plan["confirmation_text"],
-                control_context=plan["control_context"],
-                company=company,
-                environment=environment,
-            )
-            log_admin_action(
-                session,
-                action_type=f"VERIFY {plan['action']} ROLE",
-                target_object=plan["target_object"],
-                sql_text=plan["verification_sql"],
-                result_status="VERIFY_REQUIRED",
-                result_message=(
-                    "Run post-change verification SQL and attach the result to "
-                    f"{plan.get('ticket_id') or 'the access ticket'}."
-                ),
-                confirmation_text=plan["confirmation_text"],
-                control_context=plan["control_context"],
-                company=company,
-                environment=environment,
-            )
-            st.session_state[plan_key]["applied"] = True
-            st.success("Access change completed.")
-            if not audited:
-                st.warning("The access change completed, but the admin audit table was unavailable or not writable.")
-            st.session_state.pop("sec_df_grants", None)
-        except Exception as e:
-            err = format_snowflake_error(e)
-            log_admin_action(
-                session,
-                action_type=f"{plan['action']} ROLE",
-                target_object=plan["target_object"],
-                sql_text=plan["change_sql"],
-                result_status="FAILED",
-                result_message=err,
-                confirmation_text=plan["confirmation_text"],
-                control_context=plan["control_context"],
-                company=company,
-                environment=environment,
-            )
-            err_text = str(e).lower()
-            if "insufficient privilege" in err_text or "not authorized" in err_text:
-                st.error("Permission denied. Role changes require an active Snowflake role with role-management privileges.")
-            else:
-                st.error(f"Access change failed: {err}")
-
-
 def _queue_security_findings(session, df: pd.DataFrame, finding_type: str, severity: str = "High") -> None:
     if df is None or df.empty:
         st.info("No security findings to queue.")
@@ -1104,22 +457,22 @@ def _queue_security_findings(session, df: pd.DataFrame, finding_type: str, sever
             entity = user
             finding = f"{user} had {safe_int(row.get('ATTEMPT_COUNT', 0))} failed login attempts from {row.get('CLIENT_IP', 'unknown IP')}"
             action = "Validate whether attempts are expected; review identity provider logs and lock/disable user if suspicious."
-            proof = "LOGIN_HISTORY failed login attempts."
+            proof = "LOGIN_HISTORY failed login telemetry."
         elif finding_type == "Dormant User":
             entity = user
             finding = f"{user} is active but has been dormant for {safe_int(row.get('DAYS_SINCE_LOGIN', 0))} days"
             action = "Confirm ownership and disable or remove roles if the account is no longer needed."
-            proof = "USERS joined to LOGIN_HISTORY and QUERY_HISTORY."
+            proof = "USERS joined to LOGIN_HISTORY and QUERY_HISTORY telemetry."
         elif finding_type == "No MFA":
             entity = user
             finding = f"{user} is active without MFA coverage"
             action = "Enable MFA or move user to federated authentication with enforced MFA."
-            proof = "ACCOUNT_USAGE.USERS ext_authn_duo / MFA signal."
+            proof = "ACCOUNT_USAGE.USERS ext_authn_duo / MFA telemetry."
         else:
             entity = str(row.get("QUERY_ID") or user)
             finding = f"{user} produced anomalously high result output: {row.get('GB_WRITTEN', '')} GB"
             action = "Review query text, business need, destination, and user activity before approving data movement."
-            proof = "QUERY_HISTORY bytes_written_to_result compared with user baseline."
+            proof = "QUERY_HISTORY bytes_written_to_result compared with user baseline telemetry."
         actions.append({
             "Action ID": make_action_id("Security", entity, finding),
             "Source": f"Security Posture - {finding_type}",
@@ -1140,7 +493,7 @@ def _queue_security_findings(session, df: pd.DataFrame, finding_type: str, sever
         st.success(f"Saved {saved} security findings to the action queue.")
     except Exception as e:
         st.error(f"Could not save to action queue: {format_snowflake_error(e)}")
-        st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
+        st.info("The action queue is not available in this environment yet. Ask the DBA team to enable it, then retry this save.")
 
 
 def _annotate_security_routes(df: pd.DataFrame, finding_type: str) -> pd.DataFrame:
@@ -1152,7 +505,7 @@ def _annotate_security_routes(df: pd.DataFrame, finding_type: str) -> pd.DataFra
         routed["NEXT_ACTION"] = "Compare source IP, client, error code, and IAM logs; disable or escalate only after confirming suspicious activity."
     elif finding_type == "Grant Review":
         routed["NEXT_WORKFLOW"] = "Security Posture"
-        routed["NEXT_ACTION"] = "Validate requester, approver, role hierarchy, and business justification before revoking or narrowing access."
+        routed["NEXT_ACTION"] = "Review requester, route, role hierarchy, and business context before narrowing access."
     elif finding_type == "Dormant User":
         routed["NEXT_WORKFLOW"] = "Security Posture"
         routed["NEXT_ACTION"] = "Confirm owner and service-account status, then disable or remove roles through approved access process."
@@ -1164,7 +517,7 @@ def _annotate_security_routes(df: pd.DataFrame, finding_type: str) -> pd.DataFra
         routed["NEXT_ACTION"] = "Open query text and result output context, confirm business purpose, and escalate to security if unexplained."
     else:
         routed["NEXT_WORKFLOW"] = "Security Posture"
-        routed["NEXT_ACTION"] = "Validate owner, evidence, and risk before changing grants, authentication, or user status."
+        routed["NEXT_ACTION"] = "Review route, telemetry, and risk before changing grants, authentication, or user status."
     return routed
 
 
@@ -1468,7 +821,7 @@ def render():
         st.subheader("Connected Programs")
         program_days = day_window_selectbox("Program lookback", key="sec_connected_program_days", default=30)
         if st.button("Load Connected Programs", key="sec_connected_programs_load"):
-            with render_load_status("Tracing connected programs", "Connected program evidence ready"):
+            with render_load_status("Tracing connected programs", "Connected program telemetry ready"):
                 try:
                     for key, df in _load_connected_programs(get_session(), company, program_days).items():
                         st.session_state[key] = df
@@ -1516,7 +869,7 @@ def render():
             for df in (session_programs, query_programs, login_programs):
                 if df is not None and not df.empty and "CONTROL_STATUS" in df.columns:
                     unknown_rows += safe_int((df["CONTROL_STATUS"] == "Needs owner").sum())
-            governed_pct = (
+            reviewed_pct = (
                 max(0, (distinct_programs - unknown_rows)) / max(distinct_programs, 1) * 100
                 if distinct_programs else 0
             )
@@ -1525,7 +878,7 @@ def render():
                 ("Programs Seen", f"{distinct_programs:,}"),
                 ("Open Sessions", f"{open_sessions:,}"),
                 ("Query/Login Events", f"{total_queries:,} / {total_logins:,}"),
-                ("Need Owner", f"{unknown_rows:,} ({governed_pct:.0f}% governed)"),
+                ("Need Owner", f"{unknown_rows:,} ({reviewed_pct:.0f}% reviewed)"),
                 ("Program Failure Rate", f"{failure_rate:.1f}% ({failed_queries:,} failed)"),
             ))
 
@@ -1616,7 +969,7 @@ def render():
     elif active_view == "Roles & Grants":
         st.subheader("Roles & Grants")
         if st.button("Load Grants", key="grants_load"):
-            with render_load_status("Loading grant evidence", "Grant evidence ready"):
+            with render_load_status("Loading grant telemetry", "Grant telemetry ready"):
                 try:
                     st.session_state["sec_df_grants"] = _load_grants_mart(company)
                     st.session_state["sec_grants_source"] = "Fast grant summary"
@@ -1653,8 +1006,6 @@ def render():
                 raw_label="All grant rows",
             )
             download_csv(df_g, "grants_to_users.csv")
-
-        _render_role_grant_change_control(get_session(), company)
 
         # Dormant users
         st.divider()

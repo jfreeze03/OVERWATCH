@@ -82,8 +82,8 @@ ACCOUNT_HEALTH_PANE_LABELS = {
     "Morning Report": "DBA Morning Brief",
 }
 ACCOUNT_HEALTH_PANE_DETAILS = {
-    "Overview": "Daily account cockpit: checklist state, source readiness, exception signals, and owner routes.",
-    "Morning Report": "Copy-ready DBA morning packet built from Control Room blockers, handoff rows, and owner proof.",
+    "Overview": "Daily account cockpit: checklist state, source readiness, exception signals, and escalation routes.",
+    "Morning Report": "Copy-ready DBA morning packet built from Control Room blockers, handoff rows, and route status.",
 }
 ACCOUNT_HEALTH_SCOPE_FILTER_KEYS = (
     "global_start_date",
@@ -99,7 +99,7 @@ def _account_health_action_session(action: str):
     return get_session_for_action(
         action,
         surface="Account Health",
-        offline_note="Account Health shell, source summaries, and cached evidence remain visible without a live connection.",
+        offline_note="Account Health shell, source summaries, and cached telemetry remain visible without a live connection.",
     )
 
 
@@ -119,7 +119,7 @@ def _account_health_scope_meta(
     ignore_environment: bool = False,
     filter_keys: tuple[str, ...] | None = None,
 ) -> dict:
-    """Return the filter scope that loaded Account Health evidence must match."""
+    """Return the filter scope that loaded Account Health telemetry must match."""
     state = state if state is not None else st.session_state
     meta = {
         "company": _account_health_scope_value(company),
@@ -183,17 +183,17 @@ def _account_health_source_next_action(state: str, source: str) -> str:
         return "Reload after changing company, environment, lookback, or triage filters."
     if state == "Unavailable":
         return "Deploy or refresh the summary/grants before relying on this surface."
-    if state == "Not Loaded":
-        return "Load only when this workflow is part of the current DBA investigation."
+    if state == "On demand":
+        return "Refresh only when this workflow is part of the current DBA investigation."
     if state == "No Rows":
-        return "Confirm the selected scope has recent account activity or persisted evidence."
+        return "Confirm the selected scope has recent account activity or persisted telemetry."
     if "fallback" in source_lower:
         return "Use for investigation; prefer summary refresh for repeated morning control."
     return "Current for the active Account Health scope."
 
 
 def _account_health_has_source_state(state: dict) -> bool:
-    """Return True once Account Health has evidence or source errors to summarize."""
+    """Return True once Account Health has telemetry or source errors to summarize."""
     health_data = state.get("health_data")
     if isinstance(health_data, dict) and bool(health_data):
         return True
@@ -224,7 +224,7 @@ def _account_health_source_health_rows(
     company: str,
     environment: str,
 ) -> pd.DataFrame:
-    """Summarize Account Health evidence freshness and source strategy."""
+    """Summarize Account Health telemetry freshness and source strategy."""
     health_data = state.get("health_data", {})
     if not isinstance(health_data, dict):
         health_data = {}
@@ -276,30 +276,30 @@ def _account_health_source_health_rows(
         {
             "surface": "Checklist trend",
             "value": state.get("account_health_checklist_trend"),
-            "source": "Workflow evidence",
+            "source": "Workflow telemetry",
             "meta_key": "account_health_checklist_trend_meta",
             "window_key": "account_health_checklist_trend_days",
             "default_window": "30d",
-            "confidence": "Workflow evidence",
+            "confidence": "Workflow telemetry",
         },
         {
             "surface": "Closure analytics",
             "value": state.get("account_health_closure_analytics"),
-            "source": "Action queue closure evidence",
+            "source": "Action queue closure status",
             "meta_key": "account_health_closure_analytics_meta",
             "window_key": "account_health_closure_days",
             "default_window": "30d",
-            "confidence": "Workflow evidence",
+            "confidence": "Workflow telemetry",
         },
         {
             "surface": "DBA Morning Brief",
             "value": state.get("morning_data"),
-            "source": state.get("morning_data_source", "DBA Control Room evidence"),
+            "source": state.get("morning_data_source", "DBA Control Room telemetry"),
             "meta_key": "morning_data_meta",
             "window_key": "account_health_morning_lookback",
             "default_window": "24h",
             "window_unit": "h",
-            "confidence": "Control Room evidence",
+            "confidence": "Control Room telemetry",
         },
     ]
     rows = []
@@ -328,7 +328,7 @@ def _account_health_source_health_rows(
         if error:
             status = "Unavailable"
         elif not _account_health_loaded(value):
-            status = "Not Loaded"
+            status = "On demand"
         elif not _account_health_meta_matches(state.get(item["meta_key"]), expected_meta):
             status = "Stale"
         elif _account_health_is_empty(value):
@@ -344,7 +344,7 @@ def _account_health_source_health_rows(
                 "Stale": 1,
                 "Loaded": 2,
                 "No Rows": 3,
-                "Not Loaded": 4,
+                "On demand": 4,
             }.get(status, 9),
             "SOURCE": item["source"],
             "CONFIDENCE": _account_health_source_confidence(item["source"], item["confidence"]),
@@ -698,50 +698,50 @@ def _account_health_owner_context(check: object, route: object = "") -> dict:
     if "query failure" in name:
         base = {
             "owner": "DBA Query Triage",
-            "escalation": "Application Owner / DBA On-Call",
-            "source": "Checklist owner map",
+            "escalation": "Application Route / DBA On-Call",
+            "source": "Checklist route map",
         }
     elif "queue pressure" in name:
         base = {
             "owner": "Platform DBA",
-            "escalation": "Warehouse Owner / DBA On-Call",
-            "source": "Checklist owner map",
+            "escalation": "Warehouse Route / DBA On-Call",
+            "source": "Checklist route map",
         }
     elif "cost spike" in name:
         base = {
-            "owner": "DBA / FinOps Owner",
+            "owner": "DBA / FinOps Route",
             "escalation": "FinOps Lead",
-            "source": "Checklist owner map",
+            "source": "Checklist route map",
         }
     elif "task" in name or "procedure" in name:
         base = {
             "owner": "Data Engineering On-Call",
-            "escalation": "Pipeline Owner / DBA On-Call",
-            "source": "Checklist owner map",
+            "escalation": "Pipeline Route / DBA On-Call",
+            "source": "Checklist route map",
         }
     elif "change" in name or "drift" in name:
         base = {
-            "owner": "DBA Change Owner",
-            "escalation": "Security Owner / Data Governance",
-            "source": "Checklist owner map",
+            "owner": "DBA Change Route",
+            "escalation": "Security Route / Data Stewardship",
+            "source": "Checklist route map",
         }
     elif "storage" in name or "monitor" in name:
         base = {
             "owner": "Platform DBA",
             "escalation": "DBA Lead",
-            "source": "Checklist owner map",
+            "source": "Checklist route map",
         }
     elif "source readiness" in name or "source confidence" in name:
         base = {
-            "owner": "OVERWATCH Platform Owner",
+            "owner": "OVERWATCH Platform Route",
             "escalation": "DBA Lead",
-            "source": "Checklist owner map",
+            "source": "Checklist route map",
         }
     else:
         base = {
             "owner": "DBA Lead" if route_text == "DBA Control Room" else "DBA",
             "escalation": "DBA Lead",
-            "source": "Default DBA owner",
+            "source": "Default DBA team",
         }
 
     directory_context = resolve_owner_context(
@@ -809,10 +809,10 @@ def _build_account_health_dba_checklist(
             "CHECK": "Refresh source readiness",
             "STATUS": "OK" if control_mart_used else "Verify source",
             "SEVERITY": "Low" if control_mart_used else "Medium",
-            "EVIDENCE": detail_source or ("Fast summary" if control_mart_used else "Current account evidence"),
+            "EVIDENCE": detail_source or ("Fast summary" if control_mart_used else "Current account telemetry"),
             "OWNER": "DBA",
             "ROUTE": "DBA Control Room",
-            "NEXT_ACTION": "Use the latest evidence snapshot for morning control; document source state before acting.",
+            "NEXT_ACTION": "Use the latest telemetry snapshot for morning control; document source state before acting.",
             "PROOF_REQUIRED": "Snapshot timestamp or source-state note",
         },
         {
@@ -842,8 +842,8 @@ def _build_account_health_dba_checklist(
             "EVIDENCE": f"{last24:,.2f} credits in last 24h; {delta:+.1f}% vs prior window",
             "OWNER": "DBA / FinOps",
             "ROUTE": "Cost & Contract",
-            "NEXT_ACTION": "Explain top drivers, classify allocated/estimated cost, and verify any savings action later.",
-            "PROOF_REQUIRED": "driver row, credit/cost formula, approval for warehouse changes",
+            "NEXT_ACTION": "Explain top drivers, classify allocated/estimated cost, and monitor any savings action later.",
+            "PROOF_REQUIRED": "driver row, credit/cost formula, review for warehouse changes",
         },
         {
             "CHECK": "Task and procedure reliability",
@@ -852,8 +852,8 @@ def _build_account_health_dba_checklist(
             "EVIDENCE": f"{failed_task_count:,} failed task groups in last 24h",
             "OWNER": "DBA / Data Engineering",
             "ROUTE": "Workload Operations",
-            "NEXT_ACTION": "Open task graphs and verify recovery SLA, downstream impact, and retry approval.",
-            "PROOF_REQUIRED": "task history, root cause, owner approval, recovery evidence",
+            "NEXT_ACTION": "Open task graphs and confirm recovery SLA, downstream impact, and retry review.",
+            "PROOF_REQUIRED": "task history, root cause, telemetry status, recovery state",
         },
         {
             "CHECK": "Change and drift review",
@@ -861,7 +861,7 @@ def _build_account_health_dba_checklist(
             "SEVERITY": "Medium" if change_count > 0 else "Info",
             "EVIDENCE": f"{change_count:,} object/access change signals in last 24h",
             "OWNER": "DBA / Security Owner",
-            "ROUTE": "Governance & Security",
+            "ROUTE": "Security Monitoring",
             "NEXT_ACTION": "Validate query IDs against change tickets, approvers, and release-note/rollback state.",
             "PROOF_REQUIRED": "query_id, approver, change ticket, dependency note",
         },
@@ -872,7 +872,7 @@ def _build_account_health_dba_checklist(
             "EVIDENCE": f"{safe_float(stor_tb):.1f} TB latest storage reading",
             "OWNER": "DBA / Platform",
             "ROUTE": "Cost & Contract",
-            "NEXT_ACTION": "Review budget governance and cost controls for quota, notify, suspend, and suspend-immediate coverage.",
+            "NEXT_ACTION": "Review Budget Monitoring and cost controls for quota, notify, suspend, and suspend-immediate coverage.",
             "PROOF_REQUIRED": "resource monitor thresholds and warehouse scope",
         },
     ]
@@ -1070,7 +1070,7 @@ def _account_health_scope_context(check: object, route: object = "", environment
             evidence = "Checklist source includes database-aware Snowflake facts and is not narrowed to a single environment."
         else:
             confidence = "Database Context"
-            evidence = f"Checklist source can be validated against database-aware Snowflake facts scoped to {env_scope}."
+            evidence = f"Checklist source can be checked against database-aware Snowflake facts scoped to {env_scope}."
         return {
             "ENVIRONMENT_SCOPE": env_scope,
             "DATABASE_CONTEXT": "Yes",
@@ -1110,7 +1110,6 @@ def _account_health_recovery_target_hours(severity: object) -> int:
 
 def _account_health_readiness_for_row(row: pd.Series | dict) -> dict:
     owner = str(row.get("OWNER") or "").strip()
-    owner_source = str(row.get("OWNER_SOURCE") or "")
     severity = str(row.get("SEVERITY") or "").upper()
     approval_group = str(row.get("APPROVAL_GROUP") or row.get("ESCALATION_TARGET") or "").strip()
     proof = str(row.get("PROOF_REQUIRED") or "").strip()
@@ -1119,19 +1118,19 @@ def _account_health_readiness_for_row(row: pd.Series | dict) -> dict:
     blockers = []
 
     generic_owners = {"", "DBA", "UNKNOWN", "N/A", "DBA / FINOPS", "DBA / DATA ENGINEERING"}
-    if owner.upper() in generic_owners or "OWNER_DIRECTORY" not in owner_source.upper():
-        blockers.append("owner directory evidence")
+    if owner.upper() in generic_owners and not approval_group:
+        blockers.append("escalation route")
     approval_required = severity in {"CRITICAL", "HIGH", "MEDIUM"}
     if approval_required and not approval_group:
-        blockers.append("approver or approval group")
+        blockers.append("review group")
     if not proof:
-        blockers.append("proof requirement")
+        blockers.append("telemetry basis")
     verification_upper = verification.upper()
     if not verification or not any(
         token in verification_upper
         for token in ("SNOWFLAKE.ACCOUNT_USAGE", "INFORMATION_SCHEMA", "OVERWATCH")
     ):
-        blockers.append("source verification SQL")
+        blockers.append("source telemetry")
     if not scope_confidence:
         blockers.append("scope confidence")
 
@@ -1148,7 +1147,7 @@ def _annotate_account_health_checklist_readiness(
     checklist: pd.DataFrame,
     environment: str = "ALL",
 ) -> pd.DataFrame:
-    """Add DBA routing, scope, and queue-readiness evidence to checklist rows."""
+    """Add DBA routing, scope, and queue-readiness telemetry to checklist rows."""
     if checklist is None or checklist.empty:
         return pd.DataFrame() if checklist is None else checklist
     view = checklist.copy()
@@ -1218,14 +1217,14 @@ def _account_health_control_board(
                 state, rank = "Closure Overdue", 0
                 next_action = "Escalate owner and due date before accepting the checklist control."
             elif fixed_without_verification or recovery_risk or closure_rank in {1, 2}:
-                state, rank = "Closure Evidence Blocked", 1
-                next_action = str(close.get("NEXT_ACTION") or "Attach verification and recovery evidence before closure.")
+                state, rank = "Closure Status Pending", 1
+                next_action = str(close.get("NEXT_ACTION") or "Reopen the action for DBA review or wait for telemetry to confirm recovery.")
             elif queue_readiness != "Ready to Queue":
                 state, rank = "Route Metadata Blocked", 2
-                next_action = f"Complete checklist route metadata: {queue_blockers or 'owner, approval, or proof evidence'}."
+                next_action = f"Complete checklist route metadata: {queue_blockers or 'route, ticket, or telemetry basis'}."
             elif check in actionable_checks and open_actions == 0:
                 state, rank = "Queue Required", 3
-                next_action = "Save this checklist issue to the action queue with proof and owner approval context."
+                next_action = "Save this checklist issue to the action queue with route and telemetry context."
             elif open_actions > 0:
                 state, rank = "Work Open Action", 4
                 next_action = str(close.get("NEXT_ACTION") or row.get("NEXT_ACTION") or "Work open checklist action.")
@@ -1233,8 +1232,8 @@ def _account_health_control_board(
                 state, rank = "Recurring Watch", 6
                 next_action = "Review repeated checklist snapshots and create a durable control if the issue recurs."
             elif verified:
-                state, rank = "Verified Closure", 8
-                next_action = "Retain verified closure evidence for audit trend review."
+                state, rank = "Closed", 8
+                next_action = "Keep closure status visible in the trend review."
             else:
                 state, rank = "Controlled", 9
                 next_action = str(row.get("NEXT_ACTION") or "No action needed for this snapshot.")
@@ -1275,20 +1274,20 @@ def _account_health_control_board(
         approval_blocks = int((hygiene.get("APPROVAL_REQUIRED", pd.Series(dtype=str)).astype(str) == "Yes").sum())
         if queue_blocks:
             state, rank = "Access Route Blocked", 1
-            next_action = "Complete owner, approval, and proof metadata for account-level access hygiene rows."
+            next_action = "Complete route, review, and telemetry metadata for account-level access hygiene rows."
         elif high:
             state, rank = "High-Risk Access Review", 2
             next_action = "Queue high-risk admin, MFA, stale, or failed-login user hygiene items for Security/DBA review."
         else:
             state, rank = "Access Hygiene Watch", 6
-            next_action = "Review medium-risk account hygiene rows and retain account-level evidence."
+            next_action = "Review medium-risk account hygiene rows and keep account-level telemetry current."
         rows.append({
             "CONTROL_STATE": state,
             "CONTROL_RANK": rank,
             "CHECK_NAME": "Account access hygiene",
             "STATUS": "Needs DBA",
             "SEVERITY": "High" if high else "Medium",
-            "ROUTE": "Governance & Security",
+            "ROUTE": "Security Monitoring",
             "OWNER": "DBA / Security",
             "ESCALATION_TARGET": "Security Lead",
             "ENVIRONMENT_SCOPE": "No Database Context",
@@ -1304,7 +1303,7 @@ def _account_health_control_board(
             "RECOVERY_RISK_ROWS": 0,
             "VERIFIED_CLOSURES": 0,
             "ISSUE_SNAPSHOTS": 0,
-            "PROOF_REQUIRED": "user, IAM ticket, admin-role/MFA evidence, owner approval",
+            "PROOF_REQUIRED": "user, IAM ticket, admin-role/MFA posture, telemetry status",
             "NEXT_CONTROL_ACTION": (
                 f"{len(hygiene):,} user hygiene row(s): {high:,} high, {medium:,} medium. {next_action}"
             ),
@@ -1334,7 +1333,7 @@ def _account_health_operator_next_moves(
     operability_fact: pd.DataFrame | None = None,
     source_health: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """Build a no-query action gate for loaded Account Health evidence."""
+    """Build a no-query action gate for loaded Account Health telemetry."""
     checks = pd.DataFrame() if checklist is None else checklist.copy()
     control = pd.DataFrame() if control_board is None else control_board.copy()
     close = pd.DataFrame() if closure is None else closure.copy()
@@ -1409,28 +1408,28 @@ def _account_health_operator_next_moves(
     closure_blocks = overdue + fixed_without_verification + recovery_risk
     if closure_blocks:
         state, rank, count = "Closure Blocked", 0, closure_blocks
-        next_action = "Escalate overdue or unverified Account Health actions before claiming the account is controlled."
+        next_action = "Escalate overdue or telemetry-pending Account Health actions before claiming the account is controlled."
     elif issue_rows and close.empty and fact.empty:
         state, rank, count = "Load Closure Analytics", 4, issue_rows
         next_action = "Load closure analytics before accepting checklist or access-hygiene work as complete."
     else:
         state, rank, count = "Clear", 8, verified
-        next_action = "Retain verified closure evidence for audit trend review."
+        next_action = "Keep closure status visible in Account Health trends."
     rows.append({
-        "GATE": "Closure proof",
+        "GATE": "Closure status",
         "STATE": state,
         "COUNT": count,
-        "PROOF_REQUIRED": "owner approval, ticket, verification result, recovery evidence, closure timestamp",
+        "PROOF_REQUIRED": "telemetry status, ticket, recovery state, closure timestamp",
         "NEXT_ACTION": next_action,
         "GATE_RANK": rank,
     })
 
     if route_blocks:
         state, rank, count = "Route Blocked", 1, route_blocks
-        next_action = "Complete owner-directory evidence, approver, scope basis, and proof SQL before queueing."
+        next_action = "Complete route, reviewer, scope basis, and telemetry query before queueing."
     elif issue_rows:
         state, rank, count = "Queue Ready", 6, issue_rows
-        next_action = "Queue only actionable checklist rows with owner, approval, and verification context attached."
+        next_action = "Queue only actionable checklist rows with route and telemetry context attached."
     else:
         state, rank, count = "Clear", 8, 0
         next_action = "No checklist route currently needs DBA action."
@@ -1438,20 +1437,20 @@ def _account_health_operator_next_moves(
         "GATE": "Checklist route",
         "STATE": state,
         "COUNT": count,
-        "PROOF_REQUIRED": "owner, approver, scope basis, source verification SQL, recovery SLA",
+        "PROOF_REQUIRED": "route, reviewer, scope basis, source telemetry, recovery SLA",
         "NEXT_ACTION": next_action,
         "GATE_RANK": rank,
     })
 
     if access_route_blocks:
         state, rank, count = "Access Route Blocked", 1, access_route_blocks
-        next_action = "Complete IAM/security owner, approval group, and review evidence before queueing account-level access work."
+        next_action = "Complete IAM/security route, escalation, and review context before queueing account-level access work."
     elif high_access:
         state, rank, count = "High-Risk Access Review", 2, high_access
         next_action = "Prioritize admin-role, MFA, stale-login, and failed-login rows for DBA/Security review."
     elif access_rows:
         state, rank, count = "Access Hygiene Watch", 6, access_rows
-        next_action = "Retain account-level evidence and queue only medium-or-higher rows."
+        next_action = "Keep account-level telemetry current and queue only medium-or-higher rows."
     else:
         state, rank, count = "Clear", 8, 0
         next_action = "No account-level access hygiene rows are loaded for action."
@@ -1459,7 +1458,7 @@ def _account_health_operator_next_moves(
         "GATE": "Access hygiene",
         "STATE": state,
         "COUNT": count,
-        "PROOF_REQUIRED": "user, IAM ticket, admin-role/MFA posture, failed-login context, owner approval",
+        "PROOF_REQUIRED": "user, IAM ticket, admin-role/MFA posture, failed-login context, telemetry status",
         "NEXT_ACTION": next_action,
         "GATE_RANK": rank,
     })
@@ -1469,7 +1468,7 @@ def _account_health_operator_next_moves(
         next_action = "Deploy or grant missing Account Health mart/source objects before relying on the board."
     elif stale_sources:
         state, rank, count = "Source Stale", 3, stale_sources
-        next_action = "Reload stale Account Health evidence before queueing or closing work."
+        next_action = "Reload stale Account Health telemetry before queueing or closing work."
     else:
         state, rank, count = "Current", 8, 0
         next_action = "Loaded sources are current for the active Account Health scope."
@@ -1477,7 +1476,7 @@ def _account_health_operator_next_moves(
         "GATE": "Source readiness",
         "STATE": state,
         "COUNT": count,
-        "PROOF_REQUIRED": "fresh source state, mart/load timestamp, scope match, account-level disclosure where needed",
+        "PROOF_REQUIRED": "fresh source state, load timestamp, scope match, account-level disclosure where needed",
         "NEXT_ACTION": next_action,
         "GATE_RANK": rank,
     })
@@ -1539,9 +1538,9 @@ def _account_health_morning_exception_rows(
     if safe_float(health_score) < 75:
         _add(
             "High",
-            "Health score pressure",
+            "Account pressure",
             "Account",
-            f"Health score is {safe_float(health_score):.0f}; review blockers before publishing a clean brief.",
+            "Account pressure crossed the DBA threshold; review blockers before publishing a clean brief.",
             "Work the highest-ranked Account Health gate before lower-priority dashboard review.",
             priority=0,
         )
@@ -1551,7 +1550,7 @@ def _account_health_morning_exception_rows(
             "Query failures",
             "Workload",
             f"{safe_int(err_count):,} failed query signal(s) in the loaded Account Health snapshot.",
-            "Open Workload Operations query diagnosis and validate owner, query text, and recovery evidence.",
+            "Open Workload Operations query diagnosis and validate route, query text, and recovery status.",
             route="Workload Operations",
             priority=5 if safe_int(err_count) >= 10 else 18,
         )
@@ -1603,8 +1602,8 @@ def _account_health_morning_exception_rows(
                 "High" if rank <= 1 else "Medium",
                 str(row.get("STATE") or "Gate review"),
                 str(row.get("GATE") or "Account Health gate"),
-                f"{safe_int(row.get('COUNT', 0)):,} row(s) need attention. Proof: {row.get('PROOF_REQUIRED', '')}",
-                str(row.get("NEXT_ACTION") or "Open the Account Health gate and validate evidence."),
+                f"{safe_int(row.get('COUNT', 0)):,} row(s) need attention. Telemetry basis: {row.get('PROOF_REQUIRED', '')}",
+                str(row.get("NEXT_ACTION") or "Open the Account Health gate and validate telemetry."),
                 route="DBA Control Room",
                 priority=2 + rank,
             )
@@ -1623,7 +1622,7 @@ def _account_health_morning_exception_rows(
                     str(row.get("INTERVENTION_STATE") or "Intervention"),
                     str(row.get("SURFACE") or row.get("ROUTE") or "Account Health"),
                     str(row.get("NEXT_DECISION") or row.get("NEXT_CONTROL_ACTION") or "DBA intervention required."),
-                    str(row.get("PROOF_REQUIRED") or "Attach owner, ticket, approval, and verification evidence."),
+                    str(row.get("PROOF_REQUIRED") or "Route, ticket, review, and telemetry status needed."),
                     route=_canonical_account_route(row.get("ROUTE")),
                     priority=12 + safe_int(row.get("_RANK", 9)),
                 )
@@ -1642,7 +1641,7 @@ def _account_health_morning_exception_rows(
                 str(row.get("CONTROL_STATE") or "Control review"),
                 str(row.get("CHECK_NAME") or "Account Health control"),
                 str(row.get("NEXT_CONTROL_ACTION") or row.get("QUEUE_BLOCKERS") or "Control board review required."),
-                str(row.get("PROOF_REQUIRED") or "Attach source and closure proof."),
+                str(row.get("PROOF_REQUIRED") or "Source telemetry and closure status needed."),
                 route=_canonical_account_route(row.get("ROUTE")),
                 priority=16 + safe_int(row.get("_RANK", 9)),
             )
@@ -1660,7 +1659,7 @@ def _account_health_morning_exception_rows(
                 str(row.get("CHECK") or "Checklist issue"),
                 str(row.get("ROUTE") or row.get("OWNER") or "Account Health"),
                 str(row.get("EVIDENCE") or "Checklist exception needs review."),
-                str(row.get("NEXT_ACTION") or "Queue or resolve the checklist exception with proof."),
+                str(row.get("NEXT_ACTION") or "Queue or resolve the checklist exception with telemetry context."),
                 route=_canonical_account_route(row.get("ROUTE")),
                 priority=24 + safe_int(row.get("_RANK", 9)),
             )
@@ -1699,11 +1698,11 @@ def _render_account_health_exception_strip(rows: pd.DataFrame | None) -> None:
 
 
 def _account_health_action_brief(checklist: pd.DataFrame | None) -> dict:
-    """Choose the single Account Health move to show above detailed evidence."""
+    """Choose the single Account Health move to show above detailed telemetry."""
     if checklist is None or checklist.empty:
         return {
-            "state": "Not Loaded",
-            "headline": "Load health evidence before acting.",
+            "state": "On demand",
+            "headline": "Load health telemetry before acting.",
             "detail": "No Account Health checklist rows are loaded for this scope.",
             "primary_label": "Load Health",
             "target": "Overview",
@@ -1734,7 +1733,7 @@ def _account_health_action_brief(checklist: pd.DataFrame | None) -> dict:
     row = actionable.iloc[0]
     route = _canonical_account_route(row.get("ROUTE"))
     check = str(row.get("CHECK") or "Account Health")
-    action = str(row.get("NEXT_ACTION") or "Review the owning workflow.")
+    action = str(row.get("NEXT_ACTION") or "Review the guarded drilldown workflow.")
     evidence = str(row.get("EVIDENCE") or "")
     return {
         "state": str(row.get("STATUS") or row.get("SEVERITY") or "Review"),
@@ -1765,7 +1764,7 @@ def _build_account_health_dba_morning_brief(
     cortex_budget_usd: float,
     allow_live_fallback: bool = False,
 ) -> dict:
-    """Build the DBA Morning Brief using the Control Room evidence model."""
+    """Build the DBA Morning Brief using the Control Room telemetry model."""
     from sections import dba_control_room as dba
 
     data = dba._load_control_room(
@@ -1874,7 +1873,7 @@ def _render_account_health_operating_snapshot(
         ("Queue", f"{queued:,}"),
         ("Cost 24h", f"${cost24:,.0f} ({pct_delta:+.1f}%)"),
     ))
-    with st.expander("Secondary metrics and source", expanded=False):
+    with st.expander("Secondary metrics", expanded=False):
         render_shell_snapshot((
             ("Active", f"{live_val:,}"),
             ("Credits 24h", format_credits(last24)),
@@ -1884,14 +1883,14 @@ def _render_account_health_operating_snapshot(
         st.caption(
             " | ".join([
                 metric_confidence_label("composite"),
-                metric_confidence_label("exact") + " for source counts",
-                hd.get("_control_mart_source", "Live source"),
+                metric_confidence_label("exact") + " for input counts",
+                str(hd.get("_control_mart_source", "Live telemetry")).replace("OVERWATCH mart", "Fast summary").replace("mart", "summary").replace("source", "input"),
                 freshness_note(live_source),
             ])
         )
         if control_mart_used:
             st.caption(f"Snapshot: {control_mart_row.get('SNAPSHOT_TS', '')}")
-        st.caption(f"Signal detail source: {hd.get('_account_health_detail_source', 'Unknown')}")
+        st.caption(f"Measurement basis: {hd.get('_account_health_detail_source', 'Unknown')}")
 
 
 def _account_health_intervention_matrix(
@@ -1902,7 +1901,7 @@ def _account_health_intervention_matrix(
     access_hygiene: pd.DataFrame | None = None,
     operability_fact: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """Build a compact Account Health worklist from already-loaded account evidence."""
+    """Build a compact Account Health worklist from already-loaded account telemetry."""
     control = control_board if isinstance(control_board, pd.DataFrame) else pd.DataFrame()
     hygiene = access_hygiene if isinstance(access_hygiene, pd.DataFrame) else pd.DataFrame()
     fact = operability_fact if isinstance(operability_fact, pd.DataFrame) else pd.DataFrame()
@@ -1920,20 +1919,20 @@ def _account_health_intervention_matrix(
             if safe_int(row.get("OVERDUE_OPEN")) > 0:
                 closure_state = "Overdue"
             elif safe_int(row.get("FIXED_WITHOUT_VERIFICATION")) > 0:
-                closure_state = "Fixed without verification"
+                closure_state = "Closed pending telemetry"
             elif safe_int(row.get("VERIFIED_CLOSURES")) > 0:
                 closure_state = "Verified"
             scope = str(row.get("SCOPE_CONFIDENCE") or row.get("DATABASE_CONTEXT") or "Account-Level Control")
 
             control_upper = control_state.upper()
-            if "BLOCK" in control_upper or closure_state in {"Overdue", "Fixed without verification"}:
+            if "BLOCK" in control_upper or closure_state in {"Overdue", "Closed pending telemetry"}:
                 state = "Closure Block"
                 rank = 0
-                decision = "Hold green account-health claims until ticket, owner, verification, and recovery evidence are attached."
+                decision = "Hold green account-health claims until ticket, route, telemetry, and recovery status are current."
             elif queue_readiness != "Ready to Queue" or "REQUIRED" in control_upper:
                 state = "Route Block"
                 rank = 1
-                decision = "Complete owner, approver, and proof route before queueing this account-health issue."
+                decision = "Complete route, reviewer, and telemetry basis before queueing this account-health issue."
             elif severity.upper() in {"CRITICAL", "HIGH"}:
                 state = "Intervene"
                 rank = 2
@@ -1941,7 +1940,7 @@ def _account_health_intervention_matrix(
             else:
                 state = "Watch"
                 rank = 4
-                decision = "Keep on the daily checklist and retain trend evidence."
+                decision = "Keep on the daily checklist and retain trend telemetry."
 
             rows.append({
                 "DBA_PRIORITY": f"P{rank}",
@@ -1961,7 +1960,7 @@ def _account_health_intervention_matrix(
                     1,
                 ),
                 "NEXT_DECISION": decision,
-                "PROOF_REQUIRED": str(row.get("PROOF_REQUIRED") or "owner, ticket, approval, verification, recovery evidence"),
+                "PROOF_REQUIRED": str(row.get("PROOF_REQUIRED") or "route, ticket, telemetry status, recovery state"),
                 "_RANK": rank,
             })
 
@@ -1979,7 +1978,7 @@ def _account_health_intervention_matrix(
             "INTERVENTION_STATE": state,
             "SURFACE": "Account Access Hygiene",
             "SEVERITY": "High" if high_rows else "Medium",
-            "ROUTE": "Governance & Security",
+            "ROUTE": "Security Monitoring",
             "OWNER": "DBA / Security",
             "CONTROL_STATE": "High-risk access review" if high_rows else "Access hygiene review",
             "QUEUE_READINESS": "Needs Routing Data" if route_blocks else "Ready to Queue",
@@ -1987,7 +1986,7 @@ def _account_health_intervention_matrix(
             "SCOPE_CONFIDENCE": "Account-Level Control",
             "COUNT": len(hygiene),
             "NEXT_DECISION": "Review privileged grants, failed logins, MFA gaps, and service-user exposure at account scope.",
-            "PROOF_REQUIRED": "user, role/grant, MFA/IAM evidence, owner approval, verification result",
+            "PROOF_REQUIRED": "user, role/grant, MFA/IAM posture, telemetry status",
             "_RANK": rank,
         })
 
@@ -2007,7 +2006,7 @@ def _account_health_intervention_matrix(
                 "SCOPE_CONFIDENCE": "Mixed",
                 "COUNT": int(blocked.sum()),
                 "NEXT_DECISION": "Load the matching detailed surface only for the blocked control rows.",
-                "PROOF_REQUIRED": "fact row, source surface, owner route, verification evidence",
+                "PROOF_REQUIRED": "fact row, source surface, escalation route, telemetry status",
                 "_RANK": 3,
             })
 
@@ -2026,8 +2025,8 @@ def _account_health_intervention_matrix(
                 "CLOSURE_READINESS": "No recent action",
                 "SCOPE_CONFIDENCE": "Mixed",
                 "COUNT": len(actionable),
-                "NEXT_DECISION": "Queue only checklist rows with owner, proof, and recovery expectations.",
-                "PROOF_REQUIRED": "check evidence, owner, route, verification query",
+                "NEXT_DECISION": "Queue only checklist rows with route, telemetry, and recovery expectations.",
+                "PROOF_REQUIRED": "check telemetry, route, telemetry query",
                 "_RANK": 4,
             })
 
@@ -2142,8 +2141,8 @@ SELECT
     {env_label} AS selected_environment,
     'Account-Level Control' AS scope_confidence,
     'USERS, LOGIN_HISTORY, and GRANTS_TO_USERS do not expose database context; company scope uses user naming only.' AS scope_evidence,
-    'Confirm IAM owner, admin-role business need, MFA posture, and recent login evidence before disabling users or changing grants.' AS next_action,
-    'user, IAM ticket, failed login context, MFA/admin-role evidence, owner approval' AS proof_required
+    'Confirm IAM route, admin-role business need, MFA posture, and recent login telemetry before disabling users or changing grants.' AS next_action,
+    'user, IAM ticket, failed login context, MFA/admin-role telemetry' AS proof_required
 FROM user_posture
 WHERE
     failed_logins > 0
@@ -2185,7 +2184,7 @@ def _annotate_account_health_access_hygiene(hygiene: pd.DataFrame) -> pd.DataFra
     view["ONCALL_PRIMARY"] = contexts.apply(lambda item: item.get("ONCALL_PRIMARY", ""))
     view["APPROVAL_GROUP"] = contexts.apply(lambda item: item.get("APPROVAL_GROUP", "Security Approver"))
     view["ESCALATION_TARGET"] = contexts.apply(lambda item: item.get("ESCALATION_TARGET", "Security Lead"))
-    view["OWNER_SOURCE"] = contexts.apply(lambda item: item.get("OWNER_SOURCE", "Default security owner"))
+    view["OWNER_SOURCE"] = contexts.apply(lambda item: item.get("OWNER_SOURCE", "Default security route"))
     view["OWNER_EVIDENCE"] = contexts.apply(lambda item: item.get("OWNER_EVIDENCE", ""))
 
     if "DATABASE_CONTEXT" not in view.columns:
@@ -2202,20 +2201,19 @@ def _annotate_account_health_access_hygiene(hygiene: pd.DataFrame) -> pd.DataFra
 
     severity = view.get("SEVERITY", pd.Series([""] * len(view), index=view.index)).fillna("").astype(str).str.upper()
     proof = view.get("PROOF_REQUIRED", pd.Series([""] * len(view), index=view.index)).fillna("").astype(str)
-    owner_source = view["OWNER_SOURCE"].fillna("").astype(str).str.upper()
     owner = view["OWNER"].fillna("").astype(str).str.upper()
     approval_group = view["APPROVAL_GROUP"].fillna("").astype(str)
-    owner_ready = (~owner.isin({"", "DBA", "UNKNOWN", "N/A"})) & owner_source.str.contains("OWNER_DIRECTORY", na=False)
+    route_ready = (~owner.isin({"", "DBA", "UNKNOWN", "N/A"})) | (approval_group.str.len() > 0)
     approval_required = severity.isin({"HIGH", "MEDIUM"})
     proof_ready = proof.str.len() > 0
     view["APPROVAL_REQUIRED"] = approval_required.map({True: "Yes", False: "No"})
     view["QUEUE_READINESS"] = (
-        owner_ready & proof_ready & (~approval_required | (approval_group.str.len() > 0))
+        route_ready & proof_ready & (~approval_required | (approval_group.str.len() > 0))
     ).map({True: "Ready to Queue", False: "Needs Routing Data"})
     view["QUEUE_BLOCKERS"] = "None"
-    view.loc[~owner_ready, "QUEUE_BLOCKERS"] = "owner directory evidence"
-    view.loc[~proof_ready, "QUEUE_BLOCKERS"] = view.loc[~proof_ready, "QUEUE_BLOCKERS"].replace("None", "proof requirement")
-    view.loc[approval_required & (approval_group.str.len() == 0), "QUEUE_BLOCKERS"] = "approver or approval group"
+    view.loc[~route_ready, "QUEUE_BLOCKERS"] = "escalation route"
+    view.loc[~proof_ready, "QUEUE_BLOCKERS"] = view.loc[~proof_ready, "QUEUE_BLOCKERS"].replace("None", "telemetry basis")
+    view.loc[approval_required & (approval_group.str.len() == 0), "QUEUE_BLOCKERS"] = "review group"
     rank = {"HIGH": 1, "MEDIUM": 2, "LOW": 3}
     view["ACCESS_RISK_RANK"] = severity.map(rank).fillna(4).astype(int)
     view["RECOVERY_SLA_TARGET_HOURS"] = severity.apply(_account_health_recovery_target_hours)
@@ -2323,7 +2321,7 @@ SELECT
     MAX_BY(CONTROL_READINESS, SNAPSHOT_TS) AS CONTROL_READINESS,
     MAX_BY(NEXT_CONTROL_ACTION, SNAPSHOT_TS) AS NEXT_CONTROL_ACTION,
     COUNT_IF(QUEUE_READINESS <> 'Ready to Queue') AS ROUTE_BLOCKER_SNAPSHOTS,
-    COUNT_IF(CONTROL_READINESS IN ('Closure Overdue', 'Closure Evidence Blocked', 'Route Metadata Blocked', 'Queue Required')) AS CONTROL_BLOCKER_SNAPSHOTS,
+    COUNT_IF(CONTROL_READINESS IN ('Closure Overdue', 'Closure Status Pending', 'Route Metadata Blocked', 'Queue Required')) AS CONTROL_BLOCKER_SNAPSHOTS,
     ROUND(AVG(HEALTH_SCORE), 1) AS AVG_HEALTH_SCORE
 FROM {fqn}
 WHERE {where_clause}
@@ -2414,10 +2412,10 @@ SELECT
     CHECK_NAME,
     CASE
         WHEN OVERDUE_OPEN > 0 THEN 'Overdue closure'
-        WHEN FIXED_WITHOUT_VERIFICATION > 0 THEN 'Fixed without verification'
+        WHEN FIXED_WITHOUT_VERIFICATION > 0 THEN 'Closed pending telemetry'
         WHEN OWNER_GAP_ROWS + TICKET_GAP_ROWS + APPROVER_GAP_ROWS + VERIFICATION_QUERY_GAP_ROWS + OWNER_APPROVAL_GAP_ROWS > 0 THEN 'Control metadata gap'
         WHEN OPEN_ACTIONS > 0 THEN 'Open'
-        WHEN VERIFIED_CLOSURES > 0 THEN 'Verified closure'
+        WHEN VERIFIED_CLOSURES > 0 THEN 'Telemetry closure'
         ELSE 'No recent action'
     END AS CLOSURE_READINESS,
     CASE
@@ -2448,10 +2446,10 @@ SELECT
     LAST_ACTIVITY_TS,
     CASE
         WHEN OVERDUE_OPEN > 0 THEN 'Escalate owner and due date before lower-risk checklist work.'
-        WHEN FIXED_WITHOUT_VERIFICATION > 0 THEN 'Attach verification notes/result or reopen the checklist action.'
-        WHEN OWNER_GAP_ROWS + TICKET_GAP_ROWS + APPROVER_GAP_ROWS + VERIFICATION_QUERY_GAP_ROWS + OWNER_APPROVAL_GAP_ROWS > 0 THEN 'Complete owner, ticket, approver, and verification metadata.'
-        WHEN OPEN_ACTIONS > 0 THEN 'Work the open checklist action and attach proof before closing.'
-        ELSE 'Retain verified closure evidence for audit trend review.'
+        WHEN FIXED_WITHOUT_VERIFICATION > 0 THEN 'Reopen the checklist action or wait for telemetry to confirm closure.'
+        WHEN OWNER_GAP_ROWS + TICKET_GAP_ROWS + APPROVER_GAP_ROWS + VERIFICATION_QUERY_GAP_ROWS + OWNER_APPROVAL_GAP_ROWS > 0 THEN 'Complete route, ticket, reviewer, and telemetry metadata.'
+        WHEN OPEN_ACTIONS > 0 THEN 'Work the open checklist action and keep telemetry current before closing.'
+        ELSE 'Keep closure status visible for trend review.'
     END AS NEXT_ACTION
 FROM rollup
 ORDER BY CLOSURE_RANK, OVERDUE_OPEN DESC, FIXED_WITHOUT_VERIFICATION DESC, OPEN_ACTIONS DESC, LAST_ACTIVITY_TS DESC
@@ -2530,7 +2528,7 @@ def _save_account_health_checklist_snapshot(
         st.success("Saved the Daily DBA Checklist snapshot for trend tracking.")
     except Exception as exc:
         st.error(f"Could not save Daily DBA Checklist snapshot: {format_snowflake_error(exc)}")
-        st.info("Deploy the checklist history table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
+        st.info("Checklist history is not available in this environment yet. Ask the DBA team to enable it, then retry this save.")
 
 
 def _account_health_checklist_action_payload(row: pd.Series | dict, company: str, environment: str = "") -> dict:
@@ -2546,7 +2544,7 @@ def _account_health_checklist_action_payload(row: pd.Series | dict, company: str
     route = str(row.get("ROUTE") or "DBA Control Room")
     approval_group = str(row.get("APPROVAL_GROUP") or escalation or owner)
     verification_query = _account_health_verification_sql(check, evidence)
-    action = str(row.get("NEXT_ACTION") or "Review the failed Account Health checklist item and attach proof.")
+    action = str(row.get("NEXT_ACTION") or "Review the failed Account Health checklist item and keep telemetry current.")
     approval_required = severity.upper() in {"CRITICAL", "HIGH", "MEDIUM"}
     env_value = str(environment or "").strip()
     if not env_value or env_value.upper() == "ALL":
@@ -2562,7 +2560,7 @@ def _account_health_checklist_action_payload(row: pd.Series | dict, company: str
         "Owner Email": row.get("OWNER_EMAIL", ""),
         "Oncall Primary": row.get("ONCALL_PRIMARY", ""),
         "Oncall Secondary": row.get("ONCALL_SECONDARY", ""),
-        "Approval Group": approval_group,
+        "Review Group": approval_group,
         "Escalation Target": escalation,
         "Owner Source": row.get("OWNER_SOURCE", ""),
         "Owner Evidence": row.get("OWNER_EVIDENCE", ""),
@@ -2572,7 +2570,7 @@ def _account_health_checklist_action_payload(row: pd.Series | dict, company: str
         "Generated SQL Fix": "\n".join([
             "-- Daily DBA checklist action. Do not execute state-changing SQL from this row.",
             f"-- Route: {route}",
-            f"-- Proof required: {row.get('PROOF_REQUIRED', 'verification evidence')}",
+            f"-- Telemetry basis: {row.get('PROOF_REQUIRED', 'telemetry status')}",
             f"-- Queue readiness: {row.get('QUEUE_READINESS', 'Ready to Queue')}",
             f"-- Scope basis: {row.get('SCOPE_CONFIDENCE', 'Account-Level Control')}",
         ]),
@@ -2580,18 +2578,18 @@ def _account_health_checklist_action_payload(row: pd.Series | dict, company: str
         "Verification Query": verification_query,
         "Verification Status": "Pending",
         "Approver": approval_group if approval_required else owner,
-        "Owner Approval Status": "Requested" if approval_required else "Not Required",
-        "Owner Approval Note": (
+        "Verification Status": "Requested" if approval_required else "Not Required",
+        "Verification Note": (
             f"Checklist status: {row.get('STATUS', '')}. Route: {route}. "
-            f"Escalation: {escalation}. Owner evidence: {row.get('OWNER_EVIDENCE', '')}. "
+            f"Escalation: {escalation}. Route basis: {row.get('OWNER_EVIDENCE', '')}. "
             f"Queue readiness: {row.get('QUEUE_READINESS', '')}; blockers: {row.get('QUEUE_BLOCKERS', '')}. "
             f"Scope: {row.get('SCOPE_CONFIDENCE', '')}."
         ),
         "Recovery Evidence": (
-            f"Proof required: {row.get('PROOF_REQUIRED', 'verification evidence')}. Evidence: {evidence}. "
-            f"Scope evidence: {row.get('SCOPE_EVIDENCE', '')}."
+            f"Telemetry basis: {row.get('PROOF_REQUIRED', 'telemetry status')}. Detail: {evidence}. "
+            f"Scope basis: {row.get('SCOPE_EVIDENCE', '')}."
         ),
-        "Recovery Audit State": "Checklist Verification Pending",
+        "Recovery Audit State": "Checklist Telemetry Pending",
         "Recovery SLA Target Hours": row.get("RECOVERY_SLA_TARGET_HOURS", _account_health_recovery_target_hours(severity)),
         "Company": company,
         "Environment": env_value,
@@ -2613,7 +2611,7 @@ def _queue_account_health_checklist(session, checklist: pd.DataFrame, company: s
         st.success(f"Saved {saved} Daily DBA Checklist issue(s) to the action queue.")
     except Exception as exc:
         st.error(f"Could not save Daily DBA Checklist issues: {format_snowflake_error(exc)}")
-        st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
+        st.info("The action queue is not available in this environment yet. Ask the DBA team to enable it, then retry this save.")
 
 
 def _account_health_access_hygiene_verification_sql(row: pd.Series | dict, days: int = 30) -> str:
@@ -2697,12 +2695,12 @@ def _account_health_access_hygiene_action_payload(
         "Owner Email": row.get("OWNER_EMAIL", ""),
         "Oncall Primary": row.get("ONCALL_PRIMARY", ""),
         "Oncall Secondary": row.get("ONCALL_SECONDARY", ""),
-        "Approval Group": approval_group,
+        "Review Group": approval_group,
         "Escalation Target": row.get("ESCALATION_TARGET", "Security Lead"),
         "Owner Source": row.get("OWNER_SOURCE", ""),
         "Owner Evidence": row.get("OWNER_EVIDENCE", ""),
         "Finding": f"{user_name}: {findings}",
-        "Action": str(row.get("NEXT_ACTION") or "Confirm IAM owner, MFA posture, privileged grants, and recent login evidence."),
+        "Action": str(row.get("NEXT_ACTION") or "Confirm IAM route, MFA posture, privileged grants, and recent login telemetry."),
         "Estimated Monthly Savings": 0.0,
         "Generated SQL Fix": "\n".join([
             "-- Account access hygiene action. Review only; do not grant, revoke, disable, or alter users from this queue row.",
@@ -2710,22 +2708,22 @@ def _account_health_access_hygiene_action_payload(
             f"-- Findings: {findings}",
             f"-- Queue readiness: {row.get('QUEUE_READINESS', 'Ready to Queue')}",
             f"-- Blockers: {row.get('QUEUE_BLOCKERS', 'None')}",
-            "-- Use IAM/Snowflake approval workflow before any access change.",
+            "-- Use IAM/Snowflake review workflow before any access change.",
         ]),
         "Proof Query": verification_query,
         "Verification Query": verification_query,
         "Verification Status": "Pending",
         "Approver": approval_group,
-        "Owner Approval Status": "Requested" if severity.upper() in {"CRITICAL", "HIGH", "MEDIUM"} else "Not Required",
-        "Owner Approval Note": (
+        "Verification Status": "Requested" if severity.upper() in {"CRITICAL", "HIGH", "MEDIUM"} else "Not Required",
+        "Verification Note": (
             f"Account-level user/auth hygiene review. Scope: {row.get('SCOPE_CONFIDENCE', 'Account-Level Control')}. "
-            f"Evidence: {row.get('SCOPE_EVIDENCE', '')}. Queue blockers: {row.get('QUEUE_BLOCKERS', '')}."
+            f"Scope basis: {row.get('SCOPE_EVIDENCE', '')}. Queue blockers: {row.get('QUEUE_BLOCKERS', '')}."
         ),
         "Recovery Evidence": (
-            f"Proof required: {row.get('PROOF_REQUIRED', 'user, IAM ticket, failed login context, MFA/admin-role evidence, owner approval')}. "
+            f"Telemetry basis: {row.get('PROOF_REQUIRED', 'user, IAM ticket, failed login context, MFA/admin-role telemetry')}. "
             f"Current findings: {findings}."
         ),
-        "Recovery Audit State": "Access Hygiene Verification Pending",
+        "Recovery Audit State": "Access Hygiene Telemetry Pending",
         "Recovery SLA Target Hours": row.get("RECOVERY_SLA_TARGET_HOURS", _account_health_recovery_target_hours(severity)),
         "Company": company,
         "Environment": "No Database Context",
@@ -2756,7 +2754,7 @@ def _queue_account_health_access_hygiene(
         st.success(f"Saved {saved} Account Access Hygiene review(s) to the action queue.")
     except Exception as exc:
         st.error(f"Could not save Account Access Hygiene reviews: {format_snowflake_error(exc)}")
-        st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
+        st.info("The action queue is not available in this environment yet. Ask the DBA team to enable it, then retry this save.")
 
 
 def _render_account_health_access_hygiene(company: str, environment: str) -> None:
@@ -2815,11 +2813,13 @@ def _render_account_health_access_hygiene(company: str, environment: str) -> Non
             )
         ):
             st.info("Loaded access hygiene is stale for the active scope. Reload before queuing access work.")
-            with st.expander("Access Hygiene Query", expanded=False):
-                st.code(
-                    st.session_state.get("account_health_access_hygiene_sql", "-- Reload access hygiene to regenerate SQL."),
-                    language="sql",
-                )
+            with st.expander("Access Hygiene Status", expanded=False):
+                render_shell_snapshot((
+                    ("Scope", "Stale"),
+                    ("Refresh", "Required"),
+                    ("Queue reviews", "After refresh"),
+                    ("Execution", "Runbook only"),
+                ))
         elif hygiene is not None and not hygiene.empty:
             high = int((hygiene.get("SEVERITY", pd.Series(dtype=str)).astype(str).str.upper() == "HIGH").sum())
             failed = int((pd.to_numeric(hygiene.get("FAILED_LOGINS", pd.Series(dtype=float)), errors="coerce").fillna(0) > 0).sum())
@@ -2869,11 +2869,16 @@ def _render_account_health_access_hygiene(company: str, environment: str) -> Non
             with b2:
                 route_ready = int((hygiene.get("QUEUE_READINESS", pd.Series(dtype=str)) == "Ready to Queue").sum())
                 st.caption(
-                    f"{len(actionable):,} medium-or-higher user/auth review(s) can be saved with read-only verification, "
-                    f"owner approval, and No Database Context scope. {route_ready:,} loaded row(s) are route-ready."
+                    f"{len(actionable):,} medium-or-higher user/auth review(s) can be saved with read-only telemetry "
+                    f"and No Database Context scope. {route_ready:,} loaded row(s) are route-ready."
                 )
-            with st.expander("Access Hygiene Query", expanded=False):
-                st.code(st.session_state.get("account_health_access_hygiene_sql", ""), language="sql")
+            with st.expander("Access Hygiene Status", expanded=False):
+                render_shell_snapshot((
+                    ("Telemetry", "Read-only"),
+                    ("Status", "Required"),
+                    ("Queue action", "Available"),
+                    ("Execution", "Runbook only"),
+                ))
         elif hygiene is not None:
             st.success("No account-level access hygiene candidates found for the selected lookback.")
 
@@ -2882,7 +2887,7 @@ def _render_account_health_source_health(company: str, environment: str) -> None
     source_health = _account_health_source_health_rows(st.session_state, company, environment)
     if source_health.empty:
         return
-    with st.expander("Account Health Source Health", expanded=False):
+    with st.expander("Account Health Data Health", expanded=False):
         current = int(source_health["STATE"].isin(["Loaded", "No Rows"]).sum())
         stale = int(source_health["STATE"].eq("Stale").sum())
         unavailable = int(source_health["STATE"].eq("Unavailable").sum())
@@ -2894,7 +2899,7 @@ def _render_account_health_source_health(company: str, environment: str) -> None
         )
         render_shell_snapshot((
             ("Current", f"{current}/{len(source_health)}"),
-            ("Mart Backed", f"{mart_backed:,}"),
+            ("Fast Summary", f"{mart_backed:,}"),
             ("Stale", f"{stale:,}"),
             ("Unavailable", f"{unavailable:,}"),
         ))
@@ -2904,13 +2909,13 @@ def _render_account_health_source_health(company: str, environment: str) -> None
         )
         render_priority_dataframe(
             source_health,
-            title="Account Health evidence source and freshness",
+            title="Account Health telemetry freshness",
             priority_columns=[
                 "SURFACE", "STATE", "SOURCE", "CONFIDENCE", "ROWS", "SCOPE", "NEXT_ACTION",
             ],
             sort_by=["STATE_RANK", "SURFACE"],
             ascending=[True, True],
-            raw_label="All Account Health source-health rows",
+            raw_label="All Account Health data-health rows",
             height=320,
         )
 
@@ -2951,8 +2956,8 @@ def render():
         render_operator_briefing(
             [
                 ("First move", "Refresh the health snapshot and read the exception signals."),
-                ("Evidence", "Use cost drivers, failed work, warehouse pressure, and changes since yesterday."),
-                ("Control", "Drill into the owning workflow before recommending action."),
+                ("Telemetry", "Use cost drivers, failed work, warehouse pressure, and changes since yesterday."),
+                ("Control", "Drill into the guarded workflow before recommending action."),
                 ("Output", "Build the DBA morning brief from verified Control Room and Account Health facts."),
             ],
             columns=4,
@@ -2988,11 +2993,11 @@ def render():
         refresh_health = st.button("Load / Refresh Health", key="health_refresh") or auto_refresh_health
         if not refresh_health:
             if not health_loaded:
-                st.info("Health snapshot is not loaded. Load it when you need current Account Health evidence.")
+                st.info("Health snapshot is available on demand. Refresh when you need current Account Health telemetry.")
             elif stale_scope:
                 st.warning("Loaded health snapshot is stale for the active filters. Refresh before acting.")
             elif cache_age > 300:
-                st.caption(f"Loaded health snapshot is {cache_age / 60:.1f} minutes old. Refresh when current evidence matters.")
+                st.caption(f"Loaded health snapshot is {cache_age / 60:.1f} minutes old. Refresh when current telemetry matters.")
 
         if refresh_health:
             action_session = _account_health_action_session("load Account Health")
@@ -3198,12 +3203,12 @@ def render():
             health_score = safe_float(control_mart_row.get("HEALTH_SCORE", 0))
             score_label = _mart_health_label(health_score)
             health_components = pd.DataFrame([
-                {"Component": "Failed queries", "Observed": err_count, "Source": "MART_DBA_CONTROL_ROOM"},
-                {"Component": "Failed tasks", "Observed": failed_tasks, "Source": "MART_DBA_CONTROL_ROOM"},
-                {"Component": "Queued minutes", "Observed": round(queued_ms / 60000, 2), "Source": "MART_DBA_CONTROL_ROOM"},
-                {"Component": "Security events", "Observed": safe_int(control_mart_row.get("SECURITY_EVENTS_24H", 0)), "Source": "MART_DBA_CONTROL_ROOM"},
-                {"Component": "Object changes", "Observed": safe_int(control_mart_row.get("OBJECT_CHANGES_24H", 0)), "Source": "MART_DBA_CONTROL_ROOM"},
-                {"Component": "Top risk", "Observed": control_mart_row.get("TOP_RISK", ""), "Source": "MART_DBA_CONTROL_ROOM"},
+                {"Component": "Failed queries", "Observed": err_count, "Source": "Fast summary"},
+                {"Component": "Failed tasks", "Observed": failed_tasks, "Source": "Fast summary"},
+                {"Component": "Queued minutes", "Observed": round(queued_ms / 60000, 2), "Source": "Fast summary"},
+                {"Component": "Security events", "Observed": safe_int(control_mart_row.get("SECURITY_EVENTS_24H", 0)), "Source": "Fast summary"},
+                {"Component": "Object changes", "Observed": safe_int(control_mart_row.get("OBJECT_CHANGES_24H", 0)), "Source": "Fast summary"},
+                {"Component": "Top risk", "Observed": control_mart_row.get("TOP_RISK", ""), "Source": "Fast summary"},
             ])
         else:
             last24 = safe_float(burn_df["LAST_24H"].iloc[0]) if not burn_df.empty else 0
@@ -3447,15 +3452,17 @@ def render():
                     height=320,
                     max_rows=12,
                 )
-                with st.expander("Account Health control summary SQL", expanded=False):
-                    st.code(st.session_state.get("account_health_operability_fact_sql", ""), language="sql")
+                with st.expander("Account Health Control Status", expanded=False):
+                    render_shell_snapshot((
+                        ("Control summary", "Ready"),
+                        ("Routed actions", "Review"),
+                        ("Telemetry", "Required"),
+                        ("Execution", "Runbook only"),
+                    ))
             elif st.session_state.get("account_health_operability_fact_error"):
-                st.caption(
-                    "Account Health control summary is not available yet; deploy or refresh "
-                    "`FACT_ACCOUNT_HEALTH_OPERABILITY_DAILY` to enable the fast blocker surface."
-                )
+                st.caption("Account Health control summary is not available yet. Ask the DBA on-call to enable the fast blocker surface.")
             else:
-                st.caption("Load the control summary when you need blocker, owner, and verification evidence.")
+                st.caption("Load the control summary when you need blockers, routes, and telemetry status.")
         elif account_detail in {"Interventions", "Controls"}:
             st.success(f"No {account_detail.lower()} rows for the loaded scope.")
         if account_detail == "Checklist":
@@ -3497,8 +3504,8 @@ def render():
                 else:
                     ready_count = int((actionable_checklist.get("QUEUE_READINESS", pd.Series(dtype=str)) == "Ready to Queue").sum())
                     st.caption(
-                        f"{len(actionable_checklist):,} checklist issue(s) will be saved with owner, approver, "
-                        f"verification SQL, proof requirements, and scope evidence. {ready_count:,} are route-ready without blockers."
+                        f"{len(actionable_checklist):,} checklist issue(s) will be saved with route, reviewer, "
+                        f"telemetry basis, and scope context. {ready_count:,} are route-ready without blockers."
                     )
         _render_account_health_access_hygiene(
             company=company,
@@ -3555,12 +3562,10 @@ def render():
                 )
             elif trend is not None:
                 st.info("No checklist history rows found for the selected scope.")
-            with st.expander("Checklist history setup SQL", expanded=False):
-                st.code(build_account_health_checklist_history_ddl(), language="sql")
         with st.expander("Daily DBA Closure Analytics", expanded=False):
             st.caption(
                 "Uses Account Health action-queue rows to show whether checklist issues are still open, "
-                "overdue, or closed without verification evidence."
+                "overdue, or waiting for telemetry to confirm closure."
             )
             closure_days = day_window_selectbox(
                 "Closure analytics window",
@@ -3587,7 +3592,7 @@ def render():
                 except Exception as exc:
                     st.session_state["account_health_closure_analytics"] = pd.DataFrame()
                     st.warning(f"Closure analytics unavailable: {format_snowflake_error(exc)}")
-                    st.info("Deploy the latest Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry.")
+                    st.info("The action queue is not available in this environment yet. Ask the DBA team to enable it, then retry.")
             closure = st.session_state.get("account_health_closure_analytics")
             if (
                 closure is not None
@@ -3600,7 +3605,7 @@ def render():
             elif closure is not None and not closure.empty:
                 render_priority_dataframe(
                     closure,
-                    title="Checklist closure evidence gaps",
+                    title="Checklist closure status gaps",
                     priority_columns=[
                         "CHECK_NAME", "CLOSURE_READINESS", "OWNER", "APPROVER",
                         "TOTAL_ACTIONS", "OPEN_ACTIONS", "OVERDUE_OPEN",
@@ -3614,21 +3619,15 @@ def render():
                     raw_label="All closure analytics rows",
                     height=300,
                 )
-                with st.expander("Closure Analytics Query", expanded=False):
-                    st.code(st.session_state.get("account_health_closure_analytics_sql", ""), language="sql")
+                with st.expander("Closure Analytics Status", expanded=False):
+                    render_shell_snapshot((
+                        ("Closure status", "Ready"),
+                        ("Telemetry", "Review"),
+                        ("Telemetry", "Required"),
+                        ("Execution", "Runbook only"),
+                    ))
             elif closure is not None:
                 st.info("No Account Health checklist action-queue rows found for the selected scope.")
-        with st.expander("Health signal contributors", expanded=False):
-            render_priority_dataframe(
-                health_components.rename(columns={"SCORE": "SIGNAL_VALUE"}),
-                title="Health signal contributors",
-                priority_columns=["COMPONENT", "SIGNAL_VALUE", "WEIGHT", "SIGNAL"],
-                sort_by=["SIGNAL_VALUE"],
-                ascending=True,
-                raw_label="All health signal contributors",
-                height=260,
-            )
-
         st.divider()
         show_loaded_time("account_health")
 
@@ -3644,19 +3643,19 @@ def render():
             ("Live", "Workload Operations", "Live triage"),
             ("Query", "Workload Operations", "Query diagnosis"),
             ("Cost", "Cost & Contract", None),
-            ("DBA", "Governance & Security", None),
+            ("DBA", "Security Monitoring", None),
         ]):
             with qnav_cols[idx]:
                 st.button(lbl, key=f"jump_{lbl}", on_click=_jump, args=(tgt, workflow), width="stretch")
 
         secondary_sig = f"{filter_sig}|{environment}"
         secondary_loaded = st.session_state.get("_account_health_secondary_sig") == secondary_sig
-        if st.button("Load Secondary Evidence", key="account_health_load_secondary_evidence"):
+        if st.button("Load Secondary Details", key="account_health_load_secondary_evidence"):
             st.session_state["_account_health_secondary_sig"] = secondary_sig
             secondary_loaded = True
         if not secondary_loaded:
             st.caption(
-                "Secondary cost slices, monitoring-cost evidence, and warehouse-pressure charts stay unloaded "
+                "Secondary cost slices, monitoring-cost detail, and warehouse-pressure charts stay unloaded "
                 "until they are needed for the current investigation."
             )
             return
@@ -3747,46 +3746,6 @@ def render():
                     workflow="Recommendations and action queue",
                 )
 
-        st.divider()
-        st.markdown("**OVERWATCH Cost of Monitoring**")
-        mon_days = day_window_selectbox(
-            "Monitoring cost window",
-            key="ah_monitoring_cost_days",
-            default=7,
-        )
-        if st.button("Load monitoring cost", key="ah_monitoring_cost_load"):
-            mon_df = run_query(
-                build_monitoring_cost_sql(mon_days),
-                ttl_key=f"ah_monitoring_cost_{company}_{mon_days}",
-                tier="historical",
-                section="Account Health",
-            )
-            st.session_state["ah_monitoring_cost"] = mon_df
-        mon_df = st.session_state.get("ah_monitoring_cost")
-        if mon_df is not None and not mon_df.empty:
-            mon_df = mon_df.copy()
-            mon_df["EST_COST"] = mon_df["CREDITS"].apply(lambda x: credits_to_dollars(x, credit_price))
-            render_shell_snapshot(
-                (
-                    ("Components", f"{len(mon_df):,}"),
-                    ("Credits", format_credits(safe_float(mon_df["CREDITS"].sum()))),
-                    ("Est. Cost", f"${safe_float(mon_df['EST_COST'].sum()):,.2f}"),
-                )
-            )
-            st.caption("Keeps the monitor honest: app-tagged queries, Streamlit warehouse, Cortex, and alert task cost.")
-            render_priority_dataframe(
-                mon_df,
-                title="Monitoring cost components",
-                priority_columns=["COMPONENT", "CREDITS", "EST_COST", "SOURCE", "CONFIDENCE"],
-                sort_by=["EST_COST", "CREDITS"],
-                ascending=[False, False],
-                raw_label="All monitoring cost rows",
-                height=220,
-            )
-            download_csv(mon_df, "overwatch_monitoring_cost.csv")
-        elif mon_df is not None:
-            st.info("No tagged OVERWATCH monitoring cost found in the selected window.")
-
         if exceptions_only:
             st.caption("Landing default stops here to avoid loading lower-priority drilldowns.")
             return
@@ -3846,8 +3805,8 @@ def render():
     elif active_view == "Morning Report":
         st.subheader("DBA Morning Brief")
         st.caption(
-            "Evidence-ranked DBA packet built from Control Room blockers, source health, handoff rows, "
-            "release gates, and action-queue closure proof."
+            "Telemetry-ranked DBA packet built from Control Room blockers, data readiness, handoff rows, "
+            "deployment gates, and action-queue closure status."
         )
 
         brief_cols = st.columns([1, 1, 2])
@@ -3872,11 +3831,11 @@ def render():
         with brief_cols[2]:
             render_shell_snapshot((("Scope", f"{company} / {environment}"),))
 
-        if st.button("Build DBA Morning Brief", key="morning_gen", type="primary"):
-            action_session = _account_health_action_session("build DBA Morning Brief")
+        if st.button("Refresh DBA Morning Brief", key="morning_gen", type="primary"):
+            action_session = _account_health_action_session("refresh DBA Morning Brief")
             if action_session is None:
                 return
-            with render_load_status("Building DBA Morning Brief", "DBA Morning Brief ready"):
+            with render_load_status("Refreshing DBA Morning Brief", "DBA Morning Brief ready"):
                 cortex_budget_usd = float(
                     st.session_state.get(
                         "dba_control_room_cortex_budget_usd",
@@ -3911,30 +3870,30 @@ def render():
         morning_packet = st.session_state.get("morning_data")
         expected_meta = _account_health_scope_meta(company, environment, window=f"{int(morning_lookback)}h")
         if not morning_packet:
-            st.info("Build the morning brief when the on-call DBA needs a ranked operating packet.")
+            st.info("Refresh the morning brief when the on-call DBA needs a ranked operating packet.")
         elif not _account_health_meta_matches(st.session_state.get("morning_data_meta"), expected_meta):
-            st.warning("Loaded DBA Morning Brief is stale for the active scope. Rebuild before using it.")
+            st.warning("Loaded DBA Morning Brief is stale for the active scope. Refresh before using it.")
         else:
             from sections import dba_control_room as dba
 
-            st.caption(f"Source: {morning_packet.get('_source', 'DBA Control Room evidence')}")
+            st.caption(f"Measurement: {morning_packet.get('_source', 'DBA Control Room telemetry')}")
             dba._render_dba_morning_brief(
                 morning_packet.get("brief", pd.DataFrame()),
                 str(morning_packet.get("markdown") or ""),
             )
             source_health = morning_packet.get("source_health", pd.DataFrame())
             if source_health is not None and not source_health.empty:
-                with st.expander("Source proof behind the brief", expanded=False):
+                with st.expander("Brief inputs", expanded=False):
                     render_priority_dataframe(
                         source_health,
-                        title="Morning brief source proof",
+                        title="Morning brief input readiness",
                         priority_columns=[
                             "PRIORITY_RANK", "SURFACE", "STATE", "EVIDENCE",
                             "OWNER_OR_ROUTE", "NEXT_ACTION", "PROOF_REQUIRED", "SOURCE",
                         ],
                         sort_by=["PRIORITY_RANK", "SURFACE"],
                         ascending=[True, True],
-                        raw_label="All morning brief source rows",
+                        raw_label="All morning brief input rows",
                         height=260,
                         max_rows=8,
                     )

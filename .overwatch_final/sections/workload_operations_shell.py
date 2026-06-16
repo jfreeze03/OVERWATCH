@@ -7,10 +7,9 @@ from datetime import date, datetime
 import streamlit as st
 
 from config import DEFAULT_COMPANY, DEFAULT_DAY_WINDOW, DEFAULT_ENVIRONMENT, ENVIRONMENT_CONFIG
-from sections.native_readiness import render_workload_data_quality_board
+from sections.native_monitoring import render_workload_data_quality_board
 from sections.shell_helpers import (
     full_workspace_requested,
-    render_refresh_contract,
     render_setup_health_board,
     render_shell_kpi_row,
     render_shell_snapshot,
@@ -56,7 +55,7 @@ _WORKFLOWS = (
     {
         "WORKFLOW": "Contention Center",
         "BUTTON_LABEL": "Open Contention",
-        "MOVE": "Prove lock waits, overlapping tasks, long DML, or warehouse queueing before changing compute.",
+        "MOVE": "Review lock waits, overlapping tasks, long DML, or warehouse queueing before changing compute.",
     },
     {
         "WORKFLOW": "Query diagnosis",
@@ -132,7 +131,7 @@ def _load_command_board() -> None:
 
 
 def _full_workspace_requested() -> bool:
-    """Keep Workload navigation data-first; open full proof only from a workflow."""
+    """Keep Workload navigation data-first; open full detail only from a workflow."""
     _ = full_workspace_requested
     if st.session_state.get(_FULL_WORKSPACE_KEY):
         return True
@@ -192,7 +191,7 @@ def _float_value(value: object, default: float = 0.0) -> float:
 def _seconds_label(value: object) -> str:
     seconds = _float_value(value)
     if not seconds:
-        return "Not loaded"
+        return "On demand"
     if seconds < 90:
         return f"{seconds:,.1f}s"
     return f"{seconds / 60.0:,.1f}m"
@@ -262,18 +261,11 @@ def _render_metric_board() -> None:
     )
     summary = _command_summary()
     render_shell_snapshot((
-        ("Queries", f"{_int_value(_row_get(snapshot_row, 'TOTAL_QUERIES', summary.get('total_queries'))):,}" if snapshot_row is not None or summary else "Not loaded"),
-        ("Failed Queries", f"{_int_value(_row_get(snapshot_row, 'FAILED_QUERIES', summary.get('failed_queries'))):,}" if snapshot_row is not None or summary else "Not loaded"),
-        ("Queue Time", _seconds_label(_row_get(snapshot_row, "QUEUE_SECONDS", summary.get("queue_seconds"))) if snapshot_row is not None or summary else "Not loaded"),
-        ("Task Failures", f"{_int_value(_row_get(task_row, 'TASK_STATUS_FAILURE_ROWS', summary.get('failed_tasks'))):,}" if task_row is not None or summary else "Not loaded"),
+        ("Queries", f"{_int_value(_row_get(snapshot_row, 'TOTAL_QUERIES', summary.get('total_queries'))):,}" if snapshot_row is not None or summary else "On demand"),
+        ("Failed Queries", f"{_int_value(_row_get(snapshot_row, 'FAILED_QUERIES', summary.get('failed_queries'))):,}" if snapshot_row is not None or summary else "On demand"),
+        ("Queue Time", _seconds_label(_row_get(snapshot_row, "QUEUE_SECONDS", summary.get("queue_seconds"))) if snapshot_row is not None or summary else "On demand"),
+        ("Task Failures", f"{_int_value(_row_get(task_row, 'TASK_STATUS_FAILURE_ROWS', summary.get('failed_tasks'))):,}" if task_row is not None or summary else "On demand"),
     ))
-    render_refresh_contract(
-        freshness_meta if isinstance(freshness_meta, dict) else {},
-        source="MART_EXECUTIVE_OBSERVABILITY / MART_DBA_CONTROL_ROOM / TASK_HISTORY",
-        target_minutes=30,
-        refresh_method="Scheduled workload mart and task-history refresh",
-        live_fallback="Explicit live triage",
-    )
 
 
 def _workload_shell_lanes(snapshot_row: object | None, task_row: object | None) -> tuple[dict[str, str], ...]:
@@ -290,7 +282,7 @@ def _workload_shell_lanes(snapshot_row: object | None, task_row: object | None) 
                     "label": "Query volume",
                     "value": f"{total_queries:,}",
                     "state": f"{failed_queries:,} failed",
-                    "detail": "MART_EXECUTIVE_OBSERVABILITY supplies first-paint query volume and failure pressure.",
+                    "detail": "Fast summary facts supply first-paint query volume and failure pressure.",
                 },
                 {
                     "label": "Runtime p95",
@@ -302,13 +294,13 @@ def _workload_shell_lanes(snapshot_row: object | None, task_row: object | None) 
                     "label": "Queue pressure",
                     "value": _summary_seconds_label(summary, "queue_seconds"),
                     "state": "Capacity",
-                    "detail": f"Top queue warehouse: {summary.get('top_queue_warehouse') or 'Not loaded'}.",
+                    "detail": f"Top queue warehouse: {summary.get('top_queue_warehouse') or 'On demand'}.",
                 },
                 {
                     "label": "Remote spillage",
                     "value": _summary_gb_label(summary, "remote_spill_gb"),
                     "state": "Memory",
-                    "detail": f"Top spill warehouse: {summary.get('top_spill_warehouse') or 'Not loaded'}.",
+                    "detail": f"Top spill warehouse: {summary.get('top_spill_warehouse') or 'On demand'}.",
                 },
                 {
                     "label": "Task failures",
@@ -323,52 +315,52 @@ def _workload_shell_lanes(snapshot_row: object | None, task_row: object | None) 
                     "detail": "Critical/high alert pressure should outrank routine optimization work.",
                 },
                 {
-                    "label": "Owner actions",
+                    "label": "Routed actions",
                     "value": f"{open_actions:,}",
                     "state": "Queue",
-                    "detail": "Open workload actions need owner, fix SQL, and verification.",
+                    "detail": "Open workload actions need a route, fix plan, and current status.",
                 },
                 {
                     "label": "Schema/data compare",
                     "value": "Ready",
-                    "state": "Proof",
-                    "detail": "Compare all schema objects, generate missing DDL, then sample/hash data likeness.",
+                    "state": "Telemetry",
+                    "detail": "Compare all schema objects, review missing objects, then sample/hash data likeness.",
                 },
             )
         return (
             {
                 "label": "Query volume",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Refresh",
-                "detail": "MART_DBA_CONTROL_ROOM supplies bounded workload facts.",
+                "detail": "Fast summary facts supply bounded workload facts.",
             },
             {
                 "label": "Runtime p95",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Performance",
                 "detail": "P95 runtime points to degraded query shapes and warehouse pressure.",
             },
             {
                 "label": "Queue pressure",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Capacity",
                 "detail": "Queue seconds separate compute saturation from bad SQL.",
             },
             {
                 "label": "Remote spillage",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Memory",
                 "detail": "Remote spill usually means inefficient joins, scans, or undersized compute.",
             },
             {
                 "label": "Task failures",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Pipeline",
                 "detail": "Task graph failures and late runs become DBA work immediately.",
             },
             {
                 "label": "Late task risk",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "SLA",
                 "detail": "Late tasks are more important than generic task counts.",
             },
@@ -376,13 +368,13 @@ def _workload_shell_lanes(snapshot_row: object | None, task_row: object | None) 
                 "label": "Contention",
                 "value": "On demand",
                 "state": "Root cause",
-                "detail": "Blocked/waiting, table hotspots, task overlap, and fix SQL load together.",
+                "detail": "Blocked/waiting, table hotspots, task overlap, and fix plans load together.",
             },
             {
                 "label": "Schema/data compare",
                 "value": "On demand",
-                "state": "Proof",
-                "detail": "Schema compare, DDL generation, row counts, and hashing stay in one workflow.",
+                "state": "Telemetry",
+                "detail": "Schema compare, missing-object review, row counts, and hashing stay in one workflow.",
             },
         )
 
@@ -405,7 +397,7 @@ def _workload_shell_lanes(snapshot_row: object | None, task_row: object | None) 
             "label": "Runtime p95",
             "value": _seconds_label(p95),
             "state": "Performance",
-            "detail": "Use query history and plan evidence before changing warehouse size.",
+            "detail": "Use query history and plan telemetry before changing warehouse size.",
         },
         {
             "label": "Queue pressure",
@@ -435,13 +427,13 @@ def _workload_shell_lanes(snapshot_row: object | None, task_row: object | None) 
             "label": "Contention",
             "value": f"{_frame_len(st.session_state.get('contention_decision_rows')):,}" if _frame_len(st.session_state.get("contention_decision_rows")) else "On demand",
             "state": "Root cause",
-            "detail": "Lock waits, task overlap, long DML, and queue evidence are handled together.",
+            "detail": "Lock waits, task overlap, long DML, and queue telemetry are handled together.",
         },
         {
             "label": "Schema/data compare",
             "value": "Ready",
-            "state": "Proof",
-            "detail": "Compare all schema objects, generate missing DDL, then sample/hash data likeness.",
+            "state": "Telemetry",
+            "detail": "Compare all schema objects, review missing objects, then sample/hash data likeness.",
         },
     )
 
@@ -462,17 +454,17 @@ def _render_contention_solution_board() -> None:
     render_setup_health_board(
         "Contention Answer Model",
         (
-            ("First proof", "Blocker/waiter map"),
-            ("Second proof", "Task overlap"),
-            ("Third proof", "Queue/spill"),
-            ("Fix contract", "Precheck + verify SQL"),
+            ("First signal", "Blocker/waiter map"),
+            ("Second signal", "Task overlap"),
+            ("Third signal", "Queue/spill"),
+            ("Fix status", "Precheck + status"),
         ),
         cadence="Live only after operator intent",
         fallback="Contention Center",
         owner="DBA Operations",
     )
     render_signal_lane_board(
-        "Safe Fix Contract",
+        "Safe Fix Status",
         (
             {
                 "label": "Classify",
@@ -483,8 +475,8 @@ def _render_contention_solution_board() -> None:
             {
                 "label": "Identify blocker",
                 "value": "query_id/session",
-                "state": "Evidence",
-                "detail": "Never kill work from a symptom row; prove blocker, waiter, object, and owner first.",
+                "state": "Telemetry",
+                "detail": "Never kill work from a symptom row; identify blocker, waiter, object, and route first.",
             },
             {
                 "label": "Pick action",
@@ -493,8 +485,8 @@ def _render_contention_solution_board() -> None:
                 "detail": "Prefer shortening transaction scope or task schedule separation before changing compute.",
             },
             {
-                "label": "Verify",
-                "value": "after-state SQL",
+                "label": "Confirm",
+                "value": "after-state status",
                 "state": "Audit",
                 "detail": "Close only after queue, blocked time, retries, and downstream task status improve.",
             },

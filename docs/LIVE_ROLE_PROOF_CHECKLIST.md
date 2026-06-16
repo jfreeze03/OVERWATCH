@@ -28,7 +28,7 @@ its operating lane.
 |---|---|---|
 | `ACCOUNTADMIN` / full DBA | All command surfaces, setup validation, alert lifecycle actions, schema compare, data compare, and controlled DBA action previews. | Executive Landing loads the metric wall; Alert History can record lifecycle audit; Schema/Data Compare config SQL is visible; Contention top fix path shows guarded SQL. |
 | `SYSADMIN` / platform DBA | Workload, cost, mart, task, warehouse, and compare visibility. State-changing admin actions remain governed. | Cost & Contract first view is fast; Workload Operations shows task/query summaries; live contention degrades cleanly when a source is unavailable. |
-| `_DSA` manager roles | Broad management visibility without unsafe execution. | Executive Landing, Cost & Contract, Alert Center, and Governance & Security show summary data, but dangerous remediation stays approval-gated. |
+| `_DSA` manager roles | Broad management visibility without unsafe execution. | Executive Landing, Cost & Contract, Alert Center, and Security Monitoring show summary data, but dangerous remediation stays review-gated. |
 | `_DTI` analyst roles | Query, workload, data compare, and evidence review focus. | Workload Operations, Query Diagnosis, Schema/Data Compare, and read-only cost summaries are visible without setup/action controls. |
 | Unknown, blank, or report roles | Restrictive report mode. | No DBA-only controls appear; unavailable Snowflake views show friendly messages; Executive Landing still renders a data-first frame when marts are granted. |
 

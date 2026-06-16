@@ -1,6 +1,6 @@
 """Helpers for reading the optional OVERWATCH Snowflake mart.
 
-The app must keep working before the mart setup SQL is installed, so these
+The app must keep working before the mart setup bundle is installed, so these
 helpers always fail closed: callers get an empty frame plus a short reason and
 can fall back to the existing live ACCOUNT_USAGE queries.
 """

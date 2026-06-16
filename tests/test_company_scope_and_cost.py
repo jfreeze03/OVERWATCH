@@ -256,7 +256,7 @@ class CompanyScopeAndCostTests(unittest.TestCase):
 
         self.assertEqual(annotated["ENVIRONMENT_ROLLUP"].tolist(), ["PROD", "DEV_ALL"])
         self.assertEqual(set(annotated["CHARGEBACK_READY"]), {"Ready"})
-        self.assertIn("owner tag proof is attached", annotated.iloc[0]["ALLOCATION_BASIS"])
+        self.assertIn("route-tag telemetry is attached", annotated.iloc[0]["ALLOCATION_BASIS"])
         self.assertEqual(annotated.iloc[0]["COST_OWNER"], "FINANCE_ANALYTICS")
         self.assertEqual(annotated.iloc[1]["OWNER_SOURCE"], "WAREHOUSE_TAG:COST_OWNER")
 
@@ -280,7 +280,7 @@ class CompanyScopeAndCostTests(unittest.TestCase):
 
         self.assertEqual(annotated.iloc[0]["ALLOCATION_CONFIDENCE"], "Account-wide / Shared")
         self.assertEqual(annotated.iloc[0]["CHARGEBACK_READY"], "No")
-        self.assertEqual(annotated.iloc[1]["ALLOCATION_CONFIDENCE"], "Shared / Needs Owner")
+        self.assertEqual(annotated.iloc[1]["ALLOCATION_CONFIDENCE"], "Shared / Needs route")
         self.assertEqual(annotated.iloc[1]["CHARGEBACK_READY"], "Review")
 
     def test_unclassified_asset_sql_uses_explicit_allowlists(self):

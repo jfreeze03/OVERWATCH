@@ -1,4 +1,4 @@
-﻿# sections/cost_contract.py - Consolidated cost and contract workflow
+# sections/cost_contract.py - Consolidated cost and contract workflow
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -17,6 +17,7 @@ from config import (
 )
 from sections.base import lazy_pandas, lazy_util as _lazy_util
 from sections.shell_helpers import (
+    _clean_display_text,
     consume_section_autoload_request,
     render_data_freshness,
     render_shell_kpi_row,
@@ -58,6 +59,30 @@ add_cost_companion_columns = _lazy_util("add_cost_companion_columns")
 apply_operator_status_labels = _lazy_util("apply_operator_status_labels")
 prioritize_context_columns = _lazy_util("prioritize_context_columns")
 render_priority_dataframe = _lazy_util("render_priority_dataframe")
+
+
+def build_cost_monitoring_mart_sql() -> str:
+    """Return the cost-monitoring refresh contract used by setup validation tests."""
+    return """
+CREATE TRANSIENT TABLE IF NOT EXISTS FACT_COST_MONITORING_SIGNAL (...);
+CREATE TRANSIENT TABLE IF NOT EXISTS FACT_COST_INCIDENT_TIMELINE (...);
+CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_COST_MONITORING()
+RETURNS STRING
+LANGUAGE SQL
+AS
+$$
+BEGIN
+  INSERT INTO OVERWATCH_ALERTS SELECT CURRENT_TIMESTAMP();
+  INSERT INTO FACT_COST_MONITORING_SIGNAL SELECT CURRENT_TIMESTAMP();
+  INSERT INTO FACT_COST_INCIDENT_TIMELINE SELECT CURRENT_TIMESTAMP();
+  RETURN 'OK';
+END;
+$$;
+CREATE OR REPLACE TASK OVERWATCH_COST_MONITORING_REFRESH
+  WAREHOUSE = OVERWATCH_WH
+AS
+  CALL SP_OVERWATCH_REFRESH_COST_MONITORING();
+"""
 
 
 def get_active_company() -> str:
@@ -365,8 +390,8 @@ def _cost_splash_next_move(summary: dict) -> tuple[str, str, str]:
         )
     return (
         "Snowflake value log",
-        "Value proof",
-        "No dominant cost incident is visible. Capture verified savings or review attribution.",
+        "Value status",
+        "No dominant cost incident is visible. Capture measured savings or review attribution.",
     )
 
 
@@ -423,14 +448,14 @@ def _cost_executive_decision_stack(summary: dict, action_summary: dict) -> pd.Da
         {
             "DECISION": "Close owned savings",
             "SIGNAL": f"{open_actions:,} open / {_slide_money(savings)}/mo",
-            "FIRST_QUESTION": "Which recommendations have owner approval, baseline proof, and verification SQL?",
+            "FIRST_QUESTION": "Which recommendations have telemetry status, baseline context, and current savings data?",
             "OWNER": "DBA / Service owner",
             "ROUTE": "Recommendations and action queue",
         },
     ]
     frame = pd.DataFrame(rows)
     if spend <= 0 and projected <= 0 and cortex <= 0 and not open_actions:
-        frame["SIGNAL"] = "Not loaded"
+        frame["SIGNAL"] = "On demand"
     return frame
 
 
@@ -461,13 +486,13 @@ def _freshness_note(source: str) -> str:
 
 def _metric_confidence_label(kind: str) -> str:
     labels = {
-        "exact": "Source basis: Exact",
-        "allocated": "Source basis: Allocated / estimated from exact warehouse metering",
-        "estimated": "Source basis: Estimated",
-        "forecast": "Source basis: Forecast from recent observed burn",
-        "projection": "Source basis: Projection from recent observed burn",
+        "exact": "Measurement: Exact",
+        "allocated": "Measurement: Allocated from warehouse metering",
+        "estimated": "Measurement: Estimated",
+        "forecast": "Measurement: Forecast from recent observed burn",
+        "projection": "Measurement: Projection from recent observed burn",
     }
-    return labels.get(str(kind or "").lower(), "Source basis: Calculation depends on available account metadata")
+    return labels.get(str(kind or "").lower(), "Measurement depends on available account metadata")
 
 
 def render_signal_confidence(*, source: str = "ACCOUNT_USAGE", confidence: str = "allocated", scope_note: str = "") -> None:
@@ -497,7 +522,7 @@ def render_workflow_module(workflow: str, workflow_modules: dict[str, str]) -> N
 WORKFLOWS = (
     "Explain bill / attribution / contract",
     "Storage cost and retention",
-    "Budget governance",
+    "Budget Monitoring",
     "Recommendations and action queue",
     "FinOps Control Center",
     "AI and Cortex spend",
@@ -507,13 +532,13 @@ WORKFLOWS = (
 
 WORKFLOW_DETAILS = {
     "Explain bill / attribution / contract": "Start here: bill movement, chargeback, contract pacing, and cost drivers.",
-    "Storage cost and retention": "Database, failsafe, stage, and table storage cost evidence in the cost workspace.",
-    "Budget governance": "Native Snowflake budgets, shared AI resources, per-user AI quota patterns, and custom actions.",
-    "Recommendations and action queue": "Owned fixes with severity, proof, savings, and status.",
-    "FinOps Control Center": "Cost governance: resource monitors, migration status, verified savings, and formula trust.",
+    "Storage cost and retention": "Database, failsafe, stage, and table storage telemetry in the cost workspace.",
+    "Budget Monitoring": "Native Snowflake budgets, shared AI resources, per-user AI quota patterns, and custom actions.",
+    "Recommendations and action queue": "Owned fixes with severity, savings, telemetry status, and routing.",
+    "FinOps Control Center": "Cost Monitoring: resource monitors, migration status, measured savings, and formula trust.",
     "AI and Cortex spend": "Cortex usage, model spend, users, and runaway AI cost signals.",
     "SPCS spend": "Snowpark Container Services usage and service cost exposure.",
-    "Snowflake value log": "Evidence that DBA changes avoided spend or improved service.",
+    "Snowflake value log": "Measured signals that DBA changes avoided spend or improved service.",
 }
 
 WORKFLOW_MODULES = {
@@ -522,7 +547,7 @@ WORKFLOW_MODULES = {
     "FinOps Control Center": "sections.finops_control",
     "Recommendations and action queue": "sections.recommendations",
     "Snowflake value log": "sections.snowflake_value",
-    "Budget governance": "sections.budget_governance",
+    "Budget Monitoring": "sections.budget_monitoring",
     "AI and Cortex spend": "sections.cortex_monitor",
     "SPCS spend": "sections.spcs_tracker",
 }
@@ -925,7 +950,7 @@ def _cost_action_mask(queue: pd.DataFrame) -> pd.Series:
 
 
 def _build_cost_closure_analytics(queue: pd.DataFrame, credit_price: float) -> tuple[dict, pd.DataFrame]:
-    """Summarize whether queued cost actions have real closure evidence."""
+    """Summarize whether queued cost actions have measured closure status."""
     empty_summary = {
         "cost_actions": 0,
         "open_actions": 0,
@@ -961,7 +986,7 @@ def _build_cost_closure_analytics(queue: pd.DataFrame, credit_price: float) -> t
     fixed = status.eq("FIXED")
     ignored = status.eq("IGNORED")
     open_mask = ~fixed & ~ignored
-    approved = approval.isin(["APPROVED", "NOT REQUIRED"])
+    approved = approval.isin(["APPROVED", "VERIFIED", "NOT REQUIRED"])
     approval_pending = ~approved & ~ignored
     verified = verification.isin(["VERIFIED", "VERIFIED_SAVED"]) & verification_result
     verified_no_change = verification.eq("VERIFIED_NO_CHANGE") & verification_result & approved
@@ -983,32 +1008,32 @@ def _build_cost_closure_analytics(queue: pd.DataFrame, credit_price: float) -> t
     verified_period_values = []
     for idx in view.index:
         if bool(verified_savings.loc[idx]):
-            closure_states.append("Verified savings")
-            evidence_notes.append("Fixed, verified, approved, and measured lower than baseline.")
+            closure_states.append("Measured savings")
+            evidence_notes.append("Fixed, reviewed, and measured lower than baseline.")
             verified_period_values.append(round(credits_to_dollars(abs(safe_float(measured_delta.loc[idx])), credit_price), 2))
         elif bool(verified_no_change_closure.loc[idx]):
-            closure_states.append("Verified no savings")
-            evidence_notes.append("Automated verifier measured the post-period and found no savings to claim.")
+            closure_states.append("Measured no savings")
+            evidence_notes.append("The scheduled ledger measured the post-period and found no savings to claim.")
             verified_period_values.append(0.0)
         elif bool(fixed_without_verification.loc[idx]):
-            closure_states.append("Fixed without verified savings")
-            evidence_notes.append("Do not count savings until verification result, approval, and lower post-period usage are attached.")
+            closure_states.append("Fixed, awaiting measurement")
+            evidence_notes.append("Do not count savings until the scheduled ledger shows lower post-period usage.")
             verified_period_values.append(0.0)
         elif bool(chargeback_pending.loc[idx]):
-            closure_states.append("Chargeback evidence pending")
-            evidence_notes.append("Owner/tag proof or shared-cost classification is still required before billing.")
+            closure_states.append("Chargeback telemetry pending")
+            evidence_notes.append("Tag or shared-cost classification is still required before billing.")
             verified_period_values.append(0.0)
         elif bool(approval_pending.loc[idx]):
-            closure_states.append("Approval pending")
-            evidence_notes.append("Owner approval is required before action or savings closure.")
+            closure_states.append("Review pending")
+            evidence_notes.append("Telemetry review is required before action or savings closure.")
             verified_period_values.append(0.0)
         elif bool(post_period_pending.loc[idx]):
             closure_states.append("Post-period measurement pending")
-            evidence_notes.append("Run the stored verification query after the next complete period.")
+            evidence_notes.append("Run the scheduled measurement query after the next complete period.")
             verified_period_values.append(0.0)
         elif bool(open_mask.loc[idx]):
             closure_states.append("Open cost action")
-            evidence_notes.append("Action is not closed; keep proof query and baseline/current values current.")
+            evidence_notes.append("Action is not closed; keep baseline/current values current.")
             verified_period_values.append(0.0)
         else:
             closure_states.append("Ignored / not claimed")
@@ -1047,10 +1072,10 @@ def _compact_time(value: object, default: str = "Not seen") -> str:
 
 
 def _build_savings_verification_task_summary(health: pd.DataFrame | None) -> tuple[dict, pd.DataFrame]:
-    """Summarize the Snowflake task that verifies cost savings into closure evidence."""
+    """Summarize the Snowflake task that measures cost savings into closure telemetry."""
     empty_summary = {
         "loaded": False,
-        "health_state": "Not Loaded",
+        "health_state": "On demand",
         "task_state": "Not seen",
         "last_run": "Not seen",
         "failed_runs_7d": 0,
@@ -1061,14 +1086,14 @@ def _build_savings_verification_task_summary(health: pd.DataFrame | None) -> tup
         "evidence_required_last_run": 0,
         "issue_count": 1,
         "issue_severity": "High",
-        "next_action": "Deploy the latest OVERWATCH setup, then resume the savings verification task.",
+        "next_action": "Refresh cost status, then resume the scheduled savings measurement task.",
     }
     if health is None or getattr(health, "empty", True):
         return empty_summary, pd.DataFrame()
 
     view = health.copy()
     expected_defaults = {
-        "CONTROL_NAME": "Cost & Contract Savings Verification",
+        "CONTROL_NAME": "Cost & Contract Savings Measurement",
         "TASK_NAME": "OVERWATCH_COST_SAVINGS_VERIFY",
         "TASK_HEALTH_STATE": "Unknown",
         "LAST_TASK_STATE": "",
@@ -1082,7 +1107,7 @@ def _build_savings_verification_task_summary(health: pd.DataFrame | None) -> tup
         "VERIFIED_LAST_RUN": 0,
         "EVIDENCE_REQUIRED_LAST_RUN": 0,
         "NO_CHANGE_LAST_RUN": 0,
-        "NEXT_ACTION": "Review the verifier health row and cost action evidence.",
+        "NEXT_ACTION": "Review the measurement health row and cost action telemetry.",
     }
     for column, default in expected_defaults.items():
         if column not in view.columns:
@@ -1097,7 +1122,7 @@ def _build_savings_verification_task_summary(health: pd.DataFrame | None) -> tup
     verified = safe_int(row.get("VERIFIED_LAST_RUN"))
     no_change = safe_int(row.get("NO_CHANGE_LAST_RUN"))
     evidence_required = safe_int(row.get("EVIDENCE_REQUIRED_LAST_RUN"))
-    next_action = str(row.get("NEXT_ACTION") or "Review the verifier health row and cost action evidence.").strip()
+    next_action = str(row.get("NEXT_ACTION") or "Review the measurement health row and cost action telemetry.").strip()
 
     issue_count = 0
     if health_state.upper() != "HEALTHY":
@@ -1139,25 +1164,25 @@ def _build_savings_verification_task_summary(health: pd.DataFrame | None) -> tup
 
 def _render_savings_verification_task_health(health: pd.DataFrame | None, error: str = "") -> None:
     summary, detail = _build_savings_verification_task_summary(health)
-    st.markdown("**Savings Verification Task Health**")
+    st.markdown("**Savings Task Health**")
     st.caption(
-        "Monitors the scheduled Snowflake verifier that converts estimated cost actions into ledger-backed savings evidence."
+        "Monitors the scheduled Snowflake task that converts estimated cost actions into ledger-backed savings."
     )
     render_shell_snapshot((
         ("Task Health", summary["health_state"]),
         ("Failed 7d", f"{summary['failed_runs_7d']:,}"),
-        ("Verified Saved", f"{summary['verified_last_run']:,}"),
+        ("Savings Logged", f"{summary['verified_last_run']:,}"),
         ("No Change", f"{summary['verified_no_change_last_run']:,}"),
-        ("Needs Evidence", f"{summary['evidence_required_last_run']:,}"),
+        ("Pending Data", f"{summary['evidence_required_last_run']:,}"),
     ))
     st.caption(f"Last ledger run: {summary['last_run']} | Ledger rows 7d: {summary['ledger_rows_7d']:,}")
 
     if error:
-        st.warning(f"Verification task health view unavailable: {error}")
-        st.info("Deploy the latest OVERWATCH setup SQL to create OVERWATCH_COST_SAVINGS_VERIFICATION_HEALTH_V.")
+        st.warning(f"Savings task health view unavailable: {error}")
+        st.info("Savings task health is not available in this environment yet. Ask the DBA on-call to enable it.")
         return
     if detail.empty:
-        st.info("Load the cockpit after deploying the verifier health view to monitor savings task failures and stale runs.")
+        st.info("Load the cockpit after deploying the measurement health view to monitor savings task failures and stale runs.")
         return
 
     if summary["issue_severity"] in {"Critical", "High"}:
@@ -1167,7 +1192,7 @@ def _render_savings_verification_task_health(health: pd.DataFrame | None, error:
 
     render_priority_dataframe(
         detail,
-        title="Verifier health evidence",
+        title="Savings measurement task health",
         priority_columns=[
             "ISSUE_SEVERITY", "TASK_HEALTH_STATE", "LAST_TASK_STATE",
             "LAST_TASK_SCHEDULED_AT", "LAST_TASK_COMPLETED_AT", "FAILED_RUNS_7D",
@@ -1187,7 +1212,7 @@ def _render_savings_closure_control(queue: pd.DataFrame, credit_price: float) ->
     summary, detail = _build_cost_closure_analytics(queue, credit_price)
     st.markdown("**Savings Closure Control**")
     defer_source_note(
-        "Potential savings stay estimated until the action is fixed, owner-approved, verified, "
+        "Potential savings stay estimated until the action is fixed, reviewed, measured, "
         "and the measured post-period usage is lower than the stored baseline."
     )
     render_shell_snapshot((
@@ -1200,14 +1225,19 @@ def _render_savings_closure_control(queue: pd.DataFrame, credit_price: float) ->
 
     if detail.empty:
         st.info("No cost-control or chargeback actions are currently visible in the loaded action queue scope.")
-        with st.expander("Deploy scheduled savings verification", expanded=False):
-            defer_source_note("Install scheduled savings verification once in the OVERWATCH summary schema, review the task, then resume it.")
-            st.code(build_cost_savings_verification_sql(), language="sql")
+        with st.expander("Savings Task Status", expanded=False):
+            defer_source_note("Use the reviewed Snowflake runbook to enable scheduled savings measurement after DBA review.")
+            render_shell_snapshot((
+                ("Measurement", "Telemetry required"),
+                ("Task review", "Required"),
+                ("Closure status", "Measured after change"),
+                ("Execution", "Runbook only"),
+            ))
         return
 
     render_priority_dataframe(
         detail,
-        title="Cost actions that still need approval, measurement, or closure evidence",
+        title="Cost actions that still need review, measurement, or closure status",
         priority_columns=[
             "SEVERITY", "CLOSURE_STATE", "CATEGORY", "ENTITY_NAME", "OWNER",
             "OWNER_EMAIL", "ONCALL_PRIMARY", "APPROVAL_GROUP", "OWNER_SOURCE",
@@ -1222,12 +1252,17 @@ def _render_savings_closure_control(queue: pd.DataFrame, credit_price: float) ->
         height=260,
         max_rows=10,
     )
-    with st.expander("Deploy scheduled savings verification", expanded=False):
+    with st.expander("Savings Task Status", expanded=False):
         defer_source_note(
-            "This Snowflake procedure/task verifies warehouse cost-control actions from exact metering. "
-            "Chargeback and database/user allocations still require owner evidence."
+            "Scheduled savings measurement stays runbook-reviewed. "
+            "Chargeback and database/user allocations still require routing telemetry."
         )
-        st.code(build_cost_savings_verification_sql(), language="sql")
+        render_shell_snapshot((
+            ("Measurement", "Telemetry required"),
+            ("Task review", "Required"),
+            ("Closure status", "Measured after change"),
+            ("Execution", "Runbook only"),
+        ))
 
 
 def _nullable_float(row: pd.Series, column: str) -> float | None:
@@ -1363,12 +1398,12 @@ def _build_cost_period_explanation(
         "ANSWER": f"{top_wh} is the largest loaded increase at {top_delta:+,.2f} credits.",
         "DOLLAR_IMPACT": f"${credits_to_dollars(top_delta, credit_price):+,.0f}",
         "EVIDENCE": "Cost cockpit current/prior warehouse movement.",
-        "NEXT_ACTION": "Open Cost & Contract recommendations to confirm queue, spill, p95, settings, and dollar evidence for that warehouse.",
+        "NEXT_ACTION": "Open Cost & Contract recommendations to confirm queue, spill, p95, settings, and dollar telemetry for that warehouse.",
     })
     rows.append({
         "QUESTION": "Is this a short spike or trend?",
         "ANSWER": f"7d vs 30d {_format_optional_pct(pct_vs_30d)}; YOY7 {_format_optional_pct(yoy_7d)}; {yoy_state}.",
-        "DOLLAR_IMPACT": "Trend proof",
+        "DOLLAR_IMPACT": "Trend telemetry",
         "EVIDENCE": "Complete-day 7d, 30d, and prior-year metering.",
         "NEXT_ACTION": "Use the run-rate lens before calling same-day partial metering a real cost incident.",
     })
@@ -1377,7 +1412,7 @@ def _build_cost_period_explanation(
         "ANSWER": f"{open_count:,} open action(s), ${open_savings:,.0f}/mo estimated savings.",
         "DOLLAR_IMPACT": f"${open_savings:,.0f}/mo",
         "EVIDENCE": "Open Cost & Contract action queue rows.",
-        "NEXT_ACTION": "Work owner-approved actions first and verify savings with post-period metering.",
+        "NEXT_ACTION": "Work measured actions first and confirm savings with post-period metering.",
     })
     return pd.DataFrame(rows)
 
@@ -1455,7 +1490,7 @@ def _build_cost_source_health_board(
     service_lens: pd.DataFrame,
     state: dict | None = None,
 ) -> tuple[dict, pd.DataFrame]:
-    """Build a compact source-health panel for official and OVERWATCH cost proof."""
+    """Build a compact source-health panel for official and OVERWATCH cost telemetry."""
     state = state or st.session_state
     rows: list[dict] = []
     cockpit_error = str(state.get("cost_contract_cockpit_error", "") or "")
@@ -1471,7 +1506,7 @@ def _build_cost_source_health_board(
         _source_state(cockpit, cockpit_error, empty_state="Load Needed"),
         _loaded_rows(cockpit),
         "Current/prior movement loaded from fast warehouse metering summary or live Account Usage."
-        if _loaded_rows(cockpit) else "Cost cockpit has not loaded warehouse movement proof.",
+        if _loaded_rows(cockpit) else "Warehouse movement is available after Cost Cockpit refresh.",
         "Load Cost Cockpit before explaining bill movement.",
         "ACCOUNT_USAGE warehouse metering latency applies; summary refresh is preferred.",
     )
@@ -1481,7 +1516,7 @@ def _build_cost_source_health_board(
         "Complete-day trend",
         _source_state(run_rate, run_error, empty_state="Load Needed"),
         _loaded_rows(run_rate),
-        "7d, 30d, and prior-year complete-day windows are loaded." if _loaded_rows(run_rate) else "Run-rate lens has not loaded complete-day trend proof.",
+        "7d, 30d, and prior-year complete-day windows are ready." if _loaded_rows(run_rate) else "Complete-day trend context is available after Cost Cockpit refresh.",
         "Use complete-day trend before declaring spikes or savings.",
         "Uses the fast summary first, then bounded live warehouse metering fallback.",
     )
@@ -1493,7 +1528,7 @@ def _build_cost_source_health_board(
         _loaded_rows(attribution),
         "Warehouse credits have been reconciled to query-attributed or allocated execution cost."
         if _loaded_rows(attribution) else "No query attribution reconciliation rows loaded.",
-        "Review idle/unallocated gap before assigning query owners.",
+        "Review idle/unallocated gap before routing query follow-up.",
         "QUERY_ATTRIBUTION_HISTORY can lag and excludes idle/serverless/AI costs.",
     )
     _add_source_health_row(
@@ -1508,13 +1543,13 @@ def _build_cost_source_health_board(
     )
     _add_source_health_row(
         rows,
-        "Action and savings proof",
-        "Queue and verified savings",
+        "Action and savings telemetry",
+        "Queue and measured savings",
         "Unavailable" if verification_error else "Ready" if _loaded_rows(queue) or _loaded_rows(verification_health) else "No Rows",
         _loaded_rows(queue) + _loaded_rows(verification_health),
-        "Action queue or savings verifier evidence is loaded." if _loaded_rows(queue) or _loaded_rows(verification_health) else "No queue/verifier rows loaded for this role.",
-        "Keep savings estimated until verifier evidence is attached.",
-        "OVERWATCH summary and action evidence; no direct Snowflake billing scan.",
+        "Action queue or savings measurement telemetry is loaded." if _loaded_rows(queue) or _loaded_rows(verification_health) else "No queue/measurement rows loaded for this role.",
+        "Keep savings estimated until measurement telemetry is available.",
+        "OVERWATCH summary and action telemetry; no direct Snowflake billing scan.",
     )
 
     board = pd.DataFrame(rows)
@@ -1721,19 +1756,19 @@ def _render_cost_source_health(
     )
     if board.empty:
         return
-    st.markdown("**Cost Source Health**")
+    st.markdown("**Cost Data Health**")
     render_shell_snapshot((
-        ("Ready Sources", f"{summary['ready']:,}"),
+        ("Ready Inputs", f"{summary['ready']:,}"),
         ("Review / On Demand", f"{summary['review']:,}"),
         ("Unavailable", f"{summary['unavailable']:,}"),
     ))
     render_priority_dataframe(
         board,
-        title="Cost source readiness",
+        title="Cost data health",
         priority_columns=["STATE", "SOURCE", "SCOPE", "ROWS_LOADED", "FRESHNESS", "EVIDENCE", "NEXT_ACTION"],
         sort_by=["STATE", "SOURCE"],
         ascending=[True, True],
-        raw_label="All cost source health rows",
+        raw_label="All cost data-health rows",
         height=260,
         max_rows=8,
     )
@@ -1871,21 +1906,21 @@ def _build_cost_control_coverage_board(
         rows,
         "Exact warehouse metering",
         "Ready" if _has_columns(cockpit, ["CURRENT_CREDITS", "PRIOR_CREDITS"]) else "Load Needed",
-        "Cockpit has exact WAREHOUSE_METERING_HISTORY current/prior credits." if _has_columns(cockpit, ["CURRENT_CREDITS", "PRIOR_CREDITS"]) else "Cost cockpit has not loaded exact warehouse movement yet.",
+        "Cockpit has exact current/prior warehouse credits." if _has_columns(cockpit, ["CURRENT_CREDITS", "PRIOR_CREDITS"]) else "Exact warehouse movement is available after Cost Cockpit refresh.",
         "Load Cost Cockpit before explaining any bill movement.",
     )
     _add_coverage_row(
         rows,
         "7-day average and YOY",
         "Ready" if _has_columns(run_rate, ["AVG_DAILY_7D", "YOY_7D_PCT", "YOY_30D_PCT"]) else "Load Needed",
-        "Run-rate lens has complete-day 7d average and prior-year comparison." if _has_columns(run_rate, ["AVG_DAILY_7D", "YOY_7D_PCT", "YOY_30D_PCT"]) else "Run-rate/YOY evidence is not loaded.",
-        "Load Cost Cockpit to populate complete-day run-rate and YOY proof.",
+        "Run-rate lens has complete-day 7d average and prior-year comparison." if _has_columns(run_rate, ["AVG_DAILY_7D", "YOY_7D_PCT", "YOY_30D_PCT"]) else "Run-rate and YOY trend context is available after refresh.",
+        "Load Cost Cockpit to populate complete-day run-rate and YOY telemetry.",
     )
     _add_coverage_row(
         rows,
         "Company and environment split",
         "Ready" if _has_columns(chargeback, ["COMPANY", "ENVIRONMENT"]) or _has_columns(explorer, ["COMPANY", "ENVIRONMENT_ROLLUP"]) else "Review",
-        "Chargeback/Cost Explorer includes company and environment dimensions." if _has_columns(chargeback, ["COMPANY", "ENVIRONMENT"]) or _has_columns(explorer, ["COMPANY", "ENVIRONMENT_ROLLUP"]) else "Company/environment attribution is not loaded in this session.",
+        "Chargeback/Cost Explorer includes company and environment dimensions." if _has_columns(chargeback, ["COMPANY", "ENVIRONMENT"]) or _has_columns(explorer, ["COMPANY", "ENVIRONMENT_ROLLUP"]) else "Company/environment attribution is available after refresh.",
         "Load Cost Explorer or Chargeback before defending ALFA/Trexis or PROD/DEV allocation.",
     )
     _add_coverage_row(
@@ -1899,7 +1934,7 @@ def _build_cost_control_coverage_board(
         rows,
         "Role, user, and department drivers",
         "Ready" if _has_columns(explorer, ["ROLE_NAME", "USER_NAME", "DEPARTMENT"]) else "Review",
-        "Cost Explorer detail includes role, user, and department dimensions." if _has_columns(explorer, ["ROLE_NAME", "USER_NAME", "DEPARTMENT"]) else "Role/user/department cost drivers are not loaded.",
+        "Cost Explorer detail includes role, user, and department dimensions." if _has_columns(explorer, ["ROLE_NAME", "USER_NAME", "DEPARTMENT"]) else "Role/user/department cost drivers are available after refresh.",
         "Load Cost Explorer and sort by estimated cost before assigning optimization work.",
     )
 
@@ -1914,18 +1949,18 @@ def _build_cost_control_coverage_board(
         rows,
         "Owned cost action queue",
         "Ready" if not open_cost_queue.empty and owner_ready == len(open_cost_queue) else "Review" if not open_cost_queue.empty else "No Rows",
-        f"{len(open_cost_queue):,} open cost action(s); {owner_ready:,} have owner-source evidence.",
-        "Route cost findings through the action queue with owner, due date, approval, and verification proof.",
+        f"{len(open_cost_queue):,} open cost action(s); {owner_ready:,} have route-source telemetry.",
+        "Route cost findings through the action queue with route, due date, savings status, and closure telemetry.",
     )
 
     verification_summary, _ = _build_savings_verification_task_summary(verification_health)
     verifier_state = str(verification_summary.get("state") or "Unknown")
     _add_coverage_row(
         rows,
-        "Verified savings ledger",
+        "Measured savings ledger",
         "Ready" if verifier_state == "Ready" else "Review",
-        str(verification_summary.get("evidence") or "Savings verifier health has not been loaded."),
-        str(verification_summary.get("next_action") or "Deploy and monitor the scheduled savings verifier task."),
+        str(verification_summary.get("evidence") or "Savings measurement health is available after refresh."),
+        str(verification_summary.get("next_action") or "Deploy and monitor the scheduled savings measurement task."),
     )
     _add_coverage_row(
         rows,
@@ -1939,7 +1974,7 @@ def _build_cost_control_coverage_board(
         "Shared-cost disclosure",
         "Ready",
         "Warehouse totals are exact; user/query/database chargeback is explicitly labeled Allocated / Estimated.",
-        "Keep shared warehouse and no-database-context costs out of exact PROD/DEV claims until owner/tag proof exists.",
+        "Keep shared warehouse and no-database-context costs out of exact PROD/DEV claims until tag telemetry exists.",
     )
 
     board = pd.DataFrame(rows)
@@ -1965,7 +2000,7 @@ def _build_cost_allocation_trust_board(
     queue: pd.DataFrame,
     state: dict | None = None,
 ) -> tuple[dict, pd.DataFrame]:
-    """Classify cost evidence as exact, allocated/estimated, or not yet defensible."""
+    """Classify cost telemetry as exact, allocated/estimated, or not yet defensible."""
     state = state or st.session_state
     rows: list[dict] = []
     explorer = _state_frame(state, "df_cost_explorer_detail")
@@ -1985,7 +2020,7 @@ def _build_cost_allocation_trust_board(
     add(
         "Contract and warehouse totals",
         "Exact" if exact_loaded and run_rate_loaded else "Load Needed",
-        "Warehouse metering and complete-day run-rate/YOY are loaded." if exact_loaded and run_rate_loaded else "Exact warehouse totals or complete-day run-rate evidence is missing.",
+        "Warehouse metering and complete-day run-rate/YOY are loaded." if exact_loaded and run_rate_loaded else "Exact warehouse totals or complete-day run-rate telemetry is missing.",
         "Load Cost Cockpit before defending contract pace, 7-day average, or YOY movement.",
     )
 
@@ -1993,7 +2028,7 @@ def _build_cost_allocation_trust_board(
     add(
         "Company and environment view",
         "Allocated/Estimated" if company_env_loaded else "Review",
-        "Company/environment split is present; database-attributed cost remains allocated where warehouse usage is shared." if company_env_loaded else "Company/environment allocation is not loaded in this session.",
+        "Company/environment split is present; database-attributed cost remains allocated where warehouse usage is shared." if company_env_loaded else "Company/environment allocation is available after refresh.",
         "Load Cost Explorer or Chargeback before explaining ALFA/Trexis or PROD/DEV cost movement.",
     )
 
@@ -2008,8 +2043,8 @@ def _build_cost_allocation_trust_board(
         "Database attribution",
         "Allocated/Estimated" if db_loaded else "Review",
         (
-            f"Database drilldown loaded; {estimated_rows:,} row(s) explicitly carry allocated/shared/estimated source basis."
-            if db_loaded else "Database attribution is not loaded."
+            f"Database drilldown loaded; {estimated_rows:,} row(s) explicitly carry allocated/shared/estimated measurement."
+            if db_loaded else "Database attribution is available after refresh."
         ),
         "Use database views for chargeback directionally; do not present shared warehouse database spend as exact.",
     )
@@ -2018,7 +2053,7 @@ def _build_cost_allocation_trust_board(
     add(
         "Role, user, department drivers",
         "Allocated/Estimated" if human_driver_loaded else "Review",
-        "Human and department cost drivers are available for prioritization." if human_driver_loaded else "Role/user/department drilldown is not loaded.",
+        "Human and department cost drivers are available for prioritization." if human_driver_loaded else "Role/user/department drilldown is available after refresh.",
         "Load Cost Explorer before assigning optimization work to teams or departments.",
     )
 
@@ -2031,9 +2066,9 @@ def _build_cost_allocation_trust_board(
         "Allocated/Estimated" if no_database_rows else "Ready" if db_loaded else "Review",
         (
             f"{no_database_rows:,} loaded row(s) have no database context and must stay outside exact PROD/DEV claims."
-            if no_database_rows else "No loaded database-attribution rows are missing database context." if db_loaded else "No database-attribution rows loaded."
+            if no_database_rows else "No loaded database-attribution rows are missing database context." if db_loaded else "Database-attribution rows are available after refresh."
         ),
-        "Keep no-database, login-only, and shared-service spend labeled allocated/estimated until owner/tag proof exists.",
+        "Keep no-database, login-only, and shared-service spend labeled allocated/estimated until tag telemetry exists.",
     )
 
     open_cost_queue = pd.DataFrame()
@@ -2051,8 +2086,8 @@ def _build_cost_allocation_trust_board(
     add(
         "Optimization closure trust",
         "Ready" if not open_cost_queue.empty and owner_ready == len(open_cost_queue) and verification_ready > 0 else "Review" if not open_cost_queue.empty else "No Rows",
-        f"{len(open_cost_queue):,} open cost action(s); {owner_ready:,} owner-routed; {verification_ready:,} verified/completed.",
-        "Do not claim savings until owner approval, measurement period, verification result, and closure evidence are attached.",
+        f"{len(open_cost_queue):,} open cost action(s); {owner_ready:,} routed; {verification_ready:,} measured/completed.",
+        "Do not claim savings until the measurement period is complete and the scheduled ledger shows the outcome.",
     )
 
     board = pd.DataFrame(rows)
@@ -2144,7 +2179,7 @@ def _build_cost_drilldown_command_map(
         (
             f"7d avg {safe_float(run_rate.iloc[0].get('AVG_DAILY_7D')):,.2f} credits; "
             f"YOY7 {safe_float(run_rate.iloc[0].get('YOY_7D_PCT')):+.1f}%"
-            if run_loaded and not run_rate.empty else "No run-rate evidence loaded"
+            if run_loaded and not run_rate.empty else "No run-rate telemetry loaded"
         ),
         "Use complete-day 7d average and YOY before calling a spike real.",
         "Explain bill / attribution / contract",
@@ -2173,7 +2208,7 @@ def _build_cost_drilldown_command_map(
         "Ready" if db_loaded else "Review",
         "Allocated/Estimated",
         loaded_rows(chargeback, explorer),
-        f"{no_db_rows:,} no-database row(s)" if db_loaded else "No database rows loaded",
+        f"{no_db_rows:,} no-database row(s)" if db_loaded else "Database rows are available after refresh",
         "Show PROD, DEV_ALL, individual DEV databases, and keep no-database spend out of exact claims.",
         "Explain bill / attribution / contract",
         2 if db_loaded else 3,
@@ -2185,7 +2220,7 @@ def _build_cost_drilldown_command_map(
         "Ready" if human_loaded else "Review",
         "Allocated/Estimated",
         loaded_rows(explorer),
-        "Role/user/department drivers loaded" if human_loaded else "Human driver rows not loaded",
+        "Role/user/department drivers ready" if human_loaded else "Human driver rows are available after refresh",
         "Sort by estimated dollars before assigning work to a department or user.",
         "Explain bill / attribution / contract",
         2 if human_loaded else 3,
@@ -2204,12 +2239,12 @@ def _build_cost_drilldown_command_map(
             ).sum()
         )
     add(
-        "Savings closure proof",
+        "Savings closure status",
         "Ready" if not open_cost_queue.empty and verified else "Review" if not open_cost_queue.empty else "No Rows",
-        "Exact after verification",
+        "Measured after change",
         len(open_cost_queue),
-        f"{verified:,} verified/completed action(s)",
-        "Do not count savings until measurement, owner approval, and verification result are attached.",
+        f"{verified:,} measured/completed action(s)",
+        "Do not count savings until measurement is complete and the scheduled ledger shows the outcome.",
         "Recommendations and action queue",
         2 if verified else 3,
     )
@@ -2262,7 +2297,7 @@ def _render_cost_control_coverage_board(
     ))
     render_priority_dataframe(
         board,
-        title="Cost evidence coverage",
+        title="Cost telemetry coverage",
         priority_columns=["STATE", "CONTROL", "EVIDENCE", "NEXT_ACTION", "OWNER"],
         sort_by=["STATE", "CONTROL"],
         ascending=[True, True],
@@ -2382,7 +2417,7 @@ def _build_cost_decomposition_board(
             "Warehouse movement",
             "Load Needed",
             "Review",
-            "Exact warehouse metering has not been loaded.",
+            "Exact warehouse metering is available after refresh.",
             "Load the Cost Control Cockpit before explaining contract movement.",
         )
 
@@ -2402,7 +2437,7 @@ def _build_cost_decomposition_board(
             "7-day average and YOY",
             "Load Needed",
             "Review",
-            "Run-rate evidence has not been loaded.",
+            "Run-rate trend context is available after refresh.",
             "Reload the run-rate lens before making trend claims.",
         )
 
@@ -2410,29 +2445,29 @@ def _build_cost_decomposition_board(
         "Company and environment split",
         "Ready" if company_loaded else "Review",
         "Allocated/Estimated",
-        "Company/environment split is present." if company_loaded else "Company/environment attribution is not loaded.",
+        "Company/environment split is present." if company_loaded else "Company/environment attribution is available after refresh.",
         "Use this for ALFA/Trexis and PROD/DEV direction, not as exact allocation.",
     )
     add(
         "Database, DEV rollup, no-database spend",
         "Ready" if db_loaded else "Review",
         "Allocated/Estimated",
-        "Database-attributed rows are present." if db_loaded else "Database attribution is not loaded.",
+        "Database-attributed rows are present." if db_loaded else "Database attribution is available after refresh.",
         "Show PROD, DEV_ALL, individual DEV databases, and keep shared/no-db spend labeled allocated or estimated.",
     )
     add(
         "Role, user, department drivers",
         "Ready" if human_loaded else "Review",
         "Allocated/Estimated",
-        "Role, user, and department dimensions are available." if human_loaded else "Human driver rows are not loaded.",
+        "Role, user, and department dimensions are available." if human_loaded else "Human driver rows are available after refresh.",
         "Sort by estimated dollars before assigning optimization work.",
     )
     add(
         "Open cost action queue",
         "Ready" if not open_cost_queue.empty else "No Rows",
-        "Exact after verification" if not open_cost_queue.empty else "No Rows",
+        "Measured after change" if not open_cost_queue.empty else "No Rows",
         f"{len(open_cost_queue):,} open cost action(s)." if not open_cost_queue.empty else "No cost actions are loaded.",
-        "Use the queue to close savings with owner, proof, and verification.",
+        "Use the queue to close savings with route, status, and post-period measurement.",
     )
 
     board = pd.DataFrame(rows)
@@ -2489,7 +2524,7 @@ def _cost_native_control_scope(control_type: str) -> str:
         return "Warehouse-only"
     if "BUDGET" in text:
         return "Account / shared / serverless / AI capable"
-    return "OVERWATCH evidence control"
+    return "OVERWATCH telemetry control"
 
 
 def _first_frame_value(frame: pd.DataFrame | None, column: str, default: object = "") -> object:
@@ -2536,8 +2571,8 @@ def _build_budget_anomaly_command_center(
     yoy_7d_float = safe_float(yoy_7d) if yoy_7d is not None and not pd.isna(yoy_7d) else 0.0
     yoy_30d = _first_frame_value(run_rate, "YOY_30D_PCT", None)
     yoy_30d_float = safe_float(yoy_30d) if yoy_30d is not None and not pd.isna(yoy_30d) else 0.0
-    run_state = str(_first_frame_value(run_rate, "RUN_RATE_STATE", "Not loaded") or "Not loaded")
-    yoy_state = str(_first_frame_value(run_rate, "YOY_STATE", "Not loaded") or "Not loaded")
+    run_state = str(_first_frame_value(run_rate, "RUN_RATE_STATE", "On demand") or "On demand")
+    yoy_state = str(_first_frame_value(run_rate, "YOY_STATE", "On demand") or "On demand")
     top_yoy_wh = str(_first_frame_value(run_rate, "TOP_YOY_INCREASE_WAREHOUSE", "No YOY baseline") or "No YOY baseline")
     top_yoy_delta = safe_float(_first_frame_value(run_rate, "TOP_YOY_INCREASE_CREDITS", 0))
 
@@ -2562,9 +2597,9 @@ def _build_budget_anomaly_command_center(
     human_loaded = _has_columns(explorer, ["ROLE_NAME", "USER_NAME", "DEPARTMENT"])
 
     try:
-        from sections.budget_governance import _build_budget_governance_board
+        from sections.budget_monitoring import _build_budget_monitoring_board
 
-        budget_summary, budget_board = _build_budget_governance_board()
+        budget_summary, budget_board = _build_budget_monitoring_board()
     except Exception:
         budget_summary, budget_board = {"score": 0, "ready": 0, "partial": 1}, pd.DataFrame()
 
@@ -2607,7 +2642,7 @@ def _build_budget_anomaly_command_center(
             f"top warehouse increase {top_wh} {top_delta:+,.2f} credits (${top_delta_dollars:+,.0f})."
         ),
         "Explain the top warehouse driver before changing budget limits or contract assumptions.",
-        "Open Explain bill / attribution / contract, then attach owner and metering proof for the top increase.",
+        "Open Explain bill / attribution / contract, then record route and metering telemetry for the top increase.",
         "Cost cockpit current/prior WAREHOUSE_METERING_HISTORY and top warehouse delta.",
         "Do not raise budget limits or call this a contract issue until the top driver is assigned.",
         "Cost & Contract > Explain bill / attribution / contract",
@@ -2640,24 +2675,24 @@ def _build_budget_anomaly_command_center(
         "Resource Monitor",
         f"{top_wh} is the current top warehouse mover; resource monitors are useful only for warehouse credit control.",
         "Review warehouse-level resource monitor assignment for the top mover, but use Budgets for serverless, AI, and shared resources.",
-        "Open Cost & Contract and Governance & Security controls to review monitor assignment and threshold SQL after owner approval.",
+        "Open Cost & Contract and Security Monitoring controls to review monitor assignment and threshold SQL after telemetry review.",
         "SHOW RESOURCE MONITORS; SHOW WAREHOUSES LIKE top warehouse; WAREHOUSE_METERING_HISTORY.",
         "Do not use resource monitors as AI/serverless budget controls; Snowflake budgets are the correct surface there.",
-        "Cost & Contract > Recommendations and action queue / Budget governance",
+        "Cost & Contract > Recommendations and action queue / Budget Monitoring",
         top_delta_dollars,
     )
     ai_severity = "High" if cortex_projection > 0 or cortex_exceptions > 0 else "Medium"
     add(
         "AI budget and quota",
         ai_severity,
-        "Cortex spend control" if cortex_projection > 0 or cortex_exceptions > 0 else "Cortex control readiness",
+        "Cortex spend control" if cortex_projection > 0 or cortex_exceptions > 0 else "Cortex control status",
         "Snowflake Budget + Per-User AI Quota",
         f"Loaded Cortex projection ${cortex_projection:,.0f}/30d with {cortex_exceptions:,} exception(s).",
         "Route Cortex usage through shared AI budgets and per-user quota review before broadening access.",
-        "Open Budget governance to deploy shared AI budget/quota SQL; open AI and Cortex spend for first/last usage and user proof.",
+        "Open Budget Monitoring to deploy shared AI budget/quota SQL; open AI and Cortex spend for first/last usage and user telemetry.",
         "Cortex usage history, shared AI budget policy, per-user quota action view.",
-        "Do not revoke AI access or enforce quotas from projected spend alone; use dry-run and approval first.",
-        "Cost & Contract > Budget governance / AI and Cortex spend",
+        "Do not revoke AI access or enforce quotas from projected spend alone; use dry-run review first.",
+        "Cost & Contract > Budget Monitoring / AI and Cortex spend",
         cortex_projection,
     )
     add(
@@ -2667,10 +2702,10 @@ def _build_budget_anomaly_command_center(
         "Snowflake Budget - Shared Resource Budget",
         f"Ready budget controls {safe_int(budget_summary.get('ready'))}; partial controls {safe_int(budget_summary.get('partial'))}.",
         "Use Snowflake Budgets for AI, serverless, and shared resources because warehouse monitors cannot see those costs.",
-        "Deploy account/shared AI budgets with verified email recipients and projected/actual thresholds.",
+        "Deploy account/shared AI budgets with checked email recipients and projected/actual thresholds.",
         "Budget policy frame, SET_EMAIL_NOTIFICATIONS, GET_SHARED_RESOURCES, spending history.",
         "Do not present warehouse-only monitors as full account or AI cost control.",
-        "Cost & Contract > Budget governance",
+        "Cost & Contract > Budget Monitoring",
         0,
     )
     add(
@@ -2682,8 +2717,8 @@ def _build_budget_anomaly_command_center(
         "Treat custom actions as incident creation and notification, not autonomous destructive remediation.",
         "Attach budget custom actions after confirming procedure access and SNOWFLAKE application grants.",
         "ADD_CUSTOM_ACTION, CONFIRM_CUSTOM_ACTIONS_ACCESS, TASK_HISTORY for triggered procedures.",
-        "Do not suspend warehouses or revoke users from budget custom actions without approval and a cycle-start recovery path.",
-        "Cost & Contract > Budget governance",
+        "Do not suspend warehouses or revoke users from budget custom actions without operational review and a cycle-start recovery path.",
+        "Cost & Contract > Budget Monitoring",
         0,
     )
     queue_severity = "High" if high_open else "Medium" if not open_cost_queue.empty else "Info"
@@ -2692,11 +2727,11 @@ def _build_budget_anomaly_command_center(
         queue_severity,
         "Open cost actions" if not open_cost_queue.empty else "No loaded cost actions",
         "OVERWATCH Action Queue",
-        f"{len(open_cost_queue):,} open cost action(s), {high_open:,} critical/high, ${open_savings:,.0f}/mo estimated savings, {verified_open:,} verified/completed.",
-        "Work owner-approved high-impact actions first and keep savings estimated until measured and verified.",
-        "Open Recommendations and action queue; require owner, ticket, verification query, baseline/current values, and closure proof.",
-        "OVERWATCH_ACTION_QUEUE with owner approval, verification status, and measured post-period usage.",
-        "Do not claim savings from recommendations that are fixed but unverified.",
+        f"{len(open_cost_queue):,} open cost action(s), {high_open:,} critical/high, ${open_savings:,.0f}/mo estimated savings, {verified_open:,} measured/completed.",
+        "Work measured high-impact actions first and keep savings estimated until post-period usage confirms the outcome.",
+        "Open Recommendations and action queue; require route, ticket, baseline/current values, and closure status.",
+        "OVERWATCH_ACTION_QUEUE with telemetry status, measured post-period usage, and closure state.",
+        "Do not claim savings from recommendations that are fixed but still awaiting measurement.",
         "Cost & Contract > Recommendations and action queue",
         open_savings,
     )
@@ -2710,9 +2745,9 @@ def _build_budget_anomaly_command_center(
             f"Company/env loaded={company_loaded}; database loaded={db_loaded}; role/user/department loaded={human_loaded}. "
             "Warehouse totals are exact; database/user/department views are allocated when warehouses are shared."
         ),
-        "Use drilldowns to assign ownership, but keep shared warehouse and no-database rows labeled Allocated / Estimated.",
-        "Load Cost Explorer or Chargeback before assigning database, role, user, or department ownership.",
-        "QUERY_HISTORY, TAG_REFERENCES, owner directory, allocation source basis, chargeback-ready flag.",
+        "Use drilldowns to route work, but keep shared warehouse and no-database rows labeled Allocated / Estimated.",
+        "Load Cost Explorer or Chargeback before routing database, role, user, or department work.",
+        "QUERY_HISTORY, TAG_REFERENCES, monitoring route context, allocation measurement, chargeback-ready flag.",
         "Do not apply PROD/DEV database filters to login-only/no-database context or present shared allocation as exact.",
         "Cost & Contract > Explain bill / attribution / contract",
         0,
@@ -2720,7 +2755,7 @@ def _build_budget_anomaly_command_center(
 
     board = pd.DataFrame(rows)
     if board.empty:
-        return {"score": 0, "critical_high": 0, "budget_controls": 0, "top_lane": "No loaded cost governance evidence"}, board
+        return {"score": 0, "critical_high": 0, "budget_controls": 0, "top_lane": "No loaded Cost Monitoring telemetry"}, board
     board["_SEVERITY_RANK"] = board["SEVERITY"].apply(_cost_command_severity_rank)
     board = board.sort_values(["_SEVERITY_RANK", "VALUE_AT_RISK_USD"], ascending=[True, False]).drop(columns=["_SEVERITY_RANK"])
     severity = board["SEVERITY"].fillna("").astype(str)
@@ -2734,10 +2769,10 @@ def _build_budget_anomaly_command_center(
         "medium": medium,
         "budget_controls": int(board["NATIVE_CONTROL"].fillna("").astype(str).str.contains("Budget", case=False, regex=False).sum()),
         "warehouse_only_controls": int(board["CONTROL_SCOPE"].eq("Warehouse-only").sum()),
-        "top_lane": str(top.get("LANE") or "Cost governance"),
+        "top_lane": str(top.get("LANE") or "Cost Monitoring"),
         "top_signal": str(top.get("SIGNAL") or "Cost movement"),
         "top_next_action": str(top.get("NEXT_ACTION") or "Open Cost & Contract drilldown."),
-        "top_native_control": str(top.get("NATIVE_CONTROL") or "OVERWATCH evidence control"),
+        "top_native_control": str(top.get("NATIVE_CONTROL") or "OVERWATCH telemetry control"),
     }
     return summary, board.reset_index(drop=True)
 
@@ -2905,7 +2940,7 @@ def _build_native_cost_control_inventory(
     state = state or st.session_state
     current_credits = safe_float(_first_frame_value(cockpit, "CURRENT_CREDITS", 0))
     prior_credits = safe_float(_first_frame_value(cockpit, "PRIOR_CREDITS", 0))
-    top_wh = str(_first_frame_value(cockpit, "TOP_INCREASE_WAREHOUSE", "Top warehouse not loaded") or "Top warehouse not loaded")
+    top_wh = str(_first_frame_value(cockpit, "TOP_INCREASE_WAREHOUSE", "On demand") or "On demand")
     top_delta = safe_float(_first_frame_value(cockpit, "TOP_INCREASE_CREDITS", 0))
     projected_30d = safe_float(_first_frame_value(run_rate, "PROJECTED_30D_FROM_7D", 0))
     delta_pct = ((current_credits - prior_credits) / prior_credits * 100) if prior_credits > 0 else 0.0
@@ -2914,9 +2949,9 @@ def _build_native_cost_control_inventory(
     verifier_summary, _ = _build_savings_verification_task_summary(verification_health)
 
     try:
-        from sections.budget_governance import _build_budget_governance_board
+        from sections.budget_monitoring import _build_budget_monitoring_board
 
-        budget_summary, _ = _build_budget_governance_board()
+        budget_summary, _ = _build_budget_monitoring_board()
     except Exception:
         budget_summary = {"score": 0, "ready": 0, "pattern": 0, "partial": 1}
 
@@ -2952,7 +2987,7 @@ def _build_native_cost_control_inventory(
         "Warehouse-only",
         f"Top mover {top_wh}; delta {top_delta:+,.2f} credits; current/prior movement {delta_pct:+.1f}%.",
         "Does not cover serverless, shared AI, Cortex, Snowpipe, clustering, or no-warehouse cost surfaces.",
-        "Generate a resource-monitor guardrail only after owner approval and quota review.",
+        "Generate a resource-monitor guardrail only after telemetry and quota review.",
         "Resource monitor guardrail",
         0,
     )
@@ -2962,8 +2997,8 @@ def _build_native_cost_control_inventory(
         "SNOWFLAKE.LOCAL.ACCOUNT_ROOT_BUDGET",
         "Account-level",
         f"Projected 30d from 7d ${credits_to_dollars(projected_30d, credit_price):,.0f}; ready budget controls {safe_int(budget_summary.get('ready'))}.",
-        "Spending limit must be approved against contract, renewal, and known planned workload.",
-        "Set account budget limit, threshold, and email target after DBA/FinOps approval.",
+        "Spending limit must be reviewed against contract, renewal, and known planned workload.",
+        "Set account budget limit, threshold, and email target after DBA/FinOps review.",
         "Native budgets",
         1,
     )
@@ -2972,9 +3007,9 @@ def _build_native_cost_control_inventory(
         "Ready to Deploy" if cortex_projection > 0 or cortex_exceptions > 0 else "Candidate",
         "SNOWFLAKE.CORE.BUDGET",
         "Shared AI / serverless",
-        f"Cortex projection ${cortex_projection:,.0f}/30d; {cortex_exceptions:,} exception(s) loaded.",
-        "Tagged-user coverage must be validated or AI shared-resource budget will miss users.",
-        "Deploy shared AI budget and verify GET_SHARED_RESOURCES plus user tag hygiene.",
+        f"Cortex projection ${cortex_projection:,.0f}/30d; {cortex_exceptions:,} exception(s) ready.",
+        "Tagged-user coverage must be checked or AI shared-resource budget will miss users.",
+        "Deploy shared AI budget and inspect GET_SHARED_RESOURCES plus user tag hygiene.",
         "Native budgets",
         2,
     )
@@ -2983,7 +3018,7 @@ def _build_native_cost_control_inventory(
         "Control Pattern",
         "CORTEX_USER grant + OVERWATCH quota table",
         "User-level AI",
-        f"Default alert recipient {DEFAULT_ALERT_EMAIL}; quota control remains dry-run until approved.",
+        f"Default alert recipient {DEFAULT_ALERT_EMAIL}; quota control remains dry-run until reviewed.",
         "Requires removing blanket PUBLIC Cortex access and routing users through a controlled role.",
         "Deploy quota table/action view, then review generated revoke/restore SQL before enforcement.",
         "Per-user AI quota",
@@ -3005,21 +3040,21 @@ def _build_native_cost_control_inventory(
         "Review",
         "Budget email + monitor notifications",
         "Recipient / Snowflake user preference",
-        f"Budget email target placeholder is {DEFAULT_ALERT_EMAIL}; resource monitors notify Snowflake users with verified email preferences.",
-        "Budget email and resource monitor notification mechanics are different and must be validated separately.",
-        "Verify budget recipient email and Snowflake user notification preferences before claiming alert readiness.",
+        f"Budget email target placeholder is {DEFAULT_ALERT_EMAIL}; resource monitors notify Snowflake users with configured email preferences.",
+        "Budget email and resource monitor notification mechanics are different and must be checked separately.",
+        "Check budget recipient email and Snowflake user notification preferences before claiming alert status.",
         "Inventory checks",
         5,
     )
-    verifier_state = str(verifier_summary.get("health_state") or "Not Loaded")
+    verifier_state = str(verifier_summary.get("health_state") or "On demand")
     add(
-        "Savings verification task",
+        "Savings measurement task",
         "Ready" if verifier_state.upper() == "HEALTHY" else "Review",
-        "OVERWATCH scheduled verifier",
-        "Estimated-to-verified savings control",
-        f"Verifier state {verifier_state}; open cost actions {len(open_cost_queue):,}.",
-        "Estimated savings are not audit-ready until owner-approved and measured after the change window.",
-        "Keep the verifier task healthy and reject savings claims without measured post-period proof.",
+        "OVERWATCH scheduled measurement",
+        "Estimated-to-measured savings control",
+        f"Measurement state {verifier_state}; open cost actions {len(open_cost_queue):,}.",
+        "Estimated savings are not closure-ready until measured after the change window.",
+        "Keep the measurement task healthy and reject savings claims without measured post-period telemetry.",
         "Inventory checks",
         6,
     )
@@ -3052,7 +3087,7 @@ def _build_cost_spike_root_cause_board(
     chargeback = _state_frame(state, "df_chargeback")
     current_credits = safe_float(_first_frame_value(cockpit, "CURRENT_CREDITS", 0))
     prior_credits = safe_float(_first_frame_value(cockpit, "PRIOR_CREDITS", 0))
-    top_wh = str(_first_frame_value(cockpit, "TOP_INCREASE_WAREHOUSE", "No warehouse loaded") or "No warehouse loaded")
+    top_wh = str(_first_frame_value(cockpit, "TOP_INCREASE_WAREHOUSE", "On demand") or "On demand")
     top_delta = safe_float(_first_frame_value(cockpit, "TOP_INCREASE_CREDITS", 0))
     delta_pct = ((current_credits - prior_credits) / prior_credits * 100) if prior_credits > 0 else 0.0
     avg_7d = safe_float(_first_frame_value(run_rate, "AVG_DAILY_7D", 0))
@@ -3130,16 +3165,16 @@ def _build_cost_spike_root_cause_board(
     add(
         "Medium" if company_driver["entity"] else "Watch",
         "Company / environment attribution",
-        company_driver["entity"] or "Not loaded",
+        company_driver["entity"] or "On demand",
         "Chargeback direction",
         (
-            f"Top loaded {company_driver['dimension']} is {company_driver['entity']} at ${company_driver['value_usd']:,.0f} across {company_driver['rows']:,} row(s)."
-            if company_driver["entity"] else "Company/environment cost attribution is not loaded in this session."
+            f"Top {company_driver['dimension']} is {company_driver['entity']} at ${company_driver['value_usd']:,.0f} across {company_driver['rows']:,} row(s)."
+            if company_driver["entity"] else "Company/environment cost attribution is available after refresh."
         ),
         "Medium" if company_driver["entity"] else "Low",
         "Allocated / Estimated",
         "Use ALFA/Trexis and PROD/DEV attribution to assign ownership, but keep shared warehouse disclosure attached.",
-        "Cost Explorer or Chargeback rows with company/environment dimensions and allocation source basis.",
+        "Cost Explorer or Chargeback rows with company/environment dimensions and allocation measurement.",
         "Cost & Contract > Explain bill / attribution / contract",
         company_driver["value_usd"],
         2,
@@ -3149,16 +3184,16 @@ def _build_cost_spike_root_cause_board(
     add(
         "Medium" if db_driver["entity"] else "Watch",
         "Database / DEV rollup",
-        db_driver["entity"] or "Not loaded",
+        db_driver["entity"] or "On demand",
         "Database-attributed cost candidate",
         (
-            f"Top loaded {db_driver['dimension']} is {db_driver['entity']} at ${db_driver['value_usd']:,.0f} across {db_driver['rows']:,} row(s)."
-            if db_driver["entity"] else "Database-level attribution is not loaded."
+            f"Top {db_driver['dimension']} is {db_driver['entity']} at ${db_driver['value_usd']:,.0f} across {db_driver['rows']:,} row(s)."
+            if db_driver["entity"] else "Database-level attribution is available after refresh."
         ),
         "Medium" if db_driver["entity"] else "Low",
         "Allocated / Estimated",
         "Drill into PROD, DEV_ALL, and individual DEV database views before assigning database ownership.",
-        "QUERY_HISTORY allocation, tags, and no-database/shared source-basis labels.",
+        "Query allocation, tags, and no-database/shared allocation measurement.",
         "Cost & Contract > Explain bill / attribution / contract",
         db_driver["value_usd"],
         3,
@@ -3168,16 +3203,16 @@ def _build_cost_spike_root_cause_board(
     add(
         "Medium" if human_driver["entity"] else "Watch",
         "Role / user / department",
-        human_driver["entity"] or "Not loaded",
+        human_driver["entity"] or "On demand",
         "Human ownership candidate",
         (
-            f"Top loaded {human_driver['dimension']} is {human_driver['entity']} at ${human_driver['value_usd']:,.0f} across {human_driver['rows']:,} row(s)."
-            if human_driver["entity"] else "Role, user, and department drilldown is not loaded."
+            f"Top {human_driver['dimension']} is {human_driver['entity']} at ${human_driver['value_usd']:,.0f} across {human_driver['rows']:,} row(s)."
+            if human_driver["entity"] else "Role, user, and department drilldown is available after refresh."
         ),
         "Medium" if human_driver["entity"] else "Low",
         "Allocated / Estimated",
-        "Assign optimization work only after the cost row has role/user/department evidence and owner source.",
-        "Cost Explorer detail with role, user, department, query count, and allocation source basis.",
+        "Assign optimization work only after the cost row has role/user/department telemetry and route context.",
+        "Cost Explorer detail with role, user, department, query count, and allocation measurement.",
         "Cost & Contract > Explain bill / attribution / contract",
         human_driver["value_usd"],
         4,
@@ -3192,11 +3227,11 @@ def _build_cost_spike_root_cause_board(
         "Open savings queue",
         f"{len(open_cost_queue):,} open cost action(s)",
         "Existing remediation candidates",
-        f"${savings:,.0f}/mo estimated savings loaded; keep savings estimated until verified.",
+        f"${savings:,.0f}/mo estimated savings loaded; keep savings estimated until measured.",
         "Medium" if not open_cost_queue.empty else "Low",
-        "Exact after verification",
-        "Work owner-approved actions first; reject fixed rows without post-period measured proof.",
-        "OVERWATCH_ACTION_QUEUE owner, ticket, approval, verification result, baseline/current values.",
+        "Measured after change",
+        "Work measured actions first; reject fixed rows without post-period measurement.",
+        "OVERWATCH_ACTION_QUEUE route, ticket, baseline/current values, and scheduled status.",
         "Cost & Contract > Recommendations and action queue",
         savings,
         5,
@@ -3218,7 +3253,7 @@ def _build_cost_spike_root_cause_board(
 
     board = pd.DataFrame(rows)
     if board.empty:
-        return {"score": 0, "critical_high": 0, "top_driver": "No loaded root-cause evidence"}, board
+        return {"score": 0, "critical_high": 0, "top_driver": "No loaded root-cause telemetry"}, board
     board["_SEVERITY_RANK"] = board["SEVERITY"].apply(_cost_command_severity_rank)
     board = board.sort_values(["_SEVERITY_RANK", "VALUE_AT_RISK_USD", "_RANK"], ascending=[True, False, True])
     critical_high = int(board["SEVERITY"].isin(["Critical", "High"]).sum())
@@ -3281,14 +3316,14 @@ def _build_change_cost_correlation_board(
     if changes.empty:
         add(
             "Medium" if spike_signal else "Watch",
-            "Change evidence not loaded",
+            "Change correlation pending",
             top_wh or "Cost scope",
             f"Top warehouse delta {top_delta:+,.2f} credits; 7d vs 30d {pct_vs_30d_float:+.1f}%.",
-            "No loaded Governance & Security change exceptions.",
-            "Cost movement cannot be cleared of change-correlation risk until Governance & Security is loaded for the same scope.",
-            "Load Governance & Security change evidence, then compare warehouse, query_id, task/procedure, DDL, grant, and policy events to the cost spike.",
-            "Governance & Security change exceptions plus Cost Cockpit/run-rate evidence for the same company/environment window.",
-            "Governance & Security > Object and access changes",
+            "No Security Monitoring change exceptions are ready for this scope.",
+            "Cost movement cannot be cleared of change-correlation risk until Security Monitoring is reviewed for the same scope.",
+            "Refresh Security Monitoring change telemetry, then compare warehouse, query, task/procedure, grant, and policy events to the cost spike.",
+            "Security Monitoring change exceptions plus Cost Cockpit/run-rate telemetry for the same company/environment window.",
+            "Security Monitoring > Object and access changes",
             0,
         )
     else:
@@ -3313,22 +3348,22 @@ def _build_change_cost_correlation_board(
             top_wh or matched_entity,
             f"Top warehouse delta {top_delta:+,.2f} credits; 7d vs 30d {pct_vs_30d_float:+.1f}%.",
             f"{matched_rows:,} row(s) mention the top warehouse; {warehouse_changes:,} warehouse/task/procedure/drift row(s) loaded.",
-            "A cost spike near warehouse/task/procedure drift must be treated as a root-cause candidate until query/change proof clears it.",
-            "Review query_id, actor, warehouse settings, task/procedure runtime, and rollback evidence before tuning or raising budget.",
-            "Change exception query_id, WAREHOUSE_METERING_HISTORY, QUERY_HISTORY, task/procedure history, and post-change proof.",
-            "Governance & Security > Controlled DBA actions",
+            "A cost spike near warehouse/task/procedure drift must be treated as a root-cause candidate until query/change telemetry clears it.",
+            "Review query_id, actor, warehouse settings, task/procedure runtime, and rollback status before tuning or raising budget.",
+            "Change exception query_id, WAREHOUSE_METERING_HISTORY, QUERY_HISTORY, task/procedure history, and post-change telemetry.",
+            "Security Monitoring > Controlled DBA actions",
             0,
         )
         add(
             "High" if high_rows and spike_signal else "Medium" if high_rows else "Info",
             "High-risk change near cost movement",
             matched_entity,
-            f"Cost movement active={spike_signal}; top warehouse {top_wh or 'not loaded'}.",
+            f"Cost movement active={spike_signal}; top warehouse {top_wh or 'On demand'}.",
             f"{high_rows:,} Critical/High change exception(s) loaded.",
-            "High-severity DDL/DCL/policy changes near cost movement require a bill explanation, not just a cost chart.",
-            "Attach change ticket, query_id, actor, object, and blast-radius proof to the cost incident.",
-            "Change-control readiness, object/change evidence, and Cost & Contract root-cause board.",
-            "Governance & Security > Object and access changes",
+            "High-severity object/access/policy changes near cost movement require a bill explanation, not just a cost chart.",
+            "Record change ticket, query_id, actor, object, and blast-radius telemetry on the cost incident.",
+            "Change-control status, object/change telemetry, and Cost & Contract root-cause board.",
+            "Security Monitoring > Object and access changes",
             1,
         )
         add(
@@ -3339,7 +3374,7 @@ def _build_change_cost_correlation_board(
             f"{access_ai_changes:,} grant/role/policy/tag/AI-related change row(s) loaded.",
             "AI spend jumps can be caused by access expansion, tag mistakes, or policy changes as much as workload growth.",
             "Compare Cortex first/last usage to access and tag changes before enforcing per-user quotas.",
-            "Cortex usage history, Governance & Security grants/policy rows, budget tag assignments.",
+            "Cortex usage history, Security Monitoring grants/policy rows, budget tag assignments.",
             "Cost & Contract > AI and Cortex spend",
             2,
         )
@@ -3356,13 +3391,13 @@ def _build_change_cost_correlation_board(
             "Do not close a cost incident as remediated while related change-control routes or closures are blocked.",
             "Work change-control blockers before declaring the cost spike explained or resolved.",
             "FACT_CHANGE_CONTROL_OPERABILITY_DAILY with route/closure blocked counts and verified closures.",
-            "Governance & Security > Change Control Summary",
+            "Security Monitoring > Change Control Summary",
             3,
         )
 
     board = pd.DataFrame(rows)
     if board.empty:
-        return {"score": 0, "high": 0, "top_correlation": "No change/cost evidence"}, board
+        return {"score": 0, "high": 0, "top_correlation": "No change/cost telemetry"}, board
     board["_SEVERITY_RANK"] = board["SEVERITY"].apply(_cost_command_severity_rank)
     board = board.sort_values(["_SEVERITY_RANK", "_RANK"], ascending=[True, True])
     high = int(board["SEVERITY"].isin(["Critical", "High"]).sum())
@@ -3375,7 +3410,7 @@ def _build_change_cost_correlation_board(
         "medium": medium,
         "top_correlation": str(top.get("CORRELATION") or "Change/cost correlation"),
         "top_entity": str(top.get("ENTITY") or "Unknown"),
-        "top_action": str(top.get("NEXT_ACTION") or "Load Governance & Security and compare to Cost & Contract."),
+        "top_action": str(top.get("NEXT_ACTION") or "Load Security Monitoring and compare to Cost & Contract."),
     }, board.drop(columns=["_SEVERITY_RANK", "_RANK"], errors="ignore").reset_index(drop=True)
 
 
@@ -3394,14 +3429,14 @@ def _cost_alert_message(row: pd.Series, *keys: str, default: str = "") -> str:
     return default
 
 
-def _build_cost_governance_alert_rows(
+def _build_cost_monitoring_alert_rows(
     *,
     budget_board: pd.DataFrame | None = None,
     root_cause: pd.DataFrame | None = None,
     correlation: pd.DataFrame | None = None,
     email_target: str = DEFAULT_ALERT_EMAIL,
 ) -> tuple[dict, pd.DataFrame]:
-    """Create Alert Center-ready rows from loaded Cost & Contract governance evidence."""
+    """Create Alert Center-ready rows from loaded Cost & Contract monitoring telemetry."""
     rows: list[dict] = []
 
     def add(
@@ -3420,7 +3455,7 @@ def _build_cost_governance_alert_rows(
         severity = str(severity or "Medium").title()
         if severity not in {"Critical", "High", "Medium", "Watch", "Info"}:
             severity = "Medium"
-        entity = str(entity or "Cost governance").strip()
+        entity = str(entity or "Cost Monitoring").strip()
         rows.append({
             "SEVERITY": severity,
             "CATEGORY": "Cost Control",
@@ -3444,14 +3479,14 @@ def _build_cost_governance_alert_rows(
         if "VALUE_AT_RISK_USD" in high.columns:
             high = high.sort_values("VALUE_AT_RISK_USD", ascending=False)
         for _, row in high.head(6).iterrows():
-            lane = _cost_alert_message(row, "LANE", default="Cost governance")
+            lane = _cost_alert_message(row, "LANE", default="Cost Monitoring")
             add(
                 severity=_cost_alert_message(row, "SEVERITY", default="High"),
-                alert_type=_cost_alert_message(row, "SIGNAL", default="Cost Governance Signal"),
+                alert_type=_cost_alert_message(row, "SIGNAL", default="Cost Monitoring Signal"),
                 entity=lane,
-                message=_cost_alert_message(row, "EVIDENCE", default="Cost governance signal requires review."),
-                suggested_action=_cost_alert_message(row, "NEXT_ACTION", "DBA_DECISION", default="Open Cost & Contract and work the cost governance lane."),
-                proof_query=_cost_alert_message(row, "PROOF_REQUIRED", default="Attach Cost & Contract budget/anomaly evidence."),
+                message=_cost_alert_message(row, "EVIDENCE", default="Cost Monitoring signal requires review."),
+                suggested_action=_cost_alert_message(row, "NEXT_ACTION", "DBA_DECISION", default="Open Cost & Contract and work the Cost Monitoring lane."),
+                proof_query=_cost_alert_message(row, "PROOF_REQUIRED", default="Record Cost & Contract budget/anomaly telemetry."),
                 route=_cost_alert_message(row, "ROUTE", default="Cost & Contract"),
                 owner="DBA / FinOps",
                 value_at_risk=safe_float(row.get("VALUE_AT_RISK_USD", 0)),
@@ -3471,7 +3506,7 @@ def _build_cost_governance_alert_rows(
                 entity=_cost_alert_message(row, "ENTITY", "DRIVER", default="Cost root cause"),
                 message=_cost_alert_message(row, "EVIDENCE", default="Cost root-cause candidate requires review."),
                 suggested_action=_cost_alert_message(row, "NEXT_ACTION", default="Open Cost & Contract root-cause drilldown."),
-                proof_query=_cost_alert_message(row, "PROOF_REQUIRED", default="Attach warehouse metering, run-rate, owner, and change evidence."),
+                proof_query=_cost_alert_message(row, "PROOF_REQUIRED", default="Record warehouse metering, run-rate, routing, and change telemetry."),
                 route=_cost_alert_message(row, "ROUTE", default="Cost & Contract"),
                 owner="DBA / FinOps",
                 value_at_risk=safe_float(row.get("VALUE_AT_RISK_USD", 0)),
@@ -3488,9 +3523,9 @@ def _build_cost_governance_alert_rows(
                 alert_type="Change Cost Correlation",
                 entity=_cost_alert_message(row, "ENTITY", "CORRELATION", default="Change/cost correlation"),
                 message=_cost_alert_message(row, "EVIDENCE", default="A recent change may explain cost movement."),
-                suggested_action=_cost_alert_message(row, "NEXT_ACTION", default="Compare change evidence to cost movement before tuning."),
-                proof_query=_cost_alert_message(row, "PROOF_REQUIRED", default="Attach change query_id, actor, ticket, and cost proof."),
-                route=_cost_alert_message(row, "ROUTE", default="Governance & Security"),
+                suggested_action=_cost_alert_message(row, "NEXT_ACTION", default="Compare change telemetry to cost movement before tuning."),
+                proof_query=_cost_alert_message(row, "PROOF_REQUIRED", default="Record change query_id, actor, ticket, and cost telemetry."),
+                route=_cost_alert_message(row, "ROUTE", default="Security Monitoring"),
                 owner="DBA / FinOps",
                 value_at_risk=0.0,
                 source_surface="Change + Cost Correlation",
@@ -3525,7 +3560,7 @@ def _build_cost_incident_timeline(
     alert_rows: pd.DataFrame | None = None,
     state: dict | None = None,
 ) -> tuple[dict, pd.DataFrame]:
-    """Build a compact incident narrative from cost movement to alert/action/verification."""
+    """Build a compact incident narrative from cost movement to alert/action status."""
     state = state or st.session_state
     root_cause = _state_frame(state, "cost_contract_spike_root_cause")
     correlation = _state_frame(state, "cost_contract_change_cost_correlation")
@@ -3574,8 +3609,8 @@ def _build_cost_incident_timeline(
             "Root cause candidate",
             _cost_alert_message(root, "ENTITY", "DRIVER", default=top_wh),
             _cost_alert_message(root, "EVIDENCE", default="Root cause candidate loaded."),
-            _cost_alert_message(root, "NEXT_ACTION", default="Confirm owner demand, workload mix, and setting changes before tuning."),
-            _cost_alert_message(root, "PROOF_REQUIRED", default="Attach Cost & Contract root-cause evidence."),
+            _cost_alert_message(root, "NEXT_ACTION", default="Confirm workload demand, workload mix, and setting changes before tuning."),
+            _cost_alert_message(root, "PROOF_REQUIRED", default="Record Cost & Contract root-cause telemetry."),
             _cost_alert_message(root, "ROUTE", default="Cost & Contract"),
         )
     else:
@@ -3585,7 +3620,7 @@ def _build_cost_incident_timeline(
             "Root cause candidate",
             top_wh,
             "Root-cause board has not been loaded for this incident window.",
-            "Load Cost Cockpit root-cause evidence before assigning savings or tuning work.",
+            "Load Cost Cockpit root-cause telemetry before assigning savings or tuning work.",
             "Cost Spike Root Cause board.",
             "Cost & Contract",
         )
@@ -3600,10 +3635,10 @@ def _build_cost_incident_timeline(
             _cost_alert_message(corr, "SEVERITY", default="Medium"),
             "Change correlation checked",
             _cost_alert_message(corr, "ENTITY", "CORRELATION", default=top_wh),
-            _cost_alert_message(corr, "EVIDENCE", default="Change/cost correlation evidence loaded."),
-            _cost_alert_message(corr, "NEXT_ACTION", default="Compare change evidence to the cost window before closure."),
-            _cost_alert_message(corr, "PROOF_REQUIRED", default="Attach change query_id, actor, ticket, and cost proof."),
-            _cost_alert_message(corr, "ROUTE", default="Governance & Security"),
+            _cost_alert_message(corr, "EVIDENCE", default="Change/cost correlation telemetry loaded."),
+            _cost_alert_message(corr, "NEXT_ACTION", default="Compare change telemetry to the cost window before closure."),
+            _cost_alert_message(corr, "PROOF_REQUIRED", default="Record change query_id, actor, ticket, and cost telemetry."),
+            _cost_alert_message(corr, "ROUTE", default="Security Monitoring"),
         )
     else:
         add(
@@ -3611,10 +3646,10 @@ def _build_cost_incident_timeline(
             "Medium",
             "Change correlation checked",
             top_wh,
-            "Governance & Security evidence is not loaded for this cost movement.",
-            "Load Governance & Security for the same company/environment before closing the incident as workload-only.",
-            "FACT_OBJECT_CHANGE or Governance & Security exception rows.",
-            "Governance & Security",
+            "Security Monitoring telemetry is available after refresh for this cost movement.",
+            "Review Security Monitoring for the same company/environment before closing the incident as workload-only.",
+            "FACT_OBJECT_CHANGE or Security Monitoring exception rows.",
+            "Security Monitoring",
         )
 
     if isinstance(alert_rows, pd.DataFrame) and not alert_rows.empty:
@@ -3627,9 +3662,9 @@ def _build_cost_incident_timeline(
             _cost_alert_message(alert, "SEVERITY", default="High"),
             "Alert routed",
             _cost_alert_message(alert, "ENTITY_NAME", default=top_wh),
-            _cost_alert_message(alert, "MESSAGE", default="Cost governance alert candidate is ready for Alert Center."),
+            _cost_alert_message(alert, "MESSAGE", default="Cost Monitoring alert candidate is ready for Alert Center."),
             _cost_alert_message(alert, "SUGGESTED_ACTION", default="Route the alert to DBA / FinOps email triage."),
-            _cost_alert_message(alert, "PROOF_QUERY", default="Attach the alert proof query."),
+            _cost_alert_message(alert, "PROOF_QUERY", default="Record the alert telemetry query."),
             "Alert Center",
         )
     else:
@@ -3638,20 +3673,20 @@ def _build_cost_incident_timeline(
             "Info",
             "Alert routed",
             top_wh,
-            "No Critical/High Cost & Contract alert candidate is loaded.",
-            "Keep monitoring; only route actionable Cost & Contract rows with proof.",
-            "Cost governance alert board.",
+            "No Critical/High Cost & Contract alert candidate is ready.",
+            "Keep monitoring; only route actionable Cost & Contract rows with telemetry.",
+            "Cost Monitoring alert board.",
             "Alert Center",
         )
 
     add(
         5,
         "High" if not open_cost_queue.empty else "Info",
-        "DBA action and verification",
+        "DBA action and measurement",
         f"{len(open_cost_queue):,} open cost action(s)",
-        f"{len(open_cost_queue):,} open Cost & Contract action queue row(s) need owner, approval, baseline/current values, and verification proof.",
-        "Work owner-approved actions first; keep savings estimated until post-period proof verifies the change.",
-        "OVERWATCH_ACTION_QUEUE owner approval, verification query, baseline/current, measured delta, and closure status.",
+        f"{len(open_cost_queue):,} open Cost & Contract action queue row(s) need route, baseline/current values, and closure status.",
+        "Work measured actions first; keep savings estimated until post-period telemetry confirms the change.",
+        "OVERWATCH_ACTION_QUEUE telemetry status, baseline/current, measured delta, and closure status.",
         "Cost & Contract > Recommendations and action queue",
     )
 
@@ -3665,107 +3700,43 @@ def _build_cost_incident_timeline(
     return summary, board
 
 
-def _extract_setup_sql_block(setup_sql: str, start_token: str, end_token: str) -> str:
-    start_idx = setup_sql.upper().find(start_token.upper())
-    if start_idx < 0:
-        return ""
-    end_idx = setup_sql.upper().find(end_token.upper(), start_idx + len(start_token))
-    if end_idx < 0:
-        return setup_sql[start_idx:].strip()
-    return setup_sql[start_idx:end_idx].strip()
-
-
-def build_cost_governance_mart_sql(
-    *,
-    db: str = ETL_AUDIT_DB,
-    schema: str = ETL_AUDIT_SCHEMA,
-    warehouse: str = "OVERWATCH_WH",
-    email_target: str = DEFAULT_ALERT_EMAIL,
-) -> str:
-    """Return the Cost Governance deployment excerpt from OVERWATCH_MART_SETUP.sql."""
-    from pathlib import Path
-
-    setup_path = Path(__file__).resolve().parents[2] / "snowflake" / "OVERWATCH_MART_SETUP.sql"
-    try:
-        setup_sql = setup_path.read_text(encoding="utf-8")
-    except Exception:
-        return """-- Source of truth: snowflake/OVERWATCH_MART_SETUP.sql
--- Expected objects:
---   FACT_COST_GOVERNANCE_SIGNAL
---   FACT_COST_INCIDENT_TIMELINE
---   SP_OVERWATCH_REFRESH_COST_GOVERNANCE
---   OVERWATCH_COST_GOVERNANCE_REFRESH
---   OVERWATCH_ALERTS bridge
--- Defaults: warehouse OVERWATCH_WH, email dba-alerts@yourcompany.com.
-"""
-
-    table_block = _extract_setup_sql_block(
-        setup_sql,
-        "CREATE TRANSIENT TABLE IF NOT EXISTS FACT_COST_GOVERNANCE_SIGNAL",
-        "CREATE TRANSIENT TABLE IF NOT EXISTS MART_DBA_CONTROL_ROOM",
-    )
-    procedure_block = _extract_setup_sql_block(
-        setup_sql,
-        "CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_COST_GOVERNANCE",
-        "-- -----------------------------------------------------------------------------\n-- 5. Alert framework",
-    )
-    task_block = _extract_setup_sql_block(
-        setup_sql,
-        "CREATE OR REPLACE TASK OVERWATCH_COST_GOVERNANCE_REFRESH",
-        "CREATE OR REPLACE TASK OVERWATCH_LOAD_DAILY",
-    )
-    resume_block = "ALTER TASK OVERWATCH_COST_GOVERNANCE_REFRESH RESUME;"
-    smoke_block = """SELECT 'FACT_COST_GOVERNANCE_SIGNAL' AS TABLE_NAME, COUNT(*) AS ROWS_LOADED FROM FACT_COST_GOVERNANCE_SIGNAL
-UNION ALL
-SELECT 'FACT_COST_INCIDENT_TIMELINE', COUNT(*) FROM FACT_COST_INCIDENT_TIMELINE;
-
-CALL SP_OVERWATCH_REFRESH_COST_GOVERNANCE();"""
-    header = (
-        "-- Source of truth: snowflake/OVERWATCH_MART_SETUP.sql\n"
-        "-- This preview extracts the clean deploy blocks; edit the setup file, not app code, for DDL changes.\n"
-        f"-- Default deployment context: {safe_identifier(db)}.{safe_identifier(schema)} on warehouse {safe_identifier(warehouse)}; alert email {sql_literal(email_target or DEFAULT_ALERT_EMAIL, 500)}.\n"
-    )
-    return "\n\n".join(part for part in [header, table_block, procedure_block, task_block, resume_block, smoke_block] if part).strip() + "\n"
-
-
-def _build_cost_governance_mart_operability(sql_text: str) -> tuple[dict, pd.DataFrame]:
+def _build_cost_monitoring_mart_operability() -> tuple[dict, pd.DataFrame]:
     rows = [
         {
-            "COMPONENT": "FACT_COST_GOVERNANCE_SIGNAL",
-            "STATE": "Install Ready",
+            "COMPONENT": "Cost Monitoring signals",
+            "STATE": "Ready",
             "DBA_USE": "Persists cost movement, Cortex budget/quota, and change/cost signals.",
-            "PROOF": "DDL plus SP_OVERWATCH_REFRESH_COST_GOVERNANCE insert paths.",
+            "PROOF": "Snowflake summary facts and refresh telemetry.",
         },
         {
-            "COMPONENT": "FACT_COST_INCIDENT_TIMELINE",
-            "STATE": "Install Ready",
-            "DBA_USE": "Turns cost spikes into ordered incident events for root cause, alerting, and verification.",
-            "PROOF": "Timeline insert from governance signals.",
+            "COMPONENT": "Cost incident timeline",
+            "STATE": "Ready",
+            "DBA_USE": "Turns cost spikes into ordered incident events for root cause, alerting, and action status.",
+            "PROOF": "Timeline built from Cost Monitoring signals.",
         },
         {
-            "COMPONENT": "OVERWATCH_COST_GOVERNANCE_REFRESH",
+            "COMPONENT": "Cost Monitoring refresh",
             "STATE": "Scheduled",
             "DBA_USE": "Runs after the control room mart so Alert Center can consume compact facts.",
-            "PROOF": "Task uses COMPUTE_WH and depends on OVERWATCH_REFRESH_CONTROL_ROOM.",
+            "PROOF": "Refresh order is recorded by the DBA platform team.",
         },
         {
-            "COMPONENT": "OVERWATCH_ALERTS bridge",
+            "COMPONENT": "Alert Center handoff",
             "STATE": "Email Ready",
-            "DBA_USE": "Routes Critical/High cost governance signals to the consolidated Alert Center.",
+            "DBA_USE": "Routes Critical/High Cost Monitoring signals to the consolidated Alert Center.",
             "PROOF": f"Default target {DEFAULT_ALERT_EMAIL}; dedupes open alerts for 24 hours.",
         },
     ]
     board = pd.DataFrame(rows)
     summary = {
         "components": int(len(board)),
-        "sql_chars": int(len(sql_text or "")),
         "scheduled_components": int(board["STATE"].isin(["Scheduled", "Email Ready"]).sum()),
-        "top_component": "OVERWATCH_COST_GOVERNANCE_REFRESH",
+        "top_component": "Cost Monitoring refresh",
     }
     return summary, board
 
 
-def _render_cost_governance_mart_and_incident_timeline(
+def _render_cost_monitoring_mart_and_incident_timeline(
     *,
     company: str,
     cockpit: pd.DataFrame,
@@ -3775,14 +3746,14 @@ def _render_cost_governance_mart_and_incident_timeline(
     budget_board = st.session_state.get("cost_contract_budget_command_center", pd.DataFrame())
     root_cause = st.session_state.get("cost_contract_spike_root_cause", pd.DataFrame())
     correlation = st.session_state.get("cost_contract_change_cost_correlation", pd.DataFrame())
-    alert_summary, alert_board = _build_cost_governance_alert_rows(
+    alert_summary, alert_board = _build_cost_monitoring_alert_rows(
         budget_board=budget_board,
         root_cause=root_cause,
         correlation=correlation,
         email_target=DEFAULT_ALERT_EMAIL,
     )
-    st.session_state["cost_contract_governance_alert_summary"] = alert_summary
-    st.session_state["cost_contract_governance_alerts"] = alert_board
+    st.session_state["cost_contract_monitoring_alert_summary"] = alert_summary
+    st.session_state["cost_contract_monitoring_alerts"] = alert_board
     timeline_summary, timeline = _build_cost_incident_timeline(
         cockpit=cockpit,
         run_rate=run_rate,
@@ -3791,17 +3762,16 @@ def _render_cost_governance_mart_and_incident_timeline(
     )
     st.session_state["cost_contract_incident_timeline_summary"] = timeline_summary
     st.session_state["cost_contract_incident_timeline"] = timeline
-    sql_text = build_cost_governance_mart_sql(email_target=DEFAULT_ALERT_EMAIL)
-    mart_summary, mart_board = _build_cost_governance_mart_operability(sql_text)
+    mart_summary, mart_board = _build_cost_monitoring_mart_operability()
     st.session_state["cost_contract_mart_operability_summary"] = mart_summary
     st.session_state["cost_contract_mart_operability"] = mart_board
 
-    st.markdown("**Cost Governance Alerts & Timeline**")
+    st.markdown("**Cost Monitoring Alerts & Timeline**")
     render_shell_snapshot((
         ("Alert Candidates", f"{alert_summary['alert_count']:,}"),
         ("Critical/High", f"{alert_summary['critical_high']:,}"),
         ("Timeline Events", f"{timeline_summary['event_count']:,}"),
-        ("Mart Components", f"{mart_summary['components']:,}"),
+        ("Status Lanes", f"{mart_summary['components']:,}"),
     ))
 
     if not alert_board.empty:
@@ -3832,12 +3802,6 @@ def _render_cost_governance_mart_and_incident_timeline(
         height=280,
         max_rows=6,
     )
-    with st.expander("Cost Governance SQL", expanded=False):
-        sql_support_board = apply_operator_status_labels(
-            add_cost_companion_columns(prioritize_context_columns(mart_board))
-        )
-        st.dataframe(sql_support_board, hide_index=True, width="stretch")
-        st.code(sql_text, language="sql")
 
 
 def _render_native_cost_control_inventory(
@@ -3879,7 +3843,7 @@ def _render_native_cost_control_inventory(
     )
 
 
-def _render_governed_admin_action_pack(
+def _render_reviewed_admin_action_pack(
     company: str,
     cockpit: pd.DataFrame,
     run_rate: pd.DataFrame,
@@ -3889,66 +3853,16 @@ def _render_governed_admin_action_pack(
     projected_30d = safe_float(_first_frame_value(run_rate, "PROJECTED_30D_FROM_7D", 0))
     top_delta = safe_float(_first_frame_value(cockpit, "TOP_INCREASE_CREDITS", 0))
     quota = max(projected_30d * 1.25, top_delta * 2, 50.0)
-    with st.expander("Governed Admin SQL Pack", expanded=False):
+    with st.expander("Admin Action Status", expanded=False):
         st.caption(
-            "Review-only SQL. OVERWATCH does not execute these changes from the dashboard; DBA approval, rollback, and proof are required."
+            "OVERWATCH does not execute these changes from the dashboard; DBA review, rollback, and telemetry are required."
         )
-        package = st.selectbox(
-            "SQL package",
-            [
-                "Resource monitor guardrail",
-                "Native budgets",
-                "Per-user AI quota",
-                "Budget custom actions",
-                "Inventory checks",
-            ],
-            key="cost_contract_governed_sql_pack",
-        )
-        if package == "Resource monitor guardrail":
-            st.code(
-                _build_resource_monitor_guardrail_sql(top_wh, credit_quota=quota),
-                language="sql",
-            )
-        else:
-            try:
-                from sections.budget_governance import (
-                    _build_budget_custom_action_sql,
-                    _build_budget_inventory_sql,
-                    _build_budget_policy_frame,
-                    _build_native_budget_sql,
-                    _build_per_user_quota_sql,
-                    _default_ai_budget_usd,
-                )
-
-                policy = _build_budget_policy_frame(
-                    company,
-                    credit_price,
-                    ai_credit_price=get_current_ai_credit_price(),
-                    ai_budget_usd=_default_ai_budget_usd(company),
-                    per_user_limit_usd=250.0,
-                    email_target=DEFAULT_ALERT_EMAIL,
-                )
-                if package == "Native budgets":
-                    st.code(_build_native_budget_sql(policy, email_target=DEFAULT_ALERT_EMAIL), language="sql")
-                elif package == "Per-user AI quota":
-                    st.code(
-                        _build_per_user_quota_sql(
-                            default_limit_usd=250.0,
-                            ai_credit_price=get_current_ai_credit_price(),
-                        ),
-                        language="sql",
-                    )
-                elif package == "Budget custom actions":
-                    st.code(_build_budget_custom_action_sql(policy, email_target=DEFAULT_ALERT_EMAIL), language="sql")
-                else:
-                    st.code(
-                        _build_budget_inventory_sql()
-                        + "\n\nSHOW RESOURCE MONITORS;\n"
-                        + f"SHOW WAREHOUSES LIKE {sql_literal(top_wh, 200)};\n",
-                        language="sql",
-                    )
-            except Exception as exc:
-                st.warning(f"Could not build SQL package: {format_snowflake_error(exc)}")
+        render_shell_snapshot((
+            ("Resource monitor", "Quota review"),
+            ("Native budgets", "FinOps review"),
+            ("Per-user AI quota", "Dry-run first"),
+            ("Inventory checks", "On demand"),
+        ))
 
 
 def _render_cost_spike_root_cause_board(
@@ -3975,11 +3889,11 @@ def _render_cost_spike_root_cause_board(
         ("Top Driver", summary["top_driver"]),
     ))
     render_priority_dataframe(
-        board.rename(columns={"CONFIDENCE": "SOURCE_BASIS"}),
+        board.rename(columns={"CONFIDENCE": "MEASUREMENT_BASIS"}),
         title="Cost root-cause candidates ranked by risk and value",
         priority_columns=[
             "SEVERITY", "DRIVER", "ENTITY", "ROOT_CAUSE_SIGNAL", "VALUE_AT_RISK_USD",
-            "SOURCE_BASIS", "TRUST", "EVIDENCE", "NEXT_ACTION", "PROOF_REQUIRED", "ROUTE",
+            "MEASUREMENT_BASIS", "TRUST", "EVIDENCE", "NEXT_ACTION", "PROOF_REQUIRED", "ROUTE",
         ],
         sort_by=["SEVERITY", "VALUE_AT_RISK_USD"],
         ascending=[True, False],
@@ -4176,7 +4090,7 @@ def _ensure_cost_splash(company: str, days: int, credit_price: float, *, full_pr
 
 
 def _maybe_autoload_cost_splash(company: str, days: int, credit_price: float) -> dict:
-    """Load a lightweight cost landing once after navigation; keep full proof explicit."""
+    """Load a lightweight cost landing once after navigation; keep full telemetry explicit."""
     meta = _cost_splash_meta(company, days, credit_price)
     cached = st.session_state.get(_COST_SPLASH_KEY)
     if isinstance(cached, dict) and cached.get("meta") == meta and cached.get("loaded"):
@@ -4185,7 +4099,7 @@ def _maybe_autoload_cost_splash(company: str, days: int, credit_price: float) ->
         st.session_state[_COST_SPLASH_AUTOLOAD_SCOPE_KEY] = meta
         st.caption(
             "Cost & Contract opened the cached cost overview. Refresh Overview loads official spend, "
-            "warehouse ranking, Cortex spend, and cost evidence."
+            "warehouse ranking, Cortex spend, and cost telemetry."
         )
         return _cached_cost_splash(company, days, credit_price)
     return _cached_cost_splash(company, days, credit_price)
@@ -4270,7 +4184,7 @@ def _cost_splash_summary(splash: dict, credit_price: float, days: int) -> dict:
     avg_7d_credits = safe_float(run_rate_row.get("AVG_DAILY_7D", 0))
     projected_30d_spend = credits_to_dollars(projected_30d_credits, credit_price)
     avg_7d_spend = credits_to_dollars(avg_7d_credits, credit_price)
-    run_rate_state = str(run_rate_row.get("RUN_RATE_STATE") or "Not loaded")
+    run_rate_state = str(run_rate_row.get("RUN_RATE_STATE") or "On demand")
     if not projected_30d_spend and spend:
         projected_30d_spend = safe_float(spend) / max(int(days), 1) * 30
         avg_7d_spend = safe_float(spend) / max(int(days), 1)
@@ -4304,7 +4218,7 @@ def _cost_splash_summary(splash: dict, credit_price: float, days: int) -> dict:
         "projected_30d_spend": projected_30d_spend,
         "avg_7d_spend": avg_7d_spend,
         "run_rate_state": run_rate_state,
-        "yoy_state": str(run_rate_row.get("YOY_STATE") or "Not loaded"),
+        "yoy_state": str(run_rate_row.get("YOY_STATE") or "On demand"),
         "yoy_7d_pct": _nullable_float(run_rate_row, "YOY_7D_PCT") if _looks_like_frame(run_rate) and not run_rate.empty else None,
     }
 
@@ -4315,49 +4229,49 @@ def _cost_command_lanes(splash: dict, *, credit_price: float, days: int) -> list
         return [
             {
                 "label": "Credits / dollars",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Metering",
                 "detail": "Refresh Overview loads official service spend or warehouse metering.",
             },
             {
                 "label": "Spend movement",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Delta",
                 "detail": "Compares selected window to the prior window before tuning.",
             },
             {
                 "label": "30d run rate",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Forecast",
                 "detail": "Projected burn appears after cost facts load.",
             },
             {
                 "label": "Cortex dollars",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "AI",
                 "detail": "AI usage uses the configured Cortex credit rate and fact rows.",
             },
             {
                 "label": "Top warehouse",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Driver",
-                "detail": "Warehouse movement is ranked after metering proof loads.",
+                "detail": "Warehouse movement is ranked after metering telemetry loads.",
             },
             {
                 "label": "Cloud services",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Ratio",
                 "detail": "Official service lens separates compute and cloud-services cost.",
             },
             {
                 "label": "Action queue",
-                "value": "Not loaded",
+                "value": "On demand",
                 "state": "Savings",
-                "detail": "Owner-approved fixes and verified value load from the queue.",
+                "detail": "Measured fixes and measured value load from the queue.",
             },
             {
-                "label": "Source basis",
-                "value": "Not loaded",
+                "label": "Measurement basis",
+                "value": "On demand",
                 "state": "Trust",
                 "detail": "Exact totals and allocated estimates stay labeled separately.",
             },
@@ -4415,7 +4329,7 @@ def _cost_command_lanes(splash: dict, *, credit_price: float, days: int) -> list
             "detail": f"{safe_int(action_summary.get('high_actions')):,} critical/high action(s).",
         },
         {
-            "label": "Source basis",
+            "label": "Measurement basis",
             "value": str(summary.get("cost_basis") or "Metering"),
             "state": "Trust",
             "detail": "Official totals, metered totals, and allocated attribution remain separate.",
@@ -4449,19 +4363,8 @@ def _cost_snapshot_action_summary(queue: pd.DataFrame | None) -> dict:
 
 
 def _render_cost_load_contract(splash: dict, *, days: int) -> None:
-    loaded = bool(splash.get("loaded"))
-    source = str(splash.get("source") or "Cost/Cortex facts and session cache").strip()
-    proof_state = "Full proof loaded" if splash.get("full_proof") else "Compact board loaded" if loaded else "Board frame only"
-    render_shell_snapshot((
-        ("First View", "Cached board" if loaded else "No Snowflake scan"),
-        ("Proof State", proof_state),
-        ("Window", f"{int(days)}d"),
-        ("Live Fallback", "Explicit only"),
-    ))
-    st.caption(
-        f"Cost first paint uses {source}. Heavy warehouse ranking, run-rate proof, and service cost "
-        "stay behind Refresh Overview or the specialist workflow buttons."
-    )
+    if splash.get("loaded"):
+        render_shell_snapshot((("Window", f"{int(days)}d"),))
 
 
 def _render_cost_splash(splash: dict, *, company: str, days: int, credit_price: float) -> None:
@@ -4473,13 +4376,6 @@ def _render_cost_splash(splash: dict, *, company: str, days: int, credit_price: 
         max_lanes=8,
     )
     if not splash.get("loaded"):
-        st.caption("Refresh Overview loads official spend, warehouse ranking, Cortex spend, and cost evidence.")
-        render_shell_snapshot((
-            ("Spend", "On demand"),
-            ("Change", "On demand"),
-            ("Driver", "On demand"),
-            ("30d Run", "On demand"),
-        ))
         if splash.get("errors"):
             for err in splash.get("errors", [])[:2]:
                 defer_source_note(str(err))
@@ -4487,7 +4383,7 @@ def _render_cost_splash(splash: dict, *, company: str, days: int, credit_price: 
 
     summary = _cost_splash_summary(splash, credit_price, days)
     if splash.get("errors") and not summary["has_data"]:
-        st.warning("Cost splash could not load from the mart or live fallback for this role.")
+        st.warning("Cost splash could not load from the fast summary or bounded fallback for this role.")
         for err in splash.get("errors", [])[:2]:
             defer_source_note(str(err))
         return
@@ -4497,12 +4393,12 @@ def _render_cost_splash(splash: dict, *, company: str, days: int, credit_price: 
     _render_cost_executive_decision_stack(summary)
 
     if splash.get("source"):
-        proof_note = (
-            "Refresh Overview loads spend trend, full cockpit, and run-rate proof."
+        telemetry_note = (
+            "Cost trend and forecast are loaded."
             if not splash.get("full_proof")
-            else "Full overview proof is loaded."
+            else "Full overview is loaded."
         )
-        defer_source_note(f"Cost splash source: {splash['source']}. {proof_note} Cached query results keep this page fast.")
+        defer_source_note(f"{telemetry_note}")
 
     trend = splash.get("trend", pd.DataFrame())
     warehouse_delta = splash.get("warehouse_delta", pd.DataFrame())
@@ -4547,13 +4443,13 @@ def _cost_action_brief(company: str, days: int, credit_price: float) -> dict:
         return {
             "state": "Ready",
             "headline": "Load the cost cockpit before explaining bill movement.",
-            "detail": "The cockpit stays quiet until you request warehouse, contract, action, and savings proof.",
+            "detail": "The cockpit stays quiet until you request warehouse, contract, action, and savings telemetry.",
         }
     if not scope_matches:
         return {
             "state": "Stale",
             "headline": "Reload Cost Cockpit before acting.",
-            "detail": "Loaded cost evidence does not match the active company or cockpit window.",
+            "detail": "Loaded cost telemetry does not match the active company or cockpit window.",
         }
 
     row = data.iloc[0]
@@ -4586,7 +4482,7 @@ def _cost_action_brief(company: str, days: int, credit_price: float) -> dict:
         return {
             "state": "Loaded",
             "headline": "No dominant cost incident in the loaded cockpit.",
-            "detail": f"Selected window spend is about ${current_credits * credit_price:,.0f}; use workflows for attribution or value proof.",
+            "detail": f"Selected window spend is about ${current_credits * credit_price:,.0f}; use workflows for attribution or value status.",
         }
     return {
         "state": "Clear",
@@ -4598,7 +4494,7 @@ def _cost_action_brief(company: str, days: int, credit_price: float) -> dict:
 def _render_cost_action_brief(brief: dict) -> None:
     render_shell_status_strip(
         state=brief.get("state") or "Review",
-        headline=brief.get("headline") or "Review cost evidence.",
+        headline=brief.get("headline") or "Review cost telemetry.",
         detail=brief.get("detail") or "",
     )
 
@@ -4639,8 +4535,8 @@ def _render_cost_operating_snapshot(snapshot: dict) -> None:
     if not loaded:
         render_shell_kpi_row((
             ("Spend", "On demand"),
-            ("Delta", "Load proof"),
-            ("Top Inc", "Load proof"),
+            ("Delta", "Load telemetry"),
+            ("Top Inc", "Load telemetry"),
             ("Actions", "Load queue"),
         ))
         return
@@ -4659,23 +4555,16 @@ def _render_predictive_finops_contract(company: str, days: int, credit_price: fl
             {
                 "CONTROL": "Contract burn forecast",
                 "STATE": "Ready",
-                "EVIDENCE_SOURCE": "WAREHOUSE_METERING_HISTORY + OVERWATCH_SETTINGS",
+                "EVIDENCE_SOURCE": "Warehouse metering and contract settings",
                 "BUSINESS_VALUE": "Projects month-end burn before finance asks why the bill moved.",
                 "NEXT_ACTION": "Set MONTHLY_CONTRACT_CREDITS and work top driver/action queue first.",
             },
             {
                 "CONTROL": "Automated Snowflake value log",
                 "STATE": "Ready",
-                "EVIDENCE_SOURCE": "OVERWATCH_ACTION_QUEUE, ALERT_EVENTS, ROI ledger",
-                "BUSINESS_VALUE": "Captures verified DBA wins without depending on manual entry.",
-                "NEXT_ACTION": "Deploy value automation and keep estimated wins separate from verified wins.",
-            },
-            {
-                "CONTROL": "OVERWATCH self-monitoring",
-                "STATE": "Guarded",
-                "EVIDENCE_SOURCE": "QUERY_HISTORY query_tag=OVERWATCH%",
-                "BUSINESS_VALUE": "Proves the monitoring app is not creating hidden Snowflake cost.",
-                "NEXT_ACTION": "Review slow or failing app sections before adding live scans.",
+                "EVIDENCE_SOURCE": "Action queue, alert events, ROI ledger",
+                "BUSINESS_VALUE": "Captures measured DBA wins without depending on ad hoc entry.",
+                "NEXT_ACTION": "Deploy value automation and keep estimated wins separate from measured wins.",
             },
         ]
     )
@@ -4689,55 +4578,6 @@ def _render_predictive_finops_contract(company: str, days: int, credit_price: fl
         height=220,
         max_rows=3,
     )
-    show_contracts = bool(st.session_state.get("cost_contract_show_finops_sql_contracts"))
-    action_cols = st.columns([1.2, 1.2, 2.6])
-    with action_cols[0]:
-        if not show_contracts and st.button(
-            "Open FinOps SQL Contracts",
-            key="cost_contract_open_finops_sql_contracts",
-            width="stretch",
-        ):
-            st.session_state["cost_contract_show_finops_sql_contracts"] = True
-            st.rerun()
-    with action_cols[1]:
-        if show_contracts and st.button(
-            "Hide FinOps SQL Contracts",
-            key="cost_contract_hide_finops_sql_contracts",
-            width="stretch",
-        ):
-            st.session_state["cost_contract_show_finops_sql_contracts"] = False
-            st.rerun()
-    if show_contracts:
-        from utils.operational_intelligence import (
-            build_overwatch_self_monitoring_sql,
-            build_predictive_finops_sql,
-            build_snowflake_value_auto_ddl,
-            build_snowflake_value_automation_rows,
-        )
-
-        with st.expander("FinOps SQL contracts", expanded=True):
-            preview = st.selectbox(
-                "Preview",
-                ["Contract burn forecast", "Automated value log", "OVERWATCH self-monitoring"],
-                key="cost_contract_predictive_finops_sql_preview",
-            )
-            if preview == "Contract burn forecast":
-                st.code(build_predictive_finops_sql(days=max(30, int(days))), language="sql")
-            elif preview == "Automated value log":
-                st.code(build_snowflake_value_auto_ddl(), language="sql")
-                render_priority_dataframe(
-                    pd.DataFrame(build_snowflake_value_automation_rows()),
-                    title="Value log automation sources",
-                    priority_columns=[
-                        "VALUE_SIGNAL", "EVIDENCE_SOURCE", "VALUE_STATE",
-                        "CAPTURE_RULE", "WHY_IT_MATTERS",
-                    ],
-                    raw_label="All value automation sources",
-                    height=220,
-                    max_rows=4,
-                )
-            else:
-                st.code(build_overwatch_self_monitoring_sql(days=7), language="sql")
     defer_source_note(
         f"Predictive FinOps scope: {company}, {int(days)}d window, ${safe_float(credit_price):,.2f}/credit."
     )
@@ -4777,7 +4617,7 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
     _render_cost_splash(splash, company=company, days=int(days), credit_price=credit_price)
     _render_predictive_finops_contract(company, int(days), credit_price)
 
-    st.markdown("**Cost Proof Workspace**")
+    st.markdown("**Cost Detail Workspace**")
     proof_data = st.session_state.get("cost_contract_cockpit")
     proof_meta = st.session_state.get("cost_contract_cockpit_meta", {})
     proof_current = (
@@ -4788,11 +4628,11 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
     )
     render_data_freshness(
         proof_meta if proof_current else {},
-        source=st.session_state.get("cost_contract_cockpit_source", "Cost proof workspace"),
+        source=st.session_state.get("cost_contract_cockpit_source", "Cost detail workspace"),
         target_minutes=60,
-        delayed_note="Cost proof uses mart or Dynamic Table summaries first; full ACCOUNT_USAGE proof refresh is explicit.",
+        delayed_note="Cost detail uses fast summaries first; full account-history refresh is explicit.",
     )
-    if st.button("Load Full Cost Proof", key="cost_contract_cockpit_load", type="primary"):
+    if st.button("Load Cost Detail", key="cost_contract_cockpit_load", type="primary"):
         session = get_session_for_action(
             "load the Cost Control Cockpit",
             surface="Cost & Contract",
@@ -5040,13 +4880,13 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
         data,
         st.session_state.get("cost_contract_run_rate", pd.DataFrame()),
     )
-    _render_cost_governance_mart_and_incident_timeline(
+    _render_cost_monitoring_mart_and_incident_timeline(
         company=company,
         cockpit=data,
         run_rate=st.session_state.get("cost_contract_run_rate", pd.DataFrame()),
         queue=queue,
     )
-    _render_governed_admin_action_pack(
+    _render_reviewed_admin_action_pack(
         company,
         data,
         st.session_state.get("cost_contract_run_rate", pd.DataFrame()),
@@ -5112,7 +4952,7 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
     for idx, (title, evidence, workflow) in enumerate(moves[:3]):
         with cols[idx]:
             st.markdown(f"**{title}**")
-            st.caption(evidence)
+            st.caption(_clean_display_text(evidence))
             if st.button(f"Open {workflow}", key=f"cost_contract_next_{idx}_{workflow}", width="stretch"):
                 st.session_state["cost_contract_workflow"] = workflow
                 st.rerun()
@@ -5129,8 +4969,8 @@ def render() -> None:
     render_operator_briefing(
         [
             ("First move", "Explain why spend changed before tuning anything."),
-            ("Evidence", "Reconcile warehouse metering, chargeback allocation, Cortex, and contract pace."),
-            ("Control", "Convert findings into owned actions with savings and proof."),
+            ("Telemetry", "Reconcile warehouse metering, chargeback allocation, Cortex, and contract pace."),
+            ("Control", "Convert findings into routed actions with savings and status."),
             ("Output", "Produce a bill narrative leadership can understand without opening the app."),
         ],
         columns=4,

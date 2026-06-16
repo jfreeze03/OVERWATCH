@@ -1,4 +1,4 @@
-# utils/ask_overwatch.py - deterministic, evidence-grounded priority brief helpers
+# utils/ask_overwatch.py - deterministic, telemetry-grounded priority brief helpers
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -8,6 +8,7 @@ import pandas as pd
 from config import normalize_section_name
 from .helpers import safe_float, safe_int
 from .recommendation_intelligence import harden_recommendation
+from .workflows import _clean_operator_display_value
 
 
 SEVERITY_RANK = {
@@ -38,10 +39,10 @@ DOMAIN_TERMS = {
         "security", "grant", "role", "login", "mfa", "access",
     ),
     "change": (
-        "change", "drift", "ddl", "owner", "approval",
+        "change", "drift", "ddl", "route", "verification",
     ),
     "automation": (
-        "automation", "automate", "auto", "guided", "approval", "manual only", "blocker",
+        "automation", "automate", "auto", "guided", "verification", "manual only", "blocker",
     ),
     "ai_platform": (
         "agent", "mcp", "intelligence", "openflow", "horizon", "semantic",
@@ -74,12 +75,6 @@ ASK_OVERWATCH_STATE_KEYS = (
     "dba_operator_runbook",
     "dba_control_room_incident_board",
     "dba_control_room_handoff",
-    "arch_adaptive_compute",
-    "arch_ai_security_guardrails",
-    "arch_futures_board",
-    "arch_futures_adoption_gate",
-    "arch_agentic_ai_summary",
-    "arch_agentic_ai_scorecard",
     "cost_contract_budget_command_summary",
     "cost_contract_budget_command_center",
     "cost_contract_native_control_summary",
@@ -88,8 +83,8 @@ ASK_OVERWATCH_STATE_KEYS = (
     "cost_contract_spike_root_cause",
     "cost_contract_change_cost_summary",
     "cost_contract_change_cost_correlation",
-    "cost_contract_governance_alert_summary",
-    "cost_contract_governance_alerts",
+    "cost_contract_monitoring_alert_summary",
+    "cost_contract_monitoring_alerts",
     "cost_contract_incident_timeline_summary",
     "cost_contract_incident_timeline",
     "cost_contract_mart_operability_summary",
@@ -105,7 +100,7 @@ ASK_OVERWATCH_STATE_KEYS = (
 
 
 def snapshot_ask_overwatch_state(state: Mapping) -> dict:
-    """Return only the loaded evidence surfaces the priority brief reads."""
+    """Return only the loaded telemetry surfaces the priority brief reads."""
     snapshot: dict = {}
     for key in ASK_OVERWATCH_STATE_KEYS:
         try:
@@ -160,6 +155,32 @@ def _text(row: Mapping | pd.Series | dict, *keys: str, default: str = "") -> str
     return str(value).strip()
 
 
+def _clean_answer_text(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    for old, new in (
+        ("Executive Evidence", "Executive Landing"),
+        ("Limited executive evidence", "Limited executive telemetry"),
+        ("Attach ", "Use "),
+        ("attach ", "use "),
+        ("attached", "available"),
+        ("Evidence-grounded", "Telemetry-grounded"),
+        ("evidence-grounded", "telemetry-grounded"),
+        ("loaded evidence", "loaded telemetry"),
+        ("source evidence", "source telemetry"),
+        ("data evidence", "data telemetry"),
+        ("owner proof", "route telemetry"),
+        ("Owner/route", "Route"),
+        ("owner, ", "route, "),
+        ("owner and ", "route and "),
+        ("owner response", "route response"),
+    ):
+        text = text.replace(old, new)
+    cleaned = _clean_operator_display_value(text)
+    return str(cleaned or "").strip()
+
+
 def _route_text(value: object, default: str = "DBA Control Room") -> str:
     text = str(value or default).strip()
     return normalize_section_name(text) or default
@@ -175,10 +196,11 @@ def _append_card(cards: list[dict], card: dict) -> None:
     clean.setdefault("surface", "OVERWATCH")
     clean.setdefault("entity", clean.get("signal", "Snowflake"))
     clean.setdefault("evidence", "")
-    clean.setdefault("next_action", "Open the owning OVERWATCH workflow and validate evidence.")
-    clean.setdefault("proof", "Attach proof before closure.")
-    clean.setdefault("do_not", "Do not act without source evidence.")
+    clean.setdefault("next_action", "Open the routed OVERWATCH workflow and validate telemetry.")
+    clean.setdefault("proof", "Use telemetry before closure.")
+    clean.setdefault("do_not", "Do not act without source telemetry.")
     clean.setdefault("route", clean.get("surface", "OVERWATCH"))
+    clean = {key: _clean_answer_text(value) for key, value in clean.items()}
     cards.append(clean)
 
 
@@ -211,7 +233,7 @@ def _cards_from_automation_board(state: Mapping, cards: list[dict]) -> None:
     view.columns = [str(col).upper() for col in view.columns]
     lane_rank = {
         "READY FOR GUIDED EXECUTION": 0,
-        "APPROVAL REQUIRED": 1,
+        "VERIFICATION REQUIRED": 1,
         "EVIDENCE REQUIRED": 2,
         "AUTO-CLOSE CANDIDATE": 3,
         "MANUAL ONLY": 4,
@@ -223,20 +245,19 @@ def _cards_from_automation_board(state: Mapping, cards: list[dict]) -> None:
         lane = _text(row, "AUTOMATION_LANE", default="Automation review")
         blockers = _text(row, "BLOCKERS", default="none")
         _append_card(cards, {
-            "surface": "Automation Readiness",
+            "surface": "Automation Health",
             "severity": _text(row, "SEVERITY", default="Medium"),
             "signal": lane,
             "entity": _text(row, "ENTITY", default="automation candidate"),
             "evidence": (
-                f"lane={lane}; score={_text(row, 'AUTOMATION_SCORE', default='0')}; "
-                f"blockers={blockers}; decision={_text(row, 'DECISION')}"
+                f"lane={lane}; blockers={blockers}; decision={_text(row, 'DECISION')}"
             ),
-            "next_action": _text(row, "SAFE_AUTOMATION_STEP", default="Open Automation Readiness and resolve blockers."),
-            "proof": _text(row, "PROOF_REQUIRED", "VERIFICATION_QUERY", default="Attach verification evidence before closure."),
-            "do_not": _text(row, "DO_NOT_DO", default="Do not automate without source evidence and approval."),
-            "route": "Cost & Contract > Automation Readiness",
+            "next_action": _text(row, "SAFE_AUTOMATION_STEP", default="Open Automation Health and resolve blockers."),
+            "proof": _text(row, "PROOF_REQUIRED", "VERIFICATION_QUERY", default="Record telemetry before closure."),
+            "do_not": _text(row, "DO_NOT_DO", default="Do not automate without data telemetry and review."),
+            "route": "Cost & Contract > Automation Health",
             "category": _text(row, "CATEGORY", default="Automation"),
-            "value": _text(row, "AUTOMATION_SCORE", default="0"),
+            "value": "50" if lane.upper() in {"VERIFICATION REQUIRED", "EVIDENCE REQUIRED"} else "25",
         })
 
 
@@ -254,9 +275,9 @@ def _cards_from_cost_command_center(state: Mapping, cards: list[dict]) -> None:
         view["VALUE_AT_RISK_USD"] = 0
     view = view.sort_values(["_RANK", "VALUE_AT_RISK_USD"], ascending=[True, False]).drop(columns=["_RANK"])
     for _, row in view.head(8).iterrows():
-        lane = _text(row, "LANE", default="Cost governance")
-        native = _text(row, "NATIVE_CONTROL", default="OVERWATCH evidence control")
-        scope = _text(row, "CONTROL_SCOPE", default="Cost evidence")
+        lane = _text(row, "LANE", default="Cost Monitoring")
+        native = _text(row, "NATIVE_CONTROL", default="OVERWATCH telemetry control")
+        scope = _text(row, "CONTROL_SCOPE", default="Cost telemetry")
         value = _text(row, "VALUE_AT_RISK_USD", default="0")
         _append_card(cards, {
             "surface": "Cost & Contract - Budget & Anomaly Command Center",
@@ -265,11 +286,11 @@ def _cards_from_cost_command_center(state: Mapping, cards: list[dict]) -> None:
             "entity": lane,
             "evidence": (
                 f"native_control={native}; scope={scope}; value_at_risk=${value}. "
-                f"{_text(row, 'EVIDENCE', default='Loaded cost governance evidence.')}"
+                f"{_text(row, 'EVIDENCE', default='Loaded Cost Monitoring telemetry.')}"
             ),
             "next_action": _text(row, "NEXT_ACTION", "DBA_DECISION", default="Open Cost & Contract and work the top budget/anomaly lane."),
-            "proof": _text(row, "PROOF_REQUIRED", default="Attach cost cockpit, run-rate, budget, or action queue evidence before closure."),
-            "do_not": _text(row, "DO_NOT_DO", default="Do not change budgets, monitors, or warehouse settings without owner approval and proof."),
+            "proof": _text(row, "PROOF_REQUIRED", default="Record cost cockpit, run-rate, budget, or action queue telemetry before closure."),
+            "do_not": _text(row, "DO_NOT_DO", default="Do not change budgets, monitors, or warehouse settings without telemetry review."),
             "route": _text(row, "ROUTE", default="Cost & Contract"),
             "category": native,
             "value": value,
@@ -302,9 +323,9 @@ def _cards_from_cost_operational_boards(state: Mapping, cards: list[dict]) -> No
                     f"{_text(row, 'EVIDENCE')}"
                 ),
                 "next_action": _text(row, "DBA_NEXT_MOVE", default="Open Cost & Contract and review the native control gap."),
-                "proof": _text(row, "STRICT_GAP", default="Attach native control inventory, budget, monitor, and email proof."),
-                "do_not": "Do not claim Snowflake cost-control readiness until the native surface, scope, and notification gap are verified.",
-                "route": _text(row, "SQL_PACKAGE", default="Cost & Contract > Budget governance"),
+                "proof": _text(row, "STRICT_GAP", default="Record native control inventory, budget, monitor, and email telemetry."),
+                "do_not": "Do not claim Snowflake cost-control health until the native surface, scope, and notification gap are checked.",
+                "route": _text(row, "SQL_PACKAGE", default="Cost & Contract > Budget Monitoring"),
                 "category": _text(row, "NATIVE_SURFACE", default="Cost Control"),
                 "value": _text(row, "STATE", default="Review"),
             })
@@ -329,8 +350,8 @@ def _cards_from_cost_operational_boards(state: Mapping, cards: list[dict]) -> No
                     f"value_at_risk=${_text(row, 'VALUE_AT_RISK_USD', default='0')}. {_text(row, 'EVIDENCE')}"
                 ),
                 "next_action": _text(row, "NEXT_ACTION", default="Open Cost & Contract root-cause drilldown."),
-                "proof": _text(row, "PROOF_REQUIRED", default="Attach run-rate, warehouse, attribution, and owner proof."),
-                "do_not": "Do not tune warehouses, enforce quotas, or change budgets until the root-cause proof is attached.",
+                "proof": _text(row, "PROOF_REQUIRED", default="Record run-rate, warehouse, attribution, and route telemetry."),
+                "do_not": "Do not tune warehouses, enforce quotas, or change budgets until root-cause telemetry is available.",
                 "route": _text(row, "ROUTE", default="Cost & Contract"),
                 "category": driver,
                 "value": _text(row, "VALUE_AT_RISK_USD", default="0"),
@@ -353,15 +374,15 @@ def _cards_from_cost_operational_boards(state: Mapping, cards: list[dict]) -> No
                     f"cost_signal={_text(row, 'COST_SIGNAL')}; change_signal={_text(row, 'CHANGE_SIGNAL')}. "
                     f"{_text(row, 'EVIDENCE')}"
                 ),
-                "next_action": _text(row, "NEXT_ACTION", default="Load Governance & Security and compare it to the cost movement."),
-                "proof": _text(row, "PROOF_REQUIRED", default="Attach change query_id, ticket, actor, and cost proof."),
-                "do_not": "Do not close a cost spike until related change-control blockers are cleared or disproven.",
-                "route": _text(row, "ROUTE", default="Governance & Security"),
+                "next_action": _text(row, "NEXT_ACTION", default="Load Security Monitoring and compare it to the cost movement."),
+                "proof": _text(row, "PROOF_REQUIRED", default="Record change query_id, ticket, actor, and cost telemetry."),
+                "do_not": "Do not close a cost spike until related change blockers are cleared or ruled out.",
+                "route": _text(row, "ROUTE", default="Security Monitoring"),
                 "category": "Change/Cost Correlation",
                 "value": _text(row, "SEVERITY", default="Medium"),
             })
 
-    alerts = state.get("cost_contract_governance_alerts")
+    alerts = state.get("cost_contract_monitoring_alerts")
     if _is_df(alerts):
         view = alerts.copy()
         view.columns = [str(col).upper() for col in view.columns]
@@ -371,17 +392,17 @@ def _cards_from_cost_operational_boards(state: Mapping, cards: list[dict]) -> No
         view = view.sort_values(["_RANK", "VALUE_AT_RISK_USD"], ascending=[True, False]).drop(columns=["_RANK"])
         for _, row in view.head(6).iterrows():
             _append_card(cards, {
-                "surface": "Cost & Contract - Governance Alert Candidate",
+                "surface": "Cost & Contract - Monitoring Alert Candidate",
                 "severity": _text(row, "SEVERITY", default="High"),
-                "signal": _text(row, "ALERT_TYPE", default="Cost governance alert"),
-                "entity": _text(row, "ENTITY_NAME", default="Cost governance"),
+                "signal": _text(row, "ALERT_TYPE", default="Cost Monitoring alert"),
+                "entity": _text(row, "ENTITY_NAME", default="Cost Monitoring"),
                 "evidence": (
                     f"value_at_risk=${_text(row, 'VALUE_AT_RISK_USD', default='0')}; "
                     f"email_target={_text(row, 'EMAIL_TARGET')}. {_text(row, 'MESSAGE')}"
                 ),
-                "next_action": _text(row, "SUGGESTED_ACTION", default="Open Alert Center and route the cost governance issue."),
-                "proof": _text(row, "PROOF_QUERY", default="Attach Cost & Contract proof query before closure."),
-                "do_not": "Do not route generic cost warnings without owner, proof query, and DBA-safe next action.",
+                "next_action": _text(row, "SUGGESTED_ACTION", default="Open Alert Center and route the Cost Monitoring issue."),
+                "proof": _text(row, "PROOF_QUERY", default="Record Cost & Contract telemetry query before closure."),
+                "do_not": "Do not route generic cost warnings without route, telemetry query, and DBA-safe next action.",
                 "route": _text(row, "ROUTE", default="Alert Center"),
                 "category": _text(row, "CATEGORY", default="Cost Control"),
                 "value": _text(row, "VALUE_AT_RISK_USD", default="0"),
@@ -399,10 +420,10 @@ def _cards_from_cost_operational_boards(state: Mapping, cards: list[dict]) -> No
                 "severity": _text(row, "SEVERITY", default="Medium"),
                 "signal": _text(row, "INCIDENT_STEP", "EVENT_TYPE", default="Cost incident step"),
                 "entity": _text(row, "ENTITY", "ENTITY_NAME", default="Cost incident"),
-                "evidence": _text(row, "EVIDENCE", default="Loaded cost incident timeline evidence."),
+                "evidence": _text(row, "EVIDENCE", default="Loaded cost incident timeline telemetry."),
                 "next_action": _text(row, "NEXT_ACTION", default="Work the next cost incident step."),
-                "proof": _text(row, "PROOF_REQUIRED", "PROOF_QUERY", default="Attach proof before closure."),
-                "do_not": "Do not close a cost incident until root cause, alert route, and verification proof are complete.",
+                "proof": _text(row, "PROOF_REQUIRED", "PROOF_QUERY", default="Record telemetry before closure."),
+                "do_not": "Do not close a cost incident until root cause, alert route, and telemetry status are complete.",
                 "route": _text(row, "ROUTE", default="Cost & Contract"),
                 "category": "Cost Incident Timeline",
                 "value": _text(row, "EVENT_ORDER", default="0"),
@@ -414,16 +435,16 @@ def _cards_from_cost_operational_boards(state: Mapping, cards: list[dict]) -> No
         view.columns = [str(col).upper() for col in view.columns]
         for _, row in view.head(4).iterrows():
             _append_card(cards, {
-                "surface": "Cost & Contract - Governance Mart Operability",
+                "surface": "Cost & Contract - Monitoring Mart Operability",
                 "severity": "Medium",
                 "signal": _text(row, "STATE", default="Install Ready"),
-                "entity": _text(row, "COMPONENT", default="Cost governance summary"),
-                "evidence": _text(row, "PROOF", default="Cost governance setup evidence."),
-                "next_action": _text(row, "DBA_USE", default="Install or verify the cost governance summary object."),
-                "proof": "snowflake/OVERWATCH_MART_SETUP.sql contains the clean object DDL, procedure, task, and smoke checks.",
-                "do_not": "Do not treat app-only generated SQL as the deploy source of truth.",
-                "route": "Cost & Contract > Cost Governance SQL",
-                "category": "Cost Governance",
+                "entity": _text(row, "COMPONENT", default="Cost Monitoring summary"),
+                "evidence": _text(row, "PROOF", default="Cost Monitoring status telemetry."),
+                "next_action": _text(row, "DBA_USE", default="Check the Cost Monitoring summary object with the DBA team."),
+                "proof": "Snowflake status telemetry is available to the DBA route.",
+                "do_not": "Do not treat app-only change suggestions as deploy evidence.",
+                "route": "Cost & Contract > Cost Monitoring",
+                "category": "Cost Monitoring",
                 "value": _text(row, "STATE", default="Install Ready"),
             })
 
@@ -451,17 +472,17 @@ def _cards_from_executive_landing(state: Mapping, cards: list[dict]) -> None:
         _append_card(cards, {
             "surface": "Executive Landing",
             "severity": _platform_score_severity(score),
-            "signal": "Platform operating score",
-            "entity": f"{score}/100 {state_label}",
-            "evidence": f"score={score}/100; cap={cap_value}/100; {cap_reason}",
+            "signal": "Platform operating state",
+            "entity": state_label,
+            "evidence": f"state={state_label}; limiter={'None' if cap_value >= 100 else cap_reason}",
             "next_action": (
-                "Open Executive Landing score drivers, then route the lowest-scoring driver to the owning section."
+                "Open Executive Landing and route the strongest visible signal to its monitoring section."
             ),
-            "proof": "Executive source health plus loaded cost, alert, action queue, and migration evidence.",
-            "do_not": "Do not present the score as healthy until capped or limited evidence sources are explained.",
-            "route": "Executive Landing > Platform Operating Score",
+            "proof": "Executive data health plus loaded cost, alert, action queue, and deployment status.",
+            "do_not": "Do not present the state as healthy until limited evidence inputs are explained.",
+            "route": "Executive Landing > Executive Command Wall",
             "category": "Executive Reliability Alerts Cost",
-            "value": str(max(0, 100 - score)),
+            "value": state_label,
         })
 
     snapshot = state.get("executive_landing_snapshot")
@@ -472,15 +493,15 @@ def _cards_from_executive_landing(state: Mapping, cards: list[dict]) -> None:
     if isinstance(errors, (list, tuple)):
         for err in [str(item).strip() for item in errors if str(item).strip()][:3]:
             _append_card(cards, {
-                "surface": "Executive Landing - Source Health",
+                "surface": "Executive Landing - Data Health",
                 "severity": "Medium",
                 "signal": "Limited executive evidence",
                 "entity": "Executive snapshot",
                 "evidence": err,
-                "next_action": "Open Executive source health and reload or route the limited source before sign-off.",
-                "proof": "Executive source health table and source-specific Snowflake query error.",
-                "do_not": "Do not use limited executive evidence for leadership decisions without a source-health note.",
-                "route": "Executive Landing > Source Health",
+                "next_action": "Open Executive data health and reload or route the limited input before sign-off.",
+                "proof": "Executive data-health table and input-specific Snowflake query error.",
+                "do_not": "Do not use limited executive telemetry for leadership decisions without a data-health note.",
+                "route": "Executive Landing > Data Health",
                 "category": "Executive Evidence",
                 "value": "30",
             })
@@ -529,9 +550,9 @@ def _cards_from_executive_landing(state: Mapping, cards: list[dict]) -> None:
                 "signal": _text(row, "ALERT_NAME", "SIGNAL", "CATEGORY", default="Open alert"),
                 "entity": _text(row, "ENTITY", "OBJECT_NAME", "WAREHOUSE_NAME", default="alert scope"),
                 "evidence": _text(row, "EVIDENCE", "MESSAGE", "DETAIL", default="Open executive alert in the loaded window."),
-                "next_action": _text(row, "NEXT_ACTION", default="Open Alert Center and confirm owner, SLA, and escalation proof."),
-                "proof": _text(row, "PROOF_REQUIRED", default="Alert Center evidence row and source query result."),
-                "do_not": "Do not suppress executive alerts without owner, reason, and verification evidence.",
+                "next_action": _text(row, "NEXT_ACTION", default="Open Alert Center and confirm route, SLA, and escalation status."),
+                "proof": _text(row, "PROOF_REQUIRED", default="Alert Center telemetry row and source query result."),
+                "do_not": "Do not suppress executive alerts without route, reason, and telemetry status.",
                 "route": _text(row, "ROUTE", default="Alert Center"),
                 "category": "Alerts",
                 "value": str(max(1, 10 - safe_int(row.get("_RANK", 9)))),
@@ -550,157 +571,15 @@ def _cards_from_executive_landing(state: Mapping, cards: list[dict]) -> None:
                 "surface": "Executive Landing - Deployment Trust",
                 "severity": "High",
                 "signal": _text(row, "MIGRATION_STATE", default="Migration blocker"),
-                "entity": _text(row, "OBJECT_NAME", "OBJECT_TYPE", "VERSION", default="deployment evidence"),
-                "evidence": _text(row, "EVIDENCE", "DETAIL", default="Setup or migration blocker loaded in Executive Landing."),
-                "next_action": "Resolve setup/deployment trust before leadership sign-off.",
-                "proof": "Schema migration status evidence and deployment decision record.",
+                "entity": _text(row, "OBJECT_NAME", "OBJECT_TYPE", "VERSION", default="deployment telemetry"),
+                "evidence": _text(row, "EVIDENCE", "DETAIL", default="Status or migration blocker loaded in Executive Landing."),
+                "next_action": "Resolve data-health trust before leadership sign-off.",
+                "proof": "Schema migration status telemetry and deployment decision record.",
                 "do_not": "Do not mark deployment-ready while migration blockers remain open.",
-                "route": "Setup Status",
+                "route": "Data Health",
                 "category": "Change Reliability",
                 "value": "40",
             })
-
-
-def _cards_from_platform_futures(state: Mapping, cards: list[dict]) -> None:
-    adaptive = state.get("arch_adaptive_compute")
-    if _is_df(adaptive):
-        view = adaptive.copy()
-        view.columns = [str(col).upper() for col in view.columns]
-        if "READINESS_SCORE" in view.columns:
-            view = view.sort_values(["READINESS_SCORE"], ascending=False)
-        for _, row in view.head(6).iterrows():
-            decision = _text(row, "ADAPTIVE_DECISION", default="Observe")
-            _append_card(cards, {
-                "surface": "Governance & Security - Adaptive Compute Advisor",
-                "severity": _text(row, "SEVERITY", default="Medium"),
-                "signal": decision,
-                "entity": _text(row, "WAREHOUSE_NAME", "ENTITY_NAME", default="warehouse"),
-                "evidence": (
-                    f"score={_text(row, 'READINESS_SCORE', default='0')}; "
-                    f"credits={_text(row, 'CREDITS_30D', default='0')}; "
-                    f"queries={_text(row, 'QUERY_COUNT', default='0')}; "
-                    f"queue_sec={_text(row, 'QUEUED_SEC', default='0')}; "
-                    f"spill_gb={_text(row, 'REMOTE_SPILL_GB', default='0')}. "
-                    f"{_text(row, 'FINDING', default='Adaptive Compute decision needs evidence.')}"
-                ),
-                "next_action": _text(row, "DBA_ACTION", default="Open Governance & Security and validate owner-approved pilot evidence."),
-                "proof": _text(row, "PROOF_SQL", "VERIFICATION_QUERY", default="Compare QUERY_HISTORY and WAREHOUSE_METERING_HISTORY before and after any pilot."),
-                "do_not": _text(row, "CONVERSION_BOUNDARY", "AUTOMATION_BOUNDARY", default="Do not create or convert adaptive warehouses from dashboard automation."),
-                "route": "Governance & Security > AI governance > Adaptive Compute",
-                "category": "Adaptive Compute Readiness",
-                "value": _text(row, "READINESS_SCORE", default="0"),
-            })
-    ai_security = state.get("arch_ai_security_guardrails")
-    if _is_df(ai_security):
-        view = ai_security.copy()
-        view.columns = [str(col).upper() for col in view.columns]
-        if "SEVERITY" in view.columns:
-            view["_RANK"] = view["SEVERITY"].apply(_rank)
-            view = view.sort_values(["_RANK", "SOURCE_TYPE", "ENTITY_NAME"], ascending=[True, True, True]).drop(columns=["_RANK"])
-        for _, row in view.head(8).iterrows():
-            _append_card(cards, {
-                "surface": "Governance & Security - AI Security Guardrails",
-                "severity": _text(row, "SEVERITY", default="Medium"),
-                "signal": _text(row, "SOURCE_TYPE", "CONTROL_AREA", default="AI Security Guardrails"),
-                "entity": _text(row, "ENTITY_NAME", "OBJECT_NAME", default="AI security control"),
-                "evidence": _text(row, "FINDING", default="AI security evidence needs owner review."),
-                "next_action": _text(row, "DBA_ACTION", default="Close AI guardrail, privilege, or sensitive-data report evidence gaps."),
-                "proof": _text(row, "PROOF_SQL", "VERIFICATION_QUERY", default="Attach SHOW parameter/grant output or report visibility proof."),
-                "do_not": _text(row, "AUTOMATION_BOUNDARY", default="Do not change account parameters or grant/revoke AI privileges from dashboard automation."),
-                "route": "Governance & Security > AI governance > AI Security",
-                "category": "AI Security Guardrails",
-                "owner": _text(row, "OWNER", "OWNER_EMAIL", "APPROVAL_GROUP"),
-            })
-    gate = state.get("arch_futures_adoption_gate")
-    if _is_df(gate):
-        view = gate.copy()
-        view.columns = [str(col).upper() for col in view.columns]
-        if "READINESS_SCORE" in view.columns:
-            view = view.sort_values(["READINESS_SCORE"], ascending=True)
-        for _, row in view.head(7).iterrows():
-            state_label = _text(row, "ADOPTION_STATE", default="Evidence Gaps")
-            score = _text(row, "READINESS_SCORE", default="0")
-            area = _text(row, "CONTROL_AREA", default="AI & Platform Futures")
-            _append_card(cards, {
-                "surface": "Governance & Security - Expert Adoption Gate",
-                "severity": "High" if state_label == "Blocked" else "Medium",
-                "signal": state_label,
-                "entity": area,
-                "evidence": (
-                    f"readiness={score}; critical/high={_text(row, 'CRITICAL_HIGH_FINDINGS', default='0')}; "
-                    f"source_gaps={_text(row, 'SOURCE_GAPS', default='0')}; "
-                    f"owner_gaps={_text(row, 'OWNER_ROUTE_GAPS', default='0')}."
-                ),
-                "next_action": _text(row, "NEXT_DBA_MOVE", default="Close evidence, owner, approval, and source-health gaps before adoption."),
-                "proof": _text(row, "PRIMARY_EVIDENCE", default="Attach loaded source evidence and approval state."),
-                "do_not": _text(row, "AUTOMATION_BOUNDARY", default="Do not automate production changes without approval, rollback, and verification."),
-                "route": "Governance & Security > AI governance",
-                "category": area,
-                "value": score,
-            })
-    agentic = state.get("arch_agentic_ai_scorecard")
-    if _is_df(agentic):
-        view = agentic.copy()
-        view.columns = [str(col).upper() for col in view.columns]
-        state_rank = {"BLOCKED": 0, "EVIDENCE GAPS": 1, "CONTROLLED PILOT": 2, "PRODUCTION READY": 3}
-        if "GO_LIVE_STATE" in view.columns:
-            view["_STATE_RANK"] = view["GO_LIVE_STATE"].fillna("").astype(str).str.upper().map(state_rank).fillna(9)
-        else:
-            view["_STATE_RANK"] = 9
-        if "READINESS_SCORE" not in view.columns:
-            view["READINESS_SCORE"] = 0
-        view = view.sort_values(
-            ["_STATE_RANK", "READINESS_SCORE"],
-            ascending=[True, True],
-        ).drop(columns=["_STATE_RANK"])
-        for _, row in view.head(8).iterrows():
-            state_label = _text(row, "GO_LIVE_STATE", default="Evidence Gaps")
-            readiness = _text(row, "READINESS_SCORE", default="0")
-            area = _text(row, "CONTROL_AREA", default="Agentic AI Governance")
-            severity = "Critical" if state_label == "Blocked" else "High" if state_label == "Evidence Gaps" else "Medium"
-            _append_card(cards, {
-                "surface": "Governance & Security - Agentic AI Governance Cockpit",
-                "severity": severity,
-                "signal": state_label,
-                "entity": area,
-                "evidence": (
-                    f"surface={_text(row, 'SURFACE_CLASS', default='Agentic AI')}; readiness={readiness}; "
-                    f"critical/high={_text(row, 'CRITICAL_HIGH_FINDINGS', default='0')}; "
-                    f"source_gaps={_text(row, 'SOURCE_GAPS', default='0')}; "
-                    f"owner_gaps={_text(row, 'OWNER_ROUTE_GAPS', default='0')}; "
-                    f"blockers={_text(row, 'BLOCKERS', default='No blockers recorded')}."
-                ),
-                "next_action": _text(row, "DBA_DECISION", "NEXT_DBA_MOVE", default="Close evidence, ownership, approval, and proof gaps before production AI expansion."),
-                "proof": _text(row, "PROOF_REQUIRED", "PRIMARY_EVIDENCE", default="Attach source metadata, owner approval, and regression evidence."),
-                "do_not": _text(row, "DO_NOT_DO", "AUTOMATION_BOUNDARY", default="Do not publish or expand agentic AI surfaces without owner-approved evidence."),
-                "route": "Governance & Security > AI governance > Agentic AI Cockpit",
-                "category": area,
-                "value": str(max(0, 100 - safe_float(readiness))),
-            })
-    frame = state.get("arch_futures_board")
-    if not _is_df(frame):
-        return
-    view = frame.copy()
-    view.columns = [str(col).upper() for col in view.columns]
-    if "SEVERITY" in view.columns:
-        view["_RANK"] = view["SEVERITY"].apply(_rank)
-        view = view.sort_values(["_RANK", "CONTROL_AREA"], ascending=[True, True]).drop(columns=["_RANK"])
-    for _, row in view.head(10).iterrows():
-        control_area = _text(row, "CONTROL_AREA", default="AI & Platform Futures")
-        _append_card(cards, {
-            "surface": "Governance & Security - AI governance",
-            "severity": _text(row, "SEVERITY", default="Medium"),
-            "signal": control_area,
-            "entity": _text(row, "ENTITY_NAME", default="platform future control"),
-            "evidence": _text(row, "FINDING", default="Open platform futures finding."),
-            "next_action": _text(row, "DBA_ACTION", default="Assign owner, approval, proof SQL, and verification."),
-            "proof": _text(row, "PROOF_SQL", "VERIFICATION_QUERY", default="Attach source metadata and approval evidence."),
-            "do_not": "Do not auto-change agents, MCP servers, Openflow runtimes, semantic models, or DR controls from dashboard findings.",
-            "route": "Governance & Security > AI governance",
-            "category": control_area,
-            "owner": _text(row, "OWNER", "OWNER_EMAIL", "APPROVAL_GROUP"),
-        })
-
 
 def _cards_from_queue(df: pd.DataFrame, cards: list[dict], *, surface: str) -> None:
     if not _is_df(df):
@@ -724,9 +603,9 @@ def _cards_from_queue(df: pd.DataFrame, cards: list[dict], *, surface: str) -> N
             "signal": _text(row, "CATEGORY", "COMMAND_STATE", default="Open queue item"),
             "entity": entity,
             "evidence": finding,
-            "next_action": _text(row, "NEXT_ACTION", "RECOMMENDED_ACTION", default="Assign owner, due date, and verification evidence."),
-            "proof": proof or "Attach verification evidence before closure.",
-            "do_not": "Do not mark Fixed until the verification status is proved.",
+            "next_action": _text(row, "NEXT_ACTION", "RECOMMENDED_ACTION", default="Assign route, due date, and telemetry status."),
+            "proof": proof or "Record telemetry before closure.",
+            "do_not": "Do not mark Fixed until the telemetry status is measured.",
             "route": _text(row, "ROUTE", default="Action Queue"),
             "owner": _text(row, "OWNER", "OWNER_EMAIL", "APPROVAL_GROUP"),
         })
@@ -750,9 +629,9 @@ def _cards_from_alert_center(state: Mapping, cards: list[dict]) -> None:
                 "signal": _text(row, "CATEGORY", "ALERT_TYPE", "SOURCE_TYPE", default="Open alert issue"),
                 "entity": _text(row, "ENTITY_NAME", "ENTITY", "OBJECT_NAME", default="alert issue"),
                 "evidence": _text(row, "MESSAGE", "DETAIL", "ALERT_MESSAGE", default="Open Alert Center issue"),
-                "next_action": _text(row, "SUGGESTED_ACTION", "NEXT_ACTION", default="Route the alert to owner and record email delivery if action is required."),
-                "proof": _text(row, "PROOF_QUERY", "EVIDENCE", default="Use Alert Center proof query or action queue evidence."),
-                "do_not": "Do not send or suppress alerts without status reason and owner context.",
+                "next_action": _text(row, "SUGGESTED_ACTION", "NEXT_ACTION", default="Route the alert and record email delivery if action is required."),
+                "proof": _text(row, "PROOF_QUERY", "EVIDENCE", default="Use Alert Center telemetry query or action queue status."),
+                "do_not": "Do not send or suppress alerts without status reason and route context.",
                 "route": "Alert Center",
             })
     queue = data.get("action_queue")
@@ -819,10 +698,10 @@ def _cards_from_dba_control_room(state: Mapping, cards: list[dict]) -> None:
                 "severity": "High" if safe_float(_value(row, "PRIORITY_SCORE", default=0)) >= 50 else "Medium",
                 "signal": _text(row, "OPERATIONS_PRIORITY_STATE", default="DBA priority route"),
                 "entity": _route_text(_text(row, "SECTION", default="DBA Control Room")),
-                "evidence": _text(row, "WHY_NOW", default="Loaded DBA evidence ranked this route for operator review."),
-                "next_action": _text(row, "FIRST_MOVE", default="Open the routed section and attach proof before closure."),
-                "proof": _text(row, "PROOF_REQUIRED", default="Attach owner, ticket, approval, verification, and closure evidence."),
-                "do_not": "Do not execute DBA changes from aggregate priority alone; verify the source row and approval state first.",
+                "evidence": _text(row, "WHY_NOW", default="Loaded DBA telemetry ranked this route for operator review."),
+                "next_action": _text(row, "FIRST_MOVE", default="Open the routed section and record telemetry before closure."),
+                "proof": _text(row, "PROOF_REQUIRED", default="Record route, ticket, telemetry, and closure status."),
+                "do_not": "Do not execute DBA changes from aggregate priority alone; check the source row and review state first.",
                 "route": _route_text(_text(row, "SECTION", default="DBA Control Room")),
                 "category": "DBA Operations Priority",
                 "value": _text(row, "PRIORITY_SCORE", default="0"),
@@ -849,8 +728,8 @@ def _cards_from_dba_control_room(state: Mapping, cards: list[dict]) -> None:
             "entity": section,
             "evidence": f"gates={gates}",
             "next_action": moves or _text(first, "DBA_MOVE", default="Follow the staged DBA runbook."),
-            "proof": _text(first, "EVIDENCE_REQUIRED", default="Attach owner, ticket, approval, verification, and rollback evidence."),
-            "do_not": _text(first, "STOP_CONDITION", default="Do not proceed if owner, ticket, approval, rollback, or verification evidence is missing."),
+            "proof": _text(first, "EVIDENCE_REQUIRED", default="Record route, ticket, telemetry, and rollback status."),
+            "do_not": _text(first, "STOP_CONDITION", default="Do not proceed if route, ticket, rollback, or telemetry status is missing."),
             "route": section,
             "category": "DBA Operator Runbook",
             "value": _text(first, "PRIORITY_SCORE", default="100"),
@@ -870,10 +749,10 @@ def _cards_from_dba_control_room(state: Mapping, cards: list[dict]) -> None:
                     "severity": _text(row, "SEVERITY", "STATE", default="Medium"),
                     "signal": _text(row, "INCIDENT_TYPE", "LANE", "SIGNALS", default=surface),
                     "entity": _text(row, "ENTITY", "OWNER_OR_ROUTE", "ROUTE", default=surface),
-                    "evidence": _text(row, "EVIDENCE", "SIGNALS", default="Loaded DBA operating evidence"),
+                    "evidence": _text(row, "EVIDENCE", "SIGNALS", default="Loaded DBA operating telemetry"),
                     "next_action": _text(row, "NEXT_ACTION", "CONTAINMENT_ACTION", default="Work the incident lane first."),
-                    "proof": _text(row, "PROOF_REQUIRED", default="Attach source evidence before closure."),
-                    "do_not": "Do not close or hand off without proof requirements.",
+                    "proof": _text(row, "PROOF_REQUIRED", default="Record source telemetry before closure."),
+                    "do_not": "Do not close or hand off without telemetry status.",
                     "route": _text(row, "ROUTE", "OWNER_OR_ROUTE", default="DBA Control Room"),
                 })
 
@@ -894,9 +773,9 @@ def _cards_from_account_health(state: Mapping, cards: list[dict]) -> None:
                 "signal": _text(row, "SIGNAL", default="DBA Control Room exception"),
                 "entity": _text(row, "ENTITY", default="DBA Control Room"),
                 "evidence": _text(row, "EVIDENCE", default="Loaded DBA Control Room exception."),
-                "next_action": _text(row, "NEXT_ACTION", default="Open DBA Control Room and validate the exception evidence."),
-                "proof": "Attach owner, ticket, source query, scope basis, verification result, and recovery evidence before closure.",
-                "do_not": "Do not publish DBA Control Room as clean while morning exceptions remain unresolved or unverified.",
+                "next_action": _text(row, "NEXT_ACTION", default="Open DBA Control Room and check the exception telemetry."),
+                "proof": "Record route, ticket, source query, scope basis, status result, and recovery telemetry before closure.",
+                "do_not": "Do not publish DBA Control Room as clean while morning exceptions remain unresolved or unchecked.",
                 "route": _text(row, "ROUTE", default="DBA Control Room"),
                 "category": "Reliability",
                 "value": str(100 - safe_int(_value(row, "PRIORITY", default=50))),
@@ -919,10 +798,10 @@ def _cards_from_account_health(state: Mapping, cards: list[dict]) -> None:
                 "severity": "High" if rank <= 1 else "Medium",
                 "signal": _text(row, "STATE", default="DBA Control Room gate"),
                 "entity": _text(row, "GATE", default="DBA Control Room"),
-                "evidence": f"{safe_int(_value(row, 'COUNT', default=0)):,} row(s); proof={_text(row, 'PROOF_REQUIRED', default='owner and verification evidence')}.",
-                "next_action": _text(row, "NEXT_ACTION", default="Open DBA Control Room gates and validate source evidence."),
-                "proof": _text(row, "PROOF_REQUIRED", default="Attach owner, ticket, source evidence, and verification result."),
-                "do_not": "Do not close or suppress DBA Control Room gates without proof and owner approval.",
+                "evidence": f"{safe_int(_value(row, 'COUNT', default=0)):,} row(s); telemetry={_text(row, 'PROOF_REQUIRED', default='route and telemetry status')}.",
+                "next_action": _text(row, "NEXT_ACTION", default="Open DBA Control Room gates and check source telemetry."),
+                "proof": _text(row, "PROOF_REQUIRED", default="Record route, ticket, source telemetry, and status result."),
+                "do_not": "Do not close or suppress DBA Control Room gates without telemetry status.",
                 "route": "DBA Control Room > Gates",
                 "category": "Reliability",
                 "value": _text(row, "COUNT", default="0"),
@@ -945,8 +824,8 @@ def _cards_from_account_health(state: Mapping, cards: list[dict]) -> None:
                 "entity": _text(row, "SURFACE", "ROUTE", default="DBA Control Room"),
                 "evidence": _text(row, "NEXT_DECISION", "NEXT_CONTROL_ACTION", default="DBA intervention row is loaded."),
                 "next_action": _text(row, "NEXT_DECISION", "NEXT_CONTROL_ACTION", default="Work the P0/P1 intervention row first."),
-                "proof": _text(row, "PROOF_REQUIRED", default="Attach owner, ticket, approval, and verification evidence."),
-                "do_not": "Do not move to secondary evidence until P0/P1 DBA Control Room intervention rows are routed.",
+                "proof": _text(row, "PROOF_REQUIRED", default="Record route, ticket, and telemetry status."),
+                "do_not": "Do not move to secondary detail until P0/P1 DBA Control Room intervention rows are routed.",
                 "route": _text(row, "ROUTE", default="DBA Control Room"),
                 "category": "Reliability",
                 "value": _text(row, "COUNT", default="0"),
@@ -968,9 +847,9 @@ def _cards_from_account_health(state: Mapping, cards: list[dict]) -> None:
                 "severity": "High" if rank <= 1 else "Medium",
                 "signal": _text(row, "CONTROL_STATE", default="Control blocker"),
                 "entity": _text(row, "CHECK_NAME", default="DBA Control Room control"),
-                "evidence": _text(row, "NEXT_CONTROL_ACTION", "QUEUE_BLOCKERS", default="Control board row needs evidence review."),
+                "evidence": _text(row, "NEXT_CONTROL_ACTION", "QUEUE_BLOCKERS", default="Control board row needs telemetry review."),
                 "next_action": _text(row, "NEXT_CONTROL_ACTION", default="Open DBA Control Room control board and route the blocker."),
-                "proof": _text(row, "PROOF_REQUIRED", default="Attach source verification and closure proof."),
+                "proof": _text(row, "PROOF_REQUIRED", default="Record source telemetry and closure status."),
                 "do_not": "Do not call DBA Control Room controlled while control-board blockers remain.",
                 "route": _text(row, "ROUTE", default="DBA Control Room"),
                 "category": "Reliability",
@@ -994,9 +873,9 @@ def _cards_from_account_health(state: Mapping, cards: list[dict]) -> None:
                 "signal": _text(row, "CHECK", default="Checklist issue"),
                 "entity": _text(row, "ROUTE", "OWNER", default="DBA Control Room"),
                 "evidence": _text(row, "EVIDENCE", default="Loaded checklist exception."),
-                "next_action": _text(row, "NEXT_ACTION", default="Queue or resolve this checklist exception with proof."),
-                "proof": _text(row, "PROOF_REQUIRED", default="Attach verification SQL, owner approval, and rollback proof."),
-                "do_not": "Do not ignore checklist exceptions without verification and scope evidence.",
+                "next_action": _text(row, "NEXT_ACTION", default="Queue or resolve this checklist exception with telemetry."),
+                "proof": _text(row, "PROOF_REQUIRED", default="Record status SQL, telemetry, and rollback status."),
+                "do_not": "Do not ignore checklist exceptions without telemetry and scope basis.",
                 "route": _text(row, "ROUTE", default="DBA Control Room"),
                 "category": "Reliability",
                 "value": str(10 - safe_int(row.get("_RANK", 9))),
@@ -1030,13 +909,13 @@ def _cards_from_security_posture(state: Mapping, cards: list[dict]) -> None:
                 elif "login" in finding.lower():
                     next_action = "Validate source IP, IAM context, and recent user changes before disabling or locking the user."
                 elif "grant" in finding.lower():
-                    next_action = "Confirm owner, ticket, and business justification before revoking or narrowing access."
+                    next_action = "Confirm route, ticket, and business justification before revoking or narrowing access."
                 elif "shared" in finding.lower():
-                    next_action = "Validate consumer, owner, contract, and classification before leaving the share active."
+                    next_action = "Validate consumer, route, contract, and classification before leaving the share active."
                 else:
-                    next_action = "Open Governance & Security and validate owner, approval, ticket, and proof evidence."
+                    next_action = "Open Security Monitoring and validate route, ticket, and proof evidence."
             _append_card(cards, {
-                "surface": "Governance & Security - Security Exceptions",
+                "surface": "Security Monitoring - Security Exceptions",
                 "severity": _text(row, "SEVERITY", default="High"),
                 "signal": finding,
                 "entity": entity,
@@ -1046,9 +925,9 @@ def _cards_from_security_posture(state: Mapping, cards: list[dict]) -> None:
                     f"last_seen={_text(row, 'LAST_SEEN', default='not recorded')}."
                 ),
                 "next_action": next_action,
-                "proof": _text(row, "PROOF_QUERY", "PROOF_REQUIRED", default="Attach Governance & Security proof SQL and owner review before closure."),
-                "do_not": "Do not revoke, disable, or suppress security findings without owner, ticket, approval, and verification proof.",
-                "route": _text(row, "NEXT_WORKFLOW", default="Governance & Security"),
+                "proof": _text(row, "PROOF_QUERY", "PROOF_REQUIRED", default="Record Security Monitoring telemetry SQL and DBA review before closure."),
+                "do_not": "Do not revoke, disable, or suppress security findings without route, ticket, and telemetry status.",
+                "route": _text(row, "NEXT_WORKFLOW", default="Security Monitoring"),
                 "category": "Security",
                 "value": _text(row, "EVENT_COUNT", default="0"),
             })
@@ -1064,21 +943,21 @@ def _cards_from_security_posture(state: Mapping, cards: list[dict]) -> None:
     shared_databases = safe_int(_value(row, "SHARED_DATABASES", default=0))
     if users_without_mfa:
         _append_card(cards, {
-            "surface": "Governance & Security",
+            "surface": "Security Monitoring",
             "severity": "High",
             "signal": "MFA gaps",
             "entity": "Users",
             "evidence": f"{users_without_mfa:,} user(s) missing MFA signal in the loaded scope.",
             "next_action": "Confirm each authentication path and enforce MFA through Snowflake or the identity provider.",
-            "proof": "ACCOUNT_USAGE.USERS MFA/EXT_AUTHN_DUO evidence plus IAM/security approval.",
-            "do_not": "Do not mark Governance & Security clean until MFA exceptions are approved or remediated.",
-            "route": "Governance & Security > Access posture",
+            "proof": "ACCOUNT_USAGE.USERS MFA/EXT_AUTHN_DUO telemetry plus IAM/security review.",
+            "do_not": "Do not mark Security Monitoring clean until MFA exceptions are reviewed or remediated.",
+            "route": "Security Monitoring > Access posture",
             "category": "Security",
             "value": str(users_without_mfa),
         })
     if failed_logins:
         _append_card(cards, {
-            "surface": "Governance & Security",
+            "surface": "Security Monitoring",
             "severity": "High" if failed_logins >= 25 or failed_users >= 5 else "Medium",
             "signal": "Failed logins",
             "entity": "Identity",
@@ -1086,35 +965,35 @@ def _cards_from_security_posture(state: Mapping, cards: list[dict]) -> None:
             "next_action": "Validate source IP, IAM context, and recent user changes before locking or disabling users.",
             "proof": "LOGIN_HISTORY grouped by user, source IP, client, and error code.",
             "do_not": "Do not disable users from aggregate failure volume alone.",
-            "route": "Governance & Security > Access posture",
+            "route": "Security Monitoring > Access posture",
             "category": "Security",
             "value": str(failed_logins),
         })
     if recent_grants >= 25:
         _append_card(cards, {
-            "surface": "Governance & Security",
+            "surface": "Security Monitoring",
             "severity": "Medium",
             "signal": "Grant-change volume",
             "entity": "Roles",
             "evidence": f"{recent_grants:,} grant change(s) in the loaded lookback window.",
-            "next_action": "Load privilege sprawl and confirm owner, approval, ticket, and role capability evidence.",
-            "proof": "GRANTS_TO_USERS and GRANTS_TO_ROLES owner-review evidence.",
-            "do_not": "Do not revoke or narrow grants without business owner review.",
-            "route": "Governance & Security > Privilege sprawl",
+            "next_action": "Load privilege sprawl and confirm route, ticket, and role capability telemetry.",
+            "proof": "GRANTS_TO_USERS and GRANTS_TO_ROLES review telemetry.",
+            "do_not": "Do not revoke or narrow grants without business justification and DBA review.",
+            "route": "Security Monitoring > Privilege sprawl",
             "category": "Security",
             "value": str(recent_grants),
         })
     if shared_databases:
         _append_card(cards, {
-            "surface": "Governance & Security",
+            "surface": "Security Monitoring",
             "severity": "Watch",
             "signal": "Shared data exposure",
             "entity": "Databases",
             "evidence": f"{shared_databases:,} shared/imported database(s) in the loaded scope.",
-            "next_action": "Validate consumer, owner, contract, and classification before leaving the share active.",
-            "proof": "ACCOUNT_USAGE.DATABASES share/import metadata plus owner approval.",
-            "do_not": "Do not assume every share is approved without owner and contract evidence.",
-            "route": "Governance & Security > Data sharing exposure",
+            "next_action": "Validate consumer, route, contract, and classification before leaving the share active.",
+            "proof": "ACCOUNT_USAGE.DATABASES share/import metadata plus status review.",
+            "do_not": "Do not assume every share is reviewed without route and contract telemetry.",
+            "route": "Security Monitoring > Data sharing exposure",
             "category": "Security",
             "value": str(shared_databases),
         })
@@ -1128,7 +1007,6 @@ def build_ask_overwatch_context(state: Mapping, *, max_cards: int = 30) -> list[
     _cards_from_automation_board(state, cards)
     _cards_from_cost_command_center(state, cards)
     _cards_from_cost_operational_boards(state, cards)
-    _cards_from_platform_futures(state, cards)
     _cards_from_queue(state.get("rec_action_queue"), cards, surface="Recommendations action queue")
     _cards_from_queue(state.get("cost_contract_queue"), cards, surface="Cost & Contract action queue")
     _cards_from_alert_center(state, cards)
@@ -1220,7 +1098,7 @@ def build_top_priority_brief_cards(
             "evidence": card.get("evidence", ""),
             "next_action": card.get("next_action", ""),
             "route": card.get("route", card.get("surface", "OVERWATCH")),
-            "proof": card.get("proof", "Attach verification evidence before closure."),
+            "proof": card.get("proof", "Use telemetry before closure."),
             "domain": _normalize_domain(domain),
         })
     return brief_cards
@@ -1235,11 +1113,11 @@ def answer_ask_overwatch(
     environment: str = "",
     role: str = "",
 ) -> dict:
-    """Answer from loaded OVERWATCH evidence only; refuse generic speculation."""
+    """Answer from loaded OVERWATCH telemetry only; refuse generic speculation."""
     clean_question = str(question or "").strip()
     if not clean_question:
         return {
-            "answer": "Choose a Top Priority Brief domain after loading evidence.",
+            "answer": "Choose a Top Priority Brief domain after loading telemetry.",
             "cards": [],
             "confidence": "No question",
         }
@@ -1248,13 +1126,13 @@ def answer_ask_overwatch(
     if not cards:
         return {
             "answer": (
-                "**Answer:** I do not have enough loaded OVERWATCH evidence to give a specific recommendation.\n\n"
+                "**Answer:** I do not have enough loaded OVERWATCH telemetry to give a specific recommendation.\n\n"
                 "**Load first:** DBA Control Room for top incidents, Alert Center for active issues, or Cost & Contract > "
                 "Recommendations for owned cost/reliability actions.\n\n"
-                "**Why:** Top Priority Brief is evidence-grounded. It will not invent best-practice advice without loaded facts."
+                "**Why:** Top Priority Brief is telemetry-grounded. It will not invent best-practice advice without loaded facts."
             ),
             "cards": [],
-            "confidence": "No loaded evidence",
+            "confidence": "No loaded telemetry",
         }
 
     selected = _domain_filter(clean_question, cards)
@@ -1266,20 +1144,20 @@ def answer_ask_overwatch(
     answer = (
         f"**Answer:** Work **{top.get('entity', 'the top finding')}** first{scope_text}.\n\n"
         f"**Decision:** {top.get('signal', 'Triage the loaded finding')}.\n\n"
-        f"**Evidence:** {top.get('evidence', '')}\n\n"
+        f"**Telemetry:** {top.get('evidence', '')}\n\n"
         f"**Next move:** {top.get('next_action', '')}\n\n"
-        f"**Where to go:** {top.get('route', top.get('surface', 'OVERWATCH'))}. Owner/route: {owner}.\n\n"
-        f"**Proof before closure:** {top.get('proof', 'Attach verification evidence before closure.')}\n\n"
-        f"**Do not do:** {top.get('do_not', 'Do not act without source evidence.')}"
+        f"**Where to go:** {top.get('route', top.get('surface', 'OVERWATCH'))}. Route: {owner}.\n\n"
+        f"**Closure status:** {top.get('proof', 'Use telemetry before closure.')}\n\n"
+        f"**Do not do:** {top.get('do_not', 'Do not act without source telemetry.')}"
     )
     if role:
-        answer += f"\n\n**Context:** Role `{role}`; answer used {len(selected):,} relevant loaded evidence card(s)."
+        answer += f"\n\n**Context:** Role `{role}`; answer used {len(selected):,} relevant loaded telemetry card(s)."
     else:
-        answer += f"\n\n**Context:** Answer used {len(selected):,} relevant loaded evidence card(s)."
+        answer += f"\n\n**Context:** Answer used {len(selected):,} relevant loaded telemetry card(s)."
     return {
         "answer": answer,
         "cards": selected[:8],
-        "confidence": "Evidence-grounded",
+        "confidence": "Telemetry-grounded",
     }
 
 
@@ -1289,13 +1167,13 @@ def build_grounded_cortex_prompt(question: str, cards: list[dict], *, max_cards:
     for idx, card in enumerate(cards[:max_cards], start=1):
         evidence_lines.append(
             f"{idx}. surface={card.get('surface')}; severity={card.get('severity')}; "
-            f"entity={card.get('entity')}; evidence={card.get('evidence')}; "
-            f"next_action={card.get('next_action')}; proof={card.get('proof')}; do_not={card.get('do_not')}"
+            f"entity={card.get('entity')}; telemetry={card.get('evidence')}; "
+            f"next_action={card.get('next_action')}; closure_status={card.get('proof')}; do_not={card.get('do_not')}"
         )
-    evidence = "\n".join(evidence_lines) or "NO_EVIDENCE_LOADED"
+    evidence = "\n".join(evidence_lines) or "NO_TELEMETRY_LOADED"
     return (
-        "You are OVERWATCH, a Snowflake DBA control assistant. Answer only from the evidence below. "
-        "If the evidence does not answer the question, say exactly that and tell the user what OVERWATCH section to load. "
-        "Do not give generic Snowflake best practices. Include Decision, Evidence, Next move, Proof before closure, and Do not do.\n\n"
-        f"Question: {question}\n\nEvidence:\n{evidence}"
+        "You are OVERWATCH, a Snowflake DBA control assistant. Answer only from the telemetry below. "
+        "If the telemetry does not answer the question, say exactly that and tell the user what OVERWATCH section to load. "
+        "Do not give generic Snowflake best practices. Include Decision, Telemetry, Next move, Closure status, and Do not do.\n\n"
+        f"Question: {question}\n\nTelemetry:\n{evidence}"
     )

@@ -65,11 +65,11 @@ def _freshness_note(source: str) -> str:
 
 def _metric_confidence_label(kind: str) -> str:
     labels = {
-        "exact": "Source basis: Exact",
-        "allocated": "Source basis: Allocated / estimated from exact source records",
-        "estimated": "Source basis: Estimated",
+        "exact": "Measurement: Exact",
+        "allocated": "Measurement: Allocated from source records",
+        "estimated": "Measurement: Estimated",
     }
-    return labels.get(str(kind or "").lower(), "Source basis: Calculation depends on available account metadata")
+    return labels.get(str(kind or "").lower(), "Measurement depends on available account metadata")
 
 
 def render_signal_confidence(*, source: str = "ACCOUNT_USAGE", confidence: str = "allocated", scope_note: str = "") -> None:
@@ -112,19 +112,19 @@ WORKFLOWS = (
 )
 
 WORKFLOW_DETAILS = {
-    "Object and access changes": "Who changed what, access movement, destructive DDL, and policy changes.",
+    "Object and access changes": "Who changed what, access movement, destructive object changes, and policy changes.",
     "Schema and object drift": "Schema compare, object inventory, unused objects, and Snowflake-native drift signals.",
-    "Controlled DBA actions": "Guarded admin actions, generated SQL, and operational controls.",
+    "Controlled DBA actions": "Guarded admin actions, DBA review, and operational controls.",
     "Data movement and replication": "Replication, dynamic tables, Snowpipe, data loading, and freshness risk.",
-    "Stored procedure lineage": "Procedure ownership, child SQL, downstream objects, and runtime/cost drift.",
+    "Stored procedure lineage": "Procedure execution context, child statements, downstream objects, and runtime/cost drift.",
 }
 
 CHANGE_BRIEF_WORKFLOWS = (
     {
         "WORKFLOW": "Object and access changes",
         "BUTTON_LABEL": "Open Object Changes",
-        "DBA_MOVE": "Start with recent DDL, grants, ownership, policy, and actor evidence.",
-        "WHEN": "Unknown actor, manual DDL, access movement",
+        "DBA_MOVE": "Start with recent object changes, grants, ownership, policy, and actor evidence.",
+        "WHEN": "Unknown actor, manual object change, access movement",
     },
     {
         "WORKFLOW": "Schema and object drift",
@@ -141,14 +141,14 @@ CHANGE_BRIEF_WORKFLOWS = (
     {
         "WORKFLOW": "Stored procedure lineage",
         "BUTTON_LABEL": "Open Procedure Lineage",
-        "DBA_MOVE": "Trace stored procedure ownership, child SQL, runtime drift, and downstream impact.",
+        "DBA_MOVE": "Trace stored procedure ownership, child statements, runtime drift, and downstream impact.",
         "WHEN": "Procedure change, runtime drift, ownership review",
     },
     {
         "WORKFLOW": "Controlled DBA actions",
         "BUTTON_LABEL": "Open DBA Actions",
-        "DBA_MOVE": "Use guarded admin workflows with audit proof and verification requirements.",
-        "WHEN": "Approved changes, recovery, controlled fixes",
+        "DBA_MOVE": "Use guarded admin workflows with audit telemetry and review requirements.",
+        "WHEN": "Reviewed changes, recovery, controlled fixes",
     },
 )
 
@@ -469,8 +469,8 @@ def _change_source_next_action(state: str, source: str) -> str:
         return "Reload after changing company, environment, lookback, or triage filters."
     if state == "Unavailable":
         return "Deploy or refresh the summary/evidence tables before relying on this surface."
-    if state == "Not Loaded":
-        return "Load only when this workflow is part of the current change investigation."
+    if state == "On demand":
+        return "Refresh only when this workflow is part of the current change investigation."
     if state == "No Rows":
         return "Confirm the selected scope has recent change events, evidence, or action rows."
     if "fallback" in source_lower:
@@ -579,7 +579,7 @@ def _change_source_health_rows(
         if error:
             status = "Unavailable"
         elif not loaded:
-            status = "Not Loaded"
+            status = "On demand"
         elif not _change_meta_matches(state.get(item["meta_key"]), expected_meta):
             status = "Stale"
         elif frame.empty:
@@ -594,7 +594,7 @@ def _change_source_health_rows(
                 "Stale": 1,
                 "Loaded": 2,
                 "No Rows": 3,
-                "Not Loaded": 4,
+                "On demand": 4,
             }.get(status, 9),
             "SOURCE": source,
             "CONFIDENCE": _change_source_confidence(source, item["confidence"]),
@@ -611,33 +611,33 @@ def _change_owner_context(row: pd.Series | dict) -> dict:
     environment_label = environment_label_for_database(_change_database_name(row))
     if "policy" in finding or "tag" in finding or "masking" in finding:
         base = {
-            "owner": "Security / Data Governance",
-            "escalation": "Security Owner / Data Governance Lead",
-            "source": "Change owner map",
+            "owner": "Security / Data Stewardship",
+            "escalation": "Security / Data Stewardship Route",
+            "source": "Change route map",
         }
     elif "grant" in finding or "role" in finding or "owner" in finding:
         base = {
-            "owner": "Security Owner",
-            "escalation": "DBA Lead / Security Owner",
-            "source": "Change owner map",
+            "owner": "Security Route",
+            "escalation": "DBA Lead / Security Route",
+            "source": "Change route map",
         }
     elif "drop" in finding or "destructive" in finding:
         base = {
-            "owner": "DBA Change Owner",
-            "escalation": "Data Owner / DBA Lead",
-            "source": "Change owner map",
+            "owner": "DBA Change Route",
+            "escalation": "Data Route / DBA Lead",
+            "source": "Change route map",
         }
     elif "drift" in finding:
         base = {
-            "owner": "Platform Owner",
-            "escalation": "DBA Lead / Platform Owner",
-            "source": "Change owner map",
+            "owner": "Platform Route",
+            "escalation": "DBA Lead / Platform Route",
+            "source": "Change route map",
         }
     elif environment_label == "PROD":
         base = {
-            "owner": "Production Data Owner",
+            "owner": "Production Data Route",
             "escalation": "DBA Lead",
-            "source": "Environment owner hint",
+            "source": "Environment route hint",
         }
     elif environment_label in {
         "ALFA_EDW_DEV",
@@ -648,15 +648,15 @@ def _change_owner_context(row: pd.Series | dict) -> dict:
         "Other ALFA Non-Prod",
     }:
         base = {
-            "owner": "Development Data Owner",
+            "owner": "Development Data Route",
             "escalation": "DBA Lead",
-            "source": "Environment owner hint",
+            "source": "Environment route hint",
         }
     else:
         base = {
-            "owner": "DBA Change Owner",
+            "owner": "DBA Change Route",
             "escalation": "DBA Lead",
-            "source": "Default change owner",
+            "source": "Default change route",
         }
     directory_context = resolve_owner_context(
         row,
@@ -681,13 +681,13 @@ def _change_iac_state(row: pd.Series | dict) -> str:
     query_tag = str(row.get("QUERY_TAG") or "").lower()
     finding = str(row.get("FINDING_TYPE") or "").lower()
     if any(token in query_tag for token in ("approved", "rollback", "release")):
-        return "Approval proof tagged"
+        return "Review status tagged"
     if "drift" in finding:
-        return "Reconcile approval proof"
+        return "Reconcile review status"
     severity = str(row.get("SEVERITY") or "").upper()
     if severity in {"CRITICAL", "HIGH"}:
-        return "Manual change - rollback proof required"
-    return "Review approval evidence state"
+        return "Untracked change - rollback status required"
+    return "Review telemetry state"
 
 
 def _change_execution_audit_state(row: pd.Series | dict) -> str:
@@ -697,7 +697,7 @@ def _change_execution_audit_state(row: pd.Series | dict) -> str:
         return "Query ID and timestamp captured"
     if query_id:
         return "Query ID captured"
-    return "Missing query_id proof"
+    return "Missing query_id telemetry"
 
 
 def _change_review_sla_hours(severity: object, finding_type: object) -> int:
@@ -714,7 +714,6 @@ def _change_review_sla_hours(severity: object, finding_type: object) -> int:
 
 def _change_control_readiness_for_row(row: pd.Series | dict) -> dict:
     owner = str(row.get("OWNER") or "").strip()
-    owner_source = str(row.get("OWNER_SOURCE") or "")
     approver = str(row.get("APPROVER") or row.get("APPROVAL_GROUP") or "").strip()
     severity = str(row.get("SEVERITY") or "").upper()
     ticket_state = str(row.get("CHANGE_TICKET_STATE") or "")
@@ -724,19 +723,19 @@ def _change_control_readiness_for_row(row: pd.Series | dict) -> dict:
 
     blockers = []
     generic_owners = {"", "DBA", "UNKNOWN", "N/A", "DBA CHANGE OWNER", "SECURITY OWNER"}
-    owner_route_ready = bool(owner) and owner.upper() not in generic_owners and "OWNER_DIRECTORY" in owner_source.upper()
+    owner_route_ready = bool(owner) and owner.upper() not in generic_owners
     if not owner_route_ready:
-        blockers.append("owner directory evidence")
+        blockers.append("escalation route")
     if approval_required and not approver:
         blockers.append("approver")
     if ticket_state.lower().startswith("missing"):
-        blockers.append("change ticket evidence")
+        blockers.append("change ticket")
     if "required" in iac_state.lower() or "reconcile" in iac_state.lower():
-        blockers.append("approval/rollback evidence")
+        blockers.append("review/rollback status")
     if execution_state.lower().startswith("missing"):
-        blockers.append("query_id proof")
+        blockers.append("query_id telemetry")
 
-    route_blockers = {"owner directory evidence", "approver"}
+    route_blockers = {"escalation route", "approver"}
     closure_blockers = [item for item in blockers if item not in route_blockers]
     if any(item in route_blockers for item in blockers):
         readiness = "Route Blocked"
@@ -745,16 +744,16 @@ def _change_control_readiness_for_row(row: pd.Series | dict) -> dict:
     else:
         readiness = "Review Ready"
 
-    if "change ticket evidence" in blockers:
-        next_action = "Attach the approved change ticket or mark the row as unauthorized drift before closure."
-    elif "approval/rollback evidence" in blockers:
-        next_action = "Attach approval notes, rollback proof, or revert through the approved change path."
-    elif "query_id proof" in blockers:
+    if "change ticket" in blockers:
+        next_action = "Record the change ticket or mark the row as unauthorized drift before closure."
+    elif "review/rollback status" in blockers:
+        next_action = "Record review notes, rollback status, or revert through the reviewed change path."
+    elif "query_id telemetry" in blockers:
         next_action = "Capture the Snowflake query_id and timestamp before accepting the change."
     elif readiness == "Route Blocked":
-        next_action = "Assign a named owner and approver before queueing or closing the change."
+        next_action = "Record an escalation route and reviewer before queueing or closing the change."
     else:
-        next_action = "Review blast radius, retain approval proof, and close only after verification evidence is attached."
+        next_action = "Review blast radius, retain review status, and close only after telemetry status is present."
 
     return {
         "APPROVAL_ROUTE_READY": "Yes" if owner_route_ready and (not approval_required or bool(approver)) else "No",
@@ -792,7 +791,7 @@ def _enrich_change_control_evidence(readiness: pd.DataFrame) -> pd.DataFrame:
     )
     view["CHANGE_TICKET_ID"] = view.apply(_change_ticket_id, axis=1)
     view["CHANGE_TICKET_STATE"] = view["CHANGE_TICKET_ID"].apply(
-        lambda value: "Ticket detected" if str(value or "").strip() else "Missing ticket evidence"
+        lambda value: "Ticket detected" if str(value or "").strip() else "Missing ticket status"
     )
     view["IAC_RECONCILIATION_STATE"] = view.apply(_change_iac_state, axis=1)
     view["EXECUTION_AUDIT_STATE"] = view.apply(_change_execution_audit_state, axis=1)
@@ -800,9 +799,9 @@ def _enrich_change_control_evidence(readiness: pd.DataFrame) -> pd.DataFrame:
     missing_ticket = view["CHANGE_TICKET_ID"].fillna("").astype(str).str.strip().eq("")
     missing_iac = view["IAC_RECONCILIATION_STATE"].fillna("").astype(str).str.contains("required|reconcile", case=False, na=False)
     missing_query = view["EXECUTION_AUDIT_STATE"].fillna("").astype(str).str.contains("missing", case=False, na=False)
-    view.loc[missing_ticket, "CONTROL_GAP"] = "Missing change ticket evidence"
-    view.loc[missing_iac, "CONTROL_GAP"] = "Missing approval or rollback evidence"
-    view.loc[missing_query, "CONTROL_GAP"] = "Missing query_id proof"
+    view.loc[missing_ticket, "CONTROL_GAP"] = "Missing change ticket status"
+    view.loc[missing_iac, "CONTROL_GAP"] = "Missing review or rollback status"
+    view.loc[missing_query, "CONTROL_GAP"] = "Missing query_id telemetry"
     readiness_rows = view.apply(_change_control_readiness_for_row, axis=1)
     for column in [
         "APPROVAL_ROUTE_READY",
@@ -816,7 +815,7 @@ def _enrich_change_control_evidence(readiness: pd.DataFrame) -> pd.DataFrame:
 
 
 def _change_control_readiness_summary(readiness: pd.DataFrame) -> pd.DataFrame:
-    """Summarize change-control blockers by environment, finding, and owner route."""
+    """Summarize change-control blockers by environment, finding, and escalation route."""
     if readiness is None or readiness.empty:
         return pd.DataFrame()
     view = _enrich_change_control_evidence(readiness)
@@ -847,15 +846,15 @@ def _change_control_readiness_summary(readiness: pd.DataFrame) -> pd.DataFrame:
         closure_blocked = int(group["_CLOSURE_BLOCKED"].sum())
         ready = int(group["_READY"].sum())
         if route_blocked:
-            next_action = "Complete named owner and approver routing before accepting change evidence."
+            next_action = "Complete named route and reviewer status before accepting change telemetry."
             readiness_label = "Route Blocked"
             rank = 0
         elif closure_blocked:
-            next_action = "Attach missing ticket, query, approval, or rollback evidence before closure."
+            next_action = "Record missing ticket, query, review, or rollback status before closure."
             readiness_label = "Closure Blocked"
             rank = 1
         elif ready:
-            next_action = "Review blast radius and close only after verification evidence is retained."
+            next_action = "Review blast radius and close only after telemetry status is retained."
             readiness_label = "Review Ready"
             rank = 8
         else:
@@ -966,47 +965,47 @@ def _change_operator_next_moves(
     if route_blocked:
         state = "Route Blocked"
         rank = 0
-        next_action = "Assign named owners and approvers before accepting or queueing the change."
+        next_action = "Assign named routes and reviewers before accepting or queueing the change."
         count = route_blocked
     elif exception_count:
         state = "Route Ready"
         rank = 6
-        next_action = "Use the readiness rows to confirm owner and approver evidence before closure."
+        next_action = "Use the readiness rows to confirm route and reviewer status before closure."
         count = exception_count
     else:
         state = "Clear"
         rank = 8
-        next_action = "No change route needs owner intervention in the loaded scope."
+        next_action = "No change route needs escalation in the loaded scope."
         count = 0
     rows.append({
-        "GATE": "Owner approval route",
+        "GATE": "Review route",
         "STATE": state,
         "COUNT": count,
-        "PROOF_REQUIRED": "named owner, approver, approval group, owner evidence",
+        "PROOF_REQUIRED": "named route, reviewer, review group, route basis",
         "NEXT_ACTION": next_action,
         "GATE_RANK": rank,
     })
 
     if evidence_gaps:
-        state = "Evidence Blocked"
+        state = "Telemetry Blocked"
         rank = 1
-        next_action = "Attach ticket, approval note, rollback proof, query_id, and blast-radius proof before closure."
+        next_action = "Record ticket, review note, rollback status, query_id, and blast-radius context before closure."
         count = evidence_gaps
     elif exception_count:
         state = "Review Ready"
         rank = 6
-        next_action = "Save the evidence snapshot, then queue only verified exceptions that still need DBA action."
+        next_action = "Save the telemetry snapshot, then queue only confirmed exceptions that still need DBA action."
         count = exception_count
     else:
         state = "Clear"
         rank = 8
-        next_action = "No ticket, rollback, approval, or query proof gap crossed the current thresholds."
+        next_action = "No ticket, rollback, review, or query telemetry gap crossed the current thresholds."
         count = 0
     rows.append({
-        "GATE": "Change proof",
+        "GATE": "Change status",
         "STATE": state,
         "COUNT": count,
-        "PROOF_REQUIRED": "change ticket, query_id, approval note, rollback proof, blast-radius evidence",
+        "PROOF_REQUIRED": "change ticket, query_id, review note, rollback status, blast-radius context",
         "NEXT_ACTION": next_action,
         "GATE_RANK": rank,
     })
@@ -1014,7 +1013,7 @@ def _change_operator_next_moves(
     if closure_proof_blocks:
         state = "Closure Blocked"
         rank = 2
-        next_action = "Reopen or hold change actions until verification and recovery evidence is attached."
+        next_action = "Reopen or hold change actions until telemetry and recovery status are present."
         count = closure_proof_blocks
     elif exception_count and close.empty:
         state = "Load Closure Analytics"
@@ -1024,13 +1023,13 @@ def _change_operator_next_moves(
     else:
         state = "Clear"
         rank = 8
-        next_action = "Retain verified closure evidence for audit review."
+        next_action = "Retain closure telemetry for audit review."
         count = _change_frame_sum(close, "VERIFIED_CLOSURES") + _change_frame_sum(fact, "VERIFIED_CLOSURES")
     rows.append({
-        "GATE": "Closure proof",
+        "GATE": "Closure status",
         "STATE": state,
         "COUNT": count,
-        "PROOF_REQUIRED": "verification result, recovery evidence, ticket closure, owner approval",
+        "PROOF_REQUIRED": "telemetry result, recovery status, ticket closure",
         "NEXT_ACTION": next_action,
         "GATE_RANK": rank,
     })
@@ -1043,13 +1042,13 @@ def _change_operator_next_moves(
     else:
         state = "Database Scoped"
         rank = 8
-        next_action = "Use the selected environment/database evidence for scoped change review."
+        next_action = "Use the selected environment/database telemetry for scoped change review."
         count = 0
     rows.append({
         "GATE": "Scope confidence",
         "STATE": state,
         "COUNT": count,
-        "PROOF_REQUIRED": "database context where present; explicit account-level approval where database context is absent",
+        "PROOF_REQUIRED": "database context where present; explicit account-level review where database context is absent",
         "NEXT_ACTION": next_action,
         "GATE_RANK": rank,
     })
@@ -1061,20 +1060,20 @@ def _change_operator_next_moves(
             finding_text.str.contains("DESTRUCTIVE|DROP|POLICY|TAG|OWNER", regex=True, na=False).sum()
         )
     if recovery_risk or recovery_sensitive:
-        state = "Recovery Proof Required"
+        state = "Recovery Status Required"
         rank = 3
-        next_action = "Attach restore, rollback, downstream dependency, and owner approval proof before accepting this change."
+        next_action = "Record restore, rollback, downstream dependency, and telemetry status before accepting this change."
         count = max(recovery_risk, recovery_sensitive)
     else:
         state = "Clear"
         rank = 8
-        next_action = "No destructive, ownership, or policy/tag change currently requires extra recovery proof."
+        next_action = "No destructive, ownership, or policy/tag change currently requires extra recovery status."
         count = 0
     rows.append({
         "GATE": "Recovery readiness",
         "STATE": state,
         "COUNT": count,
-        "PROOF_REQUIRED": "restore path, rollback plan, dependency impact, owner approval, post-change verification",
+        "PROOF_REQUIRED": "restore path, rollback plan, dependency impact, telemetry status, post-change status",
         "NEXT_ACTION": next_action,
         "GATE_RANK": rank,
     })
@@ -1082,7 +1081,7 @@ def _change_operator_next_moves(
     if high_risk or safe_float(score) < 95:
         state = "Review Required" if high_risk else "Watch"
         rank = 5
-        next_action = "Work high-risk destructive, policy, owner, role, and manual drift rows before routine changes."
+        next_action = "Work high-risk destructive, policy, owner, role, and untracked drift rows before routine changes."
         count = high_risk or exception_count
     else:
         state = "Controlled"
@@ -1142,31 +1141,31 @@ def _change_action_for(finding_type: str) -> tuple[str, str, str]:
     if "drop" in value or "destructive" in value:
         return (
             "Object",
-            "Confirm change approval, downstream dependencies, backup/recovery posture, and whether the object should be restored.",
-            "-- Proof: QUERY_HISTORY destructive DDL query_id and query text.",
+            "Confirm downstream dependencies, backup/recovery posture, and whether the object should be restored.",
+            "Telemetry: query history destructive change query ID and query text.",
         )
     if "policy" in value or "tag" in value or "masking" in value:
         return (
             "Policy/Tag",
-            "Validate policy owner, classification impact, and whether masking/tag changes match governance approval.",
-            "-- Proof: QUERY_HISTORY masking/tag/row-access policy DDL.",
+            "Validate policy owner, classification impact, and whether masking/tag changes match security review.",
+            "Telemetry: query history masking/tag/row-access policy change.",
         )
     if "grant" in value or "role" in value or "owner" in value:
         return (
             "Grant/Role",
             "Confirm requester, approver, role hierarchy, and ownership transfer before accepting the access change.",
-            "-- Proof: QUERY_HISTORY grant/revoke/ownership DDL.",
+            "Telemetry: query history grant/revoke/ownership change.",
         )
     if "drift" in value:
         return (
             "Drift",
-            "Compare the query with approved change evidence; either retain owner approval and rollback proof or revert through the approved change path.",
-            "-- Proof: QUERY_HISTORY DDL/DCL query text, query tag, owner approval, and rollback proof.",
+            "Compare the query with source telemetry; either retain status and rollback context or revert through the reviewed recovery path.",
+            "Telemetry: query history change text, query tag, status, and rollback path.",
         )
     return (
         "Object",
-        "Review change for approval, ownership, dependency impact, and drift risk.",
-        "-- Proof: QUERY_HISTORY change statement.",
+        "Review change for dependency impact, access impact, and drift risk.",
+        "-- Telemetry: QUERY_HISTORY change statement.",
     )
 
 
@@ -1175,31 +1174,31 @@ def _owner_approval_for(finding_type: str) -> tuple[str, str, str]:
     if "drop" in value or "destructive" in value:
         return (
             "Requested",
-            "DBA Lead / Data Owner",
-            "Destructive DDL requires data-owner approval, dependency review, and recovery evidence.",
+            "DBA Lead / Data Route",
+            "Destructive object changes require data status, dependency review, and recovery telemetry.",
         )
     if "policy" in value or "tag" in value or "masking" in value:
         return (
             "Requested",
-            "Security Owner / Data Governance",
-            "Policy, tag, masking, and row-access changes require security/governance approval.",
+            "Security / Data Stewardship Route",
+            "Policy, tag, masking, and row-access changes require security review.",
         )
     if "grant" in value or "role" in value or "owner" in value:
         return (
             "Requested",
-            "Security Owner",
-            "Grant, revoke, role, and ownership changes require access-request approval evidence.",
+            "Security Route",
+            "Grant, revoke, role, and ownership changes require access-request review status.",
         )
     if "drift" in value:
         return (
             "Requested",
-            "DBA Lead / Platform Owner",
-            "Manual drift must be tied to owner approval and rollback proof, or reverted through the approved change path.",
+            "DBA Lead / Platform Route",
+            "Untracked drift must be tied to telemetry status and rollback context, or reverted through the reviewed recovery path.",
         )
     return (
         "Requested",
-        "Data Owner",
-        "Object changes require requester, approver, and change-ticket evidence before closure.",
+        "Data Route",
+        "Object changes require requester, reviewer, and change-ticket status before closure.",
     )
 
 
@@ -1309,7 +1308,7 @@ LIMIT 100""".strip()
 
 
 def _build_change_control_readiness(exceptions: pd.DataFrame) -> pd.DataFrame:
-    """Add ticket, approval, and proof requirements before queueing changes."""
+    """Add ticket, review, and telemetry requirements before queueing changes."""
     if exceptions is None or exceptions.empty:
         return pd.DataFrame()
     view = _change_priority_view(exceptions).copy()
@@ -1328,12 +1327,12 @@ def _build_change_control_readiness(exceptions: pd.DataFrame) -> pd.DataFrame:
     high_risk = view.get("SEVERITY", pd.Series([""] * len(view), index=view.index)).fillna("").astype(str).str.upper().isin(["CRITICAL", "HIGH"])
     finding = view.get("FINDING_TYPE", pd.Series([""] * len(view), index=view.index)).fillna("").astype(str).str.lower()
 
-    view["CONTROL_GAP"] = "Needs approver, change ticket, and blast-radius note"
-    view.loc[query_missing, "CONTROL_GAP"] = "Missing query_id proof"
-    view["CHANGE_CONTROL_STATE"] = "Validate Approval"
-    view.loc[finding.str.contains("drift", na=False), "CHANGE_CONTROL_STATE"] = "Reconcile approval proof"
-    view.loc[high_risk, "CHANGE_CONTROL_STATE"] = "Approval Required"
-    view.loc[query_missing, "CHANGE_CONTROL_STATE"] = "Proof Missing"
+    view["CONTROL_GAP"] = "Needs reviewer, change ticket, and blast-radius note"
+    view.loc[query_missing, "CONTROL_GAP"] = "Missing query_id telemetry"
+    view["CHANGE_CONTROL_STATE"] = "Validate Review"
+    view.loc[finding.str.contains("drift", na=False), "CHANGE_CONTROL_STATE"] = "Reconcile review status"
+    view.loc[high_risk, "CHANGE_CONTROL_STATE"] = "Review Required"
+    view.loc[query_missing, "CHANGE_CONTROL_STATE"] = "Telemetry Missing"
     return _enrich_change_control_evidence(view)
 
 
@@ -1347,7 +1346,7 @@ def _change_action_payload(row: pd.Series | dict, company: str, environment: str
     approval_status, approver, approval_note = _owner_approval_for(finding_type)
     owner_context = _change_owner_context(row)
     ticket_id = _change_ticket_id(row)
-    ticket_state = "ticket detected" if ticket_id else "missing ticket evidence"
+    ticket_state = "ticket detected" if ticket_id else "missing ticket status"
     iac_state = _change_iac_state(row)
     audit_state = _change_execution_audit_state(row)
     env_value = str(row.get("ENVIRONMENT") or _change_environment(row, environment) or environment or "ALL")
@@ -1355,13 +1354,13 @@ def _change_action_payload(row: pd.Series | dict, company: str, environment: str
     blast_radius_query = _change_blast_radius_sql(entity)
     finding = f"{finding_type} by {user_name} on {entity}"
     generated_review = "\n".join([
-        "-- Review-only change-control record. Do not execute state-changing SQL from this queue row.",
+        "-- Review-only change-monitoring record. Do not execute state-changing SQL from this queue row.",
         generated_sql,
-        f"-- Required proof: query_id={query_id or 'missing'}, approver, change ticket, and dependency/blast-radius note.",
-        f"-- Ticket evidence: {ticket_id or 'missing'} ({ticket_state}).",
-        f"-- approval/rollback state: {iac_state}.",
+        f"-- Required telemetry: query_id={query_id or 'missing'}, reviewer, change ticket, and dependency/blast-radius note.",
+        f"-- Ticket status: {ticket_id or 'missing'} ({ticket_state}).",
+        f"-- review/rollback state: {iac_state}.",
         f"-- Execution audit state: {audit_state}.",
-        "-- Read-only blast-radius check to run before approval:",
+        "-- Read-only blast-radius check to run before action:",
         blast_radius_query,
     ])
     return {
@@ -1375,7 +1374,7 @@ def _change_action_payload(row: pd.Series | dict, company: str, environment: str
         "Owner Email": owner_context.get("owner_email", ""),
         "Oncall Primary": owner_context.get("oncall_primary", ""),
         "Oncall Secondary": owner_context.get("oncall_secondary", ""),
-        "Approval Group": owner_context.get("approval_group", approver),
+        "Review Group": owner_context.get("approval_group", approver),
         "Escalation Target": owner_context.get("escalation", ""),
         "Owner Source": owner_context.get("source", ""),
         "Owner Evidence": owner_context.get("owner_evidence", ""),
@@ -1387,15 +1386,15 @@ def _change_action_payload(row: pd.Series | dict, company: str, environment: str
         "Verification Query": verification_query,
         "Verification Status": "Pending",
         "Approver": approver,
-        "Owner Approval Status": approval_status,
-        "Owner Approval Note": (
+        "Verification Status": approval_status,
+        "Verification Note": (
             f"{approval_note} Ticket={ticket_id or 'missing'}; "
-            f"approval_rollback={iac_state}; escalation={owner_context['escalation']}."
+            f"review_rollback={iac_state}; escalation={owner_context['escalation']}."
         ),
         "Recovery Evidence": (
             f"Run blast-radius check before closure:\n{blast_radius_query}\n\n"
-            f"Ticket evidence: {ticket_id or 'missing'}\n"
-            f"approval/rollback evidence: {iac_state}\n"
+            f"Ticket status: {ticket_id or 'missing'}\n"
+            f"review/rollback status: {iac_state}\n"
             f"Execution audit: {audit_state}"
         ),
         "Recovery Audit State": audit_state,
@@ -1485,15 +1484,15 @@ def _change_intervention_matrix(
         if recovery_sensitive:
             state = "Recovery Block"
             rank = 0
-            decision = "Block closure until restore path, dependency blast radius, owner approval, and rollback proof exist."
+            decision = "Block closure until restore path, dependency blast radius, telemetry status, and rollback path exist."
         elif missing_query or missing_ticket or iac_gap or closure_bad:
-            state = "Evidence Block"
+            state = "Telemetry Block"
             rank = 1
-            decision = "Attach query_id, ticket, approval, rollback, and verification proof before accepting the change."
+            decision = "Record query_id, ticket, review, rollback, and telemetry status before accepting the change."
         elif severity.upper() in {"CRITICAL", "HIGH"}:
-            state = "Verify Now"
+            state = "Review Now"
             rank = 2
-            decision = "Review actor, role, blast radius, and approval path before queueing the action."
+            decision = "Review actor, role, blast radius, and escalation path before queueing the action."
         else:
             state = "Watch"
             rank = 4
@@ -1513,7 +1512,7 @@ def _change_intervention_matrix(
             "IAC_STATE": iac_state or "Missing",
             "CLOSURE_READINESS": closure_state,
             "NEXT_DECISION": decision,
-            "PROOF_REQUIRED": "query_id, change ticket, release-note/rollback note, blast-radius evidence, owner approval",
+            "PROOF_REQUIRED": "query_id, change ticket, release-note/rollback note, blast-radius context, telemetry status",
             "NEXT_WORKFLOW": str(item.get("NEXT_WORKFLOW") or _change_workflow_for(item)),
             "_RANK": rank,
         })
@@ -1534,7 +1533,7 @@ def _render_change_watch_floor(score: int, exceptions: pd.DataFrame, row) -> Non
 
     render_shell_snapshot((
         ("High-Risk Changes", f"{high_risk:,}"),
-        ("Manual Drift", f"{safe_int(row.get('MANUAL_DRIFT', 0)):,}"),
+        ("Untracked Drift", f"{safe_int(row.get('MANUAL_DRIFT', 0)):,}"),
         ("Affected DBs", f"{affected_dbs:,}"),
     ))
     if priority.empty:
@@ -1599,12 +1598,12 @@ def _change_action_brief(summary, exceptions, meta: dict, company: str, environm
             return {
                 "state": "Stale",
                 "headline": "Reload the change brief before acting.",
-                "detail": "Loaded change evidence does not match the active company, environment, filters, or lookback.",
+                "detail": "Loaded change telemetry does not match the active company, environment, filters, or lookback.",
             }
         return {
             "state": "Ready",
-            "headline": "Load recent DDL, grant, owner, policy, and drift evidence.",
-            "detail": "No Snowflake change evidence loads until you request the selected scope.",
+            "headline": "Load recent object, grant, owner, policy, and drift telemetry.",
+            "detail": "No Snowflake change telemetry loads until you request the selected scope.",
         }
 
     row = summary.iloc[0]
@@ -1630,19 +1629,19 @@ def _change_action_brief(summary, exceptions, meta: dict, company: str, environm
         return {
             "state": "Control Review",
             "headline": "Validate recovery-sensitive changes first.",
-            "detail": f"{destructive_changes:,} destructive, {policy_changes:,} policy, and {owner_changes:,} ownership change(s) need approval proof.",
+            "detail": f"{destructive_changes:,} destructive, {policy_changes:,} policy, and {owner_changes:,} ownership change(s) need review status.",
         }
     if high_risk:
         return {
-            "state": "Verify Now",
+            "state": "Review Now",
             "headline": "Review high-priority change exceptions.",
             "detail": f"{high_risk:,} Critical/High exception(s) across {object_changes + access_changes:,} object/access change(s).",
         }
     if manual_drift:
         return {
             "state": "Drift Watch",
-            "headline": "Compare manual changes against approved evidence.",
-            "detail": f"{manual_drift:,} manual drift indicator(s) need owner approval, rollback proof, or ticket reconciliation.",
+            "headline": "Compare untracked changes against Snowflake telemetry.",
+            "detail": f"{manual_drift:,} untracked drift indicator(s) need telemetry status, rollback path, or ticket reconciliation.",
         }
     if score < 95:
         return {
@@ -1660,7 +1659,7 @@ def _change_action_brief(summary, exceptions, meta: dict, company: str, environm
 def _render_change_action_brief(brief: dict) -> None:
     render_shell_status_strip(
         state=brief.get("state") or "Review",
-        headline=brief.get("headline") or "Review change evidence.",
+        headline=brief.get("headline") or "Review change telemetry.",
         detail=brief.get("detail") or "",
     )
 
@@ -1700,7 +1699,7 @@ def _render_change_operating_snapshot(snapshot: dict) -> None:
         render_shell_kpi_row((
             ("Scope", str(snapshot.get("scope") or "All")),
             ("Window", str(snapshot.get("window") or "14d")),
-            ("Evidence", str(snapshot.get("evidence") or "Load brief")),
+            ("Telemetry", str(snapshot.get("evidence") or "Load brief")),
             ("Risk", str(snapshot.get("risk") or "On demand")),
         ))
         return
@@ -1800,19 +1799,19 @@ def _build_change_drift_markdown(
         f"- Owner changes: {safe_int(summary_row.get('OWNER_CHANGES', 0)):,}",
         f"- Policy/tag changes: {safe_int(summary_row.get('POLICY_CHANGES', 0)):,}",
         f"- Destructive changes: {safe_int(summary_row.get('DESTRUCTIVE_CHANGES', 0)):,}",
-        f"- Manual/unapproved drift indicators: {safe_int(summary_row.get('MANUAL_DRIFT', 0)):,}",
+        f"- Untracked drift indicators: {safe_int(summary_row.get('MANUAL_DRIFT', 0)):,}",
         "",
         "## Exceptions",
         *exception_lines,
         "",
         "## DBA Follow-Up",
         "- Review destructive and policy changes first.",
-        "- Validate grants, revokes, and ownership transfers against approved access requests.",
-        "- Compare manual changes with approved change records and rollback proof.",
-        "- Save material exceptions to the OVERWATCH Action Queue for owner/status tracking.",
+        "- Validate grants, revokes, and ownership transfers against reviewed access telemetry.",
+        "- Compare untracked changes with source records and rollback status.",
+        "- Save material exceptions to the OVERWATCH Action Queue for route/status tracking.",
         "",
-        "## Source Basis",
-        "Source: QUERY_HISTORY. DDL/DCL detection is text-pattern based, so it is strong for investigation but should be validated against approved change records and verification proof.",
+        "## Data Notes",
+        "Schema and access change detection should be validated against source records and telemetry status.",
     ]
     return "\n".join(lines)
 
@@ -1893,7 +1892,7 @@ def _build_change_drift_sql(session, days: int, company: str) -> tuple[str, str]
             {query_tag_expr} AS query_tag,
             SUBSTR(query_text, 1, 1500) AS query_text,
             CASE
-                WHEN query_text ILIKE 'DROP%' THEN 'Destructive DDL'
+                WHEN query_text ILIKE 'DROP%' THEN 'Destructive Object Change'
                 WHEN query_text ILIKE '%MASKING POLICY%' OR query_text ILIKE '%ROW ACCESS POLICY%' OR query_text ILIKE '%TAG%' THEN 'Policy or Tag Change'
                 WHEN query_text ILIKE '%OWNERSHIP%' THEN 'Owner Change'
                 WHEN query_text ILIKE 'GRANT%' OR query_text ILIKE 'REVOKE%' OR query_text ILIKE 'CREATE%ROLE%' OR query_text ILIKE 'ALTER%ROLE%' OR query_text ILIKE 'DROP%ROLE%' THEN 'Grant or Role Change'
@@ -1912,7 +1911,7 @@ def _build_change_drift_sql(session, days: int, company: str) -> tuple[str, str]
     SELECT
         finding_type,
         CASE
-            WHEN finding_type IN ('Destructive DDL', 'Policy or Tag Change', 'Owner Change') THEN 'High'
+            WHEN finding_type IN ('Destructive Object Change', 'Policy or Tag Change', 'Owner Change') THEN 'High'
             WHEN finding_type = 'Grant or Role Change' THEN 'Medium'
             ELSE 'Low'
         END AS severity,
@@ -1973,7 +1972,7 @@ def _build_mart_change_drift_sql(days: int, company: str) -> tuple[str, str]:
     exceptions_sql = f"""
     SELECT
         CASE
-            WHEN change_category = 'DROP' THEN 'Destructive DDL'
+            WHEN change_category = 'DROP' THEN 'Destructive Object Change'
             WHEN change_category = 'POLICY' THEN 'Policy or Tag Change'
             WHEN change_category = 'OWNER' THEN 'Owner Change'
             WHEN change_category = 'GRANT' THEN 'Grant or Role Change'
@@ -2022,10 +2021,10 @@ def _queue_change_exceptions(session, exceptions: pd.DataFrame) -> None:
         actions.append(_change_action_payload(row, company=company, environment=environment))
     try:
         saved = upsert_actions(session, actions)
-        st.success(f"Saved {saved} change/drift exceptions to the action queue with approval and verification fields.")
+        st.success(f"Saved {saved} change/drift exceptions to the action queue with review and telemetry fields.")
     except Exception as e:
         st.error(f"Could not save change/drift exceptions: {format_snowflake_error(e)}")
-        st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
+        st.info("The action queue is not available in this environment yet. Ask the DBA team to enable it, then retry this save.")
 
 
 def _change_control_evidence_insert_sql(
@@ -2246,10 +2245,10 @@ SELECT
     ENTITY,
     CASE
         WHEN OVERDUE_OPEN > 0 THEN 'Overdue closure'
-        WHEN FIXED_WITHOUT_VERIFICATION > 0 THEN 'Fixed without verification'
+        WHEN FIXED_WITHOUT_VERIFICATION > 0 THEN 'Closed pending telemetry'
         WHEN OWNER_GAP_ROWS + TICKET_GAP_ROWS + APPROVER_GAP_ROWS + VERIFICATION_QUERY_GAP_ROWS + OWNER_APPROVAL_GAP_ROWS > 0 THEN 'Control metadata gap'
         WHEN OPEN_ACTIONS > 0 THEN 'Open'
-        WHEN VERIFIED_CLOSURES > 0 THEN 'Verified closure'
+        WHEN VERIFIED_CLOSURES > 0 THEN 'Telemetry-confirmed closure'
         ELSE 'No recent action'
     END AS CLOSURE_READINESS,
     CASE
@@ -2279,11 +2278,11 @@ SELECT
     LAST_SEVERITY,
     LAST_ACTIVITY_TS,
     CASE
-        WHEN OVERDUE_OPEN > 0 THEN 'Escalate the change owner and ticket before accepting more drift.'
-        WHEN FIXED_WITHOUT_VERIFICATION > 0 THEN 'Attach query, ticket, rollback, and blast-radius evidence or reopen the action.'
-        WHEN OWNER_GAP_ROWS + TICKET_GAP_ROWS + APPROVER_GAP_ROWS + VERIFICATION_QUERY_GAP_ROWS + OWNER_APPROVAL_GAP_ROWS > 0 THEN 'Complete owner, ticket, approver, and verification metadata.'
-        WHEN OPEN_ACTIONS > 0 THEN 'Work the open change action and retain approval or rollback proof.'
-        ELSE 'Retain verified closure evidence for audit review.'
+        WHEN OVERDUE_OPEN > 0 THEN 'Escalate the change route and ticket before accepting more drift.'
+        WHEN FIXED_WITHOUT_VERIFICATION > 0 THEN 'Record query, ticket, rollback, and blast-radius telemetry or reopen the action.'
+        WHEN OWNER_GAP_ROWS + TICKET_GAP_ROWS + APPROVER_GAP_ROWS + VERIFICATION_QUERY_GAP_ROWS + OWNER_APPROVAL_GAP_ROWS > 0 THEN 'Complete route, ticket, reviewer, and telemetry metadata.'
+        WHEN OPEN_ACTIONS > 0 THEN 'Work the open change action and retain review or rollback status.'
+        ELSE 'Retain closure telemetry for audit review.'
     END AS NEXT_ACTION
 FROM rollup
 ORDER BY CLOSURE_RANK, OVERDUE_OPEN DESC, FIXED_WITHOUT_VERIFICATION DESC, OPEN_ACTIONS DESC, LAST_ACTIVITY_TS DESC
@@ -2361,17 +2360,17 @@ def _save_change_control_evidence_snapshot(
             environment=environment,
             source=source,
         )).collect()
-        st.success("Saved the Change Control Evidence snapshot for audit and trend tracking.")
+        st.success("Saved the Change Control telemetry snapshot for audit and trend tracking.")
     except Exception as exc:
-        st.error(f"Could not save Change Control Evidence snapshot: {format_snowflake_error(exc)}")
-        st.info("Deploy the change-control evidence table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
+        st.error(f"Could not save Change Control telemetry snapshot: {format_snowflake_error(exc)}")
+        st.info("Change-control telemetry history is not available in this environment yet. Ask the DBA route to enable it, then retry this save.")
 
 
 def _render_change_source_health(company: str, environment: str) -> None:
     source_health = _change_source_health_rows(st.session_state, company, environment)
     if source_health.empty:
         return
-    with st.expander("Change Source Health", expanded=False):
+    with st.expander("Change Data Health", expanded=False):
         current = int(source_health["STATE"].isin(["Loaded", "No Rows"]).sum())
         stale = int(source_health["STATE"].eq("Stale").sum())
         unavailable = int(source_health["STATE"].eq("Unavailable").sum())
@@ -2388,18 +2387,18 @@ def _render_change_source_health(company: str, environment: str) -> None:
             ("Unavailable", f"{unavailable:,}"),
         ))
         defer_source_note(
-            "Use this before acting on change findings. DDL/DCL detection is text-pattern based, "
+            "Use this before acting on change findings. Object/access-change detection is text-pattern based, "
             "and account/role-only events are intentionally retained when no database context exists."
         )
         render_priority_dataframe(
             source_health,
-            title="Change evidence freshness and source quality",
+            title="Change telemetry freshness",
             priority_columns=[
                 "STATE", "SURFACE", "CONFIDENCE", "ROWS", "SCOPE", "SOURCE", "NEXT_ACTION",
             ],
             sort_by=["STATE_RANK", "SURFACE"],
             ascending=[True, True],
-            raw_label="All change source health rows",
+            raw_label="All change data-health rows",
             height=260,
         )
 
@@ -2418,19 +2417,19 @@ def render() -> None:
     render_signal_confidence(
         source="ACCOUNT_USAGE",
         confidence="estimated",
-        scope_note="DDL/change detection is query-history based; SHOW commands fill live metadata gaps.",
+        scope_note="Object/change detection is query-history based; SHOW commands fill live metadata gaps.",
     )
     render_operator_briefing(
         [
-            ("First move", "Identify who changed what and whether it was approved."),
-            ("Evidence", "Preserve query ID, actor, object, timestamp, and dependency context."),
-            ("Control", "Route drift to owner review, approval proof, rollback proof, or a guarded DBA action."),
+            ("First move", "Identify who changed what and whether Snowflake telemetry exists."),
+            ("Telemetry", "Preserve query ID, actor, object, timestamp, and dependency context."),
+            ("Control", "Route drift to reviewer context, rollback status, or a guarded DBA action."),
             ("Output", "Build an audit-ready change narrative with blast-radius notes."),
         ],
         columns=4,
     )
     if st.session_state.get("exceptions_only_mode"):
-        st.warning("Landing default: prioritize recent DDL, grant, owner, policy, replication, and task-control issues.")
+        st.warning("Landing default: prioritize recent object, grant, route, policy, replication, and task-control issues.")
 
     days = safe_int(st.session_state.get("change_drift_brief_days", 14), 14)
     if days < 1 or days > 90:
@@ -2476,7 +2475,7 @@ def render() -> None:
         elif workflow == "Stored procedure lineage":
             render_workflow_module(workflow, WORKFLOW_MODULES)
         elif workflow == "Schema and object drift":
-            st.session_state["dba_tools_focus"] = "Governance"
+            st.session_state["dba_tools_focus"] = "Object Monitoring"
             st.session_state["dba_tools_focus_tool"] = "Schema Compare"
             st.info("Focused toolkit: schema compare, recent objects, unused objects, object inventory, and drift checks.")
             render_workflow_module(workflow, WORKFLOW_MODULES)
@@ -2488,7 +2487,7 @@ def render() -> None:
         else:
             st.session_state["dba_tools_focus"] = "Controlled Actions"
             st.session_state["dba_tools_focus_tool"] = "Task Graph Control"
-            st.info("Focused toolkit: query cancellation, warehouse settings, task graph control, setup, and audit evidence.")
+            st.info("Focused toolkit: query cancellation, warehouse settings, task graph control, status checks, and audit telemetry.")
             render_workflow_module(workflow, WORKFLOW_MODULES)
         return
 
@@ -2541,7 +2540,7 @@ def render() -> None:
                     source=source_label,
                 )
                 st.session_state.pop("change_drift_error", None)
-                st.info(f"Change summary unavailable from the fast source; used live QUERY_HISTORY fallback. {format_snowflake_error(exc)}")
+                st.info(f"Change summary unavailable from the fast summary; used bounded live query history. {format_snowflake_error(exc)}")
             except Exception as live_exc:
                 st.session_state["change_drift_summary"] = pd.DataFrame()
                 st.session_state["change_drift_exceptions"] = pd.DataFrame()
@@ -2574,12 +2573,12 @@ def render() -> None:
     if consume_section_autoload_request("Change & Drift") and not (
         summary is not None and not summary.empty and brief_is_current
     ):
-        st.caption("Change Control opened with a lightweight summary. Load the brief when current change-history proof is needed.")
+        st.caption("Change Control opened with a lightweight summary. Load the brief when current change-history telemetry is needed.")
     render_data_freshness(
         meta if brief_is_current and summary is not None and not summary.empty else {},
         source=st.session_state.get("change_drift_source", "Change-control brief"),
         target_minutes=60,
-        delayed_note="Fast change evidence uses OVERWATCH mart rows when available; live QUERY_HISTORY refresh is explicit.",
+        delayed_note="Fast change telemetry uses fast summary rows when available; live QUERY_HISTORY refresh is explicit.",
     )
 
     if st.button("Load Change Control Brief", key="change_drift_brief_load", type="primary"):
@@ -2645,14 +2644,18 @@ def render() -> None:
                 raw_label="All change-control summary rows",
                 height=300,
             )
-            with st.expander("Change control summary SQL", expanded=False):
-                st.code(st.session_state.get("change_control_operability_fact_sql", ""), language="sql")
+            with st.expander("Change Control Status", expanded=False):
+                render_shell_snapshot((
+                    ("Control summary", "Ready"),
+                    ("Escalation route", "Review"),
+                    ("Closure evidence", "Required"),
+                    ("Execution", "Runbook only"),
+                ))
         elif operability_fact is not None and not operability_fact.empty and not operability_fact_current:
             st.info("Loaded change-control summary is stale for the active scope. Reload the brief before acting.")
         elif st.session_state.get("change_control_operability_fact_error"):
             defer_source_note(
-                "Change-control summary is not available yet; deploy or refresh "
-                "`FACT_CHANGE_CONTROL_OPERABILITY_DAILY` to enable the fast blocker surface."
+                "Change-control summary is not available yet. Ask the DBA team to enable the fast blocker surface."
             )
 
         _render_change_watch_floor(score, exceptions, row)
@@ -2762,7 +2765,7 @@ def render() -> None:
             )
             save_col, setup_col = st.columns([1, 2])
             with save_col:
-                if st.button("Save Change Evidence Snapshot", key="change_drift_evidence_snapshot", width="stretch"):
+                if st.button("Save Change Telemetry Snapshot", key="change_drift_evidence_snapshot", width="stretch"):
                     _save_change_control_evidence_snapshot(
                         get_session(),
                         readiness,
@@ -2772,15 +2775,15 @@ def render() -> None:
                     )
             with setup_col:
                 defer_source_note(
-                        "Snapshot stores ticket, approval, rollback, owner, approver, query-id, and blast-radius requirements for audit trend review."
+                        "Snapshot stores ticket, review, rollback, owner, reviewer, query-id, and blast-radius requirements for audit trend review."
                 )
-            with st.expander("Change Control Evidence Trend", expanded=False):
+            with st.expander("Change Control Telemetry Trend", expanded=False):
                 trend_days = day_window_selectbox(
                     "Change evidence trend window",
                     key="change_drift_evidence_trend_days",
                     default=30,
                 )
-                if st.button("Load Change Evidence Trend", key="change_drift_evidence_trend_load"):
+                if st.button("Load Change Telemetry Trend", key="change_drift_evidence_trend_load"):
                     try:
                         trend_sql = _change_control_evidence_history_sql(trend_days, company, environment)
                         trend = run_query(
@@ -2798,7 +2801,7 @@ def render() -> None:
                     except Exception as exc:
                         st.session_state["change_drift_evidence_trend"] = pd.DataFrame()
                         st.session_state["change_drift_evidence_trend_error"] = format_snowflake_error(exc)
-                        st.error(f"Unable to load change-control evidence trend: {format_snowflake_error(exc)}")
+                        st.error(f"Unable to load change-control telemetry trend: {format_snowflake_error(exc)}")
                 trend = st.session_state.get("change_drift_evidence_trend")
                 trend_current = _change_meta_matches(
                     st.session_state.get("change_drift_evidence_trend_meta"),
@@ -2823,12 +2826,10 @@ def render() -> None:
                     and not trend_current
                     and not st.session_state.get("change_drift_evidence_trend_error")
                 ):
-                    st.info("Loaded change-control evidence trend is stale for the active scope. Reload the trend before acting.")
-                with st.expander("Change-control evidence setup SQL", expanded=False):
-                    st.code(build_change_control_evidence_ddl(), language="sql")
+                    st.info("Loaded change-control telemetry trend is stale for the active scope. Reload the trend before acting.")
             with st.expander("Change Action Closure Analytics", expanded=False):
                 defer_source_note(
-                    "Uses Change Control action-queue rows to show open, overdue, unapproved, "
+                    "Uses change-monitoring action-queue rows to show open, overdue, unverified, "
                     "or closed-without-verification change-control work."
                 )
                 closure_days = day_window_selectbox(
@@ -2877,8 +2878,13 @@ def render() -> None:
                         raw_label="All change closure rows",
                         height=300,
                     )
-                    with st.expander("Change Closure Query", expanded=False):
-                        st.code(st.session_state.get("change_action_closure_sql", ""), language="sql")
+                    with st.expander("Change Closure Status", expanded=False):
+                        render_shell_snapshot((
+                            ("Closure status", "Ready"),
+                            ("Telemetry", "Review"),
+                            ("Telemetry", "Required"),
+                            ("Execution", "Runbook only"),
+                        ))
                 elif (
                     closure is not None
                     and not closure_current
@@ -2908,10 +2914,13 @@ def render() -> None:
                 key="change_drift_download",
             )
         with dl2:
-            with st.expander("Proof SQL", expanded=False):
-                proof_sql = st.session_state.get("change_drift_proof_sql", {})
-                defer_source_note("Use these source queries to defend change counts and exception rows.")
-                st.code(proof_sql.get("summary", "-- Load the change brief first."), language="sql")
-                st.code(proof_sql.get("exceptions", "-- Load the change brief first."), language="sql")
+            with st.expander("Telemetry Status", expanded=False):
+                defer_source_note("Use reviewed source telemetry to defend change counts and exception rows.")
+                render_shell_snapshot((
+                    ("Summary telemetry", "Ready after refresh"),
+                    ("Exception telemetry", "Ready after refresh"),
+                    ("Route review", "Required"),
+                    ("Execution", "Runbook only"),
+                ))
         if st.session_state.get("exceptions_only_mode"):
             st.stop()

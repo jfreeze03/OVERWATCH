@@ -2,8 +2,8 @@
 
 These helpers keep the production hardening backlog executable without forcing
 every section to import Snowflake or pandas during Streamlit startup. The UI
-uses the rows and SQL previews immediately; the setup script can materialize
-the same contracts as governed Snowflake objects.
+uses the rows immediately while DBA-owned Snowflake objects provide durable
+summary facts.
 """
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ def build_capability_register_rows() -> list[dict[str, object]]:
             "NEXT_ACTION": "Materialize signal correlation and route one incident, not five disconnected alerts.",
             "SNOWFLAKE_SOURCES": "QUERY_HISTORY, TASK_HISTORY, LOGIN_HISTORY, ACCESS_HISTORY, WAREHOUSE_METERING_HISTORY",
             "OWNER": "DBA On-Call",
-            "PRODUCTION_GUARDRAIL": "Correlation is evidence ranking only; remediation remains approval-gated.",
+            "PRODUCTION_GUARDRAIL": "Correlation is telemetry ranking only; remediation remains review-gated.",
         },
         {
             "RANK": 2,
@@ -40,7 +40,7 @@ def build_capability_register_rows() -> list[dict[str, object]]:
             "NEXT_ACTION": "Use task graph facts before retrying, resuming, or calling a pipeline healthy.",
             "SNOWFLAKE_SOURCES": "TASK_HISTORY, INFORMATION_SCHEMA.TASK_HISTORY, EVENT TABLES",
             "OWNER": "DBA / Data Engineering",
-            "PRODUCTION_GUARDRAIL": "Retry and resume actions require owner policy and run ledger proof.",
+            "PRODUCTION_GUARDRAIL": "Retry and resume actions require route policy and run ledger telemetry.",
         },
         {
             "RANK": 3,
@@ -58,11 +58,11 @@ def build_capability_register_rows() -> list[dict[str, object]]:
             "CAPABILITY": "Predictive FinOps and Automated Value Log",
             "STATUS": "Foundation",
             "WHERE_IT_LANDS": "Cost & Contract, Snowflake Value",
-            "WHY_IT_MATTERS": "Forecasts burn, ranks contract risk, and auto-captures verified DBA value instead of relying on manual notes.",
-            "NEXT_ACTION": "Derive value candidates from action queue, metering deltas, alert closures, and workload recovery proof.",
+            "WHY_IT_MATTERS": "Forecasts burn, ranks contract risk, and auto-captures measured DBA value instead of relying on one-off notes.",
+            "NEXT_ACTION": "Derive value candidates from action queue, metering deltas, alert closures, and workload recovery telemetry.",
             "SNOWFLAKE_SOURCES": "WAREHOUSE_METERING_HISTORY, METERING_DAILY_HISTORY, OVERWATCH_ACTION_QUEUE, OVERWATCH_ROI_LOG",
             "OWNER": "DBA / FinOps",
-            "PRODUCTION_GUARDRAIL": "Estimated value cannot become verified until post-period evidence exists.",
+            "PRODUCTION_GUARDRAIL": "Estimated value cannot become measured until post-period telemetry exists.",
         },
         {
             "RANK": 5,
@@ -81,43 +81,43 @@ def build_capability_register_rows() -> list[dict[str, object]]:
             "STATUS": "Contract",
             "WHERE_IT_LANDS": "Workload Operations, Query diagnosis",
             "WHY_IT_MATTERS": "Cortex can explain why a query is slow only when fed real profile facts and optimization constraints.",
-            "NEXT_ACTION": "Pass query evidence, table context, spill/pruning metrics, and expected output shape into the prompt contract.",
+            "NEXT_ACTION": "Pass query telemetry, table context, spill/pruning metrics, and expected output shape into the prompt contract.",
             "SNOWFLAKE_SOURCES": "QUERY_HISTORY, QUERY_PROFILE when available, ACCESS_HISTORY, TABLE_STORAGE_METRICS",
             "OWNER": "DBA / Query Owner",
-            "PRODUCTION_GUARDRAIL": "No generic AI answer; recommendations must cite exact metrics and SQL evidence.",
+            "PRODUCTION_GUARDRAIL": "No generic AI answer; recommendations must cite exact metrics and SQL telemetry.",
         },
         {
             "RANK": 7,
-            "CAPABILITY": "OVERWATCH Self-Monitoring",
+            "CAPABILITY": "Bounded Refresh Guardrails",
             "STATUS": "New",
-            "WHERE_IT_LANDS": "Cost & Contract, Alert Center Setup",
-            "WHY_IT_MATTERS": "The monitoring app must prove its own query cost, failures, cache behavior, and slow sections.",
-            "NEXT_ACTION": "Tag every app query and summarize OVERWATCH runtime cost and errors by section.",
-            "SNOWFLAKE_SOURCES": "QUERY_HISTORY query_tag='OVERWATCH%', WAREHOUSE_METERING_HISTORY",
-            "OWNER": "OVERWATCH Maintainer",
-            "PRODUCTION_GUARDRAIL": "Use bounded windows and mart rollups so monitoring does not become the cost problem.",
+            "WHERE_IT_LANDS": "Cost & Contract, Alert Center",
+            "WHY_IT_MATTERS": "Keeps refresh cadence bounded so monitoring workflows do not become the cost problem.",
+            "NEXT_ACTION": "Use scoped summaries, explicit refresh, and status-checked live telemetry when needed.",
+            "SNOWFLAKE_SOURCES": "Scoped summaries and bounded ACCOUNT_USAGE checks",
+            "OWNER": "DBA Platform",
+            "PRODUCTION_GUARDRAIL": "Never auto-enable expensive refresh without warehouse, lag, and cost review.",
         },
         {
             "RANK": 8,
-            "CAPABILITY": "Precomputed Mart / Dynamic Table Layer With Fallback",
+            "CAPABILITY": "Fast Summary Layer With Fallback",
             "STATUS": "Foundation",
-            "WHERE_IT_LANDS": "Setup, DBA Control Room, Cost & Contract",
+            "WHERE_IT_LANDS": "Data Health, DBA Control Room, Cost & Contract",
             "WHY_IT_MATTERS": "Keeps first paint fast and makes live ACCOUNT_USAGE scans explicit instead of accidental.",
             "NEXT_ACTION": "Add optional dynamic tables where supported and fallback views/tasks everywhere else.",
             "SNOWFLAKE_SOURCES": "ACCOUNT_USAGE, Dynamic Tables, Streams/Tasks, OVERWATCH_FACT tables",
             "OWNER": "DBA Platform",
-            "PRODUCTION_GUARDRAIL": "Never auto-enable expensive refresh without warehouse, lag, and cost approval.",
+            "PRODUCTION_GUARDRAIL": "Never auto-enable expensive refresh without warehouse, lag, and cost review.",
         },
         {
             "RANK": 9,
-            "CAPABILITY": "Compliance Readiness Scorecard",
+            "CAPABILITY": "Security Risk Monitoring",
             "STATUS": "New",
-            "WHERE_IT_LANDS": "Governance & Security, Executive Landing",
+            "WHERE_IT_LANDS": "Security Monitoring, Executive Landing",
             "WHY_IT_MATTERS": "Leaders need a defensible view of admin grants, dormant users, policy drift, and risky shares.",
-            "NEXT_ACTION": "Materialize compliance controls with evidence rows and owner remediation paths.",
+            "NEXT_ACTION": "Materialize security risk signals with telemetry rows and escalation paths.",
             "SNOWFLAKE_SOURCES": "GRANTS_TO_USERS, GRANTS_TO_ROLES, LOGIN_HISTORY, ACCESS_HISTORY, POLICIES, SHARES",
-            "OWNER": "Security Engineer",
-            "PRODUCTION_GUARDRAIL": "Scorecard is a risk register, not a substitute for security approval.",
+            "OWNER": "Security Route",
+            "PRODUCTION_GUARDRAIL": "Security risk monitoring is advisory; access changes stay in guarded workflows.",
         },
         {
             "RANK": 10,
@@ -136,21 +136,21 @@ def build_capability_register_rows() -> list[dict[str, object]]:
             "STATUS": "Foundation",
             "WHERE_IT_LANDS": "App shell, every primary section",
             "WHY_IT_MATTERS": "DBAs should see scoped KPIs, risks, and summaries on the first section click without saved-view state or mode toggles.",
-            "NEXT_ACTION": "Keep section autoload bounded to fast summaries and make heavy proof an explicit local action.",
+            "NEXT_ACTION": "Keep section autoload bounded to fast summaries and make heavy telemetry an explicit local action.",
             "SNOWFLAKE_SOURCES": "Streamlit session state, fast OVERWATCH summaries, ACCOUNT_USAGE fallback",
             "OWNER": "OVERWATCH Maintainer",
             "PRODUCTION_GUARDRAIL": "Do not persist navigation state or create saved-state tables; unknown roles stay restrictive.",
         },
         {
             "RANK": 12,
-            "CAPABILITY": "Architecture Docs and Runbooks",
+            "CAPABILITY": "Monitoring Docs and Runbooks",
             "STATUS": "New",
-            "WHERE_IT_LANDS": "README, Setup & Runbook",
-            "WHY_IT_MATTERS": "A production DBA command center needs setup, privileges, failure modes, rollback, and operating rules.",
+            "WHERE_IT_LANDS": "README, Data Health Runbook",
+            "WHY_IT_MATTERS": "A production DBA command center needs data health, privileges, failure modes, rollback, and operating rules.",
             "NEXT_ACTION": "Keep a DBA runbook, data model map, precompute decision, and remediation safety model with the code.",
-            "SNOWFLAKE_SOURCES": "Repository docs, setup SQL, migration ledger",
+            "SNOWFLAKE_SOURCES": "Repository docs, status ledger, migration ledger",
             "OWNER": "DBA Lead",
-            "PRODUCTION_GUARDRAIL": "Docs must match executable objects and tests before commit.",
+            "PRODUCTION_GUARDRAIL": "Docs must match approved operating behavior before release.",
         },
     ]
 
@@ -240,7 +240,7 @@ def build_detection_root_cause_sql(hours: int = 24) -> str:
             CASE
                 WHEN signal_family = 'TASK_PIPELINE' THEN 'Open Workload Operations task graph and inspect child failure/root task.'
                 WHEN signal_family = 'PERFORMANCE' THEN 'Open Query diagnosis or Contention Center with the sample query_id.'
-                WHEN signal_family = 'SECURITY' THEN 'Open Governance & Security and verify IP, role, MFA, and service account behavior.'
+                WHEN signal_family = 'SECURITY' THEN 'Open Security Monitoring and verify IP, role, MFA, and service account behavior.'
                 ELSE 'Open Alert Center incident board.'
             END AS recommended_action
         FROM all_signals
@@ -437,7 +437,7 @@ def build_data_reconciliation_runner_sql() -> str:
                     IFF(NULLIF(c.where_clause, '') IS NULL, '', ' WHERE ' || c.where_clause)
             ) AS target_count_hash_sql,
             CASE
-                WHEN t.table_name IS NULL THEN 'Run Schema Compare to generate CREATE DDL for the missing target table before data compare.'
+                WHEN t.table_name IS NULL THEN 'Run Schema Compare to review the missing target table before data compare.'
                 WHEN c.check_mode = 'COUNT_ONLY' THEN 'Compare row counts first, then escalate to hash only if counts differ.'
                 ELSE 'Use bucketed HASH_AGG over key columns for tables too large for full hash in one pass.'
             END AS recommended_action
@@ -584,12 +584,12 @@ def build_alert_lifecycle_sql() -> str:
 
 
 def build_ai_query_diagnosis_contract_rows() -> list[dict[str, str]]:
-    """Return the evidence contract for Cortex-backed query diagnosis."""
+    """Return the telemetry contract for Cortex-backed query diagnosis."""
     return [
         {
             "EVIDENCE": "Query identity",
             "REQUIRED_FIELDS": "query_id, query_hash, user_name, role_name, warehouse_name, database_name, schema_name",
-            "WHY_REQUIRED": "The advice must target a real workload owner and repeatable query pattern.",
+            "WHY_REQUIRED": "The advice must target a real workload route and repeatable query pattern.",
         },
         {
             "EVIDENCE": "Runtime profile",
@@ -599,7 +599,7 @@ def build_ai_query_diagnosis_contract_rows() -> list[dict[str, str]]:
         {
             "EVIDENCE": "Scan efficiency",
             "REQUIRED_FIELDS": "bytes_scanned, partitions_scanned, partitions_total, pruning_pct",
-            "WHY_REQUIRED": "Prevents generic advice and points to clustering, search optimization, or filters only when evidence supports it.",
+            "WHY_REQUIRED": "Prevents generic advice and points to clustering, search optimization, or filters only when telemetry supports it.",
         },
         {
             "EVIDENCE": "Spill and memory",
@@ -609,28 +609,28 @@ def build_ai_query_diagnosis_contract_rows() -> list[dict[str, str]]:
         {
             "EVIDENCE": "Object context",
             "REQUIRED_FIELDS": "tables_accessed, row counts, storage bytes, clustering keys, search optimization flags",
-            "WHY_REQUIRED": "Recommendations need object-level proof, not only query text.",
+            "WHY_REQUIRED": "Recommendations need object-level telemetry, not only query text.",
         },
         {
             "EVIDENCE": "Required answer shape",
-            "REQUIRED_FIELDS": "root_cause, exact_fix, SQL rewrite sketch, risk, verification_query, owner_action",
-            "WHY_REQUIRED": "Forces specific DBA action and post-change proof.",
+            "REQUIRED_FIELDS": "root_cause, exact_fix, SQL rewrite sketch, risk, status_query, team_action",
+            "WHY_REQUIRED": "Forces specific DBA action and post-change telemetry.",
         },
     ]
 
 
 def build_ai_query_diagnosis_prompt_contract() -> str:
     return _sql("""
-        You are OVERWATCH Query Diagnosis. Use only the provided Snowflake evidence.
+        You are OVERWATCH Query Diagnosis. Use only the provided Snowflake telemetry.
 
         Required output:
         1. Root cause, with the exact metric that proves it.
         2. Specific SQL or object change recommendation.
         3. Why cheaper/simple alternatives are not enough.
         4. Risk and rollback note.
-        5. Verification query to run after the fix.
+        5. Status query to run after the fix.
 
-        Refuse generic advice. If evidence is missing, say exactly which Snowflake
+        Refuse generic advice. If telemetry is missing, say exactly which Snowflake
         fields are needed before recommending clustering, search optimization,
         warehouse resizing, rewrite, task change, or query cancellation.
     """)
@@ -775,7 +775,7 @@ def build_compliance_readiness_sql(days: int = 30) -> str:
             END AS severity,
             CASE
                 WHEN admin_roles IS NOT NULL THEN 'Validate owner, break-glass need, MFA, and approval for admin role.'
-                WHEN accessed_objects > 1000 THEN 'Review sensitive object access and workload owner.'
+                WHEN accessed_objects > 1000 THEN 'Review sensitive object access and workload route.'
                 ELSE 'No immediate action.'
             END AS recommended_action
         FROM rollup
@@ -850,7 +850,7 @@ def build_snowflake_value_auto_ddl() -> str:
                     ELSE FALSE
                 END AS verified,
                 verification_result AS notes,
-                'Cost avoided from owner-approved action queue item.' AS business_impact
+                'Cost avoided from verified action queue item.' AS business_impact
             FROM OVERWATCH_ACTION_QUEUE
             WHERE COALESCE(est_monthly_savings, 0) > 0
               AND UPPER(COALESCE(status, '')) IN ('FIXED', 'COMPLETED', 'DONE')
@@ -1045,16 +1045,16 @@ def build_snowflake_value_automation_rows() -> list[dict[str, str]]:
     """Return the value automation model used by the UI."""
     return [
         {
-            "VALUE_SIGNAL": "Verified cost action",
+            "VALUE_SIGNAL": "Measured cost action",
             "EVIDENCE_SOURCE": "OVERWATCH_ACTION_QUEUE",
-            "VALUE_STATE": "Estimated until post-period verifier marks it verified",
-            "CAPTURE_RULE": "Fixed/completed action with estimated monthly savings and verification state.",
-            "WHY_IT_MATTERS": "DBAs should not manually retype savings already proven by the queue.",
+            "VALUE_STATE": "Estimated until post-period measurement marks it measured",
+            "CAPTURE_RULE": "Fixed/completed action with estimated monthly savings and measurement state.",
+            "WHY_IT_MATTERS": "DBAs should not retype savings already measured by the queue.",
         },
         {
             "VALUE_SIGNAL": "Resolved alert with value at risk",
             "EVIDENCE_SOURCE": "ALERT_EVENTS",
-            "VALUE_STATE": "Verified when alert is closed with resolution notes",
+            "VALUE_STATE": "Measured when alert is closed with resolution notes",
             "CAPTURE_RULE": "Closed/resolved alert with business impact or value_at_risk_usd.",
             "WHY_IT_MATTERS": "Incident prevention belongs in the value ledger, not only cost cuts.",
         },
@@ -1062,7 +1062,7 @@ def build_snowflake_value_automation_rows() -> list[dict[str, str]]:
             "VALUE_SIGNAL": "Workload recovery",
             "EVIDENCE_SOURCE": "OVERWATCH_WORKLOAD_RECOVERY_AUDIT",
             "VALUE_STATE": "Estimated until duration/queue/error baseline improves",
-            "CAPTURE_RULE": "Recovery audit rows with before/after runtime or SLA proof.",
+            "CAPTURE_RULE": "Recovery audit rows with before/after runtime or SLA telemetry.",
             "WHY_IT_MATTERS": "Reliability wins are DBA value even when credits are flat.",
         },
         {
@@ -1070,13 +1070,13 @@ def build_snowflake_value_automation_rows() -> list[dict[str, str]]:
             "EVIDENCE_SOURCE": "QUERY_HISTORY / action queue",
             "VALUE_STATE": "Estimated until same query hash improves after change",
             "CAPTURE_RULE": "Query hash with reduced elapsed, spill, bytes scanned, or credit allocation.",
-            "WHY_IT_MATTERS": "Specific SQL improvements need measured post-change proof.",
+            "WHY_IT_MATTERS": "Specific SQL improvements need measured post-change telemetry.",
         },
     ]
 
 
 def build_operational_intelligence_sql_catalog() -> list[dict[str, str]]:
-    """Return SQL previews for the twelve-command-intelligence foundation."""
+    """Return SQL contracts for the twelve-command-intelligence foundation."""
     return [
         {
             "CAPABILITY": "Detection and Root-Cause Engine",
@@ -1099,36 +1099,36 @@ def build_operational_intelligence_sql_catalog() -> list[dict[str, str]]:
         {
             "CAPABILITY": "Predictive FinOps and Automated Value Log",
             "SQL_NAME": "Contract burn forecast and value automation",
-            "TELEMETRY": "Metering plus action evidence",
+            "TELEMETRY": "Metering plus action telemetry",
             "SQL": build_predictive_finops_sql() + "\n" + build_snowflake_value_auto_ddl(),
         },
         {
             "CAPABILITY": "Alert Lifecycle 2.0",
-            "SQL_NAME": "Alert lifecycle readiness",
+            "SQL_NAME": "Alert lifecycle status",
             "TELEMETRY": "Alert tables",
             "SQL": build_alert_lifecycle_sql(),
         },
         {
             "CAPABILITY": "Fact-Grounded AI Query Diagnosis",
             "SQL_NAME": "Cortex prompt contract",
-            "TELEMETRY": "Query/profile evidence",
+            "TELEMETRY": "Query/profile telemetry",
             "SQL": build_ai_query_diagnosis_prompt_contract(),
         },
         {
-            "CAPABILITY": "OVERWATCH Self-Monitoring",
-            "SQL_NAME": "App runtime health",
-            "TELEMETRY": "OVERWATCH query tags",
+            "CAPABILITY": "Bounded Refresh Guardrails",
+            "SQL_NAME": "Refresh guardrail summary",
+            "TELEMETRY": "Scoped summaries and bounded ACCOUNT_USAGE checks",
             "SQL": build_overwatch_self_monitoring_sql(),
         },
         {
-            "CAPABILITY": "Precomputed Mart / Dynamic Table Layer With Fallback",
-            "SQL_NAME": "Dynamic table and fallback view",
+            "CAPABILITY": "Fast Summary Layer With Fallback",
+            "SQL_NAME": "Summary refresh and fallback view",
             "TELEMETRY": "Precompute contract",
             "SQL": build_precompute_contract_sql(),
         },
         {
-            "CAPABILITY": "Compliance Readiness Scorecard",
-            "SQL_NAME": "Compliance readiness",
+            "CAPABILITY": "Security Risk Monitoring",
+            "SQL_NAME": "Security risk monitoring",
             "TELEMETRY": "Security metadata",
             "SQL": build_compliance_readiness_sql(),
         },
@@ -1145,8 +1145,8 @@ def build_operational_intelligence_sql_catalog() -> list[dict[str, str]]:
             "SQL": build_data_first_navigation_contract_sql(),
         },
         {
-            "CAPABILITY": "Architecture Docs and Runbooks",
-            "SQL_NAME": "Setup bundle",
+            "CAPABILITY": "Monitoring Docs and Runbooks",
+            "SQL_NAME": "Status bundle",
             "TELEMETRY": "Repository docs",
             "SQL": "-- See docs/OVERWATCH_COMMAND_INTELLIGENCE_RUNBOOK.md and snowflake/PRECOMPUTE.sql.",
         },
@@ -1154,7 +1154,7 @@ def build_operational_intelligence_sql_catalog() -> list[dict[str, str]]:
 
 
 def build_capability_setup_sql() -> str:
-    """Return a single setup bundle for the new command-intelligence objects."""
+    """Return a single status bundle for the new command-intelligence objects."""
     return "\n\n".join(
         [
             "-- OVERWATCH command intelligence foundation",
@@ -1176,7 +1176,7 @@ def build_command_intelligence_runbook_markdown() -> str:
         "",
         "## Operating Rule",
         "",
-        "Data should appear first. Buttons are for action, proof, or drilldown, not for hiding the main point of a section.",
+        "Data should appear first. Buttons are for action or drilldown, not for hiding the main point of a section.",
         "",
         "## Priority Capabilities",
     ]
@@ -1197,9 +1197,9 @@ def build_command_intelligence_runbook_markdown() -> str:
             "",
             "## Automated Snowflake Value Log",
             "",
-            "OVERWATCH should capture value candidates from action queue closure, alert resolution, workload recovery, and query optimization evidence. Manual entries stay available for one-off wins, but the default path is automated and evidence-backed.",
+            "OVERWATCH should capture value candidates from action queue closure, alert resolution, workload recovery, and query optimization telemetry. One-off entries stay available for exceptional wins, but the default path is automated and telemetry-backed.",
             "",
-            "Estimated value is not audit-ready. Verified value requires owner approval, post-period evidence, and a recorded verification result.",
+            "Estimated value is directional. Measured value requires post-period telemetry and a recorded status result.",
         ]
     )
     return "\n".join(lines).strip() + "\n"

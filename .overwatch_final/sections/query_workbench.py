@@ -337,12 +337,13 @@ def _root_cause_cortex_prompt(
     if not evidence_lines:
         evidence_lines.append("- No root-cause exceptions crossed the configured thresholds.")
 
+    root_cause_state = "Escalate" if score < 70 else "Review" if score < 85 else "Watch"
     return "\n".join([
         "You are OVERWATCH, a Snowflake DBA command-center assistant.",
         "Use only the evidence below. Do not invent tables, users, tickets, or causes.",
         "Write exactly 3 concise sentences for a DBA: likely root cause, evidence, and single best next action.",
         "",
-        f"Scope: company={company}; lookback_days={int(days)}; root_cause_score={int(score)}.",
+        f"Scope: company={company}; lookback_days={int(days)}; root-cause state: {root_cause_state}.",
         (
             "Summary: "
             f"total_queries={safe_int(summary_row.get('TOTAL_QUERIES'))}; "
@@ -927,7 +928,7 @@ def render_root_cause_brief(session) -> None:
                     st.success(f"Saved {saved} root-cause findings to the action queue.")
                 except Exception as e:
                     st.error(f"Could not save to action queue: {format_snowflake_error(e)}")
-                    st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
+                    st.info("The action queue is not available in this environment yet. Ask the DBA team to enable it, then retry this save.")
             narrative_meta = {
                 "company": company,
                 "days": int(days),
@@ -977,10 +978,13 @@ def render_root_cause_brief(session) -> None:
             mime="text/markdown",
             key="qw_rc_download",
         )
-        with st.expander("Proof SQL", expanded=all_evidence_mode):
-            sql_map = st.session_state.get("qw_root_sql", {})
-            st.code(sql_map.get("summary", ""), language="sql")
-            st.code(sql_map.get("exceptions", ""), language="sql")
+        with st.expander("Telemetry Status", expanded=all_evidence_mode):
+            render_shell_snapshot((
+                ("Summary telemetry", "Ready after refresh"),
+                ("Exception telemetry", "Ready after refresh"),
+                ("Route review", "Required"),
+                ("Execution", "Runbook only"),
+            ))
 
 
 def _render_root_cause_brief(session) -> None:

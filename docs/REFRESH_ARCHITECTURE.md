@@ -1,4 +1,4 @@
-# OVERWATCH Refresh Architecture
+# OVERWATCH Refresh Design
 
 OVERWATCH should feel instant to a DBA without turning the monitoring app into a
 new Snowflake cost problem. The production rule is mart-first, live-second.
@@ -7,15 +7,15 @@ new Snowflake cost problem. The production rule is mart-first, live-second.
 
 Use scheduled Snowflake tasks and transient mart/fact tables for the command
 center. Use permanent tables only for configuration, acknowledgements,
-suppression windows, remediation logs, action queue history, owner routing, and
+suppression windows, remediation logs, action queue history, routing, and
 value evidence.
 
 Do not make Dynamic Tables the base architecture. They remain optional
-accelerators in `snowflake/PRECOMPUTE.sql` after DBA approval of warehouse,
+accelerators in `snowflake/PRECOMPUTE.sql` after DBA review of warehouse,
 target lag, ownership, and refresh budget.
 
 Do not use materialized views for the primary command center. The app needs
-multi-source, windowed, owner-routed exception logic with explicit refresh and
+multi-source, windowed exception logic with explicit refresh and
 audit behavior.
 
 ## First-Paint Sources
@@ -27,7 +27,7 @@ audit behavior.
 | Alert Center | `MART_EXECUTIVE_OBSERVABILITY`, `ALERT_EVENTS`, notification/action tables | 15-60 min | No |
 | Cost & Contract | `MART_EXECUTIVE_OBSERVABILITY`, cost/Cortex facts, bounded official cost lens | 60 min | Explicit proof refresh |
 | Workload Operations | `MART_EXECUTIVE_OBSERVABILITY`, query/task facts and task history summaries | 30-60 min | Explicit live triage |
-| Governance & Security | Access posture and change-control facts | 60 min | Explicit governance lane |
+| Security Monitoring | Access posture and security facts | 60 min | Explicit drilldown only |
 | Snowflake Value | `OVERWATCH_VALUE_CANDIDATE_V`, `OVERWATCH_ROI_LOG` | 60 min | Explicit load only |
 
 The setup SQL seeds the same contract into `OVERWATCH_REFRESH_POLICY`.

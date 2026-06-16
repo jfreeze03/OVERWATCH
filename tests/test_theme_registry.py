@@ -23,8 +23,8 @@ class ThemeRegistryTests(unittest.TestCase):
             labels,
             ["Snowflake Dark", "Snowflake White"],
         )
-        self.assertEqual(theme._DEFAULT_THEME, "terminal")
-        self.assertEqual(theme._normalize_theme_key(None), "terminal")
+        self.assertEqual(theme._DEFAULT_THEME, "carbon")
+        self.assertEqual(theme._normalize_theme_key(None), "carbon")
 
     def test_removed_and_nonproduction_themes_alias_to_snowflake_dark(self):
         labels = {key: value["label"] for key, value in theme.THEMES.items()}

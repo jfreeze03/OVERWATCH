@@ -105,7 +105,7 @@ def _altair():
 
 
 def _cost_chart_palette() -> dict[str, str]:
-    theme_key = str(st.session_state.get("active_theme", "terminal") or "terminal")
+    theme_key = str(st.session_state.get("active_theme", "carbon") or "carbon")
     palettes = {
         "carbon": {
             "bar": "#29B5E8",
@@ -124,7 +124,7 @@ def _cost_chart_palette() -> dict[str, str]:
             "grid": "rgba(0, 104, 183, 0.18)",
         },
     }
-    return palettes.get(theme_key, palettes["terminal"])
+    return palettes.get(theme_key, palettes["carbon"])
 
 
 def _finalize_cost_chart(chart, *, height: int):
@@ -3906,7 +3906,7 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
     if selected_days not in DAY_WINDOW_OPTIONS:
         selected_days = DEFAULT_DAY_WINDOW
 
-    controls = st.columns([1.0, 1.0, 1.0, 1.6])
+    controls = st.columns([1.0, 1.0, 2.6])
     with controls[0]:
         days = st.selectbox(
             "Cost window",
@@ -3917,14 +3917,9 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
         )
     with controls[1]:
         refresh_overview = st.button("Refresh Overview", key="cost_contract_splash_load", type="primary", width="stretch")
-    with controls[2]:
-        if st.button("Refresh Cost", key="cost_contract_splash_refresh", width="stretch"):
-            st.session_state.pop(_COST_SPLASH_KEY, None)
-            st.session_state.pop(_COST_SPLASH_AUTOLOAD_SCOPE_KEY, None)
-            st.session_state.pop(_COST_SPLASH_AUTOLOAD_BLOCKED_SCOPE_KEY, None)
-            st.rerun()
 
     if refresh_overview:
+        st.session_state.pop(_COST_SPLASH_KEY, None)
         st.session_state.pop(_COST_SPLASH_AUTOLOAD_BLOCKED_SCOPE_KEY, None)
         splash = _ensure_cost_splash(company, int(days), credit_price)
     else:

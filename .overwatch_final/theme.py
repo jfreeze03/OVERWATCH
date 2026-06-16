@@ -16,7 +16,7 @@ import streamlit as st
 
 THEME_VERSION = "2026-06-16-theme-contrast-v9"
 
-_DEFAULT_THEME = "terminal"
+_DEFAULT_THEME = "carbon"
 _ACTIVE_THEME_KEY = "_overwatch_active_theme"
 _THEME_QUERY_PARAM = "overwatch_theme"
 _THEME_ALIASES = {

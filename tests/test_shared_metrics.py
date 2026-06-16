@@ -16,6 +16,7 @@ from utils.shared_metrics import (  # noqa: E402
     load_shared_storage_trend,
     load_shared_usage_metering_kpis,
     load_shared_warehouse_daily_credits_by_warehouse,
+    load_shared_warehouse_overview,
 )
 
 
@@ -161,6 +162,54 @@ class SharedMetricsTests(unittest.TestCase):
         live_sql = mock_run.call_args.args[0].upper()
         self.assertIn("NULL::VARCHAR AS WAREHOUSE_SIZE", live_sql)
         self.assertIn("WAREHOUSE_METERING_HISTORY", live_sql)
+
+    def test_warehouse_overview_reuses_fast_summary_result(self):
+        frame = pd.DataFrame({
+            "WAREHOUSE_NAME": ["ALFA_WH"],
+            "TOTAL_QUERIES": [100],
+            "METERED_CREDITS": [10.0],
+            "PRIOR_METERED_CREDITS": [7.0],
+            "CREDIT_DELTA": [3.0],
+        })
+
+        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run:
+            first = load_shared_warehouse_overview(object(), 7, "ALFA", section="Unit Test")
+            second = load_shared_warehouse_overview(object(), 7, "ALFA", section="Unit Test")
+
+        self.assertIs(first, second)
+        self.assertIn("Fast warehouse summary", first.source)
+        self.assertEqual(mock_run.call_count, 1)
+
+    def test_warehouse_overview_live_fallback_includes_movement_columns(self):
+        live_frame = pd.DataFrame({
+            "WAREHOUSE_NAME": ["ALFA_WH"],
+            "TOTAL_QUERIES": [100],
+            "METERED_CREDITS": [10.0],
+            "PRIOR_METERED_CREDITS": [7.0],
+            "CREDIT_DELTA": [3.0],
+            "CREDIT_DELTA_PCT": [42.9],
+        })
+
+        with patch(
+            "utils.shared_metrics.run_query",
+            side_effect=[pd.DataFrame(), live_frame],
+        ) as mock_run, patch(
+            "utils.compatibility.filter_existing_columns",
+            side_effect=[
+                ["WAREHOUSE_SIZE", "QUEUED_OVERLOAD_TIME", "BYTES_SPILLED_TO_REMOTE_STORAGE"],
+                ["CREDITS_USED_COMPUTE", "CREDITS_USED_CLOUD_SERVICES"],
+            ],
+        ):
+            result = load_shared_warehouse_overview(object(), 7, "ALFA", section="Unit Test")
+
+        self.assertEqual(mock_run.call_count, 2)
+        self.assertEqual(result.source, "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY + WAREHOUSE_METERING_HISTORY")
+        live_sql = mock_run.call_args_list[1].args[0].upper()
+        self.assertIn("QUERY_ROLLUP", live_sql)
+        self.assertIn("CREDIT_ROLLUP", live_sql)
+        self.assertIn("AS PRIOR_METERED_CREDITS", live_sql)
+        self.assertIn("AS CREDIT_DELTA", live_sql)
+        self.assertIn("AS CREDIT_DELTA_PCT", live_sql)
 
 
 if __name__ == "__main__":

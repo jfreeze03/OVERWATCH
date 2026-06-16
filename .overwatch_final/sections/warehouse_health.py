@@ -36,7 +36,7 @@ run_query = _lazy_util("run_query")
 format_snowflake_error = _lazy_util("format_snowflake_error")
 filter_existing_columns = _lazy_util("filter_existing_columns")
 render_optimization_advisor = _lazy_util("render_optimization_advisor")
-build_mart_warehouse_overview_sql = _lazy_util("build_mart_warehouse_overview_sql")
+load_shared_warehouse_overview = _lazy_util("load_shared_warehouse_overview")
 build_mart_warehouse_scaling_sql = _lazy_util("build_mart_warehouse_scaling_sql")
 build_mart_warehouse_heatmap_sql = _lazy_util("build_mart_warehouse_heatmap_sql")
 load_warehouse_inventory = _lazy_util("load_warehouse_inventory")
@@ -3656,67 +3656,32 @@ def render():
 
         def _load_warehouse_overview() -> None:
             try:
-                mart_sql = build_mart_warehouse_overview_sql(
+                session = _warehouse_action_session("load warehouse overview")
+                if session is None:
+                    return
+                overview_result = load_shared_warehouse_overview(
+                    session,
                     wh_days,
-                    company=company,
-                    warehouse_contains=global_warehouse,
-                    user_contains=global_user,
-                    role_contains=global_role,
-                    database_contains=global_database,
-                    start_date=global_start_date,
-                    end_date=global_end_date,
+                    company,
+                    force=True,
+                    section="Warehouse Health",
                 )
-                df_w = run_query(
-                    mart_sql,
-                    ttl_key=f"wh_overview_mart_{company}_{wh_days}",
-                    tier="historical",
-                )
-                source = (
-                    "Fast warehouse summary "
-                    "(cache and warehouse size require live ACCOUNT_USAGE)"
-                )
-                if df_w.empty:
-                    session = _warehouse_action_session("load live warehouse overview fallback")
-                    if session is None:
-                        return
-                    exprs = _warehouse_sql_exprs(session)
-                    df_w = run_query(f"""
-                        SELECT q.warehouse_name,
-                               {exprs["wh_size_expr"]} AS warehouse_size,
-                               COUNT(*)                            AS total_queries,
-                               AVG(q.total_elapsed_time)/1000      AS avg_elapsed_sec,
-                               PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY q.total_elapsed_time)/1000 AS p95_elapsed_sec,
-                               {exprs["queue_avg_expr"]}           AS avg_queued_sec,
-                               {exprs["remote_spill_sum_expr"]}/POWER(1024,3)  AS total_remote_spill_gb,
-                               {exprs["cache_expr"]} AS avg_cache_pct,
-                               SUM(CASE WHEN UPPER(q.execution_status)='FAILED_WITH_ERROR' THEN 1 ELSE 0 END) AS error_count,
-                               {exprs["bytes_scanned_expr"]}/POWER(1024,3)  AS total_gb_scanned
-                        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
-                        WHERE q.start_time >= DATEADD('day', -{wh_days}, CURRENT_TIMESTAMP())
-                          AND q.warehouse_name IS NOT NULL
-                          {_warehouse_global_filter_clause("q")}
-                        GROUP BY q.warehouse_name
-                        ORDER BY total_queries DESC
-                        """, ttl_key=f"wh_overview_live_{company}_{wh_days}", tier="historical")
-                    source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
+                df_w = overview_result.data
+                source = overview_result.source
                 try:
-                    metadata_session = locals().get("session")
-                    if metadata_session is None:
-                        metadata_session = _warehouse_action_session("load warehouse guardrail metadata")
-                    if metadata_session is not None:
-                        st.session_state["wh_settings_inventory"] = load_warehouse_inventory(
-                            metadata_session,
+                    st.session_state["wh_settings_inventory"] = load_warehouse_inventory(
+                        session,
+                        company,
+                    )
+                    st.session_state["wh_settings_inventory_meta"] = with_loaded_at(
+                        _warehouse_scope_meta(
                             company,
-                        )
-                        st.session_state["wh_settings_inventory_meta"] = with_loaded_at(
-                            _warehouse_scope_meta(
-                                company,
-                                environment,
-                                wh_days,
-                            ),
-                            source="Warehouse guardrail metadata",
-                        )
-                        st.session_state.pop("wh_settings_inventory_error", None)
+                            environment,
+                            wh_days,
+                        ),
+                        source="Warehouse guardrail metadata",
+                    )
+                    st.session_state.pop("wh_settings_inventory_error", None)
                 except Exception as metadata_exc:
                     st.session_state["wh_settings_inventory"] = pd.DataFrame()
                     st.session_state["wh_settings_inventory_error"] = format_snowflake_error(metadata_exc)

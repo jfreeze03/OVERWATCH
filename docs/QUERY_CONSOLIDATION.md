@@ -16,6 +16,7 @@ refresh/drilldown actions and make repeated metric families load once per scope.
 | `load_shared_storage_db_detail` | Storage Monitor per-database detail | Fast storage mart first, live database storage fallback on demand |
 | `load_shared_warehouse_daily_credits` | Cost Forecast daily credit trend | Live warehouse metering, cached once per company/filter scope |
 | `load_shared_warehouse_daily_credits_by_warehouse` | Cost Center Burn Rate daily warehouse trend | Live warehouse metering with latest observed warehouse size, cached once per company/filter scope |
+| `load_shared_warehouse_overview` | Warehouse Health overview and current/prior movement | Fast warehouse overview mart first, live query-history plus metering fallback only on explicit load |
 
 Shared results are stored under `_shared_metric_...` session keys and are cleared
 by the global refresh path.
@@ -46,7 +47,7 @@ Top ACCOUNT_USAGE source families by static reference count:
 1. Warehouse metering summary:
    Extend the shared metering layer from Usage Overview/Cost Forecast into
    current/prior credits by company, warehouse, and day. Remaining consumers:
-   Warehouse Health movement panels.
+   Warehouse Health scaling events and deeper advisor panels.
 
 2. Query history operational rollup:
    Create one mart-first/live-fallback loader for total queries, failures, queue,
@@ -54,9 +55,9 @@ Top ACCOUNT_USAGE source families by static reference count:
    Usage Overview, Account Health, Warehouse Health, DBA Control Room detail.
 
 3. Warehouse pressure rollup:
-   Create one per-warehouse pressure loader with queued, spill, latency, failures,
-   and metered credits. Consumers: Warehouse Health capacity/overview, Usage
-   Overview pressure, Account Health warehouse pressure.
+   Extend the shared warehouse overview loader into a narrower pressure-only
+   rollup with queued, spill, latency, failures, and metered credits. Consumers:
+   Usage Overview pressure, Account Health warehouse pressure, and DBA detail.
 
 4. Task/procedure health:
    Keep task/procedure detail on demand, but share the summary counters and recent

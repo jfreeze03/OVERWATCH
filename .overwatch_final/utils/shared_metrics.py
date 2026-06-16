@@ -18,6 +18,7 @@ from .company_filter import (
     get_company_scope_key,
     get_db_filter_clause,
     get_global_db_filter_clause,
+    get_global_filter_clause,
     get_global_wh_filter_clause,
     get_wh_filter_clause,
 )
@@ -27,6 +28,7 @@ from .mart import (
     build_mart_storage_trend_sql,
     build_mart_usage_metering_sql,
     build_mart_usage_storage_sql,
+    build_mart_warehouse_overview_sql,
 )
 from .query import run_query
 
@@ -521,3 +523,168 @@ def load_shared_warehouse_daily_credits_by_warehouse(
         )
 
     return _load_or_reuse("shared_warehouse_daily_credits_by_warehouse", (company, days), _loader, force=force)
+
+
+def load_shared_warehouse_overview(
+    session: object,
+    days: int,
+    company: str | None = None,
+    *,
+    force: bool = False,
+    section: str = "Shared Metrics",
+) -> SharedMetricResult:
+    """Load per-warehouse pressure and current/prior credit movement."""
+
+    company = company or get_active_company()
+    days = int(days)
+    warehouse_contains = str(st.session_state.get("global_warehouse", "") or "").strip()
+    user_contains = str(st.session_state.get("global_user", "") or "").strip()
+    role_contains = str(st.session_state.get("global_role", "") or "").strip()
+    database_contains = str(st.session_state.get("global_database", "") or "").strip()
+    global_start_date = st.session_state.get("global_start_date")
+    global_end_date = st.session_state.get("global_end_date")
+
+    def _loader() -> SharedMetricResult:
+        mart_df = run_query(
+            build_mart_warehouse_overview_sql(
+                days,
+                company=company,
+                warehouse_contains=warehouse_contains,
+                user_contains=user_contains,
+                role_contains=role_contains,
+                database_contains=database_contains,
+                start_date=global_start_date,
+                end_date=global_end_date,
+            ),
+            ttl_key=get_company_scope_key("shared_warehouse_overview_mart", days),
+            tier="historical",
+            section=section,
+        )
+        if not mart_df.empty:
+            return SharedMetricResult(
+                data=mart_df,
+                source="Fast warehouse summary (cache and warehouse size require live ACCOUNT_USAGE)",
+                available=True,
+                effective_days=days,
+            )
+
+        from .compatibility import filter_existing_columns
+
+        qh_cols = set(
+            filter_existing_columns(
+                session,
+                "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+                [
+                    "WAREHOUSE_SIZE",
+                    "QUEUED_OVERLOAD_TIME",
+                    "BYTES_SPILLED_TO_REMOTE_STORAGE",
+                    "PERCENTAGE_SCANNED_FROM_CACHE",
+                    "BYTES_SCANNED",
+                ],
+            )
+        )
+        wm_cols = set(
+            filter_existing_columns(
+                session,
+                "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY",
+                ["CREDITS_USED_COMPUTE", "CREDITS_USED_CLOUD_SERVICES"],
+            )
+        )
+        warehouse_size_expr = "MAX(q.warehouse_size)" if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR"
+        queue_avg_expr = "AVG(q.queued_overload_time) / 1000" if "QUEUED_OVERLOAD_TIME" in qh_cols else "0"
+        remote_spill_expr = (
+            "SUM(q.bytes_spilled_to_remote_storage)"
+            if "BYTES_SPILLED_TO_REMOTE_STORAGE" in qh_cols
+            else "0"
+        )
+        cache_expr = "AVG(q.percentage_scanned_from_cache)" if "PERCENTAGE_SCANNED_FROM_CACHE" in qh_cols else "NULL::FLOAT"
+        bytes_scanned_expr = "SUM(q.bytes_scanned)" if "BYTES_SCANNED" in qh_cols else "0"
+        compute_meter_expr = "m.credits_used_compute" if "CREDITS_USED_COMPUTE" in wm_cols else "m.credits_used"
+        cloud_meter_expr = "m.credits_used_cloud_services" if "CREDITS_USED_CLOUD_SERVICES" in wm_cols else "0::FLOAT"
+        query_filters = get_global_filter_clause(
+            date_col="q.start_time",
+            wh_col="q.warehouse_name",
+            user_col="q.user_name",
+            role_col="q.role_name",
+            db_col="q.database_name",
+        )
+        metering_filters = "\n".join(
+            filter(
+                None,
+                [
+                    get_wh_filter_clause("m.warehouse_name", company),
+                    get_global_wh_filter_clause("m.warehouse_name"),
+                ],
+            )
+        )
+        live_df = run_query(
+            f"""
+            WITH query_rollup AS (
+                SELECT q.warehouse_name,
+                       {warehouse_size_expr} AS warehouse_size,
+                       COUNT(*) AS total_queries,
+                       AVG(q.total_elapsed_time) / 1000 AS avg_elapsed_sec,
+                       PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY q.total_elapsed_time) / 1000 AS p95_elapsed_sec,
+                       {queue_avg_expr} AS avg_queued_sec,
+                       {remote_spill_expr} / POWER(1024, 3) AS total_remote_spill_gb,
+                       {cache_expr} AS avg_cache_pct,
+                       SUM(CASE WHEN UPPER(q.execution_status) = 'FAILED_WITH_ERROR' THEN 1 ELSE 0 END) AS error_count,
+                       {bytes_scanned_expr} / POWER(1024, 3) AS total_gb_scanned
+                FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+                WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+                  AND q.warehouse_name IS NOT NULL
+                  {query_filters}
+                GROUP BY q.warehouse_name
+            ),
+            credit_rollup AS (
+                SELECT
+                    m.warehouse_name,
+                    ROUND(SUM(IFF(m.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP()), COALESCE(m.credits_used, 0), 0)), 4) AS metered_credits,
+                    ROUND(SUM(IFF(m.start_time >= DATEADD('day', -{days * 2}, CURRENT_TIMESTAMP())
+                                  AND m.start_time < DATEADD('day', -{days}, CURRENT_TIMESTAMP()),
+                                  COALESCE(m.credits_used, 0), 0)), 4) AS prior_metered_credits,
+                    ROUND(SUM(IFF(m.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP()), COALESCE({compute_meter_expr}, 0), 0)), 4) AS credits_used_compute,
+                    ROUND(SUM(IFF(m.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP()), COALESCE({cloud_meter_expr}, 0), 0)), 4) AS credits_used_cloud_services
+                FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY m
+                WHERE m.start_time >= DATEADD('day', -{days * 2}, CURRENT_TIMESTAMP())
+                  {metering_filters}
+                GROUP BY m.warehouse_name
+            )
+            SELECT
+                COALESCE(q.warehouse_name, c.warehouse_name) AS warehouse_name,
+                q.warehouse_size,
+                COALESCE(q.total_queries, 0) AS total_queries,
+                COALESCE(q.avg_elapsed_sec, 0) AS avg_elapsed_sec,
+                COALESCE(q.p95_elapsed_sec, 0) AS p95_elapsed_sec,
+                COALESCE(q.avg_queued_sec, 0) AS avg_queued_sec,
+                COALESCE(q.total_remote_spill_gb, 0) AS total_remote_spill_gb,
+                q.avg_cache_pct,
+                COALESCE(q.error_count, 0) AS error_count,
+                COALESCE(q.total_gb_scanned, 0) AS total_gb_scanned,
+                COALESCE(c.metered_credits, 0) AS metered_credits,
+                COALESCE(c.prior_metered_credits, 0) AS prior_metered_credits,
+                ROUND(COALESCE(c.metered_credits, 0) - COALESCE(c.prior_metered_credits, 0), 4) AS credit_delta,
+                ROUND(
+                    (COALESCE(c.metered_credits, 0) - COALESCE(c.prior_metered_credits, 0))
+                    / NULLIF(COALESCE(c.prior_metered_credits, 0), 0) * 100,
+                    1
+                ) AS credit_delta_pct,
+                COALESCE(c.credits_used_compute, 0) AS credits_used_compute,
+                COALESCE(c.credits_used_cloud_services, 0) AS credits_used_cloud_services,
+                NULL::TIMESTAMP AS mart_load_ts
+            FROM query_rollup q
+            FULL OUTER JOIN credit_rollup c ON q.warehouse_name = c.warehouse_name
+            ORDER BY COALESCE(q.total_queries, 0) DESC, COALESCE(c.metered_credits, 0) DESC
+            """,
+            ttl_key=get_company_scope_key("shared_warehouse_overview_live", days),
+            tier="historical",
+            section=section,
+        )
+        return SharedMetricResult(
+            data=live_df,
+            source="Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY + WAREHOUSE_METERING_HISTORY",
+            available=not live_df.empty,
+            effective_days=days,
+        )
+
+    return _load_or_reuse("shared_warehouse_overview", (company, days), _loader, force=force)

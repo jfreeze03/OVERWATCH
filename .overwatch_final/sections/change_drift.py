@@ -99,7 +99,7 @@ def render_workflow_module(workflow: str, workflow_modules: dict[str, str]) -> N
 CHANGE_DRIFT_VIEWS = ("Change Brief", "Change Workflows")
 CHANGE_DRIFT_VIEW_DETAILS = {
     "Change Brief": "Default cockpit: status strip, KPI row, and compact exception-first workflow grid.",
-    "Change Workflows": "Open Snowflake object/access changes, stored procedure lineage, schema drift, data movement, or guarded DBA action evidence.",
+    "Change Workflows": "Open Snowflake object/access changes, stored procedure lineage, schema drift, data movement, or guarded DBA action telemetry.",
 }
 CHANGE_DRIFT_BRIEF_FIRST_VERSION = 2
 
@@ -123,7 +123,7 @@ CHANGE_BRIEF_WORKFLOWS = (
     {
         "WORKFLOW": "Object and access changes",
         "BUTTON_LABEL": "Open Object Changes",
-        "DBA_MOVE": "Start with recent object changes, grants, ownership, policy, and actor evidence.",
+        "DBA_MOVE": "Start with recent object changes, grants, ownership, policy, and actor telemetry.",
         "WHEN": "Unknown actor, manual object change, access movement",
     },
     {
@@ -234,7 +234,7 @@ def build_change_control_evidence_migration_sql(
     schema: str = ALERT_SCHEMA,
     table: str = CHANGE_CONTROL_EVIDENCE_TABLE,
 ) -> list[str]:
-    """Return additive migrations for previously deployed evidence tables."""
+    """Return additive migrations for previously deployed telemetry tables."""
     fqn = change_control_evidence_fqn(db=db, schema=schema, table=table)
     return [
         f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS APPROVAL_ROUTE_READY VARCHAR(20)",
@@ -412,7 +412,7 @@ def _change_scope_meta(
     days: int | None = None,
     state: dict | None = None,
 ) -> dict:
-    """Return the filter scope that loaded Change & Drift evidence must match."""
+    """Return the filter scope that loaded Change & Drift telemetry must match."""
     state = state if state is not None else st.session_state
     meta = {
         "company": _change_scope_value(company),
@@ -459,7 +459,7 @@ def _change_source_confidence(source: str, default: str) -> str:
     if "account_usage" in source_lower:
         return "Live ACCOUNT_USAGE"
     if "action queue" in source_lower or "workflow" in source_lower or "evidence" in source_lower:
-        return "Workflow evidence"
+        return "Workflow telemetry"
     return default
 
 
@@ -468,18 +468,18 @@ def _change_source_next_action(state: str, source: str) -> str:
     if state == "Stale":
         return "Reload after changing company, environment, lookback, or triage filters."
     if state == "Unavailable":
-        return "Deploy or refresh the summary/evidence tables before relying on this surface."
+        return "Deploy or refresh the summary/telemetry tables before relying on this surface."
     if state == "On demand":
         return "Refresh only when this workflow is part of the current change investigation."
     if state == "No Rows":
-        return "Confirm the selected scope has recent change events, evidence, or action rows."
+        return "Confirm the selected scope has recent change events, telemetry, or action rows."
     if "fallback" in source_lower:
-        return "Use for investigation; prefer summary refresh for repeated daily change control."
+        return "Use for investigation; prefer summary refresh for repeated object-change review."
     return "Current for the active DBA change scope."
 
 
 def _change_has_source_state(state: dict) -> bool:
-    """Return True once Change & Drift has evidence or source errors to summarize."""
+    """Return True once Change & Drift has telemetry or source errors to summarize."""
     for key in (
         "change_drift_summary",
         "change_drift_exceptions",
@@ -510,7 +510,7 @@ def _change_source_health_rows(
     company: str,
     environment: str,
 ) -> pd.DataFrame:
-    """Summarize Change & Drift evidence freshness and source strategy."""
+    """Summarize Change & Drift telemetry freshness and source strategy."""
     definitions = [
         {
             "surface": "Change brief",
@@ -540,18 +540,18 @@ def _change_source_health_rows(
             "meta_key": "change_control_operability_fact_meta",
             "days_key": "change_drift_brief_days",
             "default_days": 14,
-            "source": "Fast change-control summary",
+            "source": "Fast object-change summary",
             "confidence": "Fast summary",
             "error_key": "change_control_operability_fact_error",
         },
         {
-            "surface": "Evidence trend",
+            "surface": "Telemetry trend",
             "frame_key": "change_drift_evidence_trend",
             "meta_key": "change_drift_evidence_trend_meta",
             "days_key": "change_drift_evidence_trend_days",
             "default_days": 30,
-            "source": "Workflow evidence",
-            "confidence": "Workflow evidence",
+            "source": "Workflow telemetry",
+            "confidence": "Workflow telemetry",
             "error_key": "change_drift_evidence_trend_error",
         },
         {
@@ -560,8 +560,8 @@ def _change_source_health_rows(
             "meta_key": "change_action_closure_meta",
             "days_key": "change_action_closure_days",
             "default_days": 30,
-            "source": "Action queue closure evidence",
-            "confidence": "Workflow evidence",
+            "source": "Action queue closure telemetry",
+            "confidence": "Workflow telemetry",
             "error_key": "change_action_closure_error",
         },
     ]
@@ -663,7 +663,7 @@ def _change_owner_context(row: pd.Series | dict) -> dict:
         entity=entity,
         entity_type="CHANGE_CONTROL",
         owner=base["owner"],
-        category=finding or "Change Control",
+        category=finding or "Object Change Monitoring",
     )
     return {
         "owner": directory_context.get("OWNER") or base["owner"],
@@ -745,7 +745,7 @@ def _change_control_readiness_for_row(row: pd.Series | dict) -> dict:
         readiness = "Review Ready"
 
     if "change ticket" in blockers:
-        next_action = "Record the change ticket or mark the row as unauthorized drift before closure."
+        next_action = "Record the ticket or mark the row as unauthorized drift before closure."
     elif "review/rollback status" in blockers:
         next_action = "Record review notes, rollback status, or revert through the reviewed change path."
     elif "query_id telemetry" in blockers:
@@ -815,7 +815,7 @@ def _enrich_change_control_evidence(readiness: pd.DataFrame) -> pd.DataFrame:
 
 
 def _change_control_readiness_summary(readiness: pd.DataFrame) -> pd.DataFrame:
-    """Summarize change-control blockers by environment, finding, and escalation route."""
+    """Summarize object-change blockers by environment, finding, and escalation route."""
     if readiness is None or readiness.empty:
         return pd.DataFrame()
     view = _enrich_change_control_evidence(readiness)
@@ -858,7 +858,7 @@ def _change_control_readiness_summary(readiness: pd.DataFrame) -> pd.DataFrame:
             readiness_label = "Review Ready"
             rank = 8
         else:
-            next_action = "Review change-control metadata."
+            next_action = "Review object-change metadata."
             readiness_label = "Review Required"
             rank = 5
         rows.append({
@@ -905,7 +905,7 @@ def _change_operator_next_moves(
     closure: pd.DataFrame | None = None,
     operability_fact: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """Build a no-query decision gate for loaded change and drift evidence."""
+    """Build a no-query decision gate for loaded change and drift telemetry."""
     exception_count = 0 if exceptions is None or exceptions.empty else int(len(exceptions))
     summary = pd.DataFrame() if readiness_summary is None else readiness_summary.copy()
     detail = pd.DataFrame() if readiness is None else readiness.copy()
@@ -1018,7 +1018,7 @@ def _change_operator_next_moves(
     elif exception_count and close.empty:
         state = "Load Closure Analytics"
         rank = 4
-        next_action = "Load closure analytics before claiming drift or change-control work is complete."
+        next_action = "Load closure analytics before claiming drift or object-change work is complete."
         count = exception_count
     else:
         state = "Clear"
@@ -1236,7 +1236,7 @@ LIMIT 50""".strip()
 
 
 def _change_blast_radius_sql(entity: object) -> str:
-    """Build read-only object dependency evidence for a changed object or schema."""
+    """Build read-only object dependency telemetry for a changed object or schema."""
     raw = str(entity or "").strip()
     pieces = _split_snowflake_qualified_name(raw)
     if not pieces or raw.lower() in {"unknown", "snowflake account"}:
@@ -1367,7 +1367,7 @@ def _change_action_payload(row: pd.Series | dict, company: str, environment: str
         "Action ID": make_action_id("Change Drift", entity, f"{finding}|{query_id}"),
         "Source": "Change & Drift - Brief",
         "Severity": severity,
-        "Category": "Change Control",
+        "Category": "Object Change Monitoring",
         "Entity Type": entity_type,
         "Entity": entity,
         "Owner": owner_context["owner"],
@@ -1651,7 +1651,7 @@ def _change_action_brief(summary, exceptions, meta: dict, company: str, environm
         }
     return {
         "state": "Controlled",
-        "headline": "No immediate change-control blocker in the loaded brief.",
+        "headline": "No immediate object-change blocker in the loaded brief.",
         "detail": f"{object_changes + access_changes:,} object/access change(s), {manual_drift:,} drift indicator(s).",
     }
 
@@ -1788,7 +1788,7 @@ def _build_change_drift_markdown(
     else:
         exception_lines.append("- No change/drift exceptions crossed the configured thresholds.")
     lines = [
-        f"# OVERWATCH Change Control Brief - {company}",
+        f"# OVERWATCH Object Change Brief - {company}",
         "",
         f"Lookback window: {days} day(s).",
         f"Control state: {_change_drift_rating(score)}.",
@@ -2036,12 +2036,12 @@ def _change_control_evidence_insert_sql(
     snapshot_id: str = "",
 ) -> str:
     if readiness is None or readiness.empty:
-        raise ValueError("Change-control evidence snapshot has no rows to save.")
+        raise ValueError("Object-change telemetry snapshot has no rows to save.")
     view = _enrich_change_control_evidence(readiness)
     fqn = change_control_evidence_fqn()
     env_value = str(environment or "").strip() or "ALL"
     snap = snapshot_id or make_action_id(
-        "Change Control Evidence Snapshot",
+        "Object Change Telemetry Snapshot",
         company,
         f"{env_value}|{datetime.now().strftime('%Y%m%d%H%M%S')}",
     )
@@ -2177,7 +2177,7 @@ def _change_action_queue_closure_sql(days: int, company: str, environment: str =
     return f"""
 WITH scoped_actions AS (
     SELECT
-        COALESCE(CATEGORY, 'Change Control') AS CATEGORY,
+        COALESCE(CATEGORY, 'Object Change Monitoring') AS CATEGORY,
         COALESCE(ENTITY_TYPE, 'Change') AS ENTITY_TYPE,
         COALESCE(ENTITY_NAME, 'Unknown') AS ENTITY,
         COALESCE(OWNER, '') AS OWNER,
@@ -2290,7 +2290,7 @@ LIMIT 100""".strip()
 
 
 def _change_control_operability_fact_sql(days: int, company: str, environment: str = "ALL") -> str:
-    """Read change-control blockers from the fast summary."""
+    """Read object-change blockers from the fast summary."""
     table = change_control_operability_fact_fqn()
     where = [f"SNAPSHOT_DATE >= DATEADD('day', -{max(1, int(days or 30))}, CURRENT_DATE())"]
     if str(company or "").upper() != "ALL":
@@ -2360,10 +2360,10 @@ def _save_change_control_evidence_snapshot(
             environment=environment,
             source=source,
         )).collect()
-        st.success("Saved the Change Control telemetry snapshot for audit and trend tracking.")
+        st.success("Saved the object-change telemetry snapshot for audit and trend tracking.")
     except Exception as exc:
-        st.error(f"Could not save Change Control telemetry snapshot: {format_snowflake_error(exc)}")
-        st.info("Change-control telemetry history is not available in this environment yet. Ask the DBA route to enable it, then retry this save.")
+        st.error(f"Could not save object-change telemetry snapshot: {format_snowflake_error(exc)}")
+        st.info("Object-change telemetry history is not available in this environment yet. Ask the DBA route to enable it, then retry this save.")
 
 
 def _render_change_source_health(company: str, environment: str) -> None:
@@ -2450,7 +2450,7 @@ def render() -> None:
         default=14,
     )
     active_view = render_mode_selector(
-        "Change-control view",
+        "Object-change view",
         "change_drift_view",
         CHANGE_DRIFT_VIEWS,
         default=CHANGE_DRIFT_VIEWS[0],
@@ -2573,15 +2573,15 @@ def render() -> None:
     if consume_section_autoload_request("Change & Drift") and not (
         summary is not None and not summary.empty and brief_is_current
     ):
-        st.caption("Change Control opened with a lightweight summary. Load the brief when current change-history telemetry is needed.")
+        st.caption("Object Change opened with a lightweight summary. Load the brief when current change-history telemetry is needed.")
     render_data_freshness(
         meta if brief_is_current and summary is not None and not summary.empty else {},
-        source=st.session_state.get("change_drift_source", "Change-control brief"),
+        source=st.session_state.get("change_drift_source", "Object-change brief"),
         target_minutes=60,
         delayed_note="Fast change telemetry uses fast summary rows when available; live QUERY_HISTORY refresh is explicit.",
     )
 
-    if st.button("Load Change Control Brief", key="change_drift_brief_load", type="primary"):
+    if st.button("Load Object Change Brief", key="change_drift_brief_load", type="primary"):
         _load_change_drift_brief()
 
     summary = st.session_state.get("change_drift_summary")
@@ -2589,7 +2589,7 @@ def render() -> None:
     meta = st.session_state.get("change_drift_meta", {})
     brief_is_current = _change_meta_matches(meta, expected_brief_meta)
     if summary is not None and not summary.empty and not brief_is_current:
-        st.info("Loaded Change Control brief is stale for the active scope. Reload the brief before acting.")
+        st.info("Loaded Object Change brief is stale for the active scope. Reload the brief before acting.")
     if (
         summary is not None
         and not summary.empty
@@ -2618,7 +2618,7 @@ def render() -> None:
             expected_brief_meta,
         )
         if operability_fact is not None and not operability_fact.empty and operability_fact_current:
-            st.subheader("Change Control Summary")
+            st.subheader("Object Change Summary")
             render_shell_snapshot((
                 ("Rows", f"{len(operability_fact):,}"),
                 ("Overdue", f"{int(operability_fact.get('OVERDUE_OPEN', pd.Series(dtype=int)).sum()):,}"),
@@ -2626,11 +2626,11 @@ def render() -> None:
                     "Route / Closure Blocks",
                     f"{int(operability_fact.get('ROUTE_BLOCKED', pd.Series(dtype=int)).sum() + operability_fact.get('CLOSURE_BLOCKED', pd.Series(dtype=int)).sum()):,}",
                 ),
-                ("Verified Closures", f"{int(operability_fact.get('VERIFIED_CLOSURES', pd.Series(dtype=int)).sum()):,}"),
+                ("Telemetry Confirmed", f"{int(operability_fact.get('VERIFIED_CLOSURES', pd.Series(dtype=int)).sum()):,}"),
             ))
             render_priority_dataframe(
                 operability_fact,
-                title="Change-control blockers",
+                title="Object-change blockers",
                 priority_columns=[
                     "SNAPSHOT_DATE", "CONTROL_STATE", "CONTROL_SOURCE", "ENVIRONMENT",
                     "FINDING_TYPE", "ENTITY", "OWNER", "SEVERITY", "HIGH_RISK_CHANGES",
@@ -2641,28 +2641,28 @@ def render() -> None:
                 ],
                 sort_by=["CONTROL_RANK", "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION", "HIGH_RISK_CHANGES"],
                 ascending=[True, False, False, False],
-                raw_label="All change-control summary rows",
+                raw_label="All object-change summary rows",
                 height=300,
             )
-            with st.expander("Change Control Status", expanded=False):
+            with st.expander("Object Change Status", expanded=False):
                 render_shell_snapshot((
                     ("Control summary", "Ready"),
                     ("Escalation route", "Review"),
-                    ("Closure evidence", "Required"),
+                    ("Closure telemetry", "Required"),
                     ("Execution", "Runbook only"),
                 ))
         elif operability_fact is not None and not operability_fact.empty and not operability_fact_current:
-            st.info("Loaded change-control summary is stale for the active scope. Reload the brief before acting.")
+            st.info("Loaded object-change summary is stale for the active scope. Reload the brief before acting.")
         elif st.session_state.get("change_control_operability_fact_error"):
             defer_source_note(
-                "Change-control summary is not available yet. Ask the DBA team to enable the fast blocker surface."
+                "Object-change summary is not available yet. Ask the DBA team to enable the fast blocker surface."
             )
 
         _render_change_watch_floor(score, exceptions, row)
         st.divider()
 
         if exceptions is not None and not exceptions.empty:
-            st.subheader("Change Control Exceptions")
+            st.subheader("Object Change Exceptions")
             priority_exceptions = _change_priority_view(exceptions)
             render_priority_dataframe(
                 priority_exceptions,
@@ -2695,11 +2695,11 @@ def render() -> None:
             )
             render_priority_dataframe(
                 operator_moves,
-                title="Change operator next-move gates",
+                title="Object-change next-move gates",
                 priority_columns=["GATE", "STATE", "COUNT", "PROOF_REQUIRED", "NEXT_ACTION"],
                 sort_by=["GATE_RANK", "COUNT"],
                 ascending=[True, False],
-                raw_label="All change operator gates",
+                raw_label="All object-change operator gates",
                 height=240,
                 max_rows=6,
             )
@@ -2711,7 +2711,7 @@ def render() -> None:
             if not intervention_matrix.empty:
                 render_priority_dataframe(
                     intervention_matrix,
-                    title="Change DBA intervention matrix",
+                    title="Object-change intervention matrix",
                     priority_columns=[
                         "DBA_PRIORITY", "INTERVENTION_STATE", "SEVERITY", "FINDING_TYPE", "ENTITY",
                         "USER_NAME", "ROLE_NAME", "QUERY_ID", "CONTROL_STATE",
@@ -2720,7 +2720,7 @@ def render() -> None:
                     ],
                     sort_by=["DBA_PRIORITY", "SEVERITY", "FINDING_TYPE"],
                     ascending=[True, True, True],
-                    raw_label="All change DBA intervention rows",
+                    raw_label="All object-change intervention rows",
                     height=300,
                     max_rows=10,
                 )
@@ -2733,7 +2733,7 @@ def render() -> None:
                 ))
                 render_priority_dataframe(
                     readiness_summary,
-                    title="Change-control blocker board",
+                    title="Object-change blocker board",
                     priority_columns=[
                         "READINESS", "ENVIRONMENT", "FINDING_TYPE", "OWNER", "APPROVER",
                         "TOTAL_CHANGES", "HIGH_RISK_CHANGES", "ROUTE_BLOCKED",
@@ -2743,12 +2743,12 @@ def render() -> None:
                     ],
                     sort_by=["READINESS_RANK", "HIGH_RISK_CHANGES", "MISSING_TICKET_ROWS", "IAC_GAP_ROWS"],
                     ascending=[True, False, False, False],
-                    raw_label="All change-control blocker routes",
+                    raw_label="All object-change blocker routes",
                     height=260,
                 )
             render_priority_dataframe(
                 readiness,
-                title="Change-control readiness before queueing",
+                title="Object-change readiness before queueing",
                 priority_columns=[
                     "SEVERITY", "CHANGE_CONTROL_STATE", "FINDING_TYPE", "ENTITY",
                     "USER_NAME", "QUERY_ID", "APPROVER", "OWNER_APPROVAL_STATUS",
@@ -2760,7 +2760,7 @@ def render() -> None:
                 ],
                 sort_by=["SEVERITY", "CHANGE_CONTROL_STATE", "ENTITY"],
                 ascending=[True, True, True],
-                raw_label="All change-control readiness rows",
+                raw_label="All object-change readiness rows",
                 height=260,
             )
             save_col, setup_col = st.columns([1, 2])
@@ -2777,9 +2777,9 @@ def render() -> None:
                 defer_source_note(
                         "Snapshot stores ticket, review, rollback, owner, reviewer, query-id, and blast-radius requirements for audit trend review."
                 )
-            with st.expander("Change Control Telemetry Trend", expanded=False):
+            with st.expander("Object Change Telemetry Trend", expanded=False):
                 trend_days = day_window_selectbox(
-                    "Change evidence trend window",
+                    "Change telemetry trend window",
                     key="change_drift_evidence_trend_days",
                     default=30,
                 )
@@ -2801,7 +2801,7 @@ def render() -> None:
                     except Exception as exc:
                         st.session_state["change_drift_evidence_trend"] = pd.DataFrame()
                         st.session_state["change_drift_evidence_trend_error"] = format_snowflake_error(exc)
-                        st.error(f"Unable to load change-control telemetry trend: {format_snowflake_error(exc)}")
+                        st.error(f"Unable to load object-change telemetry trend: {format_snowflake_error(exc)}")
                 trend = st.session_state.get("change_drift_evidence_trend")
                 trend_current = _change_meta_matches(
                     st.session_state.get("change_drift_evidence_trend_meta"),
@@ -2810,7 +2810,7 @@ def render() -> None:
                 if trend is not None and not trend.empty and trend_current:
                     render_priority_dataframe(
                         trend,
-                        title="Persistent change-control evidence gaps",
+                        title="Persistent object-change telemetry gaps",
                         priority_columns=[
                             "FINDING_TYPE", "SEVERITY", "OWNER", "ESCALATION_TARGET",
                             "EVIDENCE_ROWS", "MISSING_TICKET_ROWS", "IAC_GAP_ROWS",
@@ -2818,7 +2818,7 @@ def render() -> None:
                         ],
                         sort_by=["MISSING_TICKET_ROWS", "IAC_GAP_ROWS", "LAST_SNAPSHOT_TS"],
                         ascending=[False, False, False],
-                        raw_label="All persisted change-control evidence",
+                        raw_label="All persisted object-change telemetry",
                         height=260,
                     )
                 elif (
@@ -2826,11 +2826,11 @@ def render() -> None:
                     and not trend_current
                     and not st.session_state.get("change_drift_evidence_trend_error")
                 ):
-                    st.info("Loaded change-control telemetry trend is stale for the active scope. Reload the trend before acting.")
+                    st.info("Loaded object-change telemetry trend is stale for the active scope. Reload the trend before acting.")
             with st.expander("Change Action Closure Analytics", expanded=False):
                 defer_source_note(
-                    "Uses change-monitoring action-queue rows to show open, overdue, unverified, "
-                    "or closed-without-verification change-control work."
+                    "Uses change-monitoring action-queue rows to show open, overdue, telemetry-pending, "
+                    "or closed-without-telemetry object-change work."
                 )
                 closure_days = day_window_selectbox(
                     "Change closure window",
@@ -2864,7 +2864,7 @@ def render() -> None:
                 if closure is not None and not closure.empty and closure_current:
                     render_priority_dataframe(
                         closure,
-                        title="Change closure evidence gaps",
+                        title="Change closure telemetry gaps",
                         priority_columns=[
                             "CATEGORY", "ENTITY_TYPE", "ENTITY", "CLOSURE_READINESS",
                             "OWNER", "APPROVER", "TOTAL_ACTIONS", "OPEN_ACTIONS",
@@ -2892,7 +2892,7 @@ def render() -> None:
                 ):
                     st.info("Loaded change closure analytics are stale for the active scope. Reload closure analytics before acting.")
                 elif closure is not None and closure_current:
-                    st.info("No Change Control action-queue rows found for the selected scope.")
+                    st.info("No object-change action-queue rows found for the selected scope.")
             if st.button("Save Change Exceptions to Action Queue", key="change_drift_queue"):
                 _queue_change_exceptions(get_session(), exceptions)
         elif exceptions is not None:

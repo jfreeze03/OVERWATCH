@@ -2640,9 +2640,9 @@ def _security_control_board(
             blockers = f"{review_rows:,} snapshot row(s), {blocker_rows:,} blocker row(s)"
             next_action = "Review repeated security snapshots and convert recurring access risk into a durable control."
         elif verified:
-            state, rank = "Verified Closure", 8
+            state, rank = "Telemetry Confirmed", 8
             blockers = "None"
-            next_action = "Keep closure status visible for audit review."
+            next_action = "Keep closure telemetry visible for security trend review."
         else:
             state, rank = "Controlled", 9
             blockers = str(row.get("CONTROL_BLOCKERS") or "None")

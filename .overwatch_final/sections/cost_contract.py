@@ -2115,6 +2115,54 @@ def _cost_advisor_action_summary(board: pd.DataFrame | None) -> pd.DataFrame:
     return summary[columns].reset_index(drop=True)
 
 
+def _cost_advisor_detail_options(board: pd.DataFrame | None) -> pd.DataFrame:
+    if not _looks_like_frame(board) or board.empty:
+        return pd.DataFrame()
+    view = _decorate_cost_advisor_board(board).reset_index(drop=True).copy()
+    view["_DETAIL_ID"] = view.index.astype(int)
+    view["DETAIL_LABEL"] = view.apply(
+        lambda row: (
+            f"{row.get('SEVERITY', row.get('PRIORITY', 'Review'))} | "
+            f"{row.get('ACTION_TYPE', 'Investigate')} | "
+            f"{row.get('ENTITY', 'Unknown')}"
+        ),
+        axis=1,
+    )
+    return view
+
+
+def _render_cost_advisor_detail(board: pd.DataFrame | None) -> None:
+    options = _cost_advisor_detail_options(board)
+    if options.empty:
+        return
+    st.markdown("**Open Cost Advisor Finding**")
+    selected_label = st.selectbox(
+        "Advisor finding",
+        options["DETAIL_LABEL"].tolist(),
+        key="cost_advisor_detail_select",
+    )
+    selected = options[options["DETAIL_LABEL"].eq(selected_label)]
+    if selected.empty:
+        return
+    row = selected.iloc[0]
+    render_shell_snapshot((
+        ("Priority", str(row.get("SEVERITY") or row.get("PRIORITY") or "Review")),
+        ("Action", str(row.get("ACTION_TYPE") or "Investigate")),
+        ("Route", str(row.get("WORKFLOW_ROUTE") or "Recommendations and action queue")),
+        ("Metric", str(row.get("PRIMARY_METRIC") or "")),
+    ))
+    st.caption(_clean_display_text(str(row.get("TELEMETRY_SUMMARY") or row.get("EVIDENCE") or "")))
+    st.markdown(f"**Next move:** {_clean_display_text(str(row.get('SAFE_NEXT_ACTION') or 'Review the loaded telemetry.'))}")
+    st.markdown(f"**Proof:** {_clean_display_text(str(row.get('VALIDATION_NEEDED') or row.get('PROOF_REQUIRED') or 'Confirm in the next completed telemetry window.'))}")
+    do_not_do = str(row.get("DO_NOT_DO") or "").strip()
+    if do_not_do:
+        st.caption(f"Guardrail: {_clean_display_text(do_not_do)}")
+    route = str(row.get("WORKFLOW_ROUTE") or "").strip()
+    if route in WORKFLOWS and st.button(f"Open {route}", key="cost_advisor_detail_route", width="stretch"):
+        st.session_state["cost_contract_workflow"] = route
+        st.rerun()
+
+
 def _render_cost_advisor_category_chart(board: pd.DataFrame) -> None:
     summary = _cost_advisor_category_summary(board)
     if summary.empty:
@@ -2224,6 +2272,7 @@ def _render_cost_advisor_board(
         height=340,
         max_rows=12,
     )
+    _render_cost_advisor_detail(board)
 
 
 def _render_cost_source_health(
@@ -3480,7 +3529,7 @@ def _build_change_cost_correlation_board(
             f"{high_rows:,} Critical/High change exception(s) loaded.",
             "High-severity object/access/policy changes near cost movement require a bill explanation, not just a cost chart.",
             "Record change ticket, query_id, actor, object, and blast-radius telemetry on the cost incident.",
-            "Change-control status, object/change telemetry, and Cost & Contract root-cause board.",
+            "Object-change telemetry, object/access change rows, and Cost & Contract root-cause board.",
             "Security Monitoring > Object and access changes",
             1,
         )
@@ -3502,14 +3551,14 @@ def _build_change_cost_correlation_board(
         closure = int(pd.to_numeric(operability.get("CLOSURE_BLOCKED", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
         add(
             "High" if blocked + closure > 0 and spike_signal else "Info",
-            "Change-control closure blocker",
-            "Change control summary",
+            "Object-change telemetry blocker",
+            "Object-change summary",
             f"Cost movement active={spike_signal}.",
             f"{blocked:,} route blocker(s); {closure:,} closure blocker(s).",
-            "Do not close a cost incident as remediated while related change-control routes or closures are blocked.",
-            "Work change-control blockers before declaring the cost spike explained or resolved.",
-            "FACT_CHANGE_CONTROL_OPERABILITY_DAILY with route/closure blocked counts and verified closures.",
-            "Security Monitoring > Change Control Summary",
+            "Do not mark a cost incident resolved while related object-change telemetry is still blocked.",
+            "Work object-change blockers before declaring the cost spike explained or resolved.",
+            "FACT_CHANGE_CONTROL_OPERABILITY_DAILY with route and telemetry blocker counts.",
+            "Security Monitoring > Object and access changes",
             3,
         )
 

@@ -2,12 +2,12 @@
 
 OVERWATCH is a production Streamlit monitor for Snowflake DBA operations.
 It brings executive observability, DBA triage, alerts, cost monitoring,
-workload operations, and security evidence into one DBA-owned workflow.
+workload operations, and security telemetry into one DBA-owned workflow.
 
 The app is intentionally mart-first. Snowflake account telemetry is collected
 into compact OVERWATCH facts by scheduled tasks, and the Streamlit app reads
 those facts before it falls back to live account views. This keeps the app fast,
-keeps Snowflake cost predictable, and gives every recommendation an evidence
+keeps Snowflake cost predictable, and gives every recommendation a telemetry
 path.
 
 ## Telemetry Architecture Decision
@@ -15,7 +15,7 @@ path.
 OVERWATCH production setup uses scheduled Snowflake tasks plus transient fact
 and mart tables as the default architecture. Permanent tables are reserved for
 configuration, acknowledgements, remediation logs, action history, suppression
-windows, and DBA-entered evidence that should not disappear if a reproducible
+windows, and DBA-entered audit notes that should not disappear if a reproducible
 mart is rebuilt.
 
 The production DDL source is `snowflake/OVERWATCH_MART_SETUP.sql`. Optional
@@ -26,7 +26,7 @@ error handling and audit logging.
 
 The Executive Landing page is the one deliberate first-paint aggregate:
 `MART_EXECUTIVE_OBSERVABILITY`. It is refreshed after the hourly load, Cortex
-load, Control Room, cost monitoring, and automation tasks so the first screen
+load, Control Room, cost monitoring, and executive refresh tasks so the first screen
 can show spend, Cortex cost, runtime, queueing, spill, failures, alerts,
 actions, storage, ranked cost drivers, queries by database, execution status,
 and warehouse pressure from one compact source. The app renders the monitoring
@@ -44,7 +44,7 @@ summary backbone. Executive Landing uses it directly for the executive
 summary; DBA Control Room, Alert Center, Workload Operations, and Cost &
 Contract reuse the same cached/session board for spend, Cortex, queue, spill,
 failure, alert, action, and freshness signals before their deeper
-section-specific marts or proof workspaces are opened.
+section-specific marts or detail workspaces are opened.
 
 The same decision is documented in `docs/REFRESH_ARCHITECTURE.md` and checked by
 `snowflake/OVERWATCH_MART_VALIDATION.sql`, which defines first-paint sources,
@@ -68,11 +68,13 @@ break-glass setup work. The deployment check remains
 Supporting operations documents:
 
 - `docs/OVERWATCH_RECOVERY_RUNBOOK.md` - operator recovery checklist.
+- `docs/MART_RESET_RUNBOOK.md` - drop/setup/refresh sequence for mart rebuilds.
+- `docs/MART_OBJECT_REVIEW.md` - current mart object inventory and pruning guardrails.
 - `CHANGELOG.md` - release-level change history.
 
 The first-paint summaries expose monitoring lanes for Snowflake Data Metric
 Functions, Snowflake ALERT objects, OVERWATCH query-tag self-cost, and optional
-organization usage rollups. Those lanes are readiness contracts, not hidden
+organization usage rollups. Those lanes are setup contracts, not hidden
 live scans: unavailable privileges should produce friendly setup/fallback
 messages while the page still renders instantly.
 
@@ -82,8 +84,8 @@ messages while the page still renders instantly.
 |---|---|---|
 | Monitoring Core | Executive Landing, DBA Control Room, Alert Center | Leadership summary, morning triage, incident queue, alert routing, and action closure. |
 | Cost Monitoring | Cost & Contract | Spend explanation, warehouse/user/role attribution, Cortex spend, contract pacing, storage, optimization, and action telemetry. |
-| Operations | Workload Operations | Query/task/procedure status, contention, pipeline evidence, SLA risk, schema/data compare, and runbooks. |
-| Security | Security Monitoring | MFA/login/grant posture, object changes, risky shares, access evidence, rollback evidence, schema compare, and controlled DBA actions. |
+| Operations | Workload Operations | Query/task/procedure status, contention, pipeline telemetry, SLA risk, schema/data compare, and runbooks. |
+| Security | Security Monitoring | MFA/login/grant posture, object changes, risky shares, access telemetry, rollback context, schema compare, and controlled DBA actions. |
 
 ## Daily Operating Model
 
@@ -138,7 +140,7 @@ logged rather than silently executed.
 
 The section covers security, cost, performance, task and pipeline,
 data-quality, and optimization alert families. Snowflake `ACCOUNT_USAGE` views
-are treated as authoritative historical evidence but are labeled as delayed
+are treated as authoritative historical telemetry but are labeled as delayed
 telemetry. Near-real-time operations should use `INFORMATION_SCHEMA` table
 functions, Snowflake alert objects, task graph notifications, and event tables
 where the account supports them.
@@ -170,7 +172,7 @@ are measured through post-period telemetry rather than a separate value ledger.
 
 Run `snowflake/OVERWATCH_MART_VALIDATION.sql` after setup to verify required
 objects, executive board panels, source freshness, refresh-policy targets,
-alert lifecycle/audit tables, reconciliation proof, and caller context.
+alert lifecycle/audit tables, reconciliation status, and caller context.
 
 ## Quick Start
 
@@ -246,5 +248,9 @@ against `.overwatch_final`, `tests`, and documentation before release.
   intelligence, reconciliation, cost monitoring, and security objects.
 - [docs/REFRESH_ARCHITECTURE.md](docs/REFRESH_ARCHITECTURE.md) documents the
   mart-first refresh policy, first-paint sources, and live-query boundaries.
+- [docs/MART_OBJECT_REVIEW.md](docs/MART_OBJECT_REVIEW.md) records the current
+  mart object inventory and safe-pruning decisions.
+- [docs/MART_RESET_RUNBOOK.md](docs/MART_RESET_RUNBOOK.md) gives the mass-drop,
+  setup, refresh, and validation sequence for a clean mart rebuild.
 - [UX_PRODUCTION_GUIDELINES.md](UX_PRODUCTION_GUIDELINES.md) documents current
   production UI standards.

@@ -5455,6 +5455,7 @@ def _dba_handoff_rows(
     command_queue: pd.DataFrame | None,
     closure_rollup: pd.DataFrame | None,
     source_health: pd.DataFrame | None,
+    advisor_rows: pd.DataFrame | None = None,
     *,
     max_rows: int = 14,
 ) -> pd.DataFrame:
@@ -5547,6 +5548,33 @@ def _dba_handoff_rows(
                 "NEXT_ACTION": str(item.get("NEXT_ACTION") or "Reload or refresh this telemetry before acting."),
                 "PROOF_REQUIRED": "current data health for active company, environment, lookback, spend threshold, and triage filters",
                 "SOURCE": "Data Health",
+            })
+
+    advisors = advisor_rows.copy() if advisor_rows is not None and not advisor_rows.empty else _empty_df()
+    if not advisors.empty:
+        advisors.columns = [str(col).upper() for col in advisors.columns]
+        for _, item in advisors.head(5).iterrows():
+            severity = str(item.get("SEVERITY") or "Medium").title()
+            route = str(item.get("ROUTE") or "DBA Control Room")
+            entity = str(item.get("ENTITY") or "Advisor finding")
+            signal = str(item.get("SIGNAL") or item.get("SOURCE_SURFACE") or "Loaded advisor")
+            savings = safe_float(item.get("EST_MONTHLY_SAVINGS_USD"))
+            risk = safe_float(item.get("VALUE_AT_RISK_USD"))
+            value = []
+            if savings > 0:
+                value.append(f"${savings:,.0f}/mo savings")
+            if risk > 0:
+                value.append(f"${risk:,.0f} value at risk")
+            value_text = "; ".join(value) if value else str(item.get("DETAIL") or "loaded advisor telemetry")
+            rows.append({
+                "PRIORITY_RANK": 1 if severity in {"Critical", "High"} else 2 if severity == "Medium" else 4,
+                "LANE": route,
+                "STATE": f"{severity} Advisor",
+                "EVIDENCE": f"{signal} on {entity}; {value_text}",
+                "OWNER_OR_ROUTE": route,
+                "NEXT_ACTION": str(item.get("NEXT_ACTION") or "Open the owning monitoring section and review loaded telemetry."),
+                "PROOF_REQUIRED": str(item.get("TELEMETRY_BASIS") or _dba_section_proof_required(route)),
+                "SOURCE": str(item.get("SOURCE_SURFACE") or "Loaded Advisor"),
             })
 
     if not rows:
@@ -5644,6 +5672,36 @@ def _render_shift_handoff_panel(
         file_name=f"overwatch_dba_shift_handoff_{company.lower()}_{environment.lower()}.md",
         mime="text/markdown",
         key="dba_shift_handoff_download",
+    )
+
+
+def _render_loaded_advisor_signals(advisor_rows: pd.DataFrame | None) -> None:
+    if advisor_rows is None or advisor_rows.empty:
+        st.info("No loaded advisor signals are available yet. Open Cost & Contract, Warehouse Health, or Stored Procedures and load advisor telemetry.")
+        return
+    rows = advisor_rows.copy()
+    high = int(rows["SEVERITY"].astype(str).str.title().isin(["Critical", "High"]).sum()) if "SEVERITY" in rows.columns else 0
+    savings = safe_float(pd.to_numeric(rows.get("EST_MONTHLY_SAVINGS_USD", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
+    risk = safe_float(pd.to_numeric(rows.get("VALUE_AT_RISK_USD", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
+    st.markdown("**Loaded Advisor Signals**")
+    render_shell_snapshot((
+        ("Signals", f"{len(rows):,}"),
+        ("High Priority", f"{high:,}"),
+        ("Est. Savings / Mo", f"${savings:,.0f}"),
+        ("Value At Risk", f"${risk:,.0f}"),
+    ))
+    render_priority_dataframe(
+        rows,
+        title="Loaded advisor queue",
+        priority_columns=[
+            "SOURCE_SURFACE", "SEVERITY", "SIGNAL", "ENTITY", "ROUTE",
+            "NEXT_ACTION", "TELEMETRY_BASIS", "EST_MONTHLY_SAVINGS_USD", "VALUE_AT_RISK_USD",
+        ],
+        sort_by=["PRIORITY_RANK", "VALUE_AT_RISK_USD", "EST_MONTHLY_SAVINGS_USD"],
+        ascending=[True, False, False],
+        raw_label="All loaded advisor signals",
+        height=320,
+        max_rows=14,
     )
 
 
@@ -6343,11 +6401,16 @@ def render() -> None:
                 source_mode=source_mode,
             )
             st.session_state["dba_control_room_incident_board"] = incident_board
+            from utils import build_loaded_advisor_signal_board
+
+            advisor_signal_board = build_loaded_advisor_signal_board(st.session_state)
+            st.session_state["dba_loaded_advisor_signals"] = advisor_signal_board
             handoff_rows = _dba_handoff_rows(
                 exceptions,
                 command_queue,
                 closure_rollup_for_handoff,
                 source_health_for_handoff,
+                advisor_signal_board,
             )
             handoff_md = _build_dba_shift_handoff_markdown(
                 handoff_rows,
@@ -6396,7 +6459,7 @@ def render() -> None:
             else:
                 ops_detail = st.selectbox(
                     "Operations Detail",
-                    ("Morning Brief", "Priority", "Runbook", "Escalations", "Handoff", "Incidents", "Queue"),
+                    ("Morning Brief", "Priority", "Runbook", "Escalations", "Handoff", "Incidents", "Advisors", "Queue"),
                     label_visibility="collapsed",
                     key="dba_operations_board_detail",
                 )
@@ -6422,6 +6485,8 @@ def render() -> None:
                     company=company,
                     environment=environment,
                 )
+            elif ops_detail == "Advisors":
+                _render_loaded_advisor_signals(advisor_signal_board)
             elif ops_detail == "Queue":
                 _render_command_queue_control(
                     command_queue,

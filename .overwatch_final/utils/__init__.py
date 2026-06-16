@@ -236,6 +236,7 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
     "recommendation_intelligence": (
         "duplicate_query_decision", "harden_recommendation",
         "harden_recommendation_rows", "warehouse_sizing_decision",
+        "build_loaded_advisor_signal_board",
     ),
     "incident_correlation": (
         "build_incident_correlation_sql",

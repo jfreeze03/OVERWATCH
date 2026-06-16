@@ -14,12 +14,12 @@ OVERWATCH gives DBAs one place to answer five production questions:
 2. What is driving Snowflake cost?
 3. Which workloads, tasks, warehouses, or procedures are failing or slowing
    down?
-4. Which security, access, and change-control risks need owner action?
+4. Which security, access, and object-change risks need owner action?
 5. What can be summarized for executives without manually rebuilding a slide
    deck?
 
 The product goal is not just dashboard visibility. The goal is closed-loop DBA
-operations: detect, route, act, verify, and retain evidence.
+operations: detect, route, act, refresh telemetry, and keep an audit trail.
 
 ## Production Navigation
 
@@ -27,14 +27,13 @@ operations: detect, route, act, verify, and retain evidence.
 |---|---|---|
 | Command Center | Executive Landing | Executive-ready summary, KPI packet, cost movement, risk movement, and presentation notes. |
 | Command Center | DBA Control Room | Morning triage, top priority brief, open work, live status, and action queue routing. |
-| Command Center | Alert Center | Alert rules, alert history, delivery preparation, digest evidence, and alert health. |
+| Command Center | Alert Center | Alert rules, alert history, delivery preparation, digest telemetry, and alert health. |
 | Command Center | Account Health | Account-level exception checklist, service health, source freshness, and DBA next actions. |
-| Financial Control | Cost & Contract | Cost overview, warehouse/user/role attribution, Cortex spend, contract pacing, savings verification, and RCA narrative. |
-| Operations | Workload Operations | Live query/task/procedure status, Control-M style job evidence, performance indicators, and errors. |
-| Operations | Warehouse Health | Warehouse pressure, queue/spill/latency evidence, setting review, resize/suspend/resume guardrails, and verification proof. |
-| Governance | Security Posture | MFA, login posture, role/grant posture, dormant/high-risk access, sharing exposure, and security evidence. |
-| Governance | Change & Drift | Object changes, schema compare, Terraform evidence, Jira evidence, Flyway/Git evidence, and drift context. |
-| Architecture | Architecture Readiness | Ownership, objectives, platform futures, source health, control register, and readiness evidence. |
+| Financial Control | Cost & Contract | Cost overview, warehouse/user/role attribution, Cortex spend, contract pacing, savings telemetry, and RCA narrative. |
+| Operations | Workload Operations | Live query/task/procedure status, task graph health, stored procedure analysis, performance indicators, and errors. |
+| Operations | Warehouse Health | Warehouse pressure, queue/spill/latency telemetry, setting review, resize/suspend/resume guardrails, and post-change checks. |
+| Security | Security Posture | MFA, login posture, role/grant posture, dormant/high-risk access, sharing exposure, and security telemetry. |
+| Operations | Change & Drift | Object changes, schema compare, stored procedure lineage, data movement, and drift context. |
 
 Legacy bookmarks and saved views may still redirect to the current sections, but
 production documentation and navigation should use only the names above.
@@ -58,7 +57,7 @@ dig through a long sidebar during morning triage.
 | Cost/date window | Standard windows: `1`, `7`, `14`, `30`, `60`, and `90` days. |
 | Warehouse | Metadata/static warehouse options scoped to the selected company/environment where possible. |
 | User | Optional user-level workload or cost focus. |
-| Exceptions-only | Keeps first-load views focused on failing or high-risk evidence. |
+| Exceptions-only | Keeps first-load views focused on failing or high-risk telemetry. |
 
 For Trexis, production databases end in `_PRD`; development/test databases end
 in `_DEV` or `_SIT`. For ALFA, configured production and development database
@@ -89,7 +88,7 @@ Trexis databases are explicitly hardcoded:
 - `TRXS_GW_DATA_PRD`
 - `TRXS_GW_DATA_SIT`
 
-Environment classification is evidence-sensitive. Rows with no reliable
+Environment classification is telemetry-sensitive. Rows with no reliable
 database context should remain `No Database Context`; they should not be forced
 into production or development.
 
@@ -104,7 +103,8 @@ Core mart facts include:
 - `FACT_WAREHOUSE_HOURLY`
 - `FACT_QUERY_HOURLY`
 - `FACT_QUERY_DETAIL_RECENT`
-- `FACT_TASK_DAILY`
+- `FACT_TASK_RUN`
+- `FACT_TASK_CRITICAL_PATH`
 - `FACT_OBJECT_CHANGE`
 - `FACT_COST_DAILY`
 - `FACT_CORTEX_DAILY`
@@ -113,17 +113,17 @@ Core mart facts include:
 - `FACT_WAREHOUSE_OPERABILITY_DAILY`
 - `FACT_SECURITY_OPERABILITY_DAILY`
 
-Core durable evidence tables include:
+Core durable audit/status tables include:
 
 - `OVERWATCH_ACTION_QUEUE`
 - `OVERWATCH_ALERTS`
-- `OVERWATCH_OWNER_DIRECTORY`
 - `OVERWATCH_ADMIN_ACTION_AUDIT`
 - `OVERWATCH_WORKLOAD_RECOVERY_AUDIT`
 - `OVERWATCH_WAREHOUSE_SETTING_REVIEW`
-- `OVERWATCH_AUTOMATION_RUN`
-- `OVERWATCH_EXECUTIVE_PACKET`
-- `OVERWATCH_EXTERNAL_CONTROL_FEED`
+- `OVERWATCH_ALERT_DELIVERY_LOG`
+- `OVERWATCH_RECON_CONFIG`
+- `OVERWATCH_RECON_RUN`
+- `OVERWATCH_SCHEMA_DIFF_RESULT`
 
 ## Cost And Credit Rules
 
@@ -137,7 +137,7 @@ Cost metrics must stay aligned across sections.
 | Cortex AI dollar estimate | Cortex AI credits multiplied by `$2.20`. |
 | Official billed service credits | Use `METERING_DAILY_HISTORY`. |
 | Official currency reconciliation | Use organization usage/rate-sheet views only when the active role can see them. |
-| User/role/schema/database attribution | Allocate exact metered warehouse-hour credits by query evidence when direct billing is unavailable. |
+| User/role/schema/database attribution | Allocate exact metered warehouse-hour credits by query telemetry when direct billing is unavailable. |
 
 All sections should distinguish exact Snowflake metering from allocated
 attribution. Cost tables should include dollars when the metric represents
@@ -149,10 +149,10 @@ Any production-impacting admin control must follow this pattern:
 
 1. Show the current value.
 2. Generate changed-only SQL.
-3. Require typed confirmation or explicit approval.
-4. Capture owner, ticket, reason, rollback SQL, and proof query.
+3. Require typed confirmation or reviewed route.
+4. Capture owner, ticket, reason, rollback SQL, and telemetry query.
 5. Write an audit row even when the action fails.
-6. Keep the action open until verification evidence exists.
+6. Keep the action open until verification telemetry exists.
 
 Warehouse setting changes, query cancellation, task execution, account
 parameter changes, and security/role changes should never be treated as simple
@@ -160,28 +160,20 @@ button clicks.
 
 ## Integrations
 
-OVERWATCH supports evidence surfaces for:
-
-- Control-M style task/job status, performance indicators, and errors.
-- Jira approval and issue evidence.
-- Terraform plan/apply/drift evidence.
-- Flyway migration evidence.
-- Git/source-control evidence.
-- Snowflake email notification integration for digest and critical alerts.
-
-These integrations should land in durable evidence tables or external feed
-tables before they become trusted production signals.
+OVERWATCH supports Snowflake-native alert delivery telemetry through approved
+Snowflake email notification integration when available. External workflow tools
+are not part of the current product surface.
 
 ## Alerting And Executive Reporting
 
-Alert Center prepares alert content with severity, owner, route, proof query,
+Alert Center prepares alert content with severity, owner, route, telemetry query,
 and delivery state. When the Snowflake email notification integration is
 approved, alert digest procedures can call Snowflake email delivery instead of
 remaining dry-run packaging.
 
-Executive Landing and the automation objects support weekly or on-demand
-executive packets. A production packet should include cost movement, top risk,
-open actions, verified savings, incidents, governance blockers, and next steps.
+Executive Landing reads compact observability marts for cost movement, top risk,
+open actions, incidents, and next DBA moves. Packet-style reporting should be
+generated from those monitoring marts instead of separate packet ledgers.
 
 ## UI Standards
 
@@ -189,12 +181,12 @@ Production sections should follow these rules:
 
 - Exception-first: show urgent failures or risk before tables.
 - One navigation level: avoid tabs inside tabs.
-- Explicit load gates: heavy evidence should load only when requested.
+- Explicit load gates: heavy telemetry should load only when requested.
 - Useful metrics only: no build/test/internal performance metrics in app UI.
 - Cost where it matters: credit tables should include dollar estimates.
 - Toggle chart/table state: when a chart exposes data, users need a path back
   to the chart.
-- Compact action briefs: use short operator language and proof links.
+- Compact action briefs: use short operator language and telemetry links.
 - Consistent labels: use current section names and remove stale terminology.
 
 ## Production Release Checklist

@@ -1618,6 +1618,50 @@ def _render_active_alerts(
         raw_label="All alert monitoring controls",
         height=220,
     )
+    _render_loaded_advisor_alert_candidates()
+
+
+def _render_loaded_advisor_alert_candidates() -> None:
+    from utils import build_loaded_advisor_signal_board
+
+    pd = _pd()
+    advisor_rows = build_loaded_advisor_signal_board(st.session_state)
+    if advisor_rows.empty:
+        return
+    view = advisor_rows.copy()
+    if "SEVERITY" in view.columns:
+        severity = view["SEVERITY"].fillna("").astype(str).str.title()
+        view = view[severity.isin(["Critical", "High", "Medium"])]
+    if view.empty:
+        return
+    high = int(view["SEVERITY"].astype(str).str.title().isin(["Critical", "High"]).sum())
+    savings = 0.0
+    risk = 0.0
+    if "EST_MONTHLY_SAVINGS_USD" in view.columns:
+        savings = float(pd.to_numeric(view["EST_MONTHLY_SAVINGS_USD"], errors="coerce").fillna(0).sum())
+    if "VALUE_AT_RISK_USD" in view.columns:
+        risk = float(pd.to_numeric(view["VALUE_AT_RISK_USD"], errors="coerce").fillna(0).sum())
+    st.markdown("**Loaded Advisor Alert Candidates**")
+    render_shell_snapshot((
+        ("Candidates", f"{len(view):,}"),
+        ("Critical / High", f"{high:,}"),
+        ("Est. Savings / Mo", f"${savings:,.0f}"),
+        ("Value At Risk", f"${risk:,.0f}"),
+    ))
+    _render_priority_dataframe(
+        view,
+        title="Advisor signals that may need alert routing",
+        priority_columns=[
+            "SOURCE_SURFACE", "SEVERITY", "SIGNAL", "ENTITY",
+            "ROUTE", "NEXT_ACTION", "TELEMETRY_BASIS",
+            "EST_MONTHLY_SAVINGS_USD", "VALUE_AT_RISK_USD",
+        ],
+        sort_by=["PRIORITY_RANK", "VALUE_AT_RISK_USD", "EST_MONTHLY_SAVINGS_USD"],
+        ascending=[True, False, False],
+        raw_label="All advisor alert candidate rows",
+        height=300,
+        max_rows=12,
+    )
 
 
 def _render_alert_detection_catalog() -> None:

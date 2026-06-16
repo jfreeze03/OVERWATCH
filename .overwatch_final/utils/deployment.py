@@ -101,7 +101,7 @@ def build_streamlit_manifest_contract(root: str | Path | None = None) -> pd.Data
             "CALLER-mode deployment, never execute_as OWNER",
             "OWNER" if "execute_as: OWNER" in manifest else "CALLER documented",
             "execute_as: OWNER" not in manifest and "CALLER MODE MEANS" in manifest,
-            "Keep the app in caller-mode. Do not deploy OVERWATCH as owner-rights automation.",
+            "Keep the app in caller-mode. Do not deploy OVERWATCH as an owner-rights action runner.",
         ),
         _contract_row(
             "Snowflake package artifacts",
@@ -154,7 +154,7 @@ def build_streamlit_manifest_contract(root: str | Path | None = None) -> pd.Data
         ),
         _contract_row(
             "Cortex completion guardrails",
-            "manual Cortex completions are throttled, cached, and telemetry-safe",
+            "ad hoc Cortex completions are throttled, cached, and telemetry-safe",
             "present" if "Run Cortex guardrails" in ci_text else "missing",
             "Run Cortex guardrails" in ci_text
             and "tests.test_cortex_guard" in ci_text
@@ -220,32 +220,25 @@ def build_schema_migration_contract() -> pd.DataFrame:
             "READY_CRITERIA": "Version row exists and OVERWATCH_SETTINGS is queryable.",
         },
         {
-            "COMPONENT": "Action queue and closure status",
+            "COMPONENT": "Action queue and telemetry status",
             "REQUIRED_VERSION": OVERWATCH_SCHEMA_VERSION,
             "REQUIRED_OBJECT": "OVERWATCH_ACTION_QUEUE",
             "WHY_IT_MATTERS": "Keeps recommendations, alert routes, cost actions, and closure status auditable.",
             "READY_CRITERIA": "Queue table exists with route, SLA, review, and telemetry columns.",
         },
         {
-            "COMPONENT": "Alert automation",
+            "COMPONENT": "Alert delivery",
             "REQUIRED_VERSION": OVERWATCH_SCHEMA_VERSION,
             "REQUIRED_OBJECT": "OVERWATCH_ALERT_DELIVERY_LOG",
             "WHY_IT_MATTERS": "Stores digest delivery telemetry, escalation acknowledgement, and email health history.",
             "READY_CRITERIA": "Delivery log exists and Alert Center can write digest telemetry.",
         },
         {
-            "COMPONENT": "Alert automation",
+            "COMPONENT": "Alert delivery",
             "REQUIRED_VERSION": OVERWATCH_SCHEMA_VERSION,
             "REQUIRED_OBJECT": "OVERWATCH_ANNOTATIONS",
             "WHY_IT_MATTERS": "Stores suppression windows used by the hourly anomaly task to avoid duplicate alert noise.",
             "READY_CRITERIA": "Annotation table exists before OVERWATCH_ANOMALY_CHECK is resumed.",
-        },
-        {
-            "COMPONENT": "No-touch automation",
-            "REQUIRED_VERSION": OVERWATCH_SCHEMA_VERSION,
-            "REQUIRED_OBJECT": "OVERWATCH_AUTOMATION_RUN",
-            "WHY_IT_MATTERS": "Records scheduled queue seeding, owner routing, alert digest, executive packet, and Snowflake-native refresh runs.",
-            "READY_CRITERIA": "Automation run ledger, health view, refresh procedure, and task are deployed.",
         },
         {
             "COMPONENT": "Cost telemetry mart",
@@ -293,12 +286,9 @@ def build_schema_migration_status_sql(
 WITH required_objects AS (
     SELECT * FROM VALUES
         ('Core mart setup', 'OVERWATCH_SETTINGS', 'TABLE', '{version}'),
-        ('Action queue and closure status', 'OVERWATCH_ACTION_QUEUE', 'TABLE', '{version}'),
-        ('Alert automation', 'OVERWATCH_ALERT_DELIVERY_LOG', 'TABLE', '{version}'),
-        ('Alert automation', 'OVERWATCH_ANNOTATIONS', 'TABLE', '{version}'),
-        ('No-touch automation', 'OVERWATCH_AUTOMATION_RUN', 'TABLE', '{version}'),
-        ('No-touch automation', 'OVERWATCH_AUTOMATION_HEALTH_V', 'VIEW', '{version}'),
-        ('No-touch automation', 'OVERWATCH_EXECUTIVE_PACKET', 'TABLE', '{version}'),
+        ('Action queue and telemetry status', 'OVERWATCH_ACTION_QUEUE', 'TABLE', '{version}'),
+        ('Alert delivery', 'OVERWATCH_ALERT_DELIVERY_LOG', 'TABLE', '{version}'),
+        ('Alert delivery', 'OVERWATCH_ANNOTATIONS', 'TABLE', '{version}'),
         ('Cost telemetry mart', 'FACT_COST_DAILY', 'TABLE', '{version}'),
         ('Cost telemetry mart', 'FACT_COST_SOURCE_HEALTH_DAILY', 'TABLE', '{version}'),
         ('Executive observability mart', 'MART_EXECUTIVE_OBSERVABILITY', 'TABLE', '{version}'),
@@ -372,9 +362,9 @@ MERGE INTO OVERWATCH_SCHEMA_MIGRATION tgt
 USING (
   SELECT
     '{version}' AS MIGRATION_VERSION,
-    'Executive observability mart, cost telemetry, procedure context, alert automation, and migration ledger' AS MIGRATION_NAME,
+    'Executive observability mart, cost telemetry, procedure context, alert delivery, and migration ledger' AS MIGRATION_NAME,
     'snowflake/OVERWATCH_MART_SETUP.sql' AS SOURCE_FILE,
-    'Baseline setup ledger row for the app release, including the executive first-paint observability mart, cost telemetry marts, procedure database/schema context, alert automation, and migration tracking.' AS NOTES
+    'Baseline setup ledger row for the app release, including the executive first-paint observability mart, cost telemetry marts, procedure database/schema context, alert delivery, and migration tracking.' AS NOTES
 ) src
 ON tgt.MIGRATION_VERSION = src.MIGRATION_VERSION
 WHEN MATCHED THEN UPDATE SET

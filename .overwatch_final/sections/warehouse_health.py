@@ -1697,6 +1697,63 @@ def _warehouse_setting_action_plan(guardrail_board: pd.DataFrame | None) -> pd.D
     return plan[columns].reset_index(drop=True)
 
 
+def _warehouse_setting_route(action_type: str) -> str:
+    action = str(action_type or "").lower()
+    if "capacity" in action or "cost movement" in action:
+        return "Efficiency"
+    if "timeout" in action or "auto-suspend" in action or "resource monitor" in action:
+        return "Optimization Advisor"
+    return "Overview & Scaling"
+
+
+def _warehouse_setting_detail_options(plan: pd.DataFrame | None) -> pd.DataFrame:
+    if plan is None or getattr(plan, "empty", True):
+        return pd.DataFrame()
+    view = plan.copy().reset_index(drop=True)
+    view["DETAIL_LABEL"] = view.apply(
+        lambda row: (
+            f"{row.get('PRIORITY', 'Review')} | "
+            f"{row.get('ACTION_TYPE', 'Setting review')} | "
+            f"{row.get('WAREHOUSE_NAME', 'Unknown warehouse')}"
+        ),
+        axis=1,
+    )
+    view["WORKFLOW_ROUTE"] = view["ACTION_TYPE"].apply(_warehouse_setting_route)
+    return view
+
+
+def _render_warehouse_setting_action_detail(plan: pd.DataFrame | None) -> None:
+    options = _warehouse_setting_detail_options(plan)
+    if options.empty:
+        return
+    st.markdown("**Open Warehouse Setting Action**")
+    selected_label = st.selectbox(
+        "Warehouse setting action",
+        options["DETAIL_LABEL"].tolist(),
+        key="warehouse_setting_action_select",
+    )
+    selected = options[options["DETAIL_LABEL"].eq(selected_label)]
+    if selected.empty:
+        return
+    row = selected.iloc[0]
+    render_shell_snapshot((
+        ("Priority", str(row.get("PRIORITY") or "Review")),
+        ("Warehouse", str(row.get("WAREHOUSE_NAME") or "Unknown")),
+        ("State", str(row.get("CURRENT_STATE") or "Review")),
+        ("Route", str(row.get("WORKFLOW_ROUTE") or "Overview & Scaling")),
+    ))
+    st.caption(str(row.get("WHY") or "Review the loaded warehouse telemetry before changing settings."))
+    st.markdown(f"**Safe move:** {row.get('SAFE_SETTING_MOVE') or 'Review telemetry before changing this warehouse.'}")
+    st.markdown(f"**Rollback check:** {row.get('ROLLBACK_CHECK') or 'Compare credits, runtime, queue, spill, and failures after the change.'}")
+    proof = str(row.get("PROOF_REQUIRED") or "").strip()
+    if proof:
+        st.caption(f"Proof: {proof}")
+    route = str(row.get("WORKFLOW_ROUTE") or "").strip()
+    if route in WAREHOUSE_HEALTH_VIEWS and st.button(f"Open {route}", key="warehouse_setting_action_route", width="stretch"):
+        st.session_state["warehouse_health_view"] = route
+        st.rerun()
+
+
 def _warehouse_frame_sum(frame: pd.DataFrame | None, column: str) -> int:
     if frame is None or frame.empty or column not in frame.columns:
         return 0
@@ -3800,6 +3857,7 @@ def render():
                         max_rows=12,
                     )
                     download_csv(setting_plan, "warehouse_setting_action_plan.csv")
+                    _render_warehouse_setting_action_detail(setting_plan)
                 if st.session_state.get("wh_settings_inventory_error"):
                     defer_source_note(
                         "Warehouse metadata was unavailable for resource-monitor, timeout, and auto-suspend checks: "

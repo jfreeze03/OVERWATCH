@@ -1,6 +1,6 @@
 # OVERWATCH Recovery Runbook
 
-Use this when the dashboard is blank, stale, slow, or showing conflicting evidence.
+Use this when the dashboard is blank, stale, slow, or showing conflicting telemetry.
 
 ## First Five Checks
 
@@ -21,7 +21,7 @@ Use this when the dashboard is blank, stale, slow, or showing conflicting eviden
 
 1. Query `DBA_MAINT_DB.OVERWATCH.PIPELINE_SLA_CONFIG`.
 2. Query `DBA_MAINT_DB.OVERWATCH.PIPELINE_SLA_STATUS_V`.
-3. Remember `SNOWFLAKE.ACCOUNT_USAGE.TABLES` is delayed; use task history or event tables for near-real-time proof.
+3. Remember `SNOWFLAKE.ACCOUNT_USAGE.TABLES` is delayed; use task history or event tables for near-real-time status.
 4. Update thresholds in `PIPELINE_SLA_CONFIG`; do not hard-code SLA assumptions in Streamlit.
 
 ## If Alert Counts Look Wrong
@@ -36,7 +36,7 @@ Use this when the dashboard is blank, stale, slow, or showing conflicting eviden
 1. Narrow company, environment, date, warehouse, and user filters.
 2. Check the in-session query budget summary in DBA Control Room if exposed.
 3. Review query tags beginning with `OVERWATCH` in `SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY`.
-4. Move repeated live views into transient fact tables or the optional precompute layer.
+4. Move repeated live views into transient fact tables or the scheduled mart layer.
 
 ## If Cost Numbers Are Challenged
 

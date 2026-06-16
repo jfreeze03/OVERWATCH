@@ -525,6 +525,151 @@ def build_automation_readiness_board(
     ).drop(columns=["_LANE_RANK", "_SEVERITY_RANK"])
 
 
+def _state_frame(state: Mapping | dict | None, key: str) -> pd.DataFrame:
+    value = state.get(key) if isinstance(state, Mapping) else None
+    return value.copy() if isinstance(value, pd.DataFrame) and not value.empty else pd.DataFrame()
+
+
+def _advisor_severity_rank(value: object) -> int:
+    return {
+        "CRITICAL": 0,
+        "HIGH": 1,
+        "MEDIUM": 2,
+        "LOW": 3,
+        "INFO": 4,
+    }.get(str(value or "").strip().upper(), 5)
+
+
+def _advisor_route_from_warehouse_action(action_type: object) -> str:
+    action = str(action_type or "").lower()
+    if "capacity" in action or "cost movement" in action:
+        return "Warehouse Health > Efficiency"
+    if "timeout" in action or "auto-suspend" in action or "resource monitor" in action:
+        return "Warehouse Health > Optimization Advisor"
+    return "Warehouse Health"
+
+
+def _advisor_add_signal(
+    rows: list[dict],
+    *,
+    source_surface: str,
+    severity: object,
+    signal: object,
+    entity: object,
+    route: object,
+    next_action: object,
+    telemetry_basis: object = "",
+    estimated_savings_usd: object = 0,
+    value_at_risk_usd: object = 0,
+    detail: object = "",
+) -> None:
+    sev = str(severity or "Medium").strip().title() or "Medium"
+    rows.append({
+        "SOURCE_SURFACE": str(source_surface or "Loaded advisor"),
+        "SEVERITY": sev,
+        "SIGNAL": str(signal or "Advisor finding"),
+        "ENTITY": str(entity or "Unknown"),
+        "ROUTE": str(route or "DBA Control Room"),
+        "NEXT_ACTION": str(next_action or "Open the owning monitoring section and review loaded telemetry."),
+        "TELEMETRY_BASIS": str(telemetry_basis or detail or "Loaded advisor telemetry."),
+        "EST_MONTHLY_SAVINGS_USD": safe_float(estimated_savings_usd),
+        "VALUE_AT_RISK_USD": abs(safe_float(value_at_risk_usd)),
+        "DETAIL": str(detail or ""),
+    })
+
+
+def build_loaded_advisor_signal_board(state: Mapping | dict | None = None, *, limit: int = 18) -> pd.DataFrame:
+    """Return advisor rows already loaded in Streamlit session state.
+
+    This deliberately reads only in-memory section outputs. It does not query
+    Snowflake and can be used by summary surfaces without adding scan cost.
+    """
+    rows: list[dict] = []
+    state_map = state if isinstance(state, Mapping) else {}
+
+    cost_board = _state_frame(state_map, "cost_contract_cost_advisor_board")
+    if not cost_board.empty:
+        for _, row in cost_board.head(8).iterrows():
+            _advisor_add_signal(
+                rows,
+                source_surface="Cost Advisor",
+                severity=_text(row, "SEVERITY", "PRIORITY", default="Medium"),
+                signal=_text(row, "FINDING", "CATEGORY", default="Cost advisor finding"),
+                entity=_text(row, "ENTITY", default="Cost signal"),
+                route=_text(row, "WORKFLOW_ROUTE", default="Cost & Contract"),
+                next_action=_text(row, "SAFE_NEXT_ACTION", default="Open Cost & Contract advisor detail."),
+                telemetry_basis=_text(row, "VALIDATION_NEEDED", "PROOF_REQUIRED", default="Cost advisor telemetry."),
+                estimated_savings_usd=_row_value(row, "EST_MONTHLY_SAVINGS_USD", default=0),
+                value_at_risk_usd=_row_value(row, "EST_MONTHLY_IMPACT_USD", default=0),
+                detail=_text(row, "TELEMETRY_SUMMARY", "EVIDENCE", default=""),
+            )
+
+    warehouse_plan = _state_frame(state_map, "wh_settings_action_plan")
+    if not warehouse_plan.empty:
+        for _, row in warehouse_plan.head(8).iterrows():
+            _advisor_add_signal(
+                rows,
+                source_surface="Warehouse Settings Advisor",
+                severity=_text(row, "PRIORITY", default="Medium"),
+                signal=_text(row, "ACTION_TYPE", default="Warehouse setting review"),
+                entity=_text(row, "WAREHOUSE_NAME", default="Unknown warehouse"),
+                route=_advisor_route_from_warehouse_action(_row_value(row, "ACTION_TYPE")),
+                next_action=_text(row, "SAFE_SETTING_MOVE", default="Open Warehouse Health setting detail."),
+                telemetry_basis=_text(row, "PROOF_REQUIRED", "ROLLBACK_CHECK", default="Warehouse setting telemetry."),
+                detail=_text(row, "WHY", default=""),
+            )
+
+    procedure_board = _state_frame(state_map, "sp_analysis_board")
+    if not procedure_board.empty:
+        for _, row in procedure_board.head(8).iterrows():
+            credits = safe_float(_row_value(row, "EST_TOTAL_CREDITS", default=0))
+            _advisor_add_signal(
+                rows,
+                source_surface="Stored Procedure Analysis",
+                severity=_text(row, "PRIORITY", default="Medium"),
+                signal=_text(row, "SIGNAL", "OPTIMIZATION_ISSUE", default="Procedure advisor signal"),
+                entity=_text(row, "PROCEDURE_CONTEXT", "PROCEDURE_NAME", default="Unknown procedure"),
+                route="Workload Operations > Stored Procedures",
+                next_action=_text(row, "SAFE_NEXT_ACTION", default="Open Stored Procedures and compare CALL telemetry."),
+                telemetry_basis=_text(row, "PROOF_REQUIRED", default="Procedure run and child-query telemetry."),
+                value_at_risk_usd=credits * 3.68,
+                detail=_text(row, "OPTIMIZATION_ISSUE", default=""),
+            )
+
+    cost_alerts = _state_frame(state_map, "cost_contract_monitoring_alerts")
+    if not cost_alerts.empty:
+        for _, row in cost_alerts.head(6).iterrows():
+            _advisor_add_signal(
+                rows,
+                source_surface="Cost Monitoring Alerts",
+                severity=_text(row, "SEVERITY", default="Medium"),
+                signal=_text(row, "ALERT_TYPE", "SIGNAL_TYPE", default="Cost monitoring signal"),
+                entity=_text(row, "ENTITY_NAME", "ENTITY", default="Cost alert"),
+                route=_text(row, "ROUTE", default="Alert Center"),
+                next_action=_text(row, "SUGGESTED_ACTION", "NEXT_ACTION", default="Open Alert Center or Cost & Contract incident timeline."),
+                telemetry_basis=_text(row, "PROOF_QUERY", "PROOF_REQUIRED", default="Cost monitoring alert telemetry."),
+                value_at_risk_usd=_row_value(row, "VALUE_AT_RISK_USD", default=0),
+                detail=_text(row, "MESSAGE", "DETAIL", default=""),
+            )
+
+    if not rows:
+        return pd.DataFrame(columns=[
+            "SOURCE_SURFACE", "SEVERITY", "SIGNAL", "ENTITY", "ROUTE",
+            "NEXT_ACTION", "TELEMETRY_BASIS", "EST_MONTHLY_SAVINGS_USD",
+            "VALUE_AT_RISK_USD", "DETAIL", "PRIORITY_RANK",
+        ])
+    frame = pd.DataFrame(rows)
+    frame["PRIORITY_RANK"] = frame["SEVERITY"].apply(_advisor_severity_rank)
+    frame["_VALUE_RANK"] = (
+        pd.to_numeric(frame["VALUE_AT_RISK_USD"], errors="coerce").fillna(0)
+        + pd.to_numeric(frame["EST_MONTHLY_SAVINGS_USD"], errors="coerce").fillna(0)
+    )
+    return frame.sort_values(
+        ["PRIORITY_RANK", "_VALUE_RANK", "SOURCE_SURFACE", "ENTITY"],
+        ascending=[True, False, True, True],
+    ).drop(columns=["_VALUE_RANK"], errors="ignore").head(max(1, int(limit))).reset_index(drop=True)
+
+
 def warehouse_sizing_decision(row: Mapping | pd.Series | dict) -> dict:
     """Classify warehouse sizing telemetry without generic upsize advice."""
     warehouse = _entity(row)

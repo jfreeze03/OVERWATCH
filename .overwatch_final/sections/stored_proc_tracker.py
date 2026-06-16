@@ -837,6 +837,53 @@ def _procedure_analysis_summary(
     }, board
 
 
+def _procedure_analysis_detail_options(board: pd.DataFrame | None) -> pd.DataFrame:
+    if board is None or getattr(board, "empty", True):
+        return pd.DataFrame()
+    view = board.copy().reset_index(drop=True)
+    view["DETAIL_LABEL"] = view.apply(
+        lambda row: (
+            f"{row.get('PRIORITY', 'Review')} | "
+            f"{row.get('ACTION_TYPE', 'Procedure review')} | "
+            f"{row.get('PROCEDURE_CONTEXT', 'Unknown procedure')}"
+        ),
+        axis=1,
+    )
+    return view
+
+
+def _render_procedure_analysis_detail(board: pd.DataFrame | None) -> None:
+    options = _procedure_analysis_detail_options(board)
+    if options.empty:
+        return
+    st.markdown("**Open Procedure Advisor Signal**")
+    selected_label = st.selectbox(
+        "Procedure advisor signal",
+        options["DETAIL_LABEL"].tolist(),
+        key="procedure_analysis_detail_select",
+    )
+    selected = options[options["DETAIL_LABEL"].eq(selected_label)]
+    if selected.empty:
+        return
+    row = selected.iloc[0]
+    render_shell_snapshot((
+        ("Priority", str(row.get("PRIORITY") or "Review")),
+        ("State", str(row.get("STATE") or "Investigate")),
+        ("Runtime", f"{safe_float(row.get('LATEST_RUNTIME_SEC')):,.1f}s"),
+        ("Credits", f"{safe_float(row.get('EST_TOTAL_CREDITS')):,.4f}"),
+    ))
+    st.caption(str(row.get("OPTIMIZATION_ISSUE") or row.get("SIGNAL") or "Procedure telemetry signal."))
+    st.markdown(f"**Next move:** {row.get('SAFE_NEXT_ACTION') or 'Compare the latest CALL to baseline and inspect child-query telemetry.'}")
+    st.markdown(f"**Proof:** {row.get('PROOF_REQUIRED') or 'Next CALL should return within baseline with linked query history.'}")
+    guardrail = str(row.get("DO_NOT_DO") or "").strip()
+    if guardrail:
+        st.caption(f"Guardrail: {guardrail}")
+    proc = str(row.get("PROCEDURE_CONTEXT") or row.get("PROCEDURE_NAME") or "").strip()
+    if proc and st.button("Mark For Downstream Review", key="procedure_analysis_detail_target", width="stretch"):
+        st.session_state["_sp_downstream_target_hint"] = proc
+        st.rerun()
+
+
 def _procedure_owner(row: pd.Series) -> str:
     return str(
         row.get("PROCEDURE_OWNER")
@@ -1317,6 +1364,7 @@ def render():
                     height=320,
                     max_rows=12,
                 )
+                _render_procedure_analysis_detail(advisor_board)
             if exceptions.empty:
                 st.success("No procedure runtime or cost regressions crossed the default thresholds.")
             else:
@@ -1536,6 +1584,8 @@ def render():
         download_csv(df_sp, "stored_proc_usage.csv")
 
         st.divider()
+        if st.session_state.get("_sp_downstream_target_hint"):
+            st.caption(f"Marked for downstream review: {st.session_state.get('_sp_downstream_target_hint')}")
         proc_options = df_sp["PROCEDURE_NAME"].fillna(df_sp["QUERY_TEXT"]).astype(str).tolist()
         selected_proc = st.selectbox("Open downstream query detail", proc_options, key="sp_downstream_select")
         if selected_proc and st.button("Load Downstream Queries", key="sp_downstream_load"):

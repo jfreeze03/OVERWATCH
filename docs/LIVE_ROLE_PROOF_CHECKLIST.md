@@ -26,17 +26,17 @@ outside Snowflake's privilege model.
 
 | Role family | Expected access | Must verify |
 |---|---|---|
-| `SNOW_ACCOUNTADMINS` | Full admin command center access, setup validation, alert lifecycle actions, schema compare, data compare, and guarded account-level previews. | Executive Landing loads the metric wall; Alert History can record lifecycle audit; Schema/Data Compare config SQL is visible; account-parameter workflows stay gated by Snowflake privileges and typed confirmation. |
-| `SNOW_SYSADMINS` | Full admin command center access for workload, cost, mart, task, warehouse, and compare visibility. | Cost & Contract first view is fast; Workload Operations shows task/query summaries; live contention degrades cleanly when a source is unavailable; account-level actions explain the required privilege instead of failing raw. |
+| `SNOW_ACCOUNTADMINS` | Full admin monitoring access, setup validation, alert lifecycle actions, schema compare, data compare, and guarded account-level previews. | Executive Landing loads the metric wall; Alert History can record lifecycle audit; Schema/Data Compare config SQL is visible; account-parameter workflows stay gated by Snowflake privileges and typed confirmation. |
+| `SNOW_SYSADMINS` | Full admin monitoring access for workload, cost, mart, task, warehouse, and compare visibility. | Cost & Contract first view is fast; Workload Operations shows task/query summaries; live contention degrades cleanly when a source is unavailable; account-level actions explain the required privilege instead of failing raw. |
 | Unknown, blank, raw system, or report roles | No monitoring section access. | The app shows the approved role requirement and does not dispatch primary monitoring sections. |
 
 ## Section Smoke By Role
 
 - Executive Landing: first paint shows executive glance KPIs, Snowflake Observability Wall,
   spend/runtime/cost-driver charts, and data freshness.
-- Every primary navigation surface: first paint shows a scoped signal summary
-  before workflow buttons. Buttons should be drill-through, not the only way to
-  see useful data.
+- Every primary navigation surface: first paint lands directly on useful
+  monitoring data before secondary workflow buttons. Buttons should be
+  drill-through, not the only way to see useful data.
 - DBA Control Room: morning queue renders without saved views or hidden workflow
   toggles.
 - Alert Center: incident summary renders; lifecycle audit requires a note and writes

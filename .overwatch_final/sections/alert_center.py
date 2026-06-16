@@ -12,7 +12,6 @@ from sections.shell_helpers import (
     render_shell_kpi_row,
     render_shell_snapshot,
     render_shell_status_strip,
-    render_signal_lane_board,
     with_loaded_at,
 )
 
@@ -44,8 +43,7 @@ def defer_source_note(*parts: object, section: str | None = None) -> None:
     st.session_state[key] = notes
 
 ALERT_CENTER_PANES = [
-    "Alert Brief",
-    "Command Center",
+    "Active Alerts",
     "Detection Catalog",
     "Issue Inbox",
     "Triage Digest",
@@ -57,8 +55,7 @@ ALERT_CENTER_PANES = [
 ]
 
 ALERT_CENTER_PANE_LABELS = {
-    "Alert Brief": "Brief",
-    "Command Center": "Command",
+    "Active Alerts": "Active",
     "Detection Catalog": "Catalog",
     "Issue Inbox": "Inbox",
     "Triage Digest": "Digest",
@@ -70,12 +67,12 @@ ALERT_CENTER_PANE_LABELS = {
 }
 
 ALERT_CENTER_BRIEF_FIRST_VERSION = 2
-ALERT_CENTER_DEFAULT_VIEW = "Command Center"
+ALERT_CENTER_DEFAULT_VIEW = "Active Alerts"
 
 ALERT_CENTER_BRIEF_WORKFLOWS = (
     {
-        "VIEW": "Command Center",
-        "BUTTON_LABEL": "Open Command Center",
+        "VIEW": "Active Alerts",
+        "BUTTON_LABEL": "Open Active Alerts",
         "DBA_MOVE": "Start with severity-ranked operational risk and alert routes.",
         "WHEN": "First look, shift start, incident review",
     },
@@ -118,8 +115,7 @@ ALERT_CENTER_BRIEF_WORKFLOWS = (
 )
 
 ALERT_CENTER_SOURCES_BY_PANE = {
-    "Alert Brief": set(),
-    "Command Center": {"alerts", "action_queue", "delivery_log", "rules"},
+    "Active Alerts": {"alerts", "action_queue", "delivery_log", "rules"},
     "Detection Catalog": set(),
     "Issue Inbox": {"alerts", "action_queue"},
     "Triage Digest": {"alerts"},
@@ -170,6 +166,8 @@ def _alert_center_sources_for_view(view: str) -> set[str]:
 
 def _normalize_alert_center_view(view: object) -> str:
     normalized = str(view or "")
+    if normalized in {"Alert Brief", "Command Center", "Control Health", "Automation Health"}:
+        return ALERT_CENTER_DEFAULT_VIEW
     return normalized if normalized in ALERT_CENTER_PANES else ALERT_CENTER_DEFAULT_VIEW
 
 
@@ -274,7 +272,7 @@ def _load_center_data(
         load_alert_rule_catalog,
     )
 
-    sources = set(sources or ALERT_CENTER_SOURCES_BY_PANE["Command Center"])
+    sources = set(sources or ALERT_CENTER_SOURCES_BY_PANE[ALERT_CENTER_DEFAULT_VIEW])
     data: dict[str, object] = {
         "alerts": pd.DataFrame(),
         "action_queue": pd.DataFrame(),
@@ -726,8 +724,8 @@ def _alert_center_action_brief(
                 "state": str(row.get("STATE") or "Blocked"),
                 "headline": "Restore alert control telemetry.",
                 "detail": f"{control}: {next_action or evidence}".strip(": "),
-                "primary_label": "Open Command",
-                "target": "Command Center",
+                "primary_label": "Open Active Alerts",
+                "target": ALERT_CENTER_DEFAULT_VIEW,
             }
 
     if overdue > 0:
@@ -780,12 +778,7 @@ def _alert_center_action_brief(
 
 
 def _alert_center_pending_brief(active_view: str, required_sources: set[str]) -> dict:
-    if active_view == "Alert Brief":
-        return {
-            "state": "Brief Ready",
-            "headline": "Choose the alert workflow before loading telemetry.",
-            "detail": "Start with command center, issue inbox, triage digest, delivery status, or queue routing based on the operator question.",
-        }
+    active_view = _normalize_alert_center_view(active_view)
     return {
         "state": "Ready",
         "headline": f"Load {active_view} before routing alert work.",
@@ -827,7 +820,7 @@ def _apply_alert_center_brief_first_default() -> None:
             st.session_state.get("alert_center_active_view")
         )
         return
-    if st.session_state.get("alert_center_active_view") in (None, "Alert Brief"):
+    if st.session_state.get("alert_center_active_view") in (None, "Alert Brief", "Command Center"):
         st.session_state["alert_center_active_view"] = ALERT_CENTER_DEFAULT_VIEW
     else:
         st.session_state["alert_center_active_view"] = _normalize_alert_center_view(
@@ -982,7 +975,7 @@ def _alert_command_lanes(
     delivery_log: object | None = None,
     loaded: bool = False,
 ) -> list[dict[str, str]]:
-    """Return the alert command center lanes without loading new data."""
+    """Return alert monitoring lanes without loading new data."""
     if not loaded:
         source_text = ", ".join(sorted(required_sources)) if required_sources else "no source load required"
         return [
@@ -1176,7 +1169,7 @@ def _alert_center_exception_rows(
             "Route alert",
             "Replace generic alert routes before escalation.",
             owner="Platform DBA",
-            route="Command Center",
+            route=ALERT_CENTER_DEFAULT_VIEW,
         )
         delivery_status = alerts.get("DELIVERY_STATUS", pd.Series(index=alerts.index, dtype=str)).fillna("").astype(str).str.upper()
         ready_count = int(delivery_status.str.contains("EMAIL_READY").sum())
@@ -1212,7 +1205,7 @@ def _alert_center_exception_rows(
             "Reload inputs",
             "Reload alert inputs, route status, or delivery logs before acting on stale telemetry.",
             owner="Platform DBA",
-            route="Command Center",
+            route=ALERT_CENTER_DEFAULT_VIEW,
         )
 
     if issues is not None and not issues.empty:
@@ -1513,7 +1506,7 @@ def _alert_integration_health_board(
     return board.sort_values(["_STATE_RANK", "CONTROL"]).drop(columns=["_STATE_RANK"], errors="ignore")
 
 
-def _render_alert_command_center(
+def _render_active_alerts(
     alerts: pd.DataFrame,
     queue: pd.DataFrame,
     delivery_log: pd.DataFrame,
@@ -1526,7 +1519,7 @@ def _render_alert_command_center(
     )
 
     pd = _pd()
-    st.subheader("Alert Command Center")
+    st.subheader("Active Alert Queue")
     summary = build_alert_command_center_summary(alerts)
     metrics = summary.get("metrics", pd.DataFrame())
     if isinstance(metrics, pd.DataFrame) and not metrics.empty:
@@ -1541,7 +1534,7 @@ def _render_alert_command_center(
             metrics,
             title="Operating metrics",
             priority_columns=["METRIC", "VALUE", "STATE", "DETAIL"],
-            raw_label="All command center metrics",
+            raw_label="All alert operating metrics",
             height=220,
         )
 
@@ -1549,7 +1542,7 @@ def _render_alert_command_center(
     if isinstance(incident_board, pd.DataFrame) and not incident_board.empty:
         _render_priority_dataframe(
             incident_board,
-            title="Incident action board",
+            title="Incidents to work first",
             priority_columns=[
                 "PRIORITY", "SEVERITY", "SLA_STATE", "AGE_HOURS", "CATEGORY",
                 "SIGNAL", "ENTITY", "OWNER", "BUSINESS_IMPACT",
@@ -1558,7 +1551,7 @@ def _render_alert_command_center(
             ],
             sort_by=["PRIORITY"],
             ascending=True,
-            raw_label="All incident action rows",
+            raw_label="All active incident rows",
             height=420,
         )
         _download_csv(incident_board, "overwatch_alert_incident_action_board.csv")
@@ -1638,7 +1631,7 @@ def _render_alert_command_center(
         pd.DataFrame(digest_rows),
         title="Operating controls",
         priority_columns=["STATE", "CONTROL", "EVIDENCE", "NEXT_ACTION", "OWNER"],
-        raw_label="All command center controls",
+        raw_label="All alert monitoring controls",
         height=220,
     )
 
@@ -1747,27 +1740,6 @@ def render() -> None:
     )
     required_sources = _alert_center_sources_for_view(active_view)
 
-    if active_view == "Alert Brief":
-        _render_alert_center_action_brief(_alert_center_pending_brief(active_view, required_sources))
-        _render_alert_center_metric_rows(
-            open_issues=0,
-            open_alerts=0,
-            critical_high=0,
-            overdue=0,
-            email_ready=0,
-            email_logged=0,
-            open_queue=0,
-            loaded=False,
-        )
-        render_signal_lane_board(
-            "Alert Signal Summary",
-            _alert_command_lanes(active_view=active_view, required_sources=required_sources, loaded=False),
-            max_lanes=8,
-        )
-        _render_alert_center_brief_launchpad()
-        st.caption("Each workflow loads only the required inputs listed on its load button; no Alert Center data is fetched by the brief itself.")
-        return
-
     if active_view == "Suppression Windows":
         _render_annotations()
         return
@@ -1801,7 +1773,7 @@ def render() -> None:
         and not current_data
     ):
         st.caption(
-            "Alert Center opened the command frame without live Snowflake reads. "
+            "Alert Center opened without live Snowflake reads. "
             f"Load {active_view} when fresh alert telemetry is needed."
         )
         defer_source_note(f"Inputs on load: {_alert_center_source_summary(required_sources)}")
@@ -1828,11 +1800,6 @@ def render() -> None:
             open_queue=0,
             loaded=False,
         )
-        render_signal_lane_board(
-            "Alert Signal Summary",
-            _alert_command_lanes(active_view=active_view, required_sources=required_sources, loaded=False),
-            max_lanes=8,
-        )
         st.info(f"Load {active_view} when ready.")
         defer_source_note(f"Inputs on load: {_alert_center_source_summary(required_sources)}")
         return
@@ -1850,11 +1817,6 @@ def render() -> None:
             open_queue=0,
             loaded=False,
         )
-        render_signal_lane_board(
-            "Alert Signal Summary",
-            _alert_command_lanes(active_view=active_view, required_sources=required_sources, loaded=False),
-            max_lanes=8,
-        )
         st.warning("Company, environment, or window changed after this load. Reload before triaging alerts.")
         defer_source_note(f"Loaded scope: {loaded_scope or 'none'} | Current scope: {expected_scope}")
         return
@@ -1871,11 +1833,6 @@ def render() -> None:
             email_logged=0,
             open_queue=0,
             loaded=False,
-        )
-        render_signal_lane_board(
-            "Alert Signal Summary",
-            _alert_command_lanes(active_view=active_view, required_sources=required_sources, loaded=False),
-            max_lanes=8,
         )
         st.info(f"Load {active_view} to fetch missing input(s).")
         defer_source_note(f"Missing Alert Center input(s): {_alert_center_source_summary(set(missing_sources))}")
@@ -1956,23 +1913,10 @@ def render() -> None:
         email_logged=email_logged_count,
         open_queue=open_queue_count,
     )
-    render_signal_lane_board(
-        "Alert Signal Summary",
-        _alert_command_lanes(
-            active_view=active_view,
-            required_sources=required_sources,
-            alerts=alerts,
-            queue=queue,
-            issues=issues,
-            delivery_log=delivery_log,
-            loaded=True,
-        ),
-        max_lanes=8,
-    )
     _render_alert_center_exception_strip(exception_rows)
 
-    if active_view == "Command Center":
-        _render_alert_command_center(alerts, queue, delivery_log, rules)
+    if active_view == ALERT_CENTER_DEFAULT_VIEW:
+        _render_active_alerts(alerts, queue, delivery_log, rules)
 
     elif active_view == "Delivery & Remediation":
         _render_alert_notification_remediation(alerts, delivery_log, rules)

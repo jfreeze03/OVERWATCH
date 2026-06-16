@@ -1,6 +1,6 @@
 # OVERWATCH
 
-OVERWATCH is a production Streamlit command center for Snowflake DBA operations.
+OVERWATCH is a production Streamlit monitor for Snowflake DBA operations.
 It brings executive observability, DBA triage, alerts, cost monitoring,
 workload operations, and security evidence into one DBA-owned workflow.
 
@@ -20,7 +20,7 @@ mart is rebuilt.
 
 The production DDL source is `snowflake/OVERWATCH_MART_SETUP.sql`. Optional
 precompute experiments have been retired so there is one deployable Snowflake
-setup path. Materialized views are avoided for the main command center because
+setup path. Materialized views are avoided for the main monitoring app because
 the app needs multi-source, windowed, exception ranking logic with explicit
 error handling and audit logging.
 
@@ -35,10 +35,9 @@ hydrates the mart when Snowflake access is available. Raw
 `ACCOUNT_USAGE` scans are never part of Executive Landing first paint.
 
 Every primary navigation click now follows the same production UX pattern:
-status strip, scoped KPI row, then a compact signal summary with the most
-important monitoring facts already visible. Workflow buttons are secondary drill-through
-actions, not a required step before the DBA sees what is risky, expensive, late,
-or broken.
+direct entry into the useful monitoring surface with the most important facts
+already visible. Workflow buttons are secondary drill-through actions, not a
+required step before the DBA sees what is risky, expensive, late, or broken.
 
 The fast monitoring surfaces share `MART_EXECUTIVE_OBSERVABILITY` as the tiny
 summary backbone. Executive Landing uses it directly for the executive
@@ -80,7 +79,7 @@ messages while the page still renders instantly.
 
 | Group | Sections | Primary job |
 |---|---|---|
-| Command Center | Executive Landing, DBA Control Room, Alert Center | Leadership summary, morning triage, incident queue, alert routing, and action closure. |
+| Monitoring Core | Executive Landing, DBA Control Room, Alert Center | Leadership summary, morning triage, incident queue, alert routing, and action closure. |
 | Cost Monitoring | Cost & Contract | Spend explanation, warehouse/user/role attribution, Cortex spend, contract pacing, storage, optimization, and action telemetry. |
 | Operations | Workload Operations | Query/task/procedure status, contention, pipeline evidence, SLA risk, schema/data compare, and runbooks. |
 | Security | Security Monitoring | MFA/login/grant posture, object changes, risky shares, access evidence, rollback evidence, schema compare, and controlled DBA actions. |
@@ -90,11 +89,11 @@ messages while the page still renders instantly.
 1. Open Executive Landing for the observability health, cost, alert, and workload summary.
 2. Use the topbar filters for company, environment, date window, warehouse, and
    user scope.
-3. Scan the signal summary on any section before drilling into workflows.
+3. Open the section that matches the question; each primary section lands directly on useful telemetry or a specialist monitor.
 4. Open DBA Control Room for the morning priority queue and incident handoff.
-5. Route actions through the action queue with owner, severity, proof query,
-   rollback evidence, and verification status.
-6. Use the specialist sections only when the summary shows a real exception or executive question.
+5. Route actions through the action queue with severity, telemetry basis,
+   rollback context, and closure status.
+6. Use specialist monitors when the first screen shows a real exception or executive question.
 
 ## Cost Formula Contract
 
@@ -114,9 +113,9 @@ Database, schema, user, role, and environment costs are allocated from exact
 metered warehouse-hour credits when Snowflake does not provide direct billing at
 that grain. Exact metering and allocated attribution are labeled separately.
 
-## Alert Command Center
+## Alert Monitoring
 
-The Alert Center is being hardened into a proactive DBA command center rather
+The Alert Center is being hardened into a proactive DBA monitoring surface rather
 than a cosmetic inbox. It now has deployable configuration, event,
 acknowledgement, notification, routing, threshold, and remediation audit
 tables:
@@ -131,7 +130,7 @@ tables:
 - `ALERT_OWNER_ROUTING`
 - `ALERT_DATA_QUALITY_CHECKS`
 
-Lifecycle actions should be written to the command-center audit tables. The app
+Lifecycle actions should be written to the alert audit tables. The app
 generates reviewable insert SQL for `ALERT_ACKNOWLEDGEMENTS` and
 `ALERT_REMEDIATION_LOG`; dangerous remediation remains review-gated and
 logged rather than silently executed.
@@ -143,10 +142,10 @@ telemetry. Near-real-time operations should use `INFORMATION_SCHEMA` table
 functions, Snowflake alert objects, task graph notifications, and event tables
 where the account supports them.
 
-The Command Center now promotes open alert rows into an incident action board.
-That board sorts by severity, SLA age, owner, ticket state, business impact,
-source freshness, proof query, and remediation mode so the DBA can work the
-right item first instead of scanning a flat inbox.
+The Alert Center now opens on active incidents and lifecycle telemetry. Rows are
+sorted by severity, SLA age, route, business impact, source freshness, and
+remediation mode so the DBA can work the right item first instead of scanning a
+flat inbox.
 
 The command-intelligence hardening pass keeps the monitoring foundation focused:
 root-cause correlation, task critical path, reconciliation, cost run-rate

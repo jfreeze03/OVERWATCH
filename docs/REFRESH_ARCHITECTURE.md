@@ -5,14 +5,14 @@ new Snowflake cost problem. The production rule is mart-first, live-second.
 
 ## Default Decision
 
-Use scheduled Snowflake tasks and transient mart/fact tables for the command
-center. Use permanent tables only for configuration, acknowledgements,
+Use scheduled Snowflake tasks and transient mart/fact tables for the monitoring
+app. Use permanent tables only for configuration, acknowledgements,
 suppression windows, remediation logs, action queue history, and routing.
 
 Do not make Dynamic Tables the base architecture. The production setup has one
 deployable DDL source: `snowflake/OVERWATCH_MART_SETUP.sql`.
 
-Do not use materialized views for the primary command center. The app needs
+Do not use materialized views for the primary monitoring app. The app needs
 multi-source, windowed exception logic with explicit refresh and
 audit behavior.
 
@@ -72,7 +72,7 @@ operator intent.
 
 ## Native Snowflake Signals
 
-The production hardening strategy expects the command center to label native
+The production hardening strategy expects the monitoring app to label native
 Snowflake signal availability clearly. Where the role has privileges, the app
 can summarize:
 

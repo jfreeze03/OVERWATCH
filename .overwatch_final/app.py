@@ -204,7 +204,7 @@ def _admin_access_is_allowed(role: str, connection_available: bool) -> bool:
 
 
 def _resolve_visible_sections() -> list[str]:
-    """Return the full admin command-center navigation."""
+    """Return the full admin monitoring navigation."""
     return [section for section in ALL_SECTIONS if section not in PRIMARY_NAV_HIDDEN_SECTIONS]
 
 
@@ -233,10 +233,10 @@ def _request_section_detail_state(section: str) -> None:
         st.session_state["_executive_landing_brief_mode"] = False
         return
     if target == "DBA Control Room":
-        st.session_state["dba_control_room_active_view"] = "Morning Brief"
+        st.session_state["dba_control_room_active_view"] = "Fast Watch"
         return
     if target == "Alert Center":
-        st.session_state["alert_center_active_view"] = "Command Center"
+        st.session_state["alert_center_active_view"] = "Active Alerts"
         return
     if target == "Cost & Contract":
         st.session_state["cost_contract_workflow"] = "Usage attribution and run-rate"
@@ -246,7 +246,7 @@ def _request_section_detail_state(section: str) -> None:
         st.session_state["workload_operations_query_focus"] = "Contention Telemetry"
         return
     if target == "Security Monitoring":
-        st.session_state["security_posture_view"] = "Security Brief"
+        st.session_state["security_posture_view"] = "Access posture"
         st.session_state["security_posture_workflow"] = "Access posture"
 
 
@@ -695,7 +695,7 @@ def _render_app_header(section: str, company: str, credit_price: float, role: st
         st.markdown(
             f"""
             <div class="ow-topbar">
-                <div class="ow-section-kicker">OVERWATCH DBA COMMAND CENTER</div>
+                <div class="ow-section-kicker">OVERWATCH SNOWFLAKE MONITOR</div>
                 <div class="ow-section-row">
                     <span class="ow-section-icon">{safe_icon}</span>
                     <div>
@@ -802,7 +802,7 @@ credit_price = _current_credit_price()
 st.session_state["_overwatch_active_section"] = active_section
 
 # Paint the main app shell before the sidebar and selected section hydrate. During
-# high-concurrency startup this gives users an immediate, stable command-center frame.
+# high-concurrency startup this gives users an immediate, stable monitoring frame.
 _render_app_header(active_section, active_company, credit_price, current_role)
 active_company = _render_topbar_filter_strip(active_company)
 
@@ -812,7 +812,7 @@ with st.sidebar:
     st.markdown("""
     <div class="ow-sidebar-brand">
         <div class="ow-brand-row"><span class="ow-brand-dot"></span><span>OVERWATCH</span></div>
-        <div class="ow-sidebar-subtitle">Snowflake DBA Command Center</div>
+        <div class="ow-sidebar-subtitle">Snowflake Usage Monitor</div>
         <div class="ow-live-pill">LIVE</div>
     </div>
     """, unsafe_allow_html=True)

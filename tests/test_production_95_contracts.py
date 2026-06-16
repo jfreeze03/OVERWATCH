@@ -194,14 +194,14 @@ class Production95ContractsTests(unittest.TestCase):
         self.assertNotIn("Top Priority Brief", app_text)
         self.assertNotIn("priority_brief_slot", app_text)
         self.assertIn(
-            'SectionDefinition("COMMAND CENTER", "briefcase", "Executive Landing", "sections.executive_landing")',
+            'SectionDefinition("MONITORING CORE", "briefcase", "Executive Landing", "sections.executive_landing")',
             (APP_ROOT / "config.py").read_text(encoding="utf-8"),
         )
         self.assertFalse((APP_ROOT / "sections" / "executive_landing_shell.py").exists())
         self.assertIn("def _load_executive_observability", executive_text)
         self.assertIn("_executive_landing_observability_autoload_scope", executive_text)
         self.assertIn("Snowflake Observability Wall", executive_text)
-        self.assertIn("Executive Summary Signals", executive_text)
+        self.assertNotIn("Executive Summary Signals", executive_text)
         self.assertIn("Executive decisions to make first", executive_text)
         self.assertNotIn("Refresh Board", executive_text)
         self.assertNotIn("Executive Command Wall", executive_text)
@@ -227,8 +227,8 @@ class Production95ContractsTests(unittest.TestCase):
         self.assertFalse((APP_ROOT / "sections" / "cost_contract_shell.py").exists())
         self.assertFalse((APP_ROOT / "sections" / "alert_center_shell.py").exists())
         self.assertFalse((APP_ROOT / "sections" / "workload_operations_shell.py").exists())
-        self.assertIn("Cost Signal Summary", cost_text)
-        self.assertIn("Alert Signal Summary", alert_text)
+        self.assertNotIn("Cost Signal Summary", cost_text)
+        self.assertNotIn("Alert Signal Summary", alert_text)
         self.assertIn('QUERY_INVESTIGATION_WORKFLOW = "Query investigation"', workload_text)
         self.assertNotIn("Cost Command Board", cost_text)
         self.assertNotIn("Alert Command Board", alert_text)

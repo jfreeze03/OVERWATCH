@@ -2463,26 +2463,26 @@ def _render_task_ops_brief(session) -> None:
             )
 
         slo_summary, slo_board = _build_task_reliability_slo_board(summary, exceptions, recovery_sla)
-        st.subheader("Task Reliability SLO Board")
+        st.subheader("Task Reliability Detail")
         render_shell_snapshot((
             ("Ready", f"{slo_summary['ready']:,}"),
             ("Review", f"{slo_summary['review']:,}"),
-            ("SLOs", f"{len(slo_board):,}"),
+            ("Checks", f"{len(slo_board):,}"),
         ))
         render_priority_dataframe(
             slo_board,
-            title="Task reliability SLOs and next control step",
+            title="Task reliability checks and next control step",
             priority_columns=["STATE", "SLO", "EVIDENCE", "NEXT_ACTION"],
             sort_by=["STATE", "SLO"],
             ascending=[True, True],
-            raw_label="All task reliability SLO rows",
+            raw_label="All task reliability detail rows",
             height=220,
             max_rows=10,
         )
 
         recovery_board = _task_recovery_command_board(exceptions, recovery_sla)
         if not recovery_board.empty:
-            st.subheader("Recovery Command Summary")
+            st.subheader("Recovery Detail Summary")
             blocked = int(recovery_board["COMMAND_STATE"].astype(str).eq("Blocked").sum())
             p1_p2 = int(recovery_board["INCIDENT_PRIORITY"].astype(str).str.startswith(("P1", "P2")).sum())
             owner_review = int(

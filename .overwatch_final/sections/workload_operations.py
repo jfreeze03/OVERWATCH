@@ -1,4 +1,4 @@
-# sections/workload_operations.py - consolidated DBA workload command center
+# sections/workload_operations.py - consolidated DBA workload monitor
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence

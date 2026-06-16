@@ -2039,7 +2039,7 @@ def _account_health_intervention_matrix(
 
 
 def _account_health_access_hygiene_sql(session, days: int, company: str, environment: str = "ALL") -> str:
-    """Build account-level user/auth hygiene SQL for the daily DBA command center.
+    """Build account-level user/auth hygiene SQL for the daily DBA monitor.
 
     Login and user metadata do not carry database context, so this intentionally
     ignores the selected PROD/DEV database environment and labels the scope.

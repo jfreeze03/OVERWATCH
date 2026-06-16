@@ -36,16 +36,16 @@ def request_section_workspace(section: str) -> None:
         st.session_state["_executive_landing_brief_mode"] = False
         request_executive_landing_hydration()
     elif target == "DBA Control Room":
-        st.session_state["dba_control_room_active_view"] = "Morning Brief"
+        st.session_state["dba_control_room_active_view"] = "Fast Watch"
     elif target == "Alert Center":
-        st.session_state["alert_center_active_view"] = "Command Center"
+        st.session_state["alert_center_active_view"] = "Active Alerts"
     elif target == "Cost & Contract":
         st.session_state["cost_contract_workflow"] = "Usage attribution and run-rate"
     elif target == "Workload Operations":
         st.session_state["workload_operations_workflow"] = "Query investigation"
         st.session_state["workload_operations_query_focus"] = "Contention Telemetry"
     elif target == "Security Monitoring":
-        st.session_state["security_posture_view"] = "Security Brief"
+        st.session_state["security_posture_view"] = "Access posture"
         st.session_state["security_posture_workflow"] = "Access posture"
     st.session_state["_overwatch_pending_autoload_section"] = target
     st.session_state["_overwatch_pending_autoload_started_at"] = datetime.now().isoformat(timespec="seconds")

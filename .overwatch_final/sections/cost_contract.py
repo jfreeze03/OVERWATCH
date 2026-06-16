@@ -23,7 +23,6 @@ from sections.shell_helpers import (
     render_shell_kpi_row,
     render_shell_snapshot,
     render_shell_status_strip,
-    render_signal_lane_board,
     with_loaded_at,
 )
 from utils.primitives import safe_float, safe_int
@@ -1378,7 +1377,7 @@ def _build_cost_source_health_board(
         _loaded_rows(cockpit),
         "Current/prior movement loaded from fast warehouse metering summary or live Account Usage."
         if _loaded_rows(cockpit) else "Warehouse movement is available after Cost Cockpit refresh.",
-        "Refresh cost proof before explaining usage movement.",
+        "Refresh cost detail before explaining usage movement.",
         "ACCOUNT_USAGE warehouse metering latency applies; summary refresh is preferred.",
     )
     _add_source_health_row(
@@ -1776,14 +1775,14 @@ def _build_cost_control_coverage_board(
         "Exact warehouse metering",
         "Ready" if _has_columns(cockpit, ["CURRENT_CREDITS", "PRIOR_CREDITS"]) else "Load Needed",
         "Cockpit has exact current/prior warehouse credits." if _has_columns(cockpit, ["CURRENT_CREDITS", "PRIOR_CREDITS"]) else "Exact warehouse movement is available after Cost Cockpit refresh.",
-        "Refresh cost proof before explaining any usage movement.",
+        "Refresh cost detail before explaining any usage movement.",
     )
     _add_coverage_row(
         rows,
         "7-day average and YOY",
         "Ready" if _has_columns(run_rate, ["AVG_DAILY_7D", "YOY_7D_PCT", "YOY_30D_PCT"]) else "Load Needed",
         "Run-rate lens has complete-day 7d average and prior-year comparison." if _has_columns(run_rate, ["AVG_DAILY_7D", "YOY_7D_PCT", "YOY_30D_PCT"]) else "Run-rate and YOY trend context is available after refresh.",
-        "Refresh cost proof to populate complete-day run-rate and YOY telemetry.",
+        "Refresh cost detail to populate complete-day run-rate and YOY telemetry.",
     )
     _add_coverage_row(
         rows,
@@ -1880,7 +1879,7 @@ def _build_cost_allocation_trust_board(
         "Contract and warehouse totals",
         "Exact" if exact_loaded and run_rate_loaded else "Load Needed",
         "Warehouse metering and complete-day run-rate/YOY are loaded." if exact_loaded and run_rate_loaded else "Exact warehouse totals or complete-day run-rate telemetry is missing.",
-        "Refresh cost proof before defending run-rate pace, 7-day average, or YOY movement.",
+        "Refresh cost detail before defending run-rate pace, 7-day average, or YOY movement.",
     )
 
     company_env_loaded = _has_columns(chargeback, ["COMPANY", "ENVIRONMENT"]) or _has_columns(explorer, ["COMPANY", "ENVIRONMENT_ROLLUP"])
@@ -3023,7 +3022,7 @@ def _build_cost_incident_timeline(
             "Root cause candidate",
             top_wh,
             "Root-cause board has not been loaded for this incident window.",
-            "Refresh cost proof telemetry before assigning savings or tuning work.",
+            "Refresh cost detail telemetry before assigning savings or tuning work.",
             "Cost Spike Root Cause board.",
             "Cost & Contract",
         )
@@ -3098,7 +3097,7 @@ def _build_cost_incident_timeline(
         "event_count": int(len(board)),
         "critical_high": int(board["SEVERITY"].isin(["Critical", "High"]).sum()) if not board.empty else 0,
         "top_step": str(board.iloc[0].get("INCIDENT_STEP") if not board.empty else "No incident timeline"),
-        "next_action": str(board.iloc[0].get("NEXT_ACTION") if not board.empty else "Refresh cost proof."),
+        "next_action": str(board.iloc[0].get("NEXT_ACTION") if not board.empty else "Refresh cost detail."),
     }
     return summary, board
 
@@ -3726,11 +3725,6 @@ def _render_cost_load_contract(splash: dict, *, days: int) -> None:
 def _render_cost_splash(splash: dict, *, company: str, days: int, credit_price: float) -> None:
     st.markdown("**Cost Overview**")
     _render_cost_load_contract(splash, days=int(days))
-    render_signal_lane_board(
-        "Cost Signal Summary",
-        _cost_command_lanes(splash, credit_price=credit_price, days=int(days)),
-        max_lanes=8,
-    )
     if not splash.get("loaded"):
         if splash.get("errors"):
             for err in splash.get("errors", [])[:2]:
@@ -3937,7 +3931,7 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
         splash = _maybe_autoload_cost_splash(company, int(days), credit_price)
     _render_cost_splash(splash, company=company, days=int(days), credit_price=credit_price)
 
-    st.markdown("**Cost Proof Refresh**")
+    st.markdown("**Cost Detail Refresh**")
     proof_data = st.session_state.get("cost_contract_cockpit")
     proof_meta = st.session_state.get("cost_contract_cockpit_meta", {})
     proof_current = (
@@ -3952,7 +3946,7 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
         target_minutes=60,
         delayed_note="Cost detail uses fast summaries first; full account-history refresh is explicit.",
     )
-    if st.button("Refresh Cost Proof", key="cost_contract_cockpit_load", type="primary"):
+    if st.button("Refresh Cost Details", key="cost_contract_cockpit_load", type="primary"):
         session = get_session_for_action(
             "load the Cost Control Cockpit",
             surface="Cost & Contract",
@@ -4065,7 +4059,7 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
                 st.session_state["cost_contract_service_lens_error"] = format_snowflake_error(exc)
                 st.session_state["cost_contract_service_lens_source"] = ""
     defer_section_note(
-        "Cost proof refresh is optional; use it when you need account-history evidence behind the fast cost summary."
+        "Cost detail refresh is optional; use it when you need account-history rows behind the fast cost summary."
     )
 
     data = st.session_state.get("cost_contract_cockpit")
@@ -4084,7 +4078,7 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
     ):
         st.info(
             f"Loaded cockpit data is for {int(loaded_days)} days; selected window is {int(days)} days. "
-            "Refresh cost proof before acting on detailed telemetry."
+            "Refresh cost details before acting on detailed telemetry."
         )
     if (
         not data_is_frame

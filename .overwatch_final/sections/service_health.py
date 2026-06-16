@@ -297,7 +297,7 @@ def render():
     if (services["SCORE"] < 95).any() and st.button("Send service findings to Action Queue", key="svc_queue"):
         _queue_service_findings(session, services)
 
-    st.subheader("Service Risk Board")
+    st.subheader("Service Risk Detail")
     service_risk_view = services.rename(columns={"SCORE": "RISK_VALUE"})
     render_priority_dataframe(
         service_risk_view,
@@ -308,7 +308,7 @@ def render():
         raw_label="All service risk rows",
         height=260,
     )
-    download_csv(service_risk_view.drop(columns=["RISK_VALUE"], errors="ignore"), "service_health_risk_board.csv")
+    download_csv(service_risk_view.drop(columns=["RISK_VALUE"], errors="ignore"), "service_health_risk_detail.csv")
 
     st.subheader("Warehouse Pressure Detail")
     if wh_df.empty:

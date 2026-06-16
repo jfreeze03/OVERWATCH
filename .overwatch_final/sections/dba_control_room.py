@@ -20,7 +20,6 @@ from sections.shell_helpers import (
     render_data_freshness,
     render_shell_snapshot,
     render_shell_status_strip,
-    render_signal_lane_board,
     with_loaded_at,
 )
 from utils.evidence_mode import (
@@ -137,7 +136,7 @@ DBA_CONTROL_SCOPE_FILTER_KEYS = (
 DBA_CONTROL_ROOM_PANES = (
     "Fast Watch",
     "Morning Brief",
-    "Operations Board",
+    "Operations Detail",
     "Triage",
     "Drill Routes",
     "Service Posture",
@@ -146,7 +145,7 @@ DBA_CONTROL_ROOM_PANES = (
 DBA_CONTROL_ROOM_PANE_LABELS = {
     "Fast Watch": "Watch",
     "Morning Brief": "Morning",
-    "Operations Board": "Ops",
+    "Operations Detail": "Ops",
     "Triage": "Triage",
     "Drill Routes": "Routes",
     "Service Posture": "Service",
@@ -293,7 +292,7 @@ def _jump(title: str, *, warehouse: str = "", user: str = "", workflow: str = ""
         elif title == "Cost & Contract":
             st.session_state["cost_contract_workflow"] = workflow
         elif title == "Security Monitoring":
-            st.session_state["security_posture_view"] = "Security Brief"
+            st.session_state["security_posture_view"] = workflow if workflow in {"Access posture", "Privilege sprawl", "Data sharing exposure"} else "Access posture"
             st.session_state["security_posture_workflow"] = workflow or "Access posture"
         elif title == "Security Posture":
             st.session_state["security_posture_workflow"] = workflow
@@ -969,7 +968,7 @@ def _evidence_surface_route(surface: object) -> tuple[str, str, str]:
     if "schema" in text or "migration" in text:
         return (
             "DBA Control Room",
-            "Operations Board",
+            "Operations Detail",
             "object status and required monitoring objects",
         )
     if "task" in text or "procedure" in text:
@@ -2172,9 +2171,9 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
                 f"{safe_int(release_summary.get('blocked')):,} blocked status item(s); "
                 f"{safe_int(release_summary.get('review')):,} review item(s)"
             ),
-            "Action": "Open Operations Board and clear task recovery blockers before production change.",
+            "Action": "Open Operations Detail and clear task recovery blockers before production change.",
             "Route": "DBA Control Room",
-            "Workflow": "Operations Board",
+            "Workflow": "Operations Detail",
         })
     elif safe_int(release_summary.get("review")):
         rows.append({
@@ -2183,7 +2182,7 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
             "Evidence": f"{safe_int(release_summary.get('review')):,} operational status review item(s)",
             "Action": "Review task timeline, telemetry status, and rollback path before production change.",
             "Route": "DBA Control Room",
-            "Workflow": "Operations Board",
+            "Workflow": "Operations Detail",
         })
     failed_queries = safe_int(row.get("FAILED_QUERIES", 0))
     queued_queries = safe_int(row.get("QUEUED_QUERIES", 0))
@@ -2337,7 +2336,7 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
                         f"{len(closure_blockers):,} route(s) blocked; {overdue:,} overdue, "
                         f"{unverified:,} closed pending telemetry, {recovery:,} recovery status risk."
                     ),
-                    "Action": "Use DBA Command Queue Control to close telemetry, ticket, review, and recovery gaps.",
+                    "Action": "Use DBA Action Queue Control to close telemetry, ticket, review, and recovery gaps.",
                     "Route": "DBA Control Room",
                     "Workflow": "Action Queue",
                 })
@@ -4038,7 +4037,7 @@ def _dba_escalation_packet(
                 why_now=item.get("SIGNALS") or item.get("INCIDENT_TYPE"),
                 first_move=item.get("CONTAINMENT_ACTION"),
                 proof_required=item.get("PROOF_REQUIRED"),
-                source_signal=f"Incident Board: {item.get('INCIDENT_ID', '')} {item.get('INCIDENT_TYPE', '')}".strip(),
+                source_signal=f"Incident Detail: {item.get('INCIDENT_ID', '')} {item.get('INCIDENT_TYPE', '')}".strip(),
                 sla_target=item.get("SLA_TARGET"),
                 workflow=item.get("INVESTIGATION_PATH") or route,
             )
@@ -5048,7 +5047,7 @@ def _render_command_queue_control(
             ]["CLOSURE_BLOCKER_ROWS"].sum()
         )
     )
-    st.markdown("**DBA Command Queue Control**")
+    st.markdown("**DBA Action Queue Control**")
     total_blocks = summary["approval_blocks"] + summary["metadata_blocks"] + closure_blockers
     render_shell_snapshot((
         ("Open Actions", f"{summary['open']:,}"),
@@ -5065,7 +5064,7 @@ def _render_command_queue_control(
     if not section_board.empty:
         render_priority_dataframe(
             section_board,
-            title="DBA control-plane operating board",
+            title="DBA operating detail",
             priority_columns=[
                 "OPERABILITY_STATE", "SECTION", "DEPLOYMENT_LABEL", "GATE_DRIVERS", "OPEN_ACTIONS",
                 "OVERDUE", "EXECUTION_READY", "METADATA_BLOCKS", "APPROVAL_BLOCKS",
@@ -5075,7 +5074,7 @@ def _render_command_queue_control(
             ],
             sort_by=["OPERABILITY_RANK", "OVERDUE"],
             ascending=[True, False],
-            raw_label="All DBA control-plane operating rows",
+            raw_label="All DBA operating rows",
             height=280,
             max_rows=12,
         )
@@ -5093,7 +5092,7 @@ def _render_command_queue_control(
             ],
             sort_by=["CLOSURE_RANK", "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION", "CLOSURE_BLOCKER_ROWS"],
             ascending=[True, False, False, False],
-            raw_label="All command closure status rows",
+            raw_label="All closure status rows",
             height=240,
             max_rows=10,
         )
@@ -5106,7 +5105,7 @@ def _render_command_queue_control(
     if not route_readiness.empty:
         render_priority_dataframe(
             route_readiness,
-            title="Command status by DBA route",
+            title="Action status by DBA route",
             priority_columns=[
                 "ROUTE", "OPEN_ACTIONS", "OVERDUE", "EXECUTION_READY", "AUDIT_READY",
                 "ROUTE_READY", "OWNER_GAPS", "APPROVAL_BLOCKS", "METADATA_BLOCKS",
@@ -5114,7 +5113,7 @@ def _render_command_queue_control(
             ],
             sort_by=["OVERDUE", "METADATA_BLOCKS", "APPROVAL_BLOCKS", "OPEN_ACTIONS"],
             ascending=[False, False, False, False],
-            raw_label="All command route status rows",
+            raw_label="All action route status rows",
             height=220,
             max_rows=10,
         )
@@ -5243,8 +5242,8 @@ def _dba_action_brief(
             "state": "Blocked",
             "headline": "Operational status needs action before production change.",
             "detail": f"{release_blocks:,} blocker(s), {release_reviews:,} review item(s).",
-            "primary_label": "Open Ops Board",
-            "target": "Operations Board",
+            "primary_label": "Open Ops Detail",
+            "target": "Operations Detail",
             "workflow": "",
         }
     if release_reviews:
@@ -5252,8 +5251,8 @@ def _dba_action_brief(
             "state": "Review",
             "headline": "Telemetry status needs DBA review.",
             "detail": f"{release_reviews:,} review/not-loaded item(s).",
-            "primary_label": "Open Ops Board",
-            "target": "Operations Board",
+            "primary_label": "Open Ops Detail",
+            "target": "Operations Detail",
             "workflow": "",
         }
 
@@ -5647,7 +5646,7 @@ def _build_dba_incident_markdown(
 ) -> str:
     rows = incident_board if incident_board is not None and not incident_board.empty else _empty_df()
     lines = [
-        "# OVERWATCH DBA Incident Board",
+        "# OVERWATCH DBA Incident Detail",
         f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         f"Scope: {company} / {environment}",
         f"Lookback: {int(lookback_hours)} hours",
@@ -5693,7 +5692,7 @@ def _render_incident_board_panel(
 ) -> None:
     if incident_board is None or incident_board.empty:
         return
-    st.markdown("**DBA Incident Board**")
+    st.markdown("**DBA Incident Detail**")
     render_shell_snapshot((
         ("Incidents", f"{len(incident_board):,}"),
         ("Containment", f"{int(incident_board['STATUS'].astype(str).eq('Containment Required').sum()):,}"),
@@ -5716,9 +5715,9 @@ def _render_incident_board_panel(
         max_rows=10,
     )
     st.download_button(
-        "Download DBA Incident Board",
+        "Download DBA Incident Detail",
         incident_md,
-        file_name=f"overwatch_dba_incident_board_{company.lower()}_{environment.lower()}.md",
+        file_name=f"overwatch_dba_incident_detail_{company.lower()}_{environment.lower()}.md",
         mime="text/markdown",
         key="dba_incident_board_download",
     )
@@ -5865,8 +5864,8 @@ def _render_release_readiness_gate(
             _jump("Security Monitoring", workflow="Object and access changes")
             st.rerun()
     with r3:
-        if st.button("Open Operations Board", key="dba_release_gate_open_operations", width="stretch"):
-            st.session_state["dba_control_room_active_view"] = "Operations Board"
+        if st.button("Open Operations Detail", key="dba_release_gate_open_operations", width="stretch"):
+            st.session_state["dba_control_room_active_view"] = "Operations Detail"
             st.rerun()
     return summary, gate, timeline
 
@@ -6143,7 +6142,7 @@ def render() -> None:
     elif snapshot_result is not None and not snapshot_result.available:
         st.caption("Fast snapshot unavailable. Ask the DBA team to enable the summary facts for cheap control-room triage.")
     elif not snapshot_scope_ok:
-        st.caption("Clear filters or refresh the operations board for this scoped view.")
+        st.caption("Clear filters or refresh the operations detail for this scoped view.")
 
     mode_default_key = "_dba_control_room_detail_defaults"
     if st.session_state.get(mode_default_key) != evidence_mode:
@@ -6241,11 +6240,6 @@ def render() -> None:
             _render_consolidated_service_posture()
             return
     if not data:
-        render_signal_lane_board(
-            "DBA Signal Summary",
-            _dba_command_lanes(loaded=False),
-            max_lanes=8,
-        )
         st.divider()
         active_view = render_workflow_selector(
             "DBA Control Room view",
@@ -6263,11 +6257,11 @@ def render() -> None:
             if st.button("Refresh DBA Morning Brief", key="dba_control_room_build_morning_from_empty", type="primary"):
                 _load_control_room_evidence(status_label="Refreshing DBA Morning Brief", auto_build_ops=True)
                 st.rerun()
-        elif active_view == "Operations Board":
-            st.warning("Refresh the Operations Board to see route priority, runbook, handoff, incident, and action queue detail.")
+        elif active_view == "Operations Detail":
+            st.warning("Refresh the Operations Detail to see route priority, runbook, handoff, incident, and action queue detail.")
             st.caption("Workflow: triage refresh -> route priority -> routed action -> closure status.")
-            if st.button("Refresh Operations Board", key="dba_control_room_build_ops_from_empty", type="primary"):
-                _load_control_room_evidence(status_label="Refreshing Operations Board", auto_build_ops=True)
+            if st.button("Refresh Operations Detail", key="dba_control_room_build_ops_from_empty", type="primary"):
+                _load_control_room_evidence(status_label="Refreshing Operations Detail", auto_build_ops=True)
                 st.rerun()
         else:
             st.warning(f"{load_label} to see today's DBA exceptions and exportable telemetry.")
@@ -6347,22 +6341,6 @@ def render() -> None:
         queued_queries=queued_queries,
         failed_queries=failed_queries,
     )
-    render_signal_lane_board(
-        "DBA Signal Summary",
-        _dba_command_lanes(
-            loaded=True,
-            failed_queries=failed_queries,
-            queued_queries=queued_queries,
-            failed_tasks=failed_tasks,
-            period_credits=period_credits,
-            credit_delta=credit_delta,
-            regression_count=regression_count,
-            cortex_exception_count=0 if cortex_exceptions.empty else len(cortex_exceptions),
-            source_issue_count=source_issue_count,
-            open_actions=0,
-        ),
-        max_lanes=8,
-    )
     _render_dba_command_intelligence_contract()
 
     st.divider()
@@ -6401,13 +6379,13 @@ def render() -> None:
             )
             _render_route_buttons(priority)
         st.caption(
-            "Use Operations Board when you need route priority, runbook, escalation, handoff, incident, or queue detail."
+            "Use Operations Detail when you need route priority, runbook, escalation, handoff, incident, or queue detail."
         )
 
     elif active_view == "Service Posture":
         _render_consolidated_service_posture()
 
-    elif active_view in {"Operations Board", "Morning Brief"}:
+    elif active_view in {"Operations Detail", "Morning Brief"}:
         ops_scope_key = _dba_control_ops_scope_key(
             company,
             environment,
@@ -6428,7 +6406,7 @@ def render() -> None:
                 load_label = "Refresh DBA Morning Brief"
             else:
                 st.caption("Refresh route priority, runbook, escalation, handoff, incident, and queue detail for the current scope.")
-                load_label = "Refresh Operations Board"
+                load_label = "Refresh Operations Detail"
             if st.button(load_label, key="dba_control_room_build_ops", type="primary"):
                 st.session_state["dba_control_room_ops_ready"] = True
                 st.rerun()
@@ -6538,7 +6516,7 @@ def render() -> None:
                 st.session_state["dba_operations_board_detail"] = ops_detail
             else:
                 ops_detail = st.selectbox(
-                    "Operations Board detail",
+                    "Operations Detail",
                     ("Morning Brief", "Priority", "Runbook", "Escalations", "Handoff", "Incidents", "Queue"),
                     label_visibility="collapsed",
                     key="dba_operations_board_detail",

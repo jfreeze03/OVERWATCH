@@ -146,7 +146,7 @@ def build_capability_register_rows() -> list[dict[str, object]]:
             "CAPABILITY": "Monitoring Docs and Runbooks",
             "STATUS": "New",
             "WHERE_IT_LANDS": "README, Data Health Runbook",
-            "WHY_IT_MATTERS": "A production DBA command center needs data health, privileges, failure modes, rollback, and operating rules.",
+            "WHY_IT_MATTERS": "A production DBA monitor needs data health, privileges, failure modes, rollback, and operating rules.",
             "NEXT_ACTION": "Keep a DBA runbook, data model map, precompute decision, and remediation safety model with the code.",
             "SNOWFLAKE_SOURCES": "Repository docs, status ledger, migration ledger",
             "OWNER": "DBA Lead",

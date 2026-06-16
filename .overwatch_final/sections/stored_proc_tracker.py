@@ -887,7 +887,7 @@ def render():
             if not exceptions.empty:
                 st.warning("Procedure operations has exceptions to review before relying on task graphs as production workflow control.")
                 slo_summary, slo_board = _build_procedure_reliability_slo_board(summary, exceptions)
-                st.subheader("Procedure Reliability SLO Board")
+                st.subheader("Procedure Reliability Detail")
                 render_shell_snapshot((
                     ("Ready", f"{slo_summary['ready']:,}"),
                     ("Review", f"{slo_summary['review']:,}"),
@@ -895,11 +895,11 @@ def render():
                 ))
                 render_priority_dataframe(
                     slo_board,
-                    title="Procedure reliability SLOs and next control step",
+                    title="Procedure reliability checks and next control step",
                     priority_columns=["STATE", "SLO", "EVIDENCE", "NEXT_ACTION"],
                     sort_by=["STATE", "SLO"],
                     ascending=[True, True],
-                    raw_label="All procedure reliability SLO rows",
+                    raw_label="All procedure reliability detail rows",
                     height=220,
                     max_rows=10,
                 )

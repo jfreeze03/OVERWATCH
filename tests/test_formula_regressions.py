@@ -500,9 +500,9 @@ class FormulaRegressionTests(unittest.TestCase):
 
         self.assertEqual(scorecard["score"], 61)
         self.assertEqual(scorecard["score_cap"], 74)
-        self.assertIn("readiness blocker", scorecard["cap_reason"])
+        self.assertIn("monitoring coverage blocker", scorecard["cap_reason"])
         self.assertEqual(scorecard["state"], "Executive Escalation")
-        self.assertEqual(by_driver["Readiness Trust"]["SCORE_CAP"], 74)
+        self.assertEqual(by_driver["Monitoring Coverage"]["SCORE_CAP"], 74)
         self.assertEqual(by_driver["Telemetry Coverage"]["SCORE_CAP"], 82)
         self.assertLess(by_driver["Reliability / Alerts"]["SCORE_IMPACT"], 0)
 
@@ -2672,7 +2672,7 @@ class FormulaRegressionTests(unittest.TestCase):
             failed_queries=0,
         )
         self.assertEqual(blocked["state"], "Blocked")
-        self.assertEqual(blocked["target"], "Operations Board")
+        self.assertEqual(blocked["target"], "Operations Detail")
         self.assertIn("1 blocker", blocked["detail"])
 
         routed = _dba_action_brief(
@@ -3168,7 +3168,7 @@ class FormulaRegressionTests(unittest.TestCase):
             source_mode="Fast triage summary",
         )
 
-        self.assertIn("# OVERWATCH DBA Incident Board", markdown)
+        self.assertIn("# OVERWATCH DBA Incident Detail", markdown)
         self.assertIn("Containment Required", markdown)
         self.assertIn("Operating Rules", markdown)
         self.assertIn("Refresh stale or unavailable telemetry", markdown)
@@ -3278,13 +3278,13 @@ class FormulaRegressionTests(unittest.TestCase):
         handoff = pd.DataFrame([
             {
                 "PRIORITY_RANK": 1,
-                "LANE": "Operations Board",
+                "LANE": "Operations Detail",
                 "STATE": "Unavailable",
                 "EVIDENCE": "Task SLA / Cost unavailable",
                 "OWNER_OR_ROUTE": "DBA / Platform",
                 "NEXT_ACTION": "Refresh mart grants before relying on this surface.",
                 "PROOF_REQUIRED": "current telemetry status",
-                "SOURCE": "Operations Board",
+                "SOURCE": "Operations Detail",
             }
         ])
         release_gate = pd.DataFrame([
@@ -3295,7 +3295,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "EVIDENCE": "OVERWATCH_ANNOTATIONS missing",
                 "NEXT_ACTION": "Apply release remediation DDL.",
                 "ROUTE": "Change & Drift",
-                "WORKFLOW": "Operations Board",
+                "WORKFLOW": "Operations Detail",
                 "PROOF_REQUIRED": "object status, rollback SQL, task retry telemetry",
             }
         ])
@@ -3317,9 +3317,9 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Workload route", by_route["Workload Operations"]["OWNER_ROUTE"])
         self.assertEqual(by_route["Cost & Contract"]["ESCALATION_LEVEL"], "Escalate Now")
         self.assertIn("Warehouse route", by_route["Cost & Contract"]["OWNER_ROUTE"])
-        self.assertIn("Incident Board", by_route["Cost & Contract"]["SOURCE_SIGNALS"])
+        self.assertIn("Incident Detail", by_route["Cost & Contract"]["SOURCE_SIGNALS"])
         self.assertIn("Stabilize queue", by_route["Cost & Contract"]["FIRST_MOVE"])
-        self.assertIn("Go only", by_route["Operations Board"]["GO_NO_GO"])
+        self.assertIn("Go only", by_route["Operations Detail"]["GO_NO_GO"])
         self.assertTrue(packet["AUTO_GENERATED"].eq("Yes").all())
 
     def test_dba_escalation_packet_markdown_is_owner_ready(self):
@@ -3383,13 +3383,13 @@ class FormulaRegressionTests(unittest.TestCase):
         handoff = pd.DataFrame([
             {
                 "PRIORITY_RANK": 1,
-                "LANE": "Operations Board",
+                "LANE": "Operations Detail",
                 "STATE": "Unavailable",
                 "EVIDENCE": "Task SLA / Cost unavailable",
                 "OWNER_OR_ROUTE": "DBA / Platform",
                 "NEXT_ACTION": "Refresh mart grants before relying on this surface.",
                 "PROOF_REQUIRED": "current telemetry status",
-                "SOURCE": "Operations Board",
+                "SOURCE": "Operations Detail",
             }
         ])
 
@@ -4190,7 +4190,7 @@ class FormulaRegressionTests(unittest.TestCase):
             summary_row=summary_row,
             exceptions=exceptions,
         )
-        self.assertIn("OVERWATCH Security Brief - ALFA", md)
+        self.assertIn("OVERWATCH Security Summary - ALFA", md)
         self.assertIn("Security state:", md)
         self.assertNotIn("Security score", md)
         self.assertIn("## Data Notes", md)
@@ -4568,7 +4568,7 @@ class FormulaRegressionTests(unittest.TestCase):
         sql = _security_action_queue_closure_sql(45, "ALFA", "DEV_ALL").upper()
 
         self.assertIn("OVERWATCH_ACTION_QUEUE", sql)
-        self.assertIn("SECURITY POSTURE - SECURITY BRIEF", sql)
+        self.assertIn("SECURITY POSTURE - SECURITY SUMMARY", sql)
         self.assertIn("SECURITY POSTURE - PRIVILEGED GRANT STATUS", sql)
         self.assertIn("COMPANY = 'ALFA'", sql)
         for db_name in ["ALFA_EDW_DEV", "ALFA_EDW_SAN", "ALFA_EDW_PHX", "ALFA_EDW_SEA", "ALFA_EDW_SIT"]:
@@ -4641,8 +4641,8 @@ class FormulaRegressionTests(unittest.TestCase):
         rows = _security_source_health_rows(state, company="ALFA", environment="PROD")
         by_surface = {row["SURFACE"]: row for _, row in rows.iterrows()}
 
-        self.assertEqual(by_surface["Security brief"]["STATE"], "Loaded")
-        self.assertEqual(by_surface["Security brief"]["CONFIDENCE"], "Live fallback")
+        self.assertEqual(by_surface["Security summary"]["STATE"], "Loaded")
+        self.assertEqual(by_surface["Security summary"]["CONFIDENCE"], "Live fallback")
         self.assertEqual(by_surface["Security exceptions"]["ROWS"], 1)
         self.assertEqual(by_surface["Control summary"]["STATE"], "Unavailable")
         self.assertEqual(by_surface["Privileged grants"]["STATE"], "Stale")
@@ -7204,7 +7204,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "raw_score": 63.5,
                 "state": "Executive Escalation",
                 "score_cap": 74,
-                "cap_reason": "1 readiness blocker(s) cap the executive operating state.",
+                "cap_reason": "1 monitoring coverage blocker(s) cap the executive operating state.",
             },
             "executive_landing_snapshot": {
                 "errors": ["Alert evidence unavailable: missing ALERT_EVENTS privilege."],
@@ -7229,7 +7229,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(cards[0]["signal"], "Platform operating state")
         self.assertEqual(cards[0]["severity"], "Critical")
         self.assertEqual(cards[0]["entity"], "Executive Escalation")
-        self.assertIn("limiter=1 status blocker", cards[0]["evidence"])
+        self.assertIn("limiter=1 monitoring coverage blocker", cards[0]["evidence"])
         self.assertIn("Failed production task", {card["signal"] for card in alert_cards})
 
     def test_top_priority_brief_reads_security_posture_summary(self):
@@ -8290,7 +8290,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "NEXT_ACTION": "Deploy delivery audit table.",
             }]),
         )
-        self.assertEqual(blocked["target"], "Command Center")
+        self.assertEqual(blocked["target"], "Active Alerts")
         self.assertIn("Delivery audit input", blocked["detail"])
         self.assertIn("Deploy delivery audit table", blocked["detail"])
 
@@ -8368,21 +8368,21 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_signal["Overdue alert SLAs"]["ROUTE"], "Triage Digest")
         self.assertEqual(by_signal["Generic alert routes"]["OWNER"], "Platform DBA")
         self.assertEqual(by_signal["Open action queue"]["COUNT"], 1)
-        self.assertEqual(by_signal["Alert control blockers"]["ROUTE"], "Command Center")
+        self.assertEqual(by_signal["Alert control blockers"]["ROUTE"], "Active Alerts")
         self.assertEqual(by_signal["Delivery failures"]["COUNT"], 1)
 
-    def test_alert_center_pending_brief_keeps_alert_brief_as_workflow_chooser(self):
+    def test_alert_center_pending_state_uses_active_alerts_default(self):
         brief = _alert_center_pending_brief("Alert Brief", set())
 
-        self.assertEqual(brief["state"], "Brief Ready")
-        self.assertIn("Choose the alert workflow", brief["headline"])
-        self.assertNotIn("Inputs on load", brief["detail"])
+        self.assertEqual(brief["state"], "Ready")
+        self.assertIn("Load Active Alerts", brief["headline"])
+        self.assertIn("Inputs on load", brief["detail"])
 
         workflows = _alert_center_brief_workflow_rows()
         self.assertEqual(
             [row["VIEW"] for row in workflows],
             [
-                "Command Center",
+                "Active Alerts",
                 "Detection Catalog",
                 "Issue Inbox",
                 "Triage Digest",
@@ -8392,7 +8392,7 @@ class FormulaRegressionTests(unittest.TestCase):
             ],
         )
         by_view = {row["VIEW"]: row for row in workflows}
-        self.assertIn("Open Command Center", by_view["Command Center"]["BUTTON_LABEL"])
+        self.assertIn("Open Active Alerts", by_view["Active Alerts"]["BUTTON_LABEL"])
         self.assertIn("Open Detection Catalog", by_view["Detection Catalog"]["BUTTON_LABEL"])
         self.assertIn("Alert history", by_view["Issue Inbox"]["SOURCES"])
         self.assertIn("Action queue", by_view["Issue Inbox"]["SOURCES"])
@@ -8409,22 +8409,22 @@ class FormulaRegressionTests(unittest.TestCase):
             st.session_state["alert_center_active_view"] = "Control Health"
             _apply_alert_center_brief_first_default()
 
-            self.assertEqual(st.session_state["alert_center_active_view"], "Command Center")
+            self.assertEqual(st.session_state["alert_center_active_view"], "Active Alerts")
             self.assertEqual(st.session_state["_alert_center_brief_first_version"], 2)
 
             st.session_state["alert_center_active_view"] = "Automation Health"
             _apply_alert_center_brief_first_default()
-            self.assertEqual(st.session_state["alert_center_active_view"], "Command Center")
+            self.assertEqual(st.session_state["alert_center_active_view"], "Active Alerts")
 
             st.session_state.clear()
             _apply_alert_center_brief_first_default()
-            self.assertEqual(st.session_state["alert_center_active_view"], "Command Center")
+            self.assertEqual(st.session_state["alert_center_active_view"], "Active Alerts")
 
             st.session_state.clear()
             st.session_state["alert_center_active_view"] = "Control Health"
             st.session_state["alert_center_data"] = {"_loaded_sources": []}
             _apply_alert_center_brief_first_default()
-            self.assertEqual(st.session_state["alert_center_active_view"], "Command Center")
+            self.assertEqual(st.session_state["alert_center_active_view"], "Active Alerts")
         finally:
             st.session_state.clear()
             st.session_state.update(previous)
@@ -8438,7 +8438,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn('"Alert Center"', config_text)
         self.assertIn('"sections.alert_center"', config_text)
         self.assertFalse((APP_ROOT / "sections" / "alert_center_shell.py").exists())
-        self.assertIn('ALERT_CENTER_DEFAULT_VIEW = "Command Center"', alert_text)
+        self.assertIn('ALERT_CENTER_DEFAULT_VIEW = "Active Alerts"', alert_text)
         self.assertIn("consolidated Alert Center", dba_tools_text)
         self.assertNotIn("Alert Configuration", rec_text)
         self.assertNotIn("tab_alerts", rec_text)
@@ -8694,7 +8694,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(safe_contract["DANGEROUS_ACTION"], "No")
         self.assertEqual(safe_contract["REMEDIATION_MODE"], "RECOMMEND")
 
-    def test_alert_command_center_runbook_lists_privileges_and_integrations(self):
+    def test_alert_monitoring_runbook_lists_privileges_and_integrations(self):
         privileges = build_alert_required_privileges()
         integrations = build_alert_optional_integrations()
         runbook = build_alert_command_center_runbook_markdown()
@@ -8703,6 +8703,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Notification integration usage", "\n".join(privileges["PRIVILEGE_ASSUMPTION"]))
         self.assertIn("Snowflake ALERT objects", "\n".join(integrations["INTEGRATION"]))
         self.assertIn("Event tables", "\n".join(integrations["INTEGRATION"]))
+        self.assertIn("OVERWATCH Alert Monitoring Runbook", runbook)
         self.assertIn("ACCOUNT_USAGE views are authoritative", runbook)
         self.assertIn("AUTO is allowed only", runbook)
 

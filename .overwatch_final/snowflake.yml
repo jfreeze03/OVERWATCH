@@ -43,7 +43,7 @@ streamlit:
   stage: DBA_MAINT_DB.OVERWATCH.OVERWATCH_STAGE
   main_file: app.py
   title: "OVERWATCH - Snowflake DBA Monitor"
-  comment: "DBA command center for ALFA Insurance"
+  comment: "DBA monitoring app for ALFA Insurance"
 
   # Warehouse used by SiS for Python execution. SQL queries run here unless
   # the session executes USE WAREHOUSE first.

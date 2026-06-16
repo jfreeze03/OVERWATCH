@@ -91,7 +91,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertFalse(PRIMARY_NAV_HIDDEN_SECTIONS)
         self.assertEqual(
             list(NAV_GROUPS),
-            ["COMMAND CENTER", "FINANCIAL CONTROL", "OPERATIONS", "SECURITY"],
+            ["MONITORING CORE", "FINANCIAL CONTROL", "OPERATIONS", "SECURITY"],
         )
         self.assertEqual(set(ALL_SECTIONS), set(SECTION_MODULES))
         self.assertEqual(
@@ -207,7 +207,7 @@ class NavigationIntegrityTests(unittest.TestCase):
 
         executive_text = (APP_ROOT / "sections" / "executive_landing.py").read_text(encoding="utf-8")
         self.assertIn("Snowflake Observability Wall", executive_text)
-        self.assertIn("Executive Summary Signals", executive_text)
+        self.assertNotIn("Executive Summary Signals", executive_text)
         self.assertIn("Refresh Summary", executive_text)
 
     def test_shell_evidence_label_reflects_loaded_state(self):
@@ -247,12 +247,12 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('if target == "Executive Landing":', app_text)
         self.assertIn('st.session_state["_executive_landing_full_workspace_requested"] = True', app_text)
         self.assertIn('st.session_state["_executive_landing_brief_mode"] = False', app_text)
-        self.assertIn('st.session_state["dba_control_room_active_view"] = "Morning Brief"', app_text)
-        self.assertIn('st.session_state["alert_center_active_view"] = "Command Center"', app_text)
+        self.assertIn('st.session_state["dba_control_room_active_view"] = "Fast Watch"', app_text)
+        self.assertIn('st.session_state["alert_center_active_view"] = "Active Alerts"', app_text)
         self.assertIn('st.session_state["cost_contract_workflow"] = "Usage attribution and run-rate"', app_text)
         self.assertIn('st.session_state["workload_operations_workflow"] = "Query investigation"', app_text)
         self.assertIn('st.session_state["workload_operations_query_focus"] = "Contention Telemetry"', app_text)
-        self.assertIn('st.session_state["security_posture_view"] = "Security Brief"', app_text)
+        self.assertIn('st.session_state["security_posture_view"] = "Access posture"', app_text)
         self.assertIn('st.session_state["security_posture_workflow"] = "Access posture"', app_text)
         self.assertIn('st.session_state.pop("_overwatch_pending_autoload_section", None)', app_text)
         self.assertIn('st.session_state.pop("_overwatch_pending_autoload_started_at", None)', app_text)
@@ -263,7 +263,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         )
         self.assertIn("def request_section_workspace", navigation_text)
         self.assertIn("request_section_workspace(target)", navigation_text)
-        self.assertIn('st.session_state["alert_center_active_view"] = "Command Center"', navigation_text)
+        self.assertIn('st.session_state["alert_center_active_view"] = "Active Alerts"', navigation_text)
         self.assertIn('st.session_state["cost_contract_workflow"] = "Usage attribution and run-rate"', navigation_text)
         self.assertIn('st.session_state["workload_operations_query_focus"] = "Contention Telemetry"', navigation_text)
         self.assertIn('st.session_state["security_posture_workflow"] = "Access posture"', navigation_text)
@@ -279,12 +279,12 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("compatibility_state_for_section(raw_section)", navigation_text)
         self.assertIn("request_section_workspace(target)", navigation_text)
         self.assertIn("request_executive_landing_hydration()", navigation_text)
-        self.assertIn('st.session_state["dba_control_room_active_view"] = "Morning Brief"', navigation_text)
-        self.assertIn('st.session_state["alert_center_active_view"] = "Command Center"', navigation_text)
+        self.assertIn('st.session_state["dba_control_room_active_view"] = "Fast Watch"', navigation_text)
+        self.assertIn('st.session_state["alert_center_active_view"] = "Active Alerts"', navigation_text)
         self.assertIn('st.session_state["cost_contract_workflow"] = "Usage attribution and run-rate"', navigation_text)
         self.assertIn('st.session_state["workload_operations_workflow"] = "Query investigation"', navigation_text)
         self.assertIn('st.session_state["workload_operations_query_focus"] = "Contention Telemetry"', navigation_text)
-        self.assertIn('st.session_state["security_posture_view"] = "Security Brief"', navigation_text)
+        self.assertIn('st.session_state["security_posture_view"] = "Access posture"', navigation_text)
         self.assertIn('st.session_state["security_posture_workflow"] = "Access posture"', navigation_text)
         self.assertIn('target != current or target == "Executive Landing"', navigation_text)
         self.assertIn('st.session_state["_overwatch_pending_section"] = target', navigation_text)
@@ -312,7 +312,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("def _load_executive_observability", full_workspace_text)
         self.assertIn("_executive_landing_observability_autoload_scope", full_workspace_text)
         self.assertIn("Snowflake Observability Wall", full_workspace_text)
-        self.assertIn("Executive Summary Signals", full_workspace_text)
+        self.assertNotIn("Executive Summary Signals", full_workspace_text)
         self.assertIn("Refresh Summary", full_workspace_text)
         self.assertNotIn("Refresh Board", full_workspace_text)
         self.assertNotIn("Executive Command Wall", full_workspace_text)
@@ -340,15 +340,15 @@ class NavigationIntegrityTests(unittest.TestCase):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
         nav_text = (APP_ROOT / "sections" / "navigation.py").read_text(encoding="utf-8")
         self.assertIn('"Morning Brief"', full_workspace_text)
-        self.assertIn('"dba_control_room_active_view"] = "Morning Brief"', app_text)
-        self.assertIn('"dba_control_room_active_view"] = "Morning Brief"', nav_text)
+        self.assertIn('"dba_control_room_active_view"] = "Fast Watch"', app_text)
+        self.assertIn('"dba_control_room_active_view"] = "Fast Watch"', nav_text)
         self.assertIn("with_loaded_at(", full_workspace_text)
         self.assertIn("source=getattr(snapshot_result, \"source\", \"Fast summary snapshot\")", full_workspace_text)
         self.assertIn("DBA_CONTROL_ROOM_LIVE_FALLBACK_CAP_HOURS = 24", full_workspace_text)
         self.assertIn("DBA_CONTROL_ROOM_LIVE_FALLBACK_KEYS", full_workspace_text)
         self.assertIn('"Morning Brief"', full_workspace_text)
         self.assertIn('"Morning Brief": "Morning"', full_workspace_text)
-        self.assertIn('elif active_view in {"Operations Board", "Morning Brief"}:', full_workspace_text)
+        self.assertIn('elif active_view in {"Operations Detail", "Morning Brief"}:', full_workspace_text)
         self.assertIn('load_label = "Refresh DBA Morning Brief"', full_workspace_text)
         self.assertIn('st.session_state["dba_operations_board_detail"] = ops_detail', full_workspace_text)
         self.assertIn('"Service Posture"', full_workspace_text)
@@ -369,10 +369,10 @@ class NavigationIntegrityTests(unittest.TestCase):
         full_workspace_text = (APP_ROOT / "sections" / "alert_center.py").read_text(encoding="utf-8")
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
         nav_text = (APP_ROOT / "sections" / "navigation.py").read_text(encoding="utf-8")
-        self.assertIn('ALERT_CENTER_DEFAULT_VIEW = "Command Center"', full_workspace_text)
-        self.assertIn('"alert_center_active_view"] = "Command Center"', app_text)
-        self.assertIn('"alert_center_active_view"] = "Command Center"', nav_text)
-        self.assertIn("Alert Signal Summary", full_workspace_text)
+        self.assertIn('ALERT_CENTER_DEFAULT_VIEW = "Active Alerts"', full_workspace_text)
+        self.assertIn('"alert_center_active_view"] = "Active Alerts"', app_text)
+        self.assertIn('"alert_center_active_view"] = "Active Alerts"', nav_text)
+        self.assertNotIn("Alert Signal Summary", full_workspace_text)
         self.assertNotIn("Alert Command Board", full_workspace_text)
         self.assertIn("ALERT_CENTER_PANES", full_workspace_text)
 
@@ -383,10 +383,10 @@ class NavigationIntegrityTests(unittest.TestCase):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
         nav_text = (APP_ROOT / "sections" / "navigation.py").read_text(encoding="utf-8")
         self.assertIn("SECURITY_POSTURE_VIEWS", security_text)
-        self.assertIn("Security Signal Summary", security_text)
+        self.assertNotIn("Security Signal Summary", security_text)
         self.assertNotIn("Security Monitoring Command Board", security_text)
-        self.assertIn('"security_posture_view"] = "Security Brief"', app_text)
-        self.assertIn('"security_posture_view"] = "Security Brief"', nav_text)
+        self.assertIn('"security_posture_view"] = "Access posture"', app_text)
+        self.assertIn('"security_posture_view"] = "Access posture"', nav_text)
 
     def test_workload_operations_uses_fast_shell_module(self):
         self.assertEqual(SECTION_MODULES["Workload Operations"], "sections.workload_operations")
@@ -414,7 +414,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('"Usage attribution and run-rate"', full_workspace_text)
         self.assertIn('"cost_contract_workflow"] = "Usage attribution and run-rate"', app_text)
         self.assertIn('"cost_contract_workflow"] = "Usage attribution and run-rate"', nav_text)
-        self.assertIn("Cost Signal Summary", full_workspace_text)
+        self.assertNotIn("Cost Signal Summary", full_workspace_text)
         self.assertNotIn("Cost Command Board", full_workspace_text)
         cost_center_text = (APP_ROOT / "sections" / "cost_center.py").read_text(encoding="utf-8")
         self.assertNotIn("Contract Utilization", cost_center_text)
@@ -462,7 +462,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(
             compatibility_state_for_section("Account Health"),
             {
-                "dba_control_room_active_view": "Morning Brief",
+                "dba_control_room_active_view": "Fast Watch",
                 "_dba_control_room_full_workspace_requested": True,
                 "_dba_control_room_brief_mode": False,
             },
@@ -507,7 +507,7 @@ class NavigationIntegrityTests(unittest.TestCase):
 
         self.assertIn("_source_health_rows", executive_text)
         self.assertIn("Executive Data Health", executive_text)
-        self.assertIn('"alert_center_active_view": "Command Center"', executive_text)
+        self.assertIn('"alert_center_active_view": "Active Alerts"', executive_text)
         self.assertIn('workflow_key="cost_contract_workflow"', executive_text)
         self.assertIn('workflow="Usage attribution and run-rate"', executive_text)
         self.assertIn('workflow_key="change_drift_workflow"', executive_text)

@@ -351,7 +351,7 @@ def _root_cause_cortex_prompt(
 
     root_cause_state = "Escalate" if score < 70 else "Review" if score < 85 else "Watch"
     return "\n".join([
-        "You are OVERWATCH, a Snowflake DBA command-center assistant.",
+        "You are OVERWATCH, a Snowflake DBA monitoring assistant.",
         "Use only the evidence below. Do not invent tables, users, tickets, or causes.",
         "Write exactly 3 concise sentences for a DBA: likely root cause, evidence, and single best next action.",
         "",

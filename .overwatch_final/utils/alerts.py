@@ -2516,7 +2516,7 @@ def build_alert_event_materialization_sql(
     events_table = _command_center_fqn("ALERT_EVENTS", db, schema)
     config_table = _command_center_fqn("ALERT_CONFIG", db, schema)
     run_table = _command_center_fqn("ALERT_RUN_HISTORY", db, schema)
-    return f"""-- Materialize current Alert Center rows into durable command-center events.
+    return f"""-- Materialize current Alert Center rows into durable alert lifecycle events.
 -- Safe to schedule after OVERWATCH_ALERTS / OVERWATCH_ALERT_TRIAGE_V are populated.
 SET OVERWATCH_ALERT_RUN_ID = 'ALERT_ENGINE_' || TO_VARCHAR(CURRENT_TIMESTAMP(), 'YYYYMMDDHH24MISS');
 
@@ -2609,7 +2609,7 @@ def build_alert_command_center_setup_sql(
     db: str = ALERT_DB,
     schema: str = ALERT_SCHEMA,
 ) -> str:
-    """DDL for the proactive alert command center configuration, event, and audit objects."""
+    """DDL for proactive alert monitoring configuration, event, and audit objects."""
     threshold_rows = build_alert_threshold_seed_rows()
     threshold_columns = [
         "THRESHOLD_KEY",
@@ -2650,7 +2650,7 @@ def build_alert_command_center_setup_sql(
         "ROUTE",
         "NOTIFICATION_CHANNEL",
     ])
-    return f"""-- OVERWATCH Alert Command Center
+    return f"""-- OVERWATCH Alert Monitoring
 -- DBA-grade alert detection, acknowledgement, notification, and remediation audit contract.
 -- ACCOUNT_USAGE views can lag; ALERT_CONFIG.TELEMETRY_LATENCY documents delayed vs near-real-time checks.
 
@@ -3168,7 +3168,7 @@ def build_alert_command_center_summary(
     run_history: pd.DataFrame | None = None,
     now: Any | None = None,
 ) -> dict[str, object]:
-    """Summarize loaded alert evidence into DBA command-center metrics and boards."""
+    """Summarize loaded alert evidence into DBA monitoring metrics."""
     current_time = pd.Timestamp(now) if now is not None else pd.Timestamp.now()
     if alerts is None or alerts.empty:
         return {
@@ -3695,7 +3695,7 @@ def build_alert_remediation_contract(row: pd.Series | dict | None = None) -> dic
 
 
 def build_alert_command_center_runbook_markdown() -> str:
-    return """# OVERWATCH Alert Command Center Runbook
+    return """# OVERWATCH Alert Monitoring Runbook
 
 ## Operating Rule
 The Alert Center is a triage and monitoring surface. It should detect, prioritize, route, notify, and audit. It should not silently mutate Snowflake objects.

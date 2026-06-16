@@ -22,7 +22,6 @@ from sections.shell_helpers import (
     render_shell_kpi_row,
     render_shell_snapshot,
     render_shell_status_strip,
-    render_signal_lane_board,
 )
 from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_source_note
@@ -151,7 +150,7 @@ def _build_platform_operating_score(summary: dict, source_health: pd.DataFrame |
     if limited_sources:
         caps.append((82, f"{limited_sources} executive telemetry input(s) are limited."))
     if migration_blockers:
-        caps.append((74, f"{migration_blockers} readiness blocker(s) cap the executive operating state."))
+        caps.append((74, f"{migration_blockers} monitoring coverage blocker(s) cap the executive operating state."))
     if critical_high:
         caps.append((85, f"{critical_high} Critical/High open alert(s) limit the executive health index."))
     if high_actions:
@@ -186,10 +185,10 @@ def _build_platform_operating_score(summary: dict, source_health: pd.DataFrame |
             cap=88 if high_actions else None,
         ),
         _score_driver(
-            "Readiness Trust",
+            "Monitoring Coverage",
             penalty=deployment_penalty,
-            evidence=f"{migration_blockers:,} readiness blocker(s).",
-            next_action="Open Data Health and reconcile persistent object status before leadership sign-off.",
+            evidence=f"{migration_blockers:,} monitoring coverage blocker(s).",
+            next_action="Open Data Health and reconcile source status before using the executive wall.",
             cap=74 if migration_blockers else None,
         ),
         _score_driver(
@@ -297,10 +296,10 @@ def _default_platform_summary() -> dict:
             "NEXT_ACTION": "Open Alert Center or DBA Control Room for owner-ready triage.",
         },
         {
-            "SOURCE": "Readiness and migration trust",
+            "SOURCE": "Monitoring coverage",
             "STATE": "Limited",
-            "EVIDENCE": "Readiness status is available after refresh.",
-            "NEXT_ACTION": "Open Security Monitoring when readiness review is needed.",
+            "EVIDENCE": "Monitoring source status is available after refresh.",
+            "NEXT_ACTION": "Open the source section when coverage detail is needed.",
         },
     ])
     return _with_platform_operating_score({
@@ -342,7 +341,7 @@ def _decision_rows(summary: dict) -> pd.DataFrame:
         {
             "PRIORITY": "4",
             "DECISION_AREA": "Deployment trust",
-            "SIGNAL": f"{summary['migration_blockers']:,} readiness blocker(s)",
+            "SIGNAL": f"{summary['migration_blockers']:,} monitoring coverage blocker(s)",
             "NEXT_ACTION": "Open Security Monitoring and reconcile readiness telemetry.",
             "WORKFLOW": "Change & Drift",
         },
@@ -1702,12 +1701,6 @@ def _render_executive_observability_board(
             refresh_method="Scheduled data refresh",
             live_fallback="On demand",
         )
-        st.markdown("**Executive Metric Summary**")
-        render_signal_lane_board(
-            "Executive Summary Grid",
-            _executive_summary_lanes(board, days=int(days), credit_price=credit_price),
-            max_lanes=8,
-        )
         st.markdown("**Snowflake Observability Wall**")
         render_shell_kpi_row((
             ("Spend", "On demand"),
@@ -1828,11 +1821,6 @@ def _render_executive_observability_board(
         ("Avg/day", _money(avg_daily_spend) if _obs_metric_loaded(board, "Credits Used") else "On demand"),
         ("Storage", f"{safe_float(storage_tb):,.2f} TB / {_money(storage_cost)}" if _obs_metric_loaded(board, "Storage") else "On demand"),
     ))
-    render_signal_lane_board(
-        "Executive Summary Signals",
-        _executive_summary_lanes(board, days=int(days), credit_price=credit_price),
-        max_lanes=8,
-    )
     _render_executive_pressure_board(board)
     _render_executive_priority_board(board, days=int(days))
 
@@ -2226,9 +2214,9 @@ def render() -> None:
     n1, n2, n3, n4 = st.columns(4)
     with n1:
         _nav_button(
-            "Alert Command",
+            "Active Alerts",
             "Alert Center",
-            state_updates={"alert_center_active_view": "Command Center"},
+            state_updates={"alert_center_active_view": "Active Alerts"},
         )
     with n2:
         _nav_button("Cost Drivers", "Cost & Contract", workflow_key="cost_contract_workflow", workflow="Usage attribution and run-rate")

@@ -260,13 +260,13 @@ class SectionDefinition:
         return self.title
 
 
-# Production navigation exposes only the command-center surfaces that should be
+# Production navigation exposes only the monitoring surfaces that should be
 # first-class in front of DBAs and leadership. Legacy redirect aliases below
 # keep deep links working without keeping weak standalone pages alive.
 SECTION_DEFINITIONS = (
-    SectionDefinition("COMMAND CENTER", "briefcase", "Executive Landing", "sections.executive_landing"),
-    SectionDefinition("COMMAND CENTER", "target", "DBA Control Room", "sections.dba_control_room"),
-    SectionDefinition("COMMAND CENTER", "bell", "Alert Center", "sections.alert_center"),
+    SectionDefinition("MONITORING CORE", "briefcase", "Executive Landing", "sections.executive_landing"),
+    SectionDefinition("MONITORING CORE", "target", "DBA Control Room", "sections.dba_control_room"),
+    SectionDefinition("MONITORING CORE", "bell", "Alert Center", "sections.alert_center"),
     SectionDefinition("FINANCIAL CONTROL", "cost", "Cost & Contract", "sections.cost_contract"),
     SectionDefinition("OPERATIONS", "work", "Workload Operations", "sections.workload_operations"),
     SectionDefinition("SECURITY", "security", "Security Monitoring", "sections.security_posture"),
@@ -320,7 +320,7 @@ RETIRED_SECTION_REDIRECTS = {
 }
 SECTION_ROUTE_STATE = {
     "Account Health": {
-        "dba_control_room_active_view": "Morning Brief",
+        "dba_control_room_active_view": "Fast Watch",
         "_dba_control_room_full_workspace_requested": True,
         "_dba_control_room_brief_mode": False,
     },
@@ -335,7 +335,7 @@ SECTION_ROUTE_STATE = {
         "_cost_contract_brief_mode": False,
     },
     "Security Posture": {
-        "security_posture_view": "Security Brief",
+        "security_posture_view": "Access posture",
     },
 }
 SECTION_BY_TITLE = dict(_CANONICAL_SECTION_BY_TITLE)

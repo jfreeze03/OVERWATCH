@@ -75,7 +75,7 @@ DEFAULT_ALERT_RULES = [
         "SLA_HOURS": 24,
         "OWNER": "DBA / Cost owner",
         "ROUTE": "Cost & Contract",
-        "RUNBOOK": "Explain the bill movement, identify route-backed drivers, and route cost-control actions.",
+        "RUNBOOK": "Explain the usage movement, identify route-backed drivers, and route cost-control actions.",
     },
     {
         "RULE_ID": "QUERY_HIGH_ERROR_RATE",

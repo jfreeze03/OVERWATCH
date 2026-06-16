@@ -2218,7 +2218,7 @@ def render() -> None:
             state_updates={"alert_center_active_view": "Command Center"},
         )
     with n2:
-        _nav_button("Cost Drivers", "Cost & Contract", workflow_key="cost_contract_workflow", workflow="Explain bill / attribution / contract")
+        _nav_button("Cost Drivers", "Cost & Contract", workflow_key="cost_contract_workflow", workflow="Usage attribution and run-rate")
     with n3:
         _nav_button("DBA Queue", "DBA Control Room")
     with n4:

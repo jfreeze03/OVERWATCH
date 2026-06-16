@@ -2232,7 +2232,7 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
             "Evidence": f"{credit_delta:+.1f}% vs prior window; est. ${credits_to_dollars(period_credits, credit_price):,.0f}",
             "Action": "Identify top users, warehouses, tasks, and query patterns.",
             "Route": "Cost & Contract",
-            "Workflow": "Explain bill / attribution / contract",
+            "Workflow": "Usage attribution and run-rate",
         })
     if not tasks.empty:
         rows.append({
@@ -6658,9 +6658,9 @@ def render() -> None:
                     _jump("Workload Operations", workflow=workflow)
         with r2:
             st.subheader("Cost and Capacity")
-            st.write("Bill explanations, contract pacing, warehouse pressure, rightsizing, recommendations, and value telemetry.")
+            st.write("Bill explanations, run-rate pacing, warehouse pressure, rightsizing, recommendations, and value telemetry.")
             for label, title, workflow in [
-                ("Cost & Contract", "Cost & Contract", "Explain bill / attribution / contract"),
+                ("Cost & Contract", "Cost & Contract", "Usage attribution and run-rate"),
                 ("AI / Cortex Spend", "Cost & Contract", "AI and Cortex spend"),
                 ("Warehouse Capacity", "Cost & Contract", "Recommendations and action queue"),
             ]:

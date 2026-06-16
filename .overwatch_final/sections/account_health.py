@@ -3694,7 +3694,7 @@ def render():
                                 "Cost & Contract",
                                 user_filter=sel_user,
                                 workflow_key="cost_contract_workflow",
-                                workflow="Explain bill / attribution / contract",
+                                workflow="Usage attribution and run-rate",
                             )
             else:
                 st.info("No cost driver data yet.")

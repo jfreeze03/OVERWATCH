@@ -857,8 +857,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(summary["active_services"], 2)
 
         next_move = _cost_splash_next_move(summary)
-        self.assertEqual(next_move[0], "Explain bill / attribution / contract")
-        self.assertEqual(next_move[1], "Bill movement")
+        self.assertEqual(next_move[0], "Usage attribution and run-rate")
+        self.assertEqual(next_move[1], "Usage movement")
 
         cortex_summary = dict(summary, delta_pct=0.0, top_warehouse_delta_spend=0.0)
         cortex_move = _cost_splash_next_move(cortex_summary)
@@ -1874,8 +1874,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_trust["Database attribution"]["TRUST_STATE"], "Allocated/Estimated")
         self.assertEqual(by_trust["Shared and no-database spend"]["TRUST_STATE"], "Allocated/Estimated")
         self.assertLess(trust_summary["score"], 100)
-        self.assertEqual(by_drill["Warehouse bill movement"]["TRUST"], "Exact")
-        self.assertEqual(by_drill["Warehouse bill movement"]["COMMAND_PRIORITY"], "P0")
+        self.assertEqual(by_drill["Warehouse usage movement"]["TRUST"], "Exact")
+        self.assertEqual(by_drill["Warehouse usage movement"]["COMMAND_PRIORITY"], "P0")
         self.assertEqual(by_drill["Database, DEV rollup, no-database spend"]["TRUST"], "Allocated/Estimated")
         self.assertIn("no-database", by_drill["Database, DEV rollup, no-database spend"]["NEXT_ACTION"])
         self.assertGreaterEqual(drill_summary["ready"], 3)
@@ -2003,7 +2003,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "EVIDENCE": "ALFA_WH moved 55 credits versus prior.",
                 "NEXT_ACTION": "Confirm owner demand and warehouse setting changes before tuning.",
                 "PROOF_REQUIRED": "WAREHOUSE_METERING_HISTORY current/prior window and top delta.",
-                "ROUTE": "Cost & Contract > Explain bill / attribution / contract",
+                "ROUTE": "Cost & Contract > Usage attribution and run-rate",
             }]),
             "cost_contract_change_cost_correlation": pd.DataFrame([{
                 "SEVERITY": "High",
@@ -2039,7 +2039,7 @@ class FormulaRegressionTests(unittest.TestCase):
             "EVIDENCE": "ALFA_WH moved 170 credits versus prior window.",
             "NEXT_ACTION": "Confirm owner demand and setting changes before tuning.",
             "PROOF_REQUIRED": "WAREHOUSE_METERING_HISTORY current/prior window.",
-            "ROUTE": "Cost & Contract > Explain bill / attribution / contract",
+            "ROUTE": "Cost & Contract > Usage attribution and run-rate",
         }])
         correlation = pd.DataFrame([{
             "SEVERITY": "High",
@@ -5198,7 +5198,8 @@ class FormulaRegressionTests(unittest.TestCase):
             st.session_state.clear()
             _seed_ai_query_diagnosis_from_row(by_query["01spill"], days=7)
 
-            self.assertEqual(st.session_state["workload_operations_workflow"], "Query diagnosis")
+            self.assertEqual(st.session_state["workload_operations_workflow"], "Query investigation")
+            self.assertEqual(st.session_state["workload_operations_query_focus"], "AI Query Diagnosis")
             self.assertEqual(st.session_state["query_analysis_active_view"], "AI Diagnosis")
             self.assertEqual(st.session_state["ai_query_id"], "01spill")
             self.assertIn("FACT_POLICY", st.session_state["ai_query_text"])
@@ -7592,10 +7593,9 @@ class FormulaRegressionTests(unittest.TestCase):
 
     def test_cost_center_chargeback_exposes_environment_and_database(self):
         cost_text = (APP_ROOT / "sections" / "cost_center.py").read_text(encoding="utf-8").upper()
-        chargeback_block = cost_text[
-            cost_text.index('ELIF COST_VIEW == "CHARGEBACK"'):
-            cost_text.index('ELIF COST_VIEW == "CONTRACT UTILIZATION"')
-        ]
+        self.assertNotIn('COST_VIEW == "CONTRACT UTILIZATION"', cost_text)
+        self.assertNotIn('"CONTRACT UTILIZATION"', cost_text)
+        chargeback_block = cost_text[cost_text.index('ELIF COST_VIEW == "CHARGEBACK"'):]
         self.assertIn("AS ENVIRONMENT", chargeback_block)
         self.assertIn("AS DATABASE_NAME", chargeback_block)
         self.assertIn('"ENVIRONMENT"', chargeback_block)
@@ -7755,9 +7755,9 @@ class FormulaRegressionTests(unittest.TestCase):
             "Severity": "High",
             "Signal": "Credit spike",
             "Evidence": "Credits rose 80%.",
-            "Action": "Explain bill movement.",
+            "Action": "Explain usage movement.",
             "Route": "Cost & Contract",
-            "Workflow": "Explain bill / attribution / contract",
+            "Workflow": "Usage attribution and run-rate",
         }])
 
         subject = build_alert_email_subject(alert.iloc[0], company="ALFA")
@@ -8045,7 +8045,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "OWNER": "DBA / Cost owner",
                 "EMAIL_TARGET": "",
                 "DELIVERY_STATUS": "",
-                "SUGGESTED_ACTION": "Explain bill movement.",
+                "SUGGESTED_ACTION": "Explain usage movement.",
             },
         ])
         queue = pd.DataFrame([{

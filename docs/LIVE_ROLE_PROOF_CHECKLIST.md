@@ -44,7 +44,7 @@ its operating lane.
   toggles.
 - Alert Center: incident board loads; lifecycle audit requires a note and writes
   only `ALERT_ACKNOWLEDGEMENTS` and `ALERT_REMEDIATION_LOG`.
-- Cost & Contract: first view shows spend, contract pace, Cortex dollars,
+- Cost & Contract: first view shows spend, run-rate pace, Cortex dollars,
   cost-driver signals, and the action queue; heavy proof stays behind explicit
   refresh.
 - Workload Operations: subsection navigation opens detail immediately.

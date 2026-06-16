@@ -40,7 +40,6 @@ COST_CENTER_VIEWS = (
     "Forecast",
     "Attribution",
     "Chargeback",
-    "Contract Utilization",
 )
 
 COST_CENTER_VIEW_DETAILS = {
@@ -52,7 +51,6 @@ COST_CENTER_VIEW_DETAILS = {
     "Forecast": "Near-term projected burn from recent usage.",
     "Attribution": "Role, schema, client, and lineage cost views.",
     "Chargeback": "ALFA/Trexis company allocation output.",
-    "Contract Utilization": "Committed-use utilization and risk.",
 }
 
 NO_DATABASE_CONTEXT_VALUES = {
@@ -858,7 +856,7 @@ def _annotate_cost_routes(df: pd.DataFrame, finding_type: str) -> pd.DataFrame:
         return df
     routed = df.copy()
     if finding_type == "Warehouse Delta":
-        routed["NEXT_WORKFLOW"] = "Explain bill / attribution / contract"
+        routed["NEXT_WORKFLOW"] = "Usage attribution and run-rate"
         routed["NEXT_ACTION"] = (
             "Drill into the warehouse delta, separate workload growth from idle/service overhead, "
             "then validate top users and query types before resizing."
@@ -1262,7 +1260,7 @@ def _build_finance_movement_summary(
             "Current Cost": round(credits_to_dollars(current_credits, credit_price), 2),
             "Delta Cost": round(credits_to_dollars(current_credits - prior_credits, credit_price), 2),
             "Measurement Basis": "Exact",
-            "Action": "Use this as the official warehouse-compute bill movement.",
+            "Action": "Use this as the official warehouse-compute usage movement.",
         },
         {
             "Category": "Query-attributed workload",
@@ -2085,7 +2083,7 @@ def render():
                 priority_columns=["Driver", "Credits", "Estimated Cost", "Type"],
                 sort_by=["Credits"],
                 ascending=False,
-                raw_label="All bill movement rows",
+                raw_label="All usage movement rows",
             )
 
             if st.session_state.get("exceptions_only_mode"):
@@ -2889,266 +2887,3 @@ def render():
             download_csv(df_show, "chargeback_detail.csv")
             if st.button("Save chargeback outliers to Action Queue", key="cc_chargeback_queue"):
                 _queue_cost_outliers(session, df_show, credit_price, "Cost & Contract - Chargeback")
-
-    # -- CONTRACT / COMMITMENT UTILIZATION -------------------------------------
-    elif cost_view == "Contract Utilization":
-        st.subheader("Contract & Commitment Utilization")
-        st.caption("Track consumption against the annual Snowflake committed-use contract.")
-        defer_source_note(
-            "Projects burn rate to flag over- and under-utilization risk. "
-            "This is the canonical contract view; contract evidence is consolidated in Cost & Contract."
-        )
-
-        col_ct1, col_ct2, col_ct3 = st.columns(3)
-        with col_ct1:
-            committed_credits = st.number_input(
-                "Annual committed credits",
-                min_value=0, max_value=10_000_000, value=100_000, step=1_000,
-                key="cc_committed_credits",
-                help="Total credits in your Snowflake annual contract."
-            )
-        with col_ct2:
-            from datetime import datetime as _dt
-            contract_start = st.date_input(
-                "Contract start date",
-                value=_dt(datetime.now().year, 1, 1).date(),
-                key="cc_contract_start",
-            )
-        with col_ct3:
-            contract_months = st.number_input(
-                "Contract length (months)", min_value=1, max_value=60, value=12,
-                key="cc_contract_months",
-            )
-
-        if st.button("Calculate Utilization", key="cc_contract_calc"):
-            try:
-                ytd_source = "SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY" if company == "ALL" else "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"
-                ytd_filter = "" if company == "ALL" else get_wh_filter_clause("warehouse_name", company)
-                df_ytd = run_query(f"""
-                    SELECT TO_DATE(start_time) AS usage_date,
-                           SUM(credits_used) AS credits_used
-                    FROM {ytd_source}
-                    WHERE start_time >= TO_DATE({sql_literal(str(contract_start))})
-                      AND start_time <  DATEADD('hour', -24, CURRENT_TIMESTAMP())
-                      {ytd_filter}
-                    GROUP BY usage_date
-                    ORDER BY usage_date
-                """, ttl_key=f"cc_contract_ytd_{company}_{contract_start}", tier="historical")
-                st.session_state["cc_contract_data"] = df_ytd
-                st.session_state["cc_contract_params"] = {
-                    "committed": committed_credits,
-                    "start": str(contract_start),
-                    "months": contract_months,
-                }
-            except Exception as e:
-                st.warning(f"Utilization data unavailable in this role/context: {format_snowflake_error(e)}")
-
-        if st.session_state.get("cc_contract_data") is not None:
-            df_c  = st.session_state["cc_contract_data"]
-            params = st.session_state.get("cc_contract_params", {})
-            committed = params.get("committed", committed_credits)
-            start_str = params.get("start", str(contract_start))
-            months    = params.get("months", contract_months)
-
-            start_date = datetime.strptime(start_str, "%Y-%m-%d").date()
-            days_in_contract = max(int(round(float(months) * 30.44)), 1)
-            contract_end_date = start_date + timedelta(days=days_in_contract - 1)
-            as_of_date = min(max(datetime.now().date() - timedelta(days=1), start_date), contract_end_date)
-
-            observed_days = pd.DataFrame({
-                "USAGE_DATE": pd.date_range(start_date, as_of_date, freq="D")
-            })
-            df_daily = df_c.copy()
-            if df_daily.empty:
-                df_daily = observed_days.copy()
-                df_daily["CREDITS_USED"] = 0.0
-            else:
-                df_daily["USAGE_DATE"] = pd.to_datetime(df_daily["USAGE_DATE"]).dt.normalize()
-                df_daily["CREDITS_USED"] = pd.to_numeric(df_daily["CREDITS_USED"], errors="coerce").fillna(0.0)
-                df_daily = observed_days.merge(df_daily, on="USAGE_DATE", how="left")
-                df_daily["CREDITS_USED"] = df_daily["CREDITS_USED"].fillna(0.0)
-
-            ytd_used = float(df_daily["CREDITS_USED"].sum())
-            days_elapsed = max(len(df_daily), 1)
-            days_remaining = max((contract_end_date - as_of_date).days, 0)
-
-            daily_rate = ytd_used / days_elapsed
-            last_7_avg = float(df_daily.tail(min(7, len(df_daily)))["CREDITS_USED"].mean() or 0)
-            last_30_avg = float(df_daily.tail(min(30, len(df_daily)))["CREDITS_USED"].mean() or 0)
-            trend_label = burn_trend_label(last_7_avg, last_30_avg)
-
-            future_days = pd.date_range(as_of_date + timedelta(days=1), contract_end_date, freq="D")
-            future_business_days = int((future_days.dayofweek < 5).sum()) if len(future_days) else 0
-            future_weekend_days = len(future_days) - future_business_days
-            business_hist = df_daily[df_daily["USAGE_DATE"].dt.dayofweek < 5]
-            weekend_hist = df_daily[df_daily["USAGE_DATE"].dt.dayofweek >= 5]
-            business_avg = float(business_hist.tail(20)["CREDITS_USED"].mean() or last_30_avg or daily_rate)
-            weekend_avg = float(weekend_hist.tail(8)["CREDITS_USED"].mean() or last_30_avg or daily_rate)
-
-            projected_total = ytd_used + (daily_rate * days_remaining)
-            projected_7 = ytd_used + (last_7_avg * days_remaining)
-            projected_30 = ytd_used + (last_30_avg * days_remaining)
-            projected_business = ytd_used + (business_avg * future_business_days) + (weekend_avg * future_weekend_days)
-            remaining_commitment = committed - ytd_used
-            pct_consumed     = (ytd_used / committed * 100) if committed > 0 else 0
-            pct_time_elapsed = (days_elapsed / days_in_contract * 100) if days_in_contract > 0 else 0
-
-            runway_rate = last_7_avg if trend_label == "Accelerating" and last_7_avg > 0 else daily_rate
-            if runway_rate > 0 and remaining_commitment > 0:
-                days_until_exhausted = remaining_commitment / runway_rate
-                exhaust_date = (datetime.now() + timedelta(days=days_until_exhausted)).strftime("%Y-%m-%d")
-            else:
-                days_until_exhausted = None
-                exhaust_date = "N/A"
-
-            # Pacing ratio: credits consumed % vs time elapsed %
-            pacing_ratio = (pct_consumed / pct_time_elapsed) if pct_time_elapsed > 0 else 1.0
-            projected_pct_over = ((projected_total / committed) * 100 - 100) if committed > 0 else 0.0
-
-            render_shell_snapshot((
-                ("YTD Consumed", format_credits(ytd_used)),
-                ("Remaining Commitment", format_credits(remaining_commitment)),
-                ("% Consumed", f"{pct_consumed:.1f}% ({pct_consumed - pct_time_elapsed:+.1f}% vs time)"),
-                ("Daily Burn Rate", f"{daily_rate:,.1f} cr/day"),
-                ("Projected Year-End", format_credits(projected_total)),
-            ))
-            defer_source_note(
-                f"{metric_confidence_label('exact')} for consumed credits | "
-                f"{metric_confidence_label('projection')} | "
-                f"{freshness_note('WAREHOUSE_METERING_HISTORY')}"
-            )
-
-            render_shell_snapshot((
-                ("7-Day Projection", f"{format_credits(projected_7)} ({trend_label})"),
-                ("30-Day Projection", f"{format_credits(projected_30)} ({burn_trend_label(last_30_avg, daily_rate)})"),
-                ("Business-Day Adjusted", f"{format_credits(projected_business)} ({business_avg:,.1f} cr/business day)"),
-            ))
-
-            # -- Progress bar ---------------------------------------------------
-            bar_pct = min(pct_consumed / 100, 1.0)
-            st.progress(bar_pct, text=f"{pct_consumed:.1f}% of {committed:,} committed credits")
-
-            # -- Pacing diagnosis -----------------------------------------------
-            st.divider()
-            if pacing_ratio > 1.15:
-                exhaustion_line = (
-                    f"At {runway_rate:,.1f} cr/day you will exhaust the commitment on "
-                    f"**{exhaust_date}** ({days_until_exhausted:.0f} days from now), "
-                    f"**{days_remaining - days_until_exhausted:.0f} days early**. "
-                    if days_until_exhausted is not None
-                    else "Current burn cannot calculate a reliable exhaustion date. "
-                )
-                st.error(
-                    f"**Burning too fast** - consuming credits {pacing_ratio:.1f}x faster than the "
-                    f"contract pace. {exhaustion_line}"
-                    f"Projected year-end: **{projected_total:,.0f}** vs committed **{committed:,}** "
-                    f"({projected_pct_over:.0f}% over)."
-                )
-            elif pacing_ratio < 0.75:
-                under_pct = 100 - (projected_total / committed * 100) if committed > 0 else 0.0
-                st.warning(
-                    f"**Under-utilizing** - tracking at {pacing_ratio:.2f}x the contract pace. "
-                    f"Projected year-end: **{projected_total:,.0f}** of {committed:,} credits "
-                    f"({under_pct:.0f}% under-utilized). "
-                    f"Review with Snowflake account team - unused committed credits typically do not roll over."
-                )
-            else:
-                st.success(
-                    f"**On pace** - pacing ratio {pacing_ratio:.2f}x. "
-                    f"Projected year-end: **{projected_total:,.0f}** of {committed:,} credits "
-                    f"({pct_consumed:.0f}% consumed, {pct_time_elapsed:.0f}% of contract elapsed)."
-                )
-
-            # -- Monthly breakdown chart ----------------------------------------
-            st.divider()
-            st.subheader("Monthly Consumption")
-            if st.button("Load Monthly Breakdown", key="cc_monthly_breakdown"):
-                try:
-                    monthly_source = "SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY" if company == "ALL" else "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"
-                    monthly_filter = "" if company == "ALL" else get_wh_filter_clause("warehouse_name", company)
-                    df_monthly = run_query(f"""
-                        SELECT DATE_TRUNC('month', start_time) AS month,
-                               SUM(credits_used) AS monthly_credits,
-                               SUM(credits_used) * {credit_price} AS monthly_cost
-                        FROM {monthly_source}
-                        WHERE start_time >= TO_DATE({sql_literal(start_str)})
-                          AND start_time <  DATEADD('hour', -24, CURRENT_TIMESTAMP())
-                          {monthly_filter}
-                        GROUP BY month
-                        ORDER BY month
-                    """, ttl_key=f"cc_monthly_{company}_{start_str}_{credit_price}", tier="historical")
-                    st.session_state["cc_monthly_data"] = df_monthly
-                except Exception as e:
-                    st.warning(f"Monthly breakdown unavailable in this role/context: {format_snowflake_error(e)}")
-
-            if st.session_state.get("cc_monthly_data") is not None and not st.session_state["cc_monthly_data"].empty:
-                df_m = st.session_state["cc_monthly_data"]
-                df_m["COMMITMENT_PACE_LINE"] = committed / (months or 12)
-                df_m["CUMULATIVE"]  = df_m["MONTHLY_CREDITS"].cumsum()
-
-                col_m1, col_m2 = st.columns(2)
-                with col_m1:
-                    render_chart_with_data_toggle(
-                        "Monthly credits vs commitment pace",
-                        "cc_contract_monthly_commitment",
-                        lambda: st.bar_chart(df_m.set_index("MONTH")[["MONTHLY_CREDITS","COMMITMENT_PACE_LINE"]]),
-                        df_m,
-                        priority_columns=["MONTH", "MONTHLY_CREDITS", "COMMITMENT_PACE_LINE", "CUMULATIVE"],
-                        sort_by=["MONTH"],
-                        ascending=True,
-                        max_rows=24,
-                    )
-                with col_m2:
-                    render_chart_with_data_toggle(
-                        "Cumulative consumption",
-                        "cc_contract_cumulative",
-                        lambda: st.line_chart(df_m.set_index("MONTH")["CUMULATIVE"]),
-                        df_m,
-                        priority_columns=["MONTH", "CUMULATIVE", "MONTHLY_CREDITS", "COMMITMENT_PACE_LINE"],
-                        sort_by=["MONTH"],
-                        ascending=True,
-                        max_rows=24,
-                    )
-
-                download_csv(df_m, "contract_utilization.csv")
-
-            # -- By service type ------------------------------------------------
-            st.divider()
-            st.subheader("Consumption by Service Type")
-            if company != "ALL":
-                st.info("Service-type metering is account-level in Snowflake. Switch Company View to ALL for a full service breakdown.")
-            else:
-                if st.button("Load Service Breakdown", key="cc_service_type"):
-                    try:
-                        df_svc = run_query(f"""
-                            SELECT service_type,
-                                   SUM(credits_used) AS total_credits,
-                                   ROUND(SUM(credits_used) / NULLIF({ytd_used}, 0) * 100, 1) AS pct_of_total
-                            FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY
-                            WHERE start_time >= TO_DATE({sql_literal(start_str)})
-                              AND start_time <  DATEADD('hour', -24, CURRENT_TIMESTAMP())
-                            GROUP BY service_type
-                            ORDER BY total_credits DESC
-                        """, ttl_key=f"cc_service_{company}_{start_str}_{ytd_used}", tier="historical")
-                        st.session_state["cc_svc_data"] = df_svc
-                    except Exception as e:
-                        st.warning(f"Service breakdown unavailable in this role/context: {format_snowflake_error(e)}")
-
-                if st.session_state.get("cc_svc_data") is not None and not st.session_state["cc_svc_data"].empty:
-                    df_sv = st.session_state["cc_svc_data"]
-                    render_chart_with_data_toggle(
-                        "Service-type contract consumption",
-                        "cc_contract_service_type",
-                        lambda: render_ranked_bar_chart(
-                            df_sv,
-                            "SERVICE_TYPE",
-                            "TOTAL_CREDITS",
-                            top_n=12,
-                        ),
-                        df_sv,
-                        priority_columns=["SERVICE_TYPE", "TOTAL_CREDITS", "PCT_OF_TOTAL"],
-                        sort_by=["TOTAL_CREDITS", "PCT_OF_TOTAL"],
-                        ascending=[False, False],
-                        raw_label="All service-type rows",
-                    )
-                    download_csv(df_sv, "contract_by_service_type.csv")

@@ -38,9 +38,9 @@ _FULL_WORKSPACE_STATE_KEYS = (
 
 _WORKFLOWS = (
     {
-        "WORKFLOW": "Explain bill / attribution / contract",
+        "WORKFLOW": "Usage attribution and run-rate",
         "BUTTON_LABEL": "Open Cost Overview",
-        "MOVE": "Start with bill movement, warehouse ranking, service spend, Cortex, and contract pace.",
+        "MOVE": "Start with usage movement, warehouse ranking, service spend, Cortex, and run-rate pace.",
     },
     {
         "WORKFLOW": "Storage cost and retention",
@@ -292,7 +292,7 @@ def _cost_shell_lanes(board: dict | None = None) -> tuple[dict[str, str], ...]:
                 "detail": "Recommendations require expected savings, action route, and telemetry status.",
             },
             {
-                "label": "Contract pace",
+                "label": "Run-rate pace",
                 "value": "On demand",
                 "state": "Forecast",
                 "detail": "Forecasted burn is compared with current spend pace.",
@@ -344,7 +344,7 @@ def _cost_shell_lanes(board: dict | None = None) -> tuple[dict[str, str], ...]:
             "detail": f"Open estimated savings: {_money(board.get('est_savings'))}.",
         },
         {
-            "label": "Contract pace",
+            "label": "Run-rate pace",
             "value": "Review" if _float_value(board.get("forecast")) and _float_value(board.get("forecast")) > _float_value(board.get("spend")) else "Stable",
             "state": "Forecast",
             "detail": "Forecasted burn compared with current spend pace.",
@@ -404,7 +404,7 @@ def _render_metric_board() -> None:
             ("Current Spend", "Awaiting data"),
             ("Delta", "Awaiting data"),
             ("30d Forecast", "Awaiting data"),
-            ("Contract Pace", "Awaiting data"),
+            ("Run-rate Pace", "Awaiting data"),
         ))
         render_shell_kpi_row((
             ("Cortex", "Awaiting data"),
@@ -417,7 +417,7 @@ def _render_metric_board() -> None:
             ("Current Spend", _money(board["spend"])),
             ("Delta", _money(board["delta_spend"], signed=True)),
             ("30d Forecast", _money(board["forecast"])),
-            ("Contract Pace", "Review" if board["forecast"] and board["forecast"] > board["spend"] else "Stable"),
+            ("Run-rate Pace", "Review" if board["forecast"] and board["forecast"] > board["spend"] else "Stable"),
         ))
         render_shell_kpi_row((
             ("Cortex", board["cortex"]),

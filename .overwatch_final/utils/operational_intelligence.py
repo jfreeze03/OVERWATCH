@@ -534,10 +534,10 @@ def build_cost_run_rate_sql(days: int = 90) -> str:
         SELECT
             *,
             CASE
-                WHEN monthly_contract_credits IS NULL THEN 'Set MONTHLY_CONTRACT_CREDITS in OVERWATCH_SETTINGS.'
-                WHEN projected_month_end_credits > monthly_contract_credits THEN 'Contract burn risk. Work top driver and action queue now.'
-                WHEN projected_month_end_credits > monthly_contract_credits * 0.9 THEN 'Approaching contract pace. Validate the top driver.'
-                ELSE 'Contract pace within current threshold.'
+                WHEN monthly_contract_credits IS NULL THEN 'Monthly usage threshold is not configured.'
+                WHEN projected_month_end_credits > monthly_contract_credits THEN 'Run-rate burn risk. Work top driver and action queue now.'
+                WHEN projected_month_end_credits > monthly_contract_credits * 0.9 THEN 'Approaching run-rate pace. Validate the top driver.'
+                ELSE 'Run-rate pace within current threshold.'
             END AS recommended_action
         FROM projected;
     """)

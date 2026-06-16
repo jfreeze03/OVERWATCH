@@ -170,6 +170,11 @@ class NavigationIntegrityTests(unittest.TestCase):
                 self.assertNotIn("def safe_float", section_text)
                 self.assertNotIn("def safe_int", section_text)
 
+    def test_session_cache_decorator_supports_snowflake_streamlit_runtime(self):
+        session_text = (APP_ROOT / "utils" / "session.py").read_text(encoding="utf-8")
+        self.assertIn("@st.cache_resource(show_spinner=False)", session_text)
+        self.assertNotIn("on_release=", session_text)
+
     def test_fast_shells_use_data_first_brief_pattern(self):
         shell_modules = {
             section: module_path
@@ -365,7 +370,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("st.caption(\n                evidence_caption", shell_text)
         self.assertIn("_PLATFORM_SUMMARY_KEY", shell_text)
         self.assertIn("def _executive_glance_kpis", shell_text)
-        self.assertIn("Monthly contract pace", shell_text)
+        self.assertIn("Monthly run-rate pace", shell_text)
         self.assertIn("Daily burn rate", shell_text)
         self.assertIn("Open critical/high alerts", shell_text)
         self.assertIn("Pipeline SLA compliance", shell_text)
@@ -375,6 +380,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("7-Day Spend Trend", shell_text)
         self.assertIn("Observability Summary", shell_text)
         self.assertIn("Snowflake Observability Wall", shell_text)
+        self.assertIn("Monthly Usage Summary", shell_text)
+        self.assertIn("Alerts and Action Queue", shell_text)
         self.assertIn("Top 5 Action Items", shell_text)
         self.assertNotIn("st.dataframe(_top_action_rows()", shell_text)
         self.assertIn("for row in _top_action_rows()", shell_text)
@@ -594,11 +601,12 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("def _render_operating_snapshot", shell_text)
         self.assertIn("Workload Operations Drilldowns", shell_text)
         self.assertNotIn("Open Workload Workspace", shell_text)
-        self.assertIn("Open Query Triage", shell_text)
+        self.assertIn("Open Query Investigation", shell_text)
         self.assertIn("Open Task / Procedure Health", shell_text)
         self.assertIn("Open Pipeline SLA", shell_text)
         self.assertIn("Open Schema / Data Compare", shell_text)
-        self.assertIn("Open AI Query Diagnosis", shell_text)
+        self.assertNotIn("Open Query Triage", shell_text)
+        self.assertNotIn("Open AI Query Diagnosis", shell_text)
         self.assertNotIn("Open Task Graphs", shell_text)
         self.assertNotIn("Open Contention", shell_text)
         self.assertNotIn("Open Live Triage", shell_text)
@@ -615,6 +623,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(SECTION_MODULES["Cost & Contract"], "sections.cost_contract_shell")
         shell_text = (APP_ROOT / "sections" / "cost_contract_shell.py").read_text(encoding="utf-8")
         full_workspace_text = (APP_ROOT / "sections" / "cost_contract.py").read_text(encoding="utf-8")
+        cost_center_text = (APP_ROOT / "sections" / "cost_center.py").read_text(encoding="utf-8")
         shell_import_block = shell_text.split("def _delegate_full_workspace", 1)[0]
 
         self.assertIn("def _delegate_full_workspace", shell_text)
@@ -640,6 +649,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Cost Command Board", shell_text)
         self.assertIn("Cost Signals", shell_text)
         self.assertIn("Cost Executive Flow", shell_text)
+        self.assertIn("Run-rate Pace", shell_text)
+        self.assertNotIn("Contract Pace", shell_text)
         self.assertNotIn("Cost Mart Contract", shell_text)
         self.assertNotIn("render_refresh_contract(", shell_text)
         self.assertNotIn("FACT_COST_DAILY / FACT_CORTEX_DAILY", shell_text)
@@ -660,6 +671,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("Open Budgets", shell_text)
         self.assertNotIn("Open Value Log", shell_text)
         self.assertIn("Open Storage Cost", shell_text)
+        self.assertNotIn("Contract Utilization", cost_center_text)
+        self.assertNotIn("Annual committed credits", cost_center_text)
+        self.assertNotIn("Calculate Utilization", cost_center_text)
         self.assertIn("cost_contract_workflow", shell_text)
         self.assertNotIn("open_detail", shell_text)
         self.assertIn("WORKFLOWS", full_workspace_text)
@@ -793,7 +807,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Executive Data Health", executive_text)
         self.assertIn('"alert_center_active_view": "Command Center"', executive_text)
         self.assertIn('workflow_key="cost_contract_workflow"', executive_text)
-        self.assertIn('workflow="Explain bill / attribution / contract"', executive_text)
+        self.assertIn('workflow="Usage attribution and run-rate"', executive_text)
         self.assertIn('workflow_key="change_drift_workflow"', executive_text)
         self.assertIn('workflow="Controlled DBA actions"', executive_text)
         self.assertIn('"dba_tools_group_selector": "Cost & Health"', executive_text)
@@ -958,19 +972,21 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(
             workload_operations.WORKFLOWS,
             (
-                "Query & contention",
+                "Query investigation",
                 "Task & procedure health",
                 "Pipeline / SLA risk",
                 "Schema & data compare",
-                "AI query diagnosis",
             ),
         )
+        self.assertNotIn("Query & contention", workload_operations.WORKFLOWS)
+        self.assertNotIn("AI query diagnosis", workload_operations.WORKFLOWS)
         self.assertNotIn("Live triage", workload_operations.WORKFLOWS)
         self.assertNotIn("Task graphs", workload_operations.WORKFLOWS)
         self.assertNotIn("History search", workload_operations.WORKFLOWS)
         self.assertIn("History Search", query_analysis.QUERY_ANALYSIS_PANES)
-        self.assertEqual(workload_operations.WORKFLOW_MODULES["Query & contention"], "sections.contention_center")
-        self.assertEqual(workload_operations.WORKFLOW_MODULES["AI query diagnosis"], "sections.query_analysis")
+        self.assertEqual(workload_operations.WORKFLOW_MODULES["Query investigation"], "sections.query_analysis")
+        self.assertIn("Contention Telemetry", workload_operations.QUERY_FOCUS_DETAILS)
+        self.assertIn("AI Query Diagnosis", workload_operations.QUERY_FOCUS_DETAILS)
         self.assertEqual(workload_operations.WORKFLOW_MODULES["Task & procedure health"], "sections.task_management")
         self.assertEqual(workload_operations.WORKFLOW_MODULES["Pipeline / SLA risk"], "sections.pipeline_health")
         self.assertEqual(workload_operations.WORKFLOW_MODULES["Schema & data compare"], "sections.dba_tools")
@@ -1000,7 +1016,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(
             cost_contract.WORKFLOWS,
             (
-                "Explain bill / attribution / contract",
+                "Usage attribution and run-rate",
                 "Storage cost and retention",
                 "Recommendations and action queue",
                 "AI and Cortex spend",

@@ -142,14 +142,7 @@ def _has_streamlit_snowflake_secrets() -> bool:
         return False
 
 
-def _close_streamlit_connection(conn) -> None:
-    try:
-        conn.close()
-    except Exception:
-        pass
-
-
-@st.cache_resource(show_spinner=False, on_release=_close_streamlit_connection)
+@st.cache_resource(show_spinner=False)
 def _quiet_streamlit_snowflake_connection():
     """Create Streamlit's Snowflake connection without exposing framework spinner text."""
     from streamlit.connections import SnowflakeConnection

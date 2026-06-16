@@ -14,7 +14,7 @@
 #   render_theme_picker()
 import streamlit as st
 
-THEME_VERSION = "2026-06-16-theme-contrast-v4"
+THEME_VERSION = "2026-06-16-theme-contrast-v6"
 
 _DEFAULT_THEME = "terminal"
 _THEME_ALIASES = {
@@ -1234,6 +1234,57 @@ _THEME_EXTRAS = {
     color: #ffffff !important;
     -webkit-text-fill-color: #ffffff !important;
 }
+.stApp [data-testid="stMain"] .stButton > button[kind="secondary"],
+.stApp [data-testid="stMain"] [data-testid="stButton"] button[kind="secondary"],
+.stApp [data-testid="stMain"] button[data-testid="stBaseButton-secondary"] {
+    color: #eef8fb !important;
+    -webkit-text-fill-color: #eef8fb !important;
+    background: linear-gradient(135deg, rgba(17,86,127,0.58), rgba(0,53,69,0.72)) !important;
+    border-color: rgba(113,211,220,0.56) !important;
+}
+.stApp [data-testid="stMain"] .stButton > button[kind="secondary"] p,
+.stApp [data-testid="stMain"] [data-testid="stButton"] button[kind="secondary"] p,
+.stApp [data-testid="stMain"] button[data-testid="stBaseButton-secondary"] p,
+.stApp [data-testid="stMain"] .stButton > button[kind="secondary"] span:not([class*="icon"]):not([class*="material"]),
+.stApp [data-testid="stMain"] [data-testid="stButton"] button[kind="secondary"] span:not([class*="icon"]):not([class*="material"]),
+.stApp [data-testid="stMain"] button[data-testid="stBaseButton-secondary"] span:not([class*="icon"]):not([class*="material"]) {
+    color: #eef8fb !important;
+    -webkit-text-fill-color: #eef8fb !important;
+}
+.stApp [data-testid="stMain"] .stButton > button[kind="secondary"]:hover,
+.stApp [data-testid="stMain"] [data-testid="stButton"] button[kind="secondary"]:hover,
+.stApp [data-testid="stMain"] button[data-testid="stBaseButton-secondary"]:hover {
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+    background: linear-gradient(135deg, #0068b7, #003545) !important;
+    border-color: rgba(113,211,220,0.96) !important;
+    box-shadow: 0 4px 18px rgba(41,181,232,0.34) !important;
+}
+.stApp [data-testid="stMain"] .stButton > button[kind="secondary"]:hover p,
+.stApp [data-testid="stMain"] [data-testid="stButton"] button[kind="secondary"]:hover p,
+.stApp [data-testid="stMain"] button[data-testid="stBaseButton-secondary"]:hover p,
+.stApp [data-testid="stMain"] .stButton > button[kind="secondary"]:hover span:not([class*="icon"]):not([class*="material"]),
+.stApp [data-testid="stMain"] [data-testid="stButton"] button[kind="secondary"]:hover span:not([class*="icon"]):not([class*="material"]),
+.stApp [data-testid="stMain"] button[data-testid="stBaseButton-secondary"]:hover span:not([class*="icon"]):not([class*="material"]) {
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+}
+.stApp [data-testid="stMain"] .ow-signal-card:hover,
+.stApp [data-testid="stMain"] .ow-shell-snapshot-card:hover,
+.stApp [data-testid="stMain"] .ow-section-guide-card:hover {
+    background: rgba(18,42,55,0.98) !important;
+    border-color: rgba(113,211,220,0.60) !important;
+    box-shadow: 0 8px 28px rgba(41,181,232,0.18) !important;
+}
+.stApp [data-testid="stMain"] .ow-signal-card:hover,
+.stApp [data-testid="stMain"] .ow-signal-card:hover *,
+.stApp [data-testid="stMain"] .ow-shell-snapshot-card:hover,
+.stApp [data-testid="stMain"] .ow-shell-snapshot-card:hover *,
+.stApp [data-testid="stMain"] .ow-section-guide-card:hover,
+.stApp [data-testid="stMain"] .ow-section-guide-card:hover * {
+    color: #eef8fb !important;
+    -webkit-text-fill-color: #eef8fb !important;
+}
 [data-testid="stSidebar"] .stButton > button,
 [data-testid="stSidebar"] [data-testid="stButton"] button,
 [data-testid="stSidebar"] button[data-testid^="stBaseButton"] {
@@ -1308,6 +1359,63 @@ _THEME_EXTRAS = {
 """,
     "terminal": """ <style> /* Snowflake White: reduce glare and make navigation decisively blue. */ .stApp .stButton > button, .stApp [data-testid="stButton"] button, .stApp button[data-testid^="stBaseButton"] {     color: #102a43 !important;     background: linear-gradient(135deg, #ffffff, #edf8fd) !important;     border-color: rgba(0,104,183,0.38) !important; } .stApp .stButton > button:hover, .stApp [data-testid="stButton"] button:hover, .stApp button[data-testid^="stBaseButton"]:hover {     color: #004f8f !important;     background: linear-gradient(135deg, #f8fdff, #d9f1fb) !important;     border-color: rgba(0,104,183,0.58) !important; } .stApp .stButton > button p, .stApp [data-testid="stButton"] button p, .stApp button[data-testid^="stBaseButton"] p {     color: inherit !important; } .stApp .stButton > button[kind="primary"], .stApp [data-testid="stButton"] button[kind="primary"], .stApp button[data-testid="stBaseButton-primary"] {     color: #ffffff !important;     background: linear-gradient(135deg, #0068b7, #29B5E8) !important;     border-color: rgba(0,104,183,0.78) !important; } .stApp .stButton > button[kind="primary"] p, .stApp [data-testid="stButton"] button[kind="primary"] p, .stApp button[data-testid="stBaseButton-primary"] p {     color: #ffffff !important; } .stMain [data-testid="stMarkdownContainer"], .stMain [data-testid="stMarkdownContainer"] p {     color: #102a43 !important; } .stMain [data-testid="stCaptionContainer"], .stMain [data-testid="stCaptionContainer"] p, .stMain [data-testid="stCaptionContainer"] span {     color: #526b7a !important; } [data-testid="stSidebar"] label, [data-testid="stSidebar"] .stRadio > label, [data-testid="stSidebar"] p {     color: #1f4e6b !important; } .stApp [data-testid="stSidebar"] .stButton > button, .stApp [data-testid="stSidebar"] [data-testid="stButton"] button, .stApp [data-testid="stSidebar"] button[data-testid^="stBaseButton"] {     color: #102a43 !important;     background: linear-gradient(135deg, #ffffff, #eaf6fb) !important;     border-color: rgba(0,104,183,0.28) !important;     box-shadow: none !important; } .stApp [data-testid="stSidebar"] .stButton > button p, .stApp [data-testid="stSidebar"] [data-testid="stButton"] button p, .stApp [data-testid="stSidebar"] button[data-testid^="stBaseButton"] p {     color: #102a43 !important; } .stApp [data-testid="stSidebar"] .stButton > button:hover, .stApp [data-testid="stSidebar"] [data-testid="stButton"] button:hover, .stApp [data-testid="stSidebar"] button[data-testid^="stBaseButton"]:hover {     color: #003f73 !important;     background: linear-gradient(135deg, #f8fdff, #d9f1fb) !important;     border-color: rgba(0,104,183,0.55) !important;     box-shadow: 0 2px 9px rgba(0,104,183,0.12) !important; } [data-testid="stSidebar"] .stRadio > div > label:hover {     color: #0068b7 !important;     background: rgba(0,104,183,0.08); } [data-testid="stSidebar"] .stRadio > div > label[data-checked="true"] {     color: #0068b7 !important;     background: rgba(0,104,183,0.13);     border-left: 3px solid #0068b7; } .stApp [data-testid="stSidebar"] .stButton > button[kind="primary"], .stApp [data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"], .stApp [data-testid="stSidebar"] button[data-testid="stBaseButton-primary"] {     color: #ffffff !important;     background: linear-gradient(135deg, #0068b7, #00528f) !important;     border-color: rgba(0,63,115,0.94) !important;     box-shadow: inset 4px 0 0 #71D3DC, 0 3px 13px rgba(0,104,183,0.24) !important; } .stApp [data-testid="stSidebar"] .stButton > button[kind="primary"] p, .stApp [data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"] p, .stApp [data-testid="stSidebar"] button[data-testid="stBaseButton-primary"] p {     color: #ffffff !important; } [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] .ow-live-pill {     color: #0068b7 !important; } [data-testid="stMetric"] {     border-top: 3px solid rgba(0,104,183,0.75) !important; } [data-testid="stMetricValue"] { color: #102a43 !important; } [data-testid="stMetricLabel"] { color: #526b7a !important; } [data-testid="stExpander"] {     background: #ffffff !important;     border-color: #b7d5e5 !important; } [data-testid="stExpander"] summary, [data-testid="stExpander"] summary > div, [data-testid="stExpander"] summary p, [data-testid="stExpander"] summary span, [data-testid="stExpander"] details, [data-testid="stExpander"] [data-testid="stMarkdownContainer"], [data-testid="stExpander"] [data-testid="stMarkdownContainer"] p {     color: #102a43 !important; } [data-testid="stExpander"] summary {     background: #ffffff !important;     border-radius: 7px !important; } [data-testid="stSidebar"] [data-testid="stExpander"] summary {     color: #ffffff !important;     background: linear-gradient(135deg, #0068b7, #00528f) !important;     border: 1px solid rgba(0,82,143,0.78) !important;     border-bottom: 1px solid rgba(0,82,143,0.78) !important;     box-shadow: 0 2px 9px rgba(0,104,183,0.16) !important; } [data-testid="stSidebar"] [data-testid="stExpander"] summary, [data-testid="stSidebar"] [data-testid="stExpander"] summary > span, [data-testid="stSidebar"] [data-testid="stExpander"] summary > span > div, [data-testid="stSidebar"] [data-testid="stExpander"] summary p, [data-testid="stSidebar"] [data-testid="stExpander"] summary span {     color: #ffffff !important; } [data-testid="stSidebar"] [data-testid="stExpander"] summary:hover {     background: linear-gradient(135deg, #0079d6, #005fa8) !important;     border-color: rgba(0,104,183,0.90) !important; } [data-testid="stExpander"] summary:hover, [data-testid="stExpander"] summary:hover p, [data-testid="stExpander"] summary:hover span {     color: #0068b7 !important; } [data-testid="stSidebar"] [data-testid="stExpander"] summary:hover, [data-testid="stSidebar"] [data-testid="stExpander"] summary:hover > span, [data-testid="stSidebar"] [data-testid="stExpander"] summary:hover p, [data-testid="stSidebar"] [data-testid="stExpander"] summary:hover span {     color: #ffffff !important; } .stApp .stTabs [data-baseweb="tab-list"] {     background: #dceff7 !important;     border-bottom: 2px solid rgba(0,104,183,0.55); } .stApp .stTabs [data-baseweb="tab"] {     color: #102a43 !important;     font-weight: 650; } .stApp .stTabs [data-baseweb="tab"] p {     color: inherit !important; } .stApp .stTabs [aria-selected="true"] {     color: #ffffff !important;     background: linear-gradient(135deg, #0068b7, #00528f) !important;     border-color: rgba(0,82,143,0.72) !important; } .stApp .stTabs [aria-selected="true"] p {     color: #ffffff !important; } </style> """,
 }
+
+_THEME_EXTRAS["terminal"] += """
+<style>
+/* Snowflake White: match dark-mode selector strength so theme switching cannot leave stale dark button/card rules active. */
+.stApp [data-testid="stMain"] .stButton > button[kind="secondary"],
+.stApp [data-testid="stMain"] [data-testid="stButton"] button[kind="secondary"],
+.stApp [data-testid="stMain"] button[data-testid="stBaseButton-secondary"] {
+    color: #102a43 !important;
+    -webkit-text-fill-color: #102a43 !important;
+    background: linear-gradient(135deg, #ffffff, #edf8fd) !important;
+    border-color: rgba(0,104,183,0.38) !important;
+}
+.stApp [data-testid="stMain"] .stButton > button[kind="secondary"] p,
+.stApp [data-testid="stMain"] [data-testid="stButton"] button[kind="secondary"] p,
+.stApp [data-testid="stMain"] button[data-testid="stBaseButton-secondary"] p,
+.stApp [data-testid="stMain"] .stButton > button[kind="secondary"] span:not([class*="icon"]):not([class*="material"]),
+.stApp [data-testid="stMain"] [data-testid="stButton"] button[kind="secondary"] span:not([class*="icon"]):not([class*="material"]),
+.stApp [data-testid="stMain"] button[data-testid="stBaseButton-secondary"] span:not([class*="icon"]):not([class*="material"]) {
+    color: #102a43 !important;
+    -webkit-text-fill-color: #102a43 !important;
+}
+.stApp [data-testid="stMain"] .stButton > button[kind="secondary"]:hover,
+.stApp [data-testid="stMain"] [data-testid="stButton"] button[kind="secondary"]:hover,
+.stApp [data-testid="stMain"] button[data-testid="stBaseButton-secondary"]:hover {
+    color: #003f73 !important;
+    -webkit-text-fill-color: #003f73 !important;
+    background: linear-gradient(135deg, #f8fdff, #d9f1fb) !important;
+    border-color: rgba(0,104,183,0.58) !important;
+    box-shadow: 0 2px 9px rgba(0,104,183,0.12) !important;
+}
+.stApp [data-testid="stMain"] .stButton > button[kind="secondary"]:hover p,
+.stApp [data-testid="stMain"] [data-testid="stButton"] button[kind="secondary"]:hover p,
+.stApp [data-testid="stMain"] button[data-testid="stBaseButton-secondary"]:hover p,
+.stApp [data-testid="stMain"] .stButton > button[kind="secondary"]:hover span:not([class*="icon"]):not([class*="material"]),
+.stApp [data-testid="stMain"] [data-testid="stButton"] button[kind="secondary"]:hover span:not([class*="icon"]):not([class*="material"]),
+.stApp [data-testid="stMain"] button[data-testid="stBaseButton-secondary"]:hover span:not([class*="icon"]):not([class*="material"]) {
+    color: #003f73 !important;
+    -webkit-text-fill-color: #003f73 !important;
+}
+.stApp [data-testid="stMain"] .ow-signal-card:hover,
+.stApp [data-testid="stMain"] .ow-shell-snapshot-card:hover,
+.stApp [data-testid="stMain"] .ow-section-guide-card:hover {
+    background: #ffffff !important;
+    border-color: rgba(0,104,183,0.42) !important;
+    box-shadow: 0 2px 8px rgba(0,104,183,0.10) !important;
+}
+.stApp [data-testid="stMain"] .ow-signal-card:hover,
+.stApp [data-testid="stMain"] .ow-signal-card:hover *,
+.stApp [data-testid="stMain"] .ow-shell-snapshot-card:hover,
+.stApp [data-testid="stMain"] .ow-shell-snapshot-card:hover *,
+.stApp [data-testid="stMain"] .ow-section-guide-card:hover,
+.stApp [data-testid="stMain"] .ow-section-guide-card:hover * {
+    color: #102a43 !important;
+    -webkit-text-fill-color: #102a43 !important;
+}
+</style>
+"""
 
 _STREAMLIT_ICON_FIX = """
 <style>

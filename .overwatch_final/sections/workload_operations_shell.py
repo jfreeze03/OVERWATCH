@@ -20,6 +20,7 @@ from utils.command_board import load_or_reuse_command_board
 _FULL_WORKSPACE_KEY = "_workload_operations_full_workspace_requested"
 _BRIEF_MODE_KEY = "_workload_operations_brief_mode"
 _EXPLICIT_WORKFLOW_KEY = "_workload_operations_explicit_workflow_request"
+QUERY_INVESTIGATION_WORKFLOW = "Query investigation"
 _COMMAND_BOARD_DATA_KEY = "workload_operations_command_board_data"
 _COMMAND_BOARD_SUMMARY_KEY = "workload_operations_command_board_summary"
 _COMMAND_BOARD_META_KEY = "workload_operations_command_board_meta"
@@ -46,9 +47,9 @@ _FULL_WORKSPACE_STATE_KEYS = (
 
 _WORKFLOWS = (
     {
-        "WORKFLOW": "Query & contention",
-        "BUTTON_LABEL": "Open Query Triage",
-        "MOVE": "Find running, queued, failed, slow, spilling, blocked, or high-cost SQL before changing compute.",
+        "WORKFLOW": QUERY_INVESTIGATION_WORKFLOW,
+        "BUTTON_LABEL": "Open Query Investigation",
+        "MOVE": "One path for running, queued, failed, slow, spilling, blocked, high-cost, and AI-diagnosed SQL.",
     },
     {
         "WORKFLOW": "Task & procedure health",
@@ -64,11 +65,6 @@ _WORKFLOWS = (
         "WORKFLOW": "Schema & data compare",
         "BUTTON_LABEL": "Open Schema / Data Compare",
         "MOVE": "Compare source and target objects, row counts, missing objects, and data likeness from one route.",
-    },
-    {
-        "WORKFLOW": "AI query diagnosis",
-        "BUTTON_LABEL": "Open AI Query Diagnosis",
-        "MOVE": "Use AI-assisted Snowflake recommendations for slow, spilling, scan-heavy, or failed SQL.",
     },
 )
 
@@ -281,7 +277,7 @@ def _workload_shell_lanes(snapshot_row: object | None, task_row: object | None) 
                     "label": "Runtime p95",
                     "value": _summary_seconds_label(summary, "p95_runtime_sec"),
                     "state": "Performance",
-                    "detail": "P95 runtime is the first signal for regressions before opening AI Query Diagnosis.",
+                    "detail": "P95 runtime is the first signal for regressions before opening Query Investigation.",
                 },
                 {
                     "label": "Queue pressure",
@@ -372,7 +368,7 @@ def _workload_shell_lanes(snapshot_row: object | None, task_row: object | None) 
             "label": "Query volume",
             "value": f"{total_queries:,}",
             "state": f"{failed_queries:,} failed",
-            "detail": "Failed query count should route into AI Query Diagnosis before escalation.",
+            "detail": "Failed query count should route into Query Investigation before escalation.",
         },
         {
             "label": "Runtime p95",

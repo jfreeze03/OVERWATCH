@@ -1,8 +1,9 @@
 """Executive Landing glance page.
 
-Production contract: this route is a boardroom glance page, not a workflow hub.
-It shows six leadership KPIs immediately, then one trend chart and one action
-table. Deeper investigation starts from the owning sections.
+Production contract: this route is the first-page observability wall, not a
+workflow hub. It shows cost, AI spend, workload, pressure, alert, action, and
+monthly movement signals immediately. Deeper investigation starts from the
+owning monitoring sections.
 """
 
 from __future__ import annotations
@@ -59,6 +60,12 @@ def _safe_int(value: object, default: int = 0) -> int:
 
 def _money(value: object) -> str:
     return f"${_safe_float(value):,.0f}"
+
+
+def _money_signed(value: object) -> str:
+    amount = _safe_float(value)
+    sign = "+" if amount >= 0 else "-"
+    return f"{sign}${abs(amount):,.0f}"
 
 
 def _window_days() -> int:
@@ -160,7 +167,7 @@ def _executive_glance_kpis() -> tuple[dict[str, str], ...]:
     burn_state = "Anomaly" if prior_daily and daily_burn > prior_daily * 1.25 else _trend_symbol(daily_burn, prior_daily)
     return (
         {
-            "label": "Monthly contract pace",
+            "label": "Monthly run-rate pace",
             "value": f"{_money(spend)} / {_money(commitment)}",
             "state": f"{commitment_pct:,.0f}%",
             "detail": f"{spend_state}; compute rate ${_credit_price():.2f}/credit.",
@@ -466,6 +473,14 @@ def _render_observability_summary() -> None:
     _render_bar_panel("Warehouse Spill", spill, value_name="Remote spill GB", max_rows=8)
 
 
+def _render_monthly_summary() -> None:
+    render_signal_lane_board("Monthly Usage Summary", _monthly_summary_lanes(), max_lanes=8)
+
+
+def _render_alert_action_queue() -> None:
+    render_signal_lane_board("Alerts and Action Queue", _alert_action_lanes(), max_lanes=8)
+
+
 def _observability_wall_lanes() -> tuple[dict[str, str], ...]:
     summary = _summary()
     return (
@@ -544,6 +559,124 @@ def _observability_wall_lanes() -> tuple[dict[str, str], ...]:
     )
 
 
+def _monthly_summary_lanes() -> tuple[dict[str, str], ...]:
+    summary = _summary()
+    spend = _current_spend(summary)
+    prior = _prior_spend(summary)
+    days = _window_days()
+    daily_burn = spend / days if spend else 0.0
+    projected_month = daily_burn * 30
+    commitment = _monthly_commitment()
+    commitment_pct = projected_month / commitment * 100 if commitment else 0.0
+    return (
+        {
+            "label": "Window spend",
+            "value": _money(spend),
+            "state": f"{days}d",
+            "detail": "Selected-window compute dollars at the configured credit rate.",
+        },
+        {
+            "label": "Prior window",
+            "value": _money(prior),
+            "state": "Compare",
+            "detail": "Prior comparison period used for movement and burn context.",
+        },
+        {
+            "label": "Spend delta",
+            "value": _money_signed(spend - prior),
+            "state": _trend_symbol(spend, prior),
+            "detail": "Difference between current and prior spend windows.",
+        },
+        {
+            "label": "Projected month",
+            "value": _money(projected_month),
+            "state": f"{commitment_pct:,.0f}% pace",
+            "detail": f"Simple 30-day projection from current daily burn against {_money(commitment)} commitment.",
+        },
+        {
+            "label": "Cortex month-to-date",
+            "value": _money(summary.get("cortex_cost_usd")),
+            "state": "AI",
+            "detail": "AI spend is kept separate from warehouse compute.",
+        },
+        {
+            "label": "Storage footprint",
+            "value": f"{_safe_float(summary.get('storage_tb')):,.1f} TB",
+            "state": _money(summary.get("storage_cost_usd")),
+            "detail": "Storage cost and footprint stay visible on the first page.",
+        },
+        {
+            "label": "Top cost driver",
+            "value": str(summary.get("top_cost_driver") or "On demand")[:28],
+            "state": _money(summary.get("top_cost_driver_usd")),
+            "detail": "Largest spend driver in the selected scope.",
+        },
+        {
+            "label": "Run-rate pace",
+            "value": "Review" if commitment_pct >= 90 else "Stable",
+            "state": f"{commitment_pct:,.0f}%",
+            "detail": "Projected month-end burn against the configured monthly usage threshold.",
+        },
+    )
+
+
+def _alert_action_lanes() -> tuple[dict[str, str], ...]:
+    summary = _summary()
+    queue_seconds = _safe_float(summary.get("queue_seconds"))
+    remote_spill_gb = _safe_float(summary.get("remote_spill_gb"))
+    p95_runtime = _safe_float(summary.get("p95_runtime_sec"))
+    return (
+        {
+            "label": "Critical/high alerts",
+            "value": f"{_safe_int(summary.get('critical_high_alerts')):,}",
+            "state": "Risk",
+            "detail": f"Oldest alert age: {_oldest_alert_age(summary)}.",
+        },
+        {
+            "label": "Open actions",
+            "value": f"{_safe_int(summary.get('open_actions')):,}",
+            "state": f"{_safe_int(summary.get('high_actions')):,} high",
+            "detail": "Action queue pressure that needs triage or closure.",
+        },
+        {
+            "label": "Failed queries",
+            "value": f"{_safe_int(summary.get('failed_queries')):,}",
+            "state": "SQL",
+            "detail": "Failed query count routes into Workload Operations diagnosis.",
+        },
+        {
+            "label": "Failed tasks",
+            "value": f"{_safe_int(summary.get('failed_tasks')):,}",
+            "state": "Pipeline",
+            "detail": "Task failures route into task/procedure health.",
+        },
+        {
+            "label": "P95 runtime",
+            "value": f"{p95_runtime:,.1f}s",
+            "state": "Runtime",
+            "detail": "P95 runtime shows user-facing workload pressure.",
+        },
+        {
+            "label": "Warehouse queue",
+            "value": f"{queue_seconds / 60.0:,.1f}m",
+            "state": str(summary.get("top_queue_warehouse") or "No warehouse")[:20],
+            "detail": "Queued time points to saturation or concurrency pressure.",
+        },
+        {
+            "label": "Remote spill",
+            "value": f"{remote_spill_gb:,.1f} GB",
+            "state": str(summary.get("top_spill_warehouse") or "No warehouse")[:20],
+            "detail": "Remote spill points to scan, join, memory, or sizing pressure.",
+        },
+        {
+            "label": "Pipeline SLA",
+            "value": f"{_pipeline_sla_pct(summary):,.1f}%" if _pipeline_sla_pct(summary) else "On demand",
+            "state": "SLA",
+            "detail": "SLA signal stays visible without opening pipeline detail.",
+        },
+    )
+
+
 def _render_top_actions() -> None:
     st.markdown("**Top 5 Action Items**")
     for row in _top_action_rows():
@@ -580,5 +713,7 @@ def render() -> None:
     _render_kpis()
     _render_spend_trend()
     _render_observability_summary()
+    _render_monthly_summary()
+    _render_alert_action_queue()
     _render_top_actions()
     _render_copy_summary()

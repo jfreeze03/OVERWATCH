@@ -133,6 +133,8 @@ class Production95ContractsTests(unittest.TestCase):
         self.assertNotIn("load_setup_readiness", shell_text)
         self.assertIn("Observability Summary", shell_text)
         self.assertIn("Snowflake Observability Wall", shell_text)
+        self.assertIn("Monthly Usage Summary", shell_text)
+        self.assertIn("Alerts and Action Queue", shell_text)
         self.assertIn("Platform risk signals", shell_text)
         self.assertNotIn("Setup Readiness", shell_text)
         self.assertNotIn("Platform Operating Score", shell_text)
@@ -164,7 +166,8 @@ class Production95ContractsTests(unittest.TestCase):
         self.assertIn("Delivery & Remediation", alert_shell)
 
         self.assertIn("Workload Command Board", workload_shell)
-        self.assertIn("Open Query Triage", workload_shell)
+        self.assertIn("Open Query Investigation", workload_shell)
+        self.assertNotIn("Open Query Triage", workload_shell)
         self.assertIn("Open Task / Procedure Health", workload_shell)
         self.assertIn("Open Pipeline SLA", workload_shell)
         self.assertNotIn("Safe Fix Status", workload_shell)

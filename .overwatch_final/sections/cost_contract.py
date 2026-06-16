@@ -401,8 +401,8 @@ def _cost_splash_next_move(summary: dict) -> tuple[str, str, str]:
 
     if delta_pct >= 20 or top_wh_delta > 0:
         return (
-            "Explain bill / attribution / contract",
-            "Bill movement",
+            "Usage attribution and run-rate",
+            "Usage movement",
             f"{top_wh} is the first cost driver to explain ({_slide_money(top_wh_delta, signed=True)}).",
         )
     if cortex_spend > 0:
@@ -413,9 +413,9 @@ def _cost_splash_next_move(summary: dict) -> tuple[str, str, str]:
         )
     if projected_30d > safe_float(summary.get("spend")):
         return (
-            "Explain bill / attribution / contract",
+            "Usage attribution and run-rate",
             "Run-rate check",
-            f"Projected 30-day spend is {_slide_money(projected_30d)}. Explain the driver and contract pace.",
+            f"Projected 30-day spend is {_slide_money(projected_30d)}. Explain the driver and run-rate pace.",
         )
     return (
         "Recommendations and action queue",
@@ -454,18 +454,18 @@ def _cost_executive_decision_stack(summary: dict, action_summary: dict) -> pd.Da
     savings = safe_float(action_summary.get("estimated_savings"))
     rows = [
         {
-            "DECISION": "Explain bill movement",
+            "DECISION": "Explain usage movement",
             "SIGNAL": _slide_money(delta, signed=True),
             "FIRST_QUESTION": f"Is {summary.get('top_warehouse')} the real driver or just the largest warehouse mover?",
             "OWNER": "DBA / Cost owner",
-            "ROUTE": "Explain bill / attribution / contract",
+            "ROUTE": "Usage attribution and run-rate",
         },
         {
             "DECISION": "Validate contract burn",
             "SIGNAL": _slide_money(projected),
-            "FIRST_QUESTION": "Does the 30-day run-rate fit the committed-use plan and contract pace?",
+            "FIRST_QUESTION": "Does the 30-day run-rate fit the usage baseline and run-rate pace?",
             "OWNER": "DBA / Cost owner",
-            "ROUTE": "Explain bill / attribution / contract",
+            "ROUTE": "Usage attribution and run-rate",
         },
         {
             "DECISION": "Review Cortex usage",
@@ -549,7 +549,7 @@ def render_workflow_module(workflow: str, workflow_modules: dict[str, str]) -> N
     render()
 
 WORKFLOWS = (
-    "Explain bill / attribution / contract",
+    "Usage attribution and run-rate",
     "Storage cost and retention",
     "Recommendations and action queue",
     "AI and Cortex spend",
@@ -557,7 +557,7 @@ WORKFLOWS = (
 )
 
 WORKFLOW_DETAILS = {
-    "Explain bill / attribution / contract": "Start here: bill movement, chargeback, contract pacing, and cost drivers.",
+    "Usage attribution and run-rate": "Start here: usage movement, chargeback, run-rate pacing, and cost drivers.",
     "Storage cost and retention": "Database, failsafe, stage, and table storage telemetry in the cost workspace.",
     "Recommendations and action queue": "Owned fixes with severity, savings, telemetry status, and routing.",
     "AI and Cortex spend": "Cortex usage, model spend, users, and runaway AI cost signals.",
@@ -565,7 +565,7 @@ WORKFLOW_DETAILS = {
 }
 
 WORKFLOW_MODULES = {
-    "Explain bill / attribution / contract": "sections.cost_center",
+    "Usage attribution and run-rate": "sections.cost_center",
     "Storage cost and retention": "sections.storage_monitor",
     "Recommendations and action queue": "sections.recommendations",
     "AI and Cortex spend": "sections.cortex_monitor",
@@ -1378,7 +1378,7 @@ def _build_cost_source_health_board(
         _loaded_rows(cockpit),
         "Current/prior movement loaded from fast warehouse metering summary or live Account Usage."
         if _loaded_rows(cockpit) else "Warehouse movement is available after Cost Cockpit refresh.",
-        "Load Cost Cockpit before explaining bill movement.",
+        "Load Cost Cockpit before explaining usage movement.",
         "ACCOUNT_USAGE warehouse metering latency applies; summary refresh is preferred.",
     )
     _add_source_health_row(
@@ -1776,7 +1776,7 @@ def _build_cost_control_coverage_board(
         "Exact warehouse metering",
         "Ready" if _has_columns(cockpit, ["CURRENT_CREDITS", "PRIOR_CREDITS"]) else "Load Needed",
         "Cockpit has exact current/prior warehouse credits." if _has_columns(cockpit, ["CURRENT_CREDITS", "PRIOR_CREDITS"]) else "Exact warehouse movement is available after Cost Cockpit refresh.",
-        "Load Cost Cockpit before explaining any bill movement.",
+        "Load Cost Cockpit before explaining any usage movement.",
     )
     _add_coverage_row(
         rows,
@@ -1880,7 +1880,7 @@ def _build_cost_allocation_trust_board(
         "Contract and warehouse totals",
         "Exact" if exact_loaded and run_rate_loaded else "Load Needed",
         "Warehouse metering and complete-day run-rate/YOY are loaded." if exact_loaded and run_rate_loaded else "Exact warehouse totals or complete-day run-rate telemetry is missing.",
-        "Load Cost Cockpit before defending contract pace, 7-day average, or YOY movement.",
+        "Load Cost Cockpit before defending run-rate pace, 7-day average, or YOY movement.",
     )
 
     company_env_loaded = _has_columns(chargeback, ["COMPANY", "ENVIRONMENT"]) or _has_columns(explorer, ["COMPANY", "ENVIRONMENT_ROLLUP"])
@@ -2019,13 +2019,13 @@ def _build_cost_drilldown_command_map(
     top_wh = str(cockpit.iloc[0].get("TOP_INCREASE_WAREHOUSE") or "") if isinstance(cockpit, pd.DataFrame) and not cockpit.empty else ""
     exact_loaded = _has_columns(cockpit, ["CURRENT_CREDITS", "PRIOR_CREDITS"])
     add(
-        "Warehouse bill movement",
+        "Warehouse usage movement",
         "Ready" if exact_loaded else "Load Needed",
         "Exact",
         loaded_rows(cockpit),
         f"{current_credits:,.2f} current credits; {prior_credits:,.2f} prior credits",
         f"Explain top warehouse movement first{f': {top_wh}' if top_wh else ''}.",
-        "Explain bill / attribution / contract",
+        "Usage attribution and run-rate",
         0 if exact_loaded else 1,
     )
 
@@ -2041,7 +2041,7 @@ def _build_cost_drilldown_command_map(
             if run_loaded and not run_rate.empty else "No run-rate telemetry loaded"
         ),
         "Use complete-day 7d average and YOY before calling a spike real.",
-        "Explain bill / attribution / contract",
+        "Usage attribution and run-rate",
         0 if run_loaded else 1,
     )
 
@@ -2053,7 +2053,7 @@ def _build_cost_drilldown_command_map(
         loaded_rows(chargeback, explorer),
         "ALFA/Trexis plus PROD/DEV split" if company_loaded else "No company/environment rows loaded",
         "Use this for chargeback direction; keep shared warehouse disclosure visible.",
-        "Explain bill / attribution / contract",
+        "Usage attribution and run-rate",
         2 if company_loaded else 3,
     )
 
@@ -2069,7 +2069,7 @@ def _build_cost_drilldown_command_map(
         loaded_rows(chargeback, explorer),
         f"{no_db_rows:,} no-database row(s)" if db_loaded else "Database rows are available after refresh",
         "Show PROD, DEV_ALL, individual DEV databases, and keep no-database spend out of exact claims.",
-        "Explain bill / attribution / contract",
+        "Usage attribution and run-rate",
         2 if db_loaded else 3,
     )
 
@@ -2081,7 +2081,7 @@ def _build_cost_drilldown_command_map(
         loaded_rows(explorer),
         "Role/user/department drivers ready" if human_loaded else "Human driver rows are available after refresh",
         "Sort by estimated dollars before assigning work to a department or user.",
-        "Explain bill / attribution / contract",
+        "Usage attribution and run-rate",
         2 if human_loaded else 3,
     )
 
@@ -2275,7 +2275,7 @@ def _build_cost_decomposition_board(
             "Load Needed",
             "Review",
             "Exact warehouse metering is available after refresh.",
-            "Load the Cost Control Cockpit before explaining contract movement.",
+            "Load the Cost Control Cockpit before explaining usage movement.",
         )
 
     if run_loaded:
@@ -2566,7 +2566,7 @@ def _build_cost_spike_root_cause_board(
         "Exact warehouse metering",
         "Start here. Confirm owner demand, task/query mix, size/auto-suspend changes, and monitor coverage for this warehouse.",
         "WAREHOUSE_METERING_HISTORY current/prior window and top delta.",
-        "Cost & Contract > Explain bill / attribution / contract",
+        "Cost & Contract > Usage attribution and run-rate",
         max(credits_to_dollars(top_delta, credit_price), credits_to_dollars(current_credits - prior_credits, credit_price), 0),
         0,
     )
@@ -2581,7 +2581,7 @@ def _build_cost_spike_root_cause_board(
         "Exact when run-rate lens loaded",
         "Do not escalate from same-day partial metering; use complete-day trend to decide whether this is a real spike.",
         "Cost run-rate lens with complete-day 7d, 30d, and prior-year rows.",
-        "Cost & Contract > Explain bill / attribution / contract",
+        "Cost & Contract > Usage attribution and run-rate",
         credits_to_dollars(abs(top_delta), credit_price),
         1,
     )
@@ -2600,7 +2600,7 @@ def _build_cost_spike_root_cause_board(
         "Allocated / Estimated",
         "Use ALFA/Trexis and PROD/DEV attribution to assign ownership, but keep shared warehouse disclosure attached.",
         "Cost Explorer or Chargeback rows with company/environment dimensions and allocation measurement.",
-        "Cost & Contract > Explain bill / attribution / contract",
+        "Cost & Contract > Usage attribution and run-rate",
         company_driver["value_usd"],
         2,
     )
@@ -2619,7 +2619,7 @@ def _build_cost_spike_root_cause_board(
         "Allocated / Estimated",
         "Drill into PROD, DEV_ALL, and individual DEV database views before assigning database ownership.",
         "Query allocation, tags, and no-database/shared allocation measurement.",
-        "Cost & Contract > Explain bill / attribution / contract",
+        "Cost & Contract > Usage attribution and run-rate",
         db_driver["value_usd"],
         3,
     )
@@ -2638,7 +2638,7 @@ def _build_cost_spike_root_cause_board(
         "Allocated / Estimated",
         "Assign optimization work only after the cost row has role/user/department telemetry and route context.",
         "Cost Explorer detail with role, user, department, query count, and allocation measurement.",
-        "Cost & Contract > Explain bill / attribution / contract",
+        "Cost & Contract > Usage attribution and run-rate",
         human_driver["value_usd"],
         4,
     )
@@ -2998,7 +2998,7 @@ def _build_cost_incident_timeline(
         f"{top_wh}: {top_delta:+,.2f} credit delta; current {current_credits:,.2f} vs prior {prior_credits:,.2f}; 7d vs 30d {pct_vs_30d_float:+.1f}%.",
         "Explain the top cost mover before changing warehouse settings or workload routing.",
         "Complete-day run-rate plus FACT_WAREHOUSE_HOURLY current/prior warehouse metering.",
-        "Cost & Contract > Explain bill / attribution / contract",
+        "Cost & Contract > Usage attribution and run-rate",
     )
 
     if isinstance(root_cause, pd.DataFrame) and not root_cause.empty:
@@ -3782,7 +3782,7 @@ def _cost_action_brief(company: str, days: int, credit_price: float) -> dict:
     if not data_loaded:
         return {
             "state": "Ready",
-            "headline": "Load the cost cockpit before explaining bill movement.",
+            "headline": "Load the cost cockpit before explaining usage movement.",
             "detail": "The cockpit stays quiet until you request warehouse, contract, action, and impact telemetry.",
         }
     if not scope_matches:
@@ -4190,10 +4190,10 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
     moves = []
     if delta_pct >= 20 or safe_float(row.get("TOP_INCREASE_CREDITS", 0)) > 0:
         moves.append((
-            "Explain the bill movement",
+            "Explain the usage movement",
             f"Top increase: {row.get('TOP_INCREASE_WAREHOUSE', 'unknown')} "
             f"({safe_float(row.get('TOP_INCREASE_CREDITS', 0)):,.2f} credits).",
-            "Explain bill / attribution / contract",
+            "Usage attribution and run-rate",
         ))
     if high_actions > 0 or total_savings > 0:
         moves.append((
@@ -4236,14 +4236,14 @@ def render() -> None:
     render_operator_briefing(
         [
             ("First move", "Explain why spend changed before tuning anything."),
-            ("Telemetry", "Reconcile warehouse metering, chargeback allocation, Cortex, and contract pace."),
+            ("Telemetry", "Reconcile warehouse metering, chargeback allocation, Cortex, and run-rate pace."),
             ("Control", "Convert findings into routed actions with savings and status."),
-            ("Output", "Produce a bill narrative leadership can understand without opening the app."),
+            ("Output", "Produce a usage narrative leadership can understand without opening the app."),
         ],
         columns=4,
     )
     if st.session_state.get("exceptions_only_mode"):
-        st.warning("Landing default: prioritize bill deltas, open action queue items, and contract risk.")
+        st.warning("Landing default: prioritize usage deltas, open action queue items, and run-rate risk.")
     _render_cost_watch_floor(company, credit_price)
 
     workflow = render_workflow_selector(

@@ -20,9 +20,7 @@ from sections.shell_helpers import (
     _clean_display_text,
     consume_section_autoload_request,
     render_data_freshness,
-    render_shell_kpi_row,
     render_shell_snapshot,
-    render_shell_status_strip,
     with_loaded_at,
 )
 from utils.primitives import safe_float, safe_int
@@ -2203,7 +2201,7 @@ def _render_cost_drilldown_command_map(
     )
     if board.empty:
         return
-    st.markdown("**Cost Drilldown Readiness**")
+    st.markdown("**Cost Drilldown Status**")
     render_shell_snapshot((
         ("Ready", f"{summary['ready']:,}"),
         ("Review", f"{summary['review']:,}"),
@@ -2219,7 +2217,7 @@ def _render_cost_drilldown_command_map(
         ],
         sort_by=["COMMAND_PRIORITY", "DRILLDOWN"],
         ascending=[True, True],
-        raw_label="All cost drilldown readiness rows",
+        raw_label="All cost drilldown status rows",
         height=280,
         max_rows=10,
     )
@@ -3453,8 +3451,8 @@ def _maybe_autoload_cost_splash(company: str, days: int, credit_price: float) ->
     if consume_section_autoload_request("Cost & Contract"):
         st.session_state[_COST_SPLASH_AUTOLOAD_SCOPE_KEY] = meta
         st.caption(
-            "Cost & Contract opened fast summary facts. Refresh Overview loads official spend, "
-            "warehouse ranking, Cortex spend, and proof telemetry."
+            "Cost & Contract opened fast summary facts. Refresh Cost loads official spend, "
+            "warehouse ranking, Cortex spend, and supporting telemetry."
         )
         return _ensure_cost_splash(company, days, credit_price, full_proof=False)
     return _cached_cost_splash(company, days, credit_price)
@@ -3586,7 +3584,7 @@ def _cost_command_lanes(splash: dict, *, credit_price: float, days: int) -> list
                 "label": "Credits / dollars",
                 "value": "On demand",
                 "state": "Metering",
-                "detail": "Refresh Overview loads official service spend or warehouse metering.",
+                "detail": "Refresh Cost loads official service spend or warehouse metering.",
             },
             {
                 "label": "Spend movement",
@@ -3776,128 +3774,6 @@ def _render_cost_splash(splash: dict, *, company: str, days: int, credit_price: 
     )
 
 
-def _cost_action_brief(company: str, days: int, credit_price: float) -> dict:
-    data = st.session_state.get("cost_contract_cockpit")
-    meta = st.session_state.get("cost_contract_cockpit_meta", {})
-    err = str(st.session_state.get("cost_contract_cockpit_error", "") or "")
-    data_loaded = _looks_like_frame(data) and not data.empty
-    scope_matches = meta.get("company") == company and meta.get("days") == int(days)
-
-    if err:
-        return {
-            "state": "Unavailable",
-            "headline": "Cost cockpit did not load for this role or source.",
-            "detail": "Specialist cost workflows remain available; reload the cockpit when Snowflake access is ready.",
-        }
-    if not data_loaded:
-        return {
-            "state": "Ready",
-            "headline": "Load the cost cockpit before explaining usage movement.",
-            "detail": "The cockpit stays quiet until you request warehouse, contract, action, and impact telemetry.",
-        }
-    if not scope_matches:
-        return {
-            "state": "Stale",
-            "headline": "Reload Cost Cockpit before acting.",
-            "detail": "Loaded cost telemetry does not match the active company or cockpit window.",
-        }
-
-    row = data.iloc[0]
-    current_credits = safe_float(row.get("CURRENT_CREDITS", 0))
-    prior_credits = safe_float(row.get("PRIOR_CREDITS", 0))
-    delta_pct = ((current_credits - prior_credits) / prior_credits * 100) if prior_credits > 0 else 0.0
-    top_wh = str(row.get("TOP_INCREASE_WAREHOUSE") or "No increase")
-    top_delta = safe_float(row.get("TOP_INCREASE_CREDITS", 0))
-    queue = st.session_state.get("cost_contract_queue")
-    open_actions = high_actions = 0
-    if _looks_like_frame(queue) and not queue.empty and "STATUS" in queue.columns:
-        open_mask = ~queue["STATUS"].isin(["Fixed", "Ignored"])
-        open_actions = int(open_mask.sum())
-        if "SEVERITY" in queue.columns:
-            high_actions = int((queue["SEVERITY"].isin(["Critical", "High"]) & open_mask).sum())
-
-    if delta_pct >= 20 or top_delta > 0:
-        return {
-            "state": "Bill Move",
-            "headline": "Explain the top warehouse movement first.",
-            "detail": f"{top_wh} moved {top_delta:+,.2f} credits; selected window is {delta_pct:+.1f}% versus prior.",
-        }
-    if high_actions:
-        return {
-            "state": "Action Queue",
-            "headline": "Work high-priority savings or cost-control actions.",
-            "detail": f"{high_actions:,} high-priority action(s) across {open_actions:,} open cost action(s).",
-        }
-    if current_credits > 0:
-        return {
-            "state": "Loaded",
-            "headline": "No dominant cost incident in the loaded cockpit.",
-            "detail": f"Selected window spend is about ${current_credits * credit_price:,.0f}; use drilldowns for attribution, Cortex, storage, SPCS, or action status.",
-        }
-    return {
-        "state": "Clear",
-        "headline": "No warehouse spend surfaced in the loaded cockpit.",
-        "detail": "Use specialist workflows only if a chargeback, contract, or savings question remains.",
-    }
-
-
-def _render_cost_action_brief(brief: dict) -> None:
-    render_shell_status_strip(
-        state=brief.get("state") or "Review",
-        headline=brief.get("headline") or "Review cost telemetry.",
-        detail=brief.get("detail") or "",
-    )
-
-
-def _cost_operating_snapshot(company: str, days: int, credit_price: float) -> dict:
-    data = st.session_state.get("cost_contract_cockpit")
-    meta = st.session_state.get("cost_contract_cockpit_meta", {})
-    loaded = (
-        _looks_like_frame(data)
-        and not data.empty
-        and meta.get("company") == company
-        and meta.get("days") == int(days)
-    )
-    if not loaded:
-        return {"loaded": False}
-
-    row = data.iloc[0]
-    current_credits = safe_float(row.get("CURRENT_CREDITS", 0))
-    prior_credits = safe_float(row.get("PRIOR_CREDITS", 0))
-    delta_pct = ((current_credits - prior_credits) / prior_credits * 100) if prior_credits > 0 else 0.0
-    queue = st.session_state.get("cost_contract_queue")
-    open_actions = 0
-    if _looks_like_frame(queue) and not queue.empty and "STATUS" in queue.columns:
-        status = queue["STATUS"].fillna("").astype(str)
-        open_actions = int((~status.isin(["Fixed", "Ignored"])).sum())
-
-    return {
-        "loaded": True,
-        "spend": credits_to_dollars(current_credits, credit_price),
-        "delta_pct": delta_pct,
-        "top_delta_credits": safe_float(row.get("TOP_INCREASE_CREDITS", 0)),
-        "open_actions": open_actions,
-    }
-
-
-def _render_cost_operating_snapshot(snapshot: dict) -> None:
-    loaded = bool(snapshot.get("loaded"))
-    if not loaded:
-        render_shell_kpi_row((
-            ("Spend", "On demand"),
-            ("Delta", "Load telemetry"),
-            ("Top Inc", "Load telemetry"),
-            ("Actions", "Load queue"),
-        ))
-        return
-    render_shell_kpi_row((
-        ("Spend", f"${safe_float(snapshot.get('spend')):,.0f}"),
-        ("Delta", f"{safe_float(snapshot.get('delta_pct')):+.1f}%"),
-        ("Top Inc", f"{safe_float(snapshot.get('top_delta_credits')):+,.1f} cr"),
-        ("Actions", f"{safe_int(snapshot.get('open_actions')):,}"),
-    ))
-
-
 def _render_cost_watch_floor(company: str, credit_price: float) -> None:
     selected_days = safe_int(
         st.session_state.get("cost_contract_cockpit_window", DEFAULT_DAY_WINDOW),
@@ -3916,9 +3792,9 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
             key="cost_contract_cockpit_window",
         )
     with controls[1]:
-        refresh_overview = st.button("Refresh Overview", key="cost_contract_splash_load", type="primary", width="stretch")
+        refresh_cost = st.button("Refresh Cost", key="cost_contract_refresh", type="primary", width="stretch")
 
-    if refresh_overview:
+    if refresh_cost:
         st.session_state.pop(_COST_SPLASH_KEY, None)
         st.session_state.pop(_COST_SPLASH_AUTOLOAD_BLOCKED_SCOPE_KEY, None)
         splash = _ensure_cost_splash(company, int(days), credit_price)
@@ -3926,7 +3802,6 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
         splash = _maybe_autoload_cost_splash(company, int(days), credit_price)
     _render_cost_splash(splash, company=company, days=int(days), credit_price=credit_price)
 
-    st.markdown("**Cost Detail Refresh**")
     proof_data = st.session_state.get("cost_contract_cockpit")
     proof_meta = st.session_state.get("cost_contract_cockpit_meta", {})
     proof_current = (
@@ -3941,7 +3816,7 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
         target_minutes=60,
         delayed_note="Cost detail uses fast summaries first; full account-history refresh is explicit.",
     )
-    if st.button("Refresh Cost Details", key="cost_contract_cockpit_load", type="primary"):
+    if refresh_cost:
         session = get_session_for_action(
             "load the Cost Control Cockpit",
             surface="Cost & Contract",
@@ -4054,7 +3929,7 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
                 st.session_state["cost_contract_service_lens_error"] = format_snowflake_error(exc)
                 st.session_state["cost_contract_service_lens_source"] = ""
     defer_section_note(
-        "Cost detail refresh is optional; use it when you need account-history rows behind the fast cost summary."
+        "Cost detail telemetry is optional; refresh only when you need account-history rows behind the fast cost summary."
     )
 
     data = st.session_state.get("cost_contract_cockpit")

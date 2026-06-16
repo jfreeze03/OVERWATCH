@@ -655,14 +655,15 @@ def render_priority_dataframe(
             or "SQL" in upper
             or "DDL" in upper
             or "DCL" in upper
+            or "PROOF" in upper
+            or "EVIDENCE" in upper
+            or "VERIFY" in upper
+            or "VERIFICATION" in upper
             or "APPROVAL" in upper
             or "READINESS" in upper
-            or "OWNER ROUTE" in upper
-            or upper == "OWNER"
-            or upper == "OWNER_NAME"
-            or upper == "OWNER_EMAIL"
-            or upper.startswith("OWNER_ROUTE")
-            or upper.startswith("OWNER_APPROVAL")
+            or "MANUAL" in upper
+            or "OWNER" in upper
+            or "INTERNAL" in upper
             or "OWNER APPROVAL" in upper
             or "SCORE" in upper
             or upper == "WEIGHT"

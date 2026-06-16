@@ -214,7 +214,7 @@ def _warn_on_broad_role(role: str) -> None:
             return
         st.warning(
             "OVERWATCH is running with a broad administrator role. "
-            "For production, use OVERWATCH_MONITOR for read-only telemetry and OVERWATCH_OPERATOR for approved actions."
+            "For production, use a least-privilege read-only monitoring role."
         )
         st.session_state["_overwatch_broad_role_warning_shown"] = True
     except Exception:

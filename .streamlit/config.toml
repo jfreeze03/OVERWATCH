@@ -6,3 +6,11 @@ showSidebarNavigation = false
 
 [browser]
 gatherUsageStats = false
+
+[theme]
+base = "light"
+primaryColor = "#0068B7"
+backgroundColor = "#F6FBFF"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#102A43"
+font = "sans serif"

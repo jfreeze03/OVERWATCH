@@ -150,7 +150,7 @@ def _maybe_reload_dev_helpers() -> None:
 
 import sections
 
-if getattr(theme_module, "THEME_VERSION", "") != "2026-06-13-score-shell-white-theme-v1":
+if getattr(theme_module, "THEME_VERSION", "") != "2026-06-15-responsive-dashboard-grid-v3":
     theme_module = importlib.reload(theme_module)
     inject_theme = theme_module.inject_theme
     render_theme_picker = theme_module.render_theme_picker

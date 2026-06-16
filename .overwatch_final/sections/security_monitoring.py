@@ -2,14 +2,17 @@
 from __future__ import annotations
 
 import importlib
+from datetime import date
 
 import streamlit as st
 
+from config import DEFAULT_COMPANY, DEFAULT_DAY_WINDOW, DEFAULT_ENVIRONMENT, ENVIRONMENT_CONFIG
 from sections.shell_helpers import (
     render_shell_snapshot,
     render_shell_workflows,
     render_signal_lane_board,
 )
+from utils.command_board import load_or_reuse_command_board
 
 
 VIEWS = ("Security Posture",)
@@ -17,6 +20,10 @@ _FULL_WORKSPACE_KEY = "_security_monitoring_full_workspace_requested"
 _BRIEF_MODE_KEY = "_security_monitoring_brief_mode"
 _FAST_ENTRY_VERSION_KEY = "_security_monitoring_fast_entry_version"
 _FAST_ENTRY_VERSION = 1
+_COMMAND_BOARD_DATA_KEY = "security_monitoring_command_board_data"
+_COMMAND_BOARD_SUMMARY_KEY = "security_monitoring_command_board_summary"
+_COMMAND_BOARD_META_KEY = "security_monitoring_command_board_meta"
+_COMMAND_BOARD_REFRESH_MARKER_KEY = "security_monitoring_command_board_refresh_marker"
 _WORKFLOWS = (
     {
         "VIEW": "Security Posture",
@@ -37,6 +44,49 @@ def _frame_len(value: object) -> int:
         return max(0, int(len(value)))
     except Exception:
         return 0
+
+
+def _safe_int(value: object, default: int = 0) -> int:
+    try:
+        return int(float(value if value is not None else default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _active_company() -> str:
+    return str(st.session_state.get("active_company", DEFAULT_COMPANY) or DEFAULT_COMPANY)
+
+
+def _active_environment() -> str:
+    env = str(st.session_state.get("global_environment", DEFAULT_ENVIRONMENT) or DEFAULT_ENVIRONMENT)
+    return env if env in ENVIRONMENT_CONFIG else DEFAULT_ENVIRONMENT
+
+
+def _window_days() -> int:
+    start = st.session_state.get("global_start_date")
+    end = st.session_state.get("global_end_date")
+    if isinstance(start, date) and isinstance(end, date):
+        return max(1, (end - start).days + 1)
+    return int(DEFAULT_DAY_WINDOW)
+
+
+def _command_summary() -> dict:
+    summary = st.session_state.get(_COMMAND_BOARD_SUMMARY_KEY)
+    if isinstance(summary, dict) and summary.get("loaded"):
+        return dict(summary)
+    return {}
+
+
+def _load_command_board() -> None:
+    load_or_reuse_command_board(
+        data_key=_COMMAND_BOARD_DATA_KEY,
+        summary_key=_COMMAND_BOARD_SUMMARY_KEY,
+        meta_key=_COMMAND_BOARD_META_KEY,
+        refresh_marker_key=_COMMAND_BOARD_REFRESH_MARKER_KEY,
+        company=_active_company(),
+        environment=_active_environment(),
+        days=_window_days(),
+    )
 
 
 def _apply_fast_entry_default() -> None:
@@ -85,6 +135,64 @@ def _delegate_full_workspace() -> None:
 def _security_lanes() -> tuple[dict[str, str], ...]:
     security_summary = _frame_len(st.session_state.get("security_posture_summary"))
     security_exceptions = _frame_len(st.session_state.get("security_posture_exceptions"))
+    command_summary = _command_summary()
+    if command_summary and not any((security_summary, security_exceptions)):
+        failed_logins = _safe_int(command_summary.get("failed_logins"))
+        privileged = _safe_int(command_summary.get("privileged_grants"))
+        dormant = _safe_int(command_summary.get("dormant_users"))
+        active_users = _safe_int(command_summary.get("active_users"))
+        open_actions = _safe_int(command_summary.get("open_actions"))
+        critical_high = _safe_int(command_summary.get("critical_high_alerts"))
+        return (
+            {
+                "label": "Login anomalies",
+                "value": f"{failed_logins:,}",
+                "state": "Auth",
+                "detail": "Failed-login movement is visible before opening security detail.",
+            },
+            {
+                "label": "Privileged access",
+                "value": f"{privileged:,}",
+                "state": "Access",
+                "detail": "High-privilege grant exposure is tracked from Snowflake account metadata.",
+            },
+            {
+                "label": "Dormant users",
+                "value": f"{dormant:,}",
+                "state": "Identity",
+                "detail": f"{active_users:,} active user(s) are in the current monitoring scope.",
+            },
+            {
+                "label": "Security signals",
+                "value": f"{critical_high:,}",
+                "state": "Risk",
+                "detail": "Security pressure shares the same alert/action queue facts as the other command sections.",
+            },
+            {
+                "label": "Action route",
+                "value": f"{open_actions:,}",
+                "state": "Queue",
+                "detail": "Potential security work routes into monitored actions with current Snowflake telemetry.",
+            },
+            {
+                "label": "Sensitive access",
+                "value": "Tracked",
+                "state": "Access",
+                "detail": "Open Security Detail for access-history and sharing analysis.",
+            },
+            {
+                "label": "Public exposure",
+                "value": "Tracked",
+                "state": "Risk",
+                "detail": "Broad grants, external stages, integrations, and shares stay in the security lane.",
+            },
+            {
+                "label": "Data sharing",
+                "value": "Tracked",
+                "state": "Sharing",
+                "detail": "Provider/consumer share patterns remain visible without change-management scope.",
+            },
+        )
     if not any((security_summary, security_exceptions)):
         return (
             {
@@ -156,14 +264,23 @@ def _security_lanes() -> tuple[dict[str, str], ...]:
 def _render_metric_board() -> None:
     security_summary = _frame_len(st.session_state.get("security_posture_summary"))
     security_exceptions = _frame_len(st.session_state.get("security_posture_exceptions"))
+    command_summary = _command_summary()
     st.markdown("**Security Monitoring Command Board**")
     render_signal_lane_board("Security Monitoring Command Board", _security_lanes(), max_lanes=8)
-    render_shell_snapshot((
-        ("Security Summary", "Loaded" if security_summary else "On demand"),
-        ("Security Exceptions", f"{security_exceptions:,}" if security_exceptions else "On demand"),
-        ("Privileged Access", "Tracked"),
-        ("Login Risk", "Tracked"),
-    ))
+    if command_summary and not security_summary:
+        render_shell_snapshot((
+            ("Failed Logins", f"{_safe_int(command_summary.get('failed_logins')):,}"),
+            ("Privileged Grants", f"{_safe_int(command_summary.get('privileged_grants')):,}"),
+            ("Dormant Users", f"{_safe_int(command_summary.get('dormant_users')):,}"),
+            ("Open Actions", f"{_safe_int(command_summary.get('open_actions')):,}"),
+        ))
+    else:
+        render_shell_snapshot((
+            ("Security Summary", "Loaded" if security_summary else "On demand"),
+            ("Security Exceptions", f"{security_exceptions:,}" if security_exceptions else "On demand"),
+            ("Privileged Access", "Tracked"),
+            ("Login Risk", "Tracked"),
+        ))
 
 
 def _render_workflow_launchpad() -> None:
@@ -186,5 +303,6 @@ def render() -> None:
         _delegate_full_workspace()
         return
 
+    _load_command_board()
     _render_metric_board()
     _render_workflow_launchpad()

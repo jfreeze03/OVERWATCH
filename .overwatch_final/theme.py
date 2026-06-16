@@ -14,9 +14,9 @@
 #   render_theme_picker()
 import streamlit as st
 
-THEME_VERSION = "2026-06-13-score-shell-white-theme-v1"
+THEME_VERSION = "2026-06-15-responsive-dashboard-grid-v3"
 
-_DEFAULT_THEME = "carbon"
+_DEFAULT_THEME = "terminal"
 _THEME_ALIASES = {
     "aurora": "carbon",
     "black_ice": "carbon",
@@ -92,6 +92,53 @@ _VARS = {
 }
 """,
 
+# 6. SNOWFLAKE WHITE - white workspace with Snowflake blue command accents
+"terminal": """
+:root {
+    --bg-app:          #f6fbff;
+    --bg-sidebar:      #ffffff;
+    --bg-card:         #ffffff;
+    --bg-card-hover:   #f1f8fd;
+    --bg-input:        #ffffff;
+    --bg-tab-list:     #e7f3fa;
+    --bg-expander:     #ffffff;
+
+    --border-subtle:   rgba(0, 104, 183, 0.16);
+    --border-normal:   rgba(0, 104, 183, 0.30);
+    --border-strong:   rgba(0, 104, 183, 0.58);
+    --border-sidebar:  rgba(0, 104, 183, 0.18);
+
+    --text-primary:    #102a43;
+    --text-secondary:  #31566b;
+    --text-muted:      #607b8a;
+    --text-input:      #102a43;
+    --text-heading:    #102a43;
+
+    --accent:          #0068B7;
+    --accent-rgb:      0, 104, 183;
+    --accent2:         #29B5E8;
+    --accent3:         #71D3DC;
+    --h1-gradient:     linear-gradient(90deg, #102a43, #0068B7, #29B5E8);
+
+    --metric-shadow:        0 1px 2px rgba(15, 42, 67, 0.08), 0 8px 24px rgba(0, 104, 183, 0.08);
+    --metric-hover-shadow:  0 2px 5px rgba(15, 42, 67, 0.10), 0 10px 28px rgba(0, 104, 183, 0.14);
+    --btn-bg:          linear-gradient(135deg, #ffffff, #edf8fd);
+    --btn-bg-hover:    linear-gradient(135deg, #f8fdff, #d9f1fb);
+    --btn-border:      rgba(0, 104, 183, 0.34);
+    --btn-hover-shadow: 0 2px 9px rgba(0, 104, 183, 0.12);
+    --slider-track:    linear-gradient(90deg, #0068B7, #29B5E8);
+    --tab-active-bg:   #0068B7;
+    --tab-active-col:  #ffffff;
+    --hr-bg:           linear-gradient(90deg, transparent, rgba(0,104,183,0.28), transparent);
+    --scrollbar-track: #e7f3fa;
+    --scrollbar-thumb: rgba(0, 104, 183, 0.34);
+    --scrollbar-hover: rgba(0, 104, 183, 0.56);
+    --font-body:       'Lato', 'Inter', 'DM Sans', system-ui, sans-serif;
+    --font-mono:       'DM Mono', 'Cascadia Mono', monospace;
+    --extra-css:       '';
+}
+""",
+
 }
 
 # Shared structural styles (all colors via variables)
@@ -108,8 +155,10 @@ _STRUCTURAL_CSS = """
 }
 .block-container {
     padding-top: 1rem !important;
+    padding-left: 2.1rem !important;
+    padding-right: 2.1rem !important;
     padding-bottom: 2rem !important;
-    max-width: 1500px !important;
+    max-width: 1600px !important;
 }
 [data-testid="stToolbar"],
 [data-testid="stDecoration"],
@@ -301,8 +350,33 @@ hr {
 /* Charts */
 [data-testid="stArrowVegaLiteChart"],
 [data-testid="stVegaLiteChart"] {
+    background: var(--bg-card) !important;
+    border: 1px solid var(--border-subtle) !important;
+    border-radius: 8px !important;
+    box-shadow: var(--metric-shadow) !important;
+    padding: 0.45rem !important;
+    overflow: hidden !important;
+}
+[data-testid="stArrowVegaLiteChart"] canvas,
+[data-testid="stVegaLiteChart"] canvas,
+[data-testid="stArrowVegaLiteChart"] svg,
+[data-testid="stVegaLiteChart"] svg,
+.vega-embed,
+.vega-embed canvas,
+.vega-embed svg {
     background: transparent !important;
-    border-radius: 10px;
+}
+.ow-chart-title {
+    color: var(--text-primary);
+    font-size: 0.82rem;
+    font-weight: 850;
+    margin: 0.55rem 0 0.28rem;
+}
+.ow-chart-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 0.85rem;
+    margin: 0.35rem 0 0.85rem;
 }
 
 /* Inputs */
@@ -315,6 +389,32 @@ hr {
     border-radius: 8px !important;
     color: var(--text-input) !important;
     font-family: var(--font-body) !important;
+}
+.stApp [data-baseweb="input"],
+.stApp [data-baseweb="base-input"],
+.stApp [data-baseweb="select"] > div {
+    background: var(--bg-input) !important;
+    border-color: var(--border-normal) !important;
+    color: var(--text-input) !important;
+    font-family: var(--font-body) !important;
+}
+.stApp [data-baseweb="input"] input,
+.stApp [data-baseweb="base-input"] input,
+.stApp [data-baseweb="select"] input,
+.stApp [data-baseweb="select"] span,
+.stApp [data-baseweb="select"] div {
+    color: var(--text-input) !important;
+    -webkit-text-fill-color: var(--text-input) !important;
+}
+.stApp [data-baseweb="select"] svg {
+    color: var(--text-input) !important;
+    fill: var(--text-input) !important;
+}
+.stApp [data-baseweb="input"]:focus-within,
+.stApp [data-baseweb="base-input"]:focus-within,
+.stApp [data-baseweb="select"]:focus-within > div {
+    border-color: var(--border-strong) !important;
+    box-shadow: 0 0 12px rgba(var(--accent-rgb), 0.12) !important;
 }
 .stSelectbox > div > div:focus-within,
 .stTextInput > div > div > input:focus,
@@ -725,6 +825,7 @@ code, pre, .stCodeBlock {
 }
 .ow-shell-snapshot-grid {
     display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
     gap: 0.65rem;
     margin: 0.35rem 0 0.85rem;
 }
@@ -782,6 +883,74 @@ code, pre, .stCodeBlock {
     font-weight: 800;
     line-height: 1.25;
     overflow-wrap: anywhere;
+}
+.ow-signal-board {
+    margin: 0.28rem 0 0.9rem;
+}
+.ow-signal-title {
+    color: var(--text-primary);
+    font-size: 0.92rem;
+    font-weight: 850;
+    margin: 0.2rem 0 0.48rem;
+}
+.ow-signal-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+    gap: 0.72rem;
+}
+.ow-signal-card {
+    min-width: 0;
+    min-height: 6.2rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 0.48rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    background: var(--bg-card);
+    box-shadow: var(--metric-shadow);
+    padding: 0.78rem 0.86rem;
+}
+.ow-signal-card-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.52rem;
+}
+.ow-signal-label {
+    color: var(--text-muted);
+    font-size: 0.66rem;
+    font-weight: 850;
+    letter-spacing: 0.04em;
+    line-height: 1.24;
+    text-transform: uppercase;
+    overflow-wrap: anywhere;
+}
+.ow-signal-pill {
+    flex: 0 0 auto;
+    max-width: 54%;
+    border: 1px solid rgba(var(--accent-rgb), 0.16);
+    border-radius: 999px;
+    background: rgba(var(--accent-rgb), 0.08);
+    color: var(--accent);
+    font-size: 0.64rem;
+    font-weight: 850;
+    line-height: 1.1;
+    padding: 0.18rem 0.46rem;
+    overflow-wrap: anywhere;
+    text-align: center;
+}
+.ow-signal-value {
+    color: var(--text-primary);
+    font-size: 1.2rem;
+    font-weight: 850;
+    line-height: 1.15;
+    overflow-wrap: anywhere;
+}
+.ow-signal-detail {
+    color: var(--text-secondary);
+    font-size: 0.76rem;
+    line-height: 1.35;
 }
 .ow-section-guide {
     display: grid;
@@ -886,11 +1055,18 @@ code, pre, .stCodeBlock {
     color: var(--accent) !important;
 }
 @media (max-width: 900px) {
+    .block-container {
+        padding-left: 1rem !important;
+        padding-right: 1rem !important;
+    }
     .ow-brief-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
     }
     .ow-shell-snapshot-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    }
+    .ow-signal-grid {
+        grid-template-columns: repeat(auto-fit, minmax(165px, 1fr)) !important;
     }
     .ow-section-guide {
         grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
@@ -915,6 +1091,9 @@ code, pre, .stCodeBlock {
         grid-template-columns: 1fr !important;
     }
     .ow-shell-snapshot-grid {
+        grid-template-columns: 1fr !important;
+    }
+    .ow-signal-grid {
         grid-template-columns: 1fr !important;
     }
 }
@@ -1133,6 +1312,10 @@ def _normalize_theme_key(theme_key: str | None) -> str:
 
 
 def _get_theme() -> str:
+    if st.session_state.get("_active_theme_version") != THEME_VERSION:
+        st.session_state["active_theme"] = _DEFAULT_THEME
+        st.session_state["theme_picker_radio"] = _DEFAULT_THEME
+        st.session_state["_active_theme_version"] = THEME_VERSION
     theme_key = _normalize_theme_key(st.session_state.get("active_theme", _DEFAULT_THEME))
     if st.session_state.get("active_theme") != theme_key:
         st.session_state["active_theme"] = theme_key

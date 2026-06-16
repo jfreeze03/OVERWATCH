@@ -494,21 +494,23 @@ def _render_command_snapshot() -> None:
 def _render_morning_route_board() -> None:
     data = st.session_state.get("dba_control_room_data")
     failed_queries = failed_tasks = action_rows = queue_minutes = 0
+    summary_loaded = False
     if isinstance(data, dict) and data:
         failed_queries = _frame_len(data.get("failed_queries"))
         failed_tasks = _frame_len(data.get("task_failures"))
         action_rows = _frame_len(data.get("action_queue"))
     elif _command_summary():
         summary = _command_summary()
+        summary_loaded = True
         failed_queries = int(_safe_float(summary.get("failed_queries")))
         failed_tasks = int(_safe_float(summary.get("failed_tasks")))
         action_rows = int(_safe_float(summary.get("open_actions")))
         queue_minutes = _safe_float(summary.get("queue_seconds")) / 60.0
     st.markdown("**Morning Route Board**")
     render_shell_snapshot((
-        ("Incidents", f"{failed_queries + failed_tasks:,}" if failed_queries or failed_tasks else "On demand"),
-        ("Action Queue", f"{action_rows:,}" if action_rows else "On demand"),
-        ("Queue Pressure", f"{queue_minutes:,.1f}m" if queue_minutes else "On demand"),
+        ("Incidents", f"{failed_queries + failed_tasks:,}" if summary_loaded or failed_queries or failed_tasks else "On demand"),
+        ("Action Queue", f"{action_rows:,}" if summary_loaded or action_rows else "On demand"),
+        ("Queue Pressure", f"{queue_minutes:,.1f}m" if summary_loaded or queue_minutes else "On demand"),
         ("Triage", "Ready"),
     ))
 

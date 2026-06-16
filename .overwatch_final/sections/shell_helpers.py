@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
+from html import escape as _escape_markup
 import re
 
 import streamlit as st
@@ -350,13 +351,12 @@ def render_shell_snapshot(metrics: tuple[tuple[str, object], ...]) -> None:
         visible_metrics.append((_clean_display_text(label), clean_value))
     if not visible_metrics:
         return
-    column_count = max(1, min(4, len(visible_metrics)))
-    cols = st.columns(column_count)
-    for idx, (label, value) in enumerate(visible_metrics):
-        with cols[idx % column_count]:
-            with st.container(border=True):
-                st.caption(label)
-                st.markdown(f"**{value}**")
+    cards = "".join(
+        f'<div class="ow-shell-snapshot-card"><span class="ow-shell-snapshot-label">{_escape_markup(label)}</span>'
+        f'<strong class="ow-shell-snapshot-value">{_escape_markup(value)}</strong></div>'
+        for label, value in visible_metrics
+    )
+    st.html(f'<div class="ow-shell-snapshot-grid">{cards}</div>')
 
 
 def render_shell_status_strip(
@@ -370,8 +370,9 @@ def render_shell_status_strip(
         copy_col, state_col = st.columns([4, 1])
         with copy_col:
             st.markdown(f"**{_clean_display_text(headline or 'Ready')}**")
+            detail = _clean_display_text(detail)
             if detail:
-                st.caption(_clean_display_text(detail))
+                st.caption(detail)
         with state_col:
             _badge(state or "Ready")
 
@@ -400,22 +401,28 @@ def render_signal_lane_board(
             break
     if not rows:
         return
-    st.markdown(f"**{_clean_display_text(title)}**")
-    column_count = max(1, min(4, len(rows)))
-    cols = st.columns(column_count)
-    for idx, row in enumerate(rows):
+    cards: list[str] = []
+    for row in rows:
         label = _clean_display_text(row.get("label") or row.get("LANE") or "Signal")
         value = _clean_display_text(row.get("value") or row.get("VALUE") or "On demand")
         state = _clean_display_text(row.get("state") or row.get("STATE") or "Review")
         detail = _clean_display_text(row.get("detail") or row.get("DETAIL") or row.get("next") or row.get("NEXT_ACTION") or "")
         show_detail = bool(row.get("show_detail") or row.get("SHOW_DETAIL"))
-        with cols[idx % column_count]:
-            with st.container(border=True):
-                st.caption(label)
-                _badge(state)
-                st.markdown(f"**{value}**")
-                if detail and show_detail:
-                    st.caption(detail)
+        detail_html = (
+            f'<div class="ow-signal-detail">{_escape_markup(detail)}</div>'
+            if detail and show_detail
+            else ""
+        )
+        cards.append(
+            f'<div class="ow-signal-card"><div class="ow-signal-card-top">'
+            f'<span class="ow-signal-label">{_escape_markup(label)}</span>'
+            f'<span class="ow-signal-pill">{_escape_markup(state)}</span></div>'
+            f'<div class="ow-signal-value">{_escape_markup(value)}</div>{detail_html}</div>'
+        )
+    st.html(
+        f'<section class="ow-signal-board"><div class="ow-signal-title">{_escape_markup(_clean_display_text(title))}</div>'
+        f'<div class="ow-signal-grid">{"".join(cards)}</div></section>'
+    )
 
 
 def _workflow_key_token(value: object, index: int) -> str:

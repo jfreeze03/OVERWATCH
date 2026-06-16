@@ -279,17 +279,122 @@ def _chart_frame(panel: str, metric: str, value_column: str = "VALUE_USD"):
     return view
 
 
+def _altair():
+    import altair as alt
+
+    return alt
+
+
+def _chart_records(frame, value_name: str, fallback_points: list[float] | None = None) -> list[dict[str, object]]:
+    if getattr(frame, "empty", True):
+        points = fallback_points if fallback_points is not None else [0.0]
+        if len(points) > 1:
+            labels = [f"D-{len(points) - idx - 1}" if idx < len(points) - 1 else "Today" for idx in range(len(points))]
+        else:
+            labels = ["Current"]
+        return [{"Label": label, value_name: _safe_float(value)} for label, value in zip(labels, points)]
+    rows = frame.reset_index().copy()
+    value_columns = [column for column in rows.columns if column != "Label"]
+    source_value = value_columns[0] if value_columns else value_name
+    if source_value not in rows.columns:
+        rows[source_value] = 0.0
+    rows[value_name] = rows[source_value].map(_safe_float)
+    rows["Label"] = rows["Label"].astype(str)
+    return rows[["Label", value_name]].to_dict("records")
+
+
+def _configure_chart(chart):
+    return (
+        chart.configure_view(strokeWidth=0)
+        .configure_axis(
+            gridColor="rgba(0,104,183,0.10)",
+            labelColor="#31566b",
+            titleColor="#31566b",
+            domainColor="rgba(0,104,183,0.22)",
+            tickColor="rgba(0,104,183,0.22)",
+            labelFontSize=10,
+            titleFontSize=11,
+        )
+        .configure_legend(
+            labelColor="#31566b",
+            titleColor="#31566b",
+            orient="bottom",
+        )
+    )
+
+
+def _render_line_panel(title: str, frame, *, fallback_points: list[float] | None = None, value_name: str = "Value") -> None:
+    alt = _altair()
+    rows = _chart_records(frame, value_name, fallback_points)
+    st.markdown(f'<div class="ow-chart-title">{title}</div>', unsafe_allow_html=True)
+    base = alt.Chart(alt.Data(values=rows)).encode(
+        x=alt.X(
+            "Label:N",
+            title=None,
+            axis=alt.Axis(labelAngle=-35, labelLimit=92, labelOverlap=True),
+        ),
+        y=alt.Y(f"{value_name}:Q", title=None, scale=alt.Scale(zero=True)),
+        tooltip=[
+            alt.Tooltip("Label:N", title="Period"),
+            alt.Tooltip(f"{value_name}:Q", title=value_name, format=",.2f"),
+        ],
+    )
+    area = base.mark_area(
+        color="#29B5E8",
+        opacity=0.16,
+        interpolate="monotone",
+    )
+    line = base.mark_line(
+        color="#0068B7",
+        strokeWidth=3,
+        interpolate="monotone",
+    )
+    points = base.mark_point(
+        color="#0068B7",
+        filled=True,
+        size=42,
+    )
+    st.altair_chart(_configure_chart((area + line + points).properties(height=170)), width="stretch")
+
+
+def _render_bar_panel(title: str, frame, *, value_name: str = "Value", max_rows: int = 8) -> None:
+    alt = _altair()
+    rows = _chart_records(frame, value_name)[:max(1, int(max_rows or 8))]
+    st.markdown(f'<div class="ow-chart-title">{title}</div>', unsafe_allow_html=True)
+    height = max(138, min(224, 28 * len(rows) + 44))
+    chart = (
+        alt.Chart(alt.Data(values=rows))
+        .mark_bar(color="#0068B7", cornerRadiusEnd=4, opacity=0.86)
+        .encode(
+            y=alt.Y(
+                "Label:N",
+                title=None,
+                sort="-x",
+                axis=alt.Axis(labelLimit=150),
+            ),
+            x=alt.X(f"{value_name}:Q", title=None, scale=alt.Scale(zero=True)),
+            tooltip=[
+                alt.Tooltip("Label:N", title="Dimension"),
+                alt.Tooltip(f"{value_name}:Q", title=value_name, format=",.2f"),
+            ],
+        )
+        .properties(height=height)
+    )
+    st.altair_chart(_configure_chart(chart), width="stretch")
+
+
 def _render_kpis() -> None:
     render_signal_lane_board("Executive Glance KPIs", _executive_glance_kpis(), max_lanes=6)
 
 
 def _render_spend_trend() -> None:
-    st.markdown("**7-Day Spend Trend**")
     daily = _chart_frame("DAILY_COST", "Daily Spend")
-    if getattr(daily, "empty", True):
-        st.line_chart({"Daily spend": _spend_trend_points()})
-        return
-    st.line_chart(daily)
+    _render_line_panel(
+        "7-Day Spend Trend",
+        daily,
+        fallback_points=_spend_trend_points(),
+        value_name="Daily spend",
+    )
 
 
 def _render_observability_summary() -> None:
@@ -304,68 +409,33 @@ def _render_observability_summary() -> None:
     pressure = _chart_frame("WAREHOUSE_PRESSURE", "Queue Seconds", "VALUE")
     spill = _chart_frame("WAREHOUSE_PRESSURE", "Remote Spill GB", "VALUE")
 
-    st.caption("Credits, dollars, query health, failures, queueing, spill, and top workload mix in one executive view.")
     render_signal_lane_board("Snowflake Observability Wall", _observability_wall_lanes(), max_lanes=12)
 
-    left, middle, right = st.columns(3)
+    left, right = st.columns(2)
     with left:
-        st.caption("Daily spend")
-        if getattr(daily_spend, "empty", True):
-            st.line_chart({"Daily spend": _spend_trend_points()})
-        else:
-            st.line_chart(daily_spend)
-    with middle:
-        st.caption("Monthly spend")
-        if getattr(monthly, "empty", True):
-            st.info("Monthly spend is available after the scheduled summary refresh.")
-        else:
-            st.bar_chart(monthly)
+        _render_line_panel("Daily Spend", daily_spend, fallback_points=_spend_trend_points(), value_name="Daily spend")
     with right:
-        st.caption("Runtime pressure")
-        if getattr(workload, "empty", True):
-            st.info("Runtime trend is available after workload facts refresh.")
-        else:
-            st.line_chart(workload)
+        _render_line_panel("Runtime Pressure", workload, fallback_points=[0.0], value_name="P95 runtime")
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2 = st.columns(2)
     with c1:
-        st.caption("Top cost drivers")
-        if getattr(drivers, "empty", True):
-            st.info("Driver ranking is available after refresh.")
-        else:
-            st.dataframe(drivers.reset_index().head(5), hide_index=True, width="stretch")
+        _render_bar_panel("Monthly Spend", monthly, value_name="Monthly spend", max_rows=6)
     with c2:
-        st.caption("Query mix")
-        if getattr(query_types, "empty", True):
-            st.info("Query type mix is available after refresh.")
-        else:
-            st.bar_chart(query_types.head(8))
+        _render_bar_panel("Top Cost Drivers", drivers, value_name="Cost drivers", max_rows=6)
+
+    c3, c4 = st.columns(2)
     with c3:
-        st.caption("Database mix")
-        if getattr(query_database, "empty", True):
-            st.info("Database mix is available after refresh.")
-        else:
-            st.bar_chart(query_database.head(8))
+        _render_bar_panel("Query Mix", query_types, value_name="Queries", max_rows=8)
     with c4:
-        st.caption("Execution status")
-        if getattr(exec_status, "empty", True):
-            st.info("Execution status is available after refresh.")
-        else:
-            st.bar_chart(exec_status.head(8))
+        _render_bar_panel("Database Mix", query_database, value_name="Queries", max_rows=8)
 
     p1, p2 = st.columns(2)
     with p1:
-        st.caption("Warehouse queue")
-        if getattr(pressure, "empty", True):
-            st.info("Warehouse pressure is available after refresh.")
-        else:
-            st.bar_chart(pressure.head(8))
+        _render_bar_panel("Execution Status", exec_status, value_name="Queries", max_rows=6)
     with p2:
-        st.caption("Warehouse spill")
-        if getattr(spill, "empty", True):
-            st.info("Spill pressure is available after refresh.")
-        else:
-            st.bar_chart(spill.head(8))
+        _render_bar_panel("Warehouse Queue", pressure, value_name="Queue seconds", max_rows=8)
+
+    _render_bar_panel("Warehouse Spill", spill, value_name="Remote spill GB", max_rows=8)
 
 
 def _observability_wall_lanes() -> tuple[dict[str, str], ...]:

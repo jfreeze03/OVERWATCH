@@ -189,9 +189,11 @@ def _float_value(value: object, default: float = 0.0) -> float:
 
 
 def _seconds_label(value: object) -> str:
+    if value is None or str(value).strip() == "":
+        return "On demand"
     seconds = _float_value(value)
     if not seconds:
-        return "On demand"
+        return "0s"
     if seconds < 90:
         return f"{seconds:,.1f}s"
     return f"{seconds / 60.0:,.1f}m"

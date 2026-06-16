@@ -30,7 +30,6 @@ _FULL_WORKSPACE_STATE_KEYS = (
     "cost_contract_cockpit",
     "cost_contract_run_rate",
     "cost_contract_queue",
-    "cost_contract_verification_health",
     "cost_contract_attribution_reconciliation",
     "cost_contract_service_lens",
     "cost_contract_budget_command_center",
@@ -324,7 +323,7 @@ def _cost_shell_lanes(board: dict | None = None) -> tuple[dict[str, str], ...]:
         },
         {
             "label": "30d run rate",
-            "value": _money(board.get("forecast")) if _float_value(board.get("forecast")) else str(board.get("run_rate_state") or "On demand"),
+            "value": _money(board.get("forecast")) if board.get("loaded") else str(board.get("run_rate_state") or "On demand"),
             "state": "Forecast",
             "detail": f"7d average daily spend: {_money(board.get('avg_daily_7d'))}.",
         },
@@ -425,7 +424,7 @@ def _render_metric_board() -> None:
         render_shell_kpi_row((
             ("Current Spend", _money(board["spend"])),
             ("Delta", _money(board["delta_spend"], signed=True)),
-            ("30d Forecast", _money(board["forecast"]) if board["forecast"] else "On demand"),
+            ("30d Forecast", _money(board["forecast"])),
             ("Contract Pace", "Review" if board["forecast"] and board["forecast"] > board["spend"] else "Stable"),
         ))
         render_shell_kpi_row((
@@ -456,7 +455,7 @@ def _render_executive_flow_board() -> None:
     else:
         render_shell_kpi_row((
             ("Burn", _money(board["spend"])),
-            ("Run Rate", _money(board["avg_daily_7d"]) if board["avg_daily_7d"] else board["run_rate_state"]),
+            ("Run Rate", _money(board["avg_daily_7d"])),
             ("Driver", str(board["top_driver"])[:28]),
             ("Action Queue", f"{_int_value(board['open_actions']):,}"),
         ))

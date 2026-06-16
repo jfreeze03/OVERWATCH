@@ -21,8 +21,8 @@ class ThemeRegistryTests(unittest.TestCase):
             labels,
             ["Snowflake Dark", "Snowflake White"],
         )
-        self.assertEqual(theme._DEFAULT_THEME, "carbon")
-        self.assertEqual(theme._normalize_theme_key(None), "carbon")
+        self.assertEqual(theme._DEFAULT_THEME, "terminal")
+        self.assertEqual(theme._normalize_theme_key(None), "terminal")
 
     def test_removed_and_nonproduction_themes_alias_to_snowflake_dark(self):
         labels = {key: value["label"] for key, value in theme.THEMES.items()}
@@ -62,6 +62,9 @@ class ThemeRegistryTests(unittest.TestCase):
     def test_snowflake_themes_use_snowflake_blue(self):
         self.assertEqual(theme.THEMES["terminal"]["swatch"], "#29B5E8")
         self.assertEqual(theme.THEMES["carbon"]["swatch"], "#29B5E8")
+        self.assertIn("--bg-app:          #f6fbff;", theme._VARS["terminal"])
+        self.assertIn("--bg-sidebar:      #ffffff;", theme._VARS["terminal"])
+        self.assertIn("--text-primary:    #102a43;", theme._VARS["terminal"])
 
     def test_light_themes_pin_custom_shell_text_contrast(self):
         self.assertIn(
@@ -120,11 +123,20 @@ class ThemeRegistryTests(unittest.TestCase):
     def test_theme_targets_current_streamlit_button_dom(self):
         self.assertIn('button[data-testid^="stBaseButton"]', theme._STRUCTURAL_CSS)
         self.assertIn('[data-testid="stButton"] button', theme._STRUCTURAL_CSS)
+        self.assertIn('[data-baseweb="input"]', theme._STRUCTURAL_CSS)
+        self.assertIn('[data-baseweb="base-input"]', theme._STRUCTURAL_CSS)
+        self.assertIn('[data-baseweb="select"] > div', theme._STRUCTURAL_CSS)
         for theme_key in ("carbon", "terminal"):
             with self.subTest(theme=theme_key):
                 extra = theme._THEME_EXTRAS[theme_key]
                 self.assertIn('button[data-testid^="stBaseButton"]', extra)
                 self.assertIn('[data-testid="stButton"] button', extra)
+
+    def test_primary_dashboard_layout_uses_responsive_grids(self):
+        self.assertIn(".ow-signal-grid", theme._STRUCTURAL_CSS)
+        self.assertIn("repeat(auto-fit, minmax(175px, 1fr))", theme._STRUCTURAL_CSS)
+        self.assertIn(".ow-chart-title", theme._STRUCTURAL_CSS)
+        self.assertIn('[data-testid="stVegaLiteChart"]', theme._STRUCTURAL_CSS)
 
 
 if __name__ == "__main__":

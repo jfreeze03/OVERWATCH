@@ -12,6 +12,8 @@ __all__ = [
     "build_metered_credit_cte", "build_idle_warehouse_sql",
     "build_monitoring_cost_sql", "build_app_runtime_cost_sql",
     "build_cost_reconciliation_sql", "build_snowflake_service_cost_lens_sql",
+    "build_cost_efficiency_summary_sql", "build_warehouse_efficiency_sql",
+    "build_clustering_cost_sql",
     "metric_confidence_label", "freshness_note",
     "CREDIT_RATES", "CREDIT_SOURCE_LABELS", "COMPUTE_CREDIT_CASE",
 ]
@@ -650,6 +652,218 @@ def build_cost_reconciliation_sql(days_back: int = 30, prefer_query_attribution:
         ABS(COALESCE(m.exact_metered_credits, 0) - COALESCE(a.allocated_query_credits, 0)) DESC,
         usage_day DESC,
         warehouse_name
+    """
+
+
+def build_cost_efficiency_summary_sql(
+    days_back: int = 7,
+    company: str = None,
+    credit_price: float = None,
+    *,
+    prefer_query_attribution: bool = True,
+) -> str:
+    """Return single-row cost efficiency telemetry for Cost & Contract."""
+    days_back = max(1, int(days_back or 7))
+    rate = float(credit_price if credit_price is not None else DEFAULTS["credit_price"])
+    try:
+        from .company_filter import get_global_filter_clause, get_wh_filter_clause
+
+        metered_scope = get_wh_filter_clause("warehouse_name", company)
+        query_scope = get_global_filter_clause(
+            date_col="",
+            wh_col="q.warehouse_name",
+            user_col="q.user_name",
+            role_col="q.role_name",
+            db_col="q.database_name",
+        )
+    except Exception:
+        metered_scope = ""
+        query_scope = ""
+
+    failed_expr = "UPPER(COALESCE(q.execution_status, '')) IN ('FAIL', 'FAILED_WITH_ERROR')"
+    return f"""
+    WITH {build_metered_credit_cte(
+        days_back=days_back,
+        include_recent=False,
+        prefer_query_attribution=prefer_query_attribution,
+    )},
+    metered AS (
+        SELECT
+            ROUND(SUM(COALESCE(credits_used, 0)), 6) AS exact_metered_credits,
+            ROUND(SUM(COALESCE(credits_used_compute, credits_used)), 6) AS exact_compute_credits
+        FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
+        WHERE start_time >= DATEADD('day', -{days_back}, CURRENT_TIMESTAMP())
+          AND start_time < DATEADD('hour', -24, CURRENT_TIMESTAMP())
+          AND warehouse_name IS NOT NULL
+          {metered_scope}
+    ),
+    query_efficiency AS (
+        SELECT
+            COUNT(*) AS query_count,
+            ROUND(SUM(COALESCE(q.bytes_scanned, 0)) / POWER(1024, 4), 4) AS tb_scanned,
+            ROUND(AVG(COALESCE(q.percentage_scanned_from_cache, 0)), 2) AS avg_cache_pct,
+            COUNT_IF({failed_expr}) AS failed_queries,
+            ROUND(SUM(IFF({failed_expr}, COALESCE(q.total_elapsed_time, 0), 0)) / 1000 / 3600, 4) AS failed_runtime_hours,
+            ROUND(SUM(IFF({failed_expr}, COALESCE(pqc.metered_credits, 0), 0)), 6) AS failed_query_credits,
+            ROUND(SUM(COALESCE(pqc.metered_credits, 0)), 6) AS attributed_query_credits,
+            COUNT_IF(pqc.credit_source = 'QUERY_ATTRIBUTION_HISTORY') AS official_attributed_queries
+        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+        LEFT JOIN per_query_credits pqc
+          ON q.query_id = pqc.query_id
+        WHERE q.start_time >= DATEADD('day', -{days_back}, CURRENT_TIMESTAMP())
+          AND q.start_time < DATEADD('hour', -24, CURRENT_TIMESTAMP())
+          AND q.warehouse_name IS NOT NULL
+          {query_scope}
+    )
+    SELECT
+        ROUND(COALESCE(m.exact_metered_credits, 0) * {rate:.4f}, 2) AS total_cost_usd,
+        q.query_count,
+        ROUND(COALESCE(m.exact_metered_credits, 0) * {rate:.4f} / NULLIF(q.query_count, 0), 4) AS cost_per_query_usd,
+        q.tb_scanned,
+        ROUND(COALESCE(m.exact_metered_credits, 0) * {rate:.4f} / NULLIF(q.tb_scanned, 0), 2) AS cost_per_tb_usd,
+        q.avg_cache_pct,
+        q.failed_queries,
+        ROUND(q.failed_query_credits * {rate:.4f}, 2) AS failed_query_waste_usd,
+        q.failed_runtime_hours,
+        q.attributed_query_credits,
+        q.official_attributed_queries,
+        CASE
+            WHEN q.official_attributed_queries > 0 THEN 'QUERY_ATTRIBUTION_HISTORY preferred; OVERWATCH fallback for gaps'
+            ELSE 'OVERWATCH allocated fallback'
+        END AS attribution_source
+    FROM metered m, query_efficiency q
+    """
+
+
+def build_warehouse_efficiency_sql(
+    days_back: int = 7,
+    company: str = None,
+    credit_price: float = None,
+    *,
+    top: int = 50,
+    prefer_query_attribution: bool = True,
+) -> str:
+    """Return per-warehouse unit economics and pressure metrics."""
+    days_back = max(1, int(days_back or 7))
+    top = max(1, int(top or 50))
+    rate = float(credit_price if credit_price is not None else DEFAULTS["credit_price"])
+    try:
+        from .company_filter import get_global_filter_clause, get_wh_filter_clause
+
+        metered_scope = get_wh_filter_clause("warehouse_name", company)
+        query_scope = get_global_filter_clause(
+            date_col="",
+            wh_col="q.warehouse_name",
+            user_col="q.user_name",
+            role_col="q.role_name",
+            db_col="q.database_name",
+        )
+    except Exception:
+        metered_scope = ""
+        query_scope = ""
+
+    failed_expr = "UPPER(COALESCE(q.execution_status, '')) IN ('FAIL', 'FAILED_WITH_ERROR')"
+    return f"""
+    WITH {build_metered_credit_cte(
+        days_back=days_back,
+        include_recent=False,
+        prefer_query_attribution=prefer_query_attribution,
+    )},
+    metered AS (
+        SELECT
+            warehouse_name,
+            ROUND(SUM(COALESCE(credits_used, 0)), 6) AS exact_metered_credits,
+            ROUND(SUM(COALESCE(credits_used_compute, credits_used)), 6) AS exact_compute_credits
+        FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
+        WHERE start_time >= DATEADD('day', -{days_back}, CURRENT_TIMESTAMP())
+          AND start_time < DATEADD('hour', -24, CURRENT_TIMESTAMP())
+          AND warehouse_name IS NOT NULL
+          {metered_scope}
+        GROUP BY warehouse_name
+    ),
+    query_stats AS (
+        SELECT
+            q.warehouse_name,
+            COUNT(*) AS query_count,
+            ROUND(SUM(COALESCE(q.total_elapsed_time, 0)) / 1000 / 3600, 4) AS exec_hours,
+            ROUND(SUM(COALESCE(q.bytes_scanned, 0)) / POWER(1024, 4), 4) AS tb_scanned,
+            ROUND(AVG(COALESCE(q.percentage_scanned_from_cache, 0)), 2) AS avg_cache_pct,
+            ROUND(SUM(COALESCE(q.queued_overload_time, 0) + COALESCE(q.queued_provisioning_time, 0)) / 1000, 2) AS queue_seconds,
+            ROUND(SUM(COALESCE(q.bytes_spilled_to_remote_storage, 0)) / POWER(1024, 3), 2) AS remote_spill_gb,
+            COUNT_IF({failed_expr}) AS failed_queries,
+            ROUND(SUM(IFF({failed_expr}, COALESCE(pqc.metered_credits, 0), 0)), 6) AS failed_query_credits,
+            ROUND(SUM(COALESCE(pqc.metered_credits, 0)), 6) AS attributed_query_credits
+        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+        LEFT JOIN per_query_credits pqc
+          ON q.query_id = pqc.query_id
+        WHERE q.start_time >= DATEADD('day', -{days_back}, CURRENT_TIMESTAMP())
+          AND q.start_time < DATEADD('hour', -24, CURRENT_TIMESTAMP())
+          AND q.warehouse_name IS NOT NULL
+          {query_scope}
+        GROUP BY q.warehouse_name
+    )
+    SELECT
+        COALESCE(m.warehouse_name, q.warehouse_name) AS warehouse_name,
+        ROUND(COALESCE(m.exact_metered_credits, 0) * {rate:.4f}, 2) AS cost_usd,
+        COALESCE(q.query_count, 0) AS query_count,
+        ROUND(COALESCE(m.exact_metered_credits, 0) * {rate:.4f} / NULLIF(q.query_count, 0), 4) AS cost_per_query_usd,
+        COALESCE(q.tb_scanned, 0) AS tb_scanned,
+        ROUND(COALESCE(m.exact_metered_credits, 0) * {rate:.4f} / NULLIF(q.tb_scanned, 0), 2) AS cost_per_tb_usd,
+        COALESCE(q.exec_hours, 0) AS exec_hours,
+        ROUND(COALESCE(m.exact_compute_credits, 0) / NULLIF(q.exec_hours, 0), 4) AS credits_per_exec_hour,
+        COALESCE(q.avg_cache_pct, 0) AS avg_cache_pct,
+        COALESCE(q.queue_seconds, 0) AS queue_seconds,
+        COALESCE(q.remote_spill_gb, 0) AS remote_spill_gb,
+        COALESCE(q.failed_queries, 0) AS failed_queries,
+        ROUND(COALESCE(q.failed_query_credits, 0) * {rate:.4f}, 2) AS failed_query_waste_usd,
+        COALESCE(q.attributed_query_credits, 0) AS attributed_query_credits
+    FROM metered m
+    FULL OUTER JOIN query_stats q
+      ON m.warehouse_name = q.warehouse_name
+    ORDER BY cost_usd DESC, failed_query_waste_usd DESC, remote_spill_gb DESC
+    LIMIT {top}
+    """
+
+
+def build_clustering_cost_sql(
+    days_back: int = 7,
+    company: str = None,
+    credit_price: float = None,
+    *,
+    top: int = 50,
+) -> str:
+    """Return automatic clustering cost and recluster churn by table."""
+    days_back = max(1, int(days_back or 7))
+    top = max(1, int(top or 50))
+    rate = float(credit_price if credit_price is not None else DEFAULTS["credit_price"])
+    try:
+        from .company_filter import get_db_filter_clause
+
+        db_scope = get_db_filter_clause("database_name", company)
+    except Exception:
+        db_scope = ""
+
+    return f"""
+    SELECT
+        database_name || '.' || schema_name || '.' || table_name AS table_name,
+        ROUND(SUM(COALESCE(credits_used, 0)), 4) AS clustering_credits,
+        ROUND(SUM(COALESCE(credits_used, 0)) * {rate:.4f}, 2) AS clustering_cost_usd,
+        ROUND(SUM(COALESCE(num_bytes_reclustered, 0)) / POWER(1024, 4), 4) AS tb_reclustered,
+        SUM(COALESCE(num_rows_reclustered, 0)) AS rows_reclustered,
+        ROUND(
+            SUM(COALESCE(credits_used, 0)) * {rate:.4f}
+            / NULLIF(SUM(COALESCE(num_bytes_reclustered, 0)) / POWER(1024, 4), 0),
+            2
+        ) AS cost_per_tb_reclustered
+    FROM SNOWFLAKE.ACCOUNT_USAGE.AUTOMATIC_CLUSTERING_HISTORY
+    WHERE start_time >= DATEADD('day', -{days_back}, CURRENT_TIMESTAMP())
+      AND start_time < DATEADD('hour', -24, CURRENT_TIMESTAMP())
+      AND database_name IS NOT NULL
+      {db_scope}
+    GROUP BY database_name, schema_name, table_name
+    HAVING SUM(COALESCE(credits_used, 0)) > 0
+    ORDER BY clustering_cost_usd DESC, cost_per_tb_reclustered DESC
+    LIMIT {top}
     """
 
 

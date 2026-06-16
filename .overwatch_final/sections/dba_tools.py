@@ -1775,7 +1775,7 @@ def render():
         st.caption(
             "View and interactively change all warehouse parameters - "
             "size, timeouts, auto-suspend, multi-cluster, QAS, and scaling policy. "
-            "Changes execute as `ALTER WAREHOUSE` statements in real time."
+            "Changes are applied only after a reviewed plan, rollback SQL, typed confirmation, and audit logging."
         )
 
         active_company = get_active_company()
@@ -1950,10 +1950,10 @@ def render():
                             disabled=not new_qas,
                         )
 
-                    apply = st.form_submit_button("Preview & Apply Changes", type="primary")
+                    preview_plan = st.form_submit_button("Preview Change Plan", type="primary")
 
                 plan_key = f"wh_change_plan_{sel_wh}"
-                if apply:
+                if preview_plan:
                     requested = {
                         "WAREHOUSE_SIZE": new_size,
                         "AUTO_SUSPEND": int(new_auto_suspend),
@@ -1969,66 +1969,6 @@ def render():
                     }
                     st.session_state[plan_key] = _build_warehouse_setting_plan(sel_wh, wh_row, requested)
 
-                if apply:
-                    # Build ALTER WAREHOUSE statement from changed params
-                    safe_wh = _quote_identifier(sel_wh)
-
-                    params = [
-                        f"WAREHOUSE_SIZE = {_SIZE_SQL.get(new_size, 'XSMALL')}",
-                        f"AUTO_SUSPEND = {int(new_auto_suspend)}",
-                        f"AUTO_RESUME = {'TRUE' if new_auto_resume else 'FALSE'}",
-                        f"STATEMENT_TIMEOUT_IN_SECONDS = {int(new_stmt_timeout)}",
-                        f"STATEMENT_QUEUED_TIMEOUT_IN_SECONDS = {int(new_queue_timeout)}",
-                        f"MAX_CONCURRENCY_LEVEL = {int(new_concurrency)}",
-                        f"SCALING_POLICY = {new_scaling}",
-                        f"MIN_CLUSTER_COUNT = {int(new_min_clusters)}",
-                        f"MAX_CLUSTER_COUNT = {int(new_max_clusters)}",
-                        f"ENABLE_QUERY_ACCELERATION = {'TRUE' if new_qas else 'FALSE'}",
-                        f"QUERY_ACCELERATION_MAX_SCALE_FACTOR = {int(new_qas_sf)}",
-                    ]
-                    alter_sql = f"ALTER WAREHOUSE {safe_wh} SET\n    " + "\n    ".join(params) + ";"
-
-                    st.subheader("Reviewed Change Plan")
-                    st.caption("Telemetry status is required before warehouse settings are applied.")
-
-                    col_apply, col_cancel = st.columns([1, 3])
-                    with col_apply:
-                        wh_confirmed = _typed_confirmation(
-                            f"Type {sel_wh} to enable ALTER WAREHOUSE",
-                            sel_wh,
-                            f"wh_confirm_{sel_wh}",
-                        )
-                        if st.button(
-                            "Apply Now",
-                            type="primary",
-                            key=f"wh_apply_{sel_wh}",
-                            disabled=True,
-                        ):
-                            # CALLER MODE: ALTER WAREHOUSE needs MODIFY on the warehouse.
-                            # SNOW_ACCOUNTADMINS and SNOW_SYSADMINS both have this.
-                            # If a future role doesn't, this surfaces a clear error.
-                            try:
-                                session.sql(alter_sql).collect()
-                                st.success(f"Warehouse `{sel_wh}` updated successfully.")
-                                st.session_state.pop("dba_df_wh_cfg", None)
-                                st.rerun()
-                            except Exception as e:
-                                err_str = str(e).lower()
-                                if "insufficient privilege" in err_str or "not authorized" in err_str:
-                                    st.error(
-                                        f"Permission denied on `{sel_wh}`. "
-                                        f"ALTER WAREHOUSE requires MODIFY privilege. "
-                                        f"Your current role may not have this on this warehouse."
-                                    )
-                                elif "enterprise" in err_str or "not supported" in err_str:
-                                    st.error(
-                                        f"Feature not available in your Snowflake edition. "
-                                        f"Multi-cluster and QAS require Enterprise or higher."
-                                    )
-                                else:
-                                    st.error(f"ALTER failed: {format_snowflake_error(e)}")
-
-    # -- TAB 2: DATA LOADING ---------------------------------------------------
                 plan = st.session_state.get(plan_key)
                 if plan:
                     st.subheader("Reviewed Warehouse Change Plan")
@@ -2149,6 +2089,7 @@ def render():
                                 "Snowflake role/user, SQL hash, confirmation text, control context, and result."
                             )
 
+    # -- TAB 2: DATA LOADING ---------------------------------------------------
     if selected_tool == "Data Loading":
         st.subheader("Data Loading Monitor")
         load_days = day_window_selectbox("Lookback", key="dl_days", default=7)

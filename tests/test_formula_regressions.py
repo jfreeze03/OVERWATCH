@@ -309,6 +309,9 @@ from sections.warehouse_health import (  # noqa: E402
 from utils.cost import (  # noqa: E402
     build_snowflake_service_cost_lens_sql,
     build_cost_reconciliation_sql,
+    build_cost_efficiency_summary_sql,
+    build_warehouse_efficiency_sql,
+    build_clustering_cost_sql,
     build_idle_warehouse_sql,
     build_metered_credit_cte,
     credits_to_dollars,
@@ -712,6 +715,24 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("OFFICIAL_ATTRIBUTED_COMPUTE_CREDITS", sql)
         self.assertIn("OVERWATCH_ALLOCATED_CREDITS", sql)
         self.assertIn("OFFICIAL_ATTRIBUTED_QUERIES", sql)
+
+    def test_cost_efficiency_builders_use_bounded_account_usage_sources(self):
+        summary_sql = build_cost_efficiency_summary_sql(14, company="ALFA", credit_price=3.68).upper()
+        warehouse_sql = build_warehouse_efficiency_sql(14, company="ALFA", credit_price=3.68).upper()
+        clustering_sql = build_clustering_cost_sql(14, company="ALFA", credit_price=3.68).upper()
+
+        self.assertIn("COST_PER_QUERY_USD", summary_sql)
+        self.assertIn("COST_PER_TB_USD", summary_sql)
+        self.assertIn("FAILED_QUERY_WASTE_USD", summary_sql)
+        self.assertIn("QUERY_ATTRIBUTION_HISTORY", summary_sql)
+        self.assertIn("START_TIME < DATEADD('HOUR', -24, CURRENT_TIMESTAMP())", summary_sql)
+        self.assertIn("CREDITS_PER_EXEC_HOUR", warehouse_sql)
+        self.assertIn("QUEUE_SECONDS", warehouse_sql)
+        self.assertIn("REMOTE_SPILL_GB", warehouse_sql)
+        self.assertIn("FAILED_QUERY_WASTE_USD", warehouse_sql)
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.AUTOMATIC_CLUSTERING_HISTORY", clustering_sql)
+        self.assertIn("COST_PER_TB_RECLUSTERED", clustering_sql)
+        self.assertIn("NUM_BYTES_RECLUSTERED", clustering_sql)
 
     def test_cost_contract_source_health_and_gap_summaries(self):
         cockpit = pd.DataFrame([{"CURRENT_CREDITS": 12.0, "PRIOR_CREDITS": 9.0}])

@@ -251,6 +251,57 @@ def harden_recommendation(rec: Mapping | pd.Series | dict) -> dict:
         confidence = "Medium - failure count is specific, root cause requires error-code detail"
         decision_gate = "Route finding"
 
+    elif "TIME TRAVEL" in source_key or "RETENTION" in source_key:
+        time_travel_tb = _num(out, "Current Value", "TIME_TRAVEL_TB", "Time Travel TB")
+        active_tb = _num(out, "ACTIVE_TB", "Active TB")
+        decision = "Review retention bloat"
+        action = (
+            f"For {entity}, confirm recovery, cloning, and compliance requirements before lowering retention. "
+            "If approved, change retention through a reviewed database/schema/table-level plan."
+        )
+        evidence = (
+            f"{entity}: {time_travel_tb:,.2f} TB time-travel storage against {active_tb:,.2f} TB active storage; "
+            f"{_money(savings)} estimated monthly exposure."
+        )
+        safe_next = "Open Storage cost and retention, confirm largest tables, and route only objects with approved retention changes."
+        proof = "After the retention window ages out, time-travel TB and monthly storage estimate should decline."
+        do_not = "Do not lower retention on regulated, clone-heavy, or recovery-sensitive databases from this finding alone."
+        confidence = "Medium - storage bytes are direct telemetry, but the safe setting depends on retention policy."
+        decision_gate = "DBA review"
+
+    elif "CLUSTERING" in source_key:
+        clustering_cost = _num(out, "Current Value", "CLUSTERING_COST_USD", "Clustering Cost USD")
+        reclustered_tb = _num(out, "TB_RECLUSTERED", "TB Reclusterd")
+        decision = "Review clustering churn"
+        action = (
+            f"For {entity}, inspect clustering depth, DML churn, pruning benefit, and query demand before changing clustering."
+        )
+        evidence = (
+            f"{entity}: {_money(clustering_cost)} automatic clustering cost, "
+            f"{reclustered_tb:,.2f} TB reclustered in the loaded window."
+        )
+        safe_next = "Open query profile/pruning evidence and verify whether the clustering key still pays for itself."
+        proof = "Cost per TB reclustered should decline or query pruning/runtime must justify the clustering spend."
+        do_not = "Do not suspend reclustering until query benefit and DML churn are reviewed."
+        confidence = "Medium - clustering cost is direct telemetry, value requires workload proof."
+        decision_gate = "DBA review"
+
+    elif "REPEATED QUERY" in source_key or "DUPLICATE QUERY" in source_key:
+        runs = safe_int(_row_value(out, "RUNS", "EXECUTION_COUNT", default=0))
+        total_hours = _num(out, "TOTAL_EXEC_HOURS", "TOTAL_WASTED_HOURS", "Total Exec Hours")
+        decision = "Review repeated query pattern"
+        action = (
+            "Confirm the repeated statement has stable semantics and reusable demand, then choose result cache hygiene, "
+            "dynamic table, task materialization, or query rewrite."
+        )
+        evidence = f"{entity}: {runs:,} executions and {total_hours:,.2f} total execution hours in the loaded window."
+        safe_next = "Inspect sample query text, users, tags, and schedule before recommending materialization."
+        proof = "Execution count, total elapsed seconds, or scan volume must fall for the same query signature."
+        do_not = "Do not create a materialized object until ownership, freshness, and reuse are proven."
+        escalation_route = _text(out, "Escalation Route", "Route", "Owner", "OWNER", default="Query reviewer / DBA lead")
+        confidence = "Medium - repeated query telemetry is directional until workload ownership is confirmed."
+        decision_gate = "Review finding"
+
     out["Decision"] = decision
     out["Action"] = action
     out["Evidence Packet"] = evidence

@@ -36,6 +36,8 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "build_metered_credit_cte", "build_idle_warehouse_sql",
         "build_monitoring_cost_sql", "build_app_runtime_cost_sql",
         "build_cost_reconciliation_sql", "build_snowflake_service_cost_lens_sql",
+        "build_cost_efficiency_summary_sql", "build_warehouse_efficiency_sql",
+        "build_clustering_cost_sql",
         "metric_confidence_label",
         "freshness_note", "CREDIT_RATES", "CREDIT_SOURCE_LABELS", "COMPUTE_CREDIT_CASE",
     ),

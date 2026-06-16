@@ -30,6 +30,9 @@ from utils.section_guidance import defer_section_note, defer_source_note
 pd = lazy_pandas()
 
 build_cost_reconciliation_sql = _lazy_util("build_cost_reconciliation_sql")
+build_cost_efficiency_summary_sql = _lazy_util("build_cost_efficiency_summary_sql")
+build_warehouse_efficiency_sql = _lazy_util("build_warehouse_efficiency_sql")
+build_clustering_cost_sql = _lazy_util("build_clustering_cost_sql")
 build_mart_bill_warehouse_delta_sql = _lazy_util("build_mart_bill_warehouse_delta_sql")
 build_mart_cost_cockpit_sql = _lazy_util("build_mart_cost_cockpit_sql")
 build_mart_cost_run_rate_sql = _lazy_util("build_mart_cost_run_rate_sql")
@@ -1742,6 +1745,82 @@ def _render_account_service_cost_lens(service_lens: pd.DataFrame, credit_price: 
         raw_label="All service-cost lens rows",
         height=280,
         max_rows=10,
+    )
+
+
+def _render_cost_efficiency_rca(
+    efficiency_summary: pd.DataFrame,
+    warehouse_efficiency: pd.DataFrame,
+    clustering_cost: pd.DataFrame,
+    credit_price: float,
+    errors: dict | None = None,
+) -> None:
+    errors = errors or {}
+    loaded_any = any(
+        isinstance(frame, pd.DataFrame) and not frame.empty
+        for frame in (efficiency_summary, warehouse_efficiency, clustering_cost)
+    )
+    if not loaded_any:
+        for label, err in errors.items():
+            if err:
+                st.caption(f"{label} unavailable: {err}")
+        return
+
+    st.markdown("**Cost Efficiency RCA**")
+    if isinstance(efficiency_summary, pd.DataFrame) and not efficiency_summary.empty:
+        row = efficiency_summary.iloc[0]
+        render_shell_snapshot((
+            ("Cost / Query", f"${safe_float(row.get('COST_PER_QUERY_USD')):,.4f}"),
+            ("Cost / TB", f"${safe_float(row.get('COST_PER_TB_USD')):,.2f}"),
+            ("Failed Waste", f"${safe_float(row.get('FAILED_QUERY_WASTE_USD')):,.0f}"),
+            ("Avg Cache", f"{safe_float(row.get('AVG_CACHE_PCT')):,.1f}%"),
+        ))
+        st.caption(
+            f"{safe_int(row.get('QUERY_COUNT')):,} query rows, "
+            f"{safe_float(row.get('TB_SCANNED')):,.2f} TB scanned, "
+            f"{safe_int(row.get('FAILED_QUERIES')):,} failed query rows. "
+            f"{str(row.get('ATTRIBUTION_SOURCE') or 'OVERWATCH allocated fallback')}"
+        )
+
+    if isinstance(warehouse_efficiency, pd.DataFrame) and not warehouse_efficiency.empty:
+        render_priority_dataframe(
+            warehouse_efficiency,
+            title="Warehouse efficiency and pressure",
+            priority_columns=[
+                "WAREHOUSE_NAME", "COST_USD", "QUERY_COUNT", "COST_PER_QUERY_USD",
+                "COST_PER_TB_USD", "CREDITS_PER_EXEC_HOUR", "QUEUE_SECONDS",
+                "REMOTE_SPILL_GB", "FAILED_QUERIES", "FAILED_QUERY_WASTE_USD",
+                "AVG_CACHE_PCT",
+            ],
+            sort_by=["FAILED_QUERY_WASTE_USD", "REMOTE_SPILL_GB", "COST_USD"],
+            ascending=[False, False, False],
+            raw_label="All warehouse efficiency rows",
+            height=300,
+            max_rows=12,
+        )
+
+    if isinstance(clustering_cost, pd.DataFrame) and not clustering_cost.empty:
+        total_clustering = safe_float(clustering_cost.get("CLUSTERING_COST_USD", pd.Series(dtype=float)).sum())
+        st.caption(f"Automatic clustering cost loaded: ${total_clustering:,.0f} in the selected window.")
+        render_priority_dataframe(
+            clustering_cost,
+            title="Automatic clustering cost and churn",
+            priority_columns=[
+                "TABLE_NAME", "CLUSTERING_COST_USD", "CLUSTERING_CREDITS",
+                "TB_RECLUSTERED", "ROWS_RECLUSTERED", "COST_PER_TB_RECLUSTERED",
+            ],
+            sort_by=["CLUSTERING_COST_USD", "COST_PER_TB_RECLUSTERED"],
+            ascending=[False, False],
+            raw_label="All clustering cost rows",
+            height=260,
+            max_rows=10,
+        )
+
+    for label, err in errors.items():
+        if err:
+            st.caption(f"{label} unavailable: {err}")
+    defer_source_note(
+        "Cost efficiency RCA uses completed ACCOUNT_USAGE windows and query-attribution fallback where official query attribution is unavailable."
     )
 
 
@@ -3928,6 +4007,55 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
                 st.session_state["cost_contract_service_lens"] = pd.DataFrame()
                 st.session_state["cost_contract_service_lens_error"] = format_snowflake_error(exc)
                 st.session_state["cost_contract_service_lens_source"] = ""
+            try:
+                st.session_state["cost_contract_efficiency_summary"] = run_query_or_raise(
+                    build_cost_efficiency_summary_sql(
+                        int(days),
+                        company=company,
+                        credit_price=credit_price,
+                        prefer_query_attribution=True,
+                    ),
+                    ttl_key=f"cost_contract_efficiency_summary_{company}_{days}_{credit_price}",
+                    tier="historical",
+                    section="Cost & Contract",
+                )
+                st.session_state["cost_contract_efficiency_summary_error"] = ""
+            except Exception as exc:
+                st.session_state["cost_contract_efficiency_summary"] = pd.DataFrame()
+                st.session_state["cost_contract_efficiency_summary_error"] = format_snowflake_error(exc)
+            try:
+                st.session_state["cost_contract_warehouse_efficiency"] = run_query_or_raise(
+                    build_warehouse_efficiency_sql(
+                        int(days),
+                        company=company,
+                        credit_price=credit_price,
+                        top=50,
+                        prefer_query_attribution=True,
+                    ),
+                    ttl_key=f"cost_contract_warehouse_efficiency_{company}_{days}_{credit_price}",
+                    tier="historical",
+                    section="Cost & Contract",
+                )
+                st.session_state["cost_contract_warehouse_efficiency_error"] = ""
+            except Exception as exc:
+                st.session_state["cost_contract_warehouse_efficiency"] = pd.DataFrame()
+                st.session_state["cost_contract_warehouse_efficiency_error"] = format_snowflake_error(exc)
+            try:
+                st.session_state["cost_contract_clustering_cost"] = run_query_or_raise(
+                    build_clustering_cost_sql(
+                        int(days),
+                        company=company,
+                        credit_price=credit_price,
+                        top=50,
+                    ),
+                    ttl_key=f"cost_contract_clustering_cost_{company}_{days}_{credit_price}",
+                    tier="historical",
+                    section="Cost & Contract",
+                )
+                st.session_state["cost_contract_clustering_cost_error"] = ""
+            except Exception as exc:
+                st.session_state["cost_contract_clustering_cost"] = pd.DataFrame()
+                st.session_state["cost_contract_clustering_cost_error"] = format_snowflake_error(exc)
     defer_section_note(
         "Cost detail telemetry is optional; refresh only when you need account-history rows behind the fast cost summary."
     )
@@ -4028,6 +4156,17 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
         st.session_state.get("cost_contract_service_lens", pd.DataFrame()),
         credit_price,
         st.session_state.get("cost_contract_service_lens_error", ""),
+    )
+    _render_cost_efficiency_rca(
+        st.session_state.get("cost_contract_efficiency_summary", pd.DataFrame()),
+        st.session_state.get("cost_contract_warehouse_efficiency", pd.DataFrame()),
+        st.session_state.get("cost_contract_clustering_cost", pd.DataFrame()),
+        credit_price,
+        errors={
+            "Efficiency summary": st.session_state.get("cost_contract_efficiency_summary_error", ""),
+            "Warehouse efficiency": st.session_state.get("cost_contract_warehouse_efficiency_error", ""),
+            "Clustering cost": st.session_state.get("cost_contract_clustering_cost_error", ""),
+        },
     )
     _render_cost_spike_root_cause_board(
         data,

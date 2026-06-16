@@ -10,6 +10,7 @@ from utils import (
     build_mart_recommendation_idle_sql,
     build_mart_recommendation_query_errors_sql,
     build_mart_recommendation_spill_sql,
+    build_clustering_cost_sql,
     build_safe_verification_query,
     build_task_failure_summary_sql,
     credits_to_dollars,
@@ -19,6 +20,8 @@ from utils import (
     filter_existing_columns,
     format_snowflake_error,
     format_credits,
+    get_db_filter_clause,
+    get_storage_cost_per_tb,
     get_global_filter_clause,
     get_session,
     get_wh_filter_clause,
@@ -170,6 +173,56 @@ WHERE warehouse_name = {wh}
 GROUP BY warehouse_name, error_code
 ORDER BY failures DESC
 LIMIT 50;
+"""
+
+
+def _storage_retention_verification_sql(database_name: str) -> str:
+    db = sql_literal(database_name, 300)
+    return f"""-- Storage retention telemetry
+SELECT table_catalog AS database_name,
+       ROUND(SUM(COALESCE(active_bytes, 0)) / POWER(1024, 4), 3) AS active_tb,
+       ROUND(SUM(COALESCE(time_travel_bytes, 0)) / POWER(1024, 4), 3) AS time_travel_tb,
+       ROUND(SUM(COALESCE(failsafe_bytes, 0)) / POWER(1024, 4), 3) AS failsafe_tb
+FROM SNOWFLAKE.ACCOUNT_USAGE.TABLE_STORAGE_METRICS
+WHERE deleted = FALSE
+  AND table_catalog = {db}
+GROUP BY table_catalog
+ORDER BY time_travel_tb DESC;
+"""
+
+
+def _clustering_verification_sql(table_name: str, days: int = 7) -> str:
+    table = sql_literal(table_name, 1000)
+    return f"""-- Automatic clustering cost telemetry
+SELECT database_name || '.' || schema_name || '.' || table_name AS table_name,
+       ROUND(SUM(COALESCE(credits_used, 0)), 4) AS clustering_credits,
+       ROUND(SUM(COALESCE(num_bytes_reclustered, 0)) / POWER(1024, 4), 4) AS tb_reclustered,
+       SUM(COALESCE(num_rows_reclustered, 0)) AS rows_reclustered,
+       MAX(start_time) AS latest_cluster_event
+FROM SNOWFLAKE.ACCOUNT_USAGE.AUTOMATIC_CLUSTERING_HISTORY
+WHERE start_time >= DATEADD('day', -{max(1, int(days or 7))}, CURRENT_TIMESTAMP())
+  AND database_name || '.' || schema_name || '.' || table_name = {table}
+GROUP BY database_name, schema_name, table_name
+ORDER BY clustering_credits DESC;
+"""
+
+
+def _repeated_query_verification_sql(query_hash: str, hash_column: str, days: int = 7) -> str:
+    qh = sql_literal(query_hash, 300)
+    column = safe_identifier(hash_column)
+    return f"""-- Repeated query pattern telemetry
+SELECT {column} AS query_hash,
+       COUNT(*) AS runs,
+       COUNT(DISTINCT user_name) AS users,
+       ROUND(SUM(COALESCE(total_elapsed_time, 0)) / 1000 / 3600, 2) AS total_exec_hours,
+       ROUND(SUM(COALESCE(bytes_scanned, 0)) / POWER(1024, 4), 2) AS tb_scanned,
+       MAX(start_time) AS latest_run,
+       SUBSTR(MAX(query_text), 1, 1000) AS sample_query
+FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+WHERE start_time >= DATEADD('day', -{max(1, int(days or 7))}, CURRENT_TIMESTAMP())
+  AND {column} = {qh}
+GROUP BY {column}
+ORDER BY runs DESC;
 """
 
 
@@ -625,6 +678,168 @@ def render():
                         "Proof Query": verification_sql,
                         "Verification Query": verification_sql,
                         "Current Value": round(safe_float(row.get("FAILURES")), 4),
+                        "Company": company,
+                    })
+            except Exception:
+                pass
+
+            try:
+                storage_rate = get_storage_cost_per_tb()
+                df_storage = run_query(f"""
+                    SELECT table_catalog AS database_name,
+                           ROUND(SUM(COALESCE(active_bytes, 0)) / POWER(1024, 4), 3) AS active_tb,
+                           ROUND(SUM(COALESCE(time_travel_bytes, 0)) / POWER(1024, 4), 3) AS time_travel_tb,
+                           ROUND(SUM(COALESCE(failsafe_bytes, 0)) / POWER(1024, 4), 3) AS failsafe_tb
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.TABLE_STORAGE_METRICS
+                    WHERE deleted = FALSE
+                      AND table_catalog IS NOT NULL
+                      {get_db_filter_clause("table_catalog", company)}
+                    GROUP BY table_catalog
+                    HAVING time_travel_tb >= 0.25
+                       AND time_travel_tb >= active_tb * 0.25
+                    ORDER BY time_travel_tb DESC
+                    LIMIT 10
+                """, ttl_key=f"rec_storage_retention_{company}", tier="historical")
+                source_notes.append("Storage retention: live ACCOUNT_USAGE.TABLE_STORAGE_METRICS")
+                for _, row in df_storage.iterrows():
+                    db_name = str(row["DATABASE_NAME"])
+                    active_tb = safe_float(row.get("ACTIVE_TB"))
+                    time_travel_tb = safe_float(row.get("TIME_TRAVEL_TB"))
+                    estimated_storage = time_travel_tb * storage_rate
+                    verification_sql = _storage_retention_verification_sql(db_name)
+                    recs.append({
+                        "Source": "Time travel retention detector",
+                        "Severity": "High" if estimated_storage >= 1000 else "Medium",
+                        "Category": "Storage Retention",
+                        "Entity Type": "Database",
+                        "Entity": db_name,
+                        "Owner": "DBA",
+                        "Finding": (
+                            f"{db_name}: {time_travel_tb:.2f} TB time-travel storage "
+                            f"vs {active_tb:.2f} TB active"
+                        ),
+                        "Action": "Confirm recovery, cloning, and compliance requirements before changing retention.",
+                        "Estimated Monthly Savings": round(estimated_storage, 2),
+                        "Generated SQL Fix": (
+                            f"-- Review only for {db_name}.\n"
+                            "-- If approved, change DATA_RETENTION_TIME_IN_DAYS at the narrowest safe scope."
+                        ),
+                        "Proof Query": verification_sql,
+                        "Verification Query": verification_sql,
+                        "Current Value": round(time_travel_tb, 4),
+                        "TIME_TRAVEL_TB": round(time_travel_tb, 4),
+                        "ACTIVE_TB": round(active_tb, 4),
+                        "Company": company,
+                    })
+            except Exception:
+                pass
+
+            try:
+                df_cluster = run_query(
+                    build_clustering_cost_sql(
+                        7,
+                        company=company,
+                        credit_price=credit_price,
+                        top=10,
+                    ),
+                    ttl_key=f"rec_clustering_cost_{company}_{credit_price}",
+                    tier="historical",
+                )
+                source_notes.append("Clustering: live ACCOUNT_USAGE.AUTOMATIC_CLUSTERING_HISTORY")
+                for _, row in df_cluster.iterrows():
+                    table_name = str(row["TABLE_NAME"])
+                    clustering_cost = safe_float(row.get("CLUSTERING_COST_USD"))
+                    if clustering_cost < 25:
+                        continue
+                    reclustered_tb = safe_float(row.get("TB_RECLUSTERED"))
+                    verification_sql = _clustering_verification_sql(table_name)
+                    recs.append({
+                        "Source": "Clustering cost detector",
+                        "Severity": "High" if clustering_cost >= 500 else "Medium",
+                        "Category": "Clustering",
+                        "Entity Type": "Table",
+                        "Entity": table_name,
+                        "Owner": "DBA",
+                        "Finding": (
+                            f"{table_name}: ${clustering_cost:,.0f} automatic clustering cost, "
+                            f"{reclustered_tb:.2f} TB reclustered"
+                        ),
+                        "Action": "Review clustering depth, DML churn, pruning benefit, and query demand before changing clustering.",
+                        "Estimated Monthly Savings": 0.0,
+                        "Generated SQL Fix": (
+                            "-- Review only. Do not suspend reclustering until pruning benefit and DML churn are confirmed."
+                        ),
+                        "Proof Query": verification_sql,
+                        "Verification Query": verification_sql,
+                        "Current Value": round(clustering_cost, 2),
+                        "CLUSTERING_COST_USD": round(clustering_cost, 2),
+                        "TB_RECLUSTERED": round(reclustered_tb, 4),
+                        "Company": company,
+                    })
+            except Exception:
+                pass
+
+            try:
+                qh_columns = set(filter_existing_columns(
+                    session,
+                    "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+                    ["QUERY_PARAMETERIZED_HASH", "QUERY_HASH"],
+                ))
+                hash_column = (
+                    "QUERY_PARAMETERIZED_HASH"
+                    if "QUERY_PARAMETERIZED_HASH" in qh_columns
+                    else "QUERY_HASH" if "QUERY_HASH" in qh_columns else ""
+                )
+                if not hash_column:
+                    raise ValueError("No query hash column is exposed in QUERY_HISTORY.")
+                hash_ident = safe_identifier(hash_column)
+                df_repeated = run_query(f"""
+                    SELECT {hash_ident} AS query_hash,
+                           COUNT(*) AS runs,
+                           COUNT(DISTINCT user_name) AS user_count,
+                           ROUND(SUM(COALESCE(total_elapsed_time, 0)) / 1000 / 3600, 2) AS total_exec_hours,
+                           ROUND(SUM(COALESCE(bytes_scanned, 0)) / POWER(1024, 4), 2) AS tb_scanned,
+                           SUBSTR(MAX(query_text), 1, 500) AS sample_query
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+                    WHERE start_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())
+                      AND warehouse_name IS NOT NULL
+                      AND UPPER(COALESCE(execution_status, '')) = 'SUCCESS'
+                      AND {hash_ident} IS NOT NULL
+                      {query_filters}
+                    GROUP BY {hash_ident}
+                    HAVING runs >= 50 OR total_exec_hours >= 2
+                    ORDER BY total_exec_hours DESC, runs DESC
+                    LIMIT 10
+                """, ttl_key=f"rec_repeated_queries_{company}_{hash_column}", tier="historical")
+                source_notes.append("Repeated query patterns: live ACCOUNT_USAGE.QUERY_HISTORY")
+                for _, row in df_repeated.iterrows():
+                    query_hash = str(row["QUERY_HASH"])
+                    runs = int(safe_float(row.get("RUNS")))
+                    total_hours = safe_float(row.get("TOTAL_EXEC_HOURS"))
+                    scanned_tb = safe_float(row.get("TB_SCANNED"))
+                    verification_sql = _repeated_query_verification_sql(query_hash, hash_column)
+                    recs.append({
+                        "Source": "Repeated query detector",
+                        "Severity": "Medium",
+                        "Category": "Query Optimization",
+                        "Entity Type": "Query Pattern",
+                        "Entity": query_hash[:120],
+                        "Owner": "Query reviewer / DBA lead",
+                        "Finding": (
+                            f"{runs:,} executions, {total_hours:.2f} execution hours, "
+                            f"{scanned_tb:.2f} TB scanned"
+                        ),
+                        "Action": "Confirm reuse, freshness, and owner before materialization or rewrite.",
+                        "Estimated Monthly Savings": 0.0,
+                        "Generated SQL Fix": (
+                            "-- No automatic SQL fix. Review sample query, ownership, freshness, and result reuse."
+                        ),
+                        "Proof Query": verification_sql,
+                        "Verification Query": verification_sql,
+                        "RUNS": runs,
+                        "TOTAL_EXEC_HOURS": round(total_hours, 2),
+                        "TB_SCANNED": round(scanned_tb, 2),
+                        "Current Value": round(total_hours, 2),
                         "Company": company,
                     })
             except Exception:

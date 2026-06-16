@@ -150,7 +150,7 @@ def _maybe_reload_dev_helpers() -> None:
 
 import sections
 
-if getattr(theme_module, "THEME_VERSION", "") != "2026-06-16-theme-contrast-v3":
+if getattr(theme_module, "THEME_VERSION", "") != "2026-06-16-theme-contrast-v4":
     theme_module = importlib.reload(theme_module)
     inject_theme = theme_module.inject_theme
     render_theme_picker = theme_module.render_theme_picker
@@ -393,13 +393,18 @@ def _current_credit_price() -> float:
 
 
 def _sidebar_panel_toggle(label: str, panel_key: str) -> bool:
-    """Render a sidebar panel launcher and return whether the panel is open."""
+    """Render a sidebar panel launcher and return whether the panel is open.
+
+    Utility panels are not navigation destinations, so keep them visually
+    secondary even when open. The primary sidebar bar should only identify the
+    selected monitoring section.
+    """
     active_panel = str(st.session_state.get("_overwatch_sidebar_panel", "") or "")
     is_active = active_panel == panel_key
     if st.button(
         label,
         key=f"sidebar_panel_{panel_key}",
-        type="primary" if is_active else "secondary",
+        type="secondary",
         width="stretch",
     ):
         is_active = not is_active

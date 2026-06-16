@@ -1243,6 +1243,12 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("def _current_active_section", app_text)
         self.assertIn("def _current_credit_price", app_text)
         self.assertIn("def _sidebar_panel_toggle", app_text)
+        sidebar_toggle_block = app_text[
+            app_text.index("def _sidebar_panel_toggle"):
+            app_text.index("def _sync_company_environment_state")
+        ]
+        self.assertIn('type="secondary"', sidebar_toggle_block)
+        self.assertNotIn('type="primary" if is_active else "secondary"', sidebar_toggle_block)
         self.assertIn("ow-filter-strip-kicker", app_text)
         self.assertNotIn("def _render_priority_brief_empty_state", app_text)
         self.assertNotIn("Open Executive Landing for the ranked platform brief.", app_text)

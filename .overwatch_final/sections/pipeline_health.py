@@ -295,7 +295,7 @@ def render():
     elif active_view == "Load Failures":
         st.subheader("Load Failure Monitor")
         load_days = day_window_selectbox("Lookback", key="pipe_load_days", default=7)
-        if st.button("Load Copy History Failures", key="pipe_load_failures"):
+        if st.button("Load Copy History Failures", key="pipe_load_failures_button"):
             try:
                 df_loads = run_query(
                     build_mart_pipeline_load_failures_sql(load_days, company),
@@ -331,6 +331,9 @@ def render():
                 st.session_state["pipe_load_failures"] = _annotate_pipeline_routes(df_loads, "Load Failure")
 
         df_loads = st.session_state.get("pipe_load_failures")
+        if df_loads is not None and not isinstance(df_loads, pd.DataFrame):
+            st.session_state.pop("pipe_load_failures", None)
+            df_loads = None
         if df_loads is not None:
             defer_source_note(st.session_state.get("pipe_load_failures_source", "SNOWFLAKE.ACCOUNT_USAGE.COPY_HISTORY"))
             if df_loads.empty:

@@ -669,7 +669,16 @@ class NavigationIntegrityTests(unittest.TestCase):
                 self.assertIn(pattern, gitignore)
 
     def test_workflow_hubs_expose_expected_subworkflows(self):
-        from sections import change_drift, cost_contract, dba_control_room, query_analysis, security_posture, task_management, workload_operations
+        from sections import (
+            change_drift,
+            cost_contract,
+            dba_control_room,
+            pipeline_health,
+            query_analysis,
+            security_posture,
+            task_management,
+            workload_operations,
+        )
 
         self.assertEqual(
             workload_operations.WORKFLOWS,
@@ -692,6 +701,10 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(workload_operations.WORKFLOW_MODULES["Task & procedure health"], "sections.task_management")
         self.assertEqual(workload_operations.WORKFLOW_MODULES["Pipeline / SLA risk"], "sections.pipeline_health")
         self.assertEqual(workload_operations.WORKFLOW_MODULES["Schema & data compare"], "sections.dba_tools")
+        pipeline_health_text = (APP_ROOT / "sections" / "pipeline_health.py").read_text(encoding="utf-8")
+        self.assertIn('key="pipe_load_failures_button"', pipeline_health_text)
+        self.assertIn('st.session_state["pipe_load_failures"] = _annotate_pipeline_routes', pipeline_health_text)
+        self.assertNotIn('st.button("Load Copy History Failures", key="pipe_load_failures")', pipeline_health_text)
         self.assertEqual(task_management.TASK_CONTROL_VIEWS[0], "Job Status Brief")
         self.assertIn("Snowflake task handoff", task_management.TASK_CONTROL_DETAILS["Job Status Brief"])
         task_management_text = (APP_ROOT / "sections" / "task_management.py").read_text(encoding="utf-8")

@@ -132,6 +132,7 @@ from sections.dba_control_room import (  # noqa: E402
     _build_dba_morning_brief_markdown,
     _dba_action_brief,
     _dba_escalation_packet,
+    _dba_morning_brief_detail_view,
     _dba_morning_command_queue,
     _dba_morning_decision_contract,
     _dba_morning_brief_rows,
@@ -3411,6 +3412,11 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("execution, rollback, and telemetry", brief.iloc[0]["ROUTE_ACTION"])
         self.assertIn("Do not release", brief.iloc[0]["STOP_RULE"])
         self.assertIn("Warehouse Health", set(brief["ROUTE"]))
+        detail_view = _dba_morning_brief_detail_view(brief)
+        self.assertEqual(len(detail_view.columns), len(set(detail_view.columns)))
+        self.assertIn("ROUTE_TELEMETRY_STATE", detail_view.columns)
+        self.assertIn("ESCALATION_ROUTE", detail_view.columns)
+        self.assertNotIn("OWNER_PROOF_STATE", detail_view.columns)
         self.assertIn("# OVERWATCH DBA Morning Brief", markdown)
         self.assertIn("No irreversible DBA action", markdown)
         self.assertIn("Decision: No-Go / contain now", markdown)

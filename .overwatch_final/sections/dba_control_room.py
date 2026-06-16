@@ -4850,6 +4850,26 @@ def _dba_morning_command_queue(brief: pd.DataFrame | None, max_rows: int = 3) ->
     return pd.DataFrame(rows)
 
 
+def _dba_morning_brief_detail_view(brief: pd.DataFrame | None) -> pd.DataFrame:
+    """Return Morning Brief detail rows with unique operator-facing columns."""
+    if brief is None or brief.empty:
+        return _empty_df()
+    brief_view = brief.copy()
+    for column in list(brief_view.columns):
+        if brief_view[column].dtype == object:
+            brief_view[column] = brief_view[column].map(_clean_display_text)
+    rename_pairs = (
+        ("OWNER_PROOF_STATE", "ROUTE_TELEMETRY_STATE"),
+        ("OWNER_ROUTE", "ESCALATION_ROUTE"),
+    )
+    for source, target in rename_pairs:
+        if target in brief_view.columns:
+            brief_view = brief_view.drop(columns=[source], errors="ignore")
+        else:
+            brief_view = brief_view.rename(columns={source: target})
+    return brief_view.loc[:, ~brief_view.columns.duplicated()]
+
+
 def _build_dba_morning_brief_markdown(
     brief: pd.DataFrame,
     *,
@@ -4989,14 +5009,7 @@ def _render_dba_morning_brief(brief: pd.DataFrame, markdown: str) -> None:
                     _seed_dba_morning_route_context(row)
                     _jump(route, workflow=workflow)
     with st.expander("Brief telemetry detail", expanded=False):
-        brief_view = brief.copy()
-        for column in brief_view.columns:
-            if brief_view[column].dtype == object:
-                brief_view[column] = brief_view[column].map(_clean_display_text)
-        brief_view = brief_view.rename(columns={
-            "OWNER_PROOF_STATE": "ROUTE_TELEMETRY_STATE",
-            "OWNER_ROUTE": "ESCALATION_ROUTE",
-        })
+        brief_view = _dba_morning_brief_detail_view(brief)
         render_priority_dataframe(
             brief_view,
             title="DBA morning brief telemetry",

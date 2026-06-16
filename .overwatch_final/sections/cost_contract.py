@@ -1609,6 +1609,513 @@ def _render_service_cost_movement_chart(service_lens: pd.DataFrame, credit_price
     st.altair_chart(chart, width="stretch")
 
 
+def _cost_advisor_priority(impact_usd: float, *, finding_type: str = "") -> str:
+    impact = abs(safe_float(impact_usd))
+    finding = str(finding_type or "").upper()
+    if impact >= 1000 or any(token in finding for token in ("SPILL", "FAILED", "ATTRIBUTION GAP")):
+        return "High"
+    if impact >= 250:
+        return "Medium"
+    return "Low"
+
+
+def _cost_advisor_add_row(
+    rows: list[dict],
+    *,
+    category: str,
+    entity: str,
+    finding: str,
+    estimate_type: str,
+    impact_usd: float,
+    savings_usd: float,
+    evidence: str,
+    safe_next_action: str,
+    proof_required: str,
+    do_not_do: str,
+    confidence: str,
+    source: str,
+) -> None:
+    impact = round(safe_float(impact_usd), 2)
+    savings = round(max(0.0, safe_float(savings_usd)), 2)
+    priority = _cost_advisor_priority(max(impact, savings), finding_type=finding)
+    rows.append({
+        "PRIORITY": priority,
+        "SEVERITY": priority,
+        "CATEGORY": category,
+        "ENTITY": str(entity or "Unknown"),
+        "FINDING": finding,
+        "ESTIMATE_TYPE": estimate_type,
+        "EST_MONTHLY_IMPACT_USD": impact,
+        "EST_MONTHLY_SAVINGS_USD": savings,
+        "EVIDENCE": evidence,
+        "TELEMETRY_SUMMARY": evidence,
+        "SAFE_NEXT_ACTION": safe_next_action,
+        "PROOF_REQUIRED": proof_required,
+        "VALIDATION_NEEDED": proof_required,
+        "DO_NOT_DO": do_not_do,
+        "CONFIDENCE": confidence,
+        "SOURCE": source,
+    })
+
+
+def _build_cost_advisor_board(
+    *,
+    efficiency_summary: pd.DataFrame | None,
+    warehouse_efficiency: pd.DataFrame | None,
+    clustering_cost: pd.DataFrame | None,
+    reconciliation: pd.DataFrame | None,
+    service_lens: pd.DataFrame | None,
+    credit_price: float,
+    days: int,
+    storage_table_metrics: pd.DataFrame | None = None,
+    storage_db_detail: pd.DataFrame | None = None,
+    storage_cost_per_tb: float | None = None,
+) -> tuple[dict, pd.DataFrame]:
+    """Build ranked cost-advisor findings from already loaded Cost & Contract frames."""
+    rows: list[dict] = []
+    days = max(1, safe_int(days, 7))
+    window_factor = 30.0 / float(days)
+    price = safe_float(credit_price, safe_float(DEFAULTS.get("credit_price"), 3.68))
+    storage_rate = safe_float(storage_cost_per_tb, safe_float(DEFAULTS.get("storage_cost_per_tb"), 23.0))
+
+    if _looks_like_frame(efficiency_summary) and not efficiency_summary.empty:
+        row = efficiency_summary.iloc[0]
+        failed_waste = safe_float(row.get("FAILED_QUERY_WASTE_USD"))
+        failed_queries = safe_int(row.get("FAILED_QUERIES"))
+        if failed_waste > 0 and failed_queries > 0:
+            monthly = failed_waste * window_factor
+            _cost_advisor_add_row(
+                rows,
+                category="Failed query waste",
+                entity="Account workload",
+                finding="Failed-query spend is measurable",
+                estimate_type="Conservative recoverable waste",
+                impact_usd=monthly,
+                savings_usd=monthly * 0.6,
+                evidence=(
+                    f"{failed_queries:,} failed query row(s), ${failed_waste:,.0f} failed-query waste "
+                    f"in the {days}-day window."
+                ),
+                safe_next_action="Group failed queries by error code, warehouse, user, and query signature before routing fixes.",
+                proof_required="Failed query count and failed-query waste should fall in the next complete cost window.",
+                do_not_do="Do not resize warehouses for failures unless queue or spill telemetry also points to capacity pressure.",
+                confidence="Medium - waste is attributed from query cost telemetry; root cause still needs query evidence.",
+                source="Cost efficiency summary",
+            )
+
+    if _looks_like_frame(warehouse_efficiency) and not warehouse_efficiency.empty:
+        work = warehouse_efficiency.copy()
+        wh_col = _cost_column(work, ["WAREHOUSE_NAME", "WAREHOUSE"])
+        if wh_col:
+            for col in (
+                "COST_USD", "QUEUE_SECONDS", "REMOTE_SPILL_GB", "FAILED_QUERY_WASTE_USD",
+                "QUERY_COUNT", "AVG_CACHE_PCT",
+            ):
+                if col not in work.columns:
+                    work[col] = 0.0
+            for _, row in work.iterrows():
+                wh = str(row.get(wh_col) or "Unknown")
+                window_cost = safe_float(row.get("COST_USD"))
+                monthly_cost = window_cost * window_factor
+                queue_seconds = safe_float(row.get("QUEUE_SECONDS"))
+                remote_spill_gb = safe_float(row.get("REMOTE_SPILL_GB"))
+                failed_waste = safe_float(row.get("FAILED_QUERY_WASTE_USD"))
+                query_count = safe_int(row.get("QUERY_COUNT"))
+                avg_cache = safe_float(row.get("AVG_CACHE_PCT"))
+                if remote_spill_gb >= 10 or queue_seconds >= 600:
+                    pressure = []
+                    if remote_spill_gb >= 10:
+                        pressure.append(f"{remote_spill_gb:,.1f} GB remote spill")
+                    if queue_seconds >= 600:
+                        pressure.append(f"{queue_seconds:,.0f}s queue time")
+                    _cost_advisor_add_row(
+                        rows,
+                        category="Warehouse pressure",
+                        entity=wh,
+                        finding="Queue or spill pressure may be inflating cost",
+                        estimate_type="Value at risk",
+                        impact_usd=monthly_cost,
+                        savings_usd=0.0,
+                        evidence=(
+                            f"{wh}: {', '.join(pressure)} with ${window_cost:,.0f} warehouse cost "
+                            f"in the {days}-day window."
+                        ),
+                        safe_next_action="Inspect top query profiles and decide between SQL tuning, workload isolation, or reviewed capacity change.",
+                        proof_required="Remote spill, queue seconds, p95 runtime, and credits must improve for the same workload.",
+                        do_not_do="Do not blindly upsize; spill can come from SQL shape and may multiply cost.",
+                        confidence="Medium - pressure is direct telemetry, but the correct fix depends on query profile evidence.",
+                        source="Warehouse efficiency and pressure",
+                    )
+                elif monthly_cost >= 250 and query_count > 0 and queue_seconds < 30 and remote_spill_gb < 1:
+                    _cost_advisor_add_row(
+                        rows,
+                        category="Warehouse right-size review",
+                        entity=wh,
+                        finding="Low-pressure warehouse may have savings opportunity",
+                        estimate_type="Conservative savings candidate",
+                        impact_usd=monthly_cost,
+                        savings_usd=monthly_cost * 0.25,
+                        evidence=(
+                            f"{wh}: ${window_cost:,.0f} cost, {query_count:,} query row(s), "
+                            f"{queue_seconds:,.0f}s queue, {remote_spill_gb:,.1f} GB remote spill, "
+                            f"{avg_cache:,.1f}% average cache in the {days}-day window."
+                        ),
+                        safe_next_action="Review p95 runtime and workload schedule before testing a one-step downsize or tighter suspend policy.",
+                        proof_required="Cost should decline while p95 runtime, queue, failures, and spill remain acceptable.",
+                        do_not_do="Do not downsize always-on, latency-sensitive, or shared service warehouses from this row alone.",
+                        confidence="Low - savings are directional until size, suspend, and SLA context are reviewed.",
+                        source="Warehouse efficiency and pressure",
+                    )
+                if failed_waste >= 50:
+                    monthly_failed = failed_waste * window_factor
+                    _cost_advisor_add_row(
+                        rows,
+                        category="Failed query waste",
+                        entity=wh,
+                        finding="Warehouse has failed-query cost waste",
+                        estimate_type="Conservative recoverable waste",
+                        impact_usd=monthly_failed,
+                        savings_usd=monthly_failed * 0.6,
+                        evidence=f"{wh}: ${failed_waste:,.0f} failed-query waste in the loaded window.",
+                        safe_next_action="Route the top failed query signatures and owners before changing warehouse settings.",
+                        proof_required="Failed-query waste should drop in the next completed cost window.",
+                        do_not_do="Do not treat failed-query waste as a warehouse-sizing fix without error-code evidence.",
+                        confidence="Medium - warehouse failure waste is measurable, root cause requires query diagnostics.",
+                        source="Warehouse efficiency and pressure",
+                    )
+
+    if _looks_like_frame(clustering_cost) and not clustering_cost.empty:
+        work = clustering_cost.copy()
+        table_col = _cost_column(work, ["TABLE_NAME", "TABLE"])
+        cost_col = _cost_column(work, ["CLUSTERING_COST_USD", "COST_USD"])
+        tb_col = _cost_column(work, ["TB_RECLUSTERED"])
+        if table_col and cost_col:
+            work["_COST"] = pd.to_numeric(work[cost_col], errors="coerce").fillna(0.0)
+            for _, row in work.sort_values("_COST", ascending=False).head(8).iterrows():
+                window_cost = safe_float(row.get("_COST"))
+                monthly_cost = window_cost * window_factor
+                if monthly_cost < 50:
+                    continue
+                table_name = str(row.get(table_col) or "Unknown")
+                tb = safe_float(row.get(tb_col)) if tb_col else 0.0
+                _cost_advisor_add_row(
+                    rows,
+                    category="Automatic clustering",
+                    entity=table_name,
+                    finding="Automatic clustering spend needs value proof",
+                    estimate_type="Conservative savings candidate",
+                    impact_usd=monthly_cost,
+                    savings_usd=monthly_cost * 0.5,
+                    evidence=(
+                        f"{table_name}: ${window_cost:,.0f} clustering cost and {tb:,.2f} TB reclustered "
+                        f"in the {days}-day window."
+                    ),
+                    safe_next_action="Review clustering depth, DML churn, pruning benefit, and top query demand before changing clustering.",
+                    proof_required="Cost per TB reclustered should fall or query pruning/runtime must justify the clustering spend.",
+                    do_not_do="Do not suspend reclustering until query benefit and recovery expectations are reviewed.",
+                    confidence="Medium - clustering cost is direct telemetry, value requires workload proof.",
+                    source="Automatic clustering cost",
+                )
+
+    if _looks_like_frame(reconciliation) and not reconciliation.empty:
+        gap = _build_attribution_gap_summary(reconciliation, price)
+        gap_usd = abs(safe_float(gap.get("gap_usd")))
+        if gap_usd >= 100:
+            _cost_advisor_add_row(
+                rows,
+                category="Attribution gap",
+                entity=str(gap.get("top_gap_warehouse") or "Warehouse attribution"),
+                finding="Query attribution gap does not reconcile to metered credits",
+                estimate_type="Data quality / idle-cost exposure",
+                impact_usd=gap_usd,
+                savings_usd=0.0,
+                evidence=(
+                    f"{safe_float(gap.get('gap_credits')):+,.2f} credit gap "
+                    f"({safe_float(gap.get('gap_pct')):+.1f}%), ${gap_usd:,.0f} equivalent."
+                ),
+                safe_next_action="Separate idle, cloud-services, serverless, AI, and execution-attributed spend before routing owners.",
+                proof_required="Reconciliation gap should narrow or be explained by labeled non-query service spend.",
+                do_not_do="Do not charge query owners for warehouse idle or service costs without explicit allocation evidence.",
+                confidence="High - metering gap is direct math; ownership requires allocation policy.",
+                source="Query attribution reconciliation",
+            )
+
+    if _looks_like_frame(service_lens) and not service_lens.empty:
+        movement = _service_lens_movement_rows(service_lens, price, limit=12)
+        if not movement.empty:
+            category_series = movement.get("SERVICE_CATEGORY", pd.Series(dtype=str)).fillna("").astype(str).str.upper()
+            non_wh = movement[~category_series.eq("WAREHOUSE")].copy()
+            if not non_wh.empty:
+                non_wh["_POS_DELTA"] = pd.to_numeric(non_wh.get("COST_DELTA_USD", 0), errors="coerce").fillna(0.0)
+                non_wh = non_wh[non_wh["_POS_DELTA"] > 0].sort_values("_POS_DELTA", ascending=False)
+                for _, row in non_wh.head(3).iterrows():
+                    delta_usd = safe_float(row.get("_POS_DELTA"))
+                    if delta_usd < 25:
+                        continue
+                    service = str(row.get("SERVICE_TYPE") or "Unknown service")
+                    category = str(row.get("SERVICE_CATEGORY") or "Other")
+                    _cost_advisor_add_row(
+                        rows,
+                        category="Service spend movement",
+                        entity=service,
+                        finding="Non-warehouse service spend increased",
+                        estimate_type="Cost movement investigation",
+                        impact_usd=delta_usd,
+                        savings_usd=0.0,
+                        evidence=f"{service}: +${delta_usd:,.0f} versus the prior completed window ({category}).",
+                        safe_next_action="Open the service lens and map the service to its owning workload or Snowflake feature.",
+                        proof_required="The next completed service-cost window should confirm whether the increase persists.",
+                        do_not_do="Do not attribute account-level service spend to a warehouse or database without direct evidence.",
+                        confidence="High - service cost comes from official account metering; owner route may need more telemetry.",
+                        source="Account service cost lens",
+                    )
+
+    if _looks_like_frame(storage_table_metrics) and not storage_table_metrics.empty:
+        work = storage_table_metrics.copy()
+        active_col = _cost_column(work, ["ACTIVE_GB"])
+        tt_col = _cost_column(work, ["TIME_TRAVEL_GB"])
+        failsafe_col = _cost_column(work, ["FAILSAFE_GB"])
+        clone_col = _cost_column(work, ["CLONE_GB"])
+        if tt_col:
+            for col in (active_col, tt_col, failsafe_col, clone_col):
+                if col and col not in work.columns:
+                    work[col] = 0.0
+            for _, row in work.iterrows():
+                catalog = str(row.get("TABLE_CATALOG") or "").strip()
+                schema = str(row.get("TABLE_SCHEMA") or "").strip()
+                table = str(row.get("TABLE_NAME") or "").strip()
+                table_name = ".".join(part for part in (catalog, schema, table) if part) or "Unknown table"
+                active_gb = safe_float(row.get(active_col)) if active_col else 0.0
+                time_travel_gb = safe_float(row.get(tt_col))
+                failsafe_gb = safe_float(row.get(failsafe_col)) if failsafe_col else 0.0
+                clone_gb = safe_float(row.get(clone_col)) if clone_col else 0.0
+                monthly_tt = (time_travel_gb / 1024.0) * storage_rate
+                if time_travel_gb >= 100 or monthly_tt >= 25:
+                    _cost_advisor_add_row(
+                        rows,
+                        category="Storage retention",
+                        entity=table_name,
+                        finding="Table time-travel storage needs retention review",
+                        estimate_type="Conservative savings candidate",
+                        impact_usd=monthly_tt,
+                        savings_usd=monthly_tt * 0.5,
+                        evidence=(
+                            f"{table_name}: {time_travel_gb:,.1f} GB time-travel, {active_gb:,.1f} GB active, "
+                            f"{failsafe_gb:,.1f} GB failsafe, {clone_gb:,.1f} GB retained for clone."
+                        ),
+                        safe_next_action="Confirm recovery, cloning, and compliance needs before lowering table/schema/database retention.",
+                        proof_required="Time-travel GB and monthly storage estimate should decline after the approved retention window ages out.",
+                        do_not_do="Do not lower retention on regulated, clone-heavy, or recovery-sensitive objects from this row alone.",
+                        confidence="Medium - table storage bytes are direct telemetry, retention safety depends on policy.",
+                        source="Storage table metrics",
+                    )
+
+    if _looks_like_frame(storage_db_detail) and not storage_db_detail.empty:
+        work = storage_db_detail.copy()
+        db_col = _cost_column(work, ["DATABASE_NAME", "DATABASE"])
+        storage_col = _cost_column(work, ["DATABASE_GB", "STORAGE_GB"])
+        failsafe_col = _cost_column(work, ["FAILSAFE_GB"])
+        cost_col = _cost_column(work, ["EST_COST_USD", "EST_MONTHLY_COST", "MONTHLY_COST_USD"])
+        if db_col and failsafe_col:
+            for _, row in work.iterrows():
+                db = str(row.get(db_col) or "Unknown database")
+                storage_gb = safe_float(row.get(storage_col)) if storage_col else 0.0
+                failsafe_gb = safe_float(row.get(failsafe_col))
+                monthly_cost = safe_float(row.get(cost_col)) if cost_col else ((storage_gb + failsafe_gb) / 1024.0) * storage_rate
+                failsafe_cost = (failsafe_gb / 1024.0) * storage_rate
+                if failsafe_gb < 250 and failsafe_cost < 25:
+                    continue
+                _cost_advisor_add_row(
+                    rows,
+                    category="Storage failsafe",
+                    entity=db,
+                    finding="Database failsafe storage is material",
+                    estimate_type="Retention and lifecycle investigation",
+                    impact_usd=max(failsafe_cost, monthly_cost),
+                    savings_usd=0.0,
+                    evidence=(
+                        f"{db}: {failsafe_gb:,.1f} GB failsafe, {storage_gb:,.1f} GB database storage, "
+                        f"~${monthly_cost:,.0f}/mo total storage estimate."
+                    ),
+                    safe_next_action="Identify recent drops/deletes and retention settings before changing lifecycle or cleanup patterns.",
+                    proof_required="Failsafe and total storage trend should decline only after Snowflake retention/failsafe windows age out.",
+                    do_not_do="Do not promise immediate savings from failsafe; Snowflake failsafe is not directly purgeable.",
+                    confidence="Medium - database storage bytes are direct telemetry, savings timing depends on retention windows.",
+                    source="Storage database detail",
+                )
+
+    board = pd.DataFrame(rows)
+    if board.empty:
+        return {
+            "findings": 0,
+            "high": 0,
+            "estimated_monthly_savings": 0.0,
+            "estimated_monthly_impact": 0.0,
+        }, board
+
+    priority_rank = {"High": 0, "Medium": 1, "Low": 2}
+    board["_PRIORITY_RANK"] = board["PRIORITY"].map(priority_rank).fillna(9)
+    board["_IMPACT_SORT"] = pd.to_numeric(board["EST_MONTHLY_IMPACT_USD"], errors="coerce").fillna(0).abs()
+    board = board.sort_values(
+        ["_PRIORITY_RANK", "EST_MONTHLY_SAVINGS_USD", "_IMPACT_SORT"],
+        ascending=[True, False, False],
+    ).drop(columns=["_PRIORITY_RANK", "_IMPACT_SORT"], errors="ignore").reset_index(drop=True)
+    priority = board["PRIORITY"].fillna("").astype(str)
+    return {
+        "findings": int(len(board)),
+        "high": int(priority.eq("High").sum()),
+        "estimated_monthly_savings": safe_float(
+            pd.to_numeric(board["EST_MONTHLY_SAVINGS_USD"], errors="coerce").fillna(0).sum()
+        ),
+        "estimated_monthly_impact": safe_float(
+            pd.to_numeric(board["EST_MONTHLY_IMPACT_USD"], errors="coerce").fillna(0).abs().sum()
+        ),
+    }, board
+
+
+def _cost_advisor_category_summary(board: pd.DataFrame | None) -> pd.DataFrame:
+    columns = [
+        "CATEGORY", "TOP_PRIORITY", "FINDINGS", "HIGH_FINDINGS",
+        "EST_MONTHLY_SAVINGS_USD", "EST_MONTHLY_IMPACT_USD", "TOP_ENTITY",
+    ]
+    if not _looks_like_frame(board) or board.empty or "CATEGORY" not in board.columns:
+        return pd.DataFrame(columns=columns)
+
+    view = board.copy()
+    view["CATEGORY"] = view["CATEGORY"].fillna("Other").astype(str).replace("", "Other")
+    view["EST_MONTHLY_SAVINGS_USD"] = pd.to_numeric(
+        view.get("EST_MONTHLY_SAVINGS_USD", pd.Series([0] * len(view), index=view.index)),
+        errors="coerce",
+    ).fillna(0).clip(lower=0)
+    view["EST_MONTHLY_IMPACT_USD"] = pd.to_numeric(
+        view.get("EST_MONTHLY_IMPACT_USD", pd.Series([0] * len(view), index=view.index)),
+        errors="coerce",
+    ).fillna(0).abs()
+    severity = view.get("SEVERITY", view.get("PRIORITY", pd.Series(["Low"] * len(view), index=view.index)))
+    view["_PRIORITY"] = severity.fillna("Low").astype(str).str.title()
+    rank_map = {"High": 0, "Medium": 1, "Low": 2}
+    view["_PRIORITY_RANK"] = view["_PRIORITY"].map(rank_map).fillna(9).astype(int)
+    view["_HIGH"] = view["_PRIORITY"].eq("High").astype(int)
+    if "ENTITY" not in view.columns:
+        view["ENTITY"] = ""
+
+    summary = (
+        view.groupby("CATEGORY", dropna=False)
+        .agg(
+            FINDINGS=("CATEGORY", "size"),
+            HIGH_FINDINGS=("_HIGH", "sum"),
+            EST_MONTHLY_SAVINGS_USD=("EST_MONTHLY_SAVINGS_USD", "sum"),
+            EST_MONTHLY_IMPACT_USD=("EST_MONTHLY_IMPACT_USD", "sum"),
+            _PRIORITY_RANK=("_PRIORITY_RANK", "min"),
+            TOP_ENTITY=("ENTITY", "first"),
+        )
+        .reset_index()
+    )
+    priority_labels = {0: "High", 1: "Medium", 2: "Low"}
+    summary["TOP_PRIORITY"] = summary["_PRIORITY_RANK"].map(priority_labels).fillna("Low")
+    summary["_SORT_VALUE"] = summary["EST_MONTHLY_SAVINGS_USD"].abs() + summary["EST_MONTHLY_IMPACT_USD"].abs()
+    summary = summary.sort_values(
+        ["_PRIORITY_RANK", "EST_MONTHLY_SAVINGS_USD", "_SORT_VALUE"],
+        ascending=[True, False, False],
+    )
+    return summary[columns].reset_index(drop=True)
+
+
+def _render_cost_advisor_category_chart(board: pd.DataFrame) -> None:
+    summary = _cost_advisor_category_summary(board)
+    if summary.empty:
+        return
+    palette = _cost_chart_palette()
+    alt = _altair()
+    base = alt.Chart(summary).encode(
+        y=alt.Y(
+            "CATEGORY:N",
+            sort=alt.SortField(field="EST_MONTHLY_SAVINGS_USD", order="descending"),
+            title=None,
+            axis=alt.Axis(labelLimit=190),
+        )
+    )
+    bars = base.mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, opacity=0.76).encode(
+        x=alt.X("EST_MONTHLY_SAVINGS_USD:Q", title="Estimated monthly dollars", axis=alt.Axis(format="$,.0f")),
+        color=alt.value(palette["bar"]),
+        tooltip=[
+            alt.Tooltip("CATEGORY:N", title="Category"),
+            alt.Tooltip("TOP_PRIORITY:N", title="Top priority"),
+            alt.Tooltip("FINDINGS:Q", title="Findings", format=","),
+            alt.Tooltip("HIGH_FINDINGS:Q", title="High", format=","),
+            alt.Tooltip("EST_MONTHLY_SAVINGS_USD:Q", title="Savings / mo", format="$,.2f"),
+            alt.Tooltip("EST_MONTHLY_IMPACT_USD:Q", title="Value at risk", format="$,.2f"),
+        ],
+    )
+    impact_ticks = base.mark_tick(color=palette["risk"], thickness=3, size=20).encode(
+        x=alt.X("EST_MONTHLY_IMPACT_USD:Q", title="Estimated monthly dollars"),
+        tooltip=[
+            alt.Tooltip("CATEGORY:N", title="Category"),
+            alt.Tooltip("EST_MONTHLY_IMPACT_USD:Q", title="Value at risk", format="$,.2f"),
+        ],
+    )
+    st.altair_chart(
+        _finalize_cost_chart(bars + impact_ticks, height=max(190, min(330, 32 * len(summary) + 58))),
+        width="stretch",
+    )
+
+
+def _render_cost_advisor_board(
+    *,
+    efficiency_summary: pd.DataFrame,
+    warehouse_efficiency: pd.DataFrame,
+    clustering_cost: pd.DataFrame,
+    reconciliation: pd.DataFrame,
+    service_lens: pd.DataFrame,
+    credit_price: float,
+    days: int,
+    storage_table_metrics: pd.DataFrame | None = None,
+    storage_db_detail: pd.DataFrame | None = None,
+    storage_cost_per_tb: float | None = None,
+) -> None:
+    summary, board = _build_cost_advisor_board(
+        efficiency_summary=efficiency_summary,
+        warehouse_efficiency=warehouse_efficiency,
+        clustering_cost=clustering_cost,
+        reconciliation=reconciliation,
+        service_lens=service_lens,
+        credit_price=credit_price,
+        days=days,
+        storage_table_metrics=storage_table_metrics,
+        storage_db_detail=storage_db_detail,
+        storage_cost_per_tb=storage_cost_per_tb,
+    )
+    st.session_state["cost_contract_cost_advisor_summary"] = summary
+    st.session_state["cost_contract_cost_advisor_board"] = board
+    if board.empty:
+        return
+    st.markdown("**Cost Advisor**")
+    render_shell_snapshot((
+        ("Findings", f"{summary['findings']:,}"),
+        ("High Priority", f"{summary['high']:,}"),
+        ("Est. Savings / Mo", f"${safe_float(summary.get('estimated_monthly_savings')):,.0f}"),
+        ("Value at Risk", f"${safe_float(summary.get('estimated_monthly_impact')):,.0f}"),
+    ))
+    st.caption(
+        "Advisor findings are conservative and telemetry-backed. Savings are estimates; pressure and attribution rows are investigation/value-at-risk signals."
+    )
+    _render_cost_advisor_category_chart(board)
+    render_priority_dataframe(
+        board,
+        title="Ranked cost advisor findings",
+        priority_columns=[
+            "SEVERITY", "CATEGORY", "ENTITY", "ESTIMATE_TYPE",
+            "EST_MONTHLY_SAVINGS_USD", "EST_MONTHLY_IMPACT_USD",
+            "TELEMETRY_SUMMARY", "SAFE_NEXT_ACTION", "VALIDATION_NEEDED", "DO_NOT_DO", "CONFIDENCE",
+        ],
+        sort_by=["SEVERITY", "EST_MONTHLY_SAVINGS_USD", "EST_MONTHLY_IMPACT_USD"],
+        ascending=[True, False, False],
+        raw_label="All cost advisor findings",
+        height=340,
+        max_rows=12,
+    )
+
+
 def _render_cost_source_health(
     *,
     cockpit: pd.DataFrame,
@@ -4156,6 +4663,18 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
         st.session_state.get("cost_contract_service_lens", pd.DataFrame()),
         credit_price,
         st.session_state.get("cost_contract_service_lens_error", ""),
+    )
+    _render_cost_advisor_board(
+        efficiency_summary=st.session_state.get("cost_contract_efficiency_summary", pd.DataFrame()),
+        warehouse_efficiency=st.session_state.get("cost_contract_warehouse_efficiency", pd.DataFrame()),
+        clustering_cost=st.session_state.get("cost_contract_clustering_cost", pd.DataFrame()),
+        reconciliation=st.session_state.get("cost_contract_attribution_reconciliation", pd.DataFrame()),
+        service_lens=st.session_state.get("cost_contract_service_lens", pd.DataFrame()),
+        credit_price=credit_price,
+        days=int(days),
+        storage_table_metrics=st.session_state.get("stor_df_table_metrics", pd.DataFrame()),
+        storage_db_detail=st.session_state.get("stor_df_db_detail", pd.DataFrame()),
+        storage_cost_per_tb=st.session_state.get("storage_cost_per_tb", DEFAULTS.get("storage_cost_per_tb", 23.0)),
     )
     _render_cost_efficiency_rca(
         st.session_state.get("cost_contract_efficiency_summary", pd.DataFrame()),

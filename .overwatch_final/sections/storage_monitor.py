@@ -199,6 +199,7 @@ def render():
                     df_db = None
                     source = ""
             if df_db is not None:
+                st.session_state["stor_df_db_detail"] = df_db
                 defer_source_note(source)
                 render_priority_dataframe(
                     df_db,
@@ -232,6 +233,7 @@ def render():
                 ORDER BY active_gb DESC
                 LIMIT 50
             """, ttl_key=f"storage_table_metrics_{get_active_company()}", tier="standard")
+            st.session_state["stor_df_table_metrics"] = df_tbl
             render_priority_dataframe(
                 df_tbl,
                 title="Largest table storage consumers",

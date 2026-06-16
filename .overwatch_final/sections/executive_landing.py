@@ -135,6 +135,9 @@ def _build_platform_operating_score(summary: dict, source_health: pd.DataFrame |
     open_actions = safe_int(summary.get("open_actions"))
     high_actions = safe_int(summary.get("high_actions"))
     migration_blockers = safe_int(summary.get("migration_blockers"))
+    advisor_findings = safe_int(summary.get("advisor_findings"))
+    advisor_high = safe_int(summary.get("advisor_high_findings"))
+    advisor_value_at_risk = safe_float(summary.get("advisor_value_at_risk_usd"))
     source_rows = source_health if isinstance(source_health, pd.DataFrame) else pd.DataFrame()
     loaded_sources = int(source_rows["STATE"].eq("Loaded").sum()) if "STATE" in source_rows.columns else 0
     limited_sources = int(source_rows["STATE"].eq("Limited").sum()) if "STATE" in source_rows.columns else 0
@@ -145,6 +148,10 @@ def _build_platform_operating_score(summary: dict, source_health: pd.DataFrame |
     action_penalty = min(18.0, high_actions * 5.0 + max(0, open_actions - high_actions) * 0.5)
     deployment_penalty = min(24.0, migration_blockers * 12.0)
     telemetry_penalty = min(18.0, limited_sources * 8.0)
+    advisor_penalty = min(
+        12.0,
+        advisor_high * 4.0 + max(0, advisor_findings - advisor_high) * 0.25 + min(advisor_value_at_risk / 2500.0, 4.0),
+    )
 
     caps: list[tuple[int, str]] = []
     if limited_sources:
@@ -155,6 +162,8 @@ def _build_platform_operating_score(summary: dict, source_health: pd.DataFrame |
         caps.append((85, f"{critical_high} Critical/High open alert(s) limit the executive health index."))
     if high_actions:
         caps.append((88, f"{high_actions} high-priority open action(s) limit the executive health index."))
+    if advisor_high:
+        caps.append((89, f"{advisor_high} high-priority loaded advisor finding(s) need DBA review."))
     if cost_delta_pct >= 0.20:
         caps.append((90, f"Spend increased {cost_delta_pct:.0%} versus the prior window."))
 
@@ -198,13 +207,32 @@ def _build_platform_operating_score(summary: dict, source_health: pd.DataFrame |
             next_action="Reload or route to the owning monitoring view when telemetry is limited.",
             cap=82 if limited_sources else None,
         ),
+        _score_driver(
+            "Advisor Backlog",
+            penalty=advisor_penalty,
+            evidence=(
+                f"{advisor_findings:,} loaded advisor finding(s), {advisor_high:,} high-priority, "
+                f"{_money(advisor_value_at_risk)} value at risk."
+            ),
+            next_action="Open the loaded advisor row's owning section before tuning or assigning work.",
+            cap=89 if advisor_high else None,
+        ),
     ])
     if not drivers.empty:
         drivers = drivers.sort_values(["SCORE_IMPACT", "DRIVER"], ascending=[True, True]).reset_index(drop=True)
 
     raw_score = max(
         0.0,
-        min(100.0, 100.0 - cost_penalty - alert_penalty - action_penalty - deployment_penalty - telemetry_penalty),
+        min(
+            100.0,
+            100.0
+            - cost_penalty
+            - alert_penalty
+            - action_penalty
+            - deployment_penalty
+            - telemetry_penalty
+            - advisor_penalty,
+        ),
     )
     cap_value = min((cap for cap, _reason in caps), default=100)
     cap_reason = next((reason for cap, reason in sorted(caps, key=lambda item: item[0]) if cap == cap_value), "")
@@ -234,10 +262,21 @@ def _persist_platform_summary(summary: dict | None) -> None:
         "state": str(summary.get("state") or "Review"),
         "score_cap": safe_int(summary.get("score_cap"), 100),
         "cap_reason": str(summary.get("cap_reason") or "No hard cap applied."),
+        "advisor_lanes": safe_int(summary.get("advisor_lanes")),
+        "advisor_findings": safe_int(summary.get("advisor_findings")),
+        "advisor_high_findings": safe_int(summary.get("advisor_high_findings")),
+        "advisor_estimated_monthly_savings_usd": safe_float(summary.get("advisor_estimated_monthly_savings_usd")),
+        "advisor_value_at_risk_usd": safe_float(summary.get("advisor_value_at_risk_usd")),
     }
 
 
-def _snapshot_state(cost: pd.DataFrame, alerts: pd.DataFrame, queue: pd.DataFrame, migration: pd.DataFrame) -> dict:
+def _snapshot_state(
+    cost: pd.DataFrame,
+    alerts: pd.DataFrame,
+    queue: pd.DataFrame,
+    migration: pd.DataFrame,
+    state: dict | None = None,
+) -> dict:
     cost_row = cost.iloc[0] if isinstance(cost, pd.DataFrame) and not cost.empty else pd.Series(dtype=object)
     current_credits = safe_float(cost_row.get("CURRENT_CREDITS"))
     prior_credits = safe_float(cost_row.get("PRIOR_CREDITS"))
@@ -261,7 +300,9 @@ def _snapshot_state(cost: pd.DataFrame, alerts: pd.DataFrame, queue: pd.DataFram
         if isinstance(migration, pd.DataFrame) and not migration.empty and "MIGRATION_STATE" in migration.columns
         else 0
     )
-    return _with_platform_operating_score({
+    advisor_rows = _executive_loaded_advisor_rows(state)
+    advisor_totals = _advisor_overlay_totals(advisor_rows)
+    summary = {
         "current_credits": current_credits,
         "prior_credits": prior_credits,
         "cost_delta": cost_delta,
@@ -271,7 +312,9 @@ def _snapshot_state(cost: pd.DataFrame, alerts: pd.DataFrame, queue: pd.DataFram
         "high_actions": high_actions,
         "migration_blockers": migration_blockers,
         "top_cost_driver": str(cost_row.get("TOP_INCREASE_WAREHOUSE") or "No loaded driver"),
-    })
+    }
+    summary.update(advisor_totals)
+    return _with_platform_operating_score(summary)
 
 
 def _default_platform_summary() -> dict:
@@ -302,7 +345,7 @@ def _default_platform_summary() -> dict:
             "NEXT_ACTION": "Open the source section when coverage detail is needed.",
         },
     ])
-    return _with_platform_operating_score({
+    summary = {
         "current_credits": 0.0,
         "prior_credits": 0.0,
         "cost_delta": 0.0,
@@ -312,7 +355,9 @@ def _default_platform_summary() -> dict:
         "high_actions": 0,
         "migration_blockers": 0,
         "top_cost_driver": "On demand",
-    }, source_health)
+    }
+    summary.update(_advisor_overlay_totals(pd.DataFrame()))
+    return _with_platform_operating_score(summary, source_health)
 
 
 def _decision_rows(summary: dict) -> pd.DataFrame:
@@ -333,13 +378,24 @@ def _decision_rows(summary: dict) -> pd.DataFrame:
         },
         {
             "PRIORITY": "3",
+            "DECISION_AREA": "Loaded advisors",
+            "SIGNAL": (
+                f"{safe_int(summary.get('advisor_findings')):,} finding(s), "
+                f"{safe_int(summary.get('advisor_high_findings')):,} high-priority, "
+                f"{_money(safe_float(summary.get('advisor_estimated_monthly_savings_usd')))}/mo estimated savings"
+            ),
+            "NEXT_ACTION": "Open Cost & Contract, Warehouse Health, or Workload Operations for the top loaded advisor row.",
+            "WORKFLOW": "Cost & Contract",
+        },
+        {
+            "PRIORITY": "4",
             "DECISION_AREA": "Measured closure",
             "SIGNAL": f"{summary['open_actions']:,} open action(s), {summary['high_actions']:,} high-priority",
             "NEXT_ACTION": "Work routed queue rows with telemetry status.",
             "WORKFLOW": "DBA Control Room",
         },
         {
-            "PRIORITY": "4",
+            "PRIORITY": "5",
             "DECISION_AREA": "Deployment trust",
             "SIGNAL": f"{summary['migration_blockers']:,} monitoring coverage blocker(s)",
             "NEXT_ACTION": "Open Security Monitoring and reconcile readiness telemetry.",
@@ -356,7 +412,10 @@ def _executive_action_brief(summary: dict | None) -> dict[str, str]:
             "headline": "Open an executive snapshot when leadership telemetry is needed.",
             "detail": "Risk, spend movement, closure work, and deployment trust stay behind one explicit load.",
         }
-    if summary["critical_high_alerts"] or summary["high_actions"] or summary["migration_blockers"]:
+    advisor_high = safe_int(summary.get("advisor_high_findings"))
+    advisor_findings = safe_int(summary.get("advisor_findings"))
+    advisor_savings = safe_float(summary.get("advisor_estimated_monthly_savings_usd"))
+    if summary["critical_high_alerts"] or summary["high_actions"] or summary["migration_blockers"] or advisor_high:
         cap_reason = str(summary.get("cap_reason") or "")
         cap_detail = f" Limiter: {cap_reason}" if cap_reason and cap_reason != "No hard cap applied." else ""
         return {
@@ -365,7 +424,8 @@ def _executive_action_brief(summary: dict | None) -> dict[str, str]:
             "detail": (
                 f"{summary['critical_high_alerts']:,} Critical/High alert(s), "
                 f"{summary['high_actions']:,} high-priority action(s), "
-                f"{summary['migration_blockers']:,} deployment blocker(s).{cap_detail}"
+                f"{summary['migration_blockers']:,} deployment blocker(s), "
+                f"{advisor_high:,} high-priority advisor finding(s).{cap_detail}"
             ),
         }
     if summary["cost_delta"] > 0:
@@ -373,6 +433,15 @@ def _executive_action_brief(summary: dict | None) -> dict[str, str]:
             "state": str(summary["state"]),
             "headline": "Spend increased; validate the top mover before the summary.",
             "detail": f"{summary['top_cost_driver']} moved {summary['cost_delta']:+,.2f} credits in the loaded window.",
+        }
+    if advisor_findings:
+        return {
+            "state": str(summary["state"]),
+            "headline": "Loaded advisor work is ready for executive triage.",
+            "detail": (
+                f"{advisor_findings:,} advisor finding(s) loaded; "
+                f"{_money(advisor_savings)}/mo estimated savings where quantified."
+            ),
         }
     return {
         "state": str(summary["state"]),
@@ -1096,6 +1165,268 @@ def _obs_count_label(board: pd.DataFrame, metric: str) -> str:
     return f"{safe_int(_obs_value(board, metric)):,}"
 
 
+def _state_payload(state: dict | None = None):
+    return st.session_state if state is None else state
+
+
+def _state_frame(state: dict | None, key: str) -> pd.DataFrame:
+    value = _state_payload(state).get(key)
+    if isinstance(value, pd.DataFrame):
+        return value.copy()
+    if isinstance(value, list):
+        return pd.DataFrame(value)
+    if isinstance(value, dict):
+        return pd.DataFrame([value])
+    return pd.DataFrame()
+
+
+def _sum_first_numeric(frame: pd.DataFrame, columns: list[str]) -> float:
+    if not isinstance(frame, pd.DataFrame) or frame.empty:
+        return 0.0
+    upper_lookup = {str(column).upper(): column for column in frame.columns}
+    for column in columns:
+        actual = upper_lookup.get(str(column).upper())
+        if actual:
+            return safe_float(pd.to_numeric(frame[actual], errors="coerce").fillna(0).sum())
+    return 0.0
+
+
+def _count_high_priority(frame: pd.DataFrame) -> int:
+    if not isinstance(frame, pd.DataFrame) or frame.empty:
+        return 0
+    for column in ("SEVERITY", "PRIORITY", "OPTIMIZATION_SEVERITY", "STATE"):
+        if column in frame.columns:
+            values = frame[column].fillna("").astype(str).str.upper()
+            return int(values.isin(["CRITICAL", "HIGH", "ESCALATE", "INCIDENT", "BLOCKED"]).sum())
+    return 0
+
+
+def _advisor_state_label(high_count: int, finding_count: int, *, default: str = "Loaded") -> str:
+    if safe_int(high_count) > 0:
+        return "Review"
+    if safe_int(finding_count) > 0:
+        return default
+    return "No rows"
+
+
+def _append_advisor_row(
+    rows: list[dict],
+    *,
+    lane: str,
+    findings: int,
+    high_findings: int = 0,
+    estimated_savings: float = 0.0,
+    value_at_risk: float = 0.0,
+    signal: str,
+    next_action: str,
+    route: str,
+    priority: int = 8,
+    state: str | None = None,
+) -> None:
+    findings = safe_int(findings)
+    if findings <= 0:
+        return
+    high_findings = safe_int(high_findings)
+    estimated_savings = safe_float(estimated_savings)
+    value_at_risk = safe_float(value_at_risk)
+    rows.append({
+        "PRIORITY": safe_int(priority, 8),
+        "LANE": lane,
+        "STATE": state or _advisor_state_label(high_findings, findings),
+        "VALUE": (
+            f"{findings:,} finding(s); {_money(estimated_savings)}/mo est. savings"
+            if estimated_savings > 0
+            else f"{findings:,} finding(s)"
+        ),
+        "FINDINGS": findings,
+        "HIGH_FINDINGS": high_findings,
+        "EST_MONTHLY_SAVINGS_USD": round(estimated_savings, 2),
+        "VALUE_AT_RISK_USD": round(value_at_risk, 2),
+        "ADVISOR_SIGNAL": signal,
+        "NEXT_ACTION": next_action,
+        "ROUTE": route,
+    })
+
+
+def _executive_loaded_advisor_rows(state: dict | None = None) -> pd.DataFrame:
+    """Summarize already-loaded advisor/recommendation frames without querying Snowflake."""
+    rows: list[dict] = []
+
+    cost_board = _state_frame(state, "cost_contract_cost_advisor_board")
+    if not cost_board.empty:
+        findings = len(cost_board)
+        high = _count_high_priority(cost_board)
+        savings = _sum_first_numeric(cost_board, ["EST_MONTHLY_SAVINGS_USD", "Estimated Monthly Savings"])
+        value_at_risk = _sum_first_numeric(cost_board, ["EST_MONTHLY_IMPACT_USD", "VALUE_AT_RISK_USD"])
+        category = str(cost_board.iloc[0].get("CATEGORY") or "loaded cost advisor finding")
+        entity = str(cost_board.iloc[0].get("ENTITY") or "loaded entity")
+        _append_advisor_row(
+            rows,
+            lane="Cost Advisor",
+            findings=findings,
+            high_findings=high,
+            estimated_savings=savings,
+            value_at_risk=value_at_risk,
+            signal=f"{high:,} high-priority; {_money(value_at_risk)} value at risk; top row: {category} / {entity}.",
+            next_action="Open Cost & Contract recommendations and work the highest telemetry-backed cost row first.",
+            route="Cost & Contract",
+            priority=3 if high else 6,
+        )
+
+    recs = _state_frame(state, "rec_recommendations")
+    if not recs.empty:
+        high = _count_high_priority(recs)
+        savings = _sum_first_numeric(
+            recs,
+            ["Estimated Monthly Savings", "EST_MONTHLY_SAVINGS_USD", "MONTHLY_SAVINGS_USD"],
+        )
+        categories = (
+            ", ".join(sorted({str(value) for value in recs.get("Category", pd.Series(dtype=str)).dropna()})[:4])
+            if "Category" in recs.columns
+            else "recommendations"
+        )
+        _append_advisor_row(
+            rows,
+            lane="Recommendation Feed",
+            findings=len(recs),
+            high_findings=high,
+            estimated_savings=savings,
+            signal=f"{len(recs):,} generated recommendation(s) across {categories}.",
+            next_action="Open Cost & Contract recommendations and confirm owner, validation, and safe next action before assignment.",
+            route="Cost & Contract",
+            priority=4 if high else 7,
+        )
+
+    idle = _state_frame(state, "opt_df_idle")
+    duplicate = _state_frame(state, "opt_df_dup")
+    sizing = _state_frame(state, "opt_df_sz")
+    capacity_exceptions = _state_frame(state, "wh_capacity_exceptions")
+    settings_inventory = _state_frame(state, "wh_settings_inventory")
+    warehouse_findings = len(idle) + len(duplicate) + len(sizing) + len(capacity_exceptions)
+    if warehouse_findings:
+        idle_credits = _sum_first_numeric(idle, ["IDLE_CREDITS"])
+        total_credits = _sum_first_numeric(sizing, ["TOTAL_CREDITS"])
+        savings = credits_to_dollars((idle_credits / 7.0 * 30.0), _credit_price()) if idle_credits else 0.0
+        spill = _sum_first_numeric(sizing, ["REMOTE_SPILL_GB"]) + _sum_first_numeric(capacity_exceptions, ["REMOTE_SPILL_GB"])
+        queue = _sum_first_numeric(sizing, ["AVG_QUEUE_SEC", "QUEUE_SECONDS"]) + _sum_first_numeric(capacity_exceptions, ["QUEUE_SECONDS"])
+        pressure_count = 0
+        if not sizing.empty:
+            spill_series = pd.to_numeric(sizing.get("REMOTE_SPILL_GB", pd.Series([0] * len(sizing))), errors="coerce").fillna(0)
+            queue_series = pd.to_numeric(sizing.get("AVG_QUEUE_SEC", pd.Series([0] * len(sizing))), errors="coerce").fillna(0)
+            pressure_count += int(((spill_series >= 10) | (queue_series >= 600)).sum())
+        high = max(_count_high_priority(capacity_exceptions), pressure_count)
+        inventory_note = f"; {len(settings_inventory):,} warehouse setting row(s) loaded" if not settings_inventory.empty else ""
+        _append_advisor_row(
+            rows,
+            lane="Warehouse Optimization",
+            findings=warehouse_findings,
+            high_findings=high,
+            estimated_savings=savings,
+            value_at_risk=credits_to_dollars(total_credits, _credit_price()) if total_credits else 0.0,
+            signal=(
+                f"{len(idle):,} idle, {len(duplicate):,} repeated-query, {len(sizing):,} sizing, "
+                f"{len(capacity_exceptions):,} capacity exception row(s); {_format_gb(spill)} spill, "
+                f"{_format_seconds(queue)} queue{inventory_note}."
+            ),
+            next_action="Open Warehouse Health and review capacity/settings evidence before any warehouse control change.",
+            route="Warehouse Health",
+            priority=3 if high else 6,
+        )
+
+    procedure_exceptions = pd.concat(
+        [
+            _state_frame(state, "sp_sla_exceptions"),
+            _state_frame(state, "sp_ops_exceptions"),
+        ],
+        ignore_index=True,
+        sort=False,
+    )
+    procedure_latest = _state_frame(state, "sp_sla_latest")
+    procedure_cost = _state_frame(state, "spt_df_sp_tracker")
+    procedure_optimization = 0
+    if not procedure_cost.empty and "OPTIMIZATION_SCORE" in procedure_cost.columns:
+        scores = pd.to_numeric(procedure_cost["OPTIMIZATION_SCORE"], errors="coerce").fillna(0)
+        procedure_optimization = int((scores > 0).sum())
+    procedure_findings = len(procedure_exceptions) + procedure_optimization
+    if procedure_findings:
+        high = _count_high_priority(procedure_exceptions)
+        cost_estimate = _sum_first_numeric(procedure_cost, ["EST_COST", "ESTIMATED_COST_USD", "EST_COST_USD"])
+        runtime = _sum_first_numeric(procedure_cost, ["TOTAL_ELAPSED_SEC", "TOTAL_ELAPSED_SECONDS"])
+        _append_advisor_row(
+            rows,
+            lane="Procedure Analysis",
+            findings=procedure_findings,
+            high_findings=high,
+            value_at_risk=cost_estimate,
+            signal=(
+                f"{len(procedure_exceptions):,} SLA/cost exception row(s), "
+                f"{procedure_optimization:,} optimization candidate(s), {len(procedure_latest):,} latest run row(s), "
+                f"{_format_seconds(runtime)} tracked runtime."
+            ),
+            next_action="Open Stored Procedures or Workload Operations and review procedure SLA/cost exceptions before reruns or tuning.",
+            route="Workload Operations",
+            priority=2 if high else 5,
+        )
+
+    storage_tables = _state_frame(state, "stor_df_table_metrics")
+    storage_db = _state_frame(state, "stor_df_db_detail")
+    if not storage_tables.empty or not storage_db.empty:
+        time_travel_gb = _sum_first_numeric(storage_tables, ["TIME_TRAVEL_GB"])
+        failsafe_gb = _sum_first_numeric(storage_tables, ["FAILSAFE_GB"]) + _sum_first_numeric(storage_db, ["FAILSAFE_GB"])
+        storage_cost = _sum_first_numeric(storage_db, ["EST_COST_USD", "EST_MONTHLY_COST", "MONTHLY_COST_USD"])
+        findings = len(storage_tables) + len(storage_db)
+        _append_advisor_row(
+            rows,
+            lane="Storage Retention",
+            findings=findings,
+            estimated_savings=0.0,
+            value_at_risk=storage_cost,
+            signal=(
+                f"{len(storage_tables):,} table storage row(s), {len(storage_db):,} database row(s), "
+                f"{time_travel_gb:,.1f} GB time-travel, {failsafe_gb:,.1f} GB failsafe."
+            ),
+            next_action="Open Storage cost and retention, then confirm recovery and compliance windows before retention changes.",
+            route="Cost & Contract",
+            priority=7,
+            state="Track",
+        )
+
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return pd.DataFrame(
+            columns=[
+                "PRIORITY", "LANE", "STATE", "VALUE", "FINDINGS", "HIGH_FINDINGS",
+                "EST_MONTHLY_SAVINGS_USD", "VALUE_AT_RISK_USD", "ADVISOR_SIGNAL", "NEXT_ACTION", "ROUTE",
+            ]
+        )
+    return out.sort_values(
+        ["PRIORITY", "HIGH_FINDINGS", "EST_MONTHLY_SAVINGS_USD", "FINDINGS"],
+        ascending=[True, False, False, False],
+    ).reset_index(drop=True)
+
+
+def _advisor_overlay_totals(rows: pd.DataFrame | None) -> dict:
+    if not isinstance(rows, pd.DataFrame) or rows.empty:
+        return {
+            "advisor_lanes": 0,
+            "advisor_findings": 0,
+            "advisor_high_findings": 0,
+            "advisor_estimated_monthly_savings_usd": 0.0,
+            "advisor_value_at_risk_usd": 0.0,
+        }
+    return {
+        "advisor_lanes": int(len(rows)),
+        "advisor_findings": safe_int(pd.to_numeric(rows.get("FINDINGS", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()),
+        "advisor_high_findings": safe_int(pd.to_numeric(rows.get("HIGH_FINDINGS", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()),
+        "advisor_estimated_monthly_savings_usd": safe_float(
+            pd.to_numeric(rows.get("EST_MONTHLY_SAVINGS_USD", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()
+        ),
+        "advisor_value_at_risk_usd": safe_float(
+            pd.to_numeric(rows.get("VALUE_AT_RISK_USD", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()
+        ),
+    }
+
+
 def _render_observability_source_status(board: pd.DataFrame) -> None:
     statuses = _obs_rows(board, "SOURCE_STATUS")
     if not isinstance(statuses, pd.DataFrame) or statuses.empty:
@@ -1121,7 +1452,7 @@ def _render_observability_source_status(board: pd.DataFrame) -> None:
         )
 
 
-def _summary_from_observability(board: pd.DataFrame, *, credit_price: float) -> dict | None:
+def _summary_from_observability(board: pd.DataFrame, *, credit_price: float, state: dict | None = None) -> dict | None:
     if not isinstance(board, pd.DataFrame) or board.empty or not _has_observability_kpis(board):
         return None
     current_credits = _obs_value(board, "Credits Used")
@@ -1132,6 +1463,8 @@ def _summary_from_observability(board: pd.DataFrame, *, credit_price: float) -> 
     failed_queries = safe_int(_obs_value(board, "Failed Queries"))
     score = _obs_value(board, "Platform Health", default=0)
     prior_credits = max(0.0, current_credits - cost_delta)
+    advisor_rows = _executive_loaded_advisor_rows(state)
+    advisor_totals = _advisor_overlay_totals(advisor_rows)
     summary = {
         "current_credits": current_credits,
         "prior_credits": prior_credits,
@@ -1143,6 +1476,7 @@ def _summary_from_observability(board: pd.DataFrame, *, credit_price: float) -> 
         "migration_blockers": 0,
         "top_cost_driver": "Account spend",
     }
+    summary.update(advisor_totals)
     scored = _with_platform_operating_score(summary, pd.DataFrame([
         {"SOURCE": "Executive observability facts", "STATE": "Loaded", "EVIDENCE": "Monitoring summary rows loaded."}
     ]))
@@ -1160,9 +1494,30 @@ def _summary_from_observability(board: pd.DataFrame, *, credit_price: float) -> 
     return scored
 
 
-def _executive_priority_rows(board: pd.DataFrame, *, days: int) -> pd.DataFrame:
+def _executive_priority_rows(
+    board: pd.DataFrame,
+    *,
+    days: int,
+    advisor_rows: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     """Convert the loaded KPI board into the first decisions leadership cares about."""
     if not isinstance(board, pd.DataFrame) or board.empty or not _has_observability_kpis(board):
+        if isinstance(advisor_rows, pd.DataFrame) and not advisor_rows.empty:
+            rows = []
+            for _, row in advisor_rows.head(6).iterrows():
+                rows.append({
+                    "PRIORITY": safe_int(row.get("PRIORITY"), 5),
+                    "LANE": str(row.get("LANE") or "Loaded advisor"),
+                    "STATE": str(row.get("STATE") or "Review"),
+                    "SIGNAL": str(row.get("ADVISOR_SIGNAL") or row.get("VALUE") or "Loaded advisor finding."),
+                    "BUSINESS_IMPACT": (
+                        f"{safe_int(row.get('FINDINGS')):,} finding(s); "
+                        f"{_money(safe_float(row.get('EST_MONTHLY_SAVINGS_USD')))}/mo estimated savings where quantified."
+                    ),
+                    "NEXT_ACTION": str(row.get("NEXT_ACTION") or "Open the owning monitoring section."),
+                    "ROUTE": str(row.get("ROUTE") or "Cost & Contract"),
+                })
+            return pd.DataFrame(rows).sort_values(["PRIORITY", "LANE"]).reset_index(drop=True)
         return pd.DataFrame(
             columns=["PRIORITY", "LANE", "STATE", "SIGNAL", "BUSINESS_IMPACT", "NEXT_ACTION", "ROUTE"]
         )
@@ -1241,11 +1596,33 @@ def _executive_priority_rows(board: pd.DataFrame, *, days: int) -> pd.DataFrame:
         },
     ]
     out = pd.DataFrame(rows)
+    if isinstance(advisor_rows, pd.DataFrame) and not advisor_rows.empty:
+        advisor_view = advisor_rows.copy()
+        for _, row in advisor_view.head(6).iterrows():
+            out = pd.concat(
+                [
+                    out,
+                    pd.DataFrame([{
+                        "PRIORITY": min(5, safe_int(row.get("PRIORITY"), 5)),
+                        "LANE": str(row.get("LANE") or "Loaded advisor"),
+                        "STATE": str(row.get("STATE") or "Review"),
+                        "SIGNAL": str(row.get("ADVISOR_SIGNAL") or row.get("VALUE") or "Loaded advisor finding."),
+                        "BUSINESS_IMPACT": (
+                            f"{safe_int(row.get('FINDINGS')):,} finding(s); "
+                            f"{_money(safe_float(row.get('EST_MONTHLY_SAVINGS_USD')))}/mo estimated savings where quantified."
+                        ),
+                        "NEXT_ACTION": str(row.get("NEXT_ACTION") or "Open the owning monitoring section."),
+                        "ROUTE": str(row.get("ROUTE") or "Cost & Contract"),
+                    }])
+                ],
+                ignore_index=True,
+                sort=False,
+            )
     return out.sort_values(["PRIORITY", "LANE"]).reset_index(drop=True)
 
 
-def _render_executive_priority_board(board: pd.DataFrame, *, days: int) -> None:
-    rows = _executive_priority_rows(board, days=int(days))
+def _render_executive_priority_board(board: pd.DataFrame, *, days: int, advisor_rows: pd.DataFrame | None = None) -> None:
+    rows = _executive_priority_rows(board, days=int(days), advisor_rows=advisor_rows)
     if rows.empty:
         return
     render_priority_dataframe(
@@ -1263,13 +1640,32 @@ def _render_executive_priority_board(board: pd.DataFrame, *, days: int) -> None:
     )
 
 
-def _executive_pressure_rows(board: pd.DataFrame) -> pd.DataFrame:
+def _executive_pressure_rows(board: pd.DataFrame, advisor_rows: pd.DataFrame | None = None) -> pd.DataFrame:
     """Return one-page pressure lanes from the compact executive mart."""
     columns = [
         "LANE", "STATE", "VALUE", "PRESSURE_SCORE", "WHY_IT_MATTERS",
         "OWNER_ROUTE", "NEXT_ACTION",
     ]
     if not isinstance(board, pd.DataFrame) or board.empty or not _has_observability_kpis(board):
+        if isinstance(advisor_rows, pd.DataFrame) and not advisor_rows.empty:
+            totals = _advisor_overlay_totals(advisor_rows)
+            return pd.DataFrame([{
+                "LANE": "Advisor backlog",
+                "STATE": "Review" if totals["advisor_high_findings"] else "Loaded",
+                "VALUE": (
+                    f"{totals['advisor_findings']:,} finding(s); "
+                    f"{_money(totals['advisor_estimated_monthly_savings_usd'])}/mo savings"
+                ),
+                "PRESSURE_SCORE": min(
+                    totals["advisor_high_findings"] * 15.0
+                    + totals["advisor_findings"] * 2.0
+                    + totals["advisor_value_at_risk_usd"] / 2500.0,
+                    100.0,
+                ),
+                "WHY_IT_MATTERS": "Loaded advisors identify avoidable cost, warehouse pressure, storage retention, and procedure work.",
+                "OWNER_ROUTE": "Cost & Contract",
+                "NEXT_ACTION": "Open the highest-priority advisor row before assigning or tuning work.",
+            }], columns=columns)
         return pd.DataFrame(columns=columns)
 
     current_spend = _obs_value(board, "Credits Used", column="VALUE_USD")
@@ -1363,6 +1759,25 @@ def _executive_pressure_rows(board: pd.DataFrame) -> pd.DataFrame:
             "NEXT_ACTION": "Review storage growth and cleanup candidates when this lane climbs.",
         },
     ]
+    if isinstance(advisor_rows, pd.DataFrame) and not advisor_rows.empty:
+        totals = _advisor_overlay_totals(advisor_rows)
+        rows.append({
+            "LANE": "Advisor backlog",
+            "STATE": "Review" if totals["advisor_high_findings"] else "Loaded",
+            "VALUE": (
+                f"{totals['advisor_findings']:,} finding(s); "
+                f"{_money(totals['advisor_estimated_monthly_savings_usd'])}/mo savings"
+            ),
+            "PRESSURE_SCORE": min(
+                totals["advisor_high_findings"] * 15.0
+                + totals["advisor_findings"] * 2.0
+                + totals["advisor_value_at_risk_usd"] / 2500.0,
+                100.0,
+            ),
+            "WHY_IT_MATTERS": "Loaded advisors identify avoidable cost, warehouse pressure, storage retention, and procedure work.",
+            "OWNER_ROUTE": "Cost & Contract",
+            "NEXT_ACTION": "Open the highest-priority advisor row before assigning or tuning work.",
+        })
     out = pd.DataFrame(rows, columns=columns)
     return out.sort_values(["PRESSURE_SCORE", "LANE"], ascending=[False, True]).reset_index(drop=True)
 
@@ -1553,8 +1968,8 @@ def _executive_summary_lanes(board: pd.DataFrame, *, days: int, credit_price: fl
     ]
 
 
-def _render_executive_pressure_board(board: pd.DataFrame) -> None:
-    rows = _executive_pressure_rows(board)
+def _render_executive_pressure_board(board: pd.DataFrame, advisor_rows: pd.DataFrame | None = None) -> None:
+    rows = _executive_pressure_rows(board, advisor_rows=advisor_rows)
     if rows.empty and isinstance(board, pd.DataFrame) and {"LANE", "STATE", "VALUE", "PRESSURE_SCORE"}.issubset(set(board.columns)):
         rows = board.copy()
     if rows.empty:
@@ -1581,6 +1996,31 @@ def _render_executive_pressure_board(board: pd.DataFrame) -> None:
         ascending=[True],
         raw_label="All executive pressure lanes",
         height=250,
+        max_rows=8,
+    )
+
+
+def _render_loaded_advisor_overlay(advisor_rows: pd.DataFrame | None) -> None:
+    if not isinstance(advisor_rows, pd.DataFrame) or advisor_rows.empty:
+        return
+    totals = _advisor_overlay_totals(advisor_rows)
+    st.markdown("**Loaded Advisor Signals**")
+    render_shell_kpi_row((
+        ("Advisor Lanes", f"{totals['advisor_lanes']:,}"),
+        ("Findings", f"{totals['advisor_findings']:,}"),
+        ("High Priority", f"{totals['advisor_high_findings']:,}"),
+        ("Est. Savings / Mo", _money(totals["advisor_estimated_monthly_savings_usd"])),
+    ))
+    render_priority_dataframe(
+        advisor_rows,
+        title="Advisor signals included in executive summary",
+        priority_columns=[
+            "PRIORITY", "LANE", "STATE", "VALUE", "ADVISOR_SIGNAL", "NEXT_ACTION", "ROUTE",
+        ],
+        sort_by=["PRIORITY", "HIGH_FINDINGS", "EST_MONTHLY_SAVINGS_USD"],
+        ascending=[True, False, False],
+        raw_label="All loaded advisor summary rows",
+        height=260,
         max_rows=8,
     )
 
@@ -1678,6 +2118,7 @@ def _render_executive_observability_board(
     credit_price: float,
 ) -> None:
     error = str((payload or {}).get("error") or "").strip()
+    advisor_rows = _executive_loaded_advisor_rows()
     if not isinstance(board, pd.DataFrame) or board.empty or not _has_observability_kpis(board):
         render_shell_status_strip(
             state="Refresh Needed" if error else "Waiting",
@@ -1726,7 +2167,9 @@ def _render_executive_observability_board(
             ("Storage", "On demand"),
             ("Freshness", "On demand"),
         ))
-        _render_executive_pressure_board(_executive_pressure_placeholder_rows())
+        _render_executive_pressure_board(_executive_pressure_placeholder_rows(), advisor_rows=advisor_rows)
+        _render_executive_priority_board(pd.DataFrame(), days=int(days), advisor_rows=advisor_rows)
+        _render_loaded_advisor_overlay(advisor_rows)
         _render_observability_source_status(board)
         return
 
@@ -1821,8 +2264,9 @@ def _render_executive_observability_board(
         ("Avg/day", _money(avg_daily_spend) if _obs_metric_loaded(board, "Credits Used") else "On demand"),
         ("Storage", f"{safe_float(storage_tb):,.2f} TB / {_money(storage_cost)}" if _obs_metric_loaded(board, "Storage") else "On demand"),
     ))
-    _render_executive_pressure_board(board)
-    _render_executive_priority_board(board, days=int(days))
+    _render_executive_pressure_board(board, advisor_rows=advisor_rows)
+    _render_executive_priority_board(board, days=int(days), advisor_rows=advisor_rows)
+    _render_loaded_advisor_overlay(advisor_rows)
 
     daily_cost = _obs_rows(board, "DAILY_COST").copy()
     monthly_cost = _obs_rows(board, "MONTHLY_COST").copy()

@@ -80,7 +80,10 @@ from sections.executive_landing import (  # noqa: E402
     _build_executive_observability_query_parts,
     _build_executive_observability_sql,
     _build_platform_operating_score,
+    _executive_loaded_advisor_rows,
+    _executive_priority_rows,
     _executive_pressure_rows,
+    _summary_from_observability,
     _snapshot_matches_scope,
 )
 from sections.cost_center import (  # noqa: E402
@@ -99,6 +102,8 @@ from sections.cost_center import (  # noqa: E402
 )
 from sections.cost_contract import (  # noqa: E402
     _build_change_cost_correlation_board,
+    _build_cost_advisor_board,
+    _cost_advisor_category_summary,
     _build_cost_allocation_trust_board,
     _build_cost_closure_analytics,
     _build_cost_control_coverage_board,
@@ -574,6 +579,64 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertGreater(float(pressure.iloc[0]["PRESSURE_SCORE"]), 0)
         self.assertLessEqual(float(pressure["PRESSURE_SCORE"].max()), 100)
 
+    def test_executive_summary_includes_loaded_advisor_surfaces(self):
+        board = pd.DataFrame([
+            {"PANEL": "KPI", "METRIC": "Platform Health", "VALUE": 91, "VALUE_USD": 0},
+            {"PANEL": "KPI", "METRIC": "Credits Used", "VALUE": 500, "VALUE_USD": 1840},
+            {"PANEL": "KPI", "METRIC": "Spend Delta", "VALUE": 20, "VALUE_USD": 73.6},
+            {"PANEL": "KPI", "METRIC": "Critical High Alerts", "VALUE": 0, "VALUE_USD": 0},
+            {"PANEL": "KPI", "METRIC": "Open Actions", "VALUE": 1, "VALUE_USD": 0},
+        ])
+        advisor_state = {
+            "cost_contract_cost_advisor_board": pd.DataFrame([
+                {
+                    "SEVERITY": "High",
+                    "CATEGORY": "Warehouse pressure",
+                    "ENTITY": "LOAD_WH",
+                    "EST_MONTHLY_SAVINGS_USD": 250.0,
+                    "EST_MONTHLY_IMPACT_USD": 1200.0,
+                }
+            ]),
+            "rec_recommendations": [
+                {
+                    "Severity": "Medium",
+                    "Category": "Query Optimization",
+                    "Entity": "HASH_123",
+                    "Estimated Monthly Savings": 75.0,
+                }
+            ],
+            "opt_df_idle": pd.DataFrame([
+                {"WAREHOUSE_NAME": "IDLE_WH", "IDLE_CREDITS": 14.0}
+            ]),
+            "opt_df_sz": pd.DataFrame([
+                {"WAREHOUSE_NAME": "SPILL_WH", "REMOTE_SPILL_GB": 25.0, "AVG_QUEUE_SEC": 900.0, "TOTAL_CREDITS": 30.0}
+            ]),
+            "sp_sla_exceptions": pd.DataFrame([
+                {"SEVERITY": "High", "PROCEDURE_NAME": "LOAD_PROC"}
+            ]),
+            "spt_df_sp_tracker": pd.DataFrame([
+                {"PROCEDURE_NAME": "LOAD_PROC", "OPTIMIZATION_SCORE": 80, "EST_COST": 35.0, "TOTAL_ELAPSED_SEC": 7200.0}
+            ]),
+        }
+
+        advisor_rows = _executive_loaded_advisor_rows(advisor_state)
+        lanes = set(advisor_rows["LANE"])
+        self.assertIn("Cost Advisor", lanes)
+        self.assertIn("Recommendation Feed", lanes)
+        self.assertIn("Warehouse Optimization", lanes)
+        self.assertIn("Procedure Analysis", lanes)
+
+        summary = _summary_from_observability(board, credit_price=3.68, state=advisor_state)
+        self.assertIsNotNone(summary)
+        self.assertGreater(summary["advisor_findings"], 0)
+        self.assertGreater(summary["advisor_high_findings"], 0)
+        self.assertGreater(summary["advisor_estimated_monthly_savings_usd"], 0)
+
+        priority = _executive_priority_rows(board, days=7, advisor_rows=advisor_rows)
+        self.assertIn("Cost Advisor", set(priority["LANE"]))
+        pressure = _executive_pressure_rows(board, advisor_rows=advisor_rows)
+        self.assertIn("Advisor backlog", set(pressure["LANE"]))
+
     def test_priority_tables_add_cost_companions_for_credit_metrics(self):
         from utils.workflows import add_cost_companion_columns
 
@@ -808,6 +871,124 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertAlmostEqual(service_summary["serverless_credits"], 1.0)
         self.assertEqual(service_summary["top_moving_service"], "SERVERLESS_TASK")
         self.assertAlmostEqual(service_summary["top_moving_delta"], -3.25)
+
+    def test_cost_advisor_board_ranks_telemetry_backed_cost_findings(self):
+        efficiency = pd.DataFrame([{
+            "FAILED_QUERY_WASTE_USD": 70.0,
+            "FAILED_QUERIES": 7,
+            "QUERY_COUNT": 400,
+            "TB_SCANNED": 12.5,
+        }])
+        warehouse_efficiency = pd.DataFrame([
+            {
+                "WAREHOUSE_NAME": "LOW_PRESSURE_WH",
+                "COST_USD": 350.0,
+                "QUERY_COUNT": 120,
+                "QUEUE_SECONDS": 0.0,
+                "REMOTE_SPILL_GB": 0.0,
+                "FAILED_QUERY_WASTE_USD": 0.0,
+                "AVG_CACHE_PCT": 82.0,
+            },
+            {
+                "WAREHOUSE_NAME": "SPILLING_WH",
+                "COST_USD": 500.0,
+                "QUERY_COUNT": 80,
+                "QUEUE_SECONDS": 900.0,
+                "REMOTE_SPILL_GB": 25.0,
+                "FAILED_QUERY_WASTE_USD": 60.0,
+                "AVG_CACHE_PCT": 18.0,
+            },
+        ])
+        clustering = pd.DataFrame([{
+            "TABLE_NAME": "ALFA_DB.PUBLIC.FACT_BIG",
+            "CLUSTERING_COST_USD": 90.0,
+            "TB_RECLUSTERED": 4.5,
+        }])
+        reconciliation = pd.DataFrame([{
+            "WAREHOUSE_NAME": "SPILLING_WH",
+            "EXACT_METERED_CREDITS": 500.0,
+            "ALLOCATED_QUERY_CREDITS": 450.0,
+            "OFFICIAL_ATTRIBUTED_COMPUTE_CREDITS": 440.0,
+            "OFFICIAL_ATTRIBUTED_QUERIES": 200,
+            "VARIANCE_CREDITS": 50.0,
+        }])
+        service_lens = pd.DataFrame([{
+            "SERVICE_CATEGORY": "Serverless / Managed Compute",
+            "SERVICE_TYPE": "SERVERLESS_TASK",
+            "CREDITS_BILLED": 100.0,
+            "CREDITS_BILLED_PRIOR": 60.0,
+            "CREDIT_DELTA": 40.0,
+            "ESTIMATED_COST_USD": 368.0,
+            "PRIOR_ESTIMATED_COST_USD": 220.8,
+            "COST_DELTA_USD": 147.2,
+        }])
+        storage_tables = pd.DataFrame([{
+            "TABLE_CATALOG": "ALFA_DB",
+            "TABLE_SCHEMA": "PUBLIC",
+            "TABLE_NAME": "FACT_RETENTION",
+            "ACTIVE_GB": 80.0,
+            "TIME_TRAVEL_GB": 512.0,
+            "FAILSAFE_GB": 12.0,
+            "CLONE_GB": 0.0,
+        }])
+        storage_db = pd.DataFrame([{
+            "DATABASE_NAME": "ALFA_DB",
+            "DATABASE_GB": 1500.0,
+            "FAILSAFE_GB": 512.0,
+            "EST_COST_USD": 80.0,
+        }])
+
+        summary, board = _build_cost_advisor_board(
+            efficiency_summary=efficiency,
+            warehouse_efficiency=warehouse_efficiency,
+            clustering_cost=clustering,
+            reconciliation=reconciliation,
+            service_lens=service_lens,
+            credit_price=DEFAULTS["credit_price"],
+            days=7,
+            storage_table_metrics=storage_tables,
+            storage_db_detail=storage_db,
+            storage_cost_per_tb=DEFAULTS["storage_cost_per_tb"],
+        )
+        categories = set(board["CATEGORY"])
+        def advisor_row(category: str, entity: str) -> pd.Series:
+            match = board[(board["CATEGORY"].eq(category)) & (board["ENTITY"].eq(entity))]
+            self.assertFalse(match.empty, f"Missing advisor row for {category} / {entity}")
+            return match.iloc[0]
+
+        self.assertGreaterEqual(summary["findings"], 6)
+        self.assertGreater(summary["estimated_monthly_savings"], 0)
+        self.assertIn("Failed query waste", categories)
+        self.assertIn("Warehouse pressure", categories)
+        self.assertIn("Warehouse right-size review", categories)
+        self.assertIn("Automatic clustering", categories)
+        self.assertIn("Attribution gap", categories)
+        self.assertIn("Service spend movement", categories)
+        self.assertIn("Storage retention", categories)
+        self.assertIn("Storage failsafe", categories)
+        self.assertIn("TELEMETRY_SUMMARY", board.columns)
+        self.assertIn("VALIDATION_NEEDED", board.columns)
+        pressure = advisor_row("Warehouse pressure", "SPILLING_WH")
+        right_size = advisor_row("Warehouse right-size review", "LOW_PRESSURE_WH")
+        service = advisor_row("Service spend movement", "SERVERLESS_TASK")
+        clustering_row = advisor_row("Automatic clustering", "ALFA_DB.PUBLIC.FACT_BIG")
+        retention = advisor_row("Storage retention", "ALFA_DB.PUBLIC.FACT_RETENTION")
+        failsafe = advisor_row("Storage failsafe", "ALFA_DB")
+        self.assertEqual(pressure["PRIORITY"], "High")
+        self.assertIn("Do not blindly upsize", pressure["DO_NOT_DO"])
+        self.assertIn("Do not downsize", right_size["DO_NOT_DO"])
+        self.assertIn("official account metering", service["CONFIDENCE"])
+        self.assertGreater(clustering_row["EST_MONTHLY_SAVINGS_USD"], 0)
+        self.assertIn("Do not lower retention", retention["DO_NOT_DO"])
+        self.assertIn("not directly purgeable", failsafe["DO_NOT_DO"])
+        category_summary = _cost_advisor_category_summary(board)
+        self.assertFalse(category_summary.empty)
+        self.assertIn("HIGH_FINDINGS", category_summary.columns)
+        failed_summary = category_summary[category_summary["CATEGORY"].eq("Failed query waste")].iloc[0]
+        self.assertGreaterEqual(failed_summary["FINDINGS"], 1)
+        self.assertGreater(failed_summary["EST_MONTHLY_SAVINGS_USD"], 0)
+        storage_summary = category_summary[category_summary["CATEGORY"].eq("Storage failsafe")].iloc[0]
+        self.assertGreater(storage_summary["EST_MONTHLY_IMPACT_USD"], 0)
 
     def test_cost_contract_summary_rows_stay_data_first_without_pptx(self):
         splash = {

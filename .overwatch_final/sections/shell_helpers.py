@@ -94,11 +94,6 @@ def _clean_display_text(value: object) -> str:
         "proof required": "telemetry basis",
         "Proof": "Telemetry",
         "proof": "telemetry",
-        "Manual Only": "DBA Review",
-        "manual verification": "telemetry refresh",
-        "Manual verification": "Telemetry refresh",
-        "manual evidence": "telemetry detail",
-        "Manual evidence": "Telemetry detail",
         "approval,": "review,",
         "approval and": "review and",
         "after approval": "after review",
@@ -462,7 +457,6 @@ def render_shell_workflows(
                 if st.button(
                     button_label,
                     key=f"{key_prefix}_{key_token}",
-                    help=caption or None,
                     width="stretch",
                 ):
                     on_open(row)

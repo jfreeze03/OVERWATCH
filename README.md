@@ -1,8 +1,8 @@
 # OVERWATCH
 
 OVERWATCH is a production Streamlit command center for Snowflake DBA operations.
-It brings executive observability, DBA triage, alerts, FinOps, workload
-operations, security, and change evidence into one DBA-owned workflow.
+It brings executive observability, DBA triage, alerts, cost monitoring,
+workload operations, and security evidence into one DBA-owned workflow.
 
 The app is intentionally mart-first. Snowflake account telemetry is collected
 into compact OVERWATCH facts by scheduled tasks, and the Streamlit app reads
@@ -18,12 +18,11 @@ configuration, acknowledgements, remediation logs, action history, suppression
 windows, and DBA-entered evidence that should not disappear if a reproducible
 mart is rebuilt.
 
-Dynamic Tables remain optional in `snowflake/PRECOMPUTE.sql`; they are not the
-base architecture because ACCOUNT_USAGE is already delayed, target lag is a
-freshness target rather than a fixed refresh interval, and each dynamic table
-needs warehouse-backed refresh budget. Materialized views are avoided for the
-main command center because the app needs multi-source, windowed, exception
-ranking logic with explicit error handling and audit logging.
+The production DDL source is `snowflake/OVERWATCH_MART_SETUP.sql`. Optional
+precompute experiments have been retired so there is one deployable Snowflake
+setup path. Materialized views are avoided for the main command center because
+the app needs multi-source, windowed, exception ranking logic with explicit
+error handling and audit logging.
 
 The Executive Landing page is the one deliberate first-paint aggregate:
 `MART_EXECUTIVE_OBSERVABILITY`. It is refreshed after the hourly load, Cortex
@@ -58,24 +57,21 @@ panels, freshness rows, and caller context. Use
 `docs/LIVE_ROLE_PROOF_CHECKLIST.md` to validate the app as ACCOUNTADMIN/SYSADMIN,
 DSA, DTI, and report-style roles before calling a build production-ready.
 
-Production role setup now lives in `snowflake/OVERWATCH_ROLE_SETUP.sql`.
-Use `OVERWATCH_MONITOR` for read-only telemetry and `OVERWATCH_OPERATOR` only
-for approved acknowledgements, action updates, and logged remediation. Avoid
-running daily operations as ACCOUNTADMIN except for break-glass setup work.
+Production role setup now lives inside `snowflake/OVERWATCH_MART_SETUP.sql` so
+there is one DDL document for databases, warehouses, roles, tables, procedures,
+views, and tasks. Use `OVERWATCH_MONITOR` for read-only telemetry and
+`OVERWATCH_OPERATOR` only for approved acknowledgements and action updates.
+Avoid running daily operations as ACCOUNTADMIN except for break-glass setup
+work. The read-only deployment check remains
+`snowflake/OVERWATCH_MART_VALIDATION.sql`.
 
-Additional Snowflake-native hardening contracts:
+Supporting operations documents:
 
-- `snowflake/OVERWATCH_PIPELINE_SLA.sql` - metadata-driven pipeline freshness and SLA status.
-- `snowflake/OVERWATCH_FRESHNESS_ALERT.sql` - optional notification-only native alert for high-severity SLA misses.
-- `snowflake/OVERWATCH_EXECUTIVE_DIGEST.sql` - daily executive digest history and task scaffold.
-- `snowflake/OVERWATCH_TAG_SETUP.sql` - owner, cost-center, and criticality tags for allocation and routing.
-- `snowflake/OVERWATCH_AVAILABILITY.sql` - OVERWATCH self-health and freshness checks.
 - `docs/OVERWATCH_RECOVERY_RUNBOOK.md` - operator recovery checklist.
 - `CHANGELOG.md` - release-level change history.
 
-The first-paint shells now expose native proof lanes for Snowflake Data Metric
-Functions, Snowflake ALERT objects, tag-based owner/cost allocation,
-OVERWATCH query-tag self-cost, executive digest history, and optional
+The first-paint shells expose monitoring lanes for Snowflake Data Metric
+Functions, Snowflake ALERT objects, OVERWATCH query-tag self-cost, and optional
 organization usage rollups. Those lanes are readiness contracts, not hidden
 live scans: unavailable privileges should produce friendly setup/fallback
 messages while the page still renders instantly.
@@ -85,7 +81,7 @@ messages while the page still renders instantly.
 | Group | Sections | Primary job |
 |---|---|---|
 | Command Center | Executive Landing, DBA Control Room, Alert Center | Leadership summary, morning triage, incident queue, alert routing, and action closure. |
-| Financial Control | Cost & Contract | Spend explanation, warehouse/user/role attribution, Cortex spend, contract pacing, savings verification, storage, and optimization. |
+| Cost Monitoring | Cost & Contract | Spend explanation, warehouse/user/role attribution, Cortex spend, contract pacing, storage, optimization, and action telemetry. |
 | Operations | Workload Operations | Query/task/procedure status, contention, pipeline evidence, SLA risk, schema/data compare, and runbooks. |
 | Security | Security Monitoring | MFA/login/grant posture, object changes, risky shares, access evidence, rollback evidence, schema compare, and controlled DBA actions. |
 
@@ -140,17 +136,12 @@ generates reviewable insert SQL for `ALERT_ACKNOWLEDGEMENTS` and
 `ALERT_REMEDIATION_LOG`; dangerous remediation remains review-gated and
 logged rather than silently executed.
 
-The section covers security, Cost/FinOps, performance, task and pipeline,
+The section covers security, cost, performance, task and pipeline,
 data-quality, and optimization alert families. Snowflake `ACCOUNT_USAGE` views
 are treated as authoritative historical evidence but are labeled as delayed
 telemetry. Near-real-time operations should use `INFORMATION_SCHEMA` table
 functions, Snowflake alert objects, task graph notifications, and event tables
 where the account supports them.
-
-Optional deployable native-alert examples live in
-`snowflake/OVERWATCH_NATIVE_ALERT_TEMPLATES.sql`. Keep those notification-only
-until the monitoring warehouse, notification integration, owner routing, and
-Alert Center lifecycle logs are approved.
 
 The Command Center now promotes open alert rows into an incident action board.
 That board sorts by severity, SLA age, owner, ticket state, business impact,
@@ -159,8 +150,8 @@ right item first instead of scanning a flat inbox.
 
 The command-intelligence hardening pass adds the ranked 12-item operating
 foundation from production review: root-cause correlation, task critical
-path, reconciliation, predictive FinOps, alert lifecycle, fact-grounded Cortex
-query diagnosis, OVERWATCH self-monitoring, optional precompute, security monitoring,
+path, reconciliation, cost run-rate monitoring, alert lifecycle, fact-grounded
+Cortex query diagnosis, OVERWATCH self-monitoring, security monitoring,
 multi-account readiness, no-saved-state navigation, and runbooks. These are
 exposed as data-first panels and SQL contracts before deeper drilldown. The
 Platform Operating Score is evidence-based; it is computed from the current
@@ -177,16 +168,9 @@ but state-changing fixes must log trigger, reviewer, before/after state,
 rollback guidance, affected object/user/warehouse/task, and verification result
 in `ALERT_REMEDIATION_LOG`.
 
-Snowflake Value is automation-first. `OVERWATCH_VALUE_CANDIDATE_V`,
-`OVERWATCH_VALUE_AUTOMATION_HEALTH_V`, `OVERWATCH_VALUE_AUTOMATION_RUN`, and
-`SP_OVERWATCH_AUTOMATE_VALUE_LOG` derive value candidates from fixed action
-queue items and resolved alert evidence so DBAs do not have to manually maintain
-the value log. Estimated value remains separate from verified value until
-post-period proof exists.
-
-Optional precompute is separated into `snowflake/PRECOMPUTE.sql`. Dynamic Tables
-must be reviewed for refresh lag, warehouse, ownership, and cost before use; the
-same file also includes fallback views.
+All deployable Snowflake objects are consolidated into
+`snowflake/OVERWATCH_MART_SETUP.sql`. Cost findings stay in the action queue and
+are measured through post-period telemetry rather than a separate value ledger.
 
 Run `snowflake/OVERWATCH_MART_VALIDATION.sql` after setup to verify required
 objects, executive board panels, source freshness, refresh-policy targets,
@@ -253,10 +237,6 @@ against `.overwatch_final`, `tests`, and documentation before release.
 
 - [OVERWATCH_DOCUMENTATION.md](OVERWATCH_DOCUMENTATION.md) is the production
   operating guide.
-- [OVERWATCH_MANUAL_INPUTS_AND_DDL_RUNBOOK.md](OVERWATCH_MANUAL_INPUTS_AND_DDL_RUNBOOK.md)
-  is the manual input, hardcoded scope, and DDL maintenance map.
-- [SNOWFLAKE_ARCHITECTURE.md](SNOWFLAKE_ARCHITECTURE.md) explains the mart,
-  tasks, objects, and app query strategy.
 - [SNOWFLAKE_FORMULA_AUDIT_20260529.md](SNOWFLAKE_FORMULA_AUDIT_20260529.md)
   documents the current cost formula contract and audit status.
 - [DBA_CONTROL_ROOM_ROADMAP.md](DBA_CONTROL_ROOM_ROADMAP.md) tracks the path to
@@ -265,11 +245,9 @@ against `.overwatch_final`, `tests`, and documentation before release.
   Alert Center setup, privileges, integrations, and daily DBA alert triage.
 - [docs/OVERWATCH_COMMAND_INTELLIGENCE_RUNBOOK.md](docs/OVERWATCH_COMMAND_INTELLIGENCE_RUNBOOK.md)
   explains the 12 command-intelligence capabilities, data-first UI model,
-  automated value log, reconciliation approach, AI query diagnosis contract, and
-  precompute decision.
+  reconciliation approach, AI query diagnosis contract, and mart-first decision.
 - [docs/DATA_MODEL.md](docs/DATA_MODEL.md) summarizes the new command
-  intelligence, reconciliation, FinOps/value, compliance, and optional
-  precompute objects.
+  intelligence, reconciliation, cost monitoring, and security objects.
 - [docs/REFRESH_ARCHITECTURE.md](docs/REFRESH_ARCHITECTURE.md) documents the
   mart-first refresh policy, first-paint sources, and live-query boundaries.
 - [UX_PRODUCTION_GUIDELINES.md](UX_PRODUCTION_GUIDELINES.md) documents current

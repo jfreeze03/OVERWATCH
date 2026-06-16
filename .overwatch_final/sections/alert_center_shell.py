@@ -247,7 +247,7 @@ def _alert_shell_lanes(data: dict) -> tuple[dict[str, str], ...]:
                     "detail": f"Queue time is {queue_seconds / 60.0:,.1f} minutes across the selected window.",
                 },
                 {
-                    "label": "Cost / FinOps",
+                    "label": "Cost",
                     "value": spend,
                     "state": "Spend",
                     "detail": f"Top driver: {summary.get('top_cost_driver') or 'On demand'}.",
@@ -291,10 +291,10 @@ def _alert_shell_lanes(data: dict) -> tuple[dict[str, str], ...]:
                 "detail": "Login, grant, access, sharing, and policy risks get their own lane.",
             },
             {
-                "label": "Cost / FinOps",
+                "label": "Cost",
                 "value": "On demand",
                 "state": "Spend",
-                "detail": "Cost anomalies and runaway spend route with savings telemetry.",
+                "detail": "Cost anomalies and runaway spend route with impact telemetry.",
             },
             {
                 "label": "Performance",
@@ -326,7 +326,7 @@ def _alert_shell_lanes(data: dict) -> tuple[dict[str, str], ...]:
     warnings = _severity_count(data, ("Warning", "Medium"))
     overdue = _category_count(data, "SLA") + _category_count(data, "OVERDUE")
     security = _category_count(data, "SECURITY")
-    cost = _category_count(data, "COST") + _category_count(data, "FINOPS")
+    cost = _category_count(data, "COST") + _category_count(data, "COST")
     performance = _category_count(data, "PERFORMANCE") + _category_count(data, "QUERY")
     pipeline = _category_count(data, "PIPELINE") + _category_count(data, "TASK")
     quality = _category_count(data, "QUALITY") + _category_count(data, "FRESHNESS")
@@ -350,7 +350,7 @@ def _alert_shell_lanes(data: dict) -> tuple[dict[str, str], ...]:
             "detail": "Failed logins, grants, sharing, sensitive access, and policy changes.",
         },
         {
-            "label": "Cost / FinOps",
+            "label": "Cost",
             "value": f"{cost:,}",
             "state": "Spend",
             "detail": "Cost anomalies need forecast, driver, and routed remediation status.",

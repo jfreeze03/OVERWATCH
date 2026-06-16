@@ -45,8 +45,6 @@ from utils.action_queue import (  # noqa: E402
     action_queue_default_due_days,
     build_safe_verification_query,
     build_action_queue_ddl,
-    build_cost_savings_verification_health_sql,
-    build_cost_savings_verification_sql,
     clear_action_queue_process_cache,
     enrich_action_queue_view,
     summarize_verification_frame,
@@ -565,10 +563,10 @@ class AdminControlTests(unittest.TestCase):
         self.assertNotIn("AI_AGENT_MCP_GOVERNANCE", setup_sql)
         self.assertNotIn("AI_SECURITY_GUARDRAILS", setup_sql)
         self.assertNotIn("AI_SECURITY_DEFAULT", setup_sql)
-        self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_COST_SAVINGS_VERIFICATION_RUN", setup_sql)
-        self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_VERIFY_COST_SAVINGS", setup_sql)
-        self.assertIn("CREATE OR REPLACE VIEW OVERWATCH_COST_SAVINGS_VERIFICATION_HEALTH_V", setup_sql)
-        self.assertIn("CREATE OR REPLACE TASK OVERWATCH_COST_SAVINGS_VERIFY", setup_sql)
+        self.assertNotIn("CREATE TABLE IF NOT EXISTS OVERWATCH_COST_SAVINGS_VERIFICATION_RUN", setup_sql)
+        self.assertNotIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_VERIFY_COST_SAVINGS", setup_sql)
+        self.assertNotIn("CREATE OR REPLACE VIEW OVERWATCH_COST_SAVINGS_VERIFICATION_HEALTH_V", setup_sql)
+        self.assertNotIn("CREATE OR REPLACE TASK OVERWATCH_COST_SAVINGS_VERIFY", setup_sql)
         self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_AUTOMATION_RUN", setup_sql)
         self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_EXECUTIVE_PACKET", setup_sql)
         self.assertNotIn("CREATE TABLE IF NOT EXISTS OVERWATCH_EXTERNAL_CONTROL_FEED", setup_sql)
@@ -581,16 +579,8 @@ class AdminControlTests(unittest.TestCase):
         self.assertNotIn("FLYWAY_MIGRATION", setup_sql)
         self.assertNotIn("DEPLOYMENT_DRIFT_MODE", setup_sql)
         self.assertIn("PRIMARY_EVIDENCE_READY", setup_sql)
-        self.assertIn("OVERWATCH_COST_SAVINGS_VERIFY TASK HANDLES AUTO-CLOSE", setup_sql)
+        self.assertNotIn("OVERWATCH_COST_SAVINGS_VERIFY TASK HANDLES AUTO-CLOSE", setup_sql)
         self.assertIn("WAREHOUSE_METERING_HISTORY", setup_sql)
-        self.assertIn("SAVINGS VERIFIED", setup_sql)
-        self.assertIn("VERIFIED_SAVED", setup_sql)
-        self.assertIn("VERIFIED_NO_CHANGE", setup_sql)
-        self.assertIn("NO_CHANGE_LAST_RUN", setup_sql)
-        self.assertIn("INSERT INTO OVERWATCH_WORKLOAD_RECOVERY_AUDIT", setup_sql)
-        self.assertIn("TASK_HEALTH_STATE", setup_sql)
-        self.assertIn("FAILED_RUNS_7D", setup_sql)
-        self.assertIn("TASK STALE", setup_sql)
         self.assertIn("ESCALATION_TARGET", setup_sql)
         self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_CHANGE_CONTROL_EVIDENCE", setup_sql)
         self.assertIn("CHANGE_TICKET_ID", setup_sql)
@@ -606,7 +596,7 @@ class AdminControlTests(unittest.TestCase):
         self.assertIn("CHANGE_EVIDENCE_READINESS", setup_sql)
         self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_WAREHOUSE_SETTING_REVIEW", setup_sql)
         self.assertIn("BASELINE_CAPACITY_SCORE", setup_sql)
-        self.assertIn("SAVINGS_VERIFICATION_REQUIRED", setup_sql)
+        self.assertIn("IMPACT_TELEMETRY_REQUIRED", setup_sql)
         self.assertIn("EXECUTED_SQL_HASH", setup_sql)
         self.assertIn("POST_CHANGE_VERIFICATION_STATUS", setup_sql)
         self.assertIn("AUDIT_READINESS", setup_sql)
@@ -683,34 +673,11 @@ class AdminControlTests(unittest.TestCase):
         self.assertIn("PREDICTIVE COST ANOMALY", setup_sql)
         self.assertIn("TASK FAILURE", setup_sql)
         self.assertIn("STORED PROCEDURE", setup_sql)
-        self.assertIn("COST SAVINGS VERIFICATION FAILURE", setup_sql)
-        self.assertIn("COST_SAVINGS_VERIFIER_FAILURE", setup_sql)
-        self.assertIn("OVERWATCH_COST_SAVINGS_VERIFY", setup_sql)
+        self.assertNotIn("COST SAVINGS VERIFICATION FAILURE", setup_sql)
+        self.assertNotIn("COST_SAVINGS_VERIFIER_FAILURE", setup_sql)
+        self.assertNotIn("OVERWATCH_COST_SAVINGS_VERIFY", setup_sql)
         self.assertIn("GRANT/REVOKE ACTIVITY", setup_sql)
         self.assertIn("WAREHOUSE SETTING CHANGE", setup_sql)
-
-        savings_verification_sql = build_cost_savings_verification_sql().upper()
-        self.assertIn("OVERWATCH_COST_SAVINGS_VERIFICATION_RUN", savings_verification_sql)
-        self.assertIn("SP_OVERWATCH_VERIFY_COST_SAVINGS", savings_verification_sql)
-        self.assertIn("OVERWATCH_COST_SAVINGS_VERIFY", savings_verification_sql)
-        self.assertIn("CURRENT_VALUE = V.POST_PERIOD_VALUE", savings_verification_sql)
-        self.assertIn("VERIFICATION_STATUS = IFF", savings_verification_sql)
-        self.assertIn("VERIFIED_SAVED", savings_verification_sql)
-        self.assertIn("VERIFIED_NO_CHANGE", savings_verification_sql)
-        self.assertIn("RECOVERY_AUDIT_STATE", savings_verification_sql)
-        self.assertIn("INSERT INTO DBA_MAINT_DB.OVERWATCH.OVERWATCH_WORKLOAD_RECOVERY_AUDIT", savings_verification_sql)
-        self.assertIn("AUTOMATED VERIFIER OUTCOME=", savings_verification_sql)
-        self.assertIn("OVERWATCH_COST_SAVINGS_VERIFICATION_HEALTH_V", savings_verification_sql)
-        self.assertIn("NO_CHANGE_LAST_RUN", savings_verification_sql)
-        self.assertIn("TASK_HEALTH_STATE", savings_verification_sql)
-        self.assertIn("FAILED_RUNS_7D", savings_verification_sql)
-        self.assertIn("ALTER TASK", savings_verification_sql)
-
-        savings_health_sql = build_cost_savings_verification_health_sql().upper()
-        self.assertIn("OVERWATCH_COST_SAVINGS_VERIFICATION_HEALTH_V", savings_health_sql)
-        self.assertIn("NO_CHANGE_LAST_RUN", savings_health_sql)
-        self.assertIn("EVIDENCE_REQUIRED_LAST_RUN", savings_health_sql)
-        self.assertIn("NEXT_ACTION", savings_health_sql)
 
         recovery_audit_sql = build_workload_recovery_audit_ddl().upper()
         self.assertIn("OVERWATCH_WORKLOAD_RECOVERY_AUDIT", recovery_audit_sql)
@@ -743,7 +710,6 @@ class AdminControlTests(unittest.TestCase):
         self.assertEqual(
             set(warehouses),
             {
-                "OVERWATCH_COST_SAVINGS_VERIFY",
                 "OVERWATCH_ANOMALY_CHECK",
                 "OVERWATCH_LOAD_HOURLY",
                 "OVERWATCH_LOAD_CORTEX",
@@ -757,7 +723,6 @@ class AdminControlTests(unittest.TestCase):
         self.assertEqual(
             warehouses,
             {
-                "OVERWATCH_COST_SAVINGS_VERIFY": "OVERWATCH_WH",
                 "OVERWATCH_ANOMALY_CHECK": "OVERWATCH_WH",
                 "OVERWATCH_LOAD_HOURLY": "OVERWATCH_WH",
                 "OVERWATCH_LOAD_CORTEX": "OVERWATCH_WH",

@@ -25,7 +25,7 @@ from utils import (
 )
 from config import (
     ALERT_DB, ALERT_SCHEMA, ALERT_TABLE,
-    ACTION_QUEUE_TABLE, ETL_AUDIT_DB, ETL_AUDIT_SCHEMA,
+    ACTION_QUEUE_TABLE,
 )
 from sections.navigation import apply_navigation_state
 from utils.dba_tool_catalog import (
@@ -1536,7 +1536,6 @@ def _setup_status_df(session) -> pd.DataFrame:
         ("Annotation Windows", "TABLE", ALERT_DB, ALERT_SCHEMA, "OVERWATCH_ANNOTATIONS"),
         ("Alert History", "TABLE", ALERT_DB, ALERT_SCHEMA, ALERT_TABLE),
         ("Action Queue", "TABLE", ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE),
-        ("Snowflake Value Log", "TABLE", ETL_AUDIT_DB, ETL_AUDIT_SCHEMA, "OVERWATCH_ROI_LOG"),
         ("Anomaly Alert Task", "TASK", ALERT_DB, ALERT_SCHEMA, "OVERWATCH_ANOMALY_CHECK"),
     ]
     rows = []
@@ -3115,7 +3114,7 @@ def render():
         st.subheader("Cortex AI Limits")
         st.caption(
             "View and modify Cortex AI service limits for your account. "
-            "These control daily token budgets, inference rate limits, and Cortex Search/Analyst access. "
+            "These control daily token thresholds, inference rate limits, and Cortex Search/Analyst access. "
             "Requires ACCOUNTADMIN or SYSADMIN with MODIFY ACCOUNT privilege."
         )
 
@@ -3305,9 +3304,8 @@ def render():
         st.divider()
         st.subheader("Per-User / Per-Role Cortex Access and Quotas")
         st.caption(
-            "Use Snowflake Budgets for shared AI resources and route Cortex access through a controlled role "
-            "when per-user monthly quota enforcement is required. "
-            "The quota framework lives in Cost & Contract -> Budget Monitoring."
+            "Use shared AI spend thresholds and route Cortex access through a controlled role "
+            "when per-user monthly quota enforcement is required."
         )
         st.info(
             "Tip: To enforce user quotas, revoke the blanket `SNOWFLAKE.CORTEX_USER` grant from PUBLIC, "

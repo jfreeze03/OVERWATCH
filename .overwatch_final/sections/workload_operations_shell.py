@@ -7,10 +7,8 @@ from datetime import date, datetime
 import streamlit as st
 
 from config import DEFAULT_COMPANY, DEFAULT_DAY_WINDOW, DEFAULT_ENVIRONMENT, ENVIRONMENT_CONFIG
-from sections.native_monitoring import render_workload_data_quality_board
 from sections.shell_helpers import (
     full_workspace_requested,
-    render_setup_health_board,
     render_shell_kpi_row,
     render_shell_snapshot,
     render_shell_workflows,
@@ -48,34 +46,14 @@ _FULL_WORKSPACE_STATE_KEYS = (
 
 _WORKFLOWS = (
     {
-        "WORKFLOW": "Task graphs",
-        "BUTTON_LABEL": "Open Task Graphs",
-        "MOVE": "Check Snowflake task and Snowflake job status, SLA risk, retries, and downstream impact.",
+        "WORKFLOW": "Query & contention triage",
+        "BUTTON_LABEL": "Open Query Triage",
+        "MOVE": "Find running, queued, failed, slow, spilling, blocked, or high-cost SQL before changing compute.",
     },
     {
-        "WORKFLOW": "Contention Center",
-        "BUTTON_LABEL": "Open Contention",
-        "MOVE": "Review lock waits, overlapping tasks, long DML, or warehouse queueing before changing compute.",
-    },
-    {
-        "WORKFLOW": "Query diagnosis",
-        "BUTTON_LABEL": "Open Query Diagnosis",
-        "MOVE": "Review p95 runtime, queue pressure, spill, high-cost SQL, regressions, plan steps, and history search.",
-    },
-    {
-        "WORKFLOW": "Live triage",
-        "BUTTON_LABEL": "Open Live Triage",
-        "MOVE": "Find running, queued, blocked, failed, or cancellable work right now.",
-    },
-    {
-        "WORKFLOW": "Stored procedures",
-        "BUTTON_LABEL": "Open Procedures",
-        "MOVE": "Trace CALL history, procedure runtime drift, lineage, and attributed cost.",
-    },
-    {
-        "WORKFLOW": "Pipeline health",
-        "BUTTON_LABEL": "Open Pipelines",
-        "MOVE": "Review load health, Snowpipe, task/pipeline signals, and backlog.",
+        "WORKFLOW": "Task, procedure & pipeline health",
+        "BUTTON_LABEL": "Open Pipeline Health",
+        "MOVE": "Review task graph failures, late jobs, procedure drift, load health, and downstream backlog together.",
     },
 )
 
@@ -217,10 +195,8 @@ def _summary_gb_label(summary: dict, key: str) -> str:
 def _open_workspace(workflow: str | None = None) -> None:
     st.session_state[_BRIEF_MODE_KEY] = False
     st.session_state[_FULL_WORKSPACE_KEY] = True
-    st.session_state["workload_operations_view"] = "Workload Brief"
     if workflow:
         st.session_state[_EXPLICIT_WORKFLOW_KEY] = True
-        st.session_state["workload_operations_view"] = "Specialist Workflows"
         st.session_state["workload_operations_workflow"] = workflow
     st.rerun()
 
@@ -231,17 +207,17 @@ def _delegate_full_workspace() -> None:
     workload_operations.render()
 
 
-def _return_to_brief() -> None:
+def _return_to_workload_board() -> None:
     st.session_state[_BRIEF_MODE_KEY] = True
     st.session_state[_FULL_WORKSPACE_KEY] = False
     st.rerun()
 
 
-def _render_back_to_brief_control() -> None:
+def _render_back_to_workload_board_control() -> None:
     control_col, _spacer = st.columns([1.0, 4.0])
     with control_col:
-        if st.button("Back to Brief", key="workload_operations_shell_back_to_brief", width="stretch"):
-            _return_to_brief()
+        if st.button("Back to Workload Board", key="workload_operations_shell_back_to_board", width="stretch"):
+            _return_to_workload_board()
 
 
 def _render_metric_board() -> None:
@@ -322,12 +298,6 @@ def _workload_shell_lanes(snapshot_row: object | None, task_row: object | None) 
                     "state": "Queue",
                     "detail": "Open workload actions need a route, fix plan, and current status.",
                 },
-                {
-                    "label": "Schema/data compare",
-                    "value": "Ready",
-                    "state": "Telemetry",
-                    "detail": "Compare all schema objects, review missing objects, then sample/hash data likeness.",
-                },
             )
         return (
             {
@@ -371,12 +341,6 @@ def _workload_shell_lanes(snapshot_row: object | None, task_row: object | None) 
                 "value": "On demand",
                 "state": "Root cause",
                 "detail": "Blocked/waiting, table hotspots, task overlap, and fix plans load together.",
-            },
-            {
-                "label": "Schema/data compare",
-                "value": "On demand",
-                "state": "Telemetry",
-                "detail": "Schema compare, missing-object review, row counts, and hashing stay in one workflow.",
             },
         )
 
@@ -431,69 +395,6 @@ def _workload_shell_lanes(snapshot_row: object | None, task_row: object | None) 
             "state": "Root cause",
             "detail": "Lock waits, task overlap, long DML, and queue telemetry are handled together.",
         },
-        {
-            "label": "Schema/data compare",
-            "value": "Ready",
-            "state": "Telemetry",
-            "detail": "Compare all schema objects, review missing objects, then sample/hash data likeness.",
-        },
-    )
-
-
-def _render_contention_solution_board() -> None:
-    decision_rows = st.session_state.get("contention_decision_rows")
-    historical_waits = st.session_state.get("contention_historical_waits")
-    task_overlap = st.session_state.get("contention_task_overlap")
-    long_dml = st.session_state.get("contention_long_dml")
-    st.markdown("**Contention Solution Board**")
-    summary = _command_summary()
-    render_shell_snapshot((
-        ("Blocked/Waiting", f"{_frame_len(decision_rows):,}" if _frame_len(decision_rows) else "On demand"),
-        ("Queue Time", _summary_seconds_label(summary, "queue_seconds") if summary else "On demand"),
-        ("Remote Spill", _summary_gb_label(summary, "remote_spill_gb") if summary else "On demand"),
-        ("Task Failures", f"{_int_value(summary.get('failed_tasks')):,}" if summary else "On demand"),
-    ))
-    render_setup_health_board(
-        "Contention Answer Model",
-        (
-            ("First signal", "Blocker/waiter map"),
-            ("Second signal", "Task overlap"),
-            ("Third signal", "Queue/spill"),
-            ("Fix status", "Precheck + status"),
-        ),
-        cadence="Live only after operator intent",
-        fallback="Contention Center",
-        owner="DBA Operations",
-    )
-    render_signal_lane_board(
-        "Safe Fix Status",
-        (
-            {
-                "label": "Classify",
-                "value": "Lock vs queue",
-                "state": "Required",
-                "detail": "Blocked seconds route to transaction/task overlap; queued seconds route to capacity/concurrency.",
-            },
-            {
-                "label": "Identify blocker",
-                "value": "query_id/session",
-                "state": "Telemetry",
-                "detail": "Never kill work from a symptom row; identify blocker, waiter, object, and route first.",
-            },
-            {
-                "label": "Pick action",
-                "value": "Serialize / cancel / resize",
-                "state": "Decision",
-                "detail": "Prefer shortening transaction scope or task schedule separation before changing compute.",
-            },
-            {
-                "label": "Confirm",
-                "value": "after-state status",
-                "state": "Audit",
-                "detail": "Close only after queue, blocked time, retries, and downstream task status improve.",
-            },
-        ),
-        max_lanes=4,
     )
 
 
@@ -512,13 +413,11 @@ def _render_workflow_launchpad() -> None:
 
 def render() -> None:
     if _full_workspace_requested():
-        _render_back_to_brief_control()
+        _render_back_to_workload_board_control()
         _delegate_full_workspace()
         return
 
     st.session_state.setdefault("workload_operations_shell_seen_at", datetime.now().isoformat(timespec="seconds"))
     _load_command_board()
     _render_metric_board()
-    _render_contention_solution_board()
-    render_workload_data_quality_board()
     _render_workflow_launchpad()

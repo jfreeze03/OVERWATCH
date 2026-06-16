@@ -241,13 +241,6 @@ def build_schema_migration_contract() -> pd.DataFrame:
             "READY_CRITERIA": "Annotation table exists before OVERWATCH_ANOMALY_CHECK is resumed.",
         },
         {
-            "COMPONENT": "Cost savings measurement",
-            "REQUIRED_VERSION": OVERWATCH_SCHEMA_VERSION,
-            "REQUIRED_OBJECT": "OVERWATCH_COST_SAVINGS_VERIFICATION_RUN",
-            "WHY_IT_MATTERS": "Separates estimated savings from measured savings with metering telemetry.",
-            "READY_CRITERIA": "Measurement table, procedure, view, and scheduled task are deployed.",
-        },
-        {
             "COMPONENT": "No-touch automation",
             "REQUIRED_VERSION": OVERWATCH_SCHEMA_VERSION,
             "REQUIRED_OBJECT": "OVERWATCH_AUTOMATION_RUN",
@@ -303,8 +296,6 @@ WITH required_objects AS (
         ('Action queue and closure status', 'OVERWATCH_ACTION_QUEUE', 'TABLE', '{version}'),
         ('Alert automation', 'OVERWATCH_ALERT_DELIVERY_LOG', 'TABLE', '{version}'),
         ('Alert automation', 'OVERWATCH_ANNOTATIONS', 'TABLE', '{version}'),
-        ('Cost savings measurement', 'OVERWATCH_COST_SAVINGS_VERIFICATION_RUN', 'TABLE', '{version}'),
-        ('Cost savings measurement', 'OVERWATCH_COST_SAVINGS_VERIFICATION_HEALTH_V', 'VIEW', '{version}'),
         ('No-touch automation', 'OVERWATCH_AUTOMATION_RUN', 'TABLE', '{version}'),
         ('No-touch automation', 'OVERWATCH_AUTOMATION_HEALTH_V', 'VIEW', '{version}'),
         ('No-touch automation', 'OVERWATCH_EXECUTIVE_PACKET', 'TABLE', '{version}'),

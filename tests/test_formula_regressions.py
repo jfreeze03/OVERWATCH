@@ -61,12 +61,6 @@ from sections.alert_center import (  # noqa: E402
 )
 from sections.workload_operations import (  # noqa: E402
     _build_workload_task_status_sql,
-    _build_workload_runbook_markdown,
-    _workload_action_brief,
-    _workload_runbook_filename,
-    _workload_snapshot_summary,
-    _workload_status_lanes,
-    _workload_task_summary,
 )
 from sections.query_analysis import (  # noqa: E402
     _build_ai_query_diagnosis_prompt,
@@ -107,7 +101,6 @@ from sections.cost_center import (  # noqa: E402
     _warehouse_cost_verification_sql,
 )
 from sections.cost_contract import (  # noqa: E402
-    _build_budget_anomaly_command_center,
     _build_change_cost_correlation_board,
     _build_cost_allocation_trust_board,
     _build_cost_closure_analytics,
@@ -121,9 +114,7 @@ from sections.cost_contract import (  # noqa: E402
     _build_cost_splash_cortex_sql,
     _build_cost_source_health_board,
     _build_cost_spike_root_cause_board,
-    _build_native_cost_control_inventory,
     _build_resource_monitor_guardrail_sql,
-    _build_savings_verification_task_summary,
     _build_attribution_gap_summary,
     _build_service_cost_lens_summary,
     _cost_spend_trend_rows,
@@ -132,9 +123,6 @@ from sections.cost_contract import (  # noqa: E402
     _cost_warehouse_ranking_rows,
     _service_lens_movement_rows,
     build_cost_monitoring_mart_sql,
-)
-from sections.budget_monitoring import (  # noqa: E402
-    _build_budget_monitoring_board,
 )
 from sections.dba_control_room import (  # noqa: E402
     _build_report as _build_dba_control_report,
@@ -775,7 +763,6 @@ class FormulaRegressionTests(unittest.TestCase):
             cockpit=cockpit,
             run_rate=run_rate,
             queue=pd.DataFrame(),
-            verification_health=pd.DataFrame(),
             attribution=attribution,
             service_lens=service_lens,
             state=state,
@@ -882,7 +869,7 @@ class FormulaRegressionTests(unittest.TestCase):
 
         value_summary = dict(cortex_summary, cortex_spend=0.0, projected_30d_spend=0.0)
         value_move = _cost_splash_next_move(value_summary)
-        self.assertEqual(value_move[0], "Snowflake value log")
+        self.assertEqual(value_move[0], "Recommendations and action queue")
 
         service_summary = {"top_moving_service": "CORTEX", "top_moving_delta": 4.25}
         service_lens = pd.DataFrame([
@@ -1864,7 +1851,6 @@ class FormulaRegressionTests(unittest.TestCase):
             cockpit=cockpit,
             run_rate=run_rate,
             queue=queue,
-            verification_health=pd.DataFrame(),
             state=state,
         )
         trust_summary, trust = _build_cost_allocation_trust_board(
@@ -1885,7 +1871,7 @@ class FormulaRegressionTests(unittest.TestCase):
         by_drill = {row["DRILLDOWN"]: row for _, row in drill_map.iterrows()}
         self.assertEqual(by_control["Exact warehouse metering"]["STATE"], "Ready")
         self.assertEqual(by_control["Role, user, and department drivers"]["STATE"], "Ready")
-        self.assertEqual(by_control["Measured savings ledger"]["STATE"], "Review")
+        self.assertEqual(by_control["Owned cost action queue"]["STATE"], "Ready")
         self.assertGreaterEqual(summary["score"], 90)
         self.assertEqual(by_trust["Contract and warehouse totals"]["TRUST_STATE"], "Exact")
         self.assertEqual(by_trust["Database attribution"]["TRUST_STATE"], "Allocated/Estimated")
@@ -1908,130 +1894,6 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_driver["Company and environment split"]["TRUST"], "Allocated/Estimated")
         self.assertEqual(by_driver["Open cost action queue"]["STATUS"], "Ready")
         self.assertGreaterEqual(decomposition_summary["score"], 80)
-
-    def test_budget_anomaly_command_center_distinguishes_budgets_from_resource_monitors(self):
-        cockpit = pd.DataFrame([{
-            "CURRENT_CREDITS": 120,
-            "PRIOR_CREDITS": 60,
-            "TOP_INCREASE_WAREHOUSE": "ALFA_WH",
-            "TOP_INCREASE_CREDITS": 55,
-        }])
-        run_rate = pd.DataFrame([{
-            "AVG_DAILY_7D": 17.0,
-            "AVG_DAILY_30D": 8.5,
-            "PCT_VS_30D_AVG": 100.0,
-            "YOY_7D_PCT": 42.0,
-            "YOY_30D_PCT": 18.0,
-            "RUN_RATE_STATE": "Accelerating",
-            "YOY_STATE": "Above prior year",
-            "TOP_YOY_INCREASE_WAREHOUSE": "ALFA_WH",
-            "TOP_YOY_INCREASE_CREDITS": 40,
-        }])
-        queue = pd.DataFrame([{
-            "CATEGORY": "Cost Control",
-            "STATUS": "New",
-            "SEVERITY": "High",
-            "EST_MONTHLY_SAVINGS": 900,
-            "VERIFICATION_STATUS": "Pending",
-        }])
-        state = {
-            "df_cost_explorer_detail": pd.DataFrame([{
-                "COMPANY": "ALFA",
-                "ENVIRONMENT_ROLLUP": "PROD",
-                "DATABASE_NAME": "ALFA_EDW_PROD",
-                "ROLE_NAME": "ETL_ROLE",
-                "USER_NAME": "ETL_USER",
-                "DEPARTMENT": "DATA",
-            }])
-        }
-
-        summary, board = _build_budget_anomaly_command_center(
-            cockpit=cockpit,
-            run_rate=run_rate,
-            queue=queue,
-            credit_price=4.0,
-            state=state,
-        )
-        by_lane = {row["LANE"]: row for _, row in board.iterrows()}
-
-        self.assertEqual(by_lane["Account budget pace"]["SEVERITY"], "Critical")
-        self.assertIn("ALFA_WH", by_lane["Account budget pace"]["EVIDENCE"])
-        self.assertEqual(by_lane["Warehouse guardrail"]["CONTROL_SCOPE"], "Warehouse-only")
-        self.assertIn("Resource Monitor", by_lane["Warehouse guardrail"]["NATIVE_CONTROL"])
-        self.assertIn("Snowflake Budget", by_lane["AI budget and quota"]["NATIVE_CONTROL"])
-        self.assertIn("Budget Custom Action", by_lane["Budget custom action bridge"]["NATIVE_CONTROL"])
-        self.assertIn("Predictive Cost Anomaly", by_lane["Anomaly explanation"]["NATIVE_CONTROL"])
-        self.assertIn("7d avg", by_lane["Anomaly explanation"]["EVIDENCE"])
-        self.assertIn("30-day baseline plus sigma", by_lane["Anomaly explanation"]["EVIDENCE"])
-        self.assertIn("Do not use resource monitors as AI/serverless", by_lane["Warehouse guardrail"]["DO_NOT_DO"])
-        self.assertGreaterEqual(summary["budget_controls"], 4)
-        self.assertEqual(summary["warehouse_only_controls"], 1)
-        self.assertLess(summary["score"], 100)
-
-    def test_ask_overwatch_answers_from_budget_anomaly_command_center(self):
-        board = pd.DataFrame([{
-            "SEVERITY": "High",
-            "LANE": "Warehouse guardrail",
-            "SIGNAL": "Resource monitor candidate",
-            "NATIVE_CONTROL": "Resource Monitor",
-            "CONTROL_SCOPE": "Warehouse-only",
-            "VALUE_AT_RISK_USD": 220.0,
-            "EVIDENCE": "ALFA_WH is the current top warehouse mover; resource monitors are useful only for warehouse credit control.",
-            "DBA_DECISION": "Review warehouse-level resource monitor assignment for the top mover, but use Budgets for serverless, AI, and shared resources.",
-            "NEXT_ACTION": "Open Cost & Contract and Security Monitoring controls to review monitor assignment and threshold SQL after owner approval.",
-            "PROOF_REQUIRED": "SHOW RESOURCE MONITORS; SHOW WAREHOUSES LIKE ALFA_WH;",
-            "DO_NOT_DO": "Do not use resource monitors as AI/serverless budget controls; Snowflake budgets are the correct surface there.",
-            "ROUTE": "Cost & Contract > Recommendations and action queue / Budget Monitoring",
-        }])
-        state = {"cost_contract_budget_command_center": board}
-
-        cards = build_ask_overwatch_context(state)
-        result = answer_ask_overwatch(
-            "Should we use a resource monitor or budget for the cost spike?",
-            state,
-            active_section="Cost & Contract",
-            company="ALFA",
-            environment="PROD",
-        )
-
-        self.assertEqual(cards[0]["surface"], "Cost & Contract - Budget & Anomaly Command Center")
-        self.assertIn("native_control=Resource Monitor", cards[0]["evidence"])
-        self.assertIn("Warehouse guardrail", result["answer"])
-        self.assertIn("Do not use resource monitors as AI/serverless", result["answer"])
-
-    def test_native_cost_control_inventory_separates_monitors_budgets_and_email(self):
-        cockpit = pd.DataFrame([{
-            "CURRENT_CREDITS": 140,
-            "PRIOR_CREDITS": 80,
-            "TOP_INCREASE_WAREHOUSE": "ALFA_WH",
-            "TOP_INCREASE_CREDITS": 50,
-        }])
-        run_rate = pd.DataFrame([{
-            "PROJECTED_30D_FROM_7D": 450,
-        }])
-        queue = pd.DataFrame([{
-            "CATEGORY": "Cost Control",
-            "STATUS": "New",
-            "SEVERITY": "High",
-        }])
-
-        summary, board = _build_native_cost_control_inventory(
-            cockpit=cockpit,
-            run_rate=run_rate,
-            queue=queue,
-            verification_health=pd.DataFrame([{"TASK_HEALTH_STATE": "Healthy"}]),
-            credit_price=4.0,
-            state={},
-        )
-        by_control = {row["CONTROL"]: row for _, row in board.iterrows()}
-
-        self.assertEqual(by_control["Warehouse resource monitor"]["SCOPE"], "Warehouse-only")
-        self.assertIn("RESOURCE MONITOR", by_control["Warehouse resource monitor"]["NATIVE_SURFACE"])
-        self.assertIn("serverless", by_control["Warehouse resource monitor"]["STRICT_GAP"])
-        self.assertIn("ACCOUNT_ROOT_BUDGET", by_control["Account root budget"]["NATIVE_SURFACE"])
-        self.assertIn(DEFAULT_ALERT_EMAIL, by_control["Email notification path"]["EVIDENCE"])
-        self.assertGreaterEqual(summary["ready"], 3)
-        self.assertEqual(summary["warehouse_only"], 1)
 
     def test_resource_monitor_guardrail_sql_is_review_only_and_assigns_warehouse(self):
         sql = _build_resource_monitor_guardrail_sql(
@@ -2172,18 +2034,6 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("before tuning", result["answer"])
 
     def test_cost_monitoring_alert_rows_promote_specific_cost_issues(self):
-        budget = pd.DataFrame([{
-            "SEVERITY": "High",
-            "LANE": "Warehouse guardrail",
-            "SIGNAL": "Resource monitor candidate",
-            "NATIVE_CONTROL": "Resource Monitor",
-            "CONTROL_SCOPE": "Warehouse-only",
-            "VALUE_AT_RISK_USD": 420.0,
-            "EVIDENCE": "ALFA_WH is the current top warehouse mover.",
-            "NEXT_ACTION": "Review resource monitor assignment after owner approval.",
-            "PROOF_REQUIRED": "SHOW RESOURCE MONITORS; SELECT * FROM FACT_WAREHOUSE_HOURLY;",
-            "ROUTE": "Cost & Contract > Recommendations and action queue / Budget Monitoring",
-        }])
         root = pd.DataFrame([{
             "SEVERITY": "High",
             "DRIVER": "Warehouse movement",
@@ -2205,14 +2055,13 @@ class FormulaRegressionTests(unittest.TestCase):
         }])
 
         summary, alerts = _build_cost_monitoring_alert_rows(
-            budget_board=budget,
             root_cause=root,
             correlation=correlation,
             email_target="dba-alerts@example.com",
         )
         by_type = {row["ALERT_TYPE"]: row for _, row in alerts.iterrows()}
 
-        self.assertEqual(summary["critical_high"], 3)
+        self.assertEqual(summary["critical_high"], 2)
         self.assertEqual(alerts.iloc[0]["ENTITY_NAME"], "ALFA_WH")
         self.assertEqual(by_type["Cost Root Cause Candidate"]["EMAIL_TARGET"], "dba-alerts@example.com")
         self.assertIn("current/prior", by_type["Cost Root Cause Candidate"]["PROOF_QUERY"])
@@ -2236,7 +2085,7 @@ class FormulaRegressionTests(unittest.TestCase):
             "ALERT_TYPE": "Cost Root Cause Candidate",
             "ENTITY_NAME": "ALFA_WH",
             "MESSAGE": "ALFA_WH moved 130 credits.",
-            "SUGGESTED_ACTION": "Route to DBA / FinOps email triage.",
+            "SUGGESTED_ACTION": "Route to DBA / Cost owner email triage.",
             "PROOF_QUERY": "SELECT * FROM FACT_WAREHOUSE_HOURLY WHERE WAREHOUSE_NAME = 'ALFA_WH'",
             "VALUE_AT_RISK_USD": 478.4,
         }])
@@ -2293,7 +2142,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "INCIDENT_STEP": "Alert routed",
                 "ENTITY": "ALFA_WH",
                 "EVIDENCE": "Cost monitoring alert is ready for email triage.",
-                "NEXT_ACTION": "Route the alert to DBA / FinOps.",
+                "NEXT_ACTION": "Route the alert to DBA / Cost owner.",
                 "PROOF_REQUIRED": "Alert proof query.",
                 "ROUTE": "Alert Center",
             }]),
@@ -2327,7 +2176,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_REFRESH_POLICY", setup_upper)
         self.assertIn("EXECUTIVE_OBSERVABILITY", setup_upper)
         self.assertIn("RUN_IN_FIRST_PAINT", setup_upper)
-        self.assertIn("OPTIONAL_DYNAMIC_TABLES", setup_upper)
+        self.assertIn("CONSOLIDATED_DDL", setup_upper)
+        self.assertNotIn("OPTIONAL_DYNAMIC_TABLES", setup_upper)
         self.assertIn("ALTER TABLE IF EXISTS FACT_COST_DAILY ADD COLUMN IF NOT EXISTS RATE_USD", setup_upper)
         self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_EXECUTIVE_OBSERVABILITY", setup_upper)
         self.assertIn("CREATE OR REPLACE TASK OVERWATCH_EXECUTIVE_OBSERVABILITY_REFRESH", setup_upper)
@@ -2382,7 +2232,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("WAREHOUSE = OVERWATCH_WH", setup_upper)
         self.assertIn("APP_RUNTIME", setup_upper)
         self.assertIn("WAREHOUSE_COST_MOVEMENT", setup_upper)
-        self.assertIn("CORTEX_BUDGET_AND_QUOTA", setup_upper)
+        self.assertIn("CORTEX_SPEND_AND_QUOTA", setup_upper)
         self.assertIn("CHANGE_COST_CORRELATION", setup_upper)
         self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_SCHEMA_MIGRATION", setup_upper)
         self.assertIn(OVERWATCH_SCHEMA_VERSION.upper(), setup_upper)
@@ -2394,7 +2244,7 @@ class FormulaRegressionTests(unittest.TestCase):
 
         self.assertIn("OVERWATCH_SCHEMA_MIGRATION", ddl)
         self.assertIn(OVERWATCH_SCHEMA_VERSION.upper(), ddl)
-        self.assertIn("OVERWATCH_COST_SAVINGS_VERIFICATION_RUN", status_sql)
+        self.assertNotIn("OVERWATCH_COST_SAVINGS_VERIFICATION_RUN", status_sql)
         self.assertIn("OVERWATCH_AUTOMATION_RUN", status_sql)
         self.assertIn("OVERWATCH_AUTOMATION_HEALTH_V", status_sql)
         self.assertIn("OVERWATCH_EXECUTIVE_PACKET", status_sql)
@@ -2462,7 +2312,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("_DSA", checklist)
         self.assertIn("_DTI", checklist)
         self.assertIn("SNOWFLAKE OBSERVABILITY WALL", checklist)
-        self.assertIn("SNOWFLAKE VALUE AUTOMATION CONTRACT", checklist)
+        self.assertIn("COST & CONTRACT", checklist)
+        self.assertIn("ACTION QUEUE", checklist)
 
     def test_streamlit_deployment_decision_pins_entrypoints(self):
         decision = build_streamlit_deployment_decision()
@@ -2485,20 +2336,6 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(setup["ENTRYPOINT"], "Approved DBA release process")
         self.assertIn("owned outside the Streamlit UI", setup["DEPLOY_CONTEXT"])
 
-    def test_release_remediation_sql_covers_existing_deployment_drift(self):
-        remediation_sql = (ROOT / "snowflake" / "OVERWATCH_RELEASE_REMEDIATION.sql").read_text(encoding="utf-8")
-        remediation_upper = remediation_sql.upper()
-        runbook_upper = (ROOT / "OVERWATCH_MANUAL_INPUTS_AND_DDL_RUNBOOK.md").read_text(encoding="utf-8").upper()
-
-        self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_ANNOTATIONS", remediation_upper)
-        self.assertIn("CREATE RESOURCE MONITOR IF NOT EXISTS OVERWATCH_WH_RM", remediation_upper)
-        self.assertIn("SET RESOURCE_MONITOR = OVERWATCH_WH_RM", remediation_upper)
-        self.assertIn("2026.06.04-RELEASE-REMEDIATION", remediation_upper)
-        self.assertIn("SHOW TASKS LIKE 'OVERWATCH_%'", remediation_upper)
-        self.assertIn("-- ALTER TASK IF EXISTS DBA_MAINT_DB.OVERWATCH.OVERWATCH_ANOMALY_CHECK RESUME", remediation_upper)
-        self.assertNotRegex(remediation_upper, r"(?m)^ALTER TASK .* RESUME;")
-        self.assertIn("OVERWATCH_RELEASE_REMEDIATION.SQL", runbook_upper)
-
     def test_cost_monitoring_mart_sql_matches_setup_object_contract(self):
         sql = build_cost_monitoring_mart_sql().upper()
 
@@ -2508,25 +2345,6 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("OVERWATCH_COST_MONITORING_REFRESH", sql)
         self.assertIn("OVERWATCH_ALERTS", sql)
         self.assertIn("WAREHOUSE = OVERWATCH_WH", sql)
-
-    def test_budget_monitoring_board_tracks_budget_control_capabilities(self):
-        summary, board = _build_budget_monitoring_board()
-        capabilities = set(board["CAPABILITY"])
-        self.assertEqual(
-            capabilities,
-            {
-                "Account Budget Tracking",
-                "Cortex AI Spend",
-                "User Quota Pressure",
-                "Shared Resource Budgets",
-                "Budget Incident Feed",
-                "Anomaly Explanation",
-            },
-        )
-        self.assertGreaterEqual(summary["score"], 80)
-        self.assertGreaterEqual(summary["ready"], 4)
-        self.assertEqual(board.loc[board["CAPABILITY"].eq("User Quota Pressure"), "STATE"].iloc[0], "Monitoring Pattern")
-        self.assertEqual(board.loc[board["CAPABILITY"].eq("Anomaly Explanation"), "STATE"].iloc[0], "Partial")
 
     def test_control_room_snapshot_maps_to_watch_floor_shape(self):
         snapshot = pd.DataFrame([
@@ -2917,7 +2735,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "CATEGORY": "Cost Control",
                 "SEVERITY": "Medium",
                 "ENTITY_NAME": "WH_LOAD",
-                "OWNER": "FinOps Owner",
+                "OWNER": "Cost Owner",
                 "STATUS": "Fixed",
                 "DUE_DATE": "2026-05-29",
                 "PROOF_QUERY": "SELECT 1",
@@ -2953,7 +2771,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "DUE_DATE": "2026-06-02",
                 "VERIFICATION_QUERY": "SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY",
                 "TICKET_ID": "CHG-101",
-                "APPROVER": "FinOps Lead",
+                "APPROVER": "Cost owner",
                 "BASELINE_VALUE": 100,
                 "CURRENT_VALUE": 180,
                 "OWNER_APPROVAL_STATUS": "Requested",
@@ -2970,7 +2788,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "DUE_DATE": "2026-06-02",
                 "VERIFICATION_QUERY": "SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY",
                 "TICKET_ID": "CHG-102",
-                "APPROVER": "FinOps Lead",
+                "APPROVER": "Cost owner",
                 "BASELINE_VALUE": 200,
                 "CURRENT_VALUE": 260,
                 "OWNER_APPROVAL_STATUS": "Approved",
@@ -3091,7 +2909,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "STATUS": "In Progress",
                 "DUE_DATE": "2026-06-02",
                 "TICKET_ID": "CHG-101",
-                "APPROVER": "FinOps Lead",
+                "APPROVER": "Cost owner",
                 "OWNER_APPROVAL_STATUS": "Approved",
                 "VERIFICATION_QUERY": "SELECT 1",
                 "BASELINE_VALUE": 100,
@@ -3165,11 +2983,11 @@ class FormulaRegressionTests(unittest.TestCase):
                 "CATEGORY": "Cost Control",
                 "SEVERITY": "Medium",
                 "ENTITY_NAME": "WH_BATCH",
-                "OWNER": "FinOps Owner",
+                "OWNER": "Cost Owner",
                 "STATUS": "In Progress",
                 "DUE_DATE": "2026-06-03",
                 "TICKET_ID": "CHG-101",
-                "APPROVER": "FinOps Lead",
+                "APPROVER": "Cost owner",
                 "OWNER_APPROVAL_STATUS": "Approved",
                 "VERIFICATION_QUERY": "SELECT 1",
             },
@@ -3263,7 +3081,7 @@ class FormulaRegressionTests(unittest.TestCase):
 
     def test_dba_section_proof_required_names_section_evidence_contracts(self):
         self.assertIn("release-note/rollback", _dba_section_proof_required("Change & Drift"))
-        self.assertIn("savings telemetry", _dba_section_proof_required("Cost & Contract"))
+        self.assertIn("impact telemetry", _dba_section_proof_required("Cost & Contract"))
         self.assertIn("email status", _dba_section_proof_required("Alert Center"))
 
     def test_dba_incident_board_groups_signals_into_containment_lanes(self):
@@ -4079,7 +3897,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("DATABASE_NAME ILIKE", sql)
         self.assertIn("ENVIRONMENT_ROLLUP", sql)
 
-    def test_cost_explorer_mart_sql_exposes_finops_dimensions(self):
+    def test_cost_explorer_mart_sql_exposes_cost_dimensions(self):
         sql = build_mart_cost_explorer_sql(
             45,
             "ALL",
@@ -4273,7 +4091,6 @@ class FormulaRegressionTests(unittest.TestCase):
             unallocated_credits=30.0,
             service_drivers=service_df,
             credit_price=3.0,
-            budget=250.0,
         )
         categories = set(summary["Category"])
         self.assertIn("Warehouse metering", categories)
@@ -4281,7 +4098,6 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Unallocated / idle / overhead", categories)
         self.assertIn("Data loading / ingestion", categories)
         self.assertIn("AI / Cortex", categories)
-        self.assertIn("Budget variance", categories)
         source_basis = dict(zip(summary["Category"], summary["Measurement Basis"]))
         self.assertEqual(source_basis["Warehouse metering"], "Exact")
         self.assertEqual(source_basis["Query-attributed workload"], "Allocated / Estimated")
@@ -5527,7 +5343,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("DBA Lead", annotated.iloc[0]["APPROVER"])
         self.assertIn("MAX_CLUSTER_COUNT", annotated.iloc[0]["SETTING_CHANGE_CANDIDATE"])
         self.assertIn("Warehouse Settings Manager", annotated.iloc[0]["SAFE_CHANGE_PATH"])
-        self.assertEqual(annotated.iloc[0]["SAVINGS_VERIFICATION_REQUIRED"], "No")
+        self.assertEqual(annotated.iloc[0]["IMPACT_TELEMETRY_REQUIRED"], "No")
 
     def test_warehouse_capacity_verification_sql_is_read_only_and_environment_scoped(self):
         sql = _warehouse_capacity_verification_sql(
@@ -5671,16 +5487,16 @@ class FormulaRegressionTests(unittest.TestCase):
 
         self.assertIn("CREATE TABLE IF NOT EXISTS", ddl)
         self.assertIn("OVERWATCH_WAREHOUSE_SETTING_REVIEW", ddl)
-        self.assertIn("SAVINGS_VERIFICATION_REQUIRED", ddl)
+        self.assertIn("IMPACT_TELEMETRY_REQUIRED", ddl)
         self.assertIn("INSERT INTO", insert_sql)
         self.assertIn("'BI_COMPUTE_WH'", insert_sql)
-        self.assertIn("'DBA / FINOPS ROUTE'", insert_sql)
+        self.assertIn("'DBA / COST ROUTE'", insert_sql)
         self.assertIn("'PROD'", insert_sql)
         self.assertIn("WAREHOUSE_METERING_HISTORY", insert_sql)
         self.assertIn("SNAPSHOT_TS >= DATEADD('DAY', -30", trend_sql)
         self.assertIn("COMPANY = 'ALFA'", trend_sql)
         self.assertIn("ENVIRONMENT = 'PROD'", trend_sql)
-        self.assertIn("SAVINGS_VERIFICATION_ROWS", trend_sql)
+        self.assertIn("IMPACT_TELEMETRY_ROWS", trend_sql)
 
     def test_warehouse_setting_review_schema_tracks_execution_audit_fields(self):
         ddl = build_warehouse_setting_review_ddl().upper()
@@ -5709,7 +5525,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "APPROVAL_REQUIRED": "Yes",
                 "APPROVAL_STATE": "Requested",
                 "ROLLBACK_REQUIRED": "Yes",
-                "SAVINGS_VERIFICATION_REQUIRED": "Yes",
+                "IMPACT_TELEMETRY_REQUIRED": "Yes",
                 "EXECUTION_STATUS": "Not Executed",
             }
         )
@@ -5723,7 +5539,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "CHANGE_TICKET_ID": "CHG12345",
                 "ROLLBACK_REQUIRED": "Yes",
                 "ROLLBACK_SQL": "ALTER WAREHOUSE BI_COMPUTE_WH SET AUTO_SUSPEND = 300;",
-                "SAVINGS_VERIFICATION_REQUIRED": "Yes",
+                "IMPACT_TELEMETRY_REQUIRED": "Yes",
                 "EXECUTION_STATUS": "Success",
                 "EXECUTED_SQL_HASH": "abc123",
                 "POST_CHANGE_VERIFICATION_STATUS": "Verified",
@@ -5894,7 +5710,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "SIGNAL": ["Credit Spike"],
                 "QUEUED_QUERIES": [80],
                 "METERED_CREDITS": [42.5],
-                "SAVINGS_VERIFICATION_REQUIRED": ["Yes"],
+                "IMPACT_TELEMETRY_REQUIRED": ["Yes"],
             }
         )
         control_board = pd.DataFrame(
@@ -5964,10 +5780,10 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(saved, 1)
         action = captured["actions"][0]
         self.assertEqual(action["Environment"], "PROD")
-        self.assertEqual(action["Route"], "DBA / FinOps Route")
+        self.assertEqual(action["Route"], "DBA / Cost Route")
         self.assertNotIn("Owner", action)
         self.assertNotIn("Owner Approval Status", action)
-        self.assertIn("FinOps", action["Reviewer"])
+        self.assertIn("Cost Route", action["Reviewer"])
         self.assertEqual(action["Telemetry Status"], "Requested")
         self.assertEqual(verification_query_safety_issues(action["Telemetry Query"]), [])
         self.assertIn("post-change telemetry", action["Recovery Status"])
@@ -6007,7 +5823,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(verification_query_safety_issues(action["Telemetry Query"]), [])
         self.assertNotIn("ALTER WAREHOUSE", action["Generated SQL Fix"].upper())
 
-    def test_cortex_cost_score_tracks_budget_and_user_spikes(self):
+    def test_cortex_cost_score_tracks_threshold_and_user_spikes(self):
         controlled = _cortex_cost_score(
             projected_cost=500,
             budget_usd=1000,
@@ -6040,10 +5856,10 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(alias_score, direct_score)
 
     def test_cortex_actions_are_signal_specific(self):
-        self.assertIn("daily credit limit", _cortex_action_for("Budget Breach")[0])
+        self.assertIn("daily credit limit", _cortex_action_for("Spend Threshold Breach")[0])
         self.assertIn("expected project demand", _cortex_action_for("Cost Per Request Spike")[0])
 
-    def test_cortex_control_markdown_contains_budget_context(self):
+    def test_cortex_control_markdown_contains_threshold_context(self):
         summary_row = {
             "PROJECTED_30D_COST": 1250.0,
             "ACTIVE_USERS": 12,
@@ -6053,7 +5869,7 @@ class FormulaRegressionTests(unittest.TestCase):
         exceptions = pd.DataFrame(
             {
                 "SEVERITY": ["Critical"],
-                "SIGNAL": ["Budget Breach"],
+                "SIGNAL": ["Spend Threshold Breach"],
                 "USER_NAME": ["USER_A"],
                 "SOURCE": ["CLI"],
                 "PROJECTED_30D_COST": [1250.0],
@@ -6068,8 +5884,8 @@ class FormulaRegressionTests(unittest.TestCase):
             exceptions=exceptions,
         )
         self.assertIn("OVERWATCH Cortex Cost Control Brief - ALFA", md)
-        self.assertIn("Monthly budget: $1,000.00", md)
-        self.assertIn("Budget Breach", md)
+        self.assertIn("Monthly spend threshold: $1,000.00", md)
+        self.assertIn("Spend Threshold Breach", md)
 
     def test_dba_control_room_surfaces_task_and_procedure_regressions(self):
         data = {
@@ -6966,7 +6782,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(action["Owner"], "BI_PLATFORM_ROUTE")
         self.assertEqual(action["Category"], "Cost Control")
         self.assertEqual(action["Environment"], "")
-        self.assertEqual(action["Approver"], "BI_PLATFORM_ROUTE / FinOps Lead")
+        self.assertEqual(action["Approver"], "BI_PLATFORM_ROUTE / Cost owner")
         self.assertEqual(action["Verification Status"], "Requested")
         self.assertEqual(action["Baseline Value"], 250)
         self.assertEqual(action["Current Value"], 500)
@@ -7043,9 +6859,9 @@ class FormulaRegressionTests(unittest.TestCase):
 
         action = captured["actions"][0]
         self.assertEqual(action["Category"], "Chargeback Review")
-        self.assertEqual(action["Owner"], "DBA / FinOps")
+        self.assertEqual(action["Owner"], "DBA / Cost owner")
         self.assertEqual(action["Environment"], "No Database Context")
-        self.assertEqual(action["Approver"], "FinOps Lead / Cost Route")
+        self.assertEqual(action["Approver"], "Cost owner / Cost Route")
         self.assertEqual(action["Verification Status"], "Requested")
         self.assertNotIn("Owner Approval Status", action)
         self.assertEqual(action["Recovery SLA State"], "Chargeback Telemetry Pending")
@@ -7118,7 +6934,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "CATEGORY": "Chargeback Review",
                 "SEVERITY": "High",
                 "ENTITY_NAME": "NO_DATABASE_CONTEXT / Unknown user on BI_COMPUTE_WH",
-                "OWNER": "DBA / FinOps",
+                "OWNER": "DBA / Cost owner",
                 "STATUS": "In Progress",
                 "EST_MONTHLY_SAVINGS": 400,
                 "OWNER_APPROVAL_STATUS": "Requested",
@@ -7143,7 +6959,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(summary["blocked_estimated_monthly_savings"], 700)
         self.assertEqual(summary["verified_estimated_monthly_savings"], 600)
         self.assertEqual(summary["verified_period_delta_dollars"], 150)
-        self.assertEqual(by_id["COST_VERIFIED"]["CLOSURE_STATE"], "Measured savings")
+        self.assertEqual(by_id["COST_VERIFIED"]["CLOSURE_STATE"], "Measured improvement")
         self.assertEqual(by_id["COST_FIXED_GAP"]["CLOSURE_STATE"], "Fixed, awaiting measurement")
         self.assertEqual(by_id["COST_OPEN"]["CLOSURE_STATE"], "Review pending")
         self.assertEqual(by_id["CHARGEBACK_OPEN"]["CLOSURE_STATE"], "Chargeback telemetry pending")
@@ -7176,58 +6992,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(summary["verified_no_change_actions"], 1)
         self.assertEqual(summary["fixed_without_verification"], 0)
         self.assertEqual(summary["audit_ready_pct"], 100.0)
-        self.assertEqual(detail.iloc[0]["CLOSURE_STATE"], "Measured no savings")
-        self.assertEqual(detail.iloc[0]["VERIFIED_PERIOD_DELTA_DOLLARS"], 0.0)
-
-    def test_cost_contract_verification_health_surfaces_task_and_evidence_issues(self):
-        health = pd.DataFrame([
-            {
-                "CONTROL_NAME": "Cost & Contract Savings Verification",
-                "TASK_NAME": "OVERWATCH_COST_SAVINGS_VERIFY",
-                "TASK_HEALTH_STATE": "Healthy",
-                "LAST_TASK_STATE": "SUCCEEDED",
-                "FAILED_RUNS_7D": 0,
-                "LAST_VERIFICATION_RUN_AT": "2026-05-31 07:20:00",
-                "LEDGER_RUN_ROWS_7D": 12,
-                "CANDIDATES_LAST_RUN": 4,
-                "VERIFIED_LAST_RUN": 1,
-                "EVIDENCE_REQUIRED_LAST_RUN": 3,
-                "NEXT_ACTION": "Review evidence-required cost actions.",
-            }
-        ])
-
-        summary, detail = _build_savings_verification_task_summary(health)
-
-        self.assertTrue(summary["loaded"])
-        self.assertEqual(summary["health_state"], "Healthy")
-        self.assertEqual(summary["issue_severity"], "Medium")
-        self.assertEqual(summary["issue_count"], 3)
-        self.assertEqual(summary["ledger_rows_7d"], 12)
-        self.assertEqual(summary["verified_last_run"], 1)
-        self.assertEqual(summary["verified_no_change_last_run"], 0)
-        self.assertEqual(summary["evidence_required_last_run"], 3)
-        self.assertEqual(detail.iloc[0]["ISSUE_SEVERITY"], "Medium")
-        self.assertIn("Review evidence-required", detail.iloc[0]["ISSUE_DETAIL"])
-
-    def test_cost_contract_verification_health_prioritizes_task_failures(self):
-        health = pd.DataFrame([
-            {
-                "TASK_HEALTH_STATE": "Task Failed",
-                "LAST_TASK_STATE": "FAILED",
-                "FAILED_RUNS_7D": 2,
-                "LEDGER_RUN_ROWS_7D": 0,
-                "EVIDENCE_REQUIRED_LAST_RUN": 0,
-                "NEXT_ACTION": "Inspect TASK_HISTORY error.",
-            }
-        ])
-
-        summary, detail = _build_savings_verification_task_summary(health)
-
-        self.assertEqual(summary["issue_severity"], "Critical")
-        self.assertEqual(summary["issue_count"], 3)
-        self.assertEqual(summary["failed_runs_7d"], 2)
-        self.assertEqual(detail.iloc[0]["ISSUE_COUNT"], 3)
-        self.assertIn("TASK_HISTORY", summary["next_action"])
+        self.assertEqual(detail.iloc[0]["CLOSURE_STATE"], "Measured no improvement")
+        self.assertEqual(detail.iloc[0]["MEASURED_IMPACT_DOLLARS"], 0.0)
 
     def test_recommendation_actions_have_runnable_verification_sql(self):
         queries = [
@@ -7912,9 +7678,9 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("EMAIL_READY", sql)
         self.assertIn("TASK FAILURE", sql)
         self.assertIn("STORED PROCEDURE", sql)
-        self.assertIn("COST SAVINGS VERIFICATION FAILURE", sql)
-        self.assertIn("COST_SAVINGS_VERIFIER_FAILURE", sql)
-        self.assertIn("OVERWATCH_COST_SAVINGS_VERIFY", sql)
+        self.assertNotIn("COST SAVINGS VERIFICATION FAILURE", sql)
+        self.assertNotIn("COST_SAVINGS_VERIFIER_FAILURE", sql)
+        self.assertNotIn("OVERWATCH_COST_SAVINGS_VERIFY", sql)
         self.assertIn("GRANT/REVOKE ACTIVITY", sql)
         self.assertIn("WAREHOUSE SETTING CHANGE", sql)
         self.assertIn("OVERWATCH_ALERT_RULES", sql)
@@ -7948,151 +7714,6 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("LAST_DELIVERY_AT", sql)
         self.assertIn("DBA-ALERTS@EXAMPLE.COM", sql)
 
-    def test_workload_operations_snapshot_action_brief_prioritizes_operator_move(self):
-        snapshot = pd.DataFrame([{
-            "TOTAL_QUERIES": 100,
-            "FAILED_QUERIES": 3,
-            "QUEUED_QUERIES": 7,
-            "REMOTE_SPILL_QUERIES": 2,
-            "P95_ELAPSED_SEC": 18.5,
-        }])
-        summary = _workload_snapshot_summary(snapshot)
-        self.assertEqual(summary["queries"], 100)
-        self.assertEqual(summary["failed"], 3)
-        self.assertEqual(summary["queued"], 7)
-        self.assertEqual(summary["spill"], 2)
-
-        failed = _workload_action_brief(summary)
-        self.assertEqual(failed["workflow"], "Query diagnosis")
-        self.assertIn("failed query", failed["detail"])
-
-        queued = _workload_action_brief({
-            "loaded": True,
-            "queries": 100,
-            "failed": 0,
-            "queued": 7,
-            "spill": 0,
-            "p95": 18.5,
-        })
-        self.assertEqual(queued["workflow"], "Live triage")
-        self.assertEqual(queued["state"], "Queue Pressure")
-
-        missing = _workload_action_brief(
-            _workload_snapshot_summary(pd.DataFrame()),
-            error="source missing",
-        )
-        self.assertTrue(missing["refresh"])
-        self.assertEqual(missing["workflow"], "Live triage")
-
-        task_alert_brief = _workload_action_brief(
-            {
-                "loaded": True,
-                "queries": 100,
-                "failed": 0,
-                "queued": 0,
-                "spill": 0,
-                "p95": 18.5,
-            },
-            task_summary={
-                "loaded": True,
-                "task_status_rows": 5,
-                "task_status_alerts": 2,
-                "task_status_watch": 1,
-            },
-        )
-        self.assertEqual(task_alert_brief["workflow"], "Task graphs")
-        self.assertEqual(task_alert_brief["state"], "Job Review")
-        self.assertIn("Snowflake task", task_alert_brief["detail"])
-
-        task_failure_brief = _workload_action_brief(
-            {
-                "loaded": True,
-                "queries": 100,
-                "failed": 0,
-                "queued": 0,
-                "spill": 0,
-                "p95": 18.5,
-            },
-            task_summary={
-                "loaded": True,
-                "task_status_rows": 5,
-                "task_status_failures": 2,
-                "task_status_late": 1,
-                "task_status_alerts": 3,
-                "task_status_watch": 0,
-            },
-        )
-        self.assertEqual(task_failure_brief["workflow"], "Task graphs")
-        self.assertEqual(task_failure_brief["state"], "Job Review")
-        self.assertIn("failed/blocked", task_failure_brief["detail"])
-
-        task_late_brief = _workload_action_brief(
-            {
-                "loaded": True,
-                "queries": 100,
-                "failed": 0,
-                "queued": 0,
-                "spill": 0,
-                "p95": 18.5,
-            },
-            task_summary={
-                "loaded": True,
-                "task_status_rows": 5,
-                "task_status_failures": 0,
-                "task_status_late": 2,
-                "task_status_alerts": 2,
-                "task_status_watch": 0,
-            },
-        )
-        self.assertEqual(task_late_brief["workflow"], "Task graphs")
-        self.assertEqual(task_late_brief["state"], "SLA Risk")
-        self.assertIn("late, missed", task_late_brief["detail"])
-
-        task_watch_brief = _workload_action_brief(
-            {
-                "loaded": True,
-                "queries": 100,
-                "failed": 0,
-                "queued": 0,
-                "spill": 0,
-                "p95": 18.5,
-            },
-            task_summary={
-                "loaded": True,
-                "task_status_rows": 5,
-                "task_status_alerts": 0,
-                "task_status_watch": 1,
-            },
-        )
-        self.assertEqual(task_watch_brief["workflow"], "Task graphs")
-        self.assertEqual(task_watch_brief["state"], "Job Watch")
-
-        lanes = _workload_status_lanes(summary)
-        by_label = {lane["label"]: lane for lane in lanes}
-        self.assertEqual(by_label["Task / job status"]["workflow"], "Task graphs")
-        self.assertEqual(by_label["Task / job status"]["state"], "Open live view")
-        self.assertEqual(by_label["Performance indicators"]["workflow"], "Query diagnosis")
-        self.assertIn("p95", by_label["Performance indicators"]["value"])
-        self.assertEqual(by_label["Errors"]["workflow"], "Live triage")
-        self.assertEqual(by_label["Errors"]["value"], "3 failed")
-
-        task_summary = _workload_task_summary(pd.DataFrame([{
-            "TASK_STATUS_ROWS": 5,
-            "TASK_STATUS_FAILURE_ROWS": 2,
-            "TASK_STATUS_LATE_ROWS": 1,
-            "TASK_STATUS_ALERT_ROWS": 2,
-            "TASK_STATUS_WATCH_ROWS": 1,
-            "TASK_STATUS_LAST_SEEN_AT": "2026-05-01 10:00:00",
-        }]))
-        task_lanes = _workload_status_lanes(summary, task_summary)
-        task_by_label = {lane["label"]: lane for lane in task_lanes}
-        self.assertEqual(task_by_label["Task / job status"]["state"], "Review")
-        self.assertEqual(task_by_label["Task / job status"]["value"], "2 failed or blocked")
-        self.assertEqual(task_summary["task_status_rows"], 5)
-        self.assertEqual(task_summary["task_status_failures"], 2)
-        self.assertEqual(task_summary["task_status_late"], 1)
-        self.assertEqual(task_summary["task_status_alerts"], 2)
-
     def test_workload_task_status_sql_reads_snowflake_task_history_only(self):
         sql = _build_workload_task_status_sql("Trexis", "PROD", hours=24).upper()
 
@@ -8104,42 +7725,6 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertNotIn("OVERWATCH_EXTERNAL_CONTROL_FEED", sql)
         self.assertNotIn("SOURCE_SYSTEM", sql)
         self.assertNotIn("COALESCE(ENVIRONMENT, 'NO DATABASE CONTEXT') = 'PROD'", sql)
-
-    def test_workload_runbook_markdown_is_copy_ready_and_evidence_bounded(self):
-        summary = {
-            "loaded": True,
-            "queries": 100,
-            "failed": 3,
-            "queued": 7,
-            "spill": 2,
-            "p95": 18.5,
-        }
-        brief = _workload_action_brief(summary)
-        task_summary = {
-            "loaded": True,
-            "task_status_rows": 4,
-            "task_status_failures": 1,
-            "task_status_late": 1,
-            "task_status_alerts": 1,
-            "task_status_watch": 1,
-            "last_seen": "2026-05-01 10:00:00",
-        }
-        markdown = _build_workload_runbook_markdown("Trexis", "DEV_ALL", summary, brief, task_summary)
-
-        self.assertIn("# OVERWATCH Workload Operations Runbook", markdown)
-        self.assertIn("- Scope: Trexis / DEV_ALL", markdown)
-        self.assertIn("100 queries, 3 failed, 7 queued, 2 remote-spill, p95 18.5s", markdown)
-        self.assertIn("Snowflake TASK_HISTORY runs=4; failed_blocked=1; late_or_missed=1; alerts=1; watch=1", markdown)
-        self.assertIn("## Slide Bullets", markdown)
-        self.assertIn("## Triage Order", markdown)
-        self.assertIn("Query diagnosis: capture query ID", markdown)
-        self.assertIn("Snowflake task and Snowflake task status", markdown)
-        self.assertIn("## Telemetry Checklist", markdown)
-        self.assertIn("Warehouse, user, role, database, and schema", markdown)
-        self.assertEqual(
-            _workload_runbook_filename("Trexis Corp", "DEV_ALL"),
-            "overwatch_workload_runbook_trexis_corp_dev_all.md",
-        )
 
     def test_workload_recovery_audit_ddl_captures_owner_and_verification_evidence(self):
         sql = build_workload_recovery_audit_ddl().upper()
@@ -8334,26 +7919,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "ENTITY_NAME": "WH_ALFA_LOAD",
                 "MESSAGE": "Credits doubled.",
                 "PROOF_QUERY": "SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY LIMIT 10",
-                "OWNER": "DBA / FinOps",
-            },
-            {
-                "ALERT_ID": 33,
-                "ALERT_TS": "2026-05-31 10:20:00",
-                "COMPANY": "ALFA",
-                "ENVIRONMENT": "No Database Context",
-                "CATEGORY": "Cost Control",
-                "ALERT_TYPE": "Cost Savings Verification Failure",
-                "SEVERITY": "High",
-                "STATUS": "New",
-                "ENTITY_NAME": "OVERWATCH_DB.OVERWATCH.OVERWATCH_COST_SAVINGS_VERIFY",
-                "MESSAGE": "2 failed savings verification task run(s) in the last 24 hours.",
-                "SUGGESTED_ACTION": "Open Cost & Contract verifier health.",
-                "PROOF_QUERY": "SELECT DATABASE_NAME, SCHEMA_NAME, NAME, STATE FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY WHERE UPPER(NAME) = 'OVERWATCH_COST_SAVINGS_VERIFY'",
-                "OWNER": "DBA / FinOps",
-                "ESCALATION_TARGET": "FinOps Lead",
-                "SLA_TARGET_HOURS": 8,
-                "ALERT_AGE_HOURS": 9,
-                "SLA_STATE": "Overdue",
+                "OWNER": "DBA / Cost owner",
             },
         ])
 
@@ -8362,7 +7928,6 @@ class FormulaRegressionTests(unittest.TestCase):
         task = by_entity["ALFA_EDW_PROD.PUBLIC.T_LOAD_POLICY"]
         proc = by_entity["ALFA_EDW_DEV.PUBLIC.SP_LOAD_POLICY"]
         cost = by_entity["WH_ALFA_LOAD"]
-        verifier = by_entity["OVERWATCH_DB.OVERWATCH.OVERWATCH_COST_SAVINGS_VERIFY"]
 
         self.assertEqual(task["Category"], "Task & Procedure Reliability")
         self.assertEqual(task["Entity Type"], "Task")
@@ -8395,25 +7960,6 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(cost["Category"], "Cost Control")
         self.assertNotIn("Owner Approval Status", cost)
         self.assertEqual(verification_query_safety_issues(cost["Verification Query"]), [])
-
-        self.assertEqual(verifier["Category"], "Cost Control")
-        self.assertEqual(verifier["Entity Type"], "Cost Measurement Task")
-        self.assertNotIn("Owner Approval Status", verifier)
-        self.assertNotIn("Approver", verifier)
-        self.assertEqual(verifier["Review Group"], "FinOps Lead")
-        self.assertEqual(verifier["Oncall Primary"], "")
-        self.assertIn("MONITORING_CONTEXT", verifier["Owner Source"])
-        self.assertEqual(verifier["Recovery Audit State"], "Audit Required")
-        self.assertEqual(verifier["Recovery SLA State"], "Recovery SLA Breach")
-        self.assertEqual(verifier["Recovery SLA Target Hours"], 8.0)
-        self.assertEqual(verifier["Recovery SLA Hours"], 9.0)
-        self.assertEqual(verifier["Baseline Value"], 0.0)
-        self.assertEqual(verifier["Current Value"], 2.0)
-        self.assertIn("TASK_HISTORY", verifier["Verification Query"])
-        self.assertIn("OVERWATCH_COST_SAVINGS_VERIFY", verifier["Verification Query"])
-        self.assertNotIn("ALTER TASK", verifier["Generated SQL Fix"].upper())
-        self.assertIn("clean run ledger", verifier["Action"])
-        self.assertEqual(verification_query_safety_issues(verifier["Verification Query"]), [])
 
     def test_alert_triage_view_sql_exposes_auditable_sla_state(self):
         sql = build_alert_triage_view_sql().upper()
@@ -8511,7 +8057,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "CATEGORY": "Cost Control",
                 "ALERT_TYPE": "Credit Spike",
                 "ENTITY_NAME": "COMPUTE_WH",
-                "OWNER": "DBA / FinOps",
+                "OWNER": "DBA / Cost owner",
                 "EMAIL_TARGET": "",
                 "DELIVERY_STATUS": "",
                 "SUGGESTED_ACTION": "Explain bill movement.",
@@ -8640,7 +8186,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "SEVERITY": "Medium",
                 "STATUS": "Fixed",
                 "ENTITY_NAME": "WH_ALFA_LOAD",
-                "OWNER": "DBA / FinOps",
+                "OWNER": "DBA / Cost owner",
                 "MESSAGE": "Credits returned to baseline.",
                 "DELIVERY_STATUS": "EMAIL_READY",
             },
@@ -9014,7 +8560,7 @@ class FormulaRegressionTests(unittest.TestCase):
         ).upper()
         categories = set(catalog["CATEGORY"])
 
-        self.assertTrue({"Security", "Cost / FinOps", "Performance", "Task / Pipeline", "Data Quality", "Optimization"}.issubset(categories))
+        self.assertTrue({"Security", "Cost", "Performance", "Task / Pipeline", "Data Quality", "Optimization"}.issubset(categories))
         for source in [
             "SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY",
             "SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS",
@@ -9061,12 +8607,12 @@ class FormulaRegressionTests(unittest.TestCase):
                 "ALERT_ID": 3,
                 "ALERT_TS": pd.Timestamp("2026-06-12 02:00"),
                 "RESOLVED_AT": pd.Timestamp("2026-06-12 04:00"),
-                "CATEGORY": "Cost / FinOps",
+                "CATEGORY": "Cost",
                 "ALERT_TYPE": "Credit Spike",
                 "SEVERITY": "Medium",
                 "STATUS": "Resolved",
                 "ENTITY_NAME": "WH_LOAD",
-                "OWNER": "DBA / FinOps",
+                "OWNER": "DBA / Cost owner",
                 "SUGGESTED_ACTION": "Explain metering movement.",
             },
         ])
@@ -9108,7 +8654,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "SEVERITY": "Medium",
                 "STATUS": "New",
                 "ENTITY_NAME": "WH_DEV_IDLE",
-                "OWNER": "DBA / FinOps",
+                "OWNER": "DBA / Cost owner",
                 "SUGGESTED_ACTION": "Review warehouse ownership and auto-suspend.",
             },
         ])

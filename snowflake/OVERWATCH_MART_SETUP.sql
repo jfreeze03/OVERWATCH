@@ -45,6 +45,33 @@ USE DATABASE DBA_MAINT_DB;
 USE SCHEMA OVERWATCH;
 
 -- -----------------------------------------------------------------------------
+-- 1b. Access roles
+-- -----------------------------------------------------------------------------
+
+CREATE ROLE IF NOT EXISTS OVERWATCH_MONITOR;
+CREATE ROLE IF NOT EXISTS OVERWATCH_OPERATOR;
+
+GRANT IMPORTED PRIVILEGES ON DATABASE SNOWFLAKE TO ROLE OVERWATCH_MONITOR;
+GRANT USAGE ON WAREHOUSE OVERWATCH_WH TO ROLE OVERWATCH_MONITOR;
+GRANT USAGE ON WAREHOUSE OVERWATCH_WH TO ROLE OVERWATCH_OPERATOR;
+
+GRANT USAGE ON DATABASE DBA_MAINT_DB TO ROLE OVERWATCH_MONITOR;
+GRANT USAGE ON SCHEMA DBA_MAINT_DB.OVERWATCH TO ROLE OVERWATCH_MONITOR;
+GRANT SELECT ON ALL TABLES IN SCHEMA DBA_MAINT_DB.OVERWATCH TO ROLE OVERWATCH_MONITOR;
+GRANT SELECT ON ALL VIEWS IN SCHEMA DBA_MAINT_DB.OVERWATCH TO ROLE OVERWATCH_MONITOR;
+GRANT SELECT ON FUTURE TABLES IN SCHEMA DBA_MAINT_DB.OVERWATCH TO ROLE OVERWATCH_MONITOR;
+GRANT SELECT ON FUTURE VIEWS IN SCHEMA DBA_MAINT_DB.OVERWATCH TO ROLE OVERWATCH_MONITOR;
+
+GRANT ROLE OVERWATCH_MONITOR TO ROLE OVERWATCH_OPERATOR;
+GRANT INSERT, UPDATE ON ALL TABLES IN SCHEMA DBA_MAINT_DB.OVERWATCH TO ROLE OVERWATCH_OPERATOR;
+GRANT INSERT, UPDATE ON FUTURE TABLES IN SCHEMA DBA_MAINT_DB.OVERWATCH TO ROLE OVERWATCH_OPERATOR;
+
+COMMENT ON ROLE OVERWATCH_MONITOR IS
+    'Read-only OVERWATCH telemetry role for Snowflake account usage, marts, and dashboard evidence.';
+COMMENT ON ROLE OVERWATCH_OPERATOR IS
+    'Review-gated OVERWATCH operator role for acknowledgements and action queue updates.';
+
+-- -----------------------------------------------------------------------------
 -- 2. Configuration and audit tables
 -- -----------------------------------------------------------------------------
 
@@ -102,12 +129,12 @@ USING (
   SELECT * FROM VALUES
     ('EXECUTIVE_OBSERVABILITY', 'Executive Landing', 'MART', 60, 'TASK_AFTER_FACT_LOADS', 'MART_EXECUTIVE_OBSERVABILITY', 35, TRUE, FALSE, 'Boss page reads one compact mart query on first paint: spend, Cortex, runtime, spill, tasks, alerts, actions, storage, and platform score.', 'DBA / Platform'),
     ('DBA_CONTROL_ROOM_FAST', 'DBA Control Room', 'MART', 60, 'TASK_AFTER_HOURLY_FACTS', 'MART_DBA_CONTROL_ROOM', 35, TRUE, FALSE, 'Morning triage should render from a small control-room mart before any live ACCOUNT_USAGE detail scan.', 'DBA On-Call'),
-    ('COST_WATCH_FLOOR', 'Cost & Contract', 'MART_AND_BOUNDED_OFFICIAL_COST', 60, 'TASK_PLUS_EXPLICIT_REFRESH', 'FACT_COST_DAILY; FACT_CORTEX_DAILY; WAREHOUSE_METERING_HISTORY', 730, TRUE, FALSE, 'Cost first paint shows lightweight spend, Cortex, and warehouse movement; full attribution proof is explicit.', 'DBA / FinOps'),
+    ('COST_WATCH_FLOOR', 'Cost & Contract', 'MART_AND_BOUNDED_OFFICIAL_COST', 60, 'TASK_PLUS_EXPLICIT_REFRESH', 'FACT_COST_DAILY; FACT_CORTEX_DAILY; WAREHOUSE_METERING_HISTORY', 730, TRUE, FALSE, 'Cost first paint shows lightweight spend, Cortex, and warehouse movement; full attribution proof is explicit.', 'DBA / Cost owner'),
     ('ALERT_COMMAND_VIEW', 'Alert Center', 'APP_TABLES', 15, 'TASK_OR_APP_WRITE', 'ALERT_EVENTS; ALERT_NOTIFICATION_LOG; OVERWATCH_ACTION_QUEUE', 180, TRUE, FALSE, 'Alert Center may auto-load bounded app tables on entry because they are small, owner-routed, and already deduplicated.', 'DBA / Alert Owner'),
     ('WORKLOAD_SNAPSHOT', 'Workload Operations', 'MART_AND_TASK_HISTORY', 30, 'TASK_PLUS_EXPLICIT_REFRESH', 'FACT_QUERY_HOURLY; FACT_TASK_RUN', 35, TRUE, FALSE, 'Workload first paint shows task/query pressure from compact facts; live triage is reserved for in-flight incidents.', 'DBA / Workload Owner'),
     ('LIVE_TRIAGE', 'DBA Control Room / Workload Operations', 'NEAR_REAL_TIME', 5, 'ON_DEMAND_ONLY', 'INFORMATION_SCHEMA table functions; SHOW commands', 1, FALSE, TRUE, 'Near-real-time checks are useful during incidents but must stay explicit to avoid runaway monitoring cost.', 'DBA On-Call'),
     ('DATA_RECONCILIATION', 'Workload Operations', 'ON_DEMAND_PROOF', NULL, 'APPROVAL_OR_OPERATOR_RUN', 'OVERWATCH_RECON_CONFIG; OVERWATCH_RECON_RUN', 365, FALSE, TRUE, 'Counts, hashes, and sampled diffs can be expensive and should run only for configured schema/database comparisons.', 'DBA / Data Owner'),
-    ('OPTIONAL_DYNAMIC_TABLES', 'Setup', 'OPTIONAL_PRECOMPUTE', 60, 'EXPLICIT_APPROVAL_ONLY', 'snowflake/PRECOMPUTE.sql', NULL, FALSE, FALSE, 'Dynamic Tables are optional accelerators, not the base architecture; approve warehouse, target lag, owner, and budget first.', 'DBA / Platform')
+    ('CONSOLIDATED_DDL', 'Setup', 'MART_SETUP', 60, 'SINGLE_DDL_DOCUMENT', 'snowflake/OVERWATCH_MART_SETUP.sql', NULL, FALSE, FALSE, 'All deployable Snowflake objects live in the consolidated mart setup file.', 'DBA / Platform')
 ) src(
   POLICY_NAME, SURFACE, SOURCE_CLASS, TARGET_FRESHNESS_MIN, REFRESH_METHOD,
   BASE_OBJECT, RETENTION_DAYS, RUN_IN_FIRST_PAINT, APPROVED_LIVE_FALLBACK,
@@ -457,302 +484,6 @@ QUALIFY ROW_NUMBER() OVER (
   ORDER BY RECOVERY_AUDIT_TS DESC, RECOVERY_AUDIT_ID DESC
 ) = 1;
 
-CREATE TABLE IF NOT EXISTS OVERWATCH_COST_SAVINGS_VERIFICATION_RUN (
-  RUN_ID                    NUMBER AUTOINCREMENT PRIMARY KEY,
-  RUN_TS                    TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
-  ACTION_ID                 VARCHAR(64),
-  COMPANY                   VARCHAR(100),
-  ENVIRONMENT               VARCHAR(100),
-  CATEGORY                  VARCHAR(100),
-  ENTITY_TYPE               VARCHAR(100),
-  ENTITY_NAME               VARCHAR(500),
-  OWNER                     VARCHAR(200),
-  OWNER_APPROVAL_STATUS     VARCHAR(40),
-  STATUS_BEFORE             VARCHAR(40),
-  BASELINE_VALUE            FLOAT,
-  DETECTION_CURRENT_VALUE   FLOAT,
-  POST_PERIOD_VALUE         FLOAT,
-  MEASURED_DELTA            FLOAT,
-  EST_MONTHLY_SAVINGS       FLOAT,
-  VERIFICATION_OUTCOME      VARCHAR(100),
-  VERIFICATION_RESULT       VARCHAR(8000),
-  SOURCE_QUERY              VARCHAR(8000)
-);
-
-CREATE OR REPLACE PROCEDURE SP_OVERWATCH_VERIFY_COST_SAVINGS()
-RETURNS VARCHAR
-LANGUAGE SQL
-EXECUTE AS OWNER
-AS
-$$
-DECLARE
-  candidate_count NUMBER DEFAULT 0;
-  verified_count NUMBER DEFAULT 0;
-  no_change_count NUMBER DEFAULT 0;
-  evidence_required_count NUMBER DEFAULT 0;
-BEGIN
-  CREATE OR REPLACE TEMPORARY TABLE TMP_OVERWATCH_COST_SAVINGS_VERIFY AS
-  WITH candidates AS (
-    SELECT
-      ACTION_ID,
-      COMPANY,
-      ENVIRONMENT,
-      CATEGORY,
-      ENTITY_TYPE,
-      ENTITY_NAME,
-      OWNER,
-      OWNER_APPROVAL_STATUS,
-      TICKET_ID,
-      APPROVER,
-      STATUS,
-      BASELINE_VALUE,
-      CURRENT_VALUE,
-      EST_MONTHLY_SAVINGS,
-      VERIFICATION_QUERY,
-      REGEXP_REPLACE(ENTITY_NAME, '^"|"$', '') AS WAREHOUSE_NAME
-    FROM OVERWATCH_ACTION_QUEUE
-    WHERE UPPER(COALESCE(STATUS, '')) NOT IN ('IGNORED')
-      AND (
-        UPPER(COALESCE(CATEGORY, '')) IN ('COST', 'COST CONTROL')
-        OR UPPER(COALESCE(SOURCE, '')) LIKE 'COST & CONTRACT%'
-      )
-      AND UPPER(COALESCE(ENTITY_TYPE, '')) = 'WAREHOUSE'
-      AND COALESCE(EST_MONTHLY_SAVINGS, 0) > 0
-      AND UPPER(COALESCE(VERIFICATION_STATUS, 'PENDING')) NOT IN ('VERIFIED', 'VERIFIED_SAVED', 'VERIFIED_NO_CHANGE')
-  ),
-  post_period AS (
-    SELECT
-      WAREHOUSE_NAME,
-      SUM(COALESCE(CREDITS_USED, 0)) AS POST_PERIOD_CREDITS
-    FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
-    WHERE START_TIME >= DATEADD('DAY', -7, CURRENT_DATE())
-      AND START_TIME < CURRENT_DATE()
-    GROUP BY WAREHOUSE_NAME
-  ),
-  scored AS (
-    SELECT
-      c.*,
-      p.POST_PERIOD_CREDITS,
-      p.POST_PERIOD_CREDITS - c.CURRENT_VALUE AS MEASURED_DELTA,
-      CASE
-        WHEN UPPER(COALESCE(c.OWNER_APPROVAL_STATUS, '')) NOT IN ('APPROVED', 'NOT REQUIRED')
-          THEN 'Approval Required'
-        WHEN p.POST_PERIOD_CREDITS IS NULL
-          THEN 'No Metering Evidence'
-        WHEN c.BASELINE_VALUE IS NULL OR c.CURRENT_VALUE IS NULL
-          THEN 'Baseline Required'
-        WHEN p.POST_PERIOD_CREDITS <= c.BASELINE_VALUE
-          THEN 'Verified Savings'
-        WHEN p.POST_PERIOD_CREDITS < c.CURRENT_VALUE
-          THEN 'Improvement Needs Review'
-        ELSE 'No Savings Yet'
-      END AS VERIFICATION_OUTCOME
-    FROM candidates c
-    LEFT JOIN post_period p
-      ON UPPER(p.WAREHOUSE_NAME) = UPPER(c.WAREHOUSE_NAME)
-  )
-  SELECT
-    ACTION_ID,
-    COMPANY,
-    ENVIRONMENT,
-    CATEGORY,
-    ENTITY_TYPE,
-    ENTITY_NAME,
-    OWNER,
-    OWNER_APPROVAL_STATUS,
-    TICKET_ID,
-    APPROVER,
-    STATUS AS STATUS_BEFORE,
-    BASELINE_VALUE,
-    CURRENT_VALUE AS DETECTION_CURRENT_VALUE,
-    POST_PERIOD_CREDITS AS POST_PERIOD_VALUE,
-    MEASURED_DELTA,
-    EST_MONTHLY_SAVINGS,
-    VERIFICATION_OUTCOME,
-    'Automated post-period verification: last 7 complete days for ' || ENTITY_NAME ||
-      '. Baseline=' || COALESCE(TO_VARCHAR(BASELINE_VALUE), 'missing') ||
-      '; detection current=' || COALESCE(TO_VARCHAR(CURRENT_VALUE), 'missing') ||
-      '; post-period=' || COALESCE(TO_VARCHAR(POST_PERIOD_CREDITS), 'missing') ||
-      '; outcome=' || VERIFICATION_OUTCOME AS VERIFICATION_RESULT,
-    'SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY last 7 complete days by warehouse' AS SOURCE_QUERY
-  FROM scored;
-
-  SELECT COUNT(*) INTO :candidate_count FROM TMP_OVERWATCH_COST_SAVINGS_VERIFY;
-  SELECT COUNT_IF(VERIFICATION_OUTCOME = 'Verified Savings') INTO :verified_count
-  FROM TMP_OVERWATCH_COST_SAVINGS_VERIFY;
-  SELECT COUNT_IF(VERIFICATION_OUTCOME = 'No Savings Yet') INTO :no_change_count
-  FROM TMP_OVERWATCH_COST_SAVINGS_VERIFY;
-  SELECT COUNT_IF(VERIFICATION_OUTCOME NOT IN ('Verified Savings', 'No Savings Yet')) INTO :evidence_required_count
-  FROM TMP_OVERWATCH_COST_SAVINGS_VERIFY;
-
-  INSERT INTO OVERWATCH_COST_SAVINGS_VERIFICATION_RUN (
-    ACTION_ID, COMPANY, ENVIRONMENT, CATEGORY, ENTITY_TYPE, ENTITY_NAME,
-    OWNER, OWNER_APPROVAL_STATUS, STATUS_BEFORE, BASELINE_VALUE,
-    DETECTION_CURRENT_VALUE, POST_PERIOD_VALUE, MEASURED_DELTA,
-    EST_MONTHLY_SAVINGS, VERIFICATION_OUTCOME, VERIFICATION_RESULT, SOURCE_QUERY
-  )
-  SELECT
-    ACTION_ID, COMPANY, ENVIRONMENT, CATEGORY, ENTITY_TYPE, ENTITY_NAME,
-    OWNER, OWNER_APPROVAL_STATUS, STATUS_BEFORE, BASELINE_VALUE,
-    DETECTION_CURRENT_VALUE, POST_PERIOD_VALUE, MEASURED_DELTA,
-    EST_MONTHLY_SAVINGS, VERIFICATION_OUTCOME, VERIFICATION_RESULT, SOURCE_QUERY
-  FROM TMP_OVERWATCH_COST_SAVINGS_VERIFY;
-
-  UPDATE OVERWATCH_ACTION_QUEUE q
-  SET
-    UPDATED_AT = CURRENT_TIMESTAMP(),
-    CURRENT_VALUE = v.POST_PERIOD_VALUE,
-    MEASURED_DELTA = v.MEASURED_DELTA,
-    VERIFICATION_STATUS = IFF(
-      v.VERIFICATION_OUTCOME = 'Verified Savings',
-      'VERIFIED_SAVED',
-      IFF(v.VERIFICATION_OUTCOME = 'No Savings Yet', 'VERIFIED_NO_CHANGE', 'EVIDENCE_REQUIRED')
-    ),
-    VERIFICATION_RESULT = v.VERIFICATION_RESULT,
-    VERIFIED_BY = IFF(v.VERIFICATION_OUTCOME IN ('Verified Savings', 'No Savings Yet'), 'SP_OVERWATCH_VERIFY_COST_SAVINGS', q.VERIFIED_BY),
-    VERIFIED_AT = IFF(v.VERIFICATION_OUTCOME IN ('Verified Savings', 'No Savings Yet'), CURRENT_TIMESTAMP(), q.VERIFIED_AT),
-    RECOVERY_SLA_STATE = CASE
-      WHEN v.VERIFICATION_OUTCOME = 'Verified Savings' THEN 'Savings Verified'
-      WHEN v.VERIFICATION_OUTCOME = 'No Savings Yet' THEN 'Verified No Change'
-      WHEN v.VERIFICATION_OUTCOME = 'Improvement Needs Review' THEN 'Savings Improvement Needs Review'
-      ELSE 'Savings Evidence Required'
-    END,
-    RECOVERY_AUDIT_STATE = IFF(
-      v.VERIFICATION_OUTCOME = 'Verified Savings',
-      'VERIFIED_SAVED',
-      IFF(v.VERIFICATION_OUTCOME = 'No Savings Yet', 'VERIFIED_NO_CHANGE', q.RECOVERY_AUDIT_STATE)
-    ),
-    RECOVERY_EVIDENCE = IFF(v.VERIFICATION_OUTCOME IN ('Verified Savings', 'No Savings Yet'), v.VERIFICATION_RESULT, q.RECOVERY_EVIDENCE)
-  FROM TMP_OVERWATCH_COST_SAVINGS_VERIFY v
-  WHERE q.ACTION_ID = v.ACTION_ID;
-
-  INSERT INTO OVERWATCH_WORKLOAD_RECOVERY_AUDIT (
-    ACTION_ID, COMPANY, ENVIRONMENT, ENTITY_TYPE, ENTITY_NAME,
-    INCIDENT_TYPE, INCIDENT_PRIORITY, OWNER, APPROVER, OWNER_APPROVAL_STATUS,
-    RECOVERY_SLA_STATE, TICKET_ID, ACTION_TAKEN, BEFORE_STATE, AFTER_STATE,
-    VERIFICATION_QUERY, VERIFICATION_RESULT, RECOVERY_EVIDENCE, SOURCE, NOTES
-  )
-  SELECT
-    ACTION_ID,
-    COMPANY,
-    ENVIRONMENT,
-    ENTITY_TYPE,
-    ENTITY_NAME,
-    'Cost Savings Verification' AS INCIDENT_TYPE,
-    CASE
-      WHEN VERIFICATION_OUTCOME = 'Verified Savings' THEN 'Info'
-      WHEN VERIFICATION_OUTCOME = 'No Savings Yet' THEN 'High'
-      ELSE 'Medium'
-    END AS INCIDENT_PRIORITY,
-    OWNER,
-    APPROVER,
-    OWNER_APPROVAL_STATUS,
-    CASE
-      WHEN VERIFICATION_OUTCOME = 'Verified Savings' THEN 'Savings Verified'
-      WHEN VERIFICATION_OUTCOME = 'No Savings Yet' THEN 'Verified No Change'
-      WHEN VERIFICATION_OUTCOME = 'Improvement Needs Review' THEN 'Savings Improvement Needs Review'
-      ELSE 'Savings Evidence Required'
-    END AS RECOVERY_SLA_STATE,
-    TICKET_ID,
-    CASE
-      WHEN VERIFICATION_OUTCOME = 'Verified Savings' THEN 'Closed-loop verifier recorded measured savings.'
-      WHEN VERIFICATION_OUTCOME = 'No Savings Yet' THEN 'Closed-loop verifier recorded no measured savings.'
-      ELSE 'Closed-loop verifier recorded evidence still required.'
-    END AS ACTION_TAKEN,
-    'status_before=' || COALESCE(STATUS_BEFORE, 'unknown') ||
-      '; baseline=' || COALESCE(TO_VARCHAR(BASELINE_VALUE), 'missing') ||
-      '; detection_current=' || COALESCE(TO_VARCHAR(DETECTION_CURRENT_VALUE), 'missing') AS BEFORE_STATE,
-    'post_period=' || COALESCE(TO_VARCHAR(POST_PERIOD_VALUE), 'missing') ||
-      '; measured_delta=' || COALESCE(TO_VARCHAR(MEASURED_DELTA), 'missing') AS AFTER_STATE,
-    SOURCE_QUERY AS VERIFICATION_QUERY,
-    VERIFICATION_RESULT,
-    VERIFICATION_RESULT AS RECOVERY_EVIDENCE,
-    'SP_OVERWATCH_VERIFY_COST_SAVINGS' AS SOURCE,
-    'Automated verifier outcome=' || VERIFICATION_OUTCOME AS NOTES
-  FROM TMP_OVERWATCH_COST_SAVINGS_VERIFY;
-
-  RETURN 'OVERWATCH cost savings verification complete. candidates=' || candidate_count ||
-         ', verified=' || verified_count ||
-         ', verified_no_change=' || no_change_count ||
-         ', evidence_required=' || evidence_required_count;
-END;
-$$;
-
-CREATE OR REPLACE VIEW OVERWATCH_COST_SAVINGS_VERIFICATION_V AS
-SELECT *
-FROM OVERWATCH_COST_SAVINGS_VERIFICATION_RUN
-QUALIFY ROW_NUMBER() OVER (PARTITION BY ACTION_ID ORDER BY RUN_TS DESC, RUN_ID DESC) = 1;
-
-CREATE OR REPLACE VIEW OVERWATCH_COST_SAVINGS_VERIFICATION_HEALTH_V AS
-WITH latest_task AS (
-  SELECT
-    MAX(SCHEDULED_TIME) AS LAST_TASK_SCHEDULED_AT,
-    MAX(COMPLETED_TIME) AS LAST_TASK_COMPLETED_AT,
-    MAX_BY(STATE, SCHEDULED_TIME) AS LAST_TASK_STATE,
-    MAX_BY(ERROR_MESSAGE, SCHEDULED_TIME) AS LAST_TASK_ERROR,
-    COUNT_IF(UPPER(COALESCE(STATE, '')) IN ('FAILED', 'FAILED_WITH_ERROR', 'CANCELLED')) AS FAILED_RUNS_7D
-  FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
-  WHERE UPPER(NAME) = 'OVERWATCH_COST_SAVINGS_VERIFY'
-    AND SCHEDULED_TIME >= DATEADD('DAY', -7, CURRENT_TIMESTAMP())
-),
-latest_run AS (
-  SELECT
-    MAX(RUN_TS) AS LAST_VERIFICATION_RUN_AT,
-    COUNT_IF(RUN_TS >= DATEADD('DAY', -7, CURRENT_TIMESTAMP())) AS LEDGER_RUN_ROWS_7D
-  FROM OVERWATCH_COST_SAVINGS_VERIFICATION_RUN
-),
-latest_outcome AS (
-  SELECT
-    RUN_TS,
-    COUNT(*) AS CANDIDATES_LAST_RUN,
-    COUNT_IF(VERIFICATION_OUTCOME = 'Verified Savings') AS VERIFIED_LAST_RUN,
-    COUNT_IF(VERIFICATION_OUTCOME = 'No Savings Yet') AS NO_CHANGE_LAST_RUN,
-    COUNT_IF(VERIFICATION_OUTCOME NOT IN ('Verified Savings', 'No Savings Yet')) AS EVIDENCE_REQUIRED_LAST_RUN
-  FROM OVERWATCH_COST_SAVINGS_VERIFICATION_RUN
-  WHERE RUN_TS = (SELECT MAX(RUN_TS) FROM OVERWATCH_COST_SAVINGS_VERIFICATION_RUN)
-  GROUP BY RUN_TS
-)
-SELECT
-  'Cost & Contract Savings Verification' AS CONTROL_NAME,
-  'OVERWATCH_COST_SAVINGS_VERIFY' AS TASK_NAME,
-  CASE
-    WHEN latest_task.LAST_TASK_SCHEDULED_AT IS NULL THEN 'Task Not Seen'
-    WHEN UPPER(COALESCE(latest_task.LAST_TASK_STATE, '')) IN ('FAILED', 'FAILED_WITH_ERROR', 'CANCELLED') THEN 'Task Failed'
-    WHEN latest_task.LAST_TASK_SCHEDULED_AT < DATEADD('HOUR', -36, CURRENT_TIMESTAMP()) THEN 'Task Stale'
-    WHEN latest_run.LAST_VERIFICATION_RUN_AT IS NULL THEN 'No Verification Ledger'
-    ELSE 'Healthy'
-  END AS TASK_HEALTH_STATE,
-  latest_task.LAST_TASK_STATE,
-  latest_task.LAST_TASK_SCHEDULED_AT,
-  latest_task.LAST_TASK_COMPLETED_AT,
-  latest_task.LAST_TASK_ERROR,
-  latest_task.FAILED_RUNS_7D,
-  latest_run.LAST_VERIFICATION_RUN_AT,
-  latest_run.LEDGER_RUN_ROWS_7D,
-  COALESCE(latest_outcome.CANDIDATES_LAST_RUN, 0) AS CANDIDATES_LAST_RUN,
-  COALESCE(latest_outcome.VERIFIED_LAST_RUN, 0) AS VERIFIED_LAST_RUN,
-  COALESCE(latest_outcome.NO_CHANGE_LAST_RUN, 0) AS NO_CHANGE_LAST_RUN,
-  COALESCE(latest_outcome.EVIDENCE_REQUIRED_LAST_RUN, 0) AS EVIDENCE_REQUIRED_LAST_RUN,
-  CASE
-    WHEN latest_task.LAST_TASK_SCHEDULED_AT IS NULL THEN 'Deploy and resume OVERWATCH_COST_SAVINGS_VERIFY after review.'
-    WHEN UPPER(COALESCE(latest_task.LAST_TASK_STATE, '')) IN ('FAILED', 'FAILED_WITH_ERROR', 'CANCELLED') THEN 'Open Workload Operations, inspect TASK_HISTORY error, and fix the verification task.'
-    WHEN latest_task.LAST_TASK_SCHEDULED_AT < DATEADD('HOUR', -36, CURRENT_TIMESTAMP()) THEN 'Resume or investigate the stale verification task schedule.'
-    WHEN latest_run.LAST_VERIFICATION_RUN_AT IS NULL THEN 'Task has run but no ledger rows exist; confirm privileges and candidate query scope.'
-    ELSE 'Review evidence-required cost actions and close verified savings only with owner approval.'
-  END AS NEXT_ACTION
-FROM latest_task
-CROSS JOIN latest_run
-LEFT JOIN latest_outcome
-  ON latest_outcome.RUN_TS = latest_run.LAST_VERIFICATION_RUN_AT;
-
-CREATE OR REPLACE TASK OVERWATCH_COST_SAVINGS_VERIFY
-  WAREHOUSE = OVERWATCH_WH
-  SCHEDULE = 'USING CRON 20 7 * * * America/Chicago'
-AS
-  CALL SP_OVERWATCH_VERIFY_COST_SAVINGS();
-
--- Review first, then enable when ready:
--- ALTER TASK OVERWATCH_COST_SAVINGS_VERIFY RESUME;
 
 CREATE TABLE IF NOT EXISTS OVERWATCH_DBA_CHECKLIST_HISTORY (
   SNAPSHOT_ID       VARCHAR(64),
@@ -851,7 +582,7 @@ CREATE TABLE IF NOT EXISTS OVERWATCH_WAREHOUSE_SETTING_REVIEW (
   BASELINE_METERED_CREDITS      FLOAT,
   VERIFICATION_QUERY            VARCHAR(8000),
   GENERATED_REVIEW_SQL          VARCHAR(8000),
-  SAVINGS_VERIFICATION_REQUIRED VARCHAR(20),
+  IMPACT_TELEMETRY_REQUIRED VARCHAR(20),
   APPROVAL_STATE                VARCHAR(80),
   CHANGE_TICKET_ID              VARCHAR(200),
   CURRENT_SETTINGS_JSON         VARCHAR(8000),
@@ -1202,11 +933,11 @@ USING (
   SELECT * FROM VALUES
     ('SECURITY_FAILED_LOGIN_SPIKE', 'Security', 'Failed login spike', 'High', 10, 14, 60, 'DBA / Security', 'DBA_SECURITY'),
     ('SECURITY_PRIVILEGE_ESCALATION', 'Security', 'Privileged role grant', 'Critical', 1, 7, 1440, 'Security Approver', 'DBA_SECURITY'),
-    ('COST_WAREHOUSE_CREDIT_SPIKE', 'Cost / FinOps', 'Warehouse credit spike', 'High', 1.5, 30, 1440, 'DBA / FinOps', 'FINOPS'),
+    ('COST_WAREHOUSE_CREDIT_SPIKE', 'Cost', 'Warehouse credit spike', 'High', 1.5, 30, 1440, 'DBA / Cost owner', 'COST'),
     ('PERF_QUEUE_PRESSURE', 'Performance', 'Warehouse queue pressure', 'High', 300, 14, 60, 'DBA / Platform', 'DBA_ONCALL'),
     ('PIPELINE_TASK_FAILURE', 'Task / Pipeline', 'Production task failure', 'Critical', 1, 7, 1440, 'DBA / Pipeline Owner', 'PIPELINE_ONCALL'),
     ('DQ_FRESHNESS_SLA', 'Data Quality', 'Freshness SLA missed', 'High', 1, 7, 1440, 'Data Owner', 'DATA_QUALITY'),
-    ('OPT_UNUSED_WAREHOUSE', 'Optimization', 'Unused or oversized warehouse', 'Medium', 14, 30, 1440, 'DBA / FinOps', 'FINOPS')
+    ('OPT_UNUSED_WAREHOUSE', 'Optimization', 'Unused or oversized warehouse', 'Medium', 14, 30, 1440, 'DBA / Cost owner', 'COST')
 ) src(THRESHOLD_KEY, CATEGORY, SIGNAL_NAME, SEVERITY, THRESHOLD_VALUE, BASELINE_WINDOW_DAYS, CURRENT_WINDOW_MINUTES, OWNER, NOTIFICATION_CHANNEL)
 ON tgt.THRESHOLD_KEY = src.THRESHOLD_KEY
 WHEN MATCHED THEN UPDATE SET
@@ -1230,11 +961,11 @@ USING (
   SELECT * FROM VALUES
     ('SECURITY_FAILED_LOGIN_SPIKE', 'Security', 'Failed login spike', 'High', 'DBA / Security', 'Security Monitoring', 'DBA_SECURITY'),
     ('SECURITY_PRIVILEGE_ESCALATION', 'Security', 'Privileged role grant', 'Critical', 'Security Reviewer', 'Security Monitoring', 'DBA_SECURITY'),
-    ('COST_WAREHOUSE_CREDIT_SPIKE', 'Cost / FinOps', 'Warehouse credit spike', 'High', 'DBA / FinOps', 'Cost & Contract', 'FINOPS'),
+    ('COST_WAREHOUSE_CREDIT_SPIKE', 'Cost', 'Warehouse credit spike', 'High', 'DBA / Cost owner', 'Cost & Contract', 'COST'),
     ('PERF_QUEUE_PRESSURE', 'Performance', 'Warehouse queue pressure', 'High', 'DBA / Platform', 'Workload Operations', 'DBA_ONCALL'),
     ('PIPELINE_TASK_FAILURE', 'Task / Pipeline', 'Production task failure', 'Critical', 'DBA / Pipeline Owner', 'Workload Operations', 'PIPELINE_ONCALL'),
     ('DQ_FRESHNESS_SLA', 'Data Quality', 'Freshness SLA missed', 'High', 'Data Owner', 'Workload Operations', 'DATA_QUALITY'),
-    ('OPT_UNUSED_WAREHOUSE', 'Optimization', 'Unused or oversized warehouse', 'Medium', 'DBA / FinOps', 'Cost & Contract', 'FINOPS')
+    ('OPT_UNUSED_WAREHOUSE', 'Optimization', 'Unused or oversized warehouse', 'Medium', 'DBA / Cost owner', 'Cost & Contract', 'COST')
 ) src(ALERT_KEY, CATEGORY, SIGNAL_NAME, DEFAULT_SEVERITY, OWNER, ROUTE, NOTIFICATION_CHANNEL)
 ON tgt.ALERT_KEY = src.ALERT_KEY
 WHEN MATCHED THEN UPDATE SET
@@ -1425,8 +1156,7 @@ CREATE TABLE IF NOT EXISTS OVERWATCH_ALERT_RULES (
 MERGE INTO OVERWATCH_ALERT_RULES tgt
 USING (
   SELECT * FROM VALUES
-    ('COST_CREDIT_SPIKE', 'Cost Control', 'Credit Spike', 'Medium', 24, 'DBA / FinOps', 'Cost & Contract', 'Explain the bill movement, identify owner-backed drivers, and route savings actions.'),
-    ('COST_SAVINGS_VERIFIER_FAILURE', 'Cost Control', 'Cost Savings Verification Failure', 'High', 8, 'DBA / FinOps', 'Cost & Contract', 'Inspect the savings verifier task, keep savings estimated, and restore ledger-backed verification before claiming value.'),
+    ('COST_CREDIT_SPIKE', 'Cost Control', 'Credit Spike', 'Medium', 24, 'DBA / Cost owner', 'Cost & Contract', 'Explain the bill movement, identify owner-backed drivers, and route cost-control actions.'),
     ('QUERY_HIGH_ERROR_RATE', 'Reliability', 'High Query Error Rate', 'High', 8, 'DBA / Workload Owner', 'Workload Operations', 'Group failures by error code/query text and assign the owning team.'),
     ('TASK_FAILURE', 'Reliability', 'Task Failure', 'High', 8, 'DBA / Pipeline Owner', 'Workload Operations', 'Review task graph impact, retry only after root cause, and verify the next run.'),
     ('PROCEDURE_FAILURE_OR_SPIKE', 'Reliability', 'Stored Procedure Failure / Runtime Spike', 'High', 8, 'DBA / Procedure Owner', 'Workload Operations', 'Compare release windows, inspect child queries, and verify runtime/cost return to baseline.'),
@@ -1438,10 +1168,10 @@ USING (
     ('PERF_QUERY_PRESSURE', 'Performance', 'Query Pressure', 'High', 8, 'DBA / Platform', 'Workload Operations', 'Open Query Diagnosis or Contention Center with query_id, queue/spill/lock evidence, owner, and specific optimization path.'),
     ('PIPELINE_COPY_FAILURE', 'Task / Pipeline', 'Copy Load Failure', 'High', 8, 'DBA / Data Engineering', 'Workload Operations', 'Group by table/stage/error, fix load cause, confirm downstream task graph freshness, and document SLA recovery.'),
     ('DQ_FRESHNESS_SLA', 'Data Quality', 'Freshness SLA Missed', 'High', 8, 'Data Owner', 'Workload Operations', 'Use configured database/schema/table/column/check threshold, prove latest update/load volume, and route to data owner.'),
-    ('OPT_UNUSED_OR_OVERSIZED_WAREHOUSE', 'Optimization', 'Unused Or Oversized Warehouse', 'Medium', 24, 'DBA / FinOps', 'Cost & Contract', 'Attach metering/query evidence, owner approval, rollback SQL, and expected savings before changing warehouse settings.'),
-    ('WAREHOUSE_COST_MOVEMENT', 'Cost Control', 'WAREHOUSE_COST_MOVEMENT', 'High', 8, 'DBA / FinOps', 'Cost & Contract', 'Explain the 7d warehouse cost movement, assign the owner, and route verified action only after proof.'),
-    ('CORTEX_BUDGET_AND_QUOTA', 'Cost Control', 'CORTEX_BUDGET_AND_QUOTA', 'Medium', 24, 'DBA / AI FinOps', 'Cost & Contract', 'Review shared AI budget, per-user quota, first/last usage, and access expansion before enforcing controls.'),
-    ('CHANGE_COST_CORRELATION', 'Cost Control', 'CHANGE_COST_CORRELATION', 'High', 8, 'DBA / FinOps', 'Cost & Contract', 'Compare warehouse change query_id, actor, ticket, rollback evidence, and cost movement before tuning.')
+    ('OPT_UNUSED_OR_OVERSIZED_WAREHOUSE', 'Optimization', 'Unused Or Oversized Warehouse', 'Medium', 24, 'DBA / Cost owner', 'Cost & Contract', 'Attach metering/query evidence, owner approval, rollback SQL, and expected savings before changing warehouse settings.'),
+    ('WAREHOUSE_COST_MOVEMENT', 'Cost Control', 'WAREHOUSE_COST_MOVEMENT', 'High', 8, 'DBA / Cost owner', 'Cost & Contract', 'Explain the 7d warehouse cost movement, assign the owner, and route verified action only after proof.'),
+    ('CORTEX_SPEND_AND_QUOTA', 'Cost Control', 'CORTEX_SPEND_AND_QUOTA', 'Medium', 24, 'DBA / AI cost route', 'Cost & Contract', 'Review shared AI spend threshold, per-user quota, first/last usage, and access expansion before enforcing controls.'),
+    ('CHANGE_COST_CORRELATION', 'Cost Control', 'CHANGE_COST_CORRELATION', 'High', 8, 'DBA / Cost owner', 'Cost & Contract', 'Compare warehouse change query_id, actor, ticket, rollback evidence, and cost movement before tuning.')
 ) src(RULE_ID, CATEGORY, ALERT_TYPE, DEFAULT_SEVERITY, SLA_HOURS, OWNER, ROUTE, RUNBOOK)
 ON tgt.RULE_ID = src.RULE_ID
 WHEN MATCHED THEN UPDATE SET
@@ -1548,7 +1278,7 @@ CREATE TABLE IF NOT EXISTS OVERWATCH_AUTOMATION_RUN (
   PRIMARY_EVIDENCE_STATE    VARCHAR(100),
   ACTION_QUEUE_SEEDED       NUMBER,
   OWNER_ROUTES_UPDATED      NUMBER,
-  VERIFIED_SAVINGS_STATE    VARCHAR(100),
+  ACTION_CLOSURE_STATE      VARCHAR(100),
   ALERT_DIGEST_STATE        VARCHAR(200),
   EXECUTIVE_PACKET_ID       NUMBER,
   SNAPSHOT_REFRESH_STATE    VARCHAR(100),
@@ -1569,11 +1299,14 @@ CREATE TABLE IF NOT EXISTS OVERWATCH_EXECUTIVE_PACKET (
   COST_DELTA_USD            NUMBER(18,2),
   OPEN_ALERT_COUNT          NUMBER,
   OPEN_ACTION_COUNT         NUMBER,
-  VERIFIED_SAVED_COUNT      NUMBER,
+  CLOSED_WITH_TELEMETRY_COUNT NUMBER,
   TOP_RISK                  VARCHAR(1000),
   DELIVERY_STATUS           VARCHAR(100) DEFAULT 'READY',
   SOURCE                    VARCHAR(300) DEFAULT 'OVERWATCH automation packet'
 );
+
+ALTER TABLE IF EXISTS OVERWATCH_AUTOMATION_RUN ADD COLUMN IF NOT EXISTS ACTION_CLOSURE_STATE VARCHAR(100);
+ALTER TABLE IF EXISTS OVERWATCH_EXECUTIVE_PACKET ADD COLUMN IF NOT EXISTS CLOSED_WITH_TELEMETRY_COUNT NUMBER;
 
 CREATE OR REPLACE VIEW OVERWATCH_AUTOMATION_HEALTH_V AS
 WITH latest_run AS (
@@ -1584,7 +1317,7 @@ WITH latest_run AS (
 queue AS (
   SELECT
     COUNT_IF(UPPER(COALESCE(STATUS, 'New')) NOT IN ('FIXED', 'IGNORED', 'RESOLVED')) AS OPEN_ACTIONS,
-    COUNT_IF(UPPER(COALESCE(VERIFICATION_STATUS, 'Pending')) IN ('VERIFIED_SAVED', 'VERIFIED_NO_CHANGE')) AS VERIFIED_ACTIONS
+    COUNT_IF(UPPER(COALESCE(VERIFICATION_STATUS, 'Pending')) IN ('VERIFIED', 'VERIFIED_SAVED', 'VERIFIED_NO_CHANGE', 'PASSED', 'COMPLETE', 'COMPLETED')) AS CLOSED_WITH_TELEMETRY
   FROM OVERWATCH_ACTION_QUEUE
 ),
 digest AS (
@@ -1598,10 +1331,10 @@ SELECT
   COALESCE(lr.PRIMARY_EVIDENCE_STATE, 'Not Run') AS PRIMARY_EVIDENCE_STATE,
   COALESCE(lr.ACTION_QUEUE_SEEDED, 0) AS ACTION_QUEUE_SEEDED,
   COALESCE(lr.OWNER_ROUTES_UPDATED, 0) AS OWNER_ROUTES_UPDATED,
-  COALESCE(lr.VERIFIED_SAVINGS_STATE, 'Verifier scheduled') AS VERIFIED_SAVINGS_STATE,
+  COALESCE(lr.ACTION_CLOSURE_STATE, 'Action queue records closure telemetry') AS ACTION_CLOSURE_STATE,
   COALESCE(lr.ALERT_DIGEST_STATE, digest.LAST_DIGEST_STATUS, 'Not Run') AS ALERT_DIGEST_STATE,
   COALESCE(queue.OPEN_ACTIONS, 0) AS OPEN_ACTIONS,
-  COALESCE(queue.VERIFIED_ACTIONS, 0) AS VERIFIED_ACTIONS,
+  COALESCE(queue.CLOSED_WITH_TELEMETRY, 0) AS CLOSED_WITH_TELEMETRY_COUNT,
   digest.LAST_DIGEST_TS,
   lr.NEXT_ACTION
 FROM latest_run lr
@@ -1700,7 +1433,7 @@ BEGIN
 
   INSERT INTO OVERWATCH_EXECUTIVE_PACKET (
     COMPANY, ENVIRONMENT, PACKET_SUBJECT, PACKET_BODY, COST_SPEND_USD, COST_DELTA_USD,
-    OPEN_ALERT_COUNT, OPEN_ACTION_COUNT, VERIFIED_SAVED_COUNT, TOP_RISK
+    OPEN_ALERT_COUNT, OPEN_ACTION_COUNT, CLOSED_WITH_TELEMETRY_COUNT, TOP_RISK
   )
   WITH cost_current AS (
     SELECT COALESCE(SUM(EST_COST_USD), 0) AS SPEND_USD
@@ -1725,7 +1458,7 @@ BEGIN
   actions AS (
     SELECT
       COUNT_IF(UPPER(COALESCE(STATUS, 'New')) NOT IN ('FIXED', 'IGNORED', 'RESOLVED')) AS OPEN_ACTIONS,
-      COUNT_IF(UPPER(COALESCE(VERIFICATION_STATUS, 'Pending')) = 'VERIFIED_SAVED') AS VERIFIED_SAVED
+      COUNT_IF(UPPER(COALESCE(VERIFICATION_STATUS, 'Pending')) IN ('VERIFIED', 'VERIFIED_SAVED', 'VERIFIED_NO_CHANGE', 'PASSED', 'COMPLETE', 'COMPLETED')) AS CLOSED_WITH_TELEMETRY
     FROM OVERWATCH_ACTION_QUEUE
     WHERE (:P_COMPANY = 'ALL' OR COMPANY = :P_COMPANY)
       AND (:P_ENVIRONMENT = 'ALL' OR COALESCE(ENVIRONMENT, 'No Database Context') = :P_ENVIRONMENT)
@@ -1746,14 +1479,14 @@ BEGIN
     :P_ENVIRONMENT,
     'OVERWATCH executive packet - ' || :P_COMPANY || ' / ' || :P_ENVIRONMENT,
     'Cost: $' || TO_VARCHAR(ROUND(c.SPEND_USD, 2)) || ' last 7 days; delta $' || TO_VARCHAR(ROUND(c.SPEND_USD - p.SPEND_USD, 2)) || CHAR(10) ||
-      'Open alerts: ' || a.OPEN_ALERTS || '; open actions: ' || act.OPEN_ACTIONS || '; verified savings actions: ' || act.VERIFIED_SAVED || CHAR(10) ||
+      'Open alerts: ' || a.OPEN_ALERTS || '; open actions: ' || act.OPEN_ACTIONS || '; closed-with-telemetry actions: ' || act.CLOSED_WITH_TELEMETRY || CHAR(10) ||
       'Top risk: ' || COALESCE(r.TOP_RISK, 'No open high-priority exception') || CHAR(10) ||
       'Automation: action queue seeded, owners routed, alert digest prepared, and executive packet logged.',
     c.SPEND_USD,
     c.SPEND_USD - p.SPEND_USD,
     a.OPEN_ALERTS,
     act.OPEN_ACTIONS,
-    act.VERIFIED_SAVED,
+    act.CLOSED_WITH_TELEMETRY,
     COALESCE(r.TOP_RISK, 'No open high-priority exception')
   FROM cost_current c
   CROSS JOIN cost_prior p
@@ -1782,12 +1515,12 @@ BEGIN
 
   INSERT INTO OVERWATCH_AUTOMATION_RUN (
     RUN_TS, COMPANY, ENVIRONMENT, PRIMARY_EVIDENCE_STATE, ACTION_QUEUE_SEEDED,
-    OWNER_ROUTES_UPDATED, VERIFIED_SAVINGS_STATE, ALERT_DIGEST_STATE, EXECUTIVE_PACKET_ID,
+    OWNER_ROUTES_UPDATED, ACTION_CLOSURE_STATE, ALERT_DIGEST_STATE, EXECUTIVE_PACKET_ID,
     SNAPSHOT_REFRESH_STATE, FILTER_DEFAULT_STATE, NEXT_ACTION
   )
   VALUES (
     :started_at, :P_COMPANY, :P_ENVIRONMENT, 'PRIMARY_EVIDENCE_READY', :seeded_rows,
-    :routed_rows, 'OVERWATCH_COST_SAVINGS_VERIFY task handles auto-close', :digest_state, :packet_id,
+    :routed_rows, 'Action queue records closure telemetry', :digest_state, :packet_id,
     'OVERWATCH mart task graph refreshes snapshots automatically',
     'Role-based Experience View and exceptions-first DBA defaults are app seeded',
     'Review OVERWATCH_AUTOMATION_HEALTH_V for the latest no-touch automation run.'
@@ -1796,30 +1529,6 @@ BEGIN
   RETURN 'OVERWATCH automation refreshed: seeded=' || seeded_rows || ', routed=' || routed_rows || ', digest=' || digest_state;
 END;
 $$;
-
-CREATE TABLE IF NOT EXISTS OVERWATCH_ROI_LOG (
-  ROI_ID               NUMBER AUTOINCREMENT PRIMARY KEY,
-  LOGGED_DATE          TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
-  LOGGED_BY            VARCHAR(200),
-  CATEGORY             VARCHAR(100),
-  DESCRIPTION          VARCHAR(1000),
-  ENTITY               VARCHAR(500),
-  BASELINE_CREDITS     FLOAT,
-  CURRENT_CREDITS      FLOAT,
-  SAVINGS_CREDITS      FLOAT,
-  SAVINGS_MONTHLY      FLOAT,
-  VERIFIED             BOOLEAN DEFAULT FALSE,
-  COMPANY              VARCHAR(100),
-  NOTES                VARCHAR(2000)
-);
-
-ALTER TABLE IF EXISTS OVERWATCH_ROI_LOG ADD COLUMN IF NOT EXISTS VALUE_SOURCE VARCHAR(100);
-ALTER TABLE IF EXISTS OVERWATCH_ROI_LOG ADD COLUMN IF NOT EXISTS EVIDENCE_SOURCE VARCHAR(200);
-ALTER TABLE IF EXISTS OVERWATCH_ROI_LOG ADD COLUMN IF NOT EXISTS EVIDENCE_ID VARCHAR(500);
-ALTER TABLE IF EXISTS OVERWATCH_ROI_LOG ADD COLUMN IF NOT EXISTS VALUE_STATE VARCHAR(60) DEFAULT 'ESTIMATED';
-ALTER TABLE IF EXISTS OVERWATCH_ROI_LOG ADD COLUMN IF NOT EXISTS BUSINESS_IMPACT VARCHAR(2000);
-ALTER TABLE IF EXISTS OVERWATCH_ROI_LOG ADD COLUMN IF NOT EXISTS OWNER VARCHAR(300);
-ALTER TABLE IF EXISTS OVERWATCH_ROI_LOG ADD COLUMN IF NOT EXISTS VERIFIED_TS TIMESTAMP_NTZ;
 
 CREATE TABLE IF NOT EXISTS OVERWATCH_COMMAND_INTELLIGENCE_CAPABILITY (
   RANK                  NUMBER PRIMARY KEY,
@@ -1840,11 +1549,11 @@ USING (
     (1, 'Detection and Root-Cause Engine', 'Foundation', 'Alert Center, DBA Control Room', 'Finds the shared cause behind cost, query, task, login, and object-change symptoms.', 'Materialize signal correlation and route one incident instead of disconnected alerts.', 'QUERY_HISTORY, TASK_HISTORY, LOGIN_HISTORY, ACCESS_HISTORY, WAREHOUSE_METERING_HISTORY', 'DBA On-Call', 'Correlation is evidence ranking only; remediation remains review-gated.'),
     (2, 'Task/Pipeline Critical Path Brain', 'Foundation', 'Workload Operations, DBA Morning Brief', 'Shows root task, child failure, late-risk, retry pattern, and downstream blast radius.', 'Use task graph facts before retrying, resuming, or calling a pipeline healthy.', 'TASK_HISTORY, INFORMATION_SCHEMA.TASK_HISTORY, EVENT TABLES', 'DBA / Data Engineering', 'Retry and resume actions require owner policy and run ledger proof.'),
     (3, 'Data Quality and Reconciliation Center', 'New', 'Workload Operations, DBA Tools', 'Compares row counts, hash buckets, schema drift, freshness, and sample diffs by database/schema.', 'Create metadata-driven reconciliation rules and store per-table results.', 'INFORMATION_SCHEMA, QUERY_HISTORY, configured table checks', 'DBA / Data Owner', 'Hash large tables by bucket/key, then sample mismatches before full scans.'),
-    (4, 'Predictive FinOps and Automated Value Log', 'Foundation', 'Cost & Contract, Snowflake Value', 'Forecasts burn, ranks contract risk, and auto-captures verified DBA value instead of relying on manual notes.', 'Derive value candidates from action queue, metering deltas, alert closures, and workload recovery proof.', 'WAREHOUSE_METERING_HISTORY, METERING_DAILY_HISTORY, OVERWATCH_ACTION_QUEUE, OVERWATCH_ROI_LOG', 'DBA / FinOps', 'Estimated value cannot become verified until post-period evidence exists.'),
+    (4, 'Cost Run-Rate and Attribution Monitor', 'Foundation', 'Cost & Contract', 'Forecasts burn, ranks cost drivers, and keeps leadership out of raw ACCOUNT_USAGE scans.', 'Use run-rate facts, top-driver movement, and action queue telemetry before changing warehouses.', 'WAREHOUSE_METERING_HISTORY, METERING_DAILY_HISTORY, OVERWATCH_ACTION_QUEUE', 'DBA / Cost owner', 'Run-rate projections are monitoring signals, not automatic remediation authority.'),
     (5, 'Alert Lifecycle 2.0', 'Foundation', 'Alert Center', 'Turns alerts into acknowledged, owned, suppressed, resolved, commented, and audited work.', 'Normalize lifecycle state and route repeated issues to the same owner/action.', 'ALERT_EVENTS, ALERT_ACKNOWLEDGEMENTS, ALERT_RUN_HISTORY, ALERT_REMEDIATION_LOG', 'DBA Lead', 'Deduplicate aggressively and show freshness/source lag on every board.'),
     (6, 'Fact-Grounded AI Query Diagnosis', 'Contract', 'Workload Operations, Query diagnosis', 'Cortex recommendations must cite exact scan, spill, pruning, queue, and owner evidence.', 'Pass query evidence, table context, and expected output shape into the prompt contract.', 'QUERY_HISTORY, QUERY_PROFILE when available, ACCESS_HISTORY, TABLE_STORAGE_METRICS', 'DBA / Query Owner', 'No generic AI answer; recommendations must cite exact metrics and SQL evidence.'),
     (7, 'OVERWATCH Self-Monitoring', 'New', 'Cost & Contract, Alert Center Setup', 'The monitoring app must prove its own query cost, failures, cache behavior, and slow sections.', 'Tag every app query and summarize runtime cost and errors by section.', 'QUERY_HISTORY query_tag=OVERWATCH%, WAREHOUSE_METERING_HISTORY', 'OVERWATCH Maintainer', 'Use bounded windows and mart rollups so monitoring does not become the cost problem.'),
-    (8, 'Precomputed Mart / Dynamic Table Layer With Fallback', 'Foundation', 'Setup, DBA Control Room, Cost & Contract', 'Keeps first paint fast and makes live ACCOUNT_USAGE scans explicit instead of accidental.', 'Add optional dynamic tables where supported and fallback views/tasks everywhere else.', 'ACCOUNT_USAGE, Dynamic Tables, Streams/Tasks, OVERWATCH_FACT tables', 'DBA Platform', 'Never auto-enable expensive refresh without warehouse, lag, and cost approval.'),
+    (8, 'Scheduled Mart Layer With Fallback', 'Foundation', 'Setup, DBA Control Room, Cost & Contract', 'Keeps first paint fast and makes live ACCOUNT_USAGE scans explicit instead of accidental.', 'Refresh scheduled fact and mart tables through the consolidated setup task graph.', 'ACCOUNT_USAGE, Streams/Tasks, OVERWATCH fact tables', 'DBA Platform', 'Do not add parallel DDL setup paths outside the consolidated mart setup.'),
     (9, 'Security Monitoring Scorecard', 'New', 'Security Monitoring, Executive Landing', 'Leaders need defensible evidence for admin grants, dormant users, policy drift, and risky shares.', 'Materialize security controls with evidence rows and remediation paths.', 'GRANTS_TO_USERS, GRANTS_TO_ROLES, LOGIN_HISTORY, ACCESS_HISTORY, POLICIES, SHARES', 'Security Engineer', 'Scorecard is a risk register, not a substitute for security review.'),
     (10, 'Multi-Account / Org View', 'Contract', 'Executive Landing, Cost & Contract', 'Cost and risk should roll up above one account when leadership owns multiple Snowflake accounts.', 'Provide optional ORGADMIN views and a no-ORG fallback that stays single-account.', 'ORGANIZATION_USAGE, ACCOUNT_USAGE, account registry config', 'Snowflake Platform Owner', 'Hide org views when the role lacks organization usage privileges.'),
     (11, 'Data-First Navigation Contract', 'Foundation', 'App shell, every primary section', 'DBAs should see scoped KPIs, risks, and summaries on first section click without saved-state persistence or mode toggles.', 'Keep section autoload bounded to fast summaries and make heavy proof an explicit local action.', 'Streamlit session state, fast OVERWATCH summaries, ACCOUNT_USAGE fallback', 'OVERWATCH Maintainer', 'Do not persist navigation state or create saved-state tables; unknown roles stay restrictive.'),
@@ -1915,257 +1624,6 @@ CREATE TABLE IF NOT EXISTS OVERWATCH_SCHEMA_DIFF_RESULT (
   OWNER                VARCHAR(300),
   SEVERITY             VARCHAR(40)
 );
-
-CREATE TABLE IF NOT EXISTS OVERWATCH_VALUE_AUTOMATION_RUN (
-  RUN_ID               NUMBER AUTOINCREMENT PRIMARY KEY,
-  RUN_TS               TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
-  RUN_STATUS           VARCHAR(40),
-  CANDIDATE_COUNT      NUMBER,
-  INSERTED_COUNT       NUMBER,
-  VERIFIED_COUNT       NUMBER,
-  MESSAGE              VARCHAR(4000)
-);
-
-CREATE OR REPLACE VIEW OVERWATCH_VALUE_CANDIDATE_V AS
-WITH cost_actions AS (
-    SELECT
-        'ACTION_QUEUE' AS VALUE_SOURCE,
-        'OVERWATCH_ACTION_QUEUE' AS EVIDENCE_SOURCE,
-        ACTION_ID AS EVIDENCE_ID,
-        COALESCE(CATEGORY, 'Cost action') AS CATEGORY,
-        COALESCE(ENTITY_NAME, CATEGORY, 'Snowflake action') AS ENTITY,
-        COALESCE(RECOMMENDED_ACTION, CATEGORY, 'OVERWATCH action') AS DESCRIPTION,
-        COALESCE(OWNER, OWNER_EMAIL, APPROVAL_GROUP, 'DBA / FinOps') AS OWNER,
-        COALESCE(EST_MONTHLY_SAVINGS, 0) AS SAVINGS_MONTHLY,
-        IFF(UPPER(COALESCE(VERIFICATION_STATUS, '')) = 'VERIFIED', TRUE, FALSE) AS VERIFIED,
-        VERIFICATION_RESULT AS NOTES,
-        'Cost avoided from owner-approved action queue item.' AS BUSINESS_IMPACT
-    FROM OVERWATCH_ACTION_QUEUE
-    WHERE COALESCE(EST_MONTHLY_SAVINGS, 0) > 0
-      AND UPPER(COALESCE(STATUS, '')) IN ('FIXED', 'COMPLETED', 'DONE')
-),
-alert_prevention AS (
-    SELECT
-        'ALERT_CLOSURE' AS VALUE_SOURCE,
-        'ALERT_EVENTS' AS EVIDENCE_SOURCE,
-        TO_VARCHAR(EVENT_ID) AS EVIDENCE_ID,
-        COALESCE(CATEGORY, 'Alert prevention') AS CATEGORY,
-        COALESCE(ENTITY_NAME, CATEGORY, 'Snowflake alert') AS ENTITY,
-        COALESCE(RECOMMENDED_ACTION, ALERT_KEY, 'Resolved OVERWATCH alert') AS DESCRIPTION,
-        COALESCE(OWNER, 'DBA On-Call') AS OWNER,
-        CASE
-            WHEN UPPER(COALESCE(SEVERITY, '')) = 'CRITICAL' THEN 25000
-            WHEN UPPER(COALESCE(SEVERITY, '')) = 'HIGH' THEN 10000
-            WHEN UPPER(COALESCE(SEVERITY, '')) = 'MEDIUM' THEN 2500
-            ELSE 0
-        END AS SAVINGS_MONTHLY,
-        TRUE AS VERIFIED,
-        COALESCE(EVIDENCE, BUSINESS_IMPACT, IMPACT_ESTIMATE, 'Resolved alert with OVERWATCH evidence.') AS NOTES,
-        'Incident risk retired by alert triage and closure.' AS BUSINESS_IMPACT
-    FROM ALERT_EVENTS
-    WHERE UPPER(COALESCE(STATUS, '')) IN ('RESOLVED', 'CLOSED')
-      AND UPPER(COALESCE(SEVERITY, '')) IN ('CRITICAL', 'HIGH', 'MEDIUM')
-)
-SELECT * FROM cost_actions
-UNION ALL
-SELECT * FROM alert_prevention;
-
-CREATE OR REPLACE VIEW OVERWATCH_VALUE_AUTOMATION_HEALTH_V AS
-WITH candidates AS (
-    SELECT
-        COUNT(*) AS CANDIDATE_COUNT,
-        COUNT_IF(VERIFIED) AS VERIFIED_CANDIDATE_COUNT,
-        ROUND(SUM(COALESCE(SAVINGS_MONTHLY, 0)), 2) AS CANDIDATE_MONTHLY_VALUE,
-        ROUND(SUM(IFF(VERIFIED, COALESCE(SAVINGS_MONTHLY, 0), 0)), 2) AS VERIFIED_CANDIDATE_MONTHLY_VALUE
-    FROM OVERWATCH_VALUE_CANDIDATE_V
-),
-ledger AS (
-    SELECT
-        COUNT(*) AS AUTOMATED_LEDGER_ROWS,
-        COUNT_IF(VERIFIED) AS VERIFIED_LEDGER_ROWS,
-        ROUND(SUM(COALESCE(SAVINGS_MONTHLY, 0)), 2) AS LEDGER_MONTHLY_VALUE,
-        MAX(LOGGED_DATE) AS LATEST_LOGGED_DATE
-    FROM OVERWATCH_ROI_LOG
-    WHERE VALUE_SOURCE IS NOT NULL
-),
-last_run AS (
-    SELECT
-        RUN_TS AS LATEST_RUN_TS,
-        RUN_STATUS AS LATEST_RUN_STATUS,
-        CANDIDATE_COUNT AS LATEST_CANDIDATE_COUNT,
-        INSERTED_COUNT AS LATEST_INSERTED_COUNT,
-        VERIFIED_COUNT AS LATEST_VERIFIED_COUNT,
-        MESSAGE AS LATEST_MESSAGE
-    FROM OVERWATCH_VALUE_AUTOMATION_RUN
-    QUALIFY ROW_NUMBER() OVER (ORDER BY RUN_TS DESC) = 1
-)
-SELECT
-    c.CANDIDATE_COUNT,
-    c.VERIFIED_CANDIDATE_COUNT,
-    c.CANDIDATE_MONTHLY_VALUE,
-    c.VERIFIED_CANDIDATE_MONTHLY_VALUE,
-    l.AUTOMATED_LEDGER_ROWS,
-    l.VERIFIED_LEDGER_ROWS,
-    l.LEDGER_MONTHLY_VALUE,
-    l.LATEST_LOGGED_DATE,
-    r.LATEST_RUN_TS,
-    r.LATEST_RUN_STATUS,
-    r.LATEST_CANDIDATE_COUNT,
-    r.LATEST_INSERTED_COUNT,
-    r.LATEST_VERIFIED_COUNT,
-    CASE
-        WHEN r.LATEST_RUN_TS IS NULL THEN 'Deploy and run SP_OVERWATCH_AUTOMATE_VALUE_LOG.'
-        WHEN r.LATEST_RUN_STATUS <> 'SUCCESS' THEN 'Inspect OVERWATCH_VALUE_AUTOMATION_RUN before trusting value automation.'
-        WHEN c.CANDIDATE_COUNT > l.AUTOMATED_LEDGER_ROWS THEN 'Run SP_OVERWATCH_AUTOMATE_VALUE_LOG to merge new candidates.'
-        ELSE 'Automation ledger is current for visible candidates.'
-    END AS NEXT_ACTION
-FROM candidates c
-CROSS JOIN ledger l
-LEFT JOIN last_run r ON TRUE;
-
-CREATE OR REPLACE PROCEDURE SP_OVERWATCH_AUTOMATE_VALUE_LOG()
-RETURNS VARCHAR
-LANGUAGE SQL
-EXECUTE AS CALLER
-AS
-$$
-DECLARE
-  candidate_count NUMBER DEFAULT 0;
-  inserted_count NUMBER DEFAULT 0;
-  verified_count NUMBER DEFAULT 0;
-BEGIN
-  SELECT COUNT(*), COUNT_IF(VERIFIED)
-    INTO :candidate_count, :verified_count
-  FROM OVERWATCH_VALUE_CANDIDATE_V;
-
-  MERGE INTO OVERWATCH_ROI_LOG tgt
-  USING (
-    SELECT VALUE_SOURCE, EVIDENCE_SOURCE, EVIDENCE_ID, CATEGORY, DESCRIPTION, ENTITY,
-           OWNER, SAVINGS_MONTHLY, VERIFIED, NOTES, BUSINESS_IMPACT
-    FROM OVERWATCH_VALUE_CANDIDATE_V
-  ) src
-  ON COALESCE(tgt.EVIDENCE_ID, '') = COALESCE(src.EVIDENCE_ID, '')
-     AND COALESCE(tgt.EVIDENCE_SOURCE, '') = COALESCE(src.EVIDENCE_SOURCE, '')
-  WHEN NOT MATCHED THEN INSERT (
-      LOGGED_BY, CATEGORY, DESCRIPTION, ENTITY, BASELINE_CREDITS,
-      CURRENT_CREDITS, SAVINGS_CREDITS, SAVINGS_MONTHLY, VERIFIED,
-      COMPANY, NOTES, VALUE_SOURCE, EVIDENCE_SOURCE, EVIDENCE_ID,
-      VALUE_STATE, BUSINESS_IMPACT, OWNER, VERIFIED_TS
-  )
-  VALUES (
-      'OVERWATCH_AUTOMATION', src.CATEGORY, src.DESCRIPTION, src.ENTITY,
-      NULL, NULL, NULL, src.SAVINGS_MONTHLY, src.VERIFIED,
-      NULL, src.NOTES, src.VALUE_SOURCE, src.EVIDENCE_SOURCE, src.EVIDENCE_ID,
-      IFF(src.VERIFIED, 'VERIFIED', 'ESTIMATED'), src.BUSINESS_IMPACT,
-      src.OWNER, IFF(src.VERIFIED, CURRENT_TIMESTAMP(), NULL)
-  );
-
-  inserted_count := SQLROWCOUNT;
-
-  INSERT INTO OVERWATCH_VALUE_AUTOMATION_RUN (
-      RUN_STATUS, CANDIDATE_COUNT, INSERTED_COUNT, VERIFIED_COUNT, MESSAGE
-  )
-  VALUES (
-      'SUCCESS', :candidate_count, :inserted_count, :verified_count,
-      'Automated Snowflake value capture completed.'
-  );
-
-  RETURN 'OVERWATCH value automation complete. candidates=' || candidate_count ||
-         ', inserted=' || inserted_count || ', verified=' || verified_count;
-END;
-$$;
-
-CREATE OR REPLACE VIEW OVERWATCH_SELF_MONITORING_V AS
-WITH app_queries AS (
-    SELECT
-        START_TIME,
-        QUERY_ID,
-        QUERY_TAG,
-        EXECUTION_STATUS,
-        WAREHOUSE_NAME,
-        TOTAL_ELAPSED_TIME / 1000 AS ELAPSED_SEC,
-        BYTES_SCANNED,
-        ERROR_MESSAGE,
-        REGEXP_SUBSTR(QUERY_TAG, 'section=([^|]+)', 1, 1, 'e', 1) AS SECTION_NAME
-    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-    WHERE START_TIME >= DATEADD('DAY', -7, CURRENT_TIMESTAMP())
-      AND QUERY_TAG ILIKE 'OVERWATCH%'
-)
-SELECT
-    COALESCE(SECTION_NAME, 'UNKNOWN') AS SECTION_NAME,
-    COUNT(*) AS QUERY_COUNT,
-    COUNT_IF(EXECUTION_STATUS = 'FAIL') AS FAILED_QUERIES,
-    ROUND(AVG(ELAPSED_SEC), 2) AS AVG_ELAPSED_SEC,
-    ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY ELAPSED_SEC), 2) AS P95_ELAPSED_SEC,
-    ROUND(SUM(BYTES_SCANNED) / POWER(1024, 3), 2) AS GB_SCANNED,
-    MAX_BY(QUERY_ID, ELAPSED_SEC) AS SLOWEST_QUERY_ID,
-    MAX_BY(ERROR_MESSAGE, START_TIME) AS LATEST_ERROR
-FROM app_queries
-GROUP BY COALESCE(SECTION_NAME, 'UNKNOWN');
-
-CREATE OR REPLACE VIEW OVERWATCH_CONTRACT_BURN_FORECAST_V AS
-WITH daily AS (
-    SELECT
-        USAGE_DATE,
-        WAREHOUSE_NAME,
-        SUM(COALESCE(CREDITS_USED_COMPUTE, CREDITS_USED)) AS COMPUTE_CREDITS,
-        SUM(CREDITS_USED) AS TOTAL_CREDITS
-    FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
-    WHERE USAGE_DATE >= DATEADD('DAY', -90, CURRENT_DATE())
-    GROUP BY USAGE_DATE, WAREHOUSE_NAME
-),
-rollup AS (
-    SELECT USAGE_DATE, SUM(TOTAL_CREDITS) AS ACCOUNT_CREDITS
-    FROM daily
-    GROUP BY USAGE_DATE
-),
-settings AS (
-    SELECT
-        MAX(IFF(SETTING_NAME = 'CREDIT_PRICE_USD', TRY_TO_DOUBLE(SETTING_VALUE), NULL)) AS CREDIT_PRICE_USD,
-        MAX(IFF(SETTING_NAME = 'MONTHLY_CONTRACT_CREDITS', TRY_TO_DOUBLE(SETTING_VALUE), NULL)) AS MONTHLY_CONTRACT_CREDITS
-    FROM OVERWATCH_SETTINGS
-),
-forecast AS (
-    SELECT
-        AVG(IFF(USAGE_DATE >= DATEADD('DAY', -7, CURRENT_DATE()), ACCOUNT_CREDITS, NULL)) AS AVG_7D_CREDITS,
-        AVG(IFF(USAGE_DATE >= DATEADD('DAY', -30, CURRENT_DATE()), ACCOUNT_CREDITS, NULL)) AS AVG_30D_CREDITS,
-        SUM(IFF(USAGE_DATE >= DATE_TRUNC('MONTH', CURRENT_DATE()), ACCOUNT_CREDITS, 0)) AS MONTH_TO_DATE_CREDITS
-    FROM rollup
-),
-top_driver AS (
-    SELECT WAREHOUSE_NAME, SUM(TOTAL_CREDITS) AS CREDITS_30D
-    FROM daily
-    WHERE USAGE_DATE >= DATEADD('DAY', -30, CURRENT_DATE())
-    GROUP BY WAREHOUSE_NAME
-    ORDER BY CREDITS_30D DESC
-    LIMIT 1
-),
-projected AS (
-    SELECT
-        f.AVG_7D_CREDITS,
-        f.AVG_30D_CREDITS,
-        f.MONTH_TO_DATE_CREDITS,
-        f.MONTH_TO_DATE_CREDITS
-          + f.AVG_7D_CREDITS * GREATEST(0, DATEDIFF('DAY', CURRENT_DATE(), LAST_DAY(CURRENT_DATE()))) AS PROJECTED_MONTH_END_CREDITS,
-        s.MONTHLY_CONTRACT_CREDITS,
-        ROUND((f.MONTH_TO_DATE_CREDITS
-          + f.AVG_7D_CREDITS * GREATEST(0, DATEDIFF('DAY', CURRENT_DATE(), LAST_DAY(CURRENT_DATE()))))
-          * COALESCE(s.CREDIT_PRICE_USD, 3.68), 2) AS PROJECTED_MONTH_END_USD,
-        t.WAREHOUSE_NAME AS TOP_DRIVER,
-        t.CREDITS_30D AS TOP_DRIVER_CREDITS_30D
-    FROM forecast f
-    CROSS JOIN settings s
-    LEFT JOIN top_driver t ON TRUE
-)
-SELECT
-    *,
-    CASE
-        WHEN MONTHLY_CONTRACT_CREDITS IS NULL THEN 'Set MONTHLY_CONTRACT_CREDITS in OVERWATCH_SETTINGS.'
-        WHEN PROJECTED_MONTH_END_CREDITS > MONTHLY_CONTRACT_CREDITS THEN 'Contract burn risk. Work top driver and action queue now.'
-        WHEN PROJECTED_MONTH_END_CREDITS > MONTHLY_CONTRACT_CREDITS * 0.9 THEN 'Approaching contract pace. Validate budget actions.'
-        ELSE 'Contract pace within current threshold.'
-    END AS RECOMMENDED_ACTION
-FROM projected;
 
 CREATE OR REPLACE VIEW OVERWATCH_COMPLIANCE_READINESS_V AS
 WITH admin_grants AS (
@@ -2244,7 +1702,7 @@ CREATE TRANSIENT TABLE IF NOT EXISTS FACT_WAREHOUSE_OPERABILITY_DAILY (
   REVIEW_ROWS                  NUMBER,
   APPROVAL_REQUIRED_ROWS       NUMBER,
   ROLLBACK_REQUIRED_ROWS       NUMBER,
-  SAVINGS_VERIFICATION_ROWS    NUMBER,
+  IMPACT_TELEMETRY_ROWS    NUMBER,
   OPEN_ACTIONS                 NUMBER,
   OVERDUE_OPEN                 NUMBER,
   FIXED_WITHOUT_VERIFICATION   NUMBER,
@@ -3839,7 +3297,7 @@ BEGIN
       WHEN wo.TAG_VALUE IS NOT NULL THEN wo.TAG_VALUE
       WHEN dbo.TAG_VALUE IS NOT NULL THEN dbo.TAG_VALUE
       WHEN c.USER_NAME IS NOT NULL AND UPPER(c.USER_NAME) NOT IN ('', 'UNKNOWN_USER') THEN c.USER_NAME
-      ELSE 'DBA / FinOps'
+      ELSE 'DBA / Cost owner'
     END AS COST_OWNER,
     CASE
       WHEN wo.TAG_VALUE IS NOT NULL THEN 'WAREHOUSE_TAG:' || wo.TAG_NAME
@@ -3902,7 +3360,7 @@ BEGIN
     SEVERITY, SIGNAL, CONTROL_STATE, CONTROL_RANK, CAPACITY_SCORE,
     QUERY_ROWS, QUEUE_PRESSURE_ROWS, SPILL_PRESSURE_ROWS, HIGH_LATENCY_ROWS,
     METERED_CREDITS, CREDIT_ALLOCATION_METHOD, REVIEW_ROWS, APPROVAL_REQUIRED_ROWS, ROLLBACK_REQUIRED_ROWS,
-    SAVINGS_VERIFICATION_ROWS, OPEN_ACTIONS, OVERDUE_OPEN, FIXED_WITHOUT_VERIFICATION,
+    IMPACT_TELEMETRY_ROWS, OPEN_ACTIONS, OVERDUE_OPEN, FIXED_WITHOUT_VERIFICATION,
     VERIFIED_CLOSURES, OWNER_APPROVAL_GAP_ROWS, NEXT_CONTROL_ACTION, LAST_ACTIVITY_TS
   )
   WITH query_daily AS (
@@ -3983,7 +3441,7 @@ BEGIN
       0 AS REVIEW_ROWS,
       0 AS APPROVAL_REQUIRED_ROWS,
       0 AS ROLLBACK_REQUIRED_ROWS,
-      0 AS SAVINGS_VERIFICATION_ROWS,
+      0 AS IMPACT_TELEMETRY_ROWS,
       0 AS OPEN_ACTIONS,
       0 AS OVERDUE_OPEN,
       0 AS FIXED_WITHOUT_VERIFICATION,
@@ -4013,12 +3471,12 @@ BEGIN
       MAX_BY(SIGNAL, SNAPSHOT_TS) AS SIGNAL,
       CASE
         WHEN COUNT_IF(AUDIT_READINESS IN ('Owner Route Blocked', 'Pre-Change Blocked', 'Verification Blocked')) > 0 THEN 'Setting Review Blocked'
-        WHEN COUNT_IF(APPROVAL_REQUIRED = 'Yes' OR ROLLBACK_REQUIRED = 'Yes' OR SAVINGS_VERIFICATION_REQUIRED = 'Yes') > 0 THEN 'Setting Review Required'
+        WHEN COUNT_IF(APPROVAL_REQUIRED = 'Yes' OR ROLLBACK_REQUIRED = 'Yes' OR IMPACT_TELEMETRY_REQUIRED = 'Yes') > 0 THEN 'Setting Review Required'
         ELSE 'Setting Review Ready'
       END AS CONTROL_STATE,
       CASE
         WHEN COUNT_IF(AUDIT_READINESS IN ('Owner Route Blocked', 'Pre-Change Blocked', 'Verification Blocked')) > 0 THEN 1
-        WHEN COUNT_IF(APPROVAL_REQUIRED = 'Yes' OR ROLLBACK_REQUIRED = 'Yes' OR SAVINGS_VERIFICATION_REQUIRED = 'Yes') > 0 THEN 3
+        WHEN COUNT_IF(APPROVAL_REQUIRED = 'Yes' OR ROLLBACK_REQUIRED = 'Yes' OR IMPACT_TELEMETRY_REQUIRED = 'Yes') > 0 THEN 3
         ELSE 8
       END AS CONTROL_RANK,
       MIN(BASELINE_CAPACITY_SCORE) AS CAPACITY_SCORE,
@@ -4031,7 +3489,7 @@ BEGIN
       COUNT(*) AS REVIEW_ROWS,
       COUNT_IF(APPROVAL_REQUIRED = 'Yes') AS APPROVAL_REQUIRED_ROWS,
       COUNT_IF(ROLLBACK_REQUIRED = 'Yes') AS ROLLBACK_REQUIRED_ROWS,
-      COUNT_IF(SAVINGS_VERIFICATION_REQUIRED = 'Yes') AS SAVINGS_VERIFICATION_ROWS,
+      COUNT_IF(IMPACT_TELEMETRY_REQUIRED = 'Yes') AS IMPACT_TELEMETRY_ROWS,
       0 AS OPEN_ACTIONS,
       0 AS OVERDUE_OPEN,
       0 AS FIXED_WITHOUT_VERIFICATION,
@@ -4076,7 +3534,7 @@ BEGIN
       0 AS REVIEW_ROWS,
       0 AS APPROVAL_REQUIRED_ROWS,
       0 AS ROLLBACK_REQUIRED_ROWS,
-      0 AS SAVINGS_VERIFICATION_ROWS,
+      0 AS IMPACT_TELEMETRY_ROWS,
       COUNT_IF(COALESCE(UPPER(STATUS), 'OPEN') NOT IN ('FIXED', 'IGNORED')) AS OPEN_ACTIONS,
       COUNT_IF(COALESCE(UPPER(STATUS), 'OPEN') NOT IN ('FIXED', 'IGNORED') AND DUE_DATE < CURRENT_DATE()) AS OVERDUE_OPEN,
       COUNT_IF(COALESCE(UPPER(STATUS), '') = 'FIXED' AND (UPPER(COALESCE(VERIFICATION_STATUS, '')) <> 'VERIFIED' OR LENGTH(TRIM(COALESCE(VERIFICATION_RESULT, ''))) < 15)) AS FIXED_WITHOUT_VERIFICATION,
@@ -4780,14 +4238,14 @@ BEGIN
     CURRENT_TIMESTAMP(),
     COMPANY,
     'No Database Context',
-    'CORTEX_BUDGET_AND_QUOTA',
+    'CORTEX_SPEND_AND_QUOTA',
     CASE WHEN SUM(COALESCE(EST_COST_USD, 0)) >= 500 THEN 'High' ELSE 'Medium' END,
     'USER_OR_AI_SERVICE',
     COALESCE(USER_ID, 'CORTEX'),
-    'Snowflake Budget + Per-User AI Quota',
-    'AI and shared resource budget',
+    'AI Spend Threshold + Per-User AI Quota',
+    'AI and shared resource spend threshold',
     'Cortex 7d spend $' || ROUND(SUM(COALESCE(EST_COST_USD, 0)), 2) || ' across ' || SUM(COALESCE(REQUEST_COUNT, 0)) || ' request(s).',
-    'Review shared AI budget, per-user quota, and first/last usage before broadening access.',
+    'Review shared AI spend threshold, per-user quota, and first/last usage before broadening access.',
     'SELECT * FROM FACT_CORTEX_DAILY WHERE USAGE_DATE >= DATEADD(''DAY'', -7, CURRENT_DATE()) ORDER BY EST_COST_USD DESC LIMIT 100;',
     ROUND(SUM(COALESCE(EST_COST_USD, 0)), 2),
     'FACT_CORTEX_DAILY'
@@ -4833,7 +4291,7 @@ BEGIN
     CASE SIGNAL_TYPE
       WHEN 'WAREHOUSE_COST_MOVEMENT' THEN 1
       WHEN 'CHANGE_COST_CORRELATION' THEN 2
-      WHEN 'CORTEX_BUDGET_AND_QUOTA' THEN 3
+      WHEN 'CORTEX_SPEND_AND_QUOTA' THEN 3
       ELSE 4
     END,
     COMPANY,
@@ -4867,7 +4325,7 @@ BEGIN
     EVIDENCE,
     NEXT_ACTION,
     PROOF_QUERY,
-    'DBA / FinOps',
+    'DBA / Cost owner',
     'New',
     'EMAIL',
     :alert_email,
@@ -5461,23 +4919,7 @@ task_failures AS (
   FROM FACT_TASK_RUN
   WHERE SCHEDULED_TIME >= DATEADD('hour', -24, CURRENT_TIMESTAMP())
     AND UPPER(STATE) = 'FAILED'
-    AND UPPER(TASK_NAME) <> 'OVERWATCH_COST_SAVINGS_VERIFY'
   GROUP BY COMPANY, ENVIRONMENT, DATABASE_NAME, SCHEMA_NAME, WAREHOUSE_NAME, TASK_NAME
-),
-cost_savings_verifier_failures AS (
-  SELECT
-    DATABASE_NAME,
-    SCHEMA_NAME,
-    NAME AS TASK_NAME,
-    COUNT(*) AS FAILURES,
-    MAX(STATE) AS LATEST_STATE,
-    MAX(SCHEDULED_TIME) AS LATEST_SCHEDULED_TIME,
-    MAX(LEFT(ERROR_MESSAGE, 500)) AS SAMPLE_ERROR
-  FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
-  WHERE SCHEDULED_TIME >= DATEADD('hour', -24, CURRENT_TIMESTAMP())
-    AND UPPER(NAME) = 'OVERWATCH_COST_SAVINGS_VERIFY'
-    AND UPPER(COALESCE(STATE, '')) IN ('FAILED', 'FAILED_WITH_ERROR', 'CANCELLED')
-  GROUP BY DATABASE_NAME, SCHEMA_NAME, NAME
 ),
 proc_recent AS (
   SELECT
@@ -5545,7 +4987,7 @@ candidates AS (
     r.WAREHOUSE_NAME AS ENTITY,
     'Warehouse used ' || ROUND(r.CURRENT_CREDITS, 2) || ' credits in 24 hours vs ' || ROUND(b.AVG_DAILY_CREDITS, 2) || ' average daily credits.' AS MESSAGE,
     'Warehouse used ' || ROUND(r.CURRENT_CREDITS, 2) || ' credits in 24 hours vs ' || ROUND(b.AVG_DAILY_CREDITS, 2) || ' average daily credits.' AS DETAIL,
-    'Open Cost & Contract, explain the bill movement, then route owner-backed savings actions.' AS SUGGESTED_ACTION,
+    'Open Cost & Contract, explain the bill movement, then route owner-backed cost-control actions.' AS SUGGESTED_ACTION,
     'SELECT * FROM FACT_WAREHOUSE_HOURLY WHERE WAREHOUSE_NAME = ''' || r.WAREHOUSE_NAME || ''' ORDER BY HOUR_START DESC LIMIT 100;' AS PROOF_QUERY,
     'DBA' AS OWNER
   FROM credit_recent r
@@ -5572,10 +5014,10 @@ candidates AS (
       || ROUND(PROJECTED_30D_CREDITS, 2) || ' credits.' AS MESSAGE,
     'Predictive anomaly model uses the last complete day against a rolling 30-day baseline plus sigma. '
       || 'Burn-rate multiple: ' || ROUND(BURN_RATE_MULTIPLE, 2) || 'x.' AS DETAIL,
-    'Open Cost & Contract, explain the top driver, validate owner demand, and route an Alert Center or action-queue item before budget overshoot.',
+    'Open Cost & Contract, explain the top driver, validate demand, and route an Alert Center or action-queue item before contract pace overshoot.',
     'WITH daily AS (SELECT TO_DATE(HOUR_START) AS spend_day, SUM(CREDITS_USED) AS credits FROM FACT_WAREHOUSE_HOURLY WHERE WAREHOUSE_NAME = '''
       || WAREHOUSE_NAME || ''' GROUP BY TO_DATE(HOUR_START)) SELECT * FROM daily ORDER BY spend_day DESC LIMIT 45;',
-    'DBA / FinOps'
+    'DBA / Cost owner'
   FROM predictive_cost_anomalies
 
   UNION ALL
@@ -5620,26 +5062,6 @@ candidates AS (
     'SELECT * FROM FACT_TASK_RUN WHERE TASK_NAME = ''' || TASK_NAME || ''' ORDER BY SCHEDULED_TIME DESC LIMIT 100;',
     'DBA'
   FROM task_failures
-
-  UNION ALL
-
-  SELECT
-    'ALFA',
-    'No Database Context',
-    DATABASE_NAME,
-    SCHEMA_NAME,
-    NULL,
-    'Cost Control',
-    'Cost Savings Verification Failure',
-    CASE WHEN FAILURES >= 2 THEN 'Critical' ELSE 'High' END,
-    COALESCE(DATABASE_NAME || '.' || SCHEMA_NAME || '.', '') || TASK_NAME,
-    COALESCE(DATABASE_NAME || '.' || SCHEMA_NAME || '.', '') || TASK_NAME,
-    FAILURES || ' failed savings verification task run(s) in the last 24 hours. Latest state: ' || COALESCE(LATEST_STATE, 'unknown') || '. Sample: ' || COALESCE(SAMPLE_ERROR, 'No sample error captured.'),
-    FAILURES || ' failed savings verification task run(s) in the last 24 hours. Latest state: ' || COALESCE(LATEST_STATE, 'unknown') || '. Sample: ' || COALESCE(SAMPLE_ERROR, 'No sample error captured.'),
-    'Open Cost & Contract verifier health, inspect TASK_HISTORY, keep savings estimated, and restore scheduled verification before claiming value.',
-    'SELECT DATABASE_NAME, SCHEMA_NAME, NAME, STATE, SCHEDULED_TIME, COMPLETED_TIME, QUERY_ID, ERROR_MESSAGE FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY WHERE UPPER(NAME) = ''OVERWATCH_COST_SAVINGS_VERIFY'' ORDER BY SCHEDULED_TIME DESC LIMIT 100;',
-    'DBA / FinOps'
-  FROM cost_savings_verifier_failures
 
   UNION ALL
 

@@ -22,8 +22,7 @@ WITH required_objects AS (
         ('TABLE', 'ALERT_OWNER_ROUTING'),
         ('TABLE', 'OVERWATCH_RECON_CONFIG'),
         ('TABLE', 'OVERWATCH_RECON_RUN'),
-        ('TABLE', 'OVERWATCH_SCHEMA_DIFF_RESULT'),
-        ('VIEW',  'OVERWATCH_VALUE_CANDIDATE_V')
+        ('TABLE', 'OVERWATCH_SCHEMA_DIFF_RESULT')
     AS t(REQUIRED_TYPE, REQUIRED_OBJECT)
 ),
 existing_objects AS (

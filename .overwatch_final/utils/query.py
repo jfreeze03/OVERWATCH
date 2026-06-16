@@ -63,7 +63,7 @@ def _perf_run_id() -> str:
 
 
 def _estimate_result_mb(result: pd.DataFrame) -> float:
-    """Estimate result-set memory size for budget telemetry."""
+    """Estimate result-set memory size for query-load telemetry."""
     try:
         if result is None or result.empty:
             return 0.0
@@ -326,7 +326,7 @@ def _warn_on_budget_pressure(
         return
     seen.add(warning_key)
     st.warning(
-        "OVERWATCH budget guardrail: this section repeatedly ran a heavy query. "
+        "OVERWATCH query-load guardrail: this section repeatedly ran a heavy query. "
         f"Section={section}; rows={int(row_count or 0):,}; "
         f"result={float(result_mb or 0):.1f} MB; elapsed={float(elapsed_ms or 0)/1000:.1f}s."
     )
@@ -434,7 +434,7 @@ def get_query_telemetry() -> pd.DataFrame:
 
 
 def get_query_budget_summary() -> pd.DataFrame:
-    """Return per-section query budget telemetry for this Streamlit session."""
+    """Return per-section query-load telemetry for this Streamlit session."""
     df = get_query_telemetry()
     if df.empty:
         return df
@@ -575,7 +575,7 @@ def _apply_statement_timeout(session, tier: str) -> None:
 
 
 def _check_query_budget(tier: str, ttl_key: str, query_text: str) -> bool:
-    """Return False when a non-admin render has exceeded its query budget."""
+    """Return False when a non-admin render has exceeded its query-load guardrail."""
     if _admin_actions_enabled() or str(tier or "").lower() in {"metadata"}:
         return True
     try:
@@ -594,7 +594,7 @@ def _check_query_budget(tier: str, ttl_key: str, query_text: str) -> bool:
             return True
         if not st.session_state.get(warn_key):
             st.warning(
-                "OVERWATCH query budget guardrail: this page is loading too many Snowflake queries at once. "
+                "OVERWATCH query-load guardrail: this page is loading too many Snowflake queries at once. "
                 "Use a narrower filter or refresh the section after the current board finishes."
             )
             st.session_state[warn_key] = True

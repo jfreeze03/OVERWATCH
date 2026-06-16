@@ -182,7 +182,7 @@ def build_warehouse_setting_review_ddl(
     BASELINE_METERED_CREDITS     FLOAT,
     VERIFICATION_QUERY           VARCHAR(8000),
     GENERATED_REVIEW_SQL         VARCHAR(8000),
-    SAVINGS_VERIFICATION_REQUIRED VARCHAR(20),
+    IMPACT_TELEMETRY_REQUIRED VARCHAR(20),
     APPROVAL_STATE               VARCHAR(80),
     CHANGE_TICKET_ID             VARCHAR(200),
     CURRENT_SETTINGS_JSON        VARCHAR(8000),
@@ -750,7 +750,7 @@ def build_warehouse_operability_fact_ddl(table: str = WAREHOUSE_OPERABILITY_FACT
     REVIEW_ROWS                NUMBER,
     APPROVAL_REQUIRED_ROWS     NUMBER,
     ROLLBACK_REQUIRED_ROWS     NUMBER,
-    SAVINGS_VERIFICATION_ROWS  NUMBER,
+    IMPACT_TELEMETRY_ROWS  NUMBER,
     OPEN_ACTIONS               NUMBER,
     OVERDUE_OPEN               NUMBER,
     FIXED_WITHOUT_VERIFICATION NUMBER,
@@ -897,7 +897,11 @@ LIMIT 50"""
 
 def _route_label(value: object, default: str = "Platform DBA") -> str:
     text = str(value or default).strip() or default
-    return text.replace("Owner", "Route").replace("owner", "route")
+    text = text.replace("Owner", "Route").replace("owner", "route")
+    for duplicate in ("Route Route", "Route route", "route Route", "route route"):
+        while duplicate in text:
+            text = text.replace(duplicate, "Route")
+    return text.replace("Cost route", "Cost Route")
 
 
 def _warehouse_owner_context(row: pd.Series | dict) -> dict:
@@ -905,8 +909,8 @@ def _warehouse_owner_context(row: pd.Series | dict) -> dict:
     signal = str(row.get("SIGNAL") or "").upper()
     if "CREDIT" in signal:
         base = {
-            "owner": "DBA / FinOps Route",
-            "escalation": "FinOps Lead / DBA Lead",
+            "owner": "DBA / Cost owner Route",
+            "escalation": "Cost owner / DBA Lead",
             "source": "Warehouse signal route map",
         }
     elif any(token in wh for token in ("ETL", "LOAD", "TASK", "PIPE", "AIRFLOW", "DBT")):
@@ -956,7 +960,7 @@ def _warehouse_approval_for(row: pd.Series | dict) -> str:
     signal = str(row.get("SIGNAL") or "").upper()
     owner = _route_label(row.get("OWNER") or _warehouse_owner_context(row)["owner"])
     if "CREDIT" in signal:
-        return "FinOps Lead / Warehouse Route"
+        return "Cost owner / Warehouse Route"
     if "QUEUE" in signal:
         return f"{owner} / DBA Lead"
     if "SPILL" in signal:
@@ -1024,7 +1028,7 @@ def _warehouse_setting_candidate_for(row: pd.Series) -> dict:
             "Compare queued queries, spill queries, p95 latency, and metered credits for the same warehouse/environment "
             "before closing the action."
         ),
-        "SAVINGS_VERIFICATION_REQUIRED": "Yes" if "CREDIT" in signal else "No",
+        "IMPACT_TELEMETRY_REQUIRED": "Yes" if "CREDIT" in signal else "No",
         "PRESSURE_EVIDENCE": (
             f"queued={queued:,}; spill={spill:,}; high_latency={high_latency:,}; "
             f"credit_spike={spike:,.1f}%; p95={p95:,.2f}s"
@@ -1052,7 +1056,7 @@ def _warehouse_setting_audit_readiness_for_row(row: pd.Series | dict) -> dict:
     approver = str(row.get("APPROVER") or row.get("APPROVAL_GROUP") or "").strip()
     approval_required = str(row.get("APPROVAL_REQUIRED") or "Yes").upper() == "YES"
     rollback_required = str(row.get("ROLLBACK_REQUIRED") or "Yes").upper() == "YES"
-    savings_required = str(row.get("SAVINGS_VERIFICATION_REQUIRED") or "No").upper() == "YES"
+    savings_required = str(row.get("IMPACT_TELEMETRY_REQUIRED") or "No").upper() == "YES"
     approval_state = str(row.get("APPROVAL_STATE") or row.get("OWNER_APPROVAL_STATUS") or "").upper()
     ticket_id = str(row.get("CHANGE_TICKET_ID") or row.get("TICKET_ID") or "").strip()
     rollback_sql = str(row.get("ROLLBACK_SQL") or "").strip()
@@ -1089,11 +1093,11 @@ def _warehouse_setting_audit_readiness_for_row(row: pd.Series | dict) -> dict:
     if executed and (verification_status != "VERIFIED" or len(verification_result) < 15):
         blockers.append("post-change telemetry")
     if executed and savings_required and verified_savings <= 0:
-        blockers.append("savings telemetry")
+        blockers.append("impact telemetry")
 
     route_blockers = {"escalation route"}
     pre_change_blockers = {"review status", "change ticket", "rollback SQL"}
-    verification_blockers = {"admin execution hash", "post-change telemetry", "savings telemetry"}
+    verification_blockers = {"admin execution hash", "post-change telemetry", "impact telemetry"}
 
     if failed:
         readiness = "Execution Failed"
@@ -1126,8 +1130,8 @@ def _warehouse_setting_audit_readiness_for_row(row: pd.Series | dict) -> dict:
         next_action = "Generate and retain rollback SQL from the guarded warehouse settings workflow before execution."
     elif "post-change telemetry" in blockers:
         next_action = "Refresh queue/spill/credit telemetry before closure."
-    elif "savings telemetry" in blockers:
-        next_action = "Wait for measured savings telemetry before closing the credit-control change."
+    elif "impact telemetry" in blockers:
+        next_action = "Wait for measured impact telemetry before closing the credit-control change."
     elif executed:
         next_action = "Keep execution, rollback, and post-change telemetry with the audit trail."
     else:
@@ -1224,7 +1228,7 @@ def _warehouse_setting_control_board(
             next_action = audit_readiness["NEXT_CONTROL_ACTION"]
         elif audit_rows:
             state, rank = "Execution Audit Linked", 7
-            next_action = "Confirm post-change queue, spill, credit, and savings telemetry remains current."
+            next_action = "Confirm post-change queue, spill, credit, and impact telemetry remains current."
         else:
             state, rank = "Ready for Controlled Change", 6
             next_action = "Open the guarded warehouse settings workflow, generate changed-only SQL, and keep rollback status current."
@@ -1251,7 +1255,7 @@ def _warehouse_setting_control_board(
             "LAST_EXECUTED_AT": audit_row.get("LAST_EXECUTED_AT", ""),
             "APPROVAL_REQUIRED": row.get("APPROVAL_REQUIRED", "No"),
             "ROLLBACK_REQUIRED": row.get("ROLLBACK_REQUIRED", "Yes"),
-            "SAVINGS_VERIFICATION_REQUIRED": row.get("SAVINGS_VERIFICATION_REQUIRED", "No"),
+            "IMPACT_TELEMETRY_REQUIRED": row.get("IMPACT_TELEMETRY_REQUIRED", "No"),
             "SETTING_CHANGE_CANDIDATE": row.get("SETTING_CHANGE_CANDIDATE", ""),
             "NEXT_CONTROL_ACTION": next_action,
         })
@@ -1446,7 +1450,7 @@ def _build_warehouse_guardrail_coverage(
 
         if credit_delta_pct > 50 or credit_delta >= 25:
             cost_state = "Review"
-            cost_action = "Review credit delta and savings telemetry before changing cost-related settings."
+            cost_action = "Review credit delta and impact telemetry before changing cost-related settings."
             cost_deduction = 12
         elif metered > 0:
             cost_state = "Ready"
@@ -1679,7 +1683,7 @@ def _warehouse_operator_next_moves(
         "GATE": "Telemetry route",
         "STATE": state,
         "COUNT": count,
-        "PROOF_REQUIRED": "ticket, reviewer, rollback requirement, and savings telemetry requirement",
+        "PROOF_REQUIRED": "ticket, reviewer, rollback requirement, and impact telemetry requirement",
         "NEXT_ACTION": next_action,
         "GATE_RANK": rank,
     })
@@ -1718,14 +1722,14 @@ def _warehouse_operator_next_moves(
         credit_spike_rows = int(
             exceptions.get("SIGNAL", pd.Series(dtype=str)).fillna("").astype(str).str.upper().str.contains("CREDIT").sum()
         )
-        if "SAVINGS_VERIFICATION_REQUIRED" in exceptions.columns:
+        if "IMPACT_TELEMETRY_REQUIRED" in exceptions.columns:
             savings_required = int(
-                exceptions["SAVINGS_VERIFICATION_REQUIRED"].fillna("").astype(str).str.upper().eq("YES").sum()
+                exceptions["IMPACT_TELEMETRY_REQUIRED"].fillna("").astype(str).str.upper().eq("YES").sum()
             )
-    if not control.empty and "SAVINGS_VERIFICATION_REQUIRED" in control.columns:
+    if not control.empty and "IMPACT_TELEMETRY_REQUIRED" in control.columns:
         savings_required = max(
             savings_required,
-            int(control["SAVINGS_VERIFICATION_REQUIRED"].fillna("").astype(str).str.upper().eq("YES").sum()),
+            int(control["IMPACT_TELEMETRY_REQUIRED"].fillna("").astype(str).str.upper().eq("YES").sum()),
         )
 
     if credit_spike_rows or savings_required:
@@ -1840,7 +1844,7 @@ def _warehouse_setting_review_insert_sql(
             f"{safe_float(row.get('METERED_CREDITS'))}::FLOAT AS BASELINE_METERED_CREDITS, "
             f"{sql_literal(verification_sql, 8000)} AS VERIFICATION_QUERY, "
             f"{sql_literal(review_sql, 8000)} AS GENERATED_REVIEW_SQL, "
-            f"{sql_literal(row.get('SAVINGS_VERIFICATION_REQUIRED', ''), 20)} AS SAVINGS_VERIFICATION_REQUIRED, "
+            f"{sql_literal(row.get('IMPACT_TELEMETRY_REQUIRED', ''), 20)} AS IMPACT_TELEMETRY_REQUIRED, "
             f"{sql_literal(approval_state, 80)} AS APPROVAL_STATE, "
             f"{sql_literal(row.get('CHANGE_TICKET_ID', ''), 200)} AS CHANGE_TICKET_ID, "
             f"{sql_literal(row.get('CURRENT_SETTINGS_JSON', ''), 8000)} AS CURRENT_SETTINGS_JSON, "
@@ -1866,7 +1870,7 @@ INSERT INTO {fqn} (
     POST_CHANGE_VERIFICATION, PRESSURE_EVIDENCE, BASELINE_CAPACITY_SCORE,
     BASELINE_QUEUED_QUERIES, BASELINE_SPILL_QUERIES, BASELINE_HIGH_LATENCY_QUERIES,
     BASELINE_P95_ELAPSED_SEC, BASELINE_METERED_CREDITS, VERIFICATION_QUERY,
-    GENERATED_REVIEW_SQL, SAVINGS_VERIFICATION_REQUIRED, APPROVAL_STATE,
+    GENERATED_REVIEW_SQL, IMPACT_TELEMETRY_REQUIRED, APPROVAL_STATE,
     CHANGE_TICKET_ID, CURRENT_SETTINGS_JSON, PROPOSED_SETTINGS_JSON, ROLLBACK_SQL,
     EXECUTED_SQL_HASH, EXECUTION_STATUS, EXECUTED_BY, EXECUTED_AT,
     POST_CHANGE_VERIFICATION_STATUS, POST_CHANGE_VERIFICATION_RESULT,
@@ -1893,7 +1897,7 @@ SELECT
     COUNT(*) AS REVIEW_ROWS,
     COUNT_IF(APPROVAL_REQUIRED = 'Yes') AS APPROVAL_REQUIRED_ROWS,
     COUNT_IF(ROLLBACK_REQUIRED = 'Yes') AS ROLLBACK_REQUIRED_ROWS,
-    COUNT_IF(SAVINGS_VERIFICATION_REQUIRED = 'Yes') AS SAVINGS_VERIFICATION_ROWS,
+    COUNT_IF(IMPACT_TELEMETRY_REQUIRED = 'Yes') AS IMPACT_TELEMETRY_ROWS,
     MIN(BASELINE_CAPACITY_SCORE) AS WORST_BASELINE_CAPACITY_SCORE,
     MAX(BASELINE_QUEUED_QUERIES) AS MAX_BASELINE_QUEUED_QUERIES,
     MAX(BASELINE_SPILL_QUERIES) AS MAX_BASELINE_SPILL_QUERIES,
@@ -1945,7 +1949,7 @@ WITH review_rows AS (
         COUNT(*) AS REVIEW_ROWS,
         COUNT_IF(APPROVAL_REQUIRED = 'Yes') AS APPROVAL_REQUIRED_ROWS,
         COUNT_IF(ROLLBACK_REQUIRED = 'Yes') AS ROLLBACK_REQUIRED_ROWS,
-        COUNT_IF(SAVINGS_VERIFICATION_REQUIRED = 'Yes') AS SAVINGS_VERIFICATION_REQUIRED_ROWS,
+        COUNT_IF(IMPACT_TELEMETRY_REQUIRED = 'Yes') AS IMPACT_TELEMETRY_REQUIRED_ROWS,
         MAX(SNAPSHOT_TS) AS LAST_REVIEW_TS
     FROM {review_fqn}
     WHERE {" AND ".join(review_where)}
@@ -1982,7 +1986,7 @@ SELECT
     COALESCE(r.REVIEW_ROWS, 0) AS REVIEW_ROWS,
     COALESCE(r.APPROVAL_REQUIRED_ROWS, 0) AS APPROVAL_REQUIRED_ROWS,
     COALESCE(r.ROLLBACK_REQUIRED_ROWS, 0) AS ROLLBACK_REQUIRED_ROWS,
-    COALESCE(r.SAVINGS_VERIFICATION_REQUIRED_ROWS, 0) AS SAVINGS_VERIFICATION_REQUIRED_ROWS,
+    COALESCE(r.IMPACT_TELEMETRY_REQUIRED_ROWS, 0) AS IMPACT_TELEMETRY_REQUIRED_ROWS,
     r.LAST_REVIEW_TS,
     COALESCE(a.AUDIT_ROWS, 0) AS AUDIT_ROWS,
     COALESCE(a.SUCCESSFUL_CHANGES, 0) AS SUCCESSFUL_CHANGES,
@@ -1999,8 +2003,8 @@ SELECT
         WHEN COALESCE(r.REVIEW_ROWS, 0) > 0 AND COALESCE(a.AUDIT_ROWS, 0) = 0 THEN 'Reviewed but not executed'
         WHEN COALESCE(a.SUCCESSFUL_CHANGES, 0) > 0
              AND UPPER(COALESCE(r.POST_CHANGE_VERIFICATION_STATUS, '')) <> 'VERIFIED' THEN 'Executed - telemetry pending'
-        WHEN COALESCE(r.SAVINGS_VERIFICATION_REQUIRED_ROWS, 0) > 0
-             AND LENGTH(TRIM(COALESCE(r.POST_CHANGE_VERIFICATION_RESULT, ''))) < 15 THEN 'Savings telemetry pending'
+        WHEN COALESCE(r.IMPACT_TELEMETRY_REQUIRED_ROWS, 0) > 0
+             AND LENGTH(TRIM(COALESCE(r.POST_CHANGE_VERIFICATION_RESULT, ''))) < 15 THEN 'Impact telemetry pending'
         WHEN COALESCE(a.SUCCESSFUL_CHANGES, 0) > 0 THEN 'Executed and audit linked'
         ELSE 'No setting review'
     END AS EXECUTION_AUDIT_READINESS,
@@ -2009,8 +2013,8 @@ SELECT
         WHEN COALESCE(r.REVIEW_ROWS, 0) > 0 AND COALESCE(a.AUDIT_ROWS, 0) = 0 THEN 'Execute only through the guarded warehouse settings workflow after review, ticket, and rollback SQL are present.'
         WHEN COALESCE(a.SUCCESSFUL_CHANGES, 0) > 0
              AND UPPER(COALESCE(r.POST_CHANGE_VERIFICATION_STATUS, '')) <> 'VERIFIED' THEN 'Refresh post-change telemetry before closure.'
-        WHEN COALESCE(r.SAVINGS_VERIFICATION_REQUIRED_ROWS, 0) > 0
-             AND LENGTH(TRIM(COALESCE(r.POST_CHANGE_VERIFICATION_RESULT, ''))) < 15 THEN 'Wait for measured savings telemetry for the credit-control change.'
+        WHEN COALESCE(r.IMPACT_TELEMETRY_REQUIRED_ROWS, 0) > 0
+             AND LENGTH(TRIM(COALESCE(r.POST_CHANGE_VERIFICATION_RESULT, ''))) < 15 THEN 'Wait for measured impact telemetry for the credit-control change.'
         WHEN COALESCE(a.SUCCESSFUL_CHANGES, 0) > 0 THEN 'Keep SQL hash, executor, role, rollback, and telemetry status.'
         ELSE 'Create a setting review snapshot before changing this warehouse.'
     END AS NEXT_CONTROL_ACTION
@@ -2021,7 +2025,7 @@ ORDER BY
     CASE EXECUTION_AUDIT_READINESS
         WHEN 'Execution failed' THEN 1
         WHEN 'Executed - telemetry pending' THEN 2
-        WHEN 'Savings telemetry pending' THEN 3
+        WHEN 'Impact telemetry pending' THEN 3
         WHEN 'Reviewed but not executed' THEN 4
         WHEN 'No setting review' THEN 8
         ELSE 9
@@ -2186,7 +2190,7 @@ SELECT
     REVIEW_ROWS,
     APPROVAL_REQUIRED_ROWS,
     ROLLBACK_REQUIRED_ROWS,
-    SAVINGS_VERIFICATION_ROWS,
+    IMPACT_TELEMETRY_ROWS,
     OPEN_ACTIONS,
     OVERDUE_OPEN,
     FIXED_WITHOUT_VERIFICATION,
@@ -2291,8 +2295,8 @@ def _warehouse_intervention_matrix(
         blockers = str(control_row.get("AUDIT_BLOCKERS") or item.get("ADMIN_BLOCKERS") or "")
         closure_state = str(closure_row.get("CLOSURE_READINESS") or control_row.get("CLOSURE_READINESS") or "No recent action")
         savings_required = str(
-            control_row.get("SAVINGS_VERIFICATION_REQUIRED")
-            or item.get("SAVINGS_VERIFICATION_REQUIRED")
+            control_row.get("IMPACT_TELEMETRY_REQUIRED")
+            or item.get("IMPACT_TELEMETRY_REQUIRED")
             or ""
         ).upper() == "YES"
         approval_required = str(
@@ -2703,7 +2707,7 @@ def _queue_capacity_findings(session, exceptions: pd.DataFrame) -> int:
                 f"{row.get('CHANGE_RISK', '')} "
                 f"Escalation: {row.get('ESCALATION_TARGET', 'DBA Lead')}. "
                 f"Rollback required: {row.get('ROLLBACK_REQUIRED', 'Yes')}; "
-                f"savings telemetry required: {row.get('SAVINGS_VERIFICATION_REQUIRED', 'No')}."
+                f"impact telemetry required: {row.get('IMPACT_TELEMETRY_REQUIRED', 'No')}."
             ),
             "Recovery Status": (
                 f"Baseline: {row.get('PRESSURE_EVIDENCE', '')}. "
@@ -2819,7 +2823,7 @@ def _render_capacity_brief(company: str, environment: str) -> None:
                     "QUERY_ROWS", "QUEUE_PRESSURE_ROWS", "SPILL_PRESSURE_ROWS",
                     "HIGH_LATENCY_ROWS", "METERED_CREDITS", "CREDIT_ALLOCATION_METHOD", "REVIEW_ROWS",
                     "APPROVAL_REQUIRED_ROWS", "ROLLBACK_REQUIRED_ROWS",
-                    "SAVINGS_VERIFICATION_ROWS", "OPEN_ACTIONS", "OVERDUE_OPEN",
+                    "IMPACT_TELEMETRY_ROWS", "OPEN_ACTIONS", "OVERDUE_OPEN",
                     "FIXED_WITHOUT_VERIFICATION", "VERIFIED_CLOSURES", "NEXT_CONTROL_ACTION",
                 ],
                 sort_by=["CONTROL_RANK", "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION", "METERED_CREDITS"],
@@ -2934,7 +2938,7 @@ def _render_capacity_brief(company: str, environment: str) -> None:
                         "AUDIT_READINESS", "AUDIT_BLOCKERS", "CLOSURE_READINESS",
                         "AUDIT_ROWS", "SUCCESSFUL_CHANGES", "FAILED_CHANGES",
                         "LAST_EXECUTION_STATUS", "APPROVAL_REQUIRED", "ROLLBACK_REQUIRED",
-                        "SAVINGS_VERIFICATION_REQUIRED", "NEXT_CONTROL_ACTION",
+                        "IMPACT_TELEMETRY_REQUIRED", "NEXT_CONTROL_ACTION",
                     ],
                     sort_by=["CONTROL_RANK", "METERED_CREDITS"],
                     ascending=[True, False],
@@ -2953,7 +2957,7 @@ def _render_capacity_brief(company: str, environment: str) -> None:
                     "QUEUED_QUERIES", "SPILL_QUERIES", "HIGH_LATENCY_QUERIES",
                     "METERED_CREDITS", "ADMIN_READINESS", "SETTING_CHANGE_CANDIDATE",
                     "OWNER", "ESCALATION_TARGET", "APPROVER",
-                    "APPROVAL_REQUIRED", "ROLLBACK_REQUIRED", "SAVINGS_VERIFICATION_REQUIRED", "NEXT_ACTION",
+                    "APPROVAL_REQUIRED", "ROLLBACK_REQUIRED", "IMPACT_TELEMETRY_REQUIRED", "NEXT_ACTION",
                 ],
                 sort_by=["QUEUED_QUERIES", "SPILL_QUERIES", "HIGH_LATENCY_QUERIES", "METERED_CREDITS"],
                 ascending=[False, False, False, False],
@@ -3002,7 +3006,7 @@ def _render_capacity_brief(company: str, environment: str) -> None:
                         priority_columns=[
                             "WAREHOUSE_NAME", "OWNER", "ESCALATION_TARGET", "REVIEW_ROWS",
                             "APPROVAL_REQUIRED_ROWS", "ROLLBACK_REQUIRED_ROWS",
-                            "SAVINGS_VERIFICATION_ROWS", "WORST_BASELINE_CAPACITY_SCORE",
+                            "IMPACT_TELEMETRY_ROWS", "WORST_BASELINE_CAPACITY_SCORE",
                             "MAX_BASELINE_QUEUED_QUERIES", "MAX_BASELINE_SPILL_QUERIES",
                             "LAST_SIGNAL", "LAST_SETTING_CHANGE_CANDIDATE",
                         ],

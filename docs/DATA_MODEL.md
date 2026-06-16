@@ -28,16 +28,14 @@ forensic diff SQL. Both tools generate persistence SQL for their run evidence;
 DBAs review and execute that SQL when the compare should become release or
 incident proof.
 
-## FinOps and Value
+## Cost Monitoring
 
 | Object | Type | Purpose |
 |---|---|---|
-| `OVERWATCH_CONTRACT_BURN_FORECAST_V` | View | Projects month-end credits/USD and top cost driver from metering. |
-| `OVERWATCH_ROI_LOG` | Table | Value ledger for Snowflake optimization and incident-prevention value. |
-| `OVERWATCH_VALUE_CANDIDATE_V` | View | Derives value candidates from action queue and alert closure evidence. |
-| `OVERWATCH_VALUE_AUTOMATION_HEALTH_V` | View | Shows candidate counts, ledger merge state, latest automation run, and next action. |
-| `SP_OVERWATCH_AUTOMATE_VALUE_LOG` | Procedure | Merges evidence-backed candidates into `OVERWATCH_ROI_LOG`. |
-| `OVERWATCH_VALUE_AUTOMATION_RUN` | Table | Logs each automated value-capture run. |
+| `FACT_COST_DAILY` | Transient fact | Daily Snowflake service-cost facts for the cost wall and trend charts. |
+| `FACT_CORTEX_DAILY` | Transient fact | Cortex AI request, credit, and estimated-dollar facts. |
+| `FACT_COST_MONITORING_SIGNAL` | Transient fact | Ranked cost movement and Cortex signals consumed by Cost & Contract and Alert Center. |
+| `FACT_COST_INCIDENT_TIMELINE` | Transient fact | Ordered cost incident timeline for root cause, alerting, and action status. |
 
 ## Security and Compliance
 
@@ -51,21 +49,5 @@ incident proof.
 |---|---|
 | `SNOWFLAKE.ACCOUNT_USAGE.DATA_METRIC_FUNCTION_REFERENCES` | Registers Snowflake DMF data-quality checks, schedules, states, and stale/failed runs where DMFs are enabled. |
 | `SHOW ALERTS IN ACCOUNT` / `INFORMATION_SCHEMA.ALERT_HISTORY` | Proves native Snowflake ALERT objects exist, are scheduled, and have recent run history. |
-| `SNOWFLAKE.ACCOUNT_USAGE.TAG_REFERENCES` | Supports tag-based owner, cost-center, and criticality allocation instead of relying only on naming conventions. |
 | `SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY` with `QUERY_TAG ILIKE 'OVERWATCH%'` | Measures OVERWATCH's own query count, failures, latency, bytes scanned, and section attribution. |
-| `EXECUTIVE_DIGEST_HISTORY` | Stores push-ready daily executive summaries that should match the Executive Landing command board. |
 | `SNOWFLAKE.ORGANIZATION_USAGE.METERING_DAILY_HISTORY` | Optional ORGADMIN rollup for multi-account cost when organization privileges exist. |
-
-## Optional Precompute
-
-`snowflake/PRECOMPUTE.sql` contains optional Dynamic Tables plus fallback views:
-
-- `DT_OVERWATCH_QUERY_HEALTH_HOURLY`
-- `DT_OVERWATCH_COST_DAILY`
-- `DT_OVERWATCH_TASK_CRITICAL_PATH`
-- `OVERWATCH_QUERY_HEALTH_HOURLY_V`
-- `OVERWATCH_COST_DAILY_V`
-- `OVERWATCH_TASK_CRITICAL_PATH_V`
-
-Dynamic Tables are not part of the base setup path. They require explicit DBA
-review of refresh lag, warehouse, ownership, and monitoring budget.

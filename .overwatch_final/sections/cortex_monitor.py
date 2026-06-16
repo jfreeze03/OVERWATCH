@@ -37,7 +37,7 @@ def _ai_credit_rate() -> float:
 
 
 CORTEX_VIEWS = (
-    "Budget Control",
+    "Spend Control",
     "User Attribution",
     "Daily Trends",
     "Anomaly Detection",
@@ -45,11 +45,11 @@ CORTEX_VIEWS = (
 )
 
 CORTEX_VIEW_DETAILS = {
-    "Budget Control": "Projected spend, source split, exceptions, and proof SQL.",
+    "Spend Control": "Projected spend, source split, exceptions, and quota signals.",
     "User Attribution": "User/source chargeback, requests, AI credits, and cost-per-request spikes.",
     "Daily Trends": "Daily requests, active users, credits, rolling burn, and source split.",
     "Anomaly Detection": "Z-score detection for unusual user-level Cortex spend.",
-    "Predictive Alerts": "Forward-looking budget warnings and alert SQL.",
+    "Predictive Alerts": "Forward-looking spend threshold warnings and alert SQL.",
 }
 
 
@@ -81,9 +81,9 @@ def _cortex_cost_rating(score: int) -> str:
 
 def _cortex_action_for(signal: str) -> tuple[str, str]:
     signal = str(signal or "").upper()
-    if "BUDGET" in signal:
+    if "BUDGET" in signal or "THRESHOLD" in signal:
         return (
-            "Review Cortex Code budget, daily credit limit, and role/user access before usage scales further.",
+            "Review Cortex Code spend threshold, daily credit limit, and role/user access before usage scales further.",
             "-- Consider ALTER ACCOUNT SET CORTEX_CODE_DAILY_CREDIT_LIMIT = <daily_credit_limit>;",
         )
     if "SPIKE" in signal:
@@ -111,7 +111,7 @@ def _build_cortex_control_markdown(
         "",
         f"- Lookback: {days} days",
         f"- Control state: {_cortex_cost_rating(score)}",
-        f"- Monthly budget: ${safe_float(budget_usd):,.2f}",
+        f"- Monthly spend threshold: ${safe_float(budget_usd):,.2f}",
         f"- Projected 30-day cost: ${projected_cost:,.2f}",
         f"- Active users: {safe_int(summary_row.get('ACTIVE_USERS')):,}",
         f"- Total requests: {safe_int(summary_row.get('TOTAL_REQUESTS')):,}",
@@ -120,7 +120,7 @@ def _build_cortex_control_markdown(
         "## DBA Narrative",
         (
             "Cortex Code usage can scale quietly because spend is driven by individual users and tools, "
-            "not warehouses. Use this brief to find budget breach risk, unexpected users, and source-level "
+            "not warehouses. Use this brief to find spend threshold risk, unexpected users, and source-level "
             "growth before it becomes a month-end surprise."
         ),
         "",
@@ -141,7 +141,7 @@ def _build_cortex_control_markdown(
         "## Evidence Limits",
         "- Cortex Code views are ACCOUNT_USAGE-backed and can lag.",
         "- User-level chargeback is exact for Cortex Code views when Snowflake exposes USER_ID usage records.",
-        "- Budget breach projections assume recent daily average continues for 30 days.",
+        "- Spend threshold projections assume recent daily average continues for 30 days.",
     ])
     return "\n".join(lines)
 
@@ -213,8 +213,8 @@ def _build_cortex_control_sql(days: int, budget_usd: float) -> tuple[str, str]:
                 ELSE 'Medium'
             END AS severity,
             CASE
-                WHEN projected_30d_credits > {budget_credits} THEN 'Budget Breach'
-                WHEN projected_30d_credits > {budget_credits} * 0.50 THEN 'Budget Concentration'
+                WHEN projected_30d_credits > {budget_credits} THEN 'Spend Threshold Breach'
+                WHEN projected_30d_credits > {budget_credits} * 0.50 THEN 'Spend Concentration'
                 WHEN credits_per_request > 0.10 THEN 'Cost Per Request Spike'
                 ELSE 'High Usage'
             END AS signal,
@@ -312,11 +312,11 @@ def _queue_cortex_findings(session, exceptions: pd.DataFrame, budget_usd: float)
         finding = (
             f"{signal}: {user} projected Cortex Code cost is "
             f"${safe_float(row.get('PROJECTED_30D_COST')):,.2f} against "
-            f"${safe_float(budget_usd):,.2f} monthly budget."
+            f"${safe_float(budget_usd):,.2f} monthly spend threshold."
         )
         actions.append({
             "Action ID": make_action_id("Cortex Cost", user, finding),
-            "Source": "Cortex Monitor - Cost Control",
+            "Source": "Cortex Monitor - Spend Control",
             "Category": "AI / Cortex Cost",
             "Severity": row.get("SEVERITY", "High"),
             "Entity Type": "User",
@@ -333,13 +333,13 @@ def _queue_cortex_findings(session, exceptions: pd.DataFrame, budget_usd: float)
 
 
 def _render_cortex_control_brief(session, company: str) -> None:
-    with st.expander("Cortex Cost Control Brief", expanded=bool(st.session_state.get("exceptions_only_mode"))):
+    with st.expander("Cortex Spend Control Brief", expanded=bool(st.session_state.get("exceptions_only_mode"))):
         c1, c2 = st.columns(2)
         with c1:
             days = day_window_selectbox("Cortex control lookback", key="cortex_control_days", default=30)
         with c2:
             budget_usd = st.number_input(
-                "Monthly Cortex Code budget ($)",
+                "Monthly Cortex spend threshold ($)",
                 min_value=0.0,
                 value=1000.0,
                 step=100.0,
@@ -420,7 +420,7 @@ def _render_cortex_control_brief(session, company: str) -> None:
             ai_days = max(safe_int(ai_functions["USAGE_DATE"].nunique() if "USAGE_DATE" in ai_functions.columns else 0), 1)
             ai_projected_cost = safe_float(ai_functions.get("COST_USD", pd.Series(dtype=float)).sum()) / ai_days * 30
         projected_cost = safe_float(row.get("PROJECTED_30D_COST")) + ai_projected_cost
-        daily_budget = safe_float(budget_usd) / 30 if safe_float(budget_usd) > 0 else 0.0
+        daily_threshold = safe_float(budget_usd) / 30 if safe_float(budget_usd) > 0 else 0.0
         avg_daily_cost = projected_cost / 30 if projected_cost > 0 else 0.0
         score = _cortex_cost_score(
             projected_cost=projected_cost,
@@ -434,9 +434,9 @@ def _render_cortex_control_brief(session, company: str) -> None:
             ("Heavy Users", f"{safe_int(row.get('HEAVY_USERS')):,}"),
             ("Requests", f"{safe_int(row.get('TOTAL_REQUESTS')):,}"),
         ))
-        burn_delta = f" ({(avg_daily_cost - daily_budget):+,.2f} vs budget)" if daily_budget else ""
+        burn_delta = f" ({(avg_daily_cost - daily_threshold):+,.2f} vs threshold)" if daily_threshold else ""
         render_shell_snapshot((
-            ("Daily Budget", f"${daily_budget:,.2f}"),
+            ("Daily Threshold", f"${daily_threshold:,.2f}"),
             ("Avg Daily Burn", f"${avg_daily_cost:,.2f}{burn_delta}"),
             ("Code AI Credits", format_credits(safe_float(row.get("TOTAL_CREDITS")), _ai_credit_rate())),
             ("AI Function Projection", f"${ai_projected_cost:,.2f}"),
@@ -445,11 +445,11 @@ def _render_cortex_control_brief(session, company: str) -> None:
         if ai_note:
             st.info(ai_note)
         if projected_cost > budget_usd:
-            st.error("Cortex spend is projected over budget. Treat this as a cost-control incident.")
+            st.error("Cortex spend is projected above the threshold. Treat this as a cost-control incident.")
         elif score < 78:
             st.warning("Cortex usage is concentrating or trending hot. Review heavy users before expanding access.")
         else:
-            st.success("Cortex Code spend is controlled for the selected budget and lookback.")
+            st.success("Cortex Code spend is controlled for the selected threshold and lookback.")
 
         if exceptions is not None and not exceptions.empty:
             st.subheader("Cortex Cost Exceptions")
@@ -541,14 +541,14 @@ def render():
     company = get_active_company()
 
     if st.session_state.get("exceptions_only_mode") and "cortex_monitor_view" not in st.session_state:
-        st.session_state["cortex_monitor_view"] = "Budget Control"
+        st.session_state["cortex_monitor_view"] = "Spend Control"
 
     st.subheader("AI & Cortex Monitor")
     st.caption(
-        "Track Cortex Code usage, projected spend, user attribution, anomalies, and budget-control exceptions."
+        "Track Cortex Code usage, projected spend, user attribution, anomalies, and spend-control exceptions."
     )
     defer_source_note(
-        "Live sources: Cortex Code Snowsight/CLI usage views; Budget Control also includes Cortex AI Functions when Snowflake exposes that view."
+        "Live sources: Cortex Code Snowsight/CLI usage views; Spend Control also includes Cortex AI Functions when Snowflake exposes that view."
     )
 
     cortex_view = render_workflow_selector(
@@ -560,7 +560,7 @@ def render():
     )
 
     # CORTEX CODE USERS
-    if cortex_view == "Budget Control":
+    if cortex_view == "Spend Control":
         _render_cortex_control_brief(session, company)
         if st.session_state.get("exceptions_only_mode"):
             st.stop()
@@ -999,11 +999,11 @@ def render():
         st.subheader("Predictive Cortex AI Cost Alerts")
         st.caption(
             "Projects Cortex Code spend at current trajectory. "
-            "Flags accounts on course to exceed configurable monthly budget."
+            "Flags accounts on course to exceed configurable monthly spend thresholds."
         )
 
         monthly_ai_budget = st.number_input(
-            "Monthly AI credit budget", min_value=0.0, value=500.0, step=50.0, key="ai_budget"
+            "Monthly AI credit threshold", min_value=0.0, value=500.0, step=50.0, key="ai_budget"
         )
 
         if st.button("Run Predictive Analysis", key="cc_pred_load"):
@@ -1057,14 +1057,14 @@ def render():
             if projected_month > monthly_ai_budget:
                 overage = projected_month - monthly_ai_budget
                 st.error(
-                    f"On track to exceed budget by {overage:.2f} AI credits "
+                    f"On track to exceed threshold by {overage:.2f} AI credits "
                     f"(${overage * _ai_credit_rate():,.2f})**. "
                     f"Consider setting user-level quotas or reviewing heavy users."
                 )
             else:
                 headroom = monthly_ai_budget - projected_month
                 st.success(
-                    f"Projected spend ({projected_month:.2f} credits) is within budget. "
+                    f"Projected spend ({projected_month:.2f} credits) is within threshold. "
                     f"Headroom: {headroom:.2f} credits."
                 )
 

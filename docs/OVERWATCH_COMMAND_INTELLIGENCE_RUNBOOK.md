@@ -23,40 +23,28 @@ route work, export proof, or preview guarded SQL.
 | 1 | Detection and Root-Cause Engine | Alert Center, DBA Control Room | Correlate query, task, login, cost, and object-change symptoms into one incident route. |
 | 2 | Task/Pipeline Critical Path Brain | Workload Operations | Rank root task, child failure, retry pattern, late risk, and downstream blast radius. |
 | 3 | Data Quality and Reconciliation Center | Workload Operations | Compare schema/database pairs with counts, hash buckets, freshness, schema drift, and sampled diffs. |
-| 4 | Predictive FinOps and Automated Value Log | Cost & Contract, Snowflake Value | Forecast contract burn and auto-capture verified DBA value from evidence. |
+| 4 | Cost Run-Rate and Attribution Monitor | Cost & Contract | Forecast contract burn and rank top cost drivers from metering facts. |
 | 5 | Alert Lifecycle 2.0 | Alert Center | Acknowledge, assign, suppress, resolve, comment, route, and audit alert work. |
 | 6 | Fact-Grounded AI Query Diagnosis | Workload Operations | Use Cortex only with exact query/profile/object evidence and required verification SQL. |
 | 7 | OVERWATCH Self-Monitoring | Cost & Contract, Setup | Track app query cost, failures, slow sections, and tagged runtime behavior. |
-| 8 | Precomputed Mart / Dynamic Table Layer With Fallback | Setup | Keep first paint fast; make live ACCOUNT_USAGE scans explicit. |
+| 8 | Scheduled Mart Layer With Fallback | Setup | Keep first paint fast; make live ACCOUNT_USAGE scans explicit. |
 | 9 | Security Monitoring Scorecard | Security Monitoring, Executive Landing | Show admin grants, access spikes, dormant activity, risky shares, and risky posture with action evidence. |
 | 10 | Multi-Account / Org View | Executive Landing, Cost & Contract | Optional org-level rollup when the Snowflake role has organization usage privileges. |
 | 11 | Data-First Navigation Contract | App shell, every primary section | Show scoped KPIs and summaries on first section click without saved-state persistence or global mode toggles. |
 | 12 | Monitoring Docs and Runbooks | Repo docs, Setup & Runbook | Keep setup, privileges, failure modes, rollback, and operating rules with the code. |
 
-## Automated Snowflake Value Log
+## Cost Run-Rate Monitoring
 
-The Snowflake Value Log should not depend on DBAs remembering to update it.
-Manual logging remains available, but it is a fallback.
-
-Default value sources:
-
-- `OVERWATCH_ACTION_QUEUE`: fixed cost actions with estimated savings and
-  post-period verification.
-- `ALERT_EVENTS`: resolved critical/high/medium incidents with impact evidence.
-- `OVERWATCH_WORKLOAD_RECOVERY_AUDIT`: recovery actions that improve runtime,
-  queue pressure, task success, or SLA state.
-- `QUERY_HISTORY`: query hash improvements after a targeted optimization.
-
-Value states:
-
-- `ESTIMATED`: candidate value exists, but post-period proof is incomplete.
-- `VERIFIED`: owner-approved action has measured before/after evidence.
-- `REJECTED`: no measurable value was proven after the verification window.
+Cost & Contract should explain spend movement before anyone changes a warehouse
+or assumes a contract issue. The first read should use compact facts for current
+credits, prior-window movement, Cortex spend, top drivers, and open action
+queue items.
 
 Guardrail:
 
-Do not present estimated value as verified savings. Verified value requires an
-evidence source, owner/action context, measured result, and timestamp.
+Do not treat run-rate projections as remediation authority. They point to the
+next investigation: top warehouse, service, query/user attribution, Cortex
+usage, or a routed action queue item.
 
 ## Data Reconciliation
 
@@ -89,22 +77,12 @@ include:
 If evidence is missing, the AI answer must say what is missing instead of
 inventing a recommendation.
 
-## Precompute Decision
+## Setup Decision
 
-Use `snowflake/PRECOMPUTE.sql` only after review. Dynamic Tables are optional.
-Fallback views keep the base setup lower-risk.
-
-Use Dynamic Tables when:
-
-- `OVERWATCH_WH` has an approved monitoring budget.
-- Target lag is acceptable for DBA morning triage.
-- The setup role can own and operate refresh objects.
-
-Use fallback views/tasks when:
-
-- Dynamic Tables are not approved.
-- You need caller-mode transparency over refresh behavior.
-- You want to reduce deployment risk while production hardening continues.
+Use `snowflake/OVERWATCH_MART_SETUP.sql` as the single deployable DDL document.
+Scheduled tasks and transient facts are the default setup. Dynamic-table and
+separate native-alert template scripts have been retired to keep deployment
+honest and easier to support.
 
 ## Required Privilege Families
 
@@ -113,9 +91,9 @@ Use fallback views/tasks when:
 - Create/alter privileges in the OVERWATCH database/schema for setup objects.
 - Task/warehouse ownership or delegated privileges for scheduled refresh.
 - Notification integration privileges only if external notifications are used.
-- Optional Snowflake ALERT objects can be deployed from
-  `snowflake/OVERWATCH_NATIVE_ALERT_TEMPLATES.sql` after the monitoring
-  warehouse, integration, owner route, and audit tables are approved.
+- Optional Snowflake ALERT objects should be added to the consolidated setup
+  only after the monitoring warehouse, integration, route, and audit tables are
+  approved.
 
 ## Daily DBA Flow
 
@@ -123,5 +101,5 @@ Use fallback views/tasks when:
 2. Open DBA Control Room for root-cause, critical path, and morning queue.
 3. Open Alert Center for alert lifecycle and detection catalog.
 4. Open Workload Operations for task, contention, query, and reconciliation work.
-5. Open Cost & Contract for burn forecast, action queue, and value automation.
-6. Use Snowflake Value to verify that automated value capture is working.
+5. Open Cost & Contract for burn forecast, attribution, Cortex spend, and the action queue.
+6. Validate closure through post-period telemetry before marking savings complete.

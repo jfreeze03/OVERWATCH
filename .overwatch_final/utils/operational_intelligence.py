@@ -55,14 +55,14 @@ def build_capability_register_rows() -> list[dict[str, object]]:
         },
         {
             "RANK": 4,
-            "CAPABILITY": "Predictive FinOps and Automated Value Log",
+            "CAPABILITY": "Cost Run-Rate and Attribution Monitor",
             "STATUS": "Foundation",
-            "WHERE_IT_LANDS": "Cost & Contract, Snowflake Value",
-            "WHY_IT_MATTERS": "Forecasts burn, ranks contract risk, and auto-captures measured DBA value instead of relying on one-off notes.",
-            "NEXT_ACTION": "Derive value candidates from action queue, metering deltas, alert closures, and workload recovery telemetry.",
-            "SNOWFLAKE_SOURCES": "WAREHOUSE_METERING_HISTORY, METERING_DAILY_HISTORY, OVERWATCH_ACTION_QUEUE, OVERWATCH_ROI_LOG",
-            "OWNER": "DBA / FinOps",
-            "PRODUCTION_GUARDRAIL": "Estimated value cannot become measured until post-period telemetry exists.",
+            "WHERE_IT_LANDS": "Cost & Contract",
+            "WHY_IT_MATTERS": "Forecasts burn, ranks cost drivers, and keeps leadership out of raw ACCOUNT_USAGE scans.",
+            "NEXT_ACTION": "Use run-rate facts, top-driver movement, and action queue telemetry before changing warehouses.",
+            "SNOWFLAKE_SOURCES": "WAREHOUSE_METERING_HISTORY, METERING_DAILY_HISTORY, OVERWATCH_ACTION_QUEUE",
+            "OWNER": "DBA / Cost owner",
+            "PRODUCTION_GUARDRAIL": "Run-rate projections are monitoring signals, not automatic remediation authority.",
         },
         {
             "RANK": 5,
@@ -99,14 +99,14 @@ def build_capability_register_rows() -> list[dict[str, object]]:
         },
         {
             "RANK": 8,
-            "CAPABILITY": "Fast Summary Layer With Fallback",
+            "CAPABILITY": "Scheduled Mart Layer With Fallback",
             "STATUS": "Foundation",
             "WHERE_IT_LANDS": "Data Health, DBA Control Room, Cost & Contract",
             "WHY_IT_MATTERS": "Keeps first paint fast and makes live ACCOUNT_USAGE scans explicit instead of accidental.",
-            "NEXT_ACTION": "Add optional dynamic tables where supported and fallback views/tasks everywhere else.",
-            "SNOWFLAKE_SOURCES": "ACCOUNT_USAGE, Dynamic Tables, Streams/Tasks, OVERWATCH_FACT tables",
+            "NEXT_ACTION": "Refresh scheduled fact and mart tables through the consolidated setup task graph.",
+            "SNOWFLAKE_SOURCES": "ACCOUNT_USAGE, Streams/Tasks, OVERWATCH fact tables",
             "OWNER": "DBA Platform",
-            "PRODUCTION_GUARDRAIL": "Never auto-enable expensive refresh without warehouse, lag, and cost review.",
+            "PRODUCTION_GUARDRAIL": "Do not add parallel DDL setup paths outside the consolidated mart setup.",
         },
         {
             "RANK": 9,
@@ -455,7 +455,7 @@ def build_data_reconciliation_runner_sql() -> str:
     """)
 
 
-def build_predictive_finops_sql(days: int = 90) -> str:
+def build_cost_run_rate_sql(days: int = 90) -> str:
     """Build contract burn, run-rate, and driver forecast SQL."""
     days = max(7, int(days or 90))
     return _sql(f"""
@@ -500,6 +500,17 @@ def build_predictive_finops_sql(days: int = 90) -> str:
             ORDER BY credits_30d DESC
             LIMIT 1
         ),
+        open_actions AS (
+            SELECT
+                COUNT(*) AS open_cost_actions,
+                COALESCE(SUM(EST_MONTHLY_SAVINGS), 0) AS open_est_monthly_savings
+            FROM OVERWATCH_ACTION_QUEUE
+            WHERE UPPER(COALESCE(STATUS, 'NEW')) NOT IN ('FIXED', 'IGNORED', 'RESOLVED', 'CLOSED')
+              AND (
+                  UPPER(COALESCE(CATEGORY, '')) LIKE '%COST%'
+                  OR UPPER(COALESCE(SOURCE, '')) LIKE '%COST%'
+              )
+        ),
         projected AS (
             SELECT
                 f.avg_7d_credits,
@@ -512,9 +523,12 @@ def build_predictive_finops_sql(days: int = 90) -> str:
                   + f.avg_7d_credits * GREATEST(0, DATEDIFF('DAY', CURRENT_DATE(), LAST_DAY(CURRENT_DATE()))))
                   * COALESCE(s.credit_price_usd, 3.68), 2) AS projected_month_end_usd,
                 t.warehouse_name AS top_driver,
-                t.credits_30d AS top_driver_credits_30d
+                t.credits_30d AS top_driver_credits_30d,
+                a.open_cost_actions,
+                a.open_est_monthly_savings
             FROM forecast f
             CROSS JOIN settings s
+            CROSS JOIN open_actions a
             LEFT JOIN top_driver t ON TRUE
         )
         SELECT
@@ -522,7 +536,7 @@ def build_predictive_finops_sql(days: int = 90) -> str:
             CASE
                 WHEN monthly_contract_credits IS NULL THEN 'Set MONTHLY_CONTRACT_CREDITS in OVERWATCH_SETTINGS.'
                 WHEN projected_month_end_credits > monthly_contract_credits THEN 'Contract burn risk. Work top driver and action queue now.'
-                WHEN projected_month_end_credits > monthly_contract_credits * 0.9 THEN 'Approaching contract pace. Validate budget actions.'
+                WHEN projected_month_end_credits > monthly_contract_credits * 0.9 THEN 'Approaching contract pace. Validate the top driver.'
                 ELSE 'Contract pace within current threshold.'
             END AS recommended_action
         FROM projected;
@@ -676,49 +690,6 @@ def build_overwatch_self_monitoring_sql(days: int = 7) -> str:
     """)
 
 
-def build_precompute_contract_sql() -> str:
-    """Return optional dynamic-table and fallback view contracts."""
-    return _sql("""
-        -- Optional dynamic table path. Enable only after refresh lag, warehouse,
-        -- and cost ownership are approved.
-        CREATE DYNAMIC TABLE IF NOT EXISTS DT_OVERWATCH_QUERY_HEALTH_HOURLY
-          TARGET_LAG = '60 minutes'
-          WAREHOUSE = OVERWATCH_WH
-        AS
-        SELECT
-            DATE_TRUNC('HOUR', start_time) AS hour_start,
-            warehouse_name,
-            user_name,
-            role_name,
-            database_name,
-            COUNT(*) AS query_count,
-            COUNT_IF(execution_status = 'FAIL') AS failed_count,
-            AVG(total_elapsed_time) AS avg_elapsed_ms,
-            SUM(bytes_scanned) AS bytes_scanned,
-            SUM(bytes_spilled_to_remote_storage) AS bytes_spilled_remote
-        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-        WHERE start_time >= DATEADD('DAY', -14, CURRENT_TIMESTAMP())
-        GROUP BY 1, 2, 3, 4, 5;
-
-        -- Fallback path for accounts that cannot use Dynamic Tables.
-        CREATE OR REPLACE VIEW OVERWATCH_QUERY_HEALTH_HOURLY_V AS
-        SELECT
-            DATE_TRUNC('HOUR', start_time) AS hour_start,
-            warehouse_name,
-            user_name,
-            role_name,
-            database_name,
-            COUNT(*) AS query_count,
-            COUNT_IF(execution_status = 'FAIL') AS failed_count,
-            AVG(total_elapsed_time) AS avg_elapsed_ms,
-            SUM(bytes_scanned) AS bytes_scanned,
-            SUM(bytes_spilled_to_remote_storage) AS bytes_spilled_remote
-        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-        WHERE start_time >= DATEADD('DAY', -14, CURRENT_TIMESTAMP())
-        GROUP BY 1, 2, 3, 4, 5;
-    """)
-
-
 def build_compliance_readiness_sql(days: int = 30) -> str:
     """Build admin/security compliance scorecard evidence."""
     days = max(1, int(days or 30))
@@ -813,268 +784,6 @@ def build_data_first_navigation_contract_sql() -> str:
     """)
 
 
-def build_snowflake_value_auto_ddl() -> str:
-    """Return DDL/procedure contract for no-touch value log capture."""
-    return _sql("""
-        ALTER TABLE IF EXISTS OVERWATCH_ROI_LOG ADD COLUMN IF NOT EXISTS VALUE_SOURCE VARCHAR(100);
-        ALTER TABLE IF EXISTS OVERWATCH_ROI_LOG ADD COLUMN IF NOT EXISTS EVIDENCE_SOURCE VARCHAR(200);
-        ALTER TABLE IF EXISTS OVERWATCH_ROI_LOG ADD COLUMN IF NOT EXISTS EVIDENCE_ID VARCHAR(500);
-        ALTER TABLE IF EXISTS OVERWATCH_ROI_LOG ADD COLUMN IF NOT EXISTS VALUE_STATE VARCHAR(60) DEFAULT 'ESTIMATED';
-        ALTER TABLE IF EXISTS OVERWATCH_ROI_LOG ADD COLUMN IF NOT EXISTS BUSINESS_IMPACT VARCHAR(2000);
-        ALTER TABLE IF EXISTS OVERWATCH_ROI_LOG ADD COLUMN IF NOT EXISTS OWNER VARCHAR(300);
-        ALTER TABLE IF EXISTS OVERWATCH_ROI_LOG ADD COLUMN IF NOT EXISTS VERIFIED_TS TIMESTAMP_NTZ;
-
-        CREATE TABLE IF NOT EXISTS OVERWATCH_VALUE_AUTOMATION_RUN (
-          RUN_ID               NUMBER AUTOINCREMENT PRIMARY KEY,
-          RUN_TS               TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
-          RUN_STATUS           VARCHAR(40),
-          CANDIDATE_COUNT      NUMBER,
-          INSERTED_COUNT       NUMBER,
-          VERIFIED_COUNT       NUMBER,
-          MESSAGE              VARCHAR(4000)
-        );
-
-        CREATE OR REPLACE VIEW OVERWATCH_VALUE_CANDIDATE_V AS
-        WITH cost_actions AS (
-            SELECT
-                'ACTION_QUEUE' AS value_source,
-                'OVERWATCH_ACTION_QUEUE' AS evidence_source,
-                action_id AS evidence_id,
-                COALESCE(category, 'Cost action') AS category,
-                COALESCE(entity_name, category, 'Snowflake action') AS entity,
-                COALESCE(recommended_action, category, 'OVERWATCH action') AS description,
-                COALESCE(owner, owner_email, approval_group, 'DBA / FinOps') AS owner,
-                COALESCE(est_monthly_savings, 0) AS savings_monthly,
-                CASE
-                    WHEN UPPER(COALESCE(verification_status, '')) = 'VERIFIED' THEN TRUE
-                    ELSE FALSE
-                END AS verified,
-                verification_result AS notes,
-                'Cost avoided from verified action queue item.' AS business_impact
-            FROM OVERWATCH_ACTION_QUEUE
-            WHERE COALESCE(est_monthly_savings, 0) > 0
-              AND UPPER(COALESCE(status, '')) IN ('FIXED', 'COMPLETED', 'DONE')
-        ),
-        alert_prevention AS (
-            SELECT
-                'ALERT_CLOSURE' AS value_source,
-                'ALERT_EVENTS' AS evidence_source,
-                TO_VARCHAR(event_id) AS evidence_id,
-                COALESCE(category, 'Alert prevention') AS category,
-                COALESCE(entity_name, category, 'Snowflake alert') AS entity,
-                COALESCE(recommended_action, alert_key, 'Resolved OVERWATCH alert') AS description,
-                COALESCE(owner, 'DBA On-Call') AS owner,
-                CASE
-                    WHEN UPPER(COALESCE(severity, '')) = 'CRITICAL' THEN 25000
-                    WHEN UPPER(COALESCE(severity, '')) = 'HIGH' THEN 10000
-                    WHEN UPPER(COALESCE(severity, '')) = 'MEDIUM' THEN 2500
-                    ELSE 0
-                END AS savings_monthly,
-                TRUE AS verified,
-                COALESCE(evidence, business_impact, impact_estimate, 'Resolved alert with OVERWATCH evidence.') AS notes,
-                'Incident risk retired by alert triage and closure.' AS business_impact
-            FROM ALERT_EVENTS
-            WHERE UPPER(COALESCE(status, '')) IN ('RESOLVED', 'CLOSED')
-              AND UPPER(COALESCE(severity, '')) IN ('CRITICAL', 'HIGH', 'MEDIUM')
-        )
-        SELECT * FROM cost_actions
-        UNION ALL
-        SELECT * FROM alert_prevention;
-
-        CREATE OR REPLACE VIEW OVERWATCH_VALUE_AUTOMATION_HEALTH_V AS
-        WITH candidates AS (
-            SELECT
-                COUNT(*) AS candidate_count,
-                COUNT_IF(verified) AS verified_candidate_count,
-                ROUND(SUM(COALESCE(savings_monthly, 0)), 2) AS candidate_monthly_value,
-                ROUND(SUM(IFF(verified, COALESCE(savings_monthly, 0), 0)), 2) AS verified_candidate_monthly_value
-            FROM OVERWATCH_VALUE_CANDIDATE_V
-        ),
-        ledger AS (
-            SELECT
-                COUNT(*) AS automated_ledger_rows,
-                COUNT_IF(verified) AS verified_ledger_rows,
-                ROUND(SUM(COALESCE(savings_monthly, 0)), 2) AS ledger_monthly_value,
-                MAX(logged_date) AS latest_logged_date
-            FROM OVERWATCH_ROI_LOG
-            WHERE value_source IS NOT NULL
-        ),
-        last_run AS (
-            SELECT
-                run_ts AS latest_run_ts,
-                run_status AS latest_run_status,
-                candidate_count AS latest_candidate_count,
-                inserted_count AS latest_inserted_count,
-                verified_count AS latest_verified_count,
-                message AS latest_message
-            FROM OVERWATCH_VALUE_AUTOMATION_RUN
-            QUALIFY ROW_NUMBER() OVER (ORDER BY run_ts DESC) = 1
-        )
-        SELECT
-            c.candidate_count,
-            c.verified_candidate_count,
-            c.candidate_monthly_value,
-            c.verified_candidate_monthly_value,
-            l.automated_ledger_rows,
-            l.verified_ledger_rows,
-            l.ledger_monthly_value,
-            l.latest_logged_date,
-            r.latest_run_ts,
-            r.latest_run_status,
-            r.latest_candidate_count,
-            r.latest_inserted_count,
-            r.latest_verified_count,
-            CASE
-                WHEN r.latest_run_ts IS NULL THEN 'Deploy and run SP_OVERWATCH_AUTOMATE_VALUE_LOG.'
-                WHEN r.latest_run_status <> 'SUCCESS' THEN 'Inspect OVERWATCH_VALUE_AUTOMATION_RUN before trusting value automation.'
-                WHEN c.candidate_count > l.automated_ledger_rows THEN 'Run SP_OVERWATCH_AUTOMATE_VALUE_LOG to merge new candidates.'
-                ELSE 'Automation ledger is current for visible candidates.'
-            END AS next_action
-        FROM candidates c
-        CROSS JOIN ledger l
-        LEFT JOIN last_run r ON TRUE;
-
-        CREATE OR REPLACE PROCEDURE SP_OVERWATCH_AUTOMATE_VALUE_LOG()
-        RETURNS VARCHAR
-        LANGUAGE SQL
-        EXECUTE AS CALLER
-        AS
-        $$
-        DECLARE
-          candidate_count NUMBER DEFAULT 0;
-          inserted_count NUMBER DEFAULT 0;
-          verified_count NUMBER DEFAULT 0;
-        BEGIN
-          SELECT COUNT(*), COUNT_IF(verified)
-            INTO :candidate_count, :verified_count
-          FROM OVERWATCH_VALUE_CANDIDATE_V;
-
-          MERGE INTO OVERWATCH_ROI_LOG tgt
-          USING (
-            SELECT
-                value_source,
-                evidence_source,
-                evidence_id,
-                category,
-                description,
-                entity,
-                owner,
-                savings_monthly,
-                verified,
-                notes,
-                business_impact
-            FROM OVERWATCH_VALUE_CANDIDATE_V
-          ) src
-          ON COALESCE(tgt.evidence_id, '') = COALESCE(src.evidence_id, '')
-             AND COALESCE(tgt.evidence_source, '') = COALESCE(src.evidence_source, '')
-          WHEN NOT MATCHED THEN INSERT (
-              logged_by, category, description, entity, baseline_credits,
-              current_credits, savings_credits, savings_monthly, verified,
-              company, notes, value_source, evidence_source, evidence_id,
-              value_state, business_impact, owner, verified_ts
-          )
-          VALUES (
-              'OVERWATCH_AUTOMATION', src.category, src.description, src.entity,
-              NULL, NULL, NULL, src.savings_monthly, src.verified,
-              NULL, src.notes, src.value_source, src.evidence_source, src.evidence_id,
-              IFF(src.verified, 'VERIFIED', 'ESTIMATED'), src.business_impact,
-              src.owner, IFF(src.verified, CURRENT_TIMESTAMP(), NULL)
-          );
-
-          inserted_count := SQLROWCOUNT;
-
-          INSERT INTO OVERWATCH_VALUE_AUTOMATION_RUN (
-              run_status, candidate_count, inserted_count, verified_count, message
-          )
-          VALUES (
-              'SUCCESS', :candidate_count, :inserted_count, :verified_count,
-              'Automated Snowflake value capture completed.'
-          );
-
-          RETURN 'OVERWATCH value automation complete. candidates=' || candidate_count ||
-                 ', inserted=' || inserted_count || ', verified=' || verified_count;
-        END;
-        $$;
-    """)
-
-
-def build_snowflake_value_candidate_sql(limit: int = 100) -> str:
-    """Return the read-only query for current no-touch value candidates."""
-    limit = max(1, int(limit or 100))
-    return _sql(f"""
-        SELECT
-            value_source,
-            evidence_source,
-            evidence_id,
-            category,
-            entity,
-            owner,
-            ROUND(savings_monthly, 2) AS savings_monthly,
-            IFF(verified, 'VERIFIED', 'ESTIMATED') AS value_state,
-            business_impact,
-            notes
-        FROM OVERWATCH_VALUE_CANDIDATE_V
-        ORDER BY verified DESC, savings_monthly DESC, value_source, evidence_id
-        LIMIT {limit};
-    """)
-
-
-def build_snowflake_value_automation_health_sql() -> str:
-    """Return the read-only query for value automation freshness/readiness."""
-    return _sql("""
-        SELECT
-            candidate_count,
-            verified_candidate_count,
-            candidate_monthly_value,
-            verified_candidate_monthly_value,
-            automated_ledger_rows,
-            verified_ledger_rows,
-            ledger_monthly_value,
-            latest_logged_date,
-            latest_run_ts,
-            latest_run_status,
-            latest_candidate_count,
-            latest_inserted_count,
-            latest_verified_count,
-            next_action
-        FROM OVERWATCH_VALUE_AUTOMATION_HEALTH_V;
-    """)
-
-
-def build_snowflake_value_automation_rows() -> list[dict[str, str]]:
-    """Return the value automation model used by the UI."""
-    return [
-        {
-            "VALUE_SIGNAL": "Measured cost action",
-            "EVIDENCE_SOURCE": "OVERWATCH_ACTION_QUEUE",
-            "VALUE_STATE": "Estimated until post-period measurement marks it measured",
-            "CAPTURE_RULE": "Fixed/completed action with estimated monthly savings and measurement state.",
-            "WHY_IT_MATTERS": "DBAs should not retype savings already measured by the queue.",
-        },
-        {
-            "VALUE_SIGNAL": "Resolved alert with value at risk",
-            "EVIDENCE_SOURCE": "ALERT_EVENTS",
-            "VALUE_STATE": "Measured when alert is closed with resolution notes",
-            "CAPTURE_RULE": "Closed/resolved alert with business impact or value_at_risk_usd.",
-            "WHY_IT_MATTERS": "Incident prevention belongs in the value ledger, not only cost cuts.",
-        },
-        {
-            "VALUE_SIGNAL": "Workload recovery",
-            "EVIDENCE_SOURCE": "OVERWATCH_WORKLOAD_RECOVERY_AUDIT",
-            "VALUE_STATE": "Estimated until duration/queue/error baseline improves",
-            "CAPTURE_RULE": "Recovery audit rows with before/after runtime or SLA telemetry.",
-            "WHY_IT_MATTERS": "Reliability wins are DBA value even when credits are flat.",
-        },
-        {
-            "VALUE_SIGNAL": "Query optimization",
-            "EVIDENCE_SOURCE": "QUERY_HISTORY / action queue",
-            "VALUE_STATE": "Estimated until same query hash improves after change",
-            "CAPTURE_RULE": "Query hash with reduced elapsed, spill, bytes scanned, or credit allocation.",
-            "WHY_IT_MATTERS": "Specific SQL improvements need measured post-change telemetry.",
-        },
-    ]
-
-
 def build_operational_intelligence_sql_catalog() -> list[dict[str, str]]:
     """Return SQL contracts for the twelve-command-intelligence foundation."""
     return [
@@ -1097,10 +806,10 @@ def build_operational_intelligence_sql_catalog() -> list[dict[str, str]]:
             "SQL": build_data_reconciliation_config_ddl() + "\n" + build_data_reconciliation_runner_sql(),
         },
         {
-            "CAPABILITY": "Predictive FinOps and Automated Value Log",
-            "SQL_NAME": "Contract burn forecast and value automation",
+            "CAPABILITY": "Cost Run-Rate and Attribution Monitor",
+            "SQL_NAME": "Contract burn forecast and top driver monitor",
             "TELEMETRY": "Metering plus action telemetry",
-            "SQL": build_predictive_finops_sql() + "\n" + build_snowflake_value_auto_ddl(),
+            "SQL": build_cost_run_rate_sql(),
         },
         {
             "CAPABILITY": "Alert Lifecycle 2.0",
@@ -1121,10 +830,10 @@ def build_operational_intelligence_sql_catalog() -> list[dict[str, str]]:
             "SQL": build_overwatch_self_monitoring_sql(),
         },
         {
-            "CAPABILITY": "Fast Summary Layer With Fallback",
-            "SQL_NAME": "Summary refresh and fallback view",
-            "TELEMETRY": "Precompute contract",
-            "SQL": build_precompute_contract_sql(),
+            "CAPABILITY": "Scheduled Mart Layer With Fallback",
+            "SQL_NAME": "Consolidated mart setup",
+            "TELEMETRY": "Scheduled task graph",
+            "SQL": "-- Scheduled facts and marts are defined in snowflake/OVERWATCH_MART_SETUP.sql.",
         },
         {
             "CAPABILITY": "Security Risk Monitoring",
@@ -1148,7 +857,7 @@ def build_operational_intelligence_sql_catalog() -> list[dict[str, str]]:
             "CAPABILITY": "Monitoring Docs and Runbooks",
             "SQL_NAME": "Status bundle",
             "TELEMETRY": "Repository docs",
-            "SQL": "-- See docs/OVERWATCH_COMMAND_INTELLIGENCE_RUNBOOK.md and snowflake/PRECOMPUTE.sql.",
+            "SQL": "-- See docs/OVERWATCH_COMMAND_INTELLIGENCE_RUNBOOK.md and snowflake/OVERWATCH_MART_SETUP.sql.",
         },
     ]
 
@@ -1158,10 +867,9 @@ def build_capability_setup_sql() -> str:
     return "\n\n".join(
         [
             "-- OVERWATCH command intelligence foundation",
+            "-- Deploy Snowflake DDL from snowflake/OVERWATCH_MART_SETUP.sql.",
             build_data_reconciliation_config_ddl(),
             build_data_first_navigation_contract_sql(),
-            build_snowflake_value_auto_ddl(),
-            build_precompute_contract_sql(),
             "-- Deploy views above only after privilege and refresh-cost review.",
         ]
     ).strip() + "\n"
@@ -1195,11 +903,11 @@ def build_command_intelligence_runbook_markdown() -> str:
     lines.extend(
         [
             "",
-            "## Automated Snowflake Value Log",
+            "## Cost Run-Rate Monitoring",
             "",
-            "OVERWATCH should capture value candidates from action queue closure, alert resolution, workload recovery, and query optimization telemetry. One-off entries stay available for exceptional wins, but the default path is automated and telemetry-backed.",
+            "OVERWATCH should explain cost movement from compact run-rate facts, top-driver movement, Cortex usage, and routed action queue telemetry.",
             "",
-            "Estimated value is directional. Measured value requires post-period telemetry and a recorded status result.",
+            "Cost actions stay review-gated. Projections explain the next investigation; they do not execute warehouse changes.",
         ]
     )
     return "\n".join(lines).strip() + "\n"

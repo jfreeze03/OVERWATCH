@@ -32,7 +32,6 @@ _FULL_WORKSPACE_STATE_KEYS = (
     "cost_contract_queue",
     "cost_contract_attribution_reconciliation",
     "cost_contract_service_lens",
-    "cost_contract_budget_command_center",
     "cost_contract_spike_root_cause",
     "cost_contract_change_cost_correlation",
 )
@@ -49,29 +48,14 @@ _WORKFLOWS = (
         "MOVE": "Review database, failsafe, stage, and table storage cost telemetry from Snowflake storage usage views.",
     },
     {
-        "WORKFLOW": "FinOps Control Center",
-        "BUTTON_LABEL": "Open FinOps",
-        "MOVE": "Review resource monitors, measured savings, budget risk, and contract pace.",
-    },
-    {
         "WORKFLOW": "AI and Cortex spend",
         "BUTTON_LABEL": "Open Cortex Spend",
         "MOVE": "Review Cortex usage, model spend, users, and runaway AI cost signals.",
     },
     {
-        "WORKFLOW": "Budget Monitoring",
-        "BUTTON_LABEL": "Open Budgets",
-        "MOVE": "Check native Snowflake budgets, AI quota patterns, and budget actions.",
-    },
-    {
         "WORKFLOW": "Recommendations and action queue",
         "BUTTON_LABEL": "Open Recommendations",
         "MOVE": "Route cost fixes with savings, severity, and telemetry status.",
-    },
-    {
-        "WORKFLOW": "Snowflake value log",
-        "BUTTON_LABEL": "Open Value Log",
-        "MOVE": "Show DBA savings, avoided spend, and service-improvement telemetry.",
     },
 )
 
@@ -248,7 +232,6 @@ def _loaded_cost_board() -> dict:
         "high_actions": high_actions,
         "est_savings": est_savings,
         "cortex": _money(command_summary.get("cortex_cost_usd")) if command_summary.get("loaded") else ("Loaded" if _is_loaded_frame(st.session_state.get("cortex_control_summary")) else "On demand"),
-        "budget": "Loaded" if _is_loaded_frame(st.session_state.get("cost_contract_budget_command_center")) else "On demand",
         "status": "Loaded" if loaded_at or command_summary.get("loaded") else "On demand",
     }
 
@@ -294,16 +277,10 @@ def _cost_shell_lanes(board: dict | None = None) -> tuple[dict[str, str], ...]:
                 "detail": "Recommendations require expected savings, action route, and telemetry status.",
             },
             {
-                "label": "Budget risk",
+                "label": "Contract pace",
                 "value": "On demand",
-                "state": "Budget",
-                "detail": "Budgets and quota controls load with the FinOps workflow.",
-            },
-            {
-                "label": "Value log",
-                "value": "Automated",
-                "state": "Telemetry",
-                "detail": "Candidate savings are generated from metering and action status.",
+                "state": "Forecast",
+                "detail": "Forecasted burn is compared with current spend pace.",
             },
         )
     delta = _float_value(board.get("delta_spend"))
@@ -344,12 +321,6 @@ def _cost_shell_lanes(board: dict | None = None) -> tuple[dict[str, str], ...]:
             "value": f"{_int_value(board.get('open_actions')):,} open",
             "state": f"{_int_value(board.get('high_actions')):,} high",
             "detail": f"Open estimated savings: {_money(board.get('est_savings'))}.",
-        },
-        {
-            "label": "Budget risk",
-            "value": str(board.get("budget") or "On demand"),
-            "state": "Budget",
-            "detail": "Budget and resource monitor controls are routed through FinOps.",
         },
         {
             "label": "Contract pace",
@@ -417,7 +388,7 @@ def _render_metric_board() -> None:
         render_shell_kpi_row((
             ("Cortex", "Awaiting data"),
             ("Top Driver", "Awaiting data"),
-            ("Budget Risk", "On demand"),
+            ("Driver Delta", "Awaiting data"),
             ("Open Actions", "Awaiting data"),
         ))
     else:
@@ -438,7 +409,7 @@ def _render_metric_board() -> None:
         ("Open Actions", f"{_int_value(board.get('open_actions')):,}" if board["loaded"] else "Awaiting data"),
         ("High Priority", f"{_int_value(board.get('high_actions')):,}" if board["loaded"] else "Awaiting data"),
         ("Open Est. Savings", _money(board.get("est_savings")) if board["loaded"] else "Awaiting data"),
-        ("Value Log", "Savings log"),
+        ("Monitoring Scope", "Cost signals"),
     ))
 
 

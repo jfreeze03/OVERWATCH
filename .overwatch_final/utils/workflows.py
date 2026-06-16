@@ -105,9 +105,6 @@ _DISPLAY_TEXT_REPLACEMENTS = (
     (r"\bEvidence\b", "Telemetry"),
     (r"\bproof\b", "telemetry"),
     (r"\bevidence\b", "telemetry"),
-    (r"\bManual Only\b", "DBA Review"),
-    (r"\bmanual verification\b", "telemetry refresh"),
-    (r"\bmanual evidence\b", "telemetry detail"),
     (r"\bapproved changes\b", "reviewed changes"),
     (r"\bapproved action\b", "reviewed action"),
     (r"\bapproved\b", "reviewed"),
@@ -402,7 +399,6 @@ def render_workflow_selector(
                     key=f"{key}_{start}_{workflow}",
                     type="primary" if is_selected else "secondary",
                     width="stretch",
-                    help=details.get(workflow) or None,
                 ):
                     st.session_state[key] = workflow
                     st.rerun()
@@ -420,7 +416,7 @@ def render_mode_selector(
     labels: Mapping[str, str] | None = None,
     columns: int = 4,
 ) -> str:
-    """Render a compact mode selector, using hover-help buttons when details exist."""
+    """Render a compact mode selector that honors deep-link state."""
     if not modes:
         raise ValueError("modes must contain at least one entry")
     options = list(modes)
@@ -445,7 +441,6 @@ def render_mode_selector(
                         key=f"{key}_{start}_{mode}",
                         type="primary" if is_selected else "secondary",
                         width="stretch",
-                        help=details.get(mode) or None,
                     ):
                         st.session_state[key] = mode
                         st.rerun()

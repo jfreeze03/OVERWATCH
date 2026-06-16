@@ -655,7 +655,7 @@ def build_cost_formula_audit() -> pd.DataFrame:
             "Avoids overstating spend when Snowflake returns only days with metered activity.",
         ),
         (
-            "OVERWATCH query budget",
+            "OVERWATCH query-load guardrail",
             "Track query hash, section, elapsed time, row count, result size, and repeated expensive-call count",
             "Operational telemetry",
             "Identifies sections that repeatedly scan too much data; this is a tuning signal, not a Snowflake invoice metric.",

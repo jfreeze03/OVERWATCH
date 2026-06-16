@@ -125,7 +125,7 @@ SECTION_OPERATING_GUIDE = {
         "guardrail": "Do not execute, retry, suspend, or cancel without the exact task/query identity and rollback path.",
     },
     "Cost & Contract": {
-        "first_move": "Work contract burn risk and verified savings actions before cosmetic spend breakdowns.",
+        "first_move": "Work contract burn risk and cost-control actions before cosmetic spend breakdowns.",
         "evidence": "Metering history, query/database attribution, contract target, and savings baseline.",
         "closure": "Close savings only after current spend beats baseline and telemetry status is recorded.",
         "guardrail": "Database-attributed cost is Allocated/Estimated unless exact warehouse metering supports it.",
@@ -215,7 +215,7 @@ SECTION_EVIDENCE_CONTRACT = {
         {
             "source": "Warehouse metering and contract settings",
             "confidence": "Exact metering plus configured contract input",
-            "decision_use": "Track burn rate, renewal pressure, and verified savings.",
+            "decision_use": "Track burn rate, renewal pressure, and cost-control action telemetry.",
             "invalid_use": "Do not treat contract targets as Snowflake-derived facts.",
             "proof": "Configured credit price/contract target and metering window.",
         },

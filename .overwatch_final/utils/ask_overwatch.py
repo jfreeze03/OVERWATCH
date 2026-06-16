@@ -39,10 +39,10 @@ DOMAIN_TERMS = {
         "security", "grant", "role", "login", "mfa", "access",
     ),
     "change": (
-        "change", "drift", "ddl", "route", "verification",
+        "change", "drift", "ddl", "route", "telemetry",
     ),
     "automation": (
-        "automation", "automate", "auto", "guided", "verification", "manual only", "blocker",
+        "automation", "automate", "auto", "guided", "telemetry", "blocker",
     ),
     "ai_platform": (
         "agent", "mcp", "intelligence", "openflow", "horizon", "semantic",
@@ -75,10 +75,6 @@ ASK_OVERWATCH_STATE_KEYS = (
     "dba_operator_runbook",
     "dba_control_room_incident_board",
     "dba_control_room_handoff",
-    "cost_contract_budget_command_summary",
-    "cost_contract_budget_command_center",
-    "cost_contract_native_control_summary",
-    "cost_contract_native_control_inventory",
     "cost_contract_spike_root_cause_summary",
     "cost_contract_spike_root_cause",
     "cost_contract_change_cost_summary",
@@ -171,6 +167,19 @@ def _clean_answer_text(value: object) -> str:
         ("source evidence", "source telemetry"),
         ("data evidence", "data telemetry"),
         ("owner proof", "route telemetry"),
+        ("MANUAL ONLY", "DBA REVIEW"),
+        ("Manual Only", "DBA Review"),
+        ("manual only", "DBA review"),
+        ("VERIFICATION REQUIRED", "TELEMETRY NEEDED"),
+        ("Verification Required", "Telemetry Needed"),
+        ("verification required", "telemetry needed"),
+        ("EVIDENCE REQUIRED", "TELEMETRY NEEDED"),
+        ("Evidence Required", "Telemetry Needed"),
+        ("evidence required", "telemetry needed"),
+        ("Proof Required", "Closure Telemetry"),
+        ("proof required", "closure telemetry"),
+        ("proof evidence", "closure telemetry"),
+        ("Proof Evidence", "Closure Telemetry"),
         ("Owner/route", "Route"),
         ("owner, ", "route, "),
         ("owner and ", "route and "),
@@ -261,75 +270,7 @@ def _cards_from_automation_board(state: Mapping, cards: list[dict]) -> None:
         })
 
 
-def _cards_from_cost_command_center(state: Mapping, cards: list[dict]) -> None:
-    frame = state.get("cost_contract_budget_command_center")
-    if not _is_df(frame):
-        return
-    view = frame.copy()
-    view.columns = [str(col).upper() for col in view.columns]
-    if "SEVERITY" in view.columns:
-        view["_RANK"] = view["SEVERITY"].apply(_rank)
-    else:
-        view["_RANK"] = 9
-    if "VALUE_AT_RISK_USD" not in view.columns:
-        view["VALUE_AT_RISK_USD"] = 0
-    view = view.sort_values(["_RANK", "VALUE_AT_RISK_USD"], ascending=[True, False]).drop(columns=["_RANK"])
-    for _, row in view.head(8).iterrows():
-        lane = _text(row, "LANE", default="Cost Monitoring")
-        native = _text(row, "NATIVE_CONTROL", default="OVERWATCH telemetry control")
-        scope = _text(row, "CONTROL_SCOPE", default="Cost telemetry")
-        value = _text(row, "VALUE_AT_RISK_USD", default="0")
-        _append_card(cards, {
-            "surface": "Cost & Contract - Budget & Anomaly Command Center",
-            "severity": _text(row, "SEVERITY", default="Medium"),
-            "signal": _text(row, "SIGNAL", default=lane),
-            "entity": lane,
-            "evidence": (
-                f"native_control={native}; scope={scope}; value_at_risk=${value}. "
-                f"{_text(row, 'EVIDENCE', default='Loaded Cost Monitoring telemetry.')}"
-            ),
-            "next_action": _text(row, "NEXT_ACTION", "DBA_DECISION", default="Open Cost & Contract and work the top budget/anomaly lane."),
-            "proof": _text(row, "PROOF_REQUIRED", default="Record cost cockpit, run-rate, budget, or action queue telemetry before closure."),
-            "do_not": _text(row, "DO_NOT_DO", default="Do not change budgets, monitors, or warehouse settings without telemetry review."),
-            "route": _text(row, "ROUTE", default="Cost & Contract"),
-            "category": native,
-            "value": value,
-        })
-
-
 def _cards_from_cost_operational_boards(state: Mapping, cards: list[dict]) -> None:
-    inventory = state.get("cost_contract_native_control_inventory")
-    if _is_df(inventory):
-        view = inventory.copy()
-        view.columns = [str(col).upper() for col in view.columns]
-        state_rank = {
-            "REVIEW": 0,
-            "CANDIDATE": 1,
-            "CONTROL PATTERN": 2,
-            "READY TO DEPLOY": 3,
-            "READY": 4,
-        }
-        view["_RANK"] = view.get("STATE", pd.Series([""] * len(view), index=view.index)).fillna("").astype(str).str.upper().map(state_rank).fillna(9)
-        view = view.sort_values(["_RANK", "CONTROL"], ascending=[True, True]).drop(columns=["_RANK"])
-        for _, row in view.head(8).iterrows():
-            control = _text(row, "CONTROL", default="Cost control")
-            _append_card(cards, {
-                "surface": "Cost & Contract - Native Cost Control Inventory",
-                "severity": "High" if _text(row, "STATE").upper() in {"REVIEW", "CANDIDATE"} else "Medium",
-                "signal": _text(row, "STATE", default="Review"),
-                "entity": control,
-                "evidence": (
-                    f"native_surface={_text(row, 'NATIVE_SURFACE')}; scope={_text(row, 'SCOPE')}. "
-                    f"{_text(row, 'EVIDENCE')}"
-                ),
-                "next_action": _text(row, "DBA_NEXT_MOVE", default="Open Cost & Contract and review the native control gap."),
-                "proof": _text(row, "STRICT_GAP", default="Record native control inventory, budget, monitor, and email telemetry."),
-                "do_not": "Do not claim Snowflake cost-control health until the native surface, scope, and notification gap are checked.",
-                "route": _text(row, "SQL_PACKAGE", default="Cost & Contract > Budget Monitoring"),
-                "category": _text(row, "NATIVE_SURFACE", default="Cost Control"),
-                "value": _text(row, "STATE", default="Review"),
-            })
-
     root_cause = state.get("cost_contract_spike_root_cause")
     if _is_df(root_cause):
         view = root_cause.copy()
@@ -351,7 +292,7 @@ def _cards_from_cost_operational_boards(state: Mapping, cards: list[dict]) -> No
                 ),
                 "next_action": _text(row, "NEXT_ACTION", default="Open Cost & Contract root-cause drilldown."),
                 "proof": _text(row, "PROOF_REQUIRED", default="Record run-rate, warehouse, attribution, and route telemetry."),
-                "do_not": "Do not tune warehouses, enforce quotas, or change budgets until root-cause telemetry is available.",
+                "do_not": "Do not tune warehouses or change workload routing until root-cause telemetry is available.",
                 "route": _text(row, "ROUTE", default="Cost & Contract"),
                 "category": driver,
                 "value": _text(row, "VALUE_AT_RISK_USD", default="0"),
@@ -524,7 +465,7 @@ def _cards_from_executive_landing(state: Mapping, cards: list[dict]) -> None:
                     f"current={current_credits:,.2f} credits; prior={prior_credits:,.2f}; "
                     f"delta={delta:+,.2f} credits."
                 ),
-                "next_action": "Open Cost & Contract and validate the top cost driver before budget or warehouse action.",
+                "next_action": "Open Cost & Contract and validate the top cost driver before changing warehouse settings.",
                 "proof": "Warehouse metering and cost cockpit rows for the same executive window.",
                 "do_not": "Do not resize or suspend based on aggregate spend without driver and workload evidence.",
                 "route": "Cost & Contract",
@@ -1005,7 +946,6 @@ def build_ask_overwatch_context(state: Mapping, *, max_cards: int = 30) -> list[
     _cards_from_executive_landing(state, cards)
     _cards_from_recommendations(state, cards)
     _cards_from_automation_board(state, cards)
-    _cards_from_cost_command_center(state, cards)
     _cards_from_cost_operational_boards(state, cards)
     _cards_from_queue(state.get("rec_action_queue"), cards, surface="Recommendations action queue")
     _cards_from_queue(state.get("cost_contract_queue"), cards, surface="Cost & Contract action queue")

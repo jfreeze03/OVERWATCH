@@ -200,13 +200,22 @@ class NavigationIntegrityTests(unittest.TestCase):
                     self.assertNotIn("render_shell_status_strip", shell_text)
                     self.assertIn("Executive Glance KPIs", shell_text)
                     continue
-                self.assertIn("def _return_to_brief", shell_text)
-                self.assertIn("def _render_back_to_brief_control", shell_text)
-                self.assertIn('st.button("Back to Brief"', shell_text)
+                if section == "Workload Operations":
+                    self.assertNotIn("def _return_to_brief", shell_text)
+                    self.assertNotIn("def _render_back_to_brief_control", shell_text)
+                    self.assertNotIn('st.button("Back to Brief"', shell_text)
+                    self.assertIn("def _return_to_workload_board", shell_text)
+                    self.assertIn("def _render_back_to_workload_board_control", shell_text)
+                    self.assertIn('st.button("Back to Workload Board"', shell_text)
+                    self.assertIn("_render_back_to_workload_board_control()", shell_text)
+                else:
+                    self.assertIn("def _return_to_brief", shell_text)
+                    self.assertIn("def _render_back_to_brief_control", shell_text)
+                    self.assertIn('st.button("Back to Brief"', shell_text)
+                    self.assertIn("_render_back_to_brief_control()", shell_text)
                 self.assertIn("full_workspace_requested", shell_text)
                 self.assertIn("st.session_state[_BRIEF_MODE_KEY] = False", shell_text)
                 self.assertIn("st.session_state[_BRIEF_MODE_KEY] = True", shell_text)
-                self.assertIn("_render_back_to_brief_control()", shell_text)
                 self.assertIn("from sections.shell_helpers import", shell_text)
                 self.assertIn("render_signal_lane_board", shell_text)
                 self.assertNotIn("render_shell_status_strip", shell_text)
@@ -356,7 +365,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("st.caption(\n                evidence_caption", shell_text)
         self.assertIn("_PLATFORM_SUMMARY_KEY", shell_text)
         self.assertIn("def _executive_glance_kpis", shell_text)
-        self.assertIn("Total spend vs budget", shell_text)
+        self.assertIn("Monthly contract pace", shell_text)
         self.assertIn("Daily burn rate", shell_text)
         self.assertIn("Open critical/high alerts", shell_text)
         self.assertIn("Pipeline SLA compliance", shell_text)
@@ -367,6 +376,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Observability Summary", shell_text)
         self.assertIn("Snowflake Observability Wall", shell_text)
         self.assertIn("Top 5 Action Items", shell_text)
+        self.assertNotIn("st.dataframe(_top_action_rows()", shell_text)
+        self.assertIn("for row in _top_action_rows()", shell_text)
         self.assertNotIn("Setup Readiness", shell_text)
         self.assertNotIn("MART_EXECUTIVE_OBSERVABILITY", shell_text)
         self.assertIn("load_or_reuse_command_board(", shell_text)
@@ -570,9 +581,11 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("render_shell_status_strip(", shell_text)
         self.assertIn("def _render_metric_board", shell_text)
         self.assertIn("Workload Command Board", shell_text)
-        self.assertIn("Contention Solution Board", shell_text)
-        self.assertIn("Contention Answer Model", shell_text)
-        self.assertIn("Safe Fix Status", shell_text)
+        self.assertNotIn("Contention Solution Board", shell_text)
+        self.assertNotIn("Contention Answer Model", shell_text)
+        self.assertNotIn("Safe Fix Status", shell_text)
+        self.assertNotIn("Schema/data compare", shell_text)
+        self.assertNotIn("render_workload_data_quality_board", shell_text)
         self.assertNotIn("render_refresh_contract(", shell_text)
         self.assertNotIn("MART_EXECUTIVE_OBSERVABILITY", shell_text)
         self.assertIn("_load_command_board()", shell_text)
@@ -581,18 +594,20 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("def _render_operating_snapshot", shell_text)
         self.assertIn("Workload Investigation Workflows", shell_text)
         self.assertNotIn("Open Workload Workspace", shell_text)
-        self.assertIn("Open Task Graphs", shell_text)
-        self.assertIn("Open Contention", shell_text)
-        self.assertIn("Open Query Diagnosis", shell_text)
-        self.assertIn("Open Live Triage", shell_text)
+        self.assertIn("Open Query Triage", shell_text)
+        self.assertIn("Open Pipeline Health", shell_text)
+        self.assertNotIn("Open Task Graphs", shell_text)
+        self.assertNotIn("Open Contention", shell_text)
+        self.assertNotIn("Open Query Diagnosis", shell_text)
+        self.assertNotIn("Open Live Triage", shell_text)
         self.assertIn("_EXPLICIT_WORKFLOW_KEY", shell_text)
         self.assertIn("st.session_state[_EXPLICIT_WORKFLOW_KEY] = True", shell_text)
-        self.assertIn("WORKLOAD_OPERATIONS_VIEWS", full_workspace_text)
         self.assertIn("WORKLOAD_OPERATIONS_EXPLICIT_WORKFLOW_KEY", full_workspace_text)
-        self.assertIn(
-            'st.session_state.get("workload_operations_view") == "Specialist Workflows" and not explicit_workflow_request',
-            full_workspace_text,
-        )
+        self.assertNotIn("WORKLOAD_OPERATIONS_VIEWS", full_workspace_text)
+        self.assertNotIn("Workload Brief", full_workspace_text)
+        self.assertNotIn("workload_operations_view", full_workspace_text)
+        self.assertNotIn("Refresh Workload Snapshot", full_workspace_text)
+        self.assertNotIn("Download DBA runbook", full_workspace_text)
 
     def test_cost_contract_uses_fast_shell_module(self):
         self.assertEqual(SECTION_MODULES["Cost & Contract"], "sections.cost_contract_shell")
@@ -637,9 +652,10 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("render_shell_workflows(", shell_text)
         self.assertNotIn("visible = _WORKFLOWS[1:4]", shell_text)
         self.assertNotIn("extra_cols", shell_text)
-        self.assertIn("Open FinOps", shell_text)
+        self.assertNotIn("Open FinOps", shell_text)
         self.assertIn("Open Cortex Spend", shell_text)
-        self.assertIn("Open Budgets", shell_text)
+        self.assertNotIn("Open Budgets", shell_text)
+        self.assertNotIn("Open Value Log", shell_text)
         self.assertIn("Open Storage Cost", shell_text)
         self.assertIn("cost_contract_workflow", shell_text)
         self.assertNotIn("open_detail", shell_text)
@@ -689,7 +705,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(resolve_allowed_experience_views("SNOW_PRI_GFR_PRD_ALFA_PDMWMGMT"), ("Executive",))
         self.assertEqual(
             resolve_allowed_experience_views("SNOW_PRI_GFR_PRD_ALFA_DSA"),
-            ("Executive", "FinOps", "Security", "Platform"),
+            ("Executive", "Security", "Platform"),
         )
         self.assertEqual(resolve_allowed_experience_views("SNOW_PRI_GFR_PRD_ALFA_DTI"), ("Platform",))
         self.assertEqual(resolve_allowed_experience_views("SNOW_ACCOUNTADMINS"), tuple(EXPERIENCE_VIEW_SECTIONS.keys()))
@@ -722,7 +738,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(SECTION_ALIASES["Credit Contract"], SECTION_BY_TITLE["Cost & Contract"])
         self.assertEqual(SECTION_ALIASES["Cost Center"], SECTION_BY_TITLE["Cost & Contract"])
         self.assertEqual(SECTION_ALIASES["Security & Access"], SECTION_BY_TITLE["Security Monitoring"])
-        self.assertEqual(SECTION_ALIASES["DBA Tools"], SECTION_BY_TITLE["Workload Operations"])
+        self.assertNotIn("DBA Tools", SECTION_ALIASES)
+        self.assertNotIn("Change & Drift", SECTION_ALIASES)
+        self.assertNotIn("Who Changed What?", SECTION_ALIASES)
         self.assertEqual(SECTION_ALIASES["Optimization"], SECTION_BY_TITLE["Cost & Contract"])
         self.assertEqual(SECTION_ALIASES["Warehouse Health"], SECTION_BY_TITLE["Cost & Contract"])
         self.assertNotIn("Architecture", SECTION_ALIASES)
@@ -753,7 +771,7 @@ class NavigationIntegrityTests(unittest.TestCase):
                 self.assertTrue(sections)
                 self.assertLessEqual(set(sections), set(ALL_SECTIONS))
         self.assertIn("Executive Landing", EXPERIENCE_VIEW_SECTIONS["Executive"])
-        self.assertIn("Cost & Contract", EXPERIENCE_VIEW_SECTIONS["FinOps"])
+        self.assertNotIn("FinOps", EXPERIENCE_VIEW_SECTIONS)
         self.assertIn("Security Monitoring", EXPERIENCE_VIEW_SECTIONS["Security"])
         for profile, sections in EXPERIENCE_VIEW_SECTIONS.items():
             with self.subTest(hidden_section_experience=profile):
@@ -772,7 +790,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Executive Data Health", executive_text)
         self.assertIn('"alert_center_active_view": "Automation Health"', executive_text)
         self.assertIn('workflow_key="cost_contract_workflow"', executive_text)
-        self.assertIn('workflow="FinOps Control Center"', executive_text)
+        self.assertIn('workflow="Explain bill / attribution / contract"', executive_text)
         self.assertIn('workflow_key="change_drift_workflow"', executive_text)
         self.assertIn('workflow="Controlled DBA actions"', executive_text)
         self.assertIn('"dba_tools_group_selector": "Cost & Health"', executive_text)
@@ -911,7 +929,6 @@ class NavigationIntegrityTests(unittest.TestCase):
             ROOT / "README.md",
             ROOT / "STREAMLIT_CLOUD_DEPLOY.md",
             ROOT / "OVERWATCH_DOCUMENTATION.md",
-            ROOT / "OVERWATCH_MANUAL_INPUTS_AND_DDL_RUNBOOK.md",
             APP_ROOT / "snowflake.yml",
         ):
             text = path.read_text(encoding="utf-8")
@@ -935,10 +952,16 @@ class NavigationIntegrityTests(unittest.TestCase):
     def test_workflow_hubs_expose_expected_subworkflows(self):
         from sections import change_drift, cost_contract, dba_control_room, query_analysis, security_posture, task_management, workload_operations
 
-        self.assertIn("Query diagnosis", workload_operations.WORKFLOWS)
-        self.assertIn("Contention Center", workload_operations.WORKFLOWS)
-        self.assertIn("Task graphs", workload_operations.WORKFLOWS)
-        self.assertIn("Stored procedures", workload_operations.WORKFLOWS)
+        self.assertEqual(
+            workload_operations.WORKFLOWS,
+            ("Query & contention triage", "Task, procedure & pipeline health"),
+        )
+        self.assertIn("Live triage", workload_operations.TRIAGE_FOCI)
+        self.assertIn("Contention Center", workload_operations.TRIAGE_FOCI)
+        self.assertIn("Query diagnosis", workload_operations.TRIAGE_FOCI)
+        self.assertIn("Task graphs", workload_operations.PIPELINE_FOCI)
+        self.assertIn("Stored procedures", workload_operations.PIPELINE_FOCI)
+        self.assertIn("Pipeline health", workload_operations.PIPELINE_FOCI)
         self.assertNotIn("History search", workload_operations.WORKFLOWS)
         self.assertIn("History Search", query_analysis.QUERY_ANALYSIS_PANES)
         self.assertEqual(workload_operations.WORKFLOW_MODULES["Contention Center"], "sections.contention_center")
@@ -968,30 +991,21 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Morning Brief", dba_control_room.DBA_CONTROL_ROOM_PANES)
         self.assertEqual(dba_control_room.DBA_CONTROL_ROOM_PANE_LABELS["Morning Brief"], "Morning")
         self.assertEqual(
-            cost_contract.WORKFLOWS[:5],
+            cost_contract.WORKFLOWS,
             (
                 "Explain bill / attribution / contract",
                 "Storage cost and retention",
-                "Budget Monitoring",
                 "Recommendations and action queue",
-                "FinOps Control Center",
+                "AI and Cortex spend",
+                "SPCS spend",
             ),
         )
         self.assertIn("Recommendations and action queue", cost_contract.WORKFLOWS)
         self.assertIn("Storage cost and retention", cost_contract.WORKFLOWS)
         self.assertEqual(cost_contract.WORKFLOW_MODULES["Storage cost and retention"], "sections.storage_monitor")
-        self.assertIn("Budget Monitoring", cost_contract.WORKFLOWS)
-        self.assertEqual(cost_contract.WORKFLOW_MODULES["Budget Monitoring"], "sections.budget_monitoring")
         self.assertEqual(cost_contract.WORKFLOW_MODULES["AI and Cortex spend"], "sections.cortex_monitor")
-        budget_monitoring_text = (APP_ROOT / "sections" / "budget_monitoring.py").read_text(encoding="utf-8")
-        self.assertIn("display_inventory = apply_operator_status_labels", budget_monitoring_text)
-        self.assertIn("add_cost_companion_columns(prioritize_context_columns(inventory))", budget_monitoring_text)
-        self.assertIn("from sections.shell_helpers import render_shell_snapshot", budget_monitoring_text)
-        self.assertIn('"Tracked Signals"', budget_monitoring_text)
-        self.assertNotIn("_build_native_budget_sql", budget_monitoring_text)
-        self.assertNotIn("_build_per_user_quota_sql", budget_monitoring_text)
-        self.assertNotIn("_build_budget_custom_action_sql", budget_monitoring_text)
-        self.assertNotIn(".metric(", budget_monitoring_text)
+        self.assertFalse((APP_ROOT / "sections" / "budget_monitoring.py").exists())
+        self.assertFalse((APP_ROOT / "sections" / "finops_control.py").exists())
         self.assertEqual(SECTION_ALIASES["Alerts"], SECTION_BY_TITLE["Alert Center"])
         self.assertIn("Access posture", security_posture.WORKFLOWS)
         self.assertIn("Privilege sprawl", security_posture.WORKFLOWS)
@@ -1081,7 +1095,6 @@ class NavigationIntegrityTests(unittest.TestCase):
             "detailed_diagnosis.py",
             "query_search.py",
             "service_health.py",
-            "snowflake_value.py",
             "spcs_tracker.py",
             "storage_monitor.py",
             "stored_proc_tracker.py",
@@ -1378,8 +1391,12 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("_LANE_DETAIL_STYLE", workload_text)
         self.assertNotIn("ow-workload-lane-label", workload_text)
         self.assertNotIn("unsafe_allow_html=True", workload_text)
-        self.assertIn("st.caption(str(lane.get(\"label\")", workload_text)
-        self.assertIn('help=str(lane.get("detail")', workload_text)
+        self.assertIn("QUERY_TRIAGE_WORKFLOW", workload_text)
+        self.assertIn("PIPELINE_HEALTH_WORKFLOW", workload_text)
+        self.assertIn("TRIAGE_FOCI", workload_text)
+        self.assertIn("PIPELINE_FOCI", workload_text)
+        self.assertNotIn("Workload Brief", workload_text)
+        self.assertNotIn("workload_operations_view", workload_text)
         self.assertNotIn("ow-workload-lane-detail", workload_text)
         self.assertNotIn("_TABLE_HEADING_STYLE", workflow_text)
         self.assertNotIn("_TABLE_COUNT_STYLE", workflow_text)
@@ -1450,11 +1467,11 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("WORKFLOWS_VERSION", app_text)
         self.assertIn("reload_loaded_sections()", app_text)
         self.assertIn("def reload_loaded_sections()", sections_text)
-        self.assertIn("help=details.get(workflow) or None", workflows_text)
-        self.assertIn("help=details.get(mode) or None", workflows_text)
+        self.assertNotIn("help=details.get(workflow) or None", workflows_text)
+        self.assertNotIn("help=details.get(mode) or None", workflows_text)
         self.assertNotIn("st.caption(details[workflow])", workflows_text)
         self.assertNotIn("st.caption(details[mode])", workflows_text)
-        self.assertIn("help=caption or None", shell_helpers_text)
+        self.assertNotIn("help=caption or None", shell_helpers_text)
         self.assertNotIn("st.caption(caption)", shell_helpers_text)
         self.assertNotIn("ow-workload-lane-detail", theme_text)
         self.assertIn("from .section_guidance import defer_section_note", workflows_text)

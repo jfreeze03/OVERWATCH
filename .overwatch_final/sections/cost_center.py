@@ -1,4 +1,4 @@
-# sections/cost_center.py - User leaderboard, burn rate, forecast, budget, attribution, chargeback
+# sections/cost_center.py - User leaderboard, burn rate, forecast, attribution, chargeback
 # FIX: Chargeback tab now uses get_company_case_expr() from company_filter.py
 #      instead of the old hardcoded CASE that missed WH_ALFA_* warehouses.
 import streamlit as st
@@ -38,7 +38,6 @@ COST_CENTER_VIEWS = (
     "Burn Rate",
     "Reconciliation",
     "Forecast",
-    "Budget vs Actual",
     "Attribution",
     "Chargeback",
     "Contract Utilization",
@@ -51,7 +50,6 @@ COST_CENTER_VIEW_DETAILS = {
     "Burn Rate": "Daily metered credit trend by warehouse.",
     "Reconciliation": "Metered credits vs query allocation.",
     "Forecast": "Near-term projected burn from recent usage.",
-    "Budget vs Actual": "Monthly consumption against budget.",
     "Attribution": "Role, schema, client, and lineage cost views.",
     "Chargeback": "ALFA/Trexis company allocation output.",
     "Contract Utilization": "Committed-use utilization and risk.",
@@ -208,7 +206,7 @@ def _annotate_allocation_quality(df: pd.DataFrame) -> pd.DataFrame:
             lambda row: (
                 _row_text(row, "USER_NAME")
                 if _row_text(row, "USER_NAME").upper() not in {"", "UNKNOWN USER", "UNKNOWN_USER"}
-                else "DBA / FinOps"
+                else "DBA / Cost owner"
             ),
             axis=1,
         )
@@ -444,7 +442,7 @@ def _cost_explorer_gap_board(detail: pd.DataFrame, lens_summary: pd.DataFrame) -
             "ROWS": 1,
             "EST_COST": safe_float(top.get("EST_COST")),
             "TOP_DRIVER": str(top.get("DIMENSION") or "Unknown"),
-            "ACTION": "If one driver owns 35%+ of cost, validate budget owner, workload isolation, and warehouse settings.",
+            "ACTION": "If one driver owns 35%+ of cost, validate workload isolation, chargeback basis, and warehouse settings.",
         })
     return pd.DataFrame(rows)
 
@@ -665,8 +663,8 @@ def _chargeback_action_owner(row: pd.Series) -> str:
         return cost_owner
     user = _row_text(row, "USER_NAME")
     if readiness in {"NO", "REVIEW"}:
-        return "DBA / FinOps"
-    return user if user and user.upper() not in {"UNKNOWN USER", "UNKNOWN_USER"} else "DBA / FinOps"
+        return "DBA / Cost owner"
+    return user if user and user.upper() not in {"UNKNOWN USER", "UNKNOWN_USER"} else "DBA / Cost owner"
 
 
 def _chargeback_route_text(value: str, default: str = "") -> str:
@@ -802,7 +800,7 @@ def _queue_cost_outliers(session, df: pd.DataFrame, credit_price: float, source:
         action_owner = owner_context.get("OWNER") or action_owner
         approver = (
             owner_context.get("APPROVAL_GROUP")
-            or ("FinOps Lead / Cost Route" if is_chargeback else "FinOps Lead / Workload Route")
+            or ("Cost owner / Cost Route" if is_chargeback else "Cost owner / Workload Route")
         )
         owner_approval_note = (
             "Allocated/estimated chargeback requires route/tag telemetry review before billing. "
@@ -988,7 +986,7 @@ def _warehouse_cost_control_action(
         row.get("OWNER")
         or row.get("WAREHOUSE_OWNER")
         or row.get("OWNER_ROLE")
-        or "DBA / FinOps"
+        or "DBA / Cost owner"
     ))
     base_owner = owner
     owner_context = resolve_owner_context(
@@ -1019,9 +1017,9 @@ def _warehouse_cost_control_action(
         "Measure savings in the next complete period before marking fixed."
     )
     approver = (
-        f"{owner} / FinOps Lead"
-        if base_owner and base_owner.upper() not in {"DBA", "DBA / FINOPS", "UNKNOWN"}
-        else owner_context.get("APPROVAL_GROUP") or "FinOps Lead / Warehouse Route"
+        f"{owner} / Cost owner"
+        if base_owner and base_owner.upper() not in {"DBA", "DBA / COST OWNER", "UNKNOWN"}
+        else owner_context.get("APPROVAL_GROUP") or "Cost owner / Warehouse Route"
     )
     owner_approval_note = (
         f"Exact warehouse metering for {period_label}. Review is required before any warehouse "
@@ -1247,7 +1245,6 @@ def _build_finance_movement_summary(
     unallocated_credits: float,
     service_drivers: pd.DataFrame,
     credit_price: float,
-    budget: float = 0.0,
 ) -> pd.DataFrame:
     """Build a concise finance-facing movement bridge with source-basis labels."""
     current_credits = safe_float(current_credits)
@@ -1307,19 +1304,6 @@ def _build_finance_movement_summary(
             "Delta Cost": round(credits_to_dollars(delta, credit_price), 2),
             "Measurement Basis": "Account-wide",
             "Action": "Do not charge back to ALFA/Trexis unless a service-specific owner tag or lineage exists.",
-        })
-    if budget and budget > 0:
-        current_cost = credits_to_dollars(current_credits, credit_price)
-        rows.append({
-            "Category": "Budget variance",
-            "Basis": "Configured budget minus current warehouse-compute cost",
-            "Current Credits": None,
-            "Prior Credits": None,
-            "Delta Credits": None,
-            "Current Cost": round(current_cost, 2),
-            "Delta Cost": round(current_cost - safe_float(budget), 2),
-            "Measurement Basis": "Estimated",
-            "Action": "Escalate if variance is positive and supported by a repeating workload driver.",
         })
     return pd.DataFrame(rows)
 
@@ -1666,13 +1650,6 @@ def render():
             index=1,
             key="cc_explain_period",
         )
-        explain_budget = st.number_input(
-            "Optional budget for this period ($)",
-            min_value=0.0,
-            value=0.0,
-            step=100.0,
-            key="cc_explain_budget",
-        )
         bounds = _bill_period_bounds(explain_period)
         use_mart_summary = not any([
             st.session_state.get("global_user"),
@@ -2016,14 +1993,6 @@ def render():
                 ("Change vs Baseline", _fmt_delta(delta_pct)),
                 ("Active Warehouses", f"{active_warehouses:,}"),
             ]
-            if explain_budget > 0:
-                budget_delta = current_cost - explain_budget
-                bill_metrics.append(
-                    (
-                        "Budget Variance",
-                        f"${budget_delta:+,.2f} {'over' if budget_delta > 0 else 'under'} budget",
-                    )
-                )
             render_shell_snapshot(tuple(bill_metrics))
 
             defer_source_note(
@@ -2061,7 +2030,6 @@ def render():
                 unallocated_credits=unallocated_credits,
                 service_drivers=service_drivers,
                 credit_price=credit_price,
-                budget=explain_budget,
             )
             st.subheader("Finance Movement Summary")
             defer_source_note(
@@ -2630,45 +2598,6 @@ def render():
                 max_rows=90,
             )
 
-    # -- BUDGET VS ACTUAL ------------------------------------------------------
-    elif cost_view == "Budget vs Actual":
-        st.subheader("Budget vs Actual")
-        monthly_budget = st.number_input(
-            "Monthly credit budget", min_value=0, value=10000, step=500, key="bva_budget"
-        )
-        if st.button("Load Budget Comparison", key="bva_load"):
-            try:
-                df_bva = run_query(f"""
-                    SELECT DATE_TRUNC('month', start_time) AS month,
-                           SUM(credits_used) AS actual_credits
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
-                    WHERE start_time >= DATEADD('month', -6, CURRENT_TIMESTAMP())
-                    {get_wh_filter_clause("warehouse_name")}
-                    GROUP BY month ORDER BY month
-                """, ttl_key=f"cc_budget_6mo_{company}", tier="standard")
-                st.session_state["df_bva"] = df_bva
-            except Exception as e:
-                st.warning(f"Budget comparison unavailable in this role/context: {format_snowflake_error(e)}")
-
-        if st.session_state.get("df_bva") is not None and not st.session_state["df_bva"].empty:
-            df_bv = st.session_state["df_bva"]
-            df_bv["BUDGET"]    = monthly_budget
-            df_bv["OVER_UNDER"] = df_bv["ACTUAL_CREDITS"] - monthly_budget
-            df_bv["STATUS"]    = df_bv["OVER_UNDER"].apply(
-                lambda x: "Over" if x > 0 else "Under"
-            )
-            render_chart_with_data_toggle(
-                "Budget months to explain",
-                "cc_budget_vs_actual",
-                lambda: st.bar_chart(df_bv.set_index("MONTH")[["ACTUAL_CREDITS","BUDGET"]]),
-                df_bv,
-                priority_columns=["MONTH", "ACTUAL_CREDITS", "BUDGET", "OVER_UNDER", "STATUS"],
-                sort_by=["OVER_UNDER", "ACTUAL_CREDITS"],
-                ascending=[False, False],
-                raw_label="All budget comparison rows",
-            )
-            download_csv(df_bv, "budget_vs_actual.csv")
-
     # -- ATTRIBUTION -----------------------------------------------------------
     elif cost_view == "Attribution":
         st.subheader("Cost Attribution")
@@ -3060,13 +2989,13 @@ def render():
             projected_7 = ytd_used + (last_7_avg * days_remaining)
             projected_30 = ytd_used + (last_30_avg * days_remaining)
             projected_business = ytd_used + (business_avg * future_business_days) + (weekend_avg * future_weekend_days)
-            remaining_budget = committed - ytd_used
+            remaining_commitment = committed - ytd_used
             pct_consumed     = (ytd_used / committed * 100) if committed > 0 else 0
             pct_time_elapsed = (days_elapsed / days_in_contract * 100) if days_in_contract > 0 else 0
 
             runway_rate = last_7_avg if trend_label == "Accelerating" and last_7_avg > 0 else daily_rate
-            if runway_rate > 0 and remaining_budget > 0:
-                days_until_exhausted = remaining_budget / runway_rate
+            if runway_rate > 0 and remaining_commitment > 0:
+                days_until_exhausted = remaining_commitment / runway_rate
                 exhaust_date = (datetime.now() + timedelta(days=days_until_exhausted)).strftime("%Y-%m-%d")
             else:
                 days_until_exhausted = None
@@ -3078,7 +3007,7 @@ def render():
 
             render_shell_snapshot((
                 ("YTD Consumed", format_credits(ytd_used)),
-                ("Remaining Budget", format_credits(remaining_budget)),
+                ("Remaining Commitment", format_credits(remaining_commitment)),
                 ("% Consumed", f"{pct_consumed:.1f}% ({pct_consumed - pct_time_elapsed:+.1f}% vs time)"),
                 ("Daily Burn Rate", f"{daily_rate:,.1f} cr/day"),
                 ("Projected Year-End", format_credits(projected_total)),
@@ -3154,17 +3083,17 @@ def render():
 
             if st.session_state.get("cc_monthly_data") is not None and not st.session_state["cc_monthly_data"].empty:
                 df_m = st.session_state["cc_monthly_data"]
-                df_m["BUDGET_LINE"] = committed / (months or 12)
+                df_m["COMMITMENT_PACE_LINE"] = committed / (months or 12)
                 df_m["CUMULATIVE"]  = df_m["MONTHLY_CREDITS"].cumsum()
 
                 col_m1, col_m2 = st.columns(2)
                 with col_m1:
                     render_chart_with_data_toggle(
-                        "Monthly credits vs budget",
-                        "cc_contract_monthly_budget",
-                        lambda: st.bar_chart(df_m.set_index("MONTH")[["MONTHLY_CREDITS","BUDGET_LINE"]]),
+                        "Monthly credits vs commitment pace",
+                        "cc_contract_monthly_commitment",
+                        lambda: st.bar_chart(df_m.set_index("MONTH")[["MONTHLY_CREDITS","COMMITMENT_PACE_LINE"]]),
                         df_m,
-                        priority_columns=["MONTH", "MONTHLY_CREDITS", "BUDGET_LINE", "CUMULATIVE"],
+                        priority_columns=["MONTH", "MONTHLY_CREDITS", "COMMITMENT_PACE_LINE", "CUMULATIVE"],
                         sort_by=["MONTH"],
                         ascending=True,
                         max_rows=24,
@@ -3175,7 +3104,7 @@ def render():
                         "cc_contract_cumulative",
                         lambda: st.line_chart(df_m.set_index("MONTH")["CUMULATIVE"]),
                         df_m,
-                        priority_columns=["MONTH", "CUMULATIVE", "MONTHLY_CREDITS", "BUDGET_LINE"],
+                        priority_columns=["MONTH", "CUMULATIVE", "MONTHLY_CREDITS", "COMMITMENT_PACE_LINE"],
                         sort_by=["MONTH"],
                         ascending=True,
                         max_rows=24,

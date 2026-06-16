@@ -14,7 +14,7 @@
 #   render_theme_picker()
 import streamlit as st
 
-THEME_VERSION = "2026-06-15-responsive-dashboard-grid-v3"
+THEME_VERSION = "2026-06-16-theme-contrast-v3"
 
 _DEFAULT_THEME = "terminal"
 _THEME_ALIASES = {
@@ -151,7 +151,16 @@ _STRUCTURAL_CSS = """
 /* Base */
 .stApp, .stApp > * {
     background: var(--bg-app) !important;
+    color: var(--text-primary) !important;
     font-family: var(--font-body) !important;
+}
+.stApp,
+.stApp p,
+.stApp li,
+.stApp label,
+.stApp span:not([class*="icon"]):not([class*="material"]),
+.stApp div:not([data-testid="stIconMaterial"]) {
+    color: var(--text-primary);
 }
 .block-container {
     padding-top: 1rem !important;
@@ -171,6 +180,11 @@ footer {
 [data-testid="stSidebar"] {
     background: var(--bg-sidebar) !important;
     border-right: 1px solid var(--border-sidebar) !important;
+}
+[data-testid="stSidebarContent"],
+[data-testid="stSidebarUserContent"] {
+    background: transparent !important;
+    color: var(--text-primary) !important;
 }
 [data-testid="stSidebar"] .stRadio > label,
 [data-testid="stSidebar"] label {
@@ -267,10 +281,10 @@ h2, h3 {
     margin-top: 0.55rem !important;
     font-family: var(--font-body) !important;
 }
-p, li { color: var(--text-primary); font-family: var(--font-body) !important; }
+p, li { color: var(--text-primary) !important; font-family: var(--font-body) !important; }
 [data-testid="stMarkdownContainer"],
 [data-testid="stMarkdownContainer"] *:not([class*="icon"]):not([class*="material"]) {
-    color: inherit;
+    color: var(--text-primary) !important;
     font-family: var(--font-body);
 }
 
@@ -329,6 +343,20 @@ button[data-testid="stBaseButton-primary"] p {
 [data-testid="stButton"] button[kind="primary"]:hover,
 button[data-testid="stBaseButton-primary"]:hover {
     box-shadow: 0 6px 24px rgba(var(--accent-rgb), 0.55) !important;
+}
+.stButton > button:disabled,
+[data-testid="stButton"] button:disabled,
+button[data-testid^="stBaseButton"]:disabled {
+    background: rgba(var(--accent-rgb), 0.05) !important;
+    border-color: var(--border-subtle) !important;
+    box-shadow: none !important;
+    color: var(--text-muted) !important;
+    opacity: 0.76 !important;
+}
+.stButton > button:disabled p,
+[data-testid="stButton"] button:disabled p,
+button[data-testid^="stBaseButton"]:disabled p {
+    color: var(--text-muted) !important;
 }
 
 /* Expanders */
@@ -409,6 +437,47 @@ hr {
 .stApp [data-baseweb="select"] svg {
     color: var(--text-input) !important;
     fill: var(--text-input) !important;
+}
+[data-testid="stSelectboxVirtualDropdown"],
+div:has(> [data-testid="stSelectboxVirtualDropdown"]),
+div:has(> div > [data-testid="stSelectboxVirtualDropdown"]) {
+    background: var(--bg-card) !important;
+    border-color: var(--border-normal) !important;
+    color: var(--text-primary) !important;
+}
+[data-testid="stSelectboxVirtualDropdown"] [role="option"],
+[data-testid="stSelectboxVirtualDropdown"] [role="option"] *,
+ul[data-testid="stSelectboxVirtualDropdown"] li,
+ul[data-testid="stSelectboxVirtualDropdown"] li * {
+    color: var(--text-primary) !important;
+    -webkit-text-fill-color: var(--text-primary) !important;
+}
+[data-testid="stSelectboxVirtualDropdown"] [role="option"],
+ul[data-testid="stSelectboxVirtualDropdown"] li {
+    background: var(--bg-card) !important;
+}
+[data-testid="stSelectboxVirtualDropdown"] [role="option"]:hover,
+[data-testid="stSelectboxVirtualDropdown"] [role="option"][aria-selected="true"],
+ul[data-testid="stSelectboxVirtualDropdown"] li:hover,
+ul[data-testid="stSelectboxVirtualDropdown"] li[aria-selected="true"] {
+    background: rgba(var(--accent-rgb), 0.16) !important;
+    color: var(--text-primary) !important;
+}
+.stNumberInput button,
+.stNumberInput [role="button"],
+[data-testid="stNumberInput"] button,
+[data-testid="stNumberInput"] [role="button"] {
+    background: var(--bg-input) !important;
+    border-color: var(--border-normal) !important;
+    color: var(--text-input) !important;
+    -webkit-text-fill-color: var(--text-input) !important;
+}
+.stNumberInput button:hover,
+.stNumberInput [role="button"]:hover,
+[data-testid="stNumberInput"] button:hover,
+[data-testid="stNumberInput"] [role="button"]:hover {
+    border-color: var(--border-strong) !important;
+    box-shadow: 0 0 12px rgba(var(--accent-rgb), 0.12) !important;
 }
 .stApp [data-baseweb="input"]:focus-within,
 .stApp [data-baseweb="base-input"]:focus-within,
@@ -1111,13 +1180,40 @@ _THEME_EXTRAS = {
     "carbon": """
 <style>
 /* Snowflake Dark: make Snowflake blue the dominant navigation treatment. */
+.stApp .stButton > button[kind="primary"],
+.stApp [data-testid="stButton"] button[kind="primary"],
+.stApp button[data-testid="stBaseButton-primary"] {
+    color: #ffffff !important;
+    background: linear-gradient(135deg, #0068b7, #003545) !important;
+    border: 1px solid rgba(113,211,220,0.64) !important;
+    box-shadow: 0 4px 18px rgba(41,181,232,0.26) !important;
+}
+.stApp .stButton > button[kind="primary"] p,
+.stApp [data-testid="stButton"] button[kind="primary"] p,
+.stApp button[data-testid="stBaseButton-primary"] p {
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+}
+.stApp .stButton > button[kind="primary"]:hover,
+.stApp [data-testid="stButton"] button[kind="primary"]:hover,
+.stApp button[data-testid="stBaseButton-primary"]:hover {
+    color: #ffffff !important;
+    background: linear-gradient(135deg, #0079d6, #004568) !important;
+    border-color: rgba(113,211,220,0.90) !important;
+}
+.stApp .stButton > button[kind="primary"]:hover p,
+.stApp [data-testid="stButton"] button[kind="primary"]:hover p,
+.stApp button[data-testid="stBaseButton-primary"]:hover p {
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+}
 [data-testid="stSidebar"] .stButton > button,
 [data-testid="stSidebar"] [data-testid="stButton"] button,
 [data-testid="stSidebar"] button[data-testid^="stBaseButton"] {
-    color: #ffffff !important;
-    background: linear-gradient(135deg, #0068b7, #003545) !important;
-    border-color: rgba(41,181,232,0.70) !important;
-    box-shadow: 0 2px 10px rgba(41,181,232,0.18) !important;
+    color: var(--text-primary) !important;
+    background: linear-gradient(135deg, rgba(41,181,232,0.10), rgba(113,211,220,0.06)) !important;
+    border-color: rgba(41,181,232,0.28) !important;
+    box-shadow: none !important;
 }
 [data-testid="stSidebar"] .stButton > button p,
 [data-testid="stSidebar"] [data-testid="stButton"] button p,
@@ -1128,8 +1224,8 @@ _THEME_EXTRAS = {
 [data-testid="stSidebar"] [data-testid="stButton"] button:hover,
 [data-testid="stSidebar"] button[data-testid^="stBaseButton"]:hover {
     color: #ffffff !important;
-    background: linear-gradient(135deg, #29B5E8, #0068b7) !important;
-    border-color: rgba(113,211,220,0.95) !important;
+    background: linear-gradient(135deg, rgba(41,181,232,0.28), rgba(0,104,183,0.52)) !important;
+    border-color: rgba(113,211,220,0.70) !important;
 }
 [data-testid="stSidebar"] .stButton > button[kind="primary"],
 [data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"],

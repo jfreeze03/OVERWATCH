@@ -709,8 +709,8 @@ def _account_health_owner_context(check: object, route: object = "") -> dict:
         }
     elif "cost spike" in name:
         base = {
-            "owner": "DBA / FinOps Route",
-            "escalation": "FinOps Lead",
+            "owner": "DBA / Cost owner Route",
+            "escalation": "Cost owner",
             "source": "Checklist route map",
         }
     elif "task" in name or "procedure" in name:
@@ -840,7 +840,7 @@ def _build_account_health_dba_checklist(
             "STATUS": _check_status(delta <= 20, delta <= 40),
             "SEVERITY": "High" if delta > 60 else ("Medium" if delta > 20 else "Info"),
             "EVIDENCE": f"{last24:,.2f} credits in last 24h; {delta:+.1f}% vs prior window",
-            "OWNER": "DBA / FinOps",
+            "OWNER": "DBA / Cost owner",
             "ROUTE": "Cost & Contract",
             "NEXT_ACTION": "Explain top drivers, classify allocated/estimated cost, and monitor any savings action later.",
             "PROOF_REQUIRED": "driver row, credit/cost formula, review for warehouse changes",
@@ -872,7 +872,7 @@ def _build_account_health_dba_checklist(
             "EVIDENCE": f"{safe_float(stor_tb):.1f} TB latest storage reading",
             "OWNER": "DBA / Platform",
             "ROUTE": "Cost & Contract",
-            "NEXT_ACTION": "Review Budget Monitoring and cost controls for quota, notify, suspend, and suspend-immediate coverage.",
+            "NEXT_ACTION": "Review cost controls for quota, notification, suspend, and suspend-immediate coverage.",
             "PROOF_REQUIRED": "resource monitor thresholds and warehouse scope",
         },
     ]
@@ -1117,7 +1117,7 @@ def _account_health_readiness_for_row(row: pd.Series | dict) -> dict:
     verification = _account_health_verification_sql(row.get("CHECK"), row.get("EVIDENCE"))
     blockers = []
 
-    generic_owners = {"", "DBA", "UNKNOWN", "N/A", "DBA / FINOPS", "DBA / DATA ENGINEERING"}
+    generic_owners = {"", "DBA", "UNKNOWN", "N/A", "DBA / COST OWNER", "DBA / DATA ENGINEERING"}
     if owner.upper() in generic_owners and not approval_group:
         blockers.append("escalation route")
     approval_required = severity in {"CRITICAL", "HIGH", "MEDIUM"}
@@ -2388,7 +2388,7 @@ rollup AS (
             )
         ) AS FIXED_WITHOUT_VERIFICATION,
         COUNT_IF(UPPER(STATUS) NOT IN ('FIXED', 'IGNORED') AND DUE_DATE < CURRENT_DATE()) AS OVERDUE_OPEN,
-        COUNT_IF(UPPER(OWNER) IN ('', 'DBA', 'UNKNOWN', 'N/A', 'DBA / FINOPS', 'DBA / DATA ENGINEERING')) AS OWNER_GAP_ROWS,
+        COUNT_IF(UPPER(OWNER) IN ('', 'DBA', 'UNKNOWN', 'N/A', 'DBA / COST OWNER', 'DBA / DATA ENGINEERING')) AS OWNER_GAP_ROWS,
         COUNT_IF(LENGTH(TRIM(TICKET_ID)) = 0) AS TICKET_GAP_ROWS,
         COUNT_IF(LENGTH(TRIM(APPROVER)) = 0) AS APPROVER_GAP_ROWS,
         COUNT_IF(LENGTH(TRIM(VERIFICATION_QUERY)) = 0) AS VERIFICATION_QUERY_GAP_ROWS,

@@ -297,7 +297,6 @@ SECTION_REDIRECTS = {
     "Cost Center": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
     "Credit Contract": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
     "Recommendations & Anomalies": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
-    "Snowflake Value": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
     "AI & Cortex Monitor": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
     "SPCS Tracker": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
     "Usage Overview": _CANONICAL_SECTION_BY_TITLE["DBA Control Room"],
@@ -310,9 +309,6 @@ SECTION_REDIRECTS = {
     "Security Posture": _CANONICAL_SECTION_BY_TITLE["Security Monitoring"],
     "Security & Access": _CANONICAL_SECTION_BY_TITLE["Security Monitoring"],
     "Data Sharing": _CANONICAL_SECTION_BY_TITLE["Security Monitoring"],
-    "Change & Drift": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
-    "Who Changed What?": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
-    "DBA Tools": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
     "Command Center": _CANONICAL_SECTION_BY_TITLE["DBA Control Room"],
     "Warehouse Health": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
     "Optimization": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
@@ -321,7 +317,6 @@ RETIRED_SECTION_REDIRECTS = {
     "Account Health": _CANONICAL_SECTION_BY_TITLE["DBA Control Room"],
     "Warehouse Health": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
     "Security Posture": _CANONICAL_SECTION_BY_TITLE["Security Monitoring"],
-    "Change & Drift": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
 }
 SECTION_ROUTE_STATE = {
     "Account Health": {
@@ -342,20 +337,6 @@ SECTION_ROUTE_STATE = {
     "Security Posture": {
         "security_monitoring_view": "Security Posture",
         "_security_monitoring_full_workspace_requested": True,
-    },
-    "Change & Drift": {
-        "workload_operations_view": "Change Monitoring",
-        "_workload_operations_full_workspace_requested": True,
-    },
-    "Who Changed What?": {
-        "workload_operations_view": "Change Monitoring",
-        "change_drift_requested_workflow": "Object and access changes",
-        "_workload_operations_full_workspace_requested": True,
-    },
-    "DBA Tools": {
-        "workload_operations_view": "DBA Tools",
-        "change_drift_requested_workflow": "Controlled DBA actions",
-        "_workload_operations_full_workspace_requested": True,
     },
 }
 SECTION_BY_TITLE = dict(_CANONICAL_SECTION_BY_TITLE)
@@ -458,12 +439,6 @@ EXPERIENCE_VIEW_SECTIONS = {
         "Alert Center",
         "Cost & Contract",
     ),
-    "FinOps": _sections_by_title(
-        "Executive Landing",
-        "Cost & Contract",
-        "Alert Center",
-        "Security Monitoring",
-    ),
     "Security": _sections_by_title(
         "Executive Landing",
         "Alert Center",
@@ -481,7 +456,7 @@ EXPERIENCE_VIEW_SECTIONS = {
 ROLE_EXPERIENCE_VIEWS = {
     "EXECUTIVE": ("Executive",),
     "ANALYST": ("Platform",),
-    "MANAGER": ("Executive", "FinOps", "Security", "Platform"),
+    "MANAGER": ("Executive", "Security", "Platform"),
     "REPORT": ("Executive",),
     "DBA": tuple(EXPERIENCE_VIEW_SECTIONS.keys()),
     "SYSADMIN": tuple(EXPERIENCE_VIEW_SECTIONS.keys()),

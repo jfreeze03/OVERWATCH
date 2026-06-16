@@ -150,7 +150,7 @@ def _maybe_reload_dev_helpers() -> None:
 
 import sections
 
-if getattr(theme_module, "THEME_VERSION", "") != "2026-06-15-responsive-dashboard-grid-v3":
+if getattr(theme_module, "THEME_VERSION", "") != "2026-06-16-theme-contrast-v3":
     theme_module = importlib.reload(theme_module)
     inject_theme = theme_module.inject_theme
     render_theme_picker = theme_module.render_theme_picker
@@ -638,7 +638,7 @@ SECTION_SUBTITLES = {
     "Executive Landing": "Board-ready risk, cost movement, action closure, and telemetry trust.",
     "DBA Control Room": "Morning triage, route status, data health, and release risk.",
     "Alert Center": "Consolidated incidents, email digests, annotation history, and control status.",
-    "Workload Operations": "Query history, task graphs, stored procedures, pipeline health, and runbooks.",
+    "Workload Operations": "Query/contention triage plus task, procedure, and pipeline health.",
     "Cost & Contract": "Spend attribution, contract utilization, chargeback, savings, and action queue.",
     "Security Monitoring": "Login risk, privileged grants, public access, data sharing, and security alerts.",
 }

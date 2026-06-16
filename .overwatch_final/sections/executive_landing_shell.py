@@ -23,7 +23,7 @@ _PLATFORM_SUMMARY_KEY = "executive_landing_platform_summary"
 _COMMAND_BOARD_KEY = "executive_landing_command_board"
 _COMMAND_BOARD_META_KEY = "executive_landing_command_board_meta"
 _COMMAND_BOARD_REFRESH_MARKER_KEY = "executive_landing_command_board_refresh_marker"
-_DEFAULT_MONTHLY_BUDGET_USD = 50_000.0
+_DEFAULT_MONTHLY_COMMITMENT_USD = 50_000.0
 
 
 def _active_company() -> str:
@@ -101,8 +101,12 @@ def _load_command_board() -> None:
     )
 
 
-def _monthly_budget() -> float:
-    return _safe_float(st.session_state.get("executive_monthly_budget_usd"), _DEFAULT_MONTHLY_BUDGET_USD)
+def _monthly_commitment() -> float:
+    return _safe_float(
+        st.session_state.get("executive_monthly_commitment_usd")
+        or st.session_state.get("executive_monthly_budget_usd"),
+        _DEFAULT_MONTHLY_COMMITMENT_USD,
+    )
 
 
 def _current_spend(summary: dict) -> float:
@@ -142,8 +146,8 @@ def _executive_glance_kpis() -> tuple[dict[str, str], ...]:
     days = _window_days()
     spend = _current_spend(summary)
     prior = _prior_spend(summary)
-    budget = _monthly_budget()
-    budget_pct = (spend / budget * 100) if budget else 0.0
+    commitment = _monthly_commitment()
+    commitment_pct = (spend / commitment * 100) if commitment else 0.0
     daily_burn = spend / days if spend else 0.0
     prior_daily = prior / days if prior else 0.0
     critical_high = _safe_int(summary.get("critical_high_alerts"))
@@ -152,13 +156,13 @@ def _executive_glance_kpis() -> tuple[dict[str, str], ...]:
     open_actions = _safe_int(summary.get("open_actions"))
     high_actions = _safe_int(summary.get("high_actions"))
     sla_pct = _pipeline_sla_pct(summary)
-    spend_state = "Over budget" if budget and budget_pct >= 100 else _trend_symbol(spend, prior)
+    spend_state = "Above pace" if commitment and commitment_pct >= 100 else _trend_symbol(spend, prior)
     burn_state = "Anomaly" if prior_daily and daily_burn > prior_daily * 1.25 else _trend_symbol(daily_burn, prior_daily)
     return (
         {
-            "label": "Total spend vs budget",
-            "value": f"{_money(spend)} / {_money(budget)}",
-            "state": f"{budget_pct:,.0f}%",
+            "label": "Monthly contract pace",
+            "value": f"{_money(spend)} / {_money(commitment)}",
+            "state": f"{commitment_pct:,.0f}%",
             "detail": f"{spend_state}; compute rate ${_credit_price():.2f}/credit.",
         },
         {
@@ -231,7 +235,7 @@ def _top_action_rows() -> list[dict[str, object]]:
         {
             "Priority": 3,
             "Action": "Explain spend movement",
-            "Route": "FinOps / DBA",
+            "Route": "Cost / DBA",
             "Due": "Today" if spend > prior and prior else "Weekly review",
             "Impact": f"{_money(spend - prior)} delta",
         },
@@ -256,12 +260,12 @@ def _top_action_rows() -> list[dict[str, object]]:
 def _executive_summary_text() -> str:
     summary = _summary()
     spend = _current_spend(summary)
-    budget = _monthly_budget()
-    budget_pct = (spend / budget * 100) if budget else 0.0
+    commitment = _monthly_commitment()
+    commitment_pct = (spend / commitment * 100) if commitment else 0.0
     critical_high = _safe_int(summary.get("critical_high_alerts"))
     sla_pct = _pipeline_sla_pct(summary)
     return (
-        f"Snowflake spend is at {_money(spend)} of {_money(budget)} budget ({budget_pct:,.0f}%). "
+        f"Snowflake spend is at {_money(spend)} of {_money(commitment)} monthly commitment pace ({commitment_pct:,.0f}%). "
         f"{critical_high:,} critical/high alerts are open, oldest is {_oldest_alert_age(summary)}. "
         f"Pipeline SLA compliance is {sla_pct:,.1f}%."
     )
@@ -303,21 +307,45 @@ def _chart_records(frame, value_name: str, fallback_points: list[float] | None =
     return rows[["Label", value_name]].to_dict("records")
 
 
+def _chart_theme_tokens() -> dict[str, str]:
+    theme_key = str(st.session_state.get("active_theme") or "terminal")
+    if theme_key == "carbon":
+        return {
+            "label": "#9bddea",
+            "title": "#eef8fb",
+            "grid": "rgba(113,211,220,0.18)",
+            "domain": "rgba(113,211,220,0.34)",
+            "line": "#29B5E8",
+            "area": "#29B5E8",
+            "bar": "#29B5E8",
+        }
+    return {
+        "label": "#31566b",
+        "title": "#102a43",
+        "grid": "rgba(0,104,183,0.12)",
+        "domain": "rgba(0,104,183,0.24)",
+        "line": "#0068B7",
+        "area": "#29B5E8",
+        "bar": "#0068B7",
+    }
+
+
 def _configure_chart(chart):
+    colors = _chart_theme_tokens()
     return (
         chart.configure_view(strokeWidth=0)
         .configure_axis(
-            gridColor="rgba(0,104,183,0.10)",
-            labelColor="#31566b",
-            titleColor="#31566b",
-            domainColor="rgba(0,104,183,0.22)",
-            tickColor="rgba(0,104,183,0.22)",
+            gridColor=colors["grid"],
+            labelColor=colors["label"],
+            titleColor=colors["title"],
+            domainColor=colors["domain"],
+            tickColor=colors["domain"],
             labelFontSize=10,
             titleFontSize=11,
         )
         .configure_legend(
-            labelColor="#31566b",
-            titleColor="#31566b",
+            labelColor=colors["label"],
+            titleColor=colors["title"],
             orient="bottom",
         )
     )
@@ -340,17 +368,17 @@ def _render_line_panel(title: str, frame, *, fallback_points: list[float] | None
         ],
     )
     area = base.mark_area(
-        color="#29B5E8",
+        color=_chart_theme_tokens()["area"],
         opacity=0.16,
         interpolate="monotone",
     )
     line = base.mark_line(
-        color="#0068B7",
+        color=_chart_theme_tokens()["line"],
         strokeWidth=3,
         interpolate="monotone",
     )
     points = base.mark_point(
-        color="#0068B7",
+        color=_chart_theme_tokens()["line"],
         filled=True,
         size=42,
     )
@@ -364,7 +392,7 @@ def _render_bar_panel(title: str, frame, *, value_name: str = "Value", max_rows:
     height = max(138, min(224, 28 * len(rows) + 44))
     chart = (
         alt.Chart(alt.Data(values=rows))
-        .mark_bar(color="#0068B7", cornerRadiusEnd=4, opacity=0.86)
+        .mark_bar(color=_chart_theme_tokens()["bar"], cornerRadiusEnd=4, opacity=0.86)
         .encode(
             y=alt.Y(
                 "Label:N",
@@ -518,7 +546,22 @@ def _observability_wall_lanes() -> tuple[dict[str, str], ...]:
 
 def _render_top_actions() -> None:
     st.markdown("**Top 5 Action Items**")
-    st.dataframe(_top_action_rows(), hide_index=True, width="stretch")
+    for row in _top_action_rows():
+        priority_col, action_col, due_col, impact_col = st.columns([0.45, 2.2, 1.0, 1.45])
+        with priority_col:
+            st.container(border=True).markdown(f"**#{_safe_int(row.get('Priority'))}**")
+        with action_col:
+            with st.container(border=True):
+                st.markdown(f"**{row.get('Action', '')}**")
+                st.caption(str(row.get("Route", "")))
+        with due_col:
+            with st.container(border=True):
+                st.caption("Due")
+                st.markdown(f"**{row.get('Due', '')}**")
+        with impact_col:
+            with st.container(border=True):
+                st.caption("Impact")
+                st.markdown(str(row.get("Impact", "")))
 
 
 def _render_copy_summary() -> None:

@@ -48,19 +48,17 @@ class Production95ContractsTests(unittest.TestCase):
         self.assertEqual(CREDIT_SOURCE_LABELS["live_estimate"], "Live estimate fallback")
 
     def test_new_snowflake_setup_contracts_exist(self):
-        expected = {
-            "OVERWATCH_ROLE_SETUP.sql": ("OVERWATCH_MONITOR", "OVERWATCH_OPERATOR"),
-            "OVERWATCH_PIPELINE_SLA.sql": ("PIPELINE_SLA_CONFIG", "PIPELINE_SLA_EXECUTIVE_V"),
-            "OVERWATCH_FRESHNESS_ALERT.sql": ("ALERT_PIPELINE_SLA_MISS", "ALERT_EVENTS"),
-            "OVERWATCH_EXECUTIVE_DIGEST.sql": ("EXECUTIVE_DIGEST_HISTORY", "SP_OVERWATCH_EXECUTIVE_DIGEST"),
-            "OVERWATCH_TAG_SETUP.sql": ("OVERWATCH_OWNER", "OVERWATCH_TAG_COVERAGE_V"),
-            "OVERWATCH_AVAILABILITY.sql": ("OVERWATCH_SELF_HEALTH_V", "QUERY_TAG ILIKE 'OVERWATCH%'"),
-        }
-        for file_name, markers in expected.items():
-            with self.subTest(file=file_name):
-                text = (ROOT / "snowflake" / file_name).read_text(encoding="utf-8").upper()
-                for marker in markers:
-                    self.assertIn(marker, text)
+        setup = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8").upper()
+        for marker in (
+            "CREATE ROLE IF NOT EXISTS OVERWATCH_MONITOR",
+            "CREATE ROLE IF NOT EXISTS OVERWATCH_OPERATOR",
+            "CREATE WAREHOUSE IF NOT EXISTS OVERWATCH_WH",
+            "CREATE TABLE IF NOT EXISTS ALERT_EVENTS",
+            "CREATE TABLE IF NOT EXISTS OVERWATCH_RECON_CONFIG",
+            "CREATE OR REPLACE TASK OVERWATCH_COST_MONITORING_REFRESH",
+        ):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, setup)
 
     def test_incident_and_predictive_sla_sql_are_snowflake_native(self):
         incident_sql = build_incident_correlation_sql().upper()
@@ -122,7 +120,7 @@ class Production95ContractsTests(unittest.TestCase):
 
     def test_docs_track_recovery_and_release_history(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        self.assertIn("OVERWATCH_ROLE_SETUP", readme)
+        self.assertIn("OVERWATCH_MART_SETUP.sql", readme)
         self.assertTrue((ROOT / "CHANGELOG.md").exists())
         self.assertTrue((ROOT / "docs" / "OVERWATCH_RECOVERY_RUNBOOK.md").exists())
 
@@ -155,7 +153,9 @@ class Production95ContractsTests(unittest.TestCase):
         self.assertIn("Cost Command Board", cost_shell)
         self.assertIn("Cost Signals", cost_shell)
         self.assertIn("Cost Executive Flow", cost_shell)
-        self.assertIn("Open Value Log", cost_shell)
+        self.assertNotIn("Open Value Log", cost_shell)
+        self.assertNotIn("Open FinOps", cost_shell)
+        self.assertNotIn("Open Budgets", cost_shell)
 
         self.assertIn("Lifecycle Control Loop", alert_shell)
         self.assertIn("Alert Lifecycle Board", alert_shell)
@@ -163,13 +163,14 @@ class Production95ContractsTests(unittest.TestCase):
         self.assertIn("Remediation log", alert_shell)
         self.assertIn("Review gated", alert_shell)
 
-        self.assertIn("Safe Fix Status", workload_shell)
-        self.assertIn("Lock vs queue", workload_shell)
-        self.assertIn("blocker, waiter, object, and route", workload_shell)
-        self.assertIn("Data Quality & Compare", native_monitoring)
+        self.assertIn("Workload Command Board", workload_shell)
+        self.assertIn("Open Query Triage", workload_shell)
+        self.assertIn("Open Pipeline Health", workload_shell)
+        self.assertNotIn("Safe Fix Status", workload_shell)
+        self.assertNotIn("Data Quality & Compare", native_monitoring)
         self.assertNotIn("Governance Native Sources", native_monitoring)
         self.assertFalse((APP_ROOT / "sections" / "native_readiness.py").exists())
-        self.assertIn("render_workload_data_quality_board()", workload_shell)
+        self.assertNotIn("render_workload_data_quality_board", workload_shell)
 
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("Raw", readme)

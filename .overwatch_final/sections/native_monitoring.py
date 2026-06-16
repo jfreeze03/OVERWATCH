@@ -7,41 +7,6 @@ import streamlit as st
 from sections.shell_helpers import render_signal_lane_board
 
 
-def render_workload_data_quality_board() -> None:
-    """Render data-quality and reconciliation telemetry without starting a scan."""
-    st.markdown("**Data Quality & Compare**")
-    render_signal_lane_board(
-        "Reconciliation Command Model",
-        (
-            {
-                "label": "DMF registry",
-                "value": "DMF health",
-                "state": "Native",
-                "detail": "DMF schedules, states, last runs, and failures become data-quality signals when enabled.",
-            },
-            {
-                "label": "Row-count pass",
-                "value": "Counts first",
-                "state": "Cheap",
-                "detail": "Compare matching tables by metadata and row counts before hashing large data.",
-            },
-            {
-                "label": "Hash pass",
-                "value": "HASH_AGG",
-                "state": "Targeted",
-                "detail": "Use explicit columns and bucket isolation so one bad table does not trigger a full-schema scan.",
-            },
-            {
-                "label": "Forensic diff",
-                "value": "Mismatch review",
-                "state": "Telemetry",
-                "detail": "Generate keyed or set-style diff review only for mismatched buckets/tables.",
-            },
-        ),
-        max_lanes=4,
-    )
-
-
 def render_alert_native_registry_board() -> None:
     """Render native Snowflake ALERT object telemetry for Alert Center."""
     render_signal_lane_board(

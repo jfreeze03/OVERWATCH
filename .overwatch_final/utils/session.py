@@ -142,9 +142,24 @@ def _has_streamlit_snowflake_secrets() -> bool:
         return False
 
 
+def _close_streamlit_connection(conn) -> None:
+    try:
+        conn.close()
+    except Exception:
+        pass
+
+
+@st.cache_resource(show_spinner=False, on_release=_close_streamlit_connection)
+def _quiet_streamlit_snowflake_connection():
+    """Create Streamlit's Snowflake connection without exposing framework spinner text."""
+    from streamlit.connections import SnowflakeConnection
+
+    return SnowflakeConnection(connection_name="snowflake")
+
+
 def _make_streamlit_connection_session():
     """Create a Snowpark session from Streamlit connection secrets."""
-    conn = st.connection("snowflake")
+    conn = _quiet_streamlit_snowflake_connection()
     return conn.session()
 
 

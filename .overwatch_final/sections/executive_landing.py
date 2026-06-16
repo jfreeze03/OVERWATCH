@@ -168,7 +168,7 @@ def _build_platform_operating_score(summary: dict, source_health: pd.DataFrame |
                 if cost_delta > 0
                 else "No positive spend movement in loaded cost summary."
             ),
-            next_action="Open Cost & Contract and validate the top cost mover before budget action.",
+            next_action="Open Cost & Contract and validate the top cost mover before changing warehouse settings.",
             cap=90 if cost_delta_pct >= 0.20 else None,
         ),
         _score_driver(
@@ -329,7 +329,7 @@ def _decision_rows(summary: dict) -> pd.DataFrame:
             "PRIORITY": "2",
             "DECISION_AREA": "Cost movement",
             "SIGNAL": f"{summary['top_cost_driver']} is the top cost mover; delta {summary['cost_delta']:+,.2f} credits",
-            "NEXT_ACTION": "Open Cost & Contract FinOps Control Center before changing budgets.",
+            "NEXT_ACTION": "Open Cost & Contract and explain the top cost mover before changing warehouse settings.",
             "WORKFLOW": "Cost & Contract",
         },
         {
@@ -1145,7 +1145,7 @@ def _summary_from_observability(board: pd.DataFrame, *, credit_price: float) -> 
         "top_cost_driver": "Account spend",
     }
     scored = _with_platform_operating_score(summary, pd.DataFrame([
-        {"SOURCE": "Executive observability marts", "STATE": "Loaded", "EVIDENCE": "Precomputed board rows loaded."}
+        {"SOURCE": "Executive observability marts", "STATE": "Loaded", "EVIDENCE": "Command board rows loaded."}
     ]))
     if score > 0:
         scored["score"] = safe_int(score)
@@ -2218,7 +2218,7 @@ def render() -> None:
             state_updates={"alert_center_active_view": "Automation Health"},
         )
     with n2:
-        _nav_button("FinOps Controls", "Cost & Contract", workflow_key="cost_contract_workflow", workflow="FinOps Control Center")
+        _nav_button("Cost Drivers", "Cost & Contract", workflow_key="cost_contract_workflow", workflow="Explain bill / attribution / contract")
     with n3:
         _nav_button("DBA Queue", "DBA Control Room")
     with n4:

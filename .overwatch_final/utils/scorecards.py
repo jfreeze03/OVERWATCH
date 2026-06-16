@@ -250,7 +250,7 @@ def _platform_driver_evidence(driver: str, metrics: dict) -> str:
 
 def _platform_driver_action(driver: str) -> str:
     actions = {
-        "Cost movement": "Open Cost & Contract and prove the top cost driver before changing budgets.",
+        "Cost movement": "Open Cost & Contract and prove the top cost driver before changing cost controls.",
         "Critical/high alerts": "Open Alert Center and assign owner, SLA, and remediation state.",
         "Open owner actions": "Open DBA Control Room and work the owner action queue.",
         "Task failures": "Open Workload Operations task graphs and inspect failed root/child task evidence.",

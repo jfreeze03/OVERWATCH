@@ -12,13 +12,9 @@ from utils.operational_intelligence import (  # noqa: E402
     build_capability_register_rows,
     build_capability_setup_sql,
     build_compliance_readiness_sql,
+    build_cost_run_rate_sql,
     build_operational_intelligence_sql_catalog,
     build_overwatch_self_monitoring_sql,
-    build_predictive_finops_sql,
-    build_precompute_contract_sql,
-    build_snowflake_value_auto_ddl,
-    build_snowflake_value_automation_health_sql,
-    build_snowflake_value_candidate_sql,
 )
 
 
@@ -32,11 +28,11 @@ class OperationalIntelligenceTests(unittest.TestCase):
             "Detection and Root-Cause Engine",
             "Task/Pipeline Critical Path Brain",
             "Data Quality and Reconciliation Center",
-            "Predictive FinOps and Automated Value Log",
+            "Cost Run-Rate and Attribution Monitor",
             "Alert Lifecycle 2.0",
             "Fact-Grounded AI Query Diagnosis",
             "Bounded Refresh Guardrails",
-            "Fast Summary Layer With Fallback",
+            "Scheduled Mart Layer With Fallback",
             "Security Risk Monitoring",
             "Multi-Account / Org View",
             "Data-First Navigation Contract",
@@ -56,39 +52,24 @@ class OperationalIntelligenceTests(unittest.TestCase):
             "ACCESS_HISTORY",
             "ORGANIZATION_USAGE",
             "OVERWATCH_RECON_CONFIG",
-            "OVERWATCH_VALUE_CANDIDATE_V",
+            "OVERWATCH_ACTION_QUEUE",
         ]:
             self.assertIn(source, combined_sql)
         self.assertIn("NO SAVED-STATE TABLE", combined_sql)
         self.assertNotIn("OVERWATCH_USER_PREFERENCES", combined_sql)
 
-    def test_value_automation_uses_existing_alert_event_contract(self):
-        value_sql = build_snowflake_value_auto_ddl().upper()
-        self.assertIn("OVERWATCH_VALUE_CANDIDATE_V", value_sql)
-        self.assertIn("OVERWATCH_VALUE_AUTOMATION_HEALTH_V", value_sql)
-        self.assertIn("SP_OVERWATCH_AUTOMATE_VALUE_LOG", value_sql)
-        self.assertIn("OVERWATCH_ACTION_QUEUE", value_sql)
-        self.assertIn("ALERT_EVENTS", value_sql)
-        self.assertIn("EVENT_ID", value_sql)
-        self.assertIn("IMPACT_ESTIMATE", value_sql)
-        self.assertNotIn("VALUE_AT_RISK_USD", value_sql)
-        self.assertNotIn("BUSINESS_IMPACT_USD", value_sql)
-        self.assertNotIn("SIGNAL_NAME", value_sql)
-
     def test_core_sql_contracts_avoid_same_select_alias_dependency(self):
-        finops_sql = build_predictive_finops_sql().upper()
+        cost_sql = build_cost_run_rate_sql().upper()
         compliance_sql = build_compliance_readiness_sql().upper()
         alert_sql = build_alert_lifecycle_sql().upper()
-        value_health_sql = build_snowflake_value_automation_health_sql().upper()
-        self.assertIn("PROJECTED AS", finops_sql)
-        self.assertIn("),\nPROJECTED AS", finops_sql)
-        self.assertIn("FROM PROJECTED", finops_sql)
+        self.assertIn("PROJECTED AS", cost_sql)
+        self.assertIn("),\nPROJECTED AS", cost_sql)
+        self.assertIn("FROM PROJECTED", cost_sql)
         self.assertIn("ROLLUP AS", compliance_sql)
         self.assertIn("),\nROLLUP AS", compliance_sql)
         self.assertIn("FROM ROLLUP", compliance_sql)
         self.assertIn("EVENT_ID", alert_sql)
         self.assertNotIn("USING (ALERT_ID)", alert_sql)
-        self.assertIn("OVERWATCH_VALUE_AUTOMATION_HEALTH_V", value_health_sql)
 
     def test_reconciliation_runner_uses_cross_database_account_usage_inventory(self):
         catalog = build_operational_intelligence_sql_catalog()
@@ -100,45 +81,34 @@ class OperationalIntelligenceTests(unittest.TestCase):
         self.assertIn("COMPARE_READY", recon_sql)
         self.assertNotIn("JOIN INFORMATION_SCHEMA.TABLES", recon_sql)
 
-    def test_value_automation_candidate_and_health_queries_are_read_only(self):
-        candidate_sql = build_snowflake_value_candidate_sql().upper()
-        health_sql = build_snowflake_value_automation_health_sql().upper()
-        self.assertIn("FROM OVERWATCH_VALUE_CANDIDATE_V", candidate_sql)
-        self.assertIn("FROM OVERWATCH_VALUE_AUTOMATION_HEALTH_V", health_sql)
-        self.assertNotIn("MERGE INTO", candidate_sql + health_sql)
-        self.assertNotIn("CALL SP_OVERWATCH_AUTOMATE_VALUE_LOG", candidate_sql + health_sql)
-
-    def test_self_monitoring_and_precompute_contracts_are_deployable(self):
+    def test_self_monitoring_and_setup_contracts_are_deployable(self):
         self_monitoring = build_overwatch_self_monitoring_sql().upper()
-        precompute = build_precompute_contract_sql().upper()
         setup_bundle = build_capability_setup_sql().upper()
         self.assertIn("QUERY_TAG ILIKE 'OVERWATCH%'", self_monitoring)
-        self.assertIn("CREATE DYNAMIC TABLE IF NOT EXISTS", precompute)
-        self.assertIn("CREATE OR REPLACE VIEW OVERWATCH_QUERY_HEALTH_HOURLY_V", precompute)
         self.assertIn("OVERWATCH_RECON_CONFIG", setup_bundle)
         self.assertIn("NO SAVED-STATE TABLE", setup_bundle)
+        self.assertIn("OVERWATCH_MART_SETUP.SQL", setup_bundle)
         self.assertNotIn("OVERWATCH_USER_PREFERENCES", setup_bundle)
 
-    def test_repo_docs_and_precompute_script_are_present(self):
+    def test_repo_docs_and_consolidated_setup_script_are_present(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         runbook = ROOT / "docs" / "OVERWATCH_COMMAND_INTELLIGENCE_RUNBOOK.md"
         data_model = ROOT / "docs" / "DATA_MODEL.md"
         refresh_arch = ROOT / "docs" / "REFRESH_ARCHITECTURE.md"
-        precompute = ROOT / "snowflake" / "PRECOMPUTE.sql"
-        native_alerts = ROOT / "snowflake" / "OVERWATCH_NATIVE_ALERT_TEMPLATES.sql"
-        setup = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8").upper()
+        setup_path = ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql"
+        setup = setup_path.read_text(encoding="utf-8").upper()
         self.assertTrue(runbook.exists())
         self.assertTrue(data_model.exists())
         self.assertTrue(refresh_arch.exists())
-        self.assertTrue(precompute.exists())
-        self.assertTrue(native_alerts.exists())
+        self.assertTrue(setup_path.exists())
         self.assertIn("OVERWATCH_COMMAND_INTELLIGENCE_RUNBOOK", readme)
         self.assertIn("REFRESH_ARCHITECTURE", readme)
-        self.assertIn("OVERWATCH_NATIVE_ALERT_TEMPLATES", readme)
         self.assertIn("OVERWATCH_COMMAND_INTELLIGENCE_CAPABILITY", setup)
         self.assertIn("OVERWATCH_REFRESH_POLICY", setup)
-        self.assertIn("SP_OVERWATCH_AUTOMATE_VALUE_LOG", setup)
-        self.assertIn("OVERWATCH_VALUE_AUTOMATION_HEALTH_V", setup)
+        self.assertIn("CREATE ROLE IF NOT EXISTS OVERWATCH_MONITOR", setup)
+        self.assertNotIn("PRECOMPUTE.SQL", readme.upper())
+        self.assertNotIn("SP_OVERWATCH_AUTOMATE_VALUE_LOG", setup)
+        self.assertNotIn("OVERWATCH_VALUE_AUTOMATION_HEALTH_V", setup)
 
     def test_sections_surface_command_intelligence_without_new_sidebar_sprawl(self):
         section_paths = [
@@ -147,16 +117,12 @@ class OperationalIntelligenceTests(unittest.TestCase):
             ROOT / ".overwatch_final" / "sections" / "cost_contract.py",
             ROOT / ".overwatch_final" / "sections" / "dba_control_room.py",
             ROOT / ".overwatch_final" / "sections" / "executive_landing.py",
-            ROOT / ".overwatch_final" / "sections" / "snowflake_value.py",
         ]
         text = "\n".join(path.read_text(encoding="utf-8") for path in section_paths)
         for marker in [
             "build_capability_register_rows",
-            "build_task_critical_path_brain_sql",
             "build_mart_cost_run_rate_sql",
-            "build_snowflake_value_automation_health_sql",
             "Bounded Refresh Guardrails",
-            "build_ai_query_diagnosis_contract_rows",
         ]:
             self.assertIn(marker, text)
         self.assertNotIn("God-tier", text)

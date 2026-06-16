@@ -2,7 +2,7 @@
 import pandas as pd
 import streamlit as st
 
-from config import DEFAULTS, THRESHOLDS, ETL_AUDIT_DB, ETL_AUDIT_SCHEMA
+from config import DEFAULTS, THRESHOLDS
 from sections.shell_helpers import _clean_display_text, render_shell_snapshot
 from utils import (
     build_idle_warehouse_sql,
@@ -389,36 +389,6 @@ def _render_queue(session):
             height=120,
         )
 
-    if row.get("STATUS") == "Fixed" and safe_float(row.get("EST_MONTHLY_SAVINGS")) > 0:
-        st.divider()
-        st.subheader("Log Fixed Action to Snowflake Value")
-        monthly_savings = safe_float(row.get("EST_MONTHLY_SAVINGS"))
-        savings_credits = monthly_savings / 30 / max(st.session_state.get("credit_price", DEFAULTS["credit_price"]), 0.01)
-        if st.button("Create Snowflake Value entry", key="queue_log_value"):
-            try:
-                value_table = (
-                    f"{safe_identifier(ETL_AUDIT_DB)}."
-                    f"{safe_identifier(ETL_AUDIT_SCHEMA)}."
-                    f"{safe_identifier('OVERWATCH_ROI_LOG')}"
-                )
-                desc = sql_literal(row.get("RECOMMENDED_ACTION") or row.get("FINDING") or "", 1000)
-                entity = sql_literal(row.get("ENTITY_NAME") or "", 500)
-                notes = sql_literal(f"Created from action queue item {selected}", 1000)
-                session.sql(f"""
-                    INSERT INTO {value_table}
-                        (CATEGORY, DESCRIPTION, ENTITY, BASELINE_CREDITS,
-                         CURRENT_CREDITS, SAVINGS_CREDITS, SAVINGS_MONTHLY, VERIFIED, NOTES)
-                    VALUES (
-                        'Action Queue', {desc}, {entity},
-                        {savings_credits}, 0, {savings_credits},
-                        {monthly_savings}, TRUE, {notes}
-                    )
-                """).collect()
-                st.success(f"Logged ${monthly_savings:,.2f}/month to Snowflake Value.")
-            except Exception as e:
-                st.error(f"Could not log Snowflake Value: {format_snowflake_error(e)}")
-                st.info("Snowflake Value logging is not available in this environment yet. Ask the DBA team to enable it, then retry.")
-
 
 def render():
     session = get_session()
@@ -666,7 +636,7 @@ def render():
             defer_source_note(
                 metric_confidence_label("estimated"),
                 freshness_note("ACCOUNT_USAGE"),
-                "Savings are directional until the action is fixed and logged to Snowflake Value.",
+                "Savings are directional until post-period telemetry confirms the action outcome.",
             )
             top_rec = df_recs.iloc[0]
             st.warning(

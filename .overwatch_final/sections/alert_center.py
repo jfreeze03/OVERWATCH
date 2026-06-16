@@ -377,10 +377,10 @@ def _load_center_data(
                   PRIMARY_EVIDENCE_STATE,
                   ACTION_QUEUE_SEEDED,
                   OWNER_ROUTES_UPDATED,
-                  VERIFIED_SAVINGS_STATE,
+                  ACTION_CLOSURE_STATE,
                   ALERT_DIGEST_STATE,
                   OPEN_ACTIONS,
-                  VERIFIED_ACTIONS,
+                  CLOSED_WITH_TELEMETRY_COUNT,
                   LAST_DIGEST_TS,
                   NEXT_ACTION
                 FROM OVERWATCH_AUTOMATION_HEALTH_V
@@ -1073,10 +1073,10 @@ def _alert_command_lanes(
                 "detail": "Failed logins, risky grants, exfiltration, and policy drift route here.",
             },
             {
-                "label": "Cost / FinOps",
+                "label": "Cost",
                 "value": "On demand",
                 "state": "Spend",
-                "detail": "Runaway spend, warehouse spikes, Cortex spend, and budget risk.",
+                "detail": "Runaway spend, warehouse spikes, Cortex spend, and spend risk.",
             },
             {
                 "label": "Performance",
@@ -1151,10 +1151,10 @@ def _alert_command_lanes(
             "detail": "Login, privilege, sharing, and access anomalies.",
         },
         {
-            "label": "Cost / FinOps",
-            "value": f"{cat_count('COST', 'FINOPS'):,}",
+            "label": "Cost",
+            "value": f"{cat_count('COST', 'COST'):,}",
             "state": "Spend",
-            "detail": "Warehouse, Cortex, service-cost, and budget risk signals.",
+            "detail": "Warehouse, Cortex, service-cost, and spend risk signals.",
         },
         {
             "label": "Performance",
@@ -1339,7 +1339,7 @@ def _alert_owner_route_board(alerts: pd.DataFrame, queue: pd.DataFrame) -> tuple
         "",
         "DBA",
         "OVERWATCH",
-        "DBA / FINOPS",
+        "DBA / COST OWNER",
         "DBA / PLATFORM",
         "DBA / SECURITY",
         "DBA / PIPELINE OWNER",
@@ -1607,19 +1607,19 @@ def _render_no_touch_automation_health(automation_health: pd.DataFrame) -> None:
 
     primary_state = text_value("PRIMARY_EVIDENCE_STATE", "Not Run")
     digest_state = text_value("ALERT_DIGEST_STATE", "Not Run")
-    savings_state = text_value("VERIFIED_SAVINGS_STATE", "Verifier scheduled")
+    closure_state = text_value("ACTION_CLOSURE_STATE", "Action queue records closure telemetry")
     run_scope = " / ".join(
         part for part in [text_value("COMPANY", "ALL"), text_value("ENVIRONMENT", "ALL")] if part
     ) or "ALL / ALL"
     run_ts = text_value("RUN_TS", "Not Run")[:19]
     open_actions = int_value("OPEN_ACTIONS")
-    verified_actions = int_value("VERIFIED_ACTIONS")
+    closed_with_telemetry = int_value("CLOSED_WITH_TELEMETRY_COUNT")
 
     render_shell_snapshot((
         ("Last Run", run_ts),
         ("Seeded", f"{int_value('ACTION_QUEUE_SEEDED'):,}"),
         ("Open Actions", f"{open_actions:,}"),
-        ("Measured", f"{verified_actions:,}"),
+        ("Closed With Telemetry", f"{closed_with_telemetry:,}"),
     ))
 
     rows = [
@@ -1645,10 +1645,10 @@ def _render_no_touch_automation_health(automation_health: pd.DataFrame) -> None:
             "OWNER": "Platform DBA",
         },
         {
-            "STATE": "Ready" if "VERIFIED" in savings_state.upper() or "SCHEDULED" in savings_state.upper() else "Review",
-            "CONTROL": "Savings telemetry",
-            "EVIDENCE": savings_state,
-            "NEXT_ACTION": "Let metering telemetry close savings outcomes instead of DBA notes.",
+            "STATE": "Ready" if closed_with_telemetry > 0 or "CLOSURE" in closure_state.upper() else "Review",
+            "CONTROL": "Action closure telemetry",
+            "EVIDENCE": closure_state,
+            "NEXT_ACTION": "Use later usage telemetry to close impact outcomes instead of DBA notes.",
             "OWNER": "Cost Route",
         },
         {
@@ -1921,7 +1921,6 @@ def _render_alert_notification_remediation(
     rules: pd.DataFrame,
 ) -> None:
     from utils.alerts import build_alert_optional_integrations, build_alert_remediation_contract
-    from utils.operational_intelligence import build_snowflake_value_automation_rows
 
     pd = _pd()
     st.subheader("Notifications & Remediation")
@@ -1962,16 +1961,6 @@ def _render_alert_notification_remediation(
         priority_columns=["STATE", "CONTROL", "EVIDENCE", "NEXT_ACTION", "OWNER"],
         raw_label="All notification controls",
         height=240,
-    )
-    _render_priority_dataframe(
-        pd.DataFrame(build_snowflake_value_automation_rows()),
-        title="Automated Snowflake value capture",
-        priority_columns=[
-            "VALUE_SIGNAL", "EVIDENCE_SOURCE", "VALUE_STATE",
-            "CAPTURE_RULE", "WHY_IT_MATTERS",
-        ],
-        raw_label="All value automation rows",
-        height=220,
     )
     if alerts.empty:
         st.info("Load alert history to review remediation status for real alert rows.")
@@ -2767,7 +2756,7 @@ def render() -> None:
                     audit_owner = st.text_input(
                         "Route",
                         key="alert_center_audit_owner",
-                        placeholder="DBA / FinOps / Security route",
+                        placeholder="DBA / Cost owner / Security route",
                     )
                     audit_note = st.text_area(
                         "Audit note",

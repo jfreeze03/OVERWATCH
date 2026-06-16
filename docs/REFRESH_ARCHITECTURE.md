@@ -7,12 +7,10 @@ new Snowflake cost problem. The production rule is mart-first, live-second.
 
 Use scheduled Snowflake tasks and transient mart/fact tables for the command
 center. Use permanent tables only for configuration, acknowledgements,
-suppression windows, remediation logs, action queue history, routing, and
-value evidence.
+suppression windows, remediation logs, action queue history, and routing.
 
-Do not make Dynamic Tables the base architecture. They remain optional
-accelerators in `snowflake/PRECOMPUTE.sql` after DBA review of warehouse,
-target lag, ownership, and refresh budget.
+Do not make Dynamic Tables the base architecture. The production setup has one
+deployable DDL source: `snowflake/OVERWATCH_MART_SETUP.sql`.
 
 Do not use materialized views for the primary command center. The app needs
 multi-source, windowed exception logic with explicit refresh and
@@ -28,7 +26,6 @@ audit behavior.
 | Cost & Contract | `MART_EXECUTIVE_OBSERVABILITY`, cost/Cortex facts, bounded official cost lens | 60 min | Explicit proof refresh |
 | Workload Operations | `MART_EXECUTIVE_OBSERVABILITY`, query/task facts and task history summaries | 30-60 min | Explicit live triage |
 | Security Monitoring | Access posture and security facts | 60 min | Explicit drilldown only |
-| Snowflake Value | `OVERWATCH_VALUE_CANDIDATE_V`, `OVERWATCH_ROI_LOG` | 60 min | Explicit load only |
 
 The setup SQL seeds the same contract into `OVERWATCH_REFRESH_POLICY`.
 Run `snowflake/OVERWATCH_MART_VALIDATION.sql` after setup to verify the
@@ -36,11 +33,6 @@ first-paint mart, required panels, alert lifecycle tables, compare/recon tables,
 refresh policy, and caller context. Role-level proof belongs in
 `docs/LIVE_ROLE_PROOF_CHECKLIST.md`.
 
-Optional Snowflake ALERT templates live in
-`snowflake/OVERWATCH_NATIVE_ALERT_TEMPLATES.sql`. Use them to notify on stale
-marts, critical/high alert backlog, failed task materialization, or missing data
-quality proof after the warehouse and notification integration are approved.
-They should guard the command center; they do not replace live incident triage.
 The UI should still render the metric frame immediately. If a Snowflake session
 or mart lookup would block the first paint, show the precomputed-board frame and
 let the global Refresh action read the compact mart. Do not fall back to live
@@ -53,7 +45,7 @@ is unavailable, the page still shows the graphics frame, scoped "not loaded"
 lanes, setup readiness contracts, and the next refresh/setup action.
 
 The same first-paint rule applies to DBA Control Room, Workload Operations, Cost
-& Contract, Alert Center, and Snowflake Value: show the board frame immediately,
+& Contract, Alert Center, and Security Monitoring: show the board frame immediately,
 reuse already-loaded session state when present, and allow only compact
 precomputed mart reads during navigation. Raw `ACCOUNT_USAGE`,
 `INFORMATION_SCHEMA`, schema compare, data hash, remediation, and proof queries

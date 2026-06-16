@@ -73,19 +73,9 @@ DEFAULT_ALERT_RULES = [
         "ALERT_TYPE": "Credit Spike",
         "DEFAULT_SEVERITY": "Medium",
         "SLA_HOURS": 24,
-        "OWNER": "DBA / FinOps",
+        "OWNER": "DBA / Cost owner",
         "ROUTE": "Cost & Contract",
-        "RUNBOOK": "Explain the bill movement, identify route-backed drivers, and route savings actions.",
-    },
-    {
-        "RULE_ID": "COST_SAVINGS_VERIFIER_FAILURE",
-        "CATEGORY": "Cost Control",
-        "ALERT_TYPE": "Cost Savings Measurement Failure",
-        "DEFAULT_SEVERITY": "High",
-        "SLA_HOURS": 8,
-        "OWNER": "DBA / FinOps",
-        "ROUTE": "Cost & Contract",
-        "RUNBOOK": "Inspect the savings measurement task, keep savings estimated, and restore ledger-backed status before claiming value.",
+        "RUNBOOK": "Explain the bill movement, identify route-backed drivers, and route cost-control actions.",
     },
     {
         "RULE_ID": "QUERY_HIGH_ERROR_RATE",
@@ -203,7 +193,7 @@ DEFAULT_ALERT_RULES = [
         "ALERT_TYPE": "Unused Or Oversized Warehouse",
         "DEFAULT_SEVERITY": "Medium",
         "SLA_HOURS": 24,
-        "OWNER": "DBA / FinOps",
+        "OWNER": "DBA / Cost owner",
         "ROUTE": "Optimization Advisor",
         "RUNBOOK": "Record metering/query telemetry, review status, rollback path, and expected savings before changing warehouse settings.",
     },
@@ -713,7 +703,7 @@ def alert_escalation_candidates(df: pd.DataFrame, *, limit: int = 10) -> pd.Data
     severity = view["SEVERITY"].apply(normalize_alert_severity).isin(["Critical", "High"])
     sla = view.get("SLA_STATE", pd.Series(["Within SLA"] * len(view), index=view.index)).isin(["Overdue", "Due Soon"])
     owner_gap = view.get("OWNER", pd.Series(["DBA"] * len(view), index=view.index)).fillna("").astype(str).str.upper().isin(
-        ["", "DBA", "DBA / FINOPS", "DBA / PLATFORM", "DBA / SECURITY", "DBA / PIPELINE OWNER"]
+        ["", "DBA", "DBA / COST OWNER", "DBA / PLATFORM", "DBA / SECURITY", "DBA / PIPELINE OWNER"]
     )
     candidates = view[severity | sla | owner_gap].copy()
     if candidates.empty:
@@ -753,7 +743,7 @@ def build_alert_digest_summary(df: pd.DataFrame) -> dict[str, int]:
         "overdue": int(active.get("SLA_STATE", pd.Series([""] * len(active), index=active.index)).eq("Overdue").sum()),
         "due_soon": int(active.get("SLA_STATE", pd.Series([""] * len(active), index=active.index)).eq("Due Soon").sum()),
         "email_ready": int(delivery.str.contains("EMAIL_READY").sum()),
-        "needs_owner": int(owners.isin(["", "DBA", "DBA / FINOPS", "DBA / PLATFORM", "DBA / SECURITY", "DBA / PIPELINE OWNER"]).sum()),
+        "needs_owner": int(owners.isin(["", "DBA", "DBA / COST OWNER", "DBA / PLATFORM", "DBA / SECURITY", "DBA / PIPELINE OWNER"]).sum()),
     }
 
 
@@ -1283,16 +1273,6 @@ def _alert_reliability_kind(row: pd.Series | dict) -> str:
     return ""
 
 
-def _alert_is_cost_verifier(row: pd.Series | dict) -> bool:
-    signal = " ".join([
-        _row_value(row, "CATEGORY", default=""),
-        _row_value(row, "ALERT_TYPE", default=""),
-        _row_value(row, "ENTITY_NAME", "ENTITY", default=""),
-        _row_value(row, "MESSAGE", "DETAIL", default=""),
-    ]).upper()
-    return "COST SAVINGS VERIFICATION" in signal or "OVERWATCH_COST_SAVINGS_VERIFY" in signal
-
-
 def _object_leaf_name(value: object) -> str:
     text = str(value or "").strip().strip('"')
     if not text:
@@ -1373,16 +1353,6 @@ LIMIT 50
 """.strip()
 
 
-def _cost_verifier_verification_query() -> str:
-    return """
-SELECT DATABASE_NAME, SCHEMA_NAME, NAME, STATE, SCHEDULED_TIME, COMPLETED_TIME, QUERY_ID, ERROR_MESSAGE
-FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
-WHERE UPPER(NAME) = 'OVERWATCH_COST_SAVINGS_VERIFY'
-ORDER BY SCHEDULED_TIME DESC
-LIMIT 50
-""".strip()
-
-
 def _alert_recovery_verification_query(row: pd.Series | dict, reliability_kind: str) -> str:
     from .action_queue import verification_query_safety_issues
 
@@ -1455,18 +1425,6 @@ def _alert_recovery_sql_guidance(row: pd.Series | dict, reliability_kind: str) -
     ])
 
 
-def _alert_cost_verifier_sql_guidance(row: pd.Series | dict) -> str:
-    entity = _row_value(row, "ENTITY_NAME", "ENTITY", default="OVERWATCH_COST_SAVINGS_VERIFY")
-    owner = _row_value(row, "OWNER", "ESCALATION_TARGET", default="DBA / FinOps")
-    return "\n".join([
-        f"-- reviewed cost savings measurement recovery for {entity}",
-        "-- Do not claim cost savings while the measurement task is failing.",
-        f"-- Assign route/reviewer: {owner}",
-        "-- Required order: inspect TASK_HISTORY, fix measurement privileges/schedule/procedure errors, document the ticket, then confirm a clean ledger run.",
-        "-- If task recovery requires schedule, resume, or procedure changes, execute from the reviewed Workload Operations/Admin workflow with audit telemetry.",
-    ])
-
-
 def alert_history_to_actions(df_alerts: pd.DataFrame, company: str = "ALFA") -> list[dict]:
     if df_alerts is None or df_alerts.empty:
         return []
@@ -1481,18 +1439,15 @@ def alert_history_to_actions(df_alerts: pd.DataFrame, company: str = "ALFA") -> 
         entity = _row_value(row, "ENTITY_NAME", "ENTITY", default="Snowflake account")
         message = _row_value(row, "MESSAGE", "DETAIL")
         reliability_kind = _alert_reliability_kind(row)
-        is_cost_verifier = _alert_is_cost_verifier(row)
         is_recovery = reliability_kind in {"task", "procedure"}
-        reviewed_recovery = is_recovery or is_cost_verifier
-        action_category = "Task & Procedure Reliability" if is_recovery else "Cost Control" if is_cost_verifier else category
-        entity_type = "Cost Measurement Task" if is_cost_verifier else {
+        reviewed_recovery = is_recovery
+        action_category = "Task & Procedure Reliability" if is_recovery else category
+        entity_type = {
             "task": "Task",
             "procedure": "Stored Procedure",
         }.get(reliability_kind, "Alert Entity")
         proof_query = _safe_alert_proof_query(row)
-        if is_cost_verifier:
-            verification_query = _cost_verifier_verification_query()
-        elif is_recovery:
+        if is_recovery:
             verification_query = _alert_recovery_verification_query(row, reliability_kind)
         else:
             verification_query = proof_query
@@ -1513,17 +1468,7 @@ def alert_history_to_actions(df_alerts: pd.DataFrame, company: str = "ALFA") -> 
             sla_target_hours = float(ALERT_SLA_HOURS.get(normalize_alert_severity(_row_value(row, "SEVERITY", default="Medium")), 24))
         alert_age_hours = _alert_numeric_value(row, "ALERT_AGE_HOURS")
         suggested_action = _row_value(row, "SUGGESTED_ACTION", default="Review the Alert Center issue and route it through the DBA action queue.")
-        if is_cost_verifier:
-            suggested_action = (
-                f"{suggested_action} Keep savings estimated until the measurement task has a clean run ledger, "
-                "then re-run closure review in Cost & Contract."
-            )
-            sql_fix = _alert_cost_verifier_sql_guidance(row)
-            recovery_evidence = (
-                "Required closure status: TASK_HISTORY error/root cause, successful measurement task run, "
-                f"and refreshed savings measurement ledger for {entity}. Alert detail: {message}"
-            )
-        elif is_recovery:
+        if is_recovery:
             suggested_action = (
                 f"{suggested_action} Track recovery through the action queue: assign route/ticket, confirm root cause, "
                 "complete review before recovery, and confirm the next run."
@@ -1565,7 +1510,7 @@ def alert_history_to_actions(df_alerts: pd.DataFrame, company: str = "ALFA") -> 
             action.update({
                 "Verification Status": "Requested",
                 "Verification Note": (
-                    "Alert routed from Alert Center; retry, recovery, or claimed savings closure requires root-cause "
+                    "Alert routed from Alert Center; retry or recovery requires root-cause "
                     "status and post-recovery telemetry."
                 ),
                 "Recovery SLA State": _alert_recovery_sla_state(row),
@@ -1575,7 +1520,7 @@ def alert_history_to_actions(df_alerts: pd.DataFrame, company: str = "ALFA") -> 
             })
             if alert_age_hours is not None:
                 action["Recovery SLA Hours"] = float(alert_age_hours)
-            action.update(_alert_recovery_metrics(row, "task" if is_cost_verifier else reliability_kind))
+            action.update(_alert_recovery_metrics(row, reliability_kind))
         actions.append(action)
     return actions
 
@@ -2232,7 +2177,7 @@ ALERT_DATA_QUALITY_CHECK_TABLE = "ALERT_DATA_QUALITY_CHECKS"
 
 ALERT_COMMAND_CENTER_CATEGORIES = (
     "Security",
-    "Cost / FinOps",
+    "Cost",
     "Performance",
     "Task / Pipeline",
     "Data Quality",
@@ -2383,14 +2328,14 @@ def build_alert_threshold_seed_rows() -> list[dict[str, object]]:
         },
         {
             "THRESHOLD_KEY": "COST_WAREHOUSE_CREDIT_SPIKE",
-            "CATEGORY": "Cost / FinOps",
+            "CATEGORY": "Cost",
             "SIGNAL_NAME": "Warehouse credit spike",
             "SEVERITY": "High",
             "THRESHOLD_VALUE": 1.5,
             "BASELINE_WINDOW_DAYS": 30,
             "CURRENT_WINDOW_MINUTES": 1440,
-            "OWNER": "DBA / FinOps",
-            "NOTIFICATION_CHANNEL": "FINOPS",
+            "OWNER": "DBA / Cost owner",
+            "NOTIFICATION_CHANNEL": "COST",
         },
         {
             "THRESHOLD_KEY": "PERF_QUEUE_PRESSURE",
@@ -2433,8 +2378,8 @@ def build_alert_threshold_seed_rows() -> list[dict[str, object]]:
             "THRESHOLD_VALUE": 14,
             "BASELINE_WINDOW_DAYS": 30,
             "CURRENT_WINDOW_MINUTES": 1440,
-            "OWNER": "DBA / FinOps",
-            "NOTIFICATION_CHANNEL": "FINOPS",
+            "OWNER": "DBA / Cost owner",
+            "NOTIFICATION_CHANNEL": "COST",
         },
     ]
 
@@ -2687,7 +2632,7 @@ def build_alert_command_center_setup_sql(
             "OWNER": row["OWNER"],
             "ROUTE": {
                 "Security": "Security Posture",
-                "Cost / FinOps": "Cost & Contract",
+                "Cost": "Cost & Contract",
                 "Performance": "Workload Operations",
                 "Task / Pipeline": "Workload Operations",
                 "Data Quality": "Workload Operations",
@@ -3007,12 +2952,12 @@ LIMIT 100;
 """.strip(),
         },
         {
-            "CATEGORY": "Cost / FinOps",
+            "CATEGORY": "Cost",
             "SIGNAL": "Warehouse credit spike vs baseline",
             "SEVERITY": "High",
             "TELEMETRY": "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY",
             "FRESHNESS": "Finalized metering windows can lag",
-            "OWNER": "DBA / FinOps",
+            "OWNER": "DBA / Cost owner",
             "WHY_THIS_MATTERS": "Warehouse metering is the official compute source of truth; spikes need route, workload, and contract-burn context.",
             "RECOMMENDED_ACTION": "Compare current credits to 30-day baseline, then inspect query drivers and warehouse setting changes.",
             "SQL": f"""
@@ -3033,7 +2978,7 @@ baseline AS (
   )
   GROUP BY 1
 )
-SELECT 'COST_WAREHOUSE_CREDIT_SPIKE' AS ALERT_KEY, 'Cost / FinOps' AS CATEGORY, 'High' AS SEVERITY,
+SELECT 'COST_WAREHOUSE_CREDIT_SPIKE' AS ALERT_KEY, 'Cost' AS CATEGORY, 'High' AS SEVERITY,
        current_window.WAREHOUSE_NAME AS ENTITY_NAME,
        CURRENT_CREDITS AS CURRENT_VALUE, COALESCE(BASELINE_DAILY_CREDITS, 0) AS BASELINE_VALUE,
        'Explain warehouse credit spike with official metering and top query drivers.' AS RECOMMENDED_ACTION
@@ -3165,7 +3110,7 @@ LIMIT 100;
             "SEVERITY": "Medium",
             "TELEMETRY": "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSES / QUERY_HISTORY / TABLES",
             "FRESHNESS": "Delayed ACCOUNT_USAGE telemetry",
-            "OWNER": "DBA / FinOps",
+            "OWNER": "DBA / Cost owner",
             "WHY_THIS_MATTERS": "Optimization alerts should be telemetry-ranked candidates, not generic tune-the-query advice.",
             "RECOMMENDED_ACTION": "Route only with before/after telemetry, review status, rollback path, and expected savings or reliability gain.",
             "SQL": f"""
@@ -3368,7 +3313,7 @@ def _alert_business_impact(category: str, severity: str, provided: str = "") -> 
     severity_key = normalize_alert_severity(severity)
     if category_key == "SECURITY":
         return "Breach, privilege escalation, data exposure, or control bypass risk."
-    if category_key == "COST / FINOPS":
+    if category_key == "COST CONTROL":
         return "Spend run-rate or contract burn risk before finance sees the invoice."
     if category_key == "PERFORMANCE":
         return "Queue, spill, lock, or slow-query pressure can become a service incident."
@@ -3399,7 +3344,7 @@ def _alert_impact_estimate(row: pd.Series | dict, category: str, severity: str) 
     severity_key = normalize_alert_severity(severity)
     if category_key == "SECURITY":
         return "Exposure risk - quantify users, roles, objects, and source IPs during triage."
-    if category_key == "COST / FINOPS":
+    if category_key == "COST CONTROL":
         return "Cost risk - attach projected daily/month-end spend and top driver telemetry."
     if category_key == "PERFORMANCE":
         return "Service risk - attach queue time, blocked sessions, spill, and affected workload."
@@ -3441,7 +3386,7 @@ def _alert_source_freshness(category: str, provided: str = "") -> str:
     provided = str(provided or "").strip()
     if provided:
         return provided
-    if str(category or "").strip() in {"Security", "Cost / FinOps", "Performance", "Task / Pipeline", "Optimization"}:
+    if str(category or "").strip() in {"Security", "Cost", "Performance", "Task / Pipeline", "Optimization"}:
         return "ACCOUNT_USAGE delayed; use INFORMATION_SCHEMA/event-table checks for urgent confirmation."
     return "Configured check; confirm collection schedule and latest run history."
 
@@ -3684,7 +3629,7 @@ def build_alert_morning_brief_rows(alerts: pd.DataFrame, *, limit: int = 12) -> 
     priority_frame = priority_frame.sort_values(["_RANK", "EVENT_TS"], ascending=[True, False]).head(max(1, int(limit or 12))).copy()
     why_map = {
         "Security": "Possible breach, privilege escalation, data exposure, or control bypass.",
-        "Cost / FinOps": "Spend may exceed normal run-rate or contract burn before finance sees the invoice.",
+        "Cost": "Spend may exceed normal run-rate or contract burn before finance sees the invoice.",
         "Performance": "Queue, spill, long-running, or lock patterns can become an outage without intervention.",
         "Task / Pipeline": "Task graph or stored procedure failures can break the Informatica-to-Snowflake migration SLA.",
         "Data Quality": "Freshness, volume, null, duplicate, or schema drift can corrupt downstream decisions.",

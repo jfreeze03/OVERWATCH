@@ -281,7 +281,6 @@ def _jump(title: str, *, warehouse: str = "", user: str = "", workflow: str = ""
     if workflow:
         if title in {"Query Workbench", "Workload Operations"}:
             st.session_state["_workload_operations_explicit_workflow_request"] = True
-            st.session_state["workload_operations_view"] = "Specialist Workflows"
             if workflow == "Diagnosis":
                 st.session_state["workload_operations_workflow"] = "Query diagnosis"
             elif workflow == "History Search":
@@ -294,16 +293,9 @@ def _jump(title: str, *, warehouse: str = "", user: str = "", workflow: str = ""
         elif title == "Cost & Contract":
             st.session_state["cost_contract_workflow"] = workflow
         elif title == "Security Monitoring":
-            if workflow == "Security Posture":
-                st.session_state["security_monitoring_view"] = "Security Posture"
-            else:
-                st.session_state["security_monitoring_view"] = "Change & Drift"
-                st.session_state["change_drift_workflow"] = workflow
-                st.session_state["change_drift_requested_workflow"] = workflow
+            st.session_state["security_monitoring_view"] = "Security Posture"
         elif title == "Security Posture":
             st.session_state["security_posture_workflow"] = workflow
-        elif title == "Change & Drift":
-            st.session_state["change_drift_workflow"] = workflow
     if warehouse:
         st.session_state["global_warehouse"] = warehouse
         st.session_state["wh_filter"] = warehouse
@@ -449,7 +441,7 @@ def _dba_control_source_health_rows(
         else:
             state_label = "Loaded"
         if state_label == "Stale":
-            next_action = "Reload DBA Control Room after changing company, environment, lookback, budget, or triage filters."
+            next_action = "Reload DBA Control Room after changing company, environment, lookback, spend threshold, or triage filters."
         elif state_label == "Unavailable":
             next_action = "Deploy or refresh the summary/source before relying on this surface."
         elif state_label == "Deferred":
@@ -995,7 +987,7 @@ def _evidence_surface_route(surface: object) -> tuple[str, str, str]:
         return (
             "Cost & Contract",
             "Cost Cockpit",
-            "current credit, cost-driver, budget, and attribution telemetry",
+            "current credit, cost-driver, spend threshold, and attribution telemetry",
         )
     if "object" in text or "change" in text or "grant" in text:
         return (
@@ -1018,7 +1010,7 @@ def _evidence_surface_route(surface: object) -> tuple[str, str, str]:
     return (
         "DBA Control Room",
         "Data Health",
-        "fresh data health for the active company, environment, lookback, budget, and filters",
+        "fresh data health for the active company, environment, lookback, spend threshold, and filters",
     )
 
 
@@ -2290,7 +2282,7 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
                 "Severity": "High" if projected_cost > cortex_budget or score < 65 else "Medium",
                 "Signal": "Cortex / AI cost risk",
                 "Evidence": (
-                    f"Projected 30-day Cortex cost ${projected_cost:,.0f} vs ${cortex_budget:,.0f} budget; "
+                    f"Projected 30-day Cortex cost ${projected_cost:,.0f} vs ${cortex_budget:,.0f} spend threshold; "
                     f"{len(cortex_exceptions):,} user/source exception(s); state {_cortex_cost_rating(score)}"
                 ),
                 "Action": "Review Cortex users, source split, cost-per-request spikes, and daily credit guardrails.",
@@ -2381,6 +2373,9 @@ def _command_queue_route(category: object) -> str:
 def _canonical_dba_route(route: object) -> str:
     """Fold retired route labels into the current six-surface command model."""
     text = str(route or "").strip()
+    upper_text = text.upper()
+    if any(token in upper_text for token in ("CHANGE & DRIFT", "CHANGE DRIFT", "CONTROLLED DBA ACTION")):
+        return "Workload Operations"
     return normalize_section_name(text) or "DBA Control Room"
 
 
@@ -2458,7 +2453,7 @@ def _command_named_owner(row: pd.Series) -> bool:
         "UNKNOWN WAREHOUSE",
         "DBA",
         "DBA LEAD",
-        "DBA / FINOPS",
+        "DBA / COST OWNER",
         "DBA / PLATFORM",
         "DBA / SECURITY",
         "DBA / WORKLOAD OWNER",
@@ -2849,7 +2844,7 @@ def _dba_section_proof_required(section: object, lowest_component: object = "") 
     if "CHANGE" in name or "DRIFT" in name:
         return "change ticket, query_id, release-note/rollback status, blast-radius review, closure status"
     if "COST" in name:
-        return "allocated cost basis, warehouse capacity telemetry, cost attribution, savings telemetry, rollback SQL, finance-ready closure status"
+        return "allocated cost basis, warehouse capacity telemetry, cost attribution, impact telemetry, rollback SQL, finance-ready closure status"
     if "SECURITY" in name:
         return "role/grant route, reviewer, ticket, least-privilege telemetry, access closure status"
     if "ACCOUNT" in name:
@@ -3567,7 +3562,7 @@ ORDER BY credits_used DESC;""",
         }
     if "COST" in route:
         return {
-            "owner_route": "FinOps route / DBA cost reviewer",
+            "owner_route": "Cost route / DBA cost reviewer",
             "containment": "Freeze savings claims; isolate top company, warehouse, database, role, user, and task driver before action.",
             "candidate": "Queue only the driver with route, baseline/current value, finance measurement basis, and telemetry query attached.",
             "preflight_sql": f"""SELECT warehouse_name, SUM(credits_used) AS credits_used,
@@ -3611,9 +3606,9 @@ LIMIT 100;""",
         }
     if "CHANGE" in route:
         return {
-            "owner_route": "Change route / DBA change reviewer",
-            "containment": "Hold closure until change query ID, ticket, release-note/rollback, blast radius, and review status are present.",
-            "candidate": "Queue the change with object dependency impact and rollback statement before marking it controlled.",
+            "owner_route": "Workload route / DBA operations reviewer",
+            "containment": "Keep object remediation inside workload operations with source telemetry, impacted object context, and rollback boundary.",
+            "candidate": "Queue the operational fix with dependency impact and rollback statement before marking it controlled.",
             "preflight_sql": f"""SELECT query_id, user_name, role_name, warehouse_name, database_name, schema_name,
        query_type, start_time, LEFT(query_text, 500) AS query_preview
 FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
@@ -3623,7 +3618,7 @@ WHERE start_time >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
 ORDER BY start_time DESC
 LIMIT 100;""",
             "verification_sql": "SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.OBJECT_DEPENDENCIES LIMIT 100;",
-            "rollback_sql": "SELECT 'Rollback must reference the reviewed change ticket and inverse change patch.' AS rollback_boundary;",
+            "rollback_sql": "SELECT 'Rollback must reference the reviewed operational recovery plan.' AS rollback_boundary;",
         }
     if "ALERT" in route:
         return {
@@ -3681,7 +3676,7 @@ def _dba_template_route_for_signal(
             "OBJECT",
             "SCHEMA",
         )):
-            return "Change & Drift"
+            return "Workload Operations"
         if any(token in context for token in (
             "PLATFORM",
             "TOPOLOGY",
@@ -4782,11 +4777,11 @@ def _dba_morning_execution_contract(row: dict | pd.Series | None) -> dict[str, s
         evidence_package = "Procedure run baseline, latest CALL query ID, change/ticket context, telemetry, and rollback path."
         verify_next = "Confirm latest CALL returns inside runtime/cost baseline and dependent task graph remains clean."
         execution_boundary = "Do not alter procedure code from Morning Brief; route through Stored procedures and Security Monitoring."
-    elif route in {"Change & Drift", "Security Monitoring"}:
-        approval_gate = "DBA change review and ticket status before object remediation."
-        evidence_package = "Migration ledger, object/grant diff, ticket, reviewer, rollback plan, and post-change telemetry."
-        verify_next = "Reload operational status; required objects and ledger version must be Ready."
-        execution_boundary = "Do not execute object changes from Morning Brief; run reviewed remediation from the reviewed runbook."
+    elif route == "Security Monitoring":
+        approval_gate = "DBA access review and telemetry status before access remediation."
+        evidence_package = "Grant diff, requester context, least-privilege check, rollback plan, and post-action telemetry."
+        verify_next = "Reload security telemetry; grant, role, and login signals must show the intended state."
+        execution_boundary = "Do not execute access changes from Morning Brief; use Security Monitoring for telemetry and reviewed commands."
     elif route in {"Warehouse Health", "Cost & Contract"}:
         approval_gate = "DBA capacity review before resize, isolation, or monitor changes."
         evidence_package = "Warehouse load, queue/spill trend, metering impact, telemetry, rollback setting, and post-change status."
@@ -5150,7 +5145,7 @@ def _render_dba_command_intelligence_contract() -> None:
         "Task/Pipeline Critical Path Brain",
         "Alert Lifecycle 2.0",
         "Bounded Refresh Guardrails",
-        "Fast Summary Layer With Fallback",
+        "Scheduled Mart Layer With Fallback",
         "Monitoring Docs and Runbooks",
     }
     rows = pd.DataFrame(
@@ -5539,7 +5534,7 @@ def _dba_handoff_rows(
                 "EVIDENCE": f"{surface}; rows={safe_int(item.get('ROWS')):,}; scope={item.get('SCOPE', '')}",
                 "OWNER_OR_ROUTE": "DBA / Platform",
                 "NEXT_ACTION": str(item.get("NEXT_ACTION") or "Reload or refresh this telemetry before acting."),
-                "PROOF_REQUIRED": "current data health for active company, environment, lookback, budget, and triage filters",
+                "PROOF_REQUIRED": "current data health for active company, environment, lookback, spend threshold, and triage filters",
                 "SOURCE": "Data Health",
             })
 
@@ -5595,7 +5590,7 @@ def _build_dba_shift_handoff_markdown(
         "## Closure Standard",
         "- Do not mark work done unless route, ticket/change ID, telemetry status, and recovery status are present where applicable.",
         "- Treat shared warehouse cost attribution as allocated/estimated unless confirmed against billing or finance data.",
-        "- Reload stale telemetry after changing company, environment, lookback, budget, or triage filters.",
+        "- Reload stale telemetry after changing company, environment, lookback, spend threshold, or triage filters.",
     ])
     return "\n".join(lines)
 
@@ -5767,7 +5762,7 @@ def _render_control_room_source_health(
     ))
     st.caption(
         "Use this before acting from the Control Room. Stale rows mean telemetry was loaded under a different "
-        "company, environment, lookback, budget, fallback mode, or triage filter scope."
+        "company, environment, lookback, spend threshold, fallback mode, or triage filter scope."
     )
     render_priority_dataframe(
         source_health,
@@ -5933,7 +5928,7 @@ def _build_report(
         f"- p95 elapsed seconds: {safe_float(row.get('P95_ELAPSED_SEC', 0)):,.2f}",
         f"- Task SLA/cost regression candidates: {0 if task_sla_cost.empty else len(task_sla_cost):,}",
         f"- Stored procedure release-regression candidates: {0 if procedure_sla_cost.empty else len(procedure_sla_cost):,}",
-        f"- Cortex projected 30-day cost: ${cortex_projected:,.2f} vs ${cortex_budget:,.2f} budget",
+        f"- Cortex projected 30-day cost: ${cortex_projected:,.2f} vs ${cortex_budget:,.2f} spend threshold",
         f"- Cortex user/source exceptions: {0 if cortex_exceptions.empty else len(cortex_exceptions):,}",
         f"- Operational status: {safe_int(release_summary.get('blocked')):,} blocked; "
         f"{safe_int(release_summary.get('review')):,} review; "

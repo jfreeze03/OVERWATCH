@@ -1693,10 +1693,8 @@ def _open_contention_owner_route(row: pd.Series | dict) -> None:
     if route == "Active Locks":
         st.session_state["contention_center_view"] = "Active Locks"
     elif route == "Task graphs":
-        st.session_state["workload_operations_view"] = "Specialist Workflows"
         st.session_state["workload_operations_workflow"] = "Task graphs"
     elif route == "Query diagnosis":
-        st.session_state["workload_operations_view"] = "Specialist Workflows"
         st.session_state["workload_operations_workflow"] = "Query diagnosis"
         st.session_state["query_analysis_active_view"] = "AI Diagnosis"
         if query_id:
@@ -2278,7 +2276,7 @@ def render() -> None:
             with render_load_status("Capturing live incident telemetry", "Live incident snapshot ready"):
                 _load_live_incident_snapshot(live_minutes, live_warehouse, live_root_task)
     with c_live:
-        if st.button("Check Active Locks Now", key="contention_active_locks", width="stretch"):
+        if st.button("Check Active Locks Now", key="contention_active_locks_button", width="stretch"):
             with render_load_status("Checking active locks", "Active lock check complete"):
                 _check_active_locks()
 

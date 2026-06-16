@@ -65,6 +65,42 @@ class ThemeRegistryTests(unittest.TestCase):
         self.assertIn("--bg-app:          #f6fbff;", theme._VARS["terminal"])
         self.assertIn("--bg-sidebar:      #ffffff;", theme._VARS["terminal"])
         self.assertIn("--text-primary:    #102a43;", theme._VARS["terminal"])
+        self.assertIn("--text-primary:    #eef8fb;", theme._VARS["carbon"])
+
+    def test_base_theme_pins_dark_safe_text_and_number_controls(self):
+        self.assertIn("color: var(--text-primary) !important;", theme._STRUCTURAL_CSS)
+        self.assertIn("p, li { color: var(--text-primary) !important;", theme._STRUCTURAL_CSS)
+        self.assertIn('[data-testid="stMarkdownContainer"]', theme._STRUCTURAL_CSS)
+        self.assertIn('[data-testid="stNumberInput"] button', theme._STRUCTURAL_CSS)
+        self.assertIn("-webkit-text-fill-color: var(--text-input) !important", theme._STRUCTURAL_CSS)
+        self.assertIn('[data-testid="stSidebarContent"]', theme._STRUCTURAL_CSS)
+        self.assertIn("button[data-testid^=\"stBaseButton\"]:disabled", theme._STRUCTURAL_CSS)
+        self.assertIn("color: var(--text-muted) !important;", theme._STRUCTURAL_CSS)
+        self.assertIn('[data-testid="stSelectboxVirtualDropdown"]', theme._STRUCTURAL_CSS)
+        self.assertIn('[role="option"]:hover', theme._STRUCTURAL_CSS)
+        self.assertIn("background: rgba(var(--accent-rgb), 0.16) !important", theme._STRUCTURAL_CSS)
+
+    def test_dark_theme_keeps_inactive_sidebar_buttons_subtle(self):
+        carbon_extra = theme._THEME_EXTRAS["carbon"]
+        self.assertIn('.stApp button[data-testid="stBaseButton-primary"]', carbon_extra)
+        self.assertIn("background: linear-gradient(135deg, #0068b7, #003545) !important", carbon_extra)
+        self.assertIn("background: linear-gradient(135deg, #0079d6, #004568) !important", carbon_extra)
+        self.assertIn("-webkit-text-fill-color: #ffffff !important", carbon_extra)
+        self.assertIn(
+            "background: linear-gradient(135deg, rgba(41,181,232,0.10), rgba(113,211,220,0.06)) !important",
+            carbon_extra,
+        )
+        self.assertIn("box-shadow: none !important", carbon_extra)
+        self.assertIn("background: linear-gradient(135deg, #003f73, #0068b7) !important", carbon_extra)
+
+    def test_executive_shell_charts_use_theme_aware_axis_colors(self):
+        shell_text = (APP_ROOT / "sections" / "executive_landing_shell.py").read_text(encoding="utf-8")
+        self.assertIn("def _chart_theme_tokens", shell_text)
+        self.assertIn('theme_key == "carbon"', shell_text)
+        self.assertIn('"label": "#9bddea"', shell_text)
+        self.assertIn('"label": "#31566b"', shell_text)
+        self.assertIn('labelColor=colors["label"]', shell_text)
+        self.assertIn('titleColor=colors["title"]', shell_text)
 
     def test_light_themes_pin_custom_shell_text_contrast(self):
         self.assertIn(

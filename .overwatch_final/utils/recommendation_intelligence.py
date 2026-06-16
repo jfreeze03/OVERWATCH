@@ -342,7 +342,7 @@ def _automation_blockers(row: Mapping | pd.Series | dict, hardened: Mapping | di
     if _state_changing_sql(generated_sql) and approval not in {"APPROVED", "VERIFIED", "NOT REQUIRED"}:
         blockers.append("telemetry status")
     if _state_changing_sql(generated_sql) and not _truthy_text(approver):
-        blockers.append("approver")
+        blockers.append("review route")
     if any(token in blob for token in ("DROP ", "TRUNCATE", "GRANT", "REVOKE", "ALTER ROLE", "ALTER USER", "FAILOVER", "EXECUTE TASK", "CALL ")):
         blockers.append("DBA review")
     if "CLUSTERING_DEPTH" in blob or "CLUSTERING_INFORMATION" in blob:
@@ -353,7 +353,7 @@ def _automation_blockers(row: Mapping | pd.Series | dict, hardened: Mapping | di
 
 
 def automation_readiness_for_row(row: Mapping | pd.Series | dict, *, source_surface: str = "Recommendations") -> dict:
-    """Classify one recommendation/action row into a DBA automation lane."""
+    """Classify one recommendation/action row into a DBA queue lane."""
     hardened = harden_recommendation(row)
     generated_sql = _text(row, "Generated SQL Fix", "GENERATED_SQL_FIX") or _text(hardened, "Generated SQL Fix")
     proof_query = _text(row, "Proof Query", "PROOF_QUERY", "Verification Query", "VERIFICATION_QUERY") or _text(
@@ -389,7 +389,7 @@ def automation_readiness_for_row(row: Mapping | pd.Series | dict, *, source_surf
         lane = "Ready"
         next_step = "Use the guarded drilldown workflow when action is still needed."
         mode = "Guided action"
-    elif safe_guided and set(blockers) <= {"telemetry status", "approver"}:
+    elif safe_guided and set(blockers) <= {"telemetry status", "review route"}:
         lane = "Telemetry Pending"
         next_step = "Wait for telemetry to refresh before acting."
         mode = "Telemetry-gated"
@@ -419,7 +419,7 @@ def automation_readiness_for_row(row: Mapping | pd.Series | dict, *, source_surf
         "BLOCKERS": ", ".join(blockers) if blockers else "none",
         "SAFE_AUTOMATION_STEP": next_step,
         "PROOF_REQUIRED": _text(hardened, "Proof Required", default="Telemetry must show the condition cleared."),
-        "DO_NOT_DO": _text(hardened, "Do Not Do", default="Do not automate without source telemetry."),
+        "DO_NOT_DO": _text(hardened, "Do Not Do", default="Do not package queue work without source telemetry."),
         "APPROVAL_GATE": contract["APPROVAL_GATE"],
         "REVIEW_GATE": contract["REVIEW_GATE"],
         "EVIDENCE_PACKAGE": contract["EVIDENCE_PACKAGE"],

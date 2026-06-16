@@ -7415,6 +7415,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("COMPUTE_WH", result["answer"])
         self.assertIn("Telemetry Pending", result["answer"])
         self.assertIn("Telemetry Pending", result["cards"][0]["signal"])
+        self.assertEqual(result["cards"][0]["surface"], "Queue Health")
 
     def test_ask_overwatch_uses_whitelisted_state_snapshot(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
@@ -8418,7 +8419,7 @@ class FormulaRegressionTests(unittest.TestCase):
             self.assertEqual(st.session_state["alert_center_active_view"], "Active Alerts")
             self.assertEqual(st.session_state["_alert_center_brief_first_version"], 2)
 
-            st.session_state["alert_center_active_view"] = "Automation Health"
+            st.session_state["alert_center_active_view"] = "Retired Alert Pane"
             _apply_alert_center_brief_first_default()
             self.assertEqual(st.session_state["alert_center_active_view"], "Active Alerts")
 

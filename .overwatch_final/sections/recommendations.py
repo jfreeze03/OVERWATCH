@@ -42,7 +42,7 @@ from utils.workflows import clean_operator_display_text, render_load_status, ren
 
 RECOMMENDATION_PANES = (
     "Recommendations",
-    "Automation Health",
+    "Queue Health",
     "Action Queue",
     "Anomaly Log",
 )
@@ -204,8 +204,8 @@ def _automation_playbook_frame() -> pd.DataFrame:
 
 
 def _render_automation_health(session):
-    st.subheader("Automation Health")
-    st.caption("DBA-safe automation lanes for recommendations and action queue items.")
+    st.subheader("Queue Health")
+    st.caption("DBA-safe queue lanes for recommendations and action queue items.")
     c_load, c_hint = st.columns([1, 3])
     with c_load:
         if st.button("Load Action Queue", key="automation_queue_load"):
@@ -224,62 +224,76 @@ def _render_automation_health(session):
     st.session_state["rec_automation_board"] = board
 
     if board.empty:
-        st.info("No automation candidates loaded. Generate recommendations or load the action queue first.")
+        st.info("No queue candidates loaded. Generate recommendations or load the action queue first.")
+        playbook = _automation_playbook_frame().rename(columns={
+            "AUTOMATION_LANE": "QUEUE_LANE",
+        })
         render_priority_dataframe(
-            _automation_playbook_frame(),
-            title="Automation lane definitions",
-            priority_columns=["AUTOMATION_LANE", "WHAT_IT_MEANS", "DBA_ACTION"],
-            sort_by=["AUTOMATION_LANE"],
+            playbook,
+            title="Queue lane definitions",
+            priority_columns=["QUEUE_LANE", "WHAT_IT_MEANS", "DBA_ACTION"],
+            sort_by=["QUEUE_LANE"],
             ascending=True,
-            raw_label="All automation lane definitions",
+            raw_label="All queue lane definitions",
             height=260,
         )
         return
 
     ready = int((board["AUTOMATION_LANE"] == "Ready").sum())
-    approval = int((board["AUTOMATION_LANE"] == "Telemetry Pending").sum())
-    evidence = int((board["AUTOMATION_LANE"] == "Needs Data").sum())
-    manual = int((board["AUTOMATION_LANE"] == "DBA Review").sum())
+    telemetry_pending = int((board["AUTOMATION_LANE"] == "Telemetry Pending").sum())
+    needs_data = int((board["AUTOMATION_LANE"] == "Needs Data").sum())
+    dba_review = int((board["AUTOMATION_LANE"] == "DBA Review").sum())
     auto_close = int((board["AUTOMATION_LANE"] == "Resolved Candidate").sum())
     render_shell_snapshot((
         ("Candidates", f"{len(board):,}"),
         ("Guided Ready", f"{ready:,}"),
-        ("Telemetry Pending", f"{approval:,}"),
-        ("Needs Data", f"{evidence:,}"),
-        ("DBA Review", f"{manual:,}"),
+        ("Telemetry Pending", f"{telemetry_pending:,}"),
+        ("Needs Data", f"{needs_data:,}"),
+        ("DBA Review", f"{dba_review:,}"),
         ("Resolved", f"{auto_close:,}"),
     ))
 
     first = board.iloc[0]
     st.warning(
-        f"Automation first move: {first['AUTOMATION_LANE']} for {first['ENTITY']}. "
+        f"Queue first move: {first['AUTOMATION_LANE']} for {first['ENTITY']}. "
         f"Blockers: {first['BLOCKERS']}. Next: {first['SAFE_AUTOMATION_STEP']}"
     )
+    display_board = board.rename(columns={
+        "AUTOMATION_LANE": "QUEUE_LANE",
+        "AUTOMATION_MODE": "QUEUE_MODE",
+        "APPROVAL_STATE": "REVIEW_STATE",
+        "SAFE_AUTOMATION_STEP": "SAFE_NEXT_STEP",
+        "APPROVAL_GATE": "REVIEW_GATE",
+        "EVIDENCE_PACKAGE": "TELEMETRY_PACKAGE",
+        "PROOF_REQUIRED": "TELEMETRY_REQUIRED",
+    }).drop(columns=["SAFE_GUIDED_SQL", "STATE_CHANGING_SQL"], errors="ignore")
     render_priority_dataframe(
-        board,
-        title="Automation health board",
+        display_board,
+        title="Queue health board",
         priority_columns=[
-            "AUTOMATION_LANE", "SEVERITY", "CATEGORY", "ENTITY",
-            "DECISION", "BLOCKERS", "APPROVAL_STATE", "SAFE_GUIDED_SQL",
-            "STATE_CHANGING_SQL", "SAFE_AUTOMATION_STEP", "APPROVAL_GATE",
-            "EVIDENCE_PACKAGE", "VERIFY_NEXT", "EXECUTION_BOUNDARY", "CLOSURE_RULE",
-            "PROOF_REQUIRED", "DO_NOT_DO",
+            "QUEUE_LANE", "SEVERITY", "CATEGORY", "ENTITY",
+            "DECISION", "BLOCKERS", "REVIEW_STATE", "SAFE_NEXT_STEP", "REVIEW_GATE",
+            "TELEMETRY_PACKAGE", "VERIFY_NEXT", "EXECUTION_BOUNDARY", "CLOSURE_RULE",
+            "TELEMETRY_REQUIRED", "DO_NOT_DO",
         ],
-        sort_by=["AUTOMATION_LANE", "SEVERITY"],
+        sort_by=["QUEUE_LANE", "SEVERITY"],
         ascending=[True, True],
-        raw_label="All automation health rows",
+        raw_label="All queue health rows",
         height=440,
     )
-    download_csv(board, "automation_health_board.csv")
+    download_csv(display_board, "queue_health_board.csv")
 
-    with st.expander("Automation lane definitions", expanded=False):
+    with st.expander("Queue lane definitions", expanded=False):
+        playbook = _automation_playbook_frame().rename(columns={
+            "AUTOMATION_LANE": "QUEUE_LANE",
+        })
         render_priority_dataframe(
-            _automation_playbook_frame(),
-            title="Automation playbook",
-            priority_columns=["AUTOMATION_LANE", "WHAT_IT_MEANS", "DBA_ACTION"],
-            sort_by=["AUTOMATION_LANE"],
+            playbook,
+            title="Queue playbook",
+            priority_columns=["QUEUE_LANE", "WHAT_IT_MEANS", "DBA_ACTION"],
+            sort_by=["QUEUE_LANE"],
             ascending=True,
-            raw_label="All automation playbook rows",
+            raw_label="All queue playbook rows",
             height=260,
         )
 
@@ -692,7 +706,7 @@ def render():
         elif st.session_state.get("rec_recommendations") == []:
             st.success("No actionable findings. Account looks healthy.")
 
-    elif active_view == "Automation Health":
+    elif active_view == "Queue Health":
         _render_automation_health(session)
 
     elif active_view == "Action Queue":

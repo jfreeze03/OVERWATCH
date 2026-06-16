@@ -2301,6 +2301,7 @@ def _cache_task_ops_scope(
 
 
 def _render_task_ops_brief(session) -> None:
+    company = get_active_company()
     st.subheader("Task Graph Operations Cockpit")
     st.caption(
         "Snowflake task handoff view for Snowflake task graphs: live job status, performance indicators, "

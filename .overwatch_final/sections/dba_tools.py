@@ -394,8 +394,8 @@ def _schema_compare_show_objects_sql(database: str, schema: str) -> str:
 
 
 def _schema_compare_columns_sql(database: str, schema: str) -> str:
-    """Return column-level metadata so object compare also catches column drift."""
-    db_ident = safe_identifier(database)
+    """Return account-level column metadata so object compare also catches column drift."""
+    database_lit = sql_literal(database, 300)
     schema_lit = sql_literal(schema, 300)
     return f"""
 SELECT
@@ -419,12 +419,13 @@ SELECT
         || COALESCE(' datetime_precision=' || c.datetime_precision::VARCHAR, '')
         || ' nullable=' || COALESCE(c.is_nullable, 'UNKNOWN')
         || COALESCE(' default=' || c.column_default, '') AS object_signature
-FROM {db_ident}.INFORMATION_SCHEMA.COLUMNS c
-LEFT JOIN {db_ident}.INFORMATION_SCHEMA.TABLES t
-  ON c.table_catalog = t.table_catalog
- AND c.table_schema = t.table_schema
- AND c.table_name = t.table_name
-WHERE UPPER(c.table_schema) = UPPER({schema_lit})
+FROM SNOWFLAKE.ACCOUNT_USAGE.COLUMNS c
+LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.TABLES t
+  ON c.table_id = t.table_id
+ AND t.deleted IS NULL
+WHERE UPPER(c.table_catalog) = UPPER({database_lit})
+  AND UPPER(c.table_schema) = UPPER({schema_lit})
+  AND c.deleted IS NULL
 """.strip()
 
 
@@ -566,7 +567,7 @@ def _schema_compare_normalize_columns(
     schema: str,
     side: str,
 ) -> pd.DataFrame:
-    """Normalize INFORMATION_SCHEMA.COLUMNS output into compare-ready child objects."""
+    """Normalize account column metadata into compare-ready child objects."""
     empty_cols = [
         "OBJECT_TYPE", "OBJECT_NAME", "PARENT_OBJECT_NAME", "PARENT_OBJECT_TYPE",
         "OBJECT_SIGNATURE", "OBJECT_DETAIL", "ROW_COUNT", "BYTES", "PRESENT",
@@ -769,8 +770,8 @@ def _schema_compare_missing_ddl(
     from_fqn = _schema_compare_object_fqn(from_db, from_schema, object_name)
     return (
         f"-- {object_type} {object_name} is missing; {direction}.\n"
-        f"-- Review before executing. GET_DDL preserves source definition; REPLACE retargets the schema name.\n"
-        f"SELECT REPLACE(GET_DDL({sql_literal(ddl_type)}, {sql_literal(from_fqn, 1000)}), "
+        f"-- Review before executing. GET_DDL preserves source definition; REPLACE retargets fully qualified names.\n"
+        f"SELECT REPLACE(GET_DDL({sql_literal(ddl_type)}, {sql_literal(from_fqn, 1000)}, TRUE), "
         f"{sql_literal(from_schema_fqn, 1000)}, {sql_literal(to_schema_fqn, 1000)}) AS DDL_STATEMENT;"
     )
 
@@ -833,9 +834,45 @@ def _schema_compare_fetch_missing_ddl_statements(
     return frame
 
 
+def _schema_compare_ddl_script(
+    ddl_rows: pd.DataFrame,
+    *,
+    source_db: str,
+    source_schema: str,
+    target_db: str,
+    target_schema: str,
+) -> str:
+    """Build a review-only DDL script for objects missing on one side of the compare."""
+    if ddl_rows is None or ddl_rows.empty:
+        return ""
+    statements = [
+        "-- OVERWATCH schema compare missing-object script",
+        f"-- Source: {source_db}.{source_schema}",
+        f"-- Target: {target_db}.{target_schema}",
+        "-- Review dependencies, policies, grants, and environment-specific references before executing.",
+    ]
+    for _, row in ddl_rows.iterrows():
+        statement = str(row.get("DDL_STATEMENT") or row.get("DDL_REVIEW_SQL") or "").strip()
+        if not statement:
+            continue
+        object_type = str(row.get("OBJECT_TYPE") or "OBJECT").strip()
+        object_name = str(row.get("OBJECT_NAME") or "").strip()
+        compare_status = str(row.get("COMPARE_STATUS") or "").strip()
+        if not statement.endswith(";"):
+            statement += ";"
+        statements.append(
+            "\n".join([
+                "",
+                f"-- {compare_status}: {object_type} {object_name}",
+                statement,
+            ])
+        )
+    return "\n".join(statements).strip()
+
+
 def _data_compare_tables_sql(database: str, schema: str) -> str:
-    """Return data-bearing tables visible in the selected schema."""
-    db_ident = safe_identifier(database)
+    """Return data-bearing tables from Snowflake account metadata."""
+    database_lit = sql_literal(database, 300)
     schema_lit = sql_literal(schema, 300)
     return f"""
 SELECT
@@ -845,11 +882,14 @@ SELECT
     bytes AS metadata_bytes,
     created,
     last_altered
-FROM {db_ident}.INFORMATION_SCHEMA.TABLES
-WHERE UPPER(table_schema) = UPPER({schema_lit})
+FROM SNOWFLAKE.ACCOUNT_USAGE.TABLES
+WHERE UPPER(table_catalog) = UPPER({database_lit})
+  AND UPPER(table_schema) = UPPER({schema_lit})
+  AND deleted IS NULL
   AND (
-      UPPER(table_type) IN ('BASE TABLE', 'TRANSIENT TABLE', 'TEMPORARY TABLE', 'EXTERNAL TABLE', 'DYNAMIC TABLE')
+      UPPER(table_type) IN ('BASE TABLE', 'TRANSIENT TABLE', 'TEMPORARY TABLE', 'EXTERNAL TABLE', 'DYNAMIC TABLE', 'EVENT TABLE')
       OR UPPER(table_type) LIKE '%TABLE%'
+      OR UPPER(COALESCE(is_dynamic, '')) = 'YES'
   )
 ORDER BY table_name
 """.strip()
@@ -1206,7 +1246,7 @@ def _schema_compare_coverage_label() -> str:
 def _render_schema_compare_command_model() -> None:
     render_shell_snapshot((
         ("Inventory", "SHOW OBJECTS"),
-        ("Columns", "INFORMATION_SCHEMA.COLUMNS"),
+        ("Columns", "Snowflake account metadata"),
         ("Coverage", "All visible schema objects"),
         ("Missing Objects", "Review queue"),
     ))
@@ -2259,8 +2299,8 @@ def render():
     if selected_tool == "Schema Compare":
         st.subheader("Schema Compare")
         st.caption(
-            "Compares every visible schema object from SHOW OBJECTS, plus column-level metadata from "
-            "INFORMATION_SCHEMA.COLUMNS. Missing objects are highlighted for DBA review without exposing implementation SQL."
+            "Compares every visible schema object from SHOW OBJECTS, plus table and column inventory from "
+            "Snowflake account metadata. Missing objects include a DBA-reviewed create script."
         )
         _render_schema_compare_command_model()
         refresh_schema_meta = st.button("Refresh database and schema choices", key="sc_refresh_metadata")
@@ -2335,7 +2375,7 @@ def render():
         )
         config_cols = st.columns([1.0, 1.0, 3.0])
         with config_cols[0]:
-            st.caption("Recurring schema-pair checks are registered through the reviewed release runbook.")
+            st.caption("Recurring schema-pair checks are tracked through the DBA monitoring runbook.")
         with config_cols[1]:
             st.caption("Keep schema comparison telemetry with operational status when promotion depends on it.")
         with config_cols[2]:
@@ -2438,6 +2478,27 @@ def render():
                         raw_label="All missing-object review rows",
                         height=260,
                     )
+                    ddl_script = _schema_compare_ddl_script(
+                        ddl_statement_rows,
+                        source_db=dev_db,
+                        source_schema=dev_sch,
+                        target_db=prod_db,
+                        target_schema=prod_sch,
+                    )
+                    if ddl_script:
+                        st.text_area(
+                            "Missing-object DDL script",
+                            value=ddl_script,
+                            height=360,
+                            key="sc_missing_object_ddl_script",
+                        )
+                        st.download_button(
+                            "Download missing-object DDL",
+                            data=ddl_script,
+                            file_name="schema_compare_missing_objects.sql",
+                            mime="text/sql",
+                            key="sc_download_missing_object_ddl",
+                        )
                 else:
                     st.success("No missing objects were found between the selected schemas.")
                 download_csv(df_cmp, "schema_compare.csv")
@@ -2470,7 +2531,7 @@ def render():
                         owner="Release DBA",
                         severity="MEDIUM",
                     )
-                    st.caption("Schema diff results are ready for the reviewed release log after DBA review.")
+                    st.caption("Schema diff results are ready for the DBA monitoring log after review.")
             except Exception as e:
                 st.error(f"Compare failed: {format_snowflake_error(e)}")
 
@@ -2606,9 +2667,9 @@ def render():
         recon_history_sql = _recon_history_sql(days=30)
         config_cols = st.columns([1.0, 1.0, 1.0, 2.0])
         with config_cols[0]:
-            st.caption("Recurring data checks are registered through the reviewed release runbook.")
+            st.caption("Recurring data checks are tracked through the DBA monitoring runbook.")
         with config_cols[1]:
-            st.caption("Recurring reconciliation history is managed through the reviewed release runbook.")
+            st.caption("Recurring reconciliation history is managed through the DBA monitoring runbook.")
         with config_cols[2]:
             st.caption("Configuration changes are review-only from this page.")
         with config_cols[3]:
@@ -2762,7 +2823,7 @@ def render():
                         raw_label="All data compare result rows",
                     )
                     download_csv(results, "data_compare_results.csv")
-                    st.caption("Data compare run results are ready for the reviewed release log after DBA review.")
+                    st.caption("Data compare run results are ready for the DBA monitoring log after review.")
                 else:
                     st.info("No comparable tables were scanned. Check source/target schemas, table filter, or comparable columns.")
                 if skipped is not None and not skipped.empty:
@@ -2780,7 +2841,7 @@ def render():
                         height=220,
                     )
                 if scripts:
-                    st.caption("Bucket and forensic diff steps are available through the reviewed release runbook.")
+                    st.caption("Bucket and forensic diff steps are available through the DBA monitoring runbook.")
             except Exception as e:
                 st.error(f"Data Compare failed: {format_snowflake_error(e)}")
 

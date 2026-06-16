@@ -166,7 +166,7 @@ def _alert_center_sources_for_view(view: str) -> set[str]:
 
 def _normalize_alert_center_view(view: object) -> str:
     normalized = str(view or "")
-    if normalized in {"Alert Brief", "Command Center", "Control Health", "Automation Health"}:
+    if normalized in {"Alert Brief", "Command Center", "Control Health"}:
         return ALERT_CENTER_DEFAULT_VIEW
     return normalized if normalized in ALERT_CENTER_PANES else ALERT_CENTER_DEFAULT_VIEW
 

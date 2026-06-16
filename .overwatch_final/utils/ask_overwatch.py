@@ -241,31 +241,37 @@ def _cards_from_automation_board(state: Mapping, cards: list[dict]) -> None:
     view = frame.copy()
     view.columns = [str(col).upper() for col in view.columns]
     lane_rank = {
+        "READY": 0,
         "READY FOR GUIDED EXECUTION": 0,
+        "TELEMETRY PENDING": 1,
         "VERIFICATION REQUIRED": 1,
+        "NEEDS DATA": 2,
         "EVIDENCE REQUIRED": 2,
+        "RESOLVED CANDIDATE": 3,
         "AUTO-CLOSE CANDIDATE": 3,
+        "DBA REVIEW": 4,
         "MANUAL ONLY": 4,
+        "MONITOR": 5,
         "OBSERVE ONLY": 5,
     }
     view["_LANE_RANK"] = view.get("AUTOMATION_LANE", pd.Series([""] * len(view), index=view.index)).fillna("").astype(str).str.upper().map(lane_rank).fillna(9)
     view = view.sort_values(["_LANE_RANK", "AUTOMATION_SCORE"], ascending=[True, False]).drop(columns=["_LANE_RANK"])
     for _, row in view.head(10).iterrows():
-        lane = _text(row, "AUTOMATION_LANE", default="Automation review")
+        lane = _text(row, "AUTOMATION_LANE", default="Queue review")
         blockers = _text(row, "BLOCKERS", default="none")
         _append_card(cards, {
-            "surface": "Automation Health",
+            "surface": "Queue Health",
             "severity": _text(row, "SEVERITY", default="Medium"),
             "signal": lane,
-            "entity": _text(row, "ENTITY", default="automation candidate"),
+            "entity": _text(row, "ENTITY", default="queue candidate"),
             "evidence": (
                 f"lane={lane}; blockers={blockers}; decision={_text(row, 'DECISION')}"
             ),
-            "next_action": _text(row, "SAFE_AUTOMATION_STEP", default="Open Automation Health and resolve blockers."),
+            "next_action": _text(row, "SAFE_AUTOMATION_STEP", default="Open Queue Health and resolve blockers."),
             "proof": _text(row, "PROOF_REQUIRED", "VERIFICATION_QUERY", default="Record telemetry before closure."),
-            "do_not": _text(row, "DO_NOT_DO", default="Do not automate without data telemetry and review."),
-            "route": "Cost & Contract > Automation Health",
-            "category": _text(row, "CATEGORY", default="Automation"),
+            "do_not": _text(row, "DO_NOT_DO", default="Do not package queue work without telemetry and review."),
+            "route": "Cost & Contract > Queue Health",
+            "category": _text(row, "CATEGORY", default="Queue Health"),
             "value": "50" if lane.upper() in {"VERIFICATION REQUIRED", "EVIDENCE REQUIRED"} else "25",
         })
 

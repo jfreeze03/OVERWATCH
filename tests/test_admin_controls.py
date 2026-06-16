@@ -26,6 +26,7 @@ from sections.dba_tools import (  # noqa: E402
     _recon_config_insert_sql,
     _recon_history_sql,
     _schema_compare_columns_sql,
+    _schema_compare_ddl_script,
     _schema_compare_inventory,
     _schema_compare_persistence_sql,
     _schema_compare_show_objects_sql,
@@ -93,7 +94,9 @@ class AdminControlTests(unittest.TestCase):
             limit=50,
         )
 
-        self.assertIn("INFORMATION_SCHEMA.TABLES", table_sql)
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.TABLES", table_sql)
+        self.assertIn("TABLE_CATALOG", table_sql)
+        self.assertIn("DELETED IS NULL", table_sql)
         self.assertIn("HASH_AGG(\"POLICY_ID\", \"PREMIUM_AMT\")", hash_sql)
         self.assertIn("COUNT(*) AS actual_row_count", hash_sql)
         self.assertIn("WHERE BUSINESS_DATE >= '2026-01-01'", hash_sql)
@@ -165,7 +168,10 @@ class AdminControlTests(unittest.TestCase):
 
         self.assertIn("SHOW OBJECTS IN SCHEMA", objects_sql)
         self.assertIn('"ALFA_EDW_DEV"."PUBLIC"', objects_sql)
-        self.assertIn("INFORMATION_SCHEMA.COLUMNS", columns_sql)
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.COLUMNS", columns_sql)
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.TABLES", columns_sql)
+        self.assertIn("TABLE_CATALOG", columns_sql)
+        self.assertIn("C.DELETED IS NULL", columns_sql)
         self.assertIn("LEFT JOIN", columns_sql)
         self.assertNotIn("TABLE_TYPE='BASE TABLE'", columns_sql.replace(" ", ""))
         self.assertIn("TASK", SCHEMA_COMPARE_OBJECT_COVERAGE)
@@ -243,6 +249,7 @@ class AdminControlTests(unittest.TestCase):
         self.assertEqual(rows[("PROCEDURE", "SP_LOAD_POLICY")]["COMPARE_STATUS"], "Only in source")
         self.assertEqual(rows[("COLUMN", "POLICY_FACT.LOAD_TS")]["COMPARE_STATUS"], "Only in source")
         self.assertIn("GET_DDL('PROCEDURE'", rows[("PROCEDURE", "SP_LOAD_POLICY")]["DDL_REVIEW_SQL"])
+        self.assertIn(", TRUE)", rows[("PROCEDURE", "SP_LOAD_POLICY")]["DDL_REVIEW_SQL"])
         self.assertIn("AS DDL_STATEMENT", rows[("PROCEDURE", "SP_LOAD_POLICY")]["DDL_REVIEW_SQL"])
         self.assertIn('"ALFA_EDW_DEV"."PUBLIC"."SP_LOAD_POLICY"', rows[("PROCEDURE", "SP_LOAD_POLICY")]["DDL_REVIEW_SQL"])
         self.assertIn('"ALFA_EDW_PROD"."PUBLIC"', rows[("PROCEDURE", "SP_LOAD_POLICY")]["DDL_REVIEW_SQL"])
@@ -250,6 +257,18 @@ class AdminControlTests(unittest.TestCase):
             'ALTER TABLE "ALFA_EDW_PROD"."PUBLIC"."POLICY_FACT" ADD COLUMN "LOAD_TS" TIMESTAMP_NTZ;',
             rows[("COLUMN", "POLICY_FACT.LOAD_TS")]["DDL_REVIEW_SQL"],
         )
+        script = _schema_compare_ddl_script(
+            compare[compare["DDL_REVIEW_SQL"].fillna("").astype(str).str.strip().ne("")],
+            source_db="ALFA_EDW_DEV",
+            source_schema="PUBLIC",
+            target_db="ALFA_EDW_PROD",
+            target_schema="PUBLIC",
+        )
+        self.assertIn("OVERWATCH schema compare missing-object script", script)
+        self.assertIn("Only in source: PROCEDURE SP_LOAD_POLICY", script)
+        self.assertIn("Only in source: COLUMN POLICY_FACT.LOAD_TS", script)
+        self.assertIn("GET_DDL('PROCEDURE'", script)
+        self.assertIn("ADD COLUMN", script)
 
     def test_schema_and_data_compare_generate_persistence_sql(self):
         schema_sql = _schema_compare_persistence_sql(

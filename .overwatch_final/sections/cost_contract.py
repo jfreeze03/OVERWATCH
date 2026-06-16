@@ -106,12 +106,45 @@ def _altair():
 
 
 def _cost_chart_palette() -> dict[str, str]:
-    theme_key = str(st.session_state.get("active_theme", "carbon") or "carbon")
+    theme_key = str(st.session_state.get("active_theme", "terminal") or "terminal")
     palettes = {
-        "carbon": {"bar": "#29B5E8", "line": "#71D3DC", "risk": "#F97316"},
-        "terminal": {"bar": "#0068B7", "line": "#29B5E8", "risk": "#B45309"},
+        "carbon": {
+            "bar": "#29B5E8",
+            "line": "#71D3DC",
+            "risk": "#F97316",
+            "text": "#eef8fb",
+            "muted": "#9bddea",
+            "grid": "rgba(113, 211, 220, 0.18)",
+        },
+        "terminal": {
+            "bar": "#0068B7",
+            "line": "#29B5E8",
+            "risk": "#B45309",
+            "text": "#102a43",
+            "muted": "#31566b",
+            "grid": "rgba(0, 104, 183, 0.18)",
+        },
     }
-    return palettes.get(theme_key, palettes["carbon"])
+    return palettes.get(theme_key, palettes["terminal"])
+
+
+def _finalize_cost_chart(chart, *, height: int):
+    palette = _cost_chart_palette()
+    return (
+        chart
+        .properties(height=int(height), background="transparent")
+        .configure_axis(
+            labelColor=palette["muted"],
+            titleColor=palette["text"],
+            gridColor=palette["grid"],
+            domainColor=palette["grid"],
+            tickColor=palette["grid"],
+            labelFontSize=11,
+            titleFontSize=12,
+        )
+        .configure_view(strokeWidth=0)
+        .configure_legend(labelColor=palette["text"], titleColor=palette["text"])
+    )
 
 
 def _short_label(value: object, limit: int = 28) -> str:
@@ -200,7 +233,7 @@ def _render_spend_trend_chart(trend: pd.DataFrame, credit_price: float) -> None:
             axis=alt.Axis(format="%b %d", labelAngle=-35, labelOverlap=True),
         )
     )
-    bars = base.mark_bar(color=palette["bar"], opacity=0.62, cornerRadiusTopLeft=2, cornerRadiusTopRight=2).encode(
+    bars = base.mark_bar(color=palette["bar"], opacity=0.68, cornerRadiusTopLeft=2, cornerRadiusTopRight=2).encode(
         y=alt.Y("SPEND_USD:Q", title="Spend", axis=alt.Axis(format="$,.0f")),
         tooltip=[
             alt.Tooltip("USAGE_DATE:T", title="Date", format="%Y-%m-%d"),
@@ -214,7 +247,7 @@ def _render_spend_trend_chart(trend: pd.DataFrame, credit_price: float) -> None:
     points = base.mark_point(color=palette["line"], filled=True, size=42).encode(
         y="ROLLING_SPEND_USD:Q",
     )
-    st.altair_chart((bars + line + points).properties(height=265), width="stretch")
+    st.altair_chart(_finalize_cost_chart(bars + line + points, height=265), width="stretch")
 
 
 def _render_cost_chart_with_data_toggle(
@@ -296,13 +329,11 @@ def _render_warehouse_ranking_chart(warehouse_delta: pd.DataFrame, credit_price:
             ],
         )
     )
-    labels = base.mark_text(align="left", dx=6, baseline="middle", color=palette["line"], fontWeight="bold").encode(
+    labels = base.mark_text(align="left", dx=6, baseline="middle", color=palette["text"], fontWeight="bold").encode(
         x=alt.X("CURRENT_SPEND_USD:Q"),
         text="CURRENT_SPEND_LABEL:N",
     )
-    chart = (
-        bars + labels
-    ).properties(height=max(230, min(360, 34 * len(ranking) + 54)))
+    chart = _finalize_cost_chart(bars + labels, height=max(230, min(360, 34 * len(ranking) + 54)))
     st.altair_chart(chart, width="stretch")
 
 
@@ -1570,11 +1601,12 @@ def _render_service_cost_movement_chart(service_lens: pd.DataFrame, credit_price
     prior_ticks = base.mark_tick(color=palette["line"], thickness=3, size=20).encode(
         x=alt.X("PRIOR_SPEND_USD:Q", title="Current spend"),
     )
-    labels = base.mark_text(align="left", dx=6).encode(
+    labels = base.mark_text(align="left", dx=6, color=palette["text"], fontWeight="bold").encode(
         x="CURRENT_SPEND_USD:Q",
         text="DELTA_LABEL:N",
     )
-    st.altair_chart((bars + prior_ticks + labels).properties(height=max(210, min(360, 34 * len(movement) + 58))), width="stretch")
+    chart = _finalize_cost_chart(bars + prior_ticks + labels, height=max(210, min(360, 34 * len(movement) + 58)))
+    st.altair_chart(chart, width="stretch")
 
 
 def _render_cost_source_health(
@@ -3790,7 +3822,7 @@ def _cost_action_brief(company: str, days: int, credit_price: float) -> dict:
         return {
             "state": "Loaded",
             "headline": "No dominant cost incident in the loaded cockpit.",
-            "detail": f"Selected window spend is about ${current_credits * credit_price:,.0f}; use workflows for attribution or value status.",
+            "detail": f"Selected window spend is about ${current_credits * credit_price:,.0f}; use drilldowns for attribution, Cortex, storage, SPCS, or action status.",
         }
     return {
         "state": "Clear",

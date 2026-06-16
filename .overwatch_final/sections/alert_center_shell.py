@@ -37,11 +37,6 @@ _WORKFLOWS = (
         "MOVE": "Start with severity-ranked risk, category routes, freshness, and business impact.",
     },
     {
-        "VIEW": "DBA Morning Brief",
-        "BUTTON_LABEL": "Open Morning Brief",
-        "MOVE": "Work overnight failures, security events, cost anomalies, and missed SLAs in order.",
-    },
-    {
         "VIEW": "Detection Catalog",
         "BUTTON_LABEL": "Open Detection Catalog",
         "MOVE": "Review Snowflake-native security, cost, performance, pipeline, data-quality, and optimization checks.",
@@ -67,9 +62,9 @@ _WORKFLOWS = (
         "MOVE": "Move alert telemetry into routed work and closure status.",
     },
     {
-        "VIEW": "Notifications & Remediation",
+        "VIEW": "Delivery & Remediation",
         "BUTTON_LABEL": "Open Remediation",
-        "MOVE": "Review notification routing and remediation checks before action.",
+        "MOVE": "Review delivery status, suppression windows, and remediation log evidence before action.",
     },
 )
 
@@ -238,7 +233,7 @@ def _alert_shell_lanes(data: dict) -> tuple[dict[str, str], ...]:
                     "label": "Pipeline reliability",
                     "value": f"{failed_tasks:,}",
                     "state": "Tasks",
-                    "detail": "Task failures route to Task Graphs and the DBA morning brief.",
+                    "detail": "Task failures route to Workload Operations and the alert queue.",
                 },
                 {
                     "label": "Performance risk",
@@ -266,9 +261,9 @@ def _alert_shell_lanes(data: dict) -> tuple[dict[str, str], ...]:
                 },
                 {
                     "label": "Remediation route",
-                    "value": "Review gated",
+                    "value": "Review",
                     "state": "Safe",
-                    "detail": "Every fix needs current alert telemetry and audit logging.",
+                    "detail": "Every fix needs current alert telemetry and logged status.",
                 },
             )
         return (
@@ -316,9 +311,9 @@ def _alert_shell_lanes(data: dict) -> tuple[dict[str, str], ...]:
             },
             {
                 "label": "Remediation route",
-                "value": "Review gated",
+                "value": "Review",
                 "state": "Safe",
-                "detail": "Every fix needs current alert telemetry and audit logging.",
+                "detail": "Every fix needs current alert telemetry and logged status.",
             },
         )
 
@@ -426,7 +421,7 @@ def _render_metric_board() -> None:
             ("Task Failures", f"{_int_value(summary.get('failed_tasks')):,}" if summary else "On demand"),
             ("Cortex", _money(summary.get("cortex_cost_usd")) if summary else "On demand"),
             ("Fresh Sources", f"{_int_value(summary.get('freshness_sources')):,}" if summary else "On demand"),
-            ("Automation", "Review gated"),
+            ("Remediation", "Review"),
         ))
         return
 
@@ -438,8 +433,8 @@ def _render_metric_board() -> None:
     ))
     render_shell_kpi_row((
         ("Delivery Ready", f"{_frame_count(data, 'delivery_log'):,}"),
-        ("Automation Health", "Loaded" if _is_loaded_frame(data.get("automation_health")) else "On demand"),
-        ("Rules", f"{_frame_count(data, 'rules'):,}"),
+        ("Rule Catalog", f"{_frame_count(data, 'rules'):,}"),
+        ("Suppression", "Window table"),
         ("Freshness", "Loaded" if data.get("_freshness_meta") else "Loaded"),
     ))
 
@@ -464,7 +459,7 @@ def _render_lifecycle_board() -> None:
                 "label": "Detect",
                 "value": "Alert event",
                 "state": "Signal",
-                "detail": "Severity, category, source freshness, assignment, and business impact are captured once.",
+                "detail": "Severity, category, source freshness, route, and business impact are captured once.",
             },
             {
                 "label": "Deduplicate",
@@ -475,14 +470,14 @@ def _render_lifecycle_board() -> None:
             {
                 "label": "Acknowledge",
                 "value": "Ack",
-                "state": "Assigned",
-                "detail": "Ack rows prove who took responsibility and when escalation can pause.",
+                "state": "Routed",
+                "detail": "Ack rows mark active triage and when duplicate escalation can pause.",
             },
             {
                 "label": "Suppress",
                 "value": "Windowed",
                 "state": "Temporary",
-                "detail": "Suppression must expire and keep rationale; permanent hiding is not a control.",
+                "detail": "Suppression must expire and keep rationale; permanent hiding is unsafe.",
             },
             {
                 "label": "Remediate",
@@ -494,12 +489,12 @@ def _render_lifecycle_board() -> None:
                 "label": "Notify",
                 "value": "Notification log",
                 "state": "Routed",
-                "detail": "Email/webhook-ready routing is recorded even when integrations are not enabled.",
+                "detail": "Email-ready routing is recorded before alert delivery is treated as complete.",
             },
             {
                 "label": "Resolve",
                 "value": "Closure status",
-                "state": "Verified",
+                "state": "Cleared",
                 "detail": "Resolved means the condition cleared, not just clicked away.",
             },
             {
@@ -519,7 +514,7 @@ def _render_lifecycle_board() -> None:
     ))
     render_shell_kpi_row((
         ("Notify", f"{notification:,}" if notification else "Integration-ready"),
-        ("Remediate", f"{remediation:,}" if remediation else "Review gated"),
+        ("Remediate", f"{remediation:,}" if remediation else "Review"),
         ("Routing", f"{_frame_count(data, 'rules'):,}" if data else "Rules"),
         ("Dedup", "Alert key"),
     ))

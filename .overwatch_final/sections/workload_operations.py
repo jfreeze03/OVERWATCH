@@ -7,15 +7,8 @@ from importlib import import_module
 import streamlit as st
 
 from sections.base import lazy_util as _lazy_util
-from utils.evidence_mode import (
-    TRIAGE_MODE_ALL_EVIDENCE,
-    TRIAGE_MODE_INVESTIGATE,
-    TRIAGE_MODE_TRIAGE,
-    current_evidence_mode,
-)
 from utils.section_guidance import defer_section_note
 
-render_mode_selector = _lazy_util("render_mode_selector")
 render_workflow_selector = _lazy_util("render_workflow_selector")
 
 
@@ -53,75 +46,61 @@ def render_workflow_guide(summary: str, rows: Sequence[tuple[str, str]]) -> None
 
 WORKLOAD_OPERATIONS_FAST_ENTRY_VERSION = "2026-06-16-workload-board-v1"
 WORKLOAD_OPERATIONS_EXPLICIT_WORKFLOW_KEY = "_workload_operations_explicit_workflow_request"
-QUERY_TRIAGE_WORKFLOW = "Query & contention triage"
-PIPELINE_HEALTH_WORKFLOW = "Task, procedure & pipeline health"
-TRIAGE_FOCUS_KEY = "workload_operations_triage_focus"
-PIPELINE_FOCUS_KEY = "workload_operations_pipeline_focus"
+QUERY_CONTENTION_WORKFLOW = "Query & contention"
+TASK_PROCEDURE_WORKFLOW = "Task & procedure health"
+PIPELINE_SLA_WORKFLOW = "Pipeline / SLA risk"
+SCHEMA_COMPARE_WORKFLOW = "Schema & data compare"
+AI_QUERY_DIAGNOSIS_WORKFLOW = "AI query diagnosis"
+_LEGACY_TRIAGE_FOCUS_KEY = "workload_operations_triage_focus"
+_LEGACY_PIPELINE_FOCUS_KEY = "workload_operations_pipeline_focus"
 
 WORKFLOWS = (
-    QUERY_TRIAGE_WORKFLOW,
-    PIPELINE_HEALTH_WORKFLOW,
-)
-
-TRIAGE_FOCI = (
-    "Live triage",
-    "Contention Center",
-    "Query diagnosis",
-)
-
-PIPELINE_FOCI = (
-    "Task graphs",
-    "Stored procedures",
-    "Pipeline health",
+    QUERY_CONTENTION_WORKFLOW,
+    TASK_PROCEDURE_WORKFLOW,
+    PIPELINE_SLA_WORKFLOW,
+    SCHEMA_COMPARE_WORKFLOW,
+    AI_QUERY_DIAGNOSIS_WORKFLOW,
 )
 
 WORKFLOW_DETAILS = {
-    QUERY_TRIAGE_WORKFLOW: "One path for running work, queue pressure, failed SQL, slow SQL, spill, blockers, and safe contention fixes.",
-    PIPELINE_HEALTH_WORKFLOW: "One path for Snowflake task graphs, procedure drift, load health, backlog, and recovery order.",
-}
-
-TRIAGE_FOCUS_DETAILS = {
-    "Live triage": "What is running, queued, blocked, or failing right now.",
-    "Contention Center": "Lock waits, task overlap, long DML, warehouse queueing, and safe fix guidance.",
-    "Query diagnosis": "Slow, spilling, expensive, failed, scan-heavy SQL, root cause, plan steps, and history search.",
-}
-
-PIPELINE_FOCUS_DETAILS = {
-    "Task graphs": "Workflow/DAG status, failures, retries, SLA, and admin control.",
-    "Stored procedures": "Procedure CALL history, runtime drift, lineage, and cost attribution.",
-    "Pipeline health": "Load health, copy patterns, task/pipeline signals, and backlog.",
+    QUERY_CONTENTION_WORKFLOW: "Running, queued, blocked, slow, spilling, failed, or high-cost SQL with contention fix guidance.",
+    TASK_PROCEDURE_WORKFLOW: "Task graph and procedure health with late runs, failures, retry state, and recovery order.",
+    PIPELINE_SLA_WORKFLOW: "Freshness SLA, load failures, dynamic tables, Snowpipe usage, and downstream backlog.",
+    SCHEMA_COMPARE_WORKFLOW: "Schema and data compare for missing objects, row counts, and object/data likeness.",
+    AI_QUERY_DIAGNOSIS_WORKFLOW: "AI-assisted Snowflake query diagnosis for slow, spill-heavy, scan-heavy, or failed SQL.",
 }
 
 WORKFLOW_MODULES = {
-    "Live triage": "sections.live_monitor",
-    "Contention Center": "sections.contention_center",
-    "Query diagnosis": "sections.query_analysis",
-    "Task graphs": "sections.task_management",
-    "Stored procedures": "sections.stored_proc_tracker",
-    "Pipeline health": "sections.pipeline_health",
+    QUERY_CONTENTION_WORKFLOW: "sections.contention_center",
+    TASK_PROCEDURE_WORKFLOW: "sections.task_management",
+    PIPELINE_SLA_WORKFLOW: "sections.pipeline_health",
+    SCHEMA_COMPARE_WORKFLOW: "sections.dba_tools",
+    AI_QUERY_DIAGNOSIS_WORKFLOW: "sections.query_analysis",
 }
 
 CONSOLIDATED_WORKFLOW_ALIASES = {
-    "Live triage": (QUERY_TRIAGE_WORKFLOW, "Live triage", ""),
-    "Contention Center": (QUERY_TRIAGE_WORKFLOW, "Contention Center", ""),
-    "Query diagnosis": (QUERY_TRIAGE_WORKFLOW, "Query diagnosis", ""),
-    "History search": (QUERY_TRIAGE_WORKFLOW, "Query diagnosis", "History Search"),
-    "History Search": (QUERY_TRIAGE_WORKFLOW, "Query diagnosis", "History Search"),
-    "Root cause patterns": (QUERY_TRIAGE_WORKFLOW, "Query diagnosis", "Root-Cause Brief"),
-    "Detailed diagnosis": (QUERY_TRIAGE_WORKFLOW, "Query diagnosis", "Detailed Diagnosis"),
-    "AI Diagnosis": (QUERY_TRIAGE_WORKFLOW, "Query diagnosis", "AI Diagnosis"),
-    "Task graphs": (PIPELINE_HEALTH_WORKFLOW, "Task graphs", ""),
-    "Stored procedures": (PIPELINE_HEALTH_WORKFLOW, "Stored procedures", ""),
-    "Pipeline health": (PIPELINE_HEALTH_WORKFLOW, "Pipeline health", ""),
+    "Query & contention triage": QUERY_CONTENTION_WORKFLOW,
+    "Live triage": QUERY_CONTENTION_WORKFLOW,
+    "Contention Center": QUERY_CONTENTION_WORKFLOW,
+    "Query diagnosis": AI_QUERY_DIAGNOSIS_WORKFLOW,
+    "History search": AI_QUERY_DIAGNOSIS_WORKFLOW,
+    "History Search": AI_QUERY_DIAGNOSIS_WORKFLOW,
+    "Root cause patterns": AI_QUERY_DIAGNOSIS_WORKFLOW,
+    "Detailed diagnosis": AI_QUERY_DIAGNOSIS_WORKFLOW,
+    "AI Diagnosis": AI_QUERY_DIAGNOSIS_WORKFLOW,
+    "Task, procedure & pipeline health": TASK_PROCEDURE_WORKFLOW,
+    "Task graphs": TASK_PROCEDURE_WORKFLOW,
+    "Stored procedures": TASK_PROCEDURE_WORKFLOW,
+    "Pipeline health": PIPELINE_SLA_WORKFLOW,
 }
 
 LEGACY_WORKFLOW_MAP = {
-    "Diagnosis": "Query diagnosis",
-    "History Search": "History Search",
-    "AI Diagnosis": "AI Diagnosis",
-    "Live Triage": "Live triage",
-    "Contention": "Contention Center",
-    "Patterns": "Root cause patterns",
+    "Diagnosis": AI_QUERY_DIAGNOSIS_WORKFLOW,
+    "History Search": AI_QUERY_DIAGNOSIS_WORKFLOW,
+    "AI Diagnosis": AI_QUERY_DIAGNOSIS_WORKFLOW,
+    "Live Triage": QUERY_CONTENTION_WORKFLOW,
+    "Contention": QUERY_CONTENTION_WORKFLOW,
+    "Patterns": AI_QUERY_DIAGNOSIS_WORKFLOW,
 }
 
 
@@ -136,101 +115,35 @@ def _apply_fast_entry_default() -> None:
 def _normalize_workload_workflow_state() -> None:
     current = str(st.session_state.get("workload_operations_workflow") or "")
     mapped = CONSOLIDATED_WORKFLOW_ALIASES.get(current)
-    if not mapped:
-        return
-    workflow, focus, query_view = mapped
-    st.session_state["workload_operations_workflow"] = workflow
-    if focus in TRIAGE_FOCI:
-        st.session_state[TRIAGE_FOCUS_KEY] = focus
-    elif focus in PIPELINE_FOCI:
-        st.session_state[PIPELINE_FOCUS_KEY] = focus
-    if query_view:
-        st.session_state["query_analysis_active_view"] = query_view
+    if mapped:
+        st.session_state["workload_operations_workflow"] = mapped
+    legacy_focus = str(st.session_state.pop(_LEGACY_TRIAGE_FOCUS_KEY, "") or "")
+    pipeline_focus = str(st.session_state.pop(_LEGACY_PIPELINE_FOCUS_KEY, "") or "")
+    focus_workflow = CONSOLIDATED_WORKFLOW_ALIASES.get(legacy_focus) or CONSOLIDATED_WORKFLOW_ALIASES.get(pipeline_focus)
+    if focus_workflow and current not in WORKFLOWS:
+        st.session_state["workload_operations_workflow"] = focus_workflow
 
 
-def _apply_workload_evidence_mode_defaults(mode: str) -> None:
-    marker_key = "_workload_operations_evidence_mode_defaults"
-    if st.session_state.get(marker_key) == mode:
-        return
-    if mode == TRIAGE_MODE_TRIAGE:
-        st.session_state.setdefault("workload_operations_workflow", QUERY_TRIAGE_WORKFLOW)
-        st.session_state.setdefault(TRIAGE_FOCUS_KEY, "Live triage")
-    elif mode == TRIAGE_MODE_INVESTIGATE:
-        st.session_state["workload_operations_workflow"] = QUERY_TRIAGE_WORKFLOW
-        st.session_state[TRIAGE_FOCUS_KEY] = "Contention Center"
-    elif mode == TRIAGE_MODE_ALL_EVIDENCE:
-        st.session_state["workload_operations_workflow"] = QUERY_TRIAGE_WORKFLOW
-        st.session_state[TRIAGE_FOCUS_KEY] = "Query diagnosis"
-        st.session_state["query_analysis_active_view"] = "Root-Cause Brief"
-    st.session_state[marker_key] = mode
-
-
-def _build_workload_task_status_sql(company: str, environment: str, *, hours: int = 24) -> str:
-    return f"""
-        SELECT
-            COUNT(*) AS TASK_STATUS_ROWS,
-            COUNT_IF(
-                UPPER(COALESCE(STATE, '')) IN ('FAILED', 'FAILED_WITH_ERROR', 'CANCELLED')
-                OR ERROR_MESSAGE IS NOT NULL
-            ) AS TASK_STATUS_FAILURE_ROWS,
-            COUNT_IF(
-                DATEDIFF('minute', SCHEDULED_TIME, COALESCE(COMPLETED_TIME, CURRENT_TIMESTAMP())) > 60
-                AND UPPER(COALESCE(STATE, '')) NOT IN ('SUCCEEDED', 'SUCCESS', 'COMPLETED')
-            ) AS TASK_STATUS_LATE_ROWS,
-            COUNT_IF(
-                UPPER(COALESCE(STATE, '')) IN ('FAILED', 'FAILED_WITH_ERROR', 'CANCELLED')
-                OR ERROR_MESSAGE IS NOT NULL
-            ) AS TASK_STATUS_ALERT_ROWS,
-            COUNT_IF(
-                UPPER(COALESCE(STATE, '')) IN ('SKIPPED', 'SCHEDULED')
-                OR (
-                    DATEDIFF('minute', SCHEDULED_TIME, COALESCE(COMPLETED_TIME, CURRENT_TIMESTAMP())) > 30
-                    AND UPPER(COALESCE(STATE, '')) NOT IN ('SUCCEEDED', 'SUCCESS', 'COMPLETED')
-                )
-            ) AS TASK_STATUS_WATCH_ROWS,
-            MAX(COALESCE(COMPLETED_TIME, QUERY_START_TIME, SCHEDULED_TIME)) AS TASK_STATUS_LAST_SEEN_AT
-        FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
-        WHERE SCHEDULED_TIME >= DATEADD('hour', -{int(hours)}, CURRENT_TIMESTAMP())
-    """
-
-
-def _render_query_contention_triage() -> None:
-    if st.session_state.get(TRIAGE_FOCUS_KEY) not in TRIAGE_FOCI:
-        st.session_state[TRIAGE_FOCUS_KEY] = TRIAGE_FOCI[0]
-    focus = render_mode_selector(
-        "Triage focus",
-        TRIAGE_FOCUS_KEY,
-        TRIAGE_FOCI,
-        default=TRIAGE_FOCI[0],
-        details=TRIAGE_FOCUS_DETAILS,
-        columns=3,
-    )
-    if focus == "Query diagnosis" and st.session_state.pop("workload_query_diagnosis_mode", "") == "Detailed diagnosis":
-        st.session_state["query_analysis_active_view"] = "Detailed Diagnosis"
-    render_workflow_module(focus, WORKFLOW_MODULES)
-
-
-def _render_task_pipeline_health() -> None:
-    if st.session_state.get(PIPELINE_FOCUS_KEY) not in PIPELINE_FOCI:
-        st.session_state[PIPELINE_FOCUS_KEY] = PIPELINE_FOCI[0]
-    focus = render_mode_selector(
-        "Pipeline focus",
-        PIPELINE_FOCUS_KEY,
-        PIPELINE_FOCI,
-        default=PIPELINE_FOCI[0],
-        details=PIPELINE_FOCUS_DETAILS,
-        columns=3,
-    )
-    render_workflow_module(focus, WORKFLOW_MODULES)
+def _render_workload_surface(workflow: str) -> None:
+    if workflow == AI_QUERY_DIAGNOSIS_WORKFLOW:
+        st.session_state["query_analysis_active_view"] = "AI Diagnosis"
+        if st.session_state.pop("workload_query_diagnosis_mode", "") == "Detailed diagnosis":
+            st.session_state["query_analysis_active_view"] = "Detailed Diagnosis"
+    elif workflow == TASK_PROCEDURE_WORKFLOW:
+        st.session_state.setdefault("task_management_view", "Job Status Brief")
+    elif workflow == PIPELINE_SLA_WORKFLOW:
+        st.session_state.setdefault("pipeline_health_active_view", "Freshness SLA")
+    elif workflow == SCHEMA_COMPARE_WORKFLOW:
+        st.session_state["dba_tools_focus"] = "Object Monitoring"
+        st.session_state["dba_tools_focus_tool"] = "Schema Compare"
+        st.session_state["dba_tools_group_selector"] = "Object Monitoring"
+    render_workflow_module(workflow, WORKFLOW_MODULES)
 
 
 def render() -> None:
-    evidence_mode = current_evidence_mode(st.session_state)
     _apply_fast_entry_default()
-    _apply_workload_evidence_mode_defaults(evidence_mode)
     if st.session_state.get("exceptions_only_mode") and "workload_operations_workflow" not in st.session_state:
-        st.session_state["workload_operations_workflow"] = QUERY_TRIAGE_WORKFLOW
-        st.session_state[TRIAGE_FOCUS_KEY] = "Live triage"
+        st.session_state["workload_operations_workflow"] = QUERY_CONTENTION_WORKFLOW
     migrate_legacy_workflow_state(
         "query_workbench_workflow",
         "workload_operations_workflow",
@@ -238,33 +151,23 @@ def render() -> None:
     )
     _normalize_workload_workflow_state()
     if st.session_state.get("workload_operations_workflow") not in WORKFLOWS:
-        st.session_state["workload_operations_workflow"] = QUERY_TRIAGE_WORKFLOW
-
-    if evidence_mode == TRIAGE_MODE_TRIAGE:
-        defer_section_note("Start with running work, failures, SLA breaches, and release regressions.")
-    elif evidence_mode == TRIAGE_MODE_INVESTIGATE:
-        defer_section_note("Investigation detail opens specialist workflows for contention and root-cause analysis.")
-    elif evidence_mode == TRIAGE_MODE_ALL_EVIDENCE:
-        defer_section_note("Full telemetry depth opens Query diagnosis with root-cause context ready.")
+        st.session_state["workload_operations_workflow"] = QUERY_CONTENTION_WORKFLOW
 
     render_workflow_guide(
-        "Pick the investigation intent first. Query and contention triage handles in-flight SQL pressure; task, procedure, "
-        "and pipeline health handles job recovery and downstream impact.",
+        "Pick the operator surface that matches the incident. Each route opens one specialist path instead of a nested brief.",
         [
-            ("Running, queued, blocked, slow, spilling, or failed SQL", "Use Query and contention triage."),
-            ("Late task, failed task, procedure drift, load backlog, or downstream impact", "Use Task, procedure and pipeline health."),
+            ("Running, queued, blocked, slow, spilling, or failed SQL", "Use Query & contention or AI query diagnosis."),
+            ("Late task, failed procedure, load backlog, or downstream SLA risk", "Use Task & procedure health or Pipeline / SLA risk."),
+            ("Mismatch between environments or releases", "Use Schema & data compare."),
         ],
     )
 
     workflow = render_workflow_selector(
-        "Workload workflow",
+        "Workload surface",
         "workload_operations_workflow",
         WORKFLOWS,
         WORKFLOW_DETAILS,
-        columns=3,
+        columns=5,
     )
 
-    if workflow == QUERY_TRIAGE_WORKFLOW:
-        _render_query_contention_triage()
-    elif workflow == PIPELINE_HEALTH_WORKFLOW:
-        _render_task_pipeline_health()
+    _render_workload_surface(workflow)

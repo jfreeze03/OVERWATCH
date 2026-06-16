@@ -46,14 +46,29 @@ _FULL_WORKSPACE_STATE_KEYS = (
 
 _WORKFLOWS = (
     {
-        "WORKFLOW": "Query & contention triage",
+        "WORKFLOW": "Query & contention",
         "BUTTON_LABEL": "Open Query Triage",
         "MOVE": "Find running, queued, failed, slow, spilling, blocked, or high-cost SQL before changing compute.",
     },
     {
-        "WORKFLOW": "Task, procedure & pipeline health",
-        "BUTTON_LABEL": "Open Pipeline Health",
-        "MOVE": "Review task graph failures, late jobs, procedure drift, load health, and downstream backlog together.",
+        "WORKFLOW": "Task & procedure health",
+        "BUTTON_LABEL": "Open Task / Procedure Health",
+        "MOVE": "Review task graph failures, late jobs, procedure drift, retry state, and recovery order together.",
+    },
+    {
+        "WORKFLOW": "Pipeline / SLA risk",
+        "BUTTON_LABEL": "Open Pipeline SLA",
+        "MOVE": "Review load health, freshness SLA, copy failures, dynamic tables, and downstream backlog together.",
+    },
+    {
+        "WORKFLOW": "Schema & data compare",
+        "BUTTON_LABEL": "Open Schema / Data Compare",
+        "MOVE": "Compare source and target objects, row counts, missing objects, and data likeness from one route.",
+    },
+    {
+        "WORKFLOW": "AI query diagnosis",
+        "BUTTON_LABEL": "Open AI Query Diagnosis",
+        "MOVE": "Use AI-assisted Snowflake recommendations for slow, spilling, scan-heavy, or failed SQL.",
     },
 )
 
@@ -266,7 +281,7 @@ def _workload_shell_lanes(snapshot_row: object | None, task_row: object | None) 
                     "label": "Runtime p95",
                     "value": _summary_seconds_label(summary, "p95_runtime_sec"),
                     "state": "Performance",
-                    "detail": "P95 runtime is the first signal for regressions before opening Query Diagnosis.",
+                    "detail": "P95 runtime is the first signal for regressions before opening AI Query Diagnosis.",
                 },
                 {
                     "label": "Queue pressure",
@@ -284,7 +299,7 @@ def _workload_shell_lanes(snapshot_row: object | None, task_row: object | None) 
                     "label": "Task failures",
                     "value": f"{failed_tasks:,}",
                     "state": "Pipeline",
-                    "detail": "Failed task count routes into Task Graphs and the DBA morning queue.",
+                    "detail": "Failed task count routes into Task / Procedure Health and the DBA morning queue.",
                 },
                 {
                     "label": "Alert pressure",
@@ -357,7 +372,7 @@ def _workload_shell_lanes(snapshot_row: object | None, task_row: object | None) 
             "label": "Query volume",
             "value": f"{total_queries:,}",
             "state": f"{failed_queries:,} failed",
-            "detail": "Failed query count should route into Query Diagnosis before escalation.",
+            "detail": "Failed query count should route into AI Query Diagnosis before escalation.",
         },
         {
             "label": "Runtime p95",
@@ -403,7 +418,7 @@ def _render_workflow_launchpad() -> None:
         _open_workspace(str(row["WORKFLOW"]))
 
     render_shell_workflows(
-        "Workload Investigation Workflows",
+        "Workload Operations Drilldowns",
         _WORKFLOWS,
         label_key="WORKFLOW",
         key_prefix="workload_operations_shell",

@@ -14,7 +14,7 @@
 #   render_theme_picker()
 import streamlit as st
 
-THEME_VERSION = "2026-06-16-theme-contrast-v3"
+THEME_VERSION = "2026-06-16-theme-contrast-v4"
 
 _DEFAULT_THEME = "terminal"
 _THEME_ALIASES = {
@@ -326,6 +326,15 @@ button[data-testid^="stBaseButton"]:hover {
     border-color: var(--border-strong) !important;
     box-shadow: var(--btn-hover-shadow) !important;
 }
+.stButton > button:hover p,
+.stButton > button:hover span:not([class*="icon"]):not([class*="material"]),
+[data-testid="stButton"] button:hover p,
+[data-testid="stButton"] button:hover span:not([class*="icon"]):not([class*="material"]),
+button[data-testid^="stBaseButton"]:hover p,
+button[data-testid^="stBaseButton"]:hover span:not([class*="icon"]):not([class*="material"]) {
+    color: var(--text-primary) !important;
+    -webkit-text-fill-color: var(--text-primary) !important;
+}
 .stButton > button[kind="primary"],
 [data-testid="stButton"] button[kind="primary"],
 button[data-testid="stBaseButton-primary"] {
@@ -336,13 +345,26 @@ button[data-testid="stBaseButton-primary"] {
 }
 .stButton > button[kind="primary"] p,
 [data-testid="stButton"] button[kind="primary"] p,
-button[data-testid="stBaseButton-primary"] p {
+button[data-testid="stBaseButton-primary"] p,
+.stButton > button[kind="primary"] span:not([class*="icon"]):not([class*="material"]),
+[data-testid="stButton"] button[kind="primary"] span:not([class*="icon"]):not([class*="material"]),
+button[data-testid="stBaseButton-primary"] span:not([class*="icon"]):not([class*="material"]) {
     color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
 }
 .stButton > button[kind="primary"]:hover,
 [data-testid="stButton"] button[kind="primary"]:hover,
 button[data-testid="stBaseButton-primary"]:hover {
     box-shadow: 0 6px 24px rgba(var(--accent-rgb), 0.55) !important;
+}
+.stButton > button[kind="primary"]:hover p,
+.stButton > button[kind="primary"]:hover span:not([class*="icon"]):not([class*="material"]),
+[data-testid="stButton"] button[kind="primary"]:hover p,
+[data-testid="stButton"] button[kind="primary"]:hover span:not([class*="icon"]):not([class*="material"]),
+button[data-testid="stBaseButton-primary"]:hover p,
+button[data-testid="stBaseButton-primary"]:hover span:not([class*="icon"]):not([class*="material"]) {
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
 }
 .stButton > button:disabled,
 [data-testid="stButton"] button:disabled,
@@ -393,6 +415,11 @@ hr {
 .vega-embed canvas,
 .vega-embed svg {
     background: transparent !important;
+}
+[data-testid="stArrowVegaLiteChart"] svg text,
+[data-testid="stVegaLiteChart"] svg text,
+.vega-embed svg text {
+    fill: var(--text-secondary) !important;
 }
 .ow-chart-title {
     color: var(--text-primary);

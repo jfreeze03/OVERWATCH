@@ -2213,9 +2213,9 @@ def render() -> None:
     n1, n2, n3, n4 = st.columns(4)
     with n1:
         _nav_button(
-            "Alert Automation",
+            "Alert Command",
             "Alert Center",
-            state_updates={"alert_center_active_view": "Automation Health"},
+            state_updates={"alert_center_active_view": "Command Center"},
         )
     with n2:
         _nav_button("Cost Drivers", "Cost & Contract", workflow_key="cost_contract_workflow", workflow="Explain bill / attribution / contract")

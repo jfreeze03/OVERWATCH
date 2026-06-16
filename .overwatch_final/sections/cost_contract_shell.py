@@ -53,6 +53,11 @@ _WORKFLOWS = (
         "MOVE": "Review Cortex usage, model spend, users, and runaway AI cost signals.",
     },
     {
+        "WORKFLOW": "SPCS spend",
+        "BUTTON_LABEL": "Open SPCS Spend",
+        "MOVE": "Review Snowpark Container Services usage, services, and cost exposure.",
+    },
+    {
         "WORKFLOW": "Recommendations and action queue",
         "BUTTON_LABEL": "Open Recommendations",
         "MOVE": "Route cost fixes with savings, severity, and telemetry status.",
@@ -218,6 +223,8 @@ def _loaded_cost_board() -> dict:
     loaded_at = ""
     if isinstance(cockpit_meta, dict):
         loaded_at = str(cockpit_meta.get("loaded_at") or "").strip()
+    storage_cost = _float_value(command_summary.get("storage_cost_usd")) if command_summary.get("loaded") else 0.0
+    storage_tb = _float_value(command_summary.get("storage_tb")) if command_summary.get("loaded") else 0.0
     return {
         "loaded": cockpit_loaded or bool(command_summary.get("loaded")),
         "source": "Cost summary",
@@ -232,6 +239,8 @@ def _loaded_cost_board() -> dict:
         "high_actions": high_actions,
         "est_savings": est_savings,
         "cortex": _money(command_summary.get("cortex_cost_usd")) if command_summary.get("loaded") else ("Loaded" if _is_loaded_frame(st.session_state.get("cortex_control_summary")) else "On demand"),
+        "storage_cost": storage_cost,
+        "storage_tb": storage_tb,
         "status": "Loaded" if loaded_at or command_summary.get("loaded") else "On demand",
     }
 
@@ -263,6 +272,12 @@ def _cost_shell_lanes(board: dict | None = None) -> tuple[dict[str, str], ...]:
                 "value": "On demand",
                 "state": "AI",
                 "detail": "Cortex usage is isolated from warehouse compute for cost truth.",
+            },
+            {
+                "label": "Storage dollars",
+                "value": "On demand",
+                "state": "Storage",
+                "detail": "Storage spend includes database, stage, and retention cost signals.",
             },
             {
                 "label": "Top driver",
@@ -309,6 +324,12 @@ def _cost_shell_lanes(board: dict | None = None) -> tuple[dict[str, str], ...]:
             "value": str(board.get("cortex") or "On demand"),
             "state": "AI",
             "detail": "Cortex spend uses the AI-specific metering rate and facts.",
+        },
+        {
+            "label": "Storage dollars",
+            "value": _money(board.get("storage_cost")),
+            "state": f"{_float_value(board.get('storage_tb')):,.1f} TB",
+            "detail": "Database, stage, and retention cost from Snowflake storage telemetry.",
         },
         {
             "label": "Top driver",
@@ -400,16 +421,16 @@ def _render_metric_board() -> None:
         ))
         render_shell_kpi_row((
             ("Cortex", board["cortex"]),
+            ("Storage", _money(board.get("storage_cost"))),
             ("Top Driver", str(board["top_driver"])[:28]),
             ("Driver Delta", _money(board["top_delta"], signed=True)),
-            ("Open Actions", f"{_int_value(board.get('open_actions')):,}"),
         ))
     render_signal_lane_board("Cost Signals", _cost_shell_lanes(board), max_lanes=8)
     render_shell_kpi_row((
         ("Open Actions", f"{_int_value(board.get('open_actions')):,}" if board["loaded"] else "Awaiting data"),
         ("High Priority", f"{_int_value(board.get('high_actions')):,}" if board["loaded"] else "Awaiting data"),
         ("Open Est. Savings", _money(board.get("est_savings")) if board["loaded"] else "Awaiting data"),
-        ("Monitoring Scope", "Cost signals"),
+        ("Cost Signals", "Compute, AI, storage, SPCS"),
     ))
 
 
@@ -437,7 +458,7 @@ def _render_workflow_launchpad() -> None:
         _open_workspace(str(row["WORKFLOW"]))
 
     render_shell_workflows(
-        "Cost Investigation Workflows",
+        "Cost Operations Drilldowns",
         _WORKFLOWS,
         label_key="WORKFLOW",
         key_prefix="cost_contract_shell",

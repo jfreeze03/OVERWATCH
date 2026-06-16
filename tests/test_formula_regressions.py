@@ -59,9 +59,6 @@ from sections.alert_center import (  # noqa: E402
     _alert_lifecycle_board,
     _alert_owner_route_board,
 )
-from sections.workload_operations import (  # noqa: E402
-    _build_workload_task_status_sql,
-)
 from sections.query_analysis import (  # noqa: E402
     _build_ai_query_diagnosis_prompt,
     _build_query_diagnosis_action_contract,
@@ -4893,7 +4890,7 @@ class FormulaRegressionTests(unittest.TestCase):
             self.assertNotIn(retired, change_text)
             self.assertNotIn(retired, task_text)
 
-        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY", workload_text)
+        self.assertNotIn("SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY", workload_text)
         self.assertIn("OVERWATCH_CHANGE_CONTROL_EVIDENCE", setup_sql)
         self.assertIn("OVERWATCH_ACTION_QUEUE", setup_sql)
 
@@ -7714,18 +7711,6 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("LAST_DELIVERY_AT", sql)
         self.assertIn("DBA-ALERTS@EXAMPLE.COM", sql)
 
-    def test_workload_task_status_sql_reads_snowflake_task_history_only(self):
-        sql = _build_workload_task_status_sql("Trexis", "PROD", hours=24).upper()
-
-        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY", sql)
-        self.assertIn("TASK_STATUS_FAILURE_ROWS", sql)
-        self.assertIn("TASK_STATUS_LATE_ROWS", sql)
-        self.assertIn("DATEADD('HOUR', -24", sql)
-        self.assertNotIn("SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY", sql)
-        self.assertNotIn("OVERWATCH_EXTERNAL_CONTROL_FEED", sql)
-        self.assertNotIn("SOURCE_SYSTEM", sql)
-        self.assertNotIn("COALESCE(ENVIRONMENT, 'NO DATABASE CONTEXT') = 'PROD'", sql)
-
     def test_workload_recovery_audit_ddl_captures_owner_and_verification_evidence(self):
         sql = build_workload_recovery_audit_ddl().upper()
 
@@ -8305,7 +8290,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "NEXT_ACTION": "Deploy delivery audit table.",
             }]),
         )
-        self.assertEqual(blocked["target"], "Control Health")
+        self.assertEqual(blocked["target"], "Command Center")
         self.assertIn("Delivery audit input", blocked["detail"])
         self.assertIn("Deploy delivery audit table", blocked["detail"])
 
@@ -8383,7 +8368,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_signal["Overdue alert SLAs"]["ROUTE"], "Triage Digest")
         self.assertEqual(by_signal["Generic alert routes"]["OWNER"], "Platform DBA")
         self.assertEqual(by_signal["Open action queue"]["COUNT"], 1)
-        self.assertEqual(by_signal["Alert control blockers"]["ROUTE"], "Control Health")
+        self.assertEqual(by_signal["Alert control blockers"]["ROUTE"], "Command Center")
         self.assertEqual(by_signal["Delivery failures"]["COUNT"], 1)
 
     def test_alert_center_pending_brief_keeps_alert_brief_as_workflow_chooser(self):
@@ -8398,24 +8383,21 @@ class FormulaRegressionTests(unittest.TestCase):
             [row["VIEW"] for row in workflows],
             [
                 "Command Center",
-                "DBA Morning Brief",
                 "Detection Catalog",
                 "Issue Inbox",
                 "Triage Digest",
                 "Email Delivery",
                 "Action Queue Routing",
-                "Control Health",
-                "Automation Health",
+                "Delivery & Remediation",
             ],
         )
         by_view = {row["VIEW"]: row for row in workflows}
         self.assertIn("Open Command Center", by_view["Command Center"]["BUTTON_LABEL"])
-        self.assertIn("Open Morning Brief", by_view["DBA Morning Brief"]["BUTTON_LABEL"])
         self.assertIn("Open Detection Catalog", by_view["Detection Catalog"]["BUTTON_LABEL"])
         self.assertIn("Alert history", by_view["Issue Inbox"]["SOURCES"])
         self.assertIn("Action queue", by_view["Issue Inbox"]["SOURCES"])
         self.assertIn("Email delivery audit", by_view["Email Delivery"]["SOURCES"])
-        self.assertIn("No-touch automation health", by_view["Automation Health"]["SOURCES"])
+        self.assertIn("Email delivery audit", by_view["Delivery & Remediation"]["SOURCES"])
         self.assertIn("Open Issue Inbox", by_view["Issue Inbox"]["BUTTON_LABEL"])
 
     def test_alert_center_brief_first_default_preserves_explicit_data_view(self):
@@ -8427,12 +8409,12 @@ class FormulaRegressionTests(unittest.TestCase):
             st.session_state["alert_center_active_view"] = "Control Health"
             _apply_alert_center_brief_first_default()
 
-            self.assertEqual(st.session_state["alert_center_active_view"], "Control Health")
+            self.assertEqual(st.session_state["alert_center_active_view"], "Command Center")
             self.assertEqual(st.session_state["_alert_center_brief_first_version"], 2)
 
             st.session_state["alert_center_active_view"] = "Automation Health"
             _apply_alert_center_brief_first_default()
-            self.assertEqual(st.session_state["alert_center_active_view"], "Automation Health")
+            self.assertEqual(st.session_state["alert_center_active_view"], "Command Center")
 
             st.session_state.clear()
             _apply_alert_center_brief_first_default()
@@ -8442,7 +8424,7 @@ class FormulaRegressionTests(unittest.TestCase):
             st.session_state["alert_center_active_view"] = "Control Health"
             st.session_state["alert_center_data"] = {"_loaded_sources": []}
             _apply_alert_center_brief_first_default()
-            self.assertEqual(st.session_state["alert_center_active_view"], "Control Health")
+            self.assertEqual(st.session_state["alert_center_active_view"], "Command Center")
         finally:
             st.session_state.clear()
             st.session_state.update(previous)

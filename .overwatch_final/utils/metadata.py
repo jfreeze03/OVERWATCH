@@ -211,7 +211,9 @@ def load_warehouse_inventory(
     for col in [
         "NAME", "WAREHOUSE_SIZE", "STATE", "AUTO_SUSPEND", "AUTO_RESUME",
         "MIN_CLUSTER_COUNT", "MAX_CLUSTER_COUNT", "SCALING_POLICY",
-        "COMMENT",
+        "STATEMENT_TIMEOUT_IN_SECONDS", "STATEMENT_QUEUED_TIMEOUT_IN_SECONDS",
+        "MAX_CONCURRENCY_LEVEL", "ENABLE_QUERY_ACCELERATION",
+        "QUERY_ACCELERATION_MAX_SCALE_FACTOR", "COMMENT",
     ]:
         if col not in df.columns:
             df[col] = ""

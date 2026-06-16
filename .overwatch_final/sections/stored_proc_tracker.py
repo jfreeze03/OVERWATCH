@@ -3,7 +3,7 @@ import re
 
 import streamlit as st
 import pandas as pd
-from config import DEFAULTS
+from config import DEFAULTS, THRESHOLDS
 from sections.shell_helpers import render_shell_snapshot
 from utils import (
     day_window_selectbox,
@@ -61,6 +61,172 @@ PROCEDURE_SIGNAL_ROUTES = {
         "Break down child-query credits, warehouse size, Cortex/serverless calls, and release changes before approving the next run.",
     ),
 }
+
+_PROC_SCAN_GB_WARN = 50.0
+_PROC_CACHE_LOW_PCT = 10.0
+_PROC_LONG_RUNTIME_SEC = 300.0
+
+
+def _procedure_lookup(row: pd.Series | dict, *names: str, default: object = "") -> object:
+    for name in names:
+        for candidate in (name, name.upper(), name.lower()):
+            try:
+                if isinstance(row, pd.Series) and candidate in row.index:
+                    value = row.get(candidate, default)
+                elif isinstance(row, dict) and candidate in row:
+                    value = row.get(candidate, default)
+                else:
+                    continue
+                try:
+                    if pd.isna(value):
+                        continue
+                except Exception:
+                    pass
+                return value
+            except Exception:
+                continue
+    return default
+
+
+def _procedure_signal_metric(row: pd.Series | dict, *names: str, default: float = 0.0) -> float:
+    return safe_float(_procedure_lookup(row, *names, default=default), default)
+
+
+def _procedure_optimization_findings(row: pd.Series | dict) -> list[dict[str, str]]:
+    """Return DBA-safe optimization findings for one procedure telemetry row."""
+    procedure = str(_procedure_lookup(row, "PROCEDURE_CONTEXT", "PROCEDURE_NAME", default="procedure") or "procedure")
+    spill = _procedure_signal_metric(row, "REMOTE_SPILL_GB", "TOTAL_REMOTE_SPILL_GB")
+    scan_gb = _procedure_signal_metric(row, "GB_SCANNED", "BYTES_SCANNED_GB", "TOTAL_BYTES_SCANNED_GB")
+    cache_pct = _procedure_signal_metric(row, "CACHE_PCT", "AVG_CACHE_PCT")
+    partition_pct = _procedure_signal_metric(row, "PARTITION_PCT", "PRUNING_PCT")
+    elapsed = _procedure_signal_metric(row, "TOTAL_ELAPSED_SEC", "LATEST_ELAPSED_SEC")
+    runtime_change = _procedure_signal_metric(row, "RUNTIME_CHANGE_PCT")
+    cost_change = _procedure_signal_metric(row, "COST_CHANGE_PCT")
+    child_queries = safe_int(_procedure_lookup(row, "DOWNSTREAM_QUERY_COUNT", default=0))
+    spill_threshold = safe_float(THRESHOLDS.get("spill_warning_gb", 5), 5)
+    partition_threshold = safe_float(THRESHOLDS.get("partition_scan_warning_pct", 85), 85)
+
+    findings: list[dict[str, str]] = []
+    if spill >= spill_threshold:
+        findings.append({
+            "SEVERITY": "High",
+            "ISSUE": "Remote spill inside procedure workload",
+            "GUIDANCE": (
+                f"{procedure} spilled {spill:,.2f} GB remotely. Inspect child query operators for large joins, "
+                "sorts, and window functions before changing warehouse size."
+            ),
+            "SAFE_NEXT_ACTION": "Open downstream query detail, capture top spilling query IDs, then decide between SQL tuning, isolation, or a one-step warehouse validation.",
+            "PROOF_REQUIRED": "Remote spill GB and elapsed time should decline for the same procedure after the fix.",
+            "DO_NOT_DO": "Do not upsize the warehouse permanently from procedure-level spill alone.",
+        })
+    if partition_pct >= partition_threshold:
+        findings.append({
+            "SEVERITY": "High",
+            "ISSUE": "Poor partition pruning in child queries",
+            "GUIDANCE": (
+                f"Child queries scanned {partition_pct:,.1f}% of available partitions. Review predicates, clustering, "
+                "and search optimization fit for the procedure tables."
+            ),
+            "SAFE_NEXT_ACTION": "Use query detail to identify the table and predicate pattern, then validate pruning before changing compute.",
+            "PROOF_REQUIRED": "Partition scan percent and bytes scanned should fall for the same query pattern.",
+            "DO_NOT_DO": "Do not add clustering or search optimization until table, predicate, and workload reuse are proven.",
+        })
+    if scan_gb >= _PROC_SCAN_GB_WARN and cache_pct <= _PROC_CACHE_LOW_PCT:
+        findings.append({
+            "SEVERITY": "Medium",
+            "ISSUE": "Large cold scan in procedure workload",
+            "GUIDANCE": (
+                f"Child queries scanned {scan_gb:,.1f} GB with low cache reuse. Push filters earlier, reduce selected "
+                "columns, or consider a narrower persisted intermediate table."
+            ),
+            "SAFE_NEXT_ACTION": "Compare scan volume by child query and confirm whether the procedure can process incrementally.",
+            "PROOF_REQUIRED": "Bytes scanned per procedure run should drop after the change.",
+            "DO_NOT_DO": "Do not materialize a new object until ownership, freshness, and reuse are clear.",
+        })
+    if elapsed >= _PROC_LONG_RUNTIME_SEC and runtime_change >= 50:
+        findings.append({
+            "SEVERITY": "Medium",
+            "ISSUE": "Runtime regression versus procedure baseline",
+            "GUIDANCE": (
+                f"Latest runtime is {runtime_change:,.1f}% above baseline. Compare release timing, child query count, "
+                "data growth, and warehouse setting changes."
+            ),
+            "SAFE_NEXT_ACTION": "Compare this run with the prior baseline and inspect changed procedure logic or task schedule overlap.",
+            "PROOF_REQUIRED": "Next run should return inside the selected SLA baseline.",
+            "DO_NOT_DO": "Do not rerun repeatedly before identifying whether the regression is data volume, SQL shape, or capacity.",
+        })
+    if cost_change >= 50:
+        findings.append({
+            "SEVERITY": "Medium",
+            "ISSUE": "Estimated procedure cost regression",
+            "GUIDANCE": (
+                f"Estimated credits are {cost_change:,.1f}% above baseline. Review warehouse size, child scan volume, "
+                "serverless/Cortex calls, and recent release changes."
+            ),
+            "SAFE_NEXT_ACTION": "Break down child-query credits and compare against the previous stable run before approving the next scheduled execution.",
+            "PROOF_REQUIRED": "Estimated credits should return near baseline for the same procedure workload.",
+            "DO_NOT_DO": "Do not treat the cost change as savings until before/after telemetry is captured.",
+        })
+    if elapsed >= _PROC_LONG_RUNTIME_SEC * 2 and child_queries >= 10 and not findings:
+        findings.append({
+            "SEVERITY": "Low",
+            "ISSUE": "Long multi-statement procedure",
+            "GUIDANCE": (
+                f"{procedure} ran for {elapsed:,.0f}s across {child_queries:,} child query rows. Look for a small "
+                "number of dominant child statements before tuning the whole procedure."
+            ),
+            "SAFE_NEXT_ACTION": "Load downstream query detail and sort by elapsed seconds and scan volume.",
+            "PROOF_REQUIRED": "The dominant child statement should show lower runtime or scan volume after tuning.",
+            "DO_NOT_DO": "Do not rewrite the full procedure until the dominant child statement is known.",
+        })
+    if not findings:
+        findings.append({
+            "SEVERITY": "Low",
+            "ISSUE": "No clear procedure optimization anti-pattern",
+            "GUIDANCE": "No spill, scan, pruning, runtime, or cost signal crosses the current procedure triage threshold.",
+            "SAFE_NEXT_ACTION": "Keep monitoring and review only if SLA, cost, or child-query telemetry changes.",
+            "PROOF_REQUIRED": "No telemetry action needed unless the next run crosses a threshold.",
+            "DO_NOT_DO": "Do not create a change ticket from a clean procedure row.",
+        })
+    return findings
+
+
+def _procedure_optimization_score(row: pd.Series | dict) -> float:
+    spill = _procedure_signal_metric(row, "REMOTE_SPILL_GB", "TOTAL_REMOTE_SPILL_GB")
+    scan_gb = _procedure_signal_metric(row, "GB_SCANNED", "BYTES_SCANNED_GB", "TOTAL_BYTES_SCANNED_GB")
+    partition_pct = _procedure_signal_metric(row, "PARTITION_PCT", "PRUNING_PCT")
+    elapsed = _procedure_signal_metric(row, "TOTAL_ELAPSED_SEC", "LATEST_ELAPSED_SEC")
+    runtime_change = max(0.0, _procedure_signal_metric(row, "RUNTIME_CHANGE_PCT"))
+    cost_change = max(0.0, _procedure_signal_metric(row, "COST_CHANGE_PCT"))
+    score = (
+        spill * 10.0
+        + scan_gb * 0.30
+        + max(partition_pct - 50.0, 0.0) * 0.40
+        + elapsed / 30.0
+        + runtime_change * 0.20
+        + cost_change * 0.20
+    )
+    return round(score, 2)
+
+
+def _add_procedure_optimization_columns(df: pd.DataFrame | None) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df if df is not None else pd.DataFrame()
+    frame = df.copy()
+    rows = []
+    for _, row in frame.iterrows():
+        findings = _procedure_optimization_findings(row)
+        top = findings[0]
+        rows.append({
+            "OPTIMIZATION_SCORE": _procedure_optimization_score(row),
+            "OPTIMIZATION_SEVERITY": top["SEVERITY"],
+            "OPTIMIZATION_ISSUE": top["ISSUE"],
+            "OPTIMIZATION_GUIDANCE": top["GUIDANCE"],
+            "SAFE_NEXT_ACTION": top["SAFE_NEXT_ACTION"],
+            "PROOF_REQUIRED": top["PROOF_REQUIRED"],
+            "DO_NOT_DO": top["DO_NOT_DO"],
+        })
+    return pd.concat([frame.reset_index(drop=True), pd.DataFrame(rows)], axis=1)
 
 
 def _procedure_key(value: object) -> str:
@@ -505,6 +671,7 @@ def _build_procedure_sla_frames(runs: pd.DataFrame) -> tuple[dict, pd.DataFrame,
             if safe_float(row.get("AVG_EST_CREDITS")) > 0 else 0,
             axis=1,
         )
+        latest = _add_procedure_optimization_columns(latest)
 
     exceptions = []
     for _, row in latest.iterrows():
@@ -529,6 +696,13 @@ def _build_procedure_sla_frames(runs: pd.DataFrame) -> tuple[dict, pd.DataFrame,
             "AVG_EST_CREDITS": avg_credits,
             "COST_CHANGE_PCT": round(cost_change, 1),
             "DOWNSTREAM_QUERY_COUNT": safe_int(row.get("DOWNSTREAM_QUERY_COUNT")),
+            "OPTIMIZATION_SCORE": safe_float(row.get("OPTIMIZATION_SCORE")),
+            "OPTIMIZATION_SEVERITY": row.get("OPTIMIZATION_SEVERITY", ""),
+            "OPTIMIZATION_ISSUE": row.get("OPTIMIZATION_ISSUE", ""),
+            "OPTIMIZATION_GUIDANCE": row.get("OPTIMIZATION_GUIDANCE", ""),
+            "SAFE_NEXT_ACTION": row.get("SAFE_NEXT_ACTION", ""),
+            "PROOF_REQUIRED": row.get("PROOF_REQUIRED", ""),
+            "DO_NOT_DO": row.get("DO_NOT_DO", ""),
         }
         if avg_elapsed > 0 and elapsed > avg_elapsed * 1.5 and elapsed > 300:
             exceptions.append({
@@ -1018,11 +1192,13 @@ def render():
                     priority_columns=[
                         "SIGNAL", "SEVERITY", "DATABASE_NAME", "SCHEMA_NAME",
                         "PROCEDURE_CONTEXT", "PROCEDURE_NAME", "ROOT_QUERY_ID",
+                        "OPTIMIZATION_SCORE", "OPTIMIZATION_ISSUE", "OPTIMIZATION_GUIDANCE",
+                        "SAFE_NEXT_ACTION", "PROOF_REQUIRED", "DO_NOT_DO",
                         "TOTAL_ELAPSED_SEC", "AVG_ELAPSED_SEC", "RUNTIME_CHANGE_PCT",
                         "EST_TOTAL_CREDITS", "COST_CHANGE_PCT", "NEXT_WORKFLOW", "NEXT_ACTION",
                     ],
-                    sort_by=["SEVERITY", "RUNTIME_CHANGE_PCT", "COST_CHANGE_PCT"],
-                    ascending=[True, False, False],
+                    sort_by=["SEVERITY", "OPTIMIZATION_SCORE", "RUNTIME_CHANGE_PCT", "COST_CHANGE_PCT"],
+                    ascending=[True, False, False, False],
                     raw_label="All procedure SLA/cost exceptions",
                 )
                 download_csv(exceptions, "procedure_sla_cost_exceptions.csv")
@@ -1042,6 +1218,7 @@ def render():
                     col for col in [
                         "DATABASE_NAME", "SCHEMA_NAME", "PROCEDURE_CONTEXT",
                         "PROCEDURE_NAME", "ROOT_QUERY_ID", "WAREHOUSE_NAME", "WAREHOUSE_SIZE",
+                        "OPTIMIZATION_SCORE", "OPTIMIZATION_ISSUE", "SAFE_NEXT_ACTION",
                         "TOTAL_ELAPSED_SEC", "AVG_ELAPSED_SEC", "RUNTIME_CHANGE_PCT",
                         "EST_TOTAL_CREDITS", "AVG_EST_CREDITS", "COST_CHANGE_PCT",
                         "DOWNSTREAM_QUERY_COUNT", "START_TIME"
@@ -1053,11 +1230,12 @@ def render():
                     priority_columns=[
                         "DATABASE_NAME", "SCHEMA_NAME", "PROCEDURE_CONTEXT",
                         "PROCEDURE_NAME", "ROOT_QUERY_ID", "WAREHOUSE_NAME",
+                        "OPTIMIZATION_SCORE", "OPTIMIZATION_ISSUE", "SAFE_NEXT_ACTION",
                         "TOTAL_ELAPSED_SEC", "AVG_ELAPSED_SEC", "RUNTIME_CHANGE_PCT",
                         "EST_TOTAL_CREDITS", "COST_CHANGE_PCT", "START_TIME",
                     ],
-                    sort_by=["TOTAL_ELAPSED_SEC", "EST_TOTAL_CREDITS"],
-                    ascending=[False, False],
+                    sort_by=["OPTIMIZATION_SCORE", "TOTAL_ELAPSED_SEC", "EST_TOTAL_CREDITS"],
+                    ascending=[False, False, False],
                     raw_label="All latest procedure runs",
                     max_rows=50,
                 )
@@ -1068,7 +1246,16 @@ def render():
             qh_cols = set(filter_existing_columns(
                 session,
                 "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
-                ["WAREHOUSE_SIZE", "BYTES_SCANNED", "CREDITS_USED_CLOUD_SERVICES"],
+                [
+                    "WAREHOUSE_SIZE",
+                    "BYTES_SCANNED",
+                    "BYTES_SPILLED_TO_REMOTE_STORAGE",
+                    "BYTES_SPILLED_TO_LOCAL_STORAGE",
+                    "CREDITS_USED_CLOUD_SERVICES",
+                    "PERCENTAGE_SCANNED_FROM_CACHE",
+                    "PARTITIONS_SCANNED",
+                    "PARTITIONS_TOTAL",
+                ],
             ))
             root_expr = "COALESCE(q.root_query_id, q.query_id)" if has_root_query_id else "q.query_id"
             call_wh_size_expr = (
@@ -1079,9 +1266,29 @@ def render():
                 "q.bytes_scanned AS bytes_scanned"
                 if "BYTES_SCANNED" in qh_cols else "0::NUMBER AS bytes_scanned"
             )
+            child_remote_spill_expr = (
+                "q.bytes_spilled_to_remote_storage AS bytes_spilled_to_remote_storage"
+                if "BYTES_SPILLED_TO_REMOTE_STORAGE" in qh_cols else "0::NUMBER AS bytes_spilled_to_remote_storage"
+            )
+            child_local_spill_expr = (
+                "q.bytes_spilled_to_local_storage AS bytes_spilled_to_local_storage"
+                if "BYTES_SPILLED_TO_LOCAL_STORAGE" in qh_cols else "0::NUMBER AS bytes_spilled_to_local_storage"
+            )
             child_cloud_expr = (
                 "q.credits_used_cloud_services AS credits_used_cloud_services"
                 if "CREDITS_USED_CLOUD_SERVICES" in qh_cols else "0::FLOAT AS credits_used_cloud_services"
+            )
+            child_cache_expr = (
+                "q.percentage_scanned_from_cache AS percentage_scanned_from_cache"
+                if "PERCENTAGE_SCANNED_FROM_CACHE" in qh_cols else "NULL::FLOAT AS percentage_scanned_from_cache"
+            )
+            child_partitions_scanned_expr = (
+                "q.partitions_scanned AS partitions_scanned"
+                if "PARTITIONS_SCANNED" in qh_cols else "0::NUMBER AS partitions_scanned"
+            )
+            child_partitions_total_expr = (
+                "q.partitions_total AS partitions_total"
+                if "PARTITIONS_TOTAL" in qh_cols else "0::NUMBER AS partitions_total"
             )
             df_sp = run_query(f"""
                 WITH {build_metered_credit_cte(days_back=sp_days, include_recent=True)},
@@ -1107,7 +1314,12 @@ def render():
                            q.query_type,
                            q.total_elapsed_time,
                            {child_bytes_expr},
+                           {child_remote_spill_expr},
+                           {child_local_spill_expr},
                            {child_cloud_expr},
+                           {child_cache_expr},
+                           {child_partitions_scanned_expr},
+                           {child_partitions_total_expr},
                            pqc.metered_credits,
                            SUBSTR(q.query_text, 1, 500) AS child_query_text
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
@@ -1130,6 +1342,10 @@ def render():
                        ROUND(SUM(COALESCE(ch.metered_credits,0)), 4) AS metered_credits,
                        ROUND(SUM(COALESCE(ch.credits_used_cloud_services, 0)), 4) AS cloud_credits,
                        ROUND(SUM(ch.bytes_scanned)/POWER(1024,3), 2) AS gb_scanned,
+                       ROUND(SUM(COALESCE(ch.bytes_spilled_to_remote_storage, 0))/POWER(1024,3), 2) AS remote_spill_gb,
+                       ROUND(SUM(COALESCE(ch.bytes_spilled_to_local_storage, 0))/POWER(1024,3), 2) AS local_spill_gb,
+                       ROUND(AVG(ch.percentage_scanned_from_cache), 2) AS cache_pct,
+                       ROUND(SUM(COALESCE(ch.partitions_scanned, 0)) * 100.0 / NULLIF(SUM(COALESCE(ch.partitions_total, 0)), 0), 1) AS partition_pct,
                        MAX(c.start_time) AS last_call
                 FROM calls c
                 LEFT JOIN children ch ON c.root_query_id = ch.root_query_id
@@ -1164,17 +1380,21 @@ def render():
             lambda x: credits_to_dollars(x, credit_price)
         )
         df_sp = _add_procedure_context_columns(df_sp)
+        df_sp = _add_procedure_optimization_columns(df_sp)
         render_priority_dataframe(
             df_sp,
             title="Stored procedure cost drivers",
             priority_columns=[
                 "DATABASE_NAME", "SCHEMA_NAME", "PROCEDURE_CONTEXT",
                 "PROCEDURE_NAME", "USER_NAME", "WAREHOUSE_NAME", "CALL_COUNT",
+                "OPTIMIZATION_SCORE", "OPTIMIZATION_ISSUE", "OPTIMIZATION_GUIDANCE",
+                "SAFE_NEXT_ACTION", "PROOF_REQUIRED", "DO_NOT_DO",
                 "DOWNSTREAM_QUERY_COUNT", "TOTAL_ELAPSED_SEC", "METERED_CREDITS",
-                "CLOUD_CREDITS", "EST_COST", "LAST_CALL",
+                "CLOUD_CREDITS", "EST_COST", "GB_SCANNED", "REMOTE_SPILL_GB",
+                "LOCAL_SPILL_GB", "CACHE_PCT", "PARTITION_PCT", "LAST_CALL",
             ],
-            sort_by=["EST_COST", "METERED_CREDITS", "TOTAL_ELAPSED_SEC"],
-            ascending=[False, False, False],
+            sort_by=["OPTIMIZATION_SCORE", "EST_COST", "METERED_CREDITS", "TOTAL_ELAPSED_SEC"],
+            ascending=[False, False, False, False],
             raw_label="All stored procedure usage rows",
             max_rows=50,
         )
@@ -1191,7 +1411,15 @@ def render():
                 qh_cols = set(filter_existing_columns(
                     session,
                     "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
-                    ["WAREHOUSE_SIZE", "BYTES_SCANNED"],
+                    [
+                        "WAREHOUSE_SIZE",
+                        "BYTES_SCANNED",
+                        "BYTES_SPILLED_TO_REMOTE_STORAGE",
+                        "BYTES_SPILLED_TO_LOCAL_STORAGE",
+                        "PERCENTAGE_SCANNED_FROM_CACHE",
+                        "PARTITIONS_SCANNED",
+                        "PARTITIONS_TOTAL",
+                    ],
                 ))
                 root_expr = "COALESCE(q.root_query_id, q.query_id)" if has_root_query_id else "q.query_id"
                 child_wh_size_expr = (
@@ -1201,6 +1429,22 @@ def render():
                 child_gb_expr = (
                     "q.bytes_scanned/POWER(1024,3) AS gb_scanned"
                     if "BYTES_SCANNED" in qh_cols else "0::FLOAT AS gb_scanned"
+                )
+                child_remote_expr = (
+                    "q.bytes_spilled_to_remote_storage/POWER(1024,3) AS remote_spill_gb"
+                    if "BYTES_SPILLED_TO_REMOTE_STORAGE" in qh_cols else "0::FLOAT AS remote_spill_gb"
+                )
+                child_local_expr = (
+                    "q.bytes_spilled_to_local_storage/POWER(1024,3) AS local_spill_gb"
+                    if "BYTES_SPILLED_TO_LOCAL_STORAGE" in qh_cols else "0::FLOAT AS local_spill_gb"
+                )
+                child_cache_expr = (
+                    "q.percentage_scanned_from_cache AS cache_pct"
+                    if "PERCENTAGE_SCANNED_FROM_CACHE" in qh_cols else "NULL::FLOAT AS cache_pct"
+                )
+                child_partition_expr = (
+                    "q.partitions_scanned * 100.0 / NULLIF(q.partitions_total, 0) AS partition_pct"
+                    if {"PARTITIONS_SCANNED", "PARTITIONS_TOTAL"}.issubset(qh_cols) else "NULL::FLOAT AS partition_pct"
                 )
                 proc_exact = sql_literal(selected_proc)
                 proc_like = sql_literal('%' + selected_proc + '%')
@@ -1218,6 +1462,10 @@ def render():
                        q.database_name, q.schema_name, q.query_type, q.start_time,
                        q.total_elapsed_time/1000 AS elapsed_sec,
                        {child_gb_expr},
+                       {child_remote_expr},
+                       {child_local_expr},
+                       {child_cache_expr},
+                       {child_partition_expr},
                        SUBSTR(q.query_text,1,4000) AS query_text
                 FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
                 JOIN roots r ON {root_expr} = r.root_query_id

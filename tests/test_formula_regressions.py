@@ -244,12 +244,15 @@ from sections.security_access import (  # noqa: E402
     _user_mfa_column_exprs,
 )
 from sections.stored_proc_tracker import (  # noqa: E402
+    _add_procedure_optimization_columns,
     _build_procedure_reliability_action,
     _build_procedure_reliability_slo_board,
     _build_procedure_sla_frames,
     _build_procedure_ops_frames,
     _procedure_from_task_definition,
     _procedure_key,
+    _procedure_optimization_findings,
+    _procedure_optimization_score,
 )
 from sections.task_management import (  # noqa: E402
     _admin_sql_for_graph,
@@ -5405,6 +5408,8 @@ class FormulaRegressionTests(unittest.TestCase):
                 "NAME": ["OVERWATCH_WH", "BI_COMPUTE_WH"],
                 "RESOURCE_MONITOR": ["", "BI_WH_RM"],
                 "AUTO_SUSPEND": [300, 0],
+                "STATEMENT_TIMEOUT_IN_SECONDS": [3600, 0],
+                "STATEMENT_QUEUED_TIMEOUT_IN_SECONDS": [600, 0],
             }
         )
         summary, board = _build_warehouse_guardrail_coverage(
@@ -5416,10 +5421,14 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(summary["blocked"], 2)
         self.assertEqual(by_wh["OVERWATCH_WH"]["GUARDRAIL_STATE"], "Blocked")
         self.assertEqual(by_wh["OVERWATCH_WH"]["RESOURCE_MONITOR_STATE"], "Blocked")
+        self.assertEqual(by_wh["OVERWATCH_WH"]["TIMEOUT_STATE"], "Ready")
         self.assertIn("OVERWATCH_WH_RM", by_wh["OVERWATCH_WH"]["NEXT_ACTION"])
         self.assertEqual(by_wh["BI_COMPUTE_WH"]["AUTO_SUSPEND_STATE"], "Blocked")
+        self.assertEqual(by_wh["BI_COMPUTE_WH"]["TIMEOUT_STATE"], "Review")
         self.assertEqual(by_wh["BI_COMPUTE_WH"]["ESCALATION_ROUTE_STATE"], "Ready")
         self.assertEqual(by_wh["BI_COMPUTE_WH"]["CAPACITY_STATE"], "Review")
+        self.assertIn("queued_timeout=0", by_wh["BI_COMPUTE_WH"]["EVIDENCE"])
+        self.assertIn("timeout settings", by_wh["BI_COMPUTE_WH"]["PROOF_REQUIRED"])
         self.assertLess(summary["score"], 80)
 
     def test_warehouse_guardrail_coverage_marks_missing_metadata_as_data_gap(self):
@@ -5443,8 +5452,10 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(row["GUARDRAIL_STATE"], "Data Missing")
         self.assertEqual(row["RESOURCE_MONITOR_STATE"], "Unknown")
         self.assertEqual(row["AUTO_SUSPEND_STATE"], "Unknown")
+        self.assertEqual(row["TIMEOUT_STATE"], "Unknown")
         self.assertEqual(row["ESCALATION_ROUTE_STATE"], "Ready")
         self.assertIn("SHOW WAREHOUSES", row["PROOF_REQUIRED"])
+        self.assertIn("timeout settings", row["PROOF_REQUIRED"])
         self.assertLess(row["GUARDRAIL_SCORE"], 100)
 
     def test_warehouse_capacity_brief_markdown_contains_evidence_limits(self):
@@ -6611,6 +6622,46 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(latest.iloc[0]["SCHEMA_NAME"], "PUBLIC")
         self.assertEqual(latest.iloc[0]["PROCEDURE_CONTEXT"], "ALFA_EDW_DEV.PUBLIC.SP_LOAD_POLICY")
         self.assertGreater(latest.iloc[0]["RUNTIME_CHANGE_PCT"], 0)
+        self.assertIn("OPTIMIZATION_SCORE", latest.columns)
+        self.assertIn("OPTIMIZATION_ISSUE", exceptions.columns)
+        self.assertIn("SAFE_NEXT_ACTION", exceptions.columns)
+        self.assertGreater(latest.iloc[0]["OPTIMIZATION_SCORE"], 0)
+
+    def test_procedure_optimization_triage_prioritizes_spill_pruning_and_regressions(self):
+        row = pd.Series({
+            "PROCEDURE_CONTEXT": "ALFA_EDW_DEV.PUBLIC.SP_LOAD_POLICY",
+            "REMOTE_SPILL_GB": 12.5,
+            "GB_SCANNED": 180.0,
+            "CACHE_PCT": 2.0,
+            "PARTITION_PCT": 96.0,
+            "TOTAL_ELAPSED_SEC": 1400.0,
+            "RUNTIME_CHANGE_PCT": 160.0,
+            "COST_CHANGE_PCT": 120.0,
+            "DOWNSTREAM_QUERY_COUNT": 18,
+        })
+
+        findings = _procedure_optimization_findings(row)
+        issues = {finding["ISSUE"] for finding in findings}
+
+        self.assertIn("Remote spill inside procedure workload", issues)
+        self.assertIn("Poor partition pruning in child queries", issues)
+        self.assertIn("Large cold scan in procedure workload", issues)
+        self.assertGreater(_procedure_optimization_score(row), _procedure_optimization_score({"TOTAL_ELAPSED_SEC": 10}))
+        self.assertTrue(all(finding["SAFE_NEXT_ACTION"] for finding in findings))
+        self.assertTrue(all(finding["DO_NOT_DO"] for finding in findings))
+
+    def test_procedure_optimization_columns_keep_clean_rows_advisory_only(self):
+        frame = _add_procedure_optimization_columns(pd.DataFrame([{
+            "PROCEDURE_NAME": "SP_OK",
+            "TOTAL_ELAPSED_SEC": 20,
+            "REMOTE_SPILL_GB": 0,
+            "GB_SCANNED": 1,
+            "PARTITION_PCT": 5,
+        }]))
+
+        self.assertEqual(frame.iloc[0]["OPTIMIZATION_ISSUE"], "No clear procedure optimization anti-pattern")
+        self.assertIn("Keep monitoring", frame.iloc[0]["SAFE_NEXT_ACTION"])
+        self.assertIn("Do not create", frame.iloc[0]["DO_NOT_DO"])
 
     def test_procedure_mart_sql_qualifies_snapshot_timestamp(self):
         inventory_sql = build_mart_procedure_inventory_sql("ALFA").upper()

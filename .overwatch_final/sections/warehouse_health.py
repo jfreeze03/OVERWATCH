@@ -1417,6 +1417,39 @@ def _build_warehouse_guardrail_coverage(
                 suspend_action = "AUTO_SUSPEND is inside the normal guardrail range."
                 suspend_deduction = 0
 
+        statement_timeout_value, statement_timeout_known = _warehouse_first_setting(
+            settings_row,
+            ("STATEMENT_TIMEOUT_IN_SECONDS", "STATEMENT_TIMEOUT"),
+        )
+        queued_timeout_value, queued_timeout_known = _warehouse_first_setting(
+            settings_row,
+            ("STATEMENT_QUEUED_TIMEOUT_IN_SECONDS", "STATEMENT_QUEUED_TIMEOUT"),
+        )
+        if not statement_timeout_known and not queued_timeout_known:
+            timeout_state = "Unknown"
+            timeout_action = "Load warehouse metadata to verify statement and queued timeout guardrails."
+            timeout_deduction = 8
+        else:
+            statement_timeout = safe_int(statement_timeout_value, -1) if statement_timeout_known else -1
+            queued_timeout = safe_int(queued_timeout_value, -1) if queued_timeout_known else -1
+            timeout_risks = []
+            if statement_timeout_known and statement_timeout == 0:
+                timeout_risks.append("statement timeout is disabled")
+            elif statement_timeout_known and statement_timeout > 14400:
+                timeout_risks.append("statement timeout exceeds four hours")
+            if queued_timeout_known and queued_timeout == 0 and queued > 0:
+                timeout_risks.append("queued timeout is disabled while queue pressure exists")
+            elif queued_timeout_known and queued_timeout > 3600 and queued > 0:
+                timeout_risks.append("queued timeout exceeds one hour with queue pressure")
+            if timeout_risks:
+                timeout_state = "Review"
+                timeout_action = "Review timeout settings before workload growth or capacity changes: " + "; ".join(timeout_risks) + "."
+                timeout_deduction = 12 if queued > 0 or p95 > 60 else 8
+            else:
+                timeout_state = "Ready"
+                timeout_action = "Statement and queued timeout guardrails are present for loaded metadata."
+                timeout_deduction = 0
+
         control_state = str(control_row.get("CONTROL_STATE") or "").strip()
         audit_state = str(control_row.get("AUDIT_READINESS") or "").strip()
         if "Route Metadata Blocked" in {control_state, audit_state}:
@@ -1461,7 +1494,7 @@ def _build_warehouse_guardrail_coverage(
             cost_action = "Load warehouse metering telemetry before declaring cost guardrails covered."
             cost_deduction = 6
 
-        states = [monitor_state, suspend_state, route_state, capacity_state, cost_state]
+        states = [monitor_state, suspend_state, timeout_state, route_state, capacity_state, cost_state]
         if "Blocked" in states:
             guardrail_state = "Blocked"
             severity = "High"
@@ -1479,13 +1512,21 @@ def _build_warehouse_guardrail_coverage(
             severity = "Low"
             rank = 8
 
-        deduction = monitor_deduction + suspend_deduction + route_deduction + capacity_deduction + cost_deduction
+        deduction = (
+            monitor_deduction
+            + suspend_deduction
+            + timeout_deduction
+            + route_deduction
+            + capacity_deduction
+            + cost_deduction
+        )
         score = max(0, 100 - deduction)
         next_actions = [
             action
             for state, action in [
                 (monitor_state, monitor_action),
                 (suspend_state, suspend_action),
+                (timeout_state, timeout_action),
                 (route_state, route_action),
                 (capacity_state, capacity_action),
                 (cost_state, cost_action),
@@ -1495,6 +1536,8 @@ def _build_warehouse_guardrail_coverage(
         evidence_parts = [
             f"resource_monitor={monitor_value if monitor_known else 'on demand'}",
             f"auto_suspend={suspend_value if suspend_known else 'on demand'}",
+            f"statement_timeout={statement_timeout_value if statement_timeout_known else 'on demand'}",
+            f"queued_timeout={queued_timeout_value if queued_timeout_known else 'on demand'}",
             f"route={control_state or 'DBA on-call'}",
             f"queued={queued:.2f}s",
             f"spill={spill:.2f} GB",
@@ -1510,6 +1553,7 @@ def _build_warehouse_guardrail_coverage(
             "SEVERITY": severity,
             "RESOURCE_MONITOR_STATE": monitor_state,
             "AUTO_SUSPEND_STATE": suspend_state,
+            "TIMEOUT_STATE": timeout_state,
             "ESCALATION_ROUTE_STATE": route_state,
             "CAPACITY_STATE": capacity_state,
             "COST_STATE": cost_state,
@@ -1519,7 +1563,7 @@ def _build_warehouse_guardrail_coverage(
             "AVG_QUEUED_SEC": queued,
             "TOTAL_REMOTE_SPILL_GB": spill,
             "P95_ELAPSED_SEC": p95,
-            "PROOF_REQUIRED": "SHOW WAREHOUSES metadata, resource monitor assignment, metering, queue, spill, p95, and escalation route",
+            "PROOF_REQUIRED": "SHOW WAREHOUSES metadata, timeout settings, resource monitor assignment, metering, queue, spill, p95, and escalation route",
             "EVIDENCE": "; ".join(evidence_parts),
             "NEXT_ACTION": next_actions[0] if next_actions else "Guardrail coverage is ready for this warehouse.",
             "GUARDRAIL_RANK": rank,
@@ -3612,8 +3656,9 @@ def render():
                     title="Auto-derived warehouse guardrail coverage",
                     priority_columns=[
                         "WAREHOUSE_NAME", "GUARDRAIL_STATE", "GUARDRAIL_SCORE", "SEVERITY",
-                        "RESOURCE_MONITOR_STATE", "AUTO_SUSPEND_STATE", "ESCALATION_ROUTE_STATE",
-                        "CAPACITY_STATE", "COST_STATE", "METERED_CREDITS", "CREDIT_DELTA",
+                        "RESOURCE_MONITOR_STATE", "AUTO_SUSPEND_STATE", "TIMEOUT_STATE",
+                        "ESCALATION_ROUTE_STATE", "CAPACITY_STATE", "COST_STATE",
+                        "METERED_CREDITS", "CREDIT_DELTA",
                         "AVG_QUEUED_SEC", "TOTAL_REMOTE_SPILL_GB", "P95_ELAPSED_SEC",
                         "NEXT_ACTION", "PROOF_REQUIRED",
                     ],
@@ -3626,11 +3671,11 @@ def render():
                 download_csv(guardrail_board, "warehouse_guardrail_coverage.csv")
                 if st.session_state.get("wh_settings_inventory_error"):
                     defer_source_note(
-                        "Warehouse metadata was unavailable for resource-monitor and auto-suspend checks: "
+                        "Warehouse metadata was unavailable for resource-monitor, timeout, and auto-suspend checks: "
                         f"{st.session_state.get('wh_settings_inventory_error')}"
                     )
                 elif settings_inventory is None or settings_inventory.empty:
-                    defer_source_note("Resource-monitor and AUTO_SUSPEND checks need SHOW WAREHOUSES metadata.")
+                    defer_source_note("Resource-monitor, timeout, and AUTO_SUSPEND checks need SHOW WAREHOUSES metadata.")
 
             render_priority_dataframe(
                 df_w,

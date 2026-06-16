@@ -253,6 +253,57 @@ def _warehouse_setting_risk(param: str, current_sql: str, requested_sql: str) ->
     return "Review workload impact and status telemetry before applying."
 
 
+def _warehouse_setting_review_gate(param: str, current_sql: str, requested_sql: str) -> dict:
+    """Return review evidence for one changed warehouse setting."""
+    param = str(param or "").upper()
+    if param in {"STATEMENT_TIMEOUT_IN_SECONDS", "STATEMENT_QUEUED_TIMEOUT_IN_SECONDS"}:
+        if requested_sql == "0":
+            decision = "Timeout guardrail disabled"
+            proof = "24h query runtime, queue, failure, and owner SLA telemetry plus rollback SQL."
+            verify = "Watch for long-running or indefinitely queued queries after the change."
+        elif current_sql == "0" or _as_int(requested_sql, 0) < _as_int(current_sql, 0):
+            decision = "Timeout tightened"
+            proof = "Representative workload runtime, queued-time distribution, owner SLA, and rollback SQL."
+            verify = "Confirm expected queries are not cancelled or timed out after the change."
+        else:
+            decision = "Timeout loosened"
+            proof = "Business reason for longer running/queued statements, recent failures, and rollback SQL."
+            verify = "Confirm long-running statements remain intentional and queue pressure does not grow."
+        return {
+            "REVIEW_GATE": "Runaway/queue control",
+            "REVIEW_DECISION": decision,
+            "PROOF_REQUIRED": proof,
+            "VERIFY_AFTER_CHANGE": verify,
+        }
+    if param in {"WAREHOUSE_SIZE", "MIN_CLUSTER_COUNT", "MAX_CLUSTER_COUNT", "SCALING_POLICY", "MAX_CONCURRENCY_LEVEL"}:
+        return {
+            "REVIEW_GATE": "Capacity control",
+            "REVIEW_DECISION": "Capacity or concurrency setting",
+            "PROOF_REQUIRED": "Queue, spill, p95 runtime, credit impact, owner route, and rollback SQL.",
+            "VERIFY_AFTER_CHANGE": "Compare queue, spill, p95 runtime, failures, and credits against the baseline window.",
+        }
+    if param in {"AUTO_SUSPEND", "AUTO_RESUME"}:
+        return {
+            "REVIEW_GATE": "Availability/cost control",
+            "REVIEW_DECISION": "Suspend/resume policy",
+            "PROOF_REQUIRED": "Idle burn, service sensitivity, auto-resume behavior, owner route, and rollback SQL.",
+            "VERIFY_AFTER_CHANGE": "Confirm idle credits fall without workload failures or manual resume incidents.",
+        }
+    if param in {"ENABLE_QUERY_ACCELERATION", "QUERY_ACCELERATION_MAX_SCALE_FACTOR"}:
+        return {
+            "REVIEW_GATE": "Serverless cost control",
+            "REVIEW_DECISION": "Query Acceleration Service setting",
+            "PROOF_REQUIRED": "Eligible query evidence, QAS credit exposure, owner route, and rollback SQL.",
+            "VERIFY_AFTER_CHANGE": "Track QAS credits, query runtime, and warehouse credits for the same workload.",
+        }
+    return {
+        "REVIEW_GATE": "DBA review",
+        "REVIEW_DECISION": "Warehouse setting change",
+        "PROOF_REQUIRED": "Current setting, requested setting, owner route, rollback SQL, and post-change telemetry.",
+        "VERIFY_AFTER_CHANGE": "Compare the affected telemetry after the next complete workload window.",
+    }
+
+
 def _warehouse_settings_preflight_sql(warehouse_name: str) -> str:
     safe_wh = _quote_identifier(warehouse_name)
     wh_lit = sql_literal(warehouse_name, 300)
@@ -322,11 +373,13 @@ def _build_warehouse_setting_plan(
         current_sql = _normalize_warehouse_setting(param, current_raw)
         requested_sql = _normalize_warehouse_setting(param, requested_settings.get(param))
         if current_sql != requested_sql:
+            gate = _warehouse_setting_review_gate(param, current_sql, requested_sql)
             changes.append({
                 "PARAMETER": param,
                 "CURRENT": current_sql,
                 "REQUESTED": requested_sql,
                 "RISK": _warehouse_setting_risk(param, current_sql, requested_sql),
+                **gate,
             })
 
     safe_wh = _quote_identifier(warehouse_name)
@@ -344,7 +397,8 @@ def _build_warehouse_setting_plan(
     ]
     for row in changes:
         context_lines.append(
-            f"{row['PARAMETER']}: {row['CURRENT']} -> {row['REQUESTED']} | {row['RISK']}"
+            f"{row['PARAMETER']}: {row['CURRENT']} -> {row['REQUESTED']} | "
+            f"{row['REVIEW_GATE']} | {row['RISK']} | Proof: {row['PROOF_REQUIRED']}"
         )
     if rollback_sql:
         context_lines.append("Rollback plan: " + rollback_sql.replace("\n", " "))
@@ -1980,7 +2034,11 @@ def render():
                         render_priority_dataframe(
                             changes_df,
                             title="Before/after settings requiring review",
-                            priority_columns=["PARAMETER", "CURRENT", "REQUESTED", "RISK"],
+                            priority_columns=[
+                                "REVIEW_GATE", "REVIEW_DECISION", "PARAMETER",
+                                "CURRENT", "REQUESTED", "RISK",
+                                "PROOF_REQUIRED", "VERIFY_AFTER_CHANGE",
+                            ],
                             sort_by=["PARAMETER"],
                             ascending=True,
                             raw_label="All proposed warehouse changes",

@@ -432,6 +432,38 @@ class AdminControlTests(unittest.TestCase):
         self.assertEqual(plan["confirmation_text"], "ALTER WH_ALFA_BI")
         self.assertIn('SHOW GRANTS ON WAREHOUSE "WH_ALFA_BI"', plan["preflight_sql"])
         self.assertIn("Serverless cost risk", plan["control_context"])
+        self.assertIn("REVIEW_GATE", plan["changes_df"].columns)
+        by_param = {row["PARAMETER"]: row for _, row in plan["changes_df"].iterrows()}
+        self.assertEqual(by_param["AUTO_SUSPEND"]["REVIEW_GATE"], "Availability/cost control")
+        self.assertEqual(by_param["MAX_CLUSTER_COUNT"]["REVIEW_GATE"], "Capacity control")
+        self.assertEqual(by_param["ENABLE_QUERY_ACCELERATION"]["REVIEW_GATE"], "Serverless cost control")
+        self.assertIn("rollback SQL", by_param["MAX_CLUSTER_COUNT"]["PROOF_REQUIRED"])
+        self.assertIn("Capacity control", plan["control_context"])
+
+    def test_warehouse_setting_plan_marks_timeout_guardrails_as_review_gate(self):
+        current = pd.Series({
+            "name": "WH_ALFA_BI",
+            "statement_timeout_in_seconds": 0,
+            "statement_queued_timeout_in_seconds": 0,
+        })
+        plan = _build_warehouse_setting_plan(
+            "WH_ALFA_BI",
+            current,
+            {
+                "STATEMENT_TIMEOUT_IN_SECONDS": 3600,
+                "STATEMENT_QUEUED_TIMEOUT_IN_SECONDS": 600,
+            },
+        )
+        by_param = {row["PARAMETER"]: row for _, row in plan["changes_df"].iterrows()}
+
+        self.assertIn("STATEMENT_TIMEOUT_IN_SECONDS = 3600", plan["alter_sql"])
+        self.assertIn("STATEMENT_QUEUED_TIMEOUT_IN_SECONDS = 600", plan["alter_sql"])
+        self.assertIn("STATEMENT_TIMEOUT_IN_SECONDS = 0", plan["rollback_sql"])
+        self.assertEqual(by_param["STATEMENT_TIMEOUT_IN_SECONDS"]["REVIEW_GATE"], "Runaway/queue control")
+        self.assertEqual(by_param["STATEMENT_TIMEOUT_IN_SECONDS"]["REVIEW_DECISION"], "Timeout tightened")
+        self.assertEqual(by_param["STATEMENT_QUEUED_TIMEOUT_IN_SECONDS"]["REVIEW_GATE"], "Runaway/queue control")
+        self.assertIn("queued-time distribution", by_param["STATEMENT_QUEUED_TIMEOUT_IN_SECONDS"]["PROOF_REQUIRED"])
+        self.assertIn("Runaway/queue control", plan["control_context"])
 
     def test_warehouse_setting_plan_skips_unknown_current_values(self):
         current = pd.Series({

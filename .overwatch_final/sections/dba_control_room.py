@@ -140,7 +140,6 @@ DBA_CONTROL_ROOM_PANES = (
     "Triage",
     "Drill Routes",
     "Service Posture",
-    "Report Brief",
 )
 DBA_CONTROL_ROOM_PANE_LABELS = {
     "Fast Watch": "Watch",
@@ -149,7 +148,6 @@ DBA_CONTROL_ROOM_PANE_LABELS = {
     "Triage": "Triage",
     "Drill Routes": "Routes",
     "Service Posture": "Service",
-    "Report Brief": "Brief",
 }
 DBA_CONTROL_ROOM_DETAIL_PANES = (
     "Failed Queries",
@@ -5902,138 +5900,6 @@ def _render_route_buttons(exceptions: pd.DataFrame) -> None:
                 _jump(route, workflow=workflow)
 
 
-def _build_report(
-    data: dict,
-    exceptions: pd.DataFrame,
-    company: str,
-    credit_price: float,
-    lookback_hours: int,
-    source_health: pd.DataFrame | None = None,
-) -> str:
-    summary = data.get("summary", _empty_df())
-    credits = data.get("credits", _empty_df())
-    task_sla_cost = data.get("task_sla_cost", _empty_df())
-    procedure_sla_cost = data.get("procedure_sla_cost", _empty_df())
-    cortex_summary = data.get("cortex_summary", _empty_df())
-    cortex_exceptions = data.get("cortex_exceptions", _empty_df())
-    row = summary.iloc[0] if not summary.empty else {}
-    cr = credits.iloc[0] if not credits.empty else {}
-    period_credits = safe_float(cr.get("PERIOD_CREDITS", 0))
-    prior_credits = safe_float(cr.get("PRIOR_CREDITS", 0))
-    credit_delta = ((period_credits - prior_credits) / prior_credits * 100) if prior_credits > 0 else 0
-    cortex_budget = safe_float(_scalar_frame_value(data, "_cortex_budget_usd", "BUDGET_USD", 0))
-    cortex_projected = safe_float(cortex_summary.iloc[0].get("PROJECTED_30D_COST", 0)) if not cortex_summary.empty else 0
-    release_summary, release_gate = _build_auto_release_readiness_gate(data, source_health)
-    release_timeline = _build_task_failure_root_cause_timeline(data, company=company, lookback_hours=lookback_hours)
-    source_gate_summary, source_gate = _build_evidence_freshness_gate(source_health)
-
-    lines = [
-        "# OVERWATCH DBA Control Room Brief",
-        f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-        f"Company view: {company}",
-        f"Lookback: {lookback_hours} hours",
-        "",
-        "## Operating Summary",
-        f"- Queries reviewed: {safe_int(row.get('TOTAL_QUERIES', 0)):,}",
-        f"- Failed queries: {safe_int(row.get('FAILED_QUERIES', 0)):,}",
-        f"- Queued queries: {safe_int(row.get('QUEUED_QUERIES', 0)):,}",
-        f"- Remote spill queries: {safe_int(row.get('REMOTE_SPILL_QUERIES', 0)):,}",
-        f"- p95 elapsed seconds: {safe_float(row.get('P95_ELAPSED_SEC', 0)):,.2f}",
-        f"- Task SLA/cost regression candidates: {0 if task_sla_cost.empty else len(task_sla_cost):,}",
-        f"- Stored procedure release-regression candidates: {0 if procedure_sla_cost.empty else len(procedure_sla_cost):,}",
-        f"- Cortex projected 30-day cost: ${cortex_projected:,.2f} vs ${cortex_budget:,.2f} spend threshold",
-        f"- Cortex user/source exceptions: {0 if cortex_exceptions.empty else len(cortex_exceptions):,}",
-        f"- Operational status: {safe_int(release_summary.get('blocked')):,} blocked; "
-        f"{safe_int(release_summary.get('review')):,} review; "
-        f"state {_gate_state_from_counts(safe_int(release_summary.get('blocked')), safe_int(release_summary.get('review')))}",
-        f"- Credits: {format_credits(period_credits)} (${credits_to_dollars(period_credits, credit_price):,.2f})",
-        f"- Credit change vs prior window: {credit_delta:+.1f}%",
-        "",
-        "## Exceptions",
-    ]
-    if exceptions.empty:
-        lines.append("- No major exceptions detected by the control room rules.")
-    else:
-        for _, item in exceptions.iterrows():
-            lines.append(
-                _clean_display_text(
-                    f"- {item['Severity']}: {item['Signal']} - {item['Evidence']} "
-                    f"Action: {item['Action']} Route: {item['Route']}."
-                )
-            )
-    if not release_gate.empty:
-        lines.extend(["", "## Operational Status"])
-        for _, item in release_gate.head(10).iterrows():
-            lines.append(
-                _clean_display_text(
-                    f"- {item.get('STATE', '')}: {item.get('GATE', '')} - {item.get('EVIDENCE', '')} "
-                    f"Next: {item.get('NEXT_ACTION', '')}"
-                )
-            )
-    if not source_gate.empty:
-        lines.extend([
-            "",
-            "## Telemetry Status Gate",
-            f"- State: {_gate_state_from_counts(safe_int(source_gate_summary.get('blocked')), safe_int(source_gate_summary.get('review')))}; "
-            f"blocked {safe_int(source_gate_summary.get('blocked')):,}; "
-            f"review {safe_int(source_gate_summary.get('review')):,}; "
-            f"deferred {safe_int(source_gate_summary.get('deferred')):,}.",
-        ])
-        for _, item in source_gate[source_gate["GATE_STATE"].astype(str).isin(["Blocked", "Review"])].head(10).iterrows():
-            lines.append(
-                _clean_display_text(
-                    f"- {item.get('GATE_STATE', '')}: {item.get('SURFACE', '')} - "
-                    f"{item.get('EVIDENCE', '')} Next: {item.get('NEXT_ACTION', '')}"
-                )
-            )
-    if not release_timeline.empty:
-        blocking = release_timeline[
-            release_timeline.get("BLOCKS_RELEASE", pd.Series(dtype=str)).fillna("").astype(str).isin(["Yes", "Review"])
-        ]
-        if not blocking.empty:
-            lines.extend(["", "## Task Failure Root-Cause Timeline"])
-            for _, item in blocking.head(10).iterrows():
-                lines.append(
-                    f"- {item.get('EVENT_ORDER', '')}. {item.get('TIMELINE_STAGE', '')}: "
-                    f"{item.get('TASK_NAME', '')} - {item.get('ROOT_CAUSE_SIGNAL', '')}. "
-                    f"{item.get('NEXT_ACTION', '')}"
-                )
-    if not task_sla_cost.empty:
-        lines.extend(["", "## Task SLA / Cost Regression Candidates"])
-        for _, item in task_sla_cost.head(10).iterrows():
-            lines.append(
-                f"- {item.get('SEVERITY', 'Medium')}: {item.get('TASK_NAME', '')} "
-                f"{item.get('SIGNAL', '')} - {item.get('DETAIL', '')} "
-                f"Procedure: {item.get('PROCEDURE_NAME', '')}. Impact hints: {item.get('IMPACT_OBJECTS', '')}."
-            )
-    if not procedure_sla_cost.empty:
-        lines.extend(["", "## Stored Procedure Release Regression Candidates"])
-        for _, item in procedure_sla_cost.head(10).iterrows():
-            lines.append(
-                f"- {item.get('SEVERITY', 'Medium')}: {item.get('PROCEDURE_NAME', '')} "
-                f"{item.get('SIGNAL', '')} - latest {safe_float(item.get('LATEST_ELAPSED_SEC')):,.0f}s "
-                f"vs avg {safe_float(item.get('AVG_ELAPSED_SEC')):,.0f}s; "
-                f"estimated credits {safe_float(item.get('EST_TOTAL_CREDITS')):,.4f}."
-            )
-    if not cortex_exceptions.empty:
-        lines.extend(["", "## Cortex Cost Control Candidates"])
-        for _, item in cortex_exceptions.head(10).iterrows():
-            lines.append(
-                f"- {item.get('SEVERITY', 'Medium')}: {item.get('USER_NAME', '')} "
-                f"{item.get('SOURCE', '')} {item.get('SIGNAL', '')}; "
-                f"projected ${safe_float(item.get('PROJECTED_30D_COST')):,.2f}; "
-                f"credits/request {safe_float(item.get('CREDITS_PER_REQUEST')):,.6f}."
-            )
-    lines.extend([
-        "",
-        "## Metric Notes",
-        "- Credit by query is allocated from warehouse-hour metering and should be treated as estimated.",
-        "- ACCOUNT_USAGE metrics can lag up to roughly 45 minutes.",
-        "- Security and grant signals are scoped by the selected company naming rules where Snowflake metadata allows it.",
-    ])
-    return "\n".join(lines)
-
-
 def render() -> None:
     company = get_active_company()
     environment = get_active_environment()
@@ -6047,12 +5913,12 @@ def render() -> None:
             ("First move", "Use the fast snapshot for cheap triage."),
             ("Telemetry", "Load details only when a signal needs source detail."),
             ("Control", "Route to the specialist workflow before taking action."),
-            ("Output", "Export a DBA brief for leaders without giving them the app."),
+            ("Output", "Export the Morning Brief for DBA handoff."),
         ],
         columns=4,
     )
     if evidence_mode == TRIAGE_MODE_TRIAGE:
-        defer_section_note("Landing default keeps this page on actionable issues and report-ready telemetry.")
+        defer_section_note("Landing default keeps this page on actionable issues and DBA handoff telemetry.")
     elif evidence_mode == TRIAGE_MODE_INVESTIGATE:
         defer_section_note("Investigation detail opens deeper root-cause telemetry defaults.")
     elif evidence_mode == TRIAGE_MODE_ALL_EVIDENCE:
@@ -6918,22 +6784,3 @@ def render() -> None:
                 )
         else:
             st.info("Choose release windows and run the comparison when you need post-change status.")
-
-    elif active_view in {"Executive Detail", "Report Brief"}:
-        st.subheader("Report-Ready Brief")
-        report = _build_report(
-            data,
-            exceptions,
-            company,
-            credit_price,
-            int(loaded_lookback),
-            release_source_health,
-        )
-        st.text_area("Brief text", report, height=420)
-        st.download_button(
-            "Download DBA Brief",
-            report,
-            file_name=f"overwatch_dba_brief_{company}_{datetime.now().strftime('%Y%m%d_%H%M')}.md",
-            mime="text/markdown",
-            key="dba_control_room_brief_download",
-        )

@@ -48,8 +48,6 @@ ALERT_CENTER_PANES = [
     "Issue Inbox",
     "Triage Digest",
     "Alert History",
-    "Email Delivery",
-    "Action Queue Routing",
     "Delivery & Remediation",
     "Suppression Windows",
 ]
@@ -60,13 +58,11 @@ ALERT_CENTER_PANE_LABELS = {
     "Issue Inbox": "Inbox",
     "Triage Digest": "Digest",
     "Alert History": "History",
-    "Email Delivery": "Email",
-    "Action Queue Routing": "Routing",
     "Delivery & Remediation": "Remediation",
     "Suppression Windows": "Suppressions",
 }
 
-ALERT_CENTER_BRIEF_FIRST_VERSION = 2
+ALERT_CENTER_BRIEF_FIRST_VERSION = 3
 ALERT_CENTER_DEFAULT_VIEW = "Active Alerts"
 
 ALERT_CENTER_BRIEF_WORKFLOWS = (
@@ -95,22 +91,10 @@ ALERT_CENTER_BRIEF_WORKFLOWS = (
         "WHEN": "Shift handoff, incident review, email digest prep",
     },
     {
-        "VIEW": "Email Delivery",
-        "BUTTON_LABEL": "Open Delivery",
-        "DBA_MOVE": "Confirm which alerts are email-ready or already logged.",
-        "WHEN": "Notification audit, executive status, daily digest",
-    },
-    {
-        "VIEW": "Action Queue Routing",
-        "BUTTON_LABEL": "Open Queue Routing",
-        "DBA_MOVE": "Move alert telemetry into routed work.",
-        "WHEN": "Queue closure, ticket routing, DBA follow-up",
-    },
-    {
         "VIEW": "Delivery & Remediation",
         "BUTTON_LABEL": "Open Remediation",
-        "DBA_MOVE": "Review delivery status, suppression windows, and remediation log evidence.",
-        "WHEN": "Notification review, remediation status, suppression cleanup",
+        "DBA_MOVE": "Review delivery status, queue routing, suppression windows, and remediation log evidence.",
+        "WHEN": "Notification audit, queue closure, remediation status, suppression cleanup",
     },
 )
 
@@ -120,9 +104,7 @@ ALERT_CENTER_SOURCES_BY_PANE = {
     "Issue Inbox": {"alerts", "action_queue"},
     "Triage Digest": {"alerts"},
     "Alert History": {"alerts"},
-    "Email Delivery": {"alerts", "delivery_log"},
-    "Action Queue Routing": {"alerts", "action_queue"},
-    "Delivery & Remediation": {"alerts", "delivery_log", "rules"},
+    "Delivery & Remediation": {"alerts", "action_queue", "delivery_log", "rules"},
     "Suppression Windows": set(),
 }
 
@@ -168,6 +150,8 @@ def _normalize_alert_center_view(view: object) -> str:
     normalized = str(view or "")
     if normalized in {"Alert Brief", "Command Center", "Control Health"}:
         return ALERT_CENTER_DEFAULT_VIEW
+    if normalized in {"Email Delivery", "Action Queue Routing"}:
+        return "Delivery & Remediation"
     return normalized if normalized in ALERT_CENTER_PANES else ALERT_CENTER_DEFAULT_VIEW
 
 
@@ -749,8 +733,8 @@ def _alert_center_action_brief(
             "state": "Queue",
             "headline": "Work open action queue rows.",
             "detail": f"{open_queue:,} open queue row(s) need route, ticket, due date, or closure status.",
-            "primary_label": "Open Queue",
-            "target": "Action Queue Routing",
+            "primary_label": "Open Remediation",
+            "target": "Delivery & Remediation",
         }
     if email_ready > email_logged:
         return {
@@ -758,7 +742,7 @@ def _alert_center_action_brief(
             "headline": "Log alert delivery status.",
             "detail": f"{email_ready:,} email-ready alert(s); {email_logged:,} delivery row(s) logged in this scope.",
             "primary_label": "Open Delivery",
-            "target": "Email Delivery",
+            "target": "Delivery & Remediation",
         }
     if open_issues > 0:
         return {
@@ -1180,7 +1164,7 @@ def _alert_center_exception_rows(
             max(0, ready_count - logged_count),
             "Log delivery",
             "Log digest/email delivery status for ready alerts.",
-            route="Email Delivery",
+            route="Delivery & Remediation",
         )
 
     if queue is not None and not queue.empty:
@@ -1193,7 +1177,7 @@ def _alert_center_exception_rows(
                 "Work queue",
                 "Confirm route, due date, ticket, and closure status on open queue rows.",
                 owner="DBA Lead",
-                route="Action Queue Routing",
+                route="Delivery & Remediation",
             )
 
     if readiness_rows is not None and not readiness_rows.empty and "STATE" in readiness_rows.columns:
@@ -1229,7 +1213,7 @@ def _alert_center_exception_rows(
             "Retry delivery",
             "Review failed notification attempts and route to the email integration contact.",
             owner="DBA On-Call",
-            route="Email Delivery",
+            route="Delivery & Remediation",
         )
 
     result = pd.DataFrame(rows)
@@ -1663,10 +1647,117 @@ def _render_alert_detection_catalog() -> None:
     defer_source_note("Detection Catalog lists alert signals and required Snowflake telemetry.")
 
 
+def _render_alert_email_delivery_status(alerts: pd.DataFrame, delivery_log: pd.DataFrame) -> None:
+    pd = _pd()
+    st.markdown("**Notification Queue**")
+    defer_source_note(
+        "Rows are email-ready by default once the Snowflake email integration is enabled."
+    )
+    if alerts.empty:
+        st.info("No email-ready alert rows found.")
+    else:
+        email_view = alerts.copy()
+        if "EMAIL_TARGET" not in email_view.columns:
+            email_view["EMAIL_TARGET"] = _alert_email_target()
+        email_view["EMAIL_TARGET"] = email_view["EMAIL_TARGET"].replace("", _alert_email_target()).fillna(_alert_email_target())
+        _render_priority_dataframe(
+            email_view,
+            title="Email-ready alert messages",
+            priority_columns=[
+                "ALERT_TS", "SEVERITY", "DELIVERY_STATUS", "EMAIL_TARGET",
+                "EMAIL_SUBJECT", "ENTITY_NAME", "MESSAGE",
+            ],
+            sort_by=["ALERT_TS"],
+            ascending=False,
+            raw_label="All email delivery rows",
+            height=320,
+        )
+        for _, row in email_view.head(5).iterrows():
+            with st.expander(str(row.get("EMAIL_SUBJECT") or "OVERWATCH alert email"), expanded=False):
+                st.text(str(row.get("EMAIL_BODY") or row.get("MESSAGE") or "No email body captured."))
+
+    st.markdown("**Delivery Audit**")
+    if delivery_log.empty:
+        st.info("No delivery audit rows loaded for this window.")
+    else:
+        _render_priority_dataframe(
+            delivery_log,
+            title="Email delivery audit",
+            priority_columns=[
+                "DELIVERY_TS", "DELIVERY_STATUS", "DELIVERY_TARGET", "ALERT_COUNT",
+                "EMAIL_SUBJECT", "DELIVERY_BY", "DELIVERY_NOTES",
+            ],
+            sort_by=["DELIVERY_TS"],
+            ascending=False,
+            raw_label="All delivery audit rows",
+            height=260,
+        )
+
+
+def _render_alert_action_queue_routing(alerts: pd.DataFrame, queue: pd.DataFrame, company: str) -> None:
+    pd = _pd()
+    st.markdown("**Route Alerts To Action Queue**")
+    if alerts.empty:
+        st.info("Load alert history before routing alerts to the action queue.")
+    else:
+        from utils.alerts import alert_history_to_actions, mark_alerts_routed
+        from utils.action_queue import upsert_actions
+
+        routable = alerts[_open_alert_mask(alerts)] if not alerts.empty else alerts
+        defer_source_note(f"{len(routable):,} open alert row(s) are eligible for action queue routing.")
+        actions_preview = pd.DataFrame(alert_history_to_actions(routable, company=company))
+        if not actions_preview.empty:
+            recovery_count = int((actions_preview.get("Category", pd.Series(dtype=str)) == "Task & Procedure Reliability").sum())
+            if recovery_count:
+                defer_source_note(f"{recovery_count:,} task/procedure recovery action(s) include recovery SLA and telemetry status fields.")
+            _render_priority_dataframe(
+                actions_preview,
+                title="Action queue routing preview",
+                priority_columns=[
+                    "Severity", "Category", "Entity Type", "Entity", "Owner",
+                    "Oncall Primary", "Review Group",
+                    "Recovery SLA State", "Recovery SLA Target Hours",
+                    "Action",
+                ],
+                sort_by=["Severity", "Category", "Entity"],
+                ascending=[True, True, True],
+                raw_label="All routed action fields",
+                height=300,
+            )
+        if st.button("Send Open Alerts To Action Queue", key="alert_center_to_action_queue"):
+            try:
+                session = _alert_center_action_session("route alerts to the action queue")
+                if session is None:
+                    return
+                saved = upsert_actions(session, actions_preview.to_dict("records"))
+                alert_ids = routable.get("ALERT_ID", pd.Series(dtype=str)).dropna().astype(str).tolist()
+                mark_alerts_routed(session, alert_ids, action_count=saved, actor=_alert_actor())
+                st.success(f"Saved {saved} alert action(s) to the action queue.")
+                st.session_state.pop("alert_center_data", None)
+            except Exception as exc:
+                st.error(f"Could not save alerts to action queue: {_format_snowflake_error(exc)}")
+    if not queue.empty:
+        _render_priority_dataframe(
+            queue,
+            title="Current action queue",
+            priority_columns=[
+                "SEVERITY", "STATUS", "CATEGORY", "ENTITY_NAME", "OWNER",
+                "ONCALL_PRIMARY", "FINDING", "RECOMMENDED_ACTION",
+                "TICKET_ID", "DUE_STATE",
+            ],
+            sort_by=["SEVERITY", "STATUS", "UPDATED_AT"],
+            ascending=[True, True, False],
+            raw_label="All action queue rows",
+            height=320,
+        )
+
+
 def _render_alert_notification_remediation(
     alerts: pd.DataFrame,
+    queue: pd.DataFrame,
     delivery_log: pd.DataFrame,
     rules: pd.DataFrame,
+    company: str,
 ) -> None:
     from utils.alerts import build_alert_remediation_contract
 
@@ -1678,14 +1769,21 @@ def _render_alert_notification_remediation(
             "STATE": "Ready",
             "EVIDENCE": f"{len(alerts):,} alert row(s) loaded.",
             "NEXT_ACTION": "Use alert status, acknowledgement, suppression, and action-queue routing from Alert Center.",
-            "ROUTE": "Alert Center",
+            "ROUTE": "Active Alerts",
         },
         {
             "CONTROL": "Delivery status",
             "STATE": "Ready" if not delivery_log.empty else "Review",
             "EVIDENCE": f"{len(delivery_log):,} delivery audit row(s) loaded.",
             "NEXT_ACTION": "Log delivery status for open critical/high alerts.",
-            "ROUTE": "Email Delivery",
+            "ROUTE": "Delivery & Remediation",
+        },
+        {
+            "CONTROL": "Action queue handoff",
+            "STATE": "Ready" if not queue.empty else "Review",
+            "EVIDENCE": f"{len(queue):,} action queue row(s) loaded.",
+            "NEXT_ACTION": "Route open alerts to queue rows and confirm ticket, due date, and closure state.",
+            "ROUTE": "Delivery & Remediation",
         },
         {
             "CONTROL": "Rule catalog",
@@ -1700,29 +1798,30 @@ def _render_alert_notification_remediation(
         title="Delivery and remediation status",
         priority_columns=["STATE", "CONTROL", "EVIDENCE", "NEXT_ACTION", "ROUTE"],
         raw_label="All delivery and remediation rows",
-        height=240,
+        height=260,
     )
     if alerts.empty:
         st.info("Load alert history to review remediation status for real alert rows.")
-        return
-
-    alert_options = alerts.get("ALERT_ID", pd.Series(range(1, len(alerts) + 1), index=alerts.index)).dropna().astype(str).tolist()
-    selected_id = st.selectbox("Remediation status alert", alert_options[:100], key="alert_remediation_contract_id")
-    if "ALERT_ID" in alerts.columns:
-        selected_rows = alerts[alerts["ALERT_ID"].astype(str) == str(selected_id)]
     else:
-        selected_rows = alerts.iloc[[max(0, alert_options.index(selected_id))]]
-    contract = build_alert_remediation_contract(selected_rows.iloc[0].to_dict() if not selected_rows.empty else {})
-    _render_priority_dataframe(
-        pd.DataFrame([contract]),
-        title="Safe remediation status",
-        priority_columns=[
-            "REMEDIATION_MODE", "EXECUTION_BOUNDARY", "ROLLBACK_GUIDANCE",
-            "VERIFY_NEXT",
-        ],
-        raw_label="All remediation status fields",
-        height=260,
-    )
+        alert_options = alerts.get("ALERT_ID", pd.Series(range(1, len(alerts) + 1), index=alerts.index)).dropna().astype(str).tolist()
+        selected_id = st.selectbox("Remediation status alert", alert_options[:100], key="alert_remediation_contract_id")
+        if "ALERT_ID" in alerts.columns:
+            selected_rows = alerts[alerts["ALERT_ID"].astype(str) == str(selected_id)]
+        else:
+            selected_rows = alerts.iloc[[max(0, alert_options.index(selected_id))]]
+        contract = build_alert_remediation_contract(selected_rows.iloc[0].to_dict() if not selected_rows.empty else {})
+        _render_priority_dataframe(
+            pd.DataFrame([contract]),
+            title="Safe remediation status",
+            priority_columns=[
+                "REMEDIATION_MODE", "EXECUTION_BOUNDARY", "ROLLBACK_GUIDANCE",
+                "VERIFY_NEXT",
+            ],
+            raw_label="All remediation status fields",
+            height=260,
+        )
+    _render_alert_email_delivery_status(alerts, delivery_log)
+    _render_alert_action_queue_routing(alerts, queue, company)
 
 
 def render() -> None:
@@ -1919,7 +2018,7 @@ def render() -> None:
         _render_active_alerts(alerts, queue, delivery_log, rules)
 
     elif active_view == "Delivery & Remediation":
-        _render_alert_notification_remediation(alerts, delivery_log, rules)
+        _render_alert_notification_remediation(alerts, queue, delivery_log, rules, company)
 
     elif active_view == "Issue Inbox":
         st.subheader("All Active DBA Issues")
@@ -2234,101 +2333,3 @@ def render() -> None:
                                 st.error(f"Could not record lifecycle audit: {_format_snowflake_error(exc)}")
                     else:
                         st.caption("Enter an audit note to record acknowledgement and remediation-log status.")
-
-    elif active_view == "Email Delivery":
-        st.subheader("Email Delivery Queue")
-        defer_source_note(
-            "Rows are email-ready by default once the Snowflake email integration is enabled."
-        )
-        if alerts.empty:
-            st.info("No email-ready alert rows found.")
-        else:
-            email_view = alerts.copy()
-            email_view["EMAIL_TARGET"] = email_view["EMAIL_TARGET"].replace("", _alert_email_target()).fillna(_alert_email_target())
-            _render_priority_dataframe(
-                email_view,
-                title="Email-ready alert messages",
-                priority_columns=[
-                    "ALERT_TS", "SEVERITY", "DELIVERY_STATUS", "EMAIL_TARGET",
-                    "EMAIL_SUBJECT", "ENTITY_NAME", "MESSAGE",
-                ],
-                sort_by=["ALERT_TS"],
-                ascending=False,
-                raw_label="All email delivery rows",
-                height=320,
-            )
-            for _, row in email_view.head(5).iterrows():
-                with st.expander(str(row.get("EMAIL_SUBJECT") or "OVERWATCH alert email"), expanded=False):
-                    st.text(str(row.get("EMAIL_BODY") or row.get("MESSAGE") or "No email body captured."))
-        st.subheader("Delivery Audit")
-        if delivery_log.empty:
-            st.info("No delivery audit rows loaded for this window.")
-        else:
-            _render_priority_dataframe(
-                delivery_log,
-                title="Email delivery audit",
-                priority_columns=[
-                    "DELIVERY_TS", "DELIVERY_STATUS", "DELIVERY_TARGET", "ALERT_COUNT",
-                    "EMAIL_SUBJECT", "DELIVERY_BY", "DELIVERY_NOTES",
-                ],
-                sort_by=["DELIVERY_TS"],
-                ascending=False,
-                raw_label="All delivery audit rows",
-                height=260,
-            )
-
-    elif active_view == "Action Queue Routing":
-        st.subheader("Route Alerts To Action Queue")
-        if alerts.empty:
-            st.info("Load alert history before routing alerts to the action queue.")
-        else:
-            from utils.alerts import alert_history_to_actions, mark_alerts_routed
-            from utils.action_queue import upsert_actions
-
-            routable = alerts[_open_alert_mask(alerts)] if not alerts.empty else alerts
-            defer_source_note(f"{len(routable):,} open alert row(s) are eligible for action queue routing.")
-            actions_preview = pd.DataFrame(alert_history_to_actions(routable, company=company))
-            if not actions_preview.empty:
-                recovery_count = int((actions_preview.get("Category", pd.Series(dtype=str)) == "Task & Procedure Reliability").sum())
-                if recovery_count:
-                    defer_source_note(f"{recovery_count:,} task/procedure recovery action(s) include recovery SLA and telemetry status fields.")
-                _render_priority_dataframe(
-                    actions_preview,
-                    title="Action queue routing preview",
-                    priority_columns=[
-                        "Severity", "Category", "Entity Type", "Entity", "Owner",
-                        "Oncall Primary", "Review Group",
-                        "Recovery SLA State", "Recovery SLA Target Hours",
-                        "Action",
-                    ],
-                    sort_by=["Severity", "Category", "Entity"],
-                    ascending=[True, True, True],
-                    raw_label="All routed action fields",
-                    height=300,
-                )
-            if st.button("Send Open Alerts To Action Queue", key="alert_center_to_action_queue"):
-                try:
-                    session = _alert_center_action_session("route alerts to the action queue")
-                    if session is None:
-                        return
-                    saved = upsert_actions(session, actions_preview.to_dict("records"))
-                    alert_ids = routable.get("ALERT_ID", pd.Series(dtype=str)).dropna().astype(str).tolist()
-                    mark_alerts_routed(session, alert_ids, action_count=saved, actor=_alert_actor())
-                    st.success(f"Saved {saved} alert action(s) to the action queue.")
-                    st.session_state.pop("alert_center_data", None)
-                except Exception as exc:
-                    st.error(f"Could not save alerts to action queue: {_format_snowflake_error(exc)}")
-        if not queue.empty:
-            _render_priority_dataframe(
-                queue,
-                title="Current action queue",
-                priority_columns=[
-                    "SEVERITY", "STATUS", "CATEGORY", "ENTITY_NAME", "OWNER",
-                    "ONCALL_PRIMARY", "FINDING", "RECOMMENDED_ACTION",
-                    "TICKET_ID", "DUE_STATE",
-                ],
-                sort_by=["SEVERITY", "STATUS", "UPDATED_AT"],
-                ascending=[True, True, False],
-                raw_label="All action queue rows",
-                height=320,
-            )

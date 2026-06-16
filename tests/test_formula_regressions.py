@@ -122,7 +122,6 @@ from sections.cost_contract import (  # noqa: E402
     build_cost_monitoring_mart_sql,
 )
 from sections.dba_control_room import (  # noqa: E402
-    _build_report as _build_dba_control_report,
     _build_command_queue,
     _command_queue_closure_readiness,
     _command_queue_summary,
@@ -2554,7 +2553,6 @@ class FormulaRegressionTests(unittest.TestCase):
 
         source_summary, source_gate = _build_evidence_freshness_gate(source_health)
         release_summary, release_gate = _build_auto_release_readiness_gate(data, source_health)
-        report = _build_dba_control_report(data, pd.DataFrame(), "ALFA", 3.68, 24, source_health)
         by_surface = {row["SURFACE"]: row for _, row in source_gate.iterrows()}
         by_gate = {row["GATE"]: row for _, row in release_gate.iterrows()}
 
@@ -2568,8 +2566,6 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_surface["cortex_summary"]["ROUTE"], "Cost & Contract")
         self.assertEqual(by_gate["Telemetry status"]["STATE"], "Blocked")
         self.assertGreaterEqual(release_summary["blocked"], 1)
-        self.assertIn("Telemetry Status Gate", report)
-        self.assertIn("summary", report)
 
     def test_dba_control_room_loads_schema_migration_status_without_live_account_scan(self):
         called_sql = []
@@ -2644,7 +2640,6 @@ class FormulaRegressionTests(unittest.TestCase):
         summary, gate = _build_auto_release_readiness_gate(data)
         timeline = _build_task_failure_root_cause_timeline(data, company="ALFA", environment="PROD")
         exceptions = _dba_control_severity_rows(data, credit_price=3.68)
-        report = _build_dba_control_report(data, exceptions, "ALFA", 3.68, 24)
 
         self.assertGreaterEqual(summary["blocked"], 2)
         self.assertIn("Deployment object: OVERWATCH_ANNOTATIONS", set(gate["GATE"]))
@@ -2652,8 +2647,6 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Object/RBAC drift", set(timeline["ROOT_CAUSE_SIGNAL"]))
         self.assertIn("Yes", set(timeline["BLOCKS_RELEASE"]))
         self.assertIn("Operational status blocked", set(exceptions["Signal"]))
-        self.assertIn("Operational Status", report)
-        self.assertIn("Task Failure Root-Cause Timeline", report)
 
     def test_dba_action_brief_prioritizes_single_operator_move(self):
         exceptions = pd.DataFrame([
@@ -5933,10 +5926,6 @@ class FormulaRegressionTests(unittest.TestCase):
         exceptions = _dba_control_severity_rows(data, credit_price=3.0)
         self.assertIn("Task SLA or cost regression", set(exceptions["Signal"]))
         self.assertIn("Stored procedure release regression", set(exceptions["Signal"]))
-        report = _build_dba_control_report(data, exceptions, "ALFA", 3.0, 24)
-        self.assertIn("Task SLA / Cost Regression Candidates", report)
-        self.assertIn("Stored Procedure Release Regression Candidates", report)
-        self.assertIn("SP_LOAD_POLICY", report)
 
     def test_release_compare_flags_task_and_procedure_regressions(self):
         before_tasks = pd.DataFrame(
@@ -8322,7 +8311,7 @@ class FormulaRegressionTests(unittest.TestCase):
             email_logged=0,
             open_queue=4,
         )
-        self.assertEqual(queue_only["target"], "Action Queue Routing")
+        self.assertEqual(queue_only["target"], "Delivery & Remediation")
         self.assertIn("4 open queue", queue_only["detail"])
 
         clear = _alert_center_action_brief(
@@ -8393,8 +8382,6 @@ class FormulaRegressionTests(unittest.TestCase):
                 "Detection Catalog",
                 "Issue Inbox",
                 "Triage Digest",
-                "Email Delivery",
-                "Action Queue Routing",
                 "Delivery & Remediation",
             ],
         )
@@ -8403,7 +8390,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Open Detection Catalog", by_view["Detection Catalog"]["BUTTON_LABEL"])
         self.assertIn("Alert history", by_view["Issue Inbox"]["SOURCES"])
         self.assertIn("Action queue", by_view["Issue Inbox"]["SOURCES"])
-        self.assertIn("Email delivery audit", by_view["Email Delivery"]["SOURCES"])
+        self.assertIn("Action queue", by_view["Delivery & Remediation"]["SOURCES"])
         self.assertIn("Email delivery audit", by_view["Delivery & Remediation"]["SOURCES"])
         self.assertIn("Open Issue Inbox", by_view["Issue Inbox"]["BUTTON_LABEL"])
 
@@ -8417,7 +8404,7 @@ class FormulaRegressionTests(unittest.TestCase):
             _apply_alert_center_brief_first_default()
 
             self.assertEqual(st.session_state["alert_center_active_view"], "Active Alerts")
-            self.assertEqual(st.session_state["_alert_center_brief_first_version"], 2)
+            self.assertEqual(st.session_state["_alert_center_brief_first_version"], 3)
 
             st.session_state["alert_center_active_view"] = "Retired Alert Pane"
             _apply_alert_center_brief_first_default()

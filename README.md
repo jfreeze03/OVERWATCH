@@ -54,15 +54,15 @@ boundaries, and the owner for each surface.
 Use `snowflake/OVERWATCH_MART_VALIDATION.sql` after setup or release changes to
 prove required marts, alert audit tables, reconciliation tables, executive board
 panels, freshness rows, and caller context. Use
-`docs/LIVE_ROLE_PROOF_CHECKLIST.md` to validate the app as ACCOUNTADMIN/SYSADMIN,
-DSA, DTI, and report-style roles before calling a build production-ready.
+`docs/LIVE_ROLE_PROOF_CHECKLIST.md` to validate the app as
+SNOW_ACCOUNTADMINS/SNOW_SYSADMINS before calling a build production-ready.
 
 Production role setup now lives inside `snowflake/OVERWATCH_MART_SETUP.sql` so
 there is one DDL document for databases, warehouses, roles, tables, procedures,
-views, and tasks. Use `OVERWATCH_MONITOR` for read-only telemetry and
-`OVERWATCH_OPERATOR` only for approved acknowledgements and action updates.
-Avoid running daily operations as ACCOUNTADMIN except for break-glass setup
-work. The read-only deployment check remains
+views, and tasks. Use `SNOW_ACCOUNTADMINS` and `SNOW_SYSADMINS` for app access
+today; future dedicated OVERWATCH admin roles should inherit the same grants.
+Avoid running daily operations as raw ACCOUNTADMIN/SYSADMIN except for
+break-glass setup work. The deployment check remains
 `snowflake/OVERWATCH_MART_VALIDATION.sql`.
 
 Supporting operations documents:

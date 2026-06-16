@@ -12,7 +12,7 @@ from utils import (
     format_snowflake_error,
     run_compatibility_checks,
     build_cost_formula_audit, filter_existing_columns, build_task_history_sql,
-    admin_actions_enabled, admin_button_disabled,
+    admin_button_disabled,
     log_admin_action,
     show_to_df, first_existing_column, ensure_column_alias,
     scope_warehouse_names, scope_metadata_df, load_task_inventory,
@@ -89,7 +89,6 @@ def _require_typed_confirmation(confirmed: bool, expected: str) -> bool:
 
 ACCOUNT_PARAMETER_ADMIN_ROLES = {
     "ACCOUNTADMIN",
-    "SNOW_ACCOUNTADMIN",
     "SNOW_ACCOUNTADMINS",
 }
 
@@ -1637,7 +1636,7 @@ def render():
                 st.warning(
                     "Controlled Actions\n\n"
                     "Query cancellation, task suspend/resume, warehouse setting changes, and Cortex limit updates. "
-                    "These stay locked unless Admin actions are enabled."
+                    "These remain guarded by typed confirmation and Snowflake privileges."
                 )
             with risk_c:
                 st.success(
@@ -1665,16 +1664,6 @@ def render():
             apply_navigation_state("Alert Center")
             st.rerun()
 
-    if not admin_actions_enabled() and selected_tool in {
-        "Query Kill List",
-        "Warehouse Settings",
-        "Cortex AI Limits",
-        "Task Graph Control",
-    }:
-        st.info(
-            "Read-only mode is active. Load, inspect, compare, and export still work; "
-            "ALTER, CANCEL, EXECUTE, SUSPEND, and RESUME buttons stay locked until Admin actions are enabled in Settings."
-        )
     st.divider()
     if not focus_tool_active:
         st.caption(
@@ -1976,7 +1965,7 @@ def render():
                             disabled=True,
                         ):
                             # CALLER MODE: ALTER WAREHOUSE needs MODIFY on the warehouse.
-                            # SNOW_ACCOUNTADMIN and SNOW_SYSADMIN both have this.
+                            # SNOW_ACCOUNTADMINS and SNOW_SYSADMINS both have this.
                             # If a future role doesn't, this surfaces a clear error.
                             try:
                                 session.sql(alter_sql).collect()
@@ -3266,7 +3255,7 @@ def render():
                             st.stop()
                         # CALLER MODE GUARD: ALTER ACCOUNT SET requires ACCOUNTADMIN.
                         # Since execute_as=CALLER, the caller's role must have this privilege.
-                        # SNOW_SYSADMIN cannot run ALTER ACCOUNT; keep this blocked
+                        # SNOW_SYSADMINS cannot run ALTER ACCOUNT; keep this blocked
                         # before Snowflake receives account-level parameter SQL.
                         _caller_role = str(st.session_state.get("_overwatch_current_role", "") or "").strip()
                         if not _current_role_allows_alter_account(_caller_role):

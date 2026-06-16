@@ -201,7 +201,7 @@ def platform_operating_score_from_signals(metrics: dict) -> dict:
     if open_actions >= 10:
         caps.append((90.0, f"{int(open_actions)} owner action(s) remain open."))
     if freshness_sources <= 0:
-        caps.append((78.0, "No freshness proof rows were available for the command board."))
+        caps.append((78.0, "No freshness proof rows were available for the monitoring summary."))
 
     score_cap = min((cap for cap, _reason in caps), default=100.0)
     cap_reason = next((reason for cap, reason in sorted(caps, key=lambda item: item[0]) if cap == score_cap), "")
@@ -245,7 +245,7 @@ def _platform_driver_evidence(driver: str, metrics: dict) -> str:
         return f"{float(metrics.get('remote_spill_gb', 0) or 0):,.1f} GB remote spill."
     if driver == "Stale sources":
         return f"{int(float(metrics.get('stale_sources', 0) or 0)):,} stale source(s)."
-    return "Evidence available in command board summary."
+    return "Evidence available in monitoring summary."
 
 
 def _platform_driver_action(driver: str) -> str:

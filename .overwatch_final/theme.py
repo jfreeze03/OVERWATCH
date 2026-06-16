@@ -14,9 +14,11 @@
 #   render_theme_picker()
 import streamlit as st
 
-THEME_VERSION = "2026-06-16-theme-contrast-v6"
+THEME_VERSION = "2026-06-16-theme-contrast-v8"
 
 _DEFAULT_THEME = "terminal"
+_ACTIVE_THEME_KEY = "_overwatch_active_theme"
+_THEME_QUERY_PARAM = "overwatch_theme"
 _THEME_ALIASES = {
     "aurora": "carbon",
     "black_ice": "carbon",
@@ -1542,14 +1544,50 @@ def _normalize_theme_key(theme_key: str | None) -> str:
     return theme_key if theme_key in THEMES else _DEFAULT_THEME
 
 
+def _query_param_theme() -> str | None:
+    try:
+        query_params = st.query_params
+        raw_theme = query_params.get(_THEME_QUERY_PARAM)
+    except Exception:
+        try:
+            query_params = st.experimental_get_query_params()
+            raw_theme = query_params.get(_THEME_QUERY_PARAM)
+        except Exception:
+            return None
+    if isinstance(raw_theme, list):
+        raw_theme = raw_theme[-1] if raw_theme else None
+    if not raw_theme:
+        return None
+    return _normalize_theme_key(str(raw_theme))
+
+
+def _set_query_param_theme(theme_key: str) -> None:
+    theme_key = _normalize_theme_key(theme_key)
+    try:
+        st.query_params[_THEME_QUERY_PARAM] = theme_key
+    except Exception:
+        try:
+            query_params = st.experimental_get_query_params()
+            query_params[_THEME_QUERY_PARAM] = theme_key
+            st.experimental_set_query_params(**query_params)
+        except Exception:
+            pass
+
+
 def _get_theme() -> str:
+    query_theme = _query_param_theme()
+    persistent_theme = st.session_state.get(_ACTIVE_THEME_KEY)
+    existing_theme = st.session_state.get("active_theme")
+    picker_theme = st.session_state.get("theme_picker_radio")
+    theme_key = _normalize_theme_key(query_theme or persistent_theme or existing_theme or picker_theme or _DEFAULT_THEME)
     if st.session_state.get("_active_theme_version") != THEME_VERSION:
-        st.session_state["active_theme"] = _DEFAULT_THEME
-        st.session_state["theme_picker_radio"] = _DEFAULT_THEME
         st.session_state["_active_theme_version"] = THEME_VERSION
-    theme_key = _normalize_theme_key(st.session_state.get("active_theme", _DEFAULT_THEME))
     if st.session_state.get("active_theme") != theme_key:
         st.session_state["active_theme"] = theme_key
+    if st.session_state.get(_ACTIVE_THEME_KEY) != theme_key:
+        st.session_state[_ACTIVE_THEME_KEY] = theme_key
+    if st.session_state.get("theme_picker_radio") not in THEMES:
+        st.session_state["theme_picker_radio"] = theme_key
     return theme_key
 
 
@@ -1580,6 +1618,13 @@ def inject_theme() -> None:
     st.markdown(_combined_theme_css(theme_key), unsafe_allow_html=True)
 
 
+def _commit_theme_picker_change() -> None:
+    selected = _normalize_theme_key(st.session_state.get("theme_picker_radio"))
+    st.session_state[_ACTIVE_THEME_KEY] = selected
+    st.session_state["active_theme"] = selected
+    _set_query_param_theme(selected)
+
+
 def render_theme_picker() -> None:
     """
     Render the theme picker.
@@ -1591,16 +1636,14 @@ def render_theme_picker() -> None:
     """
     current = _get_theme()
     options = list(THEMES.keys())
-    if st.session_state.get("theme_picker_radio") not in options:
+    if st.session_state.get("theme_picker_radio") != current:
         st.session_state["theme_picker_radio"] = current
     index = options.index(current) if current in options else 0
-    selected = st.selectbox(
+    st.selectbox(
         "Theme",
         options,
         index=index,
         format_func=lambda key: THEMES[key]["label"],
         key="theme_picker_radio",
+        on_change=_commit_theme_picker_change,
     )
-    if selected != current:
-        st.session_state["active_theme"] = selected
-        st.rerun()

@@ -1723,7 +1723,7 @@ def _paint_security_brief_chrome(
             snapshot
         )
         render_signal_lane_board(
-            "Security Monitoring Command Board",
+            "Security Signal Summary",
             _security_command_lanes(snapshot),
             max_lanes=8,
         )

@@ -293,7 +293,8 @@ def _jump(title: str, *, warehouse: str = "", user: str = "", workflow: str = ""
         elif title == "Cost & Contract":
             st.session_state["cost_contract_workflow"] = workflow
         elif title == "Security Monitoring":
-            st.session_state["security_monitoring_view"] = "Security Posture"
+            st.session_state["security_posture_view"] = "Security Brief"
+            st.session_state["security_posture_workflow"] = workflow or "Access posture"
         elif title == "Security Posture":
             st.session_state["security_posture_workflow"] = workflow
     if warehouse:
@@ -6241,7 +6242,7 @@ def render() -> None:
             return
     if not data:
         render_signal_lane_board(
-            "DBA Command Board",
+            "DBA Signal Summary",
             _dba_command_lanes(loaded=False),
             max_lanes=8,
         )
@@ -6347,7 +6348,7 @@ def render() -> None:
         failed_queries=failed_queries,
     )
     render_signal_lane_board(
-        "DBA Command Board",
+        "DBA Signal Summary",
         _dba_command_lanes(
             loaded=True,
             failed_queries=failed_queries,

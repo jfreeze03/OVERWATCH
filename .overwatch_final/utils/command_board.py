@@ -1,4 +1,4 @@
-"""Shared first-paint command board readers.
+"""Shared first-paint monitoring summary readers.
 
 These helpers keep the top-level sections data-first without making each shell
 hand-roll its own Snowflake query. They prefer compact executive summary facts
@@ -18,7 +18,7 @@ from .company_filter import get_combined_filter_clause, get_user_filter_clause, 
 from .data import normalize_df
 from .deployment import build_schema_migration_contract, build_schema_migration_status_sql
 from .mart import mart_object_name
-from .query import run_query, sql_literal
+from .query import run_query, run_query_or_raise, sql_literal
 from .scorecards import platform_operating_score_from_signals
 from .session import apply_overwatch_query_tag, build_overwatch_query_tag, get_session, snowflake_connection_known_unavailable
 
@@ -54,7 +54,7 @@ def command_board_scope(
     environment: str = DEFAULT_ENVIRONMENT,
     days: int = DEFAULT_DAY_WINDOW,
 ) -> tuple[str, str, int]:
-    """Return the cache scope for a first-paint command board."""
+    """Return the cache scope for a first-paint monitoring summary."""
     return (
         str(company or DEFAULT_COMPANY).upper(),
         str(environment or DEFAULT_ENVIRONMENT).upper(),
@@ -100,7 +100,7 @@ def empty_command_board(
     *,
     state: str = "Cached fallback",
 ) -> CommandBoard:
-    """Return an immediate no-Snowflake command board frame for first paint."""
+    """Return an immediate no-Snowflake monitoring summary frame for first paint."""
     scope = command_board_scope(company, environment, days)
     data = pd.DataFrame(columns=BOARD_COLUMNS)
     summary = summarize_command_board(data)
@@ -737,7 +737,7 @@ def placeholder_command_board(
     board = _normalize_board(pd.DataFrame(rows))
     summary = summarize_command_board(board)
     summary["state"] = "Telemetry pending"
-    summary["cap_reason"] = "Scheduled monitoring facts or an explicit refresh will hydrate this shared command board."
+    summary["cap_reason"] = "Scheduled monitoring facts or an explicit refresh will hydrate this shared monitoring summary."
     return CommandBoard(
         data=board,
         summary=summary,
@@ -777,27 +777,27 @@ def load_first_paint_command_board(
     queries = (
         (
             build_first_paint_metering_board_sql(company, days, _credit_price()),
-            "Command Board",
+            "Monitoring Summary",
             700,
         ),
         (
             build_first_paint_query_board_sql(company),
-            "Command Board",
+            "Monitoring Summary",
             700,
         ),
         (
             build_first_paint_task_board_sql(company),
-            "Command Board",
+            "Monitoring Summary",
             100,
         ),
         (
             build_first_paint_security_board_sql(company),
-            "Command Board",
+            "Monitoring Summary",
             100,
         ),
         (
             build_first_paint_cortex_board_sql(days, _ai_credit_price()),
-            "Command Board",
+            "Monitoring Summary",
             100,
         ),
     )
@@ -827,7 +827,7 @@ def load_first_paint_command_board(
     else:
         payload = empty_command_board(company, environment, days, state="Telemetry unavailable")
         payload.summary["cap_reason"] = (
-            "Monitoring telemetry is unavailable for this scope. The command board remains open while "
+            "Monitoring telemetry is unavailable for this scope. The summary remains open while "
             "Snowflake access or account-usage history catches up."
         )
         payload.meta["source"] = "SNOWFLAKE.ACCOUNT_USAGE"
@@ -844,7 +844,7 @@ def build_executive_command_board_sql(
     environment: str = DEFAULT_ENVIRONMENT,
     days: int = DEFAULT_DAY_WINDOW,
 ) -> str:
-    """Build the compact mart query used by first-paint command boards."""
+    """Build the compact mart query used by first-paint monitoring summaries."""
     table = mart_object_name("MART_EXECUTIVE_OBSERVABILITY")
     company_value = "ALL" if str(company or "").upper() == "ALL" else str(company or DEFAULT_COMPANY)
     environment_value = "ALL" if str(environment or "").upper() == "ALL" else str(environment or DEFAULT_ENVIRONMENT)
@@ -982,13 +982,16 @@ def load_executive_command_board(
 ) -> CommandBoard:
     """Load the first-paint executive command mart."""
     sql = build_executive_command_board_sql(company, environment, days)
-    frame = run_query(
-        sql,
-        ttl_key=f"command_board_{company}_{environment}_{int(days)}",
-        tier="standard",
-        section="Command Board",
-        max_rows=500,
-    )
+    try:
+        frame = run_query_or_raise(
+            sql,
+            ttl_key=f"command_board_{company}_{environment}_{int(days)}",
+            tier="standard",
+            section="Monitoring Summary",
+            max_rows=500,
+        )
+    except Exception:
+        return empty_command_board(company, environment, days, state="Mart unavailable")
     board = _normalize_board(frame)
     loaded_at = datetime.now().isoformat(timespec="seconds")
     return CommandBoard(
@@ -1021,7 +1024,7 @@ def read_command_board_state(
     environment: str = DEFAULT_ENVIRONMENT,
     days: int = DEFAULT_DAY_WINDOW,
 ) -> CommandBoard:
-    """Read a command board from session state or return an immediate fallback."""
+    """Read a monitoring summary from session state or return an immediate fallback."""
     scope = command_board_scope(company, environment, days)
     meta = st.session_state.get(meta_key)
     summary = st.session_state.get(summary_key)
@@ -1039,7 +1042,7 @@ def store_command_board_state(
     summary_key: str,
     meta_key: str,
 ) -> CommandBoard:
-    """Persist command board state for other top-level surfaces to reuse."""
+    """Persist monitoring summary state for other top-level surfaces to reuse."""
     st.session_state[data_key] = payload.data
     st.session_state[summary_key] = payload.summary
     st.session_state[meta_key] = payload.meta
@@ -1069,14 +1072,11 @@ def load_or_reuse_command_board(
     days: int = DEFAULT_DAY_WINDOW,
     force: bool = False,
 ) -> CommandBoard:
-    """Return the shared command board, preferring marts and using bounded first-paint telemetry."""
+    """Return the shared monitoring summary, preferring marts and using bounded first-paint telemetry."""
     cached = read_command_board_state(data_key, summary_key, meta_key, company, environment, days)
     refresh_changed = _global_refresh_changed(refresh_marker_key)
-    if not (force or refresh_changed):
-        if cached.summary.get("loaded"):
-            return store_command_board_state(cached, data_key=data_key, summary_key=summary_key, meta_key=meta_key)
-        payload = placeholder_command_board(company, environment, days)
-        return store_command_board_state(payload, data_key=data_key, summary_key=summary_key, meta_key=meta_key)
+    if cached.summary.get("loaded") and not (force or refresh_changed):
+        return store_command_board_state(cached, data_key=data_key, summary_key=summary_key, meta_key=meta_key)
 
     payload = load_executive_command_board(company, environment, days)
     if not payload.summary.get("loaded"):

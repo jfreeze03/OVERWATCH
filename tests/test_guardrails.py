@@ -17,18 +17,18 @@ from utils.mart import load_mart_table  # noqa: E402
 
 
 class GuardrailTests(unittest.TestCase):
-    def test_clamp_global_date_range_respects_standard_and_admin_caps(self):
+    def test_clamp_global_date_range_uses_admin_cap(self):
         previous = dict(st.session_state)
         try:
             st.session_state.clear()
             st.session_state["_overwatch_current_role"] = "APP_READONLY"
             start, end, was_clamped, max_days = clamp_global_date_range(date(2026, 1, 1), date(2026, 2, 28))
-            self.assertTrue(was_clamped)
-            self.assertEqual(max_days, 35)
-            self.assertEqual((end - start).days + 1, 35)
+            self.assertFalse(was_clamped)
+            self.assertEqual(max_days, 90)
+            self.assertEqual((end - start).days + 1, 59)
 
             st.session_state.clear()
-            st.session_state["_overwatch_current_role"] = "ACCOUNTADMIN"
+            st.session_state["_overwatch_current_role"] = "SNOW_ACCOUNTADMINS"
             start, end, was_clamped, max_days = clamp_global_date_range(date(2025, 1, 1), date(2025, 6, 1))
             self.assertTrue(was_clamped)
             self.assertEqual(max_days, 90)
@@ -78,8 +78,7 @@ class GuardrailTests(unittest.TestCase):
 
         self.assertIn('date_input_key = "_global_date_range_input"', app_text)
         self.assertIn("key=date_input_key", app_text)
-        self.assertIn("from utils.admin import render_admin_mode_control", app_text)
         self.assertIn("try:\n    from utils.admin import clamp_global_date_range", app_text)
         self.assertIn("Fallback for Snowflake stages that refresh app.py before utils.admin", app_text)
-        self.assertNotIn("from utils.admin import clamp_global_date_range, render_admin_mode_control", app_text)
+        self.assertNotIn("render_admin_mode_control", app_text)
         self.assertNotIn('st.session_state["_global_date_range_input"] =', app_text)

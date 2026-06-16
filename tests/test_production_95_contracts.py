@@ -3,6 +3,7 @@ import sys
 import unittest
 
 import pandas as pd
+import streamlit as st
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -11,6 +12,7 @@ sys.path.insert(0, str(APP_ROOT))
 
 from config import CREDIT_SOURCE_LABELS  # noqa: E402
 from utils.company_filter import assert_no_sql_injection, validate_filter_input  # noqa: E402
+import utils.command_board as command_board  # noqa: E402
 from utils.command_board import build_executive_command_board_sql, empty_command_board, summarize_command_board  # noqa: E402
 from utils.incident_correlation import build_incident_correlation_sql  # noqa: E402
 from utils.native_snowflake import (  # noqa: E402
@@ -50,8 +52,9 @@ class Production95ContractsTests(unittest.TestCase):
     def test_new_snowflake_setup_contracts_exist(self):
         setup = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8").upper()
         for marker in (
-            "CREATE ROLE IF NOT EXISTS OVERWATCH_MONITOR",
-            "CREATE ROLE IF NOT EXISTS OVERWATCH_OPERATOR",
+            "CREATE ROLE IF NOT EXISTS SNOW_ACCOUNTADMINS",
+            "CREATE ROLE IF NOT EXISTS SNOW_SYSADMINS",
+            "GRANT IMPORTED PRIVILEGES ON DATABASE SNOWFLAKE TO ROLE SNOW_ACCOUNTADMINS",
             "CREATE WAREHOUSE IF NOT EXISTS OVERWATCH_WH",
             "CREATE TABLE IF NOT EXISTS ALERT_EVENTS",
             "CREATE TABLE IF NOT EXISTS OVERWATCH_RECON_CONFIG",
@@ -59,6 +62,8 @@ class Production95ContractsTests(unittest.TestCase):
         ):
             with self.subTest(marker=marker):
                 self.assertIn(marker, setup)
+        self.assertNotIn("OVERWATCH_MONITOR", setup)
+        self.assertNotIn("OVERWATCH_OPERATOR", setup)
 
     def test_incident_and_predictive_sla_sql_are_snowflake_native(self):
         incident_sql = build_incident_correlation_sql().upper()
@@ -118,6 +123,65 @@ class Production95ContractsTests(unittest.TestCase):
         self.assertTrue(fallback.meta["first_paint"])
         self.assertIn("Use Refresh", fallback.summary["cap_reason"])
 
+    def test_command_board_loader_hydrates_on_first_render(self):
+        state_keys = (
+            "test_exec_board",
+            "test_exec_summary",
+            "test_exec_meta",
+            "test_exec_refresh_marker",
+            "_refresh_salt_global",
+        )
+        for key in state_keys:
+            st.session_state.pop(key, None)
+
+        calls = []
+        original_mart_loader = command_board.load_executive_command_board
+        original_first_paint_loader = command_board.load_first_paint_command_board
+        payload = command_board.CommandBoard(
+            data=pd.DataFrame(
+                [
+                    {
+                        "PANEL": "KPI",
+                        "METRIC": "Credits Used",
+                        "DIMENSION": "Current",
+                        "VALUE": 10,
+                        "VALUE_USD": 36.8,
+                    }
+                ]
+            ),
+            summary={"loaded": True, "current_cost_usd": 36.8},
+            meta={"company": "ALFA", "environment": "ALL", "days": 7},
+        )
+
+        def fake_mart_loader(company, environment, days):
+            calls.append(("mart", company, environment, days))
+            return payload
+
+        def fake_first_paint_loader(company, environment, days):
+            calls.append(("first_paint", company, environment, days))
+            return empty_command_board(company, environment, days)
+
+        try:
+            command_board.load_executive_command_board = fake_mart_loader
+            command_board.load_first_paint_command_board = fake_first_paint_loader
+            result = command_board.load_or_reuse_command_board(
+                data_key="test_exec_board",
+                summary_key="test_exec_summary",
+                meta_key="test_exec_meta",
+                refresh_marker_key="test_exec_refresh_marker",
+                company="ALFA",
+                environment="ALL",
+                days=7,
+            )
+        finally:
+            command_board.load_executive_command_board = original_mart_loader
+            command_board.load_first_paint_command_board = original_first_paint_loader
+            for key in state_keys:
+                st.session_state.pop(key, None)
+
+        self.assertTrue(result.summary["loaded"])
+        self.assertEqual(calls, [("mart", "ALFA", "ALL", 7)])
+
     def test_docs_track_recovery_and_release_history(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("OVERWATCH_MART_SETUP.sql", readme)
@@ -146,35 +210,29 @@ class Production95ContractsTests(unittest.TestCase):
         self.assertIn("Top 5 Action Items", shell_text)
 
     def test_final_pass_shells_surface_operating_contracts_before_drilldown(self):
-        cost_shell = (APP_ROOT / "sections" / "cost_contract_shell.py").read_text(encoding="utf-8")
-        alert_shell = (APP_ROOT / "sections" / "alert_center_shell.py").read_text(encoding="utf-8")
-        workload_shell = (APP_ROOT / "sections" / "workload_operations_shell.py").read_text(encoding="utf-8")
+        config_text = (APP_ROOT / "config.py").read_text(encoding="utf-8")
+        cost_text = (APP_ROOT / "sections" / "cost_contract.py").read_text(encoding="utf-8")
+        alert_text = (APP_ROOT / "sections" / "alert_center.py").read_text(encoding="utf-8")
+        workload_text = (APP_ROOT / "sections" / "workload_operations.py").read_text(encoding="utf-8")
         native_monitoring = (APP_ROOT / "sections" / "native_monitoring.py").read_text(encoding="utf-8")
         refresh_doc = (ROOT / "docs" / "REFRESH_ARCHITECTURE.md").read_text(encoding="utf-8")
 
-        self.assertIn("Cost Command Board", cost_shell)
-        self.assertIn("Cost Signals", cost_shell)
-        self.assertIn("Cost Executive Flow", cost_shell)
-        self.assertNotIn("Open Value Log", cost_shell)
-        self.assertNotIn("Open FinOps", cost_shell)
-        self.assertNotIn("Open Budgets", cost_shell)
-
-        self.assertIn("Lifecycle Control Loop", alert_shell)
-        self.assertIn("Alert Lifecycle Board", alert_shell)
-        self.assertIn("Acknowledge", alert_shell)
-        self.assertIn("Remediation log", alert_shell)
-        self.assertIn("Delivery & Remediation", alert_shell)
-
-        self.assertIn("Workload Command Board", workload_shell)
-        self.assertIn("Open Query Investigation", workload_shell)
-        self.assertNotIn("Open Query Triage", workload_shell)
-        self.assertIn("Open Task / Procedure Health", workload_shell)
-        self.assertIn("Open Pipeline SLA", workload_shell)
-        self.assertNotIn("Safe Fix Status", workload_shell)
+        self.assertIn('"Cost & Contract", "sections.cost_contract"', config_text)
+        self.assertIn('"Alert Center", "sections.alert_center"', config_text)
+        self.assertIn('"Workload Operations", "sections.workload_operations"', config_text)
+        self.assertFalse((APP_ROOT / "sections" / "cost_contract_shell.py").exists())
+        self.assertFalse((APP_ROOT / "sections" / "alert_center_shell.py").exists())
+        self.assertFalse((APP_ROOT / "sections" / "workload_operations_shell.py").exists())
+        self.assertIn("Cost Signal Summary", cost_text)
+        self.assertIn("Alert Signal Summary", alert_text)
+        self.assertIn('QUERY_INVESTIGATION_WORKFLOW = "Query investigation"', workload_text)
+        self.assertNotIn("Cost Command Board", cost_text)
+        self.assertNotIn("Alert Command Board", alert_text)
+        self.assertNotIn("Workload Command Board", workload_text)
         self.assertNotIn("Data Quality & Compare", native_monitoring)
         self.assertNotIn("Governance Native Sources", native_monitoring)
         self.assertFalse((APP_ROOT / "sections" / "native_readiness.py").exists())
-        self.assertNotIn("render_workload_data_quality_board", workload_shell)
+        self.assertNotIn("render_workload_data_quality_board", workload_text)
 
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("Raw", readme)

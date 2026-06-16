@@ -640,7 +640,7 @@ def _queue_top_warehouses(session, df):
 def render():
     session = get_session()
     st.subheader("Usage Overview")
-    st.caption("Executive view of Snowflake activity, cost, storage, and top usage drivers.")
+    st.caption("Admin summary of Snowflake activity, cost, storage, and top usage drivers.")
 
     c1, c2 = st.columns([1, 2])
     with c1:

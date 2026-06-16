@@ -265,11 +265,11 @@ class SectionDefinition:
 # keep deep links working without keeping weak standalone pages alive.
 SECTION_DEFINITIONS = (
     SectionDefinition("COMMAND CENTER", "briefcase", "Executive Landing", "sections.executive_landing_shell"),
-    SectionDefinition("COMMAND CENTER", "target", "DBA Control Room", "sections.dba_control_room_shell"),
-    SectionDefinition("COMMAND CENTER", "bell", "Alert Center", "sections.alert_center_shell"),
-    SectionDefinition("FINANCIAL CONTROL", "cost", "Cost & Contract", "sections.cost_contract_shell"),
-    SectionDefinition("OPERATIONS", "work", "Workload Operations", "sections.workload_operations_shell"),
-    SectionDefinition("SECURITY", "security", "Security Monitoring", "sections.security_monitoring"),
+    SectionDefinition("COMMAND CENTER", "target", "DBA Control Room", "sections.dba_control_room"),
+    SectionDefinition("COMMAND CENTER", "bell", "Alert Center", "sections.alert_center"),
+    SectionDefinition("FINANCIAL CONTROL", "cost", "Cost & Contract", "sections.cost_contract"),
+    SectionDefinition("OPERATIONS", "work", "Workload Operations", "sections.workload_operations"),
+    SectionDefinition("SECURITY", "security", "Security Monitoring", "sections.security_posture"),
 )
 
 PRIMARY_NAV_HIDDEN_SECTIONS = frozenset()
@@ -335,8 +335,7 @@ SECTION_ROUTE_STATE = {
         "_cost_contract_brief_mode": False,
     },
     "Security Posture": {
-        "security_monitoring_view": "Security Posture",
-        "_security_monitoring_full_workspace_requested": True,
+        "security_posture_view": "Security Brief",
     },
 }
 SECTION_BY_TITLE = dict(_CANONICAL_SECTION_BY_TITLE)
@@ -359,132 +358,10 @@ def compatibility_state_for_section(section: str) -> dict[str, object]:
     return dict(SECTION_ROUTE_STATE.get(str(section or "").strip(), {}))
 
 
-def _sections_by_title(*titles: str) -> list[str]:
-    return [SECTION_BY_TITLE[title] for title in titles]
-
-
-# Role profiles keep users on the same production shell while reducing access
-# to workflows where the selected experience view should not expose controls.
-ROLE_SECTIONS = {
-    "EXECUTIVE": _sections_by_title(
-        "Executive Landing",
-        "DBA Control Room",
-        "Alert Center",
-        "Cost & Contract",
-    ),
-    "ANALYST": _sections_by_title(
-        "Executive Landing",
-        "DBA Control Room",
-        "Alert Center",
-        "Workload Operations",
-        "Cost & Contract",
-        "Security Monitoring",
-    ),
-    "MANAGER": list(PRIMARY_SECTIONS),
-    "REPORT": _sections_by_title(
-        "Executive Landing",
-        "DBA Control Room",
-        "Alert Center",
-        "Workload Operations",
-        "Cost & Contract",
-        "Security Monitoring",
-    ),
-    "DBA": list(PRIMARY_SECTIONS),
-    "SYSADMIN": list(PRIMARY_SECTIONS),
-    "ACCOUNTADMIN": list(PRIMARY_SECTIONS),
-}
-
-ROLE_PROFILE_OVERRIDES = {
-    # ALFA production access roles.
-    "SNOW_PRI_GFR_PRD_ALFA_PDMWMGMT": "EXECUTIVE",
-    "SNOW_PRI_GFR_PRD_ALFA_DSA": "MANAGER",
-    "SNOW_PRI_GFR_PRD_ALFA_DTI": "ANALYST",
-    # ALFA non-production access roles.
-    "SNOW_PRI_GFR_NONPRD_ALFA_PDMWMGMT": "EXECUTIVE",
-    "SNOW_PRI_GFR_NONPRD_ALFA_DSA": "MANAGER",
-    "SNOW_PRI_GFR_NONPRD_ALFA_DTI": "ANALYST",
-    # DBA/admin deployment roles.
-    "SNOW_ACCOUNTADMINS": "DBA",
-    "SNOW_SYSADMINS": "DBA",
-    "ACCOUNTADMIN": "DBA",
-}
-
-
-def resolve_role_profile(role: str) -> str:
-    """Return the OVERWATCH navigation profile for a Snowflake role name."""
-    normalized = str(role or "").strip().upper()
-    if not normalized:
-        return "REPORT"
-    if normalized in ROLE_PROFILE_OVERRIDES:
-        return ROLE_PROFILE_OVERRIDES[normalized]
-    if normalized.endswith("_DSA") or "_DSA_" in normalized:
-        return "MANAGER"
-    if normalized.endswith("_DTI") or "_DTI_" in normalized:
-        return "ANALYST"
-    if normalized.endswith("_PDMWMGMT") or "_PDMWMGMT_" in normalized:
-        return "EXECUTIVE"
-    if "ACCOUNTADMIN" in normalized or "SYSADMIN" in normalized or "DBA" in normalized:
-        return "DBA"
-    for profile in ROLE_SECTIONS:
-        if profile in normalized:
-            return profile
-    return "REPORT"
-
-
-EXPERIENCE_VIEW_SECTIONS = {
-    "DBA": list(PRIMARY_SECTIONS),
-    "Executive": _sections_by_title(
-        "Executive Landing",
-        "DBA Control Room",
-        "Alert Center",
-        "Cost & Contract",
-    ),
-    "Security": _sections_by_title(
-        "Executive Landing",
-        "Alert Center",
-        "Security Monitoring",
-    ),
-    "Platform": _sections_by_title(
-        "Executive Landing",
-        "DBA Control Room",
-        "Workload Operations",
-        "Cost & Contract",
-        "Security Monitoring",
-    ),
-}
-
-ROLE_EXPERIENCE_VIEWS = {
-    "EXECUTIVE": ("Executive",),
-    "ANALYST": ("Platform",),
-    "MANAGER": ("Executive", "Security", "Platform"),
-    "REPORT": ("Executive",),
-    "DBA": tuple(EXPERIENCE_VIEW_SECTIONS.keys()),
-    "SYSADMIN": tuple(EXPERIENCE_VIEW_SECTIONS.keys()),
-    "ACCOUNTADMIN": tuple(EXPERIENCE_VIEW_SECTIONS.keys()),
-}
-
-
-def resolve_allowed_experience_views(role: str) -> tuple[str, ...]:
-    """Return the Experience View choices allowed for a Snowflake role."""
-    profile = resolve_role_profile(role)
-    allowed = ROLE_EXPERIENCE_VIEWS.get(profile, ROLE_EXPERIENCE_VIEWS["DBA"])
-    return tuple(view for view in allowed if view in EXPERIENCE_VIEW_SECTIONS) or ("DBA",)
-
-
-def default_experience_view_for_role(role: str) -> str:
-    """Return the first useful Experience View for the current Snowflake role."""
-    profile = resolve_role_profile(role)
-    preferred = {
-        "EXECUTIVE": "Executive",
-        "MANAGER": "Executive",
-        "REPORT": "Executive",
-        "ANALYST": "Platform",
-        "DBA": "DBA",
-        "SYSADMIN": "DBA",
-        "ACCOUNTADMIN": "DBA",
-    }.get(profile, "DBA")
-    allowed = resolve_allowed_experience_views(role)
-    return preferred if preferred in allowed else allowed[0]
+ADMIN_ACCESS_ROLES = (
+    "SNOW_ACCOUNTADMINS",
+    "SNOW_SYSADMINS",
+)
 
 
 ETL_AUDIT_DB = "DBA_MAINT_DB"

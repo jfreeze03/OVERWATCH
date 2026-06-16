@@ -12,25 +12,41 @@ import streamlit as st
 from config import compatibility_state_for_section, normalize_section_name
 
 
-SECTION_WORKSPACE_STATE_KEYS = {
-    "Executive Landing": ("_executive_landing_full_workspace_requested", "_executive_landing_brief_mode"),
-    "DBA Control Room": ("_dba_control_room_full_workspace_requested", "_dba_control_room_brief_mode"),
-    "Alert Center": ("_alert_center_full_workspace_requested", "_alert_center_brief_mode"),
-    "Cost & Contract": ("_cost_contract_full_workspace_requested", "_cost_contract_brief_mode"),
-    "Workload Operations": ("_workload_operations_full_workspace_requested", "_workload_operations_brief_mode"),
-    "Security Monitoring": ("_security_monitoring_full_workspace_requested", "_security_monitoring_brief_mode"),
-}
+EXECUTIVE_LANDING_BOARD_STATE_KEYS = (
+    "executive_landing_snapshot",
+    "executive_landing_platform_summary",
+    "executive_landing_command_board",
+    "executive_landing_command_board_meta",
+    "executive_landing_command_board_refresh_marker",
+)
+
+
+def request_executive_landing_hydration() -> None:
+    """Force the landing wall to hydrate from the command mart on navigation."""
+    for key in EXECUTIVE_LANDING_BOARD_STATE_KEYS:
+        st.session_state.pop(key, None)
+    st.session_state["_overwatch_executive_landing_refresh_started_at"] = datetime.now().isoformat(timespec="seconds")
 
 
 def request_section_workspace(section: str) -> None:
-    """Make a section jump render the data workspace instead of the compact brief."""
+    """Make a section jump render the useful working surface."""
     target = normalize_section_name(section)
-    state_keys = SECTION_WORKSPACE_STATE_KEYS.get(target)
-    if not state_keys:
-        return
-    workspace_key, brief_key = state_keys
-    st.session_state[workspace_key] = True
-    st.session_state[brief_key] = False
+    if target == "Executive Landing":
+        st.session_state["_executive_landing_full_workspace_requested"] = True
+        st.session_state["_executive_landing_brief_mode"] = False
+        request_executive_landing_hydration()
+    elif target == "DBA Control Room":
+        st.session_state["dba_control_room_active_view"] = "Morning Brief"
+    elif target == "Alert Center":
+        st.session_state["alert_center_active_view"] = "Command Center"
+    elif target == "Cost & Contract":
+        st.session_state["cost_contract_workflow"] = "Usage attribution and run-rate"
+    elif target == "Workload Operations":
+        st.session_state["workload_operations_workflow"] = "Query investigation"
+        st.session_state["workload_operations_query_focus"] = "AI Query Diagnosis"
+    elif target == "Security Monitoring":
+        st.session_state["security_posture_view"] = "Security Brief"
+        st.session_state["security_posture_workflow"] = "Access posture"
     st.session_state["_overwatch_pending_autoload_section"] = target
     st.session_state["_overwatch_pending_autoload_started_at"] = datetime.now().isoformat(timespec="seconds")
 
@@ -40,7 +56,7 @@ def apply_navigation_state(section: str, *, mark_pending: bool = True) -> str:
     raw_section = str(section or "").strip()
     target = normalize_section_name(raw_section)
     current = normalize_section_name(st.session_state.get("nav_section", ""))
-    if mark_pending and target != current:
+    if mark_pending and (target != current or target == "Executive Landing"):
         st.session_state["_overwatch_pending_section"] = target
         st.session_state["_overwatch_section_transition_started_at"] = datetime.now().isoformat(timespec="seconds")
     for key, value in compatibility_state_for_section(raw_section).items():

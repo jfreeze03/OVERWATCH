@@ -310,7 +310,7 @@ def render_setup_health_board(
     fallback: str = "Explicit only",
     owner: str = "DBA",
 ) -> None:
-    """Render setup signals that support a data-first command board."""
+    """Render setup signals that support a data-first monitoring summary."""
     return
 
 

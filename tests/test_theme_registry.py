@@ -2,6 +2,8 @@ from pathlib import Path
 import sys
 import unittest
 
+import streamlit as st
+
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = ROOT / ".overwatch_final"
@@ -55,9 +57,46 @@ class ThemeRegistryTests(unittest.TestCase):
 
     def test_theme_picker_uses_dropdown_not_radio(self):
         theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")
-        self.assertIn("selected = st.selectbox(", theme_text)
+        self.assertIn("st.selectbox(", theme_text)
+        self.assertIn("def _commit_theme_picker_change", theme_text)
+        self.assertIn("on_change=_commit_theme_picker_change", theme_text)
         self.assertNotIn("selected = st.radio(", theme_text)
         self.assertIn('key="theme_picker_radio"', theme_text)
+        self.assertIn('_THEME_QUERY_PARAM = "overwatch_theme"', theme_text)
+        self.assertIn("def _set_query_param_theme", theme_text)
+        self.assertIn("_set_query_param_theme(selected)", theme_text)
+        self.assertIn("st.experimental_get_query_params()", theme_text)
+        self.assertIn("st.experimental_set_query_params(**query_params)", theme_text)
+        self.assertIn('st.session_state.get("theme_picker_radio") != current', theme_text)
+
+    def test_theme_version_change_preserves_dark_selection(self):
+        previous = dict(st.session_state)
+        try:
+            st.session_state.clear()
+            st.session_state["active_theme"] = "carbon"
+            st.session_state["theme_picker_radio"] = "carbon"
+            st.session_state["_active_theme_version"] = "old-version"
+            self.assertEqual(theme._get_theme(), "carbon")
+            self.assertEqual(st.session_state["active_theme"], "carbon")
+            self.assertEqual(st.session_state["_overwatch_active_theme"], "carbon")
+            self.assertEqual(st.session_state["theme_picker_radio"], "carbon")
+            self.assertEqual(st.session_state["_active_theme_version"], theme.THEME_VERSION)
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)
+
+    def test_settings_widget_cannot_reset_persistent_dark_theme(self):
+        previous = dict(st.session_state)
+        try:
+            st.session_state.clear()
+            st.session_state["_overwatch_active_theme"] = "carbon"
+            st.session_state["theme_picker_radio"] = "terminal"
+            self.assertEqual(theme._get_theme(), "carbon")
+            self.assertEqual(st.session_state["active_theme"], "carbon")
+            self.assertEqual(st.session_state["_overwatch_active_theme"], "carbon")
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)
 
     def test_snowflake_themes_use_snowflake_blue(self):
         self.assertEqual(theme.THEMES["terminal"]["swatch"], "#29B5E8")

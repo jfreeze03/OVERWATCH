@@ -1145,7 +1145,7 @@ def _summary_from_observability(board: pd.DataFrame, *, credit_price: float) -> 
         "top_cost_driver": "Account spend",
     }
     scored = _with_platform_operating_score(summary, pd.DataFrame([
-        {"SOURCE": "Executive observability marts", "STATE": "Loaded", "EVIDENCE": "Command board rows loaded."}
+        {"SOURCE": "Executive observability marts", "STATE": "Loaded", "EVIDENCE": "Monitoring summary rows loaded."}
     ]))
     if score > 0:
         scored["score"] = safe_int(score)

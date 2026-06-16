@@ -7,7 +7,7 @@ from datetime import timedelta
 
 import streamlit as st
 
-from config import ALERT_DB, ALERT_SCHEMA
+from config import ALERT_DB, ALERT_SCHEMA, ADMIN_ACCESS_ROLES
 from .company_filter import get_active_environment
 
 
@@ -30,8 +30,6 @@ def sql_literal(value, max_len: int = 8000) -> str:
 
 
 ADMIN_ACTIONS_KEY = "admin_actions_enabled"
-ADMIN_ACTIONS_DEFAULT_ROLE_KEY = "_admin_actions_default_role"
-ADMIN_ACTIONS_DEFAULT_VALUE_KEY = "_admin_actions_default_value"
 ADMIN_AUDIT_TABLE = "OVERWATCH_ADMIN_ACTION_AUDIT"
 ADMIN_AUDIT_FQN = (
     f"{safe_identifier(ALERT_DB)}."
@@ -39,14 +37,7 @@ ADMIN_AUDIT_FQN = (
     f"{safe_identifier(ADMIN_AUDIT_TABLE)}"
 )
 
-ADMIN_ACTION_DEFAULT_ROLES = {
-    "ACCOUNTADMIN",
-    "SYSADMIN",
-    "SNOW_ACCOUNTADMIN",
-    "SNOW_ACCOUNTADMINS",
-    "SNOW_SYSADMIN",
-    "SNOW_SYSADMINS",
-}
+ADMIN_ACTION_DEFAULT_ROLES = set(ADMIN_ACCESS_ROLES)
 
 
 def _normalized_current_role() -> str:
@@ -54,40 +45,19 @@ def _normalized_current_role() -> str:
 
 
 def admin_actions_default_enabled() -> bool:
-    """Return whether Admin actions should default on for the active role."""
-    return _normalized_current_role() in ADMIN_ACTION_DEFAULT_ROLES
+    """Return whether Admin actions should default on."""
+    return True
 
 
 def initialize_admin_actions_default() -> None:
-    """Initialize the Admin actions toggle without overriding an operator choice."""
-    role = _normalized_current_role()
-    default_enabled = admin_actions_default_enabled()
-    if ADMIN_ACTIONS_KEY not in st.session_state:
-        st.session_state[ADMIN_ACTIONS_KEY] = default_enabled
-        st.session_state[ADMIN_ACTIONS_DEFAULT_ROLE_KEY] = role
-        st.session_state[ADMIN_ACTIONS_DEFAULT_VALUE_KEY] = default_enabled
-        return
-    if (
-        ADMIN_ACTIONS_DEFAULT_ROLE_KEY not in st.session_state
-        or ADMIN_ACTIONS_DEFAULT_VALUE_KEY not in st.session_state
-    ):
-        st.session_state[ADMIN_ACTIONS_DEFAULT_ROLE_KEY] = role
-        st.session_state[ADMIN_ACTIONS_DEFAULT_VALUE_KEY] = bool(st.session_state.get(ADMIN_ACTIONS_KEY, False))
-        return
-
-    prior_role = str(st.session_state.get(ADMIN_ACTIONS_DEFAULT_ROLE_KEY, "") or "")
-    prior_default = bool(st.session_state.get(ADMIN_ACTIONS_DEFAULT_VALUE_KEY, False))
-    current_value = bool(st.session_state.get(ADMIN_ACTIONS_KEY, False))
-    if role != prior_role and current_value == prior_default:
-        st.session_state[ADMIN_ACTIONS_KEY] = default_enabled
-        st.session_state[ADMIN_ACTIONS_DEFAULT_ROLE_KEY] = role
-        st.session_state[ADMIN_ACTIONS_DEFAULT_VALUE_KEY] = default_enabled
+    """Keep the legacy admin-actions state key pinned on."""
+    st.session_state[ADMIN_ACTIONS_KEY] = True
 
 
 def admin_actions_enabled() -> bool:
     """Return whether live account-changing controls are enabled."""
     initialize_admin_actions_default()
-    return bool(st.session_state.get(ADMIN_ACTIONS_KEY, False))
+    return True
 
 
 def clamp_global_date_range(
@@ -103,7 +73,7 @@ def clamp_global_date_range(
     if start_date > end_date:
         start_date, end_date = end_date, start_date
 
-    max_days = int(admin_days if admin_actions_enabled() else standard_days)
+    max_days = int(admin_days)
     span_days = (end_date - start_date).days + 1
     if span_days <= max_days:
         return start_date, end_date, False, max_days
@@ -113,39 +83,19 @@ def clamp_global_date_range(
 
 
 def admin_disabled_reason() -> str:
-    return "Enable Admin actions in Settings before running live Snowflake changes."
+    return "Admin action is unavailable for the selected target."
 
 
 def admin_button_disabled(disabled: bool = False) -> bool:
-    """Combine a caller-specific disabled flag with the global admin gate."""
-    return bool(disabled) or not admin_actions_enabled()
+    """Return caller-specific disabled state in admin-only mode."""
+    initialize_admin_actions_default()
+    return bool(disabled)
 
 
 def require_admin_enabled(action: str = "this action") -> bool:
-    """Show a consistent warning and return False when admin actions are locked."""
-    if admin_actions_enabled():
-        return True
-    st.warning(f"Admin actions are locked. Enable Admin actions in Settings to run {action}.")
-    return False
-
-
-def render_admin_mode_control() -> None:
-    """Render the global live-action toggle."""
+    """Compatibility helper for admin-only mode."""
     initialize_admin_actions_default()
-    default_note = (
-        " Defaults on for ACCOUNTADMIN/SYSADMIN deployment roles."
-        if admin_actions_default_enabled()
-        else " Defaults off for the current role."
-    )
-    st.toggle(
-        "Enable Admin actions",
-        key=ADMIN_ACTIONS_KEY,
-        help=(
-            "Allows live ALTER, EXECUTE, RESUME, SUSPEND, and CANCEL operations. "
-            "Keep off for read-only demos and leadership reviews."
-            f"{default_note}"
-        ),
-    )
+    return True
 
 
 def _current_execution_context(session) -> dict:

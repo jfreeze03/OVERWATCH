@@ -2304,10 +2304,10 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("APPROVED_LIVE_FALLBACK AS LIVE_FALLBACK_ALLOWED", validation_sql)
         self.assertIn("REFRESH_STATE", validation_sql)
         self.assertIn("TARGET_FRESHNESS_MIN AS TARGET_FRESHNESS_MINUTES", validation_sql)
-        self.assertIn("ACCOUNTADMIN", checklist)
-        self.assertIn("SYSADMIN", checklist)
-        self.assertIn("_DSA", checklist)
-        self.assertIn("_DTI", checklist)
+        self.assertIn("SNOW_ACCOUNTADMINS", checklist)
+        self.assertIn("SNOW_SYSADMINS", checklist)
+        self.assertNotIn("_DSA", checklist)
+        self.assertNotIn("_DTI", checklist)
         self.assertIn("SNOWFLAKE OBSERVABILITY WALL", checklist)
         self.assertIn("COST & CONTRACT", checklist)
         self.assertIn("ACTION QUEUE", checklist)
@@ -6405,7 +6405,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Snowflake task handoff state", md)
         self.assertIn("Failed Task Run", md)
         self.assertIn("Cost drift/release-regression candidates", md)
-        self.assertIn("Admin actions require", md)
+        self.assertIn("Admin actions require Snowflake task privileges", md)
 
     def test_task_actions_are_signal_specific(self):
         self.assertIn("retry the root task", _task_action_for("Failed Task Run")[0])
@@ -8431,13 +8431,14 @@ class FormulaRegressionTests(unittest.TestCase):
 
     def test_alert_surfaces_are_consolidated_to_alert_center(self):
         config_text = (APP_ROOT / "config.py").read_text(encoding="utf-8")
-        shell_text = (APP_ROOT / "sections" / "alert_center_shell.py").read_text(encoding="utf-8")
+        alert_text = (APP_ROOT / "sections" / "alert_center.py").read_text(encoding="utf-8")
         dba_tools_text = (APP_ROOT / "sections" / "dba_tools.py").read_text(encoding="utf-8")
         rec_text = (APP_ROOT / "sections" / "recommendations.py").read_text(encoding="utf-8")
 
         self.assertIn('"Alert Center"', config_text)
-        self.assertIn('"sections.alert_center_shell"', config_text)
-        self.assertIn("from sections import alert_center", shell_text)
+        self.assertIn('"sections.alert_center"', config_text)
+        self.assertFalse((APP_ROOT / "sections" / "alert_center_shell.py").exists())
+        self.assertIn('ALERT_CENTER_DEFAULT_VIEW = "Command Center"', alert_text)
         self.assertIn("consolidated Alert Center", dba_tools_text)
         self.assertNotIn("Alert Configuration", rec_text)
         self.assertNotIn("tab_alerts", rec_text)

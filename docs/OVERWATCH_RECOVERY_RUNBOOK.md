@@ -5,7 +5,7 @@ Use this when the dashboard is blank, stale, slow, or showing conflicting eviden
 ## First Five Checks
 
 1. Confirm the running version in the sidebar footer.
-2. Confirm the active role is `OVERWATCH_MONITOR` for read-only use or `OVERWATCH_OPERATOR` for approved actions.
+2. Confirm the active role is `SNOW_ACCOUNTADMINS` or `SNOW_SYSADMINS`.
 3. Run `snowflake/OVERWATCH_MART_VALIDATION.sql`.
 4. Check `DBA_MAINT_DB.OVERWATCH.OVERWATCH_SELF_HEALTH_V` for stale surfaces.
 5. Check Streamlit query warnings for result guard, timeout, or role privilege messages.

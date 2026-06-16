@@ -311,15 +311,11 @@ class AdminControlTests(unittest.TestCase):
         self.assertIn("LEFT JOIN OVERWATCH_RECON_CONFIG C", history_sql)
         self.assertIn("DATEADD('DAY', -14", history_sql)
 
-    def test_admin_actions_default_on_for_full_privilege_roles(self):
+    def test_admin_actions_are_always_enabled_for_admin_only_app(self):
         previous = dict(st.session_state)
         try:
             for role in (
-                "ACCOUNTADMIN",
-                "SYSADMIN",
-                "SNOW_ACCOUNTADMIN",
                 "SNOW_ACCOUNTADMINS",
-                "SNOW_SYSADMIN",
                 "SNOW_SYSADMINS",
             ):
                 with self.subTest(role=role):
@@ -334,14 +330,14 @@ class AdminControlTests(unittest.TestCase):
             st.session_state.clear()
             st.session_state.update(previous)
 
-    def test_admin_actions_default_off_for_non_admin_roles_and_manual_choice_sticks(self):
+    def test_admin_actions_override_legacy_disabled_state(self):
         previous = dict(st.session_state)
         try:
             st.session_state.clear()
             st.session_state["_overwatch_current_role"] = "APP_READONLY"
-            self.assertFalse(admin_actions_default_enabled())
+            self.assertTrue(admin_actions_default_enabled())
             initialize_admin_actions_default()
-            self.assertFalse(st.session_state[ADMIN_ACTIONS_KEY])
+            self.assertTrue(st.session_state[ADMIN_ACTIONS_KEY])
 
             st.session_state["_overwatch_current_role"] = "SNOW_ACCOUNTADMINS"
             initialize_admin_actions_default()
@@ -351,7 +347,7 @@ class AdminControlTests(unittest.TestCase):
             st.session_state["_overwatch_current_role"] = "ACCOUNTADMIN"
             st.session_state[ADMIN_ACTIONS_KEY] = False
             initialize_admin_actions_default()
-            self.assertFalse(st.session_state[ADMIN_ACTIONS_KEY])
+            self.assertTrue(st.session_state[ADMIN_ACTIONS_KEY])
 
             st.session_state.clear()
             st.session_state["_overwatch_current_role"] = "APP_READONLY"
@@ -363,8 +359,8 @@ class AdminControlTests(unittest.TestCase):
             st.session_state.update(previous)
 
     def test_alter_account_guard_only_allows_accountadmin_roles(self):
-        allowed_roles = ("ACCOUNTADMIN", "SNOW_ACCOUNTADMIN", "SNOW_ACCOUNTADMINS")
-        blocked_roles = ("", "SYSADMIN", "SNOW_SYSADMIN", "SECURITYADMIN", "APP_READONLY")
+        allowed_roles = ("ACCOUNTADMIN", "SNOW_ACCOUNTADMINS")
+        blocked_roles = ("", "SYSADMIN", "SNOW_SYSADMINS", "SECURITYADMIN", "APP_READONLY")
 
         for role in allowed_roles:
             with self.subTest(role=role):

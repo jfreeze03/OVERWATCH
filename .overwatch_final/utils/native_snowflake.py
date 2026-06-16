@@ -1,4 +1,4 @@
-"""Snowflake-native capability contracts for production command boards."""
+"""Snowflake-native capability contracts for production monitoring summaries."""
 
 from __future__ import annotations
 

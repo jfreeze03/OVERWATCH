@@ -1,7 +1,7 @@
 # app.py - OVERWATCH main entry point
 # -----------------------------------------------------------------------------
 # Includes:
-#   - Role-based section visibility (ROLE_SECTIONS in config.py)
+#   - Admin-only section visibility
 #   - ALFA default company seeded before radio renders
 #   - Cache invalidation on company switch
 # -----------------------------------------------------------------------------
@@ -28,15 +28,11 @@ if getattr(config_module, "CONFIG_VERSION", "") != "2026-06-05-trexis-scope-v1":
 
 from config import (
     ALL_SECTIONS, NAV_GROUPS, DEFAULTS, COMPANY_CONFIG,
-    DEFAULT_COMPANY, ROLE_SECTIONS,
-    SECTION_BY_TITLE, ENVIRONMENT_CONFIG, DEFAULT_ENVIRONMENT,
-    SECTION_ICONS, DEFAULT_ALERT_EMAIL, EXPERIENCE_VIEW_SECTIONS,
+    DEFAULT_COMPANY, ENVIRONMENT_CONFIG, DEFAULT_ENVIRONMENT,
+    SECTION_ICONS, DEFAULT_ALERT_EMAIL, ADMIN_ACCESS_ROLES,
     PRIMARY_NAV_HIDDEN_SECTIONS,
     compatibility_state_for_section,
-    default_experience_view_for_role,
     normalize_section_name,
-    resolve_allowed_experience_views,
-    resolve_role_profile,
     static_database_options,
     static_warehouse_options,
 )
@@ -53,7 +49,6 @@ from utils.company_filter import (
     get_environment_options_for_company,
     invalidate_company_cache,
 )
-from utils.admin import render_admin_mode_control
 from utils.evidence_mode import (
     TRIAGE_MODE_TRIAGE,
     evidence_mode_from_exceptions,
@@ -74,11 +69,7 @@ except ImportError:
             return start_date, end_date, False, int(standard_days)
         if start_date > end_date:
             start_date, end_date = end_date, start_date
-        try:
-            from utils.admin import admin_actions_enabled
-            max_days = int(admin_days if admin_actions_enabled() else standard_days)
-        except Exception:
-            max_days = int(standard_days)
+        max_days = int(admin_days)
         span_days = (end_date - start_date).days + 1
         if span_days <= max_days:
             return start_date, end_date, False, max_days
@@ -99,14 +90,13 @@ format_snowflake_error = _lazy_query_call("format_snowflake_error")
 
 CONNECTION_OPTIONAL_SECTIONS = {"Alert Center"}
 
-SECTION_WORKSPACE_STATE_KEYS = {
-    "Executive Landing": ("_executive_landing_full_workspace_requested", "_executive_landing_brief_mode"),
-    "DBA Control Room": ("_dba_control_room_full_workspace_requested", "_dba_control_room_brief_mode"),
-    "Alert Center": ("_alert_center_full_workspace_requested", "_alert_center_brief_mode"),
-    "Cost & Contract": ("_cost_contract_full_workspace_requested", "_cost_contract_brief_mode"),
-    "Workload Operations": ("_workload_operations_full_workspace_requested", "_workload_operations_brief_mode"),
-    "Security Monitoring": ("_security_monitoring_full_workspace_requested", "_security_monitoring_brief_mode"),
-}
+EXECUTIVE_LANDING_BOARD_STATE_KEYS = (
+    "executive_landing_snapshot",
+    "executive_landing_platform_summary",
+    "executive_landing_command_board",
+    "executive_landing_command_board_meta",
+    "executive_landing_command_board_refresh_marker",
+)
 
 
 def _seed_current_role_from_secrets() -> None:
@@ -121,6 +111,7 @@ def _seed_current_role_from_secrets() -> None:
         role = ""
     if role:
         st.session_state["_overwatch_current_role"] = role
+        st.session_state["_overwatch_current_role_source"] = "secrets"
 
 
 def _dev_reload_helpers_enabled() -> bool:
@@ -150,7 +141,7 @@ def _maybe_reload_dev_helpers() -> None:
 
 import sections
 
-if getattr(theme_module, "THEME_VERSION", "") != "2026-06-16-theme-contrast-v6":
+if getattr(theme_module, "THEME_VERSION", "") != "2026-06-16-theme-contrast-v8":
     theme_module = importlib.reload(theme_module)
     inject_theme = theme_module.inject_theme
     render_theme_picker = theme_module.render_theme_picker
@@ -180,41 +171,41 @@ if "global_start_date" not in st.session_state or "global_end_date" not in st.se
     st.session_state.setdefault("_global_date_range_input", (_default_start, _default_end))
 
 
-# Role resolution, cached for five minutes.
 def _get_current_role() -> str:
     return str(st.session_state.get("_overwatch_current_role", "") or "").upper()
 
 
-def _allowed_experience_options() -> list[str]:
-    return list(resolve_allowed_experience_views(_get_current_role()))
+def _current_role_allows_app_access(role: str) -> bool:
+    """Return whether the current Snowflake role may open the admin monitor."""
+    return str(role or "").strip().upper() in set(ADMIN_ACCESS_ROLES)
 
 
-def _current_experience_view() -> str:
-    allowed = _allowed_experience_options()
-    current = str(st.session_state.get("overwatch_experience_view", "") or allowed[0])
-    if current not in allowed:
-        current = allowed[0]
-        st.session_state["overwatch_experience_view"] = current
-    return current
+def _refresh_current_role_for_access(connection_available: bool) -> str:
+    """Capture CURRENT_ROLE before deciding whether the admin monitor can render."""
+    role = _get_current_role()
+    if not connection_available:
+        return role
+    if role and st.session_state.get("_overwatch_current_role_source") == "session":
+        return role
+    try:
+        get_session()
+    except StopException:
+        st.session_state["_overwatch_connection_unavailable"] = True
+    except Exception:
+        pass
+    return _get_current_role()
+
+
+def _admin_access_is_allowed(role: str, connection_available: bool) -> bool:
+    """Allow local no-connection shells, but gate Snowflake sessions to admin roles."""
+    if not role and not connection_available:
+        return True
+    return _current_role_allows_app_access(role)
 
 
 def _resolve_visible_sections() -> list[str]:
-    return _resolve_visible_sections_for_experience(_current_experience_view())
-
-
-def _resolve_visible_sections_for_experience(experience: str) -> list[str]:
-    role_profile = resolve_role_profile(_get_current_role())
-    base_sections = list(ROLE_SECTIONS.get(role_profile, ALL_SECTIONS))
-    allowed = _allowed_experience_options()
-    selected_experience = experience if experience in allowed else allowed[0]
-    profile_sections = EXPERIENCE_VIEW_SECTIONS.get(selected_experience, EXPERIENCE_VIEW_SECTIONS["DBA"])
-    visible = [
-        section
-        for section in profile_sections
-        if section in base_sections and section not in PRIMARY_NAV_HIDDEN_SECTIONS
-    ]
-    base_visible = [section for section in base_sections if section not in PRIMARY_NAV_HIDDEN_SECTIONS]
-    return visible or base_visible or base_sections
+    """Return the full admin command-center navigation."""
+    return [section for section in ALL_SECTIONS if section not in PRIMARY_NAV_HIDDEN_SECTIONS]
 
 
 def _normalize_nav_section(section: str) -> str:
@@ -227,22 +218,36 @@ def _apply_section_compatibility_state(section: str) -> None:
         st.session_state[key] = value
 
 
-def _request_section_board_state(section: str) -> None:
-    """Make sidebar navigation land on the section board before detailed telemetry."""
+def _request_executive_landing_hydration() -> None:
+    """Force the landing wall to hydrate from the command mart on nav click."""
+    for key in EXECUTIVE_LANDING_BOARD_STATE_KEYS:
+        st.session_state.pop(key, None)
+    st.session_state["_overwatch_executive_landing_refresh_started_at"] = datetime.now().isoformat(timespec="seconds")
+
+
+def _request_section_detail_state(section: str) -> None:
+    """Make sidebar navigation land on the useful working surface."""
     target = _normalize_nav_section(section)
-    state_keys = SECTION_WORKSPACE_STATE_KEYS.get(target)
-    if not state_keys:
-        return
-    workspace_key, brief_key = state_keys
     if target == "Executive Landing":
-        st.session_state[workspace_key] = True
-        st.session_state[brief_key] = False
+        st.session_state["_executive_landing_full_workspace_requested"] = True
+        st.session_state["_executive_landing_brief_mode"] = False
         return
-    st.session_state[workspace_key] = False
-    st.session_state[brief_key] = True
+    if target == "DBA Control Room":
+        st.session_state["dba_control_room_active_view"] = "Morning Brief"
+        return
+    if target == "Alert Center":
+        st.session_state["alert_center_active_view"] = "Command Center"
+        return
+    if target == "Cost & Contract":
+        st.session_state["cost_contract_workflow"] = "Usage attribution and run-rate"
+        return
+    if target == "Workload Operations":
+        st.session_state["workload_operations_workflow"] = "Query investigation"
+        st.session_state["workload_operations_query_focus"] = "AI Query Diagnosis"
+        return
     if target == "Security Monitoring":
-        st.session_state["_security_posture_full_workspace_requested"] = False
-        st.session_state["_security_posture_brief_mode"] = True
+        st.session_state["security_posture_view"] = "Security Brief"
+        st.session_state["security_posture_workflow"] = "Access posture"
 
 
 def _section_requires_connection(section: str) -> bool:
@@ -256,21 +261,16 @@ def _queue_section_navigation(section: str) -> None:
     current = _normalize_nav_section(st.session_state.get("nav_section", ""))
     st.session_state.pop("_overwatch_pending_autoload_section", None)
     st.session_state.pop("_overwatch_pending_autoload_started_at", None)
-    if target != current:
+    if target == "Executive Landing":
+        _request_executive_landing_hydration()
         st.session_state["_overwatch_pending_section"] = target
         st.session_state["_overwatch_section_transition_started_at"] = datetime.now().isoformat(timespec="seconds")
-    _request_section_board_state(target)
+    elif target != current:
+        st.session_state["_overwatch_pending_section"] = target
+        st.session_state["_overwatch_section_transition_started_at"] = datetime.now().isoformat(timespec="seconds")
+    _request_section_detail_state(target)
     _apply_section_compatibility_state(raw_section)
     st.session_state["nav_section"] = target
-
-
-def _sync_experience_navigation() -> None:
-    """Keep the active section valid when the persona filter changes."""
-    selected = _current_experience_view()
-    visible = _resolve_visible_sections_for_experience(selected)
-    current = _normalize_nav_section(st.session_state.get("nav_section", visible[0]))
-    if current not in visible:
-        _queue_section_navigation(visible[0])
 
 
 def _triage_mode_from_exceptions(enabled: bool) -> str:
@@ -302,19 +302,9 @@ def _ensure_triage_mode_state(default_exceptions: bool) -> None:
     _sync_exceptions_only_mode()
 
 
-def _apply_role_based_defaults() -> None:
-    """Seed no-click persona defaults for the current Snowflake role."""
-    role = _get_current_role()
-    profile = resolve_role_profile(role)
-    scope = (role, profile)
-    if st.session_state.get("_overwatch_role_defaults_scope") == scope:
-        return
-
-    default_experience = default_experience_view_for_role(role)
-    st.session_state["overwatch_experience_view"] = default_experience
-    _ensure_triage_mode_state(profile == "DBA")
-    st.session_state["_overwatch_role_defaults_scope"] = scope
-    _sync_experience_navigation()
+def _apply_admin_defaults() -> None:
+    """Seed admin-only defaults for the current session."""
+    _ensure_triage_mode_state(True)
 
 
 def _global_filter_signature() -> tuple:
@@ -368,6 +358,14 @@ def _should_show_section_transition(signature: tuple) -> bool:
     has_prior_render = "_overwatch_last_section_render_signature" in st.session_state
     has_pending_navigation = "_overwatch_pending_section" in st.session_state
     return (has_prior_render or has_pending_navigation) and _section_transition_needed(signature)
+
+
+def _section_body_reset_needed(signature: tuple) -> bool:
+    """Return whether the previous section body needs a clean clearing pass."""
+    return (
+        _should_show_section_transition(signature)
+        and st.session_state.get("_overwatch_section_body_reset_signature") != signature
+    )
 
 
 def _current_visible_sections() -> list[str]:
@@ -610,6 +608,7 @@ def _mark_section_rendered(section: str, signature: tuple) -> None:
     st.session_state["_overwatch_last_section_render_signature"] = signature
     st.session_state.pop("_overwatch_pending_section", None)
     st.session_state.pop("_overwatch_section_transition_started_at", None)
+    st.session_state.pop("_overwatch_section_body_reset_signature", None)
 
 
 def _probe_snowflake_available(force: bool = False) -> bool:
@@ -640,7 +639,7 @@ def _probe_snowflake_available(force: bool = False) -> bool:
 
 
 SECTION_SUBTITLES = {
-    "Executive Landing": "Board-ready risk, cost movement, action closure, and telemetry trust.",
+    "Executive Landing": "Risk, cost movement, action closure, and telemetry trust.",
     "DBA Control Room": "Morning triage, route status, data health, and release risk.",
     "Alert Center": "Consolidated incidents, email digests, annotation history, and control status.",
     "Workload Operations": "Query/contention triage plus task, procedure, and pipeline health.",
@@ -748,6 +747,24 @@ def _render_connection_empty_state(section: str) -> None:
         st.rerun()
 
 
+def _render_admin_access_required(role: str) -> None:
+    safe_role = html.escape(str(role or "Unknown role"))
+    safe_roles = html.escape(", ".join(ADMIN_ACCESS_ROLES))
+    st.markdown(
+        f"""
+        <div class="ow-empty-state">
+            <div class="ow-empty-title">Admin role required</div>
+            <div class="ow-empty-list">
+                <span>Current role: <code>{safe_role}</code></span>
+                <span>Allowed roles: <code>{safe_roles}</code></span>
+                <span>Switch roles in Snowflake and refresh</span>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _render_section_transition_state(section: str) -> None:
     """Hide the previous section while the selected section hydrates."""
     safe_section = html.escape(_normalize_nav_section(section))
@@ -770,8 +787,16 @@ def _render_section_transition_state(section: str) -> None:
     )
 
 
-_apply_role_based_defaults()
-current_role = _get_current_role()
+def _fresh_section_container(slot):
+    """Clear stale section children before rendering a new body."""
+    slot.empty()
+    return slot.container()
+
+
+_apply_admin_defaults()
+connection_available = _probe_snowflake_available()
+current_role = _refresh_current_role_for_access(connection_available)
+admin_access_allowed = _admin_access_is_allowed(current_role, connection_available)
 visible_sections = _current_visible_sections()
 active_section = _current_active_section(visible_sections)
 active_company = str(st.session_state.get("active_company", DEFAULT_COMPANY) or DEFAULT_COMPANY)
@@ -782,8 +807,6 @@ st.session_state["_overwatch_active_section"] = active_section
 # high-concurrency startup this gives users an immediate, stable command-center frame.
 _render_app_header(active_section, active_company, credit_price, current_role)
 active_company = _render_topbar_filter_strip(active_company)
-
-connection_available = _probe_snowflake_available()
 
 
 # Sidebar.
@@ -856,31 +879,20 @@ with st.sidebar:
 
     # Evidence depth is section-owned. Keep legacy session keys normalized for
     # deep links only; do not expose a global operator knob.
-    _ensure_triage_mode_state(resolve_role_profile(_get_current_role()) == "DBA")
+    _ensure_triage_mode_state(True)
     _sync_exceptions_only_mode()
 
     st.divider()
 
     # Navigation.
-    current_role     = _get_current_role()
-    matched_profile  = resolve_role_profile(current_role)
-    experience_options = _allowed_experience_options()
-    current_experience = _current_experience_view()
-    selected_experience = st.selectbox(
-        "Navigation View",
-        experience_options,
-        index=experience_options.index(current_experience),
-        key="overwatch_experience_view",
-        on_change=_sync_experience_navigation,
-        help="Filters navigation for the current persona without granting additional Snowflake privileges.",
-    )
+    current_role = _get_current_role()
+    admin_access_allowed = _admin_access_is_allowed(current_role, connection_available)
     visible_sections = _current_visible_sections()
-    profile_color    = {
-        "ANALYST": "#fbbf24", "MANAGER": "#c084fc", "REPORT": "#fbbf24",
-    }.get(matched_profile, "#38bdf8")
     role_label = current_role[:20] or "DBA"
 
-    st.caption(f"{role_label} - {matched_profile} role - {selected_experience} view")
+    st.caption(f"{role_label} - Admin command center")
+    if not admin_access_allowed:
+        st.warning("Switch to SNOW_ACCOUNTADMINS or SNOW_SYSADMINS to open monitoring sections.")
 
     active_section = _current_active_section(visible_sections)
 
@@ -957,7 +969,6 @@ with st.sidebar:
             format_func=lambda x: f"{x}s",
             key="rt_interval",
         )
-        render_admin_mode_control()
 
     st.divider()
 
@@ -975,32 +986,42 @@ active_section = _current_active_section(visible_sections)
 st.session_state["_overwatch_active_section"] = active_section
 
 section_signature = _section_render_signature(active_section, active_company, current_role)
-transition_slot = st.empty()
 section_slot = st.empty()
 show_transition = _should_show_section_transition(section_signature)
+if _section_body_reset_needed(section_signature):
+    with _fresh_section_container(section_slot):
+        _render_section_transition_state(active_section)
+    st.session_state["_overwatch_section_body_reset_signature"] = section_signature
+    st.session_state["_overwatch_secondary_chrome_ready"] = False
+    st.rerun()
+
 section_render_started = time.perf_counter()
 if show_transition:
-    with transition_slot.container():
+    with _fresh_section_container(section_slot):
         _render_section_transition_state(active_section)
 
 try:
     needs_connection = _section_requires_connection(active_section)
-    if needs_connection and (not connection_available or st.session_state.get("_overwatch_connection_unavailable")):
-        with section_slot.container():
+    if not admin_access_allowed:
+        with _fresh_section_container(section_slot):
+            _render_admin_access_required(current_role)
+        _mark_section_rendered(active_section, section_signature)
+    elif needs_connection and (not connection_available or st.session_state.get("_overwatch_connection_unavailable")):
+        with _fresh_section_container(section_slot):
             _render_connection_empty_state(active_section)
         _mark_section_rendered(active_section, section_signature)
     else:
         try:
-            with section_slot.container():
+            with _fresh_section_container(section_slot):
                 sections.dispatch(active_section)
             _mark_section_rendered(active_section, section_signature)
         except StopException:
             st.session_state["_overwatch_connection_unavailable"] = True
-            with section_slot.container():
+            with _fresh_section_container(section_slot):
                 _render_connection_empty_state(active_section)
             _mark_section_rendered(active_section, section_signature)
         except Exception as e:
-            with section_slot.container():
+            with _fresh_section_container(section_slot):
                 st.error(f"{active_section} could not finish rendering.")
                 st.caption(format_snowflake_error(e))
                 st.info(
@@ -1013,5 +1034,3 @@ finally:
     st.session_state["_overwatch_last_section_render_ms"] = duration_ms
     st.session_state["_overwatch_secondary_chrome_ready"] = True
     log_section_load(active_section, duration_ms)
-    if show_transition:
-        transition_slot.empty()

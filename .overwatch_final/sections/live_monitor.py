@@ -316,7 +316,7 @@ def render():
                                 confirmation_text=confirm_cancel,
                                 control_context=(
                                     "Live Monitor manual cancellation. Operator typed CANCEL and used the "
-                                    "Admin actions gate before sending SYSTEM$CANCEL_QUERY."
+                                    "admin confirmation flow before sending SYSTEM$CANCEL_QUERY."
                                 ),
                                 result_status="SUCCESS",
                                 result_message=f"Cancel sent for {kill_qid}",

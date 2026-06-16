@@ -1,9 +1,9 @@
 # OVERWATCH Live Role Proof Checklist
 
 Use this checklist after deploying or refreshing OVERWATCH in Snowflake. The
-goal is to prove each role sees useful data immediately, gets friendly
-privilege messages when a source is unavailable, and cannot run actions outside
-its operating lane.
+goal is to prove the approved admin roles see useful data immediately, get
+friendly privilege messages when a source is unavailable, and cannot run actions
+outside Snowflake's privilege model.
 
 ## First Run Proof
 
@@ -26,11 +26,9 @@ its operating lane.
 
 | Role family | Expected access | Must verify |
 |---|---|---|
-| `ACCOUNTADMIN` / full DBA | All command surfaces, setup validation, alert lifecycle actions, schema compare, data compare, and controlled DBA action previews. | Executive Landing loads the metric wall; Alert History can record lifecycle audit; Schema/Data Compare config SQL is visible; Contention top fix path shows guarded SQL. |
-| `SYSADMIN` / platform DBA | Workload, cost, mart, task, warehouse, and compare visibility. State-changing admin actions remain governed. | Cost & Contract first view is fast; Workload Operations shows task/query summaries; live contention degrades cleanly when a source is unavailable. |
-| `_DSA` manager roles | Broad management visibility without unsafe execution. | Executive Landing, Cost & Contract, Alert Center, and Security Monitoring show summary data, but dangerous remediation stays review-gated. |
-| `_DTI` analyst roles | Query, workload, data compare, and evidence review focus. | Workload Operations, Query Diagnosis, Schema/Data Compare, and read-only cost summaries are visible without setup/action controls. |
-| Unknown, blank, or report roles | Restrictive report mode. | No DBA-only controls appear; unavailable Snowflake views show friendly messages; Executive Landing still renders a data-first frame when marts are granted. |
+| `SNOW_ACCOUNTADMINS` | Full admin command center access, setup validation, alert lifecycle actions, schema compare, data compare, and guarded account-level previews. | Executive Landing loads the metric wall; Alert History can record lifecycle audit; Schema/Data Compare config SQL is visible; account-parameter workflows stay gated by Snowflake privileges and typed confirmation. |
+| `SNOW_SYSADMINS` | Full admin command center access for workload, cost, mart, task, warehouse, and compare visibility. | Cost & Contract first view is fast; Workload Operations shows task/query summaries; live contention degrades cleanly when a source is unavailable; account-level actions explain the required privilege instead of failing raw. |
+| Unknown, blank, raw system, or report roles | No monitoring section access. | The app shows the approved role requirement and does not dispatch primary monitoring sections. |
 
 ## Section Smoke By Role
 

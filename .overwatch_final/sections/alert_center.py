@@ -784,7 +784,7 @@ def _alert_center_pending_brief(active_view: str, required_sources: set[str]) ->
         return {
             "state": "Brief Ready",
             "headline": "Choose the alert workflow before loading telemetry.",
-            "detail": "Start with the command board, issue inbox, triage digest, delivery status, or queue routing based on the operator question.",
+            "detail": "Start with command center, issue inbox, triage digest, delivery status, or queue routing based on the operator question.",
         }
     return {
         "state": "Ready",
@@ -837,7 +837,7 @@ def _apply_alert_center_brief_first_default() -> None:
 
 
 def _render_alert_center_brief_launchpad() -> None:
-    st.markdown("**Alert Command Workflows**")
+    st.markdown("**Alert Investigation Workflows**")
     rows = _alert_center_brief_workflow_rows()
     for offset in range(0, len(rows), 3):
         cols = st.columns(3)
@@ -1760,7 +1760,7 @@ def render() -> None:
             loaded=False,
         )
         render_signal_lane_board(
-            "Alert Command Board",
+            "Alert Signal Summary",
             _alert_command_lanes(active_view=active_view, required_sources=required_sources, loaded=False),
             max_lanes=8,
         )
@@ -1829,7 +1829,7 @@ def render() -> None:
             loaded=False,
         )
         render_signal_lane_board(
-            "Alert Command Board",
+            "Alert Signal Summary",
             _alert_command_lanes(active_view=active_view, required_sources=required_sources, loaded=False),
             max_lanes=8,
         )
@@ -1851,7 +1851,7 @@ def render() -> None:
             loaded=False,
         )
         render_signal_lane_board(
-            "Alert Command Board",
+            "Alert Signal Summary",
             _alert_command_lanes(active_view=active_view, required_sources=required_sources, loaded=False),
             max_lanes=8,
         )
@@ -1873,7 +1873,7 @@ def render() -> None:
             loaded=False,
         )
         render_signal_lane_board(
-            "Alert Command Board",
+            "Alert Signal Summary",
             _alert_command_lanes(active_view=active_view, required_sources=required_sources, loaded=False),
             max_lanes=8,
         )
@@ -1957,7 +1957,7 @@ def render() -> None:
         open_queue=open_queue_count,
     )
     render_signal_lane_board(
-        "Alert Command Board",
+        "Alert Signal Summary",
         _alert_command_lanes(
             active_view=active_view,
             required_sources=required_sources,
@@ -2133,7 +2133,7 @@ def render() -> None:
                 ))
                 _render_priority_dataframe(
                     lifecycle,
-                    title="Alert lifecycle command board",
+                    title="Alert lifecycle summary",
                     priority_columns=[
                         "LIFECYCLE_STATE", "SLA_STATE", "SEVERITY", "STATUS",
                         "CATEGORY", "ALERT_TYPE", "ENTITY_NAME", "OWNER",

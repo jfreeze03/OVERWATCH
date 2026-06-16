@@ -141,7 +141,7 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
     "admin": (
         "admin_actions_default_enabled", "admin_actions_enabled",
         "admin_button_disabled", "admin_disabled_reason",
-        "initialize_admin_actions_default", "render_admin_mode_control", "require_admin_enabled",
+        "initialize_admin_actions_default", "require_admin_enabled",
         "clamp_global_date_range",
         "build_admin_audit_insert_sql", "log_admin_action",
     ),

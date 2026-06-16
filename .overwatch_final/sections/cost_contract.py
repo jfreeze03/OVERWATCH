@@ -3711,7 +3711,7 @@ def _render_cost_splash(splash: dict, *, company: str, days: int, credit_price: 
     st.markdown("**Cost Overview**")
     _render_cost_load_contract(splash, days=int(days))
     render_signal_lane_board(
-        "Cost Command Board",
+        "Cost Signal Summary",
         _cost_command_lanes(splash, credit_price=credit_price, days=int(days)),
         max_lanes=8,
     )

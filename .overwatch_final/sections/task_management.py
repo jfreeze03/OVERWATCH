@@ -13,7 +13,6 @@ from utils import (
     get_active_company,
     get_active_environment,
     get_session,
-    admin_actions_enabled,
     admin_button_disabled,
     log_admin_action,
     CREDIT_RATES,
@@ -1528,7 +1527,7 @@ def _build_task_ops_markdown(
         "## Telemetry Limits",
         "- TASK_HISTORY columns vary by Snowflake account and role; missing columns are feature-gated.",
         "- Procedure linkage is inferred from task definition CALL statements when available.",
-        "- Admin actions require the global Admin actions toggle and the Snowflake task privileges.",
+        "- Admin actions require Snowflake task privileges and typed confirmation where prompted.",
     ])
     return "\n".join(lines)
 
@@ -2107,7 +2106,7 @@ def _build_task_reliability_slo_board(summary: dict, exceptions: pd.DataFrame, r
         "SLO": "Critical path risk",
         "STATE": "Ready" if p1 == 0 and blocked == 0 and recovery_breaches == 0 else "Review",
         "EVIDENCE": f"P1 incidents={p1:,}; blocked recoveries={blocked:,}; recovery breaches={recovery_breaches:,}.",
-        "NEXT_ACTION": "Use the recovery command board before treating the task graph as healthy.",
+        "NEXT_ACTION": "Use the recovery summary before treating the task graph as healthy.",
     })
     board = pd.DataFrame(rows)
     board["_RANK"] = board["STATE"].map({"Review": 0, "Ready": 1}).fillna(9)
@@ -2483,7 +2482,7 @@ def _render_task_ops_brief(session) -> None:
 
         recovery_board = _task_recovery_command_board(exceptions, recovery_sla)
         if not recovery_board.empty:
-            st.subheader("Recovery Command Board")
+            st.subheader("Recovery Command Summary")
             blocked = int(recovery_board["COMMAND_STATE"].astype(str).eq("Blocked").sum())
             p1_p2 = int(recovery_board["INCIDENT_PRIORITY"].astype(str).str.startswith(("P1", "P2")).sum())
             owner_review = int(
@@ -3202,8 +3201,6 @@ def render():
             "Generate and run guarded task actions from the same place you diagnose graph health. "
             "Every action is written to the OVERWATCH admin audit table when that table exists."
         )
-        if not admin_actions_enabled():
-            st.info("Read-only mode is active. Enable Admin actions in Settings before running operational controls.")
         st.caption("Admin action audit logging is optional and owned by the DBA team.")
         exec_context = _current_execution_context(session)
         st.caption(
@@ -3466,8 +3463,6 @@ def render():
     elif task_view == "Execute Task":
         st.subheader("Execute Task On-Demand")
         st.caption("Select and run a task on demand. Ensure dependencies are met before running.")
-        if not admin_actions_enabled():
-            st.info("Read-only mode is active. Enable Admin actions in Settings before executing tasks.")
         st.caption("Admin action audit logging is optional and owned by the DBA team.")
         exec_context = _current_execution_context(session)
         st.caption(

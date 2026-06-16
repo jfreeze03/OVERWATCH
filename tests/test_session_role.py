@@ -27,20 +27,34 @@ class SessionRoleTests(unittest.TestCase):
                 self.statement = statement
                 return Result()
 
-        st.session_state.pop("_overwatch_current_role", None)
-        role = _capture_current_role(Session())
-        self.assertEqual(role, "ACCOUNTADMIN")
-        self.assertEqual(st.session_state["_overwatch_current_role"], "ACCOUNTADMIN")
+        previous = dict(st.session_state)
+        try:
+            st.session_state.pop("_overwatch_current_role", None)
+            st.session_state.pop("_overwatch_current_role_source", None)
+            role = _capture_current_role(Session())
+            self.assertEqual(role, "ACCOUNTADMIN")
+            self.assertEqual(st.session_state["_overwatch_current_role"], "ACCOUNTADMIN")
+            self.assertEqual(st.session_state["_overwatch_current_role_source"], "session")
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)
 
     def test_capture_current_role_fails_open(self):
         class Session:
             def sql(self, _statement):
                 raise RuntimeError("not available")
 
-        st.session_state.pop("_overwatch_current_role", None)
-        role = _capture_current_role(Session())
-        self.assertEqual(role, "")
-        self.assertEqual(st.session_state["_overwatch_current_role"], "")
+        previous = dict(st.session_state)
+        try:
+            st.session_state.pop("_overwatch_current_role", None)
+            st.session_state.pop("_overwatch_current_role_source", None)
+            role = _capture_current_role(Session())
+            self.assertEqual(role, "")
+            self.assertEqual(st.session_state["_overwatch_current_role"], "")
+            self.assertEqual(st.session_state["_overwatch_current_role_source"], "unknown")
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)
 
     def test_build_overwatch_query_tag_includes_active_section_scope(self):
         st.session_state["_detailed_query_tags_enabled"] = True

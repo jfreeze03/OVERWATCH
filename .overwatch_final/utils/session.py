@@ -206,10 +206,12 @@ def _capture_current_role(sess) -> str:
         role = rows[0]["R"] if rows else ""
         role = str(role or "").upper()
         st.session_state["_overwatch_current_role"] = role
+        st.session_state["_overwatch_current_role_source"] = "session"
         _warn_on_broad_role(role)
         return role
     except Exception:
         st.session_state.setdefault("_overwatch_current_role", "")
+        st.session_state.setdefault("_overwatch_current_role_source", "unknown")
         return ""
 
 
@@ -222,7 +224,7 @@ def _warn_on_broad_role(role: str) -> None:
             return
         st.warning(
             "OVERWATCH is running with a broad administrator role. "
-            "For production, use a least-privilege read-only monitoring role."
+            "For app access, use SNOW_ACCOUNTADMINS or SNOW_SYSADMINS."
         )
         st.session_state["_overwatch_broad_role_warning_shown"] = True
     except Exception:

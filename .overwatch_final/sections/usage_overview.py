@@ -15,20 +15,18 @@ from utils import (
     defer_source_note,
     freshness_note,
     get_active_company,
-    get_db_filter_clause,
     get_global_filter_clause,
     get_session,
-    get_wh_filter_clause,
     company_scoped_query,
     filter_existing_columns,
+    load_shared_usage_metering_kpis,
+    load_shared_usage_storage_kpis,
     metric_confidence_label,
     render_chart_with_data_toggle,
     render_drillable_bar_chart,
     build_mart_usage_overview_sql,
-    build_mart_usage_metering_sql,
     build_mart_usage_pressure_sql,
     build_mart_usage_cost_drivers_sql,
-    build_mart_usage_storage_sql,
     build_mart_usage_query_mix_sql,
     build_mart_usage_database_adoption_sql,
     run_query,
@@ -57,8 +55,6 @@ def _load_overview(session, days: int) -> dict:
     global_database = str(st.session_state.get("global_database", "") or "").strip()
     global_start_date = st.session_state.get("global_start_date")
     global_end_date = st.session_state.get("global_end_date")
-    wh_filter = get_wh_filter_clause("warehouse_name")
-    db_filter = get_db_filter_clause("database_name")
     qh_cols = set(filter_existing_columns(
         session,
         "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
@@ -70,11 +66,6 @@ def _load_overview(session, days: int) -> dict:
             "CREDITS_USED_CLOUD_SERVICES",
             "BYTES_SPILLED_TO_REMOTE_STORAGE",
         ],
-    ))
-    wm_cols = set(filter_existing_columns(
-        session,
-        "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY",
-        ["CREDITS_USED_COMPUTE", "CREDITS_USED_CLOUD_SERVICES"],
     ))
     success_expr = (
         "SUM(IFF(q.error_code IS NULL, 1, 0))"
@@ -104,16 +95,6 @@ def _load_overview(session, days: int) -> dict:
     remote_spill_expr = (
         "ROUND(SUM(COALESCE(q.bytes_spilled_to_remote_storage, 0)) / POWER(1024, 3), 2)"
         if "BYTES_SPILLED_TO_REMOTE_STORAGE" in qh_cols
-        else "0"
-    )
-    wm_compute_expr = (
-        f"ROUND(SUM(IFF(start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP()), credits_used_compute, 0)), 4)"
-        if "CREDITS_USED_COMPUTE" in wm_cols
-        else f"ROUND(SUM(IFF(start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP()), credits_used, 0)), 4)"
-    )
-    wm_cloud_expr = (
-        f"ROUND(SUM(IFF(start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP()), credits_used_cloud_services, 0)), 4)"
-        if "CREDITS_USED_CLOUD_SERVICES" in wm_cols
         else "0"
     )
     q_filters = get_global_filter_clause(
@@ -159,74 +140,13 @@ def _load_overview(session, days: int) -> dict:
         overview = run_query(live_overview_sql, ttl_key=f"uo_overview_live_{company}_{days}", tier="historical")
         overview_source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
 
-    live_metering_sql = f"""
-        SELECT
-            ROUND(SUM(IFF(start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP()), credits_used, 0)), 4) AS total_credits,
-            ROUND(SUM(IFF(start_time >= DATEADD('day', -{days * 2}, CURRENT_TIMESTAMP())
-                          AND start_time < DATEADD('day', -{days}, CURRENT_TIMESTAMP()),
-                          credits_used, 0)), 4) AS prior_credits,
-            {wm_compute_expr} AS compute_credits,
-            {wm_cloud_expr} AS warehouse_cloud_credits
-        FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
-        WHERE start_time >= DATEADD('day', -{days * 2}, CURRENT_TIMESTAMP())
-          {wh_filter}
-    """
-    metering = run_query(
-        build_mart_usage_metering_sql(
-            days,
-            company=company,
-            warehouse_contains=global_warehouse,
-            start_date=global_start_date,
-            end_date=global_end_date,
-        ),
-        ttl_key=f"uo_metering_mart_{company}_{days}",
-        tier="historical",
-    )
-    metering_source = "Fast metering summary"
-    if metering.empty:
-        metering = run_query(live_metering_sql, ttl_key=f"uo_metering_live_{company}_{days}", tier="historical")
-        metering_source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"
+    metering_result = load_shared_usage_metering_kpis(session, days, company, section="Usage Overview")
+    metering = metering_result.data
+    metering_source = metering_result.source
 
-    storage = run_query(
-        build_mart_usage_storage_sql(
-            days,
-            company=company,
-            database_contains=global_database,
-        ),
-        ttl_key=f"uo_storage_mart_{company}_{days}",
-        tier="historical",
-    )
-    storage_source = "Fast storage summary"
-    if storage.empty:
-        storage = run_query(f"""
-            WITH scoped AS (
-                SELECT database_name, average_database_bytes, average_failsafe_bytes, usage_date
-                FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY
-                WHERE usage_date >= DATEADD('day', -{max(days * 2, 14)}, CURRENT_DATE())
-                  {db_filter}
-            ),
-            current_latest AS (
-                SELECT database_name, average_database_bytes, average_failsafe_bytes,
-                       ROW_NUMBER() OVER (PARTITION BY database_name ORDER BY usage_date DESC) AS rn
-                FROM scoped
-            ),
-            prior_latest AS (
-                SELECT database_name, average_database_bytes,
-                       ROW_NUMBER() OVER (PARTITION BY database_name ORDER BY usage_date DESC) AS rn
-                FROM scoped
-                WHERE usage_date <= DATEADD('day', -{days}, CURRENT_DATE())
-            )
-            SELECT
-                ROUND(SUM(COALESCE(c.average_database_bytes, 0)) / POWER(1024, 4), 3) AS active_storage_tb,
-                ROUND(SUM(COALESCE(c.average_failsafe_bytes, 0)) / POWER(1024, 4), 3) AS failsafe_storage_tb,
-                ROUND(SUM(COALESCE(p.average_database_bytes, 0)) / POWER(1024, 4), 3) AS prior_active_storage_tb
-            FROM current_latest c
-            LEFT JOIN prior_latest p
-              ON c.database_name = p.database_name
-             AND p.rn = 1
-            WHERE c.rn = 1
-        """, ttl_key=f"uo_storage_{company}_{days}", tier="historical")
-        storage_source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY"
+    storage_result = load_shared_usage_storage_kpis(days, company, section="Usage Overview")
+    storage = storage_result.data
+    storage_source = storage_result.source
 
     try:
         task_health = run_query(

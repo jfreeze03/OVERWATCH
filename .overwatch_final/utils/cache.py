@@ -39,7 +39,7 @@ def clear_all_cache(
     bumping an OVERWATCH salt instead of clearing Streamlit's shared cache.
     """
     transient_prefixes = (
-        "_data_", "_ts_", "df_", "_refresh_salt_", "_sec_",
+        "_data_", "_ts_", "df_", "_refresh_salt_", "_sec_", "_shared_metric_",
         "_overwatch_query_", "alert_center_", "cortex_", "cost_contract_", "cc_", "ah_", "cm_", "ds_", "dba_",
         "lm_", "mc_", "ocm_", "opt_", "qa_", "qs_", "rec_", "sec_", "spcs_",
         "stor_", "spt_", "sp_ops_", "sp_sla_", "tm_", "task_ops_", "task_sla_",

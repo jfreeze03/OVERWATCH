@@ -3,13 +3,12 @@ import streamlit as st
 from config import DEFAULTS
 from sections.shell_helpers import render_shell_snapshot
 from utils import (
-    build_mart_storage_db_detail_sql,
-    build_mart_storage_trend_sql,
     day_window_selectbox,
     defer_source_note,
     get_active_company,
     get_db_filter_clause,
-    get_session,
+    load_shared_storage_db_detail,
+    load_shared_storage_trend,
     metric_confidence_label,
     freshness_note,
     download_csv,
@@ -24,23 +23,23 @@ from utils.workflows import render_priority_dataframe
 LIVE_STORAGE_FALLBACK_MAX_DAYS = 90
 
 
-def _load_storage_trend_from_mart(stor_days: int, company: str) -> bool:
-    df_stor = run_query(
-        build_mart_storage_trend_sql(stor_days, company),
-        ttl_key=f"storage_trend_mart_{company}_{stor_days}",
-        tier="historical",
+def _load_storage_trend(stor_days: int, company: str, *, allow_live_fallback: bool = False) -> bool:
+    result = load_shared_storage_trend(
+        stor_days,
+        company,
+        allow_live_fallback=allow_live_fallback,
+        max_live_days=LIVE_STORAGE_FALLBACK_MAX_DAYS,
+        section="Storage Monitor",
     )
-    if df_stor.empty:
+    if result.data.empty:
         return False
-    st.session_state["stor_df_stor"] = df_stor
-    st.session_state["stor_source"] = "Fast storage summary"
-    st.session_state["stor_meta"] = {"company": company, "days": int(stor_days)}
+    st.session_state["stor_df_stor"] = result.data
+    st.session_state["stor_source"] = result.source
+    st.session_state["stor_meta"] = {"company": company, "days": int(result.effective_days or stor_days)}
     return True
 
 
 def render():
-    session = get_session()
-    credit_price = st.session_state.get("credit_price", DEFAULTS["credit_price"])
     storage_cost_per_tb = st.session_state.get("storage_cost_per_tb", DEFAULTS["storage_cost_per_tb"])
     company = get_active_company()
 
@@ -55,70 +54,25 @@ def render():
         and st.session_state.get("stor_autoload_failed_meta") != stor_meta
     ):
         try:
-            if not _load_storage_trend_from_mart(stor_days, company):
+            if not _load_storage_trend(stor_days, company, allow_live_fallback=False):
                 st.session_state["stor_autoload_failed_meta"] = stor_meta
         except Exception:
             st.session_state["stor_autoload_failed_meta"] = stor_meta
 
     if st.button("Load Storage Data", key="stor_load"):
         try:
-            if not _load_storage_trend_from_mart(stor_days, company):
-                raise RuntimeError("Storage mart returned no rows.")
+            if not _load_storage_trend(stor_days, company, allow_live_fallback=True):
+                raise RuntimeError("Storage summary returned no rows.")
             if company != "ALL":
                 st.info("Stage storage is account-level in Snowflake, so this company view shows database and failsafe storage only.")
-        except Exception:
-            try:
-                if company != "ALL":
-                    st.info("Stage storage is account-level in Snowflake, so this company view shows database and failsafe storage only.")
-                fallback_days = min(int(stor_days), LIVE_STORAGE_FALLBACK_MAX_DAYS)
-                if int(stor_days) > fallback_days:
-                    st.info(
-                        f"Live storage fallback is capped at {fallback_days} days. "
-                        "Use the fast storage summary for longer trends."
-                    )
-                stage_storage_cte = (
-                    f"""
-            stage_storage AS (
-                SELECT usage_date, SUM(average_stage_bytes) AS stage_bytes
-                FROM SNOWFLAKE.ACCOUNT_USAGE.STAGE_STORAGE_USAGE_HISTORY
-                WHERE usage_date >= DATEADD('day', -{fallback_days}, CURRENT_DATE())
-                GROUP BY usage_date
-            )
-                """
-                    if company == "ALL"
-                    else """
-            stage_storage AS (
-                SELECT usage_date, 0 AS stage_bytes
-                FROM database_storage
-            )
-                """
+            fallback_days = min(int(stor_days), LIVE_STORAGE_FALLBACK_MAX_DAYS)
+            if int(stor_days) > fallback_days and st.session_state.get("stor_source", "").startswith("Live fallback"):
+                st.info(
+                    f"Live storage fallback is capped at {fallback_days} days. "
+                    "Use the fast storage summary for longer trends."
                 )
-                df_stor = run_query(f"""
-            WITH database_storage AS (
-                SELECT usage_date,
-                       SUM(average_database_bytes) AS storage_bytes,
-                       SUM(average_failsafe_bytes) AS failsafe_bytes
-                FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY
-                WHERE usage_date >= DATEADD('day', -{fallback_days}, CURRENT_DATE())
-                  {get_db_filter_clause("database_name")}
-                GROUP BY usage_date
-            ),
-            {stage_storage_cte}
-            SELECT COALESCE(d.usage_date, s.usage_date)        AS usage_date,
-                   COALESCE(d.storage_bytes,  0)/POWER(1024,3) AS storage_gb,
-                   COALESCE(d.failsafe_bytes, 0)/POWER(1024,3) AS failsafe_gb,
-                   COALESCE(s.stage_bytes,    0)/POWER(1024,3) AS stage_gb,
-                   (COALESCE(d.storage_bytes,0)+COALESCE(d.failsafe_bytes,0)+COALESCE(s.stage_bytes,0))
-                       /POWER(1024,4)                           AS total_storage_tb
-            FROM database_storage d
-            FULL OUTER JOIN stage_storage s ON d.usage_date = s.usage_date
-            ORDER BY usage_date
-                    """, ttl_key=f"storage_trend_{company}_{fallback_days}", tier="historical")
-                st.session_state["stor_df_stor"] = df_stor
-                st.session_state["stor_source"] = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE storage views"
-                st.session_state["stor_meta"] = {"company": company, "days": fallback_days}
-            except Exception as e:
-                st.warning(f"Storage data unavailable in this role/context: {format_snowflake_error(e)}")
+        except Exception as e:
+            st.warning(f"Storage data unavailable in this role/context: {format_snowflake_error(e)}")
 
     if st.session_state.get("stor_df_stor") is not None and not st.session_state["stor_df_stor"].empty:
         df_st = st.session_state["stor_df_stor"]
@@ -171,36 +125,12 @@ def render():
         st.subheader("Per-Database Storage")
         if st.button("Load DB Detail", key="stor_db_detail"):
             try:
-                df_db = run_query(
-                    build_mart_storage_db_detail_sql(company),
-                    ttl_key=f"storage_db_detail_mart_{get_active_company()}",
-                    tier="standard",
-                )
-                source = "Fast storage summary"
-                if df_db.empty:
-                    raise RuntimeError("Storage mart returned no database detail.")
-            except Exception:
-                try:
-                    df_db = run_query(f"""
-                    SELECT database_name,
-                           usage_date,
-                           average_database_bytes/POWER(1024,3) AS database_gb,
-                           average_failsafe_bytes/POWER(1024,3) AS failsafe_gb
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY
-                    WHERE usage_date = (SELECT MAX(usage_date)
-                                        FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY)
-                      {get_db_filter_clause("database_name")}
-                    ORDER BY database_gb DESC
-                    LIMIT 50
-                """, ttl_key=f"storage_db_detail_{get_active_company()}", tier="standard")
-                    source = "Live fallback: DATABASE_STORAGE_USAGE_HISTORY"
-                except Exception as e:
-                    st.warning(f"Large table data unavailable in this role/context: {format_snowflake_error(e)}")
-                    df_db = None
-                    source = ""
-            if df_db is not None:
+                result = load_shared_storage_db_detail(company, section="Storage Monitor")
+                if result.data.empty:
+                    raise RuntimeError(result.message or "Storage detail returned no rows.")
+                df_db = result.data
                 st.session_state["stor_df_db_detail"] = df_db
-                defer_source_note(source)
+                defer_source_note(result.source)
                 render_priority_dataframe(
                     df_db,
                     title="Largest databases by storage",
@@ -213,6 +143,8 @@ def render():
                     raw_label="All database storage rows",
                 )
                 download_csv(df_db, "db_storage_detail.csv")
+            except Exception as e:
+                st.warning(f"Large table data unavailable in this role/context: {format_snowflake_error(e)}")
 
         download_csv(df_st, "storage_trend.csv")
 

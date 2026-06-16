@@ -52,13 +52,20 @@ class GuardrailTests(unittest.TestCase):
 
     def test_usage_overview_and_heatmap_sources_use_mart_before_live(self):
         usage_text = (APP_ROOT / "sections" / "usage_overview.py").read_text(encoding="utf-8").upper()
+        account_text = (APP_ROOT / "sections" / "account_health.py").read_text(encoding="utf-8").upper()
+        cost_text = (APP_ROOT / "sections" / "cost_center.py").read_text(encoding="utf-8").upper()
+        shared_metrics_text = (APP_ROOT / "utils" / "shared_metrics.py").read_text(encoding="utf-8").upper()
         heatmap_text = (APP_ROOT / "sections" / "warehouse_health.py").read_text(encoding="utf-8").upper()
         task_text = (APP_ROOT / "sections" / "task_management.py").read_text(encoding="utf-8").upper()
         adoption_text = (APP_ROOT / "sections" / "adoption_analytics.py").read_text(encoding="utf-8").upper()
 
-        self.assertIn("BUILD_MART_USAGE_STORAGE_SQL", usage_text)
-        self.assertIn("BUILD_MART_USAGE_METERING_SQL", usage_text)
-        self.assertIn("LIVE FALLBACK: SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY", usage_text)
+        self.assertIn("LOAD_SHARED_USAGE_STORAGE_KPIS", usage_text)
+        self.assertIn("LOAD_SHARED_USAGE_METERING_KPIS", usage_text)
+        self.assertIn("LOAD_SHARED_USAGE_METERING_KPIS", account_text)
+        self.assertIn("LOAD_SHARED_WAREHOUSE_DAILY_CREDITS_BY_WAREHOUSE", cost_text)
+        self.assertIn("BUILD_MART_USAGE_STORAGE_SQL", shared_metrics_text)
+        self.assertIn("BUILD_MART_USAGE_METERING_SQL", shared_metrics_text)
+        self.assertIn("LIVE FALLBACK: SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY", shared_metrics_text)
         self.assertIn("BUILD_MART_WAREHOUSE_HEATMAP_SQL", heatmap_text)
         self.assertIn("WORKLOAD HEATMAP LIVE FALLBACK IS CAPPED AT 30 DAYS", heatmap_text)
         self.assertNotIn("SELECT * FROM {ETL_AUDIT_FQN}", task_text)
@@ -67,11 +74,12 @@ class GuardrailTests(unittest.TestCase):
 
     def test_storage_monitor_live_fallback_is_capped(self):
         storage_text = (APP_ROOT / "sections" / "storage_monitor.py").read_text(encoding="utf-8")
+        shared_metrics_text = (APP_ROOT / "utils" / "shared_metrics.py").read_text(encoding="utf-8")
 
         self.assertIn("LIVE_STORAGE_FALLBACK_MAX_DAYS = 90", storage_text)
         self.assertIn("fallback_days = min(int(stor_days), LIVE_STORAGE_FALLBACK_MAX_DAYS)", storage_text)
-        self.assertIn("DATEADD('day', -{fallback_days}, CURRENT_DATE())", storage_text)
-        self.assertIn('ttl_key=f"storage_trend_{company}_{fallback_days}"', storage_text)
+        self.assertIn("DATEADD('day', -{fallback_days}, CURRENT_DATE())", shared_metrics_text)
+        self.assertIn('"shared_storage_trend_live", fallback_days', shared_metrics_text)
 
     def test_app_clamps_global_date_widget_before_instantiation(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")

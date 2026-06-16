@@ -94,6 +94,7 @@ from sections.cost_center import (  # noqa: E402
     _cost_explorer_gap_board,
     _cost_explorer_live_sql,
     _cost_explorer_summary,
+    _prepare_cost_forecast_rows,
     _queue_cost_outliers,
     _normalize_cost_explorer_detail,
     _warehouse_cost_control_action,
@@ -4315,7 +4316,9 @@ class FormulaRegressionTests(unittest.TestCase):
             st.session_state.update(previous)
 
     def test_usage_overview_storage_sums_are_null_safe(self):
-        text = (APP_ROOT / "sections" / "usage_overview.py").read_text(encoding="utf-8")
+        usage_text = (APP_ROOT / "sections" / "usage_overview.py").read_text(encoding="utf-8")
+        text = (APP_ROOT / "utils" / "shared_metrics.py").read_text(encoding="utf-8")
+        self.assertIn("load_shared_usage_storage_kpis", usage_text)
         self.assertIn("SUM(COALESCE(c.average_database_bytes, 0))", text)
         self.assertIn("SUM(COALESCE(c.average_failsafe_bytes, 0))", text)
         self.assertNotIn("SUM(c.average_database_bytes)", text)
@@ -7121,6 +7124,23 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("AS AVG_ELAPSED_SEC", explain_block)
         self.assertIn('"TOTAL_CREDITS"', explain_block)
         self.assertIn('"AVG_EXECUTION_SECONDS"', explain_block)
+
+    def test_cost_forecast_rows_normalize_snowflake_timezone_days(self):
+        raw = pd.DataFrame({
+            "DAY": pd.to_datetime([
+                "2026-06-15 00:00:00+00:00",
+                "2026-06-16 00:00:00+00:00",
+            ], utc=True).astype("datetime64[us, UTC]"),
+            "DAILY_CREDITS": [10.5, 21.0],
+        })
+
+        forecast = _prepare_cost_forecast_rows(raw, today="2026-06-16")
+
+        self.assertEqual(len(forecast), 30)
+        self.assertFalse(str(forecast["DAY"].dtype).endswith("UTC]"))
+        self.assertEqual(float(forecast.loc[forecast["DAY"].eq(pd.Timestamp("2026-06-15")), "DAILY_CREDITS"].iloc[0]), 10.5)
+        self.assertEqual(float(forecast.loc[forecast["DAY"].eq(pd.Timestamp("2026-06-16")), "DAILY_CREDITS"].iloc[0]), 21.0)
+        self.assertEqual(float(forecast["DAILY_CREDITS"].sum()), 31.5)
 
     def test_cost_control_action_requires_verification_evidence(self):
         action = _warehouse_cost_control_action(

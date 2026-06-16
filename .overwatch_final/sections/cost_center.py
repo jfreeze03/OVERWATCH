@@ -23,6 +23,8 @@ from utils import (
     render_drillable_bar_chart, render_entity_query_drilldown, render_priority_dataframe,
     render_ranked_bar_chart, render_chart_with_data_toggle,
     day_window_selectbox,
+    load_shared_warehouse_daily_credits,
+    load_shared_warehouse_daily_credits_by_warehouse,
     make_action_id, upsert_actions,
     run_query, sql_literal, format_snowflake_error,
     resolve_owner_context,
@@ -227,6 +229,48 @@ def _annotate_allocation_quality(df: pd.DataFrame) -> pd.DataFrame:
             axis=1,
         )
     return annotated
+
+
+def _prepare_cost_forecast_rows(df_fc: pd.DataFrame | None, *, today: object | None = None) -> pd.DataFrame:
+    """Return a complete 30-day forecast window with timezone-safe day keys."""
+    end_day = pd.Timestamp(today) if today is not None else pd.Timestamp.today()
+    if end_day.tzinfo is not None:
+        end_day = end_day.tz_convert(None)
+    end_day = end_day.normalize()
+    full_window = pd.DataFrame({
+        "DAY": pd.date_range(
+            end_day - pd.Timedelta(days=29),
+            end_day,
+            freq="D",
+        )
+    })
+    full_window["DAY"] = pd.to_datetime(full_window["DAY"], errors="coerce").dt.normalize()
+
+    if df_fc is None or df_fc.empty:
+        full_window["DAILY_CREDITS"] = 0.0
+        return full_window
+
+    rows = df_fc.copy()
+    day_col = next((col for col in rows.columns if str(col).upper() == "DAY"), None)
+    credit_col = next((col for col in rows.columns if str(col).upper() == "DAILY_CREDITS"), None)
+    if day_col is None or credit_col is None:
+        full_window["DAILY_CREDITS"] = 0.0
+        return full_window
+
+    rows["DAY"] = (
+        pd.to_datetime(rows[day_col], errors="coerce", utc=True)
+        .dt.tz_convert(None)
+        .dt.normalize()
+    )
+    rows["DAILY_CREDITS"] = pd.to_numeric(rows[credit_col], errors="coerce").fillna(0)
+    rows = (
+        rows.dropna(subset=["DAY"])
+        .groupby("DAY", as_index=False)["DAILY_CREDITS"]
+        .sum()
+    )
+    merged = full_window.merge(rows, on="DAY", how="left")
+    merged["DAILY_CREDITS"] = pd.to_numeric(merged["DAILY_CREDITS"], errors="coerce").fillna(0)
+    return merged
 
 
 def _mixed_label(values, *, default: str = "Unknown") -> str:
@@ -1418,10 +1462,6 @@ def render():
         "MAX(q.warehouse_size)"
         if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR"
     )
-    wh_size_plain_expr = (
-        "warehouse_size"
-        if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR AS warehouse_size"
-    )
     bytes_scanned_sum_expr = (
         "SUM(q.bytes_scanned)"
         if "BYTES_SCANNED" in qh_cols else "0"
@@ -2399,31 +2439,15 @@ def render():
         br_days = day_window_selectbox("Lookback", key="br_days", default=30)
         if st.button("Load Burn Rate", key="br_load"):
             try:
-                df_br = run_query(f"""
-                    WITH latest_size AS (
-                        SELECT warehouse_name, warehouse_size
-                        FROM (
-                            SELECT warehouse_name, {wh_size_plain_expr},
-                            ROW_NUMBER() OVER (PARTITION BY warehouse_name ORDER BY start_time DESC) AS rn
-                            FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-                            WHERE start_time >= DATEADD('day', -{br_days}, CURRENT_TIMESTAMP())
-                              AND warehouse_name IS NOT NULL
-                              {get_wh_filter_clause("warehouse_name")}
-                        )
-                        WHERE rn = 1
-                    )
-                    SELECT DATE_TRUNC('day', m.start_time) AS day,
-                           m.warehouse_name,
-                           ls.warehouse_size,
-                           SUM(m.credits_used) AS daily_credits
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY m
-                    LEFT JOIN latest_size ls ON m.warehouse_name = ls.warehouse_name
-                    WHERE m.start_time >= DATEADD('day', -{br_days}, CURRENT_TIMESTAMP())
-                    {get_wh_filter_clause("m.warehouse_name")}
-                    GROUP BY day, m.warehouse_name, ls.warehouse_size
-                    ORDER BY day
-                """, ttl_key=f"cc_burn_{company}_{br_days}", tier="standard")
-                st.session_state["df_br"] = df_br
+                burn_result = load_shared_warehouse_daily_credits_by_warehouse(
+                    session,
+                    br_days,
+                    company,
+                    force=True,
+                    section="Cost & Contract",
+                )
+                st.session_state["df_br"] = burn_result.data
+                st.session_state["cc_burn_source"] = burn_result.source
             except Exception as e:
                 st.warning(f"Burn-rate data unavailable in this role/context: {format_snowflake_error(e)}")
 
@@ -2435,7 +2459,10 @@ def render():
                 ("Total Cost", f"${credits_to_dollars(total_cr, credit_price):,.2f}"),
                 ("Avg Daily Credits", f"{total_cr / max(br_days,1):,.2f}"),
             ))
-            defer_source_note(metric_confidence_label("exact"), freshness_note("WAREHOUSE_METERING_HISTORY"))
+            defer_source_note(
+                metric_confidence_label("exact"),
+                st.session_state.get("cc_burn_source", freshness_note("WAREHOUSE_METERING_HISTORY")),
+            )
             daily = df_b.groupby("DAY")["DAILY_CREDITS"].sum().reset_index()
             render_chart_with_data_toggle(
                 "Daily Credit Burn",
@@ -2553,30 +2580,19 @@ def render():
         st.subheader("Credit Forecast (30-day Linear Projection)")
         if st.button("Generate Forecast", key="fc_load"):
             try:
-                df_fc = run_query(f"""
-                    SELECT DATE_TRUNC('day', start_time) AS day,
-                           SUM(credits_used) AS daily_credits
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
-                    WHERE start_time >= DATEADD('day', -30, CURRENT_TIMESTAMP())
-                    {get_wh_filter_clause("warehouse_name")}
-                    GROUP BY day ORDER BY day
-                """, ttl_key=f"cc_forecast_30_{company}", tier="standard")
-                st.session_state["df_fc"] = df_fc
+                result = load_shared_warehouse_daily_credits(
+                    30,
+                    company,
+                    force=True,
+                    section="Cost & Contract",
+                )
+                st.session_state["df_fc"] = result.data
+                st.session_state["cc_forecast_source"] = result.source
             except Exception as e:
                 st.warning(f"Forecast data unavailable in this role/context: {format_snowflake_error(e)}")
 
         if st.session_state.get("df_fc") is not None and not st.session_state["df_fc"].empty:
-            df_f = st.session_state["df_fc"].copy()
-            df_f["DAY"] = pd.to_datetime(df_f["DAY"])
-            full_window = pd.DataFrame({
-                "DAY": pd.date_range(
-                    pd.Timestamp.today().normalize() - pd.Timedelta(days=29),
-                    pd.Timestamp.today().normalize(),
-                    freq="D",
-                )
-            })
-            df_f = full_window.merge(df_f, on="DAY", how="left")
-            df_f["DAILY_CREDITS"] = pd.to_numeric(df_f["DAILY_CREDITS"], errors="coerce").fillna(0)
+            df_f = _prepare_cost_forecast_rows(st.session_state["df_fc"])
             avg_daily = df_f["DAILY_CREDITS"].mean()
             proj_30   = avg_daily * 30
             proj_cost = credits_to_dollars(proj_30, credit_price)
@@ -2585,6 +2601,7 @@ def render():
                 ("Projected 30-day", format_credits(proj_30)),
                 ("Projected 30-day Cost", f"${proj_cost:,.2f}"),
             ))
+            defer_source_note(st.session_state.get("cc_forecast_source", freshness_note("WAREHOUSE_METERING_HISTORY")))
             render_chart_with_data_toggle(
                 "Forecast Daily Credits",
                 "cc_forecast_daily_credits",

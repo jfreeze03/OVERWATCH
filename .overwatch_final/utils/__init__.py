@@ -59,6 +59,11 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
     "cache": (
         "bump_global_cache_salt", "clear_all_cache",
     ),
+    "shared_metrics": (
+        "SharedMetricResult", "load_shared_storage_trend", "load_shared_usage_storage_kpis",
+        "load_shared_usage_metering_kpis", "load_shared_storage_db_detail", "load_shared_warehouse_daily_credits",
+        "load_shared_warehouse_daily_credits_by_warehouse",
+    ),
     "downloads": (
         "download_csv", "show_loaded_time", "mark_loaded",
     ),

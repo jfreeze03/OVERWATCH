@@ -59,6 +59,7 @@ render_priority_dataframe = _lazy_util("render_priority_dataframe")
 render_load_status = _lazy_util("render_load_status")
 render_mode_selector = _lazy_util("render_mode_selector")
 day_window_selectbox = _lazy_util("day_window_selectbox")
+load_shared_usage_metering_kpis = _lazy_util("load_shared_usage_metering_kpis")
 
 
 def get_credit_price() -> float:
@@ -3105,17 +3106,26 @@ def render():
                 ]
                 hd["_account_health_detail_source"] = "Live fallback: ACCOUNT_USAGE"
             if not use_control_mart:
+                burn_result = load_shared_usage_metering_kpis(
+                    action_session,
+                    1,
+                    company,
+                    force=True,
+                    section="Account Health",
+                )
+                if not burn_result.data.empty:
+                    burn_row = burn_result.data.iloc[0]
+                    last_24h = safe_float(burn_row.get("TOTAL_CREDITS", 0))
+                    prior_24h = safe_float(burn_row.get("PRIOR_CREDITS", 0))
+                else:
+                    last_24h = 0.0
+                    prior_24h = 0.0
+                hd["burn"] = pd.DataFrame([{
+                    "LAST_24H": last_24h,
+                    "PRIOR_24H": prior_24h,
+                }])
+                hd["_burn_source"] = burn_result.source
                 query_plan = [
-                ("burn", f"""
-                    SELECT SUM(CASE WHEN start_time >= DATEADD('hours',-24,CURRENT_TIMESTAMP())
-                               THEN credits_used ELSE 0 END) AS last_24h,
-                           SUM(CASE WHEN start_time >= DATEADD('hours',-48,CURRENT_TIMESTAMP())
-                                    AND  start_time <  DATEADD('hours',-24,CURRENT_TIMESTAMP())
-                               THEN credits_used ELSE 0 END) AS prior_24h
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
-                    WHERE start_time >= DATEADD('hours',-48,CURRENT_TIMESTAMP())
-                      {wh_filter_m}
-                """),
                 ("errors", f"""
                     SELECT COUNT(*) AS err_count
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q

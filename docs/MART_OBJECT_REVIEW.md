@@ -1,6 +1,6 @@
 # OVERWATCH Mart Object Review
 
-Static scan date: 2026-06-16
+Static scan date: 2026-06-17
 
 This review inventories deployable Snowflake objects in `snowflake/OVERWATCH_MART_SETUP.sql`
 and cross-checks them against `.overwatch_final` app references. It is a static code scan,
@@ -75,6 +75,17 @@ Latest static dependency pass:
   contains no deployable Dynamic Tables or Secure Views. Refreshable facts stay
   as task/procedure-loaded transient tables so a secure view in an upstream
   dependency path does not break the mart.
+- Latest validation hardening: `snowflake/OVERWATCH_MART_VALIDATION.sql` now
+  reports dynamic-table and secure-view collisions in the deployed OVERWATCH
+  schema. A clean rebuild should return `PASS` for both checks before app
+  validation continues.
+- Latest reset proof hardening: the validation script also checks the expected
+  table/view/procedure/function counts and task graph state so mass rebuilds
+  can be verified from Snowflake without manually recounting the setup file.
+- Latest retired-object cleanup hardening: `snowflake/OVERWATCH_MART_DROP.sql`
+  now has explicit drops for retired monitoring-cost, cost-savings verification,
+  external-control, owner-directory, platform-futures, and static metadata
+  objects that older deployments may still contain.
 
 ## Keep
 
@@ -184,6 +195,7 @@ be removed by table count alone.
 | `FACT_MONITORING_COST_DAILY` | Removed from deployable setup. Its overlapping app/runtime cost view is covered by `FACT_COST_DAILY`, `FACT_COST_MONITORING_SIGNAL`, `FACT_COST_INCIDENT_TIMELINE`, and `MART_EXECUTIVE_OBSERVABILITY`. |
 | `OVERWATCH_AUTOMATION_RUN`, `OVERWATCH_EXECUTIVE_PACKET`, `OVERWATCH_AUTOMATION_HEALTH_V` | Removed from deployable setup. Alert delivery remains in `OVERWATCH_ALERT_DELIVERY_LOG`; first-paint executive metrics remain in `MART_EXECUTIVE_OBSERVABILITY`; old deployed copies are covered by `snowflake/OVERWATCH_MART_DROP.sql`. |
 | `SP_OVERWATCH_REFRESH_AUTOMATION`, `OVERWATCH_AUTOMATION_REFRESH` | Removed from deployable setup. The scheduled task chain now refreshes cost monitoring and then `SP_OVERWATCH_REFRESH_EXECUTIVE_OBSERVABILITY` directly. |
+| Cost-savings verification, external-control, owner-directory, platform-futures, static metadata/control-policy objects | Removed from deployable setup and covered by `snowflake/OVERWATCH_MART_DROP.sql` retired cleanup so old lower-environment rebuilds do not preserve stale scope. |
 
 ## Current No-App-Reference List
 

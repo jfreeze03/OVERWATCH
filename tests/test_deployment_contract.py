@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import sys
 import unittest
 
@@ -13,6 +14,59 @@ from utils.deployment import (  # noqa: E402
     build_streamlit_deployment_decision,
     build_streamlit_manifest_contract,
 )
+
+
+def _strip_sql_comments(sql: str) -> str:
+    return "\n".join(line.split("--", 1)[0] for line in sql.splitlines())
+
+
+def _setup_sql() -> str:
+    return _strip_sql_comments(
+        (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8")
+    ).upper()
+
+
+def _procedure_bodies(setup_sql: str) -> dict[str, str]:
+    pattern = re.compile(
+        r"CREATE\s+OR\s+REPLACE\s+PROCEDURE\s+(SP_OVERWATCH_[A-Z0-9_]+)\s*\([^)]*\).*?\$\$(.*?)\$\$",
+        flags=re.DOTALL,
+    )
+    return {match.group(1): match.group(2) for match in pattern.finditer(setup_sql)}
+
+
+RETIRED_DROP_OBJECTS = {
+    "TABLE": [
+        "FACT_MONITORING_COST_DAILY",
+        "OVERWATCH_COST_SAVINGS_VERIFICATION_RUN",
+        "OVERWATCH_EXTERNAL_CONTROL_FEED",
+        "OVERWATCH_SOURCE_CONTROL_CHANGE",
+        "OVERWATCH_OWNER_APPROVAL",
+        "OVERWATCH_OWNER_DIRECTORY",
+        "OVERWATCH_PLATFORM_FUTURES_CONTROL_REGISTER",
+        "OVERWATCH_PLATFORM_FUTURES_EVIDENCE",
+        "OVERWATCH_COMMAND_INTELLIGENCE_CAPABILITY",
+        "OVERWATCH_REFRESH_POLICY",
+        "OVERWATCH_COMPANY_SCOPE",
+        "OVERWATCH_AUTOMATION_RUN",
+        "OVERWATCH_EXECUTIVE_PACKET",
+    ],
+    "VIEW": [
+        "OVERWATCH_AUTOMATION_HEALTH_V",
+        "OVERWATCH_COST_SAVINGS_VERIFICATION_HEALTH_V",
+        "OVERWATCH_OWNER_DIRECTORY_ACTIVE_V",
+        "OVERWATCH_PLATFORM_FUTURES_CONTROL_COVERAGE_V",
+        "OVERWATCH_PLATFORM_FUTURES_EVIDENCE_LATEST_V",
+        "OVERWATCH_COMPLIANCE_READINESS_V",
+    ],
+    "TASK": [
+        "OVERWATCH_AUTOMATION_REFRESH",
+        "OVERWATCH_COST_SAVINGS_VERIFY",
+    ],
+    "PROCEDURE": [
+        "SP_OVERWATCH_REFRESH_AUTOMATION",
+        "SP_OVERWATCH_VERIFY_COST_SAVINGS",
+    ],
+}
 
 
 class DeploymentContractTests(unittest.TestCase):
@@ -72,6 +126,102 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertNotIn("DROP DYNAMIC TABLE", drop_sql)
         self.assertIn("TASK/PROCEDURE-LOADED TABLES INSTEAD OF DYNAMIC TABLES", setup_sql)
         self.assertIn("SECURE VIEWS", setup_sql)
+
+    def test_mart_refresh_tasks_call_procedure_loaded_tables(self):
+        setup_sql = _setup_sql()
+        expected_task_calls = {
+            "OVERWATCH_LOAD_HOURLY": "SP_OVERWATCH_LOAD_HOURLY",
+            "OVERWATCH_LOAD_CORTEX": "SP_OVERWATCH_LOAD_CORTEX",
+            "OVERWATCH_REFRESH_CONTROL_ROOM": "SP_OVERWATCH_REFRESH_CONTROL_ROOM",
+            "OVERWATCH_COST_MONITORING_REFRESH": "SP_OVERWATCH_REFRESH_COST_MONITORING",
+            "OVERWATCH_EXECUTIVE_OBSERVABILITY_REFRESH": "SP_OVERWATCH_REFRESH_EXECUTIVE_OBSERVABILITY",
+            "OVERWATCH_LOAD_DAILY": "SP_OVERWATCH_LOAD_DAILY",
+        }
+
+        for task_name, proc_name in expected_task_calls.items():
+            with self.subTest(task_name=task_name):
+                task = re.search(
+                    rf"CREATE\s+OR\s+REPLACE\s+TASK\s+{task_name}\b(.*?)(?=CREATE\s+OR\s+REPLACE\s+TASK|ALTER\s+TASK|SHOW\s+TASKS|$)",
+                    setup_sql,
+                    flags=re.DOTALL,
+                )
+                self.assertIsNotNone(task)
+                task_body = task.group(1)
+                self.assertIn("WAREHOUSE = OVERWATCH_WH", task_body)
+                self.assertRegex(task_body, rf"\bCALL\s+{proc_name}\s*\(\s*\)")
+
+        anomaly_task = re.search(
+            r"CREATE\s+OR\s+REPLACE\s+TASK\s+OVERWATCH_ANOMALY_CHECK\b(.*?)(?=CREATE\s+OR\s+REPLACE\s+TASK|ALTER\s+TASK|SHOW\s+TASKS|$)",
+            setup_sql,
+            flags=re.DOTALL,
+        )
+        self.assertIsNotNone(anomaly_task)
+        self.assertIn("INSERT INTO OVERWATCH_ALERTS", anomaly_task.group(1))
+        self.assertNotRegex(anomaly_task.group(1), r"\bCALL\s+SP_OVERWATCH_")
+
+    def test_refresh_procedures_write_only_setup_physical_tables(self):
+        setup_sql = _setup_sql()
+        table_creates = set(
+            re.findall(
+                r"^\s*CREATE\s+(?:TRANSIENT\s+)?TABLE\s+IF\s+NOT\s+EXISTS\s+([A-Z0-9_]+)",
+                setup_sql,
+                flags=re.MULTILINE,
+            )
+        )
+        procedure_bodies = _procedure_bodies(setup_sql)
+        self.assertGreaterEqual(len(procedure_bodies), 8)
+
+        for proc_name, body in procedure_bodies.items():
+            with self.subTest(proc_name=proc_name):
+                self.assertNotIn("CREATE DYNAMIC TABLE", body)
+                self.assertNotIn("CREATE OR REPLACE DYNAMIC TABLE", body)
+                targets = sorted(
+                    set(
+                        re.findall(
+                            r"\b(?:INSERT\s+INTO|DELETE\s+FROM|MERGE\s+INTO|TRUNCATE\s+TABLE|UPDATE)\s+([A-Z0-9_]+)",
+                            body,
+                        )
+                    )
+                )
+                self.assertTrue(targets)
+                for target in targets:
+                    self.assertIn(target, table_creates)
+
+    def test_drop_script_covers_retired_scope_cleanup_objects(self):
+        setup_sql = _setup_sql()
+        drop_sql = (ROOT / "snowflake" / "OVERWATCH_MART_DROP.sql").read_text(encoding="utf-8").upper()
+
+        for object_type, names in RETIRED_DROP_OBJECTS.items():
+            for name in names:
+                with self.subTest(object_type=object_type, name=name):
+                    if object_type == "TABLE":
+                        self.assertIn(f"DROP TABLE IF EXISTS {name}", drop_sql)
+                        self.assertNotIn(f"CREATE TABLE IF NOT EXISTS {name}", setup_sql)
+                        self.assertNotIn(f"CREATE TRANSIENT TABLE IF NOT EXISTS {name}", setup_sql)
+                    elif object_type == "VIEW":
+                        self.assertIn(f"DROP VIEW IF EXISTS {name}", drop_sql)
+                        self.assertNotIn(f"CREATE OR REPLACE VIEW {name}", setup_sql)
+                    elif object_type == "TASK":
+                        self.assertIn(f"ALTER TASK IF EXISTS {name} SUSPEND", drop_sql)
+                        self.assertIn(f"DROP TASK IF EXISTS {name}", drop_sql)
+                        self.assertNotIn(f"CREATE OR REPLACE TASK {name}", setup_sql)
+                    elif object_type == "PROCEDURE":
+                        self.assertIn(f"DROP PROCEDURE IF EXISTS {name}", drop_sql)
+                        self.assertNotIn(f"CREATE OR REPLACE PROCEDURE {name}", setup_sql)
+
+    def test_mart_validation_surfaces_dynamic_and_secure_view_collisions(self):
+        validation_sql = (ROOT / "snowflake" / "OVERWATCH_MART_VALIDATION.sql").read_text(encoding="utf-8").upper()
+
+        self.assertIn("DEPLOYABLE OBJECT COUNT CONTRACT", validation_sql)
+        self.assertIn("EXPECTED_COUNT", validation_sql)
+        self.assertIn("ACTUAL_COUNT", validation_sql)
+        self.assertIn("SHOW TASKS IN SCHEMA", validation_sql)
+        self.assertIn("TASK GRAPH DEPLOYMENT PROOF", validation_sql)
+        self.assertIn("OVERWATCH_EXECUTIVE_OBSERVABILITY_REFRESH", validation_sql)
+        self.assertIn("SHOW DYNAMIC TABLES IN SCHEMA", validation_sql)
+        self.assertIn("DYNAMIC_TABLE_COLLISIONS", validation_sql)
+        self.assertIn("SECURE_VIEW_COLLISIONS", validation_sql)
+        self.assertIn("INFORMATION_SCHEMA.VIEWS", validation_sql)
 
     def test_ci_runs_deployment_contract_before_full_suite(self):
         workflow = (ROOT / ".github" / "workflows" / "validate.yml").read_text(encoding="utf-8")

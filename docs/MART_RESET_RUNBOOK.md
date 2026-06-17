@@ -42,6 +42,12 @@ retired or rebuilt facts to Dynamic Tables when a source dependency can include
 secure views; use the scheduled refresh chain in `OVERWATCH_MART_SETUP.sql`
 instead.
 
+Snowflake allows ordinary table drops to remove dynamic table objects with the
+same name, so the table drop section is also the cleanup path for older same-name
+mart objects that were deployed before the physical-table refresh model. After
+the rebuild, run the validation script and confirm both dynamic-table and secure
+view collision checks return `PASS`.
+
 ## Dry-Run Readiness
 
 Before running a destructive lower-environment reset, do a local static rehearsal
@@ -93,11 +99,29 @@ At this revision the expected deployable object inventory is:
 | Functions | 1 |
 | Tasks | 7 |
 
+`OVERWATCH_MART_VALIDATION.sql` reports the table/view/procedure/function count
+contract directly. It also runs `SHOW TASKS IN SCHEMA` and reports each expected
+task as `PRESENT`, `SUSPENDED`, or `MISSING`. A clean post-setup run should show
+all seven expected tasks as `PRESENT`; if a task is `SUSPENDED`, resume the root
+tasks listed below after confirming setup completed.
+
 The latest static scan also confirmed that every deployable object has matching
 drop coverage in `snowflake/OVERWATCH_MART_DROP.sql`. The remaining objects with
 no direct app/test references are refresh procedures or `OVERWATCH_LOAD_AUDIT`
 bookkeeping, so the reset path should keep them unless their downstream facts are
 retired in a future setup revision.
+
+The drop script also has a retired compatibility cleanup block for old deployed
+objects that are intentionally absent from setup. Keep those drops even when the
+current setup count is clean; they make lower-environment rebuilds recover from
+older OVERWATCH DDL without a manual archaeology pass.
+
+The validation script also reports:
+
+| Check | Expected status |
+| --- | --- |
+| `DYNAMIC_TABLE_COLLISIONS` | `PASS` |
+| `SECURE_VIEW_COLLISIONS` | `PASS` |
 
 Latest consolidation note: repeated-query, duplicate-query, warehouse
 right-sizing, clustering, storage-retention, and procedure summary reads moved
@@ -196,6 +220,11 @@ setup script no longer creates them:
 | `OVERWATCH_AUTOMATION_HEALTH_V` | Alert Center and executive observability marts |
 | `SP_OVERWATCH_REFRESH_AUTOMATION` | Cost monitoring and executive observability refresh procedures |
 | `OVERWATCH_AUTOMATION_REFRESH` | Current cost and executive refresh task chain |
+| `OVERWATCH_COST_SAVINGS_VERIFICATION_RUN`, `OVERWATCH_COST_SAVINGS_VERIFICATION_HEALTH_V`, `SP_OVERWATCH_VERIFY_COST_SAVINGS`, `OVERWATCH_COST_SAVINGS_VERIFY` | Removed cost-savings verification workflow; current advisor estimates stay in app/session telemetry. |
+| `OVERWATCH_EXTERNAL_CONTROL_FEED`, `OVERWATCH_SOURCE_CONTROL_CHANGE`, `OVERWATCH_OWNER_APPROVAL` | Removed external/change-governance placeholders; DBA monitoring keeps only current Snowflake telemetry and action queue state. |
+| `OVERWATCH_OWNER_DIRECTORY`, `OVERWATCH_OWNER_DIRECTORY_ACTIVE_V` | Removed owner directory workflow; owner tag configuration remains in `OVERWATCH_OWNER_TAG_NAMES` and `DIM_COST_OWNER_TAG`. |
+| `OVERWATCH_PLATFORM_FUTURES_CONTROL_REGISTER`, `OVERWATCH_PLATFORM_FUTURES_EVIDENCE`, platform futures views | Removed architecture/futures readiness workflow; current scope is operational monitoring. |
+| `OVERWATCH_COMMAND_INTELLIGENCE_CAPABILITY`, `OVERWATCH_REFRESH_POLICY`, `OVERWATCH_COMPANY_SCOPE`, `OVERWATCH_COMPLIANCE_READINESS_V` | Removed static metadata/control tables; current contracts live in docs, Python config, and validation SQL. |
 
 No additional retired objects were identified in the latest mart/SP audit. The
 current refresh chain no longer recreates the retired automation or monitoring

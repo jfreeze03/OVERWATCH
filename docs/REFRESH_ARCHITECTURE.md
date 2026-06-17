@@ -18,6 +18,15 @@ physical table populated by a scheduled task/procedure. Do not rewrite those
 facts as Dynamic Tables; Snowflake Dynamic Tables can fail when secure views sit
 in the dependency path.
 
+When a proposed mart starts as a Dynamic Table, convert it before deployment:
+
+1. Create a transient table with the final columns.
+2. Load it from a `SP_OVERWATCH_*` refresh procedure.
+3. Schedule that procedure from an `OVERWATCH_*` task.
+4. Add the table, procedure, and task to the setup/drop contract.
+5. Run `snowflake/OVERWATCH_MART_VALIDATION.sql` and confirm no
+   `DYNAMIC_TABLE_COLLISIONS` or `SECURE_VIEW_COLLISIONS` remain.
+
 Do not use materialized views for the primary monitoring app. The app needs
 multi-source, windowed exception logic with explicit refresh and
 audit behavior.

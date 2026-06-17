@@ -43,6 +43,10 @@ refresh/drilldown actions and make repeated metric families load once per scope.
 Shared results are stored under `_shared_metric_...` session keys and are cleared
 by the global refresh path.
 
+`utils.metering_sql` now owns shared SQL shapes for Cost & Contract cockpit
+movement and run-rate/YOY metering. The mart and live fallback builders both use
+those shapes, so future cost logic changes land in one place.
+
 ## Static Query Inventory
 
 Current scan of `.overwatch_final/sections` and `.overwatch_final/utils` found
@@ -63,7 +67,13 @@ the section. Cost Center Explain This Bill now uses shared bill summary and
 warehouse-delta loaders for current/prior metering rather than embedding another
 copy of the WAREHOUSE_METERING_HISTORY summary SQL in the section. Cost &
 Contract splash keeps its stricter mart/live error reporting while reusing the
-shared live warehouse-delta SQL builder.
+shared live warehouse-delta SQL builder. Cost & Contract cockpit and run-rate
+SQL now reuse `utils.metering_sql` for both mart and live paths, and the detail
+refresh block now refreshes run-rate, action queue, attribution, service lens,
+and advisor detail data even when the fast cockpit mart succeeds.
+
+`docs/QUERY_INVENTORY.md` is the static map for current query families, cache
+call sites, and mart object disposition.
 
 Top ACCOUNT_USAGE source families by static reference count:
 
@@ -84,9 +94,9 @@ Top ACCOUNT_USAGE source families by static reference count:
 1. Warehouse metering summary:
    First pass done for Usage Overview, Cost Forecast, Burn Rate, Cost Center
    Explain This Bill, Cost & Contract splash warehouse ranking, and Cost &
-   Contract Anomaly Log. Remaining consumers: Cost & Contract run-rate/cockpit
-   helpers and deeper warehouse advisor panels that still need specialized
-   event-level metering.
+   Contract Anomaly Log. Cost & Contract run-rate/cockpit helpers now share
+   common metering SQL shapes. Remaining consumers: deeper warehouse advisor
+   panels that still need specialized event-level metering.
 
 2. Query history operational rollup:
    First pass done for Usage Overview and Account Health. Remaining consumers:

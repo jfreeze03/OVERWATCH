@@ -44,6 +44,12 @@ Latest static dependency pass:
   shared mart-first loader. `FACT_WAREHOUSE_HOURLY` remains the preferred source
   for completed-day anomaly scans, with `WAREHOUSE_METERING_HISTORY` only as the
   explicit fallback path.
+- The latest Cost & Contract pass moved cockpit movement and run-rate/YOY SQL
+  into shared metering builders used by both mart and live fallback paths. This
+  did not add or remove mart objects, but it reduced duplicated app query logic.
+- Latest static object disposition: 59 deployable objects are directly app-read
+  or app-managed, 9 are test/setup contracts, and 6 are refresh/setup plumbing.
+  See `docs/QUERY_INVENTORY.md` for the current query and object map.
 - Latest mart/SP audit: refresh procedures do not create, insert, merge, or
   delete against retired automation, executive packet, monitoring-cost,
   external-control, owner-directory, or cost-savings verification objects.

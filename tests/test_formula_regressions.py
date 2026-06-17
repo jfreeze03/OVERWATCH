@@ -15,6 +15,7 @@ APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
 
 from config import DEFAULTS, DEFAULT_ALERT_EMAIL  # noqa: E402
+import sections.cost_contract as cost_contract  # noqa: E402
 from sections.account_health import (  # noqa: E402
     _account_health_action_brief,
     _account_health_actionable_checklist,
@@ -112,6 +113,7 @@ from sections.cost_contract import (  # noqa: E402
     _build_cost_closure_analytics,
     _build_cost_control_coverage_board,
     _build_cost_decomposition_board,
+    _build_cost_cockpit_sql,
     _build_cost_monitor_service_trend_sql,
     _build_cost_drilldown_command_map,
     _build_cost_monitoring_alert_rows,
@@ -422,6 +424,7 @@ from utils.mart import (  # noqa: E402
     build_mart_adoption_users_db_sql,
     build_mart_adoption_role_type_sql,
     build_mart_chargeback_sql,
+    build_mart_cost_cockpit_sql,
     build_mart_cost_explorer_sql,
     build_mart_cost_run_rate_sql,
     build_mart_control_room_failed_logins_sql,
@@ -2089,6 +2092,31 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("FACT_WAREHOUSE_HOURLY", mart_sql)
         self.assertNotIn("SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY", mart_sql)
         self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY", live_sql)
+
+    def test_cost_contract_cockpit_and_run_rate_use_shared_metering_builders(self):
+        mart_cockpit = build_mart_cost_cockpit_sql("ALFA", 14).upper()
+        live_cockpit = _build_cost_cockpit_sql("ALFA", 14).upper()
+        mart_run_rate_source = inspect.getsource(build_mart_cost_run_rate_sql)
+        live_run_rate_source = inspect.getsource(_build_cost_run_rate_sql)
+        watch_floor_source = inspect.getsource(cost_contract._render_cost_watch_floor)
+
+        for sql in (mart_cockpit, live_cockpit):
+            self.assertIn("CURRENT_PERIOD", sql)
+            self.assertIn("PRIOR_PERIOD", sql)
+            self.assertIn("FULL OUTER JOIN", sql)
+            self.assertIn("TOP_INCREASE_WAREHOUSE", sql)
+
+        self.assertIn("FACT_WAREHOUSE_HOURLY", mart_cockpit)
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY", live_cockpit)
+        self.assertIn("build_cost_run_rate_metering_sql", mart_run_rate_source)
+        self.assertIn("build_cost_run_rate_metering_sql", live_run_rate_source)
+        run_rate_refresh_line = next(
+            line
+            for line in watch_floor_source.splitlines()
+            if 'st.session_state["cost_contract_run_rate"] = run_query(' in line
+        )
+        self.assertTrue(run_rate_refresh_line.startswith("            "))
+        self.assertFalse(run_rate_refresh_line.startswith("                "))
 
     def test_cost_control_coverage_board_requires_drilldown_and_verified_savings(self):
         cockpit = pd.DataFrame([{"CURRENT_CREDITS": 10, "PRIOR_CREDITS": 8}])

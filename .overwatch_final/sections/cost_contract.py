@@ -25,6 +25,7 @@ from sections.shell_helpers import (
     render_shell_snapshot,
     with_loaded_at,
 )
+from utils.metering_sql import build_cost_cockpit_metering_sql, build_cost_run_rate_metering_sql
 from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_section_note, defer_source_note
 
@@ -583,144 +584,21 @@ _COST_SPLASH_AUTOLOAD_BLOCKED_SCOPE_KEY = "_cost_contract_splash_autoload_blocke
 
 
 def _build_cost_cockpit_sql(company: str, days: int) -> str:
-    wh_filter = get_wh_filter_clause("warehouse_name", company)
-    return f"""
-    WITH current_period AS (
-        SELECT
-            warehouse_name,
-            SUM(COALESCE(credits_used, 0)) AS credits
-        FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
-        WHERE start_time >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
-          AND start_time < CURRENT_TIMESTAMP()
-          {wh_filter}
-        GROUP BY warehouse_name
-    ),
-    prior_period AS (
-        SELECT
-            warehouse_name,
-            SUM(COALESCE(credits_used, 0)) AS credits
-        FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
-        WHERE start_time >= DATEADD('day', -{int(days) * 2}, CURRENT_TIMESTAMP())
-          AND start_time < DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
-          {wh_filter}
-        GROUP BY warehouse_name
-    ),
-    deltas AS (
-        SELECT
-            COALESCE(c.warehouse_name, p.warehouse_name) AS warehouse_name,
-            COALESCE(c.credits, 0) AS current_credits,
-            COALESCE(p.credits, 0) AS prior_credits,
-            COALESCE(c.credits, 0) - COALESCE(p.credits, 0) AS credit_delta
-        FROM current_period c
-        FULL OUTER JOIN prior_period p
-            ON c.warehouse_name = p.warehouse_name
+    return build_cost_cockpit_metering_sql(
+        "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY",
+        "start_time",
+        get_wh_filter_clause("warehouse_name", company),
+        days=int(days),
     )
-    SELECT
-        SUM(current_credits) AS current_credits,
-        SUM(prior_credits) AS prior_credits,
-        COUNT_IF(current_credits > 0) AS active_warehouses,
-        MAX_BY(warehouse_name, credit_delta) AS top_increase_warehouse,
-        MAX(credit_delta) AS top_increase_credits
-    FROM deltas
-    """
 
 
 def _build_cost_run_rate_sql(company: str) -> str:
     """Build live fallback SQL for complete-day 7d/30d run-rate and YOY cost trend."""
-    wh_filter = get_wh_filter_clause("warehouse_name", company)
-    return f"""
-    WITH bounds AS (
-        SELECT
-            DATE_TRUNC('DAY', CURRENT_TIMESTAMP()) AS today_start,
-            DATEADD('DAY', -7, DATE_TRUNC('DAY', CURRENT_TIMESTAMP())) AS current_7d_start,
-            DATEADD('DAY', -30, DATE_TRUNC('DAY', CURRENT_TIMESTAMP())) AS current_30d_start,
-            DATEADD('YEAR', -1, DATEADD('DAY', -7, DATE_TRUNC('DAY', CURRENT_TIMESTAMP()))) AS yoy_7d_start,
-            DATEADD('YEAR', -1, DATE_TRUNC('DAY', CURRENT_TIMESTAMP())) AS yoy_7d_end,
-            DATEADD('YEAR', -1, DATEADD('DAY', -30, DATE_TRUNC('DAY', CURRENT_TIMESTAMP()))) AS yoy_30d_start,
-            DATEADD('YEAR', -1, DATE_TRUNC('DAY', CURRENT_TIMESTAMP())) AS yoy_30d_end
-    ),
-    metering AS (
-        SELECT
-            start_time AS usage_ts,
-            warehouse_name,
-            COALESCE(credits_used, 0) AS credits_used
-        FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY, bounds
-        WHERE start_time >= yoy_30d_start
-          AND start_time < today_start
-          {wh_filter}
-    ),
-    aggregate_trend AS (
-        SELECT
-            SUM(IFF(usage_ts >= current_7d_start AND usage_ts < today_start, credits_used, 0)) AS credits_7d,
-            SUM(IFF(usage_ts >= current_30d_start AND usage_ts < today_start, credits_used, 0)) AS credits_30d,
-            SUM(IFF(usage_ts >= yoy_7d_start AND usage_ts < yoy_7d_end, credits_used, 0)) AS yoy_7d_credits,
-            SUM(IFF(usage_ts >= yoy_30d_start AND usage_ts < yoy_30d_end, credits_used, 0)) AS yoy_30d_credits,
-            COUNT(DISTINCT IFF(usage_ts >= current_7d_start AND usage_ts < today_start, TO_DATE(usage_ts), NULL)) AS observed_days_7d,
-            COUNT(DISTINCT IFF(usage_ts >= current_30d_start AND usage_ts < today_start, TO_DATE(usage_ts), NULL)) AS observed_days_30d,
-            COUNT(DISTINCT IFF(usage_ts >= yoy_7d_start AND usage_ts < yoy_7d_end, TO_DATE(usage_ts), NULL)) AS yoy_days_7d,
-            COUNT(DISTINCT IFF(usage_ts >= yoy_30d_start AND usage_ts < yoy_30d_end, TO_DATE(usage_ts), NULL)) AS yoy_days_30d
-        FROM metering, bounds
-    ),
-    warehouse_yoy AS (
-        SELECT
-            warehouse_name,
-            SUM(IFF(usage_ts >= current_7d_start AND usage_ts < today_start, credits_used, 0)) AS current_7d_credits,
-            SUM(IFF(usage_ts >= yoy_7d_start AND usage_ts < yoy_7d_end, credits_used, 0)) AS yoy_7d_credits
-        FROM metering, bounds
-        GROUP BY warehouse_name
-    ),
-    top_yoy AS (
-        SELECT
-            warehouse_name AS top_yoy_increase_warehouse,
-            current_7d_credits - yoy_7d_credits AS top_yoy_increase_credits
-        FROM warehouse_yoy
-        WHERE current_7d_credits > 0 OR yoy_7d_credits > 0
-        QUALIFY ROW_NUMBER() OVER (
-            ORDER BY current_7d_credits - yoy_7d_credits DESC, current_7d_credits DESC
-        ) = 1
+    return build_cost_run_rate_metering_sql(
+        "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY",
+        "start_time",
+        get_wh_filter_clause("warehouse_name", company),
     )
-    SELECT
-        ROUND(COALESCE(a.credits_7d, 0), 4) AS credits_7d,
-        ROUND(COALESCE(a.credits_7d, 0) / 7, 4) AS avg_daily_7d,
-        ROUND(COALESCE(a.credits_30d, 0), 4) AS credits_30d,
-        ROUND(COALESCE(a.credits_30d, 0) / 30, 4) AS avg_daily_30d,
-        ROUND((COALESCE(a.credits_7d, 0) / 7) * 30, 4) AS projected_30d_from_7d,
-        ROUND(COALESCE(a.yoy_7d_credits, 0), 4) AS yoy_7d_credits,
-        ROUND(COALESCE(a.yoy_30d_credits, 0), 4) AS yoy_30d_credits,
-        a.observed_days_7d,
-        a.observed_days_30d,
-        a.yoy_days_7d,
-        a.yoy_days_30d,
-        CASE
-            WHEN COALESCE(a.credits_30d, 0) = 0 THEN NULL
-            ELSE ROUND(((COALESCE(a.credits_7d, 0) / 7) - (a.credits_30d / 30)) / NULLIF(a.credits_30d / 30, 0) * 100, 2)
-        END AS pct_vs_30d_avg,
-        CASE
-            WHEN a.yoy_days_7d < 5 OR COALESCE(a.yoy_7d_credits, 0) = 0 THEN NULL
-            ELSE ROUND((COALESCE(a.credits_7d, 0) - a.yoy_7d_credits) / NULLIF(a.yoy_7d_credits, 0) * 100, 2)
-        END AS yoy_7d_pct,
-        CASE
-            WHEN a.yoy_days_30d < 20 OR COALESCE(a.yoy_30d_credits, 0) = 0 THEN NULL
-            ELSE ROUND((COALESCE(a.credits_30d, 0) - a.yoy_30d_credits) / NULLIF(a.yoy_30d_credits, 0) * 100, 2)
-        END AS yoy_30d_pct,
-        CASE
-            WHEN COALESCE(a.credits_30d, 0) = 0 THEN 'No 30-day baseline'
-            WHEN ((COALESCE(a.credits_7d, 0) / 7) - (a.credits_30d / 30)) / NULLIF(a.credits_30d / 30, 0) >= 0.15 THEN 'Accelerating'
-            WHEN ((COALESCE(a.credits_7d, 0) / 7) - (a.credits_30d / 30)) / NULLIF(a.credits_30d / 30, 0) <= -0.15 THEN 'Cooling'
-            ELSE 'Stable'
-        END AS run_rate_state,
-        CASE
-            WHEN a.yoy_days_7d < 5 THEN 'No prior-year baseline'
-            WHEN COALESCE(a.yoy_7d_credits, 0) = 0 THEN 'No prior-year spend'
-            WHEN (COALESCE(a.credits_7d, 0) - a.yoy_7d_credits) / NULLIF(a.yoy_7d_credits, 0) >= 0.20 THEN 'Above prior year'
-            WHEN (COALESCE(a.credits_7d, 0) - a.yoy_7d_credits) / NULLIF(a.yoy_7d_credits, 0) <= -0.20 THEN 'Below prior year'
-            ELSE 'Near prior year'
-        END AS yoy_state,
-        COALESCE(t.top_yoy_increase_warehouse, 'No warehouse baseline') AS top_yoy_increase_warehouse,
-        ROUND(COALESCE(t.top_yoy_increase_credits, 0), 4) AS top_yoy_increase_credits
-    FROM aggregate_trend a
-    LEFT JOIN top_yoy t ON TRUE
-    """
 
 
 def _warehouse_hourly_table() -> str:
@@ -4591,123 +4469,123 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
                 )
                 st.session_state["cost_contract_cockpit"] = pd.DataFrame()
                 st.session_state["cost_contract_queue"] = pd.DataFrame()
+        try:
+            st.session_state["cost_contract_run_rate"] = run_query(
+                build_mart_cost_run_rate_sql(company),
+                ttl_key=f"cost_contract_run_rate_mart_{company}",
+                tier="historical",
+                section="Cost & Contract",
+            )
+            st.session_state["cost_contract_run_rate_source"] = "Fast run-rate summary"
+            st.session_state["cost_contract_run_rate_error"] = ""
+        except Exception as mart_exc:
             try:
                 st.session_state["cost_contract_run_rate"] = run_query(
-                    build_mart_cost_run_rate_sql(company),
-                    ttl_key=f"cost_contract_run_rate_mart_{company}",
+                    _build_cost_run_rate_sql(company),
+                    ttl_key=f"cost_contract_run_rate_live_{company}",
                     tier="historical",
                     section="Cost & Contract",
                 )
-                st.session_state["cost_contract_run_rate_source"] = "Fast run-rate summary"
+                st.session_state["cost_contract_run_rate_source"] = (
+                    "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"
+                )
                 st.session_state["cost_contract_run_rate_error"] = ""
-            except Exception as mart_exc:
-                try:
-                    st.session_state["cost_contract_run_rate"] = run_query(
-                        _build_cost_run_rate_sql(company),
-                        ttl_key=f"cost_contract_run_rate_live_{company}",
-                        tier="historical",
-                        section="Cost & Contract",
-                    )
-                    st.session_state["cost_contract_run_rate_source"] = (
-                        "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"
-                    )
-                    st.session_state["cost_contract_run_rate_error"] = ""
-                except Exception as exc:
-                    st.session_state["cost_contract_run_rate"] = pd.DataFrame()
-                    st.session_state["cost_contract_run_rate_source"] = ""
-                    st.session_state["cost_contract_run_rate_error"] = (
-                        f"Fast summary unavailable: {format_snowflake_error(mart_exc)}; "
-                        f"live fallback failed: {format_snowflake_error(exc)}"
-                    )
-            try:
-                st.session_state["cost_contract_queue"] = load_action_queue(session)
-                st.session_state["cost_contract_queue_error"] = ""
             except Exception as exc:
-                st.session_state["cost_contract_queue"] = pd.DataFrame()
-                st.session_state["cost_contract_queue_error"] = format_snowflake_error(exc)
-            try:
-                st.session_state["cost_contract_attribution_reconciliation"] = run_query_or_raise(
-                    build_cost_reconciliation_sql(int(days), prefer_query_attribution=True),
-                    ttl_key=f"cost_contract_attribution_reconciliation_{company}_{days}",
-                    tier="historical",
-                    section="Cost & Contract",
+                st.session_state["cost_contract_run_rate"] = pd.DataFrame()
+                st.session_state["cost_contract_run_rate_source"] = ""
+                st.session_state["cost_contract_run_rate_error"] = (
+                    f"Fast summary unavailable: {format_snowflake_error(mart_exc)}; "
+                    f"live fallback failed: {format_snowflake_error(exc)}"
                 )
-                st.session_state["cost_contract_attribution_error"] = ""
-                st.session_state["cost_contract_attribution_source"] = (
-                    "SNOWFLAKE.ACCOUNT_USAGE.QUERY_ATTRIBUTION_HISTORY + WAREHOUSE_METERING_HISTORY"
-                )
-            except Exception as exc:
-                st.session_state["cost_contract_attribution_reconciliation"] = pd.DataFrame()
-                st.session_state["cost_contract_attribution_error"] = format_snowflake_error(exc)
-                st.session_state["cost_contract_attribution_source"] = ""
-            try:
-                st.session_state["cost_contract_service_lens"] = run_query_or_raise(
-                    build_snowflake_service_cost_lens_sql(
-                        int(days),
-                        credit_price,
-                        ai_credit_price=get_current_ai_credit_price(),
-                    ),
-                    ttl_key=f"cost_contract_service_lens_official_{company}_{days}_{credit_price}",
-                    tier="historical",
-                    section="Cost & Contract",
-                )
-                st.session_state["cost_contract_service_lens_error"] = ""
-                st.session_state["cost_contract_service_lens_source"] = (
-                    "Official Cost Monitor: SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY"
-                )
-            except Exception as exc:
-                st.session_state["cost_contract_service_lens"] = pd.DataFrame()
-                st.session_state["cost_contract_service_lens_error"] = format_snowflake_error(exc)
-                st.session_state["cost_contract_service_lens_source"] = ""
-            try:
-                st.session_state["cost_contract_efficiency_summary"] = run_query_or_raise(
-                    build_cost_efficiency_summary_sql(
-                        int(days),
-                        company=company,
-                        credit_price=credit_price,
-                        prefer_query_attribution=True,
-                    ),
-                    ttl_key=f"cost_contract_efficiency_summary_{company}_{days}_{credit_price}",
-                    tier="historical",
-                    section="Cost & Contract",
-                )
-                st.session_state["cost_contract_efficiency_summary_error"] = ""
-            except Exception as exc:
-                st.session_state["cost_contract_efficiency_summary"] = pd.DataFrame()
-                st.session_state["cost_contract_efficiency_summary_error"] = format_snowflake_error(exc)
-            try:
-                st.session_state["cost_contract_warehouse_efficiency"] = run_query_or_raise(
-                    build_warehouse_efficiency_sql(
-                        int(days),
-                        company=company,
-                        credit_price=credit_price,
-                        top=50,
-                        prefer_query_attribution=True,
-                    ),
-                    ttl_key=f"cost_contract_warehouse_efficiency_{company}_{days}_{credit_price}",
-                    tier="historical",
-                    section="Cost & Contract",
-                )
-                st.session_state["cost_contract_warehouse_efficiency_error"] = ""
-            except Exception as exc:
-                st.session_state["cost_contract_warehouse_efficiency"] = pd.DataFrame()
-                st.session_state["cost_contract_warehouse_efficiency_error"] = format_snowflake_error(exc)
-            try:
-                st.session_state["cost_contract_clustering_cost"] = run_query_or_raise(
-                    build_clustering_cost_sql(
-                        int(days),
-                        company=company,
-                        credit_price=credit_price,
-                        top=50,
-                    ),
-                    ttl_key=f"cost_contract_clustering_cost_{company}_{days}_{credit_price}",
-                    tier="historical",
-                    section="Cost & Contract",
-                )
-                st.session_state["cost_contract_clustering_cost_error"] = ""
-            except Exception as exc:
-                st.session_state["cost_contract_clustering_cost"] = pd.DataFrame()
-                st.session_state["cost_contract_clustering_cost_error"] = format_snowflake_error(exc)
+        try:
+            st.session_state["cost_contract_queue"] = load_action_queue(session)
+            st.session_state["cost_contract_queue_error"] = ""
+        except Exception as exc:
+            st.session_state["cost_contract_queue"] = pd.DataFrame()
+            st.session_state["cost_contract_queue_error"] = format_snowflake_error(exc)
+        try:
+            st.session_state["cost_contract_attribution_reconciliation"] = run_query_or_raise(
+                build_cost_reconciliation_sql(int(days), prefer_query_attribution=True),
+                ttl_key=f"cost_contract_attribution_reconciliation_{company}_{days}",
+                tier="historical",
+                section="Cost & Contract",
+            )
+            st.session_state["cost_contract_attribution_error"] = ""
+            st.session_state["cost_contract_attribution_source"] = (
+                "SNOWFLAKE.ACCOUNT_USAGE.QUERY_ATTRIBUTION_HISTORY + WAREHOUSE_METERING_HISTORY"
+            )
+        except Exception as exc:
+            st.session_state["cost_contract_attribution_reconciliation"] = pd.DataFrame()
+            st.session_state["cost_contract_attribution_error"] = format_snowflake_error(exc)
+            st.session_state["cost_contract_attribution_source"] = ""
+        try:
+            st.session_state["cost_contract_service_lens"] = run_query_or_raise(
+                build_snowflake_service_cost_lens_sql(
+                    int(days),
+                    credit_price,
+                    ai_credit_price=get_current_ai_credit_price(),
+                ),
+                ttl_key=f"cost_contract_service_lens_official_{company}_{days}_{credit_price}",
+                tier="historical",
+                section="Cost & Contract",
+            )
+            st.session_state["cost_contract_service_lens_error"] = ""
+            st.session_state["cost_contract_service_lens_source"] = (
+                "Official Cost Monitor: SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY"
+            )
+        except Exception as exc:
+            st.session_state["cost_contract_service_lens"] = pd.DataFrame()
+            st.session_state["cost_contract_service_lens_error"] = format_snowflake_error(exc)
+            st.session_state["cost_contract_service_lens_source"] = ""
+        try:
+            st.session_state["cost_contract_efficiency_summary"] = run_query_or_raise(
+                build_cost_efficiency_summary_sql(
+                    int(days),
+                    company=company,
+                    credit_price=credit_price,
+                    prefer_query_attribution=True,
+                ),
+                ttl_key=f"cost_contract_efficiency_summary_{company}_{days}_{credit_price}",
+                tier="historical",
+                section="Cost & Contract",
+            )
+            st.session_state["cost_contract_efficiency_summary_error"] = ""
+        except Exception as exc:
+            st.session_state["cost_contract_efficiency_summary"] = pd.DataFrame()
+            st.session_state["cost_contract_efficiency_summary_error"] = format_snowflake_error(exc)
+        try:
+            st.session_state["cost_contract_warehouse_efficiency"] = run_query_or_raise(
+                build_warehouse_efficiency_sql(
+                    int(days),
+                    company=company,
+                    credit_price=credit_price,
+                    top=50,
+                    prefer_query_attribution=True,
+                ),
+                ttl_key=f"cost_contract_warehouse_efficiency_{company}_{days}_{credit_price}",
+                tier="historical",
+                section="Cost & Contract",
+            )
+            st.session_state["cost_contract_warehouse_efficiency_error"] = ""
+        except Exception as exc:
+            st.session_state["cost_contract_warehouse_efficiency"] = pd.DataFrame()
+            st.session_state["cost_contract_warehouse_efficiency_error"] = format_snowflake_error(exc)
+        try:
+            st.session_state["cost_contract_clustering_cost"] = run_query_or_raise(
+                build_clustering_cost_sql(
+                    int(days),
+                    company=company,
+                    credit_price=credit_price,
+                    top=50,
+                ),
+                ttl_key=f"cost_contract_clustering_cost_{company}_{days}_{credit_price}",
+                tier="historical",
+                section="Cost & Contract",
+            )
+            st.session_state["cost_contract_clustering_cost_error"] = ""
+        except Exception as exc:
+            st.session_state["cost_contract_clustering_cost"] = pd.DataFrame()
+            st.session_state["cost_contract_clustering_cost_error"] = format_snowflake_error(exc)
     defer_section_note(
         "Cost detail telemetry is optional; refresh only when you need account-history rows behind the fast cost summary."
     )

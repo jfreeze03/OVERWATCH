@@ -3,6 +3,35 @@
 This file records user-facing implementation changes that should be documented
 outside the Streamlit app UI.
 
+## 2026-06-17 - COST_MONITOR Formula Audit
+
+- Added `docs/COST_MONITOR_FORMULA_AUDIT.md` to compare OVERWATCH cost
+  metrics against the original `COST_MONITOR_DB.txt` dashboard formulas.
+- `DBA Control Room > Cost Formula Audit` now shows source-dashboard formula,
+  OVERWATCH formula, parity status, measurement basis, notes, and next-review
+  guidance.
+- Service spend categorization now keeps Openflow, Snowpark Container Services,
+  automatic clustering, replication, and serverless/task service rows out of
+  vague `Other` or warehouse-compute buckets.
+- Known follow-ups are storage-class coverage for hybrid/archive storage,
+  optional Cortex sub-service detail panes, and an annual all-service projection
+  if the original dashboard view is needed again.
+
+## 2026-06-17 - Advisor UX Polish
+
+- `Workload Operations > Stored procedures` now has a top-level Stored
+  Procedure Advisor load path that hydrates operations and SLA/cost telemetry
+  through explicit user action before showing ranked decisions.
+- Stored procedure advisor rows include decision, review stage, impact summary,
+  verification expectation, and execution guardrail fields so reviewers can
+  decide what to inspect before reruns, redeploys, or warehouse changes.
+- `Cost & Contract > Warehouse Advisor` now exposes action posture, savings
+  type, expected verification impact, and do-not-execute guardrails while
+  preserving the no-generated-DDL boundary.
+- Warehouse setting changes remain routed to `DBA Control Room > Admin >
+  Warehouse Settings`, where preview, typed confirmation, rollback context, and
+  audit logging stay guarded.
+
 ## 2026-06-17 - Warehouse Advisor Boundary
 
 - `Cost & Contract > Recommendations and action queue > Warehouse Advisor` is

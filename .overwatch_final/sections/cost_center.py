@@ -1228,18 +1228,32 @@ def _build_bill_waterfall(
 def _service_cost_category(service_type: str) -> str:
     """Group Snowflake METERING_HISTORY service types into readable bill buckets."""
     value = str(service_type or "UNKNOWN").upper()
-    if "CORTEX" in value or "AI" in value or "LLM" in value:
+    if (
+        "CORTEX" in value
+        or "INTELLIGENCE" in value
+        or "LLM" in value
+        or value == "AI_SERVICES"
+        or value.startswith("AI_")
+        or "_AI_" in value
+        or value.endswith("_AI")
+    ):
         return "AI / Cortex"
+    if "OPENFLOW" in value:
+        return "Data integration / Openflow"
     if "SNOWPIPE" in value or "PIPE" in value or "INGEST" in value:
         return "Data loading / ingestion"
     if (
         "AUTO_CLUSTER" in value
+        or "AUTOMATIC_CLUSTERING" in value
+        or "CLUSTERING" in value
         or "SEARCH_OPTIMIZATION" in value
         or "MATERIALIZED_VIEW" in value
         or "DYNAMIC_TABLE" in value
         or "SERVERLESS" in value
         or "TASK" in value
         or "REPLICATION" in value
+        or "SNOWPARK_CONTAINER" in value
+        or "CONTAINER_SERVICES" in value
     ):
         return "Serverless features"
     if "CLOUD_SERVICES" in value or "CLOUD SERVICE" in value:

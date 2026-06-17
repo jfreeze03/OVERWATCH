@@ -38,6 +38,7 @@ from utils import (
     make_action_id,
     upsert_actions,
 )
+from utils.workflows import render_load_status
 
 
 PROCEDURE_SIGNAL_ROUTES = {
@@ -770,17 +771,47 @@ def _procedure_analysis_summary(
         runtime_change = safe_float(row.get("RUNTIME_CHANGE_PCT"))
         cost_change = safe_float(row.get("COST_CHANGE_PCT"))
         issue = str(row.get("OPTIMIZATION_ISSUE") or signal)
+        priority = priority_for(row)
+        signal_upper = signal.upper()
         confidence = (
             "Allocated - procedure fact or ROOT_QUERY_ID child telemetry"
             if safe_int(row.get("DOWNSTREAM_QUERY_COUNT")) > 0 or str(row.get("ROOT_QUERY_ID") or "").strip()
             else "Estimated - outer CALL telemetry only"
         )
+        proof_required = str(
+            row.get("PROOF_REQUIRED")
+            or "Next CALL should return within runtime/cost baseline with linked query history."
+        )
+        do_not_do = str(
+            row.get("DO_NOT_DO")
+            or "Do not retry or redeploy blindly without comparing release, warehouse, and child-query evidence."
+        )
+        review_stage = (
+            "Cost attribution review"
+            if "COST" in signal_upper
+            else "Runtime root-cause review"
+            if "RUNTIME" in signal_upper
+            else "Optimization triage"
+        )
+        decision = (
+            "Review before next scheduled run"
+            if priority == "High"
+            else "Validate with next comparable run"
+            if "COST" in signal_upper or "RUNTIME" in signal_upper
+            else "Review in normal DBA queue"
+        )
         rows.append({
-            "PRIORITY": priority_for(row),
+            "PRIORITY": priority,
             "STATE": state,
             "PROCEDURE_CONTEXT": proc,
             "SIGNAL": signal,
+            "DECISION": decision,
+            "REVIEW_STAGE": review_stage,
             "OPTIMIZATION_ISSUE": issue,
+            "IMPACT_SUMMARY": (
+                f"runtime change={runtime_change:,.1f}%, "
+                f"cost change={cost_change:,.1f}%, estimated cost=${est_cost:,.2f}"
+            ),
             "LATEST_RUNTIME_SEC": runtime,
             "BASELINE_RUNTIME_SEC": baseline_runtime,
             "RUNTIME_CHANGE_PCT": runtime_change,
@@ -802,15 +833,11 @@ def _procedure_analysis_summary(
                 or row.get("RECOMMENDED_ACTION")
                 or "Compare the latest CALL to baseline and inspect child-query telemetry."
             ),
-            "PROOF_REQUIRED": str(
-                row.get("PROOF_REQUIRED")
-                or "Next CALL should return within runtime/cost baseline with linked query history."
-            ),
-            "DO_NOT_DO": str(
-                row.get("DO_NOT_DO")
-                or "Do not retry or redeploy blindly without comparing release, warehouse, and child-query evidence."
-            ),
-            "_SORT": {"High": 0, "Medium": 1, "Low": 2}.get(priority_for(row), 9),
+            "VERIFY_NEXT": proof_required,
+            "EXECUTION_GUARDRAIL": do_not_do,
+            "PROOF_REQUIRED": proof_required,
+            "DO_NOT_DO": do_not_do,
+            "_SORT": {"High": 0, "Medium": 1, "Low": 2}.get(priority, 9),
             "_SCORE": safe_float(row.get("OPTIMIZATION_SCORE")),
         })
 
@@ -870,7 +897,7 @@ def _procedure_analysis_detail_options(board: pd.DataFrame | None) -> pd.DataFra
     return view
 
 
-def _render_procedure_analysis_detail(board: pd.DataFrame | None) -> None:
+def _render_procedure_analysis_detail(board: pd.DataFrame | None, *, key_prefix: str = "procedure_analysis") -> None:
     options = _procedure_analysis_detail_options(board)
     if options.empty:
         return
@@ -878,7 +905,7 @@ def _render_procedure_analysis_detail(board: pd.DataFrame | None) -> None:
     selected_label = st.selectbox(
         "Procedure advisor signal",
         options["DETAIL_LABEL"].tolist(),
-        key="procedure_analysis_detail_select",
+        key=f"{key_prefix}_detail_select",
     )
     selected = options[options["DETAIL_LABEL"].eq(selected_label)]
     if selected.empty:
@@ -896,12 +923,19 @@ def _render_procedure_analysis_detail(board: pd.DataFrame | None) -> None:
         f"<strong>Next move:</strong> {_plain_html(row.get('SAFE_NEXT_ACTION') or 'Compare the latest CALL to baseline and inspect child-query telemetry.')}"
         "</div>"
     )
+    decision = str(row.get("DECISION") or "").strip()
+    if decision:
+        st.html(
+            "<div style='line-height:1.45; margin:.15rem 0;'>"
+            f"<strong>Decision:</strong> {_plain_html(decision)}"
+            "</div>"
+        )
     st.html(
         "<div style='line-height:1.45; margin:.15rem 0 .35rem 0;'>"
-        f"<strong>Proof:</strong> {_plain_html(row.get('PROOF_REQUIRED') or 'Next CALL should return within baseline with linked query history.')}"
+        f"<strong>Verify next:</strong> {_plain_html(row.get('VERIFY_NEXT') or row.get('PROOF_REQUIRED') or 'Next CALL should return within baseline with linked query history.')}"
         "</div>"
     )
-    guardrail = str(row.get("DO_NOT_DO") or "").strip()
+    guardrail = str(row.get("EXECUTION_GUARDRAIL") or row.get("DO_NOT_DO") or "").strip()
     if guardrail:
         st.caption(f"Guardrail: {_clean_display_text(guardrail)}")
     st.caption(
@@ -909,7 +943,7 @@ def _render_procedure_analysis_detail(board: pd.DataFrame | None) -> None:
         f"Confidence: {_clean_display_text(row.get('CONFIDENCE') or 'Estimated')}"
     )
     proc = str(row.get("PROCEDURE_CONTEXT") or row.get("PROCEDURE_NAME") or "").strip()
-    if proc and st.button("Mark For Downstream Review", key="procedure_analysis_detail_target", width="stretch"):
+    if proc and st.button("Mark For Downstream Review", key=f"{key_prefix}_detail_target", width="stretch"):
         st.session_state["_sp_downstream_target_hint"] = proc
         st.rerun()
 
@@ -1136,6 +1170,175 @@ def _query_history_has_root_query_id(session) -> bool:
     ))
 
 
+def _load_procedure_operations(session, company: str, sp_days: int) -> list[str]:
+    """Load procedure inventory, task linkage, and recent CALL telemetry into session state."""
+    errors: list[str] = []
+    procedure_sql, call_sql = _build_procedure_inventory_sql(sp_days)
+    try:
+        proc_inventory = load_shared_procedure_inventory(
+            company=company,
+            database_contains=str(st.session_state.get("global_database", "") or "").strip(),
+            live_sql=procedure_sql,
+            force=True,
+            section="Stored Procedures",
+        )
+        df_procs = proc_inventory.data
+        proc_inventory_source = proc_inventory.source if proc_inventory.available else "Unavailable"
+    except Exception as e:
+        errors.append(f"Procedure inventory unavailable: {format_snowflake_error(e)}")
+        df_procs = pd.DataFrame()
+        proc_inventory_source = "Unavailable"
+    try:
+        df_tasks = load_task_inventory(session, company, force_refresh=True)
+        task_source = "Live: SHOW TASKS IN ACCOUNT"
+    except Exception as e:
+        errors.append(f"Task inventory unavailable: {format_snowflake_error(e)}")
+        df_tasks = pd.DataFrame()
+        task_source = "Unavailable"
+    try:
+        proc_calls = load_shared_procedure_calls(
+            company=company,
+            days=sp_days,
+            live_sql=call_sql,
+            force=True,
+            section="Stored Procedures",
+        )
+        df_calls = proc_calls.data
+        proc_call_source = proc_calls.source if proc_calls.available else "Unavailable"
+    except Exception as e:
+        errors.append(f"Recent CALL history unavailable: {format_snowflake_error(e)}")
+        df_calls = pd.DataFrame()
+        proc_call_source = "Unavailable"
+
+    summary, exceptions, joined = _build_procedure_ops_frames(df_procs, df_tasks, df_calls)
+    st.session_state["sp_ops_summary"] = summary
+    st.session_state["sp_ops_exceptions"] = exceptions
+    st.session_state["sp_ops_joined"] = joined
+    st.session_state["sp_ops_sources"] = {
+        "inventory": proc_inventory_source,
+        "calls": proc_call_source,
+        "tasks": task_source,
+    }
+    return errors
+
+
+def _load_procedure_sla_watch(session, company: str, sp_days: int, credit_price: float) -> list[str]:
+    """Load stored procedure SLA/cost telemetry and build the advisor board."""
+    errors: list[str] = []
+    try:
+        root_context = {"available": False}
+
+        def _live_sla_sql() -> str:
+            root_context["available"] = _query_history_has_root_query_id(session)
+            return _build_procedure_sla_sql(session, sp_days, root_context["available"])
+
+        proc_sla = load_shared_procedure_sla(
+            company=company,
+            days=sp_days,
+            live_sql=_live_sla_sql,
+            force=True,
+            section="Stored Procedures",
+        )
+        df_proc_runs = proc_sla.data
+        proc_sla_source = proc_sla.source if proc_sla.available else "Unavailable"
+        has_root_query_id = bool(root_context["available"] or str(proc_sla_source).startswith("Fast"))
+        summary, exceptions, latest = _build_procedure_sla_frames(df_proc_runs)
+        advisor_summary, advisor_board = _procedure_analysis_summary(
+            latest,
+            exceptions,
+            credit_price=safe_float(credit_price),
+        )
+        st.session_state["sp_sla_summary"] = summary
+        st.session_state["sp_sla_exceptions"] = exceptions
+        st.session_state["sp_sla_latest"] = latest
+        st.session_state["sp_sla_root_available"] = has_root_query_id
+        st.session_state["sp_sla_source"] = proc_sla_source
+        st.session_state["sp_analysis_summary"] = advisor_summary
+        st.session_state["sp_analysis_board"] = advisor_board
+    except Exception as e:
+        errors.append(f"Procedure SLA/cost watch unavailable: {format_snowflake_error(e)}")
+        st.session_state["sp_sla_summary"] = {"RUNS": 0, "PROCEDURES": 0, "SLA_BREACHES": 0, "COST_BREACHES": 0}
+        st.session_state["sp_sla_exceptions"] = pd.DataFrame()
+        st.session_state["sp_sla_latest"] = pd.DataFrame()
+        st.session_state["sp_sla_root_available"] = False
+        st.session_state["sp_sla_source"] = "Unavailable"
+        st.session_state["sp_analysis_summary"] = {
+            "procedures": 0,
+            "findings": 0,
+            "high": 0,
+            "runtime_regressions": 0,
+            "cost_regressions": 0,
+        }
+        st.session_state["sp_analysis_board"] = pd.DataFrame()
+    return errors
+
+
+def _load_full_procedure_advisor(session, company: str, sp_days: int, credit_price: float) -> list[str]:
+    errors = _load_procedure_operations(session, company, sp_days)
+    errors.extend(_load_procedure_sla_watch(session, company, sp_days, credit_price))
+    return errors
+
+
+def _render_procedure_advisor_overview() -> None:
+    advisor_summary = st.session_state.get("sp_analysis_summary") or {}
+    advisor_board = st.session_state.get("sp_analysis_board")
+    advisor_board = advisor_board if isinstance(advisor_board, pd.DataFrame) else pd.DataFrame()
+    ops_summary = st.session_state.get("sp_ops_summary") or {}
+    ops_exceptions = st.session_state.get("sp_ops_exceptions")
+    ops_exceptions = ops_exceptions if isinstance(ops_exceptions, pd.DataFrame) else pd.DataFrame()
+
+    if not advisor_summary and not ops_summary:
+        st.info("Load Procedure Advisor to rank runtime, cost, orchestration, and child-query signals.")
+        return
+
+    render_shell_snapshot((
+        ("Advisor Findings", f"{safe_int(advisor_summary.get('findings')):,}"),
+        ("High Priority", f"{safe_int(advisor_summary.get('high')):,}"),
+        ("Ops Exceptions", f"{len(ops_exceptions):,}"),
+        ("Est. Cost", f"${safe_float(advisor_summary.get('estimated_cost_usd')):,.0f}"),
+    ))
+
+    sources = st.session_state.get("sp_ops_sources", {})
+    sla_source = str(st.session_state.get("sp_sla_source", "") or "").strip()
+    source_notes = [str(v) for v in sources.values() if str(v or "").strip()]
+    if sla_source:
+        source_notes.append(sla_source)
+    if source_notes:
+        defer_source_note(*source_notes)
+
+    if not advisor_board.empty:
+        render_priority_dataframe(
+            advisor_board,
+            title="Stored procedure advisor front line",
+            priority_columns=[
+                "PRIORITY", "DECISION", "REVIEW_STAGE", "PROCEDURE_CONTEXT",
+                "SIGNAL", "IMPACT_SUMMARY", "SAFE_NEXT_ACTION", "VERIFY_NEXT",
+                "EXECUTION_GUARDRAIL", "CONFIDENCE", "WORKFLOW_ROUTE",
+            ],
+            sort_by=["PRIORITY", "LATEST_RUNTIME_SEC", "EST_TOTAL_CREDITS"],
+            ascending=[True, False, False],
+            raw_label="All stored procedure advisor front-line rows",
+            height=320,
+            max_rows=12,
+        )
+        _render_procedure_analysis_detail(advisor_board, key_prefix="procedure_analysis_front")
+    elif not ops_exceptions.empty:
+        render_priority_dataframe(
+            ops_exceptions,
+            title="Stored procedure operations exceptions",
+            priority_columns=[
+                "OPERATING_RISK", "SIGNAL", "SEVERITY", "PROCEDURE_CONTEXT",
+                "ORCHESTRATION_STATUS", "OWNER_REVIEW", "NEXT_WORKFLOW", "NEXT_ACTION",
+            ],
+            sort_by=["OPERATING_RISK_RANK", "SEVERITY", "CALL_COUNT"],
+            ascending=[True, True, False],
+            raw_label="All stored procedure operations exceptions",
+            max_rows=12,
+        )
+    else:
+        st.success("No stored procedure advisor findings crossed the current thresholds.")
+
+
 def render():
     session = get_session()
     credit_price = st.session_state.get("credit_price", DEFAULTS["credit_price"])
@@ -1165,56 +1368,23 @@ def render():
         schema_col="q.schema_name",
     )
 
+    if st.button("Load Procedure Advisor", key="sp_advisor_load", type="primary"):
+        with render_load_status("Loading procedure advisor", "Procedure advisor ready"):
+            load_errors = _load_full_procedure_advisor(session, company, sp_days, credit_price)
+        for error in load_errors:
+            st.info(error)
+    _render_procedure_advisor_overview()
+
     with st.expander("Procedure Operations Brief", expanded=bool(st.session_state.get("exceptions_only_mode"))):
         st.caption(
             "Snowflake procedure operations view: procedure inventory, task linkage, recent CALL activity, "
             "and orphan/suspended-task risk."
         )
         if st.button("Load Procedure Operations", key="sp_ops_load"):
-            procedure_sql, call_sql = _build_procedure_inventory_sql(sp_days)
-            try:
-                proc_inventory = load_shared_procedure_inventory(
-                    company=company,
-                    database_contains=str(st.session_state.get("global_database", "") or "").strip(),
-                    live_sql=procedure_sql,
-                    force=True,
-                    section="Stored Procedures",
-                )
-                df_procs = proc_inventory.data
-                proc_inventory_source = proc_inventory.source if proc_inventory.available else "Unavailable"
-            except Exception as e:
-                st.info(f"Procedure inventory unavailable: {format_snowflake_error(e)}")
-                df_procs = pd.DataFrame()
-                proc_inventory_source = "Unavailable"
-            try:
-                df_tasks = load_task_inventory(session, company, force_refresh=True)
-            except Exception as e:
-                st.info(f"Task inventory unavailable: {format_snowflake_error(e)}")
-                df_tasks = pd.DataFrame()
-            try:
-                proc_calls = load_shared_procedure_calls(
-                    company=company,
-                    days=sp_days,
-                    live_sql=call_sql,
-                    force=True,
-                    section="Stored Procedures",
-                )
-                df_calls = proc_calls.data
-                proc_call_source = proc_calls.source if proc_calls.available else "Unavailable"
-            except Exception as e:
-                st.info(f"Recent CALL history unavailable: {format_snowflake_error(e)}")
-                df_calls = pd.DataFrame()
-                proc_call_source = "Unavailable"
-
-            summary, exceptions, joined = _build_procedure_ops_frames(df_procs, df_tasks, df_calls)
-            st.session_state["sp_ops_summary"] = summary
-            st.session_state["sp_ops_exceptions"] = exceptions
-            st.session_state["sp_ops_joined"] = joined
-            st.session_state["sp_ops_sources"] = {
-                "inventory": proc_inventory_source,
-                "calls": proc_call_source,
-                "tasks": "Live: SHOW TASKS IN ACCOUNT",
-            }
+            with render_load_status("Loading procedure operations", "Procedure operations ready"):
+                load_errors = _load_procedure_operations(session, company, sp_days)
+            for error in load_errors:
+                st.info(error)
 
         summary = st.session_state.get("sp_ops_summary")
         if summary:
@@ -1315,31 +1485,10 @@ def render():
             "This is designed to catch product-release regressions before the next executive cost/performance review."
         )
         if st.button("Load Procedure SLA/Cost Watch", key="sp_sla_load"):
-            try:
-                root_context = {"available": False}
-
-                def _live_sla_sql() -> str:
-                    root_context["available"] = _query_history_has_root_query_id(session)
-                    return _build_procedure_sla_sql(session, sp_days, root_context["available"])
-
-                proc_sla = load_shared_procedure_sla(
-                    company=company,
-                    days=sp_days,
-                    live_sql=_live_sla_sql,
-                    force=True,
-                    section="Stored Procedures",
-                )
-                df_proc_runs = proc_sla.data
-                proc_sla_source = proc_sla.source if proc_sla.available else "Unavailable"
-                has_root_query_id = bool(root_context["available"] or proc_sla_source.startswith("Fast"))
-                summary, exceptions, latest = _build_procedure_sla_frames(df_proc_runs)
-                st.session_state["sp_sla_summary"] = summary
-                st.session_state["sp_sla_exceptions"] = exceptions
-                st.session_state["sp_sla_latest"] = latest
-                st.session_state["sp_sla_root_available"] = has_root_query_id
-                st.session_state["sp_sla_source"] = proc_sla_source
-            except Exception as e:
-                st.info(f"Procedure SLA/cost watch unavailable: {format_snowflake_error(e)}")
+            with render_load_status("Loading procedure SLA/cost watch", "Procedure SLA/cost watch ready"):
+                load_errors = _load_procedure_sla_watch(session, company, sp_days, credit_price)
+            for error in load_errors:
+                st.info(error)
 
         summary = st.session_state.get("sp_sla_summary")
         if summary:
@@ -1379,11 +1528,14 @@ def render():
                     advisor_board,
                     title="Procedure advisor signals",
                     priority_columns=[
-                        "PRIORITY", "STATE", "PROCEDURE_CONTEXT", "SIGNAL", "ACTION_TYPE",
-                        "OPTIMIZATION_ISSUE", "LATEST_RUNTIME_SEC", "BASELINE_RUNTIME_SEC",
+                        "PRIORITY", "STATE", "DECISION", "REVIEW_STAGE",
+                        "PROCEDURE_CONTEXT", "SIGNAL", "ACTION_TYPE",
+                        "OPTIMIZATION_ISSUE", "IMPACT_SUMMARY",
+                        "LATEST_RUNTIME_SEC", "BASELINE_RUNTIME_SEC",
                         "RUNTIME_CHANGE_PCT", "EST_TOTAL_CREDITS", "EST_TOTAL_COST_USD",
                         "COST_CHANGE_PCT", "DOWNSTREAM_QUERY_COUNT", "CONFIDENCE",
-                        "WORKFLOW_ROUTE", "SAFE_NEXT_ACTION", "PROOF_REQUIRED", "DO_NOT_DO",
+                        "WORKFLOW_ROUTE", "SAFE_NEXT_ACTION", "VERIFY_NEXT",
+                        "EXECUTION_GUARDRAIL", "PROOF_REQUIRED", "DO_NOT_DO",
                     ],
                     sort_by=["PRIORITY", "LATEST_RUNTIME_SEC", "EST_TOTAL_CREDITS"],
                     ascending=[True, False, False],

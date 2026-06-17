@@ -3909,8 +3909,16 @@ def render():
         render_priority_dataframe(
             audit_view,
             title="Cost formula validation",
-            priority_columns=["METRIC", "MEASUREMENT_BASIS", "FORMULA", "NOTES"],
-            sort_by=["MEASUREMENT_BASIS", "METRIC"],
+            priority_columns=[
+                "METRIC",
+                "PARITY_STATUS",
+                "MEASUREMENT_BASIS",
+                "SOURCE_DASHBOARD_FORMULA",
+                "FORMULA",
+                "NOTES",
+                "NEXT_REVIEW",
+            ],
+            sort_by=["PARITY_STATUS", "METRIC"],
             ascending=[True, True],
             raw_label="All formula checks",
         )
@@ -4103,8 +4111,16 @@ def render():
         render_priority_dataframe(
             cost_formula_view,
             title="Cost formula validation",
-            priority_columns=["METRIC", "MEASUREMENT_BASIS", "FORMULA", "NOTES"],
-            sort_by=["MEASUREMENT_BASIS", "METRIC"],
+            priority_columns=[
+                "METRIC",
+                "PARITY_STATUS",
+                "MEASUREMENT_BASIS",
+                "SOURCE_DASHBOARD_FORMULA",
+                "FORMULA",
+                "NOTES",
+                "NEXT_REVIEW",
+            ],
+            sort_by=["PARITY_STATUS", "METRIC"],
             ascending=[True, True],
             raw_label="All formula checks",
         )

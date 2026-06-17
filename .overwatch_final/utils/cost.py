@@ -113,13 +113,19 @@ def build_snowflake_service_cost_lens_sql(
             service_type,
             period,
             CASE
-                WHEN service_type ILIKE '%CORTEX%' OR service_type ILIKE '%AI%' OR service_type ILIKE '%INTELLIGENCE%'
+                WHEN service_type ILIKE '%CORTEX%'
+                  OR service_type ILIKE '%INTELLIGENCE%'
+                  OR service_type = 'AI_SERVICES'
+                  OR service_type ILIKE 'AI_%'
+                  OR service_type ILIKE '%_AI_%'
+                  OR service_type ILIKE '%_AI'
                     THEN 'AI / Cortex'
                 WHEN service_type IN (
                     'AUTOMATIC_CLUSTERING', 'COPY_FILES', 'MATERIALIZED_VIEW',
                     'QUERY_ACCELERATION', 'SEARCH_OPTIMIZATION', 'SERVERLESS_ALERTS',
                     'SERVERLESS_TASK', 'SNOWPIPE', 'SNOWPIPE_STREAMING',
-                    'SNOWPARK_CONTAINER_SERVICES', 'REPLICATION'
+                    'SNOWPARK_CONTAINER_SERVICES', 'REPLICATION',
+                    'OPENFLOW_COMPUTE_SNOWFLAKE'
                 )
                     THEN 'Serverless / Managed Compute'
                 WHEN service_type ILIKE '%STORAGE%' THEN 'Storage'
@@ -129,7 +135,12 @@ def build_snowflake_service_cost_lens_sql(
                 ELSE 'Other'
             END AS service_category,
             CASE
-                WHEN service_type ILIKE '%CORTEX%' OR service_type ILIKE '%AI%' OR service_type ILIKE '%INTELLIGENCE%'
+                WHEN service_type ILIKE '%CORTEX%'
+                  OR service_type ILIKE '%INTELLIGENCE%'
+                  OR service_type = 'AI_SERVICES'
+                  OR service_type ILIKE 'AI_%'
+                  OR service_type ILIKE '%_AI_%'
+                  OR service_type ILIKE '%_AI'
                     THEN {ai_credit_price:.4f}
                 ELSE {credit_price:.4f}
             END AS rate_usd,
@@ -205,8 +216,11 @@ def build_snowflake_service_cost_trend_sql(
                 SUM(COALESCE(credits_used, 0)) AS total_credits,
                 CASE
                     WHEN UPPER(COALESCE(service_type, 'UNKNOWN')) ILIKE '%CORTEX%'
-                      OR UPPER(COALESCE(service_type, 'UNKNOWN')) ILIKE '%AI%'
                       OR UPPER(COALESCE(service_type, 'UNKNOWN')) ILIKE '%INTELLIGENCE%'
+                      OR UPPER(COALESCE(service_type, 'UNKNOWN')) = 'AI_SERVICES'
+                      OR UPPER(COALESCE(service_type, 'UNKNOWN')) ILIKE 'AI_%'
+                      OR UPPER(COALESCE(service_type, 'UNKNOWN')) ILIKE '%_AI_%'
+                      OR UPPER(COALESCE(service_type, 'UNKNOWN')) ILIKE '%_AI'
                         THEN {ai_credit_price:.4f}
                     ELSE {credit_price:.4f}
                 END AS rate_usd,

@@ -340,7 +340,7 @@ from utils.cost import (  # noqa: E402
     query_attribution_supported,
 )
 from utils.mart import build_mart_cost_service_lens_sql  # noqa: E402
-from utils.compatibility import clear_compatibility_process_cache  # noqa: E402
+from utils.compatibility import build_cost_formula_audit, clear_compatibility_process_cache  # noqa: E402
 from utils.deployment import (  # noqa: E402
     OVERWATCH_SCHEMA_VERSION,
     STREAMLIT_DEPLOYMENT_DECISION_VERSION,
@@ -767,10 +767,12 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertNotIn("SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY", service_sql)
         self.assertIn("SERVICE_CATEGORY", service_sql)
         self.assertIn("AI / CORTEX", service_sql)
+        self.assertNotIn("ILIKE '%AI%'", service_sql)
         self.assertIn("SERVERLESS / MANAGED COMPUTE", service_sql)
         self.assertIn("SUM(COALESCE(CREDITS_USED, 0)) AS TOTAL_CREDITS", service_sql)
         self.assertIn("SUM(COALESCE(CREDITS_USED_COMPUTE, 0)) AS COMPUTE_CREDITS", service_sql)
         self.assertIn("SUM(COALESCE(CREDITS_USED_CLOUD_SERVICES, 0)) AS CLOUD_SERVICES_CREDITS", service_sql)
+        self.assertIn("'OPENFLOW_COMPUTE_SNOWFLAKE'", service_sql)
         self.assertIn("CREDITS_BILLED", service_sql)
         self.assertIn("CREDITS_BILLED_PRIOR", service_sql)
         self.assertIn("CREDIT_DELTA", service_sql)
@@ -804,6 +806,29 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("USAGE_DATE >= DATEADD('DAY', -28", mart_sql)
         self.assertIn("WHEN USAGE_DATE >= DATEADD('DAY', -14", mart_sql)
         self.assertIn("FAST COST SUMMARY", mart_sql)
+
+    def test_cost_formula_audit_tracks_source_dashboard_parity(self):
+        audit = build_cost_formula_audit()
+
+        self.assertTrue({
+            "METRIC",
+            "SOURCE_DASHBOARD_FORMULA",
+            "FORMULA",
+            "CONFIDENCE",
+            "PARITY_STATUS",
+            "NOTES",
+            "NEXT_REVIEW",
+        }.issubset(set(audit.columns)))
+
+        by_metric = audit.set_index("METRIC")
+        self.assertEqual(by_metric.loc["Monthly service costs", "PARITY_STATUS"], "Aligned")
+        self.assertIn("METERING_HISTORY", by_metric.loc["Monthly service costs", "SOURCE_DASHBOARD_FORMULA"])
+        self.assertEqual(by_metric.loc["Forecast run rate", "PARITY_STATUS"], "Intentional metric change")
+        self.assertIn("WAREHOUSE_METERING_HISTORY", by_metric.loc["Forecast run rate", "FORMULA"])
+        self.assertEqual(by_metric.loc["Storage dollars", "PARITY_STATUS"], "Needs formula expansion")
+        self.assertIn("hybrid", by_metric.loc["Storage dollars", "SOURCE_DASHBOARD_FORMULA"].lower())
+        self.assertEqual(by_metric.loc["Cortex detailed sources", "PARITY_STATUS"], "Coverage gap to evaluate")
+        self.assertIn("REST API", by_metric.loc["Cortex detailed sources", "SOURCE_DASHBOARD_FORMULA"])
 
     def test_metered_credit_cte_uses_compute_credits_with_total_fallback(self):
         sql = build_metered_credit_cte(hours_back=24, include_recent=True).upper()
@@ -4487,6 +4512,9 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(_service_cost_category("SNOWPIPE"), "Data loading / ingestion")
         self.assertEqual(_service_cost_category("CORTEX_SEARCH"), "AI / Cortex")
         self.assertEqual(_service_cost_category("AUTO_CLUSTERING"), "Serverless features")
+        self.assertEqual(_service_cost_category("AUTOMATIC_CLUSTERING"), "Serverless features")
+        self.assertEqual(_service_cost_category("SNOWPARK_CONTAINER_SERVICES"), "Serverless features")
+        self.assertEqual(_service_cost_category("OPENFLOW_COMPUTE_SNOWFLAKE"), "Data integration / Openflow")
         self.assertEqual(_service_cost_category("CLOUD_SERVICES"), "Cloud services / metadata")
 
     def test_finance_movement_summary_separates_source_basis_levels(self):
@@ -5950,6 +5978,10 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("VERIFIED_MONTHLY_SAVINGS_USD", advisor.columns)
         self.assertIn("SAVINGS_STATUS", advisor.columns)
         self.assertIn("SAVINGS_ASSUMPTION", advisor.columns)
+        self.assertIn("SAVINGS_TYPE", advisor.columns)
+        self.assertIn("ACTION_POSTURE", advisor.columns)
+        self.assertIn("EXPECTED_VERIFICATION_IMPACT", advisor.columns)
+        self.assertIn("DO_NOT_EXECUTE_UNTIL", advisor.columns)
         self.assertIn("VERIFICATION_WINDOW_DAYS", advisor.columns)
         self.assertNotIn("REVIEW_SQL", advisor.columns)
         self.assertGreater(float(advisor["EST_MONTHLY_SAVINGS_USD"].sum()), 0)
@@ -5958,6 +5990,14 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Auto-suspend savings", set(advisor["ADVISOR_TYPE"]))
         self.assertIn("Downsize savings candidate", set(advisor["ADVISOR_TYPE"]))
         self.assertIn("Capacity or size review", set(advisor["ADVISOR_TYPE"]))
+        self.assertIn("Guarded admin change candidate", set(advisor["ACTION_POSTURE"]))
+        self.assertIn("Estimated right-size savings", set(advisor["SAVINGS_TYPE"]))
+        self.assertTrue(advisor["DO_NOT_EXECUTE_UNTIL"].astype(str).str.len().gt(0).all())
+        self.assertTrue(
+            advisor["EXPECTED_VERIFICATION_IMPACT"].astype(str).str.contains(
+                "queue|spill|p95|credits", case=False, regex=True
+            ).any()
+        )
         self.assertNotIn("ALTER WAREHOUSE", advisor.to_string().upper())
         self.assertIn("DBA Control Room > Admin > Warehouse Settings", advisor.to_string())
 
@@ -7167,8 +7207,18 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("EST_TOTAL_COST_USD", advisor_board.columns)
         self.assertIn("CONFIDENCE", advisor_board.columns)
         self.assertIn("WORKFLOW_ROUTE", advisor_board.columns)
+        self.assertIn("DECISION", advisor_board.columns)
+        self.assertIn("REVIEW_STAGE", advisor_board.columns)
+        self.assertIn("IMPACT_SUMMARY", advisor_board.columns)
+        self.assertIn("VERIFY_NEXT", advisor_board.columns)
+        self.assertIn("EXECUTION_GUARDRAIL", advisor_board.columns)
         self.assertIn("Fix runtime regression", set(advisor_board["ACTION_TYPE"]))
         self.assertIn("Review cost regression", set(advisor_board["ACTION_TYPE"]))
+        self.assertIn("Review before next scheduled run", set(advisor_board["DECISION"]))
+        self.assertTrue(advisor_board["VERIFY_NEXT"].astype(str).str.len().gt(0).all())
+        self.assertTrue(
+            advisor_board["EXECUTION_GUARDRAIL"].astype(str).str.contains("Do not", case=False).any()
+        )
         detail_options = _procedure_analysis_detail_options(advisor_board)
         self.assertFalse(detail_options.empty)
         self.assertIn("DETAIL_LABEL", detail_options.columns)

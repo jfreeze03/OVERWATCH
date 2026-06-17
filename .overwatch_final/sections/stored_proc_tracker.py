@@ -828,6 +828,8 @@ def _procedure_analysis_summary(
                 else "Optimize child workload"
             ),
             "WORKFLOW_ROUTE": "Workload Operations > Stored procedures",
+            "ALERT_CENTER_LANE": "Reliability",
+            "ALERT_HANDOFF": "Route high-priority runtime, cost, orphan, or suspended-task findings through Alert Center Reliability.",
             "SAFE_NEXT_ACTION": str(
                 row.get("SAFE_NEXT_ACTION")
                 or row.get("RECOMMENDED_ACTION")
@@ -1312,7 +1314,8 @@ def _render_procedure_advisor_overview() -> None:
             title="Stored procedure advisor front line",
             priority_columns=[
                 "PRIORITY", "DECISION", "REVIEW_STAGE", "PROCEDURE_CONTEXT",
-                "SIGNAL", "IMPACT_SUMMARY", "SAFE_NEXT_ACTION", "VERIFY_NEXT",
+                "SIGNAL", "ALERT_CENTER_LANE", "ALERT_HANDOFF",
+                "IMPACT_SUMMARY", "SAFE_NEXT_ACTION", "VERIFY_NEXT",
                 "EXECUTION_GUARDRAIL", "CONFIDENCE", "WORKFLOW_ROUTE",
             ],
             sort_by=["PRIORITY", "LATEST_RUNTIME_SEC", "EST_TOTAL_CREDITS"],
@@ -1530,11 +1533,13 @@ def render():
                     priority_columns=[
                         "PRIORITY", "STATE", "DECISION", "REVIEW_STAGE",
                         "PROCEDURE_CONTEXT", "SIGNAL", "ACTION_TYPE",
+                        "ALERT_CENTER_LANE", "ALERT_HANDOFF",
                         "OPTIMIZATION_ISSUE", "IMPACT_SUMMARY",
                         "LATEST_RUNTIME_SEC", "BASELINE_RUNTIME_SEC",
                         "RUNTIME_CHANGE_PCT", "EST_TOTAL_CREDITS", "EST_TOTAL_COST_USD",
                         "COST_CHANGE_PCT", "DOWNSTREAM_QUERY_COUNT", "CONFIDENCE",
-                        "WORKFLOW_ROUTE", "SAFE_NEXT_ACTION", "VERIFY_NEXT",
+                        "WORKFLOW_ROUTE", "ALERT_CENTER_LANE", "ALERT_HANDOFF",
+                        "SAFE_NEXT_ACTION", "VERIFY_NEXT",
                         "EXECUTION_GUARDRAIL", "PROOF_REQUIRED", "DO_NOT_DO",
                     ],
                     sort_by=["PRIORITY", "LATEST_RUNTIME_SEC", "EST_TOTAL_CREDITS"],

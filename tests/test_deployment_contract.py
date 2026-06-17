@@ -225,6 +225,7 @@ class DeploymentContractTests(unittest.TestCase):
 
     def test_mart_validation_surfaces_dynamic_and_secure_view_collisions(self):
         validation_sql = (ROOT / "snowflake" / "OVERWATCH_MART_VALIDATION.sql").read_text(encoding="utf-8").upper()
+        audit_sql = (ROOT / "snowflake" / "OVERWATCH_DYNAMIC_TABLE_SECURE_VIEW_AUDIT.sql").read_text(encoding="utf-8").upper()
 
         self.assertIn("DEPLOYABLE OBJECT COUNT CONTRACT", validation_sql)
         self.assertIn("EXPECTED_COUNT", validation_sql)
@@ -236,6 +237,11 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertIn("DYNAMIC_TABLE_COLLISIONS", validation_sql)
         self.assertIn("SECURE_VIEW_COLLISIONS", validation_sql)
         self.assertIn("INFORMATION_SCHEMA.VIEWS", validation_sql)
+        self.assertIn("SHOW DYNAMIC TABLES IN SCHEMA", audit_sql)
+        self.assertIn("DYNAMIC_TABLE_COLLISIONS", audit_sql)
+        self.assertIn("SECURE_VIEW_COLLISIONS", audit_sql)
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.OBJECT_DEPENDENCIES", audit_sql)
+        self.assertIn("TABLE + TASK/PROCEDURE", audit_sql)
 
     def test_ci_runs_deployment_contract_before_full_suite(self):
         workflow = (ROOT / ".github" / "workflows" / "validate.yml").read_text(encoding="utf-8")

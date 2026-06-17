@@ -111,7 +111,15 @@ ALERT_CENTER_SOURCES_BY_PANE = {
     "Reliability": {"alerts", "action_queue", "rules"},
     "Security": {"alerts", "action_queue", "rules"},
     "Detection Catalog": set(),
-    "Delivery & Automation": {"alerts", "action_queue", "delivery_log", "rules"},
+    "Delivery & Automation": {
+        "alerts",
+        "action_queue",
+        "delivery_log",
+        "rules",
+        "native_registry",
+        "remediation_policy",
+        "remediation_dry_run",
+    },
     "Suppression Windows": set(),
 }
 
@@ -139,6 +147,24 @@ ALERT_CENTER_SOURCE_PLAN = {
         "OBJECT": "Alert rules",
         "WHY": "Severity, SLA, route, and runbook control",
         "COST_GUARDRAIL": "Small configuration read",
+    },
+    "native_registry": {
+        "SOURCE": "Native alert registry",
+        "OBJECT": "Reviewed Snowflake ALERT candidates",
+        "WHY": "Shows what native detections exist, are candidates, or are enabled",
+        "COST_GUARDRAIL": "Small registry table read",
+    },
+    "remediation_policy": {
+        "SOURCE": "Remediation policy",
+        "OBJECT": "Review-only automation policy catalog",
+        "WHY": "Shows whether any alert class is eligible for dry-run or auto mode",
+        "COST_GUARDRAIL": "Small policy table read",
+    },
+    "remediation_dry_run": {
+        "SOURCE": "Remediation dry-runs",
+        "OBJECT": "Dry-run audit log",
+        "WHY": "Shows proposed actions and blockers before any automation is allowed",
+        "COST_GUARDRAIL": "Recent-window audit read",
     },
 }
 
@@ -277,6 +303,9 @@ def _load_center_data(
         build_dashboard_issue_rows,
         load_alert_delivery_log,
         load_alert_history,
+        load_alert_native_object_registry,
+        load_alert_remediation_dry_runs,
+        load_alert_remediation_policy,
         load_alert_rule_catalog,
     )
 
@@ -287,10 +316,16 @@ def _load_center_data(
         "issues": pd.DataFrame(),
         "delivery_log": pd.DataFrame(),
         "rules": pd.DataFrame(),
+        "native_registry": pd.DataFrame(),
+        "remediation_policy": pd.DataFrame(),
+        "remediation_dry_run": pd.DataFrame(),
         "alerts_error": "",
         "queue_error": "",
         "delivery_error": "",
         "rule_error": "",
+        "native_registry_error": "",
+        "remediation_policy_error": "",
+        "remediation_dry_run_error": "",
         "loaded_at": datetime.now().isoformat(timespec="seconds"),
         "_loaded_sources": sorted(sources),
     }
@@ -323,6 +358,25 @@ def _load_center_data(
             data["rules"] = load_alert_rule_catalog(section="Alert Center")
         except Exception as exc:
             data["rule_error"] = _format_snowflake_error(exc)
+    if "native_registry" in sources:
+        try:
+            data["native_registry"] = load_alert_native_object_registry(section="Alert Center")
+        except Exception as exc:
+            data["native_registry_error"] = _format_snowflake_error(exc)
+    if "remediation_policy" in sources:
+        try:
+            data["remediation_policy"] = load_alert_remediation_policy(section="Alert Center")
+        except Exception as exc:
+            data["remediation_policy_error"] = _format_snowflake_error(exc)
+    if "remediation_dry_run" in sources:
+        try:
+            data["remediation_dry_run"] = load_alert_remediation_dry_runs(
+                days=max(days, 14),
+                limit=limit,
+                section="Alert Center",
+            )
+        except Exception as exc:
+            data["remediation_dry_run_error"] = _format_snowflake_error(exc)
     data["issues"] = build_dashboard_issue_rows(
         alerts=data["alerts"] if isinstance(data["alerts"], pd.DataFrame) else pd.DataFrame(),
         queue=data["action_queue"] if isinstance(data["action_queue"], pd.DataFrame) else pd.DataFrame(),
@@ -1790,7 +1844,11 @@ def _render_loaded_advisor_alert_candidates() -> None:
 
 
 def _render_alert_detection_catalog() -> None:
-    from utils.alerts import build_alert_native_object_registry_seed_rows, build_alert_signal_query_catalog
+    from utils.alerts import (
+        build_alert_native_object_registry_seed_rows,
+        build_alert_signal_query_catalog,
+        load_alert_native_object_registry,
+    )
 
     st.subheader("Detection Catalog")
     catalog = build_alert_signal_query_catalog(hours=24)
@@ -1813,13 +1871,35 @@ def _render_alert_detection_catalog() -> None:
         selected_signal = st.selectbox("Signal detail", signal_options, key="alert_detection_catalog_signal")
         selected = visible[visible["SIGNAL"].astype(str) == selected_signal].iloc[0]
         st.caption(str(selected.get("RECOMMENDED_ACTION") or "Review this alert signal with the owning DBA team."))
-    native_rows = _pd().DataFrame(build_alert_native_object_registry_seed_rows())
+    c1, c2 = st.columns([1, 3])
+    with c1:
+        if st.button("Load Native Registry", key="alert_catalog_load_native_registry"):
+            try:
+                session = _alert_center_action_session("load native alert registry")
+                if session is not None:
+                    st.session_state["alert_native_registry_live"] = load_alert_native_object_registry(
+                        section="Alert Center",
+                    )
+                    st.session_state["alert_native_registry_source"] = "Live registry table"
+            except Exception as exc:
+                st.info(f"Native alert registry is not available in this environment yet. {_format_snowflake_error(exc)}")
+                st.session_state["alert_native_registry_live"] = _pd().DataFrame()
+    with c2:
+        st.caption("Native registry rows are disabled-by-default implementation candidates until reviewed and enabled in Snowflake.")
+
+    live_native_rows = st.session_state.get("alert_native_registry_live")
+    registry_source = st.session_state.get("alert_native_registry_source", "Built-in seed candidates")
+    native_rows = live_native_rows if isinstance(live_native_rows, _pd().DataFrame) and not live_native_rows.empty else _pd().DataFrame(build_alert_native_object_registry_seed_rows())
+    if not native_rows.empty:
+        native_rows = native_rows.copy()
+        if "REGISTRY_SOURCE" not in native_rows.columns:
+            native_rows["REGISTRY_SOURCE"] = registry_source
     if not native_rows.empty:
         _render_priority_dataframe(
             native_rows,
             title="Native Snowflake alert implementation candidates",
             priority_columns=[
-                "STATUS", "CATEGORY", "ALERT_KEY", "ALERT_OBJECT_NAME",
+                "REGISTRY_SOURCE", "STATUS", "CATEGORY", "ALERT_KEY", "ALERT_OBJECT_NAME",
                 "TARGET_ROUTE", "SCHEDULE_TEXT", "CONDITION_SOURCE",
                 "ACTION_SOURCE", "SAFETY_NOTE",
             ],
@@ -1941,11 +2021,25 @@ def _render_alert_notification_remediation(
     delivery_log: pd.DataFrame,
     rules: pd.DataFrame,
     company: str,
+    native_registry: pd.DataFrame | None = None,
+    remediation_policy: pd.DataFrame | None = None,
+    remediation_dry_run: pd.DataFrame | None = None,
 ) -> None:
     from utils.alerts import build_alert_remediation_contract, build_alert_remediation_policy_seed_rows
 
     pd = _pd()
+    native_registry = native_registry if isinstance(native_registry, pd.DataFrame) else pd.DataFrame()
+    remediation_policy = remediation_policy if isinstance(remediation_policy, pd.DataFrame) else pd.DataFrame()
+    remediation_dry_run = remediation_dry_run if isinstance(remediation_dry_run, pd.DataFrame) else pd.DataFrame()
     st.subheader("Delivery & Automation")
+    enabled_native = 0
+    candidate_native = 0
+    if not native_registry.empty:
+        enabled_native = int(native_registry.get("ENABLED_BY_DEFAULT", pd.Series(dtype=bool)).fillna(False).astype(bool).sum())
+        candidate_native = int(native_registry.get("STATUS", pd.Series(dtype=str)).fillna("").astype(str).str.upper().eq("CANDIDATE").sum())
+    auto_policy = 0
+    if not remediation_policy.empty:
+        auto_policy = int(remediation_policy.get("AUTO_ELIGIBLE", pd.Series(dtype=bool)).fillna(False).astype(bool).sum())
     controls = [
         {
             "CONTROL": "Alert inbox",
@@ -1975,6 +2069,33 @@ def _render_alert_notification_remediation(
             "NEXT_ACTION": "Use rules as monitoring context; do not change thresholds from the alert view.",
             "ROUTE": "Detection Catalog",
         },
+        {
+            "CONTROL": "Native alert registry",
+            "STATE": "Ready" if not native_registry.empty else "Review",
+            "EVIDENCE": (
+                f"{len(native_registry):,} native candidate row(s); {enabled_native:,} enabled by default; {candidate_native:,} candidate(s)."
+                if not native_registry.empty else "Registry table not loaded or not deployed yet."
+            ),
+            "NEXT_ACTION": "Review generated CREATE ALERT SQL and enable only after owner, threshold, and warehouse are approved.",
+            "ROUTE": "Detection Catalog",
+        },
+        {
+            "CONTROL": "Remediation policy",
+            "STATE": "Ready" if not remediation_policy.empty and auto_policy == 0 else "Review",
+            "EVIDENCE": (
+                f"{len(remediation_policy):,} policy row(s); {auto_policy:,} auto-eligible."
+                if not remediation_policy.empty else "Policy table not loaded or not deployed yet."
+            ),
+            "NEXT_ACTION": "Keep AUTO_ELIGIBLE false until dry-run evidence and rollback checks are proven.",
+            "ROUTE": "Delivery & Automation",
+        },
+        {
+            "CONTROL": "Remediation dry-runs",
+            "STATE": "Ready" if not remediation_dry_run.empty else "No Rows",
+            "EVIDENCE": f"{len(remediation_dry_run):,} recent dry-run row(s) loaded.",
+            "NEXT_ACTION": "Use dry-runs to prove before-state, proposed action, blocker, and verification SQL before any future automation.",
+            "ROUTE": "Delivery & Automation",
+        },
     ]
     _render_priority_dataframe(
         pd.DataFrame(controls),
@@ -2003,19 +2124,48 @@ def _render_alert_notification_remediation(
             raw_label="All remediation status fields",
             height=260,
         )
-    policy_rows = pd.DataFrame(build_alert_remediation_policy_seed_rows())
+    policy_rows = remediation_policy.copy() if not remediation_policy.empty else pd.DataFrame(build_alert_remediation_policy_seed_rows())
     if not policy_rows.empty:
+        if "POLICY_SOURCE" not in policy_rows.columns:
+            policy_rows["POLICY_SOURCE"] = "Live policy table" if not remediation_policy.empty else "Built-in seed policy"
         _render_priority_dataframe(
             policy_rows,
             title="Remediation policy matrix",
             priority_columns=[
-                "REMEDIATION_MODE", "AUTO_ELIGIBLE", "CATEGORY", "ALERT_KEY",
+                "POLICY_SOURCE", "REMEDIATION_MODE", "AUTO_ELIGIBLE", "CATEGORY", "ALERT_KEY",
                 "ACTION_TYPE", "REQUIRED_REVIEW", "ROLLBACK_GUIDANCE",
                 "VERIFICATION_SQL",
             ],
             raw_label="All remediation policy rows",
             height=300,
             max_rows=8,
+        )
+    if not native_registry.empty:
+        _render_priority_dataframe(
+            native_registry,
+            title="Native alert deployment status",
+            priority_columns=[
+                "STATUS", "ENABLED_BY_DEFAULT", "CATEGORY", "ALERT_KEY",
+                "ALERT_OBJECT_NAME", "TARGET_ROUTE", "WAREHOUSE_NAME",
+                "SCHEDULE_TEXT", "SAFETY_NOTE",
+            ],
+            raw_label="All native alert registry rows",
+            height=260,
+            max_rows=8,
+        )
+    if not remediation_dry_run.empty:
+        _render_priority_dataframe(
+            remediation_dry_run,
+            title="Recent remediation dry-runs",
+            priority_columns=[
+                "CREATED_AT", "DRY_RUN_STATUS", "POLICY_ID", "ALERT_KEY",
+                "EXPECTED_EFFECT", "BLOCKING_REASON", "VERIFICATION_SQL",
+            ],
+            sort_by=["CREATED_AT"],
+            ascending=False,
+            raw_label="All remediation dry-run rows",
+            height=260,
+            max_rows=10,
         )
     _render_alert_email_delivery_status(alerts, delivery_log)
     _render_alert_action_queue_routing(alerts, queue, company)
@@ -2143,6 +2293,9 @@ def render() -> None:
     issues = data.get("issues") if isinstance(data.get("issues"), pd.DataFrame) else pd.DataFrame()
     delivery_log = data.get("delivery_log") if isinstance(data.get("delivery_log"), pd.DataFrame) else pd.DataFrame()
     rules = data.get("rules") if isinstance(data.get("rules"), pd.DataFrame) else pd.DataFrame()
+    native_registry = data.get("native_registry") if isinstance(data.get("native_registry"), pd.DataFrame) else pd.DataFrame()
+    remediation_policy = data.get("remediation_policy") if isinstance(data.get("remediation_policy"), pd.DataFrame) else pd.DataFrame()
+    remediation_dry_run = data.get("remediation_dry_run") if isinstance(data.get("remediation_dry_run"), pd.DataFrame) else pd.DataFrame()
     if data.get("alerts_error"):
         st.info("Alert history unavailable.")
         defer_source_note(
@@ -2155,6 +2308,12 @@ def render() -> None:
         defer_source_note("Delivery audit is not available in this environment yet.", data["delivery_error"])
     if data.get("rule_error"):
         defer_source_note("Alert rule catalog is not available in this environment yet.", data["rule_error"])
+    if data.get("native_registry_error"):
+        defer_source_note("Native alert registry is not available in this environment yet.", data["native_registry_error"])
+    if data.get("remediation_policy_error"):
+        defer_source_note("Remediation policy catalog is not available in this environment yet.", data["remediation_policy_error"])
+    if data.get("remediation_dry_run_error"):
+        defer_source_note("Remediation dry-run audit is not available in this environment yet.", data["remediation_dry_run_error"])
     defer_source_note(f"Loaded {data.get('loaded_at', '')}. Email target defaults to {_alert_email_target()}.")
 
     open_alerts = _open_alert_mask(alerts)
@@ -2232,7 +2391,16 @@ def render() -> None:
         _render_alert_domain_workbench(active_view, alerts, queue, rules)
 
     elif active_view == "Delivery & Automation":
-        _render_alert_notification_remediation(alerts, queue, delivery_log, rules, company)
+        _render_alert_notification_remediation(
+            alerts,
+            queue,
+            delivery_log,
+            rules,
+            company,
+            native_registry=native_registry,
+            remediation_policy=remediation_policy,
+            remediation_dry_run=remediation_dry_run,
+        )
 
     elif active_view == "Issue Inbox":
         st.subheader("All Active DBA Issues")

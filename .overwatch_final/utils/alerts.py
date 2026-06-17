@@ -2362,6 +2362,17 @@ def build_alert_threshold_seed_rows() -> list[dict[str, object]]:
             "NOTIFICATION_CHANNEL": "COST",
         },
         {
+            "THRESHOLD_KEY": "BEHAVIOR_USER_QUERY_ANOMALY",
+            "CATEGORY": "Behavior",
+            "SIGNAL_NAME": "User query behavior anomaly",
+            "SEVERITY": "High",
+            "THRESHOLD_VALUE": 10,
+            "BASELINE_WINDOW_DAYS": 14,
+            "CURRENT_WINDOW_MINUTES": 120,
+            "OWNER": "DBA / Workload reviewer",
+            "NOTIFICATION_CHANNEL": "DBA_ONCALL",
+        },
+        {
             "THRESHOLD_KEY": "PERF_QUEUE_PRESSURE",
             "CATEGORY": "Performance",
             "SIGNAL_NAME": "Warehouse queue pressure",
@@ -2570,6 +2581,74 @@ def build_alert_native_object_registry_seed_rows(
             "SAFETY_NOTE": "Recommend-only. Do not alter Cortex access automatically.",
         },
         {
+            "REGISTRY_KEY": "NATIVE_COST_WAREHOUSE_CREDIT_SPIKE",
+            "ALERT_KEY": "COST_WAREHOUSE_CREDIT_SPIKE",
+            "CATEGORY": "Cost",
+            "ALERT_OBJECT_NAME": "OVERWATCH_ALERT_WAREHOUSE_CREDIT_SPIKE",
+            "TARGET_ROUTE": "Cost & Contract",
+            "WAREHOUSE_NAME": "OVERWATCH_WH",
+            "SCHEDULE_TEXT": "60 MINUTE",
+            "STATUS": "CANDIDATE",
+            "CONDITION_SOURCE": "FACT_WAREHOUSE_HOURLY current-day credits vs 30-day baseline",
+            "ACTION_SOURCE": "Insert recommend-only cost movement event into ALERT_EVENTS",
+            "GENERATED_CREATE_SQL": f"""CREATE OR REPLACE ALERT OVERWATCH_ALERT_WAREHOUSE_CREDIT_SPIKE
+  WAREHOUSE = OVERWATCH_WH
+  SCHEDULE = '60 MINUTE'
+  IF (EXISTS (
+    WITH current_window AS (
+      SELECT WAREHOUSE_NAME, SUM(METERED_CREDITS) AS CURRENT_CREDITS
+      FROM FACT_WAREHOUSE_HOURLY
+      WHERE HOUR_START >= DATEADD('hour', -24, CURRENT_TIMESTAMP())
+      GROUP BY WAREHOUSE_NAME
+    ),
+    baseline AS (
+      SELECT WAREHOUSE_NAME, AVG(DAILY_CREDITS) AS BASELINE_DAILY_CREDITS
+      FROM (
+        SELECT WAREHOUSE_NAME, DATE_TRUNC('day', HOUR_START) AS USAGE_DAY, SUM(METERED_CREDITS) AS DAILY_CREDITS
+        FROM FACT_WAREHOUSE_HOURLY
+        WHERE HOUR_START >= DATEADD('day', -31, CURRENT_TIMESTAMP())
+          AND HOUR_START < DATEADD('day', -1, CURRENT_TIMESTAMP())
+        GROUP BY WAREHOUSE_NAME, DATE_TRUNC('day', HOUR_START)
+      )
+      GROUP BY WAREHOUSE_NAME
+    )
+    SELECT 1
+    FROM current_window c
+    LEFT JOIN baseline b USING (WAREHOUSE_NAME)
+    WHERE c.CURRENT_CREDITS > GREATEST(10, COALESCE(b.BASELINE_DAILY_CREDITS, 0) * 1.5)
+  ))
+  THEN INSERT INTO {event_table}
+    (ALERT_KEY, CATEGORY, SEVERITY, STATUS, OWNER, RECOMMENDED_ACTION, ENTITY_TYPE, ENTITY_NAME, WAREHOUSE_NAME, CURRENT_VALUE, BASELINE_VALUE, REMEDIATION_MODE, EVIDENCE, DEDUPE_KEY)
+    WITH current_window AS (
+      SELECT WAREHOUSE_NAME, SUM(METERED_CREDITS) AS CURRENT_CREDITS
+      FROM FACT_WAREHOUSE_HOURLY
+      WHERE HOUR_START >= DATEADD('hour', -24, CURRENT_TIMESTAMP())
+      GROUP BY WAREHOUSE_NAME
+    ),
+    baseline AS (
+      SELECT WAREHOUSE_NAME, AVG(DAILY_CREDITS) AS BASELINE_DAILY_CREDITS
+      FROM (
+        SELECT WAREHOUSE_NAME, DATE_TRUNC('day', HOUR_START) AS USAGE_DAY, SUM(METERED_CREDITS) AS DAILY_CREDITS
+        FROM FACT_WAREHOUSE_HOURLY
+        WHERE HOUR_START >= DATEADD('day', -31, CURRENT_TIMESTAMP())
+          AND HOUR_START < DATEADD('day', -1, CURRENT_TIMESTAMP())
+        GROUP BY WAREHOUSE_NAME, DATE_TRUNC('day', HOUR_START)
+      )
+      GROUP BY WAREHOUSE_NAME
+    )
+    SELECT 'COST_WAREHOUSE_CREDIT_SPIKE', 'Cost', 'High', 'New', 'DBA / Cost owner',
+           'Explain the warehouse credit spike with run-rate, top query, setting, and company-scope telemetry before changing capacity.',
+           'WAREHOUSE', c.WAREHOUSE_NAME, c.WAREHOUSE_NAME, c.CURRENT_CREDITS, COALESCE(b.BASELINE_DAILY_CREDITS, 0), 'RECOMMEND',
+           'Native candidate detected warehouse credits above baseline.',
+           SHA2('COST_WAREHOUSE_CREDIT_SPIKE|' || c.WAREHOUSE_NAME || '|' || TO_VARCHAR(CURRENT_DATE()), 256)
+    FROM current_window c
+    LEFT JOIN baseline b USING (WAREHOUSE_NAME)
+    WHERE c.CURRENT_CREDITS > GREATEST(10, COALESCE(b.BASELINE_DAILY_CREDITS, 0) * 1.5);""",
+            "GENERATED_DROP_SQL": "DROP ALERT IF EXISTS OVERWATCH_ALERT_WAREHOUSE_CREDIT_SPIKE;",
+            "ENABLED_BY_DEFAULT": False,
+            "SAFETY_NOTE": "Recommend-only. Do not resize, suspend, or alter warehouses automatically.",
+        },
+        {
             "REGISTRY_KEY": "NATIVE_SECURITY_PRIVILEGE_ESCALATION",
             "ALERT_KEY": "SECURITY_PRIVILEGE_ESCALATION",
             "CATEGORY": "Security",
@@ -2639,6 +2718,47 @@ def build_alert_native_object_registry_seed_rows(
             "ENABLED_BY_DEFAULT": False,
             "SAFETY_NOTE": "Status-review only. Reruns require task graph safety checks.",
         },
+        {
+            "REGISTRY_KEY": "NATIVE_BEHAVIOR_USER_QUERY_ANOMALY",
+            "ALERT_KEY": "BEHAVIOR_USER_QUERY_ANOMALY",
+            "CATEGORY": "Behavior",
+            "ALERT_OBJECT_NAME": "OVERWATCH_ALERT_USER_QUERY_BEHAVIOR",
+            "TARGET_ROUTE": "Workload Operations",
+            "WAREHOUSE_NAME": "OVERWATCH_WH",
+            "SCHEDULE_TEXT": "60 MINUTE",
+            "STATUS": "CANDIDATE",
+            "CONDITION_SOURCE": "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY user failure, runtime, spill, and warehouse pressure patterns",
+            "ACTION_SOURCE": "Insert status-review behavior event into ALERT_EVENTS",
+            "GENERATED_CREATE_SQL": f"""CREATE OR REPLACE ALERT OVERWATCH_ALERT_USER_QUERY_BEHAVIOR
+  WAREHOUSE = OVERWATCH_WH
+  SCHEDULE = '60 MINUTE'
+  IF (EXISTS (
+    SELECT 1
+    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+    WHERE START_TIME >= DATEADD('hour', -2, CURRENT_TIMESTAMP())
+    GROUP BY USER_NAME, ROLE_NAME, WAREHOUSE_NAME
+    HAVING COUNT_IF(UPPER(COALESCE(EXECUTION_STATUS, '')) NOT IN ('SUCCESS', '')) >= 10
+        OR SUM(COALESCE(TOTAL_ELAPSED_TIME, 0)) / 1000 >= 7200
+        OR SUM(COALESCE(BYTES_SPILLED_TO_REMOTE_STORAGE, 0)) / POWER(1024, 3) >= 25
+  ))
+  THEN INSERT INTO {event_table}
+    (ALERT_KEY, CATEGORY, SEVERITY, STATUS, OWNER, RECOMMENDED_ACTION, ENTITY_TYPE, ENTITY_NAME, USER_NAME, ROLE_NAME, WAREHOUSE_NAME, CURRENT_VALUE, REMEDIATION_MODE, EVIDENCE, DEDUPE_KEY)
+    SELECT 'BEHAVIOR_USER_QUERY_ANOMALY', 'Behavior', 'High', 'New', 'DBA / Workload reviewer',
+           'Review the user, role, repeated query pattern, recent guidance, and downstream system impact before coaching or controls.',
+           'USER', COALESCE(USER_NAME, 'Unknown user'), USER_NAME, ROLE_NAME, WAREHOUSE_NAME,
+           COUNT(*) AS CURRENT_VALUE, 'STATUS_REVIEW',
+           'Native candidate detected repeated failures, long runtime, or remote spill for a user/role/warehouse pattern.',
+           SHA2('BEHAVIOR_USER_QUERY_ANOMALY|' || COALESCE(USER_NAME, '') || '|' || COALESCE(ROLE_NAME, '') || '|' || COALESCE(WAREHOUSE_NAME, '') || '|' || TO_VARCHAR(CURRENT_DATE()), 256)
+    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+    WHERE START_TIME >= DATEADD('hour', -2, CURRENT_TIMESTAMP())
+    GROUP BY USER_NAME, ROLE_NAME, WAREHOUSE_NAME
+    HAVING COUNT_IF(UPPER(COALESCE(EXECUTION_STATUS, '')) NOT IN ('SUCCESS', '')) >= 10
+        OR SUM(COALESCE(TOTAL_ELAPSED_TIME, 0)) / 1000 >= 7200
+        OR SUM(COALESCE(BYTES_SPILLED_TO_REMOTE_STORAGE, 0)) / POWER(1024, 3) >= 25;""",
+            "GENERATED_DROP_SQL": "DROP ALERT IF EXISTS OVERWATCH_ALERT_USER_QUERY_BEHAVIOR;",
+            "ENABLED_BY_DEFAULT": False,
+            "SAFETY_NOTE": "Status-review only. Do not cancel queries, disable users, or change grants automatically.",
+        },
     ]
 
 
@@ -2672,6 +2792,34 @@ def build_alert_remediation_policy_seed_rows() -> list[dict[str, object]]:
             "EXECUTION_SQL_TEMPLATE": "ALTER WAREHOUSE IDENTIFIER('<warehouse_name>') SET AUTO_SUSPEND = <seconds>;",
             "ROLLBACK_GUIDANCE": "Reset AUTO_SUSPEND to the captured before-state value.",
             "VERIFICATION_SQL": "SHOW WAREHOUSES LIKE '<warehouse_name>';",
+        },
+        {
+            "POLICY_ID": "POLICY_WAREHOUSE_SPIKE_COST_REVIEW",
+            "ALERT_KEY": "COST_WAREHOUSE_CREDIT_SPIKE",
+            "CATEGORY": "Cost",
+            "ACTION_TYPE": "Warehouse cost spike review",
+            "REMEDIATION_MODE": "RECOMMEND",
+            "AUTO_ELIGIBLE": False,
+            "REQUIRED_REVIEW": "DBA / Cost owner plus workload owner",
+            "BEFORE_STATE_SQL": "SELECT * FROM FACT_WAREHOUSE_HOURLY WHERE WAREHOUSE_NAME = '<warehouse_name>' ORDER BY HOUR_START DESC LIMIT 168;",
+            "DRY_RUN_SQL": "-- Compare current/prior run-rate, top query hashes, warehouse settings, and company scope; no ALTER WAREHOUSE from Alert Center.",
+            "EXECUTION_SQL_TEMPLATE": "-- No automatic warehouse change. Use guarded Admin workflow if a setting change is approved.",
+            "ROLLBACK_GUIDANCE": "Restore prior warehouse settings only through guarded Admin review with before-state evidence.",
+            "VERIFICATION_SQL": "SELECT * FROM FACT_WAREHOUSE_HOURLY WHERE WAREHOUSE_NAME = '<warehouse_name>' ORDER BY HOUR_START DESC LIMIT 168;",
+        },
+        {
+            "POLICY_ID": "POLICY_USER_QUERY_BEHAVIOR_REVIEW",
+            "ALERT_KEY": "BEHAVIOR_USER_QUERY_ANOMALY",
+            "CATEGORY": "Behavior",
+            "ACTION_TYPE": "User/query behavior review",
+            "REMEDIATION_MODE": "STATUS_REVIEW",
+            "AUTO_ELIGIBLE": False,
+            "REQUIRED_REVIEW": "DBA / Workload reviewer",
+            "BEFORE_STATE_SQL": "SELECT USER_NAME, ROLE_NAME, WAREHOUSE_NAME, QUERY_ID, EXECUTION_STATUS, TOTAL_ELAPSED_TIME, QUERY_TEXT FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY WHERE USER_NAME = '<user_name>' ORDER BY START_TIME DESC LIMIT 100;",
+            "DRY_RUN_SQL": "-- Compare repeated query hash, failures, role, warehouse, and recent coaching/change source before any control action.",
+            "EXECUTION_SQL_TEMPLATE": "-- No automatic cancel, disable, revoke, or warehouse change from behavior alerts.",
+            "ROLLBACK_GUIDANCE": "If a manual control was applied, restore access/settings only after verified query behavior and owner approval.",
+            "VERIFICATION_SQL": "SELECT USER_NAME, ROLE_NAME, WAREHOUSE_NAME, COUNT(*) AS QUERY_COUNT FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY WHERE START_TIME >= DATEADD('day', -1, CURRENT_TIMESTAMP()) GROUP BY 1,2,3 ORDER BY QUERY_COUNT DESC;",
         },
         {
             "POLICY_ID": "POLICY_TASK_RERUN_STATUS_REVIEW",
@@ -2855,6 +3003,151 @@ WHEN NOT MATCHED THEN INSERT
 VALUES
   ({", ".join("src." + column for column in columns)});
 """
+
+
+def load_alert_native_object_registry(section: str = "Alert Center") -> pd.DataFrame:
+    """Load reviewed native Snowflake alert candidates from the mart registry."""
+    table = _command_center_fqn(ALERT_NATIVE_OBJECT_REGISTRY_TABLE)
+    columns = [
+        "REGISTRY_KEY",
+        "ALERT_KEY",
+        "CATEGORY",
+        "ALERT_OBJECT_NAME",
+        "TARGET_ROUTE",
+        "WAREHOUSE_NAME",
+        "SCHEDULE_TEXT",
+        "STATUS",
+        "CONDITION_SOURCE",
+        "ACTION_SOURCE",
+        "ENABLED_BY_DEFAULT",
+        "SAFETY_NOTE",
+        "UPDATED_AT",
+        "UPDATED_BY",
+        "GENERATED_CREATE_SQL",
+        "GENERATED_DROP_SQL",
+    ]
+    df = run_query(f"""
+        SELECT
+            REGISTRY_KEY,
+            ALERT_KEY,
+            CATEGORY,
+            ALERT_OBJECT_NAME,
+            TARGET_ROUTE,
+            WAREHOUSE_NAME,
+            SCHEDULE_TEXT,
+            STATUS,
+            CONDITION_SOURCE,
+            ACTION_SOURCE,
+            ENABLED_BY_DEFAULT,
+            SAFETY_NOTE,
+            UPDATED_AT,
+            UPDATED_BY,
+            GENERATED_CREATE_SQL,
+            GENERATED_DROP_SQL
+        FROM {table}
+        ORDER BY ENABLED_BY_DEFAULT DESC, TARGET_ROUTE, CATEGORY, ALERT_KEY
+        LIMIT 200
+    """, ttl_key="alert_native_object_registry", tier="metadata", section=section, max_rows=200)
+    for column in columns:
+        if column not in df.columns:
+            df[column] = None
+    return df[columns]
+
+
+def load_alert_remediation_policy(section: str = "Alert Center") -> pd.DataFrame:
+    """Load safe remediation policy rows from the mart policy catalog."""
+    table = _command_center_fqn(ALERT_REMEDIATION_POLICY_TABLE)
+    columns = [
+        "POLICY_ID",
+        "ALERT_KEY",
+        "CATEGORY",
+        "ACTION_TYPE",
+        "REMEDIATION_MODE",
+        "AUTO_ELIGIBLE",
+        "REQUIRED_REVIEW",
+        "BEFORE_STATE_SQL",
+        "DRY_RUN_SQL",
+        "EXECUTION_SQL_TEMPLATE",
+        "ROLLBACK_GUIDANCE",
+        "VERIFICATION_SQL",
+        "ACTIVE",
+        "UPDATED_AT",
+        "UPDATED_BY",
+    ]
+    df = run_query(f"""
+        SELECT
+            POLICY_ID,
+            ALERT_KEY,
+            CATEGORY,
+            ACTION_TYPE,
+            REMEDIATION_MODE,
+            AUTO_ELIGIBLE,
+            REQUIRED_REVIEW,
+            BEFORE_STATE_SQL,
+            DRY_RUN_SQL,
+            EXECUTION_SQL_TEMPLATE,
+            ROLLBACK_GUIDANCE,
+            VERIFICATION_SQL,
+            ACTIVE,
+            UPDATED_AT,
+            UPDATED_BY
+        FROM {table}
+        ORDER BY ACTIVE DESC, AUTO_ELIGIBLE ASC, CATEGORY, ALERT_KEY, POLICY_ID
+        LIMIT 300
+    """, ttl_key="alert_remediation_policy", tier="metadata", section=section, max_rows=300)
+    for column in columns:
+        if column not in df.columns:
+            df[column] = None
+    return df[columns]
+
+
+def load_alert_remediation_dry_runs(
+    *,
+    days: int = 14,
+    limit: int = 200,
+    section: str = "Alert Center",
+) -> pd.DataFrame:
+    """Load recent remediation dry-run audit rows without executing any action."""
+    days = max(1, min(int(days or 14), 365))
+    limit = max(1, min(int(limit or 200), 1000))
+    table = _command_center_fqn(ALERT_REMEDIATION_DRY_RUN_TABLE)
+    columns = [
+        "DRY_RUN_ID",
+        "POLICY_ID",
+        "EVENT_ID",
+        "ALERT_KEY",
+        "CREATED_AT",
+        "CREATED_BY",
+        "DRY_RUN_STATUS",
+        "BEFORE_STATE",
+        "PROPOSED_SQL",
+        "EXPECTED_EFFECT",
+        "BLOCKING_REASON",
+        "VERIFICATION_SQL",
+    ]
+    df = run_query(f"""
+        SELECT
+            DRY_RUN_ID,
+            POLICY_ID,
+            EVENT_ID,
+            ALERT_KEY,
+            CREATED_AT,
+            CREATED_BY,
+            DRY_RUN_STATUS,
+            BEFORE_STATE,
+            PROPOSED_SQL,
+            EXPECTED_EFFECT,
+            BLOCKING_REASON,
+            VERIFICATION_SQL
+        FROM {table}
+        WHERE CREATED_AT >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+        ORDER BY CREATED_AT DESC, DRY_RUN_ID DESC
+        LIMIT {limit}
+    """, ttl_key=f"alert_remediation_dry_runs_{days}_{limit}", tier="recent", section=section, max_rows=limit)
+    for column in columns:
+        if column not in df.columns:
+            df[column] = None
+    return df[columns]
 
 
 def build_alert_event_materialization_sql(

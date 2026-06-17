@@ -27,6 +27,12 @@ When a proposed mart starts as a Dynamic Table, convert it before deployment:
 5. Run `snowflake/OVERWATCH_MART_VALIDATION.sql` and confirm no
    `DYNAMIC_TABLE_COLLISIONS` or `SECURE_VIEW_COLLISIONS` remain.
 
+Before importing DDL from another build or doing a mass mart reset, also run
+`snowflake/OVERWATCH_DYNAMIC_TABLE_SECURE_VIEW_AUDIT.sql`. It scans the current
+schema for OVERWATCH-named Dynamic Tables and Secure Views and includes an
+optional account-level dependency check for Dynamic Tables that reference secure
+views.
+
 Do not use materialized views for the primary monitoring app. The app needs
 multi-source, windowed exception logic with explicit refresh and
 audit behavior.

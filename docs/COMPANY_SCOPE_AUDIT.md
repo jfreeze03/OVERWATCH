@@ -28,6 +28,9 @@ defensible owner dimension.
   available so role scoping participates in ALFA/Trexis classification.
 - Use `get_user_company_filter_clause()` for user-only sources such as
   `USERS`, `LOGIN_HISTORY`, `SESSIONS`, and `GRANTS_TO_USERS`.
+- Cost and Cortex user views should prefer role-aware user scoping. Trexis users
+  with active `%TRXS%` role grants belong in the Trexis company view even if a
+  source table does not expose a Trexis warehouse or database.
 - Keep `get_user_filter_clause()` centralized in `utils/company_filter.py` as
   the fallback primitive. App surfaces should call the role-aware helper.
 - Label `METERING_HISTORY` service rows and account storage classes as
@@ -46,3 +49,5 @@ defensible owner dimension.
 - Alert routing/configuration and global thresholds.
 - Any service cost whose Snowflake source does not expose user, role, warehouse,
   database, or tag ownership.
+- Snowflake Admin/Cost Management account totals. Use them for reconciliation,
+  then explain which subset is company-scoped, allocated, or account-wide.

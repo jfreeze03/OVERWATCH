@@ -154,6 +154,34 @@ outside the Streamlit app UI.
   Cortex access changes, privileged grants, task reruns, and warehouse timeout
   changes must keep before-state, rollback, verification, and owner review
   evidence before any execution path is considered.
+- Alert Center `Detection Catalog` can now load the live native alert registry,
+  and `Delivery & Automation` can load registry, remediation policy, and
+  dry-run audit rows in the same bounded refresh as alert history.
+- Native alert candidates now include warehouse credit spike and user/query
+  behavior anomaly checks in addition to Cortex spend, privileged grants, and
+  task failures. These candidates remain disabled by default and review-only.
+
+## 2026-06-17 - Dynamic Table Audit Artifact
+
+- Added `snowflake/OVERWATCH_DYNAMIC_TABLE_SECURE_VIEW_AUDIT.sql` as a
+  read-only pre-reset/pre-import scan for side-built DDLs and old deployed
+  objects.
+- The deployable setup still contains no Dynamic Tables or Secure Views. If a
+  future mart is proposed as a Dynamic Table, rewrite it as a physical table
+  loaded by `SP_OVERWATCH_*` and scheduled by an `OVERWATCH_*` task before it
+  enters `OVERWATCH_MART_SETUP.sql`.
+
+## 2026-06-17 - Advisor And Company-Scope Polish
+
+- `Warehouse Health > Optimization Advisor` now labels idle and right-sizing
+  rows by value type and shows estimated monthly savings where a downsize/idle
+  candidate has a defensible calculation. Pressure/upsize rows remain
+  reliability/performance items, not savings claims.
+- Stored procedure advisor rows now include Alert Center Reliability handoff
+  columns so procedure runtime/cost/orchestration issues route consistently.
+- `Cost & Contract` coverage/trust boards now call out the Trexis role/user
+  boundary so ALFA/Trexis cost review can separate exact warehouse/database
+  scope from user/role allocation and account-wide Snowflake service totals.
 
 ## 2026-06-17 - Production Startup Cleanup
 

@@ -1,0 +1,123 @@
+-- OVERWATCH dynamic table / secure view compatibility audit.
+-- Run before a mart reset or before importing DDL from another build.
+--
+-- Dynamic Tables can fail when their source dependency path includes secure
+-- views. OVERWATCH deployable marts should stay as physical tables loaded by
+-- SP_OVERWATCH_* procedures and OVERWATCH_* tasks.
+
+-- 1) Current-schema dynamic table collisions with OVERWATCH mart names.
+SHOW DYNAMIC TABLES IN SCHEMA;
+
+WITH dynamic_objects AS (
+    SELECT
+        UPPER("name") AS OBJECT_NAME,
+        "database_name" AS DATABASE_NAME,
+        "schema_name" AS SCHEMA_NAME,
+        "target_lag" AS TARGET_LAG,
+        "refresh_mode" AS REFRESH_MODE,
+        "scheduling_state" AS SCHEDULING_STATE
+    FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+),
+overwatch_dynamic_collisions AS (
+    SELECT *
+    FROM dynamic_objects
+    WHERE OBJECT_NAME ILIKE 'FACT\_%' ESCAPE '\'
+       OR OBJECT_NAME ILIKE 'DIM\_%' ESCAPE '\'
+       OR OBJECT_NAME ILIKE 'MART\_%' ESCAPE '\'
+       OR OBJECT_NAME ILIKE 'OVERWATCH\_%' ESCAPE '\'
+       OR OBJECT_NAME ILIKE 'ALERT\_%' ESCAPE '\'
+)
+SELECT
+    'DYNAMIC_TABLE_COLLISIONS' AS CHECK_NAME,
+    COUNT(*) AS ISSUE_COUNT,
+    IFF(COUNT(*) = 0, 'PASS', 'FAIL') AS VALIDATION_STATUS,
+    LISTAGG(DATABASE_NAME || '.' || SCHEMA_NAME || '.' || OBJECT_NAME, ', ')
+        WITHIN GROUP (ORDER BY DATABASE_NAME, SCHEMA_NAME, OBJECT_NAME) AS DETAILS
+FROM overwatch_dynamic_collisions;
+
+SELECT
+    DATABASE_NAME,
+    SCHEMA_NAME,
+    OBJECT_NAME,
+    TARGET_LAG,
+    REFRESH_MODE,
+    SCHEDULING_STATE,
+    'Rewrite as CREATE TABLE IF NOT EXISTS plus SP_OVERWATCH_* load and OVERWATCH_* task.' AS RECOMMENDED_ACTION
+FROM overwatch_dynamic_collisions
+ORDER BY DATABASE_NAME, SCHEMA_NAME, OBJECT_NAME;
+
+-- 2) Current-schema secure view collisions with OVERWATCH mart names.
+SELECT
+    'SECURE_VIEW_COLLISIONS' AS CHECK_NAME,
+    COUNT(*) AS ISSUE_COUNT,
+    IFF(COUNT(*) = 0, 'PASS', 'FAIL') AS VALIDATION_STATUS,
+    LISTAGG(TABLE_CATALOG || '.' || TABLE_SCHEMA || '.' || TABLE_NAME, ', ')
+        WITHIN GROUP (ORDER BY TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME) AS DETAILS
+FROM INFORMATION_SCHEMA.VIEWS
+WHERE TABLE_SCHEMA = CURRENT_SCHEMA()
+  AND UPPER(COALESCE(IS_SECURE, 'NO')) = 'YES'
+  AND (
+      TABLE_NAME ILIKE 'FACT\_%' ESCAPE '\'
+      OR TABLE_NAME ILIKE 'DIM\_%' ESCAPE '\'
+      OR TABLE_NAME ILIKE 'MART\_%' ESCAPE '\'
+      OR TABLE_NAME ILIKE 'OVERWATCH\_%' ESCAPE '\'
+      OR TABLE_NAME ILIKE 'ALERT\_%' ESCAPE '\'
+  );
+
+SELECT
+    TABLE_CATALOG AS DATABASE_NAME,
+    TABLE_SCHEMA AS SCHEMA_NAME,
+    TABLE_NAME,
+    IS_SECURE,
+    'Do not use a secure view as an OVERWATCH mart target. Use a table loaded by task/procedure.' AS RECOMMENDED_ACTION
+FROM INFORMATION_SCHEMA.VIEWS
+WHERE TABLE_SCHEMA = CURRENT_SCHEMA()
+  AND UPPER(COALESCE(IS_SECURE, 'NO')) = 'YES'
+  AND (
+      TABLE_NAME ILIKE 'FACT\_%' ESCAPE '\'
+      OR TABLE_NAME ILIKE 'DIM\_%' ESCAPE '\'
+      OR TABLE_NAME ILIKE 'MART\_%' ESCAPE '\'
+      OR TABLE_NAME ILIKE 'OVERWATCH\_%' ESCAPE '\'
+      OR TABLE_NAME ILIKE 'ALERT\_%' ESCAPE '\'
+  )
+ORDER BY TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME;
+
+-- 3) Optional account-level dependency risk scan.
+-- Requires imported privileges on SNOWFLAKE. If this view is unavailable, use
+-- the two current-schema checks above plus SHOW DYNAMIC TABLES IN ACCOUNT.
+WITH secure_views AS (
+    SELECT
+        TABLE_CATALOG,
+        TABLE_SCHEMA,
+        TABLE_NAME
+    FROM SNOWFLAKE.ACCOUNT_USAGE.VIEWS
+    WHERE DELETED IS NULL
+      AND UPPER(COALESCE(IS_SECURE, 'NO')) = 'YES'
+),
+dynamic_dependencies AS (
+    SELECT
+        REFERENCING_DATABASE,
+        REFERENCING_SCHEMA,
+        REFERENCING_OBJECT_NAME,
+        REFERENCING_OBJECT_DOMAIN,
+        REFERENCED_DATABASE,
+        REFERENCED_SCHEMA,
+        REFERENCED_OBJECT_NAME,
+        REFERENCED_OBJECT_DOMAIN
+    FROM SNOWFLAKE.ACCOUNT_USAGE.OBJECT_DEPENDENCIES
+    WHERE UPPER(COALESCE(REFERENCING_OBJECT_DOMAIN, '')) = 'DYNAMIC TABLE'
+)
+SELECT
+    d.REFERENCING_DATABASE,
+    d.REFERENCING_SCHEMA,
+    d.REFERENCING_OBJECT_NAME,
+    d.REFERENCED_DATABASE,
+    d.REFERENCED_SCHEMA,
+    d.REFERENCED_OBJECT_NAME,
+    'Dynamic table references secure view; rewrite the dynamic table as table + task/procedure.' AS RECOMMENDED_ACTION
+FROM dynamic_dependencies d
+JOIN secure_views v
+  ON UPPER(d.REFERENCED_DATABASE) = UPPER(v.TABLE_CATALOG)
+ AND UPPER(d.REFERENCED_SCHEMA) = UPPER(v.TABLE_SCHEMA)
+ AND UPPER(d.REFERENCED_OBJECT_NAME) = UPPER(v.TABLE_NAME)
+ORDER BY d.REFERENCING_DATABASE, d.REFERENCING_SCHEMA, d.REFERENCING_OBJECT_NAME;

@@ -2366,6 +2366,17 @@ def _build_cost_control_coverage_board(
     )
     _add_coverage_row(
         rows,
+        "Trexis role/user boundary",
+        "Ready" if _has_columns(explorer, ["ROLE_NAME", "USER_NAME"]) else "Review",
+        (
+            "User-scoped views can apply TRXS role/user monikers when role and user dimensions are loaded."
+            if _has_columns(explorer, ["ROLE_NAME", "USER_NAME"]) else
+            "Trexis user segregation is available after role/user Cost Explorer detail is loaded."
+        ),
+        "Use role/user detail for Cortex and user-driven cost reviews; keep account-wide service totals as reconciliation context.",
+    )
+    _add_coverage_row(
+        rows,
         "Database and DEV rollup",
         "Ready" if _has_columns(chargeback, ["DATABASE_NAME"]) or _has_columns(explorer, ["DATABASE_NAME"]) else "Review",
         "Database-attributed cost is visible and labeled Allocated / Estimated." if _has_columns(chargeback, ["DATABASE_NAME"]) or _has_columns(explorer, ["DATABASE_NAME"]) else "Database-level attribution has not been loaded.",
@@ -2461,6 +2472,16 @@ def _build_cost_allocation_trust_board(
         "Allocated/Estimated" if company_env_loaded else "Review",
         "Company/environment split is present; database-attributed cost remains allocated where warehouse usage is shared." if company_env_loaded else "Company/environment allocation is available after refresh.",
         "Load Cost Explorer or Chargeback before explaining ALFA/Trexis or PROD/DEV cost movement.",
+    )
+    add(
+        "Trexis role/user boundary",
+        "Allocated/Estimated" if _has_columns(explorer, ["ROLE_NAME", "USER_NAME"]) else "Review",
+        (
+            "Role/user cost rows are available; Trexis users can be separated by TRXS role membership and TRXS user monikers where telemetry exposes them."
+            if _has_columns(explorer, ["ROLE_NAME", "USER_NAME"]) else
+            "Role/user cost rows are available after Cost Explorer refresh."
+        ),
+        "Use this for user-driven cost and Cortex review; do not split account-wide Snowflake services without an allocation basis.",
     )
 
     db_loaded = _has_columns(chargeback, ["DATABASE_NAME"]) or _has_columns(explorer, ["DATABASE_NAME"])

@@ -31,6 +31,30 @@ OPTIMIZATION_ADVISOR_PANES = (
 )
 
 
+def _monthly_idle_savings_usd(idle_credits: object, days: int, credit_price: float) -> float:
+    lookback_days = max(1, int(days or 7))
+    return round(credits_to_dollars(safe_float(idle_credits) / lookback_days * 30, credit_price), 2)
+
+
+def _right_size_monthly_savings_usd(row, days: int, credit_price: float) -> float:
+    decision = str(row.get("DECISION", "") or "").lower()
+    if "downsize candidate" not in decision:
+        return 0.0
+    lookback_days = max(1, int(days or 14))
+    monthly_run_rate = safe_float(row.get("TOTAL_CREDITS", 0)) / lookback_days * 30
+    return round(credits_to_dollars(monthly_run_rate * 0.40, credit_price), 2)
+
+
+def _advisor_value_type(row) -> str:
+    savings = safe_float(row.get("EST_MONTHLY_SAVINGS_USD", 0))
+    decision = str(row.get("DECISION", "") or "")
+    if savings > 0:
+        return "Estimated savings"
+    if "incident" in decision.lower() or "pressure" in decision.lower() or "spill" in decision.lower():
+        return "Reliability / performance"
+    return "Review only"
+
+
 def _idle_warehouse_advisor_decision(row, credit_price: float) -> dict:
     idle_credits = safe_float(row.get("IDLE_CREDITS", 0))
     idle_hours = int(safe_float(row.get("IDLE_HOURS", 0)))
@@ -100,11 +124,17 @@ def render_optimization_advisor():
             df_i = st.session_state["opt_df_idle"].copy()
             decision_rows = [_idle_warehouse_advisor_decision(row, credit_price) for _, row in df_i.iterrows()]
             df_i = pd.concat([df_i.reset_index(drop=True), pd.DataFrame(decision_rows)], axis=1)
+            df_i["EST_MONTHLY_SAVINGS_USD"] = df_i["IDLE_CREDITS"].apply(
+                lambda value: _monthly_idle_savings_usd(value, idle_days, credit_price)
+            )
+            df_i["VALUE_TYPE"] = "Estimated idle savings"
             total_idle = df_i["IDLE_CREDITS"].sum()
+            total_monthly_savings = safe_float(df_i["EST_MONTHLY_SAVINGS_USD"].sum())
             render_shell_snapshot((
                 ("Warehouses Wasting", f"{len(df_i):,}"),
                 ("Total Idle Credits", format_credits(total_idle)),
-                ("Idle Cost", f"${credits_to_dollars(total_idle, credit_price):,.2f}"),
+                ("7d Idle Cost", f"${credits_to_dollars(total_idle, credit_price):,.2f}"),
+                ("Est. Savings / Mo", f"${total_monthly_savings:,.0f}"),
             ))
             source = st.session_state.get("opt_df_idle_source") or "Warehouse metering and query telemetry"
             st.caption(f"{source} | {metric_confidence_label('exact')}")
@@ -123,6 +153,8 @@ def render_optimization_advisor():
                     "PROOF_REQUIRED",
                     "DO_NOT_DO",
                     "WAREHOUSE_NAME",
+                    "VALUE_TYPE",
+                    "EST_MONTHLY_SAVINGS_USD",
                     "IDLE_HOURS",
                     "IDLE_CREDITS",
                     "TOTAL_CREDITS",
@@ -230,12 +262,28 @@ def render_optimization_advisor():
             df_s = st.session_state["opt_df_sz"].copy()
             decision_rows = [warehouse_sizing_decision(row) for _, row in df_s.iterrows()]
             df_s = pd.concat([df_s.reset_index(drop=True), pd.DataFrame(decision_rows)], axis=1)
+            df_s["EST_MONTHLY_SAVINGS_USD"] = df_s.apply(
+                lambda row: _right_size_monthly_savings_usd(row, sz_days, credit_price),
+                axis=1,
+            )
+            df_s["VALUE_TYPE"] = df_s.apply(_advisor_value_type, axis=1)
+            savings_candidates = int((df_s["EST_MONTHLY_SAVINGS_USD"] > 0).sum())
+            monthly_savings = safe_float(df_s["EST_MONTHLY_SAVINGS_USD"].sum())
+            reliability_candidates = int(df_s["VALUE_TYPE"].astype(str).str.contains("Reliability", case=False, na=False).sum())
+            render_shell_snapshot((
+                ("Warehouses Reviewed", f"{len(df_s):,}"),
+                ("Savings Candidates", f"{savings_candidates:,}"),
+                ("Est. Savings / Mo", f"${monthly_savings:,.0f}"),
+                ("Reliability Items", f"{reliability_candidates:,}"),
+            ))
             st.caption(f"{st.session_state.get('opt_df_sz_source', 'Warehouse telemetry')} | {metric_confidence_label('exact')}")
             render_priority_dataframe(
                 df_s,
                 title="Right-sizing candidates",
                 priority_columns=[
                     "DECISION",
+                    "VALUE_TYPE",
+                    "EST_MONTHLY_SAVINGS_USD",
                     "EVIDENCE_PACKET",
                     "SAFE_NEXT_ACTION",
                     "APPROVAL_GATE",
@@ -253,8 +301,8 @@ def render_optimization_advisor():
                     "REMOTE_SPILL_GB",
                     "AVG_CACHE_PCT",
                 ],
-                sort_by=["REMOTE_SPILL_GB", "AVG_QUEUE_SEC", "TOTAL_CREDITS"],
-                ascending=[False, False, False],
+                sort_by=["EST_MONTHLY_SAVINGS_USD", "REMOTE_SPILL_GB", "AVG_QUEUE_SEC", "TOTAL_CREDITS"],
+                ascending=[False, False, False, False],
                 raw_label="Warehouse sizing detail",
             )
 

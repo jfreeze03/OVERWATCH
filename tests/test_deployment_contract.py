@@ -242,6 +242,27 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertIn("SECURE_VIEW_COLLISIONS", audit_sql)
         self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.OBJECT_DEPENDENCIES", audit_sql)
         self.assertIn("TABLE + TASK/PROCEDURE", audit_sql)
+        self.assertIn("GENERATED_DROP_SQL", audit_sql)
+        self.assertIn("GENERATED_TABLE_STUB_SQL", audit_sql)
+        self.assertIn("GENERATED_PROCEDURE_STUB_SQL", audit_sql)
+        self.assertIn("GENERATED_TASK_STUB_SQL", audit_sql)
+
+    def test_native_alert_deployment_script_is_review_only(self):
+        setup_sql = _setup_sql()
+        deployment_sql = (ROOT / "snowflake" / "OVERWATCH_NATIVE_ALERT_DEPLOYMENT.sql").read_text(encoding="utf-8").upper()
+        drop_sql = (ROOT / "snowflake" / "OVERWATCH_MART_DROP.sql").read_text(encoding="utf-8").upper()
+        validation_sql = (ROOT / "snowflake" / "OVERWATCH_MART_VALIDATION.sql").read_text(encoding="utf-8").upper()
+
+        self.assertIn("CREATE OR REPLACE VIEW ALERT_NATIVE_DEPLOYMENT_REVIEW_V", deployment_sql)
+        self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_STAGE_ALERT_REMEDIATION_DRY_RUN", deployment_sql)
+        self.assertIn("THIS SCRIPT DOES NOT ENABLE OR EXECUTE NATIVE ALERTS AUTOMATICALLY", deployment_sql)
+        self.assertIn("ALERT_NATIVE_DEPLOYMENT_REVIEW_V", setup_sql)
+        self.assertIn("SP_OVERWATCH_STAGE_ALERT_REMEDIATION_DRY_RUN", setup_sql)
+        self.assertIn("DROP VIEW IF EXISTS ALERT_NATIVE_DEPLOYMENT_REVIEW_V", drop_sql)
+        self.assertIn("DROP PROCEDURE IF EXISTS SP_OVERWATCH_STAGE_ALERT_REMEDIATION_DRY_RUN", drop_sql)
+        self.assertIn("('VIEW', 'ALERT_NATIVE_DEPLOYMENT_REVIEW_V')", validation_sql)
+        self.assertIn("('VIEW', 3)", validation_sql)
+        self.assertIn("('PROCEDURE', 9)", validation_sql)
 
     def test_ci_runs_deployment_contract_before_full_suite(self):
         workflow = (ROOT / ".github" / "workflows" / "validate.yml").read_text(encoding="utf-8")

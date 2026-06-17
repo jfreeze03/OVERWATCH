@@ -1845,6 +1845,7 @@ def _render_loaded_advisor_alert_candidates() -> None:
 
 def _render_alert_detection_catalog() -> None:
     from utils.alerts import (
+        build_alert_native_deployment_review_rows,
         build_alert_native_object_registry_seed_rows,
         build_alert_signal_query_catalog,
         load_alert_native_object_registry,
@@ -1905,6 +1906,20 @@ def _render_alert_detection_catalog() -> None:
             ],
             raw_label="All native alert registry candidates",
             height=260,
+            max_rows=8,
+        )
+        deployment_rows = build_alert_native_deployment_review_rows(native_rows)
+        _render_priority_dataframe(
+            deployment_rows,
+            title="Native alert deployment review",
+            priority_columns=[
+                "DEPLOYMENT_STATE", "CATEGORY", "ALERT_KEY", "ALERT_OBJECT_NAME",
+                "TARGET_ROUTE", "WAREHOUSE_NAME", "SCHEDULE_TEXT",
+                "DEPLOYMENT_SQL_PRESENT", "ROLLBACK_SQL_PRESENT",
+                "DEPLOYMENT_NEXT_STEP", "VALIDATION_SQL",
+            ],
+            raw_label="All native alert deployment review fields",
+            height=280,
             max_rows=8,
         )
     defer_source_note("Detection Catalog lists alert signals and required Snowflake telemetry.")

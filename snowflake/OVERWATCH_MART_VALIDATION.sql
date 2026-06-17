@@ -19,6 +19,7 @@ WITH required_objects AS (
         ('TABLE', 'ALERT_REMEDIATION_POLICY'),
         ('TABLE', 'ALERT_REMEDIATION_DRY_RUN'),
         ('TABLE', 'ALERT_NATIVE_OBJECT_REGISTRY'),
+        ('VIEW', 'ALERT_NATIVE_DEPLOYMENT_REVIEW_V'),
         ('TABLE', 'ALERT_NOTIFICATION_LOG'),
         ('TABLE', 'ALERT_THRESHOLDS'),
         ('TABLE', 'ALERT_OWNER_ROUTING'),
@@ -49,8 +50,8 @@ ORDER BY VALIDATION_STATUS DESC, REQUIRED_TYPE, REQUIRED_OBJECT;
 WITH expected_counts AS (
     SELECT * FROM VALUES
         ('TABLE', 59),
-        ('VIEW', 2),
-        ('PROCEDURE', 8),
+        ('VIEW', 3),
+        ('PROCEDURE', 9),
         ('FUNCTION', 1)
     AS t(OBJECT_TYPE, EXPECTED_COUNT)
 ),

@@ -172,6 +172,7 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "build_cost_cortex_alert_drilldown",
         "build_alert_data_quality_check_seed_rows", "build_alert_data_quality_checks_ddl",
         "build_alert_event_materialization_sql", "build_alert_incident_action_board",
+        "build_alert_native_deployment_review_rows", "build_alert_native_deployment_review_sql",
         "build_alert_native_object_registry_seed_rows", "build_alert_native_registry_ddl",
         "build_alert_remediation_policy_seed_rows", "build_alert_remediation_policy_ddl",
         "build_loaded_section_alert_signal_board", "build_section_alert_signal_board",

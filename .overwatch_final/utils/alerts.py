@@ -2556,7 +2556,7 @@ def build_alert_native_object_registry_seed_rows(
             "WAREHOUSE_NAME": "OVERWATCH_WH",
             "SCHEDULE_TEXT": "60 MINUTE",
             "STATUS": "CANDIDATE",
-            "CONDITION_SOURCE": "FACT_CORTEX_DAILY 7-day spend vs shared threshold",
+            "CONDITION_SOURCE": "FACT_CORTEX_DAILY company-labeled 7-day spend vs shared threshold",
             "ACTION_SOURCE": "Insert recommend-only event into ALERT_EVENTS",
             "GENERATED_CREATE_SQL": f"""CREATE OR REPLACE ALERT OVERWATCH_ALERT_CORTEX_SPEND_SPIKE
   WAREHOUSE = OVERWATCH_WH
@@ -2565,17 +2565,20 @@ def build_alert_native_object_registry_seed_rows(
     SELECT 1
     FROM FACT_CORTEX_DAILY
     WHERE USAGE_DATE >= DATEADD('day', -7, CURRENT_DATE())
+    GROUP BY COMPANY
     HAVING SUM(EST_COST_USD) > 25
   ))
   THEN INSERT INTO {event_table}
-    (ALERT_KEY, CATEGORY, SEVERITY, STATUS, OWNER, RECOMMENDED_ACTION, ENTITY_TYPE, ENTITY_NAME, CURRENT_VALUE, REMEDIATION_MODE, EVIDENCE, DEDUPE_KEY)
-    SELECT 'COST_CORTEX_SPEND_SPIKE', 'Cost', 'High', 'New', 'DBA / AI cost route',
+    (COMPANY, ENVIRONMENT, ALERT_KEY, CATEGORY, SEVERITY, STATUS, OWNER, RECOMMENDED_ACTION, ENTITY_TYPE, ENTITY_NAME, CURRENT_VALUE, REMEDIATION_MODE, EVIDENCE, DEDUPE_KEY)
+    SELECT COALESCE(COMPANY, 'Account-Wide'), 'ALL', 'COST_CORTEX_SPEND_SPIKE', 'Cost', 'High', 'New', 'DBA / AI cost route',
            'Review Cortex user/source spend, quota settings, grants, and company scope before changing access.',
            'CORTEX', 'CORTEX', SUM(EST_COST_USD), 'RECOMMEND',
            'Native candidate detected Cortex spend above threshold.',
-           SHA2('COST_CORTEX_SPEND_SPIKE|' || TO_VARCHAR(CURRENT_DATE()), 256)
+           SHA2('COST_CORTEX_SPEND_SPIKE|' || COALESCE(COMPANY, 'Account-Wide') || '|' || TO_VARCHAR(CURRENT_DATE()), 256)
     FROM FACT_CORTEX_DAILY
-    WHERE USAGE_DATE >= DATEADD('day', -7, CURRENT_DATE());""",
+    WHERE USAGE_DATE >= DATEADD('day', -7, CURRENT_DATE())
+    GROUP BY COMPANY
+    HAVING SUM(EST_COST_USD) > 25;""",
             "GENERATED_DROP_SQL": "DROP ALERT IF EXISTS OVERWATCH_ALERT_CORTEX_SPEND_SPIKE;",
             "ENABLED_BY_DEFAULT": False,
             "SAFETY_NOTE": "Recommend-only. Do not alter Cortex access automatically.",
@@ -2589,60 +2592,60 @@ def build_alert_native_object_registry_seed_rows(
             "WAREHOUSE_NAME": "OVERWATCH_WH",
             "SCHEDULE_TEXT": "60 MINUTE",
             "STATUS": "CANDIDATE",
-            "CONDITION_SOURCE": "FACT_WAREHOUSE_HOURLY current-day credits vs 30-day baseline",
+            "CONDITION_SOURCE": "FACT_WAREHOUSE_HOURLY company-labeled current-day CREDITS_USED vs 30-day baseline",
             "ACTION_SOURCE": "Insert recommend-only cost movement event into ALERT_EVENTS",
             "GENERATED_CREATE_SQL": f"""CREATE OR REPLACE ALERT OVERWATCH_ALERT_WAREHOUSE_CREDIT_SPIKE
   WAREHOUSE = OVERWATCH_WH
   SCHEDULE = '60 MINUTE'
   IF (EXISTS (
     WITH current_window AS (
-      SELECT WAREHOUSE_NAME, SUM(METERED_CREDITS) AS CURRENT_CREDITS
+      SELECT COMPANY, WAREHOUSE_NAME, SUM(CREDITS_USED) AS CURRENT_CREDITS
       FROM FACT_WAREHOUSE_HOURLY
       WHERE HOUR_START >= DATEADD('hour', -24, CURRENT_TIMESTAMP())
-      GROUP BY WAREHOUSE_NAME
+      GROUP BY COMPANY, WAREHOUSE_NAME
     ),
     baseline AS (
-      SELECT WAREHOUSE_NAME, AVG(DAILY_CREDITS) AS BASELINE_DAILY_CREDITS
+      SELECT COMPANY, WAREHOUSE_NAME, AVG(DAILY_CREDITS) AS BASELINE_DAILY_CREDITS
       FROM (
-        SELECT WAREHOUSE_NAME, DATE_TRUNC('day', HOUR_START) AS USAGE_DAY, SUM(METERED_CREDITS) AS DAILY_CREDITS
+        SELECT COMPANY, WAREHOUSE_NAME, DATE_TRUNC('day', HOUR_START) AS USAGE_DAY, SUM(CREDITS_USED) AS DAILY_CREDITS
         FROM FACT_WAREHOUSE_HOURLY
         WHERE HOUR_START >= DATEADD('day', -31, CURRENT_TIMESTAMP())
           AND HOUR_START < DATEADD('day', -1, CURRENT_TIMESTAMP())
-        GROUP BY WAREHOUSE_NAME, DATE_TRUNC('day', HOUR_START)
+        GROUP BY COMPANY, WAREHOUSE_NAME, DATE_TRUNC('day', HOUR_START)
       )
-      GROUP BY WAREHOUSE_NAME
+      GROUP BY COMPANY, WAREHOUSE_NAME
     )
     SELECT 1
     FROM current_window c
-    LEFT JOIN baseline b USING (WAREHOUSE_NAME)
+    LEFT JOIN baseline b USING (COMPANY, WAREHOUSE_NAME)
     WHERE c.CURRENT_CREDITS > GREATEST(10, COALESCE(b.BASELINE_DAILY_CREDITS, 0) * 1.5)
   ))
   THEN INSERT INTO {event_table}
-    (ALERT_KEY, CATEGORY, SEVERITY, STATUS, OWNER, RECOMMENDED_ACTION, ENTITY_TYPE, ENTITY_NAME, WAREHOUSE_NAME, CURRENT_VALUE, BASELINE_VALUE, REMEDIATION_MODE, EVIDENCE, DEDUPE_KEY)
+    (COMPANY, ENVIRONMENT, ALERT_KEY, CATEGORY, SEVERITY, STATUS, OWNER, RECOMMENDED_ACTION, ENTITY_TYPE, ENTITY_NAME, WAREHOUSE_NAME, CURRENT_VALUE, BASELINE_VALUE, REMEDIATION_MODE, EVIDENCE, DEDUPE_KEY)
     WITH current_window AS (
-      SELECT WAREHOUSE_NAME, SUM(METERED_CREDITS) AS CURRENT_CREDITS
+      SELECT COMPANY, WAREHOUSE_NAME, SUM(CREDITS_USED) AS CURRENT_CREDITS
       FROM FACT_WAREHOUSE_HOURLY
       WHERE HOUR_START >= DATEADD('hour', -24, CURRENT_TIMESTAMP())
-      GROUP BY WAREHOUSE_NAME
+      GROUP BY COMPANY, WAREHOUSE_NAME
     ),
     baseline AS (
-      SELECT WAREHOUSE_NAME, AVG(DAILY_CREDITS) AS BASELINE_DAILY_CREDITS
+      SELECT COMPANY, WAREHOUSE_NAME, AVG(DAILY_CREDITS) AS BASELINE_DAILY_CREDITS
       FROM (
-        SELECT WAREHOUSE_NAME, DATE_TRUNC('day', HOUR_START) AS USAGE_DAY, SUM(METERED_CREDITS) AS DAILY_CREDITS
+        SELECT COMPANY, WAREHOUSE_NAME, DATE_TRUNC('day', HOUR_START) AS USAGE_DAY, SUM(CREDITS_USED) AS DAILY_CREDITS
         FROM FACT_WAREHOUSE_HOURLY
         WHERE HOUR_START >= DATEADD('day', -31, CURRENT_TIMESTAMP())
           AND HOUR_START < DATEADD('day', -1, CURRENT_TIMESTAMP())
-        GROUP BY WAREHOUSE_NAME, DATE_TRUNC('day', HOUR_START)
+        GROUP BY COMPANY, WAREHOUSE_NAME, DATE_TRUNC('day', HOUR_START)
       )
-      GROUP BY WAREHOUSE_NAME
+      GROUP BY COMPANY, WAREHOUSE_NAME
     )
-    SELECT 'COST_WAREHOUSE_CREDIT_SPIKE', 'Cost', 'High', 'New', 'DBA / Cost owner',
+    SELECT COALESCE(c.COMPANY, 'Shared/Unclassified'), 'ALL', 'COST_WAREHOUSE_CREDIT_SPIKE', 'Cost', 'High', 'New', 'DBA / Cost owner',
            'Explain the warehouse credit spike with run-rate, top query, setting, and company-scope telemetry before changing capacity.',
            'WAREHOUSE', c.WAREHOUSE_NAME, c.WAREHOUSE_NAME, c.CURRENT_CREDITS, COALESCE(b.BASELINE_DAILY_CREDITS, 0), 'RECOMMEND',
            'Native candidate detected warehouse credits above baseline.',
-           SHA2('COST_WAREHOUSE_CREDIT_SPIKE|' || c.WAREHOUSE_NAME || '|' || TO_VARCHAR(CURRENT_DATE()), 256)
+           SHA2('COST_WAREHOUSE_CREDIT_SPIKE|' || COALESCE(c.COMPANY, 'Shared/Unclassified') || '|' || c.WAREHOUSE_NAME || '|' || TO_VARCHAR(CURRENT_DATE()), 256)
     FROM current_window c
-    LEFT JOIN baseline b USING (WAREHOUSE_NAME)
+    LEFT JOIN baseline b USING (COMPANY, WAREHOUSE_NAME)
     WHERE c.CURRENT_CREDITS > GREATEST(10, COALESCE(b.BASELINE_DAILY_CREDITS, 0) * 1.5);""",
             "GENERATED_DROP_SQL": "DROP ALERT IF EXISTS OVERWATCH_ALERT_WAREHOUSE_CREDIT_SPIKE;",
             "ENABLED_BY_DEFAULT": False,
@@ -2657,29 +2660,31 @@ def build_alert_native_object_registry_seed_rows(
             "WAREHOUSE_NAME": "OVERWATCH_WH",
             "SCHEDULE_TEXT": "60 MINUTE",
             "STATUS": "CANDIDATE",
-            "CONDITION_SOURCE": "SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS privileged role grants",
+            "CONDITION_SOURCE": "FACT_GRANT_DAILY company-labeled privileged role grants",
             "ACTION_SOURCE": "Insert status-review event into ALERT_EVENTS",
             "GENERATED_CREATE_SQL": f"""CREATE OR REPLACE ALERT OVERWATCH_ALERT_PRIVILEGE_ESCALATION
   WAREHOUSE = OVERWATCH_WH
   SCHEDULE = '60 MINUTE'
   IF (EXISTS (
     SELECT 1
-    FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS
-    WHERE CREATED_ON >= DATEADD('hour', -2, CURRENT_TIMESTAMP())
+    FROM FACT_GRANT_DAILY
+    WHERE SNAPSHOT_DATE >= DATEADD('day', -2, CURRENT_DATE())
+      AND CREATED_ON >= DATEADD('hour', -24, CURRENT_TIMESTAMP())
       AND DELETED_ON IS NULL
-      AND UPPER(ROLE) IN ('ACCOUNTADMIN', 'SECURITYADMIN', 'SYSADMIN', 'ORGADMIN')
+      AND UPPER(ROLE_NAME) IN ('ACCOUNTADMIN', 'SECURITYADMIN', 'SYSADMIN', 'ORGADMIN')
   ))
   THEN INSERT INTO {event_table}
-    (ALERT_KEY, CATEGORY, SEVERITY, STATUS, OWNER, RECOMMENDED_ACTION, ENTITY_TYPE, ENTITY_NAME, REMEDIATION_MODE, EVIDENCE, DEDUPE_KEY)
-    SELECT 'SECURITY_PRIVILEGE_ESCALATION', 'Security', 'Critical', 'New', 'Security Reviewer',
+    (COMPANY, ENVIRONMENT, ALERT_KEY, CATEGORY, SEVERITY, STATUS, OWNER, RECOMMENDED_ACTION, ENTITY_TYPE, ENTITY_NAME, USER_NAME, ROLE_NAME, REMEDIATION_MODE, EVIDENCE, DEDUPE_KEY)
+    SELECT COALESCE(COMPANY, 'Shared/Unclassified'), 'No Database Context', 'SECURITY_PRIVILEGE_ESCALATION', 'Security', 'Critical', 'New', 'Security Reviewer',
            'Validate ticket, reviewer, MFA posture, and access purpose before accepting the privileged grant.',
-           'USER', GRANTEE_NAME, 'STATUS_REVIEW',
-           'Native candidate detected privileged role grant: ' || ROLE,
-           SHA2('SECURITY_PRIVILEGE_ESCALATION|' || GRANTEE_NAME || '|' || ROLE || '|' || TO_VARCHAR(CREATED_ON), 256)
-    FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS
-    WHERE CREATED_ON >= DATEADD('hour', -2, CURRENT_TIMESTAMP())
+           'USER', GRANTEE_NAME, GRANTEE_NAME, ROLE_NAME, 'STATUS_REVIEW',
+           'Native candidate detected privileged role grant: ' || ROLE_NAME,
+           SHA2('SECURITY_PRIVILEGE_ESCALATION|' || COALESCE(COMPANY, 'Shared/Unclassified') || '|' || GRANTEE_NAME || '|' || ROLE_NAME || '|' || TO_VARCHAR(CREATED_ON), 256)
+    FROM FACT_GRANT_DAILY
+    WHERE SNAPSHOT_DATE >= DATEADD('day', -2, CURRENT_DATE())
+      AND CREATED_ON >= DATEADD('hour', -24, CURRENT_TIMESTAMP())
       AND DELETED_ON IS NULL
-      AND UPPER(ROLE) IN ('ACCOUNTADMIN', 'SECURITYADMIN', 'SYSADMIN', 'ORGADMIN');""",
+      AND UPPER(ROLE_NAME) IN ('ACCOUNTADMIN', 'SECURITYADMIN', 'SYSADMIN', 'ORGADMIN');""",
             "GENERATED_DROP_SQL": "DROP ALERT IF EXISTS OVERWATCH_ALERT_PRIVILEGE_ESCALATION;",
             "ENABLED_BY_DEFAULT": False,
             "SAFETY_NOTE": "Status-review only. Never auto-revoke from this alert.",
@@ -2693,25 +2698,25 @@ def build_alert_native_object_registry_seed_rows(
             "WAREHOUSE_NAME": "OVERWATCH_WH",
             "SCHEDULE_TEXT": "30 MINUTE",
             "STATUS": "CANDIDATE",
-            "CONDITION_SOURCE": "SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY failed/skipped task graph rows",
+            "CONDITION_SOURCE": "FACT_TASK_RUN company/environment-labeled failed/skipped task graph rows",
             "ACTION_SOURCE": "Insert status-review event into ALERT_EVENTS",
             "GENERATED_CREATE_SQL": f"""CREATE OR REPLACE ALERT OVERWATCH_ALERT_TASK_FAILURE
   WAREHOUSE = OVERWATCH_WH
   SCHEDULE = '30 MINUTE'
   IF (EXISTS (
     SELECT 1
-    FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
+    FROM FACT_TASK_RUN
     WHERE SCHEDULED_TIME >= DATEADD('hour', -2, CURRENT_TIMESTAMP())
       AND UPPER(COALESCE(STATE, '')) IN ('FAILED', 'FAILED_WITH_ERROR', 'SKIPPED', 'CANCELLED')
   ))
   THEN INSERT INTO {event_table}
-    (ALERT_KEY, CATEGORY, SEVERITY, STATUS, OWNER, RECOMMENDED_ACTION, ENTITY_TYPE, ENTITY_NAME, QUERY_ID, REMEDIATION_MODE, EVIDENCE, DEDUPE_KEY)
-    SELECT 'PIPELINE_TASK_FAILURE', 'Task / Pipeline', 'Critical', 'New', 'DBA / Pipeline Owner',
+    (COMPANY, ENVIRONMENT, ALERT_KEY, CATEGORY, SEVERITY, STATUS, OWNER, RECOMMENDED_ACTION, ENTITY_TYPE, ENTITY_NAME, DATABASE_NAME, SCHEMA_NAME, QUERY_ID, REMEDIATION_MODE, EVIDENCE, DEDUPE_KEY)
+    SELECT COALESCE(COMPANY, 'Shared/Unclassified'), COALESCE(ENVIRONMENT, 'No Database Context'), 'PIPELINE_TASK_FAILURE', 'Task / Pipeline', 'Critical', 'New', 'DBA / Pipeline Owner',
            'Identify root task, failed child, last success, downstream SLA, and safe rerun conditions.',
-           'TASK', DATABASE_NAME || '.' || SCHEMA_NAME || '.' || NAME, QUERY_ID, 'STATUS_REVIEW',
+           'TASK', DATABASE_NAME || '.' || SCHEMA_NAME || '.' || TASK_NAME, DATABASE_NAME, SCHEMA_NAME, QUERY_ID, 'STATUS_REVIEW',
            COALESCE(ERROR_MESSAGE, STATE),
-           SHA2('PIPELINE_TASK_FAILURE|' || COALESCE(ROOT_TASK_ID, NAME) || '|' || TO_VARCHAR(SCHEDULED_TIME), 256)
-    FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
+           SHA2('PIPELINE_TASK_FAILURE|' || COALESCE(COMPANY, 'Shared/Unclassified') || '|' || COALESCE(ROOT_TASK_NAME, TASK_NAME) || '|' || TO_VARCHAR(SCHEDULED_TIME), 256)
+    FROM FACT_TASK_RUN
     WHERE SCHEDULED_TIME >= DATEADD('hour', -2, CURRENT_TIMESTAMP())
       AND UPPER(COALESCE(STATE, '')) IN ('FAILED', 'FAILED_WITH_ERROR', 'SKIPPED', 'CANCELLED');""",
             "GENERATED_DROP_SQL": "DROP ALERT IF EXISTS OVERWATCH_ALERT_TASK_FAILURE;",
@@ -2727,31 +2732,31 @@ def build_alert_native_object_registry_seed_rows(
             "WAREHOUSE_NAME": "OVERWATCH_WH",
             "SCHEDULE_TEXT": "60 MINUTE",
             "STATUS": "CANDIDATE",
-            "CONDITION_SOURCE": "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY user failure, runtime, spill, and warehouse pressure patterns",
+            "CONDITION_SOURCE": "FACT_QUERY_DETAIL_RECENT company/environment-labeled user failure, runtime, spill, and warehouse pressure patterns",
             "ACTION_SOURCE": "Insert status-review behavior event into ALERT_EVENTS",
             "GENERATED_CREATE_SQL": f"""CREATE OR REPLACE ALERT OVERWATCH_ALERT_USER_QUERY_BEHAVIOR
   WAREHOUSE = OVERWATCH_WH
   SCHEDULE = '60 MINUTE'
   IF (EXISTS (
     SELECT 1
-    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+    FROM FACT_QUERY_DETAIL_RECENT
     WHERE START_TIME >= DATEADD('hour', -2, CURRENT_TIMESTAMP())
-    GROUP BY USER_NAME, ROLE_NAME, WAREHOUSE_NAME
+    GROUP BY COMPANY, ENVIRONMENT, USER_NAME, ROLE_NAME, WAREHOUSE_NAME
     HAVING COUNT_IF(UPPER(COALESCE(EXECUTION_STATUS, '')) NOT IN ('SUCCESS', '')) >= 10
         OR SUM(COALESCE(TOTAL_ELAPSED_TIME, 0)) / 1000 >= 7200
         OR SUM(COALESCE(BYTES_SPILLED_TO_REMOTE_STORAGE, 0)) / POWER(1024, 3) >= 25
   ))
   THEN INSERT INTO {event_table}
-    (ALERT_KEY, CATEGORY, SEVERITY, STATUS, OWNER, RECOMMENDED_ACTION, ENTITY_TYPE, ENTITY_NAME, USER_NAME, ROLE_NAME, WAREHOUSE_NAME, CURRENT_VALUE, REMEDIATION_MODE, EVIDENCE, DEDUPE_KEY)
-    SELECT 'BEHAVIOR_USER_QUERY_ANOMALY', 'Behavior', 'High', 'New', 'DBA / Workload reviewer',
+    (COMPANY, ENVIRONMENT, ALERT_KEY, CATEGORY, SEVERITY, STATUS, OWNER, RECOMMENDED_ACTION, ENTITY_TYPE, ENTITY_NAME, USER_NAME, ROLE_NAME, WAREHOUSE_NAME, CURRENT_VALUE, REMEDIATION_MODE, EVIDENCE, DEDUPE_KEY)
+    SELECT COALESCE(COMPANY, 'Shared/Unclassified'), COALESCE(ENVIRONMENT, 'No Database Context'), 'BEHAVIOR_USER_QUERY_ANOMALY', 'Behavior', 'High', 'New', 'DBA / Workload reviewer',
            'Review the user, role, repeated query pattern, recent guidance, and downstream system impact before coaching or controls.',
            'USER', COALESCE(USER_NAME, 'Unknown user'), USER_NAME, ROLE_NAME, WAREHOUSE_NAME,
            COUNT(*) AS CURRENT_VALUE, 'STATUS_REVIEW',
            'Native candidate detected repeated failures, long runtime, or remote spill for a user/role/warehouse pattern.',
-           SHA2('BEHAVIOR_USER_QUERY_ANOMALY|' || COALESCE(USER_NAME, '') || '|' || COALESCE(ROLE_NAME, '') || '|' || COALESCE(WAREHOUSE_NAME, '') || '|' || TO_VARCHAR(CURRENT_DATE()), 256)
-    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+           SHA2('BEHAVIOR_USER_QUERY_ANOMALY|' || COALESCE(COMPANY, 'Shared/Unclassified') || '|' || COALESCE(USER_NAME, '') || '|' || COALESCE(ROLE_NAME, '') || '|' || COALESCE(WAREHOUSE_NAME, '') || '|' || TO_VARCHAR(CURRENT_DATE()), 256)
+    FROM FACT_QUERY_DETAIL_RECENT
     WHERE START_TIME >= DATEADD('hour', -2, CURRENT_TIMESTAMP())
-    GROUP BY USER_NAME, ROLE_NAME, WAREHOUSE_NAME
+    GROUP BY COMPANY, ENVIRONMENT, USER_NAME, ROLE_NAME, WAREHOUSE_NAME
     HAVING COUNT_IF(UPPER(COALESCE(EXECUTION_STATUS, '')) NOT IN ('SUCCESS', '')) >= 10
         OR SUM(COALESCE(TOTAL_ELAPSED_TIME, 0)) / 1000 >= 7200
         OR SUM(COALESCE(BYTES_SPILLED_TO_REMOTE_STORAGE, 0)) / POWER(1024, 3) >= 25;""",
@@ -3005,6 +3010,182 @@ VALUES
 """
 
 
+def build_alert_native_deployment_review_rows(
+    registry_rows: pd.DataFrame | list[dict[str, object]] | None = None,
+) -> pd.DataFrame:
+    """Return operator-facing deployment readiness rows for native alert candidates."""
+    if registry_rows is None:
+        rows = pd.DataFrame(build_alert_native_object_registry_seed_rows())
+    elif isinstance(registry_rows, pd.DataFrame):
+        rows = registry_rows.copy()
+    else:
+        rows = pd.DataFrame(registry_rows)
+    if rows.empty:
+        return pd.DataFrame(columns=[
+            "DEPLOYMENT_STATE",
+            "CATEGORY",
+            "ALERT_KEY",
+            "ALERT_OBJECT_NAME",
+            "TARGET_ROUTE",
+            "WAREHOUSE_NAME",
+            "SCHEDULE_TEXT",
+            "DEPLOYMENT_SQL_PRESENT",
+            "ROLLBACK_SQL_PRESENT",
+            "DEPLOYMENT_NEXT_STEP",
+            "VALIDATION_SQL",
+            "SAFETY_NOTE",
+        ])
+
+    rows = rows.copy()
+    for column in [
+        "STATUS",
+        "ENABLED_BY_DEFAULT",
+        "CATEGORY",
+        "ALERT_KEY",
+        "ALERT_OBJECT_NAME",
+        "TARGET_ROUTE",
+        "WAREHOUSE_NAME",
+        "SCHEDULE_TEXT",
+        "GENERATED_CREATE_SQL",
+        "GENERATED_DROP_SQL",
+        "SAFETY_NOTE",
+    ]:
+        if column not in rows.columns:
+            rows[column] = None
+
+    status = rows["STATUS"].fillna("CANDIDATE").astype(str).str.upper()
+    enabled = rows["ENABLED_BY_DEFAULT"].fillna(False).astype(bool)
+    rows["DEPLOYMENT_STATE"] = "CANDIDATE_REVIEW_REQUIRED"
+    rows.loc[status.isin(["APPROVED", "READY", "READY_TO_DEPLOY"]), "DEPLOYMENT_STATE"] = "READY_FOR_MANUAL_DEPLOY"
+    rows.loc[status.isin(["DEPLOYED", "ACTIVE"]), "DEPLOYMENT_STATE"] = "DEPLOYED_MONITOR"
+    rows.loc[enabled, "DEPLOYMENT_STATE"] = "BLOCKED_ENABLED_BY_DEFAULT"
+    rows["DEPLOYMENT_SQL_PRESENT"] = rows["GENERATED_CREATE_SQL"].fillna("").astype(str).str.contains("CREATE OR REPLACE ALERT", case=False, regex=False)
+    rows["ROLLBACK_SQL_PRESENT"] = rows["GENERATED_DROP_SQL"].fillna("").astype(str).str.contains("DROP ALERT", case=False, regex=False)
+    rows["DEPLOYMENT_NEXT_STEP"] = rows["DEPLOYMENT_STATE"].map({
+        "READY_FOR_MANUAL_DEPLOY": "Run generated CREATE ALERT SQL manually in Snowflake after owner, threshold, and warehouse review.",
+        "DEPLOYED_MONITOR": "Monitor ALERT_EVENTS, ALERT_RUN_HISTORY, notification logs, and remediation dry-runs.",
+        "BLOCKED_ENABLED_BY_DEFAULT": "Set ENABLED_BY_DEFAULT to false before deployment review can continue.",
+    }).fillna("Review threshold, schedule, owner, route, safety note, and generated SQL before marking approved.")
+    rows["VALIDATION_SQL"] = rows["ALERT_OBJECT_NAME"].fillna("").astype(str).apply(
+        lambda name: f"SHOW ALERTS LIKE '{name}';" if name else "SHOW ALERTS IN SCHEMA;"
+    )
+    return rows[[
+        "DEPLOYMENT_STATE",
+        "CATEGORY",
+        "ALERT_KEY",
+        "ALERT_OBJECT_NAME",
+        "TARGET_ROUTE",
+        "WAREHOUSE_NAME",
+        "SCHEDULE_TEXT",
+        "DEPLOYMENT_SQL_PRESENT",
+        "ROLLBACK_SQL_PRESENT",
+        "DEPLOYMENT_NEXT_STEP",
+        "VALIDATION_SQL",
+        "SAFETY_NOTE",
+        "GENERATED_CREATE_SQL",
+        "GENERATED_DROP_SQL",
+    ]]
+
+
+def build_alert_native_deployment_review_sql(
+    db: str = ALERT_DB,
+    schema: str = ALERT_SCHEMA,
+) -> str:
+    """Return safe SQL objects for reviewing native-alert deployment and dry-runs."""
+    registry = _command_center_fqn(ALERT_NATIVE_OBJECT_REGISTRY_TABLE, db, schema)
+    policy = _command_center_fqn(ALERT_REMEDIATION_POLICY_TABLE, db, schema)
+    dry_run = _command_center_fqn(ALERT_REMEDIATION_DRY_RUN_TABLE, db, schema)
+    events = _command_center_fqn("ALERT_EVENTS", db, schema)
+    view = _command_center_fqn("ALERT_NATIVE_DEPLOYMENT_REVIEW_V", db, schema)
+    proc = _command_center_fqn("SP_OVERWATCH_STAGE_ALERT_REMEDIATION_DRY_RUN", db, schema)
+    return f"""-- Native Snowflake alert deployment review and remediation dry-run staging.
+-- This script never executes GENERATED_CREATE_SQL or GENERATED_DROP_SQL.
+-- Operators review SQL first, deploy selected alerts manually, and keep all
+-- remediation as dry-run/status-review until a separate guarded automation
+-- path is explicitly approved.
+
+CREATE OR REPLACE VIEW {view} AS
+SELECT
+  REGISTRY_KEY,
+  ALERT_KEY,
+  CATEGORY,
+  ALERT_OBJECT_NAME,
+  TARGET_ROUTE,
+  WAREHOUSE_NAME,
+  SCHEDULE_TEXT,
+  STATUS,
+  ENABLED_BY_DEFAULT,
+  CASE
+    WHEN COALESCE(ENABLED_BY_DEFAULT, FALSE) THEN 'BLOCKED_ENABLED_BY_DEFAULT'
+    WHEN UPPER(COALESCE(STATUS, 'CANDIDATE')) IN ('APPROVED', 'READY', 'READY_TO_DEPLOY') THEN 'READY_FOR_MANUAL_DEPLOY'
+    WHEN UPPER(COALESCE(STATUS, 'CANDIDATE')) IN ('DEPLOYED', 'ACTIVE') THEN 'DEPLOYED_MONITOR'
+    ELSE 'CANDIDATE_REVIEW_REQUIRED'
+  END AS DEPLOYMENT_STATE,
+  IFF(GENERATED_CREATE_SQL ILIKE '%CREATE OR REPLACE ALERT%', TRUE, FALSE) AS DEPLOYMENT_SQL_PRESENT,
+  IFF(GENERATED_DROP_SQL ILIKE '%DROP ALERT%', TRUE, FALSE) AS ROLLBACK_SQL_PRESENT,
+  CASE
+    WHEN COALESCE(ENABLED_BY_DEFAULT, FALSE) THEN 'Set ENABLED_BY_DEFAULT to FALSE before review can continue.'
+    WHEN UPPER(COALESCE(STATUS, 'CANDIDATE')) IN ('APPROVED', 'READY', 'READY_TO_DEPLOY') THEN 'Run GENERATED_CREATE_SQL manually after owner, threshold, schedule, and warehouse approval.'
+    WHEN UPPER(COALESCE(STATUS, 'CANDIDATE')) IN ('DEPLOYED', 'ACTIVE') THEN 'Monitor ALERT_EVENTS and dry-run outcomes; use GENERATED_DROP_SQL only for rollback.'
+    ELSE 'Review owner, threshold, route, safety note, and generated SQL before marking approved.'
+  END AS DEPLOYMENT_NEXT_STEP,
+  'SHOW ALERTS LIKE ''' || ALERT_OBJECT_NAME || ''';' AS VALIDATION_SQL,
+  SAFETY_NOTE,
+  GENERATED_CREATE_SQL,
+  GENERATED_DROP_SQL,
+  UPDATED_AT,
+  UPDATED_BY
+FROM {registry};
+
+CREATE OR REPLACE PROCEDURE {proc}(
+  P_EVENT_ID NUMBER,
+  P_ALERT_KEY VARCHAR
+)
+RETURNS VARCHAR
+LANGUAGE SQL
+EXECUTE AS CALLER
+AS
+$$
+BEGIN
+  INSERT INTO {dry_run}
+    (POLICY_ID, EVENT_ID, ALERT_KEY, DRY_RUN_STATUS, BEFORE_STATE, PROPOSED_SQL,
+     EXPECTED_EFFECT, BLOCKING_REASON, VERIFICATION_SQL)
+  SELECT
+    p.POLICY_ID,
+    e.EVENT_ID,
+    e.ALERT_KEY,
+    CASE
+      WHEN COALESCE(p.AUTO_ELIGIBLE, FALSE) THEN 'REVIEW_REQUIRED_AUTO_DISABLED'
+      ELSE 'BLOCKED_REVIEW_REQUIRED'
+    END AS DRY_RUN_STATUS,
+    p.BEFORE_STATE_SQL AS BEFORE_STATE,
+    COALESCE(NULLIF(p.EXECUTION_SQL_TEMPLATE, ''), p.DRY_RUN_SQL) AS PROPOSED_SQL,
+    'Dry-run only. Capture before-state, review route owner, and verify expected impact before any manual action.' AS EXPECTED_EFFECT,
+    CASE
+      WHEN COALESCE(p.AUTO_ELIGIBLE, FALSE) THEN 'AUTO_ELIGIBLE is not sufficient for execution; guarded automation is not enabled in OVERWATCH.'
+      ELSE 'AUTO_ELIGIBLE is false. Manual review is required before any action.'
+    END AS BLOCKING_REASON,
+    p.VERIFICATION_SQL
+  FROM {events} e
+  JOIN {policy} p
+    ON UPPER(p.ALERT_KEY) = UPPER(e.ALERT_KEY)
+   AND COALESCE(p.ACTIVE, TRUE)
+  WHERE (P_EVENT_ID IS NULL OR e.EVENT_ID = P_EVENT_ID)
+    AND (P_ALERT_KEY IS NULL OR UPPER(e.ALERT_KEY) = UPPER(P_ALERT_KEY))
+    AND NOT EXISTS (
+      SELECT 1
+      FROM {dry_run} d
+      WHERE d.EVENT_ID = e.EVENT_ID
+        AND d.POLICY_ID = p.POLICY_ID
+        AND d.CREATED_AT >= DATEADD('hour', -24, CURRENT_TIMESTAMP())
+    );
+
+  RETURN 'Remediation dry-run staging completed. Review ALERT_REMEDIATION_DRY_RUN before any manual action.';
+END;
+$$;
+"""
+
+
 def load_alert_native_object_registry(section: str = "Alert Center") -> pd.DataFrame:
     """Load reviewed native Snowflake alert candidates from the mart registry."""
     table = _command_center_fqn(ALERT_NATIVE_OBJECT_REGISTRY_TABLE)
@@ -3176,6 +3357,8 @@ MERGE INTO {events_table} tgt
 USING (
   SELECT
     COALESCE(NULLIF(a.ALERT_TYPE, ''), NULLIF(a.CATEGORY, ''), 'OVERWATCH_ALERT') AS ALERT_KEY,
+    COALESCE(a.COMPANY, 'Shared/Unclassified') AS COMPANY,
+    COALESCE(a.ENVIRONMENT, 'No Database Context') AS ENVIRONMENT,
     COALESCE(a.ALERT_TS, CURRENT_TIMESTAMP()) AS EVENT_TS,
     COALESCE(a.ALERT_TS, CURRENT_TIMESTAMP()) AS FIRST_SEEN_AT,
     CURRENT_TIMESTAMP() AS LAST_SEEN_AT,
@@ -3226,6 +3409,8 @@ USING (
 ON tgt.DEDUPE_KEY = src.DEDUPE_KEY
 WHEN MATCHED THEN UPDATE SET
   LAST_SEEN_AT = src.LAST_SEEN_AT,
+  COMPANY = src.COMPANY,
+  ENVIRONMENT = src.ENVIRONMENT,
   STATUS = src.STATUS,
   SEVERITY = src.SEVERITY,
   OWNER = src.OWNER,
@@ -3233,11 +3418,11 @@ WHEN MATCHED THEN UPDATE SET
   EVIDENCE = src.EVIDENCE,
   RAW_EVENT = src.RAW_EVENT
 WHEN NOT MATCHED THEN INSERT
-  (ALERT_KEY, EVENT_TS, FIRST_SEEN_AT, LAST_SEEN_AT, DETECTED_AT, CATEGORY, SEVERITY, STATUS,
+  (ALERT_KEY, COMPANY, ENVIRONMENT, EVENT_TS, FIRST_SEEN_AT, LAST_SEEN_AT, DETECTED_AT, CATEGORY, SEVERITY, STATUS,
    BUSINESS_IMPACT, IMPACT_ESTIMATE, OWNER, RECOMMENDED_ACTION, ENTITY_TYPE, ENTITY_NAME,
    WAREHOUSE_NAME, DATABASE_NAME, SCHEMA_NAME, PROOF_QUERY, REMEDIATION_MODE, EVIDENCE, DEDUPE_KEY, RAW_EVENT)
 VALUES
-  (src.ALERT_KEY, src.EVENT_TS, src.FIRST_SEEN_AT, src.LAST_SEEN_AT, src.DETECTED_AT, src.CATEGORY, src.SEVERITY, src.STATUS,
+  (src.ALERT_KEY, src.COMPANY, src.ENVIRONMENT, src.EVENT_TS, src.FIRST_SEEN_AT, src.LAST_SEEN_AT, src.DETECTED_AT, src.CATEGORY, src.SEVERITY, src.STATUS,
    src.BUSINESS_IMPACT, src.IMPACT_ESTIMATE, src.OWNER, src.RECOMMENDED_ACTION, src.ENTITY_TYPE, src.ENTITY_NAME,
    src.WAREHOUSE_NAME, src.DATABASE_NAME, src.SCHEMA_NAME, src.PROOF_QUERY, src.REMEDIATION_MODE, src.EVIDENCE, src.DEDUPE_KEY, src.RAW_EVENT);
 
@@ -3342,6 +3527,8 @@ CREATE TABLE IF NOT EXISTS {_command_center_fqn("ALERT_THRESHOLDS", db, schema)}
 
 CREATE TABLE IF NOT EXISTS {_command_center_fqn("ALERT_EVENTS", db, schema)} (
   EVENT_ID                  NUMBER AUTOINCREMENT PRIMARY KEY,
+  COMPANY                   VARCHAR(100),
+  ENVIRONMENT               VARCHAR(100),
   ALERT_KEY                 VARCHAR(200),
   EVENT_TS                  TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
   FIRST_SEEN_AT             TIMESTAMP_NTZ,
@@ -3376,6 +3563,9 @@ CREATE TABLE IF NOT EXISTS {_command_center_fqn("ALERT_EVENTS", db, schema)} (
   DEDUPE_KEY                VARCHAR(500),
   RAW_EVENT                 VARIANT
 );
+
+ALTER TABLE IF EXISTS {_command_center_fqn("ALERT_EVENTS", db, schema)} ADD COLUMN IF NOT EXISTS COMPANY VARCHAR(100);
+ALTER TABLE IF EXISTS {_command_center_fqn("ALERT_EVENTS", db, schema)} ADD COLUMN IF NOT EXISTS ENVIRONMENT VARCHAR(100);
 
 CREATE TABLE IF NOT EXISTS {_command_center_fqn("ALERT_RUN_HISTORY", db, schema)} (
   RUN_ID                    VARCHAR(200) PRIMARY KEY,
@@ -3468,6 +3658,8 @@ CREATE TABLE IF NOT EXISTS {_command_center_fqn("ALERT_OWNER_ROUTING", db, schem
 {build_alert_native_registry_ddl(db=db, schema=schema).strip()}
 
 {build_alert_remediation_policy_ddl(db=db, schema=schema).strip()}
+
+{build_alert_native_deployment_review_sql(db=db, schema=schema).strip()}
 
 MERGE INTO {_command_center_fqn("ALERT_THRESHOLDS", db, schema)} tgt
 USING (

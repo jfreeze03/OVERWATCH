@@ -119,10 +119,16 @@ This plan combines:
 - `ALERT_REMEDIATION_POLICY` and `ALERT_REMEDIATION_DRY_RUN` define the future
   automation contract. Current seed policies are recommend/status-review only,
   with no auto-eligible rows.
+- `ALERT_EVENTS` now carries `COMPANY` and `ENVIRONMENT` directly. Native alert
+  events should populate these fields from company-labeled marts whenever the
+  source supports ALFA/Trexis attribution.
 - Alert Center `Detection Catalog` can load live registry rows. `Delivery &
   Automation` can load the live registry, remediation policy, and dry-run audit
   rows with alert history so operators can see deployment state and dry-run
   blockers without reading setup SQL.
+- `snowflake/OVERWATCH_NATIVE_ALERT_DEPLOYMENT.sql` creates a review view and
+  dry-run staging procedure. It does not enable alert objects or execute
+  remediation.
 
 ## Current Native Alert Candidates
 
@@ -130,9 +136,9 @@ This plan combines:
 |---|---|---|---|---|
 | Cortex spend spike | `FACT_CORTEX_DAILY` | Cost & Contract | Recommend | Review users, source, quota, grants, and company scope before access changes. |
 | Warehouse credit spike | `FACT_WAREHOUSE_HOURLY` | Cost & Contract | Recommend | Explain run-rate, top query, settings, and company scope before warehouse changes. |
-| Privileged role escalation | `SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS` | Security Monitoring | Status review | Never auto-revoke from the alert; require ticket/reviewer/MFA evidence. |
-| Task failure | `SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY` | Workload Operations | Status review | Rerun only after root-cause, idempotency, dependency, and downstream SLA checks. |
-| User/query behavior anomaly | `SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY` | Workload Operations | Status review | Review user, role, repeated query pattern, coaching source, and impact before controls. |
+| Privileged role escalation | `FACT_GRANT_DAILY` | Security Monitoring | Status review | Never auto-revoke from the alert; require ticket/reviewer/MFA evidence. |
+| Task failure | `FACT_TASK_RUN` | Workload Operations | Status review | Rerun only after root-cause, idempotency, dependency, and downstream SLA checks. |
+| User/query behavior anomaly | `FACT_QUERY_DETAIL_RECENT` | Workload Operations | Status review | Review user, role, repeated query pattern, coaching source, and impact before controls. |
 
 Snowflake's native alert objects can send notifications or run SQL actions when
 a condition is met, but generated `CREATE ALERT` SQL is registry output only in

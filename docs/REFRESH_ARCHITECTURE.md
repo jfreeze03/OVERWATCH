@@ -33,6 +33,11 @@ schema for OVERWATCH-named Dynamic Tables and Secure Views and includes an
 optional account-level dependency check for Dynamic Tables that reference secure
 views.
 
+The audit emits generated drop SQL plus table/procedure/task rewrite stubs for
+flagged Dynamic Tables. Treat those as conversion scaffolding only; the source
+query still needs DBA review before the rewritten table/procedure/task enters
+`OVERWATCH_MART_SETUP.sql`.
+
 Do not use materialized views for the primary monitoring app. The app needs
 multi-source, windowed exception logic with explicit refresh and
 audit behavior.
@@ -71,6 +76,11 @@ reuse already-loaded session state when present, and allow only compact
 precomputed mart reads during navigation. Raw `ACCOUNT_USAGE`,
 `INFORMATION_SCHEMA`, schema compare, data hash, remediation, and proof queries
 stay behind explicit refresh/load actions or scheduled Snowflake tasks.
+
+Native Snowflake alert deployment follows the same explicit-action pattern.
+`snowflake/OVERWATCH_NATIVE_ALERT_DEPLOYMENT.sql` creates a deployment review
+view and dry-run staging procedure, but generated `CREATE ALERT` SQL remains a
+manual DBA deployment decision.
 
 Primary sidebar navigation must land on the section summary, not the heavy proof
 workspace. Drill-through buttons inside a summary may open the detailed workspace

@@ -42,10 +42,12 @@ incident proof.
 
 | Object | Type | Purpose |
 |---|---|---|
-| `ALERT_EVENTS` | Table | Durable alert lifecycle event table used by Alert Center command lanes. |
+| `ALERT_EVENTS` | Table | Durable alert lifecycle event table used by Alert Center command lanes. Includes `COMPANY` and `ENVIRONMENT` for ALFA/Trexis-scoped alert routing where the source can provide it. |
 | `ALERT_NATIVE_OBJECT_REGISTRY` | Table | Reviewed native Snowflake alert candidates with generated create/drop SQL. Candidates are disabled by default. |
+| `ALERT_NATIVE_DEPLOYMENT_REVIEW_V` | View | Review-only native alert deployment state, generated SQL presence, validation SQL, and next operator step. |
 | `ALERT_REMEDIATION_POLICY` | Table | Recommend/status-review policy catalog for future guarded remediation. |
 | `ALERT_REMEDIATION_DRY_RUN` | Table | Audit table for proposed remediation dry-runs before any execution path exists. |
+| `SP_OVERWATCH_STAGE_ALERT_REMEDIATION_DRY_RUN` | Procedure | Stages remediation dry-run rows from alert events and policy rows; it does not execute corrective SQL. |
 | `ALERT_ACKNOWLEDGEMENTS`, `ALERT_NOTIFICATION_LOG`, `ALERT_REMEDIATION_LOG` | Tables | Alert acknowledgement, delivery, and remediation audit history. |
 
 ## Native Snowflake Proof Contracts

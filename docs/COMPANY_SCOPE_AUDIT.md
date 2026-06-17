@@ -31,6 +31,11 @@ defensible owner dimension.
 - Cost and Cortex user views should prefer role-aware user scoping. Trexis users
   with active `%TRXS%` role grants belong in the Trexis company view even if a
   source table does not expose a Trexis warehouse or database.
+- Alert events should populate `COMPANY` and `ENVIRONMENT` when the signal
+  comes from company-labeled OVERWATCH facts. Native alert candidates should
+  prefer `FACT_CORTEX_DAILY`, `FACT_WAREHOUSE_HOURLY`, `FACT_GRANT_DAILY`,
+  `FACT_TASK_RUN`, and `FACT_QUERY_DETAIL_RECENT` before falling back to raw
+  account usage.
 - Keep `get_user_filter_clause()` centralized in `utils/company_filter.py` as
   the fallback primitive. App surfaces should call the role-aware helper.
 - Label `METERING_HISTORY` service rows and account storage classes as

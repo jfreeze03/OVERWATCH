@@ -166,10 +166,32 @@ outside the Streamlit app UI.
 - Added `snowflake/OVERWATCH_DYNAMIC_TABLE_SECURE_VIEW_AUDIT.sql` as a
   read-only pre-reset/pre-import scan for side-built DDLs and old deployed
   objects.
+- The audit now emits generated drop SQL plus table/procedure/task rewrite
+  stubs for any Dynamic Table collision or Dynamic Table -> secure view
+  dependency it finds. These are review stubs, not executable finished mart
+  logic; the source query must still be rewritten into the approved
+  `SP_OVERWATCH_*` pattern.
 - The deployable setup still contains no Dynamic Tables or Secure Views. If a
   future mart is proposed as a Dynamic Table, rewrite it as a physical table
   loaded by `SP_OVERWATCH_*` and scheduled by an `OVERWATCH_*` task before it
   enters `OVERWATCH_MART_SETUP.sql`.
+
+## 2026-06-17 - Native Alert Deployment Review
+
+- `ALERT_EVENTS` now has explicit `COMPANY` and `ENVIRONMENT` columns so
+  materialized alerts and native alert events can preserve ALFA/Trexis scope
+  instead of relying only on fallback inference.
+- Native alert generated SQL now uses company-labeled OVERWATCH marts where
+  possible: `FACT_CORTEX_DAILY`, `FACT_WAREHOUSE_HOURLY`,
+  `FACT_GRANT_DAILY`, `FACT_TASK_RUN`, and `FACT_QUERY_DETAIL_RECENT`.
+- `snowflake/OVERWATCH_NATIVE_ALERT_DEPLOYMENT.sql` creates
+  `ALERT_NATIVE_DEPLOYMENT_REVIEW_V` and
+  `SP_OVERWATCH_STAGE_ALERT_REMEDIATION_DRY_RUN`. The script does not execute
+  generated alert SQL and does not perform remediation; it stages dry-run rows
+  for review.
+- The native warehouse credit alert template now uses the deployed mart column
+  `CREDITS_USED`; do not use `METERED_CREDITS` against
+  `FACT_WAREHOUSE_HOURLY`.
 
 ## 2026-06-17 - Advisor And Company-Scope Polish
 

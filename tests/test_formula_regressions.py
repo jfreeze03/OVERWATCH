@@ -402,6 +402,8 @@ from utils.alerts import (  # noqa: E402
     build_alert_data_quality_checks_ddl,
     build_alert_event_materialization_sql,
     build_alert_incident_action_board,
+    build_alert_native_deployment_review_rows,
+    build_alert_native_deployment_review_sql,
     build_alert_native_object_registry_seed_rows,
     build_alert_native_registry_ddl,
     build_loaded_section_alert_signal_board,
@@ -2696,10 +2698,10 @@ class FormulaRegressionTests(unittest.TestCase):
         )
 
         self.assertEqual(len(tables), 59)
-        self.assertEqual(len(views), 2)
+        self.assertEqual(len(views), 3)
         self.assertEqual(len(tasks), 7)
         self.assertEqual(len(functions), 1)
-        self.assertEqual(len(procedures), 8)
+        self.assertEqual(len(procedures), 9)
 
         for table in tables:
             self.assertIn(f"DROP TABLE IF EXISTS {table}", drop_sql)
@@ -9370,22 +9372,53 @@ class FormulaRegressionTests(unittest.TestCase):
     def test_native_alert_registry_and_remediation_policy_contracts_are_safe_by_default(self):
         native_rows = build_alert_native_object_registry_seed_rows()
         policy_rows = build_alert_remediation_policy_seed_rows()
+        native_sql = "\n".join(row["GENERATED_CREATE_SQL"] for row in native_rows).upper()
         native_ddl = build_alert_native_registry_ddl().upper()
+        deployment_sql = build_alert_native_deployment_review_sql().upper()
+        deployment_rows = build_alert_native_deployment_review_rows(native_rows)
         policy_ddl = build_alert_remediation_policy_ddl().upper()
         setup_sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8").upper()
         drop_sql = (ROOT / "snowflake" / "OVERWATCH_MART_DROP.sql").read_text(encoding="utf-8").upper()
         validation_sql = (ROOT / "snowflake" / "OVERWATCH_MART_VALIDATION.sql").read_text(encoding="utf-8").upper()
+        deployment_file = (ROOT / "snowflake" / "OVERWATCH_NATIVE_ALERT_DEPLOYMENT.sql").read_text(encoding="utf-8").upper()
 
         self.assertGreaterEqual(len(native_rows), 3)
         self.assertTrue(all(row["ENABLED_BY_DEFAULT"] is False for row in native_rows))
         self.assertTrue(any(row["ALERT_KEY"] == "COST_CORTEX_SPEND_SPIKE" for row in native_rows))
         self.assertTrue(any(row["ALERT_KEY"] == "COST_WAREHOUSE_CREDIT_SPIKE" for row in native_rows))
         self.assertTrue(any(row["ALERT_KEY"] == "BEHAVIOR_USER_QUERY_ANOMALY" for row in native_rows))
-        self.assertIn("CREATE OR REPLACE ALERT", "\n".join(row["GENERATED_CREATE_SQL"] for row in native_rows).upper())
+        self.assertIn("CREATE OR REPLACE ALERT", native_sql)
+        self.assertIn("FACT_WAREHOUSE_HOURLY", native_sql)
+        self.assertIn("CREDITS_USED", native_sql)
+        self.assertNotIn("METERED_CREDITS", native_sql)
+        self.assertIn("FACT_QUERY_DETAIL_RECENT", native_sql)
+        self.assertIn("FACT_TASK_RUN", native_sql)
+        self.assertIn("FACT_GRANT_DAILY", native_sql)
+        self.assertIn("COMPANY, ENVIRONMENT", native_sql)
         self.assertIn("ALERT_NATIVE_OBJECT_REGISTRY", native_ddl)
         self.assertIn("ALERT_NATIVE_OBJECT_REGISTRY", setup_sql)
+        self.assertIn("COMPANY              VARCHAR(100)", setup_sql)
+        self.assertIn("ALTER TABLE IF EXISTS ALERT_EVENTS ADD COLUMN IF NOT EXISTS COMPANY", setup_sql)
+        self.assertNotIn("SUM(METERED_CREDITS) > 10", setup_sql)
+        self.assertIn("ENTITY_NAME, WAREHOUSE_NAME, CURRENT_VALUE", setup_sql)
+        self.assertIn("NATIVE CANDIDATE DETECTED WAREHOUSE CREDITS ABOVE THRESHOLD", setup_sql)
+        self.assertIn("GROUP BY COMPANY, WAREHOUSE_NAME HAVING SUM(CREDITS_USED) > 10", setup_sql)
         self.assertIn("DROP TABLE IF EXISTS ALERT_NATIVE_OBJECT_REGISTRY", drop_sql)
         self.assertIn("ALERT_NATIVE_OBJECT_REGISTRY", validation_sql)
+        self.assertIn("ALERT_NATIVE_DEPLOYMENT_REVIEW_V", deployment_sql)
+        self.assertIn("SP_OVERWATCH_STAGE_ALERT_REMEDIATION_DRY_RUN", deployment_sql)
+        self.assertIn("ALERT_NATIVE_DEPLOYMENT_REVIEW_V", setup_sql)
+        self.assertIn("SP_OVERWATCH_STAGE_ALERT_REMEDIATION_DRY_RUN", setup_sql)
+        self.assertIn("DROP VIEW IF EXISTS ALERT_NATIVE_DEPLOYMENT_REVIEW_V", drop_sql)
+        self.assertIn("DROP PROCEDURE IF EXISTS SP_OVERWATCH_STAGE_ALERT_REMEDIATION_DRY_RUN", drop_sql)
+        self.assertIn("ALERT_NATIVE_DEPLOYMENT_REVIEW_V", validation_sql)
+        self.assertIn("OVERWATCH_NATIVE_ALERT_DEPLOYMENT", deployment_file)
+        self.assertTrue(set(deployment_rows["DEPLOYMENT_STATE"]).issubset({
+            "CANDIDATE_REVIEW_REQUIRED",
+            "READY_FOR_MANUAL_DEPLOY",
+            "DEPLOYED_MONITOR",
+            "BLOCKED_ENABLED_BY_DEFAULT",
+        }))
 
         self.assertGreaterEqual(len(policy_rows), 6)
         self.assertTrue(all(row["AUTO_ELIGIBLE"] is False for row in policy_rows))
@@ -9461,6 +9494,9 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("MERGE INTO", materialize_sql)
         self.assertIn("ALERT_EVENTS", materialize_sql)
         self.assertIn("OVERWATCH_ALERT_TRIAGE_V", materialize_sql)
+        self.assertIn("COMPANY = SRC.COMPANY", materialize_sql)
+        self.assertIn("ENVIRONMENT = SRC.ENVIRONMENT", materialize_sql)
+        self.assertIn("(ALERT_KEY, COMPANY, ENVIRONMENT", materialize_sql)
         self.assertIn("ALERT_RUN_HISTORY", materialize_sql)
         self.assertIn("DEDUPE_KEY", materialize_sql)
         self.assertIn("SHA2", materialize_sql)

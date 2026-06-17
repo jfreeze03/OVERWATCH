@@ -14,15 +14,15 @@ from utils import (
     burn_trend_label,
     metric_confidence_label, freshness_note,
     get_credit_price,
-    get_wh_filter_clause, get_global_wh_filter_clause,
     get_global_filter_clause, get_company_case_expr,
     get_active_environment, get_environment_case_expr, get_environment_filter_clause,
-    build_mart_bill_summary_sql, build_mart_bill_warehouse_delta_sql,
     build_mart_chargeback_sql, build_mart_cost_explorer_sql, load_mart_table, mart_source_caption,
     filter_existing_columns,
     render_drillable_bar_chart, render_entity_query_drilldown, render_priority_dataframe,
     render_ranked_bar_chart, render_chart_with_data_toggle,
     day_window_selectbox,
+    load_shared_bill_metering_summary,
+    load_shared_bill_warehouse_delta,
     load_shared_warehouse_daily_credits,
     load_shared_warehouse_daily_credits_by_warehouse,
     make_action_id, upsert_actions,
@@ -1696,10 +1696,6 @@ def render():
             st.session_state.get("global_schema"),
         ])
         warehouse_contains = str(st.session_state.get("global_warehouse") or "").strip()
-        wh_filter_meter = " ".join(filter(None, [
-            get_wh_filter_clause("warehouse_name"),
-            get_global_wh_filter_clause("warehouse_name"),
-        ]))
         wh_filter_query = get_global_filter_clause(
             "",
             "q.warehouse_name",
@@ -1732,95 +1728,28 @@ def render():
 
         if st.button("Explain Bill", key="cc_explain_load", type="primary"):
             try:
-                live_summary_sql = f"""
-                WITH bounds AS (
-                    SELECT
-                        {bounds['current_start']} AS current_start,
-                        {bounds['current_end']} AS current_end,
-                        {bounds['prior_start']} AS prior_start,
-                        {bounds['prior_end']} AS prior_end
-                ),
-                metering AS (
-                    SELECT 'CURRENT' AS period, warehouse_name, start_time, credits_used
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY, bounds
-                    WHERE start_time >= current_start
-                      AND start_time < current_end
-                      {wh_filter_meter}
-                    UNION ALL
-                    SELECT 'PRIOR' AS period, warehouse_name, start_time, credits_used
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY, bounds
-                    WHERE start_time >= prior_start
-                      AND start_time < prior_end
-                      {wh_filter_meter}
+                summary_result = load_shared_bill_metering_summary(
+                    bounds["current_start"],
+                    bounds["current_end"],
+                    bounds["prior_start"],
+                    bounds["prior_end"],
+                    company,
+                    warehouse_contains=warehouse_contains,
+                    prefer_mart=use_mart_summary,
+                    force=True,
+                    section="Cost & Contract",
                 )
-                SELECT
-                    period,
-                    ROUND(SUM(credits_used), 4) AS credits,
-                    COUNT(DISTINCT warehouse_name) AS active_warehouses,
-                    COUNT(DISTINCT TO_DATE(start_time)) AS active_days
-                FROM metering
-                GROUP BY period
-                """
-                live_wh_delta_sql = f"""
-                WITH bounds AS (
-                    SELECT
-                        {bounds['current_start']} AS current_start,
-                        {bounds['current_end']} AS current_end,
-                        {bounds['prior_start']} AS prior_start,
-                        {bounds['prior_end']} AS prior_end
-                ),
-                current_wh AS (
-                    SELECT warehouse_name, SUM(credits_used) AS credits
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY, bounds
-                    WHERE start_time >= current_start
-                      AND start_time < current_end
-                      {wh_filter_meter}
-                    GROUP BY warehouse_name
-                ),
-                prior_wh AS (
-                    SELECT warehouse_name, SUM(credits_used) AS credits
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY, bounds
-                    WHERE start_time >= prior_start
-                      AND start_time < prior_end
-                      {wh_filter_meter}
-                    GROUP BY warehouse_name
+                wh_delta_result = load_shared_bill_warehouse_delta(
+                    bounds["current_start"],
+                    bounds["current_end"],
+                    bounds["prior_start"],
+                    bounds["prior_end"],
+                    company,
+                    warehouse_contains=warehouse_contains,
+                    prefer_mart=use_mart_summary,
+                    force=True,
+                    section="Cost & Contract",
                 )
-                SELECT
-                    COALESCE(c.warehouse_name, p.warehouse_name) AS warehouse_name,
-                    ROUND(COALESCE(c.credits, 0), 4) AS current_credits,
-                    ROUND(COALESCE(p.credits, 0), 4) AS prior_credits,
-                    ROUND(COALESCE(c.credits, 0) - COALESCE(p.credits, 0), 4) AS credit_delta,
-                    CASE
-                        WHEN COALESCE(p.credits, 0) = 0 THEN NULL
-                        ELSE ROUND(((COALESCE(c.credits, 0) - p.credits) / NULLIF(p.credits, 0)) * 100, 2)
-                    END AS pct_delta
-                FROM current_wh c
-                FULL OUTER JOIN prior_wh p ON c.warehouse_name = p.warehouse_name
-                ORDER BY ABS(COALESCE(c.credits, 0) - COALESCE(p.credits, 0)) DESC
-                LIMIT 25
-                """
-                if use_mart_summary:
-                    summary_sql = build_mart_bill_summary_sql(
-                        bounds["current_start"],
-                        bounds["current_end"],
-                        bounds["prior_start"],
-                        bounds["prior_end"],
-                        company=company,
-                        warehouse_contains=warehouse_contains,
-                    )
-                    wh_delta_sql = build_mart_bill_warehouse_delta_sql(
-                        bounds["current_start"],
-                        bounds["current_end"],
-                        bounds["prior_start"],
-                        bounds["prior_end"],
-                        company=company,
-                        warehouse_contains=warehouse_contains,
-                    )
-                    bill_summary_source = "Fast billing summary"
-                else:
-                    summary_sql = live_summary_sql
-                    wh_delta_sql = live_wh_delta_sql
-                    bill_summary_source = "Live fallback: WAREHOUSE_METERING_HISTORY"
                 driver_sql = f"""
                 WITH bounds AS (
                     SELECT
@@ -1931,29 +1860,8 @@ def render():
                 GROUP BY period, COALESCE(service_type, 'UNKNOWN')
                 ORDER BY period, credits DESC
                 """
-                st.session_state["cc_explain_summary"] = run_query(
-                    summary_sql,
-                    ttl_key=f"cc_explain_summary_{company}_{explain_period}_{'mart' if use_mart_summary else 'live'}",
-                    tier="standard",
-                )
-                if use_mart_summary and st.session_state["cc_explain_summary"].empty:
-                    bill_summary_source = "Live fallback: fast summary unavailable or stale"
-                    st.session_state["cc_explain_summary"] = run_query(
-                        live_summary_sql,
-                        ttl_key=f"cc_explain_summary_{company}_{explain_period}_fallback",
-                        tier="standard",
-                    )
-                st.session_state["cc_explain_wh_delta"] = run_query(
-                    wh_delta_sql,
-                    ttl_key=f"cc_explain_wh_{company}_{explain_period}_{'mart' if use_mart_summary else 'live'}",
-                    tier="standard",
-                )
-                if use_mart_summary and st.session_state["cc_explain_wh_delta"].empty:
-                    st.session_state["cc_explain_wh_delta"] = run_query(
-                        live_wh_delta_sql,
-                        ttl_key=f"cc_explain_wh_{company}_{explain_period}_fallback",
-                        tier="standard",
-                    )
+                st.session_state["cc_explain_summary"] = summary_result.data
+                st.session_state["cc_explain_wh_delta"] = wh_delta_result.data
                 st.session_state["cc_explain_drivers"] = run_query(
                     driver_sql,
                     ttl_key=f"cc_explain_drivers_{company}_{explain_period}",
@@ -1987,7 +1895,8 @@ def render():
                     "period": explain_period,
                     "credit_price": credit_price,
                     "filters": explain_filter_signature,
-                    "summary_source": bill_summary_source,
+                    "summary_source": summary_result.source,
+                    "warehouse_delta_source": wh_delta_result.source,
                 }
             except Exception as e:
                 st.error(f"Unable to explain bill: {format_snowflake_error(e)}")

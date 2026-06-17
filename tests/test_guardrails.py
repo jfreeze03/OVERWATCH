@@ -65,6 +65,8 @@ class GuardrailTests(unittest.TestCase):
         self.assertIn("LOAD_SHARED_WAREHOUSE_PRESSURE_SUMMARY", usage_text)
         self.assertIn("LOAD_SHARED_USAGE_METERING_KPIS", account_text)
         self.assertIn("LOAD_SHARED_QUERY_HISTORY_ROLLUP", account_text)
+        self.assertIn("LOAD_SHARED_BILL_METERING_SUMMARY", cost_text)
+        self.assertIn("LOAD_SHARED_BILL_WAREHOUSE_DELTA", cost_text)
         self.assertIn("LOAD_SHARED_WAREHOUSE_DAILY_CREDITS_BY_WAREHOUSE", cost_text)
         self.assertIn("LOAD_SHARED_WAREHOUSE_OVERVIEW", heatmap_text)
         self.assertIn("LOAD_SHARED_WAREHOUSE_SCALING_EVENTS", heatmap_text)

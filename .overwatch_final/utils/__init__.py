@@ -61,7 +61,9 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
     ),
     "shared_metrics": (
         "SharedMetricResult", "load_shared_storage_trend", "load_shared_usage_storage_kpis",
-        "load_shared_usage_metering_kpis", "load_shared_storage_db_detail", "load_shared_warehouse_daily_credits",
+        "load_shared_usage_metering_kpis", "load_shared_storage_db_detail",
+        "load_shared_bill_metering_summary", "load_shared_bill_warehouse_delta",
+        "load_shared_warehouse_daily_credits",
         "load_shared_warehouse_daily_credits_by_warehouse", "load_shared_warehouse_overview",
         "load_shared_warehouse_credit_anomalies",
         "load_shared_query_history_rollup", "load_shared_warehouse_pressure_summary",

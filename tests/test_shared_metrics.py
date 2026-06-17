@@ -14,6 +14,8 @@ sys.path.insert(0, str(APP_ROOT))
 from utils.shared_metrics import (  # noqa: E402
     _storage_summary_from_trend,
     load_shared_access_hygiene_snapshot,
+    load_shared_bill_metering_summary,
+    load_shared_bill_warehouse_delta,
     load_shared_duplicate_query_patterns,
     load_shared_procedure_calls,
     load_shared_procedure_inventory,
@@ -144,6 +146,74 @@ class SharedMetricsTests(unittest.TestCase):
         self.assertIn("AS WAREHOUSE_CLOUD_CREDITS", live_sql)
         self.assertIn("CREDITS_USED_COMPUTE", live_sql)
         self.assertNotIn("CREDITS_USED_CLOUD_SERVICES, 0)) AS WAREHOUSE_CLOUD_CREDITS", live_sql)
+
+    def test_bill_metering_summary_reuses_fast_summary(self):
+        frame = pd.DataFrame({
+            "PERIOD": ["CURRENT"],
+            "CREDITS": [42.0],
+            "ACTIVE_WAREHOUSES": [3],
+            "ACTIVE_DAYS": [7],
+        })
+
+        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run:
+            first = load_shared_bill_metering_summary(
+                "DATEADD('DAY', -7, CURRENT_TIMESTAMP())",
+                "CURRENT_TIMESTAMP()",
+                "DATEADD('DAY', -14, CURRENT_TIMESTAMP())",
+                "DATEADD('DAY', -7, CURRENT_TIMESTAMP())",
+                "ALFA",
+                warehouse_contains="BI",
+                section="Unit Test",
+            )
+            second = load_shared_bill_metering_summary(
+                "DATEADD('DAY', -7, CURRENT_TIMESTAMP())",
+                "CURRENT_TIMESTAMP()",
+                "DATEADD('DAY', -14, CURRENT_TIMESTAMP())",
+                "DATEADD('DAY', -7, CURRENT_TIMESTAMP())",
+                "ALFA",
+                warehouse_contains="BI",
+                section="Unit Test",
+            )
+
+        self.assertIs(first, second)
+        self.assertEqual(first.source, "Fast billing summary")
+        self.assertEqual(mock_run.call_count, 1)
+        sql = mock_run.call_args.args[0].upper()
+        self.assertIn("FACT_WAREHOUSE_HOURLY", sql)
+        self.assertIn("WAREHOUSE_NAME ILIKE", sql)
+
+    def test_bill_warehouse_delta_live_fallback_is_shared(self):
+        live_frame = pd.DataFrame({
+            "WAREHOUSE_NAME": ["ALFA_WH"],
+            "CURRENT_CREDITS": [20.0],
+            "PRIOR_CREDITS": [10.0],
+            "CREDIT_DELTA": [10.0],
+            "PCT_DELTA": [100.0],
+        })
+
+        with patch(
+            "utils.shared_metrics.run_query",
+            side_effect=[pd.DataFrame(), live_frame],
+        ) as mock_run:
+            result = load_shared_bill_warehouse_delta(
+                "DATEADD('DAY', -7, CURRENT_TIMESTAMP())",
+                "CURRENT_TIMESTAMP()",
+                "DATEADD('DAY', -14, CURRENT_TIMESTAMP())",
+                "DATEADD('DAY', -7, CURRENT_TIMESTAMP())",
+                "ALFA",
+                warehouse_contains="BI",
+                section="Unit Test",
+            )
+
+        self.assertTrue(result.available)
+        self.assertEqual(result.source, "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY")
+        self.assertEqual(mock_run.call_count, 2)
+        mart_sql = mock_run.call_args_list[0].args[0].upper()
+        live_sql = mock_run.call_args_list[1].args[0].upper()
+        self.assertIn("FACT_WAREHOUSE_HOURLY", mart_sql)
+        self.assertIn("WAREHOUSE_METERING_HISTORY", live_sql)
+        self.assertIn("FULL OUTER JOIN", live_sql)
+        self.assertIn("WAREHOUSE_NAME ILIKE", live_sql)
 
     def test_warehouse_daily_by_warehouse_reuses_session_result(self):
         frame = pd.DataFrame({

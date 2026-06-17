@@ -17,6 +17,8 @@ from .company_filter import (
     get_active_company,
     get_company_scope_key,
     get_db_filter_clause,
+    get_environment_case_expr,
+    get_environment_filter_clause,
     get_global_db_filter_clause,
     get_global_filter_clause,
     get_global_wh_filter_clause,
@@ -24,7 +26,13 @@ from .company_filter import (
     get_user_filter_clause,
 )
 from .compatibility import build_task_failure_summary_sql, filter_existing_columns
-from .cost import build_clustering_cost_sql, build_idle_warehouse_sql
+from .cost import (
+    build_clustering_cost_sql,
+    build_idle_warehouse_sql,
+    build_metered_credit_cte,
+    build_snowflake_service_cost_lens_sql,
+    build_snowflake_service_cost_trend_sql,
+)
 from .data import normalize_df
 from .mart import (
     build_mart_bill_summary_sql,
@@ -36,6 +44,10 @@ from .mart import (
     build_mart_procedure_calls_sql,
     build_mart_procedure_inventory_sql,
     build_mart_procedure_sla_sql,
+    build_mart_service_login_health_sql,
+    build_mart_service_query_health_sql,
+    build_mart_service_task_health_sql,
+    build_mart_service_warehouse_health_sql,
     build_mart_warehouse_scaling_sql,
     build_mart_storage_db_detail_sql,
     build_mart_storage_trend_sql,
@@ -44,9 +56,10 @@ from .mart import (
     build_mart_usage_pressure_sql,
     build_mart_usage_storage_sql,
     build_mart_warehouse_overview_sql,
+    build_mart_warehouse_heatmap_sql,
     mart_object_name,
 )
-from .query import run_query, sql_literal
+from .query import run_query, run_query_or_raise, sql_literal
 
 
 LIVE_STORAGE_FALLBACK_MAX_DAYS = 90
@@ -315,6 +328,98 @@ def load_shared_usage_storage_kpis(
     return _load_or_reuse("shared_usage_storage", (company, days), _loader, force=force)
 
 
+def load_shared_service_cost_lens(
+    days: int,
+    company: str | None = None,
+    *,
+    credit_price: float = 0.0,
+    ai_credit_price: float = 0.0,
+    force: bool = False,
+    section: str = "Shared Metrics",
+) -> SharedMetricResult:
+    """Load official service cost movement once per scope for cost surfaces."""
+    company = company or get_active_company()
+    days = max(1, int(days or 7))
+    credit_price = float(credit_price or 0)
+    ai_credit_price = float(ai_credit_price or 0)
+
+    def _loader() -> SharedMetricResult:
+        df = run_query_or_raise(
+            build_snowflake_service_cost_lens_sql(
+                days,
+                credit_price or None,
+                ai_credit_price or None,
+            ),
+            ttl_key=get_company_scope_key(
+                "shared_service_cost_lens_official",
+                days,
+                credit_price,
+                ai_credit_price,
+            ),
+            tier="historical",
+            section=section,
+        )
+        return SharedMetricResult(
+            data=df,
+            source="Official Cost Monitor: SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY",
+            available=not df.empty,
+            effective_days=days,
+        )
+
+    return _load_or_reuse(
+        "shared_service_cost_lens",
+        (company, days, credit_price, ai_credit_price),
+        _loader,
+        force=force,
+    )
+
+
+def load_shared_service_cost_trend(
+    days: int,
+    company: str | None = None,
+    *,
+    credit_price: float = 0.0,
+    ai_credit_price: float = 0.0,
+    force: bool = False,
+    section: str = "Shared Metrics",
+) -> SharedMetricResult:
+    """Load daily official service cost once per scope for cost surfaces."""
+    company = company or get_active_company()
+    days = max(1, int(days or 7))
+    credit_price = float(credit_price or 0)
+    ai_credit_price = float(ai_credit_price or 0)
+
+    def _loader() -> SharedMetricResult:
+        df = run_query_or_raise(
+            build_snowflake_service_cost_trend_sql(
+                days,
+                credit_price or None,
+                ai_credit_price or None,
+            ),
+            ttl_key=get_company_scope_key(
+                "shared_service_cost_trend_official",
+                days,
+                credit_price,
+                ai_credit_price,
+            ),
+            tier="historical",
+            section=section,
+        )
+        return SharedMetricResult(
+            data=df,
+            source="Official Cost Monitor: SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY",
+            available=not df.empty,
+            effective_days=days,
+        )
+
+    return _load_or_reuse(
+        "shared_service_cost_trend",
+        (company, days, credit_price, ai_credit_price),
+        _loader,
+        force=force,
+    )
+
+
 def _query_history_rollup_exprs(session: object) -> dict[str, str]:
     """Return QUERY_HISTORY expressions that tolerate optional account columns."""
     from .compatibility import filter_existing_columns
@@ -550,6 +655,342 @@ def load_shared_warehouse_pressure_summary(
         )
 
     return _load_or_reuse("shared_warehouse_pressure", (company, days), _loader, force=force)
+
+
+def _first_numeric_value(df: pd.DataFrame, column: str) -> float:
+    if df is None or df.empty or column not in df.columns:
+        return 0.0
+    try:
+        return float(pd.to_numeric(df.get(column), errors="coerce").fillna(0).iloc[0])
+    except Exception:
+        return 0.0
+
+
+def _service_query_history_exprs(session: object) -> dict[str, str]:
+    """Return Service Health QUERY_HISTORY expressions across Snowflake versions."""
+    qh_cols = set(
+        filter_existing_columns(
+            session,
+            "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+            [
+                "ERROR_CODE",
+                "WAREHOUSE_SIZE",
+                "QUEUED_OVERLOAD_TIME",
+                "TRANSACTION_BLOCKED_TIME",
+                "BYTES_SPILLED_TO_REMOTE_STORAGE",
+                "PERCENTAGE_SCANNED_FROM_CACHE",
+            ],
+        )
+    )
+    return {
+        "error_pred": (
+            "q.error_code IS NOT NULL"
+            if "ERROR_CODE" in qh_cols
+            else "UPPER(q.execution_status) = 'FAILED_WITH_ERROR'"
+        ),
+        "queued_pred": (
+            "q.queued_overload_time > 0"
+            if "QUEUED_OVERLOAD_TIME" in qh_cols
+            else "FALSE"
+        ),
+        "blocked_pred": (
+            "q.transaction_blocked_time > 0"
+            if "TRANSACTION_BLOCKED_TIME" in qh_cols
+            else "FALSE"
+        ),
+        "wh_size_expr": (
+            "MAX(q.warehouse_size)"
+            if "WAREHOUSE_SIZE" in qh_cols
+            else "NULL::VARCHAR"
+        ),
+        "queued_sec_expr": (
+            "ROUND(SUM(q.queued_overload_time) / 1000, 2)"
+            if "QUEUED_OVERLOAD_TIME" in qh_cols
+            else "0::FLOAT"
+        ),
+        "remote_spill_expr": (
+            "ROUND(SUM(q.bytes_spilled_to_remote_storage) / POWER(1024, 3), 2)"
+            if "BYTES_SPILLED_TO_REMOTE_STORAGE" in qh_cols
+            else "0::FLOAT"
+        ),
+        "cache_expr": (
+            "ROUND(AVG(q.percentage_scanned_from_cache), 2)"
+            if "PERCENTAGE_SCANNED_FROM_CACHE" in qh_cols
+            else "0::FLOAT"
+        ),
+    }
+
+
+def load_shared_service_query_health(
+    session: object,
+    hours: int,
+    company: str | None = None,
+    *,
+    force: bool = False,
+    section: str = "Shared Metrics",
+) -> SharedMetricResult:
+    """Load hourly query processor health for Service Health surfaces."""
+    company = company or get_active_company()
+    hours = max(1, int(hours or 24))
+
+    def _loader() -> SharedMetricResult:
+        mart_df = run_query(
+            build_mart_service_query_health_sql(hours, company=company),
+            ttl_key=get_company_scope_key("shared_service_query_health_mart", hours),
+            tier="recent",
+            section=section,
+        )
+        if not mart_df.empty and _first_numeric_value(mart_df, "TOTAL_QUERIES") > 0:
+            return SharedMetricResult(
+                data=mart_df,
+                source="Fast query summary",
+                available=True,
+                effective_days=hours,
+            )
+
+        exprs = _service_query_history_exprs(session)
+        live_df = run_query(
+            f"""
+            SELECT
+                COUNT(*) AS total_queries,
+                SUM(IFF({exprs["error_pred"]}, 1, 0)) AS failed_queries,
+                SUM(IFF({exprs["queued_pred"]}, 1, 0)) AS queued_queries,
+                SUM(IFF({exprs["blocked_pred"]}, 1, 0)) AS blocked_queries,
+                ROUND(AVG(q.total_elapsed_time) / 1000, 2) AS avg_elapsed_sec,
+                ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY q.total_elapsed_time) / 1000, 2) AS p95_elapsed_sec
+            FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+            WHERE q.start_time >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
+              AND q.warehouse_name IS NOT NULL
+              {get_wh_filter_clause("q.warehouse_name", company)}
+              {get_db_filter_clause("q.database_name", company)}
+              {get_user_filter_clause("q.user_name", company)}
+            """,
+            ttl_key=get_company_scope_key("shared_service_query_health_live", hours),
+            tier="recent",
+            section=section,
+        )
+        return SharedMetricResult(
+            data=live_df,
+            source="Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+            available=not live_df.empty,
+            effective_days=hours,
+        )
+
+    return _load_or_reuse("shared_service_query_health", (company, hours), _loader, force=force)
+
+
+def load_shared_service_warehouse_health(
+    session: object,
+    hours: int,
+    company: str | None = None,
+    *,
+    force: bool = False,
+    section: str = "Shared Metrics",
+) -> SharedMetricResult:
+    """Load hourly warehouse pressure rows for Service Health surfaces."""
+    company = company or get_active_company()
+    hours = max(1, int(hours or 24))
+
+    def _loader() -> SharedMetricResult:
+        mart_df = run_query(
+            build_mart_service_warehouse_health_sql(hours, company=company),
+            ttl_key=get_company_scope_key("shared_service_warehouse_health_mart", hours),
+            tier="recent",
+            section=section,
+        )
+        if not mart_df.empty:
+            return SharedMetricResult(
+                data=mart_df,
+                source="Fast warehouse pressure summary",
+                available=True,
+                effective_days=hours,
+            )
+
+        exprs = _service_query_history_exprs(session)
+        live_df = run_query(
+            f"""
+            SELECT
+                q.warehouse_name,
+                {exprs["wh_size_expr"]} AS warehouse_size,
+                COUNT(*) AS total_queries,
+                SUM(IFF({exprs["error_pred"]}, 1, 0)) AS failed_queries,
+                {exprs["queued_sec_expr"]} AS queued_sec,
+                {exprs["remote_spill_expr"]} AS remote_spill_gb,
+                {exprs["cache_expr"]} AS avg_cache_pct
+            FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+            WHERE q.start_time >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
+              AND q.warehouse_name IS NOT NULL
+              {get_wh_filter_clause("q.warehouse_name", company)}
+              {get_db_filter_clause("q.database_name", company)}
+              {get_user_filter_clause("q.user_name", company)}
+            GROUP BY q.warehouse_name
+            ORDER BY queued_sec DESC, remote_spill_gb DESC, failed_queries DESC
+            LIMIT 100
+            """,
+            ttl_key=get_company_scope_key("shared_service_warehouse_health_live", hours),
+            tier="recent",
+            section=section,
+        )
+        return SharedMetricResult(
+            data=live_df,
+            source="Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+            available=not live_df.empty,
+            effective_days=hours,
+        )
+
+    return _load_or_reuse("shared_service_warehouse_health", (company, hours), _loader, force=force)
+
+
+def load_shared_service_login_health(
+    hours: int,
+    company: str | None = None,
+    *,
+    force: bool = False,
+    section: str = "Shared Metrics",
+) -> SharedMetricResult:
+    """Load hourly login/auth health for Service Health surfaces."""
+    company = company or get_active_company()
+    hours = max(1, int(hours or 24))
+
+    def _loader() -> SharedMetricResult:
+        if hours >= 24:
+            mart_df = run_query(
+                build_mart_service_login_health_sql(hours, company=company),
+                ttl_key=get_company_scope_key("shared_service_login_health_mart", hours),
+                tier="recent",
+                section=section,
+            )
+            if not mart_df.empty:
+                return SharedMetricResult(
+                    data=mart_df,
+                    source="Fast login summary",
+                    available=True,
+                    effective_days=hours,
+                )
+
+        live_df = run_query(
+            f"""
+            SELECT
+                COUNT(*) AS login_events,
+                SUM(IFF(is_success = 'NO', 1, 0)) AS failed_logins,
+                COUNT(DISTINCT user_name) AS login_users,
+                COUNT(DISTINCT client_ip) AS distinct_ips
+            FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
+            WHERE event_timestamp >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
+              {get_user_filter_clause("user_name", company)}
+            """,
+            ttl_key=get_company_scope_key("shared_service_login_health_live", hours),
+            tier="recent",
+            section=section,
+        )
+        return SharedMetricResult(
+            data=live_df,
+            source="Live fallback: SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY",
+            available=not live_df.empty,
+            effective_days=hours,
+        )
+
+    return _load_or_reuse("shared_service_login_health", (company, hours), _loader, force=force)
+
+
+def load_shared_service_task_health(
+    session: object,
+    hours: int,
+    company: str | None = None,
+    *,
+    force: bool = False,
+    section: str = "Shared Metrics",
+) -> SharedMetricResult:
+    """Load hourly task service health for Service Health surfaces."""
+    company = company or get_active_company()
+    hours = max(1, int(hours or 24))
+
+    def _loader() -> SharedMetricResult:
+        try:
+            mart_df = run_query(
+                build_mart_service_task_health_sql(hours, company=company),
+                ttl_key=get_company_scope_key("shared_service_task_health_mart", hours),
+                tier="recent",
+                section=section,
+            )
+            if not mart_df.empty:
+                return SharedMetricResult(
+                    data=mart_df,
+                    source="Fast task summary",
+                    available=True,
+                    effective_days=hours,
+                )
+
+            from .compatibility import build_task_health_sql
+
+            live_df = run_query(
+                build_task_health_sql(
+                    session,
+                    f"scheduled_time >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())",
+                    company=company,
+                ),
+                ttl_key=get_company_scope_key("shared_service_task_health_live", hours),
+                tier="recent",
+                section=section,
+            )
+            return SharedMetricResult(
+                data=live_df,
+                source="Live fallback: SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY",
+                available=not live_df.empty,
+                effective_days=hours,
+            )
+        except Exception as exc:
+            return SharedMetricResult(
+                data=pd.DataFrame([{
+                    "TASK_RUNS": 0,
+                    "FAILED_TASKS": 0,
+                    "SUCCEEDED_TASKS": 0,
+                    "DISTINCT_TASKS": 0,
+                }]),
+                source="Unavailable",
+                available=False,
+                message=str(exc),
+                effective_days=hours,
+            )
+
+    return _load_or_reuse("shared_service_task_health", (company, hours), _loader, force=force)
+
+
+def load_shared_service_pipe_health(
+    hours: int,
+    company: str | None = None,
+    *,
+    force: bool = False,
+    section: str = "Shared Metrics",
+) -> SharedMetricResult:
+    """Load hourly COPY_HISTORY health for Service Health surfaces."""
+    company = company or get_active_company()
+    hours = max(1, int(hours or 24))
+
+    def _loader() -> SharedMetricResult:
+        df = run_query(
+            f"""
+            SELECT
+                COUNT(*) AS load_events,
+                SUM(IFF(status = 'LOAD_FAILED', 1, 0)) AS failed_loads,
+                ROUND(SUM(row_count), 0) AS rows_loaded,
+                ROUND(SUM(file_size) / POWER(1024, 3), 2) AS gb_loaded
+            FROM SNOWFLAKE.ACCOUNT_USAGE.COPY_HISTORY
+            WHERE last_load_time >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
+              {get_db_filter_clause("table_catalog_name", company)}
+            """,
+            ttl_key=get_company_scope_key("shared_service_pipe_health", hours),
+            tier="recent",
+            section=section,
+        )
+        return SharedMetricResult(
+            data=df,
+            source="Live: SNOWFLAKE.ACCOUNT_USAGE.COPY_HISTORY",
+            available=not df.empty,
+            effective_days=hours,
+        )
+
+    return _load_or_reuse("shared_service_pipe_health", (company, hours), _loader, force=force)
 
 
 def load_shared_usage_metering_kpis(
@@ -1477,6 +1918,265 @@ def load_shared_warehouse_scaling_events(
     return _load_or_reuse("shared_warehouse_scaling", (company, days), _loader, force=force)
 
 
+def _warehouse_health_exprs(session: object) -> dict[str, str]:
+    """Return Warehouse Health QUERY_HISTORY expressions across Snowflake versions."""
+
+    qh_cols = set(
+        filter_existing_columns(
+            session,
+            "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+            [
+                "WAREHOUSE_SIZE",
+                "QUEUED_OVERLOAD_TIME",
+                "BYTES_SPILLED_TO_LOCAL_STORAGE",
+                "BYTES_SPILLED_TO_REMOTE_STORAGE",
+                "PERCENTAGE_SCANNED_FROM_CACHE",
+            ],
+        )
+    )
+    return {
+        "wh_size_expr": "MAX(q.warehouse_size)" if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR",
+        "plain_wh_size_expr": "MAX(warehouse_size)" if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR",
+        "queue_sum_expr": "SUM(q.queued_overload_time)" if "QUEUED_OVERLOAD_TIME" in qh_cols else "0",
+        "remote_spill_sum_expr": (
+            "SUM(q.bytes_spilled_to_remote_storage)"
+            if "BYTES_SPILLED_TO_REMOTE_STORAGE" in qh_cols
+            else "0"
+        ),
+        "local_spill_expr": (
+            "SUM(bytes_spilled_to_local_storage)"
+            if "BYTES_SPILLED_TO_LOCAL_STORAGE" in qh_cols
+            else "0"
+        ),
+        "local_spill_row_expr": (
+            "bytes_spilled_to_local_storage"
+            if "BYTES_SPILLED_TO_LOCAL_STORAGE" in qh_cols
+            else "0"
+        ),
+        "remote_spill_expr": (
+            "SUM(bytes_spilled_to_remote_storage)"
+            if "BYTES_SPILLED_TO_REMOTE_STORAGE" in qh_cols
+            else "0"
+        ),
+        "remote_spill_row_expr": (
+            "bytes_spilled_to_remote_storage"
+            if "BYTES_SPILLED_TO_REMOTE_STORAGE" in qh_cols
+            else "0"
+        ),
+        "cache_expr": "AVG(q.percentage_scanned_from_cache)" if "PERCENTAGE_SCANNED_FROM_CACHE" in qh_cols else "0",
+    }
+
+
+def load_shared_warehouse_efficiency(
+    session: object,
+    days: int,
+    company: str | None = None,
+    *,
+    force: bool = False,
+    section: str = "Shared Metrics",
+) -> SharedMetricResult:
+    """Load Warehouse Health efficiency risks through one explicit drilldown query."""
+
+    company = company or get_active_company()
+    days = max(1, int(days or 7))
+
+    def _loader() -> SharedMetricResult:
+        exprs = _warehouse_health_exprs(session)
+        query_filters = get_global_filter_clause(
+            date_col="q.start_time",
+            wh_col="q.warehouse_name",
+            user_col="q.user_name",
+            role_col="q.role_name",
+            db_col="q.database_name",
+        )
+        df = run_query(
+            f"""
+            WITH {build_metered_credit_cte(days_back=days, include_recent=True)}
+            SELECT q.warehouse_name,
+                   {exprs["wh_size_expr"]} AS warehouse_size,
+                   COUNT(*) AS query_count,
+                   ROUND(SUM(COALESCE(pqc.metered_credits, 0)), 4) AS metered_credits,
+                   ROUND(SUM(COALESCE(pqc.metered_credits, 0)) / NULLIF(COUNT(*), 0), 6) AS credits_per_query,
+                   ROUND({exprs["queue_sum_expr"]} / 1000 / NULLIF(SUM(COALESCE(pqc.metered_credits, 0)), 0), 2) AS queue_sec_per_credit,
+                   ROUND({exprs["remote_spill_sum_expr"]} / POWER(1024,3) / NULLIF(SUM(COALESCE(pqc.metered_credits, 0)), 0), 2) AS remote_spill_gb_per_credit,
+                   ROUND({exprs["cache_expr"]}, 2) AS avg_cache_pct,
+                   ROUND(100
+                         - LEAST(COALESCE({exprs["queue_sum_expr"]} / 1000 / NULLIF(SUM(COALESCE(pqc.metered_credits, 0)), 0), 0), 25)
+                         - LEAST(COALESCE({exprs["remote_spill_sum_expr"]} / POWER(1024,3) / NULLIF(SUM(COALESCE(pqc.metered_credits, 0)), 0), 0), 25)
+                         - LEAST(COALESCE(SUM(COALESCE(pqc.metered_credits, 0)) / NULLIF(COUNT(*), 0), 0) * 10, 25),
+                         1) AS efficiency_score
+            FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+            LEFT JOIN per_query_credits pqc ON q.query_id = pqc.query_id
+            WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+              AND q.warehouse_name IS NOT NULL
+              {query_filters}
+            GROUP BY q.warehouse_name
+            ORDER BY efficiency_score ASC, metered_credits DESC
+            LIMIT 200
+            """,
+            ttl_key=get_company_scope_key("shared_warehouse_efficiency", days),
+            tier="historical",
+            section=section,
+        )
+        return SharedMetricResult(
+            data=df,
+            source="Live: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY + query-attributed metering",
+            available=not df.empty,
+            effective_days=days,
+        )
+
+    return _load_or_reuse("shared_warehouse_efficiency", (company, days), _loader, force=force)
+
+
+def load_shared_warehouse_spill(
+    session: object,
+    days: int,
+    company: str | None = None,
+    *,
+    force: bool = False,
+    section: str = "Shared Metrics",
+) -> SharedMetricResult:
+    """Load Warehouse Health spill and memory pressure through one explicit drilldown query."""
+
+    company = company or get_active_company()
+    days = max(1, int(days or 7))
+
+    def _loader() -> SharedMetricResult:
+        exprs = _warehouse_health_exprs(session)
+        query_filters = get_global_filter_clause(
+            date_col="start_time",
+            wh_col="warehouse_name",
+            user_col="user_name",
+            role_col="role_name",
+            db_col="database_name",
+        )
+        df = run_query(
+            f"""
+            SELECT warehouse_name, {exprs["plain_wh_size_expr"]} AS warehouse_size,
+                   COUNT(*) AS spill_query_count,
+                   ROUND({exprs["local_spill_expr"]}/POWER(1024,3),2) AS local_spill_gb,
+                   ROUND({exprs["remote_spill_expr"]}/POWER(1024,3),2) AS remote_spill_gb,
+                   ROUND(AVG(total_elapsed_time)/1000,2) AS avg_elapsed_sec
+            FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+            WHERE start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+              AND ({exprs["local_spill_row_expr"]} > 0 OR {exprs["remote_spill_row_expr"]} > 0)
+              AND warehouse_name IS NOT NULL
+              {query_filters}
+            GROUP BY warehouse_name
+            ORDER BY local_spill_gb + remote_spill_gb DESC
+            """,
+            ttl_key=get_company_scope_key("shared_warehouse_spill", days),
+            tier="historical",
+            section=section,
+        )
+        return SharedMetricResult(
+            data=df,
+            source="Live: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+            available=not df.empty,
+            effective_days=days,
+        )
+
+    return _load_or_reuse("shared_warehouse_spill", (company, days), _loader, force=force)
+
+
+def load_shared_warehouse_heatmap(
+    days: int,
+    company: str | None = None,
+    *,
+    warehouse_contains: str = "",
+    user_contains: str = "",
+    role_contains: str = "",
+    database_contains: str = "",
+    start_date: object = None,
+    end_date: object = None,
+    force: bool = False,
+    section: str = "Shared Metrics",
+) -> SharedMetricResult:
+    """Load Warehouse Health heatmap from mart first with bounded live fallback."""
+
+    company = company or get_active_company()
+    days = max(1, int(days or 30))
+
+    def _loader() -> SharedMetricResult:
+        mart_sql = build_mart_warehouse_heatmap_sql(
+            days,
+            company=company,
+            warehouse_contains=warehouse_contains,
+            user_contains=user_contains,
+            role_contains=role_contains,
+            database_contains=database_contains,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        mart_df = run_query(
+            mart_sql,
+            ttl_key=get_company_scope_key("shared_warehouse_heatmap_mart", days),
+            tier="historical",
+            section=section,
+        )
+        if not mart_df.empty:
+            return SharedMetricResult(
+                data=mart_df,
+                source="Fast warehouse summary",
+                available=True,
+                effective_days=days,
+            )
+
+        live_days = min(days, 30)
+        query_filters = get_global_filter_clause(
+            date_col="start_time",
+            wh_col="warehouse_name",
+            user_col="user_name",
+            role_col="role_name",
+            db_col="database_name",
+        )
+        live_df = run_query(
+            f"""
+            SELECT warehouse_name,
+                   DAYOFWEEK(start_time) AS day_of_week,
+                   HOUR(start_time) AS hour_of_day,
+                   COUNT(*) AS query_count,
+                   ROUND(AVG(total_elapsed_time)/1000,2) AS avg_elapsed_sec
+            FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+            WHERE start_time >= DATEADD('day', -{live_days}, CURRENT_TIMESTAMP())
+              AND warehouse_name IS NOT NULL
+              {query_filters}
+            GROUP BY warehouse_name, day_of_week, hour_of_day
+            ORDER BY warehouse_name, day_of_week, hour_of_day
+            """,
+            ttl_key=get_company_scope_key("shared_warehouse_heatmap_live", live_days),
+            tier="historical",
+            section=section,
+        )
+        return SharedMetricResult(
+            data=live_df,
+            source="Bounded live warehouse history",
+            available=not live_df.empty,
+            message=(
+                "Workload heatmap live fallback is capped at 30 days to avoid broad query-history scans."
+                if live_days < days
+                else ""
+            ),
+            effective_days=live_days,
+        )
+
+    return _load_or_reuse(
+        "shared_warehouse_heatmap",
+        (
+            company,
+            days,
+            warehouse_contains,
+            user_contains,
+            role_contains,
+            database_contains,
+            start_date,
+            end_date,
+        ),
+        _loader,
+        force=force,
+    )
+
+
 def load_shared_task_health_summary(
     session: object,
     days: int,
@@ -1527,17 +2227,40 @@ def load_shared_task_health_summary(
     return _load_or_reuse("shared_task_health", (company, days), _loader, force=force)
 
 
-def _shared_user_exprs(session: object) -> dict[str, str]:
-    """Return USERS projections for MFA/password signals across Snowflake versions."""
-    from .compatibility import filter_existing_columns
+def shared_mfa_count_expr(user_cols: set[str]) -> str:
+    """Return a compatible aggregate expression for active users missing MFA."""
+    normalized = {str(col or "").upper() for col in user_cols}
+    if "HAS_MFA" in normalized:
+        return "COUNT_IF(COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR(has_mfa)), FALSE) = FALSE)"
+    if "EXT_AUTHN_DUO" in normalized:
+        return "COUNT_IF(COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR(ext_authn_duo)), FALSE) = FALSE)"
+    return "NULL::NUMBER"
 
-    user_cols = set(
-        filter_existing_columns(
-            session,
-            "SNOWFLAKE.ACCOUNT_USAGE.USERS",
-            ["HAS_MFA", "EXT_AUTHN_DUO", "HAS_PASSWORD", "LAST_SUCCESS_LOGIN"],
-        )
-    )
+
+def shared_mfa_gap_predicate(user_cols: set[str], alias: str = "u") -> str:
+    """Return a compatible row predicate for active users missing MFA."""
+    normalized = {str(col or "").upper() for col in user_cols}
+    prefix = f"{alias}." if alias else ""
+    if "HAS_MFA" in normalized:
+        return f"AND COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR({prefix}has_mfa)), FALSE) = FALSE"
+    if "EXT_AUTHN_DUO" in normalized:
+        return f"AND COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR({prefix}ext_authn_duo)), FALSE) = FALSE"
+    return "AND 1 = 0"
+
+
+def shared_mfa_proof_label(user_cols: set[str]) -> str:
+    """Return the source label used for MFA exception proof rows."""
+    normalized = {str(col or "").upper() for col in user_cols}
+    if "HAS_MFA" in normalized:
+        return "ACCOUNT_USAGE.USERS HAS_MFA signal"
+    if "EXT_AUTHN_DUO" in normalized:
+        return "ACCOUNT_USAGE.USERS EXT_AUTHN_DUO signal"
+    return "ACCOUNT_USAGE.USERS MFA signal unavailable"
+
+
+def _shared_user_exprs_from_columns(user_cols: set[str] | list[str] | tuple[str, ...]) -> dict[str, str]:
+    """Return USERS projections for MFA/password signals from discovered columns."""
+    user_cols = {str(col or "").upper() for col in user_cols}
     if "HAS_MFA" in user_cols:
         mfa_bool_expr = "COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR(u.has_mfa)), FALSE)"
         mfa_source_expr = "'HAS_MFA'"
@@ -1567,6 +2290,503 @@ def _shared_user_exprs(session: object) -> dict[str, str]:
             if "LAST_SUCCESS_LOGIN" in user_cols else "NULL::TIMESTAMP_NTZ"
         ),
     }
+
+
+def _shared_user_exprs(session: object) -> dict[str, str]:
+    """Return USERS projections for MFA/password signals across Snowflake versions."""
+    from .compatibility import filter_existing_columns
+
+    user_cols = filter_existing_columns(
+        session,
+        "SNOWFLAKE.ACCOUNT_USAGE.USERS",
+        ["HAS_MFA", "EXT_AUTHN_DUO", "HAS_PASSWORD", "LAST_SUCCESS_LOGIN"],
+    )
+    return _shared_user_exprs_from_columns(user_cols)
+
+
+def _shared_security_user_columns(session: object) -> set[str]:
+    return set(
+        filter_existing_columns(
+            session,
+            "SNOWFLAKE.ACCOUNT_USAGE.USERS",
+            ["HAS_MFA", "EXT_AUTHN_DUO", "HAS_PASSWORD", "LAST_SUCCESS_LOGIN"],
+        )
+    )
+
+
+def build_shared_security_summary_sql(session: object, days: int, company: str) -> tuple[str, str]:
+    """Build live ACCOUNT_USAGE security summary and exception SQL."""
+    days = max(1, int(days or 30))
+    user_cols = _shared_security_user_columns(session)
+    mfa_count_expr = shared_mfa_count_expr(user_cols)
+    mfa_gap_predicate = shared_mfa_gap_predicate(user_cols)
+    mfa_proof = shared_mfa_proof_label(user_cols)
+    password_count_expr = (
+        "COUNT_IF(COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR(has_password)), FALSE) = TRUE)"
+        if "HAS_PASSWORD" in user_cols else "NULL::NUMBER"
+    )
+    last_seen_expr = "u.last_success_login" if "LAST_SUCCESS_LOGIN" in user_cols else "u.created_on"
+    user_filter_lh = get_user_filter_clause("lh.user_name")
+    user_filter_u = get_user_filter_clause("u.name")
+    user_filter_g = get_user_filter_clause("g.grantee_name")
+    db_filter = get_db_filter_clause("d.database_name")
+    object_grant_db_filter = get_db_filter_clause("gor.table_catalog")
+    company_label = sql_literal(company, 100)
+
+    summary_sql = f"""
+    WITH login_events AS (
+        SELECT
+            COUNT(*) AS login_events,
+            COUNT_IF(lh.is_success = 'NO') AS failed_logins,
+            COUNT(DISTINCT IFF(lh.is_success = 'NO', lh.user_name, NULL)) AS failed_users,
+            COUNT(DISTINCT IFF(lh.is_success = 'NO', lh.client_ip, NULL)) AS failed_ips
+        FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY lh
+        WHERE lh.event_timestamp >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+          {user_filter_lh}
+    ),
+    users AS (
+        SELECT
+            COUNT(*) AS active_users,
+            {mfa_count_expr} AS users_without_mfa,
+            {password_count_expr} AS password_users
+        FROM SNOWFLAKE.ACCOUNT_USAGE.USERS u
+        WHERE u.deleted_on IS NULL
+          AND COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR(u.disabled)), FALSE) = FALSE
+          {user_filter_u}
+    ),
+    recent_grants AS (
+        SELECT COUNT(*) AS recent_grants
+        FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS g
+        WHERE g.deleted_on IS NULL
+          AND g.created_on >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+          {user_filter_g}
+    ),
+    shared_dbs AS (
+        SELECT COUNT(*) AS shared_databases
+        FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASES d
+        WHERE d.deleted IS NULL
+          AND d.type IN ('IMPORTED DATABASE', 'SHARE')
+          {db_filter}
+    )
+    SELECT
+        {company_label} AS company,
+        login_events.login_events,
+        login_events.failed_logins,
+        login_events.failed_users,
+        login_events.failed_ips,
+        users.active_users,
+        users.users_without_mfa,
+        users.password_users,
+        recent_grants.recent_grants AS recent_grants,
+        shared_dbs.shared_databases
+    FROM login_events, users, recent_grants, shared_dbs
+    """
+    exceptions_sql = f"""
+    WITH failed_logins AS (
+        SELECT
+            'Failed Login' AS finding_type,
+            IFF(COUNT(*) >= 25 OR COUNT(DISTINCT client_ip) >= 5, 'High', 'Medium') AS severity,
+            user_name AS entity,
+            COUNT(*) AS event_count,
+            COUNT(DISTINCT client_ip) AS distinct_sources,
+            MAX(event_timestamp) AS last_seen,
+            'LOGIN_HISTORY failed login attempts by user/IP' AS proof_query,
+            NULL::VARCHAR AS database_name
+        FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY lh
+        WHERE lh.event_timestamp >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+          AND lh.is_success = 'NO'
+          {user_filter_lh}
+        GROUP BY user_name
+        HAVING COUNT(*) >= 3
+    ),
+    mfa_gaps AS (
+        SELECT
+            'MFA Gap' AS finding_type,
+            'High' AS severity,
+            u.name AS entity,
+            1 AS event_count,
+            0 AS distinct_sources,
+            COALESCE({last_seen_expr}, u.created_on) AS last_seen,
+            '{mfa_proof}' AS proof_query,
+            NULL::VARCHAR AS database_name
+        FROM SNOWFLAKE.ACCOUNT_USAGE.USERS u
+        WHERE u.deleted_on IS NULL
+          AND COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR(u.disabled)), FALSE) = FALSE
+          {user_filter_u}
+          {mfa_gap_predicate}
+    ),
+    recent_grants AS (
+        SELECT
+            'Recent Grant' AS finding_type,
+            IFF(COUNT(*) >= 10, 'Medium', 'Low') AS severity,
+            g.grantee_name AS entity,
+            COUNT(*) AS event_count,
+            COUNT(DISTINCT g.role) AS distinct_sources,
+            MAX(g.created_on) AS last_seen,
+            'ACCOUNT_USAGE.GRANTS_TO_USERS active grants created recently' AS proof_query,
+            NULL::VARCHAR AS database_name
+        FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS g
+        WHERE g.deleted_on IS NULL
+          AND g.created_on >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+          {user_filter_g}
+        GROUP BY g.grantee_name
+        HAVING COUNT(*) >= 3
+    ),
+    object_grants AS (
+        SELECT
+            'Object Grant' AS finding_type,
+            IFF(COUNT(*) >= 10 OR COUNT_IF(COALESCE(TO_VARCHAR(gor.grant_option), 'false') = 'true') > 0, 'High', 'Medium') AS severity,
+            COALESCE(gor.table_catalog || '.' || gor.table_schema || '.' || gor.name, gor.table_catalog, gor.name) AS entity,
+            COUNT(*) AS event_count,
+            COUNT(DISTINCT gor.grantee_name) AS distinct_sources,
+            MAX(gor.created_on) AS last_seen,
+            'ACCOUNT_USAGE.GRANTS_TO_ROLES object grants by database/schema/object' AS proof_query,
+            gor.table_catalog AS database_name
+        FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_ROLES gor
+        WHERE gor.deleted_on IS NULL
+          AND gor.created_on >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+          AND gor.table_catalog IS NOT NULL
+          {object_grant_db_filter}
+        GROUP BY gor.table_catalog, gor.table_schema, gor.name
+        HAVING COUNT(*) >= 3 OR COUNT_IF(COALESCE(TO_VARCHAR(gor.grant_option), 'false') = 'true') > 0
+    ),
+    shared_exposure AS (
+        SELECT
+            'Shared Database Exposure' AS finding_type,
+            'Medium' AS severity,
+            d.database_name AS entity,
+            1 AS event_count,
+            0 AS distinct_sources,
+            d.created AS last_seen,
+            'ACCOUNT_USAGE.DATABASES imported database/share metadata' AS proof_query,
+            d.database_name AS database_name
+        FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASES d
+        WHERE d.deleted IS NULL
+          AND d.type IN ('IMPORTED DATABASE', 'SHARE')
+          {db_filter}
+    )
+    SELECT * FROM failed_logins
+    UNION ALL
+    SELECT * FROM mfa_gaps
+    UNION ALL
+    SELECT * FROM recent_grants
+    UNION ALL
+    SELECT * FROM object_grants
+    UNION ALL
+    SELECT * FROM shared_exposure
+    ORDER BY
+        CASE severity WHEN 'Critical' THEN 1 WHEN 'High' THEN 2 WHEN 'Medium' THEN 3 ELSE 4 END,
+        event_count DESC,
+        last_seen DESC
+    LIMIT 100
+    """
+    return summary_sql, exceptions_sql
+
+
+def build_shared_security_mart_brief_sql(session: object, days: int, company: str) -> tuple[str, str]:
+    """Build mart-backed security summary SQL with bounded live metadata."""
+    days = max(1, int(days or 30))
+    user_cols = _shared_security_user_columns(session)
+    mfa_count_expr = shared_mfa_count_expr(user_cols)
+    mfa_gap_predicate = shared_mfa_gap_predicate(user_cols)
+    mfa_proof = shared_mfa_proof_label(user_cols)
+    password_count_expr = (
+        "COUNT_IF(COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR(has_password)), FALSE) = TRUE)"
+        if "HAS_PASSWORD" in user_cols else "NULL::NUMBER"
+    )
+    last_seen_expr = "u.last_success_login" if "LAST_SUCCESS_LOGIN" in user_cols else "u.created_on"
+    user_filter_lh = get_user_filter_clause("lh.user_name")
+    user_filter_u = get_user_filter_clause("u.name")
+    user_filter_g = get_user_filter_clause("g.grantee_name")
+    db_filter = get_db_filter_clause("d.database_name")
+    object_grant_db_filter = get_db_filter_clause("gor.table_catalog")
+    login_table = mart_object_name("FACT_LOGIN_DAILY")
+    grant_table = mart_object_name("FACT_GRANT_DAILY")
+    login_company_filter = "" if str(company or "").upper() == "ALL" else f"AND lh.company = {sql_literal(company, 100)}"
+    grant_company_filter = "" if str(company or "").upper() == "ALL" else f"AND g.company = {sql_literal(company, 100)}"
+    company_label = sql_literal(company, 100)
+
+    summary_sql = f"""
+    WITH login_events AS (
+        SELECT
+            COALESCE(SUM(success_count), 0) + COALESCE(SUM(failure_count), 0) AS login_events,
+            COALESCE(SUM(failure_count), 0) AS failed_logins,
+            COUNT(DISTINCT IFF(COALESCE(failure_count, 0) > 0, lh.user_name, NULL)) AS failed_users,
+            COUNT(DISTINCT IFF(COALESCE(failure_count, 0) > 0, lh.client_ip, NULL)) AS failed_ips
+        FROM {login_table} lh
+        WHERE lh.login_date >= DATEADD('day', -{days}, CURRENT_DATE())
+          {login_company_filter}
+          {user_filter_lh}
+    ),
+    users AS (
+        SELECT
+            COUNT(*) AS active_users,
+            {mfa_count_expr} AS users_without_mfa,
+            {password_count_expr} AS password_users
+        FROM SNOWFLAKE.ACCOUNT_USAGE.USERS u
+        WHERE u.deleted_on IS NULL
+          AND COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR(u.disabled)), FALSE) = FALSE
+          {user_filter_u}
+    ),
+    recent_grants AS (
+        SELECT COALESCE(SUM(grant_count), 0) AS recent_grants
+        FROM {grant_table} g
+        WHERE 1 = 1
+          {grant_company_filter}
+          AND g.deleted_on IS NULL
+          AND g.created_on >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+          {user_filter_g}
+    ),
+    shared_dbs AS (
+        SELECT COUNT(*) AS shared_databases
+        FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASES d
+        WHERE d.deleted IS NULL
+          AND d.type IN ('IMPORTED DATABASE', 'SHARE')
+          {db_filter}
+    )
+    SELECT
+        {company_label} AS company,
+        login_events.login_events,
+        login_events.failed_logins,
+        login_events.failed_users,
+        login_events.failed_ips,
+        users.active_users,
+        users.users_without_mfa,
+        users.password_users,
+        recent_grants.recent_grants AS recent_grants,
+        shared_dbs.shared_databases
+    FROM login_events, users, recent_grants, shared_dbs
+    """
+    exceptions_sql = f"""
+    WITH failed_logins AS (
+        SELECT
+            'Failed Login' AS finding_type,
+            IFF(SUM(failure_count) >= 25 OR COUNT(DISTINCT client_ip) >= 5, 'High', 'Medium') AS severity,
+            user_name AS entity,
+            COALESCE(SUM(failure_count), 0) AS event_count,
+            COUNT(DISTINCT client_ip) AS distinct_sources,
+            MAX(login_date)::TIMESTAMP_NTZ AS last_seen,
+            'FACT_LOGIN_DAILY failed login attempts by user/IP' AS proof_query,
+            NULL::VARCHAR AS database_name
+        FROM {login_table} lh
+        WHERE lh.login_date >= DATEADD('day', -{days}, CURRENT_DATE())
+          {login_company_filter}
+          AND COALESCE(failure_count, 0) > 0
+          {user_filter_lh}
+        GROUP BY user_name
+        HAVING COALESCE(SUM(failure_count), 0) >= 3
+    ),
+    mfa_gaps AS (
+        SELECT
+            'MFA Gap' AS finding_type,
+            'High' AS severity,
+            u.name AS entity,
+            1 AS event_count,
+            0 AS distinct_sources,
+            COALESCE({last_seen_expr}, u.created_on) AS last_seen,
+            '{mfa_proof}' AS proof_query,
+            NULL::VARCHAR AS database_name
+        FROM SNOWFLAKE.ACCOUNT_USAGE.USERS u
+        WHERE u.deleted_on IS NULL
+          AND COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR(u.disabled)), FALSE) = FALSE
+          {user_filter_u}
+          {mfa_gap_predicate}
+    ),
+    recent_grants AS (
+        SELECT
+            'Recent Grant' AS finding_type,
+            IFF(SUM(grant_count) >= 10, 'Medium', 'Low') AS severity,
+            g.grantee_name AS entity,
+            COALESCE(SUM(grant_count), 0) AS event_count,
+            COUNT(DISTINCT g.role_name) AS distinct_sources,
+            MAX(g.created_on) AS last_seen,
+            'FACT_GRANT_DAILY active grants created recently' AS proof_query,
+            NULL::VARCHAR AS database_name
+        FROM {grant_table} g
+        WHERE 1 = 1
+          {grant_company_filter}
+          AND g.deleted_on IS NULL
+          AND g.created_on >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+          {user_filter_g}
+        GROUP BY g.grantee_name
+        HAVING COALESCE(SUM(grant_count), 0) >= 3
+    ),
+    object_grants AS (
+        SELECT
+            'Object Grant' AS finding_type,
+            IFF(COUNT(*) >= 10 OR COUNT_IF(COALESCE(TO_VARCHAR(gor.grant_option), 'false') = 'true') > 0, 'High', 'Medium') AS severity,
+            COALESCE(gor.table_catalog || '.' || gor.table_schema || '.' || gor.name, gor.table_catalog, gor.name) AS entity,
+            COUNT(*) AS event_count,
+            COUNT(DISTINCT gor.grantee_name) AS distinct_sources,
+            MAX(gor.created_on) AS last_seen,
+            'ACCOUNT_USAGE.GRANTS_TO_ROLES object grants by database/schema/object' AS proof_query,
+            gor.table_catalog AS database_name
+        FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_ROLES gor
+        WHERE gor.deleted_on IS NULL
+          AND gor.created_on >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+          AND gor.table_catalog IS NOT NULL
+          {object_grant_db_filter}
+        GROUP BY gor.table_catalog, gor.table_schema, gor.name
+        HAVING COUNT(*) >= 3 OR COUNT_IF(COALESCE(TO_VARCHAR(gor.grant_option), 'false') = 'true') > 0
+    ),
+    shared_exposure AS (
+        SELECT
+            'Shared Database Exposure' AS finding_type,
+            'Medium' AS severity,
+            d.database_name AS entity,
+            1 AS event_count,
+            0 AS distinct_sources,
+            d.created AS last_seen,
+            'ACCOUNT_USAGE.DATABASES imported database/share metadata' AS proof_query,
+            d.database_name AS database_name
+        FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASES d
+        WHERE d.deleted IS NULL
+          AND d.type IN ('IMPORTED DATABASE', 'SHARE')
+          {db_filter}
+    )
+    SELECT * FROM failed_logins
+    UNION ALL
+    SELECT * FROM mfa_gaps
+    UNION ALL
+    SELECT * FROM recent_grants
+    UNION ALL
+    SELECT * FROM object_grants
+    UNION ALL
+    SELECT * FROM shared_exposure
+    ORDER BY
+        CASE severity WHEN 'Critical' THEN 1 WHEN 'High' THEN 2 WHEN 'Medium' THEN 3 ELSE 4 END,
+        event_count DESC,
+        last_seen DESC
+    LIMIT 100
+    """
+    return summary_sql, exceptions_sql
+
+
+def build_shared_security_privileged_grant_review_sql(
+    days: int,
+    company: str,
+    environment: str = "ALL",
+) -> str:
+    """Return high-risk account-role and object grants with environment-aware object scope."""
+
+    days = max(1, min(int(days or 30), 90))
+    user_filter = get_user_filter_clause("gtu.grantee_name")
+    object_env_filter = get_environment_filter_clause(
+        "gor.table_catalog",
+        environment=environment,
+        company=company,
+    )
+    object_env_expr = get_environment_case_expr("gor.table_catalog")
+    return f"""WITH privileged_role_grants AS (
+    SELECT
+        'Privileged Role Grant' AS finding_type,
+        IFF(UPPER(gtu.role) IN ('ACCOUNTADMIN', 'ORGADMIN', 'SECURITYADMIN'), 'Critical', 'High') AS severity,
+        gtu.grantee_name AS entity,
+        gtu.role AS role_name,
+        NULL::VARCHAR AS privilege,
+        FALSE AS grant_option,
+        NULL::VARCHAR AS object_name,
+        NULL::VARCHAR AS database_name,
+        FALSE AS database_context,
+        'No Database Context' AS environment,
+        'ACCOUNT_USAGE.GRANTS_TO_USERS privileged role grants' AS proof_query,
+        gtu.granted_by,
+        gtu.created_on,
+        DATEDIFF('day', gtu.created_on, CURRENT_TIMESTAMP()) AS grant_age_days,
+        'Business justification, ticket/reference, review-by date, and telemetry status required.' AS proof_required,
+        'Review account-level privileged role grant; do not hide this row behind a database environment filter.' AS next_action
+    FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS gtu
+    WHERE gtu.deleted_on IS NULL
+      AND (
+          UPPER(gtu.role) IN ('ACCOUNTADMIN', 'ORGADMIN', 'SECURITYADMIN', 'SYSADMIN', 'USERADMIN')
+          OR UPPER(gtu.role) ILIKE '%ADMIN%'
+          OR UPPER(gtu.role) ILIKE '%SECURITY%'
+      )
+      {user_filter}
+),
+object_privilege_grants AS (
+    SELECT
+        'Privileged Object Grant' AS finding_type,
+        IFF(
+            UPPER(gor.privilege) IN ('OWNERSHIP', 'APPLY MASKING POLICY', 'APPLY ROW ACCESS POLICY')
+            OR COALESCE(TO_VARCHAR(gor.grant_option), 'false') = 'true',
+            'High',
+            'Medium'
+        ) AS severity,
+        gor.grantee_name AS entity,
+        NULL::VARCHAR AS role_name,
+        gor.privilege AS privilege,
+        COALESCE(TO_VARCHAR(gor.grant_option), 'false') = 'true' AS grant_option,
+        gor.name AS object_name,
+        gor.table_catalog AS database_name,
+        TRUE AS database_context,
+        {object_env_expr} AS environment,
+        'ACCOUNT_USAGE.GRANTS_TO_ROLES privileged object grants' AS proof_query,
+        gor.granted_by,
+        gor.created_on,
+        DATEDIFF('day', gor.created_on, CURRENT_TIMESTAMP()) AS grant_age_days,
+        'Privilege justification, ticket/reference, review-by date, and rollback status required.' AS proof_required,
+        'Review database-scoped object privilege before revoke/narrowing action.' AS next_action
+    FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_ROLES gor
+    WHERE gor.deleted_on IS NULL
+      AND gor.created_on >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+      AND gor.table_catalog IS NOT NULL
+      AND (
+          UPPER(gor.privilege) IN (
+              'OWNERSHIP',
+              'MANAGE GRANTS',
+              'APPLY MASKING POLICY',
+              'APPLY ROW ACCESS POLICY',
+              'CREATE DATABASE ROLE',
+              'CREATE SCHEMA',
+              'CREATE TABLE',
+              'CREATE VIEW'
+          )
+          OR COALESCE(TO_VARCHAR(gor.grant_option), 'false') = 'true'
+      )
+      {object_env_filter}
+)
+SELECT
+    finding_type,
+    severity,
+    entity,
+    role_name,
+    privilege,
+    grant_option,
+    object_name,
+    database_name,
+    database_context,
+    environment,
+    proof_query,
+    granted_by,
+    created_on,
+    grant_age_days,
+    proof_required,
+    next_action
+FROM privileged_role_grants
+UNION ALL
+SELECT
+    finding_type,
+    severity,
+    entity,
+    role_name,
+    privilege,
+    grant_option,
+    object_name,
+    database_name,
+    database_context,
+    environment,
+    proof_query,
+    granted_by,
+    created_on,
+    grant_age_days,
+    proof_required,
+    next_action
+FROM object_privilege_grants
+ORDER BY
+    CASE severity WHEN 'Critical' THEN 0 WHEN 'High' THEN 1 WHEN 'Medium' THEN 2 ELSE 3 END,
+    created_on DESC
+LIMIT 200""".strip()
 
 
 def load_shared_mfa_coverage(
@@ -1684,25 +2904,24 @@ def load_shared_grants_to_users(
     return _load_or_reuse("shared_grants_to_users", (company,), _loader, force=force)
 
 
-def load_shared_access_hygiene_snapshot(
+def build_shared_access_hygiene_sql(
     session: object,
     days: int,
     company: str | None = None,
-    *,
     environment: str = "ALL",
-    force: bool = False,
-    section: str = "Shared Metrics",
-) -> SharedMetricResult:
-    """Load account-level user/login/grant hygiene once for Account Health/Security."""
-
+    *,
+    user_columns: set[str] | list[str] | tuple[str, ...] | None = None,
+) -> str:
+    """Build account-level user/login/grant hygiene SQL for shared security surfaces."""
     company = company or get_active_company()
     days = max(1, int(days or 30))
     env_label = sql_literal(str(environment or "ALL"), 100)
-
-    def _loader() -> SharedMetricResult:
-        exprs = _shared_user_exprs(session)
-        df = run_query(
-            f"""
+    exprs = (
+        _shared_user_exprs_from_columns(user_columns)
+        if user_columns is not None
+        else _shared_user_exprs(session)
+    )
+    return f"""
             WITH login_rollup AS (
                 SELECT
                     lh.user_name,
@@ -1791,7 +3010,26 @@ def load_shared_access_hygiene_snapshot(
                 admin_role_count DESC,
                 days_since_seen DESC
             LIMIT 100
-            """,
+            """.strip()
+
+
+def load_shared_access_hygiene_snapshot(
+    session: object,
+    days: int,
+    company: str | None = None,
+    *,
+    environment: str = "ALL",
+    force: bool = False,
+    section: str = "Shared Metrics",
+) -> SharedMetricResult:
+    """Load account-level user/login/grant hygiene once for Account Health/Security."""
+
+    company = company or get_active_company()
+    days = max(1, int(days or 30))
+
+    def _loader() -> SharedMetricResult:
+        df = run_query(
+            build_shared_access_hygiene_sql(session, days, company, environment),
             ttl_key=get_company_scope_key("shared_access_hygiene", days, environment),
             tier="standard",
             section=section,

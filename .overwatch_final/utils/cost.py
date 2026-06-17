@@ -12,6 +12,7 @@ __all__ = [
     "build_metered_credit_cte", "build_idle_warehouse_sql",
     "build_monitoring_cost_sql", "build_app_runtime_cost_sql",
     "build_cost_reconciliation_sql", "build_snowflake_service_cost_lens_sql",
+    "build_snowflake_service_cost_trend_sql",
     "build_cost_efficiency_summary_sql", "build_warehouse_efficiency_sql",
     "build_clustering_cost_sql",
     "metric_confidence_label", "freshness_note",
@@ -178,6 +179,58 @@ def build_snowflake_service_cost_lens_sql(
         OR ABS(SUM(compute_credits)) > 0
         OR ABS(SUM(cloud_services_credits)) > 0
     ORDER BY ABS(credit_delta) DESC, credits_billed DESC, service_category, service_type
+    """
+
+
+def build_snowflake_service_cost_trend_sql(
+    days_back: int = 7,
+    credit_price: float = None,
+    ai_credit_price: float = None,
+) -> str:
+    """Return daily official Snowflake service cost for the current window."""
+    days_back = max(1, int(days_back or 7))
+    if credit_price is None:
+        credit_price = DEFAULTS["credit_price"]
+    credit_price = float(credit_price or DEFAULTS["credit_price"])
+    if ai_credit_price is None:
+        ai_credit_price = DEFAULTS["ai_credit_price"]
+    ai_credit_price = float(ai_credit_price or DEFAULTS["ai_credit_price"])
+    return f"""
+        WITH period_data AS (
+            SELECT
+                DATE(start_time) AS usage_date,
+                UPPER(COALESCE(service_type, 'UNKNOWN')) AS service_type,
+                SUM(COALESCE(credits_used_compute, 0)) AS compute_credits,
+                SUM(COALESCE(credits_used_cloud_services, 0)) AS cloud_services_credits,
+                SUM(COALESCE(credits_used, 0)) AS total_credits,
+                CASE
+                    WHEN UPPER(COALESCE(service_type, 'UNKNOWN')) ILIKE '%CORTEX%'
+                      OR UPPER(COALESCE(service_type, 'UNKNOWN')) ILIKE '%AI%'
+                      OR UPPER(COALESCE(service_type, 'UNKNOWN')) ILIKE '%INTELLIGENCE%'
+                        THEN {ai_credit_price:.4f}
+                    ELSE {credit_price:.4f}
+                END AS rate_usd,
+                CASE
+                    WHEN DATE(start_time) > DATEADD('day', -{days_back}, DATEADD('hour', -24, CURRENT_TIMESTAMP()))
+                        THEN 'CURRENT'
+                    ELSE 'PRIOR'
+                END AS period
+            FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY
+            WHERE start_time >= DATEADD('day', -{days_back * 2}, DATEADD('hour', -24, CURRENT_TIMESTAMP()))
+              AND start_time < DATEADD('hour', -24, CURRENT_TIMESTAMP())
+            GROUP BY DATE(start_time), UPPER(COALESCE(service_type, 'UNKNOWN'))
+        )
+        SELECT
+            usage_date,
+            ROUND(SUM(total_credits), 4) AS daily_credits,
+            ROUND(SUM(total_credits * rate_usd), 2) AS daily_spend_usd,
+            ROUND(SUM(compute_credits), 4) AS compute_credits,
+            ROUND(SUM(cloud_services_credits), 4) AS cloud_services_credits,
+            COUNT(DISTINCT service_type) AS active_services
+        FROM period_data
+        WHERE period = 'CURRENT'
+        GROUP BY usage_date
+        ORDER BY usage_date
     """
 
 

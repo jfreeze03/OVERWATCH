@@ -41,7 +41,7 @@ build_shared_bill_warehouse_delta_live_sql = _lazy_util("build_shared_bill_wareh
 build_mart_cost_cockpit_sql = _lazy_util("build_mart_cost_cockpit_sql")
 build_mart_cost_run_rate_sql = _lazy_util("build_mart_cost_run_rate_sql")
 build_mart_cost_service_lens_sql = _lazy_util("build_mart_cost_service_lens_sql")
-build_snowflake_service_cost_lens_sql = _lazy_util("build_snowflake_service_cost_lens_sql")
+build_snowflake_service_cost_trend_sql = _lazy_util("build_snowflake_service_cost_trend_sql")
 credits_to_dollars = _lazy_util("credits_to_dollars")
 format_snowflake_error = _lazy_util("format_snowflake_error")
 get_active_environment = _lazy_util("get_active_environment")
@@ -51,6 +51,8 @@ get_session_for_action = _lazy_util("get_session_for_action")
 get_user_filter_clause = _lazy_util("get_user_filter_clause")
 get_wh_filter_clause = _lazy_util("get_wh_filter_clause")
 load_action_queue = _lazy_util("load_action_queue")
+load_shared_service_cost_lens = _lazy_util("load_shared_service_cost_lens")
+load_shared_service_cost_trend = _lazy_util("load_shared_service_cost_trend")
 render_mode_selector = _lazy_util("render_mode_selector")
 render_workflow_selector = _lazy_util("render_workflow_selector")
 run_query = _lazy_util("run_query")
@@ -634,46 +636,7 @@ def _build_cost_splash_daily_trend_sql(company: str, days: int, *, mart: bool = 
 
 
 def _build_cost_monitor_service_trend_sql(days: int, credit_price: float | None = None, ai_credit_price: float | None = None) -> str:
-    days_int = max(int(days or 7), 1)
-    credit_rate = safe_float(credit_price, safe_float(DEFAULTS.get("credit_price"), 3.68))
-    ai_rate = safe_float(ai_credit_price, safe_float(DEFAULTS.get("ai_credit_price"), 2.20))
-    return f"""
-        WITH period_data AS (
-            SELECT
-                DATE(start_time) AS usage_date,
-                UPPER(COALESCE(service_type, 'UNKNOWN')) AS service_type,
-                SUM(COALESCE(credits_used_compute, 0)) AS compute_credits,
-                SUM(COALESCE(credits_used_cloud_services, 0)) AS cloud_services_credits,
-                SUM(COALESCE(credits_used, 0)) AS total_credits,
-                CASE
-                    WHEN UPPER(COALESCE(service_type, 'UNKNOWN')) ILIKE '%CORTEX%'
-                      OR UPPER(COALESCE(service_type, 'UNKNOWN')) ILIKE '%AI%'
-                      OR UPPER(COALESCE(service_type, 'UNKNOWN')) ILIKE '%INTELLIGENCE%'
-                        THEN {ai_rate:.4f}
-                    ELSE {credit_rate:.4f}
-                END AS rate_usd,
-                CASE
-                    WHEN DATE(start_time) > DATEADD('day', -{days_int}, DATEADD('hour', -24, CURRENT_TIMESTAMP()))
-                        THEN 'CURRENT'
-                    ELSE 'PRIOR'
-                END AS period
-            FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY
-            WHERE start_time >= DATEADD('day', -{days_int * 2}, DATEADD('hour', -24, CURRENT_TIMESTAMP()))
-              AND start_time < DATEADD('hour', -24, CURRENT_TIMESTAMP())
-            GROUP BY DATE(start_time), UPPER(COALESCE(service_type, 'UNKNOWN'))
-        )
-        SELECT
-            usage_date,
-            ROUND(SUM(total_credits), 4) AS daily_credits,
-            ROUND(SUM(total_credits * rate_usd), 2) AS daily_spend_usd,
-            ROUND(SUM(compute_credits), 4) AS compute_credits,
-            ROUND(SUM(cloud_services_credits), 4) AS cloud_services_credits,
-            COUNT(DISTINCT service_type) AS active_services
-        FROM period_data
-        WHERE period = 'CURRENT'
-        GROUP BY usage_date
-        ORDER BY usage_date
-    """
+    return build_snowflake_service_cost_trend_sql(days, credit_price, ai_credit_price)
 
 
 def _build_cost_splash_warehouse_delta_sql(company: str, days: int, *, mart: bool = True) -> str:
@@ -3990,15 +3953,21 @@ def _ensure_cost_splash(company: str, days: int, credit_price: float, *, full_pr
     trend = pd.DataFrame()
     trend_source = trend_error = ""
     if full_proof:
-        trend, trend_source, trend_error = _load_cost_splash_live_query(
-            _build_cost_monitor_service_trend_sql(
+        try:
+            trend_result = load_shared_service_cost_trend(
                 int(days),
+                company,
                 credit_price=credit_price,
                 ai_credit_price=get_current_ai_credit_price(),
-            ),
-            f"cost_splash_official_service_trend_{company}_{days}",
-            "Official Cost Monitor: SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY",
-        )
+                section="Cost & Contract",
+            )
+            trend = trend_result.data
+            trend_source = trend_result.source
+            trend_error = trend_result.message
+        except Exception as exc:
+            trend = pd.DataFrame()
+            trend_source = ""
+            trend_error = format_snowflake_error(exc)
     warehouse_delta, delta_source, delta_error = _load_cost_splash_query(
         _build_cost_splash_warehouse_delta_sql(company, int(days), mart=True),
         _build_cost_splash_warehouse_delta_sql(company, int(days), mart=False),
@@ -4014,15 +3983,21 @@ def _ensure_cost_splash(company: str, days: int, credit_price: float, *, full_pr
     service_costs = pd.DataFrame()
     service_source = service_error = ""
     if full_proof:
-        service_costs, service_source, service_error = _load_cost_splash_live_query(
-            build_snowflake_service_cost_lens_sql(
+        try:
+            service_result = load_shared_service_cost_lens(
                 int(days),
-                credit_price,
+                company,
+                credit_price=credit_price,
                 ai_credit_price=get_current_ai_credit_price(),
-            ),
-            f"cost_splash_official_service_lens_{company}_{days}_{credit_price}",
-            "Official Cost Monitor: SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY",
-        )
+                section="Cost & Contract",
+            )
+            service_costs = service_result.data
+            service_source = service_result.source
+            service_error = service_result.message
+        except Exception as exc:
+            service_costs = pd.DataFrame()
+            service_source = ""
+            service_error = format_snowflake_error(exc)
     run_rate = pd.DataFrame()
     run_rate_source = run_rate_error = ""
     if full_proof:
@@ -4519,20 +4494,17 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
             st.session_state["cost_contract_attribution_error"] = format_snowflake_error(exc)
             st.session_state["cost_contract_attribution_source"] = ""
         try:
-            st.session_state["cost_contract_service_lens"] = run_query_or_raise(
-                build_snowflake_service_cost_lens_sql(
-                    int(days),
-                    credit_price,
-                    ai_credit_price=get_current_ai_credit_price(),
-                ),
-                ttl_key=f"cost_contract_service_lens_official_{company}_{days}_{credit_price}",
-                tier="historical",
+            service_result = load_shared_service_cost_lens(
+                int(days),
+                company,
+                credit_price=credit_price,
+                ai_credit_price=get_current_ai_credit_price(),
+                force=True,
                 section="Cost & Contract",
             )
-            st.session_state["cost_contract_service_lens_error"] = ""
-            st.session_state["cost_contract_service_lens_source"] = (
-                "Official Cost Monitor: SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY"
-            )
+            st.session_state["cost_contract_service_lens"] = service_result.data
+            st.session_state["cost_contract_service_lens_error"] = service_result.message
+            st.session_state["cost_contract_service_lens_source"] = service_result.source
         except Exception as exc:
             st.session_state["cost_contract_service_lens"] = pd.DataFrame()
             st.session_state["cost_contract_service_lens_error"] = format_snowflake_error(exc)

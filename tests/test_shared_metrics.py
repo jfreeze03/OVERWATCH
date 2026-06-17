@@ -14,6 +14,10 @@ sys.path.insert(0, str(APP_ROOT))
 from utils.shared_metrics import (  # noqa: E402
     _storage_summary_from_trend,
     build_shared_bill_warehouse_delta_live_sql,
+    build_shared_access_hygiene_sql,
+    build_shared_security_mart_brief_sql,
+    build_shared_security_privileged_grant_review_sql,
+    build_shared_security_summary_sql,
     load_shared_access_hygiene_snapshot,
     load_shared_bill_metering_summary,
     load_shared_bill_warehouse_delta,
@@ -31,15 +35,28 @@ from utils.shared_metrics import (  # noqa: E402
     load_shared_recommendation_repeated_queries,
     load_shared_recommendation_spill_warehouses,
     load_shared_recommendation_storage_retention,
+    load_shared_service_cost_lens,
+    load_shared_service_cost_trend,
+    load_shared_service_login_health,
+    load_shared_service_pipe_health,
+    load_shared_service_query_health,
+    load_shared_service_task_health,
+    load_shared_service_warehouse_health,
     load_shared_storage_trend,
     load_shared_task_health_summary,
     load_shared_usage_metering_kpis,
     load_shared_warehouse_credit_anomalies,
     load_shared_warehouse_right_sizing,
     load_shared_warehouse_daily_credits_by_warehouse,
+    load_shared_warehouse_efficiency,
+    load_shared_warehouse_heatmap,
     load_shared_warehouse_overview,
     load_shared_warehouse_pressure_summary,
     load_shared_warehouse_scaling_events,
+    load_shared_warehouse_spill,
+    shared_mfa_count_expr,
+    shared_mfa_gap_predicate,
+    shared_mfa_proof_label,
 )
 
 
@@ -147,6 +164,68 @@ class SharedMetricsTests(unittest.TestCase):
         self.assertIn("AS WAREHOUSE_CLOUD_CREDITS", live_sql)
         self.assertIn("CREDITS_USED_COMPUTE", live_sql)
         self.assertNotIn("CREDITS_USED_CLOUD_SERVICES, 0)) AS WAREHOUSE_CLOUD_CREDITS", live_sql)
+
+    def test_service_cost_lens_reuses_official_metering_history(self):
+        frame = pd.DataFrame({
+            "SERVICE_TYPE": ["WAREHOUSE_METERING"],
+            "CREDITS_BILLED": [10.0],
+            "ESTIMATED_COST_USD": [36.8],
+        })
+
+        with patch("utils.shared_metrics.run_query_or_raise", return_value=frame) as mock_run:
+            first = load_shared_service_cost_lens(
+                14,
+                "ALFA",
+                credit_price=3.68,
+                ai_credit_price=2.20,
+                section="Unit Test",
+            )
+            second = load_shared_service_cost_lens(
+                14,
+                "ALFA",
+                credit_price=3.68,
+                ai_credit_price=2.20,
+                section="Unit Test",
+            )
+
+        self.assertIs(first, second)
+        self.assertEqual(mock_run.call_count, 1)
+        self.assertEqual(first.source, "Official Cost Monitor: SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY")
+        sql = mock_run.call_args.args[0].upper()
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY", sql)
+        self.assertIn("CREDITS_BILLED", sql)
+        self.assertIn("START_TIME < DATEADD('HOUR', -24, CURRENT_TIMESTAMP())", sql)
+
+    def test_service_cost_trend_reuses_official_metering_history(self):
+        frame = pd.DataFrame({
+            "USAGE_DATE": ["2026-06-15"],
+            "DAILY_CREDITS": [10.0],
+            "DAILY_SPEND_USD": [36.8],
+        })
+
+        with patch("utils.shared_metrics.run_query_or_raise", return_value=frame) as mock_run:
+            first = load_shared_service_cost_trend(
+                7,
+                "ALFA",
+                credit_price=3.68,
+                ai_credit_price=2.20,
+                section="Unit Test",
+            )
+            second = load_shared_service_cost_trend(
+                7,
+                "ALFA",
+                credit_price=3.68,
+                ai_credit_price=2.20,
+                section="Unit Test",
+            )
+
+        self.assertIs(first, second)
+        self.assertEqual(mock_run.call_count, 1)
+        self.assertEqual(first.source, "Official Cost Monitor: SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY")
+        sql = mock_run.call_args.args[0].upper()
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY", sql)
+        self.assertIn("DAILY_SPEND_USD", sql)
+        self.assertIn("WHERE PERIOD = 'CURRENT'", sql)
 
     def test_bill_metering_summary_reuses_fast_summary(self):
         frame = pd.DataFrame({
@@ -455,6 +534,99 @@ class SharedMetricsTests(unittest.TestCase):
         self.assertIn("REMOTE_SPILL_GB", live_sql)
         self.assertIn("PRESSURE_WAREHOUSES", live_sql)
 
+    def test_service_query_health_live_fallback_is_hourly(self):
+        live_frame = pd.DataFrame({
+            "TOTAL_QUERIES": [24],
+            "FAILED_QUERIES": [2],
+            "QUEUED_QUERIES": [3],
+            "BLOCKED_QUERIES": [1],
+            "P95_ELAPSED_SEC": [12.5],
+        })
+
+        with patch(
+            "utils.shared_metrics.run_query",
+            side_effect=[pd.DataFrame(), live_frame],
+        ) as mock_run, patch(
+            "utils.shared_metrics.filter_existing_columns",
+            return_value=[
+                "ERROR_CODE",
+                "QUEUED_OVERLOAD_TIME",
+                "TRANSACTION_BLOCKED_TIME",
+                "BYTES_SPILLED_TO_REMOTE_STORAGE",
+            ],
+        ):
+            result = load_shared_service_query_health(object(), 12, "ALFA", section="Unit Test")
+
+        self.assertEqual(result.source, "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY")
+        self.assertEqual(mock_run.call_count, 2)
+        live_sql = mock_run.call_args_list[1].args[0].upper()
+        self.assertIn("DATEADD('HOUR', -12", live_sql)
+        self.assertIn("AS BLOCKED_QUERIES", live_sql)
+        self.assertIn("P95_ELAPSED_SEC", live_sql)
+        self.assertIn("Q.ERROR_CODE IS NOT NULL", live_sql)
+
+    def test_service_warehouse_health_prefers_fast_summary(self):
+        frame = pd.DataFrame({
+            "WAREHOUSE_NAME": ["ALFA_WH"],
+            "TOTAL_QUERIES": [100],
+            "QUEUED_SEC": [10.0],
+        })
+
+        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run:
+            result = load_shared_service_warehouse_health(object(), 24, "ALFA", section="Unit Test")
+
+        self.assertEqual(result.source, "Fast warehouse pressure summary")
+        self.assertEqual(mock_run.call_count, 1)
+
+    def test_service_login_health_subday_uses_live_history(self):
+        frame = pd.DataFrame({
+            "LOGIN_EVENTS": [8],
+            "FAILED_LOGINS": [1],
+        })
+
+        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run:
+            result = load_shared_service_login_health(4, "ALFA", section="Unit Test")
+
+        self.assertEqual(result.source, "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY")
+        self.assertEqual(mock_run.call_count, 1)
+        sql = mock_run.call_args.args[0].upper()
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY", sql)
+        self.assertIn("DATEADD('HOUR', -4", sql)
+
+    def test_service_task_health_falls_back_to_task_history(self):
+        live_frame = pd.DataFrame({
+            "TASK_RUNS": [4],
+            "FAILED_TASKS": [1],
+            "SUCCEEDED_TASKS": [3],
+            "DISTINCT_TASKS": [2],
+        })
+
+        with patch(
+            "utils.shared_metrics.run_query",
+            side_effect=[pd.DataFrame(), live_frame],
+        ) as mock_run, patch(
+            "utils.compatibility.build_task_health_sql",
+            return_value="SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY",
+        ):
+            result = load_shared_service_task_health(object(), 6, "ALFA", section="Unit Test")
+
+        self.assertEqual(result.source, "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY")
+        self.assertEqual(mock_run.call_count, 2)
+
+    def test_service_pipe_health_uses_copy_history(self):
+        frame = pd.DataFrame({
+            "LOAD_EVENTS": [5],
+            "FAILED_LOADS": [1],
+        })
+
+        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run:
+            result = load_shared_service_pipe_health(8, "ALFA", section="Unit Test")
+
+        self.assertEqual(result.source, "Live: SNOWFLAKE.ACCOUNT_USAGE.COPY_HISTORY")
+        sql = mock_run.call_args.args[0].upper()
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.COPY_HISTORY", sql)
+        self.assertIn("DATEADD('HOUR', -8", sql)
+
     def test_warehouse_scaling_events_prefers_mart(self):
         frame = pd.DataFrame({
             "WAREHOUSE_NAME": ["ALFA_WH"],
@@ -489,6 +661,90 @@ class SharedMetricsTests(unittest.TestCase):
         self.assertIn("CREDITS_USED_COMPUTE", live_sql)
         self.assertIn("CREDITS_USED_CLOUD_SERVICES", live_sql)
 
+    def test_warehouse_efficiency_uses_shared_query_attributed_metering(self):
+        frame = pd.DataFrame({
+            "WAREHOUSE_NAME": ["ALFA_WH"],
+            "METERED_CREDITS": [10.0],
+            "EFFICIENCY_SCORE": [65.0],
+        })
+
+        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run, patch(
+            "utils.shared_metrics.filter_existing_columns",
+            side_effect=[
+                [
+                    "WAREHOUSE_SIZE",
+                    "QUEUED_OVERLOAD_TIME",
+                    "BYTES_SPILLED_TO_REMOTE_STORAGE",
+                    "PERCENTAGE_SCANNED_FROM_CACHE",
+                ],
+                ["CREDITS_USED_COMPUTE", "CREDITS_USED_CLOUD_SERVICES"],
+            ],
+        ):
+            result = load_shared_warehouse_efficiency(object(), 7, "ALFA", section="Unit Test")
+
+        self.assertEqual(result.source, "Live: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY + query-attributed metering")
+        sql = mock_run.call_args.args[0].upper()
+        self.assertIn("PER_QUERY_CREDITS", sql)
+        self.assertIn("QUEUE_SEC_PER_CREDIT", sql)
+        self.assertIn("REMOTE_SPILL_GB_PER_CREDIT", sql)
+        self.assertIn("EFFICIENCY_SCORE", sql)
+
+    def test_warehouse_spill_uses_shared_query_history_loader(self):
+        frame = pd.DataFrame({
+            "WAREHOUSE_NAME": ["ALFA_WH"],
+            "LOCAL_SPILL_GB": [1.5],
+            "REMOTE_SPILL_GB": [2.5],
+        })
+
+        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run, patch(
+            "utils.shared_metrics.filter_existing_columns",
+            return_value=[
+                "WAREHOUSE_SIZE",
+                "BYTES_SPILLED_TO_LOCAL_STORAGE",
+                "BYTES_SPILLED_TO_REMOTE_STORAGE",
+            ],
+        ):
+            result = load_shared_warehouse_spill(object(), 7, "ALFA", section="Unit Test")
+
+        self.assertEqual(result.source, "Live: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY")
+        sql = mock_run.call_args.args[0].upper()
+        self.assertIn("BYTES_SPILLED_TO_LOCAL_STORAGE", sql)
+        self.assertIn("BYTES_SPILLED_TO_REMOTE_STORAGE", sql)
+        self.assertIn("SPILL_QUERY_COUNT", sql)
+
+    def test_warehouse_heatmap_prefers_mart_and_caps_live_fallback(self):
+        mart_frame = pd.DataFrame({
+            "WAREHOUSE_NAME": ["ALFA_WH"],
+            "DAY_OF_WEEK": [1],
+            "HOUR_OF_DAY": [12],
+            "QUERY_COUNT": [10],
+        })
+
+        with patch("utils.shared_metrics.run_query", return_value=mart_frame) as mock_run:
+            result = load_shared_warehouse_heatmap(30, "ALFA", section="Unit Test")
+
+        self.assertEqual(result.source, "Fast warehouse summary")
+        self.assertEqual(mock_run.call_count, 1)
+
+        live_frame = pd.DataFrame({
+            "WAREHOUSE_NAME": ["ALFA_WH"],
+            "DAY_OF_WEEK": [1],
+            "HOUR_OF_DAY": [12],
+            "QUERY_COUNT": [10],
+        })
+        st.session_state.clear()
+        st.session_state["active_company"] = "ALFA"
+        st.session_state["global_environment"] = "ALL"
+        with patch("utils.shared_metrics.run_query", side_effect=[pd.DataFrame(), live_frame]) as mock_run:
+            result = load_shared_warehouse_heatmap(45, "ALFA", section="Unit Test")
+
+        self.assertEqual(result.source, "Bounded live warehouse history")
+        self.assertEqual(result.effective_days, 30)
+        self.assertIn("capped at 30 days", result.message)
+        live_sql = mock_run.call_args_list[1].args[0].upper()
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY", live_sql)
+        self.assertIn("DATEADD('DAY', -30", live_sql)
+
     def test_task_health_summary_returns_zero_row_when_unavailable(self):
         with patch(
             "utils.compatibility.build_task_health_sql",
@@ -519,6 +775,56 @@ class SharedMetricsTests(unittest.TestCase):
         self.assertIn("AS HAS_MFA", sql)
         self.assertIn("AS MFA_SOURCE", sql)
 
+    def test_shared_mfa_helpers_match_snowflake_user_variants(self):
+        self.assertEqual(
+            shared_mfa_count_expr({"HAS_MFA"}),
+            "COUNT_IF(COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR(has_mfa)), FALSE) = FALSE)",
+        )
+        self.assertEqual(
+            shared_mfa_gap_predicate({"EXT_AUTHN_DUO"}),
+            "AND COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR(u.ext_authn_duo)), FALSE) = FALSE",
+        )
+        self.assertEqual(
+            shared_mfa_gap_predicate({"HAS_MFA"}, alias="usr"),
+            "AND COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR(usr.has_mfa)), FALSE) = FALSE",
+        )
+        self.assertEqual(
+            shared_mfa_proof_label(set()),
+            "ACCOUNT_USAGE.USERS MFA signal unavailable",
+        )
+
+    def test_security_summary_builders_share_security_monitoring_sql(self):
+        st.session_state["global_environment"] = "DEV_ALL"
+        with patch(
+            "utils.shared_metrics.filter_existing_columns",
+            return_value=["HAS_MFA", "HAS_PASSWORD", "LAST_SUCCESS_LOGIN"],
+        ):
+            live_summary, live_exceptions = build_shared_security_summary_sql(object(), 14, "ALFA")
+            mart_summary, mart_exceptions = build_shared_security_mart_brief_sql(object(), 14, "ALFA")
+
+        combined_exceptions = "\n".join([live_exceptions, mart_exceptions]).upper()
+        combined_summary = "\n".join([live_summary, mart_summary]).upper()
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY", live_summary.upper())
+        self.assertIn("FACT_LOGIN_DAILY", mart_summary.upper())
+        self.assertIn("FACT_GRANT_DAILY", mart_exceptions.upper())
+        self.assertIn("GRANTS_TO_ROLES", combined_exceptions)
+        self.assertIn("'OBJECT GRANT'", combined_exceptions)
+        self.assertIn("GOR.TABLE_CATALOG AS DATABASE_NAME", combined_exceptions)
+        self.assertIn("ALFA_EDW", combined_exceptions)
+        self.assertNotIn("GRANTS_TO_ROLES", combined_summary)
+
+    def test_security_privileged_grant_review_builder_keeps_account_grants_unfiltered(self):
+        sql = build_shared_security_privileged_grant_review_sql(30, "ALFA", "PROD")
+        sql_upper = sql.upper()
+
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS", sql_upper)
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_ROLES", sql_upper)
+        self.assertIn("'NO DATABASE CONTEXT' AS ENVIRONMENT", sql_upper)
+        self.assertIn("PRIVILEGED_ROLE_GRANTS", sql_upper)
+        self.assertIn("OBJECT_PRIVILEGE_GRANTS", sql_upper)
+        self.assertIn("ALFA_EDW_PROD", sql_upper)
+        self.assertNotIn("GTU.TABLE_CATALOG", sql_upper)
+
     def test_grants_to_users_prefers_mart(self):
         frame = pd.DataFrame({
             "GRANTEE_NAME": ["ALFA_USER"],
@@ -530,6 +836,24 @@ class SharedMetricsTests(unittest.TestCase):
 
         self.assertEqual(result.source, "Fast grant summary")
         self.assertEqual(mock_run.call_count, 1)
+
+    def test_access_hygiene_sql_is_shared_and_account_scoped(self):
+        sql = build_shared_access_hygiene_sql(
+            object(),
+            30,
+            "ALFA",
+            "DEV_ALL",
+            user_columns=["HAS_PASSWORD", "EXT_AUTHN_DUO", "LAST_SUCCESS_LOGIN"],
+        ).upper()
+
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.USERS", sql)
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY", sql)
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS", sql)
+        self.assertIn("'NO DATABASE CONTEXT' AS DATABASE_CONTEXT", sql)
+        self.assertIn("'NO DATABASE CONTEXT' AS ENVIRONMENT_SCOPE", sql)
+        self.assertIn("'DEV_ALL' AS SELECTED_ENVIRONMENT", sql)
+        self.assertNotIn("TABLE_CATALOG", sql)
+        self.assertNotIn("DATABASE_NAME", sql)
 
     def test_access_hygiene_snapshot_labels_account_scope(self):
         frame = pd.DataFrame({

@@ -59,9 +59,11 @@ render_priority_dataframe = _lazy_util("render_priority_dataframe")
 render_load_status = _lazy_util("render_load_status")
 render_mode_selector = _lazy_util("render_mode_selector")
 day_window_selectbox = _lazy_util("day_window_selectbox")
+load_shared_usage_storage_kpis = _lazy_util("load_shared_usage_storage_kpis")
 load_shared_usage_metering_kpis = _lazy_util("load_shared_usage_metering_kpis")
 load_shared_query_history_rollup = _lazy_util("load_shared_query_history_rollup")
 load_shared_warehouse_pressure_summary = _lazy_util("load_shared_warehouse_pressure_summary")
+build_shared_access_hygiene_sql = _lazy_util("build_shared_access_hygiene_sql")
 load_shared_access_hygiene_snapshot = _lazy_util("load_shared_access_hygiene_snapshot")
 
 
@@ -2043,123 +2045,19 @@ def _account_health_intervention_matrix(
 
 
 def _account_health_access_hygiene_sql(session, days: int, company: str, environment: str = "ALL") -> str:
-    """Build account-level user/auth hygiene SQL for the daily DBA monitor.
-
-    Login and user metadata do not carry database context, so this intentionally
-    ignores the selected PROD/DEV database environment and labels the scope.
-    """
-    lookback_days = max(1, int(days or 30))
-    user_cols = set(filter_existing_columns(
+    """Compatibility wrapper for the shared account-level user/auth hygiene SQL."""
+    user_cols = filter_existing_columns(
         session,
         "SNOWFLAKE.ACCOUNT_USAGE.USERS",
-        ["HAS_PASSWORD", "EXT_AUTHN_DUO", "LAST_SUCCESS_LOGIN"],
-    ))
-    has_password_expr = (
-        "COALESCE(TO_VARCHAR(u.has_password), 'false')"
-        if "HAS_PASSWORD" in user_cols else "'unknown'"
+        ["HAS_MFA", "HAS_PASSWORD", "EXT_AUTHN_DUO", "LAST_SUCCESS_LOGIN"],
     )
-    mfa_expr = (
-        "COALESCE(TO_VARCHAR(u.ext_authn_duo), 'unknown')"
-        if "EXT_AUTHN_DUO" in user_cols else "'unknown'"
+    return build_shared_access_hygiene_sql(
+        session,
+        days,
+        company,
+        environment,
+        user_columns=user_cols,
     )
-    last_success_expr = (
-        "u.last_success_login"
-        if "LAST_SUCCESS_LOGIN" in user_cols else "NULL::TIMESTAMP_NTZ"
-    )
-    user_filter_u = get_user_filter_clause("u.name", company)
-    user_filter_lh = get_user_filter_clause("lh.user_name", company)
-    user_filter_g = get_user_filter_clause("g.grantee_name", company)
-    env_label = sql_literal(str(environment or "ALL"), 100)
-    return f"""
-WITH login_rollup AS (
-    SELECT
-        lh.user_name,
-        COUNT_IF(lh.is_success = 'NO') AS failed_logins,
-        COUNT(DISTINCT IFF(lh.is_success = 'NO', lh.client_ip, NULL)) AS failed_ips,
-        MAX(IFF(lh.is_success = 'YES', lh.event_timestamp, NULL)) AS last_login_from_history
-    FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY lh
-    WHERE lh.event_timestamp >= DATEADD('day', -{lookback_days}, CURRENT_TIMESTAMP())
-      {user_filter_lh}
-    GROUP BY lh.user_name
-),
-admin_grants AS (
-    SELECT
-        g.grantee_name AS user_name,
-        COUNT(DISTINCT g.role) AS admin_role_count,
-        LISTAGG(DISTINCT g.role, ', ') WITHIN GROUP (ORDER BY g.role) AS admin_roles
-    FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS g
-    WHERE g.deleted_on IS NULL
-      {user_filter_g}
-      AND (
-          UPPER(g.role) IN ('ACCOUNTADMIN', 'ORGADMIN', 'SECURITYADMIN', 'SYSADMIN', 'USERADMIN')
-          OR UPPER(g.role) LIKE '%ADMIN%'
-          OR UPPER(g.role) LIKE '%SECURITY%'
-      )
-    GROUP BY g.grantee_name
-),
-user_posture AS (
-    SELECT
-        u.name AS user_name,
-        COALESCE(TO_VARCHAR(u.disabled), 'false') AS disabled,
-        {has_password_expr} AS has_password,
-        {mfa_expr} AS mfa_signal,
-        COALESCE(lr.last_login_from_history, {last_success_expr}, u.created_on) AS last_seen,
-        COALESCE(lr.failed_logins, 0) AS failed_logins,
-        COALESCE(lr.failed_ips, 0) AS failed_ips,
-        COALESCE(ag.admin_role_count, 0) AS admin_role_count,
-        COALESCE(ag.admin_roles, '') AS admin_roles
-    FROM SNOWFLAKE.ACCOUNT_USAGE.USERS u
-    LEFT JOIN login_rollup lr ON UPPER(u.name) = UPPER(lr.user_name)
-    LEFT JOIN admin_grants ag ON UPPER(u.name) = UPPER(ag.user_name)
-    WHERE u.deleted_on IS NULL
-      {user_filter_u}
-)
-SELECT
-    user_name,
-    disabled,
-    has_password,
-    mfa_signal,
-    last_seen,
-    failed_logins,
-    failed_ips,
-    admin_role_count,
-    admin_roles,
-    DATEDIFF('day', last_seen, CURRENT_TIMESTAMP()) AS days_since_seen,
-    CASE
-        WHEN failed_logins >= 25 OR failed_ips >= 5 THEN 'High'
-        WHEN admin_role_count > 0 AND (mfa_signal = 'unknown' OR LOWER(mfa_signal) <> 'true') THEN 'High'
-        WHEN DATEDIFF('day', last_seen, CURRENT_TIMESTAMP()) >= 90 THEN 'Medium'
-        WHEN failed_logins > 0 OR admin_role_count > 0 OR (mfa_signal <> 'unknown' AND LOWER(mfa_signal) <> 'true') THEN 'Medium'
-        ELSE 'Low'
-    END AS severity,
-    CONCAT_WS('; ',
-        IFF(disabled = 'true', 'disabled user retained in account', NULL),
-        IFF(failed_logins > 0, failed_logins || ' failed login(s)', NULL),
-        IFF(failed_ips >= 5, failed_ips || ' failed login source IP(s)', NULL),
-        IFF(admin_role_count > 0, admin_role_count || ' privileged role grant(s)', NULL),
-        IFF(mfa_signal <> 'unknown' AND LOWER(mfa_signal) <> 'true', 'MFA signal missing', NULL),
-        IFF(DATEDIFF('day', last_seen, CURRENT_TIMESTAMP()) >= 90, 'dormant >= 90 days', NULL)
-    ) AS posture_findings,
-    'No Database Context' AS database_context,
-    'No Database Context' AS environment_scope,
-    {env_label} AS selected_environment,
-    'Account-Level Control' AS scope_confidence,
-    'USERS, LOGIN_HISTORY, and GRANTS_TO_USERS do not expose database context; company scope uses user naming only.' AS scope_evidence,
-    'Confirm IAM route, admin-role business need, MFA posture, and recent login telemetry before disabling users or changing grants.' AS next_action,
-    'user, IAM ticket, failed login context, MFA/admin-role telemetry' AS proof_required
-FROM user_posture
-WHERE
-    failed_logins > 0
-    OR admin_role_count > 0
-    OR (mfa_signal <> 'unknown' AND LOWER(mfa_signal) <> 'true')
-    OR DATEDIFF('day', last_seen, CURRENT_TIMESTAMP()) >= 90
-ORDER BY
-    CASE severity WHEN 'High' THEN 1 WHEN 'Medium' THEN 2 ELSE 3 END,
-    failed_logins DESC,
-    admin_role_count DESC,
-    days_since_seen DESC
-LIMIT 100
-""".strip()
 
 
 def _annotate_account_health_access_hygiene(hygiene: pd.DataFrame) -> pd.DataFrame:
@@ -3038,17 +2936,7 @@ def render():
                 failed_pred_q = qh["failed_pred_q"]
                 queued_count_expr_q = qh["queued_count_expr_q"]
                 query_plan = [
-                    ("storage", f"""
-                    SELECT COALESCE(
-                        ROUND(SUM(COALESCE(average_database_bytes,0)+COALESCE(average_failsafe_bytes,0))/POWER(1024,4),2),
-                        0
-                    ) AS storage_tb
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY
-                    WHERE usage_date = (SELECT MAX(usage_date)
-                                        FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY)
-                      {get_db_filter_clause("database_name", company)}
-                """),
-                ("cost_drivers", f"""
+                    ("cost_drivers", f"""
                     WITH {build_metered_credit_cte(hours_back=48, include_recent=True)}
                     SELECT q.user_name, q.warehouse_name, {cost_wh_size_expr} AS warehouse_size,
                            COUNT(*) AS query_count,
@@ -3156,6 +3044,22 @@ def render():
                 )
                 hd["warehouse_pressure"] = pressure_result.data
                 hd["_warehouse_pressure_source"] = pressure_result.source
+                storage_result = load_shared_usage_storage_kpis(
+                    1,
+                    company,
+                    force=True,
+                    section="Account Health",
+                )
+                storage_summary = storage_result.data
+                if storage_summary is not None and not storage_summary.empty:
+                    storage_row = storage_summary.iloc[0]
+                    storage_tb = safe_float(storage_row.get("ACTIVE_STORAGE_TB", 0)) + safe_float(
+                        storage_row.get("FAILSAFE_STORAGE_TB", 0)
+                    )
+                    hd["storage"] = pd.DataFrame([{"STORAGE_TB": storage_tb}])
+                else:
+                    hd["storage"] = pd.DataFrame(columns=["STORAGE_TB"])
+                hd["_storage_source"] = storage_result.source
                 query_plan = [
                 ("task_health", _task_health_sql_or_empty(
                     action_session,

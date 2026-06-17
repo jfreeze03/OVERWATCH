@@ -31,7 +31,6 @@ get_environment_filter_clause = _lazy_util("get_environment_filter_clause")
 get_global_filter_clause = _lazy_util("get_global_filter_clause")
 metric_confidence_label = _lazy_util("metric_confidence_label")
 freshness_note = _lazy_util("freshness_note")
-build_metered_credit_cte = _lazy_util("build_metered_credit_cte")
 make_action_id = _lazy_util("make_action_id")
 upsert_actions = _lazy_util("upsert_actions")
 run_query = _lazy_util("run_query")
@@ -40,7 +39,9 @@ filter_existing_columns = _lazy_util("filter_existing_columns")
 render_optimization_advisor = _lazy_util("render_optimization_advisor")
 load_shared_warehouse_overview = _lazy_util("load_shared_warehouse_overview")
 load_shared_warehouse_scaling_events = _lazy_util("load_shared_warehouse_scaling_events")
-build_mart_warehouse_heatmap_sql = _lazy_util("build_mart_warehouse_heatmap_sql")
+load_shared_warehouse_efficiency = _lazy_util("load_shared_warehouse_efficiency")
+load_shared_warehouse_spill = _lazy_util("load_shared_warehouse_spill")
+load_shared_warehouse_heatmap = _lazy_util("load_shared_warehouse_heatmap")
 load_warehouse_inventory = _lazy_util("load_warehouse_inventory")
 mart_object_name = _lazy_util("mart_object_name")
 resolve_owner_context = _lazy_util("resolve_owner_context")
@@ -292,18 +293,6 @@ def _warehouse_frame_len(frame) -> int:
         return int(len(frame))
     except TypeError:
         return 0
-
-
-def _warehouse_global_filter_clause(alias: str | None = None) -> str:
-    """Build query-history triage filters only when a live SQL path is opened."""
-    prefix = f"{alias}." if alias else ""
-    return get_global_filter_clause(
-        date_col=f"{prefix}start_time",
-        wh_col=f"{prefix}warehouse_name",
-        user_col=f"{prefix}user_name",
-        role_col=f"{prefix}role_name",
-        db_col=f"{prefix}database_name",
-    )
 
 
 def _warehouse_column_sum(frame, column: str) -> float:
@@ -3974,33 +3963,16 @@ def render():
                 session = _warehouse_action_session("load warehouse efficiency metrics")
                 if session is None:
                     return
-                exprs = _warehouse_sql_exprs(session)
-                df_eff = run_query(f"""
-                    WITH {build_metered_credit_cte(days_back=eff_days, include_recent=True)}
-                    SELECT q.warehouse_name,
-                           {exprs["wh_size_expr"]} AS warehouse_size,
-                           COUNT(*) AS query_count,
-                           ROUND(SUM(COALESCE(pqc.metered_credits, 0)), 4) AS metered_credits,
-                           ROUND(SUM(COALESCE(pqc.metered_credits, 0)) / NULLIF(COUNT(*), 0), 6) AS credits_per_query,
-                           ROUND({exprs["queue_sum_expr"]} / 1000 / NULLIF(SUM(COALESCE(pqc.metered_credits, 0)), 0), 2) AS queue_sec_per_credit,
-                           ROUND({exprs["remote_spill_sum_expr"]} / POWER(1024,3) / NULLIF(SUM(COALESCE(pqc.metered_credits, 0)), 0), 2) AS remote_spill_gb_per_credit,
-                           ROUND({exprs["cache_expr"]}, 2) AS avg_cache_pct,
-                           ROUND(100
-                                 - LEAST(COALESCE({exprs["queue_sum_expr"]} / 1000 / NULLIF(SUM(COALESCE(pqc.metered_credits, 0)), 0), 0), 25)
-                                 - LEAST(COALESCE({exprs["remote_spill_sum_expr"]} / POWER(1024,3) / NULLIF(SUM(COALESCE(pqc.metered_credits, 0)), 0), 0), 25)
-                                 - LEAST(COALESCE(SUM(COALESCE(pqc.metered_credits, 0)) / NULLIF(COUNT(*), 0), 0) * 10, 25),
-                                 1) AS efficiency_score
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
-                    LEFT JOIN per_query_credits pqc ON q.query_id = pqc.query_id
-                    WHERE q.start_time >= DATEADD('day', -{eff_days}, CURRENT_TIMESTAMP())
-                      AND q.warehouse_name IS NOT NULL
-                      {_warehouse_global_filter_clause("q")}
-                    GROUP BY q.warehouse_name
-                    ORDER BY efficiency_score ASC, metered_credits DESC
-                    LIMIT 200
-                """, ttl_key=f"wh_efficiency_{company}_{eff_days}", tier="historical")
-                st.session_state["wh_efficiency"] = df_eff
+                result = load_shared_warehouse_efficiency(
+                    session,
+                    eff_days,
+                    company,
+                    force=True,
+                    section="Warehouse Health",
+                )
+                st.session_state["wh_efficiency"] = result.data
                 st.session_state["wh_efficiency_meta"] = _warehouse_scope_meta(company, environment, eff_days)
+                st.session_state["wh_efficiency_source"] = result.source
             except Exception as e:
                 st.warning(f"Efficiency metrics unavailable in this role/context: {format_snowflake_error(e)}")
 
@@ -4020,7 +3992,10 @@ def render():
                 ("Needs Review", len(low)),
                 ("Total metered credits", format_credits(float(df_eff["METERED_CREDITS"].sum()))),
             ))
-            defer_source_note(metric_confidence_label("allocated"), freshness_note("ACCOUNT_USAGE"))
+            defer_source_note(
+                metric_confidence_label("allocated"),
+                st.session_state.get("wh_efficiency_source", freshness_note("ACCOUNT_USAGE")),
+            )
             df_eff_display = df_eff.rename(columns={"EFFICIENCY_SCORE": "REVIEW_PRIORITY"})
             render_priority_dataframe(
                 df_eff_display,
@@ -4063,23 +4038,16 @@ def render():
                 session = _warehouse_action_session("load warehouse spill data")
                 if session is None:
                     return
-                exprs = _warehouse_sql_exprs(session)
-                df_sp = run_query(f"""
-                    SELECT warehouse_name, {exprs["plain_wh_size_expr"]} AS warehouse_size,
-                           COUNT(*) AS spill_query_count,
-                           ROUND({exprs["local_spill_expr"]}/POWER(1024,3),2)  AS local_spill_gb,
-                           ROUND({exprs["remote_spill_expr"]}/POWER(1024,3),2) AS remote_spill_gb,
-                           ROUND(AVG(total_elapsed_time)/1000,2)                       AS avg_elapsed_sec
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-                    WHERE start_time >= DATEADD('day', -{sp_days}, CURRENT_TIMESTAMP())
-                      AND ({exprs["local_spill_row_expr"]} > 0 OR {exprs["remote_spill_row_expr"]} > 0)
-                      AND warehouse_name IS NOT NULL
-                      {_warehouse_global_filter_clause()}
-                    GROUP BY warehouse_name
-                    ORDER BY local_spill_gb + remote_spill_gb DESC
-                """, ttl_key=f"wh_spill_{company}_{sp_days}", tier="historical")
-                st.session_state["wh_df_sp"] = df_sp
+                result = load_shared_warehouse_spill(
+                    session,
+                    sp_days,
+                    company,
+                    force=True,
+                    section="Warehouse Health",
+                )
+                st.session_state["wh_df_sp"] = result.data
                 st.session_state["wh_df_sp_meta"] = _warehouse_scope_meta(company, environment, sp_days)
+                st.session_state["wh_df_sp_source"] = result.source
             except Exception as e:
                 st.warning(f"Spill data unavailable in this role/context: {format_snowflake_error(e)}")
 
@@ -4098,6 +4066,7 @@ def render():
                 ("Total Local Spill", f"{df_sp['LOCAL_SPILL_GB'].sum():.1f} GB"),
                 ("Total Remote Spill", f"{df_sp['REMOTE_SPILL_GB'].sum():.1f} GB"),
             ))
+            defer_source_note(st.session_state.get("wh_df_sp_source", "Live: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
             render_priority_dataframe(
                 df_sp,
                 title="Spill and memory pressure",
@@ -4134,43 +4103,23 @@ def render():
 
         if st.button("Refresh Heatmap", key="hm_build"):
             try:
-                mart_sql = build_mart_warehouse_heatmap_sql(
+                result = load_shared_warehouse_heatmap(
                     hm_days,
-                    company=company,
+                    company,
                     warehouse_contains=global_warehouse,
                     user_contains=global_user,
                     role_contains=global_role,
                     database_contains=global_database,
                     start_date=global_start_date,
                     end_date=global_end_date,
+                    force=True,
+                    section="Warehouse Health",
                 )
-                df_hm = run_query(
-                    mart_sql,
-                    ttl_key=f"wh_heatmap_mart_{company}_{hm_days}",
-                    tier="historical",
-                )
-                source = "Fast warehouse summary"
-                if df_hm.empty:
-                    live_days = min(int(hm_days), 30)
-                    if live_days < int(hm_days):
-                        st.warning("Workload heatmap live fallback is capped at 30 days to avoid broad query-history scans.")
-                    df_hm = run_query(f"""
-                        SELECT warehouse_name,
-                               DAYOFWEEK(start_time) AS day_of_week,
-                               HOUR(start_time)      AS hour_of_day,
-                               COUNT(*)              AS query_count,
-                               ROUND(AVG(total_elapsed_time)/1000,2) AS avg_elapsed_sec
-                        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-                        WHERE start_time >= DATEADD('day', -{live_days}, CURRENT_TIMESTAMP())
-                          AND warehouse_name IS NOT NULL
-                          {_warehouse_global_filter_clause()}
-                        GROUP BY warehouse_name, day_of_week, hour_of_day
-                        ORDER BY warehouse_name, day_of_week, hour_of_day
-                    """, ttl_key=f"wh_heatmap_live_{company}_{live_days}", tier="historical")
-                    source = "Bounded live warehouse history"
-                st.session_state["wh_df_hm"] = df_hm
+                if result.message:
+                    st.warning(result.message)
+                st.session_state["wh_df_hm"] = result.data
                 st.session_state["wh_df_hm_meta"] = _warehouse_scope_meta(company, environment, hm_days)
-                st.session_state["wh_df_hm_source"] = source
+                st.session_state["wh_df_hm_source"] = result.source
             except Exception as e:
                 st.warning(f"Workload heatmap unavailable in this role/context: {format_snowflake_error(e)}")
 
@@ -4184,6 +4133,8 @@ def render():
             st.info("Loaded workload heatmap is stale for the active scope. Refresh Heatmap before acting.")
         elif st.session_state.get("wh_df_hm") is not None and not st.session_state["wh_df_hm"].empty:
             df_hm = st.session_state["wh_df_hm"]
+            if st.session_state.get("wh_df_hm_source"):
+                defer_source_note(str(st.session_state.get("wh_df_hm_source")))
             whs = df_hm["WAREHOUSE_NAME"].unique()
             sel_wh = st.selectbox("Warehouse", whs, key="hm_wh_sel")
 

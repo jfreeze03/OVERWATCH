@@ -24,14 +24,12 @@ from utils.section_guidance import defer_section_note, defer_source_note
 pd = lazy_pandas()
 
 action_queue_environment_clause = _lazy_util("action_queue_environment_clause")
+build_shared_security_mart_brief_sql = _lazy_util("build_shared_security_mart_brief_sql")
+build_shared_security_privileged_grant_review_sql = _lazy_util("build_shared_security_privileged_grant_review_sql")
+build_shared_security_summary_sql = _lazy_util("build_shared_security_summary_sql")
 environment_label_for_database = _lazy_util("environment_label_for_database")
-filter_existing_columns = _lazy_util("filter_existing_columns")
 format_snowflake_error = _lazy_util("format_snowflake_error")
-get_db_filter_clause = _lazy_util("get_db_filter_clause")
-get_environment_case_expr = _lazy_util("get_environment_case_expr")
-get_environment_filter_clause = _lazy_util("get_environment_filter_clause")
 get_session = _lazy_util("get_session")
-get_user_filter_clause = _lazy_util("get_user_filter_clause")
 mart_object_name = _lazy_util("mart_object_name")
 make_action_id = _lazy_util("make_action_id")
 render_priority_dataframe = _lazy_util("render_priority_dataframe")
@@ -42,6 +40,9 @@ resolve_owner_context = _lazy_util("resolve_owner_context")
 run_query = _lazy_util("run_query")
 safe_identifier = _lazy_util("safe_identifier")
 sql_literal = _lazy_util("sql_literal")
+shared_mfa_count_expr = _lazy_util("shared_mfa_count_expr")
+shared_mfa_gap_predicate = _lazy_util("shared_mfa_gap_predicate")
+shared_mfa_proof_label = _lazy_util("shared_mfa_proof_label")
 upsert_actions = _lazy_util("upsert_actions")
 
 
@@ -54,31 +55,15 @@ def get_active_environment() -> str:
 
 
 def _mfa_count_expr(user_cols: set[str]) -> str:
-    normalized = {str(col or "").upper() for col in user_cols}
-    if "HAS_MFA" in normalized:
-        return "COUNT_IF(COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR(has_mfa)), FALSE) = FALSE)"
-    if "EXT_AUTHN_DUO" in normalized:
-        return "COUNT_IF(COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR(ext_authn_duo)), FALSE) = FALSE)"
-    return "NULL::NUMBER"
+    return shared_mfa_count_expr(user_cols)
 
 
 def _mfa_gap_predicate(user_cols: set[str], alias: str = "u") -> str:
-    normalized = {str(col or "").upper() for col in user_cols}
-    prefix = f"{alias}." if alias else ""
-    if "HAS_MFA" in normalized:
-        return f"AND COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR({prefix}has_mfa)), FALSE) = FALSE"
-    if "EXT_AUTHN_DUO" in normalized:
-        return f"AND COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR({prefix}ext_authn_duo)), FALSE) = FALSE"
-    return "AND 1 = 0"
+    return shared_mfa_gap_predicate(user_cols, alias)
 
 
 def _mfa_proof_label(user_cols: set[str]) -> str:
-    normalized = {str(col or "").upper() for col in user_cols}
-    if "HAS_MFA" in normalized:
-        return "ACCOUNT_USAGE.USERS HAS_MFA signal"
-    if "EXT_AUTHN_DUO" in normalized:
-        return "ACCOUNT_USAGE.USERS EXT_AUTHN_DUO signal"
-    return "ACCOUNT_USAGE.USERS MFA signal unavailable"
+    return shared_mfa_proof_label(user_cols)
 
 
 def _freshness_note(source: str) -> str:
@@ -927,125 +912,7 @@ def _build_security_access_review(exceptions: pd.DataFrame, environment: str = "
 
 
 def _security_privileged_grant_review_sql(days: int, company: str, environment: str = "ALL") -> str:
-    """Return high-risk account-role and object grants with environment-aware object scope."""
-    days = max(1, min(int(days or 30), 90))
-    user_filter = get_user_filter_clause("gtu.grantee_name")
-    object_env_filter = get_environment_filter_clause(
-        "gor.table_catalog",
-        environment=environment,
-        company=company,
-    )
-    object_env_expr = get_environment_case_expr("gor.table_catalog")
-    return f"""WITH privileged_role_grants AS (
-    SELECT
-        'Privileged Role Grant' AS finding_type,
-        IFF(UPPER(gtu.role) IN ('ACCOUNTADMIN', 'ORGADMIN', 'SECURITYADMIN'), 'Critical', 'High') AS severity,
-        gtu.grantee_name AS entity,
-        gtu.role AS role_name,
-        NULL::VARCHAR AS privilege,
-        FALSE AS grant_option,
-        NULL::VARCHAR AS object_name,
-        NULL::VARCHAR AS database_name,
-        FALSE AS database_context,
-        'No Database Context' AS environment,
-        'ACCOUNT_USAGE.GRANTS_TO_USERS privileged role grants' AS proof_query,
-        gtu.granted_by,
-        gtu.created_on,
-        DATEDIFF('day', gtu.created_on, CURRENT_TIMESTAMP()) AS grant_age_days,
-        'Business justification, ticket/reference, review-by date, and telemetry status required.' AS proof_required,
-        'Review account-level privileged role grant; do not hide this row behind a database environment filter.' AS next_action
-    FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS gtu
-    WHERE gtu.deleted_on IS NULL
-      AND (
-          UPPER(gtu.role) IN ('ACCOUNTADMIN', 'ORGADMIN', 'SECURITYADMIN', 'SYSADMIN', 'USERADMIN')
-          OR UPPER(gtu.role) ILIKE '%ADMIN%'
-          OR UPPER(gtu.role) ILIKE '%SECURITY%'
-      )
-      {user_filter}
-),
-object_privilege_grants AS (
-    SELECT
-        'Privileged Object Grant' AS finding_type,
-        IFF(
-            UPPER(gor.privilege) IN ('OWNERSHIP', 'APPLY MASKING POLICY', 'APPLY ROW ACCESS POLICY')
-            OR COALESCE(TO_VARCHAR(gor.grant_option), 'false') = 'true',
-            'High',
-            'Medium'
-        ) AS severity,
-        gor.grantee_name AS entity,
-        NULL::VARCHAR AS role_name,
-        gor.privilege AS privilege,
-        COALESCE(TO_VARCHAR(gor.grant_option), 'false') = 'true' AS grant_option,
-        gor.name AS object_name,
-        gor.table_catalog AS database_name,
-        TRUE AS database_context,
-        {object_env_expr} AS environment,
-        'ACCOUNT_USAGE.GRANTS_TO_ROLES privileged object grants' AS proof_query,
-        gor.granted_by,
-        gor.created_on,
-        DATEDIFF('day', gor.created_on, CURRENT_TIMESTAMP()) AS grant_age_days,
-        'Privilege justification, ticket/reference, review-by date, and rollback status required.' AS proof_required,
-        'Review database-scoped object privilege before revoke/narrowing action.' AS next_action
-    FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_ROLES gor
-    WHERE gor.deleted_on IS NULL
-      AND gor.created_on >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
-      AND gor.table_catalog IS NOT NULL
-      AND (
-          UPPER(gor.privilege) IN (
-              'OWNERSHIP',
-              'MANAGE GRANTS',
-              'APPLY MASKING POLICY',
-              'APPLY ROW ACCESS POLICY',
-              'CREATE DATABASE ROLE',
-              'CREATE SCHEMA',
-              'CREATE TABLE',
-              'CREATE VIEW'
-          )
-          OR COALESCE(TO_VARCHAR(gor.grant_option), 'false') = 'true'
-      )
-      {object_env_filter}
-)
-SELECT
-    finding_type,
-    severity,
-    entity,
-    role_name,
-    privilege,
-    grant_option,
-    object_name,
-    database_name,
-    database_context,
-    environment,
-    proof_query,
-    granted_by,
-    created_on,
-    grant_age_days,
-    proof_required,
-    next_action
-FROM privileged_role_grants
-UNION ALL
-SELECT
-    finding_type,
-    severity,
-    entity,
-    role_name,
-    privilege,
-    grant_option,
-    object_name,
-    database_name,
-    database_context,
-    environment,
-    proof_query,
-    granted_by,
-    created_on,
-    grant_age_days,
-    proof_required,
-    next_action
-FROM object_privilege_grants
-ORDER BY
-    CASE severity WHEN 'Critical' THEN 0 WHEN 'High' THEN 1 WHEN 'Medium' THEN 2 ELSE 3 END,
-    created_on DESC
-LIMIT 200""".strip()
+    return build_shared_security_privileged_grant_review_sql(days, company, environment)
 
 
 def _annotate_security_privileged_grant_readiness(grants: pd.DataFrame) -> pd.DataFrame:
@@ -1919,353 +1786,11 @@ def _build_security_brief_markdown(
 
 
 def _build_security_summary_sql(session, days: int, company: str) -> tuple[str, str]:
-    user_cols = set(filter_existing_columns(
-        session,
-        "SNOWFLAKE.ACCOUNT_USAGE.USERS",
-        ["HAS_MFA", "EXT_AUTHN_DUO", "HAS_PASSWORD", "LAST_SUCCESS_LOGIN"],
-    ))
-    mfa_count_expr = _mfa_count_expr(user_cols)
-    mfa_gap_predicate = _mfa_gap_predicate(user_cols)
-    mfa_proof = _mfa_proof_label(user_cols)
-    password_count_expr = (
-        "COUNT_IF(COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR(has_password)), FALSE) = TRUE)"
-        if "HAS_PASSWORD" in user_cols else "NULL::NUMBER"
-    )
-    last_seen_expr = "u.last_success_login" if "LAST_SUCCESS_LOGIN" in user_cols else "u.created_on"
-    user_filter_lh = get_user_filter_clause("lh.user_name")
-    user_filter_u = get_user_filter_clause("u.name")
-    user_filter_g = get_user_filter_clause("g.grantee_name")
-    db_filter = get_db_filter_clause("d.database_name")
-    object_grant_db_filter = get_db_filter_clause("gor.table_catalog")
-    summary_sql = f"""
-    WITH login_events AS (
-        SELECT
-            COUNT(*) AS login_events,
-            COUNT_IF(lh.is_success = 'NO') AS failed_logins,
-            COUNT(DISTINCT IFF(lh.is_success = 'NO', lh.user_name, NULL)) AS failed_users,
-            COUNT(DISTINCT IFF(lh.is_success = 'NO', lh.client_ip, NULL)) AS failed_ips
-        FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY lh
-        WHERE lh.event_timestamp >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
-          {user_filter_lh}
-    ),
-    users AS (
-        SELECT
-            COUNT(*) AS active_users,
-            {mfa_count_expr} AS users_without_mfa,
-            {password_count_expr} AS password_users
-        FROM SNOWFLAKE.ACCOUNT_USAGE.USERS u
-        WHERE u.deleted_on IS NULL
-          AND COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR(u.disabled)), FALSE) = FALSE
-          {user_filter_u}
-    ),
-    recent_grants AS (
-        SELECT COUNT(*) AS recent_grants
-        FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS g
-        WHERE g.deleted_on IS NULL
-          AND g.created_on >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
-          {user_filter_g}
-    ),
-    shared_dbs AS (
-        SELECT COUNT(*) AS shared_databases
-        FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASES d
-        WHERE d.deleted IS NULL
-          AND d.type IN ('IMPORTED DATABASE', 'SHARE')
-          {db_filter}
-    )
-    SELECT
-        '{company}' AS company,
-        login_events.login_events,
-        login_events.failed_logins,
-        login_events.failed_users,
-        login_events.failed_ips,
-        users.active_users,
-        users.users_without_mfa,
-        users.password_users,
-        recent_grants.recent_grants AS recent_grants,
-        shared_dbs.shared_databases
-    FROM login_events, users, recent_grants, shared_dbs
-    """
-    exceptions_sql = f"""
-    WITH failed_logins AS (
-        SELECT
-            'Failed Login' AS finding_type,
-            IFF(COUNT(*) >= 25 OR COUNT(DISTINCT client_ip) >= 5, 'High', 'Medium') AS severity,
-            user_name AS entity,
-            COUNT(*) AS event_count,
-            COUNT(DISTINCT client_ip) AS distinct_sources,
-            MAX(event_timestamp) AS last_seen,
-            'LOGIN_HISTORY failed login attempts by user/IP' AS proof_query,
-            NULL::VARCHAR AS database_name
-        FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY lh
-        WHERE lh.event_timestamp >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
-          AND lh.is_success = 'NO'
-          {user_filter_lh}
-        GROUP BY user_name
-        HAVING COUNT(*) >= 3
-    ),
-    mfa_gaps AS (
-        SELECT
-            'MFA Gap' AS finding_type,
-            'High' AS severity,
-            u.name AS entity,
-            1 AS event_count,
-            0 AS distinct_sources,
-            COALESCE({last_seen_expr}, u.created_on) AS last_seen,
-            '{mfa_proof}' AS proof_query,
-            NULL::VARCHAR AS database_name
-        FROM SNOWFLAKE.ACCOUNT_USAGE.USERS u
-        WHERE u.deleted_on IS NULL
-          AND COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR(u.disabled)), FALSE) = FALSE
-          {user_filter_u}
-          {mfa_gap_predicate}
-    ),
-    recent_grants AS (
-        SELECT
-            'Recent Grant' AS finding_type,
-            IFF(COUNT(*) >= 10, 'Medium', 'Low') AS severity,
-            g.grantee_name AS entity,
-            COUNT(*) AS event_count,
-            COUNT(DISTINCT g.role) AS distinct_sources,
-            MAX(g.created_on) AS last_seen,
-            'ACCOUNT_USAGE.GRANTS_TO_USERS active grants created recently' AS proof_query,
-            NULL::VARCHAR AS database_name
-        FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS g
-        WHERE g.deleted_on IS NULL
-          AND g.created_on >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
-          {user_filter_g}
-        GROUP BY g.grantee_name
-        HAVING COUNT(*) >= 3
-    ),
-    object_grants AS (
-        SELECT
-            'Object Grant' AS finding_type,
-            IFF(COUNT(*) >= 10 OR COUNT_IF(COALESCE(TO_VARCHAR(gor.grant_option), 'false') = 'true') > 0, 'High', 'Medium') AS severity,
-            COALESCE(gor.table_catalog || '.' || gor.table_schema || '.' || gor.name, gor.table_catalog, gor.name) AS entity,
-            COUNT(*) AS event_count,
-            COUNT(DISTINCT gor.grantee_name) AS distinct_sources,
-            MAX(gor.created_on) AS last_seen,
-            'ACCOUNT_USAGE.GRANTS_TO_ROLES object grants by database/schema/object' AS proof_query,
-            gor.table_catalog AS database_name
-        FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_ROLES gor
-        WHERE gor.deleted_on IS NULL
-          AND gor.created_on >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
-          AND gor.table_catalog IS NOT NULL
-          {object_grant_db_filter}
-        GROUP BY gor.table_catalog, gor.table_schema, gor.name
-        HAVING COUNT(*) >= 3 OR COUNT_IF(COALESCE(TO_VARCHAR(gor.grant_option), 'false') = 'true') > 0
-    ),
-    shared_exposure AS (
-        SELECT
-            'Shared Database Exposure' AS finding_type,
-            'Medium' AS severity,
-            d.database_name AS entity,
-            1 AS event_count,
-            0 AS distinct_sources,
-            d.created AS last_seen,
-            'ACCOUNT_USAGE.DATABASES imported database/share metadata' AS proof_query,
-            d.database_name AS database_name
-        FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASES d
-        WHERE d.deleted IS NULL
-          AND d.type IN ('IMPORTED DATABASE', 'SHARE')
-          {db_filter}
-    )
-    SELECT * FROM failed_logins
-    UNION ALL
-    SELECT * FROM mfa_gaps
-    UNION ALL
-    SELECT * FROM recent_grants
-    UNION ALL
-    SELECT * FROM object_grants
-    UNION ALL
-    SELECT * FROM shared_exposure
-    ORDER BY
-        CASE severity WHEN 'Critical' THEN 1 WHEN 'High' THEN 2 WHEN 'Medium' THEN 3 ELSE 4 END,
-        event_count DESC,
-        last_seen DESC
-    LIMIT 100
-    """
-    return summary_sql, exceptions_sql
+    return build_shared_security_summary_sql(session, days, company)
 
 
 def _build_security_mart_brief_sql(session, days: int, company: str) -> tuple[str, str]:
-    """Build the security summary with mart-backed login aggregates and live security metadata."""
-    user_cols = set(filter_existing_columns(
-        session,
-        "SNOWFLAKE.ACCOUNT_USAGE.USERS",
-        ["HAS_MFA", "EXT_AUTHN_DUO", "HAS_PASSWORD", "LAST_SUCCESS_LOGIN"],
-    ))
-    mfa_count_expr = _mfa_count_expr(user_cols)
-    mfa_gap_predicate = _mfa_gap_predicate(user_cols)
-    mfa_proof = _mfa_proof_label(user_cols)
-    password_count_expr = (
-        "COUNT_IF(COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR(has_password)), FALSE) = TRUE)"
-        if "HAS_PASSWORD" in user_cols else "NULL::NUMBER"
-    )
-    last_seen_expr = "u.last_success_login" if "LAST_SUCCESS_LOGIN" in user_cols else "u.created_on"
-    user_filter_lh = get_user_filter_clause("lh.user_name")
-    user_filter_u = get_user_filter_clause("u.name")
-    user_filter_g = get_user_filter_clause("g.grantee_name")
-    db_filter = get_db_filter_clause("d.database_name")
-    object_grant_db_filter = get_db_filter_clause("gor.table_catalog")
-    login_table = mart_object_name("FACT_LOGIN_DAILY")
-    grant_table = mart_object_name("FACT_GRANT_DAILY")
-    login_company_filter = "" if str(company or "").upper() == "ALL" else f"AND lh.company = {sql_literal(company, 100)}"
-    grant_company_filter = "" if str(company or "").upper() == "ALL" else f"AND g.company = {sql_literal(company, 100)}"
-    company_label = sql_literal(company, 100)
-    summary_sql = f"""
-    WITH login_events AS (
-        SELECT
-            COALESCE(SUM(success_count), 0) + COALESCE(SUM(failure_count), 0) AS login_events,
-            COALESCE(SUM(failure_count), 0) AS failed_logins,
-            COUNT(DISTINCT IFF(COALESCE(failure_count, 0) > 0, lh.user_name, NULL)) AS failed_users,
-            COUNT(DISTINCT IFF(COALESCE(failure_count, 0) > 0, lh.client_ip, NULL)) AS failed_ips
-        FROM {login_table} lh
-        WHERE lh.login_date >= DATEADD('day', -{int(days)}, CURRENT_DATE())
-          {login_company_filter}
-          {user_filter_lh}
-    ),
-    users AS (
-        SELECT
-            COUNT(*) AS active_users,
-            {mfa_count_expr} AS users_without_mfa,
-            {password_count_expr} AS password_users
-        FROM SNOWFLAKE.ACCOUNT_USAGE.USERS u
-        WHERE u.deleted_on IS NULL
-          AND COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR(u.disabled)), FALSE) = FALSE
-          {user_filter_u}
-    ),
-    recent_grants AS (
-        SELECT COALESCE(SUM(grant_count), 0) AS recent_grants
-        FROM {grant_table} g
-        WHERE 1 = 1
-          {grant_company_filter}
-          AND g.deleted_on IS NULL
-          AND g.created_on >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
-          {user_filter_g}
-    ),
-    shared_dbs AS (
-        SELECT COUNT(*) AS shared_databases
-        FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASES d
-        WHERE d.deleted IS NULL
-          AND d.type IN ('IMPORTED DATABASE', 'SHARE')
-          {db_filter}
-    )
-    SELECT
-        {company_label} AS company,
-        login_events.login_events,
-        login_events.failed_logins,
-        login_events.failed_users,
-        login_events.failed_ips,
-        users.active_users,
-        users.users_without_mfa,
-        users.password_users,
-        recent_grants.recent_grants AS recent_grants,
-        shared_dbs.shared_databases
-    FROM login_events, users, recent_grants, shared_dbs
-    """
-    exceptions_sql = f"""
-    WITH failed_logins AS (
-        SELECT
-            'Failed Login' AS finding_type,
-            IFF(SUM(failure_count) >= 25 OR COUNT(DISTINCT client_ip) >= 5, 'High', 'Medium') AS severity,
-            user_name AS entity,
-            COALESCE(SUM(failure_count), 0) AS event_count,
-            COUNT(DISTINCT client_ip) AS distinct_sources,
-            MAX(login_date)::TIMESTAMP_NTZ AS last_seen,
-            'FACT_LOGIN_DAILY failed login attempts by user/IP' AS proof_query,
-            NULL::VARCHAR AS database_name
-        FROM {login_table} lh
-        WHERE lh.login_date >= DATEADD('day', -{int(days)}, CURRENT_DATE())
-          {login_company_filter}
-          AND COALESCE(failure_count, 0) > 0
-          {user_filter_lh}
-        GROUP BY user_name
-        HAVING COALESCE(SUM(failure_count), 0) >= 3
-    ),
-    mfa_gaps AS (
-        SELECT
-            'MFA Gap' AS finding_type,
-            'High' AS severity,
-            u.name AS entity,
-            1 AS event_count,
-            0 AS distinct_sources,
-            COALESCE({last_seen_expr}, u.created_on) AS last_seen,
-            '{mfa_proof}' AS proof_query,
-            NULL::VARCHAR AS database_name
-        FROM SNOWFLAKE.ACCOUNT_USAGE.USERS u
-        WHERE u.deleted_on IS NULL
-          AND COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR(u.disabled)), FALSE) = FALSE
-          {user_filter_u}
-          {mfa_gap_predicate}
-    ),
-    recent_grants AS (
-        SELECT
-            'Recent Grant' AS finding_type,
-            IFF(SUM(grant_count) >= 10, 'Medium', 'Low') AS severity,
-            g.grantee_name AS entity,
-            COALESCE(SUM(grant_count), 0) AS event_count,
-            COUNT(DISTINCT g.role_name) AS distinct_sources,
-            MAX(g.created_on) AS last_seen,
-            'FACT_GRANT_DAILY active grants created recently' AS proof_query,
-            NULL::VARCHAR AS database_name
-        FROM {grant_table} g
-        WHERE 1 = 1
-          {grant_company_filter}
-          AND g.deleted_on IS NULL
-          AND g.created_on >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
-          {user_filter_g}
-        GROUP BY g.grantee_name
-        HAVING COALESCE(SUM(grant_count), 0) >= 3
-    ),
-    object_grants AS (
-        SELECT
-            'Object Grant' AS finding_type,
-            IFF(COUNT(*) >= 10 OR COUNT_IF(COALESCE(TO_VARCHAR(gor.grant_option), 'false') = 'true') > 0, 'High', 'Medium') AS severity,
-            COALESCE(gor.table_catalog || '.' || gor.table_schema || '.' || gor.name, gor.table_catalog, gor.name) AS entity,
-            COUNT(*) AS event_count,
-            COUNT(DISTINCT gor.grantee_name) AS distinct_sources,
-            MAX(gor.created_on) AS last_seen,
-            'ACCOUNT_USAGE.GRANTS_TO_ROLES object grants by database/schema/object' AS proof_query,
-            gor.table_catalog AS database_name
-        FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_ROLES gor
-        WHERE gor.deleted_on IS NULL
-          AND gor.created_on >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
-          AND gor.table_catalog IS NOT NULL
-          {object_grant_db_filter}
-        GROUP BY gor.table_catalog, gor.table_schema, gor.name
-        HAVING COUNT(*) >= 3 OR COUNT_IF(COALESCE(TO_VARCHAR(gor.grant_option), 'false') = 'true') > 0
-    ),
-    shared_exposure AS (
-        SELECT
-            'Shared Database Exposure' AS finding_type,
-            'Medium' AS severity,
-            d.database_name AS entity,
-            1 AS event_count,
-            0 AS distinct_sources,
-            d.created AS last_seen,
-            'ACCOUNT_USAGE.DATABASES imported database/share metadata' AS proof_query,
-            d.database_name AS database_name
-        FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASES d
-        WHERE d.deleted IS NULL
-          AND d.type IN ('IMPORTED DATABASE', 'SHARE')
-          {db_filter}
-    )
-    SELECT * FROM failed_logins
-    UNION ALL
-    SELECT * FROM mfa_gaps
-    UNION ALL
-    SELECT * FROM recent_grants
-    UNION ALL
-    SELECT * FROM object_grants
-    UNION ALL
-    SELECT * FROM shared_exposure
-    ORDER BY
-        CASE severity WHEN 'Critical' THEN 1 WHEN 'High' THEN 2 WHEN 'Medium' THEN 3 ELSE 4 END,
-        event_count DESC,
-        last_seen DESC
-    LIMIT 100
-    """
-    return summary_sql, exceptions_sql
+    return build_shared_security_mart_brief_sql(session, days, company)
 
 
 def _security_access_review_insert_sql(

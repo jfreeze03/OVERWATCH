@@ -47,6 +47,22 @@ Latest static dependency pass:
 - The latest Cost & Contract pass moved cockpit movement and run-rate/YOY SQL
   into shared metering builders used by both mart and live fallback paths. This
   did not add or remove mart objects, but it reduced duplicated app query logic.
+- The latest service-cost pass moved Cost & Contract official service lens and
+  service trend reads into shared `METERING_HISTORY` loaders. This did not add
+  or remove mart objects and keeps account service-cost scans behind explicit
+  cost refresh surfaces.
+- The latest Service Health pass moved hourly query, warehouse, login, task,
+  and load health counters into shared app loaders. This did not add or remove
+  mart objects; it reuses the current query, warehouse, login, and task marts
+  where grain matches, with bounded ACCOUNT_USAGE fallback.
+- The latest Security Monitoring pass moved summary/exception SQL, privileged
+  grant review SQL, and MFA compatibility helpers into shared app utilities.
+  This did not add or remove mart objects; it reuses `FACT_LOGIN_DAILY` and
+  `FACT_GRANT_DAILY` where available with bounded ACCOUNT_USAGE fallback.
+- The latest Warehouse Health pass moved efficiency, spill/memory, and workload
+  heatmap support panels into shared app loaders. This did not add or remove
+  mart objects; the heatmap still prefers `FACT_QUERY_HOURLY` and falls back to
+  bounded `QUERY_HISTORY` only from the explicit heatmap action.
 - Latest static object disposition: 59 deployable objects are directly app-read
   or app-managed, 9 are test/setup contracts, and 6 are refresh/setup plumbing.
   See `docs/QUERY_INVENTORY.md` for the current query and object map.

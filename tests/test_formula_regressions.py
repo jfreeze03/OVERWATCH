@@ -4103,7 +4103,10 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("TRANSACTION_BLOCKED_TIME", query_exceptions.upper())
         self.assertIn("SECONDS BLOCKED", query_exceptions.upper())
 
-        security_text = (APP_ROOT / "sections" / "security_posture.py").read_text(encoding="utf-8")
+        security_text = "\n".join([
+            (APP_ROOT / "sections" / "security_posture.py").read_text(encoding="utf-8"),
+            (APP_ROOT / "utils" / "shared_metrics.py").read_text(encoding="utf-8"),
+        ])
         self.assertIn('upper() == "ALL"', security_text)
         self.assertNotIn("lh.company = '{company}'", security_text)
         self.assertNotIn("g.company = '{company}'", security_text)

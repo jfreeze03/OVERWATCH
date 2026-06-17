@@ -4,23 +4,18 @@ import streamlit as st
 
 from sections.shell_helpers import render_shell_snapshot
 from utils import (
-    build_task_health_sql,
-    build_mart_service_query_health_sql,
-    build_mart_service_warehouse_health_sql,
-    build_mart_service_login_health_sql,
-    build_mart_service_task_health_sql,
     defer_source_note,
     download_csv,
-    filter_existing_columns,
     get_active_company,
-    get_db_filter_clause,
     get_session,
-    get_user_filter_clause,
-    get_wh_filter_clause,
+    load_shared_service_login_health,
+    load_shared_service_pipe_health,
+    load_shared_service_query_health,
+    load_shared_service_task_health,
+    load_shared_service_warehouse_health,
     metric_confidence_label,
     freshness_note,
     format_snowflake_error,
-    run_query,
     safe_float,
     service_health_scorecard,
     upsert_actions,
@@ -30,176 +25,47 @@ from utils.workflows import render_load_status, render_priority_dataframe
 
 def _load_service_health(session, hours: int) -> dict:
     company = get_active_company()
-    wh_q = get_wh_filter_clause("q.warehouse_name")
-    db_q = get_db_filter_clause("q.database_name")
-    user_q = get_user_filter_clause("q.user_name")
-    user_l = get_user_filter_clause("user_name")
-    db_copy = get_db_filter_clause("table_catalog_name")
-    qh_cols = set(filter_existing_columns(
+    query_result = load_shared_service_query_health(
         session,
-        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
-        [
-            "ERROR_CODE",
-            "WAREHOUSE_SIZE",
-            "QUEUED_OVERLOAD_TIME",
-            "TRANSACTION_BLOCKED_TIME",
-            "BYTES_SPILLED_TO_REMOTE_STORAGE",
-            "PERCENTAGE_SCANNED_FROM_CACHE",
-        ],
-    ))
-    error_pred = (
-        "q.error_code IS NOT NULL"
-        if "ERROR_CODE" in qh_cols else "UPPER(q.execution_status) = 'FAILED_WITH_ERROR'"
+        hours,
+        company,
+        section="Service Health",
     )
-    queued_pred = (
-        "q.queued_overload_time > 0"
-        if "QUEUED_OVERLOAD_TIME" in qh_cols else "FALSE"
+    warehouse_result = load_shared_service_warehouse_health(
+        session,
+        hours,
+        company,
+        section="Service Health",
     )
-    blocked_pred = (
-        "q.transaction_blocked_time > 0"
-        if "TRANSACTION_BLOCKED_TIME" in qh_cols else "FALSE"
+    login_result = load_shared_service_login_health(
+        hours,
+        company,
+        section="Service Health",
     )
-    wh_size_expr = (
-        "MAX(q.warehouse_size)"
-        if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR"
+    task_result = load_shared_service_task_health(
+        session,
+        hours,
+        company,
+        section="Service Health",
     )
-    queued_sec_expr = (
-        "ROUND(SUM(q.queued_overload_time) / 1000, 2)"
-        if "QUEUED_OVERLOAD_TIME" in qh_cols else "0::FLOAT"
+    pipe_result = load_shared_service_pipe_health(
+        hours,
+        company,
+        section="Service Health",
     )
-    remote_spill_expr = (
-        "ROUND(SUM(q.bytes_spilled_to_remote_storage) / POWER(1024, 3), 2)"
-        if "BYTES_SPILLED_TO_REMOTE_STORAGE" in qh_cols else "0::FLOAT"
-    )
-    cache_expr = (
-        "ROUND(AVG(q.percentage_scanned_from_cache), 2)"
-        if "PERCENTAGE_SCANNED_FROM_CACHE" in qh_cols else "0::FLOAT"
-    )
-
-    live_query_sql = f"""
-        SELECT
-            COUNT(*) AS total_queries,
-            SUM(IFF({error_pred}, 1, 0)) AS failed_queries,
-            SUM(IFF({queued_pred}, 1, 0)) AS queued_queries,
-            SUM(IFF({blocked_pred}, 1, 0)) AS blocked_queries,
-            ROUND(AVG(q.total_elapsed_time) / 1000, 2) AS avg_elapsed_sec,
-            ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY q.total_elapsed_time) / 1000, 2) AS p95_elapsed_sec
-        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
-        WHERE q.start_time >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
-          AND q.warehouse_name IS NOT NULL
-          {wh_q} {db_q} {user_q}
-    """
-    query_health = run_query(
-        build_mart_service_query_health_sql(hours, company=company),
-        ttl_key=f"svc_query_mart_{company}_{hours}",
-        tier="recent",
-    )
-    query_source = "Fast query summary"
-    if query_health.empty or _value(query_health, "TOTAL_QUERIES") <= 0:
-        query_health = run_query(live_query_sql, ttl_key=f"svc_query_live_{company}_{hours}", tier="recent")
-        query_source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
-
-    live_warehouse_sql = f"""
-        SELECT
-            q.warehouse_name,
-            {wh_size_expr} AS warehouse_size,
-            COUNT(*) AS total_queries,
-            SUM(IFF({error_pred}, 1, 0)) AS failed_queries,
-            {queued_sec_expr} AS queued_sec,
-            {remote_spill_expr} AS remote_spill_gb,
-            {cache_expr} AS avg_cache_pct
-        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
-        WHERE q.start_time >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
-          AND q.warehouse_name IS NOT NULL
-          {wh_q} {db_q} {user_q}
-        GROUP BY q.warehouse_name
-        ORDER BY queued_sec DESC, remote_spill_gb DESC, failed_queries DESC
-        LIMIT 100
-    """
-    warehouse_health = run_query(
-        build_mart_service_warehouse_health_sql(hours, company=company),
-        ttl_key=f"svc_warehouse_mart_{company}_{hours}",
-        tier="recent",
-    )
-    warehouse_source = "Fast warehouse pressure summary"
-    if warehouse_health.empty:
-        warehouse_health = run_query(live_warehouse_sql, ttl_key=f"svc_warehouse_live_{company}_{hours}", tier="recent")
-        warehouse_source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
-
-    live_login_sql = f"""
-        SELECT
-            COUNT(*) AS login_events,
-            SUM(IFF(is_success = 'NO', 1, 0)) AS failed_logins,
-            COUNT(DISTINCT user_name) AS login_users,
-            COUNT(DISTINCT client_ip) AS distinct_ips
-        FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
-        WHERE event_timestamp >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
-          {user_l}
-    """
-    if int(hours) >= 24:
-        login_health = run_query(
-            build_mart_service_login_health_sql(hours, company=company),
-            ttl_key=f"svc_login_mart_{company}_{hours}",
-            tier="recent",
-        )
-        login_source = "Fast login summary"
-    else:
-        login_health = pd.DataFrame()
-        login_source = "Live fallback: daily mart grain is too coarse for sub-day windows"
-    if login_health.empty:
-        login_health = run_query(live_login_sql, ttl_key=f"svc_login_live_{company}_{hours}", tier="recent")
-        login_source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY"
-
-    try:
-        task_health = run_query(
-            build_mart_service_task_health_sql(hours, company=company),
-            ttl_key=f"svc_task_mart_{company}_{hours}",
-            tier="recent",
-        )
-        task_source = "Fast task summary"
-        if task_health.empty:
-            task_health = run_query(
-                build_task_health_sql(
-                    session,
-                    f"scheduled_time >= DATEADD('hour', -{int(hours)}, CURRENT_TIMESTAMP())",
-                    company=company,
-                ),
-                ttl_key=f"svc_task_live_{company}_{hours}",
-                tier="recent",
-            )
-            task_source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY"
-    except Exception:
-        task_health = pd.DataFrame([{
-            "TASK_RUNS": 0,
-            "FAILED_TASKS": 0,
-            "SUCCEEDED_TASKS": 0,
-            "DISTINCT_TASKS": 0,
-        }])
-        task_source = "Unavailable"
-
-    pipe_health = run_query(f"""
-        SELECT
-            COUNT(*) AS load_events,
-            SUM(IFF(status = 'LOAD_FAILED', 1, 0)) AS failed_loads,
-            ROUND(SUM(row_count), 0) AS rows_loaded,
-            ROUND(SUM(file_size) / POWER(1024, 3), 2) AS gb_loaded
-        FROM SNOWFLAKE.ACCOUNT_USAGE.COPY_HISTORY
-        WHERE last_load_time >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
-          {db_copy}
-    """, ttl_key=f"svc_pipe_{company}_{hours}", tier="recent")
 
     return {
-        "query_health": query_health,
-        "warehouse_health": warehouse_health,
-        "login_health": login_health,
-        "task_health": task_health,
-        "pipe_health": pipe_health,
+        "query_health": query_result.data,
+        "warehouse_health": warehouse_result.data,
+        "login_health": login_result.data,
+        "task_health": task_result.data,
+        "pipe_health": pipe_result.data,
         "sources": {
-            "query": query_source,
-            "warehouse": warehouse_source,
-            "login": login_source,
-            "task": task_source,
-            "pipe": "Live: SNOWFLAKE.ACCOUNT_USAGE.COPY_HISTORY",
+            "query": query_result.source,
+            "warehouse": warehouse_result.source,
+            "login": login_result.source,
+            "task": task_result.source,
+            "pipe": pipe_result.source,
         },
     }
 

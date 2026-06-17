@@ -2,6 +2,8 @@
 # -----------------------------------------------------------------------------
 # Specialist workflows are selected by group so only one guarded tool renders at a time.
 # -----------------------------------------------------------------------------
+from html import escape as html_escape
+
 import streamlit as st
 import pandas as pd
 from utils import (
@@ -1912,7 +1914,12 @@ def render():
                     v = wh_row.get(col, default)
                     return "" if v is None or str(v).lower() in ("nan","none","") else str(v)
 
-                st.markdown(f"**Editing: `{sel_wh}`** | Current state: `{_get('state','unknown')}`")
+                st.html(
+                    "<div style='line-height:1.45;margin:.15rem 0;'>"
+                    f"<strong>Editing:</strong> <code>{html_escape(str(sel_wh))}</code> | "
+                    f"Current state: <code>{html_escape(_get('state', 'unknown'))}</code>"
+                    "</div>"
+                )
 
                 with st.form(f"wh_edit_form_{sel_wh}"):
                     c1, c2, c3 = st.columns(3)

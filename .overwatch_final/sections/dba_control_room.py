@@ -18,6 +18,7 @@ from sections.shell_helpers import (
     _clean_display_text,
     consume_section_autoload_request,
     render_data_freshness,
+    render_escaped_bold_text,
     render_shell_snapshot,
     render_shell_status_strip,
     with_loaded_at,
@@ -5231,7 +5232,7 @@ def _render_watch_floor(
         route = str(item.get("Route", "") or "")
         workflow = str(item.get("Workflow", "") or "")
         with cols[idx]:
-            st.markdown(f"**{item.get('Severity', 'Signal')}: {item.get('Signal', '')}**")
+            render_escaped_bold_text(f"{item.get('Severity', 'Signal')}: {item.get('Signal', '')}")
             st.caption(_clean_display_text(str(item.get("Telemetry", item.get("Evidence", "")))))
             st.write(str(item.get("Action", "")))
             if route and st.button(f"Open {route}", key=f"dba_watch_floor_{idx}_{route}", width="stretch"):

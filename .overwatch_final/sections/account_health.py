@@ -60,6 +60,9 @@ render_load_status = _lazy_util("render_load_status")
 render_mode_selector = _lazy_util("render_mode_selector")
 day_window_selectbox = _lazy_util("day_window_selectbox")
 load_shared_usage_metering_kpis = _lazy_util("load_shared_usage_metering_kpis")
+load_shared_query_history_rollup = _lazy_util("load_shared_query_history_rollup")
+load_shared_warehouse_pressure_summary = _lazy_util("load_shared_warehouse_pressure_summary")
+load_shared_access_hygiene_snapshot = _lazy_util("load_shared_access_hygiene_snapshot")
 
 
 def get_credit_price() -> float:
@@ -2774,19 +2777,16 @@ def _render_account_health_access_hygiene(company: str, environment: str) -> Non
             if action_session is None:
                 return
             try:
-                sql = _account_health_access_hygiene_sql(
+                hygiene_result = load_shared_access_hygiene_snapshot(
                     action_session,
                     days,
-                    company=company,
+                    company,
                     environment=environment,
-                )
-                raw = run_query(
-                    sql,
-                    ttl_key=f"account_health_access_hygiene_{company}_{environment}_{days}",
-                    tier="standard",
+                    force=True,
                     section="Account Health",
                 )
-                st.session_state["account_health_access_hygiene_sql"] = sql
+                raw = hygiene_result.data
+                st.session_state["account_health_access_hygiene_source"] = hygiene_result.source
                 st.session_state["account_health_access_hygiene"] = _annotate_account_health_access_hygiene(raw)
                 st.session_state["account_health_access_hygiene_meta"] = _account_health_scope_meta(
                     company,
@@ -3125,40 +3125,38 @@ def render():
                     "PRIOR_24H": prior_24h,
                 }])
                 hd["_burn_source"] = burn_result.source
+                query_rollup_result = load_shared_query_history_rollup(
+                    action_session,
+                    1,
+                    company,
+                    force=True,
+                    section="Account Health",
+                )
+                query_rollup = query_rollup_result.data
+                if query_rollup is not None and not query_rollup.empty:
+                    rollup_row = query_rollup.iloc[0]
+                else:
+                    rollup_row = {}
+                failed_queries = safe_int(getattr(rollup_row, "get", lambda *_: 0)("FAILED_QUERIES", 0))
+                hd["errors"] = pd.DataFrame([{"ERR_COUNT": failed_queries}])
+                hd["query_stats"] = pd.DataFrame([{
+                    "TOTAL_QUERIES": safe_float(getattr(rollup_row, "get", lambda *_: 0)("TOTAL_QUERIES", 0)),
+                    "FAILED_QUERIES": safe_float(getattr(rollup_row, "get", lambda *_: 0)("FAILED_QUERIES", 0)),
+                    "QUEUED_QUERIES": safe_float(getattr(rollup_row, "get", lambda *_: 0)("QUEUED_QUERIES", 0)),
+                    "AVG_ELAPSED_SEC": safe_float(getattr(rollup_row, "get", lambda *_: 0)("AVG_ELAPSED_SEC", 0)),
+                }])
+                hd["_query_rollup_source"] = query_rollup_result.source
+
+                pressure_result = load_shared_warehouse_pressure_summary(
+                    action_session,
+                    1,
+                    company,
+                    force=True,
+                    section="Account Health",
+                )
+                hd["warehouse_pressure"] = pressure_result.data
+                hd["_warehouse_pressure_source"] = pressure_result.source
                 query_plan = [
-                ("errors", f"""
-                    SELECT COUNT(*) AS err_count
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
-                    WHERE q.start_time >= DATEADD('hours',-24,CURRENT_TIMESTAMP())
-                      AND {failed_pred_q}
-                      {wh_filter_q} {db_filter_q} {user_filter_q}
-                """),
-                ("query_stats", f"""
-                    SELECT COUNT(*) AS total_queries,
-                           SUM(CASE WHEN {failed_pred_q} THEN 1 ELSE 0 END) AS failed_queries,
-                           {queued_count_expr_q} AS queued_queries,
-                           ROUND(AVG(total_elapsed_time) / 1000, 2) AS avg_elapsed_sec
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
-                    WHERE q.start_time >= DATEADD('hours',-24,CURRENT_TIMESTAMP())
-                      AND q.warehouse_name IS NOT NULL
-                      {wh_filter_q} {db_filter_q} {user_filter_q}
-                """),
-                ("warehouse_pressure", f"""
-                    WITH wh AS (
-                        SELECT q.warehouse_name,
-                               COUNT(*) AS total_queries,
-                               SUM(CASE WHEN {failed_pred_q} THEN 1 ELSE 0 END) AS failed_queries,
-                               {queued_count_expr_q} AS queued_queries
-                        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
-                        WHERE q.start_time >= DATEADD('hours',-24,CURRENT_TIMESTAMP())
-                          AND q.warehouse_name IS NOT NULL
-                          {wh_filter_q} {db_filter_q} {user_filter_q}
-                        GROUP BY q.warehouse_name
-                    )
-                    SELECT COUNT(*) AS active_warehouses,
-                           SUM(IFF(failed_queries > 0 OR queued_queries > 0, 1, 0)) AS pressure_warehouses
-                    FROM wh
-                """),
                 ("task_health", _task_health_sql_or_empty(
                     action_session,
                     "scheduled_time >= DATEADD('hours', -24, CURRENT_TIMESTAMP())",

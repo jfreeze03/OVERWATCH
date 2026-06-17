@@ -99,6 +99,13 @@ def _clean_guidance_text(value: object) -> str:
         text = re.sub(pattern, replacement, text)
     return text
 
+
+def _render_guidance_bold(value: object) -> None:
+    text = html.escape(_clean_guidance_text(value).strip())
+    if text:
+        st.html(f'<div style="line-height:1.45;margin:.15rem 0;"><strong>{text}</strong></div>')
+
+
 SECTION_OPERATING_GUIDE = {
     "Executive Landing": {
         "first_move": "Review executive state, critical actions, cost movement, and data-health blockers before drilling into operational sections.",
@@ -296,7 +303,7 @@ def render_section_operating_guide(section: str) -> None:
             with cols[idx % 2]:
                 with st.container(border=True):
                     st.caption(label)
-                    st.markdown(f"**{detail}**")
+                    _render_guidance_bold(detail)
 
 
 def render_section_evidence_contract(section: str) -> None:
@@ -307,7 +314,7 @@ def render_section_evidence_contract(section: str) -> None:
     with st.expander("Operating Context", expanded=False):
         for row in rows:
             with st.container(border=True):
-                st.markdown(f"**{_clean_guidance_text(row['source'])}**")
+                _render_guidance_bold(row["source"])
                 st.caption(f"Measurement: {_clean_guidance_text(row['confidence'])}")
                 st.caption(f"Decision use: {_clean_guidance_text(row['decision_use'])}")
                 st.caption(f"Invalid use: {_clean_guidance_text(row['invalid_use'])}")
@@ -395,12 +402,12 @@ def render_section_reference(section: str) -> None:
                 ("Safety boundary", _guide_value(section, "guardrail")),
             ):
                 st.caption(label)
-                st.markdown(f"**{detail}**")
+                _render_guidance_bold(detail)
         if contract:
             st.markdown("**Operating Context**")
             for row in contract:
                 with st.container(border=True):
-                    st.markdown(f"**{_clean_guidance_text(row['source'])}**")
+                    _render_guidance_bold(row["source"])
                     st.caption(f"Measurement: {_clean_guidance_text(row['confidence'])}")
                     st.caption(f"Decision use: {_clean_guidance_text(row['decision_use'])}")
                     st.caption(f"Invalid use: {_clean_guidance_text(row['invalid_use'])}")

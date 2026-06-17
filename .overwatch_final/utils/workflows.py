@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import inspect
 import re
 from contextlib import contextmanager
@@ -163,6 +164,15 @@ def _clean_operator_display_value(value):
     for pattern, new in _DISPLAY_TEXT_REPLACEMENTS:
         cleaned = re.sub(pattern, new, cleaned)
     return cleaned
+
+
+def _render_operator_bold(value: object) -> None:
+    text = str(_clean_operator_display_value(value) or "").strip()
+    if text:
+        st.html(
+            f'<div style="line-height:1.45;margin:.15rem 0;">'
+            f"<strong>{html.escape(text)}</strong></div>"
+        )
 
 
 def clean_operator_display_text(df):
@@ -722,7 +732,7 @@ def render_priority_dataframe(
     visible_rows = min(len(view), int(max_rows or 25))
     display_title = _clean_operator_display_value(str(title or "Priority view"))
     display_raw_label = _clean_operator_display_value(str(raw_label or "Full detail"))
-    st.markdown(f"**{display_title}**")
+    _render_operator_bold(display_title)
     st.caption(f"Showing {visible_rows:,} of {len(df):,}")
     dataframe_kwargs = {
         "use_container_width": True,

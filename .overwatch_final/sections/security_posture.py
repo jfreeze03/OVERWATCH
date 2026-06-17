@@ -11,6 +11,7 @@ from sections.base import lazy_pandas, lazy_util as _lazy_util
 from sections.shell_helpers import (
     consume_section_autoload_request,
     render_data_freshness,
+    render_escaped_bold_text,
     render_shell_kpi_row,
     render_shell_snapshot,
     render_shell_status_strip,
@@ -1328,7 +1329,7 @@ def _render_security_watch_floor(score: int, exceptions: pd.DataFrame, row) -> N
     for idx, (_, item) in enumerate(priority.iterrows()):
         workflow = str(item.get("NEXT_WORKFLOW") or "Access posture")
         with cols[idx]:
-            st.markdown(f"**{item.get('SEVERITY', 'Medium')}: {item.get('FINDING_TYPE', '')}**")
+            render_escaped_bold_text(f"{item.get('SEVERITY', 'Medium')}: {item.get('FINDING_TYPE', '')}")
             st.caption(f"{item.get('ENTITY_TYPE', 'Access')}: {item.get('ENTITY', 'unknown')}")
             next_action = str(item.get("NEXT_ACTION", "") or "")
             proof_query = str(item.get("PROOF_QUERY", "") or "")
@@ -1691,7 +1692,7 @@ def _render_security_brief_launchpad() -> None:
         cols = st.columns(3)
         for col, row in zip(cols, rows):
             with col:
-                st.markdown(f"**{row['WORKFLOW']}**")
+                render_escaped_bold_text(row["WORKFLOW"])
                 help_text = f"{row['DBA_MOVE']} When: {row['WHEN']}"
                 if st.button(
                     row["BUTTON_LABEL"],
@@ -2934,7 +2935,7 @@ def _render_privileged_grant_readiness(
         with st.expander(title, expanded=expanded):
             _body()
     else:
-        st.markdown(f"**{title}**")
+        render_escaped_bold_text(title)
         _body()
 
 

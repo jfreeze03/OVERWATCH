@@ -4,7 +4,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from sections.shell_helpers import render_shell_snapshot
+from sections.shell_helpers import render_escaped_bold_text, render_shell_snapshot
 from utils import (
     CortexRateLimitError,
     day_window_selectbox,
@@ -214,7 +214,7 @@ def _render_query_watch_floor(score: int, exceptions: pd.DataFrame, summary_row:
         warehouse = str(item.get("WAREHOUSE_NAME") or "")
         root_cause = str(item.get("ROOT_CAUSE") or "")
         with cols[idx]:
-            st.markdown(f"**{item.get('SEVERITY', 'Medium')}: {item.get('ROOT_CAUSE', '')}**")
+            render_escaped_bold_text(f"{item.get('SEVERITY', 'Medium')}: {item.get('ROOT_CAUSE', '')}")
             st.caption(f"{item.get('QUERY_ID', '')} | {item.get('WAREHOUSE_NAME', 'unknown warehouse')}")
             st.caption(f"Impact: {safe_float(item.get('IMPACT_VALUE')):,.2f} {item.get('IMPACT_UNIT', '')}")
             next_action = str(item.get("NEXT_ACTION", "") or "")

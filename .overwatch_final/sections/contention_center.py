@@ -8,7 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from sections.navigation import apply_navigation_state
-from sections.shell_helpers import render_shell_snapshot
+from sections.shell_helpers import render_escaped_bold_text, render_shell_snapshot
 from utils import (
     day_window_selectbox,
     download_csv,
@@ -2001,7 +2001,7 @@ def _render_metric_strip() -> None:
     )
     for col, (label, value) in zip(cols, values):
         with col:
-            st.markdown(f"**{label}**")
+            render_escaped_bold_text(label)
             st.caption(str(value))
 
 

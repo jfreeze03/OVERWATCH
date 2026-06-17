@@ -1,9 +1,11 @@
 # sections/recommendations.py - recommendations, persistent action queue, and anomalies
+from html import escape as html_escape
+
 import pandas as pd
 import streamlit as st
 
 from config import DEFAULTS, THRESHOLDS
-from sections.shell_helpers import _clean_display_text, render_shell_snapshot
+from sections.shell_helpers import _clean_display_text, render_escaped_bold_text, render_shell_snapshot
 from utils import (
     build_idle_warehouse_sql,
     build_mart_recommendation_failed_tasks_sql,
@@ -49,6 +51,11 @@ RECOMMENDATION_PANES = (
     "Action Queue",
     "Anomaly Log",
 )
+
+
+def _plain_html(value: object) -> str:
+    """Render generated object/action text literally inside small HTML fragments."""
+    return html_escape(_clean_display_text(value), quote=False)
 
 
 def _active_company() -> str:
@@ -432,8 +439,12 @@ def _render_queue(session):
 
     selected = st.selectbox("Inspect action", show_df["ACTION_ID"].astype(str).tolist(), key="queue_action_select")
     row = show_df[show_df["ACTION_ID"].astype(str) == selected].iloc[0]
-    st.markdown(f"**{row['ENTITY_NAME']}** - {row['FINDING']}")
-    st.caption(str(row.get("NEXT_ACTION", "Review the route and current telemetry before action.")))
+    st.html(
+        "<div style='font-size:1rem; line-height:1.45; margin:0 0 .35rem 0;'>"
+        f"<strong>{_plain_html(row.get('ENTITY_NAME', ''))}</strong> - {_plain_html(row.get('FINDING', ''))}"
+        "</div>"
+    )
+    st.caption(_clean_display_text(row.get("NEXT_ACTION", "Review the route and current telemetry before action.")))
     render_shell_snapshot((
         ("Status", _row_text(row, "STATUS") or "New"),
         ("Severity", _row_text(row, "SEVERITY") or "Medium"),
@@ -901,9 +912,7 @@ def render():
 
             with st.expander("Action review details"):
                 for _, rec in df_recs.iterrows():
-                    st.markdown(
-                        f"**{_clean_display_text(rec['Severity'])} - {_clean_display_text(rec['Decision'])} - {_clean_display_text(rec['Entity'])}**"
-                    )
+                    render_escaped_bold_text(f"{rec['Severity']} - {rec['Decision']} - {rec['Entity']}")
                     st.caption(
                         f"{_clean_display_text(rec['Evidence Packet'])} | Review: {_clean_display_text(rec.get('Review Gate', rec.get('Approval Gate', '')))} | "
                         f"Boundary: {_clean_display_text(rec['Execution Boundary'])} | {_clean_display_text(rec['Do Not Do'])}"

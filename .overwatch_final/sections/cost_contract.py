@@ -20,6 +20,8 @@ from sections.shell_helpers import (
     _clean_display_text,
     consume_section_autoload_request,
     render_data_freshness,
+    render_escaped_bold_text,
+    render_escaped_labeled_text,
     render_shell_snapshot,
     with_loaded_at,
 )
@@ -261,7 +263,7 @@ def _render_cost_chart_with_data_toggle(
     max_rows: int = 25,
 ) -> None:
     """Render a cost chart with an in-place table mode and a clear return path."""
-    st.markdown(f"**{title}**")
+    render_escaped_bold_text(title)
     mode_key = f"{key}_chart_data_mode"
     requested_key = f"{key}_chart_data_requested"
     requested_mode = st.session_state.pop(requested_key, None)
@@ -365,7 +367,7 @@ def _render_cost_splash_narrative(summary: dict, *, days: int) -> None:
     top_wh_display = _short_label(summary.get("top_warehouse"), 24)
     top_user = str(summary.get("top_cortex_user") or "No Cortex user")
     top_user_display = _short_label(top_user, 26)
-    st.markdown(f"**{state}: {headline}**")
+    render_escaped_bold_text(f"{state}: {headline}")
     st.caption(detail)
     metrics = [
         ("Spend", f"${safe_float(summary.get('spend')):,.0f} ({_slide_money(summary.get('spend_delta'), signed=True)})"),
@@ -432,7 +434,7 @@ def _render_cost_splash_next_move(summary: dict) -> None:
             st.markdown("**Next Cost Move**")
             st.caption(state)
         with detail_col:
-            st.markdown(f"**{workflow}**")
+            render_escaped_bold_text(workflow)
         with action_col:
             st.write("")
             if st.button(
@@ -2152,8 +2154,11 @@ def _render_cost_advisor_detail(board: pd.DataFrame | None) -> None:
         ("Metric", str(row.get("PRIMARY_METRIC") or "")),
     ))
     st.caption(_clean_display_text(str(row.get("TELEMETRY_SUMMARY") or row.get("EVIDENCE") or "")))
-    st.markdown(f"**Next move:** {_clean_display_text(str(row.get('SAFE_NEXT_ACTION') or 'Review the loaded telemetry.'))}")
-    st.markdown(f"**Proof:** {_clean_display_text(str(row.get('VALIDATION_NEEDED') or row.get('PROOF_REQUIRED') or 'Confirm in the next completed telemetry window.'))}")
+    render_escaped_labeled_text("Next move", row.get("SAFE_NEXT_ACTION") or "Review the loaded telemetry.")
+    render_escaped_labeled_text(
+        "Proof",
+        row.get("VALIDATION_NEEDED") or row.get("PROOF_REQUIRED") or "Confirm in the next completed telemetry window.",
+    )
     do_not_do = str(row.get("DO_NOT_DO") or "").strip()
     if do_not_do:
         st.caption(f"Guardrail: {_clean_display_text(do_not_do)}")
@@ -4915,7 +4920,7 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
     cols = st.columns(min(len(moves), 3))
     for idx, (title, evidence, workflow) in enumerate(moves[:3]):
         with cols[idx]:
-            st.markdown(f"**{title}**")
+            render_escaped_bold_text(title)
             st.caption(_clean_display_text(evidence))
             if st.button(f"Open {workflow}", key=f"cost_contract_next_{idx}_{workflow}", width="stretch"):
                 st.session_state["cost_contract_workflow"] = workflow

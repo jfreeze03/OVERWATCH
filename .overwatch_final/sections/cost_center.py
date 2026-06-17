@@ -5,7 +5,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 from config import ALFA_DEV_DATABASES, TREXIS_DEV_DATABASES, TREXIS_PROD_DATABASES
-from sections.shell_helpers import render_shell_snapshot
+from sections.shell_helpers import render_escaped_bold_text, render_shell_snapshot
 from utils.workflows import render_workflow_selector
 from utils import (
     get_session, format_credits, credits_to_dollars,
@@ -2100,7 +2100,7 @@ def render():
             with n1:
                 render_shell_snapshot((("Review Status", narrative["severity"]),))
             with n2:
-                st.markdown(f"**{narrative['headline']}**")
+                render_escaped_bold_text(narrative["headline"])
                 st.write(narrative["reason"])
                 st.caption(narrative["caveat"])
                 st.info(narrative["next_action"])

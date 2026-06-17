@@ -168,6 +168,32 @@ def _clean_display_text(value: object) -> str:
     return text
 
 
+def _display_html(value: object) -> str:
+    """Escape generated display text for small HTML fragments."""
+    return _escape_markup(_clean_display_text(value))
+
+
+def render_escaped_bold_text(value: object, *, margin: str = ".15rem 0") -> None:
+    """Render generated text in bold without letting Markdown parse underscores."""
+    text = _display_html(value)
+    if not text:
+        return
+    st.html(f'<div style="line-height:1.45; margin:{_escape_markup(margin)};"><strong>{text}</strong></div>')
+
+
+def render_escaped_labeled_text(label: object, detail: object, *, margin: str = ".15rem 0") -> None:
+    """Render a bold label and escaped generated detail text."""
+    label_text = _display_html(label)
+    detail_text = _display_html(detail)
+    if not label_text and not detail_text:
+        return
+    separator = ": " if label_text and detail_text else ""
+    st.html(
+        f'<div style="line-height:1.45; margin:{_escape_markup(margin)};">'
+        f'<strong>{label_text}</strong>{separator}{detail_text}</div>'
+    )
+
+
 def evidence_loaded(state, keys: tuple[str, ...]) -> bool:
     return any(state.get(key) is not None for key in keys)
 
@@ -271,7 +297,7 @@ def render_data_freshness(
         detail_col, state_col = st.columns([4, 1])
         with detail_col:
             st.caption(f"Data status - {_clean_display_text(source or merged.get('source') or 'Loaded data')}")
-            st.markdown(f"**{_clean_display_text(detail)}**")
+            render_escaped_bold_text(detail)
         with state_col:
             _badge(state)
     if delayed_note:
@@ -364,7 +390,7 @@ def render_shell_status_strip(
     with st.container(border=True):
         copy_col, state_col = st.columns([4, 1])
         with copy_col:
-            st.markdown(f"**{_clean_display_text(headline or 'Ready')}**")
+            render_escaped_bold_text(headline or "Ready")
             detail = _clean_display_text(detail)
             if detail:
                 st.caption(detail)
@@ -441,7 +467,7 @@ def render_shell_workflows(
     rows = list(workflows or ())
     if not rows:
         return
-    st.markdown(f"**{_clean_display_text(title)}**")
+    render_escaped_bold_text(title)
     for start in range(0, len(rows), 3):
         chunk = rows[start:start + 3]
         cols = st.columns(len(chunk))
@@ -452,7 +478,7 @@ def render_shell_workflows(
             button_label = _clean_display_text(row.get("BUTTON_LABEL") or f"Open {heading}")
             key_token = _workflow_key_token(workflow_value, index)
             with col:
-                st.markdown(f"**{_clean_display_text(heading)}**")
+                render_escaped_bold_text(heading)
                 caption = _clean_display_text(row.get(caption_key) or "").strip()
                 if st.button(
                     button_label,

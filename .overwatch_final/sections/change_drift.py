@@ -12,6 +12,7 @@ from sections.base import lazy_pandas, lazy_util as _lazy_util
 from sections.shell_helpers import (
     consume_section_autoload_request,
     render_data_freshness,
+    render_escaped_bold_text,
     render_shell_kpi_row,
     render_shell_snapshot,
     render_shell_status_strip,
@@ -1555,7 +1556,7 @@ def _render_change_watch_floor(score: int, exceptions: pd.DataFrame, row) -> Non
     for idx, (_, item) in enumerate(priority.iterrows()):
         workflow = str(item.get("NEXT_WORKFLOW") or "Object and access changes")
         with cols[idx]:
-            st.markdown(f"**{item.get('SEVERITY', 'Medium')}: {item.get('FINDING_TYPE', '')}**")
+            render_escaped_bold_text(f"{item.get('SEVERITY', 'Medium')}: {item.get('FINDING_TYPE', '')}")
             st.caption(f"{item.get('ENTITY_TYPE', 'Object')}: {item.get('ENTITY', 'unknown')}")
             st.caption(f"Actor: {item.get('USER_NAME', 'unknown')} | Query: {item.get('QUERY_ID', '')}")
             next_action = str(item.get("NEXT_ACTION", "") or "")
@@ -1759,7 +1760,7 @@ def _render_change_brief_launchpad() -> None:
         cols = st.columns(3)
         for col, row in zip(cols, rows[offset:offset + 3]):
             with col:
-                st.markdown(f"**{row['WORKFLOW']}**")
+                render_escaped_bold_text(row["WORKFLOW"])
                 help_text = f"{row['DBA_MOVE']} When: {row['WHEN']}"
                 if st.button(
                     row["BUTTON_LABEL"],

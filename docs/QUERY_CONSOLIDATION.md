@@ -17,6 +17,13 @@ refresh/drilldown actions and make repeated metric families load once per scope.
 | `load_shared_warehouse_daily_credits` | Cost Forecast daily credit trend | Live warehouse metering, cached once per company/filter scope |
 | `load_shared_warehouse_daily_credits_by_warehouse` | Cost Center Burn Rate daily warehouse trend | Live warehouse metering with latest observed warehouse size, cached once per company/filter scope |
 | `load_shared_warehouse_overview` | Warehouse Health overview and current/prior movement | Fast warehouse overview mart first, live query-history plus metering fallback only on explicit load |
+| `load_shared_query_history_rollup` | Usage Overview and Account Health query/error/queue KPIs | Fast query mart first, live QUERY_HISTORY fallback only on explicit load |
+| `load_shared_warehouse_pressure_summary` | Usage Overview and Account Health active/pressured warehouse counts | Fast query mart first, live QUERY_HISTORY fallback only on explicit load |
+| `load_shared_warehouse_scaling_events` | Warehouse Health scaling/metering event review | Fast warehouse mart first, live WAREHOUSE_METERING_HISTORY fallback |
+| `load_shared_task_health_summary` | Usage Overview task run/failure counters | Live TASK_HISTORY with optional-column compatibility and zero-row fallback |
+| `load_shared_mfa_coverage` | Security Access MFA coverage | Live USERS snapshot, cached once per company/user filter scope |
+| `load_shared_grants_to_users` | Security Access role-grant review | Fast grant mart first, live GRANTS_TO_USERS fallback |
+| `load_shared_access_hygiene_snapshot` | Account Health access hygiene | Live USERS + LOGIN_HISTORY + GRANTS_TO_USERS account-level snapshot |
 
 Shared results are stored under `_shared_metric_...` session keys and are cleared
 by the global refresh path.
@@ -50,23 +57,24 @@ Top ACCOUNT_USAGE source families by static reference count:
    Warehouse Health scaling events and deeper advisor panels.
 
 2. Query history operational rollup:
-   Create one mart-first/live-fallback loader for total queries, failures, queue,
-   spill, p95/average elapsed, active users, and active warehouses. Consumers:
-   Usage Overview, Account Health, Warehouse Health, DBA Control Room detail.
+   First pass done for Usage Overview and Account Health. Remaining consumers:
+   Warehouse Health deeper advisor panels, DBA Control Room detail, and Service
+   Health where the same counters are shown.
 
 3. Warehouse pressure rollup:
-   Extend the shared warehouse overview loader into a narrower pressure-only
-   rollup with queued, spill, latency, failures, and metered credits. Consumers:
-   Usage Overview pressure, Account Health warehouse pressure, and DBA detail.
+   First pass done for Usage Overview pressure and Account Health warehouse
+   pressure. Remaining consumers: DBA detail and any advisor panels that still
+   rebuild queue/failure pressure by warehouse.
 
 4. Task/procedure health:
-   Keep task/procedure detail on demand, but share the summary counters and recent
-   failure samples used by Account Health, DBA Control Room, and Workload
-   Operations.
+   Task summary counters now have a shared loader. Remaining work is procedure
+   call/SLA summary reuse and task failure sample reuse where the UI needs more
+   than counters.
 
 5. Security/access hygiene:
-   Share scoped `USERS`, `LOGIN_HISTORY`, and grants snapshots for Security
-   Monitoring and Account Health instead of rebuilding similar login/grant views.
+   MFA, grants, and Account Health access hygiene now use shared snapshots.
+   Remaining work is folding Security Posture summary/exceptions into the same
+   access snapshot where the column shape matches.
 
 ## Refactor Rules
 

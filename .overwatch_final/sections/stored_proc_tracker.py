@@ -1,10 +1,11 @@
 # sections/stored_proc_tracker.py - Stored procedure and UDF cost tracking
+from html import escape as html_escape
 import re
 
 import streamlit as st
 import pandas as pd
 from config import DEFAULTS, THRESHOLDS
-from sections.shell_helpers import render_shell_snapshot
+from sections.shell_helpers import _clean_display_text, render_shell_snapshot
 from utils import (
     day_window_selectbox,
     get_session,
@@ -65,6 +66,11 @@ PROCEDURE_SIGNAL_ROUTES = {
 _PROC_SCAN_GB_WARN = 50.0
 _PROC_CACHE_LOW_PCT = 10.0
 _PROC_LONG_RUNTIME_SEC = 300.0
+
+
+def _plain_html(value: object) -> str:
+    """Render generated procedure/advisor text literally inside HTML fragments."""
+    return html_escape(_clean_display_text(value), quote=False)
 
 
 def _procedure_lookup(row: pd.Series | dict, *names: str, default: object = "") -> object:
@@ -872,12 +878,20 @@ def _render_procedure_analysis_detail(board: pd.DataFrame | None) -> None:
         ("Runtime", f"{safe_float(row.get('LATEST_RUNTIME_SEC')):,.1f}s"),
         ("Credits", f"{safe_float(row.get('EST_TOTAL_CREDITS')):,.4f}"),
     ))
-    st.caption(str(row.get("OPTIMIZATION_ISSUE") or row.get("SIGNAL") or "Procedure telemetry signal."))
-    st.markdown(f"**Next move:** {row.get('SAFE_NEXT_ACTION') or 'Compare the latest CALL to baseline and inspect child-query telemetry.'}")
-    st.markdown(f"**Proof:** {row.get('PROOF_REQUIRED') or 'Next CALL should return within baseline with linked query history.'}")
+    st.caption(_clean_display_text(row.get("OPTIMIZATION_ISSUE") or row.get("SIGNAL") or "Procedure telemetry signal."))
+    st.html(
+        "<div style='line-height:1.45; margin:.35rem 0;'>"
+        f"<strong>Next move:</strong> {_plain_html(row.get('SAFE_NEXT_ACTION') or 'Compare the latest CALL to baseline and inspect child-query telemetry.')}"
+        "</div>"
+    )
+    st.html(
+        "<div style='line-height:1.45; margin:.15rem 0 .35rem 0;'>"
+        f"<strong>Proof:</strong> {_plain_html(row.get('PROOF_REQUIRED') or 'Next CALL should return within baseline with linked query history.')}"
+        "</div>"
+    )
     guardrail = str(row.get("DO_NOT_DO") or "").strip()
     if guardrail:
-        st.caption(f"Guardrail: {guardrail}")
+        st.caption(f"Guardrail: {_clean_display_text(guardrail)}")
     proc = str(row.get("PROCEDURE_CONTEXT") or row.get("PROCEDURE_NAME") or "").strip()
     if proc and st.button("Mark For Downstream Review", key="procedure_analysis_detail_target", width="stretch"):
         st.session_state["_sp_downstream_target_hint"] = proc

@@ -9,6 +9,7 @@ from config import ALERT_DB, ALERT_SCHEMA, DAY_WINDOW_OPTIONS, DEFAULT_ALERT_EMA
 from sections.shell_helpers import (
     consume_section_autoload_request,
     render_data_freshness,
+    render_escaped_bold_text,
     render_shell_kpi_row,
     render_shell_snapshot,
     render_shell_status_strip,
@@ -820,7 +821,7 @@ def _render_alert_center_brief_launchpad() -> None:
         cols = st.columns(3)
         for col, row in zip(cols, rows[offset:offset + 3]):
             with col:
-                st.markdown(f"**{row['VIEW']}**")
+                render_escaped_bold_text(row["VIEW"])
                 help_text = f"{row['DBA_MOVE']} When: {row['WHEN']}"
                 if st.button(
                     row["BUTTON_LABEL"],

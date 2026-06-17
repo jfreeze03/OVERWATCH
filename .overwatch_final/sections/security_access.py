@@ -12,6 +12,8 @@ from utils import (
     get_session,
     get_user_filter_clause,
     get_wh_filter_clause,
+    load_shared_grants_to_users,
+    load_shared_mfa_coverage,
     make_action_id,
     mart_object_name,
     format_snowflake_error,
@@ -971,23 +973,15 @@ def render():
         if st.button("Load Grants", key="grants_load"):
             with render_load_status("Loading grant telemetry", "Grant telemetry ready"):
                 try:
-                    st.session_state["sec_df_grants"] = _load_grants_mart(company)
-                    st.session_state["sec_grants_source"] = "Fast grant summary"
-                except Exception as mart_exc:
-                    st.session_state["sec_grants_source"] = "SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS"
-                    defer_source_note(f"Fast summary path skipped: {format_snowflake_error(mart_exc)}")
-                    try:
-                        df_grants = run_query(f"""
-                            SELECT grantee_name, role, granted_to, granted_by,
-                                   created_on, deleted_on
-                            FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS
-                            WHERE deleted_on IS NULL
-                              {user_filter_g}
-                            ORDER BY created_on DESC LIMIT 500
-                        """, ttl_key=f"security_grants_to_users_{company}", tier="standard")
-                        st.session_state["sec_df_grants"] = df_grants
-                    except Exception as e:
-                        st.warning(f"Grants unavailable: {format_snowflake_error(e)}")
+                    grants_result = load_shared_grants_to_users(
+                        company,
+                        force=True,
+                        section="Security Access",
+                    )
+                    st.session_state["sec_df_grants"] = grants_result.data
+                    st.session_state["sec_grants_source"] = grants_result.source
+                except Exception as e:
+                    st.warning(f"Grants unavailable: {format_snowflake_error(e)}")
 
         if st.session_state.get("sec_df_grants") is not None and not st.session_state["sec_df_grants"].empty:
             df_g = st.session_state["sec_df_grants"]
@@ -1075,18 +1069,20 @@ def render():
         if st.button("Check MFA", key="mfa_check"):
             with render_load_status("Checking MFA coverage", "MFA coverage ready"):
                 try:
-                    user_exprs = _user_column_exprs()
-                    df_mfa = run_query(
-                        _build_mfa_coverage_sql(user_exprs, user_filter_u),
-                        ttl_key=f"security_mfa_{company}",
-                        tier="standard",
+                    mfa_result = load_shared_mfa_coverage(
+                        get_session(),
+                        company,
+                        force=True,
+                        section="Security Access",
                     )
-                    st.session_state["sec_df_mfa"] = df_mfa
+                    st.session_state["sec_df_mfa"] = mfa_result.data
+                    st.session_state["sec_mfa_source"] = mfa_result.source
                 except Exception as e:
                     st.warning(f"MFA check unavailable: {format_snowflake_error(e)}")
 
         if st.session_state.get("sec_df_mfa") is not None and not st.session_state["sec_df_mfa"].empty:
             df_m = st.session_state["sec_df_mfa"]
+            defer_source_note(st.session_state.get("sec_mfa_source", "SNOWFLAKE.ACCOUNT_USAGE.USERS"))
             if "HAS_MFA" not in df_m.columns:
                 st.info("Snowflake did not expose an MFA signal column to this role. Active users are listed for IAM follow-up.")
                 render_priority_dataframe(

@@ -5,6 +5,7 @@ import time
 import streamlit as st
 import pandas as pd
 from utils.workflows import render_priority_dataframe, render_workflow_selector
+from sections.shell_helpers import render_escaped_bold_text
 from sections.shell_helpers import render_shell_snapshot
 from utils import (
     build_task_history_sql,
@@ -2521,7 +2522,7 @@ def _render_task_ops_brief(session) -> None:
                 workflow = str(item.get("NEXT_WORKFLOW") or "Job Status Brief")
                 task_name = str(item.get("TASK_NAME") or item.get("ROOT_TASK_NAME") or "Task graph")
                 with move_cols[idx]:
-                    st.markdown(f"**{item.get('SEVERITY', 'Signal')}: {task_name}**")
+                    render_escaped_bold_text(f"{item.get('SEVERITY', 'Signal')}: {task_name}")
                     signal = str(item.get("SIGNAL", "") or "")
                     st.caption(signal)
                     detail = str(item.get("DETAIL", "") or "")

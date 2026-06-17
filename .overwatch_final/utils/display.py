@@ -2,7 +2,7 @@
 import streamlit as st
 import pandas as pd
 from config import DAY_WINDOW_OPTIONS, DEFAULT_DAY_WINDOW
-from sections.shell_helpers import render_shell_snapshot
+from sections.shell_helpers import render_escaped_bold_text, render_shell_snapshot
 from .cache import clear_all_cache
 from .cost import format_credits
 from .compatibility import filter_existing_columns
@@ -140,7 +140,7 @@ def render_chart_with_data_toggle(
 ) -> str:
     """Render a chart or its backing table with a clear return path."""
     if title:
-        st.markdown(f"**{title}**")
+        render_escaped_bold_text(title)
     mode_key = f"{key}_chart_data_mode"
     requested_key = f"{key}_chart_data_requested"
     requested_mode = st.session_state.pop(requested_key, None)

@@ -11,6 +11,8 @@ from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE, DEFAULT_COMPANY, 
 from sections.shell_helpers import (
     consume_section_autoload_request,
     render_data_freshness,
+    render_escaped_bold_text,
+    render_escaped_labeled_text,
     render_shell_kpi_row,
     render_shell_snapshot,
     render_shell_status_strip,
@@ -37,7 +39,7 @@ format_snowflake_error = _lazy_util("format_snowflake_error")
 filter_existing_columns = _lazy_util("filter_existing_columns")
 render_optimization_advisor = _lazy_util("render_optimization_advisor")
 load_shared_warehouse_overview = _lazy_util("load_shared_warehouse_overview")
-build_mart_warehouse_scaling_sql = _lazy_util("build_mart_warehouse_scaling_sql")
+load_shared_warehouse_scaling_events = _lazy_util("load_shared_warehouse_scaling_events")
 build_mart_warehouse_heatmap_sql = _lazy_util("build_mart_warehouse_heatmap_sql")
 load_warehouse_inventory = _lazy_util("load_warehouse_inventory")
 mart_object_name = _lazy_util("mart_object_name")
@@ -494,7 +496,7 @@ def _render_warehouse_brief_launchpad() -> None:
         cols = st.columns(3)
         for col, row in zip(cols, rows[offset:offset + 3]):
             with col:
-                st.markdown(f"**{row['VIEW']}**")
+                render_escaped_bold_text(row["VIEW"])
                 help_text = f"{row['DBA_MOVE']} When: {row['WHEN']}"
                 if st.button(
                     row["BUTTON_LABEL"],
@@ -1743,8 +1745,14 @@ def _render_warehouse_setting_action_detail(plan: pd.DataFrame | None) -> None:
         ("Route", str(row.get("WORKFLOW_ROUTE") or "Overview & Scaling")),
     ))
     st.caption(str(row.get("WHY") or "Review the loaded warehouse telemetry before changing settings."))
-    st.markdown(f"**Safe move:** {row.get('SAFE_SETTING_MOVE') or 'Review telemetry before changing this warehouse.'}")
-    st.markdown(f"**Rollback check:** {row.get('ROLLBACK_CHECK') or 'Compare credits, runtime, queue, spill, and failures after the change.'}")
+    render_escaped_labeled_text(
+        "Safe move",
+        row.get("SAFE_SETTING_MOVE") or "Review telemetry before changing this warehouse.",
+    )
+    render_escaped_labeled_text(
+        "Rollback check",
+        row.get("ROLLBACK_CHECK") or "Compare credits, runtime, queue, spill, and failures after the change.",
+    )
     proof = str(row.get("PROOF_REQUIRED") or "").strip()
     if proof:
         st.caption(f"Proof: {proof}")
@@ -2590,7 +2598,7 @@ def _render_warehouse_watch_floor(score: int, exceptions: pd.DataFrame, summary_
     for idx, (_, item) in enumerate(priority.iterrows()):
         workflow = str(item.get("NEXT_WORKFLOW") or "Overview & Scaling")
         with cols[idx]:
-            st.markdown(f"**{item.get('SEVERITY', 'Medium')}: {item.get('SIGNAL', '')}**")
+            render_escaped_bold_text(f"{item.get('SEVERITY', 'Medium')}: {item.get('SIGNAL', '')}")
             st.caption(
                 f"{item.get('WAREHOUSE_NAME', 'unknown warehouse')} | "
                 f"Queued {safe_int(item.get('QUEUED_QUERIES')):,} | "
@@ -3878,48 +3886,18 @@ def render():
             st.subheader("Scaling Events (WAREHOUSE_METERING_HISTORY)")
             if st.button("Load Scaling Events", key="wh_scale_load"):
                 try:
-                    df_scale = run_query(
-                        build_mart_warehouse_scaling_sql(
-                            wh_days,
-                            company=company,
-                            warehouse_contains=global_warehouse,
-                            start_date=global_start_date,
-                            end_date=global_end_date,
-                        ),
-                        ttl_key=f"wh_scaling_mart_{company}_{wh_days}",
-                        tier="historical",
+                    session = _warehouse_action_session("load warehouse scaling events")
+                    if session is None:
+                        return
+                    scale_result = load_shared_warehouse_scaling_events(
+                        session,
+                        wh_days,
+                        company,
+                        force=True,
+                        section="Warehouse Health",
                     )
-                    scale_source = "Fast warehouse summary"
-                    if df_scale.empty:
-                        session = _warehouse_action_session("load live warehouse scaling fallback")
-                        if session is None:
-                            return
-                        exprs = _warehouse_sql_exprs(session)
-                        df_scale = run_query(f"""
-                            WITH latest_size AS (
-                                SELECT warehouse_name, warehouse_size
-                                FROM (
-                                    SELECT q.warehouse_name, {exprs["latest_size_expr"]} AS warehouse_size,
-                                           ROW_NUMBER() OVER (PARTITION BY q.warehouse_name ORDER BY q.start_time DESC) AS rn
-                                    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
-                                    WHERE q.start_time >= DATEADD('day', -{wh_days}, CURRENT_TIMESTAMP())
-                                      AND q.warehouse_name IS NOT NULL
-                                      {_warehouse_global_filter_clause("q")}
-                                )
-                                WHERE rn = 1
-                            )
-                            SELECT m.warehouse_name, ls.warehouse_size, m.start_time, m.end_time,
-                                   m.credits_used, {exprs["compute_meter_expr"]} AS credits_used_compute,
-                                   {exprs["cloud_meter_expr"]} AS credits_used_cloud_services
-                            FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY m
-                            LEFT JOIN latest_size ls ON m.warehouse_name = ls.warehouse_name
-                            WHERE m.start_time >= DATEADD('day', -{wh_days}, CURRENT_TIMESTAMP())
-                              {get_wh_filter_clause("m.warehouse_name")}
-                            ORDER BY m.credits_used DESC LIMIT 200
-                        """, ttl_key=f"wh_scaling_live_{company}_{wh_days}", tier="historical")
-                        scale_source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"
-                    st.session_state["wh_scaling"] = df_scale
-                    st.session_state["wh_scaling_source"] = scale_source
+                    st.session_state["wh_scaling"] = scale_result.data
+                    st.session_state["wh_scaling_source"] = scale_result.source
                     st.session_state["wh_scaling_meta"] = _warehouse_scope_meta(company, environment, wh_days)
                 except Exception as e:
                     st.warning(f"Scaling events unavailable in this role/context: {format_snowflake_error(e)}")

@@ -5,7 +5,6 @@ from config import DEFAULTS
 
 from sections.shell_helpers import render_shell_snapshot
 from utils import (
-    build_task_health_sql,
     credits_to_dollars,
     day_window_selectbox,
     download_csv,
@@ -15,17 +14,17 @@ from utils import (
     defer_source_note,
     freshness_note,
     get_active_company,
-    get_global_filter_clause,
     get_session,
     company_scoped_query,
     filter_existing_columns,
+    load_shared_query_history_rollup,
+    load_shared_task_health_summary,
     load_shared_usage_metering_kpis,
     load_shared_usage_storage_kpis,
+    load_shared_warehouse_pressure_summary,
     metric_confidence_label,
     render_chart_with_data_toggle,
     render_drillable_bar_chart,
-    build_mart_usage_overview_sql,
-    build_mart_usage_pressure_sql,
     build_mart_usage_cost_drivers_sql,
     build_mart_usage_query_mix_sql,
     build_mart_usage_database_adoption_sql,
@@ -50,95 +49,16 @@ def _altair():
 def _load_overview(session, days: int) -> dict:
     company = get_active_company()
     global_warehouse = str(st.session_state.get("global_warehouse", "") or "").strip()
-    global_user = str(st.session_state.get("global_user", "") or "").strip()
-    global_role = str(st.session_state.get("global_role", "") or "").strip()
-    global_database = str(st.session_state.get("global_database", "") or "").strip()
     global_start_date = st.session_state.get("global_start_date")
     global_end_date = st.session_state.get("global_end_date")
-    qh_cols = set(filter_existing_columns(
+    overview_result = load_shared_query_history_rollup(
         session,
-        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
-        [
-            "ERROR_CODE",
-            "QUEUED_OVERLOAD_TIME",
-            "QUEUED_PROVISIONING_TIME",
-            "QUEUED_REPAIR_TIME",
-            "CREDITS_USED_CLOUD_SERVICES",
-            "BYTES_SPILLED_TO_REMOTE_STORAGE",
-        ],
-    ))
-    success_expr = (
-        "SUM(IFF(q.error_code IS NULL, 1, 0))"
-        if "ERROR_CODE" in qh_cols
-        else "SUM(IFF(UPPER(q.execution_status) = 'SUCCESS', 1, 0))"
+        days,
+        company,
+        section="Usage Overview",
     )
-    failed_expr = (
-        "SUM(IFF(q.error_code IS NOT NULL, 1, 0))"
-        if "ERROR_CODE" in qh_cols
-        else "SUM(IFF(UPPER(q.execution_status) = 'FAILED_WITH_ERROR', 1, 0))"
-    )
-    queue_terms = [
-        f"q.{col.lower()} > 0"
-        for col in ("QUEUED_OVERLOAD_TIME", "QUEUED_PROVISIONING_TIME", "QUEUED_REPAIR_TIME")
-        if col in qh_cols
-    ]
-    queued_expr = (
-        "SUM(IFF(" + " OR ".join(queue_terms) + ", 1, 0))"
-        if queue_terms
-        else "0"
-    )
-    qh_cloud_expr = (
-        "ROUND(SUM(COALESCE(q.credits_used_cloud_services, 0)), 4)"
-        if "CREDITS_USED_CLOUD_SERVICES" in qh_cols
-        else "0"
-    )
-    remote_spill_expr = (
-        "ROUND(SUM(COALESCE(q.bytes_spilled_to_remote_storage, 0)) / POWER(1024, 3), 2)"
-        if "BYTES_SPILLED_TO_REMOTE_STORAGE" in qh_cols
-        else "0"
-    )
-    q_filters = get_global_filter_clause(
-        date_col="q.start_time",
-        wh_col="q.warehouse_name",
-        user_col="q.user_name",
-        role_col="q.role_name",
-        db_col="q.database_name",
-    )
-
-    live_overview_sql = f"""
-        SELECT
-            COUNT(*) AS total_queries,
-            COUNT(DISTINCT q.user_name) AS total_users,
-            COUNT(DISTINCT q.database_name) AS active_databases,
-            ROUND(100 * {success_expr} / NULLIF(COUNT(*), 0), 1) AS query_success_rate,
-            {failed_expr} AS failed_queries,
-            {queued_expr} AS queued_queries,
-            ROUND(AVG(q.total_elapsed_time) / 1000, 2) AS avg_elapsed_sec,
-            ROUND(AVG(q.execution_time) / 1000, 2) AS avg_execution_sec,
-            {qh_cloud_expr} AS cloud_service_credits
-        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
-        WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
-          AND q.warehouse_name IS NOT NULL
-          {q_filters}
-    """
-    overview = run_query(
-        build_mart_usage_overview_sql(
-            days,
-            company=company,
-            warehouse_contains=global_warehouse,
-            user_contains=global_user,
-            role_contains=global_role,
-            database_contains=global_database,
-            start_date=global_start_date,
-            end_date=global_end_date,
-        ),
-        ttl_key=f"uo_overview_mart_{company}_{days}",
-        tier="historical",
-    )
-    overview_source = "Fast usage summary"
-    if overview.empty or _first_number(overview, "TOTAL_QUERIES") <= 0:
-        overview = run_query(live_overview_sql, ttl_key=f"uo_overview_live_{company}_{days}", tier="historical")
-        overview_source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
+    overview = overview_result.data
+    overview_source = overview_result.source
 
     metering_result = load_shared_usage_metering_kpis(session, days, company, section="Usage Overview")
     metering = metering_result.data
@@ -148,68 +68,18 @@ def _load_overview(session, days: int) -> dict:
     storage = storage_result.data
     storage_source = storage_result.source
 
-    try:
-        task_health = run_query(
-            build_task_health_sql(
-                session,
-                f"scheduled_time >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())",
-                company=company,
-            ),
-            ttl_key=f"uo_task_health_{company}_{days}",
-            tier="historical",
-            section="Usage Overview",
-        )
-    except Exception:
-        task_health = pd.DataFrame([{
-            "TASK_RUNS": 0,
-            "FAILED_TASKS": 0,
-            "SUCCEEDED_TASKS": 0,
-            "DISTINCT_TASKS": 0,
-        }])
+    task_result = load_shared_task_health_summary(session, days, company, section="Usage Overview")
+    task_health = task_result.data
+    task_source = task_result.source
 
-    live_pressure_sql = f"""
-        WITH wh AS (
-            SELECT
-                q.warehouse_name,
-                COUNT(*) AS total_queries,
-                {failed_expr} AS failed_queries,
-                {queued_expr} AS queued_queries,
-                {remote_spill_expr} AS remote_spill_gb
-            FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
-            WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
-              AND q.warehouse_name IS NOT NULL
-              {q_filters}
-            GROUP BY q.warehouse_name
-        )
-        SELECT
-            COUNT(*) AS active_warehouses,
-            SUM(IFF(queued_queries > 0 OR remote_spill_gb > 1 OR failed_queries > 0, 1, 0)) AS pressure_warehouses
-        FROM wh
-    """
-    warehouse_pressure = run_query(
-        build_mart_usage_pressure_sql(
-            days,
-            company=company,
-            warehouse_contains=global_warehouse,
-            user_contains=global_user,
-            role_contains=global_role,
-            database_contains=global_database,
-            start_date=global_start_date,
-            end_date=global_end_date,
-        ),
-        ttl_key=f"uo_wh_pressure_mart_{company}_{days}",
-        tier="historical",
+    pressure_result = load_shared_warehouse_pressure_summary(
+        session,
+        days,
+        company,
         section="Usage Overview",
     )
-    pressure_source = "Fast warehouse pressure summary"
-    if warehouse_pressure.empty:
-        warehouse_pressure = run_query(
-            live_pressure_sql,
-            ttl_key=f"uo_wh_pressure_live_{company}_{days}",
-            tier="historical",
-            section="Usage Overview",
-        )
-        pressure_source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
+    warehouse_pressure = pressure_result.data
+    pressure_source = pressure_result.source
 
     driver_preview = pd.DataFrame()
     driver_preview_source = "Deferred: warehouse movement preview needs the fast summary"
@@ -242,7 +112,7 @@ def _load_overview(session, days: int) -> dict:
             "metering": metering_source,
             "warehouse_pressure": pressure_source,
             "storage": storage_source,
-            "task_health": "Live: task history metadata",
+            "task_health": task_source,
             "driver_preview": driver_preview_source,
         },
     }

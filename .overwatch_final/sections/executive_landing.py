@@ -18,6 +18,7 @@ from config import (
 from sections.base import lazy_pandas, lazy_util as _lazy_util
 from sections.navigation import apply_navigation_state
 from sections.shell_helpers import (
+    render_escaped_bold_text,
     render_refresh_contract,
     render_shell_kpi_row,
     render_shell_snapshot,
@@ -2034,7 +2035,7 @@ def _render_line_chart(
     color_column: str | None = None,
     height: int = 210,
 ) -> None:
-    st.markdown(f"**{title}**")
+    render_escaped_bold_text(title)
     if rows is None or rows.empty or y_column not in rows.columns or "PERIOD_START" not in rows.columns:
         st.caption("No precomputed rows loaded for this chart.")
         return
@@ -2075,7 +2076,7 @@ def _render_bar_chart(
     color: str = "#29B5E8",
     height: int = 220,
 ) -> None:
-    st.markdown(f"**{title}**")
+    render_escaped_bold_text(title)
     if rows is None or rows.empty or x_column not in rows.columns or y_column not in rows.columns:
         st.caption("No precomputed rows loaded for this chart.")
         return

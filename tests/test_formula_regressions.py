@@ -402,17 +402,22 @@ from utils.alerts import (  # noqa: E402
     build_alert_data_quality_checks_ddl,
     build_alert_event_materialization_sql,
     build_alert_incident_action_board,
+    build_alert_native_object_registry_seed_rows,
+    build_alert_native_registry_ddl,
     build_loaded_section_alert_signal_board,
     build_alert_morning_brief_rows,
     build_alert_optional_integrations,
     build_alert_owner_workload_board,
     build_alert_remediation_log_insert_sql,
     build_alert_remediation_contract,
+    build_alert_remediation_policy_seed_rows,
+    build_alert_remediation_policy_ddl,
     build_alert_required_privileges,
     build_alert_rule_audit_ddl,
     build_alert_rule_audit_insert_sql,
     build_alert_rule_update_sql,
     build_section_alert_signal_board,
+    build_cost_cortex_alert_drilldown,
     build_alert_signal_query_catalog,
     build_alert_status_update_sql,
     build_alert_threshold_seed_rows,
@@ -2690,7 +2695,7 @@ class FormulaRegressionTests(unittest.TestCase):
             flags=re.MULTILINE,
         )
 
-        self.assertEqual(len(tables), 56)
+        self.assertEqual(len(tables), 59)
         self.assertEqual(len(views), 2)
         self.assertEqual(len(tasks), 7)
         self.assertEqual(len(functions), 1)
@@ -9292,8 +9297,15 @@ class FormulaRegressionTests(unittest.TestCase):
 
         self.assertEqual(cost_rows.iloc[0]["SECTION_FOCUS"], "Cortex spend")
         self.assertEqual(cost_rows.iloc[0]["ENTITY"], "SNOW_DTI_ANALYST")
+        self.assertEqual(cost_rows.iloc[0]["DESTINATION_SECTION"], "Cost & Contract")
+        self.assertEqual(cost_rows.iloc[0]["DESTINATION_WORKFLOW"], "AI and Cortex spend")
+        self.assertEqual(cost_rows.iloc[0]["ALERT_CENTER_VIEW"], "Cost & Behavior")
+        self.assertIn("quota", cost_rows.iloc[0]["DRILLDOWN_HINT"].lower())
+        self.assertEqual(cost_rows.iloc[0]["AUTOMATION_READINESS"], "Recommend only")
         self.assertEqual(security_rows.iloc[0]["CATEGORY"], "Security")
+        self.assertEqual(security_rows.iloc[0]["DESTINATION_WORKFLOW"], "Access posture")
         self.assertEqual(workload_rows.iloc[0]["CATEGORY"], "Task / Pipeline")
+        self.assertEqual(workload_rows.iloc[0]["DESTINATION_WORKFLOW"], "Task & procedure health")
         self.assertEqual(len(executive_rows), 3)
 
         loaded_rows = build_loaded_section_alert_signal_board(
@@ -9301,6 +9313,10 @@ class FormulaRegressionTests(unittest.TestCase):
             section="Cost & Contract",
         )
         self.assertEqual(loaded_rows.iloc[0]["SECTION_FOCUS"], "Cortex spend")
+        drilldown = build_cost_cortex_alert_drilldown(alerts, limit=4)
+        self.assertFalse(drilldown.empty)
+        self.assertEqual(drilldown.iloc[0]["FOCUS"], "Cortex spend")
+        self.assertIn("Open AI and Cortex spend", drilldown.iloc[0]["SAFE_ACTION"])
 
     def test_alert_surfaces_are_consolidated_to_alert_center(self):
         config_text = (APP_ROOT / "config.py").read_text(encoding="utf-8")
@@ -9326,6 +9342,9 @@ class FormulaRegressionTests(unittest.TestCase):
             "ALERT_RUN_HISTORY",
             "ALERT_ACKNOWLEDGEMENTS",
             "ALERT_REMEDIATION_LOG",
+            "ALERT_REMEDIATION_POLICY",
+            "ALERT_REMEDIATION_DRY_RUN",
+            "ALERT_NATIVE_OBJECT_REGISTRY",
             "ALERT_NOTIFICATION_LOG",
             "ALERT_THRESHOLDS",
             "ALERT_OWNER_ROUTING",
@@ -9342,9 +9361,37 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("PIPELINE_TASK_FAILURE", sql)
         self.assertIn("COST_CORTEX_SPEND_SPIKE", sql)
         self.assertIn("COST_CORTEX_SPEND_SPIKE", setup_sql)
+        self.assertIn("OVERWATCH_ALERT_CORTEX_SPEND_SPIKE", setup_sql)
+        self.assertIn("POLICY_CORTEX_QUOTA_REVIEW", setup_sql)
         threshold_keys = {row["THRESHOLD_KEY"] for row in build_alert_threshold_seed_rows()}
         self.assertIn("COST_CORTEX_SPEND_SPIKE", threshold_keys)
         self.assertGreaterEqual(len(threshold_keys), 8)
+
+    def test_native_alert_registry_and_remediation_policy_contracts_are_safe_by_default(self):
+        native_rows = build_alert_native_object_registry_seed_rows()
+        policy_rows = build_alert_remediation_policy_seed_rows()
+        native_ddl = build_alert_native_registry_ddl().upper()
+        policy_ddl = build_alert_remediation_policy_ddl().upper()
+        setup_sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8").upper()
+        drop_sql = (ROOT / "snowflake" / "OVERWATCH_MART_DROP.sql").read_text(encoding="utf-8").upper()
+        validation_sql = (ROOT / "snowflake" / "OVERWATCH_MART_VALIDATION.sql").read_text(encoding="utf-8").upper()
+
+        self.assertGreaterEqual(len(native_rows), 3)
+        self.assertTrue(all(row["ENABLED_BY_DEFAULT"] is False for row in native_rows))
+        self.assertTrue(any(row["ALERT_KEY"] == "COST_CORTEX_SPEND_SPIKE" for row in native_rows))
+        self.assertIn("CREATE OR REPLACE ALERT", "\n".join(row["GENERATED_CREATE_SQL"] for row in native_rows).upper())
+        self.assertIn("ALERT_NATIVE_OBJECT_REGISTRY", native_ddl)
+        self.assertIn("ALERT_NATIVE_OBJECT_REGISTRY", setup_sql)
+        self.assertIn("DROP TABLE IF EXISTS ALERT_NATIVE_OBJECT_REGISTRY", drop_sql)
+        self.assertIn("ALERT_NATIVE_OBJECT_REGISTRY", validation_sql)
+
+        self.assertGreaterEqual(len(policy_rows), 4)
+        self.assertTrue(all(row["AUTO_ELIGIBLE"] is False for row in policy_rows))
+        self.assertIn("ALERT_REMEDIATION_POLICY", policy_ddl)
+        self.assertIn("ALERT_REMEDIATION_DRY_RUN", policy_ddl)
+        self.assertIn("POLICY_CORTEX_QUOTA_REVIEW", setup_sql)
+        self.assertIn("DROP TABLE IF EXISTS ALERT_REMEDIATION_POLICY", drop_sql)
+        self.assertIn("ALERT_REMEDIATION_DRY_RUN", validation_sql)
 
     def test_alert_lifecycle_insert_sql_targets_command_center_audit_tables(self):
         ack_sql = build_alert_acknowledgement_insert_sql(

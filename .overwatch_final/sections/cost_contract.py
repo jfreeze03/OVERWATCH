@@ -25,6 +25,7 @@ from sections.shell_helpers import (
     render_shell_snapshot,
     with_loaded_at,
 )
+from sections.navigation import apply_section_workflow_navigation
 from utils.metering_sql import build_cost_cockpit_metering_sql, build_cost_run_rate_metering_sql
 from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_section_note, defer_source_note
@@ -64,6 +65,7 @@ apply_operator_status_labels = _lazy_util("apply_operator_status_labels")
 prioritize_context_columns = _lazy_util("prioritize_context_columns")
 render_priority_dataframe = _lazy_util("render_priority_dataframe")
 build_loaded_section_alert_signal_board = _lazy_util("build_loaded_section_alert_signal_board")
+build_cost_cortex_alert_drilldown = _lazy_util("build_cost_cortex_alert_drilldown")
 
 
 def build_cost_monitoring_mart_sql() -> str:
@@ -4763,6 +4765,12 @@ def _render_loaded_cost_alert_context() -> None:
     board = build_loaded_section_alert_signal_board(st.session_state, section="Cost & Contract", limit=8)
     if board.empty:
         return
+    alert_data = st.session_state.get("alert_center_data", {}) if isinstance(st.session_state.get("alert_center_data"), dict) else {}
+    drilldown = build_cost_cortex_alert_drilldown(
+        alert_data.get("alerts", pd.DataFrame()),
+        alert_data.get("action_queue", pd.DataFrame()),
+        limit=8,
+    )
     focus = board.get("SECTION_FOCUS", pd.Series(dtype=str)).fillna("").astype(str)
     severity = board.get("SEVERITY", pd.Series(dtype=str)).fillna("").astype(str)
     sla = board.get("SLA_STATE", pd.Series(dtype=str)).fillna("").astype(str)
@@ -4779,7 +4787,8 @@ def _render_loaded_cost_alert_context() -> None:
         priority_columns=[
             "SECTION_FOCUS", "SEVERITY", "SLA_STATE", "CATEGORY", "SIGNAL",
             "ENTITY", "OWNER", "FIRST_RESPONSE", "RECOMMENDED_ACTION",
-            "IMPACT_ESTIMATE", "QUEUE_STATE", "TICKET_ID",
+            "IMPACT_ESTIMATE", "OPEN_PATH", "DRILLDOWN_HINT",
+            "AUTOMATION_READINESS", "QUEUE_STATE", "TICKET_ID",
         ],
         sort_by=["PRIORITY"],
         ascending=True,
@@ -4787,6 +4796,34 @@ def _render_loaded_cost_alert_context() -> None:
         height=260,
         max_rows=6,
     )
+    if not drilldown.empty:
+        render_priority_dataframe(
+            drilldown,
+            title="Cost and Cortex alert drilldown",
+            priority_columns=[
+                "FOCUS", "SEVERITY", "ENTITY", "WHY_THIS_FIRED",
+                "WHERE_TO_OPEN", "SAFE_ACTION", "AUTOMATION_BOUNDARY",
+            ],
+            raw_label="All cost and Cortex alert drilldown rows",
+            height=260,
+            max_rows=6,
+        )
+    top = board.iloc[0]
+    button_cols = st.columns(2)
+    with button_cols[0]:
+        if st.button("Open Alert Lane", key="cost_alert_open_alert_lane", width="stretch"):
+            apply_section_workflow_navigation(
+                "Alert Center",
+                alert_center_view=str(top.get("ALERT_CENTER_VIEW") or "Cost & Behavior"),
+            )
+            st.rerun()
+    with button_cols[1]:
+        if st.button("Open Cost Drilldown", key="cost_alert_open_cost_drilldown", width="stretch"):
+            apply_section_workflow_navigation(
+                str(top.get("DESTINATION_SECTION") or "Cost & Contract"),
+                workflow=str(top.get("DESTINATION_WORKFLOW") or "Usage attribution and run-rate"),
+            )
+            st.rerun()
     defer_source_note("Loaded Cost and Cortex Alerts reuse Alert Center data and do not run a separate Snowflake query.")
 
 

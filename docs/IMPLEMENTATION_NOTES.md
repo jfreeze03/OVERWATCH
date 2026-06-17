@@ -135,6 +135,26 @@ outside the Streamlit app UI.
 - Keep future alert UI additions domain-focused. Prefer a single filtered
   evidence workbench over adding more inbox/digest/history-style panes.
 
+## 2026-06-17 - Alert Drilldowns And Native Registry
+
+- Loaded alert strips now carry operator route metadata: destination section,
+  destination workflow, Alert Center lane, drilldown hint, and automation
+  readiness. Executive Landing, Cost & Contract, Workload Operations, Security
+  Monitoring, and Alert Center domain lanes use that metadata for quick-open
+  buttons.
+- `Cost & Contract` has a dedicated loaded Cortex/spend alert drilldown that
+  explains why a signal fired, where to open the evidence, the safe first
+  action, and the automation boundary.
+- Fresh setup now creates `ALERT_NATIVE_OBJECT_REGISTRY`,
+  `ALERT_REMEDIATION_POLICY`, and `ALERT_REMEDIATION_DRY_RUN`. These objects
+  are registry/policy/audit contracts only; native Snowflake alerts remain
+  disabled candidates until a DBA reviews and deploys generated SQL outside the
+  app.
+- All seeded remediation policies default to recommend/status-review behavior.
+  Cortex access changes, privileged grants, task reruns, and warehouse timeout
+  changes must keep before-state, rollback, verification, and owner review
+  evidence before any execution path is considered.
+
 ## 2026-06-17 - Production Startup Cleanup
 
 - App startup should not use development hot-reload guards for config, utils,

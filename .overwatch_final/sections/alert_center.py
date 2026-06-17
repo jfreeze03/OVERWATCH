@@ -1138,6 +1138,7 @@ def _render_alert_domain_workbench(
     rules: pd.DataFrame,
 ) -> None:
     from utils.alerts import build_section_alert_signal_board
+    from sections.navigation import apply_section_workflow_navigation
 
     pd = _pd()
     title_map = {
@@ -1166,6 +1167,7 @@ def _render_alert_domain_workbench(
                 "SECTION_FOCUS", "PRIORITY", "SEVERITY", "SLA_STATE", "CATEGORY",
                 "SIGNAL", "ENTITY", "OWNER", "ROUTE", "FIRST_RESPONSE",
                 "RECOMMENDED_ACTION", "IMPACT_ESTIMATE", "SOURCE_FRESHNESS",
+                "OPEN_PATH", "DRILLDOWN_HINT", "AUTOMATION_READINESS",
                 "REMEDIATION_MODE", "QUEUE_STATE", "TICKET_ID",
             ],
             sort_by=["PRIORITY"],
@@ -1174,6 +1176,20 @@ def _render_alert_domain_workbench(
             height=420,
             max_rows=15,
         )
+        top = board.iloc[0]
+        cols = st.columns(2)
+        with cols[0]:
+            if st.button("Open Owning Section", key=f"alert_domain_open_owner_{active_view}", width="stretch"):
+                apply_section_workflow_navigation(
+                    str(top.get("DESTINATION_SECTION") or "Alert Center"),
+                    workflow=str(top.get("DESTINATION_WORKFLOW") or ""),
+                    alert_center_view=str(top.get("ALERT_CENTER_VIEW") or active_view),
+                )
+                st.rerun()
+        with cols[1]:
+            if st.button("Open Command Center", key=f"alert_domain_open_command_{active_view}", width="stretch"):
+                apply_section_workflow_navigation("Alert Center", alert_center_view="Command Center")
+                st.rerun()
 
     if rules is not None and not rules.empty:
         rule_text = pd.Series([""] * len(rules), index=rules.index, dtype=str)
@@ -1774,7 +1790,7 @@ def _render_loaded_advisor_alert_candidates() -> None:
 
 
 def _render_alert_detection_catalog() -> None:
-    from utils.alerts import build_alert_signal_query_catalog
+    from utils.alerts import build_alert_native_object_registry_seed_rows, build_alert_signal_query_catalog
 
     st.subheader("Detection Catalog")
     catalog = build_alert_signal_query_catalog(hours=24)
@@ -1797,6 +1813,20 @@ def _render_alert_detection_catalog() -> None:
         selected_signal = st.selectbox("Signal detail", signal_options, key="alert_detection_catalog_signal")
         selected = visible[visible["SIGNAL"].astype(str) == selected_signal].iloc[0]
         st.caption(str(selected.get("RECOMMENDED_ACTION") or "Review this alert signal with the owning DBA team."))
+    native_rows = _pd().DataFrame(build_alert_native_object_registry_seed_rows())
+    if not native_rows.empty:
+        _render_priority_dataframe(
+            native_rows,
+            title="Native Snowflake alert implementation candidates",
+            priority_columns=[
+                "STATUS", "CATEGORY", "ALERT_KEY", "ALERT_OBJECT_NAME",
+                "TARGET_ROUTE", "SCHEDULE_TEXT", "CONDITION_SOURCE",
+                "ACTION_SOURCE", "SAFETY_NOTE",
+            ],
+            raw_label="All native alert registry candidates",
+            height=260,
+            max_rows=8,
+        )
     defer_source_note("Detection Catalog lists alert signals and required Snowflake telemetry.")
 
 
@@ -1912,7 +1942,7 @@ def _render_alert_notification_remediation(
     rules: pd.DataFrame,
     company: str,
 ) -> None:
-    from utils.alerts import build_alert_remediation_contract
+    from utils.alerts import build_alert_remediation_contract, build_alert_remediation_policy_seed_rows
 
     pd = _pd()
     st.subheader("Delivery & Automation")
@@ -1972,6 +2002,20 @@ def _render_alert_notification_remediation(
             ],
             raw_label="All remediation status fields",
             height=260,
+        )
+    policy_rows = pd.DataFrame(build_alert_remediation_policy_seed_rows())
+    if not policy_rows.empty:
+        _render_priority_dataframe(
+            policy_rows,
+            title="Remediation policy matrix",
+            priority_columns=[
+                "REMEDIATION_MODE", "AUTO_ELIGIBLE", "CATEGORY", "ALERT_KEY",
+                "ACTION_TYPE", "REQUIRED_REVIEW", "ROLLBACK_GUIDANCE",
+                "VERIFICATION_SQL",
+            ],
+            raw_label="All remediation policy rows",
+            height=300,
+            max_rows=8,
         )
     _render_alert_email_delivery_status(alerts, delivery_log)
     _render_alert_action_queue_routing(alerts, queue, company)

@@ -38,6 +38,16 @@ incident proof.
 | `FACT_COST_MONITORING_SIGNAL` | Transient fact | Ranked cost movement and Cortex signals consumed by Cost & Contract and Alert Center. |
 | `FACT_COST_INCIDENT_TIMELINE` | Transient fact | Ordered cost incident timeline for root cause, alerting, and action status. |
 
+## Alert Operations
+
+| Object | Type | Purpose |
+|---|---|---|
+| `ALERT_EVENTS` | Table | Durable alert lifecycle event table used by Alert Center command lanes. |
+| `ALERT_NATIVE_OBJECT_REGISTRY` | Table | Reviewed native Snowflake alert candidates with generated create/drop SQL. Candidates are disabled by default. |
+| `ALERT_REMEDIATION_POLICY` | Table | Recommend/status-review policy catalog for future guarded remediation. |
+| `ALERT_REMEDIATION_DRY_RUN` | Table | Audit table for proposed remediation dry-runs before any execution path exists. |
+| `ALERT_ACKNOWLEDGEMENTS`, `ALERT_NOTIFICATION_LOG`, `ALERT_REMEDIATION_LOG` | Tables | Alert acknowledgement, delivery, and remediation audit history. |
+
 ## Native Snowflake Proof Contracts
 
 | Source | Purpose |

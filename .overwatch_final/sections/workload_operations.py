@@ -7,6 +7,7 @@ from importlib import import_module
 import streamlit as st
 
 from sections.base import lazy_util as _lazy_util
+from sections.navigation import apply_section_workflow_navigation
 from utils.section_guidance import defer_section_note
 
 render_workflow_selector = _lazy_util("render_workflow_selector")
@@ -57,7 +58,8 @@ def _render_loaded_workload_alert_context() -> None:
         priority_columns=[
             "SECTION_FOCUS", "SEVERITY", "SLA_STATE", "CATEGORY", "SIGNAL",
             "ENTITY", "OWNER", "FIRST_RESPONSE", "RECOMMENDED_ACTION",
-            "SOURCE_FRESHNESS", "QUEUE_STATE", "TICKET_ID",
+            "SOURCE_FRESHNESS", "OPEN_PATH", "DRILLDOWN_HINT",
+            "AUTOMATION_READINESS", "QUEUE_STATE", "TICKET_ID",
         ],
         sort_by=["PRIORITY"],
         ascending=True,
@@ -65,6 +67,22 @@ def _render_loaded_workload_alert_context() -> None:
         height=260,
         max_rows=6,
     )
+    top = board.iloc[0]
+    cols = st.columns(2)
+    with cols[0]:
+        if st.button("Open Alert Lane", key="workload_alert_open_alert_lane", width="stretch"):
+            apply_section_workflow_navigation(
+                "Alert Center",
+                alert_center_view=str(top.get("ALERT_CENTER_VIEW") or "Reliability"),
+            )
+            st.rerun()
+    with cols[1]:
+        if st.button("Open Workload Drilldown", key="workload_alert_open_drilldown", width="stretch"):
+            apply_section_workflow_navigation(
+                str(top.get("DESTINATION_SECTION") or "Workload Operations"),
+                workflow=str(top.get("DESTINATION_WORKFLOW") or "Task & procedure health"),
+            )
+            st.rerun()
 
 
 WORKLOAD_OPERATIONS_FAST_ENTRY_VERSION = "2026-06-16-workload-board-v1"

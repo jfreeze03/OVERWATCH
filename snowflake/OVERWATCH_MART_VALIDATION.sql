@@ -16,6 +16,9 @@ WITH required_objects AS (
         ('TABLE', 'ALERT_EVENTS'),
         ('TABLE', 'ALERT_ACKNOWLEDGEMENTS'),
         ('TABLE', 'ALERT_REMEDIATION_LOG'),
+        ('TABLE', 'ALERT_REMEDIATION_POLICY'),
+        ('TABLE', 'ALERT_REMEDIATION_DRY_RUN'),
+        ('TABLE', 'ALERT_NATIVE_OBJECT_REGISTRY'),
         ('TABLE', 'ALERT_NOTIFICATION_LOG'),
         ('TABLE', 'ALERT_THRESHOLDS'),
         ('TABLE', 'ALERT_OWNER_ROUTING'),
@@ -45,7 +48,7 @@ ORDER BY VALIDATION_STATUS DESC, REQUIRED_TYPE, REQUIRED_OBJECT;
 -- 2) Deployable object count contract.
 WITH expected_counts AS (
     SELECT * FROM VALUES
-        ('TABLE', 56),
+        ('TABLE', 59),
         ('VIEW', 2),
         ('PROCEDURE', 8),
         ('FUNCTION', 1)

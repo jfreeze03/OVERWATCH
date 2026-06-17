@@ -35,6 +35,9 @@ from .query import (
 ANNOTATION_TABLE = "OVERWATCH_ANNOTATIONS"
 ALERT_DELIVERY_LOG_TABLE = "OVERWATCH_ALERT_DELIVERY_LOG"
 ALERT_RULE_AUDIT_TABLE = "OVERWATCH_ALERT_RULE_AUDIT"
+ALERT_NATIVE_OBJECT_REGISTRY_TABLE = "ALERT_NATIVE_OBJECT_REGISTRY"
+ALERT_REMEDIATION_POLICY_TABLE = "ALERT_REMEDIATION_POLICY"
+ALERT_REMEDIATION_DRY_RUN_TABLE = "ALERT_REMEDIATION_DRY_RUN"
 DEFAULT_ALERT_RECIPIENT = DEFAULT_ALERT_EMAIL
 
 
@@ -2526,6 +2529,334 @@ VALUES
 """
 
 
+def build_alert_native_object_registry_seed_rows(
+    db: str = ALERT_DB,
+    schema: str = ALERT_SCHEMA,
+) -> list[dict[str, object]]:
+    """Return approved native Snowflake ALERT candidates without enabling them."""
+    event_table = _command_center_fqn("ALERT_EVENTS", db, schema)
+    return [
+        {
+            "REGISTRY_KEY": "NATIVE_COST_CORTEX_SPEND_SPIKE",
+            "ALERT_KEY": "COST_CORTEX_SPEND_SPIKE",
+            "CATEGORY": "Cost",
+            "ALERT_OBJECT_NAME": "OVERWATCH_ALERT_CORTEX_SPEND_SPIKE",
+            "TARGET_ROUTE": "Cost & Contract",
+            "WAREHOUSE_NAME": "OVERWATCH_WH",
+            "SCHEDULE_TEXT": "60 MINUTE",
+            "STATUS": "CANDIDATE",
+            "CONDITION_SOURCE": "FACT_CORTEX_DAILY 7-day spend vs shared threshold",
+            "ACTION_SOURCE": "Insert recommend-only event into ALERT_EVENTS",
+            "GENERATED_CREATE_SQL": f"""CREATE OR REPLACE ALERT OVERWATCH_ALERT_CORTEX_SPEND_SPIKE
+  WAREHOUSE = OVERWATCH_WH
+  SCHEDULE = '60 MINUTE'
+  IF (EXISTS (
+    SELECT 1
+    FROM FACT_CORTEX_DAILY
+    WHERE USAGE_DATE >= DATEADD('day', -7, CURRENT_DATE())
+    HAVING SUM(EST_COST_USD) > 25
+  ))
+  THEN INSERT INTO {event_table}
+    (ALERT_KEY, CATEGORY, SEVERITY, STATUS, OWNER, RECOMMENDED_ACTION, ENTITY_TYPE, ENTITY_NAME, CURRENT_VALUE, REMEDIATION_MODE, EVIDENCE, DEDUPE_KEY)
+    SELECT 'COST_CORTEX_SPEND_SPIKE', 'Cost', 'High', 'New', 'DBA / AI cost route',
+           'Review Cortex user/source spend, quota settings, grants, and company scope before changing access.',
+           'CORTEX', 'CORTEX', SUM(EST_COST_USD), 'RECOMMEND',
+           'Native candidate detected Cortex spend above threshold.',
+           SHA2('COST_CORTEX_SPEND_SPIKE|' || TO_VARCHAR(CURRENT_DATE()), 256)
+    FROM FACT_CORTEX_DAILY
+    WHERE USAGE_DATE >= DATEADD('day', -7, CURRENT_DATE());""",
+            "GENERATED_DROP_SQL": "DROP ALERT IF EXISTS OVERWATCH_ALERT_CORTEX_SPEND_SPIKE;",
+            "ENABLED_BY_DEFAULT": False,
+            "SAFETY_NOTE": "Recommend-only. Do not alter Cortex access automatically.",
+        },
+        {
+            "REGISTRY_KEY": "NATIVE_SECURITY_PRIVILEGE_ESCALATION",
+            "ALERT_KEY": "SECURITY_PRIVILEGE_ESCALATION",
+            "CATEGORY": "Security",
+            "ALERT_OBJECT_NAME": "OVERWATCH_ALERT_PRIVILEGE_ESCALATION",
+            "TARGET_ROUTE": "Security Monitoring",
+            "WAREHOUSE_NAME": "OVERWATCH_WH",
+            "SCHEDULE_TEXT": "60 MINUTE",
+            "STATUS": "CANDIDATE",
+            "CONDITION_SOURCE": "SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS privileged role grants",
+            "ACTION_SOURCE": "Insert status-review event into ALERT_EVENTS",
+            "GENERATED_CREATE_SQL": f"""CREATE OR REPLACE ALERT OVERWATCH_ALERT_PRIVILEGE_ESCALATION
+  WAREHOUSE = OVERWATCH_WH
+  SCHEDULE = '60 MINUTE'
+  IF (EXISTS (
+    SELECT 1
+    FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS
+    WHERE CREATED_ON >= DATEADD('hour', -2, CURRENT_TIMESTAMP())
+      AND DELETED_ON IS NULL
+      AND UPPER(ROLE) IN ('ACCOUNTADMIN', 'SECURITYADMIN', 'SYSADMIN', 'ORGADMIN')
+  ))
+  THEN INSERT INTO {event_table}
+    (ALERT_KEY, CATEGORY, SEVERITY, STATUS, OWNER, RECOMMENDED_ACTION, ENTITY_TYPE, ENTITY_NAME, REMEDIATION_MODE, EVIDENCE, DEDUPE_KEY)
+    SELECT 'SECURITY_PRIVILEGE_ESCALATION', 'Security', 'Critical', 'New', 'Security Reviewer',
+           'Validate ticket, reviewer, MFA posture, and access purpose before accepting the privileged grant.',
+           'USER', GRANTEE_NAME, 'STATUS_REVIEW',
+           'Native candidate detected privileged role grant: ' || ROLE,
+           SHA2('SECURITY_PRIVILEGE_ESCALATION|' || GRANTEE_NAME || '|' || ROLE || '|' || TO_VARCHAR(CREATED_ON), 256)
+    FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS
+    WHERE CREATED_ON >= DATEADD('hour', -2, CURRENT_TIMESTAMP())
+      AND DELETED_ON IS NULL
+      AND UPPER(ROLE) IN ('ACCOUNTADMIN', 'SECURITYADMIN', 'SYSADMIN', 'ORGADMIN');""",
+            "GENERATED_DROP_SQL": "DROP ALERT IF EXISTS OVERWATCH_ALERT_PRIVILEGE_ESCALATION;",
+            "ENABLED_BY_DEFAULT": False,
+            "SAFETY_NOTE": "Status-review only. Never auto-revoke from this alert.",
+        },
+        {
+            "REGISTRY_KEY": "NATIVE_PIPELINE_TASK_FAILURE",
+            "ALERT_KEY": "PIPELINE_TASK_FAILURE",
+            "CATEGORY": "Task / Pipeline",
+            "ALERT_OBJECT_NAME": "OVERWATCH_ALERT_TASK_FAILURE",
+            "TARGET_ROUTE": "Workload Operations",
+            "WAREHOUSE_NAME": "OVERWATCH_WH",
+            "SCHEDULE_TEXT": "30 MINUTE",
+            "STATUS": "CANDIDATE",
+            "CONDITION_SOURCE": "SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY failed/skipped task graph rows",
+            "ACTION_SOURCE": "Insert status-review event into ALERT_EVENTS",
+            "GENERATED_CREATE_SQL": f"""CREATE OR REPLACE ALERT OVERWATCH_ALERT_TASK_FAILURE
+  WAREHOUSE = OVERWATCH_WH
+  SCHEDULE = '30 MINUTE'
+  IF (EXISTS (
+    SELECT 1
+    FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
+    WHERE SCHEDULED_TIME >= DATEADD('hour', -2, CURRENT_TIMESTAMP())
+      AND UPPER(COALESCE(STATE, '')) IN ('FAILED', 'FAILED_WITH_ERROR', 'SKIPPED', 'CANCELLED')
+  ))
+  THEN INSERT INTO {event_table}
+    (ALERT_KEY, CATEGORY, SEVERITY, STATUS, OWNER, RECOMMENDED_ACTION, ENTITY_TYPE, ENTITY_NAME, QUERY_ID, REMEDIATION_MODE, EVIDENCE, DEDUPE_KEY)
+    SELECT 'PIPELINE_TASK_FAILURE', 'Task / Pipeline', 'Critical', 'New', 'DBA / Pipeline Owner',
+           'Identify root task, failed child, last success, downstream SLA, and safe rerun conditions.',
+           'TASK', DATABASE_NAME || '.' || SCHEMA_NAME || '.' || NAME, QUERY_ID, 'STATUS_REVIEW',
+           COALESCE(ERROR_MESSAGE, STATE),
+           SHA2('PIPELINE_TASK_FAILURE|' || COALESCE(ROOT_TASK_ID, NAME) || '|' || TO_VARCHAR(SCHEDULED_TIME), 256)
+    FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
+    WHERE SCHEDULED_TIME >= DATEADD('hour', -2, CURRENT_TIMESTAMP())
+      AND UPPER(COALESCE(STATE, '')) IN ('FAILED', 'FAILED_WITH_ERROR', 'SKIPPED', 'CANCELLED');""",
+            "GENERATED_DROP_SQL": "DROP ALERT IF EXISTS OVERWATCH_ALERT_TASK_FAILURE;",
+            "ENABLED_BY_DEFAULT": False,
+            "SAFETY_NOTE": "Status-review only. Reruns require task graph safety checks.",
+        },
+    ]
+
+
+def build_alert_remediation_policy_seed_rows() -> list[dict[str, object]]:
+    """Return safe default remediation policies for alert dry-run review."""
+    return [
+        {
+            "POLICY_ID": "POLICY_CORTEX_QUOTA_REVIEW",
+            "ALERT_KEY": "COST_CORTEX_SPEND_SPIKE",
+            "CATEGORY": "Cost",
+            "ACTION_TYPE": "Cortex quota or access review",
+            "REMEDIATION_MODE": "RECOMMEND",
+            "AUTO_ELIGIBLE": False,
+            "REQUIRED_REVIEW": "DBA / AI cost route plus Security when grants change",
+            "BEFORE_STATE_SQL": "SHOW PARAMETERS LIKE 'CORTEX%' IN ACCOUNT;",
+            "DRY_RUN_SQL": "-- Review top FACT_CORTEX_DAILY users/sources and candidate quota setting; do not execute from Alert Center.",
+            "EXECUTION_SQL_TEMPLATE": "-- No automatic Cortex access change. Use approved DBA workflow after review.",
+            "ROLLBACK_GUIDANCE": "Restore prior Cortex parameter, role grant, or quota setting captured in before-state notes.",
+            "VERIFICATION_SQL": "SELECT * FROM FACT_CORTEX_DAILY WHERE USAGE_DATE >= DATEADD('day', -7, CURRENT_DATE()) ORDER BY EST_COST_USD DESC LIMIT 100;",
+        },
+        {
+            "POLICY_ID": "POLICY_IDLE_WAREHOUSE_TIMEOUT_REVIEW",
+            "ALERT_KEY": "OPT_UNUSED_WAREHOUSE",
+            "CATEGORY": "Optimization",
+            "ACTION_TYPE": "Warehouse auto-suspend timeout review",
+            "REMEDIATION_MODE": "STATUS_REVIEW",
+            "AUTO_ELIGIBLE": False,
+            "REQUIRED_REVIEW": "DBA / Cost owner",
+            "BEFORE_STATE_SQL": "SHOW WAREHOUSES;",
+            "DRY_RUN_SQL": "-- Generate ALTER WAREHOUSE <name> SET AUTO_SUSPEND = <seconds> after route review.",
+            "EXECUTION_SQL_TEMPLATE": "ALTER WAREHOUSE IDENTIFIER('<warehouse_name>') SET AUTO_SUSPEND = <seconds>;",
+            "ROLLBACK_GUIDANCE": "Reset AUTO_SUSPEND to the captured before-state value.",
+            "VERIFICATION_SQL": "SHOW WAREHOUSES LIKE '<warehouse_name>';",
+        },
+        {
+            "POLICY_ID": "POLICY_TASK_RERUN_STATUS_REVIEW",
+            "ALERT_KEY": "PIPELINE_TASK_FAILURE",
+            "CATEGORY": "Task / Pipeline",
+            "ACTION_TYPE": "Task rerun review",
+            "REMEDIATION_MODE": "STATUS_REVIEW",
+            "AUTO_ELIGIBLE": False,
+            "REQUIRED_REVIEW": "DBA / Pipeline Owner",
+            "BEFORE_STATE_SQL": "SELECT * FROM TABLE(INFORMATION_SCHEMA.TASK_HISTORY()) ORDER BY SCHEDULED_TIME DESC LIMIT 100;",
+            "DRY_RUN_SQL": "-- Confirm root cause, dependency state, and downstream idempotency before EXECUTE TASK.",
+            "EXECUTION_SQL_TEMPLATE": "EXECUTE TASK IDENTIFIER('<database.schema.task_name>');",
+            "ROLLBACK_GUIDANCE": "Record downstream cleanup plan or rerun blocker before manual execution.",
+            "VERIFICATION_SQL": "SELECT * FROM TABLE(INFORMATION_SCHEMA.TASK_HISTORY()) ORDER BY SCHEDULED_TIME DESC LIMIT 100;",
+        },
+        {
+            "POLICY_ID": "POLICY_SECURITY_ACCESS_STATUS_REVIEW",
+            "ALERT_KEY": "SECURITY_PRIVILEGE_ESCALATION",
+            "CATEGORY": "Security",
+            "ACTION_TYPE": "Access rollback review",
+            "REMEDIATION_MODE": "STATUS_REVIEW",
+            "AUTO_ELIGIBLE": False,
+            "REQUIRED_REVIEW": "Security Reviewer",
+            "BEFORE_STATE_SQL": "SHOW GRANTS TO USER <user_name>;",
+            "DRY_RUN_SQL": "-- Compare grant, ticket, reviewer, and MFA posture before any revoke.",
+            "EXECUTION_SQL_TEMPLATE": "-- Revoke SQL is intentionally not generated for AUTO mode.",
+            "ROLLBACK_GUIDANCE": "Re-grant only after reviewer approval and ticket evidence.",
+            "VERIFICATION_SQL": "SHOW GRANTS TO USER <user_name>;",
+        },
+    ]
+
+
+def build_alert_native_registry_ddl(
+    db: str = ALERT_DB,
+    schema: str = ALERT_SCHEMA,
+) -> str:
+    rows = build_alert_native_object_registry_seed_rows(db=db, schema=schema)
+    columns = [
+        "REGISTRY_KEY",
+        "ALERT_KEY",
+        "CATEGORY",
+        "ALERT_OBJECT_NAME",
+        "TARGET_ROUTE",
+        "WAREHOUSE_NAME",
+        "SCHEDULE_TEXT",
+        "STATUS",
+        "CONDITION_SOURCE",
+        "ACTION_SOURCE",
+        "GENERATED_CREATE_SQL",
+        "GENERATED_DROP_SQL",
+        "ENABLED_BY_DEFAULT",
+        "SAFETY_NOTE",
+    ]
+    values = _values_clause(rows, columns)
+    table = _command_center_fqn(ALERT_NATIVE_OBJECT_REGISTRY_TABLE, db, schema)
+    return f"""CREATE TABLE IF NOT EXISTS {table} (
+  REGISTRY_KEY          VARCHAR(200) PRIMARY KEY,
+  ALERT_KEY             VARCHAR(200),
+  CATEGORY              VARCHAR(100),
+  ALERT_OBJECT_NAME     VARCHAR(300),
+  TARGET_ROUTE          VARCHAR(200),
+  WAREHOUSE_NAME        VARCHAR(300),
+  SCHEDULE_TEXT         VARCHAR(100),
+  STATUS                VARCHAR(40) DEFAULT 'CANDIDATE',
+  CONDITION_SOURCE      VARCHAR(1000),
+  ACTION_SOURCE         VARCHAR(1000),
+  GENERATED_CREATE_SQL  VARCHAR(16000),
+  GENERATED_DROP_SQL    VARCHAR(4000),
+  ENABLED_BY_DEFAULT    BOOLEAN DEFAULT FALSE,
+  SAFETY_NOTE           VARCHAR(4000),
+  UPDATED_AT            TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+  UPDATED_BY            VARCHAR(200) DEFAULT CURRENT_USER()
+);
+
+MERGE INTO {table} tgt
+USING (
+  SELECT * FROM VALUES
+    {values}
+) src({", ".join(columns)})
+ON tgt.REGISTRY_KEY = src.REGISTRY_KEY
+WHEN MATCHED THEN UPDATE SET
+  ALERT_KEY = src.ALERT_KEY,
+  CATEGORY = src.CATEGORY,
+  ALERT_OBJECT_NAME = src.ALERT_OBJECT_NAME,
+  TARGET_ROUTE = src.TARGET_ROUTE,
+  WAREHOUSE_NAME = src.WAREHOUSE_NAME,
+  SCHEDULE_TEXT = src.SCHEDULE_TEXT,
+  STATUS = src.STATUS,
+  CONDITION_SOURCE = src.CONDITION_SOURCE,
+  ACTION_SOURCE = src.ACTION_SOURCE,
+  GENERATED_CREATE_SQL = src.GENERATED_CREATE_SQL,
+  GENERATED_DROP_SQL = src.GENERATED_DROP_SQL,
+  ENABLED_BY_DEFAULT = src.ENABLED_BY_DEFAULT,
+  SAFETY_NOTE = src.SAFETY_NOTE,
+  UPDATED_AT = CURRENT_TIMESTAMP(),
+  UPDATED_BY = CURRENT_USER()
+WHEN NOT MATCHED THEN INSERT
+  ({", ".join(columns)})
+VALUES
+  ({", ".join("src." + column for column in columns)});
+"""
+
+
+def build_alert_remediation_policy_ddl(
+    db: str = ALERT_DB,
+    schema: str = ALERT_SCHEMA,
+) -> str:
+    rows = build_alert_remediation_policy_seed_rows()
+    columns = [
+        "POLICY_ID",
+        "ALERT_KEY",
+        "CATEGORY",
+        "ACTION_TYPE",
+        "REMEDIATION_MODE",
+        "AUTO_ELIGIBLE",
+        "REQUIRED_REVIEW",
+        "BEFORE_STATE_SQL",
+        "DRY_RUN_SQL",
+        "EXECUTION_SQL_TEMPLATE",
+        "ROLLBACK_GUIDANCE",
+        "VERIFICATION_SQL",
+    ]
+    policy_table = _command_center_fqn(ALERT_REMEDIATION_POLICY_TABLE, db, schema)
+    dry_run_table = _command_center_fqn(ALERT_REMEDIATION_DRY_RUN_TABLE, db, schema)
+    values = _values_clause(rows, columns)
+    return f"""CREATE TABLE IF NOT EXISTS {policy_table} (
+  POLICY_ID              VARCHAR(200) PRIMARY KEY,
+  ALERT_KEY              VARCHAR(200),
+  CATEGORY               VARCHAR(100),
+  ACTION_TYPE            VARCHAR(200),
+  REMEDIATION_MODE       VARCHAR(40) DEFAULT 'RECOMMEND',
+  AUTO_ELIGIBLE          BOOLEAN DEFAULT FALSE,
+  REQUIRED_REVIEW        VARCHAR(500),
+  BEFORE_STATE_SQL       VARCHAR(8000),
+  DRY_RUN_SQL            VARCHAR(8000),
+  EXECUTION_SQL_TEMPLATE VARCHAR(8000),
+  ROLLBACK_GUIDANCE      VARCHAR(4000),
+  VERIFICATION_SQL       VARCHAR(8000),
+  ACTIVE                 BOOLEAN DEFAULT TRUE,
+  UPDATED_AT             TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+  UPDATED_BY             VARCHAR(200) DEFAULT CURRENT_USER()
+);
+
+CREATE TABLE IF NOT EXISTS {dry_run_table} (
+  DRY_RUN_ID          NUMBER AUTOINCREMENT PRIMARY KEY,
+  POLICY_ID           VARCHAR(200),
+  EVENT_ID            NUMBER,
+  ALERT_KEY           VARCHAR(200),
+  CREATED_AT          TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+  CREATED_BY          VARCHAR(200) DEFAULT CURRENT_USER(),
+  DRY_RUN_STATUS      VARCHAR(100),
+  BEFORE_STATE        VARCHAR(8000),
+  PROPOSED_SQL        VARCHAR(16000),
+  EXPECTED_EFFECT     VARCHAR(4000),
+  BLOCKING_REASON     VARCHAR(4000),
+  VERIFICATION_SQL    VARCHAR(8000)
+);
+
+MERGE INTO {policy_table} tgt
+USING (
+  SELECT * FROM VALUES
+    {values}
+) src({", ".join(columns)})
+ON tgt.POLICY_ID = src.POLICY_ID
+WHEN MATCHED THEN UPDATE SET
+  ALERT_KEY = src.ALERT_KEY,
+  CATEGORY = src.CATEGORY,
+  ACTION_TYPE = src.ACTION_TYPE,
+  REMEDIATION_MODE = src.REMEDIATION_MODE,
+  AUTO_ELIGIBLE = src.AUTO_ELIGIBLE,
+  REQUIRED_REVIEW = src.REQUIRED_REVIEW,
+  BEFORE_STATE_SQL = src.BEFORE_STATE_SQL,
+  DRY_RUN_SQL = src.DRY_RUN_SQL,
+  EXECUTION_SQL_TEMPLATE = src.EXECUTION_SQL_TEMPLATE,
+  ROLLBACK_GUIDANCE = src.ROLLBACK_GUIDANCE,
+  VERIFICATION_SQL = src.VERIFICATION_SQL,
+  UPDATED_AT = CURRENT_TIMESTAMP(),
+  UPDATED_BY = CURRENT_USER()
+WHEN NOT MATCHED THEN INSERT
+  ({", ".join(columns)})
+VALUES
+  ({", ".join("src." + column for column in columns)});
+"""
+
+
 def build_alert_event_materialization_sql(
     db: str = ALERT_DB,
     schema: str = ALERT_SCHEMA,
@@ -2840,6 +3171,10 @@ CREATE TABLE IF NOT EXISTS {_command_center_fqn("ALERT_OWNER_ROUTING", db, schem
 );
 
 {build_alert_data_quality_checks_ddl(db=db, schema=schema).strip()}
+
+{build_alert_native_registry_ddl(db=db, schema=schema).strip()}
+
+{build_alert_remediation_policy_ddl(db=db, schema=schema).strip()}
 
 MERGE INTO {_command_center_fqn("ALERT_THRESHOLDS", db, schema)} tgt
 USING (
@@ -3681,6 +4016,102 @@ def _section_alert_focus(text: str) -> str:
     return "Operational alert"
 
 
+def _alert_route_for_focus(section: str, focus: str) -> tuple[str, str, str, str, str]:
+    """Map loaded alert context to the section/workflow that should be opened next."""
+    focus_key = str(focus or "").upper()
+    section_key = str(section or "").upper()
+    if "CORTEX" in focus_key:
+        return (
+            "Cost & Contract",
+            "AI and Cortex spend",
+            "Cost & Behavior",
+            "Open Cost & Contract > AI and Cortex spend.",
+            "Review Cortex user/source, baseline, quota, grants, and company scope before changing access.",
+        )
+    if "SPEND" in focus_key or "COST" in focus_key:
+        return (
+            "Cost & Contract",
+            "Usage attribution and run-rate",
+            "Cost & Behavior",
+            "Open Cost & Contract > Usage attribution and run-rate.",
+            "Compare completed-window metering, run-rate baseline, chargeback, and open savings actions.",
+        )
+    if "SECURITY" in focus_key:
+        return (
+            "Security Monitoring",
+            "Access posture",
+            "Security",
+            "Open Security Monitoring > Access posture.",
+            "Confirm actor, role, MFA/login context, object scope, and reviewer status before closure.",
+        )
+    if "PIPELINE" in focus_key:
+        return (
+            "Workload Operations",
+            "Task & procedure health",
+            "Reliability",
+            "Open Workload Operations > Task & procedure health.",
+            "Check root task/procedure, failed child query, last success, retry safety, and downstream SLA.",
+        )
+    if "QUERY" in focus_key or "PERFORMANCE" in focus_key:
+        return (
+            "Workload Operations",
+            "Query investigation",
+            "Reliability",
+            "Open Workload Operations > Query investigation.",
+            "Review query ID, warehouse pressure, queue/spill/lock evidence, and workload owner route.",
+        )
+    if "WORKLOAD" in section_key:
+        return (
+            "Workload Operations",
+            "Task & procedure health",
+            "Reliability",
+            "Open Workload Operations and choose the reliability workflow matching the signal.",
+            "Use exact query/task/procedure telemetry before retrying, resizing, or cancelling anything.",
+        )
+    if "SECURITY" in section_key:
+        return (
+            "Security Monitoring",
+            "Access posture",
+            "Security",
+            "Open Security Monitoring and validate the access posture route.",
+            "Treat access/security signals as status-review until reviewer and evidence are attached.",
+        )
+    return (
+        "Alert Center",
+        "Command Center",
+        "Command Center",
+        "Open Alert Center > Command Center.",
+        "Work route, SLA, delivery, action queue, and closure status from the alert command board.",
+    )
+
+
+def _alert_automation_readiness(focus: str, remediation_mode: str) -> str:
+    mode = str(remediation_mode or "RECOMMEND").upper().replace(" ", "_")
+    focus_key = str(focus or "").upper()
+    if mode in {"OFF", "DISABLED"}:
+        return "Detection only"
+    if any(token in focus_key for token in ("SECURITY", "CORTEX", "SPEND", "COST")):
+        return "Recommend only"
+    if "PIPELINE" in focus_key:
+        return "Dry-run candidate"
+    if "QUERY" in focus_key or "PERFORMANCE" in focus_key:
+        return "Status-review candidate"
+    return "Recommend only"
+
+
+def _alert_cortex_guardrail(row: pd.Series | dict[str, Any]) -> str:
+    text = " ".join(
+        _row_value(row, key, default="")
+        for key in ("SECTION_FOCUS", "SIGNAL", "CATEGORY", "RECOMMENDED_ACTION", "ENTITY")
+    ).upper()
+    if "CORTEX" not in text and " AI " not in f" {text} ":
+        return ""
+    return (
+        "Do not disable Cortex access from an alert alone; compare user/source baseline, "
+        "company scope, grants, and quota settings first."
+    )
+
+
 def build_section_alert_signal_board(
     alerts: pd.DataFrame,
     queue: pd.DataFrame | None = None,
@@ -3712,6 +4143,13 @@ def build_section_alert_signal_board(
         "REMEDIATION_MODE",
         "QUEUE_STATE",
         "TICKET_ID",
+        "ALERT_CENTER_VIEW",
+        "DESTINATION_SECTION",
+        "DESTINATION_WORKFLOW",
+        "OPEN_PATH",
+        "DRILLDOWN_HINT",
+        "AUTOMATION_READINESS",
+        "CORTEX_GUARDRAIL",
     ]
     incident_board = build_alert_incident_action_board(alerts, queue, limit=500)
     if incident_board.empty:
@@ -3754,6 +4192,20 @@ def build_section_alert_signal_board(
         return pd.DataFrame(columns=output_columns)
 
     visible["SECTION_FOCUS"] = search_text.loc[visible.index].apply(_section_alert_focus)
+    route_values = visible["SECTION_FOCUS"].apply(lambda focus: _alert_route_for_focus(section, focus))
+    visible["DESTINATION_SECTION"] = route_values.apply(lambda value: value[0])
+    visible["DESTINATION_WORKFLOW"] = route_values.apply(lambda value: value[1])
+    visible["ALERT_CENTER_VIEW"] = route_values.apply(lambda value: value[2])
+    visible["OPEN_PATH"] = route_values.apply(lambda value: value[3])
+    visible["DRILLDOWN_HINT"] = route_values.apply(lambda value: value[4])
+    visible["AUTOMATION_READINESS"] = visible.apply(
+        lambda row: _alert_automation_readiness(
+            str(row.get("SECTION_FOCUS") or ""),
+            str(row.get("REMEDIATION_MODE") or "RECOMMEND"),
+        ),
+        axis=1,
+    )
+    visible["CORTEX_GUARDRAIL"] = visible.apply(_alert_cortex_guardrail, axis=1)
     priority = pd.to_numeric(visible.get("PRIORITY", pd.Series(range(1, len(visible) + 1), index=visible.index)), errors="coerce").fillna(999)
     focus_boost = visible["SECTION_FOCUS"].isin(["Cortex spend", "Spend spike"]).map({True: -0.25, False: 0.0})
     visible["_SECTION_SORT"] = priority + focus_boost
@@ -3782,6 +4234,74 @@ def build_loaded_section_alert_signal_board(
     alerts_df = alerts if isinstance(alerts, pd.DataFrame) else pd.DataFrame()
     queue_df = queue if isinstance(queue, pd.DataFrame) else pd.DataFrame()
     return build_section_alert_signal_board(alerts_df, queue_df, section=section, limit=limit)
+
+
+def build_cost_cortex_alert_drilldown(
+    alerts: pd.DataFrame,
+    queue: pd.DataFrame | None = None,
+    *,
+    limit: int = 10,
+) -> pd.DataFrame:
+    """Build a cost/Cortex alert explanation board from loaded alert context."""
+    board = build_section_alert_signal_board(alerts, queue, section="Cost & Contract", limit=max(limit, 10))
+    if board.empty:
+        return pd.DataFrame(columns=[
+            "FOCUS",
+            "SEVERITY",
+            "ENTITY",
+            "WHY_THIS_FIRED",
+            "BASELINE_CONTEXT",
+            "CURRENT_CONTEXT",
+            "THRESHOLD_CONTEXT",
+            "WHERE_TO_OPEN",
+            "SAFE_ACTION",
+            "AUTOMATION_BOUNDARY",
+        ])
+    visible = board[
+        board["SECTION_FOCUS"].isin(["Cortex spend", "Spend spike", "Cost movement"])
+    ].copy()
+    if visible.empty:
+        return pd.DataFrame()
+
+    def _context(row: pd.Series, key: str) -> str:
+        raw = _row_value(row, key, default="")
+        if not raw:
+            return "Not loaded"
+        return raw
+
+    rows: list[dict[str, str]] = []
+    for _, row in visible.head(max(1, int(limit or 10))).iterrows():
+        focus = str(row.get("SECTION_FOCUS") or "Cost movement")
+        signal = str(row.get("SIGNAL") or row.get("CATEGORY") or "Cost alert")
+        entity = str(row.get("ENTITY") or "Snowflake account")
+        if focus == "Cortex spend":
+            why = (
+                f"{signal} is active for {entity}; validate user/source usage, request count, "
+                "baseline, company route, and quota settings."
+            )
+            safe_action = "Open AI and Cortex spend; review grants and quota route before changing access."
+            boundary = "Recommend only until quota/grant changes have named DBA status review."
+        elif focus == "Spend spike":
+            why = f"{signal} indicates spend is above the loaded baseline for {entity}."
+            safe_action = "Open usage attribution and run-rate; compare official metering to query and warehouse drivers."
+            boundary = "No automatic warehouse changes from spend alone."
+        else:
+            why = f"{signal} needs cost movement review for {entity}."
+            safe_action = "Open Cost & Contract and reconcile run-rate, chargeback, and action queue."
+            boundary = "Recommend only unless a remediation policy explicitly allows dry-run."
+        rows.append({
+            "FOCUS": focus,
+            "SEVERITY": str(row.get("SEVERITY") or ""),
+            "ENTITY": entity,
+            "WHY_THIS_FIRED": why,
+            "BASELINE_CONTEXT": _context(row, "BASELINE_VALUE"),
+            "CURRENT_CONTEXT": _context(row, "CURRENT_VALUE"),
+            "THRESHOLD_CONTEXT": _context(row, "THRESHOLD_VALUE"),
+            "WHERE_TO_OPEN": str(row.get("OPEN_PATH") or "Open Cost & Contract."),
+            "SAFE_ACTION": safe_action,
+            "AUTOMATION_BOUNDARY": boundary,
+        })
+    return pd.DataFrame(rows)
 
 
 def build_alert_owner_workload_board(

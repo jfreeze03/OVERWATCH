@@ -64,3 +64,27 @@ def apply_navigation_state(section: str, *, mark_pending: bool = True) -> str:
     request_section_workspace(target)
     st.session_state["nav_section"] = target
     return target
+
+
+def apply_section_workflow_navigation(
+    section: str,
+    *,
+    workflow: str = "",
+    alert_center_view: str = "",
+    mark_pending: bool = True,
+) -> str:
+    """Navigate to a section and optionally select its most useful workflow."""
+    target = apply_navigation_state(section, mark_pending=mark_pending)
+    workflow_value = str(workflow or "").strip()
+    if target == "Alert Center":
+        st.session_state["alert_center_active_view"] = str(alert_center_view or workflow_value or "Command Center")
+    elif target == "Cost & Contract" and workflow_value:
+        st.session_state["cost_contract_workflow"] = workflow_value
+    elif target == "Workload Operations" and workflow_value:
+        st.session_state["workload_operations_workflow"] = workflow_value
+        if workflow_value == "Query investigation":
+            st.session_state["workload_operations_query_focus"] = "Contention Telemetry"
+    elif target == "Security Monitoring" and workflow_value:
+        st.session_state["security_posture_view"] = workflow_value
+        st.session_state["security_posture_workflow"] = workflow_value
+    return target

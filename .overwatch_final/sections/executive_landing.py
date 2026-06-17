@@ -16,7 +16,7 @@ from config import (
     DAY_WINDOW_OPTIONS,
 )
 from sections.base import lazy_pandas, lazy_util as _lazy_util
-from sections.navigation import apply_navigation_state
+from sections.navigation import apply_navigation_state, apply_section_workflow_navigation
 from sections.shell_helpers import (
     render_escaped_bold_text,
     render_refresh_contract,
@@ -2685,6 +2685,7 @@ def _render_loaded_executive_alert_context() -> None:
         priority_columns=[
             "SECTION_FOCUS", "SEVERITY", "SLA_STATE", "CATEGORY", "SIGNAL",
             "ENTITY", "OWNER", "ROUTE", "FIRST_RESPONSE", "RECOMMENDED_ACTION",
+            "OPEN_PATH", "AUTOMATION_READINESS",
         ],
         sort_by=["PRIORITY"],
         ascending=True,
@@ -2692,6 +2693,23 @@ def _render_loaded_executive_alert_context() -> None:
         height=260,
         max_rows=6,
     )
+    top = board.iloc[0]
+    cols = st.columns(2)
+    with cols[0]:
+        if st.button("Open Alert Command", key="executive_alert_open_command", width="stretch"):
+            apply_section_workflow_navigation(
+                "Alert Center",
+                alert_center_view=str(top.get("ALERT_CENTER_VIEW") or "Command Center"),
+            )
+            st.rerun()
+    with cols[1]:
+        if st.button("Open Impacted Section", key="executive_alert_open_impacted_section", width="stretch"):
+            apply_section_workflow_navigation(
+                str(top.get("DESTINATION_SECTION") or "Alert Center"),
+                workflow=str(top.get("DESTINATION_WORKFLOW") or "Command Center"),
+                alert_center_view=str(top.get("ALERT_CENTER_VIEW") or "Command Center"),
+            )
+            st.rerun()
 
 
 def render() -> None:

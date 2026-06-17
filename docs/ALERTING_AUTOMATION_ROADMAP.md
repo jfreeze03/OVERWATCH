@@ -108,6 +108,31 @@ This plan combines:
   `ALERT_THRESHOLDS`, `ALERT_CONFIG`, and the detection catalog. Fresh mart
   rebuilds should include the `COST_CORTEX_SPEND_SPIKE` threshold alongside the
   existing `CORTEX_SPEND_AND_QUOTA` event family.
+- Section alert strips now include destination section/workflow, Alert Center
+  lane, safe drilldown hint, and automation readiness. The app can route a
+  loaded Cost/Cortex, Reliability, Security, or Executive alert to the owning
+  workflow without running another account-history query.
+- `ALERT_NATIVE_OBJECT_REGISTRY` stores reviewed native Snowflake alert
+  candidates and generated create/drop SQL. Candidates are not enabled by
+  default and should remain DBA-reviewed deployment artifacts, not app-side
+  mutations.
+- `ALERT_REMEDIATION_POLICY` and `ALERT_REMEDIATION_DRY_RUN` define the future
+  automation contract. Current seed policies are recommend/status-review only,
+  with no auto-eligible rows.
+
+## Current Native Alert Candidates
+
+| Candidate | Source | Route | Mode | Boundary |
+|---|---|---|---|---|
+| Cortex spend spike | `FACT_CORTEX_DAILY` | Cost & Contract | Recommend | Review users, source, quota, grants, and company scope before access changes. |
+| Privileged role escalation | `SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS` | Security Monitoring | Status review | Never auto-revoke from the alert; require ticket/reviewer/MFA evidence. |
+| Task failure | `SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY` | Workload Operations | Status review | Rerun only after root-cause, idempotency, dependency, and downstream SLA checks. |
+
+Snowflake's native alert objects can send notifications or run SQL actions when
+a condition is met, but generated `CREATE ALERT` SQL is registry output only in
+OVERWATCH right now. DBA deployment should separately validate condition/action
+SQL because Snowflake validates some identifier/type issues only when an alert
+executes.
 
 ## Alert Domains
 

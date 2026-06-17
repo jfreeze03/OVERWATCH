@@ -8,6 +8,7 @@ import streamlit as st
 
 from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE, DEFAULT_COMPANY, DEFAULT_ENVIRONMENT
 from sections.base import lazy_pandas, lazy_util as _lazy_util
+from sections.navigation import apply_section_workflow_navigation
 from sections.shell_helpers import (
     consume_section_autoload_request,
     render_data_freshness,
@@ -117,7 +118,8 @@ def _render_loaded_security_alert_context() -> None:
         priority_columns=[
             "SECTION_FOCUS", "SEVERITY", "SLA_STATE", "CATEGORY", "SIGNAL",
             "ENTITY", "OWNER", "FIRST_RESPONSE", "RECOMMENDED_ACTION",
-            "IMPACT_ESTIMATE", "QUEUE_STATE", "TICKET_ID",
+            "IMPACT_ESTIMATE", "OPEN_PATH", "DRILLDOWN_HINT",
+            "AUTOMATION_READINESS", "QUEUE_STATE", "TICKET_ID",
         ],
         sort_by=["PRIORITY"],
         ascending=True,
@@ -125,6 +127,22 @@ def _render_loaded_security_alert_context() -> None:
         height=260,
         max_rows=6,
     )
+    top = board.iloc[0]
+    cols = st.columns(2)
+    with cols[0]:
+        if st.button("Open Alert Lane", key="security_alert_open_alert_lane", width="stretch"):
+            apply_section_workflow_navigation(
+                "Alert Center",
+                alert_center_view=str(top.get("ALERT_CENTER_VIEW") or "Security"),
+            )
+            st.rerun()
+    with cols[1]:
+        if st.button("Open Security Drilldown", key="security_alert_open_drilldown", width="stretch"):
+            apply_section_workflow_navigation(
+                str(top.get("DESTINATION_SECTION") or "Security Monitoring"),
+                workflow=str(top.get("DESTINATION_WORKFLOW") or "Access posture"),
+            )
+            st.rerun()
 
 
 def render_workflow_module(workflow: str, workflow_modules: dict[str, str]) -> None:

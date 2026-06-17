@@ -24,13 +24,16 @@ from .company_filter import (
     get_user_filter_clause,
 )
 from .compatibility import build_task_failure_summary_sql, filter_existing_columns
-from .cost import build_idle_warehouse_sql
+from .cost import build_clustering_cost_sql, build_idle_warehouse_sql
 from .data import normalize_df
 from .mart import (
     build_mart_recommendation_failed_tasks_sql,
     build_mart_recommendation_idle_sql,
     build_mart_recommendation_query_errors_sql,
     build_mart_recommendation_spill_sql,
+    build_mart_procedure_calls_sql,
+    build_mart_procedure_inventory_sql,
+    build_mart_procedure_sla_sql,
     build_mart_warehouse_scaling_sql,
     build_mart_storage_db_detail_sql,
     build_mart_storage_trend_sql,
@@ -95,6 +98,12 @@ def _load_or_reuse(
         if cached is not None:
             return cached
     return _store_result(state_key, loader())
+
+
+def _company_column_filter(column: str, company: str | None) -> str:
+    if not company or str(company).upper() == "ALL":
+        return ""
+    return f"AND UPPER({column}) = UPPER({sql_literal(company, 100)})"
 
 
 def _storage_summary_from_trend(trend: pd.DataFrame, days: int) -> pd.DataFrame:
@@ -1648,3 +1657,590 @@ def load_shared_recommendation_query_failures(
             return _empty_result("Query failure advisor", f"{mart_message} Live fallback unavailable: {exc}")
 
     return _load_or_reuse("shared_rec_query_failures", (company, days, min_failures), _loader, force=force)
+
+
+def load_shared_recommendation_storage_retention(
+    company: str | None = None,
+    *,
+    min_time_travel_tb: float = 0.25,
+    min_time_travel_ratio: float = 0.25,
+    force: bool = False,
+    section: str = "Shared Metrics",
+) -> SharedMetricResult:
+    """Load time-travel-heavy database candidates once for recommendation surfaces."""
+
+    company = company or get_active_company()
+    min_time_travel_tb = float(min_time_travel_tb or 0)
+    min_time_travel_ratio = float(min_time_travel_ratio or 0)
+
+    def _loader() -> SharedMetricResult:
+        try:
+            df = run_query(
+                f"""
+                SELECT table_catalog AS database_name,
+                       ROUND(SUM(COALESCE(active_bytes, 0)) / POWER(1024, 4), 3) AS active_tb,
+                       ROUND(SUM(COALESCE(time_travel_bytes, 0)) / POWER(1024, 4), 3) AS time_travel_tb,
+                       ROUND(SUM(COALESCE(failsafe_bytes, 0)) / POWER(1024, 4), 3) AS failsafe_tb
+                FROM SNOWFLAKE.ACCOUNT_USAGE.TABLE_STORAGE_METRICS
+                WHERE (deleted IS NULL OR deleted = FALSE)
+                  AND table_catalog IS NOT NULL
+                  {get_db_filter_clause("table_catalog", company)}
+                GROUP BY table_catalog
+                HAVING time_travel_tb >= {min_time_travel_tb}
+                   AND time_travel_tb >= active_tb * {min_time_travel_ratio}
+                ORDER BY time_travel_tb DESC
+                LIMIT 10
+                """,
+                ttl_key=get_company_scope_key(
+                    "shared_rec_storage_retention",
+                    min_time_travel_tb,
+                    min_time_travel_ratio,
+                ),
+                tier="historical",
+                section=section,
+            )
+            return SharedMetricResult(
+                data=df,
+                source="Live: SNOWFLAKE.ACCOUNT_USAGE.TABLE_STORAGE_METRICS",
+                available=not df.empty,
+            )
+        except Exception as exc:
+            return _empty_result("Storage retention advisor", f"Live storage-retention scan unavailable: {exc}")
+
+    return _load_or_reuse(
+        "shared_rec_storage_retention",
+        (company, min_time_travel_tb, min_time_travel_ratio),
+        _loader,
+        force=force,
+    )
+
+
+def load_shared_recommendation_clustering_cost(
+    company: str | None = None,
+    *,
+    days: int = 7,
+    credit_price: float = 0.0,
+    top: int = 10,
+    force: bool = False,
+    section: str = "Shared Metrics",
+) -> SharedMetricResult:
+    """Load automatic clustering cost candidates once for recommendation surfaces."""
+
+    company = company or get_active_company()
+    days = max(1, int(days or 7))
+    top = max(1, int(top or 10))
+    credit_price = float(credit_price or 0)
+
+    def _loader() -> SharedMetricResult:
+        try:
+            df = run_query(
+                build_clustering_cost_sql(days, company=company, credit_price=credit_price or None, top=top),
+                ttl_key=get_company_scope_key("shared_rec_clustering_cost", days, credit_price, top),
+                tier="historical",
+                section=section,
+            )
+            return SharedMetricResult(
+                data=df,
+                source="Live: SNOWFLAKE.ACCOUNT_USAGE.AUTOMATIC_CLUSTERING_HISTORY",
+                available=not df.empty,
+                effective_days=days,
+            )
+        except Exception as exc:
+            return _empty_result("Clustering cost advisor", f"Live clustering-cost scan unavailable: {exc}")
+
+    return _load_or_reuse("shared_rec_clustering_cost", (company, days, credit_price, top), _loader, force=force)
+
+
+def load_shared_recommendation_repeated_queries(
+    session: object,
+    company: str | None = None,
+    *,
+    days: int = 7,
+    min_runs: int = 50,
+    min_total_exec_hours: float = 2.0,
+    force: bool = False,
+    section: str = "Shared Metrics",
+) -> SharedMetricResult:
+    """Load repeated expensive query patterns once for recommendation surfaces."""
+
+    company = company or get_active_company()
+    days = max(1, int(days or 7))
+    min_runs = max(1, int(min_runs or 1))
+    min_total_exec_hours = float(min_total_exec_hours or 0)
+
+    def _loader() -> SharedMetricResult:
+        mart_message = ""
+        query_filters = get_global_filter_clause(
+            date_col="start_time",
+            wh_col="warehouse_name",
+            user_col="user_name",
+            role_col="role_name",
+            db_col="database_name",
+        )
+        if days <= 30:
+            try:
+                table = mart_object_name("FACT_QUERY_DETAIL_RECENT")
+                df = run_query(
+                    f"""
+                    SELECT query_hash,
+                           COUNT(*) AS runs,
+                           COUNT(DISTINCT user_name) AS user_count,
+                           ROUND(SUM(COALESCE(total_elapsed_time, 0)) / 1000 / 3600, 2) AS total_exec_hours,
+                           ROUND(SUM(COALESCE(bytes_scanned, 0)) / POWER(1024, 4), 2) AS tb_scanned,
+                           SUBSTR(MAX(query_text), 1, 500) AS sample_query,
+                           'QUERY_HASH' AS hash_column
+                    FROM {table}
+                    WHERE start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+                      AND warehouse_name IS NOT NULL
+                      AND UPPER(COALESCE(execution_status, '')) = 'SUCCESS'
+                      AND query_hash IS NOT NULL
+                      {_company_column_filter("company", company)}
+                      {query_filters}
+                    GROUP BY query_hash
+                    HAVING runs >= {min_runs} OR total_exec_hours >= {min_total_exec_hours}
+                    ORDER BY total_exec_hours DESC, runs DESC
+                    LIMIT 10
+                    """,
+                    ttl_key=get_company_scope_key(
+                        "shared_rec_repeated_queries_mart",
+                        days,
+                        min_runs,
+                        min_total_exec_hours,
+                    ),
+                    tier="historical",
+                    section=section,
+                )
+                if not df.empty:
+                    return SharedMetricResult(
+                        data=df,
+                        source="Fast query-detail summary",
+                        available=True,
+                        effective_days=days,
+                    )
+                mart_message = "Repeated-query mart returned no rows."
+            except Exception as exc:
+                mart_message = str(exc)
+        else:
+            mart_message = "Live scan required for repeated-query lookbacks beyond retained query detail."
+
+        try:
+            qh_columns = set(filter_existing_columns(
+                session,
+                "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+                ["QUERY_PARAMETERIZED_HASH", "QUERY_HASH"],
+            ))
+            hash_column = (
+                "QUERY_PARAMETERIZED_HASH"
+                if "QUERY_PARAMETERIZED_HASH" in qh_columns
+                else "QUERY_HASH" if "QUERY_HASH" in qh_columns else ""
+            )
+            if not hash_column:
+                return _empty_result(
+                    "Repeated query advisor",
+                    f"{mart_message} QUERY_HISTORY does not expose a query hash column.",
+                    effective_days=days,
+                )
+            hash_ident = hash_column
+            df = run_query(
+                f"""
+                SELECT {hash_ident} AS query_hash,
+                       COUNT(*) AS runs,
+                       COUNT(DISTINCT user_name) AS user_count,
+                       ROUND(SUM(COALESCE(total_elapsed_time, 0)) / 1000 / 3600, 2) AS total_exec_hours,
+                       ROUND(SUM(COALESCE(bytes_scanned, 0)) / POWER(1024, 4), 2) AS tb_scanned,
+                       SUBSTR(MAX(query_text), 1, 500) AS sample_query,
+                       '{hash_column}' AS hash_column
+                FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+                WHERE start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+                  AND warehouse_name IS NOT NULL
+                  AND UPPER(COALESCE(execution_status, '')) = 'SUCCESS'
+                  AND {hash_ident} IS NOT NULL
+                  {query_filters}
+                GROUP BY {hash_ident}
+                HAVING runs >= {min_runs} OR total_exec_hours >= {min_total_exec_hours}
+                ORDER BY total_exec_hours DESC, runs DESC
+                LIMIT 10
+                """,
+                ttl_key=get_company_scope_key(
+                    "shared_rec_repeated_queries_live",
+                    days,
+                    min_runs,
+                    min_total_exec_hours,
+                    hash_column,
+                ),
+                tier="historical",
+                section=section,
+            )
+            return SharedMetricResult(
+                data=df,
+                source="Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+                available=not df.empty,
+                message="" if not df.empty else mart_message,
+                effective_days=days,
+            )
+        except Exception as exc:
+            return _empty_result("Repeated query advisor", f"{mart_message} Live fallback unavailable: {exc}")
+
+    return _load_or_reuse(
+        "shared_rec_repeated_queries",
+        (company, days, min_runs, min_total_exec_hours),
+        _loader,
+        force=force,
+    )
+
+
+def load_shared_duplicate_query_patterns(
+    session: object,
+    company: str | None = None,
+    *,
+    days: int = 7,
+    min_executions: int = 5,
+    force: bool = False,
+    section: str = "Shared Metrics",
+) -> SharedMetricResult:
+    """Load duplicate/redundant query candidates once for advisor panels."""
+
+    company = company or get_active_company()
+    days = max(1, int(days or 7))
+    min_executions = max(1, int(min_executions or 1))
+
+    def _loader() -> SharedMetricResult:
+        query_filters = get_global_filter_clause(
+            date_col="start_time",
+            wh_col="warehouse_name",
+            user_col="user_name",
+            role_col="role_name",
+            db_col="database_name",
+        )
+        mart_message = ""
+        if days <= 30:
+            try:
+                table = mart_object_name("FACT_QUERY_DETAIL_RECENT")
+                df = run_query(
+                    f"""
+                    SELECT SUBSTR(query_text, 1, 200) AS query_sig,
+                           COUNT(DISTINCT user_name) AS user_count,
+                           COUNT(*) AS execution_count,
+                           SUM(total_elapsed_time) / NULLIF(COUNT(*), 0) / 1000 AS avg_elapsed_sec,
+                           SUM(total_elapsed_time) / 1000 AS total_wasted_sec,
+                           0::FLOAT AS cloud_credits
+                    FROM {table}
+                    WHERE start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+                      AND UPPER(COALESCE(execution_status, '')) = 'SUCCESS'
+                      AND warehouse_name IS NOT NULL
+                      AND query_text IS NOT NULL
+                      {_company_column_filter("company", company)}
+                      {query_filters}
+                    GROUP BY query_sig
+                    HAVING execution_count >= {min_executions}
+                    ORDER BY execution_count DESC, total_wasted_sec DESC
+                    LIMIT 100
+                    """,
+                    ttl_key=get_company_scope_key("shared_duplicate_queries_mart", days, min_executions),
+                    tier="standard",
+                    section=section,
+                )
+                if not df.empty:
+                    return SharedMetricResult(
+                        data=df,
+                        source="Fast query-detail summary",
+                        available=True,
+                        effective_days=days,
+                    )
+                mart_message = "Duplicate-query mart returned no rows."
+            except Exception as exc:
+                mart_message = str(exc)
+        else:
+            mart_message = "Live scan required for duplicate-query lookbacks beyond retained query detail."
+
+        try:
+            qh_cols = set(filter_existing_columns(
+                session,
+                "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+                ["CREDITS_USED_CLOUD_SERVICES"],
+            ))
+            cloud_expr = (
+                "SUM(COALESCE(credits_used_cloud_services, 0))"
+                if "CREDITS_USED_CLOUD_SERVICES" in qh_cols
+                else "0"
+            )
+            df = run_query(
+                f"""
+                SELECT SUBSTR(query_text, 1, 200) AS query_sig,
+                       COUNT(DISTINCT user_name) AS user_count,
+                       COUNT(*) AS execution_count,
+                       SUM(total_elapsed_time) / NULLIF(COUNT(*), 0) / 1000 AS avg_elapsed_sec,
+                       SUM(total_elapsed_time) / 1000 AS total_wasted_sec,
+                       {cloud_expr} AS cloud_credits
+                FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+                WHERE start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+                  AND UPPER(execution_status) = 'SUCCESS'
+                  AND warehouse_name IS NOT NULL
+                  {query_filters}
+                GROUP BY query_sig
+                HAVING COUNT(*) >= {min_executions}
+                ORDER BY execution_count DESC
+                LIMIT 100
+                """,
+                ttl_key=get_company_scope_key("shared_duplicate_queries_live", days, min_executions),
+                tier="standard",
+                section=section,
+            )
+            return SharedMetricResult(
+                data=df,
+                source="Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+                available=not df.empty,
+                message="" if not df.empty else mart_message,
+                effective_days=days,
+            )
+        except Exception as exc:
+            return _empty_result("Duplicate query advisor", f"{mart_message} Live fallback unavailable: {exc}")
+
+    return _load_or_reuse("shared_duplicate_queries", (company, days, min_executions), _loader, force=force)
+
+
+def load_shared_warehouse_right_sizing(
+    session: object,
+    company: str | None = None,
+    *,
+    days: int = 14,
+    force: bool = False,
+    section: str = "Shared Metrics",
+) -> SharedMetricResult:
+    """Load warehouse right-sizing telemetry once for advisor panels."""
+
+    company = company or get_active_company()
+    days = max(1, int(days or 14))
+
+    def _loader() -> SharedMetricResult:
+        try:
+            qh_cols = set(filter_existing_columns(
+                session,
+                "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+                [
+                    "WAREHOUSE_SIZE",
+                    "QUEUED_OVERLOAD_TIME",
+                    "BYTES_SPILLED_TO_REMOTE_STORAGE",
+                    "PERCENTAGE_SCANNED_FROM_CACHE",
+                ],
+            ))
+            wh_size_expr = "MAX(warehouse_size)" if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR"
+            queue_expr = "AVG(queued_overload_time) / 1000" if "QUEUED_OVERLOAD_TIME" in qh_cols else "0"
+            spill_expr = (
+                "SUM(bytes_spilled_to_remote_storage) / POWER(1024, 3)"
+                if "BYTES_SPILLED_TO_REMOTE_STORAGE" in qh_cols
+                else "0"
+            )
+            cache_expr = "AVG(percentage_scanned_from_cache)" if "PERCENTAGE_SCANNED_FROM_CACHE" in qh_cols else "0"
+            query_filters = get_global_filter_clause(
+                date_col="start_time",
+                wh_col="warehouse_name",
+                user_col="user_name",
+                role_col="role_name",
+                db_col="database_name",
+            )
+            df = run_query(
+                f"""
+                WITH query_stats AS (
+                    SELECT
+                        warehouse_name,
+                        {wh_size_expr} AS warehouse_size,
+                        COUNT(*) AS total_queries,
+                        {queue_expr} AS avg_queue_sec,
+                        {spill_expr} AS remote_spill_gb,
+                        {cache_expr} AS avg_cache_pct
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+                    WHERE start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+                      AND warehouse_name IS NOT NULL
+                      {query_filters}
+                    GROUP BY warehouse_name
+                ),
+                metering AS (
+                    SELECT
+                        warehouse_name,
+                        ROUND(SUM(credits_used), 4) AS total_credits
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
+                    WHERE start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+                      AND start_time <  DATEADD('hour', -24, CURRENT_TIMESTAMP())
+                      {get_wh_filter_clause("warehouse_name", company)}
+                    GROUP BY warehouse_name
+                )
+                SELECT
+                    q.warehouse_name,
+                    q.warehouse_size,
+                    q.total_queries,
+                    ROUND(q.avg_queue_sec, 2) AS avg_queue_sec,
+                    ROUND(q.remote_spill_gb, 2) AS remote_spill_gb,
+                    ROUND(q.avg_cache_pct, 2) AS avg_cache_pct,
+                    COALESCE(m.total_credits, 0) AS total_credits
+                FROM query_stats q
+                LEFT JOIN metering m
+                  ON q.warehouse_name = m.warehouse_name
+                ORDER BY total_credits DESC
+                """,
+                ttl_key=get_company_scope_key("shared_warehouse_right_sizing", days),
+                tier="historical",
+                section=section,
+            )
+            return SharedMetricResult(
+                data=df,
+                source="Live: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY + WAREHOUSE_METERING_HISTORY",
+                available=not df.empty,
+                effective_days=days,
+            )
+        except Exception as exc:
+            return _empty_result("Warehouse right-sizing advisor", f"Warehouse sizing telemetry unavailable: {exc}")
+
+    return _load_or_reuse("shared_warehouse_right_sizing", (company, days), _loader, force=force)
+
+
+def load_shared_procedure_inventory(
+    company: str | None = None,
+    *,
+    database_contains: str = "",
+    live_sql: str = "",
+    force: bool = False,
+    section: str = "Shared Metrics",
+) -> SharedMetricResult:
+    """Load stored procedure inventory once, preferring the procedure snapshot mart."""
+
+    company = company or get_active_company()
+    database_contains = str(database_contains or "").strip()
+
+    def _loader() -> SharedMetricResult:
+        mart_message = ""
+        try:
+            df = run_query(
+                build_mart_procedure_inventory_sql(company=company, database_contains=database_contains),
+                ttl_key=get_company_scope_key("shared_procedure_inventory_mart", database_contains),
+                tier="metadata",
+                section=section,
+            )
+            if not df.empty:
+                return SharedMetricResult(data=df, source="Fast procedure inventory", available=True)
+            mart_message = "Procedure inventory mart returned no rows."
+        except Exception as exc:
+            mart_message = str(exc)
+
+        live_sql_value = live_sql() if callable(live_sql) else live_sql
+        if not live_sql_value:
+            return _empty_result("Procedure inventory", mart_message)
+        try:
+            df = run_query(
+                live_sql_value,
+                ttl_key=get_company_scope_key("shared_procedure_inventory_live", database_contains),
+                tier="metadata",
+                section=section,
+            )
+            return SharedMetricResult(
+                data=df,
+                source="Live fallback: SNOWFLAKE.ACCOUNT_USAGE.PROCEDURES",
+                available=not df.empty,
+                message="" if not df.empty else mart_message,
+            )
+        except Exception as exc:
+            return _empty_result("Procedure inventory", f"{mart_message} Live fallback unavailable: {exc}")
+
+    return _load_or_reuse("shared_procedure_inventory", (company, database_contains), _loader, force=force)
+
+
+def load_shared_procedure_calls(
+    company: str | None = None,
+    *,
+    days: int = 7,
+    live_sql: str = "",
+    force: bool = False,
+    section: str = "Shared Metrics",
+) -> SharedMetricResult:
+    """Load stored procedure call summary once, preferring FACT_PROCEDURE_RUN."""
+
+    company = company or get_active_company()
+    days = max(1, int(days or 7))
+
+    def _loader() -> SharedMetricResult:
+        mart_message = ""
+        try:
+            df = run_query(
+                build_mart_procedure_calls_sql(days, company=company),
+                ttl_key=get_company_scope_key("shared_procedure_calls_mart", days),
+                tier="standard",
+                section=section,
+            )
+            if not df.empty:
+                return SharedMetricResult(data=df, source="Fast procedure run summary", available=True, effective_days=days)
+            mart_message = "Procedure call mart returned no rows."
+        except Exception as exc:
+            mart_message = str(exc)
+
+        live_sql_value = live_sql() if callable(live_sql) else live_sql
+        if not live_sql_value:
+            return _empty_result("Procedure call summary", mart_message, effective_days=days)
+        try:
+            df = run_query(
+                live_sql_value,
+                ttl_key=get_company_scope_key("shared_procedure_calls_live", days),
+                tier="standard",
+                section=section,
+            )
+            return SharedMetricResult(
+                data=df,
+                source="Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+                available=not df.empty,
+                message="" if not df.empty else mart_message,
+                effective_days=days,
+            )
+        except Exception as exc:
+            return _empty_result("Procedure call summary", f"{mart_message} Live fallback unavailable: {exc}", effective_days=days)
+
+    return _load_or_reuse("shared_procedure_calls", (company, days), _loader, force=force)
+
+
+def load_shared_procedure_sla(
+    company: str | None = None,
+    *,
+    days: int = 7,
+    live_sql: str = "",
+    force: bool = False,
+    section: str = "Shared Metrics",
+) -> SharedMetricResult:
+    """Load procedure SLA/cost detail once, preferring FACT_PROCEDURE_RUN."""
+
+    company = company or get_active_company()
+    days = max(1, int(days or 7))
+
+    def _loader() -> SharedMetricResult:
+        mart_message = ""
+        try:
+            df = run_query(
+                build_mart_procedure_sla_sql(days, company=company),
+                ttl_key=get_company_scope_key("shared_procedure_sla_mart", days),
+                tier="standard",
+                section=section,
+            )
+            if not df.empty:
+                return SharedMetricResult(data=df, source="Fast procedure SLA summary", available=True, effective_days=days)
+            mart_message = "Procedure SLA mart returned no rows."
+        except Exception as exc:
+            mart_message = str(exc)
+
+        live_sql_value = live_sql() if callable(live_sql) else live_sql
+        if not live_sql_value:
+            return _empty_result("Procedure SLA/cost watch", mart_message, effective_days=days)
+        try:
+            df = run_query(
+                live_sql_value,
+                ttl_key=get_company_scope_key("shared_procedure_sla_live", days),
+                tier="standard",
+                section=section,
+            )
+            return SharedMetricResult(
+                data=df,
+                source="Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+                available=not df.empty,
+                message="" if not df.empty else mart_message,
+                effective_days=days,
+            )
+        except Exception as exc:
+            return _empty_result("Procedure SLA/cost watch", f"{mart_message} Live fallback unavailable: {exc}", effective_days=days)
+
+    return _load_or_reuse("shared_procedure_sla", (company, days), _loader, force=force)

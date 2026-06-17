@@ -67,13 +67,20 @@ At this revision the expected deployable object inventory is:
 | Views | 2 |
 | Procedures | 8 |
 | Functions | 1 |
+| Tasks | 7 |
 
 The latest static scan also confirmed that every deployable object has matching
 drop coverage in `snowflake/OVERWATCH_MART_DROP.sql`. The remaining objects with
 no direct app/test references are refresh procedures or `OVERWATCH_LOAD_AUDIT`
 bookkeeping, so the reset path should keep them unless their downstream facts are
 retired in a future setup revision.
-| Tasks | 7 |
+
+Latest consolidation note: repeated-query, duplicate-query, warehouse
+right-sizing, clustering, storage-retention, and procedure summary reads moved
+behind shared app loaders. A reset does not need new objects for that pass, but a
+fresh setup should still recreate `FACT_QUERY_DETAIL_RECENT`,
+`FACT_PROCEDURE_RUN`, and the procedure/task snapshots because those are now used
+more broadly as fast advisor inputs.
 
 Also confirm:
 

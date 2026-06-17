@@ -1344,13 +1344,15 @@ def _executive_loaded_advisor_rows(state: dict | None = None) -> pd.DataFrame:
     )
     procedure_latest = _state_frame(state, "sp_sla_latest")
     procedure_cost = _state_frame(state, "spt_df_sp_tracker")
+    procedure_analysis = _state_frame(state, "sp_analysis_board")
     procedure_optimization = 0
     if not procedure_cost.empty and "OPTIMIZATION_SCORE" in procedure_cost.columns:
         scores = pd.to_numeric(procedure_cost["OPTIMIZATION_SCORE"], errors="coerce").fillna(0)
         procedure_optimization = int((scores > 0).sum())
-    procedure_findings = len(procedure_exceptions) + procedure_optimization
+    procedure_analysis_findings = len(procedure_analysis)
+    procedure_findings = len(procedure_exceptions) + procedure_optimization + procedure_analysis_findings
     if procedure_findings:
-        high = _count_high_priority(procedure_exceptions)
+        high = max(_count_high_priority(procedure_exceptions), _count_high_priority(procedure_analysis))
         cost_estimate = _sum_first_numeric(procedure_cost, ["EST_COST", "ESTIMATED_COST_USD", "EST_COST_USD"])
         runtime = _sum_first_numeric(procedure_cost, ["TOTAL_ELAPSED_SEC", "TOTAL_ELAPSED_SECONDS"])
         _append_advisor_row(
@@ -1361,6 +1363,7 @@ def _executive_loaded_advisor_rows(state: dict | None = None) -> pd.DataFrame:
             value_at_risk=cost_estimate,
             signal=(
                 f"{len(procedure_exceptions):,} SLA/cost exception row(s), "
+                f"{procedure_analysis_findings:,} analysis signal(s), "
                 f"{procedure_optimization:,} optimization candidate(s), {len(procedure_latest):,} latest run row(s), "
                 f"{_format_seconds(runtime)} tracked runtime."
             ),

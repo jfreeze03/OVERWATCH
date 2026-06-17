@@ -28,9 +28,9 @@ from utils import (
     get_active_environment,
     get_db_filter_clause,
     load_task_inventory,
-    build_mart_procedure_inventory_sql,
-    build_mart_procedure_calls_sql,
-    build_mart_procedure_sla_sql,
+    load_shared_procedure_inventory,
+    load_shared_procedure_calls,
+    load_shared_procedure_sla,
     safe_float,
     safe_int,
     CREDIT_RATES,
@@ -1152,25 +1152,17 @@ def render():
             "and orphan/suspended-task risk."
         )
         if st.button("Load Procedure Operations", key="sp_ops_load"):
-            proc_inventory_source = "Fast procedure inventory"
-            proc_call_source = "Fast procedure run summary"
+            procedure_sql, call_sql = _build_procedure_inventory_sql(sp_days)
             try:
-                df_procs = run_query(
-                    build_mart_procedure_inventory_sql(
-                        company=company,
-                        database_contains=str(st.session_state.get("global_database", "") or "").strip(),
-                    ),
-                    ttl_key=f"procedure_inventory_mart_schema_context_v1_{company}_{sp_days}",
-                    tier="metadata",
+                proc_inventory = load_shared_procedure_inventory(
+                    company=company,
+                    database_contains=str(st.session_state.get("global_database", "") or "").strip(),
+                    live_sql=procedure_sql,
+                    force=True,
+                    section="Stored Procedures",
                 )
-                if df_procs.empty:
-                    procedure_sql, _ = _build_procedure_inventory_sql(sp_days)
-                    df_procs = run_query(
-                        procedure_sql,
-                        ttl_key=f"procedure_inventory_live_schema_context_v1_{company}_{sp_days}",
-                        tier="metadata",
-                    )
-                    proc_inventory_source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.PROCEDURES"
+                df_procs = proc_inventory.data
+                proc_inventory_source = proc_inventory.source if proc_inventory.available else "Unavailable"
             except Exception as e:
                 st.info(f"Procedure inventory unavailable: {format_snowflake_error(e)}")
                 df_procs = pd.DataFrame()
@@ -1181,19 +1173,15 @@ def render():
                 st.info(f"Task inventory unavailable: {format_snowflake_error(e)}")
                 df_tasks = pd.DataFrame()
             try:
-                df_calls = run_query(
-                    build_mart_procedure_calls_sql(sp_days, company=company),
-                    ttl_key=f"procedure_recent_calls_mart_schema_context_v1_{company}_{sp_days}",
-                    tier="standard",
+                proc_calls = load_shared_procedure_calls(
+                    company=company,
+                    days=sp_days,
+                    live_sql=call_sql,
+                    force=True,
+                    section="Stored Procedures",
                 )
-                if df_calls.empty:
-                    _, call_sql = _build_procedure_inventory_sql(sp_days)
-                    df_calls = run_query(
-                        call_sql,
-                        ttl_key=f"procedure_recent_calls_live_schema_context_v1_{company}_{sp_days}",
-                        tier="standard",
-                    )
-                    proc_call_source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
+                df_calls = proc_calls.data
+                proc_call_source = proc_calls.source if proc_calls.available else "Unavailable"
             except Exception as e:
                 st.info(f"Recent CALL history unavailable: {format_snowflake_error(e)}")
                 df_calls = pd.DataFrame()
@@ -1309,21 +1297,22 @@ def render():
         )
         if st.button("Load Procedure SLA/Cost Watch", key="sp_sla_load"):
             try:
-                df_proc_runs = run_query(
-                    build_mart_procedure_sla_sql(sp_days, company=company),
-                    ttl_key=f"procedure_sla_watch_mart_schema_context_v1_{company}_{sp_days}",
-                    tier="standard",
+                root_context = {"available": False}
+
+                def _live_sla_sql() -> str:
+                    root_context["available"] = _query_history_has_root_query_id(session)
+                    return _build_procedure_sla_sql(session, sp_days, root_context["available"])
+
+                proc_sla = load_shared_procedure_sla(
+                    company=company,
+                    days=sp_days,
+                    live_sql=_live_sla_sql,
+                    force=True,
+                    section="Stored Procedures",
                 )
-                proc_sla_source = "Fast procedure SLA summary"
-                has_root_query_id = True
-                if df_proc_runs.empty:
-                    has_root_query_id = _query_history_has_root_query_id(session)
-                    df_proc_runs = run_query(
-                        _build_procedure_sla_sql(session, sp_days, has_root_query_id),
-                        ttl_key=f"procedure_sla_watch_live_schema_context_v1_{company}_{sp_days}_{has_root_query_id}",
-                        tier="standard",
-                    )
-                    proc_sla_source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
+                df_proc_runs = proc_sla.data
+                proc_sla_source = proc_sla.source if proc_sla.available else "Unavailable"
+                has_root_query_id = bool(root_context["available"] or proc_sla_source.startswith("Fast"))
                 summary, exceptions, latest = _build_procedure_sla_frames(df_proc_runs)
                 st.session_state["sp_sla_summary"] = summary
                 st.session_state["sp_sla_exceptions"] = exceptions
@@ -1578,6 +1567,7 @@ def render():
         )
         df_sp = _add_procedure_context_columns(df_sp)
         df_sp = _add_procedure_optimization_columns(df_sp)
+        st.session_state["spt_df_sp_tracker"] = df_sp
         render_priority_dataframe(
             df_sp,
             title="Stored procedure cost drivers",

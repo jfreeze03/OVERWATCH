@@ -1596,7 +1596,7 @@ def _warehouse_setting_action_plan(guardrail_board: pd.DataFrame | None) -> pd.D
     """Return advisory setting moves from loaded guardrail coverage."""
     columns = [
         "PRIORITY", "WAREHOUSE_NAME", "ACTION_TYPE", "CURRENT_STATE", "CURRENT_SETTING",
-        "SAFE_SETTING_MOVE", "WHY", "PROOF_REQUIRED", "ROLLBACK_CHECK",
+        "SAFE_SETTING_MOVE", "WHY", "PROOF_REQUIRED", "ROLLBACK_CHECK", "REVIEW_SQL",
     ]
     if guardrail_board is None or getattr(guardrail_board, "empty", True):
         return pd.DataFrame(columns=columns)
@@ -1627,6 +1627,7 @@ def _warehouse_setting_action_plan(guardrail_board: pd.DataFrame | None) -> pd.D
             "WHY": why,
             "PROOF_REQUIRED": source.get("PROOF_REQUIRED", ""),
             "ROLLBACK_CHECK": rollback_check,
+            "REVIEW_SQL": _warehouse_setting_review_sql(source.get("WAREHOUSE_NAME", ""), action_type),
             "_SORT": {"High": 0, "Medium": 1, "Low": 2}.get(priority, 9),
             "_SCORE": safe_float(source.get("GUARDRAIL_SCORE")),
             "_CREDITS": safe_float(source.get("METERED_CREDITS")),
@@ -1753,6 +1754,9 @@ def _render_warehouse_setting_action_detail(plan: pd.DataFrame | None) -> None:
         "Rollback check",
         row.get("ROLLBACK_CHECK") or "Compare credits, runtime, queue, spill, and failures after the change.",
     )
+    review_sql = str(row.get("REVIEW_SQL") or "").strip()
+    if review_sql:
+        st.code(review_sql, language="sql")
     proof = str(row.get("PROOF_REQUIRED") or "").strip()
     if proof:
         st.caption(f"Proof: {proof}")
@@ -1773,6 +1777,39 @@ def _warehouse_state_count(frame: pd.DataFrame | None, column: str, states: set[
         return 0
     normalized = {state.upper() for state in states}
     return int(frame[column].fillna("").astype(str).str.upper().isin(normalized).sum())
+
+
+def _warehouse_setting_review_sql(warehouse_name: object, action_type: object, days: int = 7) -> str:
+    """Generate review-only SQL for a warehouse setting candidate."""
+    wh_name = str(warehouse_name or "").strip()
+    if not wh_name or wh_name == "Unknown warehouse":
+        return "-- Load warehouse settings and telemetry before generating review SQL."
+    wh = sql_literal(wh_name, 300)
+    days = max(1, int(days or 7))
+    return f"""-- Review only: {action_type} for {wh_name}
+-- Do not run ALTER WAREHOUSE from this packet. Use the guarded settings workflow after review.
+SHOW WAREHOUSES LIKE {wh};
+
+SELECT warehouse_name,
+       ROUND(SUM(COALESCE(credits_used, 0)), 4) AS metered_credits,
+       MIN(start_time) AS first_metered_hour,
+       MAX(end_time) AS last_metered_hour
+FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
+WHERE warehouse_name = {wh}
+  AND start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+GROUP BY warehouse_name;
+
+SELECT warehouse_name,
+       COUNT(*) AS query_count,
+       COUNT_IF(UPPER(COALESCE(execution_status, '')) <> 'SUCCESS') AS non_success_queries,
+       ROUND(AVG(COALESCE(queued_overload_time, 0)) / 1000, 2) AS avg_queue_sec,
+       ROUND(SUM(COALESCE(bytes_spilled_to_remote_storage, 0)) / POWER(1024, 3), 2) AS remote_spill_gb,
+       ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY COALESCE(total_elapsed_time, 0)) / 1000, 2) AS p95_elapsed_sec
+FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+WHERE warehouse_name = {wh}
+  AND start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+GROUP BY warehouse_name;
+"""
 
 
 def _warehouse_operator_next_moves(

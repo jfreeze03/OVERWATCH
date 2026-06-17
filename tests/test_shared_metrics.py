@@ -14,16 +14,24 @@ sys.path.insert(0, str(APP_ROOT))
 from utils.shared_metrics import (  # noqa: E402
     _storage_summary_from_trend,
     load_shared_access_hygiene_snapshot,
+    load_shared_duplicate_query_patterns,
+    load_shared_procedure_calls,
+    load_shared_procedure_inventory,
+    load_shared_procedure_sla,
+    load_shared_recommendation_clustering_cost,
     load_shared_grants_to_users,
     load_shared_mfa_coverage,
     load_shared_query_history_rollup,
     load_shared_recommendation_failed_tasks,
     load_shared_recommendation_idle_warehouses,
     load_shared_recommendation_query_failures,
+    load_shared_recommendation_repeated_queries,
     load_shared_recommendation_spill_warehouses,
+    load_shared_recommendation_storage_retention,
     load_shared_storage_trend,
     load_shared_task_health_summary,
     load_shared_usage_metering_kpis,
+    load_shared_warehouse_right_sizing,
     load_shared_warehouse_daily_credits_by_warehouse,
     load_shared_warehouse_overview,
     load_shared_warehouse_pressure_summary,
@@ -487,6 +495,171 @@ class SharedMetricsTests(unittest.TestCase):
         sql = mock_run.call_args_list[1].args[0].upper()
         self.assertIn("FAILED_WITH_ERROR", sql)
         self.assertIn("HAVING FAILURES > 10", sql)
+
+    def test_recommendation_storage_retention_uses_table_storage_metrics(self):
+        frame = pd.DataFrame({
+            "DATABASE_NAME": ["ALFA_DB"],
+            "ACTIVE_TB": [1.0],
+            "TIME_TRAVEL_TB": [0.5],
+            "FAILSAFE_TB": [0.1],
+        })
+
+        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run:
+            result = load_shared_recommendation_storage_retention("ALFA", section="Unit Test")
+
+        self.assertTrue(result.available)
+        self.assertEqual(result.source, "Live: SNOWFLAKE.ACCOUNT_USAGE.TABLE_STORAGE_METRICS")
+        sql = mock_run.call_args.args[0].upper()
+        self.assertIn("TABLE_STORAGE_METRICS", sql)
+        self.assertIn("TIME_TRAVEL_TB >= 0.25", sql)
+
+    def test_recommendation_clustering_cost_uses_shared_builder(self):
+        frame = pd.DataFrame({
+            "TABLE_NAME": ["ALFA_DB.PUBLIC.FACT"],
+            "CLUSTERING_COST_USD": [42.0],
+            "TB_RECLUSTERED": [1.5],
+        })
+
+        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run:
+            result = load_shared_recommendation_clustering_cost(
+                "ALFA",
+                days=7,
+                credit_price=3.68,
+                section="Unit Test",
+            )
+
+        self.assertEqual(result.source, "Live: SNOWFLAKE.ACCOUNT_USAGE.AUTOMATIC_CLUSTERING_HISTORY")
+        sql = mock_run.call_args.args[0].upper()
+        self.assertIn("AUTOMATIC_CLUSTERING_HISTORY", sql)
+        self.assertIn("CLUSTERING_COST_USD", sql)
+
+    def test_recommendation_repeated_queries_prefers_query_detail_mart(self):
+        frame = pd.DataFrame({
+            "QUERY_HASH": ["abc"],
+            "RUNS": [60],
+            "TOTAL_EXEC_HOURS": [3.0],
+            "TB_SCANNED": [2.0],
+            "HASH_COLUMN": ["QUERY_HASH"],
+        })
+
+        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run:
+            result = load_shared_recommendation_repeated_queries(object(), "ALFA", section="Unit Test")
+
+        self.assertEqual(result.source, "Fast query-detail summary")
+        self.assertEqual(mock_run.call_count, 1)
+        self.assertIn("FACT_QUERY_DETAIL_RECENT", mock_run.call_args.args[0].upper())
+
+    def test_recommendation_repeated_queries_live_fallback_uses_parameterized_hash(self):
+        frame = pd.DataFrame({
+            "QUERY_HASH": ["abc"],
+            "RUNS": [60],
+            "TOTAL_EXEC_HOURS": [3.0],
+            "HASH_COLUMN": ["QUERY_PARAMETERIZED_HASH"],
+        })
+
+        with patch(
+            "utils.shared_metrics.run_query",
+            side_effect=[pd.DataFrame(), frame],
+        ) as mock_run, patch(
+            "utils.shared_metrics.filter_existing_columns",
+            return_value=["QUERY_PARAMETERIZED_HASH", "QUERY_HASH"],
+        ):
+            result = load_shared_recommendation_repeated_queries(object(), "ALFA", section="Unit Test")
+
+        self.assertEqual(result.source, "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY")
+        self.assertEqual(mock_run.call_count, 2)
+        sql = mock_run.call_args_list[1].args[0].upper()
+        self.assertIn("QUERY_PARAMETERIZED_HASH", sql)
+        self.assertIn("TOTAL_EXEC_HOURS", sql)
+
+    def test_duplicate_query_patterns_live_fallback_uses_cloud_credits_when_available(self):
+        frame = pd.DataFrame({
+            "QUERY_SIG": ["SELECT 1"],
+            "EXECUTION_COUNT": [6],
+            "USER_COUNT": [2],
+            "CLOUD_CREDITS": [0.2],
+        })
+
+        with patch(
+            "utils.shared_metrics.run_query",
+            side_effect=[pd.DataFrame(), frame],
+        ) as mock_run, patch(
+            "utils.shared_metrics.filter_existing_columns",
+            return_value=["CREDITS_USED_CLOUD_SERVICES"],
+        ):
+            result = load_shared_duplicate_query_patterns(object(), "ALFA", section="Unit Test")
+
+        self.assertEqual(result.source, "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY")
+        sql = mock_run.call_args_list[1].args[0].upper()
+        self.assertIn("CREDITS_USED_CLOUD_SERVICES", sql)
+        self.assertIn("HAVING COUNT(*) >= 5", sql)
+
+    def test_warehouse_right_sizing_uses_optional_query_history_columns(self):
+        frame = pd.DataFrame({
+            "WAREHOUSE_NAME": ["ALFA_WH"],
+            "WAREHOUSE_SIZE": ["MEDIUM"],
+            "TOTAL_QUERIES": [100],
+            "AVG_QUEUE_SEC": [1.5],
+            "REMOTE_SPILL_GB": [10.0],
+            "AVG_CACHE_PCT": [20.0],
+            "TOTAL_CREDITS": [30.0],
+        })
+
+        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run, patch(
+            "utils.shared_metrics.filter_existing_columns",
+            return_value=[
+                "WAREHOUSE_SIZE",
+                "QUEUED_OVERLOAD_TIME",
+                "BYTES_SPILLED_TO_REMOTE_STORAGE",
+                "PERCENTAGE_SCANNED_FROM_CACHE",
+            ],
+        ):
+            result = load_shared_warehouse_right_sizing(object(), "ALFA", section="Unit Test")
+
+        self.assertEqual(result.source, "Live: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY + WAREHOUSE_METERING_HISTORY")
+        sql = mock_run.call_args.args[0].upper()
+        self.assertIn("WAREHOUSE_METERING_HISTORY", sql)
+        self.assertIn("BYTES_SPILLED_TO_REMOTE_STORAGE", sql)
+
+    def test_procedure_inventory_live_fallback_uses_supplied_sql(self):
+        frame = pd.DataFrame({"PROCEDURE_NAME": ["SP_LOAD"]})
+
+        with patch(
+            "utils.shared_metrics.run_query",
+            side_effect=[pd.DataFrame(), frame],
+        ) as mock_run:
+            result = load_shared_procedure_inventory(
+                "ALFA",
+                live_sql="SELECT 'SP_LOAD' AS procedure_name",
+                section="Unit Test",
+            )
+
+        self.assertEqual(result.source, "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.PROCEDURES")
+        self.assertEqual(mock_run.call_count, 2)
+
+    def test_procedure_calls_prefers_mart(self):
+        frame = pd.DataFrame({"PROCEDURE_NAME": ["SP_LOAD"], "CALL_COUNT": [3]})
+
+        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run:
+            result = load_shared_procedure_calls("ALFA", days=7, live_sql="SELECT 1", section="Unit Test")
+
+        self.assertEqual(result.source, "Fast procedure run summary")
+        self.assertEqual(mock_run.call_count, 1)
+
+    def test_procedure_sla_live_sql_is_lazy_until_mart_empty(self):
+        frame = pd.DataFrame({"PROCEDURE_NAME": ["SP_LOAD"], "ROOT_QUERY_ID": ["q1"]})
+        calls = {"live": 0}
+
+        def live_sql():
+            calls["live"] += 1
+            return "SELECT 'SP_LOAD' AS procedure_name"
+
+        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run:
+            result = load_shared_procedure_sla("ALFA", days=7, live_sql=live_sql, section="Unit Test")
+
+        self.assertEqual(result.source, "Fast procedure SLA summary")
+        self.assertEqual(mock_run.call_count, 1)
+        self.assertEqual(calls["live"], 0)
 
 
 if __name__ == "__main__":

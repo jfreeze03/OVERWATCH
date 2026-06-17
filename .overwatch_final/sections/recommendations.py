@@ -7,24 +7,23 @@ import streamlit as st
 from config import DEFAULTS, THRESHOLDS
 from sections.shell_helpers import _clean_display_text, render_escaped_bold_text, render_shell_snapshot
 from utils import (
-    build_clustering_cost_sql,
     build_safe_verification_query,
     credits_to_dollars,
     day_window_selectbox,
     defer_source_note,
     download_csv,
-    filter_existing_columns,
     format_snowflake_error,
     format_credits,
-    get_db_filter_clause,
     get_storage_cost_per_tb,
-    get_global_filter_clause,
     get_session,
     get_wh_filter_clause,
     load_shared_recommendation_failed_tasks,
     load_shared_recommendation_idle_warehouses,
     load_shared_recommendation_query_failures,
     load_shared_recommendation_spill_warehouses,
+    load_shared_recommendation_storage_retention,
+    load_shared_recommendation_clustering_cost,
+    load_shared_recommendation_repeated_queries,
     load_action_queue,
     make_action_id,
     metric_confidence_label,
@@ -486,13 +485,6 @@ def render():
             recs = []
             source_notes = []
             company = _active_company()
-            query_filters = get_global_filter_clause(
-                date_col="start_time",
-                wh_col="warehouse_name",
-                user_col="user_name",
-                role_col="role_name",
-                db_col="database_name",
-            )
 
             try:
                 idle_result = load_shared_recommendation_idle_warehouses(
@@ -632,22 +624,14 @@ def render():
 
             try:
                 storage_rate = get_storage_cost_per_tb()
-                df_storage = run_query(f"""
-                    SELECT table_catalog AS database_name,
-                           ROUND(SUM(COALESCE(active_bytes, 0)) / POWER(1024, 4), 3) AS active_tb,
-                           ROUND(SUM(COALESCE(time_travel_bytes, 0)) / POWER(1024, 4), 3) AS time_travel_tb,
-                           ROUND(SUM(COALESCE(failsafe_bytes, 0)) / POWER(1024, 4), 3) AS failsafe_tb
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.TABLE_STORAGE_METRICS
-                    WHERE deleted = FALSE
-                      AND table_catalog IS NOT NULL
-                      {get_db_filter_clause("table_catalog", company)}
-                    GROUP BY table_catalog
-                    HAVING time_travel_tb >= 0.25
-                       AND time_travel_tb >= active_tb * 0.25
-                    ORDER BY time_travel_tb DESC
-                    LIMIT 10
-                """, ttl_key=f"rec_storage_retention_{company}", tier="historical")
-                source_notes.append("Storage retention: live ACCOUNT_USAGE.TABLE_STORAGE_METRICS")
+                storage_result = load_shared_recommendation_storage_retention(
+                    company,
+                    min_time_travel_tb=0.25,
+                    min_time_travel_ratio=0.25,
+                    section="Recommendations",
+                )
+                df_storage = storage_result.data
+                source_notes.append(f"Storage retention: {storage_result.source}")
                 for _, row in df_storage.iterrows():
                     db_name = str(row["DATABASE_NAME"])
                     active_tb = safe_float(row.get("ACTIVE_TB"))
@@ -682,17 +666,15 @@ def render():
                 pass
 
             try:
-                df_cluster = run_query(
-                    build_clustering_cost_sql(
-                        7,
-                        company=company,
-                        credit_price=credit_price,
-                        top=10,
-                    ),
-                    ttl_key=f"rec_clustering_cost_{company}_{credit_price}",
-                    tier="historical",
+                cluster_result = load_shared_recommendation_clustering_cost(
+                    company,
+                    days=7,
+                    credit_price=credit_price,
+                    top=10,
+                    section="Recommendations",
                 )
-                source_notes.append("Clustering: live ACCOUNT_USAGE.AUTOMATIC_CLUSTERING_HISTORY")
+                df_cluster = cluster_result.data
+                source_notes.append(f"Clustering: {cluster_result.source}")
                 for _, row in df_cluster.iterrows():
                     table_name = str(row["TABLE_NAME"])
                     clustering_cost = safe_float(row.get("CLUSTERING_COST_USD"))
@@ -727,40 +709,19 @@ def render():
                 pass
 
             try:
-                qh_columns = set(filter_existing_columns(
+                repeated_result = load_shared_recommendation_repeated_queries(
                     session,
-                    "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
-                    ["QUERY_PARAMETERIZED_HASH", "QUERY_HASH"],
-                ))
-                hash_column = (
-                    "QUERY_PARAMETERIZED_HASH"
-                    if "QUERY_PARAMETERIZED_HASH" in qh_columns
-                    else "QUERY_HASH" if "QUERY_HASH" in qh_columns else ""
+                    company,
+                    days=7,
+                    min_runs=50,
+                    min_total_exec_hours=2.0,
+                    section="Recommendations",
                 )
-                if not hash_column:
-                    raise ValueError("No query hash column is exposed in QUERY_HISTORY.")
-                hash_ident = safe_identifier(hash_column)
-                df_repeated = run_query(f"""
-                    SELECT {hash_ident} AS query_hash,
-                           COUNT(*) AS runs,
-                           COUNT(DISTINCT user_name) AS user_count,
-                           ROUND(SUM(COALESCE(total_elapsed_time, 0)) / 1000 / 3600, 2) AS total_exec_hours,
-                           ROUND(SUM(COALESCE(bytes_scanned, 0)) / POWER(1024, 4), 2) AS tb_scanned,
-                           SUBSTR(MAX(query_text), 1, 500) AS sample_query
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-                    WHERE start_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())
-                      AND warehouse_name IS NOT NULL
-                      AND UPPER(COALESCE(execution_status, '')) = 'SUCCESS'
-                      AND {hash_ident} IS NOT NULL
-                      {query_filters}
-                    GROUP BY {hash_ident}
-                    HAVING runs >= 50 OR total_exec_hours >= 2
-                    ORDER BY total_exec_hours DESC, runs DESC
-                    LIMIT 10
-                """, ttl_key=f"rec_repeated_queries_{company}_{hash_column}", tier="historical")
-                source_notes.append("Repeated query patterns: live ACCOUNT_USAGE.QUERY_HISTORY")
+                df_repeated = repeated_result.data
+                source_notes.append(f"Repeated query patterns: {repeated_result.source}")
                 for _, row in df_repeated.iterrows():
                     query_hash = str(row["QUERY_HASH"])
+                    hash_column = str(row.get("HASH_COLUMN") or "QUERY_HASH")
                     runs = int(safe_float(row.get("RUNS")))
                     total_hours = safe_float(row.get("TOTAL_EXEC_HOURS"))
                     scanned_tb = safe_float(row.get("TB_SCANNED"))

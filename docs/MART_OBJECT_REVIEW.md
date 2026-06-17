@@ -36,6 +36,10 @@ Latest static dependency pass:
   populate only their current summary marts.
 - No additional safe drop was found without intentionally retiring an active app
   workflow, setup-support object, or refresh/bookkeeping object.
+- The latest consolidation pass moved repeated-query, duplicate-query,
+  right-sizing, storage-retention, clustering, and procedure summary reads into
+  shared app loaders. This did not create new mart objects; it increased reuse
+  of existing query detail and procedure facts.
 
 ## Keep
 
@@ -67,6 +71,21 @@ bookkeeping. Do not remove them unless their downstream facts are removed or rep
 | `SP_OVERWATCH_PRUNE` | Retention cleanup for transient facts. |
 | `OVERWATCH_LOAD_HOURLY`, `OVERWATCH_LOAD_DAILY`, `OVERWATCH_LOAD_CORTEX`, `OVERWATCH_REFRESH_CONTROL_ROOM`, `OVERWATCH_EXECUTIVE_OBSERVABILITY_REFRESH` | Scheduled wrappers around refresh procedures. |
 | `OVERWATCH_LOAD_AUDIT` | Refresh bookkeeping written by setup procedures. It is not surfaced today, but remains useful for live refresh troubleshooting. |
+
+## Mart Slimming Assessment
+
+The current mart count still looks large, but most tables fall into active roles:
+
+| Role | Keep rationale |
+| --- | --- |
+| Hourly/daily rollups | Reduce repeated ACCOUNT_USAGE scans for cost, warehouse, query, storage, Cortex, security, and executive summary surfaces. |
+| Recent detail facts | Support drilldowns and advisor fallbacks without broad historical scans. |
+| Snapshot dimensions | Preserve task, procedure, table, grant, and warehouse setting context that Snowflake history views do not expose cleanly in one place. |
+| Workflow/audit tables | Keep action queue, alert delivery, recovery, setting-review, and admin audit state visible for DBA operations. |
+
+No table is marked for immediate removal in this pass. The next safe slimming
+step is to merge only after a pair of objects has the same grain, refresh cadence,
+retention need, and no unique downstream display or audit purpose.
 
 ## Keep As Setup Support
 

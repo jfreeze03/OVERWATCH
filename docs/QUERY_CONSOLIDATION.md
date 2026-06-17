@@ -28,6 +28,14 @@ refresh/drilldown actions and make repeated metric families load once per scope.
 | `load_shared_recommendation_spill_warehouses` | Recommendations remote-spill advisor | Fast recommendation mart first, live QUERY_HISTORY fallback with optional-column checks |
 | `load_shared_recommendation_failed_tasks` | Recommendations task-failure advisor | Fast task-run mart first, live TASK_HISTORY fallback through compatibility SQL |
 | `load_shared_recommendation_query_failures` | Recommendations query-failure advisor | Fast query-hourly mart first, live QUERY_HISTORY fallback |
+| `load_shared_recommendation_storage_retention` | Recommendations storage-retention advisor | Live TABLE_STORAGE_METRICS, cached once per company/scope because this remains a targeted drilldown source |
+| `load_shared_recommendation_clustering_cost` | Recommendations clustering-cost advisor | Live AUTOMATIC_CLUSTERING_HISTORY, cached once per company/window/rate |
+| `load_shared_recommendation_repeated_queries` | Recommendations repeated expensive query patterns | Fast query-detail mart first, live QUERY_HISTORY hash fallback for empty/custom paths |
+| `load_shared_duplicate_query_patterns` | Warehouse Health duplicate-query advisor | Fast query-detail mart first, live QUERY_HISTORY fallback with optional cloud-services credits |
+| `load_shared_warehouse_right_sizing` | Warehouse Health right-sizing advisor | Live QUERY_HISTORY + WAREHOUSE_METERING_HISTORY with optional-column checks |
+| `load_shared_procedure_inventory` | Stored Procedure operations brief | Fast procedure snapshot mart first, live PROCEDURES fallback supplied by the section |
+| `load_shared_procedure_calls` | Stored Procedure recent CALL summary | Fast procedure-run mart first, live QUERY_HISTORY fallback supplied by the section |
+| `load_shared_procedure_sla` | Stored Procedure SLA/cost watch | Fast procedure-run mart first, lazy live QUERY_HISTORY fallback supplied by the section |
 
 Shared results are stored under `_shared_metric_...` session keys and are cleared
 by the global refresh path.
@@ -39,11 +47,12 @@ about 240 `run_query(` call sites and about 270 explicit `ttl_key=` call sites.
 Most are already cached by `utils.query`; the remaining opportunity is to reduce
 different sections building near-identical SQL under different cache keys.
 
-Latest pass note: the raw call-site count did not materially drop because the
-shared advisor loaders moved repeated section queries into `utils.shared_metrics`.
-The important change is that idle warehouse, remote spill, task failure, and query
-failure candidates now share one mart-first/live-fallback read path and source
-caption contract.
+Latest pass note: the raw call-site count will not drop one-for-one because
+shared loaders deliberately keep the SQL source in `utils.shared_metrics`.
+The important change is that idle warehouse, remote spill, task failure, query
+failure, repeated-query, duplicate-query, right-sizing, clustering, storage
+retention, and procedure summary candidates now share one source-caption and
+cache contract.
 
 Top ACCOUNT_USAGE source families by static reference count:
 
@@ -77,9 +86,10 @@ Top ACCOUNT_USAGE source families by static reference count:
    rebuild queue/failure pressure by warehouse.
 
 4. Task/procedure health:
-   Task summary counters and recommendation-level failed task candidates now have
-   shared loaders. Remaining work is procedure call/SLA summary reuse and task
-   failure sample reuse where the UI needs more than advisor candidates.
+   Task summary counters, recommendation-level failed task candidates, procedure
+   inventory, procedure call summaries, and procedure SLA/cost watch loads now
+   have shared loaders. Remaining work is deeper task failure sample reuse where
+   the UI needs more than advisor candidates.
 
 5. Security/access hygiene:
    MFA, grants, and Account Health access hygiene now use shared snapshots.
@@ -87,9 +97,10 @@ Top ACCOUNT_USAGE source families by static reference count:
    access snapshot where the column shape matches.
 
 6. Advisor signal inventory:
-   First pass done for recommendation idle, spill, failed-task, and failed-query
-   candidates. Remaining work is repeated-query, storage-retention, clustering,
-   and warehouse right-sizing candidate reuse.
+   First pass done for recommendation idle, spill, failed-task, failed-query,
+   repeated-query, storage-retention, clustering, Warehouse Health duplicate
+   queries, and right-sizing candidates. Remaining work is deeper DBA detail
+   panels that still rebuild query-history pressure for one-off investigations.
 
 ## Refactor Rules
 

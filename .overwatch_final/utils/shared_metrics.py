@@ -1396,6 +1396,7 @@ def load_shared_recommendation_idle_warehouses(
     *,
     days: int = 7,
     min_idle_credits: float = 1.0,
+    allow_live_fallback: bool = True,
     force: bool = False,
     section: str = "Shared Metrics",
 ) -> SharedMetricResult:
@@ -1423,6 +1424,9 @@ def load_shared_recommendation_idle_warehouses(
         else:
             mart_message = "Live scan required for non-default idle threshold or lookback."
 
+        if not allow_live_fallback:
+            return _empty_result("Fast recommendation summary", mart_message)
+
         try:
             df = run_query(
                 build_idle_warehouse_sql(
@@ -1443,7 +1447,12 @@ def load_shared_recommendation_idle_warehouses(
         except Exception as exc:
             return _empty_result("Idle warehouse advisor", f"{mart_message} Live fallback unavailable: {exc}")
 
-    return _load_or_reuse("shared_rec_idle", (company, days, min_idle_credits), _loader, force=force)
+    return _load_or_reuse(
+        "shared_rec_idle",
+        (company, days, min_idle_credits, allow_live_fallback),
+        _loader,
+        force=force,
+    )
 
 
 def load_shared_recommendation_spill_warehouses(
@@ -1452,6 +1461,7 @@ def load_shared_recommendation_spill_warehouses(
     *,
     days: int = 7,
     min_remote_gb: float = 5.0,
+    allow_live_fallback: bool = True,
     force: bool = False,
     section: str = "Shared Metrics",
 ) -> SharedMetricResult:
@@ -1478,6 +1488,9 @@ def load_shared_recommendation_spill_warehouses(
                 mart_message = str(exc)
         else:
             mart_message = "Live scan required for non-default spill threshold or lookback."
+
+        if not allow_live_fallback:
+            return _empty_result("Fast recommendation summary", mart_message)
 
         try:
             qh_cols = set(filter_existing_columns(
@@ -1522,7 +1535,12 @@ def load_shared_recommendation_spill_warehouses(
         except Exception as exc:
             return _empty_result("Remote spill advisor", f"{mart_message} Live fallback unavailable: {exc}")
 
-    return _load_or_reuse("shared_rec_spill", (company, days, min_remote_gb), _loader, force=force)
+    return _load_or_reuse(
+        "shared_rec_spill",
+        (company, days, min_remote_gb, allow_live_fallback),
+        _loader,
+        force=force,
+    )
 
 
 def load_shared_recommendation_failed_tasks(
@@ -1531,6 +1549,7 @@ def load_shared_recommendation_failed_tasks(
     *,
     days: int = 7,
     min_failures: int = 3,
+    allow_live_fallback: bool = True,
     force: bool = False,
     section: str = "Shared Metrics",
 ) -> SharedMetricResult:
@@ -1557,6 +1576,9 @@ def load_shared_recommendation_failed_tasks(
                 mart_message = str(exc)
         else:
             mart_message = "Live scan required for non-default task-failure threshold or lookback."
+
+        if not allow_live_fallback:
+            return _empty_result("Fast recommendation summary", mart_message)
 
         try:
             failed_task_sql = build_task_failure_summary_sql(
@@ -1587,7 +1609,12 @@ def load_shared_recommendation_failed_tasks(
         except Exception as exc:
             return _empty_result("Failed task advisor", f"{mart_message} Live fallback unavailable: {exc}")
 
-    return _load_or_reuse("shared_rec_failed_tasks", (company, days, min_failures), _loader, force=force)
+    return _load_or_reuse(
+        "shared_rec_failed_tasks",
+        (company, days, min_failures, allow_live_fallback),
+        _loader,
+        force=force,
+    )
 
 
 def load_shared_recommendation_query_failures(
@@ -1595,6 +1622,7 @@ def load_shared_recommendation_query_failures(
     *,
     days: int = 7,
     min_failures: int = 10,
+    allow_live_fallback: bool = True,
     force: bool = False,
     section: str = "Shared Metrics",
 ) -> SharedMetricResult:
@@ -1621,6 +1649,9 @@ def load_shared_recommendation_query_failures(
                 mart_message = str(exc)
         else:
             mart_message = "Live scan required for non-default query-failure lookback."
+
+        if not allow_live_fallback:
+            return _empty_result("Fast recommendation summary", mart_message)
 
         try:
             query_filters = get_global_filter_clause(
@@ -1656,7 +1687,12 @@ def load_shared_recommendation_query_failures(
         except Exception as exc:
             return _empty_result("Query failure advisor", f"{mart_message} Live fallback unavailable: {exc}")
 
-    return _load_or_reuse("shared_rec_query_failures", (company, days, min_failures), _loader, force=force)
+    return _load_or_reuse(
+        "shared_rec_query_failures",
+        (company, days, min_failures, allow_live_fallback),
+        _loader,
+        force=force,
+    )
 
 
 def load_shared_recommendation_storage_retention(
@@ -1758,6 +1794,7 @@ def load_shared_recommendation_repeated_queries(
     days: int = 7,
     min_runs: int = 50,
     min_total_exec_hours: float = 2.0,
+    allow_live_fallback: bool = True,
     force: bool = False,
     section: str = "Shared Metrics",
 ) -> SharedMetricResult:
@@ -1823,6 +1860,9 @@ def load_shared_recommendation_repeated_queries(
         else:
             mart_message = "Live scan required for repeated-query lookbacks beyond retained query detail."
 
+        if not allow_live_fallback:
+            return _empty_result("Fast query-detail summary", mart_message, effective_days=days)
+
         try:
             qh_columns = set(filter_existing_columns(
                 session,
@@ -1883,7 +1923,7 @@ def load_shared_recommendation_repeated_queries(
 
     return _load_or_reuse(
         "shared_rec_repeated_queries",
-        (company, days, min_runs, min_total_exec_hours),
+        (company, days, min_runs, min_total_exec_hours, allow_live_fallback),
         _loader,
         force=force,
     )

@@ -80,6 +80,7 @@ from sections.executive_landing import (  # noqa: E402
     _build_executive_observability_query_parts,
     _build_executive_observability_sql,
     _build_platform_operating_score,
+    _executive_command_summary_rows,
     _executive_loaded_advisor_rows,
     _executive_priority_rows,
     _executive_pressure_rows,
@@ -644,6 +645,36 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Cost Advisor", set(priority["LANE"]))
         pressure = _executive_pressure_rows(board, advisor_rows=advisor_rows)
         self.assertIn("Advisor backlog", set(pressure["LANE"]))
+
+    def test_executive_command_summary_includes_procedure_and_warehouse_controls(self):
+        advisor_state = {
+            "rec_warehouse_control_plan": pd.DataFrame([
+                {
+                    "PRIORITY": "High",
+                    "WAREHOUSE_NAME": "LOAD_WH",
+                    "ACTION_TYPE": "Auto-suspend review",
+                    "CURRENT_STATE": "Blocked",
+                    "SAFE_SETTING_MOVE": "Review AUTO_SUSPEND before changing settings.",
+                    "REVIEW_SQL": "SHOW WAREHOUSES LIKE 'LOAD_WH';",
+                }
+            ]),
+            "sp_analysis_board": pd.DataFrame([
+                {
+                    "SEVERITY": "High",
+                    "PROCEDURE_NAME": "SP_LOAD_POLICY",
+                    "RECOMMENDATION": "Review runtime spike.",
+                }
+            ]),
+        }
+        advisor_rows = _executive_loaded_advisor_rows(advisor_state)
+        command = _executive_command_summary_rows(pd.DataFrame(), advisor_rows, days=7)
+        by_area = {row["AREA"]: row for _, row in command.iterrows()}
+
+        self.assertIn("Warehouse controls", by_area)
+        self.assertIn("Procedure analysis", by_area)
+        self.assertIn("setting control action", by_area["Warehouse controls"]["CURRENT_SIGNAL"])
+        self.assertIn("analysis signal", by_area["Procedure analysis"]["CURRENT_SIGNAL"])
+        self.assertEqual(by_area["Warehouse controls"]["ROUTE"], "Cost & Contract")
 
     def test_priority_tables_add_cost_companions_for_credit_metrics(self):
         from utils.workflows import add_cost_companion_columns
@@ -2507,6 +2538,29 @@ class FormulaRegressionTests(unittest.TestCase):
             self.assertIn(f"DROP FUNCTION IF EXISTS {function}", drop_sql)
         for procedure in procedures:
             self.assertIn(f"DROP PROCEDURE IF EXISTS {procedure}", drop_sql)
+
+    def test_mart_refresh_procedures_do_not_write_retired_objects(self):
+        setup_sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8").upper()
+        retired_objects = [
+            "FACT_MONITORING_COST_DAILY",
+            "OVERWATCH_AUTOMATION_RUN",
+            "OVERWATCH_EXECUTIVE_PACKET",
+            "OVERWATCH_AUTOMATION_HEALTH_V",
+            "OVERWATCH_EXTERNAL_CONTROL_FEED",
+            "OVERWATCH_SOURCE_CONTROL_CHANGE",
+            "OVERWATCH_OWNER_APPROVAL",
+            "OVERWATCH_OWNER_DIRECTORY",
+            "OVERWATCH_PLATFORM_FUTURES_CONTROL_REGISTER",
+            "OVERWATCH_COST_SAVINGS_VERIFICATION_RUN",
+        ]
+        for retired in retired_objects:
+            with self.subTest(retired=retired):
+                self.assertNotIn(f"CREATE TABLE IF NOT EXISTS {retired}", setup_sql)
+                self.assertNotIn(f"CREATE TRANSIENT TABLE IF NOT EXISTS {retired}", setup_sql)
+                self.assertNotIn(f"CREATE OR REPLACE VIEW {retired}", setup_sql)
+                self.assertNotIn(f"INSERT INTO {retired}", setup_sql)
+                self.assertNotIn(f"MERGE INTO {retired}", setup_sql)
+                self.assertNotIn(f"DELETE FROM {retired}", setup_sql)
 
     def test_schema_migration_contract_tracks_setup_ledger(self):
         contract = build_schema_migration_contract()

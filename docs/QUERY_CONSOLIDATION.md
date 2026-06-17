@@ -52,7 +52,9 @@ shared loaders deliberately keep the SQL source in `utils.shared_metrics`.
 The important change is that idle warehouse, remote spill, task failure, query
 failure, repeated-query, duplicate-query, right-sizing, clustering, storage
 retention, and procedure summary candidates now share one source-caption and
-cache contract.
+cache contract. The visible Recommendations default now runs in fast
+mart-backed mode; live ACCOUNT_USAGE fallback plus storage/clustering deep scans
+require the explicit deep-scan action.
 
 Top ACCOUNT_USAGE source families by static reference count:
 

@@ -40,6 +40,11 @@ Latest static dependency pass:
   right-sizing, storage-retention, clustering, and procedure summary reads into
   shared app loaders. This did not create new mart objects; it increased reuse
   of existing query detail and procedure facts.
+- Latest mart/SP audit: refresh procedures do not create, insert, merge, or
+  delete against retired automation, executive packet, monitoring-cost,
+  external-control, owner-directory, or cost-savings verification objects.
+  `snowflake/OVERWATCH_MART_DROP.sql` remains the mass-drop script for both
+  current objects and old deployed copies.
 
 ## Keep
 
@@ -86,6 +91,23 @@ The current mart count still looks large, but most tables fall into active roles
 No table is marked for immediate removal in this pass. The next safe slimming
 step is to merge only after a pair of objects has the same grain, refresh cadence,
 retention need, and no unique downstream display or audit purpose.
+
+## Procedure Output Map
+
+The setup procedures now map to current facts only:
+
+| Procedure | Current outputs |
+| --- | --- |
+| `SP_OVERWATCH_LOAD_HOURLY` | `FACT_WAREHOUSE_HOURLY`, `FACT_QUERY_HOURLY`, `FACT_QUERY_DETAIL_RECENT`, `FACT_OBJECT_CHANGE`, `FACT_TASK_RUN`, `FACT_TASK_CRITICAL_PATH`, `FACT_PROCEDURE_RUN` |
+| `SP_OVERWATCH_LOAD_DAILY` | `FACT_COST_DAILY`, `FACT_COST_SOURCE_HEALTH_DAILY`, `FACT_LOGIN_DAILY`, `FACT_GRANT_DAILY`, `FACT_STORAGE_DAILY`, `FACT_COPY_LOAD_DAILY`, `DIM_COST_OWNER_TAG`, `FACT_CHARGEBACK_DAILY`, operability facts |
+| `SP_OVERWATCH_LOAD_CORTEX` | `FACT_CORTEX_DAILY` |
+| `SP_OVERWATCH_REFRESH_COST_MONITORING` | `FACT_COST_MONITORING_SIGNAL`, `FACT_COST_INCIDENT_TIMELINE` |
+| `SP_OVERWATCH_REFRESH_CONTROL_ROOM` | `MART_DBA_CONTROL_ROOM` |
+| `SP_OVERWATCH_REFRESH_EXECUTIVE_OBSERVABILITY` | `MART_EXECUTIVE_OBSERVABILITY` |
+| `SP_OVERWATCH_PRUNE` | Retention cleanup for retained facts only |
+
+Retired refresh objects stay only in the drop script so old deployed copies are
+removed during a fresh rebuild. They are not setup outputs.
 
 ## Keep As Setup Support
 

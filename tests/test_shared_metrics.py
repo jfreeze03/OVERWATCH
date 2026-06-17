@@ -431,6 +431,20 @@ class SharedMetricsTests(unittest.TestCase):
         self.assertIn("WAREHOUSE_METERING_HISTORY", sql)
         self.assertIn("QUERY_HISTORY", sql)
 
+    def test_recommendation_idle_warehouses_can_skip_live_fallback(self):
+        with patch("utils.shared_metrics.run_query") as mock_run:
+            result = load_shared_recommendation_idle_warehouses(
+                "ALFA",
+                days=14,
+                min_idle_credits=2.0,
+                allow_live_fallback=False,
+                section="Unit Test",
+            )
+
+        self.assertFalse(result.available)
+        self.assertEqual(result.source, "Fast recommendation summary")
+        self.assertEqual(mock_run.call_count, 0)
+
     def test_recommendation_spill_warehouses_live_fallback_uses_optional_size(self):
         frame = pd.DataFrame({
             "WAREHOUSE_NAME": ["ALFA_WH"],
@@ -571,6 +585,22 @@ class SharedMetricsTests(unittest.TestCase):
         sql = mock_run.call_args_list[1].args[0].upper()
         self.assertIn("QUERY_PARAMETERIZED_HASH", sql)
         self.assertIn("TOTAL_EXEC_HOURS", sql)
+
+    def test_recommendation_repeated_queries_can_skip_live_fallback(self):
+        with patch("utils.shared_metrics.run_query", return_value=pd.DataFrame()) as mock_run, patch(
+            "utils.shared_metrics.filter_existing_columns",
+        ) as mock_cols:
+            result = load_shared_recommendation_repeated_queries(
+                object(),
+                "ALFA",
+                allow_live_fallback=False,
+                section="Unit Test",
+            )
+
+        self.assertFalse(result.available)
+        self.assertEqual(result.source, "Fast query-detail summary")
+        self.assertEqual(mock_run.call_count, 1)
+        mock_cols.assert_not_called()
 
     def test_duplicate_query_patterns_live_fallback_uses_cloud_credits_when_available(self):
         frame = pd.DataFrame({

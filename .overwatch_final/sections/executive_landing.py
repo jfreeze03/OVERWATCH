@@ -1303,7 +1303,8 @@ def _executive_loaded_advisor_rows(state: dict | None = None) -> pd.DataFrame:
     sizing = _state_frame(state, "opt_df_sz")
     capacity_exceptions = _state_frame(state, "wh_capacity_exceptions")
     settings_inventory = _state_frame(state, "wh_settings_inventory")
-    warehouse_findings = len(idle) + len(duplicate) + len(sizing) + len(capacity_exceptions)
+    rec_setting_plan = _state_frame(state, "rec_warehouse_control_plan")
+    warehouse_findings = len(idle) + len(duplicate) + len(sizing) + len(capacity_exceptions) + len(rec_setting_plan)
     if warehouse_findings:
         idle_credits = _sum_first_numeric(idle, ["IDLE_CREDITS"])
         total_credits = _sum_first_numeric(sizing, ["TOTAL_CREDITS"])
@@ -1317,6 +1318,7 @@ def _executive_loaded_advisor_rows(state: dict | None = None) -> pd.DataFrame:
             pressure_count += int(((spill_series >= 10) | (queue_series >= 600)).sum())
         high = max(_count_high_priority(capacity_exceptions), pressure_count)
         inventory_note = f"; {len(settings_inventory):,} warehouse setting row(s) loaded" if not settings_inventory.empty else ""
+        control_note = f"; {len(rec_setting_plan):,} setting control action(s)" if not rec_setting_plan.empty else ""
         _append_advisor_row(
             rows,
             lane="Warehouse Optimization",
@@ -1327,10 +1329,10 @@ def _executive_loaded_advisor_rows(state: dict | None = None) -> pd.DataFrame:
             signal=(
                 f"{len(idle):,} idle, {len(duplicate):,} repeated-query, {len(sizing):,} sizing, "
                 f"{len(capacity_exceptions):,} capacity exception row(s); {_format_gb(spill)} spill, "
-                f"{_format_seconds(queue)} queue{inventory_note}."
+                f"{_format_seconds(queue)} queue{inventory_note}{control_note}."
             ),
-            next_action="Open Warehouse Health and review capacity/settings evidence before any warehouse control change.",
-            route="Warehouse Health",
+            next_action="Open Cost & Contract warehouse controls and review setting evidence before any warehouse change.",
+            route="Cost & Contract",
             priority=3 if high else 6,
         )
 
@@ -2029,6 +2031,126 @@ def _render_loaded_advisor_overlay(advisor_rows: pd.DataFrame | None) -> None:
     )
 
 
+def _advisor_lane(advisor_rows: pd.DataFrame | None, lane_text: str) -> pd.Series | None:
+    if not isinstance(advisor_rows, pd.DataFrame) or advisor_rows.empty or "LANE" not in advisor_rows.columns:
+        return None
+    matches = advisor_rows[advisor_rows["LANE"].fillna("").astype(str).str.contains(lane_text, case=False, na=False)]
+    if matches.empty:
+        return None
+    return matches.iloc[0]
+
+
+def _executive_command_summary_rows(board: pd.DataFrame, advisor_rows: pd.DataFrame | None, *, days: int) -> pd.DataFrame:
+    """Return one compact operating summary across current loaded executive inputs."""
+    rows: list[dict[str, object]] = []
+    has_board = isinstance(board, pd.DataFrame) and not board.empty and _has_observability_kpis(board)
+    spend_delta = _obs_value(board, "Spend Delta", column="VALUE_USD") if has_board else 0.0
+    cost_driver = _obs_rows(board, "COST_DRIVER") if has_board else pd.DataFrame()
+    top_cost_driver = "No loaded cost driver"
+    top_cost_value = 0.0
+    if isinstance(cost_driver, pd.DataFrame) and not cost_driver.empty and "VALUE_USD" in cost_driver.columns:
+        ranked = cost_driver.copy()
+        ranked["VALUE_USD"] = pd.to_numeric(ranked["VALUE_USD"], errors="coerce").fillna(0)
+        ranked = ranked.sort_values("VALUE_USD", ascending=False)
+        top_cost_driver = str(ranked.iloc[0].get("DIMENSION") or "Cost driver")
+        top_cost_value = safe_float(ranked.iloc[0].get("VALUE_USD"))
+    elif has_board and _obs_metric_loaded(board, "Spend Delta"):
+        top_cost_driver = "Account spend"
+        top_cost_value = spend_delta
+
+    rows.append({
+        "PRIORITY": 1 if spend_delta > 0 else 5,
+        "AREA": "Cost movement",
+        "STATE": "Review" if spend_delta > 0 else "Stable",
+        "CURRENT_SIGNAL": f"{top_cost_driver}: {_money(top_cost_value)}; delta {_money(spend_delta, signed=True)}.",
+        "NEXT_ACTION": "Open Cost & Contract and explain the top driver before setting changes.",
+        "ROUTE": "Cost & Contract",
+    })
+
+    failed_tasks = safe_int(_obs_value(board, "Failed Tasks")) if has_board else 0
+    failed_queries = safe_int(_obs_value(board, "Failed Queries")) if has_board else 0
+    queue_seconds = _obs_value(board, "Queue Time") if has_board else 0.0
+    spill_gb = _obs_value(board, "Remote Spill") if has_board else 0.0
+    workload_pressure = failed_tasks + failed_queries + (1 if queue_seconds else 0) + (1 if spill_gb else 0)
+    rows.append({
+        "PRIORITY": 2 if workload_pressure else 6,
+        "AREA": "Workload health",
+        "STATE": "Investigate" if workload_pressure else "Clear",
+        "CURRENT_SIGNAL": (
+            f"{failed_tasks:,} failed task(s), {failed_queries:,} failed query(s), "
+            f"{_format_seconds(queue_seconds)} queue, {_format_gb(spill_gb)} spill."
+        ),
+        "NEXT_ACTION": "Open Workload Operations for task/procedure and query pressure detail.",
+        "ROUTE": "Workload Operations",
+    })
+
+    procedure_row = _advisor_lane(advisor_rows, "Procedure")
+    rows.append({
+        "PRIORITY": safe_int(procedure_row.get("PRIORITY"), 3) if procedure_row is not None else 7,
+        "AREA": "Procedure analysis",
+        "STATE": str(procedure_row.get("STATE") or "Review") if procedure_row is not None else "On demand",
+        "CURRENT_SIGNAL": (
+            str(procedure_row.get("ADVISOR_SIGNAL") or procedure_row.get("VALUE") or "Procedure analysis loaded.")
+            if procedure_row is not None
+            else "Load Task & procedure health to include stored-procedure SLA, cost, and optimization signals."
+        ),
+        "NEXT_ACTION": (
+            str(procedure_row.get("NEXT_ACTION") or "Open Workload Operations procedure health.")
+            if procedure_row is not None
+            else "Open Workload Operations > Task & procedure health."
+        ),
+        "ROUTE": "Workload Operations",
+    })
+
+    warehouse_row = _advisor_lane(advisor_rows, "Warehouse")
+    rows.append({
+        "PRIORITY": safe_int(warehouse_row.get("PRIORITY"), 4) if warehouse_row is not None else 8,
+        "AREA": "Warehouse controls",
+        "STATE": str(warehouse_row.get("STATE") or "Review") if warehouse_row is not None else "On demand",
+        "CURRENT_SIGNAL": (
+            str(warehouse_row.get("ADVISOR_SIGNAL") or warehouse_row.get("VALUE") or "Warehouse controls loaded.")
+            if warehouse_row is not None
+            else "Load Cost & Contract > Warehouse Controls to include setting-control actions."
+        ),
+        "NEXT_ACTION": (
+            str(warehouse_row.get("NEXT_ACTION") or "Open Cost & Contract warehouse controls.")
+            if warehouse_row is not None
+            else "Open Cost & Contract > Recommendations and action queue > Warehouse Controls."
+        ),
+        "ROUTE": "Cost & Contract",
+    })
+
+    critical_high = safe_int(_obs_value(board, "Critical High Alerts")) if has_board else 0
+    open_actions = safe_int(_obs_value(board, "Open Actions")) if has_board else 0
+    rows.append({
+        "PRIORITY": 1 if critical_high else 9,
+        "AREA": "Open risk",
+        "STATE": "Escalate" if critical_high else "Track",
+        "CURRENT_SIGNAL": f"{critical_high:,} Critical/High alert(s), {open_actions:,} open action(s).",
+        "NEXT_ACTION": "Open Alert Center and DBA Control Room for route, owner, and telemetry status.",
+        "ROUTE": "Alert Center",
+    })
+
+    return pd.DataFrame(rows).sort_values(["PRIORITY", "AREA"]).reset_index(drop=True)
+
+
+def _render_executive_command_summary(board: pd.DataFrame, advisor_rows: pd.DataFrame | None, *, days: int) -> None:
+    rows = _executive_command_summary_rows(board, advisor_rows, days=int(days))
+    if rows.empty:
+        return
+    st.markdown("**Executive Command Summary**")
+    render_priority_dataframe(
+        rows,
+        title="Current top operating calls",
+        priority_columns=["AREA", "STATE", "CURRENT_SIGNAL", "NEXT_ACTION", "ROUTE"],
+        sort_by=["PRIORITY", "AREA"],
+        ascending=[True, True],
+        raw_label="All executive command summary rows",
+        height=260,
+        max_rows=5,
+    )
+
+
 def _render_line_chart(
     rows: pd.DataFrame,
     *,
@@ -2171,6 +2293,7 @@ def _render_executive_observability_board(
             ("Storage", "On demand"),
             ("Freshness", "On demand"),
         ))
+        _render_executive_command_summary(pd.DataFrame(), advisor_rows, days=int(days))
         _render_executive_pressure_board(_executive_pressure_placeholder_rows(), advisor_rows=advisor_rows)
         _render_executive_priority_board(pd.DataFrame(), days=int(days), advisor_rows=advisor_rows)
         _render_loaded_advisor_overlay(advisor_rows)
@@ -2268,6 +2391,7 @@ def _render_executive_observability_board(
         ("Avg/day", _money(avg_daily_spend) if _obs_metric_loaded(board, "Credits Used") else "On demand"),
         ("Storage", f"{safe_float(storage_tb):,.2f} TB / {_money(storage_cost)}" if _obs_metric_loaded(board, "Storage") else "On demand"),
     ))
+    _render_executive_command_summary(board, advisor_rows, days=int(days))
     _render_executive_pressure_board(board, advisor_rows=advisor_rows)
     _render_executive_priority_board(board, days=int(days), advisor_rows=advisor_rows)
     _render_loaded_advisor_overlay(advisor_rows)

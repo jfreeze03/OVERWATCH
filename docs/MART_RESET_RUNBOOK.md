@@ -82,6 +82,12 @@ fresh setup should still recreate `FACT_QUERY_DETAIL_RECENT`,
 `FACT_PROCEDURE_RUN`, and the procedure/task snapshots because those are now used
 more broadly as fast advisor inputs.
 
+Latest mart/SP audit note: the refresh procedures only write current mart facts
+and summary marts. Retired automation, packet, monitoring-cost, external-control,
+owner-directory, and cost-savings verification objects are not recreated by setup;
+they remain in `snowflake/OVERWATCH_MART_DROP.sql` only so a mass drop removes
+old deployed copies before a fresh setup.
+
 Also confirm:
 
 ```sql

@@ -5,6 +5,7 @@ import pandas as pd
 import streamlit as st
 
 from config import DEFAULTS, THRESHOLDS
+from sections.warehouse_health import _build_warehouse_guardrail_coverage, _warehouse_setting_action_plan
 from sections.shell_helpers import _clean_display_text, render_escaped_bold_text, render_shell_snapshot
 from utils import (
     build_safe_verification_query,
@@ -24,6 +25,8 @@ from utils import (
     load_shared_recommendation_storage_retention,
     load_shared_recommendation_clustering_cost,
     load_shared_recommendation_repeated_queries,
+    load_shared_warehouse_overview,
+    load_warehouse_inventory,
     load_action_queue,
     make_action_id,
     metric_confidence_label,
@@ -44,6 +47,7 @@ from utils.workflows import clean_operator_display_text, render_load_status, ren
 
 RECOMMENDATION_PANES = (
     "Recommendations",
+    "Warehouse Controls",
     "Queue Health",
     "Action Queue",
     "Anomaly Log",
@@ -260,6 +264,153 @@ def _automation_playbook_frame() -> pd.DataFrame:
     ])
 
 
+def _warehouse_control_scope(company: str, days: int) -> dict:
+    return {
+        "company": str(company or "").strip(),
+        "days": int(days),
+        "warehouse": str(st.session_state.get("global_warehouse", "") or "").strip(),
+        "environment": str(st.session_state.get("global_environment", "") or "").strip(),
+    }
+
+
+def _warehouse_control_scope_matches(meta: dict | None, expected: dict) -> bool:
+    if not isinstance(meta, dict):
+        return False
+    for key, value in expected.items():
+        if key == "days":
+            try:
+                if int(meta.get(key)) != int(value):
+                    return False
+            except Exception:
+                return False
+        elif str(meta.get(key, "") or "").strip() != str(value or "").strip():
+            return False
+    return True
+
+
+def _load_warehouse_control_plan(session, company: str, days: int) -> None:
+    overview_result = load_shared_warehouse_overview(
+        session,
+        days,
+        company,
+        force=True,
+        section="Recommendations",
+    )
+    inventory = load_warehouse_inventory(session, company)
+    summary, guardrail_board = _build_warehouse_guardrail_coverage(
+        overview_result.data,
+        settings_inventory=inventory,
+    )
+    setting_plan = _warehouse_setting_action_plan(guardrail_board)
+    st.session_state["rec_warehouse_control_overview"] = overview_result.data
+    st.session_state["rec_warehouse_control_inventory"] = inventory
+    st.session_state["rec_warehouse_control_guardrails"] = guardrail_board
+    st.session_state["rec_warehouse_control_summary"] = summary
+    st.session_state["rec_warehouse_control_plan"] = setting_plan
+    st.session_state["rec_warehouse_control_source"] = overview_result.source
+    st.session_state["rec_warehouse_control_meta"] = _warehouse_control_scope(company, days)
+    st.session_state["rec_warehouse_control_error"] = ""
+
+
+def _render_warehouse_control_detail(plan: pd.DataFrame) -> None:
+    if plan.empty:
+        return
+    options = plan.copy().reset_index(drop=True)
+    options["DETAIL_LABEL"] = options.apply(
+        lambda row: (
+            f"{row.get('PRIORITY', 'Review')} | "
+            f"{row.get('ACTION_TYPE', 'Setting review')} | "
+            f"{row.get('WAREHOUSE_NAME', 'Unknown warehouse')}"
+        ),
+        axis=1,
+    )
+    selected = st.selectbox(
+        "Warehouse setting action",
+        options["DETAIL_LABEL"].tolist(),
+        key="rec_warehouse_control_action_select",
+    )
+    row = options[options["DETAIL_LABEL"].eq(selected)].iloc[0]
+    render_shell_snapshot((
+        ("Priority", str(row.get("PRIORITY") or "Review")),
+        ("Warehouse", str(row.get("WAREHOUSE_NAME") or "Unknown")),
+        ("State", str(row.get("CURRENT_STATE") or "Review")),
+        ("Action", str(row.get("ACTION_TYPE") or "Setting review")),
+    ))
+    st.caption(_clean_display_text(row.get("WHY") or "Review warehouse telemetry before changing settings."))
+    st.markdown("**Safe move**")
+    st.caption(_clean_display_text(row.get("SAFE_SETTING_MOVE") or "Review telemetry before changing this warehouse."))
+    st.markdown("**Rollback check**")
+    st.caption(_clean_display_text(row.get("ROLLBACK_CHECK") or "Compare credits, runtime, queue, spill, and failures after the change."))
+    review_sql = str(row.get("REVIEW_SQL") or "").strip()
+    if review_sql:
+        st.code(review_sql, language="sql")
+
+
+def _render_warehouse_controls(session) -> None:
+    st.subheader("Warehouse Setting Controls")
+    st.caption("Review-only warehouse setting actions using loaded cost, queue, spill, p95, and SHOW WAREHOUSES metadata.")
+    company = _active_company()
+    days = day_window_selectbox("Control window", key="rec_wh_control_days", default=7)
+    expected = _warehouse_control_scope(company, days)
+    current = _warehouse_control_scope_matches(st.session_state.get("rec_warehouse_control_meta"), expected)
+
+    if st.button("Load Warehouse Controls", key="rec_wh_control_load", type="primary"):
+        with render_load_status("Loading warehouse controls", "Warehouse controls ready"):
+            try:
+                _load_warehouse_control_plan(session, company, days)
+                current = True
+            except Exception as exc:
+                st.session_state["rec_warehouse_control_error"] = format_snowflake_error(exc)
+                st.session_state["rec_warehouse_control_plan"] = pd.DataFrame()
+                current = False
+
+    error = str(st.session_state.get("rec_warehouse_control_error") or "").strip()
+    if error:
+        st.warning(f"Warehouse controls unavailable in this role/context: {error}")
+
+    if not current:
+        st.info("Load Warehouse Controls to generate changed-only setting review actions for the active scope.")
+        return
+
+    summary = st.session_state.get("rec_warehouse_control_summary") or {}
+    guardrails = st.session_state.get("rec_warehouse_control_guardrails")
+    plan = st.session_state.get("rec_warehouse_control_plan")
+    plan = plan if isinstance(plan, pd.DataFrame) else pd.DataFrame()
+    guardrails = guardrails if isinstance(guardrails, pd.DataFrame) else pd.DataFrame()
+    render_shell_snapshot((
+        ("Guardrail Score", f"{int(summary.get('score', 100))}"),
+        ("Blocked", f"{int(summary.get('blocked', 0)):,}"),
+        ("Needs Review", f"{int(summary.get('review', 0)):,}"),
+        ("Actions", f"{len(plan):,}"),
+    ))
+    source = str(st.session_state.get("rec_warehouse_control_source") or "Warehouse controls")
+    defer_source_note(
+        metric_confidence_label("estimated"),
+        f"Warehouse controls loaded from {source}; review SQL is read-only and does not alter warehouses.",
+    )
+
+    if not plan.empty:
+        render_priority_dataframe(
+            plan,
+            title="Warehouse setting controls",
+            priority_columns=[
+                "PRIORITY", "WAREHOUSE_NAME", "ACTION_TYPE", "CURRENT_STATE",
+                "CURRENT_SETTING", "SAFE_SETTING_MOVE", "WHY", "ROLLBACK_CHECK",
+            ],
+            sort_by=["PRIORITY", "WAREHOUSE_NAME", "ACTION_TYPE"],
+            ascending=[True, True, True],
+            raw_label="All warehouse setting control rows",
+            height=340,
+            max_rows=12,
+        )
+        download_csv(clean_operator_display_text(plan), "warehouse_setting_controls.csv")
+        _render_warehouse_control_detail(plan)
+    elif not guardrails.empty:
+        st.success("Loaded warehouse guardrails are ready; no changed setting action is currently required.")
+    else:
+        st.info("No warehouse overview rows were available for the active scope.")
+
+
 def _render_automation_health(session):
     st.subheader("Queue Health")
     st.caption("DBA-safe queue lanes for recommendations and action queue items.")
@@ -473,24 +624,34 @@ def render():
         "Recommendation view",
         "recommendations_active_view",
         RECOMMENDATION_PANES,
-        columns=4,
+        columns=5,
         show_label=True,
     )
 
     if active_view == "Recommendations":
         st.subheader("Automated Recommendations Feed")
-        st.caption("Prioritized findings that can be saved into a persistent route/status queue.")
+        st.caption("Fast recommendations use mart summaries first. Deep scans are explicit when ACCOUNT_USAGE detail is needed.")
 
-        if st.button("Generate Recommendations", key="recs_gen"):
+        scan_cols = st.columns([1.1, 1.2, 3.0])
+        with scan_cols[0]:
+            run_fast_scan = st.button("Generate Fast Recommendations", key="recs_gen", type="primary")
+        with scan_cols[1]:
+            run_deep_scan = st.button("Run Deep ACCOUNT_USAGE Scan", key="recs_deep_gen")
+
+        if run_fast_scan or run_deep_scan:
             recs = []
             source_notes = []
             company = _active_company()
+            include_live = bool(run_deep_scan)
+            scan_mode = "deep ACCOUNT_USAGE scan" if include_live else "fast mart-backed scan"
+            source_notes.append(f"Scan mode: {scan_mode}")
 
             try:
                 idle_result = load_shared_recommendation_idle_warehouses(
                     company,
                     days=7,
                     min_idle_credits=1.0,
+                    allow_live_fallback=include_live,
                     section="Recommendations",
                 )
                 df_idle = idle_result.data
@@ -528,6 +689,7 @@ def render():
                     company,
                     days=7,
                     min_remote_gb=5.0,
+                    allow_live_fallback=include_live,
                     section="Recommendations",
                 )
                 df_spill = spill_result.data
@@ -561,6 +723,7 @@ def render():
                     company,
                     days=7,
                     min_failures=3,
+                    allow_live_fallback=include_live,
                     section="Recommendations",
                 )
                 df_ftask = failed_task_result.data
@@ -595,6 +758,7 @@ def render():
                     company,
                     days=7,
                     min_failures=THRESHOLDS["error_rate_high"],
+                    allow_live_fallback=include_live,
                     section="Recommendations",
                 )
                 df_err = query_failure_result.data
@@ -622,91 +786,97 @@ def render():
             except Exception:
                 pass
 
-            try:
-                storage_rate = get_storage_cost_per_tb()
-                storage_result = load_shared_recommendation_storage_retention(
-                    company,
-                    min_time_travel_tb=0.25,
-                    min_time_travel_ratio=0.25,
-                    section="Recommendations",
-                )
-                df_storage = storage_result.data
-                source_notes.append(f"Storage retention: {storage_result.source}")
-                for _, row in df_storage.iterrows():
-                    db_name = str(row["DATABASE_NAME"])
-                    active_tb = safe_float(row.get("ACTIVE_TB"))
-                    time_travel_tb = safe_float(row.get("TIME_TRAVEL_TB"))
-                    estimated_storage = time_travel_tb * storage_rate
-                    verification_sql = _storage_retention_verification_sql(db_name)
-                    recs.append({
-                        "Source": "Time travel retention detector",
-                        "Severity": "High" if estimated_storage >= 1000 else "Medium",
-                        "Category": "Storage Retention",
-                        "Entity Type": "Database",
-                        "Entity": db_name,
-                        "Owner": "DBA",
-                        "Finding": (
-                            f"{db_name}: {time_travel_tb:.2f} TB time-travel storage "
-                            f"vs {active_tb:.2f} TB active"
-                        ),
-                        "Action": "Confirm recovery, cloning, and compliance requirements before changing retention.",
-                        "Estimated Monthly Savings": round(estimated_storage, 2),
-                        "Generated SQL Fix": (
-                            f"-- Review only for {db_name}.\n"
-                            "-- If approved, change DATA_RETENTION_TIME_IN_DAYS at the narrowest safe scope."
-                        ),
-                        "Proof Query": verification_sql,
-                        "Verification Query": verification_sql,
-                        "Current Value": round(time_travel_tb, 4),
-                        "TIME_TRAVEL_TB": round(time_travel_tb, 4),
-                        "ACTIVE_TB": round(active_tb, 4),
-                        "Company": company,
-                    })
-            except Exception:
-                pass
+            if include_live:
+                try:
+                    storage_rate = get_storage_cost_per_tb()
+                    storage_result = load_shared_recommendation_storage_retention(
+                        company,
+                        min_time_travel_tb=0.25,
+                        min_time_travel_ratio=0.25,
+                        section="Recommendations",
+                    )
+                    df_storage = storage_result.data
+                    source_notes.append(f"Storage retention: {storage_result.source}")
+                    for _, row in df_storage.iterrows():
+                        db_name = str(row["DATABASE_NAME"])
+                        active_tb = safe_float(row.get("ACTIVE_TB"))
+                        time_travel_tb = safe_float(row.get("TIME_TRAVEL_TB"))
+                        estimated_storage = time_travel_tb * storage_rate
+                        verification_sql = _storage_retention_verification_sql(db_name)
+                        recs.append({
+                            "Source": "Time travel retention detector",
+                            "Severity": "High" if estimated_storage >= 1000 else "Medium",
+                            "Category": "Storage Retention",
+                            "Entity Type": "Database",
+                            "Entity": db_name,
+                            "Owner": "DBA",
+                            "Finding": (
+                                f"{db_name}: {time_travel_tb:.2f} TB time-travel storage "
+                                f"vs {active_tb:.2f} TB active"
+                            ),
+                            "Action": "Confirm recovery, cloning, and compliance requirements before changing retention.",
+                            "Estimated Monthly Savings": round(estimated_storage, 2),
+                            "Generated SQL Fix": (
+                                f"-- Review only for {db_name}.\n"
+                                "-- If approved, change DATA_RETENTION_TIME_IN_DAYS at the narrowest safe scope."
+                            ),
+                            "Proof Query": verification_sql,
+                            "Verification Query": verification_sql,
+                            "Current Value": round(time_travel_tb, 4),
+                            "TIME_TRAVEL_TB": round(time_travel_tb, 4),
+                            "ACTIVE_TB": round(active_tb, 4),
+                            "Company": company,
+                        })
+                except Exception:
+                    pass
+            else:
+                source_notes.append("Storage retention: deep scan not run")
 
-            try:
-                cluster_result = load_shared_recommendation_clustering_cost(
-                    company,
-                    days=7,
-                    credit_price=credit_price,
-                    top=10,
-                    section="Recommendations",
-                )
-                df_cluster = cluster_result.data
-                source_notes.append(f"Clustering: {cluster_result.source}")
-                for _, row in df_cluster.iterrows():
-                    table_name = str(row["TABLE_NAME"])
-                    clustering_cost = safe_float(row.get("CLUSTERING_COST_USD"))
-                    if clustering_cost < 25:
-                        continue
-                    reclustered_tb = safe_float(row.get("TB_RECLUSTERED"))
-                    verification_sql = _clustering_verification_sql(table_name)
-                    recs.append({
-                        "Source": "Clustering cost detector",
-                        "Severity": "High" if clustering_cost >= 500 else "Medium",
-                        "Category": "Clustering",
-                        "Entity Type": "Table",
-                        "Entity": table_name,
-                        "Owner": "DBA",
-                        "Finding": (
-                            f"{table_name}: ${clustering_cost:,.0f} automatic clustering cost, "
-                            f"{reclustered_tb:.2f} TB reclustered"
-                        ),
-                        "Action": "Review clustering depth, DML churn, pruning benefit, and query demand before changing clustering.",
-                        "Estimated Monthly Savings": 0.0,
-                        "Generated SQL Fix": (
-                            "-- Review only. Do not suspend reclustering until pruning benefit and DML churn are confirmed."
-                        ),
-                        "Proof Query": verification_sql,
-                        "Verification Query": verification_sql,
-                        "Current Value": round(clustering_cost, 2),
-                        "CLUSTERING_COST_USD": round(clustering_cost, 2),
-                        "TB_RECLUSTERED": round(reclustered_tb, 4),
-                        "Company": company,
-                    })
-            except Exception:
-                pass
+            if include_live:
+                try:
+                    cluster_result = load_shared_recommendation_clustering_cost(
+                        company,
+                        days=7,
+                        credit_price=credit_price,
+                        top=10,
+                        section="Recommendations",
+                    )
+                    df_cluster = cluster_result.data
+                    source_notes.append(f"Clustering: {cluster_result.source}")
+                    for _, row in df_cluster.iterrows():
+                        table_name = str(row["TABLE_NAME"])
+                        clustering_cost = safe_float(row.get("CLUSTERING_COST_USD"))
+                        if clustering_cost < 25:
+                            continue
+                        reclustered_tb = safe_float(row.get("TB_RECLUSTERED"))
+                        verification_sql = _clustering_verification_sql(table_name)
+                        recs.append({
+                            "Source": "Clustering cost detector",
+                            "Severity": "High" if clustering_cost >= 500 else "Medium",
+                            "Category": "Clustering",
+                            "Entity Type": "Table",
+                            "Entity": table_name,
+                            "Owner": "DBA",
+                            "Finding": (
+                                f"{table_name}: ${clustering_cost:,.0f} automatic clustering cost, "
+                                f"{reclustered_tb:.2f} TB reclustered"
+                            ),
+                            "Action": "Review clustering depth, DML churn, pruning benefit, and query demand before changing clustering.",
+                            "Estimated Monthly Savings": 0.0,
+                            "Generated SQL Fix": (
+                                "-- Review only. Do not suspend reclustering until pruning benefit and DML churn are confirmed."
+                            ),
+                            "Proof Query": verification_sql,
+                            "Verification Query": verification_sql,
+                            "Current Value": round(clustering_cost, 2),
+                            "CLUSTERING_COST_USD": round(clustering_cost, 2),
+                            "TB_RECLUSTERED": round(reclustered_tb, 4),
+                            "Company": company,
+                        })
+                except Exception:
+                    pass
+            else:
+                source_notes.append("Clustering: deep scan not run")
 
             try:
                 repeated_result = load_shared_recommendation_repeated_queries(
@@ -715,6 +885,7 @@ def render():
                     days=7,
                     min_runs=50,
                     min_total_exec_hours=2.0,
+                    allow_live_fallback=include_live,
                     section="Recommendations",
                 )
                 df_repeated = repeated_result.data
@@ -826,6 +997,9 @@ def render():
                     st.info("The action queue is not available in this environment yet. Ask the DBA team to enable it, then retry.")
         elif st.session_state.get("rec_recommendations") == []:
             st.success("No actionable findings. Account looks healthy.")
+
+    elif active_view == "Warehouse Controls":
+        _render_warehouse_controls(session)
 
     elif active_view == "Queue Health":
         _render_automation_health(session)

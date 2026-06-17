@@ -37,6 +37,25 @@ The drop script suspends tasks before dropping them, drops dependent tasks/views
 procedures before tables, and keeps extra `DROP IF EXISTS` statements for retired
 objects from older deployments.
 
+## Dry-Run Readiness
+
+Before running a destructive lower-environment reset, do a local static rehearsal
+from this Git revision:
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest tests.test_formula_regressions.FormulaRegressionTests.test_overwatch_mart_drop_script_covers_setup_objects
+.\.venv\Scripts\python.exe -m unittest tests.test_formula_regressions.FormulaRegressionTests.test_mart_refresh_procedures_do_not_write_retired_objects
+```
+
+Then review the generated object inventory in `docs/MART_OBJECT_REVIEW.md`.
+Do not run the drop script if either guard fails. A failure means the setup/drop
+pair is out of sync or a retired object has leaked back into refresh logic.
+
+For a worksheet rehearsal, keep the first run in a non-production account or
+schema. Use the same role, database, schema, warehouse, and Git revision for
+drop, setup, validation, and task resume so the object count and procedure output
+map stay comparable.
+
 ## Required Refresh Calls
 
 The setup script already runs the bootstrap calls near the end. If you need to rerun
@@ -91,6 +110,35 @@ old deployed copies before a fresh setup.
 Also confirm:
 
 ```sql
+WITH deployed_objects AS (
+    SELECT 'TABLE' AS OBJECT_TYPE, TABLE_NAME AS OBJECT_NAME
+    FROM INFORMATION_SCHEMA.TABLES
+    WHERE TABLE_SCHEMA = CURRENT_SCHEMA()
+    UNION ALL
+    SELECT 'VIEW', TABLE_NAME
+    FROM INFORMATION_SCHEMA.VIEWS
+    WHERE TABLE_SCHEMA = CURRENT_SCHEMA()
+    UNION ALL
+    SELECT 'PROCEDURE', PROCEDURE_NAME
+    FROM INFORMATION_SCHEMA.PROCEDURES
+    WHERE PROCEDURE_SCHEMA = CURRENT_SCHEMA()
+    UNION ALL
+    SELECT 'FUNCTION', FUNCTION_NAME
+    FROM INFORMATION_SCHEMA.FUNCTIONS
+    WHERE FUNCTION_SCHEMA = CURRENT_SCHEMA()
+)
+SELECT OBJECT_TYPE, COUNT(*) AS OBJECT_COUNT
+FROM deployed_objects
+WHERE OBJECT_NAME ILIKE 'OVERWATCH%'
+   OR OBJECT_NAME ILIKE 'FACT_%'
+   OR OBJECT_NAME ILIKE 'DIM_%'
+   OR OBJECT_NAME ILIKE 'MART_%'
+   OR OBJECT_NAME ILIKE 'SP_OVERWATCH%'
+GROUP BY OBJECT_TYPE
+ORDER BY OBJECT_TYPE;
+
+SHOW TASKS IN SCHEMA;
+
 SELECT *
 FROM OVERWATCH_SCHEMA_MIGRATION
 ORDER BY APPLIED_AT DESC
@@ -100,6 +148,21 @@ SELECT LOAD_NAME, STATUS, LOAD_STARTED_AT, LOAD_FINISHED_AT, MESSAGE
 FROM OVERWATCH_LOAD_AUDIT
 ORDER BY LOAD_STARTED_AT DESC
 LIMIT 20;
+
+SELECT 'FACT_MONITORING_COST_DAILY' AS RETIRED_OBJECT, COUNT(*) AS PRESENT
+FROM INFORMATION_SCHEMA.TABLES
+WHERE TABLE_SCHEMA = CURRENT_SCHEMA()
+  AND TABLE_NAME = 'FACT_MONITORING_COST_DAILY'
+UNION ALL
+SELECT 'OVERWATCH_EXECUTIVE_PACKET', COUNT(*)
+FROM INFORMATION_SCHEMA.TABLES
+WHERE TABLE_SCHEMA = CURRENT_SCHEMA()
+  AND TABLE_NAME = 'OVERWATCH_EXECUTIVE_PACKET'
+UNION ALL
+SELECT 'OVERWATCH_AUTOMATION_HEALTH_V', COUNT(*)
+FROM INFORMATION_SCHEMA.VIEWS
+WHERE TABLE_SCHEMA = CURRENT_SCHEMA()
+  AND TABLE_NAME = 'OVERWATCH_AUTOMATION_HEALTH_V';
 ```
 
 ## Resume Tasks

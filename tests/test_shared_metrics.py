@@ -31,6 +31,7 @@ from utils.shared_metrics import (  # noqa: E402
     load_shared_storage_trend,
     load_shared_task_health_summary,
     load_shared_usage_metering_kpis,
+    load_shared_warehouse_credit_anomalies,
     load_shared_warehouse_right_sizing,
     load_shared_warehouse_daily_credits_by_warehouse,
     load_shared_warehouse_overview,
@@ -181,6 +182,70 @@ class SharedMetricsTests(unittest.TestCase):
         live_sql = mock_run.call_args.args[0].upper()
         self.assertIn("NULL::VARCHAR AS WAREHOUSE_SIZE", live_sql)
         self.assertIn("WAREHOUSE_METERING_HISTORY", live_sql)
+
+    def test_warehouse_credit_anomalies_prefers_fast_summary(self):
+        frame = pd.DataFrame({
+            "WAREHOUSE_NAME": ["ALFA_WH"],
+            "DAY": ["2026-06-15"],
+            "DAILY_CREDITS": [42.0],
+            "ROLLING_AVG": [10.0],
+            "ZSCORE": [3.2],
+            "ANOMALY_FLAG": ["SPIKE"],
+        })
+
+        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run:
+            first = load_shared_warehouse_credit_anomalies("ALFA", days=30, section="Unit Test")
+            second = load_shared_warehouse_credit_anomalies("ALFA", days=30, section="Unit Test")
+
+        self.assertIs(first, second)
+        self.assertEqual(first.source, "Fast warehouse credit summary")
+        self.assertEqual(mock_run.call_count, 1)
+        sql = mock_run.call_args.args[0].upper()
+        self.assertIn("FACT_WAREHOUSE_HOURLY", sql)
+        self.assertIn("CURRENT_DATE()", sql)
+        self.assertIn("ANOMALY_FLAG", sql)
+
+    def test_warehouse_credit_anomalies_live_fallback_is_explicit(self):
+        live_frame = pd.DataFrame({
+            "WAREHOUSE_NAME": ["ALFA_WH"],
+            "DAY": ["2026-06-15"],
+            "DAILY_CREDITS": [22.0],
+            "ROLLING_AVG": [8.0],
+            "ZSCORE": [2.4],
+            "ANOMALY_FLAG": ["SPIKE"],
+        })
+
+        with patch(
+            "utils.shared_metrics.run_query",
+            side_effect=[pd.DataFrame(), live_frame],
+        ) as mock_run:
+            result = load_shared_warehouse_credit_anomalies(
+                "ALFA",
+                days=30,
+                allow_live_fallback=True,
+                section="Unit Test",
+            )
+
+        self.assertTrue(result.available)
+        self.assertEqual(result.source, "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY")
+        self.assertEqual(mock_run.call_count, 2)
+        live_sql = mock_run.call_args_list[1].args[0].upper()
+        self.assertIn("WAREHOUSE_METERING_HISTORY", live_sql)
+        self.assertIn("CURRENT_DATE()", live_sql)
+        self.assertIn("ROLLING_AVG IS NOT NULL", live_sql)
+
+    def test_warehouse_credit_anomalies_can_skip_live_fallback(self):
+        with patch("utils.shared_metrics.run_query", return_value=pd.DataFrame()) as mock_run:
+            result = load_shared_warehouse_credit_anomalies(
+                "ALFA",
+                days=30,
+                allow_live_fallback=False,
+                section="Unit Test",
+            )
+
+        self.assertFalse(result.available)
+        self.assertEqual(result.source, "Fast warehouse credit summary")
+        self.assertEqual(mock_run.call_count, 1)
 
     def test_warehouse_overview_reuses_fast_summary_result(self):
         frame = pd.DataFrame({

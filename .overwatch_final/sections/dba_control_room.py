@@ -6582,7 +6582,7 @@ def render() -> None:
                     _jump("Workload Operations", workflow=workflow)
         with r2:
             st.subheader("Cost and Capacity")
-            st.write("Bill explanations, run-rate pacing, warehouse pressure, rightsizing, recommendations, and value telemetry.")
+            st.write("Bill explanations, run-rate pacing, warehouse pressure, rightsizing, recommendations, and action telemetry.")
             for label, title, workflow in [
                 ("Cost & Contract", "Cost & Contract", "Usage attribution and run-rate"),
                 ("AI / Cortex Spend", "Cost & Contract", "AI and Cortex spend"),

@@ -8,7 +8,6 @@ from config import DEFAULTS, THRESHOLDS
 from sections.warehouse_health import _build_warehouse_guardrail_coverage, _warehouse_setting_action_plan
 from sections.shell_helpers import _clean_display_text, render_escaped_bold_text, render_shell_snapshot
 from utils import (
-    build_safe_verification_query,
     credits_to_dollars,
     day_window_selectbox,
     defer_source_note,
@@ -17,7 +16,6 @@ from utils import (
     format_credits,
     get_storage_cost_per_tb,
     get_session,
-    get_wh_filter_clause,
     load_shared_recommendation_failed_tasks,
     load_shared_recommendation_idle_warehouses,
     load_shared_recommendation_query_failures,
@@ -26,20 +24,16 @@ from utils import (
     load_shared_recommendation_clustering_cost,
     load_shared_recommendation_repeated_queries,
     load_shared_warehouse_overview,
+    load_shared_warehouse_credit_anomalies,
     load_warehouse_inventory,
     load_action_queue,
     make_action_id,
     metric_confidence_label,
     freshness_note,
-    run_query,
-    run_query_or_raise,
     safe_float,
     safe_identifier,
     sql_literal,
-    update_action_status_with_evidence,
     upsert_actions,
-    summarize_verification_frame,
-    verification_query_safety_issues,
 )
 from utils.recommendation_intelligence import build_automation_readiness_board, harden_recommendation
 from utils.workflows import clean_operator_display_text, render_load_status, render_priority_dataframe, render_workflow_selector
@@ -348,7 +342,7 @@ def _render_warehouse_control_detail(plan: pd.DataFrame) -> None:
 
 def _render_warehouse_controls(session) -> None:
     st.subheader("Warehouse Setting Controls")
-    st.caption("Review-only warehouse setting actions using loaded cost, queue, spill, p95, and SHOW WAREHOUSES metadata.")
+    st.caption("Review-only setting actions from loaded cost, queue, spill, p95, and SHOW WAREHOUSES metadata.")
     company = _active_company()
     days = day_window_selectbox("Control window", key="rec_wh_control_days", default=7)
     expected = _warehouse_control_scope(company, days)
@@ -369,7 +363,7 @@ def _render_warehouse_controls(session) -> None:
         st.warning(f"Warehouse controls unavailable in this role/context: {error}")
 
     if not current:
-        st.info("Load Warehouse Controls to generate changed-only setting review actions for the active scope.")
+        st.info("Load Warehouse Controls when you need changed-only AUTO_SUSPEND, sizing, and guardrail review actions.")
         return
 
     summary = st.session_state.get("rec_warehouse_control_summary") or {}
@@ -630,7 +624,7 @@ def render():
 
     if active_view == "Recommendations":
         st.subheader("Automated Recommendations Feed")
-        st.caption("Fast recommendations use mart summaries first. Deep scans are explicit when ACCOUNT_USAGE detail is needed.")
+        st.caption("Fast mode reads advisor summaries. Deep mode runs bounded ACCOUNT_USAGE scans only when detail is needed.")
 
         scan_cols = st.columns([1.1, 1.2, 3.0])
         with scan_cols[0]:
@@ -643,7 +637,7 @@ def render():
             source_notes = []
             company = _active_company()
             include_live = bool(run_deep_scan)
-            scan_mode = "deep ACCOUNT_USAGE scan" if include_live else "fast mart-backed scan"
+            scan_mode = "deep ACCOUNT_USAGE scan" if include_live else "fast advisor-summary scan"
             source_notes.append(f"Scan mode: {scan_mode}")
 
             try:
@@ -1009,51 +1003,33 @@ def render():
 
     elif active_view == "Anomaly Log":
         st.subheader("Anomaly Log")
-        st.caption("Flags warehouse credit spikes against a rolling 7-day baseline.")
+        st.caption("Flags completed-day warehouse credit spikes against a rolling 7-day baseline.")
         anom_days = day_window_selectbox("Detection window", key="anom_days", default=30)
 
         if st.button("Detect Anomalies", key="anom_detect"):
             with render_load_status("Detecting credit anomalies", "Anomaly scan ready"):
                 try:
-                    df_anom = run_query(f"""
-                WITH daily AS (
-                    SELECT warehouse_name,
-                           DATE_TRUNC('day', start_time) AS day,
-                           SUM(credits_used) AS daily_credits
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
-                    WHERE start_time >= DATEADD('day', -{anom_days}, CURRENT_TIMESTAMP())
-                      {get_wh_filter_clause("warehouse_name")}
-                    GROUP BY warehouse_name, day
-                ),
-                stats AS (
-                    SELECT warehouse_name, day, daily_credits,
-                           AVG(daily_credits) OVER (
-                               PARTITION BY warehouse_name
-                               ORDER BY day ROWS BETWEEN 6 PRECEDING AND 1 PRECEDING
-                           ) AS rolling_avg,
-                           STDDEV(daily_credits) OVER (
-                               PARTITION BY warehouse_name
-                               ORDER BY day ROWS BETWEEN 6 PRECEDING AND 1 PRECEDING
-                           ) AS rolling_std
-                    FROM daily
-                )
-                SELECT warehouse_name, day, daily_credits,
-                       ROUND(rolling_avg, 4) AS rolling_avg,
-                       ROUND(CASE WHEN rolling_std > 0 THEN (daily_credits - rolling_avg) / rolling_std END, 2) AS zscore,
-                       CASE WHEN (daily_credits - rolling_avg) / NULLIF(rolling_std, 0) > 2 THEN 'SPIKE'
-                            WHEN (daily_credits - rolling_avg) / NULLIF(rolling_std, 0) > 1.5 THEN 'ELEVATED'
-                            ELSE NULL END AS anomaly_flag
-                FROM stats
-                WHERE rolling_avg IS NOT NULL
-                  AND (daily_credits - rolling_avg) / NULLIF(rolling_std, 0) > 1.5
-                ORDER BY day DESC, zscore DESC
-                    """, ttl_key=f"rec_anomaly_{_active_company()}_{anom_days}", tier="historical")
-                    st.session_state["rec_anomalies"] = df_anom
+                    anomaly_result = load_shared_warehouse_credit_anomalies(
+                        _active_company(),
+                        days=anom_days,
+                        zscore_threshold=1.5,
+                        allow_live_fallback=True,
+                        force=True,
+                        section="Recommendations",
+                    )
+                    st.session_state["rec_anomalies"] = anomaly_result.data
+                    st.session_state["rec_anomalies_source"] = anomaly_result.source
+                    st.session_state["rec_anomalies_message"] = anomaly_result.message
                 except Exception as e:
                     st.warning(f"Recommendation scan unavailable in this role/context: {format_snowflake_error(e)}")
 
         df_an = st.session_state.get("rec_anomalies")
         if df_an is not None:
+            source = str(st.session_state.get("rec_anomalies_source") or "Warehouse credit anomalies")
+            defer_source_note(
+                metric_confidence_label("estimated"),
+                f"Anomaly source: {source}. Completed days only; current partial-day spend is excluded.",
+            )
             if not df_an.empty:
                 spikes = df_an[df_an.get("ANOMALY_FLAG", pd.Series(dtype=str)).astype(str) == "SPIKE"] if "ANOMALY_FLAG" in df_an.columns else df_an
                 st.warning(f"{len(spikes)} spike events detected.")

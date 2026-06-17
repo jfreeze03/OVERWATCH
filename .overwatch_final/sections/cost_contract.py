@@ -4467,7 +4467,7 @@ def _cost_snapshot_action_summary(queue: pd.DataFrame | None) -> dict:
 
 def _render_cost_load_contract(splash: dict, *, days: int) -> None:
     if splash.get("loaded"):
-        render_shell_snapshot((("Window", f"{int(days)}d"),))
+        defer_source_note(f"Cost overview window: {int(days)} days.")
 
 
 def _render_cost_splash(splash: dict, *, company: str, days: int, credit_price: float) -> None:
@@ -4940,7 +4940,7 @@ def render() -> None:
             ("First move", "Explain why spend changed before tuning anything."),
             ("Telemetry", "Reconcile warehouse metering, chargeback allocation, Cortex, and run-rate pace."),
             ("Control", "Convert findings into routed actions with savings and status."),
-            ("Output", "Produce a usage narrative leadership can understand without opening the app."),
+            ("Output", "Produce a DBA-ready usage narrative with the source and action route attached."),
         ],
         columns=4,
     )

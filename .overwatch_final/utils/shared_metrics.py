@@ -782,6 +782,144 @@ def load_shared_warehouse_daily_credits_by_warehouse(
     return _load_or_reuse("shared_warehouse_daily_credits_by_warehouse", (company, days), _loader, force=force)
 
 
+def load_shared_warehouse_credit_anomalies(
+    company: str | None = None,
+    *,
+    days: int = 30,
+    zscore_threshold: float = 1.5,
+    allow_live_fallback: bool = True,
+    force: bool = False,
+    section: str = "Shared Metrics",
+) -> SharedMetricResult:
+    """Load completed-day warehouse credit anomalies from the shared mart first."""
+
+    company = company or get_active_company()
+    days = max(7, int(days or 30))
+    zscore_threshold = float(zscore_threshold or 1.5)
+    scan_days = days + 7
+
+    def _anomaly_sql(source_table: str, date_col: str, credit_col: str, extra_filter: str = "") -> str:
+        return f"""
+            WITH daily AS (
+                SELECT
+                    warehouse_name,
+                    DATE_TRUNC('day', {date_col}) AS day,
+                    SUM(COALESCE({credit_col}, 0)) AS daily_credits
+                FROM {source_table}
+                WHERE {date_col} >= DATEADD('day', -{scan_days}, CURRENT_TIMESTAMP())
+                  AND {date_col} < CURRENT_DATE()
+                  AND warehouse_name IS NOT NULL
+                  {extra_filter}
+                GROUP BY warehouse_name, day
+            ),
+            stats AS (
+                SELECT
+                    warehouse_name,
+                    day,
+                    daily_credits,
+                    AVG(daily_credits) OVER (
+                        PARTITION BY warehouse_name
+                        ORDER BY day ROWS BETWEEN 6 PRECEDING AND 1 PRECEDING
+                    ) AS rolling_avg,
+                    STDDEV(daily_credits) OVER (
+                        PARTITION BY warehouse_name
+                        ORDER BY day ROWS BETWEEN 6 PRECEDING AND 1 PRECEDING
+                    ) AS rolling_std
+                FROM daily
+            )
+            SELECT
+                warehouse_name,
+                day,
+                ROUND(daily_credits, 4) AS daily_credits,
+                ROUND(rolling_avg, 4) AS rolling_avg,
+                ROUND((daily_credits - rolling_avg) / NULLIF(rolling_std, 0), 2) AS zscore,
+                CASE
+                    WHEN (daily_credits - rolling_avg) / NULLIF(rolling_std, 0) > 2 THEN 'SPIKE'
+                    WHEN (daily_credits - rolling_avg) / NULLIF(rolling_std, 0) > {zscore_threshold} THEN 'ELEVATED'
+                    ELSE NULL
+                END AS anomaly_flag
+            FROM stats
+            WHERE day >= DATEADD('day', -{days}, CURRENT_DATE())
+              AND rolling_avg IS NOT NULL
+              AND rolling_std > 0
+              AND (daily_credits - rolling_avg) / NULLIF(rolling_std, 0) > {zscore_threshold}
+            ORDER BY day DESC, zscore DESC, daily_credits DESC
+        """
+
+    def _loader() -> SharedMetricResult:
+        mart_message = ""
+        try:
+            mart_df = run_query(
+                _anomaly_sql(
+                    mart_object_name("FACT_WAREHOUSE_HOURLY"),
+                    "hour_start",
+                    "credits_used",
+                    "\n                  ".join(
+                        filter(
+                            None,
+                            [
+                                _company_column_filter("company", company),
+                                get_global_wh_filter_clause("warehouse_name"),
+                            ],
+                        )
+                    ),
+                ),
+                ttl_key=get_company_scope_key("shared_warehouse_credit_anomalies_mart", days, zscore_threshold),
+                tier="historical",
+                section=section,
+            )
+            if not mart_df.empty:
+                return SharedMetricResult(
+                    data=mart_df,
+                    source="Fast warehouse credit summary",
+                    available=True,
+                    effective_days=days,
+                )
+            mart_message = "Warehouse credit summary returned no anomaly rows."
+        except Exception as exc:
+            mart_message = str(exc)
+
+        if not allow_live_fallback:
+            return _empty_result("Fast warehouse credit summary", mart_message, effective_days=days)
+
+        try:
+            live_df = run_query(
+                _anomaly_sql(
+                    "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY",
+                    "start_time",
+                    "credits_used",
+                    "\n                  ".join(
+                        filter(
+                            None,
+                            [
+                                get_wh_filter_clause("warehouse_name", company),
+                                get_global_wh_filter_clause("warehouse_name"),
+                            ],
+                        )
+                    ),
+                ),
+                ttl_key=get_company_scope_key("shared_warehouse_credit_anomalies_live", days, zscore_threshold),
+                tier="historical",
+                section=section,
+            )
+            return SharedMetricResult(
+                data=live_df,
+                source="Live fallback: SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY",
+                available=not live_df.empty,
+                message="" if not live_df.empty else mart_message,
+                effective_days=days,
+            )
+        except Exception as exc:
+            return _empty_result("Warehouse credit anomalies", f"{mart_message} Live fallback unavailable: {exc}")
+
+    return _load_or_reuse(
+        "shared_warehouse_credit_anomalies",
+        (company, days, zscore_threshold, allow_live_fallback),
+        _loader,
+        force=force,
+    )
+
+
 def load_shared_warehouse_overview(
     session: object,
     days: int,

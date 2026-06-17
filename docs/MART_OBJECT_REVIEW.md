@@ -40,6 +40,10 @@ Latest static dependency pass:
   right-sizing, storage-retention, clustering, and procedure summary reads into
   shared app loaders. This did not create new mart objects; it increased reuse
   of existing query detail and procedure facts.
+- The latest cost cleanup also moved warehouse credit anomaly detection into a
+  shared mart-first loader. `FACT_WAREHOUSE_HOURLY` remains the preferred source
+  for completed-day anomaly scans, with `WAREHOUSE_METERING_HISTORY` only as the
+  explicit fallback path.
 - Latest mart/SP audit: refresh procedures do not create, insert, merge, or
   delete against retired automation, executive packet, monitoring-cost,
   external-control, owner-directory, or cost-savings verification objects.

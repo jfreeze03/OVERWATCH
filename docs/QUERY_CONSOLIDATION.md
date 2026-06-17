@@ -16,6 +16,7 @@ refresh/drilldown actions and make repeated metric families load once per scope.
 | `load_shared_storage_db_detail` | Storage Monitor per-database detail | Fast storage mart first, live database storage fallback on demand |
 | `load_shared_warehouse_daily_credits` | Cost Forecast daily credit trend | Live warehouse metering, cached once per company/filter scope |
 | `load_shared_warehouse_daily_credits_by_warehouse` | Cost Center Burn Rate daily warehouse trend | Live warehouse metering with latest observed warehouse size, cached once per company/filter scope |
+| `load_shared_warehouse_credit_anomalies` | Cost & Contract Anomaly Log | Fast warehouse hourly mart first, live WAREHOUSE_METERING_HISTORY fallback only from the explicit anomaly action |
 | `load_shared_warehouse_overview` | Warehouse Health overview and current/prior movement | Fast warehouse overview mart first, live query-history plus metering fallback only on explicit load |
 | `load_shared_query_history_rollup` | Usage Overview and Account Health query/error/queue KPIs | Fast query mart first, live QUERY_HISTORY fallback only on explicit load |
 | `load_shared_warehouse_pressure_summary` | Usage Overview and Account Health active/pressured warehouse counts | Fast query mart first, live QUERY_HISTORY fallback only on explicit load |
@@ -54,7 +55,9 @@ failure, repeated-query, duplicate-query, right-sizing, clustering, storage
 retention, and procedure summary candidates now share one source-caption and
 cache contract. The visible Recommendations default now runs in fast
 mart-backed mode; live ACCOUNT_USAGE fallback plus storage/clustering deep scans
-require the explicit deep-scan action.
+require the explicit deep-scan action. The Anomaly Log now also shares the
+warehouse credit anomaly loader instead of building a one-off metering query in
+the section.
 
 Top ACCOUNT_USAGE source families by static reference count:
 
@@ -74,8 +77,9 @@ Top ACCOUNT_USAGE source families by static reference count:
 
 1. Warehouse metering summary:
    Extend the shared metering layer from Usage Overview/Cost Forecast into
-   current/prior credits by company, warehouse, and day. Remaining consumers:
-   Warehouse Health scaling events and deeper advisor panels.
+   current/prior credits by company, warehouse, and day. The Anomaly Log now
+   uses the shared anomaly loader. Remaining consumers: deeper warehouse advisor
+   panels that still need specialized event-level metering.
 
 2. Query history operational rollup:
    First pass done for Usage Overview and Account Health. Remaining consumers:

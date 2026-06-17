@@ -44,6 +44,7 @@ from utils.shared_metrics import (  # noqa: E402
     load_shared_service_warehouse_health,
     load_shared_storage_trend,
     load_shared_task_health_summary,
+    load_shared_task_history_detail,
     load_shared_usage_metering_kpis,
     load_shared_warehouse_credit_anomalies,
     load_shared_warehouse_right_sizing,
@@ -755,6 +756,48 @@ class SharedMetricsTests(unittest.TestCase):
         self.assertFalse(result.available)
         self.assertEqual(int(result.data["TASK_RUNS"].iloc[0]), 0)
         self.assertIn("TASK_HISTORY", result.source)
+
+    def test_task_history_detail_prefers_mart(self):
+        frame = pd.DataFrame({
+            "TASK_NAME": ["ALFA_TASK"],
+            "STATE": ["SUCCEEDED"],
+            "QUERY_ID": ["01a"],
+        })
+
+        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run:
+            result = load_shared_task_history_detail(object(), 7, "ALFA", section="Unit Test")
+
+        self.assertEqual(result.source, "Fast task run summary")
+        self.assertTrue(result.available)
+        self.assertEqual(mock_run.call_count, 1)
+        sql = mock_run.call_args.args[0].upper()
+        self.assertIn("FACT_TASK_RUN", sql)
+
+    def test_task_history_detail_live_fallback_after_empty_mart(self):
+        live_frame = pd.DataFrame({
+            "TASK_NAME": ["ALFA_TASK"],
+            "STATE": ["FAILED"],
+            "QUERY_ID": ["01b"],
+        })
+
+        with patch("utils.shared_metrics.run_query", side_effect=[pd.DataFrame(), live_frame]) as mock_run, patch(
+            "utils.shared_metrics.build_task_history_sql",
+            return_value="SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY",
+        ) as mock_live_sql:
+            result = load_shared_task_history_detail(
+                object(),
+                7,
+                "ALFA",
+                limit=500,
+                section="Unit Test",
+            )
+
+        self.assertEqual(result.source, "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY")
+        self.assertIn("Fast task run summary returned no rows", result.message)
+        self.assertEqual(mock_run.call_count, 2)
+        mock_live_sql.assert_called_once()
+        live_sql = mock_run.call_args_list[1].args[0].upper()
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY", live_sql)
 
     def test_mfa_coverage_uses_users_snapshot(self):
         frame = pd.DataFrame({

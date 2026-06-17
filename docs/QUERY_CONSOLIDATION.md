@@ -34,6 +34,7 @@ refresh/drilldown actions and make repeated metric families load once per scope.
 | `load_shared_warehouse_spill` | Warehouse Health spill/memory panel | Explicit live `QUERY_HISTORY` spill scan, cached once per company/window/filter scope |
 | `load_shared_warehouse_heatmap` | Warehouse Health workload heatmap | Fast hourly query mart first, bounded live `QUERY_HISTORY` fallback capped at 30 days |
 | `load_shared_task_health_summary` | Usage Overview task run/failure counters | Live TASK_HISTORY with optional-column compatibility and zero-row fallback |
+| `load_shared_task_history_detail` | Task Management history, ops brief, and failure console | Fast task-run mart first, live `TASK_HISTORY` fallback through compatibility SQL |
 | `load_shared_mfa_coverage` | Security Access MFA coverage | Live USERS snapshot, cached once per company/user filter scope |
 | `load_shared_grants_to_users` | Security Access role-grant review | Fast grant mart first, live GRANTS_TO_USERS fallback |
 | `load_shared_access_hygiene_snapshot` | Account Health access hygiene | Live USERS + LOGIN_HISTORY + GRANTS_TO_USERS account-level snapshot |
@@ -97,6 +98,9 @@ column handling cannot drift from the shared loader.
 Account Health live storage now reuses `load_shared_usage_storage_kpis` instead
 of embedding a separate `DATABASE_STORAGE_USAGE_HISTORY` query in the detail
 refresh path.
+Task Management history, operations, and failure-console detail now reuse
+`load_shared_task_history_detail`, keeping task-run mart preference and live
+`TASK_HISTORY` fallback in one shared loader.
 The detail refresh block now refreshes run-rate, action queue, attribution,
 service lens, and advisor detail data even when the fast cockpit mart succeeds.
 
@@ -140,10 +144,10 @@ Top ACCOUNT_USAGE source families by static reference count:
 
 4. Task/procedure health:
    Task summary counters, Service Health task counters, recommendation-level
-   failed task candidates, procedure inventory, procedure call summaries, and
-   procedure SLA/cost watch loads now have shared loaders. Remaining work is
-   deeper task failure sample reuse where the UI needs more than advisor
-   candidates.
+   failed task candidates, Task Management task-history detail, procedure
+   inventory, procedure call summaries, and procedure SLA/cost watch loads now
+   have shared loaders. Remaining work is deeper linked query-detail reuse and
+   targeted running-task cancel samples.
 
 5. Security/access hygiene:
    MFA, grants, Account Health access hygiene, Security Monitoring

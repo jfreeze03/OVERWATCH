@@ -75,6 +75,7 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "load_shared_warehouse_credit_anomalies",
         "load_shared_query_history_rollup", "load_shared_warehouse_pressure_summary",
         "load_shared_warehouse_scaling_events", "load_shared_task_health_summary",
+        "load_shared_task_history_detail",
         "load_shared_warehouse_efficiency", "load_shared_warehouse_spill",
         "load_shared_warehouse_heatmap",
         "load_shared_service_query_health", "load_shared_service_warehouse_health",

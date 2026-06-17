@@ -26,7 +26,7 @@ Static token mentions in app Python code:
 | --- | ---: | --- |
 | `QUERY_HISTORY` | 262 | Keep consolidating rollups, advisor pressure, and attribution paths behind shared loaders. |
 | `WAREHOUSE_METERING_HISTORY` | 89 | Cost cockpit, run-rate, splash movement, anomaly, forecast, and burn-rate paths now share common metering shapes where practical. |
-| `TASK_HISTORY` | 99 | Task summary, Service Health counters, and recommendation candidates use shared loaders; deeper samples remain section-specific. |
+| `TASK_HISTORY` | 99 | Task summary, Service Health counters, recommendation candidates, and Task Management history detail use shared loaders; targeted running-task samples remain section-specific. |
 | `USERS` | 143 | Security/access snapshots and Security Monitoring summary builders are partially shared; posture exception row reuse remains a future consolidation target. |
 | `METERING_HISTORY` | 110 | Service-cost lens/trend now share one official loader; keep explicit refresh only. |
 | `LOGIN_HISTORY` | 56 | Access hygiene, security, and Service Health day-level surfaces now share loaders where scopes match. |
@@ -86,6 +86,22 @@ Service Health now gets its hourly cards from shared loaders. The query,
 warehouse, login, and task paths prefer marts when the lookback and grain fit,
 then fall back to bounded ACCOUNT_USAGE scans. The load path remains a bounded
 `COPY_HISTORY` scan because there is not a broader shared consumer yet.
+
+## Current Task And Procedure Consolidation
+
+| Query shape | Shared owner | Current consumers |
+| --- | --- | --- |
+| Task health counters | `load_shared_task_health_summary` | Usage Overview, DBA summary surfaces |
+| Task history detail | `load_shared_task_history_detail` | Task Management history, operations brief, failure console |
+| Procedure inventory | `load_shared_procedure_inventory` | Stored Procedure operations brief |
+| Procedure call summary | `load_shared_procedure_calls` | Stored Procedure recent CALL summary |
+| Procedure SLA/cost watch | `load_shared_procedure_sla` | Stored Procedure SLA/cost watch |
+
+Task Management now uses a shared task-history detail loader for the main
+history, operations, and failure-console paths. The loader prefers
+`FACT_TASK_RUN` and falls back to compatibility-gated live `TASK_HISTORY`.
+Focused running-task cancel checks remain section-specific because they use a
+short live window and admin preflight context.
 
 ## Current Warehouse Health Consolidation
 

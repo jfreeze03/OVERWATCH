@@ -25,7 +25,7 @@ from .company_filter import (
     get_wh_filter_clause,
     get_user_filter_clause,
 )
-from .compatibility import build_task_failure_summary_sql, filter_existing_columns
+from .compatibility import build_task_failure_summary_sql, build_task_history_sql, filter_existing_columns
 from .cost import (
     build_clustering_cost_sql,
     build_idle_warehouse_sql,
@@ -57,6 +57,7 @@ from .mart import (
     build_mart_usage_storage_sql,
     build_mart_warehouse_overview_sql,
     build_mart_warehouse_heatmap_sql,
+    build_mart_task_history_sql,
     mart_object_name,
 )
 from .query import run_query, run_query_or_raise, sql_literal
@@ -2225,6 +2226,87 @@ def load_shared_task_health_summary(
             )
 
     return _load_or_reuse("shared_task_health", (company, days), _loader, force=force)
+
+
+def load_shared_task_history_detail(
+    session: object,
+    days: int,
+    company: str | None = None,
+    *,
+    database_contains: str = "",
+    limit: int = 1000,
+    allow_live_fallback: bool = True,
+    force: bool = False,
+    section: str = "Shared Metrics",
+) -> SharedMetricResult:
+    """Load task-history detail once for Task Management and DBA detail paths."""
+
+    company = company or get_active_company()
+    days = max(1, int(days or 7))
+    database_contains = str(database_contains or "").strip()
+    limit = max(1, int(limit or 1000))
+
+    def _loader() -> SharedMetricResult:
+        mart_message = ""
+        try:
+            mart_df = run_query(
+                build_mart_task_history_sql(
+                    days,
+                    company=company,
+                    database_contains=database_contains,
+                    limit=limit,
+                ),
+                ttl_key=get_company_scope_key("shared_task_history_detail_mart", company, days, database_contains, limit),
+                tier="historical",
+                section=section,
+            )
+            if not mart_df.empty:
+                return SharedMetricResult(
+                    data=mart_df,
+                    source="Fast task run summary",
+                    available=True,
+                    effective_days=days,
+                )
+            mart_message = "Fast task run summary returned no rows."
+        except Exception as exc:
+            mart_message = f"Fast task run summary unavailable: {exc}"
+
+        if not allow_live_fallback:
+            return _empty_result("Fast task run summary", mart_message, effective_days=days)
+
+        try:
+            live_df = run_query(
+                build_task_history_sql(
+                    session,
+                    f"scheduled_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())",
+                    limit=limit,
+                    company=company,
+                ),
+                ttl_key=get_company_scope_key("shared_task_history_detail_live", company, days, database_contains, limit),
+                tier="historical",
+                section=section,
+            )
+            return SharedMetricResult(
+                data=live_df,
+                source="Live fallback: SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY",
+                available=not live_df.empty,
+                message=mart_message,
+                effective_days=days,
+            )
+        except Exception as exc:
+            message = f"{mart_message} Live fallback unavailable: {exc}".strip()
+            return _empty_result(
+                "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY",
+                message,
+                effective_days=days,
+            )
+
+    return _load_or_reuse(
+        "shared_task_history_detail",
+        (company, days, database_contains, limit, allow_live_fallback),
+        _loader,
+        force=force,
+    )
 
 
 def shared_mfa_count_expr(user_cols: set[str]) -> str:

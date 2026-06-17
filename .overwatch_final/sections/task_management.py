@@ -19,11 +19,11 @@ from utils import (
     CREDIT_RATES,
     filter_existing_columns,
     load_live_task_runs,
+    load_shared_task_history_detail,
     load_task_inventory,
     make_action_id,
     build_mart_task_critical_path_sql,
     build_mart_task_inventory_sql,
-    build_mart_task_history_sql,
     build_mart_query_detail_recent_sql,
     run_query,
     run_query_or_raise,
@@ -2173,36 +2173,20 @@ def _load_task_ops_scope(
             else:
                 inventory_source = "Fast task inventory unavailable"
                 inventory = pd.DataFrame()
-    try:
-        history = run_query(
-            build_mart_task_history_sql(
-                days,
-                company=company,
-                database_contains=database_contains,
-                limit=1000,
-            ),
-            ttl_key=f"{ttl_prefix}_history_mart_{company}_{days}",
-            tier="historical",
-            section="Task Management",
-        )
-        if history.empty:
-            if allow_live_fallback:
-                history = run_query_or_raise(build_task_history_sql(
-                    session,
-                    f"scheduled_time >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())",
-                    limit=1000,
-                    company=company,
-                ))
-            else:
-                history_source = "Fast task run summary empty"
-        else:
-            history_source = "Fast task run summary"
-    except Exception as e:
-        if allow_live_fallback:
-            st.info(f"Task history unavailable in this role/context: {format_snowflake_error(e)}")
-        else:
-            history_source = "Fast task run summary unavailable"
-        history = pd.DataFrame()
+    history_result = load_shared_task_history_detail(
+        session,
+        days,
+        company,
+        database_contains=database_contains,
+        limit=1000,
+        allow_live_fallback=allow_live_fallback,
+        force=force_inventory_refresh,
+        section="Task Management",
+    )
+    history = history_result.data
+    history_source = history_result.source
+    if history_result.message and allow_live_fallback and history.empty:
+        st.info(f"Task history unavailable in this role/context: {history_result.message}")
     if include_live_runs and not inventory.empty:
         try:
             live_runs = load_live_task_runs(
@@ -2908,18 +2892,19 @@ def render():
             except Exception:
                 st.session_state["tg_list"] = pd.DataFrame()
 
-            # Task history
-            try:
-                df_th = run_query_or_raise(build_task_history_sql(
-                    session,
-                    f"scheduled_time >= DATEADD('day', -{int(th_days)}, CURRENT_TIMESTAMP())",
-                    limit=500,
-                    company=st.session_state.get("active_company", "ALFA"),
-                ))
-                st.session_state["tg_hist"] = df_th
-            except Exception as e:
-                st.info(f"Task history unavailable in this role/context: {format_snowflake_error(e)}")
-                st.session_state["tg_hist"] = pd.DataFrame()
+            history_result = load_shared_task_history_detail(
+                session,
+                th_days,
+                get_active_company(),
+                limit=500,
+                allow_live_fallback=True,
+                force=True,
+                section="Task Management",
+            )
+            if history_result.message and history_result.data.empty:
+                st.info(f"Task history unavailable in this role/context: {history_result.message}")
+            st.session_state["tg_hist"] = history_result.data
+            st.session_state["tg_hist_source"] = history_result.source
 
         tl = st.session_state.get("tg_list", pd.DataFrame())
         th = st.session_state.get("tg_hist", pd.DataFrame())
@@ -2986,16 +2971,19 @@ def render():
             except Exception as e:
                 st.info(f"Task inventory unavailable: {format_snowflake_error(e)}")
                 inventory = pd.DataFrame()
-            try:
-                history = run_query_or_raise(build_task_history_sql(
-                    session,
-                    f"scheduled_time >= DATEADD('day', -{int(fc_days)}, CURRENT_TIMESTAMP())",
-                    limit=1000,
-                    company=get_active_company(),
-                ))
-            except Exception as e:
-                st.info(f"Task failure history unavailable: {format_snowflake_error(e)}")
-                history = pd.DataFrame()
+            history_result = load_shared_task_history_detail(
+                session,
+                fc_days,
+                get_active_company(),
+                limit=1000,
+                allow_live_fallback=True,
+                force=True,
+                section="Task Management",
+            )
+            if history_result.message and history_result.data.empty:
+                st.info(f"Task failure history unavailable: {history_result.message}")
+            history = history_result.data
+            st.session_state["tm_failure_history_source"] = history_result.source
 
             failed_query_ids = []
             if not history.empty and "QUERY_ID" in history.columns:

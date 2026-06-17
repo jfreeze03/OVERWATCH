@@ -102,6 +102,27 @@ THRESHOLDS = {
     "adaptive_compute_spill_watch_gb": 5.0,
 }
 
+WAREHOUSE_ADVISOR_CONFIG = {
+    # Savings rates are directional until a complete post-change telemetry window
+    # confirms lower credits without worse queue, spill, p95, or failures.
+    "auto_suspend_savings_rates": (
+        (1000, 0.25),
+        (600, 0.15),
+        (300, 0.08),
+        (0, 0.50),
+    ),
+    "default_auto_suspend_sec": 300,
+    "pressure_queue_sec": 5.0,
+    "pressure_p95_sec": 120.0,
+    "pressure_spill_gb": THRESHOLDS["spill_warning_gb"],
+    "downsize_min_monthly_usd": 100.0,
+    "downsize_max_queue_sec": 1.0,
+    "downsize_max_spill_gb": 1.0,
+    "downsize_max_p95_sec": 30.0,
+    "downsize_recoverable_rate": 0.40,
+    "verification_window_days": 7,
+}
+
 CREDIT_RATES = {
     "X-Small": 1,
     "Small": 2,

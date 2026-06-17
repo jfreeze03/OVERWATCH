@@ -737,6 +737,8 @@ def _build_procedure_sla_frames(runs: pd.DataFrame) -> tuple[dict, pd.DataFrame,
 def _procedure_analysis_summary(
     latest: pd.DataFrame | None,
     exceptions: pd.DataFrame | None,
+    *,
+    credit_price: float,
 ) -> tuple[dict, pd.DataFrame]:
     """Build a compact advisor view from already loaded procedure telemetry."""
     latest_view = latest.copy() if latest is not None and not latest.empty else pd.DataFrame()
@@ -764,9 +766,15 @@ def _procedure_analysis_summary(
         runtime = safe_float(row.get("LATEST_ELAPSED_SEC", row.get("TOTAL_ELAPSED_SEC")))
         baseline_runtime = safe_float(row.get("AVG_ELAPSED_SEC"))
         credits = safe_float(row.get("EST_TOTAL_CREDITS", row.get("METERED_CREDITS")))
+        est_cost = credits_to_dollars(credits, credit_price)
         runtime_change = safe_float(row.get("RUNTIME_CHANGE_PCT"))
         cost_change = safe_float(row.get("COST_CHANGE_PCT"))
         issue = str(row.get("OPTIMIZATION_ISSUE") or signal)
+        confidence = (
+            "Allocated - procedure fact or ROOT_QUERY_ID child telemetry"
+            if safe_int(row.get("DOWNSTREAM_QUERY_COUNT")) > 0 or str(row.get("ROOT_QUERY_ID") or "").strip()
+            else "Estimated - outer CALL telemetry only"
+        )
         rows.append({
             "PRIORITY": priority_for(row),
             "STATE": state,
@@ -777,8 +785,10 @@ def _procedure_analysis_summary(
             "BASELINE_RUNTIME_SEC": baseline_runtime,
             "RUNTIME_CHANGE_PCT": runtime_change,
             "EST_TOTAL_CREDITS": credits,
+            "EST_TOTAL_COST_USD": round(est_cost, 2),
             "COST_CHANGE_PCT": cost_change,
             "DOWNSTREAM_QUERY_COUNT": safe_int(row.get("DOWNSTREAM_QUERY_COUNT")),
+            "CONFIDENCE": confidence,
             "ACTION_TYPE": (
                 "Fix runtime regression"
                 if "RUNTIME" in signal.upper()
@@ -786,6 +796,7 @@ def _procedure_analysis_summary(
                 if "COST" in signal.upper()
                 else "Optimize child workload"
             ),
+            "WORKFLOW_ROUTE": "Workload Operations > Stored procedures",
             "SAFE_NEXT_ACTION": str(
                 row.get("SAFE_NEXT_ACTION")
                 or row.get("RECOMMENDED_ACTION")
@@ -840,6 +851,7 @@ def _procedure_analysis_summary(
         "high": int(board["PRIORITY"].eq("High").sum()),
         "runtime_regressions": int(signals.str.contains("RUNTIME").sum()),
         "cost_regressions": int(signals.str.contains("COST").sum()),
+        "estimated_cost_usd": safe_float(board["EST_TOTAL_COST_USD"].sum()),
     }, board
 
 
@@ -876,7 +888,7 @@ def _render_procedure_analysis_detail(board: pd.DataFrame | None) -> None:
         ("Priority", str(row.get("PRIORITY") or "Review")),
         ("State", str(row.get("STATE") or "Investigate")),
         ("Runtime", f"{safe_float(row.get('LATEST_RUNTIME_SEC')):,.1f}s"),
-        ("Credits", f"{safe_float(row.get('EST_TOTAL_CREDITS')):,.4f}"),
+        ("Est. Cost", f"${safe_float(row.get('EST_TOTAL_COST_USD')):,.2f}"),
     ))
     st.caption(_clean_display_text(row.get("OPTIMIZATION_ISSUE") or row.get("SIGNAL") or "Procedure telemetry signal."))
     st.html(
@@ -892,6 +904,10 @@ def _render_procedure_analysis_detail(board: pd.DataFrame | None) -> None:
     guardrail = str(row.get("DO_NOT_DO") or "").strip()
     if guardrail:
         st.caption(f"Guardrail: {_clean_display_text(guardrail)}")
+    st.caption(
+        f"Route: {_clean_display_text(row.get('WORKFLOW_ROUTE') or 'Workload Operations > Stored procedures')} | "
+        f"Confidence: {_clean_display_text(row.get('CONFIDENCE') or 'Estimated')}"
+    )
     proc = str(row.get("PROCEDURE_CONTEXT") or row.get("PROCEDURE_NAME") or "").strip()
     if proc and st.button("Mark For Downstream Review", key="procedure_analysis_detail_target", width="stretch"):
         st.session_state["_sp_downstream_target_hint"] = proc
@@ -1125,8 +1141,11 @@ def render():
     credit_price = st.session_state.get("credit_price", DEFAULTS["credit_price"])
     company = get_active_company()
 
-    st.subheader("Stored Proc & UDF Cost Tracker")
-    st.caption("CALL activity plus downstream child statements where ROOT_QUERY_ID is populated.")
+    st.subheader("Stored Procedure Advisor")
+    st.caption(
+        "Ranked procedure runtime, cost, orchestration, and child-query signals. "
+        "Recommendations stay review-only; reruns, task actions, and warehouse changes use guarded workflows."
+    )
 
     sp_days = day_window_selectbox("Lookback", key="sp_tracker_days", default=7)
     proc_filters_plain = get_global_filter_clause(
@@ -1341,7 +1360,11 @@ def render():
                 else "credits are estimated from warehouse size, elapsed seconds, and cloud services credits"
             )
             defer_source_note(metric_confidence_label(confidence), sla_source, f"{credit_note}.")
-            advisor_summary, advisor_board = _procedure_analysis_summary(latest, exceptions)
+            advisor_summary, advisor_board = _procedure_analysis_summary(
+                latest,
+                exceptions,
+                credit_price=safe_float(credit_price),
+            )
             st.session_state["sp_analysis_summary"] = advisor_summary
             st.session_state["sp_analysis_board"] = advisor_board
             if not advisor_board.empty:
@@ -1350,7 +1373,7 @@ def render():
                     ("Findings", f"{safe_int(advisor_summary.get('findings')):,}"),
                     ("High Priority", f"{safe_int(advisor_summary.get('high')):,}"),
                     ("Runtime Regressions", f"{safe_int(advisor_summary.get('runtime_regressions')):,}"),
-                    ("Cost Regressions", f"{safe_int(advisor_summary.get('cost_regressions')):,}"),
+                    ("Est. Cost", f"${safe_float(advisor_summary.get('estimated_cost_usd')):,.0f}"),
                 ))
                 render_priority_dataframe(
                     advisor_board,
@@ -1358,8 +1381,9 @@ def render():
                     priority_columns=[
                         "PRIORITY", "STATE", "PROCEDURE_CONTEXT", "SIGNAL", "ACTION_TYPE",
                         "OPTIMIZATION_ISSUE", "LATEST_RUNTIME_SEC", "BASELINE_RUNTIME_SEC",
-                        "RUNTIME_CHANGE_PCT", "EST_TOTAL_CREDITS", "COST_CHANGE_PCT",
-                        "DOWNSTREAM_QUERY_COUNT", "SAFE_NEXT_ACTION", "PROOF_REQUIRED", "DO_NOT_DO",
+                        "RUNTIME_CHANGE_PCT", "EST_TOTAL_CREDITS", "EST_TOTAL_COST_USD",
+                        "COST_CHANGE_PCT", "DOWNSTREAM_QUERY_COUNT", "CONFIDENCE",
+                        "WORKFLOW_ROUTE", "SAFE_NEXT_ACTION", "PROOF_REQUIRED", "DO_NOT_DO",
                     ],
                     sort_by=["PRIORITY", "LATEST_RUNTIME_SEC", "EST_TOTAL_CREDITS"],
                     ascending=[True, False, False],

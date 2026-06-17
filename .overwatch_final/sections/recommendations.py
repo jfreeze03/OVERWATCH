@@ -4,7 +4,7 @@ from html import escape as html_escape
 import pandas as pd
 import streamlit as st
 
-from config import DEFAULTS, THRESHOLDS
+from config import DEFAULTS, THRESHOLDS, WAREHOUSE_ADVISOR_CONFIG
 from sections.warehouse_health import (
     _build_warehouse_cost_control_posture,
     _build_warehouse_guardrail_coverage,
@@ -347,14 +347,17 @@ def _auto_suspend_savings_rate(auto_suspend: object) -> float:
         return 0.0
     seconds = safe_int(auto_suspend, -1)
     if seconds == 0:
-        return 0.50
-    if seconds > 1000:
-        return 0.25
-    if seconds > 600:
-        return 0.15
-    if seconds > 300:
-        return 0.08
+        return safe_float(dict(WAREHOUSE_ADVISOR_CONFIG["auto_suspend_savings_rates"]).get(0, 0.50))
+    for floor_seconds, rate in sorted(WAREHOUSE_ADVISOR_CONFIG["auto_suspend_savings_rates"], reverse=True):
+        if int(floor_seconds) == 0:
+            continue
+        if seconds >= int(floor_seconds):
+            return safe_float(rate)
     return 0.0
+
+
+def _warehouse_advisor_verification_window() -> int:
+    return max(1, safe_int(WAREHOUSE_ADVISOR_CONFIG.get("verification_window_days"), 7))
 
 
 def _advisor_priority(severity: str) -> int:
@@ -373,8 +376,9 @@ def _build_warehouse_advisor_recommendations(
     columns = [
         "PRIORITY", "WAREHOUSE_NAME", "ADVISOR_TYPE", "RECOMMENDATION",
         "WHY", "CURRENT_SIGNAL", "CURRENT_SETTING", "EST_MONTHLY_SAVINGS_USD",
+        "VERIFIED_MONTHLY_SAVINGS_USD", "SAVINGS_STATUS", "SAVINGS_ASSUMPTION",
         "MONTHLY_RUN_RATE_USD", "PERFORMANCE_RISK", "SAFE_NEXT_STEP",
-        "ADMIN_WORKFLOW", "VERIFY_NEXT", "CONFIDENCE",
+        "ADMIN_WORKFLOW", "VERIFY_NEXT", "VERIFICATION_WINDOW_DAYS", "CONFIDENCE",
     ]
     rows: list[dict[str, object]] = []
     seen: set[tuple[str, str]] = set()
@@ -389,7 +393,15 @@ def _build_warehouse_advisor_recommendations(
         normalized = {column: row.get(column, "") for column in columns}
         normalized["WAREHOUSE_NAME"] = wh
         normalized["EST_MONTHLY_SAVINGS_USD"] = round(safe_float(normalized.get("EST_MONTHLY_SAVINGS_USD")), 2)
+        normalized["VERIFIED_MONTHLY_SAVINGS_USD"] = round(safe_float(normalized.get("VERIFIED_MONTHLY_SAVINGS_USD")), 2)
         normalized["MONTHLY_RUN_RATE_USD"] = round(safe_float(normalized.get("MONTHLY_RUN_RATE_USD")), 2)
+        normalized["SAVINGS_STATUS"] = normalized.get("SAVINGS_STATUS") or (
+            "Needs Verification" if normalized["EST_MONTHLY_SAVINGS_USD"] else "Not Claimed"
+        )
+        normalized["VERIFICATION_WINDOW_DAYS"] = safe_int(
+            normalized.get("VERIFICATION_WINDOW_DAYS"),
+            _warehouse_advisor_verification_window(),
+        )
         rows.append(normalized)
 
     posture_view = posture if isinstance(posture, pd.DataFrame) else pd.DataFrame()
@@ -398,9 +410,13 @@ def _build_warehouse_advisor_recommendations(
         if state not in {"Blocked", "Needs Review", "Watch"}:
             continue
         wh = str(row.get("WAREHOUSE_NAME") or "Unknown warehouse")
-        recommended_suspend = safe_int(row.get("RECOMMENDED_AUTO_SUSPEND_SEC"), 300) or 300
+        recommended_suspend = (
+            safe_int(row.get("RECOMMENDED_AUTO_SUSPEND_SEC"), WAREHOUSE_ADVISOR_CONFIG["default_auto_suspend_sec"])
+            or WAREHOUSE_ADVISOR_CONFIG["default_auto_suspend_sec"]
+        )
         monthly = _warehouse_monthly_run_rate(row.get("METERED_CREDITS"), days, credit_price)
-        savings = round(monthly * _auto_suspend_savings_rate(row.get("AUTO_SUSPEND_SEC")), 2)
+        savings_rate = _auto_suspend_savings_rate(row.get("AUTO_SUSPEND_SEC"))
+        savings = round(monthly * savings_rate, 2)
         auto_resume = row.get("AUTO_RESUME")
         if auto_resume is False and savings <= 0:
             savings = 0.0
@@ -416,11 +432,15 @@ def _build_warehouse_advisor_recommendations(
                 f"AUTO_RESUME={row.get('AUTO_RESUME') if row.get('AUTO_RESUME') is not None else 'not loaded'}"
             ),
             "EST_MONTHLY_SAVINGS_USD": savings,
+            "VERIFIED_MONTHLY_SAVINGS_USD": 0.0,
+            "SAVINGS_STATUS": "Needs Verification" if savings else "Not Claimed",
+            "SAVINGS_ASSUMPTION": f"{savings_rate:.0%} recoverable idle/suspend run-rate from loaded metering.",
             "MONTHLY_RUN_RATE_USD": monthly,
             "PERFORMANCE_RISK": "Validate p95, queue, spill, and failed-query behavior before shortening suspend.",
             "SAFE_NEXT_STEP": "Open DBA Control Room > Admin > Warehouse Settings, preview the change, and use typed confirmation only after review.",
             "ADMIN_WORKFLOW": "DBA Control Room > Admin > Warehouse Settings",
             "VERIFY_NEXT": "Compare next complete-window idle credits, p95 runtime, queue seconds, spill GB, and failures.",
+            "VERIFICATION_WINDOW_DAYS": _warehouse_advisor_verification_window(),
             "CONFIDENCE": "Medium - savings are directional until post-change metering confirms lower idle burn.",
         })
 
@@ -430,7 +450,14 @@ def _build_warehouse_advisor_recommendations(
         for _, r in posture_view.iterrows()
         if str(r.get("WAREHOUSE_NAME") or "").strip()
     }
-    spill_threshold = safe_float(THRESHOLDS.get("spill_warning_gb", 10), 10.0)
+    spill_threshold = safe_float(WAREHOUSE_ADVISOR_CONFIG.get("pressure_spill_gb"), 10.0)
+    queue_threshold = safe_float(WAREHOUSE_ADVISOR_CONFIG.get("pressure_queue_sec"), 5.0)
+    p95_threshold = safe_float(WAREHOUSE_ADVISOR_CONFIG.get("pressure_p95_sec"), 120.0)
+    downsize_min_monthly = safe_float(WAREHOUSE_ADVISOR_CONFIG.get("downsize_min_monthly_usd"), 100.0)
+    downsize_queue_max = safe_float(WAREHOUSE_ADVISOR_CONFIG.get("downsize_max_queue_sec"), 1.0)
+    downsize_spill_max = safe_float(WAREHOUSE_ADVISOR_CONFIG.get("downsize_max_spill_gb"), 1.0)
+    downsize_p95_max = safe_float(WAREHOUSE_ADVISOR_CONFIG.get("downsize_max_p95_sec"), 30.0)
+    downsize_rate = safe_float(WAREHOUSE_ADVISOR_CONFIG.get("downsize_recoverable_rate"), 0.40)
     for _, row in overview_view.iterrows():
         wh = str(row.get("WAREHOUSE_NAME") or "Unknown warehouse")
         posture_row = posture_by_wh.get(wh.upper(), {})
@@ -441,13 +468,13 @@ def _build_warehouse_advisor_recommendations(
         p95 = safe_float(row.get("P95_ELAPSED_SEC"))
         total_queries = safe_int(row.get("TOTAL_QUERIES"), 0)
         size = row.get("WAREHOUSE_SIZE") or posture_row.get("WAREHOUSE_SIZE", "")
-        if spill >= spill_threshold or queue >= 5 or p95 >= 120:
+        if spill >= spill_threshold or queue >= queue_threshold or p95 >= p95_threshold:
             signals = []
             if spill >= spill_threshold:
                 signals.append(f"{spill:.1f} GB remote spill")
-            if queue >= 5:
+            if queue >= queue_threshold:
                 signals.append(f"{queue:.1f}s avg queue")
-            if p95 >= 120:
+            if p95 >= p95_threshold:
                 signals.append(f"{p95:.1f}s p95 runtime")
             add({
                 "PRIORITY": "High" if spill >= spill_threshold else "Medium",
@@ -458,22 +485,26 @@ def _build_warehouse_advisor_recommendations(
                 "CURRENT_SIGNAL": f"size={size or 'not loaded'}, credits={metered:.2f}, queries={total_queries:,}",
                 "CURRENT_SETTING": f"size={size or 'not loaded'}",
                 "EST_MONTHLY_SAVINGS_USD": 0.0,
+                "VERIFIED_MONTHLY_SAVINGS_USD": 0.0,
+                "SAVINGS_STATUS": "Not Claimed",
+                "SAVINGS_ASSUMPTION": "No savings claimed for pressure or upsize reviews.",
                 "MONTHLY_RUN_RATE_USD": monthly,
                 "PERFORMANCE_RISK": "Upsize can improve reliability but should not be counted as savings until runtime and credits are measured.",
                 "SAFE_NEXT_STEP": "Use Warehouse Health query/profile detail first; if a setting change is still justified, execute through Admin.",
                 "ADMIN_WORKFLOW": "DBA Control Room > Admin > Warehouse Settings",
                 "VERIFY_NEXT": "Recheck spill, queue, p95, total credits, and failure rate after one comparable workload window.",
+                "VERIFICATION_WINDOW_DAYS": _warehouse_advisor_verification_window(),
                 "CONFIDENCE": "Medium - pressure is telemetry-backed, but root cause still needs query/profile review.",
             })
         elif (
             total_queries > 0
-            and monthly >= 100
-            and queue <= 1
-            and spill < 1
-            and p95 <= 30
+            and monthly >= downsize_min_monthly
+            and queue <= downsize_queue_max
+            and spill < downsize_spill_max
+            and p95 <= downsize_p95_max
             and _warehouse_size_rank(size) > 0
         ):
-            savings = round(monthly * 0.40, 2)
+            savings = round(monthly * downsize_rate, 2)
             add({
                 "PRIORITY": "Medium" if savings < 500 else "High",
                 "WAREHOUSE_NAME": wh,
@@ -486,11 +517,15 @@ def _build_warehouse_advisor_recommendations(
                 "CURRENT_SIGNAL": f"size={size or 'not loaded'}, queue={queue:.1f}s, spill={spill:.1f} GB, p95={p95:.1f}s",
                 "CURRENT_SETTING": f"size={size or 'not loaded'}",
                 "EST_MONTHLY_SAVINGS_USD": savings,
+                "VERIFIED_MONTHLY_SAVINGS_USD": 0.0,
+                "SAVINGS_STATUS": "Needs Verification",
+                "SAVINGS_ASSUMPTION": f"{downsize_rate:.0%} one-step-down recoverable rate from monthly run-rate.",
                 "MONTHLY_RUN_RATE_USD": monthly,
                 "PERFORMANCE_RISK": "Downsize can increase runtime or queueing; treat savings as estimated until post-change telemetry is clean.",
                 "SAFE_NEXT_STEP": "Confirm owners and workload windows, then use Admin to preview a one-step size test.",
                 "ADMIN_WORKFLOW": "DBA Control Room > Admin > Warehouse Settings",
                 "VERIFY_NEXT": "Compare p95, queue, spill, failures, and credits against the prior complete period.",
+                "VERIFICATION_WINDOW_DAYS": _warehouse_advisor_verification_window(),
                 "CONFIDENCE": "Low - savings use a conservative one-step-down assumption and require validation.",
             })
 
@@ -510,11 +545,15 @@ def _build_warehouse_advisor_recommendations(
             "CURRENT_SIGNAL": state,
             "CURRENT_SETTING": str(row.get("CURRENT_SETTING") or "not loaded"),
             "EST_MONTHLY_SAVINGS_USD": 0.0,
+            "VERIFIED_MONTHLY_SAVINGS_USD": 0.0,
+            "SAVINGS_STATUS": "Not Claimed",
+            "SAVINGS_ASSUMPTION": "Guardrail finding only; no savings claimed.",
             "MONTHLY_RUN_RATE_USD": 0.0,
             "PERFORMANCE_RISK": str(row.get("ROLLBACK_CHECK") or "Verify workload telemetry after any change."),
             "SAFE_NEXT_STEP": "Route the recommendation through the guarded Admin workflow if a setting change is still needed.",
             "ADMIN_WORKFLOW": "DBA Control Room > Admin > Warehouse Settings",
             "VERIFY_NEXT": str(row.get("ROLLBACK_CHECK") or "Compare credits, queue, spill, p95, and failures."),
+            "VERIFICATION_WINDOW_DAYS": _warehouse_advisor_verification_window(),
             "CONFIDENCE": "Medium - guardrail finding is loaded, savings are not claimed for this control.",
         })
 
@@ -552,7 +591,8 @@ def _render_warehouse_advisor_detail(advisor: pd.DataFrame) -> None:
         ("Priority", str(row.get("PRIORITY") or "Review")),
         ("Warehouse", str(row.get("WAREHOUSE_NAME") or "Unknown")),
         ("Savings / Mo", f"${safe_float(row.get('EST_MONTHLY_SAVINGS_USD')):,.0f}"),
-        ("Run Rate / Mo", f"${safe_float(row.get('MONTHLY_RUN_RATE_USD')):,.0f}"),
+        ("Verified / Mo", f"${safe_float(row.get('VERIFIED_MONTHLY_SAVINGS_USD')):,.0f}"),
+        ("Status", str(row.get("SAVINGS_STATUS") or "Needs Verification")),
     ))
     st.markdown("**Recommendation**")
     st.caption(_clean_display_text(row.get("RECOMMENDATION") or "Review warehouse telemetry."))
@@ -562,6 +602,12 @@ def _render_warehouse_advisor_detail(advisor: pd.DataFrame) -> None:
     st.caption(_clean_display_text(row.get("SAFE_NEXT_STEP") or "Review before changing settings."))
     st.markdown("**Validation**")
     st.caption(_clean_display_text(row.get("VERIFY_NEXT") or "Compare credits and performance after a complete window."))
+    assumption = str(row.get("SAVINGS_ASSUMPTION") or "").strip()
+    if assumption:
+        st.caption(
+            f"Savings basis: {_clean_display_text(assumption)} "
+            f"Verification window: {safe_int(row.get('VERIFICATION_WINDOW_DAYS'), _warehouse_advisor_verification_window())} day(s)."
+        )
     st.caption(f"Execution path: {_clean_display_text(row.get('ADMIN_WORKFLOW') or 'DBA Control Room > Admin')}")
 
 
@@ -630,9 +676,11 @@ def _render_warehouse_controls(session) -> None:
             title="Warehouse recommendations ranked by impact",
             priority_columns=[
                 "PRIORITY", "WAREHOUSE_NAME", "ADVISOR_TYPE", "RECOMMENDATION",
-                "EST_MONTHLY_SAVINGS_USD", "MONTHLY_RUN_RATE_USD", "CURRENT_SIGNAL",
-                "CURRENT_SETTING", "PERFORMANCE_RISK", "SAFE_NEXT_STEP",
-                "ADMIN_WORKFLOW", "VERIFY_NEXT", "CONFIDENCE",
+                "EST_MONTHLY_SAVINGS_USD", "VERIFIED_MONTHLY_SAVINGS_USD",
+                "SAVINGS_STATUS", "SAVINGS_ASSUMPTION", "MONTHLY_RUN_RATE_USD",
+                "CURRENT_SIGNAL", "CURRENT_SETTING", "PERFORMANCE_RISK",
+                "SAFE_NEXT_STEP", "ADMIN_WORKFLOW", "VERIFY_NEXT",
+                "VERIFICATION_WINDOW_DAYS", "CONFIDENCE",
             ],
             sort_by=["PRIORITY", "EST_MONTHLY_SAVINGS_USD", "MONTHLY_RUN_RATE_USD"],
             ascending=[True, False, False],

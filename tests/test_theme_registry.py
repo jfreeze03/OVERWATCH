@@ -41,6 +41,8 @@ class ThemeRegistryTests(unittest.TestCase):
         self.assertNotIn("roll_tide", theme._VARS)
         self.assertNotIn("war_eagle", theme._VARS)
         self.assertNotIn("corporate", theme._VARS)
+        self.assertNotIn("roll_tide", theme._THEME_ALIASES)
+        self.assertNotIn("war_eagle", theme._THEME_ALIASES)
         self.assertNotIn("roll_tide", theme._THEME_EXTRAS)
         self.assertNotIn("war_eagle", theme._THEME_EXTRAS)
         self.assertNotIn("corporate", theme._THEME_EXTRAS)

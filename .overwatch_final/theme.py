@@ -23,8 +23,6 @@ _THEME_ALIASES = {
     "aurora": "carbon",
     "black_ice": "carbon",
     "midnight": "carbon",
-    "roll_tide": "carbon",
-    "war_eagle": "carbon",
     "corporate": "carbon",
     "henson": "carbon",
 }

@@ -61,6 +61,18 @@ class DeploymentContractTests(unittest.TestCase):
 
         self.assertNotIn("execute_as: OWNER", manifest)
 
+    def test_mart_setup_avoids_dynamic_tables_and_secure_views(self):
+        setup_sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8").upper()
+        drop_sql = (ROOT / "snowflake" / "OVERWATCH_MART_DROP.sql").read_text(encoding="utf-8").upper()
+
+        self.assertNotIn("CREATE DYNAMIC TABLE", setup_sql)
+        self.assertNotIn("CREATE OR REPLACE DYNAMIC TABLE", setup_sql)
+        self.assertNotIn("CREATE SECURE VIEW", setup_sql)
+        self.assertNotIn("CREATE OR REPLACE SECURE VIEW", setup_sql)
+        self.assertNotIn("DROP DYNAMIC TABLE", drop_sql)
+        self.assertIn("TASK/PROCEDURE-LOADED TABLES INSTEAD OF DYNAMIC TABLES", setup_sql)
+        self.assertIn("SECURE VIEWS", setup_sql)
+
     def test_ci_runs_deployment_contract_before_full_suite(self):
         workflow = (ROOT / ".github" / "workflows" / "validate.yml").read_text(encoding="utf-8")
 

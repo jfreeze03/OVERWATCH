@@ -15,6 +15,9 @@
 --   - transient mart tables for rebuildable data
 --   - permanent audit/action tables for telemetry and DBA-entered status
 --   - hourly refresh, offset from the top of the hour for ACCOUNT_USAGE latency
+--   - task/procedure-loaded tables instead of Dynamic Tables when a source path
+--     can include secure views; Dynamic Tables cannot safely depend on secure
+--     views in that Snowflake pattern.
 
 -- -----------------------------------------------------------------------------
 -- 1. Runtime objects

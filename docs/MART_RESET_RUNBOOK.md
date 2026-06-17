@@ -37,6 +37,11 @@ The drop script suspends tasks before dropping them, drops dependent tasks/views
 procedures before tables, and keeps extra `DROP IF EXISTS` statements for retired
 objects from older deployments.
 
+The rebuild target is task/procedure-loaded physical tables. Do not convert
+retired or rebuilt facts to Dynamic Tables when a source dependency can include
+secure views; use the scheduled refresh chain in `OVERWATCH_MART_SETUP.sql`
+instead.
+
 ## Dry-Run Readiness
 
 Before running a destructive lower-environment reset, do a local static rehearsal

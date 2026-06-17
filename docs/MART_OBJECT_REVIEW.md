@@ -71,6 +71,10 @@ Latest static dependency pass:
   external-control, owner-directory, or cost-savings verification objects.
   `snowflake/OVERWATCH_MART_DROP.sql` remains the mass-drop script for both
   current objects and old deployed copies.
+- Latest secure-view compatibility audit: `snowflake/OVERWATCH_MART_SETUP.sql`
+  contains no deployable Dynamic Tables or Secure Views. Refreshable facts stay
+  as task/procedure-loaded transient tables so a secure view in an upstream
+  dependency path does not break the mart.
 
 ## Keep
 
@@ -117,6 +121,11 @@ The current mart count still looks large, but most tables fall into active roles
 No table is marked for immediate removal in this pass. The next safe slimming
 step is to merge only after a pair of objects has the same grain, refresh cadence,
 retention need, and no unique downstream display or audit purpose.
+
+Do not use Dynamic Tables as the merge target for any object whose source path
+can include secure views. Merge candidates must remain physical tables populated
+by the scheduled refresh chain unless a live Snowflake proof confirms the source
+dependency path is compatible.
 
 ## Procedure Output Map
 

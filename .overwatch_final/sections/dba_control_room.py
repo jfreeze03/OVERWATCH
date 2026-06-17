@@ -4925,7 +4925,7 @@ def _build_dba_morning_brief_markdown(
             workflow = _clean_display_text(row.get("WORKFLOW", "")).strip()
             workflow_note = f" / {workflow}" if workflow else ""
             focus_note = _dba_morning_focus_note(row)
-            focus_sentence = f" Focus: {focus_note}." if focus_note else ""
+            focus_sentence = f" Target signal: {focus_note}." if focus_note else ""
             lines.append(
                 f"- {safe_int(row.get('MORNING_RANK'))}. [{_clean_display_text(row.get('STATE', ''))}] "
                 f"{_clean_display_text(row.get('ROUTE', ''))}{workflow_note}: {_clean_display_text(row.get('FIRST_MOVE', ''))} "
@@ -5031,7 +5031,7 @@ def _render_dba_morning_brief(brief: pd.DataFrame, markdown: str) -> None:
             f"Stop rule: {row.get('STOP_RULE', '')}",
         ]
         if focus_note:
-            help_lines.append(f"Focus: {focus_note}")
+            help_lines.append(f"Target signal: {focus_note}")
         help_text = "\n".join(help_lines)
         with move_cols[idx]:
             if st.button(label, key=f"dba_morning_open_{idx}_{route}_{workflow}", help=help_text, width="stretch"):

@@ -19,13 +19,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-import theme as theme_module
 from theme import inject_theme, render_theme_picker
-import config as config_module
-
-if getattr(config_module, "CONFIG_VERSION", "") != "2026-06-05-trexis-scope-v1":
-    config_module = importlib.reload(config_module)
-
 from config import (
     ALL_SECTIONS, NAV_GROUPS, DEFAULTS, COMPANY_CONFIG,
     DEFAULT_COMPANY, ENVIRONMENT_CONFIG, DEFAULT_ENVIRONMENT,
@@ -36,11 +30,6 @@ from config import (
     static_database_options,
     static_warehouse_options,
 )
-import utils as utils_package
-
-if getattr(utils_package, "UTILS_EXPORT_VERSION", "") != "2026-06-17-idle-guard-v1":
-    utils_package = importlib.reload(utils_package)
-
 from utils.cache import clear_all_cache
 from utils.session import get_session
 from utils.logging import log_section_load
@@ -83,8 +72,6 @@ except ImportError:
         if span_days <= max_days:
             return start_date, end_date, False, max_days
         return end_date - timedelta(days=max_days - 1), end_date, True, max_days
-import utils.section_guidance as section_guidance
-
 def _lazy_query_call(name: str):
     def _call(*args, **kwargs):
         query_module = importlib.import_module("utils.query")
@@ -123,42 +110,7 @@ def _seed_current_role_from_secrets() -> None:
         st.session_state["_overwatch_current_role_source"] = "secrets"
 
 
-def _dev_reload_helpers_enabled() -> bool:
-    """Return whether shared helper hot-reload checks should run."""
-    try:
-        return bool(st.session_state.get("_overwatch_dev_reload_helpers", False))
-    except Exception:
-        return False
-
-
-def _maybe_reload_dev_helpers() -> None:
-    """Reload shared UI helpers only during explicit local development."""
-    if not _dev_reload_helpers_enabled():
-        return
-
-    import utils.display as display_module
-    import utils.workflows as workflows_module
-
-    if getattr(display_module, "DISPLAY_VERSION", "") != "2026-06-05-chart-drillback-cost-v1":
-        importlib.reload(display_module)
-
-    if getattr(workflows_module, "WORKFLOWS_VERSION", "") != "2026-06-09-load-status-guard-v1":
-        importlib.reload(workflows_module)
-        if hasattr(sections, "reload_loaded_sections"):
-            sections.reload_loaded_sections()
-
-
 import sections
-
-if getattr(theme_module, "THEME_VERSION", "") != "2026-06-16-theme-contrast-v8":
-    theme_module = importlib.reload(theme_module)
-    inject_theme = theme_module.inject_theme
-    render_theme_picker = theme_module.render_theme_picker
-
-if getattr(section_guidance, "SECTION_GUIDANCE_VERSION", "") != "2026-06-13-no-bottom-notes-v1":
-    section_guidance = importlib.reload(section_guidance)
-
-_maybe_reload_dev_helpers()
 
 inject_theme()
 

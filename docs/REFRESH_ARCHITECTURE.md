@@ -12,6 +12,12 @@ suppression windows, remediation logs, action queue history, and routing.
 Do not make Dynamic Tables the base architecture. The production setup has one
 deployable DDL source: `snowflake/OVERWATCH_MART_SETUP.sql`.
 
+This is now a hard deployment boundary for secure-view compatibility. If an
+OVERWATCH mart source can resolve through a secure view, the target must be a
+physical table populated by a scheduled task/procedure. Do not rewrite those
+facts as Dynamic Tables; Snowflake Dynamic Tables can fail when secure views sit
+in the dependency path.
+
 Do not use materialized views for the primary monitoring app. The app needs
 multi-source, windowed exception logic with explicit refresh and
 audit behavior.

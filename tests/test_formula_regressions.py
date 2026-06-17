@@ -640,7 +640,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Cost Advisor", lanes)
         self.assertIn("Recommendation Feed", lanes)
         self.assertIn("Warehouse Optimization", lanes)
-        self.assertIn("Procedure Analysis", lanes)
+        self.assertIn("Stored Procedure Advisor", lanes)
 
         summary = _summary_from_observability(board, credit_price=3.68, state=advisor_state)
         self.assertIsNotNone(summary)
@@ -686,9 +686,9 @@ class FormulaRegressionTests(unittest.TestCase):
         by_area = {row["AREA"]: row for _, row in command.iterrows()}
 
         self.assertIn("Warehouse advisor", by_area)
-        self.assertIn("Procedure analysis", by_area)
+        self.assertIn("Stored procedure advisor", by_area)
         self.assertIn("advisor recommendation", by_area["Warehouse advisor"]["CURRENT_SIGNAL"])
-        self.assertIn("analysis signal", by_area["Procedure analysis"]["CURRENT_SIGNAL"])
+        self.assertIn("analysis signal", by_area["Stored procedure advisor"]["CURRENT_SIGNAL"])
         self.assertEqual(by_area["Warehouse advisor"]["ROUTE"], "Cost & Contract")
 
     def test_priority_tables_add_cost_companions_for_credit_metrics(self):
@@ -3982,7 +3982,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Telemetry package: Save precheck result", markdown)
         self.assertIn("Confirm next: Confirm cancellation state", markdown)
         self.assertIn("Boundary: OVERWATCH displays action SQL only", markdown)
-        self.assertIn("Focus: query=01blocked", markdown)
+        self.assertIn("Target signal: query=01blocked", markdown)
         self.assertIn("warehouse=WH_TRXS_LOAD", markdown)
         self.assertIn("object=PROD_DB.CORE.FACT_POLICY", markdown)
 
@@ -5939,8 +5939,14 @@ class FormulaRegressionTests(unittest.TestCase):
         )
 
         self.assertIn("EST_MONTHLY_SAVINGS_USD", advisor.columns)
+        self.assertIn("VERIFIED_MONTHLY_SAVINGS_USD", advisor.columns)
+        self.assertIn("SAVINGS_STATUS", advisor.columns)
+        self.assertIn("SAVINGS_ASSUMPTION", advisor.columns)
+        self.assertIn("VERIFICATION_WINDOW_DAYS", advisor.columns)
         self.assertNotIn("REVIEW_SQL", advisor.columns)
         self.assertGreater(float(advisor["EST_MONTHLY_SAVINGS_USD"].sum()), 0)
+        self.assertEqual(float(advisor["VERIFIED_MONTHLY_SAVINGS_USD"].sum()), 0.0)
+        self.assertIn("Needs Verification", set(advisor["SAVINGS_STATUS"]))
         self.assertIn("Auto-suspend savings", set(advisor["ADVISOR_TYPE"]))
         self.assertIn("Downsize savings candidate", set(advisor["ADVISOR_TYPE"]))
         self.assertIn("Capacity or size review", set(advisor["ADVISOR_TYPE"]))
@@ -7142,13 +7148,17 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("OPTIMIZATION_ISSUE", exceptions.columns)
         self.assertIn("SAFE_NEXT_ACTION", exceptions.columns)
         self.assertGreater(latest.iloc[0]["OPTIMIZATION_SCORE"], 0)
-        advisor_summary, advisor_board = _procedure_analysis_summary(latest, exceptions)
+        advisor_summary, advisor_board = _procedure_analysis_summary(latest, exceptions, credit_price=3.68)
         self.assertEqual(advisor_summary["runtime_regressions"], 1)
         self.assertEqual(advisor_summary["cost_regressions"], 1)
+        self.assertGreater(advisor_summary["estimated_cost_usd"], 0)
         self.assertGreaterEqual(advisor_summary["findings"], 2)
         self.assertIn("ACTION_TYPE", advisor_board.columns)
         self.assertIn("SAFE_NEXT_ACTION", advisor_board.columns)
         self.assertIn("DO_NOT_DO", advisor_board.columns)
+        self.assertIn("EST_TOTAL_COST_USD", advisor_board.columns)
+        self.assertIn("CONFIDENCE", advisor_board.columns)
+        self.assertIn("WORKFLOW_ROUTE", advisor_board.columns)
         self.assertIn("Fix runtime regression", set(advisor_board["ACTION_TYPE"]))
         self.assertIn("Review cost regression", set(advisor_board["ACTION_TYPE"]))
         detail_options = _procedure_analysis_detail_options(advisor_board)

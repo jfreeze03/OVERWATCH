@@ -1373,7 +1373,7 @@ def _executive_loaded_advisor_rows(state: dict | None = None) -> pd.DataFrame:
         runtime = _sum_first_numeric(procedure_cost, ["TOTAL_ELAPSED_SEC", "TOTAL_ELAPSED_SECONDS"])
         _append_advisor_row(
             rows,
-            lane="Procedure Analysis",
+            lane="Stored Procedure Advisor",
             findings=procedure_findings,
             high_findings=high,
             value_at_risk=cost_estimate,
@@ -1383,7 +1383,7 @@ def _executive_loaded_advisor_rows(state: dict | None = None) -> pd.DataFrame:
                 f"{procedure_optimization:,} optimization candidate(s), {len(procedure_latest):,} latest run row(s), "
                 f"{_format_seconds(runtime)} tracked runtime."
             ),
-            next_action="Open Stored Procedures or Workload Operations and review procedure SLA/cost exceptions before reruns or tuning.",
+            next_action="Open Workload Operations > Stored procedures and review procedure SLA/cost exceptions before reruns or tuning.",
             route="Workload Operations",
             priority=2 if high else 5,
         )
@@ -2101,7 +2101,7 @@ def _executive_command_summary_rows(board: pd.DataFrame, advisor_rows: pd.DataFr
     procedure_row = _advisor_lane(advisor_rows, "Procedure")
     rows.append({
         "PRIORITY": safe_int(procedure_row.get("PRIORITY"), 3) if procedure_row is not None else 7,
-        "AREA": "Procedure analysis",
+        "AREA": "Stored procedure advisor",
         "STATE": str(procedure_row.get("STATE") or "Review") if procedure_row is not None else "On demand",
         "CURRENT_SIGNAL": (
             str(procedure_row.get("ADVISOR_SIGNAL") or procedure_row.get("VALUE") or "Procedure analysis loaded.")
@@ -2111,7 +2111,7 @@ def _executive_command_summary_rows(board: pd.DataFrame, advisor_rows: pd.DataFr
         "NEXT_ACTION": (
             str(procedure_row.get("NEXT_ACTION") or "Open Workload Operations procedure health.")
             if procedure_row is not None
-            else "Open Workload Operations > Task & procedure health."
+            else "Open Workload Operations > Stored procedures."
         ),
         "ROUTE": "Workload Operations",
     })
@@ -2356,11 +2356,13 @@ def _render_executive_observability_board(
         if not has_fact_trends
         else "Snowflake observability summary loaded from precomputed OVERWATCH facts."
     )
+    loaded_advisor_count = safe_int(len(advisor_rows)) if isinstance(advisor_rows, pd.DataFrame) and not advisor_rows.empty else 0
     status_detail = (
         "Run or check the OVERWATCH mart refresh before using this view for leadership numbers."
         if not has_fact_trends
         else (
             f"{int(days)}-day view: cost, Cortex, query runtime, queue pressure, spill, task health, and storage. "
+            f"{loaded_advisor_count:,} loaded advisor lane(s) are included from current session state. "
             "Alerts and action-queue counts remain On demand unless their secure app tables are available to this role. "
             "Detailed telemetry stays in the specialist sections."
         )
@@ -2725,7 +2727,7 @@ def render() -> None:
         defer_source_note("Loaded Executive Landing snapshot is for another scope. Reload the snapshot for the selected company, environment, and window.")
         st.session_state.pop(PLATFORM_SUMMARY_STATE_KEY, None)
         snapshot = None
-    summary = _summary_from_observability(board, credit_price=credit_price)
+    summary = _summary_from_observability(board, credit_price=credit_price, state=st.session_state)
     source_health = pd.DataFrame()
     if isinstance(snapshot, dict):
         source_health = _source_health_rows(snapshot)

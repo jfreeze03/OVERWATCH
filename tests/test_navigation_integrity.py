@@ -1234,15 +1234,19 @@ class NavigationIntegrityTests(unittest.TestCase):
 
     def test_workflow_helpers_keep_landing_pages_compact(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
-        sections_text = (APP_ROOT / "sections" / "__init__.py").read_text(encoding="utf-8")
         shell_helpers_text = (APP_ROOT / "sections" / "shell_helpers.py").read_text(encoding="utf-8")
         theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")
         workflows_text = (APP_ROOT / "utils" / "workflows.py").read_text(encoding="utf-8")
 
         self.assertIn("WORKFLOWS_VERSION", workflows_text)
-        self.assertIn("WORKFLOWS_VERSION", app_text)
-        self.assertIn("reload_loaded_sections()", app_text)
-        self.assertIn("def reload_loaded_sections()", sections_text)
+        self.assertNotIn("WORKFLOWS_VERSION", app_text)
+        self.assertNotIn("reload_loaded_sections()", app_text)
+        self.assertNotIn("_maybe_reload_dev_helpers", app_text)
+        self.assertNotIn("_overwatch_dev_reload_helpers", app_text)
+        self.assertNotIn("CONFIG_VERSION", app_text)
+        self.assertNotIn("UTILS_EXPORT_VERSION", app_text)
+        self.assertNotIn("SECTION_GUIDANCE_VERSION", app_text)
+        self.assertNotIn("THEME_VERSION", app_text)
         self.assertNotIn("help=details.get(workflow) or None", workflows_text)
         self.assertNotIn("help=details.get(mode) or None", workflows_text)
         self.assertNotIn("st.caption(details[workflow])", workflows_text)

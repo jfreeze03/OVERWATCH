@@ -3,6 +3,24 @@
 This file records user-facing implementation changes that should be documented
 outside the Streamlit app UI.
 
+## 2026-06-17 - Alert Operations Review Workflow
+
+- Added `snowflake/OVERWATCH_ALERT_OPERATIONS_REVIEW.sql` as a read-only
+  worksheet script for object readiness, native alert promotion state,
+  threshold/baseline tuning candidates, ALFA/Trexis company-scope quality, and
+  dynamic-table compatibility reminders.
+- `Alert Center > Detection Catalog` now shows the threshold tuning review plan
+  and a native alert operations checklist next to the native registry and
+  deployment review rows.
+- `Alert Center > Delivery & Automation` now shows operations readiness,
+  loaded-alert threshold tuning, and company-scope readiness before the
+  remediation policy, dry-run, delivery, and action-queue tables.
+- Native alert promotion is still manual. The app does not execute promotion
+  SQL, enable native alerts, or run corrective automation.
+- Threshold changes should be made from Snowflake evidence after comparing
+  current value, baseline, company split, owner route, and Snowflake Admin/Cost
+  Management context where appropriate.
+
 ## 2026-06-17 - COST_MONITOR Formula Audit
 
 - Added `docs/COST_MONITOR_FORMULA_AUDIT.md` to compare OVERWATCH cost
@@ -192,6 +210,22 @@ outside the Streamlit app UI.
 - The native warehouse credit alert template now uses the deployed mart column
   `CREDITS_USED`; do not use `METERED_CREDITS` against
   `FACT_WAREHOUSE_HOURLY`.
+
+## 2026-06-17 - Alert Center Operator Workflow Polish
+
+- `Alert Center > Command Center` now renders an operator workflow spine before
+  the broad incident/category tables. The workflow shows detect, triage, route,
+  notify, dry-run, and close steps with the loaded count, current state, and
+  next DBA move.
+- The highest-priority incident now renders as a compact decision packet with
+  what fired, why it matters, owner/route readiness, evidence, and automation
+  boundary. This keeps the first DBA action visible without opening additional
+  panes.
+- Cost/Cortex, Reliability, and Security alert lanes now show a first-response
+  path before their detailed workbench: confirm signal, open the owning
+  monitoring workflow, capture evidence, and respect the remediation boundary.
+- The workflow remains review/status focused. It does not execute remediation
+  SQL, change native alert status, or add new Snowflake objects.
 
 ## 2026-06-17 - Advisor And Company-Scope Polish
 

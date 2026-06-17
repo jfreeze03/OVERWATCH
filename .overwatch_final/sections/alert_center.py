@@ -917,6 +917,480 @@ def _render_alert_center_action_brief(brief: dict) -> None:
     )
 
 
+def _alert_operator_workflow_rows(
+    *,
+    alerts: pd.DataFrame,
+    queue: pd.DataFrame,
+    delivery_log: pd.DataFrame,
+    incident_board: pd.DataFrame,
+    native_registry: pd.DataFrame | None = None,
+    remediation_policy: pd.DataFrame | None = None,
+    remediation_dry_run: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Return the operator workflow spine for the loaded Alert Center scope."""
+    pd = _pd()
+    alerts = alerts if isinstance(alerts, pd.DataFrame) else pd.DataFrame()
+    queue = queue if isinstance(queue, pd.DataFrame) else pd.DataFrame()
+    delivery_log = delivery_log if isinstance(delivery_log, pd.DataFrame) else pd.DataFrame()
+    incident_board = incident_board if isinstance(incident_board, pd.DataFrame) else pd.DataFrame()
+    native_registry = native_registry if isinstance(native_registry, pd.DataFrame) else pd.DataFrame()
+    remediation_policy = remediation_policy if isinstance(remediation_policy, pd.DataFrame) else pd.DataFrame()
+    remediation_dry_run = remediation_dry_run if isinstance(remediation_dry_run, pd.DataFrame) else pd.DataFrame()
+
+    open_incidents = int(len(incident_board))
+    severe = 0
+    breached = 0
+    route_needed = 0
+    ticket_missing = 0
+    if not incident_board.empty:
+        severity = incident_board.get("SEVERITY", pd.Series(index=incident_board.index, dtype=str)).fillna("").astype(str)
+        sla_state = incident_board.get("SLA_STATE", pd.Series(index=incident_board.index, dtype=str)).fillna("").astype(str).str.upper()
+        severe = int(severity.isin(["Critical", "High"]).sum())
+        breached = int(sla_state.isin(["BREACHED", "OVERDUE"]).sum())
+        queue_state = incident_board.get("QUEUE_STATE", pd.Series(index=incident_board.index, dtype=str)).fillna("").astype(str)
+        route_needed = int(queue_state.str.upper().str.contains("ROUTE TO ACTION QUEUE|NOT QUEUED", regex=True).sum())
+        tickets = incident_board.get("TICKET_ID", pd.Series(index=incident_board.index, dtype=str)).fillna("").astype(str).str.strip()
+        ticket_missing = int((tickets.eq("") & severity.isin(["Critical", "High"])).sum())
+
+    email_ready = 0
+    email_logged = 0
+    if not alerts.empty and "DELIVERY_STATUS" in alerts.columns:
+        delivery_status = alerts["DELIVERY_STATUS"].fillna("").astype(str).str.upper()
+        email_ready = int(delivery_status.str.contains("EMAIL_READY", regex=False).sum())
+        email_logged = int(delivery_status.str.contains("EMAIL_LOGGED", regex=False).sum())
+    delivery_failed = 0
+    if not delivery_log.empty and "DELIVERY_STATUS" in delivery_log.columns:
+        delivery_failed = int(delivery_log["DELIVERY_STATUS"].fillna("").astype(str).str.upper().str.contains("FAILED|ERROR|BOUNCED", regex=True).sum())
+    delivery_gap = max(0, email_ready - email_logged) + delivery_failed
+
+    native_candidates = 0
+    if not native_registry.empty and "STATUS" in native_registry.columns:
+        native_candidates = int(native_registry["STATUS"].fillna("CANDIDATE").astype(str).str.upper().isin({"CANDIDATE", "READY", "APPROVED", "READY_TO_DEPLOY"}).sum())
+    policy_count = int(len(remediation_policy))
+    dry_run_count = int(len(remediation_dry_run))
+
+    queue_open = 0
+    if not queue.empty and "STATUS" in queue.columns:
+        queue_status = queue["STATUS"].fillna("New").astype(str).str.title()
+        queue_open = int((~queue_status.isin(["Fixed", "Ignored", "Resolved", "Closed"])).sum())
+
+    rows = [
+        {
+            "STEP": "1 Detect",
+            "STATE": "Review" if open_incidents else "Clear",
+            "COUNT": open_incidents,
+            "WHAT_TO_CHECK": "Open incident rows in the loaded alert/action scope.",
+            "NEXT_ACTION": "Work the highest-priority packet first." if open_incidents else "Keep the scope loaded for new events.",
+            "OPERATOR_VIEW": "Command Center",
+        },
+        {
+            "STEP": "2 Triage",
+            "STATE": "Escalate" if breached else ("Priority" if severe else "Ready"),
+            "COUNT": breached or severe,
+            "WHAT_TO_CHECK": "SLA, severity, business impact, and source freshness.",
+            "NEXT_ACTION": "Acknowledge breached or critical/high incidents before lower-risk rows." if (breached or severe) else "Review medium/low rows after queue and delivery are clean.",
+            "OPERATOR_VIEW": "Next incident packet",
+        },
+        {
+            "STEP": "3 Route",
+            "STATE": "Review" if route_needed or ticket_missing else "Ready",
+            "COUNT": max(route_needed, ticket_missing),
+            "WHAT_TO_CHECK": "Named owner, action queue state, ticket/reference, and approval group.",
+            "NEXT_ACTION": "Route rows without action queue or ticket context before escalation." if (route_needed or ticket_missing) else "Routes and references are ready for loaded incidents.",
+            "OPERATOR_VIEW": "Delivery & Automation",
+        },
+        {
+            "STEP": "4 Notify",
+            "STATE": "Review" if delivery_gap else "Ready",
+            "COUNT": delivery_gap,
+            "WHAT_TO_CHECK": "Email-ready rows, delivery audit rows, and failed notification attempts.",
+            "NEXT_ACTION": "Log digest delivery or investigate failed delivery attempts." if delivery_gap else "Delivery telemetry is current for the loaded scope.",
+            "OPERATOR_VIEW": "Delivery & Automation",
+        },
+        {
+            "STEP": "5 Dry-run",
+            "STATE": "Candidate" if native_candidates or policy_count else "Not configured",
+            "COUNT": native_candidates or policy_count,
+            "WHAT_TO_CHECK": "Native alert candidates, remediation policy rows, and dry-run audit evidence.",
+            "NEXT_ACTION": (
+                "Stage or review dry-runs only; do not execute corrective SQL from Alert Center."
+                if native_candidates or policy_count
+                else "Load the automation pane after native alert deployment objects exist."
+            ),
+            "OPERATOR_VIEW": "Delivery & Automation",
+        },
+        {
+            "STEP": "6 Close",
+            "STATE": "Review" if queue_open else "Ready",
+            "COUNT": queue_open,
+            "WHAT_TO_CHECK": "Closure note, ticket/reference, post-fix telemetry, rollback status, and queue status.",
+            "NEXT_ACTION": "Close only after evidence and route status are recorded." if queue_open else "No open queue rows need closure in this scope.",
+            "OPERATOR_VIEW": "Command Center",
+        },
+    ]
+    if dry_run_count:
+        rows[4]["WHAT_TO_CHECK"] = f"{rows[4]['WHAT_TO_CHECK']} {dry_run_count:,} dry-run row(s) loaded."
+    return pd.DataFrame(rows)
+
+
+def _alert_next_incident_packet(incident_board: pd.DataFrame) -> pd.DataFrame:
+    """Return the next incident as a small DBA decision packet."""
+    pd = _pd()
+    if incident_board is None or incident_board.empty:
+        return pd.DataFrame(columns=["CHECKPOINT", "STATE", "DETAIL", "NEXT_ACTION"])
+    top = incident_board.iloc[0]
+    signal = str(top.get("SIGNAL") or top.get("CATEGORY") or "Alert")
+    entity = str(top.get("ENTITY") or "Snowflake account")
+    severity = str(top.get("SEVERITY") or "Medium")
+    sla_state = str(top.get("SLA_STATE") or "On Track")
+    remediation_mode = str(top.get("REMEDIATION_MODE") or "RECOMMEND")
+    queue_state = str(top.get("QUEUE_STATE") or "Route to action queue")
+    ticket = str(top.get("TICKET_ID") or "").strip()
+    owner = str(top.get("OWNER") or "DBA").strip()
+    route = str(top.get("ROUTE") or "Alert Center").strip()
+    evidence_gap = str(top.get("EVIDENCE_GAP") or "Telemetry, route, and closure status required.")
+    proof = str(top.get("PROOF_QUERY") or "Open source telemetry and record status.")
+    return pd.DataFrame([
+        {
+            "CHECKPOINT": "What fired",
+            "STATE": f"{severity} / {sla_state}",
+            "DETAIL": f"{signal} on {entity}",
+            "NEXT_ACTION": str(top.get("FIRST_RESPONSE") or "Acknowledge and triage the alert."),
+        },
+        {
+            "CHECKPOINT": "Why it matters",
+            "STATE": str(top.get("CATEGORY") or "Alert"),
+            "DETAIL": str(top.get("BUSINESS_IMPACT") or "Business impact needs review."),
+            "NEXT_ACTION": str(top.get("IMPACT_ESTIMATE") or "Attach impact estimate before closure."),
+        },
+        {
+            "CHECKPOINT": "Owner and route",
+            "STATE": "Ready" if owner.upper() not in {"", "DBA", "OVERWATCH"} and ticket else "Review",
+            "DETAIL": f"Owner: {owner or 'DBA'} | Route: {route} | Ticket: {ticket or 'missing'}",
+            "NEXT_ACTION": f"Queue state: {queue_state}. {evidence_gap}",
+        },
+        {
+            "CHECKPOINT": "Evidence",
+            "STATE": str(top.get("SOURCE_FRESHNESS") or "Loaded telemetry"),
+            "DETAIL": proof,
+            "NEXT_ACTION": "Use this evidence before escalation, suppression, or closure.",
+        },
+        {
+            "CHECKPOINT": "Automation boundary",
+            "STATE": remediation_mode,
+            "DETAIL": str(top.get("APPROVAL_GROUP") or "DBA Review"),
+            "NEXT_ACTION": "Dry-run/status review only unless a separately approved guarded workflow executes the change.",
+        },
+    ])
+
+
+def _alert_domain_next_move_rows(board: pd.DataFrame, active_view: str) -> pd.DataFrame:
+    """Return the first domain-lane move without requiring users to scan the full table."""
+    pd = _pd()
+    if board is None or board.empty:
+        return pd.DataFrame(columns=["MOVE", "STATE", "DETAIL", "NEXT_ACTION"])
+    top = board.iloc[0]
+    destination = str(top.get("DESTINATION_SECTION") or "Alert Center")
+    workflow = str(top.get("DESTINATION_WORKFLOW") or active_view)
+    boundary = str(top.get("AUTOMATION_READINESS") or "Recommend only")
+    guardrail = str(top.get("CORTEX_GUARDRAIL") or "").strip()
+    return pd.DataFrame([
+        {
+            "MOVE": "Confirm signal",
+            "STATE": str(top.get("SEVERITY") or "Review"),
+            "DETAIL": f"{top.get('SIGNAL', 'Alert')} on {top.get('ENTITY', 'Snowflake account')}",
+            "NEXT_ACTION": str(top.get("FIRST_RESPONSE") or "Acknowledge and review loaded telemetry."),
+        },
+        {
+            "MOVE": "Open owner workflow",
+            "STATE": destination,
+            "DETAIL": f"{destination} > {workflow}",
+            "NEXT_ACTION": str(top.get("DRILLDOWN_HINT") or top.get("OPEN_PATH") or "Open the owning monitoring section."),
+        },
+        {
+            "MOVE": "Capture evidence",
+            "STATE": str(top.get("SOURCE_FRESHNESS") or "Loaded telemetry"),
+            "DETAIL": str(top.get("PROOF_QUERY") or "Open source telemetry and record status."),
+            "NEXT_ACTION": "Attach proof before suppression, escalation, or closure.",
+        },
+        {
+            "MOVE": "Respect boundary",
+            "STATE": boundary,
+            "DETAIL": guardrail or str(top.get("REMEDIATION_MODE") or "No automatic action from this alert row."),
+            "NEXT_ACTION": "Use dry-run/status review only until the owning workflow approves execution.",
+        },
+    ])
+
+
+def _alert_threshold_tuning_rows(alerts: pd.DataFrame | None = None, rules: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Return alert threshold review rows grounded in the DBA-owned threshold catalog."""
+    from utils.alerts import build_alert_threshold_seed_rows
+
+    pd = _pd()
+    alerts = alerts if isinstance(alerts, pd.DataFrame) else pd.DataFrame()
+    rules = rules if isinstance(rules, pd.DataFrame) else pd.DataFrame()
+    seeds = pd.DataFrame(build_alert_threshold_seed_rows())
+    if seeds.empty:
+        return pd.DataFrame(columns=[
+            "REVIEW_STATE",
+            "THRESHOLD_KEY",
+            "CATEGORY",
+            "SIGNAL_NAME",
+            "CONFIGURED_THRESHOLD",
+            "WINDOW",
+            "RECENT_ALERTS",
+            "OPEN_ALERTS",
+            "OWNER",
+            "SOURCE_OBJECT",
+            "NEXT_ACTION",
+        ])
+
+    source_map = {
+        "COST_CORTEX_SPEND_SPIKE": "FACT_CORTEX_DAILY",
+        "COST_WAREHOUSE_CREDIT_SPIKE": "FACT_WAREHOUSE_HOURLY",
+        "BEHAVIOR_USER_QUERY_ANOMALY": "FACT_QUERY_DETAIL_RECENT",
+        "PERF_QUEUE_PRESSURE": "FACT_WAREHOUSE_HOURLY",
+        "PIPELINE_TASK_FAILURE": "FACT_TASK_RUN",
+        "SECURITY_PRIVILEGE_ESCALATION": "FACT_GRANT_DAILY",
+        "SECURITY_FAILED_LOGIN_SPIKE": "FACT_LOGIN_DAILY",
+        "DQ_FRESHNESS_SLA": "Configured data-quality checks",
+        "OPT_UNUSED_WAREHOUSE": "FACT_WAREHOUSE_HOURLY",
+    }
+
+    searchable = pd.Series(dtype=str)
+    if not alerts.empty:
+        text_columns = [
+            "ALERT_KEY",
+            "RULE_ID",
+            "ALERT_TYPE",
+            "SIGNAL",
+            "CATEGORY",
+            "MESSAGE",
+            "SUGGESTED_ACTION",
+            "RECOMMENDED_ACTION",
+            "EVIDENCE",
+        ]
+        pieces = []
+        for column in text_columns:
+            if column in alerts.columns:
+                pieces.append(alerts[column].fillna("").astype(str))
+        if pieces:
+            searchable = pieces[0]
+            for piece in pieces[1:]:
+                searchable = searchable.str.cat(piece, sep=" ")
+            searchable = searchable.str.upper()
+        else:
+            searchable = pd.Series([""] * len(alerts), index=alerts.index, dtype=str)
+
+    rows: list[dict[str, object]] = []
+    for _, seed in seeds.iterrows():
+        key = str(seed.get("THRESHOLD_KEY") or "").upper()
+        signal = str(seed.get("SIGNAL_NAME") or "").upper()
+        matched = pd.DataFrame()
+        if not alerts.empty and len(searchable):
+            mask = searchable.str.contains(key, regex=False)
+            if signal:
+                mask = mask | searchable.str.contains(signal, regex=False)
+            matched = alerts[mask]
+
+        recent_alerts = int(len(matched))
+        open_alerts = int(_open_alert_mask(matched).sum()) if not matched.empty else 0
+        critical_high = 0
+        if not matched.empty and "SEVERITY" in matched.columns:
+            critical_high = int(matched["SEVERITY"].fillna("").astype(str).isin(["Critical", "High"]).sum())
+        if recent_alerts == 0:
+            state = "No Recent Signal"
+            next_action = "Run the Snowflake alert operations review before changing this threshold."
+        elif critical_high or open_alerts:
+            state = "Tune With Evidence"
+            next_action = "Compare current value, baseline, company split, and owner route before tuning."
+        else:
+            state = "Watch"
+            next_action = "Keep the threshold until repeated closed/noise rows prove it needs tuning."
+
+        rule_matches = pd.DataFrame()
+        if not rules.empty:
+            rule_text = pd.Series([""] * len(rules), index=rules.index, dtype=str)
+            for column in ["RULE_ID", "ALERT_TYPE", "CATEGORY", "RUNBOOK"]:
+                if column in rules.columns:
+                    rule_text = rule_text.str.cat(rules[column].fillna("").astype(str), sep=" ")
+            rule_matches = rules[rule_text.str.upper().str.contains(key, regex=False)]
+
+        rows.append({
+            "REVIEW_STATE": state,
+            "THRESHOLD_KEY": key,
+            "CATEGORY": seed.get("CATEGORY", ""),
+            "SIGNAL_NAME": seed.get("SIGNAL_NAME", ""),
+            "CONFIGURED_THRESHOLD": seed.get("THRESHOLD_VALUE", ""),
+            "WINDOW": f"{int(seed.get('CURRENT_WINDOW_MINUTES') or 0)}m current / {int(seed.get('BASELINE_WINDOW_DAYS') or 0)}d baseline",
+            "RECENT_ALERTS": recent_alerts,
+            "OPEN_ALERTS": open_alerts,
+            "OWNER": seed.get("OWNER", ""),
+            "SOURCE_OBJECT": source_map.get(key, "Alert mart or configuration"),
+            "RULE_ROWS": int(len(rule_matches)),
+            "NEXT_ACTION": next_action,
+        })
+
+    rank = {"Tune With Evidence": 0, "Watch": 1, "No Recent Signal": 2}
+    result = pd.DataFrame(rows)
+    result["_RANK"] = result["REVIEW_STATE"].map(rank).fillna(9)
+    return result.sort_values(["_RANK", "CATEGORY", "THRESHOLD_KEY"]).drop(columns=["_RANK"]).reset_index(drop=True)
+
+
+def _alert_company_scope_readiness_rows(alerts: pd.DataFrame | None, queue: pd.DataFrame | None) -> pd.DataFrame:
+    """Return company/environment quality rows for alert routing and ALFA/Trexis review."""
+    pd = _pd()
+    alerts = alerts if isinstance(alerts, pd.DataFrame) else pd.DataFrame()
+    queue = queue if isinstance(queue, pd.DataFrame) else pd.DataFrame()
+
+    def scope_row(source_name: str, frame: pd.DataFrame) -> dict[str, object]:
+        if frame.empty:
+            return {
+                "SOURCE": source_name,
+                "STATE": "No Rows",
+                "ROWS": 0,
+                "COMPANY_VALUES": "none",
+                "MISSING_COMPANY": 0,
+                "ENVIRONMENT_VALUES": "none",
+                "MISSING_ENVIRONMENT": 0,
+                "NEXT_ACTION": "Load recent telemetry before company-specific routing review.",
+            }
+        company_values = pd.Series([""] * len(frame), index=frame.index, dtype=str)
+        if "COMPANY" in frame.columns:
+            company_values = frame["COMPANY"].fillna("").astype(str).str.strip()
+        env_values = pd.Series([""] * len(frame), index=frame.index, dtype=str)
+        if "ENVIRONMENT" in frame.columns:
+            env_values = frame["ENVIRONMENT"].fillna("").astype(str).str.strip()
+        missing_company = int(company_values.eq("").sum()) if "COMPANY" in frame.columns else int(len(frame))
+        missing_environment = int(env_values.eq("").sum()) if "ENVIRONMENT" in frame.columns else int(len(frame))
+        company_display = ", ".join(sorted({value for value in company_values if value})[:6]) or "none"
+        environment_display = ", ".join(sorted({value for value in env_values if value})[:6]) or "none"
+        unclassified = int(company_values.str.upper().isin({"", "SHARED/UNCLASSIFIED", "ACCOUNT-WIDE", "NO COMPANY"}).sum())
+        state = "Ready"
+        next_action = "Company and environment scope is usable for route review."
+        if "COMPANY" not in frame.columns:
+            state = "Needs Company"
+            next_action = "Add or load COMPANY before ALFA/Trexis-specific alert routing."
+        elif missing_company or unclassified:
+            state = "Review Scope"
+            next_action = "Improve role/warehouse/company mapping before treating these rows as company-specific."
+        elif "ENVIRONMENT" not in frame.columns or missing_environment:
+            state = "Review Environment"
+            next_action = "Add environment context where the source can provide it."
+        return {
+            "SOURCE": source_name,
+            "STATE": state,
+            "ROWS": int(len(frame)),
+            "COMPANY_VALUES": company_display,
+            "MISSING_COMPANY": missing_company,
+            "ENVIRONMENT_VALUES": environment_display,
+            "MISSING_ENVIRONMENT": missing_environment,
+            "NEXT_ACTION": next_action,
+        }
+
+    rows = [
+        scope_row("Alert events", alerts),
+        scope_row("Action queue", queue),
+    ]
+
+    if not alerts.empty and "COMPANY" in alerts.columns:
+        company_values = alerts["COMPANY"].fillna("").astype(str).str.upper()
+        trexis_rows = int(company_values.eq("TREXIS").sum())
+        alfa_rows = int(company_values.eq("ALFA").sum())
+        rows.append({
+            "SOURCE": "ALFA/Trexis split",
+            "STATE": "Ready" if trexis_rows or alfa_rows else "Review Scope",
+            "ROWS": int(len(alerts)),
+            "COMPANY_VALUES": f"ALFA={alfa_rows:,}; Trexis={trexis_rows:,}",
+            "MISSING_COMPANY": int(company_values.isin({"", "SHARED/UNCLASSIFIED", "ACCOUNT-WIDE"}).sum()),
+            "ENVIRONMENT_VALUES": "Alert events",
+            "MISSING_ENVIRONMENT": 0,
+            "NEXT_ACTION": "Use TRXS-role and warehouse mapping to explain Trexis rows; keep shared rows out of company-specific actions.",
+        })
+
+    rank = {"Review Scope": 0, "Needs Company": 0, "Review Environment": 1, "No Rows": 2, "Ready": 3}
+    result = pd.DataFrame(rows)
+    result["_RANK"] = result["STATE"].map(rank).fillna(9)
+    return result.sort_values(["_RANK", "SOURCE"]).drop(columns=["_RANK"], errors="ignore").reset_index(drop=True)
+
+
+def _alert_operations_review_rows(
+    *,
+    alerts: pd.DataFrame | None = None,
+    queue: pd.DataFrame | None = None,
+    native_registry: pd.DataFrame | None = None,
+    remediation_policy: pd.DataFrame | None = None,
+    remediation_dry_run: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Return the next implementation checks for native alerts and automation readiness."""
+    pd = _pd()
+    alerts = alerts if isinstance(alerts, pd.DataFrame) else pd.DataFrame()
+    queue = queue if isinstance(queue, pd.DataFrame) else pd.DataFrame()
+    native_registry = native_registry if isinstance(native_registry, pd.DataFrame) else pd.DataFrame()
+    remediation_policy = remediation_policy if isinstance(remediation_policy, pd.DataFrame) else pd.DataFrame()
+    remediation_dry_run = remediation_dry_run if isinstance(remediation_dry_run, pd.DataFrame) else pd.DataFrame()
+
+    native_ready = 0
+    native_blocked = 0
+    native_candidates = int(len(native_registry))
+    if not native_registry.empty:
+        status = native_registry.get("STATUS", pd.Series(index=native_registry.index, dtype=str)).fillna("CANDIDATE").astype(str).str.upper()
+        native_ready = int(status.isin({"APPROVED", "READY", "READY_TO_DEPLOY"}).sum())
+        enabled = native_registry.get("ENABLED_BY_DEFAULT", pd.Series(False, index=native_registry.index)).fillna(False).astype(bool)
+        native_blocked = int(enabled.sum())
+
+    auto_eligible = 0
+    if not remediation_policy.empty and "AUTO_ELIGIBLE" in remediation_policy.columns:
+        auto_eligible = int(remediation_policy["AUTO_ELIGIBLE"].fillna(False).astype(bool).sum())
+
+    scope_rows = _alert_company_scope_readiness_rows(alerts, queue)
+    scope_review_count = 0
+    if not scope_rows.empty:
+        scope_review_count = int(scope_rows["STATE"].isin(["Review Scope", "Needs Company", "Review Environment"]).sum())
+
+    rows = [
+        {
+            "REVIEW_AREA": "Native alert promotion",
+            "STATE": "Blocked" if native_blocked else ("Ready Candidate" if native_ready else "Review"),
+            "COUNT": native_blocked or native_ready or native_candidates,
+            "EVIDENCE": f"{native_candidates:,} registry row(s), {native_ready:,} ready, {native_blocked:,} blocked by enabled-by-default.",
+            "NEXT_ACTION": "Run snowflake/OVERWATCH_ALERT_OPERATIONS_REVIEW.sql before promoting any native alert.",
+        },
+        {
+            "REVIEW_AREA": "Threshold tuning",
+            "STATE": "Review",
+            "COUNT": int(len(_alert_threshold_tuning_rows(alerts, None))),
+            "EVIDENCE": "Threshold seeds are app-visible; real tuning needs current mart values and baselines.",
+            "NEXT_ACTION": "Use the operations review script, then tune ALERT_THRESHOLDS with DBA approval.",
+        },
+        {
+            "REVIEW_AREA": "Company scope",
+            "STATE": "Review" if scope_review_count else "Ready",
+            "COUNT": scope_review_count,
+            "EVIDENCE": f"{scope_review_count:,} scope row(s) need review across alert/action sources.",
+            "NEXT_ACTION": "Confirm ALFA/Trexis mapping before company-specific cost, Cortex, security, or behavior actions.",
+        },
+        {
+            "REVIEW_AREA": "Dry-run automation",
+            "STATE": "Blocked" if auto_eligible else ("Ready" if not remediation_policy.empty else "Review"),
+            "COUNT": auto_eligible or int(len(remediation_dry_run)),
+            "EVIDENCE": f"{len(remediation_policy):,} policy row(s), {auto_eligible:,} auto-eligible, {len(remediation_dry_run):,} dry-run row(s).",
+            "NEXT_ACTION": "Keep auto actions disabled until before-state, rollback, verification, and owner approvals are proven.",
+        },
+        {
+            "REVIEW_AREA": "Dynamic table compatibility",
+            "STATE": "Manual Review",
+            "COUNT": 1,
+            "EVIDENCE": "Secure-view dependencies can break dynamic-table marts.",
+            "NEXT_ACTION": "Run snowflake/OVERWATCH_DYNAMIC_TABLE_SECURE_VIEW_AUDIT.sql before any mart rebuild.",
+        },
+    ]
+    rank = {"Blocked": 0, "Review": 1, "Manual Review": 2, "Ready Candidate": 3, "Ready": 4}
+    result = pd.DataFrame(rows)
+    result["_RANK"] = result["STATE"].map(rank).fillna(9)
+    return result.sort_values(["_RANK", "REVIEW_AREA"]).drop(columns=["_RANK"]).reset_index(drop=True)
+
+
 def _alert_center_scope_key(
     active_view: str,
     company: str,
@@ -1214,6 +1688,22 @@ def _render_alert_domain_workbench(
             ("Breached SLA", f"{int(sla.isin(['Breached', 'Overdue']).sum()):,}"),
             ("Spend / Cortex", f"{int(focus.isin(['Cortex spend', 'Spend spike', 'Cost movement']).sum()):,}"),
         ))
+        top = board.iloc[0]
+        render_shell_status_strip(
+            state=str(top.get("SECTION_FOCUS") or "Review"),
+            headline=f"First move: {top.get('SIGNAL', 'Alert')} on {top.get('ENTITY', 'Snowflake account')}",
+            detail=str(top.get("DRILLDOWN_HINT") or top.get("FIRST_RESPONSE") or "Open the owning workflow and confirm evidence."),
+        )
+        next_moves = _alert_domain_next_move_rows(board, active_view)
+        if not next_moves.empty:
+            _render_priority_dataframe(
+                next_moves,
+                title=f"{active_view} first response path",
+                priority_columns=["MOVE", "STATE", "DETAIL", "NEXT_ACTION"],
+                raw_label=f"All {active_view} first response steps",
+                height=220,
+                max_rows=4,
+            )
         _render_priority_dataframe(
             board,
             title=f"{active_view} alert workbench",
@@ -1230,7 +1720,6 @@ def _render_alert_domain_workbench(
             height=420,
             max_rows=15,
         )
-        top = board.iloc[0]
         cols = st.columns(2)
         with cols[0]:
             if st.button("Open Owning Section", key=f"alert_domain_open_owner_{active_view}", width="stretch"):
@@ -1702,7 +2191,37 @@ def _render_active_alerts(
         )
 
     incident_board = build_alert_incident_action_board(alerts, queue, limit=25)
+    workflow_rows = _alert_operator_workflow_rows(
+        alerts=alerts,
+        queue=queue,
+        delivery_log=delivery_log,
+        incident_board=incident_board,
+    )
+    _render_priority_dataframe(
+        workflow_rows,
+        title="Operator workflow",
+        priority_columns=["STEP", "STATE", "COUNT", "WHAT_TO_CHECK", "NEXT_ACTION", "OPERATOR_VIEW"],
+        raw_label="All alert operator workflow steps",
+        height=260,
+        max_rows=6,
+    )
     if isinstance(incident_board, pd.DataFrame) and not incident_board.empty:
+        top_incident = incident_board.iloc[0]
+        render_shell_status_strip(
+            state=f"{top_incident.get('SEVERITY', 'Review')} / {top_incident.get('SLA_STATE', 'On Track')}",
+            headline=f"Work priority 1: {top_incident.get('SIGNAL', 'Alert')} on {top_incident.get('ENTITY', 'Snowflake account')}",
+            detail=str(top_incident.get("FIRST_RESPONSE") or top_incident.get("RECOMMENDED_ACTION") or "Acknowledge, route, and capture evidence."),
+        )
+        packet = _alert_next_incident_packet(incident_board)
+        if not packet.empty:
+            _render_priority_dataframe(
+                packet,
+                title="Next incident packet",
+                priority_columns=["CHECKPOINT", "STATE", "DETAIL", "NEXT_ACTION"],
+                raw_label="All next incident packet fields",
+                height=240,
+                max_rows=5,
+            )
         _render_priority_dataframe(
             incident_board,
             title="Incidents to work first",
@@ -1922,6 +2441,29 @@ def _render_alert_detection_catalog() -> None:
             height=280,
             max_rows=8,
         )
+    threshold_rows = _alert_threshold_tuning_rows()
+    _render_priority_dataframe(
+        threshold_rows,
+        title="Threshold tuning review plan",
+        priority_columns=[
+            "REVIEW_STATE", "THRESHOLD_KEY", "CATEGORY", "SIGNAL_NAME",
+            "CONFIGURED_THRESHOLD", "WINDOW", "OWNER", "SOURCE_OBJECT",
+            "NEXT_ACTION",
+        ],
+        raw_label="All threshold tuning fields",
+        height=300,
+        max_rows=9,
+    )
+    operations_rows = _alert_operations_review_rows(native_registry=native_rows)
+    _render_priority_dataframe(
+        operations_rows,
+        title="Native alert operations review checklist",
+        priority_columns=["STATE", "REVIEW_AREA", "COUNT", "EVIDENCE", "NEXT_ACTION"],
+        raw_label="All operations review checklist rows",
+        height=240,
+        max_rows=5,
+    )
+    defer_source_note("Run snowflake/OVERWATCH_ALERT_OPERATIONS_REVIEW.sql for live threshold, company-scope, and promotion evidence.")
     defer_source_note("Detection Catalog lists alert signals and required Snowflake telemetry.")
 
 
@@ -2118,6 +2660,46 @@ def _render_alert_notification_remediation(
         priority_columns=["STATE", "CONTROL", "EVIDENCE", "NEXT_ACTION", "ROUTE"],
         raw_label="All delivery and remediation rows",
         height=260,
+    )
+    operations_rows = _alert_operations_review_rows(
+        alerts=alerts,
+        queue=queue,
+        native_registry=native_registry,
+        remediation_policy=remediation_policy,
+        remediation_dry_run=remediation_dry_run,
+    )
+    _render_priority_dataframe(
+        operations_rows,
+        title="Alert operations readiness",
+        priority_columns=["STATE", "REVIEW_AREA", "COUNT", "EVIDENCE", "NEXT_ACTION"],
+        raw_label="All alert operations readiness rows",
+        height=240,
+        max_rows=5,
+    )
+    threshold_rows = _alert_threshold_tuning_rows(alerts, rules)
+    _render_priority_dataframe(
+        threshold_rows,
+        title="Threshold tuning from loaded alerts",
+        priority_columns=[
+            "REVIEW_STATE", "THRESHOLD_KEY", "CATEGORY", "SIGNAL_NAME",
+            "CONFIGURED_THRESHOLD", "WINDOW", "RECENT_ALERTS", "OPEN_ALERTS",
+            "OWNER", "SOURCE_OBJECT", "NEXT_ACTION",
+        ],
+        raw_label="All loaded threshold tuning rows",
+        height=300,
+        max_rows=9,
+    )
+    scope_rows = _alert_company_scope_readiness_rows(alerts, queue)
+    _render_priority_dataframe(
+        scope_rows,
+        title="Company scope readiness",
+        priority_columns=[
+            "STATE", "SOURCE", "ROWS", "COMPANY_VALUES", "MISSING_COMPANY",
+            "ENVIRONMENT_VALUES", "MISSING_ENVIRONMENT", "NEXT_ACTION",
+        ],
+        raw_label="All company scope readiness rows",
+        height=260,
+        max_rows=6,
     )
     if alerts.empty:
         st.info("Load alert history to review remediation status for real alert rows.")

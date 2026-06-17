@@ -36,6 +36,10 @@ defensible owner dimension.
   prefer `FACT_CORTEX_DAILY`, `FACT_WAREHOUSE_HOURLY`, `FACT_GRANT_DAILY`,
   `FACT_TASK_RUN`, and `FACT_QUERY_DETAIL_RECENT` before falling back to raw
   account usage.
+- Run `snowflake/OVERWATCH_ALERT_OPERATIONS_REVIEW.sql` after mart refreshes or
+  alert registry changes to review `ALERT_EVENTS`, cost/Cortex, warehouse,
+  query, task, and grant fact company distribution before company-specific
+  alert routing or threshold tuning.
 - Keep `get_user_filter_clause()` centralized in `utils/company_filter.py` as
   the fallback primitive. App surfaces should call the role-aware helper.
 - Label `METERING_HISTORY` service rows and account storage classes as

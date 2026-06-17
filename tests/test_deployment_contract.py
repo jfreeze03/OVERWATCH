@@ -264,6 +264,36 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertIn("('VIEW', 3)", validation_sql)
         self.assertIn("('PROCEDURE', 9)", validation_sql)
 
+    def test_alert_operations_review_script_is_read_only_and_covers_key_marts(self):
+        review_sql = (ROOT / "snowflake" / "OVERWATCH_ALERT_OPERATIONS_REVIEW.sql").read_text(encoding="utf-8")
+        review_sql_no_comments = _strip_sql_comments(review_sql).upper()
+
+        self.assertIn("OBJECT_READINESS", review_sql_no_comments)
+        self.assertIn("NATIVE_ALERT_PROMOTION_REVIEW", review_sql_no_comments)
+        self.assertIn("THRESHOLD_TUNING_REVIEW", review_sql_no_comments)
+        self.assertIn("COMPANY_SCOPE_REVIEW", review_sql_no_comments)
+        self.assertIn("DYNAMIC_TABLE_COMPATIBILITY_REVIEW", review_sql_no_comments)
+        for source in [
+            "ALERT_EVENTS",
+            "ALERT_THRESHOLDS",
+            "ALERT_NATIVE_OBJECT_REGISTRY",
+            "ALERT_REMEDIATION_POLICY",
+            "FACT_CORTEX_DAILY",
+            "FACT_WAREHOUSE_HOURLY",
+            "FACT_QUERY_DETAIL_RECENT",
+            "FACT_TASK_RUN",
+            "FACT_GRANT_DAILY",
+            "OVERWATCH_DYNAMIC_TABLE_SECURE_VIEW_AUDIT.SQL",
+        ]:
+            with self.subTest(source=source):
+                self.assertIn(source, review_sql_no_comments)
+
+        mutating_sql = re.search(
+            r"\b(CREATE|ALTER|DROP|INSERT|UPDATE|DELETE|MERGE|TRUNCATE|CALL)\b",
+            review_sql_no_comments,
+        )
+        self.assertIsNone(mutating_sql)
+
     def test_ci_runs_deployment_contract_before_full_suite(self):
         workflow = (ROOT / ".github" / "workflows" / "validate.yml").read_text(encoding="utf-8")
 

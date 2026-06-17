@@ -48,6 +48,11 @@ mart objects that were deployed before the physical-table refresh model. After
 the rebuild, run the validation script and confirm both dynamic-table and secure
 view collision checks return `PASS`.
 
+After validation, run `snowflake/OVERWATCH_ALERT_OPERATIONS_REVIEW.sql` before
+promoting native alerts or changing thresholds. It reviews alert object
+readiness, threshold/baseline candidates, ALFA/Trexis company scope, and the
+dynamic-table compatibility follow-up in one read-only worksheet pass.
+
 ## Dry-Run Readiness
 
 Before running a destructive lower-environment reset, do a local static rehearsal

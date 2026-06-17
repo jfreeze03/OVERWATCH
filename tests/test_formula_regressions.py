@@ -56,9 +56,15 @@ from sections.alert_center import (  # noqa: E402
     _alert_center_pending_brief,
     _alert_center_operability_rows,
     _alert_center_health_score,
+    _alert_domain_next_move_rows,
     _alert_integration_health_board,
     _alert_lifecycle_board,
+    _alert_next_incident_packet,
     _alert_owner_route_board,
+    _alert_operator_workflow_rows,
+    _alert_operations_review_rows,
+    _alert_company_scope_readiness_rows,
+    _alert_threshold_tuning_rows,
 )
 from sections.query_analysis import (  # noqa: E402
     _build_ai_query_diagnosis_prompt,
@@ -9225,6 +9231,166 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Action queue", by_view["Delivery & Automation"]["SOURCES"])
         self.assertIn("Email delivery audit", by_view["Delivery & Automation"]["SOURCES"])
         self.assertIn("Open Automation", by_view["Delivery & Automation"]["BUTTON_LABEL"])
+
+    def test_alert_center_operator_workflow_spine_prioritizes_next_move(self):
+        alerts = pd.DataFrame([{
+            "SEVERITY": "Critical",
+            "STATUS": "New",
+            "CATEGORY": "Cost Control",
+            "ALERT_TYPE": "Cortex spend spike",
+            "ENTITY_NAME": "SNOW_ANALYST",
+            "OWNER": "DBA / AI cost route",
+            "ROUTE": "Cost & Contract",
+            "SUGGESTED_ACTION": "Review Cortex user/source spend and quota route.",
+            "PROOF_QUERY": "SELECT * FROM FACT_CORTEX_DAILY",
+            "DELIVERY_STATUS": "EMAIL_READY",
+            "REMEDIATION_MODE": "STATUS_REVIEW",
+            "ALERT_TS": pd.Timestamp("2026-06-17 04:00:00"),
+            "FIRST_SEEN_AT": pd.Timestamp("2026-06-17 04:00:00"),
+        }])
+        queue = pd.DataFrame([{
+            "CATEGORY": "Cost Control",
+            "ENTITY_NAME": "SNOW_ANALYST",
+            "STATUS": "New",
+            "TICKET_ID": "",
+            "EVIDENCE_GAP": "Need Cortex baseline and quota evidence.",
+            "APPROVAL_GROUP": "DBA / AI cost route",
+        }])
+        incident_board = build_alert_incident_action_board(
+            alerts,
+            queue,
+            now=pd.Timestamp("2026-06-17 09:30:00"),
+        )
+        workflow = _alert_operator_workflow_rows(
+            alerts=alerts,
+            queue=queue,
+            delivery_log=pd.DataFrame(),
+            incident_board=incident_board,
+            native_registry=pd.DataFrame([{"STATUS": "CANDIDATE"}]),
+            remediation_policy=pd.DataFrame([{"POLICY_ID": "POLICY_CORTEX_QUOTA_REVIEW"}]),
+            remediation_dry_run=pd.DataFrame([{"DRY_RUN_STATUS": "BLOCKED_REVIEW_REQUIRED"}]),
+        )
+        by_step = {row["STEP"]: row for _, row in workflow.iterrows()}
+
+        self.assertEqual(by_step["1 Detect"]["COUNT"], 1)
+        self.assertEqual(by_step["2 Triage"]["STATE"], "Escalate")
+        self.assertEqual(by_step["3 Route"]["STATE"], "Review")
+        self.assertEqual(by_step["4 Notify"]["COUNT"], 1)
+        self.assertEqual(by_step["5 Dry-run"]["STATE"], "Candidate")
+        self.assertIn("dry-run row", by_step["5 Dry-run"]["WHAT_TO_CHECK"])
+        self.assertEqual(by_step["6 Close"]["COUNT"], 1)
+
+        packet = _alert_next_incident_packet(incident_board)
+        by_checkpoint = {row["CHECKPOINT"]: row for _, row in packet.iterrows()}
+        self.assertIn("Cortex spend spike", by_checkpoint["What fired"]["DETAIL"])
+        self.assertEqual(by_checkpoint["Owner and route"]["STATE"], "Review")
+        self.assertEqual(by_checkpoint["Automation boundary"]["STATE"], "STATUS_REVIEW")
+        self.assertIn("Dry-run/status review", by_checkpoint["Automation boundary"]["NEXT_ACTION"])
+
+    def test_alert_domain_next_move_rows_show_owner_workflow_and_boundary(self):
+        alerts = pd.DataFrame([{
+            "SEVERITY": "High",
+            "STATUS": "New",
+            "CATEGORY": "Cost Control",
+            "ALERT_TYPE": "Cortex spend spike",
+            "ENTITY_NAME": "SNOW_DTI_ANALYST",
+            "OWNER": "DBA / AI cost route",
+            "ROUTE": "Cost & Contract",
+            "SUGGESTED_ACTION": "Review Cortex spend and quota settings.",
+            "PROOF_QUERY": "SELECT * FROM FACT_CORTEX_DAILY",
+            "REMEDIATION_MODE": "RECOMMEND",
+            "ALERT_TS": pd.Timestamp("2026-06-17 08:00:00"),
+        }])
+        board = build_section_alert_signal_board(alerts, section="Cost & Behavior")
+        moves = _alert_domain_next_move_rows(board, "Cost & Behavior")
+        by_move = {row["MOVE"]: row for _, row in moves.iterrows()}
+
+        self.assertIn("Cortex spend spike", by_move["Confirm signal"]["DETAIL"])
+        self.assertIn("Cost & Contract > AI and Cortex spend", by_move["Open owner workflow"]["DETAIL"])
+        self.assertIn("FACT_CORTEX_DAILY", by_move["Capture evidence"]["DETAIL"])
+        self.assertEqual(by_move["Respect boundary"]["STATE"], "Recommend only")
+        self.assertIn("Do not disable Cortex access", by_move["Respect boundary"]["DETAIL"])
+
+    def test_alert_threshold_tuning_rows_use_loaded_alerts_and_seed_thresholds(self):
+        alerts = pd.DataFrame([{
+            "ALERT_KEY": "COST_CORTEX_SPEND_SPIKE",
+            "ALERT_TYPE": "Cortex spend spike",
+            "SEVERITY": "High",
+            "STATUS": "New",
+            "CATEGORY": "Cost",
+            "COMPANY": "TREXIS",
+            "ENVIRONMENT": "PROD",
+        }])
+        rules = pd.DataFrame([{
+            "RULE_ID": "COST_CORTEX_SPEND_SPIKE",
+            "ALERT_TYPE": "Cortex spend spike",
+            "CATEGORY": "Cost",
+            "RUNBOOK": "Review Cortex cost movement.",
+        }])
+
+        rows = _alert_threshold_tuning_rows(alerts, rules)
+        by_key = {row["THRESHOLD_KEY"]: row for _, row in rows.iterrows()}
+
+        self.assertEqual(by_key["COST_CORTEX_SPEND_SPIKE"]["REVIEW_STATE"], "Tune With Evidence")
+        self.assertEqual(by_key["COST_CORTEX_SPEND_SPIKE"]["OPEN_ALERTS"], 1)
+        self.assertEqual(by_key["COST_CORTEX_SPEND_SPIKE"]["RULE_ROWS"], 1)
+        self.assertEqual(by_key["COST_CORTEX_SPEND_SPIKE"]["SOURCE_OBJECT"], "FACT_CORTEX_DAILY")
+        self.assertEqual(by_key["PIPELINE_TASK_FAILURE"]["REVIEW_STATE"], "No Recent Signal")
+        self.assertIn("Snowflake alert operations review", by_key["PIPELINE_TASK_FAILURE"]["NEXT_ACTION"])
+
+    def test_alert_company_scope_readiness_rows_flag_unclassified_scope(self):
+        alerts = pd.DataFrame([
+            {"COMPANY": "TREXIS", "ENVIRONMENT": "PROD", "STATUS": "New"},
+            {"COMPANY": "Shared/Unclassified", "ENVIRONMENT": "", "STATUS": "New"},
+        ])
+        queue = pd.DataFrame([{"STATUS": "New", "ENTITY_NAME": "WH_X"}])
+
+        rows = _alert_company_scope_readiness_rows(alerts, queue)
+        by_source = {row["SOURCE"]: row for _, row in rows.iterrows()}
+
+        self.assertEqual(by_source["Alert events"]["STATE"], "Review Scope")
+        self.assertEqual(by_source["Action queue"]["STATE"], "Needs Company")
+        self.assertIn("Trexis=1", by_source["ALFA/Trexis split"]["COMPANY_VALUES"])
+        self.assertIn("company-specific", by_source["ALFA/Trexis split"]["NEXT_ACTION"])
+
+    def test_alert_operations_review_rows_link_deployment_threshold_scope_and_dynamic_review(self):
+        alerts = pd.DataFrame([{
+            "ALERT_KEY": "COST_WAREHOUSE_CREDIT_SPIKE",
+            "SEVERITY": "High",
+            "STATUS": "New",
+            "COMPANY": "ALFA",
+            "ENVIRONMENT": "PROD",
+        }])
+        queue = pd.DataFrame([{
+            "STATUS": "New",
+            "COMPANY": "ALFA",
+            "ENVIRONMENT": "PROD",
+        }])
+        native_registry = pd.DataFrame([{
+            "STATUS": "READY_TO_DEPLOY",
+            "ENABLED_BY_DEFAULT": False,
+        }])
+        remediation_policy = pd.DataFrame([{
+            "POLICY_ID": "POLICY_WAREHOUSE_SPIKE_COST_REVIEW",
+            "AUTO_ELIGIBLE": False,
+        }])
+        dry_runs = pd.DataFrame([{"DRY_RUN_STATUS": "BLOCKED_REVIEW_REQUIRED"}])
+
+        rows = _alert_operations_review_rows(
+            alerts=alerts,
+            queue=queue,
+            native_registry=native_registry,
+            remediation_policy=remediation_policy,
+            remediation_dry_run=dry_runs,
+        )
+        by_area = {row["REVIEW_AREA"]: row for _, row in rows.iterrows()}
+
+        self.assertEqual(by_area["Native alert promotion"]["STATE"], "Ready Candidate")
+        self.assertIn("OVERWATCH_ALERT_OPERATIONS_REVIEW.sql", by_area["Native alert promotion"]["NEXT_ACTION"])
+        self.assertEqual(by_area["Company scope"]["STATE"], "Ready")
+        self.assertEqual(by_area["Dry-run automation"]["STATE"], "Ready")
+        self.assertEqual(by_area["Dynamic table compatibility"]["STATE"], "Manual Review")
+        self.assertIn("OVERWATCH_DYNAMIC_TABLE_SECURE_VIEW_AUDIT.sql", by_area["Dynamic table compatibility"]["NEXT_ACTION"])
 
     def test_alert_center_brief_first_default_preserves_explicit_data_view(self):
         import streamlit as st

@@ -97,6 +97,10 @@ This plan combines:
 - Alert Center is organized into value lanes: Command Center, Cost & Behavior,
   Reliability, Security, Detection Catalog, Delivery & Automation, and
   Suppression Windows.
+- Command Center now renders the operator path as detect -> triage -> route ->
+  notify -> dry-run -> close before the broad alert tables. The first incident
+  is also shown as a compact packet with route, evidence, and automation
+  boundary so the DBA can act without scanning every row.
 - Cost & Behavior spotlights spend spikes, Cortex spend, warehouse cost
   behavior, and user-driven spend anomalies from the same loaded alert/action
   data used by the command view.
@@ -112,6 +116,16 @@ This plan combines:
   lane, safe drilldown hint, and automation readiness. The app can route a
   loaded Cost/Cortex, Reliability, Security, or Executive alert to the owning
   workflow without running another account-history query.
+- Cost/Cortex, Reliability, and Security lanes now show a first-response path
+  before detailed workbench rows: confirm signal, open the owner workflow,
+  capture evidence, and respect the remediation boundary.
+- `snowflake/OVERWATCH_ALERT_OPERATIONS_REVIEW.sql` is the read-only worksheet
+  companion for native alert promotion readiness, threshold tuning against
+  mart baselines, ALFA/Trexis company-scope quality, and dynamic-table
+  compatibility review.
+- Detection Catalog and Delivery & Automation now surface operations-readiness,
+  threshold-tuning, and company-scope boards so DBAs can see what evidence is
+  missing before promoting alerts or changing thresholds.
 - `ALERT_NATIVE_OBJECT_REGISTRY` stores reviewed native Snowflake alert
   candidates and generated create/drop SQL. Candidates are not enabled by
   default and should remain DBA-reviewed deployment artifacts, not app-side

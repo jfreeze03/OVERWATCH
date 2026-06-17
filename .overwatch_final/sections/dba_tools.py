@@ -8,7 +8,7 @@ import streamlit as st
 import pandas as pd
 from utils import (
     get_session, safe_sql, format_credits, download_csv,
-    get_wh_filter_clause, get_db_filter_clause, get_user_filter_clause,
+    get_wh_filter_clause, get_db_filter_clause, get_user_company_filter_clause,
     get_active_company, get_active_environment, company_value_allowed,
     run_query, run_query_or_raise, sql_literal, safe_identifier,
     format_snowflake_error,
@@ -2196,7 +2196,7 @@ def render():
                     FROM SNOWFLAKE.ACCOUNT_USAGE.SESSIONS
                     WHERE created_on >= DATEADD('day', -7, CURRENT_TIMESTAMP())
                       AND DATEDIFF('hour', created_on, CURRENT_TIMESTAMP()) > 8
-                      {get_user_filter_clause("user_name")}
+                      {get_user_company_filter_clause("user_name", company)}
                     ORDER BY session_hours DESC LIMIT 100
                 """, ttl_key=f"dba_long_sessions_{company}", tier="standard")
             except Exception as e:
@@ -3412,7 +3412,7 @@ def render():
                         WHERE start_time >= DATEADD('hours', -2, CURRENT_TIMESTAMP())
                           AND UPPER(execution_status) IN ('RUNNING','QUEUED','BLOCKED')
                           {get_wh_filter_clause("warehouse_name")}
-                          {get_user_filter_clause("user_name")}
+                          {get_user_company_filter_clause("user_name", company)}
                           AND ({qh_task_indicator})
                         ORDER BY start_time DESC
                         LIMIT 200

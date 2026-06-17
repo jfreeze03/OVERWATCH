@@ -24,6 +24,7 @@ intentional, visible, and testable.
 | Automatic clustering | `AUTOMATIC_CLUSTERING_HISTORY.CREDITS_USED` | Clustering helper uses the same source; service summaries classify clustering as managed service spend | Aligned |
 | Service period movement | Current period minus previous period divided by previous period | Same current/prior movement pattern in official service-cost lens | Aligned |
 | Annual service projection | YTD `METERING_HISTORY` daily credits plus recent observed-day annualization | Cost Forecast includes a separate account-wide annual service projection from completed-window `METERING_HISTORY` | Aligned |
+| Snowflake Admin reconciliation | Account-level Snowflake cost management totals | Cost Reconciliation compares account `METERING_HISTORY`, official `WAREHOUSE_METERING_HISTORY`, scoped warehouse totals, and allocated query workload | Aligned with account/company boundary |
 
 ## Intentional Formula Changes
 

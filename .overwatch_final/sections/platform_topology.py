@@ -10,7 +10,7 @@ from utils import (
     format_snowflake_error,
     get_global_filter_clause,
     get_session,
-    get_user_filter_clause,
+    get_user_company_filter_clause,
     filter_existing_columns,
     freshness_note,
     metric_confidence_label,
@@ -167,7 +167,7 @@ def _load_topology(session, days: int, row_limit: int) -> dict:
             deleted_on
         FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS
         WHERE deleted_on IS NULL
-          {get_user_filter_clause("grantee_name")}
+          {get_user_company_filter_clause("grantee_name", company)}
         ORDER BY role, user_name
         LIMIT {row_limit}
     """, ttl_key=f"topology_role_users_{company}_{row_limit}", tier="standard", section="Platform Topology")

@@ -79,6 +79,10 @@ Latest static dependency pass:
   reports dynamic-table and secure-view collisions in the deployed OVERWATCH
   schema. A clean rebuild should return `PASS` for both checks before app
   validation continues.
+- Latest ALFA/Trexis scope hardening did not add mart objects. App surfaces now
+  use role-aware user scope for user/login/grant telemetry, and Cost Center
+  reconciliation compares Snowflake Admin account totals to OVERWATCH scoped
+  warehouse/query totals without changing mart grain.
 - Latest reset proof hardening: the validation script also checks the expected
   table/view/procedure/function counts and task graph state so mass rebuilds
   can be verified from Snowflake without manually recounting the setup file.

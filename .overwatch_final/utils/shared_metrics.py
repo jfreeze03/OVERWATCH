@@ -15,6 +15,7 @@ import streamlit as st
 
 from .company_filter import (
     get_active_company,
+    get_combined_filter_clause,
     get_company_scope_key,
     get_db_filter_clause,
     get_environment_case_expr,
@@ -24,7 +25,6 @@ from .company_filter import (
     get_global_wh_filter_clause,
     get_wh_filter_clause,
     get_user_company_filter_clause,
-    get_user_filter_clause,
 )
 from .compatibility import build_task_failure_summary_sql, build_task_history_sql, filter_existing_columns
 from .cost import (
@@ -797,6 +797,14 @@ def load_shared_service_query_health(
             )
 
         exprs = _service_query_history_exprs(session)
+        query_company_filter = get_combined_filter_clause(
+            db_col="q.database_name",
+            wh_col="q.warehouse_name",
+            user_col="q.user_name",
+            role_col="q.role_name",
+            company=company,
+        )
+        query_environment_filter = get_environment_filter_clause("q.database_name", company=company)
         live_df = run_query(
             f"""
             SELECT
@@ -809,9 +817,8 @@ def load_shared_service_query_health(
             FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
             WHERE q.start_time >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
               AND q.warehouse_name IS NOT NULL
-              {get_wh_filter_clause("q.warehouse_name", company)}
-              {get_db_filter_clause("q.database_name", company)}
-              {get_user_filter_clause("q.user_name", company)}
+              {query_company_filter}
+              {query_environment_filter}
             """,
             ttl_key=get_company_scope_key("shared_service_query_health_live", hours),
             tier="recent",
@@ -855,6 +862,14 @@ def load_shared_service_warehouse_health(
             )
 
         exprs = _service_query_history_exprs(session)
+        query_company_filter = get_combined_filter_clause(
+            db_col="q.database_name",
+            wh_col="q.warehouse_name",
+            user_col="q.user_name",
+            role_col="q.role_name",
+            company=company,
+        )
+        query_environment_filter = get_environment_filter_clause("q.database_name", company=company)
         live_df = run_query(
             f"""
             SELECT
@@ -868,9 +883,8 @@ def load_shared_service_warehouse_health(
             FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
             WHERE q.start_time >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
               AND q.warehouse_name IS NOT NULL
-              {get_wh_filter_clause("q.warehouse_name", company)}
-              {get_db_filter_clause("q.database_name", company)}
-              {get_user_filter_clause("q.user_name", company)}
+              {query_company_filter}
+              {query_environment_filter}
             GROUP BY q.warehouse_name
             ORDER BY queued_sec DESC, remote_spill_gb DESC, failed_queries DESC
             LIMIT 100
@@ -925,7 +939,7 @@ def load_shared_service_login_health(
                 COUNT(DISTINCT client_ip) AS distinct_ips
             FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
             WHERE event_timestamp >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
-              {get_user_filter_clause("user_name", company)}
+              {get_user_company_filter_clause("user_name", company)}
             """,
             ttl_key=get_company_scope_key("shared_service_login_health_live", hours),
             tier="recent",

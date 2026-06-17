@@ -101,7 +101,7 @@ get_db_filter_clause = _lazy_util("get_db_filter_clause")
 get_active_company = _lazy_util("get_active_company")
 get_global_filter_clause = _lazy_util("get_global_filter_clause")
 get_session = _lazy_util("get_session")
-get_user_filter_clause = _lazy_util("get_user_filter_clause")
+get_user_company_filter_clause = _lazy_util("get_user_company_filter_clause")
 get_wh_filter_clause = _lazy_util("get_wh_filter_clause")
 get_owner_context_columns = lazy_util_attr("OWNER_CONTEXT_COLUMNS")
 build_mart_control_room_summary_sql = _lazy_util("build_mart_control_room_summary_sql")
@@ -1749,7 +1749,6 @@ def _load_control_room(
     wh_q = get_wh_filter_clause("q.warehouse_name", company)
     wh_m = get_wh_filter_clause("warehouse_name", company)
     db_q = get_db_filter_clause("q.database_name", company)
-    user_q = get_user_filter_clause("q.user_name", company)
     global_q = get_global_filter_clause(
         "q.start_time", "q.warehouse_name", "q.user_name", "q.role_name", "q.database_name", "q.schema_name"
     )
@@ -1824,7 +1823,7 @@ def _load_control_room(
             FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
             WHERE q.start_time >= DATEADD('hour', -{live_lookback_hours}, CURRENT_TIMESTAMP())
               AND q.warehouse_name IS NOT NULL
-              {wh_q} {db_q} {user_q}
+              {global_q}
             GROUP BY q.warehouse_name
             HAVING queued_queries > 0 OR remote_spill_queries > 0 OR p95_elapsed_sec >= 60
             ORDER BY queued_queries DESC, remote_spill_gb DESC, p95_elapsed_sec DESC
@@ -1844,7 +1843,7 @@ def _load_control_room(
             FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
             WHERE q.start_time >= DATEADD('hour', -{live_lookback_hours}, CURRENT_TIMESTAMP())
               AND (q.error_code IS NOT NULL OR UPPER(q.execution_status) = 'FAILED_WITH_ERROR')
-              {wh_q} {db_q} {user_q}
+              {global_q}
             ORDER BY q.start_time DESC
             LIMIT 25
         """,
@@ -1867,7 +1866,7 @@ def _load_control_room(
                  OR q.query_type ILIKE 'GRANT%'
                  OR q.query_type ILIKE 'REVOKE%'
               )
-              {wh_q} {db_q} {user_q}
+              {global_q}
             ORDER BY q.start_time DESC
             LIMIT 25
         """,
@@ -1882,7 +1881,7 @@ def _load_control_room(
             FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
             WHERE event_timestamp >= DATEADD('hour', -{live_lookback_hours}, CURRENT_TIMESTAMP())
               AND is_success = 'NO'
-              {get_user_filter_clause("user_name", company)}
+              {get_user_company_filter_clause("user_name", company)}
             ORDER BY event_timestamp DESC
             LIMIT 25
         """,

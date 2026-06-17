@@ -8,7 +8,7 @@ from .cost import format_credits
 from .compatibility import filter_existing_columns
 from .downloads import download_csv, mark_loaded, show_loaded_time
 from .query import format_snowflake_error, run_query, run_query_or_raise, sql_literal
-from .company_filter import get_db_filter_clause, get_user_filter_clause, get_wh_filter_clause
+from .company_filter import get_combined_filter_clause
 from .helpers import safe_float
 from .workflows import add_cost_companion_columns, prioritize_context_columns
 from .workflows import apply_operator_status_labels
@@ -322,11 +322,12 @@ def render_warehouse_drilldown(
     if not warehouse_name:
         return
     wh_safe = sql_literal(warehouse_name)
-    company_filter = " ".join(filter(None, [
-        get_wh_filter_clause("warehouse_name"),
-        get_db_filter_clause("database_name"),
-        get_user_filter_clause("user_name"),
-    ]))
+    company_filter = get_combined_filter_clause(
+        db_col="database_name",
+        wh_col="warehouse_name",
+        user_col="user_name",
+        role_col="role_name",
+    )
     qh_expr = _query_history_detail_exprs()
     df_wh = run_query(f"""
         SELECT query_id, user_name, warehouse_name, {qh_expr["warehouse_size"]}, database_name, schema_name,
@@ -398,11 +399,12 @@ def render_entity_query_drilldown(
         )
     else:
         where_clause = f"{col} = {value}"
-    company_filter = " ".join(filter(None, [
-        get_wh_filter_clause("warehouse_name"),
-        get_db_filter_clause("database_name"),
-        get_user_filter_clause("user_name"),
-    ]))
+    company_filter = get_combined_filter_clause(
+        db_col="database_name",
+        wh_col="warehouse_name",
+        user_col="user_name",
+        role_col="role_name",
+    )
     df_detail   = run_query(f"""
         SELECT query_id, user_name, role_name, warehouse_name, {qh_expr["warehouse_size"]}, database_name, schema_name,
                {qh_expr["query_tag"]},

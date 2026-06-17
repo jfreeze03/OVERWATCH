@@ -14,7 +14,11 @@ import pandas as pd
 import streamlit as st
 
 from config import DEFAULTS, DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, DEFAULT_DAY_WINDOW
-from .company_filter import get_combined_filter_clause, get_user_filter_clause, get_wh_filter_clause
+from .company_filter import (
+    get_combined_filter_clause,
+    get_user_company_filter_clause,
+    get_wh_filter_clause,
+)
 from .data import normalize_df
 from .deployment import build_schema_migration_contract, build_schema_migration_status_sql
 from .mart import mart_object_name
@@ -461,9 +465,9 @@ FROM summary
 
 def build_first_paint_security_board_sql(company: str = DEFAULT_COMPANY) -> str:
     """Return board rows from identity and grant monitoring sources."""
-    login_filter = get_user_filter_clause("user_name", company)
-    user_filter = get_user_filter_clause("name", company)
-    grant_filter = get_user_filter_clause("grantee_name", company)
+    login_filter = get_user_company_filter_clause("user_name", company)
+    user_filter = get_user_company_filter_clause("name", company)
+    grant_filter = get_user_company_filter_clause("grantee_name", company)
     source = sql_literal(_source_name(), 120)
     hours = max(1, int(FIRST_PAINT_RECENT_HOURS))
     return f"""

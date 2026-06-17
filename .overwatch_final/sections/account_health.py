@@ -31,7 +31,6 @@ build_task_health_sql = _lazy_util("build_task_health_sql")
 executive_health_score = _lazy_util("executive_health_score")
 get_wh_filter_clause = _lazy_util("get_wh_filter_clause")
 get_db_filter_clause = _lazy_util("get_db_filter_clause")
-get_user_filter_clause = _lazy_util("get_user_filter_clause")
 get_global_filter_clause = _lazy_util("get_global_filter_clause")
 get_active_environment = _lazy_util("get_active_environment")
 load_latest_control_room_mart = _lazy_util("load_latest_control_room_mart")
@@ -2826,7 +2825,9 @@ def render():
     wh_filter_q = get_wh_filter_clause("q.warehouse_name", company)
     wh_filter_m = get_wh_filter_clause("warehouse_name", company)
     db_filter_q = get_db_filter_clause("q.database_name", company)
-    user_filter_q = get_user_filter_clause("q.user_name", company)
+    query_scope_filter_q = get_global_filter_clause(
+        "", "q.warehouse_name", "q.user_name", "q.role_name", "q.database_name"
+    )
     global_filter_q = get_global_filter_clause(
         "q.start_time", "q.warehouse_name", "q.user_name", "q.role_name", "q.database_name"
     )
@@ -2918,7 +2919,7 @@ def render():
                 else f"Live fallback: {mart_reason}"
             )
             hd["_control_mart_used"] = use_control_mart
-            live_df, live_source = _load_live_query_status(wh_filter_q, db_filter_q, user_filter_q)
+            live_df, live_source = _load_live_query_status("", "", query_scope_filter_q)
             hd["live"] = live_df
             hd["_live_source"] = live_source
             if use_control_mart:
@@ -2963,7 +2964,7 @@ def render():
                                SUM(CASE WHEN {failed_pred_q} THEN 1 ELSE 0 END) AS fails
                         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
                         WHERE q.start_time >= DATEADD('hours', -24, CURRENT_TIMESTAMP())
-                          {wh_filter_q} {db_filter_q} {user_filter_q}
+                          {query_scope_filter_q}
                     ),
                     yday_q AS (
                         SELECT COUNT(*) AS q,
@@ -2971,7 +2972,7 @@ def render():
                         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
                         WHERE q.start_time >= DATEADD('hours', -48, CURRENT_TIMESTAMP())
                           AND q.start_time <  DATEADD('hours', -24, CURRENT_TIMESTAMP())
-                          {wh_filter_q} {db_filter_q} {user_filter_q}
+                          {query_scope_filter_q}
                     ),
                     today_c AS (
                         SELECT SUM(credits_used) AS credits

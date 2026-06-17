@@ -101,6 +101,7 @@ from sections.cost_center import (  # noqa: E402
     _prepare_cost_forecast_rows,
     _queue_cost_outliers,
     _normalize_cost_explorer_detail,
+    _snowflake_admin_reconciliation_sql,
     _warehouse_cost_control_action,
     _service_cost_category,
     _warehouse_cost_verification_sql,
@@ -859,6 +860,17 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(metrics["RECENT_DAILY_AVG_CREDITS"], 15.0)
         self.assertGreater(metrics["PROJECTED_YEAR_CREDITS"], 30.0)
         self.assertEqual(metrics["LATEST_USAGE_DATE"], "2026-06-16")
+
+    def test_snowflake_admin_reconciliation_bridge_uses_official_account_sources(self):
+        sql = _snowflake_admin_reconciliation_sql(30).upper()
+
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY", sql)
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY", sql)
+        self.assertIn("SNOWFLAKE ADMIN ACCOUNT TOTAL", sql)
+        self.assertIn("OFFICIAL WAREHOUSE COMPUTE TOTAL", sql)
+        self.assertIn("ACCOUNT SERVICE / OTHER CREDITS", sql)
+        self.assertIn("METERING_HISTORY MINUS WAREHOUSE_METERING_HISTORY", sql)
+        self.assertIn("DATEADD('HOUR', -24, CURRENT_TIMESTAMP())", sql)
 
     def test_metered_credit_cte_uses_compute_credits_with_total_fallback(self):
         sql = build_metered_credit_cte(hours_back=24, include_recent=True).upper()

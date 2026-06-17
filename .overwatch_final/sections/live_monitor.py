@@ -16,7 +16,7 @@ from sections.shell_helpers import render_shell_snapshot
 from utils import (
     get_session,
     credits_to_dollars, estimate_live_credits, download_csv,
-    render_query_drilldown, get_active_company, get_user_filter_clause,
+    render_query_drilldown, get_active_company, get_user_company_filter_clause,
     get_global_filter_clause, get_wh_filter_clause, run_query, run_query_or_raise, sql_literal,
     safe_identifier, format_snowflake_error, filter_existing_columns,
     admin_button_disabled, log_admin_action, require_admin_enabled,
@@ -461,7 +461,7 @@ def render():
                         WHERE created_on >= DATEADD('day', -1, CURRENT_TIMESTAMP())
                         {user_filter}
                         ORDER BY session_min DESC LIMIT 200
-                    """.format(user_filter=get_user_filter_clause("user_name")), ttl_key=f"live_sessions_{company}", tier="standard")
+                    """.format(user_filter=get_user_company_filter_clause("user_name", company)), ttl_key=f"live_sessions_{company}", tier="standard")
                     st.session_state["lm_df_sessions"] = df_sess
                 except Exception as e:
                     st.warning(f"Sessions view unavailable: {format_snowflake_error(e)}")

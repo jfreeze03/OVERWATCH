@@ -122,6 +122,18 @@ class CompanyScopeAndCostTests(unittest.TestCase):
         self.assertIn("NOT EXISTS", alfa_clause)
         self.assertIn("ROLE_SCOPE.\"ROLE\" ILIKE '%TRXS%'", alfa_clause)
 
+    def test_app_surfaces_use_role_aware_user_scope(self):
+        offenders = []
+        for path in APP_ROOT.rglob("*.py"):
+            rel = path.relative_to(APP_ROOT).as_posix()
+            if rel == "utils/company_filter.py":
+                continue
+            text = path.read_text(encoding="utf-8")
+            if "get_user_filter_clause(" in text:
+                offenders.append(rel)
+
+        self.assertEqual(offenders, [])
+
     def test_mart_setup_uses_exact_trexis_warehouse_list(self):
         sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8").upper()
         self.assertIn("WH_TRXS_LOAD", sql)

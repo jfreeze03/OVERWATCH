@@ -34,6 +34,15 @@ outside the Streamlit app UI.
   user naming and active role membership where telemetry exposes them. Roles
   containing `TRXS` classify as Trexis in live cost queries, user-scoped Cortex
   paths, and mart loaders.
+- User/auth/grant surfaces now use role-aware company filtering through
+  `get_user_company_filter_clause()` so Trexis users with active `%TRXS%` role
+  grants stay in the Trexis view even when the username itself is not enough.
+- `Cost Center > Reconciliation` now includes a Snowflake Admin/Cost Management
+  bridge from account-level `METERING_HISTORY` and official
+  `WAREHOUSE_METERING_HISTORY`. The bridge intentionally separates account-wide
+  totals from company-scoped OVERWATCH warehouse and allocated query totals.
+- `docs/COMPANY_SCOPE_AUDIT.md` records which sections are exact,
+  directional/allocated, or account-wide only for ALFA/Trexis views.
 - Account-wide service rows from `METERING_HISTORY` remain reconciliation totals.
   Do not force company splits for Snowflake services or storage classes unless
   there is a defensible allocation rule documented outside the app.

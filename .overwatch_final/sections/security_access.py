@@ -10,7 +10,7 @@ from utils import (
     get_db_filter_clause,
     get_global_filter_clause,
     get_session,
-    get_user_filter_clause,
+    get_user_company_filter_clause,
     get_wh_filter_clause,
     load_shared_grants_to_users,
     load_shared_mfa_coverage,
@@ -98,7 +98,7 @@ def _load_login_audit_mart(company: str, days: int) -> dict[str, pd.DataFrame]:
         raise ValueError("Login mart keeps the most recent 35 days; using live login history for this wider lookback.")
     table = mart_object_name("FACT_LOGIN_DAILY")
     company_filter = _mart_company_filter("l", company)
-    user_filter = get_user_filter_clause("l.user_name")
+    user_filter = get_user_company_filter_clause("l.user_name", company)
     base_where = f"""
         WHERE l.login_date >= DATEADD('DAY', -{int(days)}, CURRENT_DATE())
           {company_filter}
@@ -156,7 +156,7 @@ def _load_login_posture_mart(company: str, days: int) -> dict[str, pd.DataFrame]
         raise ValueError("Login mart keeps the most recent 35 days; using live login history for this wider lookback.")
     table = mart_object_name("FACT_LOGIN_DAILY")
     company_filter = _mart_company_filter("l", company)
-    user_filter = get_user_filter_clause("l.user_name")
+    user_filter = get_user_company_filter_clause("l.user_name", company)
     where = f"""
         WHERE l.login_date >= DATEADD('DAY', -{int(days)}, CURRENT_DATE())
           {company_filter}
@@ -230,7 +230,7 @@ def _load_connected_programs(session, company: str, days: int) -> dict[str, pd.D
     """Track Snowflake client programs from login events and query-linked authentication events."""
     days = max(1, min(90, int(days)))
     query_join_days = min(365, days + 14)
-    user_filter = get_user_filter_clause("l.user_name")
+    user_filter = get_user_company_filter_clause("l.user_name", company)
     query_filters = get_global_filter_clause(
         date_col="q.start_time",
         wh_col="q.warehouse_name",
@@ -346,7 +346,7 @@ def _load_connected_programs(session, company: str, days: int) -> dict[str, pd.D
 
     session_inventory = pd.DataFrame()
     if "CREATED_ON" in session_cols and "USER_NAME" in session_cols:
-        session_user_filter = get_user_filter_clause("s.user_name")
+        session_user_filter = get_user_company_filter_clause("s.user_name", company)
         session_inventory = run_query(f"""
             SELECT
                 {session_program_expr} AS program_name,
@@ -423,7 +423,7 @@ def _load_grants_mart(company: str) -> pd.DataFrame:
     """Load active role grants from the grant snapshot mart."""
     table = mart_object_name("FACT_GRANT_DAILY")
     company_filter = _mart_company_filter("g", company)
-    user_filter = get_user_filter_clause("g.grantee_name")
+    user_filter = get_user_company_filter_clause("g.grantee_name", company)
     return run_query(f"""
         WITH latest AS (
             SELECT MAX(snapshot_date) AS snapshot_date
@@ -525,9 +525,9 @@ def _annotate_security_routes(df: pd.DataFrame, finding_type: str) -> pd.DataFra
 
 def render():
     company = get_active_company()
-    user_filter = get_user_filter_clause("user_name")
-    user_filter_u = get_user_filter_clause("u.name")
-    user_filter_g = get_user_filter_clause("grantee_name")
+    user_filter = get_user_company_filter_clause("user_name", company)
+    user_filter_u = get_user_company_filter_clause("u.name", company)
+    user_filter_g = get_user_company_filter_clause("grantee_name", company)
     query_scope = get_global_filter_clause(
         date_col="start_time",
         wh_col="warehouse_name",
@@ -1224,7 +1224,7 @@ def render():
                             WHERE q.start_time >= DATEADD('day', -{lin_days}, CURRENT_TIMESTAMP())
                               {get_wh_filter_clause("q.warehouse_name")}
                               {get_db_filter_clause("q.database_name")}
-                              {get_user_filter_clause("q.user_name")}
+                              {get_user_company_filter_clause("q.user_name", company)}
                         )
                         SELECT ah.user_name, ah.query_id,
                                ah.query_start_time,
@@ -1235,7 +1235,7 @@ def render():
                         FROM SNOWFLAKE.ACCOUNT_USAGE.ACCESS_HISTORY ah
                         JOIN scoped_queries sq ON ah.query_id = sq.query_id
                         WHERE ah.query_start_time >= DATEADD('day', -{lin_days}, CURRENT_TIMESTAMP())
-                          {get_user_filter_clause("ah.user_name")}
+                          {get_user_company_filter_clause("ah.user_name", company)}
                         ORDER BY ah.query_start_time DESC
                         LIMIT 500
                     """, ttl_key=f"security_lineage_{company}_{lin_days}", tier="standard")

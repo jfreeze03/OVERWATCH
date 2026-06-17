@@ -784,14 +784,19 @@ def load_shared_warehouse_daily_credits_by_warehouse(
     return _load_or_reuse("shared_warehouse_daily_credits_by_warehouse", (company, days), _loader, force=force)
 
 
-def _warehouse_contains_filter(column: str, warehouse_contains: str = "") -> str:
+def _warehouse_contains_filter(
+    column: str,
+    warehouse_contains: str = "",
+    *,
+    include_global_warehouse_filter: bool = True,
+) -> str:
     warehouse_contains = str(warehouse_contains or "").strip()
     if not warehouse_contains:
-        return get_global_wh_filter_clause(column)
+        return get_global_wh_filter_clause(column) if include_global_warehouse_filter else ""
     return f"AND {column} ILIKE '%' || {sql_literal(warehouse_contains, 300)} || '%'"
 
 
-def _live_bill_summary_sql(
+def build_shared_bill_metering_summary_live_sql(
     current_start: str,
     current_end: str,
     prior_start: str,
@@ -799,10 +804,15 @@ def _live_bill_summary_sql(
     *,
     company: str,
     warehouse_contains: str = "",
+    include_global_warehouse_filter: bool = True,
 ) -> str:
     wh_filter = " ".join(filter(None, [
         get_wh_filter_clause("warehouse_name", company),
-        _warehouse_contains_filter("warehouse_name", warehouse_contains),
+        _warehouse_contains_filter(
+            "warehouse_name",
+            warehouse_contains,
+            include_global_warehouse_filter=include_global_warehouse_filter,
+        ),
     ]))
     return f"""
         WITH bounds AS (
@@ -835,7 +845,7 @@ def _live_bill_summary_sql(
     """
 
 
-def _live_bill_warehouse_delta_sql(
+def build_shared_bill_warehouse_delta_live_sql(
     current_start: str,
     current_end: str,
     prior_start: str,
@@ -843,10 +853,15 @@ def _live_bill_warehouse_delta_sql(
     *,
     company: str,
     warehouse_contains: str = "",
+    include_global_warehouse_filter: bool = True,
 ) -> str:
     wh_filter = " ".join(filter(None, [
         get_wh_filter_clause("warehouse_name", company),
-        _warehouse_contains_filter("warehouse_name", warehouse_contains),
+        _warehouse_contains_filter(
+            "warehouse_name",
+            warehouse_contains,
+            include_global_warehouse_filter=include_global_warehouse_filter,
+        ),
     ]))
     return f"""
         WITH bounds AS (
@@ -935,7 +950,7 @@ def load_shared_bill_metering_summary(
                 )
 
         live_df = run_query(
-            _live_bill_summary_sql(
+            build_shared_bill_metering_summary_live_sql(
                 current_start,
                 current_end,
                 prior_start,
@@ -1013,7 +1028,7 @@ def load_shared_bill_warehouse_delta(
                 )
 
         live_df = run_query(
-            _live_bill_warehouse_delta_sql(
+            build_shared_bill_warehouse_delta_live_sql(
                 current_start,
                 current_end,
                 prior_start,

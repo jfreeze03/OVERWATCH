@@ -13,6 +13,7 @@ sys.path.insert(0, str(APP_ROOT))
 
 from utils.shared_metrics import (  # noqa: E402
     _storage_summary_from_trend,
+    build_shared_bill_warehouse_delta_live_sql,
     load_shared_access_hygiene_snapshot,
     load_shared_bill_metering_summary,
     load_shared_bill_warehouse_delta,
@@ -214,6 +215,29 @@ class SharedMetricsTests(unittest.TestCase):
         self.assertIn("WAREHOUSE_METERING_HISTORY", live_sql)
         self.assertIn("FULL OUTER JOIN", live_sql)
         self.assertIn("WAREHOUSE_NAME ILIKE", live_sql)
+
+    def test_bill_warehouse_delta_live_sql_can_skip_global_filter(self):
+        st.session_state["global_warehouse"] = "BI"
+
+        scoped_sql = build_shared_bill_warehouse_delta_live_sql(
+            "DATEADD('DAY', -7, CURRENT_TIMESTAMP())",
+            "CURRENT_TIMESTAMP()",
+            "DATEADD('DAY', -14, CURRENT_TIMESTAMP())",
+            "DATEADD('DAY', -7, CURRENT_TIMESTAMP())",
+            company="ALFA",
+        ).upper()
+        splash_sql = build_shared_bill_warehouse_delta_live_sql(
+            "DATEADD('DAY', -7, CURRENT_TIMESTAMP())",
+            "CURRENT_TIMESTAMP()",
+            "DATEADD('DAY', -14, CURRENT_TIMESTAMP())",
+            "DATEADD('DAY', -7, CURRENT_TIMESTAMP())",
+            company="ALFA",
+            include_global_warehouse_filter=False,
+        ).upper()
+
+        self.assertIn("WAREHOUSE_NAME ILIKE '%BI%'", scoped_sql)
+        self.assertNotIn("WAREHOUSE_NAME ILIKE '%BI%'", splash_sql)
+        self.assertIn("WAREHOUSE_METERING_HISTORY", splash_sql)
 
     def test_warehouse_daily_by_warehouse_reuses_session_result(self):
         frame = pd.DataFrame({

@@ -15,7 +15,7 @@ refresh/drilldown actions and make repeated metric families load once per scope.
 | `load_shared_usage_metering_kpis` | Usage Overview credit KPIs and Account Health 24-hour burn | Fast warehouse metering mart first, live metering fallback only when needed |
 | `load_shared_storage_db_detail` | Storage Monitor per-database detail | Fast storage mart first, live database storage fallback on demand |
 | `load_shared_bill_metering_summary` | Cost Center Explain This Bill current/prior warehouse totals | Fast warehouse hourly mart first, live WAREHOUSE_METERING_HISTORY fallback |
-| `load_shared_bill_warehouse_delta` | Cost Center Explain This Bill warehouse movement | Fast warehouse hourly mart first, live WAREHOUSE_METERING_HISTORY fallback |
+| `load_shared_bill_warehouse_delta` / `build_shared_bill_warehouse_delta_live_sql` | Cost Center Explain This Bill and Cost & Contract splash warehouse movement | Fast warehouse hourly mart first, shared live WAREHOUSE_METERING_HISTORY fallback shape |
 | `load_shared_warehouse_daily_credits` | Cost Forecast daily credit trend | Live warehouse metering, cached once per company/filter scope |
 | `load_shared_warehouse_daily_credits_by_warehouse` | Cost Center Burn Rate daily warehouse trend | Live warehouse metering with latest observed warehouse size, cached once per company/filter scope |
 | `load_shared_warehouse_credit_anomalies` | Cost & Contract Anomaly Log | Fast warehouse hourly mart first, live WAREHOUSE_METERING_HISTORY fallback only from the explicit anomaly action |
@@ -61,7 +61,9 @@ require the explicit deep-scan action. The Anomaly Log now also shares the
 warehouse credit anomaly loader instead of building a one-off metering query in
 the section. Cost Center Explain This Bill now uses shared bill summary and
 warehouse-delta loaders for current/prior metering rather than embedding another
-copy of the WAREHOUSE_METERING_HISTORY summary SQL in the section.
+copy of the WAREHOUSE_METERING_HISTORY summary SQL in the section. Cost &
+Contract splash keeps its stricter mart/live error reporting while reusing the
+shared live warehouse-delta SQL builder.
 
 Top ACCOUNT_USAGE source families by static reference count:
 
@@ -81,9 +83,10 @@ Top ACCOUNT_USAGE source families by static reference count:
 
 1. Warehouse metering summary:
    First pass done for Usage Overview, Cost Forecast, Burn Rate, Cost Center
-   Explain This Bill, and Cost & Contract Anomaly Log. Remaining consumers:
-   Cost & Contract splash/run-rate helpers and deeper warehouse advisor panels
-   that still need specialized event-level metering.
+   Explain This Bill, Cost & Contract splash warehouse ranking, and Cost &
+   Contract Anomaly Log. Remaining consumers: Cost & Contract run-rate/cockpit
+   helpers and deeper warehouse advisor panels that still need specialized
+   event-level metering.
 
 2. Query history operational rollup:
    First pass done for Usage Overview and Account Health. Remaining consumers:

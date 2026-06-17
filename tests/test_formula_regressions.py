@@ -118,6 +118,7 @@ from sections.cost_contract import (  # noqa: E402
     _build_cost_incident_timeline,
     _build_cost_run_rate_sql,
     _build_cost_splash_cortex_sql,
+    _build_cost_splash_warehouse_delta_sql,
     _build_cost_source_health_board,
     _build_cost_spike_root_cause_board,
     _build_resource_monitor_guardrail_sql,
@@ -1808,6 +1809,26 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("* 2.2", live_sql)
         self.assertIn("COALESCE(U.NAME, TO_VARCHAR(C.USER_ID), '') ILIKE 'TRXS_%'", live_sql)
         self.assertIn("DATEADD('DAY', -60", live_sql)
+
+    def test_cost_splash_warehouse_delta_sql_reuses_shared_live_shape(self):
+        import streamlit as st
+
+        previous_state = dict(st.session_state)
+        try:
+            st.session_state["active_company"] = "ALFA"
+            st.session_state["global_warehouse"] = "BI"
+            mart_sql = _build_cost_splash_warehouse_delta_sql("ALFA", 7, mart=True).upper()
+            live_sql = _build_cost_splash_warehouse_delta_sql("ALFA", 7, mart=False).upper()
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous_state)
+
+        self.assertIn("FACT_WAREHOUSE_HOURLY", mart_sql)
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY", live_sql)
+        self.assertIn("WITH BOUNDS AS", live_sql)
+        self.assertIn("FULL OUTER JOIN", live_sql)
+        self.assertIn("DATEADD('DAY', -14", live_sql)
+        self.assertNotIn("WAREHOUSE_NAME ILIKE '%BI%'", live_sql)
 
     def test_recommendation_mart_sql_uses_preaggregated_facts(self):
         idle_sql = build_mart_recommendation_idle_sql("ALFA").upper()

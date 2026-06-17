@@ -36,6 +36,7 @@ build_cost_efficiency_summary_sql = _lazy_util("build_cost_efficiency_summary_sq
 build_warehouse_efficiency_sql = _lazy_util("build_warehouse_efficiency_sql")
 build_clustering_cost_sql = _lazy_util("build_clustering_cost_sql")
 build_mart_bill_warehouse_delta_sql = _lazy_util("build_mart_bill_warehouse_delta_sql")
+build_shared_bill_warehouse_delta_live_sql = _lazy_util("build_shared_bill_warehouse_delta_live_sql")
 build_mart_cost_cockpit_sql = _lazy_util("build_mart_cost_cockpit_sql")
 build_mart_cost_run_rate_sql = _lazy_util("build_mart_cost_run_rate_sql")
 build_mart_cost_service_lens_sql = _lazy_util("build_mart_cost_service_lens_sql")
@@ -798,47 +799,27 @@ def _build_cost_monitor_service_trend_sql(days: int, credit_price: float | None 
 
 
 def _build_cost_splash_warehouse_delta_sql(company: str, days: int, *, mart: bool = True) -> str:
+    days_int = int(days)
+    current_start = f"DATEADD('DAY', -{days_int}, CURRENT_TIMESTAMP())"
+    current_end = "CURRENT_TIMESTAMP()"
+    prior_start = f"DATEADD('DAY', -{days_int * 2}, CURRENT_TIMESTAMP())"
+    prior_end = f"DATEADD('DAY', -{days_int}, CURRENT_TIMESTAMP())"
     if mart:
         return build_mart_bill_warehouse_delta_sql(
-            f"DATEADD('DAY', -{int(days)}, CURRENT_TIMESTAMP())",
-            "CURRENT_TIMESTAMP()",
-            f"DATEADD('DAY', -{int(days) * 2}, CURRENT_TIMESTAMP())",
-            f"DATEADD('DAY', -{int(days)}, CURRENT_TIMESTAMP())",
+            current_start,
+            current_end,
+            prior_start,
+            prior_end,
             company,
         )
-    table = "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"
-    wh_filter = get_wh_filter_clause("warehouse_name", company)
-    return f"""
-        WITH current_wh AS (
-            SELECT warehouse_name, SUM(COALESCE(credits_used, 0)) AS credits
-            FROM {table}
-            WHERE start_time >= DATEADD('DAY', -{int(days)}, CURRENT_TIMESTAMP())
-              AND start_time < CURRENT_TIMESTAMP()
-              {wh_filter}
-            GROUP BY warehouse_name
-        ),
-        prior_wh AS (
-            SELECT warehouse_name, SUM(COALESCE(credits_used, 0)) AS credits
-            FROM {table}
-            WHERE start_time >= DATEADD('DAY', -{int(days) * 2}, CURRENT_TIMESTAMP())
-              AND start_time < DATEADD('DAY', -{int(days)}, CURRENT_TIMESTAMP())
-              {wh_filter}
-            GROUP BY warehouse_name
-        )
-        SELECT
-            COALESCE(c.warehouse_name, p.warehouse_name) AS warehouse_name,
-            ROUND(COALESCE(c.credits, 0), 4) AS current_credits,
-            ROUND(COALESCE(p.credits, 0), 4) AS prior_credits,
-            ROUND(COALESCE(c.credits, 0) - COALESCE(p.credits, 0), 4) AS credit_delta,
-            CASE
-                WHEN COALESCE(p.credits, 0) = 0 THEN NULL
-                ELSE ROUND(((COALESCE(c.credits, 0) - p.credits) / NULLIF(p.credits, 0)) * 100, 2)
-            END AS pct_delta
-        FROM current_wh c
-        FULL OUTER JOIN prior_wh p ON c.warehouse_name = p.warehouse_name
-        ORDER BY ABS(COALESCE(c.credits, 0) - COALESCE(p.credits, 0)) DESC
-        LIMIT 25
-    """
+    return build_shared_bill_warehouse_delta_live_sql(
+        current_start,
+        current_end,
+        prior_start,
+        prior_end,
+        company=company,
+        include_global_warehouse_filter=False,
+    )
 
 
 def _build_cost_splash_cortex_sql(company: str, days: int, ai_credit_price: float, *, mart: bool = True) -> str:

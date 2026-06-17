@@ -44,34 +44,52 @@ def defer_source_note(*parts: object, section: str | None = None) -> None:
     st.session_state[key] = notes
 
 ALERT_CENTER_PANES = [
-    "Active Alerts",
+    "Command Center",
+    "Cost & Behavior",
+    "Reliability",
+    "Security",
     "Detection Catalog",
-    "Issue Inbox",
-    "Triage Digest",
-    "Alert History",
-    "Delivery & Remediation",
+    "Delivery & Automation",
     "Suppression Windows",
 ]
 
 ALERT_CENTER_PANE_LABELS = {
-    "Active Alerts": "Active",
+    "Command Center": "Command",
+    "Cost & Behavior": "Cost/Cortex",
+    "Reliability": "Reliability",
+    "Security": "Security",
     "Detection Catalog": "Catalog",
-    "Issue Inbox": "Inbox",
-    "Triage Digest": "Digest",
-    "Alert History": "History",
-    "Delivery & Remediation": "Remediation",
+    "Delivery & Automation": "Automation",
     "Suppression Windows": "Suppressions",
 }
 
 ALERT_CENTER_BRIEF_FIRST_VERSION = 3
-ALERT_CENTER_DEFAULT_VIEW = "Active Alerts"
+ALERT_CENTER_DEFAULT_VIEW = "Command Center"
 
 ALERT_CENTER_BRIEF_WORKFLOWS = (
     {
-        "VIEW": "Active Alerts",
-        "BUTTON_LABEL": "Open Active Alerts",
-        "DBA_MOVE": "Start with severity-ranked operational risk and alert routes.",
+        "VIEW": "Command Center",
+        "BUTTON_LABEL": "Open Command Center",
+        "DBA_MOVE": "Start with severity, SLA, route, queue, and notification risk in one place.",
         "WHEN": "First look, shift start, incident review",
+    },
+    {
+        "VIEW": "Cost & Behavior",
+        "BUTTON_LABEL": "Open Cost / Cortex",
+        "DBA_MOVE": "Focus on spend spikes, Cortex growth, warehouse cost behavior, and user-driven spend anomalies.",
+        "WHEN": "Cost anomaly, AI spend review, contract burn concern",
+    },
+    {
+        "VIEW": "Reliability",
+        "BUTTON_LABEL": "Open Reliability",
+        "DBA_MOVE": "Focus on query, task, pipeline, procedure, copy/load, and freshness risk.",
+        "WHEN": "Production incident, workload health, SLA review",
+    },
+    {
+        "VIEW": "Security",
+        "BUTTON_LABEL": "Open Security",
+        "DBA_MOVE": "Focus on login, privilege, role, export, sharing, and access-control risk.",
+        "WHEN": "Security triage, audit review, access anomaly",
     },
     {
         "VIEW": "Detection Catalog",
@@ -80,32 +98,20 @@ ALERT_CENTER_BRIEF_WORKFLOWS = (
         "WHEN": "Coverage review, audit, threshold tuning",
     },
     {
-        "VIEW": "Issue Inbox",
-        "BUTTON_LABEL": "Open Issue Inbox",
-        "DBA_MOVE": "Start with the combined alert and action-queue inbox.",
-        "WHEN": "Morning triage, new alerts, route assignment",
-    },
-    {
-        "VIEW": "Triage Digest",
-        "BUTTON_LABEL": "Open Triage Digest",
-        "DBA_MOVE": "Escalate critical, high, and overdue rows first.",
-        "WHEN": "Shift handoff, incident review, email digest prep",
-    },
-    {
-        "VIEW": "Delivery & Remediation",
-        "BUTTON_LABEL": "Open Remediation",
+        "VIEW": "Delivery & Automation",
+        "BUTTON_LABEL": "Open Automation",
         "DBA_MOVE": "Review delivery status, queue routing, suppression windows, and remediation log evidence.",
         "WHEN": "Notification audit, queue closure, remediation status, suppression cleanup",
     },
 )
 
 ALERT_CENTER_SOURCES_BY_PANE = {
-    "Active Alerts": {"alerts", "action_queue", "delivery_log", "rules"},
+    "Command Center": {"alerts", "action_queue", "delivery_log", "rules"},
+    "Cost & Behavior": {"alerts", "action_queue", "rules"},
+    "Reliability": {"alerts", "action_queue", "rules"},
+    "Security": {"alerts", "action_queue", "rules"},
     "Detection Catalog": set(),
-    "Issue Inbox": {"alerts", "action_queue"},
-    "Triage Digest": {"alerts"},
-    "Alert History": {"alerts"},
-    "Delivery & Remediation": {"alerts", "action_queue", "delivery_log", "rules"},
+    "Delivery & Automation": {"alerts", "action_queue", "delivery_log", "rules"},
     "Suppression Windows": set(),
 }
 
@@ -149,10 +155,27 @@ def _alert_center_sources_for_view(view: str) -> set[str]:
 
 def _normalize_alert_center_view(view: object) -> str:
     normalized = str(view or "")
-    if normalized in {"Alert Brief", "Command Center", "Control Health"}:
+    aliases = {
+        "Active Alerts": "Command Center",
+        "Issue Inbox": "Command Center",
+        "Triage Digest": "Command Center",
+        "Alert History": "Command Center",
+        "Alert Brief": "Command Center",
+        "Control Health": "Command Center",
+        "Cost": "Cost & Behavior",
+        "Spend": "Cost & Behavior",
+        "Cost / Cortex": "Cost & Behavior",
+        "Cortex": "Cost & Behavior",
+        "Workload": "Reliability",
+        "Pipeline": "Reliability",
+        "Email Delivery": "Delivery & Automation",
+        "Action Queue Routing": "Delivery & Automation",
+        "Delivery & Remediation": "Delivery & Automation",
+    }
+    if normalized in aliases:
+        return aliases[normalized]
+    if normalized in {"Alert Brief", "Control Health"}:
         return ALERT_CENTER_DEFAULT_VIEW
-    if normalized in {"Email Delivery", "Action Queue Routing"}:
-        return "Delivery & Remediation"
     return normalized if normalized in ALERT_CENTER_PANES else ALERT_CENTER_DEFAULT_VIEW
 
 
@@ -709,7 +732,7 @@ def _alert_center_action_brief(
                 "state": str(row.get("STATE") or "Blocked"),
                 "headline": "Restore alert control telemetry.",
                 "detail": f"{control}: {next_action or evidence}".strip(": "),
-                "primary_label": "Open Active Alerts",
+                "primary_label": "Open Command Center",
                 "target": ALERT_CENTER_DEFAULT_VIEW,
             }
 
@@ -718,24 +741,24 @@ def _alert_center_action_brief(
             "state": "Escalate",
             "headline": "Escalate overdue alert rows first.",
             "detail": f"{overdue:,} overdue alert(s); {critical_high:,} critical/high open alert(s).",
-            "primary_label": "Open Digest",
-            "target": "Triage Digest",
+            "primary_label": "Open Command Center",
+            "target": ALERT_CENTER_DEFAULT_VIEW,
         }
     if critical_high > 0:
         return {
             "state": "Priority",
             "headline": "Review critical and high alert rows.",
             "detail": f"{critical_high:,} critical/high open alert(s) across {open_alerts:,} open alert(s).",
-            "primary_label": "Open Digest",
-            "target": "Triage Digest",
+            "primary_label": "Open Command Center",
+            "target": ALERT_CENTER_DEFAULT_VIEW,
         }
     if open_queue > 0:
         return {
             "state": "Queue",
             "headline": "Work open action queue rows.",
             "detail": f"{open_queue:,} open queue row(s) need route, ticket, due date, or closure status.",
-            "primary_label": "Open Remediation",
-            "target": "Delivery & Remediation",
+            "primary_label": "Open Automation",
+            "target": "Delivery & Automation",
         }
     if email_ready > email_logged:
         return {
@@ -743,22 +766,22 @@ def _alert_center_action_brief(
             "headline": "Log alert delivery status.",
             "detail": f"{email_ready:,} email-ready alert(s); {email_logged:,} delivery row(s) logged in this scope.",
             "primary_label": "Open Delivery",
-            "target": "Delivery & Remediation",
+            "target": "Delivery & Automation",
         }
     if open_issues > 0:
         return {
             "state": "Triage",
             "headline": "Review the consolidated issue inbox.",
             "detail": f"{open_issues:,} issue row(s) are loaded from alert history and action queue telemetry.",
-            "primary_label": "Open Inbox",
-            "target": "Issue Inbox",
+            "primary_label": "Open Command Center",
+            "target": ALERT_CENTER_DEFAULT_VIEW,
         }
     return {
         "state": "Clear",
         "headline": "No immediate Alert Center move.",
         "detail": "Keep the selected window loaded for delivery status, routing, and rule telemetry when new alerts arrive.",
-        "primary_label": "Open Inbox",
-        "target": "Issue Inbox",
+        "primary_label": "Open Command Center",
+        "target": ALERT_CENTER_DEFAULT_VIEW,
     }
 
 
@@ -932,7 +955,7 @@ def _render_alert_center_metric_rows(
             ("Scope", "Company"),
             ("Window", "Selected"),
             ("Telemetry", "Load view"),
-            ("Route", "Issue Inbox"),
+            ("Route", "Command"),
         ))
         return
     render_shell_kpi_row((
@@ -1093,6 +1116,91 @@ def _alert_command_lanes(
     ]
 
 
+def _render_alert_command_lane_board(lanes: list[dict[str, str]]) -> None:
+    pd = _pd()
+    lane_rows = pd.DataFrame(lanes)
+    if lane_rows.empty:
+        return
+    _render_priority_dataframe(
+        lane_rows,
+        title="Alert operating lanes",
+        priority_columns=["label", "value", "state", "detail"],
+        raw_label="All alert operating lanes",
+        height=260,
+        max_rows=8,
+    )
+
+
+def _render_alert_domain_workbench(
+    active_view: str,
+    alerts: pd.DataFrame,
+    queue: pd.DataFrame,
+    rules: pd.DataFrame,
+) -> None:
+    from utils.alerts import build_section_alert_signal_board
+
+    pd = _pd()
+    title_map = {
+        "Cost & Behavior": "Cost, Cortex, and Behavior Alerts",
+        "Reliability": "Reliability Alerts",
+        "Security": "Security Alerts",
+    }
+    st.subheader(title_map.get(active_view, f"{active_view} Alerts"))
+    board = build_section_alert_signal_board(alerts, queue, section=active_view, limit=30)
+    if board.empty:
+        st.success(f"No loaded {active_view.lower()} alert rows are open in this scope.")
+    else:
+        severity = board.get("SEVERITY", pd.Series(dtype=str)).fillna("").astype(str)
+        sla = board.get("SLA_STATE", pd.Series(dtype=str)).fillna("").astype(str)
+        focus = board.get("SECTION_FOCUS", pd.Series(dtype=str)).fillna("").astype(str)
+        render_shell_snapshot((
+            ("Open Signals", f"{len(board):,}"),
+            ("Critical / High", f"{int(severity.isin(['Critical', 'High']).sum()):,}"),
+            ("Breached SLA", f"{int(sla.isin(['Breached', 'Overdue']).sum()):,}"),
+            ("Spend / Cortex", f"{int(focus.isin(['Cortex spend', 'Spend spike', 'Cost movement']).sum()):,}"),
+        ))
+        _render_priority_dataframe(
+            board,
+            title=f"{active_view} alert workbench",
+            priority_columns=[
+                "SECTION_FOCUS", "PRIORITY", "SEVERITY", "SLA_STATE", "CATEGORY",
+                "SIGNAL", "ENTITY", "OWNER", "ROUTE", "FIRST_RESPONSE",
+                "RECOMMENDED_ACTION", "IMPACT_ESTIMATE", "SOURCE_FRESHNESS",
+                "REMEDIATION_MODE", "QUEUE_STATE", "TICKET_ID",
+            ],
+            sort_by=["PRIORITY"],
+            ascending=True,
+            raw_label=f"All {active_view} alert rows",
+            height=420,
+            max_rows=15,
+        )
+
+    if rules is not None and not rules.empty:
+        rule_text = pd.Series([""] * len(rules), index=rules.index, dtype=str)
+        for column in ["CATEGORY", "ALERT_TYPE", "RULE_ID", "ROUTE", "RUNBOOK"]:
+            if column in rules.columns:
+                rule_text = rule_text + " " + rules[column].fillna("").astype(str).str.upper()
+        token_map = {
+            "Cost & Behavior": "COST|SPEND|CORTEX|WAREHOUSE|OPTIMIZATION|CONTRACT|CHARGEBACK",
+            "Reliability": "QUERY|TASK|PIPELINE|PROCEDURE|COPY|LOAD|PERFORMANCE|WAREHOUSE",
+            "Security": "SECURITY|LOGIN|GRANT|PRIVILEGE|SHARE|ACCESS|EXPORT",
+        }
+        token_pattern = token_map.get(active_view, "")
+        visible_rules = rules[rule_text.str.contains(token_pattern, regex=True)] if token_pattern else pd.DataFrame()
+        if not visible_rules.empty:
+            _render_priority_dataframe(
+                visible_rules,
+                title=f"{active_view} rule coverage",
+                priority_columns=[
+                    "RULE_ID", "CATEGORY", "ALERT_TYPE", "DEFAULT_SEVERITY",
+                    "SLA_HOURS", "OWNER", "ROUTE", "RUNBOOK", "IS_ACTIVE",
+                ],
+                raw_label=f"All {active_view} alert rules",
+                height=260,
+                max_rows=10,
+            )
+
+
 def _alert_center_exception_rows(
     *,
     alerts: pd.DataFrame,
@@ -1111,7 +1219,7 @@ def _alert_center_exception_rows(
         state: str,
         next_action: str,
         owner: str = "DBA On-Call",
-        route: str = "Issue Inbox",
+        route: str = ALERT_CENTER_DEFAULT_VIEW,
     ) -> None:
         if count <= 0:
             return
@@ -1134,7 +1242,7 @@ def _alert_center_exception_rows(
             int((severity.isin(["Critical", "High"]) & open_alerts).sum()),
             "Escalate",
             "Review route, SLA state, and delivery status for critical/high alerts.",
-            route="Triage Digest",
+            route=ALERT_CENTER_DEFAULT_VIEW,
         )
         if "SLA_STATE" in alerts.columns:
             sla_state = alerts["SLA_STATE"].fillna("").astype(str)
@@ -1144,7 +1252,7 @@ def _alert_center_exception_rows(
                 int((sla_state.eq("Overdue") & open_alerts).sum()),
                 "Overdue",
                 "Send overdue alert rows through the digest and confirm route response.",
-                route="Triage Digest",
+                route=ALERT_CENTER_DEFAULT_VIEW,
             )
         owner = alerts.get("OWNER", pd.Series(index=alerts.index, dtype=str)).fillna("").astype(str).str.upper()
         add(
@@ -1165,7 +1273,7 @@ def _alert_center_exception_rows(
             max(0, ready_count - logged_count),
             "Log delivery",
             "Log digest/email delivery status for ready alerts.",
-            route="Delivery & Remediation",
+            route="Delivery & Automation",
         )
 
     if queue is not None and not queue.empty:
@@ -1178,7 +1286,7 @@ def _alert_center_exception_rows(
                 "Work queue",
                 "Confirm route, due date, ticket, and closure status on open queue rows.",
                 owner="DBA Lead",
-                route="Delivery & Remediation",
+                route="Delivery & Automation",
             )
 
     if readiness_rows is not None and not readiness_rows.empty and "STATE" in readiness_rows.columns:
@@ -1201,7 +1309,7 @@ def _alert_center_exception_rows(
             int(severity.isin(["Critical", "High"]).sum()),
             "Review first",
             "Open issue detail only when the exception strip needs row-level detail.",
-            route="Issue Inbox",
+            route=ALERT_CENTER_DEFAULT_VIEW,
         )
 
     if delivery_log is not None and not delivery_log.empty:
@@ -1214,7 +1322,7 @@ def _alert_center_exception_rows(
             "Retry delivery",
             "Review failed notification attempts and route to the email integration contact.",
             owner="DBA On-Call",
-            route="Delivery & Remediation",
+            route="Delivery & Automation",
         )
 
     result = pd.DataFrame(rows)
@@ -1504,7 +1612,7 @@ def _render_active_alerts(
     )
 
     pd = _pd()
-    st.subheader("Active Alert Queue")
+    st.subheader("Alert Command Center")
     summary = build_alert_command_center_summary(alerts)
     metrics = summary.get("metrics", pd.DataFrame())
     if isinstance(metrics, pd.DataFrame) and not metrics.empty:
@@ -1807,28 +1915,28 @@ def _render_alert_notification_remediation(
     from utils.alerts import build_alert_remediation_contract
 
     pd = _pd()
-    st.subheader("Delivery & Remediation")
+    st.subheader("Delivery & Automation")
     controls = [
         {
             "CONTROL": "Alert inbox",
             "STATE": "Ready",
             "EVIDENCE": f"{len(alerts):,} alert row(s) loaded.",
             "NEXT_ACTION": "Use alert status, acknowledgement, suppression, and action-queue routing from Alert Center.",
-            "ROUTE": "Active Alerts",
+            "ROUTE": ALERT_CENTER_DEFAULT_VIEW,
         },
         {
             "CONTROL": "Delivery status",
             "STATE": "Ready" if not delivery_log.empty else "Review",
             "EVIDENCE": f"{len(delivery_log):,} delivery audit row(s) loaded.",
             "NEXT_ACTION": "Log delivery status for open critical/high alerts.",
-            "ROUTE": "Delivery & Remediation",
+            "ROUTE": "Delivery & Automation",
         },
         {
             "CONTROL": "Action queue handoff",
             "STATE": "Ready" if not queue.empty else "Review",
             "EVIDENCE": f"{len(queue):,} action queue row(s) loaded.",
             "NEXT_ACTION": "Route open alerts to queue rows and confirm ticket, due date, and closure state.",
-            "ROUTE": "Delivery & Remediation",
+            "ROUTE": "Delivery & Automation",
         },
         {
             "CONTROL": "Rule catalog",
@@ -1944,6 +2052,7 @@ def render() -> None:
             open_queue=0,
             loaded=False,
         )
+        _render_alert_command_lane_board(_alert_command_lanes(active_view=active_view, required_sources=required_sources))
         st.info(f"Load {active_view} when ready.")
         defer_source_note(f"Inputs on load: {_alert_center_source_summary(required_sources)}")
         return
@@ -1961,6 +2070,7 @@ def render() -> None:
             open_queue=0,
             loaded=False,
         )
+        _render_alert_command_lane_board(_alert_command_lanes(active_view=active_view, required_sources=required_sources))
         st.warning("Company, environment, or window changed after this load. Reload before triaging alerts.")
         defer_source_note(f"Loaded scope: {loaded_scope or 'none'} | Current scope: {expected_scope}")
         return
@@ -1978,6 +2088,7 @@ def render() -> None:
             open_queue=0,
             loaded=False,
         )
+        _render_alert_command_lane_board(_alert_command_lanes(active_view=active_view, required_sources=required_sources))
         st.info(f"Load {active_view} to fetch missing input(s).")
         defer_source_note(f"Missing Alert Center input(s): {_alert_center_source_summary(set(missing_sources))}")
         return
@@ -2057,12 +2168,26 @@ def render() -> None:
         email_logged=email_logged_count,
         open_queue=open_queue_count,
     )
+    _render_alert_command_lane_board(
+        _alert_command_lanes(
+            active_view=active_view,
+            required_sources=required_sources,
+            alerts=alerts,
+            queue=queue,
+            issues=issues,
+            delivery_log=delivery_log,
+            loaded=True,
+        )
+    )
     _render_alert_center_exception_strip(exception_rows)
 
     if active_view == ALERT_CENTER_DEFAULT_VIEW:
         _render_active_alerts(alerts, queue, delivery_log, rules)
 
-    elif active_view == "Delivery & Remediation":
+    elif active_view in {"Cost & Behavior", "Reliability", "Security"}:
+        _render_alert_domain_workbench(active_view, alerts, queue, rules)
+
+    elif active_view == "Delivery & Automation":
         _render_alert_notification_remediation(alerts, queue, delivery_log, rules, company)
 
     elif active_view == "Issue Inbox":

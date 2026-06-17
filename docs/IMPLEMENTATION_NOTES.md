@@ -105,6 +105,36 @@ outside the Streamlit app UI.
 - Procedure cost is estimated unless procedure facts or `ROOT_QUERY_ID`
   child-query attribution are available; the UI should label that confidence.
 
+## 2026-06-17 - CLAUDE-UI Alert/SP Review
+
+- `docs/CLAUDE_UI_ALERT_PROCEDURE_REVIEW.md` inventories the latest CLAUDE-UI
+  stored procedure and alert changes and maps them to OVERWATCH coverage.
+- `docs/ALERTING_AUTOMATION_ROADMAP.md` defines the broader alert taxonomy,
+  cost/system/user-behavior anomaly plan, Snowflake-native alerting boundaries,
+  and future guarded remediation model.
+- Port detection ideas, not the smaller CLAUDE-UI alert framework. OVERWATCH
+  should keep its alert lifecycle, action queue, remediation log, rule catalog,
+  and mart-first DBA monitoring model.
+- Before adding more scheduled detections, decide whether new alert events write
+  directly to `ALERT_EVENTS` or continue through `OVERWATCH_ALERTS` plus
+  materialization for compatibility.
+
+## 2026-06-17 - Alert Center Domain Lanes
+
+- Alert Center is now organized around `Command Center`, `Cost & Behavior`,
+  `Reliability`, `Security`, `Detection Catalog`, `Delivery & Automation`, and
+  `Suppression Windows`. Older saved view names normalize into the new command
+  or automation views.
+- Cost/Cortex, workload reliability, security, and executive sections can show
+  loaded Alert Center signals from `st.session_state["alert_center_data"]`.
+  These cross-section alert strips are read-only and do not trigger additional
+  Snowflake queries.
+- Cortex spend is now first-class in alert setup: Python fallback rules,
+  command-center threshold seeds, the Snowflake setup seed, and the detection
+  catalog include Cortex spend spike/quota drift coverage.
+- Keep future alert UI additions domain-focused. Prefer a single filtered
+  evidence workbench over adding more inbox/digest/history-style panes.
+
 ## 2026-06-17 - Production Startup Cleanup
 
 - App startup should not use development hot-reload guards for config, utils,

@@ -63,6 +63,7 @@ add_cost_companion_columns = _lazy_util("add_cost_companion_columns")
 apply_operator_status_labels = _lazy_util("apply_operator_status_labels")
 prioritize_context_columns = _lazy_util("prioritize_context_columns")
 render_priority_dataframe = _lazy_util("render_priority_dataframe")
+build_loaded_section_alert_signal_board = _lazy_util("build_loaded_section_alert_signal_board")
 
 
 def build_cost_monitoring_mart_sql() -> str:
@@ -4758,6 +4759,37 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
                 st.rerun()
 
 
+def _render_loaded_cost_alert_context() -> None:
+    board = build_loaded_section_alert_signal_board(st.session_state, section="Cost & Contract", limit=8)
+    if board.empty:
+        return
+    focus = board.get("SECTION_FOCUS", pd.Series(dtype=str)).fillna("").astype(str)
+    severity = board.get("SEVERITY", pd.Series(dtype=str)).fillna("").astype(str)
+    sla = board.get("SLA_STATE", pd.Series(dtype=str)).fillna("").astype(str)
+    st.markdown("**Loaded Cost and Cortex Alerts**")
+    render_shell_snapshot((
+        ("Signals", f"{len(board):,}"),
+        ("Cortex / Spend", f"{int(focus.isin(['Cortex spend', 'Spend spike', 'Cost movement']).sum()):,}"),
+        ("Critical / High", f"{int(severity.isin(['Critical', 'High']).sum()):,}"),
+        ("Breached", f"{int(sla.isin(['Breached', 'Overdue']).sum()):,}"),
+    ))
+    render_priority_dataframe(
+        board,
+        title="Loaded cost and Cortex alert context",
+        priority_columns=[
+            "SECTION_FOCUS", "SEVERITY", "SLA_STATE", "CATEGORY", "SIGNAL",
+            "ENTITY", "OWNER", "FIRST_RESPONSE", "RECOMMENDED_ACTION",
+            "IMPACT_ESTIMATE", "QUEUE_STATE", "TICKET_ID",
+        ],
+        sort_by=["PRIORITY"],
+        ascending=True,
+        raw_label="All loaded cost/Cortex alert rows",
+        height=260,
+        max_rows=6,
+    )
+    defer_source_note("Loaded Cost and Cortex Alerts reuse Alert Center data and do not run a separate Snowflake query.")
+
+
 def render() -> None:
     company = get_active_company()
     credit_price = safe_float(get_credit_price()) or 3.68
@@ -4778,6 +4810,7 @@ def render() -> None:
     if st.session_state.get("exceptions_only_mode"):
         st.warning("Landing default: prioritize usage deltas, open action queue items, and run-rate risk.")
     _render_cost_watch_floor(company, credit_price)
+    _render_loaded_cost_alert_context()
 
     workflow = render_workflow_selector(
         "Cost workflow",

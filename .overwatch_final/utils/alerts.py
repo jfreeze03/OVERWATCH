@@ -78,6 +78,16 @@ DEFAULT_ALERT_RULES = [
         "RUNBOOK": "Explain the usage movement, identify route-backed drivers, and route cost-control actions.",
     },
     {
+        "RULE_ID": "CORTEX_SPEND_AND_QUOTA",
+        "CATEGORY": "Cost Control",
+        "ALERT_TYPE": "Cortex Spend And Quota",
+        "DEFAULT_SEVERITY": "Medium",
+        "SLA_HOURS": 24,
+        "OWNER": "DBA / AI cost route",
+        "ROUTE": "Cost & Contract",
+        "RUNBOOK": "Review shared AI spend threshold, per-user quota, first/last usage, and access expansion before enforcing controls.",
+    },
+    {
         "RULE_ID": "QUERY_HIGH_ERROR_RATE",
         "CATEGORY": "Reliability",
         "ALERT_TYPE": "High Query Error Rate",
@@ -2338,6 +2348,17 @@ def build_alert_threshold_seed_rows() -> list[dict[str, object]]:
             "NOTIFICATION_CHANNEL": "COST",
         },
         {
+            "THRESHOLD_KEY": "COST_CORTEX_SPEND_SPIKE",
+            "CATEGORY": "Cost",
+            "SIGNAL_NAME": "Cortex spend spike",
+            "SEVERITY": "High",
+            "THRESHOLD_VALUE": 25,
+            "BASELINE_WINDOW_DAYS": 30,
+            "CURRENT_WINDOW_MINUTES": 10080,
+            "OWNER": "DBA / AI cost route",
+            "NOTIFICATION_CHANNEL": "COST",
+        },
+        {
             "THRESHOLD_KEY": "PERF_QUEUE_PRESSURE",
             "CATEGORY": "Performance",
             "SIGNAL_NAME": "Warehouse queue pressure",
@@ -2990,6 +3011,45 @@ LIMIT 100;
 """.strip(),
         },
         {
+            "CATEGORY": "Cost",
+            "SIGNAL": "Cortex spend spike and quota drift",
+            "SEVERITY": "High",
+            "TELEMETRY": "FACT_CORTEX_DAILY plus Cortex ACCOUNT_USAGE views",
+            "FRESHNESS": "Cortex facts are task-loaded; raw Cortex ACCOUNT_USAGE views can lag or be unavailable by feature",
+            "OWNER": "DBA / AI cost route",
+            "WHY_THIS_MATTERS": "Cortex usage can grow from user behavior, shared advice, or new features before normal warehouse cost controls catch it.",
+            "RECOMMENDED_ACTION": "Review top Cortex users, request sources, 7-day cost, quota settings, grants, and whether usage belongs to ALFA or Trexis.",
+            "SQL": f"""
+WITH recent AS (
+  SELECT USER_ID, SOURCE, SUM(EST_COST_USD) AS CURRENT_VALUE, SUM(REQUEST_COUNT) AS REQUESTS
+  FROM FACT_CORTEX_DAILY
+  WHERE USAGE_DATE >= DATEADD('day', -7, CURRENT_DATE())
+  GROUP BY 1,2
+),
+baseline AS (
+  SELECT USER_ID, SOURCE, AVG(DAILY_COST_USD) AS BASELINE_VALUE
+  FROM (
+    SELECT USER_ID, SOURCE, USAGE_DATE, SUM(EST_COST_USD) AS DAILY_COST_USD
+    FROM FACT_CORTEX_DAILY
+    WHERE USAGE_DATE >= DATEADD('day', -37, CURRENT_DATE())
+      AND USAGE_DATE < DATEADD('day', -7, CURRENT_DATE())
+    GROUP BY 1,2,3
+  )
+  GROUP BY 1,2
+)
+SELECT 'CORTEX_SPEND_AND_QUOTA' AS ALERT_KEY, 'Cost' AS CATEGORY, 'High' AS SEVERITY,
+       COALESCE(recent.USER_ID, 'CORTEX') AS ENTITY_NAME,
+       recent.SOURCE, recent.CURRENT_VALUE, COALESCE(baseline.BASELINE_VALUE, 0) AS BASELINE_VALUE,
+       recent.REQUESTS,
+       'Review Cortex user/source spend, quota settings, grants, and route before enforcing controls.' AS RECOMMENDED_ACTION
+FROM recent
+LEFT JOIN baseline USING (USER_ID, SOURCE)
+WHERE recent.CURRENT_VALUE > GREATEST(25, COALESCE(baseline.BASELINE_VALUE, 0) * 1.5)
+ORDER BY recent.CURRENT_VALUE DESC
+LIMIT 100;
+""".strip(),
+        },
+        {
             "CATEGORY": "Performance",
             "SIGNAL": "Queue, spill, blocking, and long-running query pressure",
             "SEVERITY": "High",
@@ -3538,6 +3598,190 @@ def build_alert_incident_action_board(
     board = board.sort_values(["_SORT_SCORE", "_SEVERITY_RANK", "_EVENT_TS"], ascending=[False, True, False]).head(max(1, int(limit or 50))).copy()
     board.insert(0, "PRIORITY", range(1, len(board) + 1))
     return board[columns]
+
+
+_SECTION_ALERT_TOKENS = {
+    "COST": (
+        "COST",
+        "SPEND",
+        "SPEND SPIKE",
+        "CREDIT",
+        "CORTEX",
+        "WAREHOUSE",
+        "METERING",
+        "BUDGET",
+        "CONTRACT",
+        "CHARGEBACK",
+        "FORECAST",
+        "RUN RATE",
+        "OPTIMIZATION",
+        "STORAGE",
+    ),
+    "WORKLOAD": (
+        "WORKLOAD",
+        "QUERY",
+        "PERFORMANCE",
+        "QUEUE",
+        "SPILL",
+        "LOCK",
+        "TASK",
+        "PIPELINE",
+        "PROCEDURE",
+        "COPY",
+        "LOAD",
+        "SNOWPIPE",
+        "DYNAMIC TABLE",
+        "FAILURE",
+        "SLA",
+    ),
+    "SECURITY": (
+        "SECURITY",
+        "LOGIN",
+        "MFA",
+        "GRANT",
+        "PRIVILEGE",
+        "ROLE",
+        "EXPORT",
+        "SHARE",
+        "ACCESS",
+        "EXFILTRATION",
+        "POLICY",
+        "USER",
+    ),
+}
+
+
+def _section_alert_domain(section: str) -> str:
+    text = str(section or "").strip().upper()
+    if any(token in text for token in ("COST", "CONTRACT", "CORTEX", "SPEND", "BEHAVIOR", "FORECAST")):
+        return "COST"
+    if any(token in text for token in ("WORKLOAD", "QUERY", "TASK", "PROCEDURE", "PIPELINE", "RELIABILITY")):
+        return "WORKLOAD"
+    if any(token in text for token in ("SECURITY", "ACCESS", "PRIVILEGE", "SHARE")):
+        return "SECURITY"
+    if any(token in text for token in ("EXECUTIVE", "LEADERSHIP", "COMMAND")):
+        return "EXECUTIVE"
+    return "EXECUTIVE"
+
+
+def _section_alert_focus(text: str) -> str:
+    key = str(text or "").upper()
+    if "CORTEX" in key or " AI " in f" {key} ":
+        return "Cortex spend"
+    if "SPEND SPIKE" in key or ("SPEND" in key and "SPIKE" in key):
+        return "Spend spike"
+    if any(token in key for token in ("COST", "CREDIT", "METERING", "CHARGEBACK", "CONTRACT", "BUDGET", "FORECAST")):
+        return "Cost movement"
+    if any(token in key for token in ("LOGIN", "MFA", "GRANT", "PRIVILEGE", "ACCESS", "SHARE", "EXPORT", "EXFILTRATION")):
+        return "Security access"
+    if any(token in key for token in ("TASK", "PIPELINE", "PROCEDURE", "COPY", "LOAD", "DYNAMIC TABLE", "SNOWPIPE")):
+        return "Pipeline reliability"
+    if any(token in key for token in ("QUERY", "QUEUE", "SPILL", "LOCK", "PERFORMANCE", "WAREHOUSE")):
+        return "Query performance"
+    return "Operational alert"
+
+
+def build_section_alert_signal_board(
+    alerts: pd.DataFrame,
+    queue: pd.DataFrame | None = None,
+    *,
+    section: str,
+    limit: int = 8,
+) -> pd.DataFrame:
+    """Return loaded Alert Center rows relevant to a specific app section.
+
+    This intentionally uses already-loaded alert/action data. Section pages should
+    not trigger separate ACCOUNT_USAGE scans just to show alert context.
+    """
+    output_columns = [
+        "SECTION_FOCUS",
+        "PRIORITY",
+        "SEVERITY",
+        "SLA_STATE",
+        "STATUS",
+        "CATEGORY",
+        "SIGNAL",
+        "ENTITY",
+        "OWNER",
+        "ROUTE",
+        "FIRST_RESPONSE",
+        "RECOMMENDED_ACTION",
+        "IMPACT_ESTIMATE",
+        "PROOF_QUERY",
+        "SOURCE_FRESHNESS",
+        "REMEDIATION_MODE",
+        "QUEUE_STATE",
+        "TICKET_ID",
+    ]
+    incident_board = build_alert_incident_action_board(alerts, queue, limit=500)
+    if incident_board.empty:
+        return pd.DataFrame(columns=output_columns)
+
+    text_columns = [
+        "CATEGORY",
+        "SIGNAL",
+        "ENTITY",
+        "OWNER",
+        "ROUTE",
+        "FIRST_RESPONSE",
+        "RECOMMENDED_ACTION",
+        "IMPACT_ESTIMATE",
+        "PROOF_QUERY",
+        "BUSINESS_IMPACT",
+    ]
+    search_text = pd.Series([""] * len(incident_board), index=incident_board.index, dtype=str)
+    for column in text_columns:
+        if column in incident_board.columns:
+            search_text = search_text + " " + incident_board[column].fillna("").astype(str).str.upper()
+
+    domain = _section_alert_domain(section)
+    if domain == "EXECUTIVE":
+        severity = incident_board.get("SEVERITY", pd.Series(index=incident_board.index, dtype=str)).fillna("").astype(str)
+        sla_state = incident_board.get("SLA_STATE", pd.Series(index=incident_board.index, dtype=str)).fillna("").astype(str).str.upper()
+        mask = (
+            severity.isin(["Critical", "High"])
+            | sla_state.isin(["BREACHED", "DUE <2H", "OVERDUE", "DUE SOON"])
+            | search_text.str.contains("COST|SPEND|CORTEX|SECURITY|PRIVILEGE|TASK|PIPELINE", regex=True)
+        )
+    else:
+        tokens = _SECTION_ALERT_TOKENS.get(domain, ())
+        mask = pd.Series(False, index=incident_board.index)
+        for token in tokens:
+            mask = mask | search_text.str.contains(re.escape(token), regex=True)
+
+    visible = incident_board[mask].copy()
+    if visible.empty:
+        return pd.DataFrame(columns=output_columns)
+
+    visible["SECTION_FOCUS"] = search_text.loc[visible.index].apply(_section_alert_focus)
+    priority = pd.to_numeric(visible.get("PRIORITY", pd.Series(range(1, len(visible) + 1), index=visible.index)), errors="coerce").fillna(999)
+    focus_boost = visible["SECTION_FOCUS"].isin(["Cortex spend", "Spend spike"]).map({True: -0.25, False: 0.0})
+    visible["_SECTION_SORT"] = priority + focus_boost
+    visible = visible.sort_values(["_SECTION_SORT", "SEVERITY", "SLA_STATE"], ascending=[True, True, True]).head(max(1, int(limit or 8)))
+    for column in output_columns:
+        if column not in visible.columns:
+            visible[column] = ""
+    return visible[output_columns].reset_index(drop=True)
+
+
+def build_loaded_section_alert_signal_board(
+    state: Any,
+    *,
+    section: str,
+    limit: int = 8,
+) -> pd.DataFrame:
+    """Build a section alert board from ``st.session_state`` without live reads."""
+    try:
+        data = state.get("alert_center_data")
+    except AttributeError:
+        data = None
+    if not isinstance(data, dict):
+        return pd.DataFrame()
+    alerts = data.get("alerts")
+    queue = data.get("action_queue")
+    alerts_df = alerts if isinstance(alerts, pd.DataFrame) else pd.DataFrame()
+    queue_df = queue if isinstance(queue, pd.DataFrame) else pd.DataFrame()
+    return build_section_alert_signal_board(alerts_df, queue_df, section=section, limit=limit)
 
 
 def build_alert_owner_workload_board(

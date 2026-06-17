@@ -35,6 +35,7 @@ make_action_id = _lazy_util("make_action_id")
 render_priority_dataframe = _lazy_util("render_priority_dataframe")
 render_mode_selector = _lazy_util("render_mode_selector")
 render_workflow_selector = _lazy_util("render_workflow_selector")
+build_loaded_section_alert_signal_board = _lazy_util("build_loaded_section_alert_signal_board")
 day_window_selectbox = _lazy_util("day_window_selectbox")
 resolve_owner_context = _lazy_util("resolve_owner_context")
 run_query = _lazy_util("run_query")
@@ -103,6 +104,27 @@ def render_workflow_guide(summary: str, rows) -> None:
     defer_section_note(summary)
     for trigger, action in rows:
         defer_section_note(f"{trigger}: {action}")
+
+
+def _render_loaded_security_alert_context() -> None:
+    board = build_loaded_section_alert_signal_board(st.session_state, section="Security Monitoring", limit=8)
+    if board.empty:
+        return
+    st.markdown("**Loaded Security Alerts**")
+    render_priority_dataframe(
+        board,
+        title="Loaded security alert context",
+        priority_columns=[
+            "SECTION_FOCUS", "SEVERITY", "SLA_STATE", "CATEGORY", "SIGNAL",
+            "ENTITY", "OWNER", "FIRST_RESPONSE", "RECOMMENDED_ACTION",
+            "IMPACT_ESTIMATE", "QUEUE_STATE", "TICKET_ID",
+        ],
+        sort_by=["PRIORITY"],
+        ascending=True,
+        raw_label="All loaded security alert rows",
+        height=260,
+        max_rows=6,
+    )
 
 
 def render_workflow_module(workflow: str, workflow_modules: dict[str, str]) -> None:
@@ -2550,6 +2572,7 @@ def render() -> None:
             ("External consumers or shared data exposure", "Use Data sharing exposure."),
         ],
     )
+    _render_loaded_security_alert_context()
 
     days = day_window_selectbox(
         "Security window",

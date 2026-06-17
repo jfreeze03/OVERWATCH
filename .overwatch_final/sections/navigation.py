@@ -38,7 +38,7 @@ def request_section_workspace(section: str) -> None:
     elif target == "DBA Control Room":
         st.session_state["dba_control_room_active_view"] = "Fast Watch"
     elif target == "Alert Center":
-        st.session_state["alert_center_active_view"] = "Active Alerts"
+        st.session_state["alert_center_active_view"] = "Command Center"
     elif target == "Cost & Contract":
         st.session_state["cost_contract_workflow"] = "Usage attribution and run-rate"
     elif target == "Workload Operations":

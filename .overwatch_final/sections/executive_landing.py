@@ -40,6 +40,7 @@ load_action_queue = _lazy_util("load_action_queue")
 load_alert_history = _lazy_util("load_alert_history")
 mart_object_name = _lazy_util("mart_object_name")
 render_priority_dataframe = _lazy_util("render_priority_dataframe")
+build_loaded_section_alert_signal_board = _lazy_util("build_loaded_section_alert_signal_board")
 run_query = _lazy_util("run_query")
 safe_identifier = _lazy_util("safe_identifier")
 sql_literal = _lazy_util("sql_literal")
@@ -2674,6 +2675,25 @@ def _nav_button(
         st.rerun()
 
 
+def _render_loaded_executive_alert_context() -> None:
+    board = build_loaded_section_alert_signal_board(st.session_state, section="Executive Landing", limit=8)
+    if board.empty:
+        return
+    render_priority_dataframe(
+        board,
+        title="Loaded alert signals affecting the executive summary",
+        priority_columns=[
+            "SECTION_FOCUS", "SEVERITY", "SLA_STATE", "CATEGORY", "SIGNAL",
+            "ENTITY", "OWNER", "ROUTE", "FIRST_RESPONSE", "RECOMMENDED_ACTION",
+        ],
+        sort_by=["PRIORITY"],
+        ascending=True,
+        raw_label="All loaded executive alert context rows",
+        height=260,
+        max_rows=6,
+    )
+
+
 def render() -> None:
     company = _active_company()
     environment = _active_environment()
@@ -2754,6 +2774,7 @@ def render() -> None:
         credit_price=credit_price,
     )
     load = _render_executive_action_brief(summary, int(days), show_strip=False)
+    _render_loaded_executive_alert_context()
 
     if load:
         if _load_executive_snapshot(company, environment, int(days)):
@@ -2802,9 +2823,9 @@ def render() -> None:
     n1, n2, n3, n4 = st.columns(4)
     with n1:
         _nav_button(
-            "Active Alerts",
+            "Alert Command",
             "Alert Center",
-            state_updates={"alert_center_active_view": "Active Alerts"},
+            state_updates={"alert_center_active_view": "Command Center"},
         )
     with n2:
         _nav_button("Cost Drivers", "Cost & Contract", workflow_key="cost_contract_workflow", workflow="Usage attribution and run-rate")

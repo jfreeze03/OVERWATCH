@@ -10,6 +10,8 @@ from sections.base import lazy_util as _lazy_util
 from utils.section_guidance import defer_section_note
 
 render_workflow_selector = _lazy_util("render_workflow_selector")
+render_priority_dataframe = _lazy_util("render_priority_dataframe")
+build_loaded_section_alert_signal_board = _lazy_util("build_loaded_section_alert_signal_board")
 
 
 def migrate_legacy_workflow_state(
@@ -42,6 +44,27 @@ def render_workflow_guide(summary: str, rows: Sequence[tuple[str, str]]) -> None
     defer_section_note(summary)
     for trigger, action in rows:
         defer_section_note(f"{trigger}: {action}")
+
+
+def _render_loaded_workload_alert_context() -> None:
+    board = build_loaded_section_alert_signal_board(st.session_state, section="Workload Operations", limit=8)
+    if board.empty:
+        return
+    st.markdown("**Loaded Reliability Alerts**")
+    render_priority_dataframe(
+        board,
+        title="Loaded workload alert context",
+        priority_columns=[
+            "SECTION_FOCUS", "SEVERITY", "SLA_STATE", "CATEGORY", "SIGNAL",
+            "ENTITY", "OWNER", "FIRST_RESPONSE", "RECOMMENDED_ACTION",
+            "SOURCE_FRESHNESS", "QUEUE_STATE", "TICKET_ID",
+        ],
+        sort_by=["PRIORITY"],
+        ascending=True,
+        raw_label="All loaded workload alert rows",
+        height=260,
+        max_rows=6,
+    )
 
 
 WORKLOAD_OPERATIONS_FAST_ENTRY_VERSION = "2026-06-16-workload-board-v1"
@@ -209,6 +232,7 @@ def render() -> None:
             ("Mismatch between environments or releases", "Use Schema & data compare."),
         ],
     )
+    _render_loaded_workload_alert_context()
 
     workflow = render_workflow_selector(
         "Workload surface",

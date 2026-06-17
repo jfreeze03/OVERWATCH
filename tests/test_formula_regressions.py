@@ -402,6 +402,7 @@ from utils.alerts import (  # noqa: E402
     build_alert_data_quality_checks_ddl,
     build_alert_event_materialization_sql,
     build_alert_incident_action_board,
+    build_loaded_section_alert_signal_board,
     build_alert_morning_brief_rows,
     build_alert_optional_integrations,
     build_alert_owner_workload_board,
@@ -411,6 +412,7 @@ from utils.alerts import (  # noqa: E402
     build_alert_rule_audit_ddl,
     build_alert_rule_audit_insert_sql,
     build_alert_rule_update_sql,
+    build_section_alert_signal_board,
     build_alert_signal_query_catalog,
     build_alert_status_update_sql,
     build_alert_threshold_seed_rows,
@@ -9108,7 +9110,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "NEXT_ACTION": "Deploy delivery audit table.",
             }]),
         )
-        self.assertEqual(blocked["target"], "Active Alerts")
+        self.assertEqual(blocked["target"], "Command Center")
         self.assertIn("Delivery audit input", blocked["detail"])
         self.assertIn("Deploy delivery audit table", blocked["detail"])
 
@@ -9121,7 +9123,7 @@ class FormulaRegressionTests(unittest.TestCase):
             email_logged=0,
             open_queue=1,
         )
-        self.assertEqual(overdue["target"], "Triage Digest")
+        self.assertEqual(overdue["target"], "Command Center")
         self.assertIn("overdue", overdue["detail"])
 
         queue_only = _alert_center_action_brief(
@@ -9133,7 +9135,7 @@ class FormulaRegressionTests(unittest.TestCase):
             email_logged=0,
             open_queue=4,
         )
-        self.assertEqual(queue_only["target"], "Delivery & Remediation")
+        self.assertEqual(queue_only["target"], "Delivery & Automation")
         self.assertIn("4 open queue", queue_only["detail"])
 
         clear = _alert_center_action_brief(
@@ -9183,38 +9185,39 @@ class FormulaRegressionTests(unittest.TestCase):
 
         self.assertEqual(rows.iloc[0]["SEVERITY"], "High")
         self.assertEqual(by_signal["Critical/high alerts"]["COUNT"], 1)
-        self.assertEqual(by_signal["Overdue alert SLAs"]["ROUTE"], "Triage Digest")
+        self.assertEqual(by_signal["Overdue alert SLAs"]["ROUTE"], "Command Center")
         self.assertEqual(by_signal["Generic alert routes"]["OWNER"], "Platform DBA")
         self.assertEqual(by_signal["Open action queue"]["COUNT"], 1)
-        self.assertEqual(by_signal["Alert control blockers"]["ROUTE"], "Active Alerts")
+        self.assertEqual(by_signal["Alert control blockers"]["ROUTE"], "Command Center")
         self.assertEqual(by_signal["Delivery failures"]["COUNT"], 1)
 
-    def test_alert_center_pending_state_uses_active_alerts_default(self):
+    def test_alert_center_pending_state_uses_command_center_default(self):
         brief = _alert_center_pending_brief("Alert Brief", set())
 
         self.assertEqual(brief["state"], "Ready")
-        self.assertIn("Load Active Alerts", brief["headline"])
+        self.assertIn("Load Command Center", brief["headline"])
         self.assertIn("Inputs on load", brief["detail"])
 
         workflows = _alert_center_brief_workflow_rows()
         self.assertEqual(
             [row["VIEW"] for row in workflows],
             [
-                "Active Alerts",
+                "Command Center",
+                "Cost & Behavior",
+                "Reliability",
+                "Security",
                 "Detection Catalog",
-                "Issue Inbox",
-                "Triage Digest",
-                "Delivery & Remediation",
+                "Delivery & Automation",
             ],
         )
         by_view = {row["VIEW"]: row for row in workflows}
-        self.assertIn("Open Active Alerts", by_view["Active Alerts"]["BUTTON_LABEL"])
+        self.assertIn("Open Command Center", by_view["Command Center"]["BUTTON_LABEL"])
+        self.assertIn("Cortex", by_view["Cost & Behavior"]["BUTTON_LABEL"])
+        self.assertIn("alert history", by_view["Command Center"]["SOURCES"].lower())
         self.assertIn("Open Detection Catalog", by_view["Detection Catalog"]["BUTTON_LABEL"])
-        self.assertIn("Alert history", by_view["Issue Inbox"]["SOURCES"])
-        self.assertIn("Action queue", by_view["Issue Inbox"]["SOURCES"])
-        self.assertIn("Action queue", by_view["Delivery & Remediation"]["SOURCES"])
-        self.assertIn("Email delivery audit", by_view["Delivery & Remediation"]["SOURCES"])
-        self.assertIn("Open Issue Inbox", by_view["Issue Inbox"]["BUTTON_LABEL"])
+        self.assertIn("Action queue", by_view["Delivery & Automation"]["SOURCES"])
+        self.assertIn("Email delivery audit", by_view["Delivery & Automation"]["SOURCES"])
+        self.assertIn("Open Automation", by_view["Delivery & Automation"]["BUTTON_LABEL"])
 
     def test_alert_center_brief_first_default_preserves_explicit_data_view(self):
         import streamlit as st
@@ -9225,25 +9228,79 @@ class FormulaRegressionTests(unittest.TestCase):
             st.session_state["alert_center_active_view"] = "Control Health"
             _apply_alert_center_brief_first_default()
 
-            self.assertEqual(st.session_state["alert_center_active_view"], "Active Alerts")
+            self.assertEqual(st.session_state["alert_center_active_view"], "Command Center")
             self.assertEqual(st.session_state["_alert_center_brief_first_version"], 3)
 
             st.session_state["alert_center_active_view"] = "Retired Alert Pane"
             _apply_alert_center_brief_first_default()
-            self.assertEqual(st.session_state["alert_center_active_view"], "Active Alerts")
+            self.assertEqual(st.session_state["alert_center_active_view"], "Command Center")
 
             st.session_state.clear()
             _apply_alert_center_brief_first_default()
-            self.assertEqual(st.session_state["alert_center_active_view"], "Active Alerts")
+            self.assertEqual(st.session_state["alert_center_active_view"], "Command Center")
 
             st.session_state.clear()
             st.session_state["alert_center_active_view"] = "Control Health"
             st.session_state["alert_center_data"] = {"_loaded_sources": []}
             _apply_alert_center_brief_first_default()
-            self.assertEqual(st.session_state["alert_center_active_view"], "Active Alerts")
+            self.assertEqual(st.session_state["alert_center_active_view"], "Command Center")
         finally:
             st.session_state.clear()
             st.session_state.update(previous)
+
+    def test_section_alert_signal_board_filters_loaded_alert_domains(self):
+        alerts = pd.DataFrame([
+            {
+                "SEVERITY": "High",
+                "STATUS": "New",
+                "CATEGORY": "Cost Control",
+                "ALERT_TYPE": "Cortex spend spike",
+                "ENTITY_NAME": "SNOW_DTI_ANALYST",
+                "OWNER": "DBA / AI cost route",
+                "ROUTE": "Cost & Contract",
+                "SUGGESTED_ACTION": "Review Cortex spend and quota settings.",
+                "PROOF_QUERY": "SELECT * FROM FACT_CORTEX_DAILY",
+                "ALERT_TS": pd.Timestamp("2026-06-17 08:00:00"),
+            },
+            {
+                "SEVERITY": "Critical",
+                "STATUS": "New",
+                "CATEGORY": "Security",
+                "ALERT_TYPE": "Privileged role grant",
+                "ENTITY_NAME": "APP_USER",
+                "OWNER": "Security Review",
+                "ROUTE": "Security Monitoring",
+                "SUGGESTED_ACTION": "Validate privileged role grant.",
+                "ALERT_TS": pd.Timestamp("2026-06-17 07:00:00"),
+            },
+            {
+                "SEVERITY": "High",
+                "STATUS": "New",
+                "CATEGORY": "Task / Pipeline",
+                "ALERT_TYPE": "Stored procedure failure",
+                "ENTITY_NAME": "SP_LOAD_POLICY",
+                "OWNER": "DBA / Pipeline Route",
+                "ROUTE": "Workload Operations",
+                "SUGGESTED_ACTION": "Review procedure child query failures.",
+                "ALERT_TS": pd.Timestamp("2026-06-17 06:00:00"),
+            },
+        ])
+        cost_rows = build_section_alert_signal_board(alerts, section="Cost & Contract")
+        security_rows = build_section_alert_signal_board(alerts, section="Security Monitoring")
+        workload_rows = build_section_alert_signal_board(alerts, section="Workload Operations")
+        executive_rows = build_section_alert_signal_board(alerts, section="Executive Landing")
+
+        self.assertEqual(cost_rows.iloc[0]["SECTION_FOCUS"], "Cortex spend")
+        self.assertEqual(cost_rows.iloc[0]["ENTITY"], "SNOW_DTI_ANALYST")
+        self.assertEqual(security_rows.iloc[0]["CATEGORY"], "Security")
+        self.assertEqual(workload_rows.iloc[0]["CATEGORY"], "Task / Pipeline")
+        self.assertEqual(len(executive_rows), 3)
+
+        loaded_rows = build_loaded_section_alert_signal_board(
+            {"alert_center_data": {"alerts": alerts, "action_queue": pd.DataFrame()}},
+            section="Cost & Contract",
+        )
+        self.assertEqual(loaded_rows.iloc[0]["SECTION_FOCUS"], "Cortex spend")
 
     def test_alert_surfaces_are_consolidated_to_alert_center(self):
         config_text = (APP_ROOT / "config.py").read_text(encoding="utf-8")
@@ -9254,7 +9311,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn('"Alert Center"', config_text)
         self.assertIn('"sections.alert_center"', config_text)
         self.assertFalse((APP_ROOT / "sections" / "alert_center_shell.py").exists())
-        self.assertIn('ALERT_CENTER_DEFAULT_VIEW = "Active Alerts"', alert_text)
+        self.assertIn('ALERT_CENTER_DEFAULT_VIEW = "Command Center"', alert_text)
         self.assertIn("consolidated Alert Center", dba_tools_text)
         self.assertNotIn("Alert Configuration", rec_text)
         self.assertNotIn("tab_alerts", rec_text)
@@ -9283,7 +9340,11 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("ACCOUNT_USAGE DELAYED", sql)
         self.assertIn("SECURITY_PRIVILEGE_ESCALATION", sql)
         self.assertIn("PIPELINE_TASK_FAILURE", sql)
-        self.assertGreaterEqual(len(build_alert_threshold_seed_rows()), 7)
+        self.assertIn("COST_CORTEX_SPEND_SPIKE", sql)
+        self.assertIn("COST_CORTEX_SPEND_SPIKE", setup_sql)
+        threshold_keys = {row["THRESHOLD_KEY"] for row in build_alert_threshold_seed_rows()}
+        self.assertIn("COST_CORTEX_SPEND_SPIKE", threshold_keys)
+        self.assertGreaterEqual(len(threshold_keys), 8)
 
     def test_alert_lifecycle_insert_sql_targets_command_center_audit_tables(self):
         ack_sql = build_alert_acknowledgement_insert_sql(
@@ -9365,6 +9426,8 @@ class FormulaRegressionTests(unittest.TestCase):
             "SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS",
             "SNOWFLAKE.ACCOUNT_USAGE.ACCESS_HISTORY",
             "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY",
+            "FACT_CORTEX_DAILY",
+            "CORTEX_SPEND_AND_QUOTA",
             "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
             "SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY",
             "SNOWFLAKE.ACCOUNT_USAGE.COPY_HISTORY",

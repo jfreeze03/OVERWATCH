@@ -197,7 +197,7 @@ def _request_section_detail_state(section: str) -> None:
         st.session_state["dba_control_room_active_view"] = "Fast Watch"
         return
     if target == "Alert Center":
-        st.session_state["alert_center_active_view"] = "Active Alerts"
+        st.session_state["alert_center_active_view"] = "Command Center"
         return
     if target == "Cost & Contract":
         st.session_state["cost_contract_workflow"] = "Usage attribution and run-rate"

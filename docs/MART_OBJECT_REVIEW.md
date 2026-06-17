@@ -102,7 +102,7 @@ These are directly used by app surfaces, validation, or core persisted DBA workf
 | `OVERWATCH_WAREHOUSE_SETTING_REVIEW`, `FACT_WAREHOUSE_OPERABILITY_DAILY` | Warehouse settings audit, safe setting review, and capacity telemetry. |
 | `OVERWATCH_WORKLOAD_RECOVERY_AUDIT`, `OVERWATCH_WORKLOAD_RECOVERY_AUDIT_LATEST_V` | Task/procedure recovery status and latest recovery state. |
 | `FACT_SECURITY_OPERABILITY_DAILY`, `FACT_ACCOUNT_HEALTH_OPERABILITY_DAILY`, `FACT_LOGIN_DAILY`, `FACT_GRANT_DAILY` | Security and account-health telemetry used by admin monitoring surfaces. |
-| `FACT_STORAGE_DAILY`, `FACT_COPY_LOAD_DAILY`, `FACT_OBJECT_CHANGE`, `FACT_CHANGE_CONTROL_OPERABILITY_DAILY` | Storage, load, object-change, and operability facts. Keep while corresponding monitoring code/tests still reference them. |
+| `FACT_STORAGE_DAILY`, `FACT_COPY_LOAD_DAILY`, `FACT_OBJECT_CHANGE`, `FACT_CHANGE_CONTROL_OPERABILITY_DAILY` | Storage, load, object-change, and operability facts. `FACT_STORAGE_DAILY` includes standard/stage, hybrid, archive cool, and archive cold storage classes for account-wide reconciliation. Keep while corresponding monitoring code/tests still reference them. |
 
 ## Keep As Refresh Plumbing
 
@@ -145,7 +145,7 @@ The setup procedures now map to current facts only:
 | Procedure | Current outputs |
 | --- | --- |
 | `SP_OVERWATCH_LOAD_HOURLY` | `FACT_WAREHOUSE_HOURLY`, `FACT_QUERY_HOURLY`, `FACT_QUERY_DETAIL_RECENT`, `FACT_OBJECT_CHANGE`, `FACT_TASK_RUN`, `FACT_TASK_CRITICAL_PATH`, `FACT_PROCEDURE_RUN` |
-| `SP_OVERWATCH_LOAD_DAILY` | `FACT_COST_DAILY`, `FACT_COST_SOURCE_HEALTH_DAILY`, `FACT_LOGIN_DAILY`, `FACT_GRANT_DAILY`, `FACT_STORAGE_DAILY`, `FACT_COPY_LOAD_DAILY`, `DIM_COST_OWNER_TAG`, `FACT_CHARGEBACK_DAILY`, operability facts |
+| `SP_OVERWATCH_LOAD_DAILY` | `FACT_COST_DAILY`, `FACT_COST_SOURCE_HEALTH_DAILY`, `FACT_LOGIN_DAILY`, `FACT_GRANT_DAILY`, `FACT_STORAGE_DAILY`, `FACT_COPY_LOAD_DAILY`, `DIM_COST_OWNER_TAG`, role-aware `FACT_CHARGEBACK_DAILY`, operability facts |
 | `SP_OVERWATCH_LOAD_CORTEX` | `FACT_CORTEX_DAILY` |
 | `SP_OVERWATCH_REFRESH_COST_MONITORING` | `FACT_COST_MONITORING_SIGNAL`, `FACT_COST_INCIDENT_TIMELINE` |
 | `SP_OVERWATCH_REFRESH_CONTROL_ROOM` | `MART_DBA_CONTROL_ROOM` |

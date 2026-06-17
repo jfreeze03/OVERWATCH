@@ -109,6 +109,11 @@ class SharedMetricsTests(unittest.TestCase):
         self.assertEqual(result.source, "Live fallback: SNOWFLAKE.ACCOUNT_USAGE storage views")
         live_sql = mock_run.call_args_list[1].args[0]
         self.assertIn("STAGE_STORAGE_USAGE_HISTORY", live_sql)
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.STORAGE_USAGE", live_sql)
+        self.assertIn("HYBRID_TABLE_STORAGE_BYTES", live_sql.upper())
+        self.assertIn("ARCHIVE_STORAGE_COOL_BYTES", live_sql.upper())
+        self.assertIn("HYBRID_STORAGE_COST_USD", live_sql.upper())
+        self.assertIn("ARCHIVE_COLD_COST_USD", live_sql.upper())
         self.assertIn("DATEADD('day', -90", live_sql)
 
     def test_storage_summary_from_trend_uses_prior_window(self):

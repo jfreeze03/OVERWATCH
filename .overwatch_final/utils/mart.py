@@ -1613,8 +1613,24 @@ def build_mart_storage_trend_sql(days_back: int, company: str = "ALFA") -> str:
             snapshot_date AS usage_date,
             SUM(active_bytes) / POWER(1024, 3) AS storage_gb,
             SUM(failsafe_bytes) / POWER(1024, 3) AS failsafe_gb,
-            0::FLOAT AS stage_gb,
-            SUM(active_bytes + failsafe_bytes + retained_for_clone_bytes + time_travel_bytes) / POWER(1024, 4) AS total_storage_tb,
+            SUM(COALESCE(stage_bytes, 0)) / POWER(1024, 3) AS stage_gb,
+            SUM(COALESCE(hybrid_table_storage_bytes, 0)) / POWER(1024, 3) AS hybrid_storage_gb,
+            SUM(COALESCE(archive_storage_cool_bytes, 0)) / POWER(1024, 3) AS archive_cool_gb,
+            SUM(COALESCE(archive_storage_cold_bytes, 0)) / POWER(1024, 3) AS archive_cold_gb,
+            SUM(
+                active_bytes
+                + failsafe_bytes
+                + retained_for_clone_bytes
+                + time_travel_bytes
+                + COALESCE(stage_bytes, 0)
+                + COALESCE(hybrid_table_storage_bytes, 0)
+                + COALESCE(archive_storage_cool_bytes, 0)
+                + COALESCE(archive_storage_cold_bytes, 0)
+            ) / POWER(1024, 4) AS total_storage_tb,
+            SUM(COALESCE(standard_storage_cost_usd, est_cost_usd, 0)) AS standard_storage_cost_usd,
+            SUM(COALESCE(hybrid_storage_cost_usd, 0)) AS hybrid_storage_cost_usd,
+            SUM(COALESCE(archive_cool_cost_usd, 0)) AS archive_cool_cost_usd,
+            SUM(COALESCE(archive_cold_cost_usd, 0)) AS archive_cold_cost_usd,
             SUM(est_cost_usd) AS est_monthly_cost_usd
         FROM {table}
         WHERE snapshot_date >= DATEADD('DAY', -{int(days_back)}, CURRENT_DATE())

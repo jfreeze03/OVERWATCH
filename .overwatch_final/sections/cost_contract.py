@@ -48,7 +48,7 @@ get_active_environment = _lazy_util("get_active_environment")
 get_ai_credit_price = _lazy_util("get_ai_credit_price")
 get_environment_label = _lazy_util("get_environment_label")
 get_session_for_action = _lazy_util("get_session_for_action")
-get_user_filter_clause = _lazy_util("get_user_filter_clause")
+get_user_company_filter_clause = _lazy_util("get_user_company_filter_clause")
 get_wh_filter_clause = _lazy_util("get_wh_filter_clause")
 load_action_queue = _lazy_util("load_action_queue")
 load_shared_service_cost_lens = _lazy_util("load_shared_service_cost_lens")
@@ -712,7 +712,7 @@ def _build_cost_splash_cortex_sql(company: str, days: int, ai_credit_price: floa
         """
 
     user_expr = "COALESCE(u.NAME, TO_VARCHAR(c.USER_ID), 'Unknown user')"
-    user_filter = get_user_filter_clause("COALESCE(u.NAME, TO_VARCHAR(c.USER_ID), '')", company)
+    user_filter = get_user_company_filter_clause("COALESCE(u.NAME, TO_VARCHAR(c.USER_ID), '')", company)
     return f"""
         WITH combined AS (
             SELECT USER_ID, USAGE_TIME, TOKEN_CREDITS, 'SNOWSIGHT' AS source

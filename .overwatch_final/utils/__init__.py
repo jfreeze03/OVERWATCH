@@ -117,7 +117,7 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
     ),
     "company_filter": (
         "get_active_company", "get_db_filter_clause", "get_wh_filter_clause",
-        "get_user_filter_clause", "get_role_filter_clause",
+        "get_user_filter_clause", "get_role_filter_clause", "get_user_company_filter_clause",
         "get_combined_filter_clause", "get_global_date_clause",
         "get_global_wh_filter_clause", "get_global_user_filter_clause",
         "get_global_role_filter_clause", "get_global_db_filter_clause",

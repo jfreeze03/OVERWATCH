@@ -6,6 +6,8 @@
 # Database strategy:
 #   ALFA: ALFA/ADMIN databases, excluding the exact Trexis database allowlist.
 #   Trexis: exact TRXS database families, split into PROD and DEV/SIT.
+# Role/user strategy:
+#   Trexis: TRXS_* users and roles containing TRXS when telemetry exposes them.
 #   ALL: no filter; get_company_case_expr() labels each row.
 import hashlib
 import re
@@ -250,6 +252,61 @@ def get_user_filter_clause(column: str = "user_name", company: str = None) -> st
 
 def get_role_filter_clause(column: str = "role_name", company: str = None) -> str:
     """Return SQL WHERE fragment to filter role-like names by company."""
+    cfg = get_company_cfg(company)
+    patterns = cfg.get("role_patterns", cfg.get("user_patterns", []))
+    exclude = cfg.get("role_exclude_patterns", cfg.get("user_exclude_patterns", []))
+    clauses = []
+    if patterns:
+        clauses.append(f"({_match_any_sql(column, patterns)})")
+    if exclude:
+        clauses.append(f"({_exclude_all_sql(column, exclude)})")
+    return "AND " + " AND ".join(clauses) if clauses else ""
+
+
+def _active_role_membership_sql(user_col: str, role_patterns: list[str]) -> str:
+    role_match = _match_any_sql('role_scope."ROLE"', role_patterns)
+    if not role_match:
+        return ""
+    return (
+        "EXISTS ("
+        "SELECT 1 FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS role_scope "
+        "WHERE role_scope.DELETED_ON IS NULL "
+        f"AND UPPER(role_scope.GRANTEE_NAME) = UPPER(TO_VARCHAR({user_col})) "
+        f"AND {role_match}"
+        ")"
+    )
+
+
+def get_user_company_filter_clause(column: str = "user_name", company: str = None) -> str:
+    """Return a user filter using both username and active role membership signals."""
+    company = company or get_active_company()
+    if company == "ALL":
+        return ""
+    cfg = get_company_cfg(company)
+    candidates = []
+    exclusions = []
+
+    user_match = _match_any_sql(column, cfg.get("user_patterns", []))
+    if user_match:
+        candidates.append(f"({column} IS NOT NULL AND {user_match})")
+    role_match = _active_role_membership_sql(column, cfg.get("role_patterns", []))
+    if role_match:
+        candidates.append(role_match)
+
+    user_exclude = _exclude_all_sql(column, cfg.get("user_exclude_patterns", []), allow_null=True)
+    if user_exclude:
+        exclusions.append(user_exclude)
+    role_exclude = _active_role_membership_sql(column, cfg.get("role_exclude_patterns", []))
+    if role_exclude:
+        exclusions.append(f"NOT {role_exclude}")
+
+    if candidates:
+        boundary = "(" + " OR ".join(candidates) + ")"
+        if exclusions:
+            boundary += " AND " + " AND ".join(exclusions)
+        return "AND " + boundary
+    if exclusions:
+        return "AND " + " AND ".join(exclusions)
     return get_user_filter_clause(column, company)
 
 
@@ -270,6 +327,9 @@ def company_value_allowed(value: str, kind: str = "database", company: str = Non
     elif kind == "user":
         include = cfg.get("user_patterns", [])
         exclude = cfg.get("user_exclude_patterns", [])
+    elif kind == "role":
+        include = cfg.get("role_patterns", cfg.get("user_patterns", []))
+        exclude = cfg.get("role_exclude_patterns", cfg.get("user_exclude_patterns", []))
     else:
         include = cfg.get("db_patterns", [])
         exclude = list(cfg.get("db_exclude_patterns", []))
@@ -318,6 +378,7 @@ def get_combined_filter_clause(
     db_col: str = "database_name",
     wh_col: str = "warehouse_name",
     user_col: str = "user_name",
+    role_col: str = "role_name",
     company: str = None,
 ) -> str:
     """
@@ -368,6 +429,17 @@ def get_combined_filter_clause(
         user_exclude = _exclude_all_sql(user_col, cfg.get("user_exclude_patterns", []), allow_null=True)
         if user_exclude:
             exclusions.append(user_exclude)
+    if role_col:
+        role_match = _match_any_sql(role_col, cfg.get("role_patterns", cfg.get("user_patterns", [])))
+        if role_match:
+            candidates.append(f"({role_col} IS NOT NULL AND {role_match})")
+        role_exclude = _exclude_all_sql(
+            role_col,
+            cfg.get("role_exclude_patterns", cfg.get("user_exclude_patterns", [])),
+            allow_null=True,
+        )
+        if role_exclude:
+            exclusions.append(role_exclude)
 
     if candidates:
         boundary = "(" + " OR ".join(candidates) + ")"
@@ -375,7 +447,10 @@ def get_combined_filter_clause(
             boundary += " AND " + " AND ".join(exclusions)
         return "AND " + boundary
 
-    return get_user_filter_clause(user_col, company).strip() if user_col else ""
+    fallback = get_user_filter_clause(user_col, company).strip() if user_col else ""
+    if fallback:
+        return fallback
+    return get_role_filter_clause(role_col, company).strip() if role_col else ""
 
 
 # ALL-mode classification expression
@@ -384,6 +459,7 @@ def get_company_case_expr(
     wh_col: str = "warehouse_name",
     db_col: str = "database_name",
     user_col: str = "user_name",
+    role_col: str = "role_name",
 ) -> str:
     """
     SQL CASE expression that classifies every row as 'ALFA', 'Trexis',
@@ -402,10 +478,12 @@ def get_company_case_expr(
     trexis_cfg = COMPANY_CONFIG.get("Trexis", {})
     trexis_wh_predicate = _match_any_sql(wh_col, trexis_cfg.get("wh_patterns", [])) or "1 = 0"
     trexis_db_predicate = _match_any_sql(db_col, trexis_cfg.get("db_patterns", [])) or "1 = 0"
+    role_predicate = f"OR {role_col} ILIKE '%TRXS%'" if role_col else ""
     return f"""CASE
         WHEN ({trexis_wh_predicate})
           OR ({trexis_db_predicate})
           OR {user_col} ILIKE 'TRXS_%'
+          {role_predicate}
             THEN 'Trexis'
         WHEN NULLIF(TRIM(TO_VARCHAR({wh_col})), '') IS NOT NULL
           OR {db_col} ILIKE 'ALFA_%'
@@ -547,10 +625,13 @@ def get_global_filter_clause(
             if preserve_no_database_context
             else get_environment_filter_clause(db_col)
         )
-    return " ".join(filter(None, [
-        get_combined_filter_clause(db_col=db_col, wh_col=wh_col, user_col=user_col)
+    company_clause = (
+        get_combined_filter_clause(db_col=db_col, wh_col=wh_col, user_col=user_col, role_col=role_col)
         if include_company_scope
-        else "",
+        else ""
+    )
+    return " ".join(filter(None, [
+        company_clause,
         environment_clause,
         get_global_date_clause(date_col)      if date_col  else "",
         get_global_wh_filter_clause(wh_col)   if wh_col    else "",
@@ -614,7 +695,7 @@ def company_scoped_query(
             schema_col=schema_col,
         )
         if include_global_filters
-        else get_combined_filter_clause(db_col=db_col, wh_col=wh_col, user_col=user_col)
+        else get_combined_filter_clause(db_col=db_col, wh_col=wh_col, user_col=user_col, role_col=role_col)
     )
     sql = (
         str(query_text)

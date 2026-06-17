@@ -13,9 +13,30 @@ outside the Streamlit app UI.
 - Service spend categorization now keeps Openflow, Snowpark Container Services,
   automatic clustering, replication, and serverless/task service rows out of
   vague `Other` or warehouse-compute buckets.
-- Known follow-ups are storage-class coverage for hybrid/archive storage,
-  optional Cortex sub-service detail panes, and an annual all-service projection
-  if the original dashboard view is needed again.
+- Storage-class coverage, Cortex service detail probing, and annual all-service
+  projection were added after this audit. Keep `docs/COST_MONITOR_FORMULA_AUDIT.md`
+  current whenever a formula or source changes.
+
+## 2026-06-17 - Cost Allocation And Service Coverage
+
+- `Storage Monitor` and `FACT_STORAGE_DAILY` include standard database/stage/
+  failsafe storage, hybrid table storage, archive cool storage, and archive cold
+  storage. Hybrid/archive telemetry is account-level and should be shown in ALL
+  scope unless a documented allocation basis exists.
+- `Cost & Contract > Forecast` keeps the near-term warehouse forecast and adds
+  an account-wide annual service projection from completed-window
+  `METERING_HISTORY` so OVERWATCH can be reconciled to Snowflake Admin/Cost
+  Management totals.
+- `AI & Cortex Monitor > Service Details` probes Cortex service usage history
+  views on explicit load. It renders detail only when the current role can see
+  the view and required columns.
+- ALFA/Trexis cost allocation uses warehouse and database naming first, then
+  user naming and active role membership where telemetry exposes them. Roles
+  containing `TRXS` classify as Trexis in live cost queries, user-scoped Cortex
+  paths, and mart loaders.
+- Account-wide service rows from `METERING_HISTORY` remain reconciliation totals.
+  Do not force company splits for Snowflake services or storage classes unless
+  there is a defensible allocation rule documented outside the app.
 
 ## 2026-06-17 - Advisor UX Polish
 

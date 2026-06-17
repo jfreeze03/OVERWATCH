@@ -23,6 +23,7 @@ from .company_filter import (
     get_global_filter_clause,
     get_global_wh_filter_clause,
     get_wh_filter_clause,
+    get_user_company_filter_clause,
     get_user_filter_clause,
 )
 from .compatibility import build_task_failure_summary_sql, build_task_history_sql, filter_existing_columns
@@ -32,6 +33,7 @@ from .cost import (
     build_metered_credit_cte,
     build_snowflake_service_cost_lens_sql,
     build_snowflake_service_cost_trend_sql,
+    get_storage_cost_per_tb,
 )
 from .data import normalize_df
 from .mart import (
@@ -204,6 +206,32 @@ def load_shared_storage_trend(
             )
             """
         )
+        account_storage_cte = (
+            f"""
+            account_storage AS (
+                SELECT
+                    usage_date,
+                    SUM(COALESCE(hybrid_table_storage_bytes, 0)) AS hybrid_table_storage_bytes,
+                    SUM(COALESCE(archive_storage_cool_bytes, 0)) AS archive_storage_cool_bytes,
+                    SUM(COALESCE(archive_storage_cold_bytes, 0)) AS archive_storage_cold_bytes
+                FROM SNOWFLAKE.ACCOUNT_USAGE.STORAGE_USAGE
+                WHERE usage_date >= DATEADD('day', -{fallback_days}, CURRENT_DATE())
+                GROUP BY usage_date
+            )
+            """
+            if company == "ALL"
+            else """
+            account_storage AS (
+                SELECT
+                    usage_date,
+                    0 AS hybrid_table_storage_bytes,
+                    0 AS archive_storage_cool_bytes,
+                    0 AS archive_storage_cold_bytes
+                FROM database_storage
+            )
+            """
+        )
+        standard_storage_rate = get_storage_cost_per_tb()
         df = run_query(
             f"""
             WITH database_storage AS (
@@ -215,15 +243,34 @@ def load_shared_storage_trend(
                   {get_db_filter_clause("database_name", company)}
                 GROUP BY usage_date
             ),
-            {stage_storage_cte}
-            SELECT COALESCE(d.usage_date, s.usage_date)        AS usage_date,
-                   COALESCE(d.storage_bytes,  0)/POWER(1024,3) AS storage_gb,
-                   COALESCE(d.failsafe_bytes, 0)/POWER(1024,3) AS failsafe_gb,
-                   COALESCE(s.stage_bytes,    0)/POWER(1024,3) AS stage_gb,
-                   (COALESCE(d.storage_bytes,0)+COALESCE(d.failsafe_bytes,0)+COALESCE(s.stage_bytes,0))
-                       /POWER(1024,4)                           AS total_storage_tb
+            {stage_storage_cte},
+            {account_storage_cte}
+            SELECT COALESCE(d.usage_date, s.usage_date, a.usage_date) AS usage_date,
+                   COALESCE(d.storage_bytes,  0)/POWER(1024,3)        AS storage_gb,
+                   COALESCE(d.failsafe_bytes, 0)/POWER(1024,3)        AS failsafe_gb,
+                   COALESCE(s.stage_bytes,    0)/POWER(1024,3)        AS stage_gb,
+                   COALESCE(a.hybrid_table_storage_bytes, 0)/POWER(1024,3) AS hybrid_storage_gb,
+                   COALESCE(a.archive_storage_cool_bytes, 0)/POWER(1024,3) AS archive_cool_gb,
+                   COALESCE(a.archive_storage_cold_bytes, 0)/POWER(1024,3) AS archive_cold_gb,
+                   ROUND(
+                       (COALESCE(d.storage_bytes,0)+COALESCE(d.failsafe_bytes,0)+COALESCE(s.stage_bytes,0))
+                       / POWER(1024,4) * {standard_storage_rate},
+                       2
+                   ) AS standard_storage_cost_usd,
+                   ROUND(COALESCE(a.hybrid_table_storage_bytes, 0) / POWER(1024,3) * 0.34, 2) AS hybrid_storage_cost_usd,
+                   ROUND(COALESCE(a.archive_storage_cool_bytes, 0) / POWER(1024,4) * 4, 2) AS archive_cool_cost_usd,
+                   ROUND(COALESCE(a.archive_storage_cold_bytes, 0) / POWER(1024,4) * 1, 2) AS archive_cold_cost_usd,
+                   (
+                       COALESCE(d.storage_bytes,0)
+                       + COALESCE(d.failsafe_bytes,0)
+                       + COALESCE(s.stage_bytes,0)
+                       + COALESCE(a.hybrid_table_storage_bytes,0)
+                       + COALESCE(a.archive_storage_cool_bytes,0)
+                       + COALESCE(a.archive_storage_cold_bytes,0)
+                   ) / POWER(1024,4) AS total_storage_tb
             FROM database_storage d
             FULL OUTER JOIN stage_storage s ON d.usage_date = s.usage_date
+            FULL OUTER JOIN account_storage a ON COALESCE(d.usage_date, s.usage_date) = a.usage_date
             ORDER BY usage_date
             """,
             ttl_key=get_company_scope_key("shared_storage_trend_live", fallback_days),
@@ -2408,9 +2455,9 @@ def build_shared_security_summary_sql(session: object, days: int, company: str) 
         if "HAS_PASSWORD" in user_cols else "NULL::NUMBER"
     )
     last_seen_expr = "u.last_success_login" if "LAST_SUCCESS_LOGIN" in user_cols else "u.created_on"
-    user_filter_lh = get_user_filter_clause("lh.user_name")
-    user_filter_u = get_user_filter_clause("u.name")
-    user_filter_g = get_user_filter_clause("g.grantee_name")
+    user_filter_lh = get_user_company_filter_clause("lh.user_name", company)
+    user_filter_u = get_user_company_filter_clause("u.name", company)
+    user_filter_g = get_user_company_filter_clause("g.grantee_name", company)
     db_filter = get_db_filter_clause("d.database_name")
     object_grant_db_filter = get_db_filter_clause("gor.table_catalog")
     company_label = sql_literal(company, 100)
@@ -2577,9 +2624,9 @@ def build_shared_security_mart_brief_sql(session: object, days: int, company: st
         if "HAS_PASSWORD" in user_cols else "NULL::NUMBER"
     )
     last_seen_expr = "u.last_success_login" if "LAST_SUCCESS_LOGIN" in user_cols else "u.created_on"
-    user_filter_lh = get_user_filter_clause("lh.user_name")
-    user_filter_u = get_user_filter_clause("u.name")
-    user_filter_g = get_user_filter_clause("g.grantee_name")
+    user_filter_lh = get_user_company_filter_clause("lh.user_name", company)
+    user_filter_u = get_user_company_filter_clause("u.name", company)
+    user_filter_g = get_user_company_filter_clause("g.grantee_name", company)
     db_filter = get_db_filter_clause("d.database_name")
     object_grant_db_filter = get_db_filter_clause("gor.table_catalog")
     login_table = mart_object_name("FACT_LOGIN_DAILY")
@@ -2752,7 +2799,7 @@ def build_shared_security_privileged_grant_review_sql(
     """Return high-risk account-role and object grants with environment-aware object scope."""
 
     days = max(1, min(int(days or 30), 90))
-    user_filter = get_user_filter_clause("gtu.grantee_name")
+    user_filter = get_user_company_filter_clause("gtu.grantee_name", company)
     object_env_filter = get_environment_filter_clause(
         "gor.table_catalog",
         environment=environment,
@@ -2896,7 +2943,7 @@ def load_shared_mfa_coverage(
             FROM SNOWFLAKE.ACCOUNT_USAGE.USERS u
             WHERE u.deleted_on IS NULL
               AND COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR(u.disabled)), FALSE) = FALSE
-              {get_user_filter_clause("u.name", company)}
+              {get_user_company_filter_clause("u.name", company)}
             ORDER BY has_mfa, user_name
             """,
             ttl_key=get_company_scope_key("shared_mfa_coverage"),
@@ -2945,7 +2992,7 @@ def load_shared_grants_to_users(
                 JOIN latest l ON g.snapshot_date = l.snapshot_date
                 WHERE g.deleted_on IS NULL
                   {company_filter}
-                  {get_user_filter_clause("g.grantee_name", company)}
+                  {get_user_company_filter_clause("g.grantee_name", company)}
                 GROUP BY g.grantee_name, g.role_name, g.granted_to
                 ORDER BY created_on DESC
                 LIMIT 500
@@ -2969,7 +3016,7 @@ def load_shared_grants_to_users(
                    deleted_on
             FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS
             WHERE deleted_on IS NULL
-              {get_user_filter_clause("grantee_name", company)}
+              {get_user_company_filter_clause("grantee_name", company)}
             ORDER BY created_on DESC
             LIMIT 500
             """,
@@ -3012,7 +3059,7 @@ def build_shared_access_hygiene_sql(
                     MAX(IFF(lh.is_success = 'YES', lh.event_timestamp, NULL)) AS last_login_from_history
                 FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY lh
                 WHERE lh.event_timestamp >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
-                  {get_user_filter_clause("lh.user_name", company)}
+                  {get_user_company_filter_clause("lh.user_name", company)}
                 GROUP BY lh.user_name
             ),
             admin_grants AS (
@@ -3022,7 +3069,7 @@ def build_shared_access_hygiene_sql(
                     LISTAGG(DISTINCT g.role, ', ') WITHIN GROUP (ORDER BY g.role) AS admin_roles
                 FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS g
                 WHERE g.deleted_on IS NULL
-                  {get_user_filter_clause("g.grantee_name", company)}
+                  {get_user_company_filter_clause("g.grantee_name", company)}
                   AND (
                       UPPER(g.role) IN ('ACCOUNTADMIN', 'ORGADMIN', 'SECURITYADMIN', 'SYSADMIN', 'USERADMIN')
                       OR UPPER(g.role) LIKE '%ADMIN%'
@@ -3045,7 +3092,7 @@ def build_shared_access_hygiene_sql(
                 LEFT JOIN login_rollup lr ON UPPER(u.name) = UPPER(lr.user_name)
                 LEFT JOIN admin_grants ag ON UPPER(u.name) = UPPER(ag.user_name)
                 WHERE u.deleted_on IS NULL
-                  {get_user_filter_clause("u.name", company)}
+                  {get_user_company_filter_clause("u.name", company)}
             )
             SELECT
                 user_name,
@@ -3077,7 +3124,7 @@ def build_shared_access_hygiene_sql(
                 'No Database Context' AS environment_scope,
                 {env_label} AS selected_environment,
                 'Account-Level Control' AS scope_confidence,
-                'USERS, LOGIN_HISTORY, and GRANTS_TO_USERS do not expose database context; company scope uses user naming only.' AS scope_evidence,
+                'USERS, LOGIN_HISTORY, and GRANTS_TO_USERS do not expose database context; company scope uses configured user patterns and active role membership where available.' AS scope_evidence,
                 'Confirm IAM route, admin-role business need, MFA posture, and recent login telemetry before disabling users or changing grants.' AS next_action,
                 'user, IAM ticket, failed login context, MFA/admin-role telemetry' AS proof_required
             FROM user_posture

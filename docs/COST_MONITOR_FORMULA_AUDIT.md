@@ -18,9 +18,12 @@ intentional, visible, and testable.
 | --- | --- | --- | --- |
 | Monthly service costs | `METERING_HISTORY` by `SERVICE_TYPE`, current/prior periods, completed 24-hour window | Same official account service source, with compute/cloud/total credit split and configured dollar rates | Aligned |
 | Warehouse consumption | `WAREHOUSE_METERING_HISTORY`, compute plus cloud services, active warehouses | Same warehouse metering source, with OVERWATCH company scope and completed windows where billing-facing | Aligned with scope change |
+| Storage footprint | Database, stage, failsafe, hybrid, archive cool, and archive cold bytes | `FACT_STORAGE_DAILY` and live storage fallback include standard, stage, hybrid, archive cool, and archive cold for account-wide views | Aligned with allocation caveat |
+| Storage dollars | Standard TB at `$23/TB/month`, hybrid GB at `$0.34/GB/month`, archive cool TB at `$4/TB/month`, archive cold TB at `$1/TB/month` | Standard database/stage/failsafe uses configured standard storage rate; hybrid and archive use source dashboard class rates | Aligned |
 | SPCS | `SNOWPARK_CONTAINER_SERVICES_HISTORY.CREDITS_USED` | SPCS tracker uses the same source; service lens classifies SPCS as managed service spend | Aligned |
 | Automatic clustering | `AUTOMATIC_CLUSTERING_HISTORY.CREDITS_USED` | Clustering helper uses the same source; service summaries classify clustering as managed service spend | Aligned |
 | Service period movement | Current period minus previous period divided by previous period | Same current/prior movement pattern in official service-cost lens | Aligned |
+| Annual service projection | YTD `METERING_HISTORY` daily credits plus recent observed-day annualization | Cost Forecast includes a separate account-wide annual service projection from completed-window `METERING_HISTORY` | Aligned |
 
 ## Intentional Formula Changes
 
@@ -30,17 +33,16 @@ intentional, visible, and testable.
 | Service dollars | `TOTAL_CREDITS * credit_price` | Snowflake services use compute credit price; Cortex/AI services use AI credit price | Prevents AI credits from being dollarized at the compute rate |
 | Cloud services | `QUERY_HISTORY.CREDITS_USED_CLOUD_SERVICES` for successful query overhead | `METERING_HISTORY` service totals for billing reconciliation plus warehouse cloud-service split where exposed | Query history overhead is useful, but it is not the full service bill |
 | Query/client cost | Client cost was query-level cloud-services credits only | Prefer `QUERY_ATTRIBUTION_HISTORY`; otherwise allocate metered warehouse compute by query execution share | More complete workload cost, still labeled allocated |
-| Forecast | Annual all-service projection from YTD `METERING_HISTORY` and observed recent-day average | 30-day warehouse forecast from `WAREHOUSE_METERING_HISTORY`, zero-filled calendar days | DBA operating forecast, not an annual contract forecast |
-| Company chargeback | Account-wide | ALFA/Trexis warehouse/database/user/environment boundaries | Required for OVERWATCH's operational scope |
+| Forecast | Annual all-service projection from YTD `METERING_HISTORY` and observed recent-day average | Keep the 30-day warehouse forecast and add the annual service projection beside it | DBA operating forecast and leadership annual forecast serve different decisions |
+| Company chargeback | Account-wide | ALFA/Trexis warehouse/database/user/role/environment boundaries, including roles containing `TRXS` where query telemetry exposes roles | Required for OVERWATCH's operational scope; account-level services remain reconciliation totals unless an allocation basis exists |
+| Cortex details | Cortex REST API, Intelligence, Agents, Functions, Analyst, Search, Document AI, Fine-Tuning, Cortex Code | Explicit-load Service Details workflow probes enabled Cortex service views and renders detail when grants/columns exist | Keeps first paint cheap while expanding coverage |
 
 ## Gaps To Fix Or Keep Explicit
 
 | Metric family | Source dashboard formula | Current OVERWATCH gap | Recommended next step |
 | --- | --- | --- | --- |
-| Storage footprint | Database, stage, failsafe, hybrid, archive cool, and archive cold bytes | OVERWATCH storage surfaces focus on database/failsafe/stage; hybrid/archive are not fully surfaced | Add account-wide hybrid/archive storage rows with clear non-company-scoped labeling |
-| Storage dollars | Standard TB at `$23/TB/month`, hybrid GB at `$0.34/GB/month`, archive cool TB at `$4/TB/month`, archive cold TB at `$1/TB/month` | OVERWATCH applies one configured standard storage rate to total storage TB | Split storage cost formulas by storage class before contract reconciliation |
-| Cortex details | Cortex REST API, Intelligence, Agents, Functions, Analyst, Search, Document AI, Fine-Tuning, Cortex Code | OVERWATCH has broad AI/Cortex service billing plus Cortex Code and optional AI Functions detail | Add explicit-load detail panes for enabled Cortex sub-services |
-| Annual service projection | YTD `METERING_HISTORY` daily credits plus recent observed-day annualization | OVERWATCH has a 30-day warehouse forecast instead | Add a separate annual service projection only if leadership wants the original dashboard view back |
+| Company allocation of account-level services | Source dashboard is account-wide | OVERWATCH only splits by company where warehouse/database/user/role telemetry exists | Keep Snowflake Admin/Cost Management and account-level `METERING_HISTORY` as reconciliation totals |
+| Company allocation of hybrid/archive storage | Source dashboard is account-wide | Hybrid/archive storage from `STORAGE_USAGE` is account-level and not safely company-split yet | Show in ALL scope; split later only with a documented allocation basis |
 | Replication drilldown | `REPLICATION_GROUP_USAGE_HISTORY` | Account service movement is covered; detailed replication group spend is not first-class | Add only if replication spend becomes material |
 | Serverless task drilldown | `SERVERLESS_TASK_HISTORY` | Account service movement is covered; task health is operational | Use `SERVERLESS_TASK_HISTORY` for task-specific cost detail if needed |
 

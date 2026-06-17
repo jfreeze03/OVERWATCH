@@ -127,6 +127,20 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertIn("TASK/PROCEDURE-LOADED TABLES INSTEAD OF DYNAMIC TABLES", setup_sql)
         self.assertIn("SECURE VIEWS", setup_sql)
 
+        for column_name in (
+            "STAGE_BYTES",
+            "HYBRID_TABLE_STORAGE_BYTES",
+            "ARCHIVE_STORAGE_COOL_BYTES",
+            "ARCHIVE_STORAGE_COLD_BYTES",
+            "STANDARD_STORAGE_COST_USD",
+            "HYBRID_STORAGE_COST_USD",
+            "ARCHIVE_COOL_COST_USD",
+            "ARCHIVE_COLD_COST_USD",
+        ):
+            with self.subTest(column_name=column_name):
+                self.assertIn(column_name, setup_sql)
+                self.assertIn(f"ADD COLUMN IF NOT EXISTS {column_name}", setup_sql)
+
     def test_mart_refresh_tasks_call_procedure_loaded_tables(self):
         setup_sql = _setup_sql()
         expected_task_calls = {

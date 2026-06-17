@@ -89,6 +89,8 @@ from sections.executive_landing import (  # noqa: E402
     _snapshot_matches_scope,
 )
 from sections.cost_center import (  # noqa: E402
+    _annual_service_projection_metrics,
+    _annual_service_projection_sql,
     _bill_driver_summary,
     _build_bill_waterfall,
     _build_finance_movement_summary,
@@ -170,11 +172,14 @@ from sections.dba_control_room import (  # noqa: E402
     _severity_rows as _dba_control_severity_rows,
 )
 from sections.cortex_monitor import (  # noqa: E402
+    CORTEX_SERVICE_DETAIL_SOURCES,
     _build_cortex_control_markdown,
     _build_cortex_ai_functions_daily_sql,
+    _cortex_candidate_columns,
     _cortex_action_for,
     _cortex_cost_rating,
     _cortex_cost_score,
+    _cortex_service_detail_sql,
 )
 from sections.change_drift import (  # noqa: E402
     _change_blast_radius_sql,
@@ -447,6 +452,7 @@ from utils.mart import (  # noqa: E402
     build_mart_recommendation_idle_sql,
     build_mart_recommendation_query_errors_sql,
     build_mart_recommendation_spill_sql,
+    build_mart_storage_trend_sql,
     build_mart_task_critical_path_sql,
 )
 
@@ -481,9 +487,12 @@ class FormulaRegressionTests(unittest.TestCase):
 
         self.assertEqual(DEFAULTS["credit_price"], 3.68)
         self.assertEqual(DEFAULTS["ai_credit_price"], 2.20)
+        self.assertEqual(DEFAULTS["storage_cost_per_tb"], 23.00)
         self.assertIn("('CREDIT_PRICE_USD', '3.68'", setup_sql)
         self.assertIn("('AI_CREDIT_PRICE_USD', '2.20'", setup_sql)
+        self.assertIn("('STORAGE_COST_PER_TB_USD', '23.00'", setup_sql)
         self.assertIn("credit_price := COALESCE(credit_price, 3.68)", setup_sql)
+        self.assertIn("storage_cost_per_tb := COALESCE(storage_cost_per_tb, 23.00)", setup_sql)
         self.assertIn("ai_credit_price := COALESCE(ai_credit_price, 2.20)", setup_sql)
         self.assertEqual(credits_to_dollars(10, DEFAULTS["credit_price"]), 36.8)
         stale_fallbacks = []
@@ -823,12 +832,33 @@ class FormulaRegressionTests(unittest.TestCase):
         by_metric = audit.set_index("METRIC")
         self.assertEqual(by_metric.loc["Monthly service costs", "PARITY_STATUS"], "Aligned")
         self.assertIn("METERING_HISTORY", by_metric.loc["Monthly service costs", "SOURCE_DASHBOARD_FORMULA"])
-        self.assertEqual(by_metric.loc["Forecast run rate", "PARITY_STATUS"], "Intentional metric change")
+        self.assertEqual(by_metric.loc["Forecast run rate", "PARITY_STATUS"], "Aligned with extension")
         self.assertIn("WAREHOUSE_METERING_HISTORY", by_metric.loc["Forecast run rate", "FORMULA"])
-        self.assertEqual(by_metric.loc["Storage dollars", "PARITY_STATUS"], "Needs formula expansion")
+        self.assertEqual(by_metric.loc["Storage dollars", "PARITY_STATUS"], "Aligned")
         self.assertIn("hybrid", by_metric.loc["Storage dollars", "SOURCE_DASHBOARD_FORMULA"].lower())
-        self.assertEqual(by_metric.loc["Cortex detailed sources", "PARITY_STATUS"], "Coverage gap to evaluate")
+        self.assertEqual(by_metric.loc["Cortex detailed sources", "PARITY_STATUS"], "Coverage expanded")
         self.assertIn("REST API", by_metric.loc["Cortex detailed sources", "SOURCE_DASHBOARD_FORMULA"])
+
+    def test_annual_service_projection_uses_account_metering_history(self):
+        sql = _annual_service_projection_sql().upper()
+
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY", sql)
+        self.assertIn("DATE_TRUNC('YEAR', CURRENT_DATE())", sql)
+        self.assertIn("DATEADD('HOUR', -24, CURRENT_TIMESTAMP())", sql)
+        self.assertIn("COUNT(DISTINCT SERVICE_TYPE)", sql)
+
+        metrics = _annual_service_projection_metrics(
+            pd.DataFrame({
+                "USAGE_DATE": ["2026-06-15", "2026-06-16"],
+                "DAILY_CREDITS": [10.0, 20.0],
+            }),
+            30,
+        )
+
+        self.assertEqual(metrics["YTD_ACTUAL_CREDITS"], 30.0)
+        self.assertEqual(metrics["RECENT_DAILY_AVG_CREDITS"], 15.0)
+        self.assertGreater(metrics["PROJECTED_YEAR_CREDITS"], 30.0)
+        self.assertEqual(metrics["LATEST_USAGE_DATE"], "2026-06-16")
 
     def test_metered_credit_cte_uses_compute_credits_with_total_fallback(self):
         sql = build_metered_credit_cte(hours_back=24, include_recent=True).upper()
@@ -1831,6 +1861,37 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("SUM(COALESCE(F.CREDITS, 0))", sql)
         self.assertIn("COUNT(DISTINCT F.QUERY_ID)", sql)
         self.assertIn("LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS", sql)
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS", sql)
+        self.assertIn("ROLE_SCOPE.\"ROLE\" ILIKE '%TRXS%'", sql)
+
+    def test_cortex_service_detail_sql_uses_available_service_columns(self):
+        source = next(item for item in CORTEX_SERVICE_DETAIL_SOURCES if item["label"] == "Cortex AI Functions")
+        candidates = _cortex_candidate_columns(source)
+        self.assertIn("START_TIME", candidates)
+        self.assertIn("CREDITS", candidates)
+
+        sql, issue = _cortex_service_detail_sql(
+            source,
+            ["START_TIME", "CREDITS", "QUERY_ID", "USER_ID"],
+            14,
+            ai_credit_rate=2.2,
+        )
+        upper = sql.upper()
+
+        self.assertEqual(issue, "")
+        self.assertIn("CORTEX_AI_FUNCTIONS_USAGE_HISTORY", upper)
+        self.assertIn("TO_DATE(RAW.START_TIME) AS USAGE_DATE", upper)
+        self.assertIn("SUM(COALESCE(RAW.CREDITS, 0)) AS TOTAL_CREDITS", upper)
+        self.assertIn("LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS", upper)
+        self.assertIn("DATEADD('DAY', -14", upper)
+        self.assertIn("* 2.2", upper)
+
+    def test_cortex_service_detail_sql_requires_time_column(self):
+        source = next(item for item in CORTEX_SERVICE_DETAIL_SOURCES if item["label"] == "Cortex REST API")
+        sql, issue = _cortex_service_detail_sql(source, ["CREDITS"], 30, ai_credit_rate=2.2)
+
+        self.assertEqual(sql, "")
+        self.assertIn("usage time/date", issue)
 
     def test_cost_splash_cortex_sql_tracks_spend_and_top_user(self):
         mart_sql = _build_cost_splash_cortex_sql("ALFA", 90, DEFAULTS["ai_credit_price"], mart=True).upper()
@@ -1846,7 +1907,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("CORTEX_CODE_CLI_USAGE_HISTORY", live_sql)
         self.assertIn("TOKEN_CREDITS", live_sql)
         self.assertIn("* 2.2", live_sql)
-        self.assertIn("COALESCE(U.NAME, TO_VARCHAR(C.USER_ID), '') ILIKE 'TRXS_%'", live_sql)
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS", live_sql)
+        self.assertIn("ROLE_SCOPE.\"ROLE\" ILIKE '%TRXS%'", live_sql)
         self.assertIn("DATEADD('DAY', -60", live_sql)
 
     def test_cost_splash_warehouse_delta_sql_reuses_shared_live_shape(self):
@@ -2062,6 +2124,14 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("FACT_STORAGE_DAILY", storage_sql)
         self.assertIn("STORAGE_TB", storage_sql)
         self.assertNotIn("DATABASE_STORAGE_USAGE_HISTORY", storage_sql)
+
+        trend_sql = build_mart_storage_trend_sql(30, "ALL").upper()
+        self.assertIn("FACT_STORAGE_DAILY", trend_sql)
+        self.assertIn("STAGE_BYTES", trend_sql)
+        self.assertIn("HYBRID_TABLE_STORAGE_BYTES", trend_sql)
+        self.assertIn("ARCHIVE_STORAGE_COOL_BYTES", trend_sql)
+        self.assertIn("STANDARD_STORAGE_COST_USD", trend_sql)
+        self.assertIn("ARCHIVE_COLD_COST_USD", trend_sql)
 
         cost_sql = build_mart_account_health_cost_drivers_sql(24, "Trexis").upper()
         self.assertIn("FACT_QUERY_DETAIL_RECENT", cost_sql)

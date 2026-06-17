@@ -44,7 +44,7 @@ def render():
     company = get_active_company()
 
     st.subheader("Storage Monitor")
-    st.caption("Database & stage storage with cost estimates ($23/TB/month default).")
+    st.caption(f"Database, stage, hybrid, and archive storage with cost estimates (${storage_cost_per_tb:,.2f}/TB-month standard rate).")
 
     stor_days = day_window_selectbox("Lookback", key="stor_days", default=90)
     stor_meta = {"company": company, "days": int(stor_days)}
@@ -64,7 +64,10 @@ def render():
             if not _load_storage_trend(stor_days, company, allow_live_fallback=True):
                 raise RuntimeError("Storage summary returned no rows.")
             if company != "ALL":
-                st.info("Stage storage is account-level in Snowflake, so this company view shows database and failsafe storage only.")
+                st.info(
+                    "Stage, hybrid, and archive storage classes are account-level in Snowflake. "
+                    "This company view keeps database and failsafe storage scoped and leaves account-level classes to ALL."
+                )
             fallback_days = min(int(stor_days), LIVE_STORAGE_FALLBACK_MAX_DAYS)
             if int(stor_days) > fallback_days and st.session_state.get("stor_source", "").startswith("Live fallback"):
                 st.info(
@@ -80,13 +83,22 @@ def render():
 
         if latest is not None:
             total_tb = safe_float(latest.get("TOTAL_STORAGE_TB", 0))
+            standard_cost = safe_float(latest.get("STANDARD_STORAGE_COST_USD", total_tb * storage_cost_per_tb))
+            hybrid_cost = safe_float(latest.get("HYBRID_STORAGE_COST_USD", 0))
+            archive_cool_cost = safe_float(latest.get("ARCHIVE_COOL_COST_USD", 0))
+            archive_cold_cost = safe_float(latest.get("ARCHIVE_COLD_COST_USD", 0))
+            total_storage_cost = standard_cost + hybrid_cost + archive_cool_cost + archive_cold_cost
+            if total_storage_cost <= 0:
+                total_storage_cost = total_tb * storage_cost_per_tb
             render_shell_snapshot((
                 ("Database GB", f"{safe_float(latest.get('STORAGE_GB', 0)):,.1f}"),
                 ("Failsafe GB", f"{safe_float(latest.get('FAILSAFE_GB', 0)):,.1f}"),
                 ("Stage GB", f"{safe_float(latest.get('STAGE_GB', 0)):,.1f}"),
-                ("Est Monthly Cost", f"${total_tb * storage_cost_per_tb:,.2f}"),
+                ("Hybrid GB", f"{safe_float(latest.get('HYBRID_STORAGE_GB', 0)):,.1f}"),
+                ("Archive GB", f"{safe_float(latest.get('ARCHIVE_COOL_GB', 0)) + safe_float(latest.get('ARCHIVE_COLD_GB', 0)):,.1f}"),
+                ("Est Monthly Cost", f"${total_storage_cost:,.2f}"),
             ))
-            confidence = "account-wide" if company != "ALL" else "exact"
+            confidence = "exact" if company == "ALL" else "allocated"
             defer_source_note(
                 metric_confidence_label(confidence),
                 st.session_state.get("stor_source", "SNOWFLAKE.ACCOUNT_USAGE"),
@@ -102,23 +114,52 @@ def render():
                 ) / 1024
                 for _, row in df_st.iterrows()
             ]
-        df_st["EST_MONTHLY_COST"] = df_st["TOTAL_STORAGE_TB"].apply(
-            lambda value: safe_float(value) * storage_cost_per_tb
-        )
+        for column in (
+            "HYBRID_STORAGE_GB",
+            "ARCHIVE_COOL_GB",
+            "ARCHIVE_COLD_GB",
+            "STANDARD_STORAGE_COST_USD",
+            "HYBRID_STORAGE_COST_USD",
+            "ARCHIVE_COOL_COST_USD",
+            "ARCHIVE_COLD_COST_USD",
+        ):
+            if column not in df_st.columns:
+                df_st[column] = 0.0
+        df_st["EST_MONTHLY_COST"] = [
+            (
+                safe_float(row.get("STANDARD_STORAGE_COST_USD", 0))
+                + safe_float(row.get("HYBRID_STORAGE_COST_USD", 0))
+                + safe_float(row.get("ARCHIVE_COOL_COST_USD", 0))
+                + safe_float(row.get("ARCHIVE_COLD_COST_USD", 0))
+            )
+            or safe_float(row.get("TOTAL_STORAGE_TB", 0)) * storage_cost_per_tb
+            for _, row in df_st.iterrows()
+        ]
         render_chart_with_data_toggle(
             "Storage Trend",
             "storage_trend",
-            lambda: st.area_chart(df_st.set_index("USAGE_DATE")[["STORAGE_GB","FAILSAFE_GB","STAGE_GB"]]),
+            lambda: st.area_chart(
+                df_st.set_index("USAGE_DATE")[
+                    ["STORAGE_GB", "FAILSAFE_GB", "STAGE_GB", "HYBRID_STORAGE_GB", "ARCHIVE_COOL_GB", "ARCHIVE_COLD_GB"]
+                ]
+            ),
             df_st,
             priority_columns=[
                 "USAGE_DATE", "STORAGE_GB", "FAILSAFE_GB", "STAGE_GB",
-                "TOTAL_STORAGE_TB", "EST_MONTHLY_COST",
+                "HYBRID_STORAGE_GB", "ARCHIVE_COOL_GB", "ARCHIVE_COLD_GB",
+                "TOTAL_STORAGE_TB", "STANDARD_STORAGE_COST_USD", "HYBRID_STORAGE_COST_USD",
+                "ARCHIVE_COOL_COST_USD", "ARCHIVE_COLD_COST_USD", "EST_MONTHLY_COST",
             ],
             sort_by=["USAGE_DATE"],
             ascending=True,
             max_rows=90,
             raw_label="All storage trend rows",
         )
+        if company != "ALL":
+            st.info(
+                "Hybrid and archive storage are account-level Snowflake storage classes. "
+                "Switch to ALL for the account-wide storage-class cost breakdown."
+            )
 
         # Per-database breakdown
         st.divider()

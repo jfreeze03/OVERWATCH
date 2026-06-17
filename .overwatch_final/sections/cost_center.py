@@ -273,6 +273,57 @@ def _prepare_cost_forecast_rows(df_fc: pd.DataFrame | None, *, today: object | N
     return merged
 
 
+def _annual_service_projection_sql() -> str:
+    """Return account-wide annual service projection SQL from Snowflake metering."""
+    return """
+        SELECT
+            DATE_TRUNC('day', start_time)::DATE AS usage_date,
+            SUM(COALESCE(credits_used, 0)) AS daily_credits,
+            SUM(COALESCE(credits_used_compute, 0)) AS compute_credits,
+            SUM(COALESCE(credits_used_cloud_services, 0)) AS cloud_services_credits,
+            COUNT(DISTINCT service_type) AS active_services
+        FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY
+        WHERE start_time >= DATE_TRUNC('year', CURRENT_DATE())
+          AND start_time < DATEADD('hour', -24, CURRENT_TIMESTAMP())
+        GROUP BY DATE_TRUNC('day', start_time)::DATE
+        ORDER BY usage_date
+    """
+
+
+def _annual_service_projection_metrics(data: pd.DataFrame, period_days: int) -> dict:
+    """Calculate an annual projection from observed YTD service-metering days."""
+    if data is None or data.empty or "USAGE_DATE" not in data.columns or "DAILY_CREDITS" not in data.columns:
+        return {}
+    rows = data.copy()
+    rows["USAGE_DATE"] = pd.to_datetime(rows["USAGE_DATE"], errors="coerce")
+    rows["DAILY_CREDITS"] = pd.to_numeric(rows["DAILY_CREDITS"], errors="coerce").fillna(0)
+    rows = rows.dropna(subset=["USAGE_DATE"]).sort_values("USAGE_DATE")
+    if rows.empty:
+        return {}
+
+    latest_date = rows["USAGE_DATE"].max().normalize()
+    recent_cutoff = latest_date - pd.Timedelta(days=max(1, int(period_days)))
+    recent = rows[rows["USAGE_DATE"] >= recent_cutoff]
+    if recent.empty:
+        return {}
+
+    ytd_actual = float(rows["DAILY_CREDITS"].sum())
+    daily_average = float(recent["DAILY_CREDITS"].mean())
+    year_end = pd.Timestamp(latest_date.year, 12, 31)
+    days_remaining = max(int((year_end - latest_date).days), 0)
+    projected_remaining = daily_average * days_remaining
+    projected_total = ytd_actual + projected_remaining
+    return {
+        "YTD_ACTUAL_CREDITS": ytd_actual,
+        "RECENT_DAILY_AVG_CREDITS": daily_average,
+        "PROJECTED_REMAINING_CREDITS": projected_remaining,
+        "PROJECTED_YEAR_CREDITS": projected_total,
+        "DAYS_REMAINING": days_remaining,
+        "OBSERVED_DAYS_USED": int(len(recent)),
+        "LATEST_USAGE_DATE": latest_date.date().isoformat(),
+    }
+
+
 def _mixed_label(values, *, default: str = "Unknown") -> str:
     cleaned = [str(value).strip() for value in values if str(value or "").strip()]
     unique = sorted(set(cleaned))
@@ -495,7 +546,7 @@ def _cost_explorer_live_sql(
     warehouse_size_expr: str,
     department_contains: str = "",
 ) -> str:
-    company_expr = get_company_case_expr("q.warehouse_name", "q.database_name", "q.user_name")
+    company_expr = get_company_case_expr("q.warehouse_name", "q.database_name", "q.user_name", "q.role_name")
     environment_expr = get_environment_case_expr("q.database_name")
     scope = get_global_filter_clause(
         "q.start_time", "q.warehouse_name", "q.user_name", "q.role_name", "q.database_name", "q.schema_name"
@@ -2536,6 +2587,79 @@ def render():
                 max_rows=90,
             )
 
+        st.divider()
+        st.subheader("Annual Service Projection")
+        st.caption(
+            "Account-wide projection from Snowflake service metering. "
+            "Use this to compare OVERWATCH against Snowflake Admin/Cost Management totals."
+        )
+        annual_period = st.selectbox(
+            "Run-rate basis",
+            [30, 60, 90],
+            index=0,
+            key="cc_annual_projection_days",
+            format_func=lambda value: f"Last {value} observed service days",
+        )
+        if st.button("Load Annual Service Projection", key="cc_annual_projection_load"):
+            try:
+                df_annual = run_query(
+                    _annual_service_projection_sql(),
+                    ttl_key=f"cc_annual_service_projection_{annual_period}",
+                    tier="historical",
+                    section="Cost & Contract",
+                )
+                st.session_state["df_cc_annual_projection"] = df_annual
+                st.session_state["cc_annual_projection_source"] = (
+                    "SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY, completed 24-hour window"
+                )
+            except Exception as e:
+                st.warning(f"Annual service projection unavailable: {format_snowflake_error(e)}")
+
+        annual_data = st.session_state.get("df_cc_annual_projection")
+        if annual_data is not None and not annual_data.empty:
+            annual_metrics = _annual_service_projection_metrics(annual_data, annual_period)
+            if annual_metrics:
+                projected_year = safe_float(annual_metrics.get("PROJECTED_YEAR_CREDITS"))
+                projected_remaining = safe_float(annual_metrics.get("PROJECTED_REMAINING_CREDITS"))
+                ytd_actual = safe_float(annual_metrics.get("YTD_ACTUAL_CREDITS"))
+                render_shell_snapshot((
+                    ("YTD Actual", format_credits(ytd_actual, credit_price)),
+                    ("Recent Daily Avg", f"{safe_float(annual_metrics.get('RECENT_DAILY_AVG_CREDITS')):,.2f}"),
+                    ("Projected Remainder", format_credits(projected_remaining, credit_price)),
+                    ("Projected Year", format_credits(projected_year, credit_price)),
+                    ("Days Remaining", f"{safe_int(annual_metrics.get('DAYS_REMAINING')):,}"),
+                    ("Latest Usage Date", str(annual_metrics.get("LATEST_USAGE_DATE", ""))),
+                ))
+                defer_source_note(
+                    metric_confidence_label("projection"),
+                    st.session_state.get("cc_annual_projection_source", "SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY"),
+                    freshness_note("ACCOUNT_USAGE"),
+                    "Account-wide; not company-scoped. Reconcile to Snowflake Admin/Cost Management before finance signoff.",
+                )
+                annual_display = annual_data.copy()
+                annual_display["USAGE_DATE"] = pd.to_datetime(annual_display["USAGE_DATE"], errors="coerce")
+                annual_display["DAILY_COST_USD"] = annual_display["DAILY_CREDITS"].apply(
+                    lambda value: credits_to_dollars(safe_float(value), credit_price)
+                )
+                render_chart_with_data_toggle(
+                    "YTD Service Credits",
+                    "cc_annual_service_projection",
+                    lambda: st.line_chart(annual_display.set_index("USAGE_DATE")["DAILY_CREDITS"]),
+                    annual_display,
+                    priority_columns=[
+                        "USAGE_DATE",
+                        "DAILY_CREDITS",
+                        "DAILY_COST_USD",
+                        "COMPUTE_CREDITS",
+                        "CLOUD_SERVICES_CREDITS",
+                        "ACTIVE_SERVICES",
+                    ],
+                    sort_by=["USAGE_DATE"],
+                    ascending=True,
+                    max_rows=370,
+                    raw_label="All annual service projection rows",
+                )
+
     # -- ATTRIBUTION -----------------------------------------------------------
     elif cost_view == "Attribution":
         st.subheader("Cost Attribution")
@@ -2648,7 +2772,7 @@ def render():
                     # FIX: replaced hardcoded CASE with get_company_case_expr()
                     # which reads from COMPANY_CONFIG and includes all WH_ALFA_* warehouses
                     company_expr = get_company_case_expr(
-                        "q.warehouse_name", "q.database_name", "q.user_name"
+                        "q.warehouse_name", "q.database_name", "q.user_name", "q.role_name"
                     )
                     environment_expr = get_environment_case_expr("q.database_name")
                     cb_scope = get_global_filter_clause(

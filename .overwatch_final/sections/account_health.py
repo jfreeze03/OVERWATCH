@@ -2098,7 +2098,7 @@ def _annotate_account_health_access_hygiene(hygiene: pd.DataFrame) -> pd.DataFra
     if "SCOPE_EVIDENCE" not in view.columns:
         view["SCOPE_EVIDENCE"] = (
             "USERS, LOGIN_HISTORY, and GRANTS_TO_USERS do not expose database context; "
-            "company scope uses user naming only."
+            "company scope uses configured user patterns and active role membership where available."
         )
 
     severity = view.get("SEVERITY", pd.Series([""] * len(view), index=view.index)).fillna("").astype(str).str.upper()

@@ -15,7 +15,7 @@ from utils import (
     metric_confidence_label,
     freshness_note,
     download_csv,
-    get_user_filter_clause,
+    get_user_company_filter_clause,
     filter_existing_columns,
     render_chart_with_data_toggle,
     day_window_selectbox,
@@ -38,6 +38,7 @@ def _ai_credit_rate() -> float:
 
 CORTEX_VIEWS = (
     "Spend Control",
+    "Service Details",
     "User Attribution",
     "Daily Trends",
     "Anomaly Detection",
@@ -46,11 +47,188 @@ CORTEX_VIEWS = (
 
 CORTEX_VIEW_DETAILS = {
     "Spend Control": "Projected spend, source split, exceptions, and quota signals.",
+    "Service Details": "Direct usage details from each Cortex service history view that Snowflake exposes.",
     "User Attribution": "User/source chargeback, requests, AI credits, and cost-per-request spikes.",
     "Daily Trends": "Daily requests, active users, credits, rolling burn, and source split.",
     "Anomaly Detection": "Z-score detection for unusual user-level Cortex spend.",
     "Predictive Alerts": "Forward-looking spend threshold warnings and alert SQL.",
 }
+
+CORTEX_SERVICE_DETAIL_SOURCES = (
+    {
+        "label": "Cortex Code - Snowsight",
+        "object": "SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY",
+        "time_columns": ("USAGE_TIME",),
+        "credit_columns": ("TOKEN_CREDITS", "CREDITS", "CREDITS_USED"),
+        "token_columns": ("TOKENS", "TOTAL_TOKENS"),
+        "request_columns": (),
+        "user_id_columns": ("USER_ID",),
+        "user_name_columns": (),
+    },
+    {
+        "label": "Cortex Code - CLI",
+        "object": "SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_CLI_USAGE_HISTORY",
+        "time_columns": ("USAGE_TIME",),
+        "credit_columns": ("TOKEN_CREDITS", "CREDITS", "CREDITS_USED"),
+        "token_columns": ("TOKENS", "TOTAL_TOKENS"),
+        "request_columns": (),
+        "user_id_columns": ("USER_ID",),
+        "user_name_columns": (),
+    },
+    {
+        "label": "Cortex AI Functions",
+        "object": "SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AI_FUNCTIONS_USAGE_HISTORY",
+        "time_columns": ("START_TIME", "USAGE_TIME", "USAGE_DATE"),
+        "credit_columns": ("CREDITS", "TOKEN_CREDITS", "CREDITS_USED", "CREDITS_BILLED"),
+        "token_columns": ("TOKENS", "TOTAL_TOKENS", "INPUT_TOKENS", "OUTPUT_TOKENS"),
+        "request_columns": ("REQUEST_COUNT",),
+        "user_id_columns": ("USER_ID",),
+        "user_name_columns": ("USER_NAME",),
+    },
+    {
+        "label": "Cortex REST API",
+        "object": "SNOWFLAKE.ACCOUNT_USAGE.CORTEX_REST_API_USAGE_HISTORY",
+        "time_columns": ("USAGE_TIME", "START_TIME", "REQUEST_TIME", "USAGE_DATE"),
+        "credit_columns": ("CREDITS", "TOKEN_CREDITS", "CREDITS_USED", "CREDITS_BILLED"),
+        "token_columns": ("TOKENS", "TOTAL_TOKENS", "INPUT_TOKENS", "OUTPUT_TOKENS"),
+        "request_columns": ("REQUEST_COUNT",),
+        "user_id_columns": ("USER_ID",),
+        "user_name_columns": ("USER_NAME",),
+    },
+    {
+        "label": "Snowflake Intelligence",
+        "object": "SNOWFLAKE.ACCOUNT_USAGE.SNOWFLAKE_INTELLIGENCE_USAGE_HISTORY",
+        "time_columns": ("USAGE_TIME", "START_TIME", "REQUEST_TIME", "USAGE_DATE"),
+        "credit_columns": ("CREDITS", "TOKEN_CREDITS", "CREDITS_USED", "CREDITS_BILLED"),
+        "token_columns": ("TOKENS", "TOTAL_TOKENS", "INPUT_TOKENS", "OUTPUT_TOKENS"),
+        "request_columns": ("REQUEST_COUNT",),
+        "user_id_columns": ("USER_ID",),
+        "user_name_columns": ("USER_NAME",),
+    },
+    {
+        "label": "Cortex Agents",
+        "object": "SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AGENT_USAGE_HISTORY",
+        "time_columns": ("USAGE_TIME", "START_TIME", "REQUEST_TIME", "USAGE_DATE"),
+        "credit_columns": ("CREDITS", "TOKEN_CREDITS", "CREDITS_USED", "CREDITS_BILLED"),
+        "token_columns": ("TOKENS", "TOTAL_TOKENS", "INPUT_TOKENS", "OUTPUT_TOKENS"),
+        "request_columns": ("REQUEST_COUNT",),
+        "user_id_columns": ("USER_ID",),
+        "user_name_columns": ("USER_NAME",),
+    },
+    {
+        "label": "Cortex Analyst",
+        "object": "SNOWFLAKE.ACCOUNT_USAGE.CORTEX_ANALYST_USAGE_HISTORY",
+        "time_columns": ("USAGE_TIME", "START_TIME", "REQUEST_TIME", "USAGE_DATE"),
+        "credit_columns": ("CREDITS", "TOKEN_CREDITS", "CREDITS_USED", "CREDITS_BILLED"),
+        "token_columns": ("TOKENS", "TOTAL_TOKENS", "INPUT_TOKENS", "OUTPUT_TOKENS"),
+        "request_columns": ("REQUEST_COUNT",),
+        "user_id_columns": ("USER_ID",),
+        "user_name_columns": ("USER_NAME",),
+    },
+    {
+        "label": "Cortex Search",
+        "object": "SNOWFLAKE.ACCOUNT_USAGE.CORTEX_SEARCH_DAILY_USAGE_HISTORY",
+        "time_columns": ("USAGE_DATE", "START_TIME", "USAGE_TIME"),
+        "credit_columns": ("CREDITS", "CREDITS_USED", "CREDITS_BILLED"),
+        "token_columns": ("TOKENS", "TOTAL_TOKENS"),
+        "request_columns": ("REQUEST_COUNT", "QUERY_COUNT"),
+        "user_id_columns": ("USER_ID",),
+        "user_name_columns": ("USER_NAME",),
+    },
+    {
+        "label": "Document AI",
+        "object": "SNOWFLAKE.ACCOUNT_USAGE.DOCUMENT_AI_USAGE_HISTORY",
+        "time_columns": ("USAGE_TIME", "START_TIME", "USAGE_DATE"),
+        "credit_columns": ("CREDITS", "CREDITS_USED", "CREDITS_BILLED", "TOKEN_CREDITS"),
+        "token_columns": ("TOKENS", "TOTAL_TOKENS", "PAGES"),
+        "request_columns": ("REQUEST_COUNT", "DOCUMENT_COUNT"),
+        "user_id_columns": ("USER_ID",),
+        "user_name_columns": ("USER_NAME",),
+    },
+    {
+        "label": "Cortex Fine-Tuning",
+        "object": "SNOWFLAKE.ACCOUNT_USAGE.CORTEX_FINE_TUNING_USAGE_HISTORY",
+        "time_columns": ("USAGE_TIME", "START_TIME", "USAGE_DATE"),
+        "credit_columns": ("CREDITS", "CREDITS_USED", "CREDITS_BILLED", "TOKEN_CREDITS"),
+        "token_columns": ("TOKENS", "TOTAL_TOKENS", "TRAINING_TOKENS"),
+        "request_columns": ("REQUEST_COUNT", "JOB_COUNT"),
+        "user_id_columns": ("USER_ID",),
+        "user_name_columns": ("USER_NAME",),
+    },
+)
+
+
+def _cortex_source_by_label(label: str) -> dict:
+    for source in CORTEX_SERVICE_DETAIL_SOURCES:
+        if source["label"] == label:
+            return source
+    return CORTEX_SERVICE_DETAIL_SOURCES[0]
+
+
+def _pick_available_column(available_columns, candidates) -> str:
+    available = {str(column).upper() for column in available_columns or []}
+    for candidate in candidates or ():
+        if str(candidate).upper() in available:
+            return str(candidate).upper()
+    return ""
+
+
+def _cortex_candidate_columns(source: dict) -> list[str]:
+    columns = []
+    for key in ("time_columns", "credit_columns", "token_columns", "request_columns", "user_id_columns", "user_name_columns"):
+        columns.extend(source.get(key, ()))
+    return list(dict.fromkeys(str(column).upper() for column in columns if column))
+
+
+def _cortex_service_detail_sql(source: dict, available_columns, days: int, ai_credit_rate: float | None = None) -> tuple[str, str]:
+    """Build a guarded service-detail query for whichever columns Snowflake exposes."""
+    rate = _ai_credit_rate() if ai_credit_rate is None else safe_float(ai_credit_rate)
+    time_col = _pick_available_column(available_columns, source.get("time_columns", ()))
+    if not time_col:
+        return "", "Required usage time/date column is not exposed for this service view."
+
+    credit_col = _pick_available_column(available_columns, source.get("credit_columns", ()))
+    request_col = _pick_available_column(available_columns, source.get("request_columns", ()))
+    user_id_col = _pick_available_column(available_columns, source.get("user_id_columns", ()))
+    user_name_col = _pick_available_column(available_columns, source.get("user_name_columns", ()))
+    token_cols = [
+        column
+        for column in (_pick_available_column(available_columns, [candidate]) for candidate in source.get("token_columns", ()))
+        if column
+    ]
+
+    time_expr = f"TO_TIMESTAMP_NTZ(raw.{time_col})"
+    date_expr = f"TO_DATE(raw.{time_col})"
+    credit_expr = f"COALESCE(raw.{credit_col}, 0)" if credit_col else "0"
+    request_expr = f"SUM(COALESCE(raw.{request_col}, 0))" if request_col else "COUNT(*)"
+    token_expr = " + ".join(f"COALESCE(raw.{column}, 0)" for column in token_cols) if token_cols else "0"
+    user_join = f"LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS u ON raw.{user_id_col} = u.USER_ID" if user_id_col else ""
+    user_expr = (
+        "COALESCE(u.NAME, " + (f"TO_VARCHAR(raw.{user_name_col}), " if user_name_col else "") + "'Unknown user')"
+        if user_id_col
+        else (f"COALESCE(TO_VARCHAR(raw.{user_name_col}), 'Unknown user')" if user_name_col else "'Unknown user'")
+    )
+    user_filter = get_user_company_filter_clause("u.NAME") if user_id_col else (
+        get_user_company_filter_clause(f"raw.{user_name_col}") if user_name_col else ""
+    )
+    label = str(source.get("label", "Cortex Service")).replace("'", "''")
+    object_name = source["object"]
+    return f"""
+        SELECT
+            {date_expr} AS usage_date,
+            '{label}' AS source,
+            {user_expr} AS user_name,
+            {request_expr} AS total_requests,
+            SUM({credit_expr}) AS total_credits,
+            SUM({token_expr}) AS total_tokens,
+            ROUND(SUM({credit_expr}) * {rate}, 2) AS cost_usd
+        FROM {object_name} raw
+        {user_join}
+        WHERE {time_expr} >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
+          {user_filter}
+        GROUP BY {date_expr}, {user_expr}
+        ORDER BY usage_date DESC, total_credits DESC, total_requests DESC
+    """, ""
 
 
 def _cortex_cost_score(
@@ -147,7 +325,7 @@ def _build_cortex_control_markdown(
 
 
 def _build_cortex_control_sql(days: int, budget_usd: float) -> tuple[str, str]:
-    user_filter = get_user_filter_clause("u.NAME")
+    user_filter = get_user_company_filter_clause("u.NAME")
     budget_credits = safe_float(budget_usd) / max(_ai_credit_rate(), 0.01)
     base = f"""
         WITH combined AS (
@@ -241,7 +419,7 @@ def _build_cortex_control_sql(days: int, budget_usd: float) -> tuple[str, str]:
 
 
 def _build_cortex_daily_sql(days: int) -> str:
-    user_filter = get_user_filter_clause("u.NAME")
+    user_filter = get_user_company_filter_clause("u.NAME")
     return f"""
         WITH combined AS (
             SELECT USER_ID, USAGE_TIME, TOKEN_CREDITS, TOKENS, 'Snowsight' AS SOURCE
@@ -280,7 +458,7 @@ def _build_cortex_ai_functions_daily_sql(
     joins are safe before executing the query.
     """
     user_join = "LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS u ON f.USER_ID = u.USER_ID" if include_user_filter else ""
-    user_filter = get_user_filter_clause("u.NAME") if include_user_filter else ""
+    user_filter = get_user_company_filter_clause("u.NAME") if include_user_filter else ""
     request_expr = "COUNT(DISTINCT f.QUERY_ID)" if include_query_id else "COUNT(*)"
     return f"""
         SELECT
@@ -565,6 +743,133 @@ def render():
         if st.session_state.get("exceptions_only_mode"):
             st.stop()
 
+    elif cortex_view == "Service Details":
+        st.subheader("Cortex Service Details")
+        st.caption(
+            "Probe Snowflake's Cortex usage history views and load the service-level request, credit, and cost details "
+            "available to the current role."
+        )
+        service_labels = [source["label"] for source in CORTEX_SERVICE_DETAIL_SOURCES]
+        c1, c2 = st.columns(2)
+        with c1:
+            selected_service = st.selectbox("Service usage view", service_labels, key="cortex_service_detail_source")
+        with c2:
+            detail_days = day_window_selectbox("Lookback", key="cortex_service_detail_days", default=30)
+        selected_source = _cortex_source_by_label(selected_service)
+        st.caption(selected_source["object"])
+
+        if st.button("Load Cortex Service Detail", key="cortex_service_detail_load"):
+            with render_load_status("Loading Cortex service detail", "Cortex service detail ready"):
+                try:
+                    candidate_columns = _cortex_candidate_columns(selected_source)
+                    available_columns = filter_existing_columns(session, selected_source["object"], candidate_columns)
+                    detail_sql, detail_issue = _cortex_service_detail_sql(selected_source, available_columns, detail_days)
+                    if detail_issue:
+                        st.session_state["cortex_service_detail_data"] = pd.DataFrame()
+                        st.session_state["cortex_service_detail_status"] = pd.DataFrame([{
+                            "SERVICE": selected_source["label"],
+                            "OBJECT_NAME": selected_source["object"],
+                            "STATUS": "Unavailable",
+                            "DETAIL": detail_issue,
+                            "AVAILABLE_COLUMNS": ", ".join(available_columns),
+                        }])
+                    else:
+                        detail = run_query(
+                            detail_sql,
+                            ttl_key=f"cortex_service_detail_{company}_{selected_source['label']}_{detail_days}",
+                            tier="historical",
+                            section="Cost & Contract",
+                        )
+                        st.session_state["cortex_service_detail_data"] = detail
+                        st.session_state["cortex_service_detail_status"] = pd.DataFrame([{
+                            "SERVICE": selected_source["label"],
+                            "OBJECT_NAME": selected_source["object"],
+                            "STATUS": "Ready",
+                            "DETAIL": "Loaded from ACCOUNT_USAGE service history.",
+                            "AVAILABLE_COLUMNS": ", ".join(available_columns),
+                        }])
+                        st.session_state["cortex_service_detail_sql"] = detail_sql
+                except Exception as e:
+                    st.session_state["cortex_service_detail_data"] = pd.DataFrame()
+                    st.session_state["cortex_service_detail_status"] = pd.DataFrame([{
+                        "SERVICE": selected_source["label"],
+                        "OBJECT_NAME": selected_source["object"],
+                        "STATUS": "Unavailable",
+                        "DETAIL": format_snowflake_error(e),
+                        "AVAILABLE_COLUMNS": "",
+                    }])
+
+        status = st.session_state.get("cortex_service_detail_status")
+        if status is not None and not status.empty:
+            render_priority_dataframe(
+                status,
+                title="Cortex service telemetry status",
+                priority_columns=["SERVICE", "STATUS", "DETAIL", "OBJECT_NAME", "AVAILABLE_COLUMNS"],
+                max_rows=10,
+                raw_label="All Cortex service telemetry status rows",
+                height=180,
+            )
+
+        detail = st.session_state.get("cortex_service_detail_data")
+        if detail is not None and not detail.empty:
+            detail = detail.copy()
+            if "USAGE_DATE" in detail.columns:
+                detail["USAGE_DATE"] = safe_strip_tz(detail["USAGE_DATE"])
+            total_credits = safe_float(detail.get("TOTAL_CREDITS", pd.Series(dtype=float)).sum())
+            total_cost = safe_float(detail.get("COST_USD", pd.Series(dtype=float)).sum())
+            total_requests = safe_int(detail.get("TOTAL_REQUESTS", pd.Series(dtype=float)).sum())
+            render_shell_snapshot((
+                ("Service", selected_service),
+                ("Requests", f"{total_requests:,}"),
+                ("AI Credits", f"{total_credits:,.4f}"),
+                ("Est. Cost", f"${total_cost:,.2f}"),
+            ))
+            defer_source_note(
+                metric_confidence_label("account-wide"),
+                freshness_note("ACCOUNT_USAGE"),
+                "Cortex service views are Snowflake account telemetry. Company split depends on user/role naming, not warehouse metering.",
+            )
+            daily = (
+                detail.groupby("USAGE_DATE", as_index=False)
+                .agg(COST_USD=("COST_USD", "sum"), TOTAL_CREDITS=("TOTAL_CREDITS", "sum"), TOTAL_REQUESTS=("TOTAL_REQUESTS", "sum"))
+                .sort_values("USAGE_DATE")
+            )
+            render_chart_with_data_toggle(
+                "Cortex Service Daily Cost",
+                "cortex_service_detail_daily_cost",
+                lambda: st.line_chart(daily.set_index("USAGE_DATE")[["COST_USD", "TOTAL_CREDITS"]]),
+                daily,
+                priority_columns=["USAGE_DATE", "COST_USD", "TOTAL_CREDITS", "TOTAL_REQUESTS"],
+                sort_by=["USAGE_DATE"],
+                ascending=True,
+                max_rows=90,
+                raw_label="All Cortex service daily rows",
+            )
+            render_priority_dataframe(
+                detail,
+                title="Cortex service user detail",
+                priority_columns=[
+                    "USAGE_DATE",
+                    "SOURCE",
+                    "USER_NAME",
+                    "COST_USD",
+                    "TOTAL_CREDITS",
+                    "TOTAL_REQUESTS",
+                    "TOTAL_TOKENS",
+                ],
+                sort_by=["COST_USD", "TOTAL_CREDITS", "TOTAL_REQUESTS"],
+                ascending=[False, False, False],
+                raw_label="All Cortex service detail rows",
+                height=360,
+                column_config={
+                    "COST_USD": st.column_config.NumberColumn("Cost", format="$%.2f"),
+                    "TOTAL_CREDITS": st.column_config.NumberColumn("AI Credits", format="%.4f"),
+                    "TOTAL_REQUESTS": st.column_config.NumberColumn("Requests", format="%d"),
+                    "TOTAL_TOKENS": st.column_config.NumberColumn("Tokens / Units", format="%d"),
+                },
+            )
+            download_csv(detail, "cortex_service_detail.csv")
+
     elif cortex_view == "User Attribution":
         st.subheader("Cortex Code User Breakdown")
         st.caption(
@@ -595,7 +900,7 @@ def render():
                                MAX(c.USAGE_TIME)                          AS LAST_USAGE
                         FROM combined c
                         LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS u ON c.USER_ID = u.USER_ID
-                        WHERE 1=1 {get_user_filter_clause("u.NAME")}
+                        WHERE 1=1 {get_user_company_filter_clause("u.NAME")}
                         GROUP BY u.NAME, u.EMAIL, c.SOURCE
                         ORDER BY TOTAL_CREDITS DESC
                     """, ttl_key=f"cortex_users_{company}_{cc_days}", tier="standard")
@@ -731,7 +1036,7 @@ def render():
                                      / NULLIF(p.credits/NULLIF(p.requests,0),0)*100-100, 1) AS PCT_CHANGE
                         FROM recent r JOIN prior p ON r.USER_ID = p.USER_ID
                         LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS u ON r.USER_ID = u.USER_ID
-                        WHERE 1=1 {get_user_filter_clause("u.NAME")}
+                        WHERE 1=1 {get_user_company_filter_clause("u.NAME")}
                         ORDER BY PCT_CHANGE DESC
                     """, ttl_key=f"cortex_cpr_spikes_{company}_{cc_days}", tier="standard")
                         if not df_spike.empty:
@@ -785,7 +1090,7 @@ def render():
                                SUM(TOKEN_CREDITS)      AS TOTAL_CREDITS
                         FROM combined c
                         LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS u ON c.USER_ID = u.USER_ID
-                        WHERE 1=1 {get_user_filter_clause("u.NAME")}
+                        WHERE 1=1 {get_user_company_filter_clause("u.NAME")}
                         GROUP BY USAGE_DATE, SOURCE
                         ORDER BY USAGE_DATE
                     """, ttl_key=f"cortex_trends_{company}_{cc_trend_days}", tier="standard")
@@ -932,7 +1237,7 @@ def render():
                         FROM with_stats s
                         LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS u ON s.USER_ID = u.USER_ID
                         WHERE s.AVG_7D IS NOT NULL
-                          {get_user_filter_clause("u.NAME")}
+                          {get_user_company_filter_clause("u.NAME")}
                         ORDER BY s.USAGE_DATE DESC, s.CREDITS DESC
                     """, ttl_key=f"cortex_anomalies_{company}_{cc_anom_days}", tier="standard")
                     st.session_state["cm_cc_anom_data"] = df_anom
@@ -1022,7 +1327,7 @@ def render():
                     SELECT c.USAGE_TIME::DATE AS USAGE_DATE, SUM(c.TOKEN_CREDITS) AS DAILY_CREDITS
                     FROM combined c
                     LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS u ON c.USER_ID = u.USER_ID
-                    WHERE 1=1 {get_user_filter_clause("u.NAME", company)}
+                    WHERE 1=1 {get_user_company_filter_clause("u.NAME", company)}
                     GROUP BY c.USAGE_TIME::DATE
                     ORDER BY c.USAGE_TIME::DATE
                 """, ttl_key=f"cortex_predictive_{company}", tier="standard")

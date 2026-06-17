@@ -22,6 +22,8 @@ from utils.company_filter import (  # noqa: E402
     get_environment_options_for_company,
     get_global_filter_clause,
     get_global_schema_filter_clause,
+    get_role_filter_clause,
+    get_user_company_filter_clause,
     get_wh_filter_clause,
 )
 from utils.cost import build_cost_reconciliation_sql  # noqa: E402
@@ -73,26 +75,52 @@ class CompanyScopeAndCostTests(unittest.TestCase):
         self.assertNotIn("LIKE '%'", clause.upper())
 
     def test_combined_scope_uses_any_company_signal_with_exclusions(self):
-        clause = get_combined_filter_clause("q.database_name", "q.warehouse_name", "q.user_name", company="ALFA")
+        clause = get_combined_filter_clause(
+            "q.database_name",
+            "q.warehouse_name",
+            "q.user_name",
+            "q.role_name",
+            company="ALFA",
+        )
         upper = clause.upper()
         self.assertIn(" OR ", upper)
         self.assertIn("Q.WAREHOUSE_NAME IS NOT NULL", upper)
         self.assertIn("Q.DATABASE_NAME IS NOT NULL", upper)
         self.assertIn("WH_TRXS_LOAD", upper)
         self.assertNotIn("WH_TRXS_%", upper)
-        self.assertIn("TRXS_%", upper)
+        self.assertIn("%TRXS%", upper)
+        self.assertIn("Q.ROLE_NAME", upper)
 
     def test_company_case_uses_exact_trexis_warehouse_list(self):
-        expr = get_company_case_expr("q.warehouse_name", "q.database_name", "q.user_name").upper()
+        expr = get_company_case_expr("q.warehouse_name", "q.database_name", "q.user_name", "q.role_name").upper()
         self.assertIn("WH_TRXS_LOAD", expr)
         self.assertIn("WH_TRXS_UNLOAD", expr)
         self.assertIn("TRXS_EDW_PRD", expr)
         self.assertIn("TRXS_GW_DATA_SIT", expr)
         self.assertIn("UPPER(Q.WAREHOUSE_NAME)", expr)
         self.assertIn("UPPER(Q.DATABASE_NAME)", expr)
+        self.assertIn("Q.USER_NAME ILIKE 'TRXS_%'", expr)
+        self.assertIn("Q.ROLE_NAME ILIKE '%TRXS%'", expr)
         self.assertIn("NULLIF(TRIM(TO_VARCHAR(Q.WAREHOUSE_NAME))", expr)
         self.assertNotIn("Q.DATABASE_NAME ILIKE 'TRXS_%'", expr)
         self.assertNotIn("WH_TRXS_%", expr)
+
+    def test_role_scope_uses_trxs_moniker(self):
+        trexis_clause = get_role_filter_clause("q.role_name", company="Trexis").upper()
+        alfa_clause = get_role_filter_clause("q.role_name", company="ALFA").upper()
+
+        self.assertIn("Q.ROLE_NAME ILIKE '%TRXS%'", trexis_clause)
+        self.assertIn("Q.ROLE_NAME NOT ILIKE '%TRXS%'", alfa_clause)
+
+    def test_user_company_scope_uses_active_role_membership(self):
+        trexis_clause = get_user_company_filter_clause("u.name", company="Trexis").upper()
+        alfa_clause = get_user_company_filter_clause("u.name", company="ALFA").upper()
+
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS", trexis_clause)
+        self.assertIn("ROLE_SCOPE.\"ROLE\" ILIKE '%TRXS%'", trexis_clause)
+        self.assertIn("ROLE_SCOPE.GRANTEE_NAME", trexis_clause)
+        self.assertIn("NOT EXISTS", alfa_clause)
+        self.assertIn("ROLE_SCOPE.\"ROLE\" ILIKE '%TRXS%'", alfa_clause)
 
     def test_mart_setup_uses_exact_trexis_warehouse_list(self):
         sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8").upper()
@@ -102,6 +130,7 @@ class CompanyScopeAndCostTests(unittest.TestCase):
         self.assertIn("TRXS_GW_DATA_SIT", sql)
         self.assertIn("UPPER(COALESCE(WAREHOUSE_NAME, '')) IN", sql)
         self.assertIn("UPPER(COALESCE(DATABASE_NAME, '')) IN", sql)
+        self.assertIn("ROLE_NAME ILIKE '%TRXS%'", sql)
         self.assertNotIn("OVERWATCH_COMPANY_SCOPE", sql)
         self.assertNotIn("SCOPE_PATTERN = 'WH_TRXS_%'", sql)
         self.assertNotIn("SCOPE_PATTERN = 'TRXS_%'", sql)

@@ -49,6 +49,7 @@ WORKLOAD_OPERATIONS_EXPLICIT_WORKFLOW_KEY = "_workload_operations_explicit_workf
 QUERY_INVESTIGATION_WORKFLOW = "Query investigation"
 QUERY_CONTENTION_WORKFLOW = QUERY_INVESTIGATION_WORKFLOW
 TASK_PROCEDURE_WORKFLOW = "Task & procedure health"
+STORED_PROCEDURES_WORKFLOW = "Stored procedures"
 PIPELINE_SLA_WORKFLOW = "Pipeline / SLA risk"
 SCHEMA_COMPARE_WORKFLOW = "Schema & data compare"
 AI_QUERY_DIAGNOSIS_WORKFLOW = QUERY_INVESTIGATION_WORKFLOW
@@ -61,6 +62,7 @@ _LEGACY_PIPELINE_FOCUS_KEY = "workload_operations_pipeline_focus"
 WORKFLOWS = (
     QUERY_INVESTIGATION_WORKFLOW,
     TASK_PROCEDURE_WORKFLOW,
+    STORED_PROCEDURES_WORKFLOW,
     PIPELINE_SLA_WORKFLOW,
     SCHEMA_COMPARE_WORKFLOW,
 )
@@ -68,6 +70,7 @@ WORKFLOWS = (
 WORKFLOW_DETAILS = {
     QUERY_INVESTIGATION_WORKFLOW: "One front door for running, queued, blocked, slow, spilling, failed, high-cost, and AI-diagnosed SQL.",
     TASK_PROCEDURE_WORKFLOW: "Task graph and procedure health with late runs, failures, retry state, and recovery order.",
+    STORED_PROCEDURES_WORKFLOW: "Stored procedure inventory, task linkage, runtime/cost regressions, advisor signals, and child-query drilldown.",
     PIPELINE_SLA_WORKFLOW: "Freshness SLA, load failures, dynamic tables, Snowpipe usage, and downstream backlog.",
     SCHEMA_COMPARE_WORKFLOW: "Schema and data compare for missing objects, row counts, and object/data likeness.",
 }
@@ -75,6 +78,7 @@ WORKFLOW_DETAILS = {
 WORKFLOW_MODULES = {
     QUERY_INVESTIGATION_WORKFLOW: "sections.query_analysis",
     TASK_PROCEDURE_WORKFLOW: "sections.task_management",
+    STORED_PROCEDURES_WORKFLOW: "sections.stored_proc_tracker",
     PIPELINE_SLA_WORKFLOW: "sections.pipeline_health",
     SCHEMA_COMPARE_WORKFLOW: "sections.dba_tools",
 }
@@ -110,7 +114,7 @@ CONSOLIDATED_WORKFLOW_ALIASES = {
     **{alias: QUERY_INVESTIGATION_WORKFLOW for alias in QUERY_CONTENTION_ALIASES},
     "Task, procedure & pipeline health": TASK_PROCEDURE_WORKFLOW,
     "Task graphs": TASK_PROCEDURE_WORKFLOW,
-    "Stored procedures": TASK_PROCEDURE_WORKFLOW,
+    "Stored procedure lineage": STORED_PROCEDURES_WORKFLOW,
     "Pipeline health": PIPELINE_SLA_WORKFLOW,
 }
 
@@ -201,7 +205,7 @@ def render() -> None:
         "Pick the operator surface that matches the incident. Each route opens one specialist path instead of a nested brief.",
         [
             ("Running, queued, blocked, slow, spilling, or failed SQL", "Use Query investigation, then choose diagnosis or contention focus."),
-            ("Late task, failed procedure, load backlog, or downstream SLA risk", "Use Task & procedure health or Pipeline / SLA risk."),
+            ("Late task, failed procedure, load backlog, or downstream SLA risk", "Use Task & procedure health, Stored procedures, or Pipeline / SLA risk."),
             ("Mismatch between environments or releases", "Use Schema & data compare."),
         ],
     )

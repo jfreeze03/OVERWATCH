@@ -366,7 +366,7 @@ def _warehouse_action_brief(company: str, environment: str, days: int) -> dict:
         remote_spill = _warehouse_column_sum(overview, "TOTAL_REMOTE_SPILL_GB")
         return {
             "state": "Loaded",
-            "headline": "Use the loaded overview before changing warehouse controls.",
+            "headline": "Use the loaded overview before changing warehouse settings.",
             "detail": (
                 f"{warehouses:,} warehouse(s), {total_queries:,} queries, "
                 f"and {remote_spill:,.1f} GB remote spill in the selected window."
@@ -1308,6 +1308,193 @@ def _warehouse_setting_present(value: object) -> bool:
     return bool(text) and text.upper() not in {"NONE", "NULL", "NAN", "NOT SET", "UNSET"}
 
 
+def _warehouse_sql_identifier(name: object) -> str:
+    """Return a quoted Snowflake identifier for generated review SQL."""
+    text = _warehouse_text(name)
+    if not text:
+        return '""'
+    return '"' + text.replace('"', '""') + '"'
+
+
+def _warehouse_bool_setting(value: object) -> bool | None:
+    """Parse SHOW WAREHOUSES boolean-like settings."""
+    if not _warehouse_setting_present(value):
+        return None
+    text = str(value).strip().upper()
+    if text in {"TRUE", "T", "YES", "Y", "1", "ON"}:
+        return True
+    if text in {"FALSE", "F", "NO", "N", "0", "OFF"}:
+        return False
+    return None
+
+
+def _warehouse_cost_control_review_sql(warehouse_name: object, recommended_suspend: int = 60) -> str:
+    """Generate review-only SQL for warehouse auto-suspend/auto-resume posture."""
+    wh_name = _warehouse_text(warehouse_name)
+    if not wh_name:
+        return "-- Load warehouse metadata before generating warehouse cost-control SQL."
+    wh_like = sql_literal(wh_name, 300)
+    wh_ident = _warehouse_sql_identifier(wh_name)
+    recommended_suspend = max(60, int(recommended_suspend or 60))
+    return f"""-- Review only: warehouse cost-control posture for {wh_name}
+-- Confirm workload latency, shared usage, and owner impact before executing ALTER WAREHOUSE.
+SHOW WAREHOUSES LIKE {wh_like};
+
+-- Candidate setting for DBA review; do not execute without approval for shared warehouses.
+ALTER WAREHOUSE {wh_ident}
+  SET AUTO_SUSPEND = {recommended_suspend}
+      AUTO_RESUME = TRUE;
+"""
+
+
+def _overwatch_dedicated_warehouse_setup_sql() -> str:
+    """Return advisory setup SQL for a future dedicated OVERWATCH warehouse."""
+    return """-- Future dedicated OVERWATCH warehouse pattern.
+-- Review naming, role grants, and resource monitor policy before execution.
+CREATE WAREHOUSE IF NOT EXISTS OVERWATCH_WH
+  WAREHOUSE_SIZE = XSMALL
+  AUTO_SUSPEND = 60
+  AUTO_RESUME = TRUE
+  INITIALLY_SUSPENDED = TRUE
+  COMMENT = 'Dedicated OVERWATCH Snowflake DBA monitoring warehouse';
+
+-- Optional guardrail after resource monitor policy is approved.
+-- ALTER WAREHOUSE OVERWATCH_WH SET RESOURCE_MONITOR = OVERWATCH_WH_RM;
+"""
+
+
+def _build_warehouse_cost_control_posture(
+    settings_inventory: pd.DataFrame | None,
+    overview: pd.DataFrame | None = None,
+) -> tuple[dict, pd.DataFrame]:
+    """Build current warehouse suspend/resume posture from SHOW WAREHOUSES metadata."""
+    columns = [
+        "WAREHOUSE_NAME", "COST_CONTROL_STATE", "IDLE_RISK", "AUTO_SUSPEND_SEC",
+        "AUTO_RESUME", "WAREHOUSE_SIZE", "STATE", "METERED_CREDITS",
+        "RECOMMENDED_AUTO_SUSPEND_SEC", "RECOMMENDED_ACTION", "REVIEW_SQL",
+        "POSTURE_RANK",
+    ]
+    settings = _warehouse_upper_frame(settings_inventory)
+    if settings.empty:
+        return {
+            "warehouses": 0,
+            "blocked": 0,
+            "review": 0,
+            "ready": 0,
+            "overwatch_candidates": 0,
+        }, pd.DataFrame(columns=columns)
+
+    overview_by_wh = _warehouse_row_by_name(_warehouse_upper_frame(overview))
+    rows: list[dict[str, object]] = []
+    for _, row in settings.iterrows():
+        wh_name = _warehouse_text(row.get("NAME") or row.get("WAREHOUSE_NAME"))
+        if not wh_name:
+            continue
+        wh_key = wh_name.upper()
+        suspend_value = row.get("AUTO_SUSPEND")
+        auto_suspend = safe_int(suspend_value, -1) if _warehouse_setting_present(suspend_value) else None
+        auto_resume = _warehouse_bool_setting(row.get("AUTO_RESUME"))
+        overview_row = overview_by_wh.get(wh_key, {})
+        metered = safe_float(overview_row.get("METERED_CREDITS"))
+        recommended_suspend = 60 if wh_key in {"COMPUTE_WH", "OVERWATCH_WH"} or "OVERWATCH" in wh_key else 300
+
+        reasons: list[str] = []
+        rank = 8
+        if auto_suspend is None:
+            state = "Data Missing"
+            idle_risk = "Unknown"
+            reasons.append("AUTO_SUSPEND was not available from SHOW WAREHOUSES.")
+            rank = 4
+        elif auto_suspend == 0:
+            state = "Blocked"
+            idle_risk = "Never suspends"
+            reasons.append("AUTO_SUSPEND is disabled, so idle compute can continue burning credits.")
+            rank = 0
+        elif auto_suspend > 1000:
+            state = "Needs Review"
+            idle_risk = "Longer than current 1000s session timeout"
+            reasons.append("AUTO_SUSPEND exceeds the current COMPUTE_WH session-timeout context.")
+            rank = 1
+        elif auto_suspend > 600:
+            state = "Needs Review"
+            idle_risk = "Over 10 minutes"
+            reasons.append("AUTO_SUSPEND is above ten minutes; verify the cache/performance tradeoff is intentional.")
+            rank = 2
+        elif auto_suspend > 300:
+            state = "Watch"
+            idle_risk = "Over 5 minutes"
+            reasons.append("AUTO_SUSPEND is conservative but may be high for DBA monitoring workloads.")
+            rank = 5
+        else:
+            state = "Ready"
+            idle_risk = "Bounded"
+            reasons.append("AUTO_SUSPEND is inside the recommended DBA monitoring range.")
+
+        if auto_resume is False:
+            state = "Blocked"
+            rank = min(rank, 0)
+            reasons.append("AUTO_RESUME is disabled; operators may hit avoidable startup failures.")
+        elif auto_resume is None:
+            if state == "Ready":
+                state = "Data Missing"
+            rank = min(rank, 4)
+            reasons.append("AUTO_RESUME was not available from SHOW WAREHOUSES.")
+
+        if wh_key == "COMPUTE_WH":
+            if state == "Ready":
+                state = "Watch"
+                rank = min(rank, 5)
+            reasons.append("This is the current shared OVERWATCH warehouse; prefer idle guard plus short auto-suspend.")
+        elif "OVERWATCH" in wh_key:
+            reasons.append("This appears to be an OVERWATCH-dedicated warehouse; keep it small, auto-resuming, and fast-suspending.")
+
+        if state == "Blocked":
+            action = f"Review and set AUTO_SUSPEND={recommended_suspend}, AUTO_RESUME=TRUE, then monitor the next complete window."
+        elif state in {"Needs Review", "Watch"}:
+            action = f"Validate workload impact, then consider AUTO_SUSPEND={recommended_suspend} with AUTO_RESUME=TRUE."
+        elif state == "Data Missing":
+            action = "Reload warehouse metadata or verify role can see SHOW WAREHOUSES settings."
+        else:
+            action = "Keep current suspend/resume policy visible in warehouse cost-control reviews."
+
+        rows.append({
+            "WAREHOUSE_NAME": wh_name,
+            "COST_CONTROL_STATE": state,
+            "IDLE_RISK": idle_risk,
+            "AUTO_SUSPEND_SEC": auto_suspend,
+            "AUTO_RESUME": auto_resume,
+            "WAREHOUSE_SIZE": row.get("WAREHOUSE_SIZE", ""),
+            "STATE": row.get("STATE", ""),
+            "METERED_CREDITS": metered,
+            "RECOMMENDED_AUTO_SUSPEND_SEC": recommended_suspend,
+            "RECOMMENDED_ACTION": " ".join(reasons + [action]),
+            "REVIEW_SQL": _warehouse_cost_control_review_sql(wh_name, recommended_suspend),
+            "POSTURE_RANK": rank,
+        })
+
+    if not rows:
+        return {
+            "warehouses": 0,
+            "blocked": 0,
+            "review": 0,
+            "ready": 0,
+            "overwatch_candidates": 0,
+        }, pd.DataFrame(columns=columns)
+    posture = pd.DataFrame(rows).sort_values(
+        ["POSTURE_RANK", "METERED_CREDITS", "WAREHOUSE_NAME"],
+        ascending=[True, False, True],
+    ).reset_index(drop=True)
+    state_series = posture["COST_CONTROL_STATE"].astype(str)
+    summary = {
+        "warehouses": int(len(posture)),
+        "blocked": int(state_series.eq("Blocked").sum()),
+        "review": int(state_series.isin(["Needs Review", "Watch", "Data Missing"]).sum()),
+        "ready": int(state_series.eq("Ready").sum()),
+        "overwatch_candidates": int(posture["WAREHOUSE_NAME"].astype(str).str.upper().str.contains("OVERWATCH|COMPUTE_WH").sum()),
+    }
+    return summary, posture[columns]
+
+
 def _build_warehouse_guardrail_coverage(
     overview: pd.DataFrame | None,
     owner_inventory: pd.DataFrame | None = None,
@@ -1753,6 +1940,53 @@ def _render_warehouse_setting_action_detail(plan: pd.DataFrame | None) -> None:
     if route in WAREHOUSE_HEALTH_VIEWS and st.button(f"Open {route}", key="warehouse_setting_action_route", width="stretch"):
         st.session_state["warehouse_health_view"] = route
         st.rerun()
+
+
+def _render_warehouse_cost_control_posture(
+    settings_inventory: pd.DataFrame | None,
+    overview: pd.DataFrame | None = None,
+) -> None:
+    summary, posture = _build_warehouse_cost_control_posture(settings_inventory, overview)
+    st.subheader("Warehouse Cost-Control Posture")
+    if posture.empty:
+        st.info("Load warehouse metadata to review AUTO_SUSPEND and AUTO_RESUME posture.")
+        return
+
+    render_shell_snapshot((
+        ("Warehouses", f"{summary['warehouses']:,}"),
+        ("Blocked", f"{summary['blocked']:,}"),
+        ("Needs Review", f"{summary['review']:,}"),
+        ("OVERWATCH candidates", f"{summary['overwatch_candidates']:,}"),
+    ))
+    render_priority_dataframe(
+        posture,
+        title="Suspend and resume posture",
+        priority_columns=[
+            "WAREHOUSE_NAME", "COST_CONTROL_STATE", "IDLE_RISK", "AUTO_SUSPEND_SEC",
+            "AUTO_RESUME", "WAREHOUSE_SIZE", "STATE", "METERED_CREDITS",
+            "RECOMMENDED_AUTO_SUSPEND_SEC", "RECOMMENDED_ACTION",
+        ],
+        sort_by=["POSTURE_RANK", "METERED_CREDITS", "WAREHOUSE_NAME"],
+        ascending=[True, False, True],
+        raw_label="All warehouse cost-control rows",
+        height=320,
+        max_rows=12,
+    )
+    download_csv(posture, "warehouse_cost_control_posture.csv")
+
+    options = posture["WAREHOUSE_NAME"].astype(str).tolist()
+    if options:
+        selected_wh = st.selectbox(
+            "Warehouse review SQL",
+            options,
+            key="warehouse_cost_control_sql_select",
+        )
+        selected = posture[posture["WAREHOUSE_NAME"].astype(str).eq(selected_wh)]
+        if not selected.empty:
+            st.code(str(selected.iloc[0].get("REVIEW_SQL") or ""), language="sql")
+
+    with st.expander("Future dedicated OVERWATCH warehouse", expanded=False):
+        st.code(_overwatch_dedicated_warehouse_setup_sql(), language="sql")
 
 
 def _warehouse_frame_sum(frame: pd.DataFrame | None, column: str) -> int:
@@ -3853,6 +4087,7 @@ def render():
                     )
                     download_csv(setting_plan, "warehouse_setting_action_plan.csv")
                     _render_warehouse_setting_action_detail(setting_plan)
+                _render_warehouse_cost_control_posture(settings_inventory, df_w)
                 if st.session_state.get("wh_settings_inventory_error"):
                     defer_source_note(
                         "Warehouse metadata was unavailable for resource-monitor, timeout, and auto-suspend checks: "

@@ -352,10 +352,16 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('load_label = "Refresh DBA Morning Brief"', full_workspace_text)
         self.assertIn('st.session_state["dba_operations_board_detail"] = ops_detail', full_workspace_text)
         self.assertIn('"Service Posture"', full_workspace_text)
+        self.assertIn('"Admin Tools"', full_workspace_text)
+        self.assertIn('"Admin Tools": "Admin"', full_workspace_text)
         self.assertIn('from sections import service_health', full_workspace_text)
         self.assertIn("service_health.render()", full_workspace_text)
-        self.assertIn('st.session_state.get("dba_control_room_active_view") == "Service Posture"', full_workspace_text)
-        service_posture_block = full_workspace_text.split('st.session_state.get("dba_control_room_active_view") == "Service Posture"', 1)[1].split(
+        self.assertIn('from sections import dba_tools', full_workspace_text)
+        self.assertIn("dba_tools.render()", full_workspace_text)
+        self.assertIn('"Warehouse Settings"', full_workspace_text)
+        self.assertIn('"Cortex AI Limits"', full_workspace_text)
+        self.assertIn('st.session_state.get("dba_control_room_active_view") in {"Service Posture", "Admin Tools"}', full_workspace_text)
+        service_posture_block = full_workspace_text.split('st.session_state.get("dba_control_room_active_view") in {"Service Posture", "Admin Tools"}', 1)[1].split(
             'if not data:',
             1,
         )[0]
@@ -693,6 +699,7 @@ class NavigationIntegrityTests(unittest.TestCase):
             (
                 "Query investigation",
                 "Task & procedure health",
+                "Stored procedures",
                 "Pipeline / SLA risk",
                 "Schema & data compare",
             ),
@@ -707,6 +714,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Contention Telemetry", workload_operations.QUERY_FOCUS_DETAILS)
         self.assertIn("AI Query Diagnosis", workload_operations.QUERY_FOCUS_DETAILS)
         self.assertEqual(workload_operations.WORKFLOW_MODULES["Task & procedure health"], "sections.task_management")
+        self.assertEqual(workload_operations.WORKFLOW_MODULES["Stored procedures"], "sections.stored_proc_tracker")
         self.assertEqual(workload_operations.WORKFLOW_MODULES["Pipeline / SLA risk"], "sections.pipeline_health")
         self.assertEqual(workload_operations.WORKFLOW_MODULES["Schema & data compare"], "sections.dba_tools")
         pipeline_health_text = (APP_ROOT / "sections" / "pipeline_health.py").read_text(encoding="utf-8")
@@ -734,6 +742,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn(".metric(", task_management_text)
         self.assertIn("Service Posture", dba_control_room.DBA_CONTROL_ROOM_PANES)
         self.assertEqual(dba_control_room.DBA_CONTROL_ROOM_PANE_LABELS["Service Posture"], "Service")
+        self.assertIn("Admin Tools", dba_control_room.DBA_CONTROL_ROOM_PANES)
+        self.assertEqual(dba_control_room.DBA_CONTROL_ROOM_PANE_LABELS["Admin Tools"], "Admin")
         self.assertIn("Morning Brief", dba_control_room.DBA_CONTROL_ROOM_PANES)
         self.assertEqual(dba_control_room.DBA_CONTROL_ROOM_PANE_LABELS["Morning Brief"], "Morning")
         self.assertEqual(

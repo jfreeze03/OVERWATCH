@@ -70,6 +70,7 @@ Supporting operations documents:
 - `docs/OVERWATCH_RECOVERY_RUNBOOK.md` - operator recovery checklist.
 - `docs/MART_RESET_RUNBOOK.md` - drop/setup/refresh sequence for mart rebuilds.
 - `docs/MART_OBJECT_REVIEW.md` - current mart object inventory and pruning guardrails.
+- `docs/IMPLEMENTATION_NOTES.md` - documented boundaries for new implementation changes.
 - `CHANGELOG.md` - release-level change history.
 
 The first-paint summaries expose monitoring lanes for Snowflake Data Metric

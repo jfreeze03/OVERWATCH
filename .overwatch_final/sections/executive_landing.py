@@ -1304,11 +1304,24 @@ def _executive_loaded_advisor_rows(state: dict | None = None) -> pd.DataFrame:
     capacity_exceptions = _state_frame(state, "wh_capacity_exceptions")
     settings_inventory = _state_frame(state, "wh_settings_inventory")
     rec_setting_plan = _state_frame(state, "rec_warehouse_control_plan")
-    warehouse_findings = len(idle) + len(duplicate) + len(sizing) + len(capacity_exceptions) + len(rec_setting_plan)
+    warehouse_advisor = _state_frame(state, "rec_warehouse_advisor_recommendations")
+    warehouse_findings = (
+        len(idle)
+        + len(duplicate)
+        + len(sizing)
+        + len(capacity_exceptions)
+        + len(rec_setting_plan)
+        + len(warehouse_advisor)
+    )
     if warehouse_findings:
         idle_credits = _sum_first_numeric(idle, ["IDLE_CREDITS"])
         total_credits = _sum_first_numeric(sizing, ["TOTAL_CREDITS"])
-        savings = credits_to_dollars((idle_credits / 7.0 * 30.0), _credit_price()) if idle_credits else 0.0
+        advisor_savings = _sum_first_numeric(warehouse_advisor, ["EST_MONTHLY_SAVINGS_USD", "Estimated Monthly Savings"])
+        savings = (
+            advisor_savings
+            if advisor_savings
+            else credits_to_dollars((idle_credits / 7.0 * 30.0), _credit_price()) if idle_credits else 0.0
+        )
         spill = _sum_first_numeric(sizing, ["REMOTE_SPILL_GB"]) + _sum_first_numeric(capacity_exceptions, ["REMOTE_SPILL_GB"])
         queue = _sum_first_numeric(sizing, ["AVG_QUEUE_SEC", "QUEUE_SECONDS"]) + _sum_first_numeric(capacity_exceptions, ["QUEUE_SECONDS"])
         pressure_count = 0
@@ -1316,9 +1329,10 @@ def _executive_loaded_advisor_rows(state: dict | None = None) -> pd.DataFrame:
             spill_series = pd.to_numeric(sizing.get("REMOTE_SPILL_GB", pd.Series([0] * len(sizing))), errors="coerce").fillna(0)
             queue_series = pd.to_numeric(sizing.get("AVG_QUEUE_SEC", pd.Series([0] * len(sizing))), errors="coerce").fillna(0)
             pressure_count += int(((spill_series >= 10) | (queue_series >= 600)).sum())
-        high = max(_count_high_priority(capacity_exceptions), pressure_count)
+        high = max(_count_high_priority(capacity_exceptions), _count_high_priority(warehouse_advisor), pressure_count)
         inventory_note = f"; {len(settings_inventory):,} warehouse setting row(s) loaded" if not settings_inventory.empty else ""
-        control_note = f"; {len(rec_setting_plan):,} setting control action(s)" if not rec_setting_plan.empty else ""
+        advisor_note = f"; {len(warehouse_advisor):,} advisor recommendation(s)" if not warehouse_advisor.empty else ""
+        control_note = f"; {len(rec_setting_plan):,} guardrail finding(s)" if not rec_setting_plan.empty else ""
         _append_advisor_row(
             rows,
             lane="Warehouse Optimization",
@@ -1329,9 +1343,9 @@ def _executive_loaded_advisor_rows(state: dict | None = None) -> pd.DataFrame:
             signal=(
                 f"{len(idle):,} idle, {len(duplicate):,} repeated-query, {len(sizing):,} sizing, "
                 f"{len(capacity_exceptions):,} capacity exception row(s); {_format_gb(spill)} spill, "
-                f"{_format_seconds(queue)} queue{inventory_note}{control_note}."
+                f"{_format_seconds(queue)} queue{inventory_note}{advisor_note}{control_note}."
             ),
-            next_action="Open Cost & Contract warehouse controls and review setting evidence before any warehouse change.",
+            next_action="Open Cost & Contract warehouse advisor, then execute any approved change through DBA Control Room Admin.",
             route="Cost & Contract",
             priority=3 if high else 6,
         )
@@ -2105,17 +2119,17 @@ def _executive_command_summary_rows(board: pd.DataFrame, advisor_rows: pd.DataFr
     warehouse_row = _advisor_lane(advisor_rows, "Warehouse")
     rows.append({
         "PRIORITY": safe_int(warehouse_row.get("PRIORITY"), 4) if warehouse_row is not None else 8,
-        "AREA": "Warehouse controls",
+        "AREA": "Warehouse advisor",
         "STATE": str(warehouse_row.get("STATE") or "Review") if warehouse_row is not None else "On demand",
         "CURRENT_SIGNAL": (
-            str(warehouse_row.get("ADVISOR_SIGNAL") or warehouse_row.get("VALUE") or "Warehouse controls loaded.")
+            str(warehouse_row.get("ADVISOR_SIGNAL") or warehouse_row.get("VALUE") or "Warehouse advisor loaded.")
             if warehouse_row is not None
-            else "Load Cost & Contract > Warehouse Controls to include setting-control actions."
+            else "Load Cost & Contract > Warehouse Advisor to include warehouse recommendations and savings."
         ),
         "NEXT_ACTION": (
-            str(warehouse_row.get("NEXT_ACTION") or "Open Cost & Contract warehouse controls.")
+            str(warehouse_row.get("NEXT_ACTION") or "Open Cost & Contract warehouse advisor.")
             if warehouse_row is not None
-            else "Open Cost & Contract > Recommendations and action queue > Warehouse Controls."
+            else "Open Cost & Contract > Recommendations and action queue > Warehouse Advisor."
         ),
         "ROUTE": "Cost & Contract",
     })

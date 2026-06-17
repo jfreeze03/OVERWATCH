@@ -3027,7 +3027,7 @@ LIMIT 100;
             "TELEMETRY": "SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY and event tables when configured",
             "FRESHNESS": "ACCOUNT_USAGE delayed; task graph error notifications can be near-real-time when configured",
             "OWNER": "DBA / Pipeline Route",
-            "WHY_THIS_MATTERS": "Informatica migration success depends on Snowflake task graphs having SLA, failure, retry, and route telemetry.",
+            "WHY_THIS_MATTERS": "Snowflake pipeline reliability depends on task graphs having SLA, failure, retry, and route telemetry.",
             "RECOMMENDED_ACTION": "Identify root task, failed child, error signature, retry count, last success, and downstream SLA risk before rerun.",
             "SQL": f"""
 SELECT 'PIPELINE_TASK_FAILURE' AS ALERT_KEY, 'Task / Pipeline' AS CATEGORY, 'Critical' AS SEVERITY,
@@ -3631,7 +3631,7 @@ def build_alert_morning_brief_rows(alerts: pd.DataFrame, *, limit: int = 12) -> 
         "Security": "Possible breach, privilege escalation, data exposure, or control bypass.",
         "Cost": "Spend may exceed normal run-rate or contract burn before finance sees the invoice.",
         "Performance": "Queue, spill, long-running, or lock patterns can become an outage without intervention.",
-        "Task / Pipeline": "Task graph or stored procedure failures can break the Informatica-to-Snowflake migration SLA.",
+        "Task / Pipeline": "Task graph or stored procedure failures can break downstream pipeline SLAs.",
         "Data Quality": "Freshness, volume, null, duplicate, or schema drift can corrupt downstream decisions.",
         "Optimization": "The account is paying for avoidable compute, storage, or repeated inefficient patterns.",
     }

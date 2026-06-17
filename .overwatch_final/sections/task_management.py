@@ -1501,7 +1501,7 @@ def _build_task_ops_markdown(
         "",
         "## DBA Narrative",
         (
-            "This is the Informatica Monitor replacement view: use it to find broken task graphs, "
+            "This Snowflake task operations view helps find broken task graphs, "
             "failed sessions, suspended jobs, slow runs, linked procedures, and retry candidates. "
             "It should be the first stop before on-demand execution, resuming task graphs, or handing "
             "job status to Snowflake task."

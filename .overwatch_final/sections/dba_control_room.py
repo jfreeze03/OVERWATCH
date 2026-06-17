@@ -141,6 +141,7 @@ DBA_CONTROL_ROOM_PANES = (
     "Triage",
     "Drill Routes",
     "Service Posture",
+    "Admin Tools",
 )
 DBA_CONTROL_ROOM_PANE_LABELS = {
     "Fast Watch": "Watch",
@@ -149,6 +150,7 @@ DBA_CONTROL_ROOM_PANE_LABELS = {
     "Triage": "Triage",
     "Drill Routes": "Routes",
     "Service Posture": "Service",
+    "Admin Tools": "Admin",
 }
 DBA_CONTROL_ROOM_DETAIL_PANES = (
     "Failed Queries",
@@ -202,6 +204,38 @@ def _render_consolidated_service_posture() -> None:
     from sections import service_health
 
     service_health.render()
+
+
+def _set_admin_tool_focus(tool: str, group: str, focus: str) -> None:
+    st.session_state["dba_tools_focus"] = focus
+    st.session_state["dba_tools_focus_tool"] = tool
+    st.session_state["dba_tools_group_selector"] = group
+
+
+def _render_admin_tools() -> None:
+    """Render guarded Snowflake admin tools inside the DBA Control Room."""
+    from sections import dba_tools
+
+    st.subheader("Controlled Admin Tools")
+    st.caption(
+        "Use these guarded workflows for Snowflake-side changes such as warehouse timeout settings, "
+        "AUTO_SUSPEND, task controls, query cancellation, and Cortex account limits."
+    )
+    quick_paths = (
+        ("Warehouse Settings", "Warehouse Ops", "Controlled Actions"),
+        ("Cortex AI Limits", "Cost & Health", "Cost"),
+        ("Task Graph Control", "Warehouse Ops", "Controlled Actions"),
+        ("Query Kill List", "Warehouse Ops", "Controlled Actions"),
+    )
+    cols = st.columns(len(quick_paths))
+    for idx, (tool, group, focus) in enumerate(quick_paths):
+        with cols[idx]:
+            if st.button(tool, key=f"dba_admin_tool_{tool}", width="stretch"):
+                _set_admin_tool_focus(tool, group, focus)
+                st.rerun()
+    if "dba_tools_focus_tool" not in st.session_state:
+        _set_admin_tool_focus("Warehouse Settings", "Warehouse Ops", "Controlled Actions")
+    dba_tools.render()
 
 
 def _dba_control_ops_scope_key(
@@ -6165,7 +6199,7 @@ def render() -> None:
         _load_control_room_evidence()
 
     data = st.session_state.get("dba_control_room_data", {})
-    if st.session_state.get("dba_control_room_active_view") == "Service Posture":
+    if st.session_state.get("dba_control_room_active_view") in {"Service Posture", "Admin Tools"}:
         st.divider()
         active_view = render_workflow_selector(
             "DBA Control Room view",
@@ -6176,6 +6210,9 @@ def render() -> None:
         )
         if active_view == "Service Posture":
             _render_consolidated_service_posture()
+            return
+        if active_view == "Admin Tools":
+            _render_admin_tools()
             return
     if not data:
         st.divider()
@@ -6188,6 +6225,9 @@ def render() -> None:
         )
         if active_view == "Service Posture":
             _render_consolidated_service_posture()
+            return
+        if active_view == "Admin Tools":
+            _render_admin_tools()
             return
         if active_view == "Morning Brief":
             st.warning("Refresh the DBA Morning Brief to rank today's route priority and route handoff.")
@@ -6322,6 +6362,9 @@ def render() -> None:
 
     elif active_view == "Service Posture":
         _render_consolidated_service_posture()
+
+    elif active_view == "Admin Tools":
+        _render_admin_tools()
 
     elif active_view in {"Operations Detail", "Morning Brief"}:
         ops_scope_key = _dba_control_ops_scope_key(

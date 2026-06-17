@@ -213,6 +213,7 @@ from sections.query_workbench import (  # noqa: E402
     _seed_ai_query_diagnosis_from_row,
 )
 from sections.recommendations import (  # noqa: E402
+    _build_warehouse_advisor_recommendations,
     _idle_warehouse_verification_sql,
     _query_failure_verification_sql,
     _remote_spill_verification_sql,
@@ -305,7 +306,9 @@ from sections.warehouse_health import (  # noqa: E402
     _warehouse_setting_execution_audit_sql,
     _warehouse_intervention_matrix,
     _warehouse_operator_next_moves,
+    _build_warehouse_cost_control_posture,
     _build_warehouse_guardrail_coverage,
+    _overwatch_dedicated_warehouse_setup_sql,
     _warehouse_setting_action_plan,
     _warehouse_setting_detail_options,
     _build_warehouse_capacity_markdown,
@@ -662,6 +665,14 @@ class FormulaRegressionTests(unittest.TestCase):
                     "REVIEW_SQL": "SHOW WAREHOUSES LIKE 'LOAD_WH';",
                 }
             ]),
+            "rec_warehouse_advisor_recommendations": pd.DataFrame([
+                {
+                    "PRIORITY": "High",
+                    "WAREHOUSE_NAME": "LOAD_WH",
+                    "ADVISOR_TYPE": "Auto-suspend savings",
+                    "EST_MONTHLY_SAVINGS_USD": 250.0,
+                }
+            ]),
             "sp_analysis_board": pd.DataFrame([
                 {
                     "SEVERITY": "High",
@@ -674,11 +685,11 @@ class FormulaRegressionTests(unittest.TestCase):
         command = _executive_command_summary_rows(pd.DataFrame(), advisor_rows, days=7)
         by_area = {row["AREA"]: row for _, row in command.iterrows()}
 
-        self.assertIn("Warehouse controls", by_area)
+        self.assertIn("Warehouse advisor", by_area)
         self.assertIn("Procedure analysis", by_area)
-        self.assertIn("setting control action", by_area["Warehouse controls"]["CURRENT_SIGNAL"])
+        self.assertIn("advisor recommendation", by_area["Warehouse advisor"]["CURRENT_SIGNAL"])
         self.assertIn("analysis signal", by_area["Procedure analysis"]["CURRENT_SIGNAL"])
-        self.assertEqual(by_area["Warehouse controls"]["ROUTE"], "Cost & Contract")
+        self.assertEqual(by_area["Warehouse advisor"]["ROUTE"], "Cost & Contract")
 
     def test_priority_tables_add_cost_companions_for_credit_metrics(self):
         from utils.workflows import add_cost_companion_columns
@@ -5818,6 +5829,124 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("WORKFLOW_ROUTE", detail_options.columns)
         self.assertIn("Optimization Advisor", set(detail_options["WORKFLOW_ROUTE"]))
 
+    def test_warehouse_cost_control_posture_flags_shared_compute_idle_burn(self):
+        settings = pd.DataFrame(
+            {
+                "NAME": ["COMPUTE_WH", "ANALYTICS_WH"],
+                "WAREHOUSE_SIZE": ["XSMALL", "SMALL"],
+                "STATE": ["SUSPENDED", "STARTED"],
+                "AUTO_SUSPEND": [1001, 60],
+                "AUTO_RESUME": ["true", "true"],
+            }
+        )
+        overview = pd.DataFrame(
+            {
+                "WAREHOUSE_NAME": ["COMPUTE_WH", "ANALYTICS_WH"],
+                "METERED_CREDITS": [8.0, 2.0],
+            }
+        )
+
+        summary, posture = _build_warehouse_cost_control_posture(settings, overview)
+        by_wh = {row["WAREHOUSE_NAME"]: row for _, row in posture.iterrows()}
+
+        self.assertEqual(summary["warehouses"], 2)
+        self.assertEqual(summary["overwatch_candidates"], 1)
+        self.assertEqual(by_wh["COMPUTE_WH"]["COST_CONTROL_STATE"], "Needs Review")
+        self.assertEqual(by_wh["COMPUTE_WH"]["IDLE_RISK"], "Longer than current 1000s session timeout")
+        self.assertEqual(by_wh["COMPUTE_WH"]["RECOMMENDED_AUTO_SUSPEND_SEC"], 60)
+        self.assertIn("ALTER WAREHOUSE", by_wh["COMPUTE_WH"]["REVIEW_SQL"])
+        self.assertIn("AUTO_RESUME = TRUE", by_wh["COMPUTE_WH"]["REVIEW_SQL"])
+        self.assertEqual(by_wh["ANALYTICS_WH"]["COST_CONTROL_STATE"], "Ready")
+
+    def test_warehouse_cost_control_posture_blocks_never_suspend_and_documents_future_wh(self):
+        settings = pd.DataFrame(
+            {
+                "NAME": ["OVERWATCH_WH"],
+                "WAREHOUSE_SIZE": ["XSMALL"],
+                "STATE": ["STARTED"],
+                "AUTO_SUSPEND": [0],
+                "AUTO_RESUME": ["false"],
+            }
+        )
+
+        summary, posture = _build_warehouse_cost_control_posture(settings)
+        row = posture.iloc[0]
+
+        self.assertEqual(summary["blocked"], 1)
+        self.assertEqual(row["COST_CONTROL_STATE"], "Blocked")
+        self.assertEqual(row["IDLE_RISK"], "Never suspends")
+        self.assertIn("AUTO_SUSPEND = 60", row["REVIEW_SQL"])
+        setup_sql = _overwatch_dedicated_warehouse_setup_sql()
+        self.assertIn("CREATE WAREHOUSE IF NOT EXISTS OVERWATCH_WH", setup_sql)
+        self.assertIn("AUTO_RESUME = TRUE", setup_sql)
+
+    def test_warehouse_advisor_recommendations_show_savings_without_sql(self):
+        plan = pd.DataFrame([
+            {
+                "PRIORITY": "Medium",
+                "WAREHOUSE_NAME": "LOAD_WH",
+                "ACTION_TYPE": "Timeout guardrail review",
+                "CURRENT_STATE": "Review",
+                "CURRENT_SETTING": "statement=0, queued=0",
+                "SAFE_SETTING_MOVE": "Set or confirm statement and queued timeout guardrails.",
+                "WHY": "Timeout settings need review.",
+                "ROLLBACK_CHECK": "Verify timeout errors and queue stay expected.",
+                "REVIEW_SQL": "ALTER WAREHOUSE LOAD_WH SET STATEMENT_TIMEOUT_IN_SECONDS = 3600;",
+            }
+        ])
+        posture = pd.DataFrame([
+            {
+                "WAREHOUSE_NAME": "COMPUTE_WH",
+                "COST_CONTROL_STATE": "Needs Review",
+                "IDLE_RISK": "Longer than current 1000s session timeout",
+                "AUTO_SUSPEND_SEC": 1001,
+                "AUTO_RESUME": True,
+                "WAREHOUSE_SIZE": "XSMALL",
+                "STATE": "STARTED",
+                "METERED_CREDITS": 8.0,
+                "RECOMMENDED_AUTO_SUSPEND_SEC": 60,
+                "RECOMMENDED_ACTION": "Validate workload impact, then consider AUTO_SUSPEND=60.",
+                "REVIEW_SQL": "ALTER WAREHOUSE COMPUTE_WH SET AUTO_SUSPEND = 60;",
+            }
+        ])
+        overview = pd.DataFrame([
+            {
+                "WAREHOUSE_NAME": "SAVE_WH",
+                "WAREHOUSE_SIZE": "LARGE",
+                "TOTAL_QUERIES": 100,
+                "AVG_QUEUED_SEC": 0.0,
+                "TOTAL_REMOTE_SPILL_GB": 0.0,
+                "P95_ELAPSED_SEC": 10.0,
+                "METERED_CREDITS": 100.0,
+            },
+            {
+                "WAREHOUSE_NAME": "SPILL_WH",
+                "WAREHOUSE_SIZE": "MEDIUM",
+                "TOTAL_QUERIES": 100,
+                "AVG_QUEUED_SEC": 0.0,
+                "TOTAL_REMOTE_SPILL_GB": 25.0,
+                "P95_ELAPSED_SEC": 10.0,
+                "METERED_CREDITS": 12.0,
+            },
+        ])
+
+        advisor = _build_warehouse_advisor_recommendations(
+            plan,
+            posture,
+            overview,
+            days=7,
+            credit_price=3.68,
+        )
+
+        self.assertIn("EST_MONTHLY_SAVINGS_USD", advisor.columns)
+        self.assertNotIn("REVIEW_SQL", advisor.columns)
+        self.assertGreater(float(advisor["EST_MONTHLY_SAVINGS_USD"].sum()), 0)
+        self.assertIn("Auto-suspend savings", set(advisor["ADVISOR_TYPE"]))
+        self.assertIn("Downsize savings candidate", set(advisor["ADVISOR_TYPE"]))
+        self.assertIn("Capacity or size review", set(advisor["ADVISOR_TYPE"]))
+        self.assertNotIn("ALTER WAREHOUSE", advisor.to_string().upper())
+        self.assertIn("DBA Control Room > Admin > Warehouse Settings", advisor.to_string())
+
     def test_warehouse_guardrail_coverage_marks_missing_metadata_as_data_gap(self):
         overview = pd.DataFrame(
             {
@@ -6791,7 +6920,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("ALFA_EDW_DEV.PUBLIC.TGT", objects)
         self.assertIn("ALFA_RAW.PUBLIC.SRC", objects)
 
-    def test_task_ops_markdown_contains_informatica_context(self):
+    def test_task_ops_markdown_contains_snowflake_context(self):
         md = _build_task_ops_markdown(
             company="ALFA",
             days=7,
@@ -6816,7 +6945,7 @@ class FormulaRegressionTests(unittest.TestCase):
             ),
         )
         self.assertIn("OVERWATCH Task Graph Operations Brief - ALFA", md)
-        self.assertIn("Informatica Monitor replacement", md)
+        self.assertIn("Snowflake task operations view", md)
         self.assertIn("Snowflake task handoff state", md)
         self.assertIn("Failed Task Run", md)
         self.assertIn("Cost drift/release-regression candidates", md)

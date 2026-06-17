@@ -5,7 +5,11 @@ import pandas as pd
 import streamlit as st
 
 from config import DEFAULTS, THRESHOLDS
-from sections.warehouse_health import _build_warehouse_guardrail_coverage, _warehouse_setting_action_plan
+from sections.warehouse_health import (
+    _build_warehouse_cost_control_posture,
+    _build_warehouse_guardrail_coverage,
+    _warehouse_setting_action_plan,
+)
 from sections.shell_helpers import _clean_display_text, render_escaped_bold_text, render_shell_snapshot
 from utils import (
     credits_to_dollars,
@@ -31,6 +35,7 @@ from utils import (
     metric_confidence_label,
     freshness_note,
     safe_float,
+    safe_int,
     safe_identifier,
     sql_literal,
     upsert_actions,
@@ -41,7 +46,7 @@ from utils.workflows import clean_operator_display_text, render_load_status, ren
 
 RECOMMENDATION_PANES = (
     "Recommendations",
-    "Warehouse Controls",
+    "Warehouse Advisor",
     "Queue Health",
     "Action Queue",
     "Anomaly Log",
@@ -295,98 +300,355 @@ def _load_warehouse_control_plan(session, company: str, days: int) -> None:
         overview_result.data,
         settings_inventory=inventory,
     )
+    cost_summary, cost_posture = _build_warehouse_cost_control_posture(
+        inventory,
+        overview_result.data,
+    )
     setting_plan = _warehouse_setting_action_plan(guardrail_board)
     st.session_state["rec_warehouse_control_overview"] = overview_result.data
     st.session_state["rec_warehouse_control_inventory"] = inventory
     st.session_state["rec_warehouse_control_guardrails"] = guardrail_board
     st.session_state["rec_warehouse_control_summary"] = summary
+    st.session_state["rec_warehouse_cost_control_summary"] = cost_summary
+    st.session_state["rec_warehouse_cost_control_posture"] = cost_posture
     st.session_state["rec_warehouse_control_plan"] = setting_plan
     st.session_state["rec_warehouse_control_source"] = overview_result.source
     st.session_state["rec_warehouse_control_meta"] = _warehouse_control_scope(company, days)
     st.session_state["rec_warehouse_control_error"] = ""
 
 
-def _render_warehouse_control_detail(plan: pd.DataFrame) -> None:
-    if plan.empty:
+def _warehouse_size_rank(size: object) -> int:
+    order = {
+        "XSMALL": 0,
+        "X-SMALL": 0,
+        "SMALL": 1,
+        "MEDIUM": 2,
+        "LARGE": 3,
+        "XLARGE": 4,
+        "X-LARGE": 4,
+        "XXLARGE": 5,
+        "2X-LARGE": 5,
+        "XXXLARGE": 6,
+        "3X-LARGE": 6,
+        "4X-LARGE": 7,
+        "5X-LARGE": 8,
+        "6X-LARGE": 9,
+    }
+    return order.get(str(size or "").strip().upper(), -1)
+
+
+def _warehouse_monthly_run_rate(metered_credits: object, days: int, credit_price: float) -> float:
+    days = max(1, int(days or 1))
+    return round(credits_to_dollars(safe_float(metered_credits) / days * 30.0, credit_price), 2)
+
+
+def _auto_suspend_savings_rate(auto_suspend: object) -> float:
+    if auto_suspend is None:
+        return 0.0
+    seconds = safe_int(auto_suspend, -1)
+    if seconds == 0:
+        return 0.50
+    if seconds > 1000:
+        return 0.25
+    if seconds > 600:
+        return 0.15
+    if seconds > 300:
+        return 0.08
+    return 0.0
+
+
+def _advisor_priority(severity: str) -> int:
+    return {"High": 0, "Medium": 1, "Low": 2, "Info": 3}.get(str(severity or ""), 9)
+
+
+def _build_warehouse_advisor_recommendations(
+    plan: pd.DataFrame | None,
+    posture: pd.DataFrame | None,
+    overview: pd.DataFrame | None,
+    *,
+    days: int,
+    credit_price: float,
+) -> pd.DataFrame:
+    """Build presentation-safe warehouse recommendations without generated DDL."""
+    columns = [
+        "PRIORITY", "WAREHOUSE_NAME", "ADVISOR_TYPE", "RECOMMENDATION",
+        "WHY", "CURRENT_SIGNAL", "CURRENT_SETTING", "EST_MONTHLY_SAVINGS_USD",
+        "MONTHLY_RUN_RATE_USD", "PERFORMANCE_RISK", "SAFE_NEXT_STEP",
+        "ADMIN_WORKFLOW", "VERIFY_NEXT", "CONFIDENCE",
+    ]
+    rows: list[dict[str, object]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def add(row: dict[str, object]) -> None:
+        wh = str(row.get("WAREHOUSE_NAME") or "Unknown warehouse").strip() or "Unknown warehouse"
+        kind = str(row.get("ADVISOR_TYPE") or row.get("RECOMMENDATION") or "Recommendation").strip()
+        key = (wh.upper(), kind.upper())
+        if key in seen:
+            return
+        seen.add(key)
+        normalized = {column: row.get(column, "") for column in columns}
+        normalized["WAREHOUSE_NAME"] = wh
+        normalized["EST_MONTHLY_SAVINGS_USD"] = round(safe_float(normalized.get("EST_MONTHLY_SAVINGS_USD")), 2)
+        normalized["MONTHLY_RUN_RATE_USD"] = round(safe_float(normalized.get("MONTHLY_RUN_RATE_USD")), 2)
+        rows.append(normalized)
+
+    posture_view = posture if isinstance(posture, pd.DataFrame) else pd.DataFrame()
+    for _, row in posture_view.iterrows():
+        state = str(row.get("COST_CONTROL_STATE") or "").strip()
+        if state not in {"Blocked", "Needs Review", "Watch"}:
+            continue
+        wh = str(row.get("WAREHOUSE_NAME") or "Unknown warehouse")
+        recommended_suspend = safe_int(row.get("RECOMMENDED_AUTO_SUSPEND_SEC"), 300) or 300
+        monthly = _warehouse_monthly_run_rate(row.get("METERED_CREDITS"), days, credit_price)
+        savings = round(monthly * _auto_suspend_savings_rate(row.get("AUTO_SUSPEND_SEC")), 2)
+        auto_resume = row.get("AUTO_RESUME")
+        if auto_resume is False and savings <= 0:
+            savings = 0.0
+        add({
+            "PRIORITY": "High" if state == "Blocked" else "Medium",
+            "WAREHOUSE_NAME": wh,
+            "ADVISOR_TYPE": "Auto-suspend savings",
+            "RECOMMENDATION": f"Target AUTO_SUSPEND={recommended_suspend}s after workload review.",
+            "WHY": str(row.get("RECOMMENDED_ACTION") or "Auto-suspend or auto-resume settings need DBA review."),
+            "CURRENT_SIGNAL": str(row.get("IDLE_RISK") or state),
+            "CURRENT_SETTING": (
+                f"AUTO_SUSPEND={row.get('AUTO_SUSPEND_SEC') if row.get('AUTO_SUSPEND_SEC') is not None else 'not loaded'}, "
+                f"AUTO_RESUME={row.get('AUTO_RESUME') if row.get('AUTO_RESUME') is not None else 'not loaded'}"
+            ),
+            "EST_MONTHLY_SAVINGS_USD": savings,
+            "MONTHLY_RUN_RATE_USD": monthly,
+            "PERFORMANCE_RISK": "Validate p95, queue, spill, and failed-query behavior before shortening suspend.",
+            "SAFE_NEXT_STEP": "Open DBA Control Room > Admin > Warehouse Settings, preview the change, and use typed confirmation only after review.",
+            "ADMIN_WORKFLOW": "DBA Control Room > Admin > Warehouse Settings",
+            "VERIFY_NEXT": "Compare next complete-window idle credits, p95 runtime, queue seconds, spill GB, and failures.",
+            "CONFIDENCE": "Medium - savings are directional until post-change metering confirms lower idle burn.",
+        })
+
+    overview_view = overview if isinstance(overview, pd.DataFrame) else pd.DataFrame()
+    posture_by_wh = {
+        str(r.get("WAREHOUSE_NAME") or "").upper(): r
+        for _, r in posture_view.iterrows()
+        if str(r.get("WAREHOUSE_NAME") or "").strip()
+    }
+    spill_threshold = safe_float(THRESHOLDS.get("spill_warning_gb", 10), 10.0)
+    for _, row in overview_view.iterrows():
+        wh = str(row.get("WAREHOUSE_NAME") or "Unknown warehouse")
+        posture_row = posture_by_wh.get(wh.upper(), {})
+        metered = safe_float(row.get("METERED_CREDITS"))
+        monthly = _warehouse_monthly_run_rate(metered, days, credit_price)
+        queue = safe_float(row.get("AVG_QUEUED_SEC"))
+        spill = safe_float(row.get("TOTAL_REMOTE_SPILL_GB"))
+        p95 = safe_float(row.get("P95_ELAPSED_SEC"))
+        total_queries = safe_int(row.get("TOTAL_QUERIES"), 0)
+        size = row.get("WAREHOUSE_SIZE") or posture_row.get("WAREHOUSE_SIZE", "")
+        if spill >= spill_threshold or queue >= 5 or p95 >= 120:
+            signals = []
+            if spill >= spill_threshold:
+                signals.append(f"{spill:.1f} GB remote spill")
+            if queue >= 5:
+                signals.append(f"{queue:.1f}s avg queue")
+            if p95 >= 120:
+                signals.append(f"{p95:.1f}s p95 runtime")
+            add({
+                "PRIORITY": "High" if spill >= spill_threshold else "Medium",
+                "WAREHOUSE_NAME": wh,
+                "ADVISOR_TYPE": "Capacity or size review",
+                "RECOMMENDATION": "Review query profiles before resizing, clustering, or multi-cluster changes.",
+                "WHY": " and ".join(signals) + " indicates pressure that may be warehouse sizing, concurrency, or query shape.",
+                "CURRENT_SIGNAL": f"size={size or 'not loaded'}, credits={metered:.2f}, queries={total_queries:,}",
+                "CURRENT_SETTING": f"size={size or 'not loaded'}",
+                "EST_MONTHLY_SAVINGS_USD": 0.0,
+                "MONTHLY_RUN_RATE_USD": monthly,
+                "PERFORMANCE_RISK": "Upsize can improve reliability but should not be counted as savings until runtime and credits are measured.",
+                "SAFE_NEXT_STEP": "Use Warehouse Health query/profile detail first; if a setting change is still justified, execute through Admin.",
+                "ADMIN_WORKFLOW": "DBA Control Room > Admin > Warehouse Settings",
+                "VERIFY_NEXT": "Recheck spill, queue, p95, total credits, and failure rate after one comparable workload window.",
+                "CONFIDENCE": "Medium - pressure is telemetry-backed, but root cause still needs query/profile review.",
+            })
+        elif (
+            total_queries > 0
+            and monthly >= 100
+            and queue <= 1
+            and spill < 1
+            and p95 <= 30
+            and _warehouse_size_rank(size) > 0
+        ):
+            savings = round(monthly * 0.40, 2)
+            add({
+                "PRIORITY": "Medium" if savings < 500 else "High",
+                "WAREHOUSE_NAME": wh,
+                "ADVISOR_TYPE": "Downsize savings candidate",
+                "RECOMMENDATION": "Test one-size-down only if workload latency tolerance is confirmed.",
+                "WHY": (
+                    f"No loaded queue or spill pressure, p95 {p95:.1f}s, and about ${monthly:,.0f}/mo run-rate "
+                    "make this a conservative savings candidate."
+                ),
+                "CURRENT_SIGNAL": f"size={size or 'not loaded'}, queue={queue:.1f}s, spill={spill:.1f} GB, p95={p95:.1f}s",
+                "CURRENT_SETTING": f"size={size or 'not loaded'}",
+                "EST_MONTHLY_SAVINGS_USD": savings,
+                "MONTHLY_RUN_RATE_USD": monthly,
+                "PERFORMANCE_RISK": "Downsize can increase runtime or queueing; treat savings as estimated until post-change telemetry is clean.",
+                "SAFE_NEXT_STEP": "Confirm owners and workload windows, then use Admin to preview a one-step size test.",
+                "ADMIN_WORKFLOW": "DBA Control Room > Admin > Warehouse Settings",
+                "VERIFY_NEXT": "Compare p95, queue, spill, failures, and credits against the prior complete period.",
+                "CONFIDENCE": "Low - savings use a conservative one-step-down assumption and require validation.",
+            })
+
+    plan_view = plan if isinstance(plan, pd.DataFrame) else pd.DataFrame()
+    for _, row in plan_view.iterrows():
+        action_type = str(row.get("ACTION_TYPE") or "Setting review")
+        if action_type == "Auto-suspend review":
+            continue
+        wh = str(row.get("WAREHOUSE_NAME") or "Unknown warehouse")
+        state = str(row.get("CURRENT_STATE") or "Review")
+        add({
+            "PRIORITY": "High" if state == "Blocked" else "Medium",
+            "WAREHOUSE_NAME": wh,
+            "ADVISOR_TYPE": action_type,
+            "RECOMMENDATION": str(row.get("SAFE_SETTING_MOVE") or "Review warehouse setting posture."),
+            "WHY": str(row.get("WHY") or "Loaded guardrail telemetry indicates a warehouse setting needs review."),
+            "CURRENT_SIGNAL": state,
+            "CURRENT_SETTING": str(row.get("CURRENT_SETTING") or "not loaded"),
+            "EST_MONTHLY_SAVINGS_USD": 0.0,
+            "MONTHLY_RUN_RATE_USD": 0.0,
+            "PERFORMANCE_RISK": str(row.get("ROLLBACK_CHECK") or "Verify workload telemetry after any change."),
+            "SAFE_NEXT_STEP": "Route the recommendation through the guarded Admin workflow if a setting change is still needed.",
+            "ADMIN_WORKFLOW": "DBA Control Room > Admin > Warehouse Settings",
+            "VERIFY_NEXT": str(row.get("ROLLBACK_CHECK") or "Compare credits, queue, spill, p95, and failures."),
+            "CONFIDENCE": "Medium - guardrail finding is loaded, savings are not claimed for this control.",
+        })
+
+    if not rows:
+        return pd.DataFrame(columns=columns)
+    advisor = pd.DataFrame(rows)
+    advisor["_PRIORITY_SORT"] = advisor["PRIORITY"].map(_advisor_priority).fillna(9)
+    advisor = advisor.sort_values(
+        ["_PRIORITY_SORT", "EST_MONTHLY_SAVINGS_USD", "MONTHLY_RUN_RATE_USD", "WAREHOUSE_NAME"],
+        ascending=[True, False, False, True],
+    ).drop(columns=["_PRIORITY_SORT"])
+    return advisor[columns].reset_index(drop=True)
+
+
+def _render_warehouse_advisor_detail(advisor: pd.DataFrame) -> None:
+    if advisor.empty:
         return
-    options = plan.copy().reset_index(drop=True)
+    options = advisor.copy().reset_index(drop=True)
     options["DETAIL_LABEL"] = options.apply(
         lambda row: (
             f"{row.get('PRIORITY', 'Review')} | "
-            f"{row.get('ACTION_TYPE', 'Setting review')} | "
-            f"{row.get('WAREHOUSE_NAME', 'Unknown warehouse')}"
+            f"${safe_float(row.get('EST_MONTHLY_SAVINGS_USD')):,.0f}/mo | "
+            f"{row.get('WAREHOUSE_NAME', 'Unknown warehouse')} | "
+            f"{row.get('ADVISOR_TYPE', 'Recommendation')}"
         ),
         axis=1,
     )
     selected = st.selectbox(
-        "Warehouse setting action",
+        "Warehouse recommendation",
         options["DETAIL_LABEL"].tolist(),
-        key="rec_warehouse_control_action_select",
+        key="rec_warehouse_advisor_select",
     )
     row = options[options["DETAIL_LABEL"].eq(selected)].iloc[0]
     render_shell_snapshot((
         ("Priority", str(row.get("PRIORITY") or "Review")),
         ("Warehouse", str(row.get("WAREHOUSE_NAME") or "Unknown")),
-        ("State", str(row.get("CURRENT_STATE") or "Review")),
-        ("Action", str(row.get("ACTION_TYPE") or "Setting review")),
+        ("Savings / Mo", f"${safe_float(row.get('EST_MONTHLY_SAVINGS_USD')):,.0f}"),
+        ("Run Rate / Mo", f"${safe_float(row.get('MONTHLY_RUN_RATE_USD')):,.0f}"),
     ))
-    st.caption(_clean_display_text(row.get("WHY") or "Review warehouse telemetry before changing settings."))
-    st.markdown("**Safe move**")
-    st.caption(_clean_display_text(row.get("SAFE_SETTING_MOVE") or "Review telemetry before changing this warehouse."))
-    st.markdown("**Rollback check**")
-    st.caption(_clean_display_text(row.get("ROLLBACK_CHECK") or "Compare credits, runtime, queue, spill, and failures after the change."))
-    review_sql = str(row.get("REVIEW_SQL") or "").strip()
-    if review_sql:
-        st.code(review_sql, language="sql")
+    st.markdown("**Recommendation**")
+    st.caption(_clean_display_text(row.get("RECOMMENDATION") or "Review warehouse telemetry."))
+    st.markdown("**Why this matters**")
+    st.caption(_clean_display_text(row.get("WHY") or "Loaded telemetry indicates the warehouse should be reviewed."))
+    st.markdown("**Safe next step**")
+    st.caption(_clean_display_text(row.get("SAFE_NEXT_STEP") or "Review before changing settings."))
+    st.markdown("**Validation**")
+    st.caption(_clean_display_text(row.get("VERIFY_NEXT") or "Compare credits and performance after a complete window."))
+    st.caption(f"Execution path: {_clean_display_text(row.get('ADMIN_WORKFLOW') or 'DBA Control Room > Admin')}")
 
 
 def _render_warehouse_controls(session) -> None:
-    st.subheader("Warehouse Setting Controls")
-    st.caption("Review-only setting actions from loaded cost, queue, spill, p95, and SHOW WAREHOUSES metadata.")
+    st.subheader("Warehouse Advisor")
+    st.caption("Prioritized warehouse recommendations with estimated savings, pressure signals, and safe execution routing.")
     company = _active_company()
-    days = day_window_selectbox("Control window", key="rec_wh_control_days", default=7)
+    days = day_window_selectbox("Advisor window", key="rec_wh_control_days", default=7)
     expected = _warehouse_control_scope(company, days)
     current = _warehouse_control_scope_matches(st.session_state.get("rec_warehouse_control_meta"), expected)
 
-    if st.button("Load Warehouse Controls", key="rec_wh_control_load", type="primary"):
-        with render_load_status("Loading warehouse controls", "Warehouse controls ready"):
+    if st.button("Load Warehouse Advisor", key="rec_wh_control_load", type="primary"):
+        with render_load_status("Loading warehouse advisor", "Warehouse advisor ready"):
             try:
                 _load_warehouse_control_plan(session, company, days)
                 current = True
             except Exception as exc:
                 st.session_state["rec_warehouse_control_error"] = format_snowflake_error(exc)
                 st.session_state["rec_warehouse_control_plan"] = pd.DataFrame()
+                st.session_state["rec_warehouse_advisor_recommendations"] = pd.DataFrame()
                 current = False
 
     error = str(st.session_state.get("rec_warehouse_control_error") or "").strip()
     if error:
-        st.warning(f"Warehouse controls unavailable in this role/context: {error}")
+        st.warning(f"Warehouse advisor unavailable in this role/context: {error}")
 
     if not current:
-        st.info("Load Warehouse Controls when you need changed-only AUTO_SUSPEND, sizing, and guardrail review actions.")
+        st.info("Load Warehouse Advisor to rank suspend, sizing, timeout, and guardrail recommendations before using Admin controls.")
         return
 
     summary = st.session_state.get("rec_warehouse_control_summary") or {}
+    cost_summary = st.session_state.get("rec_warehouse_cost_control_summary") or {}
     guardrails = st.session_state.get("rec_warehouse_control_guardrails")
+    posture = st.session_state.get("rec_warehouse_cost_control_posture")
     plan = st.session_state.get("rec_warehouse_control_plan")
     plan = plan if isinstance(plan, pd.DataFrame) else pd.DataFrame()
     guardrails = guardrails if isinstance(guardrails, pd.DataFrame) else pd.DataFrame()
+    posture = posture if isinstance(posture, pd.DataFrame) else pd.DataFrame()
+    overview = st.session_state.get("rec_warehouse_control_overview")
+    overview = overview if isinstance(overview, pd.DataFrame) else pd.DataFrame()
+    advisor = _build_warehouse_advisor_recommendations(
+        plan,
+        posture,
+        overview,
+        days=days,
+        credit_price=safe_float(st.session_state.get("credit_price", DEFAULTS["credit_price"])),
+    )
+    st.session_state["rec_warehouse_advisor_recommendations"] = advisor
+    advisor_savings = safe_float(advisor["EST_MONTHLY_SAVINGS_USD"].sum()) if not advisor.empty else 0.0
+    high_advisor = int(advisor["PRIORITY"].astype(str).isin(["High", "Critical"]).sum()) if not advisor.empty else 0
     render_shell_snapshot((
-        ("Guardrail Score", f"{int(summary.get('score', 100))}"),
-        ("Blocked", f"{int(summary.get('blocked', 0)):,}"),
-        ("Needs Review", f"{int(summary.get('review', 0)):,}"),
-        ("Actions", f"{len(plan):,}"),
+        ("Recommendations", f"{len(advisor):,}"),
+        ("High Priority", f"{high_advisor:,}"),
+        ("Est. Savings / Mo", f"${advisor_savings:,.0f}"),
+        ("Est. Savings / Yr", f"${advisor_savings * 12:,.0f}"),
     ))
-    source = str(st.session_state.get("rec_warehouse_control_source") or "Warehouse controls")
+    source = str(st.session_state.get("rec_warehouse_control_source") or "Warehouse advisor")
     defer_source_note(
         metric_confidence_label("estimated"),
-        f"Warehouse controls loaded from {source}; review SQL is read-only and does not alter warehouses.",
+        f"Warehouse advisor loaded from {source}; savings are estimated until post-change telemetry confirms the result.",
     )
+
+    if not advisor.empty:
+        render_priority_dataframe(
+            advisor,
+            title="Warehouse recommendations ranked by impact",
+            priority_columns=[
+                "PRIORITY", "WAREHOUSE_NAME", "ADVISOR_TYPE", "RECOMMENDATION",
+                "EST_MONTHLY_SAVINGS_USD", "MONTHLY_RUN_RATE_USD", "CURRENT_SIGNAL",
+                "CURRENT_SETTING", "PERFORMANCE_RISK", "SAFE_NEXT_STEP",
+                "ADMIN_WORKFLOW", "VERIFY_NEXT", "CONFIDENCE",
+            ],
+            sort_by=["PRIORITY", "EST_MONTHLY_SAVINGS_USD", "MONTHLY_RUN_RATE_USD"],
+            ascending=[True, False, False],
+            raw_label="All warehouse advisor rows",
+            height=420,
+            max_rows=12,
+        )
+        download_csv(clean_operator_display_text(advisor), "warehouse_advisor_recommendations.csv")
+        _render_warehouse_advisor_detail(advisor)
+    else:
+        st.success("No warehouse recommendations crossed the advisor thresholds for this scope.")
 
     if not plan.empty:
         render_priority_dataframe(
             plan,
-            title="Warehouse setting controls",
+            title="Supporting guardrail findings",
             priority_columns=[
                 "PRIORITY", "WAREHOUSE_NAME", "ACTION_TYPE", "CURRENT_STATE",
                 "CURRENT_SETTING", "SAFE_SETTING_MOVE", "WHY", "ROLLBACK_CHECK",
@@ -397,12 +659,41 @@ def _render_warehouse_controls(session) -> None:
             height=340,
             max_rows=12,
         )
-        download_csv(clean_operator_display_text(plan), "warehouse_setting_controls.csv")
-        _render_warehouse_control_detail(plan)
+        download_csv(
+            clean_operator_display_text(plan.drop(columns=["REVIEW_SQL"], errors="ignore")),
+            "warehouse_guardrail_findings.csv",
+        )
     elif not guardrails.empty:
         st.success("Loaded warehouse guardrails are ready; no changed setting action is currently required.")
     else:
         st.info("No warehouse overview rows were available for the active scope.")
+
+    if not posture.empty:
+        st.subheader("Suspend / Resume Evidence")
+        render_shell_snapshot((
+            ("Warehouses", f"{int(cost_summary.get('warehouses', len(posture))):,}"),
+            ("Blocked", f"{int(cost_summary.get('blocked', 0)):,}"),
+            ("Needs Review", f"{int(cost_summary.get('review', 0)):,}"),
+            ("OVERWATCH candidates", f"{int(cost_summary.get('overwatch_candidates', 0)):,}"),
+        ))
+        render_priority_dataframe(
+            posture,
+            title="Warehouse suspend and resume posture",
+            priority_columns=[
+                "WAREHOUSE_NAME", "COST_CONTROL_STATE", "IDLE_RISK", "AUTO_SUSPEND_SEC",
+                "AUTO_RESUME", "WAREHOUSE_SIZE", "STATE", "METERED_CREDITS",
+                "RECOMMENDED_AUTO_SUSPEND_SEC", "RECOMMENDED_ACTION",
+            ],
+            sort_by=["POSTURE_RANK", "METERED_CREDITS", "WAREHOUSE_NAME"],
+            ascending=[True, False, True],
+            raw_label="All warehouse suspend/resume rows",
+            height=340,
+            max_rows=12,
+        )
+        download_csv(
+            clean_operator_display_text(posture.drop(columns=["REVIEW_SQL"], errors="ignore")),
+            "warehouse_suspend_resume_evidence.csv",
+        )
 
 
 def _render_automation_health(session):
@@ -992,7 +1283,7 @@ def render():
         elif st.session_state.get("rec_recommendations") == []:
             st.success("No actionable findings. Account looks healthy.")
 
-    elif active_view == "Warehouse Controls":
+    elif active_view == "Warehouse Advisor":
         _render_warehouse_controls(session)
 
     elif active_view == "Queue Health":

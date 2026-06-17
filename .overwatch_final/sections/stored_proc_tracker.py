@@ -1148,7 +1148,7 @@ def render():
 
     with st.expander("Procedure Operations Brief", expanded=bool(st.session_state.get("exceptions_only_mode"))):
         st.caption(
-            "Informatica workflow replacement view: procedure inventory, task linkage, recent CALL activity, "
+            "Snowflake procedure operations view: procedure inventory, task linkage, recent CALL activity, "
             "and orphan/suspended-task risk."
         )
         if st.button("Load Procedure Operations", key="sp_ops_load"):

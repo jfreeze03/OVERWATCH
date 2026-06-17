@@ -22,6 +22,7 @@ from utils import (
     admin_button_disabled, log_admin_action, require_admin_enabled,
     load_warehouse_options,
     render_chart_with_data_toggle,
+    queries_paused, query_pause_message,
 )
 from utils.workflows import render_priority_dataframe, render_workflow_selector
 from config import DEFAULTS, THRESHOLDS
@@ -124,6 +125,11 @@ def render():
                 "Auto-refresh", key="lm_auto",
                 help=f"Refreshes every {rt_interval}s via st.fragment - non-blocking."
             )
+        if queries_paused():
+            st.session_state["lm_auto"] = False
+            auto_refresh = False
+            refresh_live = False
+            st.info(query_pause_message())
         with c3:
             try_info_schema = st.checkbox(
                 "Try live metadata",
@@ -213,6 +219,10 @@ def render():
 
         @st.fragment(run_every=_run_every)
         def _live_panel():
+            if queries_paused():
+                st.session_state["lm_auto"] = False
+                st.info(query_pause_message())
+                return
             wh_filter_clean = (wh_filter or "").strip()
             wh_clause = f"AND warehouse_name ILIKE {sql_literal('%' + wh_filter_clean + '%')}" if wh_filter_clean else ""
             company_wh_clause = get_wh_filter_clause("warehouse_name")

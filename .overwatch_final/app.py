@@ -38,12 +38,21 @@ from config import (
 )
 import utils as utils_package
 
-if getattr(utils_package, "UTILS_EXPORT_VERSION", "") != "2026-06-06-day-window-export-v1":
+if getattr(utils_package, "UTILS_EXPORT_VERSION", "") != "2026-06-17-idle-guard-v1":
     utils_package = importlib.reload(utils_package)
 
 from utils.cache import clear_all_cache
 from utils.session import get_session
 from utils.logging import log_section_load
+from utils.idle import (
+    ensure_idle_state,
+    get_idle_timeout_seconds,
+    idle_elapsed_seconds,
+    mark_operator_activity,
+    queries_paused,
+    query_pause_message,
+    resume_queries,
+)
 from utils.company_filter import (
     get_environment_label,
     get_environment_options_for_company,
@@ -722,6 +731,38 @@ def _render_app_header(section: str, company: str, credit_price: float, role: st
             st.rerun()
 
 
+def _format_idle_duration(seconds: int) -> str:
+    minutes = max(1, int(round(seconds / 60)))
+    if minutes < 60:
+        return f"{minutes} min"
+    hours = minutes // 60
+    rem = minutes % 60
+    return f"{hours}h {rem:02d}m" if rem else f"{hours}h"
+
+
+def _render_query_pause_state() -> None:
+    """Render the idle pause shell without hydrating Snowflake telemetry."""
+    elapsed = idle_elapsed_seconds()
+    timeout = get_idle_timeout_seconds()
+    st.markdown(
+        f"""
+        <div class="ow-empty-state">
+            <div class="ow-empty-title">OVERWATCH is idle</div>
+            <div class="ow-empty-list">
+                <span>Snowflake queries are paused</span>
+                <span>Idle: <code>{html.escape(_format_idle_duration(elapsed))}</code></span>
+                <span>Timeout: <code>{html.escape(_format_idle_duration(timeout))}</code></span>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.info(query_pause_message())
+    if st.button("Resume OVERWATCH", key="overwatch_resume_queries", type="primary"):
+        resume_queries()
+        st.rerun()
+
+
 def _render_connection_empty_state(section: str) -> None:
     st.markdown(
         f"""
@@ -792,8 +833,12 @@ def _fresh_section_container(slot):
 
 
 _apply_admin_defaults()
+ensure_idle_state()
+idle_query_paused = queries_paused()
+if not idle_query_paused:
+    mark_operator_activity("app render")
 connection_available = _probe_snowflake_available()
-current_role = _refresh_current_role_for_access(connection_available)
+current_role = _get_current_role() if idle_query_paused else _refresh_current_role_for_access(connection_available)
 admin_access_allowed = _admin_access_is_allowed(current_role, connection_available)
 visible_sections = _current_visible_sections()
 active_section = _current_active_section(visible_sections)
@@ -887,7 +932,7 @@ with st.sidebar:
     admin_access_allowed = _admin_access_is_allowed(current_role, connection_available)
     visible_sections = _current_visible_sections()
 
-    if not admin_access_allowed:
+    if not admin_access_allowed and not idle_query_paused:
         st.warning("Switch to SNOW_ACCOUNTADMINS or SNOW_SYSADMINS to open monitoring sections.")
 
     active_section = _current_active_section(visible_sections)
@@ -965,6 +1010,19 @@ with st.sidebar:
             format_func=lambda x: f"{x}s",
             key="rt_interval",
         )
+        idle_timeout_options = [300, 600, 900, 1800, 3600]
+        current_idle_timeout = get_idle_timeout_seconds()
+        if current_idle_timeout not in idle_timeout_options:
+            idle_timeout_options.append(current_idle_timeout)
+            idle_timeout_options = sorted(set(idle_timeout_options))
+        st.selectbox(
+            "Idle query pause",
+            idle_timeout_options,
+            index=idle_timeout_options.index(current_idle_timeout),
+            format_func=lambda x: f"{int(x / 60)} min",
+            key="overwatch_idle_timeout_seconds",
+            help="Pauses OVERWATCH Snowflake queries after inactivity. Resume keeps Live Monitor auto-refresh off.",
+        )
 
     st.divider()
 
@@ -992,7 +1050,11 @@ if show_transition:
 
 try:
     needs_connection = _section_requires_connection(active_section)
-    if not admin_access_allowed:
+    if idle_query_paused:
+        with _fresh_section_container(section_slot):
+            _render_query_pause_state()
+        _mark_section_rendered(active_section, section_signature)
+    elif not admin_access_allowed:
         with _fresh_section_container(section_slot):
             _render_admin_access_required(current_role)
         _mark_section_rendered(active_section, section_signature)

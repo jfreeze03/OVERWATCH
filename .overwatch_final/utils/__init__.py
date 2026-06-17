@@ -9,7 +9,7 @@ from __future__ import annotations
 from importlib import import_module
 
 
-UTILS_EXPORT_VERSION = "2026-06-06-day-window-export-v1"
+UTILS_EXPORT_VERSION = "2026-06-17-idle-guard-v1"
 
 
 _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
@@ -21,6 +21,12 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "safe_sql", "safe_identifier", "safe_schedule", "sql_literal",
         "get_query_telemetry", "get_query_budget_summary", "clear_query_telemetry",
         "format_snowflake_error",
+    ),
+    "idle": (
+        "DEFAULT_IDLE_TIMEOUT_SECONDS", "clamp_idle_timeout_seconds",
+        "empty_paused_result", "ensure_idle_state", "get_idle_timeout_seconds",
+        "idle_elapsed_seconds", "mark_operator_activity", "pause_queries",
+        "queries_paused", "query_pause_message", "resume_queries",
     ),
     "cortex": (
         "CortexRateLimitError", "reserve_cortex_completion", "run_cortex_completion",

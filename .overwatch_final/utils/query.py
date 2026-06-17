@@ -15,6 +15,7 @@ import pandas as pd
 from datetime import datetime
 from .session import apply_overwatch_query_tag, build_overwatch_query_tag, get_session
 from .data import normalize_df
+from .idle import empty_paused_result, queries_paused
 
 CACHE_TIERS: dict[str, int] = {
     "live":       30,     # INFORMATION_SCHEMA - real-time, 30s stale is fine
@@ -842,6 +843,8 @@ def _run_query_base(
     Returns:
         Normalized DataFrame. Empty DataFrame on any error (never raises).
     """
+    if queries_paused():
+        return empty_paused_result(ttl_key=ttl_key, section=section)
     if not _check_query_budget(tier, ttl_key, query_text):
         return pd.DataFrame()
     with st.spinner(spinner_msg):
@@ -908,6 +911,8 @@ def run_query_or_raise(
     result = pd.DataFrame()
     query_tag = _build_overwatch_query_tag(section, ttl_key, tier)
     executable_query = _inject_read_limit(query_text, max_rows=max_rows)
+    if queries_paused():
+        return empty_paused_result(ttl_key=ttl_key, section=section)
     if not _check_query_budget(tier, ttl_key, query_text):
         return result
     try:

@@ -67,6 +67,10 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "load_shared_warehouse_scaling_events", "load_shared_task_health_summary",
         "load_shared_mfa_coverage", "load_shared_grants_to_users",
         "load_shared_access_hygiene_snapshot",
+        "load_shared_recommendation_idle_warehouses",
+        "load_shared_recommendation_spill_warehouses",
+        "load_shared_recommendation_failed_tasks",
+        "load_shared_recommendation_query_failures",
     ),
     "downloads": (
         "download_csv", "show_loaded_time", "mark_loaded",

@@ -2602,10 +2602,6 @@ def _render_warehouse_watch_floor(score: int, exceptions: pd.DataFrame, summary_
             st.caption(
                 f"{item.get('WAREHOUSE_NAME', 'unknown warehouse')} | "
                 f"Queued {safe_int(item.get('QUEUED_QUERIES')):,} | "
-                f"Spill {safe_int(item.get('SPILL_QUERIES')):,}"
-            )
-            st.caption(
-                f"Queued {safe_int(item.get('QUEUED_QUERIES')):,} | "
                 f"Spill {safe_int(item.get('SPILL_QUERIES')):,} | "
                 f"{format_credits(safe_float(item.get('METERED_CREDITS')))}"
             )

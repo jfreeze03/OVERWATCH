@@ -8,7 +8,6 @@ from sections.shell_helpers import render_shell_snapshot
 from .compatibility import filter_existing_columns
 from .company_filter import get_active_company, get_global_filter_clause, get_wh_filter_clause
 from .cost import (
-    build_idle_warehouse_sql,
     credits_to_dollars,
     format_credits,
     metric_confidence_label,
@@ -18,6 +17,7 @@ from .helpers import safe_float
 from .recommendation_intelligence import duplicate_query_decision, harden_recommendation, warehouse_sizing_decision
 from .query import format_snowflake_error, run_query
 from .session import get_session
+from .shared_metrics import load_shared_recommendation_idle_warehouses
 from .workflows import render_priority_dataframe, render_workflow_selector
 
 
@@ -134,16 +134,15 @@ def render_optimization_advisor():
 
         if st.button("Find Idle Credits", key="idle_load"):
             try:
-                df_idle = run_query(
-                    build_idle_warehouse_sql(
-                        days_back=idle_days,
-                        wh_filter=get_wh_filter_clause("warehouse_name"),
-                        min_idle_credits=THRESHOLDS["idle_credit_waste_min"],
-                    ),
-                    ttl_key=f"optimization_idle_{company}_{idle_days}",
-                    tier="historical",
+                idle_result = load_shared_recommendation_idle_warehouses(
+                    company,
+                    days=idle_days,
+                    min_idle_credits=THRESHOLDS["idle_credit_waste_min"],
+                    force=True,
+                    section="Warehouse Health",
                 )
-                st.session_state["opt_df_idle"] = df_idle
+                st.session_state["opt_df_idle"] = idle_result.data
+                st.session_state["opt_df_idle_source"] = idle_result.source
             except Exception as e:
                 st.warning(f"Idle warehouse scan unavailable: {format_snowflake_error(e)}")
 
@@ -157,7 +156,8 @@ def render_optimization_advisor():
                 ("Total Idle Credits", format_credits(total_idle)),
                 ("Idle Cost", f"${credits_to_dollars(total_idle, credit_price):,.2f}"),
             ))
-            st.caption(metric_confidence_label("exact"))
+            source = st.session_state.get("opt_df_idle_source") or "Warehouse metering and query telemetry"
+            st.caption(f"{source} | {metric_confidence_label('exact')}")
             render_priority_dataframe(
                 df_i,
                 title="Idle warehouse waste candidates",

@@ -17,6 +17,10 @@ from utils.shared_metrics import (  # noqa: E402
     load_shared_grants_to_users,
     load_shared_mfa_coverage,
     load_shared_query_history_rollup,
+    load_shared_recommendation_failed_tasks,
+    load_shared_recommendation_idle_warehouses,
+    load_shared_recommendation_query_failures,
+    load_shared_recommendation_spill_warehouses,
     load_shared_storage_trend,
     load_shared_task_health_summary,
     load_shared_usage_metering_kpis,
@@ -383,6 +387,106 @@ class SharedMetricsTests(unittest.TestCase):
         sql = mock_run.call_args.args[0].upper()
         self.assertIn("NO DATABASE CONTEXT", sql)
         self.assertIn("USERS, LOGIN_HISTORY, AND GRANTS_TO_USERS", sql)
+
+    def test_recommendation_idle_warehouses_prefers_mart_and_reuses(self):
+        frame = pd.DataFrame({
+            "WAREHOUSE_NAME": ["ALFA_WH"],
+            "IDLE_HOURS": [4],
+            "IDLE_CREDITS": [2.5],
+        })
+
+        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run:
+            first = load_shared_recommendation_idle_warehouses("ALFA", section="Unit Test")
+            second = load_shared_recommendation_idle_warehouses("ALFA", section="Unit Test")
+
+        self.assertIs(first, second)
+        self.assertEqual(first.source, "Fast recommendation summary")
+        self.assertEqual(mock_run.call_count, 1)
+
+    def test_recommendation_idle_warehouses_live_fallback_for_custom_lookback(self):
+        frame = pd.DataFrame({
+            "WAREHOUSE_NAME": ["ALFA_WH"],
+            "IDLE_HOURS": [8],
+            "IDLE_CREDITS": [4.0],
+        })
+
+        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run:
+            result = load_shared_recommendation_idle_warehouses(
+                "ALFA",
+                days=14,
+                min_idle_credits=2.0,
+                section="Unit Test",
+            )
+
+        self.assertEqual(result.source, "Live fallback: SNOWFLAKE.ACCOUNT_USAGE warehouse/query history")
+        sql = mock_run.call_args.args[0].upper()
+        self.assertIn("WAREHOUSE_METERING_HISTORY", sql)
+        self.assertIn("QUERY_HISTORY", sql)
+
+    def test_recommendation_spill_warehouses_live_fallback_uses_optional_size(self):
+        frame = pd.DataFrame({
+            "WAREHOUSE_NAME": ["ALFA_WH"],
+            "WAREHOUSE_SIZE": ["MEDIUM"],
+            "REMOTE_GB": [12.0],
+        })
+
+        with patch(
+            "utils.shared_metrics.run_query",
+            side_effect=[pd.DataFrame(), frame],
+        ) as mock_run, patch(
+            "utils.shared_metrics.filter_existing_columns",
+            return_value=["WAREHOUSE_SIZE", "BYTES_SPILLED_TO_REMOTE_STORAGE"],
+        ):
+            result = load_shared_recommendation_spill_warehouses(object(), "ALFA", section="Unit Test")
+
+        self.assertEqual(result.source, "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY")
+        self.assertEqual(mock_run.call_count, 2)
+        sql = mock_run.call_args_list[1].args[0].upper()
+        self.assertIn("MAX(WAREHOUSE_SIZE)", sql)
+        self.assertIn("BYTES_SPILLED_TO_REMOTE_STORAGE", sql)
+
+    def test_recommendation_failed_tasks_live_fallback_wraps_task_summary(self):
+        frame = pd.DataFrame({
+            "TASK_NAME": ["LOAD_TASK"],
+            "FAILURES": [5],
+        })
+
+        with patch(
+            "utils.shared_metrics.run_query",
+            side_effect=[pd.DataFrame(), frame],
+        ) as mock_run, patch(
+            "utils.shared_metrics.build_task_failure_summary_sql",
+            return_value="SELECT 'LOAD_TASK' AS task_name, 5 AS failures",
+        ):
+            result = load_shared_recommendation_failed_tasks(object(), "ALFA", section="Unit Test")
+
+        self.assertEqual(result.source, "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY")
+        self.assertEqual(mock_run.call_count, 2)
+        sql = mock_run.call_args_list[1].args[0].upper()
+        self.assertIn("WITH FAILED_TASKS AS", sql)
+        self.assertIn("WHERE FAILURES > 3", sql)
+
+    def test_recommendation_query_failures_live_fallback_uses_global_filters(self):
+        frame = pd.DataFrame({
+            "WAREHOUSE_NAME": ["ALFA_WH"],
+            "FAILURES": [12],
+        })
+
+        with patch(
+            "utils.shared_metrics.run_query",
+            side_effect=[pd.DataFrame(), frame],
+        ) as mock_run:
+            result = load_shared_recommendation_query_failures(
+                "ALFA",
+                days=7,
+                min_failures=10,
+                section="Unit Test",
+            )
+
+        self.assertEqual(result.source, "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY")
+        sql = mock_run.call_args_list[1].args[0].upper()
+        self.assertIn("FAILED_WITH_ERROR", sql)
+        self.assertIn("HAVING FAILURES > 10", sql)
 
 
 if __name__ == "__main__":

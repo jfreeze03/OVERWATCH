@@ -67,6 +67,12 @@ At this revision the expected deployable object inventory is:
 | Views | 2 |
 | Procedures | 8 |
 | Functions | 1 |
+
+The latest static scan also confirmed that every deployable object has matching
+drop coverage in `snowflake/OVERWATCH_MART_DROP.sql`. The remaining objects with
+no direct app/test references are refresh procedures or `OVERWATCH_LOAD_AUDIT`
+bookkeeping, so the reset path should keep them unless their downstream facts are
+retired in a future setup revision.
 | Tasks | 7 |
 
 Also confirm:
@@ -109,6 +115,10 @@ setup script no longer creates them:
 | `OVERWATCH_AUTOMATION_HEALTH_V` | Alert Center and executive observability marts |
 | `SP_OVERWATCH_REFRESH_AUTOMATION` | Cost monitoring and executive observability refresh procedures |
 | `OVERWATCH_AUTOMATION_REFRESH` | Current cost and executive refresh task chain |
+
+No additional retired objects were identified in the latest mart/SP audit. The
+current refresh chain no longer recreates the retired automation or monitoring
+cost objects listed above.
 
 ## Rollback
 

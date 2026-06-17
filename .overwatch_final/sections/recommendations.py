@@ -7,14 +7,8 @@ import streamlit as st
 from config import DEFAULTS, THRESHOLDS
 from sections.shell_helpers import _clean_display_text, render_escaped_bold_text, render_shell_snapshot
 from utils import (
-    build_idle_warehouse_sql,
-    build_mart_recommendation_failed_tasks_sql,
-    build_mart_recommendation_idle_sql,
-    build_mart_recommendation_query_errors_sql,
-    build_mart_recommendation_spill_sql,
     build_clustering_cost_sql,
     build_safe_verification_query,
-    build_task_failure_summary_sql,
     credits_to_dollars,
     day_window_selectbox,
     defer_source_note,
@@ -27,6 +21,10 @@ from utils import (
     get_global_filter_clause,
     get_session,
     get_wh_filter_clause,
+    load_shared_recommendation_failed_tasks,
+    load_shared_recommendation_idle_warehouses,
+    load_shared_recommendation_query_failures,
+    load_shared_recommendation_spill_warehouses,
     load_action_queue,
     make_action_id,
     metric_confidence_label,
@@ -497,24 +495,14 @@ def render():
             )
 
             try:
-                try:
-                    df_idle = run_query(
-                        build_mart_recommendation_idle_sql(company),
-                        ttl_key=f"rec_idle_mart_{company}",
-                        tier="historical",
-                    )
-                    source_notes.append("Idle warehouses: Fast summary")
-                except Exception:
-                    df_idle = run_query(
-                        build_idle_warehouse_sql(
-                            days_back=7,
-                            wh_filter=get_wh_filter_clause("warehouse_name"),
-                            min_idle_credits=1.0,
-                        ) + "\nLIMIT 10",
-                        ttl_key=f"rec_idle_live_{company}",
-                        tier="historical",
-                    )
-                    source_notes.append("Idle warehouses: live ACCOUNT_USAGE fallback")
+                idle_result = load_shared_recommendation_idle_warehouses(
+                    company,
+                    days=7,
+                    min_idle_credits=1.0,
+                    section="Recommendations",
+                )
+                df_idle = idle_result.data
+                source_notes.append(f"Idle warehouses: {idle_result.source}")
                 for _, row in df_idle.iterrows():
                     wh_name = str(row["WAREHOUSE_NAME"])
                     wh_ident = safe_identifier(wh_name)
@@ -543,39 +531,15 @@ def render():
                 pass
 
             try:
-                try:
-                    df_spill = run_query(
-                        build_mart_recommendation_spill_sql(company),
-                        ttl_key=f"rec_spill_mart_{company}",
-                        tier="historical",
-                    )
-                    source_notes.append("Remote spill: Fast summary")
-                except Exception:
-                    qh_cols = set(filter_existing_columns(
-                        session,
-                        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
-                        ["WAREHOUSE_SIZE", "BYTES_SPILLED_TO_REMOTE_STORAGE"],
-                    ))
-                    if "BYTES_SPILLED_TO_REMOTE_STORAGE" not in qh_cols:
-                        raise ValueError("Remote spill column is not exposed in QUERY_HISTORY.")
-                    spill_wh_size_expr = (
-                        "MAX(warehouse_size)"
-                        if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR"
-                    )
-                    df_spill = run_query(f"""
-                        SELECT warehouse_name, {spill_wh_size_expr} AS warehouse_size,
-                               ROUND(SUM(bytes_spilled_to_remote_storage)/POWER(1024,3), 2) AS remote_gb
-                        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-                        WHERE start_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())
-                          AND bytes_spilled_to_remote_storage > 0
-                          AND warehouse_name IS NOT NULL
-                          {query_filters}
-                        GROUP BY warehouse_name
-                        HAVING remote_gb > 5
-                        ORDER BY remote_gb DESC
-                        LIMIT 10
-                    """, ttl_key=f"rec_spill_live_{company}", tier="historical")
-                    source_notes.append("Remote spill: live ACCOUNT_USAGE fallback")
+                spill_result = load_shared_recommendation_spill_warehouses(
+                    session,
+                    company,
+                    days=7,
+                    min_remote_gb=5.0,
+                    section="Recommendations",
+                )
+                df_spill = spill_result.data
+                source_notes.append(f"Remote spill: {spill_result.source}")
                 for _, row in df_spill.iterrows():
                     wh_name = str(row["WAREHOUSE_NAME"])
                     verification_sql = _remote_spill_verification_sql(wh_name)
@@ -600,27 +564,15 @@ def render():
                 pass
 
             try:
-                try:
-                    df_ftask = run_query(
-                        build_mart_recommendation_failed_tasks_sql(company),
-                        ttl_key=f"rec_failed_tasks_mart_{company}",
-                        tier="historical",
-                    )
-                    source_notes.append("Failed tasks: Fast summary")
-                except Exception:
-                    failed_task_sql = build_task_failure_summary_sql(
-                        session,
-                        "scheduled_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())",
-                        limit=25,
-                        company=company,
-                    )
-                    df_ftask = run_query(
-                        f"WITH failed_tasks AS ({failed_task_sql}) "
-                        "SELECT * FROM failed_tasks WHERE failures > 3 ORDER BY failures DESC LIMIT 5",
-                        ttl_key=f"rec_failed_tasks_live_{company}",
-                        tier="historical",
-                    )
-                    source_notes.append("Failed tasks: live ACCOUNT_USAGE fallback")
+                failed_task_result = load_shared_recommendation_failed_tasks(
+                    session,
+                    company,
+                    days=7,
+                    min_failures=3,
+                    section="Recommendations",
+                )
+                df_ftask = failed_task_result.data
+                source_notes.append(f"Failed tasks: {failed_task_result.source}")
                 for _, row in df_ftask.iterrows():
                     task_name = str(row["TASK_NAME"])
                     verification_sql = _task_failure_verification_sql(task_name)
@@ -647,30 +599,14 @@ def render():
                 pass
 
             try:
-                try:
-                    df_err = run_query(
-                        build_mart_recommendation_query_errors_sql(
-                            company,
-                            min_failures=THRESHOLDS["error_rate_high"],
-                        ),
-                        ttl_key=f"rec_query_errors_mart_{company}",
-                        tier="historical",
-                    )
-                    source_notes.append("Query failures: Fast summary")
-                except Exception:
-                    df_err = run_query(f"""
-                        SELECT warehouse_name, COUNT(*) AS failures
-                        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-                        WHERE start_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())
-                          AND UPPER(execution_status) = 'FAILED_WITH_ERROR'
-                          AND warehouse_name IS NOT NULL
-                          {query_filters}
-                        GROUP BY warehouse_name
-                        HAVING failures > {THRESHOLDS['error_rate_high']}
-                        ORDER BY failures DESC
-                        LIMIT 5
-                    """, ttl_key=f"rec_query_errors_live_{company}", tier="historical")
-                    source_notes.append("Query failures: live ACCOUNT_USAGE fallback")
+                query_failure_result = load_shared_recommendation_query_failures(
+                    company,
+                    days=7,
+                    min_failures=THRESHOLDS["error_rate_high"],
+                    section="Recommendations",
+                )
+                df_err = query_failure_result.data
+                source_notes.append(f"Query failures: {query_failure_result.source}")
                 for _, row in df_err.iterrows():
                     wh_name = str(row["WAREHOUSE_NAME"])
                     verification_sql = _query_failure_verification_sql(wh_name)

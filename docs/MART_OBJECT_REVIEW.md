@@ -25,6 +25,18 @@ procedures/tasks or setup-support tables that are referenced by the setup SQL it
 
 Objects without `.overwatch_final` or test references: 6. All six are refresh plumbing.
 
+Latest static dependency pass:
+
+- Deployable setup objects: 74.
+- Drop coverage: every deployable table, view, procedure, function, and task has
+  a matching `DROP ... IF EXISTS` in `snowflake/OVERWATCH_MART_DROP.sql`.
+- Refresh procedure ownership is current: hourly/daily/Cortex procedures populate
+  the retained facts, cost monitoring populates `FACT_COST_MONITORING_SIGNAL` and
+  `FACT_COST_INCIDENT_TIMELINE`, and executive/control-room refresh procedures
+  populate only their current summary marts.
+- No additional safe drop was found without intentionally retiring an active app
+  workflow, setup-support object, or refresh/bookkeeping object.
+
 ## Keep
 
 These are directly used by app surfaces, validation, or core persisted DBA workflows.

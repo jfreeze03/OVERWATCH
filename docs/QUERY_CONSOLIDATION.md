@@ -24,6 +24,10 @@ refresh/drilldown actions and make repeated metric families load once per scope.
 | `load_shared_mfa_coverage` | Security Access MFA coverage | Live USERS snapshot, cached once per company/user filter scope |
 | `load_shared_grants_to_users` | Security Access role-grant review | Fast grant mart first, live GRANTS_TO_USERS fallback |
 | `load_shared_access_hygiene_snapshot` | Account Health access hygiene | Live USERS + LOGIN_HISTORY + GRANTS_TO_USERS account-level snapshot |
+| `load_shared_recommendation_idle_warehouses` | Recommendations and Warehouse Health idle-credit advisor | Fast recommendation mart first for default 7-day view, live warehouse/query fallback for custom lookbacks |
+| `load_shared_recommendation_spill_warehouses` | Recommendations remote-spill advisor | Fast recommendation mart first, live QUERY_HISTORY fallback with optional-column checks |
+| `load_shared_recommendation_failed_tasks` | Recommendations task-failure advisor | Fast task-run mart first, live TASK_HISTORY fallback through compatibility SQL |
+| `load_shared_recommendation_query_failures` | Recommendations query-failure advisor | Fast query-hourly mart first, live QUERY_HISTORY fallback |
 
 Shared results are stored under `_shared_metric_...` session keys and are cleared
 by the global refresh path.
@@ -34,6 +38,12 @@ Current scan of `.overwatch_final/sections` and `.overwatch_final/utils` found
 about 240 `run_query(` call sites and about 270 explicit `ttl_key=` call sites.
 Most are already cached by `utils.query`; the remaining opportunity is to reduce
 different sections building near-identical SQL under different cache keys.
+
+Latest pass note: the raw call-site count did not materially drop because the
+shared advisor loaders moved repeated section queries into `utils.shared_metrics`.
+The important change is that idle warehouse, remote spill, task failure, and query
+failure candidates now share one mart-first/live-fallback read path and source
+caption contract.
 
 Top ACCOUNT_USAGE source families by static reference count:
 
@@ -67,14 +77,19 @@ Top ACCOUNT_USAGE source families by static reference count:
    rebuild queue/failure pressure by warehouse.
 
 4. Task/procedure health:
-   Task summary counters now have a shared loader. Remaining work is procedure
-   call/SLA summary reuse and task failure sample reuse where the UI needs more
-   than counters.
+   Task summary counters and recommendation-level failed task candidates now have
+   shared loaders. Remaining work is procedure call/SLA summary reuse and task
+   failure sample reuse where the UI needs more than advisor candidates.
 
 5. Security/access hygiene:
    MFA, grants, and Account Health access hygiene now use shared snapshots.
    Remaining work is folding Security Posture summary/exceptions into the same
    access snapshot where the column shape matches.
+
+6. Advisor signal inventory:
+   First pass done for recommendation idle, spill, failed-task, and failed-query
+   candidates. Remaining work is repeated-query, storage-retention, clustering,
+   and warehouse right-sizing candidate reuse.
 
 ## Refactor Rules
 

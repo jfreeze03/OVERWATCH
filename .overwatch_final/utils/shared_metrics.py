@@ -23,8 +23,14 @@ from .company_filter import (
     get_wh_filter_clause,
     get_user_filter_clause,
 )
+from .compatibility import build_task_failure_summary_sql, filter_existing_columns
+from .cost import build_idle_warehouse_sql
 from .data import normalize_df
 from .mart import (
+    build_mart_recommendation_failed_tasks_sql,
+    build_mart_recommendation_idle_sql,
+    build_mart_recommendation_query_errors_sql,
+    build_mart_recommendation_spill_sql,
     build_mart_warehouse_scaling_sql,
     build_mart_storage_db_detail_sql,
     build_mart_storage_trend_sql,
@@ -1374,3 +1380,271 @@ def load_shared_access_hygiene_snapshot(
         )
 
     return _load_or_reuse("shared_access_hygiene", (company, days, environment), _loader, force=force)
+
+
+def load_shared_recommendation_idle_warehouses(
+    company: str | None = None,
+    *,
+    days: int = 7,
+    min_idle_credits: float = 1.0,
+    force: bool = False,
+    section: str = "Shared Metrics",
+) -> SharedMetricResult:
+    """Load idle-warehouse advisor candidates once for recommendation surfaces."""
+
+    company = company or get_active_company()
+    days = max(1, int(days or 7))
+    min_idle_credits = float(min_idle_credits or 0)
+
+    def _loader() -> SharedMetricResult:
+        mart_message = ""
+        if days == 7 and min_idle_credits <= 1.0:
+            try:
+                df = run_query(
+                    build_mart_recommendation_idle_sql(company),
+                    ttl_key=get_company_scope_key("shared_rec_idle_mart"),
+                    tier="historical",
+                    section=section,
+                )
+                if not df.empty:
+                    return SharedMetricResult(data=df, source="Fast recommendation summary", available=True)
+                mart_message = "Idle warehouse mart returned no rows."
+            except Exception as exc:
+                mart_message = str(exc)
+        else:
+            mart_message = "Live scan required for non-default idle threshold or lookback."
+
+        try:
+            df = run_query(
+                build_idle_warehouse_sql(
+                    days_back=days,
+                    wh_filter=get_wh_filter_clause("warehouse_name"),
+                    min_idle_credits=min_idle_credits,
+                ),
+                ttl_key=get_company_scope_key("shared_rec_idle_live", days, min_idle_credits),
+                tier="historical",
+                section=section,
+            )
+            return SharedMetricResult(
+                data=df,
+                source="Live fallback: SNOWFLAKE.ACCOUNT_USAGE warehouse/query history",
+                available=not df.empty,
+                message="" if not df.empty else mart_message,
+            )
+        except Exception as exc:
+            return _empty_result("Idle warehouse advisor", f"{mart_message} Live fallback unavailable: {exc}")
+
+    return _load_or_reuse("shared_rec_idle", (company, days, min_idle_credits), _loader, force=force)
+
+
+def load_shared_recommendation_spill_warehouses(
+    session: object,
+    company: str | None = None,
+    *,
+    days: int = 7,
+    min_remote_gb: float = 5.0,
+    force: bool = False,
+    section: str = "Shared Metrics",
+) -> SharedMetricResult:
+    """Load remote-spill advisor candidates once for recommendation surfaces."""
+
+    company = company or get_active_company()
+    days = max(1, int(days or 7))
+    min_remote_gb = float(min_remote_gb or 0)
+
+    def _loader() -> SharedMetricResult:
+        mart_message = ""
+        if days == 7 and min_remote_gb <= 5.0:
+            try:
+                df = run_query(
+                    build_mart_recommendation_spill_sql(company),
+                    ttl_key=get_company_scope_key("shared_rec_spill_mart"),
+                    tier="historical",
+                    section=section,
+                )
+                if not df.empty:
+                    return SharedMetricResult(data=df, source="Fast recommendation summary", available=True)
+                mart_message = "Remote spill mart returned no rows."
+            except Exception as exc:
+                mart_message = str(exc)
+        else:
+            mart_message = "Live scan required for non-default spill threshold or lookback."
+
+        try:
+            qh_cols = set(filter_existing_columns(
+                session,
+                "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+                ["WAREHOUSE_SIZE", "BYTES_SPILLED_TO_REMOTE_STORAGE"],
+            ))
+            if "BYTES_SPILLED_TO_REMOTE_STORAGE" not in qh_cols:
+                return _empty_result("Remote spill advisor", "QUERY_HISTORY remote spill column is not available.")
+            wh_size_expr = "MAX(warehouse_size)" if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR"
+            query_filters = get_global_filter_clause(
+                date_col="start_time",
+                wh_col="warehouse_name",
+                user_col="user_name",
+                role_col="role_name",
+                db_col="database_name",
+            )
+            df = run_query(
+                f"""
+                SELECT warehouse_name, {wh_size_expr} AS warehouse_size,
+                       ROUND(SUM(bytes_spilled_to_remote_storage)/POWER(1024,3), 2) AS remote_gb
+                FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+                WHERE start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+                  AND bytes_spilled_to_remote_storage > 0
+                  AND warehouse_name IS NOT NULL
+                  {query_filters}
+                GROUP BY warehouse_name
+                HAVING remote_gb > {min_remote_gb}
+                ORDER BY remote_gb DESC
+                LIMIT 10
+                """,
+                ttl_key=get_company_scope_key("shared_rec_spill_live", days, min_remote_gb),
+                tier="historical",
+                section=section,
+            )
+            return SharedMetricResult(
+                data=df,
+                source="Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+                available=not df.empty,
+                message="" if not df.empty else mart_message,
+            )
+        except Exception as exc:
+            return _empty_result("Remote spill advisor", f"{mart_message} Live fallback unavailable: {exc}")
+
+    return _load_or_reuse("shared_rec_spill", (company, days, min_remote_gb), _loader, force=force)
+
+
+def load_shared_recommendation_failed_tasks(
+    session: object,
+    company: str | None = None,
+    *,
+    days: int = 7,
+    min_failures: int = 3,
+    force: bool = False,
+    section: str = "Shared Metrics",
+) -> SharedMetricResult:
+    """Load task-failure advisor candidates once for recommendation surfaces."""
+
+    company = company or get_active_company()
+    days = max(1, int(days or 7))
+    min_failures = max(0, int(min_failures or 0))
+
+    def _loader() -> SharedMetricResult:
+        mart_message = ""
+        if days == 7 and min_failures <= 3:
+            try:
+                df = run_query(
+                    build_mart_recommendation_failed_tasks_sql(company),
+                    ttl_key=get_company_scope_key("shared_rec_failed_tasks_mart"),
+                    tier="historical",
+                    section=section,
+                )
+                if not df.empty:
+                    return SharedMetricResult(data=df, source="Fast recommendation summary", available=True)
+                mart_message = "Failed task mart returned no rows."
+            except Exception as exc:
+                mart_message = str(exc)
+        else:
+            mart_message = "Live scan required for non-default task-failure threshold or lookback."
+
+        try:
+            failed_task_sql = build_task_failure_summary_sql(
+                session,
+                f"scheduled_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())",
+                limit=25,
+                company=company,
+            )
+            df = run_query(
+                f"""
+                WITH failed_tasks AS ({failed_task_sql})
+                SELECT *
+                FROM failed_tasks
+                WHERE failures > {min_failures}
+                ORDER BY failures DESC
+                LIMIT 5
+                """,
+                ttl_key=get_company_scope_key("shared_rec_failed_tasks_live", days, min_failures),
+                tier="historical",
+                section=section,
+            )
+            return SharedMetricResult(
+                data=df,
+                source="Live fallback: SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY",
+                available=not df.empty,
+                message="" if not df.empty else mart_message,
+            )
+        except Exception as exc:
+            return _empty_result("Failed task advisor", f"{mart_message} Live fallback unavailable: {exc}")
+
+    return _load_or_reuse("shared_rec_failed_tasks", (company, days, min_failures), _loader, force=force)
+
+
+def load_shared_recommendation_query_failures(
+    company: str | None = None,
+    *,
+    days: int = 7,
+    min_failures: int = 10,
+    force: bool = False,
+    section: str = "Shared Metrics",
+) -> SharedMetricResult:
+    """Load query-failure advisor candidates once for recommendation surfaces."""
+
+    company = company or get_active_company()
+    days = max(1, int(days or 7))
+    min_failures = max(0, int(min_failures or 0))
+
+    def _loader() -> SharedMetricResult:
+        mart_message = ""
+        if days == 7:
+            try:
+                df = run_query(
+                    build_mart_recommendation_query_errors_sql(company, min_failures=min_failures),
+                    ttl_key=get_company_scope_key("shared_rec_query_failures_mart", min_failures),
+                    tier="historical",
+                    section=section,
+                )
+                if not df.empty:
+                    return SharedMetricResult(data=df, source="Fast recommendation summary", available=True)
+                mart_message = "Query failure mart returned no rows."
+            except Exception as exc:
+                mart_message = str(exc)
+        else:
+            mart_message = "Live scan required for non-default query-failure lookback."
+
+        try:
+            query_filters = get_global_filter_clause(
+                date_col="start_time",
+                wh_col="warehouse_name",
+                user_col="user_name",
+                role_col="role_name",
+                db_col="database_name",
+            )
+            df = run_query(
+                f"""
+                SELECT warehouse_name, COUNT(*) AS failures
+                FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+                WHERE start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+                  AND UPPER(execution_status) = 'FAILED_WITH_ERROR'
+                  AND warehouse_name IS NOT NULL
+                  {query_filters}
+                GROUP BY warehouse_name
+                HAVING failures > {min_failures}
+                ORDER BY failures DESC
+                LIMIT 5
+                """,
+                ttl_key=get_company_scope_key("shared_rec_query_failures_live", days, min_failures),
+                tier="historical",
+                section=section,
+            )
+            return SharedMetricResult(
+                data=df,
+                source="Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+                available=not df.empty,
+                message="" if not df.empty else mart_message,
+            )
+        except Exception as exc:
+            return _empty_result("Query failure advisor", f"{mart_message} Live fallback unavailable: {exc}")
+
+    return _load_or_reuse("shared_rec_query_failures", (company, days, min_failures), _loader, force=force)

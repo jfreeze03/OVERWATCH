@@ -1,14 +1,39 @@
 # OVERWATCH
 
-OVERWATCH is a production Streamlit monitor for Snowflake DBA operations.
-It brings executive observability, DBA triage, alerts, cost monitoring,
-workload operations, and security telemetry into one DBA-owned workflow.
+OVERWATCH is an enterprise Snowflake Command Center and production Streamlit
+monitor for Snowflake DBA operations. It brings executive observability, DBA
+triage, alerts, cost monitoring, workload operations, security telemetry,
+governance readiness, ownership routing, and value verification into one
+DBA-owned workflow.
 
 The app is intentionally mart-first. Snowflake account telemetry is collected
 into compact OVERWATCH facts by scheduled tasks, and the Streamlit app reads
 those facts before it falls back to live account views. This keeps the app fast,
 keeps Snowflake cost predictable, and gives every recommendation a telemetry
 path.
+
+## Executive Rollout Status
+
+OVERWATCH has passed validation for an admin pilot under the approved interim
+`SNOW_ACCOUNTADMINS` and `SNOW_SYSADMINS` access model. The approved target
+roles are `OVERWATCH_VIEWER`, `OVERWATCH_OPERATOR`, and `OVERWATCH_ADMIN`;
+grant migration remains review-only and should move through controlled
+Snowflake change management.
+
+Current rollout posture:
+
+- Admin pilot: Go.
+- Broad production: Conditional Go / Review.
+- Production readiness score: 94 / Review.
+- Alert recipient: `jdees@alfains.com`.
+- Remaining production review item: true telemetry freshness gaps, including
+  Trexis coverage under ALFA-equivalent expectations.
+
+The leadership-ready rollout package is documented in
+`docs/EXECUTIVE_ROLLOUT_PACKAGE.md`. It explains the business case,
+governance model, value framework, readiness posture, risk register, KPI
+catalog, and rollout recommendation for CIO/CTO/VP/Director and governance
+review audiences.
 
 ## Telemetry Architecture Decision
 
@@ -67,6 +92,8 @@ break-glass setup work. The deployment check remains
 
 Supporting operations documents:
 
+- `docs/EXECUTIVE_ROLLOUT_PACKAGE.md` - leadership rollout package,
+  value framework, risk register, KPIs, and go/no-go recommendation.
 - `docs/OVERWATCH_RECOVERY_RUNBOOK.md` - operator recovery checklist.
 - `docs/MART_RESET_RUNBOOK.md` - drop/setup/refresh sequence for mart rebuilds.
 - `docs/MART_OBJECT_REVIEW.md` - current mart object inventory and pruning guardrails.
@@ -234,6 +261,11 @@ against `.overwatch_final`, `tests`, and documentation before release.
 
 ## Documentation
 
+- [docs/EXECUTIVE_ROLLOUT_PACKAGE.md](docs/EXECUTIVE_ROLLOUT_PACKAGE.md)
+  is the leadership-facing rollout package for executive, architecture,
+  governance, and risk review audiences.
+- [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md) documents
+  production readiness, validation posture, and governance-alignment status.
 - [OVERWATCH_DOCUMENTATION.md](OVERWATCH_DOCUMENTATION.md) is the production
   operating guide.
 - [SNOWFLAKE_FORMULA_AUDIT_20260529.md](SNOWFLAKE_FORMULA_AUDIT_20260529.md)

@@ -90,3 +90,9 @@ For the remaining broad-production cleanup checklist, including schema drift
 classification, alert email configuration, data freshness triage, and
 reviewable role grant SQL, use
 `docs/PRODUCTION_READINESS_CLEANUP.md`.
+
+Governance-alignment release candidate assumptions are documented there as
+well: `jdees@alfains.com` is the approved alert recipient, Trexis has
+ALFA-equivalent telemetry expectations, target `OVERWATCH_*` roles are approved
+for reviewed migration, and `SNOW_ACCOUNTADMINS`/`SNOW_SYSADMINS` remain the
+approved interim access model.

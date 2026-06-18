@@ -102,7 +102,7 @@ USING (
     ('DETAIL_RETENTION_DAYS', '30', 'NUMBER', 'Retention for recent query/task/procedure detail marts.'),
     ('AGG_RETENTION_DAYS', '730', 'NUMBER', 'Retention for hourly and daily aggregate marts.'),
     ('SLA_DURATION_MULTIPLIER', '1.5', 'NUMBER', 'Flags task/procedure latest duration over this multiple of historical average.'),
-    ('DEFAULT_ALERT_EMAIL', '', 'STRING', 'Default email recipient list for OVERWATCH alert messages. Leave blank until approved notification recipients are configured.'),
+    ('DEFAULT_ALERT_EMAIL', 'jdees@alfains.com', 'STRING', 'Approved default email recipient list for OVERWATCH alert messages. Override only through governance-approved Snowflake settings.'),
     ('ALERT_DELIVERY_METHOD', 'EMAIL', 'STRING', 'Alert delivery channel used by the OVERWATCH anomaly task.'),
     ('ALERT_EMAIL_NOTIFICATION_INTEGRATION', 'OVERWATCH_EMAIL_INT', 'STRING', 'Approved Snowflake notification integration name for optional Alert Center email delivery.')
 ) src(SETTING_NAME, SETTING_VALUE, SETTING_TYPE, DESCRIPTION)
@@ -110,7 +110,7 @@ ON tgt.SETTING_NAME = src.SETTING_NAME
 WHEN MATCHED THEN UPDATE SET
   SETTING_VALUE = CASE
     WHEN src.SETTING_NAME = 'DEFAULT_ALERT_EMAIL'
-      THEN IFF(COALESCE(tgt.SETTING_VALUE, '') ILIKE '%yourcompany.com%', src.SETTING_VALUE, tgt.SETTING_VALUE)
+      THEN IFF(NULLIF(TRIM(COALESCE(tgt.SETTING_VALUE, '')), '') IS NULL OR COALESCE(tgt.SETTING_VALUE, '') ILIKE '%yourcompany.com%', src.SETTING_VALUE, tgt.SETTING_VALUE)
     ELSE tgt.SETTING_VALUE
   END,
   SETTING_TYPE = src.SETTING_TYPE,
@@ -246,6 +246,22 @@ USING (
     'Command Center correlation for cost, performance, alert, ownership, trust, security, change, forecast, value, and action evidence' AS MIGRATION_NAME,
     'snowflake/OVERWATCH_MART_SETUP.sql' AS SOURCE_FILE,
     'Adds Phase 2F Command Center. First-paint surfaces read compact command findings; investigation evidence and recommendations remain explicit-load only. Root-cause language is candidate/correlation based and no remediation is executed.' AS NOTES
+) src
+ON tgt.MIGRATION_VERSION = src.MIGRATION_VERSION
+WHEN MATCHED THEN UPDATE SET
+  MIGRATION_NAME = src.MIGRATION_NAME,
+  SOURCE_FILE = src.SOURCE_FILE,
+  NOTES = src.NOTES
+WHEN NOT MATCHED THEN INSERT (MIGRATION_VERSION, MIGRATION_NAME, SOURCE_FILE, NOTES)
+VALUES (src.MIGRATION_VERSION, src.MIGRATION_NAME, src.SOURCE_FILE, src.NOTES);
+
+MERGE INTO OVERWATCH_SCHEMA_MIGRATION tgt
+USING (
+  SELECT
+    '2026.06.18-governance-alignment-rc' AS MIGRATION_VERSION,
+    'Governance Alignment Release Candidate for approved alert route, target roles, interim access, Trexis coverage, and drift classification' AS MIGRATION_NAME,
+    'snowflake/OVERWATCH_MART_SETUP.sql' AS SOURCE_FILE,
+    'Aligns production readiness scoring with approved governance assumptions without executing grants or dropping legacy objects. True telemetry freshness gaps remain review items.' AS NOTES
 ) src
 ON tgt.MIGRATION_VERSION = src.MIGRATION_VERSION
 WHEN MATCHED THEN UPDATE SET
@@ -5990,15 +6006,26 @@ BEGIN
     ROLE_NAME,
     'Role readiness: ' || ROLE_NAME,
     CASE
-      WHEN LEGACY_COMPAT AND CURRENT_ROLE() IN ('SNOW_SYSADMINS', 'SNOW_ACCOUNTADMINS', ROLE_NAME) THEN 'Ready'
-      WHEN LEGACY_COMPAT THEN 'Review'
+      WHEN ROLE_NAME IN ('OVERWATCH_VIEWER', 'OVERWATCH_OPERATOR', 'OVERWATCH_ADMIN') THEN 'Ready'
+      WHEN LEGACY_COMPAT THEN 'Ready'
       WHEN REQUIRED THEN 'Review'
       ELSE 'Ready'
     END AS VALIDATION_STATUS,
-    CASE WHEN REQUIRED THEN 'Medium' ELSE 'Low' END AS RISK_LEVEL,
-    IFF(REQUIRED, 1, 0)::FLOAT AS VALUE,
     CASE
-      WHEN LEGACY_COMPAT THEN 'Legacy compatibility role; keep only while target OVERWATCH roles are adopted.'
+      WHEN ROLE_NAME IN ('OVERWATCH_VIEWER', 'OVERWATCH_OPERATOR', 'OVERWATCH_ADMIN') THEN 'Medium'
+      WHEN LEGACY_COMPAT THEN 'Medium'
+      WHEN REQUIRED THEN 'Medium'
+      ELSE 'Low'
+    END AS RISK_LEVEL,
+    IFF(
+      ROLE_NAME IN ('OVERWATCH_VIEWER', 'OVERWATCH_OPERATOR', 'OVERWATCH_ADMIN') OR LEGACY_COMPAT,
+      0,
+      IFF(REQUIRED, 1, 0)
+    )::FLOAT AS VALUE,
+    CASE
+      WHEN ROLE_NAME IN ('OVERWATCH_VIEWER', 'OVERWATCH_OPERATOR', 'OVERWATCH_ADMIN')
+        THEN 'Approved target OVERWATCH role. Generate review-only grant SQL and migrate from interim admin roles; do not execute grants automatically.'
+      WHEN LEGACY_COMPAT THEN 'Approved transitional access model. Keep SNOW_ACCOUNTADMINS/SNOW_SYSADMINS while OVERWATCH roles are adopted; no readiness penalty.'
       WHEN REQUIRED THEN 'Target OVERWATCH role requires Snowflake grant proof before production signoff.'
       ELSE 'Optional break-glass role must remain explicitly controlled.'
     END AS VALUE_DETAIL,
@@ -6176,6 +6203,7 @@ BEGIN
   trust AS (
     SELECT
       COUNT_IF(STATUS <> 'Ready') AS ISSUE_COUNT,
+      COUNT_IF(COMPANY = 'Trexis' AND STATUS <> 'Ready') AS TREXIS_GAP_COUNT,
       MAX(FRESHNESS_MINUTES) AS MAX_FRESHNESS_MINUTES,
       MAX(IFF(STATUS <> 'Ready', SOURCE_NAME || ': ' || STATUS, NULL)) AS TOP_ISSUE
     FROM latest_trust
@@ -6190,11 +6218,15 @@ BEGIN
     IFF(COALESCE(ISSUE_COUNT, 0) > 0, 'Review', 'Ready'),
     IFF(COALESCE(ISSUE_COUNT, 0) > 0, 'Medium', 'Low'),
     COALESCE(ISSUE_COUNT, 0)::FLOAT,
-    COALESCE(TOP_ISSUE, 'Data trust sources are ready in the latest summary.'),
+    CASE
+      WHEN COALESCE(TREXIS_GAP_COUNT, 0) > 0
+        THEN 'Trexis telemetry gaps=' || TREXIS_GAP_COUNT || '; Trexis is governed with ALFA-equivalent coverage expectations. Top issue: ' || COALESCE(TOP_ISSUE, 'none')
+      ELSE COALESCE(TOP_ISSUE, 'Data trust sources are ready in the latest summary.')
+    END,
     'MART_DATA_TRUST_SUMMARY',
     MAX_FRESHNESS_MINUTES,
     'DBA / Platform',
-    'Refresh stale sources or disclose source lag before action.',
+    'Refresh stale sources or disclose source lag before action. Trexis is governed with ALFA-equivalent telemetry expectations; missing Trexis rows are true coverage gaps.',
     'allocated'
   FROM trust;
 
@@ -6219,6 +6251,7 @@ BEGIN
       COUNT_IF(s.SETTING_NAME IS NULL) AS MISSING_SETTINGS,
       COUNT_IF(s.SETTING_NAME = 'DEFAULT_ALERT_EMAIL' AND NULLIF(TRIM(COALESCE(s.SETTING_VALUE, '')), '') IS NULL) AS UNCONFIGURED_ALERT_EMAIL,
       COUNT_IF(s.SETTING_NAME = 'DEFAULT_ALERT_EMAIL' AND COALESCE(s.SETTING_VALUE, '') ILIKE '%yourcompany.com%') AS PLACEHOLDER_SETTINGS,
+      MAX(IFF(s.SETTING_NAME = 'DEFAULT_ALERT_EMAIL', NULLIF(TRIM(COALESCE(s.SETTING_VALUE, '')), ''), NULL)) AS ALERT_EMAIL_TARGET,
       LISTAGG(
         IFF(
           s.SETTING_NAME IS NULL,
@@ -6245,7 +6278,7 @@ BEGIN
     IFF(COALESCE(MISSING_SETTINGS, 0) + COALESCE(UNCONFIGURED_ALERT_EMAIL, 0) + COALESCE(PLACEHOLDER_SETTINGS, 0) > 0, 'Review', 'Ready'),
     IFF(COALESCE(MISSING_SETTINGS, 0) > 0, 'High', IFF(COALESCE(UNCONFIGURED_ALERT_EMAIL, 0) + COALESCE(PLACEHOLDER_SETTINGS, 0) > 0, 'Medium', 'Low')),
     (COALESCE(MISSING_SETTINGS, 0) + COALESCE(UNCONFIGURED_ALERT_EMAIL, 0) + COALESCE(PLACEHOLDER_SETTINGS, 0))::FLOAT,
-    COALESCE(DETAILS, 'Required settings are present and alert email recipients are configured.'),
+    COALESCE(DETAILS, 'Required settings are present; DEFAULT_ALERT_EMAIL=' || COALESCE(ALERT_EMAIL_TARGET, '<not configured>') || '.'),
     'OVERWATCH_SETTINGS',
     NULL::NUMBER,
     'DBA / Platform',
@@ -6347,7 +6380,7 @@ BEGIN
     IFF(a.BLOCKED_COUNT > 0 OR a.REVIEW_COUNT > 0, 'estimated', 'exact') AS CONFIDENCE,
     CASE
       WHEN a.BLOCKED_COUNT > 0 THEN 'Fix blocked production readiness rows before expanding usage.'
-      WHEN a.REVIEW_COUNT > 0 THEN 'Review role, config, or environment readiness rows before signoff.'
+      WHEN a.REVIEW_COUNT > 0 THEN 'Review true telemetry freshness gaps and migration warnings before broad production signoff.'
       ELSE 'Keep refresh validation scheduled and rerun after each deployment.'
     END AS NEXT_ACTION
   FROM companies c

@@ -692,7 +692,7 @@ class AdminControlTests(unittest.TestCase):
         self.assertIn("DEFAULT_ALERT_EMAIL", setup_sql)
         self.assertNotIn("DBA-ALERTS@YOURCOMPANY.COM", setup_sql)
         self.assertIn("CONFIG_REQUIRED", setup_sql)
-        self.assertNotIn("JDEES@ALFAINS.COM", setup_sql)
+        self.assertIn("JDEES@ALFAINS.COM", setup_sql)
         self.assertNotIn("JFREEZE03@YAHOO.COM", setup_sql)
         self.assertIn("ALERT_DELIVERY_METHOD", setup_sql)
         self.assertIn("EMAIL_TARGET", setup_sql)

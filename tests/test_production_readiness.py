@@ -43,6 +43,7 @@ class ProductionReadinessTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertIn(name, sql)
         self.assertIn("2026.06.18-PRODUCTION-READINESS", sql)
+        self.assertIn("2026.06.18-GOVERNANCE-ALIGNMENT-RC", sql)
         self.assertIn("CALL SP_OVERWATCH_REFRESH_PRODUCTION_READINESS()", sql)
 
     def test_validation_tracks_production_readiness_contract(self):
@@ -123,11 +124,21 @@ class ProductionReadinessTests(unittest.TestCase):
         setup = _setup_sql().upper()
         layout = _read(APP_ROOT / "layout.py").upper()
 
-        self.assertIn("DEFAULT_ALERT_EMAIL', ''", setup)
-        self.assertIn("NOT CONFIGURED", setup)
+        self.assertIn("DEFAULT_ALERT_EMAIL', 'JDEES@ALFAINS.COM'", setup)
+        self.assertIn("DEFAULT_ALERT_EMAIL=", setup)
         self.assertIn("CONFIG_REQUIRED", setup)
         self.assertIn("ALERT EMAIL IS NOT CONFIGURED", layout)
         self.assertNotIn("DBA-ALERTS@YOURCOMPANY.COM", setup)
+
+    def test_governance_alignment_roles_and_trexis_are_explicit(self):
+        block = _production_setup_block().upper()
+
+        self.assertIn("APPROVED TARGET OVERWATCH ROLE", block)
+        self.assertIn("APPROVED TRANSITIONAL ACCESS MODEL", block)
+        self.assertIn("DO NOT EXECUTE GRANTS AUTOMATICALLY", block)
+        self.assertIn("TREXIS IS GOVERNED WITH ALFA-EQUIVALENT COVERAGE EXPECTATIONS", block)
+        self.assertIn("TREXIS_GAP_COUNT", block)
+        self.assertIn("REVIEW TRUE TELEMETRY FRESHNESS GAPS", block)
 
     def test_cleanup_validation_outputs_drift_freshness_and_grant_proof(self):
         validation = _validation_sql().upper()
@@ -140,6 +151,7 @@ class ProductionReadinessTests(unittest.TestCase):
             "OVERWATCH_VIEWER",
             "OVERWATCH_OPERATOR",
             "OVERWATCH_ADMIN",
+            "SNOW_ACCOUNTADMINS",
             "SNOW_SYSADMINS",
             "FACT_TASK_RUN",
             "RUNBOOK_GUIDANCE",
@@ -148,7 +160,12 @@ class ProductionReadinessTests(unittest.TestCase):
                 self.assertIn(token, validation)
 
         self.assertIn("DO NOT EXECUTE GRANTS", cleanup)
-        self.assertIn("58 / REVIEW", cleanup)
+        self.assertIn("94 / REVIEW", cleanup)
+        self.assertIn("GOVERNANCE ALIGNMENT RELEASE CANDIDATE", cleanup)
+        self.assertIn("APPROVED LEGACY", validation)
+        self.assertIn("MIGRATION CANDIDATE", validation)
+        self.assertIn("CLEANUP CANDIDATE", validation)
+        self.assertIn("REQUIRED RETENTION", validation)
         self.assertIn("DEFAULT_ALERT_EMAIL", cleanup)
 
 

@@ -157,6 +157,7 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
     "alerts": (
         "ALERT_OPEN_STATUSES", "ALERT_STATUS_CHOICES", "DEFAULT_ALERT_RECIPIENT",
         "acknowledge_alert_escalation", "alert_rule_catalog",
+        "alert_delivery_status_for_target", "alert_recipient_label",
         "alert_delivery_log_fqn", "alert_escalation_candidates",
         "alert_history_to_actions", "alert_severity_rank", "alert_table_fqn",
         "alert_triage_view_fqn", "annotate_alert_triage_frame",

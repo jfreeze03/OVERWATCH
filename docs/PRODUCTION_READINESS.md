@@ -85,3 +85,8 @@ Then run `snowflake/OVERWATCH_MART_VALIDATION.sql` and review:
 
 Run the `SHOW GRANTS` statements listed in
 `OVERWATCH_PRIVILEGE_READINESS_REQUIREMENT` before declaring production ready.
+
+For the remaining broad-production cleanup checklist, including schema drift
+classification, alert email configuration, data freshness triage, and
+reviewable role grant SQL, use
+`docs/PRODUCTION_READINESS_CLEANUP.md`.

@@ -130,6 +130,69 @@ LEFT JOIN actual_counts a
   ON a.OBJECT_TYPE = e.OBJECT_TYPE
 ORDER BY VALIDATION_STATUS DESC, e.OBJECT_TYPE;
 
+-- 2b) Known schema drift inventory. This is recommendation-only; do not execute
+-- drop or migration SQL without explicit human approval.
+WITH known_drift AS (
+    SELECT * FROM VALUES
+        ('TABLE', 'FACT_COST_GOVERNANCE_SIGNAL', 'safe to drop', 'Replaced by cost monitoring, scorecard, forecasting, command-center, and closed-loop marts. Drop after dependency check.', 'DROP TABLE IF EXISTS FACT_COST_GOVERNANCE_SIGNAL;'),
+        ('TABLE', 'FACT_MONITORING_COST_DAILY', 'safe to drop', 'Superseded by FACT_COST_DAILY, FACT_COST_MONITORING_SIGNAL, and MART_EXECUTIVE_OBSERVABILITY. Drop after dependency check.', 'DROP TABLE IF EXISTS FACT_MONITORING_COST_DAILY;'),
+        ('TABLE', 'OVERWATCH_COMPANY_SCOPE', 'migrate', 'If it contains useful ALFA/Trexis rules, migrate them to the current company/role/warehouse scope model before dropping.', 'SELECT * FROM OVERWATCH_COMPANY_SCOPE; -- review then DROP TABLE IF EXISTS OVERWATCH_COMPANY_SCOPE;'),
+        ('TABLE', 'OVERWATCH_COST_SAVINGS_VERIFICATION_RUN', 'migrate', 'Migrate useful savings proof to OVERWATCH_ACTION_VERIFICATION or OVERWATCH_VALUE_LEDGER before dropping.', 'SELECT * FROM OVERWATCH_COST_SAVINGS_VERIFICATION_RUN; -- review then DROP TABLE IF EXISTS OVERWATCH_COST_SAVINGS_VERIFICATION_RUN;'),
+        ('TABLE', 'OVERWATCH_ITSM_TICKET', 'requires human approval', 'Potential ticket/audit history. Export or migrate needed rows before any drop.', 'SELECT * FROM OVERWATCH_ITSM_TICKET;'),
+        ('TABLE', 'OVERWATCH_OWNER_DIRECTORY', 'migrate', 'Generic owner directory is retired; migrate active routes to OVERWATCH_OPERATIONAL_OWNER_MAP before dropping.', 'SELECT * FROM OVERWATCH_OWNER_DIRECTORY; -- review then DROP TABLE IF EXISTS OVERWATCH_OWNER_DIRECTORY;'),
+        ('TABLE', 'OVERWATCH_PLATFORM_FUTURES_CONTROL_REGISTER', 'safe to drop', 'Platform futures scope is retired from the app. Drop after dependency check.', 'DROP TABLE IF EXISTS OVERWATCH_PLATFORM_FUTURES_CONTROL_REGISTER;'),
+        ('TABLE', 'OVERWATCH_PLATFORM_FUTURES_EVIDENCE', 'safe to drop', 'Platform futures evidence is retired from the app. Drop after dependency check.', 'DROP TABLE IF EXISTS OVERWATCH_PLATFORM_FUTURES_EVIDENCE;'),
+        ('TABLE', 'OVERWATCH_ROI_LOG', 'migrate', 'Migrate any useful value proof to OVERWATCH_VALUE_LEDGER before dropping.', 'SELECT * FROM OVERWATCH_ROI_LOG; -- review then DROP TABLE IF EXISTS OVERWATCH_ROI_LOG;'),
+        ('TABLE', 'OVERWATCH_SOURCE_CONTROL_CHANGE', 'migrate', 'Migrate useful change rows to OVERWATCH_CHANGE_EVENT before dropping.', 'SELECT * FROM OVERWATCH_SOURCE_CONTROL_CHANGE; -- review then DROP TABLE IF EXISTS OVERWATCH_SOURCE_CONTROL_CHANGE;'),
+        ('TABLE', 'PERF_TEST_BENCHMARK_RESULTS', 'deprecated but harmless', 'Perf-test history is not part of production app runtime. Drop only if local test history is not needed.', 'DROP TABLE IF EXISTS PERF_TEST_BENCHMARK_RESULTS;'),
+        ('TABLE', 'PERF_TEST_PROCEDURE_EXECUTION', 'deprecated but harmless', 'Perf-test history is not part of production app runtime. Drop only if local test history is not needed.', 'DROP TABLE IF EXISTS PERF_TEST_PROCEDURE_EXECUTION;'),
+        ('TABLE', 'PERF_TEST_QUERY_HISTORY', 'deprecated but harmless', 'Perf-test history is not part of production app runtime. Drop only if local test history is not needed.', 'DROP TABLE IF EXISTS PERF_TEST_QUERY_HISTORY;'),
+        ('TABLE', 'PERF_TEST_RISK_REGISTER', 'deprecated but harmless', 'Perf-test history is not part of production app runtime. Drop only if local test history is not needed.', 'DROP TABLE IF EXISTS PERF_TEST_RISK_REGISTER;'),
+        ('TABLE', 'PERF_TEST_RUNS', 'deprecated but harmless', 'Perf-test history is not part of production app runtime. Drop only if local test history is not needed.', 'DROP TABLE IF EXISTS PERF_TEST_RUNS;'),
+        ('TABLE', 'PERF_TEST_RUN_CONTROL', 'deprecated but harmless', 'Perf-test history is not part of production app runtime. Drop only if local test history is not needed.', 'DROP TABLE IF EXISTS PERF_TEST_RUN_CONTROL;'),
+        ('TABLE', 'PERF_TEST_TABLE_INVENTORY', 'deprecated but harmless', 'Perf-test history is not part of production app runtime. Drop only if local test history is not needed.', 'DROP TABLE IF EXISTS PERF_TEST_TABLE_INVENTORY;'),
+        ('TABLE', 'PERF_TEST_TASK_HISTORY', 'deprecated but harmless', 'Perf-test history is not part of production app runtime. Drop only if local test history is not needed.', 'DROP TABLE IF EXISTS PERF_TEST_TASK_HISTORY;'),
+        ('TABLE', 'PERF_TEST_USER_ACTIVITY', 'deprecated but harmless', 'Perf-test history is not part of production app runtime. Drop only if local test history is not needed.', 'DROP TABLE IF EXISTS PERF_TEST_USER_ACTIVITY;'),
+        ('TABLE', 'PERF_TEST_WAREHOUSE_METERING_HISTORY', 'deprecated but harmless', 'Perf-test history is not part of production app runtime. Drop only if local test history is not needed.', 'DROP TABLE IF EXISTS PERF_TEST_WAREHOUSE_METERING_HISTORY;'),
+        ('VIEW', 'OVERWATCH_COST_SAVINGS_VERIFICATION_HEALTH_V', 'migrate', 'Old savings proof view. Replace with closed-loop verification/value ledger detail.', 'DROP VIEW IF EXISTS OVERWATCH_COST_SAVINGS_VERIFICATION_HEALTH_V;'),
+        ('VIEW', 'OVERWATCH_COST_SAVINGS_VERIFICATION_V', 'migrate', 'Old savings proof view. Replace with closed-loop verification/value ledger detail.', 'DROP VIEW IF EXISTS OVERWATCH_COST_SAVINGS_VERIFICATION_V;'),
+        ('VIEW', 'OVERWATCH_OWNER_DIRECTORY_ACTIVE_V', 'migrate', 'Generic owner directory view is retired; migrate routes to OVERWATCH_OPERATIONAL_OWNER_MAP first.', 'DROP VIEW IF EXISTS OVERWATCH_OWNER_DIRECTORY_ACTIVE_V;'),
+        ('VIEW', 'OVERWATCH_PLATFORM_FUTURES_CONTROL_COVERAGE_V', 'safe to drop', 'Platform futures scope is retired from the app. Drop after dependency check.', 'DROP VIEW IF EXISTS OVERWATCH_PLATFORM_FUTURES_CONTROL_COVERAGE_V;'),
+        ('VIEW', 'OVERWATCH_PLATFORM_FUTURES_EVIDENCE_LATEST_V', 'safe to drop', 'Platform futures scope is retired from the app. Drop after dependency check.', 'DROP VIEW IF EXISTS OVERWATCH_PLATFORM_FUTURES_EVIDENCE_LATEST_V;'),
+        ('VIEW', 'PERF_TEST_APP_USAGE_REPORT_V', 'deprecated but harmless', 'Perf-test view is not part of production app runtime. Drop only if local perf reports are not needed.', 'DROP VIEW IF EXISTS PERF_TEST_APP_USAGE_REPORT_V;'),
+        ('VIEW', 'PERF_TEST_CONTROL_SUMMARY_V', 'deprecated but harmless', 'Perf-test view is not part of production app runtime. Drop only if local perf reports are not needed.', 'DROP VIEW IF EXISTS PERF_TEST_CONTROL_SUMMARY_V;'),
+        ('VIEW', 'PERF_TEST_COST_ESTIMATE_V', 'deprecated but harmless', 'Perf-test view is not part of production app runtime. Drop only if local perf reports are not needed.', 'DROP VIEW IF EXISTS PERF_TEST_COST_ESTIMATE_V;'),
+        ('VIEW', 'PERF_TEST_EXPENSIVE_QUERY_CANDIDATES_V', 'deprecated but harmless', 'Perf-test view is not part of production app runtime. Drop only if local perf reports are not needed.', 'DROP VIEW IF EXISTS PERF_TEST_EXPENSIVE_QUERY_CANDIDATES_V;'),
+        ('VIEW', 'PERF_TEST_PRODUCTION_READINESS_V', 'deprecated but harmless', 'Perf-test view is not part of production app runtime. Drop only if local perf reports are not needed.', 'DROP VIEW IF EXISTS PERF_TEST_PRODUCTION_READINESS_V;'),
+        ('VIEW', 'PERF_TEST_SCALE_SUMMARY_V', 'deprecated but harmless', 'Perf-test view is not part of production app runtime. Drop only if local perf reports are not needed.', 'DROP VIEW IF EXISTS PERF_TEST_SCALE_SUMMARY_V;'),
+        ('VIEW', 'PERF_TEST_SNOWFLAKE_QUERY_REPORT_V', 'deprecated but harmless', 'Perf-test view is not part of production app runtime. Drop only if local perf reports are not needed.', 'DROP VIEW IF EXISTS PERF_TEST_SNOWFLAKE_QUERY_REPORT_V;'),
+        ('PROCEDURE', 'SP_OVERWATCH_REFRESH_COST_GOVERNANCE', 'safe to drop', 'Old cost governance refresh is outside current admin monitoring scope. Drop after dependency check.', 'DROP PROCEDURE IF EXISTS SP_OVERWATCH_REFRESH_COST_GOVERNANCE();'),
+        ('PROCEDURE', 'SP_OVERWATCH_VERIFY_COST_SAVINGS', 'migrate', 'Old savings verification procedure should be replaced by closed-loop verification workflow.', 'DROP PROCEDURE IF EXISTS SP_OVERWATCH_VERIFY_COST_SAVINGS();'),
+        ('PROCEDURE', 'SP_PERF_TEST_GUARDRAIL_CHECK', 'deprecated but harmless', 'Perf-test procedure is not part of production app runtime. Drop only if local perf testing is retired.', 'DROP PROCEDURE IF EXISTS SP_PERF_TEST_GUARDRAIL_CHECK();')
+    AS t(OBJECT_TYPE, OBJECT_NAME, CLASSIFICATION, RECOMMENDATION, REVIEWABLE_SQL)
+),
+actual_objects AS (
+    SELECT IFF(TABLE_TYPE = 'VIEW', 'VIEW', 'TABLE') AS OBJECT_TYPE, TABLE_NAME AS OBJECT_NAME
+    FROM INFORMATION_SCHEMA.TABLES
+    WHERE TABLE_SCHEMA = CURRENT_SCHEMA()
+    UNION ALL
+    SELECT 'PROCEDURE', PROCEDURE_NAME
+    FROM INFORMATION_SCHEMA.PROCEDURES
+    WHERE PROCEDURE_SCHEMA = CURRENT_SCHEMA()
+)
+SELECT
+    k.OBJECT_TYPE,
+    k.OBJECT_NAME,
+    k.CLASSIFICATION,
+    k.RECOMMENDATION,
+    k.REVIEWABLE_SQL,
+    IFF(a.OBJECT_NAME IS NULL, 'NOT PRESENT', 'PRESENT') AS LIVE_STATUS
+FROM known_drift k
+LEFT JOIN actual_objects a
+  ON a.OBJECT_TYPE = k.OBJECT_TYPE
+ AND UPPER(a.OBJECT_NAME) = k.OBJECT_NAME
+ORDER BY k.OBJECT_TYPE, k.OBJECT_NAME;
+
 -- 3) Task graph deployment proof.
 SHOW TASKS IN SCHEMA;
 
@@ -556,6 +619,67 @@ SELECT
     MAX(TOP_RISK) AS TOP_RISK
 FROM MART_PRODUCTION_READINESS_SUMMARY
 WHERE SNAPSHOT_TS >= DATEADD('DAY', -2, CURRENT_TIMESTAMP());
+
+-- 14b) Data freshness details and runbook guidance.
+SELECT
+    COMPANY,
+    ENVIRONMENT,
+    SOURCE_NAME,
+    SOURCE_OBJECT,
+    STATUS,
+    CONFIDENCE,
+    FRESHNESS_MINUTES,
+    OWNER_ROUTE,
+    CASE
+        WHEN SOURCE_OBJECT = 'FACT_TASK_RUN' AND STATUS <> 'Ready'
+            THEN 'Run SP_OVERWATCH_LOAD_HOURLY, confirm FACT_TASK_RUN has rows for the selected company, and verify TASK_HISTORY visibility for the runtime role.'
+        WHEN STATUS = 'Missing'
+            THEN 'Confirm upstream telemetry exists for this company and rerun the owning mart refresh.'
+        WHEN STATUS = 'Stale'
+            THEN 'Rerun the owning refresh procedure or disclose source lag before operational action.'
+        ELSE NEXT_ACTION
+    END AS RUNBOOK_GUIDANCE
+FROM MART_DATA_TRUST_SUMMARY
+WHERE SNAPSHOT_TS = (SELECT MAX(SNAPSHOT_TS) FROM MART_DATA_TRUST_SUMMARY)
+  AND STATUS <> 'Ready'
+ORDER BY COMPANY, SOURCE_OBJECT;
+
+-- 14c) Reviewable grant proof SQL. These statements are not executed by this
+-- validation script; copy them into a reviewed change only after approval.
+WITH grant_proof AS (
+    SELECT * FROM VALUES
+        ('OVERWATCH_VIEWER', 10, 'CREATE ROLE IF NOT EXISTS OVERWATCH_VIEWER;'),
+        ('OVERWATCH_VIEWER', 20, 'GRANT USAGE ON DATABASE DBA_MAINT_DB TO ROLE OVERWATCH_VIEWER;'),
+        ('OVERWATCH_VIEWER', 30, 'GRANT USAGE ON SCHEMA DBA_MAINT_DB.OVERWATCH TO ROLE OVERWATCH_VIEWER;'),
+        ('OVERWATCH_VIEWER', 40, 'GRANT SELECT ON ALL TABLES IN SCHEMA DBA_MAINT_DB.OVERWATCH TO ROLE OVERWATCH_VIEWER;'),
+        ('OVERWATCH_VIEWER', 50, 'GRANT SELECT ON FUTURE TABLES IN SCHEMA DBA_MAINT_DB.OVERWATCH TO ROLE OVERWATCH_VIEWER;'),
+        ('OVERWATCH_VIEWER', 60, 'GRANT SELECT ON ALL VIEWS IN SCHEMA DBA_MAINT_DB.OVERWATCH TO ROLE OVERWATCH_VIEWER;'),
+        ('OVERWATCH_OPERATOR', 10, 'CREATE ROLE IF NOT EXISTS OVERWATCH_OPERATOR;'),
+        ('OVERWATCH_OPERATOR', 20, 'GRANT ROLE OVERWATCH_VIEWER TO ROLE OVERWATCH_OPERATOR;'),
+        ('OVERWATCH_OPERATOR', 30, 'GRANT INSERT, UPDATE ON TABLE DBA_MAINT_DB.OVERWATCH.ALERT_ACKNOWLEDGEMENTS TO ROLE OVERWATCH_OPERATOR;'),
+        ('OVERWATCH_OPERATOR', 40, 'GRANT INSERT, UPDATE ON TABLE DBA_MAINT_DB.OVERWATCH.ALERT_REMEDIATION_LOG TO ROLE OVERWATCH_OPERATOR;'),
+        ('OVERWATCH_OPERATOR', 50, 'GRANT INSERT, UPDATE ON TABLE DBA_MAINT_DB.OVERWATCH.OVERWATCH_ACTION_QUEUE TO ROLE OVERWATCH_OPERATOR;'),
+        ('OVERWATCH_OPERATOR', 60, 'GRANT USAGE ON ALL PROCEDURES IN SCHEMA DBA_MAINT_DB.OVERWATCH TO ROLE OVERWATCH_OPERATOR;'),
+        ('OVERWATCH_ADMIN', 10, 'CREATE ROLE IF NOT EXISTS OVERWATCH_ADMIN;'),
+        ('OVERWATCH_ADMIN', 20, 'GRANT ROLE OVERWATCH_OPERATOR TO ROLE OVERWATCH_ADMIN;'),
+        ('OVERWATCH_ADMIN', 30, 'GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA DBA_MAINT_DB.OVERWATCH TO ROLE OVERWATCH_ADMIN;'),
+        ('OVERWATCH_ADMIN', 40, 'GRANT USAGE ON WAREHOUSE OVERWATCH_WH TO ROLE OVERWATCH_ADMIN;'),
+        ('OVERWATCH_ADMIN', 50, 'GRANT OPERATE ON WAREHOUSE OVERWATCH_WH TO ROLE OVERWATCH_ADMIN;'),
+        ('OVERWATCH_ADMIN', 60, 'GRANT OPERATE ON TASK OVERWATCH_LOAD_HOURLY TO ROLE OVERWATCH_ADMIN;'),
+        ('OVERWATCH_ADMIN', 70, 'GRANT OPERATE ON TASK OVERWATCH_LOAD_DAILY TO ROLE OVERWATCH_ADMIN;'),
+        ('SNOW_SYSADMINS', 10, 'SHOW GRANTS TO ROLE SNOW_SYSADMINS;'),
+        ('SNOW_SYSADMINS', 20, 'SHOW GRANTS OF ROLE SNOW_SYSADMINS;'),
+        ('SNOW_SYSADMINS', 30, 'SHOW GRANTS TO USER <ADMIN_USER>; -- confirm the operator can activate SNOW_SYSADMINS'),
+        ('SNOW_SYSADMINS', 40, 'GRANT IMPORTED PRIVILEGES ON DATABASE SNOWFLAKE TO ROLE SNOW_SYSADMINS; -- review only, requires SECURITYADMIN/ACCOUNTADMIN')
+    AS t(ROLE_NAME, STEP_ORDER, REVIEWABLE_SQL)
+)
+SELECT
+    ROLE_NAME,
+    STEP_ORDER,
+    REVIEWABLE_SQL,
+    'REVIEW_ONLY' AS EXECUTION_MODE
+FROM grant_proof
+ORDER BY ROLE_NAME, STEP_ORDER;
 
 -- 15) Phase 2B executive scorecard coverage and label proof.
 SELECT

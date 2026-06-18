@@ -175,6 +175,12 @@ def _alert_email_target() -> str:
     return current_alert_recipient(DEFAULT_ALERT_EMAIL)
 
 
+def _alert_email_target_label() -> str:
+    from utils.alerts import alert_recipient_label
+
+    return alert_recipient_label(_alert_email_target())
+
+
 def _alert_center_sources_for_view(view: str) -> set[str]:
     return set(ALERT_CENTER_SOURCES_BY_PANE.get(_normalize_alert_center_view(view), {"alerts"}))
 
@@ -710,7 +716,7 @@ def _alert_center_operability_rows(
         "Email route",
         "Ready" if missing_email == 0 else "Review",
         "Low" if missing_email == 0 else "Medium",
-        f"Default recipient {_alert_email_target()}; {ready_email:,} email-ready alert(s); {missing_email:,} missing target(s).",
+        f"Default recipient {_alert_email_target_label()}; {ready_email:,} email-ready alert(s); {missing_email:,} missing target(s).",
         "Keep email-first delivery until the Snowflake notification integration is configured.",
     )
 
@@ -3167,7 +3173,7 @@ def render() -> None:
         defer_source_note("Remediation policy catalog is not available in this environment yet.", data["remediation_policy_error"])
     if data.get("remediation_dry_run_error"):
         defer_source_note("Remediation dry-run audit is not available in this environment yet.", data["remediation_dry_run_error"])
-    defer_source_note(f"Loaded {data.get('loaded_at', '')}. Email target defaults to {_alert_email_target()}.")
+    defer_source_note(f"Loaded {data.get('loaded_at', '')}. Email target defaults to {_alert_email_target_label()}.")
 
     open_alerts = _open_alert_mask(alerts)
     high_alerts = pd.Series(dtype=bool)

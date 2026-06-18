@@ -32,6 +32,11 @@ outside Snowflake's privilege model.
 | `SNOW_SYSADMINS` | Full admin monitoring access for workload, cost, mart, task, warehouse, and compare visibility. | Cost & Contract first view is fast; Workload Operations shows task/query summaries; live contention degrades cleanly when a source is unavailable; account-level actions explain the required privilege instead of failing raw. |
 | Unknown, blank, raw system, or report roles | No monitoring section access. | The app shows the approved role requirement and does not dispatch primary monitoring sections. |
 
+For target `OVERWATCH_VIEWER`, `OVERWATCH_OPERATOR`, and `OVERWATCH_ADMIN`
+grant proof, use the review-only SQL in
+`docs/PRODUCTION_READINESS_CLEANUP.md`. Do not execute grants as part of app
+startup or validation.
+
 ## Section Smoke By Role
 
 - Executive Landing: first paint shows executive glance KPIs, Snowflake Observability Wall,

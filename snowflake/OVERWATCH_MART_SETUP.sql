@@ -102,14 +102,15 @@ USING (
     ('DETAIL_RETENTION_DAYS', '30', 'NUMBER', 'Retention for recent query/task/procedure detail marts.'),
     ('AGG_RETENTION_DAYS', '730', 'NUMBER', 'Retention for hourly and daily aggregate marts.'),
     ('SLA_DURATION_MULTIPLIER', '1.5', 'NUMBER', 'Flags task/procedure latest duration over this multiple of historical average.'),
-    ('DEFAULT_ALERT_EMAIL', 'dba-alerts@yourcompany.com', 'STRING', 'Default email recipient list for OVERWATCH alert messages until an approved Snowflake notification integration is configured.'),
+    ('DEFAULT_ALERT_EMAIL', '', 'STRING', 'Default email recipient list for OVERWATCH alert messages. Leave blank until approved notification recipients are configured.'),
     ('ALERT_DELIVERY_METHOD', 'EMAIL', 'STRING', 'Alert delivery channel used by the OVERWATCH anomaly task.'),
     ('ALERT_EMAIL_NOTIFICATION_INTEGRATION', 'OVERWATCH_EMAIL_INT', 'STRING', 'Approved Snowflake notification integration name for optional Alert Center email delivery.')
 ) src(SETTING_NAME, SETTING_VALUE, SETTING_TYPE, DESCRIPTION)
 ON tgt.SETTING_NAME = src.SETTING_NAME
 WHEN MATCHED THEN UPDATE SET
   SETTING_VALUE = CASE
-    WHEN src.SETTING_NAME = 'DEFAULT_ALERT_EMAIL' THEN src.SETTING_VALUE
+    WHEN src.SETTING_NAME = 'DEFAULT_ALERT_EMAIL'
+      THEN IFF(COALESCE(tgt.SETTING_VALUE, '') ILIKE '%yourcompany.com%', src.SETTING_VALUE, tgt.SETTING_VALUE)
     ELSE tgt.SETTING_VALUE
   END,
   SETTING_TYPE = src.SETTING_TYPE,
@@ -1217,7 +1218,7 @@ CREATE TABLE IF NOT EXISTS OVERWATCH_ALERT_DELIVERY_LOG (
 CREATE OR REPLACE PROCEDURE SP_OVERWATCH_SEND_ALERT_DIGEST(
   P_COMPANY VARCHAR DEFAULT 'ALFA',
   P_ENVIRONMENT VARCHAR DEFAULT 'ALL',
-  P_RECIPIENT VARCHAR DEFAULT 'dba-alerts@yourcompany.com',
+  P_RECIPIENT VARCHAR DEFAULT NULL,
   P_DRY_RUN BOOLEAN DEFAULT TRUE
 )
 RETURNS VARCHAR
@@ -1230,6 +1231,7 @@ DECLARE
   alert_ids VARIANT DEFAULT PARSE_JSON('[]');
   subject VARCHAR DEFAULT '';
   body VARCHAR DEFAULT '';
+  recipient VARCHAR DEFAULT NULL;
   delivery_status VARCHAR DEFAULT 'EMAIL_DRY_RUN';
 BEGIN
   CREATE OR REPLACE TEMPORARY TABLE TMP_OVERWATCH_ALERT_DIGEST AS
@@ -1286,10 +1288,17 @@ BEGIN
     RETURN 'No open OVERWATCH alerts matched the requested scope.';
   END IF;
 
+  SELECT COALESCE(NULLIF(:P_RECIPIENT, ''), MAX(NULLIF(SETTING_VALUE, '')))
+    INTO :recipient
+  FROM OVERWATCH_SETTINGS
+  WHERE SETTING_NAME = 'DEFAULT_ALERT_EMAIL';
+
   IF (P_DRY_RUN) THEN
-    delivery_status := 'EMAIL_DRY_RUN';
+    delivery_status := IFF(recipient IS NULL, 'EMAIL_DRY_RUN_CONFIG_REQUIRED', 'EMAIL_DRY_RUN');
+  ELSEIF (recipient IS NULL) THEN
+    delivery_status := 'CONFIG_REQUIRED';
   ELSE
-    CALL SYSTEM$SEND_EMAIL('OVERWATCH_EMAIL_INT', :P_RECIPIENT, :subject, :body);
+    CALL SYSTEM$SEND_EMAIL('OVERWATCH_EMAIL_INT', :recipient, :subject, :body);
     delivery_status := 'EMAIL_SENT';
   END IF;
 
@@ -1297,16 +1306,19 @@ BEGIN
     (COMPANY, ENVIRONMENT, ALERT_IDS, ALERT_COUNT, DELIVERY_METHOD, DELIVERY_TARGET,
      EMAIL_SUBJECT, EMAIL_BODY, DELIVERY_STATUS, DELIVERY_BY, DELIVERY_NOTES)
   VALUES
-    (:P_COMPANY, :P_ENVIRONMENT, :alert_ids, :alert_count, 'EMAIL', :P_RECIPIENT,
+    (:P_COMPANY, :P_ENVIRONMENT, :alert_ids, :alert_count, 'EMAIL', :recipient,
      :subject, :body, :delivery_status, CURRENT_USER(),
-     IFF(:P_DRY_RUN, 'Dry-run replay package prepared; SYSTEM$SEND_EMAIL was not called.',
-                    'Delivered through approved Snowflake email notification integration OVERWATCH_EMAIL_INT.'));
+     CASE
+       WHEN :recipient IS NULL THEN 'Alert email is not configured; SYSTEM$SEND_EMAIL was not called.'
+       WHEN :P_DRY_RUN THEN 'Dry-run replay package prepared; SYSTEM$SEND_EMAIL was not called.'
+       ELSE 'Delivered through approved Snowflake email notification integration OVERWATCH_EMAIL_INT.'
+     END);
 
   UPDATE OVERWATCH_ALERTS
   SET
     DELIVERY_STATUS = delivery_status,
-    DELIVERY_TARGET = :P_RECIPIENT,
-    EMAIL_TARGET = COALESCE(NULLIF(EMAIL_TARGET, ''), :P_RECIPIENT),
+    DELIVERY_TARGET = :recipient,
+    EMAIL_TARGET = COALESCE(NULLIF(EMAIL_TARGET, ''), :recipient),
     LAST_DELIVERY_AT = CURRENT_TIMESTAMP(),
     LAST_DELIVERY_BY = CURRENT_USER(),
     DELIVERY_LOG_COUNT = COALESCE(DELIVERY_LOG_COUNT, 0) + 1,
@@ -1314,7 +1326,8 @@ BEGIN
     LAST_STATUS_AT = CURRENT_TIMESTAMP()
   WHERE ARRAY_CONTAINS(ALERT_ID::VARIANT, :alert_ids);
 
-  RETURN 'OVERWATCH alert digest ' || delivery_status || ': ' || alert_count || ' alert(s) for ' || P_RECIPIENT;
+  RETURN 'OVERWATCH alert digest ' || delivery_status || ': ' || alert_count || ' alert(s)'
+    || IFF(recipient IS NULL, '; alert email not configured.', ' for ' || recipient);
 END;
 $$;
 
@@ -5151,14 +5164,12 @@ LANGUAGE SQL
 AS
 $$
 DECLARE
-  alert_email VARCHAR DEFAULT 'dba-alerts@yourcompany.com';
+  alert_email VARCHAR DEFAULT NULL;
 BEGIN
-  SELECT COALESCE(
-           MAX(CASE WHEN SETTING_NAME = 'DEFAULT_ALERT_EMAIL' THEN SETTING_VALUE END),
-           'dba-alerts@yourcompany.com'
-         )
+  SELECT MAX(NULLIF(SETTING_VALUE, ''))
     INTO :alert_email
-  FROM OVERWATCH_SETTINGS;
+  FROM OVERWATCH_SETTINGS
+  WHERE SETTING_NAME = 'DEFAULT_ALERT_EMAIL';
 
   DELETE FROM FACT_COST_MONITORING_SIGNAL
   WHERE SNAPSHOT_TS >= DATEADD('DAY', -2, CURRENT_TIMESTAMP());
@@ -5323,7 +5334,7 @@ BEGIN
       || EVIDENCE || CHAR(10) || CHAR(10)
       || 'Next action: ' || NEXT_ACTION || CHAR(10) || CHAR(10)
       || 'Proof query: ' || PROOF_QUERY,
-    'EMAIL_READY'
+    IFF(:alert_email IS NULL, 'CONFIG_REQUIRED', 'EMAIL_READY')
   FROM FACT_COST_MONITORING_SIGNAL s
   WHERE SNAPSHOT_TS >= DATEADD('DAY', -2, CURRENT_TIMESTAMP())
     AND SEVERITY IN ('Critical', 'High')
@@ -6206,12 +6217,17 @@ BEGIN
   drift AS (
     SELECT
       COUNT_IF(s.SETTING_NAME IS NULL) AS MISSING_SETTINGS,
+      COUNT_IF(s.SETTING_NAME = 'DEFAULT_ALERT_EMAIL' AND NULLIF(TRIM(COALESCE(s.SETTING_VALUE, '')), '') IS NULL) AS UNCONFIGURED_ALERT_EMAIL,
       COUNT_IF(s.SETTING_NAME = 'DEFAULT_ALERT_EMAIL' AND COALESCE(s.SETTING_VALUE, '') ILIKE '%yourcompany.com%') AS PLACEHOLDER_SETTINGS,
       LISTAGG(
         IFF(
           s.SETTING_NAME IS NULL,
           r.SETTING_NAME || ': missing',
-          IFF(s.SETTING_NAME = 'DEFAULT_ALERT_EMAIL' AND COALESCE(s.SETTING_VALUE, '') ILIKE '%yourcompany.com%', r.SETTING_NAME || ': placeholder', NULL)
+          IFF(
+            s.SETTING_NAME = 'DEFAULT_ALERT_EMAIL' AND NULLIF(TRIM(COALESCE(s.SETTING_VALUE, '')), '') IS NULL,
+            r.SETTING_NAME || ': not configured',
+            IFF(s.SETTING_NAME = 'DEFAULT_ALERT_EMAIL' AND COALESCE(s.SETTING_VALUE, '') ILIKE '%yourcompany.com%', r.SETTING_NAME || ': placeholder', NULL)
+          )
         ),
         ', '
       ) WITHIN GROUP (ORDER BY r.SETTING_NAME) AS DETAILS
@@ -6226,10 +6242,10 @@ BEGIN
     'Configuration Drift',
     'CONFIG_DRIFT',
     'Required settings present and customized',
-    IFF(COALESCE(MISSING_SETTINGS, 0) + COALESCE(PLACEHOLDER_SETTINGS, 0) > 0, 'Review', 'Ready'),
-    IFF(COALESCE(MISSING_SETTINGS, 0) > 0, 'High', IFF(COALESCE(PLACEHOLDER_SETTINGS, 0) > 0, 'Medium', 'Low')),
-    (COALESCE(MISSING_SETTINGS, 0) + COALESCE(PLACEHOLDER_SETTINGS, 0))::FLOAT,
-    COALESCE(DETAILS, 'Required settings are present and no placeholder alert email is active.'),
+    IFF(COALESCE(MISSING_SETTINGS, 0) + COALESCE(UNCONFIGURED_ALERT_EMAIL, 0) + COALESCE(PLACEHOLDER_SETTINGS, 0) > 0, 'Review', 'Ready'),
+    IFF(COALESCE(MISSING_SETTINGS, 0) > 0, 'High', IFF(COALESCE(UNCONFIGURED_ALERT_EMAIL, 0) + COALESCE(PLACEHOLDER_SETTINGS, 0) > 0, 'Medium', 'Low')),
+    (COALESCE(MISSING_SETTINGS, 0) + COALESCE(UNCONFIGURED_ALERT_EMAIL, 0) + COALESCE(PLACEHOLDER_SETTINGS, 0))::FLOAT,
+    COALESCE(DETAILS, 'Required settings are present and alert email recipients are configured.'),
     'OVERWATCH_SETTINGS',
     NULL::NUMBER,
     'DBA / Platform',
@@ -9551,11 +9567,9 @@ INSERT INTO OVERWATCH_ALERTS (
   DELIVERY_TARGET, EMAIL_TARGET, EMAIL_SUBJECT, EMAIL_BODY, DELIVERY_STATUS
 )
 WITH alert_config AS (
-  SELECT COALESCE(
-           MAX(CASE WHEN SETTING_NAME = 'DEFAULT_ALERT_EMAIL' THEN SETTING_VALUE END),
-           'dba-alerts@yourcompany.com'
-         ) AS EMAIL_TARGET
+  SELECT MAX(NULLIF(SETTING_VALUE, '')) AS EMAIL_TARGET
   FROM OVERWATCH_SETTINGS
+  WHERE SETTING_NAME = 'DEFAULT_ALERT_EMAIL'
 ),
 credit_recent AS (
   SELECT COMPANY, WAREHOUSE_NAME, SUM(CREDITS_USED) AS CURRENT_CREDITS
@@ -9882,7 +9896,7 @@ SELECT
     || 'Detail:' || CHAR(10) || c.MESSAGE || CHAR(10) || CHAR(10)
     || 'Next action:' || CHAR(10) || c.SUGGESTED_ACTION || CHAR(10) || CHAR(10)
     || 'Proof query:' || CHAR(10) || c.PROOF_QUERY,
-  'EMAIL_READY'
+  IFF(cfg.EMAIL_TARGET IS NULL, 'CONFIG_REQUIRED', 'EMAIL_READY')
 FROM candidates c
 CROSS JOIN alert_config cfg
 WHERE NOT EXISTS (

@@ -119,6 +119,38 @@ class ProductionReadinessTests(unittest.TestCase):
         self.assertIn("ORDER BY LOAD_STARTED_AT DESC", block)
         self.assertIn("FROM LATEST_LOAD_STATUS", block)
 
+    def test_alert_email_not_configured_is_explicit(self):
+        setup = _setup_sql().upper()
+        layout = _read(APP_ROOT / "layout.py").upper()
+
+        self.assertIn("DEFAULT_ALERT_EMAIL', ''", setup)
+        self.assertIn("NOT CONFIGURED", setup)
+        self.assertIn("CONFIG_REQUIRED", setup)
+        self.assertIn("ALERT EMAIL IS NOT CONFIGURED", layout)
+        self.assertNotIn("DBA-ALERTS@YOURCOMPANY.COM", setup)
+
+    def test_cleanup_validation_outputs_drift_freshness_and_grant_proof(self):
+        validation = _validation_sql().upper()
+        cleanup = _read(ROOT / "docs" / "PRODUCTION_READINESS_CLEANUP.md").upper()
+
+        for token in [
+            "KNOWN_DRIFT",
+            "REVIEWABLE_SQL",
+            "GRANT_PROOF",
+            "OVERWATCH_VIEWER",
+            "OVERWATCH_OPERATOR",
+            "OVERWATCH_ADMIN",
+            "SNOW_SYSADMINS",
+            "FACT_TASK_RUN",
+            "RUNBOOK_GUIDANCE",
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, validation)
+
+        self.assertIn("DO NOT EXECUTE GRANTS", cleanup)
+        self.assertIn("58 / REVIEW", cleanup)
+        self.assertIn("DEFAULT_ALERT_EMAIL", cleanup)
+
 
 if __name__ == "__main__":
     unittest.main()

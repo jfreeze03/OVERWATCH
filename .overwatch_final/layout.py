@@ -396,7 +396,13 @@ def render_sidebar(
                 key=ALERT_EMAIL_TARGETS_INPUT,
                 help="Comma-separated Snowflake notification recipients for generated alert SQL.",
             )
-            set_state(ALERT_EMAIL_TARGETS, str(alert_email_targets or "").strip() or DEFAULT_ALERT_EMAIL)
+            configured_alert_email = str(alert_email_targets or "").strip()
+            set_state(ALERT_EMAIL_TARGETS, configured_alert_email)
+            if not configured_alert_email:
+                st.warning(
+                    "Alert email is not configured. Set OVERWATCH_SETTINGS.DEFAULT_ALERT_EMAIL "
+                    "in Snowflake, or enter recipients here before enabling scheduled email delivery."
+                )
             st.caption(
                 "Dollar values use the configured rate. Database, user, role, and query cost views are "
                 "allocated estimates unless a panel explicitly marks the metric as exact."

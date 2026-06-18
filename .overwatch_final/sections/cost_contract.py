@@ -74,6 +74,8 @@ prioritize_context_columns = _lazy_util("prioritize_context_columns")
 render_priority_dataframe = _lazy_util("render_priority_dataframe")
 build_loaded_section_alert_signal_board = _lazy_util("build_loaded_section_alert_signal_board")
 build_cost_cortex_alert_drilldown = _lazy_util("build_cost_cortex_alert_drilldown")
+alert_delivery_status_for_target = _lazy_util("alert_delivery_status_for_target")
+alert_recipient_label = _lazy_util("alert_recipient_label")
 
 
 def build_cost_monitoring_mart_sql() -> str:
@@ -3462,6 +3464,7 @@ def _build_cost_monitoring_alert_rows(
     email_target: str = DEFAULT_ALERT_EMAIL,
 ) -> tuple[dict, pd.DataFrame]:
     """Create Alert Center-ready rows from loaded Cost & Contract monitoring telemetry."""
+    email_target = str(email_target or DEFAULT_ALERT_EMAIL or "").strip()
     rows: list[dict] = []
 
     def add(
@@ -3491,7 +3494,8 @@ def _build_cost_monitoring_alert_rows(
             "PROOF_QUERY": proof_query,
             "ROUTE": route or "Cost & Contract",
             "OWNER": owner or "DBA / Cost owner",
-            "EMAIL_TARGET": email_target or DEFAULT_ALERT_EMAIL,
+            "EMAIL_TARGET": email_target,
+            "DELIVERY_STATUS": alert_delivery_status_for_target(email_target),
             "STATUS": "New",
             "VALUE_AT_RISK_USD": round(safe_float(value_at_risk), 2),
             "SOURCE_SURFACE": source_surface,
@@ -3540,7 +3544,7 @@ def _build_cost_monitoring_alert_rows(
         return {
             "alert_count": 0,
             "critical_high": 0,
-            "email_target": email_target or DEFAULT_ALERT_EMAIL,
+            "email_target": email_target,
             "top_alert": "No loaded Cost & Contract alert candidates",
         }, board
     board["_SEVERITY_RANK"] = board["SEVERITY"].apply(_cost_command_severity_rank)
@@ -3550,7 +3554,7 @@ def _build_cost_monitoring_alert_rows(
     summary = {
         "alert_count": int(len(board)),
         "critical_high": int(board["SEVERITY"].isin(["Critical", "High"]).sum()),
-        "email_target": email_target or DEFAULT_ALERT_EMAIL,
+        "email_target": email_target,
         "top_alert": f"{top.get('ALERT_TYPE')} - {top.get('ENTITY_NAME')}",
     }
     return summary, board.drop(columns=["_SEVERITY_RANK"], errors="ignore").reset_index(drop=True)
@@ -3726,9 +3730,9 @@ def _build_cost_monitoring_mart_operability() -> tuple[dict, pd.DataFrame]:
         },
         {
             "COMPONENT": "Alert Center handoff",
-            "STATE": "Email Ready",
+            "STATE": "Email Ready" if DEFAULT_ALERT_EMAIL else "Config Required",
             "DBA_USE": "Routes Critical/High Cost Monitoring signals to the consolidated Alert Center.",
-            "PROOF": f"Default target {DEFAULT_ALERT_EMAIL}; dedupes open alerts for 24 hours.",
+            "PROOF": f"Default target {alert_recipient_label(DEFAULT_ALERT_EMAIL)}; dedupes open alerts for 24 hours.",
         },
     ]
     board = pd.DataFrame(rows)

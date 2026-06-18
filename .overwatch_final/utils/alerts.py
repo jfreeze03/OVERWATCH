@@ -52,6 +52,15 @@ def current_alert_recipient(default: str = DEFAULT_ALERT_RECIPIENT) -> str:
     return configured or default
 
 
+def alert_recipient_label(recipient: str | None = None) -> str:
+    target = str(current_alert_recipient(recipient or "") or "").strip()
+    return target or "not configured"
+
+
+def alert_delivery_status_for_target(recipient: str | None = None) -> str:
+    return "EMAIL_READY" if str(recipient or "").strip() else "CONFIG_REQUIRED"
+
+
 ALERT_OPEN_STATUSES = {
     "NEW",
     "OPEN",
@@ -331,6 +340,8 @@ def normalize_alert_severity(value: Any) -> str:
 
 def normalize_alert_status(value: Any) -> str:
     status = str(value or "New").strip().replace("_", " ").title()
+    if status.upper() in {"CONFIG REQUIRED", "CONFIG_REQUIRED"}:
+        return "Config Required"
     if status.upper() in {"EMAIL READY", "EMAIL_READY"}:
         return "Email Ready"
     if status.upper() in {"EMAIL QUEUED", "EMAIL_QUEUED"}:
@@ -995,7 +1006,7 @@ def normalize_alert_frame(
         "DELIVERY_METHOD": ALERT_DELIVERY_METHOD,
         "EMAIL_TARGET": default_email,
         "DELIVERY_TARGET": default_email,
-        "DELIVERY_STATUS": "EMAIL_READY",
+        "DELIVERY_STATUS": alert_delivery_status_for_target(default_email),
         "PROOF_QUERY": "",
     }
     for column, default in defaults.items():
@@ -1141,7 +1152,7 @@ def load_alert_history(
             {_coalesce_sql(columns, "EMAIL_TARGET", "DELIVERY_TARGET", default=sql_literal(DEFAULT_ALERT_RECIPIENT))} AS EMAIL_TARGET,
             {_coalesce_sql(columns, "EMAIL_SUBJECT", default="''")} AS EMAIL_SUBJECT,
             {_coalesce_sql(columns, "EMAIL_BODY", default="''")} AS EMAIL_BODY,
-            {_coalesce_sql(columns, "DELIVERY_STATUS", default="'EMAIL_READY'")} AS DELIVERY_STATUS,
+            {_coalesce_sql(columns, "DELIVERY_STATUS", default=sql_literal(alert_delivery_status_for_target(DEFAULT_ALERT_RECIPIENT)))} AS DELIVERY_STATUS,
             {_coalesce_sql(columns, "LAST_DELIVERY_AT", default="NULL")} AS LAST_DELIVERY_AT,
             {_coalesce_sql(columns, "LAST_DELIVERY_BY", default="''")} AS LAST_DELIVERY_BY,
             {_coalesce_sql(columns, "DELIVERY_LOG_COUNT", default="0")} AS DELIVERY_LOG_COUNT,
@@ -1187,7 +1198,7 @@ def normalize_alert_issue_rows(df_alerts: pd.DataFrame) -> pd.DataFrame:
     view["NEXT_ACTION"] = alerts["SUGGESTED_ACTION"].fillna("").astype(str)
     view["OWNER"] = alerts["OWNER"].fillna("DBA").astype(str)
     view["EMAIL_TARGET"] = alerts["EMAIL_TARGET"].fillna(DEFAULT_ALERT_RECIPIENT).astype(str)
-    view["DELIVERY_STATUS"] = alerts["DELIVERY_STATUS"].fillna("EMAIL_READY").astype(str)
+    view["DELIVERY_STATUS"] = alerts["DELIVERY_STATUS"].fillna(alert_delivery_status_for_target(DEFAULT_ALERT_RECIPIENT)).astype(str)
     view["ROUTE"] = view["DOMAIN"].map({
         "Cost Control": "Cost & Contract",
         "Reliability": "Workload Operations",
@@ -1579,7 +1590,7 @@ VALUES
      {sql_literal(ALERT_DELIVERY_METHOD)}, {sql_literal(email_target, 500)}, {sql_literal(email_target, 500)},
      {sql_literal(build_alert_email_subject(row, company), 1000)},
      {sql_literal(build_alert_email_body(row, company), 16000)},
-     'EMAIL_READY');
+     {sql_literal(alert_delivery_status_for_target(email_target))});
 """.strip()
 
 

@@ -52,6 +52,7 @@ get_session_for_action = _lazy_util("get_session_for_action")
 get_user_company_filter_clause = _lazy_util("get_user_company_filter_clause")
 get_wh_filter_clause = _lazy_util("get_wh_filter_clause")
 load_action_queue = _lazy_util("load_action_queue")
+load_executive_scorecard_detail = _lazy_util("load_executive_scorecard_detail")
 load_value_ledger_detail = _lazy_util("load_value_ledger_detail")
 load_value_ledger_rollup = _lazy_util("load_value_ledger_rollup")
 load_shared_service_cost_lens = _lazy_util("load_shared_service_cost_lens")
@@ -4915,6 +4916,50 @@ def _render_executive_value_ledger(company: str, environment: str) -> None:
             )
 
 
+def _render_cost_efficiency_score_explanation(company: str, environment: str) -> None:
+    """Expose Cost Efficiency Score drivers behind an explicit Load action."""
+    st.markdown("**Cost Efficiency Score**")
+    st.caption("Loads score drivers from the Executive Scorecard history. Estimates do not count as realized savings.")
+    if st.button("Load Cost Efficiency Score Drivers", key="cost_contract_load_cost_score_drivers", width="stretch"):
+        st.session_state["cost_contract_cost_score_detail"] = load_executive_scorecard_detail(
+            company,
+            environment,
+            score_key="COST_EFFICIENCY",
+            days=180,
+        )
+        st.session_state["cost_contract_cost_score_scope"] = (company, environment)
+
+    detail = st.session_state.get("cost_contract_cost_score_detail")
+    if (
+        isinstance(detail, pd.DataFrame)
+        and st.session_state.get("cost_contract_cost_score_scope") == (company, environment)
+    ):
+        if detail.empty:
+            st.info("No Cost Efficiency Score driver rows are available for this scope yet.")
+            return
+        latest = detail.iloc[0]
+        render_shell_snapshot((
+            ("Score", f"{safe_float(latest.get('CURRENT_SCORE')):.0f}/100"),
+            ("Status", str(latest.get("STATUS") or "Unknown")),
+            ("Trend", str(latest.get("TREND") or "Stable")),
+            ("Value/Risk", f"${safe_float(latest.get('VALUE_AT_RISK_USD')):,.0f}"),
+        ))
+        render_priority_dataframe(
+            detail,
+            title="Cost Efficiency Score drivers",
+            priority_columns=[
+                "SNAPSHOT_TS", "CURRENT_SCORE", "STATUS", "TREND", "TOP_DRIVER",
+                "RECOMMENDED_ACTION", "OWNER_ROUTE", "VALUE_AT_RISK_USD",
+                "CONFIDENCE", "SOURCE_OBJECTS", "LAST_REFRESHED_TS",
+            ],
+            sort_by=["SNAPSHOT_TS"],
+            ascending=False,
+            raw_label="All cost efficiency score history rows",
+            height=260,
+            max_rows=8,
+        )
+
+
 def render() -> None:
     company = get_active_company()
     environment = get_active_environment()
@@ -4938,6 +4983,7 @@ def render() -> None:
     _render_cost_watch_floor(company, credit_price)
     _render_loaded_cost_alert_context()
     _render_executive_value_ledger(company, environment)
+    _render_cost_efficiency_score_explanation(company, environment)
 
     workflow = render_workflow_selector(
         "Cost workflow",

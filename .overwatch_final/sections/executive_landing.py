@@ -42,6 +42,8 @@ mart_object_name = _lazy_util("mart_object_name")
 render_priority_dataframe = _lazy_util("render_priority_dataframe")
 build_loaded_section_alert_signal_board = _lazy_util("build_loaded_section_alert_signal_board")
 load_enterprise_operating_rollups = _lazy_util("load_enterprise_operating_rollups")
+load_executive_scorecard_summary = _lazy_util("load_executive_scorecard_summary")
+load_production_readiness_summary = _lazy_util("load_production_readiness_summary")
 run_query = _lazy_util("run_query")
 safe_identifier = _lazy_util("safe_identifier")
 sql_literal = _lazy_util("sql_literal")
@@ -2803,6 +2805,94 @@ def _render_enterprise_operating_model_summary(rollups: dict[str, pd.DataFrame])
             st.dataframe(app_view, width="stretch", hide_index=True)
 
 
+def _render_production_readiness_dashboard(readiness: pd.DataFrame) -> None:
+    """Render Phase 2A compact production readiness from the summary mart."""
+    if not isinstance(readiness, pd.DataFrame) or readiness.empty:
+        st.caption("Production readiness summary is pending. Run the mart refresh to populate deployment, validation, privilege, refresh, config, and environment checks.")
+        return
+
+    row = readiness.iloc[0]
+    status = str(row.get("VALIDATION_STATUS") or "Unknown")
+    readiness_score = safe_int(row.get("READINESS_SCORE"), 0)
+    missing_privileges = safe_int(row.get("MISSING_PRIVILEGES"), 0)
+    failed_refreshes = safe_int(row.get("FAILED_MART_REFRESHES"), 0)
+    missing_marts = safe_int(row.get("MISSING_SUMMARY_MARTS"), 0)
+    stale_sources = safe_int(row.get("STALE_SOURCE_COUNT"), 0)
+    config_drift = safe_int(row.get("CONFIG_DRIFT_COUNT"), 0)
+
+    st.markdown("**Production Readiness**")
+    render_shell_snapshot((
+        ("Status", status),
+        ("Score", f"{readiness_score}/100"),
+        ("Missing Privileges", f"{missing_privileges:,}"),
+        ("Failed Refreshes", f"{failed_refreshes:,}"),
+        ("Missing Marts", f"{missing_marts:,}"),
+    ))
+    st.caption(
+        f"Deployment {row.get('DEPLOYMENT_VERSION') or 'unknown'}; "
+        f"last validation {row.get('LAST_VALIDATION_TS') or 'not recorded'}; "
+        f"confidence {row.get('CONFIDENCE') or 'fallback'}."
+    )
+    with st.expander("Production readiness signals", expanded=status in {"Blocked", "Review"}):
+        signal_rows = pd.DataFrame([
+            {"SIGNAL": "Data freshness", "VALUE": stale_sources, "STATE": "Review" if stale_sources else "Ready"},
+            {"SIGNAL": "Configuration drift", "VALUE": config_drift, "STATE": "Review" if config_drift else "Ready"},
+            {"SIGNAL": "Environment readiness", "VALUE": row.get("ENVIRONMENT_READINESS") or "Unknown", "STATE": row.get("ENVIRONMENT_READINESS") or "Unknown"},
+            {"SIGNAL": "Top risk", "VALUE": row.get("TOP_RISK") or "Production readiness checks are green.", "STATE": status},
+            {"SIGNAL": "Next action", "VALUE": row.get("NEXT_ACTION") or "Keep validation current.", "STATE": status},
+        ])
+        st.dataframe(signal_rows, width="stretch", hide_index=True)
+
+
+def _render_executive_scorecard_summary(scorecard: pd.DataFrame) -> None:
+    """Render Phase 2B leadership scoring from the compact scorecard mart."""
+    if not isinstance(scorecard, pd.DataFrame) or scorecard.empty:
+        st.caption("Executive Scorecard is pending. Run the executive mart refresh to populate leadership health scores.")
+        return
+
+    work = scorecard.copy()
+    status = work.get("STATUS", pd.Series(dtype=str)).fillna("Unknown").astype(str)
+    trend = work.get("TREND", pd.Series(dtype=str)).fillna("Stable").astype(str)
+    scores = pd.to_numeric(work.get("CURRENT_SCORE", pd.Series(dtype=float)), errors="coerce").fillna(0)
+    risk_values = pd.to_numeric(work.get("VALUE_AT_RISK_USD", pd.Series(dtype=float)), errors="coerce").fillna(0)
+    value_at_risk = safe_float(risk_values.sum())
+    lowest_score = safe_float(scores.min()) if not scores.empty else 0.0
+    red = safe_int(status.eq("Red").sum())
+    yellow = safe_int(status.eq("Yellow").sum())
+    worsening = safe_int(trend.str.contains("worsening", case=False, na=False).sum())
+    work["_CURRENT_SCORE_SORT"] = scores
+    work["_VALUE_RISK_SORT"] = risk_values
+    top_row = work.sort_values(
+        by=["_CURRENT_SCORE_SORT", "_VALUE_RISK_SORT"],
+        ascending=[True, False],
+        na_position="last",
+    ).iloc[0]
+
+    st.markdown("**Executive Scorecard**")
+    render_shell_snapshot((
+        ("Lowest Score", f"{lowest_score:.0f}/100"),
+        ("Red", f"{red:,}"),
+        ("Yellow", f"{yellow:,}"),
+        ("Worsening", f"{worsening:,}"),
+        ("Value/Risk", f"${value_at_risk:,.0f}"),
+    ))
+    st.caption(
+        f"Top concern: {top_row.get('SCORE_NAME') or 'Executive score'} is "
+        f"{top_row.get('STATUS') or 'Unknown'}; owner route "
+        f"{top_row.get('OWNER_ROUTE') or 'Owner gap'}. "
+        f"Action: {top_row.get('RECOMMENDED_ACTION') or 'Review score drivers'}."
+    )
+    view = work[[
+        column for column in [
+            "SCORE_NAME", "CURRENT_SCORE", "STATUS", "TREND", "TOP_DRIVER",
+            "RECOMMENDED_ACTION", "OWNER_ROUTE", "OWNER_GAP", "VALUE_AT_RISK_USD",
+            "CONFIDENCE", "LAST_REFRESHED_TS",
+        ]
+        if column in work.columns
+    ]]
+    st.dataframe(view, width="stretch", hide_index=True)
+
+
 def render() -> None:
     company = _active_company()
     environment = _active_environment()
@@ -2884,6 +2974,12 @@ def render() -> None:
     )
     _render_enterprise_operating_model_summary(
         load_enterprise_operating_rollups(company, environment, days=int(days))
+    )
+    _render_production_readiness_dashboard(
+        load_production_readiness_summary(company, environment, days=int(days))
+    )
+    _render_executive_scorecard_summary(
+        load_executive_scorecard_summary(company, environment, days=int(days))
     )
     load = _render_executive_action_brief(summary, int(days), show_strip=False)
     _render_loaded_executive_alert_context()

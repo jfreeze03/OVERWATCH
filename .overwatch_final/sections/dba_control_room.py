@@ -121,6 +121,8 @@ load_task_inventory = _lazy_util("load_task_inventory")
 load_action_queue = _lazy_util("load_action_queue")
 load_app_observability_detail = _lazy_util("load_app_observability_detail")
 load_data_trust_detail = _lazy_util("load_data_trust_detail")
+load_executive_scorecard_detail = _lazy_util("load_executive_scorecard_detail")
+load_production_validation_detail = _lazy_util("load_production_validation_detail")
 run_query = _lazy_util("run_query")
 sql_literal = _lazy_util("sql_literal")
 resolve_owner_context = _lazy_util("resolve_owner_context")
@@ -284,6 +286,117 @@ def _render_enterprise_diagnostics_gate(company: str, environment: str) -> None:
                 width="stretch",
                 hide_index=True,
             )
+
+
+def _render_production_readiness_gate(company: str, environment: str) -> None:
+    """Expose Phase 2A production readiness proof only behind Load buttons."""
+    st.markdown("**Production Readiness Validation**")
+    st.caption(
+        "These panels read readiness marts and validation status rows. They do not probe live Snowflake during first paint."
+    )
+    panels = (
+        ("Load Production Validation Checklist", "Production Validation Checklist", "", "dba_prod_load_checklist"),
+        ("Load Role Readiness", "Role Readiness", "Role Readiness", "dba_prod_load_roles"),
+        ("Load Privilege Readiness", "Privilege Readiness", "Privilege Readiness", "dba_prod_load_privileges"),
+        ("Load Refresh Health", "Refresh Health", "Refresh Health", "dba_prod_load_refresh"),
+    )
+    cols = st.columns(4)
+    for idx, (button_label, label, domain, key) in enumerate(panels):
+        with cols[idx]:
+            if st.button(button_label, key=key, width="stretch"):
+                st.session_state["dba_production_readiness_detail"] = load_production_validation_detail(
+                    company,
+                    environment,
+                    domain=domain,
+                    days=35,
+                )
+                st.session_state["dba_production_readiness_scope"] = (company, environment, domain)
+                st.session_state["dba_production_readiness_label"] = label
+
+    detail = st.session_state.get("dba_production_readiness_detail")
+    scope = st.session_state.get("dba_production_readiness_scope")
+    label = str(st.session_state.get("dba_production_readiness_label") or "Production Validation Checklist")
+    expected_domains = {"", "Role Readiness", "Privilege Readiness", "Refresh Health"}
+    if (
+        isinstance(detail, pd.DataFrame)
+        and isinstance(scope, tuple)
+        and len(scope) == 3
+        and scope[0] == company
+        and scope[1] == environment
+        and scope[2] in expected_domains
+    ):
+        st.markdown(f"**{label}**")
+        if detail.empty:
+            st.info("No production readiness rows are available for this scope yet.")
+            return
+        blocked = safe_int(detail.get("VALIDATION_STATUS", pd.Series(dtype=str)).fillna("").astype(str).eq("Blocked").sum())
+        review = safe_int(detail.get("VALIDATION_STATUS", pd.Series(dtype=str)).fillna("").astype(str).eq("Review").sum())
+        render_shell_snapshot((
+            ("Rows", f"{len(detail):,}"),
+            ("Blocked", f"{blocked:,}"),
+            ("Review", f"{review:,}"),
+            ("Confidence", str(detail.get("CONFIDENCE", pd.Series(["fallback"])).fillna("fallback").astype(str).iloc[0])),
+        ))
+        st.dataframe(
+            detail[[
+                column for column in [
+                    "CHECK_DOMAIN", "CHECK_NAME", "VALIDATION_STATUS", "RISK_LEVEL",
+                    "VALUE", "VALUE_DETAIL", "SOURCE_OBJECT", "FRESHNESS_MINUTES",
+                    "ROUTE", "RUNBOOK_STEP", "CONFIDENCE",
+                ]
+                if column in detail.columns
+            ]],
+            width="stretch",
+            hide_index=True,
+        )
+
+
+def _render_executive_scorecard_driver_gate(company: str, environment: str) -> None:
+    """Expose Phase 2B score drivers only behind an explicit Load action."""
+    st.markdown("**Executive Scorecard Drivers**")
+    st.caption(
+        "Loads score history and top drivers from OVERWATCH_EXECUTIVE_SCORECARD_HISTORY. "
+        "No live ACCOUNT_USAGE probe is performed."
+    )
+    if st.button("Load Executive Scorecard Drivers", key="dba_load_executive_scorecard_drivers", width="stretch"):
+        st.session_state["dba_executive_scorecard_detail"] = load_executive_scorecard_detail(
+            company,
+            environment,
+            days=180,
+        )
+        st.session_state["dba_executive_scorecard_scope"] = (company, environment)
+
+    detail = st.session_state.get("dba_executive_scorecard_detail")
+    if (
+        isinstance(detail, pd.DataFrame)
+        and st.session_state.get("dba_executive_scorecard_scope") == (company, environment)
+    ):
+        if detail.empty:
+            st.info("No Executive Scorecard driver rows are available for this scope yet.")
+            return
+        red_yellow = safe_int(detail.get("STATUS", pd.Series(dtype=str)).fillna("").astype(str).isin(["Red", "Yellow"]).sum())
+        owner_gaps = safe_int(pd.to_numeric(detail.get("OWNER_GAP", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
+        value_risk = safe_float(pd.to_numeric(detail.get("VALUE_AT_RISK_USD", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
+        render_shell_snapshot((
+            ("Rows", f"{len(detail):,}"),
+            ("Red/Yellow", f"{red_yellow:,}"),
+            ("Owner Gaps", f"{owner_gaps:,}"),
+            ("Value/Risk", f"${value_risk:,.0f}"),
+        ))
+        render_priority_dataframe(
+            detail,
+            title="Executive score drivers and owner routes",
+            priority_columns=[
+                "SCORE_NAME", "CURRENT_SCORE", "STATUS", "TREND", "RISK_LEVEL",
+                "TOP_DRIVER", "RECOMMENDED_ACTION", "OWNER_ROUTE", "OWNER_GAP",
+                "VALUE_AT_RISK_USD", "CONFIDENCE", "LAST_REFRESHED_TS",
+            ],
+            sort_by=["STATUS", "CURRENT_SCORE", "SNAPSHOT_TS"],
+            ascending=[True, True, False],
+            raw_label="All executive scorecard driver rows",
+            height=320,
+            max_rows=12,
+        )
 
 
 def _set_admin_tool_focus(tool: str, group: str, focus: str) -> None:
@@ -6274,6 +6387,8 @@ def render() -> None:
         delayed_note="DBA Control Room shows cached triage immediately; guarded live checks are reserved for explicit detail loads.",
     )
     _render_enterprise_diagnostics_gate(company, environment)
+    _render_production_readiness_gate(company, environment)
+    _render_executive_scorecard_driver_gate(company, environment)
 
     if st.button(load_label, key="dba_control_room_load", type="primary"):
         _load_control_room_evidence()

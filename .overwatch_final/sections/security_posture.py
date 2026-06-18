@@ -38,6 +38,7 @@ render_mode_selector = _lazy_util("render_mode_selector")
 render_workflow_selector = _lazy_util("render_workflow_selector")
 build_loaded_section_alert_signal_board = _lazy_util("build_loaded_section_alert_signal_board")
 day_window_selectbox = _lazy_util("day_window_selectbox")
+load_executive_scorecard_detail = _lazy_util("load_executive_scorecard_detail")
 load_ownership_coverage_rollup = _lazy_util("load_ownership_coverage_rollup")
 resolve_owner_context = _lazy_util("resolve_owner_context")
 run_query = _lazy_util("run_query")
@@ -1604,6 +1605,51 @@ def _render_security_ownership_coverage(company: str, environment: str) -> None:
     )
 
 
+def _render_security_score_explanation(company: str, environment: str) -> None:
+    """Expose Security Score drivers without loading full security detail."""
+    st.markdown("**Security Score**")
+    st.caption("Loads security score drivers from the Executive Scorecard history.")
+    if st.button("Load Security Score Drivers", key="security_load_score_drivers", width="stretch"):
+        st.session_state["security_scorecard_detail"] = load_executive_scorecard_detail(
+            company,
+            environment,
+            score_key="SECURITY",
+            days=180,
+        )
+        st.session_state["security_scorecard_scope"] = (company, environment)
+
+    detail = st.session_state.get("security_scorecard_detail")
+    if (
+        isinstance(detail, pd.DataFrame)
+        and st.session_state.get("security_scorecard_scope") == (company, environment)
+    ):
+        if detail.empty:
+            st.info("No Security Score driver rows are available for this scope yet.")
+            return
+        latest = detail.iloc[0]
+        owner_gap = str(latest.get("OWNER_GAP") or "").strip().lower() in {"true", "1", "yes", "y"}
+        render_shell_snapshot((
+            ("Score", f"{safe_float(latest.get('CURRENT_SCORE')):.0f}/100"),
+            ("Status", str(latest.get("STATUS") or "Unknown")),
+            ("Trend", str(latest.get("TREND") or "Stable")),
+            ("Owner Gap", "Yes" if owner_gap else "No"),
+        ))
+        render_priority_dataframe(
+            detail,
+            title="Security Score drivers",
+            priority_columns=[
+                "SNAPSHOT_TS", "CURRENT_SCORE", "STATUS", "TREND",
+                "TOP_DRIVER", "RECOMMENDED_ACTION", "OWNER_ROUTE",
+                "OWNER_GAP", "CONFIDENCE", "SOURCE_OBJECTS", "LAST_REFRESHED_TS",
+            ],
+            sort_by=["SNAPSHOT_TS"],
+            ascending=False,
+            raw_label="All security score history rows",
+            height=260,
+            max_rows=8,
+        )
+
+
 def _apply_queued_security_workflow() -> None:
     requested_view = st.session_state.pop("security_posture_requested_view", None)
     requested_workflow = st.session_state.pop("security_posture_requested_workflow", None)
@@ -2626,6 +2672,7 @@ def render() -> None:
     )
     _render_loaded_security_alert_context()
     _render_security_ownership_coverage(company, environment)
+    _render_security_score_explanation(company, environment)
 
     days = day_window_selectbox(
         "Security window",

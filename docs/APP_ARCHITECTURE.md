@@ -92,6 +92,14 @@ flowchart TD
 
 - [ ] `app.py` remains thin and only owns page config plus `render_app()`.
 - [ ] `snowflake.yml` includes all top-level shell modules.
+- [ ] `MART_PRODUCTION_READINESS_SUMMARY` has recent rows after deployment.
+- [ ] `OVERWATCH_PRODUCTION_VALIDATION_STATUS` includes deployment, validation,
+  role, privilege, refresh, freshness, config, and environment readiness rows.
+- [ ] `MART_EXECUTIVE_SCORECARD_SUMMARY` has recent rows for all six leadership
+  scores after `SP_OVERWATCH_REFRESH_EXECUTIVE_SCORECARD()`.
+- [ ] Executive scorecard detail panels are loaded only by explicit operator
+  buttons in DBA Control Room, Cost & Contract, Security Monitoring, and Alert
+  Center.
 - [ ] No section runs live `ACCOUNT_USAGE` queries on first paint unless the
   section explicitly requires a user refresh/load action.
 - [ ] Admin role compatibility still allows `SNOW_ACCOUNTADMINS` and
@@ -126,6 +134,13 @@ flowchart TD
 2. Add Snowflake-backed configuration tables with Python config as fallback.
 3. Introduce first-class OVERWATCH role names while preserving current admin
    compatibility.
-4. Add a production trust/readiness panel for mart freshness, privileges,
-   validation SQL, limitations, formula basis, and exact/allocated/estimated
-   classification.
+4. Phase 2A production readiness is implemented through
+   `MART_PRODUCTION_READINESS_SUMMARY`,
+   `OVERWATCH_PRODUCTION_VALIDATION_STATUS`, and
+   `docs/PRODUCTION_READINESS.md`. Future architecture phases should build on
+   that contract rather than adding new first-paint probes.
+5. Phase 2B Executive Scorecard is implemented through
+   `MART_EXECUTIVE_SCORECARD_SUMMARY`,
+   `OVERWATCH_EXECUTIVE_SCORECARD_HISTORY`, and
+   `docs/EXECUTIVE_SCORECARD.md`; it should remain mart-first and should not
+   become a section-level live-query score synthesizer.

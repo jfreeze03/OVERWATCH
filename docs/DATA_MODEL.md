@@ -34,6 +34,37 @@ Finding -> Owner -> Trust Level -> Business Impact -> Action -> Value Verified.
 
 Details and validation steps live in `docs/ENTERPRISE_OPERATING_MODEL.md`.
 
+## Production Readiness
+
+Phase 2A validates whether the deployed OVERWATCH platform is fit for real
+production use before larger command-center capabilities are added.
+
+| Object | Type | Purpose |
+|---|---|---|
+| `OVERWATCH_PRODUCTION_CHECKLIST` | Table | Production validation checklist and runbook catalog. |
+| `OVERWATCH_ROLE_READINESS_REQUIREMENT` | Table | Target OVERWATCH roles and legacy compatibility role expectations. |
+| `OVERWATCH_PRIVILEGE_READINESS_REQUIREMENT` | Table | Required Snowflake privilege families and manual proof SQL. |
+| `OVERWATCH_PRODUCTION_VALIDATION_STATUS` | Transient table | Detail readiness rows for deployment, validation, role, privilege, refresh, data freshness, config, and environment checks. |
+| `MART_PRODUCTION_READINESS_SUMMARY` | Transient mart | Compact Production Readiness Dashboard source for first paint. |
+| `SP_OVERWATCH_REFRESH_PRODUCTION_READINESS` | Procedure | Refreshes the production readiness summary and detail status rows from OVERWATCH audit/config/mart data. |
+
+Details and manual validation steps live in `docs/PRODUCTION_READINESS.md`.
+
+## Executive Scorecard
+
+Phase 2B adds a leadership scorecard that answers whether the Snowflake platform
+is healthy, what is worsening, what needs action, who owns the risk, and what
+value/risk is tied to the signal.
+
+| Object | Type | Purpose |
+|---|---|---|
+| `OVERWATCH_EXECUTIVE_SCORECARD_CONFIG` | Table | Score catalog, thresholds, owner routes, driver sources, and default recommended actions. |
+| `OVERWATCH_EXECUTIVE_SCORECARD_HISTORY` | Transient table | Score snapshots and driver history for explicit Load panels. |
+| `MART_EXECUTIVE_SCORECARD_SUMMARY` | Transient mart | Compact first-paint Executive Landing scorecard source. |
+| `SP_OVERWATCH_REFRESH_EXECUTIVE_SCORECARD` | Procedure | Refreshes all six leadership scores from existing OVERWATCH marts and app tables. |
+
+Details and manual validation steps live in `docs/EXECUTIVE_SCORECARD.md`.
+
 ## Reconciliation
 
 | Object | Type | Purpose |

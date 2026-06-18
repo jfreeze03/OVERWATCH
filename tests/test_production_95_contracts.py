@@ -63,7 +63,9 @@ class Production95ContractsTests(unittest.TestCase):
             with self.subTest(marker=marker):
                 self.assertIn(marker, setup)
         self.assertNotIn("OVERWATCH_MONITOR", setup)
-        self.assertNotIn("OVERWATCH_OPERATOR", setup)
+        self.assertIn("OVERWATCH_ROLE_READINESS_REQUIREMENT", setup)
+        self.assertNotIn("CREATE ROLE IF NOT EXISTS OVERWATCH_OPERATOR", setup)
+        self.assertNotIn("GRANT ROLE OVERWATCH_OPERATOR", setup)
 
     def test_incident_and_predictive_sla_sql_are_snowflake_native(self):
         incident_sql = build_incident_correlation_sql().upper()

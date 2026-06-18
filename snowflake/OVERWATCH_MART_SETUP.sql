@@ -158,6 +158,38 @@ WHEN MATCHED THEN UPDATE SET
 WHEN NOT MATCHED THEN INSERT (MIGRATION_VERSION, MIGRATION_NAME, SOURCE_FILE, NOTES)
 VALUES (src.MIGRATION_VERSION, src.MIGRATION_NAME, src.SOURCE_FILE, src.NOTES);
 
+MERGE INTO OVERWATCH_SCHEMA_MIGRATION tgt
+USING (
+  SELECT
+    '2026.06.18-production-readiness' AS MIGRATION_VERSION,
+    'Production readiness dashboard, role/privilege/readiness validation, and refresh health marts' AS MIGRATION_NAME,
+    'snowflake/OVERWATCH_MART_SETUP.sql' AS SOURCE_FILE,
+    'Adds Phase 2A live production validation. First-paint surfaces read a compact readiness mart; role, privilege, validation, and refresh proof rows remain explicit-load diagnostics.' AS NOTES
+) src
+ON tgt.MIGRATION_VERSION = src.MIGRATION_VERSION
+WHEN MATCHED THEN UPDATE SET
+  MIGRATION_NAME = src.MIGRATION_NAME,
+  SOURCE_FILE = src.SOURCE_FILE,
+  NOTES = src.NOTES
+WHEN NOT MATCHED THEN INSERT (MIGRATION_VERSION, MIGRATION_NAME, SOURCE_FILE, NOTES)
+VALUES (src.MIGRATION_VERSION, src.MIGRATION_NAME, src.SOURCE_FILE, src.NOTES);
+
+MERGE INTO OVERWATCH_SCHEMA_MIGRATION tgt
+USING (
+  SELECT
+    '2026.06.18-executive-scorecard' AS MIGRATION_VERSION,
+    'Executive Scorecard leadership health scoring across health, cost, security, risk, trust, and production readiness' AS MIGRATION_NAME,
+    'snowflake/OVERWATCH_MART_SETUP.sql' AS SOURCE_FILE,
+    'Adds Phase 2B Executive Scorecard. First-paint surfaces read compact scorecard marts; driver evidence remains explicit-load only.' AS NOTES
+) src
+ON tgt.MIGRATION_VERSION = src.MIGRATION_VERSION
+WHEN MATCHED THEN UPDATE SET
+  MIGRATION_NAME = src.MIGRATION_NAME,
+  SOURCE_FILE = src.SOURCE_FILE,
+  NOTES = src.NOTES
+WHEN NOT MATCHED THEN INSERT (MIGRATION_VERSION, MIGRATION_NAME, SOURCE_FILE, NOTES)
+VALUES (src.MIGRATION_VERSION, src.MIGRATION_NAME, src.SOURCE_FILE, src.NOTES);
+
 CREATE TABLE IF NOT EXISTS OVERWATCH_OWNER_TAG_NAMES (
   TAG_NAME             VARCHAR(300) PRIMARY KEY,
   OWNER_TYPE           VARCHAR(100),
@@ -2181,6 +2213,294 @@ CREATE TRANSIENT TABLE IF NOT EXISTS MART_APP_OBSERVABILITY_SUMMARY (
   CONFIDENCE                   VARCHAR(40),
   SOURCE                       VARCHAR(500),
   NEXT_ACTION                  VARCHAR(1000),
+  LOAD_TS                      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+-- -----------------------------------------------------------------------------
+-- Phase 2A: live production validation and readiness contracts
+-- -----------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS OVERWATCH_PRODUCTION_CHECKLIST (
+  CHECK_KEY                    VARCHAR(200) PRIMARY KEY,
+  CHECK_DOMAIN                 VARCHAR(100),
+  CHECK_NAME                   VARCHAR(300),
+  SURFACE                      VARCHAR(200),
+  SEVERITY                     VARCHAR(40),
+  REQUIRED_OBJECT              VARCHAR(500),
+  FIRST_PAINT_SAFE             BOOLEAN DEFAULT TRUE,
+  EXPLICIT_LOAD_REQUIRED       BOOLEAN DEFAULT FALSE,
+  EXPECTED_STATE               VARCHAR(100),
+  OWNER_ROUTE                  VARCHAR(200),
+  RUNBOOK_STEP                 VARCHAR(2000),
+  ENABLED                      BOOLEAN DEFAULT TRUE,
+  CREATED_AT                   TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+  UPDATED_AT                   TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+MERGE INTO OVERWATCH_PRODUCTION_CHECKLIST tgt
+USING (
+  SELECT * FROM VALUES
+    ('DEPLOYMENT_VERSION', 'Deployment', 'Deployment version recorded', 'Executive Landing', 'High', 'OVERWATCH_SCHEMA_MIGRATION', TRUE, FALSE, 'Ready', 'DBA / Platform', 'Confirm the latest setup migration row matches the deployed app bundle.', TRUE),
+    ('VALIDATION_RUN', 'Validation', 'Production validation run recorded', 'Executive Landing', 'High', 'MART_PRODUCTION_READINESS_SUMMARY', TRUE, FALSE, 'Ready', 'DBA / Platform', 'Run OVERWATCH_MART_VALIDATION.sql after setup and after material refresh changes.', TRUE),
+    ('ROLE_READINESS', 'Role Readiness', 'OVERWATCH role model reviewed', 'DBA Control Room', 'Medium', 'OVERWATCH_ROLE_READINESS_REQUIREMENT', FALSE, TRUE, 'Ready', 'Security / DBA', 'Confirm OVERWATCH_VIEWER, OVERWATCH_OPERATOR, OVERWATCH_ADMIN, and OVERWATCH_BREAKGLASS are either deployed or explicitly mapped to legacy admin roles.', TRUE),
+    ('PRIVILEGE_READINESS', 'Privilege Readiness', 'Required Snowflake privileges reviewed', 'DBA Control Room', 'High', 'OVERWATCH_PRIVILEGE_READINESS_REQUIREMENT', FALSE, TRUE, 'Ready', 'Security / DBA', 'Confirm imported SNOWFLAKE privileges, warehouse usage, schema usage, table DML, view select, procedure usage, and task ownership are granted to the runtime roles.', TRUE),
+    ('REFRESH_HEALTH', 'Refresh Health', 'Mart refresh jobs healthy', 'DBA Control Room', 'High', 'OVERWATCH_LOAD_AUDIT', TRUE, TRUE, 'Ready', 'DBA On-Call', 'Review failed OVERWATCH_LOAD_AUDIT rows before trusting first-paint summaries.', TRUE),
+    ('SUMMARY_MART_DATA', 'Refresh Health', 'Summary mart rows available', 'Executive Landing', 'High', 'MART_*', TRUE, FALSE, 'Ready', 'DBA / Platform', 'Run the mart refresh procedures and confirm each first-paint mart has recent rows.', TRUE),
+    ('DATA_FRESHNESS', 'Data Freshness', 'Data trust sources fresh', 'Executive Landing', 'High', 'MART_DATA_TRUST_SUMMARY', TRUE, FALSE, 'Ready', 'DBA / Platform', 'Refresh stale sources or disclose telemetry lag before operational action.', TRUE),
+    ('CONFIG_DRIFT', 'Configuration Drift', 'Required settings customized and present', 'DBA Control Room', 'Medium', 'OVERWATCH_SETTINGS', TRUE, TRUE, 'Ready', 'DBA / Platform', 'Review placeholder alert settings and required pricing/retention settings after deployment.', TRUE),
+    ('ENVIRONMENT_READINESS', 'Environment Readiness', 'Runtime context has database/schema/warehouse/role', 'Executive Landing', 'High', 'CURRENT_CONTEXT', TRUE, FALSE, 'Ready', 'DBA / Platform', 'Confirm the app runs in the intended database, schema, warehouse, and role context.', TRUE)
+  AS t(CHECK_KEY, CHECK_DOMAIN, CHECK_NAME, SURFACE, SEVERITY, REQUIRED_OBJECT, FIRST_PAINT_SAFE, EXPLICIT_LOAD_REQUIRED, EXPECTED_STATE, OWNER_ROUTE, RUNBOOK_STEP, ENABLED)
+) src
+ON tgt.CHECK_KEY = src.CHECK_KEY
+WHEN MATCHED THEN UPDATE SET
+  CHECK_DOMAIN = src.CHECK_DOMAIN,
+  CHECK_NAME = src.CHECK_NAME,
+  SURFACE = src.SURFACE,
+  SEVERITY = src.SEVERITY,
+  REQUIRED_OBJECT = src.REQUIRED_OBJECT,
+  FIRST_PAINT_SAFE = src.FIRST_PAINT_SAFE,
+  EXPLICIT_LOAD_REQUIRED = src.EXPLICIT_LOAD_REQUIRED,
+  EXPECTED_STATE = src.EXPECTED_STATE,
+  OWNER_ROUTE = src.OWNER_ROUTE,
+  RUNBOOK_STEP = src.RUNBOOK_STEP,
+  ENABLED = src.ENABLED,
+  UPDATED_AT = CURRENT_TIMESTAMP()
+WHEN NOT MATCHED THEN INSERT (
+  CHECK_KEY, CHECK_DOMAIN, CHECK_NAME, SURFACE, SEVERITY, REQUIRED_OBJECT,
+  FIRST_PAINT_SAFE, EXPLICIT_LOAD_REQUIRED, EXPECTED_STATE, OWNER_ROUTE, RUNBOOK_STEP, ENABLED
+)
+VALUES (
+  src.CHECK_KEY, src.CHECK_DOMAIN, src.CHECK_NAME, src.SURFACE, src.SEVERITY,
+  src.REQUIRED_OBJECT, src.FIRST_PAINT_SAFE, src.EXPLICIT_LOAD_REQUIRED,
+  src.EXPECTED_STATE, src.OWNER_ROUTE, src.RUNBOOK_STEP, src.ENABLED
+);
+
+CREATE TABLE IF NOT EXISTS OVERWATCH_ROLE_READINESS_REQUIREMENT (
+  ROLE_NAME                    VARCHAR(200) PRIMARY KEY,
+  ROLE_CLASS                   VARCHAR(100),
+  REQUIRED_FOR                 VARCHAR(500),
+  REQUIRED                     BOOLEAN DEFAULT TRUE,
+  LEGACY_COMPAT                BOOLEAN DEFAULT FALSE,
+  CHECK_METHOD                 VARCHAR(1000),
+  OWNER_ROUTE                  VARCHAR(200),
+  ENABLED                      BOOLEAN DEFAULT TRUE,
+  CREATED_AT                   TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+  UPDATED_AT                   TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+MERGE INTO OVERWATCH_ROLE_READINESS_REQUIREMENT tgt
+USING (
+  SELECT * FROM VALUES
+    ('OVERWATCH_VIEWER', 'Target', 'Read-only monitoring and executive scorecards', TRUE, FALSE, 'SHOW ROLES LIKE ''OVERWATCH_VIEWER''; verify USAGE on app database/schema and SELECT on marts.', 'Security / DBA', TRUE),
+    ('OVERWATCH_OPERATOR', 'Target', 'Operational triage, alert acknowledgement, and action queue updates', TRUE, FALSE, 'SHOW ROLES LIKE ''OVERWATCH_OPERATOR''; verify action queue DML and procedure usage.', 'Security / DBA', TRUE),
+    ('OVERWATCH_ADMIN', 'Target', 'Settings, refresh controls, and guarded DBA administration', TRUE, FALSE, 'SHOW ROLES LIKE ''OVERWATCH_ADMIN''; verify warehouse/task/procedure control grants.', 'Security / DBA', TRUE),
+    ('OVERWATCH_BREAKGLASS', 'Target', 'Emergency DBA intervention with explicit audit trail', FALSE, FALSE, 'SHOW ROLES LIKE ''OVERWATCH_BREAKGLASS''; verify it is disabled or tightly controlled until approved.', 'Security / DBA', TRUE),
+    ('SNOW_SYSADMINS', 'Legacy Compatibility', 'Legacy admin compatibility during transition', FALSE, TRUE, 'Confirm SNOW_SYSADMINS remains intentionally mapped while OVERWATCH roles are adopted.', 'Security / DBA', TRUE),
+    ('SNOW_ACCOUNTADMINS', 'Legacy Compatibility', 'Legacy account-admin compatibility during transition', FALSE, TRUE, 'Confirm SNOW_ACCOUNTADMINS remains intentionally mapped while OVERWATCH roles are adopted.', 'Security / DBA', TRUE)
+  AS t(ROLE_NAME, ROLE_CLASS, REQUIRED_FOR, REQUIRED, LEGACY_COMPAT, CHECK_METHOD, OWNER_ROUTE, ENABLED)
+) src
+ON UPPER(tgt.ROLE_NAME) = UPPER(src.ROLE_NAME)
+WHEN MATCHED THEN UPDATE SET
+  ROLE_CLASS = src.ROLE_CLASS,
+  REQUIRED_FOR = src.REQUIRED_FOR,
+  REQUIRED = src.REQUIRED,
+  LEGACY_COMPAT = src.LEGACY_COMPAT,
+  CHECK_METHOD = src.CHECK_METHOD,
+  OWNER_ROUTE = src.OWNER_ROUTE,
+  ENABLED = src.ENABLED,
+  UPDATED_AT = CURRENT_TIMESTAMP()
+WHEN NOT MATCHED THEN INSERT (
+  ROLE_NAME, ROLE_CLASS, REQUIRED_FOR, REQUIRED, LEGACY_COMPAT, CHECK_METHOD, OWNER_ROUTE, ENABLED
+)
+VALUES (
+  src.ROLE_NAME, src.ROLE_CLASS, src.REQUIRED_FOR, src.REQUIRED, src.LEGACY_COMPAT,
+  src.CHECK_METHOD, src.OWNER_ROUTE, src.ENABLED
+);
+
+CREATE TABLE IF NOT EXISTS OVERWATCH_PRIVILEGE_READINESS_REQUIREMENT (
+  PRIVILEGE_KEY                VARCHAR(200) PRIMARY KEY,
+  OBJECT_NAME                  VARCHAR(500),
+  OBJECT_TYPE                  VARCHAR(100),
+  REQUIRED_PRIVILEGE           VARCHAR(200),
+  REQUIRED_FOR                 VARCHAR(1000),
+  REQUIRED                     BOOLEAN DEFAULT TRUE,
+  CHECK_METHOD                 VARCHAR(1000),
+  OWNER_ROUTE                  VARCHAR(200),
+  REMEDIATION_HINT             VARCHAR(2000),
+  ENABLED                      BOOLEAN DEFAULT TRUE,
+  CREATED_AT                   TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+  UPDATED_AT                   TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+MERGE INTO OVERWATCH_PRIVILEGE_READINESS_REQUIREMENT tgt
+USING (
+  SELECT * FROM VALUES
+    ('SNOWFLAKE_IMPORTED_PRIVILEGES', 'SNOWFLAKE', 'DATABASE', 'IMPORTED PRIVILEGES', 'ACCOUNT_USAGE-backed mart refreshes', TRUE, 'SHOW GRANTS ON DATABASE SNOWFLAKE;', 'Security / DBA', 'Grant imported privileges to the approved OVERWATCH runtime/admin roles after security review.', TRUE),
+    ('OVERWATCH_WH_USAGE', 'OVERWATCH_WH', 'WAREHOUSE', 'USAGE', 'Scheduled mart refresh and Streamlit runtime queries', TRUE, 'SHOW GRANTS ON WAREHOUSE OVERWATCH_WH;', 'Security / DBA', 'Grant USAGE on OVERWATCH_WH to the runtime roles and keep AUTO_SUSPEND controlled.', TRUE),
+    ('APP_DB_USAGE', 'DBA_MAINT_DB', 'DATABASE', 'USAGE', 'Read OVERWATCH mart objects', TRUE, 'SHOW GRANTS ON DATABASE DBA_MAINT_DB;', 'Security / DBA', 'Grant USAGE on the app database to runtime roles.', TRUE),
+    ('APP_SCHEMA_USAGE', 'DBA_MAINT_DB.OVERWATCH', 'SCHEMA', 'USAGE', 'Read OVERWATCH mart schema', TRUE, 'SHOW GRANTS ON SCHEMA DBA_MAINT_DB.OVERWATCH;', 'Security / DBA', 'Grant USAGE on the app schema to runtime roles.', TRUE),
+    ('APP_TABLE_SELECT', 'DBA_MAINT_DB.OVERWATCH.*', 'TABLE', 'SELECT', 'First-paint dashboards and explicit-load detail panels', TRUE, 'SHOW GRANTS TO ROLE <role_name>;', 'Security / DBA', 'Grant SELECT on all/future OVERWATCH tables to viewer/operator/admin roles.', TRUE),
+    ('APP_ACTION_DML', 'OVERWATCH_ACTION_QUEUE', 'TABLE', 'INSERT, UPDATE', 'Review-gated action, value, and alert workflow updates', TRUE, 'SHOW GRANTS ON TABLE OVERWATCH_ACTION_QUEUE;', 'Security / DBA', 'Grant DML only to operator/admin roles that own review workflows.', TRUE),
+    ('APP_PROCEDURE_USAGE', 'SP_OVERWATCH_*', 'PROCEDURE', 'USAGE', 'Manual and scheduled mart refresh procedures', TRUE, 'SHOW PROCEDURES LIKE ''SP_OVERWATCH_%''; SHOW GRANTS TO ROLE <role_name>;', 'Security / DBA', 'Grant procedure usage to approved refresh/admin roles only.', TRUE),
+    ('APP_TASK_OPERATE', 'OVERWATCH_*', 'TASK', 'OPERATE/OWNERSHIP', 'Scheduled mart health and recovery', TRUE, 'SHOW TASKS IN SCHEMA; SHOW GRANTS TO ROLE <role_name>;', 'Security / DBA', 'Keep task ownership with the DBA/admin role; do not grant broad task control to viewers.', TRUE)
+  AS t(PRIVILEGE_KEY, OBJECT_NAME, OBJECT_TYPE, REQUIRED_PRIVILEGE, REQUIRED_FOR, REQUIRED, CHECK_METHOD, OWNER_ROUTE, REMEDIATION_HINT, ENABLED)
+) src
+ON tgt.PRIVILEGE_KEY = src.PRIVILEGE_KEY
+WHEN MATCHED THEN UPDATE SET
+  OBJECT_NAME = src.OBJECT_NAME,
+  OBJECT_TYPE = src.OBJECT_TYPE,
+  REQUIRED_PRIVILEGE = src.REQUIRED_PRIVILEGE,
+  REQUIRED_FOR = src.REQUIRED_FOR,
+  REQUIRED = src.REQUIRED,
+  CHECK_METHOD = src.CHECK_METHOD,
+  OWNER_ROUTE = src.OWNER_ROUTE,
+  REMEDIATION_HINT = src.REMEDIATION_HINT,
+  ENABLED = src.ENABLED,
+  UPDATED_AT = CURRENT_TIMESTAMP()
+WHEN NOT MATCHED THEN INSERT (
+  PRIVILEGE_KEY, OBJECT_NAME, OBJECT_TYPE, REQUIRED_PRIVILEGE, REQUIRED_FOR,
+  REQUIRED, CHECK_METHOD, OWNER_ROUTE, REMEDIATION_HINT, ENABLED
+)
+VALUES (
+  src.PRIVILEGE_KEY, src.OBJECT_NAME, src.OBJECT_TYPE, src.REQUIRED_PRIVILEGE,
+  src.REQUIRED_FOR, src.REQUIRED, src.CHECK_METHOD, src.OWNER_ROUTE,
+  src.REMEDIATION_HINT, src.ENABLED
+);
+
+CREATE TRANSIENT TABLE IF NOT EXISTS OVERWATCH_PRODUCTION_VALIDATION_STATUS (
+  SNAPSHOT_TS                  TIMESTAMP_NTZ,
+  COMPANY                      VARCHAR(100),
+  ENVIRONMENT                  VARCHAR(100),
+  CHECK_DOMAIN                 VARCHAR(100),
+  CHECK_KEY                    VARCHAR(200),
+  CHECK_NAME                   VARCHAR(300),
+  VALIDATION_STATUS            VARCHAR(40),
+  RISK_LEVEL                   VARCHAR(40),
+  VALUE                        FLOAT,
+  VALUE_DETAIL                 VARCHAR(4000),
+  SOURCE_OBJECT                VARCHAR(500),
+  FRESHNESS_MINUTES            NUMBER,
+  OWNER_ROUTE                  VARCHAR(200),
+  RUNBOOK_STEP                 VARCHAR(2000),
+  CONFIDENCE                   VARCHAR(40),
+  LOAD_TS                      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+CREATE TRANSIENT TABLE IF NOT EXISTS MART_PRODUCTION_READINESS_SUMMARY (
+  SNAPSHOT_TS                  TIMESTAMP_NTZ,
+  COMPANY                      VARCHAR(100),
+  ENVIRONMENT                  VARCHAR(100),
+  DEPLOYMENT_VERSION           VARCHAR(100),
+  LAST_DEPLOYMENT_TS           TIMESTAMP_NTZ,
+  LAST_VALIDATION_TS           TIMESTAMP_NTZ,
+  VALIDATION_STATUS            VARCHAR(40),
+  MISSING_PRIVILEGES           NUMBER,
+  FAILED_MART_REFRESHES        NUMBER,
+  MISSING_SUMMARY_MARTS        NUMBER,
+  STALE_SOURCE_COUNT           NUMBER,
+  CONFIG_DRIFT_COUNT           NUMBER,
+  ENVIRONMENT_READINESS        VARCHAR(100),
+  READINESS_SCORE              NUMBER,
+  TOP_RISK                     VARCHAR(1000),
+  CONFIDENCE                   VARCHAR(40),
+  NEXT_ACTION                  VARCHAR(1000),
+  LOAD_TS                      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+-- -----------------------------------------------------------------------------
+-- Phase 2B: leadership Executive Scorecard
+-- -----------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS OVERWATCH_EXECUTIVE_SCORECARD_CONFIG (
+  SCORE_KEY                    VARCHAR(100) PRIMARY KEY,
+  SCORE_NAME                   VARCHAR(200),
+  DISPLAY_ORDER                NUMBER,
+  SCORE_DOMAIN                 VARCHAR(100),
+  RED_BELOW                    NUMBER DEFAULT 70,
+  YELLOW_BELOW                 NUMBER DEFAULT 85,
+  OWNER_ROUTE                  VARCHAR(200),
+  DRIVER_SOURCE                VARCHAR(1000),
+  RECOMMENDED_ACTION           VARCHAR(1000),
+  ENABLED                      BOOLEAN DEFAULT TRUE,
+  CREATED_AT                   TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+  UPDATED_AT                   TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+MERGE INTO OVERWATCH_EXECUTIVE_SCORECARD_CONFIG tgt
+USING (
+  SELECT * FROM VALUES
+    ('SNOWFLAKE_HEALTH', 'Snowflake Health Score', 10, 'Platform Health', 70, 85, 'DBA / Platform', 'MART_DBA_CONTROL_ROOM; MART_APP_OBSERVABILITY_SUMMARY; MART_PRODUCTION_READINESS_SUMMARY', 'Open DBA Control Room and resolve failed refresh, app health, or control-room blocker rows.', TRUE),
+    ('COST_EFFICIENCY', 'Cost Efficiency Score', 20, 'Cost', 70, 85, 'DBA / Cost owner', 'FACT_COST_MONITORING_SIGNAL; ALERT_EVENTS; MART_EXECUTIVE_VALUE_LEDGER', 'Open Cost & Contract, explain top cost drivers, and route verified savings work.', TRUE),
+    ('SECURITY', 'Security Score', 30, 'Security', 75, 88, 'Security / DBA', 'ALERT_EVENTS; MART_OPERATIONAL_OWNER_COVERAGE', 'Open Security Monitoring and review privileged, access, ownership, and route-gap drivers.', TRUE),
+    ('OPERATIONAL_RISK', 'Operational Risk Score', 40, 'Operations', 70, 85, 'DBA On-Call', 'ALERT_EVENTS; MART_OPERATIONAL_OWNER_COVERAGE; OVERWATCH_ACTION_QUEUE', 'Open Alert Center and DBA Control Room to assign owner, SLA, and next action.', TRUE),
+    ('DATA_TRUST', 'Data Trust Score', 50, 'Data Trust', 75, 90, 'DBA / Platform', 'MART_DATA_TRUST_SUMMARY', 'Open DBA Control Room data trust diagnostics and refresh stale source marts.', TRUE),
+    ('PRODUCTION_READINESS', 'Production Readiness Score', 60, 'Production Readiness', 75, 90, 'DBA / Platform', 'MART_PRODUCTION_READINESS_SUMMARY; OVERWATCH_PRODUCTION_VALIDATION_STATUS', 'Open DBA Control Room production readiness validation before expanding usage.', TRUE)
+  AS t(SCORE_KEY, SCORE_NAME, DISPLAY_ORDER, SCORE_DOMAIN, RED_BELOW, YELLOW_BELOW, OWNER_ROUTE, DRIVER_SOURCE, RECOMMENDED_ACTION, ENABLED)
+) src
+ON tgt.SCORE_KEY = src.SCORE_KEY
+WHEN MATCHED THEN UPDATE SET
+  SCORE_NAME = src.SCORE_NAME,
+  DISPLAY_ORDER = src.DISPLAY_ORDER,
+  SCORE_DOMAIN = src.SCORE_DOMAIN,
+  RED_BELOW = src.RED_BELOW,
+  YELLOW_BELOW = src.YELLOW_BELOW,
+  OWNER_ROUTE = src.OWNER_ROUTE,
+  DRIVER_SOURCE = src.DRIVER_SOURCE,
+  RECOMMENDED_ACTION = src.RECOMMENDED_ACTION,
+  ENABLED = src.ENABLED,
+  UPDATED_AT = CURRENT_TIMESTAMP()
+WHEN NOT MATCHED THEN INSERT (
+  SCORE_KEY, SCORE_NAME, DISPLAY_ORDER, SCORE_DOMAIN, RED_BELOW, YELLOW_BELOW,
+  OWNER_ROUTE, DRIVER_SOURCE, RECOMMENDED_ACTION, ENABLED
+)
+VALUES (
+  src.SCORE_KEY, src.SCORE_NAME, src.DISPLAY_ORDER, src.SCORE_DOMAIN,
+  src.RED_BELOW, src.YELLOW_BELOW, src.OWNER_ROUTE, src.DRIVER_SOURCE,
+  src.RECOMMENDED_ACTION, src.ENABLED
+);
+
+CREATE TRANSIENT TABLE IF NOT EXISTS OVERWATCH_EXECUTIVE_SCORECARD_HISTORY (
+  SNAPSHOT_TS                  TIMESTAMP_NTZ,
+  COMPANY                      VARCHAR(100),
+  ENVIRONMENT                  VARCHAR(100),
+  SCORE_KEY                    VARCHAR(100),
+  SCORE_NAME                   VARCHAR(200),
+  CURRENT_SCORE                NUMBER(6,2),
+  STATUS                       VARCHAR(40),
+  TREND                        VARCHAR(40),
+  TREND_DELTA                  NUMBER(8,2),
+  RISK_LEVEL                   VARCHAR(40),
+  TOP_DRIVER                   VARCHAR(2000),
+  RECOMMENDED_ACTION           VARCHAR(2000),
+  OWNER_ROUTE                  VARCHAR(200),
+  OWNER_GAP                    BOOLEAN DEFAULT FALSE,
+  VALUE_AT_RISK_USD            NUMBER(18,2) DEFAULT 0,
+  CONFIDENCE                   VARCHAR(40),
+  SOURCE_OBJECTS               VARCHAR(1000),
+  LAST_REFRESHED_TS            TIMESTAMP_NTZ,
+  LOAD_TS                      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+CREATE TRANSIENT TABLE IF NOT EXISTS MART_EXECUTIVE_SCORECARD_SUMMARY (
+  SNAPSHOT_TS                  TIMESTAMP_NTZ,
+  COMPANY                      VARCHAR(100),
+  ENVIRONMENT                  VARCHAR(100),
+  SCORE_KEY                    VARCHAR(100),
+  SCORE_NAME                   VARCHAR(200),
+  DISPLAY_ORDER                NUMBER,
+  CURRENT_SCORE                NUMBER(6,2),
+  STATUS                       VARCHAR(40),
+  TREND                        VARCHAR(40),
+  TREND_DELTA                  NUMBER(8,2),
+  RISK_LEVEL                   VARCHAR(40),
+  TOP_DRIVER                   VARCHAR(2000),
+  RECOMMENDED_ACTION           VARCHAR(2000),
+  OWNER_ROUTE                  VARCHAR(200),
+  OWNER_GAP                    BOOLEAN DEFAULT FALSE,
+  VALUE_AT_RISK_USD            NUMBER(18,2) DEFAULT 0,
+  CONFIDENCE                   VARCHAR(40),
+  SOURCE_OBJECTS               VARCHAR(1000),
+  LAST_REFRESHED_TS            TIMESTAMP_NTZ,
   LOAD_TS                      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
 );
 
@@ -4877,6 +5197,990 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_PRODUCTION_READINESS()
+RETURNS VARCHAR
+LANGUAGE SQL
+AS
+$$
+DECLARE
+  snapshot_ts TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP();
+BEGIN
+  DELETE FROM OVERWATCH_PRODUCTION_VALIDATION_STATUS
+  WHERE SNAPSHOT_TS < DATEADD('DAY', -35, CURRENT_TIMESTAMP())
+     OR SNAPSHOT_TS >= DATEADD('HOUR', -4, CURRENT_TIMESTAMP());
+
+  DELETE FROM MART_PRODUCTION_READINESS_SUMMARY
+  WHERE SNAPSHOT_TS < DATEADD('DAY', -35, CURRENT_TIMESTAMP())
+     OR SNAPSHOT_TS >= DATEADD('HOUR', -4, CURRENT_TIMESTAMP());
+
+  INSERT INTO OVERWATCH_PRODUCTION_VALIDATION_STATUS (
+    SNAPSHOT_TS, COMPANY, ENVIRONMENT, CHECK_DOMAIN, CHECK_KEY, CHECK_NAME,
+    VALIDATION_STATUS, RISK_LEVEL, VALUE, VALUE_DETAIL, SOURCE_OBJECT,
+    FRESHNESS_MINUTES, OWNER_ROUTE, RUNBOOK_STEP, CONFIDENCE
+  )
+  WITH latest_deployment AS (
+    SELECT MIGRATION_VERSION, APPLIED_AT
+    FROM OVERWATCH_SCHEMA_MIGRATION
+    QUALIFY ROW_NUMBER() OVER (ORDER BY APPLIED_AT DESC, MIGRATION_VERSION DESC) = 1
+  )
+  SELECT
+    :snapshot_ts,
+    'ALL',
+    'ALL',
+    'Deployment',
+    'DEPLOYMENT_VERSION',
+    'Deployment version recorded',
+    IFF(MIGRATION_VERSION IS NULL, 'Blocked', 'Ready'),
+    IFF(MIGRATION_VERSION IS NULL, 'High', 'Low'),
+    NULL::FLOAT,
+    COALESCE(MIGRATION_VERSION, 'No deployment migration row found.'),
+    'OVERWATCH_SCHEMA_MIGRATION',
+    DATEDIFF('minute', APPLIED_AT, :snapshot_ts),
+    'DBA / Platform',
+    'Confirm the latest setup migration row matches the deployed app bundle.',
+    'exact'
+  FROM latest_deployment
+  UNION ALL
+  SELECT
+    :snapshot_ts,
+    'ALL',
+    'ALL',
+    'Validation',
+    'VALIDATION_RUN',
+    'Production validation run recorded',
+    'Ready',
+    'Low',
+    1::FLOAT,
+    'Production readiness refresh completed at ' || TO_VARCHAR(:snapshot_ts),
+    'SP_OVERWATCH_REFRESH_PRODUCTION_READINESS',
+    0,
+    'DBA / Platform',
+    'Run OVERWATCH_MART_VALIDATION.sql after setup and after material refresh changes.',
+    'exact';
+
+  INSERT INTO OVERWATCH_PRODUCTION_VALIDATION_STATUS (
+    SNAPSHOT_TS, COMPANY, ENVIRONMENT, CHECK_DOMAIN, CHECK_KEY, CHECK_NAME,
+    VALIDATION_STATUS, RISK_LEVEL, VALUE, VALUE_DETAIL, SOURCE_OBJECT,
+    FRESHNESS_MINUTES, OWNER_ROUTE, RUNBOOK_STEP, CONFIDENCE
+  )
+  SELECT
+    :snapshot_ts,
+    'ALL',
+    'ALL',
+    'Role Readiness',
+    ROLE_NAME,
+    'Role readiness: ' || ROLE_NAME,
+    CASE
+      WHEN LEGACY_COMPAT AND CURRENT_ROLE() IN ('SNOW_SYSADMINS', 'SNOW_ACCOUNTADMINS', ROLE_NAME) THEN 'Ready'
+      WHEN LEGACY_COMPAT THEN 'Review'
+      WHEN REQUIRED THEN 'Review'
+      ELSE 'Ready'
+    END AS VALIDATION_STATUS,
+    CASE WHEN REQUIRED THEN 'Medium' ELSE 'Low' END AS RISK_LEVEL,
+    IFF(REQUIRED, 1, 0)::FLOAT AS VALUE,
+    CASE
+      WHEN LEGACY_COMPAT THEN 'Legacy compatibility role; keep only while target OVERWATCH roles are adopted.'
+      WHEN REQUIRED THEN 'Target OVERWATCH role requires Snowflake grant proof before production signoff.'
+      ELSE 'Optional break-glass role must remain explicitly controlled.'
+    END AS VALUE_DETAIL,
+    'OVERWATCH_ROLE_READINESS_REQUIREMENT',
+    NULL::NUMBER,
+    OWNER_ROUTE,
+    CHECK_METHOD,
+    'fallback'
+  FROM OVERWATCH_ROLE_READINESS_REQUIREMENT
+  WHERE ENABLED = TRUE;
+
+  INSERT INTO OVERWATCH_PRODUCTION_VALIDATION_STATUS (
+    SNAPSHOT_TS, COMPANY, ENVIRONMENT, CHECK_DOMAIN, CHECK_KEY, CHECK_NAME,
+    VALIDATION_STATUS, RISK_LEVEL, VALUE, VALUE_DETAIL, SOURCE_OBJECT,
+    FRESHNESS_MINUTES, OWNER_ROUTE, RUNBOOK_STEP, CONFIDENCE
+  )
+  SELECT
+    :snapshot_ts,
+    'ALL',
+    'ALL',
+    'Privilege Readiness',
+    PRIVILEGE_KEY,
+    OBJECT_TYPE || ' ' || REQUIRED_PRIVILEGE || ': ' || OBJECT_NAME,
+    'Ready',
+    IFF(REQUIRED, 'Medium', 'Low'),
+    IFF(REQUIRED, 1, 0)::FLOAT,
+    'No recent privilege failure was recorded in OVERWATCH_LOAD_AUDIT. Manual grant proof is still required before production signoff.',
+    OBJECT_NAME,
+    NULL::NUMBER,
+    OWNER_ROUTE,
+    CHECK_METHOD || ' ' || REMEDIATION_HINT,
+    'fallback'
+  FROM OVERWATCH_PRIVILEGE_READINESS_REQUIREMENT
+  WHERE ENABLED = TRUE;
+
+  INSERT INTO OVERWATCH_PRODUCTION_VALIDATION_STATUS (
+    SNAPSHOT_TS, COMPANY, ENVIRONMENT, CHECK_DOMAIN, CHECK_KEY, CHECK_NAME,
+    VALIDATION_STATUS, RISK_LEVEL, VALUE, VALUE_DETAIL, SOURCE_OBJECT,
+    FRESHNESS_MINUTES, OWNER_ROUTE, RUNBOOK_STEP, CONFIDENCE
+  )
+  WITH privilege_failures AS (
+    SELECT
+      COUNT(*) AS FAILURE_COUNT,
+      MAX(LOAD_STARTED_AT) AS LAST_FAILURE_TS,
+      LISTAGG(LOAD_NAME || ': ' || LEFT(COALESCE(MESSAGE, STATUS, 'unknown'), 180), ' | ')
+        WITHIN GROUP (ORDER BY LOAD_NAME) AS DETAILS
+    FROM OVERWATCH_LOAD_AUDIT
+    WHERE LOAD_STARTED_AT >= DATEADD('DAY', -7, CURRENT_TIMESTAMP())
+      AND UPPER(COALESCE(STATUS, '')) NOT IN ('SUCCESS', 'SUCCEEDED', 'COMPLETE')
+      AND (
+        MESSAGE ILIKE '%privilege%'
+        OR MESSAGE ILIKE '%authorization%'
+        OR MESSAGE ILIKE '%not authorized%'
+        OR MESSAGE ILIKE '%access denied%'
+        OR MESSAGE ILIKE '%imported privileges%'
+      )
+  )
+  SELECT
+    :snapshot_ts,
+    'ALL',
+    'ALL',
+    'Privilege Readiness',
+    'RECENT_PRIVILEGE_FAILURES',
+    'Recent refresh failures caused by privilege gaps',
+    IFF(COALESCE(FAILURE_COUNT, 0) > 0, 'Blocked', 'Ready'),
+    IFF(COALESCE(FAILURE_COUNT, 0) > 0, 'High', 'Low'),
+    COALESCE(FAILURE_COUNT, 0)::FLOAT,
+    COALESCE(DETAILS, 'No recent privilege-related refresh failure found in OVERWATCH_LOAD_AUDIT.'),
+    'OVERWATCH_LOAD_AUDIT',
+    DATEDIFF('minute', LAST_FAILURE_TS, :snapshot_ts),
+    'Security / DBA',
+    'Open the failed load row, grant the minimum required privilege, rerun the refresh, then rerun validation.',
+    IFF(COALESCE(FAILURE_COUNT, 0) > 0, 'estimated', 'fallback')
+  FROM privilege_failures;
+
+  INSERT INTO OVERWATCH_PRODUCTION_VALIDATION_STATUS (
+    SNAPSHOT_TS, COMPANY, ENVIRONMENT, CHECK_DOMAIN, CHECK_KEY, CHECK_NAME,
+    VALIDATION_STATUS, RISK_LEVEL, VALUE, VALUE_DETAIL, SOURCE_OBJECT,
+    FRESHNESS_MINUTES, OWNER_ROUTE, RUNBOOK_STEP, CONFIDENCE
+  )
+  WITH refresh_failures AS (
+    SELECT
+      COUNT(*) AS FAILURE_COUNT,
+      MAX(LOAD_STARTED_AT) AS LAST_FAILURE_TS,
+      LISTAGG(LOAD_NAME || ': ' || LEFT(COALESCE(MESSAGE, STATUS, 'unknown'), 180), ' | ')
+        WITHIN GROUP (ORDER BY LOAD_NAME) AS DETAILS
+    FROM OVERWATCH_LOAD_AUDIT
+    WHERE LOAD_STARTED_AT >= DATEADD('DAY', -1, CURRENT_TIMESTAMP())
+      AND UPPER(COALESCE(STATUS, '')) NOT IN ('SUCCESS', 'SUCCEEDED', 'COMPLETE')
+  )
+  SELECT
+    :snapshot_ts,
+    'ALL',
+    'ALL',
+    'Refresh Health',
+    'FAILED_MART_REFRESHES',
+    'Failed mart refreshes in the last 24 hours',
+    IFF(COALESCE(FAILURE_COUNT, 0) > 0, 'Blocked', 'Ready'),
+    IFF(COALESCE(FAILURE_COUNT, 0) > 0, 'High', 'Low'),
+    COALESCE(FAILURE_COUNT, 0)::FLOAT,
+    COALESCE(DETAILS, 'No failed mart refresh rows were found in the last 24 hours.'),
+    'OVERWATCH_LOAD_AUDIT',
+    DATEDIFF('minute', LAST_FAILURE_TS, :snapshot_ts),
+    'DBA On-Call',
+    'Fix failed refreshes before relying on first-paint summaries.',
+    'exact'
+  FROM refresh_failures;
+
+  INSERT INTO OVERWATCH_PRODUCTION_VALIDATION_STATUS (
+    SNAPSHOT_TS, COMPANY, ENVIRONMENT, CHECK_DOMAIN, CHECK_KEY, CHECK_NAME,
+    VALIDATION_STATUS, RISK_LEVEL, VALUE, VALUE_DETAIL, SOURCE_OBJECT,
+    FRESHNESS_MINUTES, OWNER_ROUTE, RUNBOOK_STEP, CONFIDENCE
+  )
+  WITH summary_marts AS (
+    SELECT 'MART_EXECUTIVE_OBSERVABILITY' AS MART_NAME, COUNT(*) AS ROW_COUNT, MAX(SNAPSHOT_TS) AS LATEST_TS FROM MART_EXECUTIVE_OBSERVABILITY
+    UNION ALL
+    SELECT 'MART_DBA_CONTROL_ROOM', COUNT(*), MAX(SNAPSHOT_TS) FROM MART_DBA_CONTROL_ROOM
+    UNION ALL
+    SELECT 'MART_DATA_TRUST_SUMMARY', COUNT(*), MAX(SNAPSHOT_TS) FROM MART_DATA_TRUST_SUMMARY
+    UNION ALL
+    SELECT 'MART_OPERATIONAL_OWNER_COVERAGE', COUNT(*), MAX(SNAPSHOT_TS) FROM MART_OPERATIONAL_OWNER_COVERAGE
+    UNION ALL
+    SELECT 'MART_EXECUTIVE_VALUE_LEDGER', COUNT(*), MAX(SNAPSHOT_TS) FROM MART_EXECUTIVE_VALUE_LEDGER
+    UNION ALL
+    SELECT 'MART_APP_OBSERVABILITY_SUMMARY', COUNT(*), MAX(SNAPSHOT_TS) FROM MART_APP_OBSERVABILITY_SUMMARY
+  )
+  SELECT
+    :snapshot_ts,
+    'ALL',
+    'ALL',
+    'Refresh Health',
+    'SUMMARY_DATA_' || MART_NAME,
+    'Summary mart data available: ' || MART_NAME,
+    IFF(COALESCE(ROW_COUNT, 0) = 0, 'Blocked', 'Ready'),
+    IFF(COALESCE(ROW_COUNT, 0) = 0, 'High', 'Low'),
+    COALESCE(ROW_COUNT, 0)::FLOAT,
+    IFF(COALESCE(ROW_COUNT, 0) = 0, 'No rows found.', 'Rows available: ' || ROW_COUNT),
+    MART_NAME,
+    DATEDIFF('minute', LATEST_TS, :snapshot_ts),
+    'DBA / Platform',
+    'Run the appropriate OVERWATCH refresh procedure and recheck this summary mart.',
+    'exact'
+  FROM summary_marts;
+
+  INSERT INTO OVERWATCH_PRODUCTION_VALIDATION_STATUS (
+    SNAPSHOT_TS, COMPANY, ENVIRONMENT, CHECK_DOMAIN, CHECK_KEY, CHECK_NAME,
+    VALIDATION_STATUS, RISK_LEVEL, VALUE, VALUE_DETAIL, SOURCE_OBJECT,
+    FRESHNESS_MINUTES, OWNER_ROUTE, RUNBOOK_STEP, CONFIDENCE
+  )
+  WITH latest_trust AS (
+    SELECT *
+    FROM MART_DATA_TRUST_SUMMARY
+    WHERE SNAPSHOT_TS >= DATEADD('DAY', -2, CURRENT_TIMESTAMP())
+    QUALIFY ROW_NUMBER() OVER (
+      PARTITION BY COMPANY, ENVIRONMENT, SOURCE_NAME
+      ORDER BY SNAPSHOT_TS DESC, LOAD_TS DESC
+    ) = 1
+  ),
+  trust AS (
+    SELECT
+      COUNT_IF(STATUS <> 'Ready') AS ISSUE_COUNT,
+      MAX(FRESHNESS_MINUTES) AS MAX_FRESHNESS_MINUTES,
+      MAX(IFF(STATUS <> 'Ready', SOURCE_NAME || ': ' || STATUS, NULL)) AS TOP_ISSUE
+    FROM latest_trust
+  )
+  SELECT
+    :snapshot_ts,
+    'ALL',
+    'ALL',
+    'Data Freshness',
+    'DATA_TRUST_FRESHNESS',
+    'Data trust source freshness',
+    IFF(COALESCE(ISSUE_COUNT, 0) > 0, 'Review', 'Ready'),
+    IFF(COALESCE(ISSUE_COUNT, 0) > 0, 'Medium', 'Low'),
+    COALESCE(ISSUE_COUNT, 0)::FLOAT,
+    COALESCE(TOP_ISSUE, 'Data trust sources are ready in the latest summary.'),
+    'MART_DATA_TRUST_SUMMARY',
+    MAX_FRESHNESS_MINUTES,
+    'DBA / Platform',
+    'Refresh stale sources or disclose source lag before action.',
+    'allocated'
+  FROM trust;
+
+  INSERT INTO OVERWATCH_PRODUCTION_VALIDATION_STATUS (
+    SNAPSHOT_TS, COMPANY, ENVIRONMENT, CHECK_DOMAIN, CHECK_KEY, CHECK_NAME,
+    VALIDATION_STATUS, RISK_LEVEL, VALUE, VALUE_DETAIL, SOURCE_OBJECT,
+    FRESHNESS_MINUTES, OWNER_ROUTE, RUNBOOK_STEP, CONFIDENCE
+  )
+  WITH required_settings AS (
+    SELECT * FROM VALUES
+      ('CREDIT_PRICE_USD'),
+      ('AI_CREDIT_PRICE_USD'),
+      ('STORAGE_COST_PER_TB_USD'),
+      ('DETAIL_RETENTION_DAYS'),
+      ('AGG_RETENTION_DAYS'),
+      ('DEFAULT_ALERT_EMAIL'),
+      ('ALERT_DELIVERY_METHOD')
+    AS t(SETTING_NAME)
+  ),
+  drift AS (
+    SELECT
+      COUNT_IF(s.SETTING_NAME IS NULL) AS MISSING_SETTINGS,
+      COUNT_IF(s.SETTING_NAME = 'DEFAULT_ALERT_EMAIL' AND COALESCE(s.SETTING_VALUE, '') ILIKE '%yourcompany.com%') AS PLACEHOLDER_SETTINGS,
+      LISTAGG(
+        IFF(
+          s.SETTING_NAME IS NULL,
+          r.SETTING_NAME || ': missing',
+          IFF(s.SETTING_NAME = 'DEFAULT_ALERT_EMAIL' AND COALESCE(s.SETTING_VALUE, '') ILIKE '%yourcompany.com%', r.SETTING_NAME || ': placeholder', NULL)
+        ),
+        ', '
+      ) WITHIN GROUP (ORDER BY r.SETTING_NAME) AS DETAILS
+    FROM required_settings r
+    LEFT JOIN OVERWATCH_SETTINGS s
+      ON s.SETTING_NAME = r.SETTING_NAME
+  )
+  SELECT
+    :snapshot_ts,
+    'ALL',
+    'ALL',
+    'Configuration Drift',
+    'CONFIG_DRIFT',
+    'Required settings present and customized',
+    IFF(COALESCE(MISSING_SETTINGS, 0) + COALESCE(PLACEHOLDER_SETTINGS, 0) > 0, 'Review', 'Ready'),
+    IFF(COALESCE(MISSING_SETTINGS, 0) > 0, 'High', IFF(COALESCE(PLACEHOLDER_SETTINGS, 0) > 0, 'Medium', 'Low')),
+    (COALESCE(MISSING_SETTINGS, 0) + COALESCE(PLACEHOLDER_SETTINGS, 0))::FLOAT,
+    COALESCE(DETAILS, 'Required settings are present and no placeholder alert email is active.'),
+    'OVERWATCH_SETTINGS',
+    NULL::NUMBER,
+    'DBA / Platform',
+    'Update OVERWATCH_SETTINGS for pricing, retention, alert delivery, and notification integration values.',
+    'exact'
+  FROM drift;
+
+  INSERT INTO OVERWATCH_PRODUCTION_VALIDATION_STATUS (
+    SNAPSHOT_TS, COMPANY, ENVIRONMENT, CHECK_DOMAIN, CHECK_KEY, CHECK_NAME,
+    VALIDATION_STATUS, RISK_LEVEL, VALUE, VALUE_DETAIL, SOURCE_OBJECT,
+    FRESHNESS_MINUTES, OWNER_ROUTE, RUNBOOK_STEP, CONFIDENCE
+  )
+  SELECT
+    :snapshot_ts,
+    'ALL',
+    'ALL',
+    'Environment Readiness',
+    'CURRENT_CONTEXT',
+    'Current runtime context',
+    IFF(CURRENT_DATABASE() IS NULL OR CURRENT_SCHEMA() IS NULL OR CURRENT_ROLE() IS NULL OR CURRENT_WAREHOUSE() IS NULL, 'Review', 'Ready'),
+    IFF(CURRENT_DATABASE() IS NULL OR CURRENT_SCHEMA() IS NULL OR CURRENT_ROLE() IS NULL OR CURRENT_WAREHOUSE() IS NULL, 'Medium', 'Low'),
+    IFF(CURRENT_DATABASE() IS NULL OR CURRENT_SCHEMA() IS NULL OR CURRENT_ROLE() IS NULL OR CURRENT_WAREHOUSE() IS NULL, 1, 0)::FLOAT,
+    'Account=' || COALESCE(CURRENT_ACCOUNT(), '<unknown>')
+      || '; Database=' || COALESCE(CURRENT_DATABASE(), '<none>')
+      || '; Schema=' || COALESCE(CURRENT_SCHEMA(), '<none>')
+      || '; Role=' || COALESCE(CURRENT_ROLE(), '<none>')
+      || '; Warehouse=' || COALESCE(CURRENT_WAREHOUSE(), '<none>'),
+    'CURRENT_CONTEXT',
+    0,
+    'DBA / Platform',
+    'Confirm the app and tasks run under the intended Snowflake context.',
+    'exact';
+
+  INSERT INTO MART_PRODUCTION_READINESS_SUMMARY (
+    SNAPSHOT_TS, COMPANY, ENVIRONMENT, DEPLOYMENT_VERSION, LAST_DEPLOYMENT_TS,
+    LAST_VALIDATION_TS, VALIDATION_STATUS, MISSING_PRIVILEGES,
+    FAILED_MART_REFRESHES, MISSING_SUMMARY_MARTS, STALE_SOURCE_COUNT,
+    CONFIG_DRIFT_COUNT, ENVIRONMENT_READINESS, READINESS_SCORE, TOP_RISK,
+    CONFIDENCE, NEXT_ACTION
+  )
+  WITH latest AS (
+    SELECT *
+    FROM OVERWATCH_PRODUCTION_VALIDATION_STATUS
+    WHERE SNAPSHOT_TS = :snapshot_ts
+  ),
+  deployment AS (
+    SELECT MIGRATION_VERSION, APPLIED_AT
+    FROM OVERWATCH_SCHEMA_MIGRATION
+    QUALIFY ROW_NUMBER() OVER (ORDER BY APPLIED_AT DESC, MIGRATION_VERSION DESC) = 1
+  ),
+  aggregate_status AS (
+    SELECT
+      COUNT_IF(VALIDATION_STATUS = 'Blocked') AS BLOCKED_COUNT,
+      COUNT_IF(VALIDATION_STATUS = 'Review') AS REVIEW_COUNT,
+      COUNT_IF(VALIDATION_STATUS NOT IN ('Ready', 'Review', 'Blocked')) AS UNKNOWN_COUNT,
+      SUM(IFF(CHECK_DOMAIN = 'Privilege Readiness' AND VALIDATION_STATUS = 'Blocked', COALESCE(VALUE, 1), 0)) AS MISSING_PRIVILEGES,
+      MAX(IFF(CHECK_KEY = 'FAILED_MART_REFRESHES', COALESCE(VALUE, 0), 0)) AS FAILED_MART_REFRESHES,
+      SUM(IFF(CHECK_KEY ILIKE 'SUMMARY_DATA_%' AND VALIDATION_STATUS = 'Blocked', 1, 0)) AS MISSING_SUMMARY_MARTS,
+      MAX(IFF(CHECK_KEY = 'DATA_TRUST_FRESHNESS', COALESCE(VALUE, 0), 0)) AS STALE_SOURCE_COUNT,
+      MAX(IFF(CHECK_KEY = 'CONFIG_DRIFT', COALESCE(VALUE, 0), 0)) AS CONFIG_DRIFT_COUNT,
+      MAX(IFF(CHECK_KEY = 'CURRENT_CONTEXT', VALIDATION_STATUS, NULL)) AS ENVIRONMENT_READINESS,
+      COALESCE(
+        MAX(IFF(VALIDATION_STATUS = 'Blocked', CHECK_NAME || ': ' || VALUE_DETAIL, NULL)),
+        MAX(IFF(VALIDATION_STATUS = 'Review', CHECK_NAME || ': ' || VALUE_DETAIL, NULL)),
+        'Production readiness checks are green.'
+      ) AS TOP_RISK
+    FROM latest
+  ),
+  companies AS (
+    SELECT COLUMN1::VARCHAR AS COMPANY
+    FROM VALUES ('ALL'), ('ALFA'), ('Trexis')
+  )
+  SELECT
+    :snapshot_ts,
+    c.COMPANY,
+    'ALL',
+    d.MIGRATION_VERSION,
+    d.APPLIED_AT,
+    :snapshot_ts,
+    CASE
+      WHEN a.BLOCKED_COUNT > 0 THEN 'Blocked'
+      WHEN a.REVIEW_COUNT > 0 OR a.UNKNOWN_COUNT > 0 THEN 'Review'
+      ELSE 'Ready'
+    END AS VALIDATION_STATUS,
+    COALESCE(a.MISSING_PRIVILEGES, 0)::NUMBER,
+    COALESCE(a.FAILED_MART_REFRESHES, 0)::NUMBER,
+    COALESCE(a.MISSING_SUMMARY_MARTS, 0)::NUMBER,
+    COALESCE(a.STALE_SOURCE_COUNT, 0)::NUMBER,
+    COALESCE(a.CONFIG_DRIFT_COUNT, 0)::NUMBER,
+    COALESCE(a.ENVIRONMENT_READINESS, 'Unknown'),
+    GREATEST(
+      0,
+      100
+        - COALESCE(a.BLOCKED_COUNT, 0) * 18
+        - COALESCE(a.REVIEW_COUNT, 0) * 6
+        - COALESCE(a.UNKNOWN_COUNT, 0) * 3
+    )::NUMBER AS READINESS_SCORE,
+    a.TOP_RISK,
+    IFF(a.BLOCKED_COUNT > 0 OR a.REVIEW_COUNT > 0, 'estimated', 'exact') AS CONFIDENCE,
+    CASE
+      WHEN a.BLOCKED_COUNT > 0 THEN 'Fix blocked production readiness rows before expanding usage.'
+      WHEN a.REVIEW_COUNT > 0 THEN 'Review role, config, or environment readiness rows before signoff.'
+      ELSE 'Keep refresh validation scheduled and rerun after each deployment.'
+    END AS NEXT_ACTION
+  FROM companies c
+  CROSS JOIN aggregate_status a
+  LEFT JOIN deployment d ON TRUE;
+
+  INSERT INTO OVERWATCH_LOAD_AUDIT (LOAD_NAME, LOAD_STARTED_AT, LOAD_FINISHED_AT, STATUS, MESSAGE)
+  VALUES (
+    'SP_OVERWATCH_REFRESH_PRODUCTION_READINESS',
+    :snapshot_ts,
+    CURRENT_TIMESTAMP(),
+    'SUCCESS',
+    'Refreshed production readiness dashboard, role readiness, privilege readiness, refresh health, config drift, and environment readiness summaries.'
+  );
+
+  RETURN 'OVERWATCH production readiness refreshed.';
+END;
+$$;
+
+CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_EXECUTIVE_SCORECARD()
+RETURNS VARCHAR
+LANGUAGE SQL
+AS
+$$
+DECLARE
+  snapshot_ts TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP();
+BEGIN
+  DELETE FROM OVERWATCH_EXECUTIVE_SCORECARD_HISTORY
+  WHERE SNAPSHOT_TS < DATEADD('DAY', -180, CURRENT_TIMESTAMP())
+     OR SNAPSHOT_TS >= DATEADD('HOUR', -4, CURRENT_TIMESTAMP());
+
+  DELETE FROM MART_EXECUTIVE_SCORECARD_SUMMARY
+  WHERE SNAPSHOT_TS < DATEADD('DAY', -35, CURRENT_TIMESTAMP())
+     OR SNAPSHOT_TS >= DATEADD('HOUR', -4, CURRENT_TIMESTAMP());
+
+  INSERT INTO OVERWATCH_EXECUTIVE_SCORECARD_HISTORY (
+    SNAPSHOT_TS, COMPANY, ENVIRONMENT, SCORE_KEY, SCORE_NAME, CURRENT_SCORE,
+    STATUS, TREND, TREND_DELTA, RISK_LEVEL, TOP_DRIVER, RECOMMENDED_ACTION,
+    OWNER_ROUTE, OWNER_GAP, VALUE_AT_RISK_USD, CONFIDENCE, SOURCE_OBJECTS,
+    LAST_REFRESHED_TS
+  )
+  WITH companies AS (
+    SELECT COLUMN1::VARCHAR AS COMPANY
+    FROM VALUES ('ALL'), ('ALFA'), ('Trexis')
+  ),
+  latest_control AS (
+    SELECT
+      COALESCE(COMPANY, 'ALL') AS COMPANY,
+      HEALTH_SCORE,
+      FAILED_QUERIES_24H,
+      FAILED_TASKS_24H,
+      QUEUED_MS_24H,
+      SECURITY_EVENTS_24H,
+      TOP_RISK,
+      COALESCE(LOAD_TS, SNAPSHOT_TS) AS LAST_REFRESHED_TS
+    FROM MART_DBA_CONTROL_ROOM
+    QUALIFY ROW_NUMBER() OVER (
+      PARTITION BY COALESCE(COMPANY, 'ALL')
+      ORDER BY SNAPSHOT_TS DESC, LOAD_TS DESC
+    ) = 1
+  ),
+  latest_prod AS (
+    SELECT
+      COALESCE(COMPANY, 'ALL') AS COMPANY,
+      COALESCE(ENVIRONMENT, 'ALL') AS ENVIRONMENT,
+      READINESS_SCORE,
+      VALIDATION_STATUS,
+      MISSING_PRIVILEGES,
+      FAILED_MART_REFRESHES,
+      MISSING_SUMMARY_MARTS,
+      STALE_SOURCE_COUNT,
+      CONFIG_DRIFT_COUNT,
+      TOP_RISK,
+      NEXT_ACTION,
+      CONFIDENCE,
+      COALESCE(LAST_VALIDATION_TS, LOAD_TS, SNAPSHOT_TS) AS LAST_REFRESHED_TS
+    FROM MART_PRODUCTION_READINESS_SUMMARY
+    QUALIFY ROW_NUMBER() OVER (
+      PARTITION BY COALESCE(COMPANY, 'ALL'), COALESCE(ENVIRONMENT, 'ALL')
+      ORDER BY SNAPSHOT_TS DESC, LOAD_TS DESC
+    ) = 1
+  ),
+  latest_trust AS (
+    SELECT *
+    FROM MART_DATA_TRUST_SUMMARY
+    QUALIFY ROW_NUMBER() OVER (
+      PARTITION BY COALESCE(COMPANY, 'ALL'), COALESCE(ENVIRONMENT, 'ALL'), SOURCE_NAME
+      ORDER BY SNAPSHOT_TS DESC, LOAD_TS DESC
+    ) = 1
+  ),
+  trust_agg AS (
+    SELECT
+      COALESCE(COMPANY, 'ALL') AS COMPANY,
+      COALESCE(ENVIRONMENT, 'ALL') AS ENVIRONMENT,
+      COUNT(*) AS SOURCE_COUNT,
+      COUNT_IF(STATUS <> 'Ready') AS ISSUE_COUNT,
+      MAX(FRESHNESS_MINUTES) AS MAX_FRESHNESS_MINUTES,
+      MAX(IFF(STATUS <> 'Ready', SOURCE_NAME || ': ' || STATUS, NULL)) AS TOP_DRIVER,
+      MAX(OWNER_ROUTE) AS OWNER_ROUTE,
+      MAX(LOAD_TS) AS LAST_REFRESHED_TS
+    FROM latest_trust
+    GROUP BY COALESCE(COMPANY, 'ALL'), COALESCE(ENVIRONMENT, 'ALL')
+  ),
+  latest_ownership AS (
+    SELECT *
+    FROM MART_OPERATIONAL_OWNER_COVERAGE
+    QUALIFY ROW_NUMBER() OVER (
+      PARTITION BY COALESCE(COMPANY, 'ALL'), COALESCE(ENVIRONMENT, 'ALL'), SURFACE, ENTITY_TYPE
+      ORDER BY SNAPSHOT_TS DESC, LOAD_TS DESC
+    ) = 1
+  ),
+  ownership_agg AS (
+    SELECT
+      COALESCE(COMPANY, 'ALL') AS COMPANY,
+      COALESCE(ENVIRONMENT, 'ALL') AS ENVIRONMENT,
+      COALESCE(SURFACE, 'ALL') AS SURFACE,
+      SUM(COALESCE(GAP_ITEMS, 0)) AS GAP_ITEMS,
+      MAX(TOP_GAP_ENTITY) AS TOP_GAP_ENTITY,
+      MAX(OWNER_ROUTE) AS OWNER_ROUTE,
+      MAX(LOAD_TS) AS LAST_REFRESHED_TS
+    FROM latest_ownership
+    GROUP BY COALESCE(COMPANY, 'ALL'), COALESCE(ENVIRONMENT, 'ALL'), COALESCE(SURFACE, 'ALL')
+  ),
+  ownership_all AS (
+    SELECT
+      COMPANY,
+      ENVIRONMENT,
+      SUM(GAP_ITEMS) AS GAP_ITEMS,
+      MAX(TOP_GAP_ENTITY) AS TOP_GAP_ENTITY,
+      MAX(OWNER_ROUTE) AS OWNER_ROUTE,
+      MAX(LAST_REFRESHED_TS) AS LAST_REFRESHED_TS
+    FROM ownership_agg
+    GROUP BY COMPANY, ENVIRONMENT
+  ),
+  latest_app AS (
+    SELECT *
+    FROM MART_APP_OBSERVABILITY_SUMMARY
+    QUALIFY ROW_NUMBER() OVER (
+      PARTITION BY COALESCE(COMPANY, 'ALL'), COALESCE(ENVIRONMENT, 'ALL'), SECTION_NAME
+      ORDER BY SNAPSHOT_TS DESC, LOAD_TS DESC
+    ) = 1
+  ),
+  app_agg AS (
+    SELECT
+      COALESCE(COMPANY, 'ALL') AS COMPANY,
+      COALESCE(ENVIRONMENT, 'ALL') AS ENVIRONMENT,
+      SUM(COALESCE(SLOW_SECTION_COUNT, 0)) AS SLOW_SECTION_COUNT,
+      SUM(COALESCE(QUERY_FAILURE_COUNT, 0)) AS QUERY_FAILURE_COUNT,
+      MAX(IFF(HEALTH_STATE <> 'Ready', SECTION_NAME || ': ' || HEALTH_STATE, NULL)) AS TOP_DRIVER,
+      MAX(LOAD_TS) AS LAST_REFRESHED_TS
+    FROM latest_app
+    GROUP BY COALESCE(COMPANY, 'ALL'), COALESCE(ENVIRONMENT, 'ALL')
+  ),
+  latest_value AS (
+    SELECT *
+    FROM MART_EXECUTIVE_VALUE_LEDGER
+    WHERE WINDOW_DAYS = 35
+    QUALIFY ROW_NUMBER() OVER (
+      PARTITION BY COALESCE(COMPANY, 'ALL'), COALESCE(ENVIRONMENT, 'ALL'), STATUS, OWNER_ROUTE, CONFIDENCE
+      ORDER BY SNAPSHOT_TS DESC, LOAD_TS DESC
+    ) = 1
+  ),
+  value_agg AS (
+    SELECT
+      COALESCE(COMPANY, 'ALL') AS COMPANY,
+      COALESCE(ENVIRONMENT, 'ALL') AS ENVIRONMENT,
+      SUM(COALESCE(EXPECTED_SAVINGS_USD, 0)) AS EXPECTED_SAVINGS_USD,
+      SUM(COALESCE(VERIFIED_SAVINGS_USD, 0)) AS VERIFIED_SAVINGS_USD,
+      SUM(COALESCE(UNVERIFIED_ESTIMATE_USD, 0)) AS UNVERIFIED_ESTIMATE_USD,
+      SUM(COALESCE(OPEN_ITEMS, 0)) AS OPEN_ITEMS,
+      MAX(OWNER_ROUTE) AS OWNER_ROUTE,
+      MAX(LOAD_TS) AS LAST_REFRESHED_TS
+    FROM latest_value
+    GROUP BY COALESCE(COMPANY, 'ALL'), COALESCE(ENVIRONMENT, 'ALL')
+  ),
+  alert_agg AS (
+    SELECT
+      COALESCE(COMPANY, 'ALL') AS COMPANY,
+      COALESCE(ENVIRONMENT, 'ALL') AS ENVIRONMENT,
+      COUNT_IF(SEVERITY IN ('Critical', 'High')) AS CRITICAL_HIGH_ALERTS,
+      COUNT_IF(COALESCE(CATEGORY, ALERT_KEY, '') ILIKE '%SECURITY%' OR COALESCE(ALERT_KEY, '') ILIKE '%PRIVILEGE%') AS SECURITY_ALERTS,
+      COUNT_IF(COALESCE(CATEGORY, ALERT_KEY, '') ILIKE '%COST%' OR COALESCE(ALERT_KEY, '') ILIKE '%CORTEX%') AS COST_ALERTS,
+      MAX(IFF(SEVERITY IN ('Critical', 'High'), COALESCE(ALERT_KEY, CATEGORY) || ': ' || COALESCE(ENTITY_NAME, ''), NULL)) AS TOP_ALERT,
+      MAX(COALESCE(OWNER, 'DBA / Alert owner')) AS OWNER_ROUTE,
+      MAX(COALESCE(LAST_SEEN_AT, EVENT_TS, DETECTED_AT)) AS LAST_REFRESHED_TS
+    FROM ALERT_EVENTS
+    WHERE COALESCE(LAST_SEEN_AT, EVENT_TS, DETECTED_AT, CURRENT_TIMESTAMP()) >= DATEADD('DAY', -35, CURRENT_TIMESTAMP())
+      AND UPPER(COALESCE(STATUS, 'New')) NOT IN ('FIXED', 'IGNORED', 'CLOSED', 'RESOLVED')
+    GROUP BY COALESCE(COMPANY, 'ALL'), COALESCE(ENVIRONMENT, 'ALL')
+  ),
+  cost_signal_agg AS (
+    SELECT
+      COALESCE(COMPANY, 'ALL') AS COMPANY,
+      COALESCE(ENVIRONMENT, 'ALL') AS ENVIRONMENT,
+      COUNT_IF(SEVERITY IN ('Critical', 'High')) AS CRITICAL_HIGH_SIGNALS,
+      SUM(COALESCE(VALUE_AT_RISK_USD, 0)) AS VALUE_AT_RISK_USD,
+      MAX(IFF(SEVERITY IN ('Critical', 'High'), SIGNAL_TYPE || ': ' || ENTITY_NAME, NULL)) AS TOP_DRIVER,
+      MAX(LOAD_TS) AS LAST_REFRESHED_TS
+    FROM FACT_COST_MONITORING_SIGNAL
+    WHERE SNAPSHOT_TS >= DATEADD('DAY', -35, CURRENT_TIMESTAMP())
+    GROUP BY COALESCE(COMPANY, 'ALL'), COALESCE(ENVIRONMENT, 'ALL')
+  ),
+  action_agg AS (
+    SELECT
+      COALESCE(COMPANY, 'ALL') AS COMPANY,
+      COALESCE(ENVIRONMENT, 'ALL') AS ENVIRONMENT,
+      COUNT(*) AS OPEN_ACTIONS,
+      COUNT_IF(SEVERITY IN ('Critical', 'High')) AS HIGH_ACTIONS,
+      MAX(FINDING) AS TOP_ACTION,
+      MAX(COALESCE(OWNER, ONCALL_PRIMARY, ESCALATION_TARGET, 'DBA On-Call')) AS OWNER_ROUTE,
+      MAX(COALESCE(UPDATED_AT, CREATED_AT)) AS LAST_REFRESHED_TS
+    FROM OVERWATCH_ACTION_QUEUE
+    WHERE UPPER(COALESCE(STATUS, 'New')) NOT IN ('FIXED', 'IGNORED', 'CLOSED', 'RESOLVED')
+      AND COALESCE(UPDATED_AT, CREATED_AT, CURRENT_TIMESTAMP()) >= DATEADD('DAY', -180, CURRENT_TIMESTAMP())
+    GROUP BY COALESCE(COMPANY, 'ALL'), COALESCE(ENVIRONMENT, 'ALL')
+  ),
+  control_scoped AS (
+    SELECT c.COMPANY AS SCOPE_COMPANY, lc.*
+    FROM companies c
+    LEFT JOIN latest_control lc
+      ON lc.COMPANY IN (c.COMPANY, 'ALL')
+    QUALIFY ROW_NUMBER() OVER (
+      PARTITION BY c.COMPANY
+      ORDER BY IFF(lc.COMPANY = c.COMPANY, 0, 1), lc.LAST_REFRESHED_TS DESC NULLS LAST
+    ) = 1
+  ),
+  production_scoped AS (
+    SELECT c.COMPANY AS SCOPE_COMPANY, prod.*
+    FROM companies c
+    LEFT JOIN latest_prod prod
+      ON prod.COMPANY IN (c.COMPANY, 'ALL')
+     AND prod.ENVIRONMENT = 'ALL'
+    QUALIFY ROW_NUMBER() OVER (
+      PARTITION BY c.COMPANY
+      ORDER BY IFF(prod.COMPANY = c.COMPANY, 0, 1), prod.LAST_REFRESHED_TS DESC NULLS LAST
+    ) = 1
+  ),
+  trust_scoped AS (
+    SELECT c.COMPANY AS SCOPE_COMPANY, trust.*
+    FROM companies c
+    LEFT JOIN trust_agg trust
+      ON trust.COMPANY IN (c.COMPANY, 'ALL')
+     AND trust.ENVIRONMENT = 'ALL'
+    QUALIFY ROW_NUMBER() OVER (
+      PARTITION BY c.COMPANY
+      ORDER BY IFF(trust.COMPANY = c.COMPANY, 0, 1), trust.LAST_REFRESHED_TS DESC NULLS LAST
+    ) = 1
+  ),
+  ownership_all_scoped AS (
+    SELECT c.COMPANY AS SCOPE_COMPANY, own.*
+    FROM companies c
+    LEFT JOIN ownership_all own
+      ON own.COMPANY IN (c.COMPANY, 'ALL')
+     AND own.ENVIRONMENT = 'ALL'
+    QUALIFY ROW_NUMBER() OVER (
+      PARTITION BY c.COMPANY
+      ORDER BY IFF(own.COMPANY = c.COMPANY, 0, 1), own.LAST_REFRESHED_TS DESC NULLS LAST
+    ) = 1
+  ),
+  security_ownership_scoped AS (
+    SELECT c.COMPANY AS SCOPE_COMPANY, sec_own.*
+    FROM companies c
+    LEFT JOIN ownership_agg sec_own
+      ON sec_own.COMPANY IN (c.COMPANY, 'ALL')
+     AND sec_own.ENVIRONMENT = 'ALL'
+     AND sec_own.SURFACE = 'Security Monitoring'
+    QUALIFY ROW_NUMBER() OVER (
+      PARTITION BY c.COMPANY
+      ORDER BY IFF(sec_own.COMPANY = c.COMPANY, 0, 1), sec_own.LAST_REFRESHED_TS DESC NULLS LAST
+    ) = 1
+  ),
+  app_scoped AS (
+    SELECT c.COMPANY AS SCOPE_COMPANY, app.*
+    FROM companies c
+    LEFT JOIN app_agg app
+      ON app.COMPANY IN (c.COMPANY, 'ALL')
+     AND app.ENVIRONMENT = 'ALL'
+    QUALIFY ROW_NUMBER() OVER (
+      PARTITION BY c.COMPANY
+      ORDER BY IFF(app.COMPANY = c.COMPANY, 0, 1), app.LAST_REFRESHED_TS DESC NULLS LAST
+    ) = 1
+  ),
+  value_scoped AS (
+    SELECT c.COMPANY AS SCOPE_COMPANY, val.*
+    FROM companies c
+    LEFT JOIN value_agg val
+      ON val.COMPANY IN (c.COMPANY, 'ALL')
+     AND val.ENVIRONMENT = 'ALL'
+    QUALIFY ROW_NUMBER() OVER (
+      PARTITION BY c.COMPANY
+      ORDER BY IFF(val.COMPANY = c.COMPANY, 0, 1), val.LAST_REFRESHED_TS DESC NULLS LAST
+    ) = 1
+  ),
+  alert_scoped AS (
+    SELECT c.COMPANY AS SCOPE_COMPANY, alerts.*
+    FROM companies c
+    LEFT JOIN alert_agg alerts
+      ON alerts.COMPANY IN (c.COMPANY, 'ALL')
+     AND alerts.ENVIRONMENT = 'ALL'
+    QUALIFY ROW_NUMBER() OVER (
+      PARTITION BY c.COMPANY
+      ORDER BY IFF(alerts.COMPANY = c.COMPANY, 0, 1), alerts.LAST_REFRESHED_TS DESC NULLS LAST
+    ) = 1
+  ),
+  cost_signal_scoped AS (
+    SELECT c.COMPANY AS SCOPE_COMPANY, cs.*
+    FROM companies c
+    LEFT JOIN cost_signal_agg cs
+      ON cs.COMPANY IN (c.COMPANY, 'ALL')
+     AND cs.ENVIRONMENT = 'ALL'
+    QUALIFY ROW_NUMBER() OVER (
+      PARTITION BY c.COMPANY
+      ORDER BY IFF(cs.COMPANY = c.COMPANY, 0, 1), cs.LAST_REFRESHED_TS DESC NULLS LAST
+    ) = 1
+  ),
+  action_scoped AS (
+    SELECT c.COMPANY AS SCOPE_COMPANY, actions.*
+    FROM companies c
+    LEFT JOIN action_agg actions
+      ON actions.COMPANY IN (c.COMPANY, 'ALL')
+     AND actions.ENVIRONMENT = 'ALL'
+    QUALIFY ROW_NUMBER() OVER (
+      PARTITION BY c.COMPANY
+      ORDER BY IFF(actions.COMPANY = c.COMPANY, 0, 1), actions.LAST_REFRESHED_TS DESC NULLS LAST
+    ) = 1
+  ),
+  raw_scores AS (
+    SELECT
+      c.COMPANY,
+      'ALL' AS ENVIRONMENT,
+      'SNOWFLAKE_HEALTH' AS SCORE_KEY,
+      GREATEST(0, LEAST(100,
+        COALESCE(lc.HEALTH_SCORE, 72)
+        - COALESCE(pa.FAILED_MART_REFRESHES, 0) * 6
+        - COALESCE(app.QUERY_FAILURE_COUNT, 0) * 2
+        - IFF(COALESCE(lc.FAILED_TASKS_24H, 0) > 0, 6, 0)
+      )) AS CURRENT_SCORE,
+      IFF(COALESCE(pa.FAILED_MART_REFRESHES, 0) > 0 OR COALESCE(app.QUERY_FAILURE_COUNT, 0) > 0, 'Worsening', 'Stable') AS TREND,
+      -1 * (COALESCE(pa.FAILED_MART_REFRESHES, 0) * 6 + COALESCE(app.QUERY_FAILURE_COUNT, 0) * 2) AS TREND_DELTA,
+      COALESCE(lc.TOP_RISK, app.TOP_DRIVER, pa.TOP_RISK, 'Snowflake monitoring health is within current thresholds.') AS TOP_DRIVER,
+      'Open DBA Control Room and resolve failed refresh, app health, or control-room blocker rows.' AS RECOMMENDED_ACTION,
+      'DBA / Platform' AS OWNER_ROUTE,
+      FALSE AS OWNER_GAP,
+      0::NUMBER(18,2) AS VALUE_AT_RISK_USD,
+      IFF(lc.HEALTH_SCORE IS NULL, 'fallback', 'allocated') AS CONFIDENCE,
+      'MART_DBA_CONTROL_ROOM; MART_APP_OBSERVABILITY_SUMMARY; MART_PRODUCTION_READINESS_SUMMARY' AS SOURCE_OBJECTS,
+      COALESCE(lc.LAST_REFRESHED_TS, app.LAST_REFRESHED_TS, pa.LAST_REFRESHED_TS) AS LAST_REFRESHED_TS
+    FROM companies c
+    LEFT JOIN control_scoped lc ON lc.SCOPE_COMPANY = c.COMPANY
+    LEFT JOIN app_scoped app ON app.SCOPE_COMPANY = c.COMPANY
+    LEFT JOIN production_scoped pa ON pa.SCOPE_COMPANY = c.COMPANY
+
+    UNION ALL
+
+    SELECT
+      c.COMPANY,
+      'ALL',
+      'COST_EFFICIENCY',
+      GREATEST(0, LEAST(100,
+        100
+        - COALESCE(cs.CRITICAL_HIGH_SIGNALS, 0) * 8
+        - COALESCE(alerts.COST_ALERTS, 0) * 3
+        - LEAST(COALESCE(val.UNVERIFIED_ESTIMATE_USD, 0) / 1000, 15)
+        + LEAST(COALESCE(val.VERIFIED_SAVINGS_USD, 0) / 2500, 5)
+      )),
+      IFF(COALESCE(cs.CRITICAL_HIGH_SIGNALS, 0) + COALESCE(alerts.COST_ALERTS, 0) > 0, 'Worsening', IFF(COALESCE(val.VERIFIED_SAVINGS_USD, 0) > 0, 'Improving', 'Stable')),
+      ROUND(LEAST(COALESCE(val.VERIFIED_SAVINGS_USD, 0) / 2500, 5) - COALESCE(cs.CRITICAL_HIGH_SIGNALS, 0) * 8 - COALESCE(alerts.COST_ALERTS, 0) * 3, 2),
+      COALESCE(cs.TOP_DRIVER, alerts.TOP_ALERT, 'No high-priority cost efficiency driver is active.'),
+      'Open Cost & Contract, explain top cost drivers, and route verified savings work.',
+      COALESCE(val.OWNER_ROUTE, 'DBA / Cost owner'),
+      COALESCE(val.OWNER_ROUTE, '') = '',
+      COALESCE(cs.VALUE_AT_RISK_USD, 0) + COALESCE(val.UNVERIFIED_ESTIMATE_USD, 0),
+      IFF(cs.COMPANY IS NULL AND val.COMPANY IS NULL, 'fallback', 'estimated'),
+      'FACT_COST_MONITORING_SIGNAL; ALERT_EVENTS; MART_EXECUTIVE_VALUE_LEDGER',
+      COALESCE(cs.LAST_REFRESHED_TS, val.LAST_REFRESHED_TS, alerts.LAST_REFRESHED_TS)
+    FROM companies c
+    LEFT JOIN cost_signal_scoped cs ON cs.SCOPE_COMPANY = c.COMPANY
+    LEFT JOIN value_scoped val ON val.SCOPE_COMPANY = c.COMPANY
+    LEFT JOIN alert_scoped alerts ON alerts.SCOPE_COMPANY = c.COMPANY
+
+    UNION ALL
+
+    SELECT
+      c.COMPANY,
+      'ALL',
+      'SECURITY',
+      GREATEST(0, LEAST(100,
+        100
+        - COALESCE(alerts.SECURITY_ALERTS, 0) * 10
+        - COALESCE(sec_own.GAP_ITEMS, 0) * 7
+      )),
+      IFF(COALESCE(alerts.SECURITY_ALERTS, 0) + COALESCE(sec_own.GAP_ITEMS, 0) > 0, 'Worsening', 'Stable'),
+      -1 * (COALESCE(alerts.SECURITY_ALERTS, 0) * 10 + COALESCE(sec_own.GAP_ITEMS, 0) * 7),
+      COALESCE(alerts.TOP_ALERT, 'Security ownership gaps: ' || COALESCE(sec_own.TOP_GAP_ENTITY, 'none'), 'No high-priority security score driver is active.'),
+      'Open Security Monitoring and review privileged, access, ownership, and route-gap drivers.',
+      COALESCE(sec_own.OWNER_ROUTE, alerts.OWNER_ROUTE, 'Security / DBA'),
+      COALESCE(sec_own.GAP_ITEMS, 0) > 0,
+      0::NUMBER(18,2),
+      IFF(alerts.COMPANY IS NULL AND sec_own.COMPANY IS NULL, 'fallback', 'estimated'),
+      'ALERT_EVENTS; MART_OPERATIONAL_OWNER_COVERAGE',
+      COALESCE(alerts.LAST_REFRESHED_TS, sec_own.LAST_REFRESHED_TS)
+    FROM companies c
+    LEFT JOIN alert_scoped alerts ON alerts.SCOPE_COMPANY = c.COMPANY
+    LEFT JOIN security_ownership_scoped sec_own ON sec_own.SCOPE_COMPANY = c.COMPANY
+
+    UNION ALL
+
+    SELECT
+      c.COMPANY,
+      'ALL',
+      'OPERATIONAL_RISK',
+      GREATEST(0, LEAST(100,
+        100
+        - COALESCE(alerts.CRITICAL_HIGH_ALERTS, 0) * 8
+        - COALESCE(own.GAP_ITEMS, 0) * 4
+        - COALESCE(actions.HIGH_ACTIONS, 0) * 5
+      )),
+      IFF(COALESCE(alerts.CRITICAL_HIGH_ALERTS, 0) + COALESCE(actions.HIGH_ACTIONS, 0) + COALESCE(own.GAP_ITEMS, 0) > 0, 'Worsening', 'Stable'),
+      -1 * (COALESCE(alerts.CRITICAL_HIGH_ALERTS, 0) * 8 + COALESCE(actions.HIGH_ACTIONS, 0) * 5 + COALESCE(own.GAP_ITEMS, 0) * 4),
+      COALESCE(alerts.TOP_ALERT, actions.TOP_ACTION, 'Ownership gaps: ' || COALESCE(own.TOP_GAP_ENTITY, 'none'), 'No operational risk driver is active.'),
+      'Open Alert Center and DBA Control Room to assign owner, SLA, and next action.',
+      COALESCE(actions.OWNER_ROUTE, own.OWNER_ROUTE, alerts.OWNER_ROUTE, 'DBA On-Call'),
+      COALESCE(own.GAP_ITEMS, 0) > 0,
+      0::NUMBER(18,2),
+      IFF(alerts.COMPANY IS NULL AND own.COMPANY IS NULL AND actions.COMPANY IS NULL, 'fallback', 'estimated'),
+      'ALERT_EVENTS; MART_OPERATIONAL_OWNER_COVERAGE; OVERWATCH_ACTION_QUEUE',
+      COALESCE(alerts.LAST_REFRESHED_TS, own.LAST_REFRESHED_TS, actions.LAST_REFRESHED_TS)
+    FROM companies c
+    LEFT JOIN alert_scoped alerts ON alerts.SCOPE_COMPANY = c.COMPANY
+    LEFT JOIN ownership_all_scoped own ON own.SCOPE_COMPANY = c.COMPANY
+    LEFT JOIN action_scoped actions ON actions.SCOPE_COMPANY = c.COMPANY
+
+    UNION ALL
+
+    SELECT
+      c.COMPANY,
+      'ALL',
+      'DATA_TRUST',
+      GREATEST(0, LEAST(100,
+        100
+        - COALESCE(trust.ISSUE_COUNT, 0) * 10
+        - IFF(COALESCE(trust.SOURCE_COUNT, 0) = 0, 25, 0)
+      )),
+      IFF(COALESCE(trust.ISSUE_COUNT, 0) > 0 OR COALESCE(trust.SOURCE_COUNT, 0) = 0, 'Worsening', 'Stable'),
+      -1 * (COALESCE(trust.ISSUE_COUNT, 0) * 10 + IFF(COALESCE(trust.SOURCE_COUNT, 0) = 0, 25, 0)),
+      COALESCE(trust.TOP_DRIVER, 'Data trust sources are current.'),
+      'Open DBA Control Room data trust diagnostics and refresh stale source marts.',
+      COALESCE(trust.OWNER_ROUTE, 'DBA / Platform'),
+      FALSE,
+      0::NUMBER(18,2),
+      IFF(trust.COMPANY IS NULL, 'fallback', 'allocated'),
+      'MART_DATA_TRUST_SUMMARY',
+      trust.LAST_REFRESHED_TS
+    FROM companies c
+    LEFT JOIN trust_scoped trust ON trust.SCOPE_COMPANY = c.COMPANY
+
+    UNION ALL
+
+    SELECT
+      c.COMPANY,
+      'ALL',
+      'PRODUCTION_READINESS',
+      GREATEST(0, LEAST(100, COALESCE(prod.READINESS_SCORE, 70))),
+      IFF(COALESCE(prod.VALIDATION_STATUS, 'Unknown') IN ('Blocked', 'Review'), 'Worsening', 'Stable'),
+      IFF(COALESCE(prod.VALIDATION_STATUS, 'Unknown') = 'Blocked', -18, IFF(COALESCE(prod.VALIDATION_STATUS, 'Unknown') = 'Review', -6, 0)),
+      COALESCE(prod.TOP_RISK, 'Production readiness checks are green.'),
+      COALESCE(prod.NEXT_ACTION, 'Open DBA Control Room production readiness validation before expanding usage.'),
+      'DBA / Platform',
+      COALESCE(prod.MISSING_PRIVILEGES, 0) > 0,
+      0::NUMBER(18,2),
+      COALESCE(prod.CONFIDENCE, 'fallback'),
+      'MART_PRODUCTION_READINESS_SUMMARY; OVERWATCH_PRODUCTION_VALIDATION_STATUS',
+      prod.LAST_REFRESHED_TS
+    FROM companies c
+    LEFT JOIN production_scoped prod ON prod.SCOPE_COMPANY = c.COMPANY
+  ),
+  annotated AS (
+    SELECT
+      r.COMPANY,
+      r.ENVIRONMENT,
+      cfg.SCORE_KEY,
+      cfg.SCORE_NAME,
+      ROUND(r.CURRENT_SCORE, 2) AS CURRENT_SCORE,
+      CASE
+        WHEN r.CURRENT_SCORE < cfg.RED_BELOW THEN 'Red'
+        WHEN r.CURRENT_SCORE < cfg.YELLOW_BELOW THEN 'Yellow'
+        ELSE 'Green'
+      END AS STATUS,
+      r.TREND,
+      r.TREND_DELTA,
+      CASE
+        WHEN r.CURRENT_SCORE < cfg.RED_BELOW THEN 'High'
+        WHEN r.CURRENT_SCORE < cfg.YELLOW_BELOW THEN 'Medium'
+        ELSE 'Low'
+      END AS RISK_LEVEL,
+      COALESCE(NULLIF(r.TOP_DRIVER, ''), 'No active driver.') AS TOP_DRIVER,
+      COALESCE(NULLIF(r.RECOMMENDED_ACTION, ''), cfg.RECOMMENDED_ACTION) AS RECOMMENDED_ACTION,
+      COALESCE(NULLIF(r.OWNER_ROUTE, ''), cfg.OWNER_ROUTE) AS OWNER_ROUTE,
+      COALESCE(r.OWNER_GAP, FALSE) AS OWNER_GAP,
+      COALESCE(r.VALUE_AT_RISK_USD, 0) AS VALUE_AT_RISK_USD,
+      IFF(LOWER(COALESCE(r.CONFIDENCE, 'fallback')) IN ('exact', 'allocated', 'estimated', 'fallback'), LOWER(COALESCE(r.CONFIDENCE, 'fallback')), 'fallback') AS CONFIDENCE,
+      COALESCE(r.SOURCE_OBJECTS, cfg.DRIVER_SOURCE) AS SOURCE_OBJECTS,
+      COALESCE(r.LAST_REFRESHED_TS, :snapshot_ts) AS LAST_REFRESHED_TS
+    FROM raw_scores r
+    JOIN OVERWATCH_EXECUTIVE_SCORECARD_CONFIG cfg
+      ON cfg.SCORE_KEY = r.SCORE_KEY
+     AND cfg.ENABLED = TRUE
+  )
+  SELECT
+    :snapshot_ts,
+    COMPANY,
+    ENVIRONMENT,
+    SCORE_KEY,
+    SCORE_NAME,
+    CURRENT_SCORE,
+    STATUS,
+    TREND,
+    TREND_DELTA,
+    RISK_LEVEL,
+    TOP_DRIVER,
+    RECOMMENDED_ACTION,
+    OWNER_ROUTE,
+    OWNER_GAP,
+    VALUE_AT_RISK_USD,
+    CONFIDENCE,
+    SOURCE_OBJECTS,
+    LAST_REFRESHED_TS
+  FROM annotated;
+
+  INSERT INTO MART_EXECUTIVE_SCORECARD_SUMMARY (
+    SNAPSHOT_TS, COMPANY, ENVIRONMENT, SCORE_KEY, SCORE_NAME, DISPLAY_ORDER,
+    CURRENT_SCORE, STATUS, TREND, TREND_DELTA, RISK_LEVEL, TOP_DRIVER,
+    RECOMMENDED_ACTION, OWNER_ROUTE, OWNER_GAP, VALUE_AT_RISK_USD,
+    CONFIDENCE, SOURCE_OBJECTS, LAST_REFRESHED_TS
+  )
+  SELECT
+    h.SNAPSHOT_TS,
+    h.COMPANY,
+    h.ENVIRONMENT,
+    h.SCORE_KEY,
+    h.SCORE_NAME,
+    cfg.DISPLAY_ORDER,
+    h.CURRENT_SCORE,
+    h.STATUS,
+    h.TREND,
+    h.TREND_DELTA,
+    h.RISK_LEVEL,
+    h.TOP_DRIVER,
+    h.RECOMMENDED_ACTION,
+    h.OWNER_ROUTE,
+    h.OWNER_GAP,
+    h.VALUE_AT_RISK_USD,
+    h.CONFIDENCE,
+    h.SOURCE_OBJECTS,
+    h.LAST_REFRESHED_TS
+  FROM OVERWATCH_EXECUTIVE_SCORECARD_HISTORY h
+  JOIN OVERWATCH_EXECUTIVE_SCORECARD_CONFIG cfg
+    ON cfg.SCORE_KEY = h.SCORE_KEY
+  WHERE h.SNAPSHOT_TS = :snapshot_ts;
+
+  INSERT INTO OVERWATCH_LOAD_AUDIT (LOAD_NAME, LOAD_STARTED_AT, LOAD_FINISHED_AT, STATUS, MESSAGE)
+  VALUES (
+    'SP_OVERWATCH_REFRESH_EXECUTIVE_SCORECARD',
+    :snapshot_ts,
+    CURRENT_TIMESTAMP(),
+    'SUCCESS',
+    'Refreshed Executive Scorecard summary and driver history for health, cost, security, operational risk, data trust, and production readiness.'
+  );
+
+  RETURN 'OVERWATCH executive scorecard refreshed.';
+END;
+$$;
+
 CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_EXECUTIVE_OBSERVABILITY()
 RETURNS VARCHAR
 LANGUAGE SQL
@@ -5319,6 +6623,8 @@ BEGIN
   FROM source_freshness;
 
   CALL SP_OVERWATCH_REFRESH_ENTERPRISE_OPERATING_MODEL();
+  CALL SP_OVERWATCH_REFRESH_PRODUCTION_READINESS();
+  CALL SP_OVERWATCH_REFRESH_EXECUTIVE_SCORECARD();
 
   RETURN 'OVERWATCH executive observability mart refreshed.';
 END;
@@ -5775,7 +7081,11 @@ SELECT 'MART_OPERATIONAL_OWNER_COVERAGE', COUNT(*) FROM MART_OPERATIONAL_OWNER_C
 UNION ALL
 SELECT 'MART_EXECUTIVE_VALUE_LEDGER', COUNT(*) FROM MART_EXECUTIVE_VALUE_LEDGER
 UNION ALL
-SELECT 'MART_APP_OBSERVABILITY_SUMMARY', COUNT(*) FROM MART_APP_OBSERVABILITY_SUMMARY;
+SELECT 'MART_APP_OBSERVABILITY_SUMMARY', COUNT(*) FROM MART_APP_OBSERVABILITY_SUMMARY
+UNION ALL
+SELECT 'MART_PRODUCTION_READINESS_SUMMARY', COUNT(*) FROM MART_PRODUCTION_READINESS_SUMMARY
+UNION ALL
+SELECT 'MART_EXECUTIVE_SCORECARD_SUMMARY', COUNT(*) FROM MART_EXECUTIVE_SCORECARD_SUMMARY;
 
 
 
@@ -5787,3 +7097,5 @@ CALL SP_OVERWATCH_REFRESH_COST_MONITORING();
 CALL SP_OVERWATCH_LOAD_DAILY();
 CALL SP_OVERWATCH_REFRESH_EXECUTIVE_OBSERVABILITY();
 CALL SP_OVERWATCH_REFRESH_ENTERPRISE_OPERATING_MODEL();
+CALL SP_OVERWATCH_REFRESH_PRODUCTION_READINESS();
+CALL SP_OVERWATCH_REFRESH_EXECUTIVE_SCORECARD();

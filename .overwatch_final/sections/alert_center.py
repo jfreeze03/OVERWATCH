@@ -2801,6 +2801,54 @@ def _render_operational_ownership_coverage(company: str, environment: str) -> No
     st.dataframe(view, width="stretch", hide_index=True)
 
 
+def _render_operational_risk_score_explanation(company: str, environment: str) -> None:
+    """Expose Operational Risk Score drivers behind an explicit Load action."""
+    from utils import load_executive_scorecard_detail
+
+    pd = _pd()
+    st.markdown("**Operational Risk Score**")
+    st.caption("Loads alert/action ownership risk drivers from the Executive Scorecard history.")
+    if st.button("Load Operational Risk Score Drivers", key="alert_center_load_operational_score_drivers", width="stretch"):
+        st.session_state["alert_center_operational_score_detail"] = load_executive_scorecard_detail(
+            company,
+            environment,
+            score_key="OPERATIONAL_RISK",
+            days=180,
+        )
+        st.session_state["alert_center_operational_score_scope"] = (company, environment)
+
+    detail = st.session_state.get("alert_center_operational_score_detail")
+    if (
+        isinstance(detail, pd.DataFrame)
+        and st.session_state.get("alert_center_operational_score_scope") == (company, environment)
+    ):
+        if detail.empty:
+            st.info("No Operational Risk Score driver rows are available for this scope yet.")
+            return
+        latest = detail.iloc[0]
+        score = float(pd.to_numeric(pd.Series([latest.get("CURRENT_SCORE")]), errors="coerce").fillna(0).iloc[0])
+        render_shell_snapshot((
+            ("Score", f"{score:.0f}/100"),
+            ("Status", str(latest.get("STATUS") or "Unknown")),
+            ("Trend", str(latest.get("TREND") or "Stable")),
+            ("Owner", str(latest.get("OWNER_ROUTE") or "Owner gap")),
+        ))
+        _render_priority_dataframe(
+            detail,
+            title="Operational Risk Score drivers",
+            priority_columns=[
+                "SNAPSHOT_TS", "CURRENT_SCORE", "STATUS", "TREND", "TOP_DRIVER",
+                "RECOMMENDED_ACTION", "OWNER_ROUTE", "OWNER_GAP",
+                "CONFIDENCE", "SOURCE_OBJECTS", "LAST_REFRESHED_TS",
+            ],
+            sort_by=["SNAPSHOT_TS"],
+            ascending=False,
+            raw_label="All operational risk score history rows",
+            height=260,
+            max_rows=8,
+        )
+
+
 def render() -> None:
     company = get_active_company()
     environment = get_active_environment()
@@ -2816,6 +2864,7 @@ def render() -> None:
     )
     required_sources = _alert_center_sources_for_view(active_view)
     _render_operational_ownership_coverage(company, environment)
+    _render_operational_risk_score_explanation(company, environment)
 
     if active_view == "Suppression Windows":
         _render_annotations()

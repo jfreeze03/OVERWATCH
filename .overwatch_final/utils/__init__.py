@@ -320,6 +320,18 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "load_value_ledger_rollup",
         "load_value_ledger_detail",
     ),
+    "production_readiness": (
+        "READINESS_STATUS_LABELS",
+        "load_production_readiness_summary",
+        "load_production_validation_detail",
+    ),
+    "executive_scorecard": (
+        "SCORE_KEYS",
+        "SCORE_STATUS_LABELS",
+        "score_status_for_value",
+        "load_executive_scorecard_summary",
+        "load_executive_scorecard_detail",
+    ),
     "ask_overwatch": (
         "TOP_PRIORITY_BRIEF_DOMAINS", "answer_ask_overwatch",
         "build_ask_overwatch_context", "build_grounded_cortex_prompt",

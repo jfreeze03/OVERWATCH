@@ -262,7 +262,7 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertIn("DROP PROCEDURE IF EXISTS SP_OVERWATCH_STAGE_ALERT_REMEDIATION_DRY_RUN", drop_sql)
         self.assertIn("('VIEW', 'ALERT_NATIVE_DEPLOYMENT_REVIEW_V')", validation_sql)
         self.assertIn("('VIEW', 3)", validation_sql)
-        self.assertIn("('PROCEDURE', 10)", validation_sql)
+        self.assertIn("('PROCEDURE', 12)", validation_sql)
 
     def test_alert_operations_review_script_is_read_only_and_covers_key_marts(self):
         review_sql = (ROOT / "snowflake" / "OVERWATCH_ALERT_OPERATIONS_REVIEW.sql").read_text(encoding="utf-8")

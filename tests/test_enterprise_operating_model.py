@@ -135,6 +135,29 @@ class EnterpriseOperatingModelTests(unittest.TestCase):
         verified_assignments = re.findall(r"VERIFIED_SAVINGS_USD", block)
         self.assertGreaterEqual(len(verified_assignments), 3)
 
+    def test_sparse_activity_still_populates_company_rollup_baselines(self):
+        block = _enterprise_setup_block().upper()
+        for marker in [
+            "NO ACTIVE OWNERSHIP ITEMS FOR THIS COMPANY/SURFACE",
+            "NO ACTIVE VALUE-LEDGER ROWS WERE FOUND FOR THIS COMPANY/WINDOW",
+            "FALLBACK APP-OBSERVABILITY ROW",
+        ]:
+            with self.subTest(marker=marker):
+                self.assertIn(marker, block)
+
+        self.assertIn("FROM VALUES ('ALL'), ('ALFA'), ('TREXIS')", block)
+        self.assertIn("NO ACTIVE VALUE ITEMS", block)
+
+    def test_executive_observability_populates_source_status_panel(self):
+        sql = _setup_sql().upper()
+        proc_start = sql.index("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_EXECUTIVE_OBSERVABILITY")
+        proc_end = sql.index("-- -----------------------------------------------------------------------------\n-- 5. ALERT FRAMEWORK", proc_start)
+        proc = sql[proc_start:proc_end]
+
+        self.assertIn("'SOURCE_STATUS' AS PANEL", proc)
+        self.assertIn("MART_DATA_TRUST_SUMMARY", proc)
+        self.assertIn("CALL SP_OVERWATCH_REFRESH_ENTERPRISE_OPERATING_MODEL()", proc)
+
 
 if __name__ == "__main__":
     unittest.main()

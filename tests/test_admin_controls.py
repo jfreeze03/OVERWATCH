@@ -643,12 +643,20 @@ class AdminControlTests(unittest.TestCase):
         self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_WAREHOUSE_SETTING_REVIEW", setup_sql)
         self.assertIn("BASELINE_CAPACITY_SCORE", setup_sql)
         self.assertIn("IMPACT_TELEMETRY_REQUIRED", setup_sql)
+        self.assertIn(
+            "ALTER TABLE IF EXISTS OVERWATCH_WAREHOUSE_SETTING_REVIEW ADD COLUMN IF NOT EXISTS IMPACT_TELEMETRY_REQUIRED",
+            setup_sql,
+        )
         self.assertIn("EXECUTED_SQL_HASH", setup_sql)
         self.assertIn("POST_CHANGE_VERIFICATION_STATUS", setup_sql)
         self.assertIn("AUDIT_READINESS", setup_sql)
         self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS FACT_WAREHOUSE_OPERABILITY_DAILY", setup_sql)
         self.assertIn("QUEUE_PRESSURE_ROWS", setup_sql)
         self.assertIn("SPILL_PRESSURE_ROWS", setup_sql)
+        self.assertIn(
+            "ALTER TABLE IF EXISTS FACT_WAREHOUSE_OPERABILITY_DAILY ADD COLUMN IF NOT EXISTS IMPACT_TELEMETRY_ROWS",
+            setup_sql,
+        )
         self.assertIn("CREDIT_ALLOCATION_METHOD", setup_sql)
         self.assertIn("ESTIMATED FROM WAREHOUSE METERING ALLOCATED BY QUERY SHARE", setup_sql)
         self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_SECURITY_ACCESS_REVIEW", setup_sql)

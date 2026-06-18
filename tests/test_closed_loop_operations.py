@@ -153,6 +153,8 @@ class ClosedLoopOperationsTests(unittest.TestCase):
             "ACTUAL_GT_EXPECTED_ROWS",
             "BAD_APPROVAL_STATUS_ROWS",
             "BAD_VERIFICATION_STATUS_ROWS",
+            "REQUESTED",
+            "APPROVAL NOT REQUIRED",
         ]:
             with self.subTest(token=token):
                 self.assertIn(token, validation)
@@ -166,6 +168,13 @@ class ClosedLoopOperationsTests(unittest.TestCase):
         self.assertNotIn("SYSTEM$SEND_EMAIL", block)
         self.assertNotIn("EXECUTION_ALLOWED_IN_APP = TRUE", block)
         self.assertNotIn("'EXECUTED' AS EXECUTION_STATUS", block)
+
+    def test_closed_loop_numeric_savings_fields_do_not_use_try_to_number(self):
+        block = _closed_loop_setup_block()
+        self.assertIn("COALESCE(EST_MONTHLY_SAVINGS, 0) AS EXPECTED_SAVINGS_USD", block)
+        self.assertIn("GREATEST(MEASURED_DELTA, 0)", block)
+        self.assertNotIn("TRY_TO_NUMBER(EST_MONTHLY_SAVINGS)", block)
+        self.assertNotIn("TRY_TO_NUMBER(MEASURED_DELTA)", block)
 
     def test_documentation_covers_closed_loop_contract(self):
         docs = "\n".join(

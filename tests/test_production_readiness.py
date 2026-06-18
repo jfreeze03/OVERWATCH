@@ -112,6 +112,13 @@ class ProductionReadinessTests(unittest.TestCase):
             with self.subTest(confidence=confidence):
                 self.assertIn(confidence, block)
 
+    def test_refresh_health_uses_latest_status_per_load_name(self):
+        block = _production_setup_block().upper()
+        self.assertIn("LATEST_LOAD_STATUS", block)
+        self.assertIn("PARTITION BY LOAD_NAME", block)
+        self.assertIn("ORDER BY LOAD_STARTED_AT DESC", block)
+        self.assertIn("FROM LATEST_LOAD_STATUS", block)
+
 
 if __name__ == "__main__":
     unittest.main()

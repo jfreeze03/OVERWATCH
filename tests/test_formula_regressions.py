@@ -510,6 +510,17 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("credit_price := COALESCE(credit_price, 3.68)", setup_sql)
         self.assertIn("storage_cost_per_tb := COALESCE(storage_cost_per_tb, 23.00)", setup_sql)
         self.assertIn("ai_credit_price := COALESCE(ai_credit_price, 2.20)", setup_sql)
+        daily_block = setup_sql.split("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_LOAD_DAILY()", 1)[1].split(
+            "CREATE OR REPLACE PROCEDURE SP_OVERWATCH_LOAD_CORTEX()", 1
+        )[0]
+        self.assertIn("storage_cost_per_tb NUMBER(18,4) DEFAULT 23.00", daily_block)
+        self.assertIn("SELECT TRY_TO_NUMBER(SETTING_VALUE) INTO :storage_cost_per_tb", daily_block)
+        self.assertIn("WHERE SETTING_NAME = 'STORAGE_COST_PER_TB_USD'", daily_block)
+        self.assertIn("storage_cost_per_tb := COALESCE(storage_cost_per_tb, 23.00)", daily_block)
+        self.assertIn("AS STAGE_STORAGE_BYTES", daily_block)
+        self.assertIn("COALESCE(s.STAGE_STORAGE_BYTES, 0) AS STAGE_BYTES", daily_block)
+        self.assertIn("ALTER TABLE IF EXISTS FACT_STORAGE_DAILY ADD COLUMN IF NOT EXISTS STAGE_BYTES NUMBER;", setup_sql)
+        self.assertNotIn("ADD COLUMN IF NOT EXISTS STAGE_BYTES NUMBER DEFAULT 0", setup_sql)
         self.assertEqual(credits_to_dollars(10, DEFAULTS["credit_price"]), 36.8)
         stale_fallbacks = []
         pattern = re.compile(r"session_state\.get\(\s*['\"]credit_price['\"]\s*,\s*3\.0+")

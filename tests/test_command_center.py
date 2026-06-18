@@ -161,6 +161,19 @@ class CommandCenterTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, validation)
 
+    def test_command_center_derives_trust_issue_count_from_trust_rows(self):
+        block = _command_center_setup_block().upper()
+        trust_block = block.split("TRUST_RISK AS (", 1)[1].split("),\n  READINESS AS", 1)[0]
+        self.assertIn("COUNT_IF(UPPER(COALESCE(STATUS, 'UNKNOWN'))", trust_block)
+        self.assertIn("AS ISSUE_COUNT", trust_block)
+        self.assertIn("FROM MART_DATA_TRUST_SUMMARY", trust_block)
+        self.assertNotIn("ORDER BY ISSUE_COUNT", trust_block)
+
+    def test_command_center_normalizes_forecast_confidence_labels(self):
+        block = _command_center_setup_block()
+        self.assertIn("WHEN COALESCE(CONFIDENCE, '') IN ('High', 'Medium', 'Low')", block)
+        self.assertIn("THEN 'estimated'", block)
+
     def test_command_center_block_has_no_silent_remediation_or_live_scans(self):
         block = _command_center_setup_block().upper()
         self.assertNotIn("SNOWFLAKE.ACCOUNT_USAGE", block)

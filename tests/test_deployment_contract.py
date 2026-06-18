@@ -230,6 +230,8 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertIn("DEPLOYABLE OBJECT COUNT CONTRACT", validation_sql)
         self.assertIn("EXPECTED_COUNT", validation_sql)
         self.assertIn("ACTUAL_COUNT", validation_sql)
+        self.assertIn("ESCAPE '^'", validation_sql)
+        self.assertNotIn("ESCAPE '\\'", validation_sql)
         self.assertIn("SHOW TASKS IN SCHEMA", validation_sql)
         self.assertIn("TASK GRAPH DEPLOYMENT PROOF", validation_sql)
         self.assertIn("OVERWATCH_EXECUTIVE_OBSERVABILITY_REFRESH", validation_sql)

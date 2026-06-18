@@ -92,6 +92,23 @@ issue without claiming unsupported root cause.
 
 Details and manual validation steps live in `docs/CHANGE_INTELLIGENCE.md`.
 
+## Closed Loop Operations
+
+Phase 2E makes actions auditable from finding through approval, review plan,
+verification, measured value, and closure. It does not execute remediation.
+
+| Object | Type | Purpose |
+| --- | --- | --- |
+| `OVERWATCH_ACTION_WORKFLOW` | Transient table | Action lifecycle rows with finding, source telemetry, owner route, business impact, risk, approval status, review text, rollback guidance, verification, savings, evidence, and closure state. |
+| `OVERWATCH_ACTION_APPROVAL` | Transient table | Approval proof rows with status, approver, approval timestamp, risk, owner route, and recommended action. |
+| `OVERWATCH_ACTION_EXECUTION_PLAN` | Transient table | Review-gated SQL/action text, rollback guidance, dangerous-action flag, and explicit in-app execution block. |
+| `OVERWATCH_ACTION_VERIFICATION` | Transient table | Verification status, verification window, evidence, expected savings, and actual verified savings. |
+| `OVERWATCH_ACTION_EVIDENCE` | Transient table | Evidence trail for workflow, source telemetry, business impact, rollback, verification, and closure context. |
+| `MART_CLOSED_LOOP_OPERATIONS_SUMMARY` | Transient mart | Compact first-paint action, approval, verification, closure, owner-gap, and value summary. |
+| `SP_OVERWATCH_REFRESH_CLOSED_LOOP_OPERATIONS` | Procedure | Refreshes closed-loop operations rows from existing OVERWATCH alert, action, value, and dry-run sources without executing remediation. |
+
+Details and manual validation steps live in `docs/CLOSED_LOOP_OPERATIONS.md`.
+
 ## Reconciliation
 
 | Object | Type | Purpose |

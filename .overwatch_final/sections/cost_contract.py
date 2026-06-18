@@ -53,6 +53,7 @@ get_user_company_filter_clause = _lazy_util("get_user_company_filter_clause")
 get_wh_filter_clause = _lazy_util("get_wh_filter_clause")
 load_action_queue = _lazy_util("load_action_queue")
 load_change_correlation_detail = _lazy_util("load_change_correlation_detail")
+load_closed_loop_verification_detail = _lazy_util("load_closed_loop_verification_detail")
 load_executive_scorecard_detail = _lazy_util("load_executive_scorecard_detail")
 load_forecast_detail = _lazy_util("load_forecast_detail")
 load_value_ledger_detail = _lazy_util("load_value_ledger_detail")
@@ -5048,6 +5049,56 @@ def _render_cost_change_correlation(company: str, environment: str) -> None:
         )
 
 
+def _render_savings_verification_workflow(company: str, environment: str) -> None:
+    """Expose Phase 2E cost savings verification behind an explicit Load action."""
+    st.markdown("**Savings Verification Workflow**")
+    st.caption(
+        "Loads post-action verification rows from closed-loop marts. "
+        "Forecasted and expected savings remain separate from actual verified savings."
+    )
+    if st.button("Load Savings Verification", key="cost_contract_load_savings_verification", width="stretch"):
+        st.session_state["cost_contract_savings_verification_detail"] = load_closed_loop_verification_detail(
+            company,
+            environment,
+            domains=("Cost",),
+            days=180,
+        )
+        st.session_state["cost_contract_savings_verification_scope"] = (company, environment)
+
+    detail = st.session_state.get("cost_contract_savings_verification_detail")
+    if (
+        isinstance(detail, pd.DataFrame)
+        and st.session_state.get("cost_contract_savings_verification_scope") == (company, environment)
+    ):
+        if detail.empty:
+            st.info("No cost savings verification rows are available for this scope yet.")
+            return
+        expected = pd.to_numeric(detail.get("EXPECTED_SAVINGS_USD", pd.Series(dtype=float)), errors="coerce").fillna(0)
+        actual = pd.to_numeric(detail.get("ACTUAL_VERIFIED_SAVINGS_USD", pd.Series(dtype=float)), errors="coerce").fillna(0)
+        status = detail.get("VERIFICATION_STATUS", pd.Series(dtype=str)).fillna("").astype(str)
+        render_shell_snapshot((
+            ("Expected", f"${safe_float(expected.sum()):,.0f}"),
+            ("Verified", f"${safe_float(actual.sum()):,.0f}"),
+            ("Unverified", f"${safe_float((expected - actual).clip(lower=0).sum()):,.0f}"),
+            ("Pending", f"{safe_int((~status.isin(['Verified', 'Closed'])).sum()):,}"),
+        ))
+        render_priority_dataframe(
+            detail,
+            title="Savings verification workflow",
+            priority_columns=[
+                "ACTION_DOMAIN", "VERIFICATION_STATUS", "EXPECTED_SAVINGS_USD",
+                "ACTUAL_VERIFIED_SAVINGS_USD", "VERIFICATION_WINDOW_START",
+                "VERIFICATION_WINDOW_END", "VERIFICATION_STEPS", "VERIFIED_BY",
+                "VERIFIED_AT", "EVIDENCE", "LAST_REFRESHED_TS",
+            ],
+            sort_by=["ACTUAL_VERIFIED_SAVINGS_USD", "EXPECTED_SAVINGS_USD", "LAST_REFRESHED_TS"],
+            ascending=[False, False, False],
+            raw_label="All savings verification rows",
+            height=300,
+            max_rows=10,
+        )
+
+
 def render() -> None:
     company = get_active_company()
     environment = get_active_environment()
@@ -5074,6 +5125,7 @@ def render() -> None:
     _render_cost_efficiency_score_explanation(company, environment)
     _render_cost_forecast_detail(company, environment)
     _render_cost_change_correlation(company, environment)
+    _render_savings_verification_workflow(company, environment)
 
     workflow = render_workflow_selector(
         "Cost workflow",

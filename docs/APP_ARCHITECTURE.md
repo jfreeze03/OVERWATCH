@@ -101,6 +101,11 @@ flowchart TD
   keys after `SP_OVERWATCH_REFRESH_FORECASTING()`.
 - [ ] `MART_CHANGE_INTELLIGENCE_SUMMARY` has recent rows for all nine change
   categories after `SP_OVERWATCH_REFRESH_CHANGE_INTELLIGENCE()`.
+- [ ] `MART_CLOSED_LOOP_OPERATIONS_SUMMARY` has recent action lifecycle rows
+  after `SP_OVERWATCH_REFRESH_CLOSED_LOOP_OPERATIONS()`.
+- [ ] Closed Loop Operations detail panels load only after explicit operator
+  buttons in DBA Control Room, Alert Center, Cost & Contract, Workload
+  Operations, and Security Monitoring.
 - [ ] Executive scorecard detail panels are loaded only by explicit operator
   buttons in DBA Control Room, Cost & Contract, Security Monitoring, and Alert
   Center.
@@ -159,3 +164,9 @@ flowchart TD
    `OVERWATCH_CHANGE_CORRELATION`, and `docs/CHANGE_INTELLIGENCE.md`; evidence
    and correlation detail stay behind explicit Load buttons, and the app must
    use `possible correlation` unless separate proof exists.
+8. Phase 2E Closed Loop Operations is implemented through
+   `MART_CLOSED_LOOP_OPERATIONS_SUMMARY`, `OVERWATCH_ACTION_WORKFLOW`,
+   `OVERWATCH_ACTION_APPROVAL`, `OVERWATCH_ACTION_EXECUTION_PLAN`,
+   `OVERWATCH_ACTION_VERIFICATION`, `OVERWATCH_ACTION_EVIDENCE`, and
+   `docs/CLOSED_LOOP_OPERATIONS.md`; action detail stays behind explicit Load
+   buttons, generated SQL is review-gated, and no silent execution is allowed.

@@ -2896,6 +2896,61 @@ def _render_alert_change_context(company: str, environment: str) -> None:
         st.caption("These rows are timing and entity matches only. Treat them as possible correlations until evidence proves causality.")
 
 
+def _render_alert_action_workflows(company: str, environment: str) -> None:
+    """Show alert/incident action workflows only after the operator loads them."""
+    from utils import load_closed_loop_workflow_detail
+
+    pd = _pd()
+    st.markdown("**Alert Action Workflows**")
+    st.caption(
+        "Loads action workflows tied to alert and incident context. "
+        "Recommended SQL/action text remains review-gated and is not executed from Alert Center."
+    )
+    domains = ("Alert", "Cost", "Operations", "Security", "Workload")
+    if st.button("Load Alert Action Workflows", key="alert_center_load_closed_loop_workflows", width="stretch"):
+        st.session_state["alert_center_closed_loop_workflows"] = load_closed_loop_workflow_detail(
+            company,
+            environment,
+            domains=domains,
+            days=180,
+        )
+        st.session_state["alert_center_closed_loop_scope"] = (company, environment)
+
+    detail = st.session_state.get("alert_center_closed_loop_workflows")
+    if (
+        isinstance(detail, pd.DataFrame)
+        and st.session_state.get("alert_center_closed_loop_scope") == (company, environment)
+    ):
+        if detail.empty:
+            st.info("No alert action workflows are available for this scope yet.")
+            return
+        status = detail.get("VERIFICATION_STATUS", pd.Series(dtype=str)).fillna("").astype(str)
+        approval = detail.get("APPROVAL_STATUS", pd.Series(dtype=str)).fillna("").astype(str)
+        actual = pd.to_numeric(detail.get("ACTUAL_VERIFIED_SAVINGS_USD", pd.Series(dtype=float)), errors="coerce").fillna(0)
+        render_shell_snapshot((
+            ("Actions", f"{len(detail):,}"),
+            ("Need Approval", f"{int((~approval.isin(['Approved', 'Not Required'])).sum()):,}"),
+            ("Verify", f"{int((~status.isin(['Verified', 'Closed'])).sum()):,}"),
+            ("Verified Value", f"${float(actual.sum()):,.0f}"),
+        ))
+        _render_priority_dataframe(
+            detail,
+            title="Alert and incident action workflows",
+            priority_columns=[
+                "ACTION_DOMAIN", "FINDING", "SOURCE_TELEMETRY", "ENTITY_TYPE",
+                "ENTITY_NAME", "RISK_LEVEL", "OWNER_ROUTE", "APPROVAL_STATUS",
+                "EXECUTION_MODE", "VERIFICATION_STATUS", "EXPECTED_SAVINGS_USD",
+                "ACTUAL_VERIFIED_SAVINGS_USD", "RECOMMENDED_ACTION",
+                "LAST_REFRESHED_TS",
+            ],
+            sort_by=["RISK_LEVEL", "LAST_REFRESHED_TS"],
+            ascending=[True, False],
+            raw_label="All alert closed-loop workflow rows",
+            height=320,
+            max_rows=12,
+        )
+
+
 def render() -> None:
     company = get_active_company()
     environment = get_active_environment()
@@ -2913,6 +2968,7 @@ def render() -> None:
     _render_operational_ownership_coverage(company, environment)
     _render_operational_risk_score_explanation(company, environment)
     _render_alert_change_context(company, environment)
+    _render_alert_action_workflows(company, environment)
 
     if active_view == "Suppression Windows":
         _render_annotations()

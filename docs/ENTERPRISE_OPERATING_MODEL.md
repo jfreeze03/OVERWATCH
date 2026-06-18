@@ -21,6 +21,7 @@ explicit Load buttons.
 | Executive Scorecard | Executive Landing | DBA Control Room, Cost & Contract, Security Monitoring, Alert Center | `MART_EXECUTIVE_SCORECARD_SUMMARY` | `OVERWATCH_EXECUTIVE_SCORECARD_HISTORY` |
 | Executive Forecasting | Executive Landing | DBA Control Room, Cost & Contract, Workload Operations | `MART_EXECUTIVE_FORECAST_SUMMARY` | `OVERWATCH_FORECAST_HISTORY` |
 | Change Intelligence | Executive Landing | DBA Control Room, Cost & Contract, Workload Operations, Security Monitoring, Alert Center | `MART_CHANGE_INTELLIGENCE_SUMMARY` | `OVERWATCH_CHANGE_EVENT`, `OVERWATCH_CHANGE_CORRELATION` |
+| Closed Loop Operations | Executive Landing | DBA Control Room, Alert Center, Cost & Contract, Workload Operations, Security Monitoring | `MART_CLOSED_LOOP_OPERATIONS_SUMMARY` | `OVERWATCH_ACTION_WORKFLOW`, `OVERWATCH_ACTION_APPROVAL`, `OVERWATCH_ACTION_EXECUTION_PLAN`, `OVERWATCH_ACTION_VERIFICATION`, `OVERWATCH_ACTION_EVIDENCE` |
 
 ## Snowflake Objects
 
@@ -51,6 +52,13 @@ explicit Load buttons.
 | `OVERWATCH_CHANGE_CORRELATION` | Explicit-load Phase 2D possible correlation history. |
 | `MART_CHANGE_INTELLIGENCE_SUMMARY` | Compact Phase 2D recent-change and risk summary. |
 | `SP_OVERWATCH_REFRESH_CHANGE_INTELLIGENCE` | Refreshes change events, possible correlations, and compact summary rows. |
+| `OVERWATCH_ACTION_WORKFLOW` | Phase 2E finding, owner, impact, risk, approval, action, verification, value, evidence, and closure lifecycle rows. |
+| `OVERWATCH_ACTION_APPROVAL` | Phase 2E approval status, approver, timestamp, risk, owner, and recommended-action proof rows. |
+| `OVERWATCH_ACTION_EXECUTION_PLAN` | Phase 2E review-gated SQL/action text, rollback guidance, verification steps, dangerous-action flags, and in-app execution block. |
+| `OVERWATCH_ACTION_VERIFICATION` | Phase 2E verification status, evidence, expected savings, and actual verified savings. |
+| `OVERWATCH_ACTION_EVIDENCE` | Phase 2E action evidence trail. |
+| `MART_CLOSED_LOOP_OPERATIONS_SUMMARY` | Compact Phase 2E action/value/closure summary. |
+| `SP_OVERWATCH_REFRESH_CLOSED_LOOP_OPERATIONS` | Refreshes closed-loop operations rows from existing OVERWATCH sources without executing remediation. |
 
 ## Confidence Labels
 
@@ -73,6 +81,9 @@ Validation SQL checks these labels across the new objects.
 - Production readiness role and privilege proof stays explicit; see `docs/PRODUCTION_READINESS.md`.
 - Change Intelligence uses `possible correlation` until separate evidence proves
   causality; it does not execute remediation.
+- Closed Loop Operations is review-gated: generated SQL/action text is evidence
+  only, `EXECUTION_ALLOWED_IN_APP` remains false, and actual verified savings
+  require post-action telemetry.
 
 ## Manual Snowflake Validation
 
@@ -133,3 +144,16 @@ Then review `MART_CHANGE_INTELLIGENCE_SUMMARY`, `OVERWATCH_CHANGE_EVENT`,
 Intelligence checks in `snowflake/OVERWATCH_MART_VALIDATION.sql`. Correlation
 rows are timing/entity candidates only and should remain labeled
 `possible correlation`.
+
+Closed Loop Operations:
+
+```sql
+CALL SP_OVERWATCH_REFRESH_CLOSED_LOOP_OPERATIONS();
+```
+
+Then review `MART_CLOSED_LOOP_OPERATIONS_SUMMARY`,
+`OVERWATCH_ACTION_WORKFLOW`, `OVERWATCH_ACTION_APPROVAL`,
+`OVERWATCH_ACTION_EXECUTION_PLAN`, `OVERWATCH_ACTION_VERIFICATION`,
+`OVERWATCH_ACTION_EVIDENCE`, `docs/CLOSED_LOOP_OPERATIONS.md`, and the Closed
+Loop Operations checks in `snowflake/OVERWATCH_MART_VALIDATION.sql`. Generated
+SQL must remain review-only and no silent execution is allowed.

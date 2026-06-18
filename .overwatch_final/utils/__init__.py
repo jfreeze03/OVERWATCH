@@ -348,6 +348,16 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "load_change_event_detail",
         "load_change_correlation_detail",
     ),
+    "closed_loop_operations": (
+        "CLOSED_LOOP_DOMAINS",
+        "CLOSED_LOOP_RISK_LABELS",
+        "CLOSED_LOOP_EXECUTION_MODES",
+        "CLOSED_LOOP_CONFIDENCE_LABELS",
+        "load_closed_loop_summary",
+        "load_closed_loop_workflow_detail",
+        "load_closed_loop_execution_plan_detail",
+        "load_closed_loop_verification_detail",
+    ),
     "ask_overwatch": (
         "TOP_PRIORITY_BRIEF_DOMAINS", "answer_ask_overwatch",
         "build_ask_overwatch_context", "build_grounded_cortex_prompt",

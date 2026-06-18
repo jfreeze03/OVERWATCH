@@ -122,6 +122,9 @@ load_action_queue = _lazy_util("load_action_queue")
 load_app_observability_detail = _lazy_util("load_app_observability_detail")
 load_change_correlation_detail = _lazy_util("load_change_correlation_detail")
 load_change_event_detail = _lazy_util("load_change_event_detail")
+load_closed_loop_execution_plan_detail = _lazy_util("load_closed_loop_execution_plan_detail")
+load_closed_loop_verification_detail = _lazy_util("load_closed_loop_verification_detail")
+load_closed_loop_workflow_detail = _lazy_util("load_closed_loop_workflow_detail")
 load_data_trust_detail = _lazy_util("load_data_trust_detail")
 load_executive_scorecard_detail = _lazy_util("load_executive_scorecard_detail")
 load_forecast_detail = _lazy_util("load_forecast_detail")
@@ -522,6 +525,112 @@ def _render_change_intelligence_gate(company: str, environment: str) -> None:
                 raw_label="All possible change correlations",
                 height=300,
                 max_rows=12,
+            )
+
+
+def _render_closed_loop_operations_gate(company: str, environment: str) -> None:
+    """Expose Phase 2E action, verification, and review plans behind Load."""
+    st.markdown("**Closed Loop Operations**")
+    st.caption(
+        "Loads action workflow, review plans, and verification evidence from OVERWATCH closed-loop marts. "
+        "Dangerous SQL is displayed for review only and is not executed in the app."
+    )
+    if st.button("Load Closed-Loop Actions", key="dba_load_closed_loop_operations", width="stretch"):
+        st.session_state["dba_closed_loop_workflow_detail"] = load_closed_loop_workflow_detail(
+            company,
+            environment,
+            days=180,
+        )
+        st.session_state["dba_closed_loop_execution_plan_detail"] = load_closed_loop_execution_plan_detail(
+            company,
+            environment,
+            days=180,
+        )
+        st.session_state["dba_closed_loop_verification_detail"] = load_closed_loop_verification_detail(
+            company,
+            environment,
+            days=180,
+        )
+        st.session_state["dba_closed_loop_scope"] = (company, environment)
+
+    if st.session_state.get("dba_closed_loop_scope") != (company, environment):
+        return
+
+    workflows = st.session_state.get("dba_closed_loop_workflow_detail")
+    execution_plans = st.session_state.get("dba_closed_loop_execution_plan_detail")
+    verification = st.session_state.get("dba_closed_loop_verification_detail")
+    if isinstance(workflows, pd.DataFrame):
+        if workflows.empty:
+            st.info("No closed-loop action workflows are available for this scope yet.")
+        else:
+            approval = workflows.get("APPROVAL_STATUS", pd.Series(dtype=str)).fillna("").astype(str)
+            verification_status = workflows.get("VERIFICATION_STATUS", pd.Series(dtype=str)).fillna("").astype(str)
+            verified = pd.to_numeric(
+                workflows.get("ACTUAL_VERIFIED_SAVINGS_USD", pd.Series(dtype=float)),
+                errors="coerce",
+            ).fillna(0)
+            need_approval = safe_int((~approval.isin(["Approved", "Not Required"])).sum())
+            needs_verification = safe_int((~verification_status.isin(["Verified", "Closed"])).sum())
+            render_shell_snapshot((
+                ("Actions", f"{len(workflows):,}"),
+                ("Need Approval", f"{need_approval:,}"),
+                ("Verify", f"{needs_verification:,}"),
+                ("Verified Value", f"${safe_float(verified.sum()):,.0f}"),
+            ))
+            render_priority_dataframe(
+                workflows,
+                title="Closed-loop action queue",
+                priority_columns=[
+                    "ACTION_DOMAIN", "FINDING", "RISK_LEVEL", "OWNER_ROUTE",
+                    "BUSINESS_IMPACT", "APPROVAL_STATUS", "EXECUTION_MODE",
+                    "VERIFICATION_STATUS", "EXPECTED_SAVINGS_USD",
+                    "ACTUAL_VERIFIED_SAVINGS_USD", "RECOMMENDED_ACTION",
+                    "LAST_REFRESHED_TS",
+                ],
+                sort_by=["RISK_LEVEL", "LAST_REFRESHED_TS"],
+                ascending=[True, False],
+                raw_label="All closed-loop workflow rows",
+                height=320,
+                max_rows=12,
+            )
+    if isinstance(execution_plans, pd.DataFrame):
+        if execution_plans.empty:
+            st.info("No reviewable execution plans are available for this scope yet.")
+        else:
+            st.caption("Execution plans are review-gated. OVERWATCH does not run ALTER/CREATE/DROP/GRANT/REVOKE/SUSPEND/RESUME actions from this panel.")
+            render_priority_dataframe(
+                execution_plans,
+                title="Review-gated SQL and action plans",
+                priority_columns=[
+                    "ACTION_DOMAIN", "EXECUTION_MODE", "EXECUTION_STATUS",
+                    "DANGEROUS_ACTION_FLAG", "EXECUTION_ALLOWED_IN_APP",
+                    "REVIEW_SQL_TEXT", "REVIEW_ACTION_TEXT", "ROLLBACK_GUIDANCE",
+                    "VERIFICATION_STEPS", "LAST_REFRESHED_TS",
+                ],
+                sort_by=["DANGEROUS_ACTION_FLAG", "LAST_REFRESHED_TS"],
+                ascending=[False, False],
+                raw_label="All closed-loop execution plan rows",
+                height=300,
+                max_rows=10,
+            )
+    if isinstance(verification, pd.DataFrame):
+        if verification.empty:
+            st.info("No verification rows are available for this scope yet.")
+        else:
+            render_priority_dataframe(
+                verification,
+                title="Verification and measured value queue",
+                priority_columns=[
+                    "ACTION_DOMAIN", "VERIFICATION_STATUS", "EXPECTED_SAVINGS_USD",
+                    "ACTUAL_VERIFIED_SAVINGS_USD", "VERIFICATION_WINDOW_START",
+                    "VERIFICATION_WINDOW_END", "VERIFICATION_STEPS", "VERIFIED_BY",
+                    "VERIFIED_AT", "EVIDENCE", "LAST_REFRESHED_TS",
+                ],
+                sort_by=["ACTUAL_VERIFIED_SAVINGS_USD", "EXPECTED_SAVINGS_USD", "LAST_REFRESHED_TS"],
+                ascending=[False, False, False],
+                raw_label="All closed-loop verification rows",
+                height=300,
+                max_rows=10,
             )
 
 
@@ -6517,6 +6626,7 @@ def render() -> None:
     _render_executive_scorecard_driver_gate(company, environment)
     _render_forecast_exception_gate(company, environment)
     _render_change_intelligence_gate(company, environment)
+    _render_closed_loop_operations_gate(company, environment)
 
     if st.button(load_label, key="dba_control_room_load", type="primary"):
         _load_control_room_evidence()

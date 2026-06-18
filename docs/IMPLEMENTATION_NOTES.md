@@ -301,3 +301,19 @@ outside the Streamlit app UI.
   root cause unless separate proof exists.
 - `SP_OVERWATCH_REFRESH_CHANGE_INTELLIGENCE` writes OVERWATCH mart rows only and
   does not execute remediation.
+
+## 2026-06-18 - Closed Loop Operations Phase 2E
+
+- Added a mart-first Closed Loop Operations layer for:
+  detect -> analyze -> recommend -> approve -> review plan -> verify ->
+  measure -> close.
+- Executive Landing reads only `MART_CLOSED_LOOP_OPERATIONS_SUMMARY` for first
+  paint. DBA Control Room, Alert Center, Cost & Contract, Workload Operations,
+  and Security Monitoring load action workflow, review SQL/action text,
+  evidence, and verification detail only after explicit Load buttons.
+- `OVERWATCH_ACTION_EXECUTION_PLAN` stores review-gated SQL/action text and
+  marks in-app execution as blocked. OVERWATCH does not execute generated
+  `ALTER`, `CREATE`, `DROP`, `GRANT`, `REVOKE`, `SUSPEND`, or `RESUME`
+  statements.
+- Expected savings and forecasted savings remain separate from actual verified
+  savings. Actual verified savings require post-action telemetry and evidence.

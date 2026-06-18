@@ -43,6 +43,7 @@ render_priority_dataframe = _lazy_util("render_priority_dataframe")
 build_loaded_section_alert_signal_board = _lazy_util("build_loaded_section_alert_signal_board")
 load_enterprise_operating_rollups = _lazy_util("load_enterprise_operating_rollups")
 load_change_intelligence_summary = _lazy_util("load_change_intelligence_summary")
+load_closed_loop_summary = _lazy_util("load_closed_loop_summary")
 load_executive_scorecard_summary = _lazy_util("load_executive_scorecard_summary")
 load_executive_forecast_summary = _lazy_util("load_executive_forecast_summary")
 load_production_readiness_summary = _lazy_util("load_production_readiness_summary")
@@ -3005,6 +3006,52 @@ def _render_change_intelligence_summary(changes: pd.DataFrame) -> None:
     st.dataframe(view, width="stretch", hide_index=True)
 
 
+def _render_closed_loop_summary(actions: pd.DataFrame) -> None:
+    """Render Phase 2E compact closed-loop action/value summary."""
+    if not isinstance(actions, pd.DataFrame) or actions.empty:
+        st.caption("Closed Loop Operations is pending. Run the executive mart refresh to populate action lifecycle rows.")
+        return
+
+    work = actions.copy()
+    open_count = pd.to_numeric(work.get("OPEN_ACTION_COUNT", pd.Series(dtype=float)), errors="coerce").fillna(0)
+    approvals = pd.to_numeric(work.get("APPROVAL_REQUIRED_COUNT", pd.Series(dtype=float)), errors="coerce").fillna(0)
+    pending_verify = pd.to_numeric(work.get("VERIFICATION_PENDING_COUNT", pd.Series(dtype=float)), errors="coerce").fillna(0)
+    verified_value = pd.to_numeric(work.get("ACTUAL_VERIFIED_SAVINGS_USD", pd.Series(dtype=float)), errors="coerce").fillna(0)
+    expected_value = pd.to_numeric(work.get("EXPECTED_SAVINGS_USD", pd.Series(dtype=float)), errors="coerce").fillna(0)
+    work["_ACTION_SORT"] = open_count + approvals + pending_verify
+    work["_VALUE_SORT"] = expected_value
+    top_row = work.sort_values(
+        by=["_ACTION_SORT", "_VALUE_SORT"],
+        ascending=[False, False],
+        na_position="last",
+    ).iloc[0]
+
+    st.markdown("**Closed Loop Operations**")
+    render_shell_snapshot((
+        ("Open Actions", f"{safe_int(open_count.sum()):,}"),
+        ("Need Approval", f"{safe_int(approvals.sum()):,}"),
+        ("Verify", f"{safe_int(pending_verify.sum()):,}"),
+        ("Verified Value", f"${safe_float(verified_value.sum()):,.0f}"),
+    ))
+    st.caption(
+        f"Top action area: {top_row.get('ACTION_DOMAIN') or 'Actions'}; "
+        f"{top_row.get('NEXT_ACTION') or 'Work actions through approval and verification.'} "
+        "Expected savings stay separate from actual verified savings."
+    )
+    view = work[[
+        column for column in [
+            "ACTION_DOMAIN", "OPEN_ACTION_COUNT", "APPROVAL_REQUIRED_COUNT",
+            "APPROVED_COUNT", "VERIFICATION_PENDING_COUNT", "VERIFIED_COUNT",
+            "CLOSED_COUNT", "HIGH_RISK_COUNT", "OWNER_GAP_COUNT",
+            "EXPECTED_SAVINGS_USD", "ACTUAL_VERIFIED_SAVINGS_USD",
+            "UNVERIFIED_EXPECTED_USD", "TOP_FINDING", "NEXT_ACTION",
+            "CONFIDENCE", "LAST_REFRESHED_TS",
+        ]
+        if column in work.columns
+    ]]
+    st.dataframe(view, width="stretch", hide_index=True)
+
+
 def render() -> None:
     company = _active_company()
     environment = _active_environment()
@@ -3098,6 +3145,9 @@ def render() -> None:
     )
     _render_change_intelligence_summary(
         load_change_intelligence_summary(company, environment, days=int(days))
+    )
+    _render_closed_loop_summary(
+        load_closed_loop_summary(company, environment, days=int(days))
     )
     load = _render_executive_action_brief(summary, int(days), show_strip=False)
     _render_loaded_executive_alert_context()

@@ -27,9 +27,9 @@ def _validation_sql() -> str:
 def _change_intelligence_setup_block() -> str:
     sql = _setup_sql()
     start = sql.index("-- Phase 2D: Change Intelligence")
-    end = sql.index("-- Existing installs may have been created", start)
+    end = sql.index("-- Phase 2E: Closed Loop Operations", start)
     proc_start = sql.index("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_CHANGE_INTELLIGENCE")
-    proc_end = sql.index("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_EXECUTIVE_OBSERVABILITY", proc_start)
+    proc_end = sql.index("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_CLOSED_LOOP_OPERATIONS", proc_start)
     return sql[start:end] + "\n" + sql[proc_start:proc_end]
 
 
@@ -51,8 +51,8 @@ class ChangeIntelligenceTests(unittest.TestCase):
                 self.assertIn(name, validation)
         self.assertIn("2026.06.18-CHANGE-INTELLIGENCE", setup)
         self.assertIn("CALL SP_OVERWATCH_REFRESH_CHANGE_INTELLIGENCE()", setup)
-        self.assertIn("('TABLE', 83)", validation)
-        self.assertIn("('PROCEDURE', 14)", validation)
+        self.assertIn("('TABLE', 89)", validation)
+        self.assertIn("('PROCEDURE', 15)", validation)
 
     def test_change_labels_and_categories_are_constrained(self):
         from utils.change_intelligence import (

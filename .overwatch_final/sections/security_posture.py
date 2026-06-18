@@ -40,6 +40,8 @@ build_loaded_section_alert_signal_board = _lazy_util("build_loaded_section_alert
 day_window_selectbox = _lazy_util("day_window_selectbox")
 load_executive_scorecard_detail = _lazy_util("load_executive_scorecard_detail")
 load_change_event_detail = _lazy_util("load_change_event_detail")
+load_closed_loop_execution_plan_detail = _lazy_util("load_closed_loop_execution_plan_detail")
+load_closed_loop_workflow_detail = _lazy_util("load_closed_loop_workflow_detail")
 load_ownership_coverage_rollup = _lazy_util("load_ownership_coverage_rollup")
 resolve_owner_context = _lazy_util("resolve_owner_context")
 run_query = _lazy_util("run_query")
@@ -1694,6 +1696,74 @@ def _render_security_change_detail(company: str, environment: str) -> None:
         )
 
 
+def _render_security_action_approval(company: str, environment: str) -> None:
+    """Expose security action approval and review plans behind Load."""
+    st.markdown("**Security Action Approval Workflow**")
+    st.caption(
+        "Loads security action workflows and review-only plans. "
+        "Access changes remain approval-gated and are not executed from this screen."
+    )
+    domains = ("Security",)
+    if st.button("Load Security Approvals", key="security_load_closed_loop_approvals", width="stretch"):
+        st.session_state["security_closed_loop_workflow_detail"] = load_closed_loop_workflow_detail(
+            company,
+            environment,
+            domains=domains,
+            days=180,
+        )
+        st.session_state["security_closed_loop_execution_plan_detail"] = load_closed_loop_execution_plan_detail(
+            company,
+            environment,
+            domains=domains,
+            days=180,
+        )
+        st.session_state["security_closed_loop_scope"] = (company, environment)
+
+    if st.session_state.get("security_closed_loop_scope") != (company, environment):
+        return
+    workflows = st.session_state.get("security_closed_loop_workflow_detail")
+    execution_plans = st.session_state.get("security_closed_loop_execution_plan_detail")
+    if isinstance(workflows, pd.DataFrame):
+        if workflows.empty:
+            st.info("No security action workflows are available for this scope yet.")
+        else:
+            render_priority_dataframe(
+                workflows,
+                title="Security action approval workflow",
+                priority_columns=[
+                    "FINDING", "ENTITY_TYPE", "ENTITY_NAME", "RISK_LEVEL",
+                    "OWNER_ROUTE", "OWNER_GAP", "APPROVAL_STATUS",
+                    "APPROVED_BY", "APPROVAL_TS", "EXECUTION_MODE",
+                    "VERIFICATION_STATUS", "RECOMMENDED_ACTION",
+                    "LAST_REFRESHED_TS",
+                ],
+                sort_by=["RISK_LEVEL", "LAST_REFRESHED_TS"],
+                ascending=[True, False],
+                raw_label="All security closed-loop workflow rows",
+                height=300,
+                max_rows=10,
+            )
+    if isinstance(execution_plans, pd.DataFrame):
+        if execution_plans.empty:
+            st.info("No security review plans are available for this scope yet.")
+        else:
+            render_priority_dataframe(
+                execution_plans,
+                title="Review-gated security SQL and action plans",
+                priority_columns=[
+                    "EXECUTION_MODE", "EXECUTION_STATUS", "DANGEROUS_ACTION_FLAG",
+                    "EXECUTION_ALLOWED_IN_APP", "REVIEW_SQL_TEXT",
+                    "REVIEW_ACTION_TEXT", "ROLLBACK_GUIDANCE",
+                    "VERIFICATION_STEPS", "LAST_REFRESHED_TS",
+                ],
+                sort_by=["DANGEROUS_ACTION_FLAG", "LAST_REFRESHED_TS"],
+                ascending=[False, False],
+                raw_label="All security closed-loop execution plans",
+                height=280,
+                max_rows=8,
+            )
+
+
 def _apply_queued_security_workflow() -> None:
     requested_view = st.session_state.pop("security_posture_requested_view", None)
     requested_workflow = st.session_state.pop("security_posture_requested_workflow", None)
@@ -2718,6 +2788,7 @@ def render() -> None:
     _render_security_ownership_coverage(company, environment)
     _render_security_score_explanation(company, environment)
     _render_security_change_detail(company, environment)
+    _render_security_action_approval(company, environment)
 
     days = day_window_selectbox(
         "Security window",

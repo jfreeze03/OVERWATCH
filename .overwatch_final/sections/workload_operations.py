@@ -17,6 +17,8 @@ get_active_company = _lazy_util("get_active_company")
 get_active_environment = _lazy_util("get_active_environment")
 load_change_correlation_detail = _lazy_util("load_change_correlation_detail")
 load_change_event_detail = _lazy_util("load_change_event_detail")
+load_closed_loop_execution_plan_detail = _lazy_util("load_closed_loop_execution_plan_detail")
+load_closed_loop_workflow_detail = _lazy_util("load_closed_loop_workflow_detail")
 load_forecast_detail = _lazy_util("load_forecast_detail")
 render_workflow_selector = _lazy_util("render_workflow_selector")
 render_priority_dataframe = _lazy_util("render_priority_dataframe")
@@ -205,6 +207,73 @@ def _render_workload_change_detail(company: str, environment: str) -> None:
             )
 
 
+def _render_workload_closed_loop_detail(company: str, environment: str) -> None:
+    """Expose operational remediation workflows behind an explicit Load action."""
+    st.markdown("**Operational Action Workflow**")
+    st.caption(
+        "Loads workload and operations action workflows plus review-only execution plans. "
+        "OVERWATCH does not execute remediation SQL from this panel."
+    )
+    domains = ("Workload", "Operations")
+    if st.button("Load Operational Actions", key="workload_load_closed_loop_actions", width="stretch"):
+        st.session_state["workload_closed_loop_workflow_detail"] = load_closed_loop_workflow_detail(
+            company,
+            environment,
+            domains=domains,
+            days=180,
+        )
+        st.session_state["workload_closed_loop_execution_plan_detail"] = load_closed_loop_execution_plan_detail(
+            company,
+            environment,
+            domains=domains,
+            days=180,
+        )
+        st.session_state["workload_closed_loop_scope"] = (company, environment)
+
+    if st.session_state.get("workload_closed_loop_scope") != (company, environment):
+        return
+    workflows = st.session_state.get("workload_closed_loop_workflow_detail")
+    execution_plans = st.session_state.get("workload_closed_loop_execution_plan_detail")
+    if isinstance(workflows, pd.DataFrame):
+        if workflows.empty:
+            st.info("No workload or operations action workflows are available for this scope yet.")
+        else:
+            render_priority_dataframe(
+                workflows,
+                title="Operational remediation workflow",
+                priority_columns=[
+                    "ACTION_DOMAIN", "FINDING", "ENTITY_TYPE", "ENTITY_NAME",
+                    "RISK_LEVEL", "OWNER_ROUTE", "APPROVAL_STATUS",
+                    "EXECUTION_MODE", "VERIFICATION_STATUS", "BUSINESS_IMPACT",
+                    "RECOMMENDED_ACTION", "LAST_REFRESHED_TS",
+                ],
+                sort_by=["RISK_LEVEL", "LAST_REFRESHED_TS"],
+                ascending=[True, False],
+                raw_label="All workload closed-loop workflow rows",
+                height=300,
+                max_rows=10,
+            )
+    if isinstance(execution_plans, pd.DataFrame):
+        if execution_plans.empty:
+            st.info("No workload review plans are available for this scope yet.")
+        else:
+            render_priority_dataframe(
+                execution_plans,
+                title="Review-only workload action plans",
+                priority_columns=[
+                    "ACTION_DOMAIN", "EXECUTION_MODE", "EXECUTION_STATUS",
+                    "DANGEROUS_ACTION_FLAG", "EXECUTION_ALLOWED_IN_APP",
+                    "REVIEW_SQL_TEXT", "REVIEW_ACTION_TEXT",
+                    "ROLLBACK_GUIDANCE", "VERIFICATION_STEPS",
+                ],
+                sort_by=["DANGEROUS_ACTION_FLAG", "LAST_REFRESHED_TS"],
+                ascending=[False, False],
+                raw_label="All workload closed-loop execution plans",
+                height=280,
+                max_rows=8,
+            )
+
+
 WORKLOAD_OPERATIONS_FAST_ENTRY_VERSION = "2026-06-16-workload-board-v1"
 WORKLOAD_OPERATIONS_EXPLICIT_WORKFLOW_KEY = "_workload_operations_explicit_workflow_request"
 QUERY_INVESTIGATION_WORKFLOW = "Query investigation"
@@ -375,6 +444,7 @@ def render() -> None:
     environment = get_active_environment()
     _render_workload_forecast_detail(company, environment)
     _render_workload_change_detail(company, environment)
+    _render_workload_closed_loop_detail(company, environment)
 
     workflow = render_workflow_selector(
         "Workload surface",

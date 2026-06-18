@@ -109,6 +109,24 @@ verification, measured value, and closure. It does not execute remediation.
 
 Details and manual validation steps live in `docs/CLOSED_LOOP_OPERATIONS.md`.
 
+## Command Center
+
+Phase 2F correlates cost, performance, alerts, ownership, trust, security,
+change intelligence, forecasts, scorecards, value, and closed-loop action state
+into deterministic root-cause candidate findings. It does not execute
+remediation.
+
+| Object | Type | Purpose |
+| --- | --- | --- |
+| `OVERWATCH_COMMAND_CENTER_QUESTION` | Table | Investigation catalog for cost spike, warehouse slow, recent change, failure/SLA, security risk, and executive risk questions. |
+| `OVERWATCH_COMMAND_CENTER_FINDING` | Transient table | Root-cause candidate findings with evidence, owner, business/technical impact, related signals, recommendation, risk, execution-plan reference, expected value/risk, and verification path. |
+| `OVERWATCH_COMMAND_CENTER_EVIDENCE` | Transient table | Evidence rows tied to each finding and source object. |
+| `OVERWATCH_COMMAND_CENTER_RECOMMENDATION` | Transient table | Review-gated recommendations tied to closed-loop execution plan references when available. |
+| `MART_COMMAND_CENTER_SUMMARY` | Transient mart | Compact first-paint summary by investigation type. |
+| `SP_OVERWATCH_REFRESH_COMMAND_CENTER` | Procedure | Refreshes Command Center findings, evidence, recommendations, and summaries from existing OVERWATCH marts without executing remediation. |
+
+Details and manual validation steps live in `docs/COMMAND_CENTER.md`.
+
 ## Reconciliation
 
 | Object | Type | Purpose |

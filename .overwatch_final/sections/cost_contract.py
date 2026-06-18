@@ -54,6 +54,8 @@ get_wh_filter_clause = _lazy_util("get_wh_filter_clause")
 load_action_queue = _lazy_util("load_action_queue")
 load_change_correlation_detail = _lazy_util("load_change_correlation_detail")
 load_closed_loop_verification_detail = _lazy_util("load_closed_loop_verification_detail")
+load_command_center_finding_detail = _lazy_util("load_command_center_finding_detail")
+load_command_center_recommendation_detail = _lazy_util("load_command_center_recommendation_detail")
 load_executive_scorecard_detail = _lazy_util("load_executive_scorecard_detail")
 load_forecast_detail = _lazy_util("load_forecast_detail")
 load_value_ledger_detail = _lazy_util("load_value_ledger_detail")
@@ -5099,6 +5101,70 @@ def _render_savings_verification_workflow(company: str, environment: str) -> Non
         )
 
 
+def _render_cost_command_findings(company: str, environment: str) -> None:
+    """Expose cost-spike Command Center findings behind an explicit Load action."""
+    st.markdown("**Cost Command Findings**")
+    st.caption("Loads deterministic cost-spike root-cause candidates, evidence summaries, and review-gated recommendations.")
+    types = ("Cost Spike",)
+    if st.button("Load Cost Command Findings", key="cost_contract_load_command_center", width="stretch"):
+        st.session_state["cost_contract_command_findings"] = load_command_center_finding_detail(
+            company,
+            environment,
+            investigation_types=types,
+            days=180,
+        )
+        st.session_state["cost_contract_command_recommendations"] = load_command_center_recommendation_detail(
+            company,
+            environment,
+            investigation_types=types,
+            days=180,
+        )
+        st.session_state["cost_contract_command_scope"] = (company, environment)
+
+    if st.session_state.get("cost_contract_command_scope") != (company, environment):
+        return
+    findings = st.session_state.get("cost_contract_command_findings")
+    recommendations = st.session_state.get("cost_contract_command_recommendations")
+    if isinstance(findings, pd.DataFrame):
+        if findings.empty:
+            st.info("No cost Command Center findings are available for this scope yet.")
+        else:
+            render_priority_dataframe(
+                findings,
+                title="Cost-spike root-cause candidates",
+                priority_columns=[
+                    "QUESTION_TEXT", "ROOT_CAUSE_CANDIDATE", "CAUSALITY_LABEL",
+                    "EVIDENCE_SUMMARY", "CONFIDENCE", "BUSINESS_IMPACT",
+                    "OWNER_ROUTE", "RELATED_CHANGES", "RELATED_ALERTS",
+                    "RELATED_SCORECARD_DRIVERS", "RELATED_FORECASTS",
+                    "RECOMMENDED_ACTION", "RISK_LEVEL", "EXECUTION_PLAN_REF",
+                    "EXPECTED_SAVINGS_OR_RISK_AVOIDED_USD", "VERIFICATION_PATH",
+                ],
+                sort_by=["RISK_LEVEL", "EXPECTED_SAVINGS_OR_RISK_AVOIDED_USD", "LAST_REFRESHED_TS"],
+                ascending=[True, False, False],
+                raw_label="All cost command findings",
+                height=300,
+                max_rows=8,
+            )
+    if isinstance(recommendations, pd.DataFrame):
+        if not recommendations.empty:
+            render_priority_dataframe(
+                recommendations,
+                title="Cost command recommendations",
+                priority_columns=[
+                    "RECOMMENDED_ACTION", "RISK_LEVEL", "OWNER_ROUTE",
+                    "EXECUTION_PLAN_REF", "REVIEW_REQUIRED",
+                    "EXPECTED_SAVINGS_OR_RISK_AVOIDED_USD", "VERIFICATION_PATH",
+                    "SAFETY_NOTE", "LAST_REFRESHED_TS",
+                ],
+                sort_by=["EXPECTED_SAVINGS_OR_RISK_AVOIDED_USD", "LAST_REFRESHED_TS"],
+                ascending=[False, False],
+                raw_label="All cost command recommendations",
+                height=260,
+                max_rows=6,
+            )
+
+
 def render() -> None:
     company = get_active_company()
     environment = get_active_environment()
@@ -5126,6 +5192,7 @@ def render() -> None:
     _render_cost_forecast_detail(company, environment)
     _render_cost_change_correlation(company, environment)
     _render_savings_verification_workflow(company, environment)
+    _render_cost_command_findings(company, environment)
 
     workflow = render_workflow_selector(
         "Cost workflow",

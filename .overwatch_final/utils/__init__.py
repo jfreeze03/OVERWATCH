@@ -358,6 +358,16 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "load_closed_loop_execution_plan_detail",
         "load_closed_loop_verification_detail",
     ),
+    "command_center": (
+        "COMMAND_CENTER_INVESTIGATION_TYPES",
+        "COMMAND_CENTER_RISK_LABELS",
+        "COMMAND_CENTER_CONFIDENCE_LABELS",
+        "COMMAND_CENTER_CAUSALITY_LABELS",
+        "load_command_center_summary",
+        "load_command_center_finding_detail",
+        "load_command_center_evidence_detail",
+        "load_command_center_recommendation_detail",
+    ),
     "ask_overwatch": (
         "TOP_PRIORITY_BRIEF_DOMAINS", "answer_ask_overwatch",
         "build_ask_overwatch_context", "build_grounded_cortex_prompt",

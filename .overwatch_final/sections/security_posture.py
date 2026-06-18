@@ -42,6 +42,8 @@ load_executive_scorecard_detail = _lazy_util("load_executive_scorecard_detail")
 load_change_event_detail = _lazy_util("load_change_event_detail")
 load_closed_loop_execution_plan_detail = _lazy_util("load_closed_loop_execution_plan_detail")
 load_closed_loop_workflow_detail = _lazy_util("load_closed_loop_workflow_detail")
+load_command_center_finding_detail = _lazy_util("load_command_center_finding_detail")
+load_command_center_recommendation_detail = _lazy_util("load_command_center_recommendation_detail")
 load_ownership_coverage_rollup = _lazy_util("load_ownership_coverage_rollup")
 resolve_owner_context = _lazy_util("resolve_owner_context")
 run_query = _lazy_util("run_query")
@@ -1764,6 +1766,68 @@ def _render_security_action_approval(company: str, environment: str) -> None:
             )
 
 
+def _render_security_command_findings(company: str, environment: str) -> None:
+    """Expose security-risk Command Center findings behind an explicit Load."""
+    st.markdown("**Security Command Findings**")
+    st.caption("Loads security-risk root-cause candidates, owner gaps, related changes, and review-gated recommendations.")
+    types = ("Security Risk",)
+    if st.button("Load Security Command Findings", key="security_load_command_center", width="stretch"):
+        st.session_state["security_command_findings"] = load_command_center_finding_detail(
+            company,
+            environment,
+            investigation_types=types,
+            days=180,
+        )
+        st.session_state["security_command_recommendations"] = load_command_center_recommendation_detail(
+            company,
+            environment,
+            investigation_types=types,
+            days=180,
+        )
+        st.session_state["security_command_scope"] = (company, environment)
+
+    if st.session_state.get("security_command_scope") != (company, environment):
+        return
+    findings = st.session_state.get("security_command_findings")
+    recommendations = st.session_state.get("security_command_recommendations")
+    if isinstance(findings, pd.DataFrame):
+        if findings.empty:
+            st.info("No security Command Center findings are available for this scope yet.")
+        else:
+            render_priority_dataframe(
+                findings,
+                title="Security root-cause candidates",
+                priority_columns=[
+                    "QUESTION_TEXT", "ROOT_CAUSE_CANDIDATE", "CAUSALITY_LABEL",
+                    "EVIDENCE_SUMMARY", "CONFIDENCE", "BUSINESS_IMPACT",
+                    "OWNER_ROUTE", "OWNER_GAP", "RELATED_CHANGES",
+                    "RELATED_ALERTS", "RELATED_SCORECARD_DRIVERS",
+                    "RECOMMENDED_ACTION", "RISK_LEVEL", "EXECUTION_PLAN_REF",
+                    "VERIFICATION_PATH",
+                ],
+                sort_by=["RISK_LEVEL", "LAST_REFRESHED_TS"],
+                ascending=[True, False],
+                raw_label="All security command findings",
+                height=300,
+                max_rows=8,
+            )
+    if isinstance(recommendations, pd.DataFrame) and not recommendations.empty:
+        render_priority_dataframe(
+            recommendations,
+            title="Security command recommendations",
+            priority_columns=[
+                "RECOMMENDED_ACTION", "RISK_LEVEL", "OWNER_ROUTE",
+                "EXECUTION_PLAN_REF", "REVIEW_REQUIRED", "VERIFICATION_PATH",
+                "SAFETY_NOTE", "LAST_REFRESHED_TS",
+            ],
+            sort_by=["RISK_LEVEL", "LAST_REFRESHED_TS"],
+            ascending=[True, False],
+            raw_label="All security command recommendations",
+            height=260,
+            max_rows=6,
+        )
+
+
 def _apply_queued_security_workflow() -> None:
     requested_view = st.session_state.pop("security_posture_requested_view", None)
     requested_workflow = st.session_state.pop("security_posture_requested_workflow", None)
@@ -2789,6 +2853,7 @@ def render() -> None:
     _render_security_score_explanation(company, environment)
     _render_security_change_detail(company, environment)
     _render_security_action_approval(company, environment)
+    _render_security_command_findings(company, environment)
 
     days = day_window_selectbox(
         "Security window",

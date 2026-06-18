@@ -44,6 +44,7 @@ build_loaded_section_alert_signal_board = _lazy_util("build_loaded_section_alert
 load_enterprise_operating_rollups = _lazy_util("load_enterprise_operating_rollups")
 load_change_intelligence_summary = _lazy_util("load_change_intelligence_summary")
 load_closed_loop_summary = _lazy_util("load_closed_loop_summary")
+load_command_center_summary = _lazy_util("load_command_center_summary")
 load_executive_scorecard_summary = _lazy_util("load_executive_scorecard_summary")
 load_executive_forecast_summary = _lazy_util("load_executive_forecast_summary")
 load_production_readiness_summary = _lazy_util("load_production_readiness_summary")
@@ -3052,6 +3053,47 @@ def _render_closed_loop_summary(actions: pd.DataFrame) -> None:
     st.dataframe(view, width="stretch", hide_index=True)
 
 
+def _render_command_center_summary(findings: pd.DataFrame) -> None:
+    """Render Phase 2F compact Command Center summary from the summary mart."""
+    if not isinstance(findings, pd.DataFrame) or findings.empty:
+        st.caption("Command Center is pending. Run the executive mart refresh to populate correlated findings.")
+        return
+
+    work = findings.copy()
+    finding_count = pd.to_numeric(work.get("FINDING_COUNT", pd.Series(dtype=float)), errors="coerce").fillna(0)
+    high_risk = pd.to_numeric(work.get("HIGH_RISK_COUNT", pd.Series(dtype=float)), errors="coerce").fillna(0)
+    owner_gap = pd.to_numeric(work.get("OWNER_GAP_COUNT", pd.Series(dtype=float)), errors="coerce").fillna(0)
+    expected_value = pd.to_numeric(work.get("EXPECTED_VALUE_USD", pd.Series(dtype=float)), errors="coerce").fillna(0)
+    work["_SORT_VALUE"] = high_risk * 1000000 + owner_gap * 10000 + expected_value
+    top_row = work.sort_values("_SORT_VALUE", ascending=False, na_position="last").iloc[0]
+
+    st.markdown("**Command Center**")
+    render_shell_snapshot((
+        ("Findings", f"{safe_int(finding_count.sum()):,}"),
+        ("High Risk", f"{safe_int(high_risk.sum()):,}"),
+        ("Owner Gaps", f"{safe_int(owner_gap.sum()):,}"),
+        ("Value/Risk", f"${safe_float(expected_value.sum()):,.0f}"),
+    ))
+    st.caption(
+        f"Top investigation: {top_row.get('INVESTIGATION_TYPE') or 'Command Center'}; "
+        f"{top_row.get('TOP_RECOMMENDED_ACTION') or 'Load the DBA Command Center workspace for evidence.'} "
+        "Findings are deterministic root-cause candidates, not unverified causality claims."
+    )
+    view = work[[
+        column for column in [
+            "INVESTIGATION_TYPE", "QUESTION_TEXT", "FINDING_COUNT",
+            "HIGH_RISK_COUNT", "OWNER_GAP_COUNT", "RELATED_CHANGE_COUNT",
+            "RELATED_ALERT_COUNT", "RELATED_SCORECARD_COUNT",
+            "RELATED_FORECAST_COUNT", "REVIEW_PLAN_COUNT",
+            "EXPECTED_VALUE_USD", "TOP_ROOT_CAUSE_CANDIDATE",
+            "TOP_EVIDENCE_SUMMARY", "TOP_RECOMMENDED_ACTION",
+            "CONFIDENCE", "RISK_LEVEL", "LAST_REFRESHED_TS",
+        ]
+        if column in work.columns
+    ]]
+    st.dataframe(view, width="stretch", hide_index=True)
+
+
 def render() -> None:
     company = _active_company()
     environment = _active_environment()
@@ -3148,6 +3190,9 @@ def render() -> None:
     )
     _render_closed_loop_summary(
         load_closed_loop_summary(company, environment, days=int(days))
+    )
+    _render_command_center_summary(
+        load_command_center_summary(company, environment, days=int(days))
     )
     load = _render_executive_action_brief(summary, int(days), show_strip=False)
     _render_loaded_executive_alert_context()

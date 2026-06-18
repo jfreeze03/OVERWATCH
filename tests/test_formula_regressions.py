@@ -2703,11 +2703,11 @@ class FormulaRegressionTests(unittest.TestCase):
             flags=re.MULTILINE,
         )
 
-        self.assertEqual(len(tables), 89)
+        self.assertEqual(len(tables), 94)
         self.assertEqual(len(views), 3)
         self.assertEqual(len(tasks), 7)
         self.assertEqual(len(functions), 1)
-        self.assertEqual(len(procedures), 15)
+        self.assertEqual(len(procedures), 16)
 
         for table in tables:
             self.assertIn(f"DROP TABLE IF EXISTS {table}", drop_sql)

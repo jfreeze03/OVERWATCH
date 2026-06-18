@@ -27,9 +27,9 @@ def _validation_sql() -> str:
 def _closed_loop_setup_block() -> str:
     sql = _setup_sql()
     start = sql.index("-- Phase 2E: Closed Loop Operations")
-    end = sql.index("-- Existing installs may have been created", start)
+    end = sql.index("-- Phase 2F: Command Center", start)
     proc_start = sql.index("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_CLOSED_LOOP_OPERATIONS")
-    proc_end = sql.index("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_EXECUTIVE_OBSERVABILITY", proc_start)
+    proc_end = sql.index("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_COMMAND_CENTER", proc_start)
     return sql[start:end] + "\n" + sql[proc_start:proc_end]
 
 
@@ -53,8 +53,8 @@ class ClosedLoopOperationsTests(unittest.TestCase):
                 self.assertIn(name, validation)
         self.assertIn("2026.06.18-CLOSED-LOOP-OPERATIONS", setup)
         self.assertIn("CALL SP_OVERWATCH_REFRESH_CLOSED_LOOP_OPERATIONS()", setup)
-        self.assertIn("('TABLE', 89)", validation)
-        self.assertIn("('PROCEDURE', 15)", validation)
+        self.assertIn("('TABLE', 94)", validation)
+        self.assertIn("('PROCEDURE', 16)", validation)
 
     def test_closed_loop_labels_are_constrained(self):
         from utils.closed_loop_operations import (

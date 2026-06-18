@@ -106,6 +106,11 @@ flowchart TD
 - [ ] Closed Loop Operations detail panels load only after explicit operator
   buttons in DBA Control Room, Alert Center, Cost & Contract, Workload
   Operations, and Security Monitoring.
+- [ ] `MART_COMMAND_CENTER_SUMMARY` has recent rows for all six investigation
+  types after `SP_OVERWATCH_REFRESH_COMMAND_CENTER()`.
+- [ ] Command Center detail panels load only after explicit operator buttons in
+  DBA Control Room, Alert Center, Cost & Contract, Workload Operations, and
+  Security Monitoring.
 - [ ] Executive scorecard detail panels are loaded only by explicit operator
   buttons in DBA Control Room, Cost & Contract, Security Monitoring, and Alert
   Center.
@@ -170,3 +175,10 @@ flowchart TD
    `OVERWATCH_ACTION_VERIFICATION`, `OVERWATCH_ACTION_EVIDENCE`, and
    `docs/CLOSED_LOOP_OPERATIONS.md`; action detail stays behind explicit Load
    buttons, generated SQL is review-gated, and no silent execution is allowed.
+9. Phase 2F Command Center is implemented through
+   `MART_COMMAND_CENTER_SUMMARY`, `OVERWATCH_COMMAND_CENTER_FINDING`,
+   `OVERWATCH_COMMAND_CENTER_EVIDENCE`,
+   `OVERWATCH_COMMAND_CENTER_RECOMMENDATION`, and
+   `docs/COMMAND_CENTER.md`; first paint stays compact, detail stays behind
+   explicit Load buttons, deterministic non-AI explanations must exist, and the
+   app must not overclaim causality.

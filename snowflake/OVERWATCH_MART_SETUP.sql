@@ -238,6 +238,22 @@ WHEN MATCHED THEN UPDATE SET
 WHEN NOT MATCHED THEN INSERT (MIGRATION_VERSION, MIGRATION_NAME, SOURCE_FILE, NOTES)
 VALUES (src.MIGRATION_VERSION, src.MIGRATION_NAME, src.SOURCE_FILE, src.NOTES);
 
+MERGE INTO OVERWATCH_SCHEMA_MIGRATION tgt
+USING (
+  SELECT
+    '2026.06.18-command-center' AS MIGRATION_VERSION,
+    'Command Center correlation for cost, performance, alert, ownership, trust, security, change, forecast, value, and action evidence' AS MIGRATION_NAME,
+    'snowflake/OVERWATCH_MART_SETUP.sql' AS SOURCE_FILE,
+    'Adds Phase 2F Command Center. First-paint surfaces read compact command findings; investigation evidence and recommendations remain explicit-load only. Root-cause language is candidate/correlation based and no remediation is executed.' AS NOTES
+) src
+ON tgt.MIGRATION_VERSION = src.MIGRATION_VERSION
+WHEN MATCHED THEN UPDATE SET
+  MIGRATION_NAME = src.MIGRATION_NAME,
+  SOURCE_FILE = src.SOURCE_FILE,
+  NOTES = src.NOTES
+WHEN NOT MATCHED THEN INSERT (MIGRATION_VERSION, MIGRATION_NAME, SOURCE_FILE, NOTES)
+VALUES (src.MIGRATION_VERSION, src.MIGRATION_NAME, src.SOURCE_FILE, src.NOTES);
+
 CREATE TABLE IF NOT EXISTS OVERWATCH_OWNER_TAG_NAMES (
   TAG_NAME             VARCHAR(300) PRIMARY KEY,
   OWNER_TYPE           VARCHAR(100),
@@ -2923,6 +2939,145 @@ CREATE TRANSIENT TABLE IF NOT EXISTS MART_CLOSED_LOOP_OPERATIONS_SUMMARY (
   CONFIDENCE                   VARCHAR(40),
   LAST_REFRESHED_TS            TIMESTAMP_NTZ,
   LOAD_TS                      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+-- -----------------------------------------------------------------------------
+-- Phase 2F: Command Center
+-- -----------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS OVERWATCH_COMMAND_CENTER_QUESTION (
+  QUESTION_KEY                 VARCHAR(100) PRIMARY KEY,
+  INVESTIGATION_TYPE           VARCHAR(100),
+  QUESTION_TEXT                VARCHAR(500),
+  DISPLAY_ORDER                NUMBER,
+  SOURCE_OBJECTS               VARCHAR(1000),
+  DEFAULT_OWNER_ROUTE          VARCHAR(200),
+  DEFAULT_RISK_LEVEL           VARCHAR(40),
+  DEFAULT_CONFIDENCE           VARCHAR(40),
+  DEFAULT_ACTION               VARCHAR(2000),
+  ENABLED                      BOOLEAN DEFAULT TRUE,
+  CREATED_AT                   TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+  UPDATED_AT                   TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+MERGE INTO OVERWATCH_COMMAND_CENTER_QUESTION tgt
+USING (
+  SELECT * FROM VALUES
+    ('COST_SPIKE', 'Cost Spike', 'Why did costs spike?', 10, 'MART_EXECUTIVE_OBSERVABILITY; MART_EXECUTIVE_FORECAST_SUMMARY; MART_EXECUTIVE_VALUE_LEDGER; OVERWATCH_ACTION_WORKFLOW', 'DBA / Cost owner', 'High', 'allocated', 'Open Cost & Contract, confirm the spend driver, route an owner-backed savings action, and verify value after the change.', TRUE),
+    ('WAREHOUSE_SLOW', 'Warehouse Slow', 'Why is this warehouse slow?', 20, 'MART_EXECUTIVE_OBSERVABILITY; MART_EXECUTIVE_FORECAST_SUMMARY; OVERWATCH_ACTION_WORKFLOW', 'DBA / Workload owner', 'High', 'allocated', 'Open Workload Operations, review queue/spill/pressure evidence, and create a review-gated action plan.', TRUE),
+    ('RECENT_CHANGE', 'Recent Change', 'What changed recently?', 30, 'MART_CHANGE_INTELLIGENCE_SUMMARY; OVERWATCH_CHANGE_CORRELATION', 'DBA / Platform', 'Medium', 'estimated', 'Review recent high-risk changes and treat timing/entity matches as possible correlation until proven.', TRUE),
+    ('FAILURE_SLA', 'Failure / SLA', 'Why did this fail?', 40, 'ALERT_EVENTS; MART_EXECUTIVE_OBSERVABILITY; OVERWATCH_ACTION_WORKFLOW', 'DBA On-Call', 'High', 'allocated', 'Open Alert Center and Workload Operations, assign the owner, capture evidence, and verify recovery.', TRUE),
+    ('SECURITY_RISK', 'Security Risk', 'What security risk needs action?', 50, 'ALERT_EVENTS; MART_OPERATIONAL_OWNER_COVERAGE; MART_EXECUTIVE_SCORECARD_SUMMARY; MART_CHANGE_INTELLIGENCE_SUMMARY', 'Security / DBA', 'High', 'allocated', 'Open Security Monitoring, validate ownership gaps, and route approval-gated access actions.', TRUE),
+    ('EXECUTIVE_RISK', 'Executive Risk', 'What should leadership worry about?', 60, 'MART_EXECUTIVE_SCORECARD_SUMMARY; MART_PRODUCTION_READINESS_SUMMARY; MART_DATA_TRUST_SUMMARY; MART_CLOSED_LOOP_OPERATIONS_SUMMARY', 'DBA / Platform', 'Medium', 'estimated', 'Use the scorecard, readiness, trust, and action lifecycle evidence to decide the next operating move.', TRUE)
+  AS t(QUESTION_KEY, INVESTIGATION_TYPE, QUESTION_TEXT, DISPLAY_ORDER, SOURCE_OBJECTS, DEFAULT_OWNER_ROUTE, DEFAULT_RISK_LEVEL, DEFAULT_CONFIDENCE, DEFAULT_ACTION, ENABLED)
+) src
+ON tgt.QUESTION_KEY = src.QUESTION_KEY
+WHEN MATCHED THEN UPDATE SET
+  INVESTIGATION_TYPE = src.INVESTIGATION_TYPE,
+  QUESTION_TEXT = src.QUESTION_TEXT,
+  DISPLAY_ORDER = src.DISPLAY_ORDER,
+  SOURCE_OBJECTS = src.SOURCE_OBJECTS,
+  DEFAULT_OWNER_ROUTE = src.DEFAULT_OWNER_ROUTE,
+  DEFAULT_RISK_LEVEL = src.DEFAULT_RISK_LEVEL,
+  DEFAULT_CONFIDENCE = src.DEFAULT_CONFIDENCE,
+  DEFAULT_ACTION = src.DEFAULT_ACTION,
+  ENABLED = src.ENABLED,
+  UPDATED_AT = CURRENT_TIMESTAMP()
+WHEN NOT MATCHED THEN INSERT (
+  QUESTION_KEY, INVESTIGATION_TYPE, QUESTION_TEXT, DISPLAY_ORDER, SOURCE_OBJECTS,
+  DEFAULT_OWNER_ROUTE, DEFAULT_RISK_LEVEL, DEFAULT_CONFIDENCE, DEFAULT_ACTION, ENABLED
+)
+VALUES (
+  src.QUESTION_KEY, src.INVESTIGATION_TYPE, src.QUESTION_TEXT, src.DISPLAY_ORDER,
+  src.SOURCE_OBJECTS, src.DEFAULT_OWNER_ROUTE, src.DEFAULT_RISK_LEVEL,
+  src.DEFAULT_CONFIDENCE, src.DEFAULT_ACTION, src.ENABLED
+);
+
+CREATE TRANSIENT TABLE IF NOT EXISTS OVERWATCH_COMMAND_CENTER_FINDING (
+  SNAPSHOT_TS                         TIMESTAMP_NTZ,
+  COMPANY                             VARCHAR(100),
+  ENVIRONMENT                         VARCHAR(100),
+  FINDING_ID                          VARCHAR(200),
+  QUESTION_KEY                        VARCHAR(100),
+  INVESTIGATION_TYPE                  VARCHAR(100),
+  QUESTION_TEXT                       VARCHAR(500),
+  ROOT_CAUSE_CANDIDATE                VARCHAR(4000),
+  EVIDENCE_SUMMARY                    VARCHAR(8000),
+  CONFIDENCE                          VARCHAR(40),
+  BUSINESS_IMPACT                     VARCHAR(4000),
+  TECHNICAL_IMPACT                    VARCHAR(4000),
+  OWNER_ROUTE                         VARCHAR(200),
+  OWNER_GAP                           BOOLEAN DEFAULT FALSE,
+  RELATED_CHANGES                     VARCHAR(4000),
+  RELATED_ALERTS                      VARCHAR(4000),
+  RELATED_SCORECARD_DRIVERS           VARCHAR(4000),
+  RELATED_FORECASTS                   VARCHAR(4000),
+  RECOMMENDED_ACTION                  VARCHAR(4000),
+  RISK_LEVEL                          VARCHAR(40),
+  EXECUTION_PLAN_REF                  VARCHAR(200),
+  EXPECTED_SAVINGS_OR_RISK_AVOIDED_USD NUMBER(18,2) DEFAULT 0,
+  VERIFICATION_PATH                   VARCHAR(4000),
+  CAUSALITY_LABEL                     VARCHAR(100),
+  LAST_REFRESHED_TS                   TIMESTAMP_NTZ,
+  LOAD_TS                             TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+CREATE TRANSIENT TABLE IF NOT EXISTS OVERWATCH_COMMAND_CENTER_EVIDENCE (
+  SNAPSHOT_TS                  TIMESTAMP_NTZ,
+  COMPANY                      VARCHAR(100),
+  ENVIRONMENT                  VARCHAR(100),
+  FINDING_ID                   VARCHAR(200),
+  EVIDENCE_ID                  VARCHAR(200),
+  EVIDENCE_TYPE                VARCHAR(100),
+  SOURCE_OBJECT                VARCHAR(500),
+  RELATED_OBJECT               VARCHAR(500),
+  EVIDENCE_SUMMARY             VARCHAR(8000),
+  CONFIDENCE                   VARCHAR(40),
+  CAUSALITY_LABEL              VARCHAR(100),
+  LAST_REFRESHED_TS            TIMESTAMP_NTZ,
+  LOAD_TS                      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+CREATE TRANSIENT TABLE IF NOT EXISTS OVERWATCH_COMMAND_CENTER_RECOMMENDATION (
+  SNAPSHOT_TS                         TIMESTAMP_NTZ,
+  COMPANY                             VARCHAR(100),
+  ENVIRONMENT                         VARCHAR(100),
+  FINDING_ID                          VARCHAR(200),
+  RECOMMENDATION_ID                   VARCHAR(200),
+  RECOMMENDED_ACTION                  VARCHAR(4000),
+  RISK_LEVEL                          VARCHAR(40),
+  OWNER_ROUTE                         VARCHAR(200),
+  EXECUTION_PLAN_REF                  VARCHAR(200),
+  REVIEW_REQUIRED                     BOOLEAN DEFAULT TRUE,
+  EXPECTED_SAVINGS_OR_RISK_AVOIDED_USD NUMBER(18,2) DEFAULT 0,
+  VERIFICATION_PATH                   VARCHAR(4000),
+  SAFETY_NOTE                         VARCHAR(2000),
+  LAST_REFRESHED_TS                   TIMESTAMP_NTZ,
+  LOAD_TS                             TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+CREATE TRANSIENT TABLE IF NOT EXISTS MART_COMMAND_CENTER_SUMMARY (
+  SNAPSHOT_TS                         TIMESTAMP_NTZ,
+  COMPANY                             VARCHAR(100),
+  ENVIRONMENT                         VARCHAR(100),
+  INVESTIGATION_TYPE                  VARCHAR(100),
+  QUESTION_TEXT                       VARCHAR(500),
+  FINDING_COUNT                       NUMBER DEFAULT 0,
+  HIGH_RISK_COUNT                     NUMBER DEFAULT 0,
+  OWNER_GAP_COUNT                     NUMBER DEFAULT 0,
+  RELATED_CHANGE_COUNT                NUMBER DEFAULT 0,
+  RELATED_ALERT_COUNT                 NUMBER DEFAULT 0,
+  RELATED_SCORECARD_COUNT             NUMBER DEFAULT 0,
+  RELATED_FORECAST_COUNT              NUMBER DEFAULT 0,
+  REVIEW_PLAN_COUNT                   NUMBER DEFAULT 0,
+  EXPECTED_VALUE_USD                  NUMBER(18,2) DEFAULT 0,
+  TOP_ROOT_CAUSE_CANDIDATE            VARCHAR(4000),
+  TOP_EVIDENCE_SUMMARY                VARCHAR(8000),
+  TOP_RECOMMENDED_ACTION              VARCHAR(4000),
+  CONFIDENCE                          VARCHAR(40),
+  RISK_LEVEL                          VARCHAR(40),
+  LAST_REFRESHED_TS                   TIMESTAMP_NTZ,
+  LOAD_TS                             TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
 );
 
 -- Existing installs may have been created before environment dimensions and
@@ -8077,6 +8232,619 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_COMMAND_CENTER()
+RETURNS VARCHAR
+LANGUAGE SQL
+AS
+$$
+DECLARE
+  snapshot_ts TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP();
+BEGIN
+  DELETE FROM OVERWATCH_COMMAND_CENTER_FINDING
+  WHERE SNAPSHOT_TS >= DATEADD('HOUR', -4, CURRENT_TIMESTAMP());
+  DELETE FROM OVERWATCH_COMMAND_CENTER_EVIDENCE
+  WHERE SNAPSHOT_TS >= DATEADD('HOUR', -4, CURRENT_TIMESTAMP());
+  DELETE FROM OVERWATCH_COMMAND_CENTER_RECOMMENDATION
+  WHERE SNAPSHOT_TS >= DATEADD('HOUR', -4, CURRENT_TIMESTAMP());
+  DELETE FROM MART_COMMAND_CENTER_SUMMARY
+  WHERE SNAPSHOT_TS >= DATEADD('HOUR', -4, CURRENT_TIMESTAMP());
+
+  DELETE FROM OVERWATCH_COMMAND_CENTER_FINDING
+  WHERE SNAPSHOT_TS < DATEADD('DAY', -180, CURRENT_TIMESTAMP());
+  DELETE FROM OVERWATCH_COMMAND_CENTER_EVIDENCE
+  WHERE SNAPSHOT_TS < DATEADD('DAY', -180, CURRENT_TIMESTAMP());
+  DELETE FROM OVERWATCH_COMMAND_CENTER_RECOMMENDATION
+  WHERE SNAPSHOT_TS < DATEADD('DAY', -180, CURRENT_TIMESTAMP());
+  DELETE FROM MART_COMMAND_CENTER_SUMMARY
+  WHERE SNAPSHOT_TS < DATEADD('DAY', -180, CURRENT_TIMESTAMP());
+
+  INSERT INTO OVERWATCH_COMMAND_CENTER_FINDING (
+    SNAPSHOT_TS, COMPANY, ENVIRONMENT, FINDING_ID, QUESTION_KEY,
+    INVESTIGATION_TYPE, QUESTION_TEXT, ROOT_CAUSE_CANDIDATE,
+    EVIDENCE_SUMMARY, CONFIDENCE, BUSINESS_IMPACT, TECHNICAL_IMPACT,
+    OWNER_ROUTE, OWNER_GAP, RELATED_CHANGES, RELATED_ALERTS,
+    RELATED_SCORECARD_DRIVERS, RELATED_FORECASTS, RECOMMENDED_ACTION,
+    RISK_LEVEL, EXECUTION_PLAN_REF, EXPECTED_SAVINGS_OR_RISK_AVOIDED_USD,
+    VERIFICATION_PATH, CAUSALITY_LABEL, LAST_REFRESHED_TS
+  )
+  WITH
+  companies AS (
+    SELECT COLUMN1::VARCHAR AS COMPANY
+    FROM VALUES ('ALL'), ('ALFA'), ('Trexis')
+  ),
+  questions AS (
+    SELECT *
+    FROM OVERWATCH_COMMAND_CENTER_QUESTION
+    WHERE ENABLED
+  ),
+  spend_delta AS (
+    SELECT *
+    FROM MART_EXECUTIVE_OBSERVABILITY
+    WHERE PANEL = 'KPI'
+      AND METRIC = 'Spend Delta'
+      AND WINDOW_DAYS = 30
+    QUALIFY ROW_NUMBER() OVER (
+      PARTITION BY COMPANY
+      ORDER BY SNAPSHOT_TS DESC, LOAD_TS DESC
+    ) = 1
+  ),
+  queue_pressure AS (
+    SELECT
+      COMPANY,
+      MAX(IFF(METRIC = 'Queue Time', VALUE, NULL)) AS QUEUE_SECONDS,
+      MAX(IFF(METRIC = 'P95 Runtime', VALUE, NULL)) AS P95_SECONDS,
+      MAX(IFF(METRIC = 'Remote Spill', VALUE, NULL)) AS SPILL_GB,
+      MAX(SNAPSHOT_TS) AS SNAPSHOT_TS,
+      MAX(LOAD_TS) AS LOAD_TS
+    FROM MART_EXECUTIVE_OBSERVABILITY
+    WHERE PANEL = 'KPI'
+      AND METRIC IN ('Queue Time', 'P95 Runtime', 'Remote Spill')
+      AND WINDOW_DAYS = 30
+    GROUP BY COMPANY
+  ),
+  failure_obs AS (
+    SELECT
+      COMPANY,
+      MAX(IFF(METRIC = 'Failed Queries', VALUE, NULL)) AS FAILED_QUERIES,
+      MAX(IFF(METRIC = 'Failed Tasks', VALUE, NULL)) AS FAILED_TASKS,
+      MAX(SNAPSHOT_TS) AS SNAPSHOT_TS,
+      MAX(LOAD_TS) AS LOAD_TS
+    FROM MART_EXECUTIVE_OBSERVABILITY
+    WHERE PANEL = 'KPI'
+      AND METRIC IN ('Failed Queries', 'Failed Tasks')
+      AND WINDOW_DAYS = 30
+    GROUP BY COMPANY
+  ),
+  cost_forecast AS (
+    SELECT *
+    FROM MART_EXECUTIVE_FORECAST_SUMMARY
+    WHERE FORECAST_DOMAIN = 'Cost'
+    QUALIFY ROW_NUMBER() OVER (
+      PARTITION BY COMPANY
+      ORDER BY VALUE_AT_RISK_USD DESC, DISPLAY_ORDER, SNAPSHOT_TS DESC, LOAD_TS DESC
+    ) = 1
+  ),
+  workload_forecast AS (
+    SELECT *
+    FROM MART_EXECUTIVE_FORECAST_SUMMARY
+    WHERE FORECAST_DOMAIN IN ('Workload', 'Operations')
+    QUALIFY ROW_NUMBER() OVER (
+      PARTITION BY COMPANY
+      ORDER BY VALUE_AT_RISK_USD DESC, DISPLAY_ORDER, SNAPSHOT_TS DESC, LOAD_TS DESC
+    ) = 1
+  ),
+  scorecard_low AS (
+    SELECT *
+    FROM MART_EXECUTIVE_SCORECARD_SUMMARY
+    QUALIFY ROW_NUMBER() OVER (
+      PARTITION BY COMPANY
+      ORDER BY CURRENT_SCORE ASC, DISPLAY_ORDER, SNAPSHOT_TS DESC, LOAD_TS DESC
+    ) = 1
+  ),
+  cost_score AS (
+    SELECT *
+    FROM MART_EXECUTIVE_SCORECARD_SUMMARY
+    WHERE SCORE_KEY = 'COST_EFFICIENCY'
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY COMPANY ORDER BY SNAPSHOT_TS DESC, LOAD_TS DESC) = 1
+  ),
+  security_score AS (
+    SELECT *
+    FROM MART_EXECUTIVE_SCORECARD_SUMMARY
+    WHERE SCORE_KEY = 'SECURITY'
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY COMPANY ORDER BY SNAPSHOT_TS DESC, LOAD_TS DESC) = 1
+  ),
+  operational_score AS (
+    SELECT *
+    FROM MART_EXECUTIVE_SCORECARD_SUMMARY
+    WHERE SCORE_KEY = 'OPERATIONAL_RISK'
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY COMPANY ORDER BY SNAPSHOT_TS DESC, LOAD_TS DESC) = 1
+  ),
+  change_top AS (
+    SELECT *
+    FROM MART_CHANGE_INTELLIGENCE_SUMMARY
+    QUALIFY ROW_NUMBER() OVER (
+      PARTITION BY COMPANY
+      ORDER BY HIGH_RISK_COUNT DESC, CORRELATION_CANDIDATE_COUNT DESC, LATEST_CHANGE_TS DESC, LOAD_TS DESC
+    ) = 1
+  ),
+  change_security AS (
+    SELECT *
+    FROM MART_CHANGE_INTELLIGENCE_SUMMARY
+    WHERE CHANGE_TYPE IN ('ROLE_CHANGE', 'GRANT_CHANGE', 'NETWORK_POLICY_CHANGE', 'INTEGRATION_CHANGE', 'SECURITY_SENSITIVE_CHANGE')
+    QUALIFY ROW_NUMBER() OVER (
+      PARTITION BY COMPANY
+      ORDER BY HIGH_RISK_COUNT DESC, CORRELATION_CANDIDATE_COUNT DESC, LATEST_CHANGE_TS DESC, LOAD_TS DESC
+    ) = 1
+  ),
+  change_corr AS (
+    SELECT
+      c.COMPANY,
+      COUNT(*) AS CORRELATION_COUNT,
+      MAX(cc.RELATED_TS) AS LATEST_RELATED_TS,
+      MAX(cc.EVIDENCE) AS TOP_EVIDENCE,
+      MAX(cc.CONFIDENCE) AS CONFIDENCE
+    FROM companies c
+    LEFT JOIN OVERWATCH_CHANGE_CORRELATION cc
+      ON (c.COMPANY = 'ALL' OR COALESCE(cc.COMPANY, 'ALL') IN ('ALL', c.COMPANY))
+     AND cc.RELATED_TS >= DATEADD('DAY', -30, CURRENT_TIMESTAMP())
+    GROUP BY c.COMPANY
+  ),
+  alert_rollup AS (
+    SELECT
+      c.COMPANY,
+      SUM(IFF(a.EVENT_ID IS NOT NULL AND UPPER(COALESCE(a.STATUS, 'NEW')) NOT IN ('RESOLVED', 'FIXED', 'IGNORED', 'CLOSED'), 1, 0)) AS OPEN_ALERTS,
+      SUM(IFF(a.EVENT_ID IS NOT NULL AND UPPER(COALESCE(a.SEVERITY, '')) IN ('CRITICAL', 'HIGH'), 1, 0)) AS HIGH_ALERTS,
+      SUM(IFF(a.EVENT_ID IS NOT NULL AND UPPER(COALESCE(a.CATEGORY, '')) LIKE '%COST%', 1, 0)) AS COST_ALERTS,
+      SUM(IFF(a.EVENT_ID IS NOT NULL AND (UPPER(COALESCE(a.CATEGORY, '')) LIKE '%SECURITY%' OR UPPER(COALESCE(a.CATEGORY, '')) LIKE '%ACCESS%'), 1, 0)) AS SECURITY_ALERTS,
+      SUM(IFF(a.EVENT_ID IS NOT NULL AND (UPPER(COALESCE(a.CATEGORY, '')) LIKE '%WORKLOAD%' OR UPPER(COALESCE(a.CATEGORY, '')) LIKE '%RELIABILITY%' OR UPPER(COALESCE(a.CATEGORY, '')) LIKE '%TASK%'), 1, 0)) AS WORKLOAD_ALERTS,
+      MAX(COALESCE(a.LAST_SEEN_AT, a.EVENT_TS, a.DETECTED_AT)) AS LAST_ALERT_TS,
+      MAX(COALESCE(a.EVIDENCE, a.BUSINESS_IMPACT, a.RECOMMENDED_ACTION)) AS ALERT_EVIDENCE
+    FROM companies c
+    LEFT JOIN ALERT_EVENTS a
+      ON (c.COMPANY = 'ALL' OR COALESCE(a.COMPANY, 'ALL') IN ('ALL', c.COMPANY))
+     AND COALESCE(a.LAST_SEEN_AT, a.EVENT_TS, a.DETECTED_AT) >= DATEADD('DAY', -30, CURRENT_TIMESTAMP())
+    GROUP BY c.COMPANY
+  ),
+  owner_gap AS (
+    SELECT *
+    FROM MART_OPERATIONAL_OWNER_COVERAGE
+    QUALIFY ROW_NUMBER() OVER (
+      PARTITION BY COMPANY
+      ORDER BY GAP_ITEMS DESC, TOTAL_ITEMS DESC, SNAPSHOT_TS DESC, LOAD_TS DESC
+    ) = 1
+  ),
+  trust_risk AS (
+    SELECT *
+    FROM MART_DATA_TRUST_SUMMARY
+    QUALIFY ROW_NUMBER() OVER (
+      PARTITION BY COMPANY
+      ORDER BY ISSUE_COUNT DESC, SNAPSHOT_TS DESC, LOAD_TS DESC
+    ) = 1
+  ),
+  readiness AS (
+    SELECT *
+    FROM MART_PRODUCTION_READINESS_SUMMARY
+    QUALIFY ROW_NUMBER() OVER (
+      PARTITION BY COMPANY
+      ORDER BY READINESS_SCORE ASC, LOAD_TS DESC
+    ) = 1
+  ),
+  value_rollup AS (
+    SELECT
+      COMPANY,
+      SUM(COALESCE(EXPECTED_SAVINGS_USD, 0)) AS EXPECTED_SAVINGS_USD,
+      SUM(COALESCE(VERIFIED_SAVINGS_USD, 0)) AS VERIFIED_SAVINGS_USD,
+      SUM(COALESCE(UNVERIFIED_ESTIMATE_USD, 0)) AS UNVERIFIED_ESTIMATE_USD,
+      MAX(NEXT_ACTION) AS NEXT_ACTION,
+      MAX(LOAD_TS) AS LOAD_TS
+    FROM MART_EXECUTIVE_VALUE_LEDGER
+    GROUP BY COMPANY
+  ),
+  closed_loop AS (
+    SELECT
+      COMPANY,
+      ACTION_DOMAIN,
+      SUM(COALESCE(OPEN_ACTION_COUNT, 0)) AS OPEN_ACTION_COUNT,
+      SUM(COALESCE(APPROVAL_REQUIRED_COUNT, 0)) AS APPROVAL_REQUIRED_COUNT,
+      SUM(COALESCE(VERIFICATION_PENDING_COUNT, 0)) AS VERIFICATION_PENDING_COUNT,
+      SUM(COALESCE(EXPECTED_SAVINGS_USD, 0)) AS EXPECTED_SAVINGS_USD,
+      SUM(COALESCE(ACTUAL_VERIFIED_SAVINGS_USD, 0)) AS ACTUAL_VERIFIED_SAVINGS_USD,
+      MAX(TOP_FINDING) AS TOP_FINDING,
+      MAX(NEXT_ACTION) AS NEXT_ACTION,
+      MAX(LAST_REFRESHED_TS) AS LAST_REFRESHED_TS
+    FROM MART_CLOSED_LOOP_OPERATIONS_SUMMARY
+    GROUP BY COMPANY, ACTION_DOMAIN
+  ),
+  action_ref AS (
+    SELECT *
+    FROM OVERWATCH_ACTION_WORKFLOW
+    QUALIFY ROW_NUMBER() OVER (
+      PARTITION BY COMPANY, ACTION_DOMAIN
+      ORDER BY
+        CASE RISK_LEVEL WHEN 'Critical' THEN 0 WHEN 'High' THEN 1 WHEN 'Medium' THEN 2 ELSE 3 END,
+        LAST_REFRESHED_TS DESC,
+        LOAD_TS DESC
+    ) = 1
+  ),
+  findings AS (
+    SELECT
+      :snapshot_ts AS SNAPSHOT_TS,
+      c.COMPANY,
+      'ALL' AS ENVIRONMENT,
+      'CMD:COST_SPIKE:' || c.COMPANY || ':' || TO_VARCHAR(:snapshot_ts, 'YYYYMMDDHH24MISS') AS FINDING_ID,
+      q.QUESTION_KEY,
+      q.INVESTIGATION_TYPE,
+      q.QUESTION_TEXT,
+      'Root-cause candidate: likely driver is spend delta, forecast pressure, or an unverified cost action from compact cost marts.' AS ROOT_CAUSE_CANDIDATE,
+      'Spend delta $' || TO_VARCHAR(ROUND(COALESCE(sd.VALUE_USD, 0), 2))
+        || '; forecast driver: ' || COALESCE(cf.MAIN_DRIVER, 'No cost forecast driver loaded')
+        || '; unverified value $' || TO_VARCHAR(ROUND(COALESCE(v.UNVERIFIED_ESTIMATE_USD, 0), 2)) AS EVIDENCE_SUMMARY,
+      COALESCE(cf.CONFIDENCE, cs.CONFIDENCE, q.DEFAULT_CONFIDENCE) AS CONFIDENCE,
+      'Cost movement can consume contract capacity and create avoidable spend if no owner-backed action is verified.' AS BUSINESS_IMPACT,
+      'Cost pressure is tied to compact spend, forecast, value-ledger, and action-lifecycle signals.' AS TECHNICAL_IMPACT,
+      COALESCE(cs.OWNER_ROUTE, q.DEFAULT_OWNER_ROUTE) AS OWNER_ROUTE,
+      COALESCE(cs.OWNER_GAP, FALSE) AS OWNER_GAP,
+      COALESCE(ct.TOP_OBJECT_NAME, 'No recent cost-related change loaded') AS RELATED_CHANGES,
+      TO_VARCHAR(COALESCE(ar.COST_ALERTS, 0)) || ' cost alert(s)' AS RELATED_ALERTS,
+      COALESCE(cs.TOP_DRIVER, 'No cost score driver loaded') AS RELATED_SCORECARD_DRIVERS,
+      COALESCE(cf.FORECAST_NAME || ': ' || cf.MAIN_DRIVER, 'No cost forecast loaded') AS RELATED_FORECASTS,
+      COALESCE(cl.NEXT_ACTION, q.DEFAULT_ACTION) AS RECOMMENDED_ACTION,
+      CASE
+        WHEN COALESCE(sd.VALUE_USD, 0) > 5000 OR COALESCE(ar.COST_ALERTS, 0) > 0 THEN 'High'
+        WHEN COALESCE(sd.VALUE_USD, 0) > 0 OR COALESCE(cf.VALUE_AT_RISK_USD, 0) > 0 THEN 'Medium'
+        ELSE q.DEFAULT_RISK_LEVEL
+      END AS RISK_LEVEL,
+      arf.WORKFLOW_ID AS EXECUTION_PLAN_REF,
+      GREATEST(COALESCE(cf.VALUE_AT_RISK_USD, 0), COALESCE(v.UNVERIFIED_ESTIMATE_USD, 0), COALESCE(cl.EXPECTED_SAVINGS_USD, 0)) AS EXPECTED_SAVINGS_OR_RISK_AVOIDED_USD,
+      'Verify savings with post-action cost telemetry and value-ledger evidence before counting realized value.' AS VERIFICATION_PATH,
+      'likely driver' AS CAUSALITY_LABEL,
+      GREATEST_IGNORE_NULLS(sd.LOAD_TS, cf.LAST_REFRESHED_TS, cs.LAST_REFRESHED_TS, cl.LAST_REFRESHED_TS, :snapshot_ts) AS LAST_REFRESHED_TS
+    FROM companies c
+    JOIN questions q ON q.QUESTION_KEY = 'COST_SPIKE'
+    LEFT JOIN spend_delta sd ON sd.COMPANY = c.COMPANY
+    LEFT JOIN cost_forecast cf ON cf.COMPANY = c.COMPANY
+    LEFT JOIN cost_score cs ON cs.COMPANY = c.COMPANY
+    LEFT JOIN change_top ct ON ct.COMPANY = c.COMPANY
+    LEFT JOIN alert_rollup ar ON ar.COMPANY = c.COMPANY
+    LEFT JOIN value_rollup v ON v.COMPANY = c.COMPANY
+    LEFT JOIN closed_loop cl ON cl.COMPANY = c.COMPANY AND cl.ACTION_DOMAIN = 'Cost'
+    LEFT JOIN action_ref arf ON arf.COMPANY = c.COMPANY AND arf.ACTION_DOMAIN = 'Cost'
+    UNION ALL
+    SELECT
+      :snapshot_ts,
+      c.COMPANY,
+      'ALL',
+      'CMD:WAREHOUSE_SLOW:' || c.COMPANY || ':' || TO_VARCHAR(:snapshot_ts, 'YYYYMMDDHH24MISS'),
+      q.QUESTION_KEY,
+      q.INVESTIGATION_TYPE,
+      q.QUESTION_TEXT,
+      'Root-cause candidate: likely driver is queue pressure, long P95 runtime, spill, or workload forecast pressure.',
+      'Queue seconds ' || TO_VARCHAR(ROUND(COALESCE(qp.QUEUE_SECONDS, 0), 2))
+        || '; P95 seconds ' || TO_VARCHAR(ROUND(COALESCE(qp.P95_SECONDS, 0), 2))
+        || '; spill GB ' || TO_VARCHAR(ROUND(COALESCE(qp.SPILL_GB, 0), 2))
+        || '; forecast driver: ' || COALESCE(wf.MAIN_DRIVER, 'No workload forecast driver loaded'),
+      COALESCE(wf.CONFIDENCE, os.CONFIDENCE, q.DEFAULT_CONFIDENCE),
+      'Warehouse pressure can delay production workloads, increase cost, and create SLA exposure.',
+      'Performance pressure is tied to compact query, warehouse, forecast, and action-lifecycle signals.',
+      COALESCE(wf.OWNER_ROUTE, os.OWNER_ROUTE, q.DEFAULT_OWNER_ROUTE),
+      COALESCE(wf.OWNER_GAP, os.OWNER_GAP, FALSE),
+      COALESCE(ct.TOP_OBJECT_NAME, 'No related workload change loaded'),
+      TO_VARCHAR(COALESCE(ar.WORKLOAD_ALERTS, 0)) || ' workload alert(s)',
+      COALESCE(os.TOP_DRIVER, 'No operational score driver loaded'),
+      COALESCE(wf.FORECAST_NAME || ': ' || wf.MAIN_DRIVER, 'No workload forecast loaded'),
+      COALESCE(cl.NEXT_ACTION, q.DEFAULT_ACTION),
+      CASE
+        WHEN COALESCE(qp.QUEUE_SECONDS, 0) > 3600 OR COALESCE(ar.WORKLOAD_ALERTS, 0) > 0 THEN 'High'
+        WHEN COALESCE(qp.P95_SECONDS, 0) > 60 OR COALESCE(qp.SPILL_GB, 0) > 0 THEN 'Medium'
+        ELSE q.DEFAULT_RISK_LEVEL
+      END,
+      arf.WORKFLOW_ID,
+      GREATEST(COALESCE(wf.VALUE_AT_RISK_USD, 0), COALESCE(cl.EXPECTED_SAVINGS_USD, 0)),
+      'Verify improvement with queue, runtime, spill, SLA, and post-action telemetry before closure.',
+      'likely driver',
+      GREATEST_IGNORE_NULLS(qp.LOAD_TS, wf.LAST_REFRESHED_TS, os.LAST_REFRESHED_TS, cl.LAST_REFRESHED_TS, :snapshot_ts)
+    FROM companies c
+    JOIN questions q ON q.QUESTION_KEY = 'WAREHOUSE_SLOW'
+    LEFT JOIN queue_pressure qp ON qp.COMPANY = c.COMPANY
+    LEFT JOIN workload_forecast wf ON wf.COMPANY = c.COMPANY
+    LEFT JOIN operational_score os ON os.COMPANY = c.COMPANY
+    LEFT JOIN change_top ct ON ct.COMPANY = c.COMPANY
+    LEFT JOIN alert_rollup ar ON ar.COMPANY = c.COMPANY
+    LEFT JOIN closed_loop cl ON cl.COMPANY = c.COMPANY AND cl.ACTION_DOMAIN = 'Workload'
+    LEFT JOIN action_ref arf ON arf.COMPANY = c.COMPANY AND arf.ACTION_DOMAIN = 'Workload'
+    UNION ALL
+    SELECT
+      :snapshot_ts,
+      c.COMPANY,
+      'ALL',
+      'CMD:RECENT_CHANGE:' || c.COMPANY || ':' || TO_VARCHAR(:snapshot_ts, 'YYYYMMDDHH24MISS'),
+      q.QUESTION_KEY,
+      q.INVESTIGATION_TYPE,
+      q.QUESTION_TEXT,
+      'Root-cause candidate: recent high-risk change or timing/entity proximity is a possible correlation, not proven causality.',
+      'Recent changes ' || TO_VARCHAR(COALESCE(ct.CHANGE_COUNT, 0))
+        || '; high risk ' || TO_VARCHAR(COALESCE(ct.HIGH_RISK_COUNT, 0))
+        || '; possible correlations ' || TO_VARCHAR(COALESCE(cc.CORRELATION_COUNT, 0))
+        || '; evidence: ' || COALESCE(cc.TOP_EVIDENCE, ct.BUSINESS_IMPACT, 'No change evidence loaded'),
+      COALESCE(cc.CONFIDENCE, ct.CONFIDENCE, q.DEFAULT_CONFIDENCE),
+      COALESCE(ct.BUSINESS_IMPACT, 'Recent changes can explain incident timing and owner routing but need validation before causality is claimed.'),
+      'Change intelligence uses object, alert, cost, security, and workload proximity evidence from OVERWATCH marts.',
+      COALESCE(ct.OWNER_ROUTE, q.DEFAULT_OWNER_ROUTE),
+      COALESCE(ct.OWNER_GAP_COUNT, 0) > 0,
+      COALESCE(ct.TOP_OBJECT_NAME, 'No recent change loaded'),
+      TO_VARCHAR(COALESCE(ct.RELATED_ALERT_COUNT, 0)) || ' related alert(s)',
+      COALESCE(sl.TOP_DRIVER, 'No scorecard driver loaded'),
+      COALESCE(wf.FORECAST_NAME || ': ' || wf.MAIN_DRIVER, 'No related forecast loaded'),
+      q.DEFAULT_ACTION,
+      CASE WHEN COALESCE(ct.HIGH_RISK_COUNT, 0) > 0 THEN 'High' WHEN COALESCE(ct.CHANGE_COUNT, 0) > 0 THEN 'Medium' ELSE q.DEFAULT_RISK_LEVEL END,
+      arf.WORKFLOW_ID,
+      COALESCE(sl.VALUE_AT_RISK_USD, 0),
+      'Validate change timing, owner, affected object, and related alert evidence before escalating root-cause status.',
+      'possible correlation',
+      GREATEST_IGNORE_NULLS(ct.LATEST_CHANGE_TS, cc.LATEST_RELATED_TS, sl.LAST_REFRESHED_TS, :snapshot_ts)
+    FROM companies c
+    JOIN questions q ON q.QUESTION_KEY = 'RECENT_CHANGE'
+    LEFT JOIN change_top ct ON ct.COMPANY = c.COMPANY
+    LEFT JOIN change_corr cc ON cc.COMPANY = c.COMPANY
+    LEFT JOIN scorecard_low sl ON sl.COMPANY = c.COMPANY
+    LEFT JOIN workload_forecast wf ON wf.COMPANY = c.COMPANY
+    LEFT JOIN action_ref arf ON arf.COMPANY = c.COMPANY AND arf.ACTION_DOMAIN = 'Operations'
+    UNION ALL
+    SELECT
+      :snapshot_ts,
+      c.COMPANY,
+      'ALL',
+      'CMD:FAILURE_SLA:' || c.COMPANY || ':' || TO_VARCHAR(:snapshot_ts, 'YYYYMMDDHH24MISS'),
+      q.QUESTION_KEY,
+      q.INVESTIGATION_TYPE,
+      q.QUESTION_TEXT,
+      'Root-cause candidate: likely driver is an open alert, failed query/task pattern, or SLA forecast pressure.',
+      'Open alerts ' || TO_VARCHAR(COALESCE(ar.OPEN_ALERTS, 0))
+        || '; high alerts ' || TO_VARCHAR(COALESCE(ar.HIGH_ALERTS, 0))
+        || '; failed queries ' || TO_VARCHAR(ROUND(COALESCE(fo.FAILED_QUERIES, 0), 0))
+        || '; failed tasks ' || TO_VARCHAR(ROUND(COALESCE(fo.FAILED_TASKS, 0), 0)),
+      COALESCE(os.CONFIDENCE, wf.CONFIDENCE, q.DEFAULT_CONFIDENCE),
+      'Failure and SLA risk can delay business workflows and consume DBA response time.',
+      'Failure evidence is tied to alert events, failed query/task facts, forecasts, and closed-loop action state.',
+      COALESCE(os.OWNER_ROUTE, wf.OWNER_ROUTE, q.DEFAULT_OWNER_ROUTE),
+      COALESCE(os.OWNER_GAP, wf.OWNER_GAP, FALSE),
+      COALESCE(ct.TOP_OBJECT_NAME, 'No related failure-time change loaded'),
+      TO_VARCHAR(COALESCE(ar.OPEN_ALERTS, 0)) || ' open alert(s)',
+      COALESCE(os.TOP_DRIVER, 'No operational score driver loaded'),
+      COALESCE(wf.FORECAST_NAME || ': ' || wf.MAIN_DRIVER, 'No SLA forecast loaded'),
+      COALESCE(cl.NEXT_ACTION, q.DEFAULT_ACTION),
+      CASE WHEN COALESCE(ar.HIGH_ALERTS, 0) > 0 OR COALESCE(fo.FAILED_TASKS, 0) > 0 THEN 'High' WHEN COALESCE(ar.OPEN_ALERTS, 0) > 0 THEN 'Medium' ELSE q.DEFAULT_RISK_LEVEL END,
+      arf.WORKFLOW_ID,
+      GREATEST(COALESCE(wf.VALUE_AT_RISK_USD, 0), COALESCE(cl.EXPECTED_SAVINGS_USD, 0)),
+      'Verify recovery with alert closure, task/procedure telemetry, and closed-loop verification evidence.',
+      'likely driver',
+      GREATEST_IGNORE_NULLS(ar.LAST_ALERT_TS, fo.LOAD_TS, os.LAST_REFRESHED_TS, wf.LAST_REFRESHED_TS, cl.LAST_REFRESHED_TS, :snapshot_ts)
+    FROM companies c
+    JOIN questions q ON q.QUESTION_KEY = 'FAILURE_SLA'
+    LEFT JOIN alert_rollup ar ON ar.COMPANY = c.COMPANY
+    LEFT JOIN failure_obs fo ON fo.COMPANY = c.COMPANY
+    LEFT JOIN operational_score os ON os.COMPANY = c.COMPANY
+    LEFT JOIN workload_forecast wf ON wf.COMPANY = c.COMPANY
+    LEFT JOIN change_top ct ON ct.COMPANY = c.COMPANY
+    LEFT JOIN closed_loop cl ON cl.COMPANY = c.COMPANY AND cl.ACTION_DOMAIN = 'Alert'
+    LEFT JOIN action_ref arf ON arf.COMPANY = c.COMPANY AND arf.ACTION_DOMAIN = 'Alert'
+    UNION ALL
+    SELECT
+      :snapshot_ts,
+      c.COMPANY,
+      'ALL',
+      'CMD:SECURITY_RISK:' || c.COMPANY || ':' || TO_VARCHAR(:snapshot_ts, 'YYYYMMDDHH24MISS'),
+      q.QUESTION_KEY,
+      q.INVESTIGATION_TYPE,
+      q.QUESTION_TEXT,
+      'Root-cause candidate: likely driver is security score pressure, security-sensitive change, alert, or ownership gap.',
+      'Security alerts ' || TO_VARCHAR(COALESCE(ar.SECURITY_ALERTS, 0))
+        || '; owner gaps ' || TO_VARCHAR(COALESCE(og.GAP_ITEMS, 0))
+        || '; security change: ' || COALESCE(cs.TOP_OBJECT_NAME, 'No security-sensitive change loaded'),
+      COALESCE(ss.CONFIDENCE, cs.CONFIDENCE, q.DEFAULT_CONFIDENCE),
+      'Security risk can create audit exposure, privilege drift, data exposure, or delayed access remediation.',
+      'Security evidence is tied to scorecard, ownership coverage, security changes, and alert events.',
+      COALESCE(ss.OWNER_ROUTE, cs.OWNER_ROUTE, q.DEFAULT_OWNER_ROUTE),
+      COALESCE(ss.OWNER_GAP, FALSE) OR COALESCE(og.GAP_ITEMS, 0) > 0,
+      COALESCE(cs.TOP_OBJECT_NAME, 'No security-sensitive change loaded'),
+      TO_VARCHAR(COALESCE(ar.SECURITY_ALERTS, 0)) || ' security alert(s)',
+      COALESCE(ss.TOP_DRIVER, 'No security score driver loaded'),
+      'Security forecast not required; deterministic score, change, alert, and owner evidence used.',
+      COALESCE(cl.NEXT_ACTION, q.DEFAULT_ACTION),
+      CASE WHEN COALESCE(ar.SECURITY_ALERTS, 0) > 0 OR COALESCE(ss.STATUS, '') = 'Red' THEN 'High' WHEN COALESCE(og.GAP_ITEMS, 0) > 0 THEN 'Medium' ELSE q.DEFAULT_RISK_LEVEL END,
+      arf.WORKFLOW_ID,
+      GREATEST(COALESCE(ss.VALUE_AT_RISK_USD, 0), COALESCE(cl.EXPECTED_SAVINGS_USD, 0)),
+      'Verify closure with security alert status, grant/access evidence, and approval-gated action verification.',
+      'likely driver',
+      GREATEST_IGNORE_NULLS(ar.LAST_ALERT_TS, ss.LAST_REFRESHED_TS, cs.LATEST_CHANGE_TS, cl.LAST_REFRESHED_TS, :snapshot_ts)
+    FROM companies c
+    JOIN questions q ON q.QUESTION_KEY = 'SECURITY_RISK'
+    LEFT JOIN alert_rollup ar ON ar.COMPANY = c.COMPANY
+    LEFT JOIN security_score ss ON ss.COMPANY = c.COMPANY
+    LEFT JOIN change_security cs ON cs.COMPANY = c.COMPANY
+    LEFT JOIN owner_gap og ON og.COMPANY = c.COMPANY
+    LEFT JOIN closed_loop cl ON cl.COMPANY = c.COMPANY AND cl.ACTION_DOMAIN IN ('Security', 'ALL')
+    LEFT JOIN action_ref arf ON arf.COMPANY = c.COMPANY AND arf.ACTION_DOMAIN = 'Security'
+    UNION ALL
+    SELECT
+      :snapshot_ts,
+      c.COMPANY,
+      'ALL',
+      'CMD:EXECUTIVE_RISK:' || c.COMPANY || ':' || TO_VARCHAR(:snapshot_ts, 'YYYYMMDDHH24MISS'),
+      q.QUESTION_KEY,
+      q.INVESTIGATION_TYPE,
+      q.QUESTION_TEXT,
+      'Root-cause candidate: likely driver is the lowest leadership score, readiness/trust issue, or open action lifecycle risk.',
+      'Lowest score: ' || COALESCE(sl.SCORE_NAME, 'No score loaded')
+        || ' ' || TO_VARCHAR(ROUND(COALESCE(sl.CURRENT_SCORE, 0), 1))
+        || '; readiness ' || TO_VARCHAR(ROUND(COALESCE(pr.READINESS_SCORE, 0), 1))
+        || '; trust issues ' || TO_VARCHAR(COALESCE(tr.ISSUE_COUNT, 0))
+        || '; open actions ' || TO_VARCHAR(COALESCE(cl.OPEN_ACTION_COUNT, 0)),
+      COALESCE(sl.CONFIDENCE, pr.CONFIDENCE, tr.CONFIDENCE, q.DEFAULT_CONFIDENCE),
+      'Executive risk combines health, readiness, trust, owner, value, and action lifecycle exposure for leadership triage.',
+      'Executive evidence is a deterministic rollup of scorecard, readiness, trust, closed-loop, and value ledger marts.',
+      COALESCE(sl.OWNER_ROUTE, pr.NEXT_ACTION, q.DEFAULT_OWNER_ROUTE),
+      COALESCE(sl.OWNER_GAP, FALSE) OR COALESCE(cl.OPEN_ACTION_COUNT, 0) > 0 AND COALESCE(cl.TOP_FINDING, '') ILIKE '%Owner gap%',
+      COALESCE(ct.TOP_OBJECT_NAME, 'No change driver loaded'),
+      TO_VARCHAR(COALESCE(ar.OPEN_ALERTS, 0)) || ' open alert(s)',
+      COALESCE(sl.TOP_DRIVER, 'No leadership score driver loaded'),
+      COALESCE(wf.FORECAST_NAME || ': ' || wf.MAIN_DRIVER, 'No executive forecast loaded'),
+      COALESCE(cl.NEXT_ACTION, sl.RECOMMENDED_ACTION, q.DEFAULT_ACTION),
+      CASE WHEN COALESCE(sl.STATUS, '') = 'Red' OR COALESCE(pr.VALIDATION_STATUS, '') = 'Blocked' THEN 'High' WHEN COALESCE(tr.ISSUE_COUNT, 0) > 0 THEN 'Medium' ELSE q.DEFAULT_RISK_LEVEL END,
+      arf.WORKFLOW_ID,
+      GREATEST(COALESCE(sl.VALUE_AT_RISK_USD, 0), COALESCE(wf.VALUE_AT_RISK_USD, 0), COALESCE(cl.EXPECTED_SAVINGS_USD, 0), COALESCE(v.UNVERIFIED_ESTIMATE_USD, 0)),
+      'Verify leadership risk reduction through score movement, readiness validation, trust freshness, and closed-loop closure evidence.',
+      'likely driver',
+      GREATEST_IGNORE_NULLS(sl.LAST_REFRESHED_TS, pr.LAST_VALIDATION_TS, tr.LOAD_TS, cl.LAST_REFRESHED_TS, wf.LAST_REFRESHED_TS, :snapshot_ts)
+    FROM companies c
+    JOIN questions q ON q.QUESTION_KEY = 'EXECUTIVE_RISK'
+    LEFT JOIN scorecard_low sl ON sl.COMPANY = c.COMPANY
+    LEFT JOIN readiness pr ON pr.COMPANY = c.COMPANY
+    LEFT JOIN trust_risk tr ON tr.COMPANY = c.COMPANY
+    LEFT JOIN closed_loop cl ON cl.COMPANY = c.COMPANY AND cl.ACTION_DOMAIN = 'ALL'
+    LEFT JOIN value_rollup v ON v.COMPANY = c.COMPANY
+    LEFT JOIN alert_rollup ar ON ar.COMPANY = c.COMPANY
+    LEFT JOIN change_top ct ON ct.COMPANY = c.COMPANY
+    LEFT JOIN workload_forecast wf ON wf.COMPANY = c.COMPANY
+    LEFT JOIN action_ref arf ON arf.COMPANY = c.COMPANY AND arf.ACTION_DOMAIN = 'ALL'
+  )
+  SELECT * FROM findings;
+
+  INSERT INTO OVERWATCH_COMMAND_CENTER_EVIDENCE (
+    SNAPSHOT_TS, COMPANY, ENVIRONMENT, FINDING_ID, EVIDENCE_ID,
+    EVIDENCE_TYPE, SOURCE_OBJECT, RELATED_OBJECT, EVIDENCE_SUMMARY,
+    CONFIDENCE, CAUSALITY_LABEL, LAST_REFRESHED_TS
+  )
+  SELECT
+    SNAPSHOT_TS,
+    COMPANY,
+    ENVIRONMENT,
+    FINDING_ID,
+    FINDING_ID || ':SUMMARY',
+    'DETERMINISTIC_SUMMARY',
+    CASE INVESTIGATION_TYPE
+      WHEN 'Cost Spike' THEN 'MART_EXECUTIVE_OBSERVABILITY; MART_EXECUTIVE_FORECAST_SUMMARY; MART_EXECUTIVE_VALUE_LEDGER'
+      WHEN 'Warehouse Slow' THEN 'MART_EXECUTIVE_OBSERVABILITY; MART_EXECUTIVE_FORECAST_SUMMARY'
+      WHEN 'Recent Change' THEN 'MART_CHANGE_INTELLIGENCE_SUMMARY; OVERWATCH_CHANGE_CORRELATION'
+      WHEN 'Failure / SLA' THEN 'ALERT_EVENTS; MART_EXECUTIVE_OBSERVABILITY'
+      WHEN 'Security Risk' THEN 'MART_EXECUTIVE_SCORECARD_SUMMARY; MART_CHANGE_INTELLIGENCE_SUMMARY; ALERT_EVENTS'
+      ELSE 'MART_EXECUTIVE_SCORECARD_SUMMARY; MART_PRODUCTION_READINESS_SUMMARY; MART_DATA_TRUST_SUMMARY'
+    END,
+    COALESCE(EXECUTION_PLAN_REF, FINDING_ID),
+    EVIDENCE_SUMMARY,
+    CONFIDENCE,
+    CAUSALITY_LABEL,
+    LAST_REFRESHED_TS
+  FROM OVERWATCH_COMMAND_CENTER_FINDING
+  WHERE SNAPSHOT_TS = :snapshot_ts;
+
+  INSERT INTO OVERWATCH_COMMAND_CENTER_RECOMMENDATION (
+    SNAPSHOT_TS, COMPANY, ENVIRONMENT, FINDING_ID, RECOMMENDATION_ID,
+    RECOMMENDED_ACTION, RISK_LEVEL, OWNER_ROUTE, EXECUTION_PLAN_REF,
+    REVIEW_REQUIRED, EXPECTED_SAVINGS_OR_RISK_AVOIDED_USD,
+    VERIFICATION_PATH, SAFETY_NOTE, LAST_REFRESHED_TS
+  )
+  SELECT
+    SNAPSHOT_TS,
+    COMPANY,
+    ENVIRONMENT,
+    FINDING_ID,
+    FINDING_ID || ':RECOMMENDATION',
+    RECOMMENDED_ACTION,
+    RISK_LEVEL,
+    OWNER_ROUTE,
+    EXECUTION_PLAN_REF,
+    TRUE,
+    EXPECTED_SAVINGS_OR_RISK_AVOIDED_USD,
+    VERIFICATION_PATH,
+    'Command Center recommendations are review-gated through Closed Loop Operations. OVERWATCH does not execute dangerous SQL or silent remediation from this workflow.',
+    LAST_REFRESHED_TS
+  FROM OVERWATCH_COMMAND_CENTER_FINDING
+  WHERE SNAPSHOT_TS = :snapshot_ts;
+
+  INSERT INTO MART_COMMAND_CENTER_SUMMARY (
+    SNAPSHOT_TS, COMPANY, ENVIRONMENT, INVESTIGATION_TYPE, QUESTION_TEXT,
+    FINDING_COUNT, HIGH_RISK_COUNT, OWNER_GAP_COUNT, RELATED_CHANGE_COUNT,
+    RELATED_ALERT_COUNT, RELATED_SCORECARD_COUNT, RELATED_FORECAST_COUNT,
+    REVIEW_PLAN_COUNT, EXPECTED_VALUE_USD, TOP_ROOT_CAUSE_CANDIDATE,
+    TOP_EVIDENCE_SUMMARY, TOP_RECOMMENDED_ACTION, CONFIDENCE, RISK_LEVEL,
+    LAST_REFRESHED_TS
+  )
+  WITH ranked AS (
+    SELECT
+      f.*,
+      ROW_NUMBER() OVER (
+        PARTITION BY COMPANY, ENVIRONMENT, INVESTIGATION_TYPE
+        ORDER BY
+          CASE RISK_LEVEL WHEN 'Critical' THEN 0 WHEN 'High' THEN 1 WHEN 'Medium' THEN 2 ELSE 3 END,
+          EXPECTED_SAVINGS_OR_RISK_AVOIDED_USD DESC,
+          LAST_REFRESHED_TS DESC
+      ) AS RN
+    FROM OVERWATCH_COMMAND_CENTER_FINDING f
+    WHERE SNAPSHOT_TS = :snapshot_ts
+  ),
+  agg AS (
+    SELECT
+      COMPANY,
+      ENVIRONMENT,
+      INVESTIGATION_TYPE,
+      MAX(QUESTION_TEXT) AS QUESTION_TEXT,
+      COUNT(*) AS FINDING_COUNT,
+      COUNT_IF(RISK_LEVEL IN ('Critical', 'High')) AS HIGH_RISK_COUNT,
+      COUNT_IF(OWNER_GAP) AS OWNER_GAP_COUNT,
+      COUNT_IF(COALESCE(RELATED_CHANGES, '') NOT ILIKE 'No %') AS RELATED_CHANGE_COUNT,
+      SUM(TRY_TO_NUMBER(REGEXP_SUBSTR(COALESCE(RELATED_ALERTS, '0'), '^[0-9]+'))) AS RELATED_ALERT_COUNT,
+      COUNT_IF(COALESCE(RELATED_SCORECARD_DRIVERS, '') NOT ILIKE 'No %') AS RELATED_SCORECARD_COUNT,
+      COUNT_IF(COALESCE(RELATED_FORECASTS, '') NOT ILIKE 'No %') AS RELATED_FORECAST_COUNT,
+      COUNT_IF(COALESCE(EXECUTION_PLAN_REF, '') <> '') AS REVIEW_PLAN_COUNT,
+      SUM(COALESCE(EXPECTED_SAVINGS_OR_RISK_AVOIDED_USD, 0)) AS EXPECTED_VALUE_USD,
+      MIN(CASE RISK_LEVEL WHEN 'Critical' THEN 0 WHEN 'High' THEN 1 WHEN 'Medium' THEN 2 ELSE 3 END) AS RISK_RANK,
+      MAX(LAST_REFRESHED_TS) AS LAST_REFRESHED_TS
+    FROM OVERWATCH_COMMAND_CENTER_FINDING
+    WHERE SNAPSHOT_TS = :snapshot_ts
+    GROUP BY COMPANY, ENVIRONMENT, INVESTIGATION_TYPE
+  )
+  SELECT
+    :snapshot_ts,
+    a.COMPANY,
+    a.ENVIRONMENT,
+    a.INVESTIGATION_TYPE,
+    a.QUESTION_TEXT,
+    a.FINDING_COUNT,
+    a.HIGH_RISK_COUNT,
+    a.OWNER_GAP_COUNT,
+    a.RELATED_CHANGE_COUNT,
+    COALESCE(a.RELATED_ALERT_COUNT, 0),
+    a.RELATED_SCORECARD_COUNT,
+    a.RELATED_FORECAST_COUNT,
+    a.REVIEW_PLAN_COUNT,
+    a.EXPECTED_VALUE_USD,
+    r.ROOT_CAUSE_CANDIDATE,
+    r.EVIDENCE_SUMMARY,
+    r.RECOMMENDED_ACTION,
+    r.CONFIDENCE,
+    CASE a.RISK_RANK WHEN 0 THEN 'Critical' WHEN 1 THEN 'High' WHEN 2 THEN 'Medium' ELSE 'Low' END,
+    a.LAST_REFRESHED_TS
+  FROM agg a
+  JOIN ranked r
+    ON r.COMPANY = a.COMPANY
+   AND r.ENVIRONMENT = a.ENVIRONMENT
+   AND r.INVESTIGATION_TYPE = a.INVESTIGATION_TYPE
+   AND r.RN = 1;
+
+  INSERT INTO OVERWATCH_LOAD_AUDIT (LOAD_NAME, LOAD_STARTED_AT, LOAD_FINISHED_AT, STATUS, MESSAGE)
+  VALUES (
+    'SP_OVERWATCH_REFRESH_COMMAND_CENTER',
+    :snapshot_ts,
+    CURRENT_TIMESTAMP(),
+    'SUCCESS',
+    'Refreshed Command Center findings, evidence, recommendations, and compact summary rows. Recommendations are review-gated and no remediation SQL was executed.'
+  );
+
+  RETURN 'OVERWATCH Command Center refreshed without executing remediation.';
+END;
+$$;
+
 CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_EXECUTIVE_OBSERVABILITY()
 RETURNS VARCHAR
 LANGUAGE SQL
@@ -8524,6 +9292,7 @@ BEGIN
   CALL SP_OVERWATCH_REFRESH_FORECASTING();
   CALL SP_OVERWATCH_REFRESH_CHANGE_INTELLIGENCE();
   CALL SP_OVERWATCH_REFRESH_CLOSED_LOOP_OPERATIONS();
+  CALL SP_OVERWATCH_REFRESH_COMMAND_CENTER();
 
   RETURN 'OVERWATCH executive observability mart refreshed.';
 END;
@@ -8990,7 +9759,9 @@ SELECT 'MART_EXECUTIVE_FORECAST_SUMMARY', COUNT(*) FROM MART_EXECUTIVE_FORECAST_
 UNION ALL
 SELECT 'MART_CHANGE_INTELLIGENCE_SUMMARY', COUNT(*) FROM MART_CHANGE_INTELLIGENCE_SUMMARY
 UNION ALL
-SELECT 'MART_CLOSED_LOOP_OPERATIONS_SUMMARY', COUNT(*) FROM MART_CLOSED_LOOP_OPERATIONS_SUMMARY;
+SELECT 'MART_CLOSED_LOOP_OPERATIONS_SUMMARY', COUNT(*) FROM MART_CLOSED_LOOP_OPERATIONS_SUMMARY
+UNION ALL
+SELECT 'MART_COMMAND_CENTER_SUMMARY', COUNT(*) FROM MART_COMMAND_CENTER_SUMMARY;
 
 
 
@@ -9007,3 +9778,4 @@ CALL SP_OVERWATCH_REFRESH_EXECUTIVE_SCORECARD();
 CALL SP_OVERWATCH_REFRESH_FORECASTING();
 CALL SP_OVERWATCH_REFRESH_CHANGE_INTELLIGENCE();
 CALL SP_OVERWATCH_REFRESH_CLOSED_LOOP_OPERATIONS();
+CALL SP_OVERWATCH_REFRESH_COMMAND_CENTER();

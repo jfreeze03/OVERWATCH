@@ -125,6 +125,9 @@ load_change_event_detail = _lazy_util("load_change_event_detail")
 load_closed_loop_execution_plan_detail = _lazy_util("load_closed_loop_execution_plan_detail")
 load_closed_loop_verification_detail = _lazy_util("load_closed_loop_verification_detail")
 load_closed_loop_workflow_detail = _lazy_util("load_closed_loop_workflow_detail")
+load_command_center_evidence_detail = _lazy_util("load_command_center_evidence_detail")
+load_command_center_finding_detail = _lazy_util("load_command_center_finding_detail")
+load_command_center_recommendation_detail = _lazy_util("load_command_center_recommendation_detail")
 load_data_trust_detail = _lazy_util("load_data_trust_detail")
 load_executive_scorecard_detail = _lazy_util("load_executive_scorecard_detail")
 load_forecast_detail = _lazy_util("load_forecast_detail")
@@ -629,6 +632,111 @@ def _render_closed_loop_operations_gate(company: str, environment: str) -> None:
                 sort_by=["ACTUAL_VERIFIED_SAVINGS_USD", "EXPECTED_SAVINGS_USD", "LAST_REFRESHED_TS"],
                 ascending=[False, False, False],
                 raw_label="All closed-loop verification rows",
+                height=300,
+                max_rows=10,
+            )
+
+
+def _render_command_center_investigation_gate(company: str, environment: str) -> None:
+    """Expose Phase 2F correlated investigations only behind Load."""
+    st.markdown("**Command Center Investigations**")
+    st.caption(
+        "Loads deterministic root-cause candidates, evidence, and review-gated recommendations from Command Center marts. "
+        "Possible correlations are not causality claims and no remediation is executed."
+    )
+    if st.button("Load Command Center Investigations", key="dba_load_command_center_investigations", width="stretch"):
+        st.session_state["dba_command_center_findings"] = load_command_center_finding_detail(
+            company,
+            environment,
+            days=180,
+        )
+        st.session_state["dba_command_center_evidence"] = load_command_center_evidence_detail(
+            company,
+            environment,
+            days=180,
+        )
+        st.session_state["dba_command_center_recommendations"] = load_command_center_recommendation_detail(
+            company,
+            environment,
+            days=180,
+        )
+        st.session_state["dba_command_center_scope"] = (company, environment)
+
+    if st.session_state.get("dba_command_center_scope") != (company, environment):
+        return
+
+    findings = st.session_state.get("dba_command_center_findings")
+    evidence = st.session_state.get("dba_command_center_evidence")
+    recommendations = st.session_state.get("dba_command_center_recommendations")
+    if isinstance(findings, pd.DataFrame):
+        if findings.empty:
+            st.info("No Command Center findings are available for this scope yet.")
+        else:
+            risk = findings.get("RISK_LEVEL", pd.Series(dtype=str)).fillna("").astype(str)
+            owner_gap = pd.to_numeric(findings.get("OWNER_GAP", pd.Series(dtype=float)), errors="coerce").fillna(0)
+            value = pd.to_numeric(
+                findings.get("EXPECTED_SAVINGS_OR_RISK_AVOIDED_USD", pd.Series(dtype=float)),
+                errors="coerce",
+            ).fillna(0)
+            render_shell_snapshot((
+                ("Findings", f"{len(findings):,}"),
+                ("High Risk", f"{safe_int(risk.isin(['Critical', 'High']).sum()):,}"),
+                ("Owner Gaps", f"{safe_int(owner_gap.sum()):,}"),
+                ("Value/Risk", f"${safe_float(value.sum()):,.0f}"),
+            ))
+            render_priority_dataframe(
+                findings,
+                title="Command Center root-cause candidates",
+                priority_columns=[
+                    "INVESTIGATION_TYPE", "QUESTION_TEXT", "ROOT_CAUSE_CANDIDATE",
+                    "CAUSALITY_LABEL", "EVIDENCE_SUMMARY", "CONFIDENCE",
+                    "BUSINESS_IMPACT", "TECHNICAL_IMPACT", "OWNER_ROUTE",
+                    "OWNER_GAP", "RELATED_CHANGES", "RELATED_ALERTS",
+                    "RELATED_SCORECARD_DRIVERS", "RELATED_FORECASTS",
+                    "RECOMMENDED_ACTION", "RISK_LEVEL", "EXECUTION_PLAN_REF",
+                    "EXPECTED_SAVINGS_OR_RISK_AVOIDED_USD", "VERIFICATION_PATH",
+                    "LAST_REFRESHED_TS",
+                ],
+                sort_by=["RISK_LEVEL", "EXPECTED_SAVINGS_OR_RISK_AVOIDED_USD", "LAST_REFRESHED_TS"],
+                ascending=[True, False, False],
+                raw_label="All Command Center finding rows",
+                height=340,
+                max_rows=12,
+            )
+    if isinstance(evidence, pd.DataFrame):
+        if evidence.empty:
+            st.info("No Command Center evidence rows are available for this scope yet.")
+        else:
+            render_priority_dataframe(
+                evidence,
+                title="Command Center evidence trail",
+                priority_columns=[
+                    "INVESTIGATION_TYPE", "EVIDENCE_TYPE", "SOURCE_OBJECT",
+                    "RELATED_OBJECT", "EVIDENCE_SUMMARY", "CONFIDENCE",
+                    "CAUSALITY_LABEL", "LAST_REFRESHED_TS",
+                ],
+                sort_by=["LAST_REFRESHED_TS"],
+                ascending=False,
+                raw_label="All Command Center evidence rows",
+                height=300,
+                max_rows=10,
+            )
+    if isinstance(recommendations, pd.DataFrame):
+        if recommendations.empty:
+            st.info("No Command Center recommendations are available for this scope yet.")
+        else:
+            render_priority_dataframe(
+                recommendations,
+                title="Review-gated Command Center recommendations",
+                priority_columns=[
+                    "INVESTIGATION_TYPE", "RECOMMENDED_ACTION", "RISK_LEVEL",
+                    "OWNER_ROUTE", "EXECUTION_PLAN_REF", "REVIEW_REQUIRED",
+                    "EXPECTED_SAVINGS_OR_RISK_AVOIDED_USD", "VERIFICATION_PATH",
+                    "SAFETY_NOTE", "LAST_REFRESHED_TS",
+                ],
+                sort_by=["RISK_LEVEL", "EXPECTED_SAVINGS_OR_RISK_AVOIDED_USD", "LAST_REFRESHED_TS"],
+                ascending=[True, False, False],
+                raw_label="All Command Center recommendation rows",
                 height=300,
                 max_rows=10,
             )
@@ -6627,6 +6735,7 @@ def render() -> None:
     _render_forecast_exception_gate(company, environment)
     _render_change_intelligence_gate(company, environment)
     _render_closed_loop_operations_gate(company, environment)
+    _render_command_center_investigation_gate(company, environment)
 
     if st.button(load_label, key="dba_control_room_load", type="primary"):
         _load_control_room_evidence()

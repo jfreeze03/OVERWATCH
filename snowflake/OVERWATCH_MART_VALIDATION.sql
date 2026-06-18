@@ -55,7 +55,12 @@ WITH required_objects AS (
         ('TABLE', 'OVERWATCH_ACTION_EXECUTION_PLAN'),
         ('TABLE', 'OVERWATCH_ACTION_VERIFICATION'),
         ('TABLE', 'OVERWATCH_ACTION_EVIDENCE'),
-        ('TABLE', 'MART_CLOSED_LOOP_OPERATIONS_SUMMARY')
+        ('TABLE', 'MART_CLOSED_LOOP_OPERATIONS_SUMMARY'),
+        ('TABLE', 'OVERWATCH_COMMAND_CENTER_QUESTION'),
+        ('TABLE', 'OVERWATCH_COMMAND_CENTER_FINDING'),
+        ('TABLE', 'OVERWATCH_COMMAND_CENTER_EVIDENCE'),
+        ('TABLE', 'OVERWATCH_COMMAND_CENTER_RECOMMENDATION'),
+        ('TABLE', 'MART_COMMAND_CENTER_SUMMARY')
     AS t(REQUIRED_TYPE, REQUIRED_OBJECT)
 ),
 existing_objects AS (
@@ -79,9 +84,9 @@ ORDER BY VALIDATION_STATUS DESC, REQUIRED_TYPE, REQUIRED_OBJECT;
 -- 2) Deployable object count contract.
 WITH expected_counts AS (
     SELECT * FROM VALUES
-        ('TABLE', 89),
+        ('TABLE', 94),
         ('VIEW', 3),
-        ('PROCEDURE', 15),
+        ('PROCEDURE', 16),
         ('FUNCTION', 1)
     AS t(OBJECT_TYPE, EXPECTED_COUNT)
 ),
@@ -221,7 +226,8 @@ WITH refresh_contract AS (
         ('EXECUTIVE_SCORECARD', 'Executive Landing / DBA Control Room / Cost & Contract / Security Monitoring / Alert Center', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_EXECUTIVE_SCORECARD_SUMMARY; OVERWATCH_EXECUTIVE_SCORECARD_HISTORY', 180, TRUE, FALSE, 'Leadership scorecard reads compact score summaries first; driver history is explicit Load by section.', 'DBA / Platform'),
         ('EXECUTIVE_FORECASTING', 'Executive Landing / DBA Control Room / Cost & Contract / Workload Operations', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_EXECUTIVE_FORECAST_SUMMARY; OVERWATCH_FORECAST_HISTORY', 180, TRUE, FALSE, 'Leadership forecasts read compact summary rows first; historical drivers and evidence are explicit Load by section.', 'DBA / Cost owner'),
         ('CHANGE_INTELLIGENCE', 'Executive Landing / DBA Control Room / Cost & Contract / Workload Operations / Security Monitoring / Alert Center', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_CHANGE_INTELLIGENCE_SUMMARY; OVERWATCH_CHANGE_EVENT; OVERWATCH_CHANGE_CORRELATION', 180, TRUE, FALSE, 'Executive Landing reads compact change-risk summaries first; event evidence and possible correlations are explicit Load by section.', 'DBA / Platform'),
-        ('CLOSED_LOOP_OPERATIONS', 'Executive Landing / DBA Control Room / Alert Center / Cost & Contract / Workload Operations / Security Monitoring', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_CLOSED_LOOP_OPERATIONS_SUMMARY; OVERWATCH_ACTION_WORKFLOW; OVERWATCH_ACTION_APPROVAL; OVERWATCH_ACTION_EXECUTION_PLAN; OVERWATCH_ACTION_VERIFICATION; OVERWATCH_ACTION_EVIDENCE', 180, TRUE, FALSE, 'Executive Landing reads compact action lifecycle summaries first; approval, review SQL, evidence, and verification detail are explicit Load by section. No remediation SQL is executed.', 'DBA / Platform')
+        ('CLOSED_LOOP_OPERATIONS', 'Executive Landing / DBA Control Room / Alert Center / Cost & Contract / Workload Operations / Security Monitoring', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_CLOSED_LOOP_OPERATIONS_SUMMARY; OVERWATCH_ACTION_WORKFLOW; OVERWATCH_ACTION_APPROVAL; OVERWATCH_ACTION_EXECUTION_PLAN; OVERWATCH_ACTION_VERIFICATION; OVERWATCH_ACTION_EVIDENCE', 180, TRUE, FALSE, 'Executive Landing reads compact action lifecycle summaries first; approval, review SQL, evidence, and verification detail are explicit Load by section. No remediation SQL is executed.', 'DBA / Platform'),
+        ('COMMAND_CENTER', 'Executive Landing / DBA Control Room / Alert Center / Cost & Contract / Workload Operations / Security Monitoring', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_COMMAND_CENTER_SUMMARY; OVERWATCH_COMMAND_CENTER_FINDING; OVERWATCH_COMMAND_CENTER_EVIDENCE; OVERWATCH_COMMAND_CENTER_RECOMMENDATION', 180, TRUE, FALSE, 'Executive Landing reads compact command findings first; investigation evidence and recommendations are explicit Load by section. No remediation SQL is executed.', 'DBA / Platform')
     AS t(
         POLICY_NAME, SURFACE, SOURCE_CLASS, TARGET_FRESHNESS_MIN, REFRESH_METHOD,
         BASE_OBJECT, RETENTION_DAYS, RUN_IN_FIRST_PAINT, APPROVED_LIVE_FALLBACK,
@@ -260,7 +266,8 @@ WITH refresh_contract AS (
         ('EXECUTIVE_SCORECARD', 'Executive Landing / DBA Control Room / Cost & Contract / Security Monitoring / Alert Center', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_EXECUTIVE_SCORECARD_SUMMARY; OVERWATCH_EXECUTIVE_SCORECARD_HISTORY', 180, TRUE, FALSE),
         ('EXECUTIVE_FORECASTING', 'Executive Landing / DBA Control Room / Cost & Contract / Workload Operations', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_EXECUTIVE_FORECAST_SUMMARY; OVERWATCH_FORECAST_HISTORY', 180, TRUE, FALSE),
         ('CHANGE_INTELLIGENCE', 'Executive Landing / DBA Control Room / Cost & Contract / Workload Operations / Security Monitoring / Alert Center', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_CHANGE_INTELLIGENCE_SUMMARY; OVERWATCH_CHANGE_EVENT; OVERWATCH_CHANGE_CORRELATION', 180, TRUE, FALSE),
-        ('CLOSED_LOOP_OPERATIONS', 'Executive Landing / DBA Control Room / Alert Center / Cost & Contract / Workload Operations / Security Monitoring', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_CLOSED_LOOP_OPERATIONS_SUMMARY; OVERWATCH_ACTION_WORKFLOW; OVERWATCH_ACTION_APPROVAL; OVERWATCH_ACTION_EXECUTION_PLAN; OVERWATCH_ACTION_VERIFICATION; OVERWATCH_ACTION_EVIDENCE', 180, TRUE, FALSE)
+        ('CLOSED_LOOP_OPERATIONS', 'Executive Landing / DBA Control Room / Alert Center / Cost & Contract / Workload Operations / Security Monitoring', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_CLOSED_LOOP_OPERATIONS_SUMMARY; OVERWATCH_ACTION_WORKFLOW; OVERWATCH_ACTION_APPROVAL; OVERWATCH_ACTION_EXECUTION_PLAN; OVERWATCH_ACTION_VERIFICATION; OVERWATCH_ACTION_EVIDENCE', 180, TRUE, FALSE),
+        ('COMMAND_CENTER', 'Executive Landing / DBA Control Room / Alert Center / Cost & Contract / Workload Operations / Security Monitoring', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_COMMAND_CENTER_SUMMARY; OVERWATCH_COMMAND_CENTER_FINDING; OVERWATCH_COMMAND_CENTER_EVIDENCE; OVERWATCH_COMMAND_CENTER_RECOMMENDATION', 180, TRUE, FALSE)
     AS t(
         POLICY_NAME, SURFACE, SOURCE_CLASS, TARGET_FRESHNESS_MIN, REFRESH_METHOD,
         BASE_OBJECT, RETENTION_DAYS, RUN_IN_FIRST_PAINT, APPROVED_LIVE_FALLBACK
@@ -321,6 +328,11 @@ freshness AS (
         'Executive Landing / DBA Control Room / Alert Center / Cost & Contract / Workload Operations / Security Monitoring' AS SURFACE,
         MAX(SNAPSHOT_TS) AS LATEST_REFRESH_TS
     FROM MART_CLOSED_LOOP_OPERATIONS_SUMMARY
+    UNION ALL
+    SELECT
+        'Executive Landing / DBA Control Room / Alert Center / Cost & Contract / Workload Operations / Security Monitoring' AS SURFACE,
+        MAX(SNAPSHOT_TS) AS LATEST_REFRESH_TS
+    FROM MART_COMMAND_CENTER_SUMMARY
 ),
 freshness_agg AS (
     SELECT SURFACE, MAX(LATEST_REFRESH_TS) AS LATEST_REFRESH_TS
@@ -497,7 +509,9 @@ SELECT 'MART_EXECUTIVE_FORECAST_SUMMARY', COUNT(*), MAX(SNAPSHOT_TS) FROM MART_E
 UNION ALL
 SELECT 'MART_CHANGE_INTELLIGENCE_SUMMARY', COUNT(*), MAX(SNAPSHOT_TS) FROM MART_CHANGE_INTELLIGENCE_SUMMARY
 UNION ALL
-SELECT 'MART_CLOSED_LOOP_OPERATIONS_SUMMARY', COUNT(*), MAX(SNAPSHOT_TS) FROM MART_CLOSED_LOOP_OPERATIONS_SUMMARY;
+SELECT 'MART_CLOSED_LOOP_OPERATIONS_SUMMARY', COUNT(*), MAX(SNAPSHOT_TS) FROM MART_CLOSED_LOOP_OPERATIONS_SUMMARY
+UNION ALL
+SELECT 'MART_COMMAND_CENTER_SUMMARY', COUNT(*), MAX(SNAPSHOT_TS) FROM MART_COMMAND_CENTER_SUMMARY;
 
 -- 14) Phase 2A production readiness summary and detail proof.
 SELECT
@@ -834,14 +848,67 @@ SELECT
     'PASS' AS VALIDATION_STATUS,
     'Closed Loop Operations stores review SQL, approval state, evidence, and verification state only. It does not execute ALTER, CREATE, DROP, GRANT, REVOKE, SUSPEND, or RESUME actions.' AS DETAILS;
 
--- 19) Enterprise remediation safety note.
+-- 19) Phase 2F Command Center coverage and safety proof.
+SELECT
+    'COMMAND_CENTER_PROCEDURE' AS CHECK_NAME,
+    'SP_OVERWATCH_REFRESH_COMMAND_CENTER' AS PROCEDURE_NAME,
+    COUNT(*) AS MATCHING_PROCEDURES,
+    IFF(COUNT(*) > 0, 'PASS', 'FAIL') AS VALIDATION_STATUS
+FROM INFORMATION_SCHEMA.PROCEDURES
+WHERE PROCEDURE_SCHEMA = CURRENT_SCHEMA()
+  AND PROCEDURE_NAME = 'SP_OVERWATCH_REFRESH_COMMAND_CENTER';
+
+SELECT
+    'COMMAND_CENTER_SUMMARY' AS CHECK_NAME,
+    COUNT(*) AS ROW_COUNT,
+    COUNT(DISTINCT INVESTIGATION_TYPE) AS INVESTIGATION_TYPE_COUNT,
+    MAX(SNAPSHOT_TS) AS LATEST_REFRESH_TS,
+    IFF(COUNT(DISTINCT INVESTIGATION_TYPE) >= 6, 'PASS', 'FAIL') AS VALIDATION_STATUS
+FROM MART_COMMAND_CENTER_SUMMARY;
+
+SELECT
+    'COMMAND_CENTER_LABELS_AND_WORDING' AS CHECK_NAME,
+    COUNT_IF(INVESTIGATION_TYPE NOT IN ('Cost Spike', 'Warehouse Slow', 'Recent Change', 'Failure / SLA', 'Security Risk', 'Executive Risk')) AS BAD_INVESTIGATION_ROWS,
+    COUNT_IF(LOWER(COALESCE(CONFIDENCE, '')) NOT IN ('exact', 'allocated', 'estimated', 'fallback')) AS BAD_CONFIDENCE_ROWS,
+    COUNT_IF(RISK_LEVEL NOT IN ('Critical', 'High', 'Medium', 'Low')) AS BAD_RISK_ROWS,
+    COUNT_IF(LOWER(COALESCE(CAUSALITY_LABEL, '')) NOT IN ('root-cause candidate', 'likely driver', 'possible correlation')) AS BAD_CAUSALITY_ROWS,
+    COUNT_IF(LOWER(COALESCE(ROOT_CAUSE_CANDIDATE, '')) LIKE '%root cause%' AND LOWER(COALESCE(ROOT_CAUSE_CANDIDATE, '')) NOT LIKE '%root-cause candidate%') AS OVERCLAIMED_ROOT_CAUSE_ROWS,
+    IFF(
+        COUNT_IF(INVESTIGATION_TYPE NOT IN ('Cost Spike', 'Warehouse Slow', 'Recent Change', 'Failure / SLA', 'Security Risk', 'Executive Risk')) = 0
+        AND COUNT_IF(LOWER(COALESCE(CONFIDENCE, '')) NOT IN ('exact', 'allocated', 'estimated', 'fallback')) = 0
+        AND COUNT_IF(RISK_LEVEL NOT IN ('Critical', 'High', 'Medium', 'Low')) = 0
+        AND COUNT_IF(LOWER(COALESCE(CAUSALITY_LABEL, '')) NOT IN ('root-cause candidate', 'likely driver', 'possible correlation')) = 0
+        AND COUNT_IF(LOWER(COALESCE(ROOT_CAUSE_CANDIDATE, '')) LIKE '%root cause%' AND LOWER(COALESCE(ROOT_CAUSE_CANDIDATE, '')) NOT LIKE '%root-cause candidate%') = 0,
+        'PASS',
+        'FAIL'
+    ) AS VALIDATION_STATUS
+FROM OVERWATCH_COMMAND_CENTER_FINDING
+WHERE SNAPSHOT_TS >= DATEADD('DAY', -7, CURRENT_TIMESTAMP());
+
+SELECT
+    'COMMAND_CENTER_EVIDENCE_AND_RECOMMENDATIONS' AS CHECK_NAME,
+    (SELECT COUNT(*) FROM OVERWATCH_COMMAND_CENTER_EVIDENCE WHERE SNAPSHOT_TS >= DATEADD('DAY', -7, CURRENT_TIMESTAMP())) AS EVIDENCE_ROWS,
+    COUNT(*) AS RECOMMENDATION_ROWS,
+    COUNT_IF(NOT REVIEW_REQUIRED) AS NOT_REVIEW_GATED_ROWS,
+    COUNT_IF(COALESCE(EXECUTION_PLAN_REF, '') <> '') AS REVIEW_PLAN_REFERENCES,
+    IFF(COUNT_IF(NOT REVIEW_REQUIRED) = 0, 'PASS', 'FAIL') AS VALIDATION_STATUS
+FROM OVERWATCH_COMMAND_CENTER_RECOMMENDATION
+WHERE SNAPSHOT_TS >= DATEADD('DAY', -7, CURRENT_TIMESTAMP());
+
+SELECT
+    'COMMAND_CENTER_NO_SILENT_REMEDIATION' AS CHECK_NAME,
+    0 AS ISSUE_COUNT,
+    'PASS' AS VALIDATION_STATUS,
+    'Command Center creates deterministic findings, evidence, and review-gated recommendations only. It does not execute ALTER, CREATE, DROP, GRANT, REVOKE, SUSPEND, RESUME, or auto-remediation actions.' AS DETAILS;
+
+-- 20) Enterprise remediation safety note.
 SELECT
     'ENTERPRISE_REMEDIATION_SAFETY' AS CHECK_NAME,
     0 AS ISSUE_COUNT,
     'PASS' AS VALIDATION_STATUS,
     'The enterprise operating model records findings, owners, trust, impact, actions, and verified value only; it does not execute corrective SQL.' AS DETAILS;
 
--- 20) Caller context for privilege troubleshooting.
+-- 21) Caller context for privilege troubleshooting.
 SELECT
     CURRENT_ACCOUNT() AS CURRENT_ACCOUNT_NAME,
     CURRENT_DATABASE() AS CURRENT_DATABASE_NAME,

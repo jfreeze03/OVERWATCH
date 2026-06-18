@@ -22,6 +22,7 @@ explicit Load buttons.
 | Executive Forecasting | Executive Landing | DBA Control Room, Cost & Contract, Workload Operations | `MART_EXECUTIVE_FORECAST_SUMMARY` | `OVERWATCH_FORECAST_HISTORY` |
 | Change Intelligence | Executive Landing | DBA Control Room, Cost & Contract, Workload Operations, Security Monitoring, Alert Center | `MART_CHANGE_INTELLIGENCE_SUMMARY` | `OVERWATCH_CHANGE_EVENT`, `OVERWATCH_CHANGE_CORRELATION` |
 | Closed Loop Operations | Executive Landing | DBA Control Room, Alert Center, Cost & Contract, Workload Operations, Security Monitoring | `MART_CLOSED_LOOP_OPERATIONS_SUMMARY` | `OVERWATCH_ACTION_WORKFLOW`, `OVERWATCH_ACTION_APPROVAL`, `OVERWATCH_ACTION_EXECUTION_PLAN`, `OVERWATCH_ACTION_VERIFICATION`, `OVERWATCH_ACTION_EVIDENCE` |
+| Command Center | Executive Landing | DBA Control Room, Alert Center, Cost & Contract, Workload Operations, Security Monitoring | `MART_COMMAND_CENTER_SUMMARY` | `OVERWATCH_COMMAND_CENTER_FINDING`, `OVERWATCH_COMMAND_CENTER_EVIDENCE`, `OVERWATCH_COMMAND_CENTER_RECOMMENDATION` |
 
 ## Snowflake Objects
 
@@ -59,6 +60,12 @@ explicit Load buttons.
 | `OVERWATCH_ACTION_EVIDENCE` | Phase 2E action evidence trail. |
 | `MART_CLOSED_LOOP_OPERATIONS_SUMMARY` | Compact Phase 2E action/value/closure summary. |
 | `SP_OVERWATCH_REFRESH_CLOSED_LOOP_OPERATIONS` | Refreshes closed-loop operations rows from existing OVERWATCH sources without executing remediation. |
+| `OVERWATCH_COMMAND_CENTER_QUESTION` | Phase 2F investigation question catalog. |
+| `OVERWATCH_COMMAND_CENTER_FINDING` | Phase 2F deterministic root-cause candidate findings with related evidence and owner/action/value context. |
+| `OVERWATCH_COMMAND_CENTER_EVIDENCE` | Phase 2F finding evidence rows. |
+| `OVERWATCH_COMMAND_CENTER_RECOMMENDATION` | Phase 2F review-gated recommendations tied to closed-loop execution plan references when available. |
+| `MART_COMMAND_CENTER_SUMMARY` | Compact Phase 2F Command Center summary for first paint. |
+| `SP_OVERWATCH_REFRESH_COMMAND_CENTER` | Refreshes Command Center findings, evidence, recommendations, and summaries without executing remediation. |
 
 ## Confidence Labels
 
@@ -84,6 +91,9 @@ Validation SQL checks these labels across the new objects.
 - Closed Loop Operations is review-gated: generated SQL/action text is evidence
   only, `EXECUTION_ALLOWED_IN_APP` remains false, and actual verified savings
   require post-action telemetry.
+- Command Center uses deterministic non-AI explanations first. It must use
+  `root-cause candidate`, `likely driver`, or `possible correlation` wording and
+  must not silently execute remediation.
 
 ## Manual Snowflake Validation
 
@@ -157,3 +167,16 @@ Then review `MART_CLOSED_LOOP_OPERATIONS_SUMMARY`,
 `OVERWATCH_ACTION_EVIDENCE`, `docs/CLOSED_LOOP_OPERATIONS.md`, and the Closed
 Loop Operations checks in `snowflake/OVERWATCH_MART_VALIDATION.sql`. Generated
 SQL must remain review-only and no silent execution is allowed.
+
+Command Center:
+
+```sql
+CALL SP_OVERWATCH_REFRESH_COMMAND_CENTER();
+```
+
+Then review `MART_COMMAND_CENTER_SUMMARY`,
+`OVERWATCH_COMMAND_CENTER_FINDING`, `OVERWATCH_COMMAND_CENTER_EVIDENCE`,
+`OVERWATCH_COMMAND_CENTER_RECOMMENDATION`, `docs/COMMAND_CENTER.md`, and the
+Command Center checks in `snowflake/OVERWATCH_MART_VALIDATION.sql`.
+Recommendations must remain review-gated and causality wording must stay
+conservative.

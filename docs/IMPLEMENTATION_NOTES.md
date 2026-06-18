@@ -317,3 +317,22 @@ outside the Streamlit app UI.
   statements.
 - Expected savings and forecasted savings remain separate from actual verified
   savings. Actual verified savings require post-action telemetry and evidence.
+
+## 2026-06-18 - Command Center Phase 2F
+
+- Added a mart-first Command Center that correlates cost, performance, alerts,
+  ownership, trust, security, change intelligence, forecasting, scorecards,
+  value ledger, and closed-loop operations into deterministic findings.
+- Executive Landing reads only `MART_COMMAND_CENTER_SUMMARY` for first paint.
+  DBA Control Room, Alert Center, Cost & Contract, Workload Operations, and
+  Security Monitoring load finding/evidence/recommendation detail only after
+  explicit Load buttons.
+- Findings use conservative wording: `root-cause candidate`, `likely driver`,
+  and `possible correlation`. The app does not claim causality from timing or
+  entity proximity alone.
+- Command Center recommendations remain review-gated through Closed Loop
+  Operations references when available. The refresh procedure does not execute
+  remediation SQL or dangerous Snowflake actions.
+- Non-AI explanations are required. Optional AI/Cortex summarization can be
+  added later only as a clearly labeled assistive layer, not a first-paint
+  dependency.

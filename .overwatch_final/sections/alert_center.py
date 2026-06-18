@@ -2951,6 +2951,74 @@ def _render_alert_action_workflows(company: str, environment: str) -> None:
         )
 
 
+def _render_alert_command_findings(company: str, environment: str) -> None:
+    """Show related Command Center findings for alert and incident context."""
+    from utils import load_command_center_finding_detail, load_command_center_recommendation_detail
+
+    pd = _pd()
+    st.markdown("**Alert Command Findings**")
+    st.caption(
+        "Loads command findings tied to alerts, failures, cost, security, workload, and possible change correlations. "
+        "Recommendations remain review-gated."
+    )
+    types = ("Failure / SLA", "Cost Spike", "Warehouse Slow", "Security Risk", "Recent Change")
+    if st.button("Load Alert Command Findings", key="alert_center_load_command_findings", width="stretch"):
+        st.session_state["alert_center_command_findings"] = load_command_center_finding_detail(
+            company,
+            environment,
+            investigation_types=types,
+            days=180,
+        )
+        st.session_state["alert_center_command_recommendations"] = load_command_center_recommendation_detail(
+            company,
+            environment,
+            investigation_types=types,
+            days=180,
+        )
+        st.session_state["alert_center_command_scope"] = (company, environment)
+
+    if st.session_state.get("alert_center_command_scope") != (company, environment):
+        return
+    findings = st.session_state.get("alert_center_command_findings")
+    recommendations = st.session_state.get("alert_center_command_recommendations")
+    if isinstance(findings, pd.DataFrame):
+        if findings.empty:
+            st.info("No alert-related Command Center findings are available for this scope yet.")
+        else:
+            _render_priority_dataframe(
+                findings,
+                title="Alert-related root-cause candidates",
+                priority_columns=[
+                    "INVESTIGATION_TYPE", "QUESTION_TEXT", "ROOT_CAUSE_CANDIDATE",
+                    "CAUSALITY_LABEL", "EVIDENCE_SUMMARY", "CONFIDENCE",
+                    "OWNER_ROUTE", "RELATED_CHANGES", "RELATED_ALERTS",
+                    "RELATED_SCORECARD_DRIVERS", "RELATED_FORECASTS",
+                    "RECOMMENDED_ACTION", "RISK_LEVEL", "EXECUTION_PLAN_REF",
+                    "VERIFICATION_PATH", "LAST_REFRESHED_TS",
+                ],
+                sort_by=["RISK_LEVEL", "LAST_REFRESHED_TS"],
+                ascending=[True, False],
+                raw_label="All alert command findings",
+                height=320,
+                max_rows=10,
+            )
+    if isinstance(recommendations, pd.DataFrame) and not recommendations.empty:
+        _render_priority_dataframe(
+            recommendations,
+            title="Alert command recommendations",
+            priority_columns=[
+                "INVESTIGATION_TYPE", "RECOMMENDED_ACTION", "RISK_LEVEL",
+                "OWNER_ROUTE", "EXECUTION_PLAN_REF", "REVIEW_REQUIRED",
+                "VERIFICATION_PATH", "SAFETY_NOTE", "LAST_REFRESHED_TS",
+            ],
+            sort_by=["RISK_LEVEL", "LAST_REFRESHED_TS"],
+            ascending=[True, False],
+            raw_label="All alert command recommendations",
+            height=260,
+            max_rows=8,
+        )
+
+
 def render() -> None:
     company = get_active_company()
     environment = get_active_environment()
@@ -2969,6 +3037,7 @@ def render() -> None:
     _render_operational_risk_score_explanation(company, environment)
     _render_alert_change_context(company, environment)
     _render_alert_action_workflows(company, environment)
+    _render_alert_command_findings(company, environment)
 
     if active_view == "Suppression Windows":
         _render_annotations()

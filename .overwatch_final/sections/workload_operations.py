@@ -19,6 +19,8 @@ load_change_correlation_detail = _lazy_util("load_change_correlation_detail")
 load_change_event_detail = _lazy_util("load_change_event_detail")
 load_closed_loop_execution_plan_detail = _lazy_util("load_closed_loop_execution_plan_detail")
 load_closed_loop_workflow_detail = _lazy_util("load_closed_loop_workflow_detail")
+load_command_center_finding_detail = _lazy_util("load_command_center_finding_detail")
+load_command_center_recommendation_detail = _lazy_util("load_command_center_recommendation_detail")
 load_forecast_detail = _lazy_util("load_forecast_detail")
 render_workflow_selector = _lazy_util("render_workflow_selector")
 render_priority_dataframe = _lazy_util("render_priority_dataframe")
@@ -274,6 +276,67 @@ def _render_workload_closed_loop_detail(company: str, environment: str) -> None:
             )
 
 
+def _render_workload_command_findings(company: str, environment: str) -> None:
+    """Expose warehouse slowdown and failure/SLA command findings behind Load."""
+    st.markdown("**Workload Command Findings**")
+    st.caption("Loads root-cause candidates for slow warehouses, queue pressure, task/query failures, and SLA risk.")
+    types = ("Warehouse Slow", "Failure / SLA")
+    if st.button("Load Workload Command Findings", key="workload_load_command_center", width="stretch"):
+        st.session_state["workload_command_findings"] = load_command_center_finding_detail(
+            company,
+            environment,
+            investigation_types=types,
+            days=180,
+        )
+        st.session_state["workload_command_recommendations"] = load_command_center_recommendation_detail(
+            company,
+            environment,
+            investigation_types=types,
+            days=180,
+        )
+        st.session_state["workload_command_scope"] = (company, environment)
+
+    if st.session_state.get("workload_command_scope") != (company, environment):
+        return
+    findings = st.session_state.get("workload_command_findings")
+    recommendations = st.session_state.get("workload_command_recommendations")
+    if isinstance(findings, pd.DataFrame):
+        if findings.empty:
+            st.info("No workload Command Center findings are available for this scope yet.")
+        else:
+            render_priority_dataframe(
+                findings,
+                title="Workload root-cause candidates",
+                priority_columns=[
+                    "INVESTIGATION_TYPE", "QUESTION_TEXT", "ROOT_CAUSE_CANDIDATE",
+                    "CAUSALITY_LABEL", "EVIDENCE_SUMMARY", "CONFIDENCE",
+                    "TECHNICAL_IMPACT", "OWNER_ROUTE", "RELATED_CHANGES",
+                    "RELATED_ALERTS", "RELATED_FORECASTS", "RECOMMENDED_ACTION",
+                    "RISK_LEVEL", "EXECUTION_PLAN_REF", "VERIFICATION_PATH",
+                ],
+                sort_by=["RISK_LEVEL", "LAST_REFRESHED_TS"],
+                ascending=[True, False],
+                raw_label="All workload command findings",
+                height=300,
+                max_rows=8,
+            )
+    if isinstance(recommendations, pd.DataFrame) and not recommendations.empty:
+        render_priority_dataframe(
+            recommendations,
+            title="Workload command recommendations",
+            priority_columns=[
+                "INVESTIGATION_TYPE", "RECOMMENDED_ACTION", "RISK_LEVEL",
+                "OWNER_ROUTE", "EXECUTION_PLAN_REF", "REVIEW_REQUIRED",
+                "VERIFICATION_PATH", "SAFETY_NOTE", "LAST_REFRESHED_TS",
+            ],
+            sort_by=["RISK_LEVEL", "LAST_REFRESHED_TS"],
+            ascending=[True, False],
+            raw_label="All workload command recommendations",
+            height=260,
+            max_rows=6,
+        )
+
+
 WORKLOAD_OPERATIONS_FAST_ENTRY_VERSION = "2026-06-16-workload-board-v1"
 WORKLOAD_OPERATIONS_EXPLICIT_WORKFLOW_KEY = "_workload_operations_explicit_workflow_request"
 QUERY_INVESTIGATION_WORKFLOW = "Query investigation"
@@ -445,6 +508,7 @@ def render() -> None:
     _render_workload_forecast_detail(company, environment)
     _render_workload_change_detail(company, environment)
     _render_workload_closed_loop_detail(company, environment)
+    _render_workload_command_findings(company, environment)
 
     workflow = render_workflow_selector(
         "Workload surface",

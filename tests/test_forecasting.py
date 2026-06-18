@@ -27,9 +27,9 @@ def _validation_sql() -> str:
 def _forecast_setup_block() -> str:
     sql = _setup_sql()
     start = sql.index("-- Phase 2C: leadership forecasting")
-    end = sql.index("-- Existing installs may have been created", start)
+    end = sql.index("-- Phase 2D: Change Intelligence", start)
     proc_start = sql.index("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_FORECASTING")
-    proc_end = sql.index("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_EXECUTIVE_OBSERVABILITY", proc_start)
+    proc_end = sql.index("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_CHANGE_INTELLIGENCE", proc_start)
     return sql[start:end] + "\n" + sql[proc_start:proc_end]
 
 
@@ -50,8 +50,8 @@ class ForecastingTests(unittest.TestCase):
                 self.assertIn(name, validation)
         self.assertIn("2026.06.18-EXECUTIVE-FORECASTING", setup)
         self.assertIn("CALL SP_OVERWATCH_REFRESH_FORECASTING()", setup)
-        self.assertIn("('TABLE', 79)", validation)
-        self.assertIn("('PROCEDURE', 13)", validation)
+        self.assertIn("('TABLE', 83)", validation)
+        self.assertIn("('PROCEDURE', 14)", validation)
 
     def test_forecast_labels_and_keys_are_constrained(self):
         from utils.forecasting import FORECAST_CONFIDENCE_LABELS, FORECAST_KEYS, FORECAST_TREND_LABELS

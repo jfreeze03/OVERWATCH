@@ -99,11 +99,15 @@ flowchart TD
   scores after `SP_OVERWATCH_REFRESH_EXECUTIVE_SCORECARD()`.
 - [ ] `MART_EXECUTIVE_FORECAST_SUMMARY` has recent rows for all seven forecast
   keys after `SP_OVERWATCH_REFRESH_FORECASTING()`.
+- [ ] `MART_CHANGE_INTELLIGENCE_SUMMARY` has recent rows for all nine change
+  categories after `SP_OVERWATCH_REFRESH_CHANGE_INTELLIGENCE()`.
 - [ ] Executive scorecard detail panels are loaded only by explicit operator
   buttons in DBA Control Room, Cost & Contract, Security Monitoring, and Alert
   Center.
 - [ ] No section runs live `ACCOUNT_USAGE` queries on first paint unless the
   section explicitly requires a user refresh/load action.
+- [ ] Change Intelligence event and correlation evidence remains behind
+  explicit Load buttons and keeps `possible correlation` wording.
 - [ ] Admin role compatibility still allows `SNOW_ACCOUNTADMINS` and
   `SNOW_SYSADMINS`.
 - [ ] Local no-connection mode can show connection-optional shells without
@@ -150,3 +154,8 @@ flowchart TD
    `MART_EXECUTIVE_FORECAST_SUMMARY`, `OVERWATCH_FORECAST_HISTORY`, and
    `docs/FORECASTING.md`; forecast details stay behind explicit Load buttons
    and forecasted savings must not be counted as verified value.
+7. Phase 2D Change Intelligence is implemented through
+   `MART_CHANGE_INTELLIGENCE_SUMMARY`, `OVERWATCH_CHANGE_EVENT`,
+   `OVERWATCH_CHANGE_CORRELATION`, and `docs/CHANGE_INTELLIGENCE.md`; evidence
+   and correlation detail stay behind explicit Load buttons, and the app must
+   use `possible correlation` unless separate proof exists.

@@ -20,6 +20,7 @@ explicit Load buttons.
 | Production Readiness | Executive Landing | DBA Control Room | `MART_PRODUCTION_READINESS_SUMMARY` | `OVERWATCH_PRODUCTION_VALIDATION_STATUS` |
 | Executive Scorecard | Executive Landing | DBA Control Room, Cost & Contract, Security Monitoring, Alert Center | `MART_EXECUTIVE_SCORECARD_SUMMARY` | `OVERWATCH_EXECUTIVE_SCORECARD_HISTORY` |
 | Executive Forecasting | Executive Landing | DBA Control Room, Cost & Contract, Workload Operations | `MART_EXECUTIVE_FORECAST_SUMMARY` | `OVERWATCH_FORECAST_HISTORY` |
+| Change Intelligence | Executive Landing | DBA Control Room, Cost & Contract, Workload Operations, Security Monitoring, Alert Center | `MART_CHANGE_INTELLIGENCE_SUMMARY` | `OVERWATCH_CHANGE_EVENT`, `OVERWATCH_CHANGE_CORRELATION` |
 
 ## Snowflake Objects
 
@@ -45,6 +46,11 @@ explicit Load buttons.
 | `OVERWATCH_FORECAST_HISTORY` | Explicit-load Phase 2C forecast driver history. |
 | `MART_EXECUTIVE_FORECAST_SUMMARY` | Compact Phase 2C leadership forecasting summary. |
 | `SP_OVERWATCH_REFRESH_FORECASTING` | Refreshes cost, contract, storage, pressure, and SLA forecasts from OVERWATCH facts. |
+| `OVERWATCH_CHANGE_RULE` | Phase 2D change category, owner route, risk, confidence, source, and business-impact catalog. |
+| `OVERWATCH_CHANGE_EVENT` | Explicit-load Phase 2D normalized change event history. |
+| `OVERWATCH_CHANGE_CORRELATION` | Explicit-load Phase 2D possible correlation history. |
+| `MART_CHANGE_INTELLIGENCE_SUMMARY` | Compact Phase 2D recent-change and risk summary. |
+| `SP_OVERWATCH_REFRESH_CHANGE_INTELLIGENCE` | Refreshes change events, possible correlations, and compact summary rows. |
 
 ## Confidence Labels
 
@@ -65,6 +71,8 @@ Validation SQL checks these labels across the new objects.
 - Value estimates are not counted as realized savings unless verified telemetry exists.
 - Ownership coverage is operational routing only; it is not an owner directory or governance approval system.
 - Production readiness role and privilege proof stays explicit; see `docs/PRODUCTION_READINESS.md`.
+- Change Intelligence uses `possible correlation` until separate evidence proves
+  causality; it does not execute remediation.
 
 ## Manual Snowflake Validation
 
@@ -113,3 +121,15 @@ Then review `MART_EXECUTIVE_FORECAST_SUMMARY`, `OVERWATCH_FORECAST_HISTORY`,
 `docs/FORECASTING.md`, and the forecasting checks in
 `snowflake/OVERWATCH_MART_VALIDATION.sql`. Forecasted savings are not verified
 value and must stay separate from `MART_EXECUTIVE_VALUE_LEDGER`.
+
+Change Intelligence:
+
+```sql
+CALL SP_OVERWATCH_REFRESH_CHANGE_INTELLIGENCE();
+```
+
+Then review `MART_CHANGE_INTELLIGENCE_SUMMARY`, `OVERWATCH_CHANGE_EVENT`,
+`OVERWATCH_CHANGE_CORRELATION`, `docs/CHANGE_INTELLIGENCE.md`, and the Change
+Intelligence checks in `snowflake/OVERWATCH_MART_VALIDATION.sql`. Correlation
+rows are timing/entity candidates only and should remain labeled
+`possible correlation`.

@@ -339,6 +339,15 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "load_executive_forecast_summary",
         "load_forecast_detail",
     ),
+    "change_intelligence": (
+        "CHANGE_TYPES",
+        "CHANGE_RISK_LABELS",
+        "CHANGE_CONFIDENCE_LABELS",
+        "CHANGE_CORRELATION_LABELS",
+        "load_change_intelligence_summary",
+        "load_change_event_detail",
+        "load_change_correlation_detail",
+    ),
     "ask_overwatch": (
         "TOP_PRIORITY_BRIEF_DOMAINS", "answer_ask_overwatch",
         "build_ask_overwatch_context", "build_grounded_cortex_prompt",

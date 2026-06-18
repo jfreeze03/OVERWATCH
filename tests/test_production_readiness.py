@@ -23,9 +23,9 @@ def _validation_sql() -> str:
 def _production_setup_block() -> str:
     sql = _setup_sql()
     start = sql.index("-- Phase 2A: live production validation")
-    end = sql.index("-- Existing installs may have been created", start)
+    end = sql.index("-- Phase 2B: leadership Executive Scorecard", start)
     proc_start = sql.index("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_PRODUCTION_READINESS")
-    proc_end = sql.index("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_EXECUTIVE_OBSERVABILITY", proc_start)
+    proc_end = sql.index("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_EXECUTIVE_SCORECARD", proc_start)
     return sql[start:end] + "\n" + sql[proc_start:proc_end]
 
 
@@ -47,8 +47,8 @@ class ProductionReadinessTests(unittest.TestCase):
 
     def test_validation_tracks_production_readiness_contract(self):
         validation = _validation_sql().upper()
-        self.assertIn("('TABLE', 79)", validation)
-        self.assertIn("('PROCEDURE', 13)", validation)
+        self.assertIn("('TABLE', 83)", validation)
+        self.assertIn("('PROCEDURE', 14)", validation)
         for token in [
             "PRODUCTION_READINESS_SUMMARY",
             "PRODUCTION_PRIVILEGE_BLOCKERS",

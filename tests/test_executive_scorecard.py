@@ -27,9 +27,9 @@ def _validation_sql() -> str:
 def _scorecard_setup_block() -> str:
     sql = _setup_sql()
     start = sql.index("-- Phase 2B: leadership Executive Scorecard")
-    end = sql.index("-- Existing installs may have been created", start)
+    end = sql.index("-- Phase 2C: leadership forecasting", start)
     proc_start = sql.index("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_EXECUTIVE_SCORECARD")
-    proc_end = sql.index("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_EXECUTIVE_OBSERVABILITY", proc_start)
+    proc_end = sql.index("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_FORECASTING", proc_start)
     return sql[start:end] + "\n" + sql[proc_start:proc_end]
 
 
@@ -49,8 +49,8 @@ class ExecutiveScorecardTests(unittest.TestCase):
                 self.assertIn(name, drop)
                 self.assertIn(name, validation)
         self.assertIn("CALL SP_OVERWATCH_REFRESH_EXECUTIVE_SCORECARD()", setup)
-        self.assertIn("('TABLE', 79)", validation)
-        self.assertIn("('PROCEDURE', 13)", validation)
+        self.assertIn("('TABLE', 83)", validation)
+        self.assertIn("('PROCEDURE', 14)", validation)
 
     def test_score_labels_thresholds_and_keys_are_constrained(self):
         from utils.executive_scorecard import SCORE_KEYS, SCORE_STATUS_LABELS, score_status_for_value

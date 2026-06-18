@@ -24,9 +24,9 @@ def _validation_sql() -> str:
 def _enterprise_setup_block() -> str:
     sql = _setup_sql()
     start = sql.index("-- Enterprise operating model")
-    end = sql.index("-- Existing installs may have been created", start)
+    end = sql.index("-- Phase 2A: live production validation", start)
     proc_start = sql.index("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_ENTERPRISE_OPERATING_MODEL")
-    proc_end = sql.index("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_EXECUTIVE_OBSERVABILITY", proc_start)
+    proc_end = sql.index("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_PRODUCTION_READINESS", proc_start)
     return sql[start:end] + "\n" + sql[proc_start:proc_end]
 
 
@@ -52,8 +52,8 @@ class EnterpriseOperatingModelTests(unittest.TestCase):
 
     def test_validation_contract_tracks_new_objects_and_confidence_labels(self):
         validation = _validation_sql().upper()
-        self.assertIn("('TABLE', 79)", validation)
-        self.assertIn("('PROCEDURE', 13)", validation)
+        self.assertIn("('TABLE', 83)", validation)
+        self.assertIn("('PROCEDURE', 14)", validation)
         for name in [
             "MART_DATA_TRUST_SUMMARY",
             "MART_OPERATIONAL_OWNER_COVERAGE",

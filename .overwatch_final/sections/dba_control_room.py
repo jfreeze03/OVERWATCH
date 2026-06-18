@@ -120,6 +120,8 @@ load_latest_control_room_mart = _lazy_util("load_latest_control_room_mart")
 load_task_inventory = _lazy_util("load_task_inventory")
 load_action_queue = _lazy_util("load_action_queue")
 load_app_observability_detail = _lazy_util("load_app_observability_detail")
+load_change_correlation_detail = _lazy_util("load_change_correlation_detail")
+load_change_event_detail = _lazy_util("load_change_event_detail")
 load_data_trust_detail = _lazy_util("load_data_trust_detail")
 load_executive_scorecard_detail = _lazy_util("load_executive_scorecard_detail")
 load_forecast_detail = _lazy_util("load_forecast_detail")
@@ -447,6 +449,80 @@ def _render_forecast_exception_gate(company: str, environment: str) -> None:
             height=300,
             max_rows=12,
         )
+
+
+def _render_change_intelligence_gate(company: str, environment: str) -> None:
+    """Expose Phase 2D high-risk changes and possible correlations behind Load."""
+    st.markdown("**Change Intelligence**")
+    st.caption(
+        "Loads normalized change events and possible correlations from OVERWATCH change marts. "
+        "Possible correlations are not root-cause claims and no remediation is executed."
+    )
+    if st.button("Load Change Intelligence", key="dba_load_change_intelligence", width="stretch"):
+        st.session_state["dba_change_event_detail"] = load_change_event_detail(
+            company,
+            environment,
+            risk_levels=("Critical", "High"),
+            days=180,
+        )
+        st.session_state["dba_change_correlation_detail"] = load_change_correlation_detail(
+            company,
+            environment,
+            days=180,
+        )
+        st.session_state["dba_change_intelligence_scope"] = (company, environment)
+
+    scope_ok = st.session_state.get("dba_change_intelligence_scope") == (company, environment)
+    events = st.session_state.get("dba_change_event_detail")
+    correlations = st.session_state.get("dba_change_correlation_detail")
+    if not scope_ok:
+        return
+    if isinstance(events, pd.DataFrame):
+        if events.empty:
+            st.info("No high-risk change events are available for this scope yet.")
+        else:
+            risk = events.get("RISK_LEVEL", pd.Series(dtype=str)).fillna("").astype(str)
+            owner_gaps = pd.to_numeric(events.get("OWNER_GAP", pd.Series(dtype=float)), errors="coerce").fillna(0)
+            render_shell_snapshot((
+                ("Events", f"{len(events):,}"),
+                ("Critical", f"{safe_int(risk.eq('Critical').sum()):,}"),
+                ("High", f"{safe_int(risk.eq('High').sum()):,}"),
+                ("Owner Gaps", f"{safe_int(owner_gaps.sum()):,}"),
+            ))
+            render_priority_dataframe(
+                events,
+                title="High-risk recent changes",
+                priority_columns=[
+                    "CHANGE_TS", "CHANGE_TYPE", "OBJECT_TYPE", "OBJECT_NAME",
+                    "CHANGED_BY", "RISK_LEVEL", "BUSINESS_IMPACT", "OWNER_ROUTE",
+                    "RELATED_ALERT_COUNT", "RELATED_INCIDENTS", "CONFIDENCE",
+                    "LAST_REFRESHED_TS",
+                ],
+                sort_by=["CHANGE_TS"],
+                ascending=False,
+                raw_label="All high-risk change events",
+                height=300,
+                max_rows=12,
+            )
+    if isinstance(correlations, pd.DataFrame):
+        if correlations.empty:
+            st.info("No possible change correlations are available for this scope yet.")
+        else:
+            render_priority_dataframe(
+                correlations,
+                title="Possible change correlations",
+                priority_columns=[
+                    "RELATED_TS", "CHANGE_TS", "CHANGE_TYPE", "OBJECT_NAME",
+                    "CORRELATION_TYPE", "RELATED_SIGNAL", "RELATED_ENTITY",
+                    "CORRELATION_STRENGTH", "CORRELATION_LABEL", "EVIDENCE",
+                    "OWNER_ROUTE", "CONFIDENCE",
+                ],
+                sort_by=["RELATED_TS", "CHANGE_TS"],
+                ascending=[False, False],
+                raw_label="All possible change correlations",
+                height=300,
+                max_rows=12,
+            )
 
 
 def _set_admin_tool_focus(tool: str, group: str, focus: str) -> None:
@@ -6440,6 +6516,7 @@ def render() -> None:
     _render_production_readiness_gate(company, environment)
     _render_executive_scorecard_driver_gate(company, environment)
     _render_forecast_exception_gate(company, environment)
+    _render_change_intelligence_gate(company, environment)
 
     if st.button(load_label, key="dba_control_room_load", type="primary"):
         _load_control_room_evidence()

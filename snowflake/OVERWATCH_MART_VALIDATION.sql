@@ -45,7 +45,11 @@ WITH required_objects AS (
         ('TABLE', 'MART_EXECUTIVE_SCORECARD_SUMMARY'),
         ('TABLE', 'OVERWATCH_FORECAST_CONFIG'),
         ('TABLE', 'OVERWATCH_FORECAST_HISTORY'),
-        ('TABLE', 'MART_EXECUTIVE_FORECAST_SUMMARY')
+        ('TABLE', 'MART_EXECUTIVE_FORECAST_SUMMARY'),
+        ('TABLE', 'OVERWATCH_CHANGE_RULE'),
+        ('TABLE', 'OVERWATCH_CHANGE_EVENT'),
+        ('TABLE', 'OVERWATCH_CHANGE_CORRELATION'),
+        ('TABLE', 'MART_CHANGE_INTELLIGENCE_SUMMARY')
     AS t(REQUIRED_TYPE, REQUIRED_OBJECT)
 ),
 existing_objects AS (
@@ -69,9 +73,9 @@ ORDER BY VALIDATION_STATUS DESC, REQUIRED_TYPE, REQUIRED_OBJECT;
 -- 2) Deployable object count contract.
 WITH expected_counts AS (
     SELECT * FROM VALUES
-        ('TABLE', 79),
+        ('TABLE', 83),
         ('VIEW', 3),
-        ('PROCEDURE', 13),
+        ('PROCEDURE', 14),
         ('FUNCTION', 1)
     AS t(OBJECT_TYPE, EXPECTED_COUNT)
 ),
@@ -209,7 +213,8 @@ WITH refresh_contract AS (
         ('APP_SELF_OBSERVABILITY', 'Executive Landing / DBA Control Room', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_APP_OBSERVABILITY_SUMMARY; OVERWATCH_APP_OBSERVABILITY', 35, TRUE, FALSE, 'App health reads compact query-tag/runtime summaries; detail is explicit Load.', 'DBA / Platform'),
         ('PRODUCTION_READINESS', 'Executive Landing / DBA Control Room', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_PRODUCTION_READINESS_SUMMARY; OVERWATCH_PRODUCTION_VALIDATION_STATUS', 35, TRUE, FALSE, 'Production readiness shows deployment, validation, role, privilege, refresh, config, freshness, and environment status from compact readiness marts.', 'DBA / Platform'),
         ('EXECUTIVE_SCORECARD', 'Executive Landing / DBA Control Room / Cost & Contract / Security Monitoring / Alert Center', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_EXECUTIVE_SCORECARD_SUMMARY; OVERWATCH_EXECUTIVE_SCORECARD_HISTORY', 180, TRUE, FALSE, 'Leadership scorecard reads compact score summaries first; driver history is explicit Load by section.', 'DBA / Platform'),
-        ('EXECUTIVE_FORECASTING', 'Executive Landing / DBA Control Room / Cost & Contract / Workload Operations', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_EXECUTIVE_FORECAST_SUMMARY; OVERWATCH_FORECAST_HISTORY', 180, TRUE, FALSE, 'Leadership forecasts read compact summary rows first; historical drivers and evidence are explicit Load by section.', 'DBA / Cost owner')
+        ('EXECUTIVE_FORECASTING', 'Executive Landing / DBA Control Room / Cost & Contract / Workload Operations', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_EXECUTIVE_FORECAST_SUMMARY; OVERWATCH_FORECAST_HISTORY', 180, TRUE, FALSE, 'Leadership forecasts read compact summary rows first; historical drivers and evidence are explicit Load by section.', 'DBA / Cost owner'),
+        ('CHANGE_INTELLIGENCE', 'Executive Landing / DBA Control Room / Cost & Contract / Workload Operations / Security Monitoring / Alert Center', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_CHANGE_INTELLIGENCE_SUMMARY; OVERWATCH_CHANGE_EVENT; OVERWATCH_CHANGE_CORRELATION', 180, TRUE, FALSE, 'Executive Landing reads compact change-risk summaries first; event evidence and possible correlations are explicit Load by section.', 'DBA / Platform')
     AS t(
         POLICY_NAME, SURFACE, SOURCE_CLASS, TARGET_FRESHNESS_MIN, REFRESH_METHOD,
         BASE_OBJECT, RETENTION_DAYS, RUN_IN_FIRST_PAINT, APPROVED_LIVE_FALLBACK,
@@ -246,7 +251,8 @@ WITH refresh_contract AS (
         ('APP_SELF_OBSERVABILITY', 'Executive Landing / DBA Control Room', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_APP_OBSERVABILITY_SUMMARY; OVERWATCH_APP_OBSERVABILITY', 35, TRUE, FALSE),
         ('PRODUCTION_READINESS', 'Executive Landing / DBA Control Room', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_PRODUCTION_READINESS_SUMMARY; OVERWATCH_PRODUCTION_VALIDATION_STATUS', 35, TRUE, FALSE),
         ('EXECUTIVE_SCORECARD', 'Executive Landing / DBA Control Room / Cost & Contract / Security Monitoring / Alert Center', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_EXECUTIVE_SCORECARD_SUMMARY; OVERWATCH_EXECUTIVE_SCORECARD_HISTORY', 180, TRUE, FALSE),
-        ('EXECUTIVE_FORECASTING', 'Executive Landing / DBA Control Room / Cost & Contract / Workload Operations', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_EXECUTIVE_FORECAST_SUMMARY; OVERWATCH_FORECAST_HISTORY', 180, TRUE, FALSE)
+        ('EXECUTIVE_FORECASTING', 'Executive Landing / DBA Control Room / Cost & Contract / Workload Operations', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_EXECUTIVE_FORECAST_SUMMARY; OVERWATCH_FORECAST_HISTORY', 180, TRUE, FALSE),
+        ('CHANGE_INTELLIGENCE', 'Executive Landing / DBA Control Room / Cost & Contract / Workload Operations / Security Monitoring / Alert Center', 'MART', 120, 'TASK_AFTER_EXECUTIVE_REFRESH', 'MART_CHANGE_INTELLIGENCE_SUMMARY; OVERWATCH_CHANGE_EVENT; OVERWATCH_CHANGE_CORRELATION', 180, TRUE, FALSE)
     AS t(
         POLICY_NAME, SURFACE, SOURCE_CLASS, TARGET_FRESHNESS_MIN, REFRESH_METHOD,
         BASE_OBJECT, RETENTION_DAYS, RUN_IN_FIRST_PAINT, APPROVED_LIVE_FALLBACK
@@ -297,6 +303,11 @@ freshness AS (
         'Executive Landing / DBA Control Room / Cost & Contract / Workload Operations' AS SURFACE,
         MAX(SNAPSHOT_TS) AS LATEST_REFRESH_TS
     FROM MART_EXECUTIVE_FORECAST_SUMMARY
+    UNION ALL
+    SELECT
+        'Executive Landing / DBA Control Room / Cost & Contract / Workload Operations / Security Monitoring / Alert Center' AS SURFACE,
+        MAX(SNAPSHOT_TS) AS LATEST_REFRESH_TS
+    FROM MART_CHANGE_INTELLIGENCE_SUMMARY
 ),
 freshness_agg AS (
     SELECT SURFACE, MAX(LATEST_REFRESH_TS) AS LATEST_REFRESH_TS
@@ -469,7 +480,9 @@ SELECT 'MART_PRODUCTION_READINESS_SUMMARY', COUNT(*), MAX(SNAPSHOT_TS) FROM MART
 UNION ALL
 SELECT 'MART_EXECUTIVE_SCORECARD_SUMMARY', COUNT(*), MAX(SNAPSHOT_TS) FROM MART_EXECUTIVE_SCORECARD_SUMMARY
 UNION ALL
-SELECT 'MART_EXECUTIVE_FORECAST_SUMMARY', COUNT(*), MAX(SNAPSHOT_TS) FROM MART_EXECUTIVE_FORECAST_SUMMARY;
+SELECT 'MART_EXECUTIVE_FORECAST_SUMMARY', COUNT(*), MAX(SNAPSHOT_TS) FROM MART_EXECUTIVE_FORECAST_SUMMARY
+UNION ALL
+SELECT 'MART_CHANGE_INTELLIGENCE_SUMMARY', COUNT(*), MAX(SNAPSHOT_TS) FROM MART_CHANGE_INTELLIGENCE_SUMMARY;
 
 -- 14) Phase 2A production readiness summary and detail proof.
 SELECT
@@ -645,14 +658,95 @@ SELECT
     'PASS' AS VALIDATION_STATUS,
     'Forecasted spend, storage, pressure, and SLA risk are estimates only; they are not inserted into verified savings or counted as realized value.' AS DETAILS;
 
--- 17) Enterprise remediation safety note.
+-- 17) Phase 2D Change Intelligence coverage and label proof.
+SELECT
+    'CHANGE_INTELLIGENCE_PROCEDURE' AS CHECK_NAME,
+    'SP_OVERWATCH_REFRESH_CHANGE_INTELLIGENCE' AS PROCEDURE_NAME,
+    COUNT(*) AS MATCHING_PROCEDURES,
+    IFF(COUNT(*) > 0, 'PASS', 'FAIL') AS VALIDATION_STATUS
+FROM INFORMATION_SCHEMA.PROCEDURES
+WHERE PROCEDURE_SCHEMA = CURRENT_SCHEMA()
+  AND PROCEDURE_NAME = 'SP_OVERWATCH_REFRESH_CHANGE_INTELLIGENCE';
+
+SELECT
+    'CHANGE_INTELLIGENCE_SUMMARY' AS CHECK_NAME,
+    COUNT(*) AS ROW_COUNT,
+    COUNT(DISTINCT CHANGE_TYPE) AS CHANGE_TYPE_COUNT,
+    MAX(SNAPSHOT_TS) AS LATEST_REFRESH_TS,
+    IFF(COUNT(DISTINCT CHANGE_TYPE) >= 9, 'PASS', 'FAIL') AS VALIDATION_STATUS
+FROM MART_CHANGE_INTELLIGENCE_SUMMARY;
+
+WITH required_change_types AS (
+    SELECT * FROM VALUES
+        ('WAREHOUSE_CHANGE'),
+        ('ROLE_CHANGE'),
+        ('GRANT_CHANGE'),
+        ('TASK_CHANGE'),
+        ('PROCEDURE_CHANGE'),
+        ('NETWORK_POLICY_CHANGE'),
+        ('INTEGRATION_CHANGE'),
+        ('OBJECT_CHANGE'),
+        ('SECURITY_SENSITIVE_CHANGE')
+    AS t(CHANGE_TYPE)
+),
+latest_change_summary AS (
+    SELECT *
+    FROM MART_CHANGE_INTELLIGENCE_SUMMARY
+    WHERE SNAPSHOT_TS >= DATEADD('DAY', -7, CURRENT_TIMESTAMP())
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY COMPANY, ENVIRONMENT, CHANGE_TYPE
+        ORDER BY SNAPSHOT_TS DESC, LOAD_TS DESC
+    ) = 1
+)
+SELECT
+    r.CHANGE_TYPE,
+    COUNT(s.CHANGE_TYPE) AS ROW_COUNT,
+    MAX(s.CHANGE_COUNT) AS CHANGE_COUNT,
+    MAX(s.RISK_LEVEL) AS RISK_LEVEL,
+    MAX(s.CONFIDENCE) AS CONFIDENCE,
+    IFF(COUNT(s.CHANGE_TYPE) > 0, 'PASS', 'FAIL') AS VALIDATION_STATUS
+FROM required_change_types r
+LEFT JOIN latest_change_summary s
+  ON s.CHANGE_TYPE = r.CHANGE_TYPE
+GROUP BY r.CHANGE_TYPE
+ORDER BY r.CHANGE_TYPE;
+
+SELECT
+    'CHANGE_INTELLIGENCE_LABELS' AS CHECK_NAME,
+    COUNT_IF(RISK_LEVEL NOT IN ('Critical', 'High', 'Medium', 'Low')) AS BAD_RISK_LABELS,
+    COUNT_IF(LOWER(COALESCE(CONFIDENCE, '')) NOT IN ('exact', 'allocated', 'estimated', 'fallback')) AS BAD_CONFIDENCE_LABELS,
+    COUNT_IF(COALESCE(BUSINESS_IMPACT, '') = '') AS EMPTY_IMPACT_ROWS,
+    IFF(
+        COUNT_IF(RISK_LEVEL NOT IN ('Critical', 'High', 'Medium', 'Low')) = 0
+        AND COUNT_IF(LOWER(COALESCE(CONFIDENCE, '')) NOT IN ('exact', 'allocated', 'estimated', 'fallback')) = 0
+        AND COUNT_IF(COALESCE(BUSINESS_IMPACT, '') = '') = 0,
+        'PASS',
+        'FAIL'
+    ) AS VALIDATION_STATUS
+FROM MART_CHANGE_INTELLIGENCE_SUMMARY
+WHERE SNAPSHOT_TS >= DATEADD('DAY', -7, CURRENT_TIMESTAMP());
+
+SELECT
+    'CHANGE_CORRELATION_SAFETY' AS CHECK_NAME,
+    COUNT_IF(LOWER(COALESCE(CORRELATION_LABEL, '')) <> 'possible correlation') AS BAD_CORRELATION_LABELS,
+    COUNT_IF(LOWER(COALESCE(EVIDENCE, '')) LIKE '%root cause%' AND LOWER(COALESCE(EVIDENCE, '')) NOT LIKE '%not a root-cause claim%') AS ROOT_CAUSE_CLAIMS,
+    IFF(
+        COUNT_IF(LOWER(COALESCE(CORRELATION_LABEL, '')) <> 'possible correlation') = 0
+        AND COUNT_IF(LOWER(COALESCE(EVIDENCE, '')) LIKE '%root cause%' AND LOWER(COALESCE(EVIDENCE, '')) NOT LIKE '%not a root-cause claim%') = 0,
+        'PASS',
+        'FAIL'
+    ) AS VALIDATION_STATUS
+FROM OVERWATCH_CHANGE_CORRELATION
+WHERE SNAPSHOT_TS >= DATEADD('DAY', -7, CURRENT_TIMESTAMP());
+
+-- 18) Enterprise remediation safety note.
 SELECT
     'ENTERPRISE_REMEDIATION_SAFETY' AS CHECK_NAME,
     0 AS ISSUE_COUNT,
     'PASS' AS VALIDATION_STATUS,
     'The enterprise operating model records findings, owners, trust, impact, actions, and verified value only; it does not execute corrective SQL.' AS DETAILS;
 
--- 18) Caller context for privilege troubleshooting.
+-- 19) Caller context for privilege troubleshooting.
 SELECT
     CURRENT_ACCOUNT() AS CURRENT_ACCOUNT_NAME,
     CURRENT_DATABASE() AS CURRENT_DATABASE_NAME,

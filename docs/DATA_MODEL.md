@@ -76,6 +76,22 @@ Details and manual validation steps live in `docs/EXECUTIVE_SCORECARD.md`.
 
 Details and manual validation steps live in `docs/FORECASTING.md`.
 
+## Change Intelligence
+
+Phase 2D normalizes Snowflake changes and possible downstream correlations so
+operators can review what changed before a cost, performance, security, or alert
+issue without claiming unsupported root cause.
+
+| Object | Type | Purpose |
+| --- | --- | --- |
+| `OVERWATCH_CHANGE_RULE` | Table | Change category catalog, risk label, owner route, confidence label, and default business impact. |
+| `OVERWATCH_CHANGE_EVENT` | Transient table | Normalized warehouse, role, grant, task, procedure, network policy, integration, object, and security-sensitive changes. |
+| `OVERWATCH_CHANGE_CORRELATION` | Transient table | Explicit-load possible correlation rows between changes and later alert, cost, security, or workload signals. |
+| `MART_CHANGE_INTELLIGENCE_SUMMARY` | Transient mart | Compact first-paint recent-change and risk summary for Executive Landing. |
+| `SP_OVERWATCH_REFRESH_CHANGE_INTELLIGENCE` | Procedure | Refreshes change events, possible correlations, and summary rows from existing OVERWATCH marts. |
+
+Details and manual validation steps live in `docs/CHANGE_INTELLIGENCE.md`.
+
 ## Reconciliation
 
 | Object | Type | Purpose |

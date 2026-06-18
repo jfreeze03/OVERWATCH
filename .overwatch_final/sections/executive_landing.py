@@ -42,6 +42,7 @@ mart_object_name = _lazy_util("mart_object_name")
 render_priority_dataframe = _lazy_util("render_priority_dataframe")
 build_loaded_section_alert_signal_board = _lazy_util("build_loaded_section_alert_signal_board")
 load_enterprise_operating_rollups = _lazy_util("load_enterprise_operating_rollups")
+load_change_intelligence_summary = _lazy_util("load_change_intelligence_summary")
 load_executive_scorecard_summary = _lazy_util("load_executive_scorecard_summary")
 load_executive_forecast_summary = _lazy_util("load_executive_forecast_summary")
 load_production_readiness_summary = _lazy_util("load_production_readiness_summary")
@@ -2961,6 +2962,49 @@ def _render_executive_forecast_summary(forecasts: pd.DataFrame) -> None:
     st.dataframe(view, width="stretch", hide_index=True)
 
 
+def _render_change_intelligence_summary(changes: pd.DataFrame) -> None:
+    """Render Phase 2D compact change-risk summary from the summary mart."""
+    if not isinstance(changes, pd.DataFrame) or changes.empty:
+        st.caption("Change Intelligence is pending. Run the executive mart refresh to populate recent change-risk rows.")
+        return
+
+    work = changes.copy()
+    change_count = pd.to_numeric(work.get("CHANGE_COUNT", pd.Series(dtype=float)), errors="coerce").fillna(0)
+    high_risk = pd.to_numeric(work.get("HIGH_RISK_COUNT", pd.Series(dtype=float)), errors="coerce").fillna(0)
+    owner_gaps = pd.to_numeric(work.get("OWNER_GAP_COUNT", pd.Series(dtype=float)), errors="coerce").fillna(0)
+    correlations = pd.to_numeric(work.get("CORRELATION_CANDIDATE_COUNT", pd.Series(dtype=float)), errors="coerce").fillna(0)
+    work["_HIGH_RISK_SORT"] = high_risk
+    work["_CHANGE_SORT"] = change_count
+    top_row = work.sort_values(
+        by=["_HIGH_RISK_SORT", "_CHANGE_SORT"],
+        ascending=[False, False],
+        na_position="last",
+    ).iloc[0]
+
+    st.markdown("**Change Intelligence**")
+    render_shell_snapshot((
+        ("Changes", f"{safe_int(change_count.sum()):,}"),
+        ("High Risk", f"{safe_int(high_risk.sum()):,}"),
+        ("Owner Gaps", f"{safe_int(owner_gaps.sum()):,}"),
+        ("Possible Links", f"{safe_int(correlations.sum()):,}"),
+    ))
+    st.caption(
+        f"Top change area: {top_row.get('CHANGE_CATEGORY') or top_row.get('CHANGE_TYPE') or 'Change'}; "
+        f"latest object {top_row.get('TOP_OBJECT_NAME') or 'No recent changes'}. "
+        "Related alerts are shown as possible correlations, not root-cause claims."
+    )
+    view = work[[
+        column for column in [
+            "CHANGE_CATEGORY", "CHANGE_TYPE", "CHANGE_COUNT", "HIGH_RISK_COUNT",
+            "RELATED_ALERT_COUNT", "CORRELATION_CANDIDATE_COUNT", "LATEST_CHANGE_TS",
+            "TOP_OBJECT_NAME", "TOP_CHANGED_BY", "RISK_LEVEL", "BUSINESS_IMPACT",
+            "OWNER_ROUTE", "CONFIDENCE", "LAST_REFRESHED_TS",
+        ]
+        if column in work.columns
+    ]]
+    st.dataframe(view, width="stretch", hide_index=True)
+
+
 def render() -> None:
     company = _active_company()
     environment = _active_environment()
@@ -3051,6 +3095,9 @@ def render() -> None:
     )
     _render_executive_forecast_summary(
         load_executive_forecast_summary(company, environment, days=int(days))
+    )
+    _render_change_intelligence_summary(
+        load_change_intelligence_summary(company, environment, days=int(days))
     )
     load = _render_executive_action_brief(summary, int(days), show_strip=False)
     _render_loaded_executive_alert_context()

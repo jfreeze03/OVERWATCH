@@ -287,3 +287,17 @@ outside the Streamlit app UI.
 - `SP_OVERWATCH_REFRESH_ENTERPRISE_OPERATING_MODEL` does not execute
   remediation. It only summarizes existing OVERWATCH facts, app logs, action
   queue rows, and ledger rows.
+
+## 2026-06-18 - Change Intelligence Phase 2D
+
+- Added a mart-first Change Intelligence layer that normalizes warehouse, role,
+  grant, task, procedure, network policy, integration, object, and
+  security-sensitive changes.
+- Executive Landing reads only `MART_CHANGE_INTELLIGENCE_SUMMARY` for first
+  paint. DBA Control Room, Cost & Contract, Workload Operations, Security
+  Monitoring, and Alert Center load event/correlation evidence only after an
+  explicit Load button.
+- Correlation rows are labeled `possible correlation`; OVERWATCH does not claim
+  root cause unless separate proof exists.
+- `SP_OVERWATCH_REFRESH_CHANGE_INTELLIGENCE` writes OVERWATCH mart rows only and
+  does not execute remediation.

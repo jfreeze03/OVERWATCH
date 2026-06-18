@@ -52,6 +52,7 @@ get_session_for_action = _lazy_util("get_session_for_action")
 get_user_company_filter_clause = _lazy_util("get_user_company_filter_clause")
 get_wh_filter_clause = _lazy_util("get_wh_filter_clause")
 load_action_queue = _lazy_util("load_action_queue")
+load_change_correlation_detail = _lazy_util("load_change_correlation_detail")
 load_executive_scorecard_detail = _lazy_util("load_executive_scorecard_detail")
 load_forecast_detail = _lazy_util("load_forecast_detail")
 load_value_ledger_detail = _lazy_util("load_value_ledger_detail")
@@ -5008,6 +5009,45 @@ def _render_cost_forecast_detail(company: str, environment: str) -> None:
         )
 
 
+def _render_cost_change_correlation(company: str, environment: str) -> None:
+    """Expose cost-related possible change correlations behind Load."""
+    st.markdown("**Cost Change Intelligence**")
+    st.caption("Loads possible correlations between recent changes and cost/warehouse signals. This is timing evidence, not root cause.")
+    if st.button("Load Cost-Related Changes", key="cost_contract_load_change_correlations", width="stretch"):
+        st.session_state["cost_contract_change_correlation_detail"] = load_change_correlation_detail(
+            company,
+            environment,
+            change_types=("WAREHOUSE_CHANGE", "OBJECT_CHANGE", "SECURITY_SENSITIVE_CHANGE"),
+            correlation_types=("Cost",),
+            days=180,
+        )
+        st.session_state["cost_contract_change_correlation_scope"] = (company, environment)
+
+    detail = st.session_state.get("cost_contract_change_correlation_detail")
+    if (
+        isinstance(detail, pd.DataFrame)
+        and st.session_state.get("cost_contract_change_correlation_scope") == (company, environment)
+    ):
+        if detail.empty:
+            st.info("No cost-related change correlations are available for this scope yet.")
+            return
+        render_priority_dataframe(
+            detail,
+            title="Possible cost correlations after changes",
+            priority_columns=[
+                "RELATED_TS", "CHANGE_TS", "CHANGE_TYPE", "OBJECT_NAME",
+                "CHANGED_BY", "RELATED_SIGNAL", "RELATED_ENTITY",
+                "CORRELATION_STRENGTH", "CORRELATION_LABEL", "EVIDENCE",
+                "RISK_LEVEL", "OWNER_ROUTE", "CONFIDENCE",
+            ],
+            sort_by=["RELATED_TS", "CHANGE_TS"],
+            ascending=[False, False],
+            raw_label="All cost-related change correlations",
+            height=300,
+            max_rows=10,
+        )
+
+
 def render() -> None:
     company = get_active_company()
     environment = get_active_environment()
@@ -5033,6 +5073,7 @@ def render() -> None:
     _render_executive_value_ledger(company, environment)
     _render_cost_efficiency_score_explanation(company, environment)
     _render_cost_forecast_detail(company, environment)
+    _render_cost_change_correlation(company, environment)
 
     workflow = render_workflow_selector(
         "Cost workflow",

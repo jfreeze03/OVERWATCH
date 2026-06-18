@@ -15,6 +15,8 @@ pd = lazy_pandas()
 
 get_active_company = _lazy_util("get_active_company")
 get_active_environment = _lazy_util("get_active_environment")
+load_change_correlation_detail = _lazy_util("load_change_correlation_detail")
+load_change_event_detail = _lazy_util("load_change_event_detail")
 load_forecast_detail = _lazy_util("load_forecast_detail")
 render_workflow_selector = _lazy_util("render_workflow_selector")
 render_priority_dataframe = _lazy_util("render_priority_dataframe")
@@ -138,6 +140,69 @@ def _render_workload_forecast_detail(company: str, environment: str) -> None:
             height=280,
             max_rows=8,
         )
+
+
+def _render_workload_change_detail(company: str, environment: str) -> None:
+    """Expose task/procedure/object changes and workload correlations behind Load."""
+    st.markdown("**Workload Change Intelligence**")
+    st.caption("Loads task, procedure, and object changes plus possible workload correlations. No live metadata scan is run.")
+    if st.button("Load Workload Changes", key="workload_load_change_intelligence", width="stretch"):
+        change_types = ("TASK_CHANGE", "PROCEDURE_CHANGE", "OBJECT_CHANGE")
+        st.session_state["workload_change_event_detail"] = load_change_event_detail(
+            company,
+            environment,
+            change_types=change_types,
+            days=180,
+        )
+        st.session_state["workload_change_correlation_detail"] = load_change_correlation_detail(
+            company,
+            environment,
+            change_types=change_types,
+            correlation_types=("Workload", "Alert"),
+            days=180,
+        )
+        st.session_state["workload_change_scope"] = (company, environment)
+
+    if st.session_state.get("workload_change_scope") != (company, environment):
+        return
+    events = st.session_state.get("workload_change_event_detail")
+    correlations = st.session_state.get("workload_change_correlation_detail")
+    if isinstance(events, pd.DataFrame):
+        if events.empty:
+            st.info("No workload change events are available for this scope yet.")
+        else:
+            render_priority_dataframe(
+                events,
+                title="Task, procedure, and object changes",
+                priority_columns=[
+                    "CHANGE_TS", "CHANGE_TYPE", "OBJECT_TYPE", "OBJECT_NAME",
+                    "CHANGED_BY", "RISK_LEVEL", "BUSINESS_IMPACT", "OWNER_ROUTE",
+                    "RELATED_ALERT_COUNT", "CONFIDENCE",
+                ],
+                sort_by=["CHANGE_TS"],
+                ascending=False,
+                raw_label="All workload change rows",
+                height=280,
+                max_rows=10,
+            )
+    if isinstance(correlations, pd.DataFrame):
+        if correlations.empty:
+            st.info("No workload change correlations are available for this scope yet.")
+        else:
+            render_priority_dataframe(
+                correlations,
+                title="Possible workload correlations after changes",
+                priority_columns=[
+                    "RELATED_TS", "CHANGE_TS", "CHANGE_TYPE", "OBJECT_NAME",
+                    "RELATED_SIGNAL", "RELATED_ENTITY", "CORRELATION_LABEL",
+                    "EVIDENCE", "OWNER_ROUTE", "CONFIDENCE",
+                ],
+                sort_by=["RELATED_TS", "CHANGE_TS"],
+                ascending=[False, False],
+                raw_label="All workload change correlations",
+                height=280,
+                max_rows=10,
+            )
 
 
 WORKLOAD_OPERATIONS_FAST_ENTRY_VERSION = "2026-06-16-workload-board-v1"
@@ -306,7 +371,10 @@ def render() -> None:
         ],
     )
     _render_loaded_workload_alert_context()
-    _render_workload_forecast_detail(get_active_company(), get_active_environment())
+    company = get_active_company()
+    environment = get_active_environment()
+    _render_workload_forecast_detail(company, environment)
+    _render_workload_change_detail(company, environment)
 
     workflow = render_workflow_selector(
         "Workload surface",

@@ -39,6 +39,7 @@ render_workflow_selector = _lazy_util("render_workflow_selector")
 build_loaded_section_alert_signal_board = _lazy_util("build_loaded_section_alert_signal_board")
 day_window_selectbox = _lazy_util("day_window_selectbox")
 load_executive_scorecard_detail = _lazy_util("load_executive_scorecard_detail")
+load_change_event_detail = _lazy_util("load_change_event_detail")
 load_ownership_coverage_rollup = _lazy_util("load_ownership_coverage_rollup")
 resolve_owner_context = _lazy_util("resolve_owner_context")
 run_query = _lazy_util("run_query")
@@ -1650,6 +1651,49 @@ def _render_security_score_explanation(company: str, environment: str) -> None:
         )
 
 
+def _render_security_change_detail(company: str, environment: str) -> None:
+    """Expose security-sensitive change events only after an operator asks for them."""
+    st.markdown("**Security-Sensitive Changes**")
+    st.caption("Loads role, grant, network policy, integration, and security-sensitive change evidence from the change mart.")
+    if st.button("Load Security-Sensitive Changes", key="security_load_change_intelligence", width="stretch"):
+        st.session_state["security_change_intelligence_detail"] = load_change_event_detail(
+            company,
+            environment,
+            change_types=(
+                "ROLE_CHANGE",
+                "GRANT_CHANGE",
+                "NETWORK_POLICY_CHANGE",
+                "INTEGRATION_CHANGE",
+                "SECURITY_SENSITIVE_CHANGE",
+            ),
+            days=180,
+        )
+        st.session_state["security_change_intelligence_scope"] = (company, environment)
+
+    detail = st.session_state.get("security_change_intelligence_detail")
+    if (
+        isinstance(detail, pd.DataFrame)
+        and st.session_state.get("security_change_intelligence_scope") == (company, environment)
+    ):
+        if detail.empty:
+            st.info("No security-sensitive change rows are available for this scope yet.")
+            return
+        render_priority_dataframe(
+            detail,
+            title="Security-sensitive change events",
+            priority_columns=[
+                "CHANGE_TS", "CHANGE_TYPE", "OBJECT_TYPE", "OBJECT_NAME",
+                "CHANGED_BY", "RISK_LEVEL", "BUSINESS_IMPACT", "OWNER_ROUTE",
+                "OWNER_GAP", "RELATED_ALERT_COUNT", "CONFIDENCE", "LAST_REFRESHED_TS",
+            ],
+            sort_by=["CHANGE_TS"],
+            ascending=False,
+            raw_label="All security-sensitive change rows",
+            height=300,
+            max_rows=12,
+        )
+
+
 def _apply_queued_security_workflow() -> None:
     requested_view = st.session_state.pop("security_posture_requested_view", None)
     requested_workflow = st.session_state.pop("security_posture_requested_workflow", None)
@@ -2673,6 +2717,7 @@ def render() -> None:
     _render_loaded_security_alert_context()
     _render_security_ownership_coverage(company, environment)
     _render_security_score_explanation(company, environment)
+    _render_security_change_detail(company, environment)
 
     days = day_window_selectbox(
         "Security window",

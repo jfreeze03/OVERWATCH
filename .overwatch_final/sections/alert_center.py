@@ -2849,6 +2849,53 @@ def _render_operational_risk_score_explanation(company: str, environment: str) -
         )
 
 
+def _render_alert_change_context(company: str, environment: str) -> None:
+    """Show change correlations near Alert Center context without claiming causality."""
+    from utils import load_change_correlation_detail
+
+    pd = _pd()
+    st.markdown("**Related Changes**")
+    st.caption("Loads possible change correlations for alert, cost, security, and workload signals.")
+    if st.button("Load Related Changes", key="alert_center_load_related_changes", width="stretch"):
+        st.session_state["alert_center_change_correlation_detail"] = load_change_correlation_detail(
+            company,
+            environment,
+            correlation_types=("Alert", "Cost", "Security", "Workload"),
+            days=180,
+        )
+        st.session_state["alert_center_change_scope"] = (company, environment)
+
+    detail = st.session_state.get("alert_center_change_correlation_detail")
+    if (
+        isinstance(detail, pd.DataFrame)
+        and st.session_state.get("alert_center_change_scope") == (company, environment)
+    ):
+        if detail.empty:
+            st.info("No related change correlations are available for this scope yet.")
+            return
+        render_shell_snapshot((
+            ("Possible Links", f"{len(detail):,}"),
+            ("High Risk", f"{int(pd.Series(detail.get('RISK_LEVEL', [])).astype(str).isin(['Critical', 'High']).sum()):,}"),
+            ("Signals", f"{int(pd.Series(detail.get('RELATED_SIGNAL', [])).dropna().nunique()):,}"),
+        ))
+        _render_priority_dataframe(
+            detail,
+            title="Related changes and possible correlations",
+            priority_columns=[
+                "RELATED_TS", "CORRELATION_TYPE", "CHANGE_TYPE", "OBJECT_TYPE",
+                "OBJECT_NAME", "CHANGED_BY", "RELATED_SIGNAL", "RELATED_ENTITY",
+                "CORRELATION_LABEL", "RISK_LEVEL", "BUSINESS_IMPACT",
+                "OWNER_ROUTE", "CONFIDENCE", "EVIDENCE",
+            ],
+            sort_by=["RELATED_TS", "CHANGE_TS"],
+            ascending=False,
+            raw_label="All related change correlation rows",
+            height=320,
+            max_rows=12,
+        )
+        st.caption("These rows are timing and entity matches only. Treat them as possible correlations until evidence proves causality.")
+
+
 def render() -> None:
     company = get_active_company()
     environment = get_active_environment()
@@ -2865,6 +2912,7 @@ def render() -> None:
     required_sources = _alert_center_sources_for_view(active_view)
     _render_operational_ownership_coverage(company, environment)
     _render_operational_risk_score_explanation(company, environment)
+    _render_alert_change_context(company, environment)
 
     if active_view == "Suppression Windows":
         _render_annotations()

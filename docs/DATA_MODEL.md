@@ -65,6 +65,17 @@ value/risk is tied to the signal.
 
 Details and manual validation steps live in `docs/EXECUTIVE_SCORECARD.md`.
 
+## Executive Forecasting
+
+| Object | Type | Purpose |
+| --- | --- | --- |
+| `OVERWATCH_FORECAST_CONFIG` | Table | Forecast catalog, owner route, methodology, confidence rule, source object list, and recommended action defaults. |
+| `OVERWATCH_FORECAST_HISTORY` | Transient table | Forecast snapshots and historical driver rows for explicit Load panels. |
+| `MART_EXECUTIVE_FORECAST_SUMMARY` | Transient mart | Compact first-paint Executive Landing forecast summary. |
+| `SP_OVERWATCH_REFRESH_FORECASTING` | Procedure | Refreshes leadership forecasts from existing OVERWATCH cost, storage, query, task, and procedure facts. |
+
+Details and manual validation steps live in `docs/FORECASTING.md`.
+
 ## Reconciliation
 
 | Object | Type | Purpose |

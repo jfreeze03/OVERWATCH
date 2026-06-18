@@ -53,6 +53,7 @@ get_user_company_filter_clause = _lazy_util("get_user_company_filter_clause")
 get_wh_filter_clause = _lazy_util("get_wh_filter_clause")
 load_action_queue = _lazy_util("load_action_queue")
 load_executive_scorecard_detail = _lazy_util("load_executive_scorecard_detail")
+load_forecast_detail = _lazy_util("load_forecast_detail")
 load_value_ledger_detail = _lazy_util("load_value_ledger_detail")
 load_value_ledger_rollup = _lazy_util("load_value_ledger_rollup")
 load_shared_service_cost_lens = _lazy_util("load_shared_service_cost_lens")
@@ -4960,6 +4961,53 @@ def _render_cost_efficiency_score_explanation(company: str, environment: str) ->
         )
 
 
+def _render_cost_forecast_detail(company: str, environment: str) -> None:
+    """Expose Phase 2C cost forecasting evidence only behind Load."""
+    st.markdown("**Cost Forecast Drivers**")
+    st.caption("Loads forecast history from OVERWATCH_FORECAST_HISTORY. Forecasts are estimates and do not count as verified savings.")
+    if st.button("Load Cost Forecast Drivers", key="cost_contract_load_forecast_drivers", width="stretch"):
+        st.session_state["cost_contract_forecast_detail"] = load_forecast_detail(
+            company,
+            environment,
+            forecast_keys=("EOM_SPEND", "EOQ_SPEND", "CONTRACT_BURN", "CREDIT_ANOMALY"),
+            days=180,
+        )
+        st.session_state["cost_contract_forecast_scope"] = (company, environment)
+
+    detail = st.session_state.get("cost_contract_forecast_detail")
+    if (
+        isinstance(detail, pd.DataFrame)
+        and st.session_state.get("cost_contract_forecast_scope") == (company, environment)
+    ):
+        if detail.empty:
+            st.info("No cost forecast rows are available for this scope yet.")
+            return
+        upward = safe_int(detail.get("TREND_DIRECTION", pd.Series(dtype=str)).fillna("").astype(str).eq("Up").sum())
+        low_confidence = safe_int(detail.get("CONFIDENCE", pd.Series(dtype=str)).fillna("").astype(str).eq("Low").sum())
+        value_risk = safe_float(pd.to_numeric(detail.get("VALUE_AT_RISK_USD", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
+        render_shell_snapshot((
+            ("Rows", f"{len(detail):,}"),
+            ("Trending Up", f"{upward:,}"),
+            ("Low Confidence", f"{low_confidence:,}"),
+            ("Value/Risk", f"${value_risk:,.0f}"),
+        ))
+        render_priority_dataframe(
+            detail,
+            title="Cost forecast drivers and methodology",
+            priority_columns=[
+                "SNAPSHOT_TS", "FORECAST_NAME", "FORECAST_VALUE", "VALUE_UNIT",
+                "CURRENT_ACTUAL", "PRIOR_PERIOD_VALUE", "TREND_DIRECTION",
+                "CONFIDENCE", "METHODOLOGY", "MAIN_DRIVER", "RECOMMENDED_ACTION",
+                "OWNER_ROUTE", "VALUE_AT_RISK_USD", "LAST_REFRESHED_TS",
+            ],
+            sort_by=["SNAPSHOT_TS", "FORECAST_KEY"],
+            ascending=[False, True],
+            raw_label="All cost forecast history rows",
+            height=300,
+            max_rows=12,
+        )
+
+
 def render() -> None:
     company = get_active_company()
     environment = get_active_environment()
@@ -4984,6 +5032,7 @@ def render() -> None:
     _render_loaded_cost_alert_context()
     _render_executive_value_ledger(company, environment)
     _render_cost_efficiency_score_explanation(company, environment)
+    _render_cost_forecast_detail(company, environment)
 
     workflow = render_workflow_selector(
         "Cost workflow",

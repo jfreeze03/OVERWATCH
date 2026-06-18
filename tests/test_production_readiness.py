@@ -47,8 +47,8 @@ class ProductionReadinessTests(unittest.TestCase):
 
     def test_validation_tracks_production_readiness_contract(self):
         validation = _validation_sql().upper()
-        self.assertIn("('TABLE', 76)", validation)
-        self.assertIn("('PROCEDURE', 12)", validation)
+        self.assertIn("('TABLE', 79)", validation)
+        self.assertIn("('PROCEDURE', 13)", validation)
         for token in [
             "PRODUCTION_READINESS_SUMMARY",
             "PRODUCTION_PRIVILEGE_BLOCKERS",

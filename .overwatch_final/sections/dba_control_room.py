@@ -122,6 +122,7 @@ load_action_queue = _lazy_util("load_action_queue")
 load_app_observability_detail = _lazy_util("load_app_observability_detail")
 load_data_trust_detail = _lazy_util("load_data_trust_detail")
 load_executive_scorecard_detail = _lazy_util("load_executive_scorecard_detail")
+load_forecast_detail = _lazy_util("load_forecast_detail")
 load_production_validation_detail = _lazy_util("load_production_validation_detail")
 run_query = _lazy_util("run_query")
 sql_literal = _lazy_util("sql_literal")
@@ -395,6 +396,55 @@ def _render_executive_scorecard_driver_gate(company: str, environment: str) -> N
             ascending=[True, True, False],
             raw_label="All executive scorecard driver rows",
             height=320,
+            max_rows=12,
+        )
+
+
+def _render_forecast_exception_gate(company: str, environment: str) -> None:
+    """Expose Phase 2C forecast exceptions only behind an explicit Load action."""
+    st.markdown("**Forecast Exceptions**")
+    st.caption(
+        "Loads forecasting history from OVERWATCH_FORECAST_HISTORY. "
+        "Forecasts are heuristic estimates and do not execute remediation."
+    )
+    if st.button("Load Forecast Exceptions", key="dba_load_forecast_exceptions", width="stretch"):
+        st.session_state["dba_forecast_exception_detail"] = load_forecast_detail(
+            company,
+            environment,
+            days=180,
+        )
+        st.session_state["dba_forecast_exception_scope"] = (company, environment)
+
+    detail = st.session_state.get("dba_forecast_exception_detail")
+    if (
+        isinstance(detail, pd.DataFrame)
+        and st.session_state.get("dba_forecast_exception_scope") == (company, environment)
+    ):
+        if detail.empty:
+            st.info("No forecast exception rows are available for this scope yet.")
+            return
+        trend = detail.get("TREND_DIRECTION", pd.Series(dtype=str)).fillna("").astype(str)
+        confidence = detail.get("CONFIDENCE", pd.Series(dtype=str)).fillna("").astype(str)
+        risk = pd.to_numeric(detail.get("VALUE_AT_RISK_USD", pd.Series(dtype=float)), errors="coerce").fillna(0)
+        render_shell_snapshot((
+            ("Rows", f"{len(detail):,}"),
+            ("Trending Up", f"{safe_int(trend.eq('Up').sum()):,}"),
+            ("Low Confidence", f"{safe_int(confidence.eq('Low').sum()):,}"),
+            ("Value/Risk", f"${safe_float(risk.sum()):,.0f}"),
+        ))
+        render_priority_dataframe(
+            detail,
+            title="Forecast exceptions and driver history",
+            priority_columns=[
+                "FORECAST_NAME", "FORECAST_DOMAIN", "FORECAST_VALUE", "VALUE_UNIT",
+                "CURRENT_ACTUAL", "PRIOR_PERIOD_VALUE", "TREND_DIRECTION",
+                "CONFIDENCE", "MAIN_DRIVER", "RECOMMENDED_ACTION", "OWNER_ROUTE",
+                "VALUE_AT_RISK_USD", "SOURCE_OBJECTS", "LAST_REFRESHED_TS",
+            ],
+            sort_by=["SNAPSHOT_TS", "FORECAST_KEY"],
+            ascending=[False, True],
+            raw_label="All forecast exception rows",
+            height=300,
             max_rows=12,
         )
 
@@ -6389,6 +6439,7 @@ def render() -> None:
     _render_enterprise_diagnostics_gate(company, environment)
     _render_production_readiness_gate(company, environment)
     _render_executive_scorecard_driver_gate(company, environment)
+    _render_forecast_exception_gate(company, environment)
 
     if st.button(load_label, key="dba_control_room_load", type="primary"):
         _load_control_room_evidence()

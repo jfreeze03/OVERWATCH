@@ -332,6 +332,13 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "load_executive_scorecard_summary",
         "load_executive_scorecard_detail",
     ),
+    "forecasting": (
+        "FORECAST_KEYS",
+        "FORECAST_CONFIDENCE_LABELS",
+        "FORECAST_TREND_LABELS",
+        "load_executive_forecast_summary",
+        "load_forecast_detail",
+    ),
     "ask_overwatch": (
         "TOP_PRIORITY_BRIEF_DOMAINS", "answer_ask_overwatch",
         "build_ask_overwatch_context", "build_grounded_cortex_prompt",

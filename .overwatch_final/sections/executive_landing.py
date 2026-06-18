@@ -43,6 +43,7 @@ render_priority_dataframe = _lazy_util("render_priority_dataframe")
 build_loaded_section_alert_signal_board = _lazy_util("build_loaded_section_alert_signal_board")
 load_enterprise_operating_rollups = _lazy_util("load_enterprise_operating_rollups")
 load_executive_scorecard_summary = _lazy_util("load_executive_scorecard_summary")
+load_executive_forecast_summary = _lazy_util("load_executive_forecast_summary")
 load_production_readiness_summary = _lazy_util("load_production_readiness_summary")
 run_query = _lazy_util("run_query")
 safe_identifier = _lazy_util("safe_identifier")
@@ -2893,6 +2894,73 @@ def _render_executive_scorecard_summary(scorecard: pd.DataFrame) -> None:
     st.dataframe(view, width="stretch", hide_index=True)
 
 
+def _format_forecast_value(value: object, unit: object) -> str:
+    numeric = safe_float(value, 0.0)
+    unit_label = str(unit or "").lower()
+    if unit_label == "usd":
+        return f"${numeric:,.0f}"
+    if unit_label == "percent":
+        return f"{numeric:,.1f}%"
+    if unit_label == "tb":
+        return f"{numeric:,.2f} TB"
+    if unit_label == "seconds":
+        return f"{numeric:,.0f}s"
+    if unit_label == "count":
+        return f"{numeric:,.0f}"
+    return f"{numeric:,.2f}"
+
+
+def _render_executive_forecast_summary(forecasts: pd.DataFrame) -> None:
+    """Render Phase 2C compact forecasting from the summary mart."""
+    if not isinstance(forecasts, pd.DataFrame) or forecasts.empty:
+        st.caption("Executive Forecasting is pending. Run the executive mart refresh to populate leadership forecast rows.")
+        return
+
+    work = forecasts.copy()
+    trend = work.get("TREND_DIRECTION", pd.Series(dtype=str)).fillna("Unknown").astype(str)
+    confidence = work.get("CONFIDENCE", pd.Series(dtype=str)).fillna("Low").astype(str)
+    risk_values = pd.to_numeric(work.get("VALUE_AT_RISK_USD", pd.Series(dtype=float)), errors="coerce").fillna(0)
+    upward = safe_int(trend.eq("Up").sum())
+    low_confidence = safe_int(confidence.eq("Low").sum())
+    value_risk = safe_float(risk_values.sum())
+    work["_RISK_SORT"] = risk_values
+    work["_LOW_CONF_SORT"] = confidence.eq("Low").astype(int)
+    top_row = work.sort_values(
+        by=["_RISK_SORT", "_LOW_CONF_SORT"],
+        ascending=[False, False],
+        na_position="last",
+    ).iloc[0]
+
+    st.markdown("**Executive Forecasting**")
+    render_shell_snapshot((
+        ("Forecasts", f"{len(work):,}"),
+        ("Trending Up", f"{upward:,}"),
+        ("Low Confidence", f"{low_confidence:,}"),
+        ("Value/Risk", f"${value_risk:,.0f}"),
+    ))
+    st.caption(
+        f"Top forecast: {top_row.get('FORECAST_NAME') or 'Forecast'} "
+        f"{_format_forecast_value(top_row.get('FORECAST_VALUE'), top_row.get('VALUE_UNIT'))}; "
+        f"confidence {top_row.get('CONFIDENCE') or 'Low'}. "
+        "Forecasts are heuristic estimates and are not counted as verified savings."
+    )
+    view = work[[
+        column for column in [
+            "FORECAST_NAME", "FORECAST_DOMAIN", "FORECAST_VALUE", "VALUE_UNIT",
+            "CURRENT_ACTUAL", "PRIOR_PERIOD_VALUE", "TREND_DIRECTION",
+            "CONFIDENCE", "MAIN_DRIVER", "RECOMMENDED_ACTION", "OWNER_ROUTE",
+            "VALUE_AT_RISK_USD", "LAST_REFRESHED_TS",
+        ]
+        if column in work.columns
+    ]].copy()
+    if "FORECAST_VALUE" in view.columns and "VALUE_UNIT" in view.columns:
+        view["FORECAST_DISPLAY"] = [
+            _format_forecast_value(value, unit)
+            for value, unit in zip(view["FORECAST_VALUE"], view["VALUE_UNIT"], strict=False)
+        ]
+    st.dataframe(view, width="stretch", hide_index=True)
+
+
 def render() -> None:
     company = _active_company()
     environment = _active_environment()
@@ -2980,6 +3048,9 @@ def render() -> None:
     )
     _render_executive_scorecard_summary(
         load_executive_scorecard_summary(company, environment, days=int(days))
+    )
+    _render_executive_forecast_summary(
+        load_executive_forecast_summary(company, environment, days=int(days))
     )
     load = _render_executive_action_brief(summary, int(days), show_strip=False)
     _render_loaded_executive_alert_context()

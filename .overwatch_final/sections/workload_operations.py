@@ -6,10 +6,16 @@ from importlib import import_module
 
 import streamlit as st
 
-from sections.base import lazy_util as _lazy_util
+from sections.base import lazy_pandas, lazy_util as _lazy_util
 from sections.navigation import apply_section_workflow_navigation
+from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_section_note
 
+pd = lazy_pandas()
+
+get_active_company = _lazy_util("get_active_company")
+get_active_environment = _lazy_util("get_active_environment")
+load_forecast_detail = _lazy_util("load_forecast_detail")
 render_workflow_selector = _lazy_util("render_workflow_selector")
 render_priority_dataframe = _lazy_util("render_priority_dataframe")
 build_loaded_section_alert_signal_board = _lazy_util("build_loaded_section_alert_signal_board")
@@ -83,6 +89,55 @@ def _render_loaded_workload_alert_context() -> None:
                 workflow=str(top.get("DESTINATION_WORKFLOW") or "Task & procedure health"),
             )
             st.rerun()
+
+
+def _render_workload_forecast_detail(company: str, environment: str) -> None:
+    """Expose workload pressure and SLA forecasts only after operator request."""
+    st.markdown("**Workload Forecast Drivers**")
+    st.caption(
+        "Loads warehouse pressure and SLA risk forecast history from OVERWATCH_FORECAST_HISTORY. "
+        "No live Snowflake scan or remediation is executed."
+    )
+    if st.button("Load Workload Forecast Drivers", key="workload_load_forecast_drivers", width="stretch"):
+        st.session_state["workload_forecast_detail"] = load_forecast_detail(
+            company,
+            environment,
+            forecast_keys=("WAREHOUSE_PRESSURE", "SLA_RISK"),
+            days=180,
+        )
+        st.session_state["workload_forecast_scope"] = (company, environment)
+
+    detail = st.session_state.get("workload_forecast_detail")
+    if (
+        isinstance(detail, pd.DataFrame)
+        and st.session_state.get("workload_forecast_scope") == (company, environment)
+    ):
+        if detail.empty:
+            st.info("No workload forecast rows are available for this scope yet.")
+            return
+        trend = detail.get("TREND_DIRECTION", pd.Series(dtype=str)).fillna("").astype(str)
+        confidence = detail.get("CONFIDENCE", pd.Series(dtype=str)).fillna("").astype(str)
+        risk = pd.to_numeric(detail.get("VALUE_AT_RISK_USD", pd.Series(dtype=float)), errors="coerce").fillna(0)
+        st.caption(
+            f"{safe_int(trend.eq('Up').sum()):,} forecast(s) trending up; "
+            f"{safe_int(confidence.eq('Low').sum()):,} low-confidence forecast(s); "
+            f"${safe_float(risk.sum()):,.0f} value/risk tagged."
+        )
+        render_priority_dataframe(
+            detail,
+            title="Warehouse pressure and SLA forecast drivers",
+            priority_columns=[
+                "FORECAST_NAME", "FORECAST_VALUE", "VALUE_UNIT", "CURRENT_ACTUAL",
+                "PRIOR_PERIOD_VALUE", "TREND_DIRECTION", "CONFIDENCE",
+                "MAIN_DRIVER", "RECOMMENDED_ACTION", "OWNER_ROUTE",
+                "LAST_REFRESHED_TS",
+            ],
+            sort_by=["SNAPSHOT_TS", "FORECAST_KEY"],
+            ascending=[False, True],
+            raw_label="All workload forecast history rows",
+            height=280,
+            max_rows=8,
+        )
 
 
 WORKLOAD_OPERATIONS_FAST_ENTRY_VERSION = "2026-06-16-workload-board-v1"
@@ -251,6 +306,7 @@ def render() -> None:
         ],
     )
     _render_loaded_workload_alert_context()
+    _render_workload_forecast_detail(get_active_company(), get_active_environment())
 
     workflow = render_workflow_selector(
         "Workload surface",

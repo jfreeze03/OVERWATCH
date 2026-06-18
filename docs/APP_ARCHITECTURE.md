@@ -97,6 +97,8 @@ flowchart TD
   role, privilege, refresh, freshness, config, and environment readiness rows.
 - [ ] `MART_EXECUTIVE_SCORECARD_SUMMARY` has recent rows for all six leadership
   scores after `SP_OVERWATCH_REFRESH_EXECUTIVE_SCORECARD()`.
+- [ ] `MART_EXECUTIVE_FORECAST_SUMMARY` has recent rows for all seven forecast
+  keys after `SP_OVERWATCH_REFRESH_FORECASTING()`.
 - [ ] Executive scorecard detail panels are loaded only by explicit operator
   buttons in DBA Control Room, Cost & Contract, Security Monitoring, and Alert
   Center.
@@ -144,3 +146,7 @@ flowchart TD
    `OVERWATCH_EXECUTIVE_SCORECARD_HISTORY`, and
    `docs/EXECUTIVE_SCORECARD.md`; it should remain mart-first and should not
    become a section-level live-query score synthesizer.
+6. Phase 2C Forecasting is implemented through
+   `MART_EXECUTIVE_FORECAST_SUMMARY`, `OVERWATCH_FORECAST_HISTORY`, and
+   `docs/FORECASTING.md`; forecast details stay behind explicit Load buttons
+   and forecasted savings must not be counted as verified value.

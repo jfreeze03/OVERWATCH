@@ -19,6 +19,7 @@ explicit Load buttons.
 | App Self-Observability | Executive Landing | DBA Control Room | `MART_APP_OBSERVABILITY_SUMMARY` | `OVERWATCH_APP_OBSERVABILITY` |
 | Production Readiness | Executive Landing | DBA Control Room | `MART_PRODUCTION_READINESS_SUMMARY` | `OVERWATCH_PRODUCTION_VALIDATION_STATUS` |
 | Executive Scorecard | Executive Landing | DBA Control Room, Cost & Contract, Security Monitoring, Alert Center | `MART_EXECUTIVE_SCORECARD_SUMMARY` | `OVERWATCH_EXECUTIVE_SCORECARD_HISTORY` |
+| Executive Forecasting | Executive Landing | DBA Control Room, Cost & Contract, Workload Operations | `MART_EXECUTIVE_FORECAST_SUMMARY` | `OVERWATCH_FORECAST_HISTORY` |
 
 ## Snowflake Objects
 
@@ -40,6 +41,10 @@ explicit Load buttons.
 | `OVERWATCH_EXECUTIVE_SCORECARD_HISTORY` | Explicit-load Phase 2B score driver history. |
 | `MART_EXECUTIVE_SCORECARD_SUMMARY` | Compact Phase 2B leadership health score summary. |
 | `SP_OVERWATCH_REFRESH_EXECUTIVE_SCORECARD` | Refreshes leadership scores from existing OVERWATCH marts and app tables. |
+| `OVERWATCH_FORECAST_CONFIG` | Phase 2C forecast catalog, owner routes, methodology, and confidence rules. |
+| `OVERWATCH_FORECAST_HISTORY` | Explicit-load Phase 2C forecast driver history. |
+| `MART_EXECUTIVE_FORECAST_SUMMARY` | Compact Phase 2C leadership forecasting summary. |
+| `SP_OVERWATCH_REFRESH_FORECASTING` | Refreshes cost, contract, storage, pressure, and SLA forecasts from OVERWATCH facts. |
 
 ## Confidence Labels
 
@@ -97,3 +102,14 @@ CALL SP_OVERWATCH_REFRESH_EXECUTIVE_SCORECARD();
 Then review `MART_EXECUTIVE_SCORECARD_SUMMARY`,
 `OVERWATCH_EXECUTIVE_SCORECARD_HISTORY`, `docs/EXECUTIVE_SCORECARD.md`, and the
 scorecard checks in `snowflake/OVERWATCH_MART_VALIDATION.sql`.
+
+Forecasting:
+
+```sql
+CALL SP_OVERWATCH_REFRESH_FORECASTING();
+```
+
+Then review `MART_EXECUTIVE_FORECAST_SUMMARY`, `OVERWATCH_FORECAST_HISTORY`,
+`docs/FORECASTING.md`, and the forecasting checks in
+`snowflake/OVERWATCH_MART_VALIDATION.sql`. Forecasted savings are not verified
+value and must stay separate from `MART_EXECUTIVE_VALUE_LEDGER`.

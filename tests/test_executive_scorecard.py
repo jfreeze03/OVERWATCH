@@ -49,8 +49,8 @@ class ExecutiveScorecardTests(unittest.TestCase):
                 self.assertIn(name, drop)
                 self.assertIn(name, validation)
         self.assertIn("CALL SP_OVERWATCH_REFRESH_EXECUTIVE_SCORECARD()", setup)
-        self.assertIn("('TABLE', 76)", validation)
-        self.assertIn("('PROCEDURE', 12)", validation)
+        self.assertIn("('TABLE', 79)", validation)
+        self.assertIn("('PROCEDURE', 13)", validation)
 
     def test_score_labels_thresholds_and_keys_are_constrained(self):
         from utils.executive_scorecard import SCORE_KEYS, SCORE_STATUS_LABELS, score_status_for_value

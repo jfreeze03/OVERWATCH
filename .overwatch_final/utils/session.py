@@ -6,6 +6,29 @@ import re
 
 import streamlit as st
 
+from runtime_state import (
+    ACTIVE_COMPANY,
+    ACTIVE_QUERY_TAG,
+    ACTIVE_QUERY_TAG_SECTION,
+    ACTIVE_SECTION,
+    BROAD_ROLE_WARNING_SHOWN,
+    CONNECTION_AVAILABLE,
+    CONNECTION_SURFACE,
+    CONNECTION_UNAVAILABLE,
+    CURRENT_ROLE,
+    CURRENT_ROLE_SOURCE,
+    DETAILED_QUERY_TAGS_ENABLED,
+    GLOBAL_ENVIRONMENT,
+    NAV_SECTION,
+    PERF_RUN_ID,
+    SF_SESSION,
+    SF_SESSION_CREATED_AT,
+    ensure_default_state,
+    get_state,
+    pop_state,
+    set_state,
+)
+
 
 # How long before we force a session health check.
 _SESSION_TTL_MINUTES = 55
@@ -22,7 +45,7 @@ _STMT_TIMEOUT_SECONDS = 840
 def _perf_run_id() -> str:
     """Return optional release-validation run id for query attribution."""
     try:
-        value = st.session_state.get("_overwatch_perf_run_id", "")
+        value = get_state(PERF_RUN_ID, "")
     except Exception:
         value = ""
     value = value or os.environ.get("OVERWATCH_PERF_RUN_ID", "")
@@ -32,7 +55,7 @@ def _perf_run_id() -> str:
 def _detailed_query_tags_enabled() -> bool:
     """Return whether section-aware query tags should be applied."""
     try:
-        return bool(st.session_state.get("_detailed_query_tags_enabled", True))
+        return bool(get_state(DETAILED_QUERY_TAGS_ENABLED, True))
     except Exception:
         return True
 
@@ -48,9 +71,9 @@ def _active_section_label(section: str = "") -> str:
     """Resolve the current section label without importing app routing code."""
     if section:
         return str(section)
-    for key in ("_overwatch_active_section", "nav_section"):
+    for key in (ACTIVE_SECTION, NAV_SECTION):
         try:
-            value = str(st.session_state.get(key) or "").strip()
+            value = str(get_state(key) or "").strip()
         except Exception:
             value = ""
         if value:
@@ -79,8 +102,8 @@ def build_overwatch_query_tag(
         return _QUERY_TAG
 
     section_part = _query_tag_part(_active_section_label(section))
-    company_part = _query_tag_part(st.session_state.get("active_company", "ALFA"), 24)
-    environment = str(st.session_state.get("global_environment", "") or "").strip()
+    company_part = _query_tag_part(get_state(ACTIVE_COMPANY, "ALFA"), 24)
+    environment = str(get_state(GLOBAL_ENVIRONMENT, "") or "").strip()
     tier_part = _query_tag_part(tier, 20) if tier else ""
     parts = [
         _QUERY_TAG,
@@ -100,12 +123,13 @@ def build_overwatch_query_tag(
 def apply_overwatch_query_tag(session, query_tag: str = "", *, section: str = "") -> None:
     """Apply a Snowflake QUERY_TAG when needed; never block the UI on failure."""
     tag = str(query_tag or build_overwatch_query_tag(section=section))[:_QUERY_TAG_MAX_LEN] or _QUERY_TAG
-    if st.session_state.get("_overwatch_active_query_tag") == tag:
+    if get_state(ACTIVE_QUERY_TAG) == tag:
         return
     try:
         session.sql(f"ALTER SESSION SET QUERY_TAG = {_sql_literal(tag)}").collect()
-        st.session_state["_overwatch_active_query_tag"] = tag
-        st.session_state["_overwatch_active_query_tag_section"] = (
+        set_state(ACTIVE_QUERY_TAG, tag)
+        set_state(
+            ACTIVE_QUERY_TAG_SECTION,
             _section_from_query_tag(tag) or _query_tag_part(_active_section_label(section))
         )
     except Exception:
@@ -120,8 +144,8 @@ def _ensure_active_section_query_tag(session) -> None:
 
     active_section = _active_section_label()
     active_part = _query_tag_part(active_section)
-    current_section = str(st.session_state.get("_overwatch_active_query_tag_section") or "")
-    current_tag = str(st.session_state.get("_overwatch_active_query_tag") or "")
+    current_section = str(get_state(ACTIVE_QUERY_TAG_SECTION) or "")
+    current_tag = str(get_state(ACTIVE_QUERY_TAG) or "")
     if current_section == active_part and current_tag.startswith(f"{_QUERY_TAG}|"):
         return
 
@@ -190,8 +214,8 @@ def _make_session():
             f"STATEMENT_TIMEOUT_IN_SECONDS = {_STMT_TIMEOUT_SECONDS}, "
             "TIMEZONE = 'UTC'"
         ).collect()
-        st.session_state["_overwatch_active_query_tag"] = _QUERY_TAG
-        st.session_state["_overwatch_active_query_tag_section"] = ""
+        set_state(ACTIVE_QUERY_TAG, _QUERY_TAG)
+        set_state(ACTIVE_QUERY_TAG_SECTION, "")
     except Exception:
         pass
 
@@ -205,13 +229,13 @@ def _capture_current_role(sess) -> str:
         rows = sess.sql("SELECT CURRENT_ROLE() AS R").collect()
         role = rows[0]["R"] if rows else ""
         role = str(role or "").upper()
-        st.session_state["_overwatch_current_role"] = role
-        st.session_state["_overwatch_current_role_source"] = "session"
+        set_state(CURRENT_ROLE, role)
+        set_state(CURRENT_ROLE_SOURCE, "session")
         _warn_on_broad_role(role)
         return role
     except Exception:
-        st.session_state.setdefault("_overwatch_current_role", "")
-        st.session_state.setdefault("_overwatch_current_role_source", "unknown")
+        ensure_default_state(CURRENT_ROLE, "")
+        ensure_default_state(CURRENT_ROLE_SOURCE, "unknown")
         return ""
 
 
@@ -220,13 +244,13 @@ def _warn_on_broad_role(role: str) -> None:
     if str(role or "").upper() not in {"ACCOUNTADMIN", "ORGADMIN", "SECURITYADMIN"}:
         return
     try:
-        if st.session_state.get("_overwatch_broad_role_warning_shown"):
+        if get_state(BROAD_ROLE_WARNING_SHOWN):
             return
         st.warning(
             "OVERWATCH is running with a broad administrator role. "
             "For app access, use SNOW_ACCOUNTADMINS or SNOW_SYSADMINS."
         )
-        st.session_state["_overwatch_broad_role_warning_shown"] = True
+        set_state(BROAD_ROLE_WARNING_SHOWN, True)
     except Exception:
         pass
 
@@ -243,27 +267,29 @@ def _session_is_alive(sess) -> bool:
 def get_session():
     """Return a live, validated Snowflake session."""
     now = datetime.now()
-    last_created = st.session_state.get("_sf_session_created_at")
+    last_created = get_state(SF_SESSION_CREATED_AT)
     needs_check = False
     if last_created:
         age_min = (now - last_created).total_seconds() / 60
         needs_check = age_min >= _SESSION_TTL_MINUTES
-    elif "sf_session" in st.session_state:
-        st.session_state["_sf_session_created_at"] = now
+    elif get_state(SF_SESSION) is not None:
+        set_state(SF_SESSION_CREATED_AT, now)
 
-    if needs_check and "sf_session" in st.session_state:
-        if not _session_is_alive(st.session_state["sf_session"]):
-            st.session_state.pop("sf_session", None)
-        st.session_state["_sf_session_created_at"] = now
+    session = get_state(SF_SESSION)
+    if needs_check and session is not None:
+        if not _session_is_alive(session):
+            pop_state(SF_SESSION, None)
+            session = None
+        set_state(SF_SESSION_CREATED_AT, now)
 
-    if "sf_session" not in st.session_state:
+    if session is None:
         sess = _make_session()
-        st.session_state["sf_session"] = sess
-        st.session_state["_sf_session_created_at"] = now
-    elif "_overwatch_current_role" not in st.session_state:
-        _capture_current_role(st.session_state["sf_session"])
+        set_state(SF_SESSION, sess)
+        set_state(SF_SESSION_CREATED_AT, now)
+        session = sess
+    elif get_state(CURRENT_ROLE) is None:
+        _capture_current_role(session)
 
-    session = st.session_state["sf_session"]
     _ensure_active_section_query_tag(session)
     return session
 
@@ -271,8 +297,8 @@ def get_session():
 def snowflake_connection_known_unavailable() -> bool:
     """Return True when startup already proved Snowflake is unavailable."""
     return bool(
-        st.session_state.get("_overwatch_connection_unavailable")
-        or st.session_state.get("_overwatch_connection_available") is False
+        get_state(CONNECTION_UNAVAILABLE)
+        or get_state(CONNECTION_AVAILABLE) is False
     )
 
 
@@ -292,13 +318,13 @@ def get_session_for_action(
         if exc.__class__.__name__ != "StopException":
             raise
         st.info(f"Snowflake connection is required to {action}. {offline_note}")
-        st.session_state["_overwatch_connection_unavailable"] = True
-        st.session_state["_overwatch_connection_available"] = False
-        st.session_state["_overwatch_connection_surface"] = surface
+        set_state(CONNECTION_UNAVAILABLE, True)
+        set_state(CONNECTION_AVAILABLE, False)
+        set_state(CONNECTION_SURFACE, surface)
         return None
 
 
 def invalidate_session():
     """Force-drop the cached Snowflake session."""
-    st.session_state.pop("sf_session", None)
-    st.session_state.pop("_sf_session_created_at", None)
+    pop_state(SF_SESSION, None)
+    pop_state(SF_SESSION_CREATED_AT, None)

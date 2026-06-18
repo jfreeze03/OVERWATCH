@@ -3,6 +3,31 @@
 This file records user-facing implementation changes that should be documented
 outside the Streamlit app UI.
 
+## 2026-06-17 - App Shell Phase 1 Refactor
+
+- `.overwatch_final/app.py` is now a thin Streamlit entrypoint that only sets
+  page config and calls `shell.render_app()`.
+- App-shell responsibilities were split into explicit modules:
+  `shell.py`, `navigation.py`, `access_control.py`, `filters.py`,
+  `layout.py`, `runtime_state.py`, `refresh.py`, and `section_dispatch.py`.
+- Follow-up hardening centralized shell-owned session keys in
+  `runtime_state.py`, replaced the sidebar positional return tuple with a
+  `SidebarState` contract, and prevents the shell from probing Snowflake while
+  idle query pause is active.
+- The hardening pass expanded `SidebarState` to include active company,
+  connection availability, and idle state; moved shared section-navigation keys
+  to constants; and added tests blocking raw shell-layer `st.session_state`
+  access outside `runtime_state.py`.
+- Streamlit-in-Snowflake packaging was updated so `.overwatch_final/snowflake.yml`
+  includes the new top-level shell modules.
+- `sections.__init__` now re-exports the top-level section dispatcher for
+  backward compatibility with existing internal imports.
+- `docs/APP_ARCHITECTURE.md` records the Phase 1 refactor map, module
+  responsibilities, migration summary, manual validation points, and
+  production-readiness checklist.
+- `docs/SESSION_STATE_CONTRACT.md` records persistent, transient, filter, cache,
+  and known-exception state ownership.
+
 ## 2026-06-17 - Alert Operations Review Workflow
 
 - Added `snowflake/OVERWATCH_ALERT_OPERATIONS_REVIEW.sql` as a read-only
@@ -245,3 +270,20 @@ outside the Streamlit app UI.
   theme, section guidance, display helpers, or workflow helpers.
 - Theme version state remains only to preserve the selected Snowflake Dark/White
   theme across sessions and Streamlit reruns.
+
+## 2026-06-17 - Enterprise Operating Model Phase 1
+
+- Added mart-first Phase 1 enterprise capabilities around:
+  `Finding -> Owner -> Trust Level -> Business Impact -> Action -> Value Verified`.
+- New Snowflake objects live in `snowflake/OVERWATCH_MART_SETUP.sql` and are
+  documented in `docs/ENTERPRISE_OPERATING_MODEL.md`.
+- Executive Landing reads compact trust, ownership, value, and app health
+  summaries only. DBA Control Room and Cost & Contract detail evidence require
+  explicit Load buttons.
+- `MART_EXECUTIVE_VALUE_LEDGER` separates verified savings from unverified
+  estimates. Unverified expected savings must not be counted as realized value.
+- `OVERWATCH_OPERATIONAL_OWNER_MAP` is an operational route fallback by entity
+  type. It is not a generic owner directory or governance approval workflow.
+- `SP_OVERWATCH_REFRESH_ENTERPRISE_OPERATING_MODEL` does not execute
+  remediation. It only summarizes existing OVERWATCH facts, app logs, action
+  queue rows, and ledger rows.

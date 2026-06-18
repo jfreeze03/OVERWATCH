@@ -38,6 +38,7 @@ render_mode_selector = _lazy_util("render_mode_selector")
 render_workflow_selector = _lazy_util("render_workflow_selector")
 build_loaded_section_alert_signal_board = _lazy_util("build_loaded_section_alert_signal_board")
 day_window_selectbox = _lazy_util("day_window_selectbox")
+load_ownership_coverage_rollup = _lazy_util("load_ownership_coverage_rollup")
 resolve_owner_context = _lazy_util("resolve_owner_context")
 run_query = _lazy_util("run_query")
 safe_identifier = _lazy_util("safe_identifier")
@@ -1570,6 +1571,39 @@ def _queue_security_workflow(workflow: str) -> None:
         st.rerun()
 
 
+def _render_security_ownership_coverage(company: str, environment: str) -> None:
+    coverage = load_ownership_coverage_rollup(
+        company,
+        environment,
+        surface="Security Monitoring",
+        days=35,
+    )
+    if coverage is None or getattr(coverage, "empty", True):
+        st.caption("Security ownership coverage is pending. Refresh the enterprise operating model mart to show access route gaps.")
+        return
+    gaps = safe_int(pd.to_numeric(coverage.get("GAP_ITEMS", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
+    routed = safe_int(pd.to_numeric(coverage.get("ROUTED_ITEMS", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
+    confidence = str(coverage.get("CONFIDENCE", pd.Series(["estimated"])).fillna("estimated").astype(str).iloc[0])
+    st.markdown("**Security Ownership Coverage**")
+    render_shell_snapshot((
+        ("Routed", f"{routed:,}"),
+        ("Gaps", f"{gaps:,}"),
+        ("Confidence", confidence),
+    ))
+    st.dataframe(
+        coverage[[
+            column for column in [
+                "ENTITY_TYPE", "TOTAL_ITEMS", "ROUTED_ITEMS", "GAP_ITEMS",
+                "COVERAGE_PCT", "TRUST_LEVEL", "CONFIDENCE", "TOP_GAP_ENTITY",
+                "ROUTE", "NEXT_ACTION",
+            ]
+            if column in coverage.columns
+        ]],
+        width="stretch",
+        hide_index=True,
+    )
+
+
 def _apply_queued_security_workflow() -> None:
     requested_view = st.session_state.pop("security_posture_requested_view", None)
     requested_workflow = st.session_state.pop("security_posture_requested_workflow", None)
@@ -2591,6 +2625,7 @@ def render() -> None:
         ],
     )
     _render_loaded_security_alert_context()
+    _render_security_ownership_coverage(company, environment)
 
     days = day_window_selectbox(
         "Security window",

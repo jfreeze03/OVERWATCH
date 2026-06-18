@@ -274,7 +274,6 @@ def _metric(df, column: str) -> float:
 
 
 def render():
-    session = get_session()
     st.subheader("Adoption Analytics")
     st.caption("Track which teams, warehouses, databases, roles, and clients are actually using Snowflake.")
 
@@ -282,6 +281,7 @@ def render():
     if st.button("Load Adoption Analytics", key="aa_load"):
         with render_load_status("Loading adoption telemetry", "Adoption telemetry ready"):
             try:
+                session = get_session()
                 st.session_state["aa_data"] = _load_adoption(session, days)
             except Exception as e:
                 st.warning(f"Adoption analytics unavailable in this role/context: {format_snowflake_error(e)}")

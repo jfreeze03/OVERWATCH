@@ -5,9 +5,9 @@ import threading
 import time
 
 import pandas as pd
-import streamlit as st
 
 from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE
+from runtime_state import CURRENT_ROLE, OVERWATCH_ACTOR, get_state, set_state
 from .company_filter import get_active_company, get_active_environment, get_environment_db_patterns
 from .query import run_query, safe_identifier, sql_literal
 
@@ -169,7 +169,7 @@ def _show_column_name(row) -> str:
 
 def _action_queue_role_scope() -> str:
     try:
-        return str(st.session_state.get("_overwatch_current_role", "") or "").upper()
+        return str(get_state(CURRENT_ROLE, "") or "").upper()
     except Exception:
         return ""
 
@@ -199,24 +199,24 @@ def _mark_action_queue_process_columns(columns: set[str]) -> None:
 
 def _action_queue_column_names(session) -> set[str]:
     """Return deployed action-queue columns using cached metadata per role."""
-    cached = st.session_state.get(_ACTION_QUEUE_COLUMN_CACHE_KEY)
+    cached = get_state(_ACTION_QUEUE_COLUMN_CACHE_KEY)
     if isinstance(cached, set):
         return cached
     process_cached = _action_queue_process_cached_columns()
     if process_cached is not None:
-        st.session_state[_ACTION_QUEUE_COLUMN_CACHE_KEY] = process_cached
+        set_state(_ACTION_QUEUE_COLUMN_CACHE_KEY, process_cached)
         return process_cached
     with _ACTION_QUEUE_SHOW_LOCK:
         process_cached = _action_queue_process_cached_columns()
         if process_cached is not None:
-            st.session_state[_ACTION_QUEUE_COLUMN_CACHE_KEY] = process_cached
+            set_state(_ACTION_QUEUE_COLUMN_CACHE_KEY, process_cached)
             return process_cached
         try:
             rows = session.sql(f"SHOW COLUMNS IN TABLE {ACTION_QUEUE_FQN}").collect()
         except Exception:
             rows = []
         columns = {name for row in rows for name in [_show_column_name(row)] if name}
-        st.session_state[_ACTION_QUEUE_COLUMN_CACHE_KEY] = columns
+        set_state(_ACTION_QUEUE_COLUMN_CACHE_KEY, columns)
         _mark_action_queue_process_columns(columns)
         return columns
 
@@ -843,7 +843,7 @@ def load_action_queue(session, limit: int = 500) -> pd.DataFrame:
 
 
 def _safe_actor(session) -> str:
-    return str(st.session_state.get("_overwatch_actor", "OVERWATCH") or "OVERWATCH")
+    return str(get_state(OVERWATCH_ACTOR, "OVERWATCH") or "OVERWATCH")
 
 
 def update_action_status(session, action_id: str, status: str, reason: str = "") -> None:

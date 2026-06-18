@@ -7,11 +7,32 @@ layer. The full source of truth remains `snowflake/OVERWATCH_MART_SETUP.sql`.
 
 | Object | Type | Purpose |
 |---|---|---|
-| `OVERWATCH_SELF_MONITORING_V` | View | Summarizes app query tags, failures, latency, and bytes scanned by section. |
+| `OVERWATCH_USAGE_LOG` | Table | Runtime/query event log used for app self-observability summaries. |
 | `MART_EXECUTIVE_OBSERVABILITY` | Transient mart | Executive monitoring wall: spend, Cortex, runtime, queue, spill, alerts, actions, storage, cost drivers, query database mix, execution status, and warehouse pressure. |
 
 The refresh contract and capability notes now live in documentation and
 validation SQL instead of static mart tables.
+
+## Enterprise Operating Model
+
+Phase 1 enterprise capabilities connect monitoring work through:
+
+Finding -> Owner -> Trust Level -> Business Impact -> Action -> Value Verified.
+
+| Object | Type | Purpose |
+|---|---|---|
+| `OVERWATCH_DATA_TRUST_SOURCE` | Table | Source freshness policy, owner route, business impact, and confidence label catalog. |
+| `OVERWATCH_DATA_TRUST_STATUS` | Transient table | Source-level trust diagnostics for DBA Control Room explicit loads. |
+| `MART_DATA_TRUST_SUMMARY` | Transient mart | Compact trust rollup for Executive Landing first paint. |
+| `OVERWATCH_OPERATIONAL_OWNER_MAP` | Table | Operational route fallback by entity type; it is not a generic owner directory. |
+| `MART_OPERATIONAL_OWNER_COVERAGE` | Transient mart | Ownership coverage and route gaps for Alert Center and Security Monitoring. |
+| `OVERWATCH_VALUE_LEDGER` | Table | Expected savings, actual verified savings, confidence, evidence, owner route, status, and rollback notes. |
+| `MART_EXECUTIVE_VALUE_LEDGER` | Transient mart | Executive value rollup. Verified savings and unverified estimates are separate. |
+| `OVERWATCH_APP_OBSERVABILITY` | Transient table | App runtime/query-tag detail from OVERWATCH usage logs. |
+| `MART_APP_OBSERVABILITY_SUMMARY` | Transient mart | Compact app health rollup for Executive Landing/DBA Control Room. |
+| `SP_OVERWATCH_REFRESH_ENTERPRISE_OPERATING_MODEL` | Procedure | Refreshes the enterprise operating-model summaries from existing OVERWATCH facts and app tables. |
+
+Details and validation steps live in `docs/ENTERPRISE_OPERATING_MODEL.md`.
 
 ## Reconciliation
 
@@ -56,5 +77,5 @@ incident proof.
 |---|---|
 | `SNOWFLAKE.ACCOUNT_USAGE.DATA_METRIC_FUNCTION_REFERENCES` | Registers Snowflake DMF data-quality checks, schedules, states, and stale/failed runs where DMFs are enabled. |
 | `SHOW ALERTS IN ACCOUNT` / `INFORMATION_SCHEMA.ALERT_HISTORY` | Proves native Snowflake ALERT objects exist, are scheduled, and have recent run history. |
-| `SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY` with `QUERY_TAG ILIKE 'OVERWATCH%'` | Measures OVERWATCH's own query count, failures, latency, bytes scanned, and section attribution. |
+| `OVERWATCH_USAGE_LOG` and query-tag telemetry | Measures OVERWATCH's own query count, failures, latency, and section attribution without first-paint `ACCOUNT_USAGE` scans. |
 | `SNOWFLAKE.ORGANIZATION_USAGE.METERING_DAILY_HISTORY` | Optional ORGADMIN rollup for multi-account cost when organization privileges exist. |

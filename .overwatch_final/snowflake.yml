@@ -51,7 +51,15 @@ streamlit:
 
   artifacts:
     - app.py
+    - access_control.py
     - config.py
+    - filters.py
+    - layout.py
+    - navigation.py
+    - refresh.py
+    - runtime_state.py
+    - section_dispatch.py
+    - shell.py
     - theme.py
     - environment.yml
     - utils/

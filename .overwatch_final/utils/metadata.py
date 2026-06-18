@@ -2,8 +2,8 @@
 import time
 
 import pandas as pd
-import streamlit as st
 
+from runtime_state import CURRENT_ROLE, SHOW_STATEMENT_CACHE, ensure_default_state, get_state, pop_state
 from config import COMPANY_CONFIG
 from .admin import safe_identifier, sql_literal
 from .company_filter import company_value_allowed, get_active_company
@@ -15,7 +15,7 @@ _SHOW_CACHE_MAX_ENTRIES = 12
 
 
 def _show_cache_key(stmt: str) -> str:
-    role = str(st.session_state.get("_overwatch_current_role", "") or "").upper()
+    role = str(get_state(CURRENT_ROLE, "") or "").upper()
     normalized_stmt = " ".join(str(stmt or "").strip().split()).upper()
     return f"{role}|{normalized_stmt}"
 
@@ -34,9 +34,9 @@ def _prune_show_cache(cache: dict) -> None:
 def clear_show_statement_cache(stmt: str | None = None) -> None:
     """Clear cached SHOW/DESC metadata after explicit DBA refresh or changes."""
     if stmt is None:
-        st.session_state.pop("_overwatch_show_statement_cache", None)
+        pop_state(SHOW_STATEMENT_CACHE, None)
         return
-    cache = st.session_state.get("_overwatch_show_statement_cache", {})
+    cache = get_state(SHOW_STATEMENT_CACHE, {})
     cache.pop(_show_cache_key(stmt), None)
 
 
@@ -44,7 +44,7 @@ def show_to_df(session, stmt: str, force_refresh: bool = False) -> pd.DataFrame:
     """Run a SHOW/DESC statement and return a normalized DataFrame."""
     now = time.time()
     cache_key = _show_cache_key(stmt)
-    cache = st.session_state.setdefault("_overwatch_show_statement_cache", {})
+    cache = ensure_default_state(SHOW_STATEMENT_CACHE, {})
     cached = cache.get(cache_key)
     if not force_refresh and cached:
         age_sec = now - float(cached.get("loaded_at", 0) or 0)

@@ -97,10 +97,12 @@ class GuardrailTests(unittest.TestCase):
 
     def test_app_clamps_global_date_widget_before_instantiation(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
+        filters_text = (APP_ROOT / "filters.py").read_text(encoding="utf-8")
 
-        self.assertIn('date_input_key = "_global_date_range_input"', app_text)
-        self.assertIn("key=date_input_key", app_text)
-        self.assertIn("try:\n    from utils.admin import clamp_global_date_range", app_text)
-        self.assertIn("Fallback for Snowflake stages that refresh app.py before utils.admin", app_text)
-        self.assertNotIn("render_admin_mode_control", app_text)
-        self.assertNotIn('st.session_state["_global_date_range_input"] =', app_text)
+        self.assertIn("from shell import render_app", app_text)
+        self.assertIn("GLOBAL_DATE_RANGE_INPUT", filters_text)
+        self.assertIn("key=GLOBAL_DATE_RANGE_INPUT", filters_text)
+        self.assertIn("try:\n    from utils.admin import clamp_global_date_range", filters_text)
+        self.assertIn("Fallback for Snowflake stages that refresh filters before utils.admin", filters_text)
+        self.assertNotIn("render_admin_mode_control", app_text + filters_text)
+        self.assertNotIn('st.session_state["_global_date_range_input"] =', app_text + filters_text)

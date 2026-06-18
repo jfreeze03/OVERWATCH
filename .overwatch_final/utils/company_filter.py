@@ -22,6 +22,21 @@ from config import (
     ENVIRONMENT_OPTIONS_BY_COMPANY,
     DEFAULT_ENVIRONMENT,
 )
+from runtime_state import (
+    ACTIVE_COMPANY,
+    GLOBAL_DATABASE,
+    GLOBAL_END_DATE,
+    GLOBAL_ENVIRONMENT,
+    GLOBAL_ROLE,
+    GLOBAL_SCHEMA,
+    GLOBAL_START_DATE,
+    GLOBAL_USER,
+    GLOBAL_WAREHOUSE,
+    REFRESH_SALT_GLOBAL,
+    get_state,
+    pop_state,
+    set_state,
+)
 from .state_keys import PRESERVE_STATE_EXACT, PRESERVE_STATE_PREFIXES
 
 
@@ -95,7 +110,7 @@ def _exclude_all_sql(column: str, patterns: list[str], *, allow_null: bool = Fal
 
 def get_active_company() -> str:
     """Return currently selected company key. Defaults to ALFA (never ALL)."""
-    return st.session_state.get("active_company", DEFAULT_COMPANY)
+    return get_state(ACTIVE_COMPANY, DEFAULT_COMPANY)
 
 
 def get_company_cfg(company: str = None) -> dict:
@@ -106,10 +121,10 @@ def get_company_cfg(company: str = None) -> dict:
 
 def get_active_environment() -> str:
     """Return the selected environment scope for the active company."""
-    env = str(st.session_state.get("global_environment", DEFAULT_ENVIRONMENT) or DEFAULT_ENVIRONMENT)
+    env = str(get_state(GLOBAL_ENVIRONMENT, DEFAULT_ENVIRONMENT) or DEFAULT_ENVIRONMENT)
     if env not in ENVIRONMENT_CONFIG:
         return DEFAULT_ENVIRONMENT
-    company = st.session_state.get("active_company", DEFAULT_COMPANY)
+    company = get_state(ACTIVE_COMPANY, DEFAULT_COMPANY)
     options = ENVIRONMENT_OPTIONS_BY_COMPANY.get(company, ENVIRONMENT_OPTIONS_BY_COMPANY.get("ALL", (DEFAULT_ENVIRONMENT,)))
     return env if env in options else DEFAULT_ENVIRONMENT
 
@@ -188,9 +203,9 @@ def invalidate_company_cache(
         and (clear_metadata or not any(k.startswith(p) for p in _METADATA_CACHE_PREFIXES))
     ]
     for k in keys_to_drop:
-        del st.session_state[k]
+        pop_state(k, None)
     if clear_streamlit_cache:
-        st.session_state["_refresh_salt_global"] = datetime.now().isoformat()
+        set_state(REFRESH_SALT_GLOBAL, datetime.now().isoformat())
 
 
 # WHERE clause builders
@@ -505,8 +520,8 @@ def _text_filter_clause(value: str, column: str) -> str:
 
 
 def get_global_date_clause(column: str = "start_time") -> str:
-    start = st.session_state.get("global_start_date")
-    end   = st.session_state.get("global_end_date")
+    start = get_state(GLOBAL_START_DATE)
+    end = get_state(GLOBAL_END_DATE)
     clauses = []
     if start:
         clauses.append(f"{column} >= TO_TIMESTAMP_NTZ('{start} 00:00:00')")
@@ -516,23 +531,23 @@ def get_global_date_clause(column: str = "start_time") -> str:
 
 
 def get_global_wh_filter_clause(column: str = "warehouse_name") -> str:
-    return _text_filter_clause(st.session_state.get("global_warehouse"), column)
+    return _text_filter_clause(get_state(GLOBAL_WAREHOUSE), column)
 
 
 def get_global_user_filter_clause(column: str = "user_name") -> str:
-    return _text_filter_clause(st.session_state.get("global_user"), column)
+    return _text_filter_clause(get_state(GLOBAL_USER), column)
 
 
 def get_global_role_filter_clause(column: str = "role_name") -> str:
-    return _text_filter_clause(st.session_state.get("global_role"), column)
+    return _text_filter_clause(get_state(GLOBAL_ROLE), column)
 
 
 def get_global_db_filter_clause(column: str = "database_name") -> str:
-    return _text_filter_clause(st.session_state.get("global_database"), column)
+    return _text_filter_clause(get_state(GLOBAL_DATABASE), column)
 
 
 def get_global_schema_filter_clause(column: str = "schema_name") -> str:
-    return _text_filter_clause(st.session_state.get("global_schema"), column)
+    return _text_filter_clause(get_state(GLOBAL_SCHEMA), column)
 
 
 def get_environment_filter_clause(
@@ -647,13 +662,13 @@ def get_company_scope_key(prefix: str, *parts: object) -> str:
     payload = "|".join([
         str(prefix),
         str(get_active_company()),
-        str(st.session_state.get("global_start_date", "")),
-        str(st.session_state.get("global_end_date", "")),
-        str(st.session_state.get("global_warehouse", "")),
-        str(st.session_state.get("global_user", "")),
-        str(st.session_state.get("global_role", "")),
-        str(st.session_state.get("global_database", "")),
-        str(st.session_state.get("global_schema", "")),
+        str(get_state(GLOBAL_START_DATE, "")),
+        str(get_state(GLOBAL_END_DATE, "")),
+        str(get_state(GLOBAL_WAREHOUSE, "")),
+        str(get_state(GLOBAL_USER, "")),
+        str(get_state(GLOBAL_ROLE, "")),
+        str(get_state(GLOBAL_DATABASE, "")),
+        str(get_state(GLOBAL_SCHEMA, "")),
         str(get_active_environment()),
         *[str(part) for part in parts],
     ])

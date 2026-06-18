@@ -119,6 +119,8 @@ build_schema_migration_status_sql = _lazy_util("build_schema_migration_status_sq
 load_latest_control_room_mart = _lazy_util("load_latest_control_room_mart")
 load_task_inventory = _lazy_util("load_task_inventory")
 load_action_queue = _lazy_util("load_action_queue")
+load_app_observability_detail = _lazy_util("load_app_observability_detail")
+load_data_trust_detail = _lazy_util("load_data_trust_detail")
 run_query = _lazy_util("run_query")
 sql_literal = _lazy_util("sql_literal")
 resolve_owner_context = _lazy_util("resolve_owner_context")
@@ -204,6 +206,84 @@ def _render_consolidated_service_posture() -> None:
     from sections import service_health
 
     service_health.render()
+
+
+def _render_enterprise_diagnostics_gate(company: str, environment: str) -> None:
+    """Expose enterprise trust/app detail only when the operator asks for it."""
+    st.markdown("**Production Trust Diagnostics**")
+    st.caption("Detail diagnostics read OVERWATCH marts and logs only. They stay unloaded until a DBA needs proof.")
+    c1, c2 = st.columns([1.2, 1.2])
+    with c1:
+        if st.button("Load Data Trust Diagnostics", key="dba_enterprise_load_data_trust", width="stretch"):
+            st.session_state["dba_enterprise_data_trust_detail"] = load_data_trust_detail(
+                company,
+                environment,
+                days=35,
+            )
+            st.session_state["dba_enterprise_data_trust_scope"] = (company, environment)
+    with c2:
+        if st.button("Load App Observability Detail", key="dba_enterprise_load_app_observability", width="stretch"):
+            st.session_state["dba_enterprise_app_observability_detail"] = load_app_observability_detail(
+                company,
+                environment,
+                days=7,
+            )
+            st.session_state["dba_enterprise_app_observability_scope"] = (company, environment)
+
+    trust = st.session_state.get("dba_enterprise_data_trust_detail")
+    if (
+        isinstance(trust, pd.DataFrame)
+        and st.session_state.get("dba_enterprise_data_trust_scope") == (company, environment)
+    ):
+        if trust.empty:
+            st.info("No data trust diagnostics are available for this scope yet.")
+        else:
+            render_shell_snapshot((
+                ("Sources", f"{len(trust):,}"),
+                ("Stale/Missing", f"{safe_int((~trust.get('STATUS', pd.Series(dtype=str)).fillna('').astype(str).eq('Ready')).sum()):,}"),
+                ("Confidence", str(trust.get("CONFIDENCE", pd.Series(["fallback"])).fillna("fallback").astype(str).iloc[0])),
+            ))
+            st.dataframe(
+                trust[[
+                    column for column in [
+                        "SOURCE_NAME", "SOURCE_OBJECT", "STATUS", "CONFIDENCE",
+                        "LATEST_SOURCE_TS", "AGE_MINUTES", "TARGET_FRESHNESS_MIN",
+                        "ROUTE", "BUSINESS_IMPACT", "NEXT_ACTION",
+                    ]
+                    if column in trust.columns
+                ]],
+                width="stretch",
+                hide_index=True,
+            )
+
+    app_detail = st.session_state.get("dba_enterprise_app_observability_detail")
+    if (
+        isinstance(app_detail, pd.DataFrame)
+        and st.session_state.get("dba_enterprise_app_observability_scope") == (company, environment)
+    ):
+        if app_detail.empty:
+            st.info("No app observability detail is available for this scope yet.")
+        else:
+            failures = safe_int(pd.to_numeric(app_detail.get("QUERY_FAILURE_COUNT", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
+            slow = safe_int((pd.to_numeric(app_detail.get("RENDER_MS", pd.Series(dtype=float)), errors="coerce").fillna(0) >= 5000).sum())
+            render_shell_snapshot((
+                ("Events", f"{len(app_detail):,}"),
+                ("Failures", f"{failures:,}"),
+                ("Slow Events", f"{slow:,}"),
+            ))
+            st.dataframe(
+                app_detail[[
+                    column for column in [
+                        "EVENT_TS", "SECTION_NAME", "EVENT_TYPE", "RENDER_MS",
+                        "QUERY_COUNT", "QUERY_FAILURE_COUNT", "OVERWATCH_COST_USD",
+                        "VALIDATION_STATUS", "DEPLOYMENT_VERSION", "LAST_DEPLOYMENT_TS",
+                        "DETAIL",
+                    ]
+                    if column in app_detail.columns
+                ]],
+                width="stretch",
+                hide_index=True,
+            )
 
 
 def _set_admin_tool_focus(tool: str, group: str, focus: str) -> None:
@@ -6193,6 +6273,7 @@ def render() -> None:
         target_minutes=30,
         delayed_note="DBA Control Room shows cached triage immediately; guarded live checks are reserved for explicit detail loads.",
     )
+    _render_enterprise_diagnostics_gate(company, environment)
 
     if st.button(load_label, key="dba_control_room_load", type="primary"):
         _load_control_room_evidence()

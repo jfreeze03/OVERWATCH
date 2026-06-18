@@ -8,6 +8,14 @@ from datetime import timedelta
 import streamlit as st
 
 from config import ALERT_DB, ALERT_SCHEMA, ADMIN_ACCESS_ROLES
+from runtime_state import (
+    ACTIVE_COMPANY,
+    ADMIN_ACTIONS_ENABLED,
+    CURRENT_ROLE,
+    OVERWATCH_ACTOR,
+    get_state,
+    set_state,
+)
 from .company_filter import get_active_environment
 
 
@@ -29,7 +37,7 @@ def sql_literal(value, max_len: int = 8000) -> str:
     return "'" + text.replace("'", "''") + "'"
 
 
-ADMIN_ACTIONS_KEY = "admin_actions_enabled"
+ADMIN_ACTIONS_KEY = ADMIN_ACTIONS_ENABLED
 ADMIN_AUDIT_TABLE = "OVERWATCH_ADMIN_ACTION_AUDIT"
 ADMIN_AUDIT_FQN = (
     f"{safe_identifier(ALERT_DB)}."
@@ -41,7 +49,7 @@ ADMIN_ACTION_DEFAULT_ROLES = set(ADMIN_ACCESS_ROLES)
 
 
 def _normalized_current_role() -> str:
-    return str(st.session_state.get("_overwatch_current_role", "") or "").strip().upper()
+    return str(get_state(CURRENT_ROLE, "") or "").strip().upper()
 
 
 def admin_actions_default_enabled() -> bool:
@@ -51,7 +59,7 @@ def admin_actions_default_enabled() -> bool:
 
 def initialize_admin_actions_default() -> None:
     """Keep the legacy admin-actions state key pinned on."""
-    st.session_state[ADMIN_ACTIONS_KEY] = True
+    set_state(ADMIN_ACTIONS_KEY, True)
 
 
 def admin_actions_enabled() -> bool:
@@ -171,8 +179,8 @@ def log_admin_action(
     """Write an admin action audit row when the OVERWATCH audit table exists."""
     try:
         exec_context = _current_execution_context(session)
-        app_user = str(st.session_state.get("_overwatch_actor", "OVERWATCH") or "OVERWATCH")
-        company = str(company or st.session_state.get("active_company", "") or "")
+        app_user = str(get_state(OVERWATCH_ACTOR, "OVERWATCH") or "OVERWATCH")
+        company = str(company or get_state(ACTIVE_COMPANY, "") or "")
         environment = str(environment or get_active_environment() or "")
         session.sql(build_admin_audit_insert_sql(
             company=company,

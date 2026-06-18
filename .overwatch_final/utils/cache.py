@@ -3,6 +3,8 @@ from datetime import datetime
 
 import streamlit as st
 
+from runtime_state import REFRESH_SALT_GLOBAL, SF_SESSION_CREATED_AT, pop_state, set_state
+
 from .state_keys import PRESERVE_STATE_EXACT, PRESERVE_STATE_PREFIXES
 
 
@@ -19,7 +21,7 @@ _METADATA_CACHE_PREFIXES = (
 def bump_global_cache_salt() -> str:
     """Invalidate OVERWATCH cached query entries without clearing shared caches."""
     salt = datetime.now().isoformat()
-    st.session_state["_refresh_salt_global"] = salt
+    set_state(REFRESH_SALT_GLOBAL, salt)
     return salt
 
 
@@ -62,11 +64,11 @@ def clear_all_cache(
         and any(k.startswith(p) for p in transient_prefixes)
     ]
     for k in keys_to_remove:
-        del st.session_state[k]
+        pop_state(k, None)
 
     # Reset the TTL timestamp; get_session() will stamp an existing session
     # without paying for an immediate SELECT 1 check.
-    st.session_state.pop("_sf_session_created_at", None)
+    pop_state(SF_SESSION_CREATED_AT, None)
 
     if clear_streamlit_cache:
         bump_global_cache_salt()

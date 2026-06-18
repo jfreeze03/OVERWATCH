@@ -12,7 +12,15 @@ STREAMLIT_DEPLOYMENT_DECISION_VERSION = "2026.06.13-streamlit-entrypoint-contrac
 STREAMLIT_MANIFEST_CONTRACT_VERSION = "2026.06.13-sis-manifest-contract"
 STREAMLIT_SNOWFLAKE_ARTIFACTS = (
     "app.py",
+    "access_control.py",
     "config.py",
+    "filters.py",
+    "layout.py",
+    "navigation.py",
+    "refresh.py",
+    "runtime_state.py",
+    "section_dispatch.py",
+    "shell.py",
     "theme.py",
     "environment.yml",
     "utils/",

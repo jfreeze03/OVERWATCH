@@ -8,7 +8,15 @@ from dataclasses import dataclass
 from typing import Iterable
 
 import pandas as pd
-import streamlit as st
+
+from runtime_state import (
+    AVAILABLE_COLUMNS_CACHE,
+    COLUMN_PROBE_CACHE,
+    CURRENT_ROLE,
+    UNAVAILABLE_COLUMN_VIEWS,
+    ensure_default_state,
+    get_state,
+)
 
 from .data import normalize_df
 from .query import format_snowflake_error
@@ -214,7 +222,7 @@ def _mark_process_columns(object_name: str, columns: set[str]) -> None:
 
 def _role_cache_scope() -> str:
     try:
-        return str(st.session_state.get("_overwatch_current_role", "") or "").upper()
+        return str(get_state(CURRENT_ROLE, "") or "").upper()
     except Exception:
         return ""
 
@@ -261,7 +269,7 @@ def _mark_process_unavailable(object_name: str) -> None:
 def get_available_columns(session, object_name: str) -> set[str]:
     """Return upper-case columns exposed by an account/view without scanning data."""
     object_name = _validate_object_name(object_name)
-    cache = st.session_state.setdefault("_overwatch_available_columns", {})
+    cache = ensure_default_state(AVAILABLE_COLUMNS_CACHE, {})
     if object_name in cache:
         return {str(col).upper() for col in cache.get(object_name, [])}
     cached_columns = _process_cached_columns(object_name)
@@ -301,7 +309,7 @@ def filter_existing_columns(session, object_name: str, columns: Iterable[str]) -
             seen.add(col_upper)
     if not requested:
         return []
-    unavailable = st.session_state.setdefault("_overwatch_unavailable_column_views", set())
+    unavailable = ensure_default_state(UNAVAILABLE_COLUMN_VIEWS, set())
     if object_name in unavailable:
         return []
     if _process_unavailable(object_name):
@@ -312,7 +320,7 @@ def filter_existing_columns(session, object_name: str, columns: Iterable[str]) -
     except Exception:
         unavailable.add(object_name)
         return []
-    probe_cache = st.session_state.setdefault("_overwatch_column_probe", {})
+    probe_cache = ensure_default_state(COLUMN_PROBE_CACHE, {})
     candidates = [col for col in requested if col in available]
     for col in candidates:
         cache_key = f"{object_name}:{col}"

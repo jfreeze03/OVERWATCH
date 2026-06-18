@@ -1,7 +1,7 @@
 # utils/data.py — DataFrame normalization: Decimal/Timestamp handling
 import pandas as pd
-import streamlit as st
 from config import COMPANY_CONFIG, DEFAULT_COMPANY
+from runtime_state import ACTIVE_COMPANY, get_state
 
 # Columns that should always be numeric
 _NUMERIC_COLS = {
@@ -122,7 +122,7 @@ def _has_value(series: pd.Series) -> pd.Series:
 
 
 def _apply_company_scope(df: pd.DataFrame) -> pd.DataFrame:
-    company = st.session_state.get("active_company", DEFAULT_COMPANY)
+    company = get_state(ACTIVE_COMPANY, DEFAULT_COMPANY)
     if company == "ALL" or df is None or df.empty:
         return df
 
@@ -156,7 +156,7 @@ def _apply_company_scope(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _has_company_scope_columns(columns: set[str]) -> bool:
-    if st.session_state.get("active_company", DEFAULT_COMPANY) == "ALL":
+    if get_state(ACTIVE_COMPANY, DEFAULT_COMPANY) == "ALL":
         return False
     return bool(columns & {
         "WAREHOUSE_NAME", "WAREHOUSE",

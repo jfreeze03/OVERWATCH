@@ -11,9 +11,17 @@ from dataclasses import dataclass
 from datetime import datetime
 
 import pandas as pd
-import streamlit as st
 
 from config import DEFAULTS, DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, DEFAULT_DAY_WINDOW
+from runtime_state import (
+    AI_CREDIT_PRICE,
+    CONNECTION_AVAILABLE,
+    CONNECTION_UNAVAILABLE,
+    CREDIT_PRICE,
+    REFRESH_SALT_GLOBAL,
+    get_state,
+    set_state,
+)
 from .company_filter import (
     get_combined_filter_clause,
     get_user_company_filter_clause,
@@ -179,15 +187,15 @@ def _top_dimension(board: pd.DataFrame, panel: str, metric: str | None = None) -
 
 
 def _credit_price() -> float:
-    return _safe_float(st.session_state.get("credit_price", DEFAULTS.get("credit_price", 3.68)), 3.68)
+    return _safe_float(get_state(CREDIT_PRICE, DEFAULTS.get("credit_price", 3.68)), 3.68)
 
 
 def _ai_credit_price() -> float:
-    return _safe_float(st.session_state.get("ai_credit_price", DEFAULTS.get("ai_credit_price", 2.20)), 2.20)
+    return _safe_float(get_state(AI_CREDIT_PRICE, DEFAULTS.get("ai_credit_price", 2.20)), 2.20)
 
 
 def _first_paint_refresh_salt() -> str:
-    return str(st.session_state.get("_refresh_salt_global", "") or "")
+    return str(get_state(REFRESH_SALT_GLOBAL, "") or "")
 
 
 def _bounded_query(sql: str, max_rows: int) -> str:
@@ -207,8 +215,8 @@ def _quiet_first_paint_query(sql: str, *, section: str, max_rows: int = 500) -> 
         return normalize_df(frame), True
     except BaseException as exc:
         if exc.__class__.__name__ == "StopException":
-            st.session_state["_overwatch_connection_unavailable"] = True
-            st.session_state["_overwatch_connection_available"] = False
+            set_state(CONNECTION_UNAVAILABLE, True)
+            set_state(CONNECTION_AVAILABLE, False)
         return pd.DataFrame(), False
 
 
@@ -766,9 +774,9 @@ def load_first_paint_command_board(
     """Load and cache the shared first-paint monitoring board for all primary sections."""
     scope = command_board_scope(company, environment, days)
     refresh_salt = _first_paint_refresh_salt()
-    cached = st.session_state.get(FIRST_PAINT_CACHE_KEY)
-    cached_scope = st.session_state.get(FIRST_PAINT_SCOPE_KEY)
-    cached_refresh = st.session_state.get(FIRST_PAINT_REFRESH_KEY)
+    cached = get_state(FIRST_PAINT_CACHE_KEY)
+    cached_scope = get_state(FIRST_PAINT_SCOPE_KEY)
+    cached_refresh = get_state(FIRST_PAINT_REFRESH_KEY)
     if (
         isinstance(cached, CommandBoard)
         and cached_scope == scope
@@ -837,9 +845,9 @@ def load_first_paint_command_board(
         payload.meta["source"] = "SNOWFLAKE.ACCOUNT_USAGE"
         payload.meta["successes"] = successes
 
-    st.session_state[FIRST_PAINT_CACHE_KEY] = payload
-    st.session_state[FIRST_PAINT_SCOPE_KEY] = scope
-    st.session_state[FIRST_PAINT_REFRESH_KEY] = refresh_salt
+    set_state(FIRST_PAINT_CACHE_KEY, payload)
+    set_state(FIRST_PAINT_SCOPE_KEY, scope)
+    set_state(FIRST_PAINT_REFRESH_KEY, refresh_salt)
     return payload
 
 
@@ -1030,9 +1038,9 @@ def read_command_board_state(
 ) -> CommandBoard:
     """Read a monitoring summary from session state or return an immediate fallback."""
     scope = command_board_scope(company, environment, days)
-    meta = st.session_state.get(meta_key)
-    summary = st.session_state.get(summary_key)
-    data = st.session_state.get(data_key)
+    meta = get_state(meta_key)
+    summary = get_state(summary_key)
+    data = get_state(data_key)
     if isinstance(meta, dict) and isinstance(summary, dict) and _scope_matches(meta, scope):
         board = _normalize_board(data if isinstance(data, pd.DataFrame) else pd.DataFrame())
         return CommandBoard(data=board, summary=dict(summary), meta=dict(meta))
@@ -1047,20 +1055,20 @@ def store_command_board_state(
     meta_key: str,
 ) -> CommandBoard:
     """Persist monitoring summary state for other top-level surfaces to reuse."""
-    st.session_state[data_key] = payload.data
-    st.session_state[summary_key] = payload.summary
-    st.session_state[meta_key] = payload.meta
+    set_state(data_key, payload.data)
+    set_state(summary_key, payload.summary)
+    set_state(meta_key, payload.meta)
     return payload
 
 
 def _global_refresh_changed(marker_key: str) -> bool:
-    current = str(st.session_state.get("_refresh_salt_global", "") or "")
-    previous = st.session_state.get(marker_key)
+    current = str(get_state(REFRESH_SALT_GLOBAL, "") or "")
+    previous = get_state(marker_key)
     if previous is None:
-        st.session_state[marker_key] = current
+        set_state(marker_key, current)
         return False
     if previous != current:
-        st.session_state[marker_key] = current
+        set_state(marker_key, current)
         return True
     return False
 

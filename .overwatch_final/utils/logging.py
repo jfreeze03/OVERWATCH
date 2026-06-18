@@ -12,8 +12,18 @@
 import time
 import os
 import re
-import streamlit as st
 from config import ALERT_DB, ALERT_SCHEMA
+from runtime_state import (
+    ACTIVE_COMPANY,
+    CURRENT_ROLE,
+    LOGGING_ENABLED,
+    OVERWATCH_ACTOR,
+    PERF_RUN_ID,
+    QUERY_LOGGING_ENABLED,
+    SESSION_ID,
+    get_state,
+    set_state,
+)
 
 
 def safe_identifier(value: str, allow_qualified: bool = False) -> str:
@@ -39,13 +49,13 @@ LOG_TABLE = (
     f"{safe_identifier('OVERWATCH_USAGE_LOG')}"
 )
 APP_VERSION = "3.0"
-_ENABLED_KEY = "_logging_enabled"
-_QUERY_ENABLED_KEY = "_query_logging_enabled"
+_ENABLED_KEY = LOGGING_ENABLED
+_QUERY_ENABLED_KEY = QUERY_LOGGING_ENABLED
 
 
 def _perf_run_id() -> str:
     try:
-        value = st.session_state.get("_overwatch_perf_run_id", "")
+        value = get_state(PERF_RUN_ID, "")
     except Exception:
         value = ""
     value = value or os.environ.get("OVERWATCH_PERF_RUN_ID", "")
@@ -119,19 +129,19 @@ ORDER BY log_date DESC, load_count DESC;
 
 
 def is_logging_enabled() -> bool:
-    return st.session_state.get(_ENABLED_KEY, False)
+    return get_state(_ENABLED_KEY, False)
 
 
 def set_logging_enabled(enabled: bool) -> None:
-    st.session_state[_ENABLED_KEY] = enabled
+    set_state(_ENABLED_KEY, enabled)
 
 
 def is_query_logging_enabled() -> bool:
-    return st.session_state.get(_QUERY_ENABLED_KEY, False)
+    return get_state(_QUERY_ENABLED_KEY, False)
 
 
 def set_query_logging_enabled(enabled: bool) -> None:
-    st.session_state[_QUERY_ENABLED_KEY] = bool(enabled)
+    set_state(_QUERY_ENABLED_KEY, bool(enabled))
 
 
 def log_section_load(section: str, duration_ms: int = 0) -> None:
@@ -151,10 +161,10 @@ def log_section_load(section: str, duration_ms: int = 0) -> None:
         from utils.session import get_session
         session = get_session()
 
-        user = str(st.session_state.get("_overwatch_actor", "OVERWATCH") or "OVERWATCH")
-        role = str(st.session_state.get("_overwatch_current_role", "") or "")
-        company = st.session_state.get("active_company", "ALFA")
-        sess_id = st.session_state.get("_session_id", "")
+        user = str(get_state(OVERWATCH_ACTOR, "OVERWATCH") or "OVERWATCH")
+        role = str(get_state(CURRENT_ROLE, "") or "")
+        company = get_state(ACTIVE_COMPANY, "ALFA")
+        sess_id = get_state(SESSION_ID, "")
         perf_run_id = _perf_run_id()
 
         session.sql(f"""
@@ -192,10 +202,10 @@ def log_query_event(
         from utils.session import get_session
         session = get_session()
 
-        user = str(st.session_state.get("_overwatch_actor", "OVERWATCH") or "OVERWATCH")
-        role = str(st.session_state.get("_overwatch_current_role", "") or "")
-        company = st.session_state.get("active_company", "ALFA")
-        sess_id = st.session_state.get("_session_id", "")
+        user = str(get_state(OVERWATCH_ACTOR, "OVERWATCH") or "OVERWATCH")
+        role = str(get_state(CURRENT_ROLE, "") or "")
+        company = get_state(ACTIVE_COMPANY, "ALFA")
+        sess_id = get_state(SESSION_ID, "")
         perf_run_id = _perf_run_id()
         used_cache_sql = "TRUE" if used_cache else "FALSE"
 

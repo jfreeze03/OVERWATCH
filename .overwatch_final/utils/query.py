@@ -13,6 +13,36 @@ import time
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+from runtime_state import (
+    ACTIVE_COMPANY,
+    ACTIVE_QUERY_TAG,
+    CURRENT_ROLE,
+    GLOBAL_DATABASE,
+    GLOBAL_END_DATE,
+    GLOBAL_ENVIRONMENT,
+    GLOBAL_ROLE,
+    GLOBAL_START_DATE,
+    GLOBAL_USER,
+    GLOBAL_WAREHOUSE,
+    NAV_SECTION,
+    PERF_RUN_ID,
+    QUERY_BUDGET_HITS,
+    QUERY_BUDGET_WARNING_HASHES,
+    QUERY_BUDGET_WINDOW_COUNT,
+    QUERY_BUDGET_WINDOW_STARTED_AT,
+    QUERY_BUDGET_WINDOW_WARNED,
+    QUERY_LOGGING_ENABLED,
+    QUERY_TELEMETRY,
+    QUERY_WARNING_HASHES,
+    REFRESH_SALT_GLOBAL,
+    REFRESH_SALT_PREFIX,
+    RESULT_GUARD_WARNING_HASHES,
+    STATEMENT_TIMEOUT_SECONDS,
+    ensure_default_state,
+    get_state,
+    pop_state,
+    set_state,
+)
 from .session import apply_overwatch_query_tag, build_overwatch_query_tag, get_session
 from .data import normalize_df
 from .idle import empty_paused_result, queries_paused
@@ -56,7 +86,7 @@ QUERY_BUDGET_THRESHOLDS = {
 def _perf_run_id() -> str:
     """Optional run id used by external release validation."""
     try:
-        value = st.session_state.get("_overwatch_perf_run_id", "")
+        value = get_state(PERF_RUN_ID, "")
     except Exception:
         value = ""
     value = value or os.environ.get("OVERWATCH_PERF_RUN_ID", "")
@@ -248,7 +278,7 @@ def _infer_telemetry_section(section: str = "", ttl_key: str = "") -> str:
         if key.startswith(prefix):
             return label
 
-    nav_section = str(st.session_state.get("nav_section") or "").strip()
+    nav_section = str(get_state(NAV_SECTION) or "").strip()
     return nav_section or "Unknown"
 
 
@@ -266,7 +296,7 @@ def _record_query_telemetry(
     try:
         query_hash = hashlib.sha1(str(query_text).encode("utf-8", errors="ignore")).hexdigest()[:12]
         active_section = _infer_telemetry_section(section, ttl_key)
-        entries = st.session_state.setdefault("_overwatch_query_telemetry", [])
+        entries = ensure_default_state(QUERY_TELEMETRY, [])
         entries.append({
             "timestamp": datetime.now().isoformat(timespec="seconds"),
             "perf_run_id": _perf_run_id(),
@@ -282,7 +312,7 @@ def _record_query_telemetry(
         if len(entries) > 250:
             del entries[:-250]
         _warn_on_budget_pressure(active_section, query_hash, ttl_key, elapsed_ms, row_count, result_mb)
-        if st.session_state.get("_query_logging_enabled", False):
+        if get_state(QUERY_LOGGING_ENABLED, False):
             try:
                 from .logging import log_query_event
 
@@ -315,13 +345,13 @@ def _warn_on_budget_pressure(
     if not is_expensive:
         return
 
-    budget = st.session_state.setdefault("_overwatch_query_budget_hits", {})
+    budget = ensure_default_state(QUERY_BUDGET_HITS, {})
     key = f"{section}|{ttl_key}|{query_hash}"
     budget[key] = int(budget.get(key, 0)) + 1
     if budget[key] < QUERY_BUDGET_THRESHOLDS["repeat_warning_count"]:
         return
 
-    seen = st.session_state.setdefault("_overwatch_query_budget_warning_hashes", set())
+    seen = ensure_default_state(QUERY_BUDGET_WARNING_HASHES, set())
     warning_key = f"{section}|{ttl_key}|{query_hash}"
     if warning_key in seen:
         return
@@ -335,7 +365,7 @@ def _warn_on_budget_pressure(
 
 def _show_query_warning(prefix: str, error: Exception) -> None:
     message = f"{prefix}: {format_snowflake_error(error)}"
-    seen = st.session_state.setdefault("_overwatch_query_warning_hashes", set())
+    seen = ensure_default_state(QUERY_WARNING_HASHES, set())
     warning_hash = hashlib.sha1(message.encode("utf-8", errors="ignore")).hexdigest()[:12]
     if warning_hash in seen:
         return
@@ -346,7 +376,7 @@ def _show_query_warning(prefix: str, error: Exception) -> None:
 def _show_result_guard_message(message: str, level: str = "warning") -> None:
     """Show a de-duplicated result-size guardrail message."""
     normalized_level = "error" if str(level or "").lower() == "error" else "warning"
-    seen = st.session_state.setdefault("_overwatch_result_guard_warning_hashes", set())
+    seen = ensure_default_state(RESULT_GUARD_WARNING_HASHES, set())
     warning_hash = hashlib.sha1(f"{normalized_level}|{message}".encode("utf-8", errors="ignore")).hexdigest()[:12]
     if warning_hash in seen:
         return
@@ -431,7 +461,7 @@ def format_snowflake_error(error: Exception, max_len: int = 320) -> str:
 
 def get_query_telemetry() -> pd.DataFrame:
     """Return recent query-run telemetry for the current Streamlit session."""
-    return pd.DataFrame(st.session_state.get("_overwatch_query_telemetry", []))
+    return pd.DataFrame(get_state(QUERY_TELEMETRY, []))
 
 
 def get_query_budget_summary() -> pd.DataFrame:
@@ -485,11 +515,11 @@ def get_query_budget_summary() -> pd.DataFrame:
 
 def clear_query_telemetry() -> None:
     """Clear current session query telemetry."""
-    st.session_state["_overwatch_query_telemetry"] = []
-    st.session_state["_overwatch_query_budget_hits"] = {}
-    st.session_state["_overwatch_query_budget_warning_hashes"] = set()
-    st.session_state["_overwatch_result_guard_warning_hashes"] = set()
-    st.session_state.pop("_overwatch_active_query_tag", None)
+    set_state(QUERY_TELEMETRY, [])
+    set_state(QUERY_BUDGET_HITS, {})
+    set_state(QUERY_BUDGET_WARNING_HASHES, set())
+    set_state(RESULT_GUARD_WARNING_HASHES, set())
+    pop_state(ACTIVE_QUERY_TAG, None)
 
 
 def safe_sql(value: str) -> str:
@@ -566,11 +596,10 @@ def _apply_statement_timeout(session, tier: str) -> None:
     """Apply a bounded Snowflake statement timeout for the current query tier."""
     timeout = _statement_timeout_for_tier(tier)
     try:
-        current_key = "_overwatch_statement_timeout_seconds"
-        if st.session_state.get(current_key) == timeout:
+        if get_state(STATEMENT_TIMEOUT_SECONDS) == timeout:
             return
         session.sql(f"ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS = {timeout}").collect()
-        st.session_state[current_key] = timeout
+        set_state(STATEMENT_TIMEOUT_SECONDS, timeout)
     except Exception:
         pass
 
@@ -581,24 +610,21 @@ def _check_query_budget(tier: str, ttl_key: str, query_text: str) -> bool:
         return True
     try:
         now = time.time()
-        window_key = "_overwatch_query_budget_window_started_at"
-        count_key = "_overwatch_query_budget_window_count"
-        warn_key = "_overwatch_query_budget_window_warned"
-        started = float(st.session_state.get(window_key, 0.0) or 0.0)
+        started = float(get_state(QUERY_BUDGET_WINDOW_STARTED_AT, 0.0) or 0.0)
         if not started or now - started > 20:
-            st.session_state[window_key] = now
-            st.session_state[count_key] = 0
-            st.session_state[warn_key] = False
-        st.session_state[count_key] = int(st.session_state.get(count_key, 0) or 0) + 1
+            set_state(QUERY_BUDGET_WINDOW_STARTED_AT, now)
+            set_state(QUERY_BUDGET_WINDOW_COUNT, 0)
+            set_state(QUERY_BUDGET_WINDOW_WARNED, False)
+        set_state(QUERY_BUDGET_WINDOW_COUNT, int(get_state(QUERY_BUDGET_WINDOW_COUNT, 0) or 0) + 1)
         limit = int(QUERY_BUDGET_THRESHOLDS["max_queries_per_render"])
-        if st.session_state[count_key] <= limit:
+        if int(get_state(QUERY_BUDGET_WINDOW_COUNT, 0) or 0) <= limit:
             return True
-        if not st.session_state.get(warn_key):
+        if not get_state(QUERY_BUDGET_WINDOW_WARNED):
             st.warning(
                 "OVERWATCH query-load guardrail: this page is loading too many Snowflake queries at once. "
                 "Use a narrower filter or refresh the section after the current board finishes."
             )
-            st.session_state[warn_key] = True
+            set_state(QUERY_BUDGET_WINDOW_WARNED, True)
         return False
     except Exception:
         return True
@@ -624,22 +650,22 @@ def _cache_context() -> str:
     # can run inside a managed stored-procedure context where those calls may be
     # blocked before the actual page query gets a chance to execute.
     return "|".join([
-        str(st.session_state.get("active_company", "")),
-        str(st.session_state.get("global_start_date", "")),
-        str(st.session_state.get("global_end_date", "")),
-        str(st.session_state.get("global_warehouse", "")),
-        str(st.session_state.get("global_user", "")),
-        str(st.session_state.get("global_role", "")),
-        str(st.session_state.get("global_database", "")),
-        str(st.session_state.get("global_environment", "")),
-        str(st.session_state.get("_overwatch_current_role", "")),
+        str(get_state(ACTIVE_COMPANY, "")),
+        str(get_state(GLOBAL_START_DATE, "")),
+        str(get_state(GLOBAL_END_DATE, "")),
+        str(get_state(GLOBAL_WAREHOUSE, "")),
+        str(get_state(GLOBAL_USER, "")),
+        str(get_state(GLOBAL_ROLE, "")),
+        str(get_state(GLOBAL_DATABASE, "")),
+        str(get_state(GLOBAL_ENVIRONMENT, "")),
+        str(get_state(CURRENT_ROLE, "")),
     ])
 
 
 def _cache_salt(ttl_key: str) -> str:
     """Return cache salt for global refresh plus a specific query namespace."""
-    global_salt = st.session_state.get("_refresh_salt_global", "")
-    scoped_salt = st.session_state.get(f"_refresh_salt_{ttl_key}", "")
+    global_salt = get_state(REFRESH_SALT_GLOBAL, "")
+    scoped_salt = get_state(f"{REFRESH_SALT_PREFIX}{ttl_key}", "")
     return f"{global_salt}|{scoped_salt}"
 
 
@@ -943,4 +969,4 @@ def run_query_or_raise(
 
 def force_refresh(key: str):
     """Bump cache salt to force re-execution of a specific section's queries."""
-    st.session_state[f"_refresh_salt_{key}"] = datetime.now().isoformat()
+    set_state(f"{REFRESH_SALT_PREFIX}{key}", datetime.now().isoformat())

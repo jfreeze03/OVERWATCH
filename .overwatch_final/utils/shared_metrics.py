@@ -11,7 +11,16 @@ from dataclasses import dataclass
 from typing import Callable
 
 import pandas as pd
-import streamlit as st
+from runtime_state import (
+    GLOBAL_DATABASE,
+    GLOBAL_END_DATE,
+    GLOBAL_ROLE,
+    GLOBAL_START_DATE,
+    GLOBAL_USER,
+    GLOBAL_WAREHOUSE,
+    get_state,
+    set_state,
+)
 
 from .company_filter import (
     get_active_company,
@@ -94,13 +103,25 @@ def _shared_state_key(metric: str, *parts: object) -> str:
 
 
 def _get_cached_result(state_key: str) -> SharedMetricResult | None:
-    result = st.session_state.get(state_key)
+    result = get_state(state_key)
     return result if isinstance(result, SharedMetricResult) else None
 
 
 def _store_result(state_key: str, result: SharedMetricResult) -> SharedMetricResult:
-    st.session_state[state_key] = result
+    set_state(state_key, result)
     return result
+
+
+def _global_filter_values() -> tuple[str, str, str, str, object, object]:
+    """Return shared global filters through the session-state gateway."""
+    return (
+        str(get_state(GLOBAL_WAREHOUSE, "") or "").strip(),
+        str(get_state(GLOBAL_USER, "") or "").strip(),
+        str(get_state(GLOBAL_ROLE, "") or "").strip(),
+        str(get_state(GLOBAL_DATABASE, "") or "").strip(),
+        get_state(GLOBAL_START_DATE),
+        get_state(GLOBAL_END_DATE),
+    )
 
 
 def _load_or_reuse(
@@ -304,7 +325,7 @@ def load_shared_usage_storage_kpis(
     days = int(days)
 
     def _loader() -> SharedMetricResult:
-        database_contains = str(st.session_state.get("global_database", "") or "").strip()
+        _, _, _, database_contains, _, _ = _global_filter_values()
         if not database_contains:
             trend_result = load_shared_storage_trend(
                 max(days * 2, 14),
@@ -544,12 +565,14 @@ def load_shared_query_history_rollup(
 
     company = company or get_active_company()
     days = int(days)
-    warehouse_contains = str(st.session_state.get("global_warehouse", "") or "").strip()
-    user_contains = str(st.session_state.get("global_user", "") or "").strip()
-    role_contains = str(st.session_state.get("global_role", "") or "").strip()
-    database_contains = str(st.session_state.get("global_database", "") or "").strip()
-    global_start_date = st.session_state.get("global_start_date")
-    global_end_date = st.session_state.get("global_end_date")
+    (
+        warehouse_contains,
+        user_contains,
+        role_contains,
+        database_contains,
+        global_start_date,
+        global_end_date,
+    ) = _global_filter_values()
 
     def _loader() -> SharedMetricResult:
         mart_df = run_query(
@@ -632,12 +655,14 @@ def load_shared_warehouse_pressure_summary(
 
     company = company or get_active_company()
     days = int(days)
-    warehouse_contains = str(st.session_state.get("global_warehouse", "") or "").strip()
-    user_contains = str(st.session_state.get("global_user", "") or "").strip()
-    role_contains = str(st.session_state.get("global_role", "") or "").strip()
-    database_contains = str(st.session_state.get("global_database", "") or "").strip()
-    global_start_date = st.session_state.get("global_start_date")
-    global_end_date = st.session_state.get("global_end_date")
+    (
+        warehouse_contains,
+        user_contains,
+        role_contains,
+        database_contains,
+        global_start_date,
+        global_end_date,
+    ) = _global_filter_values()
 
     def _loader() -> SharedMetricResult:
         mart_df = run_query(
@@ -1067,9 +1092,7 @@ def load_shared_usage_metering_kpis(
 
     company = company or get_active_company()
     days = int(days)
-    warehouse_contains = str(st.session_state.get("global_warehouse", "") or "").strip()
-    global_start_date = st.session_state.get("global_start_date")
-    global_end_date = st.session_state.get("global_end_date")
+    warehouse_contains, _, _, _, global_start_date, global_end_date = _global_filter_values()
 
     def _loader() -> SharedMetricResult:
         mart_df = run_query(
@@ -1712,12 +1735,14 @@ def load_shared_warehouse_overview(
 
     company = company or get_active_company()
     days = int(days)
-    warehouse_contains = str(st.session_state.get("global_warehouse", "") or "").strip()
-    user_contains = str(st.session_state.get("global_user", "") or "").strip()
-    role_contains = str(st.session_state.get("global_role", "") or "").strip()
-    database_contains = str(st.session_state.get("global_database", "") or "").strip()
-    global_start_date = st.session_state.get("global_start_date")
-    global_end_date = st.session_state.get("global_end_date")
+    (
+        warehouse_contains,
+        user_contains,
+        role_contains,
+        database_contains,
+        global_start_date,
+        global_end_date,
+    ) = _global_filter_values()
 
     def _loader() -> SharedMetricResult:
         mart_df = run_query(
@@ -1877,9 +1902,7 @@ def load_shared_warehouse_scaling_events(
 
     company = company or get_active_company()
     days = int(days)
-    warehouse_contains = str(st.session_state.get("global_warehouse", "") or "").strip()
-    global_start_date = st.session_state.get("global_start_date")
-    global_end_date = st.session_state.get("global_end_date")
+    warehouse_contains, _, _, _, global_start_date, global_end_date = _global_filter_values()
 
     def _loader() -> SharedMetricResult:
         mart_df = run_query(

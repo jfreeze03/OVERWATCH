@@ -12,6 +12,7 @@ from dataclasses import dataclass
 import pandas as pd
 
 from config import ETL_AUDIT_DB, ETL_AUDIT_SCHEMA, ENVIRONMENT_CONFIG, DEFAULT_ENVIRONMENT
+from runtime_state import GLOBAL_ENVIRONMENT, get_state
 from .company_filter import get_environment_db_patterns
 from .metering_sql import build_cost_cockpit_metering_sql, build_cost_run_rate_metering_sql
 from .query import run_query, safe_identifier, sql_literal
@@ -953,9 +954,7 @@ def _mart_company_filter(company: str = "ALFA") -> str:
 
 def _active_environment() -> str:
     try:
-        import streamlit as st
-
-        env = str(st.session_state.get("global_environment", DEFAULT_ENVIRONMENT) or DEFAULT_ENVIRONMENT)
+        env = str(get_state(GLOBAL_ENVIRONMENT, DEFAULT_ENVIRONMENT) or DEFAULT_ENVIRONMENT)
     except Exception:
         env = DEFAULT_ENVIRONMENT
     return env if env in ENVIRONMENT_CONFIG else DEFAULT_ENVIRONMENT

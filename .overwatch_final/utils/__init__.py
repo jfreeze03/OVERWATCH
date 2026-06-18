@@ -311,6 +311,15 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "build_capability_setup_sql",
         "build_command_intelligence_runbook_markdown",
     ),
+    "enterprise_operating_model": (
+        "CONFIDENCE_LABELS",
+        "load_enterprise_operating_rollups",
+        "load_data_trust_detail",
+        "load_app_observability_detail",
+        "load_ownership_coverage_rollup",
+        "load_value_ledger_rollup",
+        "load_value_ledger_detail",
+    ),
     "ask_overwatch": (
         "TOP_PRIORITY_BRIEF_DOMAINS", "answer_ask_overwatch",
         "build_ask_overwatch_context", "build_grounded_cortex_prompt",

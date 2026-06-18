@@ -41,6 +41,7 @@ load_alert_history = _lazy_util("load_alert_history")
 mart_object_name = _lazy_util("mart_object_name")
 render_priority_dataframe = _lazy_util("render_priority_dataframe")
 build_loaded_section_alert_signal_board = _lazy_util("build_loaded_section_alert_signal_board")
+load_enterprise_operating_rollups = _lazy_util("load_enterprise_operating_rollups")
 run_query = _lazy_util("run_query")
 safe_identifier = _lazy_util("safe_identifier")
 sql_literal = _lazy_util("sql_literal")
@@ -2712,6 +2713,96 @@ def _render_loaded_executive_alert_context() -> None:
             st.rerun()
 
 
+def _render_enterprise_operating_model_summary(rollups: dict[str, pd.DataFrame]) -> None:
+    """Render first-paint-safe leadership trust/value rollups."""
+    trust = rollups.get("trust", pd.DataFrame())
+    ownership = rollups.get("ownership", pd.DataFrame())
+    value = rollups.get("value", pd.DataFrame())
+    app = rollups.get("app", pd.DataFrame())
+
+    trust_issues = 0
+    trust_confidence = "fallback"
+    if isinstance(trust, pd.DataFrame) and not trust.empty:
+        status = trust.get("STATUS", pd.Series(dtype=str)).fillna("").astype(str)
+        trust_issues = int((~status.eq("Ready")).sum())
+        confidence = trust.get("CONFIDENCE", pd.Series(dtype=str)).dropna().astype(str).str.lower()
+        trust_confidence = confidence.iloc[0] if not confidence.empty else "fallback"
+
+    owner_gaps = 0
+    if isinstance(ownership, pd.DataFrame) and not ownership.empty and "GAP_ITEMS" in ownership.columns:
+        owner_gaps = safe_int(pd.to_numeric(ownership["GAP_ITEMS"], errors="coerce").fillna(0).sum())
+
+    verified_savings = 0.0
+    unverified_estimate = 0.0
+    if isinstance(value, pd.DataFrame) and not value.empty:
+        verified_savings = safe_float(pd.to_numeric(value.get("VERIFIED_SAVINGS_USD", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
+        unverified_estimate = safe_float(pd.to_numeric(value.get("UNVERIFIED_ESTIMATE_USD", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
+
+    app_review = 0
+    if isinstance(app, pd.DataFrame) and not app.empty:
+        app_review = safe_int((~app.get("HEALTH_STATE", pd.Series(dtype=str)).fillna("").astype(str).eq("Ready")).sum())
+
+    if all(
+        not isinstance(frame, pd.DataFrame) or frame.empty
+        for frame in (trust, ownership, value, app)
+    ):
+        st.caption("Enterprise operating model rollups are pending. Run the mart refresh to populate trust, ownership, value, and app health summaries.")
+        return
+
+    st.markdown("**Enterprise Operating Model**")
+    render_shell_snapshot((
+        ("Trust Issues", f"{trust_issues:,}"),
+        ("Ownership Gaps", f"{owner_gaps:,}"),
+        ("Verified Value", f"${verified_savings:,.0f}"),
+        ("App Review", f"{app_review:,}"),
+    ))
+    st.caption(
+        "Operating path: Finding -> Owner -> Trust Level -> Business Impact -> Action -> Value Verified. "
+        f"Trust confidence: {trust_confidence}; unverified savings stay separate (${unverified_estimate:,.0f})."
+    )
+    with st.expander("Enterprise operating model rollups", expanded=trust_issues > 0 or owner_gaps > 0 or app_review > 0):
+        if isinstance(trust, pd.DataFrame) and not trust.empty:
+            trust_view = trust[[
+                column for column in [
+                    "SOURCE_NAME", "STATUS", "CONFIDENCE", "FRESHNESS_MINUTES",
+                    "SOURCE_OBJECT", "OWNER_ROUTE", "BUSINESS_IMPACT", "NEXT_ACTION",
+                ]
+                if column in trust.columns
+            ]].head(12)
+            st.dataframe(trust_view, width="stretch", hide_index=True)
+        if isinstance(ownership, pd.DataFrame) and not ownership.empty:
+            ownership_view = ownership[[
+                column for column in [
+                    "SURFACE", "ENTITY_TYPE", "TOTAL_ITEMS", "ROUTED_ITEMS",
+                    "GAP_ITEMS", "COVERAGE_PCT", "TRUST_LEVEL", "CONFIDENCE",
+                    "OWNER_ROUTE", "NEXT_ACTION",
+                ]
+                if column in ownership.columns
+            ]].head(12)
+            st.dataframe(ownership_view, width="stretch", hide_index=True)
+        if isinstance(value, pd.DataFrame) and not value.empty:
+            value_view = value[[
+                column for column in [
+                    "STATUS", "OWNER_ROUTE", "EXPECTED_SAVINGS_USD",
+                    "VERIFIED_SAVINGS_USD", "UNVERIFIED_ESTIMATE_USD",
+                    "CONFIDENCE", "VALUE_STATE", "NEXT_ACTION",
+                ]
+                if column in value.columns
+            ]].head(12)
+            st.dataframe(value_view, width="stretch", hide_index=True)
+        if isinstance(app, pd.DataFrame) and not app.empty:
+            app_view = app[[
+                column for column in [
+                    "SECTION_NAME", "HEALTH_STATE", "P95_RENDER_MS",
+                    "SLOW_SECTION_COUNT", "QUERY_FAILURE_COUNT",
+                    "OVERWATCH_COST_USD", "VALIDATION_STATUS", "CONFIDENCE",
+                    "NEXT_ACTION",
+                ]
+                if column in app.columns
+            ]].head(12)
+            st.dataframe(app_view, width="stretch", hide_index=True)
+
+
 def render() -> None:
     company = _active_company()
     environment = _active_environment()
@@ -2790,6 +2881,9 @@ def render() -> None:
         environment=environment,
         days=int(days),
         credit_price=credit_price,
+    )
+    _render_enterprise_operating_model_summary(
+        load_enterprise_operating_rollups(company, environment, days=int(days))
     )
     load = _render_executive_action_brief(summary, int(days), show_strip=False)
     _render_loaded_executive_alert_context()

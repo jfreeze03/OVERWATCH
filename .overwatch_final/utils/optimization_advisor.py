@@ -2,13 +2,15 @@
 import pandas as pd
 import streamlit as st
 
-from config import DEFAULTS, THRESHOLDS
+from config import THRESHOLDS
+from runtime_state import get_state, set_state
 from sections.shell_helpers import render_shell_snapshot
 
 from .company_filter import get_active_company
 from .cost import (
     credits_to_dollars,
     format_credits,
+    get_credit_price,
     metric_confidence_label,
 )
 from .display import day_window_selectbox, download_csv, render_drillable_bar_chart
@@ -89,8 +91,7 @@ def _idle_warehouse_advisor_decision(row, credit_price: float) -> dict:
 
 
 def render_optimization_advisor():
-    session = get_session()
-    credit_price = st.session_state.get("credit_price", DEFAULTS["credit_price"])
+    credit_price = get_credit_price()
     company = get_active_company()
 
     active_view = render_workflow_selector(
@@ -115,13 +116,14 @@ def render_optimization_advisor():
                     force=True,
                     section="Warehouse Health",
                 )
-                st.session_state["opt_df_idle"] = idle_result.data
-                st.session_state["opt_df_idle_source"] = idle_result.source
+                set_state("opt_df_idle", idle_result.data)
+                set_state("opt_df_idle_source", idle_result.source)
             except Exception as e:
                 st.warning(f"Idle warehouse scan unavailable: {format_snowflake_error(e)}")
 
-        if st.session_state.get("opt_df_idle") is not None and not st.session_state["opt_df_idle"].empty:
-            df_i = st.session_state["opt_df_idle"].copy()
+        opt_df_idle = get_state("opt_df_idle")
+        if opt_df_idle is not None and not opt_df_idle.empty:
+            df_i = opt_df_idle.copy()
             decision_rows = [_idle_warehouse_advisor_decision(row, credit_price) for _, row in df_i.iterrows()]
             df_i = pd.concat([df_i.reset_index(drop=True), pd.DataFrame(decision_rows)], axis=1)
             df_i["EST_MONTHLY_SAVINGS_USD"] = df_i["IDLE_CREDITS"].apply(
@@ -136,7 +138,7 @@ def render_optimization_advisor():
                 ("7d Idle Cost", f"${credits_to_dollars(total_idle, credit_price):,.2f}"),
                 ("Est. Savings / Mo", f"${total_monthly_savings:,.0f}"),
             ))
-            source = st.session_state.get("opt_df_idle_source") or "Warehouse metering and query telemetry"
+            source = get_state("opt_df_idle_source") or "Warehouse metering and query telemetry"
             st.caption(f"{source} | {metric_confidence_label('exact')}")
             render_priority_dataframe(
                 df_i,
@@ -180,7 +182,7 @@ def render_optimization_advisor():
                     f"{row.get('SAFE_NEXT_ACTION', '')} Boundary: {row.get('EXECUTION_BOUNDARY', '')}"
                 )
             download_csv(df_i, "idle_warehouses.csv")
-        elif st.session_state.get("opt_df_idle") is not None:
+        elif opt_df_idle is not None:
             st.success("No significant idle warehouse credits detected.")
 
     elif active_view == "Duplicate Queries":
@@ -193,6 +195,7 @@ def render_optimization_advisor():
 
         if st.button("Find Duplicates", key="dup_load"):
             try:
+                session = get_session()
                 duplicate_result = load_shared_duplicate_query_patterns(
                     session,
                     company,
@@ -201,17 +204,18 @@ def render_optimization_advisor():
                     force=True,
                     section="Warehouse Health",
                 )
-                st.session_state["opt_df_dup"] = duplicate_result.data
-                st.session_state["opt_df_dup_source"] = duplicate_result.source
+                set_state("opt_df_dup", duplicate_result.data)
+                set_state("opt_df_dup_source", duplicate_result.source)
             except Exception as e:
                 st.warning(f"Duplicate query analysis unavailable: {format_snowflake_error(e)}")
 
-        if st.session_state.get("opt_df_dup") is not None and not st.session_state["opt_df_dup"].empty:
-            df_d = st.session_state["opt_df_dup"]
+        opt_df_dup = get_state("opt_df_dup")
+        if opt_df_dup is not None and not opt_df_dup.empty:
+            df_d = opt_df_dup
             decision_rows = [duplicate_query_decision(row) for _, row in df_d.iterrows()]
             df_d = pd.concat([df_d.reset_index(drop=True), pd.DataFrame(decision_rows)], axis=1)
             render_shell_snapshot((("Duplicate Query Patterns", f"{len(df_d):,}"),))
-            st.caption(f"{st.session_state.get('opt_df_dup_source', 'Query history')} | {metric_confidence_label('estimated')}")
+            st.caption(f"{get_state('opt_df_dup_source', 'Query history')} | {metric_confidence_label('estimated')}")
             render_priority_dataframe(
                 df_d,
                 title="Duplicate query candidates",
@@ -246,6 +250,7 @@ def render_optimization_advisor():
 
         if st.button("Analyze Sizing", key="sz_load"):
             try:
+                session = get_session()
                 sizing_result = load_shared_warehouse_right_sizing(
                     session,
                     company,
@@ -253,13 +258,14 @@ def render_optimization_advisor():
                     force=True,
                     section="Warehouse Health",
                 )
-                st.session_state["opt_df_sz"] = sizing_result.data
-                st.session_state["opt_df_sz_source"] = sizing_result.source
+                set_state("opt_df_sz", sizing_result.data)
+                set_state("opt_df_sz_source", sizing_result.source)
             except Exception as e:
                 st.warning(f"Warehouse recommendation scan unavailable: {format_snowflake_error(e)}")
 
-        if st.session_state.get("opt_df_sz") is not None and not st.session_state["opt_df_sz"].empty:
-            df_s = st.session_state["opt_df_sz"].copy()
+        opt_df_sz = get_state("opt_df_sz")
+        if opt_df_sz is not None and not opt_df_sz.empty:
+            df_s = opt_df_sz.copy()
             decision_rows = [warehouse_sizing_decision(row) for _, row in df_s.iterrows()]
             df_s = pd.concat([df_s.reset_index(drop=True), pd.DataFrame(decision_rows)], axis=1)
             df_s["EST_MONTHLY_SAVINGS_USD"] = df_s.apply(
@@ -276,7 +282,7 @@ def render_optimization_advisor():
                 ("Est. Savings / Mo", f"${monthly_savings:,.0f}"),
                 ("Reliability Items", f"{reliability_candidates:,}"),
             ))
-            st.caption(f"{st.session_state.get('opt_df_sz_source', 'Warehouse telemetry')} | {metric_confidence_label('exact')}")
+            st.caption(f"{get_state('opt_df_sz_source', 'Warehouse telemetry')} | {metric_confidence_label('exact')}")
             render_priority_dataframe(
                 df_s,
                 title="Right-sizing candidates",

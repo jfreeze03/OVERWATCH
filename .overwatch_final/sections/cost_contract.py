@@ -52,6 +52,8 @@ get_session_for_action = _lazy_util("get_session_for_action")
 get_user_company_filter_clause = _lazy_util("get_user_company_filter_clause")
 get_wh_filter_clause = _lazy_util("get_wh_filter_clause")
 load_action_queue = _lazy_util("load_action_queue")
+load_value_ledger_detail = _lazy_util("load_value_ledger_detail")
+load_value_ledger_rollup = _lazy_util("load_value_ledger_rollup")
 load_shared_service_cost_lens = _lazy_util("load_shared_service_cost_lens")
 load_shared_service_cost_trend = _lazy_util("load_shared_service_cost_trend")
 render_mode_selector = _lazy_util("render_mode_selector")
@@ -4848,8 +4850,74 @@ def _render_loaded_cost_alert_context() -> None:
     defer_source_note("Loaded Cost and Cortex Alerts reuse Alert Center data and do not run a separate Snowflake query.")
 
 
+def _render_executive_value_ledger(company: str, environment: str) -> None:
+    rollup = load_value_ledger_rollup(company, environment, days=35)
+    if rollup is None or getattr(rollup, "empty", True):
+        st.caption("Executive Value Ledger is pending. Refresh the enterprise operating model mart to separate verified value from estimates.")
+    else:
+        expected = safe_float(pd.to_numeric(rollup.get("EXPECTED_SAVINGS_USD", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
+        verified = safe_float(pd.to_numeric(rollup.get("VERIFIED_SAVINGS_USD", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
+        unverified = safe_float(pd.to_numeric(rollup.get("UNVERIFIED_ESTIMATE_USD", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
+        open_items = safe_int(pd.to_numeric(rollup.get("OPEN_ITEMS", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
+        st.markdown("**Executive Value Ledger**")
+        render_shell_snapshot((
+            ("Verified Savings", f"${verified:,.0f}"),
+            ("Expected Savings", f"${expected:,.0f}"),
+            ("Unverified", f"${unverified:,.0f}"),
+            ("Open Items", f"{open_items:,}"),
+        ))
+        st.caption("Only verified telemetry is counted as realized savings; estimates remain open value until the verification window closes.")
+        st.dataframe(
+            rollup[[
+                column for column in [
+                    "STATUS", "OWNER_ROUTE", "EXPECTED_SAVINGS_USD",
+                    "VERIFIED_SAVINGS_USD", "UNVERIFIED_ESTIMATE_USD",
+                    "CONFIDENCE", "VALUE_STATE", "OPEN_ITEMS",
+                    "VERIFIED_ITEMS", "NEXT_ACTION",
+                ]
+                if column in rollup.columns
+            ]],
+            width="stretch",
+            hide_index=True,
+        )
+
+    if st.button("Load Value Ledger Detail", key="cost_contract_load_value_ledger_detail", width="stretch"):
+        st.session_state["cost_contract_value_ledger_detail"] = load_value_ledger_detail(
+            company,
+            environment,
+            days=180,
+        )
+        st.session_state["cost_contract_value_ledger_scope"] = (company, environment)
+
+    detail = st.session_state.get("cost_contract_value_ledger_detail")
+    if (
+        isinstance(detail, pd.DataFrame)
+        and st.session_state.get("cost_contract_value_ledger_scope") == (company, environment)
+    ):
+        if detail.empty:
+            st.info("No detailed value-ledger rows are available for this scope yet.")
+        else:
+            st.dataframe(
+                detail[[
+                    column for column in [
+                        "SOURCE", "ITEM_ID", "FINDING", "ENTITY_TYPE", "ENTITY_NAME",
+                        "ROUTE", "STATUS", "EXPECTED_SAVINGS_USD",
+                        "ACTUAL_VERIFIED_SAVINGS_USD", "UNVERIFIED_ESTIMATE_USD",
+                        "CONFIDENCE", "TRUST_LEVEL", "BUSINESS_IMPACT",
+                        "ACTION_TAKEN", "SUPPORTING_SIGNAL",
+                        "VERIFICATION_WINDOW_START", "VERIFICATION_WINDOW_END",
+                        "VERIFIED_BY", "VERIFIED_AT", "ROLLBACK_NOTES",
+                    ]
+                    if column in detail.columns
+                ]],
+                width="stretch",
+                hide_index=True,
+            )
+
+
 def render() -> None:
     company = get_active_company()
+    environment = get_active_environment()
     credit_price = safe_float(get_credit_price()) or 3.68
     render_signal_confidence(
         source="ACCOUNT_USAGE",
@@ -4869,6 +4937,7 @@ def render() -> None:
         st.warning("Landing default: prioritize usage deltas, open action queue items, and run-rate risk.")
     _render_cost_watch_floor(company, credit_price)
     _render_loaded_cost_alert_context()
+    _render_executive_value_ledger(company, environment)
 
     workflow = render_workflow_selector(
         "Cost workflow",

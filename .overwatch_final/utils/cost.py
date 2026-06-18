@@ -1,7 +1,7 @@
 # utils/cost.py - Credit/dollar formatting + metered credit CTE builder
 import pandas as pd
-import streamlit as st
 from config import CREDIT_RATES, CREDIT_SOURCE_LABELS, COMPUTE_CREDIT_CASE, DEFAULTS
+from runtime_state import AI_CREDIT_PRICE, CREDIT_PRICE, STORAGE_COST_PER_TB, get_state
 
 # Re-export for convenience
 __all__ = [
@@ -22,17 +22,17 @@ __all__ = [
 
 def get_credit_price() -> float:
     """Return the active credit price, defaulting to the mart contract setting."""
-    return float(st.session_state.get("credit_price", DEFAULTS["credit_price"]))
+    return float(get_state(CREDIT_PRICE, DEFAULTS["credit_price"]))
 
 
 def get_ai_credit_price() -> float:
     """Return the active Cortex AI credit price."""
-    return float(st.session_state.get("ai_credit_price", DEFAULTS["ai_credit_price"]))
+    return float(get_state(AI_CREDIT_PRICE, DEFAULTS["ai_credit_price"]))
 
 
 def get_storage_cost_per_tb() -> float:
     """Return the active storage cost estimate for display-only dollarization."""
-    return float(st.session_state.get("storage_cost_per_tb", DEFAULTS["storage_cost_per_tb"]))
+    return float(get_state(STORAGE_COST_PER_TB, DEFAULTS["storage_cost_per_tb"]))
 
 
 def format_credits(credits: float, credit_price: float = None) -> str:

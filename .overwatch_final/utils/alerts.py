@@ -9,6 +9,8 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
+from runtime_state import ALERT_EMAIL_TARGETS, get_state
+
 from config import (
     ALERT_DB,
     ALERT_DELIVERY_METHOD,
@@ -44,7 +46,7 @@ DEFAULT_ALERT_RECIPIENT = DEFAULT_ALERT_EMAIL
 def current_alert_recipient(default: str = DEFAULT_ALERT_RECIPIENT) -> str:
     """Return the deployment-configured alert recipient when Streamlit state exists."""
     try:
-        configured = str(st.session_state.get("alert_email_targets", "") or "").strip()
+        configured = str(get_state(ALERT_EMAIL_TARGETS, "") or "").strip()
     except Exception:
         configured = ""
     return configured or default

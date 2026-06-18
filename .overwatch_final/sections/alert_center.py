@@ -2768,6 +2768,39 @@ def _render_alert_notification_remediation(
     _render_alert_action_queue_routing(alerts, queue, company)
 
 
+def _render_operational_ownership_coverage(company: str, environment: str) -> None:
+    from utils import load_ownership_coverage_rollup
+
+    pd = _pd()
+    coverage = load_ownership_coverage_rollup(
+        company,
+        environment,
+        surface="Alert Center",
+        days=35,
+    )
+    if coverage is None or getattr(coverage, "empty", True):
+        st.caption("Operational ownership coverage is pending. Refresh the enterprise operating model mart to show alert route gaps.")
+        return
+    total = int(pd.to_numeric(coverage.get("TOTAL_ITEMS", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
+    gaps = int(pd.to_numeric(coverage.get("GAP_ITEMS", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
+    routed = int(pd.to_numeric(coverage.get("ROUTED_ITEMS", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
+    st.markdown("**Operational Ownership Coverage**")
+    render_shell_snapshot((
+        ("Alert Items", f"{total:,}"),
+        ("Routed", f"{routed:,}"),
+        ("Gaps", f"{gaps:,}"),
+    ))
+    view = coverage[[
+        column for column in [
+            "ENTITY_TYPE", "TOTAL_ITEMS", "ROUTED_ITEMS", "GAP_ITEMS",
+            "COVERAGE_PCT", "TRUST_LEVEL", "CONFIDENCE", "TOP_GAP_ENTITY",
+            "ROUTE", "NEXT_ACTION",
+        ]
+        if column in coverage.columns
+    ]]
+    st.dataframe(view, width="stretch", hide_index=True)
+
+
 def render() -> None:
     company = get_active_company()
     environment = get_active_environment()
@@ -2782,6 +2815,7 @@ def render() -> None:
         columns=4,
     )
     required_sources = _alert_center_sources_for_view(active_view)
+    _render_operational_ownership_coverage(company, environment)
 
     if active_view == "Suppression Windows":
         _render_annotations()

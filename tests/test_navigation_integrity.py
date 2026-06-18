@@ -1,11 +1,16 @@
 from pathlib import Path
 import ast
+import contextlib
 import importlib.util
+import re
 import sys
 import unittest
+from dataclasses import fields, is_dataclass
 from datetime import datetime, timedelta
+from unittest.mock import patch
 
 import pandas as pd
+import streamlit as st
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -100,14 +105,18 @@ class NavigationIntegrityTests(unittest.TestCase):
         )
         config_text = (APP_ROOT / "config.py").read_text(encoding="utf-8")
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
+        access_text = (APP_ROOT / "access_control.py").read_text(encoding="utf-8")
+        layout_text = (APP_ROOT / "layout.py").read_text(encoding="utf-8")
         self.assertEqual(ADMIN_ACCESS_ROLES, ("SNOW_ACCOUNTADMINS", "SNOW_SYSADMINS"))
         self.assertNotIn("ROLE_SECTIONS = {", config_text)
-        self.assertIn("ADMIN_ACCESS_ROLES", app_text)
-        self.assertIn("def _current_role_allows_app_access", app_text)
-        self.assertIn("def _admin_access_is_allowed", app_text)
-        self.assertIn('st.session_state["_overwatch_current_role_source"] = "secrets"', app_text)
-        self.assertIn('st.session_state.get("_overwatch_current_role_source") == "session"', app_text)
-        self.assertIn("SNOW_ACCOUNTADMINS or SNOW_SYSADMINS", app_text)
+        self.assertIn("from shell import render_app", app_text)
+        self.assertLessEqual(len(app_text.splitlines()), 30)
+        self.assertIn("ADMIN_ACCESS_ROLES", access_text)
+        self.assertIn("def current_role_allows_app_access", access_text)
+        self.assertIn("def admin_access_is_allowed", access_text)
+        self.assertIn('set_state(CURRENT_ROLE_SOURCE, "secrets")', access_text)
+        self.assertIn('get_state(CURRENT_ROLE_SOURCE) == "session"', access_text)
+        self.assertIn("SNOW_ACCOUNTADMINS or SNOW_SYSADMINS", layout_text)
         self.assertEqual(DAY_WINDOW_OPTIONS, (1, 7, 14, 30, 60, 90))
         self.assertEqual(DEFAULT_DAY_WINDOW, 7)
         self.assertEqual(static_warehouse_options("Trexis"), TREXIS_WAREHOUSES)
@@ -235,38 +244,31 @@ class NavigationIntegrityTests(unittest.TestCase):
 
     def test_sidebar_navigation_requests_section_detail_state(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
+        top_navigation_text = (APP_ROOT / "navigation.py").read_text(encoding="utf-8")
         navigation_text = (APP_ROOT / "sections" / "navigation.py").read_text(encoding="utf-8")
 
         self.assertNotIn("SECTION_WORKSPACE_STATE_KEYS = {", app_text)
-        self.assertIn("EXECUTIVE_LANDING_BOARD_STATE_KEYS = (", app_text)
-        self.assertIn("def _request_executive_landing_hydration", app_text)
-        self.assertIn("def _request_section_detail_state", app_text)
-        self.assertIn("_request_section_detail_state(target)", app_text)
-        self.assertIn("_request_executive_landing_hydration()", app_text)
-        self.assertIn('target == "Executive Landing"', app_text)
-        self.assertIn('if target == "Executive Landing":', app_text)
-        self.assertIn('st.session_state["_executive_landing_full_workspace_requested"] = True', app_text)
-        self.assertIn('st.session_state["_executive_landing_brief_mode"] = False', app_text)
-        self.assertIn('st.session_state["dba_control_room_active_view"] = "Fast Watch"', app_text)
-        self.assertIn('st.session_state["alert_center_active_view"] = "Command Center"', app_text)
-        self.assertIn('st.session_state["cost_contract_workflow"] = "Usage attribution and run-rate"', app_text)
-        self.assertIn('st.session_state["workload_operations_workflow"] = "Query investigation"', app_text)
-        self.assertIn('st.session_state["workload_operations_query_focus"] = "Contention Telemetry"', app_text)
-        self.assertIn('st.session_state["security_posture_view"] = "Access posture"', app_text)
-        self.assertIn('st.session_state["security_posture_workflow"] = "Access posture"', app_text)
-        self.assertIn('st.session_state.pop("_overwatch_pending_autoload_section", None)', app_text)
-        self.assertIn('st.session_state.pop("_overwatch_pending_autoload_started_at", None)', app_text)
-        self.assertNotIn('st.session_state["_overwatch_pending_autoload_section"] = target', app_text)
+        self.assertIn("from shell import render_app", app_text)
+        self.assertIn("def queue_section_navigation", top_navigation_text)
+        self.assertIn("request_section_workspace(target)", top_navigation_text)
+        self.assertIn("request_executive_landing_hydration()", top_navigation_text)
+        self.assertIn('target == "Executive Landing"', top_navigation_text)
+        self.assertIn('if target == "Executive Landing":', top_navigation_text)
+        self.assertIn('pop_state(PENDING_AUTOLOAD_SECTION, None)', top_navigation_text)
+        self.assertIn('pop_state(PENDING_AUTOLOAD_STARTED_AT, None)', top_navigation_text)
+        self.assertNotIn('st.session_state["_overwatch_pending_autoload_section"] = target', top_navigation_text)
         self.assertLess(
-            app_text.index("def _request_section_detail_state"),
-            app_text.index("def _queue_section_navigation"),
+            top_navigation_text.index("request_section_workspace(target)"),
+            top_navigation_text.index("set_state(NAV_SECTION, target)"),
         )
         self.assertIn("def request_section_workspace", navigation_text)
         self.assertIn("request_section_workspace(target)", navigation_text)
-        self.assertIn('st.session_state["alert_center_active_view"] = "Command Center"', navigation_text)
-        self.assertIn('st.session_state["cost_contract_workflow"] = "Usage attribution and run-rate"', navigation_text)
-        self.assertIn('st.session_state["workload_operations_query_focus"] = "Contention Telemetry"', navigation_text)
-        self.assertIn('st.session_state["security_posture_workflow"] = "Access posture"', navigation_text)
+        self.assertIn("set_state(EXECUTIVE_LANDING_WORKSPACE_REQUESTED, True)", navigation_text)
+        self.assertIn("set_state(EXECUTIVE_LANDING_BRIEF_MODE, False)", navigation_text)
+        self.assertIn('set_state(ALERT_CENTER_ACTIVE_VIEW, "Command Center")', navigation_text)
+        self.assertIn('set_state(COST_CONTRACT_WORKFLOW, "Usage attribution and run-rate")', navigation_text)
+        self.assertIn('set_state(WORKLOAD_OPERATIONS_QUERY_FOCUS, "Contention Telemetry")', navigation_text)
+        self.assertIn('set_state(SECURITY_POSTURE_WORKFLOW, "Access posture")', navigation_text)
 
     def test_direct_section_navigation_uses_compatibility_helper(self):
         navigation_text = (APP_ROOT / "sections" / "navigation.py").read_text(encoding="utf-8")
@@ -279,16 +281,16 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("compatibility_state_for_section(raw_section)", navigation_text)
         self.assertIn("request_section_workspace(target)", navigation_text)
         self.assertIn("request_executive_landing_hydration()", navigation_text)
-        self.assertIn('st.session_state["dba_control_room_active_view"] = "Fast Watch"', navigation_text)
-        self.assertIn('st.session_state["alert_center_active_view"] = "Command Center"', navigation_text)
-        self.assertIn('st.session_state["cost_contract_workflow"] = "Usage attribution and run-rate"', navigation_text)
-        self.assertIn('st.session_state["workload_operations_workflow"] = "Query investigation"', navigation_text)
-        self.assertIn('st.session_state["workload_operations_query_focus"] = "Contention Telemetry"', navigation_text)
-        self.assertIn('st.session_state["security_posture_view"] = "Access posture"', navigation_text)
-        self.assertIn('st.session_state["security_posture_workflow"] = "Access posture"', navigation_text)
+        self.assertIn('set_state(DBA_CONTROL_ROOM_ACTIVE_VIEW, "Fast Watch")', navigation_text)
+        self.assertIn('set_state(ALERT_CENTER_ACTIVE_VIEW, "Command Center")', navigation_text)
+        self.assertIn('set_state(COST_CONTRACT_WORKFLOW, "Usage attribution and run-rate")', navigation_text)
+        self.assertIn('set_state(WORKLOAD_OPERATIONS_WORKFLOW, "Query investigation")', navigation_text)
+        self.assertIn('set_state(WORKLOAD_OPERATIONS_QUERY_FOCUS, "Contention Telemetry")', navigation_text)
+        self.assertIn('set_state(SECURITY_POSTURE_VIEW, "Access posture")', navigation_text)
+        self.assertIn('set_state(SECURITY_POSTURE_WORKFLOW, "Access posture")', navigation_text)
         self.assertIn('target != current or target == "Executive Landing"', navigation_text)
-        self.assertIn('st.session_state["_overwatch_pending_section"] = target', navigation_text)
-        self.assertIn('st.session_state["nav_section"] = target', navigation_text)
+        self.assertIn("set_state(PENDING_SECTION, target)", navigation_text)
+        self.assertIn("set_state(NAV_SECTION, target)", navigation_text)
 
         direct_nav_modules = {
             "account_health.py": ("apply_navigation_state(section)", "apply_navigation_state(tgt)"),
@@ -303,6 +305,33 @@ class NavigationIntegrityTests(unittest.TestCase):
                 for expected_call in expected_calls:
                     self.assertIn(expected_call, module_text)
                 self.assertNotIn('st.session_state["nav_section"] =', module_text)
+
+    def test_navigation_fallback_and_retired_redirects_are_safe(self):
+        from navigation import current_active_section
+        from runtime_state import (
+            DBA_CONTROL_ROOM_ACTIVE_VIEW,
+            NAV_SECTION,
+            PENDING_SECTION,
+        )
+        from sections.navigation import apply_navigation_state
+
+        previous = dict(st.session_state)
+        try:
+            st.session_state.clear()
+            self.assertEqual(current_active_section([]), "Executive Landing")
+
+            st.session_state[NAV_SECTION] = "Missing Section"
+            self.assertEqual(current_active_section(["Alert Center", "Cost & Contract"]), "Alert Center")
+            self.assertEqual(st.session_state[NAV_SECTION], "Alert Center")
+
+            target = apply_navigation_state("Account Health")
+            self.assertEqual(target, "DBA Control Room")
+            self.assertEqual(st.session_state[NAV_SECTION], "DBA Control Room")
+            self.assertEqual(st.session_state[PENDING_SECTION], "DBA Control Room")
+            self.assertEqual(st.session_state[DBA_CONTROL_ROOM_ACTIVE_VIEW], "Fast Watch")
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)
 
     def test_executive_landing_uses_direct_observability_module(self):
         self.assertEqual(SECTION_MODULES["Executive Landing"], "sections.executive_landing")
@@ -337,11 +366,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(SECTION_MODULES["DBA Control Room"], "sections.dba_control_room")
         self.assertFalse((APP_ROOT / "sections" / "dba_control_room_shell.py").exists())
         full_workspace_text = (APP_ROOT / "sections" / "dba_control_room.py").read_text(encoding="utf-8")
-        app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
         nav_text = (APP_ROOT / "sections" / "navigation.py").read_text(encoding="utf-8")
         self.assertIn('"Morning Brief"', full_workspace_text)
-        self.assertIn('"dba_control_room_active_view"] = "Fast Watch"', app_text)
-        self.assertIn('"dba_control_room_active_view"] = "Fast Watch"', nav_text)
+        self.assertIn('set_state(DBA_CONTROL_ROOM_ACTIVE_VIEW, "Fast Watch")', nav_text)
         self.assertIn("with_loaded_at(", full_workspace_text)
         self.assertIn("source=getattr(snapshot_result, \"source\", \"Fast summary snapshot\")", full_workspace_text)
         self.assertIn("DBA_CONTROL_ROOM_LIVE_FALLBACK_CAP_HOURS = 24", full_workspace_text)
@@ -373,11 +400,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(SECTION_MODULES["Alert Center"], "sections.alert_center")
         self.assertFalse((APP_ROOT / "sections" / "alert_center_shell.py").exists())
         full_workspace_text = (APP_ROOT / "sections" / "alert_center.py").read_text(encoding="utf-8")
-        app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
         nav_text = (APP_ROOT / "sections" / "navigation.py").read_text(encoding="utf-8")
         self.assertIn('ALERT_CENTER_DEFAULT_VIEW = "Command Center"', full_workspace_text)
-        self.assertIn('"alert_center_active_view"] = "Command Center"', app_text)
-        self.assertIn('"alert_center_active_view"] = "Command Center"', nav_text)
+        self.assertIn('set_state(ALERT_CENTER_ACTIVE_VIEW, "Command Center")', nav_text)
         self.assertNotIn("Alert Signal Summary", full_workspace_text)
         self.assertNotIn("Alert Command Board", full_workspace_text)
         self.assertIn("ALERT_CENTER_PANES", full_workspace_text)
@@ -386,23 +411,19 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(SECTION_MODULES["Security Monitoring"], "sections.security_posture")
         self.assertFalse((APP_ROOT / "sections" / "security_monitoring.py").exists())
         security_text = (APP_ROOT / "sections" / "security_posture.py").read_text(encoding="utf-8")
-        app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
         nav_text = (APP_ROOT / "sections" / "navigation.py").read_text(encoding="utf-8")
         self.assertIn("SECURITY_POSTURE_VIEWS", security_text)
         self.assertNotIn("Security Signal Summary", security_text)
         self.assertNotIn("Security Monitoring Command Board", security_text)
-        self.assertIn('"security_posture_view"] = "Access posture"', app_text)
-        self.assertIn('"security_posture_view"] = "Access posture"', nav_text)
+        self.assertIn('set_state(SECURITY_POSTURE_VIEW, "Access posture")', nav_text)
 
     def test_workload_operations_uses_fast_shell_module(self):
         self.assertEqual(SECTION_MODULES["Workload Operations"], "sections.workload_operations")
         self.assertFalse((APP_ROOT / "sections" / "workload_operations_shell.py").exists())
         full_workspace_text = (APP_ROOT / "sections" / "workload_operations.py").read_text(encoding="utf-8")
-        app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
         nav_text = (APP_ROOT / "sections" / "navigation.py").read_text(encoding="utf-8")
         self.assertIn('QUERY_INVESTIGATION_WORKFLOW = "Query investigation"', full_workspace_text)
-        self.assertIn('"workload_operations_workflow"] = "Query investigation"', app_text)
-        self.assertIn('"workload_operations_workflow"] = "Query investigation"', nav_text)
+        self.assertIn('set_state(WORKLOAD_OPERATIONS_WORKFLOW, "Query investigation")', nav_text)
         self.assertNotIn("Workload Brief", full_workspace_text)
         self.assertIn("WORKLOAD_OPERATIONS_EXPLICIT_WORKFLOW_KEY", full_workspace_text)
         self.assertNotIn("WORKLOAD_OPERATIONS_VIEWS", full_workspace_text)
@@ -415,11 +436,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(SECTION_MODULES["Cost & Contract"], "sections.cost_contract")
         self.assertFalse((APP_ROOT / "sections" / "cost_contract_shell.py").exists())
         full_workspace_text = (APP_ROOT / "sections" / "cost_contract.py").read_text(encoding="utf-8")
-        app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
         nav_text = (APP_ROOT / "sections" / "navigation.py").read_text(encoding="utf-8")
         self.assertIn('"Usage attribution and run-rate"', full_workspace_text)
-        self.assertIn('"cost_contract_workflow"] = "Usage attribution and run-rate"', app_text)
-        self.assertIn('"cost_contract_workflow"] = "Usage attribution and run-rate"', nav_text)
+        self.assertIn('set_state(COST_CONTRACT_WORKFLOW, "Usage attribution and run-rate")', nav_text)
         self.assertNotIn("Cost Signal Summary", full_workspace_text)
         self.assertNotIn("Cost Command Board", full_workspace_text)
         cost_center_text = (APP_ROOT / "sections" / "cost_center.py").read_text(encoding="utf-8")
@@ -450,6 +469,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(ADMIN_ACCESS_ROLES, ("SNOW_ACCOUNTADMINS", "SNOW_SYSADMINS"))
         config_text = (APP_ROOT / "config.py").read_text(encoding="utf-8")
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
+        shell_text = (APP_ROOT / "shell.py").read_text(encoding="utf-8")
+        access_text = (APP_ROOT / "access_control.py").read_text(encoding="utf-8")
+        layout_text = (APP_ROOT / "layout.py").read_text(encoding="utf-8")
         self.assertNotIn("ROLE_SECTIONS", config_text)
         self.assertNotIn("ROLE_PROFILE_OVERRIDES", config_text)
         self.assertNotIn("resolve_role_profile", config_text)
@@ -459,8 +481,10 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("default_experience_view_for_role", config_text)
         self.assertNotIn("Navigation View", app_text)
         self.assertNotIn("overwatch_experience_view", app_text)
-        self.assertIn("_admin_access_is_allowed(current_role, connection_available)", app_text)
-        self.assertIn("_render_admin_access_required(current_role)", app_text)
+        self.assertIn("admin_access_is_allowed(current_role, connection_available)", shell_text)
+        self.assertIn("render_admin_access_required(current_role)", shell_text)
+        self.assertIn("def admin_access_is_allowed", access_text)
+        self.assertIn("def render_admin_access_required", layout_text)
 
         self.assertEqual(set(SECTION_BY_TITLE), set(ALL_SECTIONS))
         self.assertLessEqual(set(SECTION_ALIASES.values()), set(ALL_SECTIONS))
@@ -498,20 +522,23 @@ class NavigationIntegrityTests(unittest.TestCase):
     def test_experience_views_are_removed_for_admin_only_app(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
         config_text = (APP_ROOT / "config.py").read_text(encoding="utf-8")
+        access_text = (APP_ROOT / "access_control.py").read_text(encoding="utf-8")
+        runtime_text = (APP_ROOT / "runtime_state.py").read_text(encoding="utf-8")
+        layout_text = (APP_ROOT / "layout.py").read_text(encoding="utf-8")
 
         self.assertIn("Executive Landing", ALL_SECTIONS)
         self.assertEqual(SECTION_MODULES["Executive Landing"], "sections.executive_landing")
         self.assertIn("ADMIN_ACCESS_ROLES", config_text)
-        self.assertIn("def _current_role_allows_app_access", app_text)
-        self.assertIn("def _render_admin_access_required", app_text)
+        self.assertIn("def current_role_allows_app_access", access_text)
+        self.assertIn("def render_admin_access_required", layout_text)
         self.assertNotIn("EXPERIENCE_VIEW_SECTIONS", config_text)
         self.assertNotIn("ROLE_EXPERIENCE_VIEWS", config_text)
         self.assertNotIn("resolve_allowed_experience_views", config_text)
         self.assertNotIn("default_experience_view_for_role", config_text)
         self.assertNotIn("Navigation View", app_text)
         self.assertNotIn("overwatch_experience_view", app_text)
-        self.assertIn("def _apply_admin_defaults", app_text)
-        self.assertIn("exceptions_only_mode", app_text)
+        self.assertIn("def apply_admin_defaults", runtime_text)
+        self.assertIn("exceptions_only_mode", runtime_text)
         self.assertNotIn("def _allowed_experience_options", app_text)
         self.assertNotIn("def _current_experience_view", app_text)
         self.assertNotIn("_sync_experience_navigation", app_text)
@@ -878,34 +905,43 @@ class NavigationIntegrityTests(unittest.TestCase):
 
     def test_global_filter_and_metric_changes_clear_loaded_state(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
+        filters_text = (APP_ROOT / "filters.py").read_text(encoding="utf-8")
+        refresh_text = (APP_ROOT / "refresh.py").read_text(encoding="utf-8")
+        layout_text = (APP_ROOT / "layout.py").read_text(encoding="utf-8")
+        shell_text = (APP_ROOT / "shell.py").read_text(encoding="utf-8")
+        runtime_text = (APP_ROOT / "runtime_state.py").read_text(encoding="utf-8")
         cache_text = (APP_ROOT / "utils" / "cache.py").read_text(encoding="utf-8")
         company_filter_text = (APP_ROOT / "utils" / "company_filter.py").read_text(encoding="utf-8")
         query_text = (APP_ROOT / "utils" / "query.py").read_text(encoding="utf-8")
         state_keys_text = (APP_ROOT / "utils" / "state_keys.py").read_text(encoding="utf-8")
-        self.assertIn("def _global_filter_signature", app_text)
-        self.assertIn("def _metric_settings_signature", app_text)
-        self.assertIn('str(st.session_state.get("global_schema", ""))', app_text)
-        self.assertNotIn("load_schema_options", app_text)
-        self.assertIn("_global_schema_choice_scope", app_text)
-        self.assertIn("Schema contains", app_text)
-        self.assertIn("def _render_topbar_filter_strip", app_text)
-        self.assertIn("def _maybe_clear_scope_cache_on_filter_change", app_text)
-        self.assertIn("_maybe_clear_scope_cache_on_filter_change()", app_text)
-        self.assertIn("global_filters_clear_topbar", app_text)
-        self.assertIn("Optional role, database, and schema narrowing.", app_text)
+        self.assertIn("from shell import render_app", app_text)
+        self.assertIn("def global_filter_signature", filters_text)
+        self.assertIn("def metric_settings_signature", refresh_text)
+        self.assertIn("str(get_state(GLOBAL_SCHEMA, \"\"))", filters_text)
+        self.assertNotIn("load_schema_options", filters_text)
+        self.assertIn("GLOBAL_SCHEMA_CHOICE_SCOPE", filters_text)
+        self.assertIn('GLOBAL_SCHEMA_CHOICE_SCOPE = "_global_schema_choice_scope"', runtime_text)
+        self.assertIn("Schema contains", filters_text)
+        self.assertIn("def render_topbar_filter_strip", filters_text)
+        self.assertIn("def maybe_clear_scope_cache_on_filter_change", filters_text)
+        self.assertIn("maybe_clear_scope_cache_on_filter_change()", shell_text)
+        self.assertIn("WIDGET_GLOBAL_FILTERS_CLEAR_TOPBAR", filters_text)
+        self.assertIn('WIDGET_GLOBAL_FILTERS_CLEAR_TOPBAR = "global_filters_clear_topbar"', runtime_text)
+        self.assertIn("Optional role, database, and schema narrowing.", filters_text)
         self.assertIn("get_global_schema_filter_clause", company_filter_text)
         self.assertIn("schema_col", company_filter_text)
-        self.assertIn("previous_filter_signature != current_filter_signature", app_text)
-        self.assertIn("previous_metric_signature != current_metric_signature", app_text)
-        self.assertIn("clear_all_cache()", app_text)
-        self.assertIn("clear_all_cache(clear_streamlit_cache=False, clear_metadata=False)", app_text)
+        self.assertIn("previous_filter_signature != current_filter_signature", filters_text)
+        self.assertIn("previous_metric_signature != current_metric_signature", layout_text)
+        self.assertIn("clear_all_cache()", layout_text)
+        self.assertIn("clear_all_cache(clear_streamlit_cache=False, clear_metadata=False)", filters_text)
+        self.assertIn("clear_all_cache(clear_streamlit_cache=False, clear_metadata=False)", layout_text)
         self.assertIn("bump_global_cache_salt", cache_text)
-        self.assertIn('st.session_state["_refresh_salt_global"]', cache_text)
+        self.assertIn("set_state(REFRESH_SALT_GLOBAL, salt)", cache_text)
         self.assertNotIn("st.cache_data.clear()", cache_text)
-        self.assertIn('st.session_state.get("_refresh_salt_global"', query_text)
-        self.assertIn('st.session_state.get("global_environment"', query_text)
+        self.assertIn("get_state(REFRESH_SALT_GLOBAL", query_text)
+        self.assertIn("get_state(GLOBAL_ENVIRONMENT", query_text)
         self.assertNotIn('st.session_state.get("exceptions_only_mode"', query_text)
-        self.assertIn('st.session_state.get("_overwatch_current_role"', query_text)
+        self.assertIn("get_state(CURRENT_ROLE", query_text)
         self.assertIn("_query_tag", query_text)
         for prefix in (
             '"task_ops_"',
@@ -927,17 +963,23 @@ class NavigationIntegrityTests(unittest.TestCase):
 
     def test_current_role_is_seeded_from_snowflake_secrets(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
+        access_text = (APP_ROOT / "access_control.py").read_text(encoding="utf-8")
+        runtime_text = (APP_ROOT / "runtime_state.py").read_text(encoding="utf-8")
+        shell_text = (APP_ROOT / "shell.py").read_text(encoding="utf-8")
+        navigation_text = (APP_ROOT / "navigation.py").read_text(encoding="utf-8")
 
-        self.assertIn("def _seed_current_role_from_secrets", app_text)
-        self.assertIn('snowflake_cfg.get("role")', app_text)
-        self.assertIn("_seed_current_role_from_secrets()", app_text)
-        self.assertIn("def _apply_admin_defaults", app_text)
-        self.assertIn("_apply_admin_defaults()", app_text)
-        self.assertNotIn("resolve_role_profile(_get_current_role())", app_text)
-        self.assertNotIn("resolve_allowed_experience_views(_get_current_role())", app_text)
-        self.assertNotIn("matched_profile", app_text)
-        self.assertIn("compatibility_state_for_section", app_text)
-        self.assertIn("_apply_section_compatibility_state(raw_section)", app_text)
+        self.assertIn("from shell import render_app", app_text)
+        self.assertIn("def seed_current_role_from_secrets", access_text)
+        self.assertIn('snowflake_cfg.get("role")', access_text)
+        self.assertIn("seed_current_role_from_secrets()", shell_text)
+        self.assertIn("def apply_admin_defaults", runtime_text)
+        self.assertIn("apply_admin_defaults()", shell_text)
+        for text in (app_text, access_text, runtime_text, shell_text):
+            self.assertNotIn("resolve_role_profile(get_current_role())", text)
+            self.assertNotIn("resolve_allowed_experience_views(get_current_role())", text)
+            self.assertNotIn("matched_profile", text)
+        self.assertIn("compatibility_state_for_section", navigation_text)
+        self.assertIn("apply_section_compatibility_state(raw_section)", navigation_text)
 
     def test_saved_state_architecture_is_removed(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
@@ -958,25 +1000,31 @@ class NavigationIntegrityTests(unittest.TestCase):
 
     def test_section_switches_clear_stale_body_during_render(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
+        navigation_text = (APP_ROOT / "navigation.py").read_text(encoding="utf-8")
+        layout_text = (APP_ROOT / "layout.py").read_text(encoding="utf-8")
+        shell_text = (APP_ROOT / "shell.py").read_text(encoding="utf-8")
+        dispatch_text = (APP_ROOT / "section_dispatch.py").read_text(encoding="utf-8")
         theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")
 
-        self.assertIn("def _queue_section_navigation", app_text)
-        self.assertIn('CONNECTION_OPTIONAL_SECTIONS = {"Alert Center"}', app_text)
-        self.assertIn("def _section_requires_connection", app_text)
-        self.assertIn("_overwatch_pending_section", app_text)
-        self.assertIn("def _section_render_signature", app_text)
-        self.assertIn("_overwatch_last_section_render_signature", app_text)
-        self.assertIn("def _should_show_section_transition", app_text)
-        self.assertIn('has_prior_render = "_overwatch_last_section_render_signature" in st.session_state', app_text)
-        self.assertIn('has_pending_navigation = "_overwatch_pending_section" in st.session_state', app_text)
-        self.assertIn("section_slot = st.empty()", app_text)
-        self.assertIn("def _fresh_section_container", app_text)
-        self.assertIn("slot.empty()", app_text)
-        self.assertIn("_render_section_transition_state(active_section)", app_text)
-        self.assertIn("with _fresh_section_container(section_slot):", app_text)
-        self.assertIn("sections.dispatch(active_section)", app_text)
-        self.assertIn("needs_connection = _section_requires_connection(active_section)", app_text)
-        self.assertIn("if needs_connection and (not connection_available", app_text)
+        self.assertIn("from shell import render_app", app_text)
+        self.assertIn("def queue_section_navigation", navigation_text)
+        self.assertIn('CONNECTION_OPTIONAL_SECTIONS = {"Alert Center"}', navigation_text)
+        self.assertIn("def section_requires_connection", navigation_text)
+        self.assertIn("PENDING_SECTION", navigation_text)
+        self.assertIn("def section_render_signature", (APP_ROOT / "refresh.py").read_text(encoding="utf-8"))
+        self.assertIn("LAST_SECTION_RENDER_SIGNATURE", navigation_text)
+        self.assertIn("def should_show_section_transition", navigation_text)
+        self.assertIn("has_prior_render = LAST_SECTION_RENDER_SIGNATURE in st.session_state", navigation_text)
+        self.assertIn("has_pending_navigation = PENDING_SECTION in st.session_state", navigation_text)
+        self.assertIn("section_slot = st.empty()", shell_text)
+        self.assertIn("def fresh_section_container", layout_text)
+        self.assertIn("slot.empty()", layout_text)
+        self.assertIn("render_section_transition_state(active_section)", shell_text)
+        self.assertIn("with fresh_section_container(section_slot):", shell_text)
+        self.assertIn("dispatch_section(active_section)", shell_text)
+        self.assertIn("def dispatch_section", dispatch_text)
+        self.assertIn("needs_connection = section_requires_connection(active_section)", shell_text)
+        self.assertIn("elif needs_connection and (", shell_text)
         self.assertNotIn("transition_slot = st.empty()", app_text)
         self.assertNotIn("transition_slot.empty()", app_text)
         self.assertIn(".ow-section-transition", theme_text)
@@ -984,59 +1032,232 @@ class NavigationIntegrityTests(unittest.TestCase):
 
     def test_app_shell_header_renders_before_sidebar_hydration(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
+        shell_text = (APP_ROOT / "shell.py").read_text(encoding="utf-8")
+        layout_text = (APP_ROOT / "layout.py").read_text(encoding="utf-8")
+        filters_text = (APP_ROOT / "filters.py").read_text(encoding="utf-8")
+        runtime_text = (APP_ROOT / "runtime_state.py").read_text(encoding="utf-8")
         theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")
         evidence_mode_text = (APP_ROOT / "utils" / "evidence_mode.py").read_text(encoding="utf-8")
 
-        header_index = app_text.index("_render_app_header(active_section, active_company, credit_price, current_role)")
-        topbar_index = app_text.index("active_company = _render_topbar_filter_strip(active_company)")
-        sidebar_index = app_text.index("with st.sidebar:")
+        header_index = shell_text.index("render_app_header(active_section, active_company, credit_price, current_role)")
+        topbar_index = shell_text.index("active_company = render_topbar_filter_strip(active_company)")
+        sidebar_index = shell_text.index("render_sidebar(")
         self.assertLess(header_index, sidebar_index)
         self.assertLess(header_index, topbar_index)
         self.assertLess(topbar_index, sidebar_index)
-        self.assertIn("def _current_active_section", app_text)
-        self.assertIn("def _current_credit_price", app_text)
-        self.assertIn("def _sidebar_panel_toggle", app_text)
-        sidebar_toggle_block = app_text[
-            app_text.index("def _sidebar_panel_toggle"):
-            app_text.index("def _sync_company_environment_state")
+        self.assertIn("def current_active_section", (APP_ROOT / "navigation.py").read_text(encoding="utf-8"))
+        self.assertIn("def current_credit_price", (APP_ROOT / "refresh.py").read_text(encoding="utf-8"))
+        self.assertIn("@dataclass(frozen=True)", layout_text)
+        self.assertIn("class SidebarState", layout_text)
+        from layout import SidebarState
+
+        self.assertTrue(is_dataclass(SidebarState))
+        self.assertEqual(
+            [field.name for field in fields(SidebarState)],
+            [
+                "active_company",
+                "active_section",
+                "current_role",
+                "admin_access_allowed",
+                "connection_available",
+                "idle_query_paused",
+                "credit_price",
+                "visible_sections",
+            ],
+        )
+        self.assertIn("sidebar_state = render_sidebar(", shell_text)
+        self.assertIn("active_company = sidebar_state.active_company", shell_text)
+        self.assertIn("active_section = sidebar_state.active_section", shell_text)
+        self.assertIn("connection_available = sidebar_state.connection_available", shell_text)
+        self.assertIn("idle_query_paused = sidebar_state.idle_query_paused", shell_text)
+        self.assertNotIn(
+            "active_section, admin_allowed, visible_sections, credit_price, current_role = render_sidebar",
+            shell_text,
+        )
+        self.assertIn("cached_snowflake_available(default=False)", shell_text)
+        self.assertIn("def sidebar_panel_toggle", layout_text)
+        sidebar_toggle_block = layout_text[
+            layout_text.index("def sidebar_panel_toggle"):
+            layout_text.index("def format_idle_duration")
         ]
         self.assertIn('type="secondary"', sidebar_toggle_block)
         self.assertNotIn('type="primary" if is_active else "secondary"', sidebar_toggle_block)
-        self.assertIn("ow-filter-strip-kicker", app_text)
-        self.assertNotIn("def _render_priority_brief_empty_state", app_text)
-        self.assertNotIn("Open Executive Landing for the ranked platform brief.", app_text)
+        self.assertIn("ow-filter-strip-kicker", filters_text)
+        self.assertNotIn("def _render_priority_brief_empty_state", app_text + shell_text + layout_text)
+        self.assertNotIn("Open Executive Landing for the ranked platform brief.", app_text + shell_text + layout_text)
         self.assertNotIn(".ow-priority-empty", theme_text)
-        self.assertNotIn("load or refresh a section to populate priority evidence", app_text)
-        self.assertIn('"Date range"', app_text)
-        self.assertIn('"Warehouse"', app_text)
-        self.assertIn('"User contains"', app_text)
-        self.assertIn('if _sidebar_panel_toggle("Advanced Scope", "advanced_scope")', app_text)
-        self.assertIn('if _sidebar_panel_toggle("Settings", "settings")', app_text)
-        self.assertEqual(app_text.count('if _sidebar_panel_toggle("Advanced Scope", "advanced_scope")'), 1)
-        self.assertNotIn('if _sidebar_panel_toggle("Saved Views", "saved_views")', app_text)
-        self.assertNotIn('if _sidebar_panel_toggle("Global Filters", "global_filters")', app_text)
-        self.assertIn("Optional role, database, and schema narrowing.", app_text)
-        self.assertNotIn("TRIAGE_MODE_OPTIONS", app_text)
-        self.assertNotIn('"Evidence Mode"', app_text)
-        self.assertIn("triage_view_mode", app_text)
-        self.assertIn("_sync_exceptions_only_mode", app_text)
-        self.assertIn("TRIAGE_MODE_TRIAGE", app_text)
-        self.assertNotIn("TRIAGE_MODE_INVESTIGATE", app_text)
-        self.assertNotIn("TRIAGE_MODE_ALL_EVIDENCE", app_text)
+        self.assertNotIn("load or refresh a section to populate priority evidence", app_text + shell_text + layout_text)
+        self.assertIn('"Date range"', filters_text)
+        self.assertIn('"Warehouse"', filters_text)
+        self.assertIn('"User contains"', filters_text)
+        self.assertIn('if sidebar_panel_toggle("Advanced Scope", "advanced_scope")', layout_text)
+        self.assertIn('if sidebar_panel_toggle("Settings", "settings")', layout_text)
+        self.assertEqual(layout_text.count('if sidebar_panel_toggle("Advanced Scope", "advanced_scope")'), 1)
+        self.assertNotIn('if sidebar_panel_toggle("Saved Views", "saved_views")', layout_text)
+        self.assertNotIn('if sidebar_panel_toggle("Global Filters", "global_filters")', layout_text)
+        self.assertIn("Optional role, database, and schema narrowing.", filters_text)
+        self.assertNotIn("TRIAGE_MODE_OPTIONS", runtime_text)
+        self.assertNotIn('"Evidence Mode"', layout_text)
+        self.assertIn("triage_view_mode", runtime_text)
+        self.assertIn("sync_exceptions_only_mode", runtime_text)
+        self.assertIn("TRIAGE_MODE_TRIAGE", runtime_text)
+        self.assertNotIn("TRIAGE_MODE_INVESTIGATE", runtime_text)
+        self.assertNotIn("TRIAGE_MODE_ALL_EVIDENCE", runtime_text)
         self.assertIn("TRIAGE_MODE_LEGACY_ALIASES", evidence_mode_text)
-        self.assertNotIn('"Exceptions-only mode"', app_text)
+        self.assertNotIn('"Exceptions-only mode"', app_text + shell_text + layout_text)
         for path in APP_ROOT.rglob("*.py"):
             if "__pycache__" in path.parts:
                 continue
             self.assertNotIn("Exceptions-only mode", path.read_text(encoding="utf-8"), str(path))
-        self.assertNotIn("st.toggle(", app_text)
-        self.assertNotIn("Command Palette", app_text)
-        self.assertNotIn("command_palette", app_text)
-        self.assertNotIn('with st.expander("Saved Views", expanded=False)', app_text)
-        self.assertNotIn('with st.expander("Global Filters", expanded=False)', app_text)
-        self.assertNotIn('with st.expander("Settings", expanded=False)', app_text)
-        self.assertLess(app_text.index("def _render_topbar_filter_strip"), app_text.index('if _sidebar_panel_toggle("Advanced Scope", "advanced_scope")'))
-        self.assertLess(app_text.index('if _sidebar_panel_toggle("Advanced Scope", "advanced_scope")'), app_text.index('if _sidebar_panel_toggle("Settings", "settings")'))
+        self.assertNotIn("st.toggle(", app_text + shell_text + layout_text)
+        self.assertNotIn("Command Palette", app_text + shell_text + layout_text)
+        self.assertNotIn("command_palette", app_text + shell_text + layout_text)
+        self.assertNotIn('with st.expander("Saved Views", expanded=False)', app_text + shell_text + layout_text)
+        self.assertNotIn('with st.expander("Global Filters", expanded=False)', app_text + shell_text + layout_text)
+        self.assertNotIn('with st.expander("Settings", expanded=False)', app_text + shell_text + layout_text)
+        self.assertLess(shell_text.index("render_topbar_filter_strip"), shell_text.index("render_sidebar("))
+        self.assertLess(layout_text.index('if sidebar_panel_toggle("Advanced Scope", "advanced_scope")'), layout_text.index('if sidebar_panel_toggle("Settings", "settings")'))
+
+    def test_idle_shell_render_does_not_probe_snowflake(self):
+        import shell
+        from layout import SidebarState
+        from runtime_state import ACTIVE_COMPANY, CURRENT_ROLE
+
+        previous = dict(st.session_state)
+        try:
+            st.session_state.clear()
+            st.session_state[ACTIVE_COMPANY] = "ALFA"
+            st.session_state[CURRENT_ROLE] = "SNOW_ACCOUNTADMINS"
+
+            with contextlib.ExitStack() as stack:
+                for name in (
+                    "inject_theme",
+                    "ensure_startup_state",
+                    "seed_current_role_from_secrets",
+                    "apply_admin_defaults",
+                    "ensure_idle_state",
+                    "set_active_section",
+                    "render_app_header",
+                    "maybe_clear_scope_cache_on_filter_change",
+                    "mark_section_rendered",
+                    "log_section_load",
+                ):
+                    stack.enter_context(patch.object(shell, name))
+                stack.enter_context(patch.object(shell, "queries_paused", return_value=True))
+                stack.enter_context(
+                    patch.object(shell, "mark_operator_activity", side_effect=AssertionError("activity marked while idle"))
+                )
+                stack.enter_context(
+                    patch.object(
+                        shell,
+                        "probe_snowflake_available",
+                        side_effect=AssertionError("Snowflake probe during idle"),
+                    )
+                )
+                stack.enter_context(
+                    patch.object(
+                        shell,
+                        "refresh_current_role_for_access",
+                        side_effect=AssertionError("role refresh during idle"),
+                    )
+                )
+                mock_cached = stack.enter_context(
+                    patch.object(shell, "cached_snowflake_available", return_value=True)
+                )
+                stack.enter_context(patch.object(shell, "current_visible_sections", return_value=["Executive Landing"]))
+                stack.enter_context(patch.object(shell, "current_active_section", return_value="Executive Landing"))
+                stack.enter_context(patch.object(shell, "current_credit_price", return_value=3.0))
+                stack.enter_context(patch.object(shell, "render_topbar_filter_strip", return_value="ALFA"))
+                stack.enter_context(
+                    patch.object(
+                        shell,
+                        "render_sidebar",
+                        return_value=SidebarState(
+                            active_company="ALFA",
+                            active_section="Executive Landing",
+                            current_role="SNOW_ACCOUNTADMINS",
+                            admin_access_allowed=True,
+                            connection_available=True,
+                            idle_query_paused=True,
+                            credit_price=3.0,
+                            visible_sections=["Executive Landing"],
+                        ),
+                    )
+                )
+                stack.enter_context(
+                    patch.object(shell, "section_render_signature", return_value=("Executive Landing", "ALFA"))
+                )
+                stack.enter_context(patch.object(shell, "should_show_section_transition", return_value=False))
+                stack.enter_context(patch.object(shell, "section_requires_connection", return_value=True))
+                stack.enter_context(patch.object(shell.st, "empty", return_value=object()))
+                stack.enter_context(
+                    patch.object(shell, "fresh_section_container", return_value=contextlib.nullcontext())
+                )
+                mock_pause = stack.enter_context(patch.object(shell, "render_query_pause_state"))
+                shell.render_app()
+
+            mock_cached.assert_called_once_with(default=False)
+            mock_pause.assert_called_once()
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)
+
+    def test_shell_session_state_access_is_centralized(self):
+        runtime_text = (APP_ROOT / "runtime_state.py").read_text(encoding="utf-8")
+        self.assertIn("def get_state", runtime_text)
+        self.assertIn("def set_state", runtime_text)
+        self.assertIn("def pop_state", runtime_text)
+        self.assertIn("def ensure_default_state", runtime_text)
+        self.assertIn("def clear_scoped_state", runtime_text)
+
+        forbidden = re.compile(r"st\.session_state(?:\[(?:'|\")|\.get\(|\.pop\(|\.setdefault\()")
+        shell_modules = [
+            APP_ROOT / "shell.py",
+            APP_ROOT / "layout.py",
+            APP_ROOT / "filters.py",
+            APP_ROOT / "navigation.py",
+            APP_ROOT / "access_control.py",
+            APP_ROOT / "refresh.py",
+            APP_ROOT / "sections" / "navigation.py",
+            APP_ROOT / "utils" / "action_queue.py",
+            APP_ROOT / "utils" / "session.py",
+            APP_ROOT / "utils" / "query.py",
+            APP_ROOT / "utils" / "cache.py",
+            APP_ROOT / "utils" / "command_board.py",
+            APP_ROOT / "utils" / "company_filter.py",
+            APP_ROOT / "utils" / "compatibility.py",
+            APP_ROOT / "utils" / "idle.py",
+            APP_ROOT / "utils" / "mart.py",
+            APP_ROOT / "utils" / "metadata.py",
+            APP_ROOT / "utils" / "optimization_advisor.py",
+            APP_ROOT / "utils" / "shared_metrics.py",
+        ]
+        offenders = []
+        for path in shell_modules:
+            text = path.read_text(encoding="utf-8")
+            for line_no, line in enumerate(text.splitlines(), start=1):
+                if forbidden.search(line):
+                    offenders.append(f"{path.relative_to(APP_ROOT)}:{line_no}:{line.strip()}")
+        self.assertEqual(offenders, [])
+
+        contract_text = (ROOT / "docs" / "SESSION_STATE_CONTRACT.md").read_text(encoding="utf-8")
+        self.assertIn("Known Exceptions", contract_text)
+        self.assertIn("Streamlit widget keys", contract_text)
+
+    def test_access_empty_states_render_safely(self):
+        import layout
+
+        with patch.object(layout.st, "markdown") as mock_markdown:
+            layout.render_admin_access_required("APP_READONLY")
+        self.assertTrue(mock_markdown.called)
+
+        with (
+            patch.object(layout.st, "markdown") as mock_markdown,
+            patch.object(layout.st, "button", return_value=False) as mock_button,
+        ):
+            layout.render_connection_empty_state("DBA Control Room")
+        self.assertTrue(mock_markdown.called)
+        mock_button.assert_called_once()
 
     def test_sidebar_collapse_reopen_control_remains_visible(self):
         theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")

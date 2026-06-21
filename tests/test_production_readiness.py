@@ -161,7 +161,10 @@ class ProductionReadinessTests(unittest.TestCase):
                 self.assertIn(token, validation)
 
         self.assertIn("DO NOT EXECUTE GRANTS", cleanup)
-        self.assertIn("94 / REVIEW", cleanup)
+        self.assertIn("PASS/FAIL EVIDENCE GATES", cleanup)
+        self.assertIn("CI IS GREEN", cleanup)
+        self.assertIn("SNOWFLAKE/MART_SETUP/01_ROLES.SQL", cleanup)
+        self.assertIn("09_VALIDATION.SQL` RUN IN ORDER", cleanup)
         self.assertIn("GOVERNANCE ALIGNMENT RELEASE CANDIDATE", cleanup)
         self.assertIn("APPROVED LEGACY", validation)
         self.assertIn("MIGRATION CANDIDATE", validation)

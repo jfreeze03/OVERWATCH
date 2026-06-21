@@ -16,6 +16,7 @@ import streamlit as st
 ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
+from tests.sql_helpers import read_mart_setup_sql
 
 from config import (  # noqa: E402
     ALL_SECTIONS,
@@ -988,7 +989,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         utils_init_text = (APP_ROOT / "utils" / "__init__.py").read_text(encoding="utf-8")
         theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")
         dba_tools_text = (APP_ROOT / "sections" / "dba_tools.py").read_text(encoding="utf-8")
-        setup_text = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8")
+        setup_text = read_mart_setup_sql(ROOT)
 
         self.assertFalse((APP_ROOT / "utils" / "bookmarks.py").exists())
         for text in (app_text, utils_init_text, theme_text, dba_tools_text, setup_text):

@@ -6,6 +6,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
+from tests.sql_helpers import read_mart_setup_sql
 
 from utils.operational_intelligence import (  # noqa: E402
     build_alert_lifecycle_sql,
@@ -96,7 +97,7 @@ class OperationalIntelligenceTests(unittest.TestCase):
         data_model = ROOT / "docs" / "DATA_MODEL.md"
         refresh_arch = ROOT / "docs" / "REFRESH_ARCHITECTURE.md"
         setup_path = ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql"
-        setup = setup_path.read_text(encoding="utf-8").upper()
+        setup = read_mart_setup_sql(ROOT).upper()
         self.assertTrue(runbook.exists())
         self.assertTrue(data_model.exists())
         self.assertTrue(refresh_arch.exists())

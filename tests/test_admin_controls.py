@@ -10,6 +10,7 @@ import streamlit as st
 ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
+from tests.sql_helpers import read_mart_setup_sql
 
 from sections.dba_tools import (  # noqa: E402
     DATA_COMPARE_EXECUTION_STAGES,
@@ -558,7 +559,7 @@ class AdminControlTests(unittest.TestCase):
 
     def test_action_queue_ddl_and_filters_are_environment_aware(self):
         ddl = build_action_queue_ddl().upper()
-        setup_sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8").upper()
+        setup_sql = read_mart_setup_sql(ROOT).upper()
 
         self.assertIn("ENVIRONMENT", ddl)
         self.assertIn("VERIFICATION_STATUS", ddl)
@@ -750,7 +751,7 @@ class AdminControlTests(unittest.TestCase):
         self.assertEqual(action_queue_environment_clause("ENVIRONMENT", "ALL"), "")
 
     def test_overwatch_task_warehouses_match_intended_runtime(self):
-        setup_sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8")
+        setup_sql = read_mart_setup_sql(ROOT)
         task_blocks = re.findall(
             r"CREATE OR REPLACE TASK\s+(OVERWATCH_[A-Z0-9_]+)\s+(.*?);",
             setup_sql,

@@ -7,6 +7,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
+from tests.sql_helpers import read_mart_setup_sql
 
 from utils.deployment import (  # noqa: E402
     STREAMLIT_MANIFEST_CONTRACT_VERSION,
@@ -22,7 +23,7 @@ def _strip_sql_comments(sql: str) -> str:
 
 def _setup_sql() -> str:
     return _strip_sql_comments(
-        (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8")
+        read_mart_setup_sql(ROOT)
     ).upper()
 
 
@@ -70,6 +71,28 @@ RETIRED_DROP_OBJECTS = {
 
 
 class DeploymentContractTests(unittest.TestCase):
+    def test_mart_setup_is_split_into_ordered_deployment_files(self):
+        setup_dir = ROOT / "snowflake" / "mart_setup"
+        expected = [
+            "01_roles.sql",
+            "02_databases.sql",
+            "03_schemas.sql",
+            "04_tables.sql",
+            "05_views.sql",
+            "06_procedures.sql",
+            "07_tasks.sql",
+            "08_grants.sql",
+            "09_validation.sql",
+        ]
+        self.assertEqual([path.name for path in sorted(setup_dir.glob("[0-9][0-9]_*.sql"))], expected)
+
+        runner = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8")
+        readme = (setup_dir / "README.md").read_text(encoding="utf-8")
+        for filename in expected:
+            with self.subTest(filename=filename):
+                self.assertIn(f"snowflake/mart_setup/{filename}", runner)
+                self.assertIn(filename, readme)
+
     def test_streamlit_manifest_contract_is_ready(self):
         contract = build_streamlit_manifest_contract(ROOT)
 
@@ -116,7 +139,7 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertNotIn("execute_as: OWNER", manifest)
 
     def test_mart_setup_avoids_dynamic_tables_and_secure_views(self):
-        setup_sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8").upper()
+        setup_sql = read_mart_setup_sql(ROOT).upper()
         drop_sql = (ROOT / "snowflake" / "OVERWATCH_MART_DROP.sql").read_text(encoding="utf-8").upper()
 
         self.assertNotIn("CREATE DYNAMIC TABLE", setup_sql)

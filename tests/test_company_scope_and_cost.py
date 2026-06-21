@@ -9,6 +9,7 @@ import streamlit as st
 ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
+from tests.sql_helpers import read_mart_setup_sql
 
 from config import COMPANY_CONFIG, TREXIS_DATABASES, TREXIS_DEV_DATABASES, TREXIS_PROD_DATABASES, TREXIS_WAREHOUSES  # noqa: E402
 from utils.company_filter import (  # noqa: E402
@@ -135,7 +136,7 @@ class CompanyScopeAndCostTests(unittest.TestCase):
         self.assertEqual(offenders, [])
 
     def test_mart_setup_uses_exact_trexis_warehouse_list(self):
-        sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8").upper()
+        sql = read_mart_setup_sql(ROOT).upper()
         self.assertIn("WH_TRXS_LOAD", sql)
         self.assertIn("WH_TRXS_UNLOAD", sql)
         self.assertIn("TRXS_EDW_PRD", sql)

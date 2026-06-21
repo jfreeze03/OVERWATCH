@@ -13,6 +13,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
+from tests.sql_helpers import read_mart_setup_sql
 
 from config import DEFAULTS, DEFAULT_ALERT_EMAIL  # noqa: E402
 import sections.cost_contract as cost_contract  # noqa: E402
@@ -499,7 +500,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(current_evidence_mode({"triage_view_mode": "bad saved value"}), TRIAGE_MODE_TRIAGE)
 
     def test_streamlit_and_mart_credit_defaults_stay_aligned(self):
-        setup_sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8")
+        setup_sql = read_mart_setup_sql(ROOT)
 
         self.assertEqual(DEFAULTS["credit_price"], 3.68)
         self.assertEqual(DEFAULTS["ai_credit_price"], 2.20)
@@ -595,7 +596,7 @@ class FormulaRegressionTests(unittest.TestCase):
             ai_credit_price=2.20,
         )
         combined = "\n".join(sql for _, _, sql in parts).upper()
-        setup_sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8").upper()
+        setup_sql = read_mart_setup_sql(ROOT).upper()
 
         for panel in ["COST_DRIVER", "QUERY_DATABASE", "EXEC_STATUS"]:
             self.assertIn(panel, combined)
@@ -2612,7 +2613,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Alert Center", result["answer"])
 
     def test_overwatch_mart_setup_keeps_cost_monitoring_and_upgrade_contract(self):
-        setup_sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8")
+        setup_sql = read_mart_setup_sql(ROOT)
         setup_upper = setup_sql.upper()
 
         self.assertIn("ALTER TABLE IF EXISTS FACT_QUERY_HOURLY ADD COLUMN IF NOT EXISTS ENVIRONMENT", setup_upper)
@@ -2694,7 +2695,7 @@ class FormulaRegressionTests(unittest.TestCase):
             return "\n".join(line.split("--", 1)[0] for line in sql.splitlines())
 
         setup_sql = strip_sql_comments(
-            (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8")
+            read_mart_setup_sql(ROOT)
         ).upper()
         drop_sql = (ROOT / "snowflake" / "OVERWATCH_MART_DROP.sql").read_text(encoding="utf-8").upper()
 
@@ -2735,7 +2736,7 @@ class FormulaRegressionTests(unittest.TestCase):
             self.assertIn(f"DROP PROCEDURE IF EXISTS {procedure}", drop_sql)
 
     def test_mart_refresh_procedures_do_not_write_retired_objects(self):
-        setup_sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8").upper()
+        setup_sql = read_mart_setup_sql(ROOT).upper()
         retired_objects = [
             "FACT_MONITORING_COST_DAILY",
             "OVERWATCH_AUTOMATION_RUN",
@@ -4350,7 +4351,7 @@ class FormulaRegressionTests(unittest.TestCase):
             st.session_state.update(previous)
 
     def test_mart_setup_adds_explicit_environment_dimensions(self):
-        setup_sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8").upper()
+        setup_sql = read_mart_setup_sql(ROOT).upper()
         self.assertIn("CREATE OR REPLACE FUNCTION OVERWATCH_DATABASE_ENVIRONMENT", setup_sql)
         self.assertIn("UPPER(DATABASE_NAME) = 'ALFA_EDW_PROD'", setup_sql)
         self.assertNotIn("OVERWATCH_COMPANY_SCOPE", setup_sql)
@@ -5426,7 +5427,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("MISSING_TICKET_ROWS", trend_sql)
 
     def test_external_integration_placeholders_are_removed_from_change_contract(self):
-        setup_sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8").upper()
+        setup_sql = read_mart_setup_sql(ROOT).upper()
         change_text = (ROOT / ".overwatch_final" / "sections" / "change_drift.py").read_text(encoding="utf-8").upper()
         task_text = (ROOT / ".overwatch_final" / "sections" / "task_management.py").read_text(encoding="utf-8").upper()
         workload_text = (ROOT / ".overwatch_final" / "sections" / "workload_operations.py").read_text(encoding="utf-8").upper()
@@ -8513,7 +8514,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Stabilize", cards[0]["next_action"])
 
     def test_alert_task_is_email_first_and_dba_focused(self):
-        sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8").upper()
+        sql = read_mart_setup_sql(ROOT).upper()
 
         self.assertIn("OVERWATCH_ANOMALY_CHECK", sql)
         self.assertIn("CONFIG_REQUIRED", sql)
@@ -9518,7 +9519,7 @@ class FormulaRegressionTests(unittest.TestCase):
 
     def test_alert_command_center_setup_sql_creates_required_contract_tables(self):
         sql = build_alert_command_center_setup_sql().upper()
-        setup_sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8").upper()
+        setup_sql = read_mart_setup_sql(ROOT).upper()
 
         for table in [
             "ALERT_CONFIG",
@@ -9559,7 +9560,7 @@ class FormulaRegressionTests(unittest.TestCase):
         deployment_sql = build_alert_native_deployment_review_sql().upper()
         deployment_rows = build_alert_native_deployment_review_rows(native_rows)
         policy_ddl = build_alert_remediation_policy_ddl().upper()
-        setup_sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8").upper()
+        setup_sql = read_mart_setup_sql(ROOT).upper()
         drop_sql = (ROOT / "snowflake" / "OVERWATCH_MART_DROP.sql").read_text(encoding="utf-8").upper()
         validation_sql = (ROOT / "snowflake" / "OVERWATCH_MART_VALIDATION.sql").read_text(encoding="utf-8").upper()
         deployment_file = (ROOT / "snowflake" / "OVERWATCH_NATIVE_ALERT_DEPLOYMENT.sql").read_text(encoding="utf-8").upper()
@@ -9650,7 +9651,7 @@ class FormulaRegressionTests(unittest.TestCase):
         dq_ddl = build_alert_data_quality_checks_ddl().upper()
         materialize_sql = build_alert_event_materialization_sql(days=7).upper()
         setup_sql = build_alert_command_center_setup_sql().upper()
-        repo_setup_sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8").upper()
+        repo_setup_sql = read_mart_setup_sql(ROOT).upper()
         dq_rows = build_alert_data_quality_check_seed_rows()
 
         self.assertIn("CREATE TABLE IF NOT EXISTS", dq_ddl)

@@ -7,6 +7,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
+from tests.sql_helpers import read_mart_setup_sql
 
 
 def _read(path: Path) -> str:
@@ -14,7 +15,7 @@ def _read(path: Path) -> str:
 
 
 def _setup_sql() -> str:
-    return _read(ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql")
+    return read_mart_setup_sql(ROOT)
 
 
 def _validation_sql() -> str:

@@ -9,6 +9,7 @@ import streamlit as st
 ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
+from tests.sql_helpers import read_mart_setup_sql
 
 from config import CREDIT_SOURCE_LABELS  # noqa: E402
 from utils.company_filter import assert_no_sql_injection, validate_filter_input  # noqa: E402
@@ -50,7 +51,7 @@ class Production95ContractsTests(unittest.TestCase):
         self.assertEqual(CREDIT_SOURCE_LABELS["live_estimate"], "Live estimate fallback")
 
     def test_new_snowflake_setup_contracts_exist(self):
-        setup = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8").upper()
+        setup = read_mart_setup_sql(ROOT).upper()
         for marker in (
             "CREATE ROLE IF NOT EXISTS SNOW_ACCOUNTADMINS",
             "CREATE ROLE IF NOT EXISTS SNOW_SYSADMINS",

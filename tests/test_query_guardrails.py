@@ -19,6 +19,7 @@ from utils.query import (  # noqa: E402
     _query_starts_with_read,
     safe_identifier,
 )
+from utils.sql_safe import sql_literal  # noqa: E402
 
 
 class QueryGuardrailTests(unittest.TestCase):
@@ -88,6 +89,31 @@ class QueryGuardrailTests(unittest.TestCase):
             with self.subTest(identifier=identifier):
                 with self.assertRaises(ValueError):
                     safe_identifier(identifier, allow_qualified=True)
+
+    def test_sql_literal_escapes_strings_without_treating_like_patterns_as_sql(self):
+        self.assertEqual(sql_literal(None), "NULL")
+        self.assertEqual(sql_literal(""), "''")
+        self.assertEqual(sql_literal("O'Brien"), "'O''Brien'")
+        self.assertEqual(sql_literal("100%_match"), "'100%_match'")
+        self.assertEqual(sql_literal("a\x00b"), "'ab'")
+        self.assertEqual(sql_literal("x" * 20, max_len=5), "'xxxxx'")
+        self.assertEqual(sql_literal(42), "'42'")
+        self.assertEqual(sql_literal("'; DROP TABLE t; --"), "'''; DROP TABLE t; --'")
+
+    def test_sql_literal_is_shared_across_legacy_import_paths(self):
+        from utils import admin, company_filter, logging as usage_logging
+
+        for module in (query, admin, company_filter, usage_logging):
+            with self.subTest(module=module.__name__):
+                self.assertIs(module.sql_literal, sql_literal)
+                self.assertEqual(module.sql_literal("a'b", 10), "'a''b'")
+
+        public_defs = []
+        for path in (APP_ROOT / "utils").rglob("*.py"):
+            text = path.read_text(encoding="utf-8")
+            if "def sql_literal(" in text:
+                public_defs.append(path.relative_to(APP_ROOT).as_posix())
+        self.assertEqual(public_defs, ["utils/sql_safe.py"])
 
     def test_query_cache_lock_stripes_stay_removed(self):
         query_text = (APP_ROOT / "utils" / "query.py").read_text(encoding="utf-8")

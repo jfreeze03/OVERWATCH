@@ -14,6 +14,18 @@ ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
 
+
+def _section_source(path: Path) -> str:
+    """Read a section's source, transparently handling subpackages."""
+    if path.suffix == ".py" and not path.exists():
+        pkg = path.with_suffix("")
+        if pkg.is_dir():
+            return "\n".join(
+                p.read_text(encoding="utf-8") for p in sorted(pkg.rglob("*.py"))
+            )
+    return path.read_text(encoding="utf-8")
+
+
 from config import DEFAULTS, DEFAULT_ALERT_EMAIL  # noqa: E402
 import sections.cost_contract as cost_contract  # noqa: E402
 from sections.account_health import (  # noqa: E402
@@ -2906,8 +2918,8 @@ class FormulaRegressionTests(unittest.TestCase):
             called_sql.append(str(sql).upper())
             raise RuntimeError("mart unavailable")
 
-        with patch("sections.dba_control_room.run_query", side_effect=fail_mart), patch(
-            "sections.dba_control_room.load_action_queue",
+        with patch("sections.dba_control_room.data.run_query", side_effect=fail_mart), patch(
+            "sections.dba_control_room.data.load_action_queue",
             return_value=pd.DataFrame(),
         ):
             data = _load_control_room(
@@ -2932,8 +2944,8 @@ class FormulaRegressionTests(unittest.TestCase):
                 return pd.DataFrame()
             raise RuntimeError("mart unavailable")
 
-        with patch("sections.dba_control_room.run_query", side_effect=fail_mart_and_capture_live), patch(
-            "sections.dba_control_room.load_action_queue",
+        with patch("sections.dba_control_room.data.run_query", side_effect=fail_mart_and_capture_live), patch(
+            "sections.dba_control_room.data.load_action_queue",
             return_value=pd.DataFrame(),
         ):
             data = _load_control_room(
@@ -3117,8 +3129,8 @@ class FormulaRegressionTests(unittest.TestCase):
                 }])
             raise RuntimeError("mart unavailable")
 
-        with patch("sections.dba_control_room.run_query", side_effect=fake_run_query), patch(
-            "sections.dba_control_room.load_action_queue",
+        with patch("sections.dba_control_room.data.run_query", side_effect=fake_run_query), patch(
+            "sections.dba_control_room.data.load_action_queue",
             return_value=pd.DataFrame(),
         ):
             data = _load_control_room(
@@ -7440,12 +7452,17 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn('"CLIENT_APPLICATION_ID"', compat_text)
 
     def test_dba_control_room_defers_specialist_section_imports(self):
-        dba_text = (APP_ROOT / "sections" / "dba_control_room.py").read_text(encoding="utf-8")
-        top_level = dba_text[:dba_text.index("DBA_CONTROL_SCOPE_FILTER_KEYS")]
+        dba_text = _section_source(APP_ROOT / "sections" / "dba_control_room.py")
 
-        self.assertNotIn("from sections.task_management import", top_level)
-        self.assertNotIn("from sections.cortex_monitor import", top_level)
-        self.assertNotIn("from sections.stored_proc_tracker import", top_level)
+        for specialist in (
+            "sections.task_management",
+            "sections.cortex_monitor",
+            "sections.stored_proc_tracker",
+        ):
+            # No module-level (column-0) import of a specialist section.
+            self.assertNotIn(f"\nfrom {specialist} import", dba_text)
+            # The import is deferred inside a helper function (indented).
+            self.assertIn(f"    from {specialist} import", dba_text)
         self.assertIn("def _task_management_helpers", dba_text)
         self.assertIn("def _cortex_helpers", dba_text)
         self.assertIn("def _procedure_helpers", dba_text)

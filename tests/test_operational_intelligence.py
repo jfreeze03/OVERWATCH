@@ -7,6 +7,17 @@ ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
 
+
+def _section_source(path: Path) -> str:
+    """Read a section's source, transparently handling subpackages."""
+    if path.suffix == ".py" and not path.exists():
+        pkg = path.with_suffix("")
+        if pkg.is_dir():
+            return "\n".join(
+                p.read_text(encoding="utf-8") for p in sorted(pkg.rglob("*.py"))
+            )
+    return path.read_text(encoding="utf-8")
+
 from utils.operational_intelligence import (  # noqa: E402
     build_alert_lifecycle_sql,
     build_capability_register_rows,
@@ -123,7 +134,7 @@ class OperationalIntelligenceTests(unittest.TestCase):
             ROOT / ".overwatch_final" / "sections" / "dba_control_room.py",
             ROOT / ".overwatch_final" / "sections" / "executive_landing.py",
         ]
-        text = "\n".join(path.read_text(encoding="utf-8") for path in section_paths)
+        text = "\n".join(_section_source(path) for path in section_paths)
         for marker in [
             "build_capability_register_rows",
             "build_mart_cost_run_rate_sql",

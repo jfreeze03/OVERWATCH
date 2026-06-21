@@ -9,6 +9,12 @@ sys.path.insert(0, str(APP_ROOT))
 
 
 def _read(path: Path) -> str:
+    if path.suffix == ".py" and not path.exists():
+        pkg = path.with_suffix("")
+        if pkg.is_dir():
+            return "\n".join(
+                p.read_text(encoding="utf-8") for p in sorted(pkg.rglob("*.py"))
+            )
     return path.read_text(encoding="utf-8")
 
 

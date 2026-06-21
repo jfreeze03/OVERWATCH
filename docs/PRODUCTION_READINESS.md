@@ -40,7 +40,7 @@ The summary mart exposes:
 - data freshness issue count,
 - configuration drift,
 - environment readiness,
-- readiness score,
+- readiness signal for triage (not a standalone production signoff),
 - top risk,
 - next action.
 
@@ -85,6 +85,20 @@ Then run `snowflake/OVERWATCH_MART_VALIDATION.sql` and review:
 
 Run the `SHOW GRANTS` statements listed in
 `OVERWATCH_PRIVILEGE_READINESS_REQUIREMENT` before declaring production ready.
+
+## External Signoff Gates
+
+Do not declare broad production readiness from a self-assigned score. Require
+evidence that:
+
+- CI is green, including compileall, unit tests, CodeQL, Ruff critical lint,
+  focused mypy helper checks, and mojibake scan,
+- every primary section renders through the role-appropriate smoke runner,
+- `snowflake/OVERWATCH_MART_VALIDATION.sql` passes,
+- no committed secrets are present,
+- a role-based viewer smoke test passes,
+- first paint does not perform full `ACCOUNT_USAGE` scans, and
+- `snowflake/mart_setup/01_roles.sql` through `09_validation.sql` run in order.
 
 For the remaining broad-production cleanup checklist, including schema drift
 classification, alert email configuration, data freshness triage, and

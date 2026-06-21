@@ -24,10 +24,13 @@ Current rollout posture:
 
 - Admin pilot: Go.
 - Broad production: Conditional Go / Review.
-- Production readiness score: 94 / Review.
 - Alert recipient: `jdees@alfains.com`.
 - Remaining production review item: true telemetry freshness gaps, including
   Trexis coverage under ALFA-equivalent expectations.
+- Broad production signoff is based on externally verifiable gates: CI green,
+  all primary sections render in the smoke runner, mart validation passes, no
+  committed secrets, role-based viewer smoke test passes, no first-paint full
+  `ACCOUNT_USAGE` scans, and deployment SQL runs in numeric order.
 
 The leadership-ready rollout package is documented in
 `docs/EXECUTIVE_ROLLOUT_PACKAGE.md`. It explains the business case,
@@ -43,11 +46,12 @@ configuration, acknowledgements, remediation logs, action history, suppression
 windows, and DBA-entered audit notes that should not disappear if a reproducible
 mart is rebuilt.
 
-The production DDL source is `snowflake/OVERWATCH_MART_SETUP.sql`. Optional
-precompute experiments have been retired so there is one deployable Snowflake
-setup path. Materialized views are avoided for the main monitoring app because
-the app needs multi-source, windowed, exception ranking logic with explicit
-error handling and audit logging.
+The production DDL source is the ordered `snowflake/mart_setup/` bundle, with
+`snowflake/OVERWATCH_MART_SETUP.sql` retained as the deployment-order runner.
+Optional precompute experiments have been retired so there is one deployable
+Snowflake setup path. Materialized views are avoided for the main monitoring app
+because the app needs multi-source, windowed, exception ranking logic with
+explicit error handling and audit logging.
 
 The Executive Landing page is the one deliberate first-paint aggregate:
 `MART_EXECUTIVE_OBSERVABILITY`. It is refreshed after the hourly load, Cortex

@@ -19,10 +19,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Read Python runtime
+        id: python-runtime
+        run: |
+          runtime="$(< runtime.txt)"
+          echo "version=${runtime#python-}" >> "$GITHUB_OUTPUT"
+
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.11"
+          python-version: ${{ steps.python-runtime.outputs.version }}
           cache: "pip"
           cache-dependency-path: requirements.txt
 
@@ -30,9 +36,26 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
+          python -m pip install ruff mypy
 
       - name: Compile Python sources
         run: python -m compileall .overwatch_final tests
+
+      - name: Ruff critical lint
+        run: |
+          python -m ruff check \
+            .overwatch_final/sections/dba_control_room \
+            .overwatch_final/utils/sql_safe.py \
+            .overwatch_final/utils/query.py \
+            .overwatch_final/utils/admin.py \
+            .overwatch_final/utils/logging.py \
+            .overwatch_final/utils/company_filter.py \
+            tests/sql_helpers.py \
+            tests/test_sql_safe.py \
+            --select E9,F63,F7,F82
+
+      - name: Mypy focused helper checks
+        run: python -m mypy .overwatch_final/utils/sql_safe.py tests/sql_helpers.py --ignore-missing-imports
 
       - name: Validate deployment contract
         run: python -m unittest tests.test_deployment_contract

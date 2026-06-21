@@ -5,9 +5,9 @@ the app, execute grants, or drop legacy objects.
 
 ## Governance Alignment Release Candidate
 
-The prior live Production Readiness score was `58 / Review` after Phase 2F
-validation. The governance alignment release candidate removes penalties for
-approved business decisions and keeps warnings visible where migration is still
+The prior live production readiness view exposed a numeric review score after
+Phase 2F validation. This release candidate replaces self-assigned score language
+with pass/fail evidence gates and keeps warnings visible where migration is still
 pending.
 
 Approved assumptions:
@@ -19,10 +19,10 @@ Approved assumptions:
 - `SNOW_ACCOUNTADMINS` and `SNOW_SYSADMINS` are approved interim access roles
   until migration is completed.
 
-Expected score after deploying this release candidate and rerunning
-`SP_OVERWATCH_REFRESH_PRODUCTION_READINESS()` is `94 / Review` when the only
-remaining deduction is the current data freshness row. Do not manually inflate
-the score; true stale or missing source rows should remain visible.
+After deploying this release candidate, rerun
+`SP_OVERWATCH_REFRESH_PRODUCTION_READINESS()` and keep true stale or missing
+source rows visible. Do not treat a calculated score as signoff; broad
+production readiness requires the gates below to pass with evidence.
 
 Remaining broad production review items:
 
@@ -153,13 +153,20 @@ SHOW GRANTS TO USER <ADMIN_USER>;
 
 ## Ready Criteria
 
-The Production Readiness score should reach `Ready` only when:
+Broad production should be marked ready only when:
 
+- CI is green, including compileall, unit tests, CodeQL, Ruff critical lint,
+  focused mypy helper checks, and mojibake scan,
+- every primary section renders through the role-appropriate smoke runner,
+- `snowflake/OVERWATCH_MART_VALIDATION.sql` passes without unexpected failures,
+- no committed secrets are present,
+- a role-based viewer smoke test passes for the approved access model,
+- first paint does not perform full `ACCOUNT_USAGE` scans,
+- `snowflake/mart_setup/01_roles.sql` through `09_validation.sql` run in order,
 - schema drift is approved and either cleaned up, migrated, retained, or
   documented as intentionally legacy,
 - `DEFAULT_ALERT_EMAIL` remains configured to the approved recipient,
 - data trust rows required for the selected company view are `Ready`,
-- target `OVERWATCH_*` grants are applied through reviewed migration,
+- target `OVERWATCH_*` grants are applied through reviewed migration, and
 - `SNOW_ACCOUNTADMINS` and `SNOW_SYSADMINS` remain documented transitional
-  access until migration completes,
-- validation SQL has no unexpected failures.
+  access until migration completes.

@@ -18,7 +18,7 @@ load without creating surprise Snowflake cost.
 | `sql/01_perf_test_setup.sql` | Creates `PERF_TEST_*` control, run, result, risk, and guardrail objects. |
 | `sql/02_generate_synthetic_light_medium.sql` | Creates synthetic query history, warehouse metering, task, procedure, user, and 5 TB metadata simulation objects. |
 | `sql/03_generate_full_5tb_physical_BLOCKED_BY_DEFAULT.sql` | Contains the physical 5 TB pattern, commented and blocked by default. |
-| `sql/04_benchmark_report.sql` | Creates report views for app usage, Snowflake query behavior, cost estimate, and readiness score. |
+| `sql/04_benchmark_report.sql` | Creates report views for app usage, Snowflake query behavior, cost estimate, and readiness gates. |
 | `sql/99_cleanup_perf_test.sql` | Drops only `PERF_TEST_*` objects. |
 | `perf_runner.py` | Local HTTP concurrency runner and Markdown/JSON report generator. |
 | `section_smoke_runner.py` | Optional browser runner that clicks every primary section and reports visible section switch time. |
@@ -143,7 +143,7 @@ synthetic data generation unless the guardrail returns `OK`.
 | Snowflake query p95 | <= 8 sec | <= 20 sec | > 20 sec |
 | Remote spill | 0-5 GB | 5-25 GB | > 25 GB |
 | Failed dashboard queries | 0 | 1 explained failure | > 1 unexplained failure |
-| Readiness score | >= 95 | 85-94 | < 85 |
+| Readiness gates | CI, section smoke, mart validation, and first-paint scan guards pass | One gate needs documented review | Any required gate fails without accepted mitigation |
 
 ## What This Will Catch
 

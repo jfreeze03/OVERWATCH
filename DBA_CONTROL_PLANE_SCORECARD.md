@@ -23,15 +23,15 @@ workflows.
 
 A section cannot exceed the listed score while any cap condition is true.
 
-| Cap | Maximum | Trigger |
-|---|---:|---|
-| Formula uncertainty | 80 | Cost, credit, freshness, or scope formula is ambiguous or untested. |
-| No owner route | 85 | High-severity rows cannot identify owner/approval/escalation. |
-| Unsafe admin action | 85 | Production-impacting action lacks audit, rollback, or failure-path evidence. |
-| No verification loop | 90 | Recommendations can be marked done without post-action proof. |
-| Heavy first load | 90 | Section performs expensive scans or renders large tables on entry. |
-| Stale UX or labels | 92 | Visible labels, help text, docs, or comments use retired terminology. |
-| Manual-only process | 94 | Required evidence exists externally but must be pasted manually. |
+| Cap | Maximum maturity | Trigger |
+|---|---|---|
+| Formula uncertainty | Blocked | Cost, credit, freshness, or scope formula is ambiguous or untested. |
+| No owner route | Blocked | High-severity rows cannot identify owner/approval/escalation. |
+| Unsafe admin action | Blocked | Production-impacting action lacks audit, rollback, or failure-path evidence. |
+| No verification loop | Review | Recommendations can be marked done without post-action proof. |
+| Heavy first load | Review | Section performs expensive scans or renders large tables on entry. |
+| Stale UX or labels | Review | Visible labels, help text, docs, or comments use retired terminology. |
+| Manual-only process | Review | Required evidence exists externally but must be pasted manually. |
 
 ## Current Production Targets
 

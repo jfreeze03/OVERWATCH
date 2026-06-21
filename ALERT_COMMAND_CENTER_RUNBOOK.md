@@ -9,8 +9,12 @@ acknowledgement, suppression, remediation approval, and closure proof.
 
 ## Setup Objects
 
-Run `snowflake/OVERWATCH_MART_SETUP.sql` with a role allowed to create objects
-in the OVERWATCH schema. The command-center contract creates:
+Deploy the OVERWATCH mart with a role allowed to create objects in the OVERWATCH
+schema. The canonical human deployment path is the ordered split under
+`snowflake/mart_setup/` (run the numbered files in order or use
+`snowflake/mart_setup/run_mart_setup.sh`); `snowflake/OVERWATCH_MART_SETUP.sql`
+is the byte-equivalent single-file artifact. The command-center contract
+creates:
 
 - `ALERT_CONFIG`
 - `ALERT_EVENTS`

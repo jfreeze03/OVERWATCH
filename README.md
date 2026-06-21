@@ -63,9 +63,14 @@ configuration, acknowledgements, remediation logs, action history, suppression
 windows, and DBA-entered audit notes that should not disappear if a reproducible
 mart is rebuilt.
 
-The production DDL source is `snowflake/OVERWATCH_MART_SETUP.sql`. Optional
-precompute experiments have been retired so there is one deployable Snowflake
-setup path. Materialized views are avoided for the main monitoring app because
+The production DDL is deployed from the ordered split under
+`snowflake/mart_setup/` (the canonical human deployment path; run the numbered
+files `01_runtime_objects.sql` ... `08_validation.sql` in order, or use
+`snowflake/mart_setup/run_mart_setup.sh`). `snowflake/OVERWATCH_MART_SETUP.sql`
+is retained as the canonical single-file artifact and stays byte-for-byte
+equivalent to the concatenation of those parts. Optional precompute experiments
+have been retired so there is one deployable Snowflake setup path. Materialized
+views are avoided for the main monitoring app because
 the app needs multi-source, windowed, exception ranking logic with explicit
 error handling and audit logging.
 
@@ -102,10 +107,13 @@ panels, freshness rows, and caller context. Use
 `docs/LIVE_ROLE_PROOF_CHECKLIST.md` to validate the app as
 SNOW_ACCOUNTADMINS/SNOW_SYSADMINS before calling a build production-ready.
 
-Production role setup now lives inside `snowflake/OVERWATCH_MART_SETUP.sql` so
-there is one DDL document for databases, warehouses, roles, tables, procedures,
-views, and tasks. Use `SNOW_ACCOUNTADMINS` and `SNOW_SYSADMINS` for app access
-today; future dedicated OVERWATCH admin roles should inherit the same grants.
+Production role setup ships with the same DDL: roles and grants are
+`snowflake/mart_setup/02_roles_and_grants.sql` (and equivalently inside
+`snowflake/OVERWATCH_MART_SETUP.sql`), so there is one DDL definition for
+databases, warehouses, roles, tables, procedures, views, and tasks across both
+the ordered split and the single-file artifact. Use `SNOW_ACCOUNTADMINS` and
+`SNOW_SYSADMINS` for app access today; future dedicated OVERWATCH admin roles
+should inherit the same grants.
 Avoid running daily operations as raw ACCOUNTADMIN/SYSADMIN except for
 break-glass setup work. The deployment check remains
 `snowflake/OVERWATCH_MART_VALIDATION.sql`.
@@ -214,7 +222,8 @@ but state-changing fixes must log trigger, reviewer, before/after state,
 rollback guidance, affected object/user/warehouse/task, and verification result
 in `ALERT_REMEDIATION_LOG`.
 
-All deployable Snowflake objects are consolidated into
+All deployable Snowflake objects are defined in the ordered split under
+`snowflake/mart_setup/` and consolidated, byte-for-byte equivalent, into
 `snowflake/OVERWATCH_MART_SETUP.sql`. Cost findings stay in the action queue and
 are measured through post-period telemetry rather than a separate value ledger.
 
@@ -239,12 +248,24 @@ Manual Streamlit run:
 
 Production Snowflake setup:
 
-```sql
--- Run in Snowflake with a role allowed to create the OVERWATCH database,
--- schema, tables, procedures, tasks, and app warehouse.
--- File:
--- snowflake/OVERWATCH_MART_SETUP.sql
+The canonical human deployment path is the ordered split under
+`snowflake/mart_setup/`. Run the numbered files in order (a single session so
+the `USE DATABASE/SCHEMA` context carries across files), or use the bundled
+runner:
+
+```bash
+# Run in Snowflake with a role allowed to create the OVERWATCH database,
+# schema, tables, procedures, tasks, and app warehouse.
+cd snowflake/mart_setup
+./run_mart_setup.sh <snowsql-connection-name>
+# (equivalently: snowsql -c <connection> -f 01_runtime_objects.sql, then
+#  02_..., 03_..., through 08_validation.sql, in numeric order.)
 ```
+
+`snowflake/OVERWATCH_MART_SETUP.sql` is retained as the canonical single-file
+artifact and remains byte-for-byte equivalent to the ordered concatenation of
+`snowflake/mart_setup/` (enforced by `tests/test_mart_setup_split.py`). Running
+it directly produces the same result; see `snowflake/mart_setup/README.md`.
 
 Streamlit Community Cloud settings:
 

@@ -79,10 +79,13 @@ inventing a recommendation.
 
 ## Setup Decision
 
-Use `snowflake/OVERWATCH_MART_SETUP.sql` as the single deployable DDL document.
-Scheduled tasks and transient facts are the default setup. Dynamic-table and
-separate native-alert template scripts have been retired to keep deployment
-honest and easier to support.
+Deploy from the ordered split under `snowflake/mart_setup/` (the canonical human
+deployment path: run the numbered files in order or use
+`snowflake/mart_setup/run_mart_setup.sh`). `snowflake/OVERWATCH_MART_SETUP.sql`
+is the byte-equivalent single-file artifact of those parts and remains a valid
+single deployable DDL document. Scheduled tasks and transient facts are the
+default setup. Dynamic-table and separate native-alert template scripts have
+been retired to keep deployment honest and easier to support.
 
 ## Required Privilege Families
 

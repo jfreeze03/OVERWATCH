@@ -16,20 +16,48 @@ you intend to remove the full runtime container.
 2. Confirm no app user is actively relying on the current mart refresh.
 3. Save any manual notes you need from `OVERWATCH_ACTION_QUEUE`, alert history, or
    recovery tables if you are intentionally preserving operational history elsewhere.
-4. Keep a copy of the current `snowflake/OVERWATCH_MART_SETUP.sql` and
-   `snowflake/OVERWATCH_MART_DROP.sql` from the same Git revision.
+4. Keep a copy of the current `snowflake/mart_setup/` ordered files (the
+   canonical human deployment path) and `snowflake/OVERWATCH_MART_DROP.sql` from
+   the same Git revision. `snowflake/OVERWATCH_MART_SETUP.sql` is the
+   byte-equivalent single-file artifact of those parts if you prefer one file.
 
 ## Reset Sequence
 
-Run the scripts in this order from a Snowflake worksheet or SnowSQL session:
+Run the scripts in this order from a Snowflake worksheet or SnowSQL session.
+
+Step 1 - remove current OVERWATCH mart objects:
 
 ```sql
--- 1. Remove current OVERWATCH mart objects.
 !source snowflake/OVERWATCH_MART_DROP.sql
-
--- 2. Recreate current OVERWATCH mart objects and seed configuration.
-!source snowflake/OVERWATCH_MART_SETUP.sql
 ```
+
+Step 2 - recreate current OVERWATCH mart objects and seed configuration. Deploy
+the ordered split under `snowflake/mart_setup/` (the canonical human deployment
+path). Either use the bundled runner:
+
+```bash
+cd snowflake/mart_setup
+./run_mart_setup.sh <snowsql-connection-name>
+```
+
+or run the numbered files in order in a single session (so the `USE
+DATABASE/SCHEMA` context carries across files):
+
+```sql
+!source snowflake/mart_setup/01_runtime_objects.sql
+!source snowflake/mart_setup/02_roles_and_grants.sql
+!source snowflake/mart_setup/03_config_and_audit_tables.sql
+!source snowflake/mart_setup/04_mart_tables.sql
+!source snowflake/mart_setup/05_load_procedures.sql
+!source snowflake/mart_setup/06_alert_framework.sql
+!source snowflake/mart_setup/07_tasks.sql
+!source snowflake/mart_setup/08_validation.sql
+```
+
+The single-file artifact `snowflake/OVERWATCH_MART_SETUP.sql` is byte-for-byte
+equivalent to the ordered concatenation of those parts (enforced by
+`tests/test_mart_setup_split.py`), so `!source snowflake/OVERWATCH_MART_SETUP.sql`
+produces the same result if you prefer one file.
 
 If your SQL client does not support `!source`, open each file and run it as a script.
 

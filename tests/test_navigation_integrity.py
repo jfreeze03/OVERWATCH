@@ -294,8 +294,7 @@ class NavigationIntegrityTests(unittest.TestCase):
 
         direct_nav_modules = {
             "account_health.py": ("apply_navigation_state(section)", "apply_navigation_state(tgt)"),
-            "dba_control_room/types.py": ("from sections.navigation import apply_navigation_state",),
-            "dba_control_room/handoff.py": ("apply_navigation_state(raw_target)",),
+            "dba_control_room/render.py": ("from sections.navigation import apply_navigation_state", "apply_navigation_state(raw_target)"),
             "dba_tools.py": ('apply_navigation_state("Alert Center")',),
             "executive_landing.py": ("apply_navigation_state(section)",),
         }

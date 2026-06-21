@@ -38,6 +38,7 @@ from runtime_state import (
     set_state,
 )
 from .state_keys import PRESERVE_STATE_EXACT, PRESERVE_STATE_PREFIXES
+from .sql_safe import sql_literal  # re-exported for backward compatibility
 
 
 _SAFE_FILTER_PATTERN = re.compile(r"^[A-Za-z0-9_%@.\- ]{0,128}$")
@@ -45,13 +46,6 @@ _BLOCKED_SQL_PATTERN = re.compile(
     r"(;|--|/\*|\*/|\bUNION\b|\bSELECT\b|\bINSERT\b|\bUPDATE\b|\bDELETE\b|\bDROP\b|\bALTER\b|\bGRANT\b|\bREVOKE\b|\bCALL\b)",
     re.IGNORECASE,
 )
-
-
-def sql_literal(value, max_len: int = 8000) -> str:
-    if value is None:
-        return "NULL"
-    text = str(value).replace("\x00", "")[:max_len]
-    return "'" + text.replace("'", "''") + "'"
 
 
 def validate_filter_input(value: object, *, max_len: int = 128) -> str:

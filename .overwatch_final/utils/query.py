@@ -46,6 +46,7 @@ from runtime_state import (
 from .session import apply_overwatch_query_tag, build_overwatch_query_tag, get_session
 from .data import normalize_df
 from .idle import empty_paused_result, queries_paused
+from .sql_safe import sql_literal  # re-exported for backward compatibility
 
 CACHE_TIERS: dict[str, int] = {
     "live":       30,     # INFORMATION_SCHEMA - real-time, 30s stale is fine
@@ -534,14 +535,6 @@ def safe_sql(value: str) -> str:
     sanitized = re.sub(r"(--|/\*|\*/|;)", "", str(value))
     sanitized = sanitized.replace("'", "''").strip()
     return sanitized[:2000]
-
-
-def sql_literal(value, max_len: int = 8000) -> str:
-    """Return a quoted SQL string literal for generated DML/DDL."""
-    if value is None:
-        return "NULL"
-    text = str(value).replace("\x00", "")[:max_len]
-    return "'" + text.replace("'", "''") + "'"
 
 
 def safe_identifier(value: str, allow_qualified: bool = False) -> str:

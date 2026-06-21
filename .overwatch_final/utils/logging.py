@@ -24,6 +24,7 @@ from runtime_state import (
     get_state,
     set_state,
 )
+from .sql_safe import sql_literal  # re-exported for backward compatibility
 
 
 def safe_identifier(value: str, allow_qualified: bool = False) -> str:
@@ -36,12 +37,6 @@ def safe_identifier(value: str, allow_qualified: bool = False) -> str:
         raise ValueError(f"Unsafe Snowflake identifier: {raw}")
     return ".".join(parts)
 
-
-def sql_literal(value, max_len: int = 8000) -> str:
-    if value is None:
-        return "NULL"
-    text = str(value).replace("\x00", "")[:max_len]
-    return "'" + text.replace("'", "''") + "'"
 
 LOG_TABLE = (
     f"{safe_identifier(ALERT_DB)}."

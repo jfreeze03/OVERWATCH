@@ -22,14 +22,27 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.11"
+          python-version: "3.12"
           cache: "pip"
-          cache-dependency-path: requirements.txt
+          cache-dependency-path: |
+            requirements.txt
+            .overwatch_final/pyproject.toml
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
+          python -m pip install ruff mypy
+
+      - name: Run ruff lint
+        run: |
+          python -m ruff check \
+            .overwatch_final/utils/sql_safe.py \
+            tests/test_query_guardrails.py \
+            tests/test_deployment_contract.py
+
+      - name: Run scoped mypy
+        run: python -m mypy --ignore-missing-imports .overwatch_final/utils/sql_safe.py
 
       - name: Compile Python sources
         run: python -m compileall .overwatch_final tests

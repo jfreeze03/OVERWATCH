@@ -19,10 +19,13 @@ Approved assumptions:
 - `SNOW_ACCOUNTADMINS` and `SNOW_SYSADMINS` are approved interim access roles
   until migration is completed.
 
-Expected score after deploying this release candidate and rerunning
-`SP_OVERWATCH_REFRESH_PRODUCTION_READINESS()` is `94 / Review` when the only
-remaining deduction is the current data freshness row. Do not manually inflate
-the score; true stale or missing source rows should remain visible.
+The in-app `SP_OVERWATCH_REFRESH_PRODUCTION_READINESS()` score is an operator
+triage signal, not the release decision. Release go/no-go is judged against the
+externally verifiable gates in `docs/PRODUCTION_READINESS.md` (CI green, all
+sections render, mart validation passes, no committed secrets, role-based viewer
+smoke test passes, no first-paint full ACCOUNT_USAGE scans, deployment SQL runs
+in order). Do not manually inflate the in-app score; true stale or missing
+source rows should remain visible.
 
 Remaining broad production review items:
 

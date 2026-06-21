@@ -31,7 +31,11 @@ Risk Review Teams.
 4. Current Readiness
    - Admin pilot status: Go.
    - Broad production status: Conditional Go / Review.
-   - Current readiness score: 94 / Review.
+   - Readiness is judged against externally verifiable gates (CI green, all
+     sections render, mart validation passes, no committed secrets, role-based
+     viewer smoke test passes, no first-paint full ACCOUNT_USAGE scans,
+     deployment SQL runs in order) rather than a self-assigned score. See
+     `docs/PRODUCTION_READINESS.md`.
    - Remaining issue: true telemetry freshness gaps, including Trexis coverage.
 
 5. Leadership Decision Requested
@@ -289,7 +293,10 @@ Current validation position:
 
 - Admin pilot: Go.
 - Broad production: Conditional Go / Review.
-- Readiness score: 94 / Review.
+- Readiness decision uses the externally verifiable gates in
+  `docs/PRODUCTION_READINESS.md` (CI green, all sections render, mart validation
+  passes, no committed secrets, role-based viewer smoke test passes, no
+  first-paint full ACCOUNT_USAGE scans, deployment SQL runs in order).
 - Missing privileges: 0.
 - Failed mart refreshes: 0.
 - Missing summary marts: 0.
@@ -381,10 +388,12 @@ strengthen governance, and shorten the time required to detect and resolve
 issues.
 
 The platform has passed admin pilot validation and is ready for controlled
-rollout. Current readiness is 94 / Review. There are no remaining blockers
-related to approved alert routing, interim access, or target-role approval. The
-remaining production review item is telemetry freshness, especially Trexis
-coverage, which is now correctly treated as equivalent to ALFA.
+rollout. Readiness is assessed against the externally verifiable gates in
+`docs/PRODUCTION_READINESS.md` rather than a self-assigned score. There are no
+remaining blockers related to approved alert routing, interim access, or
+target-role approval. The remaining production review item is telemetry
+freshness, especially Trexis coverage, which is now correctly treated as
+equivalent to ALFA.
 
 Leadership recommendation:
 

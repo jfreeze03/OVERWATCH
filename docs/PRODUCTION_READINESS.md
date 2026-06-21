@@ -4,6 +4,27 @@ Phase 2A adds live production validation without changing the Phase 1 app
 architecture. It gives DBAs and leadership one place to see whether the
 OVERWATCH deployment can be trusted today.
 
+## Externally Verifiable Readiness Gates
+
+Go/no-go is decided against externally verifiable gates, not a self-assigned
+readiness score. Each gate is something a reviewer can independently confirm
+from CI output, the test suite, the repository, or a Snowflake validation run.
+The in-app `readiness score` (below) is a triage signal for operators, not the
+release decision.
+
+| Gate | What it proves | How to verify |
+|---|---|---|
+| **CI is green** | The committed code compiles, lints, type-checks, and passes the full test suite. | `Validate` and `CodeQL` GitHub Actions workflows are green on the release commit. |
+| **All sections render** | Every navigation section and shell contract renders without error. | `python -m unittest discover -s tests` passes (includes `test_navigation_integrity` render/contract guards). |
+| **Mart validation passes** | Required Snowflake objects, object-count contract, and recent mart rows exist. | Run `snowflake/OVERWATCH_MART_VALIDATION.sql` after deployment and confirm no failures. |
+| **No committed secrets** | No credentials, keys, or connection secrets live in the repo. | Repository scan is clean; `.gitignore` excludes `.env*`, `*.pem`, `*.key`, and `.streamlit/secrets.toml`. |
+| **Role-based viewer smoke test passes** | A read-only viewer role is correctly scoped and cannot perform admin actions. | `python -m unittest tests.test_session_role` (and `tests.test_admin_controls`) pass. |
+| **No first-paint full `ACCOUNT_USAGE` scans** | First paint stays mart-first; expensive live scans stay behind explicit Load buttons. | `python -m unittest tests.test_query_guardrails` passes; first paint reads marts only (see Operating Boundary). |
+| **Deployment SQL runs in order** | The setup DDL deploys deterministically and reproducibly. | `snowflake/setup/` parts run in numeric order and reproduce `OVERWATCH_MART_SETUP.sql` byte-for-byte (`python -m unittest tests.test_mart_setup_split`). |
+
+A deployment is "production ready" when **all** gates above are satisfied. The
+gates supersede any single composite score for release decisions.
+
 ## Operating Boundary
 
 The Production Readiness Dashboard is mart-first:

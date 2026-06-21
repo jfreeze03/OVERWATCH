@@ -24,10 +24,28 @@ Current rollout posture:
 
 - Admin pilot: Go.
 - Broad production: Conditional Go / Review.
-- Production readiness score: 94 / Review.
 - Alert recipient: `jdees@alfains.com`.
 - Remaining production review item: true telemetry freshness gaps, including
   Trexis coverage under ALFA-equivalent expectations.
+
+### Production readiness gates
+
+Readiness is judged against externally verifiable gates rather than a
+self-assigned score. Each gate is something a reviewer can independently
+confirm:
+
+| Gate | How to verify |
+|---|---|
+| CI is green | `Validate` and `CodeQL` workflows pass on the commit. |
+| All sections render | `python -m unittest discover -s tests` passes (section/navigation render contracts included). |
+| Mart validation passes | `snowflake/OVERWATCH_MART_VALIDATION.sql` runs clean after deployment. |
+| No committed secrets | No secrets in the repo; `.gitignore` excludes `.env*`, `*.pem`, `*.key`, and `secrets.toml`. |
+| Role-based viewer smoke test passes | `python -m unittest tests.test_session_role` (read-only viewer scoping) passes. |
+| No first-paint full `ACCOUNT_USAGE` scans | First paint is mart-first; live `ACCOUNT_USAGE`/`INFORMATION_SCHEMA`/`SHOW` queries stay behind explicit Load buttons (guarded by `tests.test_query_guardrails`). |
+| Deployment SQL runs in order | `snowflake/setup/` parts deploy in numeric order and reproduce `OVERWATCH_MART_SETUP.sql` (`tests.test_mart_setup_split`). |
+
+See `docs/PRODUCTION_READINESS.md` for the full gate definitions and how each is
+checked.
 
 The leadership-ready rollout package is documented in
 `docs/EXECUTIVE_ROLLOUT_PACKAGE.md`. It explains the business case,

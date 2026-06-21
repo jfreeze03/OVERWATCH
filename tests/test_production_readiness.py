@@ -170,7 +170,10 @@ class ProductionReadinessTests(unittest.TestCase):
                 self.assertIn(token, validation)
 
         self.assertIn("DO NOT EXECUTE GRANTS", cleanup)
-        self.assertIn("94 / REVIEW", cleanup)
+        # Release go/no-go is judged by externally verifiable gates, not a
+        # self-assigned readiness score.
+        self.assertIn("EXTERNALLY VERIFIABLE GATES", cleanup)
+        self.assertIn("TRIAGE SIGNAL, NOT THE RELEASE DECISION", cleanup)
         self.assertIn("GOVERNANCE ALIGNMENT RELEASE CANDIDATE", cleanup)
         self.assertIn("APPROVED LEGACY", validation)
         self.assertIn("MIGRATION CANDIDATE", validation)

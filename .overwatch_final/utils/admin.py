@@ -17,6 +17,7 @@ from runtime_state import (
     set_state,
 )
 from .company_filter import get_active_environment
+from .sql_safe import sql_literal
 
 
 def safe_identifier(value: str, allow_qualified: bool = False) -> str:
@@ -28,13 +29,6 @@ def safe_identifier(value: str, allow_qualified: bool = False) -> str:
     if any(not ident_re.match(part) for part in parts):
         raise ValueError(f"Unsafe Snowflake identifier: {raw}")
     return ".".join(parts)
-
-
-def sql_literal(value, max_len: int = 8000) -> str:
-    if value is None:
-        return "NULL"
-    text = str(value).replace("\x00", "")[:max_len]
-    return "'" + text.replace("'", "''") + "'"
 
 
 ADMIN_ACTIONS_KEY = ADMIN_ACTIONS_ENABLED

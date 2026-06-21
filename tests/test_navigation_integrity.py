@@ -66,6 +66,20 @@ def _chars(*codes: int) -> str:
     return "".join(chr(code) for code in codes)
 
 
+def _read_dba_control_room_sources() -> str:
+    package = APP_ROOT / "sections" / "dba_control_room"
+    if package.is_dir():
+        ordered = ("types.py", "health.py", "queue.py", "incidents.py", "handoff.py", "render.py", "__init__.py")
+        return "\n".join((package / name).read_text(encoding="utf-8") for name in ordered)
+    return (APP_ROOT / "sections" / "dba_control_room.py").read_text(encoding="utf-8")
+
+
+def _read_section_source(file_name: str) -> str:
+    if file_name == "dba_control_room.py":
+        return _read_dba_control_room_sources()
+    return (APP_ROOT / "sections" / file_name).read_text(encoding="utf-8")
+
+
 class NavigationIntegrityTests(unittest.TestCase):
     def test_shell_freshness_state_is_explicit_about_age(self):
         current_meta = with_loaded_at({"source": "Fast summary"}, source="Fast summary")
@@ -299,7 +313,7 @@ class NavigationIntegrityTests(unittest.TestCase):
             "executive_landing.py": ("apply_navigation_state(section)",),
         }
         for file_name, expected_calls in direct_nav_modules.items():
-            module_text = (APP_ROOT / "sections" / file_name).read_text(encoding="utf-8")
+            module_text = _read_section_source(file_name)
             with self.subTest(module=file_name):
                 self.assertIn("from sections.navigation import apply_navigation_state", module_text)
                 for expected_call in expected_calls:
@@ -365,7 +379,7 @@ class NavigationIntegrityTests(unittest.TestCase):
     def test_dba_control_room_uses_fast_shell_module(self):
         self.assertEqual(SECTION_MODULES["DBA Control Room"], "sections.dba_control_room")
         self.assertFalse((APP_ROOT / "sections" / "dba_control_room_shell.py").exists())
-        full_workspace_text = (APP_ROOT / "sections" / "dba_control_room.py").read_text(encoding="utf-8")
+        full_workspace_text = _read_dba_control_room_sources()
         nav_text = (APP_ROOT / "sections" / "navigation.py").read_text(encoding="utf-8")
         self.assertIn('"Morning Brief"', full_workspace_text)
         self.assertIn('set_state(DBA_CONTROL_ROOM_ACTIVE_VIEW, "Fast Watch")', nav_text)
@@ -635,7 +649,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(set(ALL_SECTIONS), set(DBA_CONTROL_PLANE_SECTION_BASELINE))
 
     def test_dba_control_room_does_not_render_admin_readiness_panel(self):
-        dba_control_text = (APP_ROOT / "sections" / "dba_control_room.py").read_text(encoding="utf-8")
+        dba_control_text = _read_dba_control_room_sources()
 
         self.assertNotIn("_render_admin_readiness_panel", dba_control_text)
         self.assertNotIn("Admin Readiness to 95", dba_control_text)
@@ -644,7 +658,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("dba_control_plane_component_rows", dba_control_text)
 
     def test_dba_control_room_uses_shared_company_scope_and_cached_release_inventory(self):
-        dba_control_text = (APP_ROOT / "sections" / "dba_control_room.py").read_text(encoding="utf-8")
+        dba_control_text = _read_dba_control_room_sources()
 
         self.assertIn('get_active_company = _lazy_util("get_active_company")', dba_control_text)
         self.assertIn("company = get_active_company()", dba_control_text)
@@ -846,7 +860,7 @@ class NavigationIntegrityTests(unittest.TestCase):
             ],
         }
         for file_name, removed_patterns in hub_files.items():
-            text = (APP_ROOT / "sections" / file_name).read_text(encoding="utf-8")
+            text = _read_section_source(file_name)
             with self.subTest(file_name=file_name):
                 self.assertIn("WORKFLOW_MODULES", text)
                 self.assertIn("render_workflow_module(", text)
@@ -884,7 +898,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         ]
         for filename in compact_files:
             with self.subTest(filename=filename):
-                section_text = (APP_ROOT / "sections" / filename).read_text(encoding="utf-8")
+                section_text = _read_section_source(filename)
                 self.assertNotIn("st.header(", section_text)
                 self.assertIn("st.subheader(", section_text)
 
@@ -898,7 +912,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         ]
         for filename in consolidated_files:
             with self.subTest(filename=filename):
-                section_text = (APP_ROOT / "sections" / filename).read_text(encoding="utf-8")
+                section_text = _read_section_source(filename)
                 self.assertNotIn("def render_workflow_selector", section_text)
                 self.assertIn('render_workflow_selector = _lazy_util("render_workflow_selector")', section_text)
                 self.assertNotIn("return str(st.selectbox(label, list(workflows), key=key))", section_text)
@@ -1522,7 +1536,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         ]
         for filename, marker in duplicate_headers:
             with self.subTest(filename=filename):
-                section_text = (APP_ROOT / "sections" / filename).read_text(encoding="utf-8")
+                section_text = _read_section_source(filename)
                 self.assertNotIn(marker, section_text)
 
     def test_utils_re_exports_are_lazy(self):

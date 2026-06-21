@@ -9,7 +9,17 @@ sys.path.insert(0, str(APP_ROOT))
 
 
 def _read(path: Path) -> str:
+    if path == APP_ROOT / "sections" / "dba_control_room.py":
+        return _read_dba_control_room_sources()
     return path.read_text(encoding="utf-8")
+
+
+def _read_dba_control_room_sources() -> str:
+    package = APP_ROOT / "sections" / "dba_control_room"
+    if package.is_dir():
+        ordered = ("types.py", "health.py", "queue.py", "incidents.py", "handoff.py", "render.py", "__init__.py")
+        return "\n".join((package / name).read_text(encoding="utf-8") for name in ordered)
+    return (APP_ROOT / "sections" / "dba_control_room.py").read_text(encoding="utf-8")
 
 
 def _setup_sql() -> str:
@@ -108,7 +118,7 @@ class ChangeIntelligenceTests(unittest.TestCase):
 
     def test_ui_places_change_intelligence_in_approved_sections(self):
         executive = _read(APP_ROOT / "sections" / "executive_landing.py")
-        dba = _read(APP_ROOT / "sections" / "dba_control_room.py")
+        dba = _read_dba_control_room_sources()
         cost = _read(APP_ROOT / "sections" / "cost_contract.py")
         workload = _read(APP_ROOT / "sections" / "workload_operations.py")
         security = _read(APP_ROOT / "sections" / "security_posture.py")

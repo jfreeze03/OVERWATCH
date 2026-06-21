@@ -7,6 +7,20 @@ ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
 
+
+def _read_dba_control_room_sources() -> str:
+    package = APP_ROOT / "sections" / "dba_control_room"
+    if package.is_dir():
+        ordered = ("types.py", "health.py", "queue.py", "incidents.py", "handoff.py", "render.py", "__init__.py")
+        return "\n".join((package / name).read_text(encoding="utf-8") for name in ordered)
+    return (APP_ROOT / "sections" / "dba_control_room.py").read_text(encoding="utf-8")
+
+
+def _read_section_source(path: Path) -> str:
+    if path == APP_ROOT / "sections" / "dba_control_room.py":
+        return _read_dba_control_room_sources()
+    return path.read_text(encoding="utf-8")
+
 from utils.operational_intelligence import (  # noqa: E402
     build_alert_lifecycle_sql,
     build_capability_register_rows,
@@ -123,7 +137,7 @@ class OperationalIntelligenceTests(unittest.TestCase):
             ROOT / ".overwatch_final" / "sections" / "dba_control_room.py",
             ROOT / ".overwatch_final" / "sections" / "executive_landing.py",
         ]
-        text = "\n".join(path.read_text(encoding="utf-8") for path in section_paths)
+        text = "\n".join(_read_section_source(path) for path in section_paths)
         for marker in [
             "build_capability_register_rows",
             "build_mart_cost_run_rate_sql",

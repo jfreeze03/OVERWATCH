@@ -14,6 +14,14 @@ ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
 
+
+def _read_dba_control_room_sources() -> str:
+    package = APP_ROOT / "sections" / "dba_control_room"
+    if package.is_dir():
+        ordered = ("types.py", "health.py", "queue.py", "incidents.py", "handoff.py", "render.py", "__init__.py")
+        return "\n".join((package / name).read_text(encoding="utf-8") for name in ordered)
+    return _read_dba_control_room_sources()
+
 from config import DEFAULTS, DEFAULT_ALERT_EMAIL  # noqa: E402
 import sections.cost_contract as cost_contract  # noqa: E402
 from sections.account_health import (  # noqa: E402
@@ -7440,7 +7448,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn('"CLIENT_APPLICATION_ID"', compat_text)
 
     def test_dba_control_room_defers_specialist_section_imports(self):
-        dba_text = (APP_ROOT / "sections" / "dba_control_room.py").read_text(encoding="utf-8")
+        dba_text = _read_dba_control_room_sources()
         top_level = dba_text[:dba_text.index("DBA_CONTROL_SCOPE_FILTER_KEYS")]
 
         self.assertNotIn("from sections.task_management import", top_level)

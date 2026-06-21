@@ -33,6 +33,11 @@ A section cannot exceed the listed score while any cap condition is true.
 | Stale UX or labels | 92 | Visible labels, help text, docs, or comments use retired terminology. |
 | Manual-only process | 94 | Required evidence exists externally but must be pasted manually. |
 
+These are scoring caps for individual control-plane gaps, not a production
+readiness rating. Production readiness is proven by external gates such as CI,
+section render smoke, mart validation, secret scan, role smoke, first-paint scan
+guard, and ordered SQL deployment.
+
 ## Current Production Targets
 
 | Section | Target behavior |

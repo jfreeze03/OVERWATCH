@@ -24,7 +24,11 @@ Current rollout posture:
 
 - Admin pilot: Go.
 - Broad production: Conditional Go / Review.
-- Production readiness score: 94 / Review.
+- Production readiness is gate-based, not self-scored in docs. Treat broad
+  production as ready only when CI is green, all sections render, mart
+  validation passes, no committed secrets are found, role-based viewer smoke
+  testing passes, first paint avoids full `ACCOUNT_USAGE` scans, and deployment
+  SQL runs in numbered order.
 - Alert recipient: `jdees@alfains.com`.
 - Remaining production review item: true telemetry freshness gaps, including
   Trexis coverage under ALFA-equivalent expectations.
@@ -43,9 +47,11 @@ configuration, acknowledgements, remediation logs, action history, suppression
 windows, and DBA-entered audit notes that should not disappear if a reproducible
 mart is rebuilt.
 
-The production DDL source is `snowflake/OVERWATCH_MART_SETUP.sql`. Optional
-precompute experiments have been retired so there is one deployable Snowflake
-setup path. Materialized views are avoided for the main monitoring app because
+The production DDL is split under `snowflake/mart_setup/` in numbered
+deployment order, with `snowflake/OVERWATCH_MART_SETUP.sql` retained as the
+one-shot bundled setup source. Optional precompute experiments have been
+retired so there is one deployable Snowflake setup path. Materialized views are
+avoided for the main monitoring app because
 the app needs multi-source, windowed, exception ranking logic with explicit
 error handling and audit logging.
 

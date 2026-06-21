@@ -40,9 +40,15 @@ The summary mart exposes:
 - data freshness issue count,
 - configuration drift,
 - environment readiness,
-- readiness score,
+- mart-derived readiness result,
 - top risk,
 - next action.
+
+The readiness result is derived from refreshed validation rows in the mart; it
+must not be copied from documentation or used as a document-authored production
+rating. Broad production readiness also requires the external gates to be green:
+CI, section render smoke, mart validation, committed-secret scan, role-based
+viewer smoke test, first-paint scan guard, and numbered SQL deployment order.
 
 ## Explicit Detail Panels
 

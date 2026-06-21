@@ -178,7 +178,17 @@ class ProductionReadinessTests(unittest.TestCase):
                 self.assertIn(token, validation)
 
         self.assertIn("DO NOT EXECUTE GRANTS", cleanup)
-        self.assertIn("94 / REVIEW", cleanup)
+        for token in [
+            "CI IS GREEN",
+            "ALL APP SECTIONS RENDER",
+            "NO SECRETS ARE COMMITTED",
+            "ROLE-BASED VIEWER SMOKE TESTING PASSES",
+            "FIRST PAINT DOES NOT RUN FULL `ACCOUNT_USAGE` SCANS",
+            "DEPLOYMENT SQL RUNS IN THE NUMBERED",
+            "NOT MANUALLY INFLATE THE SCORE",
+        ]:
+            with self.subTest(cleanup_token=token):
+                self.assertIn(token, cleanup)
         self.assertIn("GOVERNANCE ALIGNMENT RELEASE CANDIDATE", cleanup)
         self.assertIn("APPROVED LEGACY", validation)
         self.assertIn("MIGRATION CANDIDATE", validation)

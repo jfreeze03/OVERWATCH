@@ -5,10 +5,11 @@ the app, execute grants, or drop legacy objects.
 
 ## Governance Alignment Release Candidate
 
-The prior live Production Readiness score was `58 / Review` after Phase 2F
+The prior live Production Readiness mart indicated `Review` after Phase 2F
 validation. The governance alignment release candidate removes penalties for
 approved business decisions and keeps warnings visible where migration is still
-pending.
+pending. Do not treat any score mentioned in release-candidate notes as a
+self-certified production rating; readiness is proven by gates.
 
 Approved assumptions:
 
@@ -19,10 +20,11 @@ Approved assumptions:
 - `SNOW_ACCOUNTADMINS` and `SNOW_SYSADMINS` are approved interim access roles
   until migration is completed.
 
-Expected score after deploying this release candidate and rerunning
-`SP_OVERWATCH_REFRESH_PRODUCTION_READINESS()` is `94 / Review` when the only
-remaining deduction is the current data freshness row. Do not manually inflate
-the score; true stale or missing source rows should remain visible.
+After deploying this release candidate and rerunning
+`SP_OVERWATCH_REFRESH_PRODUCTION_READINESS()`, use the refreshed mart rows to
+explain remaining deductions rather than copying a static score into docs. Do
+not manually inflate the score; true stale or missing source rows should remain
+visible.
 
 Remaining broad production review items:
 
@@ -153,8 +155,17 @@ SHOW GRANTS TO USER <ADMIN_USER>;
 
 ## Ready Criteria
 
-The Production Readiness score should reach `Ready` only when:
+Production readiness should be treated as `Ready` only when these externally
+verifiable gates are green:
 
+- CI is green, including compileall, unit tests, CodeQL, mojibake scan, ruff,
+  and scoped mypy,
+- all app sections render in a smoke test,
+- `snowflake/OVERWATCH_MART_VALIDATION.sql` passes,
+- no secrets are committed,
+- role-based viewer smoke testing passes,
+- first paint does not run full `ACCOUNT_USAGE` scans,
+- deployment SQL runs in the numbered `snowflake/mart_setup/` order,
 - schema drift is approved and either cleaned up, migrated, retained, or
   documented as intentionally legacy,
 - `DEFAULT_ALERT_EMAIL` remains configured to the approved recipient,

@@ -31,7 +31,10 @@ Risk Review Teams.
 4. Current Readiness
    - Admin pilot status: Go.
    - Broad production status: Conditional Go / Review.
-   - Current readiness score: 94 / Review.
+   - Readiness is measured by gates: CI green, all sections render, mart
+     validation passes, no committed secrets, viewer-role smoke test passes,
+     no first-paint full `ACCOUNT_USAGE` scans, and deployment SQL runs in
+     numbered order.
    - Remaining issue: true telemetry freshness gaps, including Trexis coverage.
 
 5. Leadership Decision Requested
@@ -277,7 +280,7 @@ Measurable value framework:
 | Alert response time | Measures operational responsiveness. | Decrease |
 | Freshness compliance | Measures trust in telemetry. | Increase |
 | Ownership coverage | Measures accountable routing. | Increase |
-| Production readiness score | Measures deployment and operating maturity. | Increase to Ready |
+| Production readiness gates | Measures deployment and operating maturity using CI, render smoke, mart validation, secrets, role smoke, first-paint scan, and SQL-order evidence. | All gates green |
 | Executive scorecard trends | Measures leadership health signals. | Improve |
 | Repeat incidents | Measures whether root causes are being addressed. | Decrease |
 | Forecast accuracy | Measures reliability of planning signals. | Improve |
@@ -289,7 +292,9 @@ Current validation position:
 
 - Admin pilot: Go.
 - Broad production: Conditional Go / Review.
-- Readiness score: 94 / Review.
+- Readiness gates: CI green, all sections render, mart validation passes, no
+  committed secrets, viewer-role smoke test passes, no first-paint full
+  `ACCOUNT_USAGE` scans, and deployment SQL runs in numbered order.
 - Missing privileges: 0.
 - Failed mart refreshes: 0.
 - Missing summary marts: 0.
@@ -381,10 +386,14 @@ strengthen governance, and shorten the time required to detect and resolve
 issues.
 
 The platform has passed admin pilot validation and is ready for controlled
-rollout. Current readiness is 94 / Review. There are no remaining blockers
-related to approved alert routing, interim access, or target-role approval. The
-remaining production review item is telemetry freshness, especially Trexis
-coverage, which is now correctly treated as equivalent to ALFA.
+rollout. Broad production remains tied to verifiable gates rather than a
+document-authored rating: CI green, all sections render, mart validation passes, no
+committed secrets, viewer-role smoke test passes, no first-paint full
+`ACCOUNT_USAGE` scans, and deployment SQL runs in numbered order. There are no
+remaining blockers related to approved alert routing, interim access, or
+target-role approval. The remaining production review item is telemetry
+freshness, especially Trexis coverage, which is now correctly treated as
+equivalent to ALFA.
 
 Leadership recommendation:
 
@@ -412,7 +421,7 @@ Leadership recommendation:
 
 | KPI | Definition | Target Direction |
 |---|---|---|
-| Production readiness score | Overall readiness score from validation and governance checks. | Increase to Ready |
+| Production readiness gates | Overall readiness evidence from CI, render smoke, mart validation, secrets, role smoke, first-paint scan, and ordered SQL deployment. | All gates green |
 | Data freshness compliance | Percentage of expected telemetry sources that are current. | Increase |
 | Trexis telemetry coverage | Completeness of Trexis coverage under ALFA-equivalent expectations. | Increase |
 | Cost savings identified | Estimated savings opportunities surfaced by OVERWATCH. | Increase |

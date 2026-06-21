@@ -1,7 +1,7 @@
 """Shift handoff and DBA morning brief construction and rendering."""
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import datetime
 import streamlit as st
 from sections.shell_helpers import (
     _clean_display_text,
@@ -32,7 +32,6 @@ from .types import (
     download_csv,
     render_priority_dataframe,
 )
-from .types import pd
 
 def _dba_task_status_task_summary(data: dict | None) -> dict:
     """Normalize the bounded Snowflake TASK_HISTORY summary used by Workload Operations."""

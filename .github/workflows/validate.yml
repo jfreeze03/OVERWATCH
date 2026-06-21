@@ -22,7 +22,8 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.11"
+          # Keep in sync with runtime.txt (python-3.12).
+          python-version: "3.12"
           cache: "pip"
           cache-dependency-path: requirements.txt
 
@@ -30,6 +31,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Lint with ruff
+        run: python -m ruff check .overwatch_final tests
+
+      - name: Type-check with mypy
+        run: python -m mypy
 
       - name: Compile Python sources
         run: python -m compileall .overwatch_final tests

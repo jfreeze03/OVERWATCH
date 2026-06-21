@@ -1,7 +1,7 @@
 """Data-loading layer for the DBA Control Room (mart + guarded live fallbacks)."""
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from utils.primitives import (
     safe_float,
     safe_int,
@@ -51,7 +51,6 @@ from .types import (
     run_query,
     sql_literal,
 )
-from .types import pd
 
 def _task_management_helpers():
     from sections.task_management import (

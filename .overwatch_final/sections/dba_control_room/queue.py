@@ -33,7 +33,6 @@ from .types import (
     render_priority_dataframe,
     resolve_owner_context,
 )
-from .types import pd
 
 def _priority_exceptions(exceptions: pd.DataFrame) -> pd.DataFrame:
     if exceptions is None or exceptions.empty:

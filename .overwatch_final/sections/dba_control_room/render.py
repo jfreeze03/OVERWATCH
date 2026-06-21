@@ -112,7 +112,6 @@ from .types import (
     render_priority_dataframe,
     render_workflow_selector,
 )
-from .types import pd
 
 def _render_consolidated_service_posture() -> None:
     """Render legacy Service Health inside the DBA Control Room workspace."""

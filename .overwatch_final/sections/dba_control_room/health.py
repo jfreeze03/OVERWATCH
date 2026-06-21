@@ -23,7 +23,6 @@ from .types import (
     download_csv,
     render_priority_dataframe,
 )
-from .types import pd
 
 def _dba_control_ops_scope_key(
     company: str,

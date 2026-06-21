@@ -1,0 +1,19 @@
+-- OVERWATCH mart setup split: 03_schemas.sql
+
+-- Create and select the OVERWATCH schema context.
+
+-- Source bundle: snowflake/OVERWATCH_MART_SETUP.sql
+
+
+
+USE DATABASE DBA_MAINT_DB;
+USE SCHEMA OVERWATCH;
+
+
+
+CREATE SCHEMA IF NOT EXISTS DBA_MAINT_DB.OVERWATCH;
+
+
+USE DATABASE DBA_MAINT_DB;
+
+USE SCHEMA OVERWATCH;

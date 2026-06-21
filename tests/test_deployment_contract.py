@@ -141,6 +141,40 @@ class DeploymentContractTests(unittest.TestCase):
                 self.assertIn(column_name, setup_sql)
                 self.assertIn(f"ADD COLUMN IF NOT EXISTS {column_name}", setup_sql)
 
+    def test_mart_setup_is_split_into_ordered_deployment_files(self):
+        split_dir = ROOT / "snowflake" / "mart_setup"
+        expected = [
+            "01_roles.sql",
+            "02_databases.sql",
+            "03_schemas.sql",
+            "04_tables.sql",
+            "05_views.sql",
+            "06_procedures.sql",
+            "07_tasks.sql",
+            "08_grants.sql",
+            "09_validation.sql",
+        ]
+
+        self.assertEqual([path.name for path in sorted(split_dir.glob("*.sql"))], expected)
+        readme = (split_dir / "README.md").read_text(encoding="utf-8")
+        last_pos = -1
+        for file_name in expected:
+            with self.subTest(file_name=file_name):
+                path = split_dir / file_name
+                text = path.read_text(encoding="utf-8").upper()
+                self.assertIn("OVERWATCH", text)
+                pos = readme.index(file_name)
+                self.assertGreater(pos, last_pos)
+                last_pos = pos
+
+        self.assertIn("CREATE ROLE IF NOT EXISTS SNOW_ACCOUNTADMINS", (split_dir / "01_roles.sql").read_text(encoding="utf-8"))
+        self.assertIn("CREATE DATABASE IF NOT EXISTS DBA_MAINT_DB", (split_dir / "02_databases.sql").read_text(encoding="utf-8"))
+        self.assertIn("CREATE SCHEMA IF NOT EXISTS DBA_MAINT_DB.OVERWATCH", (split_dir / "03_schemas.sql").read_text(encoding="utf-8"))
+        self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_LOAD_HOURLY", (split_dir / "06_procedures.sql").read_text(encoding="utf-8"))
+        self.assertIn("CREATE OR REPLACE TASK OVERWATCH_LOAD_HOURLY", (split_dir / "07_tasks.sql").read_text(encoding="utf-8"))
+        self.assertIn("GRANT SELECT ON FUTURE VIEWS", (split_dir / "08_grants.sql").read_text(encoding="utf-8"))
+        self.assertIn("CALL SP_OVERWATCH_LOAD_HOURLY()", (split_dir / "09_validation.sql").read_text(encoding="utf-8"))
+
     def test_mart_refresh_tasks_call_procedure_loaded_tables(self):
         setup_sql = _setup_sql()
         expected_task_calls = {

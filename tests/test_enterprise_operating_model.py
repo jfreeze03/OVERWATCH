@@ -10,6 +10,16 @@ sys.path.insert(0, str(APP_ROOT))
 
 
 def _read(path: Path) -> str:
+    path = Path(path)
+    if path.suffix == ".py" and not path.exists():
+        pkg = path.with_suffix("")
+        if pkg.is_dir():
+            order = ("types", "health", "queue", "incidents", "handoff", "render", "__init__")
+            files = sorted(
+                pkg.glob("*.py"),
+                key=lambda p: (order.index(p.stem) if p.stem in order else len(order), p.stem),
+            )
+            return "\n".join(f.read_text(encoding="utf-8") for f in files)
     return path.read_text(encoding="utf-8")
 
 

@@ -14,6 +14,21 @@ ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
 
+
+def _read_section(path: Path) -> str:
+    path = Path(path)
+    if path.suffix == ".py" and not path.exists():
+        pkg = path.with_suffix("")
+        if pkg.is_dir():
+            order = ("types", "health", "queue", "incidents", "handoff", "render", "__init__")
+            files = sorted(
+                pkg.glob("*.py"),
+                key=lambda p: (order.index(p.stem) if p.stem in order else len(order), p.stem),
+            )
+            return "\n".join(f.read_text(encoding="utf-8") for f in files)
+    return path.read_text(encoding="utf-8")
+
+
 from config import DEFAULTS, DEFAULT_ALERT_EMAIL  # noqa: E402
 import sections.cost_contract as cost_contract  # noqa: E402
 from sections.account_health import (  # noqa: E402
@@ -7440,7 +7455,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn('"CLIENT_APPLICATION_ID"', compat_text)
 
     def test_dba_control_room_defers_specialist_section_imports(self):
-        dba_text = (APP_ROOT / "sections" / "dba_control_room.py").read_text(encoding="utf-8")
+        dba_text = _read_section(APP_ROOT / "sections" / "dba_control_room.py")
         top_level = dba_text[:dba_text.index("DBA_CONTROL_SCOPE_FILTER_KEYS")]
 
         self.assertNotIn("from sections.task_management import", top_level)

@@ -31,7 +31,12 @@ Risk Review Teams.
 4. Current Readiness
    - Admin pilot status: Go.
    - Broad production status: Conditional Go / Review.
-   - Current readiness score: 94 / Review.
+   - Readiness is measured against externally verifiable gates (CI green, all
+     sections render, mart validation passes, no committed secrets, role-based
+     viewer smoke test passes, no first-paint full ACCOUNT_USAGE scans,
+     deployment SQL runs in order) - see the "Production readiness gates" table
+     in the repository `README.md`. The in-app Production Readiness score is one
+     telemetry signal feeding those gates, not a self-assigned grade.
    - Remaining issue: true telemetry freshness gaps, including Trexis coverage.
 
 5. Leadership Decision Requested
@@ -289,11 +294,14 @@ Current validation position:
 
 - Admin pilot: Go.
 - Broad production: Conditional Go / Review.
-- Readiness score: 94 / Review.
-- Missing privileges: 0.
-- Failed mart refreshes: 0.
-- Missing summary marts: 0.
-- Config drift: 0.
+- Readiness is gated on externally verifiable checks (see the "Production
+  readiness gates" table in `README.md`), not on a self-assigned score. The
+  in-app Production Readiness score is one telemetry signal among them.
+- Verifiable validation signals (from `OVERWATCH_MART_VALIDATION.sql`):
+  - Missing privileges: 0.
+  - Failed mart refreshes: 0.
+  - Missing summary marts: 0.
+  - Config drift: 0.
 - Remaining issue: 15 non-ready freshness rows, including 8 true Trexis gaps.
 
 Remaining governance items:
@@ -381,10 +389,14 @@ strengthen governance, and shorten the time required to detect and resolve
 issues.
 
 The platform has passed admin pilot validation and is ready for controlled
-rollout. Current readiness is 94 / Review. There are no remaining blockers
-related to approved alert routing, interim access, or target-role approval. The
-remaining production review item is telemetry freshness, especially Trexis
-coverage, which is now correctly treated as equivalent to ALFA.
+rollout. Readiness is judged against externally verifiable gates (CI green, all
+sections render, mart validation passes, no committed secrets, role-based viewer
+smoke test passes, no first-paint full ACCOUNT_USAGE scans, deployment SQL runs
+in order; see the "Production readiness gates" table in `README.md`) rather than
+a self-assigned score. There are no remaining blockers related to approved alert
+routing, interim access, or target-role approval. The remaining production
+review item is telemetry freshness, especially Trexis coverage, which is now
+correctly treated as equivalent to ALFA.
 
 Leadership recommendation:
 

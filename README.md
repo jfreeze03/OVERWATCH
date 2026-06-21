@@ -24,10 +24,30 @@ Current rollout posture:
 
 - Admin pilot: Go.
 - Broad production: Conditional Go / Review.
-- Production readiness score: 94 / Review.
 - Alert recipient: `jdees@alfains.com`.
 - Remaining production review item: true telemetry freshness gaps, including
   Trexis coverage under ALFA-equivalent expectations.
+
+> The in-app Production Readiness score (computed by
+> `SP_OVERWATCH_REFRESH_PRODUCTION_READINESS` from live validation checks) is
+> treated as one operational telemetry signal, not as a self-assigned grade of
+> readiness. Readiness is judged against the externally verifiable gates below.
+
+## Production readiness gates
+
+OVERWATCH does not claim readiness with a vanity score. Readiness is defined by
+the following externally verifiable gates; "ready" means every gate is green and
+re-checkable by anyone, not asserted by the team.
+
+| Gate | What "green" means | How to verify |
+|------|--------------------|---------------|
+| CI green | Lint, type-check, compile, and unit tests pass. | `.github/workflows/validate.yml` (ruff + mypy + `compileall` + `unittest discover`) and `codeql.yml` pass on the commit. |
+| All sections render | Every registered section module imports and renders without error. | `tests/test_navigation_integrity.py` and `perf_tests/section_smoke_runner.py`. |
+| Mart validation passes | Required marts, audit/reconciliation tables, freshness rows, and caller context exist. | Run `snowflake/OVERWATCH_MART_VALIDATION.sql` after deployment. |
+| No committed secrets | No secret files or credentials are tracked. | `.gitignore` secret patterns + `tests/test_navigation_integrity.py::NavigationIntegrityTests.test_local_secret_files_are_ignored` + CodeQL. |
+| Role-based viewer smoke test | The app works under the approved viewer/operator/admin roles. | `docs/LIVE_ROLE_PROOF_CHECKLIST.md` live proof + `tests/test_session_role.py`. |
+| No first-paint full `ACCOUNT_USAGE` scans | First paint reads compact marts only. | `tests/test_production_95_contracts.py` asserts mart-only first paint; raw `ACCOUNT_USAGE` scans are never part of Executive Landing first paint. |
+| Deployment SQL runs in order | The mart deploys reproducibly in a known order. | `snowflake/mart_setup/` ordered files + `snowflake/mart_setup/run_mart_setup.sh`; reproducibility enforced by `tests/test_mart_setup_split.py`. |
 
 The leadership-ready rollout package is documented in
 `docs/EXECUTIVE_ROLLOUT_PACKAGE.md`. It explains the business case,

@@ -74,7 +74,7 @@ class ProductionReadinessTests(unittest.TestCase):
 
     def test_ui_places_dashboard_and_load_gates(self):
         executive = _read(APP_ROOT / "sections" / "executive_landing.py")
-        dba = _read(APP_ROOT / "sections" / "dba_control_room.py")
+        dba = _read(APP_ROOT / "sections" / "dba_control_room" / "render.py")
 
         self.assertIn("load_production_readiness_summary", executive)
         self.assertIn("Production Readiness", executive)

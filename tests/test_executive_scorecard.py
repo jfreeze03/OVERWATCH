@@ -93,7 +93,7 @@ class ExecutiveScorecardTests(unittest.TestCase):
 
     def test_ui_places_scorecard_in_approved_sections(self):
         executive = _read(APP_ROOT / "sections" / "executive_landing.py")
-        dba = _read(APP_ROOT / "sections" / "dba_control_room.py")
+        dba = _read(APP_ROOT / "sections" / "dba_control_room" / "render.py")
         cost = _read(APP_ROOT / "sections" / "cost_contract.py")
         security = _read(APP_ROOT / "sections" / "security_posture.py")
         alert = _read(APP_ROOT / "sections" / "alert_center.py")
@@ -107,7 +107,7 @@ class ExecutiveScorecardTests(unittest.TestCase):
 
     def test_scorecard_detail_panels_are_explicitly_load_gated(self):
         checks = [
-            (APP_ROOT / "sections" / "dba_control_room.py", "Load Executive Scorecard Drivers", "load_executive_scorecard_detail"),
+            (APP_ROOT / "sections" / "dba_control_room" / "render.py", "Load Executive Scorecard Drivers", "load_executive_scorecard_detail"),
             (APP_ROOT / "sections" / "cost_contract.py", "Load Cost Efficiency Score Drivers", "load_executive_scorecard_detail"),
             (APP_ROOT / "sections" / "security_posture.py", "Load Security Score Drivers", "load_executive_scorecard_detail"),
             (APP_ROOT / "sections" / "alert_center.py", "Load Operational Risk Score Drivers", "load_executive_scorecard_detail"),

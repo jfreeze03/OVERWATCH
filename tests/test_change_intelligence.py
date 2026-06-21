@@ -108,7 +108,7 @@ class ChangeIntelligenceTests(unittest.TestCase):
 
     def test_ui_places_change_intelligence_in_approved_sections(self):
         executive = _read(APP_ROOT / "sections" / "executive_landing.py")
-        dba = _read(APP_ROOT / "sections" / "dba_control_room.py")
+        dba = _read(APP_ROOT / "sections" / "dba_control_room" / "render.py")
         cost = _read(APP_ROOT / "sections" / "cost_contract.py")
         workload = _read(APP_ROOT / "sections" / "workload_operations.py")
         security = _read(APP_ROOT / "sections" / "security_posture.py")
@@ -124,7 +124,7 @@ class ChangeIntelligenceTests(unittest.TestCase):
 
     def test_detail_panels_are_explicitly_load_gated(self):
         checks = [
-            (APP_ROOT / "sections" / "dba_control_room.py", "Load Change Intelligence", "load_change_event_detail"),
+            (APP_ROOT / "sections" / "dba_control_room" / "render.py", "Load Change Intelligence", "load_change_event_detail"),
             (APP_ROOT / "sections" / "cost_contract.py", "Load Cost-Related Changes", "load_change_correlation_detail"),
             (APP_ROOT / "sections" / "workload_operations.py", "Load Workload Changes", "load_change_event_detail"),
             (APP_ROOT / "sections" / "security_posture.py", "Load Security-Sensitive Changes", "load_change_event_detail"),

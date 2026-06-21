@@ -120,7 +120,7 @@ class OperationalIntelligenceTests(unittest.TestCase):
             ROOT / ".overwatch_final" / "sections" / "alert_center.py",
             ROOT / ".overwatch_final" / "sections" / "workload_operations.py",
             ROOT / ".overwatch_final" / "sections" / "cost_contract.py",
-            ROOT / ".overwatch_final" / "sections" / "dba_control_room.py",
+            ROOT / ".overwatch_final" / "sections" / "dba_control_room" / "render.py",
             ROOT / ".overwatch_final" / "sections" / "executive_landing.py",
         ]
         text = "\n".join(path.read_text(encoding="utf-8") for path in section_paths)

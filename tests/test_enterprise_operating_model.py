@@ -80,7 +80,7 @@ class EnterpriseOperatingModelTests(unittest.TestCase):
 
     def test_ui_places_capabilities_in_approved_sections(self):
         executive = _read(APP_ROOT / "sections" / "executive_landing.py")
-        dba = _read(APP_ROOT / "sections" / "dba_control_room.py")
+        dba = _read(APP_ROOT / "sections" / "dba_control_room" / "render.py")
         alert = _read(APP_ROOT / "sections" / "alert_center.py")
         security = _read(APP_ROOT / "sections" / "security_posture.py")
         cost = _read(APP_ROOT / "sections" / "cost_contract.py")
@@ -97,7 +97,7 @@ class EnterpriseOperatingModelTests(unittest.TestCase):
         self.assertIn("Load Value Ledger Detail", cost)
 
     def test_detail_panels_are_explicitly_load_gated(self):
-        dba = _read(APP_ROOT / "sections" / "dba_control_room.py")
+        dba = _read(APP_ROOT / "sections" / "dba_control_room" / "render.py")
         cost = _read(APP_ROOT / "sections" / "cost_contract.py")
 
         for button, loader in [

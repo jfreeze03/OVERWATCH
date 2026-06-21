@@ -2906,8 +2906,8 @@ class FormulaRegressionTests(unittest.TestCase):
             called_sql.append(str(sql).upper())
             raise RuntimeError("mart unavailable")
 
-        with patch("sections.dba_control_room.run_query", side_effect=fail_mart), patch(
-            "sections.dba_control_room.load_action_queue",
+        with patch("sections.dba_control_room.render.run_query", side_effect=fail_mart), patch(
+            "sections.dba_control_room.render.load_action_queue",
             return_value=pd.DataFrame(),
         ):
             data = _load_control_room(
@@ -2932,8 +2932,8 @@ class FormulaRegressionTests(unittest.TestCase):
                 return pd.DataFrame()
             raise RuntimeError("mart unavailable")
 
-        with patch("sections.dba_control_room.run_query", side_effect=fail_mart_and_capture_live), patch(
-            "sections.dba_control_room.load_action_queue",
+        with patch("sections.dba_control_room.render.run_query", side_effect=fail_mart_and_capture_live), patch(
+            "sections.dba_control_room.render.load_action_queue",
             return_value=pd.DataFrame(),
         ):
             data = _load_control_room(
@@ -3117,8 +3117,8 @@ class FormulaRegressionTests(unittest.TestCase):
                 }])
             raise RuntimeError("mart unavailable")
 
-        with patch("sections.dba_control_room.run_query", side_effect=fake_run_query), patch(
-            "sections.dba_control_room.load_action_queue",
+        with patch("sections.dba_control_room.render.run_query", side_effect=fake_run_query), patch(
+            "sections.dba_control_room.render.load_action_queue",
             return_value=pd.DataFrame(),
         ):
             data = _load_control_room(
@@ -7440,15 +7440,17 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn('"CLIENT_APPLICATION_ID"', compat_text)
 
     def test_dba_control_room_defers_specialist_section_imports(self):
-        dba_text = (APP_ROOT / "sections" / "dba_control_room.py").read_text(encoding="utf-8")
-        top_level = dba_text[:dba_text.index("DBA_CONTROL_SCOPE_FILTER_KEYS")]
+        dba_package = APP_ROOT / "sections" / "dba_control_room"
+        render_text = (dba_package / "render.py").read_text(encoding="utf-8")
+        health_text = (dba_package / "health.py").read_text(encoding="utf-8")
+        top_level = render_text[:render_text.index("def _clear_dba_control_room_derived_state")]
 
         self.assertNotIn("from sections.task_management import", top_level)
         self.assertNotIn("from sections.cortex_monitor import", top_level)
         self.assertNotIn("from sections.stored_proc_tracker import", top_level)
-        self.assertIn("def _task_management_helpers", dba_text)
-        self.assertIn("def _cortex_helpers", dba_text)
-        self.assertIn("def _procedure_helpers", dba_text)
+        self.assertIn("def _task_management_helpers", health_text)
+        self.assertIn("def _cortex_helpers", health_text)
+        self.assertIn("def _procedure_helpers", health_text)
 
     def test_mart_usage_metering_window_condition_is_not_string_spliced(self):
         mart_text = (APP_ROOT / "utils" / "mart.py").read_text(encoding="utf-8")

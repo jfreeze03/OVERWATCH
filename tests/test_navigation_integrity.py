@@ -294,14 +294,14 @@ class NavigationIntegrityTests(unittest.TestCase):
 
         direct_nav_modules = {
             "account_health.py": ("apply_navigation_state(section)", "apply_navigation_state(tgt)"),
-            "dba_control_room.py": ("apply_navigation_state(raw_target)",),
+            "dba_control_room/types.py": ("from sections.navigation import apply_navigation_state",),
+            "dba_control_room/handoff.py": ("apply_navigation_state(raw_target)",),
             "dba_tools.py": ('apply_navigation_state("Alert Center")',),
             "executive_landing.py": ("apply_navigation_state(section)",),
         }
         for file_name, expected_calls in direct_nav_modules.items():
             module_text = (APP_ROOT / "sections" / file_name).read_text(encoding="utf-8")
             with self.subTest(module=file_name):
-                self.assertIn("from sections.navigation import apply_navigation_state", module_text)
                 for expected_call in expected_calls:
                     self.assertIn(expected_call, module_text)
                 self.assertNotIn('st.session_state["nav_section"] =', module_text)
@@ -365,7 +365,9 @@ class NavigationIntegrityTests(unittest.TestCase):
     def test_dba_control_room_uses_fast_shell_module(self):
         self.assertEqual(SECTION_MODULES["DBA Control Room"], "sections.dba_control_room")
         self.assertFalse((APP_ROOT / "sections" / "dba_control_room_shell.py").exists())
-        full_workspace_text = (APP_ROOT / "sections" / "dba_control_room.py").read_text(encoding="utf-8")
+        dba_package = APP_ROOT / "sections" / "dba_control_room"
+        render_text = (dba_package / "render.py").read_text(encoding="utf-8")
+        full_workspace_text = "\n".join(path.read_text(encoding="utf-8") for path in dba_package.glob("*.py"))
         nav_text = (APP_ROOT / "sections" / "navigation.py").read_text(encoding="utf-8")
         self.assertIn('"Morning Brief"', full_workspace_text)
         self.assertIn('set_state(DBA_CONTROL_ROOM_ACTIVE_VIEW, "Fast Watch")', nav_text)
@@ -388,7 +390,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('"Warehouse Settings"', full_workspace_text)
         self.assertIn('"Cortex AI Limits"', full_workspace_text)
         self.assertIn('st.session_state.get("dba_control_room_active_view") in {"Service Posture", "Admin Tools"}', full_workspace_text)
-        service_posture_block = full_workspace_text.split('st.session_state.get("dba_control_room_active_view") in {"Service Posture", "Admin Tools"}', 1)[1].split(
+        service_posture_block = render_text.split('st.session_state.get("dba_control_room_active_view") in {"Service Posture", "Admin Tools"}', 1)[1].split(
             'if not data:',
             1,
         )[0]
@@ -635,7 +637,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(set(ALL_SECTIONS), set(DBA_CONTROL_PLANE_SECTION_BASELINE))
 
     def test_dba_control_room_does_not_render_admin_readiness_panel(self):
-        dba_control_text = (APP_ROOT / "sections" / "dba_control_room.py").read_text(encoding="utf-8")
+        dba_control_text = (APP_ROOT / "sections" / "dba_control_room" / "render.py").read_text(encoding="utf-8")
 
         self.assertNotIn("_render_admin_readiness_panel", dba_control_text)
         self.assertNotIn("Admin Readiness to 95", dba_control_text)
@@ -644,7 +646,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("dba_control_plane_component_rows", dba_control_text)
 
     def test_dba_control_room_uses_shared_company_scope_and_cached_release_inventory(self):
-        dba_control_text = (APP_ROOT / "sections" / "dba_control_room.py").read_text(encoding="utf-8")
+        dba_package = APP_ROOT / "sections" / "dba_control_room"
+        dba_control_text = "\n".join(path.read_text(encoding="utf-8") for path in dba_package.glob("*.py"))
 
         self.assertIn('get_active_company = _lazy_util("get_active_company")', dba_control_text)
         self.assertIn("company = get_active_company()", dba_control_text)
@@ -1512,7 +1515,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("ow-brief-title", workflows_text)
         self.assertNotIn("ow-brief-title", theme_text)
         duplicate_headers = [
-            ("dba_control_room.py", 'st.header("DBA Control Room")'),
+            ("dba_control_room/render.py", 'st.header("DBA Control Room")'),
             ("alert_center.py", 'st.header("Alert Center")'),
             ("cost_contract.py", 'st.header("Cost & Contract")'),
             ("workload_operations.py", 'st.header("Workload Operations")'),

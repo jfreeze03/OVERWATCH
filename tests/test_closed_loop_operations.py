@@ -111,7 +111,7 @@ class ClosedLoopOperationsTests(unittest.TestCase):
 
     def test_ui_places_closed_loop_in_approved_sections(self):
         executive = _read(APP_ROOT / "sections" / "executive_landing.py")
-        dba = _read(APP_ROOT / "sections" / "dba_control_room.py")
+        dba = _read(APP_ROOT / "sections" / "dba_control_room" / "render.py")
         cost = _read(APP_ROOT / "sections" / "cost_contract.py")
         workload = _read(APP_ROOT / "sections" / "workload_operations.py")
         security = _read(APP_ROOT / "sections" / "security_posture.py")
@@ -127,7 +127,7 @@ class ClosedLoopOperationsTests(unittest.TestCase):
 
     def test_detail_panels_are_explicitly_load_gated(self):
         checks = [
-            (APP_ROOT / "sections" / "dba_control_room.py", "Load Closed-Loop Actions", "load_closed_loop_workflow_detail"),
+            (APP_ROOT / "sections" / "dba_control_room" / "render.py", "Load Closed-Loop Actions", "load_closed_loop_workflow_detail"),
             (APP_ROOT / "sections" / "cost_contract.py", "Load Savings Verification", "load_closed_loop_verification_detail"),
             (APP_ROOT / "sections" / "workload_operations.py", "Load Operational Actions", "load_closed_loop_workflow_detail"),
             (APP_ROOT / "sections" / "security_posture.py", "Load Security Approvals", "load_closed_loop_workflow_detail"),

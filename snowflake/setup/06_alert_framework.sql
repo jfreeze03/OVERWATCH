@@ -1,0 +1,366 @@
+-- -----------------------------------------------------------------------------
+-- 5. Alert framework
+-- -----------------------------------------------------------------------------
+
+CREATE OR REPLACE TASK OVERWATCH_ANOMALY_CHECK
+  WAREHOUSE = OVERWATCH_WH
+  SCHEDULE = 'USING CRON 5 * * * * America/Chicago'
+AS
+INSERT INTO OVERWATCH_ALERTS (
+  ALERT_TS, COMPANY, ENVIRONMENT, DATABASE_NAME, SCHEMA_NAME, WAREHOUSE_NAME,
+  CATEGORY, ALERT_TYPE, SEVERITY, ENTITY_NAME, ENTITY, MESSAGE, DETAIL,
+  SUGGESTED_ACTION, PROOF_QUERY, OWNER, STATUS, DELIVERY_METHOD,
+  DELIVERY_TARGET, EMAIL_TARGET, EMAIL_SUBJECT, EMAIL_BODY, DELIVERY_STATUS
+)
+WITH alert_config AS (
+  SELECT MAX(NULLIF(SETTING_VALUE, '')) AS EMAIL_TARGET
+  FROM OVERWATCH_SETTINGS
+  WHERE SETTING_NAME = 'DEFAULT_ALERT_EMAIL'
+),
+credit_recent AS (
+  SELECT COMPANY, WAREHOUSE_NAME, SUM(CREDITS_USED) AS CURRENT_CREDITS
+  FROM FACT_WAREHOUSE_HOURLY
+  WHERE HOUR_START >= DATEADD('hour', -24, CURRENT_TIMESTAMP())
+  GROUP BY COMPANY, WAREHOUSE_NAME
+),
+credit_baseline AS (
+  SELECT COMPANY, WAREHOUSE_NAME, SUM(CREDITS_USED) / 7 AS AVG_DAILY_CREDITS
+  FROM FACT_WAREHOUSE_HOURLY
+  WHERE HOUR_START >= DATEADD('day', -8, CURRENT_TIMESTAMP())
+    AND HOUR_START < DATEADD('day', -1, CURRENT_TIMESTAMP())
+  GROUP BY COMPANY, WAREHOUSE_NAME
+),
+daily_spend_model AS (
+  SELECT
+    COMPANY,
+    WAREHOUSE_NAME,
+    TO_DATE(HOUR_START) AS SPEND_DAY,
+    SUM(CREDITS_USED) AS DAILY_CREDITS
+  FROM FACT_WAREHOUSE_HOURLY
+  WHERE HOUR_START >= DATEADD('day', -45, CURRENT_TIMESTAMP())
+    AND HOUR_START < DATE_TRUNC('day', CURRENT_TIMESTAMP())
+    AND WAREHOUSE_NAME IS NOT NULL
+  GROUP BY COMPANY, WAREHOUSE_NAME, TO_DATE(HOUR_START)
+),
+cost_anomaly_model AS (
+  SELECT
+    COMPANY,
+    WAREHOUSE_NAME,
+    SPEND_DAY,
+    DAILY_CREDITS,
+    AVG(DAILY_CREDITS) OVER (
+      PARTITION BY COMPANY, WAREHOUSE_NAME
+      ORDER BY SPEND_DAY
+      ROWS BETWEEN 30 PRECEDING AND 1 PRECEDING
+    ) AS BASELINE_CREDITS,
+    STDDEV(DAILY_CREDITS) OVER (
+      PARTITION BY COMPANY, WAREHOUSE_NAME
+      ORDER BY SPEND_DAY
+      ROWS BETWEEN 30 PRECEDING AND 1 PRECEDING
+    ) AS SIGMA_CREDITS,
+    COUNT(*) OVER (
+      PARTITION BY COMPANY, WAREHOUSE_NAME
+      ORDER BY SPEND_DAY
+      ROWS BETWEEN 30 PRECEDING AND 1 PRECEDING
+    ) AS BASELINE_DAYS
+  FROM daily_spend_model
+),
+predictive_cost_anomalies AS (
+  SELECT
+    COMPANY,
+    WAREHOUSE_NAME,
+    SPEND_DAY,
+    DAILY_CREDITS,
+    BASELINE_CREDITS,
+    COALESCE(SIGMA_CREDITS, 0) AS SIGMA_CREDITS,
+    DAILY_CREDITS * 30 AS PROJECTED_30D_CREDITS,
+    IFF(BASELINE_CREDITS > 0, DAILY_CREDITS / NULLIF(BASELINE_CREDITS, 0), NULL) AS BURN_RATE_MULTIPLE
+  FROM cost_anomaly_model
+  WHERE SPEND_DAY = CURRENT_DATE() - 1
+    AND BASELINE_DAYS >= 14
+    AND BASELINE_CREDITS > 0.1
+    AND (
+      DAILY_CREDITS > BASELINE_CREDITS + 2.5 * COALESCE(SIGMA_CREDITS, 0)
+      OR DAILY_CREDITS > BASELINE_CREDITS * 1.5
+    )
+),
+query_failures AS (
+  SELECT
+    COMPANY, ENVIRONMENT, DATABASE_NAME, SCHEMA_NAME, WAREHOUSE_NAME,
+    COUNT(*) AS FAILURES,
+    MAX(LEFT(ERROR_MESSAGE, 500)) AS SAMPLE_ERROR
+  FROM FACT_QUERY_DETAIL_RECENT
+  WHERE START_TIME >= DATEADD('hour', -24, CURRENT_TIMESTAMP())
+    AND (ERROR_CODE IS NOT NULL OR UPPER(EXECUTION_STATUS) = 'FAILED_WITH_ERROR')
+  GROUP BY COMPANY, ENVIRONMENT, DATABASE_NAME, SCHEMA_NAME, WAREHOUSE_NAME
+  HAVING COUNT(*) >= 10
+),
+warehouse_pressure AS (
+  SELECT
+    COMPANY, ENVIRONMENT, DATABASE_NAME, WAREHOUSE_NAME,
+    SUM(QUERY_COUNT) AS QUERY_COUNT,
+    SUM(TOTAL_QUEUED_MS) AS TOTAL_QUEUED_MS,
+    MAX(P95_EXECUTION_MS) AS P95_EXECUTION_MS
+  FROM FACT_QUERY_HOURLY
+  WHERE HOUR_START >= DATEADD('hour', -24, CURRENT_TIMESTAMP())
+    AND WAREHOUSE_NAME IS NOT NULL
+  GROUP BY COMPANY, ENVIRONMENT, DATABASE_NAME, WAREHOUSE_NAME
+  HAVING SUM(TOTAL_QUEUED_MS) >= 60000 OR MAX(P95_EXECUTION_MS) >= 120000
+),
+task_failures AS (
+  SELECT
+    COMPANY, ENVIRONMENT, DATABASE_NAME, SCHEMA_NAME, WAREHOUSE_NAME, TASK_NAME,
+    COUNT(*) AS FAILURES,
+    MAX(LEFT(ERROR_MESSAGE, 500)) AS SAMPLE_ERROR
+  FROM FACT_TASK_RUN
+  WHERE SCHEDULED_TIME >= DATEADD('hour', -24, CURRENT_TIMESTAMP())
+    AND UPPER(STATE) = 'FAILED'
+  GROUP BY COMPANY, ENVIRONMENT, DATABASE_NAME, SCHEMA_NAME, WAREHOUSE_NAME, TASK_NAME
+),
+proc_recent AS (
+  SELECT
+    COMPANY, ENVIRONMENT, DATABASE_NAME, SCHEMA_NAME, PROCEDURE_NAME,
+    COUNT(*) AS CALL_COUNT,
+    SUM(CASE WHEN STATUS ILIKE '%FAIL%' OR ERROR_MESSAGE IS NOT NULL THEN 1 ELSE 0 END) AS FAILURES,
+    AVG(TOTAL_DURATION_MS) AS AVG_DURATION_MS,
+    MAX(LEFT(ERROR_MESSAGE, 500)) AS SAMPLE_ERROR
+  FROM FACT_PROCEDURE_RUN
+  WHERE START_TIME >= DATEADD('hour', -24, CURRENT_TIMESTAMP())
+  GROUP BY COMPANY, ENVIRONMENT, DATABASE_NAME, SCHEMA_NAME, PROCEDURE_NAME
+),
+proc_baseline AS (
+  SELECT
+    COMPANY, DATABASE_NAME, SCHEMA_NAME, PROCEDURE_NAME,
+    AVG(TOTAL_DURATION_MS) AS BASELINE_DURATION_MS
+  FROM FACT_PROCEDURE_RUN
+  WHERE START_TIME >= DATEADD('day', -8, CURRENT_TIMESTAMP())
+    AND START_TIME < DATEADD('hour', -24, CURRENT_TIMESTAMP())
+  GROUP BY COMPANY, DATABASE_NAME, SCHEMA_NAME, PROCEDURE_NAME
+),
+procedure_risk AS (
+  SELECT
+    r.COMPANY, r.ENVIRONMENT, r.DATABASE_NAME, r.SCHEMA_NAME, r.PROCEDURE_NAME,
+    r.CALL_COUNT, r.FAILURES, r.AVG_DURATION_MS, b.BASELINE_DURATION_MS, r.SAMPLE_ERROR
+  FROM proc_recent r
+  LEFT JOIN proc_baseline b
+    ON COALESCE(r.COMPANY, '') = COALESCE(b.COMPANY, '')
+   AND COALESCE(r.DATABASE_NAME, '') = COALESCE(b.DATABASE_NAME, '')
+   AND COALESCE(r.SCHEMA_NAME, '') = COALESCE(b.SCHEMA_NAME, '')
+   AND r.PROCEDURE_NAME = b.PROCEDURE_NAME
+  WHERE r.FAILURES > 0
+     OR (r.AVG_DURATION_MS >= 60000 AND b.BASELINE_DURATION_MS > 0 AND r.AVG_DURATION_MS > b.BASELINE_DURATION_MS * 1.5)
+),
+grant_changes AS (
+  SELECT
+    COMPANY, ENVIRONMENT, DATABASE_NAME, SCHEMA_NAME, USER_NAME, ROLE_NAME,
+    COUNT(*) AS CHANGE_COUNT
+  FROM FACT_OBJECT_CHANGE
+  WHERE START_TIME >= DATEADD('hour', -24, CURRENT_TIMESTAMP())
+    AND (QUERY_TYPE ILIKE 'GRANT%' OR QUERY_TYPE ILIKE 'REVOKE%' OR QUERY_TEXT ILIKE 'GRANT %' OR QUERY_TEXT ILIKE 'REVOKE %')
+  GROUP BY COMPANY, ENVIRONMENT, DATABASE_NAME, SCHEMA_NAME, USER_NAME, ROLE_NAME
+),
+warehouse_changes AS (
+  SELECT
+    COMPANY, USER_NAME, ROLE_NAME,
+    COALESCE(REGEXP_SUBSTR(QUERY_TEXT, 'ALTER\\s+WAREHOUSE\\s+([^\\s;]+)', 1, 1, 'i', 1), 'WAREHOUSE') AS WAREHOUSE_NAME,
+    COUNT(*) AS CHANGE_COUNT
+  FROM FACT_OBJECT_CHANGE
+  WHERE START_TIME >= DATEADD('hour', -24, CURRENT_TIMESTAMP())
+    AND QUERY_TEXT ILIKE 'ALTER WAREHOUSE %'
+  GROUP BY COMPANY, USER_NAME, ROLE_NAME, WAREHOUSE_NAME
+),
+candidates AS (
+  SELECT
+    r.COMPANY,
+    'No Database Context' AS ENVIRONMENT,
+    NULL AS DATABASE_NAME,
+    NULL AS SCHEMA_NAME,
+    r.WAREHOUSE_NAME,
+    'Cost Control' AS CATEGORY,
+    'Credit Spike' AS ALERT_TYPE,
+    CASE WHEN r.CURRENT_CREDITS / NULLIF(b.AVG_DAILY_CREDITS, 0) >= 3 THEN 'High' ELSE 'Medium' END AS SEVERITY,
+    r.WAREHOUSE_NAME AS ENTITY_NAME,
+    r.WAREHOUSE_NAME AS ENTITY,
+    'Warehouse used ' || ROUND(r.CURRENT_CREDITS, 2) || ' credits in 24 hours vs ' || ROUND(b.AVG_DAILY_CREDITS, 2) || ' average daily credits.' AS MESSAGE,
+    'Warehouse used ' || ROUND(r.CURRENT_CREDITS, 2) || ' credits in 24 hours vs ' || ROUND(b.AVG_DAILY_CREDITS, 2) || ' average daily credits.' AS DETAIL,
+    'Open Cost & Contract, explain the bill movement, then route owner-backed cost-control actions.' AS SUGGESTED_ACTION,
+    'SELECT * FROM FACT_WAREHOUSE_HOURLY WHERE WAREHOUSE_NAME = ''' || r.WAREHOUSE_NAME || ''' ORDER BY HOUR_START DESC LIMIT 100;' AS PROOF_QUERY,
+    'DBA' AS OWNER
+  FROM credit_recent r
+  JOIN credit_baseline b ON r.COMPANY = b.COMPANY AND r.WAREHOUSE_NAME = b.WAREHOUSE_NAME
+  WHERE b.AVG_DAILY_CREDITS > 0.1
+    AND r.CURRENT_CREDITS > b.AVG_DAILY_CREDITS * 1.5
+
+  UNION ALL
+
+  SELECT
+    COMPANY,
+    'No Database Context' AS ENVIRONMENT,
+    NULL AS DATABASE_NAME,
+    NULL AS SCHEMA_NAME,
+    WAREHOUSE_NAME,
+    'Cost Forecast' AS CATEGORY,
+    'Predictive Cost Anomaly' AS ALERT_TYPE,
+    CASE WHEN BURN_RATE_MULTIPLE >= 2 OR DAILY_CREDITS > BASELINE_CREDITS + 3 * SIGMA_CREDITS THEN 'High' ELSE 'Medium' END AS SEVERITY,
+    WAREHOUSE_NAME || ' predictive cost anomaly' AS ENTITY_NAME,
+    WAREHOUSE_NAME AS ENTITY,
+    'Warehouse ' || WAREHOUSE_NAME || ' used ' || ROUND(DAILY_CREDITS, 2)
+      || ' credits yesterday vs 30-day baseline ' || ROUND(BASELINE_CREDITS, 2)
+      || ' (sigma ' || ROUND(SIGMA_CREDITS, 2) || '). Projected 30-day burn '
+      || ROUND(PROJECTED_30D_CREDITS, 2) || ' credits.' AS MESSAGE,
+    'Predictive anomaly model uses the last complete day against a rolling 30-day baseline plus sigma. '
+      || 'Burn-rate multiple: ' || ROUND(BURN_RATE_MULTIPLE, 2) || 'x.' AS DETAIL,
+    'Open Cost & Contract, explain the top driver, validate demand, and route an Alert Center or action-queue item before contract pace overshoot.',
+    'WITH daily AS (SELECT TO_DATE(HOUR_START) AS spend_day, SUM(CREDITS_USED) AS credits FROM FACT_WAREHOUSE_HOURLY WHERE WAREHOUSE_NAME = '''
+      || WAREHOUSE_NAME || ''' GROUP BY TO_DATE(HOUR_START)) SELECT * FROM daily ORDER BY spend_day DESC LIMIT 45;',
+    'DBA / Cost owner'
+  FROM predictive_cost_anomalies
+
+  UNION ALL
+
+  SELECT
+    COMPANY, ENVIRONMENT, DATABASE_NAME, SCHEMA_NAME, WAREHOUSE_NAME,
+    'Reliability', 'High Query Error Rate', 'High',
+    COALESCE(DATABASE_NAME || '.' || SCHEMA_NAME, WAREHOUSE_NAME),
+    COALESCE(DATABASE_NAME || '.' || SCHEMA_NAME, WAREHOUSE_NAME),
+    FAILURES || ' failed queries in the last 24 hours. Sample: ' || COALESCE(SAMPLE_ERROR, 'No sample error captured.'),
+    FAILURES || ' failed queries in the last 24 hours. Sample: ' || COALESCE(SAMPLE_ERROR, 'No sample error captured.'),
+    'Open Workload Operations, group by error code/query text, and assign the owning team.',
+    'SELECT * FROM FACT_QUERY_DETAIL_RECENT WHERE START_TIME >= DATEADD(''hour'', -24, CURRENT_TIMESTAMP()) AND WAREHOUSE_NAME = ''' || WAREHOUSE_NAME || ''' ORDER BY START_TIME DESC LIMIT 100;',
+    'DBA'
+  FROM query_failures
+
+  UNION ALL
+
+  SELECT
+    COMPANY, ENVIRONMENT, DATABASE_NAME, NULL, WAREHOUSE_NAME,
+    'Capacity', 'Warehouse Pressure',
+    CASE WHEN TOTAL_QUEUED_MS >= 300000 OR P95_EXECUTION_MS >= 300000 THEN 'High' ELSE 'Medium' END,
+    WAREHOUSE_NAME,
+    WAREHOUSE_NAME,
+    ROUND(TOTAL_QUEUED_MS / 1000, 0) || ' queued seconds; p95 execution ' || ROUND(P95_EXECUTION_MS / 1000, 0) || 's in the last 24 hours.',
+    ROUND(TOTAL_QUEUED_MS / 1000, 0) || ' queued seconds; p95 execution ' || ROUND(P95_EXECUTION_MS / 1000, 0) || 's in the last 24 hours.',
+    'Open Cost & Contract, inspect pressure telemetry, and route changed-only warehouse setting recommendations.',
+    'SELECT * FROM FACT_QUERY_HOURLY WHERE WAREHOUSE_NAME = ''' || WAREHOUSE_NAME || ''' ORDER BY HOUR_START DESC LIMIT 100;',
+    'DBA'
+  FROM warehouse_pressure
+
+  UNION ALL
+
+  SELECT
+    COMPANY, ENVIRONMENT, DATABASE_NAME, SCHEMA_NAME, WAREHOUSE_NAME,
+    'Reliability', 'Task Failure', 'High',
+    DATABASE_NAME || '.' || SCHEMA_NAME || '.' || TASK_NAME,
+    DATABASE_NAME || '.' || SCHEMA_NAME || '.' || TASK_NAME,
+    FAILURES || ' failed task run(s) in the last 24 hours. Sample: ' || COALESCE(SAMPLE_ERROR, 'No sample error captured.'),
+    FAILURES || ' failed task run(s) in the last 24 hours. Sample: ' || COALESCE(SAMPLE_ERROR, 'No sample error captured.'),
+    'Open Workload Operations task graphs, review downstream impact, and decide retry/suspend/escalate.',
+    'SELECT * FROM FACT_TASK_RUN WHERE TASK_NAME = ''' || TASK_NAME || ''' ORDER BY SCHEDULED_TIME DESC LIMIT 100;',
+    'DBA'
+  FROM task_failures
+
+  UNION ALL
+
+  SELECT
+    COMPANY, ENVIRONMENT, DATABASE_NAME, SCHEMA_NAME, NULL,
+    'Reliability',
+    CASE WHEN FAILURES > 0 THEN 'Stored Procedure Failure' ELSE 'Stored Procedure Runtime Spike' END,
+    CASE WHEN FAILURES > 0 OR AVG_DURATION_MS >= 300000 THEN 'High' ELSE 'Medium' END,
+    COALESCE(DATABASE_NAME || '.' || SCHEMA_NAME || '.', DATABASE_NAME || '.', '') || PROCEDURE_NAME,
+    COALESCE(DATABASE_NAME || '.' || SCHEMA_NAME || '.', DATABASE_NAME || '.', '') || PROCEDURE_NAME,
+    CASE
+      WHEN FAILURES > 0 THEN FAILURES || ' failed CALL(s) in the last 24 hours. Sample: ' || COALESCE(SAMPLE_ERROR, 'No sample error captured.')
+      ELSE 'Average CALL duration ' || ROUND(AVG_DURATION_MS / 1000, 1) || 's vs baseline ' || ROUND(BASELINE_DURATION_MS / 1000, 1) || 's.'
+    END,
+    CASE
+      WHEN FAILURES > 0 THEN FAILURES || ' failed CALL(s) in the last 24 hours. Sample: ' || COALESCE(SAMPLE_ERROR, 'No sample error captured.')
+      ELSE 'Average CALL duration ' || ROUND(AVG_DURATION_MS / 1000, 1) || 's vs baseline ' || ROUND(BASELINE_DURATION_MS / 1000, 1) || 's.'
+    END,
+    'Open Workload Operations stored procedures, compare release windows, and assign remediation.',
+    'SELECT * FROM FACT_PROCEDURE_RUN WHERE PROCEDURE_NAME = ''' || PROCEDURE_NAME || ''''
+      || ' AND COALESCE(DATABASE_NAME, '''') = ''' || COALESCE(DATABASE_NAME, '') || ''''
+      || ' AND COALESCE(SCHEMA_NAME, '''') = ''' || COALESCE(SCHEMA_NAME, '') || ''''
+      || ' ORDER BY START_TIME DESC LIMIT 100;',
+    'DBA'
+  FROM procedure_risk
+
+  UNION ALL
+
+  SELECT
+    COMPANY, ENVIRONMENT, DATABASE_NAME, SCHEMA_NAME, NULL,
+    'Object Change Monitoring', 'Grant/Revoke Activity', 'Medium',
+    COALESCE(DATABASE_NAME || '.' || SCHEMA_NAME, ROLE_NAME, USER_NAME, 'Account grant activity'),
+    COALESCE(DATABASE_NAME || '.' || SCHEMA_NAME, ROLE_NAME, USER_NAME, 'Account grant activity'),
+    CHANGE_COUNT || ' grant/revoke statement(s) by ' || COALESCE(USER_NAME, 'unknown user') || ' using role ' || COALESCE(ROLE_NAME, 'unknown role') || '.',
+    CHANGE_COUNT || ' grant/revoke statement(s) by ' || COALESCE(USER_NAME, 'unknown user') || ' using role ' || COALESCE(ROLE_NAME, 'unknown role') || '.',
+    'Open Security Monitoring and review least-privilege telemetry, actor, object, and review date.',
+    'SELECT * FROM FACT_OBJECT_CHANGE WHERE START_TIME >= DATEADD(''hour'', -24, CURRENT_TIMESTAMP()) AND (QUERY_TYPE ILIKE ''GRANT%'' OR QUERY_TYPE ILIKE ''REVOKE%'') ORDER BY START_TIME DESC LIMIT 100;',
+    'DBA'
+  FROM grant_changes
+
+  UNION ALL
+
+  SELECT
+    COMPANY, 'No Database Context', NULL, NULL, WAREHOUSE_NAME,
+    'Object Change Monitoring', 'Warehouse Setting Change', 'Medium',
+    WAREHOUSE_NAME,
+    WAREHOUSE_NAME,
+    CHANGE_COUNT || ' ALTER WAREHOUSE statement(s) by ' || COALESCE(USER_NAME, 'unknown user') || ' using role ' || COALESCE(ROLE_NAME, 'unknown role') || '.',
+    CHANGE_COUNT || ' ALTER WAREHOUSE statement(s) by ' || COALESCE(USER_NAME, 'unknown user') || ' using role ' || COALESCE(ROLE_NAME, 'unknown role') || '.',
+    'Open DBA Tools warehouse settings manager and review changed-only SQL, rollback path, and post-change telemetry.',
+    'SELECT * FROM FACT_OBJECT_CHANGE WHERE QUERY_TEXT ILIKE ''ALTER WAREHOUSE %'' ORDER BY START_TIME DESC LIMIT 100;',
+    'DBA'
+  FROM warehouse_changes
+)
+SELECT
+  CURRENT_TIMESTAMP(),
+  c.COMPANY,
+  COALESCE(c.ENVIRONMENT, 'No Database Context'),
+  c.DATABASE_NAME,
+  c.SCHEMA_NAME,
+  c.WAREHOUSE_NAME,
+  c.CATEGORY,
+  c.ALERT_TYPE,
+  c.SEVERITY,
+  c.ENTITY_NAME,
+  c.ENTITY,
+  c.MESSAGE,
+  c.DETAIL,
+  c.SUGGESTED_ACTION,
+  c.PROOF_QUERY,
+  c.OWNER,
+  'New',
+  'EMAIL',
+  cfg.EMAIL_TARGET,
+  cfg.EMAIL_TARGET,
+  'OVERWATCH ' || c.SEVERITY || ': ' || c.ALERT_TYPE || ' - ' || c.ENTITY_NAME,
+  'Company: ' || c.COMPANY || CHAR(10)
+    || 'Environment: ' || COALESCE(c.ENVIRONMENT, 'No Database Context') || CHAR(10)
+    || 'Severity: ' || c.SEVERITY || CHAR(10)
+    || 'Alert: ' || c.ALERT_TYPE || CHAR(10)
+    || 'Entity: ' || c.ENTITY_NAME || CHAR(10) || CHAR(10)
+    || 'Detail:' || CHAR(10) || c.MESSAGE || CHAR(10) || CHAR(10)
+    || 'Next action:' || CHAR(10) || c.SUGGESTED_ACTION || CHAR(10) || CHAR(10)
+    || 'Proof query:' || CHAR(10) || c.PROOF_QUERY,
+  IFF(cfg.EMAIL_TARGET IS NULL, 'CONFIG_REQUIRED', 'EMAIL_READY')
+FROM candidates c
+CROSS JOIN alert_config cfg
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM OVERWATCH_ANNOTATIONS ann
+  WHERE ann.ACTIVE = TRUE
+    AND ann.SUPPRESS_ALERTS = TRUE
+    AND (UPPER(ann.ENTITY) = UPPER(c.ENTITY_NAME)
+         OR UPPER(ann.ENTITY) = UPPER(COALESCE(c.WAREHOUSE_NAME, ''))
+         OR UPPER(ann.ENTITY_TYPE) = 'GLOBAL')
+    AND CURRENT_TIMESTAMP() BETWEEN ann.WINDOW_START AND ann.WINDOW_END
+)
+AND NOT EXISTS (
+  SELECT 1
+  FROM OVERWATCH_ALERTS existing
+  WHERE existing.ALERT_TS >= DATEADD('hour', -24, CURRENT_TIMESTAMP())
+    AND COALESCE(existing.CATEGORY, existing.ALERT_TYPE, '') = c.CATEGORY
+    AND COALESCE(existing.ENTITY_NAME, existing.ENTITY, '') = c.ENTITY_NAME
+    AND UPPER(COALESCE(existing.STATUS, 'New')) NOT IN ('FIXED', 'IGNORED', 'RESOLVED')
+);
+

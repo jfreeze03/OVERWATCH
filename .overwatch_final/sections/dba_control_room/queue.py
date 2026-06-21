@@ -15,7 +15,6 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
     summary = data.get("summary", _empty_df())
     credits = data.get("credits", _empty_df())
     wh = data.get("warehouse_pressure", _empty_df())
-    failed = data.get("failed_queries", _empty_df())
     tasks = data.get("task_failures", _empty_df())
     task_sla_cost = data.get("task_sla_cost", _empty_df())
     procedure_sla_cost = data.get("procedure_sla_cost", _empty_df())

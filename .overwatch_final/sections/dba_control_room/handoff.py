@@ -525,7 +525,6 @@ def _dba_morning_execution_contract(row: dict | pd.Series | None) -> dict[str, s
     route = str(_row_value(row, "ROUTE", default="DBA Control Room") or "DBA Control Room")
     workflow = str(_row_value(row, "WORKFLOW", default="") or "").strip()
     state = str(_row_value(row, "STATE", default="Review") or "Review")
-    first_move = str(_row_value(row, "FIRST_MOVE", default="Open the guarded drilldown workflow and validate telemetry.") or "")
     proof = str(_row_value(row, "PROOF_REQUIRED", default="fresh source telemetry") or "")
     owner = str(_row_value(row, "OWNER_ROUTE", default="DBA on-call") or "DBA on-call")
     focus_query = str(_row_value(row, "FOCUS_QUERY_ID", default="") or "").strip()

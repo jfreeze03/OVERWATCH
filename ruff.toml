@@ -1,0 +1,15 @@
+# Ruff configuration for OVERWATCH.
+#
+# Scope is deliberately conservative: we enable the high-signal correctness
+# checks (pyflakes `F` plus syntax/IO errors `E9`) rather than the full style
+# rule set, so CI gates on real bugs without failing on hundreds of pre-existing
+# legacy style issues. The rule set can be widened as the codebase is cleaned up.
+target-version = "py312"
+line-length = 120
+
+extend-exclude = [
+    "**/__pycache__",
+]
+
+[lint]
+select = ["E9", "F"]

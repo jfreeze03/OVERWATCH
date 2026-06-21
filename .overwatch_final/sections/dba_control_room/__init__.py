@@ -294,9 +294,7 @@ def _load_control_room(
     _build_task_ops_frames, _, _, _, _query_detail_sql = _task_management_helpers()
     _build_procedure_sla_frames, _build_procedure_sla_sql, _, _query_history_has_root_query_id = _procedure_helpers()
     _build_cortex_control_sql, _, _ = _cortex_helpers()
-    wh_q = get_wh_filter_clause("q.warehouse_name", company)
     wh_m = get_wh_filter_clause("warehouse_name", company)
-    db_q = get_db_filter_clause("q.database_name", company)
     global_q = get_global_filter_clause(
         "q.start_time", "q.warehouse_name", "q.user_name", "q.role_name", "q.database_name", "q.schema_name"
     )

@@ -22,17 +22,46 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.11"
+          # Keep this aligned with runtime.txt (verified by the step below).
+          python-version: "3.12"
           cache: "pip"
-          cache-dependency-path: requirements.txt
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Verify CI Python matches runtime.txt
+        run: |
+          expected="$(sed -n 's/^python-//p' runtime.txt | cut -d. -f1,2)"
+          actual="$(python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+          echo "runtime.txt requests Python ${expected}; CI is running ${actual}"
+          if [ "${expected}" != "${actual}" ]; then
+            echo "::error::CI Python ${actual} does not match runtime.txt (${expected})"
+            exit 1
+          fi
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
 
       - name: Compile Python sources
         run: python -m compileall .overwatch_final tests
+
+      - name: Ruff lint (refactored and new code)
+        run: |
+          ruff check \
+            .overwatch_final/utils/sql_safe.py \
+            .overwatch_final/sections/dba_control_room \
+            tests/test_sql_safe.py \
+            tests/test_mart_setup_split.py
+
+      - name: Ruff lint (full repo, advisory)
+        continue-on-error: true
+        run: ruff check .overwatch_final tests
+
+      - name: Type check shared SQL safety helper (mypy)
+        run: mypy --ignore-missing-imports .overwatch_final/utils/sql_safe.py
 
       - name: Validate deployment contract
         run: python -m unittest tests.test_deployment_contract

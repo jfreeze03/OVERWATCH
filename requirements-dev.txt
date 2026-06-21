@@ -1,0 +1,4 @@
+# Developer / CI tooling (linting and type checking).
+# Runtime dependencies live in requirements.txt.
+ruff==0.15.18
+mypy==2.1.0

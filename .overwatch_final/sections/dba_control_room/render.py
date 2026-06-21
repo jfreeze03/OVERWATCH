@@ -1581,7 +1581,6 @@ def render() -> None:
             st.caption("Workflow: snapshot -> exception -> routed action -> telemetry export.")
         return
 
-    loaded_lookback = st.session_state.get("dba_control_room_lookback", lookback_hours)
     source_mode = st.session_state.get("dba_control_room_source_mode", "Fast triage summary")
     expected_meta = _dba_control_scope_meta(
         company,
@@ -1642,12 +1641,6 @@ def render() -> None:
 
     failed_queries = safe_int(row.get("FAILED_QUERIES", 0))
     queued_queries = safe_int(row.get("QUEUED_QUERIES", 0))
-    failed_tasks = safe_int(row.get("FAILED_TASKS", row.get("FAILED_TASK_RUNS", 0)))
-    source_issue_count = 0
-    if not release_source_health.empty and "STATE" in release_source_health.columns:
-        source_issue_count = int(
-            release_source_health["STATE"].fillna("").astype(str).isin(["Unavailable", "Stale"]).sum()
-        )
     _render_dba_action_brief(
         release_gate_summary,
         exceptions,

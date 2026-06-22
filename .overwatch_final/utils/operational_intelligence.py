@@ -651,7 +651,7 @@ def build_ai_query_diagnosis_prompt_contract() -> str:
 
 
 def build_overwatch_self_monitoring_sql(days: int = 7) -> str:
-    """Build app-runtime health and cost evidence from OVERWATCH query tags."""
+    """Build optional legacy app-runtime cost evidence from query tags when present."""
     days = max(1, int(days or 7))
     return _sql(f"""
         WITH app_queries AS (

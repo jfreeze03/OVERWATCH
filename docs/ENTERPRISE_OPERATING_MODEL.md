@@ -35,7 +35,7 @@ explicit Load buttons.
 | `MART_OPERATIONAL_OWNER_COVERAGE` | Alert/security/action ownership coverage and route gaps. |
 | `OVERWATCH_VALUE_LEDGER` | Durable value proof rows with expected and actual verified savings. |
 | `MART_EXECUTIVE_VALUE_LEDGER` | Compact value rollup that separates verified savings from unverified estimates. |
-| `OVERWATCH_APP_OBSERVABILITY` | Recent app runtime/query-tag health detail from app logs. |
+| `OVERWATCH_APP_OBSERVABILITY` | Recent app runtime health detail from app logs. |
 | `MART_APP_OBSERVABILITY_SUMMARY` | Compact app health rollup for first paint. |
 | `SP_OVERWATCH_REFRESH_ENTERPRISE_OPERATING_MODEL` | Refreshes all enterprise operating-model summaries from existing OVERWATCH data. |
 | `MART_PRODUCTION_READINESS_SUMMARY` | Compact Phase 2A deployment, validation, privilege, refresh, config, freshness, and environment readiness rollup. |

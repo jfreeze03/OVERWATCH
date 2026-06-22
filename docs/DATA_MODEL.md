@@ -28,7 +28,7 @@ Finding -> Owner -> Trust Level -> Business Impact -> Action -> Value Verified.
 | `MART_OPERATIONAL_OWNER_COVERAGE` | Transient mart | Ownership coverage and route gaps for Alert Center and Security Monitoring. |
 | `OVERWATCH_VALUE_LEDGER` | Table | Expected savings, actual verified savings, confidence, evidence, owner route, status, and rollback notes. |
 | `MART_EXECUTIVE_VALUE_LEDGER` | Transient mart | Executive value rollup. Verified savings and unverified estimates are separate. |
-| `OVERWATCH_APP_OBSERVABILITY` | Transient table | App runtime/query-tag detail from OVERWATCH usage logs. |
+| `OVERWATCH_APP_OBSERVABILITY` | Transient table | App runtime detail from OVERWATCH usage logs. |
 | `MART_APP_OBSERVABILITY_SUMMARY` | Transient mart | Compact app health rollup for Executive Landing/DBA Control Room. |
 | `SP_OVERWATCH_REFRESH_ENTERPRISE_OPERATING_MODEL` | Procedure | Refreshes the enterprise operating-model summaries from existing OVERWATCH facts and app tables. |
 
@@ -170,5 +170,5 @@ incident proof.
 |---|---|
 | `SNOWFLAKE.ACCOUNT_USAGE.DATA_METRIC_FUNCTION_REFERENCES` | Registers Snowflake DMF data-quality checks, schedules, states, and stale/failed runs where DMFs are enabled. |
 | `SHOW ALERTS IN ACCOUNT` / `INFORMATION_SCHEMA.ALERT_HISTORY` | Proves native Snowflake ALERT objects exist, are scheduled, and have recent run history. |
-| `OVERWATCH_USAGE_LOG` and query-tag telemetry | Measures OVERWATCH's own query count, failures, latency, and section attribution without first-paint `ACCOUNT_USAGE` scans. |
+| `OVERWATCH_USAGE_LOG` and optional legacy query-tag telemetry | Measures OVERWATCH's own query count, failures, latency, and section attribution without first-paint `ACCOUNT_USAGE` scans. |
 | `SNOWFLAKE.ORGANIZATION_USAGE.METERING_DAILY_HISTORY` | Optional ORGADMIN rollup for multi-account cost when organization privileges exist. |

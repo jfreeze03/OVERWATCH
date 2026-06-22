@@ -488,11 +488,11 @@ def build_monitoring_cost_sql(days_back: int = 7) -> str:
     WITH {build_metered_credit_cte(days_back=days_back, include_recent=True)},
     overwatch_queries AS (
         SELECT
-            'OVERWATCH tagged queries' AS component,
+            'Legacy OVERWATCH query-tag matches' AS component,
             COUNT(*) AS events,
             ROUND(SUM(COALESCE(pqc.metered_credits, 0)), 4) AS credits,
             'Allocated' AS confidence,
-            'QUERY_HISTORY query_tag = OVERWATCH, allocated from warehouse metering' AS source
+            'Optional QUERY_HISTORY query_tag match when present; allocated from warehouse metering' AS source
         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
         LEFT JOIN per_query_credits pqc ON q.query_id = pqc.query_id
         WHERE q.start_time >= DATEADD('day', -{int(days_back)}, CURRENT_TIMESTAMP())
@@ -575,7 +575,7 @@ def build_app_runtime_cost_sql(days_back: int = 30) -> str:
     WITH {build_metered_credit_cte(days_back=days_back, include_recent=True)},
     components AS (
         SELECT
-            'OVERWATCH tagged queries' AS component,
+            'Legacy OVERWATCH query-tag matches' AS component,
             ROUND(SUM(COALESCE(pqc.metered_credits, 0)), 4) AS credits
         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
         LEFT JOIN per_query_credits pqc ON q.query_id = pqc.query_id

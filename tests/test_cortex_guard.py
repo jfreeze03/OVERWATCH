@@ -53,8 +53,10 @@ class CortexGuardTests(unittest.TestCase):
         self.assertIn("mistral-large2", session.sql_text)
         self.assertIn("''quoted''", session.sql_text)
         self.assertIn(" AS ANSWER", session.sql_text)
-        self.assertTrue(session.statements[0].startswith("ALTER SESSION SET QUERY_TAG"))
-        self.assertIn("tier=cortex", session.statements[0])
+        self.assertEqual(len(session.statements), 1)
+        self.assertNotIn("ALTER SESSION SET QUERY_TAG", session.statements[0])
+        self.assertIn("SNOWFLAKE.CORTEX.COMPLETE", session.statements[0])
+        self.assertIn("tier=cortex", st.session_state["_overwatch_active_query_tag"])
 
     def test_cortex_completion_sanitizes_unsafe_alias(self):
         session = _DummySession("diagnosis")

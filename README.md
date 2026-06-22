@@ -129,7 +129,7 @@ Supporting operations documents:
 - `CHANGELOG.md` - release-level change history.
 
 The first-paint summaries expose monitoring lanes for Snowflake Data Metric
-Functions, Snowflake ALERT objects, OVERWATCH query-tag self-cost, and optional
+Functions, Snowflake ALERT objects, OVERWATCH usage-log telemetry, and optional
 organization usage rollups. Those lanes are setup contracts, not hidden
 live scans: unavailable privileges should produce friendly setup/fallback
 messages while the page still renders instantly.

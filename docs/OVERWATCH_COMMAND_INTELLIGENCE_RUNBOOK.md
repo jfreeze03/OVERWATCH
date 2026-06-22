@@ -26,7 +26,7 @@ route work, export proof, or preview guarded SQL.
 | 4 | Cost Run-Rate and Attribution Monitor | Cost & Contract | Forecast contract burn and rank top cost drivers from metering facts. |
 | 5 | Alert Lifecycle 2.0 | Alert Center | Acknowledge, assign, suppress, resolve, comment, route, and audit alert work. |
 | 6 | Fact-Grounded AI Query Diagnosis | Workload Operations | Use Cortex only with exact query/profile/object evidence and required verification SQL. |
-| 7 | OVERWATCH Query-Tag Cost Controls | Cost & Contract | Track app-attributed query cost when query tags are available, without exposing benchmark telemetry in the UI. |
+| 7 | OVERWATCH Usage Telemetry | Cost & Contract | Track app-side usage from OVERWATCH logs, with query-tag cost treated as optional legacy evidence when available. |
 | 8 | Scheduled Mart Layer | Snowflake setup | Keep first paint fast; make live ACCOUNT_USAGE scans explicit. |
 | 9 | Security Activity Monitoring | Security Monitoring, Executive Landing | Show admin grants, access spikes, dormant activity, risky shares, and action evidence. |
 | 10 | Multi-Account / Org View | Executive Landing, Cost & Contract | Optional org-level rollup when the Snowflake role has organization usage privileges. |

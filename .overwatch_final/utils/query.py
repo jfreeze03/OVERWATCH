@@ -575,7 +575,7 @@ def _build_overwatch_query_tag(section: str, ttl_key: str, tier: str) -> str:
 
 
 def _apply_overwatch_query_tag(session, query_tag: str) -> None:
-    """Set QUERY_TAG only when it changes; failures are non-fatal."""
+    """Record local query attribution without mutating Snowflake session state."""
     apply_overwatch_query_tag(session, query_tag)
 
 

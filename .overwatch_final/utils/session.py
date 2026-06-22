@@ -81,11 +81,6 @@ def _active_section_label(section: str = "") -> str:
     return "Unknown"
 
 
-def _sql_literal(value, max_len: int = _QUERY_TAG_MAX_LEN) -> str:
-    text = str(value or "").replace("\x00", "")[:max_len]
-    return "'" + text.replace("'", "''") + "'"
-
-
 def _section_from_query_tag(query_tag: str) -> str:
     match = re.search(r"(?:^|\|)section=([^|]+)", str(query_tag or ""))
     return match.group(1) if match else ""
@@ -120,20 +115,16 @@ def build_overwatch_query_tag(
     return "|".join(parts)[:_QUERY_TAG_MAX_LEN]
 
 
-def apply_overwatch_query_tag(session, query_tag: str = "", *, section: str = "") -> None:
-    """Apply a Snowflake QUERY_TAG when needed; never block the UI on failure."""
+def apply_overwatch_query_tag(session=None, query_tag: str = "", *, section: str = "") -> None:
+    """Record OVERWATCH query attribution locally without mutating Snowflake session state."""
     tag = str(query_tag or build_overwatch_query_tag(section=section))[:_QUERY_TAG_MAX_LEN] or _QUERY_TAG
     if get_state(ACTIVE_QUERY_TAG) == tag:
         return
-    try:
-        session.sql(f"ALTER SESSION SET QUERY_TAG = {_sql_literal(tag)}").collect()
-        set_state(ACTIVE_QUERY_TAG, tag)
-        set_state(
-            ACTIVE_QUERY_TAG_SECTION,
-            _section_from_query_tag(tag) or _query_tag_part(_active_section_label(section))
-        )
-    except Exception:
-        pass
+    set_state(ACTIVE_QUERY_TAG, tag)
+    set_state(
+        ACTIVE_QUERY_TAG_SECTION,
+        _section_from_query_tag(tag) or _query_tag_part(_active_section_label(section))
+    )
 
 
 def _ensure_active_section_query_tag(session) -> None:
@@ -210,7 +201,6 @@ def _make_session():
     try:
         sess.sql(
             "ALTER SESSION SET "
-            f"QUERY_TAG = '{_QUERY_TAG}', "
             f"STATEMENT_TIMEOUT_IN_SECONDS = {_STMT_TIMEOUT_SECONDS}, "
             "TIMEZONE = 'UTC'"
         ).collect()

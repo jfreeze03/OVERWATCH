@@ -110,7 +110,7 @@ can summarize:
 - Data Metric Functions via `DATA_METRIC_FUNCTION_REFERENCES`
 - Snowflake ALERT object inventory and `ALERT_HISTORY`
 - owner/cost/criticality tags via `TAG_REFERENCES`
-- OVERWATCH self-cost via app `QUERY_TAG`
+- OVERWATCH app activity via `OVERWATCH_USAGE_LOG`; legacy app `QUERY_TAG` cost is optional when present
 - daily executive digest history
 - optional organization usage cost rollups
 

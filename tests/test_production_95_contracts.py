@@ -251,7 +251,7 @@ class Production95ContractsTests(unittest.TestCase):
         self.assertIn("Data Quality / DMF", labels)
         self.assertIn("Native alerts", labels)
         self.assertIn("Tag allocation", labels)
-        self.assertIn("OVERWATCH self-cost", labels)
+        self.assertIn("App usage telemetry", labels)
         self.assertIn("Executive digest", labels)
         self.assertIn("Org rollup", labels)
 

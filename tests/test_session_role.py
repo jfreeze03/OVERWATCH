@@ -70,7 +70,7 @@ class SessionRoleTests(unittest.TestCase):
         self.assertIn("env=PROD", tag)
         self.assertIn("tier=recent", tag)
 
-    def test_apply_overwatch_query_tag_sets_session_state_and_alter_statement(self):
+    def test_apply_overwatch_query_tag_sets_session_state_without_alter_statement(self):
         class Result:
             def collect(self):
                 return []
@@ -90,8 +90,7 @@ class SessionRoleTests(unittest.TestCase):
 
         apply_overwatch_query_tag(session, "OVERWATCH|section=DBA_Control_Room|company=ALFA")
 
-        self.assertEqual(len(session.statements), 1)
-        self.assertIn("ALTER SESSION SET QUERY_TAG", session.statements[0])
+        self.assertEqual(session.statements, [])
         self.assertEqual(st.session_state["_overwatch_active_query_tag"], "OVERWATCH|section=DBA_Control_Room|company=ALFA")
         self.assertEqual(st.session_state["_overwatch_active_query_tag_section"], "DBA_Control_Room")
 

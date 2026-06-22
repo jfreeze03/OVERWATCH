@@ -34,10 +34,10 @@ def native_capability_lanes() -> tuple[dict[str, str], ...]:
             "detail": "Prove owner, cost center, criticality, and untagged spend risk.",
         },
         {
-            "label": "OVERWATCH self-cost",
-            "value": "QUERY_TAG",
-            "state": "Required",
-            "detail": "Track app queries, p95, failures, bytes scanned, and warehouse cost by section.",
+            "label": "App usage telemetry",
+            "value": "OVERWATCH_USAGE_LOG",
+            "state": "Fallback",
+            "detail": "Track app query count, p95, failures, and section attribution from local usage logs. Legacy query-tag cost is optional when available.",
         },
         {
             "label": "Executive digest",
@@ -144,7 +144,7 @@ def build_tag_allocation_sql() -> str:
 
 
 def build_overwatch_self_cost_sql(days: int = 7) -> str:
-    """Build OVERWATCH self-cost and reliability evidence from app query tags."""
+    """Build optional legacy self-cost evidence from app query tags when present."""
     days = max(1, int(days or 7))
     return _sql(f"""
         WITH app_queries AS (

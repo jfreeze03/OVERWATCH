@@ -35,7 +35,7 @@ Use this when the dashboard is blank, stale, slow, or showing conflicting teleme
 
 1. Narrow company, environment, date, warehouse, and user filters.
 2. Check the in-session query budget summary in DBA Control Room if exposed.
-3. Review query tags beginning with `OVERWATCH` in `SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY`.
+3. Review `OVERWATCH_USAGE_LOG` for app-side section activity. If historical query tags already exist, query tags beginning with `OVERWATCH` in `SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY` can be used as optional legacy evidence.
 4. Move repeated live views into transient fact tables or the scheduled mart layer.
 
 ## If Cost Numbers Are Challenged

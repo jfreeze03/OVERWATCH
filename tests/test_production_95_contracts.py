@@ -202,6 +202,8 @@ class Production95ContractsTests(unittest.TestCase):
         self.assertFalse((APP_ROOT / "sections" / "executive_landing_shell.py").exists())
         self.assertIn("def _load_executive_observability", executive_text)
         self.assertIn("_executive_landing_observability_autoload_scope", executive_text)
+        self.assertIn("def _executive_observability_autoload_allowed", executive_text)
+        self.assertIn("_store_connection_unavailable_observability", executive_text)
         self.assertIn("Snowflake Observability Wall", executive_text)
         self.assertNotIn("Executive Summary Signals", executive_text)
         self.assertIn("Executive decisions to make first", executive_text)

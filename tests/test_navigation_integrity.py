@@ -356,6 +356,12 @@ class NavigationIntegrityTests(unittest.TestCase):
 
         self.assertIn("def _load_executive_observability", full_workspace_text)
         self.assertIn("_executive_landing_observability_autoload_scope", full_workspace_text)
+        self.assertIn("def _executive_observability_autoload_allowed", full_workspace_text)
+        self.assertIn('st.session_state.get("_overwatch_connection_available") is True', full_workspace_text)
+        self.assertIn("not snowflake_connection_known_unavailable()", full_workspace_text)
+        self.assertIn("_store_connection_unavailable_observability(company, environment, int(days))", full_workspace_text)
+        self.assertIn("refresh_session = get_session_for_action", full_workspace_text)
+        self.assertNotIn("st.session_state.get(autoload_scope_key) != expected_scope", full_workspace_text)
         self.assertIn("Snowflake Observability Wall", full_workspace_text)
         self.assertNotIn("Executive Summary Signals", full_workspace_text)
         self.assertIn("Refresh Summary", full_workspace_text)
@@ -377,6 +383,16 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("_SECTION_WORKSPACE_KEYS", full_workspace_text)
         self.assertNotIn("def _open_target_workspace", full_workspace_text)
         self.assertNotIn("def _build_executive_snapshot_pptx", full_workspace_text)
+
+    def test_section_landing_default_messages_are_removed(self):
+        offenders = []
+        for path in APP_ROOT.rglob("*.py"):
+            if "__pycache__" in path.parts:
+                continue
+            text = path.read_text(encoding="utf-8")
+            if "Landing default" in text:
+                offenders.append(str(path.relative_to(APP_ROOT)))
+        self.assertEqual(offenders, [])
 
     def test_dba_control_room_uses_fast_shell_module(self):
         self.assertEqual(SECTION_MODULES["DBA Control Room"], "sections.dba_control_room")

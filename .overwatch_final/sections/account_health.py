@@ -3660,7 +3660,6 @@ def render():
                 )
 
         if exceptions_only:
-            st.caption("Landing default stops here to avoid loading lower-priority drilldowns.")
             return
 
         st.divider()

@@ -2857,8 +2857,6 @@ def render() -> None:
         confidence="exact",
         scope_note="Company scope uses user/database naming where Snowflake does not expose company routing.",
     )
-    if st.session_state.get("exceptions_only_mode"):
-        st.warning("Landing default: prioritize failed logins, MFA gaps, risky grants, and external exposure.")
     _render_loaded_security_alert_context()
 
     days = day_window_selectbox(

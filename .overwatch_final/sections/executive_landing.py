@@ -50,12 +50,14 @@ load_executive_forecast_summary = _lazy_util("load_executive_forecast_summary")
 load_production_readiness_summary = _lazy_util("load_production_readiness_summary")
 run_query = _lazy_util("run_query")
 safe_identifier = _lazy_util("safe_identifier")
+snowflake_connection_known_unavailable = _lazy_util("snowflake_connection_known_unavailable")
 sql_literal = _lazy_util("sql_literal")
 
 
 EXECUTIVE_LANDING_VERSION = "2026-06-14-boardroom-glance-v2"
 PLATFORM_SUMMARY_STATE_KEY = "executive_landing_platform_summary"
 OBSERVABILITY_STATE_KEY = "executive_landing_observability_board"
+OBSERVABILITY_OFFLINE_SOURCE = "Snowflake connection unavailable"
 
 
 
@@ -625,6 +627,24 @@ def _store_observability_payload(
     return not _obs_rows(normalised, "KPI").empty
 
 
+def _store_connection_unavailable_observability(company: str, environment: str, days: int) -> bool:
+    return _store_observability_payload(
+        _observability_status_frame([{
+            "source": "Connection",
+            "state": "Unavailable",
+            "detail": (
+                "Snowflake connection is not available yet. Executive Landing is showing local shell "
+                "state until the app has a live Snowflake session or Refresh Summary is used after configuration."
+            ),
+        }]),
+        company=company,
+        environment=environment,
+        days=int(days),
+        source=OBSERVABILITY_OFFLINE_SOURCE,
+        error="Snowflake connection is not available yet; showing local Executive Landing shell state.",
+    )
+
+
 def _build_executive_observability_query_parts(
     company: str,
     environment: str,
@@ -1103,6 +1123,17 @@ def _current_observability_board(company: str, environment: str, days: int) -> t
         return pd.DataFrame(), {}
     data = payload.get("data")
     return (data if isinstance(data, pd.DataFrame) else pd.DataFrame()), payload
+
+
+def _observability_payload_is_offline(payload: dict) -> bool:
+    return isinstance(payload, dict) and payload.get("source") == OBSERVABILITY_OFFLINE_SOURCE
+
+
+def _executive_observability_autoload_allowed() -> bool:
+    return (
+        st.session_state.get("_overwatch_connection_available") is True
+        and not snowflake_connection_known_unavailable()
+    )
 
 
 def _obs_rows(board: pd.DataFrame, panel: str, metric: str | None = None) -> pd.DataFrame:
@@ -3147,25 +3178,38 @@ def render() -> None:
     expected_scope = _executive_snapshot_scope(company, environment, int(days))
     board, board_payload = _current_observability_board(company, environment, int(days))
     autoload_scope_key = "_executive_landing_observability_autoload_scope"
-    if (
-        (not isinstance(board, pd.DataFrame) or board.empty)
-        and st.session_state.get(autoload_scope_key) != expected_scope
-    ):
-        _load_executive_observability(
-            company,
-            environment,
-            int(days),
-            credit_price=credit_price,
-        )
+    needs_first_load = (
+        not isinstance(board, pd.DataFrame)
+        or board.empty
+        or _observability_payload_is_offline(board_payload)
+    )
+    if needs_first_load:
+        if _executive_observability_autoload_allowed():
+            _load_executive_observability(
+                company,
+                environment,
+                int(days),
+                credit_price=credit_price,
+            )
+        elif not isinstance(board, pd.DataFrame) or board.empty:
+            _store_connection_unavailable_observability(company, environment, int(days))
         st.session_state[autoload_scope_key] = expected_scope
         board, board_payload = _current_observability_board(company, environment, int(days))
     if refresh_board:
-        _load_executive_observability(
-            company,
-            environment,
-            int(days),
-            credit_price=credit_price,
+        refresh_session = get_session_for_action(
+            "refresh executive summaries",
+            surface="Executive Landing",
+            offline_note="Executive Landing will keep showing the local shell state until Snowflake is configured.",
         )
+        if refresh_session is None:
+            _store_connection_unavailable_observability(company, environment, int(days))
+        else:
+            _load_executive_observability(
+                company,
+                environment,
+                int(days),
+                credit_price=credit_price,
+            )
         st.session_state["_executive_landing_observability_scope"] = expected_scope
         board, board_payload = _current_observability_board(company, environment, int(days))
 

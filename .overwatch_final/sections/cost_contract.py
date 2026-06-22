@@ -5178,8 +5178,6 @@ def render() -> None:
         confidence="allocated",
         scope_note="Warehouse totals are exact; user/query chargeback is allocated unless noted.",
     )
-    if st.session_state.get("exceptions_only_mode"):
-        st.warning("Landing default: prioritize usage deltas, open action queue items, and run-rate risk.")
     _render_cost_watch_floor(company, credit_price)
     _render_loaded_cost_alert_context()
 

@@ -2429,9 +2429,6 @@ def render() -> None:
         ],
         columns=4,
     )
-    if st.session_state.get("exceptions_only_mode"):
-        st.warning("Landing default: prioritize recent object, grant, route, policy, replication, and task-control issues.")
-
     days = safe_int(st.session_state.get("change_drift_brief_days", 14), 14)
     if days < 1 or days > 90:
         days = 14

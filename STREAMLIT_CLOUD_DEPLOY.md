@@ -11,7 +11,7 @@ The deployment source of truth is intentionally split by runtime:
 
 | Runtime | Entry point | Manifest | Warehouse / execution |
 |---|---|---|---|
-| Streamlit in Snowflake | `.overwatch_final/app.py` | `.overwatch_final/snowflake.yml` | `OVERWATCH_WH`, `CALLER` |
+| Streamlit in Snowflake | `.overwatch_final/app.py` | `.overwatch_final/snowflake.yml` | `COMPUTE_WH`, `CALLER` |
 | Streamlit Community Cloud | `streamlit_app.py` | `.streamlit/config.toml` | user-provided Snowflake connection |
 | Snowflake setup objects | `snowflake/mart_setup/` ordered files (canonical human path; `snowflake/OVERWATCH_MART_SETUP.sql` is the byte-equivalent single-file artifact) | `utils.deployment` schema contract | setup role, mart task warehouses |
 
@@ -49,11 +49,12 @@ Expected values:
 | Setting | Value |
 |---|---|
 | Main file | `app.py` |
-| Query warehouse | `OVERWATCH_WH` |
+| Query warehouse | `COMPUTE_WH` |
 | App package root | `.overwatch_final` |
 
-`OVERWATCH_WH` is the dedicated app runtime warehouse. The current mart task
-graph runs on `COMPUTE_WH`.
+`COMPUTE_WH` is the approved current app runtime warehouse until a dedicated
+OVERWATCH warehouse is approved. The current mart task graph also runs on
+`COMPUTE_WH`.
 
 ## Snowflake Setup
 
@@ -73,8 +74,8 @@ directly instead.
 The setup creates:
 
 - OVERWATCH app database/schema objects
-- `OVERWATCH_WH`
-- `OVERWATCH_WH_RM`
+- `COMPUTE_WH`
+- `COMPUTE_WH_RM`
 - mart facts and views
 - owner, alert, action, audit, automation, and external feed tables
 - refresh procedures
@@ -94,7 +95,7 @@ CI deployment contract:
 .\.venv\Scripts\python.exe -m unittest tests.test_deployment_contract
 ```
 
-This validates the Snowflake manifest, `OVERWATCH_WH`, caller-mode boundary,
+This validates the Snowflake manifest, `COMPUTE_WH`, caller-mode boundary,
 Snowflake artifact list, Community Cloud wrapper, `.streamlit/config.toml`,
 deployment guide, and CI release rule. If it fails, fix the manifest, docs,
 and code contract before deploying.

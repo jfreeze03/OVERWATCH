@@ -12,7 +12,7 @@ from datetime import datetime
 
 import streamlit as st
 
-from access_control import admin_access_is_allowed as refresh_admin_access, get_current_role
+from access_control import admin_access_is_allowed, get_stable_current_role
 from config import (
     ADMIN_ACCESS_ROLES,
     COMPANY_CONFIG,
@@ -334,8 +334,8 @@ def render_sidebar(
 
         st.divider()
 
-        current_role = get_current_role()
-        admin_access_allowed = refresh_admin_access(current_role, connection_available)
+        current_role = current_role or get_stable_current_role()
+        admin_access_allowed = admin_access_allowed or admin_access_is_allowed(current_role, connection_available)
         visible_sections = current_visible_sections()
 
         if not admin_access_allowed and not idle_query_paused:

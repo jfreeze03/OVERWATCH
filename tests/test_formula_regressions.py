@@ -1001,7 +1001,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "VARIANCE_CREDITS": 4.0,
             },
             {
-                "WAREHOUSE_NAME": "OVERWATCH_WH",
+                "WAREHOUSE_NAME": "COMPUTE_WH",
                 "EXACT_METERED_CREDITS": 2.0,
                 "ALLOCATED_QUERY_CREDITS": 1.5,
                 "OFFICIAL_ATTRIBUTED_COMPUTE_CREDITS": 1.5,
@@ -2707,14 +2707,14 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("DATEADD('HOUR', -24, CURRENT_TIMESTAMP())", setup_upper)
         self.assertIn("ROUND(SUM(TOTAL_CREDITS * RATE_USD), 2) AS EST_COST_USD", setup_upper)
         self.assertIn("SERVICE_CATEGORY", setup_upper)
-        self.assertIn("CREATE WAREHOUSE IF NOT EXISTS OVERWATCH_WH", setup_upper)
+        self.assertIn("CREATE WAREHOUSE IF NOT EXISTS COMPUTE_WH", setup_upper)
         self.assertIn("STATEMENT_TIMEOUT_IN_SECONDS = 600", setup_upper)
-        self.assertIn("CREATE RESOURCE MONITOR IF NOT EXISTS OVERWATCH_WH_RM", setup_upper)
+        self.assertIn("CREATE RESOURCE MONITOR IF NOT EXISTS COMPUTE_WH_RM", setup_upper)
         self.assertIn("WITH CREDIT_QUOTA = 50", setup_upper)
         self.assertIn("TRIGGERS ON 80 PERCENT DO NOTIFY", setup_upper)
         self.assertIn("ON 100 PERCENT DO SUSPEND", setup_upper)
-        self.assertIn("ALTER WAREHOUSE IF EXISTS OVERWATCH_WH", setup_upper)
-        self.assertIn("SET RESOURCE_MONITOR = OVERWATCH_WH_RM", setup_upper)
+        self.assertIn("ALTER WAREHOUSE IF EXISTS COMPUTE_WH", setup_upper)
+        self.assertIn("SET RESOURCE_MONITOR = COMPUTE_WH_RM", setup_upper)
         self.assertIn("WHEN SRC.SETTING_NAME = 'DEFAULT_ALERT_EMAIL'", setup_upper)
         self.assertIn("ILIKE '%YOURCOMPANY.COM%'", setup_upper)
         self.assertIn("'CONFIG_REQUIRED'", setup_upper)
@@ -2723,7 +2723,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("AFTER OVERWATCH_REFRESH_CONTROL_ROOM", setup_upper)
         self.assertIn("OVERWATCH_ALERTS", setup_upper)
         self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_ANNOTATIONS", setup_upper)
-        self.assertIn("WAREHOUSE = OVERWATCH_WH", setup_upper)
+        self.assertIn("WAREHOUSE = COMPUTE_WH", setup_upper)
         self.assertIn("WAREHOUSE_COST_MOVEMENT", setup_upper)
         self.assertIn("CORTEX_SPEND_AND_QUOTA", setup_upper)
         self.assertIn("CHANGE_COST_CORRELATION", setup_upper)
@@ -2892,10 +2892,10 @@ class FormulaRegressionTests(unittest.TestCase):
         sis = by_runtime["Streamlit in Snowflake"]
         self.assertEqual(sis["MANIFEST"], ".overwatch_final/snowflake.yml")
         self.assertEqual(sis["ENTRYPOINT"], ".overwatch_final/app.py")
-        self.assertEqual(sis["WAREHOUSE"], "OVERWATCH_WH")
+        self.assertEqual(sis["WAREHOUSE"], "COMPUTE_WH")
         self.assertEqual(sis["EXECUTE_AS"], "CALLER")
         self.assertIn("streamlit_app.py", sis["DO_NOT_USE"])
-        self.assertIn("COMPUTE_WH", sis["DO_NOT_USE"])
+        self.assertNotIn("COMPUTE_WH", sis["DO_NOT_USE"])
 
         cloud = by_runtime["Streamlit Community Cloud"]
         self.assertEqual(cloud["ENTRYPOINT"], "streamlit_app.py")
@@ -2913,7 +2913,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("SP_OVERWATCH_REFRESH_COST_MONITORING", sql)
         self.assertIn("OVERWATCH_COST_MONITORING_REFRESH", sql)
         self.assertIn("OVERWATCH_ALERTS", sql)
-        self.assertIn("WAREHOUSE = OVERWATCH_WH", sql)
+        self.assertIn("WAREHOUSE = COMPUTE_WH", sql)
 
     def test_control_room_snapshot_maps_to_watch_floor_shape(self):
         snapshot = pd.DataFrame([
@@ -5964,7 +5964,7 @@ class FormulaRegressionTests(unittest.TestCase):
     def test_warehouse_guardrail_coverage_blocks_missing_monitor_and_never_suspend(self):
         overview = pd.DataFrame(
             {
-                "WAREHOUSE_NAME": ["OVERWATCH_WH", "BI_COMPUTE_WH"],
+                "WAREHOUSE_NAME": ["COMPUTE_WH", "BI_COMPUTE_WH"],
                 "TOTAL_QUERIES": [120, 600],
                 "AVG_QUEUED_SEC": [0.2, 3.5],
                 "TOTAL_REMOTE_SPILL_GB": [0.0, 18.0],
@@ -5976,7 +5976,7 @@ class FormulaRegressionTests(unittest.TestCase):
         )
         settings = pd.DataFrame(
             {
-                "NAME": ["OVERWATCH_WH", "BI_COMPUTE_WH"],
+                "NAME": ["COMPUTE_WH", "BI_COMPUTE_WH"],
                 "RESOURCE_MONITOR": ["", "BI_WH_RM"],
                 "AUTO_SUSPEND": [300, 0],
                 "STATEMENT_TIMEOUT_IN_SECONDS": [3600, 0],
@@ -5990,10 +5990,10 @@ class FormulaRegressionTests(unittest.TestCase):
         by_wh = {row["WAREHOUSE_NAME"]: row for _, row in board.iterrows()}
 
         self.assertEqual(summary["blocked"], 2)
-        self.assertEqual(by_wh["OVERWATCH_WH"]["GUARDRAIL_STATE"], "Blocked")
-        self.assertEqual(by_wh["OVERWATCH_WH"]["RESOURCE_MONITOR_STATE"], "Blocked")
-        self.assertEqual(by_wh["OVERWATCH_WH"]["TIMEOUT_STATE"], "Ready")
-        self.assertIn("OVERWATCH_WH_RM", by_wh["OVERWATCH_WH"]["NEXT_ACTION"])
+        self.assertEqual(by_wh["COMPUTE_WH"]["GUARDRAIL_STATE"], "Blocked")
+        self.assertEqual(by_wh["COMPUTE_WH"]["RESOURCE_MONITOR_STATE"], "Blocked")
+        self.assertEqual(by_wh["COMPUTE_WH"]["TIMEOUT_STATE"], "Ready")
+        self.assertIn("COMPUTE_WH_RM", by_wh["COMPUTE_WH"]["NEXT_ACTION"])
         self.assertEqual(by_wh["BI_COMPUTE_WH"]["AUTO_SUSPEND_STATE"], "Blocked")
         self.assertEqual(by_wh["BI_COMPUTE_WH"]["TIMEOUT_STATE"], "Review")
         self.assertEqual(by_wh["BI_COMPUTE_WH"]["ESCALATION_ROUTE_STATE"], "Ready")
@@ -6048,7 +6048,7 @@ class FormulaRegressionTests(unittest.TestCase):
     def test_warehouse_cost_control_posture_blocks_never_suspend_and_documents_future_wh(self):
         settings = pd.DataFrame(
             {
-                "NAME": ["OVERWATCH_WH"],
+                "NAME": ["COMPUTE_WH"],
                 "WAREHOUSE_SIZE": ["XSMALL"],
                 "STATE": ["STARTED"],
                 "AUTO_SUSPEND": [0],
@@ -6064,7 +6064,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(row["IDLE_RISK"], "Never suspends")
         self.assertIn("AUTO_SUSPEND = 60", row["REVIEW_SQL"])
         setup_sql = _overwatch_dedicated_warehouse_setup_sql()
-        self.assertIn("CREATE WAREHOUSE IF NOT EXISTS OVERWATCH_WH", setup_sql)
+        self.assertIn("CREATE WAREHOUSE IF NOT EXISTS COMPUTE_WH", setup_sql)
         self.assertIn("AUTO_RESUME = TRUE", setup_sql)
 
     def test_warehouse_advisor_recommendations_show_savings_without_sql(self):

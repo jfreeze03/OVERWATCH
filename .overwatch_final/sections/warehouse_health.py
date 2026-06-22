@@ -1351,7 +1351,7 @@ def _overwatch_dedicated_warehouse_setup_sql() -> str:
     """Return advisory setup SQL for a future dedicated OVERWATCH warehouse."""
     return """-- Future dedicated OVERWATCH warehouse pattern.
 -- Review naming, role grants, and resource monitor policy before execution.
-CREATE WAREHOUSE IF NOT EXISTS OVERWATCH_WH
+CREATE WAREHOUSE IF NOT EXISTS COMPUTE_WH
   WAREHOUSE_SIZE = XSMALL
   AUTO_SUSPEND = 60
   AUTO_RESUME = TRUE
@@ -1359,7 +1359,7 @@ CREATE WAREHOUSE IF NOT EXISTS OVERWATCH_WH
   COMMENT = 'Dedicated OVERWATCH Snowflake DBA monitoring warehouse';
 
 -- Optional guardrail after resource monitor policy is approved.
--- ALTER WAREHOUSE OVERWATCH_WH SET RESOURCE_MONITOR = OVERWATCH_WH_RM;
+-- ALTER WAREHOUSE COMPUTE_WH SET RESOURCE_MONITOR = COMPUTE_WH_RM;
 """
 
 
@@ -1396,7 +1396,7 @@ def _build_warehouse_cost_control_posture(
         auto_resume = _warehouse_bool_setting(row.get("AUTO_RESUME"))
         overview_row = overview_by_wh.get(wh_key, {})
         metered = safe_float(overview_row.get("METERED_CREDITS"))
-        recommended_suspend = 60 if wh_key in {"COMPUTE_WH", "OVERWATCH_WH"} or "OVERWATCH" in wh_key else 300
+        recommended_suspend = 60 if wh_key in {"COMPUTE_WH", "COMPUTE_WH"} or "OVERWATCH" in wh_key else 300
 
         reasons: list[str] = []
         rank = 8
@@ -1558,9 +1558,9 @@ def _build_warehouse_guardrail_coverage(
             monitor_state = "Ready"
             monitor_action = "Keep resource monitor assignment with the warehouse review."
             monitor_deduction = 0
-        elif "OVERWATCH" in wh_key:
+        elif "OVERWATCH" in wh_key or wh_key == "COMPUTE_WH":
             monitor_state = "Blocked"
-            monitor_action = "Assign OVERWATCH_WH to OVERWATCH_WH_RM before declaring release compute guarded."
+            monitor_action = "Assign COMPUTE_WH to COMPUTE_WH_RM before declaring release compute guarded."
             monitor_deduction = 28
         elif metered >= 50 or credit_delta > 0:
             monitor_state = "Review"

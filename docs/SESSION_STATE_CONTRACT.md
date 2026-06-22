@@ -43,6 +43,7 @@ remain owned by their section modules until they are intentionally migrated.
 - `alert_email_targets`
 - `_overwatch_current_role`
 - `_overwatch_current_role_source`
+- `_overwatch_last_allowed_role`
 
 ## Filter Keys
 

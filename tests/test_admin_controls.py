@@ -676,7 +676,7 @@ class AdminControlTests(unittest.TestCase):
         self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_OWNER_TAG_NAMES", setup_sql)
         self.assertNotIn("CREATE TABLE IF NOT EXISTS OVERWATCH_OWNER_DIRECTORY", setup_sql)
         self.assertNotIn("CREATE OR REPLACE VIEW OVERWATCH_OWNER_DIRECTORY_ACTIVE_V", setup_sql)
-        self.assertNotIn("OVERWATCH_WH_EXECUTION", setup_sql)
+        self.assertNotIn("COMPUTE_WH_EXECUTION", setup_sql)
         self.assertNotIn("COMPUTE_WH_EXECUTION", setup_sql)
         self.assertNotIn("ALFA_EDW_PROD_DATABASE", setup_sql)
         self.assertNotIn("ALFA_EDW_DEV_DATABASES", setup_sql)
@@ -784,20 +784,20 @@ class AdminControlTests(unittest.TestCase):
         self.assertEqual(
             warehouses,
             {
-                "OVERWATCH_ANOMALY_CHECK": "OVERWATCH_WH",
-                "OVERWATCH_LOAD_HOURLY": "OVERWATCH_WH",
-                "OVERWATCH_LOAD_QUERY_HOURLY": "OVERWATCH_WH",
-                "OVERWATCH_LOAD_QUERY_DETAIL": "OVERWATCH_WH",
-                "OVERWATCH_LOAD_OBJECT_CHANGE": "OVERWATCH_WH",
-                "OVERWATCH_LOAD_TASK_RUN": "OVERWATCH_WH",
-                "OVERWATCH_LOAD_PROCEDURE_RUN": "OVERWATCH_WH",
-                "OVERWATCH_LOAD_SNAPSHOTS": "OVERWATCH_WH",
-                "OVERWATCH_LOAD_TASK_CRITICAL_PATH": "OVERWATCH_WH",
-                "OVERWATCH_LOAD_CORTEX": "OVERWATCH_WH",
-                "OVERWATCH_REFRESH_CONTROL_ROOM": "OVERWATCH_WH",
-                "OVERWATCH_COST_MONITORING_REFRESH": "OVERWATCH_WH",
-                "OVERWATCH_EXECUTIVE_OBSERVABILITY_REFRESH": "OVERWATCH_WH",
-                "OVERWATCH_LOAD_DAILY": "OVERWATCH_WH",
+                "OVERWATCH_ANOMALY_CHECK": "COMPUTE_WH",
+                "OVERWATCH_LOAD_HOURLY": "COMPUTE_WH",
+                "OVERWATCH_LOAD_QUERY_HOURLY": "COMPUTE_WH",
+                "OVERWATCH_LOAD_QUERY_DETAIL": "COMPUTE_WH",
+                "OVERWATCH_LOAD_OBJECT_CHANGE": "COMPUTE_WH",
+                "OVERWATCH_LOAD_TASK_RUN": "COMPUTE_WH",
+                "OVERWATCH_LOAD_PROCEDURE_RUN": "COMPUTE_WH",
+                "OVERWATCH_LOAD_SNAPSHOTS": "COMPUTE_WH",
+                "OVERWATCH_LOAD_TASK_CRITICAL_PATH": "COMPUTE_WH",
+                "OVERWATCH_LOAD_CORTEX": "COMPUTE_WH",
+                "OVERWATCH_REFRESH_CONTROL_ROOM": "COMPUTE_WH",
+                "OVERWATCH_COST_MONITORING_REFRESH": "COMPUTE_WH",
+                "OVERWATCH_EXECUTIVE_OBSERVABILITY_REFRESH": "COMPUTE_WH",
+                "OVERWATCH_LOAD_DAILY": "COMPUTE_WH",
             },
         )
         self.assertEqual(

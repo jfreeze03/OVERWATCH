@@ -11,9 +11,9 @@ uses the mart first and requests live metadata only where immediacy matters.
 | Layer | Object or path | Purpose |
 |---|---|---|
 | Streamlit app | `.overwatch_final/app.py` | User interface, navigation, filters, section routing. |
-| App runtime warehouse | `OVERWATCH_WH` | Dedicated Streamlit execution warehouse. |
-| App resource monitor | `OVERWATCH_WH_RM` | Runtime cost guardrail. |
-| Mart task warehouse | `OVERWATCH_WH` | Dedicated scheduled mart refresh warehouse. |
+| App runtime warehouse | `COMPUTE_WH` | Approved current Streamlit execution warehouse until a dedicated OVERWATCH warehouse is approved. |
+| App resource monitor | `COMPUTE_WH_RM` | Runtime cost guardrail. |
+| Mart task warehouse | `COMPUTE_WH` | Approved current scheduled mart refresh warehouse. |
 | Snowflake setup | `snowflake/OVERWATCH_MART_SETUP.sql` | Creates database, schema, tables, procedures, tasks, and seed rows. |
 | Local tests | `tests/` | Formula, navigation, admin, scope, and regression coverage. |
 | Performance tests | `perf_tests/` | HTTP, live concurrency, and section smoke checks. |

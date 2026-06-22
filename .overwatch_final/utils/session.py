@@ -6,6 +6,7 @@ import re
 
 import streamlit as st
 
+from config import ADMIN_ACCESS_ROLES
 from runtime_state import (
     ACTIVE_COMPANY,
     ACTIVE_QUERY_TAG,
@@ -19,6 +20,7 @@ from runtime_state import (
     CURRENT_ROLE_SOURCE,
     DETAILED_QUERY_TAGS_ENABLED,
     GLOBAL_ENVIRONMENT,
+    LAST_ALLOWED_ROLE,
     NAV_SECTION,
     PERF_RUN_ID,
     SF_SESSION,
@@ -211,6 +213,8 @@ def _capture_current_role(sess) -> str:
         role = str(role or "").upper()
         set_state(CURRENT_ROLE, role)
         set_state(CURRENT_ROLE_SOURCE, "session")
+        if role in set(ADMIN_ACCESS_ROLES):
+            set_state(LAST_ALLOWED_ROLE, role)
         _warn_on_broad_role(role)
         return role
     except Exception:

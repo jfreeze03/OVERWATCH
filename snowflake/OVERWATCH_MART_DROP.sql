@@ -228,7 +228,8 @@ DROP TABLE IF EXISTS OVERWATCH_SETTINGS;
 --
 -- DROP SCHEMA IF EXISTS DBA_MAINT_DB.OVERWATCH;
 -- DROP DATABASE IF EXISTS DBA_MAINT_DB;
--- DROP WAREHOUSE IF EXISTS OVERWATCH_WH;
--- DROP RESOURCE MONITOR IF EXISTS OVERWATCH_WH_RM;
+-- Do not drop COMPUTE_WH from this reset script; it is the approved current
+-- shared runtime warehouse until a dedicated OVERWATCH warehouse is approved.
+-- Review any COMPUTE_WH_RM removal with the Snowflake platform owner first.
 -- DROP ROLE IF EXISTS SNOW_SYSADMINS;
 -- DROP ROLE IF EXISTS SNOW_ACCOUNTADMINS;

@@ -889,7 +889,7 @@ MERGE INTO OVERWATCH_PRIVILEGE_READINESS_REQUIREMENT tgt
 USING (
   SELECT * FROM VALUES
     ('SNOWFLAKE_IMPORTED_PRIVILEGES', 'SNOWFLAKE', 'DATABASE', 'IMPORTED PRIVILEGES', 'ACCOUNT_USAGE-backed mart refreshes', TRUE, 'SHOW GRANTS ON DATABASE SNOWFLAKE;', 'Security / DBA', 'Grant imported privileges to the approved OVERWATCH runtime/admin roles after security review.', TRUE),
-    ('OVERWATCH_WH_USAGE', 'OVERWATCH_WH', 'WAREHOUSE', 'USAGE', 'Scheduled mart refresh and Streamlit runtime queries', TRUE, 'SHOW GRANTS ON WAREHOUSE OVERWATCH_WH;', 'Security / DBA', 'Grant USAGE on OVERWATCH_WH to the runtime roles and keep AUTO_SUSPEND controlled.', TRUE),
+    ('COMPUTE_WH_USAGE', 'COMPUTE_WH', 'WAREHOUSE', 'USAGE', 'Scheduled mart refresh and Streamlit runtime queries', TRUE, 'SHOW GRANTS ON WAREHOUSE COMPUTE_WH;', 'Security / DBA', 'Grant USAGE on COMPUTE_WH to the runtime roles and keep AUTO_SUSPEND controlled.', TRUE),
     ('APP_DB_USAGE', 'DBA_MAINT_DB', 'DATABASE', 'USAGE', 'Read OVERWATCH mart objects', TRUE, 'SHOW GRANTS ON DATABASE DBA_MAINT_DB;', 'Security / DBA', 'Grant USAGE on the app database to runtime roles.', TRUE),
     ('APP_SCHEMA_USAGE', 'DBA_MAINT_DB.OVERWATCH', 'SCHEMA', 'USAGE', 'Read OVERWATCH mart schema', TRUE, 'SHOW GRANTS ON SCHEMA DBA_MAINT_DB.OVERWATCH;', 'Security / DBA', 'Grant USAGE on the app schema to runtime roles.', TRUE),
     ('APP_TABLE_SELECT', 'DBA_MAINT_DB.OVERWATCH.*', 'TABLE', 'SELECT', 'First-paint dashboards and explicit-load detail panels', TRUE, 'SHOW GRANTS TO ROLE <role_name>;', 'Security / DBA', 'Grant SELECT on all/future OVERWATCH tables to viewer/operator/admin roles.', TRUE),

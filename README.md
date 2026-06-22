@@ -275,7 +275,7 @@ Streamlit Community Cloud settings:
 - Tracked app config: `.streamlit/config.toml`
 
 Streamlit in Snowflake uses `.overwatch_final/snowflake.yml` with
-`main_file: app.py` and `query_warehouse: OVERWATCH_WH`.
+`main_file: app.py` and `query_warehouse: COMPUTE_WH`.
 
 ## Production Validation
 

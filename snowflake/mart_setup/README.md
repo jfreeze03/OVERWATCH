@@ -17,7 +17,7 @@ established in `01_runtime_objects.sql`):
 
 | Order | File | Contents |
 |-------|------|----------|
-| 1 | `01_runtime_objects.sql` | Database, schema, dedicated `OVERWATCH_WH` warehouse, and resource monitor. Establishes the session `USE DATABASE/SCHEMA` context. |
+| 1 | `01_runtime_objects.sql` | Database, schema, current `COMPUTE_WH` warehouse, and resource monitor. Establishes the session `USE DATABASE/SCHEMA` context. |
 | 2 | `02_roles_and_grants.sql` | Access roles (`SNOW_ACCOUNTADMINS`, `SNOW_SYSADMINS`) and their warehouse/database/schema/table/view grants. |
 | 3 | `03_config_and_audit_tables.sql` | Configuration, schema-migration, audit, action-queue, checklist, change-control, and alert tables, plus the environment UDF and supporting views. |
 | 4 | `04_mart_tables.sql` | Transient mart/fact/dimension tables and their views. |

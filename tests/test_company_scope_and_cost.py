@@ -59,7 +59,7 @@ class CompanyScopeAndCostTests(unittest.TestCase):
         self.assertNotIn("%", COMPANY_CONFIG["ALFA"]["wh_patterns"])
         self.assertTrue(company_value_allowed("WH_ALFA_ADHOC", "warehouse", "ALFA"))
         self.assertTrue(company_value_allowed("BI_COMPUTE_WH", "warehouse", "ALFA"))
-        self.assertTrue(company_value_allowed("OVERWATCH_WH", "warehouse", "ALFA"))
+        self.assertTrue(company_value_allowed("COMPUTE_WH", "warehouse", "ALFA"))
         self.assertTrue(company_value_allowed("WH_TRXS_REPORTING", "warehouse", "ALFA"))
         self.assertTrue(company_value_allowed("WH_RANDOM_VENDOR", "warehouse", "ALFA"))
         self.assertFalse(company_value_allowed("WH_TRXS_LOAD", "warehouse", "ALFA"))

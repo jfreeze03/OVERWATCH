@@ -96,10 +96,10 @@ class DeploymentContractTests(unittest.TestCase):
 
         self.assertEqual(snowflake["ENTRYPOINT"], ".overwatch_final/app.py")
         self.assertEqual(snowflake["MANIFEST"], ".overwatch_final/snowflake.yml")
-        self.assertEqual(snowflake["WAREHOUSE"], "OVERWATCH_WH")
+        self.assertEqual(snowflake["WAREHOUSE"], "COMPUTE_WH")
         self.assertEqual(snowflake["EXECUTE_AS"], "CALLER")
         self.assertIn("streamlit_app.py", snowflake["DO_NOT_USE"])
-        self.assertIn("COMPUTE_WH", snowflake["DO_NOT_USE"])
+        self.assertNotIn("COMPUTE_WH", snowflake["DO_NOT_USE"])
 
         self.assertEqual(community["ENTRYPOINT"], "streamlit_app.py")
         self.assertEqual(community["MANIFEST"], ".streamlit/config.toml")
@@ -168,7 +168,7 @@ class DeploymentContractTests(unittest.TestCase):
                 )
                 self.assertIsNotNone(task)
                 task_body = task.group(1)
-                self.assertIn("WAREHOUSE = OVERWATCH_WH", task_body)
+                self.assertIn("WAREHOUSE = COMPUTE_WH", task_body)
                 self.assertRegex(task_body, rf"\bCALL\s+{proc_name}\s*\(")
 
         anomaly_task = re.search(

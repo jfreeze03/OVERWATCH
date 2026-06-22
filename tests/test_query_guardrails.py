@@ -46,7 +46,7 @@ class QueryGuardrailTests(unittest.TestCase):
             "SHOW WAREHOUSES",
             "DESC TABLE DBA_MAINT_DB.OVERWATCH.OVERWATCH_ALERTS",
             "CALL SP_OVERWATCH_SEND_ALERT_DIGEST()",
-            "ALTER WAREHOUSE OVERWATCH_WH SUSPEND",
+            "ALTER WAREHOUSE COMPUTE_WH SUSPEND",
             "SELECT 1; SELECT 2",
         ]
         for sql in cases:

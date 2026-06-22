@@ -14,6 +14,7 @@ from runtime_state import (
     CONNECTION_UNAVAILABLE,
     CURRENT_ROLE,
     CURRENT_ROLE_SOURCE,
+    LAST_ALLOWED_ROLE,
     get_state,
     set_state,
 )
@@ -33,11 +34,23 @@ def seed_current_role_from_secrets() -> None:
     if role:
         set_state(CURRENT_ROLE, role)
         set_state(CURRENT_ROLE_SOURCE, "secrets")
+        if current_role_allows_app_access(role):
+            set_state(LAST_ALLOWED_ROLE, role)
 
 
 def get_current_role() -> str:
     """Return the current Snowflake role captured for the shell."""
     return str(get_state(CURRENT_ROLE, "") or "").upper()
+
+
+def get_last_allowed_role() -> str:
+    """Return the last captured admin role for smooth reruns during scope changes."""
+    return str(get_state(LAST_ALLOWED_ROLE, "") or "").upper()
+
+
+def get_stable_current_role() -> str:
+    """Return the captured role, falling back to the last allowed role during transient reruns."""
+    return get_current_role() or get_last_allowed_role()
 
 
 def current_role_allows_app_access(role: str) -> bool:
@@ -49,18 +62,20 @@ def refresh_current_role_for_access(connection_available: bool) -> str:
     """Capture CURRENT_ROLE before deciding whether the admin monitor can render."""
     role = get_current_role()
     if not connection_available:
-        return role
+        return role or get_last_allowed_role()
     if role and get_state(CURRENT_ROLE_SOURCE) == "session":
         return role
     if role and get_state(CURRENT_ROLE_SOURCE) == "secrets":
         return role
+    if not role and get_last_allowed_role():
+        return get_last_allowed_role()
     try:
         get_session()
     except StopException:
         set_state(CONNECTION_UNAVAILABLE, True)
     except Exception:
         pass
-    return get_current_role()
+    return get_stable_current_role()
 
 
 def cached_snowflake_available(default: bool = False) -> bool:
@@ -72,7 +87,7 @@ def admin_access_is_allowed(role: str, connection_available: bool) -> bool:
     """Allow local no-connection shells, but gate Snowflake sessions to admin roles."""
     if not connection_available:
         return True
-    return current_role_allows_app_access(role)
+    return current_role_allows_app_access(role or get_last_allowed_role())
 
 
 def probe_snowflake_available(force: bool = False) -> bool:

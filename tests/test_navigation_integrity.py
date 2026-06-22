@@ -676,10 +676,9 @@ class NavigationIntegrityTests(unittest.TestCase):
 
         self.assertEqual(deprecated, [])
 
-    def test_streamlit_manifest_uses_dedicated_app_warehouse(self):
+    def test_streamlit_manifest_uses_current_app_warehouse(self):
         manifest = (APP_ROOT / "snowflake.yml").read_text(encoding="utf-8")
-        self.assertIn("query_warehouse: OVERWATCH_WH", manifest)
-        self.assertNotIn("query_warehouse: COMPUTE_WH", manifest)
+        self.assertIn("query_warehouse: COMPUTE_WH", manifest)
         self.assertIn("execute_as: CALLER", manifest)
         self.assertIn("main_file: app.py", manifest)
         self.assertIn('title: "OVERWATCH - Snowflake DBA Monitor"', manifest)
@@ -1030,8 +1029,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("def section_render_signature", (APP_ROOT / "refresh.py").read_text(encoding="utf-8"))
         self.assertIn("LAST_SECTION_RENDER_SIGNATURE", navigation_text)
         self.assertIn("def should_show_section_transition", navigation_text)
-        self.assertIn("has_prior_render = LAST_SECTION_RENDER_SIGNATURE in st.session_state", navigation_text)
         self.assertIn("has_pending_navigation = PENDING_SECTION in st.session_state", navigation_text)
+        self.assertIn("section_changed = bool(", navigation_text)
         self.assertIn("section_slot = st.empty()", shell_text)
         self.assertIn("def fresh_section_container", layout_text)
         self.assertIn("slot.empty()", layout_text)
@@ -1274,6 +1273,29 @@ class NavigationIntegrityTests(unittest.TestCase):
             layout.render_connection_empty_state("DBA Control Room")
         self.assertTrue(mock_markdown.called)
         mock_button.assert_called_once()
+
+    def test_cached_admin_role_suppresses_scope_switch_access_flicker(self):
+        import access_control
+        import navigation
+        from runtime_state import LAST_ALLOWED_ROLE, LAST_SECTION_RENDER_SIGNATURE, PENDING_SECTION
+
+        previous = dict(st.session_state)
+        try:
+            st.session_state.clear()
+            st.session_state[LAST_ALLOWED_ROLE] = "SNOW_SYSADMINS"
+
+            with patch.object(access_control, "get_session", side_effect=AssertionError("role refresh should not block scope switch")):
+                self.assertEqual(access_control.refresh_current_role_for_access(True), "SNOW_SYSADMINS")
+            self.assertTrue(access_control.admin_access_is_allowed("", True))
+
+            st.session_state.clear()
+            st.session_state[LAST_SECTION_RENDER_SIGNATURE] = ("Executive Landing", "ALFA")
+            self.assertFalse(navigation.should_show_section_transition(("Executive Landing", "Trexis")))
+            st.session_state[PENDING_SECTION] = "Cost & Contract"
+            self.assertTrue(navigation.should_show_section_transition(("Cost & Contract", "Trexis")))
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)
 
     def test_sidebar_collapse_reopen_control_remains_visible(self):
         theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")

@@ -107,9 +107,12 @@ def section_transition_needed(signature: tuple) -> bool:
 
 def should_show_section_transition(signature: tuple) -> bool:
     """Show the stale-body cover only after a section has actually rendered."""
-    has_prior_render = LAST_SECTION_RENDER_SIGNATURE in st.session_state
     has_pending_navigation = PENDING_SECTION in st.session_state
-    return (has_prior_render or has_pending_navigation) and section_transition_needed(signature)
+    last_signature = get_state(LAST_SECTION_RENDER_SIGNATURE)
+    last_section = last_signature[0] if isinstance(last_signature, tuple) and last_signature else ""
+    current_section = signature[0] if isinstance(signature, tuple) and signature else ""
+    section_changed = bool(last_section and current_section and last_section != current_section)
+    return (has_pending_navigation or section_changed) and section_transition_needed(signature)
 
 
 def section_body_reset_needed(signature: tuple) -> bool:

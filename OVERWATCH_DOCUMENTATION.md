@@ -96,7 +96,7 @@ into production or development.
 
 The Snowflake setup file creates the OVERWATCH database, schema, tables,
 procedures, tasks, and dedicated app warehouse. The Streamlit app runs on
-`OVERWATCH_WH`. The current mart task graph runs on `COMPUTE_WH`.
+`COMPUTE_WH`. The current mart task graph runs on `COMPUTE_WH`.
 
 Core mart facts include:
 

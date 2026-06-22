@@ -6,7 +6,7 @@ definition_version: 1
 # App:       DBA_MAINT_DB.OVERWATCH.OVERWATCH
 # Stage:     DBA_MAINT_DB.OVERWATCH.OVERWATCH_STAGE
 # Roles:     SNOW_ACCOUNTADMINS, SNOW_SYSADMINS
-# Warehouse: OVERWATCH_WH
+# Warehouse: COMPUTE_WH
 #
 # execute_as: CALLER (SiS default - intentionally not set to OWNER)
 # -----------------------------------------------------------------------------
@@ -30,7 +30,7 @@ definition_version: 1
 #     GRANT MONITOR ON ACCOUNT TO ROLE <role>;
 #
 #     -- Required to run the Streamlit app and its Snowflake queries
-#     GRANT USAGE ON WAREHOUSE OVERWATCH_WH TO ROLE <role>;
+#     GRANT USAGE ON WAREHOUSE COMPUTE_WH TO ROLE <role>;
 #
 #   Without IMPORTED PRIVILEGES on SNOWFLAKE, every ACCOUNT_USAGE query
 #   returns a permissions error and the section shows an empty state.
@@ -47,7 +47,7 @@ streamlit:
 
   # Warehouse used by SiS for Python execution. SQL queries run here unless
   # the session executes USE WAREHOUSE first.
-  query_warehouse: OVERWATCH_WH
+  query_warehouse: COMPUTE_WH
 
   artifacts:
     - app.py

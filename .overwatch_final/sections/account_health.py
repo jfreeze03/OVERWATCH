@@ -3607,7 +3607,7 @@ def render():
                                 "Cost & Contract",
                                 user_filter=sel_user,
                                 workflow_key="cost_contract_workflow",
-                                workflow="Cost by User",
+                                workflow="Cost by User / Role",
                             )
             else:
                 st.info("No cost driver data yet.")
@@ -3657,7 +3657,7 @@ def render():
                 _drill_to(
                     "Cost & Contract",
                     workflow_key="cost_contract_workflow",
-                    workflow="Recommendations",
+                    workflow="Cost Recommendations",
                 )
 
         if exceptions_only:

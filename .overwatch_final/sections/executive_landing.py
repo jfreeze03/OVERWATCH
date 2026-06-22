@@ -2168,7 +2168,7 @@ def _executive_command_summary_rows(board: pd.DataFrame, advisor_rows: pd.DataFr
         "NEXT_ACTION": (
             str(warehouse_row.get("NEXT_ACTION") or "Open Cost & Contract warehouse advisor.")
             if warehouse_row is not None
-            else "Open Cost & Contract > Recommendations > Warehouse Advisor."
+            else "Open Cost & Contract > Cost Recommendations > Warehouse Advisor."
         ),
         "ROUTE": "Cost & Contract",
     })

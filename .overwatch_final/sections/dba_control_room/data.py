@@ -1050,7 +1050,7 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
             "Evidence": f"{queued_queries:,} queued queries; {len(wh):,} pressured warehouses",
             "Action": "Check warehouse sizing, clustering, and concurrency pressure.",
             "Route": "Cost & Contract",
-            "Workflow": "Recommendations",
+            "Workflow": "Cost Recommendations",
         })
     if spill_queries:
         rows.append({
@@ -1059,7 +1059,7 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
             "Evidence": f"{spill_queries:,} queries spilled to remote storage",
             "Action": "Inspect spilling queries before resizing.",
             "Route": "Cost & Contract",
-            "Workflow": "Recommendations",
+            "Workflow": "Cost Recommendations",
         })
     if p95 >= 120:
         rows.append({
@@ -1132,7 +1132,7 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
                 ),
                 "Action": "Review Cortex users, source split, cost-per-request spikes, and daily credit guardrails.",
                 "Route": "Cost & Contract",
-                "Workflow": "Cortex Spend",
+                "Workflow": "Cost by User / Role",
             })
     if not logins.empty:
         rows.append({
@@ -1162,7 +1162,7 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
                 "Evidence": f"{len(open_queue):,} open recommendations",
             "Action": "Assign routes and move items toward fixed/ignored.",
                 "Route": "Cost & Contract",
-                "Workflow": "Recommendations",
+                "Workflow": "Cost Recommendations",
             })
         closure = _command_queue_closure_readiness(queue)
         if not closure.empty:

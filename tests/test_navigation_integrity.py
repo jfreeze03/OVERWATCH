@@ -282,7 +282,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("set_state(EXECUTIVE_LANDING_WORKSPACE_REQUESTED, True)", navigation_text)
         self.assertIn("set_state(EXECUTIVE_LANDING_BRIEF_MODE, False)", navigation_text)
         self.assertIn('set_state(ALERT_CENTER_ACTIVE_VIEW, "Active Alerts")', navigation_text)
-        self.assertIn('set_state(COST_CONTRACT_WORKFLOW, "Cost by Warehouse")', navigation_text)
+        self.assertIn('set_state(COST_CONTRACT_WORKFLOW, "Cost Overview")', navigation_text)
         self.assertIn('set_state(WORKLOAD_OPERATIONS_WORKFLOW, "Workload Overview")', navigation_text)
         self.assertIn('set_state(SECURITY_POSTURE_WORKFLOW, "Failed Logins")', navigation_text)
 
@@ -299,7 +299,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("request_executive_landing_hydration()", navigation_text)
         self.assertIn('set_state(DBA_CONTROL_ROOM_ACTIVE_VIEW, "Fast Watch")', navigation_text)
         self.assertIn('set_state(ALERT_CENTER_ACTIVE_VIEW, "Active Alerts")', navigation_text)
-        self.assertIn('set_state(COST_CONTRACT_WORKFLOW, "Cost by Warehouse")', navigation_text)
+        self.assertIn('set_state(COST_CONTRACT_WORKFLOW, "Cost Overview")', navigation_text)
         self.assertIn('set_state(WORKLOAD_OPERATIONS_WORKFLOW, "Workload Overview")', navigation_text)
         self.assertIn('set_state("workload_operations_pipeline_focus", "Failed Procedures")', navigation_text)
         self.assertIn('set_state(SECURITY_POSTURE_VIEW, "Failed Logins")', navigation_text)
@@ -474,8 +474,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertFalse((APP_ROOT / "sections" / "cost_contract_shell.py").exists())
         full_workspace_text = (APP_ROOT / "sections" / "cost_contract.py").read_text(encoding="utf-8")
         nav_text = (APP_ROOT / "sections" / "navigation.py").read_text(encoding="utf-8")
+        self.assertIn('"Cost Overview"', full_workspace_text)
         self.assertIn('"Cost by Warehouse"', full_workspace_text)
-        self.assertIn('set_state(COST_CONTRACT_WORKFLOW, "Cost by Warehouse")', nav_text)
+        self.assertIn('set_state(COST_CONTRACT_WORKFLOW, "Cost Overview")', nav_text)
         self.assertNotIn("Cost Signal Summary", full_workspace_text)
         self.assertNotIn("Cost Command Board", full_workspace_text)
         cost_center_text = (APP_ROOT / "sections" / "cost_center.py").read_text(encoding="utf-8")
@@ -483,7 +484,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("Annual committed credits", cost_center_text)
         self.assertNotIn("Calculate Utilization", cost_center_text)
         self.assertIn("WORKFLOWS", full_workspace_text)
-        self.assertIn('"Advanced Cost Tools"', full_workspace_text)
+        self.assertIn("Advanced cost tools and evidence", full_workspace_text)
+        self.assertIn("Open Advanced Cost Tools", full_workspace_text)
         self.assertIn('"Storage & Retention": "sections.storage_monitor"', full_workspace_text)
         self.assertIn('"Refresh Cost"', full_workspace_text)
         self.assertNotIn('"Refresh Overview"', full_workspace_text)
@@ -544,12 +546,27 @@ class NavigationIntegrityTests(unittest.TestCase):
         )
         self.assertEqual(SECTION_ALIASES["Credit Contract"], SECTION_BY_TITLE["Cost & Contract"])
         self.assertEqual(SECTION_ALIASES["Cost Center"], SECTION_BY_TITLE["Cost & Contract"])
+        self.assertEqual(SECTION_ALIASES["Recommendations"], SECTION_BY_TITLE["Cost & Contract"])
+        self.assertEqual(SECTION_ALIASES["Cortex Monitor"], SECTION_BY_TITLE["Cost & Contract"])
         self.assertEqual(SECTION_ALIASES["Security & Access"], SECTION_BY_TITLE["Security Monitoring"])
         self.assertNotIn("DBA Tools", SECTION_ALIASES)
         self.assertNotIn("Change & Drift", SECTION_ALIASES)
         self.assertNotIn("Who Changed What?", SECTION_ALIASES)
         self.assertEqual(SECTION_ALIASES["Optimization"], SECTION_BY_TITLE["Cost & Contract"])
         self.assertEqual(SECTION_ALIASES["Warehouse Health"], SECTION_BY_TITLE["Cost & Contract"])
+        self.assertEqual(compatibility_state_for_section("Cost Center")["cost_contract_workflow"], "Cost by Warehouse")
+        self.assertEqual(compatibility_state_for_section("Credit Contract")["cost_contract_workflow"], "Budget vs Actual")
+        self.assertEqual(
+            compatibility_state_for_section("Recommendations & Anomalies")["cost_contract_workflow"],
+            "Cost Recommendations",
+        )
+        self.assertEqual(compatibility_state_for_section("Recommendations")["cost_contract_workflow"], "Cost Recommendations")
+        self.assertEqual(compatibility_state_for_section("Cortex Monitor")["cost_contract_advanced_tool"], "Cortex Spend")
+        self.assertEqual(compatibility_state_for_section("Warehouse Health")["cost_contract_workflow"], "Waste Detection")
+        self.assertEqual(compatibility_state_for_section("Storage Monitor")["cost_contract_workflow"], "Cost Overview")
+        self.assertEqual(compatibility_state_for_section("Storage Monitor")["cost_contract_advanced_tool"], "Storage & Retention")
+        self.assertEqual(compatibility_state_for_section("AI & Cortex Monitor")["cost_contract_advanced_tool"], "Cortex Spend")
+        self.assertEqual(compatibility_state_for_section("SPCS Tracker")["cost_contract_advanced_tool"], "SPCS Spend")
         self.assertNotIn("Architecture", SECTION_ALIASES)
         self.assertNotIn("Architecture Readiness", SECTION_ALIASES)
         self.assertNotIn("Disaster Recovery", SECTION_ALIASES)
@@ -822,22 +839,31 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(
             cost_contract.WORKFLOWS,
             (
+                "Cost Overview",
                 "Cost by Warehouse",
-                "Cost by User",
-                "Burn Rate",
+                "Cost by User / Role",
+                "Burn Rate & Forecast",
                 "Budget vs Actual",
-                "Forecast",
                 "Waste Detection",
-                "Chargeback",
-                "Recommendations",
-                "Cortex Spend",
-                "Advanced Cost Tools",
+                "Chargeback / Company Split",
+                "Cost Recommendations",
             ),
         )
-        self.assertIn("Recommendations", cost_contract.WORKFLOWS)
-        self.assertIn("Advanced Cost Tools", cost_contract.WORKFLOWS)
+        self.assertIn("Cost Recommendations", cost_contract.WORKFLOWS)
+        self.assertNotIn("Cortex Spend", cost_contract.WORKFLOWS)
+        self.assertNotIn("Advanced Cost Tools", cost_contract.WORKFLOWS)
+        self.assertEqual(cost_contract.LEGACY_COST_WORKFLOW_ALIASES["Forecast"], "Burn Rate & Forecast")
+        self.assertEqual(cost_contract.LEGACY_COST_WORKFLOW_ALIASES["Chargeback"], "Chargeback / Company Split")
+        self.assertEqual(cost_contract.LEGACY_COST_WORKFLOW_ALIASES["Recommendations"], "Cost Recommendations")
+        self.assertEqual(cost_contract.LEGACY_COST_WORKFLOW_ALIASES["Cortex Spend"], "Cost Overview")
+        self.assertEqual(cost_contract.LEGACY_COST_INNER_VIEW_ALIASES["Forecast"]["cost_center_view"], "Forecast")
+        self.assertEqual(cost_contract.LEGACY_COST_INNER_VIEW_ALIASES["Attribution"]["cost_center_view"], "Attribution")
+        cost_contract_text = (APP_ROOT / "sections" / "cost_contract.py").read_text(encoding="utf-8")
+        self.assertIn("_PRESERVE_COST_CENTER_VIEW_KEY", cost_contract_text)
+        self.assertIn("_LAST_COST_WORKFLOW_KEY", cost_contract_text)
         self.assertEqual(cost_contract.ADVANCED_COST_TOOL_MODULES["Storage & Retention"], "sections.storage_monitor")
-        self.assertEqual(cost_contract.WORKFLOW_MODULES["Cortex Spend"], "sections.cortex_monitor")
+        self.assertEqual(cost_contract.ADVANCED_COST_TOOL_MODULES["Cortex Spend"], "sections.cortex_monitor")
+        self.assertEqual(cost_contract.WORKFLOW_MODULES["Cost by User / Role"], "sections.cost_center")
         self.assertFalse((APP_ROOT / "sections" / "budget_monitoring.py").exists())
         self.assertFalse((APP_ROOT / "sections" / "finops_control.py").exists())
         self.assertEqual(SECTION_ALIASES["Alerts"], SECTION_BY_TITLE["Alert Center"])
@@ -904,6 +930,23 @@ class NavigationIntegrityTests(unittest.TestCase):
                 self.assertIn("render_workflow_module(", text)
                 for pattern in removed_patterns:
                     self.assertNotIn(pattern, text)
+
+    def test_primary_navigation_stays_six_section_model(self):
+        self.assertEqual(
+            PRIMARY_SECTIONS,
+            [
+                "Executive Landing",
+                "DBA Control Room",
+                "Alert Center",
+                "Cost & Contract",
+                "Workload Operations",
+                "Security Monitoring",
+            ],
+        )
+        self.assertNotIn("Command Center", PRIMARY_SECTIONS)
+        self.assertNotIn("Incidents", PRIMARY_SECTIONS)
+        self.assertNotIn("Optimization", PRIMARY_SECTIONS)
+        self.assertNotIn("Settings", PRIMARY_SECTIONS)
 
     def test_cost_contract_workflow_detail_renders_on_selection(self):
         text = (APP_ROOT / "sections" / "cost_contract.py").read_text(encoding="utf-8")

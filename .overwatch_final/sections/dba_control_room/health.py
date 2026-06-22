@@ -565,7 +565,7 @@ def _evidence_surface_route(surface: object) -> tuple[str, str, str]:
     if "warehouse" in text:
         return (
             "Cost & Contract",
-            "Recommendations",
+            "Cost Recommendations",
             "warehouse overview, pressure, settings, and metering telemetry",
         )
     if "credit" in text or "cost" in text or "cortex" in text:

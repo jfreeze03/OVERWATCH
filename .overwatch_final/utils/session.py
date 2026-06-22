@@ -168,15 +168,37 @@ def _make_streamlit_connection_session():
     return conn.session()
 
 
+def _format_connection_error(error: Exception) -> str:
+    """Return a concise startup message without leaking local credentials."""
+    text = re.sub(r"\s+", " ", str(error or "")).strip()
+    lower = text.lower()
+    if "mfa authentication is required" in lower:
+        return (
+            "Snowflake requires MFA for this user, so password-based local Streamlit "
+            "authentication is blocked. Use browser authentication in "
+            "`connections.snowflake` or run the app inside Snowflake Streamlit."
+        )
+    if "does not exist or not authorized" in lower or "not authorized" in lower:
+        return (
+            "Snowflake accepted the connection request but the configured role cannot "
+            "access one of the configured objects. Check role, warehouse, database, and schema."
+        )
+    if "incorrect username or password" in lower or "authentication failed" in lower:
+        return "Snowflake rejected the configured user/password or authentication method."
+    if not text:
+        return "Snowflake returned an empty connection error."
+    return text[:420] + ("..." if len(text) > 420 else "")
+
+
 def _make_session():
     """Create a Snowflake session and apply OVERWATCH session parameters."""
     if _has_streamlit_snowflake_secrets():
         try:
             sess = _make_streamlit_connection_session()
-        except Exception:
+        except Exception as exc:
             st.warning(
                 "Snowflake connection is not available from Streamlit secrets. "
-                "Check the configured Snowflake account, user, role, warehouse, database, and schema."
+                f"{_format_connection_error(exc)}"
             )
             st.stop()
     else:

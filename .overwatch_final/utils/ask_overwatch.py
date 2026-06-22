@@ -228,7 +228,7 @@ def _cards_from_recommendations(state: Mapping, cards: list[dict]) -> None:
             "next_action": hardened.get("Safe Next Action", hardened.get("Action", "")),
             "proof": hardened.get("Proof Required", ""),
             "do_not": hardened.get("Do Not Do", ""),
-            "route": "Cost & Contract > Recommendations",
+            "route": "Cost & Contract > Cost Recommendations",
             "category": hardened.get("Category", ""),
             "value": hardened.get("Estimated Monthly Savings", 0),
         })

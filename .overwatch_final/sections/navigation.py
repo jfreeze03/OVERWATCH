@@ -59,7 +59,7 @@ def request_section_workspace(section: str) -> None:
     elif target == "Alert Center":
         set_state(ALERT_CENTER_ACTIVE_VIEW, "Active Alerts")
     elif target == "Cost & Contract":
-        set_state(COST_CONTRACT_WORKFLOW, "Cost by Warehouse")
+        set_state(COST_CONTRACT_WORKFLOW, "Cost Overview")
     elif target == "Workload Operations":
         set_state(WORKLOAD_OPERATIONS_WORKFLOW, "Workload Overview")
     elif target == "Security Monitoring":

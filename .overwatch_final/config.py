@@ -328,7 +328,9 @@ SECTION_REDIRECTS = {
     "Data Compare": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
     "Cost Center": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
     "Credit Contract": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
+    "Recommendations": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
     "Recommendations & Anomalies": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
+    "Cortex Monitor": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
     "AI & Cortex Monitor": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
     "SPCS Tracker": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
     "Usage Overview": _CANONICAL_SECTION_BY_TITLE["DBA Control Room"],
@@ -357,14 +359,46 @@ SECTION_ROUTE_STATE = {
         "_dba_control_room_brief_mode": False,
     },
     "Warehouse Health": {
-        "cost_contract_workflow": "Recommendations",
+        "cost_contract_workflow": "Waste Detection",
         "_cost_contract_full_workspace_requested": True,
         "_cost_contract_brief_mode": False,
     },
     "Optimization": {
-        "cost_contract_workflow": "Recommendations",
+        "cost_contract_workflow": "Cost Recommendations",
         "_cost_contract_full_workspace_requested": True,
         "_cost_contract_brief_mode": False,
+    },
+    "Cost Center": {
+        "cost_contract_workflow": "Cost by Warehouse",
+    },
+    "Credit Contract": {
+        "cost_contract_workflow": "Budget vs Actual",
+    },
+    "Recommendations & Anomalies": {
+        "cost_contract_workflow": "Cost Recommendations",
+    },
+    "Recommendations": {
+        "cost_contract_workflow": "Cost Recommendations",
+    },
+    "Cortex Monitor": {
+        "cost_contract_workflow": "Cost Overview",
+        "cost_contract_advanced_tool": "Cortex Spend",
+        "_cost_contract_show_advanced_tools": True,
+    },
+    "AI & Cortex Monitor": {
+        "cost_contract_workflow": "Cost Overview",
+        "cost_contract_advanced_tool": "Cortex Spend",
+        "_cost_contract_show_advanced_tools": True,
+    },
+    "Storage Monitor": {
+        "cost_contract_workflow": "Cost Overview",
+        "cost_contract_advanced_tool": "Storage & Retention",
+        "_cost_contract_show_advanced_tools": True,
+    },
+    "SPCS Tracker": {
+        "cost_contract_workflow": "Cost Overview",
+        "cost_contract_advanced_tool": "SPCS Spend",
+        "_cost_contract_show_advanced_tools": True,
     },
     "Security Posture": {
         "security_posture_view": "Failed Logins",

@@ -214,7 +214,7 @@ def harden_recommendation(rec: Mapping | pd.Series | dict) -> dict:
         )
         evidence = f"{entity}: {spill_gb:,.2f} GB remote spill in the recommendation window."
         safe_next = (
-            "Open Cost & Contract > Recommendations, identify the query IDs causing spill, and decide between SQL tuning, "
+            "Open Cost & Contract > Cost Recommendations, identify the query IDs causing spill, and decide between SQL tuning, "
             "workload isolation, or a one-step warehouse size validation."
         )
         proof = "Track remote spill GB and queue time trend after the change."

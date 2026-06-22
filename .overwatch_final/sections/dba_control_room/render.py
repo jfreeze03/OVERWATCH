@@ -548,12 +548,12 @@ def _render_closed_loop_operations_gate(company: str, environment: str) -> None:
 
 def _render_command_center_investigation_gate(company: str, environment: str) -> None:
     """Expose Phase 2F correlated investigations only behind Load."""
-    st.markdown("**Command Center Investigations**")
+    st.markdown("**Correlated Investigations**")
     st.caption(
-        "Loads deterministic root-cause candidates, evidence, and review-gated recommendations from Command Center marts. "
+        "Loads deterministic root-cause candidates, evidence, and review-gated recommendations from correlated investigation marts. "
         "Possible correlations are not causality claims and no remediation is executed."
     )
-    if st.button("Load Command Center Investigations", key="dba_load_command_center_investigations", width="stretch"):
+    if st.button("Load Correlated Investigations", key="dba_load_command_center_investigations", width="stretch"):
         st.session_state["dba_command_center_findings"] = load_command_center_finding_detail(
             company,
             environment,
@@ -579,7 +579,7 @@ def _render_command_center_investigation_gate(company: str, environment: str) ->
     recommendations = st.session_state.get("dba_command_center_recommendations")
     if isinstance(findings, pd.DataFrame):
         if findings.empty:
-            st.info("No Command Center findings are available for this scope yet.")
+            st.info("No correlated investigation findings are available for this scope yet.")
         else:
             risk = findings.get("RISK_LEVEL", pd.Series(dtype=str)).fillna("").astype(str)
             owner_gap = pd.to_numeric(findings.get("OWNER_GAP", pd.Series(dtype=float)), errors="coerce").fillna(0)
@@ -595,7 +595,7 @@ def _render_command_center_investigation_gate(company: str, environment: str) ->
             ))
             render_priority_dataframe(
                 findings,
-                title="Command Center root-cause candidates",
+                title="Correlated root-cause candidates",
                 priority_columns=[
                     "INVESTIGATION_TYPE", "QUESTION_TEXT", "ROOT_CAUSE_CANDIDATE",
                     "CAUSALITY_LABEL", "EVIDENCE_SUMMARY", "CONFIDENCE",
@@ -608,17 +608,17 @@ def _render_command_center_investigation_gate(company: str, environment: str) ->
                 ],
                 sort_by=["RISK_LEVEL", "EXPECTED_SAVINGS_OR_RISK_AVOIDED_USD", "LAST_REFRESHED_TS"],
                 ascending=[True, False, False],
-                raw_label="All Command Center finding rows",
+                raw_label="All correlated investigation finding rows",
                 height=340,
                 max_rows=12,
             )
     if isinstance(evidence, pd.DataFrame):
         if evidence.empty:
-            st.info("No Command Center evidence rows are available for this scope yet.")
+            st.info("No correlated investigation evidence rows are available for this scope yet.")
         else:
             render_priority_dataframe(
                 evidence,
-                title="Command Center evidence trail",
+                title="Correlated investigation evidence trail",
                 priority_columns=[
                     "INVESTIGATION_TYPE", "EVIDENCE_TYPE", "SOURCE_OBJECT",
                     "RELATED_OBJECT", "EVIDENCE_SUMMARY", "CONFIDENCE",
@@ -626,17 +626,17 @@ def _render_command_center_investigation_gate(company: str, environment: str) ->
                 ],
                 sort_by=["LAST_REFRESHED_TS"],
                 ascending=False,
-                raw_label="All Command Center evidence rows",
+                raw_label="All correlated investigation evidence rows",
                 height=300,
                 max_rows=10,
             )
     if isinstance(recommendations, pd.DataFrame):
         if recommendations.empty:
-            st.info("No Command Center recommendations are available for this scope yet.")
+            st.info("No correlated investigation recommendations are available for this scope yet.")
         else:
             render_priority_dataframe(
                 recommendations,
-                title="Review-gated Command Center recommendations",
+                title="Review-gated correlated investigation recommendations",
                 priority_columns=[
                     "INVESTIGATION_TYPE", "RECOMMENDED_ACTION", "RISK_LEVEL",
                     "OWNER_ROUTE", "EXECUTION_PLAN_REF", "REVIEW_REQUIRED",
@@ -645,7 +645,7 @@ def _render_command_center_investigation_gate(company: str, environment: str) ->
                 ],
                 sort_by=["RISK_LEVEL", "EXPECTED_SAVINGS_OR_RISK_AVOIDED_USD", "LAST_REFRESHED_TS"],
                 ascending=[True, False, False],
-                raw_label="All Command Center recommendation rows",
+                raw_label="All correlated investigation recommendation rows",
                 height=300,
                 max_rows=10,
             )
@@ -1304,7 +1304,7 @@ def render() -> None:
 
     if active_view == MORNING_COCKPIT_WORKFLOW:
         _render_morning_cockpit(data, exceptions, row, period_credits, credit_delta, credit_price)
-        with st.expander("Fast Watch detail", expanded=False):
+        with st.expander("Live watch detail", expanded=False):
             _render_watch_floor(
                 data,
                 exceptions,
@@ -1458,7 +1458,7 @@ def render() -> None:
             st.session_state["dba_control_room_morning_brief"] = morning_brief
             st.session_state["dba_control_room_morning_brief_markdown"] = morning_brief_md
 
-            ops_detail_options = ("Queue", "Morning Brief", "Priority", "Runbook", "Escalations", "Handoff", "Incidents", "Advisors")
+            ops_detail_options = ("Queue", "Daily Brief", "Priority", "Runbook", "Escalations", "Handoff", "Incident Board", "Advisors")
             if st.session_state.get("dba_operations_board_detail") not in ops_detail_options:
                 st.session_state["dba_operations_board_detail"] = "Queue"
             ops_detail = st.selectbox(
@@ -1467,7 +1467,7 @@ def render() -> None:
                 label_visibility="collapsed",
                 key="dba_operations_board_detail",
             )
-            if ops_detail == "Morning Brief":
+            if ops_detail == "Daily Brief":
                 _render_dba_morning_brief(morning_brief, morning_brief_md)
             elif ops_detail == "Priority":
                 _render_operations_priority_index(operations_priority)
@@ -1482,7 +1482,7 @@ def render() -> None:
                     company=company,
                     environment=environment,
                 )
-            elif ops_detail == "Incidents":
+            elif ops_detail == "Incident Board":
                 _render_incident_board_panel(
                     incident_board,
                     incident_md,
@@ -1505,9 +1505,9 @@ def render() -> None:
             st.subheader("Reliability")
             st.write("Failed queries, task failures, queued workload, and slow p95 runtime.")
             reliability_routes = [
-                ("Query Diagnosis", "Query diagnosis"),
-                ("Task Graphs", "Task graphs"),
-                ("Pipeline Health", "Pipeline health"),
+                ("Query Investigation", "Query Investigation"),
+                ("Pipeline & Task Health", "Pipeline & Task Health"),
+                ("Load Issues & SLA", "Load Issues & SLA"),
             ]
             for label, workflow in reliability_routes:
                 if st.button(label, key=f"dba_control_reliability_{label}", width="stretch"):

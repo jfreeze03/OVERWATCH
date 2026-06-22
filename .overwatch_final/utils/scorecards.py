@@ -253,10 +253,10 @@ def _platform_driver_action(driver: str) -> str:
         "Cost movement": "Open Cost & Contract and prove the top cost driver before changing cost controls.",
         "Critical/high alerts": "Open Alert Center and assign owner, SLA, and remediation state.",
         "Open owner actions": "Open DBA Control Room and work the owner action queue.",
-        "Task failures": "Open Workload Operations task graphs and inspect failed root/child task evidence.",
-        "Query failures": "Open Query Diagnosis with failed query evidence and owner route.",
+        "Task failures": "Open Workload Operations > Pipeline & Task Health and inspect failed root/child task evidence.",
+        "Query failures": "Open Query Investigation with failed query evidence and owner route.",
         "Queue pressure": "Open Workload Operations and separate capacity queueing from lock contention.",
-        "Remote spill": "Open Query Diagnosis and inspect joins, scans, and warehouse memory pressure.",
+        "Remote spill": "Open Query Investigation and inspect joins, scans, and warehouse memory pressure.",
         "Stale sources": "Refresh or repair the scheduled mart task before acting on stale evidence.",
     }
     return actions.get(driver, "Open the owning command surface and attach proof.")

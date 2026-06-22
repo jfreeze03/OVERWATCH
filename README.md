@@ -1,7 +1,7 @@
 # OVERWATCH
 
-OVERWATCH is an enterprise Snowflake Command Center and production Streamlit
-monitor for Snowflake DBA operations. It brings executive observability, DBA
+OVERWATCH is an enterprise Snowflake DBA operations platform and production
+Streamlit monitor. It brings executive observability, DBA
 triage, alerts, cost monitoring, workload operations, security telemetry,
 governance readiness, ownership routing, and value verification into one
 DBA-owned workflow.

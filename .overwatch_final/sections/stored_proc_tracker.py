@@ -51,11 +51,11 @@ PROCEDURE_SIGNAL_ROUTES = {
         "Validate whether on-demand execution is expected; if it is a production workflow, move it into task orchestration or document the exception.",
     ),
     "Procedure Behind Suspended Task": (
-        "Task graphs",
+        "Pipeline & Task Health",
         "Open Task Graph Control, confirm the suspension reason, then resume only after dependency and downstream checks.",
     ),
     "Procedure Runtime SLA Breach": (
-        "Task graphs",
+        "Pipeline & Task Health",
         "Compare the latest run with the release window, inspect child queries and operator stats, then decide whether to tune SQL or resize/schedule the warehouse.",
     ),
     "Procedure Cost Regression": (

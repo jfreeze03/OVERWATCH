@@ -972,7 +972,7 @@ def _render_release_readiness_gate(
     r1, r2, r3 = st.columns(3)
     with r1:
         if st.button("Open Workload Operations", key="dba_release_gate_open_workload", width="stretch"):
-            _jump("Workload Operations", workflow="Task graphs")
+            _jump("Workload Operations", workflow="Pipeline & Task Health")
             st.rerun()
     with r2:
         if st.button("Open Security Monitoring", key="dba_release_gate_open_change", width="stretch"):

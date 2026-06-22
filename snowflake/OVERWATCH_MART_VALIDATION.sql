@@ -985,7 +985,7 @@ SELECT
     'PASS' AS VALIDATION_STATUS,
     'Closed Loop Operations stores review SQL, approval state, evidence, and verification state only. It does not execute ALTER, CREATE, DROP, GRANT, REVOKE, SUSPEND, or RESUME actions.' AS DETAILS;
 
--- 19) Phase 2F Command Center coverage and safety proof.
+-- 19) Phase 2F correlated investigation coverage and safety proof.
 SELECT
     'COMMAND_CENTER_PROCEDURE' AS CHECK_NAME,
     'SP_OVERWATCH_REFRESH_COMMAND_CENTER' AS PROCEDURE_NAME,
@@ -1036,7 +1036,7 @@ SELECT
     'COMMAND_CENTER_NO_SILENT_REMEDIATION' AS CHECK_NAME,
     0 AS ISSUE_COUNT,
     'PASS' AS VALIDATION_STATUS,
-    'Command Center creates deterministic findings, evidence, and review-gated recommendations only. It does not execute ALTER, CREATE, DROP, GRANT, REVOKE, SUSPEND, RESUME, or auto-remediation actions.' AS DETAILS;
+    'Correlated investigations create deterministic findings, evidence, and review-gated recommendations only. They do not execute ALTER, CREATE, DROP, GRANT, REVOKE, SUSPEND, RESUME, or auto-remediation actions.' AS DETAILS;
 
 -- 20) Enterprise remediation safety note.
 SELECT

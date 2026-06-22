@@ -35,7 +35,7 @@ def build_capability_register_rows() -> list[dict[str, object]]:
             "RANK": 2,
             "CAPABILITY": "Task/Pipeline Critical Path Brain",
             "STATUS": "Foundation",
-            "WHERE_IT_LANDS": "Workload Operations, DBA Morning Brief",
+            "WHERE_IT_LANDS": "Workload Operations, DBA Control Room",
             "WHY_IT_MATTERS": "Shows the root task, child failure, late-risk, retry pattern, and downstream blast radius.",
             "NEXT_ACTION": "Use task graph facts before retrying, resuming, or calling a pipeline healthy.",
             "SNOWFLAKE_SOURCES": "TASK_HISTORY, INFORMATION_SCHEMA.TASK_HISTORY, EVENT TABLES",
@@ -77,9 +77,9 @@ def build_capability_register_rows() -> list[dict[str, object]]:
         },
         {
             "RANK": 6,
-            "CAPABILITY": "Fact-Grounded AI Query Diagnosis",
+            "CAPABILITY": "Fact-Grounded Query Investigation",
             "STATUS": "Contract",
-            "WHERE_IT_LANDS": "Workload Operations, Query diagnosis",
+            "WHERE_IT_LANDS": "Workload Operations, Query Investigation",
             "WHY_IT_MATTERS": "Cortex can explain why a query is slow only when fed real profile facts and optimization constraints.",
             "NEXT_ACTION": "Pass query telemetry, table context, spill/pruning metrics, and expected output shape into the prompt contract.",
             "SNOWFLAKE_SOURCES": "QUERY_HISTORY, QUERY_PROFILE when available, ACCESS_HISTORY, TABLE_STORAGE_METRICS",
@@ -239,7 +239,7 @@ def build_detection_root_cause_sql(hours: int = 24) -> str:
             END AS severity,
             CASE
                 WHEN signal_family = 'TASK_PIPELINE' THEN 'Open Workload Operations task graph and inspect child failure/root task.'
-                WHEN signal_family = 'PERFORMANCE' THEN 'Open Query diagnosis or Contention Center with the sample query_id.'
+                WHEN signal_family = 'PERFORMANCE' THEN 'Open Query Investigation or Performance & Contention with the sample query_id.'
                 WHEN signal_family = 'SECURITY' THEN 'Open Security Monitoring and verify IP, role, MFA, and service account behavior.'
                 ELSE 'Open Alert Center incident board.'
             END AS recommended_action
@@ -635,7 +635,7 @@ def build_ai_query_diagnosis_contract_rows() -> list[dict[str, str]]:
 
 def build_ai_query_diagnosis_prompt_contract() -> str:
     return _sql("""
-        You are OVERWATCH Query Diagnosis. Use only the provided Snowflake telemetry.
+        You are OVERWATCH Query Investigation. Use only the provided Snowflake telemetry.
 
         Required output:
         1. Root cause, with the exact metric that proves it.
@@ -818,7 +818,7 @@ def build_operational_intelligence_sql_catalog() -> list[dict[str, str]]:
             "SQL": build_alert_lifecycle_sql(),
         },
         {
-            "CAPABILITY": "Fact-Grounded AI Query Diagnosis",
+            "CAPABILITY": "Fact-Grounded Query Investigation",
             "SQL_NAME": "Cortex prompt contract",
             "TELEMETRY": "Query/profile telemetry",
             "SQL": build_ai_query_diagnosis_prompt_contract(),

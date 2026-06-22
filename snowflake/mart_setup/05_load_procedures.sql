@@ -5976,7 +5976,7 @@ BEGIN
     TRUE,
     EXPECTED_SAVINGS_OR_RISK_AVOIDED_USD,
     VERIFICATION_PATH,
-    'Command Center recommendations are review-gated through Closed Loop Operations. OVERWATCH does not execute dangerous SQL or silent remediation from this workflow.',
+    'Correlated investigation recommendations are review-gated through Closed Loop Operations. OVERWATCH does not execute dangerous SQL or silent remediation from this workflow.',
     LAST_REFRESHED_TS
   FROM OVERWATCH_COMMAND_CENTER_FINDING
   WHERE SNAPSHOT_TS = :snapshot_ts;
@@ -6057,10 +6057,10 @@ BEGIN
     :snapshot_ts,
     CURRENT_TIMESTAMP(),
     'SUCCESS',
-    'Refreshed Command Center findings, evidence, recommendations, and compact summary rows. Recommendations are review-gated and no remediation SQL was executed.'
+    'Refreshed correlated investigation findings, evidence, recommendations, and compact summary rows. Recommendations are review-gated and no remediation SQL was executed.'
   );
 
-  RETURN 'OVERWATCH Command Center refreshed without executing remediation.';
+  RETURN 'OVERWATCH correlated investigations refreshed without executing remediation.';
 END;
 $$;
 

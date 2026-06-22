@@ -112,12 +112,12 @@ def recommendation_execution_contract(row: Mapping | pd.Series | dict) -> dict[s
             f"{entity} remote-spill rows, top spilling query IDs, query profile/operator telemetry, queue trend, and cost impact."
         )
         verify_next = "Monitor remote spill, queue, elapsed time, and credits for the same workload after the fix."
-        execution_boundary = "Do not upsize blindly; route through Query diagnosis or Cost & Contract capacity controls first."
+        execution_boundary = "Do not upsize blindly; route through Query Investigation or Cost & Contract capacity controls first."
     elif "TASK" in source_key and "FAIL" in source_key:
         review_gate = "Snowflake task operator review before retry, resume, or schedule change."
         evidence_package = f"{entity} TASK_HISTORY failure/recovery rows, latest error signature, and downstream impact."
         verify_next = "Monitor the next TASK_HISTORY run and downstream refresh state."
-        execution_boundary = "Do not EXECUTE TASK from a recommendation; use Task graphs guarded controls and status prechecks."
+        execution_boundary = "Do not EXECUTE TASK from a recommendation; use Pipeline & Task Health guarded controls and status prechecks."
     elif "QUERY FAILURE" in source_key or ("FAILED QUER" in source_key and "WAREHOUSE" in source_key):
         review_gate = "DBA reliability review before SQL, warehouse, or schedule changes."
         evidence_package = (
@@ -230,7 +230,7 @@ def harden_recommendation(rec: Mapping | pd.Series | dict) -> dict:
             "fix root cause, then retry only after the blocker is cleared."
         )
         evidence = f"{entity}: {failures:,.0f} failed run(s) in the loaded window."
-        safe_next = "Open Workload Operations > Task graphs and inspect TASK_HISTORY plus downstream impact."
+        safe_next = "Open Workload Operations > Pipeline & Task Health and inspect TASK_HISTORY plus downstream impact."
         proof = "Close only after TASK_HISTORY shows the next successful run."
         do_not = "Do not EXECUTE TASK repeatedly until the failure category and dependency blocker are understood."
         escalation_route = _text(out, "Escalation Route", "Route", "Owner", "OWNER", default="Data Engineering")
@@ -245,7 +245,7 @@ def harden_recommendation(rec: Mapping | pd.Series | dict) -> dict:
             "the responsible team with sample query IDs."
         )
         evidence = f"{entity}: {failures:,.0f} failed query event(s) in the loaded window."
-        safe_next = "Open Workload Operations > Query diagnosis filtered to this warehouse and capture the top error code."
+        safe_next = "Open Workload Operations > Query Investigation filtered to this warehouse and capture the top error code."
         proof = "Track before/after failure counts and sample query IDs; close only after the repeated signature stops."
         do_not = "Do not change warehouse size for failed queries unless queue/spill telemetry also points to capacity pressure."
         confidence = "Medium - failure count is specific, root cause requires error-code detail"

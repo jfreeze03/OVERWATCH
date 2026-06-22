@@ -189,7 +189,7 @@ DEFAULT_ALERT_RULES = [
         "SLA_HOURS": 8,
         "OWNER": "DBA / Platform",
         "ROUTE": "Workload Operations",
-        "RUNBOOK": "Open Query Diagnosis or Contention Center with query_id, queue/spill/lock telemetry, route, and specific optimization path.",
+        "RUNBOOK": "Open Query Investigation or Performance & Contention with query_id, queue/spill/lock telemetry, route, and specific optimization path.",
     },
     {
         "RULE_ID": "PIPELINE_COPY_FAILURE",
@@ -3890,7 +3890,7 @@ LIMIT 100;
             "FRESHNESS": "Use INFORMATION_SCHEMA for near-real-time triage; ACCOUNT_USAGE for historical baseline",
             "OWNER": "DBA / Platform",
             "WHY_THIS_MATTERS": "Queueing, remote spill, and lock waits are the difference between noisy SQL and production contention.",
-            "RECOMMENDED_ACTION": "Open Query Diagnosis or Contention Center with the exact query_id and warehouse telemetry.",
+            "RECOMMENDED_ACTION": "Open Query Investigation or Performance & Contention with the exact query_id and warehouse telemetry.",
             "SQL": f"""
 SELECT 'PERF_QUERY_PRESSURE' AS ALERT_KEY, 'Performance' AS CATEGORY,
        CASE WHEN COALESCE(TRANSACTION_BLOCKED_TIME, 0) > 0 THEN 'Critical' ELSE 'High' END AS SEVERITY,
@@ -4842,7 +4842,7 @@ def build_alert_owner_workload_board(
 
 
 def build_alert_morning_brief_rows(alerts: pd.DataFrame, *, limit: int = 12) -> pd.DataFrame:
-    """Return prioritized DBA Morning Brief rows from loaded alert evidence."""
+    """Return prioritized DBA Daily Brief rows from loaded alert evidence."""
     if alerts is None or alerts.empty:
         return pd.DataFrame(columns=[
             "PRIORITY",
@@ -4969,7 +4969,7 @@ The Alert Center is a triage and monitoring surface. It should detect, prioritiz
 - LOW: informational or early warning.
 
 ## Daily DBA Flow
-1. Open DBA Morning Brief and work Critical/High rows first.
+1. Open DBA Daily Brief and work Critical/High rows first.
 2. Check Security, Cost, Performance, and Pipeline categories before optimization work.
 3. Use telemetry status and bounded detail before declaring an incident.
 4. Acknowledge or suppress planned work with a telemetry note.

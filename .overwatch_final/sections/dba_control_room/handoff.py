@@ -170,7 +170,7 @@ def _dba_workload_morning_lanes(
     *,
     max_rows: int = 4,
 ) -> pd.DataFrame:
-    """Build workload-specific Morning Brief lanes from already-loaded telemetry."""
+    """Build workload-specific Daily Brief lanes from already-loaded telemetry."""
     data = data or {}
     summary = data.get("summary", _empty_df())
     row = summary.iloc[0] if summary is not None and not summary.empty else {}
@@ -241,11 +241,11 @@ def _dba_workload_morning_lanes(
             )
         )
         add_lane(
-            "Task graphs",
+            "Pipeline & Task Health",
             state="Blocked Workload",
             why_now=f"{len(task_failures):,} failed task group(s){f': {task_names}' if task_names else ''}.",
             first_move=(
-                "Open Task graphs, inspect the latest TASK_HISTORY failure, confirm Snowflake task downstream state, "
+                "Open Pipeline & Task Health, inspect the latest TASK_HISTORY failure, confirm Snowflake task downstream state, "
                 "then protect late SLAs before retrying."
             ),
             proof_required="TASK_HISTORY success after latest failure, Snowflake task rerun/late state, and downstream refresh status.",
@@ -297,11 +297,11 @@ def _dba_workload_morning_lanes(
         if last_seen:
             evidence_bits.append(f"last_seen={last_seen}")
         add_lane(
-            "Task graphs",
+            "Pipeline & Task Health",
             state=state,
             why_now=f"Snowflake TASK_HISTORY: {'; '.join(evidence_bits)}.",
             first_move=(
-                "Open Task graphs, match the Snowflake task job/run state to Snowflake TASK_HISTORY, identify downstream "
+                "Open Pipeline & Task Health, match the Snowflake task job/run state to Snowflake TASK_HISTORY, identify downstream "
                 "SLA impact, then choose retry, reroute, or hold only with review status."
             ),
             proof_required=(
@@ -319,7 +319,7 @@ def _dba_workload_morning_lanes(
         sla_count = int((signals == "Long Running / SLA Risk").sum())
         cost_count = int((signals == "Cost Drift / Release Regression").sum())
         add_lane(
-            "Task graphs",
+            "Pipeline & Task Health",
             state="SLA Risk",
             why_now=f"{sla_count:,} runtime breach(es); {cost_count:,} cost regression candidate(s).",
             first_move="Compare current task graph runs to baseline, isolate the changed task/query, and assign route status.",
@@ -382,11 +382,11 @@ def _dba_workload_morning_lanes(
         if p95_runtime >= 120:
             reason_bits.append(f"p95 {p95_runtime:,.0f}s")
         add_lane(
-            "Query diagnosis",
-            state="Query Diagnosis",
+            "Query Investigation",
+            state="Query Investigation",
             why_now="; ".join(reason_bits) or "Slow or failed query telemetry needs diagnosis.",
             first_move=(
-                "Open Query diagnosis, load the query ID/operator stats, then use AI Query Diagnosis only after "
+                "Open Query Investigation, load the query ID/operator stats, then use AI-assisted diagnosis only after "
                 "queue/spill/scan telemetry is current."
             ),
             proof_required="Query ID, warehouse/user/role/database context, operator stats, specific recommendation, and rerun comparison.",
@@ -572,7 +572,7 @@ def _dba_morning_brief_rows(
             owner_route="On-call DBA / platform route",
             go_no_go="Go for monitoring only.",
             proof_required="fresh Control Room load and current Alert Center review",
-            source_signals="Morning Brief: routine watch",
+            source_signals="Daily Brief: routine watch",
             priority_score=0,
         )
 
@@ -586,7 +586,7 @@ def _dba_morning_brief_rows(
 
 
 def _dba_morning_decision_contract(row: dict | pd.Series | None) -> dict[str, str]:
-    """Return the operator contract for one Morning Brief row."""
+    """Return the operator contract for one Daily Brief row."""
     row = row if row is not None else {}
     state = str(_row_value(row, "STATE", default="Review") or "Review")
     route = str(_row_value(row, "ROUTE", default="DBA Control Room") or "DBA Control Room")
@@ -615,7 +615,7 @@ def _dba_morning_decision_contract(row: dict | pd.Series | None) -> dict[str, st
     else:
         decision = "Monitor"
         sla_clock = "Next DBA review"
-        next_checkpoint = "Keep Fast Watch and Alert Center current."
+        next_checkpoint = "Keep Morning Cockpit and Alert Center current."
         stop_rule = "Escalate only if new telemetry raises the route priority."
 
     proof_l = proof.lower()
@@ -648,7 +648,7 @@ def _dba_morning_decision_contract(row: dict | pd.Series | None) -> dict[str, st
 
 
 def _add_dba_morning_decision_contract(brief: pd.DataFrame) -> pd.DataFrame:
-    """Attach concise decision metadata to Morning Brief rows."""
+    """Attach concise decision metadata to Daily Brief rows."""
     if brief is None or brief.empty:
         return _empty_df()
     view = brief.copy()
@@ -685,7 +685,7 @@ def _dba_morning_execution_contract(row: dict | pd.Series | None) -> dict[str, s
     approval_gate = f"{owner} review and telemetry status before operational change."
     evidence_package = proof or "current source telemetry, route, ticket, and status."
     verify_next = "Re-open the guarded drilldown workflow and confirm the signal cleared before closing the row."
-    execution_boundary = "Morning Brief is routing only; execute reviewed changes inside the guarded drilldown workflow."
+    execution_boundary = "Daily Brief is routing only; execute reviewed changes inside the guarded drilldown workflow."
 
     if workflow == "Contention Center":
         try:
@@ -708,8 +708,8 @@ def _dba_morning_execution_contract(row: dict | pd.Series | None) -> dict[str, s
             approval_gate = "DBA on-call review and incident/ticket status before cancel/abort/schedule action."
             evidence_package = "SHOW LOCKS, LOCK_WAIT_HISTORY, blocked query, target object, telemetry, and post-action status."
             verify_next = "Confirm blocked seconds stop increasing and dependent workload recovers before closure."
-            execution_boundary = "No cleanup from Morning Brief; open Contention Center for governed SQL and telemetry review."
-    elif workflow == "Task graphs":
+            execution_boundary = "No cleanup from Daily Brief; open Contention Center for governed SQL and telemetry review."
+    elif workflow in {"Task graphs", "Pipeline & Task Health"}:
         approval_gate = "Snowflake task operator and DBA on-call review before retry, resume, or schedule change."
         evidence_package = (
             "TASK_HISTORY failure/recovery rows, Snowflake task failed/blocked/late state, telemetry, "
@@ -719,30 +719,30 @@ def _dba_morning_execution_contract(row: dict | pd.Series | None) -> dict[str, s
             "Confirm next TASK_HISTORY run succeeded, Snowflake task job is closed or rerouted, and recovery SLA status "
             "is present."
         )
-        execution_boundary = "No task retry/resume from Morning Brief; use Task graphs guarded controls and status prechecks."
-    elif workflow == "Query diagnosis":
+        execution_boundary = "No task retry/resume from the daily brief; use Pipeline & Task Health guarded controls and status prechecks."
+    elif workflow in {"Query diagnosis", "Query Investigation"}:
         approval_gate = "DBA performance review before SQL, clustering, or warehouse changes."
         evidence_package = (
             "Query ID, query text/profile, operator stats, warehouse/user/role/database context, and deterministic "
             "optimization finding."
         )
         verify_next = "Compare rerun elapsed time, queue, spill, scan, and cost against the original query telemetry."
-        execution_boundary = "AI Query Diagnosis is advisory; no query changes are executed from the brief."
+        execution_boundary = "Query Investigation is advisory; no query changes are executed from the brief."
     elif workflow == "Stored procedures":
         approval_gate = "Procedure route and DBA release review before procedure or schedule changes."
         evidence_package = "Procedure run baseline, latest CALL query ID, change/ticket context, telemetry, and rollback path."
         verify_next = "Confirm latest CALL returns inside runtime/cost baseline and dependent task graph remains clean."
-        execution_boundary = "Do not alter procedure code from Morning Brief; route through Stored procedures and Security Monitoring."
+        execution_boundary = "Do not alter procedure code from Daily Brief; route through Stored procedures and Security Monitoring."
     elif route == "Security Monitoring":
         approval_gate = "DBA access review and telemetry status before access remediation."
         evidence_package = "Grant diff, requester context, least-privilege check, rollback plan, and post-action telemetry."
         verify_next = "Reload security telemetry; grant, role, and login signals must show the intended state."
-        execution_boundary = "Do not execute access changes from Morning Brief; use Security Monitoring for telemetry and reviewed commands."
+        execution_boundary = "Do not execute access changes from Daily Brief; use Security Monitoring for telemetry and reviewed commands."
     elif route in {"Warehouse Health", "Cost & Contract"}:
         approval_gate = "DBA capacity review before resize, isolation, or monitor changes."
         evidence_package = "Warehouse load, queue/spill trend, metering impact, telemetry, rollback setting, and post-change status."
         verify_next = "Confirm queued load, spill, and cost movement after the capacity or isolation decision."
-        execution_boundary = "No warehouse setting changes from Morning Brief; use Cost & Contract guarded capacity workflow."
+        execution_boundary = "No warehouse setting changes from Daily Brief; use Cost & Contract guarded capacity workflow."
 
     closure_rule = (
         f"{state}: keep this row open until review telemetry package and status are current."
@@ -775,7 +775,7 @@ def _dba_morning_focus_note(row: dict | pd.Series | None) -> str:
 
 
 def _dba_morning_command_queue(brief: pd.DataFrame | None, max_rows: int = 3) -> pd.DataFrame:
-    """Return the compact first-screen command queue for the DBA Morning Brief."""
+    """Return the compact first-screen command queue for the DBA Daily Brief."""
     if brief is None or brief.empty:
         return _empty_df()
     view = brief.copy()
@@ -807,7 +807,7 @@ def _dba_morning_command_queue(brief: pd.DataFrame | None, max_rows: int = 3) ->
 
 
 def _dba_morning_brief_detail_view(brief: pd.DataFrame | None) -> pd.DataFrame:
-    """Return Morning Brief detail rows with unique operator-facing columns."""
+    """Return Daily Brief detail rows with unique operator-facing columns."""
     if brief is None or brief.empty:
         return _empty_df()
     brief_view = brief.copy()
@@ -836,7 +836,7 @@ def _build_dba_morning_brief_markdown(
     """Create a concise markdown packet for the DBA morning brief."""
     rows = brief if brief is not None and not brief.empty else _empty_df()
     lines = [
-        "# OVERWATCH DBA Morning Brief",
+        "# OVERWATCH DBA Daily Brief",
         f"Scope: {company} / {environment} / {safe_int(lookback_hours, 24)}h",
         "Mode: Telemetry-ranked operating brief",
         "",
@@ -875,7 +875,7 @@ def _build_dba_morning_brief_markdown(
 
 
 def _seed_dba_morning_route_context(row: dict | pd.Series | None) -> None:
-    """Carry Morning Brief context into the guarded drilldown before navigation."""
+    """Carry Daily Brief context into the guarded drilldown before navigation."""
     row = row if row is not None else {}
     workflow = str(_row_value(row, "WORKFLOW", default="") or "").strip()
     query_id = str(_row_value(row, "FOCUS_QUERY_ID", default="") or "").strip()
@@ -895,7 +895,7 @@ def _seed_dba_morning_route_context(row: dict | pd.Series | None) -> None:
             st.session_state["contention_focus_query_id"] = query_id
         if warehouse:
             st.session_state["contention_live_warehouse"] = warehouse
-    elif workflow == "Query diagnosis":
+    elif workflow in {"Query diagnosis", "Query Investigation"}:
         if query_id:
             st.session_state["query_analysis_active_view"] = "History Search"
             st.session_state["qs_text"] = query_id
@@ -910,7 +910,7 @@ def _render_dba_morning_brief(brief: pd.DataFrame, markdown: str) -> None:
     if brief is None or brief.empty:
         return
     top = brief.iloc[0]
-    st.markdown("**DBA Morning Brief**")
+    st.markdown("**DBA Daily Brief**")
     render_shell_snapshot((
         ("First Route", str(top.get("ROUTE") or "DBA Control Room")),
         ("No-Go", f"{int(brief['GO_NO_GO'].astype(str).str.contains('No-Go', case=False, regex=False).sum()):,}"),
@@ -968,7 +968,7 @@ def _render_dba_morning_brief(brief: pd.DataFrame, markdown: str) -> None:
         brief_view = _dba_morning_brief_detail_view(brief)
         render_priority_dataframe(
             brief_view,
-            title="DBA morning brief telemetry",
+            title="DBA daily brief telemetry",
             priority_columns=[
                 "MORNING_RANK", "MORNING_DECISION", "SLA_CLOCK", "ROUTE", "WORKFLOW",
                 "STATE", "WHY_NOW", "FIRST_MOVE", "ROUTE_TELEMETRY_STATE", "ESCALATION_ROUTE",
@@ -978,16 +978,16 @@ def _render_dba_morning_brief(brief: pd.DataFrame, markdown: str) -> None:
             ],
             sort_by=["MORNING_RANK"],
             ascending=[True],
-            raw_label="All DBA morning brief rows",
+            raw_label="All DBA daily brief rows",
             height=300,
             max_rows=5,
         )
-    with st.expander("Morning brief packet", expanded=False):
+    with st.expander("Daily brief packet", expanded=False):
         st.code(markdown, language="markdown")
         st.download_button(
-            "Download DBA Morning Brief",
+            "Download DBA Daily Brief",
             data=markdown,
-            file_name="dba_morning_brief.md",
+            file_name="dba_daily_brief.md",
             mime="text/markdown",
             width="stretch",
         )

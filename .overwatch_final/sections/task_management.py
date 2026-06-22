@@ -1485,7 +1485,7 @@ def _build_task_ops_markdown(
         f"- Lookback: {days} days",
         f"- Snowflake task handoff state: {handoff_state}",
         f"- Handoff note: {handoff_note}",
-        f"- Task graphs/tasks: {safe_int(summary.get('TOTAL_TASKS')):,}",
+        f"- Pipeline tasks: {safe_int(summary.get('TOTAL_TASKS')):,}",
         f"- Task runs: {safe_int(summary.get('TOTAL_RUNS')):,}",
         f"- Running tasks: {safe_int(summary.get('RUNNING_TASKS')):,}",
         f"- Latest failed tasks: {safe_int(summary.get('LATEST_FAILED_TASKS')):,}",

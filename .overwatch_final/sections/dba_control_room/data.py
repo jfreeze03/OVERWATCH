@@ -1041,7 +1041,7 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
             "Evidence": f"{failed_queries:,} failed queries in lookback",
             "Action": "Review failed SQL and recurring error patterns.",
             "Route": "Workload Operations",
-            "Workflow": "Query diagnosis",
+            "Workflow": "Query Investigation",
         })
     if queued_queries or not wh.empty:
         rows.append({
@@ -1068,7 +1068,7 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
             "Evidence": f"p95 elapsed {p95:,.0f}s",
             "Action": "Investigate slow-query plan and operator stats.",
             "Route": "Workload Operations",
-            "Workflow": "Query diagnosis",
+            "Workflow": "Query Investigation",
         })
     if credit_delta >= 25:
         rows.append({
@@ -1086,7 +1086,7 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
             "Evidence": f"{len(tasks):,} failed task groups",
             "Action": "Review task history, retry logic, and downstream load impact.",
             "Route": "Workload Operations",
-            "Workflow": "Task graphs",
+            "Workflow": "Pipeline & Task Health",
         })
     if not task_sla_cost.empty:
         signals = task_sla_cost.get("SIGNAL", pd.Series(dtype=str)).astype(str)
@@ -1098,7 +1098,7 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
             "Evidence": f"{sla_count:,} runtime breach(es); {cost_count:,} cost regression candidate(s)",
             "Action": "Compare current task graph runs to recent baseline and inspect release-related procedure/query changes.",
             "Route": "Workload Operations",
-            "Workflow": "Task graphs",
+            "Workflow": "Pipeline & Task Health",
         })
     if not procedure_sla_cost.empty:
         signals = procedure_sla_cost.get("SIGNAL", pd.Series(dtype=str)).astype(str)

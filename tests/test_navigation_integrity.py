@@ -375,6 +375,92 @@ class NavigationIntegrityTests(unittest.TestCase):
             st.session_state.clear()
             st.session_state.update(previous)
 
+    def test_legacy_route_matrix_lands_on_current_workflows(self):
+        from runtime_state import (
+            ALERT_CENTER_ACTIVE_VIEW,
+            COST_CONTRACT_WORKFLOW,
+            DBA_CONTROL_ROOM_ACTIVE_VIEW,
+            EXECUTIVE_LANDING_WORKFLOW,
+            NAV_SECTION,
+            SECURITY_POSTURE_VIEW,
+            SECURITY_POSTURE_WORKFLOW,
+            WORKLOAD_OPERATIONS_WORKFLOW,
+        )
+        from sections.navigation import apply_navigation_state
+
+        route_matrix = [
+            ("Executive Landing", "Executive Landing", {EXECUTIVE_LANDING_WORKFLOW: "Executive Overview"}),
+            ("Executive Briefing", "Executive Landing", {EXECUTIVE_LANDING_WORKFLOW: "Executive Overview"}),
+            ("Adoption Analytics", "Executive Landing", {EXECUTIVE_LANDING_WORKFLOW: "Executive Admin / Advanced"}),
+            ("DBA Control Room", "DBA Control Room", {DBA_CONTROL_ROOM_ACTIVE_VIEW: "Morning Cockpit"}),
+            ("Command Center", "DBA Control Room", {DBA_CONTROL_ROOM_ACTIVE_VIEW: "Morning Cockpit"}),
+            ("Account Health", "DBA Control Room", {DBA_CONTROL_ROOM_ACTIVE_VIEW: "Morning Cockpit"}),
+            ("Usage Overview", "DBA Control Room", {DBA_CONTROL_ROOM_ACTIVE_VIEW: "Cost Watch"}),
+            ("Service Health", "DBA Control Room", {DBA_CONTROL_ROOM_ACTIVE_VIEW: "Control Room Admin / Advanced"}),
+            ("Fast Watch", "DBA Control Room", {DBA_CONTROL_ROOM_ACTIVE_VIEW: "Morning Cockpit"}),
+            ("Morning Brief", "DBA Control Room", {DBA_CONTROL_ROOM_ACTIVE_VIEW: "Morning Cockpit"}),
+            ("Alert Center", "Alert Center", {ALERT_CENTER_ACTIVE_VIEW: "Active Alerts"}),
+            ("Alerts", "Alert Center", {ALERT_CENTER_ACTIVE_VIEW: "Active Alerts"}),
+            ("Alert History", "Alert Center", {ALERT_CENTER_ACTIVE_VIEW: "Alert History"}),
+            ("Alert Configuration", "Alert Center", {ALERT_CENTER_ACTIVE_VIEW: "Alert Settings / Admin", "alert_center_admin_view": "Delivery & Automation"}),
+            ("Cost & Contract", "Cost & Contract", {COST_CONTRACT_WORKFLOW: "Cost Overview"}),
+            ("Cost Center", "Cost & Contract", {COST_CONTRACT_WORKFLOW: "Cost by Warehouse"}),
+            ("Credit Contract", "Cost & Contract", {COST_CONTRACT_WORKFLOW: "Budget vs Actual"}),
+            ("Warehouse Health", "Cost & Contract", {COST_CONTRACT_WORKFLOW: "Waste Detection"}),
+            ("Recommendations", "Cost & Contract", {COST_CONTRACT_WORKFLOW: "Cost Recommendations"}),
+            ("Recommendations & Anomalies", "Cost & Contract", {COST_CONTRACT_WORKFLOW: "Cost Recommendations"}),
+            ("Cortex Monitor", "Cost & Contract", {COST_CONTRACT_WORKFLOW: "Cost Overview", "cost_contract_advanced_tool": "Cortex Spend", "_cost_contract_show_advanced_tools": True}),
+            ("Storage Monitor", "Cost & Contract", {COST_CONTRACT_WORKFLOW: "Cost Overview", "cost_contract_advanced_tool": "Storage & Retention", "_cost_contract_show_advanced_tools": True}),
+            ("SPCS Tracker", "Cost & Contract", {COST_CONTRACT_WORKFLOW: "Cost Overview", "cost_contract_advanced_tool": "SPCS Spend", "_cost_contract_show_advanced_tools": True}),
+            ("Workload Operations", "Workload Operations", {WORKLOAD_OPERATIONS_WORKFLOW: "Workload Overview"}),
+            ("Query Analysis", "Workload Operations", {WORKLOAD_OPERATIONS_WORKFLOW: "Query Investigation"}),
+            ("Query Workbench", "Workload Operations", {WORKLOAD_OPERATIONS_WORKFLOW: "Query Investigation"}),
+            ("Query Search & History", "Workload Operations", {WORKLOAD_OPERATIONS_WORKFLOW: "Query Investigation", "query_analysis_active_view": "History Search"}),
+            ("Detailed Diagnosis", "Workload Operations", {WORKLOAD_OPERATIONS_WORKFLOW: "Query Investigation", "query_analysis_active_view": "Detailed Diagnosis"}),
+            ("Task Management", "Workload Operations", {WORKLOAD_OPERATIONS_WORKFLOW: "Pipeline & Task Health", "workload_operations_pipeline_focus": "Failed Tasks"}),
+            ("Pipeline Health", "Workload Operations", {WORKLOAD_OPERATIONS_WORKFLOW: "Pipeline & Task Health", "workload_operations_pipeline_focus": "Load Issues & SLA"}),
+            ("Stored Proc Tracker", "Workload Operations", {WORKLOAD_OPERATIONS_WORKFLOW: "Pipeline & Task Health", "workload_operations_pipeline_focus": "Failed Procedures"}),
+            ("Object Change Monitor", "Workload Operations", {WORKLOAD_OPERATIONS_WORKFLOW: "Change Analysis"}),
+            ("Schema Compare", "Workload Operations", {WORKLOAD_OPERATIONS_WORKFLOW: "Advanced DBA Tools", "dba_tools_focus": "Object Monitoring", "dba_tools_focus_tool": "Schema Compare"}),
+            ("Data Compare", "Workload Operations", {WORKLOAD_OPERATIONS_WORKFLOW: "Advanced DBA Tools", "dba_tools_focus": "Object Monitoring", "dba_tools_focus_tool": "Data Compare"}),
+            ("Security Monitoring", "Security Monitoring", {SECURITY_POSTURE_VIEW: "Security Overview", SECURITY_POSTURE_WORKFLOW: "Security Overview"}),
+            ("Security Posture", "Security Monitoring", {SECURITY_POSTURE_VIEW: "Security Overview", SECURITY_POSTURE_WORKFLOW: "Security Overview"}),
+            ("Security & Access", "Security Monitoring", {SECURITY_POSTURE_VIEW: "Risky Grants", SECURITY_POSTURE_WORKFLOW: "Risky Grants"}),
+            ("Data Sharing", "Security Monitoring", {SECURITY_POSTURE_VIEW: "Data Sharing Exposure", SECURITY_POSTURE_WORKFLOW: "Data Sharing Exposure"}),
+            ("Failed Logins", "Security Monitoring", {SECURITY_POSTURE_VIEW: "Failed Logins", SECURITY_POSTURE_WORKFLOW: "Failed Logins"}),
+            ("Access posture", "Security Monitoring", {SECURITY_POSTURE_VIEW: "Security Overview", SECURITY_POSTURE_WORKFLOW: "Security Overview"}),
+        ]
+
+        previous = dict(st.session_state)
+        try:
+            for route, expected_section, expected_state in route_matrix:
+                with self.subTest(route=route):
+                    st.session_state.clear()
+                    target = apply_navigation_state(route)
+                    self.assertEqual(target, expected_section)
+                    self.assertEqual(st.session_state[NAV_SECTION], expected_section)
+                    for key, value in expected_state.items():
+                        self.assertEqual(st.session_state.get(key), value)
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)
+
+    def test_primary_workflow_text_does_not_use_abandoned_four_section_nav(self):
+        primary_text_files = [
+            APP_ROOT / "layout.py",
+            APP_ROOT / "sections" / "executive_landing.py",
+            APP_ROOT / "sections" / "dba_control_room" / "render.py",
+            APP_ROOT / "sections" / "alert_center.py",
+            APP_ROOT / "sections" / "cost_contract.py",
+            APP_ROOT / "sections" / "workload_operations.py",
+            APP_ROOT / "sections" / "security_posture.py",
+        ]
+        combined = "\n".join(path.read_text(encoding="utf-8") for path in primary_text_files)
+        self.assertNotIn('"Incidents"', combined)
+        self.assertNotIn('"Optimization"', combined)
+        self.assertNotIn("Command Center / Incidents / Optimization / Settings", combined)
+        self.assertNotRegex(combined, r"see chart [A-D]|chart [A-D]|Chart [A-D]")
+
     def test_executive_landing_uses_direct_observability_module(self):
         self.assertEqual(SECTION_MODULES["Executive Landing"], "sections.executive_landing")
         self.assertFalse((APP_ROOT / "sections" / "executive_landing_shell.py").exists())
@@ -447,7 +533,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('CONTROL_ROOM_ADMIN_WORKFLOW: "Advanced"', full_workspace_text)
         self.assertIn('elif active_view == ACTION_QUEUE_WORKFLOW:', full_workspace_text)
         self.assertIn('load_label = "Load Action Queue"', full_workspace_text)
-        self.assertIn('ops_detail_options = ("Queue", "Morning Brief", "Priority"', full_workspace_text)
+        self.assertIn('ops_detail_options = ("Queue", "Daily Brief", "Priority"', full_workspace_text)
+        self.assertIn('"Incident Board"', full_workspace_text)
         self.assertIn('st.session_state["dba_operations_board_detail"] = "Queue"', full_workspace_text)
         self.assertIn('key="dba_operations_board_detail"', full_workspace_text)
         self.assertIn('"Service Posture": CONTROL_ROOM_ADMIN_WORKFLOW', full_workspace_text)

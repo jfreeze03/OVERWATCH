@@ -264,7 +264,7 @@ SELECT
       ELSE 'Blocked user/session DML'
     END AS ROOT_CAUSE,
     CASE
-      WHEN t.TASK_NAME IS NOT NULL THEN 'Open Task graphs for the task, confirm schedule overlap, then serialize the final table write or set NO_OVERLAP on the root graph.'
+      WHEN t.TASK_NAME IS NOT NULL THEN 'Open Pipeline & Task Health for the task, confirm schedule overlap, then serialize the final table write or set NO_OVERLAP on the root graph.'
       ELSE 'Use active locks to identify the blocker, then shorten or batch the blocked DML and prevent concurrent writers to the same target.'
     END AS NEXT_ACTION,
     CASE
@@ -627,8 +627,8 @@ def _contention_fix_fields(signal: str, row: dict | pd.Series | None = None) -> 
     if "TASK-OWNED" in signal_text or "TASK OVERLAP" in signal_text:
         fields.update({
             "BOTTLENECK_TYPE": "Task graph overlap / blocked task write",
-            "OWNER_ROUTE": "Task graphs",
-            "FIRST_MOVE": "Open Task graphs, find the overlapping root task/window, and pause or reschedule only the colliding graph.",
+            "OWNER_ROUTE": "Pipeline & Task Health",
+            "FIRST_MOVE": "Open Pipeline & Task Health, find the overlapping root task/window, and pause or reschedule only the colliding graph.",
             "SAFE_FIX": "Set OVERLAP_POLICY = NO_OVERLAP on the root task or widen the schedule; keep parallel reads/transforms but serialize the final shared-table publish.",
             "COMPUTE_DECISION": "Task overlap is a scheduling/write-path problem first; bigger compute can make overlap happen faster.",
             "PROOF_REQUIRED": "TASK_HISTORY run windows, blocked task query ID, target table, and next successful non-overlapping run.",
@@ -663,8 +663,8 @@ def _contention_fix_fields(signal: str, row: dict | pd.Series | None = None) -> 
     elif "LONG DML" in signal_text:
         fields.update({
             "BOTTLENECK_TYPE": "Long DML lock window",
-            "OWNER_ROUTE": "Query diagnosis",
-            "FIRST_MOVE": "Open Query Diagnosis for the DML query ID and identify the target table plus longest write step.",
+            "OWNER_ROUTE": "Query Investigation",
+            "FIRST_MOVE": "Open Query Investigation for the DML query ID and identify the target table plus longest write step.",
             "SAFE_FIX": "Do heavy transforms outside the transaction, then run a smaller final write; split large MERGE/UPDATE/DELETE into bounded batches.",
             "COMPUTE_DECISION": "Long elapsed DML can hold locks; check queue time separately before treating this as compute.",
             "PROOF_REQUIRED": "QUERY_HISTORY elapsed/blocked seconds, target object, and rerun showing shorter write window.",
@@ -1033,13 +1033,13 @@ def build_contention_safe_action_contract(row: dict | pd.Series | None, signal: 
             warehouse_name=warehouse,
             include_locks=True,
         )
-    elif route == "Task graphs" or "TASK" in signal_text:
+    elif route in {"Task graphs", "Pipeline & Task Health"} or "TASK" in signal_text:
         action_type = "Task schedule cleanup"
-        readiness = "Route to Task graphs"
+        readiness = "Route to Pipeline & Task Health"
         approval_gate = "Task route or scheduler review required before changing graph timing or retry behavior."
         audit_evidence = "Save task graph overlap telemetry, schedule decision, and next-run status."
         recovery_plan = "Serialize or reschedule the task graph, then confirm the next TASK_HISTORY run has no overlap."
-        execution_boundary = "No task cancel is executed from Contention Center; route changes through Task graphs."
+        execution_boundary = "No task cancel is executed from Contention Center; route changes through Pipeline & Task Health."
         prechecks = "Identify the root task, overlapping graph run, final shared target, and reviewed schedule change."
         verification = "Next TASK_HISTORY run should show no overlap and no blocked publish query."
         precheck_sql = _contention_precheck_sql(
@@ -1442,13 +1442,13 @@ def _live_incident_rows(
         if blocked <= 0 and queued <= 0 and str(_first_value(row_dict, "EXECUTION_STATUS", default="")).upper() not in {"RUNNING", "QUEUED", "BLOCKED"}:
             continue
         severity = "Critical" if blocked >= 300 else "High" if blocked >= 60 else "Medium" if queued > 0 else "Watch"
-        owner_route = "Active Locks" if blocked > 0 else "Cost & Contract" if queued > 0 else "Query diagnosis"
+        owner_route = "Active Locks" if blocked > 0 else "Cost & Contract" if queued > 0 else "Query Investigation"
         first_move = (
             "Run active locks, identify blocker transaction/session, and stop overlapping writers to the same target."
             if blocked > 0
             else "Check warehouse load and running-query concurrency before changing SQL or task ordering."
             if queued > 0
-            else "Open Query Diagnosis and inspect the running query profile before tuning."
+            else "Open Query Investigation and inspect the running query profile before tuning."
         )
         safe_fix = (
             "Serialize final writes, batch the DML, or shorten transaction scope; do not resize solely on blocked seconds."
@@ -1492,11 +1492,11 @@ def _live_incident_rows(
             "SIGNAL": "Current task graph",
             "ENTITY": task_name,
             "EVIDENCE": f"state {state}; graph {_first_value(row_dict, 'GRAPH_RUN_GROUP_ID', 'GRAPH_ID', default='')}",
-            "FIRST_MOVE": "Open Task graphs and confirm whether this graph overlaps with another run or shares a final write table.",
+            "FIRST_MOVE": "Open Pipeline & Task Health and confirm whether this graph overlaps with another run or shares a final write table.",
             "SAFE_FIX": "Pause or reschedule only the colliding graph; set OVERLAP_POLICY = NO_OVERLAP when graph instances collide.",
             "COMPUTE_DECISION": "Task graph overlap is scheduling/write-path first, not compute first.",
             "PROOF_REQUIRED": "CURRENT_TASK_GRAPHS, TASK_HISTORY run windows, root task, final target table, and next clean run.",
-            "OWNER_ROUTE": "Task graphs",
+            "OWNER_ROUTE": "Pipeline & Task Health",
             "QUERY_ID": str(_first_value(row_dict, "QUERY_ID", "GRAPH_RUN_GROUP_ID", default="")),
             "WAREHOUSE_NAME": "",
             "TARGET_OBJECT": "",
@@ -1692,10 +1692,10 @@ def _open_contention_owner_route(row: pd.Series | dict) -> None:
         st.session_state["wh_filter"] = warehouse
     if route == "Active Locks":
         st.session_state["contention_center_view"] = "Active Locks"
-    elif route == "Task graphs":
+    elif route in {"Task graphs", "Pipeline & Task Health"}:
         st.session_state["workload_operations_workflow"] = "Pipeline & Task Health"
         st.session_state["workload_operations_pipeline_focus"] = "Failed Tasks"
-    elif route == "Query diagnosis":
+    elif route in {"Query diagnosis", "Query Investigation"}:
         st.session_state["workload_operations_workflow"] = "Query Investigation"
         st.session_state["query_analysis_active_view"] = "AI Diagnosis"
         if query_id:
@@ -1779,11 +1779,11 @@ def _incident_owner_route(route: str) -> str:
     route_text = str(route or "").strip()
     if route_text == "Active Locks":
         return "DBA on-call + blocker route"
-    if route_text == "Task graphs":
+    if route_text in {"Task graphs", "Pipeline & Task Health"}:
         return "Task route / scheduler"
     if route_text in {"Warehouse Health", "Cost & Contract"}:
         return "Warehouse route"
-    if route_text == "Query diagnosis":
+    if route_text in {"Query diagnosis", "Query Investigation"}:
         return "Query route / DBA performance reviewer"
     return "DBA on-call"
 
@@ -1799,7 +1799,7 @@ def _incident_blocker(row: dict | pd.Series) -> str:
         return f"transaction {transaction_id}"
     if route in {"Warehouse Health", "Cost & Contract"}:
         return "No blocker proven"
-    if route == "Task graphs":
+    if route in {"Task graphs", "Pipeline & Task Health"}:
         entity = str(_first_value(row, "ENTITY", default="task graph")).strip()
         run_1 = str(_first_value(row, "RUN_1_QUERY_ID", default="")).strip()
         run_2 = str(_first_value(row, "RUN_2_QUERY_ID", default="")).strip()
@@ -1821,7 +1821,7 @@ def _incident_waiter(row: dict | pd.Series) -> str:
         return f"transaction {waiter_tx}"
     if route in {"Warehouse Health", "Cost & Contract"}:
         return "Queued workload"
-    if route == "Task graphs":
+    if route in {"Task graphs", "Pipeline & Task Health"}:
         return "Overlapping graph run"
     return "Not mapped"
 
@@ -1833,7 +1833,7 @@ def _incident_decision_gate(row: dict | pd.Series) -> str:
         return "Run the precheck, confirm current telemetry, then use the guarded action only if blocker/waiter details match."
     if route in {"Warehouse Health", "Cost & Contract"}:
         return "Do not cancel; confirm queued load and absence of blocker locks before compute change."
-    if route == "Task graphs":
+    if route in {"Task graphs", "Pipeline & Task Health"}:
         return "Route schedule or overlap fix; do not cancel the task graph from this cockpit."
     return "Gather missing blocker, waiter, route, and recovery telemetry before action."
 

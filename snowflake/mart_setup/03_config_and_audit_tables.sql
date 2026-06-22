@@ -164,9 +164,9 @@ MERGE INTO OVERWATCH_SCHEMA_MIGRATION tgt
 USING (
   SELECT
     '2026.06.18-command-center' AS MIGRATION_VERSION,
-    'Command Center correlation for cost, performance, alert, ownership, trust, security, change, forecast, value, and action evidence' AS MIGRATION_NAME,
+    'Correlated investigation support for cost, performance, alert, ownership, trust, security, change, forecast, value, and action evidence' AS MIGRATION_NAME,
     'snowflake/OVERWATCH_MART_SETUP.sql' AS SOURCE_FILE,
-    'Adds Phase 2F Command Center. First-paint surfaces read compact command findings; investigation evidence and recommendations remain explicit-load only. Root-cause language is candidate/correlation based and no remediation is executed.' AS NOTES
+    'Adds Phase 2F correlated investigations. First-paint surfaces read compact investigation findings; evidence and recommendations remain explicit-load only. Root-cause language is candidate/correlation based and no remediation is executed.' AS NOTES
 ) src
 ON tgt.MIGRATION_VERSION = src.MIGRATION_VERSION
 WHEN MATCHED THEN UPDATE SET
@@ -667,7 +667,7 @@ ALTER TABLE IF EXISTS OVERWATCH_ALERTS ADD COLUMN IF NOT EXISTS ESCALATION_ACK_N
 ALTER TABLE IF EXISTS OVERWATCH_ALERTS ADD COLUMN IF NOT EXISTS ROUTED_TO_ACTION_QUEUE_AT TIMESTAMP_NTZ;
 ALTER TABLE IF EXISTS OVERWATCH_ALERTS ADD COLUMN IF NOT EXISTS ROUTED_ACTION_COUNT NUMBER;
 
--- Alert Command Center configuration, event, acknowledgement, notification, and remediation contract.
+-- Alert Center configuration, event, acknowledgement, notification, and remediation contract.
 -- ACCOUNT_USAGE sources can lag; ALERT_CONFIG.TELEMETRY_LATENCY labels delayed vs near-real-time checks.
 CREATE TABLE IF NOT EXISTS ALERT_CONFIG (
   ALERT_KEY                  VARCHAR(200) PRIMARY KEY,
@@ -972,7 +972,7 @@ MERGE INTO ALERT_REMEDIATION_POLICY tgt
 USING (
   SELECT * FROM VALUES
     ('POLICY_CORTEX_QUOTA_REVIEW', 'COST_CORTEX_SPEND_SPIKE', 'Cost', 'Cortex quota or access review', 'RECOMMEND', FALSE, 'DBA / AI cost route plus Security when grants change', 'SHOW PARAMETERS LIKE ''CORTEX%'' IN ACCOUNT;', '-- Review top FACT_CORTEX_DAILY users/sources and candidate quota setting; do not execute from Alert Center.', '-- No automatic Cortex access change. Use approved DBA workflow after review.', 'Restore prior Cortex parameter, role grant, or quota setting captured in before-state notes.', 'SELECT * FROM FACT_CORTEX_DAILY WHERE USAGE_DATE >= DATEADD(''day'', -7, CURRENT_DATE()) ORDER BY EST_COST_USD DESC LIMIT 100;'),
-    ('POLICY_IDLE_WAREHOUSE_TIMEOUT_REVIEW', 'OPT_UNUSED_WAREHOUSE', 'Optimization', 'Warehouse auto-suspend timeout review', 'STATUS_REVIEW', FALSE, 'DBA / Cost owner', 'SHOW WAREHOUSES;', '-- Generate ALTER WAREHOUSE <name> SET AUTO_SUSPEND = <seconds> after route review.', 'ALTER WAREHOUSE IDENTIFIER(''<warehouse_name>'') SET AUTO_SUSPEND = <seconds>;', 'Reset AUTO_SUSPEND to the captured before-state value.', 'SHOW WAREHOUSES LIKE ''<warehouse_name>'';'),
+    ('POLICY_IDLE_WAREHOUSE_TIMEOUT_REVIEW', 'OPT_UNUSED_WAREHOUSE', 'Cost Recommendations', 'Warehouse auto-suspend timeout review', 'STATUS_REVIEW', FALSE, 'DBA / Cost owner', 'SHOW WAREHOUSES;', '-- Generate ALTER WAREHOUSE <name> SET AUTO_SUSPEND = <seconds> after route review.', 'ALTER WAREHOUSE IDENTIFIER(''<warehouse_name>'') SET AUTO_SUSPEND = <seconds>;', 'Reset AUTO_SUSPEND to the captured before-state value.', 'SHOW WAREHOUSES LIKE ''<warehouse_name>'';'),
     ('POLICY_WAREHOUSE_SPIKE_COST_REVIEW', 'COST_WAREHOUSE_CREDIT_SPIKE', 'Cost', 'Warehouse cost spike review', 'RECOMMEND', FALSE, 'DBA / Cost owner plus workload owner', 'SELECT * FROM FACT_WAREHOUSE_HOURLY WHERE WAREHOUSE_NAME = ''<warehouse_name>'' ORDER BY HOUR_START DESC LIMIT 168;', '-- Compare current/prior run-rate, top query hashes, warehouse settings, and company scope; no ALTER WAREHOUSE from Alert Center.', '-- No automatic warehouse change. Use guarded Admin workflow if a setting change is approved.', 'Restore prior warehouse settings only through guarded Admin review with before-state evidence.', 'SELECT * FROM FACT_WAREHOUSE_HOURLY WHERE WAREHOUSE_NAME = ''<warehouse_name>'' ORDER BY HOUR_START DESC LIMIT 168;'),
     ('POLICY_USER_QUERY_BEHAVIOR_REVIEW', 'BEHAVIOR_USER_QUERY_ANOMALY', 'Behavior', 'User/query behavior review', 'STATUS_REVIEW', FALSE, 'DBA / Workload reviewer', 'SELECT USER_NAME, ROLE_NAME, WAREHOUSE_NAME, QUERY_ID, EXECUTION_STATUS, TOTAL_ELAPSED_TIME, QUERY_TEXT FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY WHERE USER_NAME = ''<user_name>'' ORDER BY START_TIME DESC LIMIT 100;', '-- Compare repeated query hash, failures, role, warehouse, and recent coaching/change source before any control action.', '-- No automatic cancel, disable, revoke, or warehouse change from behavior alerts.', 'If a manual control was applied, restore access/settings only after verified query behavior and owner approval.', 'SELECT USER_NAME, ROLE_NAME, WAREHOUSE_NAME, COUNT(*) AS QUERY_COUNT FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY WHERE START_TIME >= DATEADD(''day'', -1, CURRENT_TIMESTAMP()) GROUP BY 1,2,3 ORDER BY QUERY_COUNT DESC;'),
     ('POLICY_TASK_RERUN_STATUS_REVIEW', 'PIPELINE_TASK_FAILURE', 'Task / Pipeline', 'Task rerun review', 'STATUS_REVIEW', FALSE, 'DBA / Pipeline Owner', 'SELECT * FROM TABLE(INFORMATION_SCHEMA.TASK_HISTORY()) ORDER BY SCHEDULED_TIME DESC LIMIT 100;', '-- Confirm root cause, dependency state, and downstream idempotency before EXECUTE TASK.', 'EXECUTE TASK IDENTIFIER(''<database.schema.task_name>'');', 'Record downstream cleanup plan or rerun blocker before manual execution.', 'SELECT * FROM TABLE(INFORMATION_SCHEMA.TASK_HISTORY()) ORDER BY SCHEDULED_TIME DESC LIMIT 100;'),
@@ -1089,7 +1089,7 @@ USING (
     ('PERF_QUEUE_PRESSURE', 'Performance', 'Warehouse queue pressure', 'High', 300, 14, 60, 'DBA / Platform', 'DBA_ONCALL'),
     ('PIPELINE_TASK_FAILURE', 'Task / Pipeline', 'Production task failure', 'Critical', 1, 7, 1440, 'DBA / Pipeline Owner', 'PIPELINE_ONCALL'),
     ('DQ_FRESHNESS_SLA', 'Data Quality', 'Freshness SLA missed', 'High', 1, 7, 1440, 'Data Owner', 'DATA_QUALITY'),
-    ('OPT_UNUSED_WAREHOUSE', 'Optimization', 'Unused or oversized warehouse', 'Medium', 14, 30, 1440, 'DBA / Cost owner', 'COST')
+    ('OPT_UNUSED_WAREHOUSE', 'Cost Recommendations', 'Unused or oversized warehouse', 'Medium', 14, 30, 1440, 'DBA / Cost owner', 'COST')
 ) src(THRESHOLD_KEY, CATEGORY, SIGNAL_NAME, SEVERITY, THRESHOLD_VALUE, BASELINE_WINDOW_DAYS, CURRENT_WINDOW_MINUTES, OWNER, NOTIFICATION_CHANNEL)
 ON tgt.THRESHOLD_KEY = src.THRESHOLD_KEY
 WHEN MATCHED THEN UPDATE SET
@@ -1119,7 +1119,7 @@ USING (
     ('PERF_QUEUE_PRESSURE', 'Performance', 'Warehouse queue pressure', 'High', 'DBA / Platform', 'Workload Operations', 'DBA_ONCALL'),
     ('PIPELINE_TASK_FAILURE', 'Task / Pipeline', 'Production task failure', 'Critical', 'DBA / Pipeline Owner', 'Workload Operations', 'PIPELINE_ONCALL'),
     ('DQ_FRESHNESS_SLA', 'Data Quality', 'Freshness SLA missed', 'High', 'Data Owner', 'Workload Operations', 'DATA_QUALITY'),
-    ('OPT_UNUSED_WAREHOUSE', 'Optimization', 'Unused or oversized warehouse', 'Medium', 'DBA / Cost owner', 'Cost & Contract', 'COST')
+    ('OPT_UNUSED_WAREHOUSE', 'Cost Recommendations', 'Unused or oversized warehouse', 'Medium', 'DBA / Cost owner', 'Cost & Contract', 'COST')
 ) src(ALERT_KEY, CATEGORY, SIGNAL_NAME, DEFAULT_SEVERITY, OWNER, ROUTE, NOTIFICATION_CHANNEL)
 ON tgt.ALERT_KEY = src.ALERT_KEY
 WHEN MATCHED THEN UPDATE SET
@@ -1331,10 +1331,10 @@ USING (
     ('WAREHOUSE_SETTING_CHANGE', 'Change Tracking', 'Warehouse Setting Change', 'Medium', 24, 'DBA / Platform', 'Cost & Contract', 'Review changed-only SQL, rollback SQL, and post-change telemetry.'),
     ('SECURITY_PRIVILEGE_ESCALATION', 'Security', 'Privileged Role Grant', 'Critical', 4, 'Security Reviewer', 'Security Monitoring', 'Validate ticket, reviewer, MFA posture, service-account purpose, and review date before accepting privileged role expansion.'),
     ('SECURITY_SENSITIVE_EXPORT', 'Security', 'Sensitive Access Or Export', 'High', 8, 'DBA / Security', 'Security Monitoring', 'Inspect source IP, role, query_id, destination stage, object access, and masking policy coverage.'),
-    ('PERF_QUERY_PRESSURE', 'Performance', 'Query Pressure', 'High', 8, 'DBA / Platform', 'Workload Operations', 'Open Query Diagnosis or Contention Center with query_id, queue/spill/lock telemetry, owner, and specific optimization path.'),
+    ('PERF_QUERY_PRESSURE', 'Performance', 'Query Pressure', 'High', 8, 'DBA / Platform', 'Workload Operations', 'Open Query Investigation or Performance & Contention with query_id, queue/spill/lock telemetry, owner, and specific optimization path.'),
     ('PIPELINE_COPY_FAILURE', 'Task / Pipeline', 'Copy Load Failure', 'High', 8, 'DBA / Data Engineering', 'Workload Operations', 'Group by table/stage/error, fix load cause, confirm downstream task graph freshness, and document SLA recovery.'),
     ('DQ_FRESHNESS_SLA', 'Data Quality', 'Freshness SLA Missed', 'High', 8, 'Data Owner', 'Workload Operations', 'Use configured database/schema/table/column/check threshold, prove latest update/load volume, and route to data owner.'),
-    ('OPT_UNUSED_OR_OVERSIZED_WAREHOUSE', 'Optimization', 'Unused Or Oversized Warehouse', 'Medium', 24, 'DBA / Cost owner', 'Cost & Contract', 'Attach metering/query telemetry, owner route, rollback SQL, and expected savings before changing warehouse settings.'),
+    ('OPT_UNUSED_OR_OVERSIZED_WAREHOUSE', 'Cost Recommendations', 'Unused Or Oversized Warehouse', 'Medium', 24, 'DBA / Cost owner', 'Cost & Contract', 'Attach metering/query telemetry, owner route, rollback SQL, and expected savings before changing warehouse settings.'),
     ('WAREHOUSE_COST_MOVEMENT', 'Cost Control', 'WAREHOUSE_COST_MOVEMENT', 'High', 8, 'DBA / Cost owner', 'Cost & Contract', 'Explain the 7d warehouse cost movement, assign the owner, and route action after telemetry review.'),
     ('CORTEX_SPEND_AND_QUOTA', 'Cost Control', 'CORTEX_SPEND_AND_QUOTA', 'Medium', 24, 'DBA / AI cost route', 'Cost & Contract', 'Review shared AI spend threshold, per-user quota, first/last usage, and access expansion before enforcing controls.'),
     ('CHANGE_COST_CORRELATION', 'Cost Control', 'CHANGE_COST_CORRELATION', 'High', 8, 'DBA / Cost owner', 'Cost & Contract', 'Compare warehouse change query_id, actor, rollback telemetry, and cost movement before tuning.')

@@ -1073,7 +1073,7 @@ def _dba_command_lanes(
             "label": "Failed queries",
             "value": f"{safe_int(failed_queries):,}",
             "state": "Reliability" if failed_queries else "Clear",
-            "detail": "Repeat failures route to Query diagnosis or Alert Center.",
+            "detail": "Repeat failures route to Query Investigation or Alert Center.",
         },
         {
             "label": "Queue pressure",
@@ -1136,7 +1136,7 @@ def _build_dba_incident_markdown(
         f"Lookback: {int(lookback_hours)} hours",
         f"Source mode: {source_mode}",
         "",
-        "## Active Incidents",
+        "## Active Alert Board",
     ]
     if rows.empty:
         lines.append("- No incident rows were available.")
@@ -1178,7 +1178,7 @@ def _render_incident_board_panel(
         return
     st.markdown("**DBA Incident Detail**")
     render_shell_snapshot((
-        ("Incidents", f"{len(incident_board):,}"),
+        ("Alert Rows", f"{len(incident_board):,}"),
         ("Containment", f"{int(incident_board['STATUS'].astype(str).eq('Containment Required').sum()):,}"),
         ("Overdue", f"{int(pd.to_numeric(incident_board['OVERDUE'], errors='coerce').fillna(0).sum()):,}"),
         ("Telemetry Issues", f"{int(pd.to_numeric(incident_board['SOURCE_ISSUES'], errors='coerce').fillna(0).sum()):,}"),

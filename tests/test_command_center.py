@@ -128,20 +128,20 @@ class CommandCenterTests(unittest.TestCase):
         alert = _read(APP_ROOT / "sections" / "alert_center.py")
 
         self.assertIn("load_command_center_summary", executive)
-        self.assertIn("Command Center", executive)
-        self.assertIn("Load Command Center Investigations", dba)
-        self.assertIn("Load Cost Command Findings", cost)
-        self.assertIn("Load Workload Command Findings", workload)
-        self.assertIn("Load Security Command Findings", security)
-        self.assertIn("Load Alert Command Findings", alert)
+        self.assertIn("Correlated Investigations", executive)
+        self.assertIn("Load Correlated Investigations", dba)
+        self.assertIn("Load Cost Investigation Findings", cost)
+        self.assertIn("Load Workload Investigation Findings", workload)
+        self.assertIn("Load Security Investigation Findings", security)
+        self.assertIn("Load Alert Investigation Findings", alert)
 
     def test_detail_panels_are_explicitly_load_gated(self):
         checks = [
-            (APP_ROOT / "sections" / "dba_control_room.py", "Load Command Center Investigations", "load_command_center_finding_detail"),
-            (APP_ROOT / "sections" / "cost_contract.py", "Load Cost Command Findings", "load_command_center_finding_detail"),
-            (APP_ROOT / "sections" / "workload_operations.py", "Load Workload Command Findings", "load_command_center_finding_detail"),
-            (APP_ROOT / "sections" / "security_posture.py", "Load Security Command Findings", "load_command_center_finding_detail"),
-            (APP_ROOT / "sections" / "alert_center.py", "Load Alert Command Findings", "load_command_center_finding_detail"),
+            (APP_ROOT / "sections" / "dba_control_room.py", "Load Correlated Investigations", "load_command_center_finding_detail"),
+            (APP_ROOT / "sections" / "cost_contract.py", "Load Cost Investigation Findings", "load_command_center_finding_detail"),
+            (APP_ROOT / "sections" / "workload_operations.py", "Load Workload Investigation Findings", "load_command_center_finding_detail"),
+            (APP_ROOT / "sections" / "security_posture.py", "Load Security Investigation Findings", "load_command_center_finding_detail"),
+            (APP_ROOT / "sections" / "alert_center.py", "Load Alert Investigation Findings", "load_command_center_finding_detail"),
         ]
         for path, button, loader in checks:
             with self.subTest(path=path.name, button=button):

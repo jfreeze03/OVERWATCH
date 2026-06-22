@@ -1906,11 +1906,11 @@ def _render_security_action_approval(company: str, environment: str) -> None:
 
 
 def _render_security_command_findings(company: str, environment: str) -> None:
-    """Expose security-risk Command Center findings behind an explicit Load."""
-    st.markdown("**Security Command Findings**")
+    """Expose security-risk correlated findings behind an explicit Load."""
+    st.markdown("**Security Investigation Findings**")
     st.caption("Loads security-risk root-cause candidates, owner gaps, related changes, and review-gated recommendations.")
     types = ("Security Risk",)
-    if st.button("Load Security Command Findings", key="security_load_command_center", width="stretch"):
+    if st.button("Load Security Investigation Findings", key="security_load_command_center", width="stretch"):
         st.session_state["security_command_findings"] = load_command_center_finding_detail(
             company,
             environment,
@@ -1931,7 +1931,7 @@ def _render_security_command_findings(company: str, environment: str) -> None:
     recommendations = st.session_state.get("security_command_recommendations")
     if isinstance(findings, pd.DataFrame):
         if findings.empty:
-            st.info("No security Command Center findings are available for this scope yet.")
+            st.info("No security investigation findings are available for this scope yet.")
         else:
             render_priority_dataframe(
                 findings,
@@ -1946,7 +1946,7 @@ def _render_security_command_findings(company: str, environment: str) -> None:
                 ],
                 sort_by=["RISK_LEVEL", "LAST_REFRESHED_TS"],
                 ascending=[True, False],
-                raw_label="All security command findings",
+                raw_label="All security investigation findings",
                 height=300,
                 max_rows=8,
             )

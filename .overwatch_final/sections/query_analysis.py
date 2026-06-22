@@ -618,7 +618,7 @@ Your job is to produce specific, telemetry-bound optimization recommendations fo
 
 Hard rules:
 - Every recommendation must cite exact telemetry from the query text, ACCOUNT_USAGE metrics, operator stats, or deterministic candidates below.
-- Use the Query diagnosis action contract below as the priority order and do not skip a higher-priority contention or queueing signal.
+- Use the Query Investigation action contract below as the priority order and do not skip a higher-priority contention or queueing signal.
 - Do not recommend indexes. Snowflake does not use traditional indexes for this tuning path.
 - Do not say generic phrases such as "optimize the query", "review joins", or "improve performance" unless you name the exact join/filter/sort/aggregate telemetry.
 - Separate warehouse contention from SQL-shape problems. If QUEUED_SEC is high, say that SQL tuning may not fix the bottleneck.
@@ -638,7 +638,7 @@ Structured telemetry:
 Deterministic candidates:
 {_format_candidates_for_prompt(candidates)}
 
-Query diagnosis action contract:
+Query Investigation action contract:
 {_format_action_contract_for_prompt(action_contract)}
 
 Operator stats sample:
@@ -938,7 +938,7 @@ def render():
 
     # AI diagnosis
     elif active_view == "AI Diagnosis":
-        st.subheader("AI Query Diagnosis")
+        st.subheader("Query Investigation Assistant")
         st.caption("Use query telemetry and Cortex to generate Snowflake tuning recommendations.")
 
         qid_input = st.text_input("Query ID (optional)", key="ai_query_id")

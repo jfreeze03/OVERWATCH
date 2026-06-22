@@ -22,7 +22,7 @@ established in `01_runtime_objects.sql`):
 | 3 | `03_config_and_audit_tables.sql` | Configuration, schema-migration, audit, action-queue, checklist, change-control, and alert tables, plus the environment UDF and supporting views. |
 | 4 | `04_mart_tables.sql` | Transient mart/fact/dimension tables and their views. |
 | 5 | `05_load_procedures.sql` | Load / refresh stored procedures (`SP_OVERWATCH_*`). |
-| 6 | `06_alert_framework.sql` | Alert Command Center tables and procedures. |
+| 6 | `06_alert_framework.sql` | Alert Center tables and procedures. |
 | 7 | `07_tasks.sql` | Task graph that schedules the load procedures. |
 | 8 | `08_validation.sql` | Smoke checks: `SHOW TASKS`, row-count validation, and an initial `CALL` of each refresh procedure. |
 

@@ -140,7 +140,7 @@ class ContentionCenterTests(unittest.TestCase):
                 "TASK_NAME": "PUBLISH_FACT_POLICY",
                 "BLOCKED_SECONDS": 420,
                 "WAIT_OBJECTS": "APP_DB.CORE.FACT_POLICY",
-                "NEXT_ACTION": "Open Task graphs.",
+                "NEXT_ACTION": "Open Pipeline & Task Health.",
                 "VERIFY_AFTER_FIX": "No blocked task query.",
             }]),
         )
@@ -152,7 +152,7 @@ class ContentionCenterTests(unittest.TestCase):
         self.assertIn("Repeated table/object lock hotspot", set(decisions["BOTTLENECK_TYPE"]))
         self.assertIn("Task graph overlap / blocked task write", set(decisions["BOTTLENECK_TYPE"]))
         self.assertIn("Active Locks", set(decisions["OWNER_ROUTE"]))
-        self.assertIn("Task graphs", set(decisions["OWNER_ROUTE"]))
+        self.assertIn("Pipeline & Task Health", set(decisions["OWNER_ROUTE"]))
         self.assertIn("Serialize", " ".join(decisions["NEXT_ACTION"].astype(str)))
         self.assertIn("bigger warehouse", " ".join(decisions["COMPUTE_DECISION"].astype(str)).lower())
         self.assertIn("OVERLAP_POLICY = NO_OVERLAP", " ".join(decisions["SAFE_FIX"].astype(str)))
@@ -222,7 +222,7 @@ class ContentionCenterTests(unittest.TestCase):
         )
 
         by_signal = {row["SIGNAL"]: row for row in decisions.to_dict("records")}
-        self.assertEqual(by_signal["Long DML lock window"]["OWNER_ROUTE"], "Query diagnosis")
+        self.assertEqual(by_signal["Long DML lock window"]["OWNER_ROUTE"], "Query Investigation")
         self.assertEqual(by_signal["Long DML lock window"]["TARGET_OBJECT"], "APP_DB.CORE.FACT_POLICY")
         self.assertIn("batch", by_signal["Long DML lock window"]["SAFE_FIX"].lower())
         self.assertEqual(by_signal["Warehouse queueing"]["OWNER_ROUTE"], "Cost & Contract")
@@ -306,7 +306,7 @@ class ContentionCenterTests(unittest.TestCase):
                 "ENTITY": "LOAD_FACT_POLICY",
                 "FIRST_MOVE": "Set NO_OVERLAP.",
                 "PROOF_REQUIRED": "TASK_HISTORY",
-                "OWNER_ROUTE": "Task graphs",
+                "OWNER_ROUTE": "Pipeline & Task Health",
                 "CLEANUP_DECISION": "Task schedule cleanup",
             },
             {
@@ -453,7 +453,7 @@ class ContentionCenterTests(unittest.TestCase):
         self.assertEqual(by_signal["Live blocked query"]["TARGET_OBJECT"], "APP_DB.CORE.FACT_POLICY")
         self.assertIn("transaction fix first", by_signal["Live blocked query"]["COMPUTE_DECISION"].lower())
         self.assertEqual(by_signal["Live warehouse queueing"]["OWNER_ROUTE"], "Cost & Contract")
-        self.assertEqual(by_signal["Current task graph"]["OWNER_ROUTE"], "Task graphs")
+        self.assertEqual(by_signal["Current task graph"]["OWNER_ROUTE"], "Pipeline & Task Health")
         self.assertIn("OVERLAP_POLICY = NO_OVERLAP", by_signal["Current task graph"]["SAFE_FIX"])
         self.assertIn("WAREHOUSE_LOAD_HISTORY", by_signal["Live warehouse pressure"]["PROOF_REQUIRED"])
         self.assertEqual(by_signal["Active lock"]["CLEANUP_DECISION"], "Abort active transaction candidate")

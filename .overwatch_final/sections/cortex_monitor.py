@@ -934,7 +934,7 @@ def render():
             )
 
             # Cost by user chart
-            st.subheader("Cost by User")
+            st.subheader("Cost by User / Role")
             defer_source_note(
                 "Cortex-only cost attribution. Query/user drilldown is intentionally disabled here "
                 "because query history does not expose Cortex Code cost by query."

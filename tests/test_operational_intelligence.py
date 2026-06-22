@@ -41,7 +41,7 @@ class OperationalIntelligenceTests(unittest.TestCase):
             "Data Quality and Reconciliation Center",
             "Cost Run-Rate and Attribution Monitor",
             "Alert Lifecycle 2.0",
-            "Fact-Grounded AI Query Diagnosis",
+            "Fact-Grounded Query Investigation",
             "Bounded Refresh Guardrails",
             "Scheduled Mart Layer With Fallback",
             "Security Risk Monitoring",

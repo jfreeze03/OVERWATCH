@@ -5194,11 +5194,11 @@ def _render_savings_verification_workflow(company: str, environment: str) -> Non
 
 
 def _render_cost_command_findings(company: str, environment: str) -> None:
-    """Expose cost-spike Command Center findings behind an explicit Load action."""
-    st.markdown("**Cost Command Findings**")
+    """Expose cost-spike correlated findings behind an explicit Load action."""
+    st.markdown("**Cost Investigation Findings**")
     st.caption("Loads deterministic cost-spike root-cause candidates, evidence summaries, and review-gated recommendations.")
     types = ("Cost Spike",)
-    if st.button("Load Cost Command Findings", key="cost_contract_load_command_center", width="stretch"):
+    if st.button("Load Cost Investigation Findings", key="cost_contract_load_command_center", width="stretch"):
         st.session_state["cost_contract_command_findings"] = load_command_center_finding_detail(
             company,
             environment,
@@ -5219,7 +5219,7 @@ def _render_cost_command_findings(company: str, environment: str) -> None:
     recommendations = st.session_state.get("cost_contract_command_recommendations")
     if isinstance(findings, pd.DataFrame):
         if findings.empty:
-            st.info("No cost Command Center findings are available for this scope yet.")
+            st.info("No cost investigation findings are available for this scope yet.")
         else:
             render_priority_dataframe(
                 findings,
@@ -5234,7 +5234,7 @@ def _render_cost_command_findings(company: str, environment: str) -> None:
                 ],
                 sort_by=["RISK_LEVEL", "EXPECTED_SAVINGS_OR_RISK_AVOIDED_USD", "LAST_REFRESHED_TS"],
                 ascending=[True, False, False],
-                raw_label="All cost command findings",
+                raw_label="All cost investigation findings",
                 height=300,
                 max_rows=8,
             )
@@ -5242,7 +5242,7 @@ def _render_cost_command_findings(company: str, environment: str) -> None:
         if not recommendations.empty:
             render_priority_dataframe(
                 recommendations,
-                title="Cost command recommendations",
+                title="Cost investigation recommendations",
                 priority_columns=[
                     "RECOMMENDED_ACTION", "RISK_LEVEL", "OWNER_ROUTE",
                     "EXECUTION_PLAN_REF", "REVIEW_REQUIRED",
@@ -5251,7 +5251,7 @@ def _render_cost_command_findings(company: str, environment: str) -> None:
                 ],
                 sort_by=["EXPECTED_SAVINGS_OR_RISK_AVOIDED_USD", "LAST_REFRESHED_TS"],
                 ascending=[False, False],
-                raw_label="All cost command recommendations",
+                raw_label="All cost investigation recommendations",
                 height=260,
                 max_rows=6,
             )

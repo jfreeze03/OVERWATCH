@@ -2092,7 +2092,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("GET_QUERY_OPERATOR_STATS", prompt)
         self.assertIn("SYSTEM$CLUSTERING_INFORMATION", prompt)
         self.assertIn("Warehouse queue pressure", prompt)
-        self.assertIn("Query diagnosis action contract", prompt)
+        self.assertIn("Query Investigation action contract", prompt)
         self.assertIn("Do not invent table names", prompt)
         self.assertIn("Action decision", prompt)
         self.assertIn("Status check", prompt)
@@ -3999,7 +3999,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("ROUTE_TELEMETRY_STATE", detail_view.columns)
         self.assertIn("ESCALATION_ROUTE", detail_view.columns)
         self.assertNotIn("OWNER_PROOF_STATE", detail_view.columns)
-        self.assertIn("# OVERWATCH DBA Morning Brief", markdown)
+        self.assertIn("# OVERWATCH DBA Daily Brief", markdown)
         self.assertIn("No irreversible DBA action", markdown)
         self.assertIn("Decision: No-Go / contain now", markdown)
         self.assertIn("SLA: 15 min containment", markdown)
@@ -4084,13 +4084,13 @@ class FormulaRegressionTests(unittest.TestCase):
         workload_lanes = _dba_workload_morning_lanes(data, exceptions)
         by_workflow = {row["WORKFLOW"]: row for row in workload_lanes.to_dict("records")}
 
-        self.assertIn("Task graphs", by_workflow)
+        self.assertIn("Pipeline & Task Health", by_workflow)
         self.assertIn("Contention Center", by_workflow)
-        self.assertIn("Query diagnosis", by_workflow)
+        self.assertIn("Query Investigation", by_workflow)
         self.assertIn("Stored procedures", by_workflow)
-        self.assertIn("Snowflake task", by_workflow["Task graphs"]["FIRST_MOVE"])
+        self.assertIn("Snowflake task", by_workflow["Pipeline & Task Health"]["FIRST_MOVE"])
         self.assertIn("before resizing", by_workflow["Contention Center"]["FIRST_MOVE"])
-        self.assertIn("AI Query Diagnosis", by_workflow["Query diagnosis"]["FIRST_MOVE"])
+        self.assertIn("Query Investigation", by_workflow["Query Investigation"]["FIRST_MOVE"])
         self.assertIn("QUERY_HISTORY blocked seconds", by_workflow["Contention Center"]["PROOF_REQUIRED"])
         self.assertEqual(by_workflow["Contention Center"]["FOCUS_QUERY_ID"], "01blocked")
         self.assertEqual(by_workflow["Contention Center"]["FOCUS_WAREHOUSE"], "WH_TRXS_LOAD")
@@ -4103,7 +4103,7 @@ class FormulaRegressionTests(unittest.TestCase):
             workload_lanes,
             max_rows=4,
         )
-        self.assertEqual(list(brief["WORKFLOW"]), ["Task graphs", "Contention Center", "Query diagnosis", "Stored procedures"])
+        self.assertEqual(list(brief["WORKFLOW"]), ["Pipeline & Task Health", "Contention Center", "Query Investigation", "Stored procedures"])
         self.assertEqual(list(brief["MORNING_RANK"]), [1, 2, 3, 4])
         self.assertEqual(set(brief["ROUTE"]), {"Workload Operations"})
         self.assertIn("MORNING_DECISION", brief.columns)
@@ -4119,19 +4119,19 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(brief.iloc[1]["MORNING_DECISION"], "No-Go / contain now")
         self.assertIn("No-Go for warehouse resizing", brief.iloc[1]["GO_NO_GO"])
         self.assertEqual(brief.iloc[1]["FOCUS_QUERY_ID"], "01blocked")
-        task_row = brief[brief["WORKFLOW"].eq("Task graphs")].iloc[0]
+        task_row = brief[brief["WORKFLOW"].eq("Pipeline & Task Health")].iloc[0]
         contention_row = brief[brief["WORKFLOW"].eq("Contention Center")].iloc[0]
-        query_row = brief[brief["WORKFLOW"].eq("Query diagnosis")].iloc[0]
+        query_row = brief[brief["WORKFLOW"].eq("Query Investigation")].iloc[0]
         self.assertIn("Snowflake task operator", task_row["APPROVAL_GATE"])
         self.assertIn("recovery SLA", task_row["EVIDENCE_PACKAGE"])
         self.assertIn("TASK_HISTORY run succeeded", task_row["VERIFY_NEXT"])
-        self.assertIn("Task graphs guarded controls", task_row["EXECUTION_BOUNDARY"])
+        self.assertIn("Pipeline & Task Health guarded controls", task_row["EXECUTION_BOUNDARY"])
         self.assertIn("Query route", contention_row["APPROVAL_GATE"])
         self.assertIn("post-action Query History", contention_row["EVIDENCE_PACKAGE"])
         self.assertIn("retry/recovery", contention_row["VERIFY_NEXT"])
         self.assertIn("OVERWATCH displays action SQL only", contention_row["EXECUTION_BOUNDARY"])
         self.assertIn("operator stats", query_row["EVIDENCE_PACKAGE"])
-        self.assertIn("AI Query Diagnosis is advisory", query_row["EXECUTION_BOUNDARY"])
+        self.assertIn("Query Investigation is advisory", query_row["EXECUTION_BOUNDARY"])
 
         command_queue = _dba_morning_command_queue(brief)
         self.assertEqual(len(command_queue), 3)
@@ -4161,7 +4161,7 @@ class FormulaRegressionTests(unittest.TestCase):
             lookback_hours=24,
         )
         self.assertIn("Workload Operations / Contention Center", markdown)
-        self.assertIn("Workload Operations / Query diagnosis", markdown)
+        self.assertIn("Workload Operations / Query Investigation", markdown)
         self.assertIn("No-Go for warehouse resizing", markdown)
         self.assertIn("Review gate: Query route", markdown)
         self.assertIn("Telemetry package: Save precheck result", markdown)
@@ -4197,7 +4197,7 @@ class FormulaRegressionTests(unittest.TestCase):
         workload_lanes = _dba_workload_morning_lanes(data, pd.DataFrame())
         self.assertEqual(len(workload_lanes), 1)
         lane = workload_lanes.iloc[0]
-        self.assertEqual(lane["WORKFLOW"], "Task graphs")
+        self.assertEqual(lane["WORKFLOW"], "Pipeline & Task Health")
         self.assertEqual(lane["STATE"], "Blocked Scheduler Work")
         self.assertIn("Snowflake TASK_HISTORY", lane["WHY_NOW"])
         self.assertIn("failed/blocked=3", lane["WHY_NOW"])
@@ -4214,7 +4214,7 @@ class FormulaRegressionTests(unittest.TestCase):
             workload_lanes,
             max_rows=1,
         )
-        self.assertEqual(brief.iloc[0]["WORKFLOW"], "Task graphs")
+        self.assertEqual(brief.iloc[0]["WORKFLOW"], "Pipeline & Task Health")
         self.assertEqual(brief.iloc[0]["MORNING_DECISION"], "No-Go / contain now")
         self.assertIn("Snowflake task operator", brief.iloc[0]["APPROVAL_GATE"])
         self.assertIn("recovery SLA", brief.iloc[0]["EVIDENCE_PACKAGE"])
@@ -5754,7 +5754,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(_root_cause_action_for("Full Scan")[0], "Object/Query")
         self.assertIn("Contention Center", _root_cause_action_for("Lock Contention")[1])
         self.assertIn("TRANSACTION_BLOCKED_TIME", _root_cause_action_for("Lock Contention")[2])
-        self.assertIn("AI Query Diagnosis", _root_cause_action_for("Remote Spill")[1])
+        self.assertIn("Query Investigation", _root_cause_action_for("Remote Spill")[1])
         self.assertIn("partition evidence", _root_cause_action_for("Full Scan")[1])
         self.assertIn("query ID evidence", _root_cause_action_for("Slow Query")[1])
 

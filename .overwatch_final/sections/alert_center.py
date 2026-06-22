@@ -3012,17 +3012,17 @@ def _render_alert_action_workflows(company: str, environment: str) -> None:
 
 
 def _render_alert_command_findings(company: str, environment: str) -> None:
-    """Show related Command Center findings for alert and incident context."""
+    """Show related correlated findings for alert context."""
     from utils import load_command_center_finding_detail, load_command_center_recommendation_detail
 
     pd = _pd()
-    st.markdown("**Alert Command Findings**")
+    st.markdown("**Alert Investigation Findings**")
     st.caption(
         "Loads command findings tied to alerts, failures, cost, security, workload, and possible change correlations. "
         "Recommendations remain review-gated."
     )
     types = ("Failure / SLA", "Cost Spike", "Warehouse Slow", "Security Risk", "Recent Change")
-    if st.button("Load Alert Command Findings", key="alert_center_load_command_findings", width="stretch"):
+    if st.button("Load Alert Investigation Findings", key="alert_center_load_command_findings", width="stretch"):
         st.session_state["alert_center_command_findings"] = load_command_center_finding_detail(
             company,
             environment,
@@ -3043,7 +3043,7 @@ def _render_alert_command_findings(company: str, environment: str) -> None:
     recommendations = st.session_state.get("alert_center_command_recommendations")
     if isinstance(findings, pd.DataFrame):
         if findings.empty:
-            st.info("No alert-related Command Center findings are available for this scope yet.")
+            st.info("No alert-related correlated investigation findings are available for this scope yet.")
         else:
             _render_priority_dataframe(
                 findings,
@@ -3058,14 +3058,14 @@ def _render_alert_command_findings(company: str, environment: str) -> None:
                 ],
                 sort_by=["RISK_LEVEL", "LAST_REFRESHED_TS"],
                 ascending=[True, False],
-                raw_label="All alert command findings",
+                raw_label="All alert investigation findings",
                 height=320,
                 max_rows=10,
             )
     if isinstance(recommendations, pd.DataFrame) and not recommendations.empty:
         _render_priority_dataframe(
             recommendations,
-            title="Alert command recommendations",
+            title="Alert investigation recommendations",
             priority_columns=[
                 "INVESTIGATION_TYPE", "RECOMMENDED_ACTION", "RISK_LEVEL",
                 "OWNER_ROUTE", "EXECUTION_PLAN_REF", "REVIEW_REQUIRED",
@@ -3073,7 +3073,7 @@ def _render_alert_command_findings(company: str, environment: str) -> None:
             ],
             sort_by=["RISK_LEVEL", "LAST_REFRESHED_TS"],
             ascending=[True, False],
-            raw_label="All alert command recommendations",
+            raw_label="All alert investigation recommendations",
             height=260,
             max_rows=8,
         )

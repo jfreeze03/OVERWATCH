@@ -277,11 +277,11 @@ def _render_workload_closed_loop_detail(company: str, environment: str) -> None:
 
 
 def _render_workload_command_findings(company: str, environment: str) -> None:
-    """Expose warehouse slowdown and failure/SLA command findings behind Load."""
-    st.markdown("**Workload Command Findings**")
+    """Expose warehouse slowdown and failure/SLA investigation findings behind Load."""
+    st.markdown("**Workload Investigation Findings**")
     st.caption("Loads root-cause candidates for slow warehouses, queue pressure, task/query failures, and SLA risk.")
     types = ("Warehouse Slow", "Failure / SLA")
-    if st.button("Load Workload Command Findings", key="workload_load_command_center", width="stretch"):
+    if st.button("Load Workload Investigation Findings", key="workload_load_command_center", width="stretch"):
         st.session_state["workload_command_findings"] = load_command_center_finding_detail(
             company,
             environment,
@@ -302,7 +302,7 @@ def _render_workload_command_findings(company: str, environment: str) -> None:
     recommendations = st.session_state.get("workload_command_recommendations")
     if isinstance(findings, pd.DataFrame):
         if findings.empty:
-            st.info("No workload Command Center findings are available for this scope yet.")
+            st.info("No workload investigation findings are available for this scope yet.")
         else:
             render_priority_dataframe(
                 findings,
@@ -316,14 +316,14 @@ def _render_workload_command_findings(company: str, environment: str) -> None:
                 ],
                 sort_by=["RISK_LEVEL", "LAST_REFRESHED_TS"],
                 ascending=[True, False],
-                raw_label="All workload command findings",
+                raw_label="All workload investigation findings",
                 height=300,
                 max_rows=8,
             )
     if isinstance(recommendations, pd.DataFrame) and not recommendations.empty:
         render_priority_dataframe(
             recommendations,
-            title="Workload command recommendations",
+            title="Workload investigation recommendations",
             priority_columns=[
                 "INVESTIGATION_TYPE", "RECOMMENDED_ACTION", "RISK_LEVEL",
                 "OWNER_ROUTE", "EXECUTION_PLAN_REF", "REVIEW_REQUIRED",
@@ -331,7 +331,7 @@ def _render_workload_command_findings(company: str, environment: str) -> None:
             ],
             sort_by=["RISK_LEVEL", "LAST_REFRESHED_TS"],
             ascending=[True, False],
-            raw_label="All workload command recommendations",
+            raw_label="All workload investigation recommendations",
             height=260,
             max_rows=6,
         )

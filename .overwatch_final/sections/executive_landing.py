@@ -1819,7 +1819,7 @@ def _executive_pressure_rows(board: pd.DataFrame, advisor_rows: pd.DataFrame | N
             "PRESSURE_SCORE": capped(spill_gb, 100.0),
             "WHY_IT_MATTERS": "Remote spill is a strong signal for poor pruning, oversized joins, and warehouse pressure.",
             "OWNER_ROUTE": "Workload Operations",
-            "NEXT_ACTION": "Open Query Diagnosis for the top spilling SQL patterns.",
+            "NEXT_ACTION": "Open Query Investigation for the top spilling SQL patterns.",
         },
         {
             "LANE": "Reliability",
@@ -3517,9 +3517,9 @@ def _render_closed_loop_summary(actions: pd.DataFrame) -> None:
 
 
 def _render_command_center_summary(findings: pd.DataFrame) -> None:
-    """Render Phase 2F compact Command Center summary from the summary mart."""
+    """Render Phase 2F compact correlated-investigation summary from the summary mart."""
     if not isinstance(findings, pd.DataFrame) or findings.empty:
-        st.caption("Command Center is pending. Run the executive mart refresh to populate correlated findings.")
+        st.caption("Correlated investigations are pending. Run the executive mart refresh to populate current findings.")
         return
 
     work = findings.copy()
@@ -3530,7 +3530,7 @@ def _render_command_center_summary(findings: pd.DataFrame) -> None:
     work["_SORT_VALUE"] = high_risk.mul(1_000_000.0).add(owner_gap.mul(10_000.0)).add(expected_value)
     top_row = work.sort_values("_SORT_VALUE", ascending=False, na_position="last").iloc[0]
 
-    st.markdown("**Command Center**")
+    st.markdown("**Correlated Investigations**")
     render_shell_snapshot((
         ("Findings", f"{safe_int(finding_count.sum()):,}"),
         ("High Risk", f"{safe_int(high_risk.sum()):,}"),
@@ -3538,8 +3538,8 @@ def _render_command_center_summary(findings: pd.DataFrame) -> None:
         ("Value/Risk", f"${safe_float(expected_value.sum()):,.0f}"),
     ))
     st.caption(
-        f"Top investigation: {top_row.get('INVESTIGATION_TYPE') or 'Command Center'}; "
-        f"{top_row.get('TOP_RECOMMENDED_ACTION') or 'Load the DBA Command Center workspace for evidence.'} "
+        f"Top investigation: {top_row.get('INVESTIGATION_TYPE') or 'Correlated Investigation'}; "
+        f"{top_row.get('TOP_RECOMMENDED_ACTION') or 'Load the DBA investigation workspace for evidence.'} "
         "Findings are deterministic root-cause candidates, not unverified causality claims."
     )
     view = work[[

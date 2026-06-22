@@ -47,12 +47,19 @@ COST_CENTER_VIEWS = (
 COST_CENTER_VIEW_DETAILS = {
     "Cost Explorer": "Pivot one loaded attribution set by company, department, warehouse, database, role, and user.",
     "Explain This Bill": "Narrative answer for why spend changed.",
-    "User Leaderboard": "Top users and warehouses by allocated credits.",
-    "Burn Rate": "Daily metered credit trend by warehouse.",
+    "User Leaderboard": "Cost by User / Role: top users, roles, and warehouses by allocated credits.",
+    "Burn Rate": "Burn Rate & Forecast: daily metered credit trend by warehouse.",
     "Reconciliation": "Metered credits vs query allocation.",
-    "Forecast": "Near-term projected burn from recent usage.",
+    "Forecast": "Run-rate projection detail from recent usage.",
     "Attribution": "Role, schema, client, and lineage cost views.",
-    "Chargeback": "ALFA/Trexis company allocation output.",
+    "Chargeback": "Chargeback / Company Split: ALFA/Trexis company allocation output.",
+}
+
+COST_CENTER_VIEW_LABELS = {
+    "User Leaderboard": "Cost by User / Role",
+    "Burn Rate": "Burn Rate & Forecast",
+    "Forecast": "Run-Rate Projection",
+    "Chargeback": "Chargeback / Company Split",
 }
 
 NO_DATABASE_CONTEXT_VALUES = {
@@ -1592,6 +1599,7 @@ def render():
         COST_CENTER_VIEWS,
         COST_CENTER_VIEW_DETAILS,
         columns=3,
+        labels=COST_CENTER_VIEW_LABELS,
     )
     defer_source_note(
         "Progressive load is enabled: each cost view runs only when its Load or Calculate button is selected."
@@ -2349,7 +2357,7 @@ def render():
                 _queue_bill_exceptions(session, wh_deltas, credit_price, bounds["label"])
 
     elif cost_view == "User Leaderboard":
-        st.subheader("Credit Cost by User / Warehouse")
+        st.subheader("Cost by User / Role")
         days = day_window_selectbox("Lookback", key="cc_lead_days", default=30)
         gf = get_global_filter_clause(
             "q.start_time", "q.warehouse_name", "q.user_name", "q.role_name", "q.database_name", "q.schema_name"
@@ -2459,9 +2467,9 @@ def render():
 
     # -- BURN RATE -------------------------------------------------------------
     elif cost_view == "Burn Rate":
-        st.subheader("Credit Burn Rate")
+        st.subheader("Burn Rate & Forecast")
         br_days = day_window_selectbox("Lookback", key="br_days", default=30)
-        if st.button("Load Burn Rate", key="br_load"):
+        if st.button("Load Burn Rate & Forecast", key="br_load"):
             try:
                 burn_result = load_shared_warehouse_daily_credits_by_warehouse(
                     session,
@@ -2694,10 +2702,10 @@ def render():
             )
             download_csv(df_r, "cost_reconciliation.csv")
 
-    # -- FORECAST --------------------------------------------------------------
+    # -- RUN-RATE PROJECTION ---------------------------------------------------
     elif cost_view == "Forecast":
-        st.subheader("Credit Forecast (30-day Linear Projection)")
-        if st.button("Generate Forecast", key="fc_load"):
+        st.subheader("Run-Rate Projection")
+        if st.button("Generate Run-Rate Projection", key="fc_load"):
             try:
                 result = load_shared_warehouse_daily_credits(
                     30,
@@ -2708,7 +2716,7 @@ def render():
                 st.session_state["df_fc"] = result.data
                 st.session_state["cc_forecast_source"] = result.source
             except Exception as e:
-                st.warning(f"Forecast data unavailable in this role/context: {format_snowflake_error(e)}")
+                st.warning(f"Run-rate projection data unavailable in this role/context: {format_snowflake_error(e)}")
 
         if st.session_state.get("df_fc") is not None and not st.session_state["df_fc"].empty:
             df_f = _prepare_cost_forecast_rows(st.session_state["df_fc"])
@@ -2722,7 +2730,7 @@ def render():
             ))
             defer_source_note(st.session_state.get("cc_forecast_source", freshness_note("WAREHOUSE_METERING_HISTORY")))
             render_chart_with_data_toggle(
-                "Forecast Daily Credits",
+                "Projected Daily Credits",
                 "cc_forecast_daily_credits",
                 lambda: st.area_chart(df_f.set_index("DAY")["DAILY_CREDITS"]),
                 df_f,
@@ -2888,14 +2896,14 @@ def render():
 
     # -- CHARGEBACK - ALFA / Trexis split -------------------------------------
     elif cost_view == "Chargeback":
-        st.subheader("ALFA / Trexis Chargeback")
+        st.subheader("Chargeback / Company Split")
         st.caption("Allocated credits split by company, environment, database, user, and warehouse.")
         defer_source_note(
             "Database-attributed cost is directional because shared warehouses cannot be exactly split by PROD/DEV."
         )
         cb_days = day_window_selectbox("Lookback", key="cc_cb_days", default=30)
 
-        if st.button("Load Chargeback", key="cc_cb_load"):
+        if st.button("Load Chargeback / Company Split", key="cc_cb_load"):
             try:
                 mart_sql = build_mart_chargeback_sql(
                     cb_days,
@@ -2966,7 +2974,7 @@ def render():
                 st.session_state["df_chargeback"] = df_cb
                 st.session_state["df_chargeback_source"] = source_caption
             except Exception as e:
-                st.warning(f"Chargeback data unavailable in this role/context: {format_snowflake_error(e)}")
+                st.warning(f"Chargeback / company split data unavailable in this role/context: {format_snowflake_error(e)}")
 
         if st.session_state.get("df_chargeback") is not None and not st.session_state["df_chargeback"].empty:
             df_cb = _annotate_allocation_quality(st.session_state["df_chargeback"])

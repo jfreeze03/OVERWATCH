@@ -84,7 +84,7 @@ ACCOUNT_HEALTH_PANES = (
 )
 ACCOUNT_HEALTH_PANE_LABELS = {
     "Overview": "Health Workspace",
-    "Morning Report": "DBA Morning Brief",
+    "Morning Report": "DBA Daily Brief",
 }
 ACCOUNT_HEALTH_PANE_DETAILS = {
     "Overview": "Daily account cockpit: checklist state, source readiness, exception signals, and escalation routes.",
@@ -297,7 +297,7 @@ def _account_health_source_health_rows(
             "confidence": "Workflow telemetry",
         },
         {
-            "surface": "DBA Morning Brief",
+            "surface": "DBA Daily Brief",
             "value": state.get("morning_data"),
             "source": state.get("morning_data_source", "DBA Control Room telemetry"),
             "meta_key": "morning_data_meta",
@@ -827,7 +827,7 @@ def _build_account_health_dba_checklist(
             "EVIDENCE": f"{failures:,} failed queries in last 24h",
             "OWNER": "DBA / App Owner",
             "ROUTE": "Workload Operations",
-            "NEXT_ACTION": "Open Query diagnosis, group repeat error signatures, and queue recurring failures.",
+            "NEXT_ACTION": "Open Query Investigation, group repeat error signatures, and queue recurring failures.",
             "PROOF_REQUIRED": "query_id, error code/message, affected user/warehouse",
         },
         {
@@ -1769,7 +1769,7 @@ def _build_account_health_dba_morning_brief(
     cortex_budget_usd: float,
     allow_live_fallback: bool = False,
 ) -> dict:
-    """Build the DBA Morning Brief using the Control Room telemetry model."""
+    """Build the DBA Daily Brief using the Control Room telemetry model."""
     from sections import dba_control_room as dba
 
     data = dba._load_control_room(
@@ -3716,7 +3716,7 @@ def render():
 
     # -- MORNING REPORT --------------------------------------------------------
     elif active_view == "Morning Report":
-        st.subheader("DBA Morning Brief")
+        st.subheader("DBA Daily Brief")
         st.caption(
             "Telemetry-ranked DBA packet built from Control Room blockers, data readiness, handoff rows, "
             "deployment gates, and action-queue closure status."
@@ -3744,11 +3744,11 @@ def render():
         with brief_cols[2]:
             render_shell_snapshot((("Scope", f"{company} / {environment}"),))
 
-        if st.button("Refresh DBA Morning Brief", key="morning_gen", type="primary"):
-            action_session = _account_health_action_session("refresh DBA Morning Brief")
+        if st.button("Refresh DBA Daily Brief", key="morning_gen", type="primary"):
+            action_session = _account_health_action_session("refresh DBA Daily Brief")
             if action_session is None:
                 return
-            with render_load_status("Refreshing DBA Morning Brief", "DBA Morning Brief ready"):
+            with render_load_status("Refreshing DBA Daily Brief", "DBA Daily Brief ready"):
                 cortex_budget_usd = float(
                     st.session_state.get(
                         "dba_control_room_cortex_budget_usd",
@@ -3783,9 +3783,9 @@ def render():
         morning_packet = st.session_state.get("morning_data")
         expected_meta = _account_health_scope_meta(company, environment, window=f"{int(morning_lookback)}h")
         if not morning_packet:
-            st.info("Refresh the morning brief when the on-call DBA needs a ranked operating packet.")
+            st.info("Refresh the daily brief when the on-call DBA needs a ranked operating packet.")
         elif not _account_health_meta_matches(st.session_state.get("morning_data_meta"), expected_meta):
-            st.warning("Loaded DBA Morning Brief is stale for the active scope. Refresh before using it.")
+            st.warning("Loaded DBA Daily Brief is stale for the active scope. Refresh before using it.")
         else:
             from sections import dba_control_room as dba
 

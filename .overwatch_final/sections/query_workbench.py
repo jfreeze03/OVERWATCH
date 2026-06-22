@@ -89,24 +89,24 @@ def _root_cause_action_for(cause: str) -> tuple[str, str, str]:
     if "SPILL" in cause:
         return (
             "Query/Warehouse",
-            "Open AI Query Diagnosis with query ID evidence, inspect join/sort/aggregate operators, then decide SQL-shape versus warehouse-memory fix.",
+            "Open Query Investigation with query ID evidence, inspect join/sort/aggregate operators, then decide SQL-shape versus warehouse-memory fix.",
             "-- Use GET_QUERY_OPERATOR_STATS for the query and inspect spilled bytes by operator.",
         )
     if "SCAN" in cause:
         return (
             "Object/Query",
-            "Open AI Query Diagnosis with query text and partition evidence, then validate pruning, predicate rewrite, clustering, or search optimization fit.",
+            "Open Query Investigation with query text and partition evidence, then validate pruning, predicate rewrite, clustering, or search optimization fit.",
             "-- Review PARTITIONS_SCANNED vs PARTITIONS_TOTAL and clustering depth for affected tables.",
         )
     if "SLOW" in cause:
         return (
             "Query",
-            "Open AI Query Diagnosis with query ID evidence before choosing SQL rewrite, clustering, or warehouse changes.",
+            "Open Query Investigation with query ID evidence before choosing SQL rewrite, clustering, or warehouse changes.",
             "-- Load QUERY_HISTORY and GET_QUERY_OPERATOR_STATS before changing SQL or compute.",
         )
     return (
         "Query",
-        "Open AI Query Diagnosis when query text is available; otherwise compare recurring signatures and inspect query profile.",
+        "Open Query Investigation when query text is available; otherwise compare recurring signatures and inspect query profile.",
         "-- Review elapsed, execution, compilation, queue, scan, and spill components for this query.",
     )
 

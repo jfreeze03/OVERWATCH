@@ -343,6 +343,9 @@ SECTION_REDIRECTS = {
     "Security Posture": _CANONICAL_SECTION_BY_TITLE["Security Monitoring"],
     "Security & Access": _CANONICAL_SECTION_BY_TITLE["Security Monitoring"],
     "Data Sharing": _CANONICAL_SECTION_BY_TITLE["Security Monitoring"],
+    "Failed Logins": _CANONICAL_SECTION_BY_TITLE["Security Monitoring"],
+    "Access posture": _CANONICAL_SECTION_BY_TITLE["Security Monitoring"],
+    "Access Posture": _CANONICAL_SECTION_BY_TITLE["Security Monitoring"],
     "Command Center": _CANONICAL_SECTION_BY_TITLE["DBA Control Room"],
     "Warehouse Health": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
     "Optimization": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
@@ -411,7 +414,28 @@ SECTION_ROUTE_STATE = {
         "alert_center_admin_view": "Delivery & Automation",
     },
     "Security Posture": {
+        "security_posture_view": "Security Overview",
+        "security_posture_workflow": "Security Overview",
+    },
+    "Security & Access": {
+        "security_posture_view": "Risky Grants",
+        "security_posture_workflow": "Risky Grants",
+    },
+    "Data Sharing": {
+        "security_posture_view": "Data Sharing Exposure",
+        "security_posture_workflow": "Data Sharing Exposure",
+    },
+    "Failed Logins": {
         "security_posture_view": "Failed Logins",
+        "security_posture_workflow": "Failed Logins",
+    },
+    "Access posture": {
+        "security_posture_view": "Security Overview",
+        "security_posture_workflow": "Security Overview",
+    },
+    "Access Posture": {
+        "security_posture_view": "Security Overview",
+        "security_posture_workflow": "Security Overview",
     },
     "Query Workbench": {
         "workload_operations_workflow": "Query Investigation",

@@ -4727,12 +4727,27 @@ class FormulaRegressionTests(unittest.TestCase):
 
         self.assertEqual(
             [row["WORKFLOW"] for row in rows],
-            ["Failed Logins", "Risky Grants", "Data Sharing Exposure"],
+            [
+                "Security Overview",
+                "Failed Logins",
+                "Risky Grants",
+                "Privilege Sprawl",
+                "Access Changes",
+                "Data Sharing Exposure",
+                "Security Alerts",
+                "Security Admin / Advanced",
+            ],
         )
         by_workflow = {row["WORKFLOW"]: row for row in rows}
+        self.assertIn("failed logins", by_workflow["Security Overview"]["DBA_MOVE"])
         self.assertIn("failed logins", by_workflow["Failed Logins"]["DBA_MOVE"])
         self.assertIn("admin roles", by_workflow["Risky Grants"]["DBA_MOVE"])
+        self.assertIn("dormant high-privilege", by_workflow["Privilege Sprawl"]["DBA_MOVE"])
+        self.assertIn("recent grants", by_workflow["Access Changes"]["DBA_MOVE"])
         self.assertIn("shared databases", by_workflow["Data Sharing Exposure"]["DBA_MOVE"])
+        self.assertIn("security alerts", by_workflow["Security Alerts"]["DBA_MOVE"])
+        self.assertIn("raw evidence", by_workflow["Security Admin / Advanced"]["DBA_MOVE"])
+        self.assertIn("Open Overview", by_workflow["Security Overview"]["BUTTON_LABEL"])
         self.assertIn("Open Logins", by_workflow["Failed Logins"]["BUTTON_LABEL"])
         self.assertIn("MFA gaps", by_workflow["Failed Logins"]["SOURCES"])
 

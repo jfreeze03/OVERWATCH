@@ -284,7 +284,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('set_state(ALERT_CENTER_ACTIVE_VIEW, "Active Alerts")', navigation_text)
         self.assertIn('set_state(COST_CONTRACT_WORKFLOW, "Cost Overview")', navigation_text)
         self.assertIn('set_state(WORKLOAD_OPERATIONS_WORKFLOW, "Workload Overview")', navigation_text)
-        self.assertIn('set_state(SECURITY_POSTURE_WORKFLOW, "Failed Logins")', navigation_text)
+        self.assertIn('set_state(SECURITY_POSTURE_WORKFLOW, "Security Overview")', navigation_text)
 
     def test_direct_section_navigation_uses_compatibility_helper(self):
         navigation_text = (APP_ROOT / "sections" / "navigation.py").read_text(encoding="utf-8")
@@ -302,8 +302,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('set_state(COST_CONTRACT_WORKFLOW, "Cost Overview")', navigation_text)
         self.assertIn('set_state(WORKLOAD_OPERATIONS_WORKFLOW, "Workload Overview")', navigation_text)
         self.assertIn('set_state("workload_operations_pipeline_focus", "Failed Procedures")', navigation_text)
-        self.assertIn('set_state(SECURITY_POSTURE_VIEW, "Failed Logins")', navigation_text)
-        self.assertIn('set_state(SECURITY_POSTURE_WORKFLOW, "Failed Logins")', navigation_text)
+        self.assertIn('set_state(SECURITY_POSTURE_VIEW, "Security Overview")', navigation_text)
+        self.assertIn('set_state(SECURITY_POSTURE_WORKFLOW, "Security Overview")', navigation_text)
         self.assertIn('target != current or target == "Executive Landing"', navigation_text)
         self.assertIn("set_state(PENDING_SECTION, target)", navigation_text)
         self.assertIn("set_state(NAV_SECTION, target)", navigation_text)
@@ -328,6 +328,8 @@ class NavigationIntegrityTests(unittest.TestCase):
             DBA_CONTROL_ROOM_ACTIVE_VIEW,
             NAV_SECTION,
             PENDING_SECTION,
+            SECURITY_POSTURE_VIEW,
+            SECURITY_POSTURE_WORKFLOW,
         )
         from sections.navigation import apply_navigation_state
 
@@ -345,6 +347,19 @@ class NavigationIntegrityTests(unittest.TestCase):
             self.assertEqual(st.session_state[NAV_SECTION], "DBA Control Room")
             self.assertEqual(st.session_state[PENDING_SECTION], "DBA Control Room")
             self.assertEqual(st.session_state[DBA_CONTROL_ROOM_ACTIVE_VIEW], "Fast Watch")
+
+            target = apply_navigation_state("Security & Access")
+            self.assertEqual(target, "Security Monitoring")
+            self.assertEqual(st.session_state[SECURITY_POSTURE_VIEW], "Risky Grants")
+            self.assertEqual(st.session_state[SECURITY_POSTURE_WORKFLOW], "Risky Grants")
+
+            target = apply_navigation_state("Data Sharing")
+            self.assertEqual(target, "Security Monitoring")
+            self.assertEqual(st.session_state[SECURITY_POSTURE_VIEW], "Data Sharing Exposure")
+
+            target = apply_navigation_state("Access posture")
+            self.assertEqual(target, "Security Monitoring")
+            self.assertEqual(st.session_state[SECURITY_POSTURE_VIEW], "Security Overview")
         finally:
             st.session_state.clear()
             st.session_state.update(previous)
@@ -450,7 +465,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("SECURITY_POSTURE_VIEWS", security_text)
         self.assertNotIn("Security Signal Summary", security_text)
         self.assertNotIn("Security Monitoring Command Board", security_text)
-        self.assertIn('set_state(SECURITY_POSTURE_VIEW, "Failed Logins")', nav_text)
+        self.assertIn('set_state(SECURITY_POSTURE_VIEW, "Security Overview")', nav_text)
 
     def test_workload_operations_uses_fast_shell_module(self):
         self.assertEqual(SECTION_MODULES["Workload Operations"], "sections.workload_operations")
@@ -552,6 +567,10 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(SECTION_ALIASES["Recommendations"], SECTION_BY_TITLE["Cost & Contract"])
         self.assertEqual(SECTION_ALIASES["Cortex Monitor"], SECTION_BY_TITLE["Cost & Contract"])
         self.assertEqual(SECTION_ALIASES["Security & Access"], SECTION_BY_TITLE["Security Monitoring"])
+        self.assertEqual(SECTION_ALIASES["Security Posture"], SECTION_BY_TITLE["Security Monitoring"])
+        self.assertEqual(SECTION_ALIASES["Data Sharing"], SECTION_BY_TITLE["Security Monitoring"])
+        self.assertEqual(SECTION_ALIASES["Failed Logins"], SECTION_BY_TITLE["Security Monitoring"])
+        self.assertEqual(SECTION_ALIASES["Access posture"], SECTION_BY_TITLE["Security Monitoring"])
         self.assertNotIn("DBA Tools", SECTION_ALIASES)
         self.assertNotIn("Change & Drift", SECTION_ALIASES)
         self.assertNotIn("Who Changed What?", SECTION_ALIASES)
@@ -892,10 +911,28 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(compatibility_state_for_section("Alert History")["alert_center_active_view"], "Alert History")
         self.assertEqual(compatibility_state_for_section("Alert Configuration")["alert_center_active_view"], "Alert Settings / Admin")
         self.assertEqual(compatibility_state_for_section("Alert Configuration")["alert_center_admin_view"], "Delivery & Automation")
-        self.assertIn("Failed Logins", security_posture.WORKFLOWS)
-        self.assertIn("Risky Grants", security_posture.WORKFLOWS)
-        self.assertIn("Privilege Sprawl", security_posture.WORKFLOWS)
+        self.assertEqual(
+            tuple(security_posture.WORKFLOWS),
+            (
+                "Security Overview",
+                "Failed Logins",
+                "Risky Grants",
+                "Privilege Sprawl",
+                "Access Changes",
+                "Data Sharing Exposure",
+                "Security Alerts",
+                "Security Admin / Advanced",
+            ),
+        )
+        self.assertEqual(len(security_posture.WORKFLOWS), len(set(security_posture.WORKFLOWS)))
         self.assertEqual(security_posture.WORKFLOW_MODULES["Failed Logins"], "sections.security_access")
+        self.assertEqual(security_posture.WORKFLOW_MODULES["Risky Grants"], "sections.security_access")
+        self.assertEqual(security_posture.WORKFLOW_MODULES["Data Sharing Exposure"], "sections.data_sharing")
+        self.assertEqual(compatibility_state_for_section("Security Posture")["security_posture_view"], "Security Overview")
+        self.assertEqual(compatibility_state_for_section("Security & Access")["security_posture_view"], "Risky Grants")
+        self.assertEqual(compatibility_state_for_section("Data Sharing")["security_posture_view"], "Data Sharing Exposure")
+        self.assertEqual(compatibility_state_for_section("Failed Logins")["security_posture_view"], "Failed Logins")
+        self.assertEqual(compatibility_state_for_section("Access posture")["security_posture_view"], "Security Overview")
         self.assertNotIn("Release evidence", change_drift.WORKFLOWS)
         self.assertNotIn("Owner approval evidence", change_drift.WORKFLOWS)
         self.assertIn("Schema and object drift", change_drift.WORKFLOWS)

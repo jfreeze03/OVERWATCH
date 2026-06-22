@@ -63,8 +63,8 @@ def request_section_workspace(section: str) -> None:
     elif target == "Workload Operations":
         set_state(WORKLOAD_OPERATIONS_WORKFLOW, "Workload Overview")
     elif target == "Security Monitoring":
-        set_state(SECURITY_POSTURE_VIEW, "Failed Logins")
-        set_state(SECURITY_POSTURE_WORKFLOW, "Failed Logins")
+        set_state(SECURITY_POSTURE_VIEW, "Security Overview")
+        set_state(SECURITY_POSTURE_WORKFLOW, "Security Overview")
     set_state(PENDING_AUTOLOAD_SECTION, target)
     set_state(PENDING_AUTOLOAD_STARTED_AT, datetime.now().isoformat(timespec="seconds"))
 
@@ -77,9 +77,9 @@ def apply_navigation_state(section: str, *, mark_pending: bool = True) -> str:
     if mark_pending and (target != current or target == "Executive Landing"):
         set_state(PENDING_SECTION, target)
         set_state(SECTION_TRANSITION_STARTED_AT, datetime.now().isoformat(timespec="seconds"))
+    request_section_workspace(target)
     for key, value in compatibility_state_for_section(raw_section).items():
         set_state(key, value)
-    request_section_workspace(target)
     set_state(NAV_SECTION, target)
     return target
 

@@ -330,10 +330,20 @@ def _jump(title: str, *, warehouse: str = "", user: str = "", workflow: str = ""
         elif title == "Cost & Contract":
             st.session_state["cost_contract_workflow"] = workflow
         elif title == "Security Monitoring":
-            security_workflow = workflow if workflow in {"Failed Logins", "Risky Grants", "Privilege Sprawl", "Data Sharing Exposure", "Access Changes", "Security Alerts"} else "Failed Logins"
+            security_workflow = workflow if workflow in {
+                "Security Overview",
+                "Failed Logins",
+                "Risky Grants",
+                "Privilege Sprawl",
+                "Access Changes",
+                "Data Sharing Exposure",
+                "Security Alerts",
+                "Security Admin / Advanced",
+            } else "Security Overview"
             st.session_state["security_posture_view"] = security_workflow
             st.session_state["security_posture_workflow"] = security_workflow
         elif title == "Security Posture":
+            st.session_state["security_posture_view"] = workflow
             st.session_state["security_posture_workflow"] = workflow
     if warehouse:
         st.session_state["global_warehouse"] = warehouse

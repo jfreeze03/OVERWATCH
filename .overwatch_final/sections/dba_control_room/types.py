@@ -319,9 +319,9 @@ def _jump(title: str, *, warehouse: str = "", user: str = "", workflow: str = ""
         if title in {"Query Workbench", "Workload Operations"}:
             st.session_state["_workload_operations_explicit_workflow_request"] = True
             if workflow == "Diagnosis":
-                st.session_state["workload_operations_workflow"] = "Query diagnosis"
+                st.session_state["workload_operations_workflow"] = "Query Investigation"
             elif workflow == "History Search":
-                st.session_state["workload_operations_workflow"] = "Query diagnosis"
+                st.session_state["workload_operations_workflow"] = "Query Investigation"
                 st.session_state["query_analysis_active_view"] = "History Search"
             else:
                 st.session_state["workload_operations_workflow"] = workflow

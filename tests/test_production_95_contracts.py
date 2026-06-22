@@ -233,7 +233,7 @@ class Production95ContractsTests(unittest.TestCase):
         self.assertFalse((APP_ROOT / "sections" / "workload_operations_shell.py").exists())
         self.assertNotIn("Cost Signal Summary", cost_text)
         self.assertNotIn("Alert Signal Summary", alert_text)
-        self.assertIn('QUERY_INVESTIGATION_WORKFLOW = "Query investigation"', workload_text)
+        self.assertIn('QUERY_INVESTIGATION_WORKFLOW = "Query Investigation"', workload_text)
         self.assertNotIn("Cost Command Board", cost_text)
         self.assertNotIn("Alert Command Board", alert_text)
         self.assertNotIn("Workload Command Board", workload_text)

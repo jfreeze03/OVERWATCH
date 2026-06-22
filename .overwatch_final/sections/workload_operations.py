@@ -92,7 +92,7 @@ def _render_loaded_workload_alert_context() -> None:
         if st.button("Open Workload Drilldown", key="workload_alert_open_drilldown", width="stretch"):
             apply_section_workflow_navigation(
                 str(top.get("DESTINATION_SECTION") or "Workload Operations"),
-                workflow=str(top.get("DESTINATION_WORKFLOW") or "Task & procedure health"),
+                workflow=str(top.get("DESTINATION_WORKFLOW") or PIPELINE_TASK_HEALTH_WORKFLOW),
             )
             st.rerun()
 
@@ -337,52 +337,57 @@ def _render_workload_command_findings(company: str, environment: str) -> None:
         )
 
 
-WORKLOAD_OPERATIONS_FAST_ENTRY_VERSION = "2026-06-16-workload-board-v1"
+WORKLOAD_OPERATIONS_FAST_ENTRY_VERSION = "2026-06-22-workload-flow-v2"
 WORKLOAD_OPERATIONS_EXPLICIT_WORKFLOW_KEY = "_workload_operations_explicit_workflow_request"
-QUERY_INVESTIGATION_WORKFLOW = "Query investigation"
-QUERY_CONTENTION_WORKFLOW = QUERY_INVESTIGATION_WORKFLOW
-TASK_PROCEDURE_WORKFLOW = "Task & procedure health"
-STORED_PROCEDURES_WORKFLOW = "Stored procedures"
-PIPELINE_SLA_WORKFLOW = "Pipeline / SLA risk"
-SCHEMA_COMPARE_WORKFLOW = "Schema & data compare"
+WORKLOAD_OVERVIEW_WORKFLOW = "Workload Overview"
+QUERY_INVESTIGATION_WORKFLOW = "Query Investigation"
+PIPELINE_TASK_HEALTH_WORKFLOW = "Pipeline & Task Health"
+CONTENTION_PERFORMANCE_WORKFLOW = "Contention & Performance"
+CHANGE_DRIFT_WORKFLOW = "Change & Drift"
+ADVANCED_DBA_TOOLS_WORKFLOW = "Advanced DBA Tools"
 AI_QUERY_DIAGNOSIS_WORKFLOW = QUERY_INVESTIGATION_WORKFLOW
-QUERY_FOCUS_KEY = "workload_operations_query_focus"
-QUERY_FOCUS_DIAGNOSIS = "AI Query Diagnosis"
-QUERY_FOCUS_CONTENTION = "Contention Telemetry"
+PIPELINE_FOCUS_KEY = "workload_operations_pipeline_focus"
+PIPELINE_TASK_FOCUS = "Failed tasks & procedures"
+PIPELINE_STORED_PROC_FOCUS = "Stored procedure analysis"
+PIPELINE_LOAD_FOCUS = "Pipeline loads & SLA"
 _LEGACY_TRIAGE_FOCUS_KEY = "workload_operations_triage_focus"
-_LEGACY_PIPELINE_FOCUS_KEY = "workload_operations_pipeline_focus"
 
 WORKFLOWS = (
+    WORKLOAD_OVERVIEW_WORKFLOW,
     QUERY_INVESTIGATION_WORKFLOW,
-    TASK_PROCEDURE_WORKFLOW,
-    STORED_PROCEDURES_WORKFLOW,
-    PIPELINE_SLA_WORKFLOW,
-    SCHEMA_COMPARE_WORKFLOW,
+    PIPELINE_TASK_HEALTH_WORKFLOW,
+    CONTENTION_PERFORMANCE_WORKFLOW,
+    CHANGE_DRIFT_WORKFLOW,
+    ADVANCED_DBA_TOOLS_WORKFLOW,
 )
 
 WORKFLOW_DETAILS = {
-    QUERY_INVESTIGATION_WORKFLOW: "One front door for running, queued, blocked, slow, spilling, failed, high-cost, and AI-diagnosed SQL.",
-    TASK_PROCEDURE_WORKFLOW: "Task graph and procedure health with late runs, failures, retry state, and recovery order.",
-    STORED_PROCEDURES_WORKFLOW: "Stored procedure inventory, task linkage, runtime/cost regressions, advisor signals, and child-query drilldown.",
-    PIPELINE_SLA_WORKFLOW: "Freshness SLA, load failures, dynamic tables, Snowpipe usage, and downstream backlog.",
-    SCHEMA_COMPARE_WORKFLOW: "Schema and data compare for missing objects, row counts, and object/data likeness.",
+    WORKLOAD_OVERVIEW_WORKFLOW: "Fast workload triage: failures, slow SQL, queue pressure, pipeline issues, and recent changes.",
+    QUERY_INVESTIGATION_WORKFLOW: "One front door for SQL text, query ID lookup, history search, operator stats, cost, elapsed time, bytes, queue, spill, and scans.",
+    PIPELINE_TASK_HEALTH_WORKFLOW: "Tasks, procedures, load failures, freshness SLA, dynamic tables, Snowpipe, and downstream backlog.",
+    CONTENTION_PERFORMANCE_WORKFLOW: "Warehouse queue pressure, blocked queries, lock waits, saturation, spilling, hot warehouses, and performance regressions.",
+    CHANGE_DRIFT_WORKFLOW: "Task, procedure, object, schema, deployment, and workload-related changes before an incident.",
+    ADVANCED_DBA_TOOLS_WORKFLOW: "Schema compare, data compare, generated SQL, validation utilities, and admin/debug tools.",
 }
 
 WORKFLOW_MODULES = {
     QUERY_INVESTIGATION_WORKFLOW: "sections.query_analysis",
-    TASK_PROCEDURE_WORKFLOW: "sections.task_management",
-    STORED_PROCEDURES_WORKFLOW: "sections.stored_proc_tracker",
-    PIPELINE_SLA_WORKFLOW: "sections.pipeline_health",
-    SCHEMA_COMPARE_WORKFLOW: "sections.dba_tools",
+    CONTENTION_PERFORMANCE_WORKFLOW: "sections.contention_center",
+    ADVANCED_DBA_TOOLS_WORKFLOW: "sections.dba_tools",
 }
 
-QUERY_FOCUS_DETAILS = {
-    QUERY_FOCUS_DIAGNOSIS: "Bottlenecks, history search, plan steps, and AI-assisted Snowflake query recommendations.",
-    QUERY_FOCUS_CONTENTION: "Live incidents, active locks, historical waits, hotspots, task overlap, long DML, and blocker maps.",
+PIPELINE_FOCUS_DETAILS = {
+    PIPELINE_TASK_FOCUS: "Task graph job status, failures, retries, SLA drift, cancellation controls, and linked query detail.",
+    PIPELINE_STORED_PROC_FOCUS: "Stored procedure inventory, calls, runtime/cost regressions, task linkage, and child-query drilldown.",
+    PIPELINE_LOAD_FOCUS: "Freshness SLA, copy/load failures, dynamic tables, Snowpipe usage, volume watch, and downstream backlog.",
 }
 
 QUERY_DIAGNOSIS_ALIASES = {
     "Query diagnosis",
+    "Query Investigation",
+    "Query Analysis",
+    "Query Search & History",
+    "Query Workbench",
     "History search",
     "History Search",
     "Root cause patterns",
@@ -400,23 +405,67 @@ QUERY_CONTENTION_ALIASES = {
     "Live Triage",
     "Contention",
     "Contention Center",
+    "Contention Telemetry",
+    "Contention & Performance",
+}
+
+PIPELINE_TASK_ALIASES = {
+    "Task & procedure health",
+    "Task, procedure & pipeline health",
+    "Task graphs",
+    "Task Management",
+}
+
+PIPELINE_STORED_PROC_ALIASES = {
+    "Stored procedures",
+    "Stored procedure lineage",
+    "Stored Proc Tracker",
+}
+
+PIPELINE_LOAD_ALIASES = {
+    "Pipeline health",
+    "Pipeline / SLA risk",
+    "Pipeline & Task Health",
+}
+
+CHANGE_DRIFT_ALIASES = {
+    "Change & Drift",
+    "Change Drift",
+    "Change Workflows",
+    "Object Change Monitor",
+    "Object Monitoring",
+}
+
+ADVANCED_DBA_ALIASES = {
+    "Schema & data compare",
+    "Schema Compare",
+    "Data Compare",
+    "DBA Tools",
+    "Advanced DBA Tools",
 }
 
 CONSOLIDATED_WORKFLOW_ALIASES = {
     **{alias: QUERY_INVESTIGATION_WORKFLOW for alias in QUERY_DIAGNOSIS_ALIASES},
-    **{alias: QUERY_INVESTIGATION_WORKFLOW for alias in QUERY_CONTENTION_ALIASES},
-    "Task, procedure & pipeline health": TASK_PROCEDURE_WORKFLOW,
-    "Task graphs": TASK_PROCEDURE_WORKFLOW,
-    "Stored procedure lineage": STORED_PROCEDURES_WORKFLOW,
-    "Pipeline health": PIPELINE_SLA_WORKFLOW,
+    **{alias: CONTENTION_PERFORMANCE_WORKFLOW for alias in QUERY_CONTENTION_ALIASES},
+    **{alias: PIPELINE_TASK_HEALTH_WORKFLOW for alias in PIPELINE_TASK_ALIASES},
+    **{alias: PIPELINE_TASK_HEALTH_WORKFLOW for alias in PIPELINE_STORED_PROC_ALIASES},
+    **{alias: PIPELINE_TASK_HEALTH_WORKFLOW for alias in PIPELINE_LOAD_ALIASES},
+    **{alias: CHANGE_DRIFT_WORKFLOW for alias in CHANGE_DRIFT_ALIASES},
+    **{alias: ADVANCED_DBA_TOOLS_WORKFLOW for alias in ADVANCED_DBA_ALIASES},
+}
+
+PIPELINE_FOCUS_ALIASES = {
+    **{alias: PIPELINE_TASK_FOCUS for alias in PIPELINE_TASK_ALIASES},
+    **{alias: PIPELINE_STORED_PROC_FOCUS for alias in PIPELINE_STORED_PROC_ALIASES},
+    **{alias: PIPELINE_LOAD_FOCUS for alias in PIPELINE_LOAD_ALIASES},
 }
 
 LEGACY_WORKFLOW_MAP = {
     "Diagnosis": QUERY_INVESTIGATION_WORKFLOW,
     "History Search": QUERY_INVESTIGATION_WORKFLOW,
     "AI Diagnosis": QUERY_INVESTIGATION_WORKFLOW,
-    "Live Triage": QUERY_INVESTIGATION_WORKFLOW,
-    "Contention": QUERY_INVESTIGATION_WORKFLOW,
+    "Live Triage": CONTENTION_PERFORMANCE_WORKFLOW,
+    "Contention": CONTENTION_PERFORMANCE_WORKFLOW,
     "Patterns": QUERY_INVESTIGATION_WORKFLOW,
 }
 
@@ -431,60 +480,143 @@ def _apply_fast_entry_default() -> None:
 
 def _normalize_workload_workflow_state() -> None:
     current = str(st.session_state.get("workload_operations_workflow") or "")
-    if current in QUERY_CONTENTION_ALIASES:
-        st.session_state[QUERY_FOCUS_KEY] = QUERY_FOCUS_CONTENTION
-    elif current in QUERY_DIAGNOSIS_ALIASES:
-        st.session_state[QUERY_FOCUS_KEY] = QUERY_FOCUS_DIAGNOSIS
+    pipeline_focus = PIPELINE_FOCUS_ALIASES.get(current)
+    if pipeline_focus:
+        st.session_state[PIPELINE_FOCUS_KEY] = pipeline_focus
     mapped = CONSOLIDATED_WORKFLOW_ALIASES.get(current)
     if mapped:
         st.session_state["workload_operations_workflow"] = mapped
     legacy_focus = str(st.session_state.pop(_LEGACY_TRIAGE_FOCUS_KEY, "") or "")
-    pipeline_focus = str(st.session_state.pop(_LEGACY_PIPELINE_FOCUS_KEY, "") or "")
-    if legacy_focus in QUERY_CONTENTION_ALIASES:
-        st.session_state[QUERY_FOCUS_KEY] = QUERY_FOCUS_CONTENTION
-    elif legacy_focus in QUERY_DIAGNOSIS_ALIASES:
-        st.session_state[QUERY_FOCUS_KEY] = QUERY_FOCUS_DIAGNOSIS
-    focus_workflow = CONSOLIDATED_WORKFLOW_ALIASES.get(legacy_focus) or CONSOLIDATED_WORKFLOW_ALIASES.get(pipeline_focus)
+    existing_pipeline_focus = str(st.session_state.get(PIPELINE_FOCUS_KEY, "") or "")
+    if existing_pipeline_focus in PIPELINE_FOCUS_ALIASES:
+        st.session_state[PIPELINE_FOCUS_KEY] = PIPELINE_FOCUS_ALIASES[existing_pipeline_focus]
+    focus_workflow = CONSOLIDATED_WORKFLOW_ALIASES.get(legacy_focus)
     if focus_workflow and current not in WORKFLOWS:
         st.session_state["workload_operations_workflow"] = focus_workflow
 
 
+def _set_workload_workflow(workflow: str, *, pipeline_focus: str = "") -> None:
+    st.session_state["workload_operations_workflow"] = workflow
+    if pipeline_focus:
+        st.session_state[PIPELINE_FOCUS_KEY] = pipeline_focus
+    st.rerun()
+
+
+def _render_workload_overview(company: str, environment: str) -> None:
+    st.markdown("**Workload Overview**")
+    board = build_loaded_section_alert_signal_board(st.session_state, section="Workload Operations", limit=12)
+    if isinstance(board, pd.DataFrame) and not board.empty:
+        severity = board.get("SEVERITY", pd.Series(dtype=str)).fillna("").astype(str).str.upper()
+        category = board.get("CATEGORY", pd.Series(dtype=str)).fillna("").astype(str).str.upper()
+        cols = st.columns(4)
+        cols[0].metric("Active workload items", f"{len(board):,}")
+        cols[1].metric("Critical / High", f"{safe_int(severity.isin(['CRITICAL', 'HIGH']).sum()):,}")
+        cols[2].metric("Query / contention", f"{safe_int(category.str.contains('QUERY|CONTENTION|PERFORMANCE', regex=True).sum()):,}")
+        cols[3].metric("Pipeline / task", f"{safe_int(category.str.contains('TASK|PIPELINE|PROCEDURE|LOAD', regex=True).sum()):,}")
+        _render_loaded_workload_alert_context()
+    else:
+        st.info("No loaded workload incidents are in session. Use Query Investigation, Pipeline & Task Health, or Contention & Performance when an issue starts.")
+
+    st.markdown("**Open the right tool**")
+    cols = st.columns(5)
+    with cols[0]:
+        if st.button("Slow or failed SQL", key="workload_overview_open_query", width="stretch"):
+            _set_workload_workflow(QUERY_INVESTIGATION_WORKFLOW)
+    with cols[1]:
+        if st.button("Task or load failure", key="workload_overview_open_pipeline", width="stretch"):
+            _set_workload_workflow(PIPELINE_TASK_HEALTH_WORKFLOW, pipeline_focus=PIPELINE_TASK_FOCUS)
+    with cols[2]:
+        if st.button("Queue or blocking", key="workload_overview_open_contention", width="stretch"):
+            _set_workload_workflow(CONTENTION_PERFORMANCE_WORKFLOW)
+    with cols[3]:
+        if st.button("What changed?", key="workload_overview_open_change", width="stretch"):
+            _set_workload_workflow(CHANGE_DRIFT_WORKFLOW)
+    with cols[4]:
+        if st.button("Compare / admin", key="workload_overview_open_advanced", width="stretch"):
+            _set_workload_workflow(ADVANCED_DBA_TOOLS_WORKFLOW)
+
+
 def _render_query_investigation_surface() -> None:
-    focus = render_workflow_selector(
-        "Query investigation focus",
-        QUERY_FOCUS_KEY,
-        (QUERY_FOCUS_DIAGNOSIS, QUERY_FOCUS_CONTENTION),
-        QUERY_FOCUS_DETAILS,
-        columns=2,
-    )
-    if focus == QUERY_FOCUS_CONTENTION:
-        render_workflow_module(QUERY_FOCUS_CONTENTION, {QUERY_FOCUS_CONTENTION: "sections.contention_center"})
-        return
     st.session_state.setdefault("query_analysis_active_view", "AI Diagnosis")
     if st.session_state.pop("workload_query_diagnosis_mode", "") == "Detailed diagnosis":
         st.session_state["query_analysis_active_view"] = "Detailed Diagnosis"
-    render_workflow_module(QUERY_FOCUS_DIAGNOSIS, {QUERY_FOCUS_DIAGNOSIS: "sections.query_analysis"})
+    render_workflow_module(QUERY_INVESTIGATION_WORKFLOW, WORKFLOW_MODULES)
 
 
-def _render_workload_surface(workflow: str) -> None:
+def _render_pipeline_task_health_surface() -> None:
+    focus = render_workflow_selector(
+        "Pipeline & task focus",
+        PIPELINE_FOCUS_KEY,
+        (PIPELINE_TASK_FOCUS, PIPELINE_STORED_PROC_FOCUS, PIPELINE_LOAD_FOCUS),
+        PIPELINE_FOCUS_DETAILS,
+        columns=3,
+    )
+    if focus == PIPELINE_STORED_PROC_FOCUS:
+        render_workflow_module(focus, {focus: "sections.stored_proc_tracker"})
+        return
+    if focus == PIPELINE_LOAD_FOCUS:
+        st.session_state.setdefault("pipeline_health_active_view", "Load Failures")
+        render_workflow_module(focus, {focus: "sections.pipeline_health"})
+        return
+    st.session_state.setdefault("task_management_view", "Job Status Brief")
+    render_workflow_module(focus, {focus: "sections.task_management"})
+
+
+def _render_change_drift_surface(company: str, environment: str) -> None:
+    render_workflow_guide(
+        "Use this when an incident follows a release, object change, task/procedure edit, schema drift, or deployment window.",
+        [
+            ("Problem started after a release", "Load workload changes and check task/procedure/object changes in the same window."),
+            ("Failures began after object edits", "Review possible correlations before rerun or rollback."),
+            ("Need full object comparison", "Use Advanced DBA Tools for Schema Compare and Data Compare."),
+        ],
+    )
+    _render_workload_change_detail(company, environment)
+
+
+def _render_advanced_workload_tools(company: str, environment: str) -> None:
+    st.session_state.setdefault("dba_tools_focus", "Object Monitoring")
+    st.session_state.setdefault("dba_tools_focus_tool", "Schema Compare")
+    st.session_state.setdefault("dba_tools_group_selector", "Object Monitoring")
+    render_workflow_module(ADVANCED_DBA_TOOLS_WORKFLOW, WORKFLOW_MODULES)
+
+    with st.expander("Advanced workload evidence and admin diagnostics", expanded=False):
+        render_workflow_guide(
+            "Admin-only diagnostics stay here so daily workload triage remains focused.",
+            [
+                ("Forecast or SLA risk detail", "Load only when explaining future pressure or SLA risk."),
+                ("Closed-loop workflow evidence", "Review action state and generated SQL without executing remediation."),
+                ("Command findings", "Load root-cause candidates only when a cross-domain investigation needs them."),
+            ],
+        )
+        _render_workload_forecast_detail(company, environment)
+        _render_workload_closed_loop_detail(company, environment)
+        _render_workload_command_findings(company, environment)
+
+
+def _render_workload_surface(workflow: str, company: str, environment: str) -> None:
+    if workflow == WORKLOAD_OVERVIEW_WORKFLOW:
+        _render_workload_overview(company, environment)
+        return
     if workflow == QUERY_INVESTIGATION_WORKFLOW:
         _render_query_investigation_surface()
         return
-    if workflow == TASK_PROCEDURE_WORKFLOW:
-        st.session_state.setdefault("task_management_view", "Job Status Brief")
-    elif workflow == PIPELINE_SLA_WORKFLOW:
-        st.session_state.setdefault("pipeline_health_active_view", "Freshness SLA")
-    elif workflow == SCHEMA_COMPARE_WORKFLOW:
-        st.session_state["dba_tools_focus"] = "Object Monitoring"
-        st.session_state["dba_tools_focus_tool"] = "Schema Compare"
-        st.session_state["dba_tools_group_selector"] = "Object Monitoring"
+    if workflow == PIPELINE_TASK_HEALTH_WORKFLOW:
+        _render_pipeline_task_health_surface()
+        return
+    if workflow == CHANGE_DRIFT_WORKFLOW:
+        _render_change_drift_surface(company, environment)
+        return
+    if workflow == ADVANCED_DBA_TOOLS_WORKFLOW:
+        _render_advanced_workload_tools(company, environment)
+        return
     render_workflow_module(workflow, WORKFLOW_MODULES)
 
 
 def render() -> None:
     _apply_fast_entry_default()
     if st.session_state.get("exceptions_only_mode") and "workload_operations_workflow" not in st.session_state:
-        st.session_state["workload_operations_workflow"] = QUERY_CONTENTION_WORKFLOW
+        st.session_state["workload_operations_workflow"] = WORKLOAD_OVERVIEW_WORKFLOW
     migrate_legacy_workflow_state(
         "query_workbench_workflow",
         "workload_operations_workflow",
@@ -492,32 +624,17 @@ def render() -> None:
     )
     _normalize_workload_workflow_state()
     if st.session_state.get("workload_operations_workflow") not in WORKFLOWS:
-        st.session_state["workload_operations_workflow"] = QUERY_CONTENTION_WORKFLOW
+        st.session_state["workload_operations_workflow"] = WORKLOAD_OVERVIEW_WORKFLOW
 
-    _render_loaded_workload_alert_context()
     company = get_active_company()
     environment = get_active_environment()
 
     workflow = render_workflow_selector(
-        "Workload surface",
+        "Workload workflow",
         "workload_operations_workflow",
         WORKFLOWS,
         WORKFLOW_DETAILS,
         columns=5,
     )
 
-    _render_workload_surface(workflow)
-
-    with st.expander("Advanced workload evidence and workflow guide", expanded=False):
-        render_workflow_guide(
-            "Pick the operator surface that matches the incident. Each route opens one specialist path instead of a nested brief.",
-            [
-                ("Running, queued, blocked, slow, spilling, or failed SQL", "Use Query investigation, then choose diagnosis or contention focus."),
-                ("Late task, failed procedure, load backlog, or downstream SLA risk", "Use Task & procedure health, Stored procedures, or Pipeline / SLA risk."),
-                ("Mismatch between environments or releases", "Use Schema & data compare."),
-            ],
-        )
-        _render_workload_forecast_detail(company, environment)
-        _render_workload_change_detail(company, environment)
-        _render_workload_closed_loop_detail(company, environment)
-        _render_workload_command_findings(company, environment)
+    _render_workload_surface(workflow, company, environment)

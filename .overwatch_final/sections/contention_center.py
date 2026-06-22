@@ -1693,9 +1693,10 @@ def _open_contention_owner_route(row: pd.Series | dict) -> None:
     if route == "Active Locks":
         st.session_state["contention_center_view"] = "Active Locks"
     elif route == "Task graphs":
-        st.session_state["workload_operations_workflow"] = "Task graphs"
+        st.session_state["workload_operations_workflow"] = "Pipeline & Task Health"
+        st.session_state["workload_operations_pipeline_focus"] = "Failed tasks & procedures"
     elif route == "Query diagnosis":
-        st.session_state["workload_operations_workflow"] = "Query diagnosis"
+        st.session_state["workload_operations_workflow"] = "Query Investigation"
         st.session_state["query_analysis_active_view"] = "AI Diagnosis"
         if query_id:
             st.session_state["ai_query_id"] = query_id

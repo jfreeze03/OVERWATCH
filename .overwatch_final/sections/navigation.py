@@ -24,7 +24,6 @@ from runtime_state import (
     SECTION_TRANSITION_STARTED_AT,
     SECURITY_POSTURE_VIEW,
     SECURITY_POSTURE_WORKFLOW,
-    WORKLOAD_OPERATIONS_QUERY_FOCUS,
     WORKLOAD_OPERATIONS_WORKFLOW,
     get_state,
     pop_state,
@@ -62,8 +61,7 @@ def request_section_workspace(section: str) -> None:
     elif target == "Cost & Contract":
         set_state(COST_CONTRACT_WORKFLOW, "Usage attribution and run-rate")
     elif target == "Workload Operations":
-        set_state(WORKLOAD_OPERATIONS_WORKFLOW, "Query investigation")
-        set_state(WORKLOAD_OPERATIONS_QUERY_FOCUS, "Contention Telemetry")
+        set_state(WORKLOAD_OPERATIONS_WORKFLOW, "Workload Overview")
     elif target == "Security Monitoring":
         set_state(SECURITY_POSTURE_VIEW, "Access posture")
         set_state(SECURITY_POSTURE_WORKFLOW, "Access posture")
@@ -102,8 +100,12 @@ def apply_section_workflow_navigation(
         set_state(COST_CONTRACT_WORKFLOW, workflow_value)
     elif target == "Workload Operations" and workflow_value:
         set_state(WORKLOAD_OPERATIONS_WORKFLOW, workflow_value)
-        if workflow_value == "Query investigation":
-            set_state(WORKLOAD_OPERATIONS_QUERY_FOCUS, "Contention Telemetry")
+        if workflow_value in {"Task graphs", "Task & procedure health", "Task Management"}:
+            set_state("workload_operations_pipeline_focus", "Failed tasks & procedures")
+        elif workflow_value in {"Stored procedures", "Stored procedure lineage", "Stored Proc Tracker"}:
+            set_state("workload_operations_pipeline_focus", "Stored procedure analysis")
+        elif workflow_value in {"Pipeline health", "Pipeline / SLA risk"}:
+            set_state("workload_operations_pipeline_focus", "Pipeline loads & SLA")
     elif target == "Security Monitoring" and workflow_value:
         set_state(SECURITY_POSTURE_VIEW, workflow_value)
         set_state(SECURITY_POSTURE_WORKFLOW, workflow_value)

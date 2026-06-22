@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
 
-from config import COMPANY_CONFIG, TREXIS_DATABASES, TREXIS_DEV_DATABASES, TREXIS_PROD_DATABASES, TREXIS_WAREHOUSES  # noqa: E402
+from config import COMPANY_CONFIG, TREXIS_DATABASES, TREXIS_DEV_DATABASES, TREXIS_PROD_DATABASES, TREXIS_WAREHOUSE_PATTERNS, TREXIS_WAREHOUSES  # noqa: E402
 from utils.company_filter import (  # noqa: E402
     company_value_allowed,
     environment_value_allowed,
@@ -53,25 +53,26 @@ class CompanyScopeAndCostTests(unittest.TestCase):
             st.session_state.update(previous)
 
     def test_alfa_warehouse_scope_is_not_broad_match_all(self):
-        self.assertEqual(COMPANY_CONFIG["Trexis"]["wh_patterns"], list(TREXIS_WAREHOUSES))
-        self.assertEqual(COMPANY_CONFIG["ALFA"]["wh_exclude_patterns"], list(TREXIS_WAREHOUSES))
+        self.assertEqual(COMPANY_CONFIG["Trexis"]["wh_patterns"], list(TREXIS_WAREHOUSE_PATTERNS))
+        self.assertEqual(COMPANY_CONFIG["ALFA"]["wh_exclude_patterns"], list(TREXIS_WAREHOUSE_PATTERNS))
         self.assertEqual(COMPANY_CONFIG["Trexis"]["db_patterns"], list(TREXIS_DATABASES))
         self.assertNotIn("%", COMPANY_CONFIG["ALFA"]["wh_patterns"])
+        self.assertIn("WH_TRXS%", COMPANY_CONFIG["ALFA"]["wh_exclude_patterns"])
         self.assertTrue(company_value_allowed("WH_ALFA_ADHOC", "warehouse", "ALFA"))
         self.assertTrue(company_value_allowed("BI_COMPUTE_WH", "warehouse", "ALFA"))
         self.assertTrue(company_value_allowed("COMPUTE_WH", "warehouse", "ALFA"))
-        self.assertTrue(company_value_allowed("WH_TRXS_REPORTING", "warehouse", "ALFA"))
+        self.assertFalse(company_value_allowed("WH_TRXS_REPORTING", "warehouse", "ALFA"))
         self.assertTrue(company_value_allowed("WH_RANDOM_VENDOR", "warehouse", "ALFA"))
         self.assertFalse(company_value_allowed("WH_TRXS_LOAD", "warehouse", "ALFA"))
         self.assertTrue(company_value_allowed("WH_TRXS_LOAD", "warehouse", "Trexis"))
-        self.assertFalse(company_value_allowed("WH_TRXS_REPORTING", "warehouse", "Trexis"))
+        self.assertTrue(company_value_allowed("WH_TRXS_REPORTING", "warehouse", "Trexis"))
 
     def test_company_scope_sql_excludes_trexis_for_alfa(self):
         clause = get_wh_filter_clause("warehouse_name", company="ALFA")
         self.assertIn("WH_TRXS_LOAD", clause)
         self.assertIn("WH_TRXS_UNLOAD", clause)
         self.assertIn("NOT", clause.upper())
-        self.assertNotIn("WH_TRXS_%", clause)
+        self.assertIn("WH_TRXS%", clause)
         self.assertNotIn("LIKE '%'", clause.upper())
 
     def test_combined_scope_uses_any_company_signal_with_exclusions(self):
@@ -103,7 +104,7 @@ class CompanyScopeAndCostTests(unittest.TestCase):
         self.assertIn("Q.ROLE_NAME ILIKE '%TRXS%'", expr)
         self.assertIn("NULLIF(TRIM(TO_VARCHAR(Q.WAREHOUSE_NAME))", expr)
         self.assertNotIn("Q.DATABASE_NAME ILIKE 'TRXS_%'", expr)
-        self.assertNotIn("WH_TRXS_%", expr)
+        self.assertIn("WH_TRXS%", expr)
 
     def test_role_scope_uses_trxs_moniker(self):
         trexis_clause = get_role_filter_clause("q.role_name", company="Trexis").upper()
@@ -454,7 +455,7 @@ class CompanyScopeAndCostTests(unittest.TestCase):
         try:
             warehouses = pd.DataFrame({"NAME": ["BI_COMPUTE_WH", "WH_TRXS_LOAD", "WH_TRXS_REPORTING"]})
             scoped_warehouses = scope_warehouse_names(warehouses, "NAME")
-            self.assertEqual(scoped_warehouses["NAME"].tolist(), ["WH_TRXS_LOAD"])
+            self.assertEqual(scoped_warehouses["NAME"].tolist(), ["WH_TRXS_LOAD", "WH_TRXS_REPORTING"])
 
             objects = pd.DataFrame(
                 {

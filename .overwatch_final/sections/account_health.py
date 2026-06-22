@@ -3553,8 +3553,8 @@ def render():
                 st.session_state["workload_operations_workflow"] = workflow
 
         for idx, (lbl, tgt, workflow) in enumerate([
-            ("Live", "Workload Operations", "Live triage"),
-            ("Query", "Workload Operations", "Query diagnosis"),
+            ("Live", "Workload Operations", "Contention & Performance"),
+            ("Query", "Workload Operations", "Query Investigation"),
             ("Cost", "Cost & Contract", None),
             ("DBA", "Security Monitoring", None),
         ]):
@@ -3629,7 +3629,8 @@ def render():
                     height=220,
                 )
                 if st.button("Task Management", key="ah_drill_tasks"):
-                    st.session_state["workload_operations_workflow"] = "Task graphs"
+                    st.session_state["workload_operations_workflow"] = "Pipeline & Task Health"
+                    st.session_state["workload_operations_pipeline_focus"] = "Failed tasks & procedures"
                     _drill_to("Workload Operations")
             else:
                 st.success("No failed tasks in the last 24h.")

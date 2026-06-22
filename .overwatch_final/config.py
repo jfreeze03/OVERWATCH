@@ -35,6 +35,7 @@ TREXIS_WAREHOUSES = (
     "WH_TRXS_TRANSFORM",
     "WH_TRXS_UNLOAD",
 )
+TREXIS_WAREHOUSE_PATTERNS = tuple(dict.fromkeys((*TREXIS_WAREHOUSES, "WH_TRXS%")))
 
 ALFA_WAREHOUSES = (
     "BLCOMPUTE_WH",
@@ -231,11 +232,12 @@ def static_database_options(
     return tuple(dict.fromkeys((*ALFA_PROD_DATABASES, *ALFA_DEV_DATABASES, *TREXIS_DATABASES, "ADMIN")))
 
 # Warehouse inventory confirmed from Snowflake UI:
-# Trexis uses only the four WH_TRXS_* warehouses below; every other warehouse belongs to ALFA.
+# Trexis currently uses the four known WH_TRXS_* warehouses; the pattern keeps
+# future WH_TRXS warehouses out of ALFA until the static dropdown is refreshed.
 COMPANY_CONFIG = {
     "ALFA": {
         "wh_patterns": [],
-        "wh_exclude_patterns": list(TREXIS_WAREHOUSES),
+        "wh_exclude_patterns": list(TREXIS_WAREHOUSE_PATTERNS),
         "db_patterns": ["ADMIN", "ALFA%"],
         "db_exclude_patterns": list(TREXIS_DATABASES),
         "exclude_db_pattern": "",
@@ -247,7 +249,7 @@ COMPANY_CONFIG = {
         "color": "#34d399",
     },
     "Trexis": {
-        "wh_patterns": list(TREXIS_WAREHOUSES),
+        "wh_patterns": list(TREXIS_WAREHOUSE_PATTERNS),
         "wh_exclude_patterns": [],
         "db_patterns": list(TREXIS_DATABASES),
         "db_exclude_patterns": [],
@@ -321,6 +323,9 @@ SECTION_REDIRECTS = {
     "Task Management": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
     "Pipeline Health": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
     "Stored Proc Tracker": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
+    "Object Change Monitor": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
+    "Schema Compare": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
+    "Data Compare": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
     "Cost Center": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
     "Credit Contract": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
     "Recommendations & Anomalies": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
@@ -363,6 +368,50 @@ SECTION_ROUTE_STATE = {
     },
     "Security Posture": {
         "security_posture_view": "Access posture",
+    },
+    "Query Workbench": {
+        "workload_operations_workflow": "Query Investigation",
+    },
+    "Query Analysis": {
+        "workload_operations_workflow": "Query Investigation",
+    },
+    "Query Search & History": {
+        "workload_operations_workflow": "Query Investigation",
+        "query_analysis_active_view": "History Search",
+    },
+    "Detailed Diagnosis": {
+        "workload_operations_workflow": "Query Investigation",
+        "query_analysis_active_view": "Detailed Diagnosis",
+    },
+    "Live Monitor": {
+        "workload_operations_workflow": "Contention & Performance",
+    },
+    "Task Management": {
+        "workload_operations_workflow": "Pipeline & Task Health",
+        "workload_operations_pipeline_focus": "Failed tasks & procedures",
+    },
+    "Pipeline Health": {
+        "workload_operations_workflow": "Pipeline & Task Health",
+        "workload_operations_pipeline_focus": "Pipeline loads & SLA",
+    },
+    "Stored Proc Tracker": {
+        "workload_operations_workflow": "Pipeline & Task Health",
+        "workload_operations_pipeline_focus": "Stored procedure analysis",
+    },
+    "Object Change Monitor": {
+        "workload_operations_workflow": "Change & Drift",
+    },
+    "Schema Compare": {
+        "workload_operations_workflow": "Advanced DBA Tools",
+        "dba_tools_focus": "Object Monitoring",
+        "dba_tools_focus_tool": "Schema Compare",
+        "dba_tools_group_selector": "Object Monitoring",
+    },
+    "Data Compare": {
+        "workload_operations_workflow": "Advanced DBA Tools",
+        "dba_tools_focus": "Object Monitoring",
+        "dba_tools_focus_tool": "Data Compare",
+        "dba_tools_group_selector": "Object Monitoring",
     },
 }
 SECTION_BY_TITLE = dict(_CANONICAL_SECTION_BY_TITLE)

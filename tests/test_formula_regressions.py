@@ -5793,8 +5793,8 @@ class FormulaRegressionTests(unittest.TestCase):
             st.session_state.clear()
             _seed_ai_query_diagnosis_from_row(by_query["01spill"], days=7)
 
-            self.assertEqual(st.session_state["workload_operations_workflow"], "Query investigation")
-            self.assertEqual(st.session_state["workload_operations_query_focus"], "AI Query Diagnosis")
+            self.assertEqual(st.session_state["workload_operations_workflow"], "Query Investigation")
+            self.assertNotIn("workload_operations_query_focus", st.session_state)
             self.assertEqual(st.session_state["query_analysis_active_view"], "AI Diagnosis")
             self.assertEqual(st.session_state["ai_query_id"], "01spill")
             self.assertIn("FACT_POLICY", st.session_state["ai_query_text"])

@@ -283,7 +283,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("set_state(EXECUTIVE_LANDING_BRIEF_MODE, False)", navigation_text)
         self.assertIn('set_state(ALERT_CENTER_ACTIVE_VIEW, "Command Center")', navigation_text)
         self.assertIn('set_state(COST_CONTRACT_WORKFLOW, "Usage attribution and run-rate")', navigation_text)
-        self.assertIn('set_state(WORKLOAD_OPERATIONS_QUERY_FOCUS, "Contention Telemetry")', navigation_text)
+        self.assertIn('set_state(WORKLOAD_OPERATIONS_WORKFLOW, "Workload Overview")', navigation_text)
         self.assertIn('set_state(SECURITY_POSTURE_WORKFLOW, "Access posture")', navigation_text)
 
     def test_direct_section_navigation_uses_compatibility_helper(self):
@@ -300,8 +300,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('set_state(DBA_CONTROL_ROOM_ACTIVE_VIEW, "Fast Watch")', navigation_text)
         self.assertIn('set_state(ALERT_CENTER_ACTIVE_VIEW, "Command Center")', navigation_text)
         self.assertIn('set_state(COST_CONTRACT_WORKFLOW, "Usage attribution and run-rate")', navigation_text)
-        self.assertIn('set_state(WORKLOAD_OPERATIONS_WORKFLOW, "Query investigation")', navigation_text)
-        self.assertIn('set_state(WORKLOAD_OPERATIONS_QUERY_FOCUS, "Contention Telemetry")', navigation_text)
+        self.assertIn('set_state(WORKLOAD_OPERATIONS_WORKFLOW, "Workload Overview")', navigation_text)
+        self.assertIn('set_state("workload_operations_pipeline_focus", "Stored procedure analysis")', navigation_text)
         self.assertIn('set_state(SECURITY_POSTURE_VIEW, "Access posture")', navigation_text)
         self.assertIn('set_state(SECURITY_POSTURE_WORKFLOW, "Access posture")', navigation_text)
         self.assertIn('target != current or target == "Executive Landing"', navigation_text)
@@ -454,8 +454,13 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertFalse((APP_ROOT / "sections" / "workload_operations_shell.py").exists())
         full_workspace_text = (APP_ROOT / "sections" / "workload_operations.py").read_text(encoding="utf-8")
         nav_text = (APP_ROOT / "sections" / "navigation.py").read_text(encoding="utf-8")
-        self.assertIn('QUERY_INVESTIGATION_WORKFLOW = "Query investigation"', full_workspace_text)
-        self.assertIn('set_state(WORKLOAD_OPERATIONS_WORKFLOW, "Query investigation")', nav_text)
+        self.assertIn('WORKLOAD_OVERVIEW_WORKFLOW = "Workload Overview"', full_workspace_text)
+        self.assertIn('QUERY_INVESTIGATION_WORKFLOW = "Query Investigation"', full_workspace_text)
+        self.assertIn('PIPELINE_TASK_HEALTH_WORKFLOW = "Pipeline & Task Health"', full_workspace_text)
+        self.assertIn('CONTENTION_PERFORMANCE_WORKFLOW = "Contention & Performance"', full_workspace_text)
+        self.assertIn('CHANGE_DRIFT_WORKFLOW = "Change & Drift"', full_workspace_text)
+        self.assertIn('ADVANCED_DBA_TOOLS_WORKFLOW = "Advanced DBA Tools"', full_workspace_text)
+        self.assertIn('set_state(WORKLOAD_OPERATIONS_WORKFLOW, "Workload Overview")', nav_text)
         self.assertNotIn("Workload Brief", full_workspace_text)
         self.assertIn("WORKLOAD_OPERATIONS_EXPLICIT_WORKFLOW_KEY", full_workspace_text)
         self.assertNotIn("WORKLOAD_OPERATIONS_VIEWS", full_workspace_text)
@@ -755,26 +760,36 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(
             workload_operations.WORKFLOWS,
             (
-                "Query investigation",
-                "Task & procedure health",
-                "Stored procedures",
-                "Pipeline / SLA risk",
-                "Schema & data compare",
+                "Workload Overview",
+                "Query Investigation",
+                "Pipeline & Task Health",
+                "Contention & Performance",
+                "Change & Drift",
+                "Advanced DBA Tools",
             ),
         )
+        self.assertEqual(len(workload_operations.WORKFLOWS), len(set(workload_operations.WORKFLOWS)))
         self.assertNotIn("Query & contention", workload_operations.WORKFLOWS)
         self.assertNotIn("AI query diagnosis", workload_operations.WORKFLOWS)
         self.assertNotIn("Live triage", workload_operations.WORKFLOWS)
         self.assertNotIn("Task graphs", workload_operations.WORKFLOWS)
         self.assertNotIn("History search", workload_operations.WORKFLOWS)
+        self.assertNotIn("Task & procedure health", workload_operations.WORKFLOWS)
+        self.assertNotIn("Stored procedures", workload_operations.WORKFLOWS)
+        self.assertNotIn("Pipeline / SLA risk", workload_operations.WORKFLOWS)
+        self.assertNotIn("Schema & data compare", workload_operations.WORKFLOWS)
         self.assertIn("History Search", query_analysis.QUERY_ANALYSIS_PANES)
-        self.assertEqual(workload_operations.WORKFLOW_MODULES["Query investigation"], "sections.query_analysis")
-        self.assertIn("Contention Telemetry", workload_operations.QUERY_FOCUS_DETAILS)
-        self.assertIn("AI Query Diagnosis", workload_operations.QUERY_FOCUS_DETAILS)
-        self.assertEqual(workload_operations.WORKFLOW_MODULES["Task & procedure health"], "sections.task_management")
-        self.assertEqual(workload_operations.WORKFLOW_MODULES["Stored procedures"], "sections.stored_proc_tracker")
-        self.assertEqual(workload_operations.WORKFLOW_MODULES["Pipeline / SLA risk"], "sections.pipeline_health")
-        self.assertEqual(workload_operations.WORKFLOW_MODULES["Schema & data compare"], "sections.dba_tools")
+        self.assertEqual(workload_operations.WORKFLOW_MODULES["Query Investigation"], "sections.query_analysis")
+        self.assertEqual(workload_operations.WORKFLOW_MODULES["Contention & Performance"], "sections.contention_center")
+        self.assertEqual(workload_operations.WORKFLOW_MODULES["Advanced DBA Tools"], "sections.dba_tools")
+        self.assertIn("Failed tasks & procedures", workload_operations.PIPELINE_FOCUS_DETAILS)
+        self.assertIn("Stored procedure analysis", workload_operations.PIPELINE_FOCUS_DETAILS)
+        self.assertIn("Pipeline loads & SLA", workload_operations.PIPELINE_FOCUS_DETAILS)
+        self.assertEqual(workload_operations.CONSOLIDATED_WORKFLOW_ALIASES["Task graphs"], "Pipeline & Task Health")
+        self.assertEqual(workload_operations.CONSOLIDATED_WORKFLOW_ALIASES["Stored procedures"], "Pipeline & Task Health")
+        self.assertEqual(workload_operations.CONSOLIDATED_WORKFLOW_ALIASES["Pipeline health"], "Pipeline & Task Health")
+        self.assertEqual(workload_operations.CONSOLIDATED_WORKFLOW_ALIASES["Contention Center"], "Contention & Performance")
+        self.assertEqual(workload_operations.CONSOLIDATED_WORKFLOW_ALIASES["Schema Compare"], "Advanced DBA Tools")
         pipeline_health_text = (APP_ROOT / "sections" / "pipeline_health.py").read_text(encoding="utf-8")
         self.assertIn('key="pipe_load_failures_button"', pipeline_health_text)
         self.assertIn('st.session_state["pipe_load_failures"] = _annotate_pipeline_routes', pipeline_health_text)
@@ -1432,10 +1447,12 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("_LANE_DETAIL_STYLE", workload_text)
         self.assertNotIn("ow-workload-lane-label", workload_text)
         self.assertNotIn("unsafe_allow_html=True", workload_text)
-        self.assertIn("QUERY_CONTENTION_WORKFLOW", workload_text)
-        self.assertIn("TASK_PROCEDURE_WORKFLOW", workload_text)
-        self.assertIn("PIPELINE_SLA_WORKFLOW", workload_text)
-        self.assertIn("SCHEMA_COMPARE_WORKFLOW", workload_text)
+        self.assertIn("WORKLOAD_OVERVIEW_WORKFLOW", workload_text)
+        self.assertIn("QUERY_INVESTIGATION_WORKFLOW", workload_text)
+        self.assertIn("PIPELINE_TASK_HEALTH_WORKFLOW", workload_text)
+        self.assertIn("CONTENTION_PERFORMANCE_WORKFLOW", workload_text)
+        self.assertIn("CHANGE_DRIFT_WORKFLOW", workload_text)
+        self.assertIn("ADVANCED_DBA_TOOLS_WORKFLOW", workload_text)
         self.assertIn("AI_QUERY_DIAGNOSIS_WORKFLOW", workload_text)
         self.assertNotIn("TRIAGE_FOCI", workload_text)
         self.assertNotIn("PIPELINE_FOCI", workload_text)

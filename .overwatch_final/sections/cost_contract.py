@@ -13,8 +13,6 @@ from config import (
     DEFAULT_ENVIRONMENT,
     DEFAULTS,
     DEFAULT_DAY_WINDOW,
-    ETL_AUDIT_DB,
-    ETL_AUDIT_SCHEMA,
 )
 from sections.base import lazy_pandas, lazy_util as _lazy_util
 from sections.shell_helpers import (
@@ -80,7 +78,17 @@ from sections.cost_contract_advisor import (
     _text_present,
 )
 from sections.cost_contract_helpers import get_credit_price, get_current_ai_credit_price
-from utils.metering_sql import build_cost_cockpit_metering_sql, build_cost_run_rate_metering_sql
+from sections.cost_contract_sql import (
+    _build_cost_cockpit_sql,
+    _build_cost_monitor_service_trend_sql,
+    _build_cost_run_rate_sql,
+    _build_cost_splash_cortex_sql,
+    _build_cost_splash_daily_trend_sql,
+    _build_cost_splash_warehouse_delta_sql,
+    _build_resource_monitor_guardrail_sql,
+    _cortex_daily_table,
+    _warehouse_hourly_table,
+)
 from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_section_note, defer_source_note
 
@@ -91,19 +99,14 @@ build_cost_reconciliation_sql = _lazy_util("build_cost_reconciliation_sql")
 build_cost_efficiency_summary_sql = _lazy_util("build_cost_efficiency_summary_sql")
 build_warehouse_efficiency_sql = _lazy_util("build_warehouse_efficiency_sql")
 build_clustering_cost_sql = _lazy_util("build_clustering_cost_sql")
-build_mart_bill_warehouse_delta_sql = _lazy_util("build_mart_bill_warehouse_delta_sql")
-build_shared_bill_warehouse_delta_live_sql = _lazy_util("build_shared_bill_warehouse_delta_live_sql")
 build_mart_cost_cockpit_sql = _lazy_util("build_mart_cost_cockpit_sql")
 build_mart_cost_run_rate_sql = _lazy_util("build_mart_cost_run_rate_sql")
 build_mart_cost_service_lens_sql = _lazy_util("build_mart_cost_service_lens_sql")
-build_snowflake_service_cost_trend_sql = _lazy_util("build_snowflake_service_cost_trend_sql")
 credits_to_dollars = _lazy_util("credits_to_dollars")
 format_snowflake_error = _lazy_util("format_snowflake_error")
 get_active_environment = _lazy_util("get_active_environment")
 get_environment_label = _lazy_util("get_environment_label")
 get_session_for_action = _lazy_util("get_session_for_action")
-get_user_company_filter_clause = _lazy_util("get_user_company_filter_clause")
-get_wh_filter_clause = _lazy_util("get_wh_filter_clause")
 load_action_queue = _lazy_util("load_action_queue")
 load_change_correlation_detail = _lazy_util("load_change_correlation_detail")
 load_closed_loop_verification_detail = _lazy_util("load_closed_loop_verification_detail")
@@ -119,8 +122,6 @@ render_mode_selector = _lazy_util("render_mode_selector")
 render_workflow_selector = _lazy_util("render_workflow_selector")
 run_query = _lazy_util("run_query")
 run_query_or_raise = _lazy_util("run_query_or_raise")
-safe_identifier = _lazy_util("safe_identifier")
-sql_literal = _lazy_util("sql_literal")
 add_cost_companion_columns = _lazy_util("add_cost_companion_columns")
 apply_operator_status_labels = _lazy_util("apply_operator_status_labels")
 prioritize_context_columns = _lazy_util("prioritize_context_columns")
@@ -513,183 +514,6 @@ def render_workflow_module(workflow: str, workflow_modules: dict[str, str]) -> N
         st.warning(f"Workflow module has no render() function: {module_name}")
         return
     render()
-
-def _build_cost_cockpit_sql(company: str, days: int) -> str:
-    return build_cost_cockpit_metering_sql(
-        "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY",
-        "start_time",
-        get_wh_filter_clause("warehouse_name", company),
-        days=int(days),
-    )
-
-
-def _build_cost_run_rate_sql(company: str) -> str:
-    """Build live fallback SQL for complete-day 7d/30d run-rate and YOY cost trend."""
-    return build_cost_run_rate_metering_sql(
-        "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY",
-        "start_time",
-        get_wh_filter_clause("warehouse_name", company),
-    )
-
-
-def _warehouse_hourly_table() -> str:
-    return f"{safe_identifier(ETL_AUDIT_DB)}.{safe_identifier(ETL_AUDIT_SCHEMA)}.{safe_identifier('FACT_WAREHOUSE_HOURLY')}"
-
-
-def _cortex_daily_table() -> str:
-    return f"{safe_identifier(ETL_AUDIT_DB)}.{safe_identifier(ETL_AUDIT_SCHEMA)}.{safe_identifier('FACT_CORTEX_DAILY')}"
-
-
-def _build_cost_splash_daily_trend_sql(company: str, days: int, *, mart: bool = True) -> str:
-    table = _warehouse_hourly_table() if mart else "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"
-    ts_col = "hour_start" if mart else "start_time"
-    company_filter = (
-        ""
-        if str(company or "").upper() == "ALL"
-        else f"AND COMPANY = {sql_literal(company, 100)}"
-        if mart
-        else get_wh_filter_clause("warehouse_name", company)
-    )
-    return f"""
-        SELECT
-            TO_DATE({ts_col}) AS usage_date,
-            ROUND(SUM(COALESCE(credits_used, 0)), 4) AS daily_credits
-        FROM {table}
-        WHERE {ts_col} >= DATEADD('DAY', -{int(days)}, CURRENT_TIMESTAMP())
-          AND {ts_col} < CURRENT_TIMESTAMP()
-          AND warehouse_name IS NOT NULL
-          {company_filter}
-        GROUP BY TO_DATE({ts_col})
-        ORDER BY usage_date
-    """
-
-
-def _build_cost_monitor_service_trend_sql(days: int, credit_price: float | None = None, ai_credit_price: float | None = None) -> str:
-    return build_snowflake_service_cost_trend_sql(days, credit_price, ai_credit_price)
-
-
-def _build_cost_splash_warehouse_delta_sql(company: str, days: int, *, mart: bool = True) -> str:
-    days_int = int(days)
-    current_start = f"DATEADD('DAY', -{days_int}, CURRENT_TIMESTAMP())"
-    current_end = "CURRENT_TIMESTAMP()"
-    prior_start = f"DATEADD('DAY', -{days_int * 2}, CURRENT_TIMESTAMP())"
-    prior_end = f"DATEADD('DAY', -{days_int}, CURRENT_TIMESTAMP())"
-    if mart:
-        return build_mart_bill_warehouse_delta_sql(
-            current_start,
-            current_end,
-            prior_start,
-            prior_end,
-            company,
-        )
-    return build_shared_bill_warehouse_delta_live_sql(
-        current_start,
-        current_end,
-        prior_start,
-        prior_end,
-        company=company,
-        include_global_warehouse_filter=False,
-    )
-
-
-def _build_cost_splash_cortex_sql(company: str, days: int, ai_credit_price: float, *, mart: bool = True) -> str:
-    days_int = max(int(days), 1)
-    ai_credit_rate = safe_float(ai_credit_price, safe_float(DEFAULTS.get("ai_credit_price"), 2.20))
-    if mart:
-        table = _cortex_daily_table()
-        company_filter = (
-            ""
-            if str(company or "").upper() == "ALL"
-            else f"AND UPPER(COALESCE(company, '')) = UPPER({sql_literal(company, 100)})"
-        )
-        return f"""
-            WITH user_rollup AS (
-                SELECT
-                    COALESCE(NULLIF(user_id, ''), 'Unknown user') AS user_name,
-                    SUM(COALESCE(credits_used, 0)) AS total_credits,
-                    SUM(COALESCE(est_cost_usd, COALESCE(credits_used, 0) * {ai_credit_rate})) AS spend_usd,
-                    SUM(COALESCE(request_count, 0)) AS requests
-                FROM {table}
-                WHERE usage_date >= DATEADD('DAY', -{days_int}, CURRENT_DATE())
-                  AND usage_date < CURRENT_DATE()
-                  {company_filter}
-                GROUP BY COALESCE(NULLIF(user_id, ''), 'Unknown user')
-            ),
-            totals AS (
-                SELECT
-                    SUM(total_credits) AS cortex_credits,
-                    SUM(spend_usd) AS cortex_spend_usd,
-                    SUM(requests) AS cortex_requests
-                FROM user_rollup
-            ),
-            top_user AS (
-                SELECT
-                    user_name AS top_cortex_user,
-                    spend_usd AS top_cortex_user_spend_usd
-                FROM user_rollup
-                QUALIFY ROW_NUMBER() OVER (ORDER BY spend_usd DESC, user_name) = 1
-            )
-            SELECT
-                ROUND(COALESCE(t.cortex_spend_usd, 0), 2) AS cortex_spend_usd,
-                ROUND(COALESCE(t.cortex_credits, 0), 6) AS cortex_credits,
-                COALESCE(t.cortex_requests, 0) AS cortex_requests,
-                COALESCE(u.top_cortex_user, 'No Cortex user') AS top_cortex_user,
-                ROUND(COALESCE(u.top_cortex_user_spend_usd, 0), 2) AS top_cortex_user_spend_usd,
-                'Fast Cortex summary' AS cortex_source
-            FROM totals t
-            LEFT JOIN top_user u ON TRUE
-        """
-
-    user_expr = "COALESCE(u.NAME, TO_VARCHAR(c.USER_ID), 'Unknown user')"
-    user_filter = get_user_company_filter_clause("COALESCE(u.NAME, TO_VARCHAR(c.USER_ID), '')", company)
-    return f"""
-        WITH combined AS (
-            SELECT USER_ID, USAGE_TIME, TOKEN_CREDITS, 'SNOWSIGHT' AS source
-            FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY
-            WHERE USAGE_TIME >= DATEADD('DAY', -{days_int}, CURRENT_TIMESTAMP())
-              AND USAGE_TIME < CURRENT_TIMESTAMP()
-            UNION ALL
-            SELECT USER_ID, USAGE_TIME, TOKEN_CREDITS, 'CLI' AS source
-            FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_CLI_USAGE_HISTORY
-            WHERE USAGE_TIME >= DATEADD('DAY', -{days_int}, CURRENT_TIMESTAMP())
-              AND USAGE_TIME < CURRENT_TIMESTAMP()
-        ),
-        user_rollup AS (
-            SELECT
-                {user_expr} AS user_name,
-                SUM(COALESCE(c.TOKEN_CREDITS, 0)) AS total_credits,
-                SUM(COALESCE(c.TOKEN_CREDITS, 0)) * {ai_credit_rate} AS spend_usd,
-                COUNT(*) AS requests
-            FROM combined c
-            LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS u ON c.USER_ID = u.USER_ID
-            WHERE 1=1 {user_filter}
-            GROUP BY {user_expr}
-        ),
-        totals AS (
-            SELECT
-                SUM(total_credits) AS cortex_credits,
-                SUM(spend_usd) AS cortex_spend_usd,
-                SUM(requests) AS cortex_requests
-            FROM user_rollup
-        ),
-        top_user AS (
-            SELECT
-                user_name AS top_cortex_user,
-                spend_usd AS top_cortex_user_spend_usd
-            FROM user_rollup
-            QUALIFY ROW_NUMBER() OVER (ORDER BY spend_usd DESC, user_name) = 1
-        )
-        SELECT
-            ROUND(COALESCE(t.cortex_spend_usd, 0), 2) AS cortex_spend_usd,
-            ROUND(COALESCE(t.cortex_credits, 0), 6) AS cortex_credits,
-            COALESCE(t.cortex_requests, 0) AS cortex_requests,
-            COALESCE(u.top_cortex_user, 'No Cortex user') AS top_cortex_user,
-            ROUND(COALESCE(u.top_cortex_user_spend_usd, 0), 2) AS top_cortex_user_spend_usd,
-            'Live fallback: CORTEX_CODE usage history' AS cortex_source
-        FROM totals t
-        LEFT JOIN top_user u ON TRUE
-    """
-
 
 def _loaded_cortex_state() -> tuple[float, int]:
     summary = st.session_state.get("cortex_control_summary")
@@ -2132,39 +1956,6 @@ def _first_frame_value(frame: pd.DataFrame | None, column: str, default: object 
     if frame is None or getattr(frame, "empty", True) or column not in frame.columns:
         return default
     return frame.iloc[0].get(column, default)
-
-
-def _build_resource_monitor_guardrail_sql(
-    warehouse_name: str,
-    *,
-    credit_quota: float,
-    monitor_name: str = "",
-) -> str:
-    wh = safe_identifier(warehouse_name or "TOP_WAREHOUSE")
-    quota = max(safe_float(credit_quota), 1.0)
-    monitor = safe_identifier(monitor_name or f"OVERWATCH_{wh}_RM")
-    return f"""-- Review-only resource monitor guardrail for a user-managed warehouse.
--- Resource monitors are warehouse-only controls; use separate spend thresholds for serverless, shared, and AI costs.
--- Notification email must be enabled/verified in Snowflake user preferences; NOTIFY_USERS accepts Snowflake user names, not email addresses.
-USE ROLE ACCOUNTADMIN;
-
-CREATE RESOURCE MONITOR IF NOT EXISTS {monitor}
-  WITH CREDIT_QUOTA = {quota:.2f}
-       FREQUENCY = MONTHLY
-       START_TIMESTAMP = IMMEDIATELY
-       TRIGGERS ON 75 PERCENT DO NOTIFY
-                ON 90 PERCENT DO SUSPEND
-                ON 100 PERCENT DO SUSPEND_IMMEDIATE;
-
-ALTER RESOURCE MONITOR IF EXISTS {monitor}
-  SET CREDIT_QUOTA = {quota:.2f};
-
-ALTER WAREHOUSE IF EXISTS {wh}
-  SET RESOURCE_MONITOR = {monitor};
-
-SHOW RESOURCE MONITORS;
-SHOW WAREHOUSES LIKE {sql_literal(warehouse_name or "TOP_WAREHOUSE", 200)};
-"""
 
 
 def _build_cost_spike_root_cause_board(

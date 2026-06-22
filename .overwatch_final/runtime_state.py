@@ -136,6 +136,7 @@ GLOBAL_FILTER_KEYS = (
 EXECUTIVE_LANDING_WORKSPACE_REQUESTED = "_executive_landing_full_workspace_requested"
 EXECUTIVE_LANDING_BRIEF_MODE = "_executive_landing_brief_mode"
 EXECUTIVE_LANDING_REFRESH_STARTED_AT = "_overwatch_executive_landing_refresh_started_at"
+EXECUTIVE_LANDING_WORKFLOW = "executive_landing_workflow"
 DBA_CONTROL_ROOM_ACTIVE_VIEW = "dba_control_room_active_view"
 ALERT_CENTER_ACTIVE_VIEW = "alert_center_active_view"
 COST_CONTRACT_WORKFLOW = "cost_contract_workflow"

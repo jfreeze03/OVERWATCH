@@ -24,6 +24,7 @@ from sections.shell_helpers import (
     render_shell_snapshot,
     render_shell_status_strip,
 )
+from runtime_state import EXECUTIVE_LANDING_WORKFLOW
 from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_source_note
 
@@ -48,6 +49,7 @@ load_command_center_summary = _lazy_util("load_command_center_summary")
 load_executive_scorecard_summary = _lazy_util("load_executive_scorecard_summary")
 load_executive_forecast_summary = _lazy_util("load_executive_forecast_summary")
 load_production_readiness_summary = _lazy_util("load_production_readiness_summary")
+render_workflow_selector = _lazy_util("render_workflow_selector")
 run_query = _lazy_util("run_query")
 safe_identifier = _lazy_util("safe_identifier")
 snowflake_connection_known_unavailable = _lazy_util("snowflake_connection_known_unavailable")
@@ -58,6 +60,35 @@ EXECUTIVE_LANDING_VERSION = "2026-06-14-boardroom-glance-v2"
 PLATFORM_SUMMARY_STATE_KEY = "executive_landing_platform_summary"
 OBSERVABILITY_STATE_KEY = "executive_landing_observability_board"
 OBSERVABILITY_OFFLINE_SOURCE = "Snowflake connection unavailable"
+
+EXECUTIVE_OVERVIEW_WORKFLOW = "Executive Overview"
+EXECUTIVE_COST_MOVEMENT_WORKFLOW = "Cost Movement"
+EXECUTIVE_OPERATIONAL_RISK_WORKFLOW = "Operational Risk"
+EXECUTIVE_SECURITY_RISK_WORKFLOW = "Security Risk"
+EXECUTIVE_CHANGE_SUMMARY_WORKFLOW = "Change Summary"
+EXECUTIVE_ACTIONS_WORKFLOW = "Executive Actions"
+EXECUTIVE_ADMIN_WORKFLOW = "Executive Admin / Advanced"
+EXECUTIVE_LANDING_WORKFLOWS = (
+    EXECUTIVE_OVERVIEW_WORKFLOW,
+    EXECUTIVE_COST_MOVEMENT_WORKFLOW,
+    EXECUTIVE_OPERATIONAL_RISK_WORKFLOW,
+    EXECUTIVE_SECURITY_RISK_WORKFLOW,
+    EXECUTIVE_CHANGE_SUMMARY_WORKFLOW,
+    EXECUTIVE_ACTIONS_WORKFLOW,
+    EXECUTIVE_ADMIN_WORKFLOW,
+)
+EXECUTIVE_LANDING_LEGACY_WORKFLOW_ALIASES = {
+    "Executive Briefing": EXECUTIVE_OVERVIEW_WORKFLOW,
+    "Executive Summary": EXECUTIVE_OVERVIEW_WORKFLOW,
+    "Adoption Analytics": EXECUTIVE_ADMIN_WORKFLOW,
+    "Executive Scorecard": EXECUTIVE_ADMIN_WORKFLOW,
+    "Scorecard Formulas": EXECUTIVE_ADMIN_WORKFLOW,
+    "Value Ledger": EXECUTIVE_ADMIN_WORKFLOW,
+    "Production Readiness": EXECUTIVE_ADMIN_WORKFLOW,
+    "Data Trust": EXECUTIVE_ADMIN_WORKFLOW,
+    "Command Center": EXECUTIVE_OVERVIEW_WORKFLOW,
+    "Forecasting": EXECUTIVE_COST_MOVEMENT_WORKFLOW,
+}
 
 
 
@@ -409,8 +440,8 @@ def _decision_rows(summary: dict) -> pd.DataFrame:
             "PRIORITY": "5",
             "DECISION_AREA": "Deployment trust",
             "SIGNAL": f"{summary['migration_blockers']:,} monitoring coverage blocker(s)",
-            "NEXT_ACTION": "Open Security Monitoring and reconcile readiness telemetry.",
-            "WORKFLOW": "Change & Drift",
+            "NEXT_ACTION": "Open Workload Operations > Change Analysis or Security Monitoring > Access Changes.",
+            "WORKFLOW": "Workload Operations",
         },
     ]
     return pd.DataFrame(rows)
@@ -2713,6 +2744,407 @@ def _nav_button(
         st.rerun()
 
 
+def normalize_executive_landing_workflow(value: object) -> str:
+    """Map legacy executive routes into the current front-door workflows."""
+    raw = str(value or "").strip()
+    if raw in EXECUTIVE_LANDING_WORKFLOWS:
+        return raw
+    return EXECUTIVE_LANDING_LEGACY_WORKFLOW_ALIASES.get(raw, EXECUTIVE_OVERVIEW_WORKFLOW)
+
+
+def _ensure_executive_landing_workflow_state() -> str:
+    workflow = normalize_executive_landing_workflow(st.session_state.get(EXECUTIVE_LANDING_WORKFLOW))
+    st.session_state[EXECUTIVE_LANDING_WORKFLOW] = workflow
+    return workflow
+
+
+def _format_delta_credits(summary: dict, *, credit_price: float) -> str:
+    credits = safe_float(summary.get("cost_delta"))
+    usd = credits_to_dollars(credits, credit_price)
+    return f"{credits:+,.2f} credits / {_money(usd, signed=True)}"
+
+
+def _filter_frame_by_tokens(
+    frame: pd.DataFrame,
+    tokens: tuple[str, ...],
+    columns: tuple[str, ...],
+) -> pd.DataFrame:
+    if not isinstance(frame, pd.DataFrame) or frame.empty:
+        return pd.DataFrame()
+    available = [column for column in columns if column in frame.columns]
+    if not available:
+        return pd.DataFrame()
+    search = frame[available].fillna("").astype(str).agg(" ".join, axis=1).str.upper()
+    mask = search.apply(lambda value: any(token in value for token in tokens))
+    return frame.loc[mask].copy()
+
+
+def _render_executive_data_health(source_health: pd.DataFrame) -> None:
+    if not isinstance(source_health, pd.DataFrame) or source_health.empty:
+        return
+    loaded_sources = int(source_health["STATE"].eq("Loaded").sum()) if "STATE" in source_health.columns else 0
+    limited_sources = int(source_health["STATE"].eq("Limited").sum()) if "STATE" in source_health.columns else 0
+    no_row_sources = int(source_health["STATE"].eq("No Rows").sum()) if "STATE" in source_health.columns else 0
+    render_shell_snapshot((
+        ("Inputs Ready", f"{loaded_sources}/4"),
+        ("Limited Inputs", f"{limited_sources}"),
+        ("No-Row Inputs", f"{no_row_sources}"),
+    ))
+    with st.expander("Executive Data Health", expanded=False):
+        render_priority_dataframe(
+            source_health,
+            title="Executive data health",
+            priority_columns=["SOURCE", "STATE", "EVIDENCE", "NEXT_ACTION"],
+            sort_by=["STATE", "SOURCE"],
+            ascending=[True, True],
+            raw_label="All executive data-health rows",
+            height=220,
+        )
+
+
+def _render_snapshot_prompt(workflow: str, summary: dict, days: int) -> bool:
+    st.info(
+        f"{workflow} is showing fast summary facts. Load Snapshot only when you need "
+        "alert, action, source-health, or export detail for the selected scope."
+    )
+    return _render_executive_action_brief(summary, int(days), show_strip=False)
+
+
+def _render_executive_next_clicks() -> None:
+    cols = st.columns(5)
+    with cols[0]:
+        _nav_button(
+            "Active Alerts",
+            "Alert Center",
+            state_updates={"alert_center_active_view": "Active Alerts"},
+        )
+    with cols[1]:
+        _nav_button("Open Cost", "Cost & Contract", workflow_key="cost_contract_workflow", workflow="Cost Overview")
+    with cols[2]:
+        _nav_button(
+            "Open DBA Cockpit",
+            "DBA Control Room",
+            state_updates={"dba_control_room_active_view": "Morning Cockpit"},
+        )
+    with cols[3]:
+        _nav_button(
+            "Open Workload",
+            "Workload Operations",
+            workflow_key="workload_operations_workflow",
+            workflow="Workload Overview",
+        )
+    with cols[4]:
+        _nav_button(
+            "Open Security",
+            "Security Monitoring",
+            workflow_key="security_posture_workflow",
+            workflow="Security Overview",
+            state_updates={"security_posture_view": "Security Overview"},
+        )
+
+
+def _render_executive_overview(
+    summary: dict,
+    *,
+    company: str,
+    environment: str,
+    days: int,
+    credit_price: float,
+    board: pd.DataFrame,
+    board_payload: dict,
+    snapshot: dict | None,
+) -> bool:
+    st.markdown("**Executive Overview**")
+    render_shell_status_strip(
+        state=str(summary.get("state") or "Review"),
+        headline="Environment status, movement, and next actions.",
+        detail=(
+            "Fast summary facts only; open a workflow or load the snapshot when leadership needs more context."
+        ),
+    )
+    render_refresh_contract(
+        board_payload,
+        source="Executive summary facts",
+        target_minutes=60,
+        refresh_method="Scheduled data refresh",
+        live_fallback="On demand",
+    )
+    st.markdown("**Snowflake Observability Wall**")
+    current_spend = safe_float(
+        summary.get("current_spend_usd"),
+        credits_to_dollars(safe_float(summary.get("current_credits")), credit_price),
+    )
+    failed_queries = safe_int(summary.get("failed_queries"))
+    failed_tasks = safe_int(summary.get("failed_tasks"))
+    p95_runtime = safe_float(summary.get("p95_runtime_sec"))
+    spill_gb = safe_float(summary.get("spill_gb"))
+    biggest_workload = (
+        f"{failed_queries:,} failed query(s), {failed_tasks:,} failed task(s)"
+        if failed_queries or failed_tasks
+        else f"P95 {_format_seconds(p95_runtime)} / spill {_format_gb(spill_gb)}"
+    )
+    security_signal = (
+        f"{safe_int(summary.get('critical_high_alerts')):,} Critical/High alert(s)"
+        if safe_int(summary.get("critical_high_alerts"))
+        else "No major signal in summary"
+    )
+    render_shell_kpi_row((
+        ("Health", str(summary.get("state") or _platform_score_state(summary.get("score", 0)))),
+        ("Major Issues", f"{safe_int(summary.get('critical_high_alerts')):,}"),
+        ("Cost Movement", _format_delta_credits(summary, credit_price=credit_price)),
+        ("Security Risk", security_signal),
+    ))
+    render_shell_kpi_row((
+        ("Spend", _money(current_spend)),
+        ("Workload Risk", biggest_workload),
+        ("Open Actions", f"{safe_int(summary.get('open_actions')):,}"),
+        ("Freshness", "Loaded" if isinstance(board, pd.DataFrame) and not board.empty else "On demand"),
+    ))
+
+    render_priority_dataframe(
+        _decision_rows(summary).head(5),
+        title="Executive decisions to make first",
+        priority_columns=["PRIORITY", "DECISION_AREA", "SIGNAL", "NEXT_ACTION", "WORKFLOW"],
+        sort_by=["PRIORITY"],
+        ascending=True,
+        raw_label="All executive decision rows",
+        height=230,
+        max_rows=5,
+    )
+    _render_executive_next_clicks()
+    _render_loaded_executive_alert_context()
+
+    if isinstance(snapshot, dict):
+        alerts = snapshot.get("alerts", pd.DataFrame())
+        if isinstance(alerts, pd.DataFrame) and not alerts.empty:
+            render_priority_dataframe(
+                alerts,
+                title="Major alerts in the loaded executive snapshot",
+                priority_columns=[
+                    "SEVERITY", "STATUS", "CATEGORY", "ALERT_TYPE",
+                    "ENTITY_NAME", "OWNER", "SLA_STATE", "SUGGESTED_ACTION",
+                ],
+                sort_by=["SEVERITY", "ALERT_TS"],
+                ascending=[True, False],
+                raw_label="All loaded executive alerts",
+                max_rows=5,
+                height=240,
+            )
+        return False
+    return _render_snapshot_prompt(EXECUTIVE_OVERVIEW_WORKFLOW, summary, days)
+
+
+def _render_cost_movement(summary: dict, *, company: str, environment: str, days: int, credit_price: float, board: pd.DataFrame) -> bool:
+    st.markdown("**Cost Movement**")
+    current_spend = safe_float(
+        summary.get("current_spend_usd"),
+        credits_to_dollars(safe_float(summary.get("current_credits")), credit_price),
+    )
+    run_rate = current_spend / max(int(days), 1) * 30.0
+    render_shell_snapshot((
+        ("Spend", _money(current_spend)),
+        ("Movement", _format_delta_credits(summary, credit_price=credit_price)),
+        ("30d Run Rate", _money(run_rate)),
+        ("Top Driver", str(summary.get("top_cost_driver") or "On demand")),
+    ))
+    cost_driver = _obs_rows(board, "COST_DRIVER").copy()
+    if isinstance(cost_driver, pd.DataFrame) and not cost_driver.empty:
+        render_priority_dataframe(
+            cost_driver,
+            title="Top cost movement drivers",
+            priority_columns=["DIMENSION", "VALUE_USD", "VALUE", "UNIT", "PERIOD_START"],
+            sort_by=["VALUE_USD"],
+            ascending=False,
+            raw_label="All executive cost movement rows",
+            max_rows=8,
+            height=240,
+        )
+    _render_executive_forecast_summary(load_executive_forecast_summary(company, environment, days=int(days)))
+    cols = st.columns(3)
+    with cols[0]:
+        _nav_button("Cost Overview", "Cost & Contract", workflow_key="cost_contract_workflow", workflow="Cost Overview")
+    with cols[1]:
+        _nav_button("Warehouse Spend", "Cost & Contract", workflow_key="cost_contract_workflow", workflow="Cost by Warehouse")
+    with cols[2]:
+        _nav_button("Burn / Forecast", "Cost & Contract", workflow_key="cost_contract_workflow", workflow="Burn Rate & Forecast")
+    return False
+
+
+def _render_operational_risk(summary: dict, *, snapshot: dict | None, days: int) -> bool:
+    st.markdown("**Operational Risk**")
+    render_shell_snapshot((
+        ("Failed Queries", f"{safe_int(summary.get('failed_queries')):,}"),
+        ("Failed Tasks", f"{safe_int(summary.get('failed_tasks')):,}"),
+        ("P95 Runtime", _format_seconds(safe_float(summary.get("p95_runtime_sec")))),
+        ("Spill", _format_gb(safe_float(summary.get("spill_gb")))),
+    ))
+    if isinstance(snapshot, dict):
+        alerts = _filter_frame_by_tokens(
+            snapshot.get("alerts", pd.DataFrame()),
+            ("QUERY", "TASK", "PIPELINE", "PROCEDURE", "LOAD", "SLA", "QUEUE", "WAREHOUSE"),
+            ("CATEGORY", "ALERT_TYPE", "ENTITY_NAME", "SUGGESTED_ACTION"),
+        )
+        if not alerts.empty:
+            render_priority_dataframe(
+                alerts,
+                title="Operational alerts and workload risks",
+                priority_columns=["SEVERITY", "STATUS", "CATEGORY", "ALERT_TYPE", "ENTITY_NAME", "OWNER", "SUGGESTED_ACTION"],
+                sort_by=["SEVERITY", "ALERT_TS"],
+                ascending=[True, False],
+                raw_label="All operational executive alerts",
+                max_rows=8,
+                height=260,
+            )
+    cols = st.columns(3)
+    with cols[0]:
+        _nav_button("Failure Triage", "DBA Control Room", state_updates={"dba_control_room_active_view": "Failure Triage"})
+    with cols[1]:
+        _nav_button("Pipeline Health", "Workload Operations", workflow_key="workload_operations_workflow", workflow="Pipeline & Task Health")
+    with cols[2]:
+        _nav_button("Performance", "Workload Operations", workflow_key="workload_operations_workflow", workflow="Performance & Contention")
+    if not isinstance(snapshot, dict):
+        return _render_snapshot_prompt(EXECUTIVE_OPERATIONAL_RISK_WORKFLOW, summary, days)
+    return False
+
+
+def _render_security_risk(summary: dict, *, snapshot: dict | None, days: int) -> bool:
+    st.markdown("**Security Risk**")
+    security_alerts = pd.DataFrame()
+    if isinstance(snapshot, dict):
+        security_alerts = _filter_frame_by_tokens(
+            snapshot.get("alerts", pd.DataFrame()),
+            ("SECURITY", "LOGIN", "GRANT", "PRIVILEGE", "ACCESS", "SHARE", "ROLE"),
+            ("CATEGORY", "ALERT_TYPE", "ENTITY_NAME", "SUGGESTED_ACTION"),
+        )
+    render_shell_snapshot((
+        ("Critical / High", f"{safe_int(summary.get('critical_high_alerts')):,}"),
+        ("Security Alerts", f"{len(security_alerts):,}" if not security_alerts.empty else "On demand"),
+        ("Review Route", "Security Monitoring"),
+        ("Action", "Investigate owner gaps"),
+    ))
+    if not security_alerts.empty:
+        render_priority_dataframe(
+            security_alerts,
+            title="Security risks in the loaded executive snapshot",
+            priority_columns=["SEVERITY", "STATUS", "CATEGORY", "ALERT_TYPE", "ENTITY_NAME", "OWNER", "SUGGESTED_ACTION"],
+            sort_by=["SEVERITY", "ALERT_TS"],
+            ascending=[True, False],
+            raw_label="All security executive alerts",
+            max_rows=8,
+            height=260,
+        )
+    cols = st.columns(3)
+    with cols[0]:
+        _nav_button("Security Overview", "Security Monitoring", workflow_key="security_posture_workflow", workflow="Security Overview", state_updates={"security_posture_view": "Security Overview"})
+    with cols[1]:
+        _nav_button("Risky Grants", "Security Monitoring", workflow_key="security_posture_workflow", workflow="Risky Grants", state_updates={"security_posture_view": "Risky Grants"})
+    with cols[2]:
+        _nav_button("Access Changes", "Security Monitoring", workflow_key="security_posture_workflow", workflow="Access Changes", state_updates={"security_posture_view": "Access Changes"})
+    if not isinstance(snapshot, dict):
+        return _render_snapshot_prompt(EXECUTIVE_SECURITY_RISK_WORKFLOW, summary, days)
+    return False
+
+
+def _render_change_summary(company: str, environment: str, days: int, *, snapshot: dict | None, source_health: pd.DataFrame) -> bool:
+    st.markdown("**Change Summary**")
+    _render_change_intelligence_summary(load_change_intelligence_summary(company, environment, days=int(days)))
+    if isinstance(snapshot, dict):
+        migration = snapshot.get("migration", pd.DataFrame())
+        if isinstance(migration, pd.DataFrame) and not migration.empty:
+            render_priority_dataframe(
+                migration,
+                title="Deployment and monitoring coverage changes",
+                priority_columns=[
+                    "OBJECT_NAME", "OBJECT_TYPE", "MIGRATION_STATE",
+                    "CURRENT_VERSION", "EXPECTED_VERSION", "NEXT_ACTION",
+                ],
+                sort_by=["MIGRATION_STATE", "OBJECT_NAME"],
+                ascending=[True, True],
+                raw_label="All executive migration rows",
+                max_rows=8,
+                height=250,
+            )
+    if isinstance(source_health, pd.DataFrame) and not source_health.empty:
+        with st.expander("Change-summary data health", expanded=False):
+            _render_executive_data_health(source_health)
+    cols = st.columns(3)
+    with cols[0]:
+        _nav_button("Workload Changes", "Workload Operations", workflow_key="workload_operations_workflow", workflow="Change Analysis")
+    with cols[1]:
+        _nav_button("Access Changes", "Security Monitoring", workflow_key="security_posture_workflow", workflow="Access Changes", state_updates={"security_posture_view": "Access Changes"})
+    with cols[2]:
+        _nav_button("DBA Change Watch", "DBA Control Room", state_updates={"dba_control_room_active_view": "Change Watch"})
+    return False
+
+
+def _render_executive_actions(summary: dict, *, snapshot: dict | None, days: int) -> bool:
+    st.markdown("**Executive Actions**")
+    render_priority_dataframe(
+        _decision_rows(summary).head(5),
+        title="Top action items",
+        priority_columns=["PRIORITY", "DECISION_AREA", "SIGNAL", "NEXT_ACTION", "WORKFLOW"],
+        sort_by=["PRIORITY"],
+        ascending=True,
+        raw_label="All executive action rows",
+        height=230,
+        max_rows=5,
+    )
+    if isinstance(snapshot, dict):
+        queue = snapshot.get("queue", pd.DataFrame())
+        if isinstance(queue, pd.DataFrame) and not queue.empty:
+            render_priority_dataframe(
+                queue,
+                title="Loaded owner action queue",
+                priority_columns=[
+                    "SEVERITY", "STATUS", "CATEGORY", "ENTITY_NAME",
+                    "OWNER", "DUE_DATE", "NEXT_ACTION", "OWNER_ROUTE",
+                ],
+                sort_by=["SEVERITY", "DUE_DATE"],
+                ascending=[True, True],
+                raw_label="All loaded executive action queue rows",
+                max_rows=8,
+                height=280,
+            )
+        return False
+    return _render_snapshot_prompt(EXECUTIVE_ACTIONS_WORKFLOW, summary, days)
+
+
+def _render_executive_admin_advanced(
+    company: str,
+    environment: str,
+    days: int,
+    *,
+    credit_price: float,
+    board: pd.DataFrame,
+    board_payload: dict,
+    snapshot: dict | None,
+    source_health: pd.DataFrame,
+    summary: dict,
+) -> bool:
+    st.markdown("**Executive Admin / Advanced**")
+    st.caption(
+        "Scorecard formulas, value ledger, telemetry trust detail, production readiness, "
+        "proofing/evidence grids, and advanced validation live here instead of the default front door."
+    )
+    load = False
+    if not isinstance(snapshot, dict):
+        load = _render_snapshot_prompt(EXECUTIVE_ADMIN_WORKFLOW, summary, days)
+    else:
+        _render_executive_data_health(source_health)
+        _render_loaded_executive_alert_context()
+    with st.expander("Advanced observability charts and source grids", expanded=False):
+        _render_executive_observability_board(
+            board,
+            board_payload,
+            company=company,
+            environment=environment,
+            days=int(days),
+            credit_price=credit_price,
+        )
+    _render_advanced_executive_rollups(company, environment, int(days))
+    return load
+
+
 def _render_loaded_executive_alert_context() -> None:
     board = build_loaded_section_alert_signal_board(st.session_state, section="Executive Landing", limit=8)
     if board.empty:
@@ -3157,9 +3589,10 @@ def render() -> None:
     environment = _active_environment()
     credit_price = _credit_price()
     defer_source_note(
-        "Executive Landing opens with precomputed observability facts; full snapshot/export detail stays action-gated."
+        "Executive Landing opens with precomputed observability facts; workflow detail and exports stay action-gated."
     )
 
+    active_workflow = _ensure_executive_landing_workflow_state()
     window_col, refresh_col, _window_spacer = st.columns([1.2, 1.0, 2.2])
     with window_col:
         days = st.selectbox(
@@ -3175,6 +3608,15 @@ def render() -> None:
             type="primary",
             width="stretch",
         )
+    active_workflow = render_workflow_selector(
+        "Executive Landing workflow",
+        EXECUTIVE_LANDING_WORKFLOW,
+        EXECUTIVE_LANDING_WORKFLOWS,
+        columns=4,
+    )
+    active_workflow = normalize_executive_landing_workflow(active_workflow)
+    st.session_state[EXECUTIVE_LANDING_WORKFLOW] = active_workflow
+
     expected_scope = _executive_snapshot_scope(company, environment, int(days))
     board, board_payload = _current_observability_board(company, environment, int(days))
     autoload_scope_key = "_executive_landing_observability_autoload_scope"
@@ -3236,97 +3678,69 @@ def render() -> None:
         summary = _default_platform_summary()
         _persist_platform_summary(summary)
 
-    _render_executive_observability_board(
-        board,
-        board_payload,
-        company=company,
-        environment=environment,
-        days=int(days),
-        credit_price=credit_price,
-    )
-    load = _render_executive_action_brief(summary, int(days), show_strip=False)
-    _render_loaded_executive_alert_context()
-
-    if load:
-        if _load_executive_snapshot(company, environment, int(days)):
-            st.rerun()
-
     snapshot = st.session_state.get("executive_landing_snapshot")
-    if not isinstance(snapshot, dict) or not _snapshot_matches_scope(snapshot, company, environment, int(days)):
-        _render_advanced_executive_rollups(company, environment, int(days))
-        return
+    has_loaded_snapshot = isinstance(snapshot, dict) and _snapshot_matches_scope(snapshot, company, environment, int(days))
+    loaded_snapshot = snapshot if has_loaded_snapshot else None
 
-    for err in snapshot.get("errors", []):
-        defer_source_note(err)
+    if isinstance(loaded_snapshot, dict):
+        for err in loaded_snapshot.get("errors", []):
+            defer_source_note(err)
 
-    if not isinstance(source_health, pd.DataFrame) or source_health.empty:
-        source_health = _source_health_rows(snapshot)
+    if isinstance(loaded_snapshot, dict) and (not isinstance(source_health, pd.DataFrame) or source_health.empty):
+        source_health = _source_health_rows(loaded_snapshot)
         summary = _with_platform_operating_score(summary, source_health)
         _persist_platform_summary(summary)
-    loaded_sources = int(source_health["STATE"].eq("Loaded").sum())
-    limited_sources = int(source_health["STATE"].eq("Limited").sum())
-    no_row_sources = int(source_health["STATE"].eq("No Rows").sum())
-    render_shell_snapshot((
-        ("Inputs Ready", f"{loaded_sources}/4"),
-        ("Limited Inputs", f"{limited_sources}"),
-        ("No-Row Inputs", f"{no_row_sources}"),
-    ))
-    with st.expander("Executive Data Health", expanded=False):
-        render_priority_dataframe(
-            source_health,
-            title="Executive data health",
-            priority_columns=["SOURCE", "STATE", "EVIDENCE", "NEXT_ACTION"],
-            sort_by=["STATE", "SOURCE"],
-            ascending=[True, True],
-            raw_label="All executive data-health rows",
-            height=220,
-        )
 
-    render_priority_dataframe(
-        _decision_rows(summary),
-        title="Executive decisions to make first",
-        priority_columns=["PRIORITY", "DECISION_AREA", "SIGNAL", "NEXT_ACTION", "WORKFLOW"],
-        sort_by=["PRIORITY"],
-        ascending=True,
-        raw_label="All executive decision rows",
-        height=240,
-    )
-
-    n1, n2, n3, n4 = st.columns(4)
-    with n1:
-        _nav_button(
-            "Alert Command",
-            "Alert Center",
-            state_updates={"alert_center_active_view": "Active Alerts"},
+    load = False
+    if active_workflow == EXECUTIVE_OVERVIEW_WORKFLOW:
+        load = _render_executive_overview(
+            summary,
+            company=company,
+            environment=environment,
+            days=int(days),
+            credit_price=credit_price,
+            board=board,
+            board_payload=board_payload,
+            snapshot=loaded_snapshot,
         )
-    with n2:
-        _nav_button("Cost Drivers", "Cost & Contract", workflow_key="cost_contract_workflow", workflow="Cost by Warehouse")
-    with n3:
-        _nav_button("DBA Queue", "DBA Control Room")
-    with n4:
-        _nav_button(
-            "Data Health",
-            "Change & Drift",
-            workflow_key="change_drift_workflow",
-            workflow="Controlled DBA actions",
-            state_updates={
-                "dba_tools_focus": "Cost",
-                "dba_tools_group_selector": "Cost & Health",
-                "dba_tools_tool_selector_Cost & Health": "Data Health",
-            },
+    elif active_workflow == EXECUTIVE_COST_MOVEMENT_WORKFLOW:
+        load = _render_cost_movement(
+            summary,
+            company=company,
+            environment=environment,
+            days=int(days),
+            credit_price=credit_price,
+            board=board,
         )
-
-    alerts = snapshot.get("alerts", pd.DataFrame())
-    if isinstance(alerts, pd.DataFrame) and not alerts.empty:
-        render_priority_dataframe(
-            alerts,
-            title="Alerts leadership should know about",
-            priority_columns=["SEVERITY", "STATUS", "CATEGORY", "ALERT_TYPE", "ENTITY_NAME", "OWNER", "SLA_STATE", "SUGGESTED_ACTION"],
-            sort_by=["SEVERITY", "ALERT_TS"],
-            ascending=[True, False],
-            raw_label="All loaded executive alerts",
-            max_rows=8,
-            height=280,
+    elif active_workflow == EXECUTIVE_OPERATIONAL_RISK_WORKFLOW:
+        load = _render_operational_risk(summary, snapshot=loaded_snapshot, days=int(days))
+    elif active_workflow == EXECUTIVE_SECURITY_RISK_WORKFLOW:
+        load = _render_security_risk(summary, snapshot=loaded_snapshot, days=int(days))
+    elif active_workflow == EXECUTIVE_CHANGE_SUMMARY_WORKFLOW:
+        load = _render_change_summary(
+            company,
+            environment,
+            int(days),
+            snapshot=loaded_snapshot,
+            source_health=source_health,
         )
+    elif active_workflow == EXECUTIVE_ACTIONS_WORKFLOW:
+        load = _render_executive_actions(summary, snapshot=loaded_snapshot, days=int(days))
+    elif active_workflow == EXECUTIVE_ADMIN_WORKFLOW:
+        load = _render_executive_admin_advanced(
+            company,
+            environment,
+            int(days),
+            credit_price=credit_price,
+            board=board,
+            board_payload=board_payload,
+            snapshot=loaded_snapshot,
+            source_health=source_health,
+            summary=summary,
+        )
+    else:
+        st.session_state[EXECUTIVE_LANDING_WORKFLOW] = EXECUTIVE_OVERVIEW_WORKFLOW
+        st.rerun()
 
-    _render_advanced_executive_rollups(company, environment, int(days))
+    if load and _load_executive_snapshot(company, environment, int(days)):
+        st.rerun()

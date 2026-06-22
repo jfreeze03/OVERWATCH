@@ -281,6 +281,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("request_section_workspace(target)", navigation_text)
         self.assertIn("set_state(EXECUTIVE_LANDING_WORKSPACE_REQUESTED, True)", navigation_text)
         self.assertIn("set_state(EXECUTIVE_LANDING_BRIEF_MODE, False)", navigation_text)
+        self.assertIn('set_state(EXECUTIVE_LANDING_WORKFLOW, "Executive Overview")', navigation_text)
         self.assertIn('set_state(ALERT_CENTER_ACTIVE_VIEW, "Active Alerts")', navigation_text)
         self.assertIn('set_state(COST_CONTRACT_WORKFLOW, "Cost Overview")', navigation_text)
         self.assertIn('set_state(WORKLOAD_OPERATIONS_WORKFLOW, "Workload Overview")', navigation_text)
@@ -297,6 +298,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("compatibility_state_for_section(raw_section)", navigation_text)
         self.assertIn("request_section_workspace(target)", navigation_text)
         self.assertIn("request_executive_landing_hydration()", navigation_text)
+        self.assertIn('set_state(EXECUTIVE_LANDING_WORKFLOW, "Executive Overview")', navigation_text)
         self.assertIn('set_state(DBA_CONTROL_ROOM_ACTIVE_VIEW, "Morning Cockpit")', navigation_text)
         self.assertIn('set_state(ALERT_CENTER_ACTIVE_VIEW, "Active Alerts")', navigation_text)
         self.assertIn('set_state(COST_CONTRACT_WORKFLOW, "Cost Overview")', navigation_text)
@@ -326,6 +328,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         from navigation import current_active_section
         from runtime_state import (
             DBA_CONTROL_ROOM_ACTIVE_VIEW,
+            EXECUTIVE_LANDING_WORKFLOW,
             NAV_SECTION,
             PENDING_SECTION,
             SECURITY_POSTURE_VIEW,
@@ -341,6 +344,14 @@ class NavigationIntegrityTests(unittest.TestCase):
             st.session_state[NAV_SECTION] = "Missing Section"
             self.assertEqual(current_active_section(["Alert Center", "Cost & Contract"]), "Alert Center")
             self.assertEqual(st.session_state[NAV_SECTION], "Alert Center")
+
+            target = apply_navigation_state("Executive Briefing")
+            self.assertEqual(target, "Executive Landing")
+            self.assertEqual(st.session_state[EXECUTIVE_LANDING_WORKFLOW], "Executive Overview")
+
+            target = apply_navigation_state("Adoption Analytics")
+            self.assertEqual(target, "Executive Landing")
+            self.assertEqual(st.session_state[EXECUTIVE_LANDING_WORKFLOW], "Executive Admin / Advanced")
 
             target = apply_navigation_state("Account Health")
             self.assertEqual(target, "DBA Control Room")
@@ -650,13 +661,29 @@ class NavigationIntegrityTests(unittest.TestCase):
 
         self.assertIn("_source_health_rows", executive_text)
         self.assertIn("Executive Data Health", executive_text)
+        self.assertIn("EXECUTIVE_LANDING_WORKFLOWS = (", executive_text)
+        for workflow in (
+            "Executive Overview",
+            "Cost Movement",
+            "Operational Risk",
+            "Security Risk",
+            "Change Summary",
+            "Executive Actions",
+            "Executive Admin / Advanced",
+        ):
+            self.assertIn(workflow, executive_text)
+        self.assertIn("normalize_executive_landing_workflow", executive_text)
+        self.assertIn('"Executive Briefing": EXECUTIVE_OVERVIEW_WORKFLOW', executive_text)
+        self.assertIn('"Adoption Analytics": EXECUTIVE_ADMIN_WORKFLOW', executive_text)
         self.assertIn('"alert_center_active_view": "Active Alerts"', executive_text)
         self.assertIn('workflow_key="cost_contract_workflow"', executive_text)
         self.assertIn('workflow="Cost by Warehouse"', executive_text)
-        self.assertIn('workflow_key="change_drift_workflow"', executive_text)
-        self.assertIn('workflow="Controlled DBA actions"', executive_text)
-        self.assertIn('"dba_tools_group_selector": "Cost & Health"', executive_text)
-        self.assertIn('"dba_tools_tool_selector_Cost & Health": "Data Health"', executive_text)
+        self.assertIn('workflow_key="workload_operations_workflow"', executive_text)
+        self.assertIn('workflow="Change Analysis"', executive_text)
+        self.assertIn('workflow_key="security_posture_workflow"', executive_text)
+        self.assertIn('state_updates={"dba_control_room_active_view": "Change Watch"}', executive_text)
+        self.assertIn("Scorecard formulas, value ledger, telemetry trust detail, production readiness", executive_text)
+        self.assertIn('with st.expander("Advanced observability charts and source grids", expanded=False):', executive_text)
 
     def test_section_alias_literal_has_no_duplicate_keys(self):
         config_tree = ast.parse((APP_ROOT / "config.py").read_text(encoding="utf-8"))

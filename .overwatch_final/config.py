@@ -358,6 +358,12 @@ RETIRED_SECTION_REDIRECTS = {
     "Security Posture": _CANONICAL_SECTION_BY_TITLE["Security Monitoring"],
 }
 SECTION_ROUTE_STATE = {
+    "Executive Briefing": {
+        "executive_landing_workflow": "Executive Overview",
+    },
+    "Adoption Analytics": {
+        "executive_landing_workflow": "Executive Admin / Advanced",
+    },
     "Account Health": {
         "dba_control_room_active_view": "Morning Cockpit",
         "_dba_control_room_full_workspace_requested": True,

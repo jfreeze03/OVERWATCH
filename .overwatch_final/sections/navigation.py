@@ -16,6 +16,7 @@ from runtime_state import (
     DBA_CONTROL_ROOM_ACTIVE_VIEW,
     EXECUTIVE_LANDING_BRIEF_MODE,
     EXECUTIVE_LANDING_REFRESH_STARTED_AT,
+    EXECUTIVE_LANDING_WORKFLOW,
     EXECUTIVE_LANDING_WORKSPACE_REQUESTED,
     NAV_SECTION,
     PENDING_AUTOLOAD_SECTION,
@@ -53,6 +54,7 @@ def request_section_workspace(section: str) -> None:
     if target == "Executive Landing":
         set_state(EXECUTIVE_LANDING_WORKSPACE_REQUESTED, True)
         set_state(EXECUTIVE_LANDING_BRIEF_MODE, False)
+        set_state(EXECUTIVE_LANDING_WORKFLOW, "Executive Overview")
         request_executive_landing_hydration()
     elif target == "DBA Control Room":
         set_state(DBA_CONTROL_ROOM_ACTIVE_VIEW, "Morning Cockpit")

@@ -11,7 +11,6 @@ Reduce bloat without breaking the six-section operator model or removing useful 
 | File | Approx lines | Primary issue | Action |
 |---|---:|---|---|
 | `.overwatch_final/sections/cost_contract.py` | 5003 | Workflow shell, cost overview, value ledger, forecast, changes, savings evidence, and old delegation in one module. | Split cost workflows and advanced evidence gates after live regression is available. |
-| `.overwatch_final/utils/alerts.py` | 4671 | Alert SQL catalog, rule generation, alert actions, delivery, active queue helpers, and DBA briefing helpers mixed together. | Split catalog/admin SQL from active alert queue logic. |
 | `.overwatch_final/sections/warehouse_health.py` | 4108 | Old optimization advisor and warehouse controls overlap Cost & Contract. | Move operator output behind Cost & Contract > Waste Detection; keep raw controls advanced. |
 | `.overwatch_final/sections/dba_tools.py` | 3861 | Admin tools, generated SQL, settings controls, compare tools, validation utilities. | Keep under Workload Operations > Advanced DBA Tools / Control Room Admin. |
 | `.overwatch_final/utils/shared_metrics.py` | 3804 | Many shared SQL builders and cache wrappers. | Consolidate shared mart-first query helpers by workflow. |
@@ -20,6 +19,7 @@ Reduce bloat without breaking the six-section operator model or removing useful 
 | `.overwatch_final/sections/alert_center.py` | 3432 | Active alerts, history, admin config, suppression, closed loop, and investigation evidence. | Split active workflow from admin/evidence helpers. |
 | `.overwatch_final/sections/task_management.py` | 3281 | Task management and pipeline health overlap Pipeline & Task Health. | Keep as delegated implementation, remove duplicate entry points only after regression. |
 | `.overwatch_final/sections/security_posture.py` | 3267 | Security overview, failed logins, grants, sprawl, sharing, admin evidence in one file. | Split advanced evidence after route behavior is stable. |
+| `.overwatch_final/utils/alerts.py` | 132 | Compatibility facade only after alert split. | Keep as stable import surface; do not add new implementation logic here. |
 
 ## Duplicate Code Groups
 
@@ -48,7 +48,7 @@ These are candidates, not approved removals:
 
 | Metric | Current | Target |
 |---|---:|---:|
-| Large app modules above 3000 lines | 10 | 3 or fewer |
+| Large app modules above 3000 lines | 9 | 3 or fewer |
 | Daily operator mart tables | 90+ expected in current setup | 28-34 after migration |
 | Primary route aliases exposed to users | Several before this pass | Zero known in primary UI |
 | Live Snowflake regression coverage | New runner, blocked by auth | Passing in test account |
@@ -57,17 +57,22 @@ These are candidates, not approved removals:
 
 - `.overwatch_final/workflow_contracts.py` now centralizes the six-section workflow contract and legacy route matrix used by both tests and the live Snowflake regression runner.
 - `tests/test_navigation_integrity.py` checks the six primary sections, legacy route redirects, workflow names, old 4-section absence, company scoping, and stale chart text.
+- `tests/test_alert_status.py` locks down alert status/severity normalization, including the intentional difference between triage status preservation and command-center unknown-status collapse.
+- `tests/test_alert_facade.py` proves representative `utils.alerts` imports still point to focused modules and that internal callers do not import private facade names.
+- `tests/test_alert_lifecycle.py`, `tests/test_alert_triage.py`, `tests/test_alert_action_queue.py`, `tests/test_alert_command_center.py`, `tests/test_alert_catalog.py`, `tests/test_alert_delivery.py`, and `tests/test_alert_native_catalog.py` cover the completed alert helper split.
 - `tests/test_command_center.py` now validates correlated investigation UI placement and explicit load gates.
 - `tests/test_contention_center.py`, `tests/test_formula_regressions.py`, and `tests/test_operational_intelligence.py` validate renamed workflow/action contracts.
 - `perf_tests/full_app_snowflake_regression.py` is the live Snowflake gate once authentication is corrected.
 
 ## Next Rewrite Order
 
-1. Split `utils/alerts.py` into active queue, catalog/admin SQL, delivery/suppression, and DBA brief helpers.
-2. Split `cost_contract.py` into cost overview/workflow shell and advanced evidence modules.
-3. Consolidate shared explicit-load gates and priority dataframe patterns.
-4. Retire duplicated legacy route rendering after route metrics prove no active usage.
-5. Rewrite mart loads to feed daily workflows directly before dropping any old objects.
+1. Split `cost_contract.py` into cost overview/workflow shell and advanced evidence modules.
+2. Split `warehouse_health.py` so operator recommendations remain under Cost & Contract while low-level controls stay advanced.
+3. Split `dba_tools.py` into compare tools, generated SQL, validation utilities, and settings controls.
+4. Consolidate shared explicit-load gates and priority dataframe patterns.
+5. Break up `shared_metrics.py` by workflow/query family only after the cost/workload callers have regression coverage.
+6. Retire duplicated legacy route rendering after route metrics prove no active usage.
+7. Rewrite mart loads to feed daily workflows directly before dropping any old objects.
 
 ## De-Bloat Completed After Initial Audit
 
@@ -76,3 +81,6 @@ These are candidates, not approved removals:
 | Duplicated six-section workflow list in Snowflake regression runner | Replaced with `.overwatch_final/workflow_contracts.py`. |
 | Duplicated legacy route matrix in navigation tests | Replaced with `.overwatch_final/workflow_contracts.py`. |
 | Contract drift guard | Added a test that the workflow contract matches the configured six primary sections. |
+| Alert facade split | Reduced `.overwatch_final/utils/alerts.py` to a 132-line compatibility facade. Implementation now lives in `alert_action_queue.py`, `alert_annotations.py`, `alert_boards.py`, `alert_catalog.py`, `alert_command_center.py`, `alert_delivery.py`, `alert_lifecycle.py`, `alert_native_catalog.py`, `alert_status.py`, and `alert_triage.py`. |
+| Alert status/severity duplication | Centralized alert status and severity constants in `alert_status.py`; command-center unknown-status collapse remains explicit and tested. |
+| Alert facade import hygiene | Replaced production `utils.alerts` imports in Alert Center with focused-module imports. No direct private imports from `utils.alerts` are expected outside compatibility tests. |

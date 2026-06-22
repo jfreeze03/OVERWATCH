@@ -178,13 +178,13 @@ ALERT_CENTER_SOURCE_PLAN = {
 
 
 def _alert_email_target() -> str:
-    from utils.alerts import current_alert_recipient
+    from utils.alert_delivery import current_alert_recipient
 
     return current_alert_recipient(DEFAULT_ALERT_EMAIL)
 
 
 def _alert_email_target_label() -> str:
-    from utils.alerts import alert_recipient_label
+    from utils.alert_delivery import alert_recipient_label
 
     return alert_recipient_label(_alert_email_target())
 
@@ -333,15 +333,14 @@ def _load_center_data(
     sources: set[str] | None = None,
 ) -> dict:
     pd = _pd()
-    from utils.alerts import (
-        build_dashboard_issue_rows,
-        load_alert_delivery_log,
-        load_alert_history,
+    from utils.alert_catalog import load_alert_rule_catalog
+    from utils.alert_delivery import load_alert_delivery_log
+    from utils.alert_native_catalog import (
         load_alert_native_object_registry,
         load_alert_remediation_dry_runs,
         load_alert_remediation_policy,
-        load_alert_rule_catalog,
     )
+    from utils.alert_triage import build_dashboard_issue_rows, load_alert_history
 
     sources = set(sources or ALERT_CENTER_SOURCES_BY_PANE[ALERT_CENTER_DEFAULT_VIEW])
     data: dict[str, object] = {
@@ -1170,7 +1169,7 @@ def _alert_domain_next_move_rows(board: pd.DataFrame, active_view: str) -> pd.Da
 
 def _alert_threshold_tuning_rows(alerts: pd.DataFrame | None = None, rules: pd.DataFrame | None = None) -> pd.DataFrame:
     """Return alert threshold review rows grounded in the DBA-owned threshold catalog."""
-    from utils.alerts import build_alert_threshold_seed_rows
+    from utils.alert_native_catalog import build_alert_threshold_seed_rows
 
     pd = _pd()
     alerts = alerts if isinstance(alerts, pd.DataFrame) else pd.DataFrame()
@@ -1711,7 +1710,7 @@ def _render_alert_domain_workbench(
     queue: pd.DataFrame,
     rules: pd.DataFrame,
 ) -> None:
-    from utils.alerts import build_section_alert_signal_board
+    from utils.alert_boards import build_section_alert_signal_board
     from sections.navigation import apply_section_workflow_navigation
 
     pd = _pd()
@@ -2211,7 +2210,7 @@ def _render_active_alerts(
     delivery_log: pd.DataFrame,
     rules: pd.DataFrame,
 ) -> None:
-    from utils.alerts import (
+    from utils.alert_boards import (
         build_alert_command_center_summary,
         build_alert_incident_action_board,
         build_alert_owner_workload_board,
@@ -2423,10 +2422,10 @@ def _render_loaded_advisor_alert_candidates() -> None:
 
 
 def _render_alert_detection_catalog() -> None:
-    from utils.alerts import (
+    from utils.alert_command_center import build_alert_signal_query_catalog
+    from utils.alert_native_catalog import (
         build_alert_native_deployment_review_rows,
         build_alert_native_object_registry_seed_rows,
-        build_alert_signal_query_catalog,
         load_alert_native_object_registry,
     )
 
@@ -2580,7 +2579,7 @@ def _render_alert_action_queue_routing(alerts: pd.DataFrame, queue: pd.DataFrame
     if alerts.empty:
         st.info("Load alert history before routing alerts to the action queue.")
     else:
-        from utils.alerts import alert_history_to_actions, mark_alerts_routed
+        from utils.alert_action_queue import alert_history_to_actions, mark_alerts_routed
         from utils.action_queue import upsert_actions
 
         routable = alerts[_open_alert_mask(alerts)] if not alerts.empty else alerts
@@ -2642,7 +2641,8 @@ def _render_alert_notification_remediation(
     remediation_policy: pd.DataFrame | None = None,
     remediation_dry_run: pd.DataFrame | None = None,
 ) -> None:
-    from utils.alerts import build_alert_remediation_contract, build_alert_remediation_policy_seed_rows
+    from utils.alert_boards import build_alert_remediation_contract
+    from utils.alert_native_catalog import build_alert_remediation_policy_seed_rows
 
     pd = _pd()
     native_registry = native_registry if isinstance(native_registry, pd.DataFrame) else pd.DataFrame()
@@ -3372,12 +3372,12 @@ def render() -> None:
         if alerts.empty:
             st.info("Load alert history before preparing the operator digest.")
         else:
-            from utils.alerts import (
+            from utils.alert_delivery import log_alert_digest_delivery
+            from utils.alert_triage import (
                 alert_escalation_candidates,
                 build_alert_digest_body,
                 build_alert_digest_subject,
                 build_alert_digest_summary,
-                log_alert_digest_delivery,
             )
 
             digest_summary = build_alert_digest_summary(alerts)
@@ -3569,13 +3569,15 @@ def render() -> None:
 
             alert_ids = alerts["ALERT_ID"].dropna().astype(str).tolist() if "ALERT_ID" in alerts.columns else []
             if alert_ids:
-                from utils.alerts import (
-                    ALERT_STATUS_CHOICES,
-                    acknowledge_alert_escalation,
+                from utils.alert_command_center import (
                     build_alert_acknowledgement_insert_sql,
                     build_alert_remediation_log_insert_sql,
+                )
+                from utils.alert_lifecycle import (
+                    acknowledge_alert_escalation,
                     update_alert_status,
                 )
+                from utils.alert_status import ALERT_STATUS_CHOICES
 
                 with st.expander("Update alert lifecycle", expanded=False):
                     with st.form("alert_center_status_update"):

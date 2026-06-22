@@ -3,8 +3,8 @@
 This module owns the SQL contract for alert lifecycle tables, event
 materialization, acknowledgement/remediation audit inserts, signal-query
 catalogs, privilege readiness, optional integrations, and the operator runbook.
-Runtime dataframe normalization and visible alert boards remain in
-``utils.alerts``.
+Runtime dataframe normalization and visible alert boards live in focused
+sibling modules while ``utils.alerts`` stays as the compatibility facade.
 """
 from __future__ import annotations
 

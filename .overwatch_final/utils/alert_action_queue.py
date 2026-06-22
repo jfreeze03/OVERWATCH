@@ -2,7 +2,8 @@
 
 This module owns the narrow path that converts active alert rows into action
 queue records and marks alert rows as routed. Catalog, delivery, native alert,
-and UI board logic intentionally stay in ``utils.alerts`` for now.
+and UI board logic live in focused sibling modules while ``utils.alerts`` stays
+as the compatibility facade.
 """
 from __future__ import annotations
 

@@ -1,22 +1,16 @@
-# utils/alerts.py - email-first alert framework, alert table DDL, and annotations
+# utils/alerts.py - alert framework facade, catalog, triage, and annotations
 from __future__ import annotations
 
-import json
 import re
-import urllib.request
 from typing import Any
 
 import pandas as pd
-import streamlit as st
-
-from runtime_state import ALERT_EMAIL_TARGETS, get_state
 
 from config import (
     ALERT_DB,
     ALERT_DELIVERY_METHOD,
     ALERT_SCHEMA,
     ALERT_TABLE,
-    DEFAULT_ALERT_EMAIL,
 )
 from .compatibility import filter_existing_columns
 from .company_filter import (
@@ -25,40 +19,36 @@ from .company_filter import (
     get_active_environment,
     get_environment_db_patterns,
 )
-from .monitor_context import resolve_owner_context
 from .query import (
-    format_snowflake_error,
     run_query,
     safe_identifier,
     sql_literal,
 )
+from .alert_action_queue import alert_history_to_actions, mark_alerts_routed
+from .alert_delivery import (
+    ALERT_DELIVERY_LOG_TABLE,
+    DEFAULT_ALERT_RECIPIENT,
+    alert_delivery_log_fqn,
+    alert_delivery_status_for_target,
+    alert_recipient_label,
+    build_alert_delivery_log_ddl,
+    build_alert_delivery_log_insert_sql,
+    build_alert_delivery_mark_sql,
+    build_alert_email_body,
+    build_alert_email_delivery_procedure_sql,
+    build_alert_email_subject,
+    current_alert_recipient,
+    load_alert_delivery_log,
+    log_alert_digest_delivery,
+    send_teams_alert,
+)
 
 
 ANNOTATION_TABLE = "OVERWATCH_ANNOTATIONS"
-ALERT_DELIVERY_LOG_TABLE = "OVERWATCH_ALERT_DELIVERY_LOG"
 ALERT_RULE_AUDIT_TABLE = "OVERWATCH_ALERT_RULE_AUDIT"
 ALERT_NATIVE_OBJECT_REGISTRY_TABLE = "ALERT_NATIVE_OBJECT_REGISTRY"
 ALERT_REMEDIATION_POLICY_TABLE = "ALERT_REMEDIATION_POLICY"
 ALERT_REMEDIATION_DRY_RUN_TABLE = "ALERT_REMEDIATION_DRY_RUN"
-DEFAULT_ALERT_RECIPIENT = DEFAULT_ALERT_EMAIL
-
-
-def current_alert_recipient(default: str = DEFAULT_ALERT_RECIPIENT) -> str:
-    """Return the deployment-configured alert recipient when Streamlit state exists."""
-    try:
-        configured = str(get_state(ALERT_EMAIL_TARGETS, "") or "").strip()
-    except Exception:
-        configured = ""
-    return configured or default
-
-
-def alert_recipient_label(recipient: str | None = None) -> str:
-    target = str(current_alert_recipient(recipient or "") or "").strip()
-    return target or "not configured"
-
-
-def alert_delivery_status_for_target(recipient: str | None = None) -> str:
-    return "EMAIL_READY" if str(recipient or "").strip() else "CONFIG_REQUIRED"
 
 
 ALERT_OPEN_STATUSES = {
@@ -240,34 +230,6 @@ ISSUE_COLUMNS = [
 ]
 
 
-def send_teams_alert(webhook_url: str, message: str, title: str = "OVERWATCH Alert") -> bool:
-    """Send a Microsoft Teams message via incoming webhook.
-
-    Kept for future Teams support, but the active framework is email-first.
-    """
-    if not webhook_url:
-        return False
-    payload = json.dumps({
-        "@type": "MessageCard",
-        "@context": "https://schema.org/extensions",
-        "summary": title,
-        "themeColor": "38BDF8",
-        "title": title,
-        "text": message,
-    }).encode("utf-8")
-    try:
-        req = urllib.request.Request(
-            webhook_url,
-            data=payload,
-            headers={"Content-Type": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            return 200 <= resp.status < 300
-    except Exception as e:
-        st.warning(f"Teams alert failed: {format_snowflake_error(e)}")
-        return False
-
-
 def alert_table_fqn(
     db: str = ALERT_DB,
     schema: str = ALERT_SCHEMA,
@@ -290,18 +252,6 @@ def alert_triage_view_fqn(
     if quoted:
         return f"{safe_identifier(db)}.{safe_identifier(schema)}.{safe_identifier(view)}"
     return f"{db}.{schema}.{view}"
-
-
-def alert_delivery_log_fqn(
-    db: str = ALERT_DB,
-    schema: str = ALERT_SCHEMA,
-    table: str = ALERT_DELIVERY_LOG_TABLE,
-    *,
-    quoted: bool = False,
-) -> str:
-    if quoted:
-        return f"{safe_identifier(db)}.{safe_identifier(schema)}.{safe_identifier(table)}"
-    return f"{db}.{schema}.{table}"
 
 
 def alert_rule_audit_fqn(
@@ -831,25 +781,6 @@ def build_alert_digest_body(
     return "\n".join(lines)
 
 
-def _numeric_alert_ids(df_or_ids: Any) -> list[int]:
-    if df_or_ids is None:
-        return []
-    if isinstance(df_or_ids, pd.DataFrame):
-        if "ALERT_ID" not in df_or_ids.columns:
-            return []
-        values = df_or_ids["ALERT_ID"].dropna().astype(str).tolist()
-    elif isinstance(df_or_ids, pd.Series):
-        values = df_or_ids.dropna().astype(str).tolist()
-    else:
-        values = list(df_or_ids)
-    clean: list[int] = []
-    for value in values:
-        text = str(value).strip()
-        if text.isdigit():
-            clean.append(int(text))
-    return list(dict.fromkeys(clean))
-
-
 def _status_rank(value: Any) -> int:
     status = str(value or "New").strip().upper().replace(" ", "_")
     if status in {"NEW", "EMAIL_READY", "EMAIL_QUEUED", "OPEN", "ACTIVE", "PENDING"}:
@@ -947,41 +878,6 @@ def _environment_scope_alert_rows(df: pd.DataFrame, environment: str | None) -> 
         return environment_value_allowed(row_env, environment=env)
 
     return df[df.apply(allowed, axis=1)]
-
-
-def build_alert_email_subject(row: pd.Series | dict, company: str = "ALFA") -> str:
-    severity = normalize_alert_severity(_row_value(row, "SEVERITY", default="Medium"))
-    category = _row_value(row, "CATEGORY", "ALERT_TYPE", "DOMAIN", "SIGNAL", default="Alert")
-    entity = _row_value(row, "ENTITY_NAME", "ENTITY", default="Snowflake account")
-    company_text = _row_value(row, "COMPANY", default=company)
-    return f"OVERWATCH {severity}: {category} - {entity} ({company_text})"
-
-
-def build_alert_email_body(row: pd.Series | dict, company: str = "ALFA") -> str:
-    company_text = _row_value(row, "COMPANY", default=company)
-    environment = _row_value(row, "ENVIRONMENT", default="No Database Context")
-    category = _row_value(row, "CATEGORY", "ALERT_TYPE", "DOMAIN", "SIGNAL", default="Alert")
-    entity = _row_value(row, "ENTITY_NAME", "ENTITY", default="Snowflake account")
-    severity = normalize_alert_severity(_row_value(row, "SEVERITY", default="Medium"))
-    message = _row_value(row, "MESSAGE", "DETAIL", default="No alert detail captured.")
-    action = _row_value(row, "SUGGESTED_ACTION", "NEXT_ACTION", default="Review the Alert Center issue and route it through the DBA action queue.")
-    proof = _row_value(row, "PROOF_QUERY", default="No telemetry query captured.")
-    return "\n".join([
-        f"Company: {company_text}",
-        f"Environment: {environment}",
-        f"Severity: {severity}",
-        f"Alert: {category}",
-        f"Entity: {entity}",
-        "",
-        "Detail:",
-        message,
-        "",
-        "Next action:",
-        action,
-        "",
-        "Telemetry query:",
-        proof,
-    ])
 
 
 def normalize_alert_frame(
@@ -1285,272 +1181,6 @@ def build_dashboard_issue_rows(
     return combined.drop(columns=["_SEVERITY_RANK", "_STATUS_RANK", "_EVENT_TS"], errors="ignore")
 
 
-def _alert_reliability_kind(row: pd.Series | dict) -> str:
-    signal = " ".join([
-        _row_value(row, "CATEGORY", default=""),
-        _row_value(row, "ALERT_TYPE", default=""),
-        _row_value(row, "SUGGESTED_ACTION", default=""),
-        _row_value(row, "ALERT_RUNBOOK", default=""),
-    ]).upper()
-    if "TASK" in signal:
-        return "task"
-    if "STORED PROCEDURE" in signal or "PROCEDURE" in signal or "PROC_" in signal:
-        return "procedure"
-    return ""
-
-
-def _object_leaf_name(value: object) -> str:
-    text = str(value or "").strip().strip('"')
-    if not text:
-        return ""
-    parts = [part.strip().strip('"') for part in text.split(".") if part.strip()]
-    return parts[-1] if parts else text
-
-
-def _safe_alert_row_query(row: pd.Series | dict) -> str:
-    alert_id = _row_value(row, "ALERT_ID", default="")
-    columns = "ALERT_ID, ALERT_TS, STATUS, SEVERITY, CATEGORY, ALERT_TYPE, ENTITY_NAME, MESSAGE"
-    if str(alert_id).strip().isdigit():
-        return f"""
-SELECT {columns}
-FROM {alert_table_fqn(quoted=True)}
-WHERE ALERT_ID = {int(alert_id)}
-LIMIT 50
-""".strip()
-    entity = _row_value(row, "ENTITY_NAME", "ENTITY", default="Snowflake account")
-    return f"""
-SELECT {columns}
-FROM {alert_table_fqn(quoted=True)}
-WHERE ENTITY_NAME = {sql_literal(entity, 500)}
-ORDER BY ALERT_TS DESC
-LIMIT 50
-""".strip()
-
-
-def _safe_alert_proof_query(row: pd.Series | dict) -> str:
-    from .action_queue import verification_query_safety_issues
-
-    proof = _row_value(row, "PROOF_QUERY", default="")
-    if proof and not verification_query_safety_issues(proof):
-        return proof
-    return _safe_alert_row_query(row)
-
-
-def _task_recovery_verification_query(row: pd.Series | dict) -> str:
-    entity = _row_value(row, "ENTITY_NAME", "ENTITY", default="")
-    task_name = _object_leaf_name(entity) or entity or "UNKNOWN_TASK"
-    database = _row_value(row, "DATABASE_NAME", default="")
-    schema = _row_value(row, "SCHEMA_NAME", default="")
-    filters = [f"UPPER(NAME) = UPPER({sql_literal(task_name, 500)})"]
-    if database:
-        filters.append(f"UPPER(DATABASE_NAME) = UPPER({sql_literal(database, 500)})")
-    if schema:
-        filters.append(f"UPPER(SCHEMA_NAME) = UPPER({sql_literal(schema, 500)})")
-    where_clause = " AND ".join(filters)
-    return f"""
-SELECT DATABASE_NAME, SCHEMA_NAME, NAME, STATE, SCHEDULED_TIME, COMPLETED_TIME, QUERY_ID, ERROR_MESSAGE
-FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
-WHERE {where_clause}
-ORDER BY SCHEDULED_TIME DESC
-LIMIT 50
-""".strip()
-
-
-def _procedure_recovery_verification_query(row: pd.Series | dict) -> str:
-    entity = _row_value(row, "ENTITY_NAME", "ENTITY", default="")
-    proc_name = _object_leaf_name(entity) or entity or "UNKNOWN_PROCEDURE"
-    database = _row_value(row, "DATABASE_NAME", default="")
-    schema = _row_value(row, "SCHEMA_NAME", default="")
-    filters = ["QUERY_TYPE = 'CALL'"]
-    if database:
-        filters.append(f"UPPER(DATABASE_NAME) = UPPER({sql_literal(database, 500)})")
-    if schema:
-        filters.append(f"UPPER(SCHEMA_NAME) = UPPER({sql_literal(schema, 500)})")
-    if proc_name:
-        filters.append(f"QUERY_TEXT ILIKE {sql_literal('%' + proc_name + '%', 500)}")
-    where_clause = " AND ".join(filters)
-    return f"""
-SELECT QUERY_ID, START_TIME, USER_NAME, ROLE_NAME, WAREHOUSE_NAME, DATABASE_NAME, SCHEMA_NAME,
-       EXECUTION_STATUS, TOTAL_ELAPSED_TIME, ERROR_CODE, ERROR_MESSAGE
-FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-WHERE {where_clause}
-ORDER BY START_TIME DESC
-LIMIT 50
-""".strip()
-
-
-def _alert_recovery_verification_query(row: pd.Series | dict, reliability_kind: str) -> str:
-    from .action_queue import verification_query_safety_issues
-
-    proof = _row_value(row, "PROOF_QUERY", default="")
-    if proof and not verification_query_safety_issues(proof):
-        return proof
-    if reliability_kind == "task":
-        return _task_recovery_verification_query(row)
-    if reliability_kind == "procedure":
-        return _procedure_recovery_verification_query(row)
-    return _safe_alert_row_query(row)
-
-
-def _alert_numeric_value(row: pd.Series | dict, *columns: str) -> float | None:
-    for column in columns:
-        value = _row_value(row, column, default="")
-        try:
-            if value not in ("", None):
-                return float(value)
-        except Exception:
-            continue
-    return None
-
-
-def _alert_recovery_metrics(row: pd.Series | dict, reliability_kind: str) -> dict[str, float]:
-    text = " ".join([
-        _row_value(row, "ALERT_TYPE", default=""),
-        _row_value(row, "MESSAGE", "DETAIL", default=""),
-    ])
-    upper_text = text.upper()
-    metrics: dict[str, float] = {}
-    if "RUNTIME" in upper_text or "DURATION" in upper_text:
-        current_match = re.search(r"(?:DURATION|CALL DURATION)\s+([0-9]+(?:\.[0-9]+)?)\s*S", text, flags=re.IGNORECASE)
-        baseline_match = re.search(r"BASELINE\s+([0-9]+(?:\.[0-9]+)?)\s*S", text, flags=re.IGNORECASE)
-        if current_match:
-            metrics["Baseline Value"] = float(baseline_match.group(1)) if baseline_match else 0.0
-            metrics["Current Value"] = float(current_match.group(1))
-            metrics["Measured Delta"] = metrics["Current Value"] - metrics["Baseline Value"]
-            return metrics
-
-    failure_match = re.search(r"([0-9]+(?:\.[0-9]+)?)\s+FAILED", text, flags=re.IGNORECASE)
-    if failure_match or reliability_kind in {"task", "procedure"}:
-        current = float(failure_match.group(1)) if failure_match else 1.0
-        metrics["Baseline Value"] = 0.0
-        metrics["Current Value"] = current
-        metrics["Measured Delta"] = current
-    return metrics
-
-
-def _alert_recovery_sla_state(row: pd.Series | dict) -> str:
-    status = normalize_alert_status(_row_value(row, "STATUS", default="New")).upper()
-    if status in ALERT_CLOSED_STATUSES:
-        return ""
-    sla_state = str(_row_value(row, "SLA_STATE", default="")).strip().upper()
-    if sla_state == "OVERDUE":
-        return "Recovery SLA Breach"
-    return "Open Failure"
-
-
-def _alert_recovery_sql_guidance(row: pd.Series | dict, reliability_kind: str) -> str:
-    entity = _row_value(row, "ENTITY_NAME", "ENTITY", default="Snowflake object")
-    owner = _row_value(row, "OWNER", "ESCALATION_TARGET", default="DBA / owner")
-    noun = "task" if reliability_kind == "task" else "stored procedure"
-    return "\n".join([
-        f"-- reviewed {noun} recovery for {entity}",
-        "-- Do not perform retry from Alert Center.",
-        f"-- Assign DBA route/reviewer: {owner}",
-        "-- Required order: confirm root cause, document ticket, complete review, then recover from Workload Operations.",
-        "-- After recovery, run the read-only status query attached to this action and record the result in closure status.",
-    ])
-
-
-def alert_history_to_actions(df_alerts: pd.DataFrame, company: str = "ALFA") -> list[dict]:
-    if df_alerts is None or df_alerts.empty:
-        return []
-    from .action_queue import make_action_id
-
-    actions = []
-    alerts = normalize_alert_frame(df_alerts, company=company)
-    for _, row in alerts.head(500).iterrows():
-        alert_id = _row_value(row, "ALERT_ID", "ALERT_TS")
-        category = _row_value(row, "CATEGORY", "ALERT_TYPE", default="Alert")
-        alert_type = _row_value(row, "ALERT_TYPE", "CATEGORY", default=category)
-        entity = _row_value(row, "ENTITY_NAME", "ENTITY", default="Snowflake account")
-        message = _row_value(row, "MESSAGE", "DETAIL")
-        reliability_kind = _alert_reliability_kind(row)
-        is_recovery = reliability_kind in {"task", "procedure"}
-        reviewed_recovery = is_recovery
-        action_category = "Task & Procedure Reliability" if is_recovery else category
-        entity_type = {
-            "task": "Task",
-            "procedure": "Stored Procedure",
-        }.get(reliability_kind, "Alert Entity")
-        proof_query = _safe_alert_proof_query(row)
-        if is_recovery:
-            verification_query = _alert_recovery_verification_query(row, reliability_kind)
-        else:
-            verification_query = proof_query
-        owner = _row_value(row, "OWNER", default="DBA")
-        owner_context = resolve_owner_context(
-            row,
-            entity=entity,
-            entity_type=entity_type,
-            owner=owner,
-            category=action_category,
-            alert_type=alert_type,
-        )
-        owner = owner_context.get("OWNER") or owner
-        escalation_target = _row_value(row, "ESCALATION_TARGET", default="") or owner_context.get("ESCALATION_TARGET", "")
-        approval_group = owner_context.get("APPROVAL_GROUP") or escalation_target or owner
-        sla_target_hours = _alert_numeric_value(row, "SLA_TARGET_HOURS")
-        if sla_target_hours is None:
-            sla_target_hours = float(ALERT_SLA_HOURS.get(normalize_alert_severity(_row_value(row, "SEVERITY", default="Medium")), 24))
-        alert_age_hours = _alert_numeric_value(row, "ALERT_AGE_HOURS")
-        suggested_action = _row_value(row, "SUGGESTED_ACTION", default="Review the Alert Center issue and route it through the DBA action queue.")
-        if is_recovery:
-            suggested_action = (
-                f"{suggested_action} Track recovery through the action queue: assign route/ticket, confirm root cause, "
-                "complete review before recovery, and confirm the next run."
-            )
-            sql_fix = _alert_recovery_sql_guidance(row, reliability_kind)
-            recovery_evidence = (
-                "Required closure status: root cause, recovery timestamp, and a successful next-run "
-                f"status check for {entity}. Alert detail: {message}"
-            )
-        else:
-            sql_fix = "-- Review alert telemetry before applying a fix."
-            recovery_evidence = ""
-        action = {
-            "Action ID": make_action_id(action_category if reviewed_recovery else "Alert", entity, f"{alert_type}|{message}|{alert_id}"),
-            "Source": "Alert Center",
-            "Severity": normalize_alert_severity(_row_value(row, "SEVERITY", default="Medium")),
-            "Category": action_category,
-            "Entity Type": entity_type,
-            "Entity": entity,
-            "Owner": owner,
-            "Finding": f"{alert_type}: {message}",
-            "Action": suggested_action,
-            "Estimated Monthly Savings": 0.0,
-            "Generated SQL Fix": sql_fix,
-            "Proof Query": proof_query,
-            "Verification Status": "Pending",
-            "Verification Query": verification_query,
-            "Company": _row_value(row, "COMPANY", default=company),
-            "Environment": _row_value(row, "ENVIRONMENT", default="No Database Context"),
-            "Owner Email": owner_context.get("OWNER_EMAIL", ""),
-            "Oncall Primary": owner_context.get("ONCALL_PRIMARY", ""),
-            "Oncall Secondary": owner_context.get("ONCALL_SECONDARY", ""),
-            "Review Group": approval_group,
-            "Escalation Target": escalation_target,
-            "Owner Source": owner_context.get("OWNER_SOURCE", ""),
-            "Owner Evidence": owner_context.get("OWNER_EVIDENCE", ""),
-        }
-        if reviewed_recovery:
-            action.update({
-                "Verification Status": "Requested",
-                "Verification Note": (
-                    "Alert routed from Alert Center; retry or recovery requires root-cause "
-                    "status and post-recovery telemetry."
-                ),
-                "Recovery SLA State": _alert_recovery_sla_state(row),
-                "Recovery SLA Target Hours": float(sla_target_hours),
-                "Recovery Evidence": recovery_evidence,
-                "Recovery Audit State": "Audit Required",
-            })
-            if alert_age_hours is not None:
-                action["Recovery SLA Hours"] = float(alert_age_hours)
-            action.update(_alert_recovery_metrics(row, reliability_kind))
-        actions.append(action)
-    return actions
-
-
 def build_alert_insert_sql(
     *,
     company: str,
@@ -1733,345 +1363,6 @@ def acknowledge_alert_escalation(
         note=note,
         columns=columns,
     )).collect()
-
-
-def mark_alerts_routed(
-    session,
-    alert_ids: list[int | str],
-    *,
-    action_count: int = 0,
-    actor: str = "OVERWATCH",
-) -> None:
-    clean_ids = [int(value) for value in alert_ids if str(value).strip().isdigit()]
-    if not clean_ids:
-        return
-    columns = set(filter_existing_columns(
-        session,
-        alert_table_fqn(),
-        ["STATUS", "ROUTED_TO_ACTION_QUEUE_AT", "ROUTED_ACTION_COUNT", "LAST_STATUS_BY", "LAST_STATUS_AT"],
-    ))
-    set_parts = []
-    if "STATUS" in columns:
-        set_parts.append("STATUS = CASE WHEN STATUS IS NULL OR STATUS = 'New' THEN 'In Progress' ELSE STATUS END")
-    if "ROUTED_TO_ACTION_QUEUE_AT" in columns:
-        set_parts.append("ROUTED_TO_ACTION_QUEUE_AT = CURRENT_TIMESTAMP()")
-    if "ROUTED_ACTION_COUNT" in columns:
-        set_parts.append(f"ROUTED_ACTION_COUNT = COALESCE(ROUTED_ACTION_COUNT, 0) + {int(action_count)}")
-    if "LAST_STATUS_BY" in columns:
-        set_parts.append(f"LAST_STATUS_BY = {sql_literal(actor, 200)}")
-    if "LAST_STATUS_AT" in columns:
-        set_parts.append("LAST_STATUS_AT = CURRENT_TIMESTAMP()")
-    if not set_parts:
-        return
-    session.sql(f"""
-        UPDATE {alert_table_fqn(quoted=True)}
-        SET {", ".join(set_parts)}
-        WHERE ALERT_ID IN ({", ".join(str(value) for value in clean_ids)})
-    """).collect()
-
-
-def build_alert_delivery_log_ddl(
-    db: str = ALERT_DB,
-    schema: str = ALERT_SCHEMA,
-) -> str:
-    return f"""CREATE TABLE IF NOT EXISTS {safe_identifier(db)}.{safe_identifier(schema)}.{safe_identifier(ALERT_DELIVERY_LOG_TABLE)} (
-    DELIVERY_ID      NUMBER AUTOINCREMENT PRIMARY KEY,
-    DELIVERY_TS      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
-    COMPANY          VARCHAR(100),
-    ENVIRONMENT      VARCHAR(100),
-    ALERT_IDS        VARIANT,
-    ALERT_COUNT      NUMBER,
-    DELIVERY_METHOD  VARCHAR(40) DEFAULT 'EMAIL',
-    DELIVERY_TARGET  VARCHAR(500),
-    EMAIL_SUBJECT    VARCHAR(1000),
-    EMAIL_BODY       VARCHAR(16000),
-    DELIVERY_STATUS  VARCHAR(100),
-    DELIVERY_BY      VARCHAR(200),
-    DELIVERY_NOTES   VARCHAR(4000)
-);"""
-
-
-def build_alert_delivery_log_insert_sql(
-    *,
-    alert_ids: list[int | str],
-    company: str,
-    environment: str,
-    delivery_target: str,
-    email_subject: str,
-    email_body: str,
-    actor: str,
-    notes: str,
-    delivery_status: str = "EMAIL_LOGGED",
-    db: str = ALERT_DB,
-    schema: str = ALERT_SCHEMA,
-) -> str:
-    clean_ids = _numeric_alert_ids(alert_ids)
-    if not clean_ids:
-        raise ValueError("At least one numeric alert id is required for delivery logging.")
-    if not str(delivery_target or "").strip():
-        raise ValueError("Delivery target is required.")
-    if len(str(notes or "").strip()) < 10:
-        raise ValueError("Delivery notes must explain where/how the email was handled.")
-    alert_json = json.dumps(clean_ids)
-    return f"""
-INSERT INTO {alert_delivery_log_fqn(db=db, schema=schema, quoted=True)}
-    (COMPANY, ENVIRONMENT, ALERT_IDS, ALERT_COUNT, DELIVERY_METHOD, DELIVERY_TARGET,
-     EMAIL_SUBJECT, EMAIL_BODY, DELIVERY_STATUS, DELIVERY_BY, DELIVERY_NOTES)
-VALUES
-    ({sql_literal(company, 100)}, {sql_literal(environment, 100)}, PARSE_JSON({sql_literal(alert_json, 16000)}),
-     {len(clean_ids)}, {sql_literal(ALERT_DELIVERY_METHOD, 40)}, {sql_literal(delivery_target, 500)},
-     {sql_literal(email_subject, 1000)}, {sql_literal(email_body, 16000)}, {sql_literal(delivery_status, 100)},
-     {sql_literal(actor, 200)}, {sql_literal(notes, 4000)})
-""".strip()
-
-
-def build_alert_delivery_mark_sql(
-    *,
-    alert_ids: list[int | str],
-    delivery_target: str,
-    actor: str,
-    columns: set[str] | None = None,
-    db: str = ALERT_DB,
-    schema: str = ALERT_SCHEMA,
-    table: str = ALERT_TABLE,
-) -> str:
-    clean_ids = _numeric_alert_ids(alert_ids)
-    if not clean_ids:
-        raise ValueError("At least one numeric alert id is required.")
-    available = {column.upper() for column in (columns or set())}
-    set_parts = []
-    if "DELIVERY_STATUS" in available:
-        set_parts.append("DELIVERY_STATUS = 'EMAIL_LOGGED'")
-    if "DELIVERY_TARGET" in available:
-        set_parts.append(f"DELIVERY_TARGET = {sql_literal(delivery_target, 500)}")
-    if "EMAIL_TARGET" in available:
-        set_parts.append(f"EMAIL_TARGET = COALESCE(NULLIF(EMAIL_TARGET, ''), {sql_literal(delivery_target, 500)})")
-    if "LAST_DELIVERY_AT" in available:
-        set_parts.append("LAST_DELIVERY_AT = CURRENT_TIMESTAMP()")
-    if "LAST_DELIVERY_BY" in available:
-        set_parts.append(f"LAST_DELIVERY_BY = {sql_literal(actor, 200)}")
-    if "DELIVERY_LOG_COUNT" in available:
-        set_parts.append("DELIVERY_LOG_COUNT = COALESCE(DELIVERY_LOG_COUNT, 0) + 1")
-    if "ESCALATED_TO" in available:
-        set_parts.append(
-            "ESCALATED_TO = COALESCE(ESCALATED_TO, "
-            "CASE WHEN UPPER(COALESCE(SEVERITY, 'Medium')) IN ('CRITICAL', 'HIGH') THEN 'DBA Lead' ELSE COALESCE(OWNER, 'DBA') END)"
-        )
-    if "ESCALATED_AT" in available:
-        set_parts.append("ESCALATED_AT = COALESCE(ESCALATED_AT, CURRENT_TIMESTAMP())")
-    if "LAST_STATUS_BY" in available:
-        set_parts.append(f"LAST_STATUS_BY = {sql_literal(actor, 200)}")
-    if "LAST_STATUS_AT" in available:
-        set_parts.append("LAST_STATUS_AT = CURRENT_TIMESTAMP()")
-    if not set_parts:
-        raise ValueError("OVERWATCH_ALERTS does not expose delivery audit columns.")
-    return f"""
-UPDATE {safe_identifier(db)}.{safe_identifier(schema)}.{safe_identifier(table)}
-SET {", ".join(set_parts)}
-WHERE ALERT_ID IN ({", ".join(str(value) for value in clean_ids)})
-""".strip()
-
-
-def log_alert_digest_delivery(
-    session,
-    df_alerts: pd.DataFrame,
-    *,
-    company: str,
-    environment: str,
-    delivery_target: str,
-    email_subject: str,
-    email_body: str,
-    actor: str,
-    notes: str,
-) -> int:
-    clean_ids = _numeric_alert_ids(df_alerts)
-    if not clean_ids:
-        raise ValueError("No alert rows with numeric ALERT_ID values are available to log.")
-    columns = set(filter_existing_columns(
-        session,
-        alert_table_fqn(),
-        [
-            "DELIVERY_STATUS",
-            "DELIVERY_TARGET",
-            "EMAIL_TARGET",
-            "LAST_DELIVERY_AT",
-            "LAST_DELIVERY_BY",
-            "DELIVERY_LOG_COUNT",
-            "ESCALATED_TO",
-            "ESCALATED_AT",
-            "LAST_STATUS_BY",
-            "LAST_STATUS_AT",
-        ],
-    ))
-    session.sql(build_alert_delivery_log_insert_sql(
-        alert_ids=clean_ids,
-        company=company,
-        environment=environment,
-        delivery_target=delivery_target,
-        email_subject=email_subject,
-        email_body=email_body,
-        actor=actor,
-        notes=notes,
-    )).collect()
-    if columns:
-        session.sql(build_alert_delivery_mark_sql(
-            alert_ids=clean_ids,
-            delivery_target=delivery_target,
-            actor=actor,
-            columns=columns,
-        )).collect()
-    return len(clean_ids)
-
-
-def build_alert_email_delivery_procedure_sql(
-    *,
-    db: str = ALERT_DB,
-    schema: str = ALERT_SCHEMA,
-    table: str = ALERT_TABLE,
-    notification_integration: str = "OVERWATCH_EMAIL_INT",
-    email_target: str = DEFAULT_ALERT_RECIPIENT,
-) -> str:
-    """Return optional Snowflake email delivery procedure with replay audit."""
-    db_safe = safe_identifier(db)
-    schema_safe = safe_identifier(schema)
-    table_safe = safe_identifier(table)
-    proc_fqn = f"{db_safe}.{schema_safe}.SP_OVERWATCH_SEND_ALERT_DIGEST"
-    integration = str(notification_integration or "OVERWATCH_EMAIL_INT").replace("'", "''")
-    default_recipient = sql_literal(email_target, 500)
-    return f"""-- Optional reviewed email sender for Alert Center.
--- Prerequisite: create and approve notification integration {integration} outside OVERWATCH.
--- Keep P_DRY_RUN => TRUE until the integration and recipient allow-list are verified.
-CREATE OR REPLACE PROCEDURE {proc_fqn}(
-    P_COMPANY VARCHAR DEFAULT 'ALFA',
-    P_ENVIRONMENT VARCHAR DEFAULT 'ALL',
-    P_RECIPIENT VARCHAR DEFAULT {default_recipient},
-    P_DRY_RUN BOOLEAN DEFAULT TRUE
-)
-RETURNS VARCHAR
-LANGUAGE SQL
-EXECUTE AS OWNER
-AS
-$$
-DECLARE
-    alert_count NUMBER DEFAULT 0;
-    alert_ids VARIANT DEFAULT PARSE_JSON('[]');
-    subject VARCHAR DEFAULT '';
-    body VARCHAR DEFAULT '';
-    delivery_status VARCHAR DEFAULT 'EMAIL_DRY_RUN';
-BEGIN
-    CREATE OR REPLACE TEMPORARY TABLE TMP_OVERWATCH_ALERT_DIGEST AS
-    SELECT
-        ALERT_ID,
-        COMPANY,
-        ENVIRONMENT,
-        SEVERITY,
-        CATEGORY,
-        ALERT_TYPE,
-        ENTITY_NAME,
-        OWNER,
-        COALESCE(EMAIL_SUBJECT, 'OVERWATCH ' || COALESCE(SEVERITY, 'Medium') || ' alert digest') AS EMAIL_SUBJECT,
-        COALESCE(
-            EMAIL_BODY,
-            COALESCE(SEVERITY, 'Medium') || ' | ' || COALESCE(CATEGORY, 'Alert') || ' | ' ||
-            COALESCE(ALERT_TYPE, CATEGORY, 'Alert') || ' | ' || COALESCE(ENTITY_NAME, ENTITY, 'Snowflake account') ||
-            '\\nAction: ' || COALESCE(SUGGESTED_ACTION, 'Review in Alert Center.')
-        ) AS EMAIL_BODY
-    FROM {db_safe}.{schema_safe}.{table_safe}
-    WHERE UPPER(REPLACE(COALESCE(STATUS, 'New'), ' ', '_')) IN ('NEW', 'OPEN', 'ACTIVE', 'EMAIL_READY', 'EMAIL_QUEUED', 'PENDING', 'ACKNOWLEDGED', 'IN_PROGRESS')
-      AND (P_COMPANY = 'ALL' OR COMPANY = P_COMPANY)
-      AND (
-          P_ENVIRONMENT = 'ALL'
-          OR COALESCE(ENVIRONMENT, 'No Database Context') = P_ENVIRONMENT
-          OR (P_ENVIRONMENT = 'DEV_ALL' AND COALESCE(ENVIRONMENT, '') IN ('DEV_ALL', 'ALFA_EDW_DEV', 'ALFA_EDW_SAN', 'ALFA_EDW_PHX', 'ALFA_EDW_SEA', 'ALFA_EDW_SIT', 'OTHER ALFA NON-PROD'))
-      )
-    ORDER BY
-        CASE UPPER(COALESCE(SEVERITY, 'Medium'))
-            WHEN 'CRITICAL' THEN 0
-            WHEN 'HIGH' THEN 1
-            WHEN 'MEDIUM' THEN 2
-            WHEN 'LOW' THEN 3
-            ELSE 4
-        END,
-        ALERT_TS DESC
-    LIMIT 25;
-
-    SELECT
-        COUNT(*),
-        TO_VARIANT(ARRAY_AGG(ALERT_ID)),
-        'OVERWATCH alert digest - ' || P_COMPANY || ' / ' || P_ENVIRONMENT || ' - ' || COUNT(*) || ' open issue(s)',
-        LISTAGG(
-            '[' || COALESCE(SEVERITY, 'Medium') || '] ' || COALESCE(ALERT_TYPE, CATEGORY, 'Alert') ||
-            ' | ' || COALESCE(ENTITY_NAME, 'Snowflake account') ||
-            ' | Owner: ' || COALESCE(OWNER, 'DBA') ||
-            '\\n' || EMAIL_BODY,
-            '\\n\\n---\\n\\n'
-        ) WITHIN GROUP (ORDER BY ALERT_ID)
-    INTO :alert_count, :alert_ids, :subject, :body
-    FROM TMP_OVERWATCH_ALERT_DIGEST;
-
-    IF (alert_count = 0) THEN
-        RETURN 'No open OVERWATCH alerts matched the requested scope.';
-    END IF;
-
-    IF (P_DRY_RUN) THEN
-        delivery_status := 'EMAIL_DRY_RUN';
-    ELSE
-        CALL SYSTEM$SEND_EMAIL('{integration}', :P_RECIPIENT, :subject, :body);
-        delivery_status := 'EMAIL_SENT';
-    END IF;
-
-    INSERT INTO {alert_delivery_log_fqn(db=db, schema=schema, quoted=True)}
-        (COMPANY, ENVIRONMENT, ALERT_IDS, ALERT_COUNT, DELIVERY_METHOD, DELIVERY_TARGET,
-         EMAIL_SUBJECT, EMAIL_BODY, DELIVERY_STATUS, DELIVERY_BY, DELIVERY_NOTES)
-    VALUES
-        (P_COMPANY, P_ENVIRONMENT, alert_ids, alert_count, 'EMAIL', P_RECIPIENT,
-         subject, body, delivery_status, CURRENT_USER(),
-         IFF(P_DRY_RUN, 'Dry-run replay package prepared; SYSTEM$SEND_EMAIL was not called.',
-                       'Delivered through Snowflake email notification integration {integration}.'));
-
-    UPDATE {db_safe}.{schema_safe}.{table_safe}
-    SET
-        DELIVERY_STATUS = delivery_status,
-        DELIVERY_TARGET = P_RECIPIENT,
-        EMAIL_TARGET = COALESCE(NULLIF(EMAIL_TARGET, ''), P_RECIPIENT),
-        LAST_DELIVERY_AT = CURRENT_TIMESTAMP(),
-        LAST_DELIVERY_BY = CURRENT_USER(),
-        DELIVERY_LOG_COUNT = COALESCE(DELIVERY_LOG_COUNT, 0) + 1,
-        LAST_STATUS_BY = CURRENT_USER(),
-        LAST_STATUS_AT = CURRENT_TIMESTAMP()
-    WHERE ARRAY_CONTAINS(ALERT_ID::VARIANT, alert_ids);
-
-    RETURN 'OVERWATCH alert digest ' || delivery_status || ': ' || alert_count || ' alert(s) for ' || P_RECIPIENT;
-END;
-$$;"""
-
-
-def load_alert_delivery_log(
-    *,
-    days: int = 14,
-    limit: int = 100,
-    section: str = "Alert Center",
-) -> pd.DataFrame:
-    days = max(1, min(int(days), 365))
-    limit = max(1, min(int(limit), 1000))
-    return run_query(f"""
-        SELECT
-            DELIVERY_ID,
-            DELIVERY_TS,
-            COMPANY,
-            ENVIRONMENT,
-            ALERT_COUNT,
-            DELIVERY_METHOD,
-            DELIVERY_TARGET,
-            EMAIL_SUBJECT,
-            DELIVERY_STATUS,
-            DELIVERY_BY,
-            DELIVERY_NOTES
-        FROM {alert_delivery_log_fqn(quoted=True)}
-        WHERE DELIVERY_TS >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
-        ORDER BY DELIVERY_TS DESC
-        LIMIT {limit}
-    """, ttl_key=f"alert_delivery_log_{days}_{limit}", tier="recent", section=section)
 
 
 def build_annotation_ddl(

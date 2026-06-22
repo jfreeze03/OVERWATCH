@@ -144,7 +144,14 @@ class DeploymentContractTests(unittest.TestCase):
     def test_mart_refresh_tasks_call_procedure_loaded_tables(self):
         setup_sql = _setup_sql()
         expected_task_calls = {
-            "OVERWATCH_LOAD_HOURLY": "SP_OVERWATCH_LOAD_HOURLY",
+            "OVERWATCH_LOAD_HOURLY": "SP_OVERWATCH_LOAD_HOURLY_UNIT",
+            "OVERWATCH_LOAD_QUERY_HOURLY": "SP_OVERWATCH_LOAD_HOURLY_UNIT",
+            "OVERWATCH_LOAD_QUERY_DETAIL": "SP_OVERWATCH_LOAD_HOURLY_UNIT",
+            "OVERWATCH_LOAD_OBJECT_CHANGE": "SP_OVERWATCH_LOAD_HOURLY_UNIT",
+            "OVERWATCH_LOAD_TASK_RUN": "SP_OVERWATCH_LOAD_HOURLY_UNIT",
+            "OVERWATCH_LOAD_PROCEDURE_RUN": "SP_OVERWATCH_LOAD_HOURLY_UNIT",
+            "OVERWATCH_LOAD_SNAPSHOTS": "SP_OVERWATCH_LOAD_HOURLY_UNIT",
+            "OVERWATCH_LOAD_TASK_CRITICAL_PATH": "SP_OVERWATCH_LOAD_HOURLY_UNIT",
             "OVERWATCH_LOAD_CORTEX": "SP_OVERWATCH_LOAD_CORTEX",
             "OVERWATCH_REFRESH_CONTROL_ROOM": "SP_OVERWATCH_REFRESH_CONTROL_ROOM",
             "OVERWATCH_COST_MONITORING_REFRESH": "SP_OVERWATCH_REFRESH_COST_MONITORING",
@@ -162,7 +169,7 @@ class DeploymentContractTests(unittest.TestCase):
                 self.assertIsNotNone(task)
                 task_body = task.group(1)
                 self.assertIn("WAREHOUSE = OVERWATCH_WH", task_body)
-                self.assertRegex(task_body, rf"\bCALL\s+{proc_name}\s*\(\s*\)")
+                self.assertRegex(task_body, rf"\bCALL\s+{proc_name}\s*\(")
 
         anomaly_task = re.search(
             r"CREATE\s+OR\s+REPLACE\s+TASK\s+OVERWATCH_ANOMALY_CHECK\b(.*?)(?=CREATE\s+OR\s+REPLACE\s+TASK|ALTER\s+TASK|SHOW\s+TASKS|$)",
@@ -172,6 +179,18 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertIsNotNone(anomaly_task)
         self.assertIn("INSERT INTO OVERWATCH_ALERTS", anomaly_task.group(1))
         self.assertNotRegex(anomaly_task.group(1), r"\bCALL\s+SP_OVERWATCH_")
+
+    def test_hourly_refresh_wrapper_is_guarded_by_default(self):
+        setup_sql = _setup_sql()
+
+        self.assertIn("'HOURLY_REFRESH_LOOKBACK_DAYS', '3', 'NUMBER'", setup_sql)
+        self.assertIn("'HOURLY_REFRESH_COMPAT_WRAPPER_ENABLED', 'FALSE', 'BOOLEAN'", setup_sql)
+
+        wrapper_body = _procedure_bodies(setup_sql)["SP_OVERWATCH_LOAD_HOURLY"]
+        self.assertIn("HOURLY_REFRESH_COMPAT_WRAPPER_ENABLED", wrapper_body)
+        self.assertIn("STATUS = 'SKIPPED'", wrapper_body)
+        self.assertIn("SP_OVERWATCH_LOAD_HOURLY SKIPPED BY SAFETY GUARD", wrapper_body)
+        self.assertIn("SP_OVERWATCH_LOAD_HOURLY_UNIT(UNIT_NAME, FROM_DAYS_AGO, TO_DAYS_AGO)", wrapper_body)
 
     def test_refresh_procedures_write_only_setup_physical_tables(self):
         setup_sql = _setup_sql()
@@ -264,7 +283,7 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertIn("DROP PROCEDURE IF EXISTS SP_OVERWATCH_STAGE_ALERT_REMEDIATION_DRY_RUN", drop_sql)
         self.assertIn("('VIEW', 'ALERT_NATIVE_DEPLOYMENT_REVIEW_V')", validation_sql)
         self.assertIn("('VIEW', 3)", validation_sql)
-        self.assertIn("('PROCEDURE', 16)", validation_sql)
+        self.assertIn("('PROCEDURE', 17)", validation_sql)
 
     def test_alert_operations_review_script_is_read_only_and_covers_key_marts(self):
         review_sql = (ROOT / "snowflake" / "OVERWATCH_ALERT_OPERATIONS_REVIEW.sql").read_text(encoding="utf-8")

@@ -93,7 +93,7 @@ row is therefore a true coverage gap, not a lower-standard exception.
 Use this sequence before signoff:
 
 ```sql
-CALL SP_OVERWATCH_LOAD_HOURLY();
+CALL SP_OVERWATCH_LOAD_HOURLY_UNIT('TASK_RUN', NULL, NULL);
 CALL SP_OVERWATCH_REFRESH_ENTERPRISE_OPERATING_MODEL();
 CALL SP_OVERWATCH_REFRESH_PRODUCTION_READINESS();
 

@@ -26,6 +26,14 @@ established in `01_runtime_objects.sql`):
 | 7 | `07_tasks.sql` | Task graph that schedules the load procedures. |
 | 8 | `08_validation.sql` | Smoke checks: `SHOW TASKS`, row-count validation, and an initial `CALL` of each refresh procedure. |
 
+The hourly refresh is intentionally chunked. `SP_OVERWATCH_LOAD_HOURLY_UNIT`
+loads one bounded unit/window at a time, and `07_tasks.sql` chains those units
+through separate tasks. This prevents a single `CALL SP_OVERWATCH_LOAD_HOURLY()`
+from being the only production path on accounts with a 1000-second statement
+timeout. The no-argument procedure remains as a guarded compatibility wrapper
+and is disabled by default through `HOURLY_REFRESH_COMPAT_WRAPPER_ENABLED`.
+Operators should use the task chain or explicit unit calls for backfill.
+
 > The numbering reflects the dependency-safe order of the original script:
 > runtime objects and roles first, then tables, then the procedures/tasks that
 > populate them, and finally validation. (Roles intentionally come *after* the

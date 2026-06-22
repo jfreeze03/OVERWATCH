@@ -60,7 +60,7 @@ class ClosedLoopOperationsTests(unittest.TestCase):
         self.assertIn("2026.06.18-CLOSED-LOOP-OPERATIONS", setup)
         self.assertIn("CALL SP_OVERWATCH_REFRESH_CLOSED_LOOP_OPERATIONS()", setup)
         self.assertIn("('TABLE', 94)", validation)
-        self.assertIn("('PROCEDURE', 16)", validation)
+        self.assertIn("('PROCEDURE', 17)", validation)
 
     def test_closed_loop_labels_are_constrained(self):
         from utils.closed_loop_operations import (

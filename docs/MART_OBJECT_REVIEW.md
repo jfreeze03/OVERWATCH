@@ -115,11 +115,11 @@ bookkeeping. Do not remove them unless their downstream facts are removed or rep
 
 | Object | Current purpose |
 | --- | --- |
-| `SP_OVERWATCH_LOAD_HOURLY`, `SP_OVERWATCH_LOAD_DAILY`, `SP_OVERWATCH_LOAD_CORTEX` | Load hourly, daily, and Cortex facts consumed by app marts. |
+| `SP_OVERWATCH_LOAD_HOURLY_UNIT`, `SP_OVERWATCH_LOAD_HOURLY`, `SP_OVERWATCH_LOAD_DAILY`, `SP_OVERWATCH_LOAD_CORTEX` | Load hourly, daily, and Cortex facts consumed by app marts. The hourly unit procedure is the production path; the no-argument hourly procedure is a compatibility wrapper. |
 | `SP_OVERWATCH_REFRESH_CONTROL_ROOM`, `SP_OVERWATCH_REFRESH_EXECUTIVE_OBSERVABILITY` | Refresh compact summary marts used by first-paint surfaces. |
 | `SP_OVERWATCH_REFRESH_COST_MONITORING`, `OVERWATCH_COST_MONITORING_REFRESH` | Refresh cost monitoring signal and incident timeline facts. |
 | `SP_OVERWATCH_PRUNE` | Retention cleanup for transient facts. |
-| `OVERWATCH_LOAD_HOURLY`, `OVERWATCH_LOAD_DAILY`, `OVERWATCH_LOAD_CORTEX`, `OVERWATCH_REFRESH_CONTROL_ROOM`, `OVERWATCH_EXECUTIVE_OBSERVABILITY_REFRESH` | Scheduled wrappers around refresh procedures. |
+| `OVERWATCH_LOAD_HOURLY` through `OVERWATCH_LOAD_TASK_CRITICAL_PATH`, `OVERWATCH_LOAD_DAILY`, `OVERWATCH_LOAD_CORTEX`, `OVERWATCH_REFRESH_CONTROL_ROOM`, `OVERWATCH_EXECUTIVE_OBSERVABILITY_REFRESH` | Scheduled wrappers around refresh procedures. Hourly facts are chained as separate units to stay under Snowflake statement timeout limits. |
 | `OVERWATCH_LOAD_AUDIT` | Refresh bookkeeping written by setup procedures. It is not surfaced today, but remains useful for live refresh troubleshooting. |
 
 ## Mart Slimming Assessment
@@ -148,7 +148,8 @@ The setup procedures now map to current facts only:
 
 | Procedure | Current outputs |
 | --- | --- |
-| `SP_OVERWATCH_LOAD_HOURLY` | `FACT_WAREHOUSE_HOURLY`, `FACT_QUERY_HOURLY`, `FACT_QUERY_DETAIL_RECENT`, `FACT_OBJECT_CHANGE`, `FACT_TASK_RUN`, `FACT_TASK_CRITICAL_PATH`, `FACT_PROCEDURE_RUN` |
+| `SP_OVERWATCH_LOAD_HOURLY_UNIT` | `FACT_WAREHOUSE_HOURLY`, `FACT_QUERY_HOURLY`, `FACT_QUERY_DETAIL_RECENT`, `FACT_OBJECT_CHANGE`, `FACT_TASK_RUN`, `DIM_TASK_SNAPSHOT`, `DIM_PROCEDURE_SNAPSHOT`, `FACT_TASK_CRITICAL_PATH`, `FACT_PROCEDURE_RUN` |
+| `SP_OVERWATCH_LOAD_HOURLY` | Compatibility wrapper that calls the hourly units with the configured recent lookback. |
 | `SP_OVERWATCH_LOAD_DAILY` | `FACT_COST_DAILY`, `FACT_COST_SOURCE_HEALTH_DAILY`, `FACT_LOGIN_DAILY`, `FACT_GRANT_DAILY`, `FACT_STORAGE_DAILY`, `FACT_COPY_LOAD_DAILY`, `DIM_COST_OWNER_TAG`, role-aware `FACT_CHARGEBACK_DAILY`, operability facts |
 | `SP_OVERWATCH_LOAD_CORTEX` | `FACT_CORTEX_DAILY` |
 | `SP_OVERWATCH_REFRESH_COST_MONITORING` | `FACT_COST_MONITORING_SIGNAL`, `FACT_COST_INCIDENT_TIMELINE` |
@@ -219,6 +220,7 @@ These 15 objects do not have direct `.overwatch_final` references in the static 
 | `SP_OVERWATCH_LOAD_CORTEX` | Refresh procedure. |
 | `SP_OVERWATCH_LOAD_DAILY` | Refresh procedure. |
 | `SP_OVERWATCH_LOAD_HOURLY` | Refresh procedure. |
+| `SP_OVERWATCH_LOAD_HOURLY_UNIT` | Refresh procedure. |
 | `SP_OVERWATCH_PRUNE` | Retention procedure. |
 | `SP_OVERWATCH_REFRESH_CONTROL_ROOM` | Refresh procedure. |
 | `SP_OVERWATCH_REFRESH_EXECUTIVE_OBSERVABILITY` | Refresh procedure. |

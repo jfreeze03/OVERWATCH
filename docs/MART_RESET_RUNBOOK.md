@@ -106,13 +106,28 @@ The setup script already runs the bootstrap calls near the end. If you need to r
 them manually after setup, use:
 
 ```sql
-CALL SP_OVERWATCH_LOAD_HOURLY();
+CALL SP_OVERWATCH_LOAD_HOURLY_UNIT('WAREHOUSE_HOURLY', NULL, NULL);
+CALL SP_OVERWATCH_LOAD_HOURLY_UNIT('QUERY_HOURLY', NULL, NULL);
+CALL SP_OVERWATCH_LOAD_HOURLY_UNIT('QUERY_DETAIL', NULL, NULL);
+CALL SP_OVERWATCH_LOAD_HOURLY_UNIT('OBJECT_CHANGE', NULL, NULL);
+CALL SP_OVERWATCH_LOAD_HOURLY_UNIT('TASK_RUN', NULL, NULL);
+CALL SP_OVERWATCH_LOAD_HOURLY_UNIT('PROCEDURE_RUN', NULL, NULL);
+CALL SP_OVERWATCH_LOAD_HOURLY_UNIT('SNAPSHOTS', NULL, NULL);
+CALL SP_OVERWATCH_LOAD_HOURLY_UNIT('TASK_CRITICAL_PATH', NULL, NULL);
 CALL SP_OVERWATCH_LOAD_CORTEX();
 CALL SP_OVERWATCH_REFRESH_CONTROL_ROOM();
 CALL SP_OVERWATCH_REFRESH_COST_MONITORING();
 CALL SP_OVERWATCH_LOAD_DAILY();
 CALL SP_OVERWATCH_REFRESH_EXECUTIVE_OBSERVABILITY();
 ```
+
+`SP_OVERWATCH_LOAD_HOURLY()` remains only as a guarded compatibility wrapper.
+By default it records a `SKIPPED` audit row and returns guidance instead of
+running the full chain, because the parent call can still exceed a 1000-second
+statement timeout. Use the unit calls above, or manually trigger the root task
+with `EXECUTE TASK OVERWATCH_LOAD_HOURLY;` after child tasks are resumed. For
+historical backfill, run the same unit procedure with explicit day windows, for
+example `CALL SP_OVERWATCH_LOAD_HOURLY_UNIT('QUERY_HOURLY', 35, 28);`.
 
 ## Validation
 
@@ -230,15 +245,28 @@ WHERE TABLE_SCHEMA = CURRENT_SCHEMA()
 ## Resume Tasks
 
 `OVERWATCH_MART_SETUP.sql` resumes the current task chain. If you manually suspended
-tasks after setup, resume the root tasks only:
+tasks after setup, resume the child tasks first and the scheduled roots last:
 
 ```sql
+ALTER TASK IF EXISTS OVERWATCH_EXECUTIVE_OBSERVABILITY_REFRESH RESUME;
+ALTER TASK IF EXISTS OVERWATCH_COST_MONITORING_REFRESH RESUME;
+ALTER TASK IF EXISTS OVERWATCH_REFRESH_CONTROL_ROOM RESUME;
+ALTER TASK IF EXISTS OVERWATCH_LOAD_CORTEX RESUME;
+ALTER TASK IF EXISTS OVERWATCH_LOAD_TASK_CRITICAL_PATH RESUME;
+ALTER TASK IF EXISTS OVERWATCH_LOAD_SNAPSHOTS RESUME;
+ALTER TASK IF EXISTS OVERWATCH_LOAD_PROCEDURE_RUN RESUME;
+ALTER TASK IF EXISTS OVERWATCH_LOAD_TASK_RUN RESUME;
+ALTER TASK IF EXISTS OVERWATCH_LOAD_OBJECT_CHANGE RESUME;
+ALTER TASK IF EXISTS OVERWATCH_LOAD_QUERY_DETAIL RESUME;
+ALTER TASK IF EXISTS OVERWATCH_LOAD_QUERY_HOURLY RESUME;
 ALTER TASK IF EXISTS OVERWATCH_LOAD_HOURLY RESUME;
 ALTER TASK IF EXISTS OVERWATCH_LOAD_DAILY RESUME;
 ALTER TASK IF EXISTS OVERWATCH_ANOMALY_CHECK RESUME;
 ```
 
-Child tasks resume from the setup script and run through their `AFTER` dependencies.
+The hourly root now loads warehouse metering first, then the `AFTER` chain runs
+query summary, detail, object change, task run, procedure run, snapshots, task
+critical path, Cortex, Control Room, cost monitoring, and executive observability.
 
 ## Current Retired Objects Covered
 

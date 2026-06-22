@@ -86,7 +86,7 @@ WITH expected_counts AS (
     SELECT * FROM VALUES
         ('TABLE', 94),
         ('VIEW', 3),
-        ('PROCEDURE', 16),
+        ('PROCEDURE', 17),
         ('FUNCTION', 1)
     AS t(OBJECT_TYPE, EXPECTED_COUNT)
 ),
@@ -632,7 +632,7 @@ SELECT
     OWNER_ROUTE,
     CASE
         WHEN SOURCE_OBJECT = 'FACT_TASK_RUN' AND STATUS <> 'Ready'
-            THEN 'Run SP_OVERWATCH_LOAD_HOURLY, confirm FACT_TASK_RUN has rows for the selected company, and verify TASK_HISTORY visibility for the runtime role. Trexis is ALFA-equivalent for coverage expectations.'
+            THEN 'Run SP_OVERWATCH_LOAD_HOURLY_UNIT(''TASK_RUN'', NULL, NULL), confirm FACT_TASK_RUN has rows for the selected company, and verify TASK_HISTORY visibility for the runtime role. Trexis is ALFA-equivalent for coverage expectations.'
         WHEN STATUS = 'Missing'
             THEN 'Confirm upstream telemetry exists for this company and rerun the owning mart refresh.'
         WHEN STATUS = 'Stale'

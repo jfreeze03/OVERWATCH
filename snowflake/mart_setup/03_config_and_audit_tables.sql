@@ -18,6 +18,8 @@ USING (
     ('AI_CREDIT_PRICE_USD', '2.20', 'NUMBER', 'Cortex AI/token credit price used for estimated AI cost display.'),
     ('STORAGE_COST_PER_TB_USD', '23.00', 'NUMBER', 'Standard storage cost per TB-month used for estimated storage cost display.'),
     ('MART_QUERY_RETENTION_DAYS', '35', 'NUMBER', 'Rolling window reloaded from ACCOUNT_USAGE query history.'),
+    ('HOURLY_REFRESH_LOOKBACK_DAYS', '3', 'NUMBER', 'Small rolling window used by scheduled hourly loader units to avoid warehouse statement timeout. Use explicit unit/window calls for backfill.'),
+    ('HOURLY_REFRESH_COMPAT_WRAPPER_ENABLED', 'FALSE', 'BOOLEAN', 'Safety guard for SP_OVERWATCH_LOAD_HOURLY. Keep false on timeout-sensitive warehouses and use the hourly task graph or explicit unit calls.'),
     ('DETAIL_RETENTION_DAYS', '30', 'NUMBER', 'Retention for recent query/task/procedure detail marts.'),
     ('AGG_RETENTION_DAYS', '730', 'NUMBER', 'Retention for hourly and daily aggregate marts.'),
     ('SLA_DURATION_MULTIPLIER', '1.5', 'NUMBER', 'Flags task/procedure latest duration over this multiple of historical average.'),
@@ -181,6 +183,22 @@ USING (
     'Governance Alignment Release Candidate for approved alert route, target roles, interim access, Trexis coverage, and drift classification' AS MIGRATION_NAME,
     'snowflake/OVERWATCH_MART_SETUP.sql' AS SOURCE_FILE,
     'Aligns production readiness scoring with approved governance assumptions without executing grants or dropping legacy objects. True telemetry freshness gaps remain review items.' AS NOTES
+) src
+ON tgt.MIGRATION_VERSION = src.MIGRATION_VERSION
+WHEN MATCHED THEN UPDATE SET
+  MIGRATION_NAME = src.MIGRATION_NAME,
+  SOURCE_FILE = src.SOURCE_FILE,
+  NOTES = src.NOTES
+WHEN NOT MATCHED THEN INSERT (MIGRATION_VERSION, MIGRATION_NAME, SOURCE_FILE, NOTES)
+VALUES (src.MIGRATION_VERSION, src.MIGRATION_NAME, src.SOURCE_FILE, src.NOTES);
+
+MERGE INTO OVERWATCH_SCHEMA_MIGRATION tgt
+USING (
+  SELECT
+    '2026.06.22-chunked-hourly-load' AS MIGRATION_VERSION,
+    'Chunked hourly load procedures and task graph for timeout-safe Snowflake refresh' AS MIGRATION_NAME,
+    'snowflake/mart_setup/05_load_procedures.sql; snowflake/mart_setup/07_tasks.sql' AS SOURCE_FILE,
+    'Splits the hourly ACCOUNT_USAGE refresh into reviewable units and a chained task graph so accounts with 1000-second statement limits can refresh without one long stored procedure call.' AS NOTES
 ) src
 ON tgt.MIGRATION_VERSION = src.MIGRATION_VERSION
 WHEN MATCHED THEN UPDATE SET

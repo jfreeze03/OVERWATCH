@@ -30,72 +30,13 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 APP_ROOT = ROOT / ".overwatch_final"
 RESULTS_DIR = ROOT / "perf_tests" / "results"
 RESULTS_DOC = ROOT / "docs" / "OVERWATCH_SNOWFLAKE_REGRESSION_RESULTS.md"
+sys.path.insert(0, str(APP_ROOT))
 
-PRIMARY_SECTIONS = (
-    "Executive Landing",
-    "DBA Control Room",
-    "Alert Center",
-    "Cost & Contract",
-    "Workload Operations",
-    "Security Monitoring",
+from workflow_contracts import (  # noqa: E402
+    ABANDONED_PRIMARY_SECTION_TITLES,
+    PRIMARY_SECTION_TITLES,
+    SECTION_WORKFLOW_CONTRACT,
 )
-
-EXPECTED_WORKFLOWS = {
-    "Executive Landing": (
-        "Executive Overview",
-        "Cost Movement",
-        "Operational Risk",
-        "Security Risk",
-        "Change Summary",
-        "Executive Actions",
-        "Executive Admin / Advanced",
-    ),
-    "DBA Control Room": (
-        "Morning Cockpit",
-        "Failure Triage",
-        "Cost Watch",
-        "Performance Watch",
-        "Change Watch",
-        "Action Queue",
-        "Control Room Admin / Advanced",
-    ),
-    "Alert Center": (
-        "Active Alerts",
-        "Cost Alerts",
-        "Reliability Alerts",
-        "Security Alerts",
-        "Alert History",
-        "Alert Settings / Admin",
-    ),
-    "Cost & Contract": (
-        "Cost Overview",
-        "Cost by Warehouse",
-        "Cost by User / Role",
-        "Burn Rate & Forecast",
-        "Budget vs Actual",
-        "Waste Detection",
-        "Chargeback / Company Split",
-        "Cost Recommendations",
-    ),
-    "Workload Operations": (
-        "Workload Overview",
-        "Query Investigation",
-        "Pipeline & Task Health",
-        "Performance & Contention",
-        "Change Analysis",
-        "Advanced DBA Tools",
-    ),
-    "Security Monitoring": (
-        "Security Overview",
-        "Failed Logins",
-        "Risky Grants",
-        "Privilege Sprawl",
-        "Access Changes",
-        "Data Sharing Exposure",
-        "Security Alerts",
-        "Security Admin / Advanced",
-    ),
-}
 
 SUMMARY_MARTS = (
     "MART_DBA_CONTROL_ROOM",
@@ -287,13 +228,13 @@ def static_workflow_checks() -> dict[str, Any]:
         for path in (APP_ROOT / "sections").rglob("*.py")
     )
     missing: dict[str, list[str]] = {}
-    for section, workflows in EXPECTED_WORKFLOWS.items():
+    for section, workflows in SECTION_WORKFLOW_CONTRACT.items():
         absent = [workflow for workflow in workflows if workflow not in source_text]
         if absent:
             missing[section] = absent
     primary_nav_violations = [
-        item for item in ("Command Center", "Incidents", "Optimization", "Settings")
-        if item in PRIMARY_SECTIONS
+        item for item in ABANDONED_PRIMARY_SECTION_TITLES
+        if item in PRIMARY_SECTION_TITLES
     ]
     stale_chart_refs = []
     for path in APP_ROOT.rglob("*.py"):
@@ -303,8 +244,8 @@ def static_workflow_checks() -> dict[str, Any]:
                 stale_chart_refs.append({"file": str(path.relative_to(ROOT)), "token": token})
     return {
         "status": "PASS" if not missing and not primary_nav_violations and not stale_chart_refs else "FAIL",
-        "sections": PRIMARY_SECTIONS,
-        "expected_workflows": EXPECTED_WORKFLOWS,
+        "sections": PRIMARY_SECTION_TITLES,
+        "expected_workflows": SECTION_WORKFLOW_CONTRACT,
         "missing_workflows": missing,
         "primary_nav_violations": primary_nav_violations,
         "stale_chart_refs": stale_chart_refs,
@@ -405,10 +346,10 @@ def write_reports(payload: dict[str, Any]) -> tuple[pathlib.Path, pathlib.Path]:
         "",
         "## Sections Tested",
     ]
-    for section in PRIMARY_SECTIONS:
+    for section in PRIMARY_SECTION_TITLES:
         lines.append(f"- {section}")
     lines.extend(["", "## Workflows Tested"])
-    for section, workflows in EXPECTED_WORKFLOWS.items():
+    for section, workflows in SECTION_WORKFLOW_CONTRACT.items():
         lines.append(f"- {section}: {', '.join(workflows)}")
     static = payload.get("static_workflow_checks", {})
     lines.extend([

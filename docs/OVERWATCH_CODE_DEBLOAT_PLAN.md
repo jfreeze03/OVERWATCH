@@ -55,6 +55,7 @@ These are candidates, not approved removals:
 
 ## Tests Proving No Functionality Was Lost
 
+- `.overwatch_final/workflow_contracts.py` now centralizes the six-section workflow contract and legacy route matrix used by both tests and the live Snowflake regression runner.
 - `tests/test_navigation_integrity.py` checks the six primary sections, legacy route redirects, workflow names, old 4-section absence, company scoping, and stale chart text.
 - `tests/test_command_center.py` now validates correlated investigation UI placement and explicit load gates.
 - `tests/test_contention_center.py`, `tests/test_formula_regressions.py`, and `tests/test_operational_intelligence.py` validate renamed workflow/action contracts.
@@ -68,3 +69,10 @@ These are candidates, not approved removals:
 4. Retire duplicated legacy route rendering after route metrics prove no active usage.
 5. Rewrite mart loads to feed daily workflows directly before dropping any old objects.
 
+## De-Bloat Completed After Initial Audit
+
+| Item | Result |
+|---|---|
+| Duplicated six-section workflow list in Snowflake regression runner | Replaced with `.overwatch_final/workflow_contracts.py`. |
+| Duplicated legacy route matrix in navigation tests | Replaced with `.overwatch_final/workflow_contracts.py`. |
+| Contract drift guard | Added a test that the workflow contract matches the configured six primary sections. |

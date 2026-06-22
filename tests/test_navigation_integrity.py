@@ -76,6 +76,12 @@ from sections.shell_helpers import (  # noqa: E402
     scope_label,
     with_loaded_at,
 )
+from workflow_contracts import (  # noqa: E402
+    ABANDONED_PRIMARY_SECTION_TITLES,
+    LEGACY_ROUTE_CONTRACT,
+    PRIMARY_SECTION_TITLES,
+    SECTION_WORKFLOW_CONTRACT,
+)
 
 
 def _chars(*codes: int) -> str:
@@ -376,64 +382,12 @@ class NavigationIntegrityTests(unittest.TestCase):
             st.session_state.update(previous)
 
     def test_legacy_route_matrix_lands_on_current_workflows(self):
-        from runtime_state import (
-            ALERT_CENTER_ACTIVE_VIEW,
-            COST_CONTRACT_WORKFLOW,
-            DBA_CONTROL_ROOM_ACTIVE_VIEW,
-            EXECUTIVE_LANDING_WORKFLOW,
-            NAV_SECTION,
-            SECURITY_POSTURE_VIEW,
-            SECURITY_POSTURE_WORKFLOW,
-            WORKLOAD_OPERATIONS_WORKFLOW,
-        )
+        from runtime_state import NAV_SECTION
         from sections.navigation import apply_navigation_state
-
-        route_matrix = [
-            ("Executive Landing", "Executive Landing", {EXECUTIVE_LANDING_WORKFLOW: "Executive Overview"}),
-            ("Executive Briefing", "Executive Landing", {EXECUTIVE_LANDING_WORKFLOW: "Executive Overview"}),
-            ("Adoption Analytics", "Executive Landing", {EXECUTIVE_LANDING_WORKFLOW: "Executive Admin / Advanced"}),
-            ("DBA Control Room", "DBA Control Room", {DBA_CONTROL_ROOM_ACTIVE_VIEW: "Morning Cockpit"}),
-            ("Command Center", "DBA Control Room", {DBA_CONTROL_ROOM_ACTIVE_VIEW: "Morning Cockpit"}),
-            ("Account Health", "DBA Control Room", {DBA_CONTROL_ROOM_ACTIVE_VIEW: "Morning Cockpit"}),
-            ("Usage Overview", "DBA Control Room", {DBA_CONTROL_ROOM_ACTIVE_VIEW: "Cost Watch"}),
-            ("Service Health", "DBA Control Room", {DBA_CONTROL_ROOM_ACTIVE_VIEW: "Control Room Admin / Advanced"}),
-            ("Fast Watch", "DBA Control Room", {DBA_CONTROL_ROOM_ACTIVE_VIEW: "Morning Cockpit"}),
-            ("Morning Brief", "DBA Control Room", {DBA_CONTROL_ROOM_ACTIVE_VIEW: "Morning Cockpit"}),
-            ("Alert Center", "Alert Center", {ALERT_CENTER_ACTIVE_VIEW: "Active Alerts"}),
-            ("Alerts", "Alert Center", {ALERT_CENTER_ACTIVE_VIEW: "Active Alerts"}),
-            ("Alert History", "Alert Center", {ALERT_CENTER_ACTIVE_VIEW: "Alert History"}),
-            ("Alert Configuration", "Alert Center", {ALERT_CENTER_ACTIVE_VIEW: "Alert Settings / Admin", "alert_center_admin_view": "Delivery & Automation"}),
-            ("Cost & Contract", "Cost & Contract", {COST_CONTRACT_WORKFLOW: "Cost Overview"}),
-            ("Cost Center", "Cost & Contract", {COST_CONTRACT_WORKFLOW: "Cost by Warehouse"}),
-            ("Credit Contract", "Cost & Contract", {COST_CONTRACT_WORKFLOW: "Budget vs Actual"}),
-            ("Warehouse Health", "Cost & Contract", {COST_CONTRACT_WORKFLOW: "Waste Detection"}),
-            ("Recommendations", "Cost & Contract", {COST_CONTRACT_WORKFLOW: "Cost Recommendations"}),
-            ("Recommendations & Anomalies", "Cost & Contract", {COST_CONTRACT_WORKFLOW: "Cost Recommendations"}),
-            ("Cortex Monitor", "Cost & Contract", {COST_CONTRACT_WORKFLOW: "Cost Overview", "cost_contract_advanced_tool": "Cortex Spend", "_cost_contract_show_advanced_tools": True}),
-            ("Storage Monitor", "Cost & Contract", {COST_CONTRACT_WORKFLOW: "Cost Overview", "cost_contract_advanced_tool": "Storage & Retention", "_cost_contract_show_advanced_tools": True}),
-            ("SPCS Tracker", "Cost & Contract", {COST_CONTRACT_WORKFLOW: "Cost Overview", "cost_contract_advanced_tool": "SPCS Spend", "_cost_contract_show_advanced_tools": True}),
-            ("Workload Operations", "Workload Operations", {WORKLOAD_OPERATIONS_WORKFLOW: "Workload Overview"}),
-            ("Query Analysis", "Workload Operations", {WORKLOAD_OPERATIONS_WORKFLOW: "Query Investigation"}),
-            ("Query Workbench", "Workload Operations", {WORKLOAD_OPERATIONS_WORKFLOW: "Query Investigation"}),
-            ("Query Search & History", "Workload Operations", {WORKLOAD_OPERATIONS_WORKFLOW: "Query Investigation", "query_analysis_active_view": "History Search"}),
-            ("Detailed Diagnosis", "Workload Operations", {WORKLOAD_OPERATIONS_WORKFLOW: "Query Investigation", "query_analysis_active_view": "Detailed Diagnosis"}),
-            ("Task Management", "Workload Operations", {WORKLOAD_OPERATIONS_WORKFLOW: "Pipeline & Task Health", "workload_operations_pipeline_focus": "Failed Tasks"}),
-            ("Pipeline Health", "Workload Operations", {WORKLOAD_OPERATIONS_WORKFLOW: "Pipeline & Task Health", "workload_operations_pipeline_focus": "Load Issues & SLA"}),
-            ("Stored Proc Tracker", "Workload Operations", {WORKLOAD_OPERATIONS_WORKFLOW: "Pipeline & Task Health", "workload_operations_pipeline_focus": "Failed Procedures"}),
-            ("Object Change Monitor", "Workload Operations", {WORKLOAD_OPERATIONS_WORKFLOW: "Change Analysis"}),
-            ("Schema Compare", "Workload Operations", {WORKLOAD_OPERATIONS_WORKFLOW: "Advanced DBA Tools", "dba_tools_focus": "Object Monitoring", "dba_tools_focus_tool": "Schema Compare"}),
-            ("Data Compare", "Workload Operations", {WORKLOAD_OPERATIONS_WORKFLOW: "Advanced DBA Tools", "dba_tools_focus": "Object Monitoring", "dba_tools_focus_tool": "Data Compare"}),
-            ("Security Monitoring", "Security Monitoring", {SECURITY_POSTURE_VIEW: "Security Overview", SECURITY_POSTURE_WORKFLOW: "Security Overview"}),
-            ("Security Posture", "Security Monitoring", {SECURITY_POSTURE_VIEW: "Security Overview", SECURITY_POSTURE_WORKFLOW: "Security Overview"}),
-            ("Security & Access", "Security Monitoring", {SECURITY_POSTURE_VIEW: "Risky Grants", SECURITY_POSTURE_WORKFLOW: "Risky Grants"}),
-            ("Data Sharing", "Security Monitoring", {SECURITY_POSTURE_VIEW: "Data Sharing Exposure", SECURITY_POSTURE_WORKFLOW: "Data Sharing Exposure"}),
-            ("Failed Logins", "Security Monitoring", {SECURITY_POSTURE_VIEW: "Failed Logins", SECURITY_POSTURE_WORKFLOW: "Failed Logins"}),
-            ("Access posture", "Security Monitoring", {SECURITY_POSTURE_VIEW: "Security Overview", SECURITY_POSTURE_WORKFLOW: "Security Overview"}),
-        ]
 
         previous = dict(st.session_state)
         try:
-            for route, expected_section, expected_state in route_matrix:
+            for route, expected_section, expected_state in LEGACY_ROUTE_CONTRACT:
                 with self.subTest(route=route):
                     st.session_state.clear()
                     target = apply_navigation_state(route)
@@ -1172,6 +1126,12 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("Incidents", PRIMARY_SECTIONS)
         self.assertNotIn("Optimization", PRIMARY_SECTIONS)
         self.assertNotIn("Settings", PRIMARY_SECTIONS)
+
+    def test_workflow_contract_matches_primary_navigation(self):
+        self.assertEqual(tuple(PRIMARY_SECTIONS), PRIMARY_SECTION_TITLES)
+        self.assertEqual(set(SECTION_WORKFLOW_CONTRACT), set(PRIMARY_SECTIONS))
+        self.assertFalse(set(ABANDONED_PRIMARY_SECTION_TITLES) & set(PRIMARY_SECTIONS))
+        self.assertGreaterEqual(len(LEGACY_ROUTE_CONTRACT), 30)
 
     def test_cost_contract_workflow_detail_renders_on_selection(self):
         text = (APP_ROOT / "sections" / "cost_contract.py").read_text(encoding="utf-8")

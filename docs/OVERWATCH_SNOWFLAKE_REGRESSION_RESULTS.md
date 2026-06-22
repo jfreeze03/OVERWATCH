@@ -1,13 +1,13 @@
 # OVERWATCH Snowflake Regression Results
 
-- Run ID: `SNOWFLAKE_REGRESSION_HARDENING`
-- Timestamp: `2026-06-22T21:39:28.494876+00:00`
+- Run ID: `SNOWFLAKE_REGRESSION_CONFIGURED_ACCOUNT_RECHECK`
+- Timestamp: `2026-06-22T21:49:07.587205+00:00`
 - Status: `FAIL`
 - Environment: `LOKAXGM-WU94316`
 - Role: `ACCOUNTADMIN`
 - Warehouse: `COMPUTE_WH`
 - Database/schema: `DBA_MAINT_DB.OVERWATCH`
-- JSON evidence: `C:\Users\jfree\Desktop\overwatchv3\_deploy_OVERWATCH\perf_tests\results\SNOWFLAKE_REGRESSION_HARDENING_full_app_snowflake_regression.json`
+- JSON evidence: `C:\Users\jfree\Desktop\overwatchv3\_deploy_OVERWATCH\perf_tests\results\SNOWFLAKE_REGRESSION_CONFIGURED_ACCOUNT_RECHECK_full_app_snowflake_regression.json`
 
 ## Sections Tested
 - Executive Landing
@@ -37,10 +37,22 @@
 - mart_probes: 0 checks
 - account_usage_probes: 0 checks
 
+## Account Identifier Probes
+
+All probes used `externalbrowser`, `CHRISJOHNSON1985007`, `ACCOUNTADMIN`, `COMPUTE_WH`, and `DBA_MAINT_DB.OVERWATCH`.
+
+| Account value | Result |
+|---|---|
+| `LOKAXGM-WU94316` | Reaches Snowflake, then fails with SAML Identity Provider account parameter error. |
+| `de53256.us-east-2.aws` | Reaches Snowflake, then fails with the same SAML Identity Provider account parameter error. |
+| `LOKAXGM-WU94316.us-east-2.aws` | Invalid host/account form for connector use; returns `404 Not Found` on authenticator request. |
+
+Conclusion: this is not an OVERWATCH route/test issue. Static workflow regression passes, but live SQL checks remain blocked by Snowflake externalbrowser/SAML configuration.
+
 ## Object Inventory
 
 ## Failures
 - 390190 (08001): Failed to connect to DB: LOKAXGM-WU94316.snowflakecomputing.com:443, There was an error related to the SAML Identity Provider account parameter. Contact Snowflake support.
 
 ## Recommended Fixes
-- Fix connection/privilege issue, then rerun this regression.
+- Fix Snowflake externalbrowser/SAML configuration or provide a connector-supported authentication method, then rerun this regression.

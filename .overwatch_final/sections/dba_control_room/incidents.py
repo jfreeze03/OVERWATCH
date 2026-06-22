@@ -14,6 +14,9 @@ from utils.primitives import (
     safe_int,
 )
 from .types import (
+    ACTION_QUEUE_WORKFLOW,
+    FAILURE_TRIAGE_WORKFLOW,
+    MORNING_COCKPIT_WORKFLOW,
     _canonical_dba_route,
     _dba_escalation_go_no_go,
     _dba_escalation_priority_level,
@@ -757,7 +760,7 @@ def _dba_escalation_packet(
             priority=0,
             state="Monitor",
             why_now="No loaded escalation signals.",
-            first_move="Keep Fast Watch current and review Alert Center for newly routed issues.",
+            first_move="Keep Morning Cockpit current and review Alert Center for newly routed issues.",
             proof_required="fresh Control Room load and current Alert Center review",
             source_signal="Escalation Packet: routine watch",
             workflow="DBA Control Room",
@@ -920,18 +923,18 @@ def _dba_action_brief(
             "state": "Blocked",
             "headline": "Operational status needs action before production change.",
             "detail": f"{release_blocks:,} blocker(s), {release_reviews:,} review item(s).",
-            "primary_label": "Open Ops Detail",
-            "target": "Operations Detail",
-            "workflow": "",
+            "primary_label": "Open Action Queue",
+            "target": "DBA Control Room",
+            "workflow": ACTION_QUEUE_WORKFLOW,
         }
     if release_reviews:
         return {
             "state": "Review",
             "headline": "Telemetry status needs DBA review.",
             "detail": f"{release_reviews:,} review/not-loaded item(s).",
-            "primary_label": "Open Ops Detail",
-            "target": "Operations Detail",
-            "workflow": "",
+            "primary_label": "Open Action Queue",
+            "target": "DBA Control Room",
+            "workflow": ACTION_QUEUE_WORKFLOW,
         }
 
     priority = _priority_exceptions(exceptions if exceptions is not None else _empty_df()).head(1)
@@ -966,17 +969,17 @@ def _dba_action_brief(
             "state": "Watch",
             "headline": "Failed query telemetry is ready for review.",
             "detail": f"{failed_queries:,} failed queries in the loaded window.",
-            "primary_label": "Open Triage",
-            "target": "Triage",
-            "workflow": "",
+            "primary_label": "Open Failure Triage",
+            "target": "DBA Control Room",
+            "workflow": FAILURE_TRIAGE_WORKFLOW,
         }
     return {
         "state": "Clear",
         "headline": "No immediate DBA blocker in this scope.",
         "detail": "Keep Watch current or open Data Health for review and rollback status.",
-        "primary_label": "Open Watch",
-        "target": "Fast Watch",
-        "workflow": "",
+        "primary_label": "Open Morning Cockpit",
+        "target": "DBA Control Room",
+        "workflow": MORNING_COCKPIT_WORKFLOW,
     }
 
 

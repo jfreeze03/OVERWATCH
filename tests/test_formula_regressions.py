@@ -3238,7 +3238,8 @@ class FormulaRegressionTests(unittest.TestCase):
             failed_queries=0,
         )
         self.assertEqual(blocked["state"], "Blocked")
-        self.assertEqual(blocked["target"], "Operations Detail")
+        self.assertEqual(blocked["target"], "DBA Control Room")
+        self.assertEqual(blocked["workflow"], "Action Queue")
         self.assertIn("1 blocker", blocked["detail"])
 
         routed = _dba_action_brief(

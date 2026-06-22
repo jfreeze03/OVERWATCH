@@ -25,9 +25,16 @@ from utils.section_guidance import (
     defer_section_note,
 )
 from .types import (
+    ACTION_QUEUE_WORKFLOW,
+    CHANGE_WATCH_WORKFLOW,
+    CONTROL_ROOM_ADMIN_WORKFLOW,
+    COST_WATCH_WORKFLOW,
     DBA_CONTROL_ROOM_DETAIL_PANES,
     DBA_CONTROL_ROOM_PANES,
     DBA_CONTROL_ROOM_PANE_LABELS,
+    FAILURE_TRIAGE_WORKFLOW,
+    MORNING_COCKPIT_WORKFLOW,
+    PERFORMANCE_WATCH_WORKFLOW,
     _clear_dba_control_room_derived_state,
     _empty_df,
     _jump,
@@ -35,6 +42,7 @@ from .types import (
     get_active_environment,
     get_credit_price,
     metric_confidence_label,
+    normalize_dba_control_room_pane,
     pd,
     render_operator_briefing,
 )
@@ -707,6 +715,269 @@ def _render_route_buttons(exceptions: pd.DataFrame) -> None:
                 _jump(route, workflow=workflow)
 
 
+def _filter_exceptions(exceptions: pd.DataFrame, terms: tuple[str, ...]) -> pd.DataFrame:
+    if exceptions.empty or "Signal" not in exceptions.columns:
+        return _empty_df()
+    return exceptions[
+        exceptions["Signal"].fillna("").astype(str).str.contains("|".join(terms), case=False, regex=True)
+    ].copy()
+
+
+def _render_morning_cockpit_empty(load_callback) -> None:
+    st.markdown("**Morning Cockpit**")
+    render_shell_snapshot((
+        ("Failures", "Pending"),
+        ("Cost", "Pending"),
+        ("Queue", "Pending"),
+        ("Security", "Pending"),
+        ("Changes", "Pending"),
+    ))
+    st.caption("Load the morning cockpit when you need current DBA-owned exceptions, owner routes, and action status.")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        if st.button("Load Morning Cockpit", key="dba_morning_cockpit_load_empty", type="primary", width="stretch"):
+            load_callback(status_label="Loading Morning Cockpit", auto_build_ops=True)
+            st.rerun()
+    with c2:
+        if st.button("Open Alert Center", key="dba_morning_open_alerts_empty", width="stretch"):
+            _jump("Alert Center", workflow="Active Alerts")
+    with c3:
+        if st.button("Open Workload Operations", key="dba_morning_open_workload_empty", width="stretch"):
+            _jump("Workload Operations", workflow="Workload Overview")
+
+
+def _render_morning_cockpit(
+    data: dict,
+    exceptions: pd.DataFrame,
+    row,
+    period_credits: float,
+    credit_delta: float,
+    credit_price: float,
+) -> None:
+    failed_queries = safe_int(row.get("FAILED_QUERIES", 0))
+    failed_tasks = safe_int(row.get("FAILED_TASKS", row.get("FAILED_TASK_RUNS", 0)))
+    queued_queries = safe_int(row.get("QUEUED_QUERIES", 0))
+    failed_procedures = len(data.get("procedure_sla_cost", _empty_df()))
+    failed_logins = len(data.get("failed_logins", _empty_df()))
+    changes = len(data.get("object_changes", _empty_df()))
+    st.markdown("**Morning Cockpit**")
+    render_shell_snapshot((
+        ("Failed Queries", f"{failed_queries:,}"),
+        ("Failed Tasks", f"{failed_tasks:,}"),
+        ("Failed Procedures", f"{failed_procedures:,}"),
+        ("Credits", format_credits(period_credits)),
+        ("Credit Delta", f"{credit_delta:+.1f}%"),
+        ("Queued", f"{queued_queries:,}"),
+        ("Security Warnings", f"{failed_logins:,}"),
+        ("Recent Changes", f"{changes:,}"),
+    ))
+    priority = _priority_exceptions(exceptions).head(5)
+    if priority.empty:
+        st.success("No major DBA-owned exceptions detected for the loaded scope.")
+    else:
+        render_priority_dataframe(
+            priority,
+            title="Top 5 DBA actions today",
+            priority_columns=["Severity", "Signal", "Evidence", "Action", "Route", "Workflow"],
+            sort_by=["Severity", "Signal"],
+            ascending=[True, True],
+            raw_label="All morning cockpit actions",
+            height=240,
+        )
+        _render_route_buttons(priority)
+    st.caption("Use the focused watches for failures, cost, performance, changes, or the DBA action queue.")
+
+
+def _render_failure_triage(data: dict, exceptions: pd.DataFrame) -> None:
+    st.markdown("**Failure Triage**")
+    failure_rows = _filter_exceptions(exceptions, ("fail", "task", "procedure", "copy", "load", "sla"))
+    if failure_rows.empty:
+        st.success("No failed task, procedure, query, copy/load, or SLA signals crossed the Control Room thresholds.")
+    else:
+        render_priority_dataframe(
+            failure_rows,
+            title="Failure triage queue",
+            priority_columns=["Severity", "Signal", "Evidence", "Action", "Route", "Workflow"],
+            sort_by=["Severity", "Signal"],
+            ascending=[True, True],
+            raw_label="All failure triage rows",
+            height=300,
+        )
+        _render_route_buttons(failure_rows)
+    with st.expander("Failure detail tables", expanded=False):
+        detail_map = {
+            "Failed Queries": "failed_queries",
+            "Task Failures": "task_failures",
+            "Task SLA/Cost": "task_sla_cost",
+            "Procedure SLA/Cost": "procedure_sla_cost",
+        }
+        detail_view = st.selectbox(
+            "Failure detail",
+            tuple(detail_map),
+            label_visibility="collapsed",
+            key="dba_failure_triage_detail_view",
+        )
+        df = data.get(detail_map[detail_view], _empty_df())
+        if df.empty:
+            st.info("No rows found for this failure detail.")
+        else:
+            render_priority_dataframe(
+                df,
+                title=f"{detail_view} detail",
+                priority_columns=[
+                    "SEVERITY", "SIGNAL", "ENTITY", "TASK_NAME", "PROCEDURE_NAME",
+                    "QUERY_ID", "WAREHOUSE_NAME", "USER_NAME", "ERROR_MESSAGE",
+                    "ALLOCATED_CREDITS", "EST_TOTAL_CREDITS", "DURATION_SEC",
+                    "START_TIME", "SCHEDULED_TIME",
+                ],
+                sort_by=["ALLOCATED_CREDITS", "EST_TOTAL_CREDITS", "DURATION_SEC", "START_TIME", "SCHEDULED_TIME"],
+                ascending=[False, False, False, False, False],
+                raw_label=f"All {detail_view.lower()} rows",
+                height=320,
+            )
+
+
+def _render_cost_watch(data: dict, credit_price: float) -> None:
+    st.markdown("**Cost Watch**")
+    cost_df = data.get("cost_drivers", _empty_df())
+    cortex_df = data.get("cortex_exceptions", _empty_df())
+    if cost_df.empty and cortex_df.empty:
+        st.info("No cost-driver or Cortex anomaly rows found in the loaded lookback.")
+    if not cost_df.empty:
+        cost_df = cost_df.copy()
+        cost_df["EST_COST"] = cost_df["ALLOCATED_CREDITS"].apply(lambda v: credits_to_dollars(v, credit_price))
+        render_priority_dataframe(
+            cost_df,
+            title="Largest cost drivers",
+            priority_columns=[
+                "WAREHOUSE_NAME", "USER_NAME", "ROLE_NAME", "DATABASE_NAME",
+                "ALLOCATED_CREDITS", "EST_COST", "QUERY_COUNT", "AVG_ELAPSED_SEC",
+            ],
+            sort_by=["ALLOCATED_CREDITS", "EST_COST"],
+            ascending=[False, False],
+            raw_label="All cost-driver rows",
+            height=300,
+        )
+        download_csv(cost_df, "dba_control_room_cost_watch.csv")
+    if not cortex_df.empty:
+        render_priority_dataframe(
+            cortex_df,
+            title="Cortex and AI cost exceptions",
+            priority_columns=["SEVERITY", "SIGNAL", "ENTITY", "ALLOCATED_CREDITS", "EST_COST", "ACTION"],
+            sort_by=["ALLOCATED_CREDITS", "EST_COST"],
+            ascending=[False, False],
+            raw_label="All Cortex cost rows",
+            height=220,
+        )
+    if st.button("Open Cost & Contract", key="dba_cost_watch_open_cost_contract", width="stretch"):
+        _jump("Cost & Contract", workflow="Cost Overview")
+
+
+def _render_performance_watch(data: dict, exceptions: pd.DataFrame) -> None:
+    st.markdown("**Performance Watch**")
+    performance_rows = _filter_exceptions(exceptions, ("queue", "saturat", "spill", "blocked", "long", "slow", "runtime", "pressure"))
+    wh_df = data.get("warehouse_pressure", _empty_df())
+    if performance_rows.empty and wh_df.empty:
+        st.success("No queue, saturation, spill, blocked query, or pressure signals crossed the Control Room thresholds.")
+    elif not performance_rows.empty:
+        render_priority_dataframe(
+            performance_rows,
+            title="Performance actions",
+            priority_columns=["Severity", "Signal", "Evidence", "Action", "Route", "Workflow"],
+            sort_by=["Severity", "Signal"],
+            ascending=[True, True],
+            raw_label="All performance action rows",
+            height=260,
+        )
+        _render_route_buttons(performance_rows)
+    if not wh_df.empty:
+        render_priority_dataframe(
+            wh_df,
+            title="Warehouse pressure",
+            priority_columns=[
+                "WAREHOUSE_NAME", "WAREHOUSE_SIZE", "QUEUED_QUERIES",
+                "FAILED_QUERIES", "P95_ELAPSED_SEC", "REMOTE_SPILL_GB",
+                "QUERY_COUNT", "ALLOCATED_CREDITS",
+            ],
+            sort_by=["QUEUED_QUERIES", "FAILED_QUERIES", "P95_ELAPSED_SEC"],
+            ascending=[False, False, False],
+            raw_label="All warehouse-pressure rows",
+            height=300,
+        )
+    if st.button("Open Workload Performance", key="dba_performance_watch_open_workload", width="stretch"):
+        _jump("Workload Operations", workflow="Performance & Contention")
+
+
+def _render_change_watch(data: dict) -> None:
+    st.markdown("**Change Watch**")
+    changes = data.get("object_changes", _empty_df())
+    if changes.empty:
+        st.info("No object, task, procedure, access, or deployment-related change rows found in the loaded lookback.")
+    else:
+        render_priority_dataframe(
+            changes,
+            title="Recent workload and access changes",
+            priority_columns=[
+                "SEVERITY", "SIGNAL", "ENTITY", "OBJECT_NAME", "OBJECT_TYPE",
+                "USER_NAME", "EVENT_TIMESTAMP", "ACTION",
+            ],
+            sort_by=["EVENT_TIMESTAMP", "SEVERITY"],
+            ascending=[False, True],
+            raw_label="All change rows",
+            height=320,
+        )
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("Open Workload Change Analysis", key="dba_change_watch_open_workload", width="stretch"):
+            _jump("Workload Operations", workflow="Change Analysis")
+    with c2:
+        if st.button("Open Security Access Changes", key="dba_change_watch_open_security", width="stretch"):
+            _jump("Security Monitoring", workflow="Access Changes")
+
+
+def _render_action_queue_watch(data: dict, company: str, environment: str, lookback_hours: int, source_mode: str) -> None:
+    st.markdown("**Action Queue**")
+    action_queue = data.get("action_queue", _empty_df())
+    command_queue = _build_command_queue(action_queue)
+    if command_queue.empty:
+        st.info("No DBA-owned action queue rows found for the loaded scope.")
+        return
+    closure_rollup = _command_queue_closure_readiness(action_queue)
+    section_board = _dba_section_operability_board(
+        command_queue=command_queue,
+        closure_rollup=closure_rollup,
+        source_health=_empty_df(),
+    )
+    _render_command_queue_control(command_queue, action_queue, closure_rollup=closure_rollup, section_board=section_board)
+    handoff_rows = _dba_handoff_rows(_empty_df(), command_queue, closure_rollup, _empty_df(), _empty_df())
+    handoff_md = _build_dba_shift_handoff_markdown(
+        handoff_rows,
+        company=company,
+        environment=environment,
+        lookback_hours=int(lookback_hours),
+        source_mode=source_mode,
+    )
+    with st.expander("Shift handoff", expanded=False):
+        _render_shift_handoff_panel(handoff_rows, handoff_md, company=company, environment=environment)
+
+
+def _render_control_room_admin_advanced(company: str, environment: str) -> None:
+    st.markdown("**Control Room Admin / Advanced**")
+    st.caption("Advanced proofing, readiness, service posture, admin controls, raw evidence, and validation outputs stay here.")
+    advanced_view = st.selectbox(
+        "Advanced view",
+        ("Service Posture", "Admin Tools", "Diagnostics"),
+        label_visibility="collapsed",
+        key="dba_control_room_advanced_view",
+    )
+    if advanced_view == "Service Posture":
+        _render_consolidated_service_posture()
+    elif advanced_view == "Admin Tools":
+        _render_admin_tools()
+    else:
+        _render_advanced_diagnostics_expander(company, environment)
+
+
 def render() -> None:
     company = get_active_company()
     environment = get_active_environment()
@@ -714,9 +985,11 @@ def render() -> None:
     evidence_mode = current_evidence_mode(st.session_state)
     investigation_mode = evidence_mode_is_investigation(st.session_state)
     all_evidence_mode = evidence_mode_is_all_evidence(st.session_state)
+    normalized_view = normalize_dba_control_room_pane(st.session_state.get("dba_control_room_active_view"))
+    st.session_state["dba_control_room_active_view"] = normalized_view
 
     if evidence_mode == TRIAGE_MODE_TRIAGE:
-        defer_section_note("Start with Fast Watch or load triage when current DBA telemetry is needed.")
+        defer_section_note("Start with Morning Cockpit or load triage when current DBA telemetry is needed.")
     elif evidence_mode == TRIAGE_MODE_INVESTIGATE:
         defer_section_note("Investigation mode loads deeper root-cause telemetry only after you ask for it.")
     elif evidence_mode == TRIAGE_MODE_ALL_EVIDENCE:
@@ -904,7 +1177,7 @@ def render() -> None:
         _load_control_room_evidence()
 
     data = st.session_state.get("dba_control_room_data", {})
-    if st.session_state.get("dba_control_room_active_view") in {"Service Posture", "Admin Tools"}:
+    if st.session_state.get("dba_control_room_active_view") == CONTROL_ROOM_ADMIN_WORKFLOW:
         st.divider()
         active_view = render_workflow_selector(
             "DBA Control Room view",
@@ -913,13 +1186,8 @@ def render() -> None:
             labels=DBA_CONTROL_ROOM_PANE_LABELS,
             columns=4,
         )
-        if active_view == "Service Posture":
-            _render_consolidated_service_posture()
-            _render_advanced_diagnostics_expander(company, environment)
-            return
-        if active_view == "Admin Tools":
-            _render_admin_tools()
-            _render_advanced_diagnostics_expander(company, environment)
+        if active_view == CONTROL_ROOM_ADMIN_WORKFLOW:
+            _render_control_room_admin_advanced(company, environment)
             return
     if not data:
         st.divider()
@@ -930,29 +1198,21 @@ def render() -> None:
             labels=DBA_CONTROL_ROOM_PANE_LABELS,
             columns=4,
         )
-        if active_view == "Service Posture":
-            _render_consolidated_service_posture()
-            _render_advanced_diagnostics_expander(company, environment)
+        if active_view == MORNING_COCKPIT_WORKFLOW:
+            _render_morning_cockpit_empty(_load_control_room_evidence)
             return
-        if active_view == "Admin Tools":
-            _render_admin_tools()
-            _render_advanced_diagnostics_expander(company, environment)
+        if active_view == CONTROL_ROOM_ADMIN_WORKFLOW:
+            _render_control_room_admin_advanced(company, environment)
             return
-        if active_view == "Morning Brief":
-            st.warning("Refresh the DBA Morning Brief to rank today's route priority and route handoff.")
-            st.caption("Workflow: triage refresh -> route priority -> escalation status -> route handoff.")
-            if st.button("Refresh DBA Morning Brief", key="dba_control_room_build_morning_from_empty", type="primary"):
-                _load_control_room_evidence(status_label="Refreshing DBA Morning Brief", auto_build_ops=True)
-                st.rerun()
-        elif active_view == "Operations Detail":
-            st.warning("Refresh the Operations Detail to see route priority, runbook, handoff, incident, and action queue detail.")
+        if active_view == ACTION_QUEUE_WORKFLOW:
+            st.warning("Load the Action Queue to see DBA-owned actions, status, owner, and closure detail.")
             st.caption("Workflow: triage refresh -> route priority -> routed action -> closure status.")
-            if st.button("Refresh Operations Detail", key="dba_control_room_build_ops_from_empty", type="primary"):
-                _load_control_room_evidence(status_label="Refreshing Operations Detail", auto_build_ops=True)
+            if st.button("Load Action Queue", key="dba_control_room_build_ops_from_empty", type="primary"):
+                _load_control_room_evidence(status_label="Loading Action Queue", auto_build_ops=True)
                 st.rerun()
         else:
-            st.warning(f"{load_label} to see today's DBA exceptions and exportable telemetry.")
-            st.caption("Workflow: snapshot -> exception -> routed action -> telemetry export.")
+            st.warning(f"{load_label} to see this workflow's DBA telemetry.")
+            st.caption("Workflow: load triage -> review action -> open owning section.")
         _render_advanced_diagnostics_expander(company, environment)
         return
 
@@ -1042,42 +1302,36 @@ def render() -> None:
         columns=4,
     )
 
-    if active_view == "Fast Watch":
-        _render_watch_floor(
-            data,
-            exceptions,
-            row,
-            period_credits,
-            credit_delta,
-            credit_price,
-            regression_count,
-            0 if cortex_exceptions.empty else len(cortex_exceptions),
-        )
-        priority = _priority_exceptions(exceptions).head(8)
-        if priority.empty:
-            st.success("Fast Watch is clear for the loaded scope.")
-        else:
-            render_priority_dataframe(
-                priority,
-                title="Fast Watch priority lanes",
-                priority_columns=["Severity", "Signal", "Evidence", "Action", "Route", "Workflow"],
-                sort_by=["Severity", "Signal"],
-                ascending=[True, True],
-                raw_label="All fast-watch exception rows",
-                height=260,
+    if active_view == MORNING_COCKPIT_WORKFLOW:
+        _render_morning_cockpit(data, exceptions, row, period_credits, credit_delta, credit_price)
+        with st.expander("Fast Watch detail", expanded=False):
+            _render_watch_floor(
+                data,
+                exceptions,
+                row,
+                period_credits,
+                credit_delta,
+                credit_price,
+                regression_count,
+                0 if cortex_exceptions.empty else len(cortex_exceptions),
             )
-            _render_route_buttons(priority)
-        st.caption(
-            "Use Operations Detail when you need route priority, runbook, escalation, handoff, incident, or queue detail."
-        )
 
-    elif active_view == "Service Posture":
-        _render_consolidated_service_posture()
+    elif active_view == FAILURE_TRIAGE_WORKFLOW:
+        _render_failure_triage(data, exceptions)
 
-    elif active_view == "Admin Tools":
-        _render_admin_tools()
+    elif active_view == COST_WATCH_WORKFLOW:
+        _render_cost_watch(data, credit_price)
 
-    elif active_view in {"Operations Detail", "Morning Brief"}:
+    elif active_view == PERFORMANCE_WATCH_WORKFLOW:
+        _render_performance_watch(data, exceptions)
+
+    elif active_view == CHANGE_WATCH_WORKFLOW:
+        _render_change_watch(data)
+
+    elif active_view == CONTROL_ROOM_ADMIN_WORKFLOW:
+        _render_control_room_admin_advanced(company, environment)
+
+    elif active_view == ACTION_QUEUE_WORKFLOW:
         ops_scope_key = _dba_control_ops_scope_key(
             company,
             environment,
@@ -1093,12 +1347,8 @@ def render() -> None:
         if st.session_state.pop("_dba_control_room_auto_build_ops", False):
             st.session_state["dba_control_room_ops_ready"] = True
         if not st.session_state.get("dba_control_room_ops_ready"):
-            if active_view == "Morning Brief":
-                st.caption("Refresh the DBA Morning Brief from route priority, escalation, handoff, incident, and action queue telemetry.")
-                load_label = "Refresh DBA Morning Brief"
-            else:
-                st.caption("Refresh route priority, runbook, escalation, handoff, incident, and queue detail for the current scope.")
-                load_label = "Refresh Operations Detail"
+            st.caption("Build the DBA action queue from route priority, morning brief, escalation, handoff, incident, and advisor telemetry.")
+            load_label = "Load Action Queue"
             if st.button(load_label, key="dba_control_room_build_ops", type="primary"):
                 st.session_state["dba_control_room_ops_ready"] = True
                 st.rerun()
@@ -1208,16 +1458,15 @@ def render() -> None:
             st.session_state["dba_control_room_morning_brief"] = morning_brief
             st.session_state["dba_control_room_morning_brief_markdown"] = morning_brief_md
 
-            if active_view == "Morning Brief":
-                ops_detail = "Morning Brief"
-                st.session_state["dba_operations_board_detail"] = ops_detail
-            else:
-                ops_detail = st.selectbox(
-                    "Operations Detail",
-                    ("Morning Brief", "Priority", "Runbook", "Escalations", "Handoff", "Incidents", "Advisors", "Queue"),
-                    label_visibility="collapsed",
-                    key="dba_operations_board_detail",
-                )
+            ops_detail_options = ("Queue", "Morning Brief", "Priority", "Runbook", "Escalations", "Handoff", "Incidents", "Advisors")
+            if st.session_state.get("dba_operations_board_detail") not in ops_detail_options:
+                st.session_state["dba_operations_board_detail"] = "Queue"
+            ops_detail = st.selectbox(
+                "Action Queue detail",
+                ops_detail_options,
+                label_visibility="collapsed",
+                key="dba_operations_board_detail",
+            )
             if ops_detail == "Morning Brief":
                 _render_dba_morning_brief(morning_brief, morning_brief_md)
             elif ops_detail == "Priority":
@@ -1249,77 +1498,6 @@ def render() -> None:
                     closure_rollup=closure_rollup_for_handoff,
                     section_board=section_board_for_priority,
                 )
-
-    elif active_view == "Triage":
-        if exceptions.empty:
-            st.success("No major exceptions detected by the DBA Control Room rules.")
-        else:
-            st.subheader("Priority Exceptions")
-            render_priority_dataframe(
-                exceptions,
-                title="Control-room exceptions to work first",
-                priority_columns=[
-                    "Severity", "Signal", "Evidence", "Action", "Route", "Workflow",
-                ],
-                sort_by=["Severity", "Signal"],
-                ascending=[True, True],
-                raw_label="All control-room exceptions",
-                height=260,
-            )
-            _render_route_buttons(exceptions)
-
-        st.divider()
-        left, right = st.columns(2)
-        with left:
-            st.subheader("Top Cost Drivers")
-            cost_df = data.get("cost_drivers", _empty_df())
-            if not cost_df.empty:
-                cost_df = cost_df.copy()
-                cost_df["EST_COST"] = cost_df["ALLOCATED_CREDITS"].apply(
-                    lambda v: credits_to_dollars(v, credit_price)
-                )
-                render_priority_dataframe(
-                    cost_df,
-                    title="Largest cost drivers",
-                    priority_columns=[
-                        "WAREHOUSE_NAME", "USER_NAME", "ROLE_NAME",
-                        "DATABASE_NAME", "ALLOCATED_CREDITS", "EST_COST",
-                        "QUERY_COUNT", "AVG_ELAPSED_SEC",
-                    ],
-                    sort_by=["ALLOCATED_CREDITS", "EST_COST"],
-                    ascending=[False, False],
-                    raw_label="All cost-driver rows",
-                    height=280,
-                )
-                download_csv(cost_df, "dba_control_room_cost_drivers.csv")
-            else:
-                st.info("No cost-driver rows found in the loaded lookback.")
-        with right:
-            st.subheader("Warehouse Pressure")
-            wh_df = data.get("warehouse_pressure", _empty_df())
-            if not wh_df.empty:
-                render_priority_dataframe(
-                    wh_df,
-                    title="Warehouses under pressure",
-                    priority_columns=[
-                        "WAREHOUSE_NAME", "WAREHOUSE_SIZE", "QUEUED_QUERIES",
-                        "FAILED_QUERIES", "P95_ELAPSED_SEC", "REMOTE_SPILL_GB",
-                        "QUERY_COUNT", "ALLOCATED_CREDITS",
-                    ],
-                    sort_by=["QUEUED_QUERIES", "FAILED_QUERIES", "P95_ELAPSED_SEC"],
-                    ascending=[False, False, False],
-                    raw_label="All warehouse-pressure rows",
-                    height=280,
-                )
-                sel_wh = st.selectbox(
-                    "Open warehouse",
-                    [""] + wh_df["WAREHOUSE_NAME"].dropna().astype(str).tolist(),
-                    key="dba_control_room_wh_select",
-                )
-                if sel_wh and st.button("Open Cost & Contract", key="dba_control_room_open_wh"):
-                    _jump("Cost & Contract", workflow="Cost Recommendations", warehouse=sel_wh)
-            else:
-                st.success("No warehouse pressure detected by the control-room thresholds.")
 
     elif active_view == "Drill Routes":
         r1, r2, r3 = st.columns(3)

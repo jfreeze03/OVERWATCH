@@ -12,7 +12,6 @@ from utils.primitives import (
     safe_int,
 )
 from .types import (
-    DBA_CONTROL_ROOM_PANES,
     _canonical_dba_route,
     _command_queue_route,
     _dba_section_proof_required,
@@ -20,6 +19,7 @@ from .types import (
     _frame_or_empty,
     _jump,
     _row_value,
+    normalize_dba_control_room_pane,
     pd,
 )
 from .queue import (
@@ -568,7 +568,7 @@ def _dba_morning_brief_rows(
             "DBA Control Room",
             state="Monitor",
             why_now="No loaded blocker, escalation, or handoff row for the current scope.",
-            first_move="Keep Fast Watch current and review Alert Center for newly routed issues.",
+            first_move="Keep Morning Cockpit current and review Alert Center for newly routed issues.",
             owner_route="On-call DBA / platform route",
             go_no_go="Go for monitoring only.",
             proof_required="fresh Control Room load and current Alert Center review",
@@ -958,8 +958,8 @@ def _render_dba_morning_brief(brief: pd.DataFrame, markdown: str) -> None:
         help_text = "\n".join(help_lines)
         with move_cols[idx]:
             if st.button(label, key=f"dba_morning_open_{idx}_{route}_{workflow}", help=help_text, width="stretch"):
-                if route == "DBA Control Room" and workflow in DBA_CONTROL_ROOM_PANES:
-                    st.session_state["dba_control_room_active_view"] = workflow
+                if route == "DBA Control Room":
+                    st.session_state["dba_control_room_active_view"] = normalize_dba_control_room_pane(workflow)
                     st.rerun()
                 else:
                     _seed_dba_morning_route_context(row)

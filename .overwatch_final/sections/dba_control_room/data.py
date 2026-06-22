@@ -1016,9 +1016,9 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
                 f"{safe_int(release_summary.get('blocked')):,} blocked status item(s); "
                 f"{safe_int(release_summary.get('review')):,} review item(s)"
             ),
-            "Action": "Open Operations Detail and clear task recovery blockers before production change.",
+            "Action": "Open Action Queue and clear task recovery blockers before production change.",
             "Route": "DBA Control Room",
-            "Workflow": "Operations Detail",
+            "Workflow": "Action Queue",
         })
     elif safe_int(release_summary.get("review")):
         rows.append({
@@ -1027,7 +1027,7 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
             "Evidence": f"{safe_int(release_summary.get('review')):,} operational status review item(s)",
             "Action": "Review task timeline, telemetry status, and rollback path before production change.",
             "Route": "DBA Control Room",
-            "Workflow": "Operations Detail",
+            "Workflow": "Action Queue",
         })
     failed_queries = safe_int(row.get("FAILED_QUERIES", 0))
     queued_queries = safe_int(row.get("QUEUED_QUERIES", 0))

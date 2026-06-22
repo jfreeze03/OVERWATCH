@@ -335,6 +335,8 @@ SECTION_REDIRECTS = {
     "SPCS Tracker": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
     "Usage Overview": _CANONICAL_SECTION_BY_TITLE["DBA Control Room"],
     "Service Health": _CANONICAL_SECTION_BY_TITLE["DBA Control Room"],
+    "Fast Watch": _CANONICAL_SECTION_BY_TITLE["DBA Control Room"],
+    "Morning Brief": _CANONICAL_SECTION_BY_TITLE["DBA Control Room"],
     "Alerts": _CANONICAL_SECTION_BY_TITLE["Alert Center"],
     "Alert History": _CANONICAL_SECTION_BY_TITLE["Alert Center"],
     "Alert Configuration": _CANONICAL_SECTION_BY_TITLE["Alert Center"],
@@ -357,9 +359,24 @@ RETIRED_SECTION_REDIRECTS = {
 }
 SECTION_ROUTE_STATE = {
     "Account Health": {
-        "dba_control_room_active_view": "Fast Watch",
+        "dba_control_room_active_view": "Morning Cockpit",
         "_dba_control_room_full_workspace_requested": True,
         "_dba_control_room_brief_mode": False,
+    },
+    "Command Center": {
+        "dba_control_room_active_view": "Morning Cockpit",
+    },
+    "Usage Overview": {
+        "dba_control_room_active_view": "Cost Watch",
+    },
+    "Service Health": {
+        "dba_control_room_active_view": "Control Room Admin / Advanced",
+    },
+    "Fast Watch": {
+        "dba_control_room_active_view": "Morning Cockpit",
+    },
+    "Morning Brief": {
+        "dba_control_room_active_view": "Morning Cockpit",
     },
     "Warehouse Health": {
         "cost_contract_workflow": "Waste Detection",

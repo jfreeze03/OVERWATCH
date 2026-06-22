@@ -234,26 +234,58 @@ DBA_CONTROL_SCOPE_FILTER_KEYS = (
 )
 
 
+MORNING_COCKPIT_WORKFLOW = "Morning Cockpit"
+FAILURE_TRIAGE_WORKFLOW = "Failure Triage"
+COST_WATCH_WORKFLOW = "Cost Watch"
+PERFORMANCE_WATCH_WORKFLOW = "Performance Watch"
+CHANGE_WATCH_WORKFLOW = "Change Watch"
+ACTION_QUEUE_WORKFLOW = "Action Queue"
+CONTROL_ROOM_ADMIN_WORKFLOW = "Control Room Admin / Advanced"
+
+
 DBA_CONTROL_ROOM_PANES = (
-    "Fast Watch",
-    "Morning Brief",
-    "Operations Detail",
-    "Triage",
-    "Drill Routes",
-    "Service Posture",
-    "Admin Tools",
+    MORNING_COCKPIT_WORKFLOW,
+    FAILURE_TRIAGE_WORKFLOW,
+    COST_WATCH_WORKFLOW,
+    PERFORMANCE_WATCH_WORKFLOW,
+    CHANGE_WATCH_WORKFLOW,
+    ACTION_QUEUE_WORKFLOW,
+    CONTROL_ROOM_ADMIN_WORKFLOW,
 )
 
 
 DBA_CONTROL_ROOM_PANE_LABELS = {
-    "Fast Watch": "Watch",
-    "Morning Brief": "Morning",
-    "Operations Detail": "Ops",
-    "Triage": "Triage",
-    "Drill Routes": "Routes",
-    "Service Posture": "Service",
-    "Admin Tools": "Admin",
+    MORNING_COCKPIT_WORKFLOW: "Morning",
+    FAILURE_TRIAGE_WORKFLOW: "Failures",
+    COST_WATCH_WORKFLOW: "Cost",
+    PERFORMANCE_WATCH_WORKFLOW: "Performance",
+    CHANGE_WATCH_WORKFLOW: "Changes",
+    ACTION_QUEUE_WORKFLOW: "Actions",
+    CONTROL_ROOM_ADMIN_WORKFLOW: "Advanced",
 }
+
+
+DBA_CONTROL_ROOM_LEGACY_PANE_ALIASES = {
+    "Command Center": MORNING_COCKPIT_WORKFLOW,
+    "Account Health": MORNING_COCKPIT_WORKFLOW,
+    "Usage Overview": COST_WATCH_WORKFLOW,
+    "Service Health": CONTROL_ROOM_ADMIN_WORKFLOW,
+    "Fast Watch": MORNING_COCKPIT_WORKFLOW,
+    "Morning Brief": MORNING_COCKPIT_WORKFLOW,
+    "Operations Detail": ACTION_QUEUE_WORKFLOW,
+    "Triage": FAILURE_TRIAGE_WORKFLOW,
+    "Drill Routes": MORNING_COCKPIT_WORKFLOW,
+    "Release Compare": CHANGE_WATCH_WORKFLOW,
+    "Service Posture": CONTROL_ROOM_ADMIN_WORKFLOW,
+    "Admin Tools": CONTROL_ROOM_ADMIN_WORKFLOW,
+}
+
+
+def normalize_dba_control_room_pane(value: object) -> str:
+    """Map retired DBA Control Room pane names to the workflow-first names."""
+    text = str(value or "").strip()
+    mapped = DBA_CONTROL_ROOM_LEGACY_PANE_ALIASES.get(text, text)
+    return mapped if mapped in DBA_CONTROL_ROOM_PANES else MORNING_COCKPIT_WORKFLOW
 
 
 DBA_CONTROL_ROOM_DETAIL_PANES = (
@@ -325,8 +357,8 @@ def _jump(title: str, *, warehouse: str = "", user: str = "", workflow: str = ""
                 st.session_state["query_analysis_active_view"] = "History Search"
             else:
                 st.session_state["workload_operations_workflow"] = workflow
-        elif title == "DBA Control Room" and workflow in DBA_CONTROL_ROOM_PANES:
-            st.session_state["dba_control_room_active_view"] = workflow
+        elif title == "DBA Control Room":
+            st.session_state["dba_control_room_active_view"] = normalize_dba_control_room_pane(workflow)
         elif title == "Cost & Contract":
             st.session_state["cost_contract_workflow"] = workflow
         elif title == "Security Monitoring":

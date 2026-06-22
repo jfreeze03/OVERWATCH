@@ -55,7 +55,7 @@ def request_section_workspace(section: str) -> None:
         set_state(EXECUTIVE_LANDING_BRIEF_MODE, False)
         request_executive_landing_hydration()
     elif target == "DBA Control Room":
-        set_state(DBA_CONTROL_ROOM_ACTIVE_VIEW, "Fast Watch")
+        set_state(DBA_CONTROL_ROOM_ACTIVE_VIEW, "Morning Cockpit")
     elif target == "Alert Center":
         set_state(ALERT_CENTER_ACTIVE_VIEW, "Active Alerts")
     elif target == "Cost & Contract":

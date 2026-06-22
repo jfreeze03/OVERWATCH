@@ -297,7 +297,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("compatibility_state_for_section(raw_section)", navigation_text)
         self.assertIn("request_section_workspace(target)", navigation_text)
         self.assertIn("request_executive_landing_hydration()", navigation_text)
-        self.assertIn('set_state(DBA_CONTROL_ROOM_ACTIVE_VIEW, "Fast Watch")', navigation_text)
+        self.assertIn('set_state(DBA_CONTROL_ROOM_ACTIVE_VIEW, "Morning Cockpit")', navigation_text)
         self.assertIn('set_state(ALERT_CENTER_ACTIVE_VIEW, "Active Alerts")', navigation_text)
         self.assertIn('set_state(COST_CONTRACT_WORKFLOW, "Cost Overview")', navigation_text)
         self.assertIn('set_state(WORKLOAD_OPERATIONS_WORKFLOW, "Workload Overview")', navigation_text)
@@ -346,7 +346,7 @@ class NavigationIntegrityTests(unittest.TestCase):
             self.assertEqual(target, "DBA Control Room")
             self.assertEqual(st.session_state[NAV_SECTION], "DBA Control Room")
             self.assertEqual(st.session_state[PENDING_SECTION], "DBA Control Room")
-            self.assertEqual(st.session_state[DBA_CONTROL_ROOM_ACTIVE_VIEW], "Fast Watch")
+            self.assertEqual(st.session_state[DBA_CONTROL_ROOM_ACTIVE_VIEW], "Morning Cockpit")
 
             target = apply_navigation_state("Security & Access")
             self.assertEqual(target, "Security Monitoring")
@@ -409,37 +409,50 @@ class NavigationIntegrityTests(unittest.TestCase):
                 offenders.append(str(path.relative_to(APP_ROOT)))
         self.assertEqual(offenders, [])
 
-    def test_dba_control_room_uses_fast_shell_module(self):
+    def test_dba_control_room_uses_morning_cockpit_workflows(self):
         self.assertEqual(SECTION_MODULES["DBA Control Room"], "sections.dba_control_room")
         self.assertFalse((APP_ROOT / "sections" / "dba_control_room_shell.py").exists())
         full_workspace_text = _section_source(APP_ROOT / "sections" / "dba_control_room.py")
         nav_text = (APP_ROOT / "sections" / "navigation.py").read_text(encoding="utf-8")
-        self.assertIn('"Morning Brief"', full_workspace_text)
-        self.assertIn('set_state(DBA_CONTROL_ROOM_ACTIVE_VIEW, "Fast Watch")', nav_text)
+        self.assertIn('"Morning Cockpit"', full_workspace_text)
+        self.assertIn('set_state(DBA_CONTROL_ROOM_ACTIVE_VIEW, "Morning Cockpit")', nav_text)
         self.assertIn("with_loaded_at(", full_workspace_text)
         self.assertIn("source=getattr(snapshot_result, \"source\", \"Fast summary snapshot\")", full_workspace_text)
         self.assertIn("DBA_CONTROL_ROOM_LIVE_FALLBACK_CAP_HOURS = 24", full_workspace_text)
         self.assertIn("DBA_CONTROL_ROOM_LIVE_FALLBACK_KEYS", full_workspace_text)
-        self.assertIn('"Morning Brief"', full_workspace_text)
-        self.assertIn('"Morning Brief": "Morning"', full_workspace_text)
-        self.assertIn('elif active_view in {"Operations Detail", "Morning Brief"}:', full_workspace_text)
-        self.assertIn('load_label = "Refresh DBA Morning Brief"', full_workspace_text)
-        self.assertIn('st.session_state["dba_operations_board_detail"] = ops_detail', full_workspace_text)
-        self.assertIn('"Service Posture"', full_workspace_text)
-        self.assertIn('"Admin Tools"', full_workspace_text)
-        self.assertIn('"Admin Tools": "Admin"', full_workspace_text)
+        for workflow in (
+            "Morning Cockpit",
+            "Failure Triage",
+            "Cost Watch",
+            "Performance Watch",
+            "Change Watch",
+            "Action Queue",
+            "Control Room Admin / Advanced",
+        ):
+            with self.subTest(workflow=workflow):
+                self.assertIn(f'"{workflow}"', full_workspace_text)
+        self.assertIn('MORNING_COCKPIT_WORKFLOW: "Morning"', full_workspace_text)
+        self.assertIn('FAILURE_TRIAGE_WORKFLOW: "Failures"', full_workspace_text)
+        self.assertIn('CONTROL_ROOM_ADMIN_WORKFLOW: "Advanced"', full_workspace_text)
+        self.assertIn('elif active_view == ACTION_QUEUE_WORKFLOW:', full_workspace_text)
+        self.assertIn('load_label = "Load Action Queue"', full_workspace_text)
+        self.assertIn('ops_detail_options = ("Queue", "Morning Brief", "Priority"', full_workspace_text)
+        self.assertIn('st.session_state["dba_operations_board_detail"] = "Queue"', full_workspace_text)
+        self.assertIn('key="dba_operations_board_detail"', full_workspace_text)
+        self.assertIn('"Service Posture": CONTROL_ROOM_ADMIN_WORKFLOW', full_workspace_text)
+        self.assertIn('"Admin Tools": CONTROL_ROOM_ADMIN_WORKFLOW', full_workspace_text)
         self.assertIn('from sections import service_health', full_workspace_text)
         self.assertIn("service_health.render()", full_workspace_text)
         self.assertIn('from sections import dba_tools', full_workspace_text)
         self.assertIn("dba_tools.render()", full_workspace_text)
         self.assertIn('"Warehouse Settings"', full_workspace_text)
         self.assertIn('"Cortex AI Limits"', full_workspace_text)
-        self.assertIn('st.session_state.get("dba_control_room_active_view") in {"Service Posture", "Admin Tools"}', full_workspace_text)
-        service_posture_block = full_workspace_text.split('st.session_state.get("dba_control_room_active_view") in {"Service Posture", "Admin Tools"}', 1)[1].split(
+        self.assertIn('st.session_state.get("dba_control_room_active_view") == CONTROL_ROOM_ADMIN_WORKFLOW', full_workspace_text)
+        service_posture_block = full_workspace_text.split('st.session_state.get("dba_control_room_active_view") == CONTROL_ROOM_ADMIN_WORKFLOW', 1)[1].split(
             'if not data:',
             1,
         )[0]
-        self.assertIn("_render_consolidated_service_posture()", service_posture_block)
+        self.assertIn("_render_control_room_admin_advanced(company, environment)", service_posture_block)
         self.assertIn("guarded live checks are reserved for explicit detail loads", full_workspace_text)
         self.assertNotIn("Allow live ACCOUNT_USAGE fallback queries", full_workspace_text)
 
@@ -557,11 +570,24 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(
             compatibility_state_for_section("Account Health"),
             {
-                "dba_control_room_active_view": "Fast Watch",
+                "dba_control_room_active_view": "Morning Cockpit",
                 "_dba_control_room_full_workspace_requested": True,
                 "_dba_control_room_brief_mode": False,
             },
         )
+        self.assertEqual(SECTION_ALIASES["Command Center"], SECTION_BY_TITLE["DBA Control Room"])
+        self.assertEqual(SECTION_ALIASES["Usage Overview"], SECTION_BY_TITLE["DBA Control Room"])
+        self.assertEqual(SECTION_ALIASES["Service Health"], SECTION_BY_TITLE["DBA Control Room"])
+        self.assertEqual(SECTION_ALIASES["Fast Watch"], SECTION_BY_TITLE["DBA Control Room"])
+        self.assertEqual(SECTION_ALIASES["Morning Brief"], SECTION_BY_TITLE["DBA Control Room"])
+        self.assertEqual(compatibility_state_for_section("Command Center")["dba_control_room_active_view"], "Morning Cockpit")
+        self.assertEqual(compatibility_state_for_section("Usage Overview")["dba_control_room_active_view"], "Cost Watch")
+        self.assertEqual(
+            compatibility_state_for_section("Service Health")["dba_control_room_active_view"],
+            "Control Room Admin / Advanced",
+        )
+        self.assertEqual(compatibility_state_for_section("Fast Watch")["dba_control_room_active_view"], "Morning Cockpit")
+        self.assertEqual(compatibility_state_for_section("Morning Brief")["dba_control_room_active_view"], "Morning Cockpit")
         self.assertEqual(SECTION_ALIASES["Credit Contract"], SECTION_BY_TITLE["Cost & Contract"])
         self.assertEqual(SECTION_ALIASES["Cost Center"], SECTION_BY_TITLE["Cost & Contract"])
         self.assertEqual(SECTION_ALIASES["Recommendations"], SECTION_BY_TITLE["Cost & Contract"])
@@ -853,12 +879,35 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('"SLA / Cost Drift"', task_management_text)
         self.assertIn('("Query Detail"', task_management_text)
         self.assertNotIn(".metric(", task_management_text)
-        self.assertIn("Service Posture", dba_control_room.DBA_CONTROL_ROOM_PANES)
-        self.assertEqual(dba_control_room.DBA_CONTROL_ROOM_PANE_LABELS["Service Posture"], "Service")
-        self.assertIn("Admin Tools", dba_control_room.DBA_CONTROL_ROOM_PANES)
-        self.assertEqual(dba_control_room.DBA_CONTROL_ROOM_PANE_LABELS["Admin Tools"], "Admin")
-        self.assertIn("Morning Brief", dba_control_room.DBA_CONTROL_ROOM_PANES)
-        self.assertEqual(dba_control_room.DBA_CONTROL_ROOM_PANE_LABELS["Morning Brief"], "Morning")
+        self.assertEqual(
+            dba_control_room.DBA_CONTROL_ROOM_PANES,
+            (
+                "Morning Cockpit",
+                "Failure Triage",
+                "Cost Watch",
+                "Performance Watch",
+                "Change Watch",
+                "Action Queue",
+                "Control Room Admin / Advanced",
+            ),
+        )
+        self.assertEqual(len(dba_control_room.DBA_CONTROL_ROOM_PANES), len(set(dba_control_room.DBA_CONTROL_ROOM_PANES)))
+        self.assertEqual(dba_control_room.DBA_CONTROL_ROOM_PANE_LABELS["Morning Cockpit"], "Morning")
+        self.assertEqual(dba_control_room.DBA_CONTROL_ROOM_PANE_LABELS["Failure Triage"], "Failures")
+        self.assertEqual(dba_control_room.DBA_CONTROL_ROOM_PANE_LABELS["Cost Watch"], "Cost")
+        self.assertEqual(dba_control_room.DBA_CONTROL_ROOM_PANE_LABELS["Performance Watch"], "Performance")
+        self.assertEqual(dba_control_room.DBA_CONTROL_ROOM_PANE_LABELS["Change Watch"], "Changes")
+        self.assertEqual(dba_control_room.DBA_CONTROL_ROOM_PANE_LABELS["Action Queue"], "Actions")
+        self.assertEqual(dba_control_room.DBA_CONTROL_ROOM_PANE_LABELS["Control Room Admin / Advanced"], "Advanced")
+        self.assertEqual(dba_control_room.normalize_dba_control_room_pane("Fast Watch"), "Morning Cockpit")
+        self.assertEqual(dba_control_room.normalize_dba_control_room_pane("Morning Brief"), "Morning Cockpit")
+        self.assertEqual(dba_control_room.normalize_dba_control_room_pane("Operations Detail"), "Action Queue")
+        self.assertEqual(dba_control_room.normalize_dba_control_room_pane("Triage"), "Failure Triage")
+        self.assertEqual(dba_control_room.normalize_dba_control_room_pane("Service Posture"), "Control Room Admin / Advanced")
+        self.assertEqual(dba_control_room.normalize_dba_control_room_pane("Admin Tools"), "Control Room Admin / Advanced")
+        self.assertNotIn("Service Posture", dba_control_room.DBA_CONTROL_ROOM_PANES)
+        self.assertNotIn("Admin Tools", dba_control_room.DBA_CONTROL_ROOM_PANES)
+        self.assertNotIn("Operations Detail", dba_control_room.DBA_CONTROL_ROOM_PANES)
         self.assertEqual(
             cost_contract.WORKFLOWS,
             (

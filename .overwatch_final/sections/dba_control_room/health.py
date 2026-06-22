@@ -11,6 +11,7 @@ from utils.primitives import (
 )
 from .types import (
     DBA_CONTROL_SCOPE_FILTER_KEYS,
+    ACTION_QUEUE_WORKFLOW,
     _empty_df,
     _frame_or_empty,
     _gate_state_from_counts,
@@ -553,7 +554,7 @@ def _evidence_surface_route(surface: object) -> tuple[str, str, str]:
     if "schema" in text or "migration" in text:
         return (
             "DBA Control Room",
-            "Operations Detail",
+            ACTION_QUEUE_WORKFLOW,
             "object status and required monitoring objects",
         )
     if "task" in text or "procedure" in text:
@@ -978,8 +979,8 @@ def _render_release_readiness_gate(
             _jump("Security Monitoring", workflow="Object and access changes")
             st.rerun()
     with r3:
-        if st.button("Open Operations Detail", key="dba_release_gate_open_operations", width="stretch"):
-            st.session_state["dba_control_room_active_view"] = "Operations Detail"
+        if st.button("Open Action Queue", key="dba_release_gate_open_operations", width="stretch"):
+            st.session_state["dba_control_room_active_view"] = ACTION_QUEUE_WORKFLOW
             st.rerun()
     return summary, gate, timeline
 

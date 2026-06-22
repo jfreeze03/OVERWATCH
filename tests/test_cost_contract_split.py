@@ -56,6 +56,7 @@ class CostContractSplitTests(unittest.TestCase):
         alert_facade_import = "utils" + ".alerts"
         modules = (
             APP_ROOT / "sections" / "cost_contract.py",
+            APP_ROOT / "sections" / "cost_contract_advisor.py",
             APP_ROOT / "sections" / "cost_contract_contracts.py",
             APP_ROOT / "sections" / "cost_contract_dataframes.py",
             APP_ROOT / "sections" / "cost_contract_helpers.py",

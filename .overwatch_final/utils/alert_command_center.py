@@ -19,6 +19,7 @@ from .alert_native_catalog import (
     build_alert_remediation_policy_ddl,
     build_alert_threshold_seed_rows,
 )
+from .alert_status import normalize_command_center_alert_status as normalize_alert_status
 from .query import safe_identifier, sql_literal
 
 
@@ -32,23 +33,6 @@ def alert_triage_view_fqn(
     if quoted:
         return f"{safe_identifier(db)}.{safe_identifier(schema)}.{safe_identifier(view)}"
     return f"{db}.{schema}.{view}"
-
-
-def normalize_alert_status(value: object) -> str:
-    status = str(value or "New").strip().replace("_", " ").title()
-    if status.upper() in {"IN PROGRESS", "IN-PROGRESS"}:
-        return "In Progress"
-    if status.upper() == "EMAIL READY":
-        return "Email Ready"
-    if status.upper() == "EMAIL QUEUED":
-        return "Email Queued"
-    if status.upper() in {"FIXED", "RESOLVED"}:
-        return "Fixed"
-    if status.upper() in {"IGNORED", "SUPPRESSED"}:
-        return "Ignored"
-    if status.upper() == "ACKNOWLEDGED":
-        return "Acknowledged"
-    return "New"
 
 
 ALERT_COMMAND_CENTER_TABLES = (

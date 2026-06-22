@@ -32,27 +32,15 @@ from .company_filter import (
     get_environment_db_patterns,
 )
 from .query import run_query, safe_identifier, sql_literal
-
-
-ALERT_OPEN_STATUSES = {
-    "NEW",
-    "OPEN",
-    "ACTIVE",
-    "ACKNOWLEDGED",
-    "IN PROGRESS",
-    "IN_PROGRESS",
-    "EMAIL_READY",
-    "EMAIL_QUEUED",
-    "PENDING",
-}
-ALERT_CLOSED_STATUSES = {"FIXED", "IGNORED", "RESOLVED"}
-ALERT_STATUS_CHOICES = ("Acknowledged", "In Progress", "Fixed", "Ignored")
-ALERT_SLA_HOURS = {
-    "Critical": 4,
-    "High": 8,
-    "Medium": 24,
-    "Low": 72,
-}
+from .alert_status import (
+    ALERT_CLOSED_STATUSES,
+    ALERT_OPEN_STATUSES,
+    ALERT_SLA_HOURS,
+    ALERT_STATUS_CHOICES,
+    alert_severity_rank,
+    normalize_alert_severity,
+    normalize_alert_status,
+)
 
 ISSUE_COLUMNS = [
     "ISSUE_SOURCE",
@@ -106,44 +94,6 @@ def alert_environment_values(environment: str | None) -> list[str]:
     if env == "DEV_ALL":
         values.extend(["ALL DEV/SIT", "OTHER ALFA NON-PROD"])
     return list(dict.fromkeys(value for value in values if value))
-
-
-def normalize_alert_severity(value: Any) -> str:
-    severity = str(value or "Medium").strip().title()
-    if severity.upper() == "CRITICAL":
-        return "Critical"
-    if severity.upper() == "HIGH":
-        return "High"
-    if severity.upper() == "LOW":
-        return "Low"
-    return "Medium"
-
-
-def normalize_alert_status(value: Any) -> str:
-    status = str(value or "New").strip().replace("_", " ").title()
-    if status.upper() in {"CONFIG REQUIRED", "CONFIG_REQUIRED"}:
-        return "Config Required"
-    if status.upper() in {"EMAIL READY", "EMAIL_READY"}:
-        return "Email Ready"
-    if status.upper() in {"EMAIL QUEUED", "EMAIL_QUEUED"}:
-        return "Email Queued"
-    if status.upper() in {"IN PROGRESS", "IN_PROGRESS"}:
-        return "In Progress"
-    if status.upper() in {"RESOLVED", "FIXED"}:
-        return "Fixed"
-    if status.upper() == "IGNORED":
-        return "Ignored"
-    if not status:
-        return "New"
-    return status
-
-
-def alert_severity_rank(value: Any) -> int:
-    return {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}.get(
-        normalize_alert_severity(value),
-        4,
-    )
-
 
 
 def _nonclosed_alerts(df: pd.DataFrame) -> pd.DataFrame:

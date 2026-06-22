@@ -24,6 +24,7 @@ from config import (
 )
 
 from .compatibility import filter_existing_columns
+from .alert_status import normalize_alert_severity as _normalize_alert_severity
 from .query import format_snowflake_error, run_query, safe_identifier
 from .sql_safe import sql_literal
 
@@ -67,17 +68,6 @@ def _row_value(row: Any, *names: str, default: str = "") -> str:
         if text:
             return text
     return default
-
-
-def _normalize_alert_severity(value: Any) -> str:
-    severity = str(value or "Medium").strip().title()
-    if severity.upper() == "CRITICAL":
-        return "Critical"
-    if severity.upper() == "HIGH":
-        return "High"
-    if severity.upper() == "LOW":
-        return "Low"
-    return "Medium"
 
 
 def _numeric_alert_ids(df_or_ids: Any) -> list[int]:

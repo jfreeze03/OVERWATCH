@@ -17,15 +17,12 @@ from .compatibility import filter_existing_columns
 from .monitor_context import resolve_owner_context
 from .query import safe_identifier
 from .sql_safe import sql_literal
-
-
-ALERT_CLOSED_STATUSES = {"FIXED", "IGNORED", "RESOLVED"}
-ALERT_SLA_HOURS = {
-    "Critical": 4,
-    "High": 8,
-    "Medium": 24,
-    "Low": 72,
-}
+from .alert_status import (
+    ALERT_CLOSED_STATUSES,
+    ALERT_SLA_HOURS,
+    normalize_alert_severity as _normalize_alert_severity,
+    normalize_alert_status as _normalize_alert_status,
+)
 
 
 def _alert_table_fqn(
@@ -38,36 +35,6 @@ def _alert_table_fqn(
     if quoted:
         return f"{safe_identifier(db)}.{safe_identifier(schema)}.{safe_identifier(table)}"
     return f"{db}.{schema}.{table}"
-
-
-def _normalize_alert_severity(value: Any) -> str:
-    severity = str(value or "Medium").strip().title()
-    if severity.upper() == "CRITICAL":
-        return "Critical"
-    if severity.upper() == "HIGH":
-        return "High"
-    if severity.upper() == "LOW":
-        return "Low"
-    return "Medium"
-
-
-def _normalize_alert_status(value: Any) -> str:
-    status = str(value or "New").strip().replace("_", " ").title()
-    if status.upper() in {"CONFIG REQUIRED", "CONFIG_REQUIRED"}:
-        return "Config Required"
-    if status.upper() in {"EMAIL READY", "EMAIL_READY"}:
-        return "Email Ready"
-    if status.upper() in {"EMAIL QUEUED", "EMAIL_QUEUED"}:
-        return "Email Queued"
-    if status.upper() in {"IN PROGRESS", "IN_PROGRESS"}:
-        return "In Progress"
-    if status.upper() in {"RESOLVED", "FIXED"}:
-        return "Fixed"
-    if status.upper() == "IGNORED":
-        return "Ignored"
-    if not status:
-        return "New"
-    return status
 
 
 def _row_value(row: Any, *names: str, default: str = "") -> str:

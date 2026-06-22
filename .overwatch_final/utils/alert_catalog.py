@@ -7,28 +7,16 @@ focused sibling modules.
 """
 from __future__ import annotations
 
-from typing import Any
-
 import pandas as pd
 
 from config import ALERT_DB, ALERT_SCHEMA
 
+from .alert_status import normalize_alert_severity
 from .query import run_query, safe_identifier
 from .sql_safe import sql_literal
 
 
 ALERT_RULE_AUDIT_TABLE = "OVERWATCH_ALERT_RULE_AUDIT"
-
-
-def normalize_alert_severity(value: Any) -> str:
-    severity = str(value or "Medium").strip().title()
-    if severity.upper() == "CRITICAL":
-        return "Critical"
-    if severity.upper() == "HIGH":
-        return "High"
-    if severity.upper() == "LOW":
-        return "Low"
-    return "Medium"
 
 
 DEFAULT_ALERT_RULES = [

@@ -192,28 +192,27 @@ class Production95ContractsTests(unittest.TestCase):
 
     def test_executive_landing_is_kpi_first_not_shell_brief(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
-        executive_text = (APP_ROOT / "sections" / "executive_landing.py").read_text(encoding="utf-8")
+        command_text = (APP_ROOT / "sections" / "command_center.py").read_text(encoding="utf-8")
         self.assertNotIn("Top Priority Brief", app_text)
         self.assertNotIn("priority_brief_slot", app_text)
         self.assertIn(
-            'SectionDefinition("MONITORING CORE", "briefcase", "Executive Landing", "sections.executive_landing")',
+            'SectionDefinition("OPERATE", "target", "COMMAND CENTER", "sections.command_center")',
             (APP_ROOT / "config.py").read_text(encoding="utf-8"),
         )
         self.assertFalse((APP_ROOT / "sections" / "executive_landing_shell.py").exists())
-        self.assertIn("def _load_executive_observability", executive_text)
-        self.assertIn("_executive_landing_observability_autoload_scope", executive_text)
-        self.assertIn("Snowflake Observability Wall", executive_text)
-        self.assertNotIn("Executive Summary Signals", executive_text)
-        self.assertIn("Executive decisions to make first", executive_text)
-        self.assertNotIn("Refresh Board", executive_text)
-        self.assertNotIn("Executive Command Wall", executive_text)
-        self.assertNotIn("Setup Readiness", executive_text)
-        self.assertNotIn("Platform Operating Score", executive_text)
-        self.assertNotIn("Platform Score Basis", executive_text)
-        self.assertNotIn("Platform Score Drivers", executive_text)
-        self.assertNotIn("render_native_readiness_board", executive_text)
-        self.assertNotIn("from sections.native_readiness import render_native_readiness_board", executive_text)
-        self.assertNotIn("from sections.native_readiness", executive_text)
+        self.assertIn("OVERWATCH COMMAND CENTER", command_text)
+        self.assertIn("load_operator_snapshot", command_text)
+        self.assertIn("Overall Health", command_text)
+        self.assertIn("Top Recommendations", command_text)
+        self.assertNotIn("Executive Summary Signals", command_text)
+        self.assertNotIn("Refresh Board", command_text)
+        self.assertNotIn("Executive Command Wall", command_text)
+        self.assertNotIn("Setup Readiness", command_text)
+        self.assertNotIn("Platform Operating Score", command_text)
+        self.assertNotIn("Platform Score Basis", command_text)
+        self.assertNotIn("Platform Score Drivers", command_text)
+        self.assertNotIn("render_native_readiness_board", command_text)
+        self.assertNotIn("from sections.native_readiness", command_text)
 
     def test_final_pass_shells_surface_operating_contracts_before_drilldown(self):
         config_text = (APP_ROOT / "config.py").read_text(encoding="utf-8")
@@ -223,9 +222,9 @@ class Production95ContractsTests(unittest.TestCase):
         native_monitoring = (APP_ROOT / "sections" / "native_monitoring.py").read_text(encoding="utf-8")
         refresh_doc = (ROOT / "docs" / "REFRESH_ARCHITECTURE.md").read_text(encoding="utf-8")
 
-        self.assertIn('"Cost & Contract", "sections.cost_contract"', config_text)
-        self.assertIn('"Alert Center", "sections.alert_center"', config_text)
-        self.assertIn('"Workload Operations", "sections.workload_operations"', config_text)
+        self.assertIn('"COMMAND CENTER", "sections.command_center"', config_text)
+        self.assertIn('"INCIDENTS", "sections.incidents"', config_text)
+        self.assertIn('"OPTIMIZATION", "sections.optimization"', config_text)
         self.assertFalse((APP_ROOT / "sections" / "cost_contract_shell.py").exists())
         self.assertFalse((APP_ROOT / "sections" / "alert_center_shell.py").exists())
         self.assertFalse((APP_ROOT / "sections" / "workload_operations_shell.py").exists())
@@ -242,7 +241,7 @@ class Production95ContractsTests(unittest.TestCase):
 
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("Raw", readme)
-        self.assertIn("`ACCOUNT_USAGE` scans are never part of Executive Landing first paint", readme)
+        self.assertIn("`ACCOUNT_USAGE` scans are never part of Command Center first paint", readme)
         self.assertIn("Executive Landing is not allowed to start raw `SNOWFLAKE.ACCOUNT_USAGE` scans", refresh_doc)
 
     def test_native_snowflake_contracts_cover_coco_kiro_gaps(self):

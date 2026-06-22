@@ -52,6 +52,8 @@ def refresh_current_role_for_access(connection_available: bool) -> str:
         return role
     if role and get_state(CURRENT_ROLE_SOURCE) == "session":
         return role
+    if role and get_state(CURRENT_ROLE_SOURCE) == "secrets":
+        return role
     try:
         get_session()
     except StopException:
@@ -68,7 +70,7 @@ def cached_snowflake_available(default: bool = False) -> bool:
 
 def admin_access_is_allowed(role: str, connection_available: bool) -> bool:
     """Allow local no-connection shells, but gate Snowflake sessions to admin roles."""
-    if not role and not connection_available:
+    if not connection_available:
         return True
     return current_role_allows_app_access(role)
 
@@ -79,14 +81,15 @@ def probe_snowflake_available(force: bool = False) -> bool:
         return cached_snowflake_available()
 
     available = False
-    try:
-        connections = st.secrets.get("connections", {})
-        snowflake_cfg = connections.get("snowflake", {}) if connections else {}
-        available = bool(snowflake_cfg)
-    except Exception:
-        available = False
-
-    if not available:
+    if force:
+        try:
+            get_session()
+            available = True
+        except StopException:
+            available = False
+        except Exception:
+            available = False
+    else:
         try:
             from snowflake.snowpark.context import get_active_session
 
@@ -95,6 +98,10 @@ def probe_snowflake_available(force: bool = False) -> bool:
         except Exception:
             available = False
 
-    set_state(CONNECTION_AVAILABLE, available)
-    set_state(CONNECTION_UNAVAILABLE, not available)
+    if available:
+        set_state(CONNECTION_AVAILABLE, True)
+        set_state(CONNECTION_UNAVAILABLE, False)
+    elif force:
+        set_state(CONNECTION_AVAILABLE, False)
+        set_state(CONNECTION_UNAVAILABLE, True)
     return available

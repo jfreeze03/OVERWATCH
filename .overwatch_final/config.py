@@ -287,16 +287,14 @@ class SectionDefinition:
         return self.title
 
 
-# Production navigation exposes only the monitoring surfaces that should be
-# first-class in front of DBAs and leadership. Legacy redirect aliases below
-# keep deep links working without keeping weak standalone pages alive.
+# Production navigation exposes only operator questions. Legacy redirect aliases
+# below keep deep links working while hiding engineering-heavy workbench pages
+# from the primary app experience.
 SECTION_DEFINITIONS = (
-    SectionDefinition("MONITORING CORE", "briefcase", "Executive Landing", "sections.executive_landing"),
-    SectionDefinition("MONITORING CORE", "target", "DBA Control Room", "sections.dba_control_room"),
-    SectionDefinition("MONITORING CORE", "bell", "Alert Center", "sections.alert_center"),
-    SectionDefinition("FINANCIAL CONTROL", "cost", "Cost & Contract", "sections.cost_contract"),
-    SectionDefinition("OPERATIONS", "work", "Workload Operations", "sections.workload_operations"),
-    SectionDefinition("SECURITY", "security", "Security Monitoring", "sections.security_posture"),
+    SectionDefinition("OPERATE", "target", "COMMAND CENTER", "sections.command_center"),
+    SectionDefinition("OPERATE", "bell", "INCIDENTS", "sections.incidents"),
+    SectionDefinition("OPERATE", "cost", "OPTIMIZATION", "sections.optimization"),
+    SectionDefinition("ADMIN", "settings", "SETTINGS", "sections.operator_settings"),
 )
 
 PRIMARY_NAV_HIDDEN_SECTIONS = frozenset()
@@ -312,38 +310,53 @@ PRIMARY_SECTIONS = [section for section in ALL_SECTIONS if section not in PRIMAR
 SECTION_MODULES = {_section.label: _section.module for _section in SECTION_DEFINITIONS}
 _CANONICAL_SECTION_BY_TITLE = {_section.title: _section.label for _section in SECTION_DEFINITIONS}
 SECTION_REDIRECTS = {
-    "Executive Briefing": _CANONICAL_SECTION_BY_TITLE["Executive Landing"],
-    "Query Workbench": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
-    "Live Monitor": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
-    "Detailed Diagnosis": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
-    "Query Analysis": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
-    "Query Search & History": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
-    "Task Management": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
-    "Pipeline Health": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
-    "Stored Proc Tracker": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
-    "Cost Center": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
-    "Credit Contract": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
-    "Recommendations & Anomalies": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
-    "AI & Cortex Monitor": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
-    "SPCS Tracker": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
-    "Usage Overview": _CANONICAL_SECTION_BY_TITLE["DBA Control Room"],
-    "Service Health": _CANONICAL_SECTION_BY_TITLE["DBA Control Room"],
-    "Alerts": _CANONICAL_SECTION_BY_TITLE["Alert Center"],
-    "Alert History": _CANONICAL_SECTION_BY_TITLE["Alert Center"],
-    "Alert Configuration": _CANONICAL_SECTION_BY_TITLE["Alert Center"],
-    "Adoption Analytics": _CANONICAL_SECTION_BY_TITLE["Executive Landing"],
-    "Storage Monitor": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
-    "Security Posture": _CANONICAL_SECTION_BY_TITLE["Security Monitoring"],
-    "Security & Access": _CANONICAL_SECTION_BY_TITLE["Security Monitoring"],
-    "Data Sharing": _CANONICAL_SECTION_BY_TITLE["Security Monitoring"],
-    "Command Center": _CANONICAL_SECTION_BY_TITLE["DBA Control Room"],
-    "Warehouse Health": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
-    "Optimization": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
+    "Executive Landing": _CANONICAL_SECTION_BY_TITLE["COMMAND CENTER"],
+    "Executive Briefing": _CANONICAL_SECTION_BY_TITLE["COMMAND CENTER"],
+    "DBA Control Room": _CANONICAL_SECTION_BY_TITLE["COMMAND CENTER"],
+    "Account Health": _CANONICAL_SECTION_BY_TITLE["COMMAND CENTER"],
+    "Usage Overview": _CANONICAL_SECTION_BY_TITLE["COMMAND CENTER"],
+    "Service Health": _CANONICAL_SECTION_BY_TITLE["COMMAND CENTER"],
+    "Command Center": _CANONICAL_SECTION_BY_TITLE["COMMAND CENTER"],
+    "Fast Watch": _CANONICAL_SECTION_BY_TITLE["COMMAND CENTER"],
+    "Morning Brief": _CANONICAL_SECTION_BY_TITLE["COMMAND CENTER"],
+    "Alert Center": _CANONICAL_SECTION_BY_TITLE["INCIDENTS"],
+    "Alerts": _CANONICAL_SECTION_BY_TITLE["INCIDENTS"],
+    "Alert History": _CANONICAL_SECTION_BY_TITLE["INCIDENTS"],
+    "Workload Operations": _CANONICAL_SECTION_BY_TITLE["INCIDENTS"],
+    "Query Workbench": _CANONICAL_SECTION_BY_TITLE["INCIDENTS"],
+    "Live Monitor": _CANONICAL_SECTION_BY_TITLE["INCIDENTS"],
+    "Detailed Diagnosis": _CANONICAL_SECTION_BY_TITLE["INCIDENTS"],
+    "Query Analysis": _CANONICAL_SECTION_BY_TITLE["INCIDENTS"],
+    "Query Search & History": _CANONICAL_SECTION_BY_TITLE["INCIDENTS"],
+    "Task Management": _CANONICAL_SECTION_BY_TITLE["INCIDENTS"],
+    "Pipeline Health": _CANONICAL_SECTION_BY_TITLE["INCIDENTS"],
+    "Stored Proc Tracker": _CANONICAL_SECTION_BY_TITLE["INCIDENTS"],
+    "Security Monitoring": _CANONICAL_SECTION_BY_TITLE["INCIDENTS"],
+    "Security Posture": _CANONICAL_SECTION_BY_TITLE["INCIDENTS"],
+    "Security & Access": _CANONICAL_SECTION_BY_TITLE["INCIDENTS"],
+    "Data Sharing": _CANONICAL_SECTION_BY_TITLE["INCIDENTS"],
+    "Change Drift": _CANONICAL_SECTION_BY_TITLE["INCIDENTS"],
+    "Object Change Monitor": _CANONICAL_SECTION_BY_TITLE["INCIDENTS"],
+    "Cost & Contract": _CANONICAL_SECTION_BY_TITLE["OPTIMIZATION"],
+    "Cost Center": _CANONICAL_SECTION_BY_TITLE["OPTIMIZATION"],
+    "Credit Contract": _CANONICAL_SECTION_BY_TITLE["OPTIMIZATION"],
+    "Recommendations & Anomalies": _CANONICAL_SECTION_BY_TITLE["OPTIMIZATION"],
+    "AI & Cortex Monitor": _CANONICAL_SECTION_BY_TITLE["OPTIMIZATION"],
+    "Storage Monitor": _CANONICAL_SECTION_BY_TITLE["OPTIMIZATION"],
+    "Warehouse Health": _CANONICAL_SECTION_BY_TITLE["OPTIMIZATION"],
+    "Optimization": _CANONICAL_SECTION_BY_TITLE["OPTIMIZATION"],
+    "SPCS Tracker": _CANONICAL_SECTION_BY_TITLE["SETTINGS"],
+    "Alert Configuration": _CANONICAL_SECTION_BY_TITLE["SETTINGS"],
+    "Adoption Analytics": _CANONICAL_SECTION_BY_TITLE["SETTINGS"],
+    "Platform Topology": _CANONICAL_SECTION_BY_TITLE["SETTINGS"],
+    "Native Monitoring": _CANONICAL_SECTION_BY_TITLE["SETTINGS"],
+    "Schema Compare": _CANONICAL_SECTION_BY_TITLE["SETTINGS"],
+    "Data Compare": _CANONICAL_SECTION_BY_TITLE["SETTINGS"],
 }
 RETIRED_SECTION_REDIRECTS = {
-    "Account Health": _CANONICAL_SECTION_BY_TITLE["DBA Control Room"],
-    "Warehouse Health": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
-    "Security Posture": _CANONICAL_SECTION_BY_TITLE["Security Monitoring"],
+    "Account Health": _CANONICAL_SECTION_BY_TITLE["COMMAND CENTER"],
+    "Warehouse Health": _CANONICAL_SECTION_BY_TITLE["OPTIMIZATION"],
+    "Security Posture": _CANONICAL_SECTION_BY_TITLE["INCIDENTS"],
 }
 SECTION_ROUTE_STATE = {
     "Account Health": {
@@ -363,6 +376,15 @@ SECTION_ROUTE_STATE = {
     },
     "Security Posture": {
         "security_posture_view": "Access posture",
+    },
+    "Alert Configuration": {
+        "alert_center_active_view": "Delivery & Automation",
+    },
+    "Schema Compare": {
+        "workload_operations_workflow": "Schema & data compare",
+    },
+    "Data Compare": {
+        "workload_operations_workflow": "Schema & data compare",
     },
 }
 SECTION_BY_TITLE = dict(_CANONICAL_SECTION_BY_TITLE)

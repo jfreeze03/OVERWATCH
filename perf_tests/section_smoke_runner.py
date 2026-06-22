@@ -20,13 +20,18 @@ import uuid
 
 DEFAULT_OUTPUT_DIR = pathlib.Path(__file__).resolve().parent / "results"
 DEFAULT_SECTIONS = [
-    "Executive Landing",
-    "DBA Control Room",
-    "Alert Center",
-    "Workload Operations",
-    "Cost & Contract",
-    "Security Monitoring",
+    "COMMAND CENTER",
+    "INCIDENTS",
+    "OPTIMIZATION",
+    "SETTINGS",
 ]
+
+SECTION_READY_TEXT = {
+    "COMMAND CENTER": "OVERWATCH COMMAND CENTER",
+    "INCIDENTS": "INCIDENTS",
+    "OPTIMIZATION": "OPTIMIZATION",
+    "SETTINGS": "SETTINGS",
+}
 
 
 @dataclasses.dataclass
@@ -56,8 +61,8 @@ def load_playwright():
 
 
 def wait_for_section(page, section: str, timeout_ms: int) -> None:
-    title = page.locator(".ow-section-title").filter(has_text=section).first
-    title.wait_for(state="visible", timeout=timeout_ms)
+    ready_text = SECTION_READY_TEXT.get(section, section)
+    page.get_by_text(ready_text, exact=True).first.wait_for(state="visible", timeout=timeout_ms)
     try:
         page.locator(".ow-section-transition").wait_for(state="detached", timeout=timeout_ms)
     except Exception:
@@ -66,7 +71,7 @@ def wait_for_section(page, section: str, timeout_ms: int) -> None:
 
 def wait_for_app_ready(page, timeout_ms: int) -> None:
     """Wait until the Streamlit shell has finished initial header hydration."""
-    page.locator(".ow-section-title").first.wait_for(state="visible", timeout=timeout_ms)
+    page.get_by_text("OVERWATCH COMMAND CENTER", exact=True).first.wait_for(state="visible", timeout=timeout_ms)
     try:
         page.locator(".ow-section-transition").wait_for(state="detached", timeout=timeout_ms)
     except Exception:

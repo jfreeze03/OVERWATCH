@@ -58,16 +58,20 @@ $env:OVERWATCH_PERF_RUN_ID="PERF_TEST_LOCAL_001"
 .\.venv\Scripts\python.exe .\perf_tests\live_concurrent_runner.py --url http://localhost:8501/ --users 20 --iterations 1 --ramp-seconds 10
 ```
 
-The live concurrent runner clicks only safe read/load actions by default:
+The live concurrent runner clicks the four primary areas by default:
 
-- Alert Center: `Load Issue Inbox`
-- Cost & Contract: `Refresh Cost`
+- COMMAND CENTER
+- INCIDENTS
+- OPTIMIZATION
+- SETTINGS
+
+It does not click load/detail actions by default. Those are intentionally
+on-demand in the simplified UI and should be tested with targeted scripts.
 
 The default profile intentionally avoids deep workflow buttons that may be
-behind a selected subview or collapsed investigation path, such as Account
-Health refresh, Warehouse Capacity Brief, or Change & Drift Brief. Use targeted
-section smoke tests for those paths so a broad concurrency run does not report
-stale skipped controls.
+behind Settings or collapsed investigation paths. Use targeted section smoke
+tests for those paths so a broad concurrency run does not report stale skipped
+controls.
 
 It does not click grant, save, queue, email-send, retry, suspend/resume, or
 warehouse setting mutation controls. Use `--no-load-buttons` for navigation-only

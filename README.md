@@ -1,10 +1,9 @@
 # OVERWATCH
 
 OVERWATCH is an enterprise Snowflake Command Center and production Streamlit
-monitor for Snowflake DBA operations. It brings executive observability, DBA
-triage, alerts, cost monitoring, workload operations, security telemetry,
-governance readiness, ownership routing, and value verification into one
-DBA-owned workflow.
+monitor for Snowflake DBA operations. It is now organized around five operator
+questions: what is broken, what is getting expensive, what changed, who owns it,
+and what should happen next.
 
 The app is intentionally mart-first. Snowflake account telemetry is collected
 into compact OVERWATCH facts by scheduled tasks, and the Streamlit app reads
@@ -74,7 +73,7 @@ views are avoided for the main monitoring app because
 the app needs multi-source, windowed, exception ranking logic with explicit
 error handling and audit logging.
 
-The Executive Landing page is the one deliberate first-paint aggregate:
+The `COMMAND CENTER` page is the one deliberate first-paint aggregate:
 `MART_EXECUTIVE_OBSERVABILITY`. It is refreshed after the hourly load, Cortex
 load, Control Room, cost monitoring, and executive refresh tasks so the first screen
 can show spend, Cortex cost, runtime, queueing, spill, failures, alerts,
@@ -82,19 +81,20 @@ actions, storage, ranked cost drivers, queries by database, execution status,
 and warehouse pressure from one compact source. The app renders the monitoring
 summary immediately and reuses cached/session values; an explicit Refresh
 hydrates the mart when Snowflake access is available. Raw
-`ACCOUNT_USAGE` scans are never part of Executive Landing first paint.
+`ACCOUNT_USAGE` scans are never part of Command Center first paint.
 
-Every primary navigation click now follows the same production UX pattern:
-direct entry into the useful monitoring surface with the most important facts
-already visible. Workflow buttons are secondary drill-through actions, not a
-required step before the DBA sees what is risky, expensive, late, or broken.
+Primary navigation is intentionally limited to four areas:
 
-The fast monitoring surfaces share `MART_EXECUTIVE_OBSERVABILITY` as the tiny
-summary backbone. Executive Landing uses it directly for the executive
-summary; DBA Control Room, Alert Center, Workload Operations, and Cost &
-Contract reuse the same cached/session board for spend, Cortex, queue, spill,
-failure, alert, action, and freshness signals before their deeper
-section-specific marts or detail workspaces are opened.
+| Area | Primary job |
+|---|---|
+| `COMMAND CENTER` | No-scroll first screen for overall health, active incidents, cost risk, performance risk, security risk, failed pipelines, top recommendations, and freshness. |
+| `INCIDENTS` | One simplified queue with Critical/Warning/Info severity, category, company, owner or owner gap, impact, recommended action, and details. |
+| `OPTIMIZATION` | Cost, warehouse, storage, Cortex, and recommendation workspace. |
+| `SETTINGS` | Alert setup, suppression windows, schema/data compare, role readiness, mart validation, refresh diagnostics, app observability, and legacy deep-dive tools. |
+
+Legacy sections still exist as compatibility modules, but they are no longer
+primary navigation. They should be loaded only from `SETTINGS` or explicit
+details when a DBA needs advanced diagnostics.
 
 The same decision is documented in `docs/REFRESH_ARCHITECTURE.md` and checked by
 `snowflake/OVERWATCH_MART_VALIDATION.sql`, which defines first-paint sources,
@@ -125,6 +125,7 @@ Supporting operations documents:
 - `docs/OVERWATCH_RECOVERY_RUNBOOK.md` - operator recovery checklist.
 - `docs/MART_RESET_RUNBOOK.md` - drop/setup/refresh sequence for mart rebuilds.
 - `docs/MART_OBJECT_REVIEW.md` - current mart object inventory and pruning guardrails.
+- `docs/OVERWATCH_MART_SIMPLIFICATION_PLAN.md` - target slim mart model and safe retirement sequence.
 - `docs/IMPLEMENTATION_NOTES.md` - documented boundaries for new implementation changes.
 - `CHANGELOG.md` - release-level change history.
 
@@ -134,25 +135,23 @@ organization usage rollups. Those lanes are setup contracts, not hidden
 live scans: unavailable privileges should produce friendly setup/fallback
 messages while the page still renders instantly.
 
-## Current Production Sections
+## Current Production Areas
 
-| Group | Sections | Primary job |
-|---|---|---|
-| Monitoring Core | Executive Landing, DBA Control Room, Alert Center | Leadership summary, morning triage, incident queue, alert routing, and action closure. |
-| Cost Monitoring | Cost & Contract | Spend explanation, warehouse/user/role attribution, Cortex spend, contract pacing, storage, optimization, and action telemetry. |
-| Operations | Workload Operations | Query/task/procedure status, contention, pipeline telemetry, SLA risk, schema/data compare, and runbooks. |
-| Security | Security Monitoring | MFA/login/grant posture, object changes, risky shares, access telemetry, rollback context, schema compare, and controlled DBA actions. |
+| Area | Primary job |
+|---|---|
+| COMMAND CENTER | Overall health, active incidents, risk, failed pipelines, recommendations, and freshness. |
+| INCIDENTS | Broken, changed, owner, impact, and next action. |
+| OPTIMIZATION | Expensive, inefficient, risky spend, and savings actions. |
+| SETTINGS | Admin configuration, diagnostics, validation, and advanced tools. |
 
 ## Daily Operating Model
 
-1. Open Executive Landing for the observability health, cost, alert, and workload summary.
+1. Open `COMMAND CENTER` first.
 2. Use the topbar filters for company, environment, date window, warehouse, and
    user scope.
-3. Open the section that matches the question; each primary section lands directly on useful telemetry or a specialist monitor.
-4. Open DBA Control Room for the morning priority queue and incident handoff.
-5. Route actions through the action queue with severity, telemetry basis,
-   rollback context, and closure status.
-6. Use specialist monitors when the first screen shows a real exception or executive question.
+3. Open `INCIDENTS` when something is broken, changed, ownerless, or needs action.
+4. Open `OPTIMIZATION` when something is expensive or inefficient.
+5. Open `SETTINGS` only for configuration, diagnostics, validation, schema/data compare, or advanced tools.
 
 ## Cost Formula Contract
 

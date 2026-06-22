@@ -119,8 +119,21 @@ class CompanyScopeAndCostTests(unittest.TestCase):
         self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS", trexis_clause)
         self.assertIn("ROLE_SCOPE.\"ROLE\" ILIKE '%TRXS%'", trexis_clause)
         self.assertIn("ROLE_SCOPE.GRANTEE_NAME", trexis_clause)
+        self.assertIn("ROLE_SCOPE.\"ROLE\" NOT ILIKE '%TRXS%'", trexis_clause)
         self.assertIn("NOT EXISTS", alfa_clause)
         self.assertIn("ROLE_SCOPE.\"ROLE\" ILIKE '%TRXS%'", alfa_clause)
+        self.assertIn("ROLE_SCOPE.\"ROLE\" NOT ILIKE '%TRXS%'", alfa_clause)
+
+    def test_mixed_role_admins_stay_in_alfa_user_scope(self):
+        alfa_clause = get_user_company_filter_clause("u.name", company="ALFA").upper()
+        trexis_clause = get_user_company_filter_clause("u.name", company="Trexis").upper()
+
+        self.assertIn("U.NAME NOT ILIKE 'TRXS_%'", alfa_clause)
+        self.assertIn("NOT (EXISTS", alfa_clause)
+        self.assertIn("AND NOT EXISTS", alfa_clause)
+        self.assertIn("ROLE_SCOPE.\"ROLE\" NOT ILIKE '%TRXS%'", alfa_clause)
+        self.assertIn("AND NOT EXISTS", trexis_clause)
+        self.assertIn("ROLE_SCOPE.\"ROLE\" NOT ILIKE '%TRXS%'", trexis_clause)
 
     def test_app_surfaces_use_role_aware_user_scope(self):
         offenders = []
@@ -150,6 +163,16 @@ class CompanyScopeAndCostTests(unittest.TestCase):
         self.assertNotIn("Q.WAREHOUSE_NAME ILIKE 'WH_TRXS_%'", sql)
         self.assertNotIn("DATABASE_NAME ILIKE 'TRXS_%'", sql)
         self.assertNotIn("Q.DATABASE_NAME ILIKE 'TRXS_%'", sql)
+
+    def test_user_fact_marts_treat_mixed_role_admins_as_alfa(self):
+        setup_sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8").upper()
+        split_sql = (ROOT / "snowflake" / "mart_setup" / "05_load_procedures.sql").read_text(encoding="utf-8").upper()
+
+        for sql in (setup_sql, split_sql):
+            self.assertIn("HAS_TRXS_ROLE", sql)
+            self.assertIn("HAS_NON_TRXS_ROLE", sql)
+            self.assertIn("COALESCE(UC.HAS_TRXS_ROLE, 0) = 1", sql)
+            self.assertIn("AND COALESCE(UC.HAS_NON_TRXS_ROLE, 0) = 0", sql)
 
     def test_global_filter_clause_can_avoid_duplicate_scope_predicates(self):
         previous = dict(st.session_state)

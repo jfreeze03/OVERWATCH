@@ -103,6 +103,7 @@ from sections.executive_landing import (  # noqa: E402
     _executive_loaded_advisor_rows,
     _executive_priority_rows,
     _executive_pressure_rows,
+    _render_command_center_summary,
     _summary_from_observability,
     _snapshot_matches_scope,
 )
@@ -738,6 +739,34 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("advisor recommendation", by_area["Warehouse advisor"]["CURRENT_SIGNAL"])
         self.assertIn("analysis signal", by_area["Stored procedure advisor"]["CURRENT_SIGNAL"])
         self.assertEqual(by_area["Warehouse advisor"]["ROUTE"], "Cost & Contract")
+
+    def test_command_center_summary_sort_handles_tiny_integer_counts(self):
+        findings = pd.DataFrame({
+            "INVESTIGATION_TYPE": ["Cost Spike", "Failure / SLA"],
+            "QUESTION_TEXT": ["Why did costs spike?", "Why did this fail?"],
+            "FINDING_COUNT": pd.Series([2, 1], dtype="int8"),
+            "HIGH_RISK_COUNT": pd.Series([1, 0], dtype="int8"),
+            "OWNER_GAP_COUNT": pd.Series([0, 1], dtype="int8"),
+            "EXPECTED_VALUE_USD": [250.0, 10.0],
+            "TOP_ROOT_CAUSE_CANDIDATE": ["Warehouse pressure", "Task failure"],
+            "TOP_EVIDENCE_SUMMARY": ["Spend rose after change.", "Task failed recently."],
+            "TOP_RECOMMENDED_ACTION": ["Review warehouse.", "Review task."],
+            "CONFIDENCE": ["estimated", "fallback"],
+            "RISK_LEVEL": ["High", "Medium"],
+            "LAST_REFRESHED_TS": ["2026-06-22 12:00:00", "2026-06-22 12:00:00"],
+        })
+
+        with (
+            patch("sections.executive_landing.st.markdown"),
+            patch("sections.executive_landing.st.caption"),
+            patch("sections.executive_landing.st.dataframe") as dataframe,
+            patch("sections.executive_landing.render_shell_snapshot"),
+        ):
+            _render_command_center_summary(findings)
+
+        display_frame = dataframe.call_args.args[0]
+        self.assertNotIn("_SORT_VALUE", display_frame.columns)
+        self.assertIn("HIGH_RISK_COUNT", display_frame.columns)
 
     def test_priority_tables_add_cost_companions_for_credit_metrics(self):
         from utils.workflows import add_cost_companion_columns

@@ -37,11 +37,6 @@ _SESSION_TTL_MINUTES = 55
 _QUERY_TAG = "OVERWATCH"
 _QUERY_TAG_MAX_LEN = 250
 
-# Session statement timeout in seconds. This stays under a common 1000s
-# warehouse timeout so OVERWATCH gets cleaner failures for long scans.
-_STMT_TIMEOUT_SECONDS = 840
-
-
 def _perf_run_id() -> str:
     """Return optional release-validation run id for query attribution."""
     try:
@@ -198,16 +193,11 @@ def _make_session():
                 )
                 st.stop()
 
-    try:
-        sess.sql(
-            "ALTER SESSION SET "
-            f"STATEMENT_TIMEOUT_IN_SECONDS = {_STMT_TIMEOUT_SECONDS}, "
-            "TIMEZONE = 'UTC'"
-        ).collect()
-        set_state(ACTIVE_QUERY_TAG, _QUERY_TAG)
-        set_state(ACTIVE_QUERY_TAG_SECTION, "")
-    except Exception:
-        pass
+    # Do not issue ALTER SESSION here. Streamlit-in-Snowflake can run inside a
+    # managed stored-procedure context where ALTER SESSION is rejected; timeout
+    # and timezone policy must be controlled by the Snowflake warehouse/app role.
+    set_state(ACTIVE_QUERY_TAG, _QUERY_TAG)
+    set_state(ACTIVE_QUERY_TAG_SECTION, "")
 
     _capture_current_role(sess)
     return sess

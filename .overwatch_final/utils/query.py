@@ -586,15 +586,17 @@ def _statement_timeout_for_tier(tier: str) -> int:
 
 
 def _apply_statement_timeout(session, tier: str) -> None:
-    """Apply a bounded Snowflake statement timeout for the current query tier."""
+    """Record the intended timeout tier without mutating Snowflake session state.
+
+    Streamlit-in-Snowflake can execute app code in a managed procedure context
+    where ALTER SESSION is rejected. Warehouse/session timeout policy belongs in
+    Snowflake configuration, while OVERWATCH uses read limits, cache tiers, and
+    explicit load gates for in-app guardrails.
+    """
     timeout = _statement_timeout_for_tier(tier)
-    try:
-        if get_state(STATEMENT_TIMEOUT_SECONDS) == timeout:
-            return
-        session.sql(f"ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS = {timeout}").collect()
-        set_state(STATEMENT_TIMEOUT_SECONDS, timeout)
-    except Exception:
-        pass
+    if get_state(STATEMENT_TIMEOUT_SECONDS) == timeout:
+        return
+    set_state(STATEMENT_TIMEOUT_SECONDS, timeout)
 
 
 def _check_query_budget(tier: str, ttl_key: str, query_text: str) -> bool:

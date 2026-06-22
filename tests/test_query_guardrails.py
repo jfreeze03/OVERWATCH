@@ -106,6 +106,31 @@ class QueryGuardrailTests(unittest.TestCase):
         self.assertIs(query._TIER_FN["standard"], query._cached_standard)
         self.assertIs(query._RAISE_TIER_FN["standard"], query._cached_raise_standard)
 
+    def test_statement_timeout_guardrail_does_not_alter_session(self):
+        class DummySession:
+            def __init__(self):
+                self.statements = []
+
+            def sql(self, sql_text):
+                self.statements.append(sql_text)
+                return self
+
+            def collect(self):
+                return []
+
+        session = DummySession()
+        query._apply_statement_timeout(session, "admin")
+
+        self.assertEqual(session.statements, [])
+
+    def test_session_helpers_do_not_issue_alter_session(self):
+        query_text = (APP_ROOT / "utils" / "query.py").read_text(encoding="utf-8").upper()
+        session_text = (APP_ROOT / "utils" / "session.py").read_text(encoding="utf-8").upper()
+
+        self.assertNotIn("ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS", query_text)
+        self.assertNotIn("ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS", session_text)
+        self.assertNotIn("ALTER SESSION SET TIMEZONE", session_text)
+
 
 if __name__ == "__main__":
     unittest.main()

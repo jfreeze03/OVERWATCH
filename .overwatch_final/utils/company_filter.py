@@ -7,7 +7,9 @@
 #   ALFA: ALFA/ADMIN databases, excluding the exact Trexis database allowlist.
 #   Trexis: exact TRXS database families, split into PROD and DEV/SIT.
 # Role/user strategy:
-#   Trexis: TRXS_* users and roles containing TRXS when telemetry exposes them.
+#   Trexis: TRXS_* users and users whose active role grants are TRXS-only.
+#   ALFA: non-TRXS users, including admin users who have both ALFA/admin and
+#   TRXS grants. Row-level query attribution can still use the actual role.
 #   ALL: no filter; get_company_case_expr() labels each row.
 import hashlib
 import re
@@ -286,6 +288,30 @@ def _active_role_membership_sql(user_col: str, role_patterns: list[str]) -> str:
     )
 
 
+def _active_non_matching_role_membership_sql(user_col: str, role_patterns: list[str]) -> str:
+    """Return active role membership that proves a user is not in a role-only scope."""
+    role_exclude = _exclude_all_sql('role_scope."ROLE"', role_patterns)
+    if not role_exclude:
+        return ""
+    return (
+        "EXISTS ("
+        "SELECT 1 FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS role_scope "
+        "WHERE role_scope.DELETED_ON IS NULL "
+        f"AND UPPER(role_scope.GRANTEE_NAME) = UPPER(TO_VARCHAR({user_col})) "
+        f"AND {role_exclude}"
+        ")"
+    )
+
+
+def _active_role_only_membership_sql(user_col: str, role_patterns: list[str]) -> str:
+    """Return users whose active role grants match the scope and have no other active role."""
+    role_match = _active_role_membership_sql(user_col, role_patterns)
+    non_matching_role = _active_non_matching_role_membership_sql(user_col, role_patterns)
+    if not role_match:
+        return ""
+    return f"({role_match}" + (f" AND NOT {non_matching_role}" if non_matching_role else "") + ")"
+
+
 def get_user_company_filter_clause(column: str = "user_name", company: str = None) -> str:
     """Return a user filter using both username and active role membership signals."""
     company = company or get_active_company()
@@ -298,7 +324,7 @@ def get_user_company_filter_clause(column: str = "user_name", company: str = Non
     user_match = _match_any_sql(column, cfg.get("user_patterns", []))
     if user_match:
         candidates.append(f"({column} IS NOT NULL AND {user_match})")
-    role_match = _active_role_membership_sql(column, cfg.get("role_patterns", []))
+    role_match = _active_role_only_membership_sql(column, cfg.get("role_patterns", []))
     if role_match:
         candidates.append(role_match)
 
@@ -307,7 +333,8 @@ def get_user_company_filter_clause(column: str = "user_name", company: str = Non
         exclusions.append(user_exclude)
     role_exclude = _active_role_membership_sql(column, cfg.get("role_exclude_patterns", []))
     if role_exclude:
-        exclusions.append(f"NOT {role_exclude}")
+        role_only_exclude = _active_role_only_membership_sql(column, cfg.get("role_exclude_patterns", []))
+        exclusions.append(f"NOT {role_only_exclude or role_exclude}")
 
     if candidates:
         boundary = "(" + " OR ".join(candidates) + ")"

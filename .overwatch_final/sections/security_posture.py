@@ -1828,6 +1828,35 @@ def _render_security_command_findings(company: str, environment: str) -> None:
         )
 
 
+def _render_advanced_security_evidence(company: str, environment: str) -> None:
+    """Render security evidence after the active security workflow."""
+    st.divider()
+    with st.expander("Advanced security evidence and workflow guide", expanded=False):
+        render_operator_briefing(
+            [
+                ("First move", "Separate noisy login volume from real identity or access risk."),
+                ("Telemetry", "Tie users, IPs, grants, MFA posture, and shared data to source detail."),
+                ("Control", "Escalate to IAM, revoke/narrow access, or validate business route."),
+                ("Output", "Produce an audit posture brief with routes and remediation status."),
+            ],
+            columns=4,
+        )
+        render_workflow_guide(
+            "Start with identity/access posture, open privilege sprawl for high-risk grants, "
+            "then inspect data sharing when the question is external exposure or audit telemetry.",
+            [
+                ("Login failures, MFA, grants, or risky access", "Use Access posture."),
+                ("Admin roles, ownership, grant option, or route blockers", "Use Privilege sprawl."),
+                ("External consumers or shared data exposure", "Use Data sharing exposure."),
+            ],
+        )
+        _render_security_ownership_coverage(company, environment)
+        _render_security_score_explanation(company, environment)
+        _render_security_change_detail(company, environment)
+        _render_security_action_approval(company, environment)
+        _render_security_command_findings(company, environment)
+
+
 def _apply_queued_security_workflow() -> None:
     requested_view = st.session_state.pop("security_posture_requested_view", None)
     requested_workflow = st.session_state.pop("security_posture_requested_workflow", None)
@@ -2845,40 +2874,19 @@ def render() -> None:
         details=SECURITY_POSTURE_VIEW_DETAILS,
         columns=4,
     )
-    with st.expander("Advanced security evidence and workflow guide", expanded=False):
-        render_operator_briefing(
-            [
-                ("First move", "Separate noisy login volume from real identity or access risk."),
-                ("Telemetry", "Tie users, IPs, grants, MFA posture, and shared data to source detail."),
-                ("Control", "Escalate to IAM, revoke/narrow access, or validate business route."),
-                ("Output", "Produce an audit posture brief with routes and remediation status."),
-            ],
-            columns=4,
-        )
-        render_workflow_guide(
-            "Start with identity/access posture, open privilege sprawl for high-risk grants, "
-            "then inspect data sharing when the question is external exposure or audit telemetry.",
-            [
-                ("Login failures, MFA, grants, or risky access", "Use Access posture."),
-                ("Admin roles, ownership, grant option, or route blockers", "Use Privilege sprawl."),
-                ("External consumers or shared data exposure", "Use Data sharing exposure."),
-            ],
-        )
-        _render_security_ownership_coverage(company, environment)
-        _render_security_score_explanation(company, environment)
-        _render_security_change_detail(company, environment)
-        _render_security_action_approval(company, environment)
-        _render_security_command_findings(company, environment)
     if active_view in {"Data Health"}:
         _render_security_source_health(company, environment)
         _render_privileged_grant_readiness(company, environment, days)
+        _render_advanced_security_evidence(company, environment)
         return
     if active_view in WORKFLOWS:
         st.session_state["security_posture_workflow"] = active_view
         if active_view == "Privilege sprawl":
             _render_privilege_sprawl_workflow(company, environment, days)
+            _render_advanced_security_evidence(company, environment)
             return
         render_workflow_module(active_view, WORKFLOW_MODULES)
+        _render_advanced_security_evidence(company, environment)
         return
 
     summary = st.session_state.get("security_posture_summary")
@@ -3301,6 +3309,9 @@ def render() -> None:
                     ("Execution", "Runbook only"),
                 ))
         if st.session_state.get("exceptions_only_mode"):
+            _render_advanced_security_evidence(company, environment)
             st.stop()
     elif summary is not None and not summary.empty:
         st.info("Loaded security summary is stale for the active scope. Refresh Security Summary before acting.")
+
+    _render_advanced_security_evidence(company, environment)

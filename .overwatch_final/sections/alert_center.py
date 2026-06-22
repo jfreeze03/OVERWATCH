@@ -3025,6 +3025,17 @@ def _render_alert_command_findings(company: str, environment: str) -> None:
         )
 
 
+def _render_advanced_alert_diagnostics(company: str, environment: str) -> None:
+    """Render alert diagnostics after the active alert workflow."""
+    st.divider()
+    with st.expander("Advanced alert diagnostics and enterprise evidence", expanded=False):
+        _render_operational_ownership_coverage(company, environment)
+        _render_operational_risk_score_explanation(company, environment)
+        _render_alert_change_context(company, environment)
+        _render_alert_action_workflows(company, environment)
+        _render_alert_command_findings(company, environment)
+
+
 def render() -> None:
     company = get_active_company()
     environment = get_active_environment()
@@ -3039,19 +3050,15 @@ def render() -> None:
         columns=4,
     )
     required_sources = _alert_center_sources_for_view(active_view)
-    with st.expander("Advanced alert diagnostics and enterprise evidence", expanded=False):
-        _render_operational_ownership_coverage(company, environment)
-        _render_operational_risk_score_explanation(company, environment)
-        _render_alert_change_context(company, environment)
-        _render_alert_action_workflows(company, environment)
-        _render_alert_command_findings(company, environment)
 
     if active_view == "Suppression Windows":
         _render_annotations()
+        _render_advanced_alert_diagnostics(company, environment)
         return
 
     if active_view == "Detection Catalog":
         _render_alert_detection_catalog()
+        _render_advanced_alert_diagnostics(company, environment)
         return
 
     c1, c2, c3 = st.columns([1, 1, 2])
@@ -3109,6 +3116,7 @@ def render() -> None:
         _render_alert_command_lane_board(_alert_command_lanes(active_view=active_view, required_sources=required_sources))
         st.info(f"Load {active_view} when ready.")
         defer_source_note(f"Inputs on load: {_alert_center_source_summary(required_sources)}")
+        _render_advanced_alert_diagnostics(company, environment)
         return
 
     loaded_scope = st.session_state.get("alert_center_scope")
@@ -3127,6 +3135,7 @@ def render() -> None:
         _render_alert_command_lane_board(_alert_command_lanes(active_view=active_view, required_sources=required_sources))
         st.warning("Company, environment, or window changed after this load. Reload before triaging alerts.")
         defer_source_note(f"Loaded scope: {loaded_scope or 'none'} | Current scope: {expected_scope}")
+        _render_advanced_alert_diagnostics(company, environment)
         return
     loaded_sources = set(data.get("_loaded_sources") or [])
     missing_sources = sorted(required_sources - loaded_sources)
@@ -3145,6 +3154,7 @@ def render() -> None:
         _render_alert_command_lane_board(_alert_command_lanes(active_view=active_view, required_sources=required_sources))
         st.info(f"Load {active_view} to fetch missing input(s).")
         defer_source_note(f"Missing Alert Center input(s): {_alert_center_source_summary(set(missing_sources))}")
+        _render_advanced_alert_diagnostics(company, environment)
         return
 
     pd = _pd()
@@ -3575,3 +3585,5 @@ def render() -> None:
                                 st.error(f"Could not record lifecycle audit: {_format_snowflake_error(exc)}")
                     else:
                         st.caption("Enter an audit note to record acknowledgement and remediation-log status.")
+
+    _render_advanced_alert_diagnostics(company, environment)

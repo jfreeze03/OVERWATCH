@@ -643,6 +643,19 @@ def _render_command_center_investigation_gate(company: str, environment: str) ->
             )
 
 
+def _render_advanced_diagnostics_expander(company: str, environment: str) -> None:
+    """Render admin/trust diagnostics after the DBA operator workflow."""
+    st.divider()
+    with st.expander("Advanced diagnostics and enterprise evidence", expanded=False):
+        _render_enterprise_diagnostics_gate(company, environment)
+        _render_production_readiness_gate(company, environment)
+        _render_executive_scorecard_driver_gate(company, environment)
+        _render_forecast_exception_gate(company, environment)
+        _render_change_intelligence_gate(company, environment)
+        _render_closed_loop_operations_gate(company, environment)
+        _render_command_center_investigation_gate(company, environment)
+
+
 def _set_admin_tool_focus(tool: str, group: str, focus: str) -> None:
     st.session_state["dba_tools_focus"] = focus
     st.session_state["dba_tools_focus_tool"] = tool
@@ -886,14 +899,6 @@ def render() -> None:
         target_minutes=30,
         delayed_note="DBA Control Room shows cached triage immediately; guarded live checks are reserved for explicit detail loads.",
     )
-    with st.expander("Advanced diagnostics and enterprise evidence", expanded=False):
-        _render_enterprise_diagnostics_gate(company, environment)
-        _render_production_readiness_gate(company, environment)
-        _render_executive_scorecard_driver_gate(company, environment)
-        _render_forecast_exception_gate(company, environment)
-        _render_change_intelligence_gate(company, environment)
-        _render_closed_loop_operations_gate(company, environment)
-        _render_command_center_investigation_gate(company, environment)
 
     if st.button(load_label, key="dba_control_room_load", type="primary"):
         _load_control_room_evidence()
@@ -910,9 +915,11 @@ def render() -> None:
         )
         if active_view == "Service Posture":
             _render_consolidated_service_posture()
+            _render_advanced_diagnostics_expander(company, environment)
             return
         if active_view == "Admin Tools":
             _render_admin_tools()
+            _render_advanced_diagnostics_expander(company, environment)
             return
     if not data:
         st.divider()
@@ -925,9 +932,11 @@ def render() -> None:
         )
         if active_view == "Service Posture":
             _render_consolidated_service_posture()
+            _render_advanced_diagnostics_expander(company, environment)
             return
         if active_view == "Admin Tools":
             _render_admin_tools()
+            _render_advanced_diagnostics_expander(company, environment)
             return
         if active_view == "Morning Brief":
             st.warning("Refresh the DBA Morning Brief to rank today's route priority and route handoff.")
@@ -944,6 +953,7 @@ def render() -> None:
         else:
             st.warning(f"{load_label} to see today's DBA exceptions and exportable telemetry.")
             st.caption("Workflow: snapshot -> exception -> routed action -> telemetry export.")
+        _render_advanced_diagnostics_expander(company, environment)
         return
 
     loaded_lookback = st.session_state.get("dba_control_room_lookback", lookback_hours)
@@ -972,6 +982,7 @@ def render() -> None:
             bool(include_deep_evidence),
             bool(allow_live_fallback),
         )
+        _render_advanced_diagnostics_expander(company, environment)
         return
     if source_mode == "Fast summary snapshot":
         st.caption("Snapshot loaded. Load triage when you need full exception detail.")
@@ -1593,4 +1604,6 @@ def render() -> None:
                 )
         else:
             st.info("Choose release windows and run the comparison when you need post-change status.")
+
+    _render_advanced_diagnostics_expander(company, environment)
 

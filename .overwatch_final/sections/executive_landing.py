@@ -3060,11 +3060,11 @@ def _render_command_center_summary(findings: pd.DataFrame) -> None:
         return
 
     work = findings.copy()
-    finding_count = pd.to_numeric(work.get("FINDING_COUNT", pd.Series(dtype=float)), errors="coerce").fillna(0)
-    high_risk = pd.to_numeric(work.get("HIGH_RISK_COUNT", pd.Series(dtype=float)), errors="coerce").fillna(0)
-    owner_gap = pd.to_numeric(work.get("OWNER_GAP_COUNT", pd.Series(dtype=float)), errors="coerce").fillna(0)
-    expected_value = pd.to_numeric(work.get("EXPECTED_VALUE_USD", pd.Series(dtype=float)), errors="coerce").fillna(0)
-    work["_SORT_VALUE"] = high_risk * 1000000 + owner_gap * 10000 + expected_value
+    finding_count = pd.to_numeric(work.get("FINDING_COUNT", pd.Series(dtype=float)), errors="coerce").fillna(0).astype("float64")
+    high_risk = pd.to_numeric(work.get("HIGH_RISK_COUNT", pd.Series(dtype=float)), errors="coerce").fillna(0).astype("float64")
+    owner_gap = pd.to_numeric(work.get("OWNER_GAP_COUNT", pd.Series(dtype=float)), errors="coerce").fillna(0).astype("float64")
+    expected_value = pd.to_numeric(work.get("EXPECTED_VALUE_USD", pd.Series(dtype=float)), errors="coerce").fillna(0).astype("float64")
+    work["_SORT_VALUE"] = high_risk.mul(1_000_000.0).add(owner_gap.mul(10_000.0)).add(expected_value)
     top_row = work.sort_values("_SORT_VALUE", ascending=False, na_position="last").iloc[0]
 
     st.markdown("**Command Center**")
@@ -3092,6 +3092,33 @@ def _render_command_center_summary(findings: pd.DataFrame) -> None:
         if column in work.columns
     ]]
     st.dataframe(view, width="stretch", hide_index=True)
+
+
+def _render_advanced_executive_rollups(company: str, environment: str, days: int) -> None:
+    """Render enterprise rollups after the executive decision surface."""
+    st.divider()
+    with st.expander("Advanced executive rollups", expanded=False):
+        _render_enterprise_operating_model_summary(
+            load_enterprise_operating_rollups(company, environment, days=int(days))
+        )
+        _render_production_readiness_dashboard(
+            load_production_readiness_summary(company, environment, days=int(days))
+        )
+        _render_executive_scorecard_summary(
+            load_executive_scorecard_summary(company, environment, days=int(days))
+        )
+        _render_executive_forecast_summary(
+            load_executive_forecast_summary(company, environment, days=int(days))
+        )
+        _render_change_intelligence_summary(
+            load_change_intelligence_summary(company, environment, days=int(days))
+        )
+        _render_closed_loop_summary(
+            load_closed_loop_summary(company, environment, days=int(days))
+        )
+        _render_command_center_summary(
+            load_command_center_summary(company, environment, days=int(days))
+        )
 
 
 def render() -> None:
@@ -3176,35 +3203,13 @@ def render() -> None:
     load = _render_executive_action_brief(summary, int(days), show_strip=False)
     _render_loaded_executive_alert_context()
 
-    with st.expander("Advanced executive rollups", expanded=False):
-        _render_enterprise_operating_model_summary(
-            load_enterprise_operating_rollups(company, environment, days=int(days))
-        )
-        _render_production_readiness_dashboard(
-            load_production_readiness_summary(company, environment, days=int(days))
-        )
-        _render_executive_scorecard_summary(
-            load_executive_scorecard_summary(company, environment, days=int(days))
-        )
-        _render_executive_forecast_summary(
-            load_executive_forecast_summary(company, environment, days=int(days))
-        )
-        _render_change_intelligence_summary(
-            load_change_intelligence_summary(company, environment, days=int(days))
-        )
-        _render_closed_loop_summary(
-            load_closed_loop_summary(company, environment, days=int(days))
-        )
-        _render_command_center_summary(
-            load_command_center_summary(company, environment, days=int(days))
-        )
-
     if load:
         if _load_executive_snapshot(company, environment, int(days)):
             st.rerun()
 
     snapshot = st.session_state.get("executive_landing_snapshot")
     if not isinstance(snapshot, dict) or not _snapshot_matches_scope(snapshot, company, environment, int(days)):
+        _render_advanced_executive_rollups(company, environment, int(days))
         return
 
     for err in snapshot.get("errors", []):
@@ -3279,3 +3284,5 @@ def render() -> None:
             max_rows=8,
             height=280,
         )
+
+    _render_advanced_executive_rollups(company, environment, int(days))

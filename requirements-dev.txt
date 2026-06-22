@@ -1,3 +1,4 @@
 # Development / CI tooling (not needed at app runtime).
 ruff>=0.15,<0.16
 mypy>=1.11
+playwright>=1.56

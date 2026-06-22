@@ -28,9 +28,13 @@ defensible owner dimension.
   available so role scoping participates in ALFA/Trexis classification.
 - Use `get_user_company_filter_clause()` for user-only sources such as
   `USERS`, `LOGIN_HISTORY`, `SESSIONS`, and `GRANTS_TO_USERS`.
-- Cost and Cortex user views should prefer role-aware user scoping. Trexis users
-  with active `%TRXS%` role grants belong in the Trexis company view even if a
-  source table does not expose a Trexis warehouse or database.
+- Cost and Cortex user views should prefer role-aware user scoping. Trexis-only
+  users with active `%TRXS%` role grants belong in the Trexis company view even
+  if a source table does not expose a Trexis warehouse or database. Mixed-role
+  administrators who have both ALFA/admin and `%TRXS%` grants remain visible in
+  ALFA user metrics; row-level query/workload attribution can still classify a
+  specific query as Trexis when it used Trexis warehouse, database, or role
+  context.
 - Alert events should populate `COMPANY` and `ENVIRONMENT` when the signal
   comes from company-labeled OVERWATCH facts. Native alert candidates should
   prefer `FACT_CORTEX_DAILY`, `FACT_WAREHOUSE_HOURLY`, `FACT_GRANT_DAILY`,

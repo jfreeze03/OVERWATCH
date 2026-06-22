@@ -78,8 +78,10 @@ outside the Streamlit app UI.
   containing `TRXS` classify as Trexis in live cost queries, user-scoped Cortex
   paths, and mart loaders.
 - User/auth/grant surfaces now use role-aware company filtering through
-  `get_user_company_filter_clause()` so Trexis users with active `%TRXS%` role
-  grants stay in the Trexis view even when the username itself is not enough.
+  `get_user_company_filter_clause()`. Trexis-only users with active `%TRXS%`
+  role grants stay in the Trexis view even when the username itself is not
+  enough; mixed ALFA/Trexis administrators remain in ALFA user metrics so admin
+  grants do not remove them from ALFA operator views.
 - `Cost Center > Reconciliation` now includes a Snowflake Admin/Cost Management
   bridge from account-level `METERING_HISTORY` and official
   `WAREHOUSE_METERING_HISTORY`. The bridge intentionally separates account-wide

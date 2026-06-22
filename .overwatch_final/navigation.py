@@ -30,10 +30,10 @@ from runtime_state import (
     pop_state,
     set_state,
 )
-from sections.navigation import request_section_workspace
+from sections.navigation import request_executive_landing_hydration, request_section_workspace
 
 
-CONNECTION_OPTIONAL_SECTIONS = {"COMMAND CENTER", "INCIDENTS", "OPTIMIZATION", "SETTINGS"}
+CONNECTION_OPTIONAL_SECTIONS = set(ALL_SECTIONS)
 
 
 def normalize_nav_section(section: str) -> str:
@@ -53,7 +53,7 @@ def current_visible_sections() -> list[str]:
 
 def current_active_section(visible_sections: list[str]) -> str:
     """Normalize the active section and keep the nav state valid."""
-    fallback = visible_sections[0] if visible_sections else normalize_nav_section("COMMAND CENTER")
+    fallback = visible_sections[0] if visible_sections else normalize_nav_section("Executive Landing")
     active = normalize_nav_section(get_state(NAV_SECTION, fallback))
     if active not in visible_sections:
         active = fallback
@@ -74,7 +74,11 @@ def queue_section_navigation(section: str) -> None:
     current = normalize_nav_section(get_state(NAV_SECTION, ""))
     pop_state(PENDING_AUTOLOAD_SECTION, None)
     pop_state(PENDING_AUTOLOAD_STARTED_AT, None)
-    if target != current:
+    if target == "Executive Landing":
+        request_executive_landing_hydration()
+        set_state(PENDING_SECTION, target)
+        set_state(SECTION_TRANSITION_STARTED_AT, datetime.now().isoformat(timespec="seconds"))
+    elif target != current:
         set_state(PENDING_SECTION, target)
         set_state(SECTION_TRANSITION_STARTED_AT, datetime.now().isoformat(timespec="seconds"))
     request_section_workspace(target)

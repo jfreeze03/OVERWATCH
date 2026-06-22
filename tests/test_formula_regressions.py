@@ -1404,7 +1404,7 @@ class FormulaRegressionTests(unittest.TestCase):
             detail_source="Fast summary",
         )
         brief = _account_health_action_brief(checklist)
-        self.assertEqual(brief["target"], "OPTIMIZATION")
+        self.assertEqual(brief["target"], "Cost & Contract")
         self.assertEqual(brief["state"], "Needs DBA")
         self.assertIn("Queue pressure review", brief["detail"])
 
@@ -3218,7 +3218,7 @@ class FormulaRegressionTests(unittest.TestCase):
             queued_queries=734,
             failed_queries=0,
         )
-        self.assertEqual(routed["target"], "OPTIMIZATION")
+        self.assertEqual(routed["target"], "Cost & Contract")
         self.assertEqual(routed["workflow"], "Recommendations and action queue")
         self.assertIn("Check warehouse sizing", routed["headline"])
 
@@ -3228,7 +3228,7 @@ class FormulaRegressionTests(unittest.TestCase):
             queued_queries=25,
             failed_queries=0,
         )
-        self.assertEqual(queue_only["target"], "OPTIMIZATION")
+        self.assertEqual(queue_only["target"], "Cost & Contract")
         self.assertIn("25 queued", queue_only["detail"])
 
     def test_dba_control_room_snapshot_is_only_available_for_unfiltered_all_environment(self):
@@ -3344,8 +3344,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(summary["execution_ready"], 0)
         self.assertEqual(summary["audit_ready"], 0)
         self.assertEqual(summary["metadata_blocks"], 2)
-        self.assertEqual(by_route["OPTIMIZATION"]["APPROVAL_BLOCKS"], 0)
-        self.assertEqual(by_route["OPTIMIZATION"]["EXECUTION_READY"], 0)
+        self.assertEqual(by_route["Cost & Contract"]["APPROVAL_BLOCKS"], 0)
+        self.assertEqual(by_route["Cost & Contract"]["EXECUTION_READY"], 0)
 
     def test_dba_control_room_closure_rollup_keeps_fixed_items_auditable(self):
         queue = pd.DataFrame([
@@ -3485,15 +3485,15 @@ class FormulaRegressionTests(unittest.TestCase):
         board = _dba_section_operability_board(section_rows, command_queue, closure)
         by_section = {row["SECTION"]: row for _, row in board.iterrows()}
 
-        self.assertEqual(by_section["OPTIMIZATION"]["OPERABILITY_STATE"], "Escalate Now")
-        self.assertEqual(by_section["OPTIMIZATION"]["OVERDUE"], 1)
-        self.assertGreaterEqual(by_section["OPTIMIZATION"]["CLOSURE_BLOCKERS"], 1)
-        self.assertIn("Escalate overdue", by_section["OPTIMIZATION"]["NEXT_CONTROL_ACTION"])
-        self.assertIn("telemetry query", by_section["OPTIMIZATION"]["PROOF_REQUIRED"])
-        self.assertEqual(by_section["OPTIMIZATION"]["EXECUTION_READY"], 0)
-        self.assertEqual(by_section["INCIDENTS"]["OPERABILITY_STATE"], "Build Toward 95")
-        self.assertIn("Connect IAM", by_section["INCIDENTS"]["NEXT_CONTROL_ACTION"])
-        self.assertIn("telemetry query", by_section["INCIDENTS"]["PROOF_REQUIRED"])
+        self.assertEqual(by_section["Cost & Contract"]["OPERABILITY_STATE"], "Escalate Now")
+        self.assertEqual(by_section["Cost & Contract"]["OVERDUE"], 1)
+        self.assertGreaterEqual(by_section["Cost & Contract"]["CLOSURE_BLOCKERS"], 1)
+        self.assertIn("Escalate overdue", by_section["Cost & Contract"]["NEXT_CONTROL_ACTION"])
+        self.assertIn("rollback SQL", by_section["Cost & Contract"]["PROOF_REQUIRED"])
+        self.assertEqual(by_section["Cost & Contract"]["EXECUTION_READY"], 0)
+        self.assertEqual(by_section["Security Monitoring"]["OPERABILITY_STATE"], "Build Toward 95")
+        self.assertIn("Connect IAM", by_section["Security Monitoring"]["NEXT_CONTROL_ACTION"])
+        self.assertIn("least-privilege", by_section["Security Monitoring"]["PROOF_REQUIRED"])
 
     def test_dba_operations_priority_index_ranks_hot_route_first(self):
         raw_queue = pd.DataFrame([
@@ -3569,12 +3569,12 @@ class FormulaRegressionTests(unittest.TestCase):
         )
         top = priority_index.iloc[0]
 
-        self.assertEqual(top["SECTION"], "OPTIMIZATION")
+        self.assertEqual(top["SECTION"], "Cost & Contract")
         self.assertEqual(top["OPERATIONS_PRIORITY_STATE"], "Contain Now")
         self.assertEqual(len(priority_index), 1)
         self.assertIn("Queue or warehouse pressure", top["WHY_NOW"])
         self.assertIn("Stabilize", top["FIRST_MOVE"])
-        self.assertIn("telemetry query", top["PROOF_REQUIRED"])
+        self.assertIn("rollback SQL", top["PROOF_REQUIRED"])
 
     def test_dba_operator_runbook_builds_route_specific_steps(self):
         priority_index = pd.DataFrame([
@@ -3670,7 +3670,7 @@ class FormulaRegressionTests(unittest.TestCase):
         by_type = {row["INCIDENT_TYPE"]: row for _, row in board.iterrows()}
 
         self.assertEqual(by_type["Warehouse Capacity"]["STATUS"], "Containment Required")
-        self.assertIn("OPTIMIZATION", by_type["Warehouse Capacity"]["AFFECTED_ROUTES"])
+        self.assertIn("Cost & Contract", by_type["Warehouse Capacity"]["AFFECTED_ROUTES"])
         self.assertIn("Stabilize queue", by_type["Warehouse Capacity"]["CONTAINMENT_ACTION"])
         self.assertIn("Contain", by_type["Warehouse Capacity"]["SLA_TARGET"])
         self.assertIn("Data Quality", by_type)
@@ -3864,14 +3864,14 @@ class FormulaRegressionTests(unittest.TestCase):
         )
         by_route = {row["ROUTE"]: row for _, row in packet.iterrows()}
 
-        self.assertEqual(packet.iloc[0]["ROUTE"], "INCIDENTS")
-        self.assertEqual(by_route["INCIDENTS"]["ESCALATION_LEVEL"], "Escalate Now")
-        self.assertIn("No-Go", by_route["INCIDENTS"]["GO_NO_GO"])
-        self.assertIn("On-call", by_route["INCIDENTS"]["OWNER_ROUTE"])
-        self.assertEqual(by_route["OPTIMIZATION"]["ESCALATION_LEVEL"], "Escalate Now")
-        self.assertIn("On-call", by_route["OPTIMIZATION"]["OWNER_ROUTE"])
-        self.assertIn("Incident Detail", by_route["OPTIMIZATION"]["SOURCE_SIGNALS"])
-        self.assertIn("Stabilize queue", by_route["OPTIMIZATION"]["FIRST_MOVE"])
+        self.assertEqual(packet.iloc[0]["ROUTE"], "Workload Operations")
+        self.assertEqual(by_route["Workload Operations"]["ESCALATION_LEVEL"], "Escalate Now")
+        self.assertIn("No-Go", by_route["Workload Operations"]["GO_NO_GO"])
+        self.assertIn("Workload route", by_route["Workload Operations"]["OWNER_ROUTE"])
+        self.assertEqual(by_route["Cost & Contract"]["ESCALATION_LEVEL"], "Escalate Now")
+        self.assertIn("Warehouse route", by_route["Cost & Contract"]["OWNER_ROUTE"])
+        self.assertIn("Incident Detail", by_route["Cost & Contract"]["SOURCE_SIGNALS"])
+        self.assertIn("Stabilize queue", by_route["Cost & Contract"]["FIRST_MOVE"])
         self.assertIn("Go only", by_route["Operations Detail"]["GO_NO_GO"])
         self.assertTrue(packet["AUTO_GENERATED"].eq("Yes").all())
 
@@ -8489,7 +8489,7 @@ class FormulaRegressionTests(unittest.TestCase):
         cards = build_ask_overwatch_context({"dba_operations_priority_index": priority_index})
 
         self.assertEqual(cards[0]["surface"], "DBA Operations Priority")
-        self.assertEqual(cards[0]["entity"], "OPTIMIZATION")
+        self.assertEqual(cards[0]["entity"], "Cost & Contract")
         self.assertIn("Queue or warehouse pressure", cards[0]["evidence"])
         self.assertIn("Stabilize", cards[0]["next_action"])
 
@@ -8523,7 +8523,7 @@ class FormulaRegressionTests(unittest.TestCase):
         cards = build_ask_overwatch_context({"dba_operator_runbook": plan})
 
         self.assertEqual(cards[0]["surface"], "DBA Operator Runbook")
-        self.assertEqual(cards[0]["entity"], "OPTIMIZATION")
+        self.assertEqual(cards[0]["entity"], "Cost & Contract")
         self.assertIn("Telemetry current", cards[0]["evidence"])
         self.assertIn("Stabilize", cards[0]["next_action"])
 
@@ -9517,16 +9517,17 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(drilldown.iloc[0]["FOCUS"], "Cortex spend")
         self.assertIn("Open AI and Cortex spend", drilldown.iloc[0]["SAFE_ACTION"])
 
-    def test_alert_surfaces_are_consolidated_to_incidents(self):
+    def test_alert_surfaces_are_consolidated_to_alert_center(self):
         config_text = (APP_ROOT / "config.py").read_text(encoding="utf-8")
         alert_text = (APP_ROOT / "sections" / "alert_center.py").read_text(encoding="utf-8")
+        dba_tools_text = (APP_ROOT / "sections" / "dba_tools.py").read_text(encoding="utf-8")
         rec_text = (APP_ROOT / "sections" / "recommendations.py").read_text(encoding="utf-8")
 
-        self.assertIn('"INCIDENTS"', config_text)
-        self.assertIn('"sections.incidents"', config_text)
-        self.assertIn('"Alert Center": _CANONICAL_SECTION_BY_TITLE["INCIDENTS"]', config_text)
+        self.assertIn('"Alert Center"', config_text)
+        self.assertIn('"sections.alert_center"', config_text)
         self.assertFalse((APP_ROOT / "sections" / "alert_center_shell.py").exists())
         self.assertIn('ALERT_CENTER_DEFAULT_VIEW = "Command Center"', alert_text)
+        self.assertIn("consolidated Alert Center", dba_tools_text)
         self.assertNotIn("Alert Configuration", rec_text)
         self.assertNotIn("tab_alerts", rec_text)
 

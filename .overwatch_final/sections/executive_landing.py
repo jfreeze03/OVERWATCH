@@ -3173,29 +3173,31 @@ def render() -> None:
         days=int(days),
         credit_price=credit_price,
     )
-    _render_enterprise_operating_model_summary(
-        load_enterprise_operating_rollups(company, environment, days=int(days))
-    )
-    _render_production_readiness_dashboard(
-        load_production_readiness_summary(company, environment, days=int(days))
-    )
-    _render_executive_scorecard_summary(
-        load_executive_scorecard_summary(company, environment, days=int(days))
-    )
-    _render_executive_forecast_summary(
-        load_executive_forecast_summary(company, environment, days=int(days))
-    )
-    _render_change_intelligence_summary(
-        load_change_intelligence_summary(company, environment, days=int(days))
-    )
-    _render_closed_loop_summary(
-        load_closed_loop_summary(company, environment, days=int(days))
-    )
-    _render_command_center_summary(
-        load_command_center_summary(company, environment, days=int(days))
-    )
     load = _render_executive_action_brief(summary, int(days), show_strip=False)
     _render_loaded_executive_alert_context()
+
+    with st.expander("Advanced executive rollups", expanded=False):
+        _render_enterprise_operating_model_summary(
+            load_enterprise_operating_rollups(company, environment, days=int(days))
+        )
+        _render_production_readiness_dashboard(
+            load_production_readiness_summary(company, environment, days=int(days))
+        )
+        _render_executive_scorecard_summary(
+            load_executive_scorecard_summary(company, environment, days=int(days))
+        )
+        _render_executive_forecast_summary(
+            load_executive_forecast_summary(company, environment, days=int(days))
+        )
+        _render_change_intelligence_summary(
+            load_change_intelligence_summary(company, environment, days=int(days))
+        )
+        _render_closed_loop_summary(
+            load_closed_loop_summary(company, environment, days=int(days))
+        )
+        _render_command_center_summary(
+            load_command_center_summary(company, environment, days=int(days))
+        )
 
     if load:
         if _load_executive_snapshot(company, environment, int(days)):

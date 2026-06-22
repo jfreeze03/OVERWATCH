@@ -106,14 +106,13 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(PRIMARY_SECTIONS, primary_sections)
         self.assertEqual(primary_sections, flattened)
         self.assertEqual(ALL_SECTIONS, defined)
-        self.assertEqual(len(ALL_SECTIONS), 4)
-        self.assertEqual(ALL_SECTIONS, ["COMMAND CENTER", "INCIDENTS", "OPTIMIZATION", "SETTINGS"])
+        self.assertEqual(len(ALL_SECTIONS), 6)
         self.assertNotIn("Account Health", ALL_SECTIONS)
         self.assertNotIn("Account Health", flattened)
         self.assertFalse(PRIMARY_NAV_HIDDEN_SECTIONS)
         self.assertEqual(
             list(NAV_GROUPS),
-            ["OPERATE", "ADMIN"],
+            ["MONITORING CORE", "FINANCIAL CONTROL", "OPERATIONS", "SECURITY"],
         )
         self.assertEqual(set(ALL_SECTIONS), set(SECTION_MODULES))
         self.assertEqual(
@@ -144,7 +143,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(static_database_options("ALFA", "PROD"), ALFA_PROD_DATABASES)
         self.assertEqual(static_database_options("ALFA", "DEV_ALL"), ALFA_DEV_DATABASES)
         smoke_runner_text = (ROOT / "perf_tests" / "section_smoke_runner.py").read_text(encoding="utf-8")
-        self.assertIn('DEFAULT_SECTIONS = [\n    "COMMAND CENTER",', smoke_runner_text)
+        self.assertIn('DEFAULT_SECTIONS = [\n    "Executive Landing",', smoke_runner_text)
 
     def test_calendar_day_windows_use_standard_dropdowns(self):
         display_text = (APP_ROOT / "utils" / "display.py").read_text(encoding="utf-8")
@@ -211,10 +210,12 @@ class NavigationIntegrityTests(unittest.TestCase):
             if module_path.endswith("_shell")
         }
         self.assertEqual(shell_modules, {})
-        self.assertEqual(SECTION_MODULES["COMMAND CENTER"], "sections.command_center")
-        self.assertEqual(SECTION_MODULES["INCIDENTS"], "sections.incidents")
-        self.assertEqual(SECTION_MODULES["OPTIMIZATION"], "sections.optimization")
-        self.assertEqual(SECTION_MODULES["SETTINGS"], "sections.operator_settings")
+        self.assertEqual(SECTION_MODULES["Executive Landing"], "sections.executive_landing")
+        self.assertEqual(SECTION_MODULES["DBA Control Room"], "sections.dba_control_room")
+        self.assertEqual(SECTION_MODULES["Alert Center"], "sections.alert_center")
+        self.assertEqual(SECTION_MODULES["Cost & Contract"], "sections.cost_contract")
+        self.assertEqual(SECTION_MODULES["Workload Operations"], "sections.workload_operations")
+        self.assertEqual(SECTION_MODULES["Security Monitoring"], "sections.security_posture")
         self.assertFalse((APP_ROOT / "sections" / "dba_control_room_shell.py").exists())
         self.assertFalse((APP_ROOT / "sections" / "alert_center_shell.py").exists())
         self.assertFalse((APP_ROOT / "sections" / "cost_contract_shell.py").exists())
@@ -229,10 +230,10 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("state[workspace_key] = True", helper_text)
         self.assertIn("state[brief_key] = False", helper_text)
 
-        command_text = (APP_ROOT / "sections" / "command_center.py").read_text(encoding="utf-8")
-        self.assertIn("OVERWATCH COMMAND CENTER", command_text)
-        self.assertIn("load_operator_snapshot", command_text)
-        self.assertNotIn("ACCOUNT_USAGE", command_text)
+        executive_text = (APP_ROOT / "sections" / "executive_landing.py").read_text(encoding="utf-8")
+        self.assertIn("Snowflake Observability Wall", executive_text)
+        self.assertNotIn("Executive Summary Signals", executive_text)
+        self.assertIn("Refresh Summary", executive_text)
 
     def test_shell_evidence_label_reflects_loaded_state(self):
         keys = ("loaded_frame", "loaded_error")
@@ -266,8 +267,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("from shell import render_app", app_text)
         self.assertIn("def queue_section_navigation", top_navigation_text)
         self.assertIn("request_section_workspace(target)", top_navigation_text)
-        self.assertNotIn("request_executive_landing_hydration()", top_navigation_text)
-        self.assertNotIn('target == "Executive Landing"', top_navigation_text)
+        self.assertIn("request_executive_landing_hydration()", top_navigation_text)
+        self.assertIn('target == "Executive Landing"', top_navigation_text)
+        self.assertIn('if target == "Executive Landing":', top_navigation_text)
         self.assertIn('pop_state(PENDING_AUTOLOAD_SECTION, None)', top_navigation_text)
         self.assertIn('pop_state(PENDING_AUTOLOAD_STARTED_AT, None)', top_navigation_text)
         self.assertNotIn('st.session_state["_overwatch_pending_autoload_section"] = target', top_navigation_text)
@@ -277,8 +279,12 @@ class NavigationIntegrityTests(unittest.TestCase):
         )
         self.assertIn("def request_section_workspace", navigation_text)
         self.assertIn("request_section_workspace(target)", navigation_text)
-        self.assertIn('target in {"COMMAND CENTER", "INCIDENTS", "OPTIMIZATION", "SETTINGS"}', navigation_text)
-        self.assertIn("pop_state(PENDING_AUTOLOAD_STARTED_AT, None)", navigation_text)
+        self.assertIn("set_state(EXECUTIVE_LANDING_WORKSPACE_REQUESTED, True)", navigation_text)
+        self.assertIn("set_state(EXECUTIVE_LANDING_BRIEF_MODE, False)", navigation_text)
+        self.assertIn('set_state(ALERT_CENTER_ACTIVE_VIEW, "Command Center")', navigation_text)
+        self.assertIn('set_state(COST_CONTRACT_WORKFLOW, "Usage attribution and run-rate")', navigation_text)
+        self.assertIn('set_state(WORKLOAD_OPERATIONS_QUERY_FOCUS, "Contention Telemetry")', navigation_text)
+        self.assertIn('set_state(SECURITY_POSTURE_WORKFLOW, "Access posture")', navigation_text)
 
     def test_direct_section_navigation_uses_compatibility_helper(self):
         navigation_text = (APP_ROOT / "sections" / "navigation.py").read_text(encoding="utf-8")
@@ -290,8 +296,15 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("normalize_section_name(raw_section)", navigation_text)
         self.assertIn("compatibility_state_for_section(raw_section)", navigation_text)
         self.assertIn("request_section_workspace(target)", navigation_text)
-        self.assertIn('target in {"COMMAND CENTER", "INCIDENTS", "OPTIMIZATION", "SETTINGS"}', navigation_text)
-        self.assertIn('target != current or target == "COMMAND CENTER"', navigation_text)
+        self.assertIn("request_executive_landing_hydration()", navigation_text)
+        self.assertIn('set_state(DBA_CONTROL_ROOM_ACTIVE_VIEW, "Fast Watch")', navigation_text)
+        self.assertIn('set_state(ALERT_CENTER_ACTIVE_VIEW, "Command Center")', navigation_text)
+        self.assertIn('set_state(COST_CONTRACT_WORKFLOW, "Usage attribution and run-rate")', navigation_text)
+        self.assertIn('set_state(WORKLOAD_OPERATIONS_WORKFLOW, "Query investigation")', navigation_text)
+        self.assertIn('set_state(WORKLOAD_OPERATIONS_QUERY_FOCUS, "Contention Telemetry")', navigation_text)
+        self.assertIn('set_state(SECURITY_POSTURE_VIEW, "Access posture")', navigation_text)
+        self.assertIn('set_state(SECURITY_POSTURE_WORKFLOW, "Access posture")', navigation_text)
+        self.assertIn('target != current or target == "Executive Landing"', navigation_text)
         self.assertIn("set_state(PENDING_SECTION, target)", navigation_text)
         self.assertIn("set_state(NAV_SECTION, target)", navigation_text)
 
@@ -321,30 +334,31 @@ class NavigationIntegrityTests(unittest.TestCase):
         previous = dict(st.session_state)
         try:
             st.session_state.clear()
-            self.assertEqual(current_active_section([]), "COMMAND CENTER")
+            self.assertEqual(current_active_section([]), "Executive Landing")
 
             st.session_state[NAV_SECTION] = "Missing Section"
-            self.assertEqual(current_active_section(["INCIDENTS", "OPTIMIZATION"]), "INCIDENTS")
-            self.assertEqual(st.session_state[NAV_SECTION], "INCIDENTS")
+            self.assertEqual(current_active_section(["Alert Center", "Cost & Contract"]), "Alert Center")
+            self.assertEqual(st.session_state[NAV_SECTION], "Alert Center")
 
             target = apply_navigation_state("Account Health")
-            self.assertEqual(target, "COMMAND CENTER")
-            self.assertEqual(st.session_state[NAV_SECTION], "COMMAND CENTER")
-            self.assertEqual(st.session_state[PENDING_SECTION], "COMMAND CENTER")
+            self.assertEqual(target, "DBA Control Room")
+            self.assertEqual(st.session_state[NAV_SECTION], "DBA Control Room")
+            self.assertEqual(st.session_state[PENDING_SECTION], "DBA Control Room")
             self.assertEqual(st.session_state[DBA_CONTROL_ROOM_ACTIVE_VIEW], "Fast Watch")
         finally:
             st.session_state.clear()
             st.session_state.update(previous)
 
     def test_executive_landing_uses_direct_observability_module(self):
-        self.assertEqual(SECTION_MODULES["COMMAND CENTER"], "sections.command_center")
+        self.assertEqual(SECTION_MODULES["Executive Landing"], "sections.executive_landing")
         self.assertFalse((APP_ROOT / "sections" / "executive_landing_shell.py").exists())
-        full_workspace_text = (APP_ROOT / "sections" / "command_center.py").read_text(encoding="utf-8")
+        full_workspace_text = (APP_ROOT / "sections" / "executive_landing.py").read_text(encoding="utf-8")
 
-        self.assertIn("OVERWATCH COMMAND CENTER", full_workspace_text)
-        self.assertIn("load_operator_snapshot", full_workspace_text)
-        self.assertIn("Top Recommendations", full_workspace_text)
+        self.assertIn("def _load_executive_observability", full_workspace_text)
+        self.assertIn("_executive_landing_observability_autoload_scope", full_workspace_text)
+        self.assertIn("Snowflake Observability Wall", full_workspace_text)
         self.assertNotIn("Executive Summary Signals", full_workspace_text)
+        self.assertIn("Refresh Summary", full_workspace_text)
         self.assertNotIn("Refresh Board", full_workspace_text)
         self.assertNotIn("Executive Command Wall", full_workspace_text)
         self.assertNotIn("Setup Readiness", full_workspace_text)
@@ -365,47 +379,105 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("def _build_executive_snapshot_pptx", full_workspace_text)
 
     def test_dba_control_room_uses_fast_shell_module(self):
-        self.assertEqual(SECTION_MODULES["COMMAND CENTER"], "sections.command_center")
+        self.assertEqual(SECTION_MODULES["DBA Control Room"], "sections.dba_control_room")
         self.assertFalse((APP_ROOT / "sections" / "dba_control_room_shell.py").exists())
-        full_workspace_text = (APP_ROOT / "sections" / "command_center.py").read_text(encoding="utf-8")
-        self.assertIn("Overall Health", full_workspace_text)
-        self.assertIn("Active Incidents", full_workspace_text)
-        self.assertIn("Failed Pipelines", full_workspace_text)
-        self.assertIn("Last Refresh / Freshness", full_workspace_text)
+        full_workspace_text = _section_source(APP_ROOT / "sections" / "dba_control_room.py")
+        nav_text = (APP_ROOT / "sections" / "navigation.py").read_text(encoding="utf-8")
+        self.assertIn('"Morning Brief"', full_workspace_text)
+        self.assertIn('set_state(DBA_CONTROL_ROOM_ACTIVE_VIEW, "Fast Watch")', nav_text)
+        self.assertIn("with_loaded_at(", full_workspace_text)
+        self.assertIn("source=getattr(snapshot_result, \"source\", \"Fast summary snapshot\")", full_workspace_text)
+        self.assertIn("DBA_CONTROL_ROOM_LIVE_FALLBACK_CAP_HOURS = 24", full_workspace_text)
+        self.assertIn("DBA_CONTROL_ROOM_LIVE_FALLBACK_KEYS", full_workspace_text)
+        self.assertIn('"Morning Brief"', full_workspace_text)
+        self.assertIn('"Morning Brief": "Morning"', full_workspace_text)
+        self.assertIn('elif active_view in {"Operations Detail", "Morning Brief"}:', full_workspace_text)
+        self.assertIn('load_label = "Refresh DBA Morning Brief"', full_workspace_text)
+        self.assertIn('st.session_state["dba_operations_board_detail"] = ops_detail', full_workspace_text)
+        self.assertIn('"Service Posture"', full_workspace_text)
+        self.assertIn('"Admin Tools"', full_workspace_text)
+        self.assertIn('"Admin Tools": "Admin"', full_workspace_text)
+        self.assertIn('from sections import service_health', full_workspace_text)
+        self.assertIn("service_health.render()", full_workspace_text)
+        self.assertIn('from sections import dba_tools', full_workspace_text)
+        self.assertIn("dba_tools.render()", full_workspace_text)
+        self.assertIn('"Warehouse Settings"', full_workspace_text)
+        self.assertIn('"Cortex AI Limits"', full_workspace_text)
+        self.assertIn('st.session_state.get("dba_control_room_active_view") in {"Service Posture", "Admin Tools"}', full_workspace_text)
+        service_posture_block = full_workspace_text.split('st.session_state.get("dba_control_room_active_view") in {"Service Posture", "Admin Tools"}', 1)[1].split(
+            'if not data:',
+            1,
+        )[0]
+        self.assertIn("_render_consolidated_service_posture()", service_posture_block)
+        self.assertIn("guarded live checks are reserved for explicit detail loads", full_workspace_text)
+        self.assertNotIn("Allow live ACCOUNT_USAGE fallback queries", full_workspace_text)
 
     def test_alert_center_uses_fast_shell_module(self):
-        self.assertEqual(SECTION_MODULES["INCIDENTS"], "sections.incidents")
+        self.assertEqual(SECTION_MODULES["Alert Center"], "sections.alert_center")
         self.assertFalse((APP_ROOT / "sections" / "alert_center_shell.py").exists())
-        full_workspace_text = (APP_ROOT / "sections" / "incidents.py").read_text(encoding="utf-8")
-        self.assertIn("Severity", full_workspace_text)
-        self.assertIn("Category", full_workspace_text)
-        self.assertIn("Company", full_workspace_text)
-        self.assertIn("Recommended Action", full_workspace_text)
+        full_workspace_text = (APP_ROOT / "sections" / "alert_center.py").read_text(encoding="utf-8")
+        nav_text = (APP_ROOT / "sections" / "navigation.py").read_text(encoding="utf-8")
+        self.assertIn('ALERT_CENTER_DEFAULT_VIEW = "Command Center"', full_workspace_text)
+        self.assertIn('set_state(ALERT_CENTER_ACTIVE_VIEW, "Command Center")', nav_text)
+        self.assertNotIn("Alert Signal Summary", full_workspace_text)
+        self.assertNotIn("Alert Command Board", full_workspace_text)
+        self.assertIn("ALERT_CENTER_PANES", full_workspace_text)
 
     def test_security_monitoring_keeps_security_surface_narrow(self):
-        self.assertEqual(SECTION_MODULES["INCIDENTS"], "sections.incidents")
+        self.assertEqual(SECTION_MODULES["Security Monitoring"], "sections.security_posture")
         self.assertFalse((APP_ROOT / "sections" / "security_monitoring.py").exists())
-        security_text = (APP_ROOT / "utils" / "operator_model.py").read_text(encoding="utf-8")
-        self.assertIn('category="Security"', security_text)
-        self.assertIn("Security / IAM Owner", security_text)
+        security_text = (APP_ROOT / "sections" / "security_posture.py").read_text(encoding="utf-8")
+        nav_text = (APP_ROOT / "sections" / "navigation.py").read_text(encoding="utf-8")
+        self.assertIn("SECURITY_POSTURE_VIEWS", security_text)
+        self.assertNotIn("Security Signal Summary", security_text)
+        self.assertNotIn("Security Monitoring Command Board", security_text)
+        self.assertIn('set_state(SECURITY_POSTURE_VIEW, "Access posture")', nav_text)
 
     def test_workload_operations_uses_fast_shell_module(self):
-        self.assertEqual(SECTION_MODULES["INCIDENTS"], "sections.incidents")
+        self.assertEqual(SECTION_MODULES["Workload Operations"], "sections.workload_operations")
         self.assertFalse((APP_ROOT / "sections" / "workload_operations_shell.py").exists())
-        full_workspace_text = (APP_ROOT / "utils" / "operator_model.py").read_text(encoding="utf-8")
-        self.assertIn('category="Performance"', full_workspace_text)
-        self.assertIn('category="Pipeline"', full_workspace_text)
-        self.assertIn("failed_queries", full_workspace_text)
-        self.assertIn("failed_tasks", full_workspace_text)
+        full_workspace_text = (APP_ROOT / "sections" / "workload_operations.py").read_text(encoding="utf-8")
+        nav_text = (APP_ROOT / "sections" / "navigation.py").read_text(encoding="utf-8")
+        self.assertIn('QUERY_INVESTIGATION_WORKFLOW = "Query investigation"', full_workspace_text)
+        self.assertIn('set_state(WORKLOAD_OPERATIONS_WORKFLOW, "Query investigation")', nav_text)
+        self.assertNotIn("Workload Brief", full_workspace_text)
+        self.assertIn("WORKLOAD_OPERATIONS_EXPLICIT_WORKFLOW_KEY", full_workspace_text)
+        self.assertNotIn("WORKLOAD_OPERATIONS_VIEWS", full_workspace_text)
+        self.assertNotIn("Workload Brief", full_workspace_text)
+        self.assertNotIn("workload_operations_view", full_workspace_text)
+        self.assertNotIn("Refresh Workload Snapshot", full_workspace_text)
+        self.assertNotIn("Download DBA runbook", full_workspace_text)
 
     def test_cost_contract_uses_fast_shell_module(self):
-        self.assertEqual(SECTION_MODULES["OPTIMIZATION"], "sections.optimization")
+        self.assertEqual(SECTION_MODULES["Cost & Contract"], "sections.cost_contract")
         self.assertFalse((APP_ROOT / "sections" / "cost_contract_shell.py").exists())
-        full_workspace_text = (APP_ROOT / "sections" / "optimization.py").read_text(encoding="utf-8")
-        self.assertIn("Current Spend", full_workspace_text)
-        self.assertIn("Cortex Spend", full_workspace_text)
-        self.assertIn("Storage Cost", full_workspace_text)
-        self.assertIn("Top Recommendations", full_workspace_text)
+        full_workspace_text = (APP_ROOT / "sections" / "cost_contract.py").read_text(encoding="utf-8")
+        nav_text = (APP_ROOT / "sections" / "navigation.py").read_text(encoding="utf-8")
+        self.assertIn('"Usage attribution and run-rate"', full_workspace_text)
+        self.assertIn('set_state(COST_CONTRACT_WORKFLOW, "Usage attribution and run-rate")', nav_text)
+        self.assertNotIn("Cost Signal Summary", full_workspace_text)
+        self.assertNotIn("Cost Command Board", full_workspace_text)
+        cost_center_text = (APP_ROOT / "sections" / "cost_center.py").read_text(encoding="utf-8")
+        self.assertNotIn("Contract Utilization", cost_center_text)
+        self.assertNotIn("Annual committed credits", cost_center_text)
+        self.assertNotIn("Calculate Utilization", cost_center_text)
+        self.assertIn("WORKFLOWS", full_workspace_text)
+        self.assertIn('"Storage cost and retention"', full_workspace_text)
+        self.assertIn('"Storage cost and retention": "sections.storage_monitor"', full_workspace_text)
+        self.assertIn('"Refresh Cost"', full_workspace_text)
+        self.assertNotIn('"Refresh Overview"', full_workspace_text)
+        self.assertNotIn('"Refresh Cost Details"', full_workspace_text)
+        self.assertNotIn("Cost Detail Refresh", full_workspace_text)
+        self.assertNotIn("Cost Drilldown Readiness", full_workspace_text)
+        self.assertIn("Cost Drilldown Status", full_workspace_text)
+        self.assertNotIn("def _cost_action_brief", full_workspace_text)
+        self.assertNotIn("def _cost_operating_snapshot", full_workspace_text)
+        self.assertIn("_PENDING_DETAIL_WORKFLOW_KEY", full_workspace_text)
+        self.assertNotIn("_AUTO_OPEN_DETAIL_WORKFLOWS", full_workspace_text)
+        self.assertIn("routed_workflow = st.session_state.pop(_PENDING_DETAIL_WORKFLOW_KEY, None)", full_workspace_text)
+        self.assertIn("legacy_detail_workflow = st.session_state.pop(_DETAIL_WORKFLOW_KEY, None)", full_workspace_text)
+        self.assertNotIn('st.button("Open detail"', full_workspace_text)
+        self.assertIn("render_workflow_module(workflow, WORKFLOW_MODULES)", full_workspace_text)
 
     def test_roles_and_aliases_resolve_to_visible_sections(self):
         primary_sections = [section for section in ALL_SECTIONS if section not in PRIMARY_NAV_HIDDEN_SECTIONS]
@@ -438,9 +510,9 @@ class NavigationIntegrityTests(unittest.TestCase):
                 self.assertEqual(SECTION_ALIASES[alias], target)
                 self.assertEqual(normalize_section_name(alias), target)
                 self.assertNotIn(alias, SECTION_BY_TITLE)
-        self.assertEqual(RETIRED_SECTION_REDIRECTS["Account Health"], SECTION_BY_TITLE["COMMAND CENTER"])
-        self.assertEqual(SECTION_ALIASES["Account Health"], SECTION_BY_TITLE["COMMAND CENTER"])
-        self.assertEqual(normalize_section_name("Account Health"), SECTION_BY_TITLE["COMMAND CENTER"])
+        self.assertEqual(RETIRED_SECTION_REDIRECTS["Account Health"], SECTION_BY_TITLE["DBA Control Room"])
+        self.assertEqual(SECTION_ALIASES["Account Health"], SECTION_BY_TITLE["DBA Control Room"])
+        self.assertEqual(normalize_section_name("Account Health"), SECTION_BY_TITLE["DBA Control Room"])
         self.assertEqual(
             compatibility_state_for_section("Account Health"),
             {
@@ -449,18 +521,18 @@ class NavigationIntegrityTests(unittest.TestCase):
                 "_dba_control_room_brief_mode": False,
             },
         )
-        self.assertEqual(SECTION_ALIASES["Credit Contract"], SECTION_BY_TITLE["OPTIMIZATION"])
-        self.assertEqual(SECTION_ALIASES["Cost Center"], SECTION_BY_TITLE["OPTIMIZATION"])
-        self.assertEqual(SECTION_ALIASES["Security & Access"], SECTION_BY_TITLE["INCIDENTS"])
+        self.assertEqual(SECTION_ALIASES["Credit Contract"], SECTION_BY_TITLE["Cost & Contract"])
+        self.assertEqual(SECTION_ALIASES["Cost Center"], SECTION_BY_TITLE["Cost & Contract"])
+        self.assertEqual(SECTION_ALIASES["Security & Access"], SECTION_BY_TITLE["Security Monitoring"])
         self.assertNotIn("DBA Tools", SECTION_ALIASES)
         self.assertNotIn("Change & Drift", SECTION_ALIASES)
         self.assertNotIn("Who Changed What?", SECTION_ALIASES)
-        self.assertEqual(SECTION_ALIASES["Optimization"], SECTION_BY_TITLE["OPTIMIZATION"])
-        self.assertEqual(SECTION_ALIASES["Warehouse Health"], SECTION_BY_TITLE["OPTIMIZATION"])
+        self.assertEqual(SECTION_ALIASES["Optimization"], SECTION_BY_TITLE["Cost & Contract"])
+        self.assertEqual(SECTION_ALIASES["Warehouse Health"], SECTION_BY_TITLE["Cost & Contract"])
         self.assertNotIn("Architecture", SECTION_ALIASES)
         self.assertNotIn("Architecture Readiness", SECTION_ALIASES)
         self.assertNotIn("Disaster Recovery", SECTION_ALIASES)
-        self.assertEqual(SECTION_ALIASES["Executive Briefing"], SECTION_BY_TITLE["COMMAND CENTER"])
+        self.assertEqual(SECTION_ALIASES["Executive Briefing"], SECTION_BY_TITLE["Executive Landing"])
         self.assertNotIn("LEGACY_SECTION_ALIASES", (APP_ROOT / "config.py").read_text(encoding="utf-8"))
 
     def test_experience_views_are_removed_for_admin_only_app(self):
@@ -470,8 +542,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         runtime_text = (APP_ROOT / "runtime_state.py").read_text(encoding="utf-8")
         layout_text = (APP_ROOT / "layout.py").read_text(encoding="utf-8")
 
-        self.assertIn("COMMAND CENTER", ALL_SECTIONS)
-        self.assertEqual(SECTION_MODULES["COMMAND CENTER"], "sections.command_center")
+        self.assertIn("Executive Landing", ALL_SECTIONS)
+        self.assertEqual(SECTION_MODULES["Executive Landing"], "sections.executive_landing")
         self.assertIn("ADMIN_ACCESS_ROLES", config_text)
         self.assertIn("def current_role_allows_app_access", access_text)
         self.assertIn("def render_admin_access_required", layout_text)
@@ -549,7 +621,10 @@ class NavigationIntegrityTests(unittest.TestCase):
 
     def test_workflow_hubs_replace_scattered_operational_pages(self):
         visible_titles = {section.title for section in SECTION_DEFINITIONS}
-        self.assertEqual(visible_titles, {"COMMAND CENTER", "INCIDENTS", "OPTIMIZATION", "SETTINGS"})
+        self.assertIn("Alert Center", visible_titles)
+        self.assertIn("Workload Operations", visible_titles)
+        self.assertIn("Cost & Contract", visible_titles)
+        self.assertIn("Security Monitoring", visible_titles)
         for retired_title in (
             "Account Health",
             "Warehouse Health",
@@ -573,8 +648,7 @@ class NavigationIntegrityTests(unittest.TestCase):
                 self.assertNotIn(retired_title, visible_titles)
 
     def test_visible_sections_have_strict_scorecard_baselines(self):
-        self.assertNotEqual(set(ALL_SECTIONS), set(DBA_CONTROL_PLANE_SECTION_BASELINE))
-        self.assertEqual(set(ALL_SECTIONS), {"COMMAND CENTER", "INCIDENTS", "OPTIMIZATION", "SETTINGS"})
+        self.assertEqual(set(ALL_SECTIONS), set(DBA_CONTROL_PLANE_SECTION_BASELINE))
 
     def test_dba_control_room_does_not_render_admin_readiness_panel(self):
         dba_control_text = _section_source(APP_ROOT / "sections" / "dba_control_room.py")
@@ -731,7 +805,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(cost_contract.WORKFLOW_MODULES["AI and Cortex spend"], "sections.cortex_monitor")
         self.assertFalse((APP_ROOT / "sections" / "budget_monitoring.py").exists())
         self.assertFalse((APP_ROOT / "sections" / "finops_control.py").exists())
-        self.assertEqual(SECTION_ALIASES["Alerts"], SECTION_BY_TITLE["INCIDENTS"])
+        self.assertEqual(SECTION_ALIASES["Alerts"], SECTION_BY_TITLE["Alert Center"])
         self.assertIn("Access posture", security_posture.WORKFLOWS)
         self.assertIn("Privilege sprawl", security_posture.WORKFLOWS)
         self.assertEqual(security_posture.WORKFLOW_MODULES["Access posture"], "sections.security_access")
@@ -950,10 +1024,7 @@ class NavigationIntegrityTests(unittest.TestCase):
 
         self.assertIn("from shell import render_app", app_text)
         self.assertIn("def queue_section_navigation", navigation_text)
-        self.assertIn('"COMMAND CENTER"', navigation_text)
-        self.assertIn('"INCIDENTS"', navigation_text)
-        self.assertIn('"OPTIMIZATION"', navigation_text)
-        self.assertIn('"SETTINGS"', navigation_text)
+        self.assertIn("CONNECTION_OPTIONAL_SECTIONS = set(ALL_SECTIONS)", navigation_text)
         self.assertIn("def section_requires_connection", navigation_text)
         self.assertIn("PENDING_SECTION", navigation_text)
         self.assertIn("def section_render_signature", (APP_ROOT / "refresh.py").read_text(encoding="utf-8"))
@@ -1036,7 +1107,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('"Warehouse"', filters_text)
         self.assertIn('"User contains"', filters_text)
         self.assertIn('if sidebar_panel_toggle("Advanced Scope", "advanced_scope")', layout_text)
-        self.assertIn('if sidebar_panel_toggle("Display & Rates", "settings")', layout_text)
+        self.assertIn('if sidebar_panel_toggle("Settings", "settings")', layout_text)
         self.assertEqual(layout_text.count('if sidebar_panel_toggle("Advanced Scope", "advanced_scope")'), 1)
         self.assertNotIn('if sidebar_panel_toggle("Saved Views", "saved_views")', layout_text)
         self.assertNotIn('if sidebar_panel_toggle("Global Filters", "global_filters")', layout_text)
@@ -1061,7 +1132,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn('with st.expander("Global Filters", expanded=False)', app_text + shell_text + layout_text)
         self.assertNotIn('with st.expander("Settings", expanded=False)', app_text + shell_text + layout_text)
         self.assertLess(shell_text.index("render_topbar_filter_strip"), shell_text.index("render_sidebar("))
-        self.assertLess(layout_text.index('if sidebar_panel_toggle("Advanced Scope", "advanced_scope")'), layout_text.index('if sidebar_panel_toggle("Display & Rates", "settings")'))
+        self.assertLess(layout_text.index('if sidebar_panel_toggle("Advanced Scope", "advanced_scope")'), layout_text.index('if sidebar_panel_toggle("Settings", "settings")'))
 
     def test_idle_shell_render_does_not_probe_snowflake(self):
         import shell
@@ -1235,8 +1306,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("render_deferred_section_notes(active_section)", app_text)
         self.assertNotIn("render_section_reference(active_section)", app_text)
         self.assertIn("Compatibility no-op", guidance_text)
-        self.assertEqual(set(ALL_SECTIONS), {"COMMAND CENTER", "INCIDENTS", "OPTIMIZATION", "SETTINGS"})
-        self.assertNotEqual(set(ALL_SECTIONS), set(SECTION_OPERATING_GUIDE))
+        self.assertEqual(set(ALL_SECTIONS), set(SECTION_OPERATING_GUIDE))
         for section, guide in SECTION_OPERATING_GUIDE.items():
             with self.subTest(section=section):
                 self.assertEqual(
@@ -1246,9 +1316,9 @@ class NavigationIntegrityTests(unittest.TestCase):
                 for value in guide.values():
                     self.assertGreaterEqual(len(str(value).split()), 7)
                 self.assertNotIn("best practice", " ".join(guide.values()).lower())
-        self.assertNotIn("Cost & Contract", ALL_SECTIONS)
-        self.assertNotIn("Alert Center", ALL_SECTIONS)
-        self.assertNotIn("Security Monitoring", ALL_SECTIONS)
+        self.assertIn("Database-attributed cost is Allocated/Estimated", SECTION_OPERATING_GUIDE["Cost & Contract"]["guardrail"])
+        self.assertIn("Email is the active channel", SECTION_OPERATING_GUIDE["Alert Center"]["guardrail"])
+        self.assertIn("Do not change access from summary rows", SECTION_OPERATING_GUIDE["Security Monitoring"]["guardrail"])
         self.assertIn(".ow-section-guide", theme_text)
         self.assertIn(".ow-workload-lane-card", theme_text)
         self.assertIn(".ow-workload-lane-state", theme_text)
@@ -1267,8 +1337,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("render_section_reference(active_section)", app_text)
         self.assertNotIn("render_section_evidence_contract(active_section)", app_text)
         self.assertNotIn('st.expander("Notes / Evidence", expanded=False)', guidance_text)
-        self.assertEqual(set(ALL_SECTIONS), {"COMMAND CENTER", "INCIDENTS", "OPTIMIZATION", "SETTINGS"})
-        self.assertNotEqual(set(ALL_SECTIONS), set(SECTION_EVIDENCE_CONTRACT))
+        self.assertEqual(set(ALL_SECTIONS), set(SECTION_EVIDENCE_CONTRACT))
         for section, rows in SECTION_EVIDENCE_CONTRACT.items():
             with self.subTest(section=section):
                 self.assertGreaterEqual(len(rows), 2)
@@ -1281,9 +1350,16 @@ class NavigationIntegrityTests(unittest.TestCase):
                     self.assertTrue(str(row["confidence"]).strip())
                     for key in ("decision_use", "invalid_use", "proof"):
                         self.assertGreaterEqual(len(str(row[key]).split()), 3)
-        self.assertNotIn("Cost & Contract", ALL_SECTIONS)
-        self.assertNotIn("Alert Center", ALL_SECTIONS)
-        self.assertNotIn("Security Monitoring", ALL_SECTIONS)
+        self.assertTrue(
+            any("Allocated/Estimated" in row["confidence"] for row in SECTION_EVIDENCE_CONTRACT["Cost & Contract"])
+        )
+        self.assertIn("Email-first", SECTION_EVIDENCE_CONTRACT["Alert Center"][1]["confidence"])
+        self.assertIn("Do not split exact spend by database", SECTION_EVIDENCE_CONTRACT["Cost & Contract"][0]["invalid_use"])
+        security_invalid_uses = " ".join(
+            row["invalid_use"] for row in SECTION_EVIDENCE_CONTRACT["Security Monitoring"]
+        )
+        self.assertIn("Do not revoke access", security_invalid_uses)
+        self.assertIn("Do not treat delayed account metadata as real-time enforcement", security_invalid_uses)
         self.assertIn(".ow-evidence-contract", theme_text)
         self.assertIn("lru_cache", guidance_text)
         self.assertIn("@lru_cache(maxsize=16)", guidance_text)

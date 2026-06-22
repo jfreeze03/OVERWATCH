@@ -5178,25 +5178,10 @@ def render() -> None:
         confidence="allocated",
         scope_note="Warehouse totals are exact; user/query chargeback is allocated unless noted.",
     )
-    render_operator_briefing(
-        [
-            ("First move", "Explain why spend changed before tuning anything."),
-            ("Telemetry", "Reconcile warehouse metering, chargeback allocation, Cortex, and run-rate pace."),
-            ("Control", "Convert findings into routed actions with savings and status."),
-            ("Output", "Produce a DBA-ready usage narrative with the source and action route attached."),
-        ],
-        columns=4,
-    )
     if st.session_state.get("exceptions_only_mode"):
         st.warning("Landing default: prioritize usage deltas, open action queue items, and run-rate risk.")
     _render_cost_watch_floor(company, credit_price)
     _render_loaded_cost_alert_context()
-    _render_executive_value_ledger(company, environment)
-    _render_cost_efficiency_score_explanation(company, environment)
-    _render_cost_forecast_detail(company, environment)
-    _render_cost_change_correlation(company, environment)
-    _render_savings_verification_workflow(company, environment)
-    _render_cost_command_findings(company, environment)
 
     workflow = render_workflow_selector(
         "Cost workflow",
@@ -5214,3 +5199,20 @@ def render() -> None:
         st.rerun()
 
     render_workflow_module(workflow, WORKFLOW_MODULES)
+
+    with st.expander("Advanced cost evidence and enterprise rollups", expanded=False):
+        render_operator_briefing(
+            [
+                ("First move", "Explain why spend changed before tuning anything."),
+                ("Telemetry", "Reconcile warehouse metering, chargeback allocation, Cortex, and run-rate pace."),
+                ("Control", "Convert findings into routed actions with savings and status."),
+                ("Output", "Produce a DBA-ready usage narrative with the source and action route attached."),
+            ],
+            columns=4,
+        )
+        _render_executive_value_ledger(company, environment)
+        _render_cost_efficiency_score_explanation(company, environment)
+        _render_cost_forecast_detail(company, environment)
+        _render_cost_change_correlation(company, environment)
+        _render_savings_verification_workflow(company, environment)
+        _render_cost_command_findings(company, environment)

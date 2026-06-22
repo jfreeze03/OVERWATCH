@@ -24,16 +24,19 @@ import uuid
 DEFAULT_OUTPUT_DIR = pathlib.Path(__file__).resolve().parent / "results"
 
 DEFAULT_SECTIONS = [
-    "COMMAND CENTER",
-    "INCIDENTS",
-    "OPTIMIZATION",
-    "SETTINGS",
+    "DBA Control Room",
+    "Alert Center",
+    "Cost & Contract",
+    "Workload Operations",
+    "Security Monitoring",
 ]
 
 # Default live actions must match the current top-level DBA landing flow. Deep
 # drilldown buttons can still be tested with section-specific browser scripts,
 # but they should not appear as skipped work in the broad concurrency profile.
 DEFAULT_LOAD_BUTTONS = {
+    "Alert Center": "Load Issue Inbox",
+    "Cost & Contract": "Refresh Cost",
 }
 
 VISIBLE_ERROR_PATTERNS = (

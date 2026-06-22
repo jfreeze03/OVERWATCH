@@ -3039,11 +3039,12 @@ def render() -> None:
         columns=4,
     )
     required_sources = _alert_center_sources_for_view(active_view)
-    _render_operational_ownership_coverage(company, environment)
-    _render_operational_risk_score_explanation(company, environment)
-    _render_alert_change_context(company, environment)
-    _render_alert_action_workflows(company, environment)
-    _render_alert_command_findings(company, environment)
+    with st.expander("Advanced alert diagnostics and enterprise evidence", expanded=False):
+        _render_operational_ownership_coverage(company, environment)
+        _render_operational_risk_score_explanation(company, environment)
+        _render_alert_change_context(company, environment)
+        _render_alert_action_workflows(company, environment)
+        _render_alert_command_findings(company, environment)
 
     if active_view == "Suppression Windows":
         _render_annotations()

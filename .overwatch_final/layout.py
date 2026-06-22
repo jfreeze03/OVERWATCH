@@ -75,10 +75,12 @@ from utils.idle import (
 
 
 SECTION_SUBTITLES = {
-    "COMMAND CENTER": "Overall health, active incidents, risk, ownership, and next action.",
-    "INCIDENTS": "One queue for what is broken, what changed, who owns it, and what to do next.",
-    "OPTIMIZATION": "Cost, warehouse, Cortex, storage, and savings recommendations.",
-    "SETTINGS": "Admin tools, alert setup, refresh diagnostics, role readiness, and advanced utilities.",
+    "Executive Landing": "Risk, cost movement, action closure, and telemetry trust.",
+    "DBA Control Room": "Morning triage, route status, data health, and release risk.",
+    "Alert Center": "Consolidated incidents, email digests, annotation history, and control status.",
+    "Workload Operations": "Query/contention triage plus task, procedure, and pipeline health.",
+    "Cost & Contract": "Spend attribution, contract utilization, chargeback, savings, and action queue.",
+    "Security Monitoring": "Login risk, privileged grants, public access, data sharing, and security alerts.",
 }
 
 
@@ -313,7 +315,7 @@ def render_sidebar(
         st.markdown("""
         <div class="ow-sidebar-brand">
             <div class="ow-brand-row"><span class="ow-brand-dot"></span><span>OVERWATCH</span></div>
-            <div class="ow-sidebar-subtitle">Snowflake Command Center</div>
+            <div class="ow-sidebar-subtitle">Snowflake Usage Monitor</div>
             <div class="ow-live-pill">LIVE</div>
         </div>
         """, unsafe_allow_html=True)
@@ -362,7 +364,7 @@ def render_sidebar(
 
         st.divider()
 
-        if sidebar_panel_toggle("Display & Rates", "settings"):
+        if sidebar_panel_toggle("Settings", "settings"):
             render_theme_picker()
             st.divider()
             credit_price = st.number_input(
@@ -437,16 +439,11 @@ def render_sidebar(
         st.divider()
 
         company_color = COMPANY_CONFIG.get(active_company, {}).get("color", "#38bdf8")
-        telemetry_note = (
-            "Live metadata is current; account history may lag up to 45 minutes."
-            if connection_available
-            else "Local fallback is active; use Settings or explicit refresh actions to hydrate telemetry."
-        )
         st.markdown(f"""
         <div style="font-size:0.65rem; color:#475569; text-align:center;">
             <div style="color:{company_color}; font-weight:700; margin-bottom:4px;">{active_company} view</div>
             <div>${credit_price:.2f}/credit</div>
-            <div style="margin-top:4px;">{telemetry_note}</div>
+            <div style="margin-top:4px;">Live metadata is current; account history may lag up to 45 minutes.</div>
         </div>
         """, unsafe_allow_html=True)
 

@@ -494,21 +494,9 @@ def render() -> None:
     if st.session_state.get("workload_operations_workflow") not in WORKFLOWS:
         st.session_state["workload_operations_workflow"] = QUERY_CONTENTION_WORKFLOW
 
-    render_workflow_guide(
-        "Pick the operator surface that matches the incident. Each route opens one specialist path instead of a nested brief.",
-        [
-            ("Running, queued, blocked, slow, spilling, or failed SQL", "Use Query investigation, then choose diagnosis or contention focus."),
-            ("Late task, failed procedure, load backlog, or downstream SLA risk", "Use Task & procedure health, Stored procedures, or Pipeline / SLA risk."),
-            ("Mismatch between environments or releases", "Use Schema & data compare."),
-        ],
-    )
     _render_loaded_workload_alert_context()
     company = get_active_company()
     environment = get_active_environment()
-    _render_workload_forecast_detail(company, environment)
-    _render_workload_change_detail(company, environment)
-    _render_workload_closed_loop_detail(company, environment)
-    _render_workload_command_findings(company, environment)
 
     workflow = render_workflow_selector(
         "Workload surface",
@@ -519,3 +507,17 @@ def render() -> None:
     )
 
     _render_workload_surface(workflow)
+
+    with st.expander("Advanced workload evidence and workflow guide", expanded=False):
+        render_workflow_guide(
+            "Pick the operator surface that matches the incident. Each route opens one specialist path instead of a nested brief.",
+            [
+                ("Running, queued, blocked, slow, spilling, or failed SQL", "Use Query investigation, then choose diagnosis or contention focus."),
+                ("Late task, failed procedure, load backlog, or downstream SLA risk", "Use Task & procedure health, Stored procedures, or Pipeline / SLA risk."),
+                ("Mismatch between environments or releases", "Use Schema & data compare."),
+            ],
+        )
+        _render_workload_forecast_detail(company, environment)
+        _render_workload_change_detail(company, environment)
+        _render_workload_closed_loop_detail(company, environment)
+        _render_workload_command_findings(company, environment)

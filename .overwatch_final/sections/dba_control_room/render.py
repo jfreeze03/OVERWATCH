@@ -702,21 +702,12 @@ def render() -> None:
     investigation_mode = evidence_mode_is_investigation(st.session_state)
     all_evidence_mode = evidence_mode_is_all_evidence(st.session_state)
 
-    render_operator_briefing(
-        [
-            ("First move", "Use the fast snapshot for cheap triage."),
-            ("Telemetry", "Load details only when a signal needs source detail."),
-            ("Control", "Route to the specialist workflow before taking action."),
-            ("Output", "Export the Morning Brief for DBA handoff."),
-        ],
-        columns=4,
-    )
     if evidence_mode == TRIAGE_MODE_TRIAGE:
-        defer_section_note("Landing default keeps this page on actionable issues and DBA handoff telemetry.")
+        defer_section_note("Start with Fast Watch or load triage when current DBA telemetry is needed.")
     elif evidence_mode == TRIAGE_MODE_INVESTIGATE:
-        defer_section_note("Investigation detail opens deeper root-cause telemetry defaults.")
+        defer_section_note("Investigation mode loads deeper root-cause telemetry only after you ask for it.")
     elif evidence_mode == TRIAGE_MODE_ALL_EVIDENCE:
-        defer_section_note("Full detail depth opens bounded live fallback defaults.")
+        defer_section_note("Full detail depth enables bounded live fallback only after explicit load.")
 
     cortex_budget_usd = float(
         st.session_state.get(
@@ -895,13 +886,14 @@ def render() -> None:
         target_minutes=30,
         delayed_note="DBA Control Room shows cached triage immediately; guarded live checks are reserved for explicit detail loads.",
     )
-    _render_enterprise_diagnostics_gate(company, environment)
-    _render_production_readiness_gate(company, environment)
-    _render_executive_scorecard_driver_gate(company, environment)
-    _render_forecast_exception_gate(company, environment)
-    _render_change_intelligence_gate(company, environment)
-    _render_closed_loop_operations_gate(company, environment)
-    _render_command_center_investigation_gate(company, environment)
+    with st.expander("Advanced diagnostics and enterprise evidence", expanded=False):
+        _render_enterprise_diagnostics_gate(company, environment)
+        _render_production_readiness_gate(company, environment)
+        _render_executive_scorecard_driver_gate(company, environment)
+        _render_forecast_exception_gate(company, environment)
+        _render_change_intelligence_gate(company, environment)
+        _render_closed_loop_operations_gate(company, environment)
+        _render_command_center_investigation_gate(company, environment)
 
     if st.button(load_label, key="dba_control_room_load", type="primary"):
         _load_control_room_evidence()

@@ -4,16 +4,22 @@ Date: 2026-06-22
 
 Purpose: reduce OVERWATCH from a feature-rich engineering workbench into a focused Snowflake operations command center for DBAs, data engineers, platform owners, and IT managers.
 
+> Current product direction: keep the six primary sections (`Executive Landing`,
+> `DBA Control Room`, `Alert Center`, `Cost & Contract`,
+> `Workload Operations`, `Security Monitoring`). Use this audit as a historical
+> inventory of internal fluff to hide, simplify, or move behind advanced/admin
+> expanders. Do not use the four-area consolidation as the active direction.
+
 ## Executive Decision
 
 OVERWATCH should be simplified aggressively.
 
 The current application has valuable telemetry, but too much of the user experience is organized around how the system was built instead of how operators make decisions. The top-level navigation has already been reduced to six sections, but each section still exposes too many secondary workflows, proofing panels, derived metrics, score layers, and detail paths.
 
-Recommended target:
+Revised target:
 
-- Four user areas: `COMMAND CENTER`, `INCIDENTS`, `OPTIMIZATION`, `SETTINGS`.
-- One no-scroll landing page: `OVERWATCH COMMAND CENTER`.
+- Six clear DBA sections: `Executive Landing`, `DBA Control Room`, `Alert Center`, `Cost & Contract`, `Workload Operations`, `Security Monitoring`.
+- Cleaner section entry points that put practical workflows before scorecards, readiness panels, proofing, and evidence widgets.
 - One simplified alert model: `Critical`, `Warning`, `Info`.
 - One simplified health model: `Critical`, `Warning`, `Healthy`.
 - A reduced mart layer of approximately 28 to 34 tables, down from about 94 tables.
@@ -608,4 +614,3 @@ OVERWATCH should be a Snowflake command center that tells an operator:
 5. Here is what to do next.
 
 If a feature does not support one of those five outcomes, remove it from the primary product.
-

@@ -2828,32 +2828,9 @@ def render() -> None:
         confidence="exact",
         scope_note="Company scope uses user/database naming where Snowflake does not expose company routing.",
     )
-    render_operator_briefing(
-        [
-            ("First move", "Separate noisy login volume from real identity or access risk."),
-            ("Telemetry", "Tie users, IPs, grants, MFA posture, and shared data to source detail."),
-            ("Control", "Escalate to IAM, revoke/narrow access, or validate business route."),
-            ("Output", "Produce an audit posture brief with routes and remediation status."),
-        ],
-        columns=4,
-    )
     if st.session_state.get("exceptions_only_mode"):
         st.warning("Landing default: prioritize failed logins, MFA gaps, risky grants, and external exposure.")
-    render_workflow_guide(
-        "Start with identity/access posture, open privilege sprawl for high-risk grants, "
-        "then inspect data sharing when the question is external exposure or audit telemetry.",
-        [
-            ("Login failures, MFA, grants, or risky access", "Use Access posture."),
-            ("Admin roles, ownership, grant option, or route blockers", "Use Privilege sprawl."),
-            ("External consumers or shared data exposure", "Use Data sharing exposure."),
-        ],
-    )
     _render_loaded_security_alert_context()
-    _render_security_ownership_coverage(company, environment)
-    _render_security_score_explanation(company, environment)
-    _render_security_change_detail(company, environment)
-    _render_security_action_approval(company, environment)
-    _render_security_command_findings(company, environment)
 
     days = day_window_selectbox(
         "Security window",
@@ -2868,6 +2845,30 @@ def render() -> None:
         details=SECURITY_POSTURE_VIEW_DETAILS,
         columns=4,
     )
+    with st.expander("Advanced security evidence and workflow guide", expanded=False):
+        render_operator_briefing(
+            [
+                ("First move", "Separate noisy login volume from real identity or access risk."),
+                ("Telemetry", "Tie users, IPs, grants, MFA posture, and shared data to source detail."),
+                ("Control", "Escalate to IAM, revoke/narrow access, or validate business route."),
+                ("Output", "Produce an audit posture brief with routes and remediation status."),
+            ],
+            columns=4,
+        )
+        render_workflow_guide(
+            "Start with identity/access posture, open privilege sprawl for high-risk grants, "
+            "then inspect data sharing when the question is external exposure or audit telemetry.",
+            [
+                ("Login failures, MFA, grants, or risky access", "Use Access posture."),
+                ("Admin roles, ownership, grant option, or route blockers", "Use Privilege sprawl."),
+                ("External consumers or shared data exposure", "Use Data sharing exposure."),
+            ],
+        )
+        _render_security_ownership_coverage(company, environment)
+        _render_security_score_explanation(company, environment)
+        _render_security_change_detail(company, environment)
+        _render_security_action_approval(company, environment)
+        _render_security_command_findings(company, environment)
     if active_view in {"Data Health"}:
         _render_security_source_health(company, environment)
         _render_privileged_grant_readiness(company, environment, days)

@@ -51,11 +51,7 @@ def request_executive_landing_hydration() -> None:
 def request_section_workspace(section: str) -> None:
     """Make a section jump render the useful working surface."""
     target = normalize_section_name(section)
-    if target in {"COMMAND CENTER", "INCIDENTS", "OPTIMIZATION", "SETTINGS"}:
-        pop_state(PENDING_AUTOLOAD_SECTION, None)
-        pop_state(PENDING_AUTOLOAD_STARTED_AT, None)
-        return
-    elif target == "Executive Landing":
+    if target == "Executive Landing":
         set_state(EXECUTIVE_LANDING_WORKSPACE_REQUESTED, True)
         set_state(EXECUTIVE_LANDING_BRIEF_MODE, False)
         request_executive_landing_hydration()
@@ -80,7 +76,7 @@ def apply_navigation_state(section: str, *, mark_pending: bool = True) -> str:
     raw_section = str(section or "").strip()
     target = normalize_section_name(raw_section)
     current = normalize_section_name(get_state(NAV_SECTION, ""))
-    if mark_pending and (target != current or target == "COMMAND CENTER"):
+    if mark_pending and (target != current or target == "Executive Landing"):
         set_state(PENDING_SECTION, target)
         set_state(SECTION_TRANSITION_STARTED_AT, datetime.now().isoformat(timespec="seconds"))
     for key, value in compatibility_state_for_section(raw_section).items():

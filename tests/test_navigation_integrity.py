@@ -553,23 +553,28 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("Download DBA runbook", full_workspace_text)
 
     def test_cost_contract_uses_fast_shell_module(self):
+        from sections import cost_contract_contracts
+
         self.assertEqual(SECTION_MODULES["Cost & Contract"], "sections.cost_contract")
         self.assertFalse((APP_ROOT / "sections" / "cost_contract_shell.py").exists())
         full_workspace_text = (APP_ROOT / "sections" / "cost_contract.py").read_text(encoding="utf-8")
+        contract_text = (APP_ROOT / "sections" / "cost_contract_contracts.py").read_text(encoding="utf-8")
+        cost_contract_surface = full_workspace_text + contract_text
         nav_text = (APP_ROOT / "sections" / "navigation.py").read_text(encoding="utf-8")
-        self.assertIn('"Cost Overview"', full_workspace_text)
-        self.assertIn('"Cost by Warehouse"', full_workspace_text)
+        self.assertIn('"Cost Overview"', cost_contract_surface)
+        self.assertIn('"Cost by Warehouse"', cost_contract_surface)
         self.assertIn('set_state(COST_CONTRACT_WORKFLOW, "Cost Overview")', nav_text)
-        self.assertNotIn("Cost Signal Summary", full_workspace_text)
-        self.assertNotIn("Cost Command Board", full_workspace_text)
+        self.assertNotIn("Cost Signal Summary", cost_contract_surface)
+        self.assertNotIn("Cost Command Board", cost_contract_surface)
         cost_center_text = (APP_ROOT / "sections" / "cost_center.py").read_text(encoding="utf-8")
         self.assertNotIn("Contract Utilization", cost_center_text)
         self.assertNotIn("Annual committed credits", cost_center_text)
         self.assertNotIn("Calculate Utilization", cost_center_text)
-        self.assertIn("WORKFLOWS", full_workspace_text)
+        self.assertIn("WORKFLOWS", cost_contract_surface)
         self.assertIn("Advanced cost tools and evidence", full_workspace_text)
         self.assertIn("Open Advanced Cost Tools", full_workspace_text)
-        self.assertIn('"Storage & Retention": "sections.storage_monitor"', full_workspace_text)
+        self.assertEqual(cost_contract_contracts.ADVANCED_COST_TOOL_MODULES["Storage & Retention"], "sections.storage_monitor")
+        self.assertIn('"Storage & Retention": "sections.storage_monitor"', contract_text)
         self.assertIn('"Refresh Cost"', full_workspace_text)
         self.assertNotIn('"Refresh Overview"', full_workspace_text)
         self.assertNotIn('"Refresh Cost Details"', full_workspace_text)
@@ -1134,9 +1139,13 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertGreaterEqual(len(LEGACY_ROUTE_CONTRACT), 30)
 
     def test_cost_contract_workflow_detail_renders_on_selection(self):
+        from sections import cost_contract, cost_contract_contracts
+
         text = (APP_ROOT / "sections" / "cost_contract.py").read_text(encoding="utf-8")
 
-        self.assertIn('_DETAIL_WORKFLOW_KEY = "_cost_contract_detail_workflow"', text)
+        self.assertEqual(cost_contract._DETAIL_WORKFLOW_KEY, "_cost_contract_detail_workflow")
+        self.assertEqual(cost_contract._PENDING_DETAIL_WORKFLOW_KEY, "_cost_contract_pending_detail_workflow")
+        self.assertIs(cost_contract.WORKFLOWS, cost_contract_contracts.WORKFLOWS)
         self.assertNotIn('st.button("Open detail"', text)
         self.assertNotIn("if open_workflow == workflow:", text)
         self.assertIn("routed_workflow = st.session_state.pop(_PENDING_DETAIL_WORKFLOW_KEY, None)", text)

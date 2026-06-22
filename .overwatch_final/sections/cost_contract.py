@@ -27,6 +27,28 @@ from sections.shell_helpers import (
     with_loaded_at,
 )
 from sections.navigation import apply_section_workflow_navigation
+from sections.cost_contract_contracts import (
+    ADVANCED_COST_TOOL_DETAILS,
+    ADVANCED_COST_TOOL_MODULES,
+    COST_WORKFLOW_PRESETS,
+    LEGACY_COST_ADVANCED_TOOL_ALIASES,
+    LEGACY_COST_INNER_VIEW_ALIASES,
+    LEGACY_COST_WORKFLOW_ALIASES,
+    WORKFLOW_DETAILS,
+    WORKFLOW_MODULES,
+    WORKFLOWS,
+    _ADVANCED_COST_DETAIL_VISIBLE_KEY,
+    _ADVANCED_COST_TOOLS_VISIBLE_KEY,
+    _COST_SPLASH_AUTOLOAD_BLOCKED_SCOPE_KEY,
+    _COST_SPLASH_AUTOLOAD_SCOPE_KEY,
+    _COST_SPLASH_KEY,
+    _DETAIL_WORKFLOW_KEY,
+    _LAST_COST_WORKFLOW_KEY,
+    _PENDING_DETAIL_WORKFLOW_KEY,
+    _PRESERVE_COST_CENTER_VIEW_KEY,
+    build_cost_monitoring_mart_sql,
+)
+from sections.cost_contract_helpers import get_credit_price, get_current_ai_credit_price
 from utils.metering_sql import build_cost_cockpit_metering_sql, build_cost_run_rate_metering_sql
 from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_section_note, defer_source_note
@@ -47,7 +69,6 @@ build_snowflake_service_cost_trend_sql = _lazy_util("build_snowflake_service_cos
 credits_to_dollars = _lazy_util("credits_to_dollars")
 format_snowflake_error = _lazy_util("format_snowflake_error")
 get_active_environment = _lazy_util("get_active_environment")
-get_ai_credit_price = _lazy_util("get_ai_credit_price")
 get_environment_label = _lazy_util("get_environment_label")
 get_session_for_action = _lazy_util("get_session_for_action")
 get_user_company_filter_clause = _lazy_util("get_user_company_filter_clause")
@@ -79,43 +100,8 @@ alert_delivery_status_for_target = _lazy_util("alert_delivery_status_for_target"
 alert_recipient_label = _lazy_util("alert_recipient_label")
 
 
-def build_cost_monitoring_mart_sql() -> str:
-    """Return the cost-monitoring refresh contract used by setup validation tests."""
-    return """
-CREATE TRANSIENT TABLE IF NOT EXISTS FACT_COST_MONITORING_SIGNAL (...);
-CREATE TRANSIENT TABLE IF NOT EXISTS FACT_COST_INCIDENT_TIMELINE (...);
-CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_COST_MONITORING()
-RETURNS STRING
-LANGUAGE SQL
-AS
-$$
-BEGIN
-  INSERT INTO OVERWATCH_ALERTS SELECT CURRENT_TIMESTAMP();
-  INSERT INTO FACT_COST_MONITORING_SIGNAL SELECT CURRENT_TIMESTAMP();
-  INSERT INTO FACT_COST_INCIDENT_TIMELINE SELECT CURRENT_TIMESTAMP();
-  RETURN 'OK';
-END;
-$$;
-CREATE OR REPLACE TASK OVERWATCH_COST_MONITORING_REFRESH
-  WAREHOUSE = COMPUTE_WH
-AS
-  CALL SP_OVERWATCH_REFRESH_COST_MONITORING();
-"""
-
-
 def get_active_company() -> str:
     return str(st.session_state.get("active_company", DEFAULT_COMPANY) or DEFAULT_COMPANY)
-
-
-def get_credit_price() -> float:
-    return safe_float(st.session_state.get("credit_price", DEFAULTS.get("credit_price", 3.68)), 3.68)
-
-
-def get_current_ai_credit_price() -> float:
-    try:
-        return safe_float(get_ai_credit_price(), 2.20)
-    except Exception:
-        return safe_float(st.session_state.get("ai_credit_price", DEFAULTS.get("ai_credit_price", 2.20)), 2.20)
 
 
 def _altair():
@@ -567,117 +553,6 @@ def render_workflow_module(workflow: str, workflow_modules: dict[str, str]) -> N
         st.warning(f"Workflow module has no render() function: {module_name}")
         return
     render()
-
-WORKFLOWS = (
-    "Cost Overview",
-    "Cost by Warehouse",
-    "Cost by User / Role",
-    "Burn Rate & Forecast",
-    "Budget vs Actual",
-    "Waste Detection",
-    "Chargeback / Company Split",
-    "Cost Recommendations",
-)
-
-WORKFLOW_DETAILS = {
-    "Cost Overview": "Current spend, run-rate, top driver, anomaly, and freshness without a scorecard wall.",
-    "Cost by Warehouse": "Which warehouses are driving spend, movement, idle cost, and optimization review?",
-    "Cost by User / Role": "Which users, roles, and query patterns are driving allocated spend?",
-    "Burn Rate & Forecast": "Daily spend trend, projected month-end spend, and simple run-rate forecast.",
-    "Budget vs Actual": "Reconcile Snowflake Admin totals, warehouse metering, service credits, and OVERWATCH allocation.",
-    "Waste Detection": "Anomalies, idle/inefficient warehouse posture, and avoidable usage candidates.",
-    "Chargeback / Company Split": "ALFA/Trexis allocation, environment split, and billing-ready review rows.",
-    "Cost Recommendations": "Actionable cost recommendations with owner, status, and expected savings.",
-}
-
-WORKFLOW_MODULES = {
-    "Cost by Warehouse": "sections.cost_center",
-    "Cost by User / Role": "sections.cost_center",
-    "Burn Rate & Forecast": "sections.cost_center",
-    "Budget vs Actual": "sections.cost_center",
-    "Waste Detection": "sections.recommendations",
-    "Chargeback / Company Split": "sections.cost_center",
-    "Cost Recommendations": "sections.recommendations",
-}
-
-COST_WORKFLOW_PRESETS = {
-    "Cost by Warehouse": {"cost_center_view": "Cost Explorer", "cc_explorer_lens": "Warehouse"},
-    "Cost by User / Role": {"cost_center_view": "User Leaderboard"},
-    "Burn Rate & Forecast": {"cost_center_view": "Burn Rate"},
-    "Budget vs Actual": {"cost_center_view": "Reconciliation"},
-    "Chargeback / Company Split": {"cost_center_view": "Chargeback"},
-    "Waste Detection": {"recommendations_active_view": "Anomaly Log"},
-    "Cost Recommendations": {"recommendations_active_view": "Warehouse Advisor"},
-}
-
-LEGACY_COST_WORKFLOW_ALIASES = {
-    "Cost Cockpit": "Cost Overview",
-    "Cost Overview": "Cost Overview",
-    "Usage attribution and run-rate": "Cost by Warehouse",
-    "Cost Center": "Cost by Warehouse",
-    "Usage Overview": "Cost by Warehouse",
-    "Cost by User": "Cost by User / Role",
-    "User Leaderboard": "Cost by User / Role",
-    "Attribution": "Cost by User / Role",
-    "Burn Rate": "Burn Rate & Forecast",
-    "Forecast": "Burn Rate & Forecast",
-    "Storage cost and retention": "Cost Overview",
-    "Storage Monitor": "Cost Overview",
-    "Recommendations": "Cost Recommendations",
-    "Recommendations and action queue": "Cost Recommendations",
-    "Recommendations & Anomalies": "Cost Recommendations",
-    "AI and Cortex spend": "Cost Overview",
-    "Cortex Spend": "Cost Overview",
-    "AI & Cortex Monitor": "Cost Overview",
-    "SPCS spend": "Cost Overview",
-    "SPCS Tracker": "Cost Overview",
-    "Reconciliation": "Budget vs Actual",
-    "Chargeback": "Chargeback / Company Split",
-    "Credit Contract": "Budget vs Actual",
-    "Warehouse Health": "Waste Detection",
-}
-
-LEGACY_COST_ADVANCED_TOOL_ALIASES = {
-    "Storage cost and retention": "Storage & Retention",
-    "Storage Monitor": "Storage & Retention",
-    "AI and Cortex spend": "Cortex Spend",
-    "Cortex Spend": "Cortex Spend",
-    "AI & Cortex Monitor": "Cortex Spend",
-    "SPCS spend": "SPCS Spend",
-    "SPCS Tracker": "SPCS Spend",
-}
-
-LEGACY_COST_INNER_VIEW_ALIASES = {
-    "User Leaderboard": {"cost_center_view": "User Leaderboard"},
-    "Attribution": {"cost_center_view": "Attribution"},
-    "Burn Rate": {"cost_center_view": "Burn Rate"},
-    "Forecast": {"cost_center_view": "Forecast"},
-    "Chargeback": {"cost_center_view": "Chargeback"},
-    "Credit Contract": {"cost_center_view": "Reconciliation"},
-}
-
-ADVANCED_COST_TOOL_DETAILS = {
-    "Cortex Spend": "Cortex usage, model spend, users, and runaway AI cost signals.",
-    "Storage & Retention": "Database, failsafe, stage, and table storage telemetry.",
-    "SPCS Spend": "Snowpark Container Services usage and service cost exposure.",
-}
-
-ADVANCED_COST_TOOL_MODULES = {
-    "Cortex Spend": "sections.cortex_monitor",
-    "Storage & Retention": "sections.storage_monitor",
-    "SPCS Spend": "sections.spcs_tracker",
-}
-
-_DETAIL_WORKFLOW_KEY = "_cost_contract_detail_workflow"
-_PENDING_DETAIL_WORKFLOW_KEY = "_cost_contract_pending_detail_workflow"
-_COST_SPLASH_KEY = "cost_contract_splash"
-_COST_SPLASH_AUTOLOAD_SCOPE_KEY = "_cost_contract_splash_autoload_scope"
-_COST_SPLASH_AUTOLOAD_BLOCKED_SCOPE_KEY = "_cost_contract_splash_autoload_blocked_scope"
-_ADVANCED_COST_TOOLS_VISIBLE_KEY = "_cost_contract_show_advanced_tools"
-_ADVANCED_COST_DETAIL_VISIBLE_KEY = "_cost_contract_show_advanced_detail_boards"
-_LAST_COST_WORKFLOW_KEY = "_cost_contract_last_applied_workflow"
-_PRESERVE_COST_CENTER_VIEW_KEY = "_cost_contract_preserve_cost_center_view"
-
 
 def _build_cost_cockpit_sql(company: str, days: int) -> str:
     return build_cost_cockpit_metering_sql(

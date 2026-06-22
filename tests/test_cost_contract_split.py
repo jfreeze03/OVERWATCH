@@ -61,7 +61,9 @@ class CostContractSplitTests(unittest.TestCase):
             APP_ROOT / "sections" / "cost_contract_contracts.py",
             APP_ROOT / "sections" / "cost_contract_dataframes.py",
             APP_ROOT / "sections" / "cost_contract_helpers.py",
+            APP_ROOT / "sections" / "cost_contract_intelligence.py",
             APP_ROOT / "sections" / "cost_contract_overview.py",
+            APP_ROOT / "sections" / "cost_contract_panels.py",
             APP_ROOT / "sections" / "cost_contract_sql.py",
         )
         for path in modules:

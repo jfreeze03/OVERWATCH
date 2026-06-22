@@ -559,7 +559,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertFalse((APP_ROOT / "sections" / "cost_contract_shell.py").exists())
         full_workspace_text = (APP_ROOT / "sections" / "cost_contract.py").read_text(encoding="utf-8")
         contract_text = (APP_ROOT / "sections" / "cost_contract_contracts.py").read_text(encoding="utf-8")
-        cost_contract_surface = full_workspace_text + contract_text
+        panel_text = (APP_ROOT / "sections" / "cost_contract_panels.py").read_text(encoding="utf-8")
+        intelligence_text = (APP_ROOT / "sections" / "cost_contract_intelligence.py").read_text(encoding="utf-8")
+        cost_contract_surface = full_workspace_text + contract_text + panel_text + intelligence_text
         nav_text = (APP_ROOT / "sections" / "navigation.py").read_text(encoding="utf-8")
         self.assertIn('"Cost Overview"', cost_contract_surface)
         self.assertIn('"Cost by Warehouse"', cost_contract_surface)
@@ -580,7 +582,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn('"Refresh Cost Details"', full_workspace_text)
         self.assertNotIn("Cost Detail Refresh", full_workspace_text)
         self.assertNotIn("Cost Drilldown Readiness", full_workspace_text)
-        self.assertIn("Cost Drilldown Status", full_workspace_text)
+        self.assertIn("Cost Drilldown Status", cost_contract_surface)
         self.assertNotIn("def _cost_action_brief", full_workspace_text)
         self.assertNotIn("def _cost_operating_snapshot", full_workspace_text)
         self.assertIn("_PENDING_DETAIL_WORKFLOW_KEY", full_workspace_text)

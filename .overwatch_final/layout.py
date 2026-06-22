@@ -77,7 +77,7 @@ from utils.idle import (
 SECTION_SUBTITLES = {
     "Executive Landing": "Risk, cost movement, action closure, and telemetry trust.",
     "DBA Control Room": "Morning triage, route status, data health, and release risk.",
-    "Alert Center": "Consolidated incidents, email digests, annotation history, and control status.",
+    "Alert Center": "Active alerts, owner routing, impact, recommended actions, and investigation paths.",
     "Workload Operations": "Query/contention triage plus task, procedure, and pipeline health.",
     "Cost & Contract": "Spend attribution, contract utilization, chargeback, savings, and action queue.",
     "Security Monitoring": "Login risk, privileged grants, public access, data sharing, and security alerts.",

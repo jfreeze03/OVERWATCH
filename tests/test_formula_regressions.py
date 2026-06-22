@@ -9208,7 +9208,7 @@ class FormulaRegressionTests(unittest.TestCase):
             email_logged=0,
             open_queue=4,
         )
-        self.assertEqual(queue_only["target"], "Delivery & Automation")
+        self.assertEqual(queue_only["target"], "Alert Settings / Admin")
         self.assertIn("4 open queue", queue_only["detail"])
 
         clear = _alert_center_action_brief(
@@ -9261,8 +9261,10 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_signal["Overdue alert SLAs"]["ROUTE"], "Active Alerts")
         self.assertEqual(by_signal["Generic alert routes"]["OWNER"], "Platform DBA")
         self.assertEqual(by_signal["Open action queue"]["COUNT"], 1)
+        self.assertEqual(by_signal["Open action queue"]["ROUTE"], "Alert Settings / Admin")
         self.assertEqual(by_signal["Alert control blockers"]["ROUTE"], "Active Alerts")
         self.assertEqual(by_signal["Delivery failures"]["COUNT"], 1)
+        self.assertEqual(by_signal["Delivery failures"]["ROUTE"], "Alert Settings / Admin")
 
     def test_alert_center_pending_state_uses_active_alerts_default(self):
         brief = _alert_center_pending_brief("Alert Brief", set())
@@ -9279,14 +9281,16 @@ class FormulaRegressionTests(unittest.TestCase):
                 "Cost Alerts",
                 "Reliability Alerts",
                 "Security Alerts",
-                "Advanced Alert Admin",
+                "Alert History",
+                "Alert Settings / Admin",
             ],
         )
         by_view = {row["VIEW"]: row for row in workflows}
         self.assertIn("Open Active Alerts", by_view["Active Alerts"]["BUTTON_LABEL"])
         self.assertIn("Cost", by_view["Cost Alerts"]["BUTTON_LABEL"])
         self.assertIn("alert history", by_view["Active Alerts"]["SOURCES"].lower())
-        self.assertIn("Open Advanced Admin", by_view["Advanced Alert Admin"]["BUTTON_LABEL"])
+        self.assertIn("Open Alert History", by_view["Alert History"]["BUTTON_LABEL"])
+        self.assertIn("Open Alert Settings", by_view["Alert Settings / Admin"]["BUTTON_LABEL"])
 
     def test_alert_center_operator_workflow_spine_prioritizes_next_move(self):
         alerts = pd.DataFrame([{
@@ -9457,7 +9461,8 @@ class FormulaRegressionTests(unittest.TestCase):
             st.session_state["alert_center_active_view"] = "Control Health"
             _apply_alert_center_brief_first_default()
 
-            self.assertEqual(st.session_state["alert_center_active_view"], "Active Alerts")
+            self.assertEqual(st.session_state["alert_center_active_view"], "Alert Settings / Admin")
+            self.assertEqual(st.session_state["alert_center_admin_view"], "Delivery & Automation")
             self.assertEqual(st.session_state["_alert_center_brief_first_version"], 3)
 
             st.session_state["alert_center_active_view"] = "Retired Alert Pane"
@@ -9472,7 +9477,7 @@ class FormulaRegressionTests(unittest.TestCase):
             st.session_state["alert_center_active_view"] = "Control Health"
             st.session_state["alert_center_data"] = {"_loaded_sources": []}
             _apply_alert_center_brief_first_default()
-            self.assertEqual(st.session_state["alert_center_active_view"], "Active Alerts")
+            self.assertEqual(st.session_state["alert_center_active_view"], "Alert Settings / Admin")
         finally:
             st.session_state.clear()
             st.session_state.update(previous)

@@ -400,6 +400,16 @@ SECTION_ROUTE_STATE = {
         "cost_contract_advanced_tool": "SPCS Spend",
         "_cost_contract_show_advanced_tools": True,
     },
+    "Alerts": {
+        "alert_center_active_view": "Active Alerts",
+    },
+    "Alert History": {
+        "alert_center_active_view": "Alert History",
+    },
+    "Alert Configuration": {
+        "alert_center_active_view": "Alert Settings / Admin",
+        "alert_center_admin_view": "Delivery & Automation",
+    },
     "Security Posture": {
         "security_posture_view": "Failed Logins",
     },

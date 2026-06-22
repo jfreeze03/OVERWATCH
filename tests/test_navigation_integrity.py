@@ -438,6 +438,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("Alert Signal Summary", full_workspace_text)
         self.assertNotIn("Alert Command Board", full_workspace_text)
         self.assertIn("ALERT_CENTER_PANES", full_workspace_text)
+        self.assertIn('"Alert History"', full_workspace_text)
+        self.assertIn('"Alert Settings / Admin"', full_workspace_text)
+        self.assertIn('"View Details"', full_workspace_text)
 
     def test_security_monitoring_keeps_security_surface_narrow(self):
         self.assertEqual(SECTION_MODULES["Security Monitoring"], "sections.security_posture")
@@ -764,6 +767,7 @@ class NavigationIntegrityTests(unittest.TestCase):
 
     def test_workflow_hubs_expose_expected_subworkflows(self):
         from sections import (
+            alert_center,
             change_drift,
             cost_contract,
             dba_control_room,
@@ -866,7 +870,28 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(cost_contract.WORKFLOW_MODULES["Cost by User / Role"], "sections.cost_center")
         self.assertFalse((APP_ROOT / "sections" / "budget_monitoring.py").exists())
         self.assertFalse((APP_ROOT / "sections" / "finops_control.py").exists())
+        self.assertEqual(
+            tuple(alert_center.ALERT_CENTER_PANES),
+            (
+                "Active Alerts",
+                "Cost Alerts",
+                "Reliability Alerts",
+                "Security Alerts",
+                "Alert History",
+                "Alert Settings / Admin",
+            ),
+        )
+        self.assertEqual(alert_center.ALERT_CENTER_DEFAULT_VIEW, "Active Alerts")
+        self.assertEqual(alert_center._normalize_alert_center_view("Alert Configuration"), "Alert Settings / Admin")
+        self.assertEqual(alert_center._normalize_alert_center_view("Advanced Alert Admin"), "Alert Settings / Admin")
+        self.assertEqual(alert_center._normalize_alert_center_view("Alert History"), "Alert History")
+        self.assertEqual(alert_center._alert_admin_view_for_route("Alert Configuration"), "Delivery & Automation")
+        self.assertEqual(alert_center.ALERT_CENTER_SOURCES_BY_PANE["Alert History"], {"alerts", "action_queue", "delivery_log"})
         self.assertEqual(SECTION_ALIASES["Alerts"], SECTION_BY_TITLE["Alert Center"])
+        self.assertEqual(compatibility_state_for_section("Alerts")["alert_center_active_view"], "Active Alerts")
+        self.assertEqual(compatibility_state_for_section("Alert History")["alert_center_active_view"], "Alert History")
+        self.assertEqual(compatibility_state_for_section("Alert Configuration")["alert_center_active_view"], "Alert Settings / Admin")
+        self.assertEqual(compatibility_state_for_section("Alert Configuration")["alert_center_admin_view"], "Delivery & Automation")
         self.assertIn("Failed Logins", security_posture.WORKFLOWS)
         self.assertIn("Risky Grants", security_posture.WORKFLOWS)
         self.assertIn("Privilege Sprawl", security_posture.WORKFLOWS)

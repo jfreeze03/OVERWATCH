@@ -192,6 +192,27 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertIn("SP_OVERWATCH_LOAD_HOURLY SKIPPED BY SAFETY GUARD", wrapper_body)
         self.assertIn("SP_OVERWATCH_LOAD_HOURLY_UNIT(UNIT_NAME, FROM_DAYS_AGO, TO_DAYS_AGO)", wrapper_body)
 
+    def test_hourly_unit_binds_scripting_variables_in_dml(self):
+        setup_sql = _setup_sql()
+        hourly_body = _procedure_bodies(setup_sql)["SP_OVERWATCH_LOAD_HOURLY_UNIT"]
+
+        self.assertIn("'STARTED HOURLY MART UNIT ' || :UNIT_NAME", hourly_body)
+        self.assertIn("'HOURLY MART UNIT ' || :UNIT_NAME", hourly_body)
+        self.assertIn("' FOR DAY WINDOW [' || :FROM_DAYS", hourly_body)
+        self.assertIn("|| ', ' || :TO_DAYS || '].'", hourly_body)
+        self.assertNotIn("'STARTED HOURLY MART UNIT ' || UNIT_NAME", hourly_body)
+        self.assertNotIn("'HOURLY MART UNIT ' || UNIT_NAME", hourly_body)
+
+    def test_hourly_unit_qualifies_account_usage_task_columns(self):
+        setup_sql = _setup_sql()
+        hourly_body = _procedure_bodies(setup_sql)["SP_OVERWATCH_LOAD_HOURLY_UNIT"]
+
+        self.assertIn("SELECT\n      H.SCHEDULED_TIME,\n      H.COMPLETED_TIME,", hourly_body)
+        self.assertIn("COALESCE(H.DATABASE_NAME, '')", hourly_body)
+        self.assertIn("FROM SNOWFLAKE.ACCOUNT_USAGE.TASKS T", hourly_body)
+        self.assertIn("T.TASK_DATABASE AS DATABASE_NAME", hourly_body)
+        self.assertIn("VALUES ('DIM_TASK_AND_PROCEDURE_SNAPSHOT'", hourly_body)
+
     def test_refresh_procedures_write_only_setup_physical_tables(self):
         setup_sql = _setup_sql()
         table_creates = set(

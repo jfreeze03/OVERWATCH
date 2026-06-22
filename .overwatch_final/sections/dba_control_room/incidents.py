@@ -940,7 +940,7 @@ def _dba_action_brief(
         route = _canonical_dba_route(first.get("Route", "") or "DBA Control Room")
         workflow = str(first.get("Workflow", "") or "")
         if route == "Cost & Contract" and workflow in {"", "Queue pressure"}:
-            workflow = "Recommendations and action queue"
+            workflow = "Recommendations"
         signal = str(first.get("Signal", "") or "Exception")
         action = str(first.get("Action", "") or "Review the routed workflow.")
         return {
@@ -959,7 +959,7 @@ def _dba_action_brief(
             "detail": f"{queued_queries:,} queued queries in the loaded window.",
             "primary_label": "Open Cost & Contract",
             "target": "Cost & Contract",
-            "workflow": "Recommendations and action queue",
+            "workflow": "Recommendations",
         }
     if failed_queries:
         return {

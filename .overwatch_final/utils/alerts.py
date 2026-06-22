@@ -4521,64 +4521,64 @@ def _alert_route_for_focus(section: str, focus: str) -> tuple[str, str, str, str
     if "CORTEX" in focus_key:
         return (
             "Cost & Contract",
-            "AI and Cortex spend",
-            "Cost & Behavior",
-            "Open Cost & Contract > AI and Cortex spend.",
+            "Cortex Spend",
+            "Cost Alerts",
+            "Open Cost & Contract > Cortex Spend.",
             "Review Cortex user/source, baseline, quota, grants, and company scope before changing access.",
         )
     if "SPEND" in focus_key or "COST" in focus_key:
         return (
             "Cost & Contract",
-            "Usage attribution and run-rate",
-            "Cost & Behavior",
-            "Open Cost & Contract > Usage attribution and run-rate.",
+            "Cost by Warehouse",
+            "Cost Alerts",
+            "Open Cost & Contract > Cost by Warehouse.",
             "Compare completed-window metering, run-rate baseline, chargeback, and open savings actions.",
         )
     if "SECURITY" in focus_key:
         return (
             "Security Monitoring",
-            "Access posture",
-            "Security",
-            "Open Security Monitoring > Access posture.",
+            "Failed Logins",
+            "Security Alerts",
+            "Open Security Monitoring > Failed Logins.",
             "Confirm actor, role, MFA/login context, object scope, and reviewer status before closure.",
         )
     if "PIPELINE" in focus_key:
         return (
             "Workload Operations",
-            "Task & procedure health",
-            "Reliability",
-            "Open Workload Operations > Task & procedure health.",
+            "Pipeline & Task Health",
+            "Reliability Alerts",
+            "Open Workload Operations > Pipeline & Task Health.",
             "Check root task/procedure, failed child query, last success, retry safety, and downstream SLA.",
         )
     if "QUERY" in focus_key or "PERFORMANCE" in focus_key:
         return (
             "Workload Operations",
-            "Query investigation",
-            "Reliability",
-            "Open Workload Operations > Query investigation.",
+            "Query Investigation",
+            "Reliability Alerts",
+            "Open Workload Operations > Query Investigation.",
             "Review query ID, warehouse pressure, queue/spill/lock evidence, and workload owner route.",
         )
     if "WORKLOAD" in section_key:
         return (
             "Workload Operations",
-            "Task & procedure health",
-            "Reliability",
+            "Pipeline & Task Health",
+            "Reliability Alerts",
             "Open Workload Operations and choose the reliability workflow matching the signal.",
             "Use exact query/task/procedure telemetry before retrying, resizing, or cancelling anything.",
         )
     if "SECURITY" in section_key:
         return (
             "Security Monitoring",
-            "Access posture",
-            "Security",
+            "Failed Logins",
+            "Security Alerts",
             "Open Security Monitoring and validate the access posture route.",
             "Treat access/security signals as status-review until reviewer and evidence are attached.",
         )
     return (
         "Alert Center",
-        "Command Center",
-        "Command Center",
-        "Open Alert Center > Command Center.",
+        "Active Alerts",
+        "Active Alerts",
+        "Open Alert Center > Active Alerts.",
         "Work route, SLA, delivery, action queue, and closure status from the alert command board.",
     )
 
@@ -4777,7 +4777,7 @@ def build_cost_cortex_alert_drilldown(
                 f"{signal} is active for {entity}; validate user/source usage, request count, "
                 "baseline, company route, and quota settings."
             )
-            safe_action = "Open AI and Cortex spend; review grants and quota route before changing access."
+            safe_action = "Open Cortex Spend; review grants and quota route before changing access."
             boundary = "Recommend only until quota/grant changes have named DBA status review."
         elif focus == "Spend spike":
             why = f"{signal} indicates spend is above the loaded baseline for {entity}."

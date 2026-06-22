@@ -44,72 +44,70 @@ def defer_source_note(*parts: object, section: str | None = None) -> None:
     st.session_state[key] = notes
 
 ALERT_CENTER_PANES = [
-    "Command Center",
-    "Cost & Behavior",
-    "Reliability",
-    "Security",
-    "Detection Catalog",
-    "Delivery & Automation",
-    "Suppression Windows",
+    "Active Alerts",
+    "Cost Alerts",
+    "Reliability Alerts",
+    "Security Alerts",
+    "Advanced Alert Admin",
 ]
 
 ALERT_CENTER_PANE_LABELS = {
-    "Command Center": "Command",
-    "Cost & Behavior": "Cost/Cortex",
-    "Reliability": "Reliability",
-    "Security": "Security",
-    "Detection Catalog": "Catalog",
-    "Delivery & Automation": "Automation",
-    "Suppression Windows": "Suppressions",
+    "Active Alerts": "Active",
+    "Cost Alerts": "Cost",
+    "Reliability Alerts": "Reliability",
+    "Security Alerts": "Security",
+    "Advanced Alert Admin": "Advanced",
 }
 
 ALERT_CENTER_BRIEF_FIRST_VERSION = 3
-ALERT_CENTER_DEFAULT_VIEW = "Command Center"
+ALERT_CENTER_DEFAULT_VIEW = "Active Alerts"
+ALERT_CENTER_ADMIN_VIEW_KEY = "alert_center_admin_view"
+ALERT_CENTER_ADMIN_VIEWS = ("Detection Catalog", "Delivery & Automation", "Suppression Windows")
+ALERT_CENTER_ADMIN_VIEW_DETAILS = {
+    "Detection Catalog": "Alert rule coverage, thresholds, and Snowflake-native signal inputs.",
+    "Delivery & Automation": "Email delivery, routing, action queue status, remediation logs, and dry-run evidence.",
+    "Suppression Windows": "Maintenance annotations and temporary suppression windows.",
+}
 
 ALERT_CENTER_BRIEF_WORKFLOWS = (
     {
-        "VIEW": "Command Center",
-        "BUTTON_LABEL": "Open Command Center",
+        "VIEW": "Active Alerts",
+        "BUTTON_LABEL": "Open Active Alerts",
         "DBA_MOVE": "Start with severity, SLA, route, queue, and notification risk in one place.",
         "WHEN": "First look, shift start, incident review",
     },
     {
-        "VIEW": "Cost & Behavior",
-        "BUTTON_LABEL": "Open Cost / Cortex",
+        "VIEW": "Cost Alerts",
+        "BUTTON_LABEL": "Open Cost Alerts",
         "DBA_MOVE": "Focus on spend spikes, Cortex growth, warehouse cost behavior, and user-driven spend anomalies.",
         "WHEN": "Cost anomaly, AI spend review, contract burn concern",
     },
     {
-        "VIEW": "Reliability",
-        "BUTTON_LABEL": "Open Reliability",
+        "VIEW": "Reliability Alerts",
+        "BUTTON_LABEL": "Open Reliability Alerts",
         "DBA_MOVE": "Focus on query, task, pipeline, procedure, copy/load, and freshness risk.",
         "WHEN": "Production incident, workload health, SLA review",
     },
     {
-        "VIEW": "Security",
-        "BUTTON_LABEL": "Open Security",
+        "VIEW": "Security Alerts",
+        "BUTTON_LABEL": "Open Security Alerts",
         "DBA_MOVE": "Focus on login, privilege, role, export, sharing, and access-control risk.",
         "WHEN": "Security triage, audit review, access anomaly",
     },
     {
-        "VIEW": "Detection Catalog",
-        "BUTTON_LABEL": "Open Detection Catalog",
-        "DBA_MOVE": "Review Snowflake-native checks before enabling or tuning alert rules.",
-        "WHEN": "Coverage review, audit, threshold tuning",
-    },
-    {
-        "VIEW": "Delivery & Automation",
-        "BUTTON_LABEL": "Open Automation",
+        "VIEW": "Advanced Alert Admin",
+        "BUTTON_LABEL": "Open Advanced Admin",
         "DBA_MOVE": "Review delivery status, queue routing, suppression windows, and remediation log evidence.",
-        "WHEN": "Notification audit, queue closure, remediation status, suppression cleanup",
+        "WHEN": "Catalog tuning, notification audit, suppression cleanup",
     },
 )
 
 ALERT_CENTER_SOURCES_BY_PANE = {
-    "Command Center": {"alerts", "action_queue", "delivery_log", "rules"},
-    "Cost & Behavior": {"alerts", "action_queue", "rules"},
-    "Reliability": {"alerts", "action_queue", "rules"},
-    "Security": {"alerts", "action_queue", "rules"},
+    "Active Alerts": {"alerts", "action_queue", "delivery_log", "rules"},
+    "Cost Alerts": {"alerts", "action_queue", "rules"},
+    "Reliability Alerts": {"alerts", "action_queue", "rules"},
+    "Security Alerts": {"alerts", "action_queue", "rules"},
+    "Advanced Alert Admin": set(),
     "Detection Catalog": set(),
     "Delivery & Automation": {
         "alerts",
@@ -188,27 +186,42 @@ def _alert_center_sources_for_view(view: str) -> set[str]:
 def _normalize_alert_center_view(view: object) -> str:
     normalized = str(view or "")
     aliases = {
-        "Active Alerts": "Command Center",
-        "Issue Inbox": "Command Center",
-        "Triage Digest": "Command Center",
-        "Alert History": "Command Center",
-        "Alert Brief": "Command Center",
-        "Control Health": "Command Center",
-        "Cost": "Cost & Behavior",
-        "Spend": "Cost & Behavior",
-        "Cost / Cortex": "Cost & Behavior",
-        "Cortex": "Cost & Behavior",
-        "Workload": "Reliability",
-        "Pipeline": "Reliability",
-        "Email Delivery": "Delivery & Automation",
-        "Action Queue Routing": "Delivery & Automation",
-        "Delivery & Remediation": "Delivery & Automation",
+        "Command Center": "Active Alerts",
+        "Issue Inbox": "Active Alerts",
+        "Triage Digest": "Active Alerts",
+        "Alert History": "Active Alerts",
+        "Alert Brief": "Active Alerts",
+        "Control Health": "Active Alerts",
+        "Cost": "Cost Alerts",
+        "Spend": "Cost Alerts",
+        "Cost / Cortex": "Cost Alerts",
+        "Cost & Behavior": "Cost Alerts",
+        "Cortex": "Cost Alerts",
+        "Workload": "Reliability Alerts",
+        "Pipeline": "Reliability Alerts",
+        "Reliability": "Reliability Alerts",
+        "Security": "Security Alerts",
+        "Email Delivery": "Advanced Alert Admin",
+        "Action Queue Routing": "Advanced Alert Admin",
+        "Delivery & Remediation": "Advanced Alert Admin",
+        "Detection Catalog": "Advanced Alert Admin",
+        "Delivery & Automation": "Advanced Alert Admin",
+        "Suppression Windows": "Advanced Alert Admin",
     }
     if normalized in aliases:
         return aliases[normalized]
     if normalized in {"Alert Brief", "Control Health"}:
         return ALERT_CENTER_DEFAULT_VIEW
     return normalized if normalized in ALERT_CENTER_PANES else ALERT_CENTER_DEFAULT_VIEW
+
+
+def _alert_admin_view_for_route(view: object) -> str:
+    raw = str(view or "").strip()
+    if raw in ALERT_CENTER_ADMIN_VIEWS:
+        return raw
+    if raw in {"Email Delivery", "Action Queue Routing", "Delivery & Remediation"}:
+        return "Delivery & Automation"
+    return ""
 
 
 def _alert_center_source_summary(sources: set[str]) -> str:
@@ -792,7 +805,7 @@ def _alert_center_action_brief(
                 "state": str(row.get("STATE") or "Blocked"),
                 "headline": "Restore alert control telemetry.",
                 "detail": f"{control}: {next_action or evidence}".strip(": "),
-                "primary_label": "Open Command Center",
+                "primary_label": "Open Active Alerts",
                 "target": ALERT_CENTER_DEFAULT_VIEW,
             }
 
@@ -801,7 +814,7 @@ def _alert_center_action_brief(
             "state": "Escalate",
             "headline": "Escalate overdue alert rows first.",
             "detail": f"{overdue:,} overdue alert(s); {critical_high:,} critical/high open alert(s).",
-            "primary_label": "Open Command Center",
+            "primary_label": "Open Active Alerts",
             "target": ALERT_CENTER_DEFAULT_VIEW,
         }
     if critical_high > 0:
@@ -809,7 +822,7 @@ def _alert_center_action_brief(
             "state": "Priority",
             "headline": "Review critical and high alert rows.",
             "detail": f"{critical_high:,} critical/high open alert(s) across {open_alerts:,} open alert(s).",
-            "primary_label": "Open Command Center",
+            "primary_label": "Open Active Alerts",
             "target": ALERT_CENTER_DEFAULT_VIEW,
         }
     if open_queue > 0:
@@ -817,7 +830,7 @@ def _alert_center_action_brief(
             "state": "Queue",
             "headline": "Work open action queue rows.",
             "detail": f"{open_queue:,} open queue row(s) need route, ticket, due date, or closure status.",
-            "primary_label": "Open Automation",
+            "primary_label": "Open Advanced Admin",
             "target": "Delivery & Automation",
         }
     if email_ready > email_logged:
@@ -825,7 +838,7 @@ def _alert_center_action_brief(
             "state": "Telemetry",
             "headline": "Log alert delivery status.",
             "detail": f"{email_ready:,} email-ready alert(s); {email_logged:,} delivery row(s) logged in this scope.",
-            "primary_label": "Open Delivery",
+            "primary_label": "Open Advanced Admin",
             "target": "Delivery & Automation",
         }
     if open_issues > 0:
@@ -833,14 +846,14 @@ def _alert_center_action_brief(
             "state": "Triage",
             "headline": "Review the consolidated issue inbox.",
             "detail": f"{open_issues:,} issue row(s) are loaded from alert history and action queue telemetry.",
-            "primary_label": "Open Command Center",
+            "primary_label": "Open Active Alerts",
             "target": ALERT_CENTER_DEFAULT_VIEW,
         }
     return {
         "state": "Clear",
         "headline": "No immediate Alert Center move.",
         "detail": "Keep the selected window loaded for delivery status, routing, and rule telemetry when new alerts arrive.",
-        "primary_label": "Open Command Center",
+        "primary_label": "Open Active Alerts",
         "target": ALERT_CENTER_DEFAULT_VIEW,
     }
 
@@ -870,6 +883,9 @@ def _alert_center_brief_workflow_rows() -> list[dict[str, str]]:
 
 
 def _queue_alert_center_view(view: str) -> None:
+    admin_view = _alert_admin_view_for_route(view)
+    if admin_view:
+        st.session_state[ALERT_CENTER_ADMIN_VIEW_KEY] = admin_view
     normalized = _normalize_alert_center_view(view)
     if normalized in ALERT_CENTER_PANES:
         st.session_state["alert_center_requested_view"] = normalized
@@ -879,11 +895,17 @@ def _queue_alert_center_view(view: str) -> None:
 def _apply_queued_alert_center_view() -> None:
     requested = st.session_state.pop("alert_center_requested_view", None)
     if requested:
+        admin_view = _alert_admin_view_for_route(requested)
+        if admin_view:
+            st.session_state[ALERT_CENTER_ADMIN_VIEW_KEY] = admin_view
         st.session_state["alert_center_active_view"] = _normalize_alert_center_view(requested)
 
 
 def _apply_alert_center_brief_first_default() -> None:
     if st.session_state.get("_alert_center_brief_first_version") == ALERT_CENTER_BRIEF_FIRST_VERSION:
+        admin_view = _alert_admin_view_for_route(st.session_state.get("alert_center_active_view"))
+        if admin_view:
+            st.session_state[ALERT_CENTER_ADMIN_VIEW_KEY] = admin_view
         st.session_state["alert_center_active_view"] = _normalize_alert_center_view(
             st.session_state.get("alert_center_active_view")
         )
@@ -891,6 +913,9 @@ def _apply_alert_center_brief_first_default() -> None:
     if st.session_state.get("alert_center_active_view") in (None, "Alert Brief", "Command Center"):
         st.session_state["alert_center_active_view"] = ALERT_CENTER_DEFAULT_VIEW
     else:
+        admin_view = _alert_admin_view_for_route(st.session_state.get("alert_center_active_view"))
+        if admin_view:
+            st.session_state[ALERT_CENTER_ADMIN_VIEW_KEY] = admin_view
         st.session_state["alert_center_active_view"] = _normalize_alert_center_view(
             st.session_state.get("alert_center_active_view")
         )
@@ -987,7 +1012,7 @@ def _alert_operator_workflow_rows(
             "COUNT": open_incidents,
             "WHAT_TO_CHECK": "Open incident rows in the loaded alert/action scope.",
             "NEXT_ACTION": "Work the highest-priority packet first." if open_incidents else "Keep the scope loaded for new events.",
-            "OPERATOR_VIEW": "Command Center",
+            "OPERATOR_VIEW": "Active Alerts",
         },
         {
             "STEP": "2 Triage",
@@ -1003,7 +1028,7 @@ def _alert_operator_workflow_rows(
             "COUNT": max(route_needed, ticket_missing),
             "WHAT_TO_CHECK": "Named owner, action queue state, ticket/reference, and approval group.",
             "NEXT_ACTION": "Route rows without action queue or ticket context before escalation." if (route_needed or ticket_missing) else "Routes and references are ready for loaded incidents.",
-            "OPERATOR_VIEW": "Delivery & Automation",
+            "OPERATOR_VIEW": "Advanced Alert Admin",
         },
         {
             "STEP": "4 Notify",
@@ -1011,7 +1036,7 @@ def _alert_operator_workflow_rows(
             "COUNT": delivery_gap,
             "WHAT_TO_CHECK": "Email-ready rows, delivery audit rows, and failed notification attempts.",
             "NEXT_ACTION": "Log digest delivery or investigate failed delivery attempts." if delivery_gap else "Delivery telemetry is current for the loaded scope.",
-            "OPERATOR_VIEW": "Delivery & Automation",
+            "OPERATOR_VIEW": "Advanced Alert Admin",
         },
         {
             "STEP": "5 Dry-run",
@@ -1023,7 +1048,7 @@ def _alert_operator_workflow_rows(
                 if native_candidates or policy_count
                 else "Load the automation pane after native alert deployment objects exist."
             ),
-            "OPERATOR_VIEW": "Delivery & Automation",
+            "OPERATOR_VIEW": "Advanced Alert Admin",
         },
         {
             "STEP": "6 Close",
@@ -1031,7 +1056,7 @@ def _alert_operator_workflow_rows(
             "COUNT": queue_open,
             "WHAT_TO_CHECK": "Closure note, ticket/reference, post-fix telemetry, rollback status, and queue status.",
             "NEXT_ACTION": "Close only after evidence and route status are recorded." if queue_open else "No open queue rows need closure in this scope.",
-            "OPERATOR_VIEW": "Command Center",
+            "OPERATOR_VIEW": "Active Alerts",
         },
     ]
     if dry_run_count:
@@ -1676,9 +1701,9 @@ def _render_alert_domain_workbench(
 
     pd = _pd()
     title_map = {
-        "Cost & Behavior": "Cost, Cortex, and Behavior Alerts",
-        "Reliability": "Reliability Alerts",
-        "Security": "Security Alerts",
+        "Cost Alerts": "Cost, Cortex, and Behavior Alerts",
+        "Reliability Alerts": "Reliability Alerts",
+        "Security Alerts": "Security Alerts",
     }
     st.subheader(title_map.get(active_view, f"{active_view} Alerts"))
     board = build_section_alert_signal_board(alerts, queue, section=active_view, limit=30)
@@ -1736,8 +1761,8 @@ def _render_alert_domain_workbench(
                 )
                 st.rerun()
         with cols[1]:
-            if st.button("Open Command Center", key=f"alert_domain_open_command_{active_view}", width="stretch"):
-                apply_section_workflow_navigation("Alert Center", alert_center_view="Command Center")
+            if st.button("Open Active Alerts", key=f"alert_domain_open_command_{active_view}", width="stretch"):
+                apply_section_workflow_navigation("Alert Center", alert_center_view="Active Alerts")
                 st.rerun()
 
     if rules is not None and not rules.empty:
@@ -1746,9 +1771,9 @@ def _render_alert_domain_workbench(
             if column in rules.columns:
                 rule_text = rule_text + " " + rules[column].fillna("").astype(str).str.upper()
         token_map = {
-            "Cost & Behavior": "COST|SPEND|CORTEX|WAREHOUSE|OPTIMIZATION|CONTRACT|CHARGEBACK",
-            "Reliability": "QUERY|TASK|PIPELINE|PROCEDURE|COPY|LOAD|PERFORMANCE|WAREHOUSE",
-            "Security": "SECURITY|LOGIN|GRANT|PRIVILEGE|SHARE|ACCESS|EXPORT",
+            "Cost Alerts": "COST|SPEND|CORTEX|WAREHOUSE|OPTIMIZATION|CONTRACT|CHARGEBACK",
+            "Reliability Alerts": "QUERY|TASK|PIPELINE|PROCEDURE|COPY|LOAD|PERFORMANCE|WAREHOUSE",
+            "Security Alerts": "SECURITY|LOGIN|GRANT|PRIVILEGE|SHARE|ACCESS|EXPORT",
         }
         token_pattern = token_map.get(active_view, "")
         visible_rules = rules[rule_text.str.contains(token_pattern, regex=True)] if token_pattern else pd.DataFrame()
@@ -2177,7 +2202,7 @@ def _render_active_alerts(
     )
 
     pd = _pd()
-    st.subheader("Alert Command Center")
+    st.subheader("Active Alerts")
     summary = build_alert_command_center_summary(alerts)
     metrics = summary.get("metrics", pd.DataFrame())
     if isinstance(metrics, pd.DataFrame) and not metrics.empty:
@@ -3049,14 +3074,24 @@ def render() -> None:
         labels=ALERT_CENTER_PANE_LABELS,
         columns=4,
     )
-    required_sources = _alert_center_sources_for_view(active_view)
+    source_view = active_view
+    if active_view == "Advanced Alert Admin":
+        source_view = _render_workflow_selector(
+            "Advanced alert admin tool",
+            ALERT_CENTER_ADMIN_VIEW_KEY,
+            ALERT_CENTER_ADMIN_VIEWS,
+            ALERT_CENTER_ADMIN_VIEW_DETAILS,
+            columns=3,
+        )
 
-    if active_view == "Suppression Windows":
+    required_sources = _alert_center_sources_for_view(source_view)
+
+    if source_view == "Suppression Windows":
         _render_annotations()
         _render_advanced_alert_diagnostics(company, environment)
         return
 
-    if active_view == "Detection Catalog":
+    if source_view == "Detection Catalog":
         _render_alert_detection_catalog()
         _render_advanced_alert_diagnostics(company, environment)
         return
@@ -3082,27 +3117,27 @@ def render() -> None:
     alert_autoload_requested = consume_section_autoload_request("Alert Center")
     if (
         alert_autoload_requested
-        and active_view not in {"Suppression Windows", "Detection Catalog"}
+        and source_view not in {"Suppression Windows", "Detection Catalog"}
         and not current_data
     ):
         st.caption(
             "Alert Center opened without live Snowflake reads. "
-            f"Load {active_view} when fresh alert telemetry is needed."
+            f"Load {source_view} when fresh alert telemetry is needed."
         )
         defer_source_note(f"Inputs on load: {_alert_center_source_summary(required_sources)}")
     render_data_freshness(
-        _alert_center_loaded_meta(data, active_view) if current_data else {},
-        source=f"{active_view} inputs",
+        _alert_center_loaded_meta(data, source_view) if current_data else {},
+        source=f"{source_view} inputs",
         target_minutes=60,
         delayed_note="Alert Center reads bounded alert/action sources on demand; ACCOUNT_USAGE-backed inputs can lag.",
     )
     with c3:
-        if st.button(f"Load {active_view}", key="alert_center_load", type="primary"):
-            if _load_alert_center_view_data(active_view, company, environment, int(days), int(limit), required_sources):
+        if st.button(f"Load {source_view}", key="alert_center_load", type="primary"):
+            if _load_alert_center_view_data(source_view, company, environment, int(days), int(limit), required_sources):
                 st.rerun()
 
     if not isinstance(data, dict):
-        _render_alert_center_action_brief(_alert_center_pending_brief(active_view, required_sources))
+        _render_alert_center_action_brief(_alert_center_pending_brief(source_view, required_sources))
         _render_alert_center_metric_rows(
             open_issues=0,
             open_alerts=0,
@@ -3113,15 +3148,15 @@ def render() -> None:
             open_queue=0,
             loaded=False,
         )
-        _render_alert_command_lane_board(_alert_command_lanes(active_view=active_view, required_sources=required_sources))
-        st.info(f"Load {active_view} when ready.")
+        _render_alert_command_lane_board(_alert_command_lanes(active_view=source_view, required_sources=required_sources))
+        st.info(f"Load {source_view} when ready.")
         defer_source_note(f"Inputs on load: {_alert_center_source_summary(required_sources)}")
         _render_advanced_alert_diagnostics(company, environment)
         return
 
     loaded_scope = st.session_state.get("alert_center_scope")
     if loaded_scope != expected_scope:
-        _render_alert_center_action_brief(_alert_center_pending_brief(active_view, required_sources))
+        _render_alert_center_action_brief(_alert_center_pending_brief(source_view, required_sources))
         _render_alert_center_metric_rows(
             open_issues=0,
             open_alerts=0,
@@ -3132,7 +3167,7 @@ def render() -> None:
             open_queue=0,
             loaded=False,
         )
-        _render_alert_command_lane_board(_alert_command_lanes(active_view=active_view, required_sources=required_sources))
+        _render_alert_command_lane_board(_alert_command_lanes(active_view=source_view, required_sources=required_sources))
         st.warning("Company, environment, or window changed after this load. Reload before triaging alerts.")
         defer_source_note(f"Loaded scope: {loaded_scope or 'none'} | Current scope: {expected_scope}")
         _render_advanced_alert_diagnostics(company, environment)
@@ -3140,7 +3175,7 @@ def render() -> None:
     loaded_sources = set(data.get("_loaded_sources") or [])
     missing_sources = sorted(required_sources - loaded_sources)
     if missing_sources:
-        _render_alert_center_action_brief(_alert_center_pending_brief(active_view, required_sources))
+        _render_alert_center_action_brief(_alert_center_pending_brief(source_view, required_sources))
         _render_alert_center_metric_rows(
             open_issues=0,
             open_alerts=0,
@@ -3151,8 +3186,8 @@ def render() -> None:
             open_queue=0,
             loaded=False,
         )
-        _render_alert_command_lane_board(_alert_command_lanes(active_view=active_view, required_sources=required_sources))
-        st.info(f"Load {active_view} to fetch missing input(s).")
+        _render_alert_command_lane_board(_alert_command_lanes(active_view=source_view, required_sources=required_sources))
+        st.info(f"Load {source_view} to fetch missing input(s).")
         defer_source_note(f"Missing Alert Center input(s): {_alert_center_source_summary(set(missing_sources))}")
         _render_advanced_alert_diagnostics(company, environment)
         return
@@ -3243,7 +3278,7 @@ def render() -> None:
     )
     _render_alert_command_lane_board(
         _alert_command_lanes(
-            active_view=active_view,
+            active_view=source_view,
             required_sources=required_sources,
             alerts=alerts,
             queue=queue,
@@ -3254,13 +3289,13 @@ def render() -> None:
     )
     _render_alert_center_exception_strip(exception_rows)
 
-    if active_view == ALERT_CENTER_DEFAULT_VIEW:
+    if source_view == ALERT_CENTER_DEFAULT_VIEW:
         _render_active_alerts(alerts, queue, delivery_log, rules)
 
-    elif active_view in {"Cost & Behavior", "Reliability", "Security"}:
-        _render_alert_domain_workbench(active_view, alerts, queue, rules)
+    elif source_view in {"Cost Alerts", "Reliability Alerts", "Security Alerts"}:
+        _render_alert_domain_workbench(source_view, alerts, queue, rules)
 
-    elif active_view == "Delivery & Automation":
+    elif source_view == "Delivery & Automation":
         _render_alert_notification_remediation(
             alerts,
             queue,

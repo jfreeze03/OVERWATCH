@@ -57,14 +57,14 @@ def request_section_workspace(section: str) -> None:
     elif target == "DBA Control Room":
         set_state(DBA_CONTROL_ROOM_ACTIVE_VIEW, "Fast Watch")
     elif target == "Alert Center":
-        set_state(ALERT_CENTER_ACTIVE_VIEW, "Command Center")
+        set_state(ALERT_CENTER_ACTIVE_VIEW, "Active Alerts")
     elif target == "Cost & Contract":
-        set_state(COST_CONTRACT_WORKFLOW, "Usage attribution and run-rate")
+        set_state(COST_CONTRACT_WORKFLOW, "Cost by Warehouse")
     elif target == "Workload Operations":
         set_state(WORKLOAD_OPERATIONS_WORKFLOW, "Workload Overview")
     elif target == "Security Monitoring":
-        set_state(SECURITY_POSTURE_VIEW, "Access posture")
-        set_state(SECURITY_POSTURE_WORKFLOW, "Access posture")
+        set_state(SECURITY_POSTURE_VIEW, "Failed Logins")
+        set_state(SECURITY_POSTURE_WORKFLOW, "Failed Logins")
     set_state(PENDING_AUTOLOAD_SECTION, target)
     set_state(PENDING_AUTOLOAD_STARTED_AT, datetime.now().isoformat(timespec="seconds"))
 
@@ -95,17 +95,17 @@ def apply_section_workflow_navigation(
     target = apply_navigation_state(section, mark_pending=mark_pending)
     workflow_value = str(workflow or "").strip()
     if target == "Alert Center":
-        set_state(ALERT_CENTER_ACTIVE_VIEW, str(alert_center_view or workflow_value or "Command Center"))
+        set_state(ALERT_CENTER_ACTIVE_VIEW, str(alert_center_view or workflow_value or "Active Alerts"))
     elif target == "Cost & Contract" and workflow_value:
         set_state(COST_CONTRACT_WORKFLOW, workflow_value)
     elif target == "Workload Operations" and workflow_value:
         set_state(WORKLOAD_OPERATIONS_WORKFLOW, workflow_value)
         if workflow_value in {"Task graphs", "Task & procedure health", "Task Management"}:
-            set_state("workload_operations_pipeline_focus", "Failed tasks & procedures")
+            set_state("workload_operations_pipeline_focus", "Failed Tasks")
         elif workflow_value in {"Stored procedures", "Stored procedure lineage", "Stored Proc Tracker"}:
-            set_state("workload_operations_pipeline_focus", "Stored procedure analysis")
+            set_state("workload_operations_pipeline_focus", "Failed Procedures")
         elif workflow_value in {"Pipeline health", "Pipeline / SLA risk"}:
-            set_state("workload_operations_pipeline_focus", "Pipeline loads & SLA")
+            set_state("workload_operations_pipeline_focus", "Load Issues & SLA")
     elif target == "Security Monitoring" and workflow_value:
         set_state(SECURITY_POSTURE_VIEW, workflow_value)
         set_state(SECURITY_POSTURE_WORKFLOW, workflow_value)

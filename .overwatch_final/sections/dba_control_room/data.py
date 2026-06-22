@@ -1050,7 +1050,7 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
             "Evidence": f"{queued_queries:,} queued queries; {len(wh):,} pressured warehouses",
             "Action": "Check warehouse sizing, clustering, and concurrency pressure.",
             "Route": "Cost & Contract",
-            "Workflow": "Recommendations and action queue",
+            "Workflow": "Recommendations",
         })
     if spill_queries:
         rows.append({
@@ -1059,7 +1059,7 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
             "Evidence": f"{spill_queries:,} queries spilled to remote storage",
             "Action": "Inspect spilling queries before resizing.",
             "Route": "Cost & Contract",
-            "Workflow": "Recommendations and action queue",
+            "Workflow": "Recommendations",
         })
     if p95 >= 120:
         rows.append({
@@ -1077,7 +1077,7 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
             "Evidence": f"{credit_delta:+.1f}% vs prior window; est. ${credits_to_dollars(period_credits, credit_price):,.0f}",
             "Action": "Identify top users, warehouses, tasks, and query patterns.",
             "Route": "Cost & Contract",
-            "Workflow": "Usage attribution and run-rate",
+            "Workflow": "Cost by Warehouse",
         })
     if not tasks.empty:
         rows.append({
@@ -1132,7 +1132,7 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
                 ),
                 "Action": "Review Cortex users, source split, cost-per-request spikes, and daily credit guardrails.",
                 "Route": "Cost & Contract",
-                "Workflow": "AI and Cortex spend",
+                "Workflow": "Cortex Spend",
             })
     if not logins.empty:
         rows.append({
@@ -1162,7 +1162,7 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
                 "Evidence": f"{len(open_queue):,} open recommendations",
             "Action": "Assign routes and move items toward fixed/ignored.",
                 "Route": "Cost & Contract",
-                "Workflow": "Recommendations and action queue",
+                "Workflow": "Recommendations",
             })
         closure = _command_queue_closure_readiness(queue)
         if not closure.empty:

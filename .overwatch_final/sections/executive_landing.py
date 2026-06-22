@@ -1444,7 +1444,7 @@ def _executive_loaded_advisor_rows(state: dict | None = None) -> pd.DataFrame:
                 f"{len(storage_tables):,} table storage row(s), {len(storage_db):,} database row(s), "
                 f"{time_travel_gb:,.1f} GB time-travel, {failsafe_gb:,.1f} GB failsafe."
             ),
-            next_action="Open Storage cost and retention, then confirm recovery and compliance windows before retention changes.",
+            next_action="Open Advanced Cost Tools > Storage & Retention, then confirm recovery and compliance windows before retention changes.",
             route="Cost & Contract",
             priority=7,
             state="Track",
@@ -2168,7 +2168,7 @@ def _executive_command_summary_rows(board: pd.DataFrame, advisor_rows: pd.DataFr
         "NEXT_ACTION": (
             str(warehouse_row.get("NEXT_ACTION") or "Open Cost & Contract warehouse advisor.")
             if warehouse_row is not None
-            else "Open Cost & Contract > Recommendations and action queue > Warehouse Advisor."
+            else "Open Cost & Contract > Recommendations > Warehouse Advisor."
         ),
         "ROUTE": "Cost & Contract",
     })
@@ -2737,15 +2737,15 @@ def _render_loaded_executive_alert_context() -> None:
         if st.button("Open Alert Command", key="executive_alert_open_command", width="stretch"):
             apply_section_workflow_navigation(
                 "Alert Center",
-                alert_center_view=str(top.get("ALERT_CENTER_VIEW") or "Command Center"),
+                alert_center_view=str(top.get("ALERT_CENTER_VIEW") or "Active Alerts"),
             )
             st.rerun()
     with cols[1]:
         if st.button("Open Impacted Section", key="executive_alert_open_impacted_section", width="stretch"):
             apply_section_workflow_navigation(
                 str(top.get("DESTINATION_SECTION") or "Alert Center"),
-                workflow=str(top.get("DESTINATION_WORKFLOW") or "Command Center"),
-                alert_center_view=str(top.get("ALERT_CENTER_VIEW") or "Command Center"),
+                workflow=str(top.get("DESTINATION_WORKFLOW") or "Active Alerts"),
+                alert_center_view=str(top.get("ALERT_CENTER_VIEW") or "Active Alerts"),
             )
             st.rerun()
 
@@ -3297,10 +3297,10 @@ def render() -> None:
         _nav_button(
             "Alert Command",
             "Alert Center",
-            state_updates={"alert_center_active_view": "Command Center"},
+            state_updates={"alert_center_active_view": "Active Alerts"},
         )
     with n2:
-        _nav_button("Cost Drivers", "Cost & Contract", workflow_key="cost_contract_workflow", workflow="Usage attribution and run-rate")
+        _nav_button("Cost Drivers", "Cost & Contract", workflow_key="cost_contract_workflow", workflow="Cost by Warehouse")
     with n3:
         _nav_button("DBA Queue", "DBA Control Room")
     with n4:

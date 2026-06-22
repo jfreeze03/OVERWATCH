@@ -357,17 +357,17 @@ SECTION_ROUTE_STATE = {
         "_dba_control_room_brief_mode": False,
     },
     "Warehouse Health": {
-        "cost_contract_workflow": "Recommendations and action queue",
+        "cost_contract_workflow": "Recommendations",
         "_cost_contract_full_workspace_requested": True,
         "_cost_contract_brief_mode": False,
     },
     "Optimization": {
-        "cost_contract_workflow": "Recommendations and action queue",
+        "cost_contract_workflow": "Recommendations",
         "_cost_contract_full_workspace_requested": True,
         "_cost_contract_brief_mode": False,
     },
     "Security Posture": {
-        "security_posture_view": "Access posture",
+        "security_posture_view": "Failed Logins",
     },
     "Query Workbench": {
         "workload_operations_workflow": "Query Investigation",
@@ -384,22 +384,22 @@ SECTION_ROUTE_STATE = {
         "query_analysis_active_view": "Detailed Diagnosis",
     },
     "Live Monitor": {
-        "workload_operations_workflow": "Contention & Performance",
+        "workload_operations_workflow": "Performance & Contention",
     },
     "Task Management": {
         "workload_operations_workflow": "Pipeline & Task Health",
-        "workload_operations_pipeline_focus": "Failed tasks & procedures",
+        "workload_operations_pipeline_focus": "Failed Tasks",
     },
     "Pipeline Health": {
         "workload_operations_workflow": "Pipeline & Task Health",
-        "workload_operations_pipeline_focus": "Pipeline loads & SLA",
+        "workload_operations_pipeline_focus": "Load Issues & SLA",
     },
     "Stored Proc Tracker": {
         "workload_operations_workflow": "Pipeline & Task Health",
-        "workload_operations_pipeline_focus": "Stored procedure analysis",
+        "workload_operations_pipeline_focus": "Failed Procedures",
     },
     "Object Change Monitor": {
-        "workload_operations_workflow": "Change & Drift",
+        "workload_operations_workflow": "Change Analysis",
     },
     "Schema Compare": {
         "workload_operations_workflow": "Advanced DBA Tools",

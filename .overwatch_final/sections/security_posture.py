@@ -147,7 +147,7 @@ def _render_loaded_security_alert_context() -> None:
         if st.button("Open Security Drilldown", key="security_alert_open_drilldown", width="stretch"):
             apply_section_workflow_navigation(
                 str(top.get("DESTINATION_SECTION") or "Security Monitoring"),
-                workflow=str(top.get("DESTINATION_WORKFLOW") or "Access posture"),
+                workflow=str(top.get("DESTINATION_WORKFLOW") or "Failed Logins"),
             )
             st.rerun()
 
@@ -164,37 +164,61 @@ def render_workflow_module(workflow: str, workflow_modules: dict[str, str]) -> N
         return
     render()
 
-SECURITY_POSTURE_VIEWS = ("Access posture", "Privilege sprawl", "Data sharing exposure", "Data Health")
+SECURITY_POSTURE_VIEWS = (
+    "Failed Logins",
+    "Risky Grants",
+    "Privilege Sprawl",
+    "Data Sharing Exposure",
+    "Access Changes",
+    "Security Alerts",
+    "Advanced Security Diagnostics",
+)
 SECURITY_POSTURE_VIEW_DETAILS = {
-    "Access posture": "Failed logins, MFA gaps, risky grants, user activity, and security exceptions.",
-    "Privilege sprawl": "Elevated roles, ownership grants, grant-option exposure, and risky privilege growth.",
-    "Data sharing exposure": "Shares, imported databases, exposed datasets, and external access signals.",
-    "Data Health": "Source freshness, privileged-grant status, and monitoring-input boundaries.",
+    "Failed Logins": "Login failures, MFA gaps, user activity, source IPs, and client programs.",
+    "Risky Grants": "User grants, elevated roles, ownership grants, and grant-option exposure.",
+    "Privilege Sprawl": "Admin role spread, elevated privilege growth, blockers, and review routes.",
+    "Data Sharing Exposure": "Shares, imported databases, exposed datasets, consumers, and ownership.",
+    "Access Changes": "Security-sensitive grants, roles, policies, integrations, and access drift.",
+    "Security Alerts": "Loaded security incidents with owner, impact, and recommended action.",
+    "Advanced Security Diagnostics": "Source freshness, privileged-grant readiness, score drivers, and command evidence.",
 }
 
-WORKFLOWS = ("Access posture", "Privilege sprawl", "Data sharing exposure")
+SECURITY_VIEW_ALIASES = {
+    "Access posture": "Failed Logins",
+    "Login Audit": "Failed Logins",
+    "Login Posture": "Failed Logins",
+    "Roles & Grants": "Risky Grants",
+    "Privilege sprawl": "Privilege Sprawl",
+    "Data sharing exposure": "Data Sharing Exposure",
+    "Data Health": "Advanced Security Diagnostics",
+    "Security Summary": "Security Alerts",
+    "Object and access changes": "Access Changes",
+}
+
+WORKFLOWS = ("Failed Logins", "Risky Grants", "Privilege Sprawl", "Data Sharing Exposure")
 
 WORKFLOW_DETAILS = {
-    "Access posture": "Failed logins, MFA gaps, grants, role risk, and security exceptions.",
-    "Privilege sprawl": "Admin roles, ownership grants, grant-option exposure, and telemetry gaps.",
-    "Data sharing exposure": "Shares, imported databases, exposed datasets, and route follow-up.",
+    "Failed Logins": "Login failures, MFA gaps, user activity, source IPs, and client programs.",
+    "Risky Grants": "User grants, elevated roles, ownership grants, and grant-option exposure.",
+    "Privilege Sprawl": "Admin roles, ownership grants, grant-option exposure, and telemetry gaps.",
+    "Data Sharing Exposure": "Shares, imported databases, exposed datasets, and route follow-up.",
 }
 
 SECURITY_BRIEF_WORKFLOWS = (
     {
-        "WORKFLOW": "Access posture",
-        "BUTTON_LABEL": "Open Access",
+        "WORKFLOW": "Failed Logins",
+        "BUTTON_LABEL": "Open Logins",
         "DBA_MOVE": "Start with failed logins, MFA gaps, and user-level access signals.",
         "WHEN": "Morning triage, identity incidents, or audit prep.",
     },
     {
-        "WORKFLOW": "Privilege sprawl",
-        "BUTTON_LABEL": "Open Privileges",
+        "WORKFLOW": "Risky Grants",
+        "BUTTON_LABEL": "Open Grants",
         "DBA_MOVE": "Review admin roles, ownership, grant option, and review blockers.",
         "WHEN": "Role cleanup, least-privilege review, or elevated-access questions.",
     },
     {
-        "WORKFLOW": "Data sharing exposure",
+        "WORKFLOW": "Data Sharing Exposure",
         "BUTTON_LABEL": "Open Sharing",
         "DBA_MOVE": "Validate shared databases, imported data, consumers, and ownership.",
         "WHEN": "External exposure, vendor access, or data-sharing audit review.",
@@ -202,8 +226,9 @@ SECURITY_BRIEF_WORKFLOWS = (
 )
 
 WORKFLOW_MODULES = {
-    "Access posture": "sections.security_access",
-    "Data sharing exposure": "sections.data_sharing",
+    "Failed Logins": "sections.security_access",
+    "Risky Grants": "sections.security_access",
+    "Data Sharing Exposure": "sections.data_sharing",
 }
 
 SECURITY_ACCESS_REVIEW_TABLE = "OVERWATCH_SECURITY_ACCESS_REVIEW"
@@ -1194,10 +1219,10 @@ def _privileged_grant_action_payload(row: pd.Series | dict, *, company: str, env
 def _security_workflow_for(finding_type: str) -> str:
     value = str(finding_type or "").lower()
     if "shared" in value or "exposure" in value:
-        return "Data sharing exposure"
+        return "Data Sharing Exposure"
     if "privileged" in value or "grant" in value:
-        return "Privilege sprawl"
-    return "Access posture"
+        return "Privilege Sprawl"
+    return "Failed Logins"
 
 
 def _security_priority_view(exceptions: pd.DataFrame) -> pd.DataFrame:
@@ -1236,12 +1261,12 @@ def _render_security_watch_floor(score: int, exceptions: pd.DataFrame, row) -> N
         if shared_databases:
             st.caption("No urgent findings, but shared/imported database exposure exists. Review routes and consumers periodically.")
         else:
-            st.caption("No immediate security cards. Use Access posture for audit telemetry or Data sharing exposure for external-consumer review.")
+            st.caption("No immediate security cards. Use Failed Logins for audit telemetry or Data Sharing Exposure for external-consumer review.")
         return
 
     cols = st.columns(len(priority))
     for idx, (_, item) in enumerate(priority.iterrows()):
-        workflow = str(item.get("NEXT_WORKFLOW") or "Access posture")
+        workflow = SECURITY_VIEW_ALIASES.get(str(item.get("NEXT_WORKFLOW") or ""), str(item.get("NEXT_WORKFLOW") or "Failed Logins"))
         with cols[idx]:
             render_escaped_bold_text(f"{item.get('SEVERITY', 'Medium')}: {item.get('FINDING_TYPE', '')}")
             st.caption(f"{item.get('ENTITY_TYPE', 'Access')}: {item.get('ENTITY', 'unknown')}")
@@ -1255,7 +1280,7 @@ def _render_security_watch_floor(score: int, exceptions: pd.DataFrame, row) -> N
                 width="stretch",
             ):
                 entity = str(item.get("ENTITY") or "").strip()
-                if workflow == "Data sharing exposure":
+                if workflow == "Data Sharing Exposure":
                     if entity and entity.lower() != "unknown":
                         st.session_state["global_database"] = entity.split(".")[0]
                     for stale_key in ("ds_df_dt", "ds_df_shared_db"):
@@ -1315,7 +1340,7 @@ def _security_exception_strip_rows(summary, exceptions, meta: dict, company: str
             "signal": "MFA gaps",
             "entity": "Users",
             "detail": f"{users_without_mfa:,} user(s) missing MFA signal in the selected scope.",
-            "route": "Access posture",
+            "route": "Failed Logins",
         })
     if failed_logins:
         rows.append({
@@ -1323,7 +1348,7 @@ def _security_exception_strip_rows(summary, exceptions, meta: dict, company: str
             "signal": "Failed logins",
             "entity": "Identity",
             "detail": f"{failed_logins:,} failed login(s) across {failed_users:,} user(s).",
-            "route": "Access posture",
+            "route": "Failed Logins",
         })
     if recent_grants >= 25:
         rows.append({
@@ -1331,7 +1356,7 @@ def _security_exception_strip_rows(summary, exceptions, meta: dict, company: str
             "signal": "Grant-change volume",
             "entity": "Roles",
             "detail": f"{recent_grants:,} grant change(s) in the lookback window.",
-            "route": "Privilege sprawl",
+            "route": "Privilege Sprawl",
         })
     if shared_databases:
         rows.append({
@@ -1339,7 +1364,7 @@ def _security_exception_strip_rows(summary, exceptions, meta: dict, company: str
             "signal": "Shared data exposure",
             "entity": "Databases",
             "detail": f"{shared_databases:,} shared/imported database(s) need route and consumer validation.",
-            "route": "Data sharing exposure",
+            "route": "Data Sharing Exposure",
         })
     return rows[:4]
 
@@ -1559,7 +1584,7 @@ def _security_command_lanes(snapshot: dict) -> list[dict[str, str]]:
             "label": "Access review",
             "value": "Open workflow",
             "state": "Review",
-            "detail": "Use Privilege sprawl before revoking or narrowing grants.",
+            "detail": "Use Privilege Sprawl before revoking or narrowing grants.",
         },
         {
             "label": "Closure status",
@@ -1571,6 +1596,7 @@ def _security_command_lanes(snapshot: dict) -> list[dict[str, str]]:
 
 
 def _queue_security_workflow(workflow: str) -> None:
+    workflow = SECURITY_VIEW_ALIASES.get(str(workflow or ""), str(workflow or ""))
     if workflow in WORKFLOWS:
         st.session_state["security_posture_requested_view"] = workflow
         st.session_state["security_posture_requested_workflow"] = workflow
@@ -1845,9 +1871,9 @@ def _render_advanced_security_evidence(company: str, environment: str) -> None:
             "Start with identity/access posture, open privilege sprawl for high-risk grants, "
             "then inspect data sharing when the question is external exposure or audit telemetry.",
             [
-                ("Login failures, MFA, grants, or risky access", "Use Access posture."),
-                ("Admin roles, ownership, grant option, or route blockers", "Use Privilege sprawl."),
-                ("External consumers or shared data exposure", "Use Data sharing exposure."),
+                ("Login failures, MFA, grants, or risky access", "Use Failed Logins."),
+                ("Admin roles, ownership, grant option, or route blockers", "Use Privilege Sprawl."),
+                ("External consumers or shared data exposure", "Use Data Sharing Exposure."),
             ],
         )
         _render_security_ownership_coverage(company, environment)
@@ -1860,6 +1886,8 @@ def _render_advanced_security_evidence(company: str, environment: str) -> None:
 def _apply_queued_security_workflow() -> None:
     requested_view = st.session_state.pop("security_posture_requested_view", None)
     requested_workflow = st.session_state.pop("security_posture_requested_workflow", None)
+    requested_view = SECURITY_VIEW_ALIASES.get(str(requested_view or ""), requested_view)
+    requested_workflow = SECURITY_VIEW_ALIASES.get(str(requested_workflow or ""), requested_workflow)
     if requested_view in SECURITY_POSTURE_VIEWS:
         st.session_state["security_posture_view"] = requested_view
     if requested_workflow in WORKFLOWS:
@@ -2846,9 +2874,15 @@ def render() -> None:
     if st.session_state.get("_security_posture_brief_first_version") != 1:
         st.session_state["_security_posture_brief_first_version"] = 1
     if st.session_state.get("exceptions_only_mode") and "security_posture_workflow" not in st.session_state:
-        st.session_state["security_posture_workflow"] = "Access posture"
+        st.session_state["security_posture_workflow"] = "Failed Logins"
     if st.session_state.get("exceptions_only_mode") and "security_posture_view" not in st.session_state:
-        st.session_state["security_posture_view"] = "Access posture"
+        st.session_state["security_posture_view"] = "Failed Logins"
+    current_security_view = SECURITY_VIEW_ALIASES.get(
+        str(st.session_state.get("security_posture_view") or ""),
+        st.session_state.get("security_posture_view"),
+    )
+    if current_security_view in SECURITY_POSTURE_VIEWS:
+        st.session_state["security_posture_view"] = current_security_view
     if st.session_state.get("security_posture_view") not in SECURITY_POSTURE_VIEWS:
         st.session_state["security_posture_view"] = SECURITY_POSTURE_VIEWS[0]
     _apply_queued_security_workflow()
@@ -2872,14 +2906,27 @@ def render() -> None:
         details=SECURITY_POSTURE_VIEW_DETAILS,
         columns=4,
     )
-    if active_view in {"Data Health"}:
+    if active_view == "Advanced Security Diagnostics":
         _render_security_source_health(company, environment)
         _render_privileged_grant_readiness(company, environment, days)
         _render_advanced_security_evidence(company, environment)
         return
+    if active_view == "Security Alerts":
+        _render_loaded_security_alert_context()
+        st.info("Loaded security alerts appear here after an Alert Center route opens Security Monitoring. Use Failed Logins, Risky Grants, or Data Sharing Exposure for direct investigation.")
+        _render_advanced_security_evidence(company, environment)
+        return
+    if active_view == "Access Changes":
+        _render_security_change_detail(company, environment)
+        _render_advanced_security_evidence(company, environment)
+        return
     if active_view in WORKFLOWS:
         st.session_state["security_posture_workflow"] = active_view
-        if active_view == "Privilege sprawl":
+        if active_view == "Failed Logins":
+            st.session_state["security_access_active_view"] = "Login Audit"
+        elif active_view == "Risky Grants":
+            st.session_state["security_access_active_view"] = "Roles & Grants"
+        if active_view == "Privilege Sprawl":
             _render_privilege_sprawl_workflow(company, environment, days)
             _render_advanced_security_evidence(company, environment)
             return

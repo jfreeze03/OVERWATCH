@@ -1265,16 +1265,16 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(summary["active_services"], 2)
 
         next_move = _cost_splash_next_move(summary)
-        self.assertEqual(next_move[0], "Usage attribution and run-rate")
+        self.assertEqual(next_move[0], "Cost by Warehouse")
         self.assertEqual(next_move[1], "Usage movement")
 
         cortex_summary = dict(summary, delta_pct=0.0, top_warehouse_delta_spend=0.0)
         cortex_move = _cost_splash_next_move(cortex_summary)
-        self.assertEqual(cortex_move[0], "AI and Cortex spend")
+        self.assertEqual(cortex_move[0], "Cortex Spend")
 
         value_summary = dict(cortex_summary, cortex_spend=0.0, projected_30d_spend=0.0)
         value_move = _cost_splash_next_move(value_summary)
-        self.assertEqual(value_move[0], "Recommendations and action queue")
+        self.assertEqual(value_move[0], "Recommendations")
 
         service_summary = {"top_moving_service": "CORTEX", "top_moving_delta": 4.25}
         service_lens = pd.DataFrame([
@@ -2496,7 +2496,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "EVIDENCE": "ALFA_WH moved 55 credits versus prior.",
                 "NEXT_ACTION": "Confirm owner demand and warehouse setting changes before tuning.",
                 "PROOF_REQUIRED": "WAREHOUSE_METERING_HISTORY current/prior window and top delta.",
-                "ROUTE": "Cost & Contract > Usage attribution and run-rate",
+                "ROUTE": "Cost & Contract > Cost by Warehouse",
             }]),
             "cost_contract_change_cost_correlation": pd.DataFrame([{
                 "SEVERITY": "High",
@@ -2532,7 +2532,7 @@ class FormulaRegressionTests(unittest.TestCase):
             "EVIDENCE": "ALFA_WH moved 170 credits versus prior window.",
             "NEXT_ACTION": "Confirm owner demand and setting changes before tuning.",
             "PROOF_REQUIRED": "WAREHOUSE_METERING_HISTORY current/prior window.",
-            "ROUTE": "Cost & Contract > Usage attribution and run-rate",
+            "ROUTE": "Cost & Contract > Cost by Warehouse",
         }])
         correlation = pd.DataFrame([{
             "SEVERITY": "High",
@@ -3248,7 +3248,7 @@ class FormulaRegressionTests(unittest.TestCase):
             failed_queries=0,
         )
         self.assertEqual(routed["target"], "Cost & Contract")
-        self.assertEqual(routed["workflow"], "Recommendations and action queue")
+        self.assertEqual(routed["workflow"], "Recommendations")
         self.assertIn("Check warehouse sizing", routed["headline"])
 
         queue_only = _dba_action_brief(
@@ -4727,14 +4727,14 @@ class FormulaRegressionTests(unittest.TestCase):
 
         self.assertEqual(
             [row["WORKFLOW"] for row in rows],
-            ["Access posture", "Privilege sprawl", "Data sharing exposure"],
+            ["Failed Logins", "Risky Grants", "Data Sharing Exposure"],
         )
         by_workflow = {row["WORKFLOW"]: row for row in rows}
-        self.assertIn("failed logins", by_workflow["Access posture"]["DBA_MOVE"])
-        self.assertIn("admin roles", by_workflow["Privilege sprawl"]["DBA_MOVE"])
-        self.assertIn("shared databases", by_workflow["Data sharing exposure"]["DBA_MOVE"])
-        self.assertIn("Open Access", by_workflow["Access posture"]["BUTTON_LABEL"])
-        self.assertIn("MFA gaps", by_workflow["Access posture"]["SOURCES"])
+        self.assertIn("failed logins", by_workflow["Failed Logins"]["DBA_MOVE"])
+        self.assertIn("admin roles", by_workflow["Risky Grants"]["DBA_MOVE"])
+        self.assertIn("shared databases", by_workflow["Data Sharing Exposure"]["DBA_MOVE"])
+        self.assertIn("Open Logins", by_workflow["Failed Logins"]["BUTTON_LABEL"])
+        self.assertIn("MFA gaps", by_workflow["Failed Logins"]["SOURCES"])
 
     def test_security_mfa_coverage_sql_prefers_has_mfa_and_avoids_alias_grouping(self):
         exprs = _user_mfa_column_exprs({"HAS_MFA", "HAS_PASSWORD", "LAST_SUCCESS_LOGIN"})
@@ -5021,8 +5021,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(summary["ownership_or_grant_option"], 1)
         self.assertEqual(summary["verification_required"], 2)
         self.assertEqual(summary["stale_admin_grants"], 1)
-        self.assertEqual(_security_workflow_for("Privileged Object Grant"), "Privilege sprawl")
-        self.assertEqual(_security_workflow_for("MFA Gap"), "Access posture")
+        self.assertEqual(_security_workflow_for("Privileged Object Grant"), "Privilege Sprawl")
+        self.assertEqual(_security_workflow_for("MFA Gap"), "Failed Logins")
 
     def test_privileged_grant_action_payload_is_review_only_and_closure_tracked(self):
         row = {
@@ -8650,7 +8650,7 @@ class FormulaRegressionTests(unittest.TestCase):
             "Evidence": "Credits rose 80%.",
             "Action": "Explain usage movement.",
             "Route": "Cost & Contract",
-            "Workflow": "Usage attribution and run-rate",
+            "Workflow": "Cost by Warehouse",
         }])
 
         subject = build_alert_email_subject(alert.iloc[0], company="ALFA")
@@ -9183,7 +9183,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "NEXT_ACTION": "Deploy delivery audit table.",
             }]),
         )
-        self.assertEqual(blocked["target"], "Command Center")
+        self.assertEqual(blocked["target"], "Active Alerts")
         self.assertIn("Delivery audit input", blocked["detail"])
         self.assertIn("Deploy delivery audit table", blocked["detail"])
 
@@ -9196,7 +9196,7 @@ class FormulaRegressionTests(unittest.TestCase):
             email_logged=0,
             open_queue=1,
         )
-        self.assertEqual(overdue["target"], "Command Center")
+        self.assertEqual(overdue["target"], "Active Alerts")
         self.assertIn("overdue", overdue["detail"])
 
         queue_only = _alert_center_action_brief(
@@ -9258,39 +9258,35 @@ class FormulaRegressionTests(unittest.TestCase):
 
         self.assertEqual(rows.iloc[0]["SEVERITY"], "High")
         self.assertEqual(by_signal["Critical/high alerts"]["COUNT"], 1)
-        self.assertEqual(by_signal["Overdue alert SLAs"]["ROUTE"], "Command Center")
+        self.assertEqual(by_signal["Overdue alert SLAs"]["ROUTE"], "Active Alerts")
         self.assertEqual(by_signal["Generic alert routes"]["OWNER"], "Platform DBA")
         self.assertEqual(by_signal["Open action queue"]["COUNT"], 1)
-        self.assertEqual(by_signal["Alert control blockers"]["ROUTE"], "Command Center")
+        self.assertEqual(by_signal["Alert control blockers"]["ROUTE"], "Active Alerts")
         self.assertEqual(by_signal["Delivery failures"]["COUNT"], 1)
 
-    def test_alert_center_pending_state_uses_command_center_default(self):
+    def test_alert_center_pending_state_uses_active_alerts_default(self):
         brief = _alert_center_pending_brief("Alert Brief", set())
 
         self.assertEqual(brief["state"], "Ready")
-        self.assertIn("Load Command Center", brief["headline"])
+        self.assertIn("Load Active Alerts", brief["headline"])
         self.assertIn("Inputs on load", brief["detail"])
 
         workflows = _alert_center_brief_workflow_rows()
         self.assertEqual(
             [row["VIEW"] for row in workflows],
             [
-                "Command Center",
-                "Cost & Behavior",
-                "Reliability",
-                "Security",
-                "Detection Catalog",
-                "Delivery & Automation",
+                "Active Alerts",
+                "Cost Alerts",
+                "Reliability Alerts",
+                "Security Alerts",
+                "Advanced Alert Admin",
             ],
         )
         by_view = {row["VIEW"]: row for row in workflows}
-        self.assertIn("Open Command Center", by_view["Command Center"]["BUTTON_LABEL"])
-        self.assertIn("Cortex", by_view["Cost & Behavior"]["BUTTON_LABEL"])
-        self.assertIn("alert history", by_view["Command Center"]["SOURCES"].lower())
-        self.assertIn("Open Detection Catalog", by_view["Detection Catalog"]["BUTTON_LABEL"])
-        self.assertIn("Action queue", by_view["Delivery & Automation"]["SOURCES"])
-        self.assertIn("Email delivery audit", by_view["Delivery & Automation"]["SOURCES"])
-        self.assertIn("Open Automation", by_view["Delivery & Automation"]["BUTTON_LABEL"])
+        self.assertIn("Open Active Alerts", by_view["Active Alerts"]["BUTTON_LABEL"])
+        self.assertIn("Cost", by_view["Cost Alerts"]["BUTTON_LABEL"])
+        self.assertIn("alert history", by_view["Active Alerts"]["SOURCES"].lower())
+        self.assertIn("Open Advanced Admin", by_view["Advanced Alert Admin"]["BUTTON_LABEL"])
 
     def test_alert_center_operator_workflow_spine_prioritizes_next_move(self):
         alerts = pd.DataFrame([{
@@ -9366,7 +9362,7 @@ class FormulaRegressionTests(unittest.TestCase):
         by_move = {row["MOVE"]: row for _, row in moves.iterrows()}
 
         self.assertIn("Cortex spend spike", by_move["Confirm signal"]["DETAIL"])
-        self.assertIn("Cost & Contract > AI and Cortex spend", by_move["Open owner workflow"]["DETAIL"])
+        self.assertIn("Cost & Contract > Cortex Spend", by_move["Open owner workflow"]["DETAIL"])
         self.assertIn("FACT_CORTEX_DAILY", by_move["Capture evidence"]["DETAIL"])
         self.assertEqual(by_move["Respect boundary"]["STATE"], "Recommend only")
         self.assertIn("Do not disable Cortex access", by_move["Respect boundary"]["DETAIL"])
@@ -9461,22 +9457,22 @@ class FormulaRegressionTests(unittest.TestCase):
             st.session_state["alert_center_active_view"] = "Control Health"
             _apply_alert_center_brief_first_default()
 
-            self.assertEqual(st.session_state["alert_center_active_view"], "Command Center")
+            self.assertEqual(st.session_state["alert_center_active_view"], "Active Alerts")
             self.assertEqual(st.session_state["_alert_center_brief_first_version"], 3)
 
             st.session_state["alert_center_active_view"] = "Retired Alert Pane"
             _apply_alert_center_brief_first_default()
-            self.assertEqual(st.session_state["alert_center_active_view"], "Command Center")
+            self.assertEqual(st.session_state["alert_center_active_view"], "Active Alerts")
 
             st.session_state.clear()
             _apply_alert_center_brief_first_default()
-            self.assertEqual(st.session_state["alert_center_active_view"], "Command Center")
+            self.assertEqual(st.session_state["alert_center_active_view"], "Active Alerts")
 
             st.session_state.clear()
             st.session_state["alert_center_active_view"] = "Control Health"
             st.session_state["alert_center_data"] = {"_loaded_sources": []}
             _apply_alert_center_brief_first_default()
-            self.assertEqual(st.session_state["alert_center_active_view"], "Command Center")
+            self.assertEqual(st.session_state["alert_center_active_view"], "Active Alerts")
         finally:
             st.session_state.clear()
             st.session_state.update(previous)
@@ -9526,14 +9522,14 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(cost_rows.iloc[0]["SECTION_FOCUS"], "Cortex spend")
         self.assertEqual(cost_rows.iloc[0]["ENTITY"], "SNOW_DTI_ANALYST")
         self.assertEqual(cost_rows.iloc[0]["DESTINATION_SECTION"], "Cost & Contract")
-        self.assertEqual(cost_rows.iloc[0]["DESTINATION_WORKFLOW"], "AI and Cortex spend")
-        self.assertEqual(cost_rows.iloc[0]["ALERT_CENTER_VIEW"], "Cost & Behavior")
+        self.assertEqual(cost_rows.iloc[0]["DESTINATION_WORKFLOW"], "Cortex Spend")
+        self.assertEqual(cost_rows.iloc[0]["ALERT_CENTER_VIEW"], "Cost Alerts")
         self.assertIn("quota", cost_rows.iloc[0]["DRILLDOWN_HINT"].lower())
         self.assertEqual(cost_rows.iloc[0]["AUTOMATION_READINESS"], "Recommend only")
         self.assertEqual(security_rows.iloc[0]["CATEGORY"], "Security")
-        self.assertEqual(security_rows.iloc[0]["DESTINATION_WORKFLOW"], "Access posture")
+        self.assertEqual(security_rows.iloc[0]["DESTINATION_WORKFLOW"], "Failed Logins")
         self.assertEqual(workload_rows.iloc[0]["CATEGORY"], "Task / Pipeline")
-        self.assertEqual(workload_rows.iloc[0]["DESTINATION_WORKFLOW"], "Task & procedure health")
+        self.assertEqual(workload_rows.iloc[0]["DESTINATION_WORKFLOW"], "Pipeline & Task Health")
         self.assertEqual(len(executive_rows), 3)
 
         loaded_rows = build_loaded_section_alert_signal_board(
@@ -9544,7 +9540,7 @@ class FormulaRegressionTests(unittest.TestCase):
         drilldown = build_cost_cortex_alert_drilldown(alerts, limit=4)
         self.assertFalse(drilldown.empty)
         self.assertEqual(drilldown.iloc[0]["FOCUS"], "Cortex spend")
-        self.assertIn("Open AI and Cortex spend", drilldown.iloc[0]["SAFE_ACTION"])
+        self.assertIn("Open Cortex Spend", drilldown.iloc[0]["SAFE_ACTION"])
 
     def test_alert_surfaces_are_consolidated_to_alert_center(self):
         config_text = (APP_ROOT / "config.py").read_text(encoding="utf-8")
@@ -9555,7 +9551,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn('"Alert Center"', config_text)
         self.assertIn('"sections.alert_center"', config_text)
         self.assertFalse((APP_ROOT / "sections" / "alert_center_shell.py").exists())
-        self.assertIn('ALERT_CENTER_DEFAULT_VIEW = "Command Center"', alert_text)
+        self.assertIn('ALERT_CENTER_DEFAULT_VIEW = "Active Alerts"', alert_text)
         self.assertIn("consolidated Alert Center", dba_tools_text)
         self.assertNotIn("Alert Configuration", rec_text)
         self.assertNotIn("tab_alerts", rec_text)

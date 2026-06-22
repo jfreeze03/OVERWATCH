@@ -228,7 +228,7 @@ def _cards_from_recommendations(state: Mapping, cards: list[dict]) -> None:
             "next_action": hardened.get("Safe Next Action", hardened.get("Action", "")),
             "proof": hardened.get("Proof Required", ""),
             "do_not": hardened.get("Do Not Do", ""),
-            "route": "Cost & Contract > Recommendations and action queue",
+            "route": "Cost & Contract > Recommendations",
             "category": hardened.get("Category", ""),
             "value": hardened.get("Estimated Monthly Savings", 0),
         })
@@ -898,7 +898,7 @@ def _cards_from_security_posture(state: Mapping, cards: list[dict]) -> None:
             "next_action": "Confirm each authentication path and enforce MFA through Snowflake or the identity provider.",
             "proof": "ACCOUNT_USAGE.USERS MFA/EXT_AUTHN_DUO telemetry plus IAM/security review.",
             "do_not": "Do not mark Security Monitoring clean until MFA exceptions are reviewed or remediated.",
-            "route": "Security Monitoring > Access posture",
+            "route": "Security Monitoring > Failed Logins",
             "category": "Security",
             "value": str(users_without_mfa),
         })
@@ -912,7 +912,7 @@ def _cards_from_security_posture(state: Mapping, cards: list[dict]) -> None:
             "next_action": "Validate source IP, IAM context, and recent user changes before locking or disabling users.",
             "proof": "LOGIN_HISTORY grouped by user, source IP, client, and error code.",
             "do_not": "Do not disable users from aggregate failure volume alone.",
-            "route": "Security Monitoring > Access posture",
+            "route": "Security Monitoring > Failed Logins",
             "category": "Security",
             "value": str(failed_logins),
         })
@@ -926,7 +926,7 @@ def _cards_from_security_posture(state: Mapping, cards: list[dict]) -> None:
             "next_action": "Load privilege sprawl and confirm route, ticket, and role capability telemetry.",
             "proof": "GRANTS_TO_USERS and GRANTS_TO_ROLES review telemetry.",
             "do_not": "Do not revoke or narrow grants without business justification and DBA review.",
-            "route": "Security Monitoring > Privilege sprawl",
+            "route": "Security Monitoring > Privilege Sprawl",
             "category": "Security",
             "value": str(recent_grants),
         })
@@ -940,7 +940,7 @@ def _cards_from_security_posture(state: Mapping, cards: list[dict]) -> None:
             "next_action": "Validate consumer, route, contract, and classification before leaving the share active.",
             "proof": "ACCOUNT_USAGE.DATABASES share/import metadata plus status review.",
             "do_not": "Do not assume every share is reviewed without route and contract telemetry.",
-            "route": "Security Monitoring > Data sharing exposure",
+            "route": "Security Monitoring > Data Sharing Exposure",
             "category": "Security",
             "value": str(shared_databases),
         })

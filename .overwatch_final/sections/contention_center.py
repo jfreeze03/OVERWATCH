@@ -1694,7 +1694,7 @@ def _open_contention_owner_route(row: pd.Series | dict) -> None:
         st.session_state["contention_center_view"] = "Active Locks"
     elif route == "Task graphs":
         st.session_state["workload_operations_workflow"] = "Pipeline & Task Health"
-        st.session_state["workload_operations_pipeline_focus"] = "Failed tasks & procedures"
+        st.session_state["workload_operations_pipeline_focus"] = "Failed Tasks"
     elif route == "Query diagnosis":
         st.session_state["workload_operations_workflow"] = "Query Investigation"
         st.session_state["query_analysis_active_view"] = "AI Diagnosis"
@@ -1704,7 +1704,7 @@ def _open_contention_owner_route(row: pd.Series | dict) -> None:
             st.session_state["ai_object_ctx"] = target_object
     elif route in {"Warehouse Health", "Cost & Contract"}:
         apply_navigation_state("Cost & Contract")
-        st.session_state["cost_contract_workflow"] = "Recommendations and action queue"
+        st.session_state["cost_contract_workflow"] = "Recommendations"
     else:
         st.session_state["contention_center_view"] = "Brief"
     st.rerun()

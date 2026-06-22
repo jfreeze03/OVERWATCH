@@ -1317,7 +1317,7 @@ def render() -> None:
                     key="dba_control_room_wh_select",
                 )
                 if sel_wh and st.button("Open Cost & Contract", key="dba_control_room_open_wh"):
-                    _jump("Cost & Contract", workflow="Recommendations and action queue", warehouse=sel_wh)
+                    _jump("Cost & Contract", workflow="Recommendations", warehouse=sel_wh)
             else:
                 st.success("No warehouse pressure detected by the control-room thresholds.")
 
@@ -1338,9 +1338,9 @@ def render() -> None:
             st.subheader("Cost and Capacity")
             st.write("Bill explanations, run-rate pacing, warehouse pressure, rightsizing, recommendations, and action telemetry.")
             for label, title, workflow in [
-                ("Cost & Contract", "Cost & Contract", "Usage attribution and run-rate"),
-                ("AI / Cortex Spend", "Cost & Contract", "AI and Cortex spend"),
-                ("Warehouse Capacity", "Cost & Contract", "Recommendations and action queue"),
+                ("Cost & Contract", "Cost & Contract", "Cost by Warehouse"),
+                ("AI / Cortex Spend", "Cost & Contract", "Cortex Spend"),
+                ("Warehouse Capacity", "Cost & Contract", "Recommendations"),
             ]:
                 if st.button(label, key=f"dba_control_cost_{label}", width="stretch"):
                     _jump(title, workflow=workflow)

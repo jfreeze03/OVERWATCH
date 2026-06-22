@@ -214,7 +214,7 @@ def harden_recommendation(rec: Mapping | pd.Series | dict) -> dict:
         )
         evidence = f"{entity}: {spill_gb:,.2f} GB remote spill in the recommendation window."
         safe_next = (
-            "Open Cost & Contract > Recommendations and action queue, identify the query IDs causing spill, and decide between SQL tuning, "
+            "Open Cost & Contract > Recommendations, identify the query IDs causing spill, and decide between SQL tuning, "
             "workload isolation, or a one-step warehouse size validation."
         )
         proof = "Track remote spill GB and queue time trend after the change."
@@ -263,7 +263,7 @@ def harden_recommendation(rec: Mapping | pd.Series | dict) -> dict:
             f"{entity}: {time_travel_tb:,.2f} TB time-travel storage against {active_tb:,.2f} TB active storage; "
             f"{_money(savings)} estimated monthly exposure."
         )
-        safe_next = "Open Storage cost and retention, confirm largest tables, and route only objects with approved retention changes."
+        safe_next = "Open Cost & Contract > Advanced Cost Tools > Storage & Retention, confirm largest tables, and route only objects with approved retention changes."
         proof = "After the retention window ages out, time-travel TB and monthly storage estimate should decline."
         do_not = "Do not lower retention on regulated, clone-heavy, or recovery-sensitive databases from this finding alone."
         confidence = "Medium - storage bytes are direct telemetry, but the safe setting depends on retention policy."

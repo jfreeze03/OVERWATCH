@@ -420,24 +420,24 @@ def _cost_splash_next_move(summary: dict) -> tuple[str, str, str]:
 
     if delta_pct >= 20 or top_wh_delta > 0:
         return (
-            "Usage attribution and run-rate",
+            "Cost by Warehouse",
             "Usage movement",
             f"{top_wh} is the first cost driver to explain ({_slide_money(top_wh_delta, signed=True)}).",
         )
     if cortex_spend > 0:
         return (
-            "AI and Cortex spend",
+            "Cortex Spend",
             "AI spend",
             f"Cortex spend is {_slide_money(cortex_spend)}; top user is {top_user}.",
         )
     if projected_30d > safe_float(summary.get("spend")):
         return (
-            "Usage attribution and run-rate",
+            "Burn Rate",
             "Run-rate check",
             f"Projected 30-day spend is {_slide_money(projected_30d)}. Explain the driver and run-rate pace.",
         )
     return (
-        "Recommendations and action queue",
+        "Recommendations",
         "Cost queue",
         "No dominant cost incident is visible. Review open cost actions or attribution.",
     )
@@ -477,28 +477,28 @@ def _cost_executive_decision_stack(summary: dict, action_summary: dict) -> pd.Da
             "SIGNAL": _slide_money(delta, signed=True),
             "FIRST_QUESTION": f"Is {summary.get('top_warehouse')} the real driver or just the largest warehouse mover?",
             "OWNER": "DBA / Cost owner",
-            "ROUTE": "Usage attribution and run-rate",
+            "ROUTE": "Cost by Warehouse",
         },
         {
             "DECISION": "Validate contract burn",
             "SIGNAL": _slide_money(projected),
             "FIRST_QUESTION": "Does the 30-day run-rate fit the usage baseline and run-rate pace?",
             "OWNER": "DBA / Cost owner",
-            "ROUTE": "Usage attribution and run-rate",
+            "ROUTE": "Burn Rate",
         },
         {
             "DECISION": "Review Cortex usage",
             "SIGNAL": _slide_money(cortex),
             "FIRST_QUESTION": f"Is {summary.get('top_cortex_user')} expected to be the top AI spender?",
             "OWNER": "DBA / AI platform",
-            "ROUTE": "AI and Cortex spend",
+            "ROUTE": "Cortex Spend",
         },
         {
             "DECISION": "Close owned savings",
             "SIGNAL": f"{open_actions:,} open / {_slide_money(savings)}/mo",
             "FIRST_QUESTION": "Which recommendations have telemetry status, baseline context, and current savings data?",
             "OWNER": "DBA / Service owner",
-            "ROUTE": "Recommendations and action queue",
+            "ROUTE": "Recommendations",
         },
     ]
     frame = pd.DataFrame(rows)
@@ -568,27 +568,78 @@ def render_workflow_module(workflow: str, workflow_modules: dict[str, str]) -> N
     render()
 
 WORKFLOWS = (
-    "Usage attribution and run-rate",
-    "Storage cost and retention",
-    "Recommendations and action queue",
-    "AI and Cortex spend",
-    "SPCS spend",
+    "Cost by Warehouse",
+    "Cost by User",
+    "Burn Rate",
+    "Budget vs Actual",
+    "Forecast",
+    "Waste Detection",
+    "Chargeback",
+    "Recommendations",
+    "Cortex Spend",
+    "Advanced Cost Tools",
 )
 
 WORKFLOW_DETAILS = {
-    "Usage attribution and run-rate": "Start here: usage movement, chargeback, run-rate pacing, and cost drivers.",
-    "Storage cost and retention": "Database, failsafe, stage, and table storage telemetry in the cost workspace.",
-    "Recommendations and action queue": "Owned fixes with severity, savings, telemetry status, and routing.",
-    "AI and Cortex spend": "Cortex usage, model spend, users, and runaway AI cost signals.",
-    "SPCS spend": "Snowpark Container Services usage and service cost exposure.",
+    "Cost by Warehouse": "Which warehouses are driving spend, movement, idle cost, and optimization review?",
+    "Cost by User": "Which users and query patterns are driving allocated spend?",
+    "Burn Rate": "Daily metered credit trend and current run-rate pacing.",
+    "Budget vs Actual": "Reconcile Snowflake Admin totals, warehouse metering, service credits, and OVERWATCH allocation.",
+    "Forecast": "Near-term projected burn from recent usage; estimated, not verified savings.",
+    "Waste Detection": "Anomalies, idle/inefficient warehouse posture, and avoidable usage candidates.",
+    "Chargeback": "ALFA/Trexis allocation, environment split, and billing-ready review rows.",
+    "Recommendations": "Warehouse advisor and action-ready savings recommendations.",
+    "Cortex Spend": "Cortex usage, model spend, users, and runaway AI cost signals.",
+    "Advanced Cost Tools": "Storage, SPCS, and enterprise evidence kept out of the daily cost path.",
 }
 
 WORKFLOW_MODULES = {
-    "Usage attribution and run-rate": "sections.cost_center",
-    "Storage cost and retention": "sections.storage_monitor",
-    "Recommendations and action queue": "sections.recommendations",
-    "AI and Cortex spend": "sections.cortex_monitor",
-    "SPCS spend": "sections.spcs_tracker",
+    "Cost by Warehouse": "sections.cost_center",
+    "Cost by User": "sections.cost_center",
+    "Burn Rate": "sections.cost_center",
+    "Budget vs Actual": "sections.cost_center",
+    "Forecast": "sections.cost_center",
+    "Waste Detection": "sections.recommendations",
+    "Chargeback": "sections.cost_center",
+    "Recommendations": "sections.recommendations",
+    "Cortex Spend": "sections.cortex_monitor",
+}
+
+COST_WORKFLOW_PRESETS = {
+    "Cost by Warehouse": {"cost_center_view": "Cost Explorer", "cc_explorer_lens": "Warehouse"},
+    "Cost by User": {"cost_center_view": "User Leaderboard"},
+    "Burn Rate": {"cost_center_view": "Burn Rate"},
+    "Budget vs Actual": {"cost_center_view": "Reconciliation"},
+    "Forecast": {"cost_center_view": "Forecast"},
+    "Chargeback": {"cost_center_view": "Chargeback"},
+    "Waste Detection": {"recommendations_active_view": "Anomaly Log"},
+    "Recommendations": {"recommendations_active_view": "Warehouse Advisor"},
+}
+
+LEGACY_COST_WORKFLOW_ALIASES = {
+    "Usage attribution and run-rate": "Cost by Warehouse",
+    "Cost Center": "Cost by Warehouse",
+    "Usage Overview": "Cost by Warehouse",
+    "User Leaderboard": "Cost by User",
+    "Storage cost and retention": "Advanced Cost Tools",
+    "Storage Monitor": "Advanced Cost Tools",
+    "Recommendations and action queue": "Recommendations",
+    "Recommendations & Anomalies": "Recommendations",
+    "AI and Cortex spend": "Cortex Spend",
+    "AI & Cortex Monitor": "Cortex Spend",
+    "SPCS spend": "Advanced Cost Tools",
+    "SPCS Tracker": "Advanced Cost Tools",
+    "Reconciliation": "Budget vs Actual",
+}
+
+ADVANCED_COST_TOOL_DETAILS = {
+    "Storage & Retention": "Database, failsafe, stage, and table storage telemetry.",
+    "SPCS Spend": "Snowpark Container Services usage and service cost exposure.",
+}
+
+ADVANCED_COST_TOOL_MODULES = {
+    "Storage & Retention": "sections.storage_monitor",
+    "SPCS Spend": "sections.spcs_tracker",
 }
 
 _DETAIL_WORKFLOW_KEY = "_cost_contract_detail_workflow"
@@ -1496,21 +1547,21 @@ def _cost_advisor_add_row(
 
 
 _COST_ADVISOR_ACTION_MAP = {
-    "Failed query waste": ("Fix failed workload", "Recommendations and action queue"),
-    "Warehouse pressure": ("Investigate pressure before capacity change", "Usage attribution and run-rate"),
-    "Warehouse right-size review": ("Review right-size or suspend policy", "Usage attribution and run-rate"),
-    "Automatic clustering": ("Validate clustering value", "Usage attribution and run-rate"),
-    "Attribution gap": ("Reconcile spend attribution", "Usage attribution and run-rate"),
-    "Service spend movement": ("Map non-warehouse service spend", "Usage attribution and run-rate"),
-    "Storage retention": ("Review storage retention", "Storage cost and retention"),
-    "Storage failsafe": ("Review storage lifecycle", "Storage cost and retention"),
+    "Failed query waste": ("Fix failed workload", "Waste Detection"),
+    "Warehouse pressure": ("Investigate pressure before capacity change", "Cost by Warehouse"),
+    "Warehouse right-size review": ("Review right-size or suspend policy", "Cost by Warehouse"),
+    "Automatic clustering": ("Validate clustering value", "Waste Detection"),
+    "Attribution gap": ("Reconcile spend attribution", "Budget vs Actual"),
+    "Service spend movement": ("Map non-warehouse service spend", "Budget vs Actual"),
+    "Storage retention": ("Review storage retention", "Advanced Cost Tools"),
+    "Storage failsafe": ("Review storage lifecycle", "Advanced Cost Tools"),
 }
 
 
 def _cost_advisor_action_for(category: str) -> tuple[str, str]:
     return _COST_ADVISOR_ACTION_MAP.get(
         str(category or "").strip(),
-        ("Investigate cost signal", "Recommendations and action queue"),
+        ("Investigate cost signal", "Recommendations"),
     )
 
 
@@ -1985,7 +2036,7 @@ def _render_cost_advisor_detail(board: pd.DataFrame | None) -> None:
     render_shell_snapshot((
         ("Priority", str(row.get("SEVERITY") or row.get("PRIORITY") or "Review")),
         ("Action", str(row.get("ACTION_TYPE") or "Investigate")),
-        ("Route", str(row.get("WORKFLOW_ROUTE") or "Recommendations and action queue")),
+        ("Route", LEGACY_COST_WORKFLOW_ALIASES.get(str(row.get("WORKFLOW_ROUTE") or ""), str(row.get("WORKFLOW_ROUTE") or "Recommendations"))),
         ("Metric", str(row.get("PRIMARY_METRIC") or "")),
     ))
     st.caption(_clean_display_text(str(row.get("TELEMETRY_SUMMARY") or row.get("EVIDENCE") or "")))
@@ -2419,7 +2470,7 @@ def _build_cost_control_coverage_board(
         "Cortex cost guardrail",
         "Ready" if cortex_projection > 0 or cortex_exceptions > 0 else "No Rows",
         f"Projected Cortex spend ${cortex_projection:,.0f}/30d with {cortex_exceptions:,} exception(s).",
-        "Open AI and Cortex spend when projection or exception count is non-zero.",
+        "Open Cortex Spend when projection or exception count is non-zero.",
     )
     _add_coverage_row(
         rows,
@@ -2628,7 +2679,7 @@ def _build_cost_drilldown_command_map(
         loaded_rows(cockpit),
         f"{current_credits:,.2f} current credits; {prior_credits:,.2f} prior credits",
         f"Explain top warehouse movement first{f': {top_wh}' if top_wh else ''}.",
-        "Usage attribution and run-rate",
+        "Cost by Warehouse",
         0 if exact_loaded else 1,
     )
 
@@ -2644,7 +2695,7 @@ def _build_cost_drilldown_command_map(
             if run_loaded and not run_rate.empty else "No run-rate telemetry loaded"
         ),
         "Use complete-day 7d average and YOY before calling a spike real.",
-        "Usage attribution and run-rate",
+        "Burn Rate",
         0 if run_loaded else 1,
     )
 
@@ -2656,7 +2707,7 @@ def _build_cost_drilldown_command_map(
         loaded_rows(chargeback, explorer),
         "ALFA/Trexis plus PROD/DEV split" if company_loaded else "No company/environment rows loaded",
         "Use this for chargeback direction; keep shared warehouse disclosure visible.",
-        "Usage attribution and run-rate",
+        "Chargeback",
         2 if company_loaded else 3,
     )
 
@@ -2672,7 +2723,7 @@ def _build_cost_drilldown_command_map(
         loaded_rows(chargeback, explorer),
         f"{no_db_rows:,} no-database row(s)" if db_loaded else "Database rows are available after refresh",
         "Show PROD, DEV_ALL, individual DEV databases, and keep no-database spend out of exact claims.",
-        "Usage attribution and run-rate",
+        "Chargeback",
         2 if db_loaded else 3,
     )
 
@@ -2684,7 +2735,7 @@ def _build_cost_drilldown_command_map(
         loaded_rows(explorer),
         "Role/user/department drivers ready" if human_loaded else "Human driver rows are available after refresh",
         "Sort by estimated dollars before assigning work to a department or user.",
-        "Usage attribution and run-rate",
+        "Cost by User",
         2 if human_loaded else 3,
     )
 
@@ -2707,18 +2758,18 @@ def _build_cost_drilldown_command_map(
         len(open_cost_queue),
         f"{verified:,} measured/completed action(s)",
         "Treat impact as directional until the next complete usage window confirms movement.",
-        "Recommendations and action queue",
+        "Recommendations",
         2 if verified else 3,
     )
 
     add(
-        "AI and Cortex spend",
+        "Cortex Spend",
         "Ready" if cortex_projection > 0 or cortex_exceptions > 0 else "No Rows",
         "Allocated/Estimated",
         cortex_exceptions,
         f"${cortex_projection:,.0f}/30d projection; {cortex_exceptions:,} exception(s)",
         "Review first/last usage, user attribution, and projected token-credit spend.",
-        "AI and Cortex spend",
+        "Cortex Spend",
         2 if cortex_projection > 0 or cortex_exceptions > 0 else 4,
     )
 
@@ -3169,7 +3220,7 @@ def _build_cost_spike_root_cause_board(
         "Exact warehouse metering",
         "Start here. Confirm owner demand, task/query mix, size/auto-suspend changes, and monitor coverage for this warehouse.",
         "WAREHOUSE_METERING_HISTORY current/prior window and top delta.",
-        "Cost & Contract > Usage attribution and run-rate",
+        "Cost & Contract > Cost by Warehouse",
         max(credits_to_dollars(top_delta, credit_price), credits_to_dollars(current_credits - prior_credits, credit_price), 0),
         0,
     )
@@ -3184,7 +3235,7 @@ def _build_cost_spike_root_cause_board(
         "Exact when run-rate lens loaded",
         "Do not escalate from same-day partial metering; use complete-day trend to decide whether this is a real spike.",
         "Cost run-rate lens with complete-day 7d, 30d, and prior-year rows.",
-        "Cost & Contract > Usage attribution and run-rate",
+        "Cost & Contract > Burn Rate",
         credits_to_dollars(abs(top_delta), credit_price),
         1,
     )
@@ -3203,7 +3254,7 @@ def _build_cost_spike_root_cause_board(
         "Allocated / Estimated",
         "Use ALFA/Trexis and PROD/DEV attribution to assign ownership, but keep shared warehouse disclosure attached.",
         "Cost Explorer or Chargeback rows with company/environment dimensions and allocation measurement.",
-        "Cost & Contract > Usage attribution and run-rate",
+        "Cost & Contract > Chargeback",
         company_driver["value_usd"],
         2,
     )
@@ -3222,7 +3273,7 @@ def _build_cost_spike_root_cause_board(
         "Allocated / Estimated",
         "Drill into PROD, DEV_ALL, and individual DEV database views before assigning database ownership.",
         "Query allocation, tags, and no-database/shared allocation measurement.",
-        "Cost & Contract > Usage attribution and run-rate",
+        "Cost & Contract > Chargeback",
         db_driver["value_usd"],
         3,
     )
@@ -3241,7 +3292,7 @@ def _build_cost_spike_root_cause_board(
         "Allocated / Estimated",
         "Assign optimization work only after the cost row has role/user/department telemetry and route context.",
         "Cost Explorer detail with role, user, department, query count, and allocation measurement.",
-        "Cost & Contract > Usage attribution and run-rate",
+        "Cost & Contract > Cost by User",
         human_driver["value_usd"],
         4,
     )
@@ -3260,7 +3311,7 @@ def _build_cost_spike_root_cause_board(
         "Measured after change",
         "Work measured actions first; reject fixed rows without post-period measurement.",
         "OVERWATCH_ACTION_QUEUE route, ticket, baseline/current values, and scheduled status.",
-        "Cost & Contract > Recommendations and action queue",
+        "Cost & Contract > Recommendations",
         savings,
         5,
     )
@@ -3272,9 +3323,9 @@ def _build_cost_spike_root_cause_board(
         f"Projection ${cortex_projection:,.0f}/30d; {cortex_exceptions:,} exception(s).",
         "Medium" if cortex_projection > 0 or cortex_exceptions > 0 else "Low",
         "Allocated / Estimated",
-        "Open AI and Cortex spend to confirm first/last usage, user attribution, and quota route.",
+        "Open Cortex Spend to confirm first/last usage, user attribution, and quota route.",
         "Cortex usage history, user attribution, shared AI spend threshold, and per-user quota action rows.",
-        "Cost & Contract > AI and Cortex spend",
+        "Cost & Contract > Cortex Spend",
         cortex_projection,
         6,
     )
@@ -3403,7 +3454,7 @@ def _build_change_cost_correlation_board(
             "AI spend jumps can be caused by access expansion, tag mistakes, or policy changes as much as workload growth.",
             "Compare Cortex first/last usage to access and tag changes before enforcing per-user quotas.",
             "Cortex usage history, Security Monitoring grants/policy rows, and tag assignments.",
-            "Cost & Contract > AI and Cortex spend",
+            "Cost & Contract > Cortex Spend",
             2,
         )
 
@@ -3603,7 +3654,7 @@ def _build_cost_incident_timeline(
         f"{top_wh}: {top_delta:+,.2f} credit delta; current {current_credits:,.2f} vs prior {prior_credits:,.2f}; 7d vs 30d {pct_vs_30d_float:+.1f}%.",
         "Explain the top cost mover before changing warehouse settings or workload routing.",
         "Complete-day run-rate plus FACT_WAREHOUSE_HOURLY current/prior warehouse metering.",
-        "Cost & Contract > Usage attribution and run-rate",
+        "Cost & Contract > Cost by Warehouse",
     )
 
     if isinstance(root_cause, pd.DataFrame) and not root_cause.empty:
@@ -3695,7 +3746,7 @@ def _build_cost_incident_timeline(
         f"{len(open_cost_queue):,} open Cost & Contract action queue row(s) need route, baseline/current values, and closure status.",
         "Work measured actions first; keep savings estimated until post-period telemetry confirms the change.",
         "OVERWATCH_ACTION_QUEUE telemetry status, baseline/current, measured delta, and closure status.",
-        "Cost & Contract > Recommendations and action queue",
+        "Cost & Contract > Recommendations",
     )
 
     board = pd.DataFrame(rows).sort_values("EVENT_ORDER").reset_index(drop=True)
@@ -4762,25 +4813,25 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
             "Explain the usage movement",
             f"Top increase: {row.get('TOP_INCREASE_WAREHOUSE', 'unknown')} "
             f"({safe_float(row.get('TOP_INCREASE_CREDITS', 0)):,.2f} credits).",
-            "Usage attribution and run-rate",
+            "Cost by Warehouse",
         ))
     if high_actions > 0 or total_savings > 0:
         moves.append((
             "Work the action queue",
             f"{high_actions:,} high-priority action(s), ${total_savings:,.0f}/month potential savings.",
-            "Recommendations and action queue",
+            "Recommendations",
         ))
     if cortex_exception_count > 0 or cortex_projected > 0:
         moves.append((
             "Inspect AI / Cortex spend",
             f"Projected Cortex spend ${cortex_projected:,.0f}/30d with {cortex_exception_count:,} exception(s).",
-            "AI and Cortex spend",
+            "Cortex Spend",
         ))
     if not moves:
         moves.append((
             "Review attribution and queue",
             "No dominant cost incident in this cockpit window. Review attribution or open recommendations.",
-            "Recommendations and action queue",
+            "Recommendations",
         ))
 
     st.markdown("**Next Cost Moves**")
@@ -4847,14 +4898,14 @@ def _render_loaded_cost_alert_context() -> None:
         if st.button("Open Alert Lane", key="cost_alert_open_alert_lane", width="stretch"):
             apply_section_workflow_navigation(
                 "Alert Center",
-                alert_center_view=str(top.get("ALERT_CENTER_VIEW") or "Cost & Behavior"),
+                alert_center_view=str(top.get("ALERT_CENTER_VIEW") or "Cost Alerts"),
             )
             st.rerun()
     with button_cols[1]:
         if st.button("Open Cost Drilldown", key="cost_alert_open_cost_drilldown", width="stretch"):
             apply_section_workflow_navigation(
                 str(top.get("DESTINATION_SECTION") or "Cost & Contract"),
-                workflow=str(top.get("DESTINATION_WORKFLOW") or "Usage attribution and run-rate"),
+                workflow=str(top.get("DESTINATION_WORKFLOW") or "Cost by Warehouse"),
             )
             st.rerun()
     defer_source_note("Loaded Cost and Cortex Alerts reuse Alert Center data and do not run a separate Snowflake query.")
@@ -5169,10 +5220,42 @@ def _render_cost_command_findings(company: str, environment: str) -> None:
             )
 
 
+def _normalize_cost_contract_workflow_state() -> None:
+    current = str(st.session_state.get("cost_contract_workflow") or "")
+    mapped = LEGACY_COST_WORKFLOW_ALIASES.get(current)
+    if mapped:
+        st.session_state["cost_contract_workflow"] = mapped
+
+
+def _apply_cost_workflow_preset(workflow: str) -> None:
+    for key, value in COST_WORKFLOW_PRESETS.get(str(workflow), {}).items():
+        st.session_state[key] = value
+
+
+def _render_advanced_cost_tools(company: str, environment: str) -> None:
+    tool = render_workflow_selector(
+        "Advanced cost tool",
+        "cost_contract_advanced_tool",
+        tuple(ADVANCED_COST_TOOL_DETAILS),
+        ADVANCED_COST_TOOL_DETAILS,
+        columns=2,
+    )
+    render_workflow_module(tool, ADVANCED_COST_TOOL_MODULES)
+
+
+def _render_cost_contract_workflow(workflow: str, company: str, environment: str) -> None:
+    if workflow == "Advanced Cost Tools":
+        _render_advanced_cost_tools(company, environment)
+        return
+    _apply_cost_workflow_preset(workflow)
+    render_workflow_module(workflow, WORKFLOW_MODULES)
+
+
 def render() -> None:
     company = get_active_company()
     environment = get_active_environment()
     credit_price = safe_float(get_credit_price()) or 3.68
+    _normalize_cost_contract_workflow_state()
     render_signal_confidence(
         source="ACCOUNT_USAGE",
         confidence="allocated",
@@ -5191,12 +5274,14 @@ def render() -> None:
 
     routed_workflow = st.session_state.pop(_PENDING_DETAIL_WORKFLOW_KEY, None)
     legacy_detail_workflow = st.session_state.pop(_DETAIL_WORKFLOW_KEY, None)
+    routed_workflow = LEGACY_COST_WORKFLOW_ALIASES.get(str(routed_workflow or ""), routed_workflow)
+    legacy_detail_workflow = LEGACY_COST_WORKFLOW_ALIASES.get(str(legacy_detail_workflow or ""), legacy_detail_workflow)
     routed_workflow = routed_workflow if routed_workflow in WORKFLOWS else legacy_detail_workflow
     if routed_workflow in WORKFLOWS and routed_workflow != workflow:
         st.session_state["cost_contract_workflow"] = routed_workflow
         st.rerun()
 
-    render_workflow_module(workflow, WORKFLOW_MODULES)
+    _render_cost_contract_workflow(workflow, company, environment)
 
     with st.expander("Advanced cost evidence and enterprise rollups", expanded=False):
         render_operator_briefing(

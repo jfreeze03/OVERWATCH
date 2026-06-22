@@ -36,7 +36,7 @@ from utils.workflows import (
 )
 
 WORKLOAD_QUERY_WORKFLOW = "Query Investigation"
-WORKLOAD_CONTENTION_WORKFLOW = "Contention & Performance"
+WORKLOAD_CONTENTION_WORKFLOW = "Performance & Contention"
 
 
 def _root_cause_score(

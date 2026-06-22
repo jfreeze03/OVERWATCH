@@ -342,14 +342,14 @@ WORKLOAD_OPERATIONS_EXPLICIT_WORKFLOW_KEY = "_workload_operations_explicit_workf
 WORKLOAD_OVERVIEW_WORKFLOW = "Workload Overview"
 QUERY_INVESTIGATION_WORKFLOW = "Query Investigation"
 PIPELINE_TASK_HEALTH_WORKFLOW = "Pipeline & Task Health"
-CONTENTION_PERFORMANCE_WORKFLOW = "Contention & Performance"
-CHANGE_DRIFT_WORKFLOW = "Change & Drift"
+CONTENTION_PERFORMANCE_WORKFLOW = "Performance & Contention"
+CHANGE_DRIFT_WORKFLOW = "Change Analysis"
 ADVANCED_DBA_TOOLS_WORKFLOW = "Advanced DBA Tools"
 AI_QUERY_DIAGNOSIS_WORKFLOW = QUERY_INVESTIGATION_WORKFLOW
 PIPELINE_FOCUS_KEY = "workload_operations_pipeline_focus"
-PIPELINE_TASK_FOCUS = "Failed tasks & procedures"
-PIPELINE_STORED_PROC_FOCUS = "Stored procedure analysis"
-PIPELINE_LOAD_FOCUS = "Pipeline loads & SLA"
+PIPELINE_TASK_FOCUS = "Failed Tasks"
+PIPELINE_STORED_PROC_FOCUS = "Failed Procedures"
+PIPELINE_LOAD_FOCUS = "Load Issues & SLA"
 _LEGACY_TRIAGE_FOCUS_KEY = "workload_operations_triage_focus"
 
 WORKFLOWS = (
@@ -365,8 +365,8 @@ WORKFLOW_DETAILS = {
     WORKLOAD_OVERVIEW_WORKFLOW: "Fast workload triage: failures, slow SQL, queue pressure, pipeline issues, and recent changes.",
     QUERY_INVESTIGATION_WORKFLOW: "One front door for SQL text, query ID lookup, history search, operator stats, cost, elapsed time, bytes, queue, spill, and scans.",
     PIPELINE_TASK_HEALTH_WORKFLOW: "Tasks, procedures, load failures, freshness SLA, dynamic tables, Snowpipe, and downstream backlog.",
-    CONTENTION_PERFORMANCE_WORKFLOW: "Warehouse queue pressure, blocked queries, lock waits, saturation, spilling, hot warehouses, and performance regressions.",
-    CHANGE_DRIFT_WORKFLOW: "Task, procedure, object, schema, deployment, and workload-related changes before an incident.",
+    CONTENTION_PERFORMANCE_WORKFLOW: "Queue pressure, blocked queries, warehouse saturation, concurrency, spilling, hot warehouses, and regressions.",
+    CHANGE_DRIFT_WORKFLOW: "What changed before the problem started: task, procedure, object, schema, and deployment changes.",
     ADVANCED_DBA_TOOLS_WORKFLOW: "Schema compare, data compare, generated SQL, validation utilities, and admin/debug tools.",
 }
 
@@ -407,6 +407,7 @@ QUERY_CONTENTION_ALIASES = {
     "Contention Center",
     "Contention Telemetry",
     "Contention & Performance",
+    "Performance & Contention",
 }
 
 PIPELINE_TASK_ALIASES = {
@@ -414,18 +415,24 @@ PIPELINE_TASK_ALIASES = {
     "Task, procedure & pipeline health",
     "Task graphs",
     "Task Management",
+    "Failed tasks & procedures",
+    "Failed Tasks",
 }
 
 PIPELINE_STORED_PROC_ALIASES = {
     "Stored procedures",
     "Stored procedure lineage",
     "Stored Proc Tracker",
+    "Stored procedure analysis",
+    "Failed Procedures",
 }
 
 PIPELINE_LOAD_ALIASES = {
     "Pipeline health",
     "Pipeline / SLA risk",
     "Pipeline & Task Health",
+    "Pipeline loads & SLA",
+    "Load Issues & SLA",
 }
 
 CHANGE_DRIFT_ALIASES = {
@@ -434,6 +441,7 @@ CHANGE_DRIFT_ALIASES = {
     "Change Workflows",
     "Object Change Monitor",
     "Object Monitoring",
+    "Change Analysis",
 }
 
 ADVANCED_DBA_ALIASES = {
@@ -515,7 +523,7 @@ def _render_workload_overview(company: str, environment: str) -> None:
         cols[3].metric("Pipeline / task", f"{safe_int(category.str.contains('TASK|PIPELINE|PROCEDURE|LOAD', regex=True).sum()):,}")
         _render_loaded_workload_alert_context()
     else:
-        st.info("No loaded workload incidents are in session. Use Query Investigation, Pipeline & Task Health, or Contention & Performance when an issue starts.")
+        st.info("No loaded workload incidents are in session. Use Query Investigation, Pipeline & Task Health, or Performance & Contention when an issue starts.")
 
     st.markdown("**Open the right tool**")
     cols = st.columns(5)
@@ -526,7 +534,7 @@ def _render_workload_overview(company: str, environment: str) -> None:
         if st.button("Task or load failure", key="workload_overview_open_pipeline", width="stretch"):
             _set_workload_workflow(PIPELINE_TASK_HEALTH_WORKFLOW, pipeline_focus=PIPELINE_TASK_FOCUS)
     with cols[2]:
-        if st.button("Queue or blocking", key="workload_overview_open_contention", width="stretch"):
+        if st.button("Performance issue", key="workload_overview_open_contention", width="stretch"):
             _set_workload_workflow(CONTENTION_PERFORMANCE_WORKFLOW)
     with cols[3]:
         if st.button("What changed?", key="workload_overview_open_change", width="stretch"):

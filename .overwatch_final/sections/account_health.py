@@ -3553,7 +3553,7 @@ def render():
                 st.session_state["workload_operations_workflow"] = workflow
 
         for idx, (lbl, tgt, workflow) in enumerate([
-            ("Live", "Workload Operations", "Contention & Performance"),
+            ("Live", "Workload Operations", "Performance & Contention"),
             ("Query", "Workload Operations", "Query Investigation"),
             ("Cost", "Cost & Contract", None),
             ("DBA", "Security Monitoring", None),
@@ -3607,7 +3607,7 @@ def render():
                                 "Cost & Contract",
                                 user_filter=sel_user,
                                 workflow_key="cost_contract_workflow",
-                                workflow="Usage attribution and run-rate",
+                                workflow="Cost by User",
                             )
             else:
                 st.info("No cost driver data yet.")
@@ -3630,7 +3630,7 @@ def render():
                 )
                 if st.button("Task Management", key="ah_drill_tasks"):
                     st.session_state["workload_operations_workflow"] = "Pipeline & Task Health"
-                    st.session_state["workload_operations_pipeline_focus"] = "Failed tasks & procedures"
+                    st.session_state["workload_operations_pipeline_focus"] = "Failed Tasks"
                     _drill_to("Workload Operations")
             else:
                 st.success("No failed tasks in the last 24h.")
@@ -3657,7 +3657,7 @@ def render():
                 _drill_to(
                     "Cost & Contract",
                     workflow_key="cost_contract_workflow",
-                    workflow="Recommendations and action queue",
+                    workflow="Recommendations",
                 )
 
         if exceptions_only:

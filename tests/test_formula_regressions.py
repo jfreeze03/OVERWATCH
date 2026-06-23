@@ -2284,6 +2284,7 @@ class FormulaRegressionTests(unittest.TestCase):
         mart_run_rate_source = inspect.getsource(build_mart_cost_run_rate_sql)
         live_run_rate_source = inspect.getsource(_build_cost_run_rate_sql)
         watch_floor_source = inspect.getsource(cost_contract._render_cost_watch_floor)
+        detail_loader_source = inspect.getsource(cost_contract._refresh_cost_detail_state)
 
         for sql in (mart_cockpit, live_cockpit):
             self.assertIn("CURRENT_PERIOD", sql)
@@ -2295,13 +2296,14 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY", live_cockpit)
         self.assertIn("build_cost_run_rate_metering_sql", mart_run_rate_source)
         self.assertIn("build_cost_run_rate_metering_sql", live_run_rate_source)
+        self.assertIn("_refresh_cost_detail_state(st.session_state, session, company, int(days), credit_price)", watch_floor_source)
         run_rate_refresh_line = next(
             line
-            for line in watch_floor_source.splitlines()
-            if 'st.session_state["cost_contract_run_rate"] = run_query(' in line
+            for line in detail_loader_source.splitlines()
+            if 'state["cost_contract_run_rate"] = run_query_func(' in line
         )
-        self.assertTrue(run_rate_refresh_line.startswith("            "))
-        self.assertFalse(run_rate_refresh_line.startswith("                "))
+        self.assertTrue(run_rate_refresh_line.startswith("        "))
+        self.assertFalse(run_rate_refresh_line.startswith("            "))
 
     def test_cost_control_coverage_board_requires_drilldown_and_verified_savings(self):
         cockpit = pd.DataFrame([{"CURRENT_CREDITS": 10, "PRIOR_CREDITS": 8}])

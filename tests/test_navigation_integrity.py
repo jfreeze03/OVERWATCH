@@ -512,6 +512,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(SECTION_MODULES["Alert Center"], "sections.alert_center")
         self.assertFalse((APP_ROOT / "sections" / "alert_center_shell.py").exists())
         full_workspace_text = (APP_ROOT / "sections" / "alert_center.py").read_text(encoding="utf-8")
+        active_view_text = (APP_ROOT / "sections" / "alert_center_active_view.py").read_text(encoding="utf-8")
         contract_text = (APP_ROOT / "sections" / "alert_center_contracts.py").read_text(encoding="utf-8")
         nav_text = (APP_ROOT / "sections" / "navigation.py").read_text(encoding="utf-8")
         self.assertIn("ALERT_CENTER_DEFAULT_VIEW", full_workspace_text)
@@ -522,7 +523,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("ALERT_CENTER_PANES", full_workspace_text)
         self.assertIn('"Alert History"', full_workspace_text)
         self.assertIn('"Alert Settings / Admin"', full_workspace_text)
-        self.assertIn('"View Details"', full_workspace_text)
+        self.assertIn('"View Details"', active_view_text)
 
     def test_security_monitoring_keeps_security_surface_narrow(self):
         self.assertEqual(SECTION_MODULES["Security Monitoring"], "sections.security_posture")

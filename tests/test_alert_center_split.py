@@ -11,8 +11,14 @@ APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
 
 from sections import alert_center  # noqa: E402
+from sections import alert_center_active_view as active_view  # noqa: E402
+from sections import alert_center_admin_catalog_view as catalog_view  # noqa: E402
+from sections import alert_center_admin_suppression_view as suppression_view  # noqa: E402
+from sections import alert_center_boards as boards  # noqa: E402
+from sections import alert_center_category_views as category_views  # noqa: E402
 from sections import alert_center_contracts as contracts  # noqa: E402
 from sections import alert_center_data as data  # noqa: E402
+from sections import alert_center_history_view as history_view  # noqa: E402
 from sections import alert_center_navigation as navigation  # noqa: E402
 
 
@@ -33,6 +39,8 @@ class AlertCenterSplitTests(unittest.TestCase):
     def test_alert_center_contracts_reexport_focused_modules(self):
         self.assertIs(alert_center.ALERT_CENTER_PANES, contracts.ALERT_CENTER_PANES)
         self.assertIs(alert_center.ALERT_CENTER_PANE_LABELS, contracts.ALERT_CENTER_PANE_LABELS)
+        self.assertIs(alert_center.ALERT_CENTER_ADMIN_VIEWS, contracts.ALERT_CENTER_ADMIN_VIEWS)
+        self.assertIs(alert_center.ALERT_CENTER_ADMIN_VIEW_KEY, contracts.ALERT_CENTER_ADMIN_VIEW_KEY)
         self.assertIs(alert_center.ALERT_CENTER_BRIEF_WORKFLOWS, contracts.ALERT_CENTER_BRIEF_WORKFLOWS)
         self.assertIs(alert_center.ALERT_CENTER_SOURCES_BY_PANE, contracts.ALERT_CENTER_SOURCES_BY_PANE)
         self.assertIs(alert_center.ALERT_CENTER_SOURCE_PLAN, contracts.ALERT_CENTER_SOURCE_PLAN)
@@ -43,6 +51,66 @@ class AlertCenterSplitTests(unittest.TestCase):
         self.assertIs(alert_center._alert_center_sources_for_view, navigation._alert_center_sources_for_view)
         self.assertIs(alert_center._alert_center_source_summary, navigation._alert_center_source_summary)
         self.assertIs(alert_center._load_center_data, data._load_center_data)
+
+    def test_alert_center_reexports_split_helpers(self):
+        for name in [
+            "ALERT_CENTER_PANES",
+            "ALERT_CENTER_PANE_LABELS",
+            "ALERT_CENTER_ADMIN_VIEWS",
+            "ALERT_CENTER_ADMIN_VIEW_KEY",
+            "ALERT_CENTER_SOURCE_PLAN",
+            "_normalize_alert_center_view",
+            "_alert_center_sources_for_view",
+            "_alert_center_source_summary",
+            "_load_center_data",
+            "defer_source_note",
+        ]:
+            with self.subTest(name=name):
+                self.assertTrue(hasattr(alert_center, name))
+
+    def test_alert_center_renderer_maps_cover_panes(self):
+        self.assertEqual(set(alert_center.ALERT_CENTER_PANES), set(alert_center.ALERT_CENTER_RENDERERS))
+        for view in alert_center.ALERT_CENTER_PANES:
+            with self.subTest(view=view):
+                self.assertTrue(callable(alert_center.ALERT_CENTER_RENDERERS[view]))
+
+        expected_admin = {"Detection Catalog", "Delivery & Automation", "Suppression Windows"}
+        self.assertEqual(expected_admin, set(alert_center.ALERT_CENTER_ADMIN_RENDERERS))
+        for view in expected_admin:
+            with self.subTest(admin_view=view):
+                self.assertTrue(callable(alert_center.ALERT_CENTER_ADMIN_RENDERERS[view]))
+        self.assertIs(
+            alert_center.ALERT_CENTER_ADMIN_RENDERERS["Detection Catalog"],
+            catalog_view.render_alert_detection_catalog_tool,
+        )
+
+    def test_alert_center_renderer_identity(self):
+        self.assertIs(alert_center.ALERT_CENTER_RENDERERS["Active Alerts"], active_view.render_active_alerts_pane)
+        self.assertIs(alert_center.ALERT_CENTER_RENDERERS["Cost Alerts"], category_views.render_cost_alerts_pane)
+        self.assertIs(alert_center.ALERT_CENTER_RENDERERS["Reliability Alerts"], category_views.render_reliability_alerts_pane)
+        self.assertIs(alert_center.ALERT_CENTER_RENDERERS["Security Alerts"], category_views.render_security_alerts_pane)
+        self.assertIs(alert_center.ALERT_CENTER_RENDERERS["Alert History"], history_view.render_alert_history_pane)
+        self.assertIs(alert_center.ALERT_CENTER_ADMIN_RENDERERS["Suppression Windows"], suppression_view.render_suppression_windows_pane)
+
+    def test_alert_center_board_helpers_reexport_focused_module(self):
+        for name in [
+            "_open_alert_mask",
+            "_alert_center_operability_rows",
+            "_alert_center_health_score",
+            "_alert_center_action_brief",
+            "_alert_operator_workflow_rows",
+            "_alert_next_incident_packet",
+            "_alert_domain_next_move_rows",
+            "_alert_center_exception_rows",
+            "_alert_threshold_tuning_rows",
+            "_alert_company_scope_readiness_rows",
+            "_alert_operations_review_rows",
+            "_alert_center_scope_key",
+            "_alert_center_loaded_meta",
+            "_alert_lifecycle_board",
+        ]:
+            with self.subTest(name=name):
+                self.assertIs(getattr(alert_center, name), getattr(boards, name))
 
     def test_alert_center_legacy_aliases_normalize_to_current_panes(self):
         aliases = {
@@ -133,6 +201,146 @@ class AlertCenterSplitTests(unittest.TestCase):
         self.assertIs(loaded["rules"], rules)
         self.assertIs(loaded["issues"], issues)
         self.assertEqual(loaded["_loaded_sources"], ["rules"])
+
+    def test_operability_rows_flag_stale_loaded_scope(self):
+        rows = boards._alert_center_operability_rows(
+            {},
+            company="ALFA",
+            environment="PROD",
+            days=7,
+            limit=100,
+            loaded_scope=("TREXIS", "PROD", 7, 100),
+        )
+        stale = rows[rows["CONTROL"].eq("Loaded scope status")].iloc[0]
+        self.assertEqual(stale["STATE"], "Scope Stale")
+        self.assertEqual(stale["SEVERITY"], "High")
+
+    def test_action_brief_priority_order(self):
+        blocker = pd.DataFrame([{
+            "CONTROL": "Loaded scope status",
+            "STATE": "Scope Stale",
+            "EVIDENCE": "old scope",
+            "NEXT_ACTION": "reload",
+        }])
+        cases = [
+            (dict(readiness_rows=blocker), "Scope Stale"),
+            (dict(overdue=2), "Escalate"),
+            (dict(critical_high=2), "Priority"),
+            (dict(open_queue=2), "Queue"),
+            (dict(email_ready=3, email_logged=1), "Telemetry"),
+            (dict(open_issues=2), "Triage"),
+            ({}, "Clear"),
+        ]
+        defaults = dict(
+            open_issues=0,
+            open_alerts=0,
+            critical_high=0,
+            overdue=0,
+            email_ready=0,
+            email_logged=0,
+            open_queue=0,
+            readiness_rows=None,
+        )
+        for overrides, expected_state in cases:
+            with self.subTest(expected_state=expected_state):
+                brief = boards._alert_center_action_brief(**{**defaults, **overrides})
+                self.assertEqual(brief["state"], expected_state)
+
+    def test_exception_rows_include_core_exception_signals(self):
+        alerts = pd.DataFrame([{
+            "STATUS": "New",
+            "SEVERITY": "Critical",
+            "SLA_STATE": "Overdue",
+            "OWNER": "DBA",
+            "DELIVERY_STATUS": "EMAIL_READY",
+        }])
+        queue = pd.DataFrame([{"STATUS": "New"}])
+        issues = pd.DataFrame([{"SEVERITY": "High"}])
+        delivery_log = pd.DataFrame([{"DELIVERY_STATUS": "FAILED"}])
+        readiness = pd.DataFrame([{"STATE": "Scope Stale"}])
+        rows = boards._alert_center_exception_rows(
+            alerts=alerts,
+            queue=queue,
+            issues=issues,
+            delivery_log=delivery_log,
+            readiness_rows=readiness,
+        )
+        signals = set(rows["SIGNAL"])
+        self.assertIn("Critical/high alerts", signals)
+        self.assertIn("Overdue alert SLAs", signals)
+        self.assertIn("Generic alert routes", signals)
+        self.assertIn("Delivery status gap", signals)
+        self.assertIn("Open action queue", signals)
+        self.assertIn("Alert control blockers", signals)
+
+    def test_company_scope_readiness_handles_missing_columns(self):
+        rows = boards._alert_company_scope_readiness_rows(
+            pd.DataFrame({"ALERT_ID": ["a1"]}),
+            pd.DataFrame({"ACTION_ID": ["q1"]}),
+        )
+        states = dict(zip(rows["SOURCE"], rows["STATE"]))
+        self.assertEqual(states["Alert events"], "Needs Company")
+        self.assertEqual(states["Action queue"], "Needs Company")
+
+    def test_operations_review_blocks_default_native_and_auto_policy(self):
+        rows = boards._alert_operations_review_rows(
+            native_registry=pd.DataFrame([{"STATUS": "READY", "ENABLED_BY_DEFAULT": True}]),
+            remediation_policy=pd.DataFrame([{"AUTO_ELIGIBLE": True}]),
+        )
+        states = dict(zip(rows["REVIEW_AREA"], rows["STATE"]))
+        self.assertEqual(states["Native alert promotion"], "Blocked")
+        self.assertEqual(states["Dry-run automation"], "Blocked")
+
+    def test_category_token_patterns_do_not_drift(self):
+        self.assertEqual(
+            category_views.alert_category_token_pattern("Cost Alerts"),
+            "COST|SPEND|CORTEX|WAREHOUSE|OPTIMIZATION|CONTRACT|CHARGEBACK",
+        )
+        self.assertEqual(
+            category_views.alert_category_token_pattern("Reliability Alerts"),
+            "QUERY|TASK|PIPELINE|PROCEDURE|COPY|LOAD|PERFORMANCE|WAREHOUSE",
+        )
+        self.assertEqual(
+            category_views.alert_category_token_pattern("Security Alerts"),
+            "SECURITY|LOGIN|GRANT|PRIVILEGE|SHARE|ACCESS|EXPORT",
+        )
+
+    def test_suppression_window_sql_builders(self):
+        insert_sql = suppression_view._suppression_window_insert_sql(
+            table_name="APP.ALERTS.OVERWATCH_ANNOTATIONS",
+            entity="O'HARE_WH",
+            entity_type="WAREHOUSE",
+            window_start="2026-06-23 01:00:00",
+            window_end="2026-06-23 02:00:00",
+            annotation_type="PLANNED_MAINTENANCE",
+            description="Owner's maintenance",
+            suppress=True,
+        )
+        self.assertIn("INSERT INTO APP.ALERTS.OVERWATCH_ANNOTATIONS", insert_sql)
+        self.assertIn("O''HARE_WH", insert_sql)
+        self.assertIn("Owner''s maintenance", insert_sql)
+        self.assertIn("SUPPRESS_ALERTS", insert_sql)
+
+        deactivate_sql = suppression_view._suppression_window_deactivate_sql(7, "APP.ALERTS.OVERWATCH_ANNOTATIONS")
+        self.assertIn("UPDATE APP.ALERTS.OVERWATCH_ANNOTATIONS", deactivate_sql)
+        self.assertIn("WHERE ANNOTATION_ID = 7", deactivate_sql)
+
+        select_sql = suppression_view._suppression_windows_select_sql("APP.ALERTS.OVERWATCH_ANNOTATIONS")
+        self.assertIn("DATEADD('day', -7, CURRENT_TIMESTAMP())", select_sql)
+        self.assertIn("LIMIT 300", select_sql)
+
+    def test_alert_center_facade_line_count_stays_below_guardrail(self):
+        source = (APP_ROOT / "sections" / "alert_center.py").read_text()
+        self.assertLess(len(source.splitlines()), 1800)
+        for moved_fragment in [
+            "INSERT INTO {table_name}",
+            "UPDATE {table_name}",
+            "SNOWFLAKE.ACCOUNT_USAGE",
+            "build_alert_signal_query_catalog(",
+            "build_alert_native_object_registry_seed_rows(",
+        ]:
+            with self.subTest(fragment=moved_fragment):
+                self.assertNotIn(moved_fragment, source)
 
 
 if __name__ == "__main__":

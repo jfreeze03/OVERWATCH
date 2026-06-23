@@ -7441,10 +7441,10 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("COMPANY = 'TREXIS'", sla_sql)
 
     def test_live_bugfixes_avoid_known_snowflake_identifier_and_type_errors(self):
-        dynamic_text = (APP_ROOT / "sections" / "dba_tools.py").read_text(encoding="utf-8")
+        dynamic_text = (APP_ROOT / "sections" / "dba_tools_data_movement_view.py").read_text(encoding="utf-8")
         dynamic_block = dynamic_text[
             dynamic_text.index('refresh_object = "SNOWFLAKE.ACCOUNT_USAGE.DYNAMIC_TABLE_REFRESH_HISTORY"'):
-            dynamic_text.index('if selected_tool == "Replication"')
+            dynamic_text.index("def render_replication_tool")
         ].upper()
         requested_block = dynamic_block[
             dynamic_block.index("REQUESTED_COLS = ["):

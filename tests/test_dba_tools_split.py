@@ -18,6 +18,7 @@ from sections import dba_tools_data_compare as data_compare  # noqa: E402
 from sections import dba_tools_schema_compare as schema_compare  # noqa: E402
 from sections import dba_tools_setup as setup  # noqa: E402
 from sections import dba_tools_warehouse_settings as wh_settings  # noqa: E402
+from utils.dba_tool_catalog import DBA_TOOL_GROUPS  # noqa: E402
 
 
 class DbaToolsSplitTests(unittest.TestCase):
@@ -31,6 +32,41 @@ class DbaToolsSplitTests(unittest.TestCase):
         self.assertIs(dba_tools._build_schema_compare_frame, schema_compare._build_schema_compare_frame)
         self.assertIs(dba_tools._data_compare_hash_sql, data_compare._data_compare_hash_sql)
         self.assertIs(dba_tools._setup_status_df, setup._setup_status_df)
+
+    def test_admin_control_import_surface_and_tool_dispatch_contract(self):
+        admin_control_imports = (
+            "DATA_COMPARE_EXECUTION_STAGES",
+            "SCHEMA_COMPARE_OBJECT_COVERAGE",
+            "_build_data_compare_plan",
+            "_build_schema_compare_frame",
+            "_build_warehouse_setting_plan",
+            "_data_compare_persistence_sql",
+            "_current_role_allows_alter_account",
+            "_data_compare_bucket_sql",
+            "_data_compare_forensic_sql",
+            "_data_compare_hash_sql",
+            "_data_compare_tables_sql",
+            "_recon_config_insert_sql",
+            "_recon_history_sql",
+            "_schema_compare_columns_sql",
+            "_schema_compare_ddl_script",
+            "_schema_compare_inventory",
+            "_schema_compare_persistence_sql",
+            "_schema_compare_show_objects_sql",
+        )
+        for symbol in admin_control_imports:
+            with self.subTest(symbol=symbol):
+                self.assertTrue(hasattr(dba_tools, symbol))
+
+        catalog_tools = {tool for tools in DBA_TOOL_GROUPS.values() for tool in tools}
+        handled_tools = set(dba_tools.DBA_TOOL_RENDERERS) | set(dba_tools.INLINE_DBA_TOOL_HANDLERS)
+        self.assertEqual(catalog_tools, handled_tools)
+        self.assertIn("Schema Compare", dba_tools.DBA_TOOL_RENDERERS)
+        self.assertIn("Data Compare", dba_tools.DBA_TOOL_RENDERERS)
+        self.assertIn("Warehouse Settings", dba_tools.DBA_TOOL_RENDERERS)
+        self.assertIn("Query Kill List", dba_tools.INLINE_DBA_TOOL_HANDLERS)
+        self.assertIn("Task Graph Control", dba_tools.INLINE_DBA_TOOL_HANDLERS)
+        self.assertIn("Cortex AI Limits", dba_tools.INLINE_DBA_TOOL_HANDLERS)
 
     def test_role_gate_identifier_helpers_and_select_option_contracts(self):
         self.assertTrue(common._current_role_allows_alter_account("ACCOUNTADMIN"))
@@ -219,9 +255,10 @@ class DbaToolsSplitTests(unittest.TestCase):
         self.assertEqual(table_exists.call_count, 3)
         self.assertEqual(task_exists.call_count, 1)
 
+        forbidden_alert_facade = "utils" + ".alerts"
         for path in APP_ROOT.joinpath("sections").glob("dba_tools*.py"):
             text = path.read_text(encoding="utf-8")
-            self.assertNotIn("utils.alerts", text)
+            self.assertNotIn(forbidden_alert_facade, text)
 
 
 if __name__ == "__main__":

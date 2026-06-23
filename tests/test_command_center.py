@@ -30,6 +30,16 @@ def _validation_sql() -> str:
     return _read(ROOT / "snowflake" / "OVERWATCH_MART_VALIDATION.sql")
 
 
+def _cost_contract_surface() -> str:
+    return "\n".join(
+        _read(path)
+        for path in (
+            APP_ROOT / "sections" / "cost_contract.py",
+            APP_ROOT / "sections" / "cost_contract_evidence_panels.py",
+        )
+    )
+
+
 def _command_center_setup_block() -> str:
     sql = _setup_sql()
     start = sql.index("-- Phase 2F: Command Center")
@@ -122,7 +132,7 @@ class CommandCenterTests(unittest.TestCase):
     def test_ui_places_command_center_in_approved_sections(self):
         executive = _read(APP_ROOT / "sections" / "executive_landing.py")
         dba = _read(APP_ROOT / "sections" / "dba_control_room.py")
-        cost = _read(APP_ROOT / "sections" / "cost_contract.py")
+        cost = _cost_contract_surface()
         workload = _read(APP_ROOT / "sections" / "workload_operations.py")
         security = _read(APP_ROOT / "sections" / "security_posture.py")
         alert = _read(APP_ROOT / "sections" / "alert_center.py")
@@ -138,7 +148,7 @@ class CommandCenterTests(unittest.TestCase):
     def test_detail_panels_are_explicitly_load_gated(self):
         checks = [
             (APP_ROOT / "sections" / "dba_control_room.py", "Load Correlated Investigations", "load_command_center_finding_detail"),
-            (APP_ROOT / "sections" / "cost_contract.py", "Load Cost Investigation Findings", "load_command_center_finding_detail"),
+            (APP_ROOT / "sections" / "cost_contract_evidence_panels.py", "Load Cost Investigation Findings", "load_command_center_finding_detail"),
             (APP_ROOT / "sections" / "workload_operations.py", "Load Workload Investigation Findings", "load_command_center_finding_detail"),
             (APP_ROOT / "sections" / "security_posture.py", "Load Security Investigation Findings", "load_command_center_finding_detail"),
             (APP_ROOT / "sections" / "alert_center.py", "Load Alert Investigation Findings", "load_command_center_finding_detail"),

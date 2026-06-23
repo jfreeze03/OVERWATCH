@@ -27,6 +27,16 @@ def _validation_sql() -> str:
     return _read(ROOT / "snowflake" / "OVERWATCH_MART_VALIDATION.sql")
 
 
+def _cost_contract_surface() -> str:
+    return "\n".join(
+        _read(path)
+        for path in (
+            APP_ROOT / "sections" / "cost_contract.py",
+            APP_ROOT / "sections" / "cost_contract_evidence_panels.py",
+        )
+    )
+
+
 def _enterprise_setup_block() -> str:
     sql = _setup_sql()
     start = sql.index("-- Enterprise operating model")
@@ -89,7 +99,7 @@ class EnterpriseOperatingModelTests(unittest.TestCase):
         dba = _read(APP_ROOT / "sections" / "dba_control_room.py")
         alert = _read(APP_ROOT / "sections" / "alert_center.py")
         security = _read(APP_ROOT / "sections" / "security_posture.py")
-        cost = _read(APP_ROOT / "sections" / "cost_contract.py")
+        cost = _cost_contract_surface()
 
         self.assertIn("load_enterprise_operating_rollups", executive)
         self.assertIn("Enterprise Operating Model", executive)
@@ -104,7 +114,7 @@ class EnterpriseOperatingModelTests(unittest.TestCase):
 
     def test_detail_panels_are_explicitly_load_gated(self):
         dba = _read(APP_ROOT / "sections" / "dba_control_room.py")
-        cost = _read(APP_ROOT / "sections" / "cost_contract.py")
+        cost = _cost_contract_surface()
 
         for button, loader in [
             ("Load Data Trust Diagnostics", "load_data_trust_detail"),

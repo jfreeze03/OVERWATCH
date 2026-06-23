@@ -58,9 +58,11 @@ class CostContractSplitTests(unittest.TestCase):
             APP_ROOT / "sections" / "cost_contract.py",
             APP_ROOT / "sections" / "cost_contract_advisor.py",
             APP_ROOT / "sections" / "cost_contract_advisor_panels.py",
+            APP_ROOT / "sections" / "cost_contract_alert_context.py",
             APP_ROOT / "sections" / "cost_contract_charts.py",
             APP_ROOT / "sections" / "cost_contract_contracts.py",
             APP_ROOT / "sections" / "cost_contract_dataframes.py",
+            APP_ROOT / "sections" / "cost_contract_evidence_panels.py",
             APP_ROOT / "sections" / "cost_contract_helpers.py",
             APP_ROOT / "sections" / "cost_contract_intelligence.py",
             APP_ROOT / "sections" / "cost_contract_loader.py",
@@ -68,8 +70,10 @@ class CostContractSplitTests(unittest.TestCase):
             APP_ROOT / "sections" / "cost_contract_overview.py",
             APP_ROOT / "sections" / "cost_contract_overview_panels.py",
             APP_ROOT / "sections" / "cost_contract_panels.py",
+            APP_ROOT / "sections" / "cost_contract_rendering.py",
             APP_ROOT / "sections" / "cost_contract_sql.py",
             APP_ROOT / "sections" / "cost_contract_splash.py",
+            APP_ROOT / "sections" / "cost_contract_workflow.py",
         )
         for path in modules:
             with self.subTest(path=path.name):

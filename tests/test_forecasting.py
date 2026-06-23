@@ -30,6 +30,16 @@ def _validation_sql() -> str:
     return _read(ROOT / "snowflake" / "OVERWATCH_MART_VALIDATION.sql")
 
 
+def _cost_contract_surface() -> str:
+    return "\n".join(
+        _read(path)
+        for path in (
+            APP_ROOT / "sections" / "cost_contract.py",
+            APP_ROOT / "sections" / "cost_contract_evidence_panels.py",
+        )
+    )
+
+
 def _forecast_setup_block() -> str:
     sql = _setup_sql()
     start = sql.index("-- Phase 2C: leadership forecasting")
@@ -99,7 +109,7 @@ class ForecastingTests(unittest.TestCase):
     def test_ui_places_forecasting_in_approved_sections(self):
         executive = _read(APP_ROOT / "sections" / "executive_landing.py")
         dba = _read(APP_ROOT / "sections" / "dba_control_room.py")
-        cost = _read(APP_ROOT / "sections" / "cost_contract.py")
+        cost = _cost_contract_surface()
         workload = _read(APP_ROOT / "sections" / "workload_operations.py")
 
         self.assertIn("load_executive_forecast_summary", executive)
@@ -111,7 +121,7 @@ class ForecastingTests(unittest.TestCase):
     def test_detail_panels_are_explicitly_load_gated(self):
         checks = [
             (APP_ROOT / "sections" / "dba_control_room.py", "Load Forecast Exceptions", "load_forecast_detail"),
-            (APP_ROOT / "sections" / "cost_contract.py", "Load Cost Forecast Drivers", "load_forecast_detail"),
+            (APP_ROOT / "sections" / "cost_contract_evidence_panels.py", "Load Cost Forecast Drivers", "load_forecast_detail"),
             (APP_ROOT / "sections" / "workload_operations.py", "Load Workload Forecast Drivers", "load_forecast_detail"),
         ]
         for path, button, loader in checks:

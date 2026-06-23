@@ -561,7 +561,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         contract_text = (APP_ROOT / "sections" / "cost_contract_contracts.py").read_text(encoding="utf-8")
         panel_text = (APP_ROOT / "sections" / "cost_contract_panels.py").read_text(encoding="utf-8")
         intelligence_text = (APP_ROOT / "sections" / "cost_contract_intelligence.py").read_text(encoding="utf-8")
-        cost_contract_surface = full_workspace_text + contract_text + panel_text + intelligence_text
+        workflow_text = (APP_ROOT / "sections" / "cost_contract_workflow.py").read_text(encoding="utf-8")
+        cost_contract_surface = full_workspace_text + contract_text + panel_text + intelligence_text + workflow_text
         nav_text = (APP_ROOT / "sections" / "navigation.py").read_text(encoding="utf-8")
         self.assertIn('"Cost Overview"', cost_contract_surface)
         self.assertIn('"Cost by Warehouse"', cost_contract_surface)
@@ -590,7 +591,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("routed_workflow = st.session_state.pop(_PENDING_DETAIL_WORKFLOW_KEY, None)", full_workspace_text)
         self.assertIn("legacy_detail_workflow = st.session_state.pop(_DETAIL_WORKFLOW_KEY, None)", full_workspace_text)
         self.assertNotIn('st.button("Open detail"', full_workspace_text)
-        self.assertIn("render_workflow_module(workflow, WORKFLOW_MODULES)", full_workspace_text)
+        self.assertIn("render_workflow_module(workflow, WORKFLOW_MODULES)", workflow_text)
 
     def test_roles_and_aliases_resolve_to_visible_sections(self):
         primary_sections = [section for section in ALL_SECTIONS if section not in PRIMARY_NAV_HIDDEN_SECTIONS]
@@ -1091,7 +1092,7 @@ class NavigationIntegrityTests(unittest.TestCase):
                 "task_management.render()",
                 "query_search.render()",
             ],
-            "cost_contract.py": [
+            "cost_contract_workflow.py": [
                 "from sections import",
                 "cost_center.render()",
                 "recommendations.render()",
@@ -1144,6 +1145,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         from sections import cost_contract, cost_contract_contracts
 
         text = (APP_ROOT / "sections" / "cost_contract.py").read_text(encoding="utf-8")
+        workflow_text = (APP_ROOT / "sections" / "cost_contract_workflow.py").read_text(encoding="utf-8")
 
         self.assertEqual(cost_contract._DETAIL_WORKFLOW_KEY, "_cost_contract_detail_workflow")
         self.assertEqual(cost_contract._PENDING_DETAIL_WORKFLOW_KEY, "_cost_contract_pending_detail_workflow")
@@ -1154,7 +1156,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("legacy_detail_workflow = st.session_state.pop(_DETAIL_WORKFLOW_KEY, None)", text)
         self.assertNotIn('st.button("Open full cockpit boards"', text)
         self.assertNotIn("_FULL_COCKPIT_BOARDS_KEY", text)
-        self.assertIn("render_workflow_module(workflow, WORKFLOW_MODULES)", text)
+        self.assertIn("render_workflow_module(workflow, WORKFLOW_MODULES)", workflow_text)
 
     def test_navigation_labels_are_plain_titles(self):
         for section in ALL_SECTIONS:

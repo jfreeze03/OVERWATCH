@@ -21,6 +21,7 @@ Reduce bloat without breaking the six-section operator model or removing useful 
 
 | File | Approx lines | Status |
 |---|---:|---|
+| `.overwatch_final/sections/alert_center.py` | 845 | Alert Center public route/load-gate/renderer-dispatch shell after pane, admin, diagnostics, and data split; legacy Issue Inbox/Triage Digest aliases normalize to Active Alerts. |
 | `.overwatch_final/sections/dba_tools.py` | 304 | Thin public DBA Tools selector/dispatch and compatibility reexport facade, locked by no-implementation tests. |
 | `.overwatch_final/utils/shared_metrics.py` | 164 | Import-only shared metrics compatibility facade with explicit `__all__`, identity reexport tests, and no SQL/query/dataframe implementation guardrails. |
 | `.overwatch_final/sections/warehouse_health.py` | 229 | Thin Warehouse Health selector/support-panel/dispatch shell after focused split. |
@@ -62,7 +63,9 @@ Reduce bloat without breaking the six-section operator model or removing useful 
 | `.overwatch_final/sections/alert_center_category_views.py` | 133 | Cost, Reliability, and Security alert category workbenches plus tested category token mapping. |
 | `.overwatch_final/sections/alert_center_history_view.py` | 245 | Alert History pane renderer, lifecycle summary, status update, escalation acknowledgement, and audit preview forms. |
 | `.overwatch_final/sections/alert_center_admin_catalog_view.py` | 132 | Detection Catalog renderer and read-only native registry load using the shared explicit-load helper. |
+| `.overwatch_final/sections/alert_center_admin_delivery_view.py` | 449 | Delivery & Automation renderer, action queue routing/mutation path, email delivery review, remediation status, and tested control-row helpers. |
 | `.overwatch_final/sections/alert_center_admin_suppression_view.py` | 195 | Suppression Windows admin renderer plus tested insert/select/deactivate SQL builders. |
+| `.overwatch_final/sections/alert_center_diagnostics_view.py` | 269 | Advanced diagnostics and enterprise evidence panels with existing explicit-load/session-state keys preserved. |
 
 ## Duplicate Code Groups
 
@@ -101,7 +104,7 @@ These are candidates, not approved removals:
 - `.overwatch_final/workflow_contracts.py` now centralizes the six-section workflow contract and legacy route matrix used by both tests and the live Snowflake regression runner.
 - `tests/test_navigation_integrity.py` checks the six primary sections, legacy route redirects, workflow names, old 4-section absence, company scoping, and stale chart text.
 - `tests/test_alert_status.py` locks down alert status/severity normalization, including the intentional difference between triage status preservation and command-center unknown-status collapse.
-- `tests/test_alert_center_split.py` locks Alert Center pane names, renderer maps, legacy alias normalization, admin subview routing, source-set selection, operator source summaries, facade identity for focused modules, board-helper behavior, suppression SQL builders, and the Alert Center facade line/no-creep guard.
+- `tests/test_alert_center_split.py` locks Alert Center pane names, renderer maps, legacy alias normalization, admin subview routing, source-set selection, operator source summaries, facade identity for focused modules, board-helper behavior, Delivery & Automation control rows, action-queue routing preview, suppression SQL builders, dispatch behavior, and the Alert Center facade line/no-creep guard.
 - `tests/test_alert_facade.py` proves representative `utils.alerts` imports still point to focused modules and that internal callers do not import private facade names.
 - `tests/test_alert_lifecycle.py`, `tests/test_alert_triage.py`, `tests/test_alert_action_queue.py`, `tests/test_alert_command_center.py`, `tests/test_alert_catalog.py`, `tests/test_alert_delivery.py`, and `tests/test_alert_native_catalog.py` cover the completed alert helper split.
 - `tests/test_explicit_load.py` covers explicit dataframe loads, session-state reuse, error-to-empty-frame handling, and CSV export wrapper behavior.
@@ -111,9 +114,9 @@ These are candidates, not approved removals:
 
 ## Next Rewrite Order
 
-1. Finish remaining Alert Center cleanup: Delivery & Automation renderer split, legacy Triage Digest / Issue Inbox route cleanup, and any leftover advanced diagnostics consolidation.
-2. Split Security Posture after Alert Center compile/tests stay green.
-3. Split Account Health compatibility route into useful DBA workflows.
+1. Split Security Posture after Alert Center compile/tests stay green.
+2. Split Account Health compatibility route into useful DBA workflows.
+3. Split Cost Center if it remains above threshold after Security/Account Health.
 4. Retire duplicated legacy route rendering after route metrics prove no active usage.
 5. Rationalize mart loads to feed daily workflows directly before dropping any old objects.
 
@@ -147,4 +150,5 @@ These are candidates, not approved removals:
 | Shared explicit-load/export helper | Added `utils.explicit_load` with tested button-gated dataframe loading, session-state reuse, error-to-empty-frame handling, and CSV export wrapping. |
 | Alert Center contract/navigation split started | Moved pane contracts, admin subview metadata, source plans, legacy alias normalization, admin route mapping, and source summaries into `alert_center_contracts.py` and `alert_center_navigation.py`, with facade identity tests. |
 | Alert Center data and Detection Catalog split started | Moved bounded alert source loading into `alert_center_data.py` and the Detection Catalog pane into `alert_center_admin_catalog_view.py`. Native registry and suppression-window loads now use the shared explicit-load helper while preserving Streamlit/session-state keys. |
-| Alert Center board and pane split continued | Reduced `.overwatch_final/sections/alert_center.py` from about 3326 lines to about 1514 lines by moving pure board/model helpers, Active Alerts, Cost/Reliability/Security category panes, Alert History, and Suppression Windows into focused modules. Renderer maps, facade reexports, board behavior, category token patterns, suppression SQL builders, and no-creep guards are covered by tests. Delivery & Automation and legacy digest/inbox cleanup remain deferred. |
+| Alert Center board and pane split continued | Reduced `.overwatch_final/sections/alert_center.py` from about 3326 lines to about 1514 lines by moving pure board/model helpers, Active Alerts, Cost/Reliability/Security category panes, Alert History, and Suppression Windows into focused modules. Renderer maps, facade reexports, board behavior, category token patterns, suppression SQL builders, and no-creep guards are covered by tests. |
+| Alert Center split completed for current pass | Reduced `.overwatch_final/sections/alert_center.py` from about 1514 lines to about 845 lines by moving Delivery & Automation, email delivery/action-queue routing, remediation admin rendering, and advanced diagnostics into focused modules. Legacy Issue Inbox and Triage Digest render branches were removed because aliases normalize to Active Alerts. The remaining shell owns load gates, freshness, source notes, shared pre-panels, renderer maps, and compatibility reexports. |

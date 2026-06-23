@@ -13,11 +13,13 @@ sys.path.insert(0, str(APP_ROOT))
 from sections import alert_center  # noqa: E402
 from sections import alert_center_active_view as active_view  # noqa: E402
 from sections import alert_center_admin_catalog_view as catalog_view  # noqa: E402
+from sections import alert_center_admin_delivery_view as delivery_view  # noqa: E402
 from sections import alert_center_admin_suppression_view as suppression_view  # noqa: E402
 from sections import alert_center_boards as boards  # noqa: E402
 from sections import alert_center_category_views as category_views  # noqa: E402
 from sections import alert_center_contracts as contracts  # noqa: E402
 from sections import alert_center_data as data  # noqa: E402
+from sections import alert_center_diagnostics_view as diagnostics_view  # noqa: E402
 from sections import alert_center_history_view as history_view  # noqa: E402
 from sections import alert_center_navigation as navigation  # noqa: E402
 
@@ -90,7 +92,10 @@ class AlertCenterSplitTests(unittest.TestCase):
         self.assertIs(alert_center.ALERT_CENTER_RENDERERS["Reliability Alerts"], category_views.render_reliability_alerts_pane)
         self.assertIs(alert_center.ALERT_CENTER_RENDERERS["Security Alerts"], category_views.render_security_alerts_pane)
         self.assertIs(alert_center.ALERT_CENTER_RENDERERS["Alert History"], history_view.render_alert_history_pane)
+        self.assertIs(alert_center.ALERT_CENTER_ADMIN_RENDERERS["Delivery & Automation"], delivery_view.render_alert_delivery_automation_pane)
         self.assertIs(alert_center.ALERT_CENTER_ADMIN_RENDERERS["Suppression Windows"], suppression_view.render_suppression_windows_pane)
+        self.assertIs(alert_center._render_advanced_alert_diagnostics, diagnostics_view._render_advanced_alert_diagnostics)
+        self.assertIs(alert_center._render_alert_change_context, diagnostics_view._render_alert_change_context)
 
     def test_alert_center_board_helpers_reexport_focused_module(self):
         for name in [
@@ -119,12 +124,15 @@ class AlertCenterSplitTests(unittest.TestCase):
             "Cost / Cortex": "Cost Alerts",
             "Pipeline": "Reliability Alerts",
             "Security": "Security Alerts",
+            "Triage Digest": "Active Alerts",
             "Delivery & Automation": "Alert Settings / Admin",
             "Suppression Windows": "Alert Settings / Admin",
         }
         for alias, expected in aliases.items():
             with self.subTest(alias=alias):
                 self.assertEqual(alert_center._normalize_alert_center_view(alias), expected)
+        self.assertNotIn("Issue Inbox", alert_center.ALERT_CENTER_RENDERERS)
+        self.assertNotIn("Triage Digest", alert_center.ALERT_CENTER_RENDERERS)
 
     def test_alert_center_admin_view_for_route(self):
         expected = {
@@ -291,6 +299,61 @@ class AlertCenterSplitTests(unittest.TestCase):
         self.assertEqual(states["Native alert promotion"], "Blocked")
         self.assertEqual(states["Dry-run automation"], "Blocked")
 
+    def test_delivery_control_rows_surface_review_states(self):
+        rows = delivery_view._delivery_remediation_control_rows(
+            alerts=pd.DataFrame([{"ALERT_ID": "a1"}]),
+            queue=pd.DataFrame([{"ACTION_ID": "q1"}]),
+            delivery_log=pd.DataFrame([{"DELIVERY_STATUS": "FAILED"}]),
+            rules=pd.DataFrame([{"RULE_ID": "r1"}]),
+            native_registry=pd.DataFrame([{"STATUS": "READY", "ENABLED_BY_DEFAULT": True}]),
+            remediation_policy=pd.DataFrame([{"AUTO_ELIGIBLE": True}]),
+            remediation_dry_run=pd.DataFrame(),
+        )
+        states = dict(zip(rows["CONTROL"], rows["STATE"]))
+        self.assertEqual(states["Delivery status"], "Review")
+        self.assertEqual(states["Native alert registry"], "Review")
+        self.assertEqual(states["Remediation policy"], "Review")
+
+    def test_action_queue_routing_preview_uses_only_open_alerts(self):
+        alerts = pd.DataFrame([
+            {"ALERT_ID": "open-1", "STATUS": "New"},
+            {"ALERT_ID": "closed-1", "STATUS": "Fixed"},
+        ])
+        captured = {}
+
+        def fake_to_actions(frame, company):
+            captured["ids"] = frame["ALERT_ID"].tolist()
+            captured["company"] = company
+            return [{"Entity": "WH1", "Action": "Review"}]
+
+        with patch("utils.alert_action_queue.alert_history_to_actions", side_effect=fake_to_actions):
+            routable, preview = delivery_view._action_queue_routing_preview(alerts, company="ALFA")
+
+        self.assertEqual(routable["ALERT_ID"].tolist(), ["open-1"])
+        self.assertEqual(captured, {"ids": ["open-1"], "company": "ALFA"})
+        self.assertEqual(preview["Action"].tolist(), ["Review"])
+
+    def test_loaded_pane_dispatch_calls_registered_renderer(self):
+        calls = []
+
+        def fake_active(alerts, queue, delivery_log, rules):
+            calls.append((len(alerts), len(queue), len(delivery_log), len(rules)))
+
+        handled = alert_center._render_loaded_alert_center_pane(
+            "Active Alerts",
+            pd.DataFrame([{"ALERT_ID": "a1"}]),
+            pd.DataFrame([{"ACTION_ID": "q1"}]),
+            pd.DataFrame([{"DELIVERY_STATUS": "SENT"}]),
+            pd.DataFrame([{"RULE_ID": "r1"}]),
+            "ALFA",
+            pd.DataFrame(),
+            pd.DataFrame(),
+            pd.DataFrame(),
+            renderers={"Active Alerts": fake_active},
+        )
+        self.assertTrue(handled)
+        self.assertEqual(calls, [(1, 1, 1, 1)])
+
     def test_category_token_patterns_do_not_drift(self):
         self.assertEqual(
             category_views.alert_category_token_pattern("Cost Alerts"),
@@ -331,13 +394,22 @@ class AlertCenterSplitTests(unittest.TestCase):
 
     def test_alert_center_facade_line_count_stays_below_guardrail(self):
         source = (APP_ROOT / "sections" / "alert_center.py").read_text()
-        self.assertLess(len(source.splitlines()), 1800)
+        self.assertLess(len(source.splitlines()), 1100)
         for moved_fragment in [
             "INSERT INTO {table_name}",
             "UPDATE {table_name}",
             "SNOWFLAKE.ACCOUNT_USAGE",
             "build_alert_signal_query_catalog(",
             "build_alert_native_object_registry_seed_rows(",
+            "def _render_alert_email_delivery_status",
+            "def _render_alert_action_queue_routing",
+            "def _render_alert_notification_remediation",
+            "def _render_operational_ownership_coverage",
+            "def _render_alert_change_context",
+            "def _render_alert_action_workflows",
+            "def _render_alert_command_findings",
+            'elif source_view == "Issue Inbox"',
+            'elif source_view == "Triage Digest"',
         ]:
             with self.subTest(fragment=moved_fragment):
                 self.assertNotIn(moved_fragment, source)

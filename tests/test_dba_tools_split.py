@@ -91,6 +91,22 @@ class DbaToolsSplitTests(unittest.TestCase):
             with self.subTest(fragment=fragment):
                 self.assertNotIn(fragment, source)
 
+    def test_dba_tools_all_exports_exist(self):
+        self.assertIsInstance(dba_tools.__all__, list)
+        required_exports = {
+            "DBA_TOOL_RENDERERS",
+            "INLINE_DBA_TOOL_HANDLERS",
+            "_build_data_compare_plan",
+            "_build_schema_compare_frame",
+            "_build_warehouse_setting_plan",
+            "_current_role_allows_alter_account",
+            "render",
+        }
+        self.assertTrue(required_exports.issubset(set(dba_tools.__all__)))
+        for name in dba_tools.__all__:
+            with self.subTest(name=name):
+                self.assertTrue(hasattr(dba_tools, name))
+
     def test_role_gate_identifier_helpers_and_select_option_contracts(self):
         self.assertTrue(common._current_role_allows_alter_account("ACCOUNTADMIN"))
         self.assertTrue(common._current_role_allows_alter_account("snow_accountadmins"))

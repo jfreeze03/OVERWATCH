@@ -338,20 +338,28 @@ class SharedMetricsTests(unittest.TestCase):
         for name in public_names:
             with self.subTest(name=name):
                 self.assertTrue(hasattr(shared_metrics_facade, name))
+                self.assertIn(name, shared_metrics_facade.__all__)
+
+    def test_shared_metrics_all_exports_exist(self):
+        self.assertIsInstance(shared_metrics_facade.__all__, tuple)
+        for name in shared_metrics_facade.__all__:
+            with self.subTest(name=name):
+                self.assertTrue(hasattr(shared_metrics_facade, name))
 
     def test_shared_metrics_facade_continues_shrinking(self):
         source = APP_ROOT.joinpath("utils", "shared_metrics.py").read_text(encoding="utf-8")
         self.assertLess(len(source.splitlines()), 250)
-        self.assertNotIn("def load_shared_service_query_health", source)
-        self.assertNotIn("def load_shared_query_history_rollup", source)
-        self.assertNotIn("def load_shared_warehouse_overview", source)
-        self.assertNotIn("def build_shared_security_summary_sql", source)
-        self.assertNotIn("def load_shared_recommendation_idle_warehouses", source)
-        self.assertNotIn("def load_shared_task_history_detail", source)
-        self.assertNotIn("def load_shared_procedure_inventory", source)
-        self.assertNotIn("SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY", source)
-        self.assertNotIn("SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY", source)
-        self.assertNotIn("SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY", source)
+        forbidden_fragments = (
+            "SNOWFLAKE.ACCOUNT_USAGE",
+            "run_query(",
+            "run_query_or_raise(",
+            "def load_shared_",
+            "def build_shared_",
+            "pd.DataFrame(",
+        )
+        for fragment in forbidden_fragments:
+            with self.subTest(fragment=fragment):
+                self.assertNotIn(fragment, source)
 
     def test_shared_metrics_load_or_reuse_returns_cached_result(self):
         calls = []

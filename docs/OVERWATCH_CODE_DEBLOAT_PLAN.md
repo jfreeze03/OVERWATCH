@@ -10,16 +10,23 @@ Reduce bloat without breaking the six-section operator model or removing useful 
 
 | File | Approx lines | Primary issue | Action |
 |---|---:|---|---|
-| `.overwatch_final/sections/dba_tools.py` | 304 | Thin public DBA Tools compatibility facade after extracting contracts, common helpers, planning helpers, setup checks, read-only views, QAS Monitor, Query Kill List, Cortex AI Limits, and Task Graph Control. | Complete for current split and locked by no-implementation tests. Keep this file as selector/focus/dispatch plus compatibility reexports; do not add implementation logic here. |
-| `.overwatch_final/utils/shared_metrics.py` | 164 | Public compatibility facade only. Shared metric implementations now live in focused `shared_metrics_*` modules with identity reexport tests and a shrinking/no-implementation guard. | Keep this file import-only; do not add SQL loaders or Snowflake query implementation logic here. |
-| `.overwatch_final/sections/account_health.py` | 3604 | Legacy account-health cockpit overlaps DBA Control Room. | Retain as compatibility route, move useful pieces into DBA workflows. |
-| `.overwatch_final/sections/executive_landing.py` | 3470 | Advanced rollups remain in same module as front door. | Split advanced/admin rollups later if tests prove import or render pain. |
-| `.overwatch_final/sections/alert_center.py` | 3432 | Active alerts, history, admin config, suppression, closed loop, and investigation evidence. | Split active workflow from admin/evidence helpers. |
-| `.overwatch_final/sections/task_management.py` | 3281 | Task management and pipeline health overlap Pipeline & Task Health. | Keep as delegated implementation, remove duplicate entry points only after regression. |
-| `.overwatch_final/sections/security_posture.py` | 3267 | Security overview, failed logins, grants, sprawl, sharing, admin evidence in one file. | Split advanced evidence after route behavior is stable. |
-| `.overwatch_final/sections/warehouse_health.py` | 229 | Thin public Warehouse Health shell after extracting contracts, SQL, dataframe helpers, overview launchpad, action-control builders, setting panels, capacity brief, source-health panels, queue writers, and per-workflow view renderers. | Complete for current split. Keep main `render()` as selector/support-panel/dispatch only. |
-| `.overwatch_final/sections/cost_contract.py` | 243 | Public Cost & Contract entrypoint after split; compatibility reexports plus `render()`. | Complete. Keep thin; do not add new implementation logic here. |
-| `.overwatch_final/utils/alerts.py` | 132 | Compatibility facade only after alert split. | Keep as stable import surface; do not add new implementation logic here. |
+| `.overwatch_final/sections/account_health.py` | 3812 | Legacy account-health cockpit overlaps DBA Control Room. | Retain as compatibility route, move useful pieces into DBA workflows. |
+| `.overwatch_final/sections/executive_landing.py` | 3746 | Advanced rollups remain in same module as front door. | Split advanced/admin rollups later if tests prove import or render pain. |
+| `.overwatch_final/sections/task_management.py` | 3530 | Task management and pipeline health overlap Pipeline & Task Health. | Keep as delegated implementation, remove duplicate entry points only after regression. |
+| `.overwatch_final/sections/security_posture.py` | 3488 | Security overview, failed logins, grants, sprawl, sharing, admin evidence in one file. | Split advanced evidence after route behavior is stable. |
+| `.overwatch_final/sections/alert_center.py` | 3326 | Active alerts, history, delivery/remediation, suppression, and investigation evidence. Contracts/navigation/data and Detection Catalog have started moving out. | Continue pane split with history and delivery/admin panes behind compatibility reexports. |
+| `.overwatch_final/sections/cost_center.py` | 3106 | Cost cockpit still holds multiple cost workflows and fallback branches. | Split after Alert Center/Security if cost route metrics justify another pass. |
+| `.overwatch_final/sections/change_drift.py` | 2924 | Change drift mixes overview, evidence, and investigation rendering. | Below 3000 now; revisit after larger modules are reduced. |
+
+## Completed Thin Facades
+
+| File | Approx lines | Status |
+|---|---:|---|
+| `.overwatch_final/sections/dba_tools.py` | 304 | Thin public DBA Tools selector/dispatch and compatibility reexport facade, locked by no-implementation tests. |
+| `.overwatch_final/utils/shared_metrics.py` | 164 | Import-only shared metrics compatibility facade with explicit `__all__`, identity reexport tests, and no SQL/query/dataframe implementation guardrails. |
+| `.overwatch_final/sections/warehouse_health.py` | 229 | Thin Warehouse Health selector/support-panel/dispatch shell after focused split. |
+| `.overwatch_final/sections/cost_contract.py` | 243 | Public Cost & Contract entrypoint after focused split. |
+| `.overwatch_final/utils/alerts.py` | 132 | Stable alert helper compatibility facade after focused utility split. |
 
 ## New Focused Shared Metrics Modules
 
@@ -37,6 +44,21 @@ Reduce bloat without breaking the six-section operator model or removing useful 
 | `.overwatch_final/utils/shared_metrics_recommendations.py` | 672 | Recommendation and duplicate-query advisor loaders. |
 | `.overwatch_final/utils/shared_metrics_tasks.py` | 141 | Shared task health and task-history detail loaders. |
 | `.overwatch_final/utils/shared_metrics_procedures.py` | 165 | Procedure inventory, call summary, and SLA/cost loaders. |
+
+## New Shared UI Helpers
+
+| File | Approx lines | Contents |
+|---|---:|---|
+| `.overwatch_final/utils/explicit_load.py` | 72 | Opt-in explicit dataframe load helper and CSV export wrapper for repeated button/session-state/download patterns. |
+
+## New Focused Alert Center Modules
+
+| File | Approx lines | Contents |
+|---|---:|---|
+| `.overwatch_final/sections/alert_center_contracts.py` | 181 | Pane names, admin subview contracts, source-plan metadata, and deferred source notes. |
+| `.overwatch_final/sections/alert_center_navigation.py` | 80 | Legacy alias normalization, admin subview routing, source-set selection, and operator source summaries. |
+| `.overwatch_final/sections/alert_center_data.py` | 103 | Bounded source loading for alerts, action queue, delivery, rules, native registry, remediation policy, dry-run rows, and issue rows. |
+| `.overwatch_final/sections/alert_center_admin_catalog_view.py` | 132 | Detection Catalog renderer and read-only native registry load using the shared explicit-load helper. |
 
 ## Duplicate Code Groups
 
@@ -65,7 +87,7 @@ These are candidates, not approved removals:
 
 | Metric | Current | Target |
 |---|---:|---:|
-| Large app modules above 3000 lines | 9 | 3 or fewer |
+| Large app modules above 3000 lines | 6 | 3 or fewer |
 | Daily operator mart tables | 90+ expected in current setup | 28-34 after migration |
 | Primary route aliases exposed to users | Several before this pass | Zero known in primary UI |
 | Live Snowflake regression coverage | New runner, blocked by auth | Passing in test account |
@@ -75,19 +97,21 @@ These are candidates, not approved removals:
 - `.overwatch_final/workflow_contracts.py` now centralizes the six-section workflow contract and legacy route matrix used by both tests and the live Snowflake regression runner.
 - `tests/test_navigation_integrity.py` checks the six primary sections, legacy route redirects, workflow names, old 4-section absence, company scoping, and stale chart text.
 - `tests/test_alert_status.py` locks down alert status/severity normalization, including the intentional difference between triage status preservation and command-center unknown-status collapse.
+- `tests/test_alert_center_split.py` locks Alert Center pane names, legacy alias normalization, admin subview routing, source-set selection, operator source summaries, and facade identity for the focused contracts/navigation/data modules.
 - `tests/test_alert_facade.py` proves representative `utils.alerts` imports still point to focused modules and that internal callers do not import private facade names.
 - `tests/test_alert_lifecycle.py`, `tests/test_alert_triage.py`, `tests/test_alert_action_queue.py`, `tests/test_alert_command_center.py`, `tests/test_alert_catalog.py`, `tests/test_alert_delivery.py`, and `tests/test_alert_native_catalog.py` cover the completed alert helper split.
+- `tests/test_explicit_load.py` covers explicit dataframe loads, session-state reuse, error-to-empty-frame handling, and CSV export wrapper behavior.
 - `tests/test_command_center.py` now validates correlated investigation UI placement and explicit load gates.
 - `tests/test_contention_center.py`, `tests/test_formula_regressions.py`, and `tests/test_operational_intelligence.py` validate renamed workflow/action contracts.
 - `perf_tests/full_app_snowflake_regression.py` is the live Snowflake gate once authentication is corrected.
 
 ## Next Rewrite Order
 
-1. Consolidate shared explicit-load gates and priority dataframe patterns.
-2. Keep `utils.shared_metrics` locked as an import-only compatibility facade; split any newly discovered shared metric family into focused modules first.
-3. Retire duplicated legacy route rendering after route metrics prove no active usage.
-4. Rewrite mart loads to feed daily workflows directly before dropping any old objects.
-5. Keep DBA Tools implementation logic in focused `dba_tools_*` modules and preserve the facade as dispatch/reexports only.
+1. Consolidate shared explicit-load/export helpers and migrate low-risk read-only load buttons.
+2. Continue the Alert Center pane split: Active Alerts, category panes, Alert History, Delivery & Automation, and Suppression Windows.
+3. Split Security Posture or Account Health after Alert Center compile/tests are green.
+4. Retire duplicated legacy route rendering after route metrics prove no active usage.
+5. Rationalize mart loads to feed daily workflows directly before dropping any old objects.
 
 ## De-Bloat Completed After Initial Audit
 
@@ -115,3 +139,7 @@ These are candidates, not approved removals:
 | Shared metrics security/access split | Moved MFA helpers, security summary builders, privileged grant review, access hygiene SQL, and access snapshot loaders into `shared_metrics_security.py` with ALFA/Trexis/company scoping intact. |
 | Shared metrics recommendations split | Moved idle/spill/failed-task/query-failure/storage-retention/clustering/repeated-query and duplicate-query advisor loaders into `shared_metrics_recommendations.py`, keeping source labels and fallback behavior stable. |
 | Shared metrics task/procedure split | Moved task health/detail loaders into `shared_metrics_tasks.py` and procedure inventory/call/SLA loaders into `shared_metrics_procedures.py`. `utils.shared_metrics` is now a 164-line import-only facade with explicit `__all__`, identity reexport tests, and no-implementation-creep coverage. |
+| Shared metrics and DBA facade lock | Added explicit `__all__` existence/coverage tests and kept `shared_metrics.py` free of ACCOUNT_USAGE strings, query calls, dataframe construction, and shared loader/builder function definitions. |
+| Shared explicit-load/export helper | Added `utils.explicit_load` with tested button-gated dataframe loading, session-state reuse, error-to-empty-frame handling, and CSV export wrapping. |
+| Alert Center contract/navigation split started | Moved pane contracts, admin subview metadata, source plans, legacy alias normalization, admin route mapping, and source summaries into `alert_center_contracts.py` and `alert_center_navigation.py`, with facade identity tests. |
+| Alert Center data and Detection Catalog split started | Moved bounded alert source loading into `alert_center_data.py` and the Detection Catalog pane into `alert_center_admin_catalog_view.py`. Native registry and suppression-window loads now use the shared explicit-load helper while preserving Streamlit/session-state keys. |

@@ -109,6 +109,9 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
     "downloads": (
         "download_csv", "show_loaded_time", "mark_loaded",
     ),
+    "explicit_load": (
+        "explicit_load_dataframe", "render_export_controls",
+    ),
     "display": (
         "day_window_selectbox",
         "render_query_drilldown", "render_warehouse_drilldown",

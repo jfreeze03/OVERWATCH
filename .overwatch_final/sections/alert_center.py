@@ -1,8 +1,6 @@
 # sections/alert_center.py - single alert inbox and email-first alert operations
 from __future__ import annotations
 
-from datetime import datetime
-
 import streamlit as st
 
 from config import ALERT_DB, ALERT_SCHEMA, DAY_WINDOW_OPTIONS, DEFAULT_ALERT_EMAIL, DEFAULT_DAY_WINDOW
@@ -15,166 +13,31 @@ from sections.shell_helpers import (
     render_shell_status_strip,
     with_loaded_at,
 )
+from sections.alert_center_contracts import (
+    ALERT_CENTER_ADMIN_VIEW_DETAILS,
+    ALERT_CENTER_ADMIN_VIEW_KEY,
+    ALERT_CENTER_ADMIN_VIEWS,
+    ALERT_CENTER_BRIEF_FIRST_VERSION,
+    ALERT_CENTER_BRIEF_WORKFLOWS,
+    ALERT_CENTER_DEFAULT_VIEW,
+    ALERT_CENTER_PANES,
+    ALERT_CENTER_PANE_LABELS,
+    ALERT_CENTER_SOURCES_BY_PANE,
+    ALERT_CENTER_SOURCE_PLAN,
+    _deferred_notes_key,
+    defer_source_note,
+)
+from sections.alert_center_navigation import (
+    _alert_admin_view_for_route,
+    _alert_center_source_summary,
+    _alert_center_sources_for_view,
+    _normalize_alert_center_view,
+)
+from sections.alert_center_data import _load_center_data
+from sections.alert_center_admin_catalog_view import render_alert_detection_catalog_tool
 
 
 ANNOTATION_TABLE = "OVERWATCH_ANNOTATIONS"
-_DEFERRED_NOTES_PREFIX = "_overwatch_deferred_section_notes"
-
-
-def _deferred_notes_key(section: str) -> str:
-    safe_section = str(section or "section").strip() or "section"
-    return f"{_DEFERRED_NOTES_PREFIX}:{safe_section}"
-
-
-def defer_source_note(*parts: object, section: str | None = None) -> None:
-    """Collect Alert Center source notes without importing the full playbook module on first paint."""
-    clean_parts = [
-        " ".join(str(part or "").split())
-        for part in parts
-        if str(part or "").strip()
-    ]
-    if not clean_parts:
-        return
-    active_section = section or st.session_state.get("_overwatch_active_section", "")
-    key = _deferred_notes_key(active_section)
-    clean_note = " | ".join(clean_parts)
-    notes = list(st.session_state.get(key, []))
-    if clean_note not in notes:
-        notes.append(clean_note)
-    st.session_state[key] = notes
-
-ALERT_CENTER_PANES = [
-    "Active Alerts",
-    "Cost Alerts",
-    "Reliability Alerts",
-    "Security Alerts",
-    "Alert History",
-    "Alert Settings / Admin",
-]
-
-ALERT_CENTER_PANE_LABELS = {
-    "Active Alerts": "Active Alerts",
-    "Cost Alerts": "Cost Alerts",
-    "Reliability Alerts": "Reliability Alerts",
-    "Security Alerts": "Security Alerts",
-    "Alert History": "Alert History",
-    "Alert Settings / Admin": "Alert Settings / Admin",
-}
-
-ALERT_CENTER_BRIEF_FIRST_VERSION = 3
-ALERT_CENTER_DEFAULT_VIEW = "Active Alerts"
-ALERT_CENTER_ADMIN_VIEW_KEY = "alert_center_admin_view"
-ALERT_CENTER_ADMIN_VIEWS = ("Detection Catalog", "Delivery & Automation", "Suppression Windows")
-ALERT_CENTER_ADMIN_VIEW_DETAILS = {
-    "Detection Catalog": "Alert rule coverage, thresholds, and Snowflake-native signal inputs.",
-    "Delivery & Automation": "Email delivery, routing, action queue status, remediation logs, and dry-run evidence.",
-    "Suppression Windows": "Maintenance annotations and temporary suppression windows.",
-}
-
-ALERT_CENTER_BRIEF_WORKFLOWS = (
-    {
-        "VIEW": "Active Alerts",
-        "BUTTON_LABEL": "Open Active Alerts",
-        "DBA_MOVE": "Start with severity, SLA, route, queue, and notification risk in one place.",
-        "WHEN": "First look, shift start, incident review",
-    },
-    {
-        "VIEW": "Cost Alerts",
-        "BUTTON_LABEL": "Open Cost Alerts",
-        "DBA_MOVE": "Focus on spend spikes, Cortex growth, warehouse cost behavior, and user-driven spend anomalies.",
-        "WHEN": "Cost anomaly, AI spend review, contract burn concern",
-    },
-    {
-        "VIEW": "Reliability Alerts",
-        "BUTTON_LABEL": "Open Reliability Alerts",
-        "DBA_MOVE": "Focus on query, task, pipeline, procedure, copy/load, and freshness risk.",
-        "WHEN": "Production incident, workload health, SLA review",
-    },
-    {
-        "VIEW": "Security Alerts",
-        "BUTTON_LABEL": "Open Security Alerts",
-        "DBA_MOVE": "Focus on login, privilege, role, export, sharing, and access-control risk.",
-        "WHEN": "Security triage, audit review, access anomaly",
-    },
-    {
-        "VIEW": "Alert History",
-        "BUTTON_LABEL": "Open Alert History",
-        "DBA_MOVE": "Review acknowledged, closed, recurring, and trend rows without mixing them into active triage.",
-        "WHEN": "Recurring issue review, closure audit, export",
-    },
-    {
-        "VIEW": "Alert Settings / Admin",
-        "BUTTON_LABEL": "Open Alert Settings",
-        "DBA_MOVE": "Review thresholds, delivery config, suppression windows, routing rules, native alerts, and dry-run evidence.",
-        "WHEN": "Catalog tuning, notification audit, suppression cleanup",
-    },
-)
-
-ALERT_CENTER_SOURCES_BY_PANE = {
-    "Active Alerts": {"alerts", "action_queue", "delivery_log", "rules"},
-    "Cost Alerts": {"alerts", "action_queue", "rules"},
-    "Reliability Alerts": {"alerts", "action_queue", "rules"},
-    "Security Alerts": {"alerts", "action_queue", "rules"},
-    "Alert History": {"alerts", "action_queue", "delivery_log"},
-    "Alert Settings / Admin": set(),
-    "Advanced Alert Admin": set(),
-    "Detection Catalog": set(),
-    "Delivery & Automation": {
-        "alerts",
-        "action_queue",
-        "delivery_log",
-        "rules",
-        "native_registry",
-        "remediation_policy",
-        "remediation_dry_run",
-    },
-    "Suppression Windows": set(),
-}
-
-ALERT_CENTER_SOURCE_PLAN = {
-    "alerts": {
-        "SOURCE": "Alert history",
-        "OBJECT": "Alert triage view",
-        "WHY": "Open issues, SLA state, email-ready rows",
-        "COST_GUARDRAIL": "Bounded by selected window and row limit",
-    },
-    "action_queue": {
-        "SOURCE": "Action queue",
-        "OBJECT": "Persistent DBA action queue",
-        "WHY": "Route, ticket, due date, and status tracking",
-        "COST_GUARDRAIL": "Limited queue read",
-    },
-    "delivery_log": {
-        "SOURCE": "Email delivery audit",
-        "OBJECT": "Alert delivery log",
-        "WHY": "Notification telemetry and escalation audit",
-        "COST_GUARDRAIL": "Recent-window audit read",
-    },
-    "rules": {
-        "SOURCE": "Rule catalog",
-        "OBJECT": "Alert rules",
-        "WHY": "Severity, SLA, route, and runbook control",
-        "COST_GUARDRAIL": "Small configuration read",
-    },
-    "native_registry": {
-        "SOURCE": "Native alert registry",
-        "OBJECT": "Reviewed Snowflake ALERT candidates",
-        "WHY": "Shows what native detections exist, are candidates, or are enabled",
-        "COST_GUARDRAIL": "Small registry table read",
-    },
-    "remediation_policy": {
-        "SOURCE": "Remediation policy",
-        "OBJECT": "Review-only automation policy catalog",
-        "WHY": "Shows whether any alert class is eligible for dry-run or auto mode",
-        "COST_GUARDRAIL": "Small policy table read",
-    },
-    "remediation_dry_run": {
-        "SOURCE": "Remediation dry-runs",
-        "OBJECT": "Dry-run audit log",
-        "WHY": "Shows proposed actions and blockers before any automation is allowed",
-        "COST_GUARDRAIL": "Recent-window audit read",
-    },
-}
 
 
 def _alert_email_target() -> str:
@@ -187,65 +50,6 @@ def _alert_email_target_label() -> str:
     from utils.alert_delivery import alert_recipient_label
 
     return alert_recipient_label(_alert_email_target())
-
-
-def _alert_center_sources_for_view(view: str) -> set[str]:
-    return set(ALERT_CENTER_SOURCES_BY_PANE.get(_normalize_alert_center_view(view), {"alerts"}))
-
-
-def _normalize_alert_center_view(view: object) -> str:
-    normalized = str(view or "")
-    aliases = {
-        "Command Center": "Active Alerts",
-        "Issue Inbox": "Active Alerts",
-        "Triage Digest": "Active Alerts",
-        "Alert History": "Alert History",
-        "Alert Brief": "Active Alerts",
-        "Control Health": "Alert Settings / Admin",
-        "Cost": "Cost Alerts",
-        "Spend": "Cost Alerts",
-        "Cost / Cortex": "Cost Alerts",
-        "Cost & Behavior": "Cost Alerts",
-        "Cortex": "Cost Alerts",
-        "Workload": "Reliability Alerts",
-        "Pipeline": "Reliability Alerts",
-        "Reliability": "Reliability Alerts",
-        "Security": "Security Alerts",
-        "Email Delivery": "Alert Settings / Admin",
-        "Action Queue Routing": "Alert Settings / Admin",
-        "Delivery & Remediation": "Alert Settings / Admin",
-        "Detection Catalog": "Alert Settings / Admin",
-        "Delivery & Automation": "Alert Settings / Admin",
-        "Suppression Windows": "Alert Settings / Admin",
-        "Alert Configuration": "Alert Settings / Admin",
-        "Alert Settings": "Alert Settings / Admin",
-        "Advanced Alert Admin": "Alert Settings / Admin",
-    }
-    if normalized in aliases:
-        return aliases[normalized]
-    if normalized in {"Alert Brief", "Control Health"}:
-        return ALERT_CENTER_DEFAULT_VIEW
-    return normalized if normalized in ALERT_CENTER_PANES else ALERT_CENTER_DEFAULT_VIEW
-
-
-def _alert_admin_view_for_route(view: object) -> str:
-    raw = str(view or "").strip()
-    if raw in ALERT_CENTER_ADMIN_VIEWS:
-        return raw
-    if raw in {"Alert Configuration", "Alert Settings", "Alert Settings / Admin", "Advanced Alert Admin", "Control Health"}:
-        return "Delivery & Automation"
-    if raw in {"Email Delivery", "Action Queue Routing", "Delivery & Remediation"}:
-        return "Delivery & Automation"
-    return ""
-
-
-def _alert_center_source_summary(sources: set[str]) -> str:
-    names = [
-        str(ALERT_CENTER_SOURCE_PLAN[source]["SOURCE"]).replace("sources", "inputs").replace("Sources", "Inputs")
-        for source in sorted(sources)
-        if source in ALERT_CENTER_SOURCE_PLAN
-    ]
-    return ", ".join(names) if names else "No Snowflake inputs"
 
 
 def _status_key(value) -> str:
@@ -278,9 +82,9 @@ def _alert_center_action_session(action: str):
 
 
 def _download_csv(df: pd.DataFrame, file_name: str) -> None:
-    from utils import download_csv
+    from utils.explicit_load import render_export_controls
 
-    download_csv(df, file_name)
+    render_export_controls(df, file_name, label="Export CSV")
 
 
 def _pd():
@@ -322,99 +126,6 @@ def _open_alert_mask(df: pd.DataFrame) -> pd.Series:
 
 def _alert_actor() -> str:
     return str(st.session_state.get("_overwatch_actor") or "OVERWATCH").strip() or "OVERWATCH"
-
-
-def _load_center_data(
-    session,
-    company: str,
-    environment: str,
-    days: int,
-    limit: int,
-    sources: set[str] | None = None,
-) -> dict:
-    pd = _pd()
-    from utils.alert_catalog import load_alert_rule_catalog
-    from utils.alert_delivery import load_alert_delivery_log
-    from utils.alert_native_catalog import (
-        load_alert_native_object_registry,
-        load_alert_remediation_dry_runs,
-        load_alert_remediation_policy,
-    )
-    from utils.alert_triage import build_dashboard_issue_rows, load_alert_history
-
-    sources = set(sources or ALERT_CENTER_SOURCES_BY_PANE[ALERT_CENTER_DEFAULT_VIEW])
-    data: dict[str, object] = {
-        "alerts": pd.DataFrame(),
-        "action_queue": pd.DataFrame(),
-        "issues": pd.DataFrame(),
-        "delivery_log": pd.DataFrame(),
-        "rules": pd.DataFrame(),
-        "native_registry": pd.DataFrame(),
-        "remediation_policy": pd.DataFrame(),
-        "remediation_dry_run": pd.DataFrame(),
-        "alerts_error": "",
-        "queue_error": "",
-        "delivery_error": "",
-        "rule_error": "",
-        "native_registry_error": "",
-        "remediation_policy_error": "",
-        "remediation_dry_run_error": "",
-        "loaded_at": datetime.now().isoformat(timespec="seconds"),
-        "_loaded_sources": sorted(sources),
-    }
-    if "alerts" in sources:
-        try:
-            data["alerts"] = load_alert_history(
-                session,
-                company=company,
-                environment=environment,
-                days=days,
-                limit=limit,
-                section="Alert Center",
-            )
-        except Exception as exc:
-            data["alerts_error"] = _format_snowflake_error(exc)
-    if "action_queue" in sources:
-        try:
-            from utils.action_queue import load_action_queue
-
-            data["action_queue"] = load_action_queue(session, limit=max(200, limit))
-        except Exception as exc:
-            data["queue_error"] = _format_snowflake_error(exc)
-    if "delivery_log" in sources:
-        try:
-            data["delivery_log"] = load_alert_delivery_log(days=max(days, 14), limit=100, section="Alert Center")
-        except Exception as exc:
-            data["delivery_error"] = _format_snowflake_error(exc)
-    if "rules" in sources:
-        try:
-            data["rules"] = load_alert_rule_catalog(section="Alert Center")
-        except Exception as exc:
-            data["rule_error"] = _format_snowflake_error(exc)
-    if "native_registry" in sources:
-        try:
-            data["native_registry"] = load_alert_native_object_registry(section="Alert Center")
-        except Exception as exc:
-            data["native_registry_error"] = _format_snowflake_error(exc)
-    if "remediation_policy" in sources:
-        try:
-            data["remediation_policy"] = load_alert_remediation_policy(section="Alert Center")
-        except Exception as exc:
-            data["remediation_policy_error"] = _format_snowflake_error(exc)
-    if "remediation_dry_run" in sources:
-        try:
-            data["remediation_dry_run"] = load_alert_remediation_dry_runs(
-                days=max(days, 14),
-                limit=limit,
-                section="Alert Center",
-            )
-        except Exception as exc:
-            data["remediation_dry_run_error"] = _format_snowflake_error(exc)
-    data["issues"] = build_dashboard_issue_rows(
-        alerts=data["alerts"] if isinstance(data["alerts"], pd.DataFrame) else pd.DataFrame(),
-        queue=data["action_queue"] if isinstance(data["action_queue"], pd.DataFrame) else pd.DataFrame(),
-    )
-    return data
 
 
 def _annotation_table_name() -> str:
@@ -488,15 +199,13 @@ def _render_annotations() -> None:
 
     c1, c2 = st.columns([1, 3])
     with c1:
-        if st.button("Load Suppression Windows", key="alert_center_load_annotations"):
-            try:
-                from utils import run_query
+        def _load_suppression_windows() -> pd.DataFrame:
+            from utils import run_query
 
-                session = _alert_center_action_session("load suppression windows")
-                if session is None:
-                    st.session_state["alert_center_annotations"] = pd.DataFrame()
-                    return
-                st.session_state["alert_center_annotations"] = run_query(f"""
+            session = _alert_center_action_session("load suppression windows")
+            if session is None:
+                return pd.DataFrame()
+            return run_query(f"""
                     SELECT
                         ANNOTATION_ID,
                         ENTITY,
@@ -514,9 +223,19 @@ def _render_annotations() -> None:
                     ORDER BY ACTIVE DESC, WINDOW_START DESC
                     LIMIT 300
                 """, ttl_key="alert_center_annotations", tier="recent", section="Alert Center")
-            except Exception as exc:
-                st.info(f"Suppression windows are not available in this environment yet. {_format_snowflake_error(exc)}")
-                st.session_state["alert_center_annotations"] = pd.DataFrame()
+
+        def _suppression_window_error(exc: Exception) -> None:
+            st.info(f"Suppression windows are not available in this environment yet. {_format_snowflake_error(exc)}")
+
+        from utils.explicit_load import explicit_load_dataframe
+
+        explicit_load_dataframe(
+            button_label="Load Suppression Windows",
+            button_key="alert_center_load_annotations",
+            state_key="alert_center_annotations",
+            loader=_load_suppression_windows,
+            on_error=_suppression_window_error,
+        )
     with c2:
         st.caption("Active global windows suppress every alert; entity windows suppress only the named warehouse, task, user, or alert entity.")
 
@@ -2422,108 +2141,14 @@ def _render_loaded_advisor_alert_candidates() -> None:
 
 
 def _render_alert_detection_catalog() -> None:
-    from utils.alert_command_center import build_alert_signal_query_catalog
-    from utils.alert_native_catalog import (
-        build_alert_native_deployment_review_rows,
-        build_alert_native_object_registry_seed_rows,
-        load_alert_native_object_registry,
+    render_alert_detection_catalog_tool(
+        action_session_factory=_alert_center_action_session,
+        format_error=_format_snowflake_error,
+        threshold_rows_loader=_alert_threshold_tuning_rows,
+        operations_rows_loader=lambda native_registry: _alert_operations_review_rows(
+            native_registry=native_registry,
+        ),
     )
-
-    st.subheader("Detection Catalog")
-    catalog = build_alert_signal_query_catalog(hours=24)
-    category_options = ["All"] + sorted(catalog["CATEGORY"].dropna().astype(str).unique().tolist())
-    selected_category = st.selectbox("Catalog category", category_options, key="alert_detection_catalog_category")
-    visible = catalog if selected_category == "All" else catalog[catalog["CATEGORY"].astype(str) == selected_category]
-    visible_display = visible.drop(columns=["SQL"], errors="ignore").rename(columns={"OWNER": "ROUTE"})
-    _render_priority_dataframe(
-        visible_display,
-        title="Snowflake-native alert signals",
-        priority_columns=[
-            "CATEGORY", "SIGNAL", "SEVERITY", "TELEMETRY", "FRESHNESS",
-            "ROUTE", "WHY_THIS_MATTERS", "RECOMMENDED_ACTION",
-        ],
-        raw_label="All detection catalog rows",
-        height=360,
-    )
-    if not visible.empty:
-        signal_options = visible["SIGNAL"].dropna().astype(str).tolist()
-        selected_signal = st.selectbox("Signal detail", signal_options, key="alert_detection_catalog_signal")
-        selected = visible[visible["SIGNAL"].astype(str) == selected_signal].iloc[0]
-        st.caption(str(selected.get("RECOMMENDED_ACTION") or "Review this alert signal with the owning DBA team."))
-    c1, c2 = st.columns([1, 3])
-    with c1:
-        if st.button("Load Native Registry", key="alert_catalog_load_native_registry"):
-            try:
-                session = _alert_center_action_session("load native alert registry")
-                if session is not None:
-                    st.session_state["alert_native_registry_live"] = load_alert_native_object_registry(
-                        section="Alert Center",
-                    )
-                    st.session_state["alert_native_registry_source"] = "Live registry table"
-            except Exception as exc:
-                st.info(f"Native alert registry is not available in this environment yet. {_format_snowflake_error(exc)}")
-                st.session_state["alert_native_registry_live"] = _pd().DataFrame()
-    with c2:
-        st.caption("Native registry rows are disabled-by-default implementation candidates until reviewed and enabled in Snowflake.")
-
-    live_native_rows = st.session_state.get("alert_native_registry_live")
-    registry_source = st.session_state.get("alert_native_registry_source", "Built-in seed candidates")
-    native_rows = live_native_rows if isinstance(live_native_rows, _pd().DataFrame) and not live_native_rows.empty else _pd().DataFrame(build_alert_native_object_registry_seed_rows())
-    if not native_rows.empty:
-        native_rows = native_rows.copy()
-        if "REGISTRY_SOURCE" not in native_rows.columns:
-            native_rows["REGISTRY_SOURCE"] = registry_source
-    if not native_rows.empty:
-        _render_priority_dataframe(
-            native_rows,
-            title="Native Snowflake alert implementation candidates",
-            priority_columns=[
-                "REGISTRY_SOURCE", "STATUS", "CATEGORY", "ALERT_KEY", "ALERT_OBJECT_NAME",
-                "TARGET_ROUTE", "SCHEDULE_TEXT", "CONDITION_SOURCE",
-                "ACTION_SOURCE", "SAFETY_NOTE",
-            ],
-            raw_label="All native alert registry candidates",
-            height=260,
-            max_rows=8,
-        )
-        deployment_rows = build_alert_native_deployment_review_rows(native_rows)
-        _render_priority_dataframe(
-            deployment_rows,
-            title="Native alert deployment review",
-            priority_columns=[
-                "DEPLOYMENT_STATE", "CATEGORY", "ALERT_KEY", "ALERT_OBJECT_NAME",
-                "TARGET_ROUTE", "WAREHOUSE_NAME", "SCHEDULE_TEXT",
-                "DEPLOYMENT_SQL_PRESENT", "ROLLBACK_SQL_PRESENT",
-                "DEPLOYMENT_NEXT_STEP", "VALIDATION_SQL",
-            ],
-            raw_label="All native alert deployment review fields",
-            height=280,
-            max_rows=8,
-        )
-    threshold_rows = _alert_threshold_tuning_rows()
-    _render_priority_dataframe(
-        threshold_rows,
-        title="Threshold tuning review plan",
-        priority_columns=[
-            "REVIEW_STATE", "THRESHOLD_KEY", "CATEGORY", "SIGNAL_NAME",
-            "CONFIGURED_THRESHOLD", "WINDOW", "OWNER", "SOURCE_OBJECT",
-            "NEXT_ACTION",
-        ],
-        raw_label="All threshold tuning fields",
-        height=300,
-        max_rows=9,
-    )
-    operations_rows = _alert_operations_review_rows(native_registry=native_rows)
-    _render_priority_dataframe(
-        operations_rows,
-        title="Native alert operations review checklist",
-        priority_columns=["STATE", "REVIEW_AREA", "COUNT", "EVIDENCE", "NEXT_ACTION"],
-        raw_label="All operations review checklist rows",
-        height=240,
-        max_rows=5,
-    )
-    defer_source_note("Run snowflake/OVERWATCH_ALERT_OPERATIONS_REVIEW.sql for live threshold, company-scope, and promotion evidence.")
-    defer_source_note("Detection Catalog lists alert signals and required Snowflake telemetry.")
 
 
 def _render_alert_email_delivery_status(alerts: pd.DataFrame, delivery_log: pd.DataFrame) -> None:

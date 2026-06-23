@@ -9570,13 +9570,15 @@ class FormulaRegressionTests(unittest.TestCase):
     def test_alert_surfaces_are_consolidated_to_alert_center(self):
         config_text = (APP_ROOT / "config.py").read_text(encoding="utf-8")
         alert_text = (APP_ROOT / "sections" / "alert_center.py").read_text(encoding="utf-8")
+        alert_contract_text = (APP_ROOT / "sections" / "alert_center_contracts.py").read_text(encoding="utf-8")
         dba_tools_text = (APP_ROOT / "sections" / "dba_tools.py").read_text(encoding="utf-8")
         rec_text = (APP_ROOT / "sections" / "recommendations.py").read_text(encoding="utf-8")
 
         self.assertIn('"Alert Center"', config_text)
         self.assertIn('"sections.alert_center"', config_text)
         self.assertFalse((APP_ROOT / "sections" / "alert_center_shell.py").exists())
-        self.assertIn('ALERT_CENTER_DEFAULT_VIEW = "Active Alerts"', alert_text)
+        self.assertIn("ALERT_CENTER_DEFAULT_VIEW", alert_text)
+        self.assertIn('ALERT_CENTER_DEFAULT_VIEW = "Active Alerts"', alert_contract_text)
         self.assertIn("consolidated Alert Center", dba_tools_text)
         self.assertNotIn("Alert Configuration", rec_text)
         self.assertNotIn("tab_alerts", rec_text)

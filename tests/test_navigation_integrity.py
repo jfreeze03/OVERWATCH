@@ -1181,7 +1181,13 @@ class NavigationIntegrityTests(unittest.TestCase):
         ]
         for filename in compact_files:
             with self.subTest(filename=filename):
-                section_text = (APP_ROOT / "sections" / filename).read_text(encoding="utf-8")
+                if filename == "cost_center.py":
+                    section_text = "\n".join(
+                        path.read_text(encoding="utf-8")
+                        for path in sorted((APP_ROOT / "sections").glob("cost_center*_view.py"))
+                    )
+                else:
+                    section_text = (APP_ROOT / "sections" / filename).read_text(encoding="utf-8")
                 self.assertNotIn("st.header(", section_text)
                 self.assertIn("st.subheader(", section_text)
 

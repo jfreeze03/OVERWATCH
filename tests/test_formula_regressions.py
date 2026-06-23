@@ -1378,7 +1378,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "BLOCKED_COUNT": [0],
             })
 
-        with patch("sections.account_health.run_query_or_raise", side_effect=fake_run):
+        with patch("sections.account_health_data.run_query_or_raise", side_effect=fake_run):
             df, source = _load_live_query_status("", "", "")
 
         self.assertEqual(source, "INFORMATION_SCHEMA")
@@ -1847,7 +1847,7 @@ class FormulaRegressionTests(unittest.TestCase):
 
     def test_account_health_access_hygiene_keeps_user_auth_scope_account_level(self):
         with patch(
-            "sections.account_health.filter_existing_columns",
+            "sections.account_health_access_hygiene.filter_existing_columns",
             return_value=["HAS_PASSWORD", "EXT_AUTHN_DUO", "LAST_SUCCESS_LOGIN"],
         ):
             sql = _account_health_access_hygiene_sql(None, 30, "ALFA", "DEV_ALL").upper()
@@ -7459,7 +7459,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("COALESCE(TO_VARCHAR(ERROR_CODE), 'NONE')", security_text)
         self.assertNotIn("COALESCE(ERROR_CODE, 'NONE')", security_text)
 
-        account_text = (APP_ROOT / "sections" / "account_health.py").read_text(encoding="utf-8").upper()
+        account_text = (APP_ROOT / "sections" / "account_health_data.py").read_text(encoding="utf-8").upper()
         loader_block = account_text[
             account_text.index("DEF _LOAD_LIVE_QUERY_STATUS"):
             account_text.index("DEF _CAN_USE_CONTROL_ROOM_MART")
@@ -7591,11 +7591,7 @@ class FormulaRegressionTests(unittest.TestCase):
             st.session_state.update(previous)
 
     def test_explain_bill_driver_aliases_match_visible_columns(self):
-        cost_text = (APP_ROOT / "sections" / "cost_center.py").read_text(encoding="utf-8").upper()
-        explain_block = cost_text[
-            cost_text.index('IF COST_VIEW == "EXPLAIN THIS BILL"'):
-            cost_text.index('ELIF COST_VIEW == "USER LEADERBOARD"')
-        ]
+        explain_block = (APP_ROOT / "sections" / "cost_center_explain_view.py").read_text(encoding="utf-8").upper()
         self.assertIn("AS TOTAL_CREDITS", explain_block)
         self.assertIn("AS ALLOCATED_CREDITS", explain_block)
         self.assertIn("AS AVG_EXECUTION_SECONDS", explain_block)
@@ -7702,8 +7698,8 @@ class FormulaRegressionTests(unittest.TestCase):
         previous_company = st.session_state.get("active_company")
         st.session_state["active_company"] = "ALFA"
         try:
-            with patch("sections.cost_center.upsert_actions", side_effect=fake_upsert), patch(
-                "sections.cost_center.get_active_environment", return_value="ALL"
+            with patch("sections.cost_center_action_queue.upsert_actions", side_effect=fake_upsert), patch(
+                "sections.cost_center_action_queue.get_active_environment", return_value="ALL"
             ):
                 _queue_cost_outliers(object(), df, 3.0, "Cost & Contract - Chargeback")
         finally:
@@ -8504,9 +8500,9 @@ class FormulaRegressionTests(unittest.TestCase):
 
     def test_cost_center_chargeback_exposes_environment_and_database(self):
         cost_text = (APP_ROOT / "sections" / "cost_center.py").read_text(encoding="utf-8").upper()
+        chargeback_block = (APP_ROOT / "sections" / "cost_center_chargeback_view.py").read_text(encoding="utf-8").upper()
         self.assertNotIn('COST_VIEW == "CONTRACT UTILIZATION"', cost_text)
         self.assertNotIn('"CONTRACT UTILIZATION"', cost_text)
-        chargeback_block = cost_text[cost_text.index('ELIF COST_VIEW == "CHARGEBACK"'):]
         self.assertIn("AS ENVIRONMENT", chargeback_block)
         self.assertIn("AS DATABASE_NAME", chargeback_block)
         self.assertIn('"ENVIRONMENT"', chargeback_block)

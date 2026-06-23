@@ -12,13 +12,13 @@ Reduce bloat without breaking the six-section operator model or removing useful 
 |---|---:|---|---|
 | `.overwatch_final/sections/executive_landing.py` | 3746 | Advanced rollups remain in same module as front door. | Split advanced/admin rollups later if tests prove import or render pain. |
 | `.overwatch_final/sections/task_management.py` | 3530 | Task management and pipeline health overlap Pipeline & Task Health. | Keep as delegated implementation, remove duplicate entry points only after regression. |
-| `.overwatch_final/sections/cost_center.py` | 3106 | Cost cockpit still holds multiple cost workflows and fallback branches. | Split after Alert Center/Security if cost route metrics justify another pass. |
 | `.overwatch_final/sections/change_drift.py` | 2924 | Change drift mixes overview, evidence, and investigation rendering. | Below 3000 now; revisit after larger modules are reduced. |
 
 ## Completed Thin Facades
 
 | File | Approx lines | Status |
 |---|---:|---|
+| `.overwatch_final/sections/cost_center.py` | 99 | Cost Center public selector/renderer-dispatch and compatibility reexport facade after contracts, models, SQL, action-queue, and all eight view branches moved into focused modules. |
 | `.overwatch_final/sections/account_health.py` | 83 | Account Health public route/renderer-dispatch and compatibility reexport facade after Overview, Morning Report, checklist, access hygiene, history, and action-queue split; both pane renderers are map-owned. |
 | `.overwatch_final/sections/alert_center.py` | 845 | Alert Center public route/load-gate/renderer-dispatch shell after pane, admin, diagnostics, and data split; legacy Issue Inbox/Triage Digest aliases normalize to Active Alerts. |
 | `.overwatch_final/sections/security_posture.py` | 180 | Security Monitoring public route/dispatch and compatibility reexport facade after overview, access-review, action-queue, and privilege-sprawl split, now with explicit `__all__` and a <250-line guard. |
@@ -102,6 +102,23 @@ Reduce bloat without breaking the six-section operator model or removing useful 
 | `.overwatch_final/sections/account_health_history.py` | 353 | Checklist history insert/trend SQL, closure analytics SQL, operability fact SQL, and checklist snapshot persistence. |
 | `.overwatch_final/sections/account_health_overview_view.py` | 986 | Account Health Overview controller/renderer preserving health refresh, auto-load scope, checklist, access hygiene, trend, closure, secondary evidence, quick nav, and warehouse-pressure keys. |
 
+## New Focused Cost Center Modules
+
+| File | Approx lines | Contents |
+|---|---:|---|
+| `.overwatch_final/sections/cost_center_contracts.py` | 77 | Cost Center view names, labels, details, no-database-context sentinels, and Cost Explorer lens metadata. |
+| `.overwatch_final/sections/cost_center_models.py` | 848 | Allocation-quality, environment-rollup, forecast, Cost Explorer summary/gap, bill movement, finance bridge, service grouping, and Explain Bill markdown helpers. |
+| `.overwatch_final/sections/cost_center_sql.py` | 321 | Annual service projection, admin reconciliation, Cost Explorer live, chargeback verification, and warehouse cost verification SQL builders. |
+| `.overwatch_final/sections/cost_center_action_queue.py` | 359 | Review-only cost outlier and bill exception action-queue payload/writer helpers preserving owner route and verification contracts. |
+| `.overwatch_final/sections/cost_center_explorer_view.py` | 259 | Cost Explorer renderer preserving lens, min-cost, department filter, load, source, and queue keys. |
+| `.overwatch_final/sections/cost_center_explain_view.py` | 635 | Explain This Bill renderer preserving all `cc_explain_*` loads, source metadata, finance movement, service-credit caveats, markdown download, and exception queue behavior. |
+| `.overwatch_final/sections/cost_center_user_leaderboard_view.py` | 181 | User Leaderboard renderer preserving user profile and leaderboard queue keys plus `cost_leaderboard.csv`. |
+| `.overwatch_final/sections/cost_center_burn_view.py` | 125 | Burn Rate renderer preserving `br_days`, `br_load`, `df_br`, `cc_burn_source`, and `burn_rate.csv`. |
+| `.overwatch_final/sections/cost_center_reconciliation_view.py` | 254 | Reconciliation renderer preserving `cc_recon_*`, admin bridge state, and `cost_reconciliation.csv`. |
+| `.overwatch_final/sections/cost_center_forecast_view.py` | 182 | Forecast renderer preserving run-rate and annual service projection keys. |
+| `.overwatch_final/sections/cost_center_attribution_view.py` | 152 | Attribution renderer preserving `cc_attr_*` keys and attribution drilldown/download behavior. |
+| `.overwatch_final/sections/cost_center_chargeback_view.py` | 282 | Chargeback renderer preserving chargeback load/queue keys, ALFA/Trexis scope behavior, allocation readiness fields, and mart-first fallback. |
+
 ## Duplicate Code Groups
 
 | Group | Symptoms | Target utility |
@@ -129,7 +146,7 @@ These are candidates, not approved removals:
 
 | Metric | Current | Target |
 |---|---:|---:|
-| Large app modules above 3000 lines | 3 | 3 or fewer |
+| Large app modules above 3000 lines | 2 | 3 or fewer |
 | Daily operator mart tables | 90+ expected in current setup | 28-34 after migration |
 | Primary route aliases exposed to users | Several before this pass | Zero known in primary UI |
 | Live Snowflake regression coverage | New runner, blocked by auth | Passing in test account |
@@ -144,17 +161,18 @@ These are candidates, not approved removals:
 - `tests/test_alert_lifecycle.py`, `tests/test_alert_triage.py`, `tests/test_alert_action_queue.py`, `tests/test_alert_command_center.py`, `tests/test_alert_catalog.py`, `tests/test_alert_delivery.py`, and `tests/test_alert_native_catalog.py` cover the completed alert helper split.
 - `tests/test_explicit_load.py` covers explicit dataframe loads, session-state reuse, error-to-empty-frame handling, and CSV export wrapper behavior.
 - `tests/test_account_health_split.py` locks Account Health pane contracts, compatibility reexports, retired route normalization, source-scope metadata, source-health state classification, SQL/FQN builders, data helper contracts, checklist readiness, review-only action queue payloads, access hygiene No Database Context behavior, Morning Report and Overview keys, renderer dispatch coverage, history/closure SQL escaping, snapshot persistence behavior, and the Account Health shell no-creep guard.
+- `tests/test_cost_center_split.py` locks Cost Center pane contracts, compatibility reexports, allocation/source helpers, SQL builders, review-only action queue behavior, renderer map coverage, view key preservation, and the Cost Center facade line/no-creep guard.
 - `tests/test_command_center.py` now validates correlated investigation UI placement and explicit load gates.
 - `tests/test_contention_center.py`, `tests/test_formula_regressions.py`, and `tests/test_operational_intelligence.py` validate renamed workflow/action contracts.
 - `perf_tests/full_app_snowflake_regression.py` is the live Snowflake gate once authentication is corrected.
 
 ## Next Rewrite Order
 
-1. Split Cost Center if it remains above threshold after Account Health.
-2. Split Executive Landing advanced/admin panels if they remain above threshold.
-3. Clean up Task Management delegated routes only after route metrics prove no active usage.
-4. Consider Change Drift split if route metrics justify it.
-5. Retire legacy route rendering and rationalize mart loads to feed daily workflows directly before dropping any old objects.
+1. Split Executive Landing advanced/admin panels if they remain above threshold.
+2. Clean up Task Management delegated routes only after route metrics prove no active usage.
+3. Consider Change Drift split if route metrics justify it.
+4. Retire legacy route rendering.
+5. Rationalize mart loads to feed daily workflows directly before dropping any old objects.
 
 ## De-Bloat Completed After Initial Audit
 
@@ -196,3 +214,4 @@ These are candidates, not approved removals:
 | Account Health initial split | Reduced `.overwatch_final/sections/account_health.py` from the local 3604-line baseline (older docs listed about 3812) to about 3190 lines by moving Account Health contracts, common helpers, source-health models, bounded data/query helpers, deterministic FQN/DDL/migration SQL builders, and the source-health renderer into focused modules. The public route keeps compatibility reexports and existing Account Health panes, keys, session-state names, and action behavior; Overview/Morning rendering and action queue/checklist mutation flows are deferred for a guarded pass. |
 | Account Health checklist/action/Morning split | Reduced `.overwatch_final/sections/account_health.py` from about 3190 lines to about 1483 lines by moving checklist routing/readiness helpers, review-only action queue payloads/writers, access hygiene SQL/annotation/rendering, and the Morning Report packet builder/renderer into focused modules. Existing Account Health panes and keys are preserved, including access hygiene load/source/meta/queue keys and Morning Report lookback/fallback/source/meta packet keys. The remaining route owns the large Overview branch and a partial renderer map for the moved Morning Report pane. |
 | Account Health Overview/history split completed | Reduced `.overwatch_final/sections/account_health.py` from about 1483 lines to about 83 lines by moving the Overview controller/renderer, operating snapshot/intervention helpers, checklist history SQL, closure analytics SQL, operability fact SQL, and checklist snapshot persistence into focused modules. `ACCOUNT_HEALTH_RENDERERS` now covers both Overview and Morning Report, and tests keep the route free of ACCOUNT_USAGE strings, query calls, dataframe construction, DDL/DML, and moved helper definitions. |
+| Cost Center split completed for current pass | Reduced `.overwatch_final/sections/cost_center.py` from about 3106 lines to about 99 lines by moving contracts, allocation/dataframe models, SQL builders, review-only action queue helpers, and all eight Cost Center render branches into focused modules. `COST_CENTER_RENDERERS` covers Cost Explorer, Explain This Bill, User Leaderboard, Burn Rate, Reconciliation, Forecast, Attribution, and Chargeback while preserving existing Streamlit keys, session-state names, CSV filenames, mart-first/live fallback behavior, and review-gated action queue boundaries. |

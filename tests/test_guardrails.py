@@ -59,7 +59,14 @@ class GuardrailTests(unittest.TestCase):
                 APP_ROOT / "sections" / "account_health_overview_view.py",
             ]
         )
-        cost_text = (APP_ROOT / "sections" / "cost_center.py").read_text(encoding="utf-8").upper()
+        cost_text = "\n".join(
+            path.read_text(encoding="utf-8").upper()
+            for path in [
+                APP_ROOT / "sections" / "cost_center.py",
+                APP_ROOT / "sections" / "cost_center_explain_view.py",
+                APP_ROOT / "sections" / "cost_center_burn_view.py",
+            ]
+        )
         shared_metric_surface = "\n".join(
             path.read_text(encoding="utf-8").upper()
             for path in sorted((APP_ROOT / "utils").glob("shared_metrics*.py"))

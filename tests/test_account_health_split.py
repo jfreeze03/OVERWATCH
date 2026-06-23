@@ -633,7 +633,7 @@ class AccountHealthSplitTests(unittest.TestCase):
 
     def test_account_health_shell_has_dispatch_facade_guard(self):
         source = (APP_ROOT / "sections" / "account_health.py").read_text(encoding="utf-8")
-        self.assertLess(len(source.splitlines()), 700)
+        self.assertLess(len(source.splitlines()), 150)
         for fragment in [
             "ACCOUNT_HEALTH_PANES = (",
             "ACCOUNT_HEALTH_SCOPE_FILTER_KEYS = (",

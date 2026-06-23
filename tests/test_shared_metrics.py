@@ -15,14 +15,23 @@ from utils import shared_metrics as shared_metrics_facade  # noqa: E402
 from utils import (  # noqa: E402
     shared_metrics_cache,
     shared_metrics_contracts,
+    shared_metrics_procedures,
+    shared_metrics_query,
+    shared_metrics_recommendations,
     shared_metrics_service_cost,
+    shared_metrics_service_health,
+    shared_metrics_security,
     shared_metrics_storage,
+    shared_metrics_tasks,
     shared_metrics_usage,
+    shared_metrics_warehouse,
 )
 from utils.company_filter import get_company_scope_key  # noqa: E402
 from utils.shared_metrics import (  # noqa: E402
     SharedMetricResult,
     _load_or_reuse,
+    _query_history_rollup_exprs,
+    _service_query_history_exprs,
     _shared_state_key,
     _storage_summary_from_trend,
     build_shared_bill_warehouse_delta_live_sql,
@@ -123,6 +132,226 @@ class SharedMetricsTests(unittest.TestCase):
             shared_metrics_facade.load_shared_service_cost_trend,
             shared_metrics_service_cost.load_shared_service_cost_trend,
         )
+        self.assertIs(shared_metrics_facade._query_history_rollup_exprs, shared_metrics_query._query_history_rollup_exprs)
+        self.assertIs(
+            shared_metrics_facade.load_shared_query_history_rollup,
+            shared_metrics_query.load_shared_query_history_rollup,
+        )
+        self.assertIs(
+            shared_metrics_facade.load_shared_warehouse_pressure_summary,
+            shared_metrics_query.load_shared_warehouse_pressure_summary,
+        )
+        self.assertIs(shared_metrics_facade._first_numeric_value, shared_metrics_service_health._first_numeric_value)
+        self.assertIs(
+            shared_metrics_facade._service_query_history_exprs,
+            shared_metrics_service_health._service_query_history_exprs,
+        )
+        self.assertIs(
+            shared_metrics_facade.load_shared_service_query_health,
+            shared_metrics_service_health.load_shared_service_query_health,
+        )
+        self.assertIs(
+            shared_metrics_facade.load_shared_service_warehouse_health,
+            shared_metrics_service_health.load_shared_service_warehouse_health,
+        )
+        self.assertIs(
+            shared_metrics_facade.load_shared_service_login_health,
+            shared_metrics_service_health.load_shared_service_login_health,
+        )
+        self.assertIs(
+            shared_metrics_facade.load_shared_service_task_health,
+            shared_metrics_service_health.load_shared_service_task_health,
+        )
+        self.assertIs(
+            shared_metrics_facade.load_shared_service_pipe_health,
+            shared_metrics_service_health.load_shared_service_pipe_health,
+        )
+        self.assertIs(shared_metrics_facade._warehouse_health_exprs, shared_metrics_warehouse._warehouse_health_exprs)
+        self.assertIs(
+            shared_metrics_facade.load_shared_warehouse_credit_anomalies,
+            shared_metrics_warehouse.load_shared_warehouse_credit_anomalies,
+        )
+        self.assertIs(
+            shared_metrics_facade.load_shared_warehouse_daily_credits,
+            shared_metrics_warehouse.load_shared_warehouse_daily_credits,
+        )
+        self.assertIs(
+            shared_metrics_facade.load_shared_warehouse_daily_credits_by_warehouse,
+            shared_metrics_warehouse.load_shared_warehouse_daily_credits_by_warehouse,
+        )
+        self.assertIs(
+            shared_metrics_facade.load_shared_warehouse_efficiency,
+            shared_metrics_warehouse.load_shared_warehouse_efficiency,
+        )
+        self.assertIs(
+            shared_metrics_facade.load_shared_warehouse_heatmap,
+            shared_metrics_warehouse.load_shared_warehouse_heatmap,
+        )
+        self.assertIs(
+            shared_metrics_facade.load_shared_warehouse_overview,
+            shared_metrics_warehouse.load_shared_warehouse_overview,
+        )
+        self.assertIs(
+            shared_metrics_facade.load_shared_warehouse_right_sizing,
+            shared_metrics_warehouse.load_shared_warehouse_right_sizing,
+        )
+        self.assertIs(
+            shared_metrics_facade.load_shared_warehouse_scaling_events,
+            shared_metrics_warehouse.load_shared_warehouse_scaling_events,
+        )
+        self.assertIs(
+            shared_metrics_facade.load_shared_warehouse_spill,
+            shared_metrics_warehouse.load_shared_warehouse_spill,
+        )
+        self.assertIs(shared_metrics_facade.shared_mfa_count_expr, shared_metrics_security.shared_mfa_count_expr)
+        self.assertIs(shared_metrics_facade.shared_mfa_gap_predicate, shared_metrics_security.shared_mfa_gap_predicate)
+        self.assertIs(shared_metrics_facade.shared_mfa_proof_label, shared_metrics_security.shared_mfa_proof_label)
+        self.assertIs(
+            shared_metrics_facade.build_shared_security_summary_sql,
+            shared_metrics_security.build_shared_security_summary_sql,
+        )
+        self.assertIs(
+            shared_metrics_facade.build_shared_security_mart_brief_sql,
+            shared_metrics_security.build_shared_security_mart_brief_sql,
+        )
+        self.assertIs(
+            shared_metrics_facade.build_shared_security_privileged_grant_review_sql,
+            shared_metrics_security.build_shared_security_privileged_grant_review_sql,
+        )
+        self.assertIs(
+            shared_metrics_facade.build_shared_access_hygiene_sql,
+            shared_metrics_security.build_shared_access_hygiene_sql,
+        )
+        self.assertIs(shared_metrics_facade.load_shared_mfa_coverage, shared_metrics_security.load_shared_mfa_coverage)
+        self.assertIs(shared_metrics_facade.load_shared_grants_to_users, shared_metrics_security.load_shared_grants_to_users)
+        self.assertIs(
+            shared_metrics_facade.load_shared_access_hygiene_snapshot,
+            shared_metrics_security.load_shared_access_hygiene_snapshot,
+        )
+        self.assertIs(
+            shared_metrics_facade.load_shared_recommendation_idle_warehouses,
+            shared_metrics_recommendations.load_shared_recommendation_idle_warehouses,
+        )
+        self.assertIs(
+            shared_metrics_facade.load_shared_recommendation_spill_warehouses,
+            shared_metrics_recommendations.load_shared_recommendation_spill_warehouses,
+        )
+        self.assertIs(
+            shared_metrics_facade.load_shared_recommendation_failed_tasks,
+            shared_metrics_recommendations.load_shared_recommendation_failed_tasks,
+        )
+        self.assertIs(
+            shared_metrics_facade.load_shared_recommendation_query_failures,
+            shared_metrics_recommendations.load_shared_recommendation_query_failures,
+        )
+        self.assertIs(
+            shared_metrics_facade.load_shared_recommendation_storage_retention,
+            shared_metrics_recommendations.load_shared_recommendation_storage_retention,
+        )
+        self.assertIs(
+            shared_metrics_facade.load_shared_recommendation_clustering_cost,
+            shared_metrics_recommendations.load_shared_recommendation_clustering_cost,
+        )
+        self.assertIs(
+            shared_metrics_facade.load_shared_recommendation_repeated_queries,
+            shared_metrics_recommendations.load_shared_recommendation_repeated_queries,
+        )
+        self.assertIs(
+            shared_metrics_facade.load_shared_duplicate_query_patterns,
+            shared_metrics_recommendations.load_shared_duplicate_query_patterns,
+        )
+        self.assertIs(
+            shared_metrics_facade.load_shared_task_health_summary,
+            shared_metrics_tasks.load_shared_task_health_summary,
+        )
+        self.assertIs(
+            shared_metrics_facade.load_shared_task_history_detail,
+            shared_metrics_tasks.load_shared_task_history_detail,
+        )
+        self.assertIs(
+            shared_metrics_facade.load_shared_procedure_inventory,
+            shared_metrics_procedures.load_shared_procedure_inventory,
+        )
+        self.assertIs(
+            shared_metrics_facade.load_shared_procedure_calls,
+            shared_metrics_procedures.load_shared_procedure_calls,
+        )
+        self.assertIs(
+            shared_metrics_facade.load_shared_procedure_sla,
+            shared_metrics_procedures.load_shared_procedure_sla,
+        )
+
+    def test_shared_metrics_public_import_surface_stays_available(self):
+        public_names = (
+            "SharedMetricResult",
+            "_load_or_reuse",
+            "_shared_state_key",
+            "_storage_summary_from_trend",
+            "_query_history_rollup_exprs",
+            "_service_query_history_exprs",
+            "build_shared_bill_warehouse_delta_live_sql",
+            "build_shared_access_hygiene_sql",
+            "build_shared_security_mart_brief_sql",
+            "build_shared_security_privileged_grant_review_sql",
+            "build_shared_security_summary_sql",
+            "load_shared_access_hygiene_snapshot",
+            "load_shared_bill_metering_summary",
+            "load_shared_bill_warehouse_delta",
+            "load_shared_duplicate_query_patterns",
+            "load_shared_procedure_calls",
+            "load_shared_procedure_inventory",
+            "load_shared_procedure_sla",
+            "load_shared_recommendation_clustering_cost",
+            "load_shared_grants_to_users",
+            "load_shared_mfa_coverage",
+            "load_shared_query_history_rollup",
+            "load_shared_recommendation_failed_tasks",
+            "load_shared_recommendation_idle_warehouses",
+            "load_shared_recommendation_query_failures",
+            "load_shared_recommendation_repeated_queries",
+            "load_shared_recommendation_spill_warehouses",
+            "load_shared_recommendation_storage_retention",
+            "load_shared_service_cost_lens",
+            "load_shared_service_cost_trend",
+            "load_shared_service_login_health",
+            "load_shared_service_pipe_health",
+            "load_shared_service_query_health",
+            "load_shared_service_task_health",
+            "load_shared_service_warehouse_health",
+            "load_shared_storage_trend",
+            "load_shared_task_health_summary",
+            "load_shared_task_history_detail",
+            "load_shared_usage_metering_kpis",
+            "load_shared_warehouse_credit_anomalies",
+            "load_shared_warehouse_right_sizing",
+            "load_shared_warehouse_daily_credits_by_warehouse",
+            "load_shared_warehouse_efficiency",
+            "load_shared_warehouse_heatmap",
+            "load_shared_warehouse_overview",
+            "load_shared_warehouse_pressure_summary",
+            "load_shared_warehouse_scaling_events",
+            "load_shared_warehouse_spill",
+            "shared_mfa_count_expr",
+            "shared_mfa_gap_predicate",
+            "shared_mfa_proof_label",
+        )
+        for name in public_names:
+            with self.subTest(name=name):
+                self.assertTrue(hasattr(shared_metrics_facade, name))
+
+    def test_shared_metrics_facade_continues_shrinking(self):
+        source = APP_ROOT.joinpath("utils", "shared_metrics.py").read_text(encoding="utf-8")
+        self.assertLess(len(source.splitlines()), 250)
+        self.assertNotIn("def load_shared_service_query_health", source)
+        self.assertNotIn("def load_shared_query_history_rollup", source)
+        self.assertNotIn("def load_shared_warehouse_overview", source)
+        self.assertNotIn("def build_shared_security_summary_sql", source)
+        self.assertNotIn("def load_shared_recommendation_idle_warehouses", source)
+        self.assertNotIn("def load_shared_task_history_detail", source)
+        self.assertNotIn("def load_shared_procedure_inventory", source)
+        self.assertNotIn("SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY", source)
+        self.assertNotIn("SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY", source)
+        self.assertNotIn("SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY", source)
 
     def test_shared_metrics_load_or_reuse_returns_cached_result(self):
         calls = []
@@ -142,6 +371,49 @@ class SharedMetricsTests(unittest.TestCase):
             _shared_state_key("unit_metric", "ALFA", 30),
             f"_shared_metric_{get_company_scope_key('unit_metric', 'ALFA', 30)}",
         )
+
+    def test_query_history_rollup_exprs_optional_columns(self):
+        with patch(
+            "utils.shared_metrics_query.filter_existing_columns",
+            return_value=[
+                "ERROR_CODE",
+                "QUEUED_OVERLOAD_TIME",
+                "QUEUED_PROVISIONING_TIME",
+                "QUEUED_REPAIR_TIME",
+                "CREDITS_USED_CLOUD_SERVICES",
+                "BYTES_SPILLED_TO_REMOTE_STORAGE",
+                "EXECUTION_TIME",
+            ],
+        ):
+            exprs = _query_history_rollup_exprs(object())
+
+        self.assertIn("q.error_code IS NULL", exprs["success_expr"])
+        self.assertIn("q.queued_overload_time > 0", exprs["queued_expr"])
+        self.assertIn("q.queued_provisioning_time > 0", exprs["queued_expr"])
+        self.assertIn("credits_used_cloud_services", exprs["cloud_expr"])
+        self.assertIn("bytes_spilled_to_remote_storage", exprs["remote_spill_expr"])
+        self.assertIn("q.execution_time", exprs["avg_execution_expr"])
+
+    def test_service_query_history_exprs_optional_columns(self):
+        with patch(
+            "utils.shared_metrics_service_health.filter_existing_columns",
+            return_value=[
+                "ERROR_CODE",
+                "WAREHOUSE_SIZE",
+                "QUEUED_OVERLOAD_TIME",
+                "TRANSACTION_BLOCKED_TIME",
+                "BYTES_SPILLED_TO_REMOTE_STORAGE",
+                "PERCENTAGE_SCANNED_FROM_CACHE",
+            ],
+        ):
+            exprs = _service_query_history_exprs(object())
+
+        self.assertEqual(exprs["error_pred"], "q.error_code IS NOT NULL")
+        self.assertEqual(exprs["wh_size_expr"], "MAX(q.warehouse_size)")
+        self.assertEqual(exprs["queued_pred"], "q.queued_overload_time > 0")
+        self.assertEqual(exprs["blocked_pred"], "q.transaction_blocked_time > 0")
+        self.assertIn("bytes_spilled_to_remote_storage", exprs["remote_spill_expr"])
+        self.assertIn("percentage_scanned_from_cache", exprs["cache_expr"])
 
     def test_storage_trend_reuses_session_result_for_same_scope(self):
         frame = pd.DataFrame({
@@ -404,9 +676,9 @@ class SharedMetricsTests(unittest.TestCase):
         })
 
         with patch(
-            "utils.compatibility.filter_existing_columns",
+            "utils.shared_metrics_warehouse.filter_existing_columns",
             return_value=["WAREHOUSE_SIZE"],
-        ), patch("utils.shared_metrics.run_query", return_value=frame) as mock_run:
+        ), patch("utils.shared_metrics_warehouse.run_query", return_value=frame) as mock_run:
             first = load_shared_warehouse_daily_credits_by_warehouse(object(), 30, "ALFA", section="Unit Test")
             second = load_shared_warehouse_daily_credits_by_warehouse(object(), 30, "ALFA", section="Unit Test")
 
@@ -423,9 +695,9 @@ class SharedMetricsTests(unittest.TestCase):
         })
 
         with patch(
-            "utils.compatibility.filter_existing_columns",
+            "utils.shared_metrics_warehouse.filter_existing_columns",
             return_value=[],
-        ), patch("utils.shared_metrics.run_query", return_value=frame) as mock_run:
+        ), patch("utils.shared_metrics_warehouse.run_query", return_value=frame) as mock_run:
             result = load_shared_warehouse_daily_credits_by_warehouse(object(), 7, "ALFA", section="Unit Test")
 
         self.assertTrue(result.available)
@@ -443,7 +715,7 @@ class SharedMetricsTests(unittest.TestCase):
             "ANOMALY_FLAG": ["SPIKE"],
         })
 
-        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run:
+        with patch("utils.shared_metrics_warehouse.run_query", return_value=frame) as mock_run:
             first = load_shared_warehouse_credit_anomalies("ALFA", days=30, section="Unit Test")
             second = load_shared_warehouse_credit_anomalies("ALFA", days=30, section="Unit Test")
 
@@ -466,7 +738,7 @@ class SharedMetricsTests(unittest.TestCase):
         })
 
         with patch(
-            "utils.shared_metrics.run_query",
+            "utils.shared_metrics_warehouse.run_query",
             side_effect=[pd.DataFrame(), live_frame],
         ) as mock_run:
             result = load_shared_warehouse_credit_anomalies(
@@ -485,7 +757,7 @@ class SharedMetricsTests(unittest.TestCase):
         self.assertIn("ROLLING_AVG IS NOT NULL", live_sql)
 
     def test_warehouse_credit_anomalies_can_skip_live_fallback(self):
-        with patch("utils.shared_metrics.run_query", return_value=pd.DataFrame()) as mock_run:
+        with patch("utils.shared_metrics_warehouse.run_query", return_value=pd.DataFrame()) as mock_run:
             result = load_shared_warehouse_credit_anomalies(
                 "ALFA",
                 days=30,
@@ -506,7 +778,7 @@ class SharedMetricsTests(unittest.TestCase):
             "CREDIT_DELTA": [3.0],
         })
 
-        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run:
+        with patch("utils.shared_metrics_warehouse.run_query", return_value=frame) as mock_run:
             first = load_shared_warehouse_overview(object(), 7, "ALFA", section="Unit Test")
             second = load_shared_warehouse_overview(object(), 7, "ALFA", section="Unit Test")
 
@@ -525,10 +797,10 @@ class SharedMetricsTests(unittest.TestCase):
         })
 
         with patch(
-            "utils.shared_metrics.run_query",
+            "utils.shared_metrics_warehouse.run_query",
             side_effect=[pd.DataFrame(), live_frame],
         ) as mock_run, patch(
-            "utils.compatibility.filter_existing_columns",
+            "utils.shared_metrics_warehouse.filter_existing_columns",
             side_effect=[
                 ["WAREHOUSE_SIZE", "QUEUED_OVERLOAD_TIME", "BYTES_SPILLED_TO_REMOTE_STORAGE"],
                 ["CREDITS_USED_COMPUTE", "CREDITS_USED_CLOUD_SERVICES"],
@@ -553,7 +825,7 @@ class SharedMetricsTests(unittest.TestCase):
             "AVG_ELAPSED_SEC": [1.2],
         })
 
-        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run:
+        with patch("utils.shared_metrics_query.run_query", return_value=frame) as mock_run:
             first = load_shared_query_history_rollup(object(), 7, "ALFA", section="Unit Test")
             second = load_shared_query_history_rollup(object(), 7, "ALFA", section="Unit Test")
 
@@ -570,10 +842,10 @@ class SharedMetricsTests(unittest.TestCase):
         })
 
         with patch(
-            "utils.shared_metrics.run_query",
+            "utils.shared_metrics_query.run_query",
             side_effect=[pd.DataFrame(), live_frame],
         ) as mock_run, patch(
-            "utils.compatibility.filter_existing_columns",
+            "utils.shared_metrics_query.filter_existing_columns",
             return_value=[
                 "ERROR_CODE",
                 "QUEUED_OVERLOAD_TIME",
@@ -598,10 +870,10 @@ class SharedMetricsTests(unittest.TestCase):
         })
 
         with patch(
-            "utils.shared_metrics.run_query",
+            "utils.shared_metrics_query.run_query",
             side_effect=[pd.DataFrame(), live_frame],
         ) as mock_run, patch(
-            "utils.compatibility.filter_existing_columns",
+            "utils.shared_metrics_query.filter_existing_columns",
             return_value=["ERROR_CODE", "QUEUED_OVERLOAD_TIME", "BYTES_SPILLED_TO_REMOTE_STORAGE"],
         ):
             result = load_shared_warehouse_pressure_summary(object(), 7, "ALFA", section="Unit Test")
@@ -621,10 +893,10 @@ class SharedMetricsTests(unittest.TestCase):
         })
 
         with patch(
-            "utils.shared_metrics.run_query",
+            "utils.shared_metrics_service_health.run_query",
             side_effect=[pd.DataFrame(), live_frame],
         ) as mock_run, patch(
-            "utils.shared_metrics.filter_existing_columns",
+            "utils.shared_metrics_service_health.filter_existing_columns",
             return_value=[
                 "ERROR_CODE",
                 "QUEUED_OVERLOAD_TIME",
@@ -649,7 +921,7 @@ class SharedMetricsTests(unittest.TestCase):
             "QUEUED_SEC": [10.0],
         })
 
-        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run:
+        with patch("utils.shared_metrics_service_health.run_query", return_value=frame) as mock_run:
             result = load_shared_service_warehouse_health(object(), 24, "ALFA", section="Unit Test")
 
         self.assertEqual(result.source, "Fast warehouse pressure summary")
@@ -661,7 +933,7 @@ class SharedMetricsTests(unittest.TestCase):
             "FAILED_LOGINS": [1],
         })
 
-        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run:
+        with patch("utils.shared_metrics_service_health.run_query", return_value=frame) as mock_run:
             result = load_shared_service_login_health(4, "ALFA", section="Unit Test")
 
         self.assertEqual(result.source, "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY")
@@ -679,10 +951,10 @@ class SharedMetricsTests(unittest.TestCase):
         })
 
         with patch(
-            "utils.shared_metrics.run_query",
+            "utils.shared_metrics_service_health.run_query",
             side_effect=[pd.DataFrame(), live_frame],
         ) as mock_run, patch(
-            "utils.compatibility.build_task_health_sql",
+            "utils.shared_metrics_service_health.build_task_health_sql",
             return_value="SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY",
         ):
             result = load_shared_service_task_health(object(), 6, "ALFA", section="Unit Test")
@@ -696,7 +968,7 @@ class SharedMetricsTests(unittest.TestCase):
             "FAILED_LOADS": [1],
         })
 
-        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run:
+        with patch("utils.shared_metrics_service_health.run_query", return_value=frame) as mock_run:
             result = load_shared_service_pipe_health(8, "ALFA", section="Unit Test")
 
         self.assertEqual(result.source, "Live: SNOWFLAKE.ACCOUNT_USAGE.COPY_HISTORY")
@@ -710,7 +982,7 @@ class SharedMetricsTests(unittest.TestCase):
             "CREDITS_USED": [10.0],
         })
 
-        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run:
+        with patch("utils.shared_metrics_warehouse.run_query", return_value=frame) as mock_run:
             result = load_shared_warehouse_scaling_events(object(), 7, "ALFA", section="Unit Test")
 
         self.assertEqual(result.source, "Fast warehouse summary")
@@ -724,10 +996,10 @@ class SharedMetricsTests(unittest.TestCase):
         })
 
         with patch(
-            "utils.shared_metrics.run_query",
+            "utils.shared_metrics_warehouse.run_query",
             side_effect=[pd.DataFrame(), live_frame],
         ) as mock_run, patch(
-            "utils.compatibility.filter_existing_columns",
+            "utils.shared_metrics_warehouse.filter_existing_columns",
             side_effect=[["WAREHOUSE_SIZE"], ["CREDITS_USED_COMPUTE", "CREDITS_USED_CLOUD_SERVICES"]],
         ):
             result = load_shared_warehouse_scaling_events(object(), 7, "ALFA", section="Unit Test")
@@ -745,8 +1017,8 @@ class SharedMetricsTests(unittest.TestCase):
             "EFFICIENCY_SCORE": [65.0],
         })
 
-        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run, patch(
-            "utils.shared_metrics.filter_existing_columns",
+        with patch("utils.shared_metrics_warehouse.run_query", return_value=frame) as mock_run, patch(
+            "utils.shared_metrics_warehouse.filter_existing_columns",
             side_effect=[
                 [
                     "WAREHOUSE_SIZE",
@@ -773,8 +1045,8 @@ class SharedMetricsTests(unittest.TestCase):
             "REMOTE_SPILL_GB": [2.5],
         })
 
-        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run, patch(
-            "utils.shared_metrics.filter_existing_columns",
+        with patch("utils.shared_metrics_warehouse.run_query", return_value=frame) as mock_run, patch(
+            "utils.shared_metrics_warehouse.filter_existing_columns",
             return_value=[
                 "WAREHOUSE_SIZE",
                 "BYTES_SPILLED_TO_LOCAL_STORAGE",
@@ -797,7 +1069,7 @@ class SharedMetricsTests(unittest.TestCase):
             "QUERY_COUNT": [10],
         })
 
-        with patch("utils.shared_metrics.run_query", return_value=mart_frame) as mock_run:
+        with patch("utils.shared_metrics_warehouse.run_query", return_value=mart_frame) as mock_run:
             result = load_shared_warehouse_heatmap(30, "ALFA", section="Unit Test")
 
         self.assertEqual(result.source, "Fast warehouse summary")
@@ -812,7 +1084,7 @@ class SharedMetricsTests(unittest.TestCase):
         st.session_state.clear()
         st.session_state["active_company"] = "ALFA"
         st.session_state["global_environment"] = "ALL"
-        with patch("utils.shared_metrics.run_query", side_effect=[pd.DataFrame(), live_frame]) as mock_run:
+        with patch("utils.shared_metrics_warehouse.run_query", side_effect=[pd.DataFrame(), live_frame]) as mock_run:
             result = load_shared_warehouse_heatmap(45, "ALFA", section="Unit Test")
 
         self.assertEqual(result.source, "Bounded live warehouse history")
@@ -824,7 +1096,7 @@ class SharedMetricsTests(unittest.TestCase):
 
     def test_task_health_summary_returns_zero_row_when_unavailable(self):
         with patch(
-            "utils.compatibility.build_task_health_sql",
+            "utils.shared_metrics_tasks.build_task_health_sql",
             side_effect=ValueError("TASK_HISTORY unavailable"),
         ):
             result = load_shared_task_health_summary(object(), 7, "ALFA", section="Unit Test")
@@ -840,7 +1112,7 @@ class SharedMetricsTests(unittest.TestCase):
             "QUERY_ID": ["01a"],
         })
 
-        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run:
+        with patch("utils.shared_metrics_tasks.run_query", return_value=frame) as mock_run:
             result = load_shared_task_history_detail(object(), 7, "ALFA", section="Unit Test")
 
         self.assertEqual(result.source, "Fast task run summary")
@@ -856,8 +1128,8 @@ class SharedMetricsTests(unittest.TestCase):
             "QUERY_ID": ["01b"],
         })
 
-        with patch("utils.shared_metrics.run_query", side_effect=[pd.DataFrame(), live_frame]) as mock_run, patch(
-            "utils.shared_metrics.build_task_history_sql",
+        with patch("utils.shared_metrics_tasks.run_query", side_effect=[pd.DataFrame(), live_frame]) as mock_run, patch(
+            "utils.shared_metrics_tasks.build_task_history_sql",
             return_value="SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY",
         ) as mock_live_sql:
             result = load_shared_task_history_detail(
@@ -883,8 +1155,8 @@ class SharedMetricsTests(unittest.TestCase):
             "MFA_SOURCE": ["HAS_MFA"],
         })
 
-        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run, patch(
-            "utils.compatibility.filter_existing_columns",
+        with patch("utils.shared_metrics_security.run_query", return_value=frame) as mock_run, patch(
+            "utils.shared_metrics_security.filter_existing_columns",
             return_value=["HAS_MFA", "HAS_PASSWORD", "LAST_SUCCESS_LOGIN"],
         ):
             result = load_shared_mfa_coverage(object(), "ALFA", section="Unit Test")
@@ -915,7 +1187,7 @@ class SharedMetricsTests(unittest.TestCase):
     def test_security_summary_builders_share_security_monitoring_sql(self):
         st.session_state["global_environment"] = "DEV_ALL"
         with patch(
-            "utils.shared_metrics.filter_existing_columns",
+            "utils.shared_metrics_security.filter_existing_columns",
             return_value=["HAS_MFA", "HAS_PASSWORD", "LAST_SUCCESS_LOGIN"],
         ):
             live_summary, live_exceptions = build_shared_security_summary_sql(object(), 14, "ALFA")
@@ -950,7 +1222,7 @@ class SharedMetricsTests(unittest.TestCase):
             "ROLE": ["SYSADMIN"],
         })
 
-        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run:
+        with patch("utils.shared_metrics_security.run_query", return_value=frame) as mock_run:
             result = load_shared_grants_to_users("ALFA", section="Unit Test")
 
         self.assertEqual(result.source, "Fast grant summary")
@@ -981,8 +1253,8 @@ class SharedMetricsTests(unittest.TestCase):
             "ENVIRONMENT_SCOPE": ["No Database Context"],
         })
 
-        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run, patch(
-            "utils.compatibility.filter_existing_columns",
+        with patch("utils.shared_metrics_security.run_query", return_value=frame) as mock_run, patch(
+            "utils.shared_metrics_security.filter_existing_columns",
             return_value=["HAS_MFA", "HAS_PASSWORD", "LAST_SUCCESS_LOGIN"],
         ):
             result = load_shared_access_hygiene_snapshot(
@@ -1005,7 +1277,7 @@ class SharedMetricsTests(unittest.TestCase):
             "IDLE_CREDITS": [2.5],
         })
 
-        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run:
+        with patch("utils.shared_metrics_recommendations.run_query", return_value=frame) as mock_run:
             first = load_shared_recommendation_idle_warehouses("ALFA", section="Unit Test")
             second = load_shared_recommendation_idle_warehouses("ALFA", section="Unit Test")
 
@@ -1020,7 +1292,7 @@ class SharedMetricsTests(unittest.TestCase):
             "IDLE_CREDITS": [4.0],
         })
 
-        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run:
+        with patch("utils.shared_metrics_recommendations.run_query", return_value=frame) as mock_run:
             result = load_shared_recommendation_idle_warehouses(
                 "ALFA",
                 days=14,
@@ -1034,7 +1306,7 @@ class SharedMetricsTests(unittest.TestCase):
         self.assertIn("QUERY_HISTORY", sql)
 
     def test_recommendation_idle_warehouses_can_skip_live_fallback(self):
-        with patch("utils.shared_metrics.run_query") as mock_run:
+        with patch("utils.shared_metrics_recommendations.run_query") as mock_run:
             result = load_shared_recommendation_idle_warehouses(
                 "ALFA",
                 days=14,
@@ -1055,10 +1327,10 @@ class SharedMetricsTests(unittest.TestCase):
         })
 
         with patch(
-            "utils.shared_metrics.run_query",
+            "utils.shared_metrics_recommendations.run_query",
             side_effect=[pd.DataFrame(), frame],
         ) as mock_run, patch(
-            "utils.shared_metrics.filter_existing_columns",
+            "utils.shared_metrics_recommendations.filter_existing_columns",
             return_value=["WAREHOUSE_SIZE", "BYTES_SPILLED_TO_REMOTE_STORAGE"],
         ):
             result = load_shared_recommendation_spill_warehouses(object(), "ALFA", section="Unit Test")
@@ -1076,10 +1348,10 @@ class SharedMetricsTests(unittest.TestCase):
         })
 
         with patch(
-            "utils.shared_metrics.run_query",
+            "utils.shared_metrics_recommendations.run_query",
             side_effect=[pd.DataFrame(), frame],
         ) as mock_run, patch(
-            "utils.shared_metrics.build_task_failure_summary_sql",
+            "utils.shared_metrics_recommendations.build_task_failure_summary_sql",
             return_value="SELECT 'LOAD_TASK' AS task_name, 5 AS failures",
         ):
             result = load_shared_recommendation_failed_tasks(object(), "ALFA", section="Unit Test")
@@ -1097,7 +1369,7 @@ class SharedMetricsTests(unittest.TestCase):
         })
 
         with patch(
-            "utils.shared_metrics.run_query",
+            "utils.shared_metrics_recommendations.run_query",
             side_effect=[pd.DataFrame(), frame],
         ) as mock_run:
             result = load_shared_recommendation_query_failures(
@@ -1120,7 +1392,7 @@ class SharedMetricsTests(unittest.TestCase):
             "FAILSAFE_TB": [0.1],
         })
 
-        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run:
+        with patch("utils.shared_metrics_recommendations.run_query", return_value=frame) as mock_run:
             result = load_shared_recommendation_storage_retention("ALFA", section="Unit Test")
 
         self.assertTrue(result.available)
@@ -1136,7 +1408,7 @@ class SharedMetricsTests(unittest.TestCase):
             "TB_RECLUSTERED": [1.5],
         })
 
-        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run:
+        with patch("utils.shared_metrics_recommendations.run_query", return_value=frame) as mock_run:
             result = load_shared_recommendation_clustering_cost(
                 "ALFA",
                 days=7,
@@ -1158,7 +1430,7 @@ class SharedMetricsTests(unittest.TestCase):
             "HASH_COLUMN": ["QUERY_HASH"],
         })
 
-        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run:
+        with patch("utils.shared_metrics_recommendations.run_query", return_value=frame) as mock_run:
             result = load_shared_recommendation_repeated_queries(object(), "ALFA", section="Unit Test")
 
         self.assertEqual(result.source, "Fast query-detail summary")
@@ -1174,10 +1446,10 @@ class SharedMetricsTests(unittest.TestCase):
         })
 
         with patch(
-            "utils.shared_metrics.run_query",
+            "utils.shared_metrics_recommendations.run_query",
             side_effect=[pd.DataFrame(), frame],
         ) as mock_run, patch(
-            "utils.shared_metrics.filter_existing_columns",
+            "utils.shared_metrics_recommendations.filter_existing_columns",
             return_value=["QUERY_PARAMETERIZED_HASH", "QUERY_HASH"],
         ):
             result = load_shared_recommendation_repeated_queries(object(), "ALFA", section="Unit Test")
@@ -1189,8 +1461,8 @@ class SharedMetricsTests(unittest.TestCase):
         self.assertIn("TOTAL_EXEC_HOURS", sql)
 
     def test_recommendation_repeated_queries_can_skip_live_fallback(self):
-        with patch("utils.shared_metrics.run_query", return_value=pd.DataFrame()) as mock_run, patch(
-            "utils.shared_metrics.filter_existing_columns",
+        with patch("utils.shared_metrics_recommendations.run_query", return_value=pd.DataFrame()) as mock_run, patch(
+            "utils.shared_metrics_recommendations.filter_existing_columns",
         ) as mock_cols:
             result = load_shared_recommendation_repeated_queries(
                 object(),
@@ -1213,10 +1485,10 @@ class SharedMetricsTests(unittest.TestCase):
         })
 
         with patch(
-            "utils.shared_metrics.run_query",
+            "utils.shared_metrics_recommendations.run_query",
             side_effect=[pd.DataFrame(), frame],
         ) as mock_run, patch(
-            "utils.shared_metrics.filter_existing_columns",
+            "utils.shared_metrics_recommendations.filter_existing_columns",
             return_value=["CREDITS_USED_CLOUD_SERVICES"],
         ):
             result = load_shared_duplicate_query_patterns(object(), "ALFA", section="Unit Test")
@@ -1237,8 +1509,8 @@ class SharedMetricsTests(unittest.TestCase):
             "TOTAL_CREDITS": [30.0],
         })
 
-        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run, patch(
-            "utils.shared_metrics.filter_existing_columns",
+        with patch("utils.shared_metrics_warehouse.run_query", return_value=frame) as mock_run, patch(
+            "utils.shared_metrics_warehouse.filter_existing_columns",
             return_value=[
                 "WAREHOUSE_SIZE",
                 "QUEUED_OVERLOAD_TIME",
@@ -1257,7 +1529,7 @@ class SharedMetricsTests(unittest.TestCase):
         frame = pd.DataFrame({"PROCEDURE_NAME": ["SP_LOAD"]})
 
         with patch(
-            "utils.shared_metrics.run_query",
+            "utils.shared_metrics_procedures.run_query",
             side_effect=[pd.DataFrame(), frame],
         ) as mock_run:
             result = load_shared_procedure_inventory(
@@ -1272,7 +1544,7 @@ class SharedMetricsTests(unittest.TestCase):
     def test_procedure_calls_prefers_mart(self):
         frame = pd.DataFrame({"PROCEDURE_NAME": ["SP_LOAD"], "CALL_COUNT": [3]})
 
-        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run:
+        with patch("utils.shared_metrics_procedures.run_query", return_value=frame) as mock_run:
             result = load_shared_procedure_calls("ALFA", days=7, live_sql="SELECT 1", section="Unit Test")
 
         self.assertEqual(result.source, "Fast procedure run summary")
@@ -1286,7 +1558,7 @@ class SharedMetricsTests(unittest.TestCase):
             calls["live"] += 1
             return "SELECT 'SP_LOAD' AS procedure_name"
 
-        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run:
+        with patch("utils.shared_metrics_procedures.run_query", return_value=frame) as mock_run:
             result = load_shared_procedure_sla("ALFA", days=7, live_sql=live_sql, section="Unit Test")
 
         self.assertEqual(result.source, "Fast procedure SLA summary")

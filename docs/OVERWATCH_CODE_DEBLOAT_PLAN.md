@@ -11,7 +11,7 @@ Reduce bloat without breaking the six-section operator model or removing useful 
 | File | Approx lines | Primary issue | Action |
 |---|---:|---|---|
 | `.overwatch_final/sections/dba_tools.py` | 304 | Thin public DBA Tools compatibility facade after extracting contracts, common helpers, planning helpers, setup checks, read-only views, QAS Monitor, Query Kill List, Cortex AI Limits, and Task Graph Control. | Complete for current split and locked by no-implementation tests. Keep this file as selector/focus/dispatch plus compatibility reexports; do not add implementation logic here. |
-| `.overwatch_final/utils/shared_metrics.py` | 3290 | Compatibility facade plus remaining shared SQL builders for query, warehouse, service health, security, recommendation, and procedure families. Contracts/cache, storage, usage, and service cost loaders now live in focused modules. | Continue splitting by workflow family without changing public imports or mart-first/cache behavior. |
+| `.overwatch_final/utils/shared_metrics.py` | 164 | Public compatibility facade only. Shared metric implementations now live in focused `shared_metrics_*` modules with identity reexport tests and a shrinking/no-implementation guard. | Keep this file import-only; do not add SQL loaders or Snowflake query implementation logic here. |
 | `.overwatch_final/sections/account_health.py` | 3604 | Legacy account-health cockpit overlaps DBA Control Room. | Retain as compatibility route, move useful pieces into DBA workflows. |
 | `.overwatch_final/sections/executive_landing.py` | 3470 | Advanced rollups remain in same module as front door. | Split advanced/admin rollups later if tests prove import or render pain. |
 | `.overwatch_final/sections/alert_center.py` | 3432 | Active alerts, history, admin config, suppression, closed loop, and investigation evidence. | Split active workflow from admin/evidence helpers. |
@@ -30,6 +30,13 @@ Reduce bloat without breaking the six-section operator model or removing useful 
 | `.overwatch_final/utils/shared_metrics_storage.py` | 319 | Storage trend, storage KPI, and per-database storage detail loaders. |
 | `.overwatch_final/utils/shared_metrics_usage.py` | 376 | Usage metering KPI loaders, billing metering live SQL builders, and billing summary/delta loaders. |
 | `.overwatch_final/utils/shared_metrics_service_cost.py` | 101 | Official service cost lens and trend loaders. |
+| `.overwatch_final/utils/shared_metrics_service_health.py` | 373 | Query, warehouse, login, task, and pipe service-health loaders and optional query-history expression probes. |
+| `.overwatch_final/utils/shared_metrics_query.py` | 252 | Query-history rollups and warehouse-pressure summary loaders. |
+| `.overwatch_final/utils/shared_metrics_warehouse.py` | 891 | Warehouse credits, anomaly, overview, scaling, efficiency, spill, heatmap, and right-sizing loaders. |
+| `.overwatch_final/utils/shared_metrics_security.py` | 835 | MFA/access hygiene SQL builders and security/access snapshot loaders. |
+| `.overwatch_final/utils/shared_metrics_recommendations.py` | 672 | Recommendation and duplicate-query advisor loaders. |
+| `.overwatch_final/utils/shared_metrics_tasks.py` | 141 | Shared task health and task-history detail loaders. |
+| `.overwatch_final/utils/shared_metrics_procedures.py` | 165 | Procedure inventory, call summary, and SLA/cost loaders. |
 
 ## Duplicate Code Groups
 
@@ -77,7 +84,7 @@ These are candidates, not approved removals:
 ## Next Rewrite Order
 
 1. Consolidate shared explicit-load gates and priority dataframe patterns.
-2. Continue `shared_metrics.py` splits by family: service health, query history rollups, warehouse health/cost, security, recommendations, and procedure telemetry. Keep `utils.shared_metrics` as the public compatibility surface.
+2. Keep `utils.shared_metrics` locked as an import-only compatibility facade; split any newly discovered shared metric family into focused modules first.
 3. Retire duplicated legacy route rendering after route metrics prove no active usage.
 4. Rewrite mart loads to feed daily workflows directly before dropping any old objects.
 5. Keep DBA Tools implementation logic in focused `dba_tools_*` modules and preserve the facade as dispatch/reexports only.
@@ -101,4 +108,10 @@ These are candidates, not approved removals:
 | DBA Tools facade hardening | Added no-implementation-creep tests that keep `dba_tools.py` free of live query execution, cancellation/task mutation SQL, account-parameter SQL, and dataframe construction. Task Graph Control task mutation SQL now runs through focused helper builders, and root/child matching treats regex-looking task names literally. |
 | Shared metrics contracts/cache split | Moved `SharedMetricResult`, storage fallback constants, shared state-key/cache helpers, global filter reads, and company column filters into `shared_metrics_contracts.py` and `shared_metrics_cache.py`, while keeping all names re-exported from `utils.shared_metrics`. |
 | Shared metrics storage/usage split | Moved storage trend/KPI/detail loaders into `shared_metrics_storage.py` and usage/billing metering loaders plus billing live SQL builders into `shared_metrics_usage.py`. Cache keys, effective-day caps, source labels, mart-first behavior, and public `utils.shared_metrics` imports remain covered by tests. |
-| Shared metrics service cost split | Moved official service cost lens/trend loaders into `shared_metrics_service_cost.py` with the same `SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY` source labels and public facade reexports. Service health remains deliberately deferred for a focused pass. |
+| Shared metrics service cost split | Moved official service cost lens/trend loaders into `shared_metrics_service_cost.py` with the same `SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY` source labels and public facade reexports. |
+| Shared metrics service health split | Moved service query, warehouse, login, task, and pipe health loaders into `shared_metrics_service_health.py`. Optional `QUERY_HISTORY` column probes, source labels, mart-first success, and live fallbacks are covered by focused tests. |
+| Shared metrics query rollup split | Moved query-history rollups and warehouse-pressure summary loading into `shared_metrics_query.py`, preserving optional-column expressions, global filters, mart-first behavior, and live fallback labels. |
+| Shared metrics warehouse split | Moved warehouse credit, anomaly, overview, scaling, efficiency, spill, heatmap, and right-sizing loaders into `shared_metrics_warehouse.py`, preserving mart-first/live fallback behavior and source labels. |
+| Shared metrics security/access split | Moved MFA helpers, security summary builders, privileged grant review, access hygiene SQL, and access snapshot loaders into `shared_metrics_security.py` with ALFA/Trexis/company scoping intact. |
+| Shared metrics recommendations split | Moved idle/spill/failed-task/query-failure/storage-retention/clustering/repeated-query and duplicate-query advisor loaders into `shared_metrics_recommendations.py`, keeping source labels and fallback behavior stable. |
+| Shared metrics task/procedure split | Moved task health/detail loaders into `shared_metrics_tasks.py` and procedure inventory/call/SLA loaders into `shared_metrics_procedures.py`. `utils.shared_metrics` is now a 164-line import-only facade with explicit `__all__`, identity reexport tests, and no-implementation-creep coverage. |

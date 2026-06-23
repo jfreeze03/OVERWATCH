@@ -4304,6 +4304,7 @@ class FormulaRegressionTests(unittest.TestCase):
         security_text = "\n".join([
             (APP_ROOT / "sections" / "security_posture.py").read_text(encoding="utf-8"),
             (APP_ROOT / "utils" / "shared_metrics.py").read_text(encoding="utf-8"),
+            (APP_ROOT / "utils" / "shared_metrics_security.py").read_text(encoding="utf-8"),
         ])
         self.assertIn('upper() == "ALL"', security_text)
         self.assertNotIn("lh.company = '{company}'", security_text)

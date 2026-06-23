@@ -562,7 +562,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         panel_text = (APP_ROOT / "sections" / "cost_contract_panels.py").read_text(encoding="utf-8")
         intelligence_text = (APP_ROOT / "sections" / "cost_contract_intelligence.py").read_text(encoding="utf-8")
         workflow_text = (APP_ROOT / "sections" / "cost_contract_workflow.py").read_text(encoding="utf-8")
-        cost_contract_surface = full_workspace_text + contract_text + panel_text + intelligence_text + workflow_text
+        overview_floor_text = (APP_ROOT / "sections" / "cost_contract_overview_floor.py").read_text(encoding="utf-8")
+        cost_contract_surface = full_workspace_text + contract_text + panel_text + intelligence_text + workflow_text + overview_floor_text
         nav_text = (APP_ROOT / "sections" / "navigation.py").read_text(encoding="utf-8")
         self.assertIn('"Cost Overview"', cost_contract_surface)
         self.assertIn('"Cost by Warehouse"', cost_contract_surface)
@@ -578,7 +579,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Open Advanced Cost Tools", full_workspace_text)
         self.assertEqual(cost_contract_contracts.ADVANCED_COST_TOOL_MODULES["Storage & Retention"], "sections.storage_monitor")
         self.assertIn('"Storage & Retention": "sections.storage_monitor"', contract_text)
-        self.assertIn('"Refresh Cost"', full_workspace_text)
+        self.assertIn('"Refresh Cost"', cost_contract_surface)
         self.assertNotIn('"Refresh Overview"', full_workspace_text)
         self.assertNotIn('"Refresh Cost Details"', full_workspace_text)
         self.assertNotIn("Cost Detail Refresh", full_workspace_text)

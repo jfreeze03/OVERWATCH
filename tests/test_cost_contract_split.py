@@ -68,6 +68,7 @@ class CostContractSplitTests(unittest.TestCase):
             APP_ROOT / "sections" / "cost_contract_loader.py",
             APP_ROOT / "sections" / "cost_contract_monitoring.py",
             APP_ROOT / "sections" / "cost_contract_overview.py",
+            APP_ROOT / "sections" / "cost_contract_overview_floor.py",
             APP_ROOT / "sections" / "cost_contract_overview_panels.py",
             APP_ROOT / "sections" / "cost_contract_panels.py",
             APP_ROOT / "sections" / "cost_contract_rendering.py",

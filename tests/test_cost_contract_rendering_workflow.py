@@ -1,4 +1,5 @@
 from pathlib import Path
+from contextlib import ExitStack
 import sys
 import unittest
 from unittest.mock import patch
@@ -24,9 +25,11 @@ class CostContractRenderingWorkflowTests(unittest.TestCase):
         from sections import cost_contract
         from sections import cost_contract_alert_context
         from sections import cost_contract_evidence_panels
+        from sections import cost_contract_overview_floor
         from sections import cost_contract_rendering
         from sections import cost_contract_workflow
 
+        self.assertIs(cost_contract._render_cost_watch_floor, cost_contract_overview_floor._render_cost_watch_floor)
         self.assertIs(cost_contract.render_signal_confidence, cost_contract_rendering.render_signal_confidence)
         self.assertIs(cost_contract.render_operator_briefing, cost_contract_rendering.render_operator_briefing)
         self.assertIs(cost_contract.render_workflow_module, cost_contract_rendering.render_workflow_module)
@@ -161,6 +164,7 @@ class CostContractRenderingWorkflowTests(unittest.TestCase):
 
     def test_workflow_dispatch_preserves_cost_overview_and_delegated_module_routing(self):
         from sections import cost_contract_workflow
+        from sections.cost_contract_overview_floor import _render_cost_watch_floor
 
         calls: list[tuple[str, float]] = []
         cost_contract_workflow.set_cost_overview_renderer(lambda company, price: calls.append((company, price)))
@@ -175,6 +179,161 @@ class CostContractRenderingWorkflowTests(unittest.TestCase):
         self.assertEqual(calls, [("ALFA", 4.25)])
         module_render.assert_called_once()
         self.assertEqual(module_render.call_args.args[0], "Cost Recommendations")
+        cost_contract_workflow.set_cost_overview_renderer(_render_cost_watch_floor)
+
+    def test_cost_overview_floor_refresh_uses_existing_button_and_session_contract(self):
+        from sections import cost_contract_overview_floor
+        from sections.cost_contract_contracts import (
+            _COST_SPLASH_AUTOLOAD_BLOCKED_SCOPE_KEY,
+            _COST_SPLASH_KEY,
+        )
+
+        state = {
+            "cost_contract_cockpit_window": 7,
+            _COST_SPLASH_KEY: {"old": True},
+            _COST_SPLASH_AUTOLOAD_BLOCKED_SCOPE_KEY: ("ALFA", 7),
+        }
+        button_keys: list[str] = []
+
+        def _columns(spec):
+            return [_Column() for _ in range(len(spec) if isinstance(spec, list) else spec)]
+
+        def _button(_label, *, key, **_kwargs):
+            button_keys.append(key)
+            return key == "cost_contract_refresh"
+
+        with (
+            patch.object(cost_contract_overview_floor.st, "session_state", state),
+            patch.object(cost_contract_overview_floor.st, "columns", side_effect=_columns),
+            patch.object(cost_contract_overview_floor.st, "selectbox", return_value=7),
+            patch.object(cost_contract_overview_floor.st, "button", side_effect=_button),
+            patch.object(cost_contract_overview_floor, "_ensure_cost_splash", return_value={}) as ensure_splash,
+            patch.object(cost_contract_overview_floor, "_render_cost_splash"),
+            patch.object(cost_contract_overview_floor, "render_data_freshness"),
+            patch.object(cost_contract_overview_floor, "get_session_for_action", return_value=object()) as get_session,
+            patch.object(cost_contract_overview_floor, "_refresh_cost_detail_state") as refresh_detail,
+            patch.object(cost_contract_overview_floor, "defer_section_note"),
+        ):
+            cost_contract_overview_floor._render_cost_watch_floor("ALFA", 4.0)
+
+        self.assertIn("cost_contract_refresh", button_keys)
+        self.assertNotIn(_COST_SPLASH_KEY, state)
+        self.assertNotIn(_COST_SPLASH_AUTOLOAD_BLOCKED_SCOPE_KEY, state)
+        ensure_splash.assert_called_once_with("ALFA", 7, 4.0)
+        get_session.assert_called_once()
+        refresh_detail.assert_called_once()
+
+    def test_cost_overview_floor_advanced_detail_gate_stays_hidden_by_default(self):
+        from sections import cost_contract_overview_floor
+        from sections.cost_contract_contracts import _ADVANCED_COST_DETAIL_VISIBLE_KEY
+
+        state = {
+            "cost_contract_cockpit_window": 7,
+            "cost_contract_cockpit": pd.DataFrame([{
+                "CURRENT_CREDITS": 120.0,
+                "PRIOR_CREDITS": 100.0,
+                "TOP_INCREASE_WAREHOUSE": "COMPUTE_WH",
+                "TOP_INCREASE_CREDITS": 12.0,
+            }]),
+            "cost_contract_cockpit_meta": {"company": "ALFA", "days": 7},
+            "cost_contract_cockpit_source": "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY",
+        }
+        button_keys: list[str] = []
+
+        def _columns(spec):
+            return [_Column() for _ in range(len(spec) if isinstance(spec, list) else spec)]
+
+        def _button(_label, *, key, **_kwargs):
+            button_keys.append(key)
+            return key == "cost_contract_view_advanced_details"
+
+        with (
+            patch.object(cost_contract_overview_floor.st, "session_state", state),
+            patch.object(cost_contract_overview_floor.st, "columns", side_effect=_columns),
+            patch.object(cost_contract_overview_floor.st, "selectbox", return_value=7),
+            patch.object(cost_contract_overview_floor.st, "button", side_effect=_button),
+            patch.object(cost_contract_overview_floor.st, "caption"),
+            patch.object(cost_contract_overview_floor.st, "rerun") as rerun,
+            patch.object(cost_contract_overview_floor, "_maybe_autoload_cost_splash", return_value={}),
+            patch.object(cost_contract_overview_floor, "_render_cost_splash"),
+            patch.object(cost_contract_overview_floor, "render_data_freshness"),
+            patch.object(cost_contract_overview_floor, "defer_section_note"),
+            patch.object(cost_contract_overview_floor, "defer_source_note"),
+            patch.object(cost_contract_overview_floor, "_render_cost_run_rate_lens") as run_rate_lens,
+        ):
+            cost_contract_overview_floor._render_cost_watch_floor("ALFA", 4.0)
+
+        self.assertEqual(button_keys, ["cost_contract_refresh", "cost_contract_view_advanced_details"])
+        self.assertTrue(state[_ADVANCED_COST_DETAIL_VISIBLE_KEY])
+        rerun.assert_called_once()
+        run_rate_lens.assert_not_called()
+
+    def test_cost_overview_floor_next_move_buttons_keep_route_key_contract(self):
+        from sections import cost_contract_overview_floor
+        from sections.cost_contract_contracts import _ADVANCED_COST_DETAIL_VISIBLE_KEY
+
+        state = {
+            "cost_contract_cockpit_window": 7,
+            _ADVANCED_COST_DETAIL_VISIBLE_KEY: True,
+            "cost_contract_cockpit": pd.DataFrame([{
+                "CURRENT_CREDITS": 140.0,
+                "PRIOR_CREDITS": 100.0,
+                "TOP_INCREASE_WAREHOUSE": "COMPUTE_WH",
+                "TOP_INCREASE_CREDITS": 15.0,
+            }]),
+            "cost_contract_cockpit_meta": {"company": "ALFA", "days": 7},
+            "cost_contract_queue": pd.DataFrame([{
+                "STATUS": "New",
+                "SEVERITY": "High",
+                "EST_MONTHLY_SAVINGS": 125.0,
+            }]),
+        }
+        button_keys: list[str] = []
+
+        def _columns(spec):
+            return [_Column() for _ in range(len(spec) if isinstance(spec, list) else spec)]
+
+        def _button(_label, *, key, **_kwargs):
+            button_keys.append(key)
+            return key == "cost_contract_next_0_Cost by Warehouse"
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(cost_contract_overview_floor.st, "session_state", state))
+            stack.enter_context(patch.object(cost_contract_overview_floor.st, "columns", side_effect=_columns))
+            stack.enter_context(patch.object(cost_contract_overview_floor.st, "selectbox", return_value=7))
+            stack.enter_context(patch.object(cost_contract_overview_floor.st, "button", side_effect=_button))
+            stack.enter_context(patch.object(cost_contract_overview_floor.st, "caption"))
+            stack.enter_context(patch.object(cost_contract_overview_floor.st, "expander", return_value=_Column()))
+            stack.enter_context(patch.object(cost_contract_overview_floor.st, "markdown"))
+            rerun = stack.enter_context(patch.object(cost_contract_overview_floor.st, "rerun"))
+            stack.enter_context(patch.object(cost_contract_overview_floor, "_maybe_autoload_cost_splash", return_value={}))
+            stack.enter_context(patch.object(cost_contract_overview_floor, "_render_cost_splash"))
+            stack.enter_context(patch.object(cost_contract_overview_floor, "render_data_freshness"))
+            stack.enter_context(patch.object(cost_contract_overview_floor, "defer_section_note"))
+            stack.enter_context(patch.object(cost_contract_overview_floor, "defer_source_note"))
+            stack.enter_context(patch.object(cost_contract_overview_floor, "_loaded_cortex_state", return_value=(0.0, 0)))
+            stack.enter_context(patch.object(cost_contract_overview_floor, "_render_metric_items"))
+            stack.enter_context(patch.object(cost_contract_overview_floor, "_render_cost_run_rate_lens"))
+            stack.enter_context(patch.object(cost_contract_overview_floor, "_render_cost_period_explanation"))
+            stack.enter_context(patch.object(cost_contract_overview_floor, "_render_cost_source_health"))
+            stack.enter_context(patch.object(cost_contract_overview_floor, "_render_query_attribution_gap"))
+            stack.enter_context(patch.object(cost_contract_overview_floor, "_render_account_service_cost_lens"))
+            stack.enter_context(patch.object(cost_contract_overview_floor, "_render_cost_advisor_board"))
+            stack.enter_context(patch.object(cost_contract_overview_floor, "_render_cost_efficiency_rca"))
+            stack.enter_context(patch.object(cost_contract_overview_floor, "_render_cost_spike_root_cause_board"))
+            stack.enter_context(patch.object(cost_contract_overview_floor, "_render_change_cost_correlation_board"))
+            stack.enter_context(patch.object(cost_contract_overview_floor, "_render_cost_monitoring_mart_and_incident_timeline"))
+            stack.enter_context(patch.object(cost_contract_overview_floor, "_render_savings_closure_control"))
+            stack.enter_context(patch.object(cost_contract_overview_floor, "_render_cost_control_coverage_board"))
+            stack.enter_context(patch.object(cost_contract_overview_floor, "_render_cost_allocation_trust_board"))
+            stack.enter_context(patch.object(cost_contract_overview_floor, "_render_cost_drilldown_command_map"))
+            stack.enter_context(patch.object(cost_contract_overview_floor, "_render_cost_decomposition_board"))
+            stack.enter_context(patch.object(cost_contract_overview_floor, "render_escaped_bold_text"))
+            cost_contract_overview_floor._render_cost_watch_floor("ALFA", 4.0)
+
+        self.assertIn("cost_contract_next_0_Cost by Warehouse", button_keys)
+        self.assertEqual(state["cost_contract_workflow"], "Cost by Warehouse")
+        rerun.assert_called_once()
 
 
 if __name__ == "__main__":

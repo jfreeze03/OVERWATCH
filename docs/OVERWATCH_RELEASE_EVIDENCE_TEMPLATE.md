@@ -1,12 +1,12 @@
-# OVERWATCH Release Evidence Template
+# OVERWATCH Release Evidence
 
-## Commit SHA
-
-- Release commit:
+## Commit
+- Commit SHA:
 - Branch:
+- Release date:
+- Operator:
 
-## Validation Commands And Results
-
+## Validation Commands
 - `python -m ruff check .overwatch_final tests`:
 - `python -m mypy`:
 - `python -m compileall .overwatch_final tests`:
@@ -14,49 +14,65 @@
 - `python -m unittest tests.test_cortex_guard`:
 - `python -m unittest discover -s tests`:
 
-## Deployment Contract Result
+## Deployment Contract
+- Streamlit in Snowflake entrypoint:
+- Manifest:
+- Warehouse:
+- Execute-as boundary:
+- Result:
 
-- `tests.test_deployment_contract` result:
-- `STREAMLIT_CLOUD_DEPLOY.md` reviewed:
-
-## Mart Setup Status
-
-- `snowflake/OVERWATCH_MART_SETUP.sql` deployed:
+## Mart Setup
+- Setup script used:
 - Target account/environment:
 - Core facts verified:
+- Mart load status:
+- Notes:
 
-## Browser Sanity Result
+## Browser Sanity
+- Executive Landing:
+- DBA Control Room:
+- Alert Center:
+- Cost & Contract:
+- Workload Operations:
+- Security Monitoring:
+- Legacy/deep-link workflow checks:
 
-- Six primary routes rendered:
-- Compatibility/deep-link routes checked:
-- Notes/screenshots:
+## Performance Smoke
+- `perf_tests/README.md` threshold review:
+- Section smoke result:
+- HTTP/live browser p95:
+- Failed dashboard queries:
+- Readiness score:
 
-## Performance Smoke Result
+## Guarded Operations
+- Action queue review-only smoke:
+- Typed confirmation smoke:
+- `admin_button_disabled()` unauthorized-user smoke:
+- Notes:
 
-- `perf_tests/README.md` thresholds reviewed:
-- Section smoke command/result:
-- Regressions or exceptions:
-
-## Action Queue/Admin Guard Smoke Result
-
-- Review-only action queue previews:
-- Typed confirmation exact-text checks:
-- `admin_button_disabled()` unauthorized-action checks:
-
-## Live Snowflake Regression Result
-
+## Live Snowflake Regression
+- Run status:
+- Credentials/auth available:
 - Result:
-- If not run: `not run, credentials unavailable`
+- If not run, reason:
 - Do not claim live Snowflake regression passed unless it was actually run with credentials/auth available.
 
-## Known Deferred Items
+## Secrets Check
+- Git diff/logs/screenshots/release notes checked:
+- Result:
 
+## Rollback / Reset
+- Rollback reference:
+- `snowflake/OVERWATCH_MART_DROP.sql` reset posture acknowledged:
+- Notes:
+
+## Deferred Items
 - Item:
 - Reason:
-- Owner/follow-up:
+- Owner:
+- Follow-up:
 
-## Rollback/Reset Reference
-
+References:
 - Deployment guide: `STREAMLIT_CLOUD_DEPLOY.md`
 - Mart setup: `snowflake/OVERWATCH_MART_SETUP.sql`
 - Reset/rollback runbook: `snowflake/OVERWATCH_MART_DROP.sql`

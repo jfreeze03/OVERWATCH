@@ -89,7 +89,9 @@ adds release gates for validation, deployment contracts, mart setup, browser
 smoke, performance smoke, action queue/admin guard checks, secrets, rollback,
 and release notes. `docs/OVERWATCH_RELEASE_EVIDENCE_TEMPLATE.md` captures the
 release evidence bundle and explicitly prevents claiming live Snowflake
-regression success unless the credentialed run actually happened.
+regression success unless the credentialed run actually happened. The filled
+release record for this gate is
+`docs/releases/OVERWATCH_RELEASE_EVIDENCE_a00846f_2026-06-23.md`.
 
 ## New Focused Mart Modules
 
@@ -98,7 +100,7 @@ regression success unless the credentialed run actually happened.
 | `.overwatch_final/utils/mart_contracts.py` | 25 | `MartResult` and `mart_source_caption()` for fallback-friendly mart result contracts. |
 | `.overwatch_final/utils/mart_names.py` | 17 | Safe fully-qualified mart object-name helper using existing config and identifier validation. |
 | `.overwatch_final/utils/mart_filters.py` | 95 | Pure mart text/company/environment/database/window filter helpers used by existing SQL builders. |
-| `.overwatch_final/utils/mart_control_room.py` | 244 | Pure DBA Control Room mart SQL builders; the `load_latest_control_room_mart()` loader remains in `utils.mart` to avoid a loader/import cycle. |
+| `.overwatch_final/utils/mart_control_room.py` | 244 | Pure DBA Control Room mart SQL builders. |
 | `.overwatch_final/utils/mart_account_health.py` | 275 | Account Health mart SQL builders for storage, cost drivers, change, failure, credit, queue, and YTD summaries. |
 | `.overwatch_final/utils/mart_service_health.py` | 91 | Service-health mart SQL builders for query, warehouse, login, and task health summaries. |
 | `.overwatch_final/utils/mart_task_procedure.py` | 272 | Task, query-detail lookup, and stored-procedure mart SQL builders. |
@@ -255,7 +257,7 @@ These are candidates, not approved removals:
 | Large app modules above 3000 lines | 0 | 3 or fewer |
 | Daily operator mart tables | 90+ expected in current setup | 28-34 after migration |
 | Primary route aliases exposed to users | Several before this pass | Zero known in primary UI |
-| Live Snowflake regression coverage | New runner, blocked by auth | Passing in test account |
+| Live Snowflake regression coverage | Credentialed PASS recorded in `docs/OVERWATCH_SNOWFLAKE_REGRESSION_RESULTS.md` | Passing in test account |
 
 ## Tests Proving No Functionality Was Lost
 
@@ -276,16 +278,19 @@ These are candidates, not approved removals:
 - `tests/test_route_registry.py` locks the central route registry, old 4-section absence from primary UI, legacy section aliases, workflow/default validity, config.py compatibility reexports, route-state parity, dependency-light source guard, import-only runtime smoke behavior, Executive Landing aliases, Security Monitoring aliases, Alert Center aliases, and Account Health retired-route normalization.
 - `tests/test_mart_contracts.py` locks the static mart-load rationalization inventory, setup/drop artifact presence, reset-only drop posture, `mart_object_name()` behavior, public `utils.mart` helper groups, complete `build_mart_*_sql` grouping, explicit `utils.mart.__all__` coverage, focused-module identity reexports including the loader split, mart filter behavior, every grouped SQL builder's mart object references/no-ACCOUNT_USAGE posture, `utils.mart` facade no-SQL/no-loader-definition guard, `load_mart_table()` success/empty/error behavior, source-caption behavior, unique setup table names, required core facts, and static task/procedure families.
 - `tests/test_production_readiness_contract.py` locks the production-readiness checklist document, six-section route sanity model, compatibility/deep-link framing, static release gate references, and release evidence template.
+- `tests/test_release_evidence_contract.py` locks the release evidence template, requires at least one filled release record, blocks empty placeholder bullets, requires live Snowflake PASS claims to cite the recorded result document and environment fields, and requires "not run" claims to include a reason.
+- `tests/test_snowflake_regression_results_contract.py` locks the recorded live Snowflake regression result fields and ensures recommended follow-ups such as section smoke and full unit regression are either recorded in release evidence or explicitly deferred.
 - `tests/test_command_center.py` now validates correlated investigation UI placement and explicit load gates.
 - `tests/test_contention_center.py`, `tests/test_formula_regressions.py`, and `tests/test_operational_intelligence.py` validate renamed workflow/action contracts.
 - `perf_tests/full_app_snowflake_regression.py` is the live Snowflake gate once authentication is corrected.
 
 ## Next Rewrite Order
 
-1. Run/record production-readiness validation gates.
-2. Add live Snowflake regression once credentials/auth are available.
-3. Revisit `contention_center.py` / `stored_proc_tracker.py` / DBA Control Room render only with route metrics.
-4. Mart load-plan rationalization only after production release evidence is green.
+1. Resolve any failed production-readiness gates.
+2. Add or rerun live Snowflake regression only when credentials/auth are available.
+3. Run browser/section smoke against a staged app.
+4. Revisit `contention_center.py` / `stored_proc_tracker.py` / DBA Control Room render only with route metrics.
+5. Mart load-plan rationalization only after release evidence is green.
 
 ## De-Bloat Completed After Initial Audit
 
@@ -340,4 +345,4 @@ These are candidates, not approved removals:
 | Mart contracts/names/filters micro-split | Moved `MartResult`, `mart_source_caption()`, `mart_object_name()`, and pure mart filter/window helpers into `mart_contracts.py`, `mart_names.py`, and `mart_filters.py` while keeping all public and private compatibility imports available from `utils.mart`. Large SQL builder families were subsequently split once contract coverage was in place. |
 | Mart SQL-family split started | Moved pure DBA Control Room, Account Health, Service Health, Task, Query Detail, and Procedure SQL builders into focused `mart_control_room.py`, `mart_account_health.py`, `mart_service_health.py`, and `mart_task_procedure.py` modules. `utils.mart` remains the compatibility surface and keeps `load_mart_table()`, `load_latest_control_room_mart()`, and the larger cost/warehouse/usage/adoption/storage/pipeline/recommendation builder families. Complete builder grouping, object-reference, no-ACCOUNT_USAGE, and identity tests cover the moved families. |
 | Mart SQL-family split completed | Moved the remaining cost, warehouse, usage, adoption, storage/pipeline, recommendation, bottleneck, and degradation mart SQL builders into focused modules. `utils.mart` became a 136-line compatibility reexport facade with explicit `__all__`; tests cover every public builder's focused-module identity, grouping, mart object references, no direct ACCOUNT_USAGE references, and loader success/empty/error behavior. |
-| Mart loader split and release evidence hardening | Moved `load_mart_table()` and `load_latest_control_room_mart()` into `mart_loader.py`, keeping their public `utils.mart` reexports and offline success/empty/error behavior intact. Added route-aware production-readiness checklist coverage and a release evidence template for validation, deployment, mart setup, browser/performance smoke, action queue/admin guard smoke, live-regression caveats, deferred items, and rollback references. |
+| Mart loader split and release evidence hardening | Moved `load_mart_table()` and `load_latest_control_room_mart()` into `mart_loader.py`, keeping their public `utils.mart` reexports and offline success/empty/error behavior intact. Added route-aware production-readiness checklist coverage, a release evidence template, a filled release evidence record for `a00846f`, and contract tests for validation, deployment, mart setup, browser/performance smoke, action queue/admin guard smoke, live-regression caveats, deferred items, and rollback references. |

@@ -76,16 +76,17 @@ class ProductionReadinessContractTests(unittest.TestCase):
         text = template_path.read_text(encoding="utf-8")
 
         for heading in (
-            "## Commit SHA",
-            "## Validation Commands And Results",
-            "## Deployment Contract Result",
-            "## Mart Setup Status",
-            "## Browser Sanity Result",
-            "## Performance Smoke Result",
-            "## Action Queue/Admin Guard Smoke Result",
-            "## Live Snowflake Regression Result",
-            "## Known Deferred Items",
-            "## Rollback/Reset Reference",
+            "## Commit",
+            "## Validation Commands",
+            "## Deployment Contract",
+            "## Mart Setup",
+            "## Browser Sanity",
+            "## Performance Smoke",
+            "## Guarded Operations",
+            "## Live Snowflake Regression",
+            "## Secrets Check",
+            "## Rollback / Reset",
+            "## Deferred Items",
         ):
             with self.subTest(heading=heading):
                 self.assertIn(heading, text)

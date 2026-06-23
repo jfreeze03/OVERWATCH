@@ -1,6 +1,6 @@
 # OVERWATCH Code De-Bloat Plan
 
-Date: 2026-06-22
+Date: 2026-06-23
 
 ## Goal
 
@@ -10,7 +10,7 @@ Reduce bloat without breaking the six-section operator model or removing useful 
 
 | File | Approx lines | Primary issue | Action |
 |---|---:|---|---|
-| `.overwatch_final/sections/dba_tools.py` | 3861 | Admin tools, generated SQL, settings controls, compare tools, validation utilities. | Keep under Workload Operations > Advanced DBA Tools / Control Room Admin. |
+| `.overwatch_final/sections/dba_tools.py` | 2668 | Public DBA Tools shell after extracting contracts, common helpers, warehouse-setting planning, schema/data compare helpers, and setup status checks. | Continue only with render-branch splits once tests cover the admin guardrails. |
 | `.overwatch_final/utils/shared_metrics.py` | 3804 | Many shared SQL builders and cache wrappers. | Consolidate shared mart-first query helpers by workflow. |
 | `.overwatch_final/sections/account_health.py` | 3604 | Legacy account-health cockpit overlaps DBA Control Room. | Retain as compatibility route, move useful pieces into DBA workflows. |
 | `.overwatch_final/sections/executive_landing.py` | 3470 | Advanced rollups remain in same module as front door. | Split advanced/admin rollups later if tests prove import or render pain. |
@@ -66,12 +66,11 @@ These are candidates, not approved removals:
 
 ## Next Rewrite Order
 
-1. Continue splitting `warehouse_health.py` render orchestration only where tests prove the workflow shell stays stable.
-2. Split `dba_tools.py` into compare tools, generated SQL, validation utilities, and settings controls.
-3. Consolidate shared explicit-load gates and priority dataframe patterns.
-4. Break up `shared_metrics.py` by workflow/query family only after the cost/workload callers have regression coverage.
-5. Retire duplicated legacy route rendering after route metrics prove no active usage.
-6. Rewrite mart loads to feed daily workflows directly before dropping any old objects.
+1. Continue splitting `dba_tools.py` render branches only where tests prove the typed-confirmation/admin guardrails stay stable.
+2. Consolidate shared explicit-load gates and priority dataframe patterns.
+3. Break up `shared_metrics.py` by workflow/query family only after the cost/workload callers have regression coverage.
+4. Retire duplicated legacy route rendering after route metrics prove no active usage.
+5. Rewrite mart loads to feed daily workflows directly before dropping any old objects.
 
 ## De-Bloat Completed After Initial Audit
 
@@ -85,3 +84,4 @@ These are candidates, not approved removals:
 | Alert facade import hygiene | Replaced production `utils.alerts` imports in Alert Center with focused-module imports. No direct private imports from `utils.alerts` are expected outside compatibility tests. |
 | Cost & Contract split | Reduced `.overwatch_final/sections/cost_contract.py` from about 5003 lines to a 243-line public shell. Implementation now lives in focused `cost_contract_*` modules for contracts, helpers, dataframes, SQL, charts, advisor, panels, splash/load, monitoring, evidence, rendering, workflow routing, and overview floor orchestration. |
 | Warehouse Health split continued | Reduced `.overwatch_final/sections/warehouse_health.py` from about 4108 lines to about 229 lines by extracting stable contracts, SQL builders, pure dataframe helpers, capacity decision helpers, overview launchpad panels, setting/action-control builders, guarded setting panels, review snapshot SQL, capacity SQL/brief/watch-floor helpers, source-health panels, explicit queue writers, the action-session loader, and per-workflow view renderers into focused `warehouse_health_*` modules. The main `render()` flow now remains a thin public selector/support-panel/dispatch shell. |
+| DBA Tools helper split started | Reduced `.overwatch_final/sections/dba_tools.py` from about 4128 lines to about 2668 lines by extracting stable contracts, common Streamlit-safe helpers, review-only warehouse setting planning, schema compare normalization/DDL helpers, data compare planning/SQL helpers, and setup status checks into focused `dba_tools_*` modules. The optional Warehouse Settings render branch was intentionally left in the public shell until typed-confirmation/admin execution contracts have deeper render coverage. |

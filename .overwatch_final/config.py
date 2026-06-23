@@ -7,6 +7,15 @@ cost defaults should stay here instead of being repeated in section modules.
 
 from dataclasses import dataclass
 
+from route_registry import (
+    LEGACY_SECTION_ALIASES as _ROUTE_LEGACY_SECTION_ALIASES,
+    PRIMARY_SECTION_TITLES as _ROUTE_PRIMARY_SECTION_TITLES,
+    RETIRED_SECTION_ALIASES as _ROUTE_RETIRED_SECTION_ALIASES,
+    SECTION_ALIASES as _ROUTE_SECTION_ALIASES,
+    SECTION_ROUTE_STATE as _ROUTE_SECTION_ROUTE_STATE,
+    normalize_section_route as _normalize_section_route,
+)
+
 
 CONFIG_VERSION = "2026-06-05-trexis-scope-v1"
 
@@ -313,211 +322,19 @@ ALL_SECTIONS = [_section.label for _section in SECTION_DEFINITIONS]
 PRIMARY_SECTIONS = [section for section in ALL_SECTIONS if section not in PRIMARY_NAV_HIDDEN_SECTIONS]
 SECTION_MODULES = {_section.label: _section.module for _section in SECTION_DEFINITIONS}
 _CANONICAL_SECTION_BY_TITLE = {_section.title: _section.label for _section in SECTION_DEFINITIONS}
-SECTION_REDIRECTS = {
-    "Executive Briefing": _CANONICAL_SECTION_BY_TITLE["Executive Landing"],
-    "Query Workbench": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
-    "Live Monitor": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
-    "Detailed Diagnosis": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
-    "Query Analysis": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
-    "Query Search & History": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
-    "Task Management": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
-    "Pipeline Health": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
-    "Stored Proc Tracker": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
-    "Object Change Monitor": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
-    "Schema Compare": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
-    "Data Compare": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
-    "Cost Center": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
-    "Credit Contract": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
-    "Recommendations": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
-    "Recommendations & Anomalies": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
-    "Cortex Monitor": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
-    "AI & Cortex Monitor": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
-    "SPCS Tracker": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
-    "Usage Overview": _CANONICAL_SECTION_BY_TITLE["DBA Control Room"],
-    "Service Health": _CANONICAL_SECTION_BY_TITLE["DBA Control Room"],
-    "Fast Watch": _CANONICAL_SECTION_BY_TITLE["DBA Control Room"],
-    "Morning Brief": _CANONICAL_SECTION_BY_TITLE["DBA Control Room"],
-    "Alerts": _CANONICAL_SECTION_BY_TITLE["Alert Center"],
-    "Alert History": _CANONICAL_SECTION_BY_TITLE["Alert Center"],
-    "Alert Configuration": _CANONICAL_SECTION_BY_TITLE["Alert Center"],
-    "Adoption Analytics": _CANONICAL_SECTION_BY_TITLE["Executive Landing"],
-    "Storage Monitor": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
-    "Security Posture": _CANONICAL_SECTION_BY_TITLE["Security Monitoring"],
-    "Security & Access": _CANONICAL_SECTION_BY_TITLE["Security Monitoring"],
-    "Data Sharing": _CANONICAL_SECTION_BY_TITLE["Security Monitoring"],
-    "Failed Logins": _CANONICAL_SECTION_BY_TITLE["Security Monitoring"],
-    "Access posture": _CANONICAL_SECTION_BY_TITLE["Security Monitoring"],
-    "Access Posture": _CANONICAL_SECTION_BY_TITLE["Security Monitoring"],
-    "Command Center": _CANONICAL_SECTION_BY_TITLE["DBA Control Room"],
-    "Warehouse Health": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
-    "Optimization": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
-}
-RETIRED_SECTION_REDIRECTS = {
-    "Account Health": _CANONICAL_SECTION_BY_TITLE["DBA Control Room"],
-    "Warehouse Health": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
-    "Security Posture": _CANONICAL_SECTION_BY_TITLE["Security Monitoring"],
-}
-SECTION_ROUTE_STATE = {
-    "Executive Briefing": {
-        "executive_landing_workflow": "Executive Overview",
-    },
-    "Adoption Analytics": {
-        "executive_landing_workflow": "Executive Admin / Advanced",
-    },
-    "Account Health": {
-        "dba_control_room_active_view": "Morning Cockpit",
-        "_dba_control_room_full_workspace_requested": True,
-        "_dba_control_room_brief_mode": False,
-    },
-    "Command Center": {
-        "dba_control_room_active_view": "Morning Cockpit",
-    },
-    "Usage Overview": {
-        "dba_control_room_active_view": "Cost Watch",
-    },
-    "Service Health": {
-        "dba_control_room_active_view": "Control Room Admin / Advanced",
-    },
-    "Fast Watch": {
-        "dba_control_room_active_view": "Morning Cockpit",
-    },
-    "Morning Brief": {
-        "dba_control_room_active_view": "Morning Cockpit",
-    },
-    "Warehouse Health": {
-        "cost_contract_workflow": "Waste Detection",
-        "_cost_contract_full_workspace_requested": True,
-        "_cost_contract_brief_mode": False,
-    },
-    "Optimization": {
-        "cost_contract_workflow": "Cost Recommendations",
-        "_cost_contract_full_workspace_requested": True,
-        "_cost_contract_brief_mode": False,
-    },
-    "Cost Center": {
-        "cost_contract_workflow": "Cost by Warehouse",
-    },
-    "Credit Contract": {
-        "cost_contract_workflow": "Budget vs Actual",
-    },
-    "Recommendations & Anomalies": {
-        "cost_contract_workflow": "Cost Recommendations",
-    },
-    "Recommendations": {
-        "cost_contract_workflow": "Cost Recommendations",
-    },
-    "Cortex Monitor": {
-        "cost_contract_workflow": "Cost Overview",
-        "cost_contract_advanced_tool": "Cortex Spend",
-        "_cost_contract_show_advanced_tools": True,
-    },
-    "AI & Cortex Monitor": {
-        "cost_contract_workflow": "Cost Overview",
-        "cost_contract_advanced_tool": "Cortex Spend",
-        "_cost_contract_show_advanced_tools": True,
-    },
-    "Storage Monitor": {
-        "cost_contract_workflow": "Cost Overview",
-        "cost_contract_advanced_tool": "Storage & Retention",
-        "_cost_contract_show_advanced_tools": True,
-    },
-    "SPCS Tracker": {
-        "cost_contract_workflow": "Cost Overview",
-        "cost_contract_advanced_tool": "SPCS Spend",
-        "_cost_contract_show_advanced_tools": True,
-    },
-    "Alerts": {
-        "alert_center_active_view": "Active Alerts",
-    },
-    "Alert History": {
-        "alert_center_active_view": "Alert History",
-    },
-    "Alert Configuration": {
-        "alert_center_active_view": "Alert Settings / Admin",
-        "alert_center_admin_view": "Delivery & Automation",
-    },
-    "Security Posture": {
-        "security_posture_view": "Security Overview",
-        "security_posture_workflow": "Security Overview",
-    },
-    "Security & Access": {
-        "security_posture_view": "Risky Grants",
-        "security_posture_workflow": "Risky Grants",
-    },
-    "Data Sharing": {
-        "security_posture_view": "Data Sharing Exposure",
-        "security_posture_workflow": "Data Sharing Exposure",
-    },
-    "Failed Logins": {
-        "security_posture_view": "Failed Logins",
-        "security_posture_workflow": "Failed Logins",
-    },
-    "Access posture": {
-        "security_posture_view": "Security Overview",
-        "security_posture_workflow": "Security Overview",
-    },
-    "Access Posture": {
-        "security_posture_view": "Security Overview",
-        "security_posture_workflow": "Security Overview",
-    },
-    "Query Workbench": {
-        "workload_operations_workflow": "Query Investigation",
-    },
-    "Query Analysis": {
-        "workload_operations_workflow": "Query Investigation",
-    },
-    "Query Search & History": {
-        "workload_operations_workflow": "Query Investigation",
-        "query_analysis_active_view": "History Search",
-    },
-    "Detailed Diagnosis": {
-        "workload_operations_workflow": "Query Investigation",
-        "query_analysis_active_view": "Detailed Diagnosis",
-    },
-    "Live Monitor": {
-        "workload_operations_workflow": "Performance & Contention",
-    },
-    "Task Management": {
-        "workload_operations_workflow": "Pipeline & Task Health",
-        "workload_operations_pipeline_focus": "Failed Tasks",
-    },
-    "Pipeline Health": {
-        "workload_operations_workflow": "Pipeline & Task Health",
-        "workload_operations_pipeline_focus": "Load Issues & SLA",
-    },
-    "Stored Proc Tracker": {
-        "workload_operations_workflow": "Pipeline & Task Health",
-        "workload_operations_pipeline_focus": "Failed Procedures",
-    },
-    "Object Change Monitor": {
-        "workload_operations_workflow": "Change Analysis",
-    },
-    "Schema Compare": {
-        "workload_operations_workflow": "Advanced DBA Tools",
-        "dba_tools_focus": "Object Monitoring",
-        "dba_tools_focus_tool": "Schema Compare",
-        "dba_tools_group_selector": "Object Monitoring",
-    },
-    "Data Compare": {
-        "workload_operations_workflow": "Advanced DBA Tools",
-        "dba_tools_focus": "Object Monitoring",
-        "dba_tools_focus_tool": "Data Compare",
-        "dba_tools_group_selector": "Object Monitoring",
-    },
-}
+SECTION_REDIRECTS = dict(_ROUTE_LEGACY_SECTION_ALIASES)
+RETIRED_SECTION_REDIRECTS = dict(_ROUTE_RETIRED_SECTION_ALIASES)
+SECTION_ROUTE_STATE = {route: dict(state) for route, state in _ROUTE_SECTION_ROUTE_STATE.items()}
 SECTION_BY_TITLE = dict(_CANONICAL_SECTION_BY_TITLE)
 SECTION_ICONS = {_section.title: _section.icon for _section in SECTION_DEFINITIONS}
 
-SECTION_ALIASES = {
-    **_CANONICAL_SECTION_BY_TITLE,
-    **SECTION_REDIRECTS,
-    **RETIRED_SECTION_REDIRECTS,
-}
+SECTION_ALIASES = dict(_ROUTE_SECTION_ALIASES)
+assert tuple(PRIMARY_SECTIONS) == _ROUTE_PRIMARY_SECTION_TITLES
 
 
 def normalize_section_name(section: str) -> str:
     """Return the current canonical section name for a route or alias."""
-    return SECTION_ALIASES.get(str(section or "").strip(), str(section or "").strip())
+    return _normalize_section_route(section)
 
 
 def compatibility_state_for_section(section: str) -> dict[str, object]:

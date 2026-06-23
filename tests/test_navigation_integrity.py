@@ -687,7 +687,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("Architecture Readiness", SECTION_ALIASES)
         self.assertNotIn("Disaster Recovery", SECTION_ALIASES)
         self.assertEqual(SECTION_ALIASES["Executive Briefing"], SECTION_BY_TITLE["Executive Landing"])
-        self.assertNotIn("LEGACY_SECTION_ALIASES", (APP_ROOT / "config.py").read_text(encoding="utf-8"))
+        self.assertNotIn("LEGACY_SECTION_ALIASES = {", (APP_ROOT / "config.py").read_text(encoding="utf-8"))
 
     def test_experience_views_are_removed_for_admin_only_app(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
@@ -753,25 +753,26 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('with st.expander("Advanced observability charts and source grids", expanded=False):', executive_admin)
 
     def test_section_alias_literal_has_no_duplicate_keys(self):
-        config_tree = ast.parse((APP_ROOT / "config.py").read_text(encoding="utf-8"))
-        alias_dict = None
-        for node in config_tree.body:
-            if (
-                isinstance(node, ast.Assign)
-                and any(isinstance(target, ast.Name) and target.id == "SECTION_ALIASES" for target in node.targets)
-                and isinstance(node.value, ast.Dict)
-            ):
-                alias_dict = node.value
-                break
+        registry_tree = ast.parse((APP_ROOT / "route_registry.py").read_text(encoding="utf-8"))
+        for dict_name in ("LEGACY_SECTION_ALIASES", "RETIRED_SECTION_ALIASES"):
+            alias_dict = None
+            for node in registry_tree.body:
+                if (
+                    isinstance(node, ast.Assign)
+                    and any(isinstance(target, ast.Name) and target.id == dict_name for target in node.targets)
+                    and isinstance(node.value, ast.Dict)
+                ):
+                    alias_dict = node.value
+                    break
 
-        self.assertIsNotNone(alias_dict)
-        literal_keys = [
-            key.value
-            for key in alias_dict.keys
-            if isinstance(key, ast.Constant) and isinstance(key.value, str)
-        ]
-        duplicates = sorted({key for key in literal_keys if literal_keys.count(key) > 1})
-        self.assertEqual(duplicates, [])
+            self.assertIsNotNone(alias_dict)
+            literal_keys = [
+                key.value
+                for key in alias_dict.keys
+                if isinstance(key, ast.Constant) and isinstance(key.value, str)
+            ]
+            duplicates = sorted({key for key in literal_keys if literal_keys.count(key) > 1})
+            self.assertEqual(duplicates, [])
 
     def test_ask_overwatch_is_evidence_grounded_without_raw_cortex_call(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")

@@ -9,6 +9,7 @@ sys.path.insert(0, str(APP_ROOT))
 
 import route_registry  # noqa: E402
 import workflow_contracts  # noqa: E402
+import config  # noqa: E402
 from config import PRIMARY_SECTIONS, normalize_section_name  # noqa: E402
 from sections import account_health  # noqa: E402
 from sections import alert_center  # noqa: E402
@@ -26,6 +27,37 @@ class RouteRegistryTests(unittest.TestCase):
             with self.subTest(title=title):
                 self.assertNotIn(title, PRIMARY_SECTIONS)
         self.assertEqual(tuple(PRIMARY_SECTIONS), route_registry.PRIMARY_SECTION_TITLES)
+
+    def test_primary_sections_have_workflow_contracts_and_defaults(self):
+        for section in route_registry.PRIMARY_SECTION_TITLES:
+            with self.subTest(section=section):
+                workflows = route_registry.SECTION_WORKFLOW_CONTRACT[section]
+                self.assertGreater(len(workflows), 0)
+                self.assertIn(route_registry.DEFAULT_WORKFLOW_BY_SECTION[section], workflows)
+
+    def test_legacy_route_contract_targets_are_primary_sections(self):
+        primary = set(route_registry.PRIMARY_SECTION_TITLES)
+        for route, target, state in route_registry.LEGACY_ROUTE_CONTRACT:
+            with self.subTest(route=route):
+                self.assertIn(target, primary)
+                self.assertIsInstance(state, dict)
+
+    def test_route_state_keys_are_known_routes(self):
+        known_routes = (
+            set(route_registry.PRIMARY_SECTION_TITLES)
+            | set(route_registry.LEGACY_SECTION_ALIASES)
+            | set(route_registry.RETIRED_SECTION_ALIASES)
+        )
+        for route in route_registry.SECTION_ROUTE_STATE:
+            with self.subTest(route=route):
+                self.assertIn(route, known_routes)
+
+    def test_workflow_alias_targets_are_valid_workflows(self):
+        for section, aliases in route_registry.WORKFLOW_ALIASES_BY_SECTION.items():
+            workflows = set(route_registry.SECTION_WORKFLOW_CONTRACT[section])
+            for alias, workflow in aliases.items():
+                with self.subTest(section=section, alias=alias):
+                    self.assertIn(workflow, workflows)
 
     def test_known_legacy_section_aliases_normalize_to_six_sections(self):
         expected = {
@@ -83,6 +115,31 @@ class RouteRegistryTests(unittest.TestCase):
         for route in (None, "Account Health", "Command Center", "DBA Control Room"):
             with self.subTest(route=route):
                 self.assertEqual(account_health._canonical_account_route(route), "DBA Control Room")
+
+    def test_config_reuses_route_registry_contracts(self):
+        self.assertEqual(config.SECTION_REDIRECTS, route_registry.LEGACY_SECTION_ALIASES)
+        self.assertEqual(config.RETIRED_SECTION_REDIRECTS, route_registry.RETIRED_SECTION_ALIASES)
+        self.assertEqual(config.SECTION_ROUTE_STATE, route_registry.SECTION_ROUTE_STATE)
+        self.assertEqual(config.SECTION_ALIASES, route_registry.SECTION_ALIASES)
+
+        for alias in (
+            "Command Center",
+            "Account Health",
+            "Optimization",
+            "Security Posture",
+            "Task Management",
+            "Totally Unknown Route",
+        ):
+            with self.subTest(alias=alias):
+                self.assertEqual(config.normalize_section_name(alias), route_registry.normalize_section_route(alias))
+
+    def test_route_registry_consumers_import_without_live_sessions(self):
+        import workflow_contracts as imported_workflow_contracts  # noqa: F401
+        import config as imported_config  # noqa: F401
+        from sections import account_health_common  # noqa: F401
+        from sections import alert_center_navigation  # noqa: F401
+        from sections import executive_landing_contracts  # noqa: F401
+        from sections import security_posture_contracts  # noqa: F401
 
 
 if __name__ == "__main__":

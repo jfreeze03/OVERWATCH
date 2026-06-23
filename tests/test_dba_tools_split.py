@@ -17,7 +17,10 @@ from sections import dba_tools_contracts as contracts  # noqa: E402
 from sections import dba_tools_data_compare as data_compare  # noqa: E402
 from sections import dba_tools_schema_compare as schema_compare  # noqa: E402
 from sections import dba_tools_setup as setup  # noqa: E402
+from sections import dba_tools_cortex_limits_view as cortex_limits  # noqa: E402
 from sections import dba_tools_qas_monitor_view as qas_monitor  # noqa: E402
+from sections import dba_tools_query_kill_view as query_kill  # noqa: E402
+from sections import dba_tools_task_graph_control_view as task_graph_view  # noqa: E402
 from sections import dba_tools_warehouse_settings as wh_settings  # noqa: E402
 from utils.dba_tool_catalog import DBA_TOOL_GROUPS  # noqa: E402
 
@@ -66,10 +69,10 @@ class DbaToolsSplitTests(unittest.TestCase):
         self.assertIn("Data Compare", dba_tools.DBA_TOOL_RENDERERS)
         self.assertIn("Warehouse Settings", dba_tools.DBA_TOOL_RENDERERS)
         self.assertIs(dba_tools.DBA_TOOL_RENDERERS["QAS Monitor"], qas_monitor.render_qas_monitor_tool)
-        self.assertNotIn("QAS Monitor", dba_tools.INLINE_DBA_TOOL_HANDLERS)
-        self.assertIn("Query Kill List", dba_tools.INLINE_DBA_TOOL_HANDLERS)
-        self.assertIn("Task Graph Control", dba_tools.INLINE_DBA_TOOL_HANDLERS)
-        self.assertIn("Cortex AI Limits", dba_tools.INLINE_DBA_TOOL_HANDLERS)
+        self.assertIs(dba_tools.DBA_TOOL_RENDERERS["Query Kill List"], query_kill.render_query_kill_list_tool)
+        self.assertIs(dba_tools.DBA_TOOL_RENDERERS["Cortex AI Limits"], cortex_limits.render_cortex_ai_limits_tool)
+        self.assertIs(dba_tools.DBA_TOOL_RENDERERS["Task Graph Control"], task_graph_view.render_task_graph_control_tool)
+        self.assertEqual(dba_tools.INLINE_DBA_TOOL_HANDLERS, frozenset())
 
     def test_role_gate_identifier_helpers_and_select_option_contracts(self):
         self.assertTrue(common._current_role_allows_alter_account("ACCOUNTADMIN"))

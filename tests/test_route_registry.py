@@ -14,6 +14,8 @@ from config import PRIMARY_SECTIONS, normalize_section_name  # noqa: E402
 from sections import account_health  # noqa: E402
 from sections import alert_center  # noqa: E402
 from sections import executive_landing  # noqa: E402
+from sections import executive_landing_contracts  # noqa: E402
+from sections import security_posture_contracts  # noqa: E402
 
 
 class RouteRegistryTests(unittest.TestCase):
@@ -21,6 +23,15 @@ class RouteRegistryTests(unittest.TestCase):
         self.assertIs(workflow_contracts.PRIMARY_SECTION_TITLES, route_registry.PRIMARY_SECTION_TITLES)
         self.assertIs(workflow_contracts.SECTION_WORKFLOW_CONTRACT, route_registry.SECTION_WORKFLOW_CONTRACT)
         self.assertIs(workflow_contracts.LEGACY_ROUTE_CONTRACT, route_registry.LEGACY_ROUTE_CONTRACT)
+        self.assertEqual(
+            set(workflow_contracts.__all__),
+            {
+                "ABANDONED_PRIMARY_SECTION_TITLES",
+                "LEGACY_ROUTE_CONTRACT",
+                "PRIMARY_SECTION_TITLES",
+                "SECTION_WORKFLOW_CONTRACT",
+            },
+        )
 
     def test_abandoned_primary_sections_are_not_primary_ui(self):
         for title in route_registry.ABANDONED_PRIMARY_SECTION_TITLES:
@@ -76,6 +87,12 @@ class RouteRegistryTests(unittest.TestCase):
                 self.assertEqual(route_registry.normalize_section_route(alias), target)
                 self.assertEqual(normalize_section_name(alias), target)
 
+    def test_all_registered_section_aliases_target_primary_sections(self):
+        primary = set(route_registry.PRIMARY_SECTION_TITLES)
+        for alias, target in route_registry.SECTION_ALIASES.items():
+            with self.subTest(alias=alias):
+                self.assertIn(target, primary)
+
     def test_executive_landing_aliases_remain_unchanged(self):
         expected = {
             "Executive Briefing": "Executive Overview",
@@ -121,6 +138,14 @@ class RouteRegistryTests(unittest.TestCase):
         self.assertEqual(config.RETIRED_SECTION_REDIRECTS, route_registry.RETIRED_SECTION_ALIASES)
         self.assertEqual(config.SECTION_ROUTE_STATE, route_registry.SECTION_ROUTE_STATE)
         self.assertEqual(config.SECTION_ALIASES, route_registry.SECTION_ALIASES)
+        self.assertEqual(set(config.SECTION_REDIRECTS), set(route_registry.LEGACY_SECTION_ALIASES))
+        self.assertEqual(set(config.RETIRED_SECTION_REDIRECTS), set(route_registry.RETIRED_SECTION_ALIASES))
+        for route in route_registry.SECTION_ROUTE_STATE:
+            with self.subTest(route=route):
+                self.assertEqual(
+                    config.compatibility_state_for_section(route),
+                    route_registry.compatibility_state_for_route(route),
+                )
 
         for alias in (
             "Command Center",
@@ -132,6 +157,42 @@ class RouteRegistryTests(unittest.TestCase):
         ):
             with self.subTest(alias=alias):
                 self.assertEqual(config.normalize_section_name(alias), route_registry.normalize_section_route(alias))
+
+    def test_section_alias_constants_are_registry_backed(self):
+        self.assertEqual(
+            executive_landing_contracts.EXECUTIVE_LANDING_LEGACY_WORKFLOW_ALIASES,
+            dict(route_registry.WORKFLOW_ALIASES_BY_SECTION["Executive Landing"]),
+        )
+        self.assertEqual(
+            security_posture_contracts.SECURITY_VIEW_ALIASES,
+            dict(route_registry.WORKFLOW_ALIASES_BY_SECTION["Security Monitoring"]),
+        )
+        self.assertEqual(
+            alert_center._normalize_alert_center_view("Issue Inbox"),
+            route_registry.normalize_workflow_alias("Alert Center", "Issue Inbox"),
+        )
+        self.assertEqual(
+            account_health._canonical_account_route("Account Health"),
+            route_registry.normalize_section_route("Account Health"),
+        )
+
+    def test_route_registry_stays_dependency_light(self):
+        source = (APP_ROOT / "route_registry.py").read_text(encoding="utf-8")
+        forbidden = (
+            "import config",
+            "from config",
+            "import streamlit",
+            "from streamlit",
+            "import sections",
+            "from sections",
+            "import utils",
+            "from utils",
+            "import snowflake",
+            "from snowflake",
+        )
+        for fragment in forbidden:
+            with self.subTest(fragment=fragment):
+                self.assertNotIn(fragment, source)
 
     def test_route_registry_consumers_import_without_live_sessions(self):
         import workflow_contracts as imported_workflow_contracts  # noqa: F401

@@ -67,7 +67,9 @@ Low-risk pure helpers now consume the registry while preserving their public nam
 `SECURITY_VIEW_ALIASES`, and `_canonical_account_route()`. `config.py` now
 keeps the historical `SECTION_REDIRECTS`, `RETIRED_SECTION_REDIRECTS`,
 `SECTION_ROUTE_STATE`, `SECTION_ALIASES`, and `normalize_section_name()` public
-surface while sourcing those contracts from `route_registry.py`.
+surface while sourcing those contracts from `route_registry.py`. Route-registry
+tests also assert the registry remains dependency-light and does not import
+`config`, Streamlit, Snowflake, section modules, or broader utilities.
 
 ## Mart-Load Rationalization Planning
 
@@ -75,8 +77,11 @@ surface while sourcing those contracts from `route_registry.py`.
 daily operator dependency groups, consolidation candidates, advanced/admin
 evidence stores, and no-change guardrails. This pass did not drop, disable,
 rename, or rewrite mart objects. `tests/test_mart_contracts.py` now locks the
-planning document, setup/drop artifact presence, reset-only drop posture, and
-stable `utils.mart` public helper surface before any future mart split.
+planning document, setup/drop artifact presence, reset-only drop posture,
+stable `utils.mart` public helper groups, representative SQL-builder object
+references, source-caption behavior, and static setup/drop inventory before any
+future mart split. `utils/mart.py` still intentionally owns SQL-builder
+implementations pending deeper source-label and object-name contracts.
 
 ## New Focused Alert Center Modules
 
@@ -240,9 +245,9 @@ These are candidates, not approved removals:
 - `tests/test_task_management_split.py` locks Task Management workflow contracts, compatibility reexports, graph/model helpers, guarded SQL builders, review-only action queue payloads, renderer map coverage, view key preservation, and the Task Management facade no-creep guard.
 - `tests/test_change_drift_split.py` locks Change Drift view/workflow contracts, delegated module routing, compatibility reexports, evidence and operability SQL builders, ticket/qualified-name parsing, review-only action queue payloads, renderer map coverage, key preservation, and the Change Drift facade no-creep guard.
 - `tests/test_facade_no_creep.py` applies a global line-count, `__all__`, renderer-map, and no-implementation-creep guard across completed facade files.
-- `tests/test_validation_workflow.py` locks the GitHub Validate workflow contract, including Ruff, mypy, compileall, deployment contract, Cortex guardrails, unittest discovery, mojibake scan roots, and Ruff-before-typecheck ordering.
-- `tests/test_route_registry.py` locks the central route registry, old 4-section absence from primary UI, legacy section aliases, workflow/default validity, config.py compatibility reexports, import-only runtime smoke behavior, Executive Landing aliases, Alert Center aliases, and Account Health retired-route normalization.
-- `tests/test_mart_contracts.py` locks the static mart-load rationalization inventory, setup/drop artifact presence, reset-only drop posture, `mart_object_name()` behavior, and representative `utils.mart` public helper names.
+- `tests/test_validation_workflow.py` locks the GitHub Validate workflow contract, including push/pull-request triggers on `main`, read-only permissions, dependency installation from both requirement files, Ruff, mypy, compileall, deployment contract, targeted shell guards, Cortex guardrails, unittest discovery, mojibake scan roots and `__pycache__` exclusion, timeout budget, and Ruff-before-typecheck ordering.
+- `tests/test_route_registry.py` locks the central route registry, old 4-section absence from primary UI, legacy section aliases, workflow/default validity, config.py compatibility reexports, route-state parity, dependency-light source guard, import-only runtime smoke behavior, Executive Landing aliases, Security Monitoring aliases, Alert Center aliases, and Account Health retired-route normalization.
+- `tests/test_mart_contracts.py` locks the static mart-load rationalization inventory, setup/drop artifact presence, reset-only drop posture, `mart_object_name()` behavior, public `utils.mart` helper groups, representative SQL-builder object references, source-caption behavior, unique setup table names, required core facts, and static task/procedure families.
 - `tests/test_command_center.py` now validates correlated investigation UI placement and explicit load gates.
 - `tests/test_contention_center.py`, `tests/test_formula_regressions.py`, and `tests/test_operational_intelligence.py` validate renamed workflow/action contracts.
 - `perf_tests/full_app_snowflake_regression.py` is the live Snowflake gate once authentication is corrected.
@@ -250,9 +255,9 @@ These are candidates, not approved removals:
 ## Next Rewrite Order
 
 1. Complete route registry migration for any remaining low-risk pure callers.
-2. Add mart loader inventory and source-label contracts before changing load plans.
-3. Split `utils/mart.py` only after contract tests isolate safe surfaces.
-4. Revisit `contention_center.py` / `stored_proc_tracker.py` only with route metrics.
+2. Continue mart contract/source-label coverage before changing load plans.
+3. Split `utils/mart.py` SQL builder families by workflow only after tests isolate safe surfaces.
+4. Revisit `contention_center.py` / `stored_proc_tracker.py` / DBA Control Room render only with route metrics.
 
 ## De-Bloat Completed After Initial Audit
 
@@ -303,3 +308,4 @@ These are candidates, not approved removals:
 | Route registry consolidation | Added `.overwatch_final/route_registry.py` and converted `workflow_contracts.py` into a compatibility export. Executive Landing workflow aliases, Alert Center pane aliases, Security Monitoring view aliases, and Account Health retired-route normalization now read from the registry through their existing public helper names. |
 | Change Drift / Task Management helper hardening | Made Change Drift action payload `Verification Status` explicitly use the approval-route status instead of relying on a duplicate dict key overwrite. Added source and helper tests that Task Management cancellation/execute renderers continue to use focused SQL builders. |
 | Mart-load rationalization planning | Added `docs/OVERWATCH_MART_LOAD_RATIONALIZATION.md` as a static inventory of current mart families, daily operator dependency groups, consolidation candidates, advanced/admin evidence stores, and no-drop guardrails. |
+| Validation, route, and mart contract hardening | Expanded workflow contract tests for triggers, permissions, dependency install order, timeout, targeted shell guards, and mojibake exclusions. Added route-registry parity/no-import-cycle checks and deeper mart contracts for public helper groups, representative builder object references, source captions, unique setup tables, required core facts, and setup/drop inventory. No mart object was dropped, renamed, disabled, or rewritten; `utils/mart.py` micro-split remains deferred. |

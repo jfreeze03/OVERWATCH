@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import unittest
 
 
@@ -16,17 +17,25 @@ class ValidationWorkflowTests(unittest.TestCase):
 
         expected_fragments = (
             "name: Validate",
+            "push:",
+            'branches: ["main"]',
+            "pull_request:",
+            "permissions:",
+            "contents: read",
             "name: Python validation",
             "uses: actions/checkout@v4",
             "uses: actions/setup-python@v6",
             'python-version: "3.12"',
             'cache: "pip"',
+            "python -m pip install -r requirements.txt",
+            "python -m pip install -r requirements-dev.txt",
             "python -m ruff check .overwatch_final tests",
             "python -m mypy",
             "python -m compileall .overwatch_final tests",
             "python -m unittest tests.test_deployment_contract",
             "python -m unittest tests.test_cortex_guard",
             "python -m unittest discover -s tests",
+            "any(part == \"__pycache__\" for part in path.parts)",
             'Path(".overwatch_final")',
             'Path("tests")',
             'Path(".github")',
@@ -34,6 +43,25 @@ class ValidationWorkflowTests(unittest.TestCase):
         for fragment in expected_fragments:
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, text)
+
+    def test_timeout_stays_within_validation_budget(self):
+        text = _workflow_text()
+        match = re.search(r"timeout-minutes:\s*(\d+)", text)
+        self.assertIsNotNone(match)
+        self.assertLessEqual(int(match.group(1)), 35)
+
+    def test_production_shell_guards_remain_targeted(self):
+        text = _workflow_text()
+        guard_step = text[text.index("Run production shell guards") : text.index("Run Cortex guardrails")]
+        expected_tests = (
+            "tests.test_navigation_integrity.NavigationIntegrityTests.test_streamlit_deployment_entrypoints_are_pinned",
+            "tests.test_navigation_integrity.NavigationIntegrityTests.test_app_shell_header_renders_before_sidebar_hydration",
+            "tests.test_navigation_integrity.NavigationIntegrityTests.test_workflow_hubs_replace_scattered_operational_pages",
+            "tests.test_navigation_integrity.NavigationIntegrityTests.test_dead_ui_helpers_stay_removed",
+        )
+        for test_name in expected_tests:
+            with self.subTest(test_name=test_name):
+                self.assertIn(test_name, guard_step)
 
     def test_lint_runs_before_typecheck_and_compile(self):
         text = _workflow_text()

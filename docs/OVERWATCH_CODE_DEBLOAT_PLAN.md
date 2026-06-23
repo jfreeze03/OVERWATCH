@@ -17,7 +17,7 @@ Reduce bloat without breaking the six-section operator model or removing useful 
 | `.overwatch_final/sections/alert_center.py` | 3432 | Active alerts, history, admin config, suppression, closed loop, and investigation evidence. | Split active workflow from admin/evidence helpers. |
 | `.overwatch_final/sections/task_management.py` | 3281 | Task management and pipeline health overlap Pipeline & Task Health. | Keep as delegated implementation, remove duplicate entry points only after regression. |
 | `.overwatch_final/sections/security_posture.py` | 3267 | Security overview, failed logins, grants, sprawl, sharing, admin evidence in one file. | Split advanced evidence after route behavior is stable. |
-| `.overwatch_final/sections/warehouse_health.py` | 2909 | Old optimization advisor and warehouse controls overlap Cost & Contract; first split moved contracts, SQL builders, and dataframe helpers. | In progress: next split should extract render panels only after current contract tests stay green. |
+| `.overwatch_final/sections/warehouse_health.py` | 1608 | Public Warehouse Health workflow shell after extracting contracts, SQL, dataframe helpers, overview launchpad, action-control builders, and setting panels. | In progress: next split should target remaining load/render orchestration only after current contract tests stay green. |
 | `.overwatch_final/sections/cost_contract.py` | 243 | Public Cost & Contract entrypoint after split; compatibility reexports plus `render()`. | Complete. Keep thin; do not add new implementation logic here. |
 | `.overwatch_final/utils/alerts.py` | 132 | Compatibility facade only after alert split. | Keep as stable import surface; do not add new implementation logic here. |
 
@@ -66,7 +66,7 @@ These are candidates, not approved removals:
 
 ## Next Rewrite Order
 
-1. Split `warehouse_health.py` so operator recommendations remain under Cost & Contract while low-level controls stay advanced.
+1. Continue splitting `warehouse_health.py` render orchestration only where tests prove the workflow shell stays stable.
 2. Split `dba_tools.py` into compare tools, generated SQL, validation utilities, and settings controls.
 3. Consolidate shared explicit-load gates and priority dataframe patterns.
 4. Break up `shared_metrics.py` by workflow/query family only after the cost/workload callers have regression coverage.
@@ -84,4 +84,4 @@ These are candidates, not approved removals:
 | Alert status/severity duplication | Centralized alert status and severity constants in `alert_status.py`; command-center unknown-status collapse remains explicit and tested. |
 | Alert facade import hygiene | Replaced production `utils.alerts` imports in Alert Center with focused-module imports. No direct private imports from `utils.alerts` are expected outside compatibility tests. |
 | Cost & Contract split | Reduced `.overwatch_final/sections/cost_contract.py` from about 5003 lines to a 243-line public shell. Implementation now lives in focused `cost_contract_*` modules for contracts, helpers, dataframes, SQL, charts, advisor, panels, splash/load, monitoring, evidence, rendering, workflow routing, and overview floor orchestration. |
-| Warehouse Health split started | Reduced `.overwatch_final/sections/warehouse_health.py` from about 4108 lines to about 2909 lines by extracting stable contracts, SQL builders, pure dataframe helpers, and pure capacity decision helpers into `warehouse_health_contracts.py`, `warehouse_health_sql.py`, `warehouse_health_dataframes.py`, and `warehouse_health_helpers.py`. Rendering remains in the public shell for now. |
+| Warehouse Health split continued | Reduced `.overwatch_final/sections/warehouse_health.py` from about 4108 lines to about 1608 lines by extracting stable contracts, SQL builders, pure dataframe helpers, capacity decision helpers, overview launchpad panels, setting/action-control builders, guarded setting panels, and review snapshot SQL into focused `warehouse_health_*` modules. The main `render()` flow remains in the public shell. |

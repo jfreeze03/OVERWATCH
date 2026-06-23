@@ -6,16 +6,19 @@ import streamlit as st
 from sections.dba_tools_common import (
     _load_task_inventory,
     _prioritize_query_context,
-    _qualified_name,
     _require_typed_confirmation,
     _task_history_sql,
     _typed_confirmation,
 )
 from sections.dba_tools_task_graph_control import (
+    _alter_task_resume_sql,
+    _alter_task_suspend_sql,
     _build_dag_view_frame,
     _cancel_task_graph_sql,
     _cancel_task_query_sql,
     _child_tasks_for_root,
+    _execute_task_sql,
+    _resume_task_graph_sql,
     _root_tasks_frame,
     _task_fqn,
     _task_query_history_columns,
@@ -292,7 +295,7 @@ def render_task_graph_control_tool(session, company: str) -> None:
                     if st.button("Suspend", key="tg_suspend", disabled=admin_button_disabled(state == "suspended")):
                         if _require_typed_confirmation(task_confirmed, sel_task):
                             try:
-                                session.sql(f"ALTER TASK {full_n} SUSPEND").collect()
+                                session.sql(_alter_task_suspend_sql(full_n)).collect()
                                 st.success(f"`{sel_task}` suspended.")
                                 st.session_state.pop("dba_df_tg_tasks", None)
                                 st.rerun()
@@ -303,7 +306,7 @@ def render_task_graph_control_tool(session, company: str) -> None:
                     if st.button("Resume", key="tg_resume", disabled=admin_button_disabled(state == "started")):
                         if _require_typed_confirmation(task_confirmed, sel_task):
                             try:
-                                session.sql(f"ALTER TASK {full_n} RESUME").collect()
+                                session.sql(_alter_task_resume_sql(full_n)).collect()
                                 st.success(f"`{sel_task}` resumed.")
                                 st.session_state.pop("dba_df_tg_tasks", None)
                                 st.rerun()
@@ -314,7 +317,7 @@ def render_task_graph_control_tool(session, company: str) -> None:
                     if st.button("Execute Now", key="tg_execute", disabled=admin_button_disabled()):
                         if _require_typed_confirmation(task_confirmed, sel_task):
                             try:
-                                session.sql(f"EXECUTE TASK {full_n}").collect()
+                                session.sql(_execute_task_sql(full_n)).collect()
                                 st.success(f"`{sel_task}` triggered.")
                             except Exception as e:
                                 st.error(f"Execute failed: {format_snowflake_error(e)}")
@@ -323,7 +326,7 @@ def render_task_graph_control_tool(session, company: str) -> None:
                     if st.button("Retry Last Failed", key="tg_retry", disabled=admin_button_disabled()):
                         if _require_typed_confirmation(task_confirmed, sel_task):
                             try:
-                                session.sql(f"EXECUTE TASK {full_n}").collect()
+                                session.sql(_execute_task_sql(full_n)).collect()
                                 st.success(f"Retry triggered for `{sel_task}`.")
                                 st.caption(
                                     "Note: Snowflake does not have a native RETRY_LAST_FAILED command. "
@@ -366,7 +369,7 @@ def render_task_graph_control_tool(session, company: str) -> None:
                         if st.button("Suspend Entire Graph", type="primary", key="tg_bulk_suspend", disabled=admin_button_disabled()):
                             if _require_typed_confirmation(graph_confirmed, sel_root):
                                 try:
-                                    session.sql(f"ALTER TASK {root_full} SUSPEND").collect()
+                                    session.sql(_alter_task_suspend_sql(root_full)).collect()
                                     st.success(f"Root task `{sel_root}` suspended - entire graph will stop scheduling.")
                                     st.session_state.pop("dba_df_tg_tasks", None)
                                     st.rerun()
@@ -376,20 +379,13 @@ def render_task_graph_control_tool(session, company: str) -> None:
                         if st.button("Resume Entire Graph", type="primary", key="tg_bulk_resume", disabled=admin_button_disabled()):
                             if _require_typed_confirmation(graph_confirmed, sel_root):
                                 errors_seen = []
-                                for _, child in children.iterrows():
-                                    full_child = _qualified_name(
-                                        child.get("DATABASE_NAME", ""),
-                                        child.get("SCHEMA_NAME", ""),
-                                        child.get("NAME", ""),
-                                    )
+                                child_fqns = [_task_fqn(child) for _, child in children.iterrows()]
+                                resume_targets = child_fqns + [root_full]
+                                for task_fqn, stmt in zip(resume_targets, _resume_task_graph_sql(root_full, child_fqns)):
                                     try:
-                                        session.sql(f"ALTER TASK {full_child} RESUME").collect()
+                                        session.sql(stmt).collect()
                                     except Exception as e:
-                                        errors_seen.append(f"{full_child}: {format_snowflake_error(e)}")
-                                try:
-                                    session.sql(f"ALTER TASK {root_full} RESUME").collect()
-                                except Exception as e:
-                                    errors_seen.append(f"{root_full}: {format_snowflake_error(e)}")
+                                        errors_seen.append(f"{task_fqn}: {format_snowflake_error(e)}")
 
                                 if errors_seen:
                                     st.warning(f"Resumed with {len(errors_seen)} error(s):")

@@ -11,7 +11,19 @@ ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
 
+from utils import shared_metrics as shared_metrics_facade  # noqa: E402
+from utils import (  # noqa: E402
+    shared_metrics_cache,
+    shared_metrics_contracts,
+    shared_metrics_service_cost,
+    shared_metrics_storage,
+    shared_metrics_usage,
+)
+from utils.company_filter import get_company_scope_key  # noqa: E402
 from utils.shared_metrics import (  # noqa: E402
+    SharedMetricResult,
+    _load_or_reuse,
+    _shared_state_key,
     _storage_summary_from_trend,
     build_shared_bill_warehouse_delta_live_sql,
     build_shared_access_hygiene_sql,
@@ -72,6 +84,65 @@ class SharedMetricsTests(unittest.TestCase):
         st.session_state.clear()
         st.session_state.update(self._previous_state)
 
+    def test_shared_metrics_contracts_and_cache_remain_public_surface(self):
+        self.assertIs(SharedMetricResult, shared_metrics_contracts.SharedMetricResult)
+        self.assertIs(shared_metrics_facade.SharedMetricResult, shared_metrics_contracts.SharedMetricResult)
+        self.assertIs(shared_metrics_facade._empty_result, shared_metrics_cache._empty_result)
+        self.assertIs(shared_metrics_facade._shared_state_key, shared_metrics_cache._shared_state_key)
+        self.assertIs(shared_metrics_facade._get_cached_result, shared_metrics_cache._get_cached_result)
+        self.assertIs(shared_metrics_facade._store_result, shared_metrics_cache._store_result)
+        self.assertIs(shared_metrics_facade._load_or_reuse, shared_metrics_cache._load_or_reuse)
+        self.assertIs(shared_metrics_facade._global_filter_values, shared_metrics_cache._global_filter_values)
+        self.assertIs(shared_metrics_facade._company_column_filter, shared_metrics_cache._company_column_filter)
+        self.assertIs(shared_metrics_facade._storage_summary_from_trend, shared_metrics_storage._storage_summary_from_trend)
+        self.assertIs(shared_metrics_facade.load_shared_storage_trend, shared_metrics_storage.load_shared_storage_trend)
+        self.assertIs(shared_metrics_facade.load_shared_usage_storage_kpis, shared_metrics_storage.load_shared_usage_storage_kpis)
+        self.assertIs(shared_metrics_facade.load_shared_storage_db_detail, shared_metrics_storage.load_shared_storage_db_detail)
+        self.assertIs(shared_metrics_facade.load_shared_usage_metering_kpis, shared_metrics_usage.load_shared_usage_metering_kpis)
+        self.assertIs(
+            shared_metrics_facade.build_shared_bill_metering_summary_live_sql,
+            shared_metrics_usage.build_shared_bill_metering_summary_live_sql,
+        )
+        self.assertIs(
+            shared_metrics_facade.build_shared_bill_warehouse_delta_live_sql,
+            shared_metrics_usage.build_shared_bill_warehouse_delta_live_sql,
+        )
+        self.assertIs(
+            shared_metrics_facade.load_shared_bill_metering_summary,
+            shared_metrics_usage.load_shared_bill_metering_summary,
+        )
+        self.assertIs(
+            shared_metrics_facade.load_shared_bill_warehouse_delta,
+            shared_metrics_usage.load_shared_bill_warehouse_delta,
+        )
+        self.assertIs(
+            shared_metrics_facade.load_shared_service_cost_lens,
+            shared_metrics_service_cost.load_shared_service_cost_lens,
+        )
+        self.assertIs(
+            shared_metrics_facade.load_shared_service_cost_trend,
+            shared_metrics_service_cost.load_shared_service_cost_trend,
+        )
+
+    def test_shared_metrics_load_or_reuse_returns_cached_result(self):
+        calls = []
+
+        def loader():
+            calls.append("loaded")
+            return SharedMetricResult(pd.DataFrame({"VALUE": [len(calls)]}), "Unit loader")
+
+        first = _load_or_reuse("unit_cache", ("ALFA", 30), loader)
+        second = _load_or_reuse("unit_cache", ("ALFA", 30), loader)
+
+        self.assertIs(first, second)
+        self.assertEqual(calls, ["loaded"])
+
+    def test_shared_state_key_matches_company_scope_key(self):
+        self.assertEqual(
+            _shared_state_key("unit_metric", "ALFA", 30),
+            f"_shared_metric_{get_company_scope_key('unit_metric', 'ALFA', 30)}",
+        )
+
     def test_storage_trend_reuses_session_result_for_same_scope(self):
         frame = pd.DataFrame({
             "USAGE_DATE": ["2026-06-15"],
@@ -81,7 +152,7 @@ class SharedMetricsTests(unittest.TestCase):
             "TOTAL_STORAGE_TB": [1.0],
         })
 
-        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run:
+        with patch("utils.shared_metrics_storage.run_query", return_value=frame) as mock_run:
             first = load_shared_storage_trend(30, "ALFA", allow_live_fallback=False, section="Unit Test")
             second = load_shared_storage_trend(30, "ALFA", allow_live_fallback=False, section="Unit Test")
 
@@ -99,7 +170,7 @@ class SharedMetricsTests(unittest.TestCase):
         })
 
         with patch(
-            "utils.shared_metrics.run_query",
+            "utils.shared_metrics_storage.run_query",
             side_effect=[pd.DataFrame(), live_frame],
         ) as mock_run:
             result = load_shared_storage_trend(120, "ALL", allow_live_fallback=True, section="Unit Test")
@@ -137,7 +208,7 @@ class SharedMetricsTests(unittest.TestCase):
             "WAREHOUSE_CLOUD_CREDITS": [2.0],
         })
 
-        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run:
+        with patch("utils.shared_metrics_usage.run_query", return_value=frame) as mock_run:
             first = load_shared_usage_metering_kpis(object(), 30, "ALFA", section="Unit Test")
             second = load_shared_usage_metering_kpis(object(), 30, "ALFA", section="Unit Test")
 
@@ -154,10 +225,10 @@ class SharedMetricsTests(unittest.TestCase):
         })
 
         with patch(
-            "utils.shared_metrics.run_query",
+            "utils.shared_metrics_usage.run_query",
             side_effect=[pd.DataFrame(), live_frame],
         ) as mock_run, patch(
-            "utils.compatibility.filter_existing_columns",
+            "utils.shared_metrics_usage.filter_existing_columns",
             return_value=["CREDITS_USED_COMPUTE"],
         ):
             result = load_shared_usage_metering_kpis(object(), 30, "ALFA", section="Unit Test")
@@ -178,7 +249,7 @@ class SharedMetricsTests(unittest.TestCase):
             "ESTIMATED_COST_USD": [36.8],
         })
 
-        with patch("utils.shared_metrics.run_query_or_raise", return_value=frame) as mock_run:
+        with patch("utils.shared_metrics_service_cost.run_query_or_raise", return_value=frame) as mock_run:
             first = load_shared_service_cost_lens(
                 14,
                 "ALFA",
@@ -209,7 +280,7 @@ class SharedMetricsTests(unittest.TestCase):
             "DAILY_SPEND_USD": [36.8],
         })
 
-        with patch("utils.shared_metrics.run_query_or_raise", return_value=frame) as mock_run:
+        with patch("utils.shared_metrics_service_cost.run_query_or_raise", return_value=frame) as mock_run:
             first = load_shared_service_cost_trend(
                 7,
                 "ALFA",
@@ -241,7 +312,7 @@ class SharedMetricsTests(unittest.TestCase):
             "ACTIVE_DAYS": [7],
         })
 
-        with patch("utils.shared_metrics.run_query", return_value=frame) as mock_run:
+        with patch("utils.shared_metrics_usage.run_query", return_value=frame) as mock_run:
             first = load_shared_bill_metering_summary(
                 "DATEADD('DAY', -7, CURRENT_TIMESTAMP())",
                 "CURRENT_TIMESTAMP()",
@@ -278,7 +349,7 @@ class SharedMetricsTests(unittest.TestCase):
         })
 
         with patch(
-            "utils.shared_metrics.run_query",
+            "utils.shared_metrics_usage.run_query",
             side_effect=[pd.DataFrame(), live_frame],
         ) as mock_run:
             result = load_shared_bill_warehouse_delta(

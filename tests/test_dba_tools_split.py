@@ -65,6 +65,7 @@ class DbaToolsSplitTests(unittest.TestCase):
         catalog_tools = {tool for tools in DBA_TOOL_GROUPS.values() for tool in tools}
         handled_tools = set(dba_tools.DBA_TOOL_RENDERERS) | set(dba_tools.INLINE_DBA_TOOL_HANDLERS)
         self.assertEqual(catalog_tools, handled_tools)
+        self.assertEqual(catalog_tools, set(dba_tools.DBA_TOOL_RENDERERS))
         self.assertIn("Schema Compare", dba_tools.DBA_TOOL_RENDERERS)
         self.assertIn("Data Compare", dba_tools.DBA_TOOL_RENDERERS)
         self.assertIn("Warehouse Settings", dba_tools.DBA_TOOL_RENDERERS)
@@ -73,6 +74,22 @@ class DbaToolsSplitTests(unittest.TestCase):
         self.assertIs(dba_tools.DBA_TOOL_RENDERERS["Cortex AI Limits"], cortex_limits.render_cortex_ai_limits_tool)
         self.assertIs(dba_tools.DBA_TOOL_RENDERERS["Task Graph Control"], task_graph_view.render_task_graph_control_tool)
         self.assertEqual(dba_tools.INLINE_DBA_TOOL_HANDLERS, frozenset())
+
+    def test_dba_tools_facade_has_no_implementation_creep(self):
+        source = APP_ROOT.joinpath("sections", "dba_tools.py").read_text(encoding="utf-8")
+        forbidden_fragments = (
+            "SYSTEM$CANCEL_QUERY",
+            "SYSTEM$CANCEL_TASK_GRAPH",
+            "ALTER TASK",
+            "EXECUTE TASK",
+            "ALTER ACCOUNT",
+            "run_query(",
+            "run_query_or_raise(",
+            "pd.DataFrame(",
+        )
+        for fragment in forbidden_fragments:
+            with self.subTest(fragment=fragment):
+                self.assertNotIn(fragment, source)
 
     def test_role_gate_identifier_helpers_and_select_option_contracts(self):
         self.assertTrue(common._current_role_allows_alter_account("ACCOUNTADMIN"))

@@ -17,10 +17,16 @@ class DbaToolsCortexLimitsTests(unittest.TestCase):
         self.assertNotIn("Cortex AI Limits", dba_tools.INLINE_DBA_TOOL_HANDLERS)
 
     def test_cortex_quota_sql_contract(self):
-        self.assertNotIn("ALTER ACCOUNT SET", cortex_limits._cortex_code_quota_sql(0))
+        self.assertNotIn("ALTER ACCOUNT", cortex_limits._cortex_code_quota_sql(0))
         self.assertIn(
             "ALTER ACCOUNT SET CORTEX_CODE_DAILY_CREDIT_LIMIT = 500;",
             cortex_limits._cortex_code_quota_sql(500),
+        )
+
+    def test_cortex_apply_statement_contract(self):
+        self.assertEqual(
+            cortex_limits._cortex_apply_statement(500),
+            "ALTER ACCOUNT SET CORTEX_CODE_DAILY_CREDIT_LIMIT = 500",
         )
 
     def test_cortex_apply_guard_preserves_accountadmin_gate(self):

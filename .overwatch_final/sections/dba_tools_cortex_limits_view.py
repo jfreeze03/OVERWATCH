@@ -52,7 +52,7 @@ def _cortex_code_quota_sql(limit: int) -> str:
     if daily_limit <= 0:
         return (
             "-- Cortex Code quota\n"
-            "-- No ALTER ACCOUNT statement generated. Set a positive daily limit to generate quota SQL."
+            "-- No account-change statement generated. Set a positive daily limit to generate quota SQL."
         )
     return (
         "-- Cortex Code quota\n"
@@ -190,6 +190,7 @@ def render_cortex_ai_limits_tool(session, company: str) -> None:
             help="Maximum Cortex Code credits per day across all users. Use 0 to skip SQL generation.",
         )
         generated_sql = _cortex_code_quota_sql(cortex_daily_limit)
+        st.code(generated_sql, language="sql")
 
         render_priority_dataframe(
             _cortex_readiness_rows(),
@@ -255,5 +256,3 @@ def render_cortex_ai_limits_tool(session, company: str) -> None:
             ("Quota enforcement", "Dry-run first"),
             ("Parameter review", "On demand"),
         ))
-
-    _ = generated_sql

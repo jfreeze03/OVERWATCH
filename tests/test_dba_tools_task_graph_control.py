@@ -43,6 +43,17 @@ class DbaToolsTaskGraphControlTests(unittest.TestCase):
         children = task_graph._child_tasks_for_root(df_tasks, "ROOT_EMPTY")
         self.assertEqual(set(children["NAME"]), {"CHILD_A", "CHILD_B"})
 
+    def test_child_detection_uses_literal_root_names(self):
+        df_tasks = pd.DataFrame([
+            {"NAME": "ROOT.A[1]", "PREDECESSORS": ""},
+            {"NAME": "LITERAL_CHILD", "PREDECESSORS": '["ROOT.A[1]"]'},
+            {"NAME": "REGEX_LOOKALIKE", "PREDECESSORS": "ROOTXA1"},
+            {"NAME": "OTHER", "PREDECESSORS": "ROOT.A[2]"},
+        ])
+
+        children = task_graph._child_tasks_for_root(df_tasks, "ROOT.A[1]")
+        self.assertEqual(set(children["NAME"]), {"LITERAL_CHILD"})
+
     def test_task_fqn_and_cancel_sql_use_safe_quoting(self):
         self.assertEqual(
             task_graph._task_fqn({"DATABASE_NAME": "DB", "SCHEMA_NAME": "PUBLIC", "NAME": 'TASK"A'}),
@@ -55,6 +66,32 @@ class DbaToolsTaskGraphControlTests(unittest.TestCase):
         self.assertEqual(
             task_graph._cancel_task_query_sql("query'1"),
             "SELECT SYSTEM$CANCEL_QUERY('query''1')",
+        )
+
+    def test_task_mutation_sql_builders(self):
+        task_fqn = task_graph._task_fqn({"DATABASE_NAME": "DB", "SCHEMA_NAME": "PUBLIC", "NAME": 'TASK"A'})
+        self.assertEqual(task_fqn, '"DB"."PUBLIC"."TASK""A"')
+        self.assertEqual(
+            task_graph._alter_task_suspend_sql(task_fqn),
+            'ALTER TASK "DB"."PUBLIC"."TASK""A" SUSPEND',
+        )
+        self.assertEqual(
+            task_graph._alter_task_resume_sql(task_fqn),
+            'ALTER TASK "DB"."PUBLIC"."TASK""A" RESUME',
+        )
+        self.assertEqual(
+            task_graph._execute_task_sql(task_fqn),
+            'EXECUTE TASK "DB"."PUBLIC"."TASK""A"',
+        )
+
+    def test_resume_task_graph_sql_orders_children_before_root(self):
+        self.assertEqual(
+            task_graph._resume_task_graph_sql('"DB"."PUBLIC"."ROOT"', ['"DB"."PUBLIC"."CHILD_A"', '"DB"."PUBLIC"."CHILD_B"']),
+            [
+                'ALTER TASK "DB"."PUBLIC"."CHILD_A" RESUME',
+                'ALTER TASK "DB"."PUBLIC"."CHILD_B" RESUME',
+                'ALTER TASK "DB"."PUBLIC"."ROOT" RESUME',
+            ],
         )
 
     def test_task_running_queries_sql_contract(self):

@@ -65,6 +65,24 @@ def _cancel_task_query_sql(query_id: str) -> str:
     return f"SELECT SYSTEM$CANCEL_QUERY({sql_literal(str(query_id))})"
 
 
+def _alter_task_suspend_sql(task_fqn: str) -> str:
+    return f"ALTER TASK {task_fqn} SUSPEND"
+
+
+def _alter_task_resume_sql(task_fqn: str) -> str:
+    return f"ALTER TASK {task_fqn} RESUME"
+
+
+def _execute_task_sql(task_fqn: str) -> str:
+    return f"EXECUTE TASK {task_fqn}"
+
+
+def _resume_task_graph_sql(root_fqn: str, child_fqns: list[str]) -> list[str]:
+    return [_alter_task_resume_sql(child_fqn) for child_fqn in child_fqns] + [
+        _alter_task_resume_sql(root_fqn)
+    ]
+
+
 def _task_fqn(row_or_parts) -> str:
     if isinstance(row_or_parts, (pd.Series, dict)):
         return _qualified_name(
@@ -89,7 +107,7 @@ def _child_tasks_for_root(df_tasks: pd.DataFrame, root_name: str) -> pd.DataFram
     if df_tasks is None or df_tasks.empty or "PREDECESSORS" not in df_tasks.columns:
         return pd.DataFrame()
     return df_tasks[
-        df_tasks["PREDECESSORS"].fillna("").astype(str).str.contains(str(root_name), na=False)
+        df_tasks["PREDECESSORS"].fillna("").astype(str).str.contains(str(root_name), regex=False, na=False)
     ].copy()
 
 
@@ -126,7 +144,7 @@ def _build_dag_view_frame(df_tasks: pd.DataFrame, df_hist: pd.DataFrame, root_ta
         if "PREDECESSORS" in df_tasks.columns
         else pd.Series(index=df_tasks.index, dtype=str)
     )
-    df_dag = df_tasks[root_mask | pred.str.contains(str(root_task), na=False)].copy()
+    df_dag = df_tasks[root_mask | pred.str.contains(str(root_task), regex=False, na=False)].copy()
     if df_dag.empty or "NAME" not in df_dag.columns:
         return df_dag
     task_names = [str(v) for v in df_dag["NAME"].dropna().unique().tolist()]

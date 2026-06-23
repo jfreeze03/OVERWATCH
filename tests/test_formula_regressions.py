@@ -4621,7 +4621,7 @@ class FormulaRegressionTests(unittest.TestCase):
 
     def test_usage_overview_storage_sums_are_null_safe(self):
         usage_text = (APP_ROOT / "sections" / "usage_overview.py").read_text(encoding="utf-8")
-        text = (APP_ROOT / "utils" / "shared_metrics.py").read_text(encoding="utf-8")
+        text = (APP_ROOT / "utils" / "shared_metrics_storage.py").read_text(encoding="utf-8")
         self.assertIn("load_shared_usage_storage_kpis", usage_text)
         self.assertIn("SUM(COALESCE(c.average_database_bytes, 0))", text)
         self.assertIn("SUM(COALESCE(c.average_failsafe_bytes, 0))", text)

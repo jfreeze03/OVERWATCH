@@ -10,8 +10,8 @@ Reduce bloat without breaking the six-section operator model or removing useful 
 
 | File | Approx lines | Primary issue | Action |
 |---|---:|---|---|
-| `.overwatch_final/sections/dba_tools.py` | 292 | Thin public DBA Tools compatibility facade after extracting contracts, common helpers, planning helpers, setup checks, read-only views, QAS Monitor, Query Kill List, Cortex AI Limits, and Task Graph Control. | Complete for current split. Keep this file as selector/focus/dispatch plus compatibility reexports; do not add implementation logic here. |
-| `.overwatch_final/utils/shared_metrics.py` | 3804 | Many shared SQL builders and cache wrappers. | Consolidate shared mart-first query helpers by workflow. |
+| `.overwatch_final/sections/dba_tools.py` | 304 | Thin public DBA Tools compatibility facade after extracting contracts, common helpers, planning helpers, setup checks, read-only views, QAS Monitor, Query Kill List, Cortex AI Limits, and Task Graph Control. | Complete for current split and locked by no-implementation tests. Keep this file as selector/focus/dispatch plus compatibility reexports; do not add implementation logic here. |
+| `.overwatch_final/utils/shared_metrics.py` | 3290 | Compatibility facade plus remaining shared SQL builders for query, warehouse, service health, security, recommendation, and procedure families. Contracts/cache, storage, usage, and service cost loaders now live in focused modules. | Continue splitting by workflow family without changing public imports or mart-first/cache behavior. |
 | `.overwatch_final/sections/account_health.py` | 3604 | Legacy account-health cockpit overlaps DBA Control Room. | Retain as compatibility route, move useful pieces into DBA workflows. |
 | `.overwatch_final/sections/executive_landing.py` | 3470 | Advanced rollups remain in same module as front door. | Split advanced/admin rollups later if tests prove import or render pain. |
 | `.overwatch_final/sections/alert_center.py` | 3432 | Active alerts, history, admin config, suppression, closed loop, and investigation evidence. | Split active workflow from admin/evidence helpers. |
@@ -20,6 +20,16 @@ Reduce bloat without breaking the six-section operator model or removing useful 
 | `.overwatch_final/sections/warehouse_health.py` | 229 | Thin public Warehouse Health shell after extracting contracts, SQL, dataframe helpers, overview launchpad, action-control builders, setting panels, capacity brief, source-health panels, queue writers, and per-workflow view renderers. | Complete for current split. Keep main `render()` as selector/support-panel/dispatch only. |
 | `.overwatch_final/sections/cost_contract.py` | 243 | Public Cost & Contract entrypoint after split; compatibility reexports plus `render()`. | Complete. Keep thin; do not add new implementation logic here. |
 | `.overwatch_final/utils/alerts.py` | 132 | Compatibility facade only after alert split. | Keep as stable import surface; do not add new implementation logic here. |
+
+## New Focused Shared Metrics Modules
+
+| File | Approx lines | Contents |
+|---|---:|---|
+| `.overwatch_final/utils/shared_metrics_contracts.py` | 21 | `SharedMetricResult` and shared storage fallback constants. |
+| `.overwatch_final/utils/shared_metrics_cache.py` | 78 | Shared cache keys, session-state reuse, global filter reads, and company column filters. |
+| `.overwatch_final/utils/shared_metrics_storage.py` | 319 | Storage trend, storage KPI, and per-database storage detail loaders. |
+| `.overwatch_final/utils/shared_metrics_usage.py` | 376 | Usage metering KPI loaders, billing metering live SQL builders, and billing summary/delta loaders. |
+| `.overwatch_final/utils/shared_metrics_service_cost.py` | 101 | Official service cost lens and trend loaders. |
 
 ## Duplicate Code Groups
 
@@ -67,7 +77,7 @@ These are candidates, not approved removals:
 ## Next Rewrite Order
 
 1. Consolidate shared explicit-load gates and priority dataframe patterns.
-2. Break up `shared_metrics.py` by workflow/query family only after the cost/workload callers have regression coverage.
+2. Continue `shared_metrics.py` splits by family: service health, query history rollups, warehouse health/cost, security, recommendations, and procedure telemetry. Keep `utils.shared_metrics` as the public compatibility surface.
 3. Retire duplicated legacy route rendering after route metrics prove no active usage.
 4. Rewrite mart loads to feed daily workflows directly before dropping any old objects.
 5. Keep DBA Tools implementation logic in focused `dba_tools_*` modules and preserve the facade as dispatch/reexports only.
@@ -87,4 +97,8 @@ These are candidates, not approved removals:
 | DBA Tools helper split started | Reduced `.overwatch_final/sections/dba_tools.py` from about 4128 lines to about 2668 lines by extracting stable contracts, common Streamlit-safe helpers, review-only warehouse setting planning, schema compare normalization/DDL helpers, data compare planning/SQL helpers, and setup status checks into focused `dba_tools_*` modules. |
 | DBA Tools render-branch split continued | Reduced `.overwatch_final/sections/dba_tools.py` from about 2668 lines to about 1162 lines by moving Schema Compare, Data Compare, Warehouse Settings, read-only data movement monitors, object monitoring monitors, and read-only cost/health panels into focused `dba_tools_*_view.py` modules. |
 | DBA Tools QAS Monitor split | Reduced `.overwatch_final/sections/dba_tools.py` from about 1162 lines to about 998 lines by moving QAS Monitor into `dba_tools_qas_monitor_view.py`, keeping the explicit load button, `dba_df_qas` session-state key, warehouse-size compatibility probe, and priority table contract tested. |
-| DBA Tools guarded branch split completed | Reduced `.overwatch_final/sections/dba_tools.py` from about 998 lines to about 292 lines by moving Query Kill List, Cortex AI Limits, and Task Graph Control into focused view/helper modules. Typed confirmations, admin-disabled buttons, ACCOUNTADMIN account-parameter guards, scoped filters, cancellation SQL, task mutation SQL, rerun behavior, and session-state keys remain covered by focused tests. The unreachable legacy Operational Audit placeholder was removed rather than kept in the public shell. |
+| DBA Tools guarded branch split completed | Reduced `.overwatch_final/sections/dba_tools.py` from about 998 lines to about 304 lines by moving Query Kill List, Cortex AI Limits, and Task Graph Control into focused view/helper modules. Typed confirmations, admin-disabled buttons, ACCOUNTADMIN account-parameter guards, scoped filters, cancellation SQL, task mutation SQL, rerun behavior, and session-state keys remain covered by focused tests. The unreachable legacy Operational Audit placeholder was removed rather than kept in the public shell. |
+| DBA Tools facade hardening | Added no-implementation-creep tests that keep `dba_tools.py` free of live query execution, cancellation/task mutation SQL, account-parameter SQL, and dataframe construction. Task Graph Control task mutation SQL now runs through focused helper builders, and root/child matching treats regex-looking task names literally. |
+| Shared metrics contracts/cache split | Moved `SharedMetricResult`, storage fallback constants, shared state-key/cache helpers, global filter reads, and company column filters into `shared_metrics_contracts.py` and `shared_metrics_cache.py`, while keeping all names re-exported from `utils.shared_metrics`. |
+| Shared metrics storage/usage split | Moved storage trend/KPI/detail loaders into `shared_metrics_storage.py` and usage/billing metering loaders plus billing live SQL builders into `shared_metrics_usage.py`. Cache keys, effective-day caps, source labels, mart-first behavior, and public `utils.shared_metrics` imports remain covered by tests. |
+| Shared metrics service cost split | Moved official service cost lens/trend loaders into `shared_metrics_service_cost.py` with the same `SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY` source labels and public facade reexports. Service health remains deliberately deferred for a focused pass. |

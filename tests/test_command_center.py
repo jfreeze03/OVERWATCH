@@ -134,7 +134,7 @@ class CommandCenterTests(unittest.TestCase):
         dba = _read(APP_ROOT / "sections" / "dba_control_room.py")
         cost = _cost_contract_surface()
         workload = _read(APP_ROOT / "sections" / "workload_operations.py")
-        security = _read(APP_ROOT / "sections" / "security_posture.py")
+        security = _read(APP_ROOT / "sections" / "security_posture_admin_view.py")
         alert = _read(APP_ROOT / "sections" / "alert_center_diagnostics_view.py")
 
         self.assertIn("load_command_center_summary", executive)
@@ -150,7 +150,7 @@ class CommandCenterTests(unittest.TestCase):
             (APP_ROOT / "sections" / "dba_control_room.py", "Load Correlated Investigations", "load_command_center_finding_detail"),
             (APP_ROOT / "sections" / "cost_contract_evidence_panels.py", "Load Cost Investigation Findings", "load_command_center_finding_detail"),
             (APP_ROOT / "sections" / "workload_operations.py", "Load Workload Investigation Findings", "load_command_center_finding_detail"),
-            (APP_ROOT / "sections" / "security_posture.py", "Load Security Investigation Findings", "load_command_center_finding_detail"),
+            (APP_ROOT / "sections" / "security_posture_admin_view.py", "Load Security Investigation Findings", "load_command_center_finding_detail"),
             (APP_ROOT / "sections" / "alert_center_diagnostics_view.py", "Load Alert Investigation Findings", "load_command_center_finding_detail"),
         ]
         for path, button, loader in checks:

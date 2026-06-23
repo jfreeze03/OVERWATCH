@@ -111,8 +111,8 @@ class ExecutiveScorecardTests(unittest.TestCase):
         executive = _read(APP_ROOT / "sections" / "executive_landing.py")
         dba = _read(APP_ROOT / "sections" / "dba_control_room.py")
         cost = _cost_contract_surface()
-        security = _read(APP_ROOT / "sections" / "security_posture.py")
-        alert = _read(APP_ROOT / "sections" / "alert_center.py")
+        security = _read(APP_ROOT / "sections" / "security_posture_admin_view.py")
+        alert = _read(APP_ROOT / "sections" / "alert_center_diagnostics_view.py")
 
         self.assertIn("load_executive_scorecard_summary", executive)
         self.assertIn("Executive Scorecard", executive)
@@ -125,8 +125,8 @@ class ExecutiveScorecardTests(unittest.TestCase):
         checks = [
             (APP_ROOT / "sections" / "dba_control_room.py", "Load Executive Scorecard Drivers", "load_executive_scorecard_detail"),
             (APP_ROOT / "sections" / "cost_contract_evidence_panels.py", "Load Cost Efficiency Score Drivers", "load_executive_scorecard_detail"),
-            (APP_ROOT / "sections" / "security_posture.py", "Load Security Score Drivers", "load_executive_scorecard_detail"),
-            (APP_ROOT / "sections" / "alert_center.py", "Load Operational Risk Score Drivers", "load_executive_scorecard_detail"),
+            (APP_ROOT / "sections" / "security_posture_admin_view.py", "Load Security Score Drivers", "load_executive_scorecard_detail"),
+            (APP_ROOT / "sections" / "alert_center_diagnostics_view.py", "Load Operational Risk Score Drivers", "load_executive_scorecard_detail"),
         ]
         for path, button, loader in checks:
             with self.subTest(path=path.name, button=button):

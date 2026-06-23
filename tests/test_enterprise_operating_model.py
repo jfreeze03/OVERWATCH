@@ -97,8 +97,8 @@ class EnterpriseOperatingModelTests(unittest.TestCase):
     def test_ui_places_capabilities_in_approved_sections(self):
         executive = _read(APP_ROOT / "sections" / "executive_landing.py")
         dba = _read(APP_ROOT / "sections" / "dba_control_room.py")
-        alert = _read(APP_ROOT / "sections" / "alert_center.py")
-        security = _read(APP_ROOT / "sections" / "security_posture.py")
+        alert = _read(APP_ROOT / "sections" / "alert_center_diagnostics_view.py")
+        security = _read(APP_ROOT / "sections" / "security_posture_admin_view.py")
         cost = _cost_contract_surface()
 
         self.assertIn("load_enterprise_operating_rollups", executive)

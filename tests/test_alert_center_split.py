@@ -81,6 +81,9 @@ class AlertCenterSplitTests(unittest.TestCase):
         for view in expected_admin:
             with self.subTest(admin_view=view):
                 self.assertTrue(callable(alert_center.ALERT_CENTER_ADMIN_RENDERERS[view]))
+        legacy_aliases = {"Command Center", "Issue Inbox", "Triage Digest", "Cost / Cortex", "Pipeline", "Security"}
+        self.assertFalse(legacy_aliases & set(alert_center.ALERT_CENTER_RENDERERS))
+        self.assertFalse(legacy_aliases & set(alert_center.ALERT_CENTER_ADMIN_RENDERERS))
         self.assertIs(
             alert_center.ALERT_CENTER_ADMIN_RENDERERS["Detection Catalog"],
             catalog_view.render_alert_detection_catalog_tool,
@@ -394,17 +397,19 @@ class AlertCenterSplitTests(unittest.TestCase):
 
     def test_alert_center_facade_line_count_stays_below_guardrail(self):
         source = (APP_ROOT / "sections" / "alert_center.py").read_text()
-        self.assertLess(len(source.splitlines()), 1100)
+        self.assertLess(len(source.splitlines()), 1000)
         for moved_fragment in [
             "INSERT INTO {table_name}",
             "UPDATE {table_name}",
             "SNOWFLAKE.ACCOUNT_USAGE",
             "build_alert_signal_query_catalog(",
             "build_alert_native_object_registry_seed_rows(",
+            "def render_alert_delivery_automation_pane",
             "def _render_alert_email_delivery_status",
             "def _render_alert_action_queue_routing",
             "def _render_alert_notification_remediation",
             "def _render_operational_ownership_coverage",
+            "def _render_operational_risk_score_explanation",
             "def _render_alert_change_context",
             "def _render_alert_action_workflows",
             "def _render_alert_command_findings",

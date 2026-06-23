@@ -127,8 +127,8 @@ class ChangeIntelligenceTests(unittest.TestCase):
         dba = _read(APP_ROOT / "sections" / "dba_control_room.py")
         cost = _cost_contract_surface()
         workload = _read(APP_ROOT / "sections" / "workload_operations.py")
-        security = _read(APP_ROOT / "sections" / "security_posture.py")
-        alert = _read(APP_ROOT / "sections" / "alert_center.py")
+        security = _read(APP_ROOT / "sections" / "security_posture_access_changes_view.py")
+        alert = _read(APP_ROOT / "sections" / "alert_center_diagnostics_view.py")
 
         self.assertIn("load_change_intelligence_summary", executive)
         self.assertIn("Change Intelligence", executive)
@@ -143,8 +143,8 @@ class ChangeIntelligenceTests(unittest.TestCase):
             (APP_ROOT / "sections" / "dba_control_room.py", "Load Change Intelligence", "load_change_event_detail"),
             (APP_ROOT / "sections" / "cost_contract_evidence_panels.py", "Load Cost-Related Changes", "load_change_correlation_detail"),
             (APP_ROOT / "sections" / "workload_operations.py", "Load Workload Changes", "load_change_event_detail"),
-            (APP_ROOT / "sections" / "security_posture.py", "Load Security-Sensitive Changes", "load_change_event_detail"),
-            (APP_ROOT / "sections" / "alert_center.py", "Load Related Changes", "load_change_correlation_detail"),
+            (APP_ROOT / "sections" / "security_posture_access_changes_view.py", "Load Security-Sensitive Changes", "load_change_event_detail"),
+            (APP_ROOT / "sections" / "alert_center_diagnostics_view.py", "Load Related Changes", "load_change_correlation_detail"),
         ]
         for path, button, loader in checks:
             with self.subTest(path=path.name, button=button):

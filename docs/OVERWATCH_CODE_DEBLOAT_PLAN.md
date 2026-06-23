@@ -13,9 +13,9 @@ Reduce bloat without breaking the six-section operator model or removing useful 
 | `.overwatch_final/sections/account_health.py` | 3812 | Legacy account-health cockpit overlaps DBA Control Room. | Retain as compatibility route, move useful pieces into DBA workflows. |
 | `.overwatch_final/sections/executive_landing.py` | 3746 | Advanced rollups remain in same module as front door. | Split advanced/admin rollups later if tests prove import or render pain. |
 | `.overwatch_final/sections/task_management.py` | 3530 | Task management and pipeline health overlap Pipeline & Task Health. | Keep as delegated implementation, remove duplicate entry points only after regression. |
-| `.overwatch_final/sections/security_posture.py` | 3488 | Security overview, failed logins, grants, sprawl, sharing, admin evidence in one file. | Split advanced evidence after route behavior is stable. |
 | `.overwatch_final/sections/cost_center.py` | 3106 | Cost cockpit still holds multiple cost workflows and fallback branches. | Split after Alert Center/Security if cost route metrics justify another pass. |
 | `.overwatch_final/sections/change_drift.py` | 2924 | Change drift mixes overview, evidence, and investigation rendering. | Below 3000 now; revisit after larger modules are reduced. |
+| `.overwatch_final/sections/security_posture.py` | 2716 | Security public route now has focused contracts/common/models/data and initial view modules, but overview and privilege-sprawl/action-queue detail remain inline. | Continue split before moving to Account Health. |
 
 ## Completed Thin Facades
 
@@ -67,6 +67,18 @@ Reduce bloat without breaking the six-section operator model or removing useful 
 | `.overwatch_final/sections/alert_center_admin_suppression_view.py` | 195 | Suppression Windows admin renderer plus tested insert/select/deactivate SQL builders. |
 | `.overwatch_final/sections/alert_center_diagnostics_view.py` | 269 | Advanced diagnostics and enterprise evidence panels with existing explicit-load/session-state keys preserved. |
 
+## New Focused Security Posture Modules
+
+| File | Approx lines | Contents |
+|---|---:|---|
+| `.overwatch_final/sections/security_posture_contracts.py` | 143 | Security workflow names, details, legacy aliases, brief workflow cards, and delegated module routing. |
+| `.overwatch_final/sections/security_posture_common.py` | 102 | Active scope helpers, MFA shared-helper passthroughs, freshness/confidence labels, operator notes, and delegated workflow module rendering. |
+| `.overwatch_final/sections/security_posture_models.py` | 262 | Scope metadata matching, proof-table visibility flags, source-health rows, and security score/rating helpers. |
+| `.overwatch_final/sections/security_posture_data.py` | 130 | Security summary SQL wrappers and mart-first/live-fallback summary loader preserving session-state keys and source labels. |
+| `.overwatch_final/sections/security_posture_alerts_view.py` | 52 | Loaded Security Alerts context renderer with existing Alert Center and drilldown buttons. |
+| `.overwatch_final/sections/security_posture_access_changes_view.py` | 58 | Explicit-load Security-Sensitive Changes detail renderer. |
+| `.overwatch_final/sections/security_posture_admin_view.py` | 307 | Advanced security evidence panels, score drivers, ownership coverage, action approvals, command findings, and data-health renderer. |
+
 ## Duplicate Code Groups
 
 | Group | Symptoms | Target utility |
@@ -94,7 +106,7 @@ These are candidates, not approved removals:
 
 | Metric | Current | Target |
 |---|---:|---:|
-| Large app modules above 3000 lines | 5 | 3 or fewer |
+| Large app modules above 3000 lines | 4 | 3 or fewer |
 | Daily operator mart tables | 90+ expected in current setup | 28-34 after migration |
 | Primary route aliases exposed to users | Several before this pass | Zero known in primary UI |
 | Live Snowflake regression coverage | New runner, blocked by auth | Passing in test account |
@@ -114,7 +126,7 @@ These are candidates, not approved removals:
 
 ## Next Rewrite Order
 
-1. Split Security Posture after Alert Center compile/tests stay green.
+1. Continue Security Posture split if incomplete.
 2. Split Account Health compatibility route into useful DBA workflows.
 3. Split Cost Center if it remains above threshold after Security/Account Health.
 4. Retire duplicated legacy route rendering after route metrics prove no active usage.
@@ -152,3 +164,4 @@ These are candidates, not approved removals:
 | Alert Center data and Detection Catalog split started | Moved bounded alert source loading into `alert_center_data.py` and the Detection Catalog pane into `alert_center_admin_catalog_view.py`. Native registry and suppression-window loads now use the shared explicit-load helper while preserving Streamlit/session-state keys. |
 | Alert Center board and pane split continued | Reduced `.overwatch_final/sections/alert_center.py` from about 3326 lines to about 1514 lines by moving pure board/model helpers, Active Alerts, Cost/Reliability/Security category panes, Alert History, and Suppression Windows into focused modules. Renderer maps, facade reexports, board behavior, category token patterns, suppression SQL builders, and no-creep guards are covered by tests. |
 | Alert Center split completed for current pass | Reduced `.overwatch_final/sections/alert_center.py` from about 1514 lines to about 845 lines by moving Delivery & Automation, email delivery/action-queue routing, remediation admin rendering, and advanced diagnostics into focused modules. Legacy Issue Inbox and Triage Digest render branches were removed because aliases normalize to Active Alerts. The remaining shell owns load gates, freshness, source notes, shared pre-panels, renderer maps, and compatibility reexports. |
+| Security Posture contracts/data/initial view split | Reduced `.overwatch_final/sections/security_posture.py` from about 3488 lines to about 2716 lines by moving workflow contracts, common helpers, model/source-health helpers, mart-first summary loading, loaded alert context, access-change detail, and advanced evidence panels into focused modules. The public route keeps compatibility reexports, delegated workflow module routing, Security Overview orchestration, Privilege Sprawl/action-queue behavior, and existing Streamlit/session-state keys. |

@@ -2,13 +2,75 @@
 from __future__ import annotations
 
 from datetime import datetime
-from importlib import import_module
 
 import streamlit as st
 
-from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE, DEFAULT_COMPANY, DEFAULT_ENVIRONMENT
+from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE
 from sections.base import lazy_pandas, lazy_util as _lazy_util
-from sections.navigation import apply_section_workflow_navigation
+from sections.security_posture_access_changes_view import _render_security_change_detail
+from sections.security_posture_admin_view import (
+    _render_advanced_security_evidence,
+    _render_security_action_approval,
+    _render_security_command_findings,
+    _render_security_ownership_coverage,
+    _render_security_score_explanation,
+    _render_security_source_health,
+)
+from sections.security_posture_alerts_view import _render_loaded_security_alert_context
+from sections.security_posture_common import (
+    _freshness_note,
+    _metric_confidence_label,
+    _mfa_count_expr,
+    _mfa_gap_predicate,
+    _mfa_proof_label,
+    get_active_company,
+    get_active_environment,
+    render_operator_briefing,
+    render_signal_confidence,
+    render_workflow_guide,
+    render_workflow_module,
+)
+from sections.security_posture_contracts import (
+    ACCESS_CHANGES_WORKFLOW,
+    DATA_SHARING_EXPOSURE_WORKFLOW,
+    FAILED_LOGINS_WORKFLOW,
+    PRIVILEGE_SPRAWL_WORKFLOW,
+    RISKY_GRANTS_WORKFLOW,
+    SECURITY_ADMIN_ADVANCED_WORKFLOW,
+    SECURITY_ALERTS_WORKFLOW,
+    SECURITY_BRIEF_WORKFLOWS,
+    SECURITY_OVERVIEW_WORKFLOW,
+    SECURITY_POSTURE_VIEW_DETAILS,
+    SECURITY_POSTURE_VIEWS,
+    SECURITY_VIEW_ALIASES,
+    WORKFLOW_DETAILS,
+    WORKFLOW_MODULES,
+    WORKFLOWS,
+)
+from sections.security_posture_data import (
+    _build_security_mart_brief_sql,
+    _build_security_summary_sql,
+    _clear_security_exception_state,
+    _load_security_brief,
+    _store_security_summary,
+)
+from sections.security_posture_models import (
+    SECURITY_SCOPE_FILTER_KEYS,
+    _SECURITY_PROOF_TABLES_KEY,
+    _SECURITY_PROOF_TABLES_SCOPE_KEY,
+    _hide_security_proof_tables,
+    _security_frame_rows,
+    _security_meta_matches,
+    _security_proof_tables_visible,
+    _security_rating,
+    _security_scope_meta,
+    _security_scope_value,
+    _security_score,
+    _security_source_confidence,
+    _security_source_health_rows,
+    _security_source_next_action,
+    _show_security_proof_tables,
+)
 from sections.shell_helpers import (
     consume_section_autoload_request,
     render_data_freshness,
@@ -16,18 +78,15 @@ from sections.shell_helpers import (
     render_shell_kpi_row,
     render_shell_snapshot,
     render_shell_status_strip,
-    with_loaded_at,
 )
-from utils.primitives import safe_float, safe_int
-from utils.section_guidance import defer_section_note, defer_source_note
+from utils.primitives import safe_int
+from utils.section_guidance import defer_source_note
 
 
 pd = lazy_pandas()
 
 action_queue_environment_clause = _lazy_util("action_queue_environment_clause")
-build_shared_security_mart_brief_sql = _lazy_util("build_shared_security_mart_brief_sql")
 build_shared_security_privileged_grant_review_sql = _lazy_util("build_shared_security_privileged_grant_review_sql")
-build_shared_security_summary_sql = _lazy_util("build_shared_security_summary_sql")
 environment_label_for_database = _lazy_util("environment_label_for_database")
 format_snowflake_error = _lazy_util("format_snowflake_error")
 get_session = _lazy_util("get_session")
@@ -36,266 +95,16 @@ make_action_id = _lazy_util("make_action_id")
 render_priority_dataframe = _lazy_util("render_priority_dataframe")
 render_mode_selector = _lazy_util("render_mode_selector")
 render_workflow_selector = _lazy_util("render_workflow_selector")
-build_loaded_section_alert_signal_board = _lazy_util("build_loaded_section_alert_signal_board")
 day_window_selectbox = _lazy_util("day_window_selectbox")
-load_executive_scorecard_detail = _lazy_util("load_executive_scorecard_detail")
-load_change_event_detail = _lazy_util("load_change_event_detail")
-load_closed_loop_execution_plan_detail = _lazy_util("load_closed_loop_execution_plan_detail")
-load_closed_loop_workflow_detail = _lazy_util("load_closed_loop_workflow_detail")
-load_command_center_finding_detail = _lazy_util("load_command_center_finding_detail")
-load_command_center_recommendation_detail = _lazy_util("load_command_center_recommendation_detail")
-load_ownership_coverage_rollup = _lazy_util("load_ownership_coverage_rollup")
 resolve_owner_context = _lazy_util("resolve_owner_context")
 run_query = _lazy_util("run_query")
 safe_identifier = _lazy_util("safe_identifier")
 sql_literal = _lazy_util("sql_literal")
-shared_mfa_count_expr = _lazy_util("shared_mfa_count_expr")
-shared_mfa_gap_predicate = _lazy_util("shared_mfa_gap_predicate")
-shared_mfa_proof_label = _lazy_util("shared_mfa_proof_label")
 upsert_actions = _lazy_util("upsert_actions")
 
 
-def get_active_company() -> str:
-    return str(st.session_state.get("active_company", DEFAULT_COMPANY) or DEFAULT_COMPANY)
-
-
-def get_active_environment() -> str:
-    return str(st.session_state.get("global_environment", DEFAULT_ENVIRONMENT) or DEFAULT_ENVIRONMENT)
-
-
-def _mfa_count_expr(user_cols: set[str]) -> str:
-    return shared_mfa_count_expr(user_cols)
-
-
-def _mfa_gap_predicate(user_cols: set[str], alias: str = "u") -> str:
-    return shared_mfa_gap_predicate(user_cols, alias)
-
-
-def _mfa_proof_label(user_cols: set[str]) -> str:
-    return shared_mfa_proof_label(user_cols)
-
-
-def _freshness_note(source: str) -> str:
-    source_key = str(source or "").lower()
-    if "information_schema" in source_key or source_key in {"live", "is"}:
-        return "Freshness: live INFORMATION_SCHEMA view"
-    if "account_usage" in source_key:
-        return "Freshness: ACCOUNT_USAGE can lag up to about 45-90 minutes"
-    if "mart" in source_key or "overwatch" in source_key:
-        return "Freshness: fast summary refresh cadence"
-    return "Freshness: depends on source view availability"
-
-
-def _metric_confidence_label(kind: str) -> str:
-    labels = {
-        "exact": "Measurement: Exact",
-        "allocated": "Measurement: Allocated from source records",
-        "estimated": "Measurement: Estimated",
-    }
-    return labels.get(str(kind or "").lower(), "Measurement depends on available account metadata")
-
-
-def render_signal_confidence(*, source: str = "ACCOUNT_USAGE", confidence: str = "exact", scope_note: str = "") -> None:
-    parts = [_freshness_note(source), _metric_confidence_label(confidence)]
-    if scope_note:
-        parts.append(scope_note)
-    defer_source_note(*parts)
-
-
-def render_operator_briefing(items: list[tuple[str, str]], *, columns: int = 4) -> None:
-    _ = columns
-    for label, detail in items:
-        defer_section_note(f"{label}: {detail}")
-
-
-def render_workflow_guide(summary: str, rows) -> None:
-    defer_section_note(summary)
-    for trigger, action in rows:
-        defer_section_note(f"{trigger}: {action}")
-
-
-def _render_loaded_security_alert_context() -> None:
-    board = build_loaded_section_alert_signal_board(st.session_state, section="Security Monitoring", limit=8)
-    if board.empty:
-        return
-    st.markdown("**Loaded Security Alerts**")
-    render_priority_dataframe(
-        board,
-        title="Loaded security alert context",
-        priority_columns=[
-            "SECTION_FOCUS", "SEVERITY", "SLA_STATE", "CATEGORY", "SIGNAL",
-            "ENTITY", "OWNER", "FIRST_RESPONSE", "RECOMMENDED_ACTION",
-            "IMPACT_ESTIMATE", "OPEN_PATH", "DRILLDOWN_HINT",
-            "AUTOMATION_READINESS", "QUEUE_STATE", "TICKET_ID",
-        ],
-        sort_by=["PRIORITY"],
-        ascending=True,
-        raw_label="All loaded security alert rows",
-        height=260,
-        max_rows=6,
-    )
-    top = board.iloc[0]
-    cols = st.columns(2)
-    with cols[0]:
-        if st.button("Open Alert Lane", key="security_alert_open_alert_lane", width="stretch"):
-            apply_section_workflow_navigation(
-                "Alert Center",
-                alert_center_view=str(top.get("ALERT_CENTER_VIEW") or "Security"),
-            )
-            st.rerun()
-    with cols[1]:
-        if st.button("Open Security Drilldown", key="security_alert_open_drilldown", width="stretch"):
-            apply_section_workflow_navigation(
-                str(top.get("DESTINATION_SECTION") or "Security Monitoring"),
-                workflow=str(top.get("DESTINATION_WORKFLOW") or "Failed Logins"),
-            )
-            st.rerun()
-
-
-def render_workflow_module(workflow: str, workflow_modules: dict[str, str]) -> None:
-    module_name = workflow_modules.get(str(workflow))
-    if not module_name:
-        st.warning(f"No module registered for workflow: {workflow}")
-        return
-    module = import_module(module_name)
-    render = getattr(module, "render", None)
-    if not callable(render):
-        st.warning(f"Workflow module has no render() function: {module_name}")
-        return
-    render()
-
-SECURITY_OVERVIEW_WORKFLOW = "Security Overview"
-FAILED_LOGINS_WORKFLOW = "Failed Logins"
-RISKY_GRANTS_WORKFLOW = "Risky Grants"
-PRIVILEGE_SPRAWL_WORKFLOW = "Privilege Sprawl"
-ACCESS_CHANGES_WORKFLOW = "Access Changes"
-DATA_SHARING_EXPOSURE_WORKFLOW = "Data Sharing Exposure"
-SECURITY_ALERTS_WORKFLOW = "Security Alerts"
-SECURITY_ADMIN_ADVANCED_WORKFLOW = "Security Admin / Advanced"
-
-SECURITY_POSTURE_VIEWS = (
-    SECURITY_OVERVIEW_WORKFLOW,
-    FAILED_LOGINS_WORKFLOW,
-    RISKY_GRANTS_WORKFLOW,
-    PRIVILEGE_SPRAWL_WORKFLOW,
-    ACCESS_CHANGES_WORKFLOW,
-    DATA_SHARING_EXPOSURE_WORKFLOW,
-    SECURITY_ALERTS_WORKFLOW,
-    SECURITY_ADMIN_ADVANCED_WORKFLOW,
-)
-SECURITY_POSTURE_VIEW_DETAILS = {
-    SECURITY_OVERVIEW_WORKFLOW: "Failed logins, risky grants, privilege changes, sharing exposure, and top actions.",
-    FAILED_LOGINS_WORKFLOW: "Login failures, MFA gaps, user activity, source IPs, and client programs.",
-    RISKY_GRANTS_WORKFLOW: "User grants, elevated roles, ownership grants, and grant-option exposure.",
-    PRIVILEGE_SPRAWL_WORKFLOW: "Admin role spread, elevated privilege growth, blockers, and review routes.",
-    ACCESS_CHANGES_WORKFLOW: "Security-sensitive grants, roles, policies, integrations, and access drift.",
-    DATA_SHARING_EXPOSURE_WORKFLOW: "Shares, imported databases, exposed datasets, consumers, and ownership.",
-    SECURITY_ALERTS_WORKFLOW: "Loaded security incidents with owner, impact, and recommended action.",
-    SECURITY_ADMIN_ADVANCED_WORKFLOW: "Source freshness, readiness, raw evidence, validation, and review-only plans.",
-}
-
-SECURITY_VIEW_ALIASES = {
-    "Security Posture": SECURITY_OVERVIEW_WORKFLOW,
-    "Security & Access": RISKY_GRANTS_WORKFLOW,
-    "Access posture": SECURITY_OVERVIEW_WORKFLOW,
-    "Access Posture": SECURITY_OVERVIEW_WORKFLOW,
-    "Login Audit": FAILED_LOGINS_WORKFLOW,
-    "Login Posture": FAILED_LOGINS_WORKFLOW,
-    "Roles & Grants": RISKY_GRANTS_WORKFLOW,
-    "Privilege sprawl": PRIVILEGE_SPRAWL_WORKFLOW,
-    "Data Sharing": DATA_SHARING_EXPOSURE_WORKFLOW,
-    "Data sharing exposure": DATA_SHARING_EXPOSURE_WORKFLOW,
-    "Data Health": SECURITY_ADMIN_ADVANCED_WORKFLOW,
-    "Security Summary": SECURITY_ALERTS_WORKFLOW,
-    "Object and access changes": ACCESS_CHANGES_WORKFLOW,
-    "Advanced Security Diagnostics": SECURITY_ADMIN_ADVANCED_WORKFLOW,
-    "Security Admin": SECURITY_ADMIN_ADVANCED_WORKFLOW,
-    "Advanced Security": SECURITY_ADMIN_ADVANCED_WORKFLOW,
-    "Raw Grants": SECURITY_ADMIN_ADVANCED_WORKFLOW,
-    "Role Readiness": SECURITY_ADMIN_ADVANCED_WORKFLOW,
-}
-
-WORKFLOWS = SECURITY_POSTURE_VIEWS
-
-WORKFLOW_DETAILS = {
-    SECURITY_OVERVIEW_WORKFLOW: "Fast security triage across identity, grants, access changes, sharing, and alerts.",
-    FAILED_LOGINS_WORKFLOW: "Login failures, MFA gaps, user activity, source IPs, and client programs.",
-    RISKY_GRANTS_WORKFLOW: "User grants, elevated roles, ownership grants, and grant-option exposure.",
-    PRIVILEGE_SPRAWL_WORKFLOW: "Admin roles, ownership grants, grant-option exposure, and telemetry gaps.",
-    ACCESS_CHANGES_WORKFLOW: "Recent grants, revokes, role memberships, object privileges, and who changed them.",
-    DATA_SHARING_EXPOSURE_WORKFLOW: "Shares, imported databases, exposed datasets, and route follow-up.",
-    SECURITY_ALERTS_WORKFLOW: "Security incidents from Alert Center with owners, impact, and investigation routes.",
-    SECURITY_ADMIN_ADVANCED_WORKFLOW: "Raw evidence, validation, readiness, diagnostics, and review-gated plans.",
-}
-
-SECURITY_BRIEF_WORKFLOWS = (
-    {
-        "WORKFLOW": SECURITY_OVERVIEW_WORKFLOW,
-        "BUTTON_LABEL": "Open Overview",
-        "DBA_MOVE": "Start with failed logins, risky grants, access changes, sharing exposure, and top actions.",
-        "WHEN": "Morning security review or quick triage.",
-    },
-    {
-        "WORKFLOW": FAILED_LOGINS_WORKFLOW,
-        "BUTTON_LABEL": "Open Logins",
-        "DBA_MOVE": "Start with failed logins, MFA gaps, and user-level access signals.",
-        "WHEN": "Morning triage, identity incidents, or audit prep.",
-    },
-    {
-        "WORKFLOW": RISKY_GRANTS_WORKFLOW,
-        "BUTTON_LABEL": "Open Grants",
-        "DBA_MOVE": "Review admin roles, ownership, grant option, and review blockers.",
-        "WHEN": "Role cleanup, least-privilege review, or elevated-access questions.",
-    },
-    {
-        "WORKFLOW": PRIVILEGE_SPRAWL_WORKFLOW,
-        "BUTTON_LABEL": "Open Sprawl",
-        "DBA_MOVE": "Find dormant high-privilege users, orphaned roles, and accumulated access.",
-        "WHEN": "Quarterly access cleanup or broad privilege growth review.",
-    },
-    {
-        "WORKFLOW": ACCESS_CHANGES_WORKFLOW,
-        "BUTTON_LABEL": "Open Changes",
-        "DBA_MOVE": "Review recent grants, revokes, role membership, and object privilege changes.",
-        "WHEN": "Something changed, access broke, or a user suddenly gained elevated rights.",
-    },
-    {
-        "WORKFLOW": DATA_SHARING_EXPOSURE_WORKFLOW,
-        "BUTTON_LABEL": "Open Sharing",
-        "DBA_MOVE": "Validate shared databases, imported data, consumers, and ownership.",
-        "WHEN": "External exposure, vendor access, or data-sharing audit review.",
-    },
-    {
-        "WORKFLOW": SECURITY_ALERTS_WORKFLOW,
-        "BUTTON_LABEL": "Open Alerts",
-        "DBA_MOVE": "Triage security alerts with owner, impact, and recommended action.",
-        "WHEN": "Alert Center routes a security incident or repeated signal.",
-    },
-    {
-        "WORKFLOW": SECURITY_ADMIN_ADVANCED_WORKFLOW,
-        "BUTTON_LABEL": "Open Advanced",
-        "DBA_MOVE": "Load raw evidence, readiness, validation, and review-gated action plans.",
-        "WHEN": "Audit support, admin validation, or deep proofing only.",
-    },
-)
-
-WORKFLOW_MODULES = {
-    FAILED_LOGINS_WORKFLOW: "sections.security_access",
-    RISKY_GRANTS_WORKFLOW: "sections.security_access",
-    DATA_SHARING_EXPOSURE_WORKFLOW: "sections.data_sharing",
-}
-
 SECURITY_ACCESS_REVIEW_TABLE = "OVERWATCH_SECURITY_ACCESS_REVIEW"
 SECURITY_OPERABILITY_FACT_TABLE = "FACT_SECURITY_OPERABILITY_DAILY"
-SECURITY_SCOPE_FILTER_KEYS = (
-    "global_user",
-    "global_database",
-    "global_role",
-    "global_start_date",
-    "global_end_date",
-)
-_SECURITY_PROOF_TABLES_KEY = "security_posture_show_proof_tables"
-_SECURITY_PROOF_TABLES_SCOPE_KEY = "security_posture_proof_tables_scope"
 
 
 def security_access_review_fqn(
@@ -378,201 +187,6 @@ def security_operability_fact_fqn(table: str = SECURITY_OPERABILITY_FACT_TABLE) 
     return mart_object_name(table)
 
 
-def _security_scope_value(value) -> str:
-    if value is None:
-        return ""
-    if hasattr(value, "isoformat"):
-        return value.isoformat()
-    return str(value).strip()
-
-
-def _security_scope_meta(
-    company: str,
-    environment: str,
-    days: int | None = None,
-    state: dict | None = None,
-) -> dict:
-    """Return the filter scope that loaded Security Posture telemetry must match."""
-    state = state if state is not None else st.session_state
-    meta = {
-        "company": _security_scope_value(company),
-        "environment": _security_scope_value(environment),
-    }
-    if days is not None:
-        meta["days"] = int(days)
-    for key in SECURITY_SCOPE_FILTER_KEYS:
-        meta[key] = _security_scope_value(state.get(key))
-    return meta
-
-
-def _security_meta_matches(meta: dict | None, expected: dict | None) -> bool:
-    if not isinstance(meta, dict) or not isinstance(expected, dict):
-        return False
-    for key, expected_value in expected.items():
-        actual = meta.get(key)
-        if key == "days":
-            try:
-                if int(actual) != int(expected_value):
-                    return False
-            except Exception:
-                return False
-        elif _security_scope_value(actual) != _security_scope_value(expected_value):
-            return False
-    return True
-
-
-def _security_proof_tables_visible(company: str, environment: str, days: int) -> bool:
-    return bool(st.session_state.get(_SECURITY_PROOF_TABLES_KEY)) and _security_meta_matches(
-        st.session_state.get(_SECURITY_PROOF_TABLES_SCOPE_KEY),
-        _security_scope_meta(company, environment, days),
-    )
-
-
-def _show_security_proof_tables(company: str, environment: str, days: int) -> None:
-    st.session_state[_SECURITY_PROOF_TABLES_KEY] = True
-    st.session_state[_SECURITY_PROOF_TABLES_SCOPE_KEY] = _security_scope_meta(company, environment, days)
-
-
-def _hide_security_proof_tables() -> None:
-    st.session_state[_SECURITY_PROOF_TABLES_KEY] = False
-    st.session_state.pop(_SECURITY_PROOF_TABLES_SCOPE_KEY, None)
-
-
-def _security_frame_rows(frame) -> int:
-    return len(frame) if isinstance(frame, pd.DataFrame) else 0
-
-
-def _security_source_confidence(source: str, default: str) -> str:
-    source_lower = str(source or "").lower()
-    if ("fast" in source_lower and "summary" in source_lower) or "mart" in source_lower or "fact_" in source_lower:
-        return "Fast summary"
-    if "fallback" in source_lower:
-        return "Live fallback"
-    if "account_usage" in source_lower:
-        return "Live ACCOUNT_USAGE"
-    return default
-
-
-def _security_source_next_action(state: str, source: str) -> str:
-    source_lower = str(source or "").lower()
-    if state == "Stale":
-        return "Reload after changing company, environment, lookback, or triage filters."
-    if state == "Unavailable":
-        return "Deploy or refresh the summary/grants before relying on this surface."
-    if state == "On demand":
-        return "Refresh only when this workflow is part of the current security investigation."
-    if state == "No Rows":
-        return "Confirm the selected scope has recent security events, review rows, or summary rows."
-    if "fallback" in source_lower:
-        return "Use for investigation; prefer summary refresh for repeated daily access control."
-    return "Current for the active security scope."
-
-
-def _security_source_health_rows(
-    state: dict,
-    company: str,
-    environment: str,
-) -> pd.DataFrame:
-    """Summarize Security Posture telemetry freshness and source strategy."""
-    definitions = [
-        {
-            "surface": "Security summary",
-            "frame_key": "security_posture_summary",
-            "source_key": "security_posture_source",
-            "meta_key": "security_posture_meta",
-            "days_key": "security_posture_brief_days",
-            "default_days": 30,
-            "source": "Fast security summary or live account history",
-            "confidence": "Mixed",
-        },
-        {
-            "surface": "Security exceptions",
-            "frame_key": "security_posture_exceptions",
-            "source_key": "security_posture_source",
-            "meta_key": "security_posture_meta",
-            "days_key": "security_posture_brief_days",
-            "default_days": 30,
-            "source": "Fast security summary or live account history",
-            "confidence": "Mixed",
-        },
-        {
-            "surface": "Control summary",
-            "frame_key": "security_operability_fact",
-            "meta_key": "security_operability_fact_meta",
-            "days_key": "security_posture_brief_days",
-            "default_days": 30,
-            "source": "Fast security control summary",
-            "confidence": "Fast summary",
-            "error_key": "security_operability_fact_error",
-        },
-        {
-            "surface": "Privileged grants",
-            "frame_key": "security_privileged_grants",
-            "meta_key": "security_privileged_grants_meta",
-            "days_key": "security_priv_grant_days",
-            "default_days": 30,
-            "source": "Live ACCOUNT_USAGE grants with route status annotation",
-            "confidence": "Live ACCOUNT_USAGE",
-        },
-        {
-            "surface": "Access review trend",
-            "frame_key": "security_access_review_trend",
-            "meta_key": "security_access_review_trend_meta",
-            "days_key": "security_access_review_trend_days",
-            "default_days": 30,
-            "source": "Workflow telemetry",
-            "confidence": "Workflow telemetry",
-        },
-        {
-            "surface": "Closure analytics",
-            "frame_key": "security_action_closure",
-            "meta_key": "security_action_closure_meta",
-            "days_key": "security_action_closure_days",
-            "default_days": 30,
-            "source": "Action queue closure status",
-            "confidence": "Workflow telemetry",
-        },
-    ]
-    rows = []
-    for item in definitions:
-        source_key = item.get("source_key")
-        source = str((state.get(source_key, item["source"]) if source_key else item["source"]) or item["source"])
-        frame = state.get(item["frame_key"])
-        error_key = item.get("error_key")
-        error = state.get(error_key) if error_key else None
-        days_key = item.get("days_key")
-        days = state.get(days_key, item.get("default_days")) if days_key else item.get("default_days")
-        expected_meta = _security_scope_meta(company, environment, days=days, state=state)
-        loaded = isinstance(frame, pd.DataFrame)
-        if error:
-            status = "Unavailable"
-        elif not loaded:
-            status = "On demand"
-        elif not _security_meta_matches(state.get(item["meta_key"]), expected_meta):
-            status = "Stale"
-        elif frame.empty:
-            status = "No Rows"
-        else:
-            status = "Loaded"
-        rows.append({
-            "SURFACE": item["surface"],
-            "STATE": status,
-            "STATE_RANK": {
-                "Unavailable": 0,
-                "Stale": 1,
-                "Loaded": 2,
-                "No Rows": 3,
-                "On demand": 4,
-            }.get(status, 9),
-            "SOURCE": source,
-            "CONFIDENCE": _security_source_confidence(source, item["confidence"]),
-            "ROWS": _security_frame_rows(frame),
-            "SCOPE": f"{company} / {environment} / {int(days)}d",
-            "NEXT_ACTION": _security_source_next_action(status, source),
-        })
-    return pd.DataFrame(rows)
-
-
 def build_security_operability_fact_ddl(table: str = SECURITY_OPERABILITY_FACT_TABLE) -> str:
     fqn = security_operability_fact_fqn(table=table)
     return f"""CREATE TRANSIENT TABLE IF NOT EXISTS {fqn} (
@@ -622,34 +236,6 @@ def build_security_operability_fact_migration_sql(
         f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS NEXT_CONTROL_ACTION VARCHAR(4000)",
         f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS LAST_ACTIVITY_TS TIMESTAMP_NTZ",
     ]
-
-
-def _security_score(
-    *,
-    failed_logins: int,
-    failed_users: int,
-    users_without_mfa: int,
-    active_users: int,
-    recent_grants: int,
-    shared_databases: int,
-) -> int:
-    """Weighted DBA posture score; failures and MFA gaps matter more than volume."""
-    active_users = max(safe_int(active_users), 1)
-    failed_login_penalty = min(25, safe_float(failed_logins) * 0.25 + safe_float(failed_users) * 2)
-    mfa_penalty = min(35, (safe_float(users_without_mfa) / active_users) * 100)
-    grant_penalty = min(20, safe_float(recent_grants) * 1.5)
-    exposure_penalty = min(20, safe_float(shared_databases) * 3)
-    return max(0, min(100, int(round(100 - failed_login_penalty - mfa_penalty - grant_penalty - exposure_penalty))))
-
-
-def _security_rating(score: int) -> str:
-    if score >= 95:
-        return "Strong"
-    if score >= 85:
-        return "Watch"
-    if score >= 70:
-        return "Elevated"
-    return "High Risk"
 
 
 def _security_action_for(finding_type: str) -> tuple[str, str, str]:
@@ -1716,286 +1302,6 @@ def _queue_security_workflow(workflow: str) -> None:
         st.rerun()
 
 
-def _render_security_ownership_coverage(company: str, environment: str) -> None:
-    coverage = load_ownership_coverage_rollup(
-        company,
-        environment,
-        surface="Security Monitoring",
-        days=35,
-    )
-    if coverage is None or getattr(coverage, "empty", True):
-        st.caption("Security ownership coverage is pending. Refresh the enterprise operating model mart to show access route gaps.")
-        return
-    gaps = safe_int(pd.to_numeric(coverage.get("GAP_ITEMS", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
-    routed = safe_int(pd.to_numeric(coverage.get("ROUTED_ITEMS", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
-    confidence = str(coverage.get("CONFIDENCE", pd.Series(["estimated"])).fillna("estimated").astype(str).iloc[0])
-    st.markdown("**Security Ownership Coverage**")
-    render_shell_snapshot((
-        ("Routed", f"{routed:,}"),
-        ("Gaps", f"{gaps:,}"),
-        ("Confidence", confidence),
-    ))
-    st.dataframe(
-        coverage[[
-            column for column in [
-                "ENTITY_TYPE", "TOTAL_ITEMS", "ROUTED_ITEMS", "GAP_ITEMS",
-                "COVERAGE_PCT", "TRUST_LEVEL", "CONFIDENCE", "TOP_GAP_ENTITY",
-                "ROUTE", "NEXT_ACTION",
-            ]
-            if column in coverage.columns
-        ]],
-        width="stretch",
-        hide_index=True,
-    )
-
-
-def _render_security_score_explanation(company: str, environment: str) -> None:
-    """Expose Security Score drivers without loading full security detail."""
-    st.markdown("**Security Score**")
-    st.caption("Loads security score drivers from the Executive Scorecard history.")
-    if st.button("Load Security Score Drivers", key="security_load_score_drivers", width="stretch"):
-        st.session_state["security_scorecard_detail"] = load_executive_scorecard_detail(
-            company,
-            environment,
-            score_key="SECURITY",
-            days=180,
-        )
-        st.session_state["security_scorecard_scope"] = (company, environment)
-
-    detail = st.session_state.get("security_scorecard_detail")
-    if (
-        isinstance(detail, pd.DataFrame)
-        and st.session_state.get("security_scorecard_scope") == (company, environment)
-    ):
-        if detail.empty:
-            st.info("No Security Score driver rows are available for this scope yet.")
-            return
-        latest = detail.iloc[0]
-        owner_gap = str(latest.get("OWNER_GAP") or "").strip().lower() in {"true", "1", "yes", "y"}
-        render_shell_snapshot((
-            ("Score", f"{safe_float(latest.get('CURRENT_SCORE')):.0f}/100"),
-            ("Status", str(latest.get("STATUS") or "Unknown")),
-            ("Trend", str(latest.get("TREND") or "Stable")),
-            ("Owner Gap", "Yes" if owner_gap else "No"),
-        ))
-        render_priority_dataframe(
-            detail,
-            title="Security Score drivers",
-            priority_columns=[
-                "SNAPSHOT_TS", "CURRENT_SCORE", "STATUS", "TREND",
-                "TOP_DRIVER", "RECOMMENDED_ACTION", "OWNER_ROUTE",
-                "OWNER_GAP", "CONFIDENCE", "SOURCE_OBJECTS", "LAST_REFRESHED_TS",
-            ],
-            sort_by=["SNAPSHOT_TS"],
-            ascending=False,
-            raw_label="All security score history rows",
-            height=260,
-            max_rows=8,
-        )
-
-
-def _render_security_change_detail(company: str, environment: str) -> None:
-    """Expose security-sensitive change events only after an operator asks for them."""
-    st.markdown("**Security-Sensitive Changes**")
-    st.caption("Loads role, grant, network policy, integration, and security-sensitive change evidence from the change mart.")
-    if st.button("Load Security-Sensitive Changes", key="security_load_change_intelligence", width="stretch"):
-        st.session_state["security_change_intelligence_detail"] = load_change_event_detail(
-            company,
-            environment,
-            change_types=(
-                "ROLE_CHANGE",
-                "GRANT_CHANGE",
-                "NETWORK_POLICY_CHANGE",
-                "INTEGRATION_CHANGE",
-                "SECURITY_SENSITIVE_CHANGE",
-            ),
-            days=180,
-        )
-        st.session_state["security_change_intelligence_scope"] = (company, environment)
-
-    detail = st.session_state.get("security_change_intelligence_detail")
-    if (
-        isinstance(detail, pd.DataFrame)
-        and st.session_state.get("security_change_intelligence_scope") == (company, environment)
-    ):
-        if detail.empty:
-            st.info("No security-sensitive change rows are available for this scope yet.")
-            return
-        render_priority_dataframe(
-            detail,
-            title="Security-sensitive change events",
-            priority_columns=[
-                "CHANGE_TS", "CHANGE_TYPE", "OBJECT_TYPE", "OBJECT_NAME",
-                "CHANGED_BY", "RISK_LEVEL", "BUSINESS_IMPACT", "OWNER_ROUTE",
-                "OWNER_GAP", "RELATED_ALERT_COUNT", "CONFIDENCE", "LAST_REFRESHED_TS",
-            ],
-            sort_by=["CHANGE_TS"],
-            ascending=False,
-            raw_label="All security-sensitive change rows",
-            height=300,
-            max_rows=12,
-        )
-
-
-def _render_security_action_approval(company: str, environment: str) -> None:
-    """Expose security action approval and review plans behind Load."""
-    st.markdown("**Security Action Approval Workflow**")
-    st.caption(
-        "Loads security action workflows and review-only plans. "
-        "Access changes remain approval-gated and are not executed from this screen."
-    )
-    domains = ("Security",)
-    if st.button("Load Security Approvals", key="security_load_closed_loop_approvals", width="stretch"):
-        st.session_state["security_closed_loop_workflow_detail"] = load_closed_loop_workflow_detail(
-            company,
-            environment,
-            domains=domains,
-            days=180,
-        )
-        st.session_state["security_closed_loop_execution_plan_detail"] = load_closed_loop_execution_plan_detail(
-            company,
-            environment,
-            domains=domains,
-            days=180,
-        )
-        st.session_state["security_closed_loop_scope"] = (company, environment)
-
-    if st.session_state.get("security_closed_loop_scope") != (company, environment):
-        return
-    workflows = st.session_state.get("security_closed_loop_workflow_detail")
-    execution_plans = st.session_state.get("security_closed_loop_execution_plan_detail")
-    if isinstance(workflows, pd.DataFrame):
-        if workflows.empty:
-            st.info("No security action workflows are available for this scope yet.")
-        else:
-            render_priority_dataframe(
-                workflows,
-                title="Security action approval workflow",
-                priority_columns=[
-                    "FINDING", "ENTITY_TYPE", "ENTITY_NAME", "RISK_LEVEL",
-                    "OWNER_ROUTE", "OWNER_GAP", "APPROVAL_STATUS",
-                    "APPROVED_BY", "APPROVAL_TS", "EXECUTION_MODE",
-                    "VERIFICATION_STATUS", "RECOMMENDED_ACTION",
-                    "LAST_REFRESHED_TS",
-                ],
-                sort_by=["RISK_LEVEL", "LAST_REFRESHED_TS"],
-                ascending=[True, False],
-                raw_label="All security closed-loop workflow rows",
-                height=300,
-                max_rows=10,
-            )
-    if isinstance(execution_plans, pd.DataFrame):
-        if execution_plans.empty:
-            st.info("No security review plans are available for this scope yet.")
-        else:
-            render_priority_dataframe(
-                execution_plans,
-                title="Review-gated security SQL and action plans",
-                priority_columns=[
-                    "EXECUTION_MODE", "EXECUTION_STATUS", "DANGEROUS_ACTION_FLAG",
-                    "EXECUTION_ALLOWED_IN_APP", "REVIEW_SQL_TEXT",
-                    "REVIEW_ACTION_TEXT", "ROLLBACK_GUIDANCE",
-                    "VERIFICATION_STEPS", "LAST_REFRESHED_TS",
-                ],
-                sort_by=["DANGEROUS_ACTION_FLAG", "LAST_REFRESHED_TS"],
-                ascending=[False, False],
-                raw_label="All security closed-loop execution plans",
-                height=280,
-                max_rows=8,
-            )
-
-
-def _render_security_command_findings(company: str, environment: str) -> None:
-    """Expose security-risk correlated findings behind an explicit Load."""
-    st.markdown("**Security Investigation Findings**")
-    st.caption("Loads security-risk root-cause candidates, owner gaps, related changes, and review-gated recommendations.")
-    types = ("Security Risk",)
-    if st.button("Load Security Investigation Findings", key="security_load_command_center", width="stretch"):
-        st.session_state["security_command_findings"] = load_command_center_finding_detail(
-            company,
-            environment,
-            investigation_types=types,
-            days=180,
-        )
-        st.session_state["security_command_recommendations"] = load_command_center_recommendation_detail(
-            company,
-            environment,
-            investigation_types=types,
-            days=180,
-        )
-        st.session_state["security_command_scope"] = (company, environment)
-
-    if st.session_state.get("security_command_scope") != (company, environment):
-        return
-    findings = st.session_state.get("security_command_findings")
-    recommendations = st.session_state.get("security_command_recommendations")
-    if isinstance(findings, pd.DataFrame):
-        if findings.empty:
-            st.info("No security investigation findings are available for this scope yet.")
-        else:
-            render_priority_dataframe(
-                findings,
-                title="Security root-cause candidates",
-                priority_columns=[
-                    "QUESTION_TEXT", "ROOT_CAUSE_CANDIDATE", "CAUSALITY_LABEL",
-                    "EVIDENCE_SUMMARY", "CONFIDENCE", "BUSINESS_IMPACT",
-                    "OWNER_ROUTE", "OWNER_GAP", "RELATED_CHANGES",
-                    "RELATED_ALERTS", "RELATED_SCORECARD_DRIVERS",
-                    "RECOMMENDED_ACTION", "RISK_LEVEL", "EXECUTION_PLAN_REF",
-                    "VERIFICATION_PATH",
-                ],
-                sort_by=["RISK_LEVEL", "LAST_REFRESHED_TS"],
-                ascending=[True, False],
-                raw_label="All security investigation findings",
-                height=300,
-                max_rows=8,
-            )
-    if isinstance(recommendations, pd.DataFrame) and not recommendations.empty:
-        render_priority_dataframe(
-            recommendations,
-            title="Security command recommendations",
-            priority_columns=[
-                "RECOMMENDED_ACTION", "RISK_LEVEL", "OWNER_ROUTE",
-                "EXECUTION_PLAN_REF", "REVIEW_REQUIRED", "VERIFICATION_PATH",
-                "SAFETY_NOTE", "LAST_REFRESHED_TS",
-            ],
-            sort_by=["RISK_LEVEL", "LAST_REFRESHED_TS"],
-            ascending=[True, False],
-            raw_label="All security command recommendations",
-            height=260,
-            max_rows=6,
-        )
-
-
-def _render_advanced_security_evidence(company: str, environment: str) -> None:
-    """Render security evidence after the active security workflow."""
-    st.divider()
-    with st.expander("Advanced security evidence and workflow guide", expanded=False):
-        render_operator_briefing(
-            [
-                ("First move", "Separate noisy login volume from real identity or access risk."),
-                ("Telemetry", "Tie users, IPs, grants, MFA posture, and shared data to source detail."),
-                ("Control", "Escalate to IAM, revoke/narrow access, or validate business route."),
-                ("Output", "Produce an audit posture brief with routes and remediation status."),
-            ],
-            columns=4,
-        )
-        render_workflow_guide(
-            "Start with identity/access posture, open privilege sprawl for high-risk grants, "
-            "then inspect data sharing when the question is external exposure or audit telemetry.",
-            [
-                ("Login failures, MFA, grants, or risky access", "Use Failed Logins."),
-                ("Admin roles, ownership, grant option, or route blockers", "Use Privilege Sprawl."),
-                ("External consumers or shared data exposure", "Use Data Sharing Exposure."),
-            ],
-        )
-        _render_security_ownership_coverage(company, environment)
-        _render_security_score_explanation(company, environment)
-        _render_security_change_detail(company, environment)
-        _render_security_action_approval(company, environment)
-        _render_security_command_findings(company, environment)
-
-
 def _apply_queued_security_workflow() -> None:
     requested_view = st.session_state.pop("security_posture_requested_view", None)
     requested_workflow = st.session_state.pop("security_posture_requested_workflow", None)
@@ -2251,14 +1557,6 @@ def _build_security_brief_markdown(
         "Company scope uses user/database naming where Snowflake does not expose direct company routing.",
     ]
     return "\n".join(lines)
-
-
-def _build_security_summary_sql(session, days: int, company: str) -> tuple[str, str]:
-    return build_shared_security_summary_sql(session, days, company)
-
-
-def _build_security_mart_brief_sql(session, days: int, company: str) -> tuple[str, str]:
-    return build_shared_security_mart_brief_sql(session, days, company)
 
 
 def _security_access_review_insert_sql(
@@ -2944,41 +2242,49 @@ def _render_privilege_sprawl_workflow(company: str, environment: str, days: int)
     )
 
 
-def _render_security_source_health(company: str, environment: str) -> None:
-    source_health = _security_source_health_rows(st.session_state, company, environment)
-    if source_health.empty:
-        return
-    with st.expander("Security Data Health", expanded=False):
-        current = int(source_health["STATE"].isin(["Loaded", "No Rows"]).sum())
-        stale = int(source_health["STATE"].eq("Stale").sum())
-        unavailable = int(source_health["STATE"].eq("Unavailable").sum())
-        fast_summary = int(
-            source_health[
-            source_health["STATE"].isin(["Loaded", "No Rows"])
-            & source_health["CONFIDENCE"].astype(str).str.contains("Fast summary", case=False, regex=False)
-        ].shape[0]
-        )
-        render_shell_snapshot((
-            ("Current Surfaces", f"{current}/{len(source_health)}"),
-            ("Fast Summary", f"{fast_summary:,}"),
-            ("Stale", f"{stale:,}"),
-            ("Unavailable", f"{unavailable:,}"),
-        ))
-        defer_source_note(
-            "Use this before acting on access findings. Login-only telemetry keeps account scope, while database-scoped "
-            "telemetry follows the selected company and environment."
-        )
-        render_priority_dataframe(
-            source_health,
-            title="Security telemetry freshness",
-            priority_columns=[
-                "SURFACE", "STATE", "SOURCE", "CONFIDENCE", "ROWS", "SCOPE", "NEXT_ACTION",
-            ],
-            sort_by=["STATE_RANK", "SURFACE"],
-            ascending=[True, True],
-            raw_label="All security data-health rows",
-            height=300,
-        )
+def render_security_overview(company: str, environment: str, days: int) -> None:
+    summary = st.session_state.get("security_posture_summary")
+    exceptions = st.session_state.get("security_posture_exceptions")
+    meta = st.session_state.get("security_posture_meta", {})
+    _render_security_overview_entry(summary, exceptions, meta, company, environment, days)
+    _render_security_brief_launchpad()
+    _render_advanced_security_evidence(company, environment)
+
+
+def render_security_admin_advanced(company: str, environment: str, days: int) -> None:
+    _render_security_source_health(company, environment)
+    _render_privileged_grant_readiness(company, environment, days)
+    _render_advanced_security_evidence(company, environment)
+
+
+def render_security_alerts(company: str, environment: str, days: int) -> None:
+    _ = days
+    _render_loaded_security_alert_context()
+    st.info(
+        "Loaded security alerts appear here after an Alert Center route opens Security Monitoring. "
+        "Use Failed Logins, Risky Grants, or Data Sharing Exposure for direct investigation."
+    )
+    _render_advanced_security_evidence(company, environment)
+
+
+def render_security_access_changes(company: str, environment: str, days: int) -> None:
+    _ = days
+    _render_security_change_detail(company, environment)
+    _render_advanced_security_evidence(company, environment)
+
+
+def render_security_privilege_sprawl(company: str, environment: str, days: int) -> None:
+    _render_privilege_sprawl_workflow(company, environment, days)
+    _render_advanced_security_evidence(company, environment)
+
+
+SECURITY_POSTURE_RENDERERS = {
+    SECURITY_OVERVIEW_WORKFLOW: render_security_overview,
+    PRIVILEGE_SPRAWL_WORKFLOW: render_security_privilege_sprawl,
+    ACCESS_CHANGES_WORKFLOW: render_security_access_changes,
+    SECURITY_ALERTS_WORKFLOW: render_security_alerts,
+    SECURITY_ADMIN_ADVANCED_WORKFLOW: render_security_admin_advanced,
+}
 
 
 def render() -> None:
@@ -3019,29 +2325,16 @@ def render() -> None:
         columns=4,
     )
     if active_view == SECURITY_OVERVIEW_WORKFLOW:
-        summary = st.session_state.get("security_posture_summary")
-        exceptions = st.session_state.get("security_posture_exceptions")
-        meta = st.session_state.get("security_posture_meta", {})
-        _render_security_overview_entry(summary, exceptions, meta, company, environment, days)
-        _render_security_brief_launchpad()
-        _render_advanced_security_evidence(company, environment)
+        SECURITY_POSTURE_RENDERERS[SECURITY_OVERVIEW_WORKFLOW](company, environment, days)
         return
     if active_view == SECURITY_ADMIN_ADVANCED_WORKFLOW:
-        _render_security_source_health(company, environment)
-        _render_privileged_grant_readiness(company, environment, days)
-        _render_advanced_security_evidence(company, environment)
+        SECURITY_POSTURE_RENDERERS[SECURITY_ADMIN_ADVANCED_WORKFLOW](company, environment, days)
         return
     if active_view == SECURITY_ALERTS_WORKFLOW:
-        _render_loaded_security_alert_context()
-        st.info(
-            "Loaded security alerts appear here after an Alert Center route opens Security Monitoring. "
-            "Use Failed Logins, Risky Grants, or Data Sharing Exposure for direct investigation."
-        )
-        _render_advanced_security_evidence(company, environment)
+        SECURITY_POSTURE_RENDERERS[SECURITY_ALERTS_WORKFLOW](company, environment, days)
         return
     if active_view == ACCESS_CHANGES_WORKFLOW:
-        _render_security_change_detail(company, environment)
-        _render_advanced_security_evidence(company, environment)
+        SECURITY_POSTURE_RENDERERS[ACCESS_CHANGES_WORKFLOW](company, environment, days)
         return
     if active_view in (FAILED_LOGINS_WORKFLOW, RISKY_GRANTS_WORKFLOW, PRIVILEGE_SPRAWL_WORKFLOW, DATA_SHARING_EXPOSURE_WORKFLOW):
         st.session_state["security_posture_workflow"] = active_view
@@ -3050,8 +2343,7 @@ def render() -> None:
         elif active_view == RISKY_GRANTS_WORKFLOW:
             st.session_state["security_access_active_view"] = "Roles & Grants"
         if active_view == PRIVILEGE_SPRAWL_WORKFLOW:
-            _render_privilege_sprawl_workflow(company, environment, days)
-            _render_advanced_security_evidence(company, environment)
+            SECURITY_POSTURE_RENDERERS[PRIVILEGE_SPRAWL_WORKFLOW](company, environment, days)
             return
         render_workflow_module(active_view, WORKFLOW_MODULES)
         _render_advanced_security_evidence(company, environment)
@@ -3064,82 +2356,6 @@ def render() -> None:
     snapshot_slot = st.empty()
     exception_slot = st.empty()
 
-    def _load_security_brief(*, allow_live_fallback: bool = True, quiet: bool = False) -> None:
-        session = None
-        try:
-            session = get_session()
-            summary_sql, exceptions_sql = _build_security_mart_brief_sql(session, days, company)
-            st.session_state["security_posture_summary"] = run_query(
-                summary_sql,
-                ttl_key=f"security_posture_summary_mart_{company}_{environment}_{days}",
-                tier="standard",
-            )
-            source = "Fast security summary; MFA/sharing: account history"
-            st.session_state["security_posture_meta"] = with_loaded_at(
-                _security_scope_meta(company, environment, days),
-                source=source,
-            )
-            st.session_state["security_posture_source"] = source
-            st.session_state.pop("security_posture_summary_error", None)
-            st.session_state.pop("security_posture_exceptions", None)
-            st.session_state.pop("security_posture_exception_source", None)
-            st.session_state.pop("security_posture_exception_error", None)
-            _hide_security_proof_tables()
-            st.session_state["security_posture_proof_sql"] = {
-                "summary": summary_sql,
-                "exceptions": exceptions_sql,
-            }
-        except Exception as exc:
-            if not allow_live_fallback:
-                st.session_state["security_posture_summary"] = pd.DataFrame()
-                st.session_state["security_posture_meta"] = with_loaded_at(
-                    _security_scope_meta(company, environment, days),
-                    source="Fast security summary unavailable",
-                )
-                st.session_state["security_posture_source"] = "Fast security summary unavailable"
-                st.session_state["security_posture_summary_error"] = format_snowflake_error(exc)
-                st.session_state.pop("security_posture_exceptions", None)
-                st.session_state.pop("security_posture_exception_source", None)
-                st.session_state.pop("security_posture_exception_error", None)
-                _hide_security_proof_tables()
-                if not quiet:
-                    st.info(
-                        "Fast security summary is unavailable for this scope. "
-                        "Use Refresh Security Summary for bounded live account-history telemetry."
-                    )
-                return
-            try:
-                session = session or get_session()
-                summary_sql, exceptions_sql = _build_security_summary_sql(session, days, company)
-                st.session_state["security_posture_summary"] = run_query(
-                    summary_sql,
-                    ttl_key=f"security_posture_summary_live_{company}_{environment}_{days}",
-                    tier="standard",
-                )
-                source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE"
-                st.session_state["security_posture_meta"] = with_loaded_at(
-                    _security_scope_meta(company, environment, days),
-                    source=source,
-                )
-                st.session_state["security_posture_source"] = source
-                st.session_state.pop("security_posture_summary_error", None)
-                st.session_state.pop("security_posture_exceptions", None)
-                st.session_state.pop("security_posture_exception_source", None)
-                st.session_state.pop("security_posture_exception_error", None)
-                _hide_security_proof_tables()
-                st.session_state["security_posture_proof_sql"] = {
-                    "summary": summary_sql,
-                    "exceptions": exceptions_sql,
-                }
-                if not quiet:
-                    st.info(f"Security summary unavailable from the fast summary; used bounded live account history. {format_snowflake_error(exc)}")
-            except Exception as live_exc:
-                st.session_state["security_posture_summary"] = pd.DataFrame()
-                st.session_state.pop("security_posture_exceptions", None)
-                st.session_state.pop("security_posture_exception_source", None)
-                st.session_state.pop("security_posture_exception_error", None)
-                st.error(f"Unable to load security summary: {format_snowflake_error(live_exc)}")
-
     security_expected_meta = _security_scope_meta(company, environment, days)
     summary = st.session_state.get("security_posture_summary")
     meta = st.session_state.get("security_posture_meta", {})
@@ -3149,7 +2365,13 @@ def render() -> None:
         and _security_meta_matches(meta, security_expected_meta)
     )
     if active_view == SECURITY_OVERVIEW_WORKFLOW and not security_current:
-        _load_security_brief(allow_live_fallback=False, quiet=True)
+        _load_security_brief(
+            days=days,
+            company=company,
+            environment=environment,
+            allow_live_fallback=False,
+            quiet=True,
+        )
         summary = st.session_state.get("security_posture_summary")
         exceptions = st.session_state.get("security_posture_exceptions")
         meta = st.session_state.get("security_posture_meta", {})
@@ -3185,7 +2407,13 @@ def render() -> None:
         defer_source_note(f"Fast security summary unavailable: {summary_error}")
 
     if st.button("Refresh Security Summary", key="security_posture_brief_load", type="primary"):
-        _load_security_brief(allow_live_fallback=True, quiet=False)
+        _load_security_brief(
+            days=days,
+            company=company,
+            environment=environment,
+            allow_live_fallback=True,
+            quiet=False,
+        )
         summary = st.session_state.get("security_posture_summary")
         exceptions = st.session_state.get("security_posture_exceptions")
         meta = st.session_state.get("security_posture_meta", {})

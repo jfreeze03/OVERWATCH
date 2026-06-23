@@ -130,8 +130,8 @@ class ClosedLoopOperationsTests(unittest.TestCase):
         dba = _read(APP_ROOT / "sections" / "dba_control_room.py")
         cost = _cost_contract_surface()
         workload = _read(APP_ROOT / "sections" / "workload_operations.py")
-        security = _read(APP_ROOT / "sections" / "security_posture.py")
-        alert = _read(APP_ROOT / "sections" / "alert_center.py")
+        security = _read(APP_ROOT / "sections" / "security_posture_admin_view.py")
+        alert = _read(APP_ROOT / "sections" / "alert_center_diagnostics_view.py")
 
         self.assertIn("load_closed_loop_summary", executive)
         self.assertIn("Closed Loop Operations", executive)
@@ -146,8 +146,8 @@ class ClosedLoopOperationsTests(unittest.TestCase):
             (APP_ROOT / "sections" / "dba_control_room.py", "Load Closed-Loop Actions", "load_closed_loop_workflow_detail"),
             (APP_ROOT / "sections" / "cost_contract_evidence_panels.py", "Load Savings Verification", "load_closed_loop_verification_detail"),
             (APP_ROOT / "sections" / "workload_operations.py", "Load Operational Actions", "load_closed_loop_workflow_detail"),
-            (APP_ROOT / "sections" / "security_posture.py", "Load Security Approvals", "load_closed_loop_workflow_detail"),
-            (APP_ROOT / "sections" / "alert_center.py", "Load Alert Action Workflows", "load_closed_loop_workflow_detail"),
+            (APP_ROOT / "sections" / "security_posture_admin_view.py", "Load Security Approvals", "load_closed_loop_workflow_detail"),
+            (APP_ROOT / "sections" / "alert_center_diagnostics_view.py", "Load Alert Action Workflows", "load_closed_loop_workflow_detail"),
         ]
         for path, button, loader in checks:
             with self.subTest(path=path.name, button=button):

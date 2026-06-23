@@ -1,9 +1,10 @@
 from pathlib import Path
 from collections import Counter
+import inspect
 import re
 import sys
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pandas as pd
 
@@ -13,25 +14,23 @@ APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
 
 from utils import mart  # noqa: E402
+from utils import mart_account_health  # noqa: E402
 from utils import mart_contracts  # noqa: E402
+from utils import mart_control_room  # noqa: E402
 from utils import mart_filters  # noqa: E402
 from utils import mart_names  # noqa: E402
+from utils import mart_service_health  # noqa: E402
+from utils import mart_task_procedure  # noqa: E402
 
 
-MART_PUBLIC_SURFACE = {
-    "core": (
-        "MartResult",
-        "mart_object_name",
-        "load_mart_table",
-        "mart_source_caption",
-    ),
+MART_SQL_BUILDER_GROUPS = {
     "control-room": (
-        "load_latest_control_room_mart",
         "build_mart_control_room_summary_sql",
         "build_mart_control_room_credits_sql",
         "build_mart_control_room_cost_drivers_sql",
         "build_mart_control_room_warehouse_pressure_sql",
         "build_mart_control_room_failed_queries_sql",
+        "build_mart_control_room_object_changes_sql",
         "build_mart_control_room_failed_logins_sql",
         "build_mart_control_room_task_failures_sql",
     ),
@@ -45,9 +44,60 @@ MART_PUBLIC_SURFACE = {
         "build_mart_account_health_failure_count_sql",
         "build_mart_account_health_top_driver_sql",
         "build_mart_account_health_queued_sql",
+        "build_mart_account_health_ytd_credits_sql",
+    ),
+    "cost": (
+        "build_mart_bill_summary_sql",
+        "build_mart_bill_warehouse_delta_sql",
+        "build_mart_chargeback_sql",
+        "build_mart_cost_explorer_sql",
+        "build_mart_cost_cockpit_sql",
+        "build_mart_cost_service_lens_sql",
+        "build_mart_cost_run_rate_sql",
+    ),
+    "warehouse-health": (
+        "build_mart_warehouse_overview_sql",
+        "build_mart_warehouse_heatmap_sql",
+        "build_mart_warehouse_scaling_sql",
+    ),
+    "usage": (
+        "build_mart_usage_overview_sql",
+        "build_mart_usage_metering_sql",
+        "build_mart_usage_storage_sql",
+        "build_mart_usage_pressure_sql",
+        "build_mart_usage_cost_drivers_sql",
+        "build_mart_usage_query_mix_sql",
+        "build_mart_usage_database_adoption_sql",
+    ),
+    "adoption": (
+        "build_mart_adoption_summary_sql",
+        "build_mart_adoption_warehouse_size_sql",
+        "build_mart_adoption_trend_sql",
+        "build_mart_adoption_users_wh_sql",
+        "build_mart_adoption_users_db_sql",
+        "build_mart_adoption_role_type_sql",
+    ),
+    "storage": (
+        "build_mart_storage_trend_sql",
+        "build_mart_storage_db_detail_sql",
+    ),
+    "pipeline": (
+        "build_mart_pipeline_freshness_sql",
+        "build_mart_pipeline_load_failures_sql",
+        "build_mart_pipeline_volume_sql",
+    ),
+    "recommendations": (
+        "build_mart_recommendation_idle_sql",
+        "build_mart_recommendation_spill_sql",
+        "build_mart_recommendation_failed_tasks_sql",
+        "build_mart_recommendation_query_errors_sql",
+        "build_mart_query_bottleneck_sql",
+        "build_mart_query_degradation_sql",
     ),
     "task-procedure": (
+        "build_mart_task_inventory_sql",
         "build_mart_task_history_sql",
+        "build_mart_task_critical_path_sql",
         "build_mart_query_detail_recent_sql",
         "build_mart_procedure_inventory_sql",
         "build_mart_procedure_calls_sql",
@@ -58,6 +108,282 @@ MART_PUBLIC_SURFACE = {
         "build_mart_service_warehouse_health_sql",
         "build_mart_service_login_health_sql",
         "build_mart_service_task_health_sql",
+    ),
+}
+
+MART_PUBLIC_SURFACE = {
+    "core": (
+        "MartResult",
+        "mart_object_name",
+        "load_mart_table",
+        "mart_source_caption",
+    ),
+    "control-room": (
+        "load_latest_control_room_mart",
+        *MART_SQL_BUILDER_GROUPS["control-room"],
+    ),
+    **{group: names for group, names in MART_SQL_BUILDER_GROUPS.items() if group != "control-room"},
+}
+
+MART_SQL_BUILDER_CASES = {
+    "build_mart_control_room_summary_sql": (
+        lambda: mart.build_mart_control_room_summary_sql(24, "ALFA"),
+        ("FACT_QUERY_DETAIL_RECENT",),
+    ),
+    "build_mart_control_room_credits_sql": (
+        lambda: mart.build_mart_control_room_credits_sql(24, "ALFA"),
+        ("FACT_WAREHOUSE_HOURLY",),
+    ),
+    "build_mart_control_room_cost_drivers_sql": (
+        lambda: mart.build_mart_control_room_cost_drivers_sql(24, "ALFA"),
+        ("FACT_WAREHOUSE_HOURLY", "FACT_QUERY_DETAIL_RECENT"),
+    ),
+    "build_mart_control_room_warehouse_pressure_sql": (
+        lambda: mart.build_mart_control_room_warehouse_pressure_sql(24, "ALFA"),
+        ("FACT_QUERY_DETAIL_RECENT",),
+    ),
+    "build_mart_control_room_failed_queries_sql": (
+        lambda: mart.build_mart_control_room_failed_queries_sql(24, "ALFA"),
+        ("FACT_QUERY_DETAIL_RECENT",),
+    ),
+    "build_mart_control_room_object_changes_sql": (
+        lambda: mart.build_mart_control_room_object_changes_sql(24, "ALFA"),
+        ("FACT_OBJECT_CHANGE",),
+    ),
+    "build_mart_control_room_failed_logins_sql": (
+        lambda: mart.build_mart_control_room_failed_logins_sql(24, "ALFA"),
+        ("FACT_LOGIN_DAILY",),
+    ),
+    "build_mart_control_room_task_failures_sql": (
+        lambda: mart.build_mart_control_room_task_failures_sql(24, "ALFA"),
+        ("FACT_TASK_RUN",),
+    ),
+    "build_mart_account_health_storage_sql": (
+        lambda: mart.build_mart_account_health_storage_sql("ALFA"),
+        ("FACT_STORAGE_DAILY",),
+    ),
+    "build_mart_account_health_cost_drivers_sql": (
+        lambda: mart.build_mart_account_health_cost_drivers_sql(24, "ALFA"),
+        ("FACT_WAREHOUSE_HOURLY", "FACT_QUERY_DETAIL_RECENT"),
+    ),
+    "build_mart_account_health_change_sql": (
+        lambda: mart.build_mart_account_health_change_sql(24, "ALFA"),
+        ("FACT_QUERY_HOURLY", "FACT_WAREHOUSE_HOURLY"),
+    ),
+    "build_mart_account_health_failure_types_sql": (
+        lambda: mart.build_mart_account_health_failure_types_sql(24, "ALFA"),
+        ("FACT_QUERY_HOURLY",),
+    ),
+    "build_mart_account_health_long_queries_sql": (
+        lambda: mart.build_mart_account_health_long_queries_sql(24, "ALFA"),
+        ("FACT_QUERY_DETAIL_RECENT",),
+    ),
+    "build_mart_account_health_credits_sql": (
+        lambda: mart.build_mart_account_health_credits_sql(24, "ALFA"),
+        ("FACT_WAREHOUSE_HOURLY",),
+    ),
+    "build_mart_account_health_failure_count_sql": (
+        lambda: mart.build_mart_account_health_failure_count_sql(24, "ALFA"),
+        ("FACT_QUERY_HOURLY",),
+    ),
+    "build_mart_account_health_top_driver_sql": (
+        lambda: mart.build_mart_account_health_top_driver_sql(24, "ALFA"),
+        ("FACT_WAREHOUSE_HOURLY", "FACT_QUERY_DETAIL_RECENT"),
+    ),
+    "build_mart_account_health_queued_sql": (
+        lambda: mart.build_mart_account_health_queued_sql(24, "ALFA"),
+        ("FACT_QUERY_HOURLY",),
+    ),
+    "build_mart_account_health_ytd_credits_sql": (
+        lambda: mart.build_mart_account_health_ytd_credits_sql("ALFA"),
+        ("FACT_WAREHOUSE_HOURLY",),
+    ),
+    "build_mart_bill_summary_sql": (
+        lambda: mart.build_mart_bill_summary_sql("2026-01-01", "2026-01-31", "2025-12-01", "2025-12-31", "ALFA", "WH"),
+        ("FACT_WAREHOUSE_HOURLY",),
+    ),
+    "build_mart_bill_warehouse_delta_sql": (
+        lambda: mart.build_mart_bill_warehouse_delta_sql(
+            "2026-01-01",
+            "2026-01-31",
+            "2025-12-01",
+            "2025-12-31",
+            "ALFA",
+            "WH",
+        ),
+        ("FACT_WAREHOUSE_HOURLY",),
+    ),
+    "build_mart_chargeback_sql": (
+        lambda: mart.build_mart_chargeback_sql(30, "ALFA"),
+        ("FACT_CHARGEBACK_DAILY",),
+    ),
+    "build_mart_cost_explorer_sql": (
+        lambda: mart.build_mart_cost_explorer_sql(30, "ALFA"),
+        ("FACT_CHARGEBACK_DAILY",),
+    ),
+    "build_mart_cost_cockpit_sql": (
+        lambda: mart.build_mart_cost_cockpit_sql("ALFA", 7),
+        ("FACT_WAREHOUSE_HOURLY",),
+    ),
+    "build_mart_cost_service_lens_sql": (
+        lambda: mart.build_mart_cost_service_lens_sql(30, 2.0, 3.0),
+        ("FACT_COST_DAILY",),
+    ),
+    "build_mart_cost_run_rate_sql": (
+        lambda: mart.build_mart_cost_run_rate_sql("ALFA"),
+        ("FACT_WAREHOUSE_HOURLY",),
+    ),
+    "build_mart_warehouse_overview_sql": (
+        lambda: mart.build_mart_warehouse_overview_sql(30, "ALFA"),
+        ("FACT_QUERY_HOURLY", "FACT_WAREHOUSE_HOURLY"),
+    ),
+    "build_mart_warehouse_heatmap_sql": (
+        lambda: mart.build_mart_warehouse_heatmap_sql(30, "ALFA"),
+        ("FACT_QUERY_HOURLY",),
+    ),
+    "build_mart_warehouse_scaling_sql": (
+        lambda: mart.build_mart_warehouse_scaling_sql(30, "ALFA"),
+        ("FACT_WAREHOUSE_HOURLY",),
+    ),
+    "build_mart_usage_overview_sql": (
+        lambda: mart.build_mart_usage_overview_sql(30, "ALFA"),
+        ("FACT_QUERY_HOURLY",),
+    ),
+    "build_mart_usage_metering_sql": (
+        lambda: mart.build_mart_usage_metering_sql(30, "ALFA"),
+        ("FACT_WAREHOUSE_HOURLY",),
+    ),
+    "build_mart_usage_storage_sql": (
+        lambda: mart.build_mart_usage_storage_sql(30, "ALFA"),
+        ("FACT_STORAGE_DAILY",),
+    ),
+    "build_mart_usage_pressure_sql": (
+        lambda: mart.build_mart_usage_pressure_sql(30, "ALFA"),
+        ("FACT_QUERY_HOURLY",),
+    ),
+    "build_mart_usage_cost_drivers_sql": (
+        lambda: mart.build_mart_usage_cost_drivers_sql(30, "ALFA"),
+        ("FACT_WAREHOUSE_HOURLY",),
+    ),
+    "build_mart_usage_query_mix_sql": (
+        lambda: mart.build_mart_usage_query_mix_sql(30, "ALFA"),
+        ("FACT_QUERY_HOURLY",),
+    ),
+    "build_mart_usage_database_adoption_sql": (
+        lambda: mart.build_mart_usage_database_adoption_sql(30, "ALFA"),
+        ("FACT_QUERY_HOURLY",),
+    ),
+    "build_mart_adoption_summary_sql": (
+        lambda: mart.build_mart_adoption_summary_sql(30, "ALFA"),
+        ("FACT_QUERY_HOURLY",),
+    ),
+    "build_mart_adoption_warehouse_size_sql": (
+        lambda: mart.build_mart_adoption_warehouse_size_sql(30, "ALFA"),
+        ("FACT_QUERY_HOURLY",),
+    ),
+    "build_mart_adoption_trend_sql": (
+        lambda: mart.build_mart_adoption_trend_sql(30, "ALFA"),
+        ("FACT_QUERY_HOURLY",),
+    ),
+    "build_mart_adoption_users_wh_sql": (
+        lambda: mart.build_mart_adoption_users_wh_sql(30, "ALFA"),
+        ("FACT_QUERY_HOURLY",),
+    ),
+    "build_mart_adoption_users_db_sql": (
+        lambda: mart.build_mart_adoption_users_db_sql(30, "ALFA"),
+        ("FACT_QUERY_HOURLY",),
+    ),
+    "build_mart_adoption_role_type_sql": (
+        lambda: mart.build_mart_adoption_role_type_sql(30, "ALFA"),
+        ("FACT_QUERY_HOURLY",),
+    ),
+    "build_mart_storage_trend_sql": (
+        lambda: mart.build_mart_storage_trend_sql(30, "ALFA"),
+        ("FACT_STORAGE_DAILY",),
+    ),
+    "build_mart_storage_db_detail_sql": (
+        lambda: mart.build_mart_storage_db_detail_sql("ALFA"),
+        ("FACT_STORAGE_DAILY",),
+    ),
+    "build_mart_pipeline_freshness_sql": (
+        lambda: mart.build_mart_pipeline_freshness_sql(24, "ALFA"),
+        ("DIM_TABLE_SNAPSHOT",),
+    ),
+    "build_mart_pipeline_load_failures_sql": (
+        lambda: mart.build_mart_pipeline_load_failures_sql(7, "ALFA"),
+        ("FACT_COPY_LOAD_DAILY",),
+    ),
+    "build_mart_pipeline_volume_sql": (
+        lambda: mart.build_mart_pipeline_volume_sql(1.5, "ALFA"),
+        ("DIM_TABLE_SNAPSHOT",),
+    ),
+    "build_mart_recommendation_idle_sql": (
+        lambda: mart.build_mart_recommendation_idle_sql("ALFA"),
+        ("FACT_WAREHOUSE_HOURLY", "FACT_QUERY_HOURLY"),
+    ),
+    "build_mart_recommendation_spill_sql": (
+        lambda: mart.build_mart_recommendation_spill_sql("ALFA"),
+        ("FACT_QUERY_HOURLY",),
+    ),
+    "build_mart_recommendation_failed_tasks_sql": (
+        lambda: mart.build_mart_recommendation_failed_tasks_sql("ALFA"),
+        ("FACT_TASK_RUN",),
+    ),
+    "build_mart_recommendation_query_errors_sql": (
+        lambda: mart.build_mart_recommendation_query_errors_sql("ALFA", 10),
+        ("FACT_QUERY_HOURLY",),
+    ),
+    "build_mart_query_bottleneck_sql": (
+        lambda: mart.build_mart_query_bottleneck_sql(30, 10000, "ALFA"),
+        ("FACT_QUERY_DETAIL_RECENT",),
+    ),
+    "build_mart_query_degradation_sql": (
+        lambda: mart.build_mart_query_degradation_sql("ALFA"),
+        ("FACT_QUERY_DETAIL_RECENT",),
+    ),
+    "build_mart_task_inventory_sql": (
+        lambda: mart.build_mart_task_inventory_sql("ALFA"),
+        ("DIM_TASK_SNAPSHOT",),
+    ),
+    "build_mart_task_history_sql": (
+        lambda: mart.build_mart_task_history_sql(7, "ALFA"),
+        ("FACT_TASK_RUN",),
+    ),
+    "build_mart_task_critical_path_sql": (
+        lambda: mart.build_mart_task_critical_path_sql(7, "ALFA"),
+        ("FACT_TASK_CRITICAL_PATH",),
+    ),
+    "build_mart_query_detail_recent_sql": (
+        lambda: mart.build_mart_query_detail_recent_sql(["01a", "02b"]),
+        ("FACT_QUERY_DETAIL_RECENT",),
+    ),
+    "build_mart_procedure_inventory_sql": (
+        lambda: mart.build_mart_procedure_inventory_sql("ALFA"),
+        ("DIM_PROCEDURE_SNAPSHOT",),
+    ),
+    "build_mart_procedure_calls_sql": (
+        lambda: mart.build_mart_procedure_calls_sql(7, "ALFA"),
+        ("FACT_PROCEDURE_RUN",),
+    ),
+    "build_mart_procedure_sla_sql": (
+        lambda: mart.build_mart_procedure_sla_sql(7, "ALFA"),
+        ("FACT_PROCEDURE_RUN",),
+    ),
+    "build_mart_service_query_health_sql": (
+        lambda: mart.build_mart_service_query_health_sql(24, "ALFA"),
+        ("FACT_QUERY_HOURLY",),
+    ),
+    "build_mart_service_warehouse_health_sql": (
+        lambda: mart.build_mart_service_warehouse_health_sql(24, "ALFA"),
+        ("FACT_QUERY_HOURLY",),
+    ),
+    "build_mart_service_login_health_sql": (
+        lambda: mart.build_mart_service_login_health_sql(24, "ALFA"),
+        ("FACT_LOGIN_DAILY",),
+    ),
+    "build_mart_service_task_health_sql": (
+        lambda: mart.build_mart_service_task_health_sql(24, "ALFA"),
+        ("FACT_TASK_RUN",),
     ),
 }
 
@@ -139,6 +465,21 @@ class MartContractTests(unittest.TestCase):
         self.assertIs(mart._mart_window_condition, mart_filters._mart_window_condition)
         self.assertIs(mart._mart_window_filter, mart_filters._mart_window_filter)
 
+    def test_mart_sql_family_reexports_preserve_identity(self):
+        for name in MART_SQL_BUILDER_GROUPS["control-room"]:
+            with self.subTest(family="control-room", name=name):
+                self.assertIs(getattr(mart, name), getattr(mart_control_room, name))
+        for name in MART_SQL_BUILDER_GROUPS["account-health"]:
+            with self.subTest(family="account-health", name=name):
+                self.assertIs(getattr(mart, name), getattr(mart_account_health, name))
+        for name in MART_SQL_BUILDER_GROUPS["service-health"]:
+            with self.subTest(family="service-health", name=name):
+                self.assertIs(getattr(mart, name), getattr(mart_service_health, name))
+        for name in MART_SQL_BUILDER_GROUPS["task-procedure"]:
+            with self.subTest(family="task-procedure", name=name):
+                self.assertIs(getattr(mart, name), getattr(mart_task_procedure, name))
+        self.assertNotIn("load_latest_control_room_mart", mart_control_room.__all__)
+
     def test_mart_filter_helpers_preserve_behavior(self):
         self.assertEqual(mart._mart_text_filter("", ""), "")
 
@@ -191,117 +532,73 @@ class MartContractTests(unittest.TestCase):
                 with self.subTest(group=group, name=name):
                     self.assertTrue(hasattr(mart, name))
 
-    def test_representative_sql_builders_reference_expected_mart_objects(self):
-        cases = {
-            "build_mart_control_room_summary_sql": (
-                lambda: mart.build_mart_control_room_summary_sql(24, "ALFA"),
-                ("FACT_QUERY_DETAIL_RECENT",),
-            ),
-            "build_mart_control_room_credits_sql": (
-                lambda: mart.build_mart_control_room_credits_sql(24, "ALFA"),
-                ("FACT_WAREHOUSE_HOURLY",),
-            ),
-            "build_mart_control_room_cost_drivers_sql": (
-                lambda: mart.build_mart_control_room_cost_drivers_sql(24, "ALFA"),
-                ("FACT_QUERY_DETAIL_RECENT", "FACT_WAREHOUSE_HOURLY"),
-            ),
-            "build_mart_control_room_warehouse_pressure_sql": (
-                lambda: mart.build_mart_control_room_warehouse_pressure_sql(24, "ALFA"),
-                ("FACT_QUERY_DETAIL_RECENT",),
-            ),
-            "build_mart_control_room_failed_queries_sql": (
-                lambda: mart.build_mart_control_room_failed_queries_sql(24, "ALFA"),
-                ("FACT_QUERY_DETAIL_RECENT",),
-            ),
-            "build_mart_control_room_failed_logins_sql": (
-                lambda: mart.build_mart_control_room_failed_logins_sql(24, "ALFA"),
-                ("FACT_LOGIN_DAILY",),
-            ),
-            "build_mart_control_room_task_failures_sql": (
-                lambda: mart.build_mart_control_room_task_failures_sql(24, "ALFA"),
-                ("FACT_TASK_RUN",),
-            ),
-            "build_mart_account_health_storage_sql": (
-                lambda: mart.build_mart_account_health_storage_sql("ALFA"),
-                ("FACT_STORAGE_DAILY",),
-            ),
-            "build_mart_account_health_cost_drivers_sql": (
-                lambda: mart.build_mart_account_health_cost_drivers_sql(24, "ALFA"),
-                ("FACT_QUERY_DETAIL_RECENT", "FACT_WAREHOUSE_HOURLY"),
-            ),
-            "build_mart_account_health_change_sql": (
-                lambda: mart.build_mart_account_health_change_sql(24, "ALFA"),
-                ("FACT_QUERY_HOURLY", "FACT_WAREHOUSE_HOURLY"),
-            ),
-            "build_mart_account_health_failure_types_sql": (
-                lambda: mart.build_mart_account_health_failure_types_sql(24, "ALFA"),
-                ("FACT_QUERY_HOURLY",),
-            ),
-            "build_mart_account_health_long_queries_sql": (
-                lambda: mart.build_mart_account_health_long_queries_sql(24, "ALFA"),
-                ("FACT_QUERY_DETAIL_RECENT",),
-            ),
-            "build_mart_account_health_credits_sql": (
-                lambda: mart.build_mart_account_health_credits_sql(24, "ALFA"),
-                ("FACT_WAREHOUSE_HOURLY",),
-            ),
-            "build_mart_account_health_failure_count_sql": (
-                lambda: mart.build_mart_account_health_failure_count_sql(24, "ALFA"),
-                ("FACT_QUERY_HOURLY",),
-            ),
-            "build_mart_account_health_top_driver_sql": (
-                lambda: mart.build_mart_account_health_top_driver_sql(24, "ALFA"),
-                ("FACT_QUERY_DETAIL_RECENT", "FACT_WAREHOUSE_HOURLY"),
-            ),
-            "build_mart_account_health_queued_sql": (
-                lambda: mart.build_mart_account_health_queued_sql(24, "ALFA"),
-                ("FACT_QUERY_HOURLY",),
-            ),
-            "build_mart_task_history_sql": (
-                lambda: mart.build_mart_task_history_sql(7, "ALFA"),
-                ("FACT_TASK_RUN",),
-            ),
-            "build_mart_query_detail_recent_sql": (
-                lambda: mart.build_mart_query_detail_recent_sql(["01a"]),
-                ("FACT_QUERY_DETAIL_RECENT",),
-            ),
-            "build_mart_procedure_inventory_sql": (
-                lambda: mart.build_mart_procedure_inventory_sql("ALFA"),
-                ("DIM_PROCEDURE_SNAPSHOT",),
-            ),
-            "build_mart_procedure_calls_sql": (
-                lambda: mart.build_mart_procedure_calls_sql(7, "ALFA"),
-                ("FACT_PROCEDURE_RUN",),
-            ),
-            "build_mart_procedure_sla_sql": (
-                lambda: mart.build_mart_procedure_sla_sql(7, "ALFA"),
-                ("FACT_PROCEDURE_RUN",),
-            ),
-            "build_mart_service_query_health_sql": (
-                lambda: mart.build_mart_service_query_health_sql(24, "ALFA"),
-                ("FACT_QUERY_HOURLY",),
-            ),
-            "build_mart_service_warehouse_health_sql": (
-                lambda: mart.build_mart_service_warehouse_health_sql(24, "ALFA"),
-                ("FACT_QUERY_HOURLY",),
-            ),
-            "build_mart_service_login_health_sql": (
-                lambda: mart.build_mart_service_login_health_sql(24, "ALFA"),
-                ("FACT_LOGIN_DAILY",),
-            ),
-            "build_mart_service_task_health_sql": (
-                lambda: mart.build_mart_service_task_health_sql(24, "ALFA"),
-                ("FACT_TASK_RUN",),
-            ),
-        }
+    def test_every_public_mart_sql_builder_is_grouped_exactly_once(self):
+        grouped = [name for names in MART_SQL_BUILDER_GROUPS.values() for name in names]
+        duplicates = sorted(name for name, count in Counter(grouped).items() if count > 1)
+        self.assertEqual(duplicates, [])
 
-        for name, (builder, expected_objects) in cases.items():
+        discovered = sorted(
+            name
+            for name, value in inspect.getmembers(mart, inspect.isfunction)
+            if name.startswith("build_mart_") and name.endswith("_sql")
+        )
+        self.assertEqual(sorted(grouped), discovered)
+        self.assertEqual(set(MART_SQL_BUILDER_CASES), set(discovered))
+
+    def test_sql_builders_reference_expected_mart_objects_only(self):
+        for name, (builder, expected_objects) in MART_SQL_BUILDER_CASES.items():
             with self.subTest(builder=name):
                 sql = builder()
                 self.assertIsInstance(sql, str)
                 self.assertTrue(sql.strip())
+                self.assertNotIn("SNOWFLAKE.ACCOUNT_USAGE", sql.upper())
                 for object_name in expected_objects:
                     self.assertIn(mart.mart_object_name(object_name), sql)
+                if "company" in inspect.signature(getattr(mart, name)).parameters:
+                    self.assertIn("COMPANY", sql.upper())
+                    self.assertIn("'ALFA'", sql)
+
+    def test_query_detail_recent_builder_preserves_empty_id_behavior(self):
+        self.assertEqual(mart.build_mart_query_detail_recent_sql([]), "")
+        sql = mart.build_mart_query_detail_recent_sql(["01a'b"])
+        self.assertIn(mart.mart_object_name("FACT_QUERY_DETAIL_RECENT"), sql)
+        self.assertIn("'01a''b'", sql)
+
+    def test_load_mart_table_reports_available_non_empty_results(self):
+        df = pd.DataFrame({"A": [1]})
+        with patch("utils.mart.run_query", return_value=df) as run_query:
+            result = mart.load_mart_table("FACT_QUERY_HOURLY", "SELECT 1", source_label="Fast source")
+
+        self.assertTrue(result.available)
+        self.assertIs(result.data, df)
+        self.assertEqual(result.source, "Fast source")
+        self.assertEqual(result.message, "")
+        run_query.assert_called_once_with(
+            "SELECT 1",
+            ttl_key="mart_fact_query_hourly",
+            tier="historical",
+            section="Mart",
+        )
+
+    def test_load_mart_table_reports_empty_results_as_unavailable(self):
+        df = pd.DataFrame()
+        with patch("utils.mart.run_query", return_value=df):
+            result = mart.load_mart_table("FACT_QUERY_HOURLY", "SELECT 1")
+
+        self.assertFalse(result.available)
+        self.assertIs(result.data, df)
+        self.assertEqual(result.source, mart.mart_object_name("FACT_QUERY_HOURLY"))
+        self.assertEqual(result.message, "No summary rows returned.")
+
+    def test_load_mart_table_reports_query_errors_without_raising(self):
+        run_query = Mock(side_effect=RuntimeError("warehouse asleep"))
+        with patch("utils.mart.run_query", run_query):
+            result = mart.load_mart_table("FACT_QUERY_HOURLY", "SELECT 1")
+
+        self.assertFalse(result.available)
+        self.assertTrue(result.data.empty)
+        self.assertEqual(result.source, mart.mart_object_name("FACT_QUERY_HOURLY"))
+        self.assertIn("warehouse asleep", result.message)
 
     def test_mart_source_caption_behavior_is_stable(self):
         available = mart.MartResult(data=pd.DataFrame({"A": [1]}), available=True, source="MART")

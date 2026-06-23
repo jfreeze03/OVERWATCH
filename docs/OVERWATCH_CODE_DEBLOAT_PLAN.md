@@ -11,7 +11,7 @@ Reduce bloat without breaking the six-section operator model or removing useful 
 | File | Approx lines | Primary issue | Action |
 |---|---:|---|---|
 | `.overwatch_final/sections/contention_center.py` | 2356 | Contention investigation, render helpers, and route orchestration remain combined. | Revisit after delegated route metrics show active use. |
-| `.overwatch_final/utils/mart.py` | 2240 | Mart load helpers and operational SQL builder families remain broad after contracts/names/filter helpers moved out. | Split SQL builder families only after source-label/object-name contract coverage. |
+| `.overwatch_final/utils/mart.py` | 1430 | Mart compatibility surface still owns cost, warehouse, usage, adoption, storage, pipeline, and recommendation SQL builder families. | Continue SQL-family split only after source-label/object-name contracts isolate each workflow. |
 | `.overwatch_final/sections/stored_proc_tracker.py` | 1849 | Stored procedure tracker still mixes workflow UI, metadata, and evidence helpers. | Revisit only after route metrics prove active use. |
 | `.overwatch_final/sections/dba_control_room/render.py` | 1787 | DBA Control Room render orchestration remains broad inside the already-split package. | Revisit after legacy route cleanup and route metrics. |
 
@@ -78,11 +78,13 @@ daily operator dependency groups, consolidation candidates, advanced/admin
 evidence stores, and no-change guardrails. This pass did not drop, disable,
 rename, or rewrite mart objects. `tests/test_mart_contracts.py` now locks the
 planning document, setup/drop artifact presence, reset-only drop posture,
-stable `utils.mart` public helper groups, representative SQL-builder object
-references, source-caption behavior, and static setup/drop inventory before any
-future mart split. `utils/mart.py` remains the compatibility surface and still
-intentionally owns SQL-builder implementations pending deeper source-label and
-object-name contracts.
+stable `utils.mart` public helper groups, complete SQL-builder group coverage,
+representative object references for every builder, source-caption behavior,
+offline `load_mart_table()` success/empty/error behavior, and static setup/drop
+inventory before future mart splits. `utils/mart.py` remains the compatibility
+surface and still intentionally owns the larger cost/warehouse/usage/adoption/
+storage/pipeline/recommendation SQL families pending deeper source-label and
+load-plan contracts.
 
 ## New Focused Mart Modules
 
@@ -91,6 +93,10 @@ object-name contracts.
 | `.overwatch_final/utils/mart_contracts.py` | 25 | `MartResult` and `mart_source_caption()` for fallback-friendly mart result contracts. |
 | `.overwatch_final/utils/mart_names.py` | 17 | Safe fully-qualified mart object-name helper using existing config and identifier validation. |
 | `.overwatch_final/utils/mart_filters.py` | 95 | Pure mart text/company/environment/database/window filter helpers used by existing SQL builders. |
+| `.overwatch_final/utils/mart_control_room.py` | 244 | Pure DBA Control Room mart SQL builders; the `load_latest_control_room_mart()` loader remains in `utils.mart` to avoid a loader/import cycle. |
+| `.overwatch_final/utils/mart_account_health.py` | 275 | Account Health mart SQL builders for storage, cost drivers, change, failure, credit, queue, and YTD summaries. |
+| `.overwatch_final/utils/mart_service_health.py` | 91 | Service-health mart SQL builders for query, warehouse, login, and task health summaries. |
+| `.overwatch_final/utils/mart_task_procedure.py` | 272 | Task, query-detail lookup, and stored-procedure mart SQL builders. |
 
 ## New Focused Alert Center Modules
 
@@ -256,15 +262,15 @@ These are candidates, not approved removals:
 - `tests/test_facade_no_creep.py` applies a global line-count, `__all__`, renderer-map, and no-implementation-creep guard across completed facade files.
 - `tests/test_validation_workflow.py` locks the GitHub Validate workflow contract, including push/pull-request triggers on `main`, read-only permissions, dependency installation from both requirement files, Ruff, mypy, compileall, deployment contract, targeted shell guards, Cortex guardrails, unittest discovery, mojibake scan roots and `__pycache__` exclusion, timeout budget, and Ruff-before-typecheck ordering.
 - `tests/test_route_registry.py` locks the central route registry, old 4-section absence from primary UI, legacy section aliases, workflow/default validity, config.py compatibility reexports, route-state parity, dependency-light source guard, import-only runtime smoke behavior, Executive Landing aliases, Security Monitoring aliases, Alert Center aliases, and Account Health retired-route normalization.
-- `tests/test_mart_contracts.py` locks the static mart-load rationalization inventory, setup/drop artifact presence, reset-only drop posture, `mart_object_name()` behavior, public `utils.mart` helper groups, micro-split identity reexports, mart filter behavior, representative SQL-builder object references, source-caption behavior, unique setup table names, required core facts, and static task/procedure families.
+- `tests/test_mart_contracts.py` locks the static mart-load rationalization inventory, setup/drop artifact presence, reset-only drop posture, `mart_object_name()` behavior, public `utils.mart` helper groups, complete `build_mart_*_sql` grouping, focused-module identity reexports, mart filter behavior, every grouped SQL builder's mart object references/no-ACCOUNT_USAGE posture, `load_mart_table()` success/empty/error behavior, source-caption behavior, unique setup table names, required core facts, and static task/procedure families.
 - `tests/test_command_center.py` now validates correlated investigation UI placement and explicit load gates.
 - `tests/test_contention_center.py`, `tests/test_formula_regressions.py`, and `tests/test_operational_intelligence.py` validate renamed workflow/action contracts.
 - `perf_tests/full_app_snowflake_regression.py` is the live Snowflake gate once authentication is corrected.
 
 ## Next Rewrite Order
 
-1. Continue mart contract/source-label coverage before changing load plans.
-2. Split `utils/mart.py` SQL builder families by workflow only after tests isolate safe surfaces.
+1. Continue mart SQL-family split for remaining cost, warehouse, usage, adoption, storage, pipeline, and recommendation builders.
+2. Add source-label/load-plan contracts before changing schedules or mart load plans.
 3. Revisit `contention_center.py` / `stored_proc_tracker.py` / DBA Control Room render only with route metrics.
 
 ## De-Bloat Completed After Initial Audit
@@ -318,3 +324,4 @@ These are candidates, not approved removals:
 | Mart-load rationalization planning | Added `docs/OVERWATCH_MART_LOAD_RATIONALIZATION.md` as a static inventory of current mart families, daily operator dependency groups, consolidation candidates, advanced/admin evidence stores, and no-drop guardrails. |
 | Validation, route, and mart contract hardening | Expanded workflow contract tests for triggers, permissions, dependency install order, timeout, targeted shell guards, and mojibake exclusions. Added route-registry parity/no-import-cycle checks and deeper mart contracts for public helper groups, representative builder object references, source captions, unique setup tables, required core facts, and setup/drop inventory. No mart object was dropped, renamed, disabled, or rewritten. |
 | Mart contracts/names/filters micro-split | Moved `MartResult`, `mart_source_caption()`, `mart_object_name()`, and pure mart filter/window helpers into `mart_contracts.py`, `mart_names.py`, and `mart_filters.py` while keeping all public and private compatibility imports available from `utils.mart`. Large SQL builder families remain in `utils/mart.py` for a later contract-backed split. |
+| Mart SQL-family split started | Moved pure DBA Control Room, Account Health, Service Health, Task, Query Detail, and Procedure SQL builders into focused `mart_control_room.py`, `mart_account_health.py`, `mart_service_health.py`, and `mart_task_procedure.py` modules. `utils.mart` remains the compatibility surface and keeps `load_mart_table()`, `load_latest_control_room_mart()`, and the larger cost/warehouse/usage/adoption/storage/pipeline/recommendation builder families. Complete builder grouping, object-reference, no-ACCOUNT_USAGE, and identity tests cover the moved families. |

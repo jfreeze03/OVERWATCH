@@ -1,6 +1,7 @@
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch
 
 import pandas as pd
 import streamlit as st
@@ -11,9 +12,14 @@ APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
 
 from sections import account_health  # noqa: E402
+from sections import account_health_access_hygiene as access_hygiene  # noqa: E402
+from sections import account_health_access_hygiene_view as access_hygiene_view  # noqa: E402
+from sections import account_health_action_queue as action_queue  # noqa: E402
+from sections import account_health_checklist as checklist  # noqa: E402
 from sections import account_health_common as common  # noqa: E402
 from sections import account_health_contracts as contracts  # noqa: E402
 from sections import account_health_data as data  # noqa: E402
+from sections import account_health_morning_view as morning_view  # noqa: E402
 from sections import account_health_models as models  # noqa: E402
 from sections import account_health_source_health_view as source_health_view  # noqa: E402
 from sections import account_health_sql as sql  # noqa: E402
@@ -56,7 +62,19 @@ class AccountHealthSplitTests(unittest.TestCase):
         )
 
     def test_account_health_facade_reexports_initial_focused_modules(self):
-        for module in (contracts, common, data, models, source_health_view, sql):
+        for module in (
+            contracts,
+            common,
+            data,
+            checklist,
+            access_hygiene,
+            action_queue,
+            access_hygiene_view,
+            morning_view,
+            models,
+            source_health_view,
+            sql,
+        ):
             for name in module.__all__:
                 with self.subTest(module=module.__name__, name=name):
                     self.assertTrue(hasattr(account_health, name))
@@ -222,6 +240,197 @@ class AccountHealthSplitTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("Global user filters are active", reason)
 
+    def test_checklist_owner_context_and_readiness_contracts(self):
+        self.assertEqual(account_health._account_health_owner_entity_type("Cost spike review"), "COST_CONTROL")
+        self.assertEqual(account_health._account_health_owner_entity_type("Task and procedure reliability"), "TASK")
+        self.assertEqual(account_health._account_health_owner_entity_type("Queue pressure review"), "WAREHOUSE")
+        self.assertEqual(account_health._account_health_owner_entity_type("Change and drift review"), "CHANGE_CONTROL")
+        self.assertEqual(account_health._account_health_owner_entity_type("Security grant review"), "SECURITY")
+        self.assertEqual(account_health._account_health_owner_entity_type("Other"), "ACCOUNT_HEALTH")
+
+        with patch("sections.account_health_checklist.resolve_owner_context", return_value={
+            "OWNER": "Owner Team",
+            "OWNER_EMAIL": "owner@example.com",
+            "ONCALL_PRIMARY": "Primary",
+            "ONCALL_SECONDARY": "Secondary",
+            "OWNER_SOURCE": "directory",
+            "OWNER_EVIDENCE": "ticket route",
+        }) as owner_context:
+            context = account_health._account_health_owner_context("Query failure review", "Workload Operations")
+        owner_context.assert_called_once()
+        self.assertEqual(context["owner"], "Owner Team")
+        self.assertEqual(context["escalation"], "Application Route / DBA On-Call")
+        self.assertIn("Checklist route map", context["source"])
+        self.assertEqual(context["owner_email"], "owner@example.com")
+
+        raw = pd.DataFrame([{
+            "CHECK": "Query failure review",
+            "STATUS": "Needs DBA",
+            "SEVERITY": "High",
+            "EVIDENCE": "2 failed queries",
+            "ROUTE": "Workload Operations",
+            "NEXT_ACTION": "Review failures",
+            "PROOF_REQUIRED": "query_id",
+        }])
+        with patch("sections.account_health_checklist.resolve_owner_context", return_value={
+            "OWNER": "Query Route",
+            "APPROVAL_GROUP": "DBA Review",
+            "ESCALATION_TARGET": "DBA On-Call",
+        }):
+            enriched = account_health._enrich_account_health_checklist_owners(raw)
+            annotated = account_health._annotate_account_health_checklist_readiness(enriched, environment="PROD")
+        self.assertEqual(annotated["OWNER"].iloc[0], "Query Route")
+        self.assertEqual(annotated["DATABASE_CONTEXT"].iloc[0], "Yes")
+        self.assertEqual(annotated["QUEUE_READINESS"].iloc[0], "Ready to Queue")
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY", annotated["VERIFICATION_QUERY"].iloc[0])
+
+    def test_checklist_builders_and_visibility_keep_review_contract(self):
+        with patch("sections.account_health_checklist.resolve_owner_context", return_value={"OWNER": "DBA"}):
+            checklist_frame = account_health._build_account_health_dba_checklist(
+                health_score=60,
+                score_label="Degraded",
+                err_count=12,
+                queued=3,
+                pct_delta=35,
+                last24=42.0,
+                stor_tb=1.2,
+                failed_tasks=1,
+                object_changes=2,
+                control_mart_used=False,
+                detail_source="Live fallback",
+            )
+        self.assertIn("Overall health escalation", set(checklist_frame["CHECK"]))
+        self.assertIn("Query failure review", set(checklist_frame["CHECK"]))
+        actionable = account_health._account_health_actionable_checklist(checklist_frame)
+        self.assertFalse(actionable.empty)
+        visible, title, raw_label = account_health._account_health_visible_checklist(checklist_frame)
+        self.assertEqual(title, "Daily DBA checklist exceptions")
+        self.assertEqual(raw_label, "Full daily DBA checklist rows")
+        self.assertLessEqual(len(visible), len(checklist_frame))
+        full, full_title, full_raw = account_health._account_health_visible_checklist(checklist_frame, show_full=True)
+        self.assertEqual(len(full), len(checklist_frame))
+        self.assertEqual(full_title, "Daily DBA checklist")
+        self.assertEqual(full_raw, "All daily DBA checklist rows")
+
+    def test_checklist_verification_sql_sources_and_fallback_literalization(self):
+        cases = {
+            "Query failure review": "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+            "Queue pressure review": "queued_ms",
+            "Cost spike review": "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY",
+            "Task and procedure reliability": "SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY",
+            "Change and drift review": "query_text ILIKE 'CREATE%'",
+            "Storage and monitor posture": "SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY",
+        }
+        for check_name, fragment in cases.items():
+            with self.subTest(check=check_name):
+                self.assertIn(fragment, account_health._account_health_verification_sql(check_name))
+                self.assertIn("LIMIT 50", account_health._account_health_verification_sql(check_name))
+
+        fallback = account_health._account_health_verification_sql("Owner's custom check", "O'Hare evidence")
+        self.assertIn("Owner''s custom check", fallback)
+        self.assertIn("O''Hare evidence", fallback)
+
+    def test_action_queue_payloads_are_review_only_and_session_preserving(self):
+        row = {
+            "CHECK": "Query failure review",
+            "STATUS": "Needs DBA",
+            "SEVERITY": "High",
+            "EVIDENCE": "O'Hare failure",
+            "ROUTE": "Workload Operations",
+            "OWNER": "DBA",
+            "ESCALATION_TARGET": "DBA Lead",
+            "NEXT_ACTION": "Review query failures",
+            "PROOF_REQUIRED": "query_id",
+        }
+        payload = account_health._account_health_checklist_action_payload(row, company="ALFA", environment="PROD")
+        self.assertEqual(payload["Source"], account_health.ACCOUNT_HEALTH_ACTION_SOURCE)
+        self.assertEqual(payload["Category"], "Daily DBA Checklist")
+        self.assertEqual(payload["Entity"], "Query failure review")
+        self.assertEqual(payload["Environment"], "PROD")
+        self.assertIn("Do not execute state-changing SQL", payload["Generated SQL Fix"])
+        self.assertNotIn("ALTER ", payload["Generated SQL Fix"].upper())
+
+        checklist_frame = pd.DataFrame([row])
+        with patch("sections.account_health_action_queue.upsert_actions", return_value=1) as upsert, patch(
+            "sections.account_health_action_queue.st.success"
+        ):
+            account_health._queue_account_health_checklist("SESSION", checklist_frame, "ALFA", "PROD")
+        self.assertIs(upsert.call_args.args[0], "SESSION")
+
+        with patch("sections.account_health_action_queue.upsert_actions") as upsert_empty, patch(
+            "sections.account_health_action_queue.st.info"
+        ):
+            account_health._queue_account_health_checklist("SESSION", pd.DataFrame(), "ALFA", "PROD")
+            account_health._queue_account_health_access_hygiene("SESSION", pd.DataFrame(), "ALFA")
+        upsert_empty.assert_not_called()
+
+    def test_access_hygiene_annotation_payload_and_view_keys(self):
+        hygiene = pd.DataFrame([{
+            "USER_NAME": "O'HARE_USER",
+            "SEVERITY": "High",
+            "POSTURE_FINDINGS": "Admin role without recent review",
+            "PROOF_REQUIRED": "admin role proof",
+            "FAILED_LOGINS": 2,
+            "ADMIN_ROLE_COUNT": 1,
+        }])
+        with patch("sections.account_health_access_hygiene.resolve_owner_context", return_value={
+            "OWNER": "Security",
+            "APPROVAL_GROUP": "Security Review",
+            "ESCALATION_TARGET": "Security Lead",
+        }):
+            annotated = account_health._annotate_account_health_access_hygiene(hygiene)
+        self.assertEqual(annotated["ENVIRONMENT_SCOPE"].iloc[0], "No Database Context")
+        self.assertEqual(annotated["SCOPE_CONFIDENCE"].iloc[0], "Account-Level Control")
+        self.assertEqual(annotated["QUEUE_READINESS"].iloc[0], "Ready to Queue")
+        self.assertIn("RECOVERY_SLA_TARGET_HOURS", annotated.columns)
+
+        proof_sql = account_health._account_health_access_hygiene_verification_sql(annotated.iloc[0], days=14)
+        self.assertIn("O''HARE_USER", proof_sql)
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY", proof_sql)
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS", proof_sql)
+
+        payload = account_health._account_health_access_hygiene_action_payload(annotated.iloc[0], company="ALFA", days=14)
+        self.assertEqual(payload["Source"], account_health.ACCOUNT_HEALTH_ACCESS_HYGIENE_SOURCE)
+        self.assertEqual(payload["Environment"], "No Database Context")
+        self.assertIn("Review only", payload["Generated SQL Fix"])
+
+        source = (APP_ROOT / "sections" / "account_health_access_hygiene_view.py").read_text(encoding="utf-8")
+        for token in [
+            "account_health_access_hygiene_days",
+            "account_health_access_hygiene_load",
+            "account_health_access_hygiene_source",
+            "account_health_access_hygiene",
+            "account_health_access_hygiene_meta",
+            "account_health_queue_access_hygiene",
+            "ignore_environment=True",
+            'filter_keys=("global_user",)',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, source)
+
+    def test_morning_report_renderer_contract_and_keys(self):
+        self.assertIs(
+            account_health.ACCOUNT_HEALTH_RENDERERS["Morning Report"],
+            morning_view.render_account_health_morning_report,
+        )
+        source = (APP_ROOT / "sections" / "account_health_morning_view.py").read_text(encoding="utf-8")
+        for token in [
+            "account_health_morning_lookback",
+            "account_health_morning_live_fallback",
+            "morning_data",
+            "morning_data_error",
+            "morning_data_meta",
+            "morning_data_source",
+            "DBA Control Room fast summary + bounded live fallback",
+            "DBA Control Room fast summary",
+            "_account_health_scope_meta",
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, source)
+        route_source = (APP_ROOT / "sections" / "account_health.py").read_text(encoding="utf-8")
+        self.assertIn("ACCOUNT_HEALTH_RENDERERS.get(active_view)", route_source)
+        self.assertNotIn('elif active_view == "Morning Report"', route_source)
+
     def test_account_health_has_source_state_detects_loaded_or_error_surfaces(self):
         self.assertFalse(account_health._account_health_has_source_state({}))
         self.assertTrue(account_health._account_health_has_source_state({"health_data": {"live": pd.DataFrame()}}))
@@ -229,7 +438,7 @@ class AccountHealthSplitTests(unittest.TestCase):
 
     def test_account_health_shell_has_initial_split_guard(self):
         source = (APP_ROOT / "sections" / "account_health.py").read_text(encoding="utf-8")
-        self.assertLess(len(source.splitlines()), 3200)
+        self.assertLess(len(source.splitlines()), 1600)
         for fragment in [
             "ACCOUNT_HEALTH_PANES = (",
             "ACCOUNT_HEALTH_SCOPE_FILTER_KEYS = (",
@@ -241,6 +450,13 @@ class AccountHealthSplitTests(unittest.TestCase):
             "def _render_account_health_source_health",
             "def build_account_health_checklist_history_ddl",
             "def build_account_health_operability_fact_ddl",
+            "def _build_account_health_dba_checklist",
+            "def _account_health_verification_sql",
+            "def _queue_account_health_access_hygiene",
+            "def _render_account_health_access_hygiene",
+            "def _build_account_health_dba_morning_brief",
+            "# -- MORNING REPORT",
+            'elif active_view == "Morning Report"',
         ]:
             with self.subTest(fragment=fragment):
                 self.assertNotIn(fragment, source)

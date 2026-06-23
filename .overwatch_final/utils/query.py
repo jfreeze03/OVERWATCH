@@ -6,7 +6,6 @@
 #      that crashed the entire section render with a red error page)
 #   3. Tiered cache TTLs: live=30s, standard=300s, historical=3600s, metadata=14400s
 #      (previous version had a single flat 300s TTL for all query types)
-import hashlib
 import os
 import re
 import time
@@ -295,8 +294,8 @@ def _record_query_telemetry(
 ) -> None:
     """Keep a lightweight in-session trace of OVERWATCH query volume."""
     try:
-        query_hash = hashlib.sha256(str(query_text).encode("utf-8", errors="ignore")).hexdigest()[:12]
         active_section = _infer_telemetry_section(section, ttl_key)
+        query_hash = f"{str(ttl_key or 'default')}|{active_section}|{str(tier or 'unknown')}"[:64]
         entries = ensure_default_state(QUERY_TELEMETRY, [])
         entries.append({
             "timestamp": datetime.now().isoformat(timespec="seconds"),

@@ -123,7 +123,7 @@ class ChangeIntelligenceTests(unittest.TestCase):
                 self.assertNotIn("SHOW ", block)
 
     def test_ui_places_change_intelligence_in_approved_sections(self):
-        executive = _read(APP_ROOT / "sections" / "executive_landing.py")
+        executive = _read(APP_ROOT / "sections" / "executive_landing_admin_view.py")
         dba = _read(APP_ROOT / "sections" / "dba_control_room.py")
         cost = _cost_contract_surface()
         workload = _read(APP_ROOT / "sections" / "workload_operations.py")

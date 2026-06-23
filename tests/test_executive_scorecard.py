@@ -108,7 +108,7 @@ class ExecutiveScorecardTests(unittest.TestCase):
         self.assertNotIn("SHOW ", detail)
 
     def test_ui_places_scorecard_in_approved_sections(self):
-        executive = _read(APP_ROOT / "sections" / "executive_landing.py")
+        executive = _read(APP_ROOT / "sections" / "executive_landing_admin_view.py")
         dba = _read(APP_ROOT / "sections" / "dba_control_room.py")
         cost = _cost_contract_surface()
         security = _read(APP_ROOT / "sections" / "security_posture_admin_view.py")

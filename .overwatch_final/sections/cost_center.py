@@ -27,7 +27,7 @@ from sections.cost_center_models import *  # noqa: F403
 from sections.cost_center_reconciliation_view import *  # noqa: F403
 from sections.cost_center_sql import *  # noqa: F403
 from sections.cost_center_user_leaderboard_view import *  # noqa: F403
-from utils import defer_source_note, filter_existing_columns, get_credit_price, get_session
+from utils import defer_source_note, get_credit_price, get_session
 from utils.workflows import render_workflow_selector
 
 
@@ -47,14 +47,7 @@ def render() -> None:
     session = get_session()
     credit_price = get_credit_price()
     company = st.session_state.get("active_company", "ALFA")
-    qh_cols = set(filter_existing_columns(
-        session,
-        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
-        ["WAREHOUSE_SIZE", "BYTES_SCANNED", "QUERY_TAG"],
-    ))
-    max_wh_size_expr = "MAX(q.warehouse_size)" if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR"
-    bytes_scanned_sum_expr = "SUM(q.bytes_scanned)" if "BYTES_SCANNED" in qh_cols else "0"
-    query_tag_dimension_expr = "COALESCE(q.query_tag, 'UNTAGGED')" if "QUERY_TAG" in qh_cols else "'UNTAGGED'"
+    max_wh_size_expr, bytes_scanned_sum_expr, query_tag_dimension_expr = _cost_center_query_history_expressions(session)
 
     cost_view = render_workflow_selector(
         "Cost allocation workflow",

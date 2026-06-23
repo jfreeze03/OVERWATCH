@@ -269,8 +269,9 @@ class CostCenterSplitTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertTrue(hasattr(cost_center, name))
         source = (APP_ROOT / "sections" / "cost_center.py").read_text(encoding="utf-8")
-        self.assertLess(len(source.splitlines()), 250)
+        self.assertLess(len(source.splitlines()), 150)
         for fragment in [
+            "SNOWFLAKE.ACCOUNT_USAGE",
             "run_query(",
             "pd.DataFrame(",
             "CREATE TABLE",

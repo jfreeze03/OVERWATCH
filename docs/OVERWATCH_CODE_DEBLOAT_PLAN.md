@@ -10,15 +10,17 @@ Reduce bloat without breaking the six-section operator model or removing useful 
 
 | File | Approx lines | Primary issue | Action |
 |---|---:|---|---|
-| `.overwatch_final/sections/executive_landing.py` | 3746 | Advanced rollups remain in same module as front door. | Split advanced/admin rollups later if tests prove import or render pain. |
 | `.overwatch_final/sections/task_management.py` | 3530 | Task management and pipeline health overlap Pipeline & Task Health. | Keep as delegated implementation, remove duplicate entry points only after regression. |
 | `.overwatch_final/sections/change_drift.py` | 2924 | Change drift mixes overview, evidence, and investigation rendering. | Below 3000 now; revisit after larger modules are reduced. |
+| `.overwatch_final/sections/contention_center.py` | 2356 | Contention investigation, render helpers, and route orchestration remain combined. | Revisit after delegated route metrics show active use. |
+| `.overwatch_final/utils/mart.py` | 2329 | Mart setup/build helpers and operational SQL remain broad. | Rationalize after route splits and mart-load audit. |
 
 ## Completed Thin Facades
 
 | File | Approx lines | Status |
 |---|---:|---|
-| `.overwatch_final/sections/cost_center.py` | 99 | Cost Center public selector/renderer-dispatch and compatibility reexport facade after contracts, models, SQL, action-queue, and all eight view branches moved into focused modules. |
+| `.overwatch_final/sections/executive_landing.py` | 133 | Executive Landing public workflow selector/load-gate/renderer-dispatch and compatibility reexport facade after contracts, models, observability loading, workflow panes, charts, data-health, and admin rollups moved into focused modules. |
+| `.overwatch_final/sections/cost_center.py` | 92 | Cost Center public selector/renderer-dispatch and compatibility reexport facade after contracts, models, SQL, action-queue, and all eight view branches moved into focused modules. |
 | `.overwatch_final/sections/account_health.py` | 83 | Account Health public route/renderer-dispatch and compatibility reexport facade after Overview, Morning Report, checklist, access hygiene, history, and action-queue split; both pane renderers are map-owned. |
 | `.overwatch_final/sections/alert_center.py` | 845 | Alert Center public route/load-gate/renderer-dispatch shell after pane, admin, diagnostics, and data split; legacy Issue Inbox/Triage Digest aliases normalize to Active Alerts. |
 | `.overwatch_final/sections/security_posture.py` | 180 | Security Monitoring public route/dispatch and compatibility reexport facade after overview, access-review, action-queue, and privilege-sprawl split, now with explicit `__all__` and a <250-line guard. |
@@ -108,7 +110,7 @@ Reduce bloat without breaking the six-section operator model or removing useful 
 |---|---:|---|
 | `.overwatch_final/sections/cost_center_contracts.py` | 77 | Cost Center view names, labels, details, no-database-context sentinels, and Cost Explorer lens metadata. |
 | `.overwatch_final/sections/cost_center_models.py` | 848 | Allocation-quality, environment-rollup, forecast, Cost Explorer summary/gap, bill movement, finance bridge, service grouping, and Explain Bill markdown helpers. |
-| `.overwatch_final/sections/cost_center_sql.py` | 321 | Annual service projection, admin reconciliation, Cost Explorer live, chargeback verification, and warehouse cost verification SQL builders. |
+| `.overwatch_final/sections/cost_center_sql.py` | 335 | Annual service projection, optional query-history expression probe, admin reconciliation, Cost Explorer live, chargeback verification, and warehouse cost verification SQL builders. |
 | `.overwatch_final/sections/cost_center_action_queue.py` | 359 | Review-only cost outlier and bill exception action-queue payload/writer helpers preserving owner route and verification contracts. |
 | `.overwatch_final/sections/cost_center_explorer_view.py` | 259 | Cost Explorer renderer preserving lens, min-cost, department filter, load, source, and queue keys. |
 | `.overwatch_final/sections/cost_center_explain_view.py` | 635 | Explain This Bill renderer preserving all `cc_explain_*` loads, source metadata, finance movement, service-credit caveats, markdown download, and exception queue behavior. |
@@ -118,6 +120,24 @@ Reduce bloat without breaking the six-section operator model or removing useful 
 | `.overwatch_final/sections/cost_center_forecast_view.py` | 182 | Forecast renderer preserving run-rate and annual service projection keys. |
 | `.overwatch_final/sections/cost_center_attribution_view.py` | 152 | Attribution renderer preserving `cc_attr_*` keys and attribution drilldown/download behavior. |
 | `.overwatch_final/sections/cost_center_chargeback_view.py` | 282 | Chargeback renderer preserving chargeback load/queue keys, ALFA/Trexis scope behavior, allocation readiness fields, and mart-first fallback. |
+
+## New Focused Executive Landing Modules
+
+| File | Approx lines | Contents |
+|---|---:|---|
+| `.overwatch_final/sections/executive_landing_contracts.py` | 38 | Executive Landing version, workflow names, workflow order, and legacy workflow alias map. |
+| `.overwatch_final/sections/executive_landing_common.py` | 164 | Active scope helpers, formatting helpers, workflow normalization, workflow-state sync, token filtering, and `executive_nav_*` navigation button behavior. |
+| `.overwatch_final/sections/executive_landing_models.py` | 1368 | Platform operating score, source-health/snapshot summary models, observability KPI/advisor rows, pressure lanes, decision rows, command summary rows, and action brief logic. |
+| `.overwatch_final/sections/executive_landing_data.py` | 758 | Snapshot loading, offline-safe Snowflake session handling, observability mart SQL/build parts, first-paint payload storage, autoload gates, and source/error handling. |
+| `.overwatch_final/sections/executive_landing_charts.py` | 557 | Observability source status, executive command/priority/pressure boards, advisor overlay, line/bar chart renderers, and observability wall chart panels. |
+| `.overwatch_final/sections/executive_landing_data_health_view.py` | 122 | Executive Data Health panel and loaded alert-context drillthrough with existing `executive_alert_*` keys. |
+| `.overwatch_final/sections/executive_landing_overview_view.py` | 221 | Executive Overview renderer, Load Snapshot prompt, next-click navigation, front-door KPI rows, and executive decision table. |
+| `.overwatch_final/sections/executive_landing_cost_view.py` | 104 | Cost Movement renderer preserving cost drillthrough navigation, forecast summary, and cost-movement rows. |
+| `.overwatch_final/sections/executive_landing_operational_view.py` | 104 | Operational Risk renderer preserving workload/DBA navigation and snapshot-gated operational alerts. |
+| `.overwatch_final/sections/executive_landing_security_view.py` | 105 | Security Risk renderer preserving Security Monitoring navigation and snapshot-gated security alerts. |
+| `.overwatch_final/sections/executive_landing_change_view.py` | 100 | Change Summary renderer preserving change-intelligence summary, migration rows, data-health expander, and change navigation. |
+| `.overwatch_final/sections/executive_landing_actions_view.py` | 99 | Executive Actions renderer preserving decision/action queue display and snapshot gate. |
+| `.overwatch_final/sections/executive_landing_admin_view.py` | 497 | Executive Admin / Advanced renderer, scorecard/value ledger/data trust/production readiness rollups, forecasts, change intelligence, closed-loop, and correlated-investigation summaries. |
 
 ## Duplicate Code Groups
 
@@ -146,7 +166,7 @@ These are candidates, not approved removals:
 
 | Metric | Current | Target |
 |---|---:|---:|
-| Large app modules above 3000 lines | 2 | 3 or fewer |
+| Large app modules above 3000 lines | 1 | 3 or fewer |
 | Daily operator mart tables | 90+ expected in current setup | 28-34 after migration |
 | Primary route aliases exposed to users | Several before this pass | Zero known in primary UI |
 | Live Snowflake regression coverage | New runner, blocked by auth | Passing in test account |
@@ -162,17 +182,17 @@ These are candidates, not approved removals:
 - `tests/test_explicit_load.py` covers explicit dataframe loads, session-state reuse, error-to-empty-frame handling, and CSV export wrapper behavior.
 - `tests/test_account_health_split.py` locks Account Health pane contracts, compatibility reexports, retired route normalization, source-scope metadata, source-health state classification, SQL/FQN builders, data helper contracts, checklist readiness, review-only action queue payloads, access hygiene No Database Context behavior, Morning Report and Overview keys, renderer dispatch coverage, history/closure SQL escaping, snapshot persistence behavior, and the Account Health shell no-creep guard.
 - `tests/test_cost_center_split.py` locks Cost Center pane contracts, compatibility reexports, allocation/source helpers, SQL builders, review-only action queue behavior, renderer map coverage, view key preservation, and the Cost Center facade line/no-creep guard.
+- `tests/test_executive_landing_split.py` locks Executive Landing workflow contracts, legacy aliases, compatibility reexports, scoring/filter helpers, offline snapshot behavior, renderer map coverage, dispatch helper behavior, key/navigation preservation, and the Executive Landing facade no-creep guard.
 - `tests/test_command_center.py` now validates correlated investigation UI placement and explicit load gates.
 - `tests/test_contention_center.py`, `tests/test_formula_regressions.py`, and `tests/test_operational_intelligence.py` validate renamed workflow/action contracts.
 - `perf_tests/full_app_snowflake_regression.py` is the live Snowflake gate once authentication is corrected.
 
 ## Next Rewrite Order
 
-1. Split Executive Landing advanced/admin panels if they remain above threshold.
-2. Clean up Task Management delegated routes only after route metrics prove no active usage.
-3. Consider Change Drift split if route metrics justify it.
-4. Retire legacy route rendering.
-5. Rationalize mart loads to feed daily workflows directly before dropping any old objects.
+1. Clean up Task Management delegated routes only after route metrics prove no active usage.
+2. Consider Change Drift split if route metrics justify it.
+3. Retire legacy route rendering.
+4. Rationalize mart loads to feed daily workflows directly before dropping any old objects.
 
 ## De-Bloat Completed After Initial Audit
 
@@ -214,4 +234,5 @@ These are candidates, not approved removals:
 | Account Health initial split | Reduced `.overwatch_final/sections/account_health.py` from the local 3604-line baseline (older docs listed about 3812) to about 3190 lines by moving Account Health contracts, common helpers, source-health models, bounded data/query helpers, deterministic FQN/DDL/migration SQL builders, and the source-health renderer into focused modules. The public route keeps compatibility reexports and existing Account Health panes, keys, session-state names, and action behavior; Overview/Morning rendering and action queue/checklist mutation flows are deferred for a guarded pass. |
 | Account Health checklist/action/Morning split | Reduced `.overwatch_final/sections/account_health.py` from about 3190 lines to about 1483 lines by moving checklist routing/readiness helpers, review-only action queue payloads/writers, access hygiene SQL/annotation/rendering, and the Morning Report packet builder/renderer into focused modules. Existing Account Health panes and keys are preserved, including access hygiene load/source/meta/queue keys and Morning Report lookback/fallback/source/meta packet keys. The remaining route owns the large Overview branch and a partial renderer map for the moved Morning Report pane. |
 | Account Health Overview/history split completed | Reduced `.overwatch_final/sections/account_health.py` from about 1483 lines to about 83 lines by moving the Overview controller/renderer, operating snapshot/intervention helpers, checklist history SQL, closure analytics SQL, operability fact SQL, and checklist snapshot persistence into focused modules. `ACCOUNT_HEALTH_RENDERERS` now covers both Overview and Morning Report, and tests keep the route free of ACCOUNT_USAGE strings, query calls, dataframe construction, DDL/DML, and moved helper definitions. |
-| Cost Center split completed for current pass | Reduced `.overwatch_final/sections/cost_center.py` from about 3106 lines to about 99 lines by moving contracts, allocation/dataframe models, SQL builders, review-only action queue helpers, and all eight Cost Center render branches into focused modules. `COST_CENTER_RENDERERS` covers Cost Explorer, Explain This Bill, User Leaderboard, Burn Rate, Reconciliation, Forecast, Attribution, and Chargeback while preserving existing Streamlit keys, session-state names, CSV filenames, mart-first/live fallback behavior, and review-gated action queue boundaries. |
+| Cost Center split completed for current pass | Reduced `.overwatch_final/sections/cost_center.py` from about 3106 lines to about 92 lines by moving contracts, allocation/dataframe models, SQL builders, review-only action queue helpers, optional query-history expression probing, and all eight Cost Center render branches into focused modules. `COST_CENTER_RENDERERS` covers Cost Explorer, Explain This Bill, User Leaderboard, Burn Rate, Reconciliation, Forecast, Attribution, and Chargeback while preserving existing Streamlit keys, session-state names, CSV filenames, mart-first/live fallback behavior, and review-gated action queue boundaries. |
+| Executive Landing split completed for current pass | Reduced `.overwatch_final/sections/executive_landing.py` from about 3746 lines to about 133 lines by moving workflow contracts, common navigation/scope helpers, platform/observability models, offline-safe data loading, charts, data-health panels, all seven workflow renderers, and Executive Admin / Advanced rollups into focused modules. `EXECUTIVE_LANDING_RENDERERS` covers Executive Overview, Cost Movement, Operational Risk, Security Risk, Change Summary, Executive Actions, and Executive Admin / Advanced while preserving legacy aliases, progressive/on-demand loading, offline Snowflake behavior, `executive_landing_*` session-state keys, and `executive_nav_*` navigation behavior. |

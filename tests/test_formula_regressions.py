@@ -757,10 +757,10 @@ class FormulaRegressionTests(unittest.TestCase):
         })
 
         with (
-            patch("sections.executive_landing.st.markdown"),
-            patch("sections.executive_landing.st.caption"),
-            patch("sections.executive_landing.st.dataframe") as dataframe,
-            patch("sections.executive_landing.render_shell_snapshot"),
+            patch("sections.executive_landing_admin_view.st.markdown"),
+            patch("sections.executive_landing_admin_view.st.caption"),
+            patch("sections.executive_landing_admin_view.st.dataframe") as dataframe,
+            patch("sections.executive_landing_admin_view.render_shell_snapshot"),
         ):
             _render_command_center_summary(findings)
 

@@ -7,6 +7,7 @@ from sections.cost_center_contracts import NO_DATABASE_CONTEXT_VALUES
 from sections.cost_center_models import _row_text
 from utils import (
     build_metered_credit_cte,
+    filter_existing_columns,
     get_company_case_expr,
     get_environment_case_expr,
     get_environment_filter_clause,
@@ -80,6 +81,19 @@ def _snowflake_admin_reconciliation_sql(days_back: int = 30) -> str:
             'Keep account-wide unless a service view exposes owner, user, warehouse, or database.' AS company_split_note
         FROM account_metering, warehouse_metering
     """
+
+
+def _cost_center_query_history_expressions(session) -> tuple[str, str, str]:
+    """Return optional QUERY_HISTORY expressions for Cost Center renderers."""
+    qh_cols = set(filter_existing_columns(
+        session,
+        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+        ["WAREHOUSE_SIZE", "BYTES_SCANNED", "QUERY_TAG"],
+    ))
+    max_wh_size_expr = "MAX(q.warehouse_size)" if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR"
+    bytes_scanned_sum_expr = "SUM(q.bytes_scanned)" if "BYTES_SCANNED" in qh_cols else "0"
+    query_tag_dimension_expr = "COALESCE(q.query_tag, 'UNTAGGED')" if "QUERY_TAG" in qh_cols else "'UNTAGGED'"
+    return max_wh_size_expr, bytes_scanned_sum_expr, query_tag_dimension_expr
 
 
 def _cost_explorer_live_sql(
@@ -318,4 +332,4 @@ ORDER BY period;
 """
 
 
-__all__ = ['_annual_service_projection_sql', '_snowflake_admin_reconciliation_sql', '_cost_explorer_live_sql', '_chargeback_cost_verification_sql', '_warehouse_cost_verification_sql']
+__all__ = ['_annual_service_projection_sql', '_snowflake_admin_reconciliation_sql', '_cost_center_query_history_expressions', '_cost_explorer_live_sql', '_chargeback_cost_verification_sql', '_warehouse_cost_verification_sql']

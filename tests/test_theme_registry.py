@@ -135,7 +135,7 @@ class ThemeRegistryTests(unittest.TestCase):
         self.assertIn("background: linear-gradient(135deg, #003f73, #0068b7) !important", carbon_extra)
 
     def test_executive_landing_charts_use_shared_theme_surface(self):
-        executive_text = (APP_ROOT / "sections" / "executive_landing.py").read_text(encoding="utf-8")
+        executive_text = (APP_ROOT / "sections" / "executive_landing_charts.py").read_text(encoding="utf-8")
 
         self.assertFalse((APP_ROOT / "sections" / "executive_landing_shell.py").exists())
         self.assertIn("def _render_line_chart", executive_text)

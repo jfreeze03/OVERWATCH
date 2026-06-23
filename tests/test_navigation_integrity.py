@@ -237,7 +237,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("state[brief_key] = False", helper_text)
 
         executive_text = (APP_ROOT / "sections" / "executive_landing.py").read_text(encoding="utf-8")
-        self.assertIn("Snowflake Observability Wall", executive_text)
+        executive_overview = (APP_ROOT / "sections" / "executive_landing_overview_view.py").read_text(encoding="utf-8")
+        executive_security = (APP_ROOT / "sections" / "executive_landing_security_view.py").read_text(encoding="utf-8")
+        self.assertIn("Snowflake Observability Wall", executive_overview)
         self.assertNotIn("Executive Summary Signals", executive_text)
         self.assertIn("Refresh Summary", executive_text)
 
@@ -320,7 +322,7 @@ class NavigationIntegrityTests(unittest.TestCase):
             "account_health_overview_view.py": ("apply_navigation_state(section)", "apply_navigation_state(tgt)"),
             "dba_control_room.py": ("apply_navigation_state(raw_target)",),
             "dba_tools.py": ('apply_navigation_state("Alert Center")',),
-            "executive_landing.py": ("apply_navigation_state(section)",),
+            "executive_landing_common.py": ("apply_navigation_state(section)",),
         }
         for file_name, expected_calls in direct_nav_modules.items():
             module_text = _section_source(APP_ROOT / "sections" / file_name)
@@ -419,16 +421,18 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(SECTION_MODULES["Executive Landing"], "sections.executive_landing")
         self.assertFalse((APP_ROOT / "sections" / "executive_landing_shell.py").exists())
         full_workspace_text = (APP_ROOT / "sections" / "executive_landing.py").read_text(encoding="utf-8")
+        observability_text = (APP_ROOT / "sections" / "executive_landing_data.py").read_text(encoding="utf-8")
+        overview_text = (APP_ROOT / "sections" / "executive_landing_overview_view.py").read_text(encoding="utf-8")
 
-        self.assertIn("def _load_executive_observability", full_workspace_text)
+        self.assertIn("def _load_executive_observability", observability_text)
         self.assertIn("_executive_landing_observability_autoload_scope", full_workspace_text)
-        self.assertIn("def _executive_observability_autoload_allowed", full_workspace_text)
-        self.assertIn('st.session_state.get("_overwatch_connection_available") is True', full_workspace_text)
-        self.assertIn("not snowflake_connection_known_unavailable()", full_workspace_text)
+        self.assertIn("def _executive_observability_autoload_allowed", observability_text)
+        self.assertIn('st.session_state.get("_overwatch_connection_available") is True', observability_text)
+        self.assertIn("not snowflake_connection_known_unavailable()", observability_text)
         self.assertIn("_store_connection_unavailable_observability(company, environment, int(days))", full_workspace_text)
         self.assertIn("refresh_session = get_session_for_action", full_workspace_text)
-        self.assertNotIn("st.session_state.get(autoload_scope_key) != expected_scope", full_workspace_text)
-        self.assertIn("Snowflake Observability Wall", full_workspace_text)
+        self.assertNotIn("st.session_state.get(autoload_scope_key) != expected_scope", full_workspace_text + observability_text)
+        self.assertIn("Snowflake Observability Wall", overview_text)
         self.assertNotIn("Executive Summary Signals", full_workspace_text)
         self.assertIn("Refresh Summary", full_workspace_text)
         self.assertNotIn("Refresh Board", full_workspace_text)
@@ -711,10 +715,18 @@ class NavigationIntegrityTests(unittest.TestCase):
 
     def test_executive_landing_routes_to_workflow_panes(self):
         executive_text = (APP_ROOT / "sections" / "executive_landing.py").read_text(encoding="utf-8")
+        executive_contracts = (APP_ROOT / "sections" / "executive_landing_contracts.py").read_text(encoding="utf-8")
+        executive_common = (APP_ROOT / "sections" / "executive_landing_common.py").read_text(encoding="utf-8")
+        executive_data_health = (APP_ROOT / "sections" / "executive_landing_data_health_view.py").read_text(encoding="utf-8")
+        executive_overview = (APP_ROOT / "sections" / "executive_landing_overview_view.py").read_text(encoding="utf-8")
+        executive_cost = (APP_ROOT / "sections" / "executive_landing_cost_view.py").read_text(encoding="utf-8")
+        executive_security = (APP_ROOT / "sections" / "executive_landing_security_view.py").read_text(encoding="utf-8")
+        executive_change = (APP_ROOT / "sections" / "executive_landing_change_view.py").read_text(encoding="utf-8")
+        executive_admin = (APP_ROOT / "sections" / "executive_landing_admin_view.py").read_text(encoding="utf-8")
 
         self.assertIn("_source_health_rows", executive_text)
-        self.assertIn("Executive Data Health", executive_text)
-        self.assertIn("EXECUTIVE_LANDING_WORKFLOWS = (", executive_text)
+        self.assertIn("Executive Data Health", executive_data_health)
+        self.assertIn("EXECUTIVE_LANDING_WORKFLOWS = (", executive_contracts)
         for workflow in (
             "Executive Overview",
             "Cost Movement",
@@ -724,19 +736,19 @@ class NavigationIntegrityTests(unittest.TestCase):
             "Executive Actions",
             "Executive Admin / Advanced",
         ):
-            self.assertIn(workflow, executive_text)
+            self.assertIn(workflow, executive_contracts)
         self.assertIn("normalize_executive_landing_workflow", executive_text)
-        self.assertIn('"Executive Briefing": EXECUTIVE_OVERVIEW_WORKFLOW', executive_text)
-        self.assertIn('"Adoption Analytics": EXECUTIVE_ADMIN_WORKFLOW', executive_text)
-        self.assertIn('"alert_center_active_view": "Active Alerts"', executive_text)
-        self.assertIn('workflow_key="cost_contract_workflow"', executive_text)
-        self.assertIn('workflow="Cost by Warehouse"', executive_text)
-        self.assertIn('workflow_key="workload_operations_workflow"', executive_text)
-        self.assertIn('workflow="Change Analysis"', executive_text)
-        self.assertIn('workflow_key="security_posture_workflow"', executive_text)
-        self.assertIn('state_updates={"dba_control_room_active_view": "Change Watch"}', executive_text)
-        self.assertIn("Scorecard formulas, value ledger, telemetry trust detail, production readiness", executive_text)
-        self.assertIn('with st.expander("Advanced observability charts and source grids", expanded=False):', executive_text)
+        self.assertIn('"Executive Briefing": EXECUTIVE_OVERVIEW_WORKFLOW', executive_contracts)
+        self.assertIn('"Adoption Analytics": EXECUTIVE_ADMIN_WORKFLOW', executive_contracts)
+        self.assertIn('"alert_center_active_view": "Active Alerts"', executive_overview + executive_data_health)
+        self.assertIn('workflow_key="cost_contract_workflow"', executive_common + executive_cost)
+        self.assertIn('workflow="Cost by Warehouse"', executive_cost)
+        self.assertIn('workflow_key="workload_operations_workflow"', executive_common + executive_change)
+        self.assertIn('workflow="Change Analysis"', executive_change)
+        self.assertIn('workflow_key="security_posture_workflow"', executive_overview + executive_security)
+        self.assertIn('state_updates={"dba_control_room_active_view": "Change Watch"}', executive_change)
+        self.assertIn("Scorecard formulas, value ledger, telemetry trust detail, production readiness", executive_admin)
+        self.assertIn('with st.expander("Advanced observability charts and source grids", expanded=False):', executive_admin)
 
     def test_section_alias_literal_has_no_duplicate_keys(self):
         config_tree = ast.parse((APP_ROOT / "config.py").read_text(encoding="utf-8"))

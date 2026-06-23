@@ -193,6 +193,8 @@ class Production95ContractsTests(unittest.TestCase):
     def test_executive_landing_is_kpi_first_not_shell_brief(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
         executive_text = (APP_ROOT / "sections" / "executive_landing.py").read_text(encoding="utf-8")
+        executive_data = (APP_ROOT / "sections" / "executive_landing_data.py").read_text(encoding="utf-8")
+        executive_overview = (APP_ROOT / "sections" / "executive_landing_overview_view.py").read_text(encoding="utf-8")
         self.assertNotIn("Top Priority Brief", app_text)
         self.assertNotIn("priority_brief_slot", app_text)
         self.assertIn(
@@ -200,13 +202,13 @@ class Production95ContractsTests(unittest.TestCase):
             (APP_ROOT / "config.py").read_text(encoding="utf-8"),
         )
         self.assertFalse((APP_ROOT / "sections" / "executive_landing_shell.py").exists())
-        self.assertIn("def _load_executive_observability", executive_text)
+        self.assertIn("def _load_executive_observability", executive_data)
         self.assertIn("_executive_landing_observability_autoload_scope", executive_text)
-        self.assertIn("def _executive_observability_autoload_allowed", executive_text)
-        self.assertIn("_store_connection_unavailable_observability", executive_text)
-        self.assertIn("Snowflake Observability Wall", executive_text)
+        self.assertIn("def _executive_observability_autoload_allowed", executive_data)
+        self.assertIn("_store_connection_unavailable_observability", executive_data)
+        self.assertIn("Snowflake Observability Wall", executive_overview)
         self.assertNotIn("Executive Summary Signals", executive_text)
-        self.assertIn("Executive decisions to make first", executive_text)
+        self.assertIn("Executive decisions to make first", executive_overview)
         self.assertNotIn("Refresh Board", executive_text)
         self.assertNotIn("Executive Command Wall", executive_text)
         self.assertNotIn("Setup Readiness", executive_text)

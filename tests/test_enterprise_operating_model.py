@@ -95,7 +95,7 @@ class EnterpriseOperatingModelTests(unittest.TestCase):
         self.assertNotIn("INFORMATION_SCHEMA", rollup_source)
 
     def test_ui_places_capabilities_in_approved_sections(self):
-        executive = _read(APP_ROOT / "sections" / "executive_landing.py")
+        executive = _read(APP_ROOT / "sections" / "executive_landing_admin_view.py")
         dba = _read(APP_ROOT / "sections" / "dba_control_room.py")
         alert = _read(APP_ROOT / "sections" / "alert_center_diagnostics_view.py")
         security = _read(APP_ROOT / "sections" / "security_posture_admin_view.py")

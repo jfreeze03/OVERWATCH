@@ -1,6 +1,7 @@
 from pathlib import Path
 import sys
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pandas as pd
@@ -31,8 +32,14 @@ class WarehouseHealthSplitTests(unittest.TestCase):
         from sections import warehouse_health_overview_panels
         from sections import warehouse_health_panels
         from sections import warehouse_health_queue
+        from sections import warehouse_health_rendering
         from sections import warehouse_health_setting_panels
         from sections import warehouse_health_sql
+        from sections import warehouse_health_view_advisor
+        from sections import warehouse_health_view_efficiency
+        from sections import warehouse_health_view_heatmap
+        from sections import warehouse_health_view_overview
+        from sections import warehouse_health_view_spill
 
         self.assertIs(warehouse_health.WAREHOUSE_HEALTH_VIEWS, warehouse_health_contracts.WAREHOUSE_HEALTH_VIEWS)
         self.assertIs(warehouse_health.WAREHOUSE_HEALTH_DETAILS, warehouse_health_contracts.WAREHOUSE_HEALTH_DETAILS)
@@ -81,6 +88,13 @@ class WarehouseHealthSplitTests(unittest.TestCase):
         self.assertIs(warehouse_health._render_warehouse_source_health, warehouse_health_panels._render_warehouse_source_health)
         self.assertIs(warehouse_health._apply_warehouse_fast_entry_default, warehouse_health_panels._apply_warehouse_fast_entry_default)
         self.assertIs(warehouse_health._render_warehouse_overview_exception_strip, warehouse_health_panels._render_warehouse_overview_exception_strip)
+        self.assertIs(warehouse_health.render_operator_briefing, warehouse_health_rendering.render_operator_briefing)
+        self.assertIs(warehouse_health._load_warehouse_overview, warehouse_health_view_overview._load_warehouse_overview)
+        self.assertIs(warehouse_health._render_warehouse_overview_view, warehouse_health_view_overview._render_warehouse_overview_view)
+        self.assertIs(warehouse_health._render_warehouse_efficiency_view, warehouse_health_view_efficiency._render_warehouse_efficiency_view)
+        self.assertIs(warehouse_health._render_warehouse_spill_view, warehouse_health_view_spill._render_warehouse_spill_view)
+        self.assertIs(warehouse_health._render_warehouse_heatmap_view, warehouse_health_view_heatmap._render_warehouse_heatmap_view)
+        self.assertIs(warehouse_health._render_warehouse_advisor_view, warehouse_health_view_advisor._render_warehouse_advisor_view)
 
     def test_workflow_contracts_and_alias_labels_stay_stable(self):
         from sections import warehouse_health_contracts as contracts
@@ -847,6 +861,291 @@ class WarehouseHealthSplitTests(unittest.TestCase):
         )
         self.assertEqual(captured["kwargs"]["sort_by"], ["STATE_RANK", "SURFACE"])
 
+    def test_load_warehouse_overview_writes_same_session_keys(self):
+        from sections import warehouse_health_view_overview as overview
+
+        session_state: dict = {}
+        data = pd.DataFrame([{"WAREHOUSE_NAME": "COMPUTE_WH"}])
+        inventory = pd.DataFrame([{"NAME": "COMPUTE_WH"}])
+
+        with (
+            patch.object(overview.st, "session_state", session_state),
+            patch.object(overview, "_warehouse_action_session", return_value=object()),
+            patch.object(
+                overview,
+                "load_shared_warehouse_overview",
+                return_value=SimpleNamespace(data=data, source="Fast warehouse summary"),
+            ),
+            patch.object(overview, "load_warehouse_inventory", return_value=inventory),
+        ):
+            overview._load_warehouse_overview("ALFA", "PROD", 7)
+
+        self.assertIs(session_state["wh_df_wh"], data)
+        self.assertEqual(session_state["wh_df_wh_source"], "Fast warehouse summary")
+        self.assertEqual(session_state["wh_df_wh_meta"]["company"], "ALFA")
+        self.assertEqual(session_state["wh_df_wh_meta"]["environment"], "PROD")
+        self.assertEqual(session_state["wh_df_wh_meta"]["days"], 7)
+        self.assertIs(session_state["wh_settings_inventory"], inventory)
+        self.assertEqual(session_state["wh_settings_inventory_meta"]["company"], "ALFA")
+        self.assertNotIn("wh_settings_inventory_error", session_state)
+
+    def test_overview_renderer_preserves_buttons_charts_and_csv_contracts(self):
+        from sections import warehouse_health_view_overview as overview
+
+        session_state = {
+            "warehouse_health_show_overview_evidence": True,
+        }
+        session_state["wh_df_wh_meta"] = overview._warehouse_scope_meta("ALFA", "PROD", 7, state=session_state)
+        session_state["wh_settings_inventory_meta"] = overview._warehouse_scope_meta("ALFA", "PROD", 7, state=session_state)
+        session_state["wh_scaling_meta"] = overview._warehouse_scope_meta("ALFA", "PROD", 7, state=session_state)
+        session_state["wh_df_wh_source"] = "Fast warehouse summary"
+        session_state["wh_df_wh"] = pd.DataFrame([{
+            "WAREHOUSE_NAME": "COMPUTE_WH",
+            "WAREHOUSE_SIZE": "XSMALL",
+            "TOTAL_QUERIES": 20,
+            "TOTAL_REMOTE_SPILL_GB": 1.5,
+            "AVG_QUEUED_SEC": 0.2,
+            "AVG_ELAPSED_SEC": 2.0,
+            "METERED_CREDITS": 4.0,
+            "PRIOR_METERED_CREDITS": 3.0,
+            "CREDIT_DELTA": 1.0,
+            "CREDIT_DELTA_PCT": 33.3,
+            "AVG_CACHE_PCT": 71.2,
+            "P95_ELAPSED_SEC": 3.0,
+        }])
+        session_state["wh_settings_inventory"] = pd.DataFrame([{
+            "NAME": "COMPUTE_WH",
+            "AUTO_SUSPEND": 0,
+            "RESOURCE_MONITOR": "",
+            "STATEMENT_TIMEOUT_IN_SECONDS": 0,
+            "STATEMENT_QUEUED_TIMEOUT_IN_SECONDS": 0,
+        }])
+        session_state["wh_scaling_source"] = "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"
+        session_state["wh_scaling"] = pd.DataFrame([{
+            "WAREHOUSE_NAME": "COMPUTE_WH",
+            "WAREHOUSE_SIZE": "XSMALL",
+            "START_TIME": "2026-06-01",
+            "END_TIME": "2026-06-01",
+            "CREDITS_USED": 1.0,
+            "CREDITS_USED_COMPUTE": 0.9,
+            "CREDITS_USED_CLOUD_SERVICES": 0.1,
+        }])
+        button_keys: list[str] = []
+        chart_keys: list[str] = []
+        downloads: list[str] = []
+
+        def _button(_label, *, key, **_kwargs):
+            button_keys.append(key)
+            return False
+
+        def _chart(_frame, **kwargs):
+            chart_keys.append(kwargs["key"])
+
+        def _download(_frame, file_name):
+            downloads.append(file_name)
+
+        with (
+            patch.object(overview.st, "session_state", session_state),
+            patch.object(overview.st, "subheader"),
+            patch.object(overview.st, "button", side_effect=_button),
+            patch.object(overview.st, "columns", return_value=[_Context(), _Context()]),
+            patch.object(overview.st, "divider"),
+            patch.object(overview, "day_window_selectbox", return_value=7),
+            patch.object(overview, "render_data_freshness"),
+            patch.object(overview, "render_shell_snapshot"),
+            patch.object(overview, "defer_source_note"),
+            patch.object(overview, "_render_warehouse_overview_exception_strip"),
+            patch.object(overview, "render_priority_dataframe"),
+            patch.object(overview, "_render_warehouse_setting_action_detail"),
+            patch.object(overview, "_render_warehouse_cost_control_posture"),
+            patch.object(overview, "render_drillable_bar_chart", side_effect=_chart),
+            patch.object(overview, "download_csv", side_effect=_download),
+        ):
+            overview._render_warehouse_overview_view("ALFA", "PROD")
+
+        for key in [
+            "wh_load",
+            "warehouse_health_hide_overview_evidence",
+            "wh_scale_load",
+        ]:
+            self.assertIn(key, button_keys)
+        self.assertIn("wh_cache_pct", chart_keys)
+        for file_name in [
+            "warehouse_guardrail_coverage.csv",
+            "warehouse_setting_action_plan.csv",
+            "warehouse_health.csv",
+            "scaling_events.csv",
+        ]:
+            self.assertIn(file_name, downloads)
+
+    def test_efficiency_renderer_preserves_keys_chart_and_download(self):
+        from sections import warehouse_health_view_efficiency as efficiency
+
+        session_state = {}
+        session_state["wh_efficiency_meta"] = efficiency._warehouse_scope_meta("ALFA", "PROD", 7, state=session_state)
+        session_state["wh_efficiency_source"] = "SNOWFLAKE.ACCOUNT_USAGE"
+        session_state["wh_efficiency"] = pd.DataFrame([{
+            "WAREHOUSE_NAME": "COMPUTE_WH",
+            "WAREHOUSE_SIZE": "XSMALL",
+            "EFFICIENCY_SCORE": 48.0,
+            "METERED_CREDITS": 12.0,
+            "CREDITS_PER_QUERY": 0.2,
+            "QUEUE_SEC_PER_CREDIT": 11.0,
+            "REMOTE_SPILL_GB_PER_CREDIT": 0.4,
+            "AVG_CACHE_PCT": 65.0,
+        }])
+        button_keys: list[str] = []
+        chart_keys: list[str] = []
+        downloads: list[str] = []
+
+        def _button(_label, *, key, **_kwargs):
+            button_keys.append(key)
+            return False
+
+        with (
+            patch.object(efficiency.st, "session_state", session_state),
+            patch.object(efficiency.st, "subheader"),
+            patch.object(efficiency.st, "button", side_effect=_button),
+            patch.object(efficiency, "day_window_selectbox", return_value=7),
+            patch.object(efficiency, "render_shell_snapshot"),
+            patch.object(efficiency, "defer_source_note"),
+            patch.object(efficiency, "render_priority_dataframe"),
+            patch.object(efficiency, "render_drillable_bar_chart", side_effect=lambda _frame, **kwargs: chart_keys.append(kwargs["key"])),
+            patch.object(efficiency, "download_csv", side_effect=lambda _frame, file_name: downloads.append(file_name)),
+        ):
+            efficiency._render_warehouse_efficiency_view("ALFA", "PROD")
+
+        self.assertIn("wh_eff_load", button_keys)
+        self.assertIn("wh_eff_queue", button_keys)
+        self.assertIn("wh_efficiency_review_priority", chart_keys)
+        self.assertIn("warehouse_efficiency.csv", downloads)
+
+    def test_spill_renderer_preserves_keys_chart_warning_and_download(self):
+        from sections import warehouse_health_view_spill as spill
+
+        session_state = {}
+        session_state["wh_df_sp_meta"] = spill._warehouse_scope_meta("ALFA", "PROD", 7, state=session_state)
+        session_state["wh_df_sp_source"] = "Live: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
+        session_state["wh_df_sp"] = pd.DataFrame([{
+            "WAREHOUSE_NAME": "COMPUTE_WH",
+            "WAREHOUSE_SIZE": "XSMALL",
+            "SPILL_QUERY_COUNT": 3,
+            "LOCAL_SPILL_GB": 2.0,
+            "REMOTE_SPILL_GB": 12.0,
+            "AVG_ELAPSED_SEC": 33.0,
+        }])
+        button_keys: list[str] = []
+        chart_keys: list[str] = []
+        downloads: list[str] = []
+        errors: list[str] = []
+
+        with (
+            patch.object(spill.st, "session_state", session_state),
+            patch.object(spill.st, "subheader"),
+            patch.object(spill.st, "button", side_effect=lambda _label, *, key, **_kwargs: button_keys.append(key) or False),
+            patch.object(spill.st, "error", side_effect=lambda message: errors.append(message)),
+            patch.object(spill, "day_window_selectbox", return_value=7),
+            patch.object(spill, "render_shell_snapshot"),
+            patch.object(spill, "defer_source_note"),
+            patch.object(spill, "render_priority_dataframe"),
+            patch.object(spill, "render_drillable_bar_chart", side_effect=lambda _frame, **kwargs: chart_keys.append(kwargs["key"])),
+            patch.object(spill, "download_csv", side_effect=lambda _frame, file_name: downloads.append(file_name)),
+        ):
+            spill._render_warehouse_spill_view("ALFA", "PROD")
+
+        self.assertIn("sp_load", button_keys)
+        self.assertIn("wh_spill_total", chart_keys)
+        self.assertIn("spill_report.csv", downloads)
+        self.assertTrue(any("remote spill" in message for message in errors))
+
+    def test_heatmap_renderer_preserves_keys_filters_and_day_name_pivot(self):
+        from sections import warehouse_health_view_heatmap as heatmap
+
+        rows = []
+        for day in range(7):
+            rows.append({
+                "WAREHOUSE_NAME": "COMPUTE_WH",
+                "DAY_OF_WEEK": day,
+                "HOUR_OF_DAY": 8,
+                "QUERY_COUNT": day + 1,
+                "AVG_ELAPSED_SEC": 2.5,
+            })
+        session_state = {}
+        session_state["wh_df_hm_meta"] = heatmap._warehouse_scope_meta("ALFA", "PROD", 30, state=session_state)
+        session_state["wh_df_hm_source"] = "Fast heatmap summary"
+        session_state["wh_df_hm"] = pd.DataFrame(rows)
+        button_keys: list[str] = []
+        select_keys: list[str] = []
+        captured: dict = {}
+
+        def _dataframe(styler, **_kwargs):
+            captured["pivot_index"] = list(styler.data.index)
+
+        with (
+            patch.object(heatmap.st, "session_state", session_state),
+            patch.object(heatmap.st, "subheader"),
+            patch.object(heatmap.st, "button", side_effect=lambda _label, *, key, **_kwargs: button_keys.append(key) or False),
+            patch.object(heatmap.st, "selectbox", side_effect=lambda _label, options, *, key: select_keys.append(key) or options[0]),
+            patch.object(heatmap.st, "dataframe", side_effect=_dataframe),
+            patch.object(heatmap, "day_window_selectbox", return_value=30),
+            patch.object(heatmap, "defer_source_note"),
+            patch.object(heatmap, "render_shell_snapshot"),
+        ):
+            heatmap._render_warehouse_heatmap_view(
+                "ALFA",
+                "PROD",
+                global_warehouse="COMPUTE",
+                global_user="USER",
+                global_role="ROLE",
+                global_database="DB",
+                global_start_date="2026-06-01",
+                global_end_date="2026-06-22",
+            )
+
+        self.assertIn("hm_build", button_keys)
+        self.assertIn("hm_wh_sel", select_keys)
+        self.assertEqual(captured["pivot_index"], ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"])
+
+    def test_main_dispatch_routes_each_warehouse_view_to_moved_renderer(self):
+        from sections import warehouse_health
+
+        dispatch_cases = [
+            ("Overview & Scaling", "_render_warehouse_overview_view"),
+            ("Efficiency", "_render_warehouse_efficiency_view"),
+            ("Spill & Memory", "_render_warehouse_spill_view"),
+            ("Workload Heatmap", "_render_warehouse_heatmap_view"),
+            ("Optimization Advisor", "_render_warehouse_advisor_view"),
+        ]
+        for view, target in dispatch_cases:
+            with self.subTest(view=view):
+                with (
+                    patch.object(warehouse_health, "_render_warehouse_overview_view") as overview,
+                    patch.object(warehouse_health, "_render_warehouse_efficiency_view") as efficiency,
+                    patch.object(warehouse_health, "_render_warehouse_spill_view") as spill,
+                    patch.object(warehouse_health, "_render_warehouse_heatmap_view") as heatmap,
+                    patch.object(warehouse_health, "_render_warehouse_advisor_view") as advisor,
+                ):
+                    warehouse_health._render_selected_warehouse_health_view(
+                        view,
+                        "ALFA",
+                        "PROD",
+                        global_warehouse="COMPUTE",
+                        global_user="USER",
+                        global_role="ROLE",
+                        global_database="DB",
+                        global_start_date="2026-06-01",
+                        global_end_date="2026-06-22",
+                    )
+                mocks = {
+                    "_render_warehouse_overview_view": overview,
+                    "_render_warehouse_efficiency_view": efficiency,
+                    "_render_warehouse_spill_view": spill,
+                    "_render_warehouse_heatmap_view": heatmap,
+                    "_render_warehouse_advisor_view": advisor,
+                }
+                mocks[target].assert_called_once()
+                self.assertEqual(sum(mock.call_count for mock in mocks.values()), 1)
+
     def test_warehouse_health_split_does_not_import_alert_facade(self):
         alert_facade_import = "utils" + ".alerts"
         for path in (
@@ -860,8 +1159,14 @@ class WarehouseHealthSplitTests(unittest.TestCase):
             APP_ROOT / "sections" / "warehouse_health_overview_panels.py",
             APP_ROOT / "sections" / "warehouse_health_panels.py",
             APP_ROOT / "sections" / "warehouse_health_queue.py",
+            APP_ROOT / "sections" / "warehouse_health_rendering.py",
             APP_ROOT / "sections" / "warehouse_health_setting_panels.py",
             APP_ROOT / "sections" / "warehouse_health_sql.py",
+            APP_ROOT / "sections" / "warehouse_health_view_advisor.py",
+            APP_ROOT / "sections" / "warehouse_health_view_efficiency.py",
+            APP_ROOT / "sections" / "warehouse_health_view_heatmap.py",
+            APP_ROOT / "sections" / "warehouse_health_view_overview.py",
+            APP_ROOT / "sections" / "warehouse_health_view_spill.py",
         ):
             with self.subTest(path=path.name):
                 self.assertNotIn(alert_facade_import, path.read_text(encoding="utf-8"))

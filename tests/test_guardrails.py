@@ -55,7 +55,17 @@ class GuardrailTests(unittest.TestCase):
         account_text = (APP_ROOT / "sections" / "account_health.py").read_text(encoding="utf-8").upper()
         cost_text = (APP_ROOT / "sections" / "cost_center.py").read_text(encoding="utf-8").upper()
         shared_metrics_text = (APP_ROOT / "utils" / "shared_metrics.py").read_text(encoding="utf-8").upper()
-        heatmap_text = (APP_ROOT / "sections" / "warehouse_health.py").read_text(encoding="utf-8").upper()
+        heatmap_text = "\n".join(
+            path.read_text(encoding="utf-8").upper()
+            for path in [
+                APP_ROOT / "sections" / "warehouse_health.py",
+                APP_ROOT / "sections" / "warehouse_health_view_overview.py",
+                APP_ROOT / "sections" / "warehouse_health_view_efficiency.py",
+                APP_ROOT / "sections" / "warehouse_health_view_spill.py",
+                APP_ROOT / "sections" / "warehouse_health_view_heatmap.py",
+                APP_ROOT / "sections" / "warehouse_health_view_advisor.py",
+            ]
+        )
         task_text = (APP_ROOT / "sections" / "task_management.py").read_text(encoding="utf-8").upper()
         adoption_text = (APP_ROOT / "sections" / "adoption_analytics.py").read_text(encoding="utf-8").upper()
 

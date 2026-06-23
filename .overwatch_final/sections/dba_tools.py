@@ -20,7 +20,7 @@ from utils import (
     scope_warehouse_names, scope_metadata_df, load_task_inventory,
     load_live_task_runs, load_database_options, load_schema_options,
     load_warehouse_inventory, build_unclassified_assets_sql,
-    safe_float, safe_int, render_ranked_bar_chart, day_window_selectbox,
+    safe_float, safe_int, render_ranked_bar_chart,
     render_chart_with_data_toggle,
     defer_source_note,
     build_schema_migration_contract, build_schema_migration_status_sql,
@@ -131,6 +131,7 @@ from sections.dba_tools_schema_compare_view import (
     render_schema_compare_tool,
 )
 from sections.dba_tools_warehouse_settings_view import render_warehouse_settings_tool
+from sections.dba_tools_qas_monitor_view import render_qas_monitor_tool
 from sections.dba_tools_cost_health_view import (
     render_cost_formula_audit_tool,
     render_data_health_tool,
@@ -152,6 +153,7 @@ from sections.dba_tools_object_monitoring_view import (
 
 DBA_TOOL_RENDERERS = {
     "Warehouse Settings": render_warehouse_settings_tool,
+    "QAS Monitor": render_qas_monitor_tool,
     "Data Loading": render_data_loading_tool,
     "Snowpipe Monitor": render_snowpipe_monitor_tool,
     "Dynamic Tables": render_dynamic_tables_tool,
@@ -169,7 +171,6 @@ DBA_TOOL_RENDERERS = {
 
 INLINE_DBA_TOOL_HANDLERS = frozenset({
     "Query Kill List",
-    "QAS Monitor",
     "Cortex AI Limits",
     "Task Graph Control",
 })
@@ -211,38 +212,6 @@ INLINE_DBA_TOOL_HANDLERS = frozenset({
 def render():
     session = get_session()
     company = get_active_company()
-    qh_cols = set(filter_existing_columns(
-        session,
-        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
-        [
-            "WAREHOUSE_SIZE",
-            "BYTES_SCANNED",
-            "QUERY_TAG",
-            "QUEUED_OVERLOAD_TIME",
-            "BYTES_SPILLED_TO_REMOTE_STORAGE",
-            "CREDITS_USED_CLOUD_SERVICES",
-        ],
-    ))
-    qh_warehouse_size_expr = (
-        "warehouse_size AS warehouse_size"
-        if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR AS warehouse_size"
-    )
-    qh_max_size_expr = (
-        "MAX(q.warehouse_size)"
-        if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR"
-    )
-    qh_plain_size_expr = (
-        "warehouse_size"
-        if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR AS warehouse_size"
-    )
-    qh_query_tag_expr = (
-        "query_tag AS query_tag"
-        if "QUERY_TAG" in qh_cols else "NULL::VARCHAR AS query_tag"
-    )
-    qh_task_indicator = (
-        "query_tag IS NOT NULL OR LOWER(query_text) LIKE '%execute task%'"
-        if "QUERY_TAG" in qh_cols else "LOWER(query_text) LIKE '%execute task%'"
-    )
 
     focus = st.session_state.get("dba_tools_focus")
     default_group = DBA_TOOL_FOCUS_GROUPS.get(str(focus), "Warehouse Ops")
@@ -325,6 +294,29 @@ def render():
         renderer(session, company)
         return
 
+    qh_cols = set()
+    if selected_tool in {"Query Kill List", "Task Graph Control"}:
+        qh_cols = set(filter_existing_columns(
+            session,
+            "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+            [
+                "WAREHOUSE_SIZE",
+                "QUERY_TAG",
+            ],
+        ))
+    qh_warehouse_size_expr = (
+        "warehouse_size AS warehouse_size"
+        if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR AS warehouse_size"
+    )
+    qh_query_tag_expr = (
+        "query_tag AS query_tag"
+        if "QUERY_TAG" in qh_cols else "NULL::VARCHAR AS query_tag"
+    )
+    qh_task_indicator = (
+        "query_tag IS NOT NULL OR LOWER(query_text) LIKE '%execute task%'"
+        if "QUERY_TAG" in qh_cols else "LOWER(query_text) LIKE '%execute task%'"
+    )
+
     # -- TAB 0: QUERY KILL LIST ------------------------------------------------
     if selected_tool == "Query Kill List":
         st.subheader("Long-Running Query Kill List")
@@ -391,42 +383,6 @@ def render():
 
 
 
-    if selected_tool == "QAS Monitor":
-        st.subheader("QAS Monitor")
-        qas_days = day_window_selectbox("Lookback", key="qas_days", default=7)
-        if _load_button("Load QAS Data", "qas_load"):
-            try:
-                st.session_state["dba_df_qas"] = run_query(f"""
-                    WITH latest_size AS (
-                        SELECT warehouse_name, warehouse_size
-                        FROM (
-                            SELECT warehouse_name, {qh_plain_size_expr},
-                                   ROW_NUMBER() OVER (PARTITION BY warehouse_name ORDER BY start_time DESC) AS rn
-                            FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-                            WHERE start_time >= DATEADD('day', -{qas_days}, CURRENT_TIMESTAMP())
-                              AND warehouse_name IS NOT NULL
-                        )
-                        WHERE rn = 1
-                    )
-                    SELECT q.warehouse_name, ls.warehouse_size, DATE_TRUNC('day', q.start_time) AS day,
-                           SUM(q.credits_used) AS daily_credits, COUNT(*) AS query_count
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_ACCELERATION_HISTORY q
-                    LEFT JOIN latest_size ls ON q.warehouse_name = ls.warehouse_name
-                    WHERE q.start_time >= DATEADD('day', -{qas_days}, CURRENT_TIMESTAMP())
-                      {get_wh_filter_clause("q.warehouse_name")}
-                    GROUP BY q.warehouse_name, ls.warehouse_size, day ORDER BY daily_credits DESC
-                """, ttl_key=f"dba_qas_{company}_{qas_days}", tier="standard")
-            except Exception as e:
-                st.info(f"QAS data unavailable: {format_snowflake_error(e)}")
-        if st.session_state.get("dba_df_qas") is not None:
-            render_priority_dataframe(
-                st.session_state["dba_df_qas"],
-                title="Query Acceleration usage",
-                priority_columns=["WAREHOUSE_NAME", "WAREHOUSE_SIZE", "DAY", "DAILY_CREDITS", "QUERY_COUNT"],
-                sort_by=["DAILY_CREDITS", "QUERY_COUNT"],
-                ascending=[False, False],
-                raw_label="All QAS usage rows",
-            )
 
 
 

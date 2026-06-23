@@ -17,6 +17,7 @@ from sections import dba_tools_contracts as contracts  # noqa: E402
 from sections import dba_tools_data_compare as data_compare  # noqa: E402
 from sections import dba_tools_schema_compare as schema_compare  # noqa: E402
 from sections import dba_tools_setup as setup  # noqa: E402
+from sections import dba_tools_qas_monitor_view as qas_monitor  # noqa: E402
 from sections import dba_tools_warehouse_settings as wh_settings  # noqa: E402
 from utils.dba_tool_catalog import DBA_TOOL_GROUPS  # noqa: E402
 
@@ -64,6 +65,8 @@ class DbaToolsSplitTests(unittest.TestCase):
         self.assertIn("Schema Compare", dba_tools.DBA_TOOL_RENDERERS)
         self.assertIn("Data Compare", dba_tools.DBA_TOOL_RENDERERS)
         self.assertIn("Warehouse Settings", dba_tools.DBA_TOOL_RENDERERS)
+        self.assertIs(dba_tools.DBA_TOOL_RENDERERS["QAS Monitor"], qas_monitor.render_qas_monitor_tool)
+        self.assertNotIn("QAS Monitor", dba_tools.INLINE_DBA_TOOL_HANDLERS)
         self.assertIn("Query Kill List", dba_tools.INLINE_DBA_TOOL_HANDLERS)
         self.assertIn("Task Graph Control", dba_tools.INLINE_DBA_TOOL_HANDLERS)
         self.assertIn("Cortex AI Limits", dba_tools.INLINE_DBA_TOOL_HANDLERS)

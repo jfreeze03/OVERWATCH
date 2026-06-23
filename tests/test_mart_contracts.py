@@ -15,12 +15,18 @@ sys.path.insert(0, str(APP_ROOT))
 
 from utils import mart  # noqa: E402
 from utils import mart_account_health  # noqa: E402
+from utils import mart_adoption  # noqa: E402
 from utils import mart_contracts  # noqa: E402
 from utils import mart_control_room  # noqa: E402
+from utils import mart_cost  # noqa: E402
 from utils import mart_filters  # noqa: E402
 from utils import mart_names  # noqa: E402
+from utils import mart_recommendations  # noqa: E402
 from utils import mart_service_health  # noqa: E402
+from utils import mart_storage_pipeline  # noqa: E402
 from utils import mart_task_procedure  # noqa: E402
+from utils import mart_usage  # noqa: E402
+from utils import mart_warehouse  # noqa: E402
 
 
 MART_SQL_BUILDER_GROUPS = {
@@ -466,19 +472,49 @@ class MartContractTests(unittest.TestCase):
         self.assertIs(mart._mart_window_filter, mart_filters._mart_window_filter)
 
     def test_mart_sql_family_reexports_preserve_identity(self):
-        for name in MART_SQL_BUILDER_GROUPS["control-room"]:
-            with self.subTest(family="control-room", name=name):
-                self.assertIs(getattr(mart, name), getattr(mart_control_room, name))
-        for name in MART_SQL_BUILDER_GROUPS["account-health"]:
-            with self.subTest(family="account-health", name=name):
-                self.assertIs(getattr(mart, name), getattr(mart_account_health, name))
-        for name in MART_SQL_BUILDER_GROUPS["service-health"]:
-            with self.subTest(family="service-health", name=name):
-                self.assertIs(getattr(mart, name), getattr(mart_service_health, name))
-        for name in MART_SQL_BUILDER_GROUPS["task-procedure"]:
-            with self.subTest(family="task-procedure", name=name):
-                self.assertIs(getattr(mart, name), getattr(mart_task_procedure, name))
+        focused_modules = {
+            "control-room": mart_control_room,
+            "account-health": mart_account_health,
+            "cost": mart_cost,
+            "warehouse-health": mart_warehouse,
+            "usage": mart_usage,
+            "adoption": mart_adoption,
+            "storage": mart_storage_pipeline,
+            "pipeline": mart_storage_pipeline,
+            "recommendations": mart_recommendations,
+            "service-health": mart_service_health,
+            "task-procedure": mart_task_procedure,
+        }
+        for family, names in MART_SQL_BUILDER_GROUPS.items():
+            for name in names:
+                with self.subTest(family=family, name=name):
+                    self.assertIs(getattr(mart, name), getattr(focused_modules[family], name))
         self.assertNotIn("load_latest_control_room_mart", mart_control_room.__all__)
+
+    def test_mart_compatibility_all_exports_every_public_name(self):
+        grouped = {name for names in MART_SQL_BUILDER_GROUPS.values() for name in names}
+        for name in (*MART_PUBLIC_SURFACE["core"], "load_latest_control_room_mart", *grouped):
+            with self.subTest(name=name):
+                self.assertIn(name, mart.__all__)
+                self.assertTrue(hasattr(mart, name))
+
+        for name in mart.__all__:
+            with self.subTest(export=name):
+                self.assertTrue(hasattr(mart, name))
+
+    def test_mart_compatibility_surface_is_now_loader_shell(self):
+        source = (APP_ROOT / "utils" / "mart.py").read_text(encoding="utf-8")
+        self.assertLessEqual(len(source.splitlines()), 250)
+        for fragment in (
+            "def build_mart_bill_summary_sql",
+            "def build_mart_warehouse_overview_sql",
+            "def build_mart_usage_overview_sql",
+            "def build_mart_adoption_summary_sql",
+            "def build_mart_storage_trend_sql",
+            "def build_mart_recommendation_idle_sql",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertNotIn(fragment, source)
 
     def test_mart_filter_helpers_preserve_behavior(self):
         self.assertEqual(mart._mart_text_filter("", ""), "")

@@ -13,9 +13,18 @@ extend-exclude = ["**/__pycache__"]
 [lint]
 # Default select is ["E4", "E7", "E9", "F"].
 ignore = [
+    "E402",  # module-import-not-at-top-of-file: several sections intentionally
+             # bind lazy utilities or mutate test sys.path before imports so
+             # Streamlit/Snowflake-heavy dependencies stay deferred.
     "F401",  # unused-import: utils/* and section packages re-export many symbols
              # (e.g. utils/__init__ lazy re-exports, sql_safe re-exports), so
              # static "unused" detection produces false positives here.
+    "F403",  # undefined-local-with-import-star: compatibility facades and split
+             # renderers intentionally re-export focused module surfaces via
+             # star imports while preserving existing public imports.
+    "F405",  # undefined-local-with-import-star-usage: renderer maps and facade
+             # shells intentionally consume names supplied by those star-import
+             # compatibility surfaces.
     "F541",  # f-string-missing-placeholders: cosmetic legacy occurrences.
     "F601",  # multi-value-repeated-key-literal: pre-existing "last value wins"
              # dict literals; changing them could alter behavior (tracked as a

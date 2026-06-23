@@ -40,6 +40,13 @@ def _cost_contract_surface() -> str:
     )
 
 
+def _executive_landing_surface() -> str:
+    return "\n".join(
+        _read(path)
+        for path in sorted((APP_ROOT / "sections").glob("executive_landing*.py"))
+    )
+
+
 def _forecast_setup_block() -> str:
     sql = _setup_sql()
     start = sql.index("-- Phase 2C: leadership forecasting")
@@ -107,7 +114,7 @@ class ForecastingTests(unittest.TestCase):
         self.assertNotIn("SHOW ", detail)
 
     def test_ui_places_forecasting_in_approved_sections(self):
-        executive = _read(APP_ROOT / "sections" / "executive_landing.py")
+        executive = _executive_landing_surface()
         dba = _read(APP_ROOT / "sections" / "dba_control_room.py")
         cost = _cost_contract_surface()
         workload = _read(APP_ROOT / "sections" / "workload_operations.py")

@@ -81,11 +81,14 @@ class ChangeDriftSplitTests(unittest.TestCase):
         self.assertIs(change_drift.CHANGE_DRIFT_RENDERERS["Change Brief"], brief_view.render_change_brief)
         self.assertIs(change_drift.CHANGE_DRIFT_RENDERERS["Change Workflows"], workflows_view.render_change_workflows)
         source = Path(change_drift.__file__).read_text(encoding="utf-8")
-        self.assertLess(len(source.splitlines()), 500)
+        self.assertLess(len(source.splitlines()), 150)
         for fragment in (
+            "run_query(",
+            "pd.DataFrame(",
             "CREATE TABLE IF NOT EXISTS",
             "ALTER TABLE",
             "INSERT INTO",
+            "SNOWFLAKE.ACCOUNT_USAGE",
             "def build_change_control_evidence_ddl",
             "def build_change_control_operability_fact_ddl",
             "def _change_ticket_id",
@@ -111,6 +114,7 @@ class ChangeDriftSplitTests(unittest.TestCase):
             self.assertIn(key, brief_source)
         self.assertIn("change_drift_workflow", workflow_source)
         self.assertIn("dba_tools_focus", workflow_source)
+        self.assertIn("dba_tools_focus_tool", workflow_source)
 
     def test_common_scope_and_confidence_helpers(self):
         self.assertEqual(change_drift.get_active_company(), "ALFA")
@@ -205,6 +209,7 @@ class ChangeDriftSplitTests(unittest.TestCase):
         })
         with (
             patch("sections.change_drift_action_queue.make_action_id", return_value="CHANGE-ACTION"),
+            patch("sections.change_drift_action_queue._owner_approval_for", return_value=("Route Review", "Approver", "Review note")),
             patch("sections.change_drift_models.resolve_owner_context", return_value={"OWNER": "Security Route"}),
         ):
             payload = change_drift._change_action_payload(row, "ALFA", "PROD")
@@ -213,6 +218,8 @@ class ChangeDriftSplitTests(unittest.TestCase):
         self.assertEqual(payload["Category"], "Object Change Monitoring")
         self.assertEqual(payload["Entity"], "DB.PUBLIC.TABLE_A")
         self.assertEqual(payload["Ticket ID"], "CHG-1234")
+        self.assertEqual(payload["Verification Status"], "Route Review")
+        self.assertNotEqual(payload["Verification Status"], "Pending")
         self.assertIn("Do not execute state-changing SQL", payload["Generated SQL Fix"])
         for forbidden in ("ALTER TABLE", "DROP TABLE", "CREATE TABLE"):
             self.assertNotIn(forbidden, payload["Generated SQL Fix"].upper())

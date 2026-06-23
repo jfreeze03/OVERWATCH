@@ -35,6 +35,13 @@ def _production_setup_block() -> str:
     return sql[start:end] + "\n" + sql[proc_start:proc_end]
 
 
+def _executive_landing_surface() -> str:
+    return "\n".join(
+        _read(path)
+        for path in sorted((APP_ROOT / "sections").glob("executive_landing*.py"))
+    )
+
+
 class ProductionReadinessTests(unittest.TestCase):
     def test_setup_adds_phase_2a_objects_and_refresh_call(self):
         sql = _setup_sql().upper()
@@ -79,7 +86,7 @@ class ProductionReadinessTests(unittest.TestCase):
         self.assertNotIn("SHOW ", summary)
 
     def test_ui_places_dashboard_and_load_gates(self):
-        executive = _read(APP_ROOT / "sections" / "executive_landing.py")
+        executive = _executive_landing_surface()
         dba = _read(APP_ROOT / "sections" / "dba_control_room.py")
 
         self.assertIn("load_production_readiness_summary", executive)

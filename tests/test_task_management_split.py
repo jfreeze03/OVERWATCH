@@ -113,6 +113,12 @@ class TaskManagementSplitTests(unittest.TestCase):
             self.assertIn(key, sources["control"])
         for key in ("exec_task_sel", "exec_task_confirm_", "exec_task_btn"):
             self.assertIn(key, sources["execute"])
+        self.assertIn("_cancel_task_graph_sql", sources["control"])
+        self.assertIn("_cancel_task_query_sql", sources["control"])
+        self.assertNotIn("SYSTEM$CANCEL_TASK_GRAPH(", sources["control"])
+        self.assertNotIn("SYSTEM$CANCEL_QUERY(", sources["control"])
+        self.assertIn("_execute_task_sql", sources["execute"])
+        self.assertNotIn('f"EXECUTE TASK {full}"', sources["execute"])
 
     def test_task_management_facade_no_implementation_creep(self):
         source = Path(task_management.__file__).read_text(encoding="utf-8")
@@ -206,12 +212,12 @@ class TaskManagementSplitTests(unittest.TestCase):
         suspend_sql = task_management._admin_sql_for_graph(graph, "ROOT_TASK", "SUSPEND")
         self.assertEqual(suspend_sql, ['ALTER TASK "ALFA_PROD"."PUBLIC"."ROOT_TASK" SUSPEND'])
 
-        graph_cancel_sql = task_management._cancel_task_graph_sql("group'42")
+        graph_cancel_sql = task_management._cancel_task_graph_sql("O'HARE")
         self.assertIn("SYSTEM$CANCEL_TASK_GRAPH", graph_cancel_sql)
-        self.assertIn("'group''42'", graph_cancel_sql)
-        query_cancel_sql = task_management._cancel_task_query_sql("qid'42")
+        self.assertIn("'O''HARE'", graph_cancel_sql)
+        query_cancel_sql = task_management._cancel_task_query_sql("01a'b")
         self.assertIn("SYSTEM$CANCEL_QUERY", query_cancel_sql)
-        self.assertIn("'qid''42'", query_cancel_sql)
+        self.assertIn("'01a''b'", query_cancel_sql)
         self.assertEqual(
             task_management._execute_task_sql('"ALFA_PROD"."PUBLIC"."ROOT_TASK"'),
             'EXECUTE TASK "ALFA_PROD"."PUBLIC"."ROOT_TASK"',

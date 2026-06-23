@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import streamlit as st
 
-from config import DEFAULTS, normalize_section_name
+from config import DEFAULTS
+from route_registry import normalize_section_route
 from sections.base import lazy_util as _lazy_util
 from utils.primitives import safe_float
 from utils.section_guidance import defer_section_note
@@ -14,7 +15,7 @@ get_session_for_action = _lazy_util("get_session_for_action")
 
 def _canonical_account_route(route: object) -> str:
     text = str(route or "DBA Control Room").strip()
-    return normalize_section_name(text) or "DBA Control Room"
+    return normalize_section_route(text) or "DBA Control Room"
 
 
 def get_credit_price() -> float:

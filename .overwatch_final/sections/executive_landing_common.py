@@ -25,6 +25,7 @@ from sections.shell_helpers import (
     render_shell_status_strip,
 )
 from runtime_state import EXECUTIVE_LANDING_WORKFLOW
+from route_registry import normalize_workflow_alias
 from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_source_note
 
@@ -131,10 +132,11 @@ def _nav_button(
 
 def normalize_executive_landing_workflow(value: object) -> str:
     """Map legacy executive routes into the current front-door workflows."""
-    raw = str(value or "").strip()
-    if raw in EXECUTIVE_LANDING_WORKFLOWS:
-        return raw
-    return EXECUTIVE_LANDING_LEGACY_WORKFLOW_ALIASES.get(raw, EXECUTIVE_OVERVIEW_WORKFLOW)
+    return normalize_workflow_alias(
+        "Executive Landing",
+        value,
+        default=EXECUTIVE_OVERVIEW_WORKFLOW,
+    )
 
 def _ensure_executive_landing_workflow_state() -> str:
     workflow = normalize_executive_landing_workflow(st.session_state.get(EXECUTIVE_LANDING_WORKFLOW))

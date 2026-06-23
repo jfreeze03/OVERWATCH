@@ -9,41 +9,15 @@ from sections.alert_center_contracts import (
     ALERT_CENTER_SOURCES_BY_PANE,
     ALERT_CENTER_SOURCE_PLAN,
 )
+from route_registry import normalize_workflow_alias
 
 
 def _normalize_alert_center_view(view: object) -> str:
-    normalized = str(view or "")
-    aliases = {
-        "Command Center": "Active Alerts",
-        "Issue Inbox": "Active Alerts",
-        "Triage Digest": "Active Alerts",
-        "Alert History": "Alert History",
-        "Alert Brief": "Active Alerts",
-        "Control Health": "Alert Settings / Admin",
-        "Cost": "Cost Alerts",
-        "Spend": "Cost Alerts",
-        "Cost / Cortex": "Cost Alerts",
-        "Cost & Behavior": "Cost Alerts",
-        "Cortex": "Cost Alerts",
-        "Workload": "Reliability Alerts",
-        "Pipeline": "Reliability Alerts",
-        "Reliability": "Reliability Alerts",
-        "Security": "Security Alerts",
-        "Email Delivery": "Alert Settings / Admin",
-        "Action Queue Routing": "Alert Settings / Admin",
-        "Delivery & Remediation": "Alert Settings / Admin",
-        "Detection Catalog": "Alert Settings / Admin",
-        "Delivery & Automation": "Alert Settings / Admin",
-        "Suppression Windows": "Alert Settings / Admin",
-        "Alert Configuration": "Alert Settings / Admin",
-        "Alert Settings": "Alert Settings / Admin",
-        "Advanced Alert Admin": "Alert Settings / Admin",
-    }
-    if normalized in aliases:
-        return aliases[normalized]
-    if normalized in {"Alert Brief", "Control Health"}:
-        return ALERT_CENTER_DEFAULT_VIEW
-    return normalized if normalized in ALERT_CENTER_PANES else ALERT_CENTER_DEFAULT_VIEW
+    return normalize_workflow_alias(
+        "Alert Center",
+        view,
+        default=ALERT_CENTER_DEFAULT_VIEW,
+    )
 
 
 def _alert_admin_view_for_route(view: object) -> str:

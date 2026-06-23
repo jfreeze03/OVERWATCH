@@ -723,6 +723,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         executive_security = (APP_ROOT / "sections" / "executive_landing_security_view.py").read_text(encoding="utf-8")
         executive_change = (APP_ROOT / "sections" / "executive_landing_change_view.py").read_text(encoding="utf-8")
         executive_admin = (APP_ROOT / "sections" / "executive_landing_admin_view.py").read_text(encoding="utf-8")
+        route_registry_text = (APP_ROOT / "route_registry.py").read_text(encoding="utf-8")
 
         self.assertIn("_source_health_rows", executive_text)
         self.assertIn("Executive Data Health", executive_data_health)
@@ -738,8 +739,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         ):
             self.assertIn(workflow, executive_contracts)
         self.assertIn("normalize_executive_landing_workflow", executive_text)
-        self.assertIn('"Executive Briefing": EXECUTIVE_OVERVIEW_WORKFLOW', executive_contracts)
-        self.assertIn('"Adoption Analytics": EXECUTIVE_ADMIN_WORKFLOW', executive_contracts)
+        self.assertIn('WORKFLOW_ALIASES_BY_SECTION["Executive Landing"]', executive_contracts)
+        self.assertIn('"Executive Briefing": "Executive Overview"', route_registry_text)
+        self.assertIn('"Adoption Analytics": "Executive Admin / Advanced"', route_registry_text)
         self.assertIn('"alert_center_active_view": "Active Alerts"', executive_overview + executive_data_health)
         self.assertIn('workflow_key="cost_contract_workflow"', executive_common + executive_cost)
         self.assertIn('workflow="Cost by Warehouse"', executive_cost)

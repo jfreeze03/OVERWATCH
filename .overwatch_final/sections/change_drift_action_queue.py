@@ -49,6 +49,7 @@ def _change_action_payload(row: pd.Series | dict, company: str, environment: str
     verification_query = _change_verification_sql(query_id)
     blast_radius_query = _change_blast_radius_sql(entity)
     finding = f"{finding_type} by {user_name} on {entity}"
+    verification_status = approval_status
     generated_review = "\n".join([
         "-- Review-only change-monitoring record. Do not execute state-changing SQL from this queue row.",
         generated_sql,
@@ -80,9 +81,9 @@ def _change_action_payload(row: pd.Series | dict, company: str, environment: str
         "Generated SQL Fix": generated_review,
         "Proof Query": verification_query,
         "Verification Query": verification_query,
-        "Verification Status": "Pending",
         "Approver": approver,
-        "Verification Status": approval_status,
+        # Preserve the historical effective value: approval/review route status.
+        "Verification Status": verification_status,
         "Verification Note": (
             f"{approval_note} Ticket={ticket_id or 'missing'}; "
             f"review_rollback={iac_state}; escalation={owner_context['escalation']}."

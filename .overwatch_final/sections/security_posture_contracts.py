@@ -1,6 +1,8 @@
 # sections/security_posture_contracts.py - Security Monitoring workflow contracts
 from __future__ import annotations
 
+from route_registry import WORKFLOW_ALIASES_BY_SECTION
+
 
 SECURITY_OVERVIEW_WORKFLOW = "Security Overview"
 FAILED_LOGINS_WORKFLOW = "Failed Logins"
@@ -33,26 +35,7 @@ SECURITY_POSTURE_VIEW_DETAILS = {
     SECURITY_ADMIN_ADVANCED_WORKFLOW: "Source freshness, readiness, raw evidence, validation, and review-only plans.",
 }
 
-SECURITY_VIEW_ALIASES = {
-    "Security Posture": SECURITY_OVERVIEW_WORKFLOW,
-    "Security & Access": RISKY_GRANTS_WORKFLOW,
-    "Access posture": SECURITY_OVERVIEW_WORKFLOW,
-    "Access Posture": SECURITY_OVERVIEW_WORKFLOW,
-    "Login Audit": FAILED_LOGINS_WORKFLOW,
-    "Login Posture": FAILED_LOGINS_WORKFLOW,
-    "Roles & Grants": RISKY_GRANTS_WORKFLOW,
-    "Privilege sprawl": PRIVILEGE_SPRAWL_WORKFLOW,
-    "Data Sharing": DATA_SHARING_EXPOSURE_WORKFLOW,
-    "Data sharing exposure": DATA_SHARING_EXPOSURE_WORKFLOW,
-    "Data Health": SECURITY_ADMIN_ADVANCED_WORKFLOW,
-    "Security Summary": SECURITY_ALERTS_WORKFLOW,
-    "Object and access changes": ACCESS_CHANGES_WORKFLOW,
-    "Advanced Security Diagnostics": SECURITY_ADMIN_ADVANCED_WORKFLOW,
-    "Security Admin": SECURITY_ADMIN_ADVANCED_WORKFLOW,
-    "Advanced Security": SECURITY_ADMIN_ADVANCED_WORKFLOW,
-    "Raw Grants": SECURITY_ADMIN_ADVANCED_WORKFLOW,
-    "Role Readiness": SECURITY_ADMIN_ADVANCED_WORKFLOW,
-}
+SECURITY_VIEW_ALIASES = dict(WORKFLOW_ALIASES_BY_SECTION["Security Monitoring"])
 
 WORKFLOWS = SECURITY_POSTURE_VIEWS
 

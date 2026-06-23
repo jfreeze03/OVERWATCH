@@ -121,8 +121,15 @@ class SecurityPostureSplitTests(unittest.TestCase):
 
     def test_security_posture_shell_is_shrinking_without_moved_definitions(self):
         source = (APP_ROOT / "sections" / "security_posture.py").read_text(encoding="utf-8")
-        self.assertLess(len(source.splitlines()), 1800)
+        self.assertLess(len(source.splitlines()), 250)
         for fragment in [
+            "SNOWFLAKE.ACCOUNT_USAGE",
+            "run_query(",
+            "run_query_or_raise(",
+            "pd.DataFrame(",
+            "CREATE TABLE",
+            "INSERT INTO",
+            "ALTER TABLE",
             "SECURITY_POSTURE_VIEWS = (",
             "SECURITY_VIEW_ALIASES = {",
             "def build_security_access_review_ddl",
@@ -144,6 +151,13 @@ class SecurityPostureSplitTests(unittest.TestCase):
         ]:
             with self.subTest(fragment=fragment):
                 self.assertNotIn(fragment, source)
+
+    def test_security_posture_facade_all_names_exist(self):
+        self.assertIn("render", security_posture.__all__)
+        self.assertIn("SECURITY_POSTURE_RENDERERS", security_posture.__all__)
+        for name in security_posture.__all__:
+            with self.subTest(name=name):
+                self.assertTrue(hasattr(security_posture, name))
 
     def test_security_posture_render_has_no_unreachable_overview_block(self):
         source = (APP_ROOT / "sections" / "security_posture.py").read_text(encoding="utf-8")

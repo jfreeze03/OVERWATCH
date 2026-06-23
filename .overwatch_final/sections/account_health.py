@@ -3,19 +3,22 @@ from __future__ import annotations
 
 import streamlit as st
 from datetime import datetime
-from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE, DEFAULTS, normalize_section_name
+from config import ALERT_DB, ALERT_SCHEMA
+from sections.account_health_common import *  # noqa: F403
+from sections.account_health_contracts import *  # noqa: F403
+from sections.account_health_data import *  # noqa: F403
+from sections.account_health_models import *  # noqa: F403
+from sections.account_health_source_health_view import *  # noqa: F403
+from sections.account_health_sql import *  # noqa: F403
 from sections.base import lazy_pandas, lazy_util as _lazy_util
 from sections.navigation import apply_navigation_state
 from sections.shell_helpers import render_shell_kpi_row, render_shell_snapshot, render_shell_status_strip
 from utils.primitives import safe_float, safe_int
-from utils.section_guidance import defer_section_note
 
 
 pd = lazy_pandas()
 
-get_session_for_action = _lazy_util("get_session_for_action")
 run_query = _lazy_util("run_query")
-run_query_or_raise = _lazy_util("run_query_or_raise")
 format_credits = _lazy_util("format_credits")
 credits_to_dollars = _lazy_util("credits_to_dollars")
 download_csv = _lazy_util("download_csv")
@@ -26,8 +29,6 @@ build_monitoring_cost_sql = _lazy_util("build_monitoring_cost_sql")
 metric_confidence_label = _lazy_util("metric_confidence_label")
 freshness_note = _lazy_util("freshness_note")
 render_drillable_bar_chart = _lazy_util("render_drillable_bar_chart")
-build_task_failure_summary_sql = _lazy_util("build_task_failure_summary_sql")
-build_task_health_sql = _lazy_util("build_task_health_sql")
 executive_health_score = _lazy_util("executive_health_score")
 get_wh_filter_clause = _lazy_util("get_wh_filter_clause")
 get_db_filter_clause = _lazy_util("get_db_filter_clause")
@@ -37,11 +38,6 @@ load_latest_control_room_mart = _lazy_util("load_latest_control_room_mart")
 mart_source_caption = _lazy_util("mart_source_caption")
 build_mart_account_health_storage_sql = _lazy_util("build_mart_account_health_storage_sql")
 build_mart_account_health_cost_drivers_sql = _lazy_util("build_mart_account_health_cost_drivers_sql")
-
-
-def _canonical_account_route(route: object) -> str:
-    text = str(route or "DBA Control Room").strip()
-    return normalize_section_name(text) or "DBA Control Room"
 build_mart_account_health_change_sql = _lazy_util("build_mart_account_health_change_sql")
 build_mart_control_room_task_failures_sql = _lazy_util("build_mart_control_room_task_failures_sql")
 build_mart_control_room_warehouse_pressure_sql = _lazy_util("build_mart_control_room_warehouse_pressure_sql")
@@ -53,7 +49,6 @@ sql_literal = _lazy_util("sql_literal")
 upsert_actions = _lazy_util("upsert_actions")
 action_queue_environment_clause = _lazy_util("action_queue_environment_clause")
 resolve_owner_context = _lazy_util("resolve_owner_context")
-mart_object_name = _lazy_util("mart_object_name")
 render_priority_dataframe = _lazy_util("render_priority_dataframe")
 render_load_status = _lazy_util("render_load_status")
 render_mode_selector = _lazy_util("render_mode_selector")
@@ -64,300 +59,6 @@ load_shared_query_history_rollup = _lazy_util("load_shared_query_history_rollup"
 load_shared_warehouse_pressure_summary = _lazy_util("load_shared_warehouse_pressure_summary")
 build_shared_access_hygiene_sql = _lazy_util("build_shared_access_hygiene_sql")
 load_shared_access_hygiene_snapshot = _lazy_util("load_shared_access_hygiene_snapshot")
-
-
-def get_credit_price() -> float:
-    return safe_float(st.session_state.get("credit_price", DEFAULTS.get("credit_price", 3.68)), 3.68)
-
-
-def render_operator_briefing(items: list[tuple[str, str]], *, columns: int = 4) -> None:
-    for label, detail in items:
-        defer_section_note(f"{label}: {detail}")
-
-CHECKLIST_HISTORY_TABLE = "OVERWATCH_DBA_CHECKLIST_HISTORY"
-ACCOUNT_HEALTH_OPERABILITY_FACT_TABLE = "FACT_ACCOUNT_HEALTH_OPERABILITY_DAILY"
-ACCOUNT_HEALTH_ACTION_SOURCE = "Account Health - Daily DBA Checklist"
-ACCOUNT_HEALTH_ACCESS_HYGIENE_SOURCE = "Account Health - Account Access Hygiene"
-ACCOUNT_HEALTH_PANES = (
-    "Overview",
-    "Morning Report",
-)
-ACCOUNT_HEALTH_PANE_LABELS = {
-    "Overview": "Health Workspace",
-    "Morning Report": "DBA Daily Brief",
-}
-ACCOUNT_HEALTH_PANE_DETAILS = {
-    "Overview": "Daily account cockpit: checklist state, source readiness, exception signals, and escalation routes.",
-    "Morning Report": "Copy-ready DBA morning packet built from Control Room blockers, handoff rows, and route status.",
-}
-ACCOUNT_HEALTH_SCOPE_FILTER_KEYS = (
-    "global_start_date",
-    "global_end_date",
-    "global_warehouse",
-    "global_user",
-    "global_role",
-    "global_database",
-)
-
-
-def _account_health_action_session(action: str):
-    return get_session_for_action(
-        action,
-        surface="Account Health",
-        offline_note="Account Health shell, source summaries, and cached telemetry remain visible without a live connection.",
-    )
-
-
-def _account_health_scope_value(value) -> str:
-    if value is None:
-        return ""
-    if hasattr(value, "isoformat"):
-        return value.isoformat()
-    return str(value).strip()
-
-
-def _account_health_scope_meta(
-    company: str,
-    environment: str,
-    window: str = "",
-    state: dict | None = None,
-    ignore_environment: bool = False,
-    filter_keys: tuple[str, ...] | None = None,
-) -> dict:
-    """Return the filter scope that loaded Account Health telemetry must match."""
-    state = state if state is not None else st.session_state
-    meta = {
-        "company": _account_health_scope_value(company),
-        "environment": "No Database Context" if ignore_environment else _account_health_scope_value(environment),
-    }
-    if window:
-        meta["window"] = _account_health_scope_value(window)
-    for key in (ACCOUNT_HEALTH_SCOPE_FILTER_KEYS if filter_keys is None else filter_keys):
-        meta[key] = _account_health_scope_value(state.get(key))
-    return meta
-
-
-def _account_health_meta_matches(meta: dict | None, expected: dict | None) -> bool:
-    if not isinstance(meta, dict) or not isinstance(expected, dict):
-        return False
-    for key, expected_value in expected.items():
-        if _account_health_scope_value(meta.get(key)) != _account_health_scope_value(expected_value):
-            return False
-    return True
-
-
-def _account_health_row_count(value) -> int:
-    if isinstance(value, pd.DataFrame):
-        return len(value)
-    if isinstance(value, dict):
-        return sum(len(frame) for frame in value.values() if isinstance(frame, pd.DataFrame))
-    if isinstance(value, str):
-        return 1 if value.strip() else 0
-    return 0
-
-
-def _account_health_loaded(value) -> bool:
-    return isinstance(value, (pd.DataFrame, dict, str))
-
-
-def _account_health_is_empty(value) -> bool:
-    if isinstance(value, pd.DataFrame):
-        return value.empty
-    if isinstance(value, dict):
-        frames = [frame for frame in value.values() if isinstance(frame, pd.DataFrame)]
-        return not frames or all(frame.empty for frame in frames)
-    if isinstance(value, str):
-        return not value.strip()
-    return True
-
-
-def _account_health_source_confidence(source: str, default: str) -> str:
-    source_lower = str(source or "").lower()
-    if ("fast" in source_lower and "summary" in source_lower) or "mart" in source_lower or "fact_" in source_lower:
-        return "Fast summary"
-    if "fallback" in source_lower:
-        return "Live fallback"
-    if "account_usage" in source_lower or "information_schema" in source_lower:
-        return "Live Snowflake metadata"
-    return default
-
-
-def _account_health_source_next_action(state: str, source: str) -> str:
-    source_lower = str(source or "").lower()
-    if state == "Stale":
-        return "Reload after changing company, environment, lookback, or triage filters."
-    if state == "Unavailable":
-        return "Deploy or refresh the summary/grants before relying on this surface."
-    if state == "On demand":
-        return "Refresh only when this workflow is part of the current DBA investigation."
-    if state == "No Rows":
-        return "Confirm the selected scope has recent account activity or persisted telemetry."
-    if "fallback" in source_lower:
-        return "Use for investigation; prefer summary refresh for repeated morning control."
-    return "Current for the active Account Health scope."
-
-
-def _account_health_has_source_state(state: dict) -> bool:
-    """Return True once Account Health has telemetry or source errors to summarize."""
-    health_data = state.get("health_data")
-    if isinstance(health_data, dict) and bool(health_data):
-        return True
-    for key in (
-        "account_health_operability_fact",
-        "account_health_operability_fact_error",
-        "account_health_access_hygiene",
-        "account_health_access_hygiene_error",
-        "account_health_checklist_trend",
-        "account_health_checklist_trend_error",
-        "account_health_closure_analytics",
-        "account_health_closure_analytics_error",
-        "morning_data",
-        "morning_data_error",
-    ):
-        value = state.get(key)
-        if isinstance(value, str):
-            if value.strip():
-                return True
-            continue
-        if value is not None:
-            return True
-    return False
-
-
-def _account_health_source_health_rows(
-    state: dict,
-    company: str,
-    environment: str,
-) -> pd.DataFrame:
-    """Summarize Account Health telemetry freshness and source strategy."""
-    health_data = state.get("health_data", {})
-    if not isinstance(health_data, dict):
-        health_data = {}
-    definitions = [
-        {
-            "surface": "Overview snapshot",
-            "value": health_data,
-            "source": health_data.get("_account_health_detail_source", "Fast summary or live account history"),
-            "meta_key": "account_health_overview_meta",
-            "window": "24h",
-            "confidence": "Mixed",
-        },
-        {
-            "surface": "Control-room summary",
-            "value": health_data.get("_control_mart"),
-            "source": health_data.get("_control_mart_source", "Fast control-room summary"),
-            "meta_key": "account_health_overview_meta",
-            "window": "24h",
-            "confidence": "Fast summary",
-        },
-        {
-            "surface": "Live status probe",
-            "value": health_data.get("live"),
-            "source": health_data.get("_live_source", "ACCOUNT_USAGE"),
-            "meta_key": "account_health_live_status_meta",
-            "window": "1h",
-            "confidence": "Live Snowflake metadata",
-        },
-        {
-            "surface": "Control summary",
-            "value": state.get("account_health_operability_fact"),
-            "source": "Fast Account Health control summary",
-            "meta_key": "account_health_operability_fact_meta",
-            "window": "30d",
-            "confidence": "Fast summary",
-            "error_key": "account_health_operability_fact_error",
-        },
-        {
-            "surface": "Access hygiene",
-            "value": state.get("account_health_access_hygiene"),
-            "source": "Live ACCOUNT_USAGE users, logins, and grants",
-            "meta_key": "account_health_access_hygiene_meta",
-            "window_key": "account_health_access_hygiene_days",
-            "default_window": "30d",
-            "confidence": "Account-level control",
-            "ignore_environment": True,
-            "filter_keys": ("global_user",),
-        },
-        {
-            "surface": "Checklist trend",
-            "value": state.get("account_health_checklist_trend"),
-            "source": "Workflow telemetry",
-            "meta_key": "account_health_checklist_trend_meta",
-            "window_key": "account_health_checklist_trend_days",
-            "default_window": "30d",
-            "confidence": "Workflow telemetry",
-        },
-        {
-            "surface": "Closure analytics",
-            "value": state.get("account_health_closure_analytics"),
-            "source": "Action queue closure status",
-            "meta_key": "account_health_closure_analytics_meta",
-            "window_key": "account_health_closure_days",
-            "default_window": "30d",
-            "confidence": "Workflow telemetry",
-        },
-        {
-            "surface": "DBA Daily Brief",
-            "value": state.get("morning_data"),
-            "source": state.get("morning_data_source", "DBA Control Room telemetry"),
-            "meta_key": "morning_data_meta",
-            "window_key": "account_health_morning_lookback",
-            "default_window": "24h",
-            "window_unit": "h",
-            "confidence": "Control Room telemetry",
-        },
-    ]
-    rows = []
-    for item in definitions:
-        raw_window = item.get("window")
-        if raw_window is None:
-            window_key = item.get("window_key")
-            raw_window = state.get(window_key, item.get("default_window", "")) if window_key else item.get("default_window", "")
-            raw_window_text = _account_health_scope_value(raw_window)
-            if window_key and raw_window_text.isdigit():
-                raw_window = f"{int(raw_window_text)}{item.get('window_unit', 'd')}"
-        window = _account_health_scope_value(raw_window)
-        expected_meta = _account_health_scope_meta(company, environment, window=window, state=state)
-        if item.get("ignore_environment"):
-            expected_meta = _account_health_scope_meta(
-                company,
-                environment,
-                window=window,
-                state=state,
-                ignore_environment=True,
-                filter_keys=item.get("filter_keys"),
-            )
-        value = item.get("value")
-        error_key = item.get("error_key")
-        error = state.get(error_key) if error_key else None
-        if error:
-            status = "Unavailable"
-        elif not _account_health_loaded(value):
-            status = "On demand"
-        elif not _account_health_meta_matches(state.get(item["meta_key"]), expected_meta):
-            status = "Stale"
-        elif _account_health_is_empty(value):
-            status = "No Rows"
-        else:
-            status = "Loaded"
-        scope_environment = "No Database Context" if item.get("ignore_environment") else environment
-        rows.append({
-            "SURFACE": item["surface"],
-            "STATE": status,
-            "STATE_RANK": {
-                "Unavailable": 0,
-                "Stale": 1,
-                "Loaded": 2,
-                "No Rows": 3,
-                "On demand": 4,
-            }.get(status, 9),
-            "SOURCE": item["source"],
-            "CONFIDENCE": _account_health_source_confidence(item["source"], item["confidence"]),
-            "ROWS": _account_health_row_count(value),
-            "SCOPE": f"{company} / {scope_environment} / {window}",
-            "NEXT_ACTION": _account_health_source_next_action(status, item["source"]),
-        })
-    return pd.DataFrame(rows)
 
 
 def _drill_to(
@@ -378,157 +79,6 @@ def _drill_to(
     st.rerun()
 
 
-def _task_failure_sql_or_empty(session, time_predicate: str, limit: int, company: str) -> str:
-    """Return TASK_HISTORY failure SQL, or an empty compatible result if unavailable."""
-    try:
-        return build_task_failure_summary_sql(session, time_predicate, limit=limit, company=company)
-    except Exception:
-        return """
-            SELECT NULL::VARCHAR AS TASK_NAME,
-                   NULL::VARCHAR AS DATABASE_NAME,
-                   NULL::VARCHAR AS SCHEMA_NAME,
-                   0::NUMBER AS FAILURES,
-                   NULL::TIMESTAMP_NTZ AS LAST_FAILURE,
-                   NULL::VARCHAR AS LAST_ERROR
-            WHERE 1=0
-        """
-
-
-def _task_health_sql_or_empty(session, time_predicate: str, company: str) -> str:
-    """Return TASK_HISTORY aggregate SQL, or a single zero row if unavailable."""
-    try:
-        return build_task_health_sql(session, time_predicate, company=company)
-    except Exception:
-        return """
-            SELECT 0::NUMBER AS TASK_RUNS,
-                   0::NUMBER AS FAILED_TASKS,
-                   0::NUMBER AS SUCCEEDED_TASKS,
-                   0::NUMBER AS DISTINCT_TASKS
-        """
-
-
-def _default_query_history_capabilities() -> dict[str, str]:
-    return {
-        "cost_wh_size_expr": "NULL::VARCHAR",
-        "cost_bytes_scanned_expr": "0",
-        "failed_pred_q": "UPPER(q.execution_status) = 'FAILED_WITH_ERROR'",
-        "failed_pred_plain": "UPPER(execution_status) = 'FAILED_WITH_ERROR'",
-        "queued_count_expr_q": "SUM(CASE WHEN q.execution_status ILIKE '%QUEUED%' THEN 1 ELSE 0 END)",
-        "queued_count_expr_plain": "SUM(CASE WHEN execution_status ILIKE '%QUEUED%' THEN 1 ELSE 0 END)",
-        "pressure_wh_size_expr": "NULL::VARCHAR",
-    }
-
-
-def _account_query_history_capabilities(session) -> dict[str, str]:
-    if session is None:
-        return _default_query_history_capabilities()
-    qh_cols = set(filter_existing_columns(
-        session,
-        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
-        [
-            "WAREHOUSE_SIZE",
-            "BYTES_SCANNED",
-            "ERROR_CODE",
-            "QUEUED_OVERLOAD_TIME",
-            "QUEUED_PROVISIONING_TIME",
-            "QUEUED_REPAIR_TIME",
-        ],
-    ))
-    queue_cols = [
-        col.lower()
-        for col in ["QUEUED_OVERLOAD_TIME", "QUEUED_PROVISIONING_TIME", "QUEUED_REPAIR_TIME"]
-        if col in qh_cols
-    ]
-    queue_time_q = " + ".join([f"COALESCE(q.{col}, 0)" for col in queue_cols])
-    queue_time_plain = " + ".join([f"COALESCE({col}, 0)" for col in queue_cols])
-    return {
-        "cost_wh_size_expr": "MAX(q.warehouse_size)" if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR",
-        "cost_bytes_scanned_expr": "SUM(q.bytes_scanned)" if "BYTES_SCANNED" in qh_cols else "0",
-        "failed_pred_q": (
-            "q.error_code IS NOT NULL"
-            if "ERROR_CODE" in qh_cols
-            else "UPPER(q.execution_status) = 'FAILED_WITH_ERROR'"
-        ),
-        "failed_pred_plain": (
-            "error_code IS NOT NULL"
-            if "ERROR_CODE" in qh_cols
-            else "UPPER(execution_status) = 'FAILED_WITH_ERROR'"
-        ),
-        "queued_count_expr_q": (
-            f"SUM(CASE WHEN {queue_time_q} > 0 OR q.execution_status ILIKE '%QUEUED%' THEN 1 ELSE 0 END)"
-            if queue_cols
-            else "SUM(CASE WHEN q.execution_status ILIKE '%QUEUED%' THEN 1 ELSE 0 END)"
-        ),
-        "queued_count_expr_plain": (
-            f"SUM(CASE WHEN {queue_time_plain} > 0 OR execution_status ILIKE '%QUEUED%' THEN 1 ELSE 0 END)"
-            if queue_cols
-            else "SUM(CASE WHEN execution_status ILIKE '%QUEUED%' THEN 1 ELSE 0 END)"
-        ),
-        "pressure_wh_size_expr": "MAX(warehouse_size)" if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR",
-    }
-
-
-def _live_query_status_sql(wh_filter: str, db_filter: str, user_filter: str) -> str:
-    return f"""
-        SELECT COUNT(*) AS active_count,
-               SUM(IFF(
-                   COALESCE(queued_overload_time, 0)
-                   + COALESCE(queued_provisioning_time, 0)
-                   + COALESCE(queued_repair_time, 0) > 0
-                   OR execution_status ILIKE '%QUEUED%',
-                   1,
-                   0
-               )) AS queued_count,
-               SUM(IFF(execution_status ILIKE '%BLOCKED%', 1, 0)) AS blocked_count
-        FROM TABLE(
-            INFORMATION_SCHEMA.QUERY_HISTORY(
-                END_TIME_RANGE_START=>DATEADD('hours', -1, CURRENT_TIMESTAMP()),
-                RESULT_LIMIT=>10000
-            )
-        ) q
-        WHERE execution_status IN ('RUNNING', 'QUEUED', 'BLOCKED', 'RESUMING_WAREHOUSE')
-          {wh_filter} {db_filter} {user_filter}
-    """
-
-
-def _load_live_query_status(wh_filter: str, db_filter: str, user_filter: str) -> tuple[pd.DataFrame, str]:
-    # Prefer INFORMATION_SCHEMA for the morning triage counters. ACCOUNT_USAGE
-    # remains a fallback only because Snowflake-hosted Streamlit can reject some
-    # table-function calls depending on role/session permissions.
-    fallback_sql = f"""
-        SELECT COUNT(*) AS active_count,
-               SUM(CASE WHEN execution_status ILIKE '%QUEUED%' THEN 1 ELSE 0 END) AS queued_count,
-               SUM(CASE WHEN execution_status ILIKE '%BLOCKED%' THEN 1 ELSE 0 END) AS blocked_count
-        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
-        WHERE q.start_time >= DATEADD('hours', -1, CURRENT_TIMESTAMP())
-          AND UPPER(q.execution_status) IN ('RUNNING', 'QUEUED', 'BLOCKED', 'RESUMING_WAREHOUSE')
-          {wh_filter} {db_filter} {user_filter}
-    """
-    try:
-        return run_query_or_raise(_live_query_status_sql(wh_filter, db_filter, user_filter)), "INFORMATION_SCHEMA"
-    except Exception:
-        try:
-            return run_query_or_raise(fallback_sql), "ACCOUNT_USAGE"
-        except Exception:
-            return pd.DataFrame(), "ACCOUNT_USAGE"
-
-
-def _can_use_control_room_mart(company: str) -> tuple[bool, str]:
-    """Use the mart only when section filters match its company-level grain."""
-    if str(company or "").upper() == "ALL":
-        return False, "ALL view needs live/account-level aggregation."
-    blocking_filters = {
-        "warehouse": st.session_state.get("global_warehouse"),
-        "user": st.session_state.get("global_user"),
-        "role": st.session_state.get("global_role"),
-        "database": st.session_state.get("global_database"),
-    }
-    active = [name for name, value in blocking_filters.items() if str(value or "").strip()]
-    if active:
-        return False, f"Global {', '.join(active)} filters are active."
-    return True, ""
-
-
 def _mart_health_label(score: float) -> str:
     if score >= 90:
         return "Healthy"
@@ -545,141 +95,6 @@ def _check_status(ok: bool, watch: bool = False) -> str:
     if watch:
         return "Watch"
     return "Needs DBA"
-
-
-def account_health_checklist_history_fqn(
-    db: str = ALERT_DB,
-    schema: str = ALERT_SCHEMA,
-    table: str = CHECKLIST_HISTORY_TABLE,
-) -> str:
-    return f"{safe_identifier(db)}.{safe_identifier(schema)}.{safe_identifier(table)}"
-
-
-def account_health_action_queue_fqn(
-    db: str = ALERT_DB,
-    schema: str = ALERT_SCHEMA,
-    table: str = ACTION_QUEUE_TABLE,
-) -> str:
-    return f"{safe_identifier(db)}.{safe_identifier(schema)}.{safe_identifier(table)}"
-
-
-def account_health_operability_fact_fqn(table: str = ACCOUNT_HEALTH_OPERABILITY_FACT_TABLE) -> str:
-    return mart_object_name(table)
-
-
-def build_account_health_checklist_history_ddl(
-    db: str = ALERT_DB,
-    schema: str = ALERT_SCHEMA,
-    table: str = CHECKLIST_HISTORY_TABLE,
-) -> str:
-    fqn = account_health_checklist_history_fqn(db=db, schema=schema, table=table)
-    return f"""CREATE TABLE IF NOT EXISTS {fqn} (
-    SNAPSHOT_ID       VARCHAR(64),
-    SNAPSHOT_TS       TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
-    COMPANY           VARCHAR(100),
-    ENVIRONMENT       VARCHAR(100),
-    CHECK_NAME        VARCHAR(200),
-    STATUS            VARCHAR(80),
-    SEVERITY          VARCHAR(40),
-    EVIDENCE          VARCHAR(2000),
-    OWNER             VARCHAR(200),
-    ESCALATION_TARGET VARCHAR(200),
-    OWNER_SOURCE      VARCHAR(200),
-    ROUTE             VARCHAR(120),
-    NEXT_ACTION       VARCHAR(4000),
-    PROOF_REQUIRED    VARCHAR(2000),
-    ENVIRONMENT_SCOPE VARCHAR(100),
-    DATABASE_CONTEXT  VARCHAR(80),
-    SCOPE_CONFIDENCE  VARCHAR(160),
-    SCOPE_EVIDENCE    VARCHAR(2000),
-    APPROVAL_REQUIRED VARCHAR(20),
-    QUEUE_READINESS   VARCHAR(80),
-    QUEUE_BLOCKERS    VARCHAR(2000),
-    VERIFICATION_QUERY VARCHAR(8000),
-    RECOVERY_SLA_TARGET_HOURS FLOAT,
-    CONTROL_READINESS VARCHAR(100),
-    CONTROL_BLOCKERS  VARCHAR(2000),
-    NEXT_CONTROL_ACTION VARCHAR(4000),
-    HEALTH_SCORE      FLOAT,
-    DETAIL_SOURCE     VARCHAR(500),
-    ACTIONABLE        BOOLEAN
-);"""
-
-
-def build_account_health_operability_fact_ddl(table: str = ACCOUNT_HEALTH_OPERABILITY_FACT_TABLE) -> str:
-    fqn = account_health_operability_fact_fqn(table=table)
-    return f"""CREATE TRANSIENT TABLE IF NOT EXISTS {fqn} (
-    SNAPSHOT_DATE                   DATE,
-    COMPANY                         VARCHAR(100),
-    ENVIRONMENT                     VARCHAR(100),
-    CONTROL_SOURCE                  VARCHAR(80),
-    CHECK_NAME                      VARCHAR(200),
-    ROUTE                           VARCHAR(120),
-    SEVERITY                        VARCHAR(40),
-    CONTROL_STATE                   VARCHAR(120),
-    CONTROL_RANK                    NUMBER,
-    HEALTH_SCORE                    FLOAT,
-    ISSUE_ROWS                      NUMBER,
-    ROUTE_BLOCKER_ROWS              NUMBER,
-    QUEUE_REQUIRED_ROWS             NUMBER,
-    ACCESS_HYGIENE_ROWS             NUMBER,
-    FAILED_LOGIN_ROWS               NUMBER,
-    PRIVILEGED_GRANT_ROWS           NUMBER,
-    OPEN_ACTIONS                    NUMBER,
-    OVERDUE_OPEN                    NUMBER,
-    FIXED_WITHOUT_VERIFICATION      NUMBER,
-    VERIFIED_CLOSURES               NUMBER,
-    OWNER_APPROVAL_GAP_ROWS         NUMBER,
-    RECOVERY_RISK_ROWS              NUMBER,
-    NEXT_CONTROL_ACTION             VARCHAR(4000),
-    LAST_ACTIVITY_TS                TIMESTAMP_NTZ,
-    LOAD_TS                         TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
-);"""
-
-
-def build_account_health_operability_fact_migration_sql(
-    table: str = ACCOUNT_HEALTH_OPERABILITY_FACT_TABLE,
-) -> list[str]:
-    fqn = account_health_operability_fact_fqn(table=table)
-    return [
-        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS CONTROL_SOURCE VARCHAR(80)",
-        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS CONTROL_STATE VARCHAR(120)",
-        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS CONTROL_RANK NUMBER",
-        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS HEALTH_SCORE FLOAT",
-        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS ISSUE_ROWS NUMBER",
-        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS ROUTE_BLOCKER_ROWS NUMBER",
-        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS QUEUE_REQUIRED_ROWS NUMBER",
-        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS ACCESS_HYGIENE_ROWS NUMBER",
-        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS FAILED_LOGIN_ROWS NUMBER",
-        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS PRIVILEGED_GRANT_ROWS NUMBER",
-        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS OWNER_APPROVAL_GAP_ROWS NUMBER",
-        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS RECOVERY_RISK_ROWS NUMBER",
-        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS NEXT_CONTROL_ACTION VARCHAR(4000)",
-        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS LAST_ACTIVITY_TS TIMESTAMP_NTZ",
-    ]
-
-
-def build_account_health_checklist_history_migration_sql(
-    db: str = ALERT_DB,
-    schema: str = ALERT_SCHEMA,
-    table: str = CHECKLIST_HISTORY_TABLE,
-) -> list[str]:
-    """Return additive migrations for existing Daily DBA Checklist history tables."""
-    fqn = account_health_checklist_history_fqn(db=db, schema=schema, table=table)
-    return [
-        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS ENVIRONMENT_SCOPE VARCHAR(100)",
-        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS DATABASE_CONTEXT VARCHAR(80)",
-        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS SCOPE_CONFIDENCE VARCHAR(160)",
-        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS SCOPE_EVIDENCE VARCHAR(2000)",
-        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS APPROVAL_REQUIRED VARCHAR(20)",
-        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS QUEUE_READINESS VARCHAR(80)",
-        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS QUEUE_BLOCKERS VARCHAR(2000)",
-        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS VERIFICATION_QUERY VARCHAR(8000)",
-        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS RECOVERY_SLA_TARGET_HOURS FLOAT",
-        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS CONTROL_READINESS VARCHAR(100)",
-        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS CONTROL_BLOCKERS VARCHAR(2000)",
-        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS NEXT_CONTROL_ACTION VARCHAR(4000)",
-    ]
 
 
 def _account_health_owner_entity_type(check: object, route: object = "") -> str:
@@ -2779,43 +2194,6 @@ def _render_account_health_access_hygiene(company: str, environment: str) -> Non
                 ))
         elif hygiene is not None:
             st.success("No account-level access hygiene candidates found for the selected lookback.")
-
-
-def _render_account_health_source_health(company: str, environment: str) -> None:
-    source_health = _account_health_source_health_rows(st.session_state, company, environment)
-    if source_health.empty:
-        return
-    with st.expander("Account Health Data Health", expanded=False):
-        current = int(source_health["STATE"].isin(["Loaded", "No Rows"]).sum())
-        stale = int(source_health["STATE"].eq("Stale").sum())
-        unavailable = int(source_health["STATE"].eq("Unavailable").sum())
-        mart_backed = int(
-            source_health[
-                source_health["STATE"].isin(["Loaded", "No Rows"])
-                & source_health["SOURCE"].astype(str).str.contains("mart|FACT_", case=False, regex=True)
-            ].shape[0]
-        )
-        render_shell_snapshot((
-            ("Current", f"{current}/{len(source_health)}"),
-            ("Fast Summary", f"{mart_backed:,}"),
-            ("Stale", f"{stale:,}"),
-            ("Unavailable", f"{unavailable:,}"),
-        ))
-        st.caption(
-            "Use this before publishing the morning report or queueing checklist work. "
-            "Account-level controls stay visible under environment filters when Snowflake has no database context."
-        )
-        render_priority_dataframe(
-            source_health,
-            title="Account Health telemetry freshness",
-            priority_columns=[
-                "SURFACE", "STATE", "SOURCE", "CONFIDENCE", "ROWS", "SCOPE", "NEXT_ACTION",
-            ],
-            sort_by=["STATE_RANK", "SURFACE"],
-            ascending=[True, True],
-            raw_label="All Account Health data-health rows",
-            height=320,
-        )
 
 
 def render():

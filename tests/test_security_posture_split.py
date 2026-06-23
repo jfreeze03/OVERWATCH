@@ -13,6 +13,8 @@ APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
 
 from sections import security_posture  # noqa: E402
+from sections import security_posture_access_review as access_review  # noqa: E402
+from sections import security_posture_action_queue as action_queue  # noqa: E402
 from sections import security_posture_access_changes_view as access_changes_view  # noqa: E402
 from sections import security_posture_admin_view as admin_view  # noqa: E402
 from sections import security_posture_alerts_view as alerts_view  # noqa: E402
@@ -20,6 +22,8 @@ from sections import security_posture_common as common  # noqa: E402
 from sections import security_posture_contracts as contracts  # noqa: E402
 from sections import security_posture_data as data  # noqa: E402
 from sections import security_posture_models as models  # noqa: E402
+from sections import security_posture_overview_view as overview_view  # noqa: E402
+from sections import security_posture_privilege_sprawl_view as privilege_view  # noqa: E402
 
 
 class SecurityPostureSplitTests(unittest.TestCase):
@@ -84,6 +88,11 @@ class SecurityPostureSplitTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertTrue(hasattr(security_posture, name))
                 self.assertIs(getattr(security_posture, name), getattr(admin_view, name))
+        for module in (overview_view, access_review, action_queue, privilege_view):
+            for name in module.__all__:
+                with self.subTest(module=module.__name__, name=name):
+                    self.assertTrue(hasattr(security_posture, name))
+                    self.assertIs(getattr(security_posture, name), getattr(module, name))
 
     def test_security_posture_renderer_map_covers_owned_and_delegated_workflows(self):
         owned = set(security_posture.SECURITY_POSTURE_RENDERERS)
@@ -101,21 +110,228 @@ class SecurityPostureSplitTests(unittest.TestCase):
             security_posture.SECURITY_POSTURE_RENDERERS["Access Changes"],
             security_posture.render_security_access_changes,
         )
+        self.assertIs(
+            security_posture.SECURITY_POSTURE_RENDERERS["Security Overview"],
+            overview_view.render_security_overview,
+        )
+        self.assertIs(
+            security_posture.SECURITY_POSTURE_RENDERERS["Privilege Sprawl"],
+            privilege_view.render_security_privilege_sprawl,
+        )
 
     def test_security_posture_shell_is_shrinking_without_moved_definitions(self):
         source = (APP_ROOT / "sections" / "security_posture.py").read_text(encoding="utf-8")
-        self.assertLess(len(source.splitlines()), 2800)
+        self.assertLess(len(source.splitlines()), 1800)
         for fragment in [
             "SECURITY_POSTURE_VIEWS = (",
             "SECURITY_VIEW_ALIASES = {",
+            "def build_security_access_review_ddl",
+            "def _security_access_review_insert_sql",
+            "def _security_exception_verification_sql",
+            "def _queue_security_exceptions",
+            "def _queue_privileged_grant_actions",
+            "def _render_privileged_grant_readiness",
+            "def _render_security_overview_entry",
+            "def _security_action_brief",
             "def _render_loaded_security_alert_context",
             "def _render_security_change_detail",
             "def _render_security_source_health",
             "def _render_advanced_security_evidence",
             "def _load_security_brief",
+            "SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY",
+            "SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS",
+            "SNOWFLAKE.ACCOUNT_USAGE.DATABASES",
         ]:
             with self.subTest(fragment=fragment):
                 self.assertNotIn(fragment, source)
+
+    def test_security_posture_render_has_no_unreachable_overview_block(self):
+        source = (APP_ROOT / "sections" / "security_posture.py").read_text(encoding="utf-8")
+        self.assertNotIn("if active_view == SECURITY_OVERVIEW_WORKFLOW and not security_current", source)
+        self.assertNotIn("if active_view == SECURITY_OVERVIEW_WORKFLOW:\n        _render_security_overview_entry", source)
+        self.assertNotIn("security_posture_brief_load", source)
+        self.assertIn("SECURITY_POSTURE_RENDERERS.get(active_view)", source)
+
+    def test_overview_refresh_helper_calls_live_fallback_loader(self):
+        with patch("sections.security_posture_overview_view._load_security_brief") as load_brief:
+            overview_view._refresh_security_summary("ALFA", "PROD", 30)
+        load_brief.assert_called_once_with(
+            days=30,
+            company="ALFA",
+            environment="PROD",
+            allow_live_fallback=True,
+            quiet=False,
+        )
+
+    def test_overview_exception_rows_and_stale_brief(self):
+        meta = models._security_scope_meta("ALFA", "PROD", 30, state={})
+        summary = pd.DataFrame([{
+            "FAILED_LOGINS": 2,
+            "FAILED_USERS": 1,
+            "USERS_WITHOUT_MFA": 0,
+            "RECENT_GRANTS": 0,
+            "SHARED_DATABASES": 0,
+        }])
+        exceptions = pd.DataFrame([{
+            "SEVERITY": "High",
+            "FINDING_TYPE": "Failed Login Spike",
+            "ENTITY": "USER_A",
+            "EVENT_COUNT": 4,
+            "LAST_SEEN": "2026-06-23",
+        }])
+        rows = overview_view._security_exception_strip_rows(summary, exceptions, meta, "ALFA", "PROD", 30)
+        self.assertEqual(rows[0]["route"], "Failed Logins")
+        stale = overview_view._security_action_brief(summary, exceptions, {**meta, "days": 14}, "ALFA", "PROD", 30)
+        self.assertEqual(stale["state"], "Stale")
+
+    def test_overview_source_keeps_refresh_and_proof_gate_keys(self):
+        source = (APP_ROOT / "sections" / "security_posture_overview_view.py").read_text(encoding="utf-8")
+        for token in [
+            "security_posture_brief_load",
+            "security_posture_load_exceptions",
+            "security_posture_queue",
+            "security_posture_hide_proof_tables",
+            "security_posture_load_proof_tables",
+            "_security_proof_tables_visible",
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, source)
+
+    def test_access_review_sql_builders_and_readiness_contracts(self):
+        ddl = access_review.build_security_access_review_ddl(db="APP_DB", schema="SECURITY", table="REVIEW")
+        self.assertIn("CREATE TABLE IF NOT EXISTS", ddl)
+        self.assertIn("APP_DB.SECURITY.REVIEW", ddl)
+        self.assertIn("VERIFICATION_QUERY", ddl)
+        self.assertTrue(all("ADD COLUMN IF NOT EXISTS" in sql for sql in access_review.build_security_access_review_migration_sql()))
+
+        login_sql = access_review._security_exception_verification_sql({
+            "FINDING_TYPE": "Failed Login",
+            "ENTITY": "O'HARE_USER",
+        })
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY", login_sql)
+        self.assertIn("O''HARE_USER", login_sql)
+
+        review = pd.DataFrame([{
+            "FINDING_TYPE": "Failed Login",
+            "SEVERITY": "High",
+            "ENTITY_TYPE": "User/Auth",
+            "ENTITY": "O'HARE_USER",
+            "EVENT_COUNT": 2,
+            "DISTINCT_SOURCES": 1,
+            "LAST_SEEN": "2026-06-23",
+            "OWNER": "Owner's Team",
+            "ESCALATION_TARGET": "DBA",
+            "APPROVER": "IAM",
+            "ACCESS_REVIEW_STATE": "Identity investigation required",
+            "ROLE_CAPABILITY_STATE": "Not required",
+            "TICKET_REQUIRED": "Yes",
+            "REVIEW_BY_REQUIRED": "Yes",
+            "PROOF_REQUIRED": "Owner's proof",
+            "VERIFICATION_QUERY": "SELECT 'x'",
+            "REVIEW_READINESS": "Ready for Action Queue",
+        }])
+        insert_sql = access_review._security_access_review_insert_sql(
+            review,
+            company="ALFA",
+            environment="PROD",
+            source="Owner's source",
+            snapshot_id="SNAP'1",
+        )
+        self.assertIn("SNAP''1", insert_sql)
+        self.assertIn("O''HARE_USER", insert_sql)
+        self.assertIn("Owner''s Team", insert_sql)
+        self.assertIn("Owner''s source", insert_sql)
+
+        history_sql = access_review._security_access_review_history_sql(14, "ALFA", "PROD")
+        self.assertIn("DATEADD('day', -14", history_sql)
+        self.assertIn("COMPANY = 'ALFA'", history_sql)
+        self.assertIn("ENVIRONMENT = 'PROD'", history_sql)
+
+        readiness = access_review._security_access_review_readiness_for_row({
+            "SEVERITY": "High",
+            "OWNER": "",
+            "TICKET_REQUIRED": "Yes",
+            "REVIEW_BY_REQUIRED": "Yes",
+            "VERIFICATION_QUERY": "",
+        })
+        self.assertEqual(readiness["REVIEW_READINESS"], "Assignment Blocked")
+        self.assertIn("route/on-call context", readiness["REVIEW_BLOCKERS"])
+
+    def test_action_queue_writers_preserve_payload_contracts(self):
+        exceptions = pd.DataFrame([{
+            "FINDING_TYPE": "Failed Login",
+            "SEVERITY": "High",
+            "ENTITY": "USER_A",
+            "EVENT_COUNT": 3,
+            "DISTINCT_SOURCES": 1,
+            "LAST_SEEN": "2026-06-23",
+        }])
+        with patch("sections.security_posture_access_review.resolve_owner_context", return_value={
+            "OWNER": "IAM",
+            "OWNER_EMAIL": "iam@example.com",
+            "ESCALATION_TARGET": "Security",
+            "OWNER_SOURCE": "test",
+        }), patch("sections.security_posture_action_queue.make_action_id", return_value="ACT-1"), patch(
+            "sections.security_posture_action_queue.upsert_actions", return_value=1
+        ) as upsert, patch("sections.security_posture_action_queue.st.success"):
+            action_queue._queue_security_exceptions("SESSION", exceptions)
+        upsert.assert_called_once()
+        self.assertIs(upsert.call_args.args[0], "SESSION")
+        action = upsert.call_args.args[1][0]
+        self.assertEqual(action["Category"], "Security")
+        self.assertEqual(action["Severity"], "High")
+        self.assertEqual(action["Entity"], "USER_A")
+        self.assertIn("Review-only", action["Generated SQL Fix"])
+
+        grants = pd.DataFrame([{
+            "GRANT_REVIEW_READINESS": "Review Ready",
+            "FINDING_TYPE": "Privileged Grant",
+            "SEVERITY": "High",
+            "ENTITY": "ROLE_A",
+            "ROLE_NAME": "ACCOUNTADMIN",
+            "PRIVILEGE": "USAGE",
+            "DATABASE_CONTEXT": False,
+            "OWNER": "Security",
+            "OWNER_EMAIL": "sec@example.com",
+            "ESCALATION_TARGET": "DBA",
+            "GRANT_REVIEW_STATE": "Tier 0 role grant",
+            "SCOPE_CONFIDENCE": "Account/User Context",
+            "PROOF_REQUIRED": "grant proof",
+            "NEXT_GRANT_ACTION": "Review",
+        }])
+        with patch("sections.security_posture_action_queue.make_action_id", return_value="ACT-2"), patch(
+            "sections.security_posture_action_queue.upsert_actions", return_value=1
+        ) as upsert_grants, patch("sections.security_posture_action_queue.st.success"):
+            action_queue._queue_privileged_grant_actions("SESSION2", grants, company="ALFA", environment="PROD")
+        self.assertIs(upsert_grants.call_args.args[0], "SESSION2")
+        grant_action = upsert_grants.call_args.args[1][0]
+        self.assertEqual(grant_action["Source"], "Security Posture - Privileged Grant Status")
+        self.assertEqual(grant_action["Category"], "Security Access Review")
+        self.assertEqual(grant_action["Owner"], "Security")
+
+    def test_empty_action_queue_frames_do_not_call_upsert(self):
+        with patch("sections.security_posture_action_queue.upsert_actions") as upsert, patch(
+            "sections.security_posture_action_queue.st.info"
+        ):
+            action_queue._queue_security_exceptions("SESSION", pd.DataFrame())
+            action_queue._queue_privileged_grant_actions("SESSION", pd.DataFrame(), company="ALFA", environment="PROD")
+        upsert.assert_not_called()
+
+    def test_privilege_sprawl_renderer_contract(self):
+        self.assertIs(
+            security_posture.SECURITY_POSTURE_RENDERERS["Privilege Sprawl"],
+            privilege_view.render_security_privilege_sprawl,
+        )
+        source = (APP_ROOT / "sections" / "security_posture_privilege_sprawl_view.py").read_text(encoding="utf-8")
+        for token in [
+            "security_privilege_sprawl_load",
+            "security_priv_grants_queue",
+            "security_priv_grant_days",
+            "security_privileged_grants",
+            "security_privileged_grants_meta",
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, source)
 
     def test_security_scope_metadata_matching(self):
         state = {

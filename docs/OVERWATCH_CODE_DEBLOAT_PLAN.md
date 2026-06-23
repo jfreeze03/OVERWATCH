@@ -15,13 +15,13 @@ Reduce bloat without breaking the six-section operator model or removing useful 
 | `.overwatch_final/sections/task_management.py` | 3530 | Task management and pipeline health overlap Pipeline & Task Health. | Keep as delegated implementation, remove duplicate entry points only after regression. |
 | `.overwatch_final/sections/cost_center.py` | 3106 | Cost cockpit still holds multiple cost workflows and fallback branches. | Split after Alert Center/Security if cost route metrics justify another pass. |
 | `.overwatch_final/sections/change_drift.py` | 2924 | Change drift mixes overview, evidence, and investigation rendering. | Below 3000 now; revisit after larger modules are reduced. |
-| `.overwatch_final/sections/security_posture.py` | 2716 | Security public route now has focused contracts/common/models/data and initial view modules, but overview and privilege-sprawl/action-queue detail remain inline. | Continue split before moving to Account Health. |
 
 ## Completed Thin Facades
 
 | File | Approx lines | Status |
 |---|---:|---|
 | `.overwatch_final/sections/alert_center.py` | 845 | Alert Center public route/load-gate/renderer-dispatch shell after pane, admin, diagnostics, and data split; legacy Issue Inbox/Triage Digest aliases normalize to Active Alerts. |
+| `.overwatch_final/sections/security_posture.py` | 146 | Security Monitoring public route/dispatch and compatibility reexport facade after overview, access-review, action-queue, and privilege-sprawl split. |
 | `.overwatch_final/sections/dba_tools.py` | 304 | Thin public DBA Tools selector/dispatch and compatibility reexport facade, locked by no-implementation tests. |
 | `.overwatch_final/utils/shared_metrics.py` | 164 | Import-only shared metrics compatibility facade with explicit `__all__`, identity reexport tests, and no SQL/query/dataframe implementation guardrails. |
 | `.overwatch_final/sections/warehouse_health.py` | 229 | Thin Warehouse Health selector/support-panel/dispatch shell after focused split. |
@@ -78,6 +78,10 @@ Reduce bloat without breaking the six-section operator model or removing useful 
 | `.overwatch_final/sections/security_posture_alerts_view.py` | 52 | Loaded Security Alerts context renderer with existing Alert Center and drilldown buttons. |
 | `.overwatch_final/sections/security_posture_access_changes_view.py` | 58 | Explicit-load Security-Sensitive Changes detail renderer. |
 | `.overwatch_final/sections/security_posture_admin_view.py` | 307 | Advanced security evidence panels, score drivers, ownership coverage, action approvals, command findings, and data-health renderer. |
+| `.overwatch_final/sections/security_posture_overview_view.py` | 1104 | Security Overview controller, refresh/freshness behavior, exception loading, proof-table gates, summary download, and secondary control-detail panels. |
+| `.overwatch_final/sections/security_posture_access_review.py` | 1013 | Access-review DDL/migration SQL, verification SQL, review readiness, control-board, closure/fact SQL, and snapshot save helpers. |
+| `.overwatch_final/sections/security_posture_action_queue.py` | 247 | Security exception and privileged-grant action-queue writers with existing action payload contracts. |
+| `.overwatch_final/sections/security_posture_privilege_sprawl_view.py` | 275 | Privileged grant readiness annotation, sprawl summary, and Privilege Sprawl renderer with existing explicit-load/action-queue keys. |
 
 ## Duplicate Code Groups
 
@@ -126,7 +130,7 @@ These are candidates, not approved removals:
 
 ## Next Rewrite Order
 
-1. Continue Security Posture split if incomplete.
+1. Finish any remaining Security Posture delegated-workflow cleanup if route metrics justify it.
 2. Split Account Health compatibility route into useful DBA workflows.
 3. Split Cost Center if it remains above threshold after Security/Account Health.
 4. Retire duplicated legacy route rendering after route metrics prove no active usage.
@@ -165,3 +169,6 @@ These are candidates, not approved removals:
 | Alert Center board and pane split continued | Reduced `.overwatch_final/sections/alert_center.py` from about 3326 lines to about 1514 lines by moving pure board/model helpers, Active Alerts, Cost/Reliability/Security category panes, Alert History, and Suppression Windows into focused modules. Renderer maps, facade reexports, board behavior, category token patterns, suppression SQL builders, and no-creep guards are covered by tests. |
 | Alert Center split completed for current pass | Reduced `.overwatch_final/sections/alert_center.py` from about 1514 lines to about 845 lines by moving Delivery & Automation, email delivery/action-queue routing, remediation admin rendering, and advanced diagnostics into focused modules. Legacy Issue Inbox and Triage Digest render branches were removed because aliases normalize to Active Alerts. The remaining shell owns load gates, freshness, source notes, shared pre-panels, renderer maps, and compatibility reexports. |
 | Security Posture contracts/data/initial view split | Reduced `.overwatch_final/sections/security_posture.py` from about 3488 lines to about 2716 lines by moving workflow contracts, common helpers, model/source-health helpers, mart-first summary loading, loaded alert context, access-change detail, and advanced evidence panels into focused modules. The public route keeps compatibility reexports, delegated workflow module routing, Security Overview orchestration, Privilege Sprawl/action-queue behavior, and existing Streamlit/session-state keys. |
+| Security Posture overview/controller split | Reduced `.overwatch_final/sections/security_posture.py` from about 2716 lines to about 146 lines by moving the previously unreachable Security Overview refresh/load/proof-table orchestration into `security_posture_overview_view.py`. Existing summary/session-state keys, `security_posture_brief_load`, exception load gates, proof-table gates, queue controls, and summary download behavior are preserved. |
+| Security Posture access review and action queue split | Moved access-review DDL/migration SQL, verification SQL, review readiness, control-board builders, closure/fact SQL, snapshot save helpers, and action-queue writers into `security_posture_access_review.py` and `security_posture_action_queue.py`, preserving SQL literalization, action IDs, source/category fields, and `upsert_actions` behavior. |
+| Security Posture Privilege Sprawl split | Moved privileged grant review loading, grant readiness annotation, sprawl summary, and Privilege Sprawl rendering into `security_posture_privilege_sprawl_view.py` while preserving `security_privilege_sprawl_load`, `security_priv_grants_queue`, `security_priv_grant_days`, and privileged grant session-state keys. |

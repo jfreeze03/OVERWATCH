@@ -52,7 +52,13 @@ class GuardrailTests(unittest.TestCase):
 
     def test_usage_overview_and_heatmap_sources_use_mart_before_live(self):
         usage_text = (APP_ROOT / "sections" / "usage_overview.py").read_text(encoding="utf-8").upper()
-        account_text = (APP_ROOT / "sections" / "account_health.py").read_text(encoding="utf-8").upper()
+        account_text = "\n".join(
+            path.read_text(encoding="utf-8").upper()
+            for path in [
+                APP_ROOT / "sections" / "account_health.py",
+                APP_ROOT / "sections" / "account_health_overview_view.py",
+            ]
+        )
         cost_text = (APP_ROOT / "sections" / "cost_center.py").read_text(encoding="utf-8").upper()
         shared_metric_surface = "\n".join(
             path.read_text(encoding="utf-8").upper()

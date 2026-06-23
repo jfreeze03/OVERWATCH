@@ -317,7 +317,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("set_state(NAV_SECTION, target)", navigation_text)
 
         direct_nav_modules = {
-            "account_health.py": ("apply_navigation_state(section)", "apply_navigation_state(tgt)"),
+            "account_health_overview_view.py": ("apply_navigation_state(section)", "apply_navigation_state(tgt)"),
             "dba_control_room.py": ("apply_navigation_state(raw_target)",),
             "dba_tools.py": ('apply_navigation_state("Alert Center")',),
             "executive_landing.py": ("apply_navigation_state(section)",),

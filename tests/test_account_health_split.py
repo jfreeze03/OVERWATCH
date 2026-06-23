@@ -19,8 +19,11 @@ from sections import account_health_checklist as checklist  # noqa: E402
 from sections import account_health_common as common  # noqa: E402
 from sections import account_health_contracts as contracts  # noqa: E402
 from sections import account_health_data as data  # noqa: E402
+from sections import account_health_history as history  # noqa: E402
 from sections import account_health_morning_view as morning_view  # noqa: E402
 from sections import account_health_models as models  # noqa: E402
+from sections import account_health_overview_models as overview_models  # noqa: E402
+from sections import account_health_overview_view as overview_view  # noqa: E402
 from sections import account_health_source_health_view as source_health_view  # noqa: E402
 from sections import account_health_sql as sql  # noqa: E402
 
@@ -71,6 +74,9 @@ class AccountHealthSplitTests(unittest.TestCase):
             action_queue,
             access_hygiene_view,
             morning_view,
+            history,
+            overview_models,
+            overview_view,
             models,
             source_health_view,
             sql,
@@ -431,17 +437,214 @@ class AccountHealthSplitTests(unittest.TestCase):
         self.assertIn("ACCOUNT_HEALTH_RENDERERS.get(active_view)", route_source)
         self.assertNotIn('elif active_view == "Morning Report"', route_source)
 
+    def test_overview_renderer_contract_and_keys(self):
+        self.assertEqual(set(account_health.ACCOUNT_HEALTH_PANES), set(account_health.ACCOUNT_HEALTH_RENDERERS))
+        self.assertIs(
+            account_health.ACCOUNT_HEALTH_RENDERERS["Overview"],
+            overview_view.render_account_health_overview,
+        )
+        source = (APP_ROOT / "sections" / "account_health_overview_view.py").read_text(encoding="utf-8")
+        for token in [
+            "health_refresh",
+            "_account_health_auto_load_attempt_scope",
+            "health_data",
+            "_health_ts",
+            "_health_filter_sig",
+            "account_health_overview_meta",
+            "account_health_live_status_meta",
+            "account_health_load_secondary_evidence",
+            "account_health_load_operability_fact",
+            "account_health_operability_fact",
+            "account_health_overview_detail",
+            "account_health_show_full_checklist",
+            "account_health_queue_checklist",
+            "account_health_save_checklist_snapshot",
+            "account_health_load_checklist_trend",
+            "account_health_load_closure_analytics",
+            "jump_",
+            "ah_",
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, source)
+        route_source = (APP_ROOT / "sections" / "account_health.py").read_text(encoding="utf-8")
+        self.assertIn("ACCOUNT_HEALTH_RENDERERS.get(active_view)", route_source)
+        self.assertNotIn('if active_view == "Overview"', route_source)
+        self.assertNotIn("# -- OVERVIEW", route_source)
+
+    def test_account_health_overview_intervention_matrix_prioritizes_work(self):
+        closure_block = pd.DataFrame([{
+            "CHECK_NAME": "Closure blocked",
+            "CONTROL_STATE": "Closure Overdue",
+            "SEVERITY": "High",
+            "ROUTE": "DBA Control Room",
+            "OWNER": "DBA",
+            "QUEUE_READINESS": "Ready to Queue",
+            "OVERDUE_OPEN": 2,
+            "OPEN_ACTIONS": 2,
+            "PROOF_REQUIRED": "ticket and telemetry",
+        }])
+        hygiene = pd.DataFrame([{
+            "USER_NAME": "ADMIN_USER",
+            "SEVERITY": "High",
+            "QUEUE_READINESS": "Ready to Queue",
+        }])
+        matrix = account_health._account_health_intervention_matrix(
+            checklist=pd.DataFrame(),
+            control_board=closure_block,
+            access_hygiene=hygiene,
+        )
+        self.assertEqual(matrix.iloc[0]["SURFACE"], "Closure blocked")
+        self.assertEqual(matrix.iloc[0]["INTERVENTION_STATE"], "Closure Block")
+        self.assertIn("Account Access Hygiene", set(matrix["SURFACE"]))
+
+        route_block = pd.DataFrame([{
+            "CHECK_NAME": "Route missing",
+            "CONTROL_STATE": "Queue Required",
+            "QUEUE_READINESS": "Needs Routing Data",
+            "OPEN_ACTIONS": 1,
+        }])
+        route_matrix = account_health._account_health_intervention_matrix(
+            checklist=pd.DataFrame(),
+            control_board=route_block,
+        )
+        self.assertEqual(route_matrix.iloc[0]["INTERVENTION_STATE"], "Route Block")
+
+        checklist_only = pd.DataFrame([{
+            "CHECK": "Query failure review",
+            "STATUS": "Needs DBA",
+            "SEVERITY": "High",
+            "EVIDENCE": "2 failed queries",
+            "ROUTE": "Workload Operations",
+            "OWNER": "DBA",
+            "NEXT_ACTION": "Review failures",
+            "PROOF_REQUIRED": "query_id",
+        }])
+        checklist_matrix = account_health._account_health_intervention_matrix(checklist=checklist_only)
+        self.assertEqual(checklist_matrix.iloc[0]["INTERVENTION_STATE"], "Checklist Review")
+
+    def test_account_health_history_sql_escapes_and_filters_scope(self):
+        checklist_frame = pd.DataFrame([{
+            "CHECK": "Owner's query review",
+            "STATUS": "Needs DBA",
+            "SEVERITY": "High",
+            "EVIDENCE": "O'Hare failure",
+            "OWNER": "DBA's Team",
+            "ESCALATION_TARGET": "Lead",
+            "ROUTE": "Workload Operations",
+            "NEXT_ACTION": "Review failures",
+            "PROOF_REQUIRED": "query_id",
+            "QUEUE_READINESS": "Ready to Queue",
+            "RECOVERY_SLA_TARGET_HOURS": 24,
+        }])
+        insert_sql = account_health._account_health_checklist_history_insert_sql(
+            checklist_frame,
+            company="AL'FA",
+            environment="PR'OD",
+            health_score=72.5,
+            detail_source="Source's",
+            snapshot_id="Snap's",
+        )
+        self.assertIn("INSERT INTO", insert_sql)
+        self.assertIn("Snap''s", insert_sql)
+        self.assertIn("AL''FA", insert_sql)
+        self.assertIn("Owner''s query review", insert_sql)
+        self.assertIn("O''Hare failure", insert_sql)
+        self.assertIn("Source''s", insert_sql)
+
+        trend_sql = account_health._account_health_checklist_history_sql(14, "AL'FA", "PR'OD")
+        self.assertIn("DATEADD('day', -14", trend_sql)
+        self.assertIn("COMPANY = 'AL''FA'", trend_sql)
+        self.assertIn("ENVIRONMENT = 'PR''OD'", trend_sql)
+
+        closure_sql = account_health._account_health_closure_analytics_sql(30, "ALFA", "PROD")
+        self.assertIn(account_health.ACCOUNT_HEALTH_ACTION_SOURCE, closure_sql)
+        self.assertIn(account_health.ACCOUNT_HEALTH_ACCESS_HYGIENE_SOURCE, closure_sql)
+        self.assertIn("DATEADD('day', -30", closure_sql)
+        self.assertIn("COMPANY = 'ALFA'", closure_sql)
+
+    def test_save_account_health_snapshot_runs_ddl_migrations_insert_and_handles_errors(self):
+        class FakeStatement:
+            def collect(self):
+                return []
+
+        class FakeSession:
+            def __init__(self):
+                self.queries = []
+
+            def sql(self, query):
+                self.queries.append(query)
+                return FakeStatement()
+
+        checklist_frame = pd.DataFrame([{
+            "CHECK": "Query failure review",
+            "STATUS": "Needs DBA",
+            "SEVERITY": "High",
+            "EVIDENCE": "2 failed queries",
+            "OWNER": "DBA",
+            "ESCALATION_TARGET": "Lead",
+            "ROUTE": "Workload Operations",
+            "NEXT_ACTION": "Review failures",
+            "PROOF_REQUIRED": "query_id",
+            "QUEUE_READINESS": "Ready to Queue",
+        }])
+        fake = FakeSession()
+        with patch("sections.account_health_history.st.success") as success:
+            account_health._save_account_health_checklist_snapshot(
+                fake,
+                checklist_frame,
+                company="ALFA",
+                environment="PROD",
+                health_score=88,
+                detail_source="Fast summary",
+            )
+        self.assertTrue(any("CREATE TABLE IF NOT EXISTS" in query for query in fake.queries))
+        self.assertTrue(any("ADD COLUMN IF NOT EXISTS" in query for query in fake.queries))
+        self.assertTrue(any("INSERT INTO" in query for query in fake.queries))
+        success.assert_called_once()
+
+        class BadSession:
+            def sql(self, query):
+                raise RuntimeError("boom")
+
+        with patch("sections.account_health_history.st.error") as error, patch(
+            "sections.account_health_history.st.info"
+        ) as info, patch(
+            "sections.account_health_history.format_snowflake_error", return_value="formatted"
+        ):
+            account_health._save_account_health_checklist_snapshot(
+                BadSession(),
+                checklist_frame,
+                company="ALFA",
+                environment="PROD",
+                health_score=88,
+            )
+        error.assert_called_once()
+        info.assert_called_once()
+
     def test_account_health_has_source_state_detects_loaded_or_error_surfaces(self):
         self.assertFalse(account_health._account_health_has_source_state({}))
         self.assertTrue(account_health._account_health_has_source_state({"health_data": {"live": pd.DataFrame()}}))
         self.assertTrue(account_health._account_health_has_source_state({"morning_data_error": "load failed"}))
 
-    def test_account_health_shell_has_initial_split_guard(self):
+    def test_account_health_facade_all_exports_exist(self):
+        for name in account_health.__all__:
+            with self.subTest(name=name):
+                self.assertTrue(hasattr(account_health, name))
+
+    def test_account_health_shell_has_dispatch_facade_guard(self):
         source = (APP_ROOT / "sections" / "account_health.py").read_text(encoding="utf-8")
-        self.assertLess(len(source.splitlines()), 1600)
+        self.assertLess(len(source.splitlines()), 700)
         for fragment in [
             "ACCOUNT_HEALTH_PANES = (",
             "ACCOUNT_HEALTH_SCOPE_FILTER_KEYS = (",
+            "SNOWFLAKE.ACCOUNT_USAGE",
+            "INFORMATION_SCHEMA.QUERY_HISTORY",
+            "run_query(",
+            "run_query_or_raise(",
+            "pd.DataFrame(",
+            "CREATE TABLE",
+            "ALTER TABLE",
+            "INSERT INTO",
             "def _account_query_history_capabilities",
             "def _account_health_scope_meta",
             "def _account_health_source_health_rows",
@@ -455,7 +658,15 @@ class AccountHealthSplitTests(unittest.TestCase):
             "def _queue_account_health_access_hygiene",
             "def _render_account_health_access_hygiene",
             "def _build_account_health_dba_morning_brief",
+            "def _render_account_health_operating_snapshot",
+            "def _account_health_intervention_matrix",
+            "def _account_health_checklist_history_insert_sql",
+            "def _account_health_checklist_history_sql",
+            "def _account_health_closure_analytics_sql",
+            "def _save_account_health_checklist_snapshot",
+            "# -- OVERVIEW",
             "# -- MORNING REPORT",
+            'if active_view == "Overview"',
             'elif active_view == "Morning Report"',
         ]:
             with self.subTest(fragment=fragment):

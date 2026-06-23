@@ -14,12 +14,12 @@ Reduce bloat without breaking the six-section operator model or removing useful 
 | `.overwatch_final/sections/task_management.py` | 3530 | Task management and pipeline health overlap Pipeline & Task Health. | Keep as delegated implementation, remove duplicate entry points only after regression. |
 | `.overwatch_final/sections/cost_center.py` | 3106 | Cost cockpit still holds multiple cost workflows and fallback branches. | Split after Alert Center/Security if cost route metrics justify another pass. |
 | `.overwatch_final/sections/change_drift.py` | 2924 | Change drift mixes overview, evidence, and investigation rendering. | Below 3000 now; revisit after larger modules are reduced. |
-| `.overwatch_final/sections/account_health.py` | 1483 | Compatibility route still owns the large Overview load/render body, but checklist/action/access/Morning pieces are split. | Finish Overview/controller split, then convert to full renderer dispatch shell. |
 
 ## Completed Thin Facades
 
 | File | Approx lines | Status |
 |---|---:|---|
+| `.overwatch_final/sections/account_health.py` | 83 | Account Health public route/renderer-dispatch and compatibility reexport facade after Overview, Morning Report, checklist, access hygiene, history, and action-queue split; both pane renderers are map-owned. |
 | `.overwatch_final/sections/alert_center.py` | 845 | Alert Center public route/load-gate/renderer-dispatch shell after pane, admin, diagnostics, and data split; legacy Issue Inbox/Triage Digest aliases normalize to Active Alerts. |
 | `.overwatch_final/sections/security_posture.py` | 180 | Security Monitoring public route/dispatch and compatibility reexport facade after overview, access-review, action-queue, and privilege-sprawl split, now with explicit `__all__` and a <250-line guard. |
 | `.overwatch_final/sections/dba_tools.py` | 304 | Thin public DBA Tools selector/dispatch and compatibility reexport facade, locked by no-implementation tests. |
@@ -98,6 +98,9 @@ Reduce bloat without breaking the six-section operator model or removing useful 
 | `.overwatch_final/sections/account_health_access_hygiene.py` | 150 | Account-level access hygiene SQL wrapper, annotation, and read-only user/auth verification SQL. |
 | `.overwatch_final/sections/account_health_access_hygiene_view.py` | 147 | Account Access Hygiene renderer preserving load, source, meta, and queue keys plus No Database Context scope. |
 | `.overwatch_final/sections/account_health_morning_view.py` | 221 | DBA Daily Brief packet builder and Morning Report renderer preserving lookback, fallback, source, meta, and morning packet keys. |
+| `.overwatch_final/sections/account_health_overview_models.py` | 214 | Overview operating snapshot renderer and DBA intervention-matrix model extracted from the route. |
+| `.overwatch_final/sections/account_health_history.py` | 353 | Checklist history insert/trend SQL, closure analytics SQL, operability fact SQL, and checklist snapshot persistence. |
+| `.overwatch_final/sections/account_health_overview_view.py` | 986 | Account Health Overview controller/renderer preserving health refresh, auto-load scope, checklist, access hygiene, trend, closure, secondary evidence, quick nav, and warehouse-pressure keys. |
 
 ## Duplicate Code Groups
 
@@ -140,17 +143,17 @@ These are candidates, not approved removals:
 - `tests/test_alert_facade.py` proves representative `utils.alerts` imports still point to focused modules and that internal callers do not import private facade names.
 - `tests/test_alert_lifecycle.py`, `tests/test_alert_triage.py`, `tests/test_alert_action_queue.py`, `tests/test_alert_command_center.py`, `tests/test_alert_catalog.py`, `tests/test_alert_delivery.py`, and `tests/test_alert_native_catalog.py` cover the completed alert helper split.
 - `tests/test_explicit_load.py` covers explicit dataframe loads, session-state reuse, error-to-empty-frame handling, and CSV export wrapper behavior.
-- `tests/test_account_health_split.py` locks Account Health pane contracts, compatibility reexports, retired route normalization, source-scope metadata, source-health state classification, SQL/FQN builders, data helper contracts, checklist readiness, review-only action queue payloads, access hygiene No Database Context behavior, Morning Report keys, partial renderer dispatch, and the current Account Health shell no-creep guard.
+- `tests/test_account_health_split.py` locks Account Health pane contracts, compatibility reexports, retired route normalization, source-scope metadata, source-health state classification, SQL/FQN builders, data helper contracts, checklist readiness, review-only action queue payloads, access hygiene No Database Context behavior, Morning Report and Overview keys, renderer dispatch coverage, history/closure SQL escaping, snapshot persistence behavior, and the Account Health shell no-creep guard.
 - `tests/test_command_center.py` now validates correlated investigation UI placement and explicit load gates.
 - `tests/test_contention_center.py`, `tests/test_formula_regressions.py`, and `tests/test_operational_intelligence.py` validate renamed workflow/action contracts.
 - `perf_tests/full_app_snowflake_regression.py` is the live Snowflake gate once authentication is corrected.
 
 ## Next Rewrite Order
 
-1. Continue Account Health if incomplete: Overview renderer/controller, remaining history/load helper split, and full renderer dispatch shell.
-2. Split Cost Center if it remains above threshold after Account Health.
-3. Split Executive Landing advanced/admin panels if they remain above threshold.
-4. Clean up Task Management delegated routes only after route metrics prove no active usage.
+1. Split Cost Center if it remains above threshold after Account Health.
+2. Split Executive Landing advanced/admin panels if they remain above threshold.
+3. Clean up Task Management delegated routes only after route metrics prove no active usage.
+4. Consider Change Drift split if route metrics justify it.
 5. Retire legacy route rendering and rationalize mart loads to feed daily workflows directly before dropping any old objects.
 
 ## De-Bloat Completed After Initial Audit
@@ -192,3 +195,4 @@ These are candidates, not approved removals:
 | Security Posture facade hardening | Added explicit `__all__` to `security_posture.py` and tightened split tests so the route stays under 250 lines and remains free of ACCOUNT_USAGE strings, query calls, dataframe construction, DDL/DML, and moved private helper definitions. |
 | Account Health initial split | Reduced `.overwatch_final/sections/account_health.py` from the local 3604-line baseline (older docs listed about 3812) to about 3190 lines by moving Account Health contracts, common helpers, source-health models, bounded data/query helpers, deterministic FQN/DDL/migration SQL builders, and the source-health renderer into focused modules. The public route keeps compatibility reexports and existing Account Health panes, keys, session-state names, and action behavior; Overview/Morning rendering and action queue/checklist mutation flows are deferred for a guarded pass. |
 | Account Health checklist/action/Morning split | Reduced `.overwatch_final/sections/account_health.py` from about 3190 lines to about 1483 lines by moving checklist routing/readiness helpers, review-only action queue payloads/writers, access hygiene SQL/annotation/rendering, and the Morning Report packet builder/renderer into focused modules. Existing Account Health panes and keys are preserved, including access hygiene load/source/meta/queue keys and Morning Report lookback/fallback/source/meta packet keys. The remaining route owns the large Overview branch and a partial renderer map for the moved Morning Report pane. |
+| Account Health Overview/history split completed | Reduced `.overwatch_final/sections/account_health.py` from about 1483 lines to about 83 lines by moving the Overview controller/renderer, operating snapshot/intervention helpers, checklist history SQL, closure analytics SQL, operability fact SQL, and checklist snapshot persistence into focused modules. `ACCOUNT_HEALTH_RENDERERS` now covers both Overview and Morning Report, and tests keep the route free of ACCOUNT_USAGE strings, query calls, dataframe construction, DDL/DML, and moved helper definitions. |

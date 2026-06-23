@@ -329,6 +329,7 @@ SECTION_BY_TITLE = dict(_CANONICAL_SECTION_BY_TITLE)
 SECTION_ICONS = {_section.title: _section.icon for _section in SECTION_DEFINITIONS}
 
 SECTION_ALIASES = dict(_ROUTE_SECTION_ALIASES)
+# Fail fast at startup if config navigation drifts from the central registry.
 assert tuple(PRIMARY_SECTIONS) == _ROUTE_PRIMARY_SECTION_TITLES
 
 

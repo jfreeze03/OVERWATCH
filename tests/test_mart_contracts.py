@@ -3,6 +3,7 @@ from collections import Counter
 import re
 import sys
 import unittest
+from unittest.mock import patch
 
 import pandas as pd
 
@@ -12,6 +13,9 @@ APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
 
 from utils import mart  # noqa: E402
+from utils import mart_contracts  # noqa: E402
+from utils import mart_filters  # noqa: E402
+from utils import mart_names  # noqa: E402
 
 
 MART_PUBLIC_SURFACE = {
@@ -122,6 +126,64 @@ class MartContractTests(unittest.TestCase):
             mart.mart_object_name("FACT_QUERY_HOURLY; DROP TABLE X")
         with self.assertRaises(ValueError):
             mart.mart_object_name("")
+
+    def test_mart_micro_split_reexports_preserve_identity(self):
+        self.assertIs(mart.MartResult, mart_contracts.MartResult)
+        self.assertIs(mart.mart_source_caption, mart_contracts.mart_source_caption)
+        self.assertIs(mart.mart_object_name, mart_names.mart_object_name)
+        self.assertIs(mart._mart_text_filter, mart_filters._mart_text_filter)
+        self.assertIs(mart._mart_company_filter, mart_filters._mart_company_filter)
+        self.assertIs(mart._mart_environment_column, mart_filters._mart_environment_column)
+        self.assertIs(mart._mart_environment_filter, mart_filters._mart_environment_filter)
+        self.assertIs(mart._mart_database_filter, mart_filters._mart_database_filter)
+        self.assertIs(mart._mart_window_condition, mart_filters._mart_window_condition)
+        self.assertIs(mart._mart_window_filter, mart_filters._mart_window_filter)
+
+    def test_mart_filter_helpers_preserve_behavior(self):
+        self.assertEqual(mart._mart_text_filter("", ""), "")
+
+        text_filter = mart._mart_text_filter("WAREHOUSE_NAME", "WH")
+        self.assertIn("WAREHOUSE_NAME ILIKE", text_filter)
+        self.assertIn("'WH'", text_filter)
+
+        self.assertEqual(mart._mart_company_filter("ALL"), "")
+        company_filter = mart._mart_company_filter("ALFA")
+        self.assertIn("COMPANY", company_filter)
+        self.assertIn("'ALFA'", company_filter)
+
+        self.assertEqual(mart._mart_environment_column("DATABASE_NAME"), "ENVIRONMENT")
+        self.assertEqual(mart._mart_environment_column("q.database_name"), "q.environment")
+
+        with patch("utils.mart_filters.get_state", return_value="PROD"):
+            database_filter = mart._mart_database_filter("DATABASE_NAME", "APP", "ALFA")
+        self.assertIn("DATABASE_NAME ILIKE", database_filter)
+        self.assertIn("UPPER(ENVIRONMENT)", database_filter)
+
+        window_condition = mart._mart_window_condition(
+            "HOUR_START",
+            7,
+            start_date="2026-01-01",
+            end_date="2026-01-31",
+        )
+        self.assertIn("DATEADD('DAY', -7", window_condition)
+        self.assertIn("2026-01-01 00:00:00", window_condition)
+        self.assertIn("2026-01-31 00:00:00", window_condition)
+        self.assertTrue(mart._mart_window_filter("HOUR_START", 7).startswith("AND "))
+
+    def test_mart_micro_modules_stay_tiny_and_focused(self):
+        contracts_source = (APP_ROOT / "utils" / "mart_contracts.py").read_text(encoding="utf-8")
+        names_source = (APP_ROOT / "utils" / "mart_names.py").read_text(encoding="utf-8")
+        filters_source = (APP_ROOT / "utils" / "mart_filters.py").read_text(encoding="utf-8")
+
+        for fragment in ("SELECT ", "FROM ", "CREATE TABLE"):
+            with self.subTest(module="mart_contracts", fragment=fragment):
+                self.assertNotIn(fragment, contracts_source)
+        for fragment in ("build_mart_", "SELECT ", "ACCOUNT_USAGE"):
+            with self.subTest(module="mart_names", fragment=fragment):
+                self.assertNotIn(fragment, names_source)
+        for fragment in ("FACT_", "DIM_", "MART_DBA_CONTROL_ROOM"):
+            with self.subTest(module="mart_filters", fragment=fragment):
+                self.assertNotIn(fragment, filters_source)
 
     def test_public_mart_builder_surface_still_exists(self):
         for group, names in MART_PUBLIC_SURFACE.items():

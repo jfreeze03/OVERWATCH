@@ -7,31 +7,22 @@ can fall back to the existing live ACCOUNT_USAGE queries.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import pandas as pd
 
-from config import ETL_AUDIT_DB, ETL_AUDIT_SCHEMA, ENVIRONMENT_CONFIG, DEFAULT_ENVIRONMENT
-from runtime_state import GLOBAL_ENVIRONMENT, get_state
-from .company_filter import get_environment_db_patterns
+from .mart_contracts import MartResult, mart_source_caption
+from .mart_filters import (
+    _active_environment,
+    _mart_company_filter,
+    _mart_database_filter,
+    _mart_environment_column,
+    _mart_environment_filter,
+    _mart_text_filter,
+    _mart_window_condition,
+    _mart_window_filter,
+)
+from .mart_names import mart_object_name
 from .metering_sql import build_cost_cockpit_metering_sql, build_cost_run_rate_metering_sql
-from .query import run_query, safe_identifier, sql_literal
-
-
-@dataclass(frozen=True)
-class MartResult:
-    data: pd.DataFrame
-    available: bool
-    source: str
-    message: str = ""
-
-
-def mart_object_name(table_name: str) -> str:
-    """Return a safe fully qualified mart table name."""
-    table = safe_identifier(table_name)
-    db = safe_identifier(ETL_AUDIT_DB)
-    schema = safe_identifier(ETL_AUDIT_SCHEMA)
-    return f"{db}.{schema}.{table}"
+from .query import run_query, sql_literal
 
 
 def load_mart_table(
@@ -763,8 +754,6 @@ def build_mart_chargeback_sql(
             OWNER_EVIDENCE
         ORDER BY TOTAL_CREDITS DESC, QUERY_COUNT DESC
     """
-
-
 def build_mart_cost_explorer_sql(
     days_back: int = 30,
     company: str = "ALFA",
@@ -836,8 +825,6 @@ def build_mart_cost_explorer_sql(
             SCOPE_REVIEW
         ORDER BY TOTAL_CREDITS DESC, QUERY_COUNT DESC
     """
-
-
 def build_mart_cost_cockpit_sql(company: str = "ALFA", days: int = 7) -> str:
     """Build the Cost & Contract landing cockpit from hourly warehouse facts."""
     table = mart_object_name("FACT_WAREHOUSE_HOURLY")
@@ -937,81 +924,6 @@ def build_mart_cost_run_rate_sql(company: str = "ALFA") -> str:
     table = mart_object_name("FACT_WAREHOUSE_HOURLY")
     company_filter = _mart_company_filter(company)
     return build_cost_run_rate_metering_sql(table, "hour_start", company_filter)
-
-
-def _mart_text_filter(column: str, value: str = "") -> str:
-    value = str(value or "").strip()
-    if not value:
-        return ""
-    return f"AND {column} ILIKE '%' || {sql_literal(value, 300)} || '%'"
-
-
-def _mart_company_filter(company: str = "ALFA") -> str:
-    if str(company or "").upper() == "ALL":
-        return ""
-    return f"AND COMPANY = {sql_literal(company, 100)}"
-
-
-def _active_environment() -> str:
-    try:
-        env = str(get_state(GLOBAL_ENVIRONMENT, DEFAULT_ENVIRONMENT) or DEFAULT_ENVIRONMENT)
-    except Exception:
-        env = DEFAULT_ENVIRONMENT
-    return env if env in ENVIRONMENT_CONFIG else DEFAULT_ENVIRONMENT
-
-
-def _mart_environment_column(column: str = "ENVIRONMENT") -> str:
-    """Return the environment column matching a mart database column or alias."""
-    raw = str(column or "ENVIRONMENT").strip()
-    if not raw:
-        return "ENVIRONMENT"
-    parts = raw.split(".")
-    leaf = parts[-1].strip('"').upper()
-    if leaf in {"DATABASE_NAME", "PROCEDURE_CATALOG", "TABLE_CATALOG", "TABLE_CATALOG_NAME"}:
-        return ".".join(parts[:-1] + ["environment"]) if len(parts) > 1 else "ENVIRONMENT"
-    return raw
-
-
-def _mart_environment_filter(column: str = "ENVIRONMENT", company: str = "ALFA") -> str:
-    environment = _active_environment()
-    if environment.upper() == "ALL":
-        return ""
-    env_col = _mart_environment_column(column)
-    values = [environment]
-    values.extend(get_environment_db_patterns(environment, company))
-    if environment == "DEV_ALL":
-        values.extend(["ALL DEV/SIT", "OTHER ALFA NON-PROD"])
-    if not values:
-        return ""
-    parts = [f"UPPER({env_col}) = {sql_literal(str(value).upper(), 300)}" for value in dict.fromkeys(values)]
-    return "AND (" + " OR ".join(parts) + ")"
-
-
-def _mart_database_filter(column: str = "DATABASE_NAME", value: str = "", company: str = "ALFA") -> str:
-    return " ".join(
-        filter(
-            None,
-            [
-                _mart_text_filter(column, value),
-                _mart_environment_filter(column, company),
-            ],
-        )
-    )
-
-
-def _mart_window_condition(column: str, days_back: int, start_date: object = None, end_date: object = None) -> str:
-    clauses = [f"{column} >= DATEADD('DAY', -{int(days_back)}, CURRENT_TIMESTAMP())"]
-    if start_date:
-        clauses.append(f"{column} >= TO_TIMESTAMP_NTZ({sql_literal(str(start_date) + ' 00:00:00', 40)})")
-    if end_date:
-        clauses.append(
-            f"{column} < DATEADD('DAY', 1, TO_TIMESTAMP_NTZ({sql_literal(str(end_date) + ' 00:00:00', 40)}))"
-        )
-    return " AND ".join(clauses)
-
-
-def _mart_window_filter(column: str, days_back: int, start_date: object = None, end_date: object = None) -> str:
-    return "AND " + _mart_window_condition(column, days_back, start_date, end_date)
 
 
 def build_mart_warehouse_overview_sql(
@@ -2320,10 +2232,3 @@ def build_mart_service_task_health_sql(hours_back: int, company: str = "ALFA") -
           {company_filter}
           {env_filter}
     """
-
-
-def mart_source_caption(result: MartResult, fallback_source: str = "ACCOUNT_USAGE") -> str:
-    """Human-readable fast-summary/fallback source label for captions."""
-    if result.available and not result.data.empty:
-        return "Fast summary"
-    return fallback_source

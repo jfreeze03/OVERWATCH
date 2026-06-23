@@ -11,7 +11,7 @@ Reduce bloat without breaking the six-section operator model or removing useful 
 | File | Approx lines | Primary issue | Action |
 |---|---:|---|---|
 | `.overwatch_final/sections/contention_center.py` | 2356 | Contention investigation, render helpers, and route orchestration remain combined. | Revisit after delegated route metrics show active use. |
-| `.overwatch_final/utils/mart.py` | 2329 | Mart setup/build helpers and operational SQL remain broad. | Rationalize after route splits and mart-load audit. |
+| `.overwatch_final/utils/mart.py` | 2240 | Mart load helpers and operational SQL builder families remain broad after contracts/names/filter helpers moved out. | Split SQL builder families only after source-label/object-name contract coverage. |
 | `.overwatch_final/sections/stored_proc_tracker.py` | 1849 | Stored procedure tracker still mixes workflow UI, metadata, and evidence helpers. | Revisit only after route metrics prove active use. |
 | `.overwatch_final/sections/dba_control_room/render.py` | 1787 | DBA Control Room render orchestration remains broad inside the already-split package. | Revisit after legacy route cleanup and route metrics. |
 
@@ -80,8 +80,17 @@ rename, or rewrite mart objects. `tests/test_mart_contracts.py` now locks the
 planning document, setup/drop artifact presence, reset-only drop posture,
 stable `utils.mart` public helper groups, representative SQL-builder object
 references, source-caption behavior, and static setup/drop inventory before any
-future mart split. `utils/mart.py` still intentionally owns SQL-builder
-implementations pending deeper source-label and object-name contracts.
+future mart split. `utils/mart.py` remains the compatibility surface and still
+intentionally owns SQL-builder implementations pending deeper source-label and
+object-name contracts.
+
+## New Focused Mart Modules
+
+| File | Approx lines | Contents |
+|---|---:|---|
+| `.overwatch_final/utils/mart_contracts.py` | 25 | `MartResult` and `mart_source_caption()` for fallback-friendly mart result contracts. |
+| `.overwatch_final/utils/mart_names.py` | 17 | Safe fully-qualified mart object-name helper using existing config and identifier validation. |
+| `.overwatch_final/utils/mart_filters.py` | 95 | Pure mart text/company/environment/database/window filter helpers used by existing SQL builders. |
 
 ## New Focused Alert Center Modules
 
@@ -247,17 +256,16 @@ These are candidates, not approved removals:
 - `tests/test_facade_no_creep.py` applies a global line-count, `__all__`, renderer-map, and no-implementation-creep guard across completed facade files.
 - `tests/test_validation_workflow.py` locks the GitHub Validate workflow contract, including push/pull-request triggers on `main`, read-only permissions, dependency installation from both requirement files, Ruff, mypy, compileall, deployment contract, targeted shell guards, Cortex guardrails, unittest discovery, mojibake scan roots and `__pycache__` exclusion, timeout budget, and Ruff-before-typecheck ordering.
 - `tests/test_route_registry.py` locks the central route registry, old 4-section absence from primary UI, legacy section aliases, workflow/default validity, config.py compatibility reexports, route-state parity, dependency-light source guard, import-only runtime smoke behavior, Executive Landing aliases, Security Monitoring aliases, Alert Center aliases, and Account Health retired-route normalization.
-- `tests/test_mart_contracts.py` locks the static mart-load rationalization inventory, setup/drop artifact presence, reset-only drop posture, `mart_object_name()` behavior, public `utils.mart` helper groups, representative SQL-builder object references, source-caption behavior, unique setup table names, required core facts, and static task/procedure families.
+- `tests/test_mart_contracts.py` locks the static mart-load rationalization inventory, setup/drop artifact presence, reset-only drop posture, `mart_object_name()` behavior, public `utils.mart` helper groups, micro-split identity reexports, mart filter behavior, representative SQL-builder object references, source-caption behavior, unique setup table names, required core facts, and static task/procedure families.
 - `tests/test_command_center.py` now validates correlated investigation UI placement and explicit load gates.
 - `tests/test_contention_center.py`, `tests/test_formula_regressions.py`, and `tests/test_operational_intelligence.py` validate renamed workflow/action contracts.
 - `perf_tests/full_app_snowflake_regression.py` is the live Snowflake gate once authentication is corrected.
 
 ## Next Rewrite Order
 
-1. Complete route registry migration for any remaining low-risk pure callers.
-2. Continue mart contract/source-label coverage before changing load plans.
-3. Split `utils/mart.py` SQL builder families by workflow only after tests isolate safe surfaces.
-4. Revisit `contention_center.py` / `stored_proc_tracker.py` / DBA Control Room render only with route metrics.
+1. Continue mart contract/source-label coverage before changing load plans.
+2. Split `utils/mart.py` SQL builder families by workflow only after tests isolate safe surfaces.
+3. Revisit `contention_center.py` / `stored_proc_tracker.py` / DBA Control Room render only with route metrics.
 
 ## De-Bloat Completed After Initial Audit
 
@@ -308,4 +316,5 @@ These are candidates, not approved removals:
 | Route registry consolidation | Added `.overwatch_final/route_registry.py` and converted `workflow_contracts.py` into a compatibility export. Executive Landing workflow aliases, Alert Center pane aliases, Security Monitoring view aliases, and Account Health retired-route normalization now read from the registry through their existing public helper names. |
 | Change Drift / Task Management helper hardening | Made Change Drift action payload `Verification Status` explicitly use the approval-route status instead of relying on a duplicate dict key overwrite. Added source and helper tests that Task Management cancellation/execute renderers continue to use focused SQL builders. |
 | Mart-load rationalization planning | Added `docs/OVERWATCH_MART_LOAD_RATIONALIZATION.md` as a static inventory of current mart families, daily operator dependency groups, consolidation candidates, advanced/admin evidence stores, and no-drop guardrails. |
-| Validation, route, and mart contract hardening | Expanded workflow contract tests for triggers, permissions, dependency install order, timeout, targeted shell guards, and mojibake exclusions. Added route-registry parity/no-import-cycle checks and deeper mart contracts for public helper groups, representative builder object references, source captions, unique setup tables, required core facts, and setup/drop inventory. No mart object was dropped, renamed, disabled, or rewritten; `utils/mart.py` micro-split remains deferred. |
+| Validation, route, and mart contract hardening | Expanded workflow contract tests for triggers, permissions, dependency install order, timeout, targeted shell guards, and mojibake exclusions. Added route-registry parity/no-import-cycle checks and deeper mart contracts for public helper groups, representative builder object references, source captions, unique setup tables, required core facts, and setup/drop inventory. No mart object was dropped, renamed, disabled, or rewritten. |
+| Mart contracts/names/filters micro-split | Moved `MartResult`, `mart_source_caption()`, `mart_object_name()`, and pure mart filter/window helpers into `mart_contracts.py`, `mart_names.py`, and `mart_filters.py` while keeping all public and private compatibility imports available from `utils.mart`. Large SQL builder families remain in `utils/mart.py` for a later contract-backed split. |

@@ -20,6 +20,7 @@ from utils import mart_contracts  # noqa: E402
 from utils import mart_control_room  # noqa: E402
 from utils import mart_cost  # noqa: E402
 from utils import mart_filters  # noqa: E402
+from utils import mart_loader  # noqa: E402
 from utils import mart_names  # noqa: E402
 from utils import mart_recommendations  # noqa: E402
 from utils import mart_service_health  # noqa: E402
@@ -470,6 +471,8 @@ class MartContractTests(unittest.TestCase):
         self.assertIs(mart._mart_database_filter, mart_filters._mart_database_filter)
         self.assertIs(mart._mart_window_condition, mart_filters._mart_window_condition)
         self.assertIs(mart._mart_window_filter, mart_filters._mart_window_filter)
+        self.assertIs(mart.load_mart_table, mart_loader.load_mart_table)
+        self.assertIs(mart.load_latest_control_room_mart, mart_loader.load_latest_control_room_mart)
 
     def test_mart_sql_family_reexports_preserve_identity(self):
         focused_modules = {
@@ -504,8 +507,12 @@ class MartContractTests(unittest.TestCase):
 
     def test_mart_compatibility_surface_is_now_loader_shell(self):
         source = (APP_ROOT / "utils" / "mart.py").read_text(encoding="utf-8")
-        self.assertLessEqual(len(source.splitlines()), 250)
+        self.assertLess(len(source.splitlines()), 180)
         for fragment in (
+            "def load_mart_table",
+            "SELECT ",
+            "FROM ",
+            "run_query(",
             "def build_mart_bill_summary_sql",
             "def build_mart_warehouse_overview_sql",
             "def build_mart_usage_overview_sql",
@@ -602,7 +609,7 @@ class MartContractTests(unittest.TestCase):
 
     def test_load_mart_table_reports_available_non_empty_results(self):
         df = pd.DataFrame({"A": [1]})
-        with patch("utils.mart.run_query", return_value=df) as run_query:
+        with patch("utils.mart_loader.run_query", return_value=df) as run_query:
             result = mart.load_mart_table("FACT_QUERY_HOURLY", "SELECT 1", source_label="Fast source")
 
         self.assertTrue(result.available)
@@ -618,7 +625,7 @@ class MartContractTests(unittest.TestCase):
 
     def test_load_mart_table_reports_empty_results_as_unavailable(self):
         df = pd.DataFrame()
-        with patch("utils.mart.run_query", return_value=df):
+        with patch("utils.mart_loader.run_query", return_value=df):
             result = mart.load_mart_table("FACT_QUERY_HOURLY", "SELECT 1")
 
         self.assertFalse(result.available)
@@ -628,7 +635,7 @@ class MartContractTests(unittest.TestCase):
 
     def test_load_mart_table_reports_query_errors_without_raising(self):
         run_query = Mock(side_effect=RuntimeError("warehouse asleep"))
-        with patch("utils.mart.run_query", run_query):
+        with patch("utils.mart_loader.run_query", run_query):
             result = mart.load_mart_table("FACT_QUERY_HOURLY", "SELECT 1")
 
         self.assertFalse(result.available)

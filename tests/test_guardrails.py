@@ -38,7 +38,7 @@ class GuardrailTests(unittest.TestCase):
             st.session_state.update(previous)
 
     def test_load_mart_table_uses_run_query_and_marks_empty_unavailable(self):
-        with patch("utils.mart.run_query", return_value=pd.DataFrame()) as mock_run:
+        with patch("utils.mart_loader.run_query", return_value=pd.DataFrame()) as mock_run:
             result = load_mart_table("MART_DBA_CONTROL_ROOM", "SELECT 1", source_label="DBA mart")
 
         self.assertFalse(result.available)

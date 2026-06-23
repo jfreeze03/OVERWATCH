@@ -203,9 +203,8 @@ def account_usage_probes(conn) -> list[dict[str, Any]]:
             conn,
             "account_usage_warehouse_access",
             """
-            SELECT warehouse_name, state
-            FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSES
-            WHERE deleted IS NULL
+            SELECT warehouse_name, event_state
+            FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_EVENTS_HISTORY
             LIMIT 5
             """,
         ),

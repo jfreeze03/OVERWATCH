@@ -7,14 +7,13 @@ can fall back to the existing live ACCOUNT_USAGE queries.
 
 from __future__ import annotations
 
-import pandas as pd
-
 from . import mart_account_health as _mart_account_health
 from . import mart_adoption as _mart_adoption
 from . import mart_contracts as _mart_contracts
 from . import mart_control_room as _mart_control_room
 from . import mart_cost as _mart_cost
 from . import mart_filters as _mart_filters
+from . import mart_loader as _mart_loader
 from . import mart_names as _mart_names
 from . import mart_recommendations as _mart_recommendations
 from . import mart_service_health as _mart_service_health
@@ -72,6 +71,7 @@ from .mart_filters import (
     _mart_window_condition,
     _mart_window_filter,
 )
+from .mart_loader import load_latest_control_room_mart, load_mart_table
 from .mart_names import mart_object_name
 from .mart_recommendations import (
     build_mart_query_bottleneck_sql,
@@ -117,12 +117,12 @@ from .mart_warehouse import (
     build_mart_warehouse_overview_sql,
     build_mart_warehouse_scaling_sql,
 )
-from .query import run_query, sql_literal
 
 __all__ = [
     *_mart_contracts.__all__,
     *_mart_names.__all__,
     *_mart_filters.__all__,
+    *_mart_loader.__all__,
     *_mart_control_room.__all__,
     *_mart_account_health.__all__,
     *_mart_service_health.__all__,
@@ -133,66 +133,4 @@ __all__ = [
     *_mart_adoption.__all__,
     *_mart_storage_pipeline.__all__,
     *_mart_recommendations.__all__,
-    "load_mart_table",
-    "load_latest_control_room_mart",
 ]
-
-
-def load_mart_table(
-    table_name: str,
-    sql: str,
-    source_label: str | None = None,
-) -> MartResult:
-    """Run a mart query and return a fallback-friendly result object."""
-    source = source_label or mart_object_name(table_name)
-    try:
-        df = run_query(
-            sql,
-            ttl_key=f"mart_{str(table_name).lower()}",
-            tier="historical",
-            section="Mart",
-        )
-        if df.empty:
-            return MartResult(data=df, available=False, source=source, message="No summary rows returned.")
-        return MartResult(data=df, available=True, source=source)
-    except Exception as exc:
-        return MartResult(data=pd.DataFrame(), available=False, source=source, message=str(exc))
-
-
-def load_latest_control_room_mart(company: str = "ALFA", max_age_hours: int = 6) -> MartResult:
-    """Load the latest DBA Control Room mart row for the active company."""
-    table = mart_object_name("MART_DBA_CONTROL_ROOM")
-    company = str(company or "ALFA")
-    company_filter = ""
-    if company.upper() != "ALL":
-        company_filter = f"AND COMPANY = {sql_literal(company, 100)}"
-    sql = f"""
-        WITH latest AS (
-            SELECT *,
-                   ROW_NUMBER() OVER (
-                       PARTITION BY COMPANY
-                       ORDER BY SNAPSHOT_TS DESC
-                   ) AS RN
-            FROM {table}
-            WHERE SNAPSHOT_TS >= DATEADD('HOUR', -{int(max_age_hours)}, CURRENT_TIMESTAMP())
-              {company_filter}
-        )
-        SELECT
-            SNAPSHOT_TS,
-            COMPANY,
-            HEALTH_SCORE,
-            FAILED_QUERIES_24H,
-            FAILED_TASKS_24H,
-            QUEUED_MS_24H,
-            CREDITS_24H,
-            COST_24H_USD,
-            CORTEX_COST_7D_USD,
-            SECURITY_EVENTS_24H,
-            OBJECT_CHANGES_24H,
-            TOP_RISK,
-            LOAD_TS
-        FROM latest
-        WHERE RN = 1
-        ORDER BY COMPANY
-    """
-    return load_mart_table("MART_DBA_CONTROL_ROOM", sql, source_label=table)

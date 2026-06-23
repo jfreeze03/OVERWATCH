@@ -1,13 +1,13 @@
 # OVERWATCH Snowflake Regression Results
 
-- Run ID: `SNOWFLAKE_REGRESSION_CONFIGURED_ACCOUNT_RECHECK`
-- Timestamp: `2026-06-22T21:49:07.587205+00:00`
-- Status: `FAIL`
+- Run ID: `SNOWFLAKE_REGRESSION_LIVE_PASS`
+- Timestamp: `2026-06-23T23:24:48.769959+00:00`
+- Status: `PASS`
 - Environment: `LOKAXGM-WU94316`
-- Role: `ACCOUNTADMIN`
+- Role: `SNOW_ACCOUNTADMINS`
 - Warehouse: `COMPUTE_WH`
 - Database/schema: `DBA_MAINT_DB.OVERWATCH`
-- JSON evidence: `C:\Users\jfree\Desktop\overwatchv3\_deploy_OVERWATCH\perf_tests\results\SNOWFLAKE_REGRESSION_CONFIGURED_ACCOUNT_RECHECK_full_app_snowflake_regression.json`
+- JSON evidence: `C:\Users\jfree\Desktop\overwatchv3\_deploy_OVERWATCH\perf_tests\results\SNOWFLAKE_REGRESSION_LIVE_PASS_full_app_snowflake_regression.json`
 
 ## Sections Tested
 - Executive Landing
@@ -32,27 +32,40 @@
 - Stale chart references: `[]`
 
 ## Snowflake Checks
-- Failure: `390190 (08001): Failed to connect to DB: LOKAXGM-WU94316.snowflakecomputing.com:443, There was an error related to the SAML Identity Provider account parameter. Contact Snowflake support.`
-- snowflake_checks: 0 checks
-- mart_probes: 0 checks
-- account_usage_probes: 0 checks
-
-## Account Identifier Probes
-
-All probes used `externalbrowser`, `CHRISJOHNSON1985007`, `ACCOUNTADMIN`, `COMPUTE_WH`, and `DBA_MAINT_DB.OVERWATCH`.
-
-| Account value | Result |
-|---|---|
-| `LOKAXGM-WU94316` | Reaches Snowflake, then fails with SAML Identity Provider account parameter error. |
-| `de53256.us-east-2.aws` | Reaches Snowflake, then fails with the same SAML Identity Provider account parameter error. |
-| `LOKAXGM-WU94316.us-east-2.aws` | Invalid host/account form for connector use; returns `404 Not Found` on authenticator request. |
-
-Conclusion: this is not an OVERWATCH route/test issue. Static workflow regression passes, but live SQL checks remain blocked by Snowflake externalbrowser/SAML configuration.
+- snowflake_checks: 2 checks
+  - `current_session`: `PASS` (102.09 ms)
+  - `overwatch_schema_access`: `PASS` (1414.97 ms)
+- mart_probes: 24 checks
+  - `MART_DBA_CONTROL_ROOM_preview`: `PASS` (126.74 ms)
+  - `MART_DBA_CONTROL_ROOM_freshness`: `PASS` (159.43 ms)
+  - `MART_EXECUTIVE_OBSERVABILITY_preview`: `PASS` (143.77 ms)
+  - `MART_EXECUTIVE_OBSERVABILITY_freshness`: `PASS` (152.91 ms)
+  - `MART_DATA_TRUST_SUMMARY_preview`: `PASS` (93.77 ms)
+  - `MART_DATA_TRUST_SUMMARY_freshness`: `PASS` (104.46 ms)
+  - `MART_OPERATIONAL_OWNER_COVERAGE_preview`: `PASS` (162.59 ms)
+  - `MART_OPERATIONAL_OWNER_COVERAGE_freshness`: `PASS` (107.8 ms)
+  - `MART_EXECUTIVE_VALUE_LEDGER_preview`: `PASS` (120.86 ms)
+  - `MART_EXECUTIVE_VALUE_LEDGER_freshness`: `PASS` (101.59 ms)
+  - `MART_APP_OBSERVABILITY_SUMMARY_preview`: `PASS` (160.31 ms)
+  - `MART_APP_OBSERVABILITY_SUMMARY_freshness`: `PASS` (156.02 ms)
+  - `MART_PRODUCTION_READINESS_SUMMARY_preview`: `PASS` (84.3 ms)
+  - `MART_PRODUCTION_READINESS_SUMMARY_freshness`: `PASS` (131.8 ms)
+  - `MART_EXECUTIVE_SCORECARD_SUMMARY_preview`: `PASS` (93.55 ms)
+  - `MART_EXECUTIVE_SCORECARD_SUMMARY_freshness`: `PASS` (106.11 ms)
+  - `MART_EXECUTIVE_FORECAST_SUMMARY_preview`: `PASS` (121.75 ms)
+  - `MART_EXECUTIVE_FORECAST_SUMMARY_freshness`: `PASS` (124.19 ms)
+  - `MART_CHANGE_INTELLIGENCE_SUMMARY_preview`: `PASS` (115.01 ms)
+  - `MART_CHANGE_INTELLIGENCE_SUMMARY_freshness`: `PASS` (110.59 ms)
+- account_usage_probes: 2 checks
+  - `account_usage_warehouse_access`: `PASS` (327.08 ms)
+  - `account_usage_recent_metering_access`: `PASS` (2107.57 ms)
 
 ## Object Inventory
+- `summary_marts`: `PASS`, rows `12`
+- `refresh_procedures`: `PASS`, rows `10`
 
 ## Failures
-- 390190 (08001): Failed to connect to DB: LOKAXGM-WU94316.snowflakecomputing.com:443, There was an error related to the SAML Identity Provider account parameter. Contact Snowflake support.
+- None recorded.
 
 ## Recommended Fixes
-- Fix Snowflake externalbrowser/SAML configuration or provide a connector-supported authentication method, then rerun this regression.
+- Review warnings, then run section smoke and full unit regression.

@@ -6,6 +6,7 @@ do not run live Snowflake regression unless credentials/auth are available.
 ## Required Release Gates
 
 1. Green Validate workflow or local equivalent:
+   - GitHub workflow: `.github/workflows/validate.yml`
    - `python -m ruff check .overwatch_final tests`
    - `python -m mypy`
    - `python -m compileall .overwatch_final tests`
@@ -23,8 +24,20 @@ do not run live Snowflake regression unless credentials/auth are available.
    - Treat `snowflake/OVERWATCH_MART_DROP.sql` as a reset/rollback runbook, not a rationalization step.
 5. Browser sanity checklist:
    - App loads at the target URL.
-   - Primary route navigation renders without blank pages.
-   - Executive Landing, DBA Control Room, Cost Center, Account Health, Security Posture, Alert Center, Task Management, and Change Drift render their default views.
+   - Primary route navigation renders the six-section model without blank pages:
+     - Executive Landing
+     - DBA Control Room
+     - Alert Center
+     - Cost & Contract
+     - Workload Operations
+     - Security Monitoring
+   - Primary route labels match `route_registry.PRIMARY_SECTION_TITLES`.
+   - Compatibility/deep-link routes normalize to current workflow locations:
+     - Cost Center -> Cost & Contract workflow
+     - Account Health -> DBA Control Room workflow
+     - Security Posture -> Security Monitoring workflow
+     - Task Management -> Workload Operations workflow
+     - Change Drift / Change & Drift -> Workload Operations delegated workflow path, if still used by saved links.
 6. Performance smoke thresholds:
    - Follow `perf_tests/README.md`.
    - Use the section smoke runner only against an available local or staged URL.

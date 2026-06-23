@@ -954,7 +954,14 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn('st.button("Load Copy History Failures", key="pipe_load_failures")', pipeline_health_text)
         self.assertEqual(task_management.TASK_CONTROL_VIEWS[0], "Job Status Brief")
         self.assertIn("Snowflake task handoff", task_management.TASK_CONTROL_DETAILS["Job Status Brief"])
-        task_management_text = (APP_ROOT / "sections" / "task_management.py").read_text(encoding="utf-8")
+        task_management_text = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in [
+                APP_ROOT / "sections" / "task_management.py",
+                APP_ROOT / "sections" / "task_management_job_status_view.py",
+                APP_ROOT / "sections" / "task_management_sla_cost_view.py",
+            ]
+        )
         self.assertIn('allow_live_fallback=False', task_management_text)
         self.assertIn('"Loading latest task summary snapshot..."', task_management_text)
         self.assertIn('refresh_mode="summary snapshot"', task_management_text)
@@ -965,7 +972,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("OVERWATCH_TASK_STATUS_FEED_STAGE", task_management_text)
         self.assertIn('"Performance Indicators"', task_management_text)
         self.assertNotIn('"Perf Indicators"', task_management_text)
-        self.assertIn("from sections.shell_helpers import render_shell_snapshot", task_management_text)
+        self.assertIn("render_shell_snapshot", task_management_text)
         self.assertIn('("Handoff State", task_status_state)', task_management_text)
         self.assertIn('"Performance Indicators"', task_management_text)
         self.assertIn('"SLA / Cost Drift"', task_management_text)

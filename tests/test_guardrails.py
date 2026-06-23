@@ -82,7 +82,13 @@ class GuardrailTests(unittest.TestCase):
                 APP_ROOT / "sections" / "warehouse_health_view_advisor.py",
             ]
         )
-        task_text = (APP_ROOT / "sections" / "task_management.py").read_text(encoding="utf-8").upper()
+        task_text = "\n".join(
+            path.read_text(encoding="utf-8").upper()
+            for path in [
+                APP_ROOT / "sections" / "task_management.py",
+                APP_ROOT / "sections" / "task_management_etl_audit_view.py",
+            ]
+        )
         adoption_text = (APP_ROOT / "sections" / "adoption_analytics.py").read_text(encoding="utf-8").upper()
 
         self.assertIn("LOAD_SHARED_USAGE_STORAGE_KPIS", usage_text)

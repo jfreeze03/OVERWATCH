@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import patch
 
 import pandas as pd
+import streamlit as st
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,6 +27,14 @@ from sections import executive_landing_security_view as security_view  # noqa: E
 
 
 class ExecutiveLandingSplitTests(unittest.TestCase):
+    def setUp(self):
+        self._previous_state = dict(st.session_state)
+        st.session_state.clear()
+
+    def tearDown(self):
+        st.session_state.clear()
+        st.session_state.update(self._previous_state)
+
     def test_executive_landing_contracts_stay_stable(self):
         self.assertEqual(contracts.EXECUTIVE_OVERVIEW_WORKFLOW, "Executive Overview")
         self.assertEqual(contracts.EXECUTIVE_COST_MOVEMENT_WORKFLOW, "Cost Movement")
@@ -135,6 +144,16 @@ class ExecutiveLandingSplitTests(unittest.TestCase):
         with patch("sections.executive_landing_data.get_session_for_action", return_value=None):
             self.assertFalse(data._load_executive_snapshot("ALFA", "PROD", 7))
 
+    def test_scope_filter_sql_helpers_use_active_scope(self):
+        st.session_state["active_company"] = "Trexis"
+        st.session_state["global_environment"] = "prod"
+        self.assertIn("x.COMPANY = 'Trexis'", data._company_filter_sql("x"))
+        self.assertIn("UPPER(COALESCE(x.ENVIRONMENT, 'ALL')) = 'PROD'", data._environment_filter_sql("x"))
+        st.session_state["active_company"] = "ALL"
+        st.session_state["global_environment"] = "ALL"
+        self.assertEqual(data._company_filter_sql("x"), "")
+        self.assertEqual(data._environment_filter_sql("x"), "")
+
     def test_renderer_maps_cover_every_workflow(self):
         self.assertEqual(set(contracts.EXECUTIVE_LANDING_WORKFLOWS), set(executive_landing.EXECUTIVE_LANDING_RENDERERS))
         self.assertIs(executive_landing.EXECUTIVE_LANDING_RENDERERS["Executive Overview"], overview_view.render_executive_overview)
@@ -207,7 +226,7 @@ class ExecutiveLandingSplitTests(unittest.TestCase):
 
     def test_executive_landing_facade_remains_thin(self):
         source = (APP_ROOT / "sections" / "executive_landing.py").read_text(encoding="utf-8")
-        self.assertLess(len(source.splitlines()), 700)
+        self.assertLess(len(source.splitlines()), 200)
         for fragment in [
             "def _build_platform_operating_score",
             "def _load_executive_snapshot",

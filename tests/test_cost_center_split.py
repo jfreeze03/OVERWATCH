@@ -272,6 +272,7 @@ class CostCenterSplitTests(unittest.TestCase):
         self.assertLess(len(source.splitlines()), 150)
         for fragment in [
             "SNOWFLAKE.ACCOUNT_USAGE",
+            "filter_existing_columns(",
             "run_query(",
             "pd.DataFrame(",
             "CREATE TABLE",

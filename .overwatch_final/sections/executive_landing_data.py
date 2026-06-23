@@ -57,6 +57,7 @@ sql_literal = _lazy_util("sql_literal")
 
 
 from sections.executive_landing_contracts import *
+from sections.executive_landing_common import _active_company, _active_environment
 from sections.executive_landing_models import _executive_snapshot_scope
 
 

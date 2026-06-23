@@ -10,15 +10,16 @@ Reduce bloat without breaking the six-section operator model or removing useful 
 
 | File | Approx lines | Primary issue | Action |
 |---|---:|---|---|
-| `.overwatch_final/sections/task_management.py` | 3530 | Task management and pipeline health overlap Pipeline & Task Health. | Keep as delegated implementation, remove duplicate entry points only after regression. |
 | `.overwatch_final/sections/change_drift.py` | 2924 | Change drift mixes overview, evidence, and investigation rendering. | Below 3000 now; revisit after larger modules are reduced. |
 | `.overwatch_final/sections/contention_center.py` | 2356 | Contention investigation, render helpers, and route orchestration remain combined. | Revisit after delegated route metrics show active use. |
 | `.overwatch_final/utils/mart.py` | 2329 | Mart setup/build helpers and operational SQL remain broad. | Rationalize after route splits and mart-load audit. |
+| `.overwatch_final/sections/stored_proc_tracker.py` | 1849 | Stored procedure tracker still mixes workflow UI, metadata, and evidence helpers. | Revisit only after route metrics prove active use. |
 
 ## Completed Thin Facades
 
 | File | Approx lines | Status |
 |---|---:|---|
+| `.overwatch_final/sections/task_management.py` | 74 | Task Management public workflow selector/renderer-dispatch and compatibility reexport facade after contracts, models, SQL/action helpers, read-only workflow renderers, and guarded task control renderers moved into focused modules. |
 | `.overwatch_final/sections/executive_landing.py` | 133 | Executive Landing public workflow selector/load-gate/renderer-dispatch and compatibility reexport facade after contracts, models, observability loading, workflow panes, charts, data-health, and admin rollups moved into focused modules. |
 | `.overwatch_final/sections/cost_center.py` | 92 | Cost Center public selector/renderer-dispatch and compatibility reexport facade after contracts, models, SQL, action-queue, and all eight view branches moved into focused modules. |
 | `.overwatch_final/sections/account_health.py` | 83 | Account Health public route/renderer-dispatch and compatibility reexport facade after Overview, Morning Report, checklist, access hygiene, history, and action-queue split; both pane renderers are map-owned. |
@@ -139,6 +140,23 @@ Reduce bloat without breaking the six-section operator model or removing useful 
 | `.overwatch_final/sections/executive_landing_actions_view.py` | 99 | Executive Actions renderer preserving decision/action queue display and snapshot gate. |
 | `.overwatch_final/sections/executive_landing_admin_view.py` | 497 | Executive Admin / Advanced renderer, scorecard/value ledger/data trust/production readiness rollups, forecasts, change intelligence, closed-loop, and correlated-investigation summaries. |
 
+## New Focused Task Management Modules
+
+| File | Approx lines | Contents |
+|---|---:|---|
+| `.overwatch_final/sections/task_management_contracts.py` | 26 | Task Management workflow names, details, task state sets, and recovery SLA target. |
+| `.overwatch_final/sections/task_management_common.py` | 124 | Quoted task names, typed confirmation helpers, task inventory load wrapper, execution-context cache, admin SQL runner, and admin audit wrapper. |
+| `.overwatch_final/sections/task_management_models.py` | 1569 | Task/procedure dependency parsing, predecessor/root detection, graph impact, failure classification, recovery SLA, critical-path, job-status, reliability, and runbook dataframe models. |
+| `.overwatch_final/sections/task_management_sql.py` | 185 | ETL/admin audit FQNs, query-detail SQL, guarded task/graph SQL builders, preflight SQL, and reliability proof/generated SQL helpers. |
+| `.overwatch_final/sections/task_management_action_queue.py` | 183 | Review-only task history, ETL audit, failure-console, and operations-brief action queue payloads/writers. |
+| `.overwatch_final/sections/task_management_job_status_view.py` | 543 | Job Status Brief renderer, mart-first/live-gated task operations scope load, task status boards, critical-path view, and task graph operations download. |
+| `.overwatch_final/sections/task_management_failure_console_view.py` | 206 | Failure Console renderer preserving failure load, category/detail filters, action-queue handoff, query telemetry, and runbook download keys. |
+| `.overwatch_final/sections/task_management_sla_cost_view.py` | 252 | SLA & Cost Drift renderer preserving release-risk, query detail, and drift workflow keys. |
+| `.overwatch_final/sections/task_management_history_view.py` | 108 | Task History renderer preserving task/history load state, failed-task queue handoff, and `task_history.csv`. |
+| `.overwatch_final/sections/task_management_etl_audit_view.py` | 79 | ETL Audit renderer preserving `etl_load`, `tm_df_etl`, `tm_etl_queue`, recent-window query, and `etl_audit.csv`. |
+| `.overwatch_final/sections/task_management_control_view.py` | 296 | Guarded Control Center renderer preserving typed confirmations, `admin_button_disabled()`, graph/task/cancel keys, admin action audit, and rerun behavior. |
+| `.overwatch_final/sections/task_management_execute_view.py` | 109 | Guarded Execute Task renderer preserving typed confirmation, on-demand execute key behavior, and admin audit logging. |
+
 ## Duplicate Code Groups
 
 | Group | Symptoms | Target utility |
@@ -166,7 +184,7 @@ These are candidates, not approved removals:
 
 | Metric | Current | Target |
 |---|---:|---:|
-| Large app modules above 3000 lines | 1 | 3 or fewer |
+| Large app modules above 3000 lines | 0 | 3 or fewer |
 | Daily operator mart tables | 90+ expected in current setup | 28-34 after migration |
 | Primary route aliases exposed to users | Several before this pass | Zero known in primary UI |
 | Live Snowflake regression coverage | New runner, blocked by auth | Passing in test account |
@@ -183,16 +201,17 @@ These are candidates, not approved removals:
 - `tests/test_account_health_split.py` locks Account Health pane contracts, compatibility reexports, retired route normalization, source-scope metadata, source-health state classification, SQL/FQN builders, data helper contracts, checklist readiness, review-only action queue payloads, access hygiene No Database Context behavior, Morning Report and Overview keys, renderer dispatch coverage, history/closure SQL escaping, snapshot persistence behavior, and the Account Health shell no-creep guard.
 - `tests/test_cost_center_split.py` locks Cost Center pane contracts, compatibility reexports, allocation/source helpers, SQL builders, review-only action queue behavior, renderer map coverage, view key preservation, and the Cost Center facade line/no-creep guard.
 - `tests/test_executive_landing_split.py` locks Executive Landing workflow contracts, legacy aliases, compatibility reexports, scoring/filter helpers, offline snapshot behavior, renderer map coverage, dispatch helper behavior, key/navigation preservation, and the Executive Landing facade no-creep guard.
+- `tests/test_task_management_split.py` locks Task Management workflow contracts, compatibility reexports, graph/model helpers, guarded SQL builders, review-only action queue payloads, renderer map coverage, view key preservation, and the Task Management facade no-creep guard.
 - `tests/test_command_center.py` now validates correlated investigation UI placement and explicit load gates.
 - `tests/test_contention_center.py`, `tests/test_formula_regressions.py`, and `tests/test_operational_intelligence.py` validate renamed workflow/action contracts.
 - `perf_tests/full_app_snowflake_regression.py` is the live Snowflake gate once authentication is corrected.
 
 ## Next Rewrite Order
 
-1. Clean up Task Management delegated routes only after route metrics prove no active usage.
-2. Consider Change Drift split if route metrics justify it.
-3. Retire legacy route rendering.
-4. Rationalize mart loads to feed daily workflows directly before dropping any old objects.
+1. Consider Change Drift split if route metrics justify it.
+2. Retire legacy route rendering.
+3. Rationalize mart loads to feed daily workflows directly before dropping any old objects.
+4. Reduce broad utility modules such as `utils/mart.py` if they remain painful after route cleanup.
 
 ## De-Bloat Completed After Initial Audit
 
@@ -236,3 +255,4 @@ These are candidates, not approved removals:
 | Account Health Overview/history split completed | Reduced `.overwatch_final/sections/account_health.py` from about 1483 lines to about 83 lines by moving the Overview controller/renderer, operating snapshot/intervention helpers, checklist history SQL, closure analytics SQL, operability fact SQL, and checklist snapshot persistence into focused modules. `ACCOUNT_HEALTH_RENDERERS` now covers both Overview and Morning Report, and tests keep the route free of ACCOUNT_USAGE strings, query calls, dataframe construction, DDL/DML, and moved helper definitions. |
 | Cost Center split completed for current pass | Reduced `.overwatch_final/sections/cost_center.py` from about 3106 lines to about 92 lines by moving contracts, allocation/dataframe models, SQL builders, review-only action queue helpers, optional query-history expression probing, and all eight Cost Center render branches into focused modules. `COST_CENTER_RENDERERS` covers Cost Explorer, Explain This Bill, User Leaderboard, Burn Rate, Reconciliation, Forecast, Attribution, and Chargeback while preserving existing Streamlit keys, session-state names, CSV filenames, mart-first/live fallback behavior, and review-gated action queue boundaries. |
 | Executive Landing split completed for current pass | Reduced `.overwatch_final/sections/executive_landing.py` from about 3746 lines to about 133 lines by moving workflow contracts, common navigation/scope helpers, platform/observability models, offline-safe data loading, charts, data-health panels, all seven workflow renderers, and Executive Admin / Advanced rollups into focused modules. `EXECUTIVE_LANDING_RENDERERS` covers Executive Overview, Cost Movement, Operational Risk, Security Risk, Change Summary, Executive Actions, and Executive Admin / Advanced while preserving legacy aliases, progressive/on-demand loading, offline Snowflake behavior, `executive_landing_*` session-state keys, and `executive_nav_*` navigation behavior. |
+| Task Management split completed for current pass | Reduced `.overwatch_final/sections/task_management.py` from about 3530 lines to about 74 lines by moving contracts, typed-confirmation/common helpers, task graph/failure/recovery models, SQL builders, review-only action queue helpers, read-only workflow renderers, and guarded Control Center / Execute Task branches into focused modules. `TASK_MANAGEMENT_RENDERERS` covers Job Status Brief, Failure Console, SLA & Cost Drift, Task History, ETL Audit, Control Center, and Execute Task while preserving task/session keys, typed confirmations, `admin_button_disabled()`, `log_admin_action()` audit behavior, task mutation SQL, and review-only action queue boundaries. |

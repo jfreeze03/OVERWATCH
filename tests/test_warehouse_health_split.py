@@ -23,10 +23,14 @@ class WarehouseHealthSplitTests(unittest.TestCase):
     def test_warehouse_health_reexports_moved_contract_sql_and_dataframe_helpers(self):
         from sections import warehouse_health
         from sections import warehouse_health_actions
+        from sections import warehouse_health_capacity
         from sections import warehouse_health_contracts
         from sections import warehouse_health_dataframes
         from sections import warehouse_health_helpers
+        from sections import warehouse_health_loader
         from sections import warehouse_health_overview_panels
+        from sections import warehouse_health_panels
+        from sections import warehouse_health_queue
         from sections import warehouse_health_setting_panels
         from sections import warehouse_health_sql
 
@@ -66,6 +70,17 @@ class WarehouseHealthSplitTests(unittest.TestCase):
         self.assertIs(warehouse_health._render_warehouse_operating_snapshot, warehouse_health_overview_panels._render_warehouse_operating_snapshot)
         self.assertIs(warehouse_health._warehouse_brief_workflow_rows, warehouse_health_overview_panels._warehouse_brief_workflow_rows)
         self.assertIs(warehouse_health._render_warehouse_brief_launchpad, warehouse_health_overview_panels._render_warehouse_brief_launchpad)
+        self.assertIs(warehouse_health._warehouse_action_session, warehouse_health_loader._warehouse_action_session)
+        self.assertIs(warehouse_health._warehouse_sql_exprs, warehouse_health_capacity._warehouse_sql_exprs)
+        self.assertIs(warehouse_health._build_warehouse_capacity_sql, warehouse_health_capacity._build_warehouse_capacity_sql)
+        self.assertIs(warehouse_health._build_warehouse_capacity_markdown, warehouse_health_capacity._build_warehouse_capacity_markdown)
+        self.assertIs(warehouse_health._render_warehouse_watch_floor, warehouse_health_capacity._render_warehouse_watch_floor)
+        self.assertIs(warehouse_health._queue_capacity_findings, warehouse_health_queue._queue_capacity_findings)
+        self.assertIs(warehouse_health._queue_efficiency_findings, warehouse_health_queue._queue_efficiency_findings)
+        self.assertIs(warehouse_health._render_capacity_brief, warehouse_health_panels._render_capacity_brief)
+        self.assertIs(warehouse_health._render_warehouse_source_health, warehouse_health_panels._render_warehouse_source_health)
+        self.assertIs(warehouse_health._apply_warehouse_fast_entry_default, warehouse_health_panels._apply_warehouse_fast_entry_default)
+        self.assertIs(warehouse_health._render_warehouse_overview_exception_strip, warehouse_health_panels._render_warehouse_overview_exception_strip)
 
     def test_workflow_contracts_and_alias_labels_stay_stable(self):
         from sections import warehouse_health_contracts as contracts
@@ -447,15 +462,404 @@ class WarehouseHealthSplitTests(unittest.TestCase):
         self.assertIn("APPROVAL_STATE", sql)
         self.assertIn("Unit Test", sql)
 
+    def test_warehouse_sql_exprs_preserves_optional_column_fallbacks(self):
+        from sections import warehouse_health_capacity as capacity
+
+        def _columns(_session, table, _columns):
+            if table.endswith("QUERY_HISTORY"):
+                return [
+                    "WAREHOUSE_SIZE",
+                    "QUEUED_OVERLOAD_TIME",
+                    "BYTES_SPILLED_TO_REMOTE_STORAGE",
+                    "BYTES_SCANNED",
+                ]
+            return ["CREDITS_USED_COMPUTE"]
+
+        with patch.object(capacity, "filter_existing_columns", side_effect=_columns):
+            exprs = capacity._warehouse_sql_exprs(object())
+
+        self.assertEqual(exprs["wh_size_expr"], "MAX(q.warehouse_size)")
+        self.assertEqual(exprs["queue_avg_expr"], "AVG(q.queued_overload_time)/1000")
+        self.assertEqual(exprs["local_spill_expr"], "0")
+        self.assertEqual(exprs["remote_spill_expr"], "SUM(bytes_spilled_to_remote_storage)")
+        self.assertEqual(exprs["bytes_scanned_expr"], "SUM(q.bytes_scanned)")
+        self.assertEqual(exprs["compute_meter_expr"], "m.credits_used_compute")
+        self.assertEqual(exprs["cloud_meter_expr"], "0::FLOAT")
+
+        with patch.object(capacity, "filter_existing_columns", return_value=[]):
+            fallback = capacity._warehouse_sql_exprs(object())
+        self.assertEqual(fallback["wh_size_expr"], "NULL::VARCHAR")
+        self.assertEqual(fallback["queue_sum_expr"], "0")
+        self.assertEqual(fallback["remote_spill_sum_expr"], "0")
+        self.assertEqual(fallback["compute_meter_expr"], "m.credits_used")
+
+    def test_build_warehouse_capacity_sql_preserves_shape_filters_and_lookback(self):
+        from sections import warehouse_health_capacity as capacity
+
+        def _columns(_session, table, _columns):
+            if table.endswith("QUERY_HISTORY"):
+                return [
+                    "WAREHOUSE_SIZE",
+                    "QUEUED_OVERLOAD_TIME",
+                    "QUEUED_PROVISIONING_TIME",
+                    "QUEUED_REPAIR_TIME",
+                    "BYTES_SPILLED_TO_LOCAL_STORAGE",
+                    "BYTES_SPILLED_TO_REMOTE_STORAGE",
+                ]
+            return ["CREDITS_USED_COMPUTE", "CREDITS_USED"]
+
+        with (
+            patch.object(capacity, "filter_existing_columns", side_effect=_columns),
+            patch.object(capacity, "get_global_filter_clause", return_value="AND q.company = 'ALFA'"),
+            patch.object(capacity, "get_wh_filter_clause", return_value="AND m.warehouse_name LIKE 'ALFA%'"),
+        ):
+            summary_sql, exceptions_sql = capacity._build_warehouse_capacity_sql(object(), 9)
+
+        combined_sql = f"{summary_sql}\n{exceptions_sql}".upper()
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY", combined_sql)
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY", combined_sql)
+        self.assertIn("DATEADD('DAY', -9, CURRENT_TIMESTAMP())", combined_sql)
+        self.assertIn("COALESCE(Q.QUEUED_OVERLOAD_TIME, 0)", combined_sql)
+        self.assertIn("COALESCE(Q.QUEUED_PROVISIONING_TIME, 0)", combined_sql)
+        self.assertIn("COALESCE(Q.BYTES_SPILLED_TO_REMOTE_STORAGE, 0)", combined_sql)
+        self.assertIn("AND Q.COMPANY = 'ALFA'", combined_sql)
+        self.assertIn("AND M.WAREHOUSE_NAME LIKE 'ALFA%'", combined_sql)
+        self.assertIn("LIMIT 100", combined_sql)
+        self.assertIn("CAPACITY_SCORE", combined_sql)
+
+    def test_build_warehouse_capacity_markdown_preserves_headings_and_exception_lines(self):
+        from sections import warehouse_health_capacity as capacity
+
+        markdown = capacity._build_warehouse_capacity_markdown(
+            "ALFA",
+            7,
+            72,
+            {
+                "WAREHOUSES_ACTIVE": 2,
+                "TOTAL_QUERIES": 100,
+                "QUEUED_QUERIES": 4,
+                "SPILL_QUERIES": 3,
+                "CREDIT_SPIKE_PCT": 12.3,
+            },
+            pd.DataFrame([{
+                "SEVERITY": "High",
+                "SIGNAL": "Credit Spike",
+                "WAREHOUSE_NAME": "COMPUTE_WH",
+                "METERED_CREDITS": 42.5,
+                "SETTING_CHANGE_CANDIDATE": "Review AUTO_SUSPEND.",
+            }]),
+        )
+
+        self.assertIn("# OVERWATCH Warehouse Capacity Brief - ALFA", markdown)
+        self.assertIn("## DBA Narrative", markdown)
+        self.assertIn("## Top Warehouse Exceptions", markdown)
+        self.assertIn(
+            "High | Credit Spike | COMPUTE_WH | 42.50 credits | "
+            "Review AUTO_SUSPEND, MIN_CLUSTER_COUNT, MAX_CLUSTER_COUNT",
+            markdown,
+        )
+        self.assertIn("## Settings Change Status", markdown)
+        self.assertIn("## Telemetry Limits", markdown)
+
+    def test_render_warehouse_watch_floor_preserves_button_keys_and_warehouse_scope_updates(self):
+        from sections import warehouse_health_capacity as capacity
+
+        exceptions = pd.DataFrame([{
+            "SEVERITY": "Critical",
+            "SIGNAL": "Queue Pressure",
+            "WAREHOUSE_NAME": "ETL_WH",
+            "QUEUED_QUERIES": 8,
+            "SPILL_QUERIES": 1,
+            "METERED_CREDITS": 12,
+            "CAPACITY_SCORE": 45,
+            "NEXT_ACTION": "Open queue workflow.",
+            "NEXT_WORKFLOW": "Efficiency",
+        }])
+        session_state: dict = {}
+        button_keys: list[str] = []
+
+        def _button(_label, *, key, help, width):
+            button_keys.append(key)
+            return True
+
+        with (
+            patch.object(capacity.st, "session_state", session_state),
+            patch.object(capacity.st, "success"),
+            patch.object(capacity.st, "warning"),
+            patch.object(capacity.st, "markdown"),
+            patch.object(capacity.st, "caption"),
+            patch.object(capacity.st, "columns", return_value=[_Context()]),
+            patch.object(capacity.st, "button", side_effect=_button),
+            patch.object(capacity.st, "rerun"),
+            patch.object(capacity, "render_shell_snapshot"),
+            patch.object(capacity, "render_escaped_bold_text"),
+            patch.object(capacity, "format_credits", side_effect=lambda value: f"{value:.2f} credits"),
+            patch.object(capacity, "_queue_warehouse_health_view") as queue_view,
+        ):
+            capacity._render_warehouse_watch_floor(55, exceptions, {"REMOTE_SPILL_GB": 1, "QUEUED_QUERIES": 8})
+
+        self.assertEqual(button_keys, ["wh_watch_floor_0_Workload Heatmap"])
+        self.assertEqual(session_state["global_warehouse"], "ETL_WH")
+        self.assertEqual(session_state["wh_filter"], "ETL_WH")
+        self.assertEqual(session_state["lm_wh"], "ETL_WH")
+        queue_view.assert_called_once_with("Workload Heatmap")
+
+    def test_queue_capacity_findings_builds_review_only_action_fields(self):
+        from sections import warehouse_health_queue as queue
+
+        captured: dict = {}
+
+        def _upsert(_session, actions):
+            captured["actions"] = actions
+            return len(actions)
+
+        exceptions = pd.DataFrame([{
+            "WAREHOUSE_NAME": "COMPUTE_WH",
+            "SIGNAL": "Credit Spike",
+            "SEVERITY": "High",
+            "QUEUED_QUERIES": 2,
+            "SPILL_QUERIES": 1,
+            "HIGH_LATENCY_QUERIES": 3,
+            "METERED_CREDITS": 44,
+            "CAPACITY_SCORE": 52,
+        }])
+        with (
+            patch.object(queue.st, "session_state", {"active_company": "ALFA", "global_environment": "PROD"}),
+            patch.object(queue, "upsert_actions", side_effect=_upsert),
+            patch.object(queue, "make_action_id", return_value="ACTION-1"),
+        ):
+            saved = queue._queue_capacity_findings(object(), exceptions)
+
+        self.assertEqual(saved, 1)
+        action = captured["actions"][0]
+        self.assertEqual(action["Action ID"], "ACTION-1")
+        self.assertEqual(action["Company"], "ALFA")
+        self.assertEqual(action["Environment"], "PROD")
+        self.assertEqual(action["Category"], "Warehouse Capacity")
+        self.assertIn("Review from", action["Action"])
+        self.assertIn("Do not execute a warehouse change", action["Generated SQL Fix"])
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY", action["Telemetry Query"])
+        self.assertTrue(action["Reviewer"])
+        self.assertTrue(action["Route"])
+        self.assertTrue(action["Route Basis"])
+        self.assertIn("Closure uses post-change telemetry", action["Recovery Status"])
+
+    def test_queue_efficiency_findings_builds_review_only_action_fields(self):
+        from sections import warehouse_health_queue as queue
+
+        captured: dict = {}
+
+        def _upsert(_session, actions):
+            captured["actions"] = actions
+            return len(actions)
+
+        findings = pd.DataFrame([{
+            "WAREHOUSE_NAME": "BI_WH",
+            "EFFICIENCY_SCORE": 48,
+            "QUEUE_SEC_PER_CREDIT": 12.5,
+            "REMOTE_SPILL_GB_PER_CREDIT": 1.2,
+            "METERED_CREDITS": 19,
+        }])
+        with (
+            patch.object(queue.st, "session_state", {"active_company": "Trexis", "global_environment": "PROD"}),
+            patch.object(queue.st, "success"),
+            patch.object(queue.st, "info"),
+            patch.object(queue.st, "error"),
+            patch.object(queue, "upsert_actions", side_effect=_upsert),
+            patch.object(queue, "make_action_id", return_value="EFF-1"),
+        ):
+            queue._queue_efficiency_findings(object(), findings)
+
+        action = captured["actions"][0]
+        self.assertEqual(action["Company"], "Trexis")
+        self.assertEqual(action["Environment"], "PROD")
+        self.assertEqual(action["Category"], "Warehouse Efficiency")
+        self.assertIn("Warehouse Settings Manager", action["Action"])
+        self.assertIn("Do not execute warehouse changes", action["Generated SQL Fix"])
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY", action["Telemetry Query"])
+        self.assertTrue(action["Reviewer"])
+        self.assertTrue(action["Route"])
+        self.assertTrue(action["Route Basis"])
+        self.assertIn("Closure uses queue/spill/credit telemetry", action["Recovery Status"])
+
+    def test_render_capacity_brief_preserves_load_save_download_keys_and_session_writes(self):
+        from sections import warehouse_health_panels as panels
+
+        session_state: dict = {}
+        button_keys: list[str] = []
+        download_keys: list[str] = []
+        summary = pd.DataFrame([{
+            "QUEUED_QUERIES": 0,
+            "SPILL_QUERIES": 0,
+            "HIGH_LATENCY_QUERIES": 0,
+            "TOTAL_QUERIES": 10,
+            "CREDIT_SPIKE_PCT": 0,
+            "METERED_CREDITS": 1.5,
+            "REMOTE_SPILL_GB": 0,
+        }])
+
+        def _button(_label, *, key, **_kwargs):
+            button_keys.append(key)
+            return key == "wh_capacity_load"
+
+        def _download_button(_label, _data, *, file_name, mime, key):
+            download_keys.append(key)
+            return False
+
+        class _LoadStatus:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        with (
+            patch.object(panels.st, "session_state", session_state),
+            patch.object(panels.st, "expander", return_value=_Context()),
+            patch.object(panels.st, "button", side_effect=_button),
+            patch.object(panels.st, "download_button", side_effect=_download_button),
+            patch.object(panels.st, "success"),
+            patch.object(panels.st, "info"),
+            patch.object(panels.st, "warning"),
+            patch.object(panels.st, "error"),
+            patch.object(panels, "day_window_selectbox", return_value=7),
+            patch.object(panels, "render_load_status", return_value=_LoadStatus()),
+            patch.object(panels, "_warehouse_action_session", return_value=object()),
+            patch.object(panels, "_build_warehouse_capacity_sql", return_value=("summary sql", "exceptions sql")),
+            patch.object(panels, "run_query", side_effect=[summary, pd.DataFrame(), pd.DataFrame()]),
+            patch.object(panels, "_warehouse_operability_fact_sql", return_value="operability sql"),
+            patch.object(panels, "render_shell_snapshot"),
+            patch.object(panels, "render_priority_dataframe"),
+            patch.object(panels, "_render_warehouse_watch_floor"),
+        ):
+            panels._render_capacity_brief("ALFA", "PROD")
+
+        self.assertIn("wh_capacity_load", button_keys)
+        self.assertIn("wh_capacity_download", download_keys)
+        self.assertIs(session_state["wh_capacity_summary"], summary)
+        self.assertEqual(session_state["wh_capacity_sql"], {"summary": "summary sql", "exceptions": "exceptions sql"})
+        self.assertEqual(session_state["wh_capacity_meta"]["company"], "ALFA")
+        self.assertEqual(session_state["wh_capacity_meta"]["environment"], "PROD")
+        self.assertEqual(session_state["wh_capacity_meta"]["days"], 7)
+        self.assertIn("global_warehouse", session_state["wh_capacity_meta"])
+        self.assertEqual(session_state["wh_operability_fact_sql"], "operability sql")
+        self.assertIn("wh_operability_fact", session_state)
+
+    def test_render_capacity_brief_preserves_review_and_queue_button_keys(self):
+        from sections import warehouse_health_panels as panels
+
+        button_keys: list[str] = []
+        session_state = {
+            "wh_capacity_summary": pd.DataFrame([{
+                "QUEUED_QUERIES": 2,
+                "SPILL_QUERIES": 1,
+                "HIGH_LATENCY_QUERIES": 1,
+                "TOTAL_QUERIES": 20,
+                "CREDIT_SPIKE_PCT": 30,
+                "METERED_CREDITS": 10,
+                "REMOTE_SPILL_GB": 1,
+            }]),
+            "wh_capacity_exceptions": pd.DataFrame([{
+                "SEVERITY": "High",
+                "SIGNAL": "Credit Spike",
+                "WAREHOUSE_NAME": "COMPUTE_WH",
+                "WAREHOUSE_SIZE": "XSMALL",
+                "QUEUED_QUERIES": 2,
+                "SPILL_QUERIES": 1,
+                "HIGH_LATENCY_QUERIES": 1,
+                "METERED_CREDITS": 10,
+                "CAPACITY_SCORE": 65,
+            }]),
+            "wh_capacity_meta": {"company": "ALFA", "environment": "PROD", "days": 7},
+            "wh_operability_fact": pd.DataFrame(),
+        }
+
+        def _button(_label, *, key, **_kwargs):
+            button_keys.append(key)
+            return False
+
+        def _columns(spec):
+            count = spec if isinstance(spec, int) else len(spec)
+            return [_Context() for _ in range(count)]
+
+        with (
+            patch.object(panels.st, "session_state", session_state),
+            patch.object(panels.st, "expander", return_value=_Context()),
+            patch.object(panels.st, "button", side_effect=_button),
+            patch.object(panels.st, "download_button"),
+            patch.object(panels.st, "columns", side_effect=_columns),
+            patch.object(panels.st, "divider"),
+            patch.object(panels.st, "success"),
+            patch.object(panels.st, "info"),
+            patch.object(panels.st, "warning"),
+            patch.object(panels.st, "error"),
+            patch.object(panels, "day_window_selectbox", return_value=7),
+            patch.object(panels, "render_shell_snapshot"),
+            patch.object(panels, "render_priority_dataframe"),
+            patch.object(panels, "_render_warehouse_watch_floor"),
+            patch.object(panels, "defer_source_note"),
+        ):
+            panels._render_capacity_brief("ALFA", "PROD")
+
+        for key in [
+            "wh_capacity_load",
+            "wh_setting_execution_audit_load",
+            "wh_setting_review_snapshot",
+            "wh_setting_review_trend_load",
+            "wh_action_closure_load",
+            "wh_capacity_queue",
+        ]:
+            self.assertIn(key, button_keys)
+
+    def test_render_warehouse_source_health_preserves_priority_columns(self):
+        from sections import warehouse_health_panels as panels
+
+        source_health = pd.DataFrame([{
+            "SURFACE": "Overview",
+            "STATE": "Loaded",
+            "SOURCE": "Fast summary",
+            "CONFIDENCE": "Fast summary",
+            "ROWS": 3,
+            "SCOPE": "ALFA/PROD",
+            "NEXT_ACTION": "Review",
+            "STATE_RANK": 0,
+        }])
+        captured: dict = {}
+
+        def _render_priority_dataframe(frame, **kwargs):
+            captured["frame"] = frame
+            captured["kwargs"] = kwargs
+
+        with (
+            patch.object(panels.st, "session_state", {}),
+            patch.object(panels.st, "expander", return_value=_Context()),
+            patch.object(panels, "_warehouse_source_health_rows", return_value=source_health),
+            patch.object(panels, "render_shell_snapshot"),
+            patch.object(panels, "defer_source_note"),
+            patch.object(panels, "render_priority_dataframe", side_effect=_render_priority_dataframe),
+        ):
+            panels._render_warehouse_source_health("ALFA", "PROD")
+
+        self.assertEqual(captured["kwargs"]["title"], "Warehouse telemetry source and freshness")
+        self.assertEqual(
+            captured["kwargs"]["priority_columns"],
+            ["SURFACE", "STATE", "SOURCE", "CONFIDENCE", "ROWS", "SCOPE", "NEXT_ACTION"],
+        )
+        self.assertEqual(captured["kwargs"]["sort_by"], ["STATE_RANK", "SURFACE"])
+
     def test_warehouse_health_split_does_not_import_alert_facade(self):
         alert_facade_import = "utils" + ".alerts"
         for path in (
             APP_ROOT / "sections" / "warehouse_health.py",
             APP_ROOT / "sections" / "warehouse_health_actions.py",
+            APP_ROOT / "sections" / "warehouse_health_capacity.py",
             APP_ROOT / "sections" / "warehouse_health_contracts.py",
             APP_ROOT / "sections" / "warehouse_health_dataframes.py",
             APP_ROOT / "sections" / "warehouse_health_helpers.py",
+            APP_ROOT / "sections" / "warehouse_health_loader.py",
             APP_ROOT / "sections" / "warehouse_health_overview_panels.py",
+            APP_ROOT / "sections" / "warehouse_health_panels.py",
+            APP_ROOT / "sections" / "warehouse_health_queue.py",
             APP_ROOT / "sections" / "warehouse_health_setting_panels.py",
             APP_ROOT / "sections" / "warehouse_health_sql.py",
         ):

@@ -295,7 +295,7 @@ def _record_query_telemetry(
 ) -> None:
     """Keep a lightweight in-session trace of OVERWATCH query volume."""
     try:
-        query_hash = hashlib.sha1(str(query_text).encode("utf-8", errors="ignore")).hexdigest()[:12]
+        query_hash = hashlib.sha256(str(query_text).encode("utf-8", errors="ignore")).hexdigest()[:12]
         active_section = _infer_telemetry_section(section, ttl_key)
         entries = ensure_default_state(QUERY_TELEMETRY, [])
         entries.append({

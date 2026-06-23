@@ -116,7 +116,9 @@ class TaskManagementSplitTests(unittest.TestCase):
 
     def test_task_management_facade_no_implementation_creep(self):
         source = Path(task_management.__file__).read_text(encoding="utf-8")
-        self.assertLess(source.count("\n") + 1, 700)
+        self.assertLess(source.count("\n") + 1, 150)
+        self.assertIn("TASK_MANAGEMENT_RENDERERS", source)
+        self.assertIn("render_workflow_selector", source)
         for fragment in (
             "SNOWFLAKE.ACCOUNT_USAGE",
             "INFORMATION_SCHEMA.QUERY_HISTORY",
@@ -126,6 +128,10 @@ class TaskManagementSplitTests(unittest.TestCase):
             "CREATE TABLE",
             "ALTER TABLE",
             "INSERT INTO",
+            "ALTER TASK",
+            "EXECUTE TASK",
+            "SYSTEM$CANCEL",
+            'elif task_view == "',
             'elif task_view == "ETL Audit"',
             'elif task_view == "Control Center"',
             'elif task_view == "Execute Task"',
@@ -199,6 +205,17 @@ class TaskManagementSplitTests(unittest.TestCase):
         self.assertIn('"CHILD_TASK" RESUME', resume_sql[0])
         suspend_sql = task_management._admin_sql_for_graph(graph, "ROOT_TASK", "SUSPEND")
         self.assertEqual(suspend_sql, ['ALTER TASK "ALFA_PROD"."PUBLIC"."ROOT_TASK" SUSPEND'])
+
+        graph_cancel_sql = task_management._cancel_task_graph_sql("group'42")
+        self.assertIn("SYSTEM$CANCEL_TASK_GRAPH", graph_cancel_sql)
+        self.assertIn("'group''42'", graph_cancel_sql)
+        query_cancel_sql = task_management._cancel_task_query_sql("qid'42")
+        self.assertIn("SYSTEM$CANCEL_QUERY", query_cancel_sql)
+        self.assertIn("'qid''42'", query_cancel_sql)
+        self.assertEqual(
+            task_management._execute_task_sql('"ALFA_PROD"."PUBLIC"."ROOT_TASK"'),
+            'EXECUTE TASK "ALFA_PROD"."PUBLIC"."ROOT_TASK"',
+        )
 
     def test_task_action_queue_payloads_are_review_only(self):
         row = pd.Series({

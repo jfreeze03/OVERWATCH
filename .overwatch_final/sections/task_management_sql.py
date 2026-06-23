@@ -90,6 +90,19 @@ def _admin_sql_for_graph(graph_tasks: pd.DataFrame, root_name: str, action: str)
         return child_sql + _admin_sql_for_task(root_row, "RESUME")
     raise ValueError(f"Unsupported graph action: {action}")
 
+
+def _cancel_task_graph_sql(graph_run_group_id: str) -> str:
+    return f"SELECT SYSTEM$CANCEL_TASK_GRAPH({sql_literal(graph_run_group_id)})"
+
+
+def _cancel_task_query_sql(query_id: str) -> str:
+    return f"SELECT SYSTEM$CANCEL_QUERY({sql_literal(query_id)})"
+
+
+def _execute_task_sql(task_fqn: str) -> str:
+    return f"EXECUTE TASK {task_fqn}"
+
+
 def build_admin_preflight_sql(row: pd.Series) -> str:
     full_name = _task_full_name(row)
     database_name = safe_identifier(row.get("DATABASE_NAME", ""))
@@ -182,4 +195,4 @@ def _task_reliability_generated_sql(row: pd.Series) -> str:
         "-- After retry, run the status query and record telemetry in the action queue."
     )
 
-__all__ = ['ETL_AUDIT_FQN', 'ADMIN_AUDIT_FQN', '_query_detail_sql', '_admin_sql_for_task', '_admin_sql_for_graph', 'build_admin_preflight_sql', '_task_reliability_verification_sql', '_task_reliability_proof_sql', '_task_reliability_generated_sql']
+__all__ = ['ETL_AUDIT_FQN', 'ADMIN_AUDIT_FQN', '_query_detail_sql', '_admin_sql_for_task', '_admin_sql_for_graph', '_cancel_task_graph_sql', '_cancel_task_query_sql', '_execute_task_sql', 'build_admin_preflight_sql', '_task_reliability_verification_sql', '_task_reliability_proof_sql', '_task_reliability_generated_sql']

@@ -1087,7 +1087,13 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Data movement and replication", change_drift.WORKFLOWS)
         self.assertIn("Controlled DBA actions", change_drift.WORKFLOWS)
         self.assertEqual(change_drift.WORKFLOW_MODULES["Controlled DBA actions"], "sections.dba_tools")
-        change_drift_text = (APP_ROOT / "sections" / "change_drift.py").read_text(encoding="utf-8")
+        change_drift_text = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in [
+                APP_ROOT / "sections" / "change_drift.py",
+                APP_ROOT / "sections" / "change_drift_workflows_view.py",
+            ]
+        )
         dba_tools_text = (APP_ROOT / "sections" / "dba_tools.py").read_text(encoding="utf-8")
         object_change_text = (APP_ROOT / "sections" / "object_change_monitor.py").read_text(encoding="utf-8")
         self.assertIn('st.session_state["dba_tools_focus_tool"] = "Schema Compare"', change_drift_text)
@@ -1134,7 +1140,17 @@ class NavigationIntegrityTests(unittest.TestCase):
             ],
         }
         for file_name, removed_patterns in hub_files.items():
-            text = (APP_ROOT / "sections" / file_name).read_text(encoding="utf-8")
+            if file_name == "change_drift.py":
+                text = "\n".join(
+                    path.read_text(encoding="utf-8")
+                    for path in [
+                        APP_ROOT / "sections" / "change_drift.py",
+                        APP_ROOT / "sections" / "change_drift_contracts.py",
+                        APP_ROOT / "sections" / "change_drift_workflows_view.py",
+                    ]
+                )
+            else:
+                text = (APP_ROOT / "sections" / file_name).read_text(encoding="utf-8")
             with self.subTest(file_name=file_name):
                 self.assertIn("WORKFLOW_MODULES", text)
                 self.assertIn("render_workflow_module(", text)
@@ -1220,7 +1236,16 @@ class NavigationIntegrityTests(unittest.TestCase):
         ]
         for filename in consolidated_files:
             with self.subTest(filename=filename):
-                section_text = (APP_ROOT / "sections" / filename).read_text(encoding="utf-8")
+                if filename == "change_drift.py":
+                    section_text = "\n".join(
+                        path.read_text(encoding="utf-8")
+                        for path in [
+                            APP_ROOT / "sections" / "change_drift.py",
+                            APP_ROOT / "sections" / "change_drift_workflows_view.py",
+                        ]
+                    )
+                else:
+                    section_text = (APP_ROOT / "sections" / filename).read_text(encoding="utf-8")
                 self.assertNotIn("def render_workflow_selector", section_text)
                 self.assertIn('render_workflow_selector = _lazy_util("render_workflow_selector")', section_text)
                 self.assertNotIn("return str(st.selectbox(label, list(workflows), key=key))", section_text)

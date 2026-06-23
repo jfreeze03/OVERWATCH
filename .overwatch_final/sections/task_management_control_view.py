@@ -224,7 +224,7 @@ def render_task_control_center(session) -> None:
                     if cancel_type == "Graph Run Group" and "GRAPH_RUN_GROUP_ID" in cancel_runs.columns:
                         graph_ids = cancel_runs["GRAPH_RUN_GROUP_ID"].dropna().astype(str).unique().tolist()
                         selected_graph = st.selectbox("Graph run group", graph_ids, key="tm_cancel_graph")
-                        sql_text = f"SELECT SYSTEM$CANCEL_TASK_GRAPH({sql_literal(selected_graph)})"
+                        sql_text = _cancel_task_graph_sql(selected_graph)
                         render_shell_snapshot((
                             ("Cancel target", "Graph run"),
                             ("Selected", selected_graph),
@@ -257,7 +257,7 @@ def render_task_control_center(session) -> None:
                     elif cancel_type == "Query ID" and "QUERY_ID" in cancel_runs.columns:
                         query_ids = cancel_runs["QUERY_ID"].dropna().astype(str).unique().tolist()
                         selected_query = st.selectbox("Query ID", query_ids, key="tm_cancel_query")
-                        sql_text = f"SELECT SYSTEM$CANCEL_QUERY({sql_literal(selected_query)})"
+                        sql_text = _cancel_task_query_sql(selected_query)
                         render_shell_snapshot((
                             ("Cancel target", "Query"),
                             ("Selected", selected_query),

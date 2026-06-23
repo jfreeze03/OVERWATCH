@@ -77,7 +77,7 @@ def render_task_execute_task(session) -> None:
                     disabled=admin_button_disabled(),
                 ):
                     if _require_typed_confirmation(exec_confirmed, "EXECUTE"):
-                        sql_text = f"EXECUTE TASK {full}"
+                        sql_text = _execute_task_sql(full)
                         try:
                             session.sql(sql_text).collect()
                             _log_admin_action(

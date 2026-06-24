@@ -1210,7 +1210,27 @@ class SharedMetricsTests(unittest.TestCase):
         self.assertIn("'OBJECT GRANT'", combined_exceptions)
         self.assertIn("GOR.TABLE_CATALOG AS DATABASE_NAME", combined_exceptions)
         self.assertIn("ALFA_EDW", combined_exceptions)
+        self.assertIn("ROLE_SCOPE AS", mart_summary.upper())
+        self.assertIn("HAS_EXCLUDED_ROLE", mart_summary.upper())
+        self.assertIn("HAS_NON_EXCLUDED_ROLE", mart_summary.upper())
+        self.assertEqual(mart_summary.upper().count("SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS"), 1)
+        self.assertEqual(mart_exceptions.upper().count("SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS"), 1)
         self.assertNotIn("GRANTS_TO_ROLES", combined_summary)
+
+    def test_security_mart_brief_role_scope_preserves_trexis_only_semantics(self):
+        with patch(
+            "utils.shared_metrics_security.filter_existing_columns",
+            return_value=["HAS_MFA", "HAS_PASSWORD", "LAST_SUCCESS_LOGIN"],
+        ):
+            mart_summary, _ = build_shared_security_mart_brief_sql(object(), 14, "Trexis")
+
+        sql = mart_summary.upper()
+        self.assertIn("ROLE_SCOPE AS", sql)
+        self.assertIn("HAS_COMPANY_ROLE", sql)
+        self.assertIn("HAS_NON_COMPANY_ROLE", sql)
+        self.assertIn("COALESCE(RS.HAS_COMPANY_ROLE, 0) = 1", sql)
+        self.assertIn("COALESCE(RS.HAS_NON_COMPANY_ROLE, 0) = 0", sql)
+        self.assertEqual(sql.count("SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS"), 1)
 
     def test_security_privileged_grant_review_builder_keeps_account_grants_unfiltered(self):
         sql = build_shared_security_privileged_grant_review_sql(30, "ALFA", "PROD")

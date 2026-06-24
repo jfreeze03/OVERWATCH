@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from .company_filter import (
+    _exclude_all_sql,
+    _match_any_sql,
     get_active_company,
+    get_company_cfg,
     get_company_scope_key,
     get_db_filter_clause,
     get_environment_case_expr,
@@ -45,6 +48,86 @@ def shared_mfa_proof_label(user_cols: set[str]) -> str:
     if "EXT_AUTHN_DUO" in normalized:
         return "ACCOUNT_USAGE.USERS EXT_AUTHN_DUO signal"
     return "ACCOUNT_USAGE.USERS MFA signal unavailable"
+
+
+def _role_scope_flag_expr(role_col: str, patterns: list[str], *, matching: bool) -> str:
+    """Return a role-pattern flag expression for the local shared-security role CTE."""
+    predicate = _match_any_sql(role_col, patterns) if matching else _exclude_all_sql(role_col, patterns)
+    return predicate or ("FALSE" if matching else "TRUE")
+
+
+def _shared_security_role_scope_cte(company: str) -> str:
+    """Return one role-membership CTE used by repeated user-scope predicates."""
+    company_key = str(company or "").upper()
+    if company_key == "ALL":
+        return ""
+    cfg = get_company_cfg(company)
+    role_patterns = cfg.get("role_patterns", [])
+    role_exclude_patterns = cfg.get("role_exclude_patterns", [])
+    if not role_patterns and not role_exclude_patterns:
+        return ""
+    company_match = _role_scope_flag_expr('gtu."ROLE"', role_patterns, matching=True)
+    company_non_match = _role_scope_flag_expr('gtu."ROLE"', role_patterns, matching=False)
+    excluded_match = _role_scope_flag_expr('gtu."ROLE"', role_exclude_patterns, matching=True)
+    excluded_non_match = _role_scope_flag_expr('gtu."ROLE"', role_exclude_patterns, matching=False)
+    return f"""
+    role_scope AS (
+        SELECT
+            UPPER(TO_VARCHAR(gtu.grantee_name)) AS grantee_name,
+            MAX(IFF({company_match}, 1, 0)) AS has_company_role,
+            MAX(IFF({company_non_match}, 1, 0)) AS has_non_company_role,
+            MAX(IFF({excluded_match}, 1, 0)) AS has_excluded_role,
+            MAX(IFF({excluded_non_match}, 1, 0)) AS has_non_excluded_role
+        FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS gtu
+        WHERE gtu.deleted_on IS NULL
+        GROUP BY UPPER(TO_VARCHAR(gtu.grantee_name))
+    ),
+    """
+
+
+def _shared_security_user_company_filter_clause(column: str, company: str) -> str:
+    """Return user company scope using the shared role_scope CTE when possible."""
+    company_key = str(company or "").upper()
+    if company_key == "ALL":
+        return ""
+    cfg = get_company_cfg(company)
+    candidates = []
+    exclusions = []
+
+    user_match = _match_any_sql(column, cfg.get("user_patterns", []))
+    if user_match:
+        candidates.append(f"({column} IS NOT NULL AND {user_match})")
+    if cfg.get("role_patterns"):
+        candidates.append(
+            "EXISTS ("
+            "SELECT 1 FROM role_scope rs "
+            f"WHERE rs.grantee_name = UPPER(TO_VARCHAR({column})) "
+            "AND COALESCE(rs.has_company_role, 0) = 1 "
+            "AND COALESCE(rs.has_non_company_role, 0) = 0"
+            ")"
+        )
+
+    user_exclude = _exclude_all_sql(column, cfg.get("user_exclude_patterns", []), allow_null=True)
+    if user_exclude:
+        exclusions.append(user_exclude)
+    if cfg.get("role_exclude_patterns"):
+        exclusions.append(
+            "NOT EXISTS ("
+            "SELECT 1 FROM role_scope rs "
+            f"WHERE rs.grantee_name = UPPER(TO_VARCHAR({column})) "
+            "AND COALESCE(rs.has_excluded_role, 0) = 1 "
+            "AND COALESCE(rs.has_non_excluded_role, 0) = 0"
+            ")"
+        )
+
+    if candidates:
+        boundary = "(" + " OR ".join(candidates) + ")"
+        if exclusions:
+            boundary += " AND " + " AND ".join(exclusions)
+        return "AND " + boundary
+    if exclusions:
+        return "AND " + " AND ".join(exclusions)
+    return get_user_company_filter_clause(column, company)
 
 
 def _shared_user_exprs_from_columns(user_cols: set[str] | list[str] | tuple[str, ...]) -> dict[str, str]:
@@ -115,15 +198,17 @@ def build_shared_security_summary_sql(session: object, days: int, company: str) 
         if "HAS_PASSWORD" in user_cols else "NULL::NUMBER"
     )
     last_seen_expr = "u.last_success_login" if "LAST_SUCCESS_LOGIN" in user_cols else "u.created_on"
-    user_filter_lh = get_user_company_filter_clause("lh.user_name", company)
-    user_filter_u = get_user_company_filter_clause("u.name", company)
-    user_filter_g = get_user_company_filter_clause("g.grantee_name", company)
+    role_scope_cte = _shared_security_role_scope_cte(company)
+    user_filter_lh = _shared_security_user_company_filter_clause("lh.user_name", company)
+    user_filter_u = _shared_security_user_company_filter_clause("u.name", company)
+    user_filter_g = _shared_security_user_company_filter_clause("g.grantee_name", company)
     db_filter = get_db_filter_clause("d.database_name")
     object_grant_db_filter = get_db_filter_clause("gor.table_catalog")
     company_label = sql_literal(company, 100)
 
     summary_sql = f"""
-    WITH login_events AS (
+    WITH {role_scope_cte}
+    login_events AS (
         SELECT
             COUNT(*) AS login_events,
             COUNT_IF(lh.is_success = 'NO') AS failed_logins,
@@ -171,7 +256,8 @@ def build_shared_security_summary_sql(session: object, days: int, company: str) 
     FROM login_events, users, recent_grants, shared_dbs
     """
     exceptions_sql = f"""
-    WITH failed_logins AS (
+    WITH {role_scope_cte}
+    failed_logins AS (
         SELECT
             'Failed Login' AS finding_type,
             IFF(COUNT(*) >= 25 OR COUNT(DISTINCT client_ip) >= 5, 'High', 'Medium') AS severity,
@@ -284,9 +370,10 @@ def build_shared_security_mart_brief_sql(session: object, days: int, company: st
         if "HAS_PASSWORD" in user_cols else "NULL::NUMBER"
     )
     last_seen_expr = "u.last_success_login" if "LAST_SUCCESS_LOGIN" in user_cols else "u.created_on"
-    user_filter_lh = get_user_company_filter_clause("lh.user_name", company)
-    user_filter_u = get_user_company_filter_clause("u.name", company)
-    user_filter_g = get_user_company_filter_clause("g.grantee_name", company)
+    role_scope_cte = _shared_security_role_scope_cte(company)
+    user_filter_lh = _shared_security_user_company_filter_clause("lh.user_name", company)
+    user_filter_u = _shared_security_user_company_filter_clause("u.name", company)
+    user_filter_g = _shared_security_user_company_filter_clause("g.grantee_name", company)
     db_filter = get_db_filter_clause("d.database_name")
     object_grant_db_filter = get_db_filter_clause("gor.table_catalog")
     login_table = mart_object_name("FACT_LOGIN_DAILY")
@@ -296,7 +383,8 @@ def build_shared_security_mart_brief_sql(session: object, days: int, company: st
     company_label = sql_literal(company, 100)
 
     summary_sql = f"""
-    WITH login_events AS (
+    WITH {role_scope_cte}
+    login_events AS (
         SELECT
             COALESCE(SUM(success_count), 0) + COALESCE(SUM(failure_count), 0) AS login_events,
             COALESCE(SUM(failure_count), 0) AS failed_logins,
@@ -347,7 +435,8 @@ def build_shared_security_mart_brief_sql(session: object, days: int, company: st
     FROM login_events, users, recent_grants, shared_dbs
     """
     exceptions_sql = f"""
-    WITH failed_logins AS (
+    WITH {role_scope_cte}
+    failed_logins AS (
         SELECT
             'Failed Login' AS finding_type,
             IFF(SUM(failure_count) >= 25 OR COUNT(DISTINCT client_ip) >= 5, 'High', 'Medium') AS severity,
@@ -831,5 +920,3 @@ def load_shared_access_hygiene_snapshot(
         )
 
     return _load_or_reuse("shared_access_hygiene", (company, days, environment), _loader, force=force)
-
-

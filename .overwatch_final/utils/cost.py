@@ -365,6 +365,18 @@ def build_metered_credit_cte(
         )
 
     return f"""
+    scoped_query_history AS (
+        SELECT
+            q.query_id,
+            q.warehouse_name,
+            q.start_time,
+            q.execution_time
+        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+        WHERE q.start_time >= {time_filter}
+          AND q.start_time <  {upper_bound}
+          AND q.warehouse_name IS NOT NULL
+          {query_scope}
+    ),
     metered_hourly AS (
         SELECT
             warehouse_name,
@@ -386,12 +398,8 @@ def build_metered_credit_cte(
             SUM(q.execution_time) OVER (
                 PARTITION BY q.warehouse_name, DATE_TRUNC('hour', q.start_time)
             )                                  AS hour_total_exec_ms
-        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
-        WHERE q.start_time >= {time_filter}
-          AND q.start_time <  {upper_bound}
-          AND q.warehouse_name IS NOT NULL
-          AND q.execution_time > 0
-          {query_scope}
+        FROM scoped_query_history q
+        WHERE q.execution_time > 0
     ){official_attribution_cte},
     per_query_credits AS (
         SELECT
@@ -679,13 +687,9 @@ def build_cost_reconciliation_sql(days_back: int = 30, prefer_query_attribution:
                     THEN 'QUERY_ATTRIBUTION_HISTORY preferred; OVERWATCH fallback for gaps'
                 ELSE 'OVERWATCH allocated fallback'
             END AS attribution_source
-        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+        FROM scoped_query_history q
         LEFT JOIN per_query_credits pqc
           ON q.query_id = pqc.query_id
-        WHERE q.start_time >= DATEADD('day', -{days_back}, CURRENT_TIMESTAMP())
-          AND q.start_time < DATEADD('hour', -24, CURRENT_TIMESTAMP())
-          AND q.warehouse_name IS NOT NULL
-          {query_scope}
         GROUP BY usage_day, q.warehouse_name
     )
     SELECT

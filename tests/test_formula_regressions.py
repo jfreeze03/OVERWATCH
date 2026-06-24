@@ -942,6 +942,8 @@ class FormulaRegressionTests(unittest.TestCase):
     def test_metered_credit_cte_uses_compute_credits_with_total_fallback(self):
         sql = build_metered_credit_cte(hours_back=24, include_recent=True).upper()
         self.assertIn("WAREHOUSE_METERING_HISTORY", sql)
+        self.assertIn("SCOPED_QUERY_HISTORY AS", sql)
+        self.assertIn("FROM SCOPED_QUERY_HISTORY Q", sql)
         self.assertIn("COALESCE(CREDITS_USED_COMPUTE, CREDITS_USED)", sql)
         self.assertIn("AS HOURLY_COMPUTE_CREDITS", sql)
         self.assertNotIn("SUM(CREDITS_USED)               AS HOURLY_COMPUTE_CREDITS", sql)
@@ -965,6 +967,8 @@ class FormulaRegressionTests(unittest.TestCase):
         sql = build_cost_reconciliation_sql(30, prefer_query_attribution=True).upper()
 
         self.assertIn("QUERY_ATTRIBUTION_HISTORY", sql)
+        self.assertEqual(sql.count("SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"), 1)
+        self.assertIn("FROM SCOPED_QUERY_HISTORY Q", sql)
         self.assertIn("ATTRIBUTION_SOURCE", sql)
         self.assertIn("OFFICIAL_ATTRIBUTED_COMPUTE_CREDITS", sql)
         self.assertIn("OVERWATCH_ALLOCATED_CREDITS", sql)

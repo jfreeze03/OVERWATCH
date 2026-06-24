@@ -34,6 +34,7 @@ from .types import (
     COST_WATCH_WORKFLOW,
     DBA_CONTROL_ROOM_DETAIL_PANES,
     DBA_CONTROL_ROOM_PANES,
+    DBA_CONTROL_ROOM_PANE_DETAILS,
     DBA_CONTROL_ROOM_PANE_LABELS,
     FAILURE_TRIAGE_WORKFLOW,
     MORNING_COCKPIT_WORKFLOW,
@@ -123,6 +124,22 @@ from .types import (
     render_priority_dataframe,
     render_workflow_selector,
 )
+
+
+def _render_dba_control_room_workflow_selector() -> str:
+    """Render DBA workflow navigation without hiding the selected deep-link target."""
+    return render_workflow_selector(
+        "DBA Control Room view",
+        "dba_control_room_active_view",
+        DBA_CONTROL_ROOM_PANES,
+        DBA_CONTROL_ROOM_PANE_DETAILS,
+        labels=DBA_CONTROL_ROOM_PANE_LABELS,
+        columns=4,
+        compact_details=True,
+        collapse_after=2,
+        collapsed_label="More DBA workflows",
+    )
+
 
 def _render_consolidated_service_posture() -> None:
     """Render legacy Service Health inside the DBA Control Room workspace."""
@@ -1170,25 +1187,13 @@ def render() -> None:
     data = st.session_state.get("dba_control_room_data", {})
     if st.session_state.get("dba_control_room_active_view") == CONTROL_ROOM_ADMIN_WORKFLOW:
         st.divider()
-        active_view = render_workflow_selector(
-            "DBA Control Room view",
-            "dba_control_room_active_view",
-            DBA_CONTROL_ROOM_PANES,
-            labels=DBA_CONTROL_ROOM_PANE_LABELS,
-            columns=4,
-        )
+        active_view = _render_dba_control_room_workflow_selector()
         if active_view == CONTROL_ROOM_ADMIN_WORKFLOW:
             _render_control_room_admin_advanced(company, environment)
             return
     if not data:
         st.divider()
-        active_view = render_workflow_selector(
-            "DBA Control Room view",
-            "dba_control_room_active_view",
-            DBA_CONTROL_ROOM_PANES,
-            labels=DBA_CONTROL_ROOM_PANE_LABELS,
-            columns=4,
-        )
+        active_view = _render_dba_control_room_workflow_selector()
         if active_view == MORNING_COCKPIT_WORKFLOW:
             _render_morning_cockpit_empty(_load_control_room_evidence)
             return
@@ -1285,13 +1290,7 @@ def render() -> None:
 
     st.divider()
 
-    active_view = render_workflow_selector(
-        "DBA Control Room view",
-        "dba_control_room_active_view",
-        DBA_CONTROL_ROOM_PANES,
-        labels=DBA_CONTROL_ROOM_PANE_LABELS,
-        columns=4,
-    )
+    active_view = _render_dba_control_room_workflow_selector()
 
     if active_view == MORNING_COCKPIT_WORKFLOW:
         _render_morning_cockpit(data, exceptions, row, period_credits, credit_delta, credit_price)

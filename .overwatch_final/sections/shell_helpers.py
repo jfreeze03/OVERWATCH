@@ -403,6 +403,20 @@ def render_shell_kpi_row(metrics: tuple[tuple[str, object], ...]) -> None:
     render_shell_snapshot(metrics)
 
 
+def render_first_paint_summary_shell(
+    *,
+    state: object,
+    headline: object,
+    detail: object = "",
+    metrics: tuple[tuple[str, object], ...] = (),
+    snapshot: tuple[tuple[str, object], ...] = (),
+) -> None:
+    """Render the shared first-paint status, KPI, and snapshot shell."""
+    render_shell_status_strip(state=state, headline=headline, detail=detail)
+    render_shell_kpi_row(metrics)
+    render_shell_snapshot(snapshot)
+
+
 def render_signal_lane_board(
     title: str,
     lanes: Sequence[Mapping[str, object]],

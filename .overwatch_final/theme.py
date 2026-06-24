@@ -515,6 +515,11 @@ ul[data-testid="stSelectboxVirtualDropdown"] li[aria-selected="true"] {
     border-color: var(--border-strong) !important;
     box-shadow: 0 0 12px rgba(var(--accent-rgb), 0.12) !important;
 }
+.stApp [data-testid="stButton"] button:focus-visible,
+.stApp button[data-testid^="stBaseButton"]:focus-visible {
+    outline: 2px solid var(--accent) !important;
+    outline-offset: 2px !important;
+}
 
 /* Slider */
 .stSlider > div > div > div > div {

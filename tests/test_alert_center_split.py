@@ -268,7 +268,9 @@ class AlertCenterSplitTests(unittest.TestCase):
             render_source.index('st.button(f"Load {source_view}"'),
             render_source.index("_load_alert_center_view_data("),
         )
-        self.assertIn("First paint does not query Snowflake", inspect.getsource(alert_center._render_alert_center_first_paint_shell))
+        first_paint_source = inspect.getsource(alert_center._render_alert_center_first_paint_shell)
+        self.assertIn("First paint does not query Snowflake", first_paint_source)
+        self.assertIn("render_first_paint_summary_shell(", first_paint_source)
 
     def test_alert_center_first_paint_summary_cold_state_is_on_demand(self):
         summary = alert_center._alert_center_first_paint_summary(None, "Active Alerts")

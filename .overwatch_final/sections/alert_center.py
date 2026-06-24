@@ -6,6 +6,7 @@ import streamlit as st
 from config import DAY_WINDOW_OPTIONS, DEFAULT_ALERT_EMAIL, DEFAULT_DAY_WINDOW
 from sections.shell_helpers import (
     consume_section_autoload_request,
+    render_first_paint_summary_shell,
     render_data_freshness,
     render_escaped_bold_text,
     render_shell_kpi_row,
@@ -429,24 +430,23 @@ def _render_alert_center_first_paint_shell(
     """Render a useful Alert Center shell while detailed rows remain behind Load."""
     summary = _alert_center_first_paint_summary(data, source_view, cached_summary=cached_summary)
     source_summary = _alert_center_source_summary(required_sources)
-    cta_label = f"Load {source_view}"
-    render_shell_status_strip(
+    render_first_paint_summary_shell(  # First paint does not query Snowflake; cached/session facts only.
         state=state,
         headline=f"{source_view} is ready for explicit load.",
-        detail=note or f"{cta_label} reads {source_summary} for {company} / {environment}.",
+        detail=note or f"Load {source_view} reads {source_summary} for {company} / {environment}.",
+        metrics=(
+            ("Active View", source_view),
+            ("Critical / High", summary["critical_high"]),
+            ("Overdue", summary["overdue"]),
+            ("Open Queue", summary["open_queue"]),
+        ),
+        snapshot=(
+            ("Inputs", source_summary),
+            ("Window", f"{int(days)} days / {int(limit)} rows"),
+            ("Top Lane", summary["top_lane"]),
+            ("Freshness", summary["freshness"]),
+        ),
     )
-    render_shell_kpi_row((
-        ("Active View", source_view),
-        ("Critical / High", summary["critical_high"]),
-        ("Overdue", summary["overdue"]),
-        ("Open Queue", summary["open_queue"]),
-    ))
-    render_shell_snapshot((
-        ("Inputs", source_summary),
-        ("Window", f"{int(days)} days / {int(limit)} rows"),
-        ("Top Lane", summary["top_lane"]),
-        ("Freshness", summary["freshness"]),
-    ))
     loaded_for_summary = isinstance(data, dict)
     _render_alert_command_lane_board(
         _alert_command_lanes(

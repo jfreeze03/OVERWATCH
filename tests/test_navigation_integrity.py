@@ -589,6 +589,11 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('MORNING_COCKPIT_WORKFLOW: "Morning"', full_workspace_text)
         self.assertIn('FAILURE_TRIAGE_WORKFLOW: "Failures"', full_workspace_text)
         self.assertIn('CONTROL_ROOM_ADMIN_WORKFLOW: "Advanced"', full_workspace_text)
+        self.assertIn("DBA_CONTROL_ROOM_PANE_DETAILS", full_workspace_text)
+        self.assertIn("def _render_dba_control_room_workflow_selector", full_workspace_text)
+        self.assertIn("compact_details=True", full_workspace_text)
+        self.assertIn("collapse_after=2", full_workspace_text)
+        self.assertIn('collapsed_label="More DBA workflows"', full_workspace_text)
         self.assertIn('elif active_view == ACTION_QUEUE_WORKFLOW:', full_workspace_text)
         self.assertIn('load_label = "Load Action Queue"', full_workspace_text)
         self.assertIn('ops_detail_options = ("Queue", "Daily Brief", "Priority"', full_workspace_text)
@@ -1109,6 +1114,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(dba_control_room.DBA_CONTROL_ROOM_PANE_LABELS["Change Watch"], "Changes")
         self.assertEqual(dba_control_room.DBA_CONTROL_ROOM_PANE_LABELS["Action Queue"], "Actions")
         self.assertEqual(dba_control_room.DBA_CONTROL_ROOM_PANE_LABELS["Control Room Admin / Advanced"], "Advanced")
+        self.assertEqual(set(dba_control_room.DBA_CONTROL_ROOM_PANE_DETAILS), set(dba_control_room.DBA_CONTROL_ROOM_PANES))
+        self.assertIn("operator snapshot", dba_control_room.DBA_CONTROL_ROOM_PANE_DETAILS["Morning Cockpit"])
+        self.assertIn("guarded diagnostics", dba_control_room.DBA_CONTROL_ROOM_PANE_DETAILS["Control Room Admin / Advanced"])
         self.assertEqual(dba_control_room.normalize_dba_control_room_pane("Fast Watch"), "Morning Cockpit")
         self.assertEqual(dba_control_room.normalize_dba_control_room_pane("Morning Brief"), "Morning Cockpit")
         self.assertEqual(dba_control_room.normalize_dba_control_room_pane("Operations Detail"), "Action Queue")
@@ -2008,6 +2016,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         )
 
     def test_ranked_chart_frame_orders_metrics_descending(self):
+        from utils import display
         from utils.display import rank_chart_frame, time_series_chart_frame
 
         df = pd.DataFrame({
@@ -2020,9 +2029,9 @@ class NavigationIntegrityTests(unittest.TestCase):
 
         trend = time_series_chart_frame(
             pd.DataFrame({
-                "DAY": ["2026-06-02", "invalid", "2026-06-01", "2026-06-01"],
-                "VALUE": ["2.5", "4.0", "1.0", "3.5"],
-                "SERIES": ["Spend", "Spend", "Usage", "Cost"],
+                "DAY": ["2026-06-02", "invalid", "2026-06-01", "2026-06-01", "2026-06-01"],
+                "VALUE": ["2.5", "4.0", "1.0", "3.5", "not numeric"],
+                "SERIES": ["Spend", "Spend", "Usage", "Cost", "Spend"],
             }),
             "DAY",
             "VALUE",
@@ -2034,6 +2043,22 @@ class NavigationIntegrityTests(unittest.TestCase):
         missing = time_series_chart_frame(pd.DataFrame({"DAY": ["2026-06-01"]}), "DAY", "VALUE")
         self.assertTrue(missing.empty)
         self.assertEqual(missing.columns.tolist(), ["DAY", "VALUE"])
+        missing_series = time_series_chart_frame(pd.DataFrame({"DAY": ["2026-06-01"]}), "DAY", "VALUE", series_column="SERIES")
+        self.assertTrue(missing_series.empty)
+        self.assertEqual(missing_series.columns.tolist(), ["DAY", "VALUE", "SERIES"])
+
+        with patch.object(display.st, "altair_chart") as altair_chart:
+            plotted = display.render_area_time_series_chart(
+                pd.DataFrame({
+                    "DAY": ["2026-06-02", "2026-06-01"],
+                    "VALUE": [2, 1],
+                }),
+                "DAY",
+                "VALUE",
+                title="Daily trend",
+            )
+        self.assertEqual(plotted["VALUE"].tolist(), [1, 2])
+        altair_chart.assert_called_once()
 
     def test_workflow_selector_groups_keep_selected_workflow_visible(self):
         from utils.workflows import workflow_selector_groups
@@ -2047,6 +2072,17 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(visible_two, ["Suppression Windows", "Detection Catalog"])
         self.assertEqual(hidden_two, ["Delivery & Automation"])
         self.assertEqual(workflow_selector_groups("Detection Catalog", workflows), (list(workflows), []))
+
+        from sections import dba_control_room
+
+        dba_visible, dba_hidden = workflow_selector_groups(
+            "Action Queue",
+            dba_control_room.DBA_CONTROL_ROOM_PANES,
+            collapse_after=2,
+        )
+        self.assertIn("Action Queue", dba_visible)
+        self.assertIn("Morning Cockpit", dba_visible)
+        self.assertIn("Control Room Admin / Advanced", dba_hidden)
 
     def test_workflow_helpers_keep_landing_pages_compact(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")

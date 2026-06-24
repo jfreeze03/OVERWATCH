@@ -222,6 +222,8 @@ class ThemeRegistryTests(unittest.TestCase):
         self.assertIn(".ow-section-subtitle", theme._STRUCTURAL_CSS)
         self.assertIn("line-height: 1.35", theme._STRUCTURAL_CSS)
         self.assertIn("max-width: min(880px, 100%)", theme._STRUCTURAL_CSS)
+        self.assertIn('[data-testid="stButton"] button:focus-visible', theme._STRUCTURAL_CSS)
+        self.assertIn("outline-offset: 2px", theme._STRUCTURAL_CSS)
         self.assertIn(".ow-filter-strip-shell", theme._STRUCTURAL_CSS)
         button_css = theme._STRUCTURAL_CSS.split("/* Buttons */", 1)[1].split("/* Expanders */", 1)[0]
         self.assertNotIn("backdrop-filter", button_css)

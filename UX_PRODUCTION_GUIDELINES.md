@@ -53,8 +53,14 @@ rows, exports, and specialist diagnostics appear.
 Visible section subtitles should explain the current operating surface in one
 short line. Workflow selectors may collapse advanced choices when the selected
 workflow remains visible and deep-link/session-state behavior is preserved.
+High-traffic workflow hubs such as Executive Landing and DBA Control Room should
+show the selected workflow detail inline, keep the primary/default workflow in
+the first row, and move less common workflows into a clearly named expander.
 Alert Center first paint should show cached counts when they are already in
 session state, otherwise it should stay explicitly on demand until Load is used.
+Use shared first-paint shell helpers for status strips, KPI rows, and snapshots
+when a section can do so without moving data-load decisions out of the owning
+section.
 
 ## Charts And Tables
 

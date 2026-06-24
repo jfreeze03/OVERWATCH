@@ -265,6 +265,17 @@ DBA_CONTROL_ROOM_PANE_LABELS = {
 }
 
 
+DBA_CONTROL_ROOM_PANE_DETAILS = {
+    MORNING_COCKPIT_WORKFLOW: "Start with the operator snapshot, queue posture, and morning handoff.",
+    FAILURE_TRIAGE_WORKFLOW: "Review failed queries, task failures, incidents, and escalation context.",
+    COST_WATCH_WORKFLOW: "Check credit movement, cost exceptions, and forecast pressure.",
+    PERFORMANCE_WATCH_WORKFLOW: "Inspect queueing, contention, and workload health signals.",
+    CHANGE_WATCH_WORKFLOW: "Compare release movement, drift, and change-linked risk.",
+    ACTION_QUEUE_WORKFLOW: "Load routed DBA actions, closure status, and review evidence.",
+    CONTROL_ROOM_ADMIN_WORKFLOW: "Open guarded diagnostics and typed/admin DBA tooling.",
+}
+
+
 DBA_CONTROL_ROOM_LEGACY_PANE_ALIASES = {
     "Command Center": MORNING_COCKPIT_WORKFLOW,
     "Account Health": MORNING_COCKPIT_WORKFLOW,

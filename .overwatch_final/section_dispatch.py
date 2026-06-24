@@ -10,7 +10,7 @@ import importlib
 import streamlit as st
 
 from config import SECTION_MODULES, normalize_section_name
-from perf_trace import trace
+from perf_trace import record_phase, trace
 
 
 _loaded: dict[str, object] = {}
@@ -37,15 +37,30 @@ def dispatch_section(active_section: str) -> None:
         )
         return
 
-    if module_path not in _loaded:
+    module_cached = module_path in _loaded
+    if not module_cached:
         try:
-            with trace(f"section_dispatch:module_import:{module_path}", active_section=active_section):
+            with trace(
+                f"section_dispatch:module_import:{module_path}",
+                active_section=active_section,
+                detail={"module_cached": False},
+            ):
                 _loaded[module_path] = importlib.import_module(module_path)
         except ImportError as exc:
             from utils.query import format_snowflake_error
 
             st.error(f"Failed to load section `{active_section}`: {format_snowflake_error(exc)}")
             return
+    else:
+        record_phase(
+            f"section_dispatch:module_cached:{module_path}",
+            active_section=active_section,
+            detail={"module_cached": True},
+        )
 
-    with trace(f"section_dispatch:render:{active_section}", active_section=active_section):
+    with trace(
+        f"section_dispatch:render:{active_section}",
+        active_section=active_section,
+        detail={"module_cached": module_cached},
+    ):
         _loaded[module_path].render()

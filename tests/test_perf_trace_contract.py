@@ -48,6 +48,10 @@ class PerfTraceContractTests(unittest.TestCase):
         self.assertEqual(samples[-1]["user"], "4")
         self.assertEqual(samples[-1]["iteration"], "2")
         self.assertEqual(samples[-1]["active_section"], "Executive Landing")
+        self.assertIn("runtime", samples[-1])
+        self.assertIn("python_version", samples[-1]["runtime"])
+        self.assertIn("process_id", samples[-1]["runtime"])
+        self.assertIn("thread_name", samples[-1]["runtime"])
 
     def test_render_trace_marker_is_hidden_and_perf_only(self):
         with patch.object(perf_trace, "_query_value", return_value=""):
@@ -64,6 +68,32 @@ class PerfTraceContractTests(unittest.TestCase):
         self.assertIn('id="overwatch-perf-trace"', html)
         self.assertIn("display:none", html)
         self.assertIn("shell:total_render_app", html)
+
+    def test_app_entry_import_timing_can_be_recorded_after_the_fact(self):
+        with patch.object(perf_trace, "_query_value", side_effect=lambda key: "RUN_TRACE" if key == perf_trace.PERF_RUN_QUERY_PARAM else ""):
+            perf_trace.record_phase("app_entry:import_shell", 123.45)
+            perf_trace.record_phase("app_entry:pre_render_total", 150.0)
+
+        samples = perf_trace.trace_samples()
+        self.assertEqual(samples[0]["phase"], "app_entry:import_shell")
+        self.assertEqual(samples[0]["elapsed_ms"], 123.45)
+        self.assertEqual(samples[1]["phase"], "app_entry:pre_render_total")
+        self.assertEqual(samples[1]["elapsed_ms"], 150.0)
+
+    def test_app_entry_source_records_import_phase_names(self):
+        app_source = (APP_ROOT / "app.py").read_text(encoding="utf-8")
+        helper_source = (APP_ROOT / "app_entry_timing.py").read_text(encoding="utf-8")
+        combined_source = f"{app_source}\n{helper_source}"
+
+        for phase in (
+            "app_entry:import_streamlit",
+            "app_entry:set_page_config",
+            "app_entry:import_shell",
+            "app_entry:import_perf_trace",
+            "app_entry:pre_render_total",
+        ):
+            with self.subTest(phase=phase):
+                self.assertIn(phase, combined_source)
 
 
 if __name__ == "__main__":

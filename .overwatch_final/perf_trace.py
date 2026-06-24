@@ -10,6 +10,9 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 import html
 import json
+import os
+import sys
+import threading
 import time
 from collections.abc import Iterator
 from typing import Any
@@ -24,7 +27,8 @@ PERF_TRACE_KEY = "_overwatch_perf_trace_samples"
 PERF_RUN_ID_KEY = "_overwatch_perf_run_id"
 PERF_USER_KEY = "_overwatch_perf_user"
 PERF_ITERATION_KEY = "_overwatch_perf_iteration"
-MAX_TRACE_SAMPLES = 240
+MAX_TRACE_SAMPLES = 96
+_PROCESS_STARTED_AT = time.perf_counter()
 
 
 def _query_value(key: str) -> str:
@@ -80,6 +84,29 @@ def _jsonable_detail(detail: Any) -> Any:
         return str(detail)
 
 
+def _streamlit_runtime_available() -> bool:
+    try:
+        from streamlit.runtime import exists
+
+        return bool(exists())
+    except Exception:
+        return False
+
+
+def runtime_detail(extra: Any | None = None) -> dict[str, Any]:
+    """Return cheap runtime metadata for perf-only trace samples."""
+    detail: dict[str, Any] = {
+        "python_version": sys.version.split()[0],
+        "process_id": os.getpid(),
+        "thread_name": threading.current_thread().name,
+        "process_uptime_ms": round((time.perf_counter() - _PROCESS_STARTED_AT) * 1000, 2),
+        "streamlit_runtime_available": _streamlit_runtime_available(),
+    }
+    if extra is not None:
+        detail["extra"] = _jsonable_detail(extra)
+    return detail
+
+
 def trace_samples() -> list[dict[str, Any]]:
     """Return a copy of the current session trace samples."""
     samples = st.session_state.get(PERF_TRACE_KEY, [])
@@ -105,6 +132,7 @@ def record_phase(
         "timestamp": datetime.now(UTC).isoformat(),
         "active_section": _active_section(active_section),
         "run_id": context["run_id"],
+        "runtime": runtime_detail(),
     }
     if context["user"]:
         sample["user"] = context["user"]

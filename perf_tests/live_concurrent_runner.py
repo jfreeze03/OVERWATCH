@@ -15,6 +15,7 @@ import dataclasses
 import datetime as dt
 import json
 import math
+import os
 import pathlib
 import statistics
 import time
@@ -113,6 +114,105 @@ def load_playwright():
         return None, exc
 
 
+def load_psutil():
+    """Import psutil lazily; resource telemetry is best effort."""
+    try:
+        import psutil
+
+        return psutil, None
+    except Exception as exc:
+        return None, exc
+
+
+def collect_resource_sample(label: str, *, psutil_module=None, detail: dict[str, object] | None = None) -> dict[str, object]:
+    """Collect host pressure telemetry without making psutil a dependency."""
+    sample: dict[str, object] = {
+        "label": label,
+        "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "psutil_available": psutil_module is not None,
+        "detail": detail or {},
+    }
+    if psutil_module is None:
+        return sample
+    try:
+        process = psutil_module.Process(os.getpid())
+        children = process.children(recursive=True)
+        browser_names = ("chrome", "chromium", "msedge", "playwright")
+        browser_child_count = 0
+        for child in children:
+            try:
+                name = child.name().lower()
+            except Exception:
+                name = ""
+            if any(token in name for token in browser_names):
+                browser_child_count += 1
+        sample.update({
+            "cpu_percent": psutil_module.cpu_percent(interval=None),
+            "memory_percent": psutil_module.virtual_memory().percent,
+            "process_count": len(psutil_module.pids()),
+            "python_child_process_count": len(children),
+            "browser_child_process_count": browser_child_count,
+        })
+    except Exception as exc:
+        sample["error"] = str(exc)[:240]
+    return sample
+
+
+class ResourceRecorder:
+    """Thread-safe-ish resource timeline for concurrent Playwright users."""
+
+    def __init__(self, users: int):
+        self.users = int(users)
+        self.psutil, _ = load_psutil()
+        if self.psutil is not None:
+            try:
+                self.psutil.cpu_percent(interval=None)
+            except Exception:
+                pass
+        self.samples: list[dict[str, object]] = []
+        self._lock = asyncio.Lock()
+        self._pages_opened = 0
+        self._initial_loads_completed = 0
+
+    async def record(self, label: str, **detail: object) -> None:
+        async with self._lock:
+            self.samples.append(collect_resource_sample(label, psutil_module=self.psutil, detail=detail))
+
+    async def mark_page_open(self, user_id: int) -> None:
+        async with self._lock:
+            self._pages_opened += 1
+            self.samples.append(
+                collect_resource_sample(
+                    "page_open",
+                    psutil_module=self.psutil,
+                    detail={"user_id": user_id, "pages_opened": self._pages_opened},
+                )
+            )
+            if self._pages_opened == self.users:
+                self.samples.append(
+                    collect_resource_sample("after_all_pages_open", psutil_module=self.psutil)
+                )
+
+    async def mark_initial_load(self, user_id: int, elapsed_ms: float) -> None:
+        async with self._lock:
+            self._initial_loads_completed += 1
+            self.samples.append(
+                collect_resource_sample(
+                    "initial_load_complete",
+                    psutil_module=self.psutil,
+                    detail={
+                        "user_id": user_id,
+                        "elapsed_ms": round(float(elapsed_ms), 2),
+                        "initial_loads_completed": self._initial_loads_completed,
+                    },
+                )
+            )
+            if self._initial_loads_completed == self.users:
+                self.samples.append(
+                    collect_resource_sample("after_initial_load", psutil_module=self.psutil)
+                )
+
+
 def _default_config() -> dict:
     return {
         "url": "http://localhost:8501/",
@@ -128,7 +228,9 @@ def _default_config() -> dict:
         "timeout_ms": 60000,
         "initial_wait_ms": 1200,
         "initial_load_substeps": False,
+        "section_nav_substeps": False,
         "wait_initial_idle": False,
+        "trace_slowest_initial_load": False,
         "single_initial_load": False,
         "action_settle_ms": 900,
         "ramp_seconds": 5.0,
@@ -306,9 +408,18 @@ async def wait_for_transition_clear(page, timeout_ms: int) -> None:
     )
 
 
-async def wait_for_section(page, section: str, timeout_ms: int) -> None:
+async def wait_for_section_title_visible(page, section: str, timeout_ms: int) -> None:
     title = page.locator(".ow-section-title").filter(has_text=section).first
     await title.wait_for(state="visible", timeout=timeout_ms)
+
+
+async def wait_for_active_section_container_visible(page, timeout_ms: int) -> None:
+    await wait_for_transition_clear(page, timeout_ms)
+    await page.locator(".ow-section-title").first.wait_for(state="visible", timeout=timeout_ms)
+
+
+async def wait_for_section(page, section: str, timeout_ms: int) -> None:
+    await wait_for_section_title_visible(page, section, timeout_ms)
     try:
         await wait_for_transition_clear(page, timeout_ms)
     except Exception:
@@ -405,6 +516,12 @@ async def collect_initial_load_diagnostics(page) -> dict[str, object]:
         "perf_trace": await collect_perf_trace_payload(page),
         "navigation_timing": await collect_browser_navigation_timing(page),
         "paint_timing": await collect_browser_paint_timing(page),
+    }
+
+
+async def collect_section_nav_diagnostics(page) -> dict[str, object]:
+    return {
+        "perf_trace": await collect_perf_trace_payload(page),
     }
 
 
@@ -622,7 +739,12 @@ async def run_initial_load(
         await wait_for_streamlit_idle(page, args.timeout_ms, args.action_settle_ms)
 
 
-async def run_user(browser, args: argparse.Namespace, user_id: int) -> list[StepSample]:
+async def run_user(
+    browser,
+    args: argparse.Namespace,
+    user_id: int,
+    resource_recorder: ResourceRecorder | None = None,
+) -> list[StepSample]:
     samples: list[StepSample] = []
     browser_errors: list[str] = []
     load_button_map = active_load_button_map(args.load_buttons)
@@ -631,6 +753,8 @@ async def run_user(browser, args: argparse.Namespace, user_id: int) -> list[Step
         extra_http_headers={"X-OVERWATCH-PERF-RUN-ID": args.run_id},
     )
     page = await context.new_page()
+    if resource_recorder is not None:
+        await resource_recorder.mark_page_open(user_id)
     page.set_default_timeout(args.timeout_ms)
     page.on("pageerror", lambda exc: browser_errors.append(str(exc)[:500]))
     if args.fail_console_errors:
@@ -661,6 +785,8 @@ async def run_user(browser, args: argparse.Namespace, user_id: int) -> list[Step
                 operation=initial_load,
             )
             samples.append(initial_sample)
+            if resource_recorder is not None:
+                await resource_recorder.mark_initial_load(user_id, initial_sample.elapsed_ms)
             if not initial_sample.ok and args.stop_user_on_error:
                 return samples
 
@@ -686,6 +812,8 @@ async def run_user(browser, args: argparse.Namespace, user_id: int) -> list[Step
                     operation=initial_load,
                 )
                 samples.append(initial_sample)
+                if iteration == 1 and resource_recorder is not None:
+                    await resource_recorder.mark_initial_load(user_id, initial_sample.elapsed_ms)
                 if not initial_sample.ok and args.stop_user_on_error:
                     break
 
@@ -694,8 +822,57 @@ async def run_user(browser, args: argparse.Namespace, user_id: int) -> list[Step
                 async def section_nav(section_name=section):
                     if await section_is_visible(page, section_name):
                         return None
-                    await click_named_button(page, section_name, args.timeout_ms)
-                    await wait_for_section(page, section_name, args.timeout_ms)
+                    if args.section_nav_substeps:
+                        click_sample = await timed_diagnostic_step(
+                            user_id=user_id,
+                            iteration=iteration,
+                            section=section_name,
+                            action=f"section_nav:{section_name}:click",
+                            browser_errors=browser_errors,
+                            operation=lambda: click_named_button(page, section_name, args.timeout_ms),
+                        )
+                        samples.append(click_sample)
+                        if not click_sample.ok:
+                            raise RuntimeError(click_sample.error or f"section_nav:{section_name}:click failed")
+
+                        title_sample = await timed_diagnostic_step(
+                            user_id=user_id,
+                            iteration=iteration,
+                            section=section_name,
+                            action=f"section_nav:{section_name}:title_visible",
+                            browser_errors=browser_errors,
+                            operation=lambda: wait_for_section_title_visible(page, section_name, args.timeout_ms),
+                        )
+                        samples.append(title_sample)
+                        if not title_sample.ok:
+                            raise RuntimeError(title_sample.error or f"section_nav:{section_name}:title_visible failed")
+
+                        transition_sample = await timed_diagnostic_step(
+                            user_id=user_id,
+                            iteration=iteration,
+                            section=section_name,
+                            action=f"section_nav:{section_name}:transition_clear",
+                            browser_errors=browser_errors,
+                            operation=lambda: wait_for_transition_clear(page, args.timeout_ms),
+                        )
+                        samples.append(transition_sample)
+                        if not transition_sample.ok:
+                            raise RuntimeError(transition_sample.error or f"section_nav:{section_name}:transition_clear failed")
+
+                        container_sample = await timed_diagnostic_step(
+                            user_id=user_id,
+                            iteration=iteration,
+                            section=section_name,
+                            action=f"section_nav:{section_name}:section_container_visible",
+                            browser_errors=browser_errors,
+                            operation=lambda: wait_for_active_section_container_visible(page, args.timeout_ms),
+                        )
+                        samples.append(container_sample)
+                        if not container_sample.ok:
+                            raise RuntimeError(container_sample.error or f"section_nav:{section_name}:section_container_visible failed")
+                    else:
+                        await click_named_button(page, section_name, args.timeout_ms)
+                        await wait_for_section(page, section_name, args.timeout_ms)
                     await page.wait_for_timeout(args.action_settle_ms)
 
                 nav_sample = await timed_step(
@@ -708,6 +885,16 @@ async def run_user(browser, args: argparse.Namespace, user_id: int) -> list[Step
                     operation=section_nav,
                 )
                 samples.append(nav_sample)
+                if args.section_nav_substeps and nav_sample.ok and not nav_sample.skipped:
+                    trace_sample = await timed_diagnostic_step(
+                        user_id=user_id,
+                        iteration=iteration,
+                        section=section,
+                        action=f"section_nav:{section}:perf_trace_collected",
+                        browser_errors=browser_errors,
+                        operation=lambda: collect_section_nav_diagnostics(page),
+                    )
+                    samples.append(trace_sample)
                 if not nav_sample.ok and args.stop_user_on_error:
                     break
 
@@ -746,7 +933,7 @@ async def run_user(browser, args: argparse.Namespace, user_id: int) -> list[Step
     return samples
 
 
-async def run_stress(args: argparse.Namespace) -> tuple[list[StepSample], float]:
+async def run_stress(args: argparse.Namespace) -> tuple[list[StepSample], float, list[dict[str, object]]]:
     async_playwright, import_error = load_playwright()
     if import_error:
         raise RuntimeError(
@@ -755,18 +942,22 @@ async def run_stress(args: argparse.Namespace) -> tuple[list[StepSample], float]
         ) from import_error
 
     started = time.perf_counter()
+    resource_recorder = ResourceRecorder(args.users)
+    await resource_recorder.record("before_launch")
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch(headless=not args.headed)
+        await resource_recorder.record("after_browser_launch")
 
         async def delayed_user(user_id: int) -> list[StepSample]:
             if args.ramp_seconds > 0 and args.users > 1:
                 await asyncio.sleep(((user_id - 1) / (args.users - 1)) * args.ramp_seconds)
-            return await run_user(browser, args, user_id)
+            return await run_user(browser, args, user_id, resource_recorder)
 
         grouped_samples = await asyncio.gather(*(delayed_user(user_id) for user_id in range(1, args.users + 1)))
         await browser.close()
     elapsed_sec = time.perf_counter() - started
-    return [sample for group in grouped_samples for sample in group], elapsed_sec
+    await resource_recorder.record("after_run_completion", total_elapsed_sec=round(elapsed_sec, 3))
+    return [sample for group in grouped_samples for sample in group], elapsed_sec, resource_recorder.samples
 
 
 def _metric_p95_rows(rows: list[dict[str, object]], label_key: str, value_key: str = "elapsed_ms") -> list[dict[str, object]]:
@@ -791,6 +982,7 @@ def _metric_p95_rows(rows: list[dict[str, object]], label_key: str, value_key: s
 
 def _server_phase_rows(diagnostic_samples: list[StepSample]) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
+    seen: set[tuple[object, object, object, object, object]] = set()
     for sample in diagnostic_samples:
         trace_payload = sample.detail.get("perf_trace") if isinstance(sample.detail, dict) else None
         if not isinstance(trace_payload, dict):
@@ -798,6 +990,16 @@ def _server_phase_rows(diagnostic_samples: list[StepSample]) -> list[dict[str, o
         for phase in trace_payload.get("samples", []):
             if not isinstance(phase, dict):
                 continue
+            key = (
+                phase.get("phase"),
+                phase.get("timestamp"),
+                phase.get("run_id"),
+                phase.get("user"),
+                phase.get("iteration"),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
             rows.append({
                 "phase": phase.get("phase"),
                 "elapsed_ms": phase.get("elapsed_ms"),
@@ -829,7 +1031,83 @@ def _timing_metric_rows(diagnostic_samples: list[StepSample], detail_key: str) -
     ]
 
 
-def summarize(samples: list[StepSample], total_elapsed_sec: float, args: argparse.Namespace) -> dict:
+def _phase_rows_matching(diagnostic_samples: list[StepSample], prefix: str) -> list[dict[str, object]]:
+    rows = _server_phase_rows(diagnostic_samples)
+    return [row for row in rows if str(row.get("phase", "")).startswith(prefix)]
+
+
+def _flatten_perf_trace_samples(sample: StepSample) -> list[dict[str, object]]:
+    detail = sample.detail if isinstance(sample.detail, dict) else {}
+    trace_payload = detail.get("perf_trace")
+    if not isinstance(trace_payload, dict):
+        return []
+    trace_samples = trace_payload.get("samples", [])
+    return [dict(item) for item in trace_samples if isinstance(item, dict)]
+
+
+def _top_server_phase_for_sample(sample: StepSample) -> dict[str, object]:
+    trace_samples = _flatten_perf_trace_samples(sample)
+    if not trace_samples:
+        return {}
+    return max(trace_samples, key=lambda row: float(row.get("elapsed_ms", 0) or 0))
+
+
+def _initial_load_matrix(release_samples: list[StepSample], diagnostic_samples: list[StepSample]) -> list[dict[str, object]]:
+    by_key: dict[tuple[int, int], dict[str, object]] = {}
+    for sample in release_samples:
+        if sample.action != "initial_load":
+            continue
+        by_key[(sample.user_id, sample.iteration)] = {
+            "user_id": sample.user_id,
+            "iteration": sample.iteration,
+            "release_initial_load_ms": round(sample.elapsed_ms, 2),
+            "ok": sample.ok,
+        }
+    for sample in diagnostic_samples:
+        if not sample.action.startswith("initial_load:"):
+            continue
+        key = (sample.user_id, sample.iteration)
+        row = by_key.setdefault(key, {
+            "user_id": sample.user_id,
+            "iteration": sample.iteration,
+            "release_initial_load_ms": 0.0,
+            "ok": True,
+        })
+        phase = sample.action.split(":", 1)[1]
+        row[phase] = round(sample.elapsed_ms, 2)
+        detail = sample.detail if isinstance(sample.detail, dict) else {}
+        if "navigation_timing" in detail:
+            row["browser_navigation_timing"] = detail.get("navigation_timing")
+        if "paint_timing" in detail:
+            row["browser_paint_timing"] = detail.get("paint_timing")
+        top_phase = _top_server_phase_for_sample(sample)
+        if top_phase:
+            row["top_server_phase"] = {
+                "phase": top_phase.get("phase", ""),
+                "elapsed_ms": top_phase.get("elapsed_ms", 0),
+            }
+            app_entry = [
+                phase_row for phase_row in _flatten_perf_trace_samples(sample)
+                if str(phase_row.get("phase", "")).startswith("app_entry:")
+            ]
+            if app_entry:
+                slow_app_entry = max(app_entry, key=lambda item: float(item.get("elapsed_ms", 0) or 0))
+                row["top_app_entry_phase"] = {
+                    "phase": slow_app_entry.get("phase", ""),
+                    "elapsed_ms": slow_app_entry.get("elapsed_ms", 0),
+                }
+    return sorted(by_key.values(), key=lambda row: float(row.get("release_initial_load_ms", 0) or 0), reverse=True)
+
+
+def summarize(
+    samples: list[StepSample],
+    total_elapsed_sec: float,
+    args: argparse.Namespace,
+    *,
+    resource_samples: list[dict[str, object]] | None = None,
+    trace_artifact: str = "",
+    trace_error: str = "",
+) -> dict:
     release_samples = [sample for sample in samples if not sample.diagnostic]
     diagnostic_samples = [sample for sample in samples if sample.diagnostic]
     measured_samples = [sample for sample in release_samples if not sample.skipped]
@@ -910,6 +1188,15 @@ def summarize(samples: list[StepSample], total_elapsed_sec: float, args: argpars
             reverse=True,
         )
         if action.startswith("initial_load:")
+    ]
+    section_nav_breakdown = [
+        {"action": action, **row}
+        for action, row in sorted(
+            diagnostic_by_action.items(),
+            key=lambda item: item[1]["p95_ms"],
+            reverse=True,
+        )
+        if action.startswith("section_nav:")
     ]
 
     score = 100
@@ -1002,9 +1289,15 @@ def summarize(samples: list[StepSample], total_elapsed_sec: float, args: argpars
         "top_slowest_sections": top_slowest_sections,
         "diagnostic_by_action": diagnostic_by_action,
         "initial_load_breakdown": initial_load_breakdown,
+        "section_nav_breakdown": section_nav_breakdown,
         "server_phase_breakdown": _server_phase_rows(diagnostic_samples),
+        "app_entry_phase_breakdown": _phase_rows_matching(diagnostic_samples, "app_entry:"),
         "browser_navigation_timing": _timing_metric_rows(diagnostic_samples, "navigation_timing"),
         "browser_paint_timing": _timing_metric_rows(diagnostic_samples, "paint_timing"),
+        "initial_load_matrix": _initial_load_matrix(release_samples, diagnostic_samples),
+        "resource_samples": resource_samples or [],
+        "slowest_initial_load_trace": trace_artifact,
+        "slowest_initial_load_trace_error": trace_error,
         "release_blockers": release_blockers,
         "by_action": by_action,
         "by_section": by_section,
@@ -1136,6 +1429,21 @@ def write_reports(args: argparse.Namespace, samples: list[StepSample], summary: 
             md.append(f"| {phase} | {row['steps']} | {row['errors']} | {row['p95_ms']} | {row['max_ms']} |")
     else:
         md.append("Initial-load diagnostic substeps were not enabled for this run.")
+    md.extend([
+        "",
+        "## Section Navigation Breakdown",
+        "",
+    ])
+    if summary.get("section_nav_breakdown"):
+        md.extend([
+            "| Phase | Steps | Errors | P95 ms | Max ms |",
+            "|---|---:|---:|---:|---:|",
+        ])
+        for row in summary["section_nav_breakdown"][:30]:
+            phase = str(row["action"]).split(":", 1)[1]
+            md.append(f"| {phase} | {row['steps']} | {row['errors']} | {row['p95_ms']} | {row['max_ms']} |")
+    else:
+        md.append("Section navigation diagnostic substeps were not enabled for this run.")
     if diagnostic_samples:
         diagnostic_slowest = sorted(diagnostic_samples, key=lambda item: item.elapsed_ms, reverse=True)[:10]
         md.extend([
@@ -1164,6 +1472,17 @@ def write_reports(args: argparse.Namespace, samples: list[StepSample], summary: 
         md.append("No server-side phase trace was collected.")
     md.extend([
         "",
+        "## App Entry Phase Breakdown",
+        "",
+    ])
+    if summary.get("app_entry_phase_breakdown"):
+        md.extend(["| Phase | Samples | P95 ms | Max ms |", "|---|---:|---:|---:|"])
+        for row in summary["app_entry_phase_breakdown"]:
+            md.append(f"| {row['phase']} | {row['steps']} | {row['p95_ms']} | {row['max_ms']} |")
+    else:
+        md.append("No app-entry import phase trace was collected.")
+    md.extend([
+        "",
         "## Browser Navigation Timing",
         "",
     ])
@@ -1184,6 +1503,71 @@ def write_reports(args: argparse.Namespace, samples: list[StepSample], summary: 
             md.append(f"| {row['metric']} | {row['samples']} | {row['p95_ms']} | {row['max_ms']} |")
     else:
         md.append("No browser paint timing was collected.")
+    md.extend([
+        "",
+        "## Slowest User Correlation",
+        "",
+    ])
+    if summary.get("initial_load_matrix"):
+        md.extend([
+            "| User | Initial load ms | goto_commit | shell_title_visible | responseStart | FCP | Top app-entry phase | Top server phase |",
+            "|---:|---:|---:|---:|---:|---:|---|---|",
+        ])
+        for row in summary["initial_load_matrix"][:12]:
+            nav = row.get("browser_navigation_timing") if isinstance(row, dict) else {}
+            paint = row.get("browser_paint_timing") if isinstance(row, dict) else {}
+            app_entry = row.get("top_app_entry_phase") if isinstance(row, dict) else {}
+            server = row.get("top_server_phase") if isinstance(row, dict) else {}
+            response_start = nav.get("responseStart", "") if isinstance(nav, dict) else ""
+            fcp = paint.get("first-contentful-paint", "") if isinstance(paint, dict) else ""
+            app_phase = (
+                f"{app_entry.get('phase', '')} {app_entry.get('elapsed_ms', '')} ms"
+                if isinstance(app_entry, dict) and app_entry else ""
+            )
+            server_phase = (
+                f"{server.get('phase', '')} {server.get('elapsed_ms', '')} ms"
+                if isinstance(server, dict) and server else ""
+            )
+            md.append(
+                f"| {row.get('user_id', '')} | {row.get('release_initial_load_ms', '')} | "
+                f"{row.get('goto_commit', '')} | {row.get('shell_title_visible', '')} | "
+                f"{response_start} | {fcp} | {app_phase} | {server_phase} |"
+            )
+    else:
+        md.append("No initial-load correlation rows were collected.")
+    md.extend([
+        "",
+        "## Resource Samples",
+        "",
+    ])
+    if summary.get("resource_samples"):
+        md.extend([
+            "| Label | CPU % | Memory % | Processes | Browser children | Detail |",
+            "|---|---:|---:|---:|---:|---|",
+        ])
+        for row in summary["resource_samples"]:
+            detail = json.dumps(row.get("detail", {}), separators=(",", ":"))[:180]
+            md.append(
+                f"| {row.get('label', '')} | {row.get('cpu_percent', '')} | "
+                f"{row.get('memory_percent', '')} | {row.get('process_count', '')} | "
+                f"{row.get('browser_child_process_count', '')} | `{detail}` |"
+            )
+    else:
+        md.append("No host resource telemetry was collected.")
+    if summary.get("slowest_initial_load_trace"):
+        md.extend([
+            "",
+            "## Slowest Initial Load Trace",
+            "",
+            f"- Trace artifact: `{summary['slowest_initial_load_trace']}`",
+        ])
+    elif summary.get("slowest_initial_load_trace_error"):
+        md.extend([
+            "",
+            "## Slowest Initial Load Trace",
+            "",
+            f"- Trace capture failed: `{summary['slowest_initial_load_trace_error']}`",
+        ])
     md.extend(["", "## Slowest Release Steps", "", "| User | Iteration | Section | Action | Status | Elapsed ms | Error |", "|---:|---:|---|---|---:|---:|---|"])
     for sample in slowest:
         md.append(
@@ -1245,6 +1629,53 @@ def write_reports(args: argparse.Namespace, samples: list[StepSample], summary: 
     return json_path, md_path
 
 
+async def capture_slowest_initial_load_trace(args: argparse.Namespace, samples: list[StepSample]) -> tuple[str, str]:
+    """Capture a Playwright trace for one slow initial-load replay."""
+    slow_initial = sorted(
+        [sample for sample in samples if not sample.diagnostic and sample.action == "initial_load"],
+        key=lambda sample: sample.elapsed_ms,
+        reverse=True,
+    )
+    if not slow_initial:
+        return "", "no initial_load sample available"
+    slowest = slow_initial[0]
+    async_playwright, import_error = load_playwright()
+    if import_error:
+        return "", str(import_error)[:240]
+    output_dir = pathlib.Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    trace_path = output_dir / (
+        f"{args.run_id}_slowest_initial_load_user{slowest.user_id:02d}_iter{slowest.iteration}_trace.zip"
+    )
+    try:
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(headless=not args.headed)
+            context = await browser.new_context(
+                viewport={"width": args.width, "height": args.height},
+                extra_http_headers={"X-OVERWATCH-PERF-RUN-ID": args.run_id},
+            )
+            await context.tracing.start(screenshots=True, snapshots=True, sources=False)
+            page = await context.new_page()
+            page.set_default_timeout(args.timeout_ms)
+            target_url = perf_run_url(
+                args.url,
+                run_id=f"{args.run_id}_TRACE",
+                user_id=slowest.user_id,
+                iteration=slowest.iteration,
+            )
+            await page.goto(target_url, wait_until="domcontentloaded", timeout=args.timeout_ms)
+            await page.wait_for_timeout(args.initial_wait_ms)
+            await wait_for_app_ready(page, args.timeout_ms)
+            if args.wait_initial_idle:
+                await wait_for_streamlit_idle(page, args.timeout_ms, args.action_settle_ms)
+            await context.tracing.stop(path=str(trace_path))
+            await context.close()
+            await browser.close()
+        return str(trace_path), ""
+    except Exception as exc:
+        return "", str(exc).replace("\n", " ")[:500]
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run concurrent live browser users against OVERWATCH.")
     parser.add_argument("--profile", default=argparse.SUPPRESS, help="JSON profile with default runner settings.")
@@ -1261,7 +1692,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--timeout-ms", type=int, default=argparse.SUPPRESS, help="Per-step browser timeout.")
     parser.add_argument("--initial-wait-ms", type=int, default=argparse.SUPPRESS, help="Initial page settle time.")
     parser.add_argument("--initial-load-substeps", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS, help="Record diagnostic-only initial load phase timings without changing release scoring.")
+    parser.add_argument("--section-nav-substeps", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS, help="Record diagnostic-only section navigation phase timings without changing release scoring.")
     parser.add_argument("--wait-initial-idle", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS, help="After initial app readiness, wait for Streamlit idle before recording the step.")
+    parser.add_argument("--trace-slowest-initial-load", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS, help="After the run, capture one Playwright trace replay for the slowest initial-load user.")
     parser.add_argument("--single-initial-load", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS, help="Load the app once per user, then repeat in-app section flows without hard page reloads.")
     parser.add_argument("--action-settle-ms", type=int, default=argparse.SUPPRESS, help="Minimum wait after clicks before spinner checks.")
     parser.add_argument("--ramp-seconds", type=float, default=argparse.SUPPRESS, help="Ramp users across this many seconds.")
@@ -1303,7 +1736,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     try:
-        samples, total_elapsed_sec = asyncio.run(run_stress(args))
+        samples, total_elapsed_sec, resource_samples = asyncio.run(run_stress(args))
     except Exception as exc:
         print(json.dumps({
             "run_id": args.run_id,
@@ -1312,7 +1745,18 @@ def main() -> int:
         }, indent=2))
         return 3
 
-    summary = summarize(samples, total_elapsed_sec, args)
+    trace_artifact = ""
+    trace_error = ""
+    if args.trace_slowest_initial_load:
+        trace_artifact, trace_error = asyncio.run(capture_slowest_initial_load_trace(args, samples))
+    summary = summarize(
+        samples,
+        total_elapsed_sec,
+        args,
+        resource_samples=resource_samples,
+        trace_artifact=trace_artifact,
+        trace_error=trace_error,
+    )
     json_path, md_path = write_reports(args, samples, summary)
     print(json.dumps({
         "run_id": args.run_id,

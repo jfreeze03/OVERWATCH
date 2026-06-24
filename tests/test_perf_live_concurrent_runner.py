@@ -36,7 +36,9 @@ class LiveConcurrentProfileTests(unittest.TestCase):
         self.assertTrue(args.single_initial_load)
         self.assertTrue(args.fail_console_errors)
         self.assertTrue(args.initial_load_substeps)
+        self.assertTrue(args.section_nav_substeps)
         self.assertTrue(args.wait_initial_idle)
+        self.assertFalse(args.trace_slowest_initial_load)
         self.assertEqual(args.fail_p95_ms, 10000)
         self.assertEqual(args.fail_error_rate, 0.0)
         self.assertEqual(args.missing_load_button_wait_ms, 10000)
@@ -291,6 +293,39 @@ class LiveConcurrentProfileTests(unittest.TestCase):
         self.assertEqual(summary["diagnostic_by_action"]["initial_load:app_ready"]["p95_ms"], 50000.0)
         self.assertEqual(summary["initial_load_breakdown"][0]["action"], "initial_load:app_ready")
 
+    def test_diagnostic_section_nav_samples_are_excluded_from_release_scoring(self):
+        runner = load_live_runner()
+        args = argparse.Namespace(users=1, iterations=1, fail_p95_ms=10000, fail_error_rate=0.0)
+        samples = [
+            runner.StepSample(1, 1, "DBA Control Room", "section_nav", 800.0, True),
+            runner.StepSample(
+                1,
+                1,
+                "DBA Control Room",
+                "section_nav:DBA Control Room:title_visible",
+                45000.0,
+                False,
+                browser_errors=1,
+                diagnostic=True,
+            ),
+        ]
+
+        summary = runner.summarize(samples, 1.0, args)
+
+        self.assertEqual(summary["p95_ms"], 800.0)
+        self.assertEqual(summary["errors"], 0)
+        self.assertEqual(summary["section_nav_breakdown"][0]["action"], "section_nav:DBA Control Room:title_visible")
+        self.assertNotIn("browser_errors", {item["type"] for item in summary["release_blockers"]})
+
+    def test_resource_telemetry_works_without_psutil(self):
+        runner = load_live_runner()
+
+        sample = runner.collect_resource_sample("before_launch", psutil_module=None)
+
+        self.assertEqual(sample["label"], "before_launch")
+        self.assertFalse(sample["psutil_available"])
+        self.assertIn("timestamp", sample)
+
     def test_diagnostic_samples_are_written_to_reports(self):
         runner = load_live_runner()
         args = argparse.Namespace(
@@ -315,7 +350,8 @@ class LiveConcurrentProfileTests(unittest.TestCase):
                 detail={
                     "perf_trace": {
                         "samples": [
-                            {"phase": "shell:probe_snowflake_available", "elapsed_ms": 12.5}
+                            {"phase": "app_entry:import_shell", "elapsed_ms": 20.0},
+                            {"phase": "shell:probe_snowflake_available", "elapsed_ms": 12.5},
                         ]
                     },
                     "navigation_timing": {"responseStart": 30.0},
@@ -327,6 +363,7 @@ class LiveConcurrentProfileTests(unittest.TestCase):
             samples,
             1.0,
             argparse.Namespace(users=1, iterations=1, fail_p95_ms=10000, fail_error_rate=0.0),
+            resource_samples=[{"label": "before_launch", "psutil_available": False}],
         )
         with tempfile.TemporaryDirectory() as temp_dir:
             args.output_dir = temp_dir
@@ -340,9 +377,12 @@ class LiveConcurrentProfileTests(unittest.TestCase):
         self.assertIn("Initial Load Breakdown", markdown)
         self.assertIn("goto_domcontentloaded", markdown)
         self.assertIn("Server Phase Breakdown", markdown)
+        self.assertIn("App Entry Phase Breakdown", markdown)
         self.assertIn("Browser Navigation Timing", markdown)
         self.assertIn("Browser Paint Timing", markdown)
-        self.assertEqual(summary["server_phase_breakdown"][0]["phase"], "shell:probe_snowflake_available")
+        self.assertIn("Slowest User Correlation", markdown)
+        self.assertIn("Resource Samples", markdown)
+        self.assertEqual(summary["app_entry_phase_breakdown"][0]["phase"], "app_entry:import_shell")
         self.assertEqual(summary["browser_navigation_timing"][0]["metric"], "responseStart")
 
 

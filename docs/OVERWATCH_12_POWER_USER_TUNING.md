@@ -11,13 +11,20 @@ This guide keeps the release performance gate repeatable without making generate
 - Use the initial-load-only profile to isolate App Shell first render without section navigation or load-button flows. This is diagnostic only and is not the release gate:
   `python perf_tests/run_12_power_users.py --url http://localhost:8503/ --run-id PERF_12_POWER_USERS_INITIAL_LOAD_RERUN3 --output-dir perf_tests/results --profile perf_tests/profiles/12_power_users_initial_load_only.json`
 - Use the import timing probe before browser reruns when App Shell cold start is the bottleneck:
-  `python perf_tests/import_timing.py --run-id IMPORT_TIMING_3E75A32_RERUN3 --output-dir perf_tests/results --importtime`
+  `python perf_tests/import_timing.py --run-id IMPORT_TIMING_CCFBC48_RERUN4 --output-dir perf_tests/results --importtime`
+- Use the HTTP-only first-response probe to isolate Streamlit/server first byte without Chromium paint overhead:
+  `python perf_tests/http_first_response_probe.py --url http://localhost:8503/ --run-id HTTP_FIRST_RESPONSE_CCFBC48_RERUN4 --output-dir perf_tests/results`
+- Use the initial-load concurrency ladder to find the first concurrency level where App Shell first render degrades. This is diagnostic only and is not the release gate:
+  `python perf_tests/run_initial_load_ladder.py --url http://localhost:8503/ --run-id-prefix PERF_INITIAL_LOAD_LADDER_RERUN4 --output-dir perf_tests/results`
 - Do not add or click mutation controls in broad profiles. Keep grant, save, queue, email/send, retry, suspend/resume, execute, cancel, drop, alter, create, delete, deactivate, and admin mutation controls out of benchmark profiles.
 
 ## Server And Browser Diagnostics
 - When the runner sends `overwatch_perf_run_id`, `overwatch_perf_user`, and `overwatch_perf_iteration` query parameters, OVERWATCH stores a bounded server phase trace in Streamlit session state and exposes it through a hidden `overwatch-perf-trace` DOM marker. Normal user sessions do not collect or render this trace.
 - Server phase trace samples include shell theme injection, startup state, role seeding, admin defaults, idle state, Snowflake availability probe, role refresh, header/topbar/sidebar rendering, filter cache checks, section signature, section dispatch, lazy module import, section render, and Executive Landing shell phases.
+- App-entry import timing records `app_entry:import_streamlit`, `app_entry:set_page_config`, `app_entry:import_shell`, `app_entry:import_perf_trace`, and `app_entry:pre_render_total`. These are measured before `perf_trace` is imported and recorded afterward, so they can explain slow first response that occurs before `render_app()`.
 - Browser navigation timing records `responseStart`, `responseEnd`, `domInteractive`, `domContentLoadedEventEnd`, `loadEventEnd`, `transferSize`, and `encodedBodySize` when the browser exposes them. Use browser navigation timing with paint timing (`first-paint` and `first-contentful-paint`) to separate server first response from client rendering.
+- Section navigation diagnostics record diagnostic-only phases for click, title visibility, transition clear, section container visibility, and perf-trace collection. Release `section_nav` p95 is still computed only from the scored section navigation sample.
+- Runner host resource samples record best-effort CPU, memory, process count, and browser child process count when `psutil` is available. Missing `psutil` does not block a run.
 
 ## Query Logging
 - Use a unique run ID such as `PERF_12_POWER_USERS_RELEASE` as the query tag for the benchmark session whenever credentials and the target Snowflake session allow it.
@@ -28,9 +35,11 @@ This guide keeps the release performance gate repeatable without making generate
 - `perf_tests/results/PERF_12_POWER_USERS_RELEASE_live_concurrent.json`
 - `perf_tests/results/PERF_12_POWER_USERS_RELEASE_live_concurrent.md`
 - `perf_tests/results/PERF_12_POWER_USERS_RELEASE_expert_review.md`
-- `perf_tests/results/PERF_12_POWER_USERS_INITIAL_LOAD_RERUN3_live_concurrent.json`
-- `perf_tests/results/IMPORT_TIMING_3E75A32_RERUN3_import_timing.json`
-- `perf_tests/results/IMPORT_TIMING_3E75A32_RERUN3_import_timing.md`
+- `perf_tests/results/PERF_12_POWER_USERS_INITIAL_LOAD_RERUN4_live_concurrent.json`
+- `perf_tests/results/IMPORT_TIMING_CCFBC48_RERUN4_import_timing.json`
+- `perf_tests/results/IMPORT_TIMING_CCFBC48_RERUN4_import_timing.md`
+- `perf_tests/results/HTTP_FIRST_RESPONSE_CCFBC48_RERUN4_http_first_response.json`
+- `perf_tests/results/PERF_INITIAL_LOAD_LADDER_RERUN4_initial_load_ladder.json`
 - `PERF_TEST_APP_USAGE_REPORT_V`
 - `PERF_TEST_SNOWFLAKE_QUERY_REPORT_V`
 - `PERF_TEST_EXPENSIVE_QUERY_CANDIDATES_V`
@@ -38,10 +47,13 @@ This guide keeps the release performance gate repeatable without making generate
 
 ## Triage Order
 - App Shell `initial_load`: check the Initial Load Breakdown first. `goto_commit` and `domcontentloaded` point at browser/server handshake, `initial_wait` is configured settle time, `shell_title_visible`/`topbar_visible`/`sidebar_visible` show chrome readiness, `app_ready` and `section_container_visible` point at Streamlit first render and section work, `perf_trace_collected` confirms server trace exposure, and `idle_wait` points at post-render spinner/work completion.
+- App-entry import timing: high `app_entry:import_shell` means the Python shell import path is delaying first response before `render_app()`. Split optional imports from shell/layout/filter/theme paths only when this phase dominates.
 - Server phase trace: if `shell:probe_snowflake_available` dominates, tune connection-probe contention/caching. If `section_dispatch:module_import:*` dominates, split compatibility re-exports from route renderers. If Executive Landing shell phases dominate, keep first paint on local summary frames and move optional workflow work behind explicit controls.
 - Browser navigation timing: high `responseStart` with high `goto_commit` points at server first response or cold Streamlit startup. High `domContentLoadedEventEnd` with low server phases points at browser/client rendering.
+- Browser paint timing: high `first-contentful-paint` with low app-entry and server phase p95 points at Chromium host capacity, DOM/CSS paint pressure, or Streamlit client-side rendering rather than Snowflake query work.
+- HTTP first-response probe: if HTTP time-to-first-byte is low while browser `responseStart` or FCP is high, focus on browser/Chromium resource pressure and client paint. If HTTP time-to-first-byte is high, focus on Streamlit server startup/concurrency and app-entry imports.
 - Import timing: rank baselines (`streamlit`, `pandas`, `config`, `theme`, `filters`, `layout`, `navigation`, `runtime_state`, `access_control`, `utils`) and targets (`shell`, `section_dispatch`, `sections.executive_landing_shell`, and section modules). If a route import dominates, split compatibility re-exports from the route renderer before changing release thresholds.
-- `section_nav`: rank `top_slowest_sections` and compare navigation p95 to the matching Query History rows. The runner treats the shell transition as clear when it is no longer visible; persistent hidden transition DOM should not be counted as navigation latency.
+- `section_nav`: rank `top_slowest_sections` and compare navigation p95 to the matching Query History rows. Use section-nav diagnostic substeps to tell click delay from title-visible delay, transition-clear delay, container visibility, server dispatch, and module import. The runner treats the shell transition as clear when it is no longer visible; persistent hidden transition DOM should not be counted as navigation latency.
 - `load_button` actions: keep only read-only load buttons in the broad profile and push deep workflows into targeted profiles.
 - Skipped buttons: group by label, confirm the visible default control still exists, or move the action to a targeted profile with a documented reason.
 - Browser errors: fix visible Streamlit errors and console/runtime errors before interpreting latency.

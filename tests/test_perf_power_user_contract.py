@@ -44,6 +44,8 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
         self.assertEqual(profile["users"], 12)
         self.assertEqual(profile["iterations"], 3)
         self.assertEqual(profile["ramp_seconds"], 12)
+        self.assertTrue(profile["initial_load_substeps"])
+        self.assertTrue(profile["section_nav_substeps"])
         self.assertEqual(profile["sections"], list(route_registry.PRIMARY_SECTION_TITLES))
         self.assertEqual(profile["load_buttons"]["Alert Center"], "Load Active Alerts")
         self.assertEqual(profile["load_buttons"]["Cost & Contract"], "Refresh Cost")
@@ -65,6 +67,11 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
                 normalized = label.casefold()
                 for token in runner.FORBIDDEN_LOAD_BUTTON_TOKENS:
                     self.assertNotIn(token, normalized)
+
+    def test_generated_perf_results_are_ignored_not_tracked(self):
+        gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
+
+        self.assertIn("perf_tests/results/", gitignore)
 
     def test_alert_center_profile_label_matches_default_visible_load_button(self):
         profile = json.loads(PROFILE_PATH.read_text(encoding="utf-8"))
@@ -139,6 +146,11 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
             "server phase trace",
             "browser navigation timing",
             "12_power_users_initial_load_only.json",
+            "run_initial_load_ladder.py",
+            "http_first_response_probe.py",
+            "app-entry",
+            "responseStart",
+            "first-contentful-paint",
             "app_ready",
             "idle_wait",
             "perf_tests/import_timing.py",
@@ -187,10 +199,30 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
                     {"action": "initial_load:app_ready", "steps": 12, "errors": 0, "p95_ms": 700, "max_ms": 900}
                 ],
                 "server_phase_breakdown": [
+                    {"phase": "app_entry:import_shell", "steps": 12, "p95_ms": 42, "max_ms": 60},
                     {"phase": "shell:probe_snowflake_available", "steps": 12, "p95_ms": 55, "max_ms": 80}
+                ],
+                "app_entry_phase_breakdown": [
+                    {"phase": "app_entry:import_shell", "steps": 12, "p95_ms": 42, "max_ms": 60}
                 ],
                 "browser_navigation_timing": [
                     {"metric": "responseStart", "samples": 12, "p95_ms": 30, "max_ms": 40}
+                ],
+                "browser_paint_timing": [
+                    {"metric": "first-contentful-paint", "samples": 12, "p95_ms": 50, "max_ms": 70}
+                ],
+                "initial_load_matrix": [
+                    {
+                        "user_id": 1,
+                        "release_initial_load_ms": 900,
+                        "browser_navigation_timing": {"responseStart": 30},
+                        "browser_paint_timing": {"first-contentful-paint": 50},
+                        "top_app_entry_phase": {"phase": "app_entry:import_shell", "elapsed_ms": 42},
+                        "top_server_phase": {"phase": "shell:total_render_app", "elapsed_ms": 80},
+                    }
+                ],
+                "resource_samples": [
+                    {"label": "before_launch", "cpu_percent": 1.0, "memory_percent": 50.0, "process_count": 100, "browser_child_process_count": 0}
                 ],
             },
             "samples": [
@@ -241,7 +273,11 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
             "Top Slowest Actions",
             "Initial Load Breakdown",
             "Server Phase Breakdown",
+            "App Entry Phase Breakdown",
             "Browser Navigation Timing",
+            "Browser Paint Timing",
+            "Slowest User Correlation",
+            "Playwright Host Resource Samples",
             "Top 10 Slowest Release Steps",
             "Top 10 Slowest Diagnostic Steps",
             "app_ready",

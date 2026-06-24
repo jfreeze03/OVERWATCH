@@ -118,6 +118,13 @@ def _summary_rows(summary: dict, key: str, label_key: str, limit: int = 10) -> l
     return []
 
 
+def _row_value(rows: list[dict], label_key: str, label: str) -> float:
+    for row in rows:
+        if row.get(label_key) == label:
+            return float(row.get("p95_ms", 0) or 0)
+    return 0.0
+
+
 def _diagnostic_recommendations(summary: dict) -> list[str]:
     recommendations: list[str] = []
     breakdown = _initial_load_breakdown(summary)
@@ -151,6 +158,17 @@ def _diagnostic_recommendations(summary: dict) -> list[str]:
             recommendations.append(
                 f"{phase} dominates section dispatch import time; split module imports or move optional dependencies behind workflow load."
             )
+    nav_rows = _summary_rows(summary, "browser_navigation_timing", "metric", limit=20)
+    paint_rows = _summary_rows(summary, "browser_paint_timing", "metric", limit=20)
+    response_start = _row_value(nav_rows, "metric", "responseStart")
+    fcp = _row_value(paint_rows, "metric", "first-contentful-paint")
+    server_total = server_by_phase.get("shell:total_render_app", 0)
+    app_entry_rows = _summary_rows(summary, "app_entry_phase_breakdown", "phase", limit=20)
+    app_entry_max = max((float(row.get("p95_ms", 0) or 0) for row in app_entry_rows), default=0.0)
+    if response_start > 5000 and fcp > 10000 and server_total < 1000 and app_entry_max < 5000:
+        recommendations.append(
+            "Server render and app-entry phases are low while responseStart/FCP are high; prioritize Streamlit server concurrency/runtime and browser host capacity before section-code trimming."
+        )
     return recommendations
 
 
@@ -228,6 +246,14 @@ def build_review(
     skipped = _skipped_buttons(samples)
     slowest = _top_slowest_steps(samples)
     slowest_diagnostic = _top_slowest_diagnostic_steps(samples)
+    server_rows = _summary_rows(summary, "server_phase_breakdown", "phase")
+    app_entry_rows = _summary_rows(summary, "app_entry_phase_breakdown", "phase")
+    nav_rows = _summary_rows(summary, "browser_navigation_timing", "metric")
+    paint_rows = _summary_rows(summary, "browser_paint_timing", "metric")
+    server_total_p95 = _row_value(server_rows, "phase", "shell:total_render_app")
+    app_entry_import_p95 = _row_value(app_entry_rows, "phase", "app_entry:import_shell")
+    response_start_p95 = _row_value(nav_rows, "metric", "responseStart")
+    fcp_p95 = _row_value(paint_rows, "metric", "first-contentful-paint")
     overall = _verdict(summary)
     meets_thresholds = (
         overall == "PASS"
@@ -248,6 +274,10 @@ def build_review(
         f"- Error rate: `{summary.get('error_rate', 0)}`",
         f"- Slowest section: `{_slowest_section(summary)}`",
         f"- Slowest action: `{_slowest_action(summary)}`",
+        f"- Server render p95: `{server_total_p95} ms`",
+        f"- App-entry shell import p95: `{app_entry_import_p95} ms`",
+        f"- Browser responseStart p95: `{response_start_p95} ms`",
+        f"- Browser first-contentful-paint p95: `{fcp_p95} ms`",
         "- Verdict scale: PASS / WATCH / FAIL",
         "",
         "## Threshold Assessment",
@@ -318,7 +348,6 @@ def build_review(
             f"- Slowest initial-load phase: `{phase_name}`.",
             f"- Recommendation: tune `{phase_name}` first, then rerun the same 12-user profile so release p95 remains comparable.",
         ])
-    server_rows = _summary_rows(summary, "server_phase_breakdown", "phase")
     lines.extend([
         "",
         "## Server Phase Breakdown",
@@ -330,7 +359,19 @@ def build_review(
             lines.append(f"| {row.get('phase', '')} | {row.get('steps', '')} | {row.get('p95_ms', 0)} | {row.get('max_ms', 0)} |")
     else:
         lines.append("- No server-side phase trace was collected.")
-    nav_rows = _summary_rows(summary, "browser_navigation_timing", "metric")
+    lines.extend([
+        "",
+        "## App Entry Phase Breakdown",
+        "",
+    ])
+    if app_entry_rows:
+        lines.extend(["| Phase | Samples | P95 ms | Max ms |", "|---|---:|---:|---:|"])
+        for row in app_entry_rows:
+            lines.append(
+                f"| {row.get('phase', '')} | {row.get('steps', '')} | {row.get('p95_ms', 0)} | {row.get('max_ms', 0)} |"
+            )
+    else:
+        lines.append("- No app-entry import phase trace was collected.")
     lines.extend([
         "",
         "## Browser Navigation Timing",
@@ -342,6 +383,64 @@ def build_review(
             lines.append(f"| {row.get('metric', '')} | {row.get('samples', '')} | {row.get('p95_ms', 0)} | {row.get('max_ms', 0)} |")
     else:
         lines.append("- No browser navigation timing was collected.")
+    lines.extend([
+        "",
+        "## Browser Paint Timing",
+        "",
+    ])
+    if paint_rows:
+        lines.extend(["| Metric | Samples | P95 ms | Max ms |", "|---|---:|---:|---:|"])
+        for row in paint_rows:
+            lines.append(f"| {row.get('metric', '')} | {row.get('samples', '')} | {row.get('p95_ms', 0)} | {row.get('max_ms', 0)} |")
+    else:
+        lines.append("- No browser paint timing was collected.")
+    lines.extend([
+        "",
+        "## Slowest User Correlation",
+        "",
+    ])
+    matrix = summary.get("initial_load_matrix", [])
+    if isinstance(matrix, list) and matrix:
+        lines.extend([
+            "| User | Initial load ms | responseStart | FCP | Top app-entry phase | Top server phase |",
+            "|---:|---:|---:|---:|---|---|",
+        ])
+        for row in matrix[:10]:
+            nav = row.get("browser_navigation_timing") if isinstance(row, dict) else {}
+            paint = row.get("browser_paint_timing") if isinstance(row, dict) else {}
+            app_entry = row.get("top_app_entry_phase") if isinstance(row, dict) else {}
+            server = row.get("top_server_phase") if isinstance(row, dict) else {}
+            response_start = nav.get("responseStart", "") if isinstance(nav, dict) else ""
+            fcp = paint.get("first-contentful-paint", "") if isinstance(paint, dict) else ""
+            app_phase = (
+                f"{app_entry.get('phase', '')} {app_entry.get('elapsed_ms', '')} ms"
+                if isinstance(app_entry, dict) and app_entry else ""
+            )
+            server_phase = (
+                f"{server.get('phase', '')} {server.get('elapsed_ms', '')} ms"
+                if isinstance(server, dict) and server else ""
+            )
+            lines.append(
+                f"| {row.get('user_id', '')} | {row.get('release_initial_load_ms', '')} | "
+                f"{response_start} | {fcp} | {app_phase} | {server_phase} |"
+            )
+    else:
+        lines.append("- No per-user initial-load correlation rows were collected.")
+    lines.extend([
+        "",
+        "## Playwright Host Resource Samples",
+        "",
+    ])
+    resource_samples = summary.get("resource_samples", [])
+    if isinstance(resource_samples, list) and resource_samples:
+        lines.extend(["| Label | CPU % | Memory % | Processes | Browser children |", "|---|---:|---:|---:|---:|"])
+        for row in resource_samples[:20]:
+            lines.append(
+                f"| {row.get('label', '')} | {row.get('cpu_percent', '')} | {row.get('memory_percent', '')} | "
+                f"{row.get('process_count', '')} | {row.get('browser_child_process_count', '')} |"
+            )
+    else:
+        lines.append("- No Playwright host resource samples were collected.")
     lines.extend([
         "",
         "## Expert Panel",

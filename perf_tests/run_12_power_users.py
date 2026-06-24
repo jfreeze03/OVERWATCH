@@ -27,7 +27,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR), help="Directory for JSON and Markdown reports.")
     parser.add_argument("--headed", action="store_true", help="Run with visible browser windows.")
     parser.add_argument("--allow-watch", action="store_true", help="Return success for WATCH results; default release-gate behavior treats WATCH as nonzero.")
-    return parser.parse_args(argv)
+    args, runner_args = parser.parse_known_args(argv)
+    args.runner_args = runner_args
+    return args
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -44,15 +46,29 @@ def main(argv: list[str] | None = None) -> int:
     ]
     if args.headed:
         runner_args.append("--headed")
+    runner_args.extend(args.runner_args)
     live_args = live_concurrent_runner.parse_args(runner_args)
 
     try:
-        samples, total_elapsed_sec = asyncio.run(live_concurrent_runner.run_stress(live_args))
+        samples, total_elapsed_sec, resource_samples = asyncio.run(live_concurrent_runner.run_stress(live_args))
     except Exception as exc:
         print(json.dumps({"run_id": args.run_id, "readiness_state": "BLOCKED", "error": str(exc)}, indent=2))
         return 3
 
-    summary = live_concurrent_runner.summarize(samples, total_elapsed_sec, live_args)
+    trace_artifact = ""
+    trace_error = ""
+    if live_args.trace_slowest_initial_load:
+        trace_artifact, trace_error = asyncio.run(
+            live_concurrent_runner.capture_slowest_initial_load_trace(live_args, samples)
+        )
+    summary = live_concurrent_runner.summarize(
+        samples,
+        total_elapsed_sec,
+        live_args,
+        resource_samples=resource_samples,
+        trace_artifact=trace_artifact,
+        trace_error=trace_error,
+    )
     json_path, md_path = live_concurrent_runner.write_reports(live_args, samples, summary)
     print(json.dumps({
         "run_id": args.run_id,

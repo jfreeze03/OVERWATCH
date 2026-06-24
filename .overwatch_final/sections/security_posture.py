@@ -55,6 +55,7 @@ from sections.security_posture_privilege_sprawl_view import (
     render_security_privilege_sprawl,
 )
 from sections.security_posture_privilege_sprawl_view import *  # noqa: F403
+from sections.shell_helpers import render_first_paint_summary_shell
 
 
 render_mode_selector = _lazy_util("render_mode_selector")
@@ -72,6 +73,25 @@ def _apply_queued_security_workflow() -> None:
         st.session_state["security_posture_view"] = requested_view
     if requested_workflow in WORKFLOWS:
         st.session_state["security_posture_workflow"] = requested_workflow
+
+
+def _render_security_first_paint_shell(active_view: str, company: str, environment: str, days: int) -> None:
+    render_first_paint_summary_shell(
+        state="Ready",
+        headline=f"{active_view} is ready for security review.",
+        detail="Security Monitoring opens with workflow context first; detailed evidence stays behind explicit load or workflow actions.",
+        metrics=(
+            ("Active view", active_view),
+            ("Window", f"{days} days"),
+            ("Evidence", "Workflow gated"),
+            ("Detail rows", "Explicit load"),
+        ),
+        snapshot=(
+            ("Scope", f"{company} / {environment}"),
+            ("Expected lanes", "Logins, grants, sharing, access changes"),
+            ("Next safe action", "Use selected workflow"),
+        ),
+    )
 
 
 def render_security_admin_advanced(company: str, environment: str, days: int) -> None:
@@ -165,6 +185,7 @@ def render() -> None:
         details=SECURITY_POSTURE_VIEW_DETAILS,
         columns=4,
     )
+    _render_security_first_paint_shell(active_view, company, environment, int(days or 30))
     renderer = SECURITY_POSTURE_RENDERERS.get(active_view)
     if renderer is not None:
         renderer(company, environment, days)

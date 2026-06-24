@@ -166,6 +166,47 @@ class SecurityPostureSplitTests(unittest.TestCase):
         self.assertNotIn("security_posture_brief_load", source)
         self.assertIn("SECURITY_POSTURE_RENDERERS.get(active_view)", source)
 
+    def test_security_posture_route_shell_does_not_call_security_loaders(self):
+        rendered = []
+
+        def _record_renderer(company, environment, days):
+            rendered.append((company, environment, days))
+
+        with patch.object(security_posture, "get_active_company", return_value="ALFA"), patch.object(
+            security_posture,
+            "get_active_environment",
+            return_value="PROD",
+        ), patch.object(security_posture, "render_signal_confidence"), patch.object(
+            security_posture,
+            "day_window_selectbox",
+            return_value=30,
+        ), patch.object(
+            security_posture,
+            "render_mode_selector",
+            return_value=security_posture.SECURITY_OVERVIEW_WORKFLOW,
+        ), patch.object(
+            security_posture,
+            "render_first_paint_summary_shell",
+        ) as render_shell, patch.object(
+            security_posture,
+            "_load_security_brief",
+            side_effect=AssertionError("Security route shell must not load security evidence directly"),
+        ), patch(
+            "sections.security_posture_overview_view._load_security_brief",
+            side_effect=AssertionError("Security overview loader should stay behind the delegated renderer in this test"),
+        ), patch.dict(
+            security_posture.SECURITY_POSTURE_RENDERERS,
+            {security_posture.SECURITY_OVERVIEW_WORKFLOW: _record_renderer},
+        ):
+            security_posture.render()
+
+        render_shell.assert_called_once()
+        shell_kwargs = render_shell.call_args.kwargs
+        self.assertEqual(shell_kwargs["state"], "Ready")
+        self.assertIn(("Active view", security_posture.SECURITY_OVERVIEW_WORKFLOW), shell_kwargs["metrics"])
+        self.assertIn(("Scope", "ALFA / PROD"), shell_kwargs["snapshot"])
+        self.assertEqual(rendered, [("ALFA", "PROD", 30)])
+
     def test_overview_refresh_helper_calls_live_fallback_loader(self):
         with patch("sections.security_posture_overview_view._load_security_brief") as load_brief:
             overview_view._refresh_security_summary("ALFA", "PROD", 30)

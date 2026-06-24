@@ -708,6 +708,49 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn(("Active workload items", "0"), shell_kwargs["metrics"])
         self.assertIn(("Scope", "ALFA / PROD"), shell_kwargs["snapshot"])
 
+    def test_workload_overview_loaded_context_uses_shell_without_detail_loads(self):
+        from sections import workload_operations
+
+        board = pd.DataFrame([
+            {"SEVERITY": "Critical", "CATEGORY": "Query Performance"},
+            {"SEVERITY": "Medium", "CATEGORY": "Pipeline Load"},
+        ])
+        with contextlib.ExitStack() as stack:
+            render_shell = stack.enter_context(patch.object(workload_operations, "render_first_paint_summary_shell"))
+            stack.enter_context(patch.object(workload_operations, "build_loaded_section_alert_signal_board", return_value=board))
+            loaded_context = stack.enter_context(patch.object(workload_operations, "_render_loaded_workload_alert_context"))
+            info = stack.enter_context(patch.object(workload_operations.st, "info"))
+            stack.enter_context(patch.object(workload_operations.st, "columns", side_effect=lambda count: [contextlib.nullcontext() for _ in range(count)]))
+            stack.enter_context(patch.object(workload_operations.st, "button", return_value=False))
+            stack.enter_context(patch.object(workload_operations.st, "markdown"))
+            for loader_name in (
+                "load_change_correlation_detail",
+                "load_change_event_detail",
+                "load_closed_loop_execution_plan_detail",
+                "load_closed_loop_workflow_detail",
+                "load_command_center_finding_detail",
+                "load_command_center_recommendation_detail",
+                "load_forecast_detail",
+            ):
+                stack.enter_context(patch.object(
+                    workload_operations,
+                    loader_name,
+                    side_effect=AssertionError(f"{loader_name} should stay behind explicit workflow actions"),
+                ))
+            workload_operations._render_workload_overview("ALFA", "PROD")
+
+        render_shell.assert_called_once()
+        shell_kwargs = render_shell.call_args.kwargs
+        self.assertEqual(shell_kwargs["state"], "Loaded context")
+        self.assertIn(("Active workload items", "2"), shell_kwargs["metrics"])
+        self.assertIn(("Critical / High", "1"), shell_kwargs["metrics"])
+        self.assertIn(("Query / contention", "1"), shell_kwargs["metrics"])
+        self.assertIn(("Pipeline / task", "1"), shell_kwargs["metrics"])
+        self.assertIn(("Scope", "ALFA / PROD"), shell_kwargs["snapshot"])
+        self.assertIn(("Freshness", "Session alert context"), shell_kwargs["snapshot"])
+        loaded_context.assert_called_once()
+        info.assert_not_called()
+
     def test_cost_contract_uses_fast_shell_module(self):
         from sections import cost_contract_contracts
 
@@ -2113,14 +2156,22 @@ class NavigationIntegrityTests(unittest.TestCase):
             "sections/storage_monitor.py",
         }
         offenders = []
+        remaining_legacy_usage = set()
         for path in sorted((APP_ROOT / "sections").rglob("*.py")):
             rel = path.relative_to(APP_ROOT).as_posix()
             text = path.read_text(encoding="utf-8")
             if any(token in text for token in ("st.line_chart", "st.area_chart", "st.bar_chart")):
+                remaining_legacy_usage.add(rel)
                 if rel not in legacy_native_chart_allowlist:
                     offenders.append(rel)
 
         self.assertEqual(offenders, [])
+        stale_allowlist = sorted(legacy_native_chart_allowlist - remaining_legacy_usage)
+        self.assertEqual(
+            stale_allowlist,
+            [],
+            f"Remove stale native chart allowlist entries with no native chart calls: {stale_allowlist}",
+        )
 
     def test_workflow_selector_groups_keep_selected_workflow_visible(self):
         from utils.workflows import workflow_selector_groups

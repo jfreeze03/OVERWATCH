@@ -62,7 +62,9 @@ Use shared first-paint shell helpers for status strips, KPI rows, and snapshots
 when a section can do so without moving data-load decisions out of the owning
 section. Workload Operations uses this pattern for its session-only overview;
 specialist workload evidence remains behind the selected workflow and explicit
-load actions.
+load actions. Security Monitoring uses the same shell for active-view, scope,
+expected evidence lanes, and next-action wayfinding while detailed security
+evidence stays in the selected workflow or explicit load path.
 
 ## Charts And Tables
 
@@ -77,6 +79,8 @@ Rules:
 - Prefer shared OVERWATCH Altair helpers for time-series and area charts.
 - Treat native `st.line_chart`, `st.area_chart`, and `st.bar_chart` usage as
   legacy-only unless a source-level test allowlists the specialist surface.
+- Remove legacy chart allowlist entries when the final native chart call leaves
+  that file.
 - Use source/freshness help where a metric depends on delayed Snowflake views.
 
 ## Text And Labels

@@ -42,7 +42,13 @@ from sections.cost_contract_splash import (
     _maybe_autoload_cost_splash,
     _render_cost_splash,
 )
-from sections.shell_helpers import _clean_display_text, render_data_freshness, render_escaped_bold_text
+from sections.shell_helpers import (
+    FirstPaintSummarySpec,
+    _clean_display_text,
+    render_data_freshness,
+    render_escaped_bold_text,
+    render_section_first_paint_shell,
+)
 from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_section_note, defer_source_note
 
@@ -50,7 +56,31 @@ from utils.section_guidance import defer_section_note, defer_source_note
 pd = lazy_pandas()
 
 credits_to_dollars = _lazy_util("credits_to_dollars")
+get_active_environment = _lazy_util("get_active_environment")
 get_session_for_action = _lazy_util("get_session_for_action")
+
+
+def _render_cost_first_paint_shell(company: str, days: int, splash: dict) -> None:
+    loaded = bool(splash.get("loaded"))
+    environment = str(get_active_environment() or DEFAULTS.get("default_environment") or "ALL")
+    render_section_first_paint_shell(FirstPaintSummarySpec(
+        section="Cost & Contract",
+        state="Loaded context" if loaded else "Ready",
+        headline="Cost Overview is ready for explicit spend review.",
+        detail="First paint keeps cost, forecast, and reconciliation evidence on demand until Refresh Cost is used.",
+        view="Cost Overview",
+        metrics=(
+            ("Window", f"{int(days)} days"),
+            ("Spend evidence", "Loaded" if loaded else "Explicit refresh"),
+            ("Forecast/chart state", "Loaded" if loaded else "On demand"),
+        ),
+        snapshot=(
+            ("Scope", f"{company} / {environment}"),
+        ),
+        expected_lanes=("Spend movement", "Run rate", "Warehouse drivers", "Cortex", "Savings"),
+        load_cta="Refresh Cost",
+        no_query_note="First paint does not query Snowflake; Refresh Cost loads cost facts and detail evidence.",
+    ))
 
 
 def _render_cost_watch_floor(company: str, credit_price: float) -> None:
@@ -79,6 +109,7 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
         splash = _ensure_cost_splash(company, int(days), credit_price)
     else:
         splash = _maybe_autoload_cost_splash(company, int(days), credit_price)
+    _render_cost_first_paint_shell(company, int(days), splash)
     _render_cost_splash(splash, company=company, days=int(days), credit_price=credit_price)
 
     proof_data = st.session_state.get("cost_contract_cockpit")

@@ -55,7 +55,7 @@ from sections.security_posture_privilege_sprawl_view import (
     render_security_privilege_sprawl,
 )
 from sections.security_posture_privilege_sprawl_view import *  # noqa: F403
-from sections.shell_helpers import render_first_paint_summary_shell
+from sections.shell_helpers import FirstPaintSummarySpec, render_section_first_paint_shell
 
 
 render_mode_selector = _lazy_util("render_mode_selector")
@@ -76,22 +76,24 @@ def _apply_queued_security_workflow() -> None:
 
 
 def _render_security_first_paint_shell(active_view: str, company: str, environment: str, days: int) -> None:
-    render_first_paint_summary_shell(
+    render_section_first_paint_shell(FirstPaintSummarySpec(
+        section="Security Monitoring",
         state="Ready",
         headline=f"{active_view} is ready for security review.",
         detail="Security Monitoring opens with workflow context first; detailed evidence stays behind explicit load or workflow actions.",
+        view=active_view,
         metrics=(
-            ("Active view", active_view),
             ("Window", f"{days} days"),
             ("Evidence", "Workflow gated"),
             ("Detail rows", "Explicit load"),
         ),
         snapshot=(
             ("Scope", f"{company} / {environment}"),
-            ("Expected lanes", "Logins, grants, sharing, access changes"),
-            ("Next safe action", "Use selected workflow"),
         ),
-    )
+        expected_lanes=("Logins", "Grants", "Sharing", "Access changes"),
+        load_cta="Use selected workflow or Refresh Security Summary",
+        no_query_note="First paint does not query Snowflake; refresh or workflow loads provide current security evidence.",
+    ))
 
 
 def render_security_admin_advanced(company: str, environment: str, days: int) -> None:

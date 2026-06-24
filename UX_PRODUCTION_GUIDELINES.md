@@ -64,7 +64,17 @@ section. Workload Operations uses this pattern for its session-only overview;
 specialist workload evidence remains behind the selected workflow and explicit
 load actions. Security Monitoring uses the same shell for active-view, scope,
 expected evidence lanes, and next-action wayfinding while detailed security
-evidence stays in the selected workflow or explicit load path.
+evidence stays in the selected workflow or explicit load path. Security
+Monitoring first paint must not auto-load the security summary; Refresh
+Security Summary is the current-facts boundary. Cost & Contract uses the same
+contract for Cost Overview: scope, window, evidence state, expected cost lanes,
+and Refresh Cost are visible before official spend, forecast, reconciliation,
+or contract evidence loads.
+
+Use `FirstPaintSummarySpec` through `render_section_first_paint_shell()` when a
+section needs the standard first-paint contract. Keep one-off shell rendering
+only for specialized loaded-context surfaces that already have a narrower
+contract.
 
 ## Charts And Tables
 
@@ -80,7 +90,8 @@ Rules:
 - Treat native `st.line_chart`, `st.area_chart`, and `st.bar_chart` usage as
   legacy-only unless a source-level test allowlists the specialist surface.
 - Remove legacy chart allowlist entries when the final native chart call leaves
-  that file.
+  that file. New loaded-data charts should use `render_time_series_chart`,
+  `render_area_time_series_chart`, or `render_ranked_bar_chart`.
 - Use source/freshness help where a metric depends on delayed Snowflake views.
 
 ## Text And Labels

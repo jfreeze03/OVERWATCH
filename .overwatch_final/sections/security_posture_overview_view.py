@@ -223,9 +223,9 @@ def _security_action_brief(summary, exceptions, meta: dict, company: str, enviro
                 "detail": "Loaded telemetry does not match the active company, environment, filters, or lookback.",
             }
         return {
-            "state": "Fast Summary",
-            "headline": "Security posture is ready for review.",
-            "detail": "Fast security facts are attempted automatically; live account-history proof stays behind refresh.",
+            "state": "Ready",
+            "headline": "Security posture is ready for explicit review.",
+            "detail": "First paint does not query Snowflake; use Refresh Security Summary for current security facts.",
         }
 
     row = summary.iloc[0]
@@ -276,7 +276,7 @@ def _security_operating_snapshot(summary, meta: dict, company: str, environment:
             "loaded": False,
             "scope": str(company or "All"),
             "window": f"{safe_int(days, 30):d}d",
-            "evidence": "Fast facts pending",
+            "evidence": "On demand",
             "focus": "Access",
         }
     row = summary.iloc[0]
@@ -294,7 +294,7 @@ def _render_security_operating_snapshot(snapshot: dict) -> None:
         render_shell_kpi_row((
             ("Scope", str(snapshot.get("scope") or "All")),
             ("Window", str(snapshot.get("window") or "30d")),
-            ("Telemetry", str(snapshot.get("evidence") or "Fast facts pending")),
+            ("Telemetry", str(snapshot.get("evidence") or "On demand")),
         ))
         return
     render_shell_kpi_row((
@@ -739,21 +739,6 @@ def render_security_overview(company: str, environment: str, days: int) -> None:
         and _security_meta_matches(meta, security_expected_meta)
     )
     if not security_current:
-        _load_security_brief(
-            days=days,
-            company=company,
-            environment=environment,
-            allow_live_fallback=False,
-            quiet=True,
-        )
-        summary = st.session_state.get("security_posture_summary")
-        exceptions = st.session_state.get("security_posture_exceptions")
-        meta = st.session_state.get("security_posture_meta", {})
-        security_current = (
-            summary is not None
-            and not getattr(summary, "empty", True)
-            and _security_meta_matches(meta, security_expected_meta)
-        )
         _paint_security_brief_chrome(
             brief_slot,
             snapshot_slot,
@@ -768,7 +753,7 @@ def render_security_overview(company: str, environment: str, days: int) -> None:
 
     _render_security_overview_entry(summary, exceptions, meta, company, environment, days)
     if consume_section_autoload_request("Security Posture") and not security_current:
-        st.caption("Access & Security opened with fast security facts. Refresh the security summary when current account-history telemetry is needed.")
+        st.caption("Access & Security opened without loading security facts. Refresh the security summary when current account-history telemetry is needed.")
     render_data_freshness(
         meta if security_current else {},
         source=st.session_state.get("security_posture_source", "Security summary"),

@@ -3,6 +3,7 @@ import streamlit as st
 import pandas as pd
 from config import DEFAULTS
 from sections.shell_helpers import render_shell_snapshot
+from utils.display import render_area_time_series_chart, render_ranked_bar_chart
 from utils import (
     day_window_selectbox,
     format_snowflake_error,
@@ -94,7 +95,7 @@ def render():
         render_chart_with_data_toggle(
             "Credits by Compute Pool",
             "spcs_credits_by_pool",
-            lambda: st.bar_chart(pool_agg.set_index("COMPUTE_POOL_NAME")["DAILY_CREDITS"]),
+            lambda: render_ranked_bar_chart(pool_agg, "COMPUTE_POOL_NAME", "DAILY_CREDITS"),
             pool_agg,
             priority_columns=["COMPUTE_POOL_NAME", "DAILY_CREDITS", "COST_USD", "AVG_DAILY_CREDITS", "LAST_SEEN_AT"],
             sort_by=["DAILY_CREDITS"],
@@ -107,7 +108,7 @@ def render():
         render_chart_with_data_toggle(
             "Daily Trend",
             "spcs_daily_trend",
-            lambda: st.area_chart(daily.set_index("USAGE_DATE")["DAILY_CREDITS"]),
+            lambda: render_area_time_series_chart(daily, "USAGE_DATE", "DAILY_CREDITS"),
             daily,
             priority_columns=["USAGE_DATE", "DAILY_CREDITS", "DAILY_COST_USD"],
             sort_by=["USAGE_DATE"],

@@ -3,6 +3,7 @@ import pandas as pd
 import streamlit as st
 from config import DEFAULTS
 from sections.shell_helpers import render_shell_snapshot
+from utils.display import render_time_series_chart
 from utils import (
     get_active_company,
     day_window_selectbox,
@@ -133,10 +134,16 @@ def render():
         st.subheader("Daily Transfer Trend")
         daily = df_d.groupby("DAY")[["GB_TRANSFERRED","CREDITS"]].sum().reset_index()
         daily["COST_USD"] = (pd.to_numeric(daily["CREDITS"], errors="coerce").fillna(0) * float(credit_price)).round(2)
+        daily_chart = daily.melt(
+            id_vars=["DAY"],
+            value_vars=["GB_TRANSFERRED", "CREDITS"],
+            var_name="METRIC",
+            value_name="VALUE",
+        )
         render_chart_with_data_toggle(
             "Daily transfer trend",
             "data_sharing_transfer_trend",
-            lambda: st.line_chart(daily.set_index("DAY")[["GB_TRANSFERRED", "CREDITS"]]),
+            lambda: render_time_series_chart(daily_chart, "DAY", "VALUE", series_column="METRIC"),
             daily,
             priority_columns=["DAY", "GB_TRANSFERRED", "CREDITS", "COST_USD"],
             sort_by=["DAY"],

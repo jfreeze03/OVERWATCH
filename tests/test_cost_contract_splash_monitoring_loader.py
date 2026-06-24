@@ -54,6 +54,42 @@ class CostContractSplashMonitoringLoaderTests(unittest.TestCase):
         self.assertFalse(miss["loaded"])
         self.assertEqual(miss["meta"]["company"], "Trexis")
 
+    def test_navigation_autoload_request_keeps_cost_splash_on_demand(self):
+        from sections import cost_contract_splash
+        from sections.cost_contract_contracts import (
+            _COST_SPLASH_AUTOLOAD_SCOPE_KEY,
+            _COST_SPLASH_KEY,
+        )
+
+        state = {
+            "_overwatch_pending_autoload_section": "Cost & Contract",
+            "_overwatch_pending_autoload_started_at": "2026-06-24T00:00:00",
+        }
+        with patch.object(cost_contract_splash.st, "session_state", state), patch.object(
+            cost_contract_splash.st,
+            "caption",
+        ) as caption, patch.object(
+            cost_contract_splash,
+            "get_session_for_action",
+            side_effect=AssertionError("Cost first paint must not request Snowflake"),
+        ), patch.object(
+            cost_contract_splash,
+            "run_query_or_raise",
+            side_effect=AssertionError("Cost first paint must not query Snowflake"),
+        ):
+            splash = cost_contract_splash._maybe_autoload_cost_splash("ALFA", 7, 4.0)
+
+        self.assertFalse(splash["loaded"])
+        self.assertNotIn(_COST_SPLASH_KEY, state)
+        self.assertNotIn("_overwatch_pending_autoload_section", state)
+        self.assertNotIn("_overwatch_pending_autoload_started_at", state)
+        self.assertEqual(
+            state[_COST_SPLASH_AUTOLOAD_SCOPE_KEY],
+            {"company": "ALFA", "days": 7, "credit_price": 4.0},
+        )
+        caption.assert_called_once()
+        self.assertIn("without loading cost facts", caption.call_args.args[0])
+
     def test_cost_splash_summary_preserves_service_total_and_warehouse_basis(self):
         from sections.cost_contract_splash import _cost_splash_summary
 

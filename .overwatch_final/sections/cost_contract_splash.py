@@ -232,7 +232,7 @@ def _ensure_cost_splash(company: str, days: int, credit_price: float, *, full_pr
 
 
 def _maybe_autoload_cost_splash(company: str, days: int, credit_price: float) -> dict:
-    """Load a lightweight cost landing once after navigation; keep full telemetry explicit."""
+    """Return cached cost landing data; navigation first paint stays query-on-demand."""
     meta = _cost_splash_meta(company, days, credit_price)
     cached = st.session_state.get(_COST_SPLASH_KEY)
     if isinstance(cached, dict) and cached.get("meta") == meta and cached.get("loaded"):
@@ -240,10 +240,9 @@ def _maybe_autoload_cost_splash(company: str, days: int, credit_price: float) ->
     if consume_section_autoload_request("Cost & Contract"):
         st.session_state[_COST_SPLASH_AUTOLOAD_SCOPE_KEY] = meta
         st.caption(
-            "Cost & Contract opened fast summary facts. Refresh Cost loads official spend, "
+            "Cost & Contract opened without loading cost facts. Refresh Cost loads official spend, "
             "warehouse ranking, Cortex spend, and supporting telemetry."
         )
-        return _ensure_cost_splash(company, days, credit_price, full_proof=False)
     return _cached_cost_splash(company, days, credit_price)
 
 

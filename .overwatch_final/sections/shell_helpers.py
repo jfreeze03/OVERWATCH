@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from html import escape as _escape_markup
 import re
@@ -361,6 +362,32 @@ def scope_label(company: str | None, environment: str | None) -> str:
     return f"{company_key} / {compact_environment_label(environment)}"
 
 
+@dataclass(frozen=True)
+class FirstPaintSummarySpec:
+    """Declarative first-paint shell contract for query-on-demand section entry."""
+
+    section: str
+    state: object
+    headline: object
+    view: object = ""
+    detail: object = ""
+    metrics: tuple[tuple[str, object], ...] = ()
+    snapshot: tuple[tuple[str, object], ...] = ()
+    expected_lanes: Sequence[object] | object = ()
+    load_cta: object = ""
+    no_query_note: object = ""
+
+
+def _format_expected_lanes(lanes: Sequence[object] | object) -> str:
+    if isinstance(lanes, str):
+        return _clean_display_text(lanes)
+    try:
+        values = [_clean_display_text(item) for item in lanes or ()]
+    except TypeError:
+        values = [_clean_display_text(lanes)]
+    return ", ".join(value for value in values if value)
+
+
 def render_shell_snapshot(metrics: tuple[tuple[str, object], ...]) -> None:
     """Render lightweight shell snapshot cards without the bulk of metric widgets."""
     visible_metrics = []
@@ -417,6 +444,28 @@ def render_first_paint_summary_shell(
         render_shell_kpi_row(metrics)
     if snapshot:
         render_shell_snapshot(snapshot)
+
+
+def render_section_first_paint_shell(spec: FirstPaintSummarySpec) -> None:
+    """Render a standardized first-paint shell without starting data work."""
+    metrics = tuple(spec.metrics or ())
+    if spec.view:
+        metrics = (("Active view", spec.view),) + metrics
+    expected_lanes = _format_expected_lanes(spec.expected_lanes)
+    snapshot = tuple(spec.snapshot or ())
+    if expected_lanes:
+        snapshot = snapshot + (("Expected lanes", expected_lanes),)
+    if spec.load_cta:
+        snapshot = snapshot + (("Next safe action", spec.load_cta),)
+    render_first_paint_summary_shell(
+        state=spec.state,
+        headline=spec.headline or f"{spec.section} is ready.",
+        detail=spec.detail,
+        metrics=metrics,
+        snapshot=snapshot,
+    )
+    if spec.no_query_note:
+        st.caption(_clean_display_text(spec.no_query_note))
 
 
 def render_signal_lane_board(

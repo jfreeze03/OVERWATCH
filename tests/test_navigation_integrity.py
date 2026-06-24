@@ -649,6 +649,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("SECURITY_POSTURE_VIEWS", security_text)
         self.assertNotIn("Security Signal Summary", security_text)
         self.assertNotIn("Security Monitoring Command Board", security_text)
+        self.assertIn("render_section_first_paint_shell", security_text)
+        self.assertIn("First paint does not query Snowflake", security_text)
         self.assertIn('set_state(SECURITY_POSTURE_VIEW, "Security Overview")', nav_text)
 
     def test_workload_operations_uses_fast_shell_module(self):
@@ -762,7 +764,16 @@ class NavigationIntegrityTests(unittest.TestCase):
         intelligence_text = (APP_ROOT / "sections" / "cost_contract_intelligence.py").read_text(encoding="utf-8")
         workflow_text = (APP_ROOT / "sections" / "cost_contract_workflow.py").read_text(encoding="utf-8")
         overview_floor_text = (APP_ROOT / "sections" / "cost_contract_overview_floor.py").read_text(encoding="utf-8")
-        cost_contract_surface = full_workspace_text + contract_text + panel_text + intelligence_text + workflow_text + overview_floor_text
+        splash_text = (APP_ROOT / "sections" / "cost_contract_splash.py").read_text(encoding="utf-8")
+        cost_contract_surface = (
+            full_workspace_text
+            + contract_text
+            + panel_text
+            + intelligence_text
+            + workflow_text
+            + overview_floor_text
+            + splash_text
+        )
         nav_text = (APP_ROOT / "sections" / "navigation.py").read_text(encoding="utf-8")
         self.assertIn('"Cost Overview"', cost_contract_surface)
         self.assertIn('"Cost by Warehouse"', cost_contract_surface)
@@ -779,6 +790,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(cost_contract_contracts.ADVANCED_COST_TOOL_MODULES["Storage & Retention"], "sections.storage_monitor")
         self.assertIn('"Storage & Retention": "sections.storage_monitor"', contract_text)
         self.assertIn('"Refresh Cost"', cost_contract_surface)
+        self.assertIn("render_section_first_paint_shell", cost_contract_surface)
+        self.assertIn("First paint does not query Snowflake", cost_contract_surface)
+        self.assertIn("without loading cost facts", cost_contract_surface)
         self.assertNotIn('"Refresh Overview"', full_workspace_text)
         self.assertNotIn('"Refresh Cost Details"', full_workspace_text)
         self.assertNotIn("Cost Detail Refresh", full_workspace_text)
@@ -2148,11 +2162,9 @@ class NavigationIntegrityTests(unittest.TestCase):
             "sections/cortex_monitor.py",
             "sections/cost_center_explain_view.py",
             "sections/cost_center_forecast_view.py",
-            "sections/data_sharing.py",
             "sections/dba_tools_cost_health_view.py",
             "sections/live_monitor.py",
             "sections/security_access.py",
-            "sections/spcs_tracker.py",
             "sections/storage_monitor.py",
         }
         offenders = []
@@ -2223,6 +2235,37 @@ class NavigationIntegrityTests(unittest.TestCase):
 
         kpis.assert_called_once_with((("Active View", "Active Alerts"),))
         snapshot.assert_called_once_with((("Freshness", "Not loaded"),))
+
+    def test_section_first_paint_spec_adds_view_lanes_cta_and_no_query_note(self):
+        from sections import shell_helpers
+
+        spec = shell_helpers.FirstPaintSummarySpec(
+            section="Security Monitoring",
+            view="Security Overview",
+            state="Ready",
+            headline="Security is ready",
+            detail="Evidence loads on demand.",
+            metrics=(("Window", "30 days"),),
+            snapshot=(("Scope", "ALFA / PROD"),),
+            expected_lanes=("Logins", "Grants"),
+            load_cta="Refresh Security Summary",
+            no_query_note="First paint does not query Snowflake.",
+        )
+        with patch.object(shell_helpers, "render_first_paint_summary_shell") as render_shell, patch.object(
+            shell_helpers.st,
+            "caption",
+        ) as caption:
+            shell_helpers.render_section_first_paint_shell(spec)
+
+        render_shell.assert_called_once()
+        kwargs = render_shell.call_args.kwargs
+        self.assertEqual(kwargs["state"], "Ready")
+        self.assertIn(("Active view", "Security Overview"), kwargs["metrics"])
+        self.assertIn(("Window", "30 days"), kwargs["metrics"])
+        self.assertIn(("Scope", "ALFA / PROD"), kwargs["snapshot"])
+        self.assertIn(("Expected lanes", "Logins, Grants"), kwargs["snapshot"])
+        self.assertIn(("Next safe action", "Refresh Security Summary"), kwargs["snapshot"])
+        caption.assert_called_once_with("First paint does not query Snowflake.")
 
     def test_workflow_helpers_keep_landing_pages_compact(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")

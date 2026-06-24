@@ -26,6 +26,17 @@ from sections import security_posture_overview_view as overview_view  # noqa: E4
 from sections import security_posture_privilege_sprawl_view as privilege_view  # noqa: E402
 
 
+class _UiBlock:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def container(self):
+        return self
+
+
 class SecurityPostureSplitTests(unittest.TestCase):
     def setUp(self):
         self._previous_state = dict(st.session_state)
@@ -186,7 +197,7 @@ class SecurityPostureSplitTests(unittest.TestCase):
             return_value=security_posture.SECURITY_OVERVIEW_WORKFLOW,
         ), patch.object(
             security_posture,
-            "render_first_paint_summary_shell",
+            "render_section_first_paint_shell",
         ) as render_shell, patch.object(
             security_posture,
             "_load_security_brief",
@@ -201,11 +212,115 @@ class SecurityPostureSplitTests(unittest.TestCase):
             security_posture.render()
 
         render_shell.assert_called_once()
-        shell_kwargs = render_shell.call_args.kwargs
-        self.assertEqual(shell_kwargs["state"], "Ready")
-        self.assertIn(("Active view", security_posture.SECURITY_OVERVIEW_WORKFLOW), shell_kwargs["metrics"])
-        self.assertIn(("Scope", "ALFA / PROD"), shell_kwargs["snapshot"])
+        spec = render_shell.call_args.args[0]
+        self.assertEqual(spec.state, "Ready")
+        self.assertEqual(spec.view, security_posture.SECURITY_OVERVIEW_WORKFLOW)
+        self.assertIn(("Scope", "ALFA / PROD"), spec.snapshot)
         self.assertEqual(rendered, [("ALFA", "PROD", 30)])
+
+    def test_security_overview_cold_first_paint_does_not_auto_load(self):
+        button_labels: list[str] = []
+
+        def _button(label, **_kwargs):
+            button_labels.append(str(label))
+            return False
+
+        with patch.object(
+            overview_view,
+            "_load_security_brief",
+            side_effect=AssertionError("Security overview first paint must not auto-load"),
+        ) as load_brief, patch.object(
+            overview_view,
+            "run_query",
+            side_effect=AssertionError("Security overview first paint must not run live SQL"),
+        ), patch.object(
+            overview_view,
+            "get_session",
+            side_effect=AssertionError("Security overview first paint must not request a session"),
+        ), patch.object(overview_view.st, "empty", return_value=_UiBlock()), patch.object(
+            overview_view.st,
+            "columns",
+            side_effect=lambda spec: [_UiBlock() for _ in range(len(spec) if isinstance(spec, list) else spec)],
+        ), patch.object(overview_view.st, "button", side_effect=_button), patch.object(
+            overview_view.st,
+            "expander",
+            return_value=_UiBlock(),
+        ), patch.object(overview_view.st, "markdown"), patch.object(overview_view.st, "caption"), patch.object(
+            overview_view,
+            "_render_security_action_brief",
+        ) as action_brief, patch.object(
+            overview_view,
+            "_render_security_operating_snapshot",
+        ) as operating_snapshot, patch.object(
+            overview_view,
+            "_render_security_brief_launchpad",
+        ), patch.object(overview_view, "_render_advanced_security_evidence"):
+            overview_view.render_security_overview("ALFA", "PROD", 30)
+
+        load_brief.assert_not_called()
+        self.assertIn("Refresh Security Summary", button_labels)
+        self.assertEqual(action_brief.call_args.args[0]["state"], "Ready")
+        self.assertEqual(operating_snapshot.call_args.args[0]["evidence"], "On demand")
+
+    def test_security_overview_uses_scope_compatible_summary_without_refresh(self):
+        summary = pd.DataFrame([{
+            "FAILED_LOGINS": 0,
+            "FAILED_USERS": 0,
+            "ACTIVE_USERS": 4,
+            "USERS_WITHOUT_MFA": 0,
+            "RECENT_GRANTS": 0,
+            "SHARED_DATABASES": 0,
+        }])
+        meta = models._security_scope_meta("ALFA", "PROD", 30)
+        st.session_state["security_posture_summary"] = summary
+        st.session_state["security_posture_exceptions"] = pd.DataFrame()
+        st.session_state["security_posture_meta"] = meta
+        st.session_state["security_posture_source"] = "Session security summary"
+        button_labels: list[str] = []
+
+        def _button(label, **_kwargs):
+            button_labels.append(str(label))
+            return False
+
+        with patch.object(
+            overview_view,
+            "_load_security_brief",
+            side_effect=AssertionError("Cached security summary should not refresh automatically"),
+        ) as load_brief, patch.object(overview_view.st, "empty", return_value=_UiBlock()), patch.object(
+            overview_view.st,
+            "columns",
+            side_effect=lambda spec: [_UiBlock() for _ in range(len(spec) if isinstance(spec, list) else spec)],
+        ), patch.object(overview_view.st, "button", side_effect=_button), patch.object(
+            overview_view.st,
+            "expander",
+            return_value=_UiBlock(),
+        ), patch.object(overview_view.st, "markdown"), patch.object(overview_view.st, "caption"), patch.object(
+            overview_view.st,
+            "success",
+        ), patch.object(overview_view.st, "divider"), patch.object(
+            overview_view,
+            "_render_security_brief_launchpad",
+        ), patch.object(
+            overview_view,
+            "_render_security_watch_floor",
+        ) as watch_floor, patch.object(
+            overview_view,
+            "_render_security_operability_fact_gate",
+        ) as fact_gate, patch.object(
+            overview_view,
+            "_render_security_exceptions_gate",
+        ) as exception_gate, patch.object(overview_view, "download_text"), patch.object(
+            overview_view,
+            "_render_advanced_security_evidence",
+        ), patch.object(overview_view, "render_data_freshness") as freshness:
+            overview_view.render_security_overview("ALFA", "PROD", 30)
+
+        load_brief.assert_not_called()
+        self.assertIn("Refresh Security Summary", button_labels)
+        watch_floor.assert_called_once()
+        fact_gate.assert_called_once_with("ALFA", "PROD", 30)
+        exception_gate.assert_called_once_with("ALFA", "PROD", 30)
+        freshness.assert_called_once()
 
     def test_overview_refresh_helper_calls_live_fallback_loader(self):
         with patch("sections.security_posture_overview_view._load_security_brief") as load_brief:

@@ -223,6 +223,52 @@ class CostContractRenderingWorkflowTests(unittest.TestCase):
         get_session.assert_called_once()
         refresh_detail.assert_called_once()
 
+    def test_cost_overview_floor_first_paint_shell_does_not_autoload(self):
+        from sections import cost_contract_overview_floor
+
+        state = {"cost_contract_cockpit_window": 7}
+        button_keys: list[str] = []
+
+        def _columns(spec):
+            return [_Column() for _ in range(len(spec) if isinstance(spec, list) else spec)]
+
+        def _button(_label, *, key, **_kwargs):
+            button_keys.append(key)
+            return False
+
+        with (
+            patch.object(cost_contract_overview_floor.st, "session_state", state),
+            patch.object(cost_contract_overview_floor.st, "columns", side_effect=_columns),
+            patch.object(cost_contract_overview_floor.st, "selectbox", return_value=7),
+            patch.object(cost_contract_overview_floor.st, "button", side_effect=_button),
+            patch.object(cost_contract_overview_floor, "_maybe_autoload_cost_splash", return_value={"loaded": False}) as maybe_splash,
+            patch.object(
+                cost_contract_overview_floor,
+                "_ensure_cost_splash",
+                side_effect=AssertionError("Cold Cost Overview first paint must not load cost splash"),
+            ) as ensure_splash,
+            patch.object(cost_contract_overview_floor, "_render_cost_splash"),
+            patch.object(cost_contract_overview_floor, "render_section_first_paint_shell") as render_shell,
+            patch.object(cost_contract_overview_floor, "render_data_freshness"),
+            patch.object(
+                cost_contract_overview_floor,
+                "get_session_for_action",
+                side_effect=AssertionError("Cold Cost Overview first paint must not request Snowflake"),
+            ) as get_session,
+            patch.object(cost_contract_overview_floor, "defer_section_note"),
+        ):
+            cost_contract_overview_floor._render_cost_watch_floor("ALFA", 4.0)
+
+        self.assertEqual(button_keys, ["cost_contract_refresh"])
+        maybe_splash.assert_called_once_with("ALFA", 7, 4.0)
+        ensure_splash.assert_not_called()
+        get_session.assert_not_called()
+        render_shell.assert_called_once()
+        spec = render_shell.call_args.args[0]
+        self.assertEqual(spec.section, "Cost & Contract")
+        self.assertEqual(spec.load_cta, "Refresh Cost")
+        self.assertIn("does not query Snowflake", spec.no_query_note)
+
     def test_cost_overview_floor_advanced_detail_gate_stays_hidden_by_default(self):
         from sections import cost_contract_overview_floor
         from sections.cost_contract_contracts import _ADVANCED_COST_DETAIL_VISIBLE_KEY

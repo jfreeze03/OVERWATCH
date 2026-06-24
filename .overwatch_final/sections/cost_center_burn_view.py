@@ -60,6 +60,7 @@ from utils import (
     render_entity_query_drilldown,
     render_priority_dataframe,
     render_ranked_bar_chart,
+    render_time_series_chart,
     run_query,
     safe_float,
     safe_int,
@@ -99,7 +100,7 @@ def render_burn_rate(session, company: str, credit_price: float, max_wh_size_exp
         render_chart_with_data_toggle(
             "Daily Credit Burn",
             "cc_burn_daily_credits",
-            lambda: st.line_chart(daily.set_index("DAY")["DAILY_CREDITS"]),
+            lambda: render_time_series_chart(daily, "DAY", "DAILY_CREDITS"),
             daily,
             priority_columns=["DAY", "DAILY_CREDITS"],
             sort_by=["DAY"],

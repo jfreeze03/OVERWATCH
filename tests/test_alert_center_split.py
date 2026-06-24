@@ -1,4 +1,5 @@
 from pathlib import Path
+import inspect
 import sys
 import unittest
 from unittest.mock import patch
@@ -256,6 +257,43 @@ class AlertCenterSplitTests(unittest.TestCase):
             with self.subTest(expected_state=expected_state):
                 brief = boards._alert_center_action_brief(**{**defaults, **overrides})
                 self.assertEqual(brief["state"], expected_state)
+
+    def test_alert_center_first_paint_shell_does_not_auto_load_data(self):
+        render_source = inspect.getsource(alert_center.render)
+
+        self.assertNotIn("_load_center_data(", render_source)
+        self.assertIn('st.button(f"Load {source_view}"', render_source)
+        self.assertIn("_render_alert_center_first_paint_shell(", render_source)
+        self.assertIn("First paint does not query Snowflake", inspect.getsource(alert_center._render_alert_center_first_paint_shell))
+
+    def test_alert_center_first_paint_summary_uses_cached_session_data(self):
+        cached = {
+            "loaded_at": "2026-06-24 08:30",
+            "alerts": pd.DataFrame([
+                {
+                    "STATUS": "New",
+                    "SEVERITY": "Critical",
+                    "SLA_STATE": "Overdue",
+                },
+                {
+                    "STATUS": "Fixed",
+                    "SEVERITY": "High",
+                    "SLA_STATE": "",
+                },
+            ]),
+            "action_queue": pd.DataFrame([
+                {"STATUS": "New"},
+                {"STATUS": "Fixed"},
+            ]),
+        }
+
+        summary = alert_center._alert_center_first_paint_summary(cached, "Active Alerts")
+
+        self.assertEqual(summary["critical_high"], "1")
+        self.assertEqual(summary["overdue"], "1")
+        self.assertEqual(summary["open_queue"], "1")
+        self.assertEqual(summary["top_lane"], "Critical / high")
+        self.assertEqual(summary["freshness"], "2026-06-24 08:30")
 
     def test_exception_rows_include_core_exception_signals(self):
         alerts = pd.DataFrame([{

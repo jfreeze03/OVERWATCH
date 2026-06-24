@@ -380,6 +380,52 @@ def coerce_workflow_state(key: str, workflows: Sequence[str]) -> str:
     return str(selected)
 
 
+def workflow_selector_groups(
+    selected: str,
+    workflows: Sequence[str],
+    *,
+    collapse_after: int | None = None,
+) -> tuple[list[str], list[str]]:
+    """Split workflow buttons into visible and collapsed groups without hiding the selected view."""
+    items = list(workflows)
+    if collapse_after is None or collapse_after <= 0 or collapse_after >= len(items):
+        return items, []
+    selected_text = str(selected)
+    visible = list(items[: max(1, int(collapse_after))])
+    if selected_text in items and selected_text not in visible:
+        visible = [selected_text] + [item for item in visible if item != selected_text]
+        visible = visible[: max(1, int(collapse_after))]
+    hidden = [item for item in items if item not in visible]
+    return visible, hidden
+
+
+def _render_workflow_button_rows(
+    *,
+    key: str,
+    workflows: Sequence[str],
+    selected: str,
+    columns: int,
+    labels: Mapping[str, str],
+    key_suffix: str = "",
+) -> None:
+    items = list(workflows)
+    for start in range(0, len(items), columns):
+        row = items[start:start + columns]
+        cols = st.columns(len(row))
+        for col, workflow in zip(cols, row):
+            with col:
+                is_selected = workflow == selected
+                suffix = f"_{key_suffix}" if key_suffix else ""
+                if st.button(
+                    labels.get(workflow, workflow),
+                    key=f"{key}{suffix}_{start}_{workflow}",
+                    type="primary" if is_selected else "secondary",
+                    width="stretch",
+                ):
+                    st.session_state[key] = workflow
+                    st.rerun()
+
+
 def render_workflow_selector(
     label: str,
     key: str,
@@ -389,6 +435,9 @@ def render_workflow_selector(
     columns: int = 4,
     show_label: bool = False,
     labels: Mapping[str, str] | None = None,
+    compact_details: bool = False,
+    collapse_after: int | None = None,
+    collapsed_label: str = "More workflows",
 ) -> str:
     """Render a compact workflow launcher that honors deep-link state."""
     selected = coerce_workflow_state(key, workflows)
@@ -398,20 +447,31 @@ def render_workflow_selector(
         st.caption(label)
     items = list(workflows)
     columns = max(1, min(int(columns or 4), 5))
-    for start in range(0, len(items), columns):
-        row = items[start:start + columns]
-        cols = st.columns(len(row))
-        for col, workflow in zip(cols, row):
-            with col:
-                is_selected = workflow == selected
-                if st.button(
-                    labels.get(workflow, workflow),
-                    key=f"{key}_{start}_{workflow}",
-                    type="primary" if is_selected else "secondary",
-                    width="stretch",
-                ):
-                    st.session_state[key] = workflow
-                    st.rerun()
+    visible_items, hidden_items = workflow_selector_groups(selected, items, collapse_after=collapse_after)
+    if compact_details:
+        selected_label = labels.get(selected, selected)
+        selected_detail = details.get(selected, "")
+        if selected_detail:
+            st.caption(f"{selected_label}: {selected_detail}")
+        elif selected_label:
+            st.caption(f"Selected: {selected_label}")
+    _render_workflow_button_rows(
+        key=key,
+        workflows=visible_items,
+        selected=selected,
+        columns=columns,
+        labels=labels,
+    )
+    if hidden_items:
+        with st.expander(collapsed_label, expanded=False):
+            _render_workflow_button_rows(
+                key=key,
+                workflows=hidden_items,
+                selected=selected,
+                columns=columns,
+                labels=labels,
+                key_suffix="collapsed",
+            )
     return str(st.session_state.get(key, selected))
 
 

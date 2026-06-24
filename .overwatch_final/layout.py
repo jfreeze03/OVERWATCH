@@ -151,7 +151,9 @@ def render_app_header(section: str, company: str, credit_price: float, role: str
     icon = SECTION_ICONS.get(section, "target")
     now_label = datetime.now().strftime("%Y-%m-%d %H:%M")
     safe_section = html.escape(section)
-    safe_subtitle = html.escape(section_subtitle(section), quote=True)
+    subtitle = section_subtitle(section)
+    safe_subtitle = html.escape(subtitle, quote=True)
+    safe_subtitle_text = html.escape(subtitle)
     safe_icon = html.escape(str(icon).upper())
     scope_chips = active_scope_chips(company)
     left, right = st.columns([5.4, 1.6])
@@ -164,6 +166,7 @@ def render_app_header(section: str, company: str, credit_price: float, role: str
                     <span class="ow-section-icon">{safe_icon}</span>
                     <div>
                         <div class="ow-section-title" title="{safe_subtitle}">{safe_section}</div>
+                        <div class="ow-section-subtitle">{safe_subtitle_text}</div>
                     </div>
                 </div>
                 <div class="ow-scope-row">{scope_chips}</div>

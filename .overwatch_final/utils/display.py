@@ -16,6 +16,7 @@ from .workflows import render_mode_selector, render_priority_dataframe
 
 
 DISPLAY_VERSION = "2026-06-05-chart-drillback-cost-v1"
+OVERWATCH_TIME_SERIES_PALETTE = ("#29B5E8", "#71D3DC", "#34d399", "#f59e0b", "#ef4444", "#c084fc")
 
 
 def day_window_selectbox(
@@ -84,6 +85,97 @@ def rank_chart_frame(
 
 def _ranked_chart_height(row_count: int) -> int:
     return max(180, min(520, 28 * int(row_count or 1) + 56))
+
+
+def time_series_chart_frame(
+    df: pd.DataFrame,
+    time_column: str,
+    value_column: str,
+    *,
+    series_column: str | None = None,
+) -> pd.DataFrame:
+    """Return a normalized time-series chart frame for OVERWATCH charts."""
+    columns = [time_column, value_column]
+    if series_column:
+        columns.append(series_column)
+    if df is None or df.empty or any(column not in df.columns for column in columns):
+        return pd.DataFrame(columns=columns)
+    chart_df = df[columns].copy()
+    chart_df[time_column] = pd.to_datetime(chart_df[time_column], errors="coerce")
+    chart_df[value_column] = pd.to_numeric(chart_df[value_column], errors="coerce")
+    chart_df = chart_df.dropna(subset=[time_column, value_column])
+    if series_column:
+        chart_df[series_column] = chart_df[series_column].fillna("Unknown").astype(str)
+        return chart_df.sort_values([time_column, series_column], kind="mergesort").reset_index(drop=True)
+    return chart_df.sort_values(time_column, kind="mergesort").reset_index(drop=True)
+
+
+def build_time_series_chart(
+    chart_df: pd.DataFrame,
+    time_column: str,
+    value_column: str,
+    *,
+    series_column: str | None = None,
+    title: str = "",
+    area: bool = False,
+):
+    """Build a styled Altair time-series chart from a normalized chart frame."""
+    alt = _altair()
+    if chart_df is None or chart_df.empty:
+        return None
+    mark = (
+        alt.Chart(chart_df).mark_area(opacity=0.22, line=True)
+        if area
+        else alt.Chart(chart_df).mark_line(point=True, strokeWidth=2.5)
+    )
+    tooltips = [
+        alt.Tooltip(f"{time_column}:T", title=time_column.replace("_", " ").title()),
+        alt.Tooltip(f"{value_column}:Q", title=value_column.replace("_", " ").title(), format=",.2f"),
+    ]
+    encoding = {
+        "x": alt.X(f"{time_column}:T", title=None),
+        "y": alt.Y(f"{value_column}:Q", title=value_column.replace("_", " ").title()),
+        "tooltip": tooltips,
+    }
+    if series_column:
+        encoding["color"] = alt.Color(
+            f"{series_column}:N",
+            scale=alt.Scale(range=list(OVERWATCH_TIME_SERIES_PALETTE)),
+            title=None,
+        )
+        tooltips.insert(1, alt.Tooltip(f"{series_column}:N", title=series_column.replace("_", " ").title()))
+    else:
+        encoding["color"] = alt.value(OVERWATCH_TIME_SERIES_PALETTE[0])
+    return mark.encode(**encoding).properties(title=title or None, height=260)
+
+
+def render_time_series_chart(
+    df: pd.DataFrame,
+    time_column: str,
+    value_column: str,
+    *,
+    series_column: str | None = None,
+    title: str = "",
+    area: bool = False,
+) -> pd.DataFrame:
+    """Render a styled OVERWATCH time-series chart and return plotted rows."""
+    chart_df = time_series_chart_frame(
+        df,
+        time_column,
+        value_column,
+        series_column=series_column,
+    )
+    chart = build_time_series_chart(
+        chart_df,
+        time_column,
+        value_column,
+        series_column=series_column,
+        title=title,
+        area=area,
+    )
+    if chart is not None:
+        st.altair_chart(chart, width="stretch")
+    return chart_df
 
 
 def render_ranked_bar_chart(

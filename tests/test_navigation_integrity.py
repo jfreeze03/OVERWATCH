@@ -1984,6 +1984,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("white-space: normal", theme_text)
         self.assertIn("overflow-wrap: anywhere", theme_text)
         self.assertIn("def render_ranked_bar_chart", display_text)
+        self.assertIn("def time_series_chart_frame", display_text)
+        self.assertIn("OVERWATCH_TIME_SERIES_PALETTE", display_text)
         self.assertIn("sort=alt.SortField(field=measure, order=\"descending\")", display_text)
         self.assertIn("y=alt.Y(", display_text)
         self.assertIn('st.button("Load"', display_text)
@@ -2005,7 +2007,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         )
 
     def test_ranked_chart_frame_orders_metrics_descending(self):
-        from utils.display import rank_chart_frame
+        from utils.display import rank_chart_frame, time_series_chart_frame
 
         df = pd.DataFrame({
             "NAME": ["Small", "Large", "Small", "Medium"],
@@ -2015,8 +2017,32 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(ranked["NAME"].tolist(), ["Large", "Small", "Medium"])
         self.assertEqual(ranked["VALUE"].tolist(), [9, 5, 5])
 
+        trend = time_series_chart_frame(
+            pd.DataFrame({
+                "DAY": ["2026-06-02", "invalid", "2026-06-01"],
+                "VALUE": ["2.5", "4.0", "1.0"],
+                "SERIES": ["Spend", "Spend", "Spend"],
+            }),
+            "DAY",
+            "VALUE",
+            series_column="SERIES",
+        )
+        self.assertEqual(trend["VALUE"].tolist(), [1.0, 2.5])
+        self.assertEqual(trend["SERIES"].tolist(), ["Spend", "Spend"])
+
+    def test_workflow_selector_groups_keep_selected_workflow_visible(self):
+        from utils.workflows import workflow_selector_groups
+
+        workflows = ("Detection Catalog", "Delivery & Automation", "Suppression Windows")
+        visible, hidden = workflow_selector_groups("Suppression Windows", workflows, collapse_after=1)
+
+        self.assertEqual(visible, ["Suppression Windows"])
+        self.assertEqual(hidden, ["Detection Catalog", "Delivery & Automation"])
+        self.assertEqual(workflow_selector_groups("Detection Catalog", workflows), (list(workflows), []))
+
     def test_workflow_helpers_keep_landing_pages_compact(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
+        layout_text = (APP_ROOT / "layout.py").read_text(encoding="utf-8")
         shell_helpers_text = (APP_ROOT / "sections" / "shell_helpers.py").read_text(encoding="utf-8")
         theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")
         workflows_text = (APP_ROOT / "utils" / "workflows.py").read_text(encoding="utf-8")
@@ -2048,7 +2074,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('getattr(st, "segmented_control", None)', workflows_text)
         self.assertIn("st.selectbox(", workflows_text)
         self.assertNotIn("help=_section_subtitle(section_name)", app_text)
-        self.assertNotIn('<div class="ow-section-subtitle">{safe_subtitle}</div>', app_text)
+        self.assertIn("safe_subtitle_text = html.escape(subtitle)", layout_text)
+        self.assertIn('class="ow-section-subtitle"', layout_text)
         self.assertNotIn('st.caption("NAVIGATE")', app_text)
 
         section_texts = {
@@ -2107,6 +2134,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('"migrate_legacy_workflow_state"', utils_text)
         self.assertIn('"render_ranked_bar_chart"', utils_text)
         self.assertIn('"render_chart_with_data_toggle"', utils_text)
+        self.assertIn('"render_time_series_chart"', utils_text)
+        self.assertIn('"time_series_chart_frame"', utils_text)
         self.assertIn('"rank_chart_frame"', utils_text)
         self.assertNotIn('"build_platform_futures_evidence_ddl"', utils_text)
         self.assertIn('"build_mart_cost_run_rate_sql"', utils_text)

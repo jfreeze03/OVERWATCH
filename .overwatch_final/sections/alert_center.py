@@ -322,6 +322,88 @@ def _render_alert_center_metric_rows(
             ))
 
 
+def _alert_center_first_paint_summary(data: dict | None, source_view: str) -> dict[str, str]:
+    """Summarize already-loaded Alert Center facts without reading Snowflake."""
+    if not isinstance(data, dict):
+        return {
+            "critical_high": "On demand",
+            "overdue": "On demand",
+            "open_queue": "On demand",
+            "top_lane": "Selected view",
+            "freshness": "Not loaded",
+        }
+    meta = _alert_center_loaded_meta(data, source_view)
+    freshness = str(meta.get("loaded_at") or data.get("loaded_at") or "Loaded previously")
+    pd = _pd()
+    alerts = data.get("alerts") if isinstance(data.get("alerts"), pd.DataFrame) else pd.DataFrame()
+    queue = data.get("action_queue") if isinstance(data.get("action_queue"), pd.DataFrame) else pd.DataFrame()
+    open_alerts = _open_alert_mask(alerts) if not alerts.empty else pd.Series(dtype=bool)
+    severity = alerts.get("SEVERITY", pd.Series(index=alerts.index, dtype=str)).fillna("").astype(str) if not alerts.empty else pd.Series(dtype=str)
+    critical_high = int((severity.isin(["Critical", "High"]) & open_alerts).sum()) if not alerts.empty else 0
+    overdue = 0
+    if not alerts.empty and "SLA_STATE" in alerts.columns:
+        overdue = int((alerts["SLA_STATE"].fillna("").astype(str).eq("Overdue") & open_alerts).sum())
+    open_queue = 0
+    if not queue.empty and "STATUS" in queue.columns:
+        open_queue = int((~queue["STATUS"].fillna("New").astype(str).str.title().isin(["Fixed", "Ignored"])).sum())
+    top_lane = "Critical / high" if critical_high else "Overdue SLA" if overdue else "Action queue" if open_queue else "Operating lanes"
+    return {
+        "critical_high": f"{critical_high:,}",
+        "overdue": f"{overdue:,}",
+        "open_queue": f"{open_queue:,}",
+        "top_lane": top_lane,
+        "freshness": freshness,
+    }
+
+
+def _render_alert_center_first_paint_shell(
+    *,
+    source_view: str,
+    company: str,
+    environment: str,
+    days: int,
+    limit: int,
+    required_sources: set[str],
+    data: dict | None = None,
+    state: str = "Load on demand",
+    note: str = "",
+) -> None:
+    """Render a useful Alert Center shell while detailed rows remain behind Load."""
+    summary = _alert_center_first_paint_summary(data, source_view)
+    source_summary = _alert_center_source_summary(required_sources)
+    cta_label = f"Load {source_view}"
+    render_shell_status_strip(
+        state=state,
+        headline=f"{source_view} is ready for explicit load.",
+        detail=note or f"{cta_label} reads {source_summary} for {company} / {environment}.",
+    )
+    render_shell_kpi_row((
+        ("Active View", source_view),
+        ("Critical / High", summary["critical_high"]),
+        ("Overdue", summary["overdue"]),
+        ("Open Queue", summary["open_queue"]),
+    ))
+    render_shell_snapshot((
+        ("Inputs", source_summary),
+        ("Window", f"{int(days)} days / {int(limit)} rows"),
+        ("Top Lane", summary["top_lane"]),
+        ("Freshness", summary["freshness"]),
+    ))
+    loaded_for_summary = isinstance(data, dict)
+    _render_alert_command_lane_board(
+        _alert_command_lanes(
+            active_view=source_view,
+            required_sources=required_sources,
+            alerts=data.get("alerts") if loaded_for_summary else None,
+            queue=data.get("action_queue") if loaded_for_summary else None,
+            issues=data.get("issues") if loaded_for_summary else None,
+            delivery_log=data.get("delivery_log") if loaded_for_summary else None,
+            loaded=loaded_for_summary,
+        )
+    )
+    st.info(f"Use {cta_label} for detailed Alert Center rows. First paint does not query Snowflake.")
+
+
 def _alert_command_lanes(
     *,
     active_view: str,
@@ -628,6 +710,9 @@ def render() -> None:
             ALERT_CENTER_ADMIN_VIEWS,
             ALERT_CENTER_ADMIN_VIEW_DETAILS,
             columns=3,
+            compact_details=True,
+            collapse_after=1,
+            collapsed_label="More alert admin tools",
         )
 
     required_sources = _alert_center_sources_for_view(source_view)
@@ -678,57 +763,48 @@ def render() -> None:
                 st.rerun()
 
     if not isinstance(data, dict):
-        _render_alert_center_action_brief(_alert_center_pending_brief(source_view, required_sources))
-        _render_alert_center_metric_rows(
-            open_issues=0,
-            open_alerts=0,
-            critical_high=0,
-            overdue=0,
-            email_ready=0,
-            email_logged=0,
-            open_queue=0,
-            loaded=False,
+        _render_alert_center_first_paint_shell(
+            source_view=source_view,
+            company=company,
+            environment=environment,
+            days=int(days),
+            limit=int(limit),
+            required_sources=required_sources,
         )
-        _render_alert_command_lane_board(_alert_command_lanes(active_view=source_view, required_sources=required_sources))
-        st.info(f"Load {source_view} when ready.")
         defer_source_note(f"Inputs on load: {_alert_center_source_summary(required_sources)}")
         _render_advanced_alert_diagnostics(company, environment)
         return
 
     loaded_scope = st.session_state.get("alert_center_scope")
     if loaded_scope != expected_scope:
-        _render_alert_center_action_brief(_alert_center_pending_brief(source_view, required_sources))
-        _render_alert_center_metric_rows(
-            open_issues=0,
-            open_alerts=0,
-            critical_high=0,
-            overdue=0,
-            email_ready=0,
-            email_logged=0,
-            open_queue=0,
-            loaded=False,
+        _render_alert_center_first_paint_shell(
+            source_view=source_view,
+            company=company,
+            environment=environment,
+            days=int(days),
+            limit=int(limit),
+            required_sources=required_sources,
+            data=data,
+            state="Scope changed",
+            note="Company, environment, or window changed after this load. Reload before triaging alerts.",
         )
-        _render_alert_command_lane_board(_alert_command_lanes(active_view=source_view, required_sources=required_sources))
-        st.warning("Company, environment, or window changed after this load. Reload before triaging alerts.")
         defer_source_note(f"Loaded scope: {loaded_scope or 'none'} | Current scope: {expected_scope}")
         _render_advanced_alert_diagnostics(company, environment)
         return
     loaded_sources = set(data.get("_loaded_sources") or [])
     missing_sources = sorted(required_sources - loaded_sources)
     if missing_sources:
-        _render_alert_center_action_brief(_alert_center_pending_brief(source_view, required_sources))
-        _render_alert_center_metric_rows(
-            open_issues=0,
-            open_alerts=0,
-            critical_high=0,
-            overdue=0,
-            email_ready=0,
-            email_logged=0,
-            open_queue=0,
-            loaded=False,
+        _render_alert_center_first_paint_shell(
+            source_view=source_view,
+            company=company,
+            environment=environment,
+            days=int(days),
+            limit=int(limit),
+            required_sources=required_sources,
+            data=data,
+            state="Inputs needed",
+            note=f"Load {source_view} to fetch missing input(s): {_alert_center_source_summary(set(missing_sources))}.",
         )
-        _render_alert_command_lane_board(_alert_command_lanes(active_view=source_view, required_sources=required_sources))
-        st.info(f"Load {source_view} to fetch missing input(s).")
         defer_source_note(f"Missing Alert Center input(s): {_alert_center_source_summary(set(missing_sources))}")
         _render_advanced_alert_diagnostics(company, environment)
         return

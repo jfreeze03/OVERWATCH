@@ -151,6 +151,10 @@ class ThemeRegistryTests(unittest.TestCase):
             theme._STRUCTURAL_CSS,
         )
         self.assertIn(
+            '[data-testid="stMarkdownContainer"] .ow-section-subtitle',
+            theme._STRUCTURAL_CSS,
+        )
+        self.assertIn(
             '[data-testid="stMarkdownContainer"] .ow-empty-list span',
             theme._STRUCTURAL_CSS,
         )
@@ -215,6 +219,7 @@ class ThemeRegistryTests(unittest.TestCase):
         self.assertIn("--accent:", theme._VARS["carbon"])
         self.assertIn(".ow-topbar", theme._STRUCTURAL_CSS)
         self.assertIn(".ow-section-title", theme._STRUCTURAL_CSS)
+        self.assertIn(".ow-section-subtitle", theme._STRUCTURAL_CSS)
         self.assertIn(".ow-filter-strip-shell", theme._STRUCTURAL_CSS)
         button_css = theme._STRUCTURAL_CSS.split("/* Buttons */", 1)[1].split("/* Expanders */", 1)[0]
         self.assertNotIn("backdrop-filter", button_css)

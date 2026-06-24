@@ -1,6 +1,6 @@
 # OVERWATCH Production UX Guidelines
 
-Last updated: June 6, 2026
+Last updated: June 24, 2026
 
 These guidelines keep OVERWATCH focused on DBA morning triage, safe operations,
 and executive-ready evidence.
@@ -30,17 +30,25 @@ no issues, show a compact healthy state and let the DBA move on.
 
 ## Navigation
 
-Current group order:
+Current canonical production sections:
 
-1. Command Center
-2. Financial Control
-3. Operations
-4. Governance
-5. Architecture
+1. Executive Landing
+2. DBA Control Room
+3. Alert Center
+4. Workload Operations
+5. Cost & Contract
+6. Security Monitoring
 
 Do not introduce a new top-level section unless it represents a distinct DBA
 workflow. Thin evidence pages should become tabs or load panels inside the
 section that owns the workflow.
+
+## UI Direction
+
+Facts come first, evidence opens on demand, and first paint must be useful
+without live Snowflake reads. A section entry should show the active view,
+scope, freshness, expected lanes, and the next safe load action before detailed
+rows, exports, and specialist diagnostics appear.
 
 ## Charts And Tables
 
@@ -61,13 +69,9 @@ Use current production section names only:
 - Executive Landing
 - DBA Control Room
 - Alert Center
-- Account Health
-- Cost & Contract
 - Workload Operations
-- Warehouse Health
-- Security Posture
-- Change & Drift
-- Architecture Readiness
+- Cost & Contract
+- Security Monitoring
 
 Avoid internal build/test language in the app UI. Avoid stale page names in
 comments, docs, help text, saved-view labels, and screenshots.

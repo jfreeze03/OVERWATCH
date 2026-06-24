@@ -60,7 +60,9 @@ Alert Center first paint should show cached counts when they are already in
 session state, otherwise it should stay explicitly on demand until Load is used.
 Use shared first-paint shell helpers for status strips, KPI rows, and snapshots
 when a section can do so without moving data-load decisions out of the owning
-section.
+section. Workload Operations uses this pattern for its session-only overview;
+specialist workload evidence remains behind the selected workflow and explicit
+load actions.
 
 ## Charts And Tables
 
@@ -73,6 +75,8 @@ Rules:
 - Avoid duplicate chart/table pairs that show the same fact twice.
 - Prefer ranking charts for top spenders and trend charts for movement.
 - Prefer shared OVERWATCH Altair helpers for time-series and area charts.
+- Treat native `st.line_chart`, `st.area_chart`, and `st.bar_chart` usage as
+  legacy-only unless a source-level test allowlists the specialist surface.
 - Use source/freshness help where a metric depends on delayed Snowflake views.
 
 ## Text And Labels

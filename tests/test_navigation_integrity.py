@@ -670,6 +670,43 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("workload_operations_view", full_workspace_text)
         self.assertNotIn("Refresh Workload Snapshot", full_workspace_text)
         self.assertNotIn("Download DBA runbook", full_workspace_text)
+        self.assertIn("render_first_paint_summary_shell", full_workspace_text)
+        self.assertIn("No live Snowflake reads run on entry", full_workspace_text)
+
+    def test_workload_overview_first_paint_uses_shell_without_loads(self):
+        from sections import workload_operations
+
+        with contextlib.ExitStack() as stack:
+            render_shell = stack.enter_context(patch.object(workload_operations, "render_first_paint_summary_shell"))
+            stack.enter_context(patch.object(workload_operations, "build_loaded_section_alert_signal_board", return_value=pd.DataFrame()))
+            stack.enter_context(patch.object(workload_operations.st, "columns", side_effect=lambda count: [contextlib.nullcontext() for _ in range(count)]))
+            stack.enter_context(patch.object(workload_operations.st, "button", return_value=False))
+            stack.enter_context(patch.object(workload_operations.st, "info"))
+            stack.enter_context(patch.object(workload_operations.st, "markdown"))
+            for loader_name in (
+                "load_change_correlation_detail",
+                "load_change_event_detail",
+                "load_closed_loop_execution_plan_detail",
+                "load_closed_loop_workflow_detail",
+                "load_command_center_finding_detail",
+                "load_command_center_recommendation_detail",
+                "load_forecast_detail",
+            ):
+                stack.enter_context(
+                    patch.object(
+                        workload_operations,
+                        loader_name,
+                        side_effect=AssertionError(f"{loader_name} should not run on first paint"),
+                    )
+                )
+
+            workload_operations._render_workload_overview("ALFA", "PROD")
+
+        render_shell.assert_called_once()
+        shell_kwargs = render_shell.call_args.kwargs
+        self.assertEqual(shell_kwargs["state"], "Ready")
+        self.assertIn(("Active workload items", "0"), shell_kwargs["metrics"])
+        self.assertIn(("Scope", "ALFA / PROD"), shell_kwargs["snapshot"])
 
     def test_cost_contract_uses_fast_shell_module(self):
         from sections import cost_contract_contracts
@@ -2059,6 +2096,31 @@ class NavigationIntegrityTests(unittest.TestCase):
             )
         self.assertEqual(plotted["VALUE"].tolist(), [1, 2])
         altair_chart.assert_called_once()
+
+    def test_native_streamlit_chart_usage_is_legacy_allowlisted(self):
+        # Remaining native Streamlit charts live in older specialist tools with
+        # loaded-data-only chart paths. New production surfaces should use the
+        # shared OVERWATCH chart helpers instead of adding to this allowlist.
+        legacy_native_chart_allowlist = {
+            "sections/cortex_monitor.py",
+            "sections/cost_center_explain_view.py",
+            "sections/cost_center_forecast_view.py",
+            "sections/data_sharing.py",
+            "sections/dba_tools_cost_health_view.py",
+            "sections/live_monitor.py",
+            "sections/security_access.py",
+            "sections/spcs_tracker.py",
+            "sections/storage_monitor.py",
+        }
+        offenders = []
+        for path in sorted((APP_ROOT / "sections").rglob("*.py")):
+            rel = path.relative_to(APP_ROOT).as_posix()
+            text = path.read_text(encoding="utf-8")
+            if any(token in text for token in ("st.line_chart", "st.area_chart", "st.bar_chart")):
+                if rel not in legacy_native_chart_allowlist:
+                    offenders.append(rel)
+
+        self.assertEqual(offenders, [])
 
     def test_workflow_selector_groups_keep_selected_workflow_visible(self):
         from utils.workflows import workflow_selector_groups

@@ -133,7 +133,12 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
             "10000 ms",
             "mutation controls",
             "initial_load",
-            "goto_domcontentloaded",
+            "goto_commit",
+            "domcontentloaded",
+            "shell_title_visible",
+            "server phase trace",
+            "browser navigation timing",
+            "12_power_users_initial_load_only.json",
             "app_ready",
             "idle_wait",
             "perf_tests/import_timing.py",
@@ -181,6 +186,12 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
                 "initial_load_breakdown": [
                     {"action": "initial_load:app_ready", "steps": 12, "errors": 0, "p95_ms": 700, "max_ms": 900}
                 ],
+                "server_phase_breakdown": [
+                    {"phase": "shell:probe_snowflake_available", "steps": 12, "p95_ms": 55, "max_ms": 80}
+                ],
+                "browser_navigation_timing": [
+                    {"metric": "responseStart", "samples": 12, "p95_ms": 30, "max_ms": 40}
+                ],
             },
             "samples": [
                 {
@@ -191,6 +202,17 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
                     "elapsed_ms": 900,
                     "ok": True,
                     "skipped": False,
+                    "diagnostic": False,
+                },
+                {
+                    "user_id": 1,
+                    "iteration": 1,
+                    "section": "App Shell",
+                    "action": "initial_load:app_ready",
+                    "elapsed_ms": 700,
+                    "ok": True,
+                    "skipped": False,
+                    "diagnostic": True,
                 }
             ],
         }
@@ -218,6 +240,10 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
             "Top Slowest Sections",
             "Top Slowest Actions",
             "Initial Load Breakdown",
+            "Server Phase Breakdown",
+            "Browser Navigation Timing",
+            "Top 10 Slowest Release Steps",
+            "Top 10 Slowest Diagnostic Steps",
             "app_ready",
         ):
             with self.subTest(fragment=fragment):

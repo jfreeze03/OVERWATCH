@@ -38,6 +38,7 @@ from navigation import (
     set_active_section,
     should_show_section_transition,
 )
+from perf_trace import render_trace_marker, trace
 from refresh import current_credit_price, section_render_signature
 from runtime_state import (
     ACTIVE_COMPANY,
@@ -64,47 +65,75 @@ def _format_section_error(exc: Exception) -> str:
 
 def render_app() -> None:
     """Render the OVERWATCH app shell and selected section."""
-    inject_theme()
-    ensure_startup_state()
-    seed_current_role_from_secrets()
-    apply_admin_defaults()
-    ensure_idle_state()
+    try:
+        with trace("shell:total_render_app"):
+            _render_app_body()
+    finally:
+        render_trace_marker()
+
+
+def _render_app_body() -> None:
+    with trace("shell:inject_theme"):
+        inject_theme()
+    with trace("shell:ensure_startup_state"):
+        ensure_startup_state()
+    with trace("shell:seed_current_role_from_secrets"):
+        seed_current_role_from_secrets()
+    with trace("shell:apply_admin_defaults"):
+        apply_admin_defaults()
+    with trace("shell:ensure_idle_state"):
+        ensure_idle_state()
 
     idle_query_paused = queries_paused()
     if not idle_query_paused:
         mark_operator_activity("app render")
 
-    connection_available = (
-        cached_snowflake_available(default=False)
-        if idle_query_paused
-        else probe_snowflake_available()
-    )
-    current_role = (
-        get_current_role()
-        if idle_query_paused
-        else refresh_current_role_for_access(connection_available)
-    )
-    admin_allowed = admin_access_is_allowed(current_role, connection_available)
     visible_sections = current_visible_sections()
     active_section = current_active_section(visible_sections)
+    needs_connection = section_requires_connection(active_section)
     active_company = str(get_state(ACTIVE_COMPANY, DEFAULT_COMPANY) or DEFAULT_COMPANY)
-    credit_price = current_credit_price()
     set_active_section(active_section)
 
-    # Paint the main app shell before the sidebar and selected section hydrate.
-    render_app_header(active_section, active_company, credit_price, current_role)
-    active_company = render_topbar_filter_strip(active_company)
-
-    sidebar_state = render_sidebar(
-        active_company=active_company,
+    with trace(
+        "shell:probe_snowflake_available",
         active_section=active_section,
-        visible_sections=visible_sections,
-        current_role=current_role,
-        connection_available=connection_available,
-        admin_access_allowed=admin_allowed,
-        idle_query_paused=idle_query_paused,
-        credit_price=credit_price,
-    )
+        detail={"idle_query_paused": idle_query_paused, "needs_connection": needs_connection},
+    ):
+        connection_available = (
+            cached_snowflake_available(default=False)
+            if idle_query_paused or not needs_connection
+            else probe_snowflake_available()
+        )
+    with trace(
+        "shell:refresh_current_role_for_access",
+        active_section=active_section,
+        detail={"idle_query_paused": idle_query_paused},
+    ):
+        current_role = (
+            get_current_role()
+            if idle_query_paused
+            else refresh_current_role_for_access(connection_available)
+        )
+    admin_allowed = admin_access_is_allowed(current_role, connection_available)
+    credit_price = current_credit_price()
+
+    # Paint the main app shell before the sidebar and selected section hydrate.
+    with trace("shell:render_app_header", active_section=active_section):
+        render_app_header(active_section, active_company, credit_price, current_role)
+    with trace("shell:render_topbar_filter_strip", active_section=active_section):
+        active_company = render_topbar_filter_strip(active_company)
+
+    with trace("shell:render_sidebar", active_section=active_section):
+        sidebar_state = render_sidebar(
+            active_company=active_company,
+            active_section=active_section,
+            visible_sections=visible_sections,
+            current_role=current_role,
+            connection_available=connection_available,
+            admin_access_allowed=admin_allowed,
+            idle_query_paused=idle_query_paused,
+            credit_price=credit_price,
+        )
     active_company = sidebar_state.active_company
     active_section = sidebar_state.active_section
     current_role = sidebar_state.current_role
@@ -114,13 +143,15 @@ def render_app() -> None:
     credit_price = sidebar_state.credit_price
     visible_sections = sidebar_state.visible_sections
 
-    maybe_clear_scope_cache_on_filter_change()
+    with trace("shell:filter_cache_check", active_section=active_section):
+        maybe_clear_scope_cache_on_filter_change()
     active_section = current_active_section(visible_sections)
     set_active_section(active_section)
 
-    section_signature = section_render_signature(active_section, active_company, current_role)
+    with trace("shell:section_signature", active_section=active_section):
+        section_signature = section_render_signature(active_section, active_company, current_role)
+        show_transition = should_show_section_transition(section_signature)
     section_slot = st.empty()
-    show_transition = should_show_section_transition(section_signature)
 
     section_render_started = time.perf_counter()
     if show_transition:
@@ -128,40 +159,40 @@ def render_app() -> None:
             render_section_transition_state(active_section)
 
     try:
-        needs_connection = section_requires_connection(active_section)
-        if idle_query_paused:
-            with fresh_section_container(section_slot):
-                render_query_pause_state()
-            mark_section_rendered(active_section, section_signature)
-        elif not admin_allowed:
-            with fresh_section_container(section_slot):
-                render_admin_access_required(current_role)
-            mark_section_rendered(active_section, section_signature)
-        elif needs_connection and (
-            not connection_available or get_state(CONNECTION_UNAVAILABLE)
-        ):
-            with fresh_section_container(section_slot):
-                render_connection_empty_state(active_section)
-            mark_section_rendered(active_section, section_signature)
-        else:
-            try:
+        with trace("shell:dispatch_section_total", active_section=active_section):
+            if idle_query_paused:
                 with fresh_section_container(section_slot):
-                    dispatch_section(active_section)
+                    render_query_pause_state()
                 mark_section_rendered(active_section, section_signature)
-            except StopException:
-                set_state(CONNECTION_UNAVAILABLE, True)
+            elif not admin_allowed:
+                with fresh_section_container(section_slot):
+                    render_admin_access_required(current_role)
+                mark_section_rendered(active_section, section_signature)
+            elif needs_connection and (
+                not connection_available or get_state(CONNECTION_UNAVAILABLE)
+            ):
                 with fresh_section_container(section_slot):
                     render_connection_empty_state(active_section)
                 mark_section_rendered(active_section, section_signature)
-            except Exception as exc:
-                with fresh_section_container(section_slot):
-                    st.error(f"{active_section} could not finish rendering.")
-                    st.caption(_format_section_error(exc))
-                    st.info(
-                        "The Snowflake connection may still be healthy. This usually means one panel hit a metadata, "
-                        "permission, or empty-data edge case. Try another section or refresh after the source view is available."
-                    )
-                mark_section_rendered(active_section, section_signature)
+            else:
+                try:
+                    with fresh_section_container(section_slot):
+                        dispatch_section(active_section)
+                    mark_section_rendered(active_section, section_signature)
+                except StopException:
+                    set_state(CONNECTION_UNAVAILABLE, True)
+                    with fresh_section_container(section_slot):
+                        render_connection_empty_state(active_section)
+                    mark_section_rendered(active_section, section_signature)
+                except Exception as exc:
+                    with fresh_section_container(section_slot):
+                        st.error(f"{active_section} could not finish rendering.")
+                        st.caption(_format_section_error(exc))
+                        st.info(
+                            "The Snowflake connection may still be healthy. This usually means one panel hit a metadata, "
+                            "permission, or empty-data edge case. Try another section or refresh after the source view is available."
+                        )
+                    mark_section_rendered(active_section, section_signature)
     finally:
         duration_ms = int((time.perf_counter() - section_render_started) * 1000)
         set_state(LAST_SECTION_RENDER_MS, duration_ms)

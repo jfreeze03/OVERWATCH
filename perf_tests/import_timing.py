@@ -6,6 +6,7 @@ import argparse
 import datetime as dt
 import json
 import pathlib
+import re
 import statistics
 import subprocess
 import sys
@@ -17,6 +18,18 @@ PERF_ROOT = pathlib.Path(__file__).resolve().parent
 REPO_ROOT = PERF_ROOT.parent
 APP_ROOT = REPO_ROOT / ".overwatch_final"
 DEFAULT_OUTPUT_DIR = PERF_ROOT / "results"
+DEFAULT_BASELINE_MODULES = (
+    "streamlit",
+    "pandas",
+    "config",
+    "theme",
+    "filters",
+    "layout",
+    "navigation",
+    "runtime_state",
+    "access_control",
+    "utils",
+)
 DEFAULT_MODULES = (
     "shell",
     "section_dispatch",
@@ -81,21 +94,100 @@ def _time_module_import(module: str, *, timeout_sec: float) -> dict[str, object]
     }
 
 
-def run_import_timing(modules: list[str], *, timeout_sec: float = 30.0) -> dict[str, object]:
-    rows = [_time_module_import(module, timeout_sec=timeout_sec) for module in modules]
+def _summarize_rows(rows: list[dict[str, object]]) -> dict[str, object]:
     elapsed = [float(row.get("elapsed_ms", 0) or 0) for row in rows if row.get("ok")]
     slowest = sorted(rows, key=lambda row: float(row.get("elapsed_ms", 0) or 0), reverse=True)
     return {
-        "modules": rows,
+        "module_count": len(rows),
+        "ok": sum(1 for row in rows if row.get("ok")),
+        "failed": sum(1 for row in rows if not row.get("ok")),
+        "max_ms": round(max(elapsed), 2) if elapsed else 0.0,
+        "avg_ms": round(statistics.mean(elapsed), 2) if elapsed else 0.0,
+        "slowest_module": str(slowest[0].get("module")) if slowest else "",
+        "slowest_ms": round(float(slowest[0].get("elapsed_ms", 0) or 0), 2) if slowest else 0.0,
+    }
+
+
+_IMPORTTIME_RE = re.compile(
+    r"import time:\s*(?P<self>\d+)\s*\|\s*(?P<cumulative>\d+)\s*\|\s*(?P<module>.+)$"
+)
+
+
+def _parse_importtime(stderr: str, *, target_module: str, limit: int = 12) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for line in stderr.splitlines():
+        match = _IMPORTTIME_RE.search(line)
+        if not match:
+            continue
+        rows.append({
+            "target_module": target_module,
+            "import": match.group("module").strip(),
+            "self_ms": round(int(match.group("self")) / 1000.0, 2),
+            "cumulative_ms": round(int(match.group("cumulative")) / 1000.0, 2),
+        })
+    return sorted(rows, key=lambda row: float(row["cumulative_ms"]), reverse=True)[:limit]
+
+
+def _run_importtime(module: str, *, timeout_sec: float) -> list[dict[str, object]]:
+    code = (
+        "import importlib, sys\n"
+        f"sys.path.insert(0, {str(APP_ROOT)!r})\n"
+        f"importlib.import_module({module!r})\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-X", "importtime", "-c", code],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+        timeout=timeout_sec,
+        check=False,
+    )
+    return _parse_importtime(result.stderr, target_module=module)
+
+
+def _with_baseline_delta(rows: list[dict[str, object]], baseline_summary: dict[str, object]) -> list[dict[str, object]]:
+    baseline_ms = float(baseline_summary.get("max_ms", 0) or 0)
+    adjusted = []
+    for row in rows:
+        item = dict(row)
+        if row.get("ok"):
+            item["baseline_adjusted_ms"] = round(float(row.get("elapsed_ms", 0) or 0) - baseline_ms, 2)
+        else:
+            item["baseline_adjusted_ms"] = None
+        adjusted.append(item)
+    return adjusted
+
+
+def run_import_timing(
+    modules: list[str],
+    *,
+    baseline_modules: list[str] | None = None,
+    timeout_sec: float = 30.0,
+    include_importtime: bool = False,
+) -> dict[str, object]:
+    baselines = [_time_module_import(module, timeout_sec=timeout_sec) for module in (baseline_modules or [])]
+    baseline_summary = _summarize_rows(baselines)
+    targets = [_time_module_import(module, timeout_sec=timeout_sec) for module in modules]
+    targets = _with_baseline_delta(targets, baseline_summary)
+    target_summary = _summarize_rows(targets)
+    offenders: list[dict[str, object]] = []
+    if include_importtime:
+        for module in modules:
+            offenders.extend(_run_importtime(module, timeout_sec=timeout_sec))
+        offenders = sorted(offenders, key=lambda row: float(row["cumulative_ms"]), reverse=True)[:40]
+    return {
+        "baseline_modules": baselines,
+        "target_modules": targets,
+        "modules": targets,
         "summary": {
-            "module_count": len(rows),
-            "ok": sum(1 for row in rows if row.get("ok")),
-            "failed": sum(1 for row in rows if not row.get("ok")),
-            "max_ms": round(max(elapsed), 2) if elapsed else 0.0,
-            "avg_ms": round(statistics.mean(elapsed), 2) if elapsed else 0.0,
-            "slowest_module": str(slowest[0].get("module")) if slowest else "",
-            "slowest_ms": round(float(slowest[0].get("elapsed_ms", 0) or 0), 2) if slowest else 0.0,
+            **target_summary,
+            "baseline_module_count": len(baselines),
+            "baseline_slowest_module": baseline_summary.get("slowest_module", ""),
+            "baseline_slowest_ms": baseline_summary.get("slowest_ms", 0.0),
         },
+        "baseline_summary": baseline_summary,
+        "target_summary": target_summary,
+        "top_cumulative_imports": offenders,
     }
 
 
@@ -118,23 +210,55 @@ def write_reports(payload: dict[str, object], *, run_id: str, output_dir: str | 
         f"# OVERWATCH Import Timing {run_id}",
         "",
         f"- Created at: `{created_at}`",
-        f"- Modules: `{summary['module_count']}`",
-        f"- OK: `{summary['ok']}`",
-        f"- Failed: `{summary['failed']}`",
-        f"- Slowest module: `{summary['slowest_module']}` at `{summary['slowest_ms']} ms`",
-        f"- Average import time: `{summary['avg_ms']} ms`",
+        f"- Target modules: `{summary['module_count']}`",
+        f"- Target OK: `{summary['ok']}`",
+        f"- Target failed: `{summary['failed']}`",
+        f"- Slowest target module: `{summary['slowest_module']}` at `{summary['slowest_ms']} ms`",
+        f"- Slowest baseline module: `{summary['baseline_slowest_module']}` at `{summary['baseline_slowest_ms']} ms`",
+        f"- Average target import time: `{summary['avg_ms']} ms`",
         "",
-        "## Module Timings",
+        "## Baseline Import Timings",
         "",
         "| Module | OK | Import ms | Process wall ms | Error |",
         "|---|---:|---:|---:|---|",
     ]
-    for row in sorted(payload["modules"], key=lambda item: float(item.get("elapsed_ms", 0) or 0), reverse=True):
+    for row in sorted(payload["baseline_modules"], key=lambda item: float(item.get("elapsed_ms", 0) or 0), reverse=True):
         error = str(row.get("error") or "").replace("|", "\\|")[:180]
         lines.append(
             f"| {row['module']} | {'yes' if row.get('ok') else 'no'} | "
             f"{row.get('elapsed_ms', 0)} | {row.get('process_wall_ms', 0)} | {error} |"
         )
+    lines.extend([
+        "",
+        "## Target Module Timings",
+        "",
+        "| Module | OK | Import ms | Baseline-adjusted ms | Process wall ms | Error |",
+        "|---|---:|---:|---:|---:|---|",
+    ])
+    for row in sorted(payload["target_modules"], key=lambda item: float(item.get("elapsed_ms", 0) or 0), reverse=True):
+        error = str(row.get("error") or "").replace("|", "\\|")[:180]
+        lines.append(
+            f"| {row['module']} | {'yes' if row.get('ok') else 'no'} | "
+            f"{row.get('elapsed_ms', 0)} | {row.get('baseline_adjusted_ms', '')} | "
+            f"{row.get('process_wall_ms', 0)} | {error} |"
+        )
+    lines.extend([
+        "",
+        "## Top Cumulative Import Offenders",
+        "",
+    ])
+    offenders = payload.get("top_cumulative_imports", [])
+    if offenders:
+        lines.extend([
+            "| Target module | Import | Cumulative ms | Self ms |",
+            "|---|---|---:|---:|",
+        ])
+        for row in offenders:
+            lines.append(
+                f"| {row['target_module']} | {row['import']} | {row['cumulative_ms']} | {row['self_ms']} |"
+            )
+    else:
+        lines.append("Run with `--importtime` to collect Python `-X importtime` cumulative offenders.")
     md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return json_path, md_path
 
@@ -145,12 +269,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
     parser.add_argument("--timeout-sec", type=float, default=30.0)
     parser.add_argument("--modules", nargs="*", default=list(DEFAULT_MODULES))
+    parser.add_argument("--baseline-modules", nargs="*", default=list(DEFAULT_BASELINE_MODULES))
+    parser.add_argument("--importtime", action="store_true", help="Run Python -X importtime for each target module.")
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    payload = run_import_timing(args.modules, timeout_sec=args.timeout_sec)
+    payload = run_import_timing(
+        args.modules,
+        baseline_modules=args.baseline_modules,
+        timeout_sec=args.timeout_sec,
+        include_importtime=args.importtime,
+    )
     json_path, md_path = write_reports(payload, run_id=args.run_id, output_dir=args.output_dir)
     summary = payload["summary"]
     print(json.dumps({
@@ -159,6 +290,8 @@ def main(argv: list[str] | None = None) -> int:
         "failed": summary["failed"],
         "slowest_module": summary["slowest_module"],
         "slowest_ms": summary["slowest_ms"],
+        "baseline_slowest_module": summary["baseline_slowest_module"],
+        "baseline_slowest_ms": summary["baseline_slowest_ms"],
         "json_report": str(json_path),
         "markdown_report": str(md_path),
     }, indent=2))

@@ -1643,6 +1643,85 @@ class NavigationIntegrityTests(unittest.TestCase):
             st.session_state.clear()
             st.session_state.update(previous)
 
+    def test_connection_optional_first_paint_does_not_probe_snowflake(self):
+        import shell
+        from layout import SidebarState
+        from runtime_state import ACTIVE_COMPANY, CURRENT_ROLE
+
+        previous = dict(st.session_state)
+        try:
+            st.session_state.clear()
+            st.session_state[ACTIVE_COMPANY] = "ALFA"
+            st.session_state[CURRENT_ROLE] = "SNOW_ACCOUNTADMINS"
+
+            with contextlib.ExitStack() as stack:
+                for name in (
+                    "inject_theme",
+                    "ensure_startup_state",
+                    "seed_current_role_from_secrets",
+                    "apply_admin_defaults",
+                    "ensure_idle_state",
+                    "set_active_section",
+                    "render_app_header",
+                    "maybe_clear_scope_cache_on_filter_change",
+                    "mark_section_rendered",
+                    "log_section_load",
+                    "render_trace_marker",
+                ):
+                    stack.enter_context(patch.object(shell, name))
+                stack.enter_context(patch.object(shell, "queries_paused", return_value=False))
+                stack.enter_context(patch.object(shell, "mark_operator_activity"))
+                stack.enter_context(
+                    patch.object(
+                        shell,
+                        "probe_snowflake_available",
+                        side_effect=AssertionError("optional first paint should not probe Snowflake"),
+                    )
+                )
+                mock_cached = stack.enter_context(
+                    patch.object(shell, "cached_snowflake_available", return_value=False)
+                )
+                stack.enter_context(
+                    patch.object(shell, "refresh_current_role_for_access", return_value="SNOW_ACCOUNTADMINS")
+                )
+                stack.enter_context(patch.object(shell, "current_visible_sections", return_value=["Executive Landing"]))
+                stack.enter_context(patch.object(shell, "current_active_section", return_value="Executive Landing"))
+                stack.enter_context(patch.object(shell, "section_requires_connection", return_value=False))
+                stack.enter_context(patch.object(shell, "current_credit_price", return_value=3.0))
+                stack.enter_context(patch.object(shell, "render_topbar_filter_strip", return_value="ALFA"))
+                stack.enter_context(
+                    patch.object(
+                        shell,
+                        "render_sidebar",
+                        return_value=SidebarState(
+                            active_company="ALFA",
+                            active_section="Executive Landing",
+                            current_role="SNOW_ACCOUNTADMINS",
+                            admin_access_allowed=True,
+                            connection_available=False,
+                            idle_query_paused=False,
+                            credit_price=3.0,
+                            visible_sections=["Executive Landing"],
+                        ),
+                    )
+                )
+                stack.enter_context(
+                    patch.object(shell, "section_render_signature", return_value=("Executive Landing", "ALFA"))
+                )
+                stack.enter_context(patch.object(shell, "should_show_section_transition", return_value=False))
+                stack.enter_context(patch.object(shell.st, "empty", return_value=object()))
+                stack.enter_context(
+                    patch.object(shell, "fresh_section_container", return_value=contextlib.nullcontext())
+                )
+                mock_dispatch = stack.enter_context(patch.object(shell, "dispatch_section"))
+                shell.render_app()
+
+            mock_cached.assert_called_once_with(default=False)
+            mock_dispatch.assert_called_once_with("Executive Landing")
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)
+
     def test_shell_session_state_access_is_centralized(self):
         runtime_text = (APP_ROOT / "runtime_state.py").read_text(encoding="utf-8")
         self.assertIn("def get_state", runtime_text)

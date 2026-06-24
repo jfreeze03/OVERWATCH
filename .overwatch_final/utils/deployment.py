@@ -17,6 +17,7 @@ STREAMLIT_SNOWFLAKE_ARTIFACTS = (
     "filters.py",
     "layout.py",
     "navigation.py",
+    "perf_trace.py",
     "refresh.py",
     "runtime_state.py",
     "section_dispatch.py",

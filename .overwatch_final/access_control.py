@@ -6,6 +6,7 @@ surfaces. Section-level dangerous actions still apply their own review gates.
 from __future__ import annotations
 
 import threading
+import time
 
 import streamlit as st
 from streamlit.runtime.scriptrunner import StopException
@@ -25,6 +26,7 @@ from utils.session import get_session
 
 _SNOWFLAKE_AVAILABLE_PROCESS_CACHE: bool | None = None
 _SNOWFLAKE_AVAILABLE_LOCK = threading.Lock()
+_SNOWFLAKE_AVAILABLE_LOCK_WAIT_SECONDS = 0.25
 
 
 def seed_current_role_from_secrets() -> None:
@@ -106,16 +108,22 @@ def probe_snowflake_available(force: bool = False) -> bool:
         set_state(CONNECTION_AVAILABLE, available)
         set_state(CONNECTION_UNAVAILABLE, not available)
         return available
-    if not force and not _SNOWFLAKE_AVAILABLE_LOCK.acquire(blocking=False):
-        available = bool(_SNOWFLAKE_AVAILABLE_PROCESS_CACHE) if _SNOWFLAKE_AVAILABLE_PROCESS_CACHE is not None else False
-        set_state(CONNECTION_AVAILABLE, available)
-        set_state(CONNECTION_UNAVAILABLE, not available)
-        return available
 
+    acquired = False
     available = False
     try:
         if not force:
-            _SNOWFLAKE_AVAILABLE_PROCESS_CACHE = False
+            acquired = _SNOWFLAKE_AVAILABLE_LOCK.acquire(blocking=False)
+            if not acquired:
+                deadline = time.perf_counter() + _SNOWFLAKE_AVAILABLE_LOCK_WAIT_SECONDS
+                while _SNOWFLAKE_AVAILABLE_PROCESS_CACHE is None and time.perf_counter() < deadline:
+                    time.sleep(0.01)
+                if _SNOWFLAKE_AVAILABLE_PROCESS_CACHE is not None:
+                    available = bool(_SNOWFLAKE_AVAILABLE_PROCESS_CACHE)
+                    set_state(CONNECTION_AVAILABLE, available)
+                    set_state(CONNECTION_UNAVAILABLE, not available)
+                    return available
+                return cached_snowflake_available(default=False)
         if force:
             try:
                 get_session()
@@ -133,7 +141,7 @@ def probe_snowflake_available(force: bool = False) -> bool:
             except Exception:
                 available = False
     finally:
-        if not force and _SNOWFLAKE_AVAILABLE_LOCK.locked():
+        if acquired:
             _SNOWFLAKE_AVAILABLE_LOCK.release()
 
     if available:

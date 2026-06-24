@@ -24,6 +24,7 @@ load without creating surprise Snowflake cost.
 | `section_smoke_runner.py` | Optional browser runner that clicks every primary section and reports visible section switch time. |
 | `live_concurrent_runner.py` | Concurrent browser runner that exercises Streamlit sessions, section navigation, and safe live-data load buttons. |
 | `profiles/12_power_users.json` | Guarded 12-user / 3-iteration browser profile for heavy power-user release checks. |
+| `profiles/12_power_users_initial_load_only.json` | Diagnostic 12-user / 1-iteration profile that isolates App Shell first render; not the release gate. |
 | `run_12_power_users.py` | Wrapper for the 12-heavy-power-user benchmark profile. |
 | `power_user_review.py` | Deterministic expert-panel report generator for browser benchmark results. |
 | `run_snowflake_safe_suite.py` | Env-driven Snowflake runner for the guarded metadata-scale SQL suite. It never runs the physical 5 TB script. |
@@ -109,6 +110,14 @@ Then run the guarded 12-user / 3-iteration profile:
 
 ```powershell
 .\.venv\Scripts\python.exe .\perf_tests\run_12_power_users.py --url http://localhost:8501/ --run-id PERF_12_POWER_USERS_RELEASE --output-dir perf_tests/results
+```
+
+To isolate App Shell cold first render before the release run, use the
+initial-load-only diagnostic profile. It has no section navigation or load
+button flows and must not be treated as the release gate:
+
+```powershell
+.\.venv\Scripts\python.exe .\perf_tests\run_12_power_users.py --url http://localhost:8501/ --run-id PERF_12_POWER_USERS_INITIAL_LOAD_RERUN3 --output-dir perf_tests/results --profile perf_tests/profiles/12_power_users_initial_load_only.json
 ```
 
 Generate the expert review:

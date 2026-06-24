@@ -16,6 +16,8 @@ st.set_page_config(
 )
 
 from shell import render_app  # noqa: E402
+from perf_trace import record_phase  # noqa: E402
 
 
+record_phase("app_entry_import_done")
 render_app()

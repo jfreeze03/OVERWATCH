@@ -10,6 +10,7 @@ import importlib
 import streamlit as st
 
 from config import SECTION_MODULES, normalize_section_name
+from perf_trace import trace
 
 
 _loaded: dict[str, object] = {}
@@ -38,11 +39,13 @@ def dispatch_section(active_section: str) -> None:
 
     if module_path not in _loaded:
         try:
-            _loaded[module_path] = importlib.import_module(module_path)
+            with trace(f"section_dispatch:module_import:{module_path}", active_section=active_section):
+                _loaded[module_path] = importlib.import_module(module_path)
         except ImportError as exc:
             from utils.query import format_snowflake_error
 
             st.error(f"Failed to load section `{active_section}`: {format_snowflake_error(exc)}")
             return
 
-    _loaded[module_path].render()
+    with trace(f"section_dispatch:render:{active_section}", active_section=active_section):
+        _loaded[module_path].render()

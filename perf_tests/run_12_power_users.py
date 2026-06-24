@@ -22,6 +22,7 @@ import live_concurrent_runner  # noqa: E402
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run OVERWATCH's guarded 12-power-user benchmark.")
     parser.add_argument("--url", default="http://localhost:8501/", help="Dashboard URL to test.")
+    parser.add_argument("--profile", default=str(PROFILE_PATH), help="Benchmark profile JSON path.")
     parser.add_argument("--run-id", default=f"PERF_12_POWER_USERS_{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}")
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR), help="Directory for JSON and Markdown reports.")
     parser.add_argument("--headed", action="store_true", help="Run with visible browser windows.")
@@ -33,7 +34,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     runner_args = [
         "--profile",
-        str(PROFILE_PATH),
+        args.profile,
         "--url",
         args.url,
         "--run-id",

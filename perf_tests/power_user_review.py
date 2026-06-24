@@ -56,7 +56,12 @@ def _slowest_action(summary: dict) -> str:
 
 
 def _top_slowest_steps(samples: list[dict], limit: int = 10) -> list[dict]:
-    measured = [sample for sample in samples if not sample.get("skipped")]
+    measured = [sample for sample in samples if not sample.get("skipped") and not sample.get("diagnostic")]
+    return sorted(measured, key=lambda sample: float(sample.get("elapsed_ms", 0) or 0), reverse=True)[:limit]
+
+
+def _top_slowest_diagnostic_steps(samples: list[dict], limit: int = 10) -> list[dict]:
+    measured = [sample for sample in samples if sample.get("diagnostic")]
     return sorted(measured, key=lambda sample: float(sample.get("elapsed_ms", 0) or 0), reverse=True)[:limit]
 
 
@@ -104,6 +109,49 @@ def _initial_load_breakdown(summary: dict) -> list[dict]:
         if str(action).startswith("initial_load:")
     ]
     return sorted(rows, key=lambda row: float(row.get("p95_ms", 0) or 0), reverse=True)
+
+
+def _summary_rows(summary: dict, key: str, label_key: str, limit: int = 10) -> list[dict]:
+    rows = summary.get(key, [])
+    if isinstance(rows, list):
+        return rows[:limit]
+    return []
+
+
+def _diagnostic_recommendations(summary: dict) -> list[str]:
+    recommendations: list[str] = []
+    breakdown = _initial_load_breakdown(summary)
+    phase_p95 = {
+        str(row.get("action", "")).split(":", 1)[-1]: float(row.get("p95_ms", 0) or 0)
+        for row in breakdown
+    }
+    if phase_p95.get("app_ready", 0) > 10000 and (
+        phase_p95.get("goto_domcontentloaded", 0) > 10000
+        or phase_p95.get("goto_commit", 0) > 10000
+        or phase_p95.get("domcontentloaded", 0) > 10000
+    ):
+        recommendations.append(
+            "App-ready and browser response phases are both high; prioritize server first response and Streamlit cold render tuning."
+        )
+    server_rows = _summary_rows(summary, "server_phase_breakdown", "phase", limit=20)
+    server_by_phase = {str(row.get("phase")): float(row.get("p95_ms", 0) or 0) for row in server_rows}
+    probe_ms = server_by_phase.get("shell:probe_snowflake_available", 0)
+    if probe_ms > 1000:
+        recommendations.append(
+            "shell:probe_snowflake_available is elevated; tune or cache the connection availability probe before release reruns."
+        )
+    import_rows = [
+        (phase, p95)
+        for phase, p95 in server_by_phase.items()
+        if phase.startswith("section_dispatch:module_import:")
+    ]
+    if import_rows:
+        phase, p95 = max(import_rows, key=lambda item: item[1])
+        if p95 > 1000:
+            recommendations.append(
+                f"{phase} dominates section dispatch import time; split module imports or move optional dependencies behind workflow load."
+            )
+    return recommendations
 
 
 def _panel_rows(summary: dict, section_summary: dict | None) -> list[dict]:
@@ -179,6 +227,7 @@ def build_review(
     run_id = live_payload.get("run_id", "unknown")
     skipped = _skipped_buttons(samples)
     slowest = _top_slowest_steps(samples)
+    slowest_diagnostic = _top_slowest_diagnostic_steps(samples)
     overall = _verdict(summary)
     meets_thresholds = (
         overall == "PASS"
@@ -269,6 +318,30 @@ def build_review(
             f"- Slowest initial-load phase: `{phase_name}`.",
             f"- Recommendation: tune `{phase_name}` first, then rerun the same 12-user profile so release p95 remains comparable.",
         ])
+    server_rows = _summary_rows(summary, "server_phase_breakdown", "phase")
+    lines.extend([
+        "",
+        "## Server Phase Breakdown",
+        "",
+    ])
+    if server_rows:
+        lines.extend(["| Phase | Samples | P95 ms | Max ms |", "|---|---:|---:|---:|"])
+        for row in server_rows:
+            lines.append(f"| {row.get('phase', '')} | {row.get('steps', '')} | {row.get('p95_ms', 0)} | {row.get('max_ms', 0)} |")
+    else:
+        lines.append("- No server-side phase trace was collected.")
+    nav_rows = _summary_rows(summary, "browser_navigation_timing", "metric")
+    lines.extend([
+        "",
+        "## Browser Navigation Timing",
+        "",
+    ])
+    if nav_rows:
+        lines.extend(["| Metric | Samples | P95 ms/bytes | Max ms/bytes |", "|---|---:|---:|---:|"])
+        for row in nav_rows:
+            lines.append(f"| {row.get('metric', '')} | {row.get('samples', '')} | {row.get('p95_ms', 0)} | {row.get('max_ms', 0)} |")
+    else:
+        lines.append("- No browser navigation timing was collected.")
     lines.extend([
         "",
         "## Expert Panel",
@@ -293,7 +366,7 @@ def build_review(
         lines.append("- None recorded.")
     lines.extend([
         "",
-        "## Top 10 Slowest Steps",
+        "## Top 10 Slowest Release Steps",
         "",
         "| User | Iteration | Section | Action | Elapsed ms | Status |",
         "|---:|---:|---|---|---:|---|",
@@ -308,11 +381,28 @@ def build_review(
         lines.append("|  |  | n/a | n/a | 0.00 | n/a |")
     lines.extend([
         "",
+        "## Top 10 Slowest Diagnostic Steps",
+        "",
+        "| User | Iteration | Section | Action | Elapsed ms | Status |",
+        "|---:|---:|---|---|---:|---|",
+    ])
+    for sample in slowest_diagnostic:
+        lines.append(
+            f"| {sample.get('user_id', '')} | {sample.get('iteration', '')} | {sample.get('section', '')} | "
+            f"{sample.get('action', '')} | {float(sample.get('elapsed_ms', 0) or 0):.2f} | "
+            f"{'OK' if sample.get('ok') else 'FAIL'} |"
+        )
+    if not slowest_diagnostic:
+        lines.append("|  |  | n/a | n/a | 0.00 | n/a |")
+    diagnostic_recommendations = _diagnostic_recommendations(summary)
+    lines.extend([
+        "",
         "## Recommended Next Engineering Actions",
         "- Tune the slowest section/action first, then rerun the same profile.",
         "- Pair browser latency with Snowflake Query History and PERF_TEST_* views when credentials are available.",
         "- Keep any new benchmark load button behind the forbidden-action safety guard.",
     ])
+    lines.extend(f"- {item}" for item in diagnostic_recommendations)
     if snowflake_doc:
         lines.extend(["", "## Snowflake Evidence", f"- Snowflake regression/results reference: `{snowflake_doc}`"])
     return "\n".join(lines) + "\n"

@@ -9,6 +9,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 PERF_ROOT = ROOT / "perf_tests"
 PROFILE_PATH = PERF_ROOT / "profiles" / "12_power_users.json"
+INITIAL_LOAD_PROFILE_PATH = PERF_ROOT / "profiles" / "12_power_users_initial_load_only.json"
 
 
 def load_live_runner():
@@ -39,6 +40,35 @@ class LiveConcurrentProfileTests(unittest.TestCase):
         self.assertEqual(args.fail_p95_ms, 10000)
         self.assertEqual(args.fail_error_rate, 0.0)
         self.assertEqual(args.missing_load_button_wait_ms, 10000)
+
+    def test_initial_load_only_profile_is_diagnostic_not_release_gate(self):
+        runner = load_live_runner()
+
+        args = runner.parse_args(["--profile", str(INITIAL_LOAD_PROFILE_PATH)])
+
+        self.assertEqual(args.users, 12)
+        self.assertEqual(args.iterations, 1)
+        self.assertTrue(args.single_initial_load)
+        self.assertTrue(args.initial_load_substeps)
+        self.assertTrue(args.wait_initial_idle)
+        self.assertEqual(args.sections, [])
+        self.assertFalse(args.load_buttons)
+
+    def test_perf_run_url_preserves_existing_query_params(self):
+        runner = load_live_runner()
+
+        url = runner.perf_run_url(
+            "http://localhost:8503/?foo=bar&overwatch_theme=carbon",
+            run_id="RUN42",
+            user_id=7,
+            iteration=2,
+        )
+
+        self.assertIn("foo=bar", url)
+        self.assertIn("overwatch_theme=carbon", url)
+        self.assertIn("overwatch_perf_run_id=RUN42", url)
+        self.assertIn("overwatch_perf_user=7", url)
+        self.assertIn("overwatch_perf_iteration=2", url)
 
     def test_cli_overrides_profile_values(self):
         runner = load_live_runner()
@@ -127,6 +157,22 @@ class LiveConcurrentProfileTests(unittest.TestCase):
 
         self.assertIn("await wait_for_section(page, section_name, args.timeout_ms)", section_nav_source)
         self.assertNotIn("await wait_for_streamlit_idle", section_nav_source)
+
+    def test_section_transition_wait_uses_visibility_not_detached_dom(self):
+        runner_source = (PERF_ROOT / "live_concurrent_runner.py").read_text(encoding="utf-8")
+        transition_wait_source = runner_source.split("async def wait_for_transition_clear", 1)[1].split(
+            "async def wait_for_section",
+            1,
+        )[0]
+        wait_for_section_source = runner_source.split("async def wait_for_section", 1)[1].split(
+            "async def wait_for_app_ready",
+            1,
+        )[0]
+
+        self.assertIn("getClientRects().length > 0", transition_wait_source)
+        self.assertIn('querySelectorAll(".ow-section-transition")', transition_wait_source)
+        self.assertIn("wait_for_transition_clear(page, timeout_ms)", wait_for_section_source)
+        self.assertNotIn('state="detached"', wait_for_section_source)
 
     def test_summary_reports_p95_release_blocker(self):
         runner = load_live_runner()
@@ -238,6 +284,8 @@ class LiveConcurrentProfileTests(unittest.TestCase):
         self.assertEqual(summary["p95_ms"], 900.0)
         self.assertEqual(summary["errors"], 0)
         self.assertEqual(summary["browser_error_steps"], 0)
+        self.assertEqual(summary["release_throughput_steps_per_sec"], 1.0)
+        self.assertEqual(summary["diagnostic_throughput_steps_per_sec"], 1.0)
         self.assertEqual(summary["readiness_state"], "PASS")
         self.assertNotIn("p95_threshold", {item["type"] for item in summary["release_blockers"]})
         self.assertEqual(summary["diagnostic_by_action"]["initial_load:app_ready"]["p95_ms"], 50000.0)
@@ -264,6 +312,15 @@ class LiveConcurrentProfileTests(unittest.TestCase):
                 200.0,
                 True,
                 diagnostic=True,
+                detail={
+                    "perf_trace": {
+                        "samples": [
+                            {"phase": "shell:probe_snowflake_available", "elapsed_ms": 12.5}
+                        ]
+                    },
+                    "navigation_timing": {"responseStart": 30.0},
+                    "paint_timing": {"first-contentful-paint": 55.0},
+                },
             ),
         ]
         summary = runner.summarize(
@@ -282,6 +339,11 @@ class LiveConcurrentProfileTests(unittest.TestCase):
         self.assertIn("Diagnostic Action P95", markdown)
         self.assertIn("Initial Load Breakdown", markdown)
         self.assertIn("goto_domcontentloaded", markdown)
+        self.assertIn("Server Phase Breakdown", markdown)
+        self.assertIn("Browser Navigation Timing", markdown)
+        self.assertIn("Browser Paint Timing", markdown)
+        self.assertEqual(summary["server_phase_breakdown"][0]["phase"], "shell:probe_snowflake_available")
+        self.assertEqual(summary["browser_navigation_timing"][0]["metric"], "responseStart")
 
 
 if __name__ == "__main__":

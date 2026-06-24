@@ -43,6 +43,9 @@ class ClientIsolationMatrixTests(unittest.TestCase):
         self.assertEqual(row["label"], "shared_ramp12")
         self.assertEqual(row["in_run_tail_capture_count"], 1)
         self.assertEqual(row["browser_child_process_count"], 12)
+        self.assertFalse(row["p99_tail_pass"])
+        self.assertFalse(row["readiness_pass"])
+        self.assertFalse(row["release_policy_candidate"])
 
         payload = runner.build_payload(
             run_id_prefix="CLIENT_UNIT",
@@ -57,6 +60,43 @@ class ClientIsolationMatrixTests(unittest.TestCase):
         self.assertIn("Client Isolation Matrix", markdown)
         self.assertIn("shared_ramp12", markdown)
         self.assertIn("Tail captures", markdown)
+        self.assertIn("Recommendation", markdown)
+        self.assertEqual(payload["conclusion"]["recommendation"], "ramp12_tail_blocked")
+
+    def test_client_isolation_recommends_ramp24_when_shared_longer_ramp_passes(self):
+        runner = load_module()
+        rows = [
+            {
+                "label": "shared_ramp12",
+                "release_policy_candidate": False,
+                "p99_ms": 21000,
+                "readiness_score": 92,
+            },
+            {
+                "label": "shared_ramp24",
+                "release_policy_candidate": True,
+                "p99_ms": 15000,
+                "readiness_score": 100,
+            },
+            {
+                "label": "per_user_ramp24",
+                "release_policy_candidate": True,
+                "p99_ms": 14000,
+                "readiness_score": 100,
+            },
+        ]
+
+        self.assertEqual(runner.recommend_release_policy(rows), "ramp24_passes")
+
+    def test_client_isolation_recommends_per_user_when_only_browser_isolation_passes(self):
+        runner = load_module()
+        rows = [
+            {"label": "shared_ramp12", "release_policy_candidate": False},
+            {"label": "shared_ramp24", "release_policy_candidate": False},
+            {"label": "per_user_ramp24", "release_policy_candidate": True},
+        ]
+
+        self.assertEqual(runner.recommend_release_policy(rows), "per_user_only_passes")
 
 
 if __name__ == "__main__":

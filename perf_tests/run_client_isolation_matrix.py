@@ -21,6 +21,9 @@ DEFAULT_CASES = (
     {"label": "shared_ramp36", "browser_launch_mode": "shared", "ramp_seconds": 36.0},
     {"label": "per_user_ramp24", "browser_launch_mode": "per_user", "ramp_seconds": 24.0},
 )
+P95_THRESHOLD_MS = 10000.0
+P99_TAIL_THRESHOLD_MS = P95_THRESHOLD_MS * 1.8
+READINESS_THRESHOLD = 95
 
 
 def summarize_report(report: dict[str, object], *, run_id: str, case: dict[str, object], returncode: int) -> dict[str, object]:
@@ -28,6 +31,21 @@ def summarize_report(report: dict[str, object], *, run_id: str, case: dict[str, 
     resource_samples = summary.get("resource_samples", []) if isinstance(summary, dict) else []
     last_resource = resource_samples[-1] if isinstance(resource_samples, list) and resource_samples else {}
     in_run_tails = summary.get("in_run_tail_captures", []) if isinstance(summary, dict) else []
+    p95_ms = float(summary.get("p95_ms", 0) or 0)
+    p99_ms = float(summary.get("p99_ms", 0) or 0)
+    errors = int(summary.get("errors", 0) or 0)
+    skipped_buttons = int(summary.get("skipped_buttons", 0) or 0)
+    readiness_score = int(summary.get("readiness_score", 0) or 0)
+    p99_tail_pass = p99_ms <= P99_TAIL_THRESHOLD_MS
+    readiness_pass = readiness_score >= READINESS_THRESHOLD
+    release_policy_candidate = (
+        returncode == 0
+        and p95_ms <= P95_THRESHOLD_MS
+        and p99_tail_pass
+        and readiness_pass
+        and errors == 0
+        and skipped_buttons == 0
+    )
     return {
         "run_id": run_id,
         "label": case["label"],
@@ -35,12 +53,15 @@ def summarize_report(report: dict[str, object], *, run_id: str, case: dict[str, 
         "ramp_seconds": case["ramp_seconds"],
         "returncode": returncode,
         "readiness_state": summary.get("readiness_state", "BLOCKED"),
-        "readiness_score": summary.get("readiness_score", 0),
-        "p95_ms": summary.get("p95_ms", 0),
-        "p99_ms": summary.get("p99_ms", 0),
+        "readiness_score": readiness_score,
+        "p95_ms": p95_ms,
+        "p99_ms": p99_ms,
         "max_ms": summary.get("max_ms", 0),
-        "errors": summary.get("errors", 0),
-        "skipped_buttons": summary.get("skipped_buttons", 0),
+        "errors": errors,
+        "skipped_buttons": skipped_buttons,
+        "p99_tail_pass": p99_tail_pass,
+        "readiness_pass": readiness_pass,
+        "release_policy_candidate": release_policy_candidate,
         "in_run_tail_capture_count": len(in_run_tails) if isinstance(in_run_tails, list) else 0,
         "host_cpu_percent": last_resource.get("cpu_percent", ""),
         "host_memory_percent": last_resource.get("memory_percent", ""),
@@ -96,6 +117,7 @@ def run_case(
 def build_payload(*, run_id_prefix: str, url: str, rows: list[dict[str, object]]) -> dict[str, object]:
     best = min(rows, key=lambda row: float(row.get("p99_ms", 0) or 0)) if rows else {}
     worst = max(rows, key=lambda row: float(row.get("p99_ms", 0) or 0)) if rows else {}
+    recommendation = recommend_release_policy(rows)
     return {
         "run_id_prefix": run_id_prefix,
         "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
@@ -114,8 +136,31 @@ def build_payload(*, run_id_prefix: str, url: str, rows: list[dict[str, object]]
                 "p99_ms": worst.get("p99_ms", 0),
                 "readiness_score": worst.get("readiness_score", 0),
             },
+            "p99_tail_threshold_ms": P99_TAIL_THRESHOLD_MS,
+            "readiness_threshold": READINESS_THRESHOLD,
+            "recommendation": recommendation,
         },
     }
+
+
+def _candidate_by_label(rows: list[dict[str, object]], label: str) -> bool:
+    return any(row.get("label") == label and bool(row.get("release_policy_candidate")) for row in rows)
+
+
+def recommend_release_policy(rows: list[dict[str, object]]) -> str:
+    """Return a stable recommendation token for release policy discussions."""
+
+    shared_ramp12_passes = _candidate_by_label(rows, "shared_ramp12")
+    shared_ramp24_passes = _candidate_by_label(rows, "shared_ramp24")
+    shared_ramp36_passes = _candidate_by_label(rows, "shared_ramp36")
+    per_user_passes = _candidate_by_label(rows, "per_user_ramp12") or _candidate_by_label(rows, "per_user_ramp24")
+    if shared_ramp12_passes:
+        return "ramp12_passes"
+    if shared_ramp24_passes or shared_ramp36_passes:
+        return "ramp24_passes"
+    if per_user_passes:
+        return "per_user_only_passes"
+    return "ramp12_tail_blocked"
 
 
 def write_reports(payload: dict[str, object], *, output_dir: str | pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
@@ -131,14 +176,15 @@ def write_reports(payload: dict[str, object], *, output_dir: str | pathlib.Path)
         "- Diagnostic only; this is not the release gate.",
         f"- URL: `{payload['url']}`",
         "",
-        "| Case | Browser mode | Ramp s | State | Score | p95 ms | p99 ms | Max ms | Errors | Skipped | Tail captures | CPU % | Memory % | Browser children |",
-        "|---|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| Case | Browser mode | Ramp s | State | Score | p95 ms | p99 ms | Max ms | p99 tail pass | Readiness pass | Candidate | Errors | Skipped | Tail captures | CPU % | Memory % | Browser children |",
+        "|---|---|---:|---|---:|---:|---:|---:|---|---|---|---:|---:|---:|---:|---:|---:|",
     ]
     for row in payload["rows"]:
         lines.append(
             f"| {row['label']} | {row['browser_launch_mode']} | {row['ramp_seconds']} | "
             f"{row['readiness_state']} | {row['readiness_score']} | {row['p95_ms']} | {row['p99_ms']} | "
-            f"{row['max_ms']} | {row['errors']} | {row['skipped_buttons']} | {row['in_run_tail_capture_count']} | "
+            f"{row['max_ms']} | {row['p99_tail_pass']} | {row['readiness_pass']} | {row['release_policy_candidate']} | "
+            f"{row['errors']} | {row['skipped_buttons']} | {row['in_run_tail_capture_count']} | "
             f"{row['host_cpu_percent']} | {row['host_memory_percent']} | {row['browser_child_process_count']} |"
         )
     conclusion = payload.get("conclusion", {})
@@ -149,6 +195,8 @@ def write_reports(payload: dict[str, object], *, output_dir: str | pathlib.Path)
             "",
             f"- Best case: `{conclusion.get('best_case', {}).get('label', '')}`",
             f"- Worst case: `{conclusion.get('worst_case', {}).get('label', '')}`",
+            f"- p99 tail threshold: `{conclusion.get('p99_tail_threshold_ms', P99_TAIL_THRESHOLD_MS)} ms`",
+            f"- Recommendation: `{conclusion.get('recommendation', '')}`",
         ])
     md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return json_path, md_path

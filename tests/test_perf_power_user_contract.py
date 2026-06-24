@@ -12,6 +12,7 @@ APP_ROOT = ROOT / ".overwatch_final"
 PERF_ROOT = ROOT / "perf_tests"
 PROFILE_PATH = PERF_ROOT / "profiles" / "12_power_users.json"
 RELEASE_PROFILE_PATH = PERF_ROOT / "profiles" / "12_power_users_release_scored.json"
+RAMP24_PROFILE_PATH = PERF_ROOT / "profiles" / "12_power_users_release_scored_ramp24.json"
 DIAGNOSTIC_PROFILE_PATH = PERF_ROOT / "profiles" / "12_power_users_diagnostic.json"
 SECTION_NAV_PROFILE_PATH = PERF_ROOT / "profiles" / "12_power_users_section_nav_only.json"
 RELEASE_EVIDENCE = ROOT / "docs" / "releases" / "OVERWATCH_RELEASE_EVIDENCE_24cd05e_2026-06-24.md"
@@ -60,12 +61,26 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
 
         self.assertEqual(profile["users"], 12)
         self.assertEqual(profile["iterations"], 3)
+        self.assertEqual(profile["ramp_seconds"], 12)
         self.assertEqual(profile["sections"], list(route_registry.PRIMARY_SECTION_TITLES))
         self.assertFalse(profile["initial_load_substeps"])
         self.assertFalse(profile["section_nav_substeps"])
         self.assertFalse(profile["trace_slowest_initial_load"])
         self.assertFalse(profile.get("tail_diagnostics", False))
         self.assertEqual(profile["load_buttons"]["Alert Center"], "Load Active Alerts")
+
+    def test_ramp24_profile_matches_release_scored_except_ramp(self):
+        self.assertTrue(RAMP24_PROFILE_PATH.exists())
+        strict = json.loads(RELEASE_PROFILE_PATH.read_text(encoding="utf-8"))
+        ramp24 = json.loads(RAMP24_PROFILE_PATH.read_text(encoding="utf-8"))
+
+        self.assertEqual(strict["ramp_seconds"], 12)
+        self.assertEqual(ramp24["ramp_seconds"], 24)
+        comparable_strict = dict(strict)
+        comparable_ramp24 = dict(ramp24)
+        comparable_strict.pop("ramp_seconds")
+        comparable_ramp24.pop("ramp_seconds")
+        self.assertEqual(comparable_ramp24, comparable_strict)
 
     def test_diagnostic_profile_exists_and_enables_diagnostics(self):
         self.assertTrue(DIAGNOSTIC_PROFILE_PATH.exists())
@@ -85,7 +100,7 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
 
     def test_profile_contains_only_safe_load_buttons(self):
         runner = load_module("overwatch_live_runner_power_contract", "live_concurrent_runner.py")
-        for profile_path in (PROFILE_PATH, RELEASE_PROFILE_PATH, DIAGNOSTIC_PROFILE_PATH):
+        for profile_path in (PROFILE_PATH, RELEASE_PROFILE_PATH, RAMP24_PROFILE_PATH, DIAGNOSTIC_PROFILE_PATH):
             profile = json.loads(profile_path.read_text(encoding="utf-8"))
             for label in profile["load_buttons"].values():
                 with self.subTest(profile=profile_path.name, label=label):
@@ -93,7 +108,7 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
 
     def test_profile_does_not_include_mutation_controls(self):
         runner = load_module("overwatch_live_runner_mutation_contract", "live_concurrent_runner.py")
-        for profile_path in (PROFILE_PATH, RELEASE_PROFILE_PATH, DIAGNOSTIC_PROFILE_PATH, SECTION_NAV_PROFILE_PATH):
+        for profile_path in (PROFILE_PATH, RELEASE_PROFILE_PATH, RAMP24_PROFILE_PATH, DIAGNOSTIC_PROFILE_PATH, SECTION_NAV_PROFILE_PATH):
             profile = json.loads(profile_path.read_text(encoding="utf-8"))
             load_buttons = profile.get("load_buttons") or {}
             for section_name, label in load_buttons.items():
@@ -113,6 +128,24 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
         gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
 
         self.assertIn("perf_tests/results/", gitignore)
+
+    def test_broad_release_sections_use_gated_download_helpers(self):
+        broad_paths = [
+            APP_ROOT / "sections" / "alert_center.py",
+            APP_ROOT / "sections" / "cost_contract.py",
+            APP_ROOT / "sections" / "dba_control_room" / "render.py",
+            APP_ROOT / "sections" / "executive_landing_shell.py",
+            APP_ROOT / "sections" / "executive_landing_overview_view.py",
+            APP_ROOT / "sections" / "security_posture_overview_view.py",
+        ]
+
+        for path in broad_paths:
+            with self.subTest(path=path.name):
+                source = path.read_text(encoding="utf-8")
+                self.assertNotIn("st.download_button(", source)
+        helper_source = (APP_ROOT / "utils" / "downloads.py").read_text(encoding="utf-8")
+        self.assertIn("def download_text(", helper_source)
+        self.assertIn("def download_csv(", helper_source)
 
     def test_alert_center_profile_label_matches_default_visible_load_button(self):
         profile = json.loads(PROFILE_PATH.read_text(encoding="utf-8"))
@@ -188,8 +221,12 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
             "browser navigation timing",
             "12_power_users_initial_load_only.json",
             "12_power_users_release_scored.json",
+            "12_power_users_release_scored_ramp24.json",
             "12_power_users_diagnostic.json",
             "12_power_users_section_nav_only.json",
+            "strict ramp-12",
+            "ramp-24 capacity-adjusted",
+            "PERF_RELEASE_STABILITY_RERUN9_RAMP24",
             "run_initial_load_ladder.py",
             "run_diagnostic_overhead_ab.py",
             "run_browser_capacity_matrix.py",
@@ -422,6 +459,9 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
             "Replay Reproduction Check",
             "Clean Release Stability",
             "Playwright Host Resource Samples",
+            "Ramp Policy Assessment",
+            "Client Isolation Matrix",
+            "Strict ramp-12 vs ramp-24 outcome",
             "Top 10 Slowest Release Steps",
             "Top 10 Slowest Diagnostic Steps",
             "app_ready",

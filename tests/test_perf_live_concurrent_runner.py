@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PERF_ROOT = ROOT / "perf_tests"
 PROFILE_PATH = PERF_ROOT / "profiles" / "12_power_users.json"
 RELEASE_PROFILE_PATH = PERF_ROOT / "profiles" / "12_power_users_release_scored.json"
+RAMP24_PROFILE_PATH = PERF_ROOT / "profiles" / "12_power_users_release_scored_ramp24.json"
 DIAGNOSTIC_PROFILE_PATH = PERF_ROOT / "profiles" / "12_power_users_diagnostic.json"
 INITIAL_LOAD_PROFILE_PATH = PERF_ROOT / "profiles" / "12_power_users_initial_load_only.json"
 SECTION_NAV_PROFILE_PATH = PERF_ROOT / "profiles" / "12_power_users_section_nav_only.json"
@@ -54,6 +55,7 @@ class LiveConcurrentProfileTests(unittest.TestCase):
 
         self.assertEqual(args.users, 12)
         self.assertEqual(args.iterations, 3)
+        self.assertEqual(args.ramp_seconds, 12)
         self.assertTrue(args.single_initial_load)
         self.assertTrue(args.wait_initial_idle)
         self.assertFalse(args.initial_load_substeps)
@@ -63,6 +65,23 @@ class LiveConcurrentProfileTests(unittest.TestCase):
         self.assertEqual(args.tail_capture_threshold_ms, 0)
         self.assertEqual(args.load_buttons["Alert Center"], "Load Active Alerts")
         self.assertEqual(args.load_buttons["Cost & Contract"], "Refresh Cost")
+
+    def test_ramp24_release_candidate_profile_preserves_scored_workload(self):
+        runner = load_live_runner()
+
+        strict_args = runner.parse_args(["--profile", str(RELEASE_PROFILE_PATH)])
+        ramp24_args = runner.parse_args(["--profile", str(RAMP24_PROFILE_PATH)])
+
+        self.assertEqual(strict_args.ramp_seconds, 12)
+        self.assertEqual(ramp24_args.ramp_seconds, 24)
+        self.assertEqual(ramp24_args.users, strict_args.users)
+        self.assertEqual(ramp24_args.iterations, strict_args.iterations)
+        self.assertEqual(ramp24_args.sections, strict_args.sections)
+        self.assertEqual(ramp24_args.load_buttons, strict_args.load_buttons)
+        self.assertFalse(ramp24_args.initial_load_substeps)
+        self.assertFalse(ramp24_args.section_nav_substeps)
+        self.assertFalse(ramp24_args.trace_slowest_initial_load)
+        self.assertFalse(ramp24_args.tail_diagnostics)
 
     def test_diagnostic_profile_enables_diagnostics_and_trace(self):
         runner = load_live_runner()

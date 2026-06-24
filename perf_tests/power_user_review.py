@@ -260,6 +260,39 @@ def _blocker_classification(summary: dict, samples: list[dict]) -> str:
     return "app_first_paint_code"
 
 
+def _client_isolation_rows(payload: dict | None) -> list[dict]:
+    if not isinstance(payload, dict):
+        return []
+    rows = payload.get("rows", [])
+    return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+
+
+def _client_isolation_recommendation(payload: dict | None) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    conclusion = payload.get("conclusion", {})
+    if not isinstance(conclusion, dict):
+        return ""
+    return str(conclusion.get("recommendation", "") or "")
+
+
+def _row_by_label(rows: list[dict], label: str) -> dict:
+    for row in rows:
+        if row.get("label") == label:
+            return row
+    return {}
+
+
+def _format_policy_row(row: dict) -> str:
+    if not row:
+        return "not run"
+    return (
+        f"{row.get('readiness_state', '')}, p95 {row.get('p95_ms', 0)} ms, "
+        f"p99 {row.get('p99_ms', 0)} ms, readiness {row.get('readiness_score', 0)}/100, "
+        f"errors {row.get('errors', 0)}, skipped {row.get('skipped_buttons', 0)}"
+    )
+
+
 def _panel_rows(summary: dict, section_summary: dict | None) -> list[dict]:
     p95_ms = float(summary.get("p95_ms", 0) or 0)
     p99_ms = float(summary.get("p99_ms", 0) or 0)
@@ -327,6 +360,7 @@ def build_review(
     section_payload: dict | None = None,
     snowflake_doc: str | None = None,
     stability_payload: dict | None = None,
+    client_isolation_payload: dict | None = None,
 ) -> str:
     summary = _summary(live_payload)
     samples = _samples(live_payload)
@@ -346,6 +380,8 @@ def build_review(
     failed_resource_findings = _failed_resource_findings(summary, samples)
     stale_section_findings = _stale_section_findings(summary)
     blocker_classification = _blocker_classification(summary, samples)
+    client_rows = _client_isolation_rows(client_isolation_payload)
+    client_recommendation = _client_isolation_recommendation(client_isolation_payload)
     overall = _verdict(summary)
     meets_thresholds = (
         overall == "PASS"
@@ -743,6 +779,73 @@ def build_review(
         lines.append("- No clean release stability report was attached.")
     lines.extend([
         "",
+        "## Ramp Policy Assessment",
+        "",
+    ])
+    if client_rows:
+        strict_row = _row_by_label(client_rows, "shared_ramp12")
+        ramp24_row = _row_by_label(client_rows, "shared_ramp24")
+        per_user_ramp24_row = _row_by_label(client_rows, "per_user_ramp24")
+        lines.extend([
+            f"- Client isolation recommendation: `{client_recommendation}`",
+            f"- Strict ramp-12 outcome: `{_format_policy_row(strict_row)}`",
+            f"- Shared-browser ramp-24 outcome: `{_format_policy_row(ramp24_row)}`",
+            f"- Per-user ramp-24 outcome: `{_format_policy_row(per_user_ramp24_row)}`",
+        ])
+        if client_recommendation == "ramp24_passes":
+            lines.append(
+                "- Assessment: ramp-24 is the stable local-client release posture when strict ramp-12 remains p99-tail sensitive."
+            )
+        elif client_recommendation == "ramp12_tail_blocked":
+            lines.append(
+                "- Assessment: strict ramp-12 remains blocked and no tested local-client isolation variant is release-ready."
+            )
+        elif client_recommendation == "per_user_only_passes":
+            lines.append(
+                "- Assessment: the tail clears only with per-user browser isolation; treat this as a benchmark-host capacity signal."
+            )
+        elif client_recommendation == "ramp12_passes":
+            lines.append("- Assessment: strict ramp-12 passed and no ramp policy change is needed.")
+    else:
+        lines.append("- No client isolation matrix was attached.")
+    lines.extend([
+        "",
+        "## Client Isolation Matrix",
+        "",
+    ])
+    if client_rows:
+        lines.extend([
+            "| Case | Mode | Ramp s | State | Score | p95 ms | p99 ms | p99 tail pass | Candidate |",
+            "|---|---|---:|---|---:|---:|---:|---|---|",
+        ])
+        for row in client_rows:
+            lines.append(
+                f"| {row.get('label', '')} | {row.get('browser_launch_mode', '')} | {row.get('ramp_seconds', '')} | "
+                f"{row.get('readiness_state', '')} | {row.get('readiness_score', '')} | {row.get('p95_ms', '')} | "
+                f"{row.get('p99_ms', '')} | {row.get('p99_tail_pass', '')} | {row.get('release_policy_candidate', '')} |"
+            )
+    else:
+        lines.append("- No client isolation rows were available.")
+    lines.extend([
+        "",
+        "## Strict ramp-12 vs ramp-24 outcome",
+        "",
+    ])
+    if client_rows:
+        strict_row = _row_by_label(client_rows, "shared_ramp12")
+        ramp24_row = _row_by_label(client_rows, "shared_ramp24")
+        if bool(ramp24_row.get("release_policy_candidate")) and not bool(strict_row.get("release_policy_candidate")):
+            lines.append(
+                "- Ramp-24 passed while strict ramp-12 remained tail-blocked, so the remaining risk is local-client ramp capacity rather than app server/Snowflake latency."
+            )
+        elif bool(strict_row.get("release_policy_candidate")):
+            lines.append("- Strict ramp-12 passed, so ramp-24 is not needed as an authoritative release posture.")
+        else:
+            lines.append("- Ramp-24 did not clear the release thresholds in the attached matrix; keep the manifest candidate.")
+    else:
+        lines.append("- Attach a client isolation matrix to compare strict ramp-12 with ramp-24.")
+    lines.extend([
+        "",
         "## Playwright Host Resource Samples",
         "",
     ])
@@ -837,6 +940,7 @@ def build_review(
         "- p95 is now the near-pass line; if it is under threshold and readiness still misses, treat p99/App Shell initial-load tail as the release blocker.",
         "- Focus frontend paint/tail capacity before changing Snowflake query paths when HTTP first response and server phases are low.",
         "- Fix client 404/resource lifecycle and stale section-state findings before trimming more Snowflake or mart query paths.",
+        "- If ramp-24 stability passes while strict ramp-12 remains p99-tail sensitive, formalize the chosen release ramp in the manifest before calling the gate release-ready.",
         "- Tune the slowest section/action first, then rerun the same profile.",
         "- Pair browser latency with Snowflake Query History and PERF_TEST_* views when credentials are available.",
         "- Keep any new benchmark load button behind the forbidden-action safety guard.",
@@ -853,6 +957,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--section-report", help="Optional section_smoke_runner JSON report path.")
     parser.add_argument("--snowflake-results", help="Optional Snowflake regression results doc path.")
     parser.add_argument("--stability-report", help="Optional release stability JSON report path.")
+    parser.add_argument("--client-isolation-report", help="Optional client isolation matrix JSON report path.")
     parser.add_argument("--output", help="Optional Markdown output path.")
     return parser.parse_args(argv)
 
@@ -863,11 +968,13 @@ def main(argv: list[str] | None = None) -> int:
     live_payload = _read_json(live_path)
     section_payload = _read_json(args.section_report) if args.section_report else None
     stability_payload = _read_json(args.stability_report) if args.stability_report else None
+    client_isolation_payload = _read_json(args.client_isolation_report) if args.client_isolation_report else None
     markdown = build_review(
         live_payload,
         section_payload=section_payload,
         snowflake_doc=args.snowflake_results,
         stability_payload=stability_payload,
+        client_isolation_payload=client_isolation_payload,
     )
     run_id = live_payload.get("run_id", live_path.stem.replace("_live_concurrent", ""))
     output = pathlib.Path(args.output) if args.output else DEFAULT_OUTPUT_DIR / f"{run_id}_expert_review.md"

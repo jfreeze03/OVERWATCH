@@ -270,10 +270,10 @@ class AlertCenterSplitTests(unittest.TestCase):
         )
         first_paint_source = inspect.getsource(alert_center._render_alert_center_first_paint_shell)
         self.assertIn("First paint does not query Snowflake", first_paint_source)
-        self.assertIn("render_first_paint_summary_shell(", first_paint_source)
+        self.assertIn("render_section_first_paint_shell(", first_paint_source)
 
     def test_alert_center_first_paint_shell_executes_without_loading_data(self):
-        with patch.object(alert_center, "render_first_paint_summary_shell") as render_shell, patch.object(
+        with patch.object(alert_center, "render_section_first_paint_shell") as render_shell, patch.object(
             alert_center,
             "_render_alert_command_lane_board",
         ) as render_lanes, patch.object(alert_center.st, "info") as info:
@@ -289,10 +289,13 @@ class AlertCenterSplitTests(unittest.TestCase):
         render_shell.assert_called_once()
         render_lanes.assert_called_once()
         info.assert_called_once()
-        shell_kwargs = render_shell.call_args.kwargs
-        self.assertEqual(shell_kwargs["state"], "Load on demand")
-        self.assertIn(("Active View", "Active Alerts"), shell_kwargs["metrics"])
-        self.assertIn(("Window", "7 days / 200 rows"), shell_kwargs["snapshot"])
+        spec = render_shell.call_args.args[0]
+        self.assertEqual(spec.section, "Alert Center")
+        self.assertEqual(spec.state, "Load on demand")
+        self.assertIn(("Critical / High", "On demand"), spec.metrics)
+        self.assertIn(("Window", "7 days / 200 rows"), spec.snapshot)
+        self.assertEqual(spec.view, "Active Alerts")
+        self.assertEqual(spec.load_cta, "Load Active Alerts")
         self.assertIn("Load Active Alerts", info.call_args.args[0])
         self.assertIn("First paint does not query Snowflake", info.call_args.args[0])
 

@@ -161,7 +161,12 @@ def render_cost_forecast(session, company: str, credit_price: float, max_wh_size
             render_chart_with_data_toggle(
                 "YTD Service Credits",
                 "cc_annual_service_projection",
-                lambda: st.line_chart(annual_display.set_index("USAGE_DATE")["DAILY_CREDITS"]),
+                lambda: render_area_time_series_chart(
+                    annual_display,
+                    "USAGE_DATE",
+                    "DAILY_CREDITS",
+                    title="YTD Service Credits",
+                ),
                 annual_display,
                 priority_columns=[
                     "USAGE_DATE",

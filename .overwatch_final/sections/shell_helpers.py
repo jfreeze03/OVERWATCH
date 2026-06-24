@@ -378,6 +378,37 @@ class FirstPaintSummarySpec:
     no_query_note: object = ""
 
 
+def build_first_paint_summary_spec(
+    section: str,
+    *,
+    state: object,
+    headline: object,
+    detail: object = "",
+    view: object | None = None,
+    metrics: tuple[tuple[str, object], ...] = (),
+    snapshot: tuple[tuple[str, object], ...] = (),
+    expected_lanes: Sequence[object] | object | None = None,
+    load_cta: object | None = None,
+    no_query_note: object | None = None,
+) -> FirstPaintSummarySpec:
+    """Build a first-paint shell spec from the central section contract."""
+    from sections.first_paint_contracts import get_first_paint_contract
+
+    contract = get_first_paint_contract(section)
+    return FirstPaintSummarySpec(
+        section=contract.section,
+        state=state,
+        headline=headline,
+        view=contract.default_view if view is None else view,
+        detail=detail,
+        metrics=tuple(metrics or ()),
+        snapshot=tuple(snapshot or ()),
+        expected_lanes=contract.expected_lanes if expected_lanes is None else expected_lanes,
+        load_cta=contract.explicit_load_cta if load_cta is None else load_cta,
+        no_query_note=contract.no_query_note if no_query_note is None else no_query_note,
+    )
+
+
 def _format_expected_lanes(lanes: Sequence[object] | object) -> str:
     if isinstance(lanes, str):
         return _clean_display_text(lanes)

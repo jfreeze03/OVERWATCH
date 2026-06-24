@@ -76,6 +76,22 @@ section needs the standard first-paint contract. Keep one-off shell rendering
 only for specialized loaded-context surfaces that already have a narrower
 contract.
 
+## Primary Section First-Paint Contract
+
+Every canonical section must render useful operator context before any live
+Snowflake read. The central contract registry in
+`sections.first_paint_contracts` owns the primary view, expected lanes, safe
+load boundary, cached/session sources, and forbidden first-paint loaders.
+
+| Section | Primary view | Expected lanes | Explicit load CTA |
+| --- | --- | --- | --- |
+| Executive Landing | Executive Overview | Cost movement, operational risk, security risk, change summary, executive actions | Refresh Summary |
+| DBA Control Room | Morning Cockpit | Failures, cost, queue, security, changes, action status | Load Morning Cockpit |
+| Alert Center | Active Alerts | Critical and high alerts, overdue alerts, action queue, delivery status | Load Active Alerts |
+| Workload Operations | Workload Overview | Slow or failed SQL, task and load failures, performance contention, recent changes, advanced DBA tools | Open the right tool |
+| Cost & Contract | Cost Overview | Spend movement, run rate, warehouse drivers, Cortex, savings | Refresh Cost |
+| Security Monitoring | Security Overview | Logins, grants, sharing, access changes, security alerts | Refresh Security Summary |
+
 ## Charts And Tables
 
 Charts should explain movement. Tables should prove details.

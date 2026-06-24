@@ -13,6 +13,7 @@ from utils import (
     freshness_note,
     download_csv,
     format_snowflake_error,
+    render_area_time_series_chart,
     render_chart_with_data_toggle,
     run_query,
     safe_float,
@@ -135,13 +136,28 @@ def render():
             or safe_float(row.get("TOTAL_STORAGE_TB", 0)) * storage_cost_per_tb
             for _, row in df_st.iterrows()
         ]
+        storage_chart = df_st.melt(
+            id_vars=["USAGE_DATE"],
+            value_vars=[
+                "STORAGE_GB",
+                "FAILSAFE_GB",
+                "STAGE_GB",
+                "HYBRID_STORAGE_GB",
+                "ARCHIVE_COOL_GB",
+                "ARCHIVE_COLD_GB",
+            ],
+            var_name="Storage Class",
+            value_name="Gigabytes",
+        )
         render_chart_with_data_toggle(
             "Storage Trend",
             "storage_trend",
-            lambda: st.area_chart(
-                df_st.set_index("USAGE_DATE")[
-                    ["STORAGE_GB", "FAILSAFE_GB", "STAGE_GB", "HYBRID_STORAGE_GB", "ARCHIVE_COOL_GB", "ARCHIVE_COLD_GB"]
-                ]
+            lambda: render_area_time_series_chart(
+                storage_chart,
+                "USAGE_DATE",
+                "Gigabytes",
+                series_column="Storage Class",
+                title="Storage Trend",
             ),
             df_st,
             priority_columns=[

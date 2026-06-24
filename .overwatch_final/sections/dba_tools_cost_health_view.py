@@ -16,6 +16,7 @@ from utils import (
     download_csv,
     format_credits,
     format_snowflake_error,
+    render_area_time_series_chart,
     get_active_company,
     render_chart_with_data_toggle,
     run_compatibility_checks,
@@ -100,16 +101,16 @@ def render_serverless_costs_tool(session, company: str) -> None:
                 ascending=False,
                 raw_label="All serverless service totals",
             )
-            serverless_trend = df_sv.pivot_table(
-                index="USAGE_DATE",
-                columns="SERVICE_TYPE",
-                values="DAILY_CREDITS",
-                aggfunc="sum",
-            ).fillna(0)
             render_chart_with_data_toggle(
                 "Serverless credits trend",
                 "dba_serverless_credits_trend",
-                lambda: st.area_chart(serverless_trend),
+                lambda: render_area_time_series_chart(
+                    df_sv,
+                    "USAGE_DATE",
+                    "DAILY_CREDITS",
+                    series_column="SERVICE_TYPE",
+                    title="Serverless credits trend",
+                ),
                 df_sv,
                 priority_columns=["USAGE_DATE", "SERVICE_TYPE", "DAILY_CREDITS"],
                 sort_by=["USAGE_DATE", "DAILY_CREDITS"],

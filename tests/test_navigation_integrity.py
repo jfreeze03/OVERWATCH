@@ -645,12 +645,13 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(SECTION_MODULES["Security Monitoring"], "sections.security_posture")
         self.assertFalse((APP_ROOT / "sections" / "security_monitoring.py").exists())
         security_text = (APP_ROOT / "sections" / "security_posture.py").read_text(encoding="utf-8")
+        first_paint_contracts_text = (APP_ROOT / "sections" / "first_paint_contracts.py").read_text(encoding="utf-8")
         nav_text = (APP_ROOT / "sections" / "navigation.py").read_text(encoding="utf-8")
         self.assertIn("SECURITY_POSTURE_VIEWS", security_text)
         self.assertNotIn("Security Signal Summary", security_text)
         self.assertNotIn("Security Monitoring Command Board", security_text)
         self.assertIn("render_section_first_paint_shell", security_text)
-        self.assertIn("First paint does not query Snowflake", security_text)
+        self.assertIn("First paint does not query Snowflake", first_paint_contracts_text)
         self.assertIn('set_state(SECURITY_POSTURE_VIEW, "Security Overview")', nav_text)
 
     def test_workload_operations_uses_fast_shell_module(self):
@@ -672,14 +673,15 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("workload_operations_view", full_workspace_text)
         self.assertNotIn("Refresh Workload Snapshot", full_workspace_text)
         self.assertNotIn("Download DBA runbook", full_workspace_text)
-        self.assertIn("render_first_paint_summary_shell", full_workspace_text)
+        self.assertIn("render_section_first_paint_shell", full_workspace_text)
+        self.assertIn("build_first_paint_summary_spec", full_workspace_text)
         self.assertIn("No live Snowflake reads run on entry", full_workspace_text)
 
     def test_workload_overview_first_paint_uses_shell_without_loads(self):
         from sections import workload_operations
 
         with contextlib.ExitStack() as stack:
-            render_shell = stack.enter_context(patch.object(workload_operations, "render_first_paint_summary_shell"))
+            render_shell = stack.enter_context(patch.object(workload_operations, "render_section_first_paint_shell"))
             stack.enter_context(patch.object(workload_operations, "build_loaded_section_alert_signal_board", return_value=pd.DataFrame()))
             stack.enter_context(patch.object(workload_operations.st, "columns", side_effect=lambda count: [contextlib.nullcontext() for _ in range(count)]))
             stack.enter_context(patch.object(workload_operations.st, "button", return_value=False))
@@ -705,10 +707,12 @@ class NavigationIntegrityTests(unittest.TestCase):
             workload_operations._render_workload_overview("ALFA", "PROD")
 
         render_shell.assert_called_once()
-        shell_kwargs = render_shell.call_args.kwargs
-        self.assertEqual(shell_kwargs["state"], "Ready")
-        self.assertIn(("Active workload items", "0"), shell_kwargs["metrics"])
-        self.assertIn(("Scope", "ALFA / PROD"), shell_kwargs["snapshot"])
+        spec = render_shell.call_args.args[0]
+        self.assertEqual(spec.state, "Ready")
+        self.assertEqual(spec.section, "Workload Operations")
+        self.assertIn(("Active workload items", "0"), spec.metrics)
+        self.assertIn(("Scope", "ALFA / PROD"), spec.snapshot)
+        self.assertEqual(spec.load_cta, "Open the right tool")
 
     def test_workload_overview_loaded_context_uses_shell_without_detail_loads(self):
         from sections import workload_operations
@@ -718,7 +722,7 @@ class NavigationIntegrityTests(unittest.TestCase):
             {"SEVERITY": "Medium", "CATEGORY": "Pipeline Load"},
         ])
         with contextlib.ExitStack() as stack:
-            render_shell = stack.enter_context(patch.object(workload_operations, "render_first_paint_summary_shell"))
+            render_shell = stack.enter_context(patch.object(workload_operations, "render_section_first_paint_shell"))
             stack.enter_context(patch.object(workload_operations, "build_loaded_section_alert_signal_board", return_value=board))
             loaded_context = stack.enter_context(patch.object(workload_operations, "_render_loaded_workload_alert_context"))
             info = stack.enter_context(patch.object(workload_operations.st, "info"))
@@ -742,14 +746,15 @@ class NavigationIntegrityTests(unittest.TestCase):
             workload_operations._render_workload_overview("ALFA", "PROD")
 
         render_shell.assert_called_once()
-        shell_kwargs = render_shell.call_args.kwargs
-        self.assertEqual(shell_kwargs["state"], "Loaded context")
-        self.assertIn(("Active workload items", "2"), shell_kwargs["metrics"])
-        self.assertIn(("Critical / High", "1"), shell_kwargs["metrics"])
-        self.assertIn(("Query / contention", "1"), shell_kwargs["metrics"])
-        self.assertIn(("Pipeline / task", "1"), shell_kwargs["metrics"])
-        self.assertIn(("Scope", "ALFA / PROD"), shell_kwargs["snapshot"])
-        self.assertIn(("Freshness", "Session alert context"), shell_kwargs["snapshot"])
+        spec = render_shell.call_args.args[0]
+        self.assertEqual(spec.state, "Loaded context")
+        self.assertEqual(spec.section, "Workload Operations")
+        self.assertIn(("Active workload items", "2"), spec.metrics)
+        self.assertIn(("Critical / High", "1"), spec.metrics)
+        self.assertIn(("Query / contention", "1"), spec.metrics)
+        self.assertIn(("Pipeline / task", "1"), spec.metrics)
+        self.assertIn(("Scope", "ALFA / PROD"), spec.snapshot)
+        self.assertIn(("Freshness", "Session alert context"), spec.snapshot)
         loaded_context.assert_called_once()
         info.assert_not_called()
 
@@ -791,7 +796,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('"Storage & Retention": "sections.storage_monitor"', contract_text)
         self.assertIn('"Refresh Cost"', cost_contract_surface)
         self.assertIn("render_section_first_paint_shell", cost_contract_surface)
-        self.assertIn("First paint does not query Snowflake", cost_contract_surface)
+        first_paint_contracts_text = (APP_ROOT / "sections" / "first_paint_contracts.py").read_text(encoding="utf-8")
+        self.assertIn("First paint does not query Snowflake", first_paint_contracts_text)
         self.assertIn("without loading cost facts", cost_contract_surface)
         self.assertNotIn('"Refresh Overview"', full_workspace_text)
         self.assertNotIn('"Refresh Cost Details"', full_workspace_text)
@@ -2161,11 +2167,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         legacy_native_chart_allowlist = {
             "sections/cortex_monitor.py",
             "sections/cost_center_explain_view.py",
-            "sections/cost_center_forecast_view.py",
-            "sections/dba_tools_cost_health_view.py",
             "sections/live_monitor.py",
             "sections/security_access.py",
-            "sections/storage_monitor.py",
         }
         offenders = []
         remaining_legacy_usage = set()

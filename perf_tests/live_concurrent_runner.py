@@ -580,6 +580,45 @@ async def collect_frontend_metrics(page) -> dict[str, object]:
         return {"error": str(exc)[:240]}
 
 
+async def collect_failed_resource_context(page) -> dict[str, object]:
+    """Collect compact resource timing rows that help explain client-side 404s."""
+    try:
+        payload = await page.evaluate(
+            """() => {
+                const round = (value) => Math.round(Number(value || 0) * 100) / 100;
+                const rows = Array.from(performance.getEntriesByType("resource") || []).map((entry) => {
+                    const status = typeof entry.responseStatus === "number" ? entry.responseStatus : null;
+                    return {
+                        name: String(entry.name || "").slice(0, 500),
+                        initiatorType: entry.initiatorType || "",
+                        duration_ms: round(entry.duration),
+                        transferSize: Math.round(Number(entry.transferSize || 0)),
+                        encodedBodySize: Math.round(Number(entry.encodedBodySize || 0)),
+                        decodedBodySize: Math.round(Number(entry.decodedBodySize || 0)),
+                        responseStatus: status,
+                    };
+                });
+                const failed = rows.filter((row) => {
+                    const status = row.responseStatus;
+                    const looksDownload = /download|blob|media|source/i.test(row.name);
+                    return (typeof status === "number" && status >= 400) || (looksDownload && row.transferSize === 0);
+                }).slice(-40);
+                const websocket = rows.filter((row) => {
+                    const name = String(row.name || "");
+                    return row.initiatorType === "websocket" || name.startsWith("ws:");
+                }).slice(-20);
+                return {
+                    resource_count: rows.length,
+                    failed_resources: failed,
+                    websocket_resources: websocket,
+                };
+            }"""
+        )
+        return payload if isinstance(payload, dict) else {}
+    except Exception as exc:
+        return {"resource_context_error": str(exc)[:240]}
+
+
 async def collect_perf_trace_payload(page) -> dict[str, object]:
     try:
         payload = await page.evaluate(
@@ -640,10 +679,14 @@ async def collect_visible_page_context(page) -> dict[str, object]:
                     .filter(Boolean)
                     .slice(0, 80);
                 const activeTitle = text(document.querySelector(".ow-section-title"));
+                const bodyMarker = document.querySelector("#overwatch-active-section-body");
                 const spinners = Array.from(document.querySelectorAll('[data-testid="stSpinner"], .stSpinner')).filter(visible).length;
                 const transitions = Array.from(document.querySelectorAll(".ow-section-transition")).filter(visible).length;
                 return {
                     active_section_title: activeTitle,
+                    active_section_body_marker: bodyMarker ? String(bodyMarker.getAttribute("data-overwatch-section") || "") : "",
+                    current_url: window.location.href,
+                    current_query: window.location.search,
                     visible_button_labels: buttons,
                     visible_headings_and_captions: headings,
                     spinner_count: spinners,
@@ -662,6 +705,28 @@ async def section_is_visible(page, section: str) -> bool:
         return await title.is_visible(timeout=250)
     except Exception:
         return False
+
+
+async def wait_for_section_state_stable(page, section: str, timeout_ms: int, stable_ms: int = 350) -> None:
+    """Wait for both the visible title and hidden body marker to match a section."""
+    await page.wait_for_function(
+        """(expected) => {
+            const text = (element) => (element && element.innerText ? element.innerText.replace(/\\s+/g, " ").trim() : "");
+            const title = text(document.querySelector(".ow-section-title"));
+            const marker = document.querySelector("#overwatch-active-section-body");
+            const body = marker ? String(marker.getAttribute("data-overwatch-section") || "") : "";
+            return title === expected && body === expected;
+        }""",
+        arg=section,
+        timeout=timeout_ms,
+    )
+    if stable_ms > 0:
+        await page.wait_for_timeout(stable_ms)
+        context = await collect_visible_page_context(page)
+        title = str(context.get("active_section_title", "") or "")
+        body = str(context.get("active_section_body_marker", "") or "")
+        if title != section or body != section:
+            raise RuntimeError(f"section state changed while stabilizing: title={title!r} body={body!r}")
 
 
 async def wait_for_named_button(page, label: str, timeout_ms: int):
@@ -720,6 +785,9 @@ async def collect_skipped_button_diagnostics(
         "configured_label": label,
         "expand_hidden_load_surfaces_called": expanded_load_surfaces,
     })
+    title = str(detail.get("active_section_title", "") or "")
+    body = str(detail.get("active_section_body_marker", "") or "")
+    detail["section_state_mismatch"] = title != section or body != section
     screenshot_path = pathlib.Path(output_dir) / (
         f"{_safe_artifact_token(run_id)}_skipped_button_user{user_id:02d}_iter{iteration}_"
         f"{_safe_artifact_token(section)}_{_safe_artifact_token(label)}.png"
@@ -743,6 +811,8 @@ async def collect_in_run_tail_capture(
     iteration: int,
     release_elapsed_ms: float,
     resource_recorder: ResourceRecorder | None = None,
+    browser_events: list[dict[str, object]] | None = None,
+    browser_error_messages: list[str] | None = None,
 ) -> dict[str, object]:
     """Capture tail evidence after the release stopwatch has already stopped."""
     threshold_ms = float(getattr(args, "tail_capture_threshold_ms", 0.0) or 0.0)
@@ -755,10 +825,25 @@ async def collect_in_run_tail_capture(
         "user_id": user_id,
         "iteration": iteration,
     }
+    event_window = list(browser_events or [])[-120:]
+    console_messages = [
+        event for event in event_window
+        if event.get("type") == "console" and str(event.get("level", "")).lower() in {"error", "warning", "warn"}
+    ][-60:]
+    failed_events = [
+        event for event in event_window
+        if event.get("type") in {"requestfailed", "response"}
+    ][-60:]
+    failed_resource_context = await collect_failed_resource_context(page)
     capture.update({
+        "current_url": getattr(page, "url", ""),
         "navigation_timing": await collect_browser_navigation_timing(page),
         "paint_timing": await collect_browser_paint_timing(page),
         "frontend_metrics": await collect_frontend_metrics(page),
+        "failed_resource_timing": failed_resource_context,
+        "console_messages": console_messages,
+        "failed_resources": failed_events,
+        "browser_error_messages": list(browser_error_messages or [])[-20:],
         "perf_trace": await collect_perf_trace_payload(page),
         "visible_context": await collect_visible_page_context(page),
         "host_resource_sample": collect_resource_sample(
@@ -805,6 +890,28 @@ async def click_optional_load_button(
     await wait_for_streamlit_idle(page, args.timeout_ms, min(args.action_settle_ms, 250))
     await wait_for_active_section_container_visible(page, args.timeout_ms)
     expanded = False
+    try:
+        await wait_for_section_state_stable(
+            page,
+            section,
+            args.timeout_ms,
+            min(args.action_settle_ms, 350),
+        )
+    except Exception as exc:
+        detail = await collect_skipped_button_diagnostics(
+            page,
+            section=section,
+            label=label,
+            output_dir=args.output_dir,
+            run_id=args.run_id,
+            user_id=user_id,
+            iteration=iteration,
+            expanded_load_surfaces=expanded,
+        )
+        detail["section_state_wait_error"] = str(exc)[:240]
+        if args.missing_load_button == "skip":
+            return {"status": "skipped", "detail": detail}
+        raise RuntimeError(json.dumps(detail, separators=(",", ":"))) from exc
     if args.expand_load_surfaces:
         await expand_hidden_load_surfaces(page)
         expanded = True
@@ -847,8 +954,10 @@ async def timed_step(
     diagnostic: bool = False,
     args: argparse.Namespace | None = None,
     resource_recorder: ResourceRecorder | None = None,
+    browser_events: list[dict[str, object]] | None = None,
 ) -> StepSample:
     before_browser_errors = len(browser_errors)
+    before_browser_event_count = len(browser_events or [])
     started = time.perf_counter()
     try:
         result = await operation()
@@ -879,6 +988,8 @@ async def timed_step(
                     iteration=iteration,
                     release_elapsed_ms=elapsed_ms,
                     resource_recorder=resource_recorder,
+                    browser_events=(browser_events or [])[max(0, before_browser_event_count - 20):],
+                    browser_error_messages=new_browser_messages,
                 )
             except Exception as exc:
                 result_detail["in_run_tail_capture"] = {
@@ -966,6 +1077,84 @@ async def timed_diagnostic_step(
         )
 
 
+def _append_browser_event(events: list[dict[str, object]], entry: dict[str, object]) -> None:
+    row = dict(entry)
+    row["observed_at"] = dt.datetime.utcnow().isoformat(timespec="milliseconds") + "Z"
+    events.append(row)
+    if len(events) > 600:
+        del events[: len(events) - 600]
+
+
+def register_browser_event_handlers(
+    page,
+    *,
+    browser_errors: list[str],
+    browser_events: list[dict[str, object]],
+    fail_console_errors: bool,
+) -> None:
+    """Record console/resource context without changing scoring semantics."""
+
+    def on_page_error(exc) -> None:
+        message = str(exc)[:500]
+        browser_errors.append(message)
+        _append_browser_event(browser_events, {
+            "type": "pageerror",
+            "message": message,
+        })
+
+    def on_console(msg) -> None:
+        level = str(getattr(msg, "type", "") or "")
+        text = str(getattr(msg, "text", "") or "")[:500]
+        try:
+            location = getattr(msg, "location", {}) or {}
+        except Exception:
+            location = {}
+        _append_browser_event(browser_events, {
+            "type": "console",
+            "level": level,
+            "message": text,
+            "url": str(location.get("url", ""))[:500] if isinstance(location, dict) else "",
+        })
+        if fail_console_errors and level == "error":
+            browser_errors.append(text)
+
+    def on_request_failed(request) -> None:
+        try:
+            failure = getattr(request, "failure", "") or ""
+        except Exception:
+            failure = ""
+        _append_browser_event(browser_events, {
+            "type": "requestfailed",
+            "url": str(getattr(request, "url", "") or "")[:500],
+            "resource_type": str(getattr(request, "resource_type", "") or ""),
+            "failure": str(failure)[:240],
+        })
+
+    def on_response(response) -> None:
+        try:
+            status = int(getattr(response, "status", 0) or 0)
+        except Exception:
+            status = 0
+        if status < 400:
+            return
+        try:
+            request = response.request
+            resource_type = str(getattr(request, "resource_type", "") or "")
+        except Exception:
+            resource_type = ""
+        _append_browser_event(browser_events, {
+            "type": "response",
+            "status": status,
+            "url": str(getattr(response, "url", "") or "")[:500],
+            "resource_type": resource_type,
+        })
+
+    page.on("pageerror", on_page_error)
+    page.on("console", on_console)
+    page.on("requestfailed", on_request_failed)
+    page.on("response", on_response)
+
+
 async def run_initial_load(
     *,
     page,
@@ -1049,6 +1238,7 @@ async def run_user(
 ) -> list[StepSample]:
     samples: list[StepSample] = []
     browser_errors: list[str] = []
+    browser_events: list[dict[str, object]] = []
     load_button_map = active_load_button_map(args.load_buttons)
     context = await browser.new_context(
         viewport={"width": args.width, "height": args.height},
@@ -1058,12 +1248,12 @@ async def run_user(
     if resource_recorder is not None:
         await resource_recorder.mark_page_open(user_id)
     page.set_default_timeout(args.timeout_ms)
-    page.on("pageerror", lambda exc: browser_errors.append(str(exc)[:500]))
-    if args.fail_console_errors:
-        page.on(
-            "console",
-            lambda msg: browser_errors.append(msg.text[:500]) if msg.type == "error" else None,
-        )
+    register_browser_event_handlers(
+        page,
+        browser_errors=browser_errors,
+        browser_events=browser_events,
+        fail_console_errors=args.fail_console_errors,
+    )
 
     try:
         if args.single_initial_load:
@@ -1087,6 +1277,7 @@ async def run_user(
                 operation=initial_load,
                 args=args,
                 resource_recorder=resource_recorder,
+                browser_events=browser_events,
             )
             samples.append(initial_sample)
             if resource_recorder is not None:
@@ -1116,6 +1307,7 @@ async def run_user(
                     operation=initial_load,
                     args=args,
                     resource_recorder=resource_recorder,
+                    browser_events=browser_events,
                 )
                 samples.append(initial_sample)
                 if iteration == 1 and resource_recorder is not None:
@@ -1189,6 +1381,7 @@ async def run_user(
                     action="section_nav",
                     browser_errors=browser_errors,
                     operation=section_nav,
+                    browser_events=browser_events,
                 )
                 samples.append(nav_sample)
                 if args.section_nav_substeps and nav_sample.ok and not nav_sample.skipped:
@@ -1225,6 +1418,7 @@ async def run_user(
                         action=f"load_button:{load_label}",
                         browser_errors=browser_errors,
                         operation=load_live_data,
+                        browser_events=browser_events,
                     )
                     samples.append(load_sample)
                     if not load_sample.ok and args.stop_user_on_error:
@@ -1446,10 +1640,17 @@ def _in_run_tail_capture_rows(release_samples: list[StepSample]) -> list[dict[st
             "release_elapsed_ms": round(float(sample.elapsed_ms), 2),
             "tail_capture_threshold_ms": capture.get("tail_capture_threshold_ms", 0),
             "capture_after_scoring": bool(capture.get("capture_after_scoring")),
+            "current_url": capture.get("current_url", ""),
             "screenshot_path": capture.get("screenshot_path", ""),
             "navigation_timing": capture.get("navigation_timing", {}),
             "paint_timing": capture.get("paint_timing", {}),
             "frontend_metrics": capture.get("frontend_metrics", {}),
+            "failed_resource_timing": capture.get("failed_resource_timing", {}),
+            "console_messages": capture.get("console_messages", []),
+            "failed_resources": capture.get("failed_resources", []),
+            "browser_error_messages": capture.get("browser_error_messages", []),
+            "console_message_count": len(capture.get("console_messages", []) or []),
+            "failed_resource_count": len(capture.get("failed_resources", []) or []),
             "perf_trace": capture.get("perf_trace", {}),
             "visible_context": capture.get("visible_context", {}),
             "host_resource_sample": capture.get("host_resource_sample", {}),
@@ -1970,8 +2171,8 @@ def write_reports(args: argparse.Namespace, samples: list[StepSample], summary: 
         md.extend([
             "- Captures are attached after the measured release step completes; they are not release samples.",
             "",
-            "| User | Iteration | Section | Action | Release ms | responseStart | FCP | Screenshot |",
-            "|---:|---:|---|---|---:|---:|---:|---|",
+            "| User | Iteration | Section | Action | Release ms | responseStart | FCP | Console warn/error | Failed resources | Screenshot |",
+            "|---:|---:|---|---|---:|---:|---:|---:|---:|---|",
         ])
         for row in in_run_captures[:10]:
             nav = row.get("navigation_timing") if isinstance(row.get("navigation_timing"), dict) else {}
@@ -1980,8 +2181,23 @@ def write_reports(args: argparse.Namespace, samples: list[StepSample], summary: 
                 f"| {row.get('user_id', '')} | {row.get('iteration', '')} | {row.get('section', '')} | "
                 f"{row.get('action', '')} | {row.get('release_elapsed_ms', '')} | "
                 f"{nav.get('responseStart', '')} | {paint.get('first-contentful-paint', '')} | "
+                f"{row.get('console_message_count', 0)} | {row.get('failed_resource_count', 0)} | "
                 f"`{row.get('screenshot_path', '')}` |"
             )
+        failure_rows: list[str] = []
+        for row in in_run_captures[:5]:
+            failed_events = row.get("failed_resources", [])
+            if isinstance(failed_events, list) and failed_events:
+                failure_rows.append(
+                    f"- User `{row.get('user_id', '')}` failed/resource events: "
+                    + "; ".join(
+                        str((event or {}).get("url", (event or {}).get("message", "")))[:160]
+                        for event in failed_events[:3]
+                        if isinstance(event, dict)
+                    )
+                )
+        if failure_rows:
+            md.extend(["", *failure_rows])
     else:
         md.append("No initial-load release samples crossed the in-run tail capture threshold.")
     md.extend([

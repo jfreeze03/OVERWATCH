@@ -14,7 +14,7 @@
 - `python -m unittest tests.test_cortex_guard`: PASS, 6 tests
 - `python -m unittest tests.test_release_manifest_contract tests.test_release_evidence_contract tests.test_production_readiness_contract tests.test_snowflake_regression_results_contract tests.test_release_process_contract`: PASS, 26 tests
 - `python -m unittest tests.test_mart_contracts tests.test_validation_workflow tests.test_route_registry tests.test_facade_no_creep`: PASS, 42 tests
-- `python -m unittest discover -s tests`: PASS, 1039 tests, 1 skipped
+- `python -m unittest discover -s tests`: PASS, 1082 tests, 1 skipped
 
 ## Deployment Contract
 - Streamlit in Snowflake entrypoint: PASS via `tests.test_deployment_contract`
@@ -47,45 +47,45 @@
 - Readiness score: `100/100`
 
 ## 12 Power User Performance
-- Run ID: `PERF_12_POWER_USERS_RELEASE_RERUN7C`
+- Run ID: `PERF_12_POWER_USERS_RELEASE_RERUN8C`
 - Users: `12`
 - Iterations: `3`
-- p95: `29766.24 ms`
-- p99: `32214.09 ms`
-- max: `33570.63 ms`
-- errors: `1`
-- skipped buttons: `1`, Alert Center -> Load Active Alerts
-- readiness: `35/100`
+- p95: `8784.90 ms`
+- p99: `20393.32 ms`
+- max: `23936.24 ms`
+- errors: `0`
+- skipped buttons: `0`
+- readiness: `92/100`
 - slowest section: `App Shell`
 - slowest action: `initial_load`
-- live report path: `perf_tests/results/PERF_12_POWER_USERS_RELEASE_RERUN7C_live_concurrent.json`
-- expert review path: `perf_tests/results/PERF_12_POWER_USERS_RELEASE_RERUN7C_expert_review.md`
-- import timing path: `perf_tests/results/IMPORT_TIMING_483CD39_RERUN7_import_timing.json`
-- HTTP first-response path: `perf_tests/results/HTTP_FIRST_RESPONSE_483CD39_RERUN7_http_first_response.json`
-- release stability path: `perf_tests/results/PERF_RELEASE_STABILITY_RERUN7_release_stability.json`
-- diagnostic profile path: `perf_tests/results/PERF_12_POWER_USERS_DIAGNOSTIC_RERUN7C_live_concurrent.json`
+- live report path: `perf_tests/results/PERF_12_POWER_USERS_RELEASE_RERUN8C_live_concurrent.json`
+- expert review path: `perf_tests/results/PERF_12_POWER_USERS_RELEASE_RERUN8C_expert_review.md`
+- import timing path: `perf_tests/results/IMPORT_TIMING_7A704A3_RERUN8_import_timing.json`
+- HTTP first-response path: `perf_tests/results/HTTP_FIRST_RESPONSE_7A704A3_RERUN8_http_first_response.json`
+- release stability path: `perf_tests/results/PERF_RELEASE_STABILITY_RERUN8C_release_stability.json`
+- diagnostic profile path: `perf_tests/results/PERF_12_POWER_USERS_DIAGNOSTIC_RERUN8C_live_concurrent.json`
+- client isolation matrix path: `perf_tests/results/PERF_CLIENT_ISOLATION_RERUN8C_client_isolation_matrix.json`
 - scored profile: `perf_tests/profiles/12_power_users_release_scored.json`
 - diagnostic profile: `perf_tests/profiles/12_power_users_diagnostic.json`
 - diagnostic samples: `0` in the clean scored release run; in-run tail captures and tail replays ran after each scored stopwatch stopped or after the scored run completed, and are excluded from clean release p95/readiness/error scoring.
-- readiness penalties: `p95_threshold`, `35` points, because p95 `29766.24 ms` exceeded `10000.00 ms`; `p99_tail`, `8` points, because p99 `32214.09 ms` exceeded the tail threshold `18000.00 ms` (`fail_p95_ms * 1.8`); `error_rate`, `20` points, because one browser-error step produced error rate `0.0033`; `browser_errors`, `2` points, because one step recorded Streamlit client 404 messages.
-- tail summary: p95 threshold `10000.00 ms`, p99 tail threshold `18000.00 ms`, observed p99 `32214.09 ms`, p99 overage `14214.09 ms`, slowest initial-load user `8`, iteration `1`, elapsed `33570.63 ms`.
-- release scored action p95: `initial_load 33570.63 ms`, `section_nav 29729.15 ms`, `Load Active Alerts 3111.19 ms`, `Refresh Cost 1941.86 ms`.
-- release scored section p95: `App Shell 33570.63 ms`, `DBA Control Room 31264.12 ms`, `Workload Operations 30164.76 ms`, `Alert Center 29263.81 ms`, `Cost & Contract 28635.79 ms`, `Executive Landing 5896.36 ms`, `Security Monitoring 4839.59 ms`.
-- in-run tail capture result: `6` initial-load tail captures were collected after scored timing stopped. The slowest capture was user `8`, elapsed `33570.63 ms`, browser `responseStart 8919.10 ms`, `first-contentful-paint 31924.00 ms`, DOM node count `586`, script transfer `3159638 bytes`, while server trace remained small: `shell:total_render_app 255.12 ms`, `shell:dispatch_section_total 203.07 ms`, `section_dispatch:render:Executive Landing 201.79 ms`, and app-entry pre-render `3.37 ms`.
-- tail replay result: slowest scored initial-load users replayed single-user with responseStart near `312 ms` and first-contentful-paint near `908 ms`; the slowest section-nav replay also stayed under `1s` first-contentful-paint. Reproduction summary: `3` replays, `0` reproduced, `3` not reproduced. This keeps the remaining blocker in concurrent browser/client timing rather than a slow single-session app render.
-- release stability result: diagnostic only, `PERF_RELEASE_STABILITY_RERUN7`; `3` clean scored repeats, median p95 `21036.23 ms`, median p99 `29165.62 ms`, median max `29259.31 ms`, median readiness `57/100`, worst p95 `27106.49 ms`, worst p99 `29206.46 ms`, worst max `31368.67 ms`, worst readiness `57/100`, pass/watch/fail count `0/1/2`, errors `0`, skipped buttons `2`, p99-tail runs `3`, conclusion `unstable_environment_tail`.
-- diagnostic profile result: `PERF_12_POWER_USERS_DIAGNOSTIC_RERUN7C`, p95 `9230.10 ms`, p99 `21250.46 ms`, max `24271.98 ms`, errors `0`, skipped buttons `0`, readiness `92/100`; diagnostic profile is not the release gate.
-- diagnostic initial-load breakdown p95: `domcontentloaded 11902.64 ms`, `shell_title_visible 11670.50 ms`, `goto_commit 10866.50 ms`, `idle_wait 2113.33 ms`, `initial_wait 1233.17 ms`, `section_container_visible 268.44 ms`.
-- diagnostic section-nav breakdown p95: `DBA Control Room title_visible 11480.06 ms`, `Alert Center title_visible 8249.81 ms`, `Security Monitoring title_visible 4399.29 ms`, `Cost & Contract title_visible 4004.76 ms`, `Executive Landing title_visible 3376.81 ms`, `Workload Operations title_visible 2851.48 ms`.
-- diagnostic browser timing p95: `responseStart 10860.30 ms`, `domContentLoadedEventEnd 12216.00 ms`, `first-paint 12316.00 ms`, `first-contentful-paint 21452.00 ms`.
-- diagnostic frontend paint metrics: DOM node count p95 `1235`, visible button count p95 `46`, CSS rule count p95 `1358`, script resource count p95 `2`, script transfer in in-run release capture `3159638 bytes`.
-- HTTP first-response result: PASS as diagnostic, `HTTP_FIRST_RESPONSE_483CD39_RERUN7`, users `1/3/6/9/12`, errors `0`; time-to-first-byte p95 stayed near `1015.64-1045.33 ms`, with 12-user TTFB p95 `1029.31 ms`.
-- import timing summary: all `8` target imports passed; slowest target import was `sections.cost_contract` at `2599.57 ms`, followed by the remaining target set; baseline imports all passed and the slowest baseline was `pandas` at `2272.03 ms`.
-- superseded RERUN7 note: earlier RERUN7 and RERUN7B tail captures exposed visible first-paint exceptions from the lazy Executive Landing data split (`_OBS_COLUMNS` and `_obs_rows` names). Those name defects were fixed before RERUN7C; RERUN7C is the current release-gate evidence.
-- artifact storage: `perf_tests/results/` is intentionally stored outside git; reason: generated Playwright performance artifacts are local run evidence with environment-specific timing and browser metadata.
-- result: FAIL for the release gate, because clean scored p95 exceeded `10000 ms`, readiness was below target (`35/100` < `95/100`), one configured load button was skipped, and one Streamlit client 404/browser-error step was recorded.
-- release blockers: p95 threshold, p99 tail/readiness, one browser-error step (`Client Error: Download Button source error - 404` after a 404 resource load), one skipped Alert Center `Load Active Alerts` step after the page still showed DBA Control Room load controls, and repeatable stability-tail failure.
-- top next fixes: treat the dominant issue as concurrent browser/client first-paint and section title-visible tail, not Snowflake query work; inspect Streamlit client resource loading and the intermittent download-button 404, reduce remaining first-paint DOM/CSS where feasible, and use the stability runner plus in-run tail captures to distinguish app/client regressions from local browser-host capacity.
+- readiness penalties: `p99_tail`, `8` points, because p99 `20393.32 ms` exceeded the tail threshold `18000.00 ms` (`fail_p95_ms * 1.8`).
+- tail summary: p95 threshold `10000.00 ms`, p99 tail threshold `18000.00 ms`, observed p99 `20393.32 ms`, p99 overage `2393.32 ms`, slowest initial-load user `10`, iteration `1`, elapsed `23936.24 ms`.
+- release scored action p95: `initial_load 23936.24 ms`, `section_nav 7904.30 ms`, `Load Active Alerts 3836.23 ms`, `Refresh Cost 1796.42 ms`.
+- release scored section p95: `App Shell 23936.24 ms`, `DBA Control Room 14934.72 ms`, `Alert Center 8793.86 ms`, `Workload Operations 5305.16 ms`, `Cost & Contract 4929.06 ms`, `Security Monitoring 4791.34 ms`.
+- in-run tail capture result: `7` initial-load tail captures were collected after scored timing stopped. The slowest capture was user `10`, elapsed `23936.24 ms`, browser `responseStart 10816.90 ms`, `first-contentful-paint 22204.00 ms`, DOM node count `591`, script transfer `3159638 bytes`, and zero failed resource or console-error events. Server trace remained small: `shell:total_render_app 84.43 ms`, `shell:dispatch_section_total 60.31 ms`, `section_dispatch:render:Executive Landing 58.85 ms`, and app-entry pre-render `1.86 ms`.
+- tail replay result: slowest scored initial-load users and slowest section-nav replayed single-user with first-contentful-paint below `1s`; reproduction summary: `3` replays, `0` reproduced. This keeps the remaining blocker in concurrent browser/client timing rather than slow single-session app render or Snowflake query latency.
+- release stability result: diagnostic only, `PERF_RELEASE_STABILITY_RERUN8C`; `3` clean scored repeats, median p95 `7863.91 ms`, median p99 `21757.57 ms`, median max `25350.26 ms`, median readiness `92/100`, worst p95 `12415.63 ms`, worst p99 `22608.65 ms`, worst max `26091.37 ms`, worst readiness `74/100`, pass/watch/fail count `0/2/1`, errors `0`, skipped buttons `0`, p99-tail runs `3`, conclusion `stable_watch_tail`.
+- diagnostic profile result: `PERF_12_POWER_USERS_DIAGNOSTIC_RERUN8C`, p95 `7709.94 ms`, p99 `21127.18 ms`, max `23820.49 ms`, errors `0`, skipped buttons `0`, readiness `92/100`; diagnostic profile is not the release gate.
+- diagnostic browser timing p95: `responseStart 11112.90 ms`, `domContentLoadedEventEnd 13738.10 ms`, `first-paint 13872.00 ms`, `first-contentful-paint 20872.00 ms`.
+- diagnostic frontend paint metrics: DOM node count p95 `1209`, visible button count p95 `46`, CSS rule count p95 `1348`, script resource count in in-run capture `22`, script transfer in in-run release capture `3159638 bytes`.
+- HTTP first-response result: PASS as diagnostic, `HTTP_FIRST_RESPONSE_7A704A3_RERUN8`, users `1/3/6/9/12`, errors `0`; time-to-first-byte p95 stayed near `1020.33-1045.85 ms`, with 12-user TTFB p95 `1034.22 ms`.
+- import timing summary: all `8` target imports passed; slowest target import was `shell` at `2940.38 ms`; baseline imports all passed and the slowest baseline was `layout` at `2658.39 ms`.
+- client isolation matrix result: diagnostic only, `PERF_CLIENT_ISOLATION_RERUN8C`; current shared-browser ramp-12 profile stayed WATCH with p95 `7293.29 ms`, p99 `23818.47 ms`, readiness `92/100`, errors `0`, skipped buttons `0`; shared-browser ramp-24 passed with p95 `8420.29 ms`, p99 `15498.33 ms`, readiness `100/100`; shared-browser ramp-36 passed with p95 `6316.27 ms`, p99 `8524.01 ms`, readiness `100/100`; per-user ramp-24 also passed with p95 `8648.72 ms`, p99 `13671.00 ms`, readiness `100/100`.
+- superseded RERUN7/RERUN7C note: earlier RERUN7/RERUN7B exposed lazy Executive Landing name defects (`_OBS_COLUMNS` and `_obs_rows`), and RERUN7C exposed a Streamlit client download-source 404 plus stale-section skipped load. RERUN8C fixed the client 404 and skipped-button blockers; the remaining blocker is p99/readiness tail under the current 12-second ramp.
+- artifact storage: `perf_tests/results/` is intentionally stored outside git; reason: generated Playwright performance artifacts are local run evidence with environment-specific timing, screenshots, traces, and browser metadata.
+- result: WATCH/FAIL for the release gate, because p95 passed (`8784.90 ms` <= `10000 ms`) and errors/skips were zero, but readiness remained below target (`92/100` < `95/100`) due to the p99 tail.
+- release blockers: readiness score below `95/100` from p99 tail; release stability still concluded `stable_watch_tail` under the clean scored release profile.
+- top next fixes: treat the remaining issue as concurrent browser/client first-paint tail under the current release ramp, not Snowflake query work; use the client-isolation matrix to decide whether release policy should accept a longer ramp, and continue reducing client first-paint resource pressure if the 12-second ramp must remain mandatory.
 
 ## Guarded Operations
 - Action queue review-only smoke: PASS via unit contracts covering review-only action queue behavior and full unit discovery
@@ -119,6 +119,6 @@
 - Owner: release operator
 - Follow-up: rerun `perf_tests/full_app_snowflake_regression.py` only when a fresh credentialed release gate is required.
 - Item: 12 heavy power user benchmark for `24cd05e`
-- Reason: Failed on RERUN7C because the clean scored profile regressed to p95 `29766.24 ms`, p99 `32214.09 ms`, readiness `35/100`, one browser-error step, and one skipped Alert Center load button. The RERUN7 stability pass also failed (`0/1/2` pass/watch/fail, median readiness `57/100`, conclusion `unstable_environment_tail`). In-run tail captures showed low server render time but high concurrent browser FCP, while post-run single-user replays did not reproduce the tail. Do not treat this as Snowflake query latency without new credentialed evidence.
+- Reason: Still blocked on RERUN8C because the clean scored profile passed p95 with errors `0` and skipped buttons `0`, but p99 `20393.32 ms` kept readiness at `92/100`. The corrected RERUN8C stability pass concluded `stable_watch_tail` and the client isolation matrix showed longer diagnostic ramps (`24s`/`36s`) passing, pointing to concurrent browser/client first-paint tail under the current release ramp. Do not treat this as Snowflake query latency without new credentialed evidence.
 - Owner: release operator
-- Follow-up: tune concurrent Streamlit/browser first-paint tail and the intermittent client 404/skipped-button path; rerun `python perf_tests/run_12_power_users.py --url http://localhost:8503/ --run-id PERF_12_POWER_USERS_RELEASE_RERUN8 --output-dir perf_tests/results --profile perf_tests/profiles/12_power_users_release_scored.json --tail-diagnostics --tail-capture-threshold-ms 18000` and regenerate the expert review.
+- Follow-up: decide whether the release process accepts a longer ramp policy or continue reducing concurrent Streamlit/browser first-paint tail; rerun `python perf_tests/run_12_power_users.py --url http://localhost:8503/ --run-id PERF_12_POWER_USERS_RELEASE_RERUN9 --output-dir perf_tests/results --profile perf_tests/profiles/12_power_users_release_scored.json --tail-diagnostics --tail-capture-threshold-ms 18000` and regenerate the expert review.

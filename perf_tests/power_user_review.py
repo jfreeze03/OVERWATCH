@@ -177,6 +177,89 @@ def _diagnostic_recommendations(summary: dict) -> list[str]:
     return recommendations
 
 
+def _browser_error_messages(samples: list[dict]) -> list[str]:
+    messages: list[str] = []
+    for sample in samples:
+        for message in sample.get("browser_error_messages", []) or []:
+            text = str(message)
+            if text and text not in messages:
+                messages.append(text)
+    return messages[:20]
+
+
+def _tail_captures(summary: dict) -> list[dict]:
+    captures = summary.get("in_run_tail_captures", [])
+    return [row for row in captures if isinstance(row, dict)] if isinstance(captures, list) else []
+
+
+def _failed_resource_findings(summary: dict, samples: list[dict]) -> dict[str, object]:
+    browser_messages = _browser_error_messages(samples)
+    capture_rows = _tail_captures(summary)
+    failed_events: list[dict] = []
+    failed_timings: list[dict] = []
+    for row in capture_rows:
+        events = row.get("failed_resources", [])
+        if isinstance(events, list):
+            failed_events.extend(event for event in events if isinstance(event, dict))
+        timing = row.get("failed_resource_timing", {})
+        if isinstance(timing, dict):
+            timed_failed = timing.get("failed_resources", [])
+            if isinstance(timed_failed, list):
+                failed_timings.extend(item for item in timed_failed if isinstance(item, dict))
+    all_text = " ".join(browser_messages + [str(event.get("url", "")) for event in failed_events])
+    return {
+        "browser_messages": browser_messages,
+        "failed_events": failed_events[:20],
+        "failed_timing_rows": failed_timings[:20],
+        "download_404_detected": "download button source error" in all_text.lower()
+        or " 404" in all_text.lower()
+        or "- 404" in all_text.lower(),
+    }
+
+
+def _stale_section_findings(summary: dict) -> list[dict]:
+    rows: list[dict] = []
+    skipped_details = summary.get("skipped_button_details", [])
+    if not isinstance(skipped_details, list):
+        return rows
+    for row in skipped_details:
+        if not isinstance(row, dict):
+            continue
+        detail = row.get("detail", {})
+        if not isinstance(detail, dict):
+            detail = {}
+        title = str(detail.get("active_section_title", "") or "")
+        body = str(detail.get("active_section_body_marker", "") or "")
+        section = str(row.get("section", "") or detail.get("configured_section", "") or "")
+        if detail.get("section_state_mismatch") or (section and (title != section or body != section)):
+            rows.append({
+                "user_id": row.get("user_id", ""),
+                "iteration": row.get("iteration", ""),
+                "section": section,
+                "action": row.get("action", ""),
+                "active_title": title,
+                "body_marker": body,
+                "screenshot_path": detail.get("screenshot_path", ""),
+            })
+    return rows
+
+
+def _blocker_classification(summary: dict, samples: list[dict]) -> str:
+    findings = _failed_resource_findings(summary, samples)
+    if findings.get("download_404_detected"):
+        return "client_resource_lifecycle"
+    if _stale_section_findings(summary):
+        return "stale_section_state"
+    server_total = _row_value(_summary_rows(summary, "server_phase_breakdown", "phase"), "phase", "shell:total_render_app")
+    response_start = _row_value(_summary_rows(summary, "browser_navigation_timing", "metric"), "metric", "responseStart")
+    fcp = _row_value(_summary_rows(summary, "browser_paint_timing", "metric"), "metric", "first-contentful-paint")
+    if server_total < 1500 and (response_start > 5000 or fcp > 10000):
+        return "local_browser_host_capacity"
+    if int(summary.get("readiness_score", 0) or 0) < 95 and float(summary.get("p99_ms", 0) or 0) > 18000:
+        return "concurrent_client_tail"
+    return "app_first_paint_code"
+
+
 def _panel_rows(summary: dict, section_summary: dict | None) -> list[dict]:
     p95_ms = float(summary.get("p95_ms", 0) or 0)
     p99_ms = float(summary.get("p99_ms", 0) or 0)
@@ -260,6 +343,9 @@ def build_review(
     app_entry_import_p95 = _row_value(app_entry_rows, "phase", "app_entry:import_shell")
     response_start_p95 = _row_value(nav_rows, "metric", "responseStart")
     fcp_p95 = _row_value(paint_rows, "metric", "first-contentful-paint")
+    failed_resource_findings = _failed_resource_findings(summary, samples)
+    stale_section_findings = _stale_section_findings(summary)
+    blocker_classification = _blocker_classification(summary, samples)
     overall = _verdict(summary)
     meets_thresholds = (
         overall == "PASS"
@@ -302,6 +388,46 @@ def build_review(
         )
     else:
         lines.append("- None recorded.")
+    lines.extend([
+        "",
+        "## Current Blocker Classification",
+        "",
+        f"- Classification: `{blocker_classification}`",
+        "- RERUN7C-style browser errors and stale section state are treated as client/runtime blockers, not Snowflake query blockers.",
+        "- When server render and HTTP first response are low but FCP/title-visible tails remain high, prioritize concurrent Streamlit client/browser-host analysis.",
+        "",
+        "## Client 404 / Failed Resource Summary",
+        "",
+    ])
+    browser_messages = failed_resource_findings.get("browser_messages", [])
+    failed_events = failed_resource_findings.get("failed_events", [])
+    failed_timing_rows = failed_resource_findings.get("failed_timing_rows", [])
+    lines.extend([
+        f"- Download/404 signature detected: `{bool(failed_resource_findings.get('download_404_detected'))}`",
+        f"- Browser error messages: `{len(browser_messages) if isinstance(browser_messages, list) else 0}`",
+        f"- Failed request/response events in tail captures: `{len(failed_events) if isinstance(failed_events, list) else 0}`",
+        f"- Failed resource timing rows in tail captures: `{len(failed_timing_rows) if isinstance(failed_timing_rows, list) else 0}`",
+    ])
+    if isinstance(browser_messages, list) and browser_messages:
+        for message in browser_messages[:5]:
+            lines.append(f"- Browser message: `{str(message)[:220]}`")
+    if isinstance(failed_events, list) and failed_events:
+        for event in failed_events[:5]:
+            if isinstance(event, dict):
+                lines.append(f"- Failed event: `{event.get('status', event.get('type', ''))}` `{str(event.get('url', event.get('message', '')))[:220]}`")
+    lines.extend([
+        "",
+        "## Stale Section State / Skipped Button Context",
+        "",
+    ])
+    if stale_section_findings:
+        for row in stale_section_findings[:10]:
+            lines.append(
+                f"- User `{row.get('user_id')}` iteration `{row.get('iteration')}` expected `{row.get('section')}` "
+                f"but title/body were `{row.get('active_title')}` / `{row.get('body_marker')}`; screenshot `{row.get('screenshot_path')}`."
+            )
+    else:
+        lines.append("- No title/body marker mismatch was recorded in skipped-button diagnostics.")
     lines.extend([
         "",
         "## Readiness Penalties",
@@ -556,8 +682,8 @@ def build_review(
         lines.extend([
             "- Captures run after the scored step stopwatch stops; they are not release samples.",
             "",
-            "| User | Iteration | Section | Release ms | responseStart | FCP | Active title | Screenshot |",
-            "|---:|---:|---|---:|---:|---:|---|---|",
+            "| User | Iteration | Section | Release ms | responseStart | FCP | Console warn/error | Failed resources | Active title | Body marker | Screenshot |",
+            "|---:|---:|---|---:|---:|---:|---:|---:|---|---|---|",
         ])
         for row in captures[:10]:
             if not isinstance(row, dict):
@@ -568,7 +694,9 @@ def build_review(
             lines.append(
                 f"| {row.get('user_id', '')} | {row.get('iteration', '')} | {row.get('section', '')} | "
                 f"{row.get('release_elapsed_ms', '')} | {nav.get('responseStart', '')} | "
-                f"{paint.get('first-contentful-paint', '')} | {context.get('active_section_title', '')} | "
+                f"{paint.get('first-contentful-paint', '')} | {row.get('console_message_count', 0)} | "
+                f"{row.get('failed_resource_count', 0)} | {context.get('active_section_title', '')} | "
+                f"{context.get('active_section_body_marker', '')} | "
                 f"`{row.get('screenshot_path', '')}` |"
             )
     else:
@@ -665,6 +793,8 @@ def build_review(
             lines.extend([
                 f"- User `{row.get('user_id')}` iteration `{row.get('iteration')}` section `{row.get('section')}` action `{row.get('action')}`",
                 f"  - Active title: `{detail.get('active_section_title', '')}`",
+                f"  - Body marker: `{detail.get('active_section_body_marker', '')}`",
+                f"  - Section state mismatch: `{detail.get('section_state_mismatch', False)}`",
                 f"  - Visible buttons: `{buttons}`",
                 f"  - Screenshot: `{detail.get('screenshot_path', '')}`",
             ])
@@ -706,6 +836,7 @@ def build_review(
         "## Recommended Next Engineering Actions",
         "- p95 is now the near-pass line; if it is under threshold and readiness still misses, treat p99/App Shell initial-load tail as the release blocker.",
         "- Focus frontend paint/tail capacity before changing Snowflake query paths when HTTP first response and server phases are low.",
+        "- Fix client 404/resource lifecycle and stale section-state findings before trimming more Snowflake or mart query paths.",
         "- Tune the slowest section/action first, then rerun the same profile.",
         "- Pair browser latency with Snowflake Query History and PERF_TEST_* views when credentials are available.",
         "- Keep any new benchmark load button behind the forbidden-action safety guard.",

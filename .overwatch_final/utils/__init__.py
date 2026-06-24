@@ -107,7 +107,7 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "load_shared_procedure_sla",
     ),
     "downloads": (
-        "download_csv", "show_loaded_time", "mark_loaded",
+        "download_csv", "download_text", "show_loaded_time", "mark_loaded",
     ),
     "explicit_load": (
         "explicit_load_dataframe", "render_export_controls",

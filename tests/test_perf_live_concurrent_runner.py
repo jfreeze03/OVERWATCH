@@ -294,6 +294,35 @@ class LiveConcurrentProfileTests(unittest.TestCase):
         self.assertEqual(summary["tail_summary"]["observed_p99_ms"], 19000.0)
         self.assertEqual(summary["tail_summary"]["slowest_initial_load_user"], 20)
 
+    def test_readiness_penalties_cover_threshold_tail_errors_and_browser_errors(self):
+        runner = load_live_runner()
+        args = argparse.Namespace(users=20, iterations=1, fail_p95_ms=10000, fail_error_rate=0.0)
+        samples = [
+            runner.StepSample(user_id, 1, "App Shell", "initial_load", 900.0, True)
+            for user_id in range(1, 19)
+        ]
+        samples.extend([
+            runner.StepSample(19, 1, "App Shell", "initial_load", 25000.0, True),
+            runner.StepSample(
+                20,
+                1,
+                "App Shell",
+                "initial_load",
+                22000.0,
+                False,
+                browser_errors=1,
+                browser_error_messages=["Client Error: Download Button source error - 404"],
+            ),
+        ])
+
+        summary = runner.summarize(samples, 1.0, args)
+
+        penalty_types = {item["type"] for item in summary["readiness_penalties"]}
+        self.assertIn("p95_threshold", penalty_types)
+        self.assertIn("p99_tail", penalty_types)
+        self.assertIn("error_rate", penalty_types)
+        self.assertIn("browser_errors", penalty_types)
+
     def test_summary_identifies_initial_load_when_slowest(self):
         runner = load_live_runner()
         args = argparse.Namespace(users=2, iterations=1, fail_p95_ms=10000, fail_error_rate=0.0)
@@ -449,6 +478,12 @@ class LiveConcurrentProfileTests(unittest.TestCase):
                         "navigation_timing": {"responseStart": 1200.0},
                         "paint_timing": {"first-contentful-paint": 1500.0},
                         "visible_context": {"active_section_title": "Executive Landing"},
+                        "console_messages": [{"type": "console", "level": "warning", "message": "slow"}],
+                        "failed_resources": [{"type": "response", "status": 404, "url": "/media/source"}],
+                        "failed_resource_timing": {
+                            "failed_resources": [{"name": "/media/source", "responseStatus": 404}],
+                            "websocket_resources": [{"name": "ws://localhost"}],
+                        },
                     }
                 },
             )
@@ -462,6 +497,12 @@ class LiveConcurrentProfileTests(unittest.TestCase):
         self.assertEqual(summary["diagnostic_steps"], 0)
         self.assertEqual(summary["in_run_tail_captures"][0]["capture_after_scoring"], True)
         self.assertEqual(summary["in_run_tail_captures"][0]["visible_context"]["active_section_title"], "Executive Landing")
+        self.assertEqual(summary["in_run_tail_captures"][0]["console_message_count"], 1)
+        self.assertEqual(summary["in_run_tail_captures"][0]["failed_resource_count"], 1)
+        self.assertEqual(
+            summary["in_run_tail_captures"][0]["failed_resource_timing"]["failed_resources"][0]["responseStatus"],
+            404,
+        )
 
     def test_tail_replay_reproduction_flag_identifies_non_replay_tail(self):
         runner = load_live_runner()
@@ -683,6 +724,8 @@ class LiveConcurrentProfileTests(unittest.TestCase):
                 skipped=True,
                 detail={
                     "active_section_title": "Alert Center",
+                    "active_section_body_marker": "DBA Control Room",
+                    "section_state_mismatch": True,
                     "visible_button_labels": ["Load History"],
                     "expand_hidden_load_surfaces_called": True,
                 },
@@ -692,7 +735,21 @@ class LiveConcurrentProfileTests(unittest.TestCase):
         summary = runner.summarize(samples, 1.0, args)
 
         self.assertEqual(summary["skipped_button_details"][0]["detail"]["active_section_title"], "Alert Center")
+        self.assertEqual(summary["skipped_button_details"][0]["detail"]["active_section_body_marker"], "DBA Control Room")
+        self.assertTrue(summary["skipped_button_details"][0]["detail"]["section_state_mismatch"])
         self.assertEqual(summary["skipped_button_details"][0]["detail"]["visible_button_labels"], ["Load History"])
+
+    def test_load_button_path_checks_section_body_marker_before_click(self):
+        runner_source = (PERF_ROOT / "live_concurrent_runner.py").read_text(encoding="utf-8")
+        load_button_source = runner_source.split("async def click_optional_load_button", 1)[1].split(
+            "async def timed_step",
+            1,
+        )[0]
+
+        self.assertIn("wait_for_section_state_stable", load_button_source)
+        self.assertIn("section_state_wait_error", load_button_source)
+        self.assertIn("section_state_mismatch", runner_source)
+        self.assertIn("active_section_body_marker", runner_source)
 
 
 if __name__ == "__main__":

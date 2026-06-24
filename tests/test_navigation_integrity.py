@@ -145,6 +145,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('set_state(CURRENT_ROLE_SOURCE, "secrets")', access_text)
         self.assertIn('get_state(CURRENT_ROLE_SOURCE) == "session"', access_text)
         self.assertIn("SNOW_ACCOUNTADMINS or SNOW_SYSADMINS", layout_text)
+        self.assertIn("def render_section_body_marker", layout_text)
+        self.assertIn("overwatch-active-section-body", layout_text)
         self.assertEqual(DAY_WINDOW_OPTIONS, (1, 7, 14, 30, 60, 90))
         self.assertEqual(DEFAULT_DAY_WINDOW, 7)
         self.assertEqual(static_warehouse_options("Trexis"), TREXIS_WAREHOUSES)
@@ -156,6 +158,14 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(static_database_options("ALFA", "DEV_ALL"), ALFA_DEV_DATABASES)
         smoke_runner_text = (ROOT / "perf_tests" / "section_smoke_runner.py").read_text(encoding="utf-8")
         self.assertIn('DEFAULT_SECTIONS = [\n    "Executive Landing",', smoke_runner_text)
+
+    def test_shell_marks_active_section_body_after_transition_clears(self):
+        shell_text = (APP_ROOT / "shell.py").read_text(encoding="utf-8")
+
+        self.assertIn("render_section_body_marker", shell_text)
+        self.assertGreaterEqual(shell_text.count("render_section_body_marker(active_section)"), 6)
+        transition_block = shell_text.split("if show_transition:", 1)[1].split("try:", 1)[0]
+        self.assertNotIn("render_section_body_marker", transition_block)
 
     def test_calendar_day_windows_use_standard_dropdowns(self):
         display_text = (APP_ROOT / "utils" / "display.py").read_text(encoding="utf-8")

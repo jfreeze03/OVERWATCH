@@ -27,6 +27,7 @@ from layout import (
     render_app_header,
     render_connection_empty_state,
     render_query_pause_state,
+    render_section_body_marker,
     render_section_transition_state,
     render_sidebar,
 )
@@ -162,30 +163,36 @@ def _render_app_body() -> None:
         with trace("shell:dispatch_section_total", active_section=active_section):
             if idle_query_paused:
                 with fresh_section_container(section_slot):
+                    render_section_body_marker(active_section)
                     render_query_pause_state()
                 mark_section_rendered(active_section, section_signature)
             elif not admin_allowed:
                 with fresh_section_container(section_slot):
+                    render_section_body_marker(active_section)
                     render_admin_access_required(current_role)
                 mark_section_rendered(active_section, section_signature)
             elif needs_connection and (
                 not connection_available or get_state(CONNECTION_UNAVAILABLE)
             ):
                 with fresh_section_container(section_slot):
+                    render_section_body_marker(active_section)
                     render_connection_empty_state(active_section)
                 mark_section_rendered(active_section, section_signature)
             else:
                 try:
                     with fresh_section_container(section_slot):
+                        render_section_body_marker(active_section)
                         dispatch_section(active_section)
                     mark_section_rendered(active_section, section_signature)
                 except StopException:
                     set_state(CONNECTION_UNAVAILABLE, True)
                     with fresh_section_container(section_slot):
+                        render_section_body_marker(active_section)
                         render_connection_empty_state(active_section)
                     mark_section_rendered(active_section, section_signature)
                 except Exception as exc:
                     with fresh_section_container(section_slot):
+                        render_section_body_marker(active_section)
                         st.error(f"{active_section} could not finish rendering.")
                         st.caption(_format_section_error(exc))
                         st.info(

@@ -202,6 +202,7 @@ class ExecutiveLandingSplitTests(unittest.TestCase):
             ],
             "executive_landing_data.py": [
                 "_OBS_COLUMNS",
+                "_obs_rows",
                 "_normalise_observability_frame",
                 "_observability_status_frame",
             ],

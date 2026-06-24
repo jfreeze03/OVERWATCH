@@ -45,6 +45,7 @@ from sections.shell_helpers import (
     render_shell_snapshot,
     render_shell_status_strip,
 )
+from utils.downloads import download_text
 from utils.primitives import safe_int
 from utils.section_guidance import defer_source_note
 
@@ -1058,10 +1059,10 @@ def render_security_overview(company: str, environment: str, days: int) -> None:
         )
         dl1, dl2 = st.columns([1, 3])
         with dl1:
-            st.download_button(
-                "Download Security Summary",
+            download_text(
                 brief_md,
-                file_name=f"overwatch_security_brief_{company.lower()}.md",
+                f"overwatch_security_brief_{company.lower()}.md",
+                label="Download Security Summary",
                 mime="text/markdown",
                 key="security_posture_download",
             )

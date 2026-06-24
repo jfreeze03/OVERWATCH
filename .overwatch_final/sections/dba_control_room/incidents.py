@@ -13,6 +13,9 @@ from utils.primitives import (
     safe_float,
     safe_int,
 )
+from utils.downloads import (
+    download_text,
+)
 from .types import (
     ACTION_QUEUE_WORKFLOW,
     FAILURE_TRIAGE_WORKFLOW,
@@ -582,12 +585,12 @@ def _render_dba_operator_runbook(plan: pd.DataFrame, markdown: str) -> None:
     )
     with st.expander("Runbook packet", expanded=False):
         st.code(markdown, language="markdown")
-        st.download_button(
-            "Download Runbook Packet",
-            data=markdown,
-            file_name="dba_operator_runbook.md",
+        download_text(
+            markdown,
+            "dba_operator_runbook.md",
+            label="Download Runbook Packet",
             mime="text/markdown",
-            width="stretch",
+            key="dba_operator_runbook_download",
         )
     download_csv(view, "dba_operator_runbook.csv")
 
@@ -866,12 +869,12 @@ def _render_dba_escalation_packet(packet: pd.DataFrame, markdown: str) -> None:
     )
     with st.expander("Escalation packet", expanded=False):
         st.code(markdown, language="markdown")
-        st.download_button(
-            "Download DBA Escalation Packet",
-            data=markdown,
-            file_name="dba_escalation_packet.md",
+        download_text(
+            markdown,
+            "dba_escalation_packet.md",
+            label="Download DBA Escalation Packet",
             mime="text/markdown",
-            width="stretch",
+            key="dba_escalation_packet_download",
         )
     download_csv(packet, "dba_escalation_packet.csv")
 
@@ -1198,10 +1201,10 @@ def _render_incident_board_panel(
         height=320,
         max_rows=10,
     )
-    st.download_button(
-        "Download DBA Incident Detail",
+    download_text(
         incident_md,
-        file_name=f"overwatch_dba_incident_detail_{company.lower()}_{environment.lower()}.md",
+        f"overwatch_dba_incident_detail_{company.lower()}_{environment.lower()}.md",
+        label="Download DBA Incident Detail",
         mime="text/markdown",
         key="dba_incident_board_download",
     )

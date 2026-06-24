@@ -103,6 +103,17 @@ def section_subtitle(section: str) -> str:
     return SECTION_SUBTITLES.get(section, "Snowflake DBA operating surface.")
 
 
+def render_section_body_marker(section: str) -> None:
+    """Render a hidden marker after the selected section body starts hydrating."""
+
+    safe_section = html.escape(normalize_nav_section(section), quote=True)
+    st.markdown(
+        f'<div id="overwatch-active-section-body" data-overwatch-section="{safe_section}" '
+        'style="display:none" aria-hidden="true"></div>',
+        unsafe_allow_html=True,
+    )
+
+
 def _chip(label: str, value: object, *, muted: bool = False) -> str:
     safe_label = html.escape(str(label))
     safe_value = html.escape(str(value if value not in (None, "") else "All"))

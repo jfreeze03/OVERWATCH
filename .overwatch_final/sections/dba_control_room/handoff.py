@@ -11,6 +11,9 @@ from utils.primitives import (
     safe_float,
     safe_int,
 )
+from utils.downloads import (
+    download_text,
+)
 from .types import (
     _canonical_dba_route,
     _command_queue_route,
@@ -984,12 +987,12 @@ def _render_dba_morning_brief(brief: pd.DataFrame, markdown: str) -> None:
         )
     with st.expander("Daily brief packet", expanded=False):
         st.code(markdown, language="markdown")
-        st.download_button(
-            "Download DBA Daily Brief",
-            data=markdown,
-            file_name="dba_daily_brief.md",
+        download_text(
+            markdown,
+            "dba_daily_brief.md",
+            label="Download DBA Daily Brief",
             mime="text/markdown",
-            width="stretch",
+            key="dba_daily_brief_download",
         )
     download_csv(brief_view if "brief_view" in locals() else brief, "dba_morning_brief.csv")
 
@@ -1210,10 +1213,10 @@ def _render_shift_handoff_panel(
         height=300,
         max_rows=12,
     )
-    st.download_button(
-        "Download DBA Shift Handoff",
+    download_text(
         handoff_md,
-        file_name=f"overwatch_dba_shift_handoff_{company.lower()}_{environment.lower()}.md",
+        f"overwatch_dba_shift_handoff_{company.lower()}_{environment.lower()}.md",
+        label="Download DBA Shift Handoff",
         mime="text/markdown",
         key="dba_shift_handoff_download",
     )

@@ -21,6 +21,9 @@ from utils.primitives import (
     safe_float,
     safe_int,
 )
+from utils.downloads import (
+    download_text,
+)
 from utils.section_guidance import (
     defer_section_note,
 )
@@ -1761,10 +1764,10 @@ def render() -> None:
             )
             with st.expander("Release comparison brief", expanded=False):
                 st.text_area("Brief", report, height=320, key="dba_release_compare_report_text")
-                st.download_button(
-                    "Download Release Brief",
+                download_text(
                     report,
-                    file_name=f"overwatch_release_compare_{company}_{datetime.now().strftime('%Y%m%d_%H%M')}.md",
+                    f"overwatch_release_compare_{company}_{datetime.now().strftime('%Y%m%d_%H%M')}.md",
+                    label="Download Release Brief",
                     mime="text/markdown",
                     key="dba_release_compare_report_download",
                 )

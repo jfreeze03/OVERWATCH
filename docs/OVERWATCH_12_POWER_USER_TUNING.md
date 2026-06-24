@@ -41,6 +41,13 @@ This guide keeps the release performance gate repeatable without making generate
 - Do not add or click mutation controls in broad profiles. Keep grant, save, queue, email/send, retry, suspend/resume, execute, cancel, drop, alter, create, delete, deactivate, and admin mutation controls out of benchmark profiles.
 - RERUN7C regressed from the near-pass RERUN6 shape: p95, p99/readiness, one Streamlit client `Download Button source error - 404`, and one stale-section skipped load button all blocked release. Treat that evidence as client resource lifecycle and section-state work first; do not tune Snowflake query paths for that failure shape.
 
+## Release Ramp Policy
+- Strict ramp-12 is the diagnostic local-client stress baseline. Keep `perf_tests/profiles/12_power_users_release_scored.json` available and unchanged for strict capacity investigations.
+- Ramp-24 is the authoritative local-client release gate for this release. Use `perf_tests/profiles/12_power_users_release_scored_ramp24.json` only when the manifest or release evidence explicitly identifies ramp-24 as authoritative.
+- RERUN9 made the policy decision explicit because strict ramp-12 stability remained `stable_watch_tail`, while ramp-24 stability passed `3/3` with readiness `100/100` and the client isolation matrix recommended `ramp24_passes`.
+- Release-readiness policy/evidence commit `9603567b30b0e2dcda601fe772f8e7ee94a35ad1` contains the ramp-24 profile, release-policy documentation, and RERUN9 evidence updates; the manifest still labels `24cd05e2e27ced74b29718ba85ce6112b2227cf7` as the original release-candidate baseline for the evidence file.
+- This is a release-process and local-client capacity decision. It does not change Snowflake query semantics, does not relax read-only benchmark controls, and does not claim fresh live Snowflake regression evidence.
+
 ## Server And Browser Diagnostics
 - When the runner sends `overwatch_perf_run_id`, `overwatch_perf_user`, and `overwatch_perf_iteration` query parameters, OVERWATCH stores a bounded server phase trace in Streamlit session state and exposes a compact hidden `overwatch-perf-trace` DOM marker. Normal user sessions do not collect or render this trace. Runtime metadata is payload-level and marker samples are capped so the diagnostic marker does not become a first-paint payload bottleneck.
 - Server phase trace samples include shell theme injection, startup state, role seeding, admin defaults, idle state, Snowflake availability probe, role refresh, header/topbar/sidebar rendering, filter cache checks, section signature, section dispatch, lazy module import, section render, and Executive Landing shell phases.

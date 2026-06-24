@@ -61,6 +61,9 @@ class ClientIsolationMatrixTests(unittest.TestCase):
         self.assertIn("shared_ramp12", markdown)
         self.assertIn("Tail captures", markdown)
         self.assertIn("Recommendation", markdown)
+        self.assertIn("p99 tail pass", markdown)
+        self.assertIn("Readiness pass", markdown)
+        self.assertIn("Candidate", markdown)
         self.assertEqual(payload["conclusion"]["recommendation"], "ramp12_tail_blocked")
 
     def test_client_isolation_recommends_ramp24_when_shared_longer_ramp_passes(self):
@@ -97,6 +100,26 @@ class ClientIsolationMatrixTests(unittest.TestCase):
         ]
 
         self.assertEqual(runner.recommend_release_policy(rows), "per_user_only_passes")
+
+    def test_client_isolation_recommends_ramp12_when_strict_gate_passes(self):
+        runner = load_module()
+        rows = [
+            {"label": "shared_ramp12", "release_policy_candidate": True},
+            {"label": "shared_ramp24", "release_policy_candidate": True},
+            {"label": "per_user_ramp24", "release_policy_candidate": True},
+        ]
+
+        self.assertEqual(runner.recommend_release_policy(rows), "ramp12_passes")
+
+    def test_client_isolation_recommends_tail_blocked_when_no_candidate_passes(self):
+        runner = load_module()
+        rows = [
+            {"label": "shared_ramp12", "release_policy_candidate": False},
+            {"label": "shared_ramp24", "release_policy_candidate": False},
+            {"label": "per_user_ramp24", "release_policy_candidate": False},
+        ]
+
+        self.assertEqual(runner.recommend_release_policy(rows), "ramp12_tail_blocked")
 
 
 if __name__ == "__main__":

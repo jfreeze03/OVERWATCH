@@ -5,6 +5,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "docs" / "OVERWATCH_RELEASE_MANIFEST.md"
+RELEASE_POLICY_COMMIT = "9603567b30b0e2dcda601fe772f8e7ee94a35ad1"
 
 
 def _manifest_text() -> str:
@@ -23,14 +24,24 @@ class ReleaseManifestContractTests(unittest.TestCase):
     def test_release_manifest_exists_and_points_to_current_evidence(self):
         self.assertTrue(MANIFEST.exists())
         commit_sha = _manifest_value("Commit SHA")
+        policy_commit_sha = _manifest_value("Release-readiness policy/evidence commit")
         evidence_path = _manifest_value("Evidence file")
         self.assertRegex(commit_sha, r"^[0-9a-f]{40}$")
+        self.assertRegex(policy_commit_sha, r"^[0-9a-f]{40}$")
         self.assertTrue(evidence_path)
 
         evidence_file = ROOT / evidence_path
         self.assertTrue(evidence_file.exists())
         evidence_text = evidence_file.read_text(encoding="utf-8")
         self.assertIn(commit_sha, evidence_text)
+        self.assertIn(policy_commit_sha, evidence_text)
+
+    def test_release_manifest_clarifies_candidate_and_policy_identity(self):
+        text = _manifest_text()
+
+        self.assertIn("original release-candidate baseline", text)
+        self.assertIn("ramp-24 release-policy/profile/evidence updates", text)
+        self.assertEqual(_manifest_value("Release-readiness policy/evidence commit"), RELEASE_POLICY_COMMIT)
 
     def test_manifest_references_required_release_artifacts(self):
         text = _manifest_text()

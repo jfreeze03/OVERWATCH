@@ -389,6 +389,22 @@ def build_review(
         and float(summary.get("error_rate", 1) or 0) <= float(summary.get("fail_error_rate", 0) or 0)
         and int(summary.get("readiness_score", 0) or 0) >= 95
     )
+    policy_recommendations: list[str] = []
+    if client_recommendation == "ramp24_passes" and meets_thresholds:
+        policy_recommendations.extend([
+            "- Release gate passes under the explicit ramp-24 local-client policy.",
+            "- Strict ramp-12 remains diagnostic backlog for local-client capacity, not this release gate.",
+            "- No Snowflake query work is indicated by this ramp-policy evidence.",
+        ])
+    elif client_recommendation == "ramp24_passes":
+        policy_recommendations.extend([
+            "- Ramp-24 is the only attached local-client policy candidate; keep strict ramp-12 as diagnostic backlog.",
+            "- Confirm the authoritative profile in the manifest before promoting a future run.",
+        ])
+    elif client_recommendation == "ramp12_passes":
+        policy_recommendations.append(
+            "- Strict ramp-12 passed in the attached matrix; no ramp-policy change is needed."
+        )
 
     lines = [
         f"# OVERWATCH 12 Power User Expert Review {run_id}",
@@ -937,10 +953,13 @@ def build_review(
     lines.extend([
         "",
         "## Recommended Next Engineering Actions",
+    ])
+    lines.extend(policy_recommendations)
+    lines.extend([
         "- p95 is now the near-pass line; if it is under threshold and readiness still misses, treat p99/App Shell initial-load tail as the release blocker.",
         "- Focus frontend paint/tail capacity before changing Snowflake query paths when HTTP first response and server phases are low.",
         "- Fix client 404/resource lifecycle and stale section-state findings before trimming more Snowflake or mart query paths.",
-        "- If ramp-24 stability passes while strict ramp-12 remains p99-tail sensitive, formalize the chosen release ramp in the manifest before calling the gate release-ready.",
+        "- Keep strict ramp-12 as diagnostic local-client stress evidence unless release docs explicitly make it authoritative again.",
         "- Tune the slowest section/action first, then rerun the same profile.",
         "- Pair browser latency with Snowflake Query History and PERF_TEST_* views when credentials are available.",
         "- Keep any new benchmark load button behind the forbidden-action safety guard.",

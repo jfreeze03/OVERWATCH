@@ -7,6 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
 RELEASES = DOCS / "releases"
 MANIFEST = DOCS / "OVERWATCH_RELEASE_MANIFEST.md"
+RELEASE_POLICY_COMMIT = "9603567b30b0e2dcda601fe772f8e7ee94a35ad1"
 
 REQUIRED_HEADINGS = (
     "## Commit",
@@ -87,6 +88,17 @@ class ReleaseEvidenceContractTests(unittest.TestCase):
         evidence_file = ROOT / evidence_path
         text = evidence_file.read_text(encoding="utf-8")
         self.assertIn(f"- Commit SHA: `{commit_sha}`", text)
+
+    def test_manifest_referenced_release_evidence_clarifies_policy_commit(self):
+        policy_commit_sha = _manifest_value("Release-readiness policy/evidence commit")
+        evidence_path = _manifest_value("Evidence file")
+        evidence_file = ROOT / evidence_path
+        text = evidence_file.read_text(encoding="utf-8")
+
+        self.assertEqual(policy_commit_sha, RELEASE_POLICY_COMMIT)
+        self.assertIn(f"- Release-readiness policy/evidence commit: `{policy_commit_sha}`", text)
+        self.assertIn("original release-candidate baseline", text)
+        self.assertIn("ramp-24 release profile", text)
 
     def test_validation_pass_claims_include_command_and_summary(self):
         validation_line = re.compile(r"^- `[^`]+`:\s+PASS,\s+\S", flags=re.M)

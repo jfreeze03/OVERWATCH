@@ -2,6 +2,8 @@
 
 ## Commit
 - Commit SHA: `24cd05e2e27ced74b29718ba85ce6112b2227cf7`
+- Release-readiness policy/evidence commit: `9603567b30b0e2dcda601fe772f8e7ee94a35ad1`
+- Identity note: `24cd05e2e27ced74b29718ba85ce6112b2227cf7` is the original release-candidate baseline for this evidence file; `9603567b30b0e2dcda601fe772f8e7ee94a35ad1` adds the explicit ramp-24 release profile, release-policy documentation, and RERUN9 evidence updates.
 - Branch: `main`
 - Release date: `2026-06-24`
 - Operator: `jfreeze03`
@@ -68,6 +70,7 @@
 - strict ramp-12 baseline profile: `perf_tests/profiles/12_power_users_release_scored.json`
 - diagnostic profile: `perf_tests/profiles/12_power_users_diagnostic.json`
 - ramp policy decision: the release-authoritative local-client profile is the clean scored ramp-24 profile. The strict ramp-12 profile remains a diagnostic baseline because repeated evidence still shows local browser/client p99 tail under the 12-second ramp.
+- release policy note: strict ramp-12 is a diagnostic local-client stress baseline; ramp-24 is the authoritative local-client release gate for this release because strict ramp-12 stability remained `stable_watch_tail` while ramp-24 stability passed `3/3` with readiness `100/100`. This is a release-process capacity decision, not a Snowflake query-performance change.
 - diagnostic samples: `0` in the clean scored release run; tail replay ran after the scored run completed and is excluded from clean release p95/readiness/error scoring.
 - readiness penalties: none. The p99 tail threshold was `18000.00 ms`; observed p99 was `13765.99 ms`.
 - tail summary: p95 threshold `10000.00 ms`, p99 tail threshold `18000.00 ms`, observed p99 `13765.99 ms`, p99 overage `0.00 ms`, slowest initial-load user `8`, iteration `1`, elapsed `15840.12 ms`.

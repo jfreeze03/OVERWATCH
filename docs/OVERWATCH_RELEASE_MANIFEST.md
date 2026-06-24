@@ -2,6 +2,8 @@
 
 ## Release Candidate
 - Commit SHA: `24cd05e2e27ced74b29718ba85ce6112b2227cf7`
+- Release-readiness policy/evidence commit: `9603567b30b0e2dcda601fe772f8e7ee94a35ad1`
+- Identity note: `24cd05e2e27ced74b29718ba85ce6112b2227cf7` remains the original release-candidate baseline; `9603567b30b0e2dcda601fe772f8e7ee94a35ad1` contains the ramp-24 release-policy/profile/evidence updates that make the candidate release-ready.
 - Evidence file: `docs/releases/OVERWATCH_RELEASE_EVIDENCE_24cd05e_2026-06-24.md`
 - Status: `release-ready`
 

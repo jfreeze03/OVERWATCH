@@ -18,6 +18,7 @@ SECTION_NAV_PROFILE_PATH = PERF_ROOT / "profiles" / "12_power_users_section_nav_
 RELEASE_EVIDENCE = ROOT / "docs" / "releases" / "OVERWATCH_RELEASE_EVIDENCE_24cd05e_2026-06-24.md"
 RELEASE_MANIFEST = ROOT / "docs" / "OVERWATCH_RELEASE_MANIFEST.md"
 TUNING_GUIDE = ROOT / "docs" / "OVERWATCH_12_POWER_USER_TUNING.md"
+RELEASE_POLICY_COMMIT = "9603567b30b0e2dcda601fe772f8e7ee94a35ad1"
 sys.path.insert(0, str(APP_ROOT))
 
 import route_registry  # noqa: E402
@@ -41,6 +42,29 @@ def section(text: str, heading: str) -> str:
 
 
 class PowerUserBenchmarkContractTests(unittest.TestCase):
+    def assert_clean_release_profile(self, profile: dict, *, ramp_seconds: int) -> None:
+        self.assertEqual(profile["users"], 12)
+        self.assertEqual(profile["iterations"], 3)
+        self.assertEqual(profile["ramp_seconds"], ramp_seconds)
+        self.assertTrue(profile["single_initial_load"])
+        self.assertTrue(profile["wait_initial_idle"])
+        self.assertTrue(profile["fail_console_errors"])
+        self.assertFalse(profile["initial_load_substeps"])
+        self.assertFalse(profile["section_nav_substeps"])
+        self.assertFalse(profile["trace_slowest_initial_load"])
+        self.assertFalse(profile["tail_diagnostics"])
+        self.assertEqual(profile["tail_capture_threshold_ms"], 0)
+        self.assertEqual(profile["fail_p95_ms"], 10000)
+        self.assertEqual(profile["fail_error_rate"], 0.0)
+        self.assertEqual(profile["sections"], list(route_registry.PRIMARY_SECTION_TITLES))
+        self.assertEqual(
+            profile["load_buttons"],
+            {
+                "Alert Center": "Load Active Alerts",
+                "Cost & Contract": "Refresh Cost",
+            },
+        )
+
     def test_12_power_user_profile_exists_and_covers_primary_sections(self):
         self.assertTrue(PROFILE_PATH.exists())
         profile = json.loads(PROFILE_PATH.read_text(encoding="utf-8"))
@@ -59,21 +83,15 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
         self.assertTrue(RELEASE_PROFILE_PATH.exists())
         profile = json.loads(RELEASE_PROFILE_PATH.read_text(encoding="utf-8"))
 
-        self.assertEqual(profile["users"], 12)
-        self.assertEqual(profile["iterations"], 3)
-        self.assertEqual(profile["ramp_seconds"], 12)
-        self.assertEqual(profile["sections"], list(route_registry.PRIMARY_SECTION_TITLES))
-        self.assertFalse(profile["initial_load_substeps"])
-        self.assertFalse(profile["section_nav_substeps"])
-        self.assertFalse(profile["trace_slowest_initial_load"])
-        self.assertFalse(profile.get("tail_diagnostics", False))
-        self.assertEqual(profile["load_buttons"]["Alert Center"], "Load Active Alerts")
+        self.assert_clean_release_profile(profile, ramp_seconds=12)
 
     def test_ramp24_profile_matches_release_scored_except_ramp(self):
         self.assertTrue(RAMP24_PROFILE_PATH.exists())
         strict = json.loads(RELEASE_PROFILE_PATH.read_text(encoding="utf-8"))
         ramp24 = json.loads(RAMP24_PROFILE_PATH.read_text(encoding="utf-8"))
 
+        self.assert_clean_release_profile(strict, ramp_seconds=12)
+        self.assert_clean_release_profile(ramp24, ramp_seconds=24)
         self.assertEqual(strict["ramp_seconds"], 12)
         self.assertEqual(ramp24["ramp_seconds"], 24)
         comparable_strict = dict(strict)
@@ -86,9 +104,18 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
         self.assertTrue(DIAGNOSTIC_PROFILE_PATH.exists())
         profile = json.loads(DIAGNOSTIC_PROFILE_PATH.read_text(encoding="utf-8"))
 
+        self.assertEqual(profile["users"], 12)
+        self.assertEqual(profile["iterations"], 3)
+        self.assertTrue(profile["single_initial_load"])
+        self.assertTrue(profile["wait_initial_idle"])
+        self.assertTrue(profile["fail_console_errors"])
         self.assertTrue(profile["initial_load_substeps"])
         self.assertTrue(profile["section_nav_substeps"])
         self.assertTrue(profile["trace_slowest_initial_load"])
+        self.assertEqual(profile["tail_capture_threshold_ms"], 18000)
+        self.assertEqual(profile["sections"], list(route_registry.PRIMARY_SECTION_TITLES))
+        self.assertEqual(profile["load_buttons"]["Alert Center"], "Load Active Alerts")
+        self.assertEqual(profile["load_buttons"]["Cost & Contract"], "Refresh Cost")
 
     def test_section_nav_only_profile_has_no_load_buttons(self):
         self.assertTrue(SECTION_NAV_PROFILE_PATH.exists())
@@ -251,6 +278,10 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
             "idle_wait",
             "perf_tests/import_timing.py",
             "sections.executive_landing_shell",
+            "Release Ramp Policy",
+            "ramp24_passes",
+            "release-process and local-client capacity decision",
+            RELEASE_POLICY_COMMIT,
         ):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, text)
@@ -420,12 +451,66 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
                 }
             ],
         }
+        client_isolation_payload = {
+            "run_id_prefix": "PERF_CLIENT_ISOLATION_UNIT",
+            "rows": [
+                {
+                    "label": "shared_ramp12",
+                    "browser_launch_mode": "shared",
+                    "ramp_seconds": 12,
+                    "readiness_state": "WATCH",
+                    "readiness_score": 92,
+                    "p95_ms": 9000,
+                    "p99_ms": 21000,
+                    "errors": 0,
+                    "skipped_buttons": 0,
+                    "p99_tail_pass": False,
+                    "release_policy_candidate": False,
+                },
+                {
+                    "label": "shared_ramp24",
+                    "browser_launch_mode": "shared",
+                    "ramp_seconds": 24,
+                    "readiness_state": "PASS",
+                    "readiness_score": 100,
+                    "p95_ms": 7000,
+                    "p99_ms": 13000,
+                    "errors": 0,
+                    "skipped_buttons": 0,
+                    "p99_tail_pass": True,
+                    "release_policy_candidate": True,
+                },
+                {
+                    "label": "per_user_ramp24",
+                    "browser_launch_mode": "per_user",
+                    "ramp_seconds": 24,
+                    "readiness_state": "PASS",
+                    "readiness_score": 100,
+                    "p95_ms": 6800,
+                    "p99_ms": 12000,
+                    "errors": 0,
+                    "skipped_buttons": 0,
+                    "p99_tail_pass": True,
+                    "release_policy_candidate": True,
+                },
+            ],
+            "conclusion": {"recommendation": "ramp24_passes"},
+        }
 
         with tempfile.TemporaryDirectory() as tmpdir:
             live_report = Path(tmpdir) / "live.json"
+            client_report = Path(tmpdir) / "client_isolation.json"
             output = Path(tmpdir) / "review.md"
             live_report.write_text(json.dumps(payload), encoding="utf-8")
-            code = review.main(["--live-report", str(live_report), "--output", str(output)])
+            client_report.write_text(json.dumps(client_isolation_payload), encoding="utf-8")
+            code = review.main([
+                "--live-report",
+                str(live_report),
+                "--client-isolation-report",
+                str(client_report),
+                "--output",
+                str(output),
+            ])
             self.assertEqual(code, 0)
             markdown = output.read_text(encoding="utf-8")
 
@@ -462,6 +547,9 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
             "Ramp Policy Assessment",
             "Client Isolation Matrix",
             "Strict ramp-12 vs ramp-24 outcome",
+            "Release gate passes under the explicit ramp-24 local-client policy.",
+            "Strict ramp-12 remains diagnostic backlog for local-client capacity",
+            "No Snowflake query work is indicated by this ramp-policy evidence.",
             "Top 10 Slowest Release Steps",
             "Top 10 Slowest Diagnostic Steps",
             "app_ready",

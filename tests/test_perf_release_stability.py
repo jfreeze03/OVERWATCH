@@ -35,6 +35,7 @@ class ReleaseStabilityTests(unittest.TestCase):
                 "errors": 0,
                 "skipped": 0,
                 "slowest_initial_load": {"elapsed_ms": 23000},
+                "readiness_penalties": [{"type": "p99_tail"}],
             },
             {
                 "run_id": "STAB_02",
@@ -46,6 +47,7 @@ class ReleaseStabilityTests(unittest.TestCase):
                 "errors": 0,
                 "skipped": 0,
                 "slowest_initial_load": {"elapsed_ms": 13000},
+                "readiness_penalties": [],
             },
             {
                 "run_id": "STAB_03",
@@ -57,6 +59,7 @@ class ReleaseStabilityTests(unittest.TestCase):
                 "errors": 0,
                 "skipped": 0,
                 "slowest_initial_load": {"elapsed_ms": 21000},
+                "readiness_penalties": [{"type": "p99_tail"}],
             },
         ]
 
@@ -70,6 +73,10 @@ class ReleaseStabilityTests(unittest.TestCase):
         self.assertEqual(payload["summary"]["median_p95_ms"], 9800)
         self.assertEqual(payload["summary"]["median_readiness_score"], 92)
         self.assertEqual(payload["summary"]["pass_count"], 1)
+        self.assertEqual(payload["summary"]["worst_p99_ms"], 21000)
+        self.assertEqual(payload["summary"]["worst_readiness_score"], 92)
+        self.assertEqual(payload["summary"]["p99_tail_runs"], 2)
+        self.assertEqual(payload["summary"]["conclusion"], "stable_watch_tail")
 
         with tempfile.TemporaryDirectory() as temp_dir:
             json_path, md_path = runner.write_reports(payload, output_dir=temp_dir)
@@ -78,6 +85,8 @@ class ReleaseStabilityTests(unittest.TestCase):
 
         self.assertIn("Clean Release Stability", markdown)
         self.assertIn("Median p95/p99/max", markdown)
+        self.assertIn("Worst p95/p99/max", markdown)
+        self.assertIn("Conclusion", markdown)
         self.assertIn("STAB_01", markdown)
 
 

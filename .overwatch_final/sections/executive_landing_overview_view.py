@@ -205,7 +205,21 @@ def _render_executive_overview(
             height=230,
             max_rows=5,
         )
-    _render_executive_next_clicks()
+    shortcuts_open = bool(st.session_state.get("executive_landing_workflow_shortcuts_open"))
+    if not shortcuts_open:
+        shortcut_col, _ = st.columns([1.25, 3.9])
+        with shortcut_col:
+            if st.button(
+                "Show Workflow Shortcuts",
+                key="executive_landing_show_workflow_shortcuts",
+                width="stretch",
+            ):
+                st.session_state["executive_landing_workflow_shortcuts_open"] = True
+                shortcuts_open = True
+        if not shortcuts_open:
+            st.caption("Workflow shortcuts stay collapsed during first paint.")
+    if shortcuts_open:
+        _render_executive_next_clicks()
 
     if isinstance(snapshot, dict):
         _render_loaded_executive_alert_context()

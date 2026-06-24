@@ -60,6 +60,7 @@ class LiveConcurrentProfileTests(unittest.TestCase):
         self.assertFalse(args.section_nav_substeps)
         self.assertFalse(args.trace_slowest_initial_load)
         self.assertFalse(args.tail_diagnostics)
+        self.assertEqual(args.tail_capture_threshold_ms, 0)
         self.assertEqual(args.load_buttons["Alert Center"], "Load Active Alerts")
         self.assertEqual(args.load_buttons["Cost & Contract"], "Refresh Cost")
 
@@ -71,6 +72,7 @@ class LiveConcurrentProfileTests(unittest.TestCase):
         self.assertTrue(args.initial_load_substeps)
         self.assertTrue(args.section_nav_substeps)
         self.assertTrue(args.trace_slowest_initial_load)
+        self.assertEqual(args.tail_capture_threshold_ms, 18000)
         self.assertFalse(args.tail_diagnostics)
 
     def test_section_nav_only_profile_has_no_load_buttons(self):
@@ -141,12 +143,15 @@ class LiveConcurrentProfileTests(unittest.TestCase):
             "--tail-diagnostics",
             "--tail-diagnostic-initial-load-count",
             "3",
+            "--tail-capture-threshold-ms",
+            "18000",
             "--browser-launch-mode",
             "per_user",
         ])
 
         self.assertTrue(args.tail_diagnostics)
         self.assertEqual(args.tail_diagnostic_initial_load_count, 3)
+        self.assertEqual(args.tail_capture_threshold_ms, 18000)
         self.assertEqual(args.browser_launch_mode, "per_user")
         self.assertFalse(args.initial_load_substeps)
         self.assertFalse(args.section_nav_substeps)
@@ -267,6 +272,7 @@ class LiveConcurrentProfileTests(unittest.TestCase):
         summary = runner.summarize(samples, 1.0, args)
 
         self.assertIn("skipped_load_buttons", {item["type"] for item in summary["release_blockers"]})
+        self.assertEqual(summary["skipped_buttons"], summary["skipped"])
 
     def test_summary_reports_readiness_p99_penalty(self):
         runner = load_live_runner()
@@ -284,6 +290,9 @@ class LiveConcurrentProfileTests(unittest.TestCase):
         self.assertEqual(penalty["threshold_ms"], 18000.0)
         self.assertIn("fail_p95_ms * 1.8", penalty["message"])
         self.assertIn("readiness_score", {item["type"] for item in summary["release_blockers"]})
+        self.assertEqual(summary["tail_summary"]["p99_tail_threshold_ms"], 18000.0)
+        self.assertEqual(summary["tail_summary"]["observed_p99_ms"], 19000.0)
+        self.assertEqual(summary["tail_summary"]["slowest_initial_load_user"], 20)
 
     def test_summary_identifies_initial_load_when_slowest(self):
         runner = load_live_runner()
@@ -420,6 +429,55 @@ class LiveConcurrentProfileTests(unittest.TestCase):
         self.assertEqual(summary["readiness_state"], "PASS")
         self.assertEqual(summary["tail_diagnostics"]["replays"][0]["elapsed_ms"], 50000.0)
 
+    def test_in_run_tail_capture_is_excluded_from_release_scoring(self):
+        runner = load_live_runner()
+        args = argparse.Namespace(users=1, iterations=1, fail_p95_ms=10000, fail_error_rate=0.0)
+        samples = [
+            runner.StepSample(
+                1,
+                1,
+                "App Shell",
+                "initial_load",
+                19000.0,
+                True,
+                detail={
+                    "in_run_tail_capture": {
+                        "capture_after_scoring": True,
+                        "tail_capture_threshold_ms": 18000,
+                        "release_elapsed_ms": 19000,
+                        "screenshot_path": "perf_tests/results/tail.png",
+                        "navigation_timing": {"responseStart": 1200.0},
+                        "paint_timing": {"first-contentful-paint": 1500.0},
+                        "visible_context": {"active_section_title": "Executive Landing"},
+                    }
+                },
+            )
+        ]
+
+        summary = runner.summarize(samples, 1.0, args)
+
+        self.assertEqual(summary["p95_ms"], 19000.0)
+        self.assertEqual(summary["p99_ms"], 19000.0)
+        self.assertEqual(summary["steps"], 1)
+        self.assertEqual(summary["diagnostic_steps"], 0)
+        self.assertEqual(summary["in_run_tail_captures"][0]["capture_after_scoring"], True)
+        self.assertEqual(summary["in_run_tail_captures"][0]["visible_context"]["active_section_title"], "Executive Landing")
+
+    def test_tail_replay_reproduction_flag_identifies_non_replay_tail(self):
+        runner = load_live_runner()
+
+        fields = runner.tail_replay_reproduction_fields({
+            "ok": True,
+            "release_elapsed_ms": 22403.39,
+            "elapsed_ms": 1300.0,
+            "navigation_timing": {"responseStart": 312.0},
+            "paint_timing": {"first-contentful-paint": 904.0},
+        })
+
+        self.assertFalse(fields["tail_replay_reproduced"])
+        self.assertTrue(fields["tail_replay_release_tail"])
+        self.assertIn("not reproduced", fields["tail_replay_reason"])
+
     def test_tail_diagnostic_targets_pick_top_initial_loads_and_section_nav(self):
         runner = load_live_runner()
         samples = [
@@ -547,6 +605,7 @@ class LiveConcurrentProfileTests(unittest.TestCase):
         self.assertIn('"diagnostic": true', payload)
         self.assertIn("Diagnostic Action P95", markdown)
         self.assertIn("Readiness Penalties", markdown)
+        self.assertIn("Readiness Tail Summary", markdown)
         self.assertIn("Initial Load Breakdown", markdown)
         self.assertIn("goto_domcontentloaded", markdown)
         self.assertIn("Server Phase Breakdown", markdown)

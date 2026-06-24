@@ -58,7 +58,19 @@ sql_literal = _lazy_util("sql_literal")
 
 from sections.executive_landing_contracts import *
 from sections.executive_landing_common import _active_company, _active_environment
-from sections.executive_landing_models import _executive_snapshot_scope
+from sections.executive_landing_models import _executive_snapshot_scope, _obs_rows
+
+
+_OBS_COLUMNS = [
+    "PANEL",
+    "METRIC",
+    "DIMENSION",
+    "PERIOD_START",
+    "VALUE",
+    "VALUE_USD",
+    "UNIT",
+    "SORT_ORDER",
+]
 
 
 def _load_alerts(session, company: str, environment: str, days: int) -> pd.DataFrame:

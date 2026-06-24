@@ -218,6 +218,7 @@ class ThemeRegistryTests(unittest.TestCase):
         self.assertIn(".ow-filter-strip-shell", theme._STRUCTURAL_CSS)
         button_css = theme._STRUCTURAL_CSS.split("/* Buttons */", 1)[1].split("/* Expanders */", 1)[0]
         self.assertNotIn("backdrop-filter", button_css)
+        self.assertNotIn("backdrop-filter", theme._STRUCTURAL_CSS)
 
     def test_primary_dashboard_layout_uses_responsive_grids(self):
         self.assertIn(".ow-signal-grid", theme._STRUCTURAL_CSS)

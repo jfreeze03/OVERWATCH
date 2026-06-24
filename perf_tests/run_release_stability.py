@@ -58,6 +58,23 @@ def _median(rows: list[dict[str, object]], key: str) -> float:
 
 
 def build_payload(*, run_id_prefix: str, url: str, profile: str, rows: list[dict[str, object]]) -> dict[str, object]:
+    pass_count = sum(1 for row in rows if row.get("readiness_state") == "PASS")
+    watch_count = sum(1 for row in rows if row.get("readiness_state") == "WATCH")
+    fail_count = sum(1 for row in rows if row.get("readiness_state") == "FAIL")
+    total_errors = sum(int(row.get("errors", 0) or 0) for row in rows)
+    total_skipped = sum(int(row.get("skipped", 0) or 0) for row in rows)
+    median_readiness = _median(rows, "readiness_score")
+    p99_tail_runs = sum(
+        1 for row in rows
+        for penalty in row.get("readiness_penalties", [])
+        if isinstance(penalty, dict) and penalty.get("type") == "p99_tail"
+    )
+    if pass_count >= 2 and median_readiness >= 95 and total_errors == 0 and total_skipped == 0:
+        conclusion = "stable_pass"
+    elif p99_tail_runs >= max(1, len(rows) // 2) and total_errors == 0 and total_skipped == 0:
+        conclusion = "stable_watch_tail"
+    else:
+        conclusion = "unstable_environment_tail"
     return {
         "run_id_prefix": run_id_prefix,
         "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
@@ -70,12 +87,18 @@ def build_payload(*, run_id_prefix: str, url: str, profile: str, rows: list[dict
             "median_p95_ms": _median(rows, "p95_ms"),
             "median_p99_ms": _median(rows, "p99_ms"),
             "median_max_ms": _median(rows, "max_ms"),
-            "median_readiness_score": _median(rows, "readiness_score"),
-            "pass_count": sum(1 for row in rows if row.get("readiness_state") == "PASS"),
-            "watch_count": sum(1 for row in rows if row.get("readiness_state") == "WATCH"),
-            "fail_count": sum(1 for row in rows if row.get("readiness_state") == "FAIL"),
-            "errors": sum(int(row.get("errors", 0) or 0) for row in rows),
-            "skipped": sum(int(row.get("skipped", 0) or 0) for row in rows),
+            "median_readiness_score": median_readiness,
+            "worst_p95_ms": round(max((float(row.get("p95_ms", 0) or 0) for row in rows), default=0.0), 2),
+            "worst_p99_ms": round(max((float(row.get("p99_ms", 0) or 0) for row in rows), default=0.0), 2),
+            "worst_max_ms": round(max((float(row.get("max_ms", 0) or 0) for row in rows), default=0.0), 2),
+            "worst_readiness_score": round(min((float(row.get("readiness_score", 0) or 0) for row in rows), default=0.0), 2),
+            "pass_count": pass_count,
+            "watch_count": watch_count,
+            "fail_count": fail_count,
+            "errors": total_errors,
+            "skipped": total_skipped,
+            "p99_tail_runs": p99_tail_runs,
+            "conclusion": conclusion,
         },
     }
 
@@ -87,6 +110,7 @@ def run_once(
     profile: pathlib.Path,
     output_dir: pathlib.Path,
     timeout_sec: float,
+    attach_report: bool = False,
 ) -> dict[str, object]:
     command = [
         sys.executable,
@@ -111,6 +135,10 @@ def run_once(
     report_path = output_dir / f"{run_id}_live_concurrent.json"
     report = json.loads(report_path.read_text(encoding="utf-8")) if report_path.exists() else {}
     row = summarize_report(report, run_id=run_id, returncode=result.returncode)
+    if attach_report and report:
+        row["attached_report_summary"] = report.get("summary", {})
+        samples = report.get("samples", [])
+        row["attached_report_sample_count"] = len(samples) if isinstance(samples, list) else 0
     row["report_path"] = str(report_path) if report_path.exists() else ""
     row["stdout_tail"] = result.stdout[-1000:]
     row["stderr_tail"] = result.stderr[-1000:]
@@ -136,8 +164,12 @@ def write_reports(payload: dict[str, object], *, output_dir: str | pathlib.Path)
         f"- Runs: `{summary['runs']}`",
         f"- Median p95/p99/max: `{summary['median_p95_ms']} / {summary['median_p99_ms']} / {summary['median_max_ms']} ms`",
         f"- Median readiness: `{summary['median_readiness_score']}/100`",
+        f"- Worst p95/p99/max: `{summary['worst_p95_ms']} / {summary['worst_p99_ms']} / {summary['worst_max_ms']} ms`",
+        f"- Worst readiness: `{summary['worst_readiness_score']}/100`",
         f"- PASS/WATCH/FAIL: `{summary['pass_count']} / {summary['watch_count']} / {summary['fail_count']}`",
         f"- Errors/skipped: `{summary['errors']} / {summary['skipped']}`",
+        f"- p99 tail runs: `{summary['p99_tail_runs']}`",
+        f"- Conclusion: `{summary['conclusion']}`",
         "",
         "## Runs",
         "",
@@ -164,6 +196,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--profile", default=str(DEFAULT_PROFILE))
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--timeout-sec", type=float, default=1200.0)
+    parser.add_argument("--attach-reports", action="store_true", help="Embed each run summary in the stability JSON evidence.")
     args = parser.parse_args(argv)
     if args.repeats < 1:
         parser.error("--repeats must be at least 1.")
@@ -183,6 +216,7 @@ def main(argv: list[str] | None = None) -> int:
                 profile=profile,
                 output_dir=output_dir,
                 timeout_sec=args.timeout_sec,
+                attach_report=args.attach_reports,
             )
         )
     payload = build_payload(run_id_prefix=args.run_id_prefix, url=args.url, profile=str(profile), rows=rows)
@@ -193,6 +227,8 @@ def main(argv: list[str] | None = None) -> int:
         "median_p95_ms": payload["summary"]["median_p95_ms"],
         "median_p99_ms": payload["summary"]["median_p99_ms"],
         "median_readiness_score": payload["summary"]["median_readiness_score"],
+        "worst_p99_ms": payload["summary"]["worst_p99_ms"],
+        "conclusion": payload["summary"]["conclusion"],
         "json_report": str(json_path),
         "markdown_report": str(md_path),
     }, indent=2))

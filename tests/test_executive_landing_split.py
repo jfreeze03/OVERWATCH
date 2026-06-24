@@ -200,8 +200,14 @@ class ExecutiveLandingSplitTests(unittest.TestCase):
                 "_executive_landing_observability_autoload_scope",
                 "executive_landing_snapshot",
             ],
+            "executive_landing_data.py": [
+                "_OBS_COLUMNS",
+                "_normalise_observability_frame",
+                "_observability_status_frame",
+            ],
             "executive_landing_overview_view.py": [
                 "executive_landing_load",
+                "executive_landing_show_workflow_shortcuts",
                 "Snowflake Observability Wall",
                 "Executive decisions to make first",
             ],
@@ -236,6 +242,16 @@ class ExecutiveLandingSplitTests(unittest.TestCase):
         self.assertLess(detail_button_pos, detail_gate_pos)
         self.assertLess(detail_gate_pos, table_pos)
         self.assertLess(snapshot_gate_pos, loaded_alert_context_pos)
+
+    def test_executive_workflow_shortcuts_are_explicit_after_first_paint(self):
+        source = (APP_ROOT / "sections" / "executive_landing_overview_view.py").read_text(encoding="utf-8")
+
+        shortcut_button_pos = source.index("executive_landing_show_workflow_shortcuts")
+        next_click_pos = source.index("        _render_executive_next_clicks()")
+        snapshot_prompt_pos = source.index("_render_snapshot_prompt(EXECUTIVE_OVERVIEW_WORKFLOW")
+
+        self.assertLess(shortcut_button_pos, next_click_pos)
+        self.assertLess(next_click_pos, snapshot_prompt_pos)
 
     def test_executive_landing_facade_remains_thin(self):
         source = (APP_ROOT / "sections" / "executive_landing.py").read_text(encoding="utf-8")

@@ -169,6 +169,11 @@ def _diagnostic_recommendations(summary: dict) -> list[str]:
         recommendations.append(
             "Server render and app-entry phases are low while responseStart/FCP are high; prioritize Streamlit server concurrency/runtime and browser host capacity before section-code trimming."
         )
+    tail = summary.get("tail_diagnostics")
+    if isinstance(tail, dict) and tail.get("enabled") and not tail.get("tail_replay_reproduced"):
+        recommendations.append(
+            "Tail replay did not reproduce the scored tail; focus on concurrent browser/client contention and frontend first-paint load."
+        )
     return recommendations
 
 
@@ -319,6 +324,23 @@ def build_review(
             )
     else:
         lines.append("- No readiness penalties were recorded.")
+    tail_summary = summary.get("tail_summary", {})
+    lines.extend([
+        "",
+        "## Readiness Tail Summary",
+        "",
+    ])
+    if isinstance(tail_summary, dict) and tail_summary:
+        lines.extend([
+            f"- p95 threshold: `{tail_summary.get('p95_threshold_ms', 0)} ms`",
+            f"- p99 tail threshold: `{tail_summary.get('p99_tail_threshold_ms', 0)} ms`",
+            f"- Observed p99: `{tail_summary.get('observed_p99_ms', 0)} ms`",
+            f"- p99 overage: `{tail_summary.get('p99_overage_ms', 0)} ms`",
+            f"- Slowest section/action: `{tail_summary.get('slowest_section', '')}` / `{tail_summary.get('slowest_action', '')}`",
+            f"- Slowest initial-load user: `{tail_summary.get('slowest_initial_load_user', '')}` iteration `{tail_summary.get('slowest_initial_load_iteration', '')}` at `{tail_summary.get('slowest_initial_load_elapsed_ms', 0)} ms`",
+        ])
+    else:
+        lines.append("- No tail summary was recorded.")
     lines.extend([
         "",
         "## Diagnostic Overhead A/B",
@@ -503,8 +525,8 @@ def build_review(
         if isinstance(replays, list) and replays:
             lines.extend([
                 "",
-                "| Kind | User | Iteration | Section | Release ms | Replay OK | Replay ms | responseStart | FCP | Trace | Screenshot |",
-                "|---|---:|---:|---|---:|---|---:|---:|---:|---|---|",
+                "| Kind | User | Iteration | Section | Release ms | Replay OK | Reproduced | Replay ms | responseStart | FCP | Trace | Screenshot |",
+                "|---|---:|---:|---|---:|---|---|---:|---:|---:|---|---|",
             ])
             for row in replays:
                 if not isinstance(row, dict):
@@ -514,7 +536,7 @@ def build_review(
                 lines.append(
                     f"| {row.get('kind', '')} | {row.get('user_id', '')} | {row.get('iteration', '')} | "
                     f"{row.get('section', '')} | {row.get('release_elapsed_ms', '')} | {row.get('ok', '')} | "
-                    f"{row.get('elapsed_ms', '')} | {nav.get('responseStart', '')} | "
+                    f"{row.get('tail_replay_reproduced', '')} | {row.get('elapsed_ms', '')} | {nav.get('responseStart', '')} | "
                     f"{paint.get('first-contentful-paint', '')} | `{row.get('trace_path', '')}` | "
                     f"`{row.get('screenshot_path', '')}` |"
                 )
@@ -524,6 +546,52 @@ def build_review(
             lines.append("- No replay targets were selected.")
     else:
         lines.append("- No post-scoring tail replay was attached to this report.")
+    lines.extend([
+        "",
+        "## In-Run Tail Captures",
+        "",
+    ])
+    captures = summary.get("in_run_tail_captures", [])
+    if isinstance(captures, list) and captures:
+        lines.extend([
+            "- Captures run after the scored step stopwatch stops; they are not release samples.",
+            "",
+            "| User | Iteration | Section | Release ms | responseStart | FCP | Active title | Screenshot |",
+            "|---:|---:|---|---:|---:|---:|---|---|",
+        ])
+        for row in captures[:10]:
+            if not isinstance(row, dict):
+                continue
+            nav = row.get("navigation_timing") if isinstance(row.get("navigation_timing"), dict) else {}
+            paint = row.get("paint_timing") if isinstance(row.get("paint_timing"), dict) else {}
+            context = row.get("visible_context") if isinstance(row.get("visible_context"), dict) else {}
+            lines.append(
+                f"| {row.get('user_id', '')} | {row.get('iteration', '')} | {row.get('section', '')} | "
+                f"{row.get('release_elapsed_ms', '')} | {nav.get('responseStart', '')} | "
+                f"{paint.get('first-contentful-paint', '')} | {context.get('active_section_title', '')} | "
+                f"`{row.get('screenshot_path', '')}` |"
+            )
+    else:
+        lines.append("- No in-run tail captures were attached.")
+    lines.extend([
+        "",
+        "## Replay Reproduction Check",
+        "",
+    ])
+    if isinstance(tail, dict) and tail.get("enabled"):
+        reproduction = tail.get("reproduction_summary", {})
+        lines.extend([
+            f"- Any replay reproduced the scored tail: `{tail.get('tail_replay_reproduced', False)}`",
+            f"- Reproduction summary: `{json.dumps(reproduction, separators=(',', ':')) if isinstance(reproduction, dict) else ''}`",
+        ])
+        non_reproduced = [
+            row for row in tail.get("replays", [])
+            if isinstance(row, dict) and row.get("tail_replay_release_tail") and not row.get("tail_replay_reproduced")
+        ]
+        for row in non_reproduced[:5]:
+            lines.append(f"- User `{row.get('user_id')}` {row.get('kind')}: {row.get('tail_replay_reason', '')}")
+    else:
+        lines.append("- No replay reproduction data was attached.")
     lines.extend([
         "",
         "## Clean Release Stability",
@@ -538,7 +606,10 @@ def build_review(
             f"- Runs: `{stability_summary.get('runs', 0)}`",
             f"- Median p95/p99/max: `{stability_summary.get('median_p95_ms', 0)} / {stability_summary.get('median_p99_ms', 0)} / {stability_summary.get('median_max_ms', 0)} ms`",
             f"- Median readiness: `{stability_summary.get('median_readiness_score', 0)}/100`",
+            f"- Worst p95/p99/max: `{stability_summary.get('worst_p95_ms', 0)} / {stability_summary.get('worst_p99_ms', 0)} / {stability_summary.get('worst_max_ms', 0)} ms`",
+            f"- Worst readiness: `{stability_summary.get('worst_readiness_score', 0)}/100`",
             f"- PASS/WATCH/FAIL: `{stability_summary.get('pass_count', 0)} / {stability_summary.get('watch_count', 0)} / {stability_summary.get('fail_count', 0)}`",
+            f"- Conclusion: `{stability_summary.get('conclusion', '')}`",
         ])
     else:
         lines.append("- No clean release stability report was attached.")

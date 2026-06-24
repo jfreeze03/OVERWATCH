@@ -233,6 +233,7 @@ def _default_config() -> dict:
         "trace_slowest_initial_load": False,
         "tail_diagnostics": False,
         "tail_diagnostic_initial_load_count": 2,
+        "tail_capture_threshold_ms": 0.0,
         "single_initial_load": False,
         "browser_launch_mode": "shared",
         "chromium_args": [],
@@ -613,6 +614,48 @@ async def collect_section_nav_diagnostics(page) -> dict[str, object]:
     }
 
 
+async def collect_visible_page_context(page) -> dict[str, object]:
+    """Collect visible context around the active section without clicking anything."""
+    try:
+        context = await page.evaluate(
+            """() => {
+                const visible = (element) => {
+                    if (!element) return false;
+                    const style = window.getComputedStyle(element);
+                    return style.visibility !== "hidden"
+                        && style.display !== "none"
+                        && element.getClientRects().length > 0;
+                };
+                const text = (element) => (element && element.innerText ? element.innerText.replace(/\\s+/g, " ").trim() : "");
+                const buttons = Array.from(document.querySelectorAll("button, [role='button']"))
+                    .filter(visible)
+                    .map(text)
+                    .filter(Boolean)
+                    .slice(0, 80);
+                const headings = Array.from(document.querySelectorAll(
+                    "h1,h2,h3,h4,h5,h6,.ow-section-title,.ow-section-subtitle,[data-testid='stCaptionContainer']"
+                ))
+                    .filter(visible)
+                    .map(text)
+                    .filter(Boolean)
+                    .slice(0, 80);
+                const activeTitle = text(document.querySelector(".ow-section-title"));
+                const spinners = Array.from(document.querySelectorAll('[data-testid="stSpinner"], .stSpinner')).filter(visible).length;
+                const transitions = Array.from(document.querySelectorAll(".ow-section-transition")).filter(visible).length;
+                return {
+                    active_section_title: activeTitle,
+                    visible_button_labels: buttons,
+                    visible_headings_and_captions: headings,
+                    spinner_count: spinners,
+                    transition_count: transitions,
+                };
+            }"""
+        )
+        return context if isinstance(context, dict) else {}
+    except Exception as exc:
+        return {"context_error": str(exc)[:240]}
+
+
 async def section_is_visible(page, section: str) -> bool:
     try:
         title = page.locator(".ow-section-title").filter(has_text=section).first
@@ -671,44 +714,7 @@ async def collect_skipped_button_diagnostics(
     expanded_load_surfaces: bool,
 ) -> dict[str, object]:
     """Capture local UI context for a configured load button that is missing."""
-    try:
-        context = await page.evaluate(
-            """() => {
-                const visible = (element) => {
-                    if (!element) return false;
-                    const style = window.getComputedStyle(element);
-                    return style.visibility !== "hidden"
-                        && style.display !== "none"
-                        && element.getClientRects().length > 0;
-                };
-                const text = (element) => (element && element.innerText ? element.innerText.replace(/\\s+/g, " ").trim() : "");
-                const buttons = Array.from(document.querySelectorAll("button, [role='button']"))
-                    .filter(visible)
-                    .map(text)
-                    .filter(Boolean)
-                    .slice(0, 80);
-                const headings = Array.from(document.querySelectorAll(
-                    "h1,h2,h3,h4,h5,h6,.ow-section-title,.ow-section-subtitle,[data-testid='stCaptionContainer']"
-                ))
-                    .filter(visible)
-                    .map(text)
-                    .filter(Boolean)
-                    .slice(0, 80);
-                const activeTitle = text(document.querySelector(".ow-section-title"));
-                const spinners = Array.from(document.querySelectorAll('[data-testid="stSpinner"], .stSpinner')).filter(visible).length;
-                const transitions = Array.from(document.querySelectorAll(".ow-section-transition")).filter(visible).length;
-                return {
-                    active_section_title: activeTitle,
-                    visible_button_labels: buttons,
-                    visible_headings_and_captions: headings,
-                    spinner_count: spinners,
-                    transition_count: transitions,
-                };
-            }"""
-        )
-        detail = context if isinstance(context, dict) else {}
-    except Exception as exc:
-        detail = {"context_error": str(exc)[:240]}
+    detail = await collect_visible_page_context(page)
     detail.update({
         "configured_section": section,
         "configured_label": label,
@@ -725,6 +731,60 @@ async def collect_skipped_button_diagnostics(
     except Exception as exc:
         detail["screenshot_error"] = str(exc)[:240]
     return detail
+
+
+async def collect_in_run_tail_capture(
+    page,
+    *,
+    args: argparse.Namespace,
+    section: str,
+    action: str,
+    user_id: int,
+    iteration: int,
+    release_elapsed_ms: float,
+    resource_recorder: ResourceRecorder | None = None,
+) -> dict[str, object]:
+    """Capture tail evidence after the release stopwatch has already stopped."""
+    threshold_ms = float(getattr(args, "tail_capture_threshold_ms", 0.0) or 0.0)
+    capture: dict[str, object] = {
+        "capture_after_scoring": True,
+        "tail_capture_threshold_ms": round(threshold_ms, 2),
+        "release_elapsed_ms": round(float(release_elapsed_ms), 2),
+        "section": section,
+        "action": action,
+        "user_id": user_id,
+        "iteration": iteration,
+    }
+    capture.update({
+        "navigation_timing": await collect_browser_navigation_timing(page),
+        "paint_timing": await collect_browser_paint_timing(page),
+        "frontend_metrics": await collect_frontend_metrics(page),
+        "perf_trace": await collect_perf_trace_payload(page),
+        "visible_context": await collect_visible_page_context(page),
+        "host_resource_sample": collect_resource_sample(
+            "in_run_tail_capture",
+            psutil_module=resource_recorder.psutil if resource_recorder is not None else None,
+            detail={
+                "run_id": getattr(args, "run_id", ""),
+                "user_id": user_id,
+                "iteration": iteration,
+                "section": section,
+                "action": action,
+                "release_elapsed_ms": round(float(release_elapsed_ms), 2),
+            },
+        ),
+    })
+    screenshot_path = pathlib.Path(args.output_dir) / (
+        f"{_safe_artifact_token(args.run_id)}_in_run_tail_user{user_id:02d}_iter{iteration}_"
+        f"{_safe_artifact_token(section)}_{_safe_artifact_token(action)}.png"
+    )
+    try:
+        screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+        await page.screenshot(path=str(screenshot_path), full_page=True)
+        capture["screenshot_path"] = str(screenshot_path)
+    except Exception as exc:
+        capture["screenshot_error"] = str(exc)[:240]
+    return capture
 
 
 async def click_optional_load_button(
@@ -785,6 +845,8 @@ async def timed_step(
     browser_errors: list[str],
     operation,
     diagnostic: bool = False,
+    args: argparse.Namespace | None = None,
+    resource_recorder: ResourceRecorder | None = None,
 ) -> StepSample:
     before_browser_errors = len(browser_errors)
     started = time.perf_counter()
@@ -800,6 +862,31 @@ async def timed_step(
             skipped = result.get("status") == "skipped"
             detail = result.get("detail", result)
             result_detail = detail if isinstance(detail, dict) else {"detail": detail}
+        threshold_ms = float(getattr(args, "tail_capture_threshold_ms", 0.0) or 0.0) if args is not None else 0.0
+        if (
+            not diagnostic
+            and action == "initial_load"
+            and threshold_ms > 0
+            and elapsed_ms >= threshold_ms
+        ):
+            try:
+                result_detail["in_run_tail_capture"] = await collect_in_run_tail_capture(
+                    page,
+                    args=args,
+                    section=section,
+                    action=action,
+                    user_id=user_id,
+                    iteration=iteration,
+                    release_elapsed_ms=elapsed_ms,
+                    resource_recorder=resource_recorder,
+                )
+            except Exception as exc:
+                result_detail["in_run_tail_capture"] = {
+                    "capture_after_scoring": True,
+                    "release_elapsed_ms": round(float(elapsed_ms), 2),
+                    "tail_capture_threshold_ms": round(threshold_ms, 2),
+                    "capture_error": str(exc).replace("\n", " ")[:500],
+                }
         ok = skipped or (not visible_error and new_browser_errors == 0)
         return StepSample(
             user_id=user_id,
@@ -998,6 +1085,8 @@ async def run_user(
                 action="initial_load",
                 browser_errors=browser_errors,
                 operation=initial_load,
+                args=args,
+                resource_recorder=resource_recorder,
             )
             samples.append(initial_sample)
             if resource_recorder is not None:
@@ -1025,6 +1114,8 @@ async def run_user(
                     action="initial_load",
                     browser_errors=browser_errors,
                     operation=initial_load,
+                    args=args,
+                    resource_recorder=resource_recorder,
                 )
                 samples.append(initial_sample)
                 if iteration == 1 and resource_recorder is not None:
@@ -1340,6 +1431,62 @@ def _top_server_phase_for_sample(sample: StepSample) -> dict[str, object]:
     return max(trace_samples, key=lambda row: float(row.get("elapsed_ms", 0) or 0))
 
 
+def _in_run_tail_capture_rows(release_samples: list[StepSample]) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for sample in release_samples:
+        detail = sample.detail if isinstance(sample.detail, dict) else {}
+        capture = detail.get("in_run_tail_capture")
+        if not isinstance(capture, dict):
+            continue
+        rows.append({
+            "user_id": sample.user_id,
+            "iteration": sample.iteration,
+            "section": sample.section,
+            "action": sample.action,
+            "release_elapsed_ms": round(float(sample.elapsed_ms), 2),
+            "tail_capture_threshold_ms": capture.get("tail_capture_threshold_ms", 0),
+            "capture_after_scoring": bool(capture.get("capture_after_scoring")),
+            "screenshot_path": capture.get("screenshot_path", ""),
+            "navigation_timing": capture.get("navigation_timing", {}),
+            "paint_timing": capture.get("paint_timing", {}),
+            "frontend_metrics": capture.get("frontend_metrics", {}),
+            "perf_trace": capture.get("perf_trace", {}),
+            "visible_context": capture.get("visible_context", {}),
+            "host_resource_sample": capture.get("host_resource_sample", {}),
+            "capture_error": capture.get("capture_error", capture.get("screenshot_error", "")),
+        })
+    return sorted(rows, key=lambda row: float(row.get("release_elapsed_ms", 0) or 0), reverse=True)
+
+
+def _tail_summary(
+    *,
+    release_samples: list[StepSample],
+    measured_samples: list[StepSample],
+    p99_ms: float,
+    fail_p95_ms: float,
+) -> dict[str, object]:
+    p99_tail_threshold = float(fail_p95_ms) * 1.8
+    slowest_sample = max(measured_samples, key=lambda item: item.elapsed_ms) if measured_samples else None
+    initial_loads = [
+        sample for sample in measured_samples
+        if sample.section == "App Shell" and sample.action == "initial_load"
+    ]
+    slowest_initial = max(initial_loads, key=lambda item: item.elapsed_ms) if initial_loads else None
+    return {
+        "p95_threshold_ms": round(float(fail_p95_ms), 2),
+        "p99_tail_threshold_ms": round(p99_tail_threshold, 2),
+        "observed_p99_ms": round(float(p99_ms), 2),
+        "p99_overage_ms": round(max(0.0, float(p99_ms) - p99_tail_threshold), 2),
+        "slowest_action": slowest_sample.action if slowest_sample else "",
+        "slowest_section": slowest_sample.section if slowest_sample else "",
+        "slowest_elapsed_ms": round(float(slowest_sample.elapsed_ms), 2) if slowest_sample else 0.0,
+        "slowest_initial_load_user": slowest_initial.user_id if slowest_initial else None,
+        "slowest_initial_load_iteration": slowest_initial.iteration if slowest_initial else None,
+        "slowest_initial_load_elapsed_ms": round(float(slowest_initial.elapsed_ms), 2) if slowest_initial else 0.0,
+        "initial_load_samples": sum(1 for sample in release_samples if sample.action == "initial_load"),
+    }
+
+
 def _initial_load_matrix(release_samples: list[StepSample], diagnostic_samples: list[StepSample]) -> list[dict[str, object]]:
     by_key: dict[tuple[int, int], dict[str, object]] = {}
     for sample in release_samples:
@@ -1626,6 +1773,13 @@ def summarize(
         })
 
     slowest_sample = max(measured_samples, key=lambda item: item.elapsed_ms) if measured_samples else None
+    tail_summary = _tail_summary(
+        release_samples=release_samples,
+        measured_samples=measured_samples,
+        p99_ms=p99_ms,
+        fail_p95_ms=float(args.fail_p95_ms),
+    )
+    in_run_tail_captures = _in_run_tail_capture_rows(release_samples)
     release_throughput = round((len(release_samples) - errors) / total_elapsed_sec, 3) if total_elapsed_sec else 0.0
     diagnostic_throughput = round(len(diagnostic_samples) / total_elapsed_sec, 3) if total_elapsed_sec else 0.0
     total_throughput = round(len(samples) / total_elapsed_sec, 3) if total_elapsed_sec else 0.0
@@ -1637,6 +1791,7 @@ def summarize(
         "total_samples": len(samples),
         "measured_steps": len(measured_samples),
         "skipped": skipped,
+        "skipped_buttons": skipped,
         "errors": errors,
         "error_rate": round(error_rate, 4),
         "p50_ms": round(statistics.median(elapsed), 2) if elapsed else 0.0,
@@ -1677,6 +1832,8 @@ def summarize(
         "frontend_resource_timing": _frontend_resource_timing_rows(diagnostic_samples),
         "initial_load_matrix": _initial_load_matrix(release_samples, diagnostic_samples),
         "section_nav_matrix": _section_nav_matrix(release_samples, diagnostic_samples),
+        "tail_summary": tail_summary,
+        "in_run_tail_captures": in_run_tail_captures,
         "skipped_button_details": skipped_button_details,
         "resource_samples": resource_samples or [],
         "slowest_initial_load_trace": trace_artifact,
@@ -1786,6 +1943,47 @@ def write_reports(args: argparse.Namespace, samples: list[StepSample], summary: 
             )
     else:
         md.append("No readiness penalties were applied.")
+    tail_summary = summary.get("tail_summary", {})
+    md.extend([
+        "",
+        "## Readiness Tail Summary",
+        "",
+    ])
+    if isinstance(tail_summary, dict) and tail_summary:
+        md.extend([
+            f"- p95 threshold: `{tail_summary.get('p95_threshold_ms', 0)} ms`",
+            f"- p99 tail threshold: `{tail_summary.get('p99_tail_threshold_ms', 0)} ms`",
+            f"- Observed p99: `{tail_summary.get('observed_p99_ms', 0)} ms`",
+            f"- p99 overage: `{tail_summary.get('p99_overage_ms', 0)} ms`",
+            f"- Slowest section/action: `{tail_summary.get('slowest_section', '')}` / `{tail_summary.get('slowest_action', '')}`",
+            f"- Slowest initial-load user: `{tail_summary.get('slowest_initial_load_user', '')}` iteration `{tail_summary.get('slowest_initial_load_iteration', '')}` at `{tail_summary.get('slowest_initial_load_elapsed_ms', 0)} ms`",
+        ])
+    else:
+        md.append("No tail summary was available.")
+    md.extend([
+        "",
+        "## In-Run Tail Captures",
+        "",
+    ])
+    in_run_captures = summary.get("in_run_tail_captures", [])
+    if isinstance(in_run_captures, list) and in_run_captures:
+        md.extend([
+            "- Captures are attached after the measured release step completes; they are not release samples.",
+            "",
+            "| User | Iteration | Section | Action | Release ms | responseStart | FCP | Screenshot |",
+            "|---:|---:|---|---|---:|---:|---:|---|",
+        ])
+        for row in in_run_captures[:10]:
+            nav = row.get("navigation_timing") if isinstance(row.get("navigation_timing"), dict) else {}
+            paint = row.get("paint_timing") if isinstance(row.get("paint_timing"), dict) else {}
+            md.append(
+                f"| {row.get('user_id', '')} | {row.get('iteration', '')} | {row.get('section', '')} | "
+                f"{row.get('action', '')} | {row.get('release_elapsed_ms', '')} | "
+                f"{nav.get('responseStart', '')} | {paint.get('first-contentful-paint', '')} | "
+                f"`{row.get('screenshot_path', '')}` |"
+            )
+    else:
+        md.append("No initial-load release samples crossed the in-run tail capture threshold.")
     md.extend([
         "",
         "## Section P95",
@@ -2038,8 +2236,8 @@ def write_reports(args: argparse.Namespace, samples: list[StepSample], summary: 
         if isinstance(replays, list) and replays:
             md.extend([
                 "",
-                "| Kind | User | Iteration | Section | Release ms | Replay OK | Replay ms | responseStart | FCP | Trace | Screenshot |",
-                "|---|---:|---:|---|---:|---|---:|---:|---:|---|---|",
+                "| Kind | User | Iteration | Section | Release ms | Replay OK | Reproduced | Replay ms | responseStart | FCP | Trace | Screenshot |",
+                "|---|---:|---:|---|---:|---|---|---:|---:|---:|---|---|",
             ])
             for row in replays:
                 if not isinstance(row, dict):
@@ -2049,10 +2247,12 @@ def write_reports(args: argparse.Namespace, samples: list[StepSample], summary: 
                 md.append(
                     f"| {row.get('kind', '')} | {row.get('user_id', '')} | {row.get('iteration', '')} | "
                     f"{row.get('section', '')} | {row.get('release_elapsed_ms', '')} | {row.get('ok', '')} | "
-                    f"{row.get('elapsed_ms', '')} | {nav.get('responseStart', '')} | "
+                    f"{row.get('tail_replay_reproduced', '')} | {row.get('elapsed_ms', '')} | {nav.get('responseStart', '')} | "
                     f"{paint.get('first-contentful-paint', '')} | `{row.get('trace_path', '')}` | "
                     f"`{row.get('screenshot_path', '')}` |"
                 )
+            if tail.get("reproduction_summary"):
+                md.extend(["", f"- Replay reproduction summary: `{json.dumps(tail.get('reproduction_summary'), separators=(',', ':'))}`"])
         elif tail.get("error"):
             md.append(f"- Tail replay failed before capture: `{tail.get('error')}`")
         else:
@@ -2221,6 +2421,39 @@ def tail_diagnostic_targets(samples: list[StepSample], *, initial_load_count: in
     return targets
 
 
+def tail_replay_reproduction_fields(row: dict[str, object], *, tail_threshold_ms: float = 18000.0) -> dict[str, object]:
+    """Compare the scored tail with the post-run single-user replay."""
+    release_elapsed = float(row.get("release_elapsed_ms", 0) or 0)
+    replay_elapsed = float(row.get("elapsed_ms", 0) or 0)
+    nav = row.get("navigation_timing") if isinstance(row.get("navigation_timing"), dict) else {}
+    paint = row.get("paint_timing") if isinstance(row.get("paint_timing"), dict) else {}
+    response_start = float(nav.get("responseStart", 0) or 0) if isinstance(nav, dict) else 0.0
+    fcp = float(paint.get("first-contentful-paint", 0) or 0) if isinstance(paint, dict) else 0.0
+    release_tail = release_elapsed >= float(tail_threshold_ms)
+    reproduced = bool(
+        row.get("ok")
+        and release_tail
+        and (
+            replay_elapsed >= release_elapsed * 0.5
+            or response_start >= 2000.0
+            or fcp >= 2000.0
+        )
+    )
+    reason = ""
+    if release_tail and fcp and fcp < 2000.0:
+        reason = "release tail was not reproduced; replay FCP stayed below 2000 ms"
+    elif release_tail and not reproduced:
+        reason = "release tail was not reproduced in the single-user replay"
+    elif reproduced:
+        reason = "release tail reproduced in replay timing"
+    return {
+        "tail_replay_reproduced": reproduced,
+        "tail_replay_release_tail": release_tail,
+        "tail_replay_reason": reason,
+        "tail_replay_delta_ms": round(release_elapsed - replay_elapsed, 2),
+    }
+
+
 async def _capture_tail_replay(playwright, args: argparse.Namespace, target: dict[str, object]) -> dict[str, object]:
     output_dir = pathlib.Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -2290,6 +2523,7 @@ async def _capture_tail_replay(playwright, args: argparse.Namespace, target: dic
                 await browser.close()
             except Exception:
                 pass
+    row.update(tail_replay_reproduction_fields(row))
     return row
 
 
@@ -2314,6 +2548,16 @@ async def capture_tail_diagnostics(args: argparse.Namespace, samples: list[StepS
     async with async_playwright() as playwright:
         for target in targets:
             payload["replays"].append(await _capture_tail_replay(playwright, args, target))
+    replays = [row for row in payload["replays"] if isinstance(row, dict)]
+    payload["tail_replay_reproduced"] = any(bool(row.get("tail_replay_reproduced")) for row in replays)
+    payload["reproduction_summary"] = {
+        "replayed": len(replays),
+        "reproduced": sum(1 for row in replays if row.get("tail_replay_reproduced")),
+        "not_reproduced": sum(
+            1 for row in replays
+            if row.get("tail_replay_release_tail") and not row.get("tail_replay_reproduced")
+        ),
+    }
     return payload
 
 
@@ -2338,6 +2582,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--trace-slowest-initial-load", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS, help="After the run, capture one Playwright trace replay for the slowest initial-load user.")
     parser.add_argument("--tail-diagnostics", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS, help="After clean scoring completes, replay the slowest release-tail samples with trace and paint diagnostics.")
     parser.add_argument("--tail-diagnostic-initial-load-count", type=int, default=argparse.SUPPRESS, help="Number of slow initial_load samples to replay when tail diagnostics are enabled.")
+    parser.add_argument("--tail-capture-threshold-ms", type=float, default=argparse.SUPPRESS, help="Capture in-run tail evidence after an initial_load release sample crosses this threshold; 0 disables capture.")
     parser.add_argument("--single-initial-load", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS, help="Load the app once per user, then repeat in-app section flows without hard page reloads.")
     parser.add_argument("--browser-launch-mode", choices=("shared", "per_user"), default=argparse.SUPPRESS, help="Use one shared Chromium launch or one isolated Chromium launch per simulated user.")
     parser.add_argument("--action-settle-ms", type=int, default=argparse.SUPPRESS, help="Minimum wait after clicks before spinner checks.")
@@ -2377,6 +2622,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("--users above 40 requires --allow-large-run to avoid surprise Snowflake and local CPU load.")
     if args.tail_diagnostic_initial_load_count < 0:
         parser.error("--tail-diagnostic-initial-load-count must be non-negative.")
+    if float(args.tail_capture_threshold_ms or 0.0) < 0:
+        parser.error("--tail-capture-threshold-ms must be non-negative.")
     if args.browser_launch_mode not in {"shared", "per_user"}:
         parser.error("--browser-launch-mode must be 'shared' or 'per_user'.")
     return args

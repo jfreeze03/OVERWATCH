@@ -195,6 +195,9 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
             "run_browser_capacity_matrix.py",
             "run_release_stability.py",
             "tail replay diagnostics",
+            "in-run tail capture",
+            "replay reproduction",
+            "release stability conclusion",
             "readiness penalty",
             "http_first_response_probe.py",
             "frontend paint metrics",
@@ -277,6 +280,17 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
                 "frontend_resource_timing": [
                     {"initiator_type": "script", "samples": 12, "count_p95": 6, "duration_p95_ms": 30, "transfer_size_p95": 2000}
                 ],
+                "tail_summary": {
+                    "p95_threshold_ms": 10000,
+                    "p99_tail_threshold_ms": 18000,
+                    "observed_p99_ms": 1100,
+                    "p99_overage_ms": 0,
+                    "slowest_section": "App Shell",
+                    "slowest_action": "initial_load",
+                    "slowest_initial_load_user": 1,
+                    "slowest_initial_load_iteration": 1,
+                    "slowest_initial_load_elapsed_ms": 900,
+                },
                 "initial_load_matrix": [
                     {
                         "user_id": 1,
@@ -303,6 +317,8 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
                 "tail_diagnostics": {
                     "enabled": True,
                     "post_scoring": True,
+                    "tail_replay_reproduced": False,
+                    "reproduction_summary": {"replayed": 1, "reproduced": 0, "not_reproduced": 1},
                     "replays": [
                         {
                             "kind": "initial_load",
@@ -314,11 +330,27 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
                             "elapsed_ms": 900,
                             "navigation_timing": {"responseStart": 30},
                             "paint_timing": {"first-contentful-paint": 50},
+                            "tail_replay_reproduced": False,
+                            "tail_replay_release_tail": True,
+                            "tail_replay_reason": "release tail was not reproduced; replay FCP stayed below 2000 ms",
                             "trace_path": "perf_tests/results/tail.zip",
                             "screenshot_path": "perf_tests/results/tail.png",
                         }
                     ],
                 },
+                "in_run_tail_captures": [
+                    {
+                        "user_id": 1,
+                        "iteration": 1,
+                        "section": "App Shell",
+                        "action": "initial_load",
+                        "release_elapsed_ms": 19000,
+                        "navigation_timing": {"responseStart": 1200},
+                        "paint_timing": {"first-contentful-paint": 1500},
+                        "visible_context": {"active_section_title": "Executive Landing"},
+                        "screenshot_path": "perf_tests/results/in_run_tail.png",
+                    }
+                ],
                 "resource_samples": [
                     {"label": "before_launch", "cpu_percent": 1.0, "memory_percent": 50.0, "process_count": 100, "browser_child_process_count": 0}
                 ],
@@ -368,6 +400,7 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
             "Recommended fixes",
             "Release Blockers",
             "Readiness Penalties",
+            "Readiness Tail Summary",
             "Top Slowest Sections",
             "Top Slowest Actions",
             "Initial Load Breakdown",
@@ -380,6 +413,8 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
             "Skipped Button Context",
             "Slowest User Correlation",
             "Tail Initial Load Replay",
+            "In-Run Tail Captures",
+            "Replay Reproduction Check",
             "Clean Release Stability",
             "Playwright Host Resource Samples",
             "Top 10 Slowest Release Steps",

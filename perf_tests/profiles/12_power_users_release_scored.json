@@ -8,6 +8,7 @@
   "section_nav_substeps": false,
   "trace_slowest_initial_load": false,
   "tail_diagnostics": false,
+  "tail_capture_threshold_ms": 0,
   "wait_initial_idle": true,
   "missing_load_button_wait_ms": 10000,
   "fail_p95_ms": 10000,

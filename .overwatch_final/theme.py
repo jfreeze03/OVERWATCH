@@ -228,7 +228,6 @@ footer {
 /* Metric cards */
 [data-testid="stMetric"] {
     background: var(--bg-card) !important;
-    backdrop-filter: blur(12px);
     border: 1px solid var(--border-subtle) !important;
     border-radius: 8px !important;
     padding: 12px 14px !important;
@@ -385,7 +384,6 @@ button[data-testid^="stBaseButton"]:disabled p {
     background: var(--bg-expander) !important;
     border: 1px solid var(--border-subtle) !important;
     border-radius: 8px;
-    backdrop-filter: blur(8px);
 }
 
 /* Dividers */
@@ -702,10 +700,9 @@ code, pre, .stCodeBlock {
     background: var(--bg-card);
     border: 1px solid var(--border-subtle);
     border-radius: 8px; padding: 16px; margin: 8px 0;
-    backdrop-filter: blur(12px);
 }
 .glow-text { text-shadow: 0 0 10px rgba(var(--accent-rgb), 0.5); }
-.stAlert { border-radius: 10px; backdrop-filter: blur(8px); }
+.stAlert { border-radius: 10px; }
 
 /* Clean DBA shell */
 .ow-topbar {
@@ -837,7 +834,6 @@ code, pre, .stCodeBlock {
     background:
         radial-gradient(circle at 50% 42%, rgba(var(--accent-rgb), 0.12), transparent 34rem),
         var(--bg-app);
-    backdrop-filter: blur(10px);
 }
 .ow-section-transition-card {
     width: min(620px, calc(100vw - 3rem));

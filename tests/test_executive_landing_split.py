@@ -55,6 +55,8 @@ class ExecutiveLandingSplitTests(unittest.TestCase):
                 "Executive Admin / Advanced",
             ),
         )
+        self.assertEqual(set(contracts.EXECUTIVE_LANDING_WORKFLOW_DETAILS), set(contracts.EXECUTIVE_LANDING_WORKFLOWS))
+        self.assertIn("Board-ready status", contracts.EXECUTIVE_LANDING_WORKFLOW_DETAILS["Executive Overview"])
         expected_aliases = {
             "Executive Briefing": "Executive Overview",
             "Executive Summary": "Executive Overview",
@@ -163,6 +165,14 @@ class ExecutiveLandingSplitTests(unittest.TestCase):
         self.assertIs(executive_landing.EXECUTIVE_LANDING_RENDERERS["Change Summary"], change_view.render_executive_change_summary)
         self.assertIs(executive_landing.EXECUTIVE_LANDING_RENDERERS["Executive Actions"], actions_view.render_executive_actions)
         self.assertIs(executive_landing.EXECUTIVE_LANDING_RENDERERS["Executive Admin / Advanced"], admin_view.render_executive_admin_advanced)
+
+    def test_route_shell_uses_compact_workflow_selector_details(self):
+        source = (APP_ROOT / "sections" / "executive_landing_shell.py").read_text(encoding="utf-8")
+
+        self.assertIn("EXECUTIVE_LANDING_WORKFLOW_DETAILS", source)
+        self.assertIn("compact_details=True", source)
+        self.assertIn("collapse_after=2", source)
+        self.assertIn('collapsed_label="More executive workflows"', source)
 
     def test_dispatch_helper_calls_registered_renderer(self):
         calls = []

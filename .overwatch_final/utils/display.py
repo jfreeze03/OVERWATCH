@@ -178,6 +178,25 @@ def render_time_series_chart(
     return chart_df
 
 
+def render_area_time_series_chart(
+    df: pd.DataFrame,
+    time_column: str,
+    value_column: str,
+    *,
+    series_column: str | None = None,
+    title: str = "",
+) -> pd.DataFrame:
+    """Render a styled OVERWATCH area time-series chart and return plotted rows."""
+    return render_time_series_chart(
+        df,
+        time_column,
+        value_column,
+        series_column=series_column,
+        title=title,
+        area=True,
+    )
+
+
 def render_ranked_bar_chart(
     df: pd.DataFrame,
     dimension: str,

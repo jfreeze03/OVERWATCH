@@ -1985,6 +1985,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("overflow-wrap: anywhere", theme_text)
         self.assertIn("def render_ranked_bar_chart", display_text)
         self.assertIn("def time_series_chart_frame", display_text)
+        self.assertIn("def render_area_time_series_chart", display_text)
         self.assertIn("OVERWATCH_TIME_SERIES_PALETTE", display_text)
         self.assertIn("sort=alt.SortField(field=measure, order=\"descending\")", display_text)
         self.assertIn("y=alt.Y(", display_text)
@@ -2019,16 +2020,20 @@ class NavigationIntegrityTests(unittest.TestCase):
 
         trend = time_series_chart_frame(
             pd.DataFrame({
-                "DAY": ["2026-06-02", "invalid", "2026-06-01"],
-                "VALUE": ["2.5", "4.0", "1.0"],
-                "SERIES": ["Spend", "Spend", "Spend"],
+                "DAY": ["2026-06-02", "invalid", "2026-06-01", "2026-06-01"],
+                "VALUE": ["2.5", "4.0", "1.0", "3.5"],
+                "SERIES": ["Spend", "Spend", "Usage", "Cost"],
             }),
             "DAY",
             "VALUE",
             series_column="SERIES",
         )
-        self.assertEqual(trend["VALUE"].tolist(), [1.0, 2.5])
-        self.assertEqual(trend["SERIES"].tolist(), ["Spend", "Spend"])
+        self.assertEqual(trend["VALUE"].tolist(), [3.5, 1.0, 2.5])
+        self.assertEqual(trend["SERIES"].tolist(), ["Cost", "Usage", "Spend"])
+
+        missing = time_series_chart_frame(pd.DataFrame({"DAY": ["2026-06-01"]}), "DAY", "VALUE")
+        self.assertTrue(missing.empty)
+        self.assertEqual(missing.columns.tolist(), ["DAY", "VALUE"])
 
     def test_workflow_selector_groups_keep_selected_workflow_visible(self):
         from utils.workflows import workflow_selector_groups
@@ -2038,6 +2043,9 @@ class NavigationIntegrityTests(unittest.TestCase):
 
         self.assertEqual(visible, ["Suppression Windows"])
         self.assertEqual(hidden, ["Detection Catalog", "Delivery & Automation"])
+        visible_two, hidden_two = workflow_selector_groups("Suppression Windows", workflows, collapse_after=2)
+        self.assertEqual(visible_two, ["Suppression Windows", "Detection Catalog"])
+        self.assertEqual(hidden_two, ["Delivery & Automation"])
         self.assertEqual(workflow_selector_groups("Detection Catalog", workflows), (list(workflows), []))
 
     def test_workflow_helpers_keep_landing_pages_compact(self):
@@ -2135,6 +2143,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('"render_ranked_bar_chart"', utils_text)
         self.assertIn('"render_chart_with_data_toggle"', utils_text)
         self.assertIn('"render_time_series_chart"', utils_text)
+        self.assertIn('"render_area_time_series_chart"', utils_text)
         self.assertIn('"time_series_chart_frame"', utils_text)
         self.assertIn('"rank_chart_frame"', utils_text)
         self.assertNotIn('"build_platform_futures_evidence_ddl"', utils_text)

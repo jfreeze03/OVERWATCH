@@ -25,6 +25,7 @@ from sections.executive_landing_contracts import (
     EXECUTIVE_ADMIN_WORKFLOW,
     EXECUTIVE_CHANGE_SUMMARY_WORKFLOW,
     EXECUTIVE_COST_MOVEMENT_WORKFLOW,
+    EXECUTIVE_LANDING_WORKFLOW_DETAILS,
     EXECUTIVE_LANDING_WORKFLOWS,
     EXECUTIVE_OPERATIONAL_RISK_WORKFLOW,
     EXECUTIVE_OVERVIEW_WORKFLOW,
@@ -159,7 +160,11 @@ def render() -> None:
             "Executive Landing workflow",
             EXECUTIVE_LANDING_WORKFLOW,
             EXECUTIVE_LANDING_WORKFLOWS,
+            EXECUTIVE_LANDING_WORKFLOW_DETAILS,
             columns=4,
+            compact_details=True,
+            collapse_after=2,
+            collapsed_label="More executive workflows",
         )
         active_workflow = normalize_executive_landing_workflow(active_workflow)
         st.session_state[EXECUTIVE_LANDING_WORKFLOW] = active_workflow

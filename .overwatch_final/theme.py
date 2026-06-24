@@ -747,7 +747,9 @@ code, pre, .stCodeBlock {
 .ow-section-subtitle {
     color: var(--text-secondary);
     font-size: 0.86rem;
+    line-height: 1.35;
     margin-top: 0.3rem;
+    max-width: min(880px, 100%);
 }
 .ow-scope-row {
     display: flex;

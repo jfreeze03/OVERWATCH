@@ -55,6 +55,7 @@ from utils import (
     mart_source_caption,
     metric_confidence_label,
     query_attribution_supported,
+    render_area_time_series_chart,
     render_chart_with_data_toggle,
     render_drillable_bar_chart,
     render_entity_query_drilldown,
@@ -95,7 +96,7 @@ def render_cost_forecast(session, company: str, credit_price: float, max_wh_size
         render_chart_with_data_toggle(
             "Projected Daily Credits",
             "cc_forecast_daily_credits",
-            lambda: st.area_chart(df_f.set_index("DAY")["DAILY_CREDITS"]),
+            lambda: render_area_time_series_chart(df_f, "DAY", "DAILY_CREDITS"),
             df_f,
             priority_columns=["DAY", "DAILY_CREDITS"],
             sort_by=["DAY"],

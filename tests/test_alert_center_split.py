@@ -264,7 +264,72 @@ class AlertCenterSplitTests(unittest.TestCase):
         self.assertNotIn("_load_center_data(", render_source)
         self.assertIn('st.button(f"Load {source_view}"', render_source)
         self.assertIn("_render_alert_center_first_paint_shell(", render_source)
+        self.assertLess(
+            render_source.index('st.button(f"Load {source_view}"'),
+            render_source.index("_load_alert_center_view_data("),
+        )
         self.assertIn("First paint does not query Snowflake", inspect.getsource(alert_center._render_alert_center_first_paint_shell))
+
+    def test_alert_center_first_paint_summary_cold_state_is_on_demand(self):
+        summary = alert_center._alert_center_first_paint_summary(None, "Active Alerts")
+
+        self.assertEqual(summary["critical_high"], "On demand")
+        self.assertEqual(summary["overdue"], "On demand")
+        self.assertEqual(summary["open_queue"], "On demand")
+        self.assertEqual(summary["top_lane"], "Selected view")
+        self.assertEqual(summary["freshness"], "Not loaded")
+
+    def test_alert_center_first_paint_summary_uses_cached_summary(self):
+        cached_summary = {
+            "critical_high_count": 3,
+            "overdue_count": "2",
+            "open_queue_count": 5,
+            "loaded_at": "2026-06-24 09:00",
+        }
+
+        summary = alert_center._alert_center_first_paint_summary(
+            None,
+            "Active Alerts",
+            cached_summary=cached_summary,
+        )
+
+        self.assertEqual(summary["critical_high"], "3")
+        self.assertEqual(summary["overdue"], "2")
+        self.assertEqual(summary["open_queue"], "5")
+        self.assertEqual(summary["top_lane"], "Critical / high")
+        self.assertEqual(summary["freshness"], "2026-06-24 09:00")
+
+    def test_alert_center_cached_summary_scope_must_match_filters(self):
+        cached_summary = {
+            "source_view": "Active Alerts",
+            "company": "ALFA",
+            "environment": "PROD",
+            "days": 7,
+            "limit": 200,
+            "critical_high": "1",
+        }
+
+        self.assertIs(
+            alert_center._alert_center_cached_summary_for_scope(
+                cached_summary,
+                source_view="Active Alerts",
+                company="ALFA",
+                environment="PROD",
+                days=7,
+                limit=200,
+            ),
+            cached_summary,
+        )
+        self.assertIsNone(
+            alert_center._alert_center_cached_summary_for_scope(
+                cached_summary,
+                source_view="Active Alerts",
+                company="TREXIS",
+                environment="PROD",
+                days=7,
+                limit=200,
+            )
+        )
 
     def test_alert_center_first_paint_summary_uses_cached_session_data(self):
         cached = {

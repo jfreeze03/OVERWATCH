@@ -322,16 +322,66 @@ def _render_alert_center_metric_rows(
             ))
 
 
-def _alert_center_first_paint_summary(data: dict | None, source_view: str) -> dict[str, str]:
+def _summary_count_label(summary: dict, *keys: str) -> tuple[str, int | None]:
+    for key in keys:
+        value = summary.get(key)
+        if value in (None, ""):
+            continue
+        try:
+            count = int(float(str(value).replace(",", "")))
+            return f"{count:,}", count
+        except (TypeError, ValueError):
+            return str(value), None
+    return "On demand", None
+
+
+def _alert_center_cached_summary_for_scope(
+    summary: object,
+    *,
+    source_view: str,
+    company: str,
+    environment: str,
+    days: int,
+    limit: int,
+) -> dict | None:
+    if not isinstance(summary, dict):
+        return None
+    expected = (
+        ("source_view", source_view), ("company", company), ("environment", environment), ("days", int(days)), ("limit", int(limit)),
+    )
+    return summary if all(key not in summary or summary.get(key) == value for key, value in expected) else None
+
+
+def _alert_center_first_paint_summary(
+    data: dict | None,
+    source_view: str,
+    *,
+    cached_summary: dict | None = None,
+) -> dict[str, str]:
     """Summarize already-loaded Alert Center facts without reading Snowflake."""
     if not isinstance(data, dict):
-        return {
-            "critical_high": "On demand",
-            "overdue": "On demand",
-            "open_queue": "On demand",
-            "top_lane": "Selected view",
-            "freshness": "Not loaded",
-        }
+        if isinstance(cached_summary, dict):
+            critical_high, critical_count = _summary_count_label(cached_summary, "critical_high", "critical_high_count")
+            overdue, overdue_count = _summary_count_label(cached_summary, "overdue", "overdue_count")
+            open_queue, queue_count = _summary_count_label(cached_summary, "open_queue", "open_queue_count")
+            top_lane = str(cached_summary.get("top_lane") or "").strip()
+            if not top_lane:
+                top_lane = next(
+                    (label for label, count in (
+                        ("Critical / high", critical_count),
+                        ("Overdue SLA", overdue_count),
+                        ("Action queue", queue_count),
+                    ) if count),
+                    "Operating lanes",
+                )
+            return {
+                "critical_high": critical_high,
+                "overdue": overdue,
+                "open_queue": open_queue,
+                "top_lane": top_lane,
+                "freshness": str(cached_summary.get("freshness") or cached_summary.get("loaded_at") or "Cached summary"),
+            }
+        return dict(critical_high="On demand", overdue="On demand", open_queue="On demand", top_lane="Selected view", freshness="Not loaded")
     meta = _alert_center_loaded_meta(data, source_view)
     freshness = str(meta.get("loaded_at") or data.get("loaded_at") or "Loaded previously")
     pd = _pd()
@@ -346,7 +396,14 @@ def _alert_center_first_paint_summary(data: dict | None, source_view: str) -> di
     open_queue = 0
     if not queue.empty and "STATUS" in queue.columns:
         open_queue = int((~queue["STATUS"].fillna("New").astype(str).str.title().isin(["Fixed", "Ignored"])).sum())
-    top_lane = "Critical / high" if critical_high else "Overdue SLA" if overdue else "Action queue" if open_queue else "Operating lanes"
+    top_lane = next(
+        (label for label, count in (
+            ("Critical / high", critical_high),
+            ("Overdue SLA", overdue),
+            ("Action queue", open_queue),
+        ) if count),
+        "Operating lanes",
+    )
     return {
         "critical_high": f"{critical_high:,}",
         "overdue": f"{overdue:,}",
@@ -365,11 +422,12 @@ def _render_alert_center_first_paint_shell(
     limit: int,
     required_sources: set[str],
     data: dict | None = None,
+    cached_summary: dict | None = None,
     state: str = "Load on demand",
     note: str = "",
 ) -> None:
     """Render a useful Alert Center shell while detailed rows remain behind Load."""
-    summary = _alert_center_first_paint_summary(data, source_view)
+    summary = _alert_center_first_paint_summary(data, source_view, cached_summary=cached_summary)
     source_summary = _alert_center_source_summary(required_sources)
     cta_label = f"Load {source_view}"
     render_shell_status_strip(
@@ -734,6 +792,14 @@ def render() -> None:
         limit = st.selectbox("Rows", [50, 100, 200, 500], index=2)
     data = st.session_state.get("alert_center_data")
     expected_scope = (company, environment, int(days), int(limit))
+    cached_summary = _alert_center_cached_summary_for_scope(
+        st.session_state.get("alert_center_cached_summary"),
+        source_view=source_view,
+        company=company,
+        environment=environment,
+        days=int(days),
+        limit=int(limit),
+    )
     loaded_sources = set(data.get("_loaded_sources") or []) if isinstance(data, dict) else set()
     current_data = (
         isinstance(data, dict)
@@ -770,6 +836,7 @@ def render() -> None:
             days=int(days),
             limit=int(limit),
             required_sources=required_sources,
+            cached_summary=cached_summary,
         )
         defer_source_note(f"Inputs on load: {_alert_center_source_summary(required_sources)}")
         _render_advanced_alert_diagnostics(company, environment)
@@ -785,6 +852,7 @@ def render() -> None:
             limit=int(limit),
             required_sources=required_sources,
             data=data,
+            cached_summary=cached_summary,
             state="Scope changed",
             note="Company, environment, or window changed after this load. Reload before triaging alerts.",
         )
@@ -802,6 +870,7 @@ def render() -> None:
             limit=int(limit),
             required_sources=required_sources,
             data=data,
+            cached_summary=cached_summary,
             state="Inputs needed",
             note=f"Load {source_view} to fetch missing input(s): {_alert_center_source_summary(set(missing_sources))}.",
         )
@@ -862,6 +931,15 @@ def render() -> None:
     email_ready_count = int(email_ready.sum()) if len(email_ready) else 0
     email_logged_count = int(email_logged.sum()) if len(email_logged) else 0
     open_queue_count = int(open_queue.sum()) if len(open_queue) else 0
+    loaded_summary = _alert_center_first_paint_summary(data, source_view)
+    st.session_state["alert_center_cached_summary"] = {
+        **loaded_summary,
+        "source_view": source_view,
+        "company": company,
+        "environment": environment,
+        "days": int(days),
+        "limit": int(limit),
+    }
 
     readiness_rows = pd.DataFrame()
     exception_rows = _alert_center_exception_rows(

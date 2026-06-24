@@ -50,6 +50,12 @@ without live Snowflake reads. A section entry should show the active view,
 scope, freshness, expected lanes, and the next safe load action before detailed
 rows, exports, and specialist diagnostics appear.
 
+Visible section subtitles should explain the current operating surface in one
+short line. Workflow selectors may collapse advanced choices when the selected
+workflow remains visible and deep-link/session-state behavior is preserved.
+Alert Center first paint should show cached counts when they are already in
+session state, otherwise it should stay explicitly on demand until Load is used.
+
 ## Charts And Tables
 
 Charts should explain movement. Tables should prove details.
@@ -60,6 +66,7 @@ Rules:
 - Provide a way back to the chart after exposing the chart data table.
 - Avoid duplicate chart/table pairs that show the same fact twice.
 - Prefer ranking charts for top spenders and trend charts for movement.
+- Prefer shared OVERWATCH Altair helpers for time-series and area charts.
 - Use source/freshness help where a metric depends on delayed Snowflake views.
 
 ## Text And Labels

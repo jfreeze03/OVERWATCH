@@ -34,6 +34,7 @@ class LiveConcurrentProfileTests(unittest.TestCase):
         self.assertEqual(args.ramp_seconds, 12)
         self.assertTrue(args.single_initial_load)
         self.assertTrue(args.fail_console_errors)
+        self.assertTrue(args.initial_load_substeps)
         self.assertTrue(args.wait_initial_idle)
         self.assertEqual(args.fail_p95_ms, 10000)
         self.assertEqual(args.fail_error_rate, 0.0)
@@ -211,6 +212,76 @@ class LiveConcurrentProfileTests(unittest.TestCase):
 
         self.assertEqual(summary["browser_error_messages"][0], {"message": "console boom", "count": 2})
         self.assertIn("browser_errors", {item["type"] for item in summary["release_blockers"]})
+
+    def test_diagnostic_samples_are_excluded_from_release_scoring(self):
+        runner = load_live_runner()
+        args = argparse.Namespace(users=1, iterations=1, fail_p95_ms=10000, fail_error_rate=0.0)
+        samples = [
+            runner.StepSample(1, 1, "App Shell", "initial_load", 900.0, True),
+            runner.StepSample(
+                1,
+                1,
+                "App Shell",
+                "initial_load:app_ready",
+                50000.0,
+                False,
+                browser_errors=1,
+                browser_error_messages=["diagnostic only"],
+                diagnostic=True,
+            ),
+        ]
+
+        summary = runner.summarize(samples, 1.0, args)
+
+        self.assertEqual(summary["steps"], 1)
+        self.assertEqual(summary["diagnostic_steps"], 1)
+        self.assertEqual(summary["p95_ms"], 900.0)
+        self.assertEqual(summary["errors"], 0)
+        self.assertEqual(summary["browser_error_steps"], 0)
+        self.assertEqual(summary["readiness_state"], "PASS")
+        self.assertNotIn("p95_threshold", {item["type"] for item in summary["release_blockers"]})
+        self.assertEqual(summary["diagnostic_by_action"]["initial_load:app_ready"]["p95_ms"], 50000.0)
+        self.assertEqual(summary["initial_load_breakdown"][0]["action"], "initial_load:app_ready")
+
+    def test_diagnostic_samples_are_written_to_reports(self):
+        runner = load_live_runner()
+        args = argparse.Namespace(
+            url="http://localhost:8501/",
+            users=1,
+            iterations=1,
+            sections=["Executive Landing"],
+            load_buttons=False,
+            output_dir="",
+            run_id="DIAGNOSTIC_REPORT_TEST",
+        )
+        samples = [
+            runner.StepSample(1, 1, "App Shell", "initial_load", 900.0, True),
+            runner.StepSample(
+                1,
+                1,
+                "App Shell",
+                "initial_load:goto_domcontentloaded",
+                200.0,
+                True,
+                diagnostic=True,
+            ),
+        ]
+        summary = runner.summarize(
+            samples,
+            1.0,
+            argparse.Namespace(users=1, iterations=1, fail_p95_ms=10000, fail_error_rate=0.0),
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            args.output_dir = temp_dir
+
+            json_path, md_path = runner.write_reports(args, samples, summary)
+
+            payload = json_path.read_text(encoding="utf-8")
+            markdown = md_path.read_text(encoding="utf-8")
+        self.assertIn('"diagnostic": true', payload)
+        self.assertIn("Diagnostic Action P95", markdown)
+        self.assertIn("Initial Load Breakdown", markdown)
+        self.assertIn("goto_domcontentloaded", markdown)
 
 
 if __name__ == "__main__":

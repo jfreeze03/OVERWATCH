@@ -2,7 +2,9 @@ from pathlib import Path
 import ast
 import contextlib
 import importlib.util
+import json
 import re
+import subprocess
 import sys
 import unittest
 from dataclasses import fields, is_dataclass
@@ -137,7 +139,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("def current_role_allows_app_access", access_text)
         self.assertIn("def admin_access_is_allowed", access_text)
         self.assertIn("_SNOWFLAKE_AVAILABLE_PROCESS_CACHE", access_text)
+        self.assertIn("_SNOWFLAKE_AVAILABLE_LOCK = threading.Lock()", access_text)
         self.assertIn("if not force and _SNOWFLAKE_AVAILABLE_PROCESS_CACHE is not None", access_text)
+        self.assertIn("_SNOWFLAKE_AVAILABLE_LOCK.acquire(blocking=False)", access_text)
         self.assertIn('set_state(CURRENT_ROLE_SOURCE, "secrets")', access_text)
         self.assertIn('get_state(CURRENT_ROLE_SOURCE) == "session"', access_text)
         self.assertIn("SNOW_ACCOUNTADMINS or SNOW_SYSADMINS", layout_text)
@@ -217,8 +221,8 @@ class NavigationIntegrityTests(unittest.TestCase):
             for section, module_path in SECTION_MODULES.items()
             if module_path.endswith("_shell")
         }
-        self.assertEqual(shell_modules, {})
-        self.assertEqual(SECTION_MODULES["Executive Landing"], "sections.executive_landing")
+        self.assertEqual(shell_modules, {"Executive Landing": "sections.executive_landing_shell"})
+        self.assertEqual(SECTION_MODULES["Executive Landing"], "sections.executive_landing_shell")
         self.assertEqual(SECTION_MODULES["DBA Control Room"], "sections.dba_control_room")
         self.assertEqual(SECTION_MODULES["Alert Center"], "sections.alert_center")
         self.assertEqual(SECTION_MODULES["Cost & Contract"], "sections.cost_contract")
@@ -229,7 +233,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertFalse((APP_ROOT / "sections" / "cost_contract_shell.py").exists())
         self.assertFalse((APP_ROOT / "sections" / "workload_operations_shell.py").exists())
         self.assertFalse((APP_ROOT / "sections" / "security_monitoring.py").exists())
-        self.assertFalse((APP_ROOT / "sections" / "executive_landing_shell.py").exists())
+        self.assertTrue((APP_ROOT / "sections" / "executive_landing_shell.py").exists())
 
         helper_text = (APP_ROOT / "sections" / "shell_helpers.py").read_text(encoding="utf-8")
         self.assertIn("def full_workspace_requested", helper_text)
@@ -239,11 +243,12 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("state[brief_key] = False", helper_text)
 
         executive_text = (APP_ROOT / "sections" / "executive_landing.py").read_text(encoding="utf-8")
+        executive_shell = (APP_ROOT / "sections" / "executive_landing_shell.py").read_text(encoding="utf-8")
         executive_overview = (APP_ROOT / "sections" / "executive_landing_overview_view.py").read_text(encoding="utf-8")
         executive_security = (APP_ROOT / "sections" / "executive_landing_security_view.py").read_text(encoding="utf-8")
         self.assertIn("Snowflake Observability Wall", executive_overview)
         self.assertNotIn("Executive Summary Signals", executive_text)
-        self.assertIn("Refresh Summary", executive_text)
+        self.assertIn("Refresh Summary", executive_shell)
 
     def test_app_shell_first_paint_stays_lazy_and_query_builder_clean(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
@@ -251,12 +256,14 @@ class NavigationIntegrityTests(unittest.TestCase):
         navigation_text = (APP_ROOT / "navigation.py").read_text(encoding="utf-8")
         dispatch_text = (APP_ROOT / "section_dispatch.py").read_text(encoding="utf-8")
         route_registry_text = (APP_ROOT / "route_registry.py").read_text(encoding="utf-8")
+        executive_shell_text = (APP_ROOT / "sections" / "executive_landing_shell.py").read_text(encoding="utf-8")
         first_paint_text = "\n".join([
             app_text,
             shell_text,
             navigation_text,
             dispatch_text,
             route_registry_text,
+            executive_shell_text,
         ])
 
         self.assertNotRegex(first_paint_text, r"\brun_query(?:_or_raise)?\s*\(")
@@ -265,6 +272,49 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("from sections.", shell_text)
         self.assertNotIn("from sections import", shell_text)
         self.assertIn("importlib.import_module(module_path)", dispatch_text)
+        self.assertNotIn("from sections.executive_landing_overview_view import", executive_shell_text)
+        self.assertNotIn("from sections.executive_landing_admin_view import", executive_shell_text)
+        self.assertIn("importlib.import_module(module_path)", executive_shell_text)
+
+    def test_importing_shell_does_not_load_executive_workflow_modules(self):
+        code = (
+            "import json, pathlib, sys\n"
+            f"sys.path.insert(0, {str(APP_ROOT)!r})\n"
+            "import shell\n"
+            "broad = sorted(name for name in sys.modules if name.startswith('sections.executive_landing_') "
+            "and name.rsplit('.', 1)[-1] not in {'executive_landing_common', 'executive_landing_contracts', "
+            "'executive_landing_data', 'executive_landing_models', 'executive_landing_shell'})\n"
+            "print(json.dumps(broad))\n"
+        )
+
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(json.loads(result.stdout.strip().splitlines()[-1]), [])
+
+    def test_executive_landing_route_module_is_lightweight(self):
+        code = (
+            "import importlib, json, pathlib, sys\n"
+            f"sys.path.insert(0, {str(APP_ROOT)!r})\n"
+            "importlib.import_module('sections.executive_landing_shell')\n"
+            "broad = sorted(name for name in sys.modules if name.startswith('sections.executive_landing_') "
+            "and name.rsplit('.', 1)[-1] not in {'executive_landing_common', 'executive_landing_contracts', "
+            "'executive_landing_data', 'executive_landing_models', 'executive_landing_shell'})\n"
+            "print(json.dumps(broad))\n"
+        )
+
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(json.loads(result.stdout.strip().splitlines()[-1]), [])
 
     def test_shell_evidence_label_reflects_loaded_state(self):
         keys = ("loaded_frame", "loaded_error")
@@ -441,26 +491,29 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotRegex(combined, r"see chart [A-D]|chart [A-D]|Chart [A-D]")
 
     def test_executive_landing_uses_direct_observability_module(self):
-        self.assertEqual(SECTION_MODULES["Executive Landing"], "sections.executive_landing")
-        self.assertFalse((APP_ROOT / "sections" / "executive_landing_shell.py").exists())
+        self.assertEqual(SECTION_MODULES["Executive Landing"], "sections.executive_landing_shell")
+        self.assertTrue((APP_ROOT / "sections" / "executive_landing_shell.py").exists())
         full_workspace_text = (APP_ROOT / "sections" / "executive_landing.py").read_text(encoding="utf-8")
+        route_shell_text = (APP_ROOT / "sections" / "executive_landing_shell.py").read_text(encoding="utf-8")
         observability_text = (APP_ROOT / "sections" / "executive_landing_data.py").read_text(encoding="utf-8")
         overview_text = (APP_ROOT / "sections" / "executive_landing_overview_view.py").read_text(encoding="utf-8")
 
         self.assertIn("def _load_executive_observability", observability_text)
-        self.assertIn("_executive_landing_observability_autoload_scope", full_workspace_text)
+        self.assertIn("_executive_landing_observability_autoload_scope", route_shell_text)
         self.assertIn("def _executive_observability_autoload_allowed", observability_text)
         self.assertIn("Executive first paint must not query Snowflake automatically.", observability_text)
         self.assertIn("def _executive_observability_connection_unavailable", observability_text)
         self.assertIn('st.session_state.get("_overwatch_connection_available") is not True', observability_text)
         self.assertIn("or snowflake_connection_known_unavailable()", observability_text)
-        self.assertIn("Use Refresh Summary to read the compact observability mart.", full_workspace_text)
-        self.assertIn("_store_connection_unavailable_observability(company, environment, int(days))", full_workspace_text)
-        self.assertIn("refresh_session = get_session_for_action", full_workspace_text)
+        self.assertIn("Use Refresh Summary to read the compact observability mart.", route_shell_text)
+        self.assertIn("_store_connection_unavailable_observability(company, environment, int(days))", route_shell_text)
+        self.assertIn("refresh_session = get_session_for_action", route_shell_text)
+        first_load_block = route_shell_text.split("if needs_first_load:", 1)[1].split("if refresh_board:", 1)[0]
+        self.assertNotIn("_load_executive_observability(", first_load_block)
         self.assertNotIn("st.session_state.get(autoload_scope_key) != expected_scope", full_workspace_text + observability_text)
         self.assertIn("Snowflake Observability Wall", overview_text)
         self.assertNotIn("Executive Summary Signals", full_workspace_text)
-        self.assertIn("Refresh Summary", full_workspace_text)
+        self.assertIn("Refresh Summary", route_shell_text)
         self.assertNotIn("Refresh Board", full_workspace_text)
         self.assertNotIn("Executive Command Wall", full_workspace_text)
         self.assertNotIn("Setup Readiness", full_workspace_text)
@@ -734,7 +787,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         layout_text = (APP_ROOT / "layout.py").read_text(encoding="utf-8")
 
         self.assertIn("Executive Landing", ALL_SECTIONS)
-        self.assertEqual(SECTION_MODULES["Executive Landing"], "sections.executive_landing")
+        self.assertEqual(SECTION_MODULES["Executive Landing"], "sections.executive_landing_shell")
         self.assertIn("ADMIN_ACCESS_ROLES", config_text)
         self.assertIn("def current_role_allows_app_access", access_text)
         self.assertIn("def render_admin_access_required", layout_text)
@@ -752,6 +805,7 @@ class NavigationIntegrityTests(unittest.TestCase):
 
     def test_executive_landing_routes_to_workflow_panes(self):
         executive_text = (APP_ROOT / "sections" / "executive_landing.py").read_text(encoding="utf-8")
+        executive_shell = (APP_ROOT / "sections" / "executive_landing_shell.py").read_text(encoding="utf-8")
         executive_contracts = (APP_ROOT / "sections" / "executive_landing_contracts.py").read_text(encoding="utf-8")
         executive_common = (APP_ROOT / "sections" / "executive_landing_common.py").read_text(encoding="utf-8")
         executive_data_health = (APP_ROOT / "sections" / "executive_landing_data_health_view.py").read_text(encoding="utf-8")
@@ -762,7 +816,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         executive_admin = (APP_ROOT / "sections" / "executive_landing_admin_view.py").read_text(encoding="utf-8")
         route_registry_text = (APP_ROOT / "route_registry.py").read_text(encoding="utf-8")
 
-        self.assertIn("_source_health_rows", executive_text)
+        self.assertIn("_source_health_rows", executive_shell)
         self.assertIn("Executive Data Health", executive_data_health)
         self.assertIn("EXECUTIVE_LANDING_WORKFLOWS = (", executive_contracts)
         for workflow in (
@@ -775,7 +829,7 @@ class NavigationIntegrityTests(unittest.TestCase):
             "Executive Admin / Advanced",
         ):
             self.assertIn(workflow, executive_contracts)
-        self.assertIn("normalize_executive_landing_workflow", executive_text)
+        self.assertIn("normalize_executive_landing_workflow", executive_shell)
         self.assertIn('WORKFLOW_ALIASES_BY_SECTION["Executive Landing"]', executive_contracts)
         self.assertIn('"Executive Briefing": "Executive Overview"', route_registry_text)
         self.assertIn('"Adoption Analytics": "Executive Admin / Advanced"', route_registry_text)

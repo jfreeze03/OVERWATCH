@@ -198,12 +198,13 @@ class Production95ContractsTests(unittest.TestCase):
         self.assertNotIn("Top Priority Brief", app_text)
         self.assertNotIn("priority_brief_slot", app_text)
         self.assertIn(
-            'SectionDefinition("MONITORING CORE", "briefcase", "Executive Landing", "sections.executive_landing")',
+            'SectionDefinition("MONITORING CORE", "briefcase", "Executive Landing", "sections.executive_landing_shell")',
             (APP_ROOT / "config.py").read_text(encoding="utf-8"),
         )
-        self.assertFalse((APP_ROOT / "sections" / "executive_landing_shell.py").exists())
+        self.assertTrue((APP_ROOT / "sections" / "executive_landing_shell.py").exists())
         self.assertIn("def _load_executive_observability", executive_data)
-        self.assertIn("_executive_landing_observability_autoload_scope", executive_text)
+        executive_shell = (APP_ROOT / "sections" / "executive_landing_shell.py").read_text(encoding="utf-8")
+        self.assertIn("_executive_landing_observability_autoload_scope", executive_shell)
         self.assertIn("def _executive_observability_autoload_allowed", executive_data)
         self.assertIn("_store_connection_unavailable_observability", executive_data)
         self.assertIn("Snowflake Observability Wall", executive_overview)

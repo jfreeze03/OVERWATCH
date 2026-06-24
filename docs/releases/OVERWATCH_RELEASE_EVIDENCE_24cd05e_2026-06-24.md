@@ -47,22 +47,26 @@
 - Readiness score: `100/100`
 
 ## 12 Power User Performance
-- Run ID: `PERF_12_POWER_USERS_RELEASE_RERUN`
+- Run ID: `PERF_12_POWER_USERS_RELEASE_RERUN2`
 - Users: `12`
 - Iterations: `3`
-- p95: `10712.96 ms`
-- p99: `19204.93 ms`
+- p95: `26196.91 ms`
+- p99: `27696.06 ms`
 - errors: `0`
-- readiness: `80/100`
+- readiness: `57/100`
 - slowest section: `App Shell`
 - slowest action: `initial_load`
 - skipped buttons: `0`
-- live report path: `perf_tests/results/PERF_12_POWER_USERS_RELEASE_RERUN_live_concurrent.json`
-- expert review path: `perf_tests/results/PERF_12_POWER_USERS_RELEASE_RERUN_expert_review.md`
+- live report path: `perf_tests/results/PERF_12_POWER_USERS_RELEASE_RERUN2_live_concurrent.json`
+- expert review path: `perf_tests/results/PERF_12_POWER_USERS_RELEASE_RERUN2_expert_review.md`
+- import timing path: `perf_tests/results/IMPORT_TIMING_A545D09_RERUN2_import_timing.json`
+- diagnostic samples: `48` initial-load substeps, excluded from release p95/readiness/error scoring.
+- initial-load breakdown p95: `app_ready 23824.96 ms`, `goto_domcontentloaded 19439.42 ms`, `initial_wait 1218.12 ms`, `idle_wait 915.76 ms`.
+- import timing summary: all `8` module imports passed; slowest cold import was `shell` at `4370.01 ms`, followed by `sections.alert_center` at `3509.22 ms` and `sections.cost_contract` at `1984.85 ms`.
 - artifact storage: `perf_tests/results/` is intentionally stored outside git; reason: generated Playwright performance artifacts are local run evidence with environment-specific timing and browser metadata.
 - result: FAIL, because p95 exceeded the 10000 ms 12-power-user release threshold even though browser-step errors were zero.
-- release blockers: p95 threshold exceeded (`10712.96 ms` > `10000 ms`) and readiness remained below target (`80/100` < `95/100`).
-- top next fixes: reduce App Shell `initial_load` tail latency under 12 new sessions, then tune first-iteration DBA Control Room navigation p95.
+- release blockers: p95 threshold exceeded (`26196.91 ms` > `10000 ms`) and readiness remained below target (`57/100` < `95/100`).
+- top next fixes: reduce App Shell cold first-render/server-response latency for `initial_load:app_ready` and `initial_load:goto_domcontentloaded`, then rerun DBA Control Room/section navigation p95 under the same profile.
 
 ## Guarded Operations
 - Action queue review-only smoke: PASS via unit contracts covering review-only action queue behavior and full unit discovery
@@ -96,6 +100,6 @@
 - Owner: release operator
 - Follow-up: rerun `perf_tests/full_app_snowflake_regression.py` only when a fresh credentialed release gate is required.
 - Item: 12 heavy power user benchmark for `24cd05e`
-- Reason: Failed on rerun because live browser p95 was `10712.96 ms` against the `10000 ms` threshold and readiness was `80/100`; skipped buttons were reduced to `0`, but App Shell `initial_load` remained the slowest action.
+- Reason: Failed on RERUN2 because live browser p95 was `26196.91 ms` against the `10000 ms` threshold and readiness was `57/100`; skipped buttons remained `0`, but App Shell `initial_load` remained the slowest action. Diagnostic substeps show `initial_load:app_ready` p95 `23824.96 ms` and `initial_load:goto_domcontentloaded` p95 `19439.42 ms`.
 - Owner: release operator
-- Follow-up: tune App Shell first-load tail latency and DBA Control Room first-iteration navigation; rerun `python perf_tests/run_12_power_users.py --url http://localhost:8503/ --run-id PERF_12_POWER_USERS_RELEASE_RERUN --output-dir perf_tests/results` and regenerate the expert review.
+- Follow-up: tune App Shell first-render/server-response tail latency; rerun `python perf_tests/run_12_power_users.py --url http://localhost:8503/ --run-id PERF_12_POWER_USERS_RELEASE_RERUN2 --output-dir perf_tests/results` and regenerate the expert review.

@@ -302,7 +302,7 @@ class SectionDefinition:
 # first-class in front of DBAs and leadership. Legacy redirect aliases below
 # keep deep links working without keeping weak standalone pages alive.
 SECTION_DEFINITIONS = (
-    SectionDefinition("MONITORING CORE", "briefcase", "Executive Landing", "sections.executive_landing"),
+    SectionDefinition("MONITORING CORE", "briefcase", "Executive Landing", "sections.executive_landing_shell"),
     SectionDefinition("MONITORING CORE", "target", "DBA Control Room", "sections.dba_control_room"),
     SectionDefinition("MONITORING CORE", "bell", "Alert Center", "sections.alert_center"),
     SectionDefinition("FINANCIAL CONTROL", "cost", "Cost & Contract", "sections.cost_contract"),

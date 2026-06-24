@@ -86,6 +86,7 @@ class StepSample:
     browser_errors: int = 0
     browser_error_messages: list[str] = dataclasses.field(default_factory=list)
     skipped: bool = False
+    diagnostic: bool = False
 
 
 def percentile(values: list[float], pct: float) -> float:
@@ -124,6 +125,7 @@ def _default_config() -> dict:
         "fail_console_errors": False,
         "timeout_ms": 60000,
         "initial_wait_ms": 1200,
+        "initial_load_substeps": False,
         "wait_initial_idle": False,
         "single_initial_load": False,
         "action_settle_ms": 900,
@@ -333,6 +335,7 @@ async def timed_step(
     action: str,
     browser_errors: list[str],
     operation,
+    diagnostic: bool = False,
 ) -> StepSample:
     before_browser_errors = len(browser_errors)
     started = time.perf_counter()
@@ -355,6 +358,7 @@ async def timed_step(
             browser_errors=max(0, new_browser_errors),
             browser_error_messages=[message[:500] for message in new_browser_messages[:5]],
             skipped=skipped,
+            diagnostic=diagnostic,
         )
     except Exception as exc:
         elapsed_ms = (time.perf_counter() - started) * 1000
@@ -371,7 +375,101 @@ async def timed_step(
             visible_error=visible_error[:500],
             browser_errors=max(0, len(new_browser_messages)),
             browser_error_messages=[message[:500] for message in new_browser_messages[:5]],
+            diagnostic=diagnostic,
         )
+
+
+async def timed_diagnostic_step(
+    *,
+    user_id: int,
+    iteration: int,
+    section: str,
+    action: str,
+    browser_errors: list[str],
+    operation,
+) -> StepSample:
+    """Time a real phase without adding extra DOM probes to the scored step."""
+    before_browser_errors = len(browser_errors)
+    started = time.perf_counter()
+    try:
+        await operation()
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        new_browser_messages = browser_errors[before_browser_errors:]
+        return StepSample(
+            user_id=user_id,
+            iteration=iteration,
+            section=section,
+            action=action,
+            elapsed_ms=elapsed_ms,
+            ok=len(new_browser_messages) == 0,
+            browser_errors=len(new_browser_messages),
+            browser_error_messages=[message[:500] for message in new_browser_messages[:5]],
+            diagnostic=True,
+        )
+    except Exception as exc:
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        new_browser_messages = browser_errors[before_browser_errors:]
+        return StepSample(
+            user_id=user_id,
+            iteration=iteration,
+            section=section,
+            action=action,
+            elapsed_ms=elapsed_ms,
+            ok=False,
+            error=str(exc).replace("\n", " ")[:500],
+            browser_errors=len(new_browser_messages),
+            browser_error_messages=[message[:500] for message in new_browser_messages[:5]],
+            diagnostic=True,
+        )
+
+
+async def run_initial_load(
+    *,
+    page,
+    args: argparse.Namespace,
+    user_id: int,
+    iteration: int,
+    browser_errors: list[str],
+    samples: list[StepSample],
+) -> None:
+    async def run_phase(action: str, operation) -> None:
+        sample = await timed_diagnostic_step(
+            user_id=user_id,
+            iteration=iteration,
+            section="App Shell",
+            action=action,
+            browser_errors=browser_errors,
+            operation=operation,
+        )
+        samples.append(sample)
+        if not sample.ok:
+            raise RuntimeError(sample.error or f"{action} failed")
+
+    if args.initial_load_substeps:
+        await run_phase(
+            "initial_load:goto_domcontentloaded",
+            lambda: page.goto(args.url, wait_until="domcontentloaded", timeout=args.timeout_ms),
+        )
+        await run_phase(
+            "initial_load:initial_wait",
+            lambda: page.wait_for_timeout(args.initial_wait_ms),
+        )
+        await run_phase(
+            "initial_load:app_ready",
+            lambda: wait_for_app_ready(page, args.timeout_ms),
+        )
+        if args.wait_initial_idle:
+            await run_phase(
+                "initial_load:idle_wait",
+                lambda: wait_for_streamlit_idle(page, args.timeout_ms, args.action_settle_ms),
+            )
+        return
+
+    await page.goto(args.url, wait_until="domcontentloaded", timeout=args.timeout_ms)
+    await page.wait_for_timeout(args.initial_wait_ms)
+    await wait_for_app_ready(page, args.timeout_ms)
+    if args.wait_initial_idle:
+        await wait_for_streamlit_idle(page, args.timeout_ms, args.action_settle_ms)
 
 
 async def run_user(browser, args: argparse.Namespace, user_id: int) -> list[StepSample]:
@@ -392,14 +490,17 @@ async def run_user(browser, args: argparse.Namespace, user_id: int) -> list[Step
         )
 
     try:
-        async def initial_load():
-            await page.goto(args.url, wait_until="domcontentloaded", timeout=args.timeout_ms)
-            await page.wait_for_timeout(args.initial_wait_ms)
-            await wait_for_app_ready(page, args.timeout_ms)
-            if args.wait_initial_idle:
-                await wait_for_streamlit_idle(page, args.timeout_ms, args.action_settle_ms)
-
         if args.single_initial_load:
+            async def initial_load():
+                await run_initial_load(
+                    page=page,
+                    args=args,
+                    user_id=user_id,
+                    iteration=1,
+                    browser_errors=browser_errors,
+                    samples=samples,
+                )
+
             initial_sample = await timed_step(
                 page=page,
                 user_id=user_id,
@@ -415,6 +516,16 @@ async def run_user(browser, args: argparse.Namespace, user_id: int) -> list[Step
 
         for iteration in range(1, args.iterations + 1):
             if not args.single_initial_load:
+                async def initial_load(iteration_number=iteration):
+                    await run_initial_load(
+                        page=page,
+                        args=args,
+                        user_id=user_id,
+                        iteration=iteration_number,
+                        browser_errors=browser_errors,
+                        samples=samples,
+                    )
+
                 initial_sample = await timed_step(
                     page=page,
                     user_id=user_id,
@@ -509,36 +620,38 @@ async def run_stress(args: argparse.Namespace) -> tuple[list[StepSample], float]
 
 
 def summarize(samples: list[StepSample], total_elapsed_sec: float, args: argparse.Namespace) -> dict:
-    measured_samples = [sample for sample in samples if not sample.skipped]
+    release_samples = [sample for sample in samples if not sample.diagnostic]
+    diagnostic_samples = [sample for sample in samples if sample.diagnostic]
+    measured_samples = [sample for sample in release_samples if not sample.skipped]
     elapsed = [sample.elapsed_ms for sample in measured_samples]
     errors = sum(1 for sample in measured_samples if not sample.ok)
     error_rate = errors / len(measured_samples) if measured_samples else 1.0
-    skipped = sum(1 for sample in samples if sample.skipped)
+    skipped = sum(1 for sample in release_samples if sample.skipped)
     p95_ms = percentile(elapsed, 95)
     p99_ms = percentile(elapsed, 99)
-    browser_error_steps = sum(1 for sample in samples if sample.browser_errors)
+    browser_error_steps = sum(1 for sample in release_samples if sample.browser_errors)
     browser_error_messages: dict[str, int] = {}
     visible_errors: dict[str, int] = {}
-    for sample in samples:
+    for sample in release_samples:
         if sample.visible_error:
             visible_errors[sample.visible_error] = visible_errors.get(sample.visible_error, 0) + 1
         for message in sample.browser_error_messages:
             browser_error_messages[message] = browser_error_messages.get(message, 0) + 1
     step_counts = {
-        "initial_load": sum(1 for sample in samples if sample.action == "initial_load"),
-        "section_nav": sum(1 for sample in samples if sample.action == "section_nav"),
-        "load_button": sum(1 for sample in samples if sample.action.startswith("load_button:")),
+        "initial_load": sum(1 for sample in release_samples if sample.action == "initial_load"),
+        "section_nav": sum(1 for sample in release_samples if sample.action == "section_nav"),
+        "load_button": sum(1 for sample in release_samples if sample.action.startswith("load_button:")),
     }
     skipped_by_label: dict[str, int] = {}
-    for sample in samples:
+    for sample in release_samples:
         if not sample.skipped:
             continue
         label = sample.action.split(":", 1)[1] if sample.action.startswith("load_button:") else sample.action
         skipped_by_label[label] = skipped_by_label.get(label, 0) + 1
 
     by_action = {}
-    for action in sorted({sample.action for sample in samples}):
-        action_samples = [sample for sample in samples if sample.action == action]
+    for action in sorted({sample.action for sample in release_samples}):
+        action_samples = [sample for sample in release_samples if sample.action == action]
         action_elapsed = [sample.elapsed_ms for sample in action_samples if not sample.skipped]
         by_action[action] = {
             "steps": len(action_samples),
@@ -549,8 +662,8 @@ def summarize(samples: list[StepSample], total_elapsed_sec: float, args: argpars
         }
 
     by_section = {}
-    for section in sorted({sample.section for sample in samples}):
-        section_samples = [sample for sample in samples if sample.section == section]
+    for section in sorted({sample.section for sample in release_samples}):
+        section_samples = [sample for sample in release_samples if sample.section == section]
         section_elapsed = [sample.elapsed_ms for sample in section_samples if not sample.skipped]
         by_section[section] = {
             "steps": len(section_samples),
@@ -567,6 +680,26 @@ def summarize(samples: list[StepSample], total_elapsed_sec: float, args: argpars
     top_slowest_sections = [
         {"section": section, **row}
         for section, row in sorted(by_section.items(), key=lambda item: item[1]["p95_ms"], reverse=True)
+    ]
+    diagnostic_by_action = {}
+    for action in sorted({sample.action for sample in diagnostic_samples}):
+        action_samples = [sample for sample in diagnostic_samples if sample.action == action]
+        action_elapsed = [sample.elapsed_ms for sample in action_samples if not sample.skipped]
+        diagnostic_by_action[action] = {
+            "steps": len(action_samples),
+            "errors": sum(1 for sample in action_samples if not sample.ok and not sample.skipped),
+            "skipped": sum(1 for sample in action_samples if sample.skipped),
+            "p95_ms": round(percentile(action_elapsed, 95), 2),
+            "max_ms": round(max(action_elapsed), 2) if action_elapsed else 0.0,
+        }
+    initial_load_breakdown = [
+        {"action": action, **row}
+        for action, row in sorted(
+            diagnostic_by_action.items(),
+            key=lambda item: item[1]["p95_ms"],
+            reverse=True,
+        )
+        if action.startswith("initial_load:")
     ]
 
     score = 100
@@ -623,7 +756,9 @@ def summarize(samples: list[StepSample], total_elapsed_sec: float, args: argpars
     return {
         "users": args.users,
         "iterations": args.iterations,
-        "steps": len(samples),
+        "steps": len(release_samples),
+        "diagnostic_steps": len(diagnostic_samples),
+        "total_samples": len(samples),
         "measured_steps": len(measured_samples),
         "skipped": skipped,
         "errors": errors,
@@ -649,6 +784,8 @@ def summarize(samples: list[StepSample], total_elapsed_sec: float, args: argpars
         "skipped_by_label": skipped_by_label,
         "top_slowest_actions": top_slowest_actions,
         "top_slowest_sections": top_slowest_sections,
+        "diagnostic_by_action": diagnostic_by_action,
+        "initial_load_breakdown": initial_load_breakdown,
         "release_blockers": release_blockers,
         "by_action": by_action,
         "by_section": by_section,
@@ -706,7 +843,8 @@ def write_reports(args: argparse.Namespace, samples: list[StepSample], summary: 
     md_path = output_dir / f"{args.run_id}_live_concurrent.md"
     json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
-    measured_samples = [sample for sample in samples if not sample.skipped]
+    measured_samples = [sample for sample in samples if not sample.skipped and not sample.diagnostic]
+    diagnostic_samples = [sample for sample in samples if sample.diagnostic]
     slowest = sorted(measured_samples, key=lambda item: item.elapsed_ms, reverse=True)[:15]
     failures = [sample for sample in measured_samples if not sample.ok][:15]
     md = [
@@ -718,7 +856,8 @@ def write_reports(args: argparse.Namespace, samples: list[StepSample], summary: 
         f"- Sections: `{', '.join(args.sections)}`",
         f"- Live load buttons: `{'enabled' if args.load_buttons else 'disabled'}`",
         f"- Readiness: **{summary['readiness_state']}** ({summary['readiness_score']}/100)",
-        f"- Steps: {summary['steps']} total, {summary['measured_steps']} measured, {summary['skipped']} skipped, {summary['errors']} errors ({summary['error_rate'] * 100:.2f}%)",
+        f"- Release steps: {summary['steps']} total, {summary['measured_steps']} measured, {summary['skipped']} skipped, {summary['errors']} errors ({summary['error_rate'] * 100:.2f}%)",
+        f"- Diagnostic samples: {summary['diagnostic_steps']}",
         f"- Step counts: initial_load {summary['step_counts']['initial_load']}, section_nav {summary['step_counts']['section_nav']}, load_button {summary['step_counts']['load_button']}",
         f"- Latency: p50 {summary['p50_ms']} ms, p95 {summary['p95_ms']} ms, p99 {summary['p99_ms']} ms, max {summary['max_ms']} ms",
         f"- Throughput: {summary['throughput_steps_per_sec']} successful browser steps/sec",
@@ -748,6 +887,50 @@ def write_reports(args: argparse.Namespace, samples: list[StepSample], summary: 
     ])
     for action, row in sorted(summary["by_action"].items(), key=lambda item: item[1]["p95_ms"], reverse=True):
         md.append(f"| {action} | {row['steps']} | {row['skipped']} | {row['errors']} | {row['p95_ms']} | {row['max_ms']} |")
+    md.extend([
+        "",
+        "## Diagnostic Action P95",
+        "",
+    ])
+    if summary["diagnostic_by_action"]:
+        md.extend([
+            "| Action | Steps | Errors | P95 ms | Max ms |",
+            "|---|---:|---:|---:|---:|",
+        ])
+        for action, row in sorted(summary["diagnostic_by_action"].items(), key=lambda item: item[1]["p95_ms"], reverse=True):
+            md.append(f"| {action} | {row['steps']} | {row['errors']} | {row['p95_ms']} | {row['max_ms']} |")
+    else:
+        md.append("No diagnostic action samples were recorded.")
+    md.extend([
+        "",
+        "## Initial Load Breakdown",
+        "",
+    ])
+    if summary["initial_load_breakdown"]:
+        md.extend([
+            "| Phase | Steps | Errors | P95 ms | Max ms |",
+            "|---|---:|---:|---:|---:|",
+        ])
+        for row in summary["initial_load_breakdown"]:
+            phase = str(row["action"]).split(":", 1)[1]
+            md.append(f"| {phase} | {row['steps']} | {row['errors']} | {row['p95_ms']} | {row['max_ms']} |")
+    else:
+        md.append("Initial-load diagnostic substeps were not enabled for this run.")
+    if diagnostic_samples:
+        diagnostic_slowest = sorted(diagnostic_samples, key=lambda item: item.elapsed_ms, reverse=True)[:10]
+        md.extend([
+            "",
+            "### Slowest Diagnostic Samples",
+            "",
+            "| User | Iteration | Phase | Status | Elapsed ms | Error |",
+            "|---:|---:|---|---|---:|---|",
+        ])
+        for sample in diagnostic_slowest:
+            phase = sample.action.split(":", 1)[1] if ":" in sample.action else sample.action
+            md.append(
+                f"| {sample.user_id} | {sample.iteration} | {phase} | "
+                f"{'OK' if sample.ok else 'FAIL'} | {sample.elapsed_ms:.2f} | {sample.error[:160]} |"
+            )
     md.extend(["", "## Slowest Steps", "", "| User | Iteration | Section | Action | Status | Elapsed ms | Error |", "|---:|---:|---|---|---:|---:|---|"])
     for sample in slowest:
         md.append(
@@ -824,6 +1007,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fail-console-errors", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS, help="Treat browser console errors as failed steps.")
     parser.add_argument("--timeout-ms", type=int, default=argparse.SUPPRESS, help="Per-step browser timeout.")
     parser.add_argument("--initial-wait-ms", type=int, default=argparse.SUPPRESS, help="Initial page settle time.")
+    parser.add_argument("--initial-load-substeps", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS, help="Record diagnostic-only initial load phase timings without changing release scoring.")
     parser.add_argument("--wait-initial-idle", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS, help="After initial app readiness, wait for Streamlit idle before recording the step.")
     parser.add_argument("--single-initial-load", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS, help="Load the app once per user, then repeat in-app section flows without hard page reloads.")
     parser.add_argument("--action-settle-ms", type=int, default=argparse.SUPPRESS, help="Minimum wait after clicks before spinner checks.")

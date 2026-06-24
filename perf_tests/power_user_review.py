@@ -68,6 +68,44 @@ def _skipped_buttons(samples: list[dict]) -> list[str]:
     return sorted(set(skipped))
 
 
+def _release_blockers(summary: dict) -> list[dict]:
+    blockers = summary.get("release_blockers", [])
+    return blockers if isinstance(blockers, list) else []
+
+
+def _top_rows(summary: dict, key: str, label_key: str, limit: int = 5) -> list[dict]:
+    rows = summary.get(key, [])
+    if isinstance(rows, list):
+        return rows[:limit]
+    legacy_key = "by_action" if label_key == "action" else "by_section"
+    legacy = summary.get(legacy_key, {})
+    if not isinstance(legacy, dict):
+        return []
+    return [
+        {label_key: label, **row}
+        for label, row in sorted(
+            legacy.items(),
+            key=lambda item: float(item[1].get("p95_ms", 0) or 0),
+            reverse=True,
+        )[:limit]
+    ]
+
+
+def _initial_load_breakdown(summary: dict) -> list[dict]:
+    breakdown = summary.get("initial_load_breakdown", [])
+    if isinstance(breakdown, list) and breakdown:
+        return breakdown
+    diagnostic_by_action = summary.get("diagnostic_by_action", {})
+    if not isinstance(diagnostic_by_action, dict):
+        return []
+    rows = [
+        {"action": action, **row}
+        for action, row in diagnostic_by_action.items()
+        if str(action).startswith("initial_load:")
+    ]
+    return sorted(rows, key=lambda row: float(row.get("p95_ms", 0) or 0), reverse=True)
+
+
 def _panel_rows(summary: dict, section_summary: dict | None) -> list[dict]:
     p95_ms = float(summary.get("p95_ms", 0) or 0)
     p99_ms = float(summary.get("p99_ms", 0) or 0)
@@ -168,9 +206,74 @@ def build_review(
         f"- Error rate == 0: `{'PASS' if float(summary.get('error_rate', 1) or 0) == 0 else 'FAIL'}`",
         f"- Readiness score >= 95: `{'PASS' if int(summary.get('readiness_score', 0) or 0) >= 95 else 'WATCH'}`",
         "",
-        "## Expert Panel",
+        "## Release Blockers",
         "",
     ]
+    blockers = _release_blockers(summary)
+    if blockers:
+        lines.extend(
+            f"- `{item.get('type', 'blocker')}`: {item.get('message', '')}"
+            for item in blockers
+        )
+    else:
+        lines.append("- None recorded.")
+    lines.extend([
+        "",
+        "## Top Slowest Sections",
+        "",
+        "| Section | Steps | Skipped | Errors | P95 ms | Max ms |",
+        "|---|---:|---:|---:|---:|---:|",
+    ])
+    top_sections = _top_rows(summary, "top_slowest_sections", "section")
+    for row in top_sections:
+        lines.append(
+            f"| {row.get('section', '')} | {row.get('steps', '')} | {row.get('skipped', '')} | "
+            f"{row.get('errors', '')} | {row.get('p95_ms', 0)} | {row.get('max_ms', 0)} |"
+        )
+    if not top_sections:
+        lines.append("| n/a | 0 | 0 | 0 | 0 | 0 |")
+    lines.extend([
+        "",
+        "## Top Slowest Actions",
+        "",
+        "| Action | Steps | Skipped | Errors | P95 ms | Max ms |",
+        "|---|---:|---:|---:|---:|---:|",
+    ])
+    top_actions = _top_rows(summary, "top_slowest_actions", "action")
+    for row in top_actions:
+        lines.append(
+            f"| {row.get('action', '')} | {row.get('steps', '')} | {row.get('skipped', '')} | "
+            f"{row.get('errors', '')} | {row.get('p95_ms', 0)} | {row.get('max_ms', 0)} |"
+        )
+    if not top_actions:
+        lines.append("| n/a | 0 | 0 | 0 | 0 | 0 |")
+    breakdown = _initial_load_breakdown(summary)
+    if breakdown:
+        slowest_phase = max(breakdown, key=lambda row: float(row.get("p95_ms", 0) or 0))
+        phase_name = str(slowest_phase.get("action", "")).split(":", 1)[-1]
+        lines.extend([
+            "",
+            "## Initial Load Breakdown",
+            "",
+            "| Phase | Steps | Errors | P95 ms | Max ms |",
+            "|---|---:|---:|---:|---:|",
+        ])
+        for row in breakdown:
+            phase = str(row.get("action", "")).split(":", 1)[-1]
+            lines.append(
+                f"| {phase} | {row.get('steps', '')} | {row.get('errors', '')} | "
+                f"{row.get('p95_ms', 0)} | {row.get('max_ms', 0)} |"
+            )
+        lines.extend([
+            "",
+            f"- Slowest initial-load phase: `{phase_name}`.",
+            f"- Recommendation: tune `{phase_name}` first, then rerun the same 12-user profile so release p95 remains comparable.",
+        ])
+    lines.extend([
+        "",
+        "## Expert Panel",
+        "",
+    ])
     for row in _panel_rows(summary, section_summary):
         lines.extend([
             f"### {row['role']}",

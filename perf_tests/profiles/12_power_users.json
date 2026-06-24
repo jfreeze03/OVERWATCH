@@ -4,6 +4,7 @@
   "ramp_seconds": 12,
   "single_initial_load": true,
   "fail_console_errors": true,
+  "initial_load_substeps": true,
   "wait_initial_idle": true,
   "missing_load_button_wait_ms": 10000,
   "fail_p95_ms": 10000,

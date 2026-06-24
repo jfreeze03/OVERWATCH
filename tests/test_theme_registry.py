@@ -137,7 +137,7 @@ class ThemeRegistryTests(unittest.TestCase):
     def test_executive_landing_charts_use_shared_theme_surface(self):
         executive_text = (APP_ROOT / "sections" / "executive_landing_charts.py").read_text(encoding="utf-8")
 
-        self.assertFalse((APP_ROOT / "sections" / "executive_landing_shell.py").exists())
+        self.assertTrue((APP_ROOT / "sections" / "executive_landing_shell.py").exists())
         self.assertIn("def _render_line_chart", executive_text)
         self.assertIn("def _render_bar_chart", executive_text)
         self.assertIn('alt.value("#29B5E8")', executive_text)

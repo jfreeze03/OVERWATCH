@@ -132,6 +132,12 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
             "PERF_TEST_EXPENSIVE_QUERY_CANDIDATES_V",
             "10000 ms",
             "mutation controls",
+            "initial_load",
+            "goto_domcontentloaded",
+            "app_ready",
+            "idle_wait",
+            "perf_tests/import_timing.py",
+            "sections.executive_landing_shell",
         ):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, text)
@@ -163,6 +169,18 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
                 "throughput_steps_per_sec": 2.5,
                 "by_section": {"Alert Center": {"p95_ms": 900}},
                 "by_action": {"section_nav": {"p95_ms": 900}},
+                "release_blockers": [
+                    {"type": "p95_threshold", "message": "p95 12000 ms exceeded threshold 10000 ms"}
+                ],
+                "top_slowest_sections": [
+                    {"section": "App Shell", "steps": 12, "skipped": 0, "errors": 0, "p95_ms": 900, "max_ms": 1200}
+                ],
+                "top_slowest_actions": [
+                    {"action": "initial_load", "steps": 12, "skipped": 0, "errors": 0, "p95_ms": 900, "max_ms": 1200}
+                ],
+                "initial_load_breakdown": [
+                    {"action": "initial_load:app_ready", "steps": 12, "errors": 0, "p95_ms": 700, "max_ms": 900}
+                ],
             },
             "samples": [
                 {
@@ -196,6 +214,11 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
             "WATCH",
             "FAIL",
             "Recommended fixes",
+            "Release Blockers",
+            "Top Slowest Sections",
+            "Top Slowest Actions",
+            "Initial Load Breakdown",
+            "app_ready",
         ):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, markdown)

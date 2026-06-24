@@ -61,6 +61,11 @@ def main(argv: list[str] | None = None) -> int:
         trace_artifact, trace_error = asyncio.run(
             live_concurrent_runner.capture_slowest_initial_load_trace(live_args, samples)
         )
+    tail_diagnostics = {}
+    if live_args.tail_diagnostics:
+        tail_diagnostics = asyncio.run(
+            live_concurrent_runner.capture_tail_diagnostics(live_args, samples)
+        )
     summary = live_concurrent_runner.summarize(
         samples,
         total_elapsed_sec,
@@ -68,6 +73,7 @@ def main(argv: list[str] | None = None) -> int:
         resource_samples=resource_samples,
         trace_artifact=trace_artifact,
         trace_error=trace_error,
+        tail_diagnostics=tail_diagnostics,
     )
     json_path, md_path = live_concurrent_runner.write_reports(live_args, samples, summary)
     print(json.dumps({

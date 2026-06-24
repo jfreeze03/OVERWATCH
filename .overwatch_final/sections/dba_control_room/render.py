@@ -654,6 +654,12 @@ def _render_command_center_investigation_gate(company: str, environment: str) ->
 def _render_advanced_diagnostics_expander(company: str, environment: str) -> None:
     """Render admin/trust diagnostics after the DBA operator workflow."""
     st.divider()
+    if not st.session_state.get("dba_control_room_show_advanced_diagnostics"):
+        if st.button("Show Advanced Diagnostics", key="dba_control_room_show_advanced_diagnostics", width="stretch"):
+            st.session_state["dba_control_room_show_advanced_diagnostics"] = True
+        else:
+            st.caption("Advanced diagnostics stay unloaded until requested.")
+            return
     with st.expander("Advanced diagnostics and enterprise evidence", expanded=False):
         _render_enterprise_diagnostics_gate(company, environment)
         _render_production_readiness_gate(company, environment)

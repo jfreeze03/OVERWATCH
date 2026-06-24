@@ -6,6 +6,8 @@ import argparse
 import datetime as dt
 import json
 import pathlib
+import random
+import statistics
 import subprocess
 import sys
 import uuid
@@ -31,6 +33,10 @@ def _phase_metric(rows: list[dict[str, object]], phase: str) -> float:
     return 0.0
 
 
+def _median(values: list[float]) -> float:
+    return round(float(statistics.median(values)), 2) if values else 0.0
+
+
 def summarize_live_report(report: dict[str, object], *, label: str, run_id: str, returncode: int) -> dict[str, object]:
     summary = report.get("summary", {}) if isinstance(report, dict) else {}
     nav = summary.get("browser_navigation_timing", []) if isinstance(summary, dict) else []
@@ -44,6 +50,7 @@ def summarize_live_report(report: dict[str, object], *, label: str, run_id: str,
         "readiness_score": summary.get("readiness_score", 0),
         "p95_ms": summary.get("p95_ms", 0),
         "p99_ms": summary.get("p99_ms", 0),
+        "max_ms": summary.get("max_ms", 0),
         "errors": summary.get("errors", 0),
         "skipped": summary.get("skipped", 0),
         "diagnostic_steps": summary.get("diagnostic_steps", 0),
@@ -101,7 +108,67 @@ def run_profile(
     }
 
 
-def build_payload(*, run_id_prefix: str, url: str, clean: dict[str, object], diagnostic: dict[str, object]) -> dict[str, object]:
+def plan_run_order(*, repeats: int, warmup: bool = False, order: str = "alternating") -> list[dict[str, object]]:
+    """Return deterministic clean/diagnostic run order for A/B diagnostics."""
+    repeats = max(1, int(repeats))
+    planned: list[dict[str, object]] = []
+    if warmup:
+        planned.extend([
+            {"label": "clean_scored", "repeat": 0, "warmup": True},
+            {"label": "full_diagnostic", "repeat": 0, "warmup": True},
+        ])
+    rng = random.Random(20260624)
+    for repeat in range(1, repeats + 1):
+        labels = ["clean_scored", "full_diagnostic"]
+        if order == "random":
+            rng.shuffle(labels)
+        elif repeat % 2 == 0:
+            labels.reverse()
+        for label in labels:
+            planned.append({"label": label, "repeat": repeat, "warmup": False})
+    return planned
+
+
+def _aggregate_profile(label: str, rows: list[dict[str, object]]) -> dict[str, object]:
+    included = [row for row in rows if row.get("label") == label and not row.get("warmup")]
+    if not included:
+        return {
+            "label": label,
+            "runs": 0,
+            "median_p95_ms": 0.0,
+            "median_p99_ms": 0.0,
+            "median_readiness_score": 0.0,
+            "median_responseStart_p95_ms": 0.0,
+            "median_first_contentful_paint_p95_ms": 0.0,
+            "median_server_shell_total_render_app_p95_ms": 0.0,
+            "errors": 0,
+            "skipped": 0,
+            "diagnostic_steps_median": 0.0,
+            "run_ids": [],
+        }
+    return {
+        "label": label,
+        "runs": len(included),
+        "median_p95_ms": _median([float(row.get("p95_ms", 0) or 0) for row in included]),
+        "median_p99_ms": _median([float(row.get("p99_ms", 0) or 0) for row in included]),
+        "median_readiness_score": _median([float(row.get("readiness_score", 0) or 0) for row in included]),
+        "median_responseStart_p95_ms": _median([
+            float(row.get("responseStart_p95_ms", 0) or 0) for row in included
+        ]),
+        "median_first_contentful_paint_p95_ms": _median([
+            float(row.get("first_contentful_paint_p95_ms", 0) or 0) for row in included
+        ]),
+        "median_server_shell_total_render_app_p95_ms": _median([
+            float(row.get("server_shell_total_render_app_p95_ms", 0) or 0) for row in included
+        ]),
+        "errors": sum(int(row.get("errors", 0) or 0) for row in included),
+        "skipped": sum(int(row.get("skipped", 0) or 0) for row in included),
+        "diagnostic_steps_median": _median([float(row.get("diagnostic_steps", 0) or 0) for row in included]),
+        "run_ids": [row.get("run_id", "") for row in included],
+    }
+
+
+def _legacy_rows(clean: dict[str, object], diagnostic: dict[str, object]) -> list[dict[str, object]]:
     clean_row = summarize_live_report(
         clean.get("report", {}),
         label="clean_scored",
@@ -114,16 +181,44 @@ def build_payload(*, run_id_prefix: str, url: str, clean: dict[str, object], dia
         run_id=str(diagnostic.get("run_id", "")),
         returncode=int(diagnostic.get("returncode", 0) or 0),
     )
+    clean_row.update({"repeat": 1, "warmup": False, "report_path": clean.get("report_path", "")})
+    diagnostic_row.update({"repeat": 1, "warmup": False, "report_path": diagnostic.get("report_path", "")})
+    return [clean_row, diagnostic_row]
+
+
+def build_payload(
+    *,
+    run_id_prefix: str,
+    url: str,
+    runs: list[dict[str, object]] | None = None,
+    clean: dict[str, object] | None = None,
+    diagnostic: dict[str, object] | None = None,
+    repeats: int = 1,
+    warmup: bool = False,
+    order: str = "alternating",
+) -> dict[str, object]:
+    rows = list(runs or [])
+    if not rows and clean is not None and diagnostic is not None:
+        rows = _legacy_rows(clean, diagnostic)
+    clean_profile = _aggregate_profile("clean_scored", rows)
+    diagnostic_profile = _aggregate_profile("full_diagnostic", rows)
     delta = {
-        "p95_delta_ms": round(float(diagnostic_row["p95_ms"] or 0) - float(clean_row["p95_ms"] or 0), 2),
-        "p99_delta_ms": round(float(diagnostic_row["p99_ms"] or 0) - float(clean_row["p99_ms"] or 0), 2),
-        "responseStart_delta_ms": round(
-            float(diagnostic_row["responseStart_p95_ms"] or 0) - float(clean_row["responseStart_p95_ms"] or 0),
+        "median_p95_delta_ms": round(
+            float(diagnostic_profile["median_p95_ms"] or 0) - float(clean_profile["median_p95_ms"] or 0),
             2,
         ),
-        "fcp_delta_ms": round(
-            float(diagnostic_row["first_contentful_paint_p95_ms"] or 0)
-            - float(clean_row["first_contentful_paint_p95_ms"] or 0),
+        "median_p99_delta_ms": round(
+            float(diagnostic_profile["median_p99_ms"] or 0) - float(clean_profile["median_p99_ms"] or 0),
+            2,
+        ),
+        "median_responseStart_delta_ms": round(
+            float(diagnostic_profile["median_responseStart_p95_ms"] or 0)
+            - float(clean_profile["median_responseStart_p95_ms"] or 0),
+            2,
+        ),
+        "median_fcp_delta_ms": round(
+            float(diagnostic_profile["median_first_contentful_paint_p95_ms"] or 0)
+            - float(clean_profile["median_first_contentful_paint_p95_ms"] or 0),
             2,
         ),
     }
@@ -131,12 +226,23 @@ def build_payload(*, run_id_prefix: str, url: str, clean: dict[str, object], dia
         "run_id_prefix": run_id_prefix,
         "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "url": url,
-        "profiles": [clean_row, diagnostic_row],
+        "diagnostic_only": True,
+        "repeats": repeats,
+        "warmup": warmup,
+        "order_strategy": order,
+        "run_order": [
+            {
+                "label": row.get("label"),
+                "repeat": row.get("repeat"),
+                "warmup": row.get("warmup", False),
+                "run_id": row.get("run_id"),
+                "returncode": row.get("returncode"),
+            }
+            for row in rows
+        ],
+        "runs": rows,
+        "profiles": [clean_profile, diagnostic_profile],
         "delta": delta,
-        "artifacts": {
-            "clean_report": clean.get("report_path", ""),
-            "diagnostic_report": diagnostic.get("report_path", ""),
-        },
     }
 
 
@@ -152,26 +258,42 @@ def write_reports(payload: dict[str, object], *, output_dir: str | pathlib.Path)
         "",
         "- Diagnostic only; this is not the release gate.",
         f"- URL: `{payload['url']}`",
+        f"- Repeats: `{payload.get('repeats', 1)}`",
+        f"- Warmup discarded: `{'yes' if payload.get('warmup') else 'no'}`",
+        f"- Order strategy: `{payload.get('order_strategy', 'alternating')}`",
         "",
-        "| Profile | Run ID | State | Readiness | p95 ms | p99 ms | Errors | Skipped | Diagnostic steps | responseStart p95 | FCP p95 | shell total p95 |",
-        "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "## Median Summary",
+        "",
+        "| Profile | Runs | Median readiness | Median p95 ms | Median p99 ms | Errors | Skipped | Diagnostic steps median | responseStart p95 median | FCP p95 median | shell total p95 median |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for row in payload["profiles"]:
         lines.append(
-            f"| {row['label']} | {row['run_id']} | {row['readiness_state']} | {row['readiness_score']} | "
-            f"{row['p95_ms']} | {row['p99_ms']} | {row['errors']} | {row['skipped']} | "
-            f"{row['diagnostic_steps']} | {row['responseStart_p95_ms']} | "
-            f"{row['first_contentful_paint_p95_ms']} | {row['server_shell_total_render_app_p95_ms']} |"
+            f"| {row['label']} | {row['runs']} | {row['median_readiness_score']} | "
+            f"{row['median_p95_ms']} | {row['median_p99_ms']} | {row['errors']} | {row['skipped']} | "
+            f"{row['diagnostic_steps_median']} | {row['median_responseStart_p95_ms']} | "
+            f"{row['median_first_contentful_paint_p95_ms']} | "
+            f"{row['median_server_shell_total_render_app_p95_ms']} |"
         )
     delta = payload["delta"]
     lines.extend([
         "",
         "## Delta",
-        f"- Diagnostic minus clean p95: `{delta['p95_delta_ms']} ms`",
-        f"- Diagnostic minus clean p99: `{delta['p99_delta_ms']} ms`",
-        f"- Diagnostic minus clean responseStart p95: `{delta['responseStart_delta_ms']} ms`",
-        f"- Diagnostic minus clean FCP p95: `{delta['fcp_delta_ms']} ms`",
+        f"- Diagnostic minus clean median p95: `{delta['median_p95_delta_ms']} ms`",
+        f"- Diagnostic minus clean median p99: `{delta['median_p99_delta_ms']} ms`",
+        f"- Diagnostic minus clean median responseStart p95: `{delta['median_responseStart_delta_ms']} ms`",
+        f"- Diagnostic minus clean median FCP p95: `{delta['median_fcp_delta_ms']} ms`",
+        "",
+        "## Run Order",
+        "",
+        "| Order | Profile | Repeat | Warmup | Run ID | Return code |",
+        "|---:|---|---:|---|---|---:|",
     ])
+    for idx, row in enumerate(payload.get("runs", []), start=1):
+        lines.append(
+            f"| {idx} | {row.get('label', '')} | {row.get('repeat', '')} | "
+            f"{row.get('warmup', False)} | {row.get('run_id', '')} | {row.get('returncode', '')} |"
+        )
     md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return json_path, md_path
 
@@ -184,36 +306,73 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--clean-profile", default=str(CLEAN_PROFILE))
     parser.add_argument("--diagnostic-profile", default=str(DIAGNOSTIC_PROFILE))
     parser.add_argument("--timeout-sec", type=float, default=1200.0)
-    return parser.parse_args(argv)
+    parser.add_argument("--repeats", type=int, default=2)
+    parser.add_argument("--warmup", action="store_true")
+    parser.add_argument("--order", choices=["alternating", "random"], default="alternating")
+    args = parser.parse_args(argv)
+    if args.repeats < 1:
+        parser.error("--repeats must be at least 1.")
+    return args
+
+
+def _run_id_for(prefix: str, planned: dict[str, object]) -> str:
+    label = str(planned["label"])
+    suffix = "CLEAN" if label == "clean_scored" else "DIAGNOSTIC"
+    if planned.get("warmup"):
+        return f"{prefix}_WARMUP_{suffix}"
+    return f"{prefix}_R{int(planned['repeat']):02d}_{suffix}"
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     output_dir = pathlib.Path(args.output_dir)
-    clean = run_profile(
+    profiles = {
+        "clean_scored": pathlib.Path(args.clean_profile),
+        "full_diagnostic": pathlib.Path(args.diagnostic_profile),
+    }
+    runs: list[dict[str, object]] = []
+    for planned in plan_run_order(repeats=args.repeats, warmup=args.warmup, order=args.order):
+        label = str(planned["label"])
+        run_id = _run_id_for(args.run_id_prefix, planned)
+        result = run_profile(
+            url=args.url,
+            run_id=run_id,
+            profile=profiles[label],
+            output_dir=output_dir,
+            timeout_sec=args.timeout_sec,
+        )
+        row = summarize_live_report(
+            result.get("report", {}),
+            label=label,
+            run_id=run_id,
+            returncode=int(result.get("returncode", 0) or 0),
+        )
+        row.update({
+            "repeat": planned["repeat"],
+            "warmup": planned["warmup"],
+            "report_path": result.get("report_path", ""),
+            "stdout_tail": result.get("stdout_tail", ""),
+            "stderr_tail": result.get("stderr_tail", ""),
+        })
+        runs.append(row)
+    payload = build_payload(
+        run_id_prefix=args.run_id_prefix,
         url=args.url,
-        run_id=f"{args.run_id_prefix}_CLEAN",
-        profile=pathlib.Path(args.clean_profile),
-        output_dir=output_dir,
-        timeout_sec=args.timeout_sec,
+        runs=runs,
+        repeats=args.repeats,
+        warmup=args.warmup,
+        order=args.order,
     )
-    diagnostic = run_profile(
-        url=args.url,
-        run_id=f"{args.run_id_prefix}_DIAGNOSTIC",
-        profile=pathlib.Path(args.diagnostic_profile),
-        output_dir=output_dir,
-        timeout_sec=args.timeout_sec,
-    )
-    payload = build_payload(run_id_prefix=args.run_id_prefix, url=args.url, clean=clean, diagnostic=diagnostic)
     json_path, md_path = write_reports(payload, output_dir=output_dir)
     print(json.dumps({
         "run_id_prefix": args.run_id_prefix,
-        "profiles": len(payload["profiles"]),
-        "p95_delta_ms": payload["delta"]["p95_delta_ms"],
+        "runs": len(runs),
+        "median_p95_delta_ms": payload["delta"]["median_p95_delta_ms"],
         "json_report": str(json_path),
         "markdown_report": str(md_path),
     }, indent=2))
-    return 0 if clean.get("report_path") and diagnostic.get("report_path") else 2
+    non_warmup = [row for row in runs if not row.get("warmup")]
+    return 0 if non_warmup and all(row.get("report_path") for row in non_warmup) else 2
 
 
 if __name__ == "__main__":

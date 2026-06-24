@@ -308,7 +308,6 @@ button[data-testid^="stBaseButton"] {
     min-height: 2.15rem;
     padding: 0.32rem 0.58rem;
     transition: border-color 0.18s ease, background 0.18s ease, color 0.18s ease;
-    backdrop-filter: blur(8px);
 }
 .stButton > button p,
 [data-testid="stButton"] button p,

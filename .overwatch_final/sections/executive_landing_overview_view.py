@@ -175,27 +175,40 @@ def _render_executive_overview(
         ("Cost Movement", _format_delta_credits(summary, credit_price=credit_price)),
         ("Security Risk", security_signal),
     ))
-    render_shell_kpi_row((
-        ("Spend", _money(current_spend)),
-        ("Workload Risk", biggest_workload),
-        ("Open Actions", f"{safe_int(summary.get('open_actions')):,}"),
-        ("Freshness", "Loaded" if isinstance(board, pd.DataFrame) and not board.empty else "On demand"),
-    ))
+    detail_open = bool(st.session_state.get("executive_landing_summary_detail_open"))
+    if not isinstance(snapshot, dict):
+        detail_col, _ = st.columns([1.15, 4.0])
+        with detail_col:
+            if st.button(
+                "Show Summary Detail",
+                key="executive_landing_show_summary_detail",
+                width="stretch",
+            ):
+                st.session_state["executive_landing_summary_detail_open"] = True
+                detail_open = True
 
-    render_priority_dataframe(
-        _decision_rows(summary).head(5),
-        title="Executive decisions to make first",
-        priority_columns=["PRIORITY", "DECISION_AREA", "SIGNAL", "NEXT_ACTION", "WORKFLOW"],
-        sort_by=["PRIORITY"],
-        ascending=True,
-        raw_label="All executive decision rows",
-        height=230,
-        max_rows=5,
-    )
+    if detail_open or isinstance(snapshot, dict):
+        render_shell_kpi_row((
+            ("Spend", _money(current_spend)),
+            ("Workload Risk", biggest_workload),
+            ("Open Actions", f"{safe_int(summary.get('open_actions')):,}"),
+            ("Freshness", "Loaded" if isinstance(board, pd.DataFrame) and not board.empty else "On demand"),
+        ))
+
+        render_priority_dataframe(
+            _decision_rows(summary).head(5),
+            title="Executive decisions to make first",
+            priority_columns=["PRIORITY", "DECISION_AREA", "SIGNAL", "NEXT_ACTION", "WORKFLOW"],
+            sort_by=["PRIORITY"],
+            ascending=True,
+            raw_label="All executive decision rows",
+            height=230,
+            max_rows=5,
+        )
     _render_executive_next_clicks()
-    _render_loaded_executive_alert_context()
 
     if isinstance(snapshot, dict):
+        _render_loaded_executive_alert_context()
         alerts = snapshot.get("alerts", pd.DataFrame())
         if isinstance(alerts, pd.DataFrame) and not alerts.empty:
             render_priority_dataframe(

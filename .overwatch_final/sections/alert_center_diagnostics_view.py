@@ -258,6 +258,12 @@ def _render_alert_command_findings(company: str, environment: str) -> None:
 def _render_advanced_alert_diagnostics(company: str, environment: str) -> None:
     """Render alert diagnostics after the active alert workflow."""
     st.divider()
+    if not st.session_state.get("alert_center_show_advanced_diagnostics"):
+        if st.button("Show Advanced Alert Diagnostics", key="alert_center_show_advanced_diagnostics", width="stretch"):
+            st.session_state["alert_center_show_advanced_diagnostics"] = True
+        else:
+            st.caption("Advanced alert diagnostics stay unloaded until requested.")
+            return
     with st.expander("Advanced alert diagnostics and enterprise evidence", expanded=False):
         _render_operational_ownership_coverage(company, environment)
         _render_operational_risk_score_explanation(company, environment)

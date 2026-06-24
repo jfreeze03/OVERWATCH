@@ -211,6 +211,14 @@ class ThemeRegistryTests(unittest.TestCase):
                 self.assertIn('button[data-testid^="stBaseButton"]', extra)
                 self.assertIn('[data-testid="stButton"] button', extra)
 
+    def test_theme_keeps_shell_classes_without_global_button_blur(self):
+        self.assertIn("--accent:", theme._VARS["carbon"])
+        self.assertIn(".ow-topbar", theme._STRUCTURAL_CSS)
+        self.assertIn(".ow-section-title", theme._STRUCTURAL_CSS)
+        self.assertIn(".ow-filter-strip-shell", theme._STRUCTURAL_CSS)
+        button_css = theme._STRUCTURAL_CSS.split("/* Buttons */", 1)[1].split("/* Expanders */", 1)[0]
+        self.assertNotIn("backdrop-filter", button_css)
+
     def test_primary_dashboard_layout_uses_responsive_grids(self):
         self.assertIn(".ow-signal-grid", theme._STRUCTURAL_CSS)
         self.assertIn("repeat(auto-fit, minmax(175px, 1fr))", theme._STRUCTURAL_CSS)

@@ -419,6 +419,17 @@ class AlertCenterSplitTests(unittest.TestCase):
             with self.subTest(fragment=moved_fragment):
                 self.assertNotIn(moved_fragment, source)
 
+    def test_advanced_alert_diagnostics_are_explicit_after_first_paint(self):
+        source = (APP_ROOT / "sections" / "alert_center_diagnostics_view.py").read_text(encoding="utf-8")
+        diagnostics_gate = source.split("def _render_advanced_alert_diagnostics", 1)[1].split(
+            "with st.expander",
+            1,
+        )[0]
+
+        self.assertIn("alert_center_show_advanced_diagnostics", diagnostics_gate)
+        self.assertIn("Show Advanced Alert Diagnostics", diagnostics_gate)
+        self.assertIn("return", diagnostics_gate)
+
 
 if __name__ == "__main__":
     unittest.main()

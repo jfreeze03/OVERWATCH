@@ -238,6 +238,7 @@ def build_review(
     *,
     section_payload: dict | None = None,
     snowflake_doc: str | None = None,
+    stability_payload: dict | None = None,
 ) -> str:
     summary = _summary(live_payload)
     samples = _samples(live_payload)
@@ -296,6 +297,28 @@ def build_review(
         )
     else:
         lines.append("- None recorded.")
+    lines.extend([
+        "",
+        "## Readiness Penalties",
+        "",
+    ])
+    penalties = summary.get("readiness_penalties", [])
+    if isinstance(penalties, list) and penalties:
+        lines.extend([
+            "| Penalty | Points | Observed | Threshold | Explanation |",
+            "|---|---:|---:|---:|---|",
+        ])
+        for item in penalties:
+            if not isinstance(item, dict):
+                continue
+            observed = item.get("observed_ms", item.get("observed", item.get("observed_steps", "")))
+            threshold = item.get("threshold_ms", item.get("threshold", ""))
+            lines.append(
+                f"| {item.get('type', '')} | {item.get('points', '')} | {observed} | "
+                f"{threshold} | {item.get('message', '')} |"
+            )
+    else:
+        lines.append("- No readiness penalties were recorded.")
     lines.extend([
         "",
         "## Diagnostic Overhead A/B",
@@ -470,6 +493,57 @@ def build_review(
         lines.append("- No per-user initial-load correlation rows were collected.")
     lines.extend([
         "",
+        "## Tail Initial Load Replay",
+        "",
+    ])
+    tail = summary.get("tail_diagnostics")
+    if isinstance(tail, dict) and tail.get("enabled"):
+        lines.append("- Post-scoring replay: `yes`; replay artifacts are excluded from release p95, p99, readiness, and blockers.")
+        replays = tail.get("replays", [])
+        if isinstance(replays, list) and replays:
+            lines.extend([
+                "",
+                "| Kind | User | Iteration | Section | Release ms | Replay OK | Replay ms | responseStart | FCP | Trace | Screenshot |",
+                "|---|---:|---:|---|---:|---|---:|---:|---:|---|---|",
+            ])
+            for row in replays:
+                if not isinstance(row, dict):
+                    continue
+                nav = row.get("navigation_timing") if isinstance(row.get("navigation_timing"), dict) else {}
+                paint = row.get("paint_timing") if isinstance(row.get("paint_timing"), dict) else {}
+                lines.append(
+                    f"| {row.get('kind', '')} | {row.get('user_id', '')} | {row.get('iteration', '')} | "
+                    f"{row.get('section', '')} | {row.get('release_elapsed_ms', '')} | {row.get('ok', '')} | "
+                    f"{row.get('elapsed_ms', '')} | {nav.get('responseStart', '')} | "
+                    f"{paint.get('first-contentful-paint', '')} | `{row.get('trace_path', '')}` | "
+                    f"`{row.get('screenshot_path', '')}` |"
+                )
+        elif tail.get("error"):
+            lines.append(f"- Tail replay failed before capture: `{tail.get('error')}`")
+        else:
+            lines.append("- No replay targets were selected.")
+    else:
+        lines.append("- No post-scoring tail replay was attached to this report.")
+    lines.extend([
+        "",
+        "## Clean Release Stability",
+        "",
+    ])
+    if isinstance(stability_payload, dict) and stability_payload:
+        stability_summary = stability_payload.get("summary", {})
+        if not isinstance(stability_summary, dict):
+            stability_summary = {}
+        lines.extend([
+            f"- Stability report: `{stability_payload.get('run_id_prefix', '')}`",
+            f"- Runs: `{stability_summary.get('runs', 0)}`",
+            f"- Median p95/p99/max: `{stability_summary.get('median_p95_ms', 0)} / {stability_summary.get('median_p99_ms', 0)} / {stability_summary.get('median_max_ms', 0)} ms`",
+            f"- Median readiness: `{stability_summary.get('median_readiness_score', 0)}/100`",
+            f"- PASS/WATCH/FAIL: `{stability_summary.get('pass_count', 0)} / {stability_summary.get('watch_count', 0)} / {stability_summary.get('fail_count', 0)}`",
+        ])
+    else:
+        lines.append("- No clean release stability report was attached.")
+    lines.extend([
+        "",
         "## Playwright Host Resource Samples",
         "",
     ])
@@ -559,6 +633,8 @@ def build_review(
     lines.extend([
         "",
         "## Recommended Next Engineering Actions",
+        "- p95 is now the near-pass line; if it is under threshold and readiness still misses, treat p99/App Shell initial-load tail as the release blocker.",
+        "- Focus frontend paint/tail capacity before changing Snowflake query paths when HTTP first response and server phases are low.",
         "- Tune the slowest section/action first, then rerun the same profile.",
         "- Pair browser latency with Snowflake Query History and PERF_TEST_* views when credentials are available.",
         "- Keep any new benchmark load button behind the forbidden-action safety guard.",
@@ -574,6 +650,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--live-report", required=True, help="live_concurrent_runner JSON report path.")
     parser.add_argument("--section-report", help="Optional section_smoke_runner JSON report path.")
     parser.add_argument("--snowflake-results", help="Optional Snowflake regression results doc path.")
+    parser.add_argument("--stability-report", help="Optional release stability JSON report path.")
     parser.add_argument("--output", help="Optional Markdown output path.")
     return parser.parse_args(argv)
 
@@ -583,10 +660,12 @@ def main(argv: list[str] | None = None) -> int:
     live_path = pathlib.Path(args.live_report)
     live_payload = _read_json(live_path)
     section_payload = _read_json(args.section_report) if args.section_report else None
+    stability_payload = _read_json(args.stability_report) if args.stability_report else None
     markdown = build_review(
         live_payload,
         section_payload=section_payload,
         snowflake_doc=args.snowflake_results,
+        stability_payload=stability_payload,
     )
     run_id = live_payload.get("run_id", live_path.stem.replace("_live_concurrent", ""))
     output = pathlib.Path(args.output) if args.output else DEFAULT_OUTPUT_DIR / f"{run_id}_expert_review.md"

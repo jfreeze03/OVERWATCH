@@ -52,16 +52,38 @@ class DiagnosticOverheadABTests(unittest.TestCase):
                 "server_phase_breakdown": [{"phase": "shell:total_render_app", "p95_ms": 150}],
             }
         }
+        runs = []
+        for repeat in (1, 2):
+            clean_row = runner.summarize_live_report(
+                clean_report,
+                label="clean_scored",
+                run_id=f"AB_R{repeat:02d}_CLEAN",
+                returncode=0,
+            )
+            clean_row.update({"repeat": repeat, "warmup": False, "report_path": "clean.json"})
+            runs.append(clean_row)
+            diagnostic_row = runner.summarize_live_report(
+                diagnostic_report,
+                label="full_diagnostic",
+                run_id=f"AB_R{repeat:02d}_DIAGNOSTIC",
+                returncode=2,
+            )
+            diagnostic_row.update({"repeat": repeat, "warmup": False, "report_path": "diag.json"})
+            runs.append(diagnostic_row)
         payload = runner.build_payload(
             run_id_prefix="AB_UNIT",
             url="http://localhost:8503/",
-            clean={"run_id": "AB_CLEAN", "returncode": 0, "report_path": "clean.json", "report": clean_report},
-            diagnostic={"run_id": "AB_DIAG", "returncode": 2, "report_path": "diag.json", "report": diagnostic_report},
+            runs=runs,
+            repeats=2,
+            warmup=True,
+            order="alternating",
         )
 
-        self.assertEqual(payload["delta"]["p95_delta_ms"], 5000)
+        self.assertEqual(payload["delta"]["median_p95_delta_ms"], 5000)
         self.assertEqual(payload["profiles"][0]["label"], "clean_scored")
         self.assertEqual(payload["profiles"][1]["label"], "full_diagnostic")
+        self.assertEqual(payload["profiles"][0]["runs"], 2)
+        self.assertEqual(len(payload["run_order"]), 4)
 
         with tempfile.TemporaryDirectory() as temp_dir:
             json_path, md_path = runner.write_reports(payload, output_dir=temp_dir)
@@ -71,6 +93,20 @@ class DiagnosticOverheadABTests(unittest.TestCase):
         self.assertIn("Diagnostic Overhead A/B", markdown)
         self.assertIn("clean_scored", markdown)
         self.assertIn("full_diagnostic", markdown)
+        self.assertIn("Run Order", markdown)
+
+    def test_ab_plans_warmup_and_alternating_order(self):
+        runner = load_module()
+
+        planned = runner.plan_run_order(repeats=2, warmup=True, order="alternating")
+
+        self.assertTrue(planned[0]["warmup"])
+        self.assertEqual(planned[0]["label"], "clean_scored")
+        self.assertEqual(planned[1]["label"], "full_diagnostic")
+        self.assertEqual(
+            [row["label"] for row in planned if not row["warmup"]],
+            ["clean_scored", "full_diagnostic", "full_diagnostic", "clean_scored"],
+        )
 
 
 if __name__ == "__main__":

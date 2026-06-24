@@ -591,6 +591,13 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("service_health.render()", full_workspace_text)
         self.assertIn('from sections import dba_tools', full_workspace_text)
         self.assertIn("dba_tools.render()", full_workspace_text)
+        diagnostics_gate = full_workspace_text.split("def _render_advanced_diagnostics_expander", 1)[1].split(
+            "with st.expander",
+            1,
+        )[0]
+        self.assertIn("dba_control_room_show_advanced_diagnostics", diagnostics_gate)
+        self.assertIn("Show Advanced Diagnostics", diagnostics_gate)
+        self.assertIn("return", diagnostics_gate)
         self.assertIn('"Warehouse Settings"', full_workspace_text)
         self.assertIn('"Cortex AI Limits"', full_workspace_text)
         self.assertIn('st.session_state.get("dba_control_room_active_view") == CONTROL_ROOM_ADMIN_WORKFLOW', full_workspace_text)

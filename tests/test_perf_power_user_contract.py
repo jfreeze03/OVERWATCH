@@ -64,6 +64,7 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
         self.assertFalse(profile["initial_load_substeps"])
         self.assertFalse(profile["section_nav_substeps"])
         self.assertFalse(profile["trace_slowest_initial_load"])
+        self.assertFalse(profile.get("tail_diagnostics", False))
         self.assertEqual(profile["load_buttons"]["Alert Center"], "Load Active Alerts")
 
     def test_diagnostic_profile_exists_and_enables_diagnostics(self):
@@ -192,6 +193,9 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
             "run_initial_load_ladder.py",
             "run_diagnostic_overhead_ab.py",
             "run_browser_capacity_matrix.py",
+            "run_release_stability.py",
+            "tail replay diagnostics",
+            "readiness penalty",
             "http_first_response_probe.py",
             "frontend paint metrics",
             "skipped-button diagnostics",
@@ -235,6 +239,15 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
                 "by_action": {"section_nav": {"p95_ms": 900}},
                 "release_blockers": [
                     {"type": "p95_threshold", "message": "p95 12000 ms exceeded threshold 10000 ms"}
+                ],
+                "readiness_penalties": [
+                    {
+                        "type": "p99_tail",
+                        "points": 8,
+                        "observed_ms": 19000,
+                        "threshold_ms": 18000,
+                        "message": "p99 19000 ms exceeded tail threshold 18000 ms (fail_p95_ms * 1.8)",
+                    }
                 ],
                 "top_slowest_sections": [
                     {"section": "App Shell", "steps": 12, "skipped": 0, "errors": 0, "p95_ms": 900, "max_ms": 1200}
@@ -287,6 +300,25 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
                         },
                     }
                 ],
+                "tail_diagnostics": {
+                    "enabled": True,
+                    "post_scoring": True,
+                    "replays": [
+                        {
+                            "kind": "initial_load",
+                            "user_id": 1,
+                            "iteration": 1,
+                            "section": "App Shell",
+                            "release_elapsed_ms": 1200,
+                            "ok": True,
+                            "elapsed_ms": 900,
+                            "navigation_timing": {"responseStart": 30},
+                            "paint_timing": {"first-contentful-paint": 50},
+                            "trace_path": "perf_tests/results/tail.zip",
+                            "screenshot_path": "perf_tests/results/tail.png",
+                        }
+                    ],
+                },
                 "resource_samples": [
                     {"label": "before_launch", "cpu_percent": 1.0, "memory_percent": 50.0, "process_count": 100, "browser_child_process_count": 0}
                 ],
@@ -335,6 +367,7 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
             "FAIL",
             "Recommended fixes",
             "Release Blockers",
+            "Readiness Penalties",
             "Top Slowest Sections",
             "Top Slowest Actions",
             "Initial Load Breakdown",
@@ -346,6 +379,8 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
             "Frontend Paint Metrics",
             "Skipped Button Context",
             "Slowest User Correlation",
+            "Tail Initial Load Replay",
+            "Clean Release Stability",
             "Playwright Host Resource Samples",
             "Top 10 Slowest Release Steps",
             "Top 10 Slowest Diagnostic Steps",

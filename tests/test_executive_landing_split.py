@@ -224,6 +224,19 @@ class ExecutiveLandingSplitTests(unittest.TestCase):
                 with self.subTest(file=file_name, token=token):
                     self.assertIn(token, source)
 
+    def test_executive_overview_detail_grid_is_explicit_after_first_paint(self):
+        source = (APP_ROOT / "sections" / "executive_landing_overview_view.py").read_text(encoding="utf-8")
+
+        detail_button_pos = source.index("executive_landing_show_summary_detail")
+        detail_gate_pos = source.index("if detail_open or isinstance(snapshot, dict):")
+        table_pos = source.index("render_priority_dataframe(", detail_gate_pos)
+        loaded_alert_context_pos = source.index("_render_loaded_executive_alert_context()")
+        snapshot_gate_pos = source.index("if isinstance(snapshot, dict):")
+
+        self.assertLess(detail_button_pos, detail_gate_pos)
+        self.assertLess(detail_gate_pos, table_pos)
+        self.assertLess(snapshot_gate_pos, loaded_alert_context_pos)
+
     def test_executive_landing_facade_remains_thin(self):
         source = (APP_ROOT / "sections" / "executive_landing.py").read_text(encoding="utf-8")
         self.assertLess(len(source.splitlines()), 200)

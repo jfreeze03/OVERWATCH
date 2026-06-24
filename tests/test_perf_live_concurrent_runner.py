@@ -59,6 +59,7 @@ class LiveConcurrentProfileTests(unittest.TestCase):
         self.assertFalse(args.initial_load_substeps)
         self.assertFalse(args.section_nav_substeps)
         self.assertFalse(args.trace_slowest_initial_load)
+        self.assertFalse(args.tail_diagnostics)
         self.assertEqual(args.load_buttons["Alert Center"], "Load Active Alerts")
         self.assertEqual(args.load_buttons["Cost & Contract"], "Refresh Cost")
 
@@ -70,6 +71,7 @@ class LiveConcurrentProfileTests(unittest.TestCase):
         self.assertTrue(args.initial_load_substeps)
         self.assertTrue(args.section_nav_substeps)
         self.assertTrue(args.trace_slowest_initial_load)
+        self.assertFalse(args.tail_diagnostics)
 
     def test_section_nav_only_profile_has_no_load_buttons(self):
         runner = load_live_runner()
@@ -129,6 +131,25 @@ class LiveConcurrentProfileTests(unittest.TestCase):
         self.assertEqual(args.iterations, 1)
         self.assertFalse(args.wait_initial_idle)
         self.assertEqual(args.fail_p95_ms, 15000)
+
+    def test_cli_accepts_post_scoring_tail_diagnostics(self):
+        runner = load_live_runner()
+
+        args = runner.parse_args([
+            "--profile",
+            str(RELEASE_PROFILE_PATH),
+            "--tail-diagnostics",
+            "--tail-diagnostic-initial-load-count",
+            "3",
+            "--browser-launch-mode",
+            "per_user",
+        ])
+
+        self.assertTrue(args.tail_diagnostics)
+        self.assertEqual(args.tail_diagnostic_initial_load_count, 3)
+        self.assertEqual(args.browser_launch_mode, "per_user")
+        self.assertFalse(args.initial_load_substeps)
+        self.assertFalse(args.section_nav_substeps)
 
     def test_profile_sections_and_load_button_mapping_are_preserved(self):
         runner = load_live_runner()
@@ -247,6 +268,23 @@ class LiveConcurrentProfileTests(unittest.TestCase):
 
         self.assertIn("skipped_load_buttons", {item["type"] for item in summary["release_blockers"]})
 
+    def test_summary_reports_readiness_p99_penalty(self):
+        runner = load_live_runner()
+        args = argparse.Namespace(users=20, iterations=1, fail_p95_ms=10000, fail_error_rate=0.0)
+        samples = [
+            runner.StepSample(user_id, 1, "App Shell", "initial_load", 900.0, True)
+            for user_id in range(1, 20)
+        ]
+        samples.append(runner.StepSample(20, 1, "App Shell", "initial_load", 19000.0, True))
+
+        summary = runner.summarize(samples, 1.0, args)
+
+        penalty = next(item for item in summary["readiness_penalties"] if item["type"] == "p99_tail")
+        self.assertEqual(penalty["type"], "p99_tail")
+        self.assertEqual(penalty["threshold_ms"], 18000.0)
+        self.assertIn("fail_p95_ms * 1.8", penalty["message"])
+        self.assertIn("readiness_score", {item["type"] for item in summary["release_blockers"]})
+
     def test_summary_identifies_initial_load_when_slowest(self):
         runner = load_live_runner()
         args = argparse.Namespace(users=2, iterations=1, fail_p95_ms=10000, fail_error_rate=0.0)
@@ -354,6 +392,51 @@ class LiveConcurrentProfileTests(unittest.TestCase):
         self.assertEqual(summary["errors"], 0)
         self.assertEqual(summary["section_nav_breakdown"][0]["action"], "section_nav:DBA Control Room:title_visible")
         self.assertNotIn("browser_errors", {item["type"] for item in summary["release_blockers"]})
+
+    def test_tail_diagnostics_payload_is_excluded_from_release_scoring(self):
+        runner = load_live_runner()
+        args = argparse.Namespace(users=1, iterations=1, fail_p95_ms=10000, fail_error_rate=0.0)
+        samples = [runner.StepSample(1, 1, "App Shell", "initial_load", 900.0, True)]
+        tail = {
+            "enabled": True,
+            "post_scoring": True,
+            "replays": [
+                {
+                    "kind": "initial_load",
+                    "user_id": 1,
+                    "iteration": 1,
+                    "release_elapsed_ms": 900.0,
+                    "elapsed_ms": 50000.0,
+                    "ok": False,
+                }
+            ],
+        }
+
+        summary = runner.summarize(samples, 1.0, args, tail_diagnostics=tail)
+
+        self.assertEqual(summary["p95_ms"], 900.0)
+        self.assertEqual(summary["p99_ms"], 900.0)
+        self.assertEqual(summary["errors"], 0)
+        self.assertEqual(summary["readiness_state"], "PASS")
+        self.assertEqual(summary["tail_diagnostics"]["replays"][0]["elapsed_ms"], 50000.0)
+
+    def test_tail_diagnostic_targets_pick_top_initial_loads_and_section_nav(self):
+        runner = load_live_runner()
+        samples = [
+            runner.StepSample(1, 1, "App Shell", "initial_load", 1000.0, True),
+            runner.StepSample(2, 1, "App Shell", "initial_load", 5000.0, True),
+            runner.StepSample(3, 1, "App Shell", "initial_load", 3000.0, True),
+            runner.StepSample(3, 1, "DBA Control Room", "section_nav", 7000.0, True),
+            runner.StepSample(2, 1, "Alert Center", "section_nav", 6000.0, True),
+            runner.StepSample(4, 1, "App Shell", "initial_load:app_ready", 99999.0, True, diagnostic=True),
+        ]
+
+        targets = runner.tail_diagnostic_targets(samples, initial_load_count=2)
+
+        self.assertEqual([target["kind"] for target in targets], ["initial_load", "initial_load", "section_nav"])
+        self.assertEqual(targets[0]["user_id"], 2)
+        self.assertEqual(targets[1]["user_id"], 3)
+        self.assertEqual(targets[2]["section"], "DBA Control Room")
 
     def test_resource_telemetry_works_without_psutil(self):
         runner = load_live_runner()
@@ -463,6 +546,7 @@ class LiveConcurrentProfileTests(unittest.TestCase):
             markdown = md_path.read_text(encoding="utf-8")
         self.assertIn('"diagnostic": true', payload)
         self.assertIn("Diagnostic Action P95", markdown)
+        self.assertIn("Readiness Penalties", markdown)
         self.assertIn("Initial Load Breakdown", markdown)
         self.assertIn("goto_domcontentloaded", markdown)
         self.assertIn("Server Phase Breakdown", markdown)
@@ -477,6 +561,54 @@ class LiveConcurrentProfileTests(unittest.TestCase):
         self.assertEqual(summary["browser_navigation_timing"][0]["metric"], "responseStart")
         self.assertEqual(summary["frontend_dom_metrics"][0]["metric"], "node_count")
         self.assertEqual(summary["frontend_resource_timing"][0]["initiator_type"], "script")
+
+    def test_tail_diagnostics_are_written_to_reports(self):
+        runner = load_live_runner()
+        args = argparse.Namespace(
+            url="http://localhost:8501/",
+            users=1,
+            iterations=1,
+            sections=["Executive Landing"],
+            load_buttons=False,
+            output_dir="",
+            run_id="TAIL_REPORT_TEST",
+        )
+        samples = [runner.StepSample(1, 1, "App Shell", "initial_load", 900.0, True)]
+        summary = runner.summarize(
+            samples,
+            1.0,
+            argparse.Namespace(users=1, iterations=1, fail_p95_ms=10000, fail_error_rate=0.0),
+            tail_diagnostics={
+                "enabled": True,
+                "post_scoring": True,
+                "replays": [
+                    {
+                        "kind": "initial_load",
+                        "user_id": 1,
+                        "iteration": 1,
+                        "section": "App Shell",
+                        "release_elapsed_ms": 900.0,
+                        "ok": True,
+                        "elapsed_ms": 1200.0,
+                        "navigation_timing": {"responseStart": 300.0},
+                        "paint_timing": {"first-contentful-paint": 700.0},
+                        "trace_path": "perf_tests/results/tail.zip",
+                        "screenshot_path": "perf_tests/results/tail.png",
+                    }
+                ],
+            },
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            args.output_dir = temp_dir
+
+            json_path, md_path = runner.write_reports(args, samples, summary)
+
+            payload = json_path.read_text(encoding="utf-8")
+            markdown = md_path.read_text(encoding="utf-8")
+
+        self.assertIn('"tail_diagnostics"', payload)
+        self.assertIn("Tail Replay Diagnostics", markdown)
+        self.assertIn("Post-scoring", markdown)
 
     def test_skipped_button_details_are_carried_into_summary(self):
         runner = load_live_runner()

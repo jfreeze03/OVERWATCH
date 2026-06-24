@@ -231,7 +231,10 @@ def _default_config() -> dict:
         "section_nav_substeps": False,
         "wait_initial_idle": False,
         "trace_slowest_initial_load": False,
+        "tail_diagnostics": False,
+        "tail_diagnostic_initial_load_count": 2,
         "single_initial_load": False,
+        "browser_launch_mode": "shared",
         "chromium_args": [],
         "action_settle_ms": 900,
         "ramp_seconds": 5.0,
@@ -302,6 +305,8 @@ def load_profile_defaults(profile_path: str | pathlib.Path) -> dict:
         chromium_args = profile["chromium_args"]
         if not isinstance(chromium_args, list) or not all(isinstance(item, str) for item in chromium_args):
             raise ValueError("profile chromium_args must be a string list")
+    if "browser_launch_mode" in profile and profile["browser_launch_mode"] not in {"shared", "per_user"}:
+        raise ValueError("profile browser_launch_mode must be 'shared' or 'per_user'")
     return profile
 
 
@@ -1150,16 +1155,30 @@ async def run_stress(args: argparse.Namespace) -> tuple[list[StepSample], float,
     resource_recorder = ResourceRecorder(args.users)
     await resource_recorder.record("before_launch")
     async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch(headless=not args.headed, args=list(args.chromium_args or []))
-        await resource_recorder.record("after_browser_launch")
-
         async def delayed_user(user_id: int) -> list[StepSample]:
             if args.ramp_seconds > 0 and args.users > 1:
                 await asyncio.sleep(((user_id - 1) / (args.users - 1)) * args.ramp_seconds)
-            return await run_user(browser, args, user_id, resource_recorder)
+            if args.browser_launch_mode == "per_user":
+                user_browser = await playwright.chromium.launch(
+                    headless=not args.headed,
+                    args=list(args.chromium_args or []),
+                )
+                try:
+                    await resource_recorder.record("after_user_browser_launch", user_id=user_id)
+                    return await run_user(user_browser, args, user_id, resource_recorder)
+                finally:
+                    await user_browser.close()
+            return await run_user(shared_browser, args, user_id, resource_recorder)
 
-        grouped_samples = await asyncio.gather(*(delayed_user(user_id) for user_id in range(1, args.users + 1)))
-        await browser.close()
+        shared_browser = None
+        if args.browser_launch_mode == "shared":
+            shared_browser = await playwright.chromium.launch(headless=not args.headed, args=list(args.chromium_args or []))
+            await resource_recorder.record("after_browser_launch")
+        try:
+            grouped_samples = await asyncio.gather(*(delayed_user(user_id) for user_id in range(1, args.users + 1)))
+        finally:
+            if shared_browser is not None:
+                await shared_browser.close()
     elapsed_sec = time.perf_counter() - started
     await resource_recorder.record("after_run_completion", total_elapsed_sec=round(elapsed_sec, 3))
     return [sample for group in grouped_samples for sample in group], elapsed_sec, resource_recorder.samples
@@ -1420,6 +1439,7 @@ def summarize(
     resource_samples: list[dict[str, object]] | None = None,
     trace_artifact: str = "",
     trace_error: str = "",
+    tail_diagnostics: dict[str, object] | None = None,
 ) -> dict:
     release_samples = [sample for sample in samples if not sample.diagnostic]
     diagnostic_samples = [sample for sample in samples if sample.diagnostic]
@@ -1521,14 +1541,49 @@ def summarize(
     ]
 
     score = 100
+    readiness_penalties: list[dict[str, object]] = []
     if p95_ms > args.fail_p95_ms:
-        score -= min(35, int((p95_ms - args.fail_p95_ms) / max(args.fail_p95_ms, 1) * 35) + 10)
-    if p99_ms > args.fail_p95_ms * 1.8:
+        points = min(35, int((p95_ms - args.fail_p95_ms) / max(args.fail_p95_ms, 1) * 35) + 10)
+        score -= points
+        readiness_penalties.append({
+            "type": "p95_threshold",
+            "points": points,
+            "observed_ms": round(p95_ms, 2),
+            "threshold_ms": round(float(args.fail_p95_ms), 2),
+            "message": f"p95 {round(p95_ms, 2)} ms exceeded threshold {args.fail_p95_ms} ms",
+        })
+    p99_tail_threshold = float(args.fail_p95_ms) * 1.8
+    if p99_ms > p99_tail_threshold:
         score -= 8
+        readiness_penalties.append({
+            "type": "p99_tail",
+            "points": 8,
+            "observed_ms": round(p99_ms, 2),
+            "threshold_ms": round(p99_tail_threshold, 2),
+            "message": (
+                f"p99 {round(p99_ms, 2)} ms exceeded tail threshold "
+                f"{round(p99_tail_threshold, 2)} ms (fail_p95_ms * 1.8)"
+            ),
+        })
     if error_rate > args.fail_error_rate:
-        score -= min(45, int((error_rate - args.fail_error_rate) * 100) + 20)
+        points = min(45, int((error_rate - args.fail_error_rate) * 100) + 20)
+        score -= points
+        readiness_penalties.append({
+            "type": "error_rate",
+            "points": points,
+            "observed": round(error_rate, 4),
+            "threshold": args.fail_error_rate,
+            "message": f"error rate {round(error_rate, 4)} exceeded threshold {args.fail_error_rate}",
+        })
     if browser_error_steps:
-        score -= min(20, browser_error_steps * 2)
+        points = min(20, browser_error_steps * 2)
+        score -= points
+        readiness_penalties.append({
+            "type": "browser_errors",
+            "points": points,
+            "observed_steps": browser_error_steps,
+            "message": f"{browser_error_steps} browser step(s) recorded console/runtime errors",
+        })
     score = max(0, min(100, score))
     if score >= 95 and error_rate <= args.fail_error_rate and p95_ms <= args.fail_p95_ms:
         state = "PASS"
@@ -1626,7 +1681,9 @@ def summarize(
         "resource_samples": resource_samples or [],
         "slowest_initial_load_trace": trace_artifact,
         "slowest_initial_load_trace_error": trace_error,
+        "tail_diagnostics": tail_diagnostics or {},
         "release_blockers": release_blockers,
+        "readiness_penalties": readiness_penalties,
         "by_action": by_action,
         "by_section": by_section,
         "readiness_score": score,
@@ -1710,6 +1767,25 @@ def write_reports(args: argparse.Namespace, samples: list[StepSample], summary: 
         md.extend(f"- `{item['type']}`: {item['message']}" for item in summary["release_blockers"])
     else:
         md.append("No release blockers were detected.")
+    md.extend([
+        "",
+        "## Readiness Penalties",
+        "",
+    ])
+    if summary.get("readiness_penalties"):
+        md.extend([
+            "| Penalty | Points | Observed | Threshold | Explanation |",
+            "|---|---:|---:|---:|---|",
+        ])
+        for item in summary["readiness_penalties"]:
+            observed = item.get("observed_ms", item.get("observed", item.get("observed_steps", "")))
+            threshold = item.get("threshold_ms", item.get("threshold", ""))
+            md.append(
+                f"| {item.get('type', '')} | {item.get('points', '')} | "
+                f"{observed} | {threshold} | {item.get('message', '')} |"
+            )
+    else:
+        md.append("No readiness penalties were applied.")
     md.extend([
         "",
         "## Section P95",
@@ -1949,6 +2025,38 @@ def write_reports(args: argparse.Namespace, samples: list[StepSample], summary: 
             "",
             f"- Trace capture failed: `{summary['slowest_initial_load_trace_error']}`",
         ])
+    tail = summary.get("tail_diagnostics")
+    if isinstance(tail, dict) and tail.get("enabled"):
+        md.extend([
+            "",
+            "## Tail Replay Diagnostics",
+            "",
+            "- Post-scoring diagnostic replay: `yes`",
+            "- These replay artifacts are not release samples and do not affect p95, p99, readiness, or release blockers.",
+        ])
+        replays = tail.get("replays", [])
+        if isinstance(replays, list) and replays:
+            md.extend([
+                "",
+                "| Kind | User | Iteration | Section | Release ms | Replay OK | Replay ms | responseStart | FCP | Trace | Screenshot |",
+                "|---|---:|---:|---|---:|---|---:|---:|---:|---|---|",
+            ])
+            for row in replays:
+                if not isinstance(row, dict):
+                    continue
+                nav = row.get("navigation_timing") if isinstance(row.get("navigation_timing"), dict) else {}
+                paint = row.get("paint_timing") if isinstance(row.get("paint_timing"), dict) else {}
+                md.append(
+                    f"| {row.get('kind', '')} | {row.get('user_id', '')} | {row.get('iteration', '')} | "
+                    f"{row.get('section', '')} | {row.get('release_elapsed_ms', '')} | {row.get('ok', '')} | "
+                    f"{row.get('elapsed_ms', '')} | {nav.get('responseStart', '')} | "
+                    f"{paint.get('first-contentful-paint', '')} | `{row.get('trace_path', '')}` | "
+                    f"`{row.get('screenshot_path', '')}` |"
+                )
+        elif tail.get("error"):
+            md.append(f"- Tail replay failed before capture: `{tail.get('error')}`")
+        else:
+            md.append("- No tail replay targets were selected.")
     md.extend(["", "## Slowest Release Steps", "", "| User | Iteration | Section | Action | Status | Elapsed ms | Error |", "|---:|---:|---|---|---:|---:|---|"])
     for sample in slowest:
         md.append(
@@ -2046,7 +2154,7 @@ async def capture_slowest_initial_load_trace(args: argparse.Namespace, samples: 
     )
     try:
         async with async_playwright() as playwright:
-            browser = await playwright.chromium.launch(headless=not args.headed)
+            browser = await playwright.chromium.launch(headless=not args.headed, args=list(args.chromium_args or []))
             context = await browser.new_context(
                 viewport={"width": args.width, "height": args.height},
                 extra_http_headers={"X-OVERWATCH-PERF-RUN-ID": args.run_id},
@@ -2073,6 +2181,142 @@ async def capture_slowest_initial_load_trace(args: argparse.Namespace, samples: 
         return "", str(exc).replace("\n", " ")[:500]
 
 
+def tail_diagnostic_targets(samples: list[StepSample], *, initial_load_count: int = 2) -> list[dict[str, object]]:
+    """Select release-tail samples for post-scoring single-user replay diagnostics."""
+    release_samples = [sample for sample in samples if not sample.diagnostic and not sample.skipped]
+    targets: list[dict[str, object]] = []
+    for ordinal, sample in enumerate(
+        sorted(
+            [sample for sample in release_samples if sample.action == "initial_load"],
+            key=lambda sample: sample.elapsed_ms,
+            reverse=True,
+        )[: max(0, int(initial_load_count))],
+        start=1,
+    ):
+        targets.append({
+            "kind": "initial_load",
+            "ordinal": ordinal,
+            "user_id": sample.user_id,
+            "iteration": sample.iteration,
+            "section": sample.section,
+            "action": sample.action,
+            "release_elapsed_ms": round(sample.elapsed_ms, 2),
+        })
+    section_nav_samples = sorted(
+        [sample for sample in release_samples if sample.action == "section_nav"],
+        key=lambda sample: sample.elapsed_ms,
+        reverse=True,
+    )
+    if section_nav_samples:
+        sample = section_nav_samples[0]
+        targets.append({
+            "kind": "section_nav",
+            "ordinal": 1,
+            "user_id": sample.user_id,
+            "iteration": sample.iteration,
+            "section": sample.section,
+            "action": sample.action,
+            "release_elapsed_ms": round(sample.elapsed_ms, 2),
+        })
+    return targets
+
+
+async def _capture_tail_replay(playwright, args: argparse.Namespace, target: dict[str, object]) -> dict[str, object]:
+    output_dir = pathlib.Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    kind = _safe_artifact_token(target.get("kind"))
+    section = str(target.get("section") or "App Shell")
+    user_id = int(target.get("user_id") or 0)
+    iteration = int(target.get("iteration") or 1)
+    ordinal = int(target.get("ordinal") or 1)
+    replay_run_id = f"{args.run_id}_TAIL_{kind}_{ordinal:02d}_U{user_id:02d}_I{iteration}"
+    trace_path = output_dir / f"{_safe_artifact_token(replay_run_id)}_trace.zip"
+    screenshot_path = output_dir / f"{_safe_artifact_token(replay_run_id)}.png"
+    row: dict[str, object] = {
+        **target,
+        "replay_run_id": replay_run_id,
+        "trace_path": str(trace_path),
+        "screenshot_path": str(screenshot_path),
+        "ok": False,
+    }
+    browser = None
+    context = None
+    trace_started = False
+    started = time.perf_counter()
+    try:
+        browser = await playwright.chromium.launch(headless=not args.headed, args=list(args.chromium_args or []))
+        context = await browser.new_context(
+            viewport={"width": args.width, "height": args.height},
+            extra_http_headers={"X-OVERWATCH-PERF-RUN-ID": replay_run_id},
+        )
+        await context.tracing.start(screenshots=True, snapshots=True, sources=False)
+        trace_started = True
+        page = await context.new_page()
+        page.set_default_timeout(args.timeout_ms)
+        target_url = perf_run_url(args.url, run_id=replay_run_id, user_id=user_id, iteration=iteration)
+        await page.goto(target_url, wait_until="domcontentloaded", timeout=args.timeout_ms)
+        await page.wait_for_timeout(args.initial_wait_ms)
+        await wait_for_app_ready(page, args.timeout_ms)
+        if args.wait_initial_idle:
+            await wait_for_streamlit_idle(page, args.timeout_ms, args.action_settle_ms)
+        if target.get("kind") == "section_nav" and not await section_is_visible(page, section):
+            await click_named_button(page, section, args.timeout_ms)
+            await wait_for_section(page, section, args.timeout_ms)
+            await page.wait_for_timeout(args.action_settle_ms)
+        row.update({
+            "navigation_timing": await collect_browser_navigation_timing(page),
+            "paint_timing": await collect_browser_paint_timing(page),
+            "frontend_metrics": await collect_frontend_metrics(page),
+            "perf_trace": await collect_perf_trace_payload(page),
+        })
+        await page.screenshot(path=str(screenshot_path), full_page=True)
+        row["ok"] = True
+    except Exception as exc:
+        row["error"] = str(exc).replace("\n", " ")[:500]
+    finally:
+        row["elapsed_ms"] = round((time.perf_counter() - started) * 1000, 2)
+        if context is not None:
+            if trace_started:
+                try:
+                    await context.tracing.stop(path=str(trace_path))
+                except Exception as exc:
+                    row["trace_error"] = str(exc).replace("\n", " ")[:240]
+            try:
+                await context.close()
+            except Exception:
+                pass
+        if browser is not None:
+            try:
+                await browser.close()
+            except Exception:
+                pass
+    return row
+
+
+async def capture_tail_diagnostics(args: argparse.Namespace, samples: list[StepSample]) -> dict[str, object]:
+    """Run post-scoring replay diagnostics for release-tail samples."""
+    if not args.tail_diagnostics:
+        return {}
+    targets = tail_diagnostic_targets(
+        samples,
+        initial_load_count=getattr(args, "tail_diagnostic_initial_load_count", 2),
+    )
+    payload: dict[str, object] = {
+        "enabled": True,
+        "post_scoring": True,
+        "targets": targets,
+        "replays": [],
+    }
+    async_playwright, import_error = load_playwright()
+    if import_error:
+        payload["error"] = str(import_error)[:240]
+        return payload
+    async with async_playwright() as playwright:
+        for target in targets:
+            payload["replays"].append(await _capture_tail_replay(playwright, args, target))
+    return payload
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run concurrent live browser users against OVERWATCH.")
     parser.add_argument("--profile", default=argparse.SUPPRESS, help="JSON profile with default runner settings.")
@@ -2092,7 +2336,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--section-nav-substeps", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS, help="Record diagnostic-only section navigation phase timings without changing release scoring.")
     parser.add_argument("--wait-initial-idle", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS, help="After initial app readiness, wait for Streamlit idle before recording the step.")
     parser.add_argument("--trace-slowest-initial-load", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS, help="After the run, capture one Playwright trace replay for the slowest initial-load user.")
+    parser.add_argument("--tail-diagnostics", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS, help="After clean scoring completes, replay the slowest release-tail samples with trace and paint diagnostics.")
+    parser.add_argument("--tail-diagnostic-initial-load-count", type=int, default=argparse.SUPPRESS, help="Number of slow initial_load samples to replay when tail diagnostics are enabled.")
     parser.add_argument("--single-initial-load", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS, help="Load the app once per user, then repeat in-app section flows without hard page reloads.")
+    parser.add_argument("--browser-launch-mode", choices=("shared", "per_user"), default=argparse.SUPPRESS, help="Use one shared Chromium launch or one isolated Chromium launch per simulated user.")
     parser.add_argument("--action-settle-ms", type=int, default=argparse.SUPPRESS, help="Minimum wait after clicks before spinner checks.")
     parser.add_argument("--ramp-seconds", type=float, default=argparse.SUPPRESS, help="Ramp users across this many seconds.")
     parser.add_argument("--width", type=int, default=argparse.SUPPRESS, help="Browser viewport width.")
@@ -2128,6 +2375,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("--timeout-ms must be at least 5000 for live browser tests.")
     if args.users > 40 and not args.allow_large_run:
         parser.error("--users above 40 requires --allow-large-run to avoid surprise Snowflake and local CPU load.")
+    if args.tail_diagnostic_initial_load_count < 0:
+        parser.error("--tail-diagnostic-initial-load-count must be non-negative.")
+    if args.browser_launch_mode not in {"shared", "per_user"}:
+        parser.error("--browser-launch-mode must be 'shared' or 'per_user'.")
     return args
 
 
@@ -2147,6 +2398,9 @@ def main() -> int:
     trace_error = ""
     if args.trace_slowest_initial_load:
         trace_artifact, trace_error = asyncio.run(capture_slowest_initial_load_trace(args, samples))
+    tail_diagnostics = {}
+    if args.tail_diagnostics:
+        tail_diagnostics = asyncio.run(capture_tail_diagnostics(args, samples))
     summary = summarize(
         samples,
         total_elapsed_sec,
@@ -2154,6 +2408,7 @@ def main() -> int:
         resource_samples=resource_samples,
         trace_artifact=trace_artifact,
         trace_error=trace_error,
+        tail_diagnostics=tail_diagnostics,
     )
     json_path, md_path = write_reports(args, samples, summary)
     print(json.dumps({

@@ -2376,6 +2376,37 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('"load_warehouse_options"', utils_text)
         self.assertIn('"add_cost_companion_columns"', utils_text)
 
+    def test_chart_helper_import_contract(self):
+        from utils import (
+            render_area_time_series_chart,
+            render_ranked_bar_chart,
+            render_time_series_chart,
+        )
+
+        self.assertEqual(render_time_series_chart.__name__, "render_time_series_chart")
+        self.assertEqual(render_area_time_series_chart.__name__, "render_area_time_series_chart")
+        self.assertEqual(render_ranked_bar_chart.__name__, "render_ranked_bar_chart")
+
+        direct_import_files = (
+            "cost_center_burn_view.py",
+            "cost_center_forecast_view.py",
+            "dba_tools_cost_health_view.py",
+            "storage_monitor.py",
+        )
+        for filename in direct_import_files:
+            with self.subTest(filename=filename):
+                section_text = (APP_ROOT / "sections" / filename).read_text(encoding="utf-8")
+                parsed = ast.parse(section_text)
+                package_level_utils_imports = {
+                    alias.name
+                    for node in ast.walk(parsed)
+                    if isinstance(node, ast.ImportFrom) and node.module == "utils"
+                    for alias in node.names
+                }
+                self.assertIn("from utils.display import", section_text)
+                self.assertNotIn("render_time_series_chart", package_level_utils_imports)
+                self.assertNotIn("render_area_time_series_chart", package_level_utils_imports)
+
     def test_dead_ui_helpers_stay_removed(self):
         display_text = (APP_ROOT / "utils" / "display.py").read_text(encoding="utf-8")
         helpers_text = (APP_ROOT / "utils" / "helpers.py").read_text(encoding="utf-8")

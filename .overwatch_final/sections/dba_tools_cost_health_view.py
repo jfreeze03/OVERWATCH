@@ -16,12 +16,12 @@ from utils import (
     download_csv,
     format_credits,
     format_snowflake_error,
-    render_area_time_series_chart,
     get_active_company,
     render_chart_with_data_toggle,
     run_compatibility_checks,
     run_query,
 )
+from utils.display import render_area_time_series_chart
 from utils.workflows import render_priority_dataframe
 
 

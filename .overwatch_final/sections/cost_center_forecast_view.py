@@ -55,7 +55,6 @@ from utils import (
     mart_source_caption,
     metric_confidence_label,
     query_attribution_supported,
-    render_area_time_series_chart,
     render_chart_with_data_toggle,
     render_drillable_bar_chart,
     render_entity_query_drilldown,
@@ -65,6 +64,7 @@ from utils import (
     safe_float,
     safe_int,
 )
+from utils.display import render_area_time_series_chart
 
 
 def render_cost_forecast(session, company: str, credit_price: float, max_wh_size_expr: str, bytes_scanned_sum_expr: str, query_tag_dimension_expr: str) -> None:

@@ -13,11 +13,11 @@ from utils import (
     freshness_note,
     download_csv,
     format_snowflake_error,
-    render_area_time_series_chart,
     render_chart_with_data_toggle,
     run_query,
     safe_float,
 )
+from utils.display import render_area_time_series_chart
 from utils.workflows import render_priority_dataframe
 
 

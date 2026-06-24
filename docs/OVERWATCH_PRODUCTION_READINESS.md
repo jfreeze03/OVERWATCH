@@ -54,6 +54,13 @@ do not run live Snowflake regression unless credentials/auth are available.
 10. Release notes:
     - Include commit SHA, validation command results, mart deployment status, browser/performance smoke status, and any intentionally deferred live Snowflake regression.
 
+## Release Manifest
+
+The current release candidate is declared in `docs/OVERWATCH_RELEASE_MANIFEST.md`.
+Release evidence must match the release manifest commit SHA. Historical evidence
+files under `docs/releases/` are allowed, but they cannot be used as current
+release evidence unless their commit SHA matches the manifest.
+
 ## Non-Negotiables
 
 - Do not drop, rename, disable, or rewrite mart objects as part of readiness.

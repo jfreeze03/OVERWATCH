@@ -1,7 +1,7 @@
 # OVERWATCH Release Evidence
 
 ## Commit
-- Commit SHA: `a00846f03bb8bcce9a9dfdc3a01101eadbbc2c57`
+- Commit SHA: `cda40dda9c4ffd8da731e3dde9ba6d9e6608f06a`
 - Branch: `main`
 - Release date: `2026-06-23`
 - Operator: `jfreeze03`
@@ -12,37 +12,37 @@
 - `python -m compileall .overwatch_final tests`: PASS, compiled app and tests
 - `python -m unittest tests.test_deployment_contract`: PASS, 14 tests
 - `python -m unittest tests.test_cortex_guard`: PASS, 6 tests
-- `python -m unittest tests.test_mart_contracts tests.test_production_readiness_contract`: PASS, 25 tests
+- `python -m unittest tests.test_mart_contracts tests.test_production_readiness_contract tests.test_release_evidence_contract tests.test_snowflake_regression_results_contract`: PASS, 34 tests
 - `python -m unittest tests.test_validation_workflow tests.test_route_registry tests.test_facade_no_creep`: PASS, 22 tests
-- `python -m unittest discover -s tests`: PASS, 976 tests
+- `python -m unittest discover -s tests`: PASS, 985 tests
 
 ## Deployment Contract
 - Streamlit in Snowflake entrypoint: PASS via `tests.test_deployment_contract`
 - Manifest: PASS via `tests.test_deployment_contract`
 - Warehouse: PASS via `tests.test_deployment_contract`
 - Execute-as boundary: PASS via `tests.test_deployment_contract`
-- Result: PASS, deployment contract validated locally
+- Result: PASS, deployment contract validated locally for `cda40dda9c4ffd8da731e3dde9ba6d9e6608f06a`
 
 ## Mart Setup
 - Setup script used: `snowflake/OVERWATCH_MART_SETUP.sql`
 - Target account/environment: `LOKAXGM-WU94316`, `DBA_MAINT_DB.OVERWATCH`
 - Core facts verified: PASS in `docs/OVERWATCH_SNOWFLAKE_REGRESSION_RESULTS.md`
 - Mart load status: PASS in the latest credentialed live regression evidence
-- Notes: Mart setup was not rerun in this pass; this evidence references the latest recorded credentialed run.
+- Notes: Mart setup was not rerun in this pass because no mart object drop, rename, disable, rewrite, or SQL semantic change was made.
 
 ## Browser Sanity
-- Executive Landing: PASS in section smoke run `PERF_TEST_SECTION_SMOKE_RELEASE`
-- DBA Control Room: PASS in section smoke run `PERF_TEST_SECTION_SMOKE_RELEASE`
-- Alert Center: PASS in section smoke run `PERF_TEST_SECTION_SMOKE_RELEASE`
-- Cost & Contract: PASS in section smoke run `PERF_TEST_SECTION_SMOKE_RELEASE`
-- Workload Operations: PASS in section smoke run `PERF_TEST_SECTION_SMOKE_RELEASE`
-- Security Monitoring: PASS in section smoke run `PERF_TEST_SECTION_SMOKE_RELEASE`
-- Legacy/deep-link workflow checks: covered by route registry, navigation integrity, facade no-creep, and full unit discovery tests; no separate manual deep-link browser pass was run in this pass because route compatibility is locked by automated contracts.
+- Executive Landing: PASS in section smoke run `PERF_TEST_SECTION_SMOKE_RELEASE_cda40dd`
+- DBA Control Room: PASS in section smoke run `PERF_TEST_SECTION_SMOKE_RELEASE_cda40dd`
+- Alert Center: PASS in section smoke run `PERF_TEST_SECTION_SMOKE_RELEASE_cda40dd`
+- Cost & Contract: PASS in section smoke run `PERF_TEST_SECTION_SMOKE_RELEASE_cda40dd`
+- Workload Operations: PASS in section smoke run `PERF_TEST_SECTION_SMOKE_RELEASE_cda40dd`
+- Security Monitoring: PASS in section smoke run `PERF_TEST_SECTION_SMOKE_RELEASE_cda40dd`
+- Legacy/deep-link workflow checks: covered by route registry, navigation integrity, facade no-creep, and full unit discovery tests; no separate manual deep-link browser pass was run because route compatibility is locked by automated contracts.
 
 ## Performance Smoke
 - `perf_tests/README.md` threshold review: PASS, section smoke completed against `http://localhost:8501/`
-- Section smoke result: PASS, `PERF_TEST_SECTION_SMOKE_RELEASE`
-- HTTP/live browser p95: `299.12 ms`
+- Section smoke result: PASS, `PERF_TEST_SECTION_SMOKE_RELEASE_cda40dd`
+- HTTP/live browser p95: `258.2 ms`
 - Failed dashboard queries: `0` section smoke errors recorded
 - Readiness score: `100/100`
 
@@ -53,7 +53,7 @@
 - Notes: No state-changing admin operation was executed as part of this release evidence pass.
 
 ## Live Snowflake Regression
-- Run status: PASS from latest credentialed run; no new live Snowflake regression was run in this pass.
+- Run status: PASS from latest credentialed run; no new live Snowflake regression was run for `cda40dd`.
 - Credentials/auth available: available for the recorded run in `docs/OVERWATCH_SNOWFLAKE_REGRESSION_RESULTS.md`
 - Result: PASS, see `docs/OVERWATCH_SNOWFLAKE_REGRESSION_RESULTS.md`
 - Status: `PASS`
@@ -61,11 +61,11 @@
 - Role: `SNOW_ACCOUNTADMINS`
 - Warehouse: `COMPUTE_WH`
 - Database/schema: `DBA_MAINT_DB.OVERWATCH`
-- If not run, reason: New live regression not run in this pass because the latest credentialed PASS evidence was already recorded; local validation, full unit regression, and section smoke were rerun for this evidence.
+- If not run, reason: New live regression not run for `cda40dd` because the latest credentialed PASS evidence was already recorded; local validation, full unit regression, and section smoke were rerun for this candidate.
 
 ## Secrets Check
-- Git diff/logs/screenshots/release notes checked: PASS, tracked-file scan found only placeholder/env-variable references and code variable names; `.streamlit/secrets.toml` remains ignored.
-- Result: PASS, no literal credential was added to tracked release evidence or code.
+- Git diff/logs/screenshots/release notes checked: PASS, tracked release files contain no literal Snowflake password, private key, or token.
+- Result: PASS, `.streamlit/secrets.toml` and generated performance results remain ignored.
 
 ## Rollback / Reset
 - Rollback reference: `STREAMLIT_CLOUD_DEPLOY.md`
@@ -73,7 +73,7 @@
 - Notes: No mart object was dropped, renamed, disabled, or rewritten in this pass.
 
 ## Deferred Items
-- Item: New live Snowflake regression run for this release evidence pass
-- Reason: Not rerun; existing credentialed PASS evidence is linked and local validation plus section smoke were rerun.
+- Item: New live Snowflake regression run for `cda40dd`
+- Reason: Not rerun; existing credentialed PASS evidence is linked and local validation plus section smoke were rerun for this release candidate.
 - Owner: release operator
 - Follow-up: rerun `perf_tests/full_app_snowflake_regression.py` only when a fresh credentialed release gate is required.

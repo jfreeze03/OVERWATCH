@@ -26,6 +26,9 @@ class ProductionReadinessContractTests(unittest.TestCase):
             "snowflake/OVERWATCH_MART_SETUP.sql",
             "snowflake/OVERWATCH_MART_DROP.sql",
             "perf_tests/README.md",
+            "docs/OVERWATCH_RELEASE_MANIFEST.md",
+            "Release evidence must match the release manifest commit SHA",
+            "Historical evidence",
             "do not run live Snowflake regression unless credentials/auth are available",
             "No credentials, tokens, private keys",
             "Action queue previews stay review-only",
@@ -63,6 +66,7 @@ class ProductionReadinessContractTests(unittest.TestCase):
             ".github/workflows/validate.yml",
             "STREAMLIT_CLOUD_DEPLOY.md",
             "perf_tests/README.md",
+            "docs/OVERWATCH_RELEASE_MANIFEST.md",
             "snowflake/OVERWATCH_MART_SETUP.sql",
             "snowflake/OVERWATCH_MART_DROP.sql",
         ):

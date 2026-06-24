@@ -413,8 +413,10 @@ def render_first_paint_summary_shell(
 ) -> None:
     """Render the shared first-paint status, KPI, and snapshot shell."""
     render_shell_status_strip(state=state, headline=headline, detail=detail)
-    render_shell_kpi_row(metrics)
-    render_shell_snapshot(snapshot)
+    if metrics:
+        render_shell_kpi_row(metrics)
+    if snapshot:
+        render_shell_snapshot(snapshot)
 
 
 def render_signal_lane_board(

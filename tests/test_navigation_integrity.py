@@ -2084,6 +2084,33 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Morning Cockpit", dba_visible)
         self.assertIn("Control Room Admin / Advanced", dba_hidden)
 
+    def test_first_paint_summary_shell_skips_empty_metric_groups(self):
+        from sections import shell_helpers
+
+        with patch.object(shell_helpers, "render_shell_status_strip") as status, patch.object(
+            shell_helpers,
+            "render_shell_kpi_row",
+        ) as kpis, patch.object(shell_helpers, "render_shell_snapshot") as snapshot:
+            shell_helpers.render_first_paint_summary_shell(state="Ready", headline="Alert Center ready")
+
+        status.assert_called_once()
+        kpis.assert_not_called()
+        snapshot.assert_not_called()
+
+        with patch.object(shell_helpers, "render_shell_status_strip"), patch.object(
+            shell_helpers,
+            "render_shell_kpi_row",
+        ) as kpis, patch.object(shell_helpers, "render_shell_snapshot") as snapshot:
+            shell_helpers.render_first_paint_summary_shell(
+                state="Ready",
+                headline="Alert Center ready",
+                metrics=(("Active View", "Active Alerts"),),
+                snapshot=(("Freshness", "Not loaded"),),
+            )
+
+        kpis.assert_called_once_with((("Active View", "Active Alerts"),))
+        snapshot.assert_called_once_with((("Freshness", "Not loaded"),))
+
     def test_workflow_helpers_keep_landing_pages_compact(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
         layout_text = (APP_ROOT / "layout.py").read_text(encoding="utf-8")

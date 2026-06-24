@@ -272,6 +272,30 @@ class AlertCenterSplitTests(unittest.TestCase):
         self.assertIn("First paint does not query Snowflake", first_paint_source)
         self.assertIn("render_first_paint_summary_shell(", first_paint_source)
 
+    def test_alert_center_first_paint_shell_executes_without_loading_data(self):
+        with patch.object(alert_center, "render_first_paint_summary_shell") as render_shell, patch.object(
+            alert_center,
+            "_render_alert_command_lane_board",
+        ) as render_lanes, patch.object(alert_center.st, "info") as info:
+            alert_center._render_alert_center_first_paint_shell(
+                source_view="Active Alerts",
+                company="ALFA",
+                environment="PROD",
+                days=7,
+                limit=200,
+                required_sources={"ALERTS", "ISSUES"},
+            )
+
+        render_shell.assert_called_once()
+        render_lanes.assert_called_once()
+        info.assert_called_once()
+        shell_kwargs = render_shell.call_args.kwargs
+        self.assertEqual(shell_kwargs["state"], "Load on demand")
+        self.assertIn(("Active View", "Active Alerts"), shell_kwargs["metrics"])
+        self.assertIn(("Window", "7 days / 200 rows"), shell_kwargs["snapshot"])
+        self.assertIn("Load Active Alerts", info.call_args.args[0])
+        self.assertIn("First paint does not query Snowflake", info.call_args.args[0])
+
     def test_alert_center_first_paint_summary_cold_state_is_on_demand(self):
         summary = alert_center._alert_center_first_paint_summary(None, "Active Alerts")
 

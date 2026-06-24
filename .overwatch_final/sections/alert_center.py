@@ -459,7 +459,7 @@ def _render_alert_center_first_paint_shell(
             loaded=loaded_for_summary,
         )
     )
-    st.info(f"Use {cta_label} for detailed Alert Center rows. First paint does not query Snowflake.")
+    st.info(f"Use Load {source_view} for detailed Alert Center rows. First paint does not query Snowflake.")
 
 
 def _alert_command_lanes(

@@ -202,8 +202,8 @@ def build_shared_security_summary_sql(session: object, days: int, company: str) 
     user_filter_lh = _shared_security_user_company_filter_clause("lh.user_name", company)
     user_filter_u = _shared_security_user_company_filter_clause("u.name", company)
     user_filter_g = _shared_security_user_company_filter_clause("g.grantee_name", company)
-    db_filter = get_db_filter_clause("d.database_name")
-    object_grant_db_filter = get_db_filter_clause("gor.table_catalog")
+    db_filter = get_db_filter_clause("d.database_name", company=company)
+    object_grant_db_filter = get_db_filter_clause("gor.table_catalog", company=company)
     company_label = sql_literal(company, 100)
 
     summary_sql = f"""
@@ -374,8 +374,8 @@ def build_shared_security_mart_brief_sql(session: object, days: int, company: st
     user_filter_lh = _shared_security_user_company_filter_clause("lh.user_name", company)
     user_filter_u = _shared_security_user_company_filter_clause("u.name", company)
     user_filter_g = _shared_security_user_company_filter_clause("g.grantee_name", company)
-    db_filter = get_db_filter_clause("d.database_name")
-    object_grant_db_filter = get_db_filter_clause("gor.table_catalog")
+    db_filter = get_db_filter_clause("d.database_name", company=company)
+    object_grant_db_filter = get_db_filter_clause("gor.table_catalog", company=company)
     login_table = mart_object_name("FACT_LOGIN_DAILY")
     grant_table = mart_object_name("FACT_GRANT_DAILY")
     login_company_filter = "" if str(company or "").upper() == "ALL" else f"AND lh.company = {sql_literal(company, 100)}"

@@ -1232,6 +1232,26 @@ class SharedMetricsTests(unittest.TestCase):
         self.assertIn("COALESCE(RS.HAS_NON_COMPANY_ROLE, 0) = 0", sql)
         self.assertEqual(sql.count("SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS"), 1)
 
+    def test_security_summary_builders_leave_all_company_unscoped(self):
+        st.session_state["active_company"] = "ALFA"
+        st.session_state["global_environment"] = "ALL"
+        with patch(
+            "utils.shared_metrics_security.filter_existing_columns",
+            return_value=["HAS_MFA", "HAS_PASSWORD", "LAST_SUCCESS_LOGIN"],
+        ):
+            live_summary, live_exceptions = build_shared_security_summary_sql(object(), 14, "ALL")
+            mart_summary, mart_exceptions = build_shared_security_mart_brief_sql(object(), 14, "ALL")
+
+        for sql in (live_summary, live_exceptions, mart_summary, mart_exceptions):
+            upper = sql.upper()
+            self.assertNotIn("ROLE_SCOPE AS", upper)
+            self.assertNotIn("HAS_EXCLUDED_ROLE", upper)
+            self.assertNotIn("LH.COMPANY =", upper)
+            self.assertNotIn("G.COMPANY =", upper)
+            self.assertNotIn("ALFA_EDW", upper)
+            self.assertNotIn("TRXS_EDW", upper)
+            self.assertNotIn("WH_TRXS_LOAD", upper)
+
     def test_security_privileged_grant_review_builder_keeps_account_grants_unfiltered(self):
         sql = build_shared_security_privileged_grant_review_sql(30, "ALFA", "PROD")
         sql_upper = sql.upper()

@@ -12,7 +12,7 @@ import sys
 
 
 PERF_ROOT = pathlib.Path(__file__).resolve().parent
-PROFILE_PATH = PERF_ROOT / "profiles" / "12_power_users.json"
+PROFILE_PATH = PERF_ROOT / "profiles" / "12_power_users_release_scored.json"
 DEFAULT_OUTPUT_DIR = PERF_ROOT / "results"
 sys.path.insert(0, str(PERF_ROOT))
 

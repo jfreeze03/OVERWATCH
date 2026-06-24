@@ -1,4 +1,5 @@
 import argparse
+import asyncio
 from pathlib import Path
 import importlib.util
 import sys
@@ -9,7 +10,10 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 PERF_ROOT = ROOT / "perf_tests"
 PROFILE_PATH = PERF_ROOT / "profiles" / "12_power_users.json"
+RELEASE_PROFILE_PATH = PERF_ROOT / "profiles" / "12_power_users_release_scored.json"
+DIAGNOSTIC_PROFILE_PATH = PERF_ROOT / "profiles" / "12_power_users_diagnostic.json"
 INITIAL_LOAD_PROFILE_PATH = PERF_ROOT / "profiles" / "12_power_users_initial_load_only.json"
+SECTION_NAV_PROFILE_PATH = PERF_ROOT / "profiles" / "12_power_users_section_nav_only.json"
 
 
 def load_live_runner():
@@ -38,10 +42,44 @@ class LiveConcurrentProfileTests(unittest.TestCase):
         self.assertTrue(args.initial_load_substeps)
         self.assertTrue(args.section_nav_substeps)
         self.assertTrue(args.wait_initial_idle)
-        self.assertFalse(args.trace_slowest_initial_load)
+        self.assertTrue(args.trace_slowest_initial_load)
         self.assertEqual(args.fail_p95_ms, 10000)
         self.assertEqual(args.fail_error_rate, 0.0)
         self.assertEqual(args.missing_load_button_wait_ms, 10000)
+
+    def test_release_scored_profile_disables_diagnostics(self):
+        runner = load_live_runner()
+
+        args = runner.parse_args(["--profile", str(RELEASE_PROFILE_PATH)])
+
+        self.assertEqual(args.users, 12)
+        self.assertEqual(args.iterations, 3)
+        self.assertTrue(args.single_initial_load)
+        self.assertTrue(args.wait_initial_idle)
+        self.assertFalse(args.initial_load_substeps)
+        self.assertFalse(args.section_nav_substeps)
+        self.assertFalse(args.trace_slowest_initial_load)
+        self.assertEqual(args.load_buttons["Alert Center"], "Load Active Alerts")
+        self.assertEqual(args.load_buttons["Cost & Contract"], "Refresh Cost")
+
+    def test_diagnostic_profile_enables_diagnostics_and_trace(self):
+        runner = load_live_runner()
+
+        args = runner.parse_args(["--profile", str(DIAGNOSTIC_PROFILE_PATH)])
+
+        self.assertTrue(args.initial_load_substeps)
+        self.assertTrue(args.section_nav_substeps)
+        self.assertTrue(args.trace_slowest_initial_load)
+
+    def test_section_nav_only_profile_has_no_load_buttons(self):
+        runner = load_live_runner()
+
+        args = runner.parse_args(["--profile", str(SECTION_NAV_PROFILE_PATH)])
+
+        self.assertTrue(args.section_nav_substeps)
+        self.assertFalse(args.initial_load_substeps)
+        self.assertFalse(args.load_buttons)
+        self.assertEqual(runner.active_load_button_map(args.load_buttons), {})
 
     def test_initial_load_only_profile_is_diagnostic_not_release_gate(self):
         runner = load_live_runner()
@@ -326,6 +364,35 @@ class LiveConcurrentProfileTests(unittest.TestCase):
         self.assertFalse(sample["psutil_available"])
         self.assertIn("timestamp", sample)
 
+    def test_frontend_metrics_collector_handles_missing_browser_apis(self):
+        runner = load_live_runner()
+
+        class FakePage:
+            async def evaluate(self, _script):
+                return {
+                    "dom": {"node_count": 5, "css_rule_count": 0},
+                    "resource_timing_by_type": {},
+                    "long_tasks": {"count": 0, "total_duration_ms": 0},
+                    "layout_shift": {"count": 0, "score": 0},
+                    "heap": {},
+                }
+
+        metrics = asyncio.run(runner.collect_frontend_metrics(FakePage()))
+
+        self.assertEqual(metrics["dom"]["node_count"], 5)
+        self.assertEqual(metrics["long_tasks"]["count"], 0)
+
+    def test_frontend_metrics_collector_returns_error_for_eval_failure(self):
+        runner = load_live_runner()
+
+        class FakePage:
+            async def evaluate(self, _script):
+                raise RuntimeError("no browser")
+
+        metrics = asyncio.run(runner.collect_frontend_metrics(FakePage()))
+
+        self.assertIn("error", metrics)
+
     def test_diagnostic_samples_are_written_to_reports(self):
         runner = load_live_runner()
         args = argparse.Namespace(
@@ -356,6 +423,28 @@ class LiveConcurrentProfileTests(unittest.TestCase):
                     },
                     "navigation_timing": {"responseStart": 30.0},
                     "paint_timing": {"first-contentful-paint": 55.0},
+                    "frontend_metrics": {
+                        "dom": {"node_count": 100, "css_rule_count": 12},
+                        "heap": {"used_js_heap_size": 1},
+                        "long_tasks": {"count": 0, "total_duration_ms": 0},
+                        "layout_shift": {"score": 0, "count": 0},
+                        "resource_timing_by_type": {"script": {"count": 2, "total_duration_ms": 10, "transfer_size": 100}},
+                    },
+                },
+            ),
+            runner.StepSample(
+                1,
+                1,
+                "Executive Landing",
+                "section_nav:Executive Landing:perf_trace_collected",
+                25.0,
+                True,
+                diagnostic=True,
+                detail={
+                    "frontend_metrics": {
+                        "dom": {"node_count": 120},
+                        "resource_timing_by_type": {},
+                    }
                 },
             ),
         ]
@@ -380,10 +469,39 @@ class LiveConcurrentProfileTests(unittest.TestCase):
         self.assertIn("App Entry Phase Breakdown", markdown)
         self.assertIn("Browser Navigation Timing", markdown)
         self.assertIn("Browser Paint Timing", markdown)
+        self.assertIn("Frontend Paint Metrics", markdown)
         self.assertIn("Slowest User Correlation", markdown)
+        self.assertIn("Section Navigation Matrix", markdown)
         self.assertIn("Resource Samples", markdown)
         self.assertEqual(summary["app_entry_phase_breakdown"][0]["phase"], "app_entry:import_shell")
         self.assertEqual(summary["browser_navigation_timing"][0]["metric"], "responseStart")
+        self.assertEqual(summary["frontend_dom_metrics"][0]["metric"], "node_count")
+        self.assertEqual(summary["frontend_resource_timing"][0]["initiator_type"], "script")
+
+    def test_skipped_button_details_are_carried_into_summary(self):
+        runner = load_live_runner()
+        args = argparse.Namespace(users=1, iterations=1, fail_p95_ms=10000, fail_error_rate=0.0)
+        samples = [
+            runner.StepSample(
+                1,
+                1,
+                "Alert Center",
+                "load_button:Load Active Alerts",
+                0.0,
+                True,
+                skipped=True,
+                detail={
+                    "active_section_title": "Alert Center",
+                    "visible_button_labels": ["Load History"],
+                    "expand_hidden_load_surfaces_called": True,
+                },
+            )
+        ]
+
+        summary = runner.summarize(samples, 1.0, args)
+
+        self.assertEqual(summary["skipped_button_details"][0]["detail"]["active_section_title"], "Alert Center")
+        self.assertEqual(summary["skipped_button_details"][0]["detail"]["visible_button_labels"], ["Load History"])
 
 
 if __name__ == "__main__":

@@ -165,7 +165,7 @@ def _diagnostic_recommendations(summary: dict) -> list[str]:
     server_total = server_by_phase.get("shell:total_render_app", 0)
     app_entry_rows = _summary_rows(summary, "app_entry_phase_breakdown", "phase", limit=20)
     app_entry_max = max((float(row.get("p95_ms", 0) or 0) for row in app_entry_rows), default=0.0)
-    if response_start > 5000 and fcp > 10000 and server_total < 1000 and app_entry_max < 5000:
+    if response_start > 5000 and fcp > 10000 and server_total < 1500 and app_entry_max < 5000:
         recommendations.append(
             "Server render and app-entry phases are low while responseStart/FCP are high; prioritize Streamlit server concurrency/runtime and browser host capacity before section-code trimming."
         )
@@ -298,6 +298,22 @@ def build_review(
         lines.append("- None recorded.")
     lines.extend([
         "",
+        "## Diagnostic Overhead A/B",
+        "",
+    ])
+    overhead = summary.get("diagnostic_overhead")
+    if isinstance(overhead, dict):
+        lines.extend([
+            f"- Clean profile p95: `{overhead.get('clean_p95_ms', 0)} ms`",
+            f"- Diagnostic profile p95: `{overhead.get('diagnostic_p95_ms', 0)} ms`",
+            f"- Diagnostic delta: `{overhead.get('p95_delta_ms', 0)} ms`",
+        ])
+        if float(overhead.get("p95_delta_ms", 0) or 0) > 2500:
+            lines.append("- Recommendation: keep diagnostic capture outside the scored release gate.")
+    else:
+        lines.append("- No diagnostic overhead A/B payload was attached to this live report.")
+    lines.extend([
+        "",
         "## Top Slowest Sections",
         "",
         "| Section | Steps | Skipped | Errors | P95 ms | Max ms |",
@@ -396,6 +412,32 @@ def build_review(
         lines.append("- No browser paint timing was collected.")
     lines.extend([
         "",
+        "## Frontend Paint Metrics",
+        "",
+    ])
+    dom_rows = summary.get("frontend_dom_metrics", [])
+    if isinstance(dom_rows, list) and dom_rows:
+        lines.extend(["| DOM/CSS metric | Samples | P95 | Max |", "|---|---:|---:|---:|"])
+        for row in dom_rows:
+            lines.append(
+                f"| {row.get('metric', '')} | {row.get('samples', '')} | {row.get('p95', 0)} | {row.get('max', 0)} |"
+            )
+    else:
+        lines.append("- No frontend DOM/CSS metrics were collected.")
+    resource_rows = summary.get("frontend_resource_timing", [])
+    if isinstance(resource_rows, list) and resource_rows:
+        lines.extend([
+            "",
+            "| Resource initiator | Samples | Count p95 | Duration p95 ms | Transfer p95 |",
+            "|---|---:|---:|---:|---:|",
+        ])
+        for row in resource_rows:
+            lines.append(
+                f"| {row.get('initiator_type', '')} | {row.get('samples', '')} | {row.get('count_p95', 0)} | "
+                f"{row.get('duration_p95_ms', 0)} | {row.get('transfer_size_p95', 0)} |"
+            )
+    lines.extend([
+        "",
         "## Slowest User Correlation",
         "",
     ])
@@ -463,6 +505,26 @@ def build_review(
         lines.extend(f"- {item}" for item in skipped)
     else:
         lines.append("- None recorded.")
+    lines.extend([
+        "",
+        "## Skipped Button Context",
+        "",
+    ])
+    skipped_details = summary.get("skipped_button_details", [])
+    if isinstance(skipped_details, list) and skipped_details:
+        for row in skipped_details[:10]:
+            detail = row.get("detail", {}) if isinstance(row, dict) else {}
+            if not isinstance(detail, dict):
+                detail = {}
+            buttons = ", ".join(str(item) for item in detail.get("visible_button_labels", [])[:12])
+            lines.extend([
+                f"- User `{row.get('user_id')}` iteration `{row.get('iteration')}` section `{row.get('section')}` action `{row.get('action')}`",
+                f"  - Active title: `{detail.get('active_section_title', '')}`",
+                f"  - Visible buttons: `{buttons}`",
+                f"  - Screenshot: `{detail.get('screenshot_path', '')}`",
+            ])
+    else:
+        lines.append("- No skipped-button context was captured.")
     lines.extend([
         "",
         "## Top 10 Slowest Release Steps",

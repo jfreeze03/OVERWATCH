@@ -28,6 +28,7 @@ PERF_RUN_ID_KEY = "_overwatch_perf_run_id"
 PERF_USER_KEY = "_overwatch_perf_user"
 PERF_ITERATION_KEY = "_overwatch_perf_iteration"
 MAX_TRACE_SAMPLES = 96
+PERF_TRACE_MARKER_LIMIT = 40
 _PROCESS_STARTED_AT = time.perf_counter()
 
 
@@ -115,6 +116,27 @@ def trace_samples() -> list[dict[str, Any]]:
     return [dict(sample) for sample in samples if isinstance(sample, dict)]
 
 
+def _compact_sample(sample: dict[str, Any]) -> dict[str, Any]:
+    compact = {
+        "phase": sample.get("phase", ""),
+        "elapsed_ms": sample.get("elapsed_ms", 0.0),
+        "timestamp": sample.get("timestamp", ""),
+        "active_section": sample.get("active_section", ""),
+    }
+    for key in ("run_id", "user", "iteration"):
+        if sample.get(key):
+            compact[key] = sample[key]
+    if "detail" in sample:
+        compact["detail"] = _jsonable_detail(sample["detail"])
+    return compact
+
+
+def marker_samples(limit: int = PERF_TRACE_MARKER_LIMIT) -> list[dict[str, Any]]:
+    """Return compact samples for the hidden DOM marker."""
+    samples = trace_samples()
+    return [_compact_sample(sample) for sample in samples[-max(0, int(limit)):]]
+
+
 def record_phase(
     phase: str,
     elapsed_ms: float = 0.0,
@@ -132,7 +154,6 @@ def record_phase(
         "timestamp": datetime.now(UTC).isoformat(),
         "active_section": _active_section(active_section),
         "run_id": context["run_id"],
-        "runtime": runtime_detail(),
     }
     if context["user"]:
         sample["user"] = context["user"]
@@ -179,7 +200,8 @@ def render_trace_marker() -> None:
         "run_id": context["run_id"],
         "user": context["user"],
         "iteration": context["iteration"],
-        "samples": trace_samples(),
+        "runtime": runtime_detail(),
+        "samples": marker_samples(),
     }
     escaped = html.escape(json.dumps(payload, separators=(",", ":")), quote=False)
     st.markdown(

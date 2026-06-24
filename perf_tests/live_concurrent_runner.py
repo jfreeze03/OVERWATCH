@@ -232,6 +232,7 @@ def _default_config() -> dict:
         "wait_initial_idle": False,
         "trace_slowest_initial_load": False,
         "single_initial_load": False,
+        "chromium_args": [],
         "action_settle_ms": 900,
         "ramp_seconds": 5.0,
         "width": 1440,
@@ -297,6 +298,10 @@ def load_profile_defaults(profile_path: str | pathlib.Path) -> dict:
         profile["sections"] = [str(item).strip() for item in sections]
     if "load_buttons" in profile:
         profile["load_buttons"] = normalize_load_buttons(profile["load_buttons"])
+    if "chromium_args" in profile:
+        chromium_args = profile["chromium_args"]
+        if not isinstance(chromium_args, list) or not all(isinstance(item, str) for item in chromium_args):
+            raise ValueError("profile chromium_args must be a string list")
     return profile
 
 
@@ -493,6 +498,82 @@ async def collect_browser_paint_timing(page) -> dict[str, float]:
         return {}
 
 
+async def collect_frontend_metrics(page) -> dict[str, object]:
+    """Collect paint/DOM pressure signals without requiring browser-only APIs."""
+    try:
+        metrics = await page.evaluate(
+            """() => {
+                const visible = (element) => {
+                    if (!element) return false;
+                    const style = window.getComputedStyle(element);
+                    return style.visibility !== "hidden"
+                        && style.display !== "none"
+                        && element.getClientRects().length > 0;
+                };
+                const dom = {
+                    node_count: document.querySelectorAll("*").length,
+                    visible_button_count: Array.from(document.querySelectorAll("button, [role='button']")).filter(visible).length,
+                    script_count: document.scripts ? document.scripts.length : 0,
+                    style_count: document.querySelectorAll("style").length,
+                    link_stylesheet_count: document.querySelectorAll("link[rel='stylesheet']").length,
+                    stylesheet_count: document.styleSheets ? document.styleSheets.length : 0,
+                    css_rule_count: 0,
+                    css_rule_error_count: 0,
+                };
+                try {
+                    for (const sheet of Array.from(document.styleSheets || [])) {
+                        try {
+                            dom.css_rule_count += sheet.cssRules ? sheet.cssRules.length : 0;
+                        } catch (error) {
+                            dom.css_rule_error_count += 1;
+                        }
+                    }
+                } catch (error) {
+                    dom.css_rule_error_count += 1;
+                }
+                const resourceTiming = {};
+                for (const entry of performance.getEntriesByType("resource") || []) {
+                    const key = entry.initiatorType || "other";
+                    if (!resourceTiming[key]) {
+                        resourceTiming[key] = {count: 0, total_duration_ms: 0, transfer_size: 0};
+                    }
+                    resourceTiming[key].count += 1;
+                    resourceTiming[key].total_duration_ms += Number(entry.duration || 0);
+                    resourceTiming[key].transfer_size += Number(entry.transferSize || 0);
+                }
+                for (const row of Object.values(resourceTiming)) {
+                    row.total_duration_ms = Math.round(row.total_duration_ms * 100) / 100;
+                    row.transfer_size = Math.round(row.transfer_size);
+                }
+                const longTasks = performance.getEntriesByType("longtask") || [];
+                const layoutShifts = (performance.getEntriesByType("layout-shift") || [])
+                    .filter(entry => !entry.hadRecentInput);
+                const memory = performance.memory ? {
+                    used_js_heap_size: performance.memory.usedJSHeapSize,
+                    total_js_heap_size: performance.memory.totalJSHeapSize,
+                    js_heap_size_limit: performance.memory.jsHeapSizeLimit,
+                } : {};
+                return {
+                    dom,
+                    resource_timing_by_type: resourceTiming,
+                    long_tasks: {
+                        count: longTasks.length,
+                        total_duration_ms: Math.round(longTasks.reduce((sum, entry) => sum + Number(entry.duration || 0), 0) * 100) / 100,
+                        max_duration_ms: Math.round(longTasks.reduce((max, entry) => Math.max(max, Number(entry.duration || 0)), 0) * 100) / 100,
+                    },
+                    layout_shift: {
+                        count: layoutShifts.length,
+                        score: Math.round(layoutShifts.reduce((sum, entry) => sum + Number(entry.value || 0), 0) * 10000) / 10000,
+                    },
+                    heap: memory,
+                };
+            }"""
+        )
+        return metrics if isinstance(metrics, dict) else {}
+    except Exception as exc:
+        return {"error": str(exc)[:240]}
+
+
 async def collect_perf_trace_payload(page) -> dict[str, object]:
     try:
         payload = await page.evaluate(
@@ -516,12 +597,14 @@ async def collect_initial_load_diagnostics(page) -> dict[str, object]:
         "perf_trace": await collect_perf_trace_payload(page),
         "navigation_timing": await collect_browser_navigation_timing(page),
         "paint_timing": await collect_browser_paint_timing(page),
+        "frontend_metrics": await collect_frontend_metrics(page),
     }
 
 
 async def collect_section_nav_diagnostics(page) -> dict[str, object]:
     return {
         "perf_trace": await collect_perf_trace_payload(page),
+        "frontend_metrics": await collect_frontend_metrics(page),
     }
 
 
@@ -566,6 +649,127 @@ async def click_optional_named_button(page, label: str, timeout_ms: int, missing
     return True
 
 
+def _safe_artifact_token(value: object) -> str:
+    text = "".join(ch if ch.isalnum() else "_" for ch in str(value or "").strip())
+    return "_".join(part for part in text.split("_") if part)[:80] or "unknown"
+
+
+async def collect_skipped_button_diagnostics(
+    page,
+    *,
+    section: str,
+    label: str,
+    output_dir: str | pathlib.Path,
+    run_id: str,
+    user_id: int,
+    iteration: int,
+    expanded_load_surfaces: bool,
+) -> dict[str, object]:
+    """Capture local UI context for a configured load button that is missing."""
+    try:
+        context = await page.evaluate(
+            """() => {
+                const visible = (element) => {
+                    if (!element) return false;
+                    const style = window.getComputedStyle(element);
+                    return style.visibility !== "hidden"
+                        && style.display !== "none"
+                        && element.getClientRects().length > 0;
+                };
+                const text = (element) => (element && element.innerText ? element.innerText.replace(/\\s+/g, " ").trim() : "");
+                const buttons = Array.from(document.querySelectorAll("button, [role='button']"))
+                    .filter(visible)
+                    .map(text)
+                    .filter(Boolean)
+                    .slice(0, 80);
+                const headings = Array.from(document.querySelectorAll(
+                    "h1,h2,h3,h4,h5,h6,.ow-section-title,.ow-section-subtitle,[data-testid='stCaptionContainer']"
+                ))
+                    .filter(visible)
+                    .map(text)
+                    .filter(Boolean)
+                    .slice(0, 80);
+                const activeTitle = text(document.querySelector(".ow-section-title"));
+                const spinners = Array.from(document.querySelectorAll('[data-testid="stSpinner"], .stSpinner')).filter(visible).length;
+                const transitions = Array.from(document.querySelectorAll(".ow-section-transition")).filter(visible).length;
+                return {
+                    active_section_title: activeTitle,
+                    visible_button_labels: buttons,
+                    visible_headings_and_captions: headings,
+                    spinner_count: spinners,
+                    transition_count: transitions,
+                };
+            }"""
+        )
+        detail = context if isinstance(context, dict) else {}
+    except Exception as exc:
+        detail = {"context_error": str(exc)[:240]}
+    detail.update({
+        "configured_section": section,
+        "configured_label": label,
+        "expand_hidden_load_surfaces_called": expanded_load_surfaces,
+    })
+    screenshot_path = pathlib.Path(output_dir) / (
+        f"{_safe_artifact_token(run_id)}_skipped_button_user{user_id:02d}_iter{iteration}_"
+        f"{_safe_artifact_token(section)}_{_safe_artifact_token(label)}.png"
+    )
+    try:
+        screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+        await page.screenshot(path=str(screenshot_path), full_page=True)
+        detail["screenshot_path"] = str(screenshot_path)
+    except Exception as exc:
+        detail["screenshot_error"] = str(exc)[:240]
+    return detail
+
+
+async def click_optional_load_button(
+    page,
+    *,
+    section: str,
+    label: str,
+    args: argparse.Namespace,
+    user_id: int,
+    iteration: int,
+) -> str | dict[str, object] | None:
+    """Click a configured read-only load button or return skip diagnostics."""
+    await wait_for_section_title_visible(page, section, args.timeout_ms)
+    try:
+        await wait_for_transition_clear(page, args.timeout_ms)
+    except Exception:
+        pass
+    await wait_for_streamlit_idle(page, args.timeout_ms, min(args.action_settle_ms, 250))
+    await wait_for_active_section_container_visible(page, args.timeout_ms)
+    expanded = False
+    if args.expand_load_surfaces:
+        await expand_hidden_load_surfaces(page)
+        expanded = True
+    button_wait_ms = args.timeout_ms if args.missing_load_button == "fail" else min(
+        args.timeout_ms,
+        args.missing_load_button_wait_ms,
+    )
+    try:
+        button = await wait_for_named_button(page, label, button_wait_ms)
+    except Exception as exc:
+        detail = await collect_skipped_button_diagnostics(
+            page,
+            section=section,
+            label=label,
+            output_dir=args.output_dir,
+            run_id=args.run_id,
+            user_id=user_id,
+            iteration=iteration,
+            expanded_load_surfaces=expanded,
+        )
+        detail["wait_error"] = str(exc)[:240]
+        if args.missing_load_button == "skip":
+            return {"status": "skipped", "detail": detail}
+        raise RuntimeError(json.dumps(detail, separators=(",", ":"))) from exc
+    await button.click(timeout=args.timeout_ms)
+    await wait_for_streamlit_idle(page, args.timeout_ms, args.action_settle_ms)
+    await wait_for_section(page, section, args.timeout_ms)
+    return None
+
+
 async def timed_step(
     *,
     page,
@@ -585,7 +789,12 @@ async def timed_step(
         visible_error = await collect_visible_error(page)
         new_browser_messages = browser_errors[before_browser_errors:]
         new_browser_errors = len(new_browser_messages)
+        result_detail: dict[str, object] = {}
         skipped = result == "skipped"
+        if isinstance(result, dict):
+            skipped = result.get("status") == "skipped"
+            detail = result.get("detail", result)
+            result_detail = detail if isinstance(detail, dict) else {"detail": detail}
         ok = skipped or (not visible_error and new_browser_errors == 0)
         return StepSample(
             user_id=user_id,
@@ -599,6 +808,7 @@ async def timed_step(
             browser_error_messages=[message[:500] for message in new_browser_messages[:5]],
             skipped=skipped,
             diagnostic=diagnostic,
+            detail=result_detail,
         )
     except Exception as exc:
         elapsed_ms = (time.perf_counter() - started) * 1000
@@ -902,19 +1112,14 @@ async def run_user(
                 if load_label:
 
                     async def load_live_data(section_name=section, button_label=load_label):
-                        if args.expand_load_surfaces:
-                            await expand_hidden_load_surfaces(page)
-                        clicked = await click_optional_named_button(
+                        return await click_optional_load_button(
                             page,
-                            button_label,
-                            args.timeout_ms,
-                            args.missing_load_button,
-                            args.missing_load_button_wait_ms,
+                            section=section_name,
+                            label=button_label,
+                            args=args,
+                            user_id=user_id,
+                            iteration=iteration,
                         )
-                        if not clicked:
-                            return "skipped"
-                        await wait_for_streamlit_idle(page, args.timeout_ms, args.action_settle_ms)
-                        await wait_for_section(page, section_name, args.timeout_ms)
 
                     load_sample = await timed_step(
                         page=page,
@@ -945,7 +1150,7 @@ async def run_stress(args: argparse.Namespace) -> tuple[list[StepSample], float,
     resource_recorder = ResourceRecorder(args.users)
     await resource_recorder.record("before_launch")
     async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch(headless=not args.headed)
+        browser = await playwright.chromium.launch(headless=not args.headed, args=list(args.chromium_args or []))
         await resource_recorder.record("after_browser_launch")
 
         async def delayed_user(user_id: int) -> list[StepSample]:
@@ -1031,6 +1236,70 @@ def _timing_metric_rows(diagnostic_samples: list[StepSample], detail_key: str) -
     ]
 
 
+def _frontend_metric_rows(
+    diagnostic_samples: list[StepSample],
+    group_key: str,
+    *,
+    value_prefix: str = "",
+) -> list[dict[str, object]]:
+    grouped: dict[str, list[float]] = {}
+    for sample in diagnostic_samples:
+        detail = sample.detail if isinstance(sample.detail, dict) else {}
+        frontend = detail.get("frontend_metrics")
+        if not isinstance(frontend, dict):
+            continue
+        group = frontend.get(group_key)
+        if not isinstance(group, dict):
+            continue
+        for metric, value in group.items():
+            if isinstance(value, int | float):
+                label = f"{value_prefix}{metric}" if value_prefix else str(metric)
+                grouped.setdefault(label, []).append(float(value))
+    return [
+        {
+            "metric": metric,
+            "samples": len(values),
+            "p95": round(percentile(values, 95), 2),
+            "max": round(max(values), 2) if values else 0.0,
+        }
+        for metric, values in sorted(grouped.items(), key=lambda item: percentile(item[1], 95), reverse=True)
+    ]
+
+
+def _frontend_resource_timing_rows(diagnostic_samples: list[StepSample]) -> list[dict[str, object]]:
+    grouped: dict[str, dict[str, list[float]]] = {}
+    for sample in diagnostic_samples:
+        detail = sample.detail if isinstance(sample.detail, dict) else {}
+        frontend = detail.get("frontend_metrics")
+        if not isinstance(frontend, dict):
+            continue
+        resources = frontend.get("resource_timing_by_type")
+        if not isinstance(resources, dict):
+            continue
+        for initiator, row in resources.items():
+            if not isinstance(row, dict):
+                continue
+            bucket = grouped.setdefault(str(initiator), {"count": [], "duration": [], "transfer": []})
+            for source_key, target_key in (
+                ("count", "count"),
+                ("total_duration_ms", "duration"),
+                ("transfer_size", "transfer"),
+            ):
+                value = row.get(source_key)
+                if isinstance(value, int | float):
+                    bucket[target_key].append(float(value))
+    output = []
+    for initiator, values in grouped.items():
+        output.append({
+            "initiator_type": initiator,
+            "samples": max((len(items) for items in values.values()), default=0),
+            "count_p95": round(percentile(values["count"], 95), 2),
+            "duration_p95_ms": round(percentile(values["duration"], 95), 2),
+            "transfer_size_p95": round(percentile(values["transfer"], 95), 2),
+        })
+    return sorted(output, key=lambda row: float(row.get("duration_p95_ms", 0) or 0), reverse=True)
+
+
 def _phase_rows_matching(diagnostic_samples: list[StepSample], prefix: str) -> list[dict[str, object]]:
     rows = _server_phase_rows(diagnostic_samples)
     return [row for row in rows if str(row.get("phase", "")).startswith(prefix)]
@@ -1080,6 +1349,8 @@ def _initial_load_matrix(release_samples: list[StepSample], diagnostic_samples: 
             row["browser_navigation_timing"] = detail.get("navigation_timing")
         if "paint_timing" in detail:
             row["browser_paint_timing"] = detail.get("paint_timing")
+        if "frontend_metrics" in detail:
+            row["frontend_metrics"] = detail.get("frontend_metrics")
         top_phase = _top_server_phase_for_sample(sample)
         if top_phase:
             row["top_server_phase"] = {
@@ -1097,6 +1368,48 @@ def _initial_load_matrix(release_samples: list[StepSample], diagnostic_samples: 
                     "elapsed_ms": slow_app_entry.get("elapsed_ms", 0),
                 }
     return sorted(by_key.values(), key=lambda row: float(row.get("release_initial_load_ms", 0) or 0), reverse=True)
+
+
+def _section_nav_matrix(release_samples: list[StepSample], diagnostic_samples: list[StepSample]) -> list[dict[str, object]]:
+    rows: dict[tuple[int, int, str], dict[str, object]] = {}
+    for sample in release_samples:
+        if sample.action != "section_nav":
+            continue
+        key = (sample.user_id, sample.iteration, sample.section)
+        rows[key] = {
+            "user_id": sample.user_id,
+            "iteration": sample.iteration,
+            "section": sample.section,
+            "release_section_nav_ms": round(sample.elapsed_ms, 2),
+            "ok": sample.ok,
+        }
+    for sample in diagnostic_samples:
+        if not sample.action.startswith("section_nav:"):
+            continue
+        parts = sample.action.split(":")
+        if len(parts) < 3:
+            continue
+        section = parts[1]
+        phase = parts[2]
+        key = (sample.user_id, sample.iteration, section)
+        row = rows.setdefault(key, {
+            "user_id": sample.user_id,
+            "iteration": sample.iteration,
+            "section": section,
+            "release_section_nav_ms": 0.0,
+            "ok": True,
+        })
+        row[phase] = round(sample.elapsed_ms, 2)
+        detail = sample.detail if isinstance(sample.detail, dict) else {}
+        if "frontend_metrics" in detail:
+            row["frontend_metrics"] = detail.get("frontend_metrics")
+        top_phase = _top_server_phase_for_sample(sample)
+        if top_phase:
+            row["top_server_phase"] = {
+                "phase": top_phase.get("phase", ""),
+                "elapsed_ms": top_phase.get("elapsed_ms", 0),
+            }
+    return sorted(rows.values(), key=lambda row: float(row.get("release_section_nav_ms", 0) or 0), reverse=True)
 
 
 def summarize(
@@ -1131,11 +1444,19 @@ def summarize(
         "load_button": sum(1 for sample in release_samples if sample.action.startswith("load_button:")),
     }
     skipped_by_label: dict[str, int] = {}
+    skipped_button_details: list[dict[str, object]] = []
     for sample in release_samples:
         if not sample.skipped:
             continue
         label = sample.action.split(":", 1)[1] if sample.action.startswith("load_button:") else sample.action
         skipped_by_label[label] = skipped_by_label.get(label, 0) + 1
+        skipped_button_details.append({
+            "user_id": sample.user_id,
+            "iteration": sample.iteration,
+            "section": sample.section,
+            "action": sample.action,
+            "detail": sample.detail,
+        })
 
     by_action = {}
     for action in sorted({sample.action for sample in release_samples}):
@@ -1294,7 +1615,14 @@ def summarize(
         "app_entry_phase_breakdown": _phase_rows_matching(diagnostic_samples, "app_entry:"),
         "browser_navigation_timing": _timing_metric_rows(diagnostic_samples, "navigation_timing"),
         "browser_paint_timing": _timing_metric_rows(diagnostic_samples, "paint_timing"),
+        "frontend_dom_metrics": _frontend_metric_rows(diagnostic_samples, "dom"),
+        "frontend_heap_metrics": _frontend_metric_rows(diagnostic_samples, "heap"),
+        "frontend_long_tasks": _frontend_metric_rows(diagnostic_samples, "long_tasks"),
+        "frontend_layout_shift": _frontend_metric_rows(diagnostic_samples, "layout_shift"),
+        "frontend_resource_timing": _frontend_resource_timing_rows(diagnostic_samples),
         "initial_load_matrix": _initial_load_matrix(release_samples, diagnostic_samples),
+        "section_nav_matrix": _section_nav_matrix(release_samples, diagnostic_samples),
+        "skipped_button_details": skipped_button_details,
         "resource_samples": resource_samples or [],
         "slowest_initial_load_trace": trace_artifact,
         "slowest_initial_load_trace_error": trace_error,
@@ -1505,6 +1833,36 @@ def write_reports(args: argparse.Namespace, samples: list[StepSample], summary: 
         md.append("No browser paint timing was collected.")
     md.extend([
         "",
+        "## Frontend Paint Metrics",
+        "",
+    ])
+    if summary.get("frontend_dom_metrics"):
+        md.extend(["### DOM And CSS", "", "| Metric | Samples | P95 | Max |", "|---|---:|---:|---:|"])
+        for row in summary["frontend_dom_metrics"]:
+            md.append(f"| {row['metric']} | {row['samples']} | {row['p95']} | {row['max']} |")
+    else:
+        md.append("No frontend DOM/CSS metrics were collected.")
+    if summary.get("frontend_heap_metrics"):
+        md.extend(["", "### JS Heap", "", "| Metric | Samples | P95 | Max |", "|---|---:|---:|---:|"])
+        for row in summary["frontend_heap_metrics"]:
+            md.append(f"| {row['metric']} | {row['samples']} | {row['p95']} | {row['max']} |")
+    if summary.get("frontend_long_tasks"):
+        md.extend(["", "### Long Tasks", "", "| Metric | Samples | P95 | Max |", "|---|---:|---:|---:|"])
+        for row in summary["frontend_long_tasks"]:
+            md.append(f"| {row['metric']} | {row['samples']} | {row['p95']} | {row['max']} |")
+    if summary.get("frontend_layout_shift"):
+        md.extend(["", "### Layout Shift", "", "| Metric | Samples | P95 | Max |", "|---|---:|---:|---:|"])
+        for row in summary["frontend_layout_shift"]:
+            md.append(f"| {row['metric']} | {row['samples']} | {row['p95']} | {row['max']} |")
+    if summary.get("frontend_resource_timing"):
+        md.extend(["", "### Resource Timing", "", "| Initiator | Samples | Count p95 | Duration p95 ms | Transfer p95 |", "|---|---:|---:|---:|---:|"])
+        for row in summary["frontend_resource_timing"]:
+            md.append(
+                f"| {row['initiator_type']} | {row['samples']} | {row['count_p95']} | "
+                f"{row['duration_p95_ms']} | {row['transfer_size_p95']} |"
+            )
+    md.extend([
+        "",
         "## Slowest User Correlation",
         "",
     ])
@@ -1535,6 +1893,29 @@ def write_reports(args: argparse.Namespace, samples: list[StepSample], summary: 
             )
     else:
         md.append("No initial-load correlation rows were collected.")
+    md.extend([
+        "",
+        "## Section Navigation Matrix",
+        "",
+    ])
+    if summary.get("section_nav_matrix"):
+        md.extend([
+            "| User | Iteration | Section | Section nav ms | Title visible | Container visible | Top server phase |",
+            "|---:|---:|---|---:|---:|---:|---|",
+        ])
+        for row in summary["section_nav_matrix"][:20]:
+            server = row.get("top_server_phase") if isinstance(row, dict) else {}
+            server_phase = (
+                f"{server.get('phase', '')} {server.get('elapsed_ms', '')} ms"
+                if isinstance(server, dict) and server else ""
+            )
+            md.append(
+                f"| {row.get('user_id', '')} | {row.get('iteration', '')} | {row.get('section', '')} | "
+                f"{row.get('release_section_nav_ms', '')} | {row.get('title_visible', '')} | "
+                f"{row.get('section_container_visible', '')} | {server_phase} |"
+            )
+    else:
+        md.append("No section navigation correlation rows were collected.")
     md.extend([
         "",
         "## Resource Samples",
@@ -1613,6 +1994,22 @@ def write_reports(args: argparse.Namespace, samples: list[StepSample], summary: 
         md.extend(["| User | Iteration | Section | Action |", "|---:|---:|---|---|"])
         for sample in skipped_samples[:20]:
             md.append(f"| {sample.user_id} | {sample.iteration} | {sample.section} | {sample.action} |")
+        if summary.get("skipped_button_details"):
+            md.extend(["", "### Skipped Button Context", ""])
+            for row in summary["skipped_button_details"][:10]:
+                detail = row.get("detail", {}) if isinstance(row, dict) else {}
+                if not isinstance(detail, dict):
+                    detail = {}
+                buttons = ", ".join(str(item) for item in detail.get("visible_button_labels", [])[:12])
+                headings = ", ".join(str(item) for item in detail.get("visible_headings_and_captions", [])[:8])
+                md.extend([
+                    f"- User `{row.get('user_id')}` iteration `{row.get('iteration')}` section `{row.get('section')}` action `{row.get('action')}`",
+                    f"  - Active title: `{detail.get('active_section_title', '')}`",
+                    f"  - Visible buttons: `{buttons}`",
+                    f"  - Visible headings/captions: `{headings}`",
+                    f"  - Expanded hidden load surfaces: `{detail.get('expand_hidden_load_surfaces_called', '')}`",
+                    f"  - Screenshot: `{detail.get('screenshot_path', '')}`",
+                ])
     else:
         md.append("No configured live buttons were skipped.")
     md.extend(["", "## Recommended Next Actions", ""])
@@ -1701,6 +2098,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--width", type=int, default=argparse.SUPPRESS, help="Browser viewport width.")
     parser.add_argument("--height", type=int, default=argparse.SUPPRESS, help="Browser viewport height.")
     parser.add_argument("--headed", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS, help="Run with visible browser windows.")
+    parser.add_argument("--chromium-arg", action="append", dest="chromium_args", default=argparse.SUPPRESS, help="Extra Chromium launch argument. Repeat for multiple arguments.")
     parser.add_argument("--allow-large-run", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS, help="Allow more than 40 concurrent users.")
     parser.add_argument("--output-dir", default=argparse.SUPPRESS, help="Directory for JSON and Markdown reports.")
     parser.add_argument("--run-id", default=argparse.SUPPRESS)

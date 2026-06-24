@@ -47,36 +47,44 @@
 - Readiness score: `100/100`
 
 ## 12 Power User Performance
-- Run ID: `PERF_12_POWER_USERS_RELEASE_RERUN4`
+- Run ID: `PERF_12_POWER_USERS_RELEASE_RERUN5`
 - Users: `12`
 - Iterations: `3`
-- p95: `28187.44 ms`
-- p99: `38916.67 ms`
+- p95: `9938.77 ms`
+- p99: `21049.17 ms`
 - errors: `0`
-- readiness: `57/100`
+- readiness: `92/100`
 - slowest section: `App Shell`
 - slowest action: `initial_load`
-- skipped buttons: `2`, Alert Center -> Load Active Alerts; Cost & Contract -> Refresh Cost
-- live report path: `perf_tests/results/PERF_12_POWER_USERS_RELEASE_RERUN4_live_concurrent.json`
-- expert review path: `perf_tests/results/PERF_12_POWER_USERS_RELEASE_RERUN4_expert_review.md`
-- import timing path: `perf_tests/results/IMPORT_TIMING_CCFBC48_RERUN4_import_timing.json`
-- HTTP first-response path: `perf_tests/results/HTTP_FIRST_RESPONSE_CCFBC48_RERUN4_http_first_response.json`
-- initial-load ladder path: `perf_tests/results/PERF_INITIAL_LOAD_LADDER_RERUN4_initial_load_ladder.json`
-- initial-load-only diagnostic path: `perf_tests/results/PERF_12_POWER_USERS_INITIAL_LOAD_RERUN4_live_concurrent.json`
-- diagnostic samples: `1152` section/initial-load substeps in the release run, excluded from release p95/readiness/error scoring.
-- release initial-load breakdown p95: `shell_title_visible 27875.42 ms`, `goto_commit 10820.61 ms`, `domcontentloaded 1657.49 ms`, `section_container_visible 1337.12 ms`, `initial_wait 1214.36 ms`, `idle_wait 921.39 ms`.
-- release section-nav breakdown p95: `DBA Control Room title_visible 27759.22 ms`, `Alert Center title_visible 27170.05 ms`, `Cost & Contract title_visible 26784.86 ms`, `Workload Operations title_visible 26704.54 ms`, `Executive Landing title_visible 26257.31 ms`.
-- release app-entry p95: `pre_render_total 81.67 ms`, `set_page_config 81.66 ms`, `import_shell 0.01 ms`.
-- release server phase p95: `section_dispatch:render:Cost & Contract 1259.76 ms`, `section_dispatch:render:Alert Center 1100.82 ms`, `shell:total_render_app 1060.46 ms`, `shell:dispatch_section_total 907.64 ms`, `section_dispatch:render:DBA Control Room 395.52 ms`.
-- release browser timing p95: `responseStart 10815.40 ms`, `domContentLoadedEventEnd 11132.20 ms`, `first-paint 11228.00 ms`, `first-contentful-paint 37416.00 ms`.
-- initial-load-only diagnostic result: WATCH, `PERF_12_POWER_USERS_INITIAL_LOAD_RERUN4`, p95 `11402.73 ms`, p99 `11402.73 ms`, errors `0`, skipped buttons `0`, readiness `86/100`; app-entry pre-render p95 was `3.20 ms`, server render p95 was `145.38 ms`, browser `responseStart` p95 was `4000.00 ms`, and first contentful paint p95 was `9988.00 ms`.
-- HTTP first-response result: PASS as diagnostic, `HTTP_FIRST_RESPONSE_CCFBC48_RERUN4`, users `1/3/6/9/12`, errors `0`; time-to-first-byte p95 stayed near `1015.07-1043.96 ms`, with 12-user TTFB p95 `1032.13 ms`.
-- initial-load ladder result: diagnostic only, `PERF_INITIAL_LOAD_LADDER_RERUN4`; p95 by users was `1: 5359.33 ms`, `3: 3529.89 ms`, `6: 3728.51 ms`, `9: 7130.42 ms`, `12: 12376.22 ms`; 12-user `responseStart` p95 `2526.00 ms`, first contentful paint p95 `10052.00 ms`, and server shell total render p95 `68.74 ms`.
-- import timing summary: all `8` target imports passed; slowest target import was `sections.alert_center` at `2502.34 ms` (`474.22 ms` above the slowest baseline), followed by `shell` at `2458.99 ms` (`430.87 ms` above baseline) and `sections.cost_contract` at `1932.66 ms`. Baseline imports all passed; slowest baseline was `layout` at `2028.12 ms`.
+- skipped buttons: `0`
+- live report path: `perf_tests/results/PERF_12_POWER_USERS_RELEASE_RERUN5_live_concurrent.json`
+- expert review path: `perf_tests/results/PERF_12_POWER_USERS_RELEASE_RERUN5_expert_review.md`
+- import timing path: `perf_tests/results/IMPORT_TIMING_F7C6308_RERUN5_import_timing.json`
+- HTTP first-response path: `perf_tests/results/HTTP_FIRST_RESPONSE_F7C6308_RERUN5_http_first_response.json`
+- initial-load ladder path: `perf_tests/results/PERF_INITIAL_LOAD_LADDER_RERUN5_initial_load_ladder.json`
+- diagnostic overhead A/B path: `perf_tests/results/PERF_DIAGNOSTIC_OVERHEAD_RERUN5_diagnostic_overhead_ab.json`
+- browser capacity matrix path: `perf_tests/results/PERF_BROWSER_CAPACITY_RERUN5_browser_capacity_matrix.json`
+- section-nav-only diagnostic path: `perf_tests/results/PERF_12_POWER_USERS_SECTION_NAV_RERUN5_live_concurrent.json`
+- diagnostic profile path: `perf_tests/results/PERF_12_POWER_USERS_DIAGNOSTIC_RERUN5_live_concurrent.json`
+- scored profile: `perf_tests/profiles/12_power_users_release_scored.json`
+- diagnostic profile: `perf_tests/profiles/12_power_users_diagnostic.json`
+- diagnostic samples: `0` in the clean scored release run; `1152` section/initial-load substeps in the separate diagnostic profile run, excluded from clean release p95/readiness/error scoring.
+- release scored action p95: `initial_load 23944.63 ms`, `section_nav 9026.44 ms`, `Load Active Alerts 1383.46 ms`, `Refresh Cost 1312.62 ms`.
+- release scored section p95: `App Shell 23944.63 ms`, `DBA Control Room 10460.96 ms`, `Alert Center 5359.01 ms`, `Executive Landing 5338.62 ms`, `Workload Operations 4913.57 ms`, `Cost & Contract 4899.31 ms`.
+- diagnostic initial-load breakdown p95: `goto_commit 11980.28 ms`, `shell_title_visible 11510.97 ms`, `domcontentloaded 4880.21 ms`, `initial_wait 1215.99 ms`, `idle_wait 918.39 ms`.
+- diagnostic section-nav breakdown p95: `DBA Control Room title_visible 11036.14 ms`, `Alert Center title_visible 10025.02 ms`, `Cost & Contract title_visible 4925.65 ms`, `Executive Landing title_visible 4887.13 ms`, `Workload Operations title_visible 3447.54 ms`.
+- diagnostic browser timing p95: `responseStart 11974.40 ms`, `domContentLoadedEventEnd 12237.20 ms`, `first-paint 12408.00 ms`, `first-contentful-paint 21220.00 ms`.
+- diagnostic frontend paint metrics: DOM node count p95 `1220`, visible button count p95 `46`, CSS rule count p95 `1328`, script resource count p95 `46`, script transfer p95 `5395780 bytes`.
+- diagnostic overhead A/B result: clean scored run p95 `31754.80 ms`, diagnostic run p95 `7895.38 ms`, delta `-23859.42 ms`; this noisy A/B result does not support diagnostic overhead as the primary blocker.
+- HTTP first-response result: PASS as diagnostic, `HTTP_FIRST_RESPONSE_F7C6308_RERUN5`, users `1/3/6/9/12`, errors `0`; time-to-first-byte p95 stayed near `1017.79-1050.57 ms`, with 12-user TTFB p95 `1025.65 ms`.
+- initial-load ladder result: diagnostic only, `PERF_INITIAL_LOAD_LADDER_RERUN5`; p95 by users was `1: 5870.52 ms`, `3: 3541.00 ms`, `6: 3529.94 ms`, `9: 7168.19 ms`, `12: 12412.68 ms`; 12-user `responseStart` p95 `2495.90 ms`, first contentful paint p95 `10152.00 ms`, and server shell total render p95 `67.30 ms`.
+- browser capacity matrix result: diagnostic only, `PERF_BROWSER_CAPACITY_RERUN5`; slowest case was current `1440x1000/default` at 12 users with p95 `26147.68 ms`, `responseStart` p95 `9574.80 ms`, FCP p95 `23524.00 ms`, DOM node count p95 `382`, and resource count p95 `26`; all 12-user viewport/runtime variants remained above `21726 ms` p95.
+- section-nav-only diagnostic result: FAIL, `PERF_12_POWER_USERS_SECTION_NAV_RERUN5`, p95 `19546.66 ms`, p99 `26304.47 ms`, errors `0`, skipped buttons `0`, readiness `57/100`; App Shell initial load p95 `26925.60 ms`, section_nav p95 `3373.27 ms`, and DBA Control Room title-visible p95 `18592.49 ms`.
+- import timing summary: all `8` target imports passed; slowest target import was `sections.alert_center` at `2537.98 ms` (`519.87 ms` above the slowest baseline), followed by `shell` at `2452.07 ms` (`433.96 ms` above baseline) and `sections.cost_contract` at `1976.75 ms`. Baseline imports all passed; slowest baseline was `layout` at `2018.11 ms`.
 - artifact storage: `perf_tests/results/` is intentionally stored outside git; reason: generated Playwright performance artifacts are local run evidence with environment-specific timing and browser metadata.
-- result: FAIL, because p95 exceeded the 10000 ms 12-power-user release threshold and two configured load actions skipped, even though browser-step errors were zero.
-- release blockers: p95 threshold exceeded (`28187.44 ms` > `10000 ms`), two configured load buttons skipped (`Alert Center -> Load Active Alerts`; `Cost & Contract -> Refresh Cost`), and readiness remained below target (`57/100` < `95/100`).
-- top next fixes: treat this as a Streamlit/browser concurrency and first-paint capacity issue first, because HTTP-only TTFB stayed near `1s` and app-entry/server phases were much lower than browser FCP; then investigate section navigation title-visible waits for Alert Center, DBA Control Room, and Cost & Contract.
+- result: FAIL for the release gate (runner state `WATCH`), because clean scored readiness remained below target (`92/100` < `95/100`) even though p95 was below `10000 ms`, errors were zero, and skipped buttons were zero.
+- release blockers: readiness score remained below target (`92/100` < `95/100`), driven by the long initial-load tail (`max 23944.63 ms`, p99 `21049.17 ms`).
+- top next fixes: treat the remaining issue as browser/frontend capacity and Streamlit client first-paint tail rather than instrumentation overhead or Snowflake query work; continue with frontend paint/resource reduction and local browser capacity controls, then rerun the clean scored profile.
 
 ## Guarded Operations
 - Action queue review-only smoke: PASS via unit contracts covering review-only action queue behavior and full unit discovery
@@ -110,6 +118,6 @@
 - Owner: release operator
 - Follow-up: rerun `perf_tests/full_app_snowflake_regression.py` only when a fresh credentialed release gate is required.
 - Item: 12 heavy power user benchmark for `24cd05e`
-- Reason: Failed on RERUN4 because live browser p95 was `28187.44 ms` against the `10000 ms` threshold and readiness was `57/100`; one Alert Center `Load Active Alerts` action and one Cost & Contract `Refresh Cost` action skipped. Diagnostics show high browser first response/paint and section title-visible waits: release `responseStart` p95 `10815.40 ms`, `first-contentful-paint` p95 `37416.00 ms`, DBA Control Room title-visible p95 `27759.22 ms`, and Alert Center title-visible p95 `27170.05 ms`, while app-entry import p95 and server render p95 were much lower. HTTP-only TTFB remained near `1s`, so the next pass should focus on Streamlit/browser concurrency capacity and client paint pressure before changing mart or Snowflake query paths.
+- Reason: Failed on RERUN5 because the clean scored profile reached only `92/100` readiness; p95 improved to `9938.77 ms`, browser-step errors were `0`, and skipped buttons were `0`, but p99 remained `21049.17 ms` and the slowest App Shell initial load was `23944.63 ms`. Separate diagnostics show HTTP-only TTFB stayed near `1s`, diagnostic FCP p95 was `21220.00 ms`, and 12-user browser capacity variants remained above `21726 ms` p95, so the next pass should focus on frontend/client paint capacity and tail control before changing mart or Snowflake query paths.
 - Owner: release operator
-- Follow-up: tune Streamlit/browser first-paint concurrency and section title-visible waits; rerun `python perf_tests/run_12_power_users.py --url http://localhost:8503/ --run-id PERF_12_POWER_USERS_RELEASE_RERUN5 --output-dir perf_tests/results` and regenerate the expert review.
+- Follow-up: tune Streamlit/browser first-paint tail and frontend resource pressure; rerun `python perf_tests/run_12_power_users.py --url http://localhost:8503/ --run-id PERF_12_POWER_USERS_RELEASE_RERUN6 --output-dir perf_tests/results --profile perf_tests/profiles/12_power_users_release_scored.json` and regenerate the expert review.

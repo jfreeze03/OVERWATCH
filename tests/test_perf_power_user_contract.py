@@ -11,6 +11,9 @@ ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = ROOT / ".overwatch_final"
 PERF_ROOT = ROOT / "perf_tests"
 PROFILE_PATH = PERF_ROOT / "profiles" / "12_power_users.json"
+RELEASE_PROFILE_PATH = PERF_ROOT / "profiles" / "12_power_users_release_scored.json"
+DIAGNOSTIC_PROFILE_PATH = PERF_ROOT / "profiles" / "12_power_users_diagnostic.json"
+SECTION_NAV_PROFILE_PATH = PERF_ROOT / "profiles" / "12_power_users_section_nav_only.json"
 RELEASE_EVIDENCE = ROOT / "docs" / "releases" / "OVERWATCH_RELEASE_EVIDENCE_24cd05e_2026-06-24.md"
 RELEASE_MANIFEST = ROOT / "docs" / "OVERWATCH_RELEASE_MANIFEST.md"
 TUNING_GUIDE = ROOT / "docs" / "OVERWATCH_12_POWER_USER_TUNING.md"
@@ -46,27 +49,64 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
         self.assertEqual(profile["ramp_seconds"], 12)
         self.assertTrue(profile["initial_load_substeps"])
         self.assertTrue(profile["section_nav_substeps"])
+        self.assertTrue(profile["trace_slowest_initial_load"])
         self.assertEqual(profile["sections"], list(route_registry.PRIMARY_SECTION_TITLES))
         self.assertEqual(profile["load_buttons"]["Alert Center"], "Load Active Alerts")
         self.assertEqual(profile["load_buttons"]["Cost & Contract"], "Refresh Cost")
 
+    def test_release_scored_profile_exists_and_disables_diagnostics(self):
+        self.assertTrue(RELEASE_PROFILE_PATH.exists())
+        profile = json.loads(RELEASE_PROFILE_PATH.read_text(encoding="utf-8"))
+
+        self.assertEqual(profile["users"], 12)
+        self.assertEqual(profile["iterations"], 3)
+        self.assertEqual(profile["sections"], list(route_registry.PRIMARY_SECTION_TITLES))
+        self.assertFalse(profile["initial_load_substeps"])
+        self.assertFalse(profile["section_nav_substeps"])
+        self.assertFalse(profile["trace_slowest_initial_load"])
+        self.assertEqual(profile["load_buttons"]["Alert Center"], "Load Active Alerts")
+
+    def test_diagnostic_profile_exists_and_enables_diagnostics(self):
+        self.assertTrue(DIAGNOSTIC_PROFILE_PATH.exists())
+        profile = json.loads(DIAGNOSTIC_PROFILE_PATH.read_text(encoding="utf-8"))
+
+        self.assertTrue(profile["initial_load_substeps"])
+        self.assertTrue(profile["section_nav_substeps"])
+        self.assertTrue(profile["trace_slowest_initial_load"])
+
+    def test_section_nav_only_profile_has_no_load_buttons(self):
+        self.assertTrue(SECTION_NAV_PROFILE_PATH.exists())
+        profile = json.loads(SECTION_NAV_PROFILE_PATH.read_text(encoding="utf-8"))
+
+        self.assertTrue(profile["section_nav_substeps"])
+        self.assertFalse(profile["initial_load_substeps"])
+        self.assertFalse(profile["load_buttons"])
+
     def test_profile_contains_only_safe_load_buttons(self):
         runner = load_module("overwatch_live_runner_power_contract", "live_concurrent_runner.py")
-        profile = json.loads(PROFILE_PATH.read_text(encoding="utf-8"))
-
-        for label in profile["load_buttons"].values():
-            with self.subTest(label=label):
-                self.assertEqual(runner.validate_safe_load_button_label(label), label)
+        for profile_path in (PROFILE_PATH, RELEASE_PROFILE_PATH, DIAGNOSTIC_PROFILE_PATH):
+            profile = json.loads(profile_path.read_text(encoding="utf-8"))
+            for label in profile["load_buttons"].values():
+                with self.subTest(profile=profile_path.name, label=label):
+                    self.assertEqual(runner.validate_safe_load_button_label(label), label)
 
     def test_profile_does_not_include_mutation_controls(self):
         runner = load_module("overwatch_live_runner_mutation_contract", "live_concurrent_runner.py")
-        profile = json.loads(PROFILE_PATH.read_text(encoding="utf-8"))
+        for profile_path in (PROFILE_PATH, RELEASE_PROFILE_PATH, DIAGNOSTIC_PROFILE_PATH, SECTION_NAV_PROFILE_PATH):
+            profile = json.loads(profile_path.read_text(encoding="utf-8"))
+            load_buttons = profile.get("load_buttons") or {}
+            for section_name, label in load_buttons.items():
+                with self.subTest(profile=profile_path.name, section=section_name, label=label):
+                    normalized = label.casefold()
+                    for token in runner.FORBIDDEN_LOAD_BUTTON_TOKENS:
+                        self.assertNotIn(token, normalized)
 
-        for section_name, label in profile["load_buttons"].items():
-            with self.subTest(section=section_name, label=label):
-                normalized = label.casefold()
-                for token in runner.FORBIDDEN_LOAD_BUTTON_TOKENS:
-                    self.assertNotIn(token, normalized)
+    def test_run_12_power_users_defaults_to_scored_profile(self):
+        runner = load_module("overwatch_run_12_power_users_contract", "run_12_power_users.py")
+
+        args = runner.parse_args([])
+
+        self.assertEqual(Path(args.profile), RELEASE_PROFILE_PATH)
 
     def test_generated_perf_results_are_ignored_not_tracked(self):
         gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
@@ -146,8 +186,15 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
             "server phase trace",
             "browser navigation timing",
             "12_power_users_initial_load_only.json",
+            "12_power_users_release_scored.json",
+            "12_power_users_diagnostic.json",
+            "12_power_users_section_nav_only.json",
             "run_initial_load_ladder.py",
+            "run_diagnostic_overhead_ab.py",
+            "run_browser_capacity_matrix.py",
             "http_first_response_probe.py",
+            "frontend paint metrics",
+            "skipped-button diagnostics",
             "app-entry",
             "responseStart",
             "first-contentful-paint",
@@ -211,6 +258,12 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
                 "browser_paint_timing": [
                     {"metric": "first-contentful-paint", "samples": 12, "p95_ms": 50, "max_ms": 70}
                 ],
+                "frontend_dom_metrics": [
+                    {"metric": "node_count", "samples": 12, "p95": 1000, "max": 1200}
+                ],
+                "frontend_resource_timing": [
+                    {"initiator_type": "script", "samples": 12, "count_p95": 6, "duration_p95_ms": 30, "transfer_size_p95": 2000}
+                ],
                 "initial_load_matrix": [
                     {
                         "user_id": 1,
@@ -219,6 +272,19 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
                         "browser_paint_timing": {"first-contentful-paint": 50},
                         "top_app_entry_phase": {"phase": "app_entry:import_shell", "elapsed_ms": 42},
                         "top_server_phase": {"phase": "shell:total_render_app", "elapsed_ms": 80},
+                    }
+                ],
+                "skipped_button_details": [
+                    {
+                        "user_id": 2,
+                        "iteration": 1,
+                        "section": "Alert Center",
+                        "action": "load_button:Load Active Alerts",
+                        "detail": {
+                            "active_section_title": "Alert Center",
+                            "visible_button_labels": ["Load History"],
+                            "screenshot_path": "perf_tests/results/skip.png",
+                        },
                     }
                 ],
                 "resource_samples": [
@@ -276,6 +342,9 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
             "App Entry Phase Breakdown",
             "Browser Navigation Timing",
             "Browser Paint Timing",
+            "Diagnostic Overhead A/B",
+            "Frontend Paint Metrics",
+            "Skipped Button Context",
             "Slowest User Correlation",
             "Playwright Host Resource Samples",
             "Top 10 Slowest Release Steps",

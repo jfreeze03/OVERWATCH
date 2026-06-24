@@ -1,4 +1,6 @@
 from pathlib import Path
+import html as html_module
+import json
 import sys
 import unittest
 from unittest.mock import patch
@@ -48,10 +50,7 @@ class PerfTraceContractTests(unittest.TestCase):
         self.assertEqual(samples[-1]["user"], "4")
         self.assertEqual(samples[-1]["iteration"], "2")
         self.assertEqual(samples[-1]["active_section"], "Executive Landing")
-        self.assertIn("runtime", samples[-1])
-        self.assertIn("python_version", samples[-1]["runtime"])
-        self.assertIn("process_id", samples[-1]["runtime"])
-        self.assertIn("thread_name", samples[-1]["runtime"])
+        self.assertNotIn("runtime", samples[-1])
 
     def test_render_trace_marker_is_hidden_and_perf_only(self):
         with patch.object(perf_trace, "_query_value", return_value=""):
@@ -67,7 +66,32 @@ class PerfTraceContractTests(unittest.TestCase):
         html = markdown.call_args.args[0]
         self.assertIn('id="overwatch-perf-trace"', html)
         self.assertIn("display:none", html)
-        self.assertIn("shell:total_render_app", html)
+        payload_text = html.split(">", 1)[1].split("</div>", 1)[0]
+        payload = json.loads(html_module.unescape(payload_text))
+        self.assertIn("runtime", payload)
+        self.assertIn("python_version", payload["runtime"])
+        self.assertIn("process_id", payload["runtime"])
+        self.assertIn("thread_name", payload["runtime"])
+        self.assertIn("shell:total_render_app", json.dumps(payload))
+        self.assertNotIn("runtime", payload["samples"][0])
+
+    def test_trace_marker_payload_is_compact(self):
+        with patch.object(perf_trace, "_query_value", side_effect=lambda key: "RUN_TRACE" if key == perf_trace.PERF_RUN_QUERY_PARAM else ""):
+            for idx in range(80):
+                perf_trace.record_phase(
+                    f"phase:{idx}",
+                    idx,
+                    active_section="Executive Landing",
+                    detail={"module_cached": False},
+                )
+            with patch.object(perf_trace.st, "markdown") as markdown:
+                perf_trace.render_trace_marker()
+
+        rendered = markdown.call_args.args[0]
+        payload_text = rendered.split(">", 1)[1].split("</div>", 1)[0]
+        payload = json.loads(html_module.unescape(payload_text))
+        self.assertLessEqual(len(payload["samples"]), perf_trace.PERF_TRACE_MARKER_LIMIT)
+        self.assertLess(len(payload_text), 22000)
 
     def test_app_entry_import_timing_can_be_recorded_after_the_fact(self):
         with patch.object(perf_trace, "_query_value", side_effect=lambda key: "RUN_TRACE" if key == perf_trace.PERF_RUN_QUERY_PARAM else ""):

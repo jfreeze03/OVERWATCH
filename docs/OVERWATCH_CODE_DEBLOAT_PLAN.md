@@ -90,9 +90,15 @@ smoke, performance smoke, action queue/admin guard checks, secrets, rollback,
 and release notes. `docs/OVERWATCH_RELEASE_EVIDENCE_TEMPLATE.md` captures the
 release evidence bundle and explicitly prevents claiming live Snowflake
 regression success unless the credentialed run actually happened. The current
-release candidate is declared in `docs/OVERWATCH_RELEASE_MANIFEST.md`, and its
+release candidate is declared in `docs/OVERWATCH_RELEASE_MANIFEST.md`, its
 filled release record is
-`docs/releases/OVERWATCH_RELEASE_EVIDENCE_cda40dd_2026-06-23.md`.
+`docs/releases/OVERWATCH_RELEASE_EVIDENCE_24cd05e_2026-06-24.md`, and
+`docs/OVERWATCH_RELEASE_PROCESS.md` documents the manifest/evidence/tagging
+flow so historical evidence cannot be mistaken for current release evidence.
+`perf_tests/profiles/12_power_users.json`, `perf_tests/run_12_power_users.py`,
+and `perf_tests/power_user_review.py` add a repeatable 12-heavy-power-user
+browser benchmark and deterministic expert review report for high-traffic
+release gates without clicking mutation controls.
 
 ## New Focused Mart Modules
 
@@ -282,17 +288,21 @@ These are candidates, not approved removals:
 - `tests/test_release_manifest_contract.py` locks the manifest-backed current release candidate, required artifact references, release-ready gate results, and manifest-to-evidence SHA matching.
 - `tests/test_release_evidence_contract.py` locks the release evidence template, requires at least one filled release record, blocks empty placeholder bullets, requires the manifest-referenced evidence to match the manifest commit SHA, requires validation PASS bullets to include command/result summaries, requires live Snowflake PASS claims to cite the recorded result document and environment fields, and requires "not run" claims to include a reason.
 - `tests/test_snowflake_regression_results_contract.py` locks the recorded live Snowflake regression result fields and ensures recommended follow-ups such as section smoke and full unit regression are either recorded in release evidence or explicitly deferred.
+- `tests/test_release_process_contract.py` locks the release process document so release candidates, evidence files, validation, deployment, live-regression caveats, tagging, and rollback/reset references stay documented.
+- `tests/test_perf_live_concurrent_runner.py` locks profile loading, CLI override behavior, section-to-button load mappings, and forbidden mutation-control labels for the live concurrent browser runner.
+- `tests/test_perf_power_user_contract.py` locks the 12-heavy-power-user profile, safe load-button posture, wrapper/report script presence, and deterministic expert-panel report generation.
 - `tests/test_command_center.py` now validates correlated investigation UI placement and explicit load gates.
 - `tests/test_contention_center.py`, `tests/test_formula_regressions.py`, and `tests/test_operational_intelligence.py` validate renamed workflow/action contracts.
 - `perf_tests/full_app_snowflake_regression.py` is the live Snowflake gate when credentials/auth are available.
 
 ## Next Rewrite Order
 
-1. Resolve any failed production-readiness gates.
-2. Add or rerun live Snowflake regression only when credentials/auth are available.
-3. Run browser/section smoke against a staged app.
-4. Revisit `contention_center.py` / `stored_proc_tracker.py` / DBA Control Room render only with route metrics.
-5. Mart load-plan rationalization only after release evidence is green.
+1. If release candidate is release-ready, deploy/stage using `STREAMLIT_CLOUD_DEPLOY.md`.
+2. If not release-ready, resolve failed or deferred gates first.
+3. Run the 12-heavy-power-user benchmark and attach the expert review before high-traffic rollout.
+4. Add/rerun live Snowflake regression only when credentials/auth are available.
+5. Revisit `contention_center.py` / `stored_proc_tracker.py` / DBA Control Room render only with route metrics.
+6. Mart load-plan rationalization only after release evidence is green.
 
 ## De-Bloat Completed After Initial Audit
 
@@ -347,4 +357,4 @@ These are candidates, not approved removals:
 | Mart contracts/names/filters micro-split | Moved `MartResult`, `mart_source_caption()`, `mart_object_name()`, and pure mart filter/window helpers into `mart_contracts.py`, `mart_names.py`, and `mart_filters.py` while keeping all public and private compatibility imports available from `utils.mart`. Large SQL builder families were subsequently split once contract coverage was in place. |
 | Mart SQL-family split started | Moved pure DBA Control Room, Account Health, Service Health, Task, Query Detail, and Procedure SQL builders into focused `mart_control_room.py`, `mart_account_health.py`, `mart_service_health.py`, and `mart_task_procedure.py` modules. `utils.mart` remains the compatibility surface and keeps `load_mart_table()`, `load_latest_control_room_mart()`, and the larger cost/warehouse/usage/adoption/storage/pipeline/recommendation builder families. Complete builder grouping, object-reference, no-ACCOUNT_USAGE, and identity tests cover the moved families. |
 | Mart SQL-family split completed | Moved the remaining cost, warehouse, usage, adoption, storage/pipeline, recommendation, bottleneck, and degradation mart SQL builders into focused modules. `utils.mart` became a 136-line compatibility reexport facade with explicit `__all__`; tests cover every public builder's focused-module identity, grouping, mart object references, no direct ACCOUNT_USAGE references, and loader success/empty/error behavior. |
-| Mart loader split and release evidence hardening | Moved `load_mart_table()` and `load_latest_control_room_mart()` into `mart_loader.py`, keeping their public `utils.mart` reexports and offline success/empty/error behavior intact. Added route-aware production-readiness checklist coverage, a release evidence template, manifest-backed release evidence for `cda40dd`, and contract tests for validation, deployment, mart setup, browser/performance smoke, action queue/admin guard smoke, live-regression caveats, deferred items, and rollback references. |
+| Mart loader split and release evidence hardening | Moved `load_mart_table()` and `load_latest_control_room_mart()` into `mart_loader.py`, keeping their public `utils.mart` reexports and offline success/empty/error behavior intact. Added route-aware production-readiness checklist coverage, a release evidence template, manifest-backed release evidence for `24cd05e`, and contract tests for validation, deployment, mart setup, browser/performance smoke, action queue/admin guard smoke, live-regression caveats, deferred items, and rollback references. |

@@ -46,6 +46,16 @@
 - Failed dashboard queries: `0` section smoke errors recorded
 - Readiness score: `100/100`
 
+## 12 Power User Performance
+- Run ID: not run; reason: the 12-heavy-power-user benchmark did not exist for this historical evidence pass.
+- Users: not run; reason: benchmark profile was added after this historical evidence pass.
+- Iterations: not run; reason: benchmark profile was added after this historical evidence pass.
+- p95: not run; reason: benchmark profile was added after this historical evidence pass.
+- errors: not run; reason: benchmark profile was added after this historical evidence pass.
+- readiness: not run; reason: benchmark profile was added after this historical evidence pass.
+- expert review path: not run; reason: expert review generator was added after this historical evidence pass.
+- result: not run; reason: run `perf_tests/run_12_power_users.py` before using this historical evidence for a high-traffic release.
+
 ## Guarded Operations
 - Action queue review-only smoke: PASS via unit contracts covering review-only action queue behavior and full unit discovery
 - Typed confirmation smoke: PASS via guarded Task Management/Admin contracts and full unit discovery

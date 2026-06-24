@@ -42,6 +42,9 @@ do not run live Snowflake regression unless credentials/auth are available.
    - Follow `perf_tests/README.md`.
    - Use the section smoke runner only against an available local or staged URL.
    - Treat regressions above documented thresholds as release blockers until explained.
+   - For performance-sensitive releases, run the 12-heavy-power-user benchmark in `perf_tests/profiles/12_power_users.json`.
+   - The 12-user benchmark must not click mutation controls, including grant, save, queue, email send, retry, suspend/resume, task execute, or admin mutation controls.
+   - Attach the deterministic expert review from `perf_tests/power_user_review.py`, or explicitly defer the benchmark with a reason.
 7. Action queue, typed confirmation, and admin guard smoke:
    - Action queue previews stay review-only.
    - Typed confirmations still require exact operator text.
@@ -60,6 +63,8 @@ The current release candidate is declared in `docs/OVERWATCH_RELEASE_MANIFEST.md
 Release evidence must match the release manifest commit SHA. Historical evidence
 files under `docs/releases/` are allowed, but they cannot be used as current
 release evidence unless their commit SHA matches the manifest.
+Follow `docs/OVERWATCH_RELEASE_PROCESS.md` when choosing a release candidate,
+filling evidence, and tagging only after the manifest is release-ready.
 
 ## Non-Negotiables
 

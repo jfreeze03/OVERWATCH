@@ -23,6 +23,9 @@ load without creating surprise Snowflake cost.
 | `perf_runner.py` | Local HTTP concurrency runner and Markdown/JSON report generator. |
 | `section_smoke_runner.py` | Optional browser runner that clicks every primary section and reports visible section switch time. |
 | `live_concurrent_runner.py` | Concurrent browser runner that exercises Streamlit sessions, section navigation, and safe live-data load buttons. |
+| `profiles/12_power_users.json` | Guarded 12-user / 3-iteration browser profile for heavy power-user release checks. |
+| `run_12_power_users.py` | Wrapper for the 12-heavy-power-user benchmark profile. |
+| `power_user_review.py` | Deterministic expert-panel report generator for browser benchmark results. |
 | `run_snowflake_safe_suite.py` | Env-driven Snowflake runner for the guarded metadata-scale SQL suite. It never runs the physical 5 TB script. |
 
 ## Safe Test Sequence
@@ -86,7 +89,42 @@ If Playwright is not installed in the local test environment:
 If browser tooling cannot be installed, keep using `perf_runner.py` and rely on
 `PERF_TEST_APP_USAGE_REPORT_V` for section timing.
 
-7. In Snowflake, run:
+7. Recommended release benchmark for performance-sensitive releases:
+
+## 12 Heavy Power User Benchmark
+
+Start with section smoke so primary navigation is healthy:
+
+```powershell
+.\.venv\Scripts\python.exe .\perf_tests\section_smoke_runner.py --url http://localhost:8501/ --run-id PERF_SECTION_SMOKE_PRE_12_USERS
+```
+
+If the environment needs calibration, run a small live browser pass first:
+
+```powershell
+.\.venv\Scripts\python.exe .\perf_tests\live_concurrent_runner.py --url http://localhost:8501/ --users 3 --iterations 1 --profile .\perf_tests\profiles\12_power_users.json --run-id PERF_12_POWER_USERS_CALIBRATION
+```
+
+Then run the guarded 12-user / 3-iteration profile:
+
+```powershell
+.\.venv\Scripts\python.exe .\perf_tests\run_12_power_users.py --url http://localhost:8501/ --run-id PERF_12_POWER_USERS_RELEASE --output-dir perf_tests/results
+```
+
+Generate the expert review:
+
+```powershell
+.\.venv\Scripts\python.exe .\perf_tests\power_user_review.py --live-report perf_tests/results/PERF_12_POWER_USERS_RELEASE_live_concurrent.json --section-report perf_tests/results/PERF_SECTION_SMOKE_PRE_12_USERS_sections.json
+```
+
+Release posture:
+
+- PASS requires live browser p95 <= 10000 ms, errors = 0, and readiness >= 95.
+- WATCH/FAIL if p95 > 10000 ms, errors > 0, or readiness < 95; do not call the release performance gate green without a documented deferred-risk decision.
+- Pair the browser report with Snowflake Query History and `PERF_TEST_*` report views when available.
+- The profile must not include grant, save, queue, email-send, retry, suspend/resume, task execute, or admin mutation controls.
+
+8. In Snowflake, run:
 
 ```sql
 -- Safe setup.
@@ -99,7 +137,7 @@ If browser tooling cannot be installed, keep using `perf_runner.py` and rely on
 @perf_tests/sql/04_benchmark_report.sql;
 ```
 
-8. Review:
+9. Review:
 
 ```sql
 SELECT * FROM PERF_TEST_SCALE_SUMMARY_V;
@@ -127,7 +165,7 @@ The runner executes `01_perf_test_setup.sql`, calls
 `SP_PERF_TEST_GUARDRAIL_CHECK('LIGHTWEIGHT_METADATA', FALSE)`, and stops before
 synthetic data generation unless the guardrail returns `OK`.
 
-9. Cleanup:
+10. Cleanup:
 
 ```sql
 @perf_tests/sql/99_cleanup_perf_test.sql;

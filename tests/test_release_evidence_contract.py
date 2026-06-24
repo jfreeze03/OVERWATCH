@@ -15,6 +15,7 @@ REQUIRED_HEADINGS = (
     "## Mart Setup",
     "## Browser Sanity",
     "## Performance Smoke",
+    "## 12 Power User Performance",
     "## Guarded Operations",
     "## Live Snowflake Regression",
     "## Secrets Check",
@@ -80,6 +81,13 @@ class ReleaseEvidenceContractTests(unittest.TestCase):
         self.assertTrue(evidence_file.exists())
         self.assertIn(commit_sha, evidence_file.read_text(encoding="utf-8"))
 
+    def test_manifest_referenced_release_evidence_has_matching_commit_line(self):
+        commit_sha = _manifest_value("Commit SHA")
+        evidence_path = _manifest_value("Evidence file")
+        evidence_file = ROOT / evidence_path
+        text = evidence_file.read_text(encoding="utf-8")
+        self.assertIn(f"- Commit SHA: `{commit_sha}`", text)
+
     def test_validation_pass_claims_include_command_and_summary(self):
         validation_line = re.compile(r"^- `[^`]+`:\s+PASS,\s+\S", flags=re.M)
         for evidence in sorted(RELEASES.glob("OVERWATCH_RELEASE_EVIDENCE_*.md")):
@@ -113,6 +121,27 @@ class ReleaseEvidenceContractTests(unittest.TestCase):
                         "Database/schema:",
                     ):
                         self.assertIn(fragment, live_section)
+
+    def test_browser_and_performance_pass_claims_include_run_or_numeric_result(self):
+        for evidence in sorted(RELEASES.glob("OVERWATCH_RELEASE_EVIDENCE_*.md")):
+            text = evidence.read_text(encoding="utf-8")
+            browser = _section(text, "## Browser Sanity")
+            performance = _section(text, "## Performance Smoke")
+            with self.subTest(file=evidence.name):
+                if "PASS" in browser:
+                    self.assertRegex(browser, r"PERF_TEST_SECTION_SMOKE")
+                if "PASS" in performance:
+                    self.assertRegex(performance, r"(PERF_TEST_SECTION_SMOKE|p95|Readiness score)")
+
+    def test_prior_live_snowflake_pass_claims_are_not_fresh_claims(self):
+        for evidence in sorted(RELEASES.glob("OVERWATCH_RELEASE_EVIDENCE_*.md")):
+            text = evidence.read_text(encoding="utf-8")
+            live_section = _section(text, "## Live Snowflake Regression")
+            with self.subTest(file=evidence.name):
+                if "PASS" in live_section and "not run" in live_section.lower():
+                    self.assertIn("credentialed", live_section)
+                    self.assertIn("docs/OVERWATCH_SNOWFLAKE_REGRESSION_RESULTS.md", live_section)
+                    self.assertRegex(live_section.lower(), r"(prior|latest)")
 
     def test_not_run_live_snowflake_claims_include_reason(self):
         reason_pattern = re.compile(r"^- If not run, reason:\s+\S", flags=re.M)

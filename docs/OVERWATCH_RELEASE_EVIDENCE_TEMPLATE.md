@@ -44,6 +44,16 @@
 - Failed dashboard queries:
 - Readiness score:
 
+## 12 Power User Performance
+- Run ID:
+- Users:
+- Iterations:
+- p95:
+- errors:
+- readiness:
+- expert review path:
+- result:
+
 ## Guarded Operations
 - Action queue review-only smoke:
 - Typed confirmation smoke:

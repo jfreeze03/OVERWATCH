@@ -34,6 +34,10 @@ class ProductionReadinessContractTests(unittest.TestCase):
             "Action queue previews stay review-only",
             "Typed confirmations still require exact operator text",
             "`admin_button_disabled()` guarded actions remain disabled for unauthorized users",
+            "12-heavy-power-user benchmark",
+            "perf_tests/profiles/12_power_users.json",
+            "perf_tests/power_user_review.py",
+            "must not click mutation controls",
         ):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, text)
@@ -86,6 +90,7 @@ class ProductionReadinessContractTests(unittest.TestCase):
             "## Mart Setup",
             "## Browser Sanity",
             "## Performance Smoke",
+            "## 12 Power User Performance",
             "## Guarded Operations",
             "## Live Snowflake Regression",
             "## Secrets Check",

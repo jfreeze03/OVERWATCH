@@ -51,6 +51,7 @@ class ReleaseManifestContractTests(unittest.TestCase):
         if status != "release-ready":
             self.assertEqual("candidate", status)
             self.assertIn("Deferred items:", text)
+            self.assertIn("reason", text.lower())
             return
 
         for fragment in (
@@ -59,10 +60,34 @@ class ReleaseManifestContractTests(unittest.TestCase):
             "Browser/section smoke: PASS",
             "Performance smoke: PASS",
             "Live Snowflake regression: PASS",
+            "Secrets check: PASS",
             "docs/OVERWATCH_SNOWFLAKE_REGRESSION_RESULTS.md",
             "not rerun",
             "because",
             "Deferred items:",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, text)
+
+    def test_release_ready_gate_results_are_specific(self):
+        text = _manifest_text()
+        if _manifest_value("Status") != "release-ready":
+            self.skipTest("Specific release-ready gates apply only to release-ready manifests")
+
+        self.assertRegex(text, r"Browser/section smoke: PASS, `PERF_TEST_SECTION_SMOKE_RELEASE_[^`]+`")
+        self.assertRegex(text, r"Performance smoke: PASS, section smoke readiness `\d+/100`, p95 `\d+(?:\.\d+)? ms`")
+        self.assertRegex(text, r"Validate workflow/local equivalent: PASS, .+`[0-9a-f]{40}`")
+
+    def test_prior_live_regression_pass_is_labeled_as_prior_evidence(self):
+        text = _manifest_text()
+        if "Live Snowflake regression: PASS" not in text:
+            return
+
+        for fragment in (
+            "PASS from prior credentialed evidence",
+            "not rerun",
+            "because",
+            "docs/OVERWATCH_SNOWFLAKE_REGRESSION_RESULTS.md",
         ):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, text)

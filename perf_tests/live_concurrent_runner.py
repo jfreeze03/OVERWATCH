@@ -39,6 +39,25 @@ DEFAULT_LOAD_BUTTONS = {
     "Cost & Contract": "Refresh Cost",
 }
 
+FORBIDDEN_LOAD_BUTTON_TOKENS = (
+    "grant",
+    "save",
+    "queue",
+    "email",
+    "send",
+    "retry",
+    "suspend",
+    "resume",
+    "execute",
+    "cancel",
+    "drop",
+    "alter",
+    "create",
+    "delete",
+    "deactivate",
+    "route to action queue",
+)
+
 VISIBLE_ERROR_PATTERNS = (
     "Traceback",
     "StreamlitAPIException",
@@ -88,6 +107,90 @@ def load_playwright():
         return async_playwright, None
     except Exception as exc:
         return None, exc
+
+
+def _default_config() -> dict:
+    return {
+        "url": "http://localhost:8501/",
+        "users": 8,
+        "iterations": 1,
+        "sections": list(DEFAULT_SECTIONS),
+        "load_buttons": True,
+        "expand_load_surfaces": True,
+        "missing_load_button": "skip",
+        "missing_load_button_wait_ms": 3000,
+        "stop_user_on_error": False,
+        "fail_console_errors": False,
+        "timeout_ms": 60000,
+        "initial_wait_ms": 1200,
+        "wait_initial_idle": False,
+        "single_initial_load": False,
+        "action_settle_ms": 900,
+        "ramp_seconds": 5.0,
+        "width": 1440,
+        "height": 1000,
+        "headed": False,
+        "allow_large_run": False,
+        "output_dir": str(DEFAULT_OUTPUT_DIR),
+        "run_id": f"PERF_LIVE_{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}",
+        "fail_p95_ms": 20000.0,
+        "fail_error_rate": 0.0,
+        "profile": None,
+    }
+
+
+def validate_safe_load_button_label(label: str) -> str:
+    text = str(label or "").strip()
+    if not text:
+        raise ValueError("load button labels must be non-empty strings")
+    lowered = text.lower()
+    for token in FORBIDDEN_LOAD_BUTTON_TOKENS:
+        if token in lowered:
+            raise ValueError(f"unsafe load button label rejected: {text!r}")
+    return text
+
+
+def normalize_load_buttons(value) -> bool | dict[str, str]:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, dict):
+        normalized: dict[str, str] = {}
+        for section, label in value.items():
+            section_text = str(section or "").strip()
+            if not section_text:
+                raise ValueError("load button mapping sections must be non-empty strings")
+            normalized[section_text] = validate_safe_load_button_label(str(label))
+        return normalized
+    raise ValueError("load_buttons must be true, false, or a section-to-button mapping")
+
+
+def active_load_button_map(value) -> dict[str, str]:
+    normalized = normalize_load_buttons(value)
+    if normalized is True:
+        return dict(DEFAULT_LOAD_BUTTONS)
+    if normalized is False:
+        return {}
+    return dict(normalized)
+
+
+def load_profile_defaults(profile_path: str | pathlib.Path) -> dict:
+    path = pathlib.Path(profile_path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("profile must be a JSON object")
+    allowed = set(_default_config()) - {"run_id", "profile"}
+    unknown = sorted(set(data) - allowed)
+    if unknown:
+        raise ValueError(f"unsupported profile keys: {', '.join(unknown)}")
+    profile = dict(data)
+    if "sections" in profile:
+        sections = profile["sections"]
+        if not isinstance(sections, list) or not all(str(item).strip() for item in sections):
+            raise ValueError("profile sections must be a non-empty string list")
+        profile["sections"] = [str(item).strip() for item in sections]
+    if "load_buttons" in profile:
+        profile["load_buttons"] = normalize_load_buttons(profile["load_buttons"])
+    return profile
 
 
 async def collect_visible_error(page) -> str:
@@ -258,6 +361,7 @@ async def timed_step(
 async def run_user(browser, args: argparse.Namespace, user_id: int) -> list[StepSample]:
     samples: list[StepSample] = []
     browser_errors: list[str] = []
+    load_button_map = active_load_button_map(args.load_buttons)
     context = await browser.new_context(
         viewport={"width": args.width, "height": args.height},
         extra_http_headers={"X-OVERWATCH-PERF-RUN-ID": args.run_id},
@@ -330,8 +434,8 @@ async def run_user(browser, args: argparse.Namespace, user_id: int) -> list[Step
                 if not nav_sample.ok and args.stop_user_on_error:
                     break
 
-                load_label = DEFAULT_LOAD_BUTTONS.get(section)
-                if args.load_buttons and load_label:
+                load_label = load_button_map.get(section)
+                if load_label:
 
                     async def load_live_data(section_name=section, button_label=load_label):
                         if args.expand_load_surfaces:
@@ -582,33 +686,51 @@ def write_reports(args: argparse.Namespace, samples: list[StepSample], summary: 
     return json_path, md_path
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run concurrent live browser users against OVERWATCH.")
-    parser.add_argument("--url", default="http://localhost:8501/", help="Dashboard URL to test.")
-    parser.add_argument("--users", type=int, default=8, help="Concurrent simulated browser users.")
-    parser.add_argument("--iterations", type=int, default=1, help="Full section passes per user.")
-    parser.add_argument("--sections", nargs="*", default=DEFAULT_SECTIONS, help="Section button labels to click.")
-    parser.add_argument("--load-buttons", action=argparse.BooleanOptionalAction, default=True, help="Click safe live-data load buttons.")
-    parser.add_argument("--expand-load-surfaces", action=argparse.BooleanOptionalAction, default=True, help="Open collapsed expanders before clicking safe load buttons.")
-    parser.add_argument("--missing-load-button", choices=["skip", "fail"], default="skip", help="How to handle configured load buttons that are not visible in the active section view.")
-    parser.add_argument("--missing-load-button-wait-ms", type=int, default=3000, help="How long to wait before skipping a non-visible optional load button.")
-    parser.add_argument("--stop-user-on-error", action=argparse.BooleanOptionalAction, default=False, help="Stop a user's flow after the first failed step.")
-    parser.add_argument("--fail-console-errors", action="store_true", help="Treat browser console errors as failed steps.")
-    parser.add_argument("--timeout-ms", type=int, default=60000, help="Per-step browser timeout.")
-    parser.add_argument("--initial-wait-ms", type=int, default=1200, help="Initial page settle time.")
-    parser.add_argument("--wait-initial-idle", action="store_true", help="After initial app readiness, wait for Streamlit idle before recording the step.")
-    parser.add_argument("--single-initial-load", action="store_true", help="Load the app once per user, then repeat in-app section flows without hard page reloads.")
-    parser.add_argument("--action-settle-ms", type=int, default=900, help="Minimum wait after clicks before spinner checks.")
-    parser.add_argument("--ramp-seconds", type=float, default=5.0, help="Ramp users across this many seconds.")
-    parser.add_argument("--width", type=int, default=1440, help="Browser viewport width.")
-    parser.add_argument("--height", type=int, default=1000, help="Browser viewport height.")
-    parser.add_argument("--headed", action="store_true", help="Run with visible browser windows.")
-    parser.add_argument("--allow-large-run", action="store_true", help="Allow more than 40 concurrent users.")
-    parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR), help="Directory for JSON and Markdown reports.")
-    parser.add_argument("--run-id", default=f"PERF_LIVE_{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}")
-    parser.add_argument("--fail-p95-ms", type=float, default=20000.0, help="Fail threshold for live browser step p95.")
-    parser.add_argument("--fail-error-rate", type=float, default=0.0, help="Fail threshold for browser-step error rate.")
-    args = parser.parse_args(argv)
+    parser.add_argument("--profile", default=argparse.SUPPRESS, help="JSON profile with default runner settings.")
+    parser.add_argument("--url", default=argparse.SUPPRESS, help="Dashboard URL to test.")
+    parser.add_argument("--users", type=int, default=argparse.SUPPRESS, help="Concurrent simulated browser users.")
+    parser.add_argument("--iterations", type=int, default=argparse.SUPPRESS, help="Full section passes per user.")
+    parser.add_argument("--sections", nargs="*", default=argparse.SUPPRESS, help="Section button labels to click.")
+    parser.add_argument("--load-buttons", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS, help="Click safe live-data load buttons.")
+    parser.add_argument("--expand-load-surfaces", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS, help="Open collapsed expanders before clicking safe load buttons.")
+    parser.add_argument("--missing-load-button", choices=["skip", "fail"], default=argparse.SUPPRESS, help="How to handle configured load buttons that are not visible in the active section view.")
+    parser.add_argument("--missing-load-button-wait-ms", type=int, default=argparse.SUPPRESS, help="How long to wait before skipping a non-visible optional load button.")
+    parser.add_argument("--stop-user-on-error", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS, help="Stop a user's flow after the first failed step.")
+    parser.add_argument("--fail-console-errors", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS, help="Treat browser console errors as failed steps.")
+    parser.add_argument("--timeout-ms", type=int, default=argparse.SUPPRESS, help="Per-step browser timeout.")
+    parser.add_argument("--initial-wait-ms", type=int, default=argparse.SUPPRESS, help="Initial page settle time.")
+    parser.add_argument("--wait-initial-idle", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS, help="After initial app readiness, wait for Streamlit idle before recording the step.")
+    parser.add_argument("--single-initial-load", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS, help="Load the app once per user, then repeat in-app section flows without hard page reloads.")
+    parser.add_argument("--action-settle-ms", type=int, default=argparse.SUPPRESS, help="Minimum wait after clicks before spinner checks.")
+    parser.add_argument("--ramp-seconds", type=float, default=argparse.SUPPRESS, help="Ramp users across this many seconds.")
+    parser.add_argument("--width", type=int, default=argparse.SUPPRESS, help="Browser viewport width.")
+    parser.add_argument("--height", type=int, default=argparse.SUPPRESS, help="Browser viewport height.")
+    parser.add_argument("--headed", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS, help="Run with visible browser windows.")
+    parser.add_argument("--allow-large-run", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS, help="Allow more than 40 concurrent users.")
+    parser.add_argument("--output-dir", default=argparse.SUPPRESS, help="Directory for JSON and Markdown reports.")
+    parser.add_argument("--run-id", default=argparse.SUPPRESS)
+    parser.add_argument("--fail-p95-ms", type=float, default=argparse.SUPPRESS, help="Fail threshold for live browser step p95.")
+    parser.add_argument("--fail-error-rate", type=float, default=argparse.SUPPRESS, help="Fail threshold for browser-step error rate.")
+    return parser
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    profile_parser = argparse.ArgumentParser(add_help=False)
+    profile_parser.add_argument("--profile")
+    profile_args, _ = profile_parser.parse_known_args(argv)
+
+    config = _default_config()
+    if profile_args.profile:
+        config.update(load_profile_defaults(profile_args.profile))
+        config["profile"] = profile_args.profile
+
+    parser = _build_parser()
+    cli_args = parser.parse_args(argv)
+    config.update(vars(cli_args))
+    config["load_buttons"] = normalize_load_buttons(config["load_buttons"])
+    args = argparse.Namespace(**config)
     if args.users < 1 or args.iterations < 1:
         parser.error("--users and --iterations must be positive integers.")
     if args.timeout_ms < 5000:

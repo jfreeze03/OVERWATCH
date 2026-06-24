@@ -705,9 +705,13 @@ def _executive_observability_board_empty(board) -> bool:
     return not isinstance(board, pd.DataFrame) or board.empty
 
 def _executive_observability_autoload_allowed() -> bool:
+    """Executive first paint must not query Snowflake automatically."""
+    return False
+
+def _executive_observability_connection_unavailable() -> bool:
     return (
-        st.session_state.get("_overwatch_connection_available") is True
-        and not snowflake_connection_known_unavailable()
+        st.session_state.get("_overwatch_connection_available") is not True
+        or snowflake_connection_known_unavailable()
     )
 
 def _load_executive_snapshot(company: str, environment: str, days: int) -> bool:
@@ -756,4 +760,4 @@ def _load_executive_snapshot(company: str, environment: str, days: int) -> bool:
     return True
 
 
-__all__ = ['_load_alerts', '_company_filter_sql', '_environment_filter_sql', '_build_executive_observability_sql', '_observability_scope', '_normalise_observability_frame', '_sort_observability_frame', '_observability_status_frame', '_store_observability_payload', '_store_connection_unavailable_observability', '_build_executive_observability_query_parts', '_load_executive_observability_from_parts', '_load_executive_observability', '_current_observability_board', '_observability_payload_is_offline', '_executive_observability_board_empty', '_executive_observability_autoload_allowed', '_load_executive_snapshot']
+__all__ = ['_load_alerts', '_company_filter_sql', '_environment_filter_sql', '_build_executive_observability_sql', '_observability_scope', '_normalise_observability_frame', '_sort_observability_frame', '_observability_status_frame', '_store_observability_payload', '_store_connection_unavailable_observability', '_build_executive_observability_query_parts', '_load_executive_observability_from_parts', '_load_executive_observability', '_current_observability_board', '_observability_payload_is_offline', '_executive_observability_board_empty', '_executive_observability_autoload_allowed', '_executive_observability_connection_unavailable', '_load_executive_snapshot']

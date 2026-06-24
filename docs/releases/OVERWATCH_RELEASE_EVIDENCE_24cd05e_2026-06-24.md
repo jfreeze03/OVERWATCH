@@ -40,26 +40,29 @@
 - Legacy/deep-link workflow checks: covered by route registry, navigation integrity, facade no-creep, and full unit discovery tests; no separate manual deep-link browser pass was run because route compatibility is locked by automated contracts.
 
 ## Performance Smoke
-- `perf_tests/README.md` threshold review: PASS, section smoke completed against `http://localhost:8501/`
+- `perf_tests/README.md` threshold review: PASS, section smoke completed against `http://localhost:8503/`
 - Section smoke result: PASS, `PERF_TEST_SECTION_SMOKE_RELEASE_24cd05e`
-- HTTP/live browser p95: `253.32 ms`
+- HTTP/live browser p95: `2388.01 ms`
 - Failed dashboard queries: `0` section smoke errors recorded
 - Readiness score: `100/100`
 
 ## 12 Power User Performance
-- Run ID: `PERF_12_POWER_USERS_RELEASE`
+- Run ID: `PERF_12_POWER_USERS_RELEASE_RERUN`
 - Users: `12`
 - Iterations: `3`
-- p95: `17233.75 ms`
-- p99: `35243.59 ms`
+- p95: `10712.96 ms`
+- p99: `19204.93 ms`
 - errors: `0`
-- readiness: `57/100`
+- readiness: `80/100`
 - slowest section: `App Shell`
 - slowest action: `initial_load`
-- skipped buttons: `36`, all `Alert Center -> Load Issue Inbox`
-- live report path: `perf_tests/results/PERF_12_POWER_USERS_RELEASE_live_concurrent.json`
-- expert review path: `perf_tests/results/PERF_12_POWER_USERS_RELEASE_expert_review.md`
+- skipped buttons: `0`
+- live report path: `perf_tests/results/PERF_12_POWER_USERS_RELEASE_RERUN_live_concurrent.json`
+- expert review path: `perf_tests/results/PERF_12_POWER_USERS_RELEASE_RERUN_expert_review.md`
+- artifact storage: `perf_tests/results/` is intentionally stored outside git; reason: generated Playwright performance artifacts are local run evidence with environment-specific timing and browser metadata.
 - result: FAIL, because p95 exceeded the 10000 ms 12-power-user release threshold even though browser-step errors were zero.
+- release blockers: p95 threshold exceeded (`10712.96 ms` > `10000 ms`) and readiness remained below target (`80/100` < `95/100`).
+- top next fixes: reduce App Shell `initial_load` tail latency under 12 new sessions, then tune first-iteration DBA Control Room navigation p95.
 
 ## Guarded Operations
 - Action queue review-only smoke: PASS via unit contracts covering review-only action queue behavior and full unit discovery
@@ -93,6 +96,6 @@
 - Owner: release operator
 - Follow-up: rerun `perf_tests/full_app_snowflake_regression.py` only when a fresh credentialed release gate is required.
 - Item: 12 heavy power user benchmark for `24cd05e`
-- Reason: Failed because live browser p95 was `17233.75 ms` against the `10000 ms` threshold, readiness was `57/100`, and 36 `Alert Center -> Load Issue Inbox` actions were skipped because the button was not visible in the default Alert Center view.
+- Reason: Failed on rerun because live browser p95 was `10712.96 ms` against the `10000 ms` threshold and readiness was `80/100`; skipped buttons were reduced to `0`, but App Shell `initial_load` remained the slowest action.
 - Owner: release operator
-- Follow-up: tune App Shell first-load behavior, DBA Control Room navigation, and Alert Center default load-button visibility; rerun `python perf_tests/run_12_power_users.py --url http://localhost:8501/ --run-id PERF_12_POWER_USERS_RELEASE --output-dir perf_tests/results` and regenerate the expert review.
+- Follow-up: tune App Shell first-load tail latency and DBA Control Room first-iteration navigation; rerun `python perf_tests/run_12_power_users.py --url http://localhost:8503/ --run-id PERF_12_POWER_USERS_RELEASE_RERUN --output-dir perf_tests/results` and regenerate the expert review.

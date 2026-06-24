@@ -80,8 +80,12 @@ def render() -> None:
     if needs_first_load:
         if _executive_observability_autoload_allowed():
             _load_executive_observability(company, environment, int(days), credit_price=credit_price)
-        elif board_empty:
+        elif board_empty and _executive_observability_connection_unavailable():
             _store_connection_unavailable_observability(company, environment, int(days))
+        elif board_empty:
+            defer_source_note(
+                "Executive Landing first paint is using the local summary frame. Use Refresh Summary to read the compact observability mart."
+            )
         st.session_state["_executive_landing_observability_autoload_scope"] = expected_scope
         board, board_payload = _current_observability_board(company, environment, int(days))
     if refresh_board:

@@ -177,8 +177,8 @@ class PerformanceFrameworkTests(unittest.TestCase):
 
         self.assertIn("DEFAULT_LOAD_BUTTONS", runner_text)
         self.assertEqual(runner.DEFAULT_LOAD_BUTTONS["Cost & Contract"], "Refresh Cost")
-        self.assertEqual(runner.DEFAULT_LOAD_BUTTONS["Alert Center"], "Load Issue Inbox")
-        self.assertIn("Alert Center: `Load Issue Inbox`", readme)
+        self.assertEqual(runner.DEFAULT_LOAD_BUTTONS["Alert Center"], "Load Active Alerts")
+        self.assertIn("Alert Center: `Load Active Alerts`", readme)
         self.assertIn("Cost & Contract: `Refresh Cost`", readme)
         self.assertNotIn("Account Health", runner.DEFAULT_LOAD_BUTTONS)
         self.assertNotIn("Warehouse Health", runner.DEFAULT_LOAD_BUTTONS)

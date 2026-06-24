@@ -136,6 +136,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("ADMIN_ACCESS_ROLES", access_text)
         self.assertIn("def current_role_allows_app_access", access_text)
         self.assertIn("def admin_access_is_allowed", access_text)
+        self.assertIn("_SNOWFLAKE_AVAILABLE_PROCESS_CACHE", access_text)
+        self.assertIn("if not force and _SNOWFLAKE_AVAILABLE_PROCESS_CACHE is not None", access_text)
         self.assertIn('set_state(CURRENT_ROLE_SOURCE, "secrets")', access_text)
         self.assertIn('get_state(CURRENT_ROLE_SOURCE) == "session"', access_text)
         self.assertIn("SNOW_ACCOUNTADMINS or SNOW_SYSADMINS", layout_text)
@@ -242,6 +244,27 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Snowflake Observability Wall", executive_overview)
         self.assertNotIn("Executive Summary Signals", executive_text)
         self.assertIn("Refresh Summary", executive_text)
+
+    def test_app_shell_first_paint_stays_lazy_and_query_builder_clean(self):
+        app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
+        shell_text = (APP_ROOT / "shell.py").read_text(encoding="utf-8")
+        navigation_text = (APP_ROOT / "navigation.py").read_text(encoding="utf-8")
+        dispatch_text = (APP_ROOT / "section_dispatch.py").read_text(encoding="utf-8")
+        route_registry_text = (APP_ROOT / "route_registry.py").read_text(encoding="utf-8")
+        first_paint_text = "\n".join([
+            app_text,
+            shell_text,
+            navigation_text,
+            dispatch_text,
+            route_registry_text,
+        ])
+
+        self.assertNotRegex(first_paint_text, r"\brun_query(?:_or_raise)?\s*\(")
+        self.assertNotIn("SNOWFLAKE.ACCOUNT_USAGE", first_paint_text)
+        self.assertNotIn("utils.mart", first_paint_text)
+        self.assertNotIn("from sections.", shell_text)
+        self.assertNotIn("from sections import", shell_text)
+        self.assertIn("importlib.import_module(module_path)", dispatch_text)
 
     def test_shell_evidence_label_reflects_loaded_state(self):
         keys = ("loaded_frame", "loaded_error")
@@ -427,8 +450,11 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("def _load_executive_observability", observability_text)
         self.assertIn("_executive_landing_observability_autoload_scope", full_workspace_text)
         self.assertIn("def _executive_observability_autoload_allowed", observability_text)
-        self.assertIn('st.session_state.get("_overwatch_connection_available") is True', observability_text)
-        self.assertIn("not snowflake_connection_known_unavailable()", observability_text)
+        self.assertIn("Executive first paint must not query Snowflake automatically.", observability_text)
+        self.assertIn("def _executive_observability_connection_unavailable", observability_text)
+        self.assertIn('st.session_state.get("_overwatch_connection_available") is not True', observability_text)
+        self.assertIn("or snowflake_connection_known_unavailable()", observability_text)
+        self.assertIn("Use Refresh Summary to read the compact observability mart.", full_workspace_text)
         self.assertIn("_store_connection_unavailable_observability(company, environment, int(days))", full_workspace_text)
         self.assertIn("refresh_session = get_session_for_action", full_workspace_text)
         self.assertNotIn("st.session_state.get(autoload_scope_key) != expected_scope", full_workspace_text + observability_text)
@@ -473,6 +499,17 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('set_state(DBA_CONTROL_ROOM_ACTIVE_VIEW, "Morning Cockpit")', nav_text)
         self.assertIn("with_loaded_at(", full_workspace_text)
         self.assertIn("source=getattr(snapshot_result, \"source\", \"Fast summary snapshot\")", full_workspace_text)
+        auto_snapshot_block = full_workspace_text.split(
+            'if snapshot_scope_ok and auto_load_fast_snapshot and snapshot_result is None:',
+            1,
+        )[1].split("if snapshot_scope_ok:", 1)[0]
+        self.assertNotIn("load_latest_control_room_mart", auto_snapshot_block)
+        self.assertIn("DBA Control Room opened with a lightweight Morning Cockpit shell.", auto_snapshot_block)
+        self.assertIn(
+            "Fast snapshot checks are explicit so navigation stays responsive under concurrent DBA traffic.",
+            full_workspace_text,
+        )
+        self.assertNotIn("Fast snapshot loads automatically on section navigation", full_workspace_text)
         self.assertIn("DBA_CONTROL_ROOM_LIVE_FALLBACK_CAP_HOURS = 24", full_workspace_text)
         self.assertIn("DBA_CONTROL_ROOM_LIVE_FALLBACK_KEYS", full_workspace_text)
         for workflow in (

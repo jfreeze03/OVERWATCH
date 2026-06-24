@@ -35,7 +35,7 @@ DEFAULT_SECTIONS = [
 # drilldown buttons can still be tested with section-specific browser scripts,
 # but they should not appear as skipped work in the broad concurrency profile.
 DEFAULT_LOAD_BUTTONS = {
-    "Alert Center": "Load Issue Inbox",
+    "Alert Center": "Load Active Alerts",
     "Cost & Contract": "Refresh Cost",
 }
 
@@ -84,6 +84,7 @@ class StepSample:
     error: str = ""
     visible_error: str = ""
     browser_errors: int = 0
+    browser_error_messages: list[str] = dataclasses.field(default_factory=list)
     skipped: bool = False
 
 
@@ -239,9 +240,20 @@ async def wait_for_streamlit_idle(page, timeout_ms: int, settle_ms: int) -> None
         try:
             busy = await page.evaluate(
                 """() => {
-                    const spinner = document.querySelector('[data-testid="stSpinner"], .stSpinner');
-                    const text = document.body ? document.body.innerText : "";
-                    return Boolean(spinner) || text.includes("Running...") || text.includes("Please wait...");
+                    const visible = (element) => {
+                        if (!element) return false;
+                        const style = window.getComputedStyle(element);
+                        return style.visibility !== "hidden"
+                            && style.display !== "none"
+                            && element.getClientRects().length > 0;
+                    };
+                    const spinners = Array.from(
+                        document.querySelectorAll('[data-testid="stSpinner"], .stSpinner')
+                    ).filter(visible);
+                    const statuses = Array.from(
+                        document.querySelectorAll('[data-testid="stStatusWidget"], [data-testid="stStatus"]')
+                    ).filter((element) => visible(element) && /running|loading|please wait/i.test(element.innerText || ""));
+                    return spinners.length > 0 || statuses.length > 0;
                 }"""
             )
         except Exception:
@@ -328,7 +340,8 @@ async def timed_step(
         result = await operation()
         elapsed_ms = (time.perf_counter() - started) * 1000
         visible_error = await collect_visible_error(page)
-        new_browser_errors = len(browser_errors) - before_browser_errors
+        new_browser_messages = browser_errors[before_browser_errors:]
+        new_browser_errors = len(new_browser_messages)
         skipped = result == "skipped"
         ok = skipped or (not visible_error and new_browser_errors == 0)
         return StepSample(
@@ -340,11 +353,13 @@ async def timed_step(
             ok=ok,
             visible_error=visible_error[:500],
             browser_errors=max(0, new_browser_errors),
+            browser_error_messages=[message[:500] for message in new_browser_messages[:5]],
             skipped=skipped,
         )
     except Exception as exc:
         elapsed_ms = (time.perf_counter() - started) * 1000
         visible_error = await collect_visible_error(page)
+        new_browser_messages = browser_errors[before_browser_errors:]
         return StepSample(
             user_id=user_id,
             iteration=iteration,
@@ -354,7 +369,8 @@ async def timed_step(
             ok=False,
             error=str(exc).replace("\n", " ")[:500],
             visible_error=visible_error[:500],
-            browser_errors=max(0, len(browser_errors) - before_browser_errors),
+            browser_errors=max(0, len(new_browser_messages)),
+            browser_error_messages=[message[:500] for message in new_browser_messages[:5]],
         )
 
 
@@ -418,8 +434,8 @@ async def run_user(browser, args: argparse.Namespace, user_id: int) -> list[Step
                     if await section_is_visible(page, section_name):
                         return None
                     await click_named_button(page, section_name, args.timeout_ms)
-                    await wait_for_streamlit_idle(page, args.timeout_ms, args.action_settle_ms)
                     await wait_for_section(page, section_name, args.timeout_ms)
+                    await page.wait_for_timeout(args.action_settle_ms)
 
                 nav_sample = await timed_step(
                     page=page,
@@ -501,6 +517,25 @@ def summarize(samples: list[StepSample], total_elapsed_sec: float, args: argpars
     p95_ms = percentile(elapsed, 95)
     p99_ms = percentile(elapsed, 99)
     browser_error_steps = sum(1 for sample in samples if sample.browser_errors)
+    browser_error_messages: dict[str, int] = {}
+    visible_errors: dict[str, int] = {}
+    for sample in samples:
+        if sample.visible_error:
+            visible_errors[sample.visible_error] = visible_errors.get(sample.visible_error, 0) + 1
+        for message in sample.browser_error_messages:
+            browser_error_messages[message] = browser_error_messages.get(message, 0) + 1
+    step_counts = {
+        "initial_load": sum(1 for sample in samples if sample.action == "initial_load"),
+        "section_nav": sum(1 for sample in samples if sample.action == "section_nav"),
+        "load_button": sum(1 for sample in samples if sample.action.startswith("load_button:")),
+    }
+    skipped_by_label: dict[str, int] = {}
+    for sample in samples:
+        if not sample.skipped:
+            continue
+        label = sample.action.split(":", 1)[1] if sample.action.startswith("load_button:") else sample.action
+        skipped_by_label[label] = skipped_by_label.get(label, 0) + 1
+
     by_action = {}
     for action in sorted({sample.action for sample in samples}):
         action_samples = [sample for sample in samples if sample.action == action]
@@ -525,6 +560,15 @@ def summarize(samples: list[StepSample], total_elapsed_sec: float, args: argpars
             "max_ms": round(max(section_elapsed), 2) if section_elapsed else 0.0,
         }
 
+    top_slowest_actions = [
+        {"action": action, **row}
+        for action, row in sorted(by_action.items(), key=lambda item: item[1]["p95_ms"], reverse=True)
+    ]
+    top_slowest_sections = [
+        {"section": section, **row}
+        for section, row in sorted(by_section.items(), key=lambda item: item[1]["p95_ms"], reverse=True)
+    ]
+
     score = 100
     if p95_ms > args.fail_p95_ms:
         score -= min(35, int((p95_ms - args.fail_p95_ms) / max(args.fail_p95_ms, 1) * 35) + 10)
@@ -541,6 +585,39 @@ def summarize(samples: list[StepSample], total_elapsed_sec: float, args: argpars
         state = "WATCH"
     else:
         state = "FAIL"
+
+    release_blockers: list[dict[str, object]] = []
+    if p95_ms > args.fail_p95_ms:
+        release_blockers.append({
+            "type": "p95_threshold",
+            "message": f"p95 {round(p95_ms, 2)} ms exceeded threshold {args.fail_p95_ms} ms",
+        })
+    if error_rate > args.fail_error_rate:
+        release_blockers.append({
+            "type": "error_rate",
+            "message": f"error rate {round(error_rate, 4)} exceeded threshold {args.fail_error_rate}",
+            "errors": errors,
+        })
+    if skipped:
+        release_blockers.append({
+            "type": "skipped_load_buttons",
+            "message": f"{skipped} configured load button step(s) were skipped",
+            "skipped_by_label": skipped_by_label,
+        })
+    if browser_error_steps:
+        release_blockers.append({
+            "type": "browser_errors",
+            "message": f"{browser_error_steps} browser step(s) recorded console/runtime errors",
+            "browser_error_messages": [
+                {"message": message, "count": count}
+                for message, count in sorted(browser_error_messages.items(), key=lambda item: item[1], reverse=True)[:5]
+            ],
+        })
+    if score < 95:
+        release_blockers.append({
+            "type": "readiness_score",
+            "message": f"readiness score {score}/100 is below the 95/100 release target",
+        })
 
     slowest_sample = max(measured_samples, key=lambda item: item.elapsed_ms) if measured_samples else None
     return {
@@ -559,7 +636,20 @@ def summarize(samples: list[StepSample], total_elapsed_sec: float, args: argpars
         "throughput_steps_per_sec": round((len(samples) - errors) / total_elapsed_sec, 3) if total_elapsed_sec else 0.0,
         "total_elapsed_sec": round(total_elapsed_sec, 3),
         "browser_error_steps": browser_error_steps,
+        "browser_error_messages": [
+            {"message": message, "count": count}
+            for message, count in sorted(browser_error_messages.items(), key=lambda item: item[1], reverse=True)
+        ],
+        "visible_errors": [
+            {"message": message, "count": count}
+            for message, count in sorted(visible_errors.items(), key=lambda item: item[1], reverse=True)
+        ],
         "slowest_step": dataclasses.asdict(slowest_sample) if slowest_sample else {},
+        "step_counts": step_counts,
+        "skipped_by_label": skipped_by_label,
+        "top_slowest_actions": top_slowest_actions,
+        "top_slowest_sections": top_slowest_sections,
+        "release_blockers": release_blockers,
         "by_action": by_action,
         "by_section": by_section,
         "readiness_score": score,
@@ -629,14 +719,24 @@ def write_reports(args: argparse.Namespace, samples: list[StepSample], summary: 
         f"- Live load buttons: `{'enabled' if args.load_buttons else 'disabled'}`",
         f"- Readiness: **{summary['readiness_state']}** ({summary['readiness_score']}/100)",
         f"- Steps: {summary['steps']} total, {summary['measured_steps']} measured, {summary['skipped']} skipped, {summary['errors']} errors ({summary['error_rate'] * 100:.2f}%)",
+        f"- Step counts: initial_load {summary['step_counts']['initial_load']}, section_nav {summary['step_counts']['section_nav']}, load_button {summary['step_counts']['load_button']}",
         f"- Latency: p50 {summary['p50_ms']} ms, p95 {summary['p95_ms']} ms, p99 {summary['p99_ms']} ms, max {summary['max_ms']} ms",
         f"- Throughput: {summary['throughput_steps_per_sec']} successful browser steps/sec",
+        "",
+        "## Release Blockers",
+        "",
+    ]
+    if summary["release_blockers"]:
+        md.extend(f"- `{item['type']}`: {item['message']}" for item in summary["release_blockers"])
+    else:
+        md.append("No release blockers were detected.")
+    md.extend([
         "",
         "## Section P95",
         "",
         "| Section | Steps | Skipped | Errors | P95 ms | Max ms |",
         "|---|---:|---:|---:|---:|---:|",
-    ]
+    ])
     for section, row in sorted(summary["by_section"].items(), key=lambda item: item[1]["p95_ms"], reverse=True):
         md.append(f"| {section} | {row['steps']} | {row['skipped']} | {row['errors']} | {row['p95_ms']} | {row['max_ms']} |")
     md.extend([
@@ -656,17 +756,40 @@ def write_reports(args: argparse.Namespace, samples: list[StepSample], summary: 
         )
     md.extend(["", "## Failures", ""])
     if failures:
-        md.extend(["| User | Iteration | Section | Action | Elapsed ms | Error | Visible error |", "|---:|---:|---|---|---:|---|---|"])
+        md.extend([
+            "| User | Iteration | Section | Action | Elapsed ms | Error | Visible error | Browser error |",
+            "|---:|---:|---|---|---:|---|---|---|",
+        ])
         for sample in failures:
+            browser_error = "; ".join(sample.browser_error_messages)[:180]
             md.append(
                 f"| {sample.user_id} | {sample.iteration} | {sample.section} | {sample.action} | "
-                f"{sample.elapsed_ms:.2f} | {sample.error[:140]} | {sample.visible_error[:180]} |"
+                f"{sample.elapsed_ms:.2f} | {sample.error[:140]} | {sample.visible_error[:180]} | {browser_error} |"
             )
     else:
         md.append("No browser-step failures.")
+    md.extend(["", "## Browser Errors", ""])
+    if summary["browser_error_messages"]:
+        md.extend(["| Message | Count |", "|---|---:|"])
+        for item in summary["browser_error_messages"][:10]:
+            md.append(f"| {item['message'][:240]} | {item['count']} |")
+    else:
+        md.append("No browser console or page errors were captured.")
+    md.extend(["", "## Visible Errors", ""])
+    if summary["visible_errors"]:
+        md.extend(["| Message | Count |", "|---|---:|"])
+        for item in summary["visible_errors"][:10]:
+            md.append(f"| {item['message'][:240]} | {item['count']} |")
+    else:
+        md.append("No visible Streamlit error text was captured.")
     skipped_samples = [sample for sample in samples if sample.skipped]
     md.extend(["", "## Skipped Live Buttons", ""])
     if skipped_samples:
+        if summary["skipped_by_label"]:
+            md.extend(["| Label | Skipped |", "|---|---:|"])
+            for label, count in sorted(summary["skipped_by_label"].items(), key=lambda item: item[1], reverse=True):
+                md.append(f"| {label} | {count} |")
+            md.append("")
         md.extend(["| User | Iteration | Section | Action |", "|---:|---:|---|---|"])
         for sample in skipped_samples[:20]:
             md.append(f"| {sample.user_id} | {sample.iteration} | {sample.section} | {sample.action} |")

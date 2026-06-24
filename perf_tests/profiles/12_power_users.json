@@ -5,6 +5,7 @@
   "single_initial_load": true,
   "fail_console_errors": true,
   "wait_initial_idle": true,
+  "missing_load_button_wait_ms": 10000,
   "fail_p95_ms": 10000,
   "fail_error_rate": 0.0,
   "sections": [
@@ -16,7 +17,7 @@
     "Security Monitoring"
   ],
   "load_buttons": {
-    "Alert Center": "Load Issue Inbox",
+    "Alert Center": "Load Active Alerts",
     "Cost & Contract": "Refresh Cost"
   }
 }

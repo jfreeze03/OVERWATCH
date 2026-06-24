@@ -1030,31 +1030,13 @@ def render() -> None:
 
     auto_load_fast_snapshot = consume_section_autoload_request("DBA Control Room")
     if snapshot_scope_ok and auto_load_fast_snapshot and snapshot_result is None:
-        with render_load_status("Checking latest control-room summary snapshot", "Fast snapshot check ready"):
-            snapshot_result = load_latest_control_room_mart(company, max_age_hours=6)
-            st.session_state["dba_control_room_snapshot_scope_key"] = snapshot_scope_key
-            st.session_state["dba_control_room_snapshot_result"] = snapshot_result
-        if snapshot_result is not None and snapshot_result.available and not snapshot_result.data.empty:
-            snapshot = snapshot_result.data.copy()
-            st.session_state["dba_control_room_data"] = _control_room_snapshot_to_data(snapshot)
-            st.session_state["dba_control_room_company"] = company
-            st.session_state["dba_control_room_lookback"] = 24
-            st.session_state["dba_control_room_source_mode"] = "Fast summary snapshot"
-            st.session_state["dba_control_room_meta"] = with_loaded_at(
-                _dba_control_scope_meta(
-                    company,
-                    environment,
-                    24,
-                    safe_float(cortex_budget_usd),
-                    False,
-                    False,
-                ),
-                source=getattr(snapshot_result, "source", "Fast summary snapshot"),
-            )
-            _clear_dba_control_room_derived_state()
+        st.caption(
+            "DBA Control Room opened with a lightweight Morning Cockpit shell. "
+            "Check Fast Snapshot or Load Triage when current telemetry is needed."
+        )
 
     if snapshot_scope_ok:
-        st.caption("Fast snapshot loads automatically on section navigation; use refresh when current telemetry matters.")
+        st.caption("Fast snapshot checks are explicit so navigation stays responsive under concurrent DBA traffic.")
         if st.button("Check Fast Snapshot", key="dba_control_room_check_snapshot"):
             with render_load_status("Checking latest control-room summary snapshot", "Fast snapshot check ready"):
                 snapshot_result = load_latest_control_room_mart(company, max_age_hours=6)

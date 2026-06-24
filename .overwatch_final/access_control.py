@@ -21,6 +21,9 @@ from runtime_state import (
 from utils.session import get_session
 
 
+_SNOWFLAKE_AVAILABLE_PROCESS_CACHE: bool | None = None
+
+
 def seed_current_role_from_secrets() -> None:
     """Use configured Snowflake role as a zero-query startup hint when present."""
     if get_state(CURRENT_ROLE):
@@ -92,8 +95,14 @@ def admin_access_is_allowed(role: str, connection_available: bool) -> bool:
 
 def probe_snowflake_available(force: bool = False) -> bool:
     """Return whether the app appears to have a Snowflake connection path."""
+    global _SNOWFLAKE_AVAILABLE_PROCESS_CACHE
     if not force and CONNECTION_AVAILABLE in st.session_state:
         return cached_snowflake_available()
+    if not force and _SNOWFLAKE_AVAILABLE_PROCESS_CACHE is not None:
+        available = bool(_SNOWFLAKE_AVAILABLE_PROCESS_CACHE)
+        set_state(CONNECTION_AVAILABLE, available)
+        set_state(CONNECTION_UNAVAILABLE, not available)
+        return available
 
     available = False
     if force:
@@ -119,4 +128,6 @@ def probe_snowflake_available(force: bool = False) -> bool:
     elif force:
         set_state(CONNECTION_AVAILABLE, False)
         set_state(CONNECTION_UNAVAILABLE, True)
+    if not force:
+        _SNOWFLAKE_AVAILABLE_PROCESS_CACHE = available
     return available

@@ -63,7 +63,7 @@ $env:OVERWATCH_PERF_RUN_ID="PERF_TEST_LOCAL_001"
 
 The live concurrent runner clicks only safe read/load actions by default:
 
-- Alert Center: `Load Issue Inbox`
+- Alert Center: `Load Active Alerts`
 - Cost & Contract: `Refresh Cost`
 
 The default profile intentionally avoids deep workflow buttons that may be

@@ -224,9 +224,9 @@ def _security_action_brief(summary, exceptions, meta: dict, company: str, enviro
                 "detail": "Loaded telemetry does not match the active company, environment, filters, or lookback.",
             }
         return {
-            "state": "Ready",
-            "headline": "Security posture is ready for explicit review.",
-            "detail": "First paint does not query Snowflake; use Refresh Security Summary for current security facts.",
+            "state": "Summary unavailable",
+            "headline": "Security command brief is the entry summary.",
+            "detail": "Entry reads compact summary marts when available; use Refresh Security Summary for current proof counts.",
         }
 
     row = summary.iloc[0]
@@ -277,7 +277,7 @@ def _security_operating_snapshot(summary, meta: dict, company: str, environment:
             "loaded": False,
             "scope": str(company or "All"),
             "window": f"{safe_int(days, 30):d}d",
-            "evidence": "On demand",
+            "evidence": "Summary unavailable",
             "focus": "Access",
         }
     row = summary.iloc[0]
@@ -295,7 +295,7 @@ def _render_security_operating_snapshot(snapshot: dict) -> None:
         render_shell_kpi_row((
             ("Scope", str(snapshot.get("scope") or "All")),
             ("Window", str(snapshot.get("window") or "30d")),
-            ("Telemetry", str(snapshot.get("evidence") or "On demand")),
+            ("Telemetry", str(snapshot.get("evidence") or "Summary unavailable")),
         ))
         return
     render_shell_kpi_row((
@@ -324,10 +324,10 @@ def _render_security_overview_entry(summary, exceptions, meta: dict, company: st
         action_rows = _security_exception_strip_rows(summary, exceptions, meta, company, environment, days)
     else:
         render_shell_kpi_row((
-            ("Failed Logins", "Pending"),
-            ("Risky Grants", "Pending"),
-            ("Privilege Changes", "Pending"),
-            ("Shared DBs", "Pending"),
+            ("Failed Logins", "Summary unavailable"),
+            ("Risky Grants", "Summary unavailable"),
+            ("Privilege Changes", "Summary unavailable"),
+            ("Shared DBs", "Summary unavailable"),
         ))
         action_rows = [
             {
@@ -369,49 +369,49 @@ def _security_command_lanes(snapshot: dict) -> list[dict[str, str]]:
         return [
             {
                 "label": "Failed logins",
-                "value": "Pending",
+                "value": "Summary unavailable",
                 "state": "Identity",
                 "detail": "Fast summary checks login spikes, unusual sources, and failed auth before live proof.",
             },
             {
                 "label": "MFA gaps",
-                "value": "Pending",
+                "value": "Summary unavailable",
                 "state": "Access",
                 "detail": "Review active users without exposed MFA signal.",
             },
             {
                 "label": "Grant changes",
-                "value": "Pending",
+                "value": "Summary unavailable",
                 "state": "Privilege",
                 "detail": "Admin grants, ownership, and future grants route here.",
             },
             {
                 "label": "Shared data",
-                "value": "Pending",
+                "value": "Summary unavailable",
                 "state": "Exposure",
                 "detail": "Shares, external stages, and broad grants stay visible for review.",
             },
             {
                 "label": "Policy posture",
-                "value": "On demand",
+                "value": "Detail explicit",
                 "state": "Security",
                 "detail": "Masking, row access, network policy, and integration drift.",
             },
             {
                 "label": "Sensitive access",
-                "value": "On demand",
+                "value": "Detail explicit",
                 "state": "Audit",
                 "detail": "ACCESS_HISTORY and bytes-written signals identify risky access.",
             },
             {
                 "label": "Access review",
-                "value": "On demand",
+                "value": "Detail explicit",
                 "state": "Review",
                 "detail": "Privileged grants need review context before action.",
             },
             {
                 "label": "Closure status",
-                "value": "On demand",
+                "value": "Detail explicit",
                 "state": "Audit",
                 "detail": "Investigation notes, action status, and telemetry stay logged.",
             },

@@ -65,6 +65,8 @@ from sections.shell_helpers import (
     render_section_breadcrumb,
     render_section_first_paint_shell,
 )
+from sections.section_command_brief import autoload_section_command_brief
+from sections.section_command_rendering import render_section_command_brief
 
 
 day_window_selectbox = _lazy_util("day_window_selectbox")
@@ -83,24 +85,11 @@ def _apply_queued_security_workflow() -> None:
 
 
 def _render_security_first_paint_shell(active_view: str, company: str, environment: str, days: int) -> None:
-    render_section_first_paint_shell(build_first_paint_summary_spec(
-        section="Security Monitoring",
-        state="Ready",
-        headline=f"{active_view} starts with risk triage, then loads proof on request.",
-        detail="Use Refresh Security Summary for current risk counts; login, grant, sharing, and access-change detail stays workflow gated.",
-        view=active_view,
-        metrics=(
-            ("Window", f"{days} days"),
-            ("Security risks", "Refresh needed"),
-            ("Proof rows", "Explicit load"),
-            ("Access drilldowns", "Workflow gated"),
-        ),
-        snapshot=(
-            ("Scope", f"{company} / {environment}"),
-            ("Decision path", "Failed logins -> grants -> sharing -> access changes"),
-        ),
-        load_cta="Use selected workflow or Refresh Security Summary",
-    ))
+    _ = active_view
+    render_section_command_brief(
+        autoload_section_command_brief("Security Monitoring", company, environment, int(days or 30)),
+        key_prefix="security_monitoring_command_brief",
+    )
     render_command_deck(
         get_command_deck_contract("Security Monitoring"),
         key_prefix="security_command_deck",

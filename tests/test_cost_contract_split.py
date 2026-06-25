@@ -92,11 +92,12 @@ class CostContractSplitTests(unittest.TestCase):
         self.assertNotIn("render_local_section_menu", cost_contract_text)
         self.assertNotIn("render_explore_lens_selector", cost_contract_text)
         self.assertIn("render_section_breadcrumb", cost_contract_text)
-        self.assertIn("render_kpi_hero_row", cost_contract_text)
+        self.assertIn("autoload_section_command_brief", cost_contract_text)
+        self.assertIn("render_section_command_brief", cost_contract_text)
         self.assertIn("render_cost_primary_tabs", cost_contract_text)
         self.assertIn("render_cost_explorer_lens_pills", cost_contract_text)
         self.assertLess(
-            cost_contract_text.rindex("render_cost_action_cards()"),
+            cost_contract_text.rindex("render_section_command_brief("),
             cost_contract_text.rindex("_render_cost_contract_workflow(workflow, company, environment)"),
         )
         self.assertIn("render_primary_section_tabs", hierarchy_text)

@@ -18,6 +18,8 @@ from sections.shell_helpers import (
     render_section_breadcrumb,
     render_section_first_paint_shell,
 )
+from sections.section_command_brief import autoload_section_command_brief
+from sections.section_command_rendering import render_section_command_brief
 from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_section_note
 
@@ -520,49 +522,21 @@ def _set_workload_workflow(workflow: str, *, pipeline_focus: str = "") -> None:
 
 
 def _render_workload_overview(company: str, environment: str) -> None:
+    render_section_command_brief(
+        autoload_section_command_brief("Workload Operations", company, environment, 7),
+        key_prefix="workload_operations_command_brief",
+    )
     board = build_loaded_section_alert_signal_board(st.session_state, section="Workload Operations", limit=12)
     if isinstance(board, pd.DataFrame) and not board.empty:
         severity = board.get("SEVERITY", pd.Series(dtype=str)).fillna("").astype(str).str.upper()
         category = board.get("CATEGORY", pd.Series(dtype=str)).fillna("").astype(str).str.upper()
-        render_section_first_paint_shell(
-            build_first_paint_summary_spec(
-                section="Workload Operations",
-                state="Loaded context",
-                headline="Workload Overview is ready for triage.",
-                detail="Loaded reliability alert context is already in session; specialist evidence stays behind explicit workflow actions.",
-                metrics=(
-                    ("Active workload items", f"{len(board):,}"),
-                    ("Critical / High", f"{safe_int(severity.isin(['CRITICAL', 'HIGH']).sum()):,}"),
-                    ("Query / contention", f"{safe_int(category.str.contains('QUERY|CONTENTION|PERFORMANCE', regex=True).sum()):,}"),
-                    ("Pipeline / task", f"{safe_int(category.str.contains('TASK|PIPELINE|PROCEDURE|LOAD', regex=True).sum()):,}"),
-                ),
-                snapshot=(
-                    ("Scope", f"{company} / {environment}"),
-                    ("Freshness", "Session alert context"),
-                ),
-            )
+        st.caption(
+            "Loaded workload alert context is available in session: "
+            f"{len(board):,} item(s), "
+            f"{safe_int(severity.isin(['CRITICAL', 'HIGH']).sum()):,} critical/high, "
+            f"{safe_int(category.str.contains('TASK|PIPELINE|PROCEDURE|LOAD', regex=True).sum()):,} pipeline/task."
         )
         _render_loaded_workload_alert_context()
-    else:
-        render_section_first_paint_shell(
-            build_first_paint_summary_spec(
-                section="Workload Operations",
-                state="Ready",
-                headline="Workload Overview is ready for explicit triage.",
-                detail="No live Snowflake reads run on entry. Choose a workflow when an issue starts.",
-                metrics=(
-                    ("Active workload items", "0"),
-                    ("Critical / High", "0"),
-                    ("Query / contention", "0"),
-                    ("Pipeline / task", "0"),
-                ),
-                snapshot=(
-                    ("Scope", f"{company} / {environment}"),
-                    ("Freshness", "No workload alert context loaded"),
-                ),
-            )
-        )
-        st.info("No loaded workload incidents are in session. Use Query Investigation, Pipeline & Task Health, or Performance & Contention when an issue starts.")
 
     render_command_deck(
         get_command_deck_contract("Workload Operations"),

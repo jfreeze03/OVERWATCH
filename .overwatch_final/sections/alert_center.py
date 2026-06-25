@@ -21,6 +21,8 @@ from sections.shell_helpers import (
     render_shell_status_strip,
     with_loaded_at,
 )
+from sections.section_command_brief import autoload_section_command_brief
+from sections.section_command_rendering import render_section_command_brief
 from sections.alert_center_contracts import (
     ALERT_CENTER_ADMIN_VIEW_DETAILS,
     ALERT_CENTER_ADMIN_VIEW_KEY,
@@ -335,7 +337,7 @@ def _summary_count_label(summary: dict, *keys: str) -> tuple[str, int | None]:
             return f"{count:,}", count
         except (TypeError, ValueError):
             return str(value), None
-    return "On demand", None
+    return "Summary unavailable", None
 
 
 def _alert_center_cached_summary_for_scope(
@@ -384,7 +386,13 @@ def _alert_center_first_paint_summary(
                 "top_lane": top_lane,
                 "freshness": str(cached_summary.get("freshness") or cached_summary.get("loaded_at") or "Cached summary"),
             }
-        return dict(critical_high="On demand", overdue="On demand", open_queue="On demand", top_lane="Selected view", freshness="Not loaded")
+        return dict(
+            critical_high="Summary unavailable",
+            overdue="Summary unavailable",
+            open_queue="Summary unavailable",
+            top_lane="Selected view",
+            freshness="Summary mart unavailable",
+        )
     meta = _alert_center_loaded_meta(data, source_view)
     freshness = str(meta.get("loaded_at") or data.get("loaded_at") or "Loaded previously")
     pd = _pd()
@@ -432,7 +440,7 @@ def _render_alert_center_first_paint_shell(
     """Render a useful Alert Center shell while detailed rows remain behind Load."""
     summary = _alert_center_first_paint_summary(data, source_view, cached_summary=cached_summary)
     source_summary = _alert_center_source_summary(required_sources)
-    spec = build_first_paint_summary_spec(  # First paint does not query Snowflake; cached/session facts only.
+    spec = build_first_paint_summary_spec(
         section="Alert Center",
         state=state,
         headline=f"{source_view} is ready for explicit load.",
@@ -465,7 +473,7 @@ def _render_alert_center_first_paint_shell(
             loaded=loaded_for_summary,
         )
     )
-    st.info(f"Use Load {source_view} for detailed Alert Center rows. First paint does not query Snowflake.")
+    st.info(f"Use Load {source_view} for detailed Alert Center rows. Entry summaries come from compact marts when available.")
 
 
 def _render_alert_command_lane_board(lanes: list[dict[str, str]]) -> None:
@@ -669,6 +677,10 @@ def render() -> None:
         )
     with c2:
         limit = st.selectbox("Rows", [50, 100, 200, 500], index=2)
+    render_section_command_brief(
+        autoload_section_command_brief("Alert Center", company, environment, int(days)),
+        key_prefix="alert_center_command_brief",
+    )
     data = st.session_state.get("alert_center_data")
     expected_scope = (company, environment, int(days), int(limit))
     cached_summary = _alert_center_cached_summary_for_scope(
@@ -692,8 +704,8 @@ def render() -> None:
         and not current_data
     ):
         st.caption(
-            "Alert Center opened without live Snowflake reads. "
-            f"Load {active_view} when fresh alert telemetry is needed."
+            "Alert Center opened with the command brief first. "
+            f"Load {active_view} when row-level alert telemetry is needed."
         )
         defer_source_note(f"Inputs on load: {_alert_center_source_summary(required_sources)}")
     render_data_freshness(
@@ -708,51 +720,18 @@ def render() -> None:
                 st.rerun()
 
     if not isinstance(data, dict):
-        _render_alert_center_first_paint_shell(
-            source_view=source_view,
-            company=company,
-            environment=environment,
-            days=int(days),
-            limit=int(limit),
-            required_sources=required_sources,
-            cached_summary=cached_summary,
-        )
         defer_source_note(f"Inputs on load: {_alert_center_source_summary(required_sources)}")
         _render_advanced_alert_diagnostics(company, environment)
         return
 
     loaded_scope = st.session_state.get("alert_center_scope")
     if loaded_scope != expected_scope:
-        _render_alert_center_first_paint_shell(
-            source_view=source_view,
-            company=company,
-            environment=environment,
-            days=int(days),
-            limit=int(limit),
-            required_sources=required_sources,
-            data=data,
-            cached_summary=cached_summary,
-            state="Scope changed",
-            note="Company, environment, or window changed after this load. Reload before triaging alerts.",
-        )
         defer_source_note(f"Loaded scope: {loaded_scope or 'none'} | Current scope: {expected_scope}")
         _render_advanced_alert_diagnostics(company, environment)
         return
     loaded_sources = set(data.get("_loaded_sources") or [])
     missing_sources = sorted(required_sources - loaded_sources)
     if missing_sources:
-        _render_alert_center_first_paint_shell(
-            source_view=source_view,
-            company=company,
-            environment=environment,
-            days=int(days),
-            limit=int(limit),
-            required_sources=required_sources,
-            data=data,
-            cached_summary=cached_summary,
-            state="Inputs needed",
-            note=f"Load {active_view} to fetch missing input(s): {_alert_center_source_summary(set(missing_sources))}.",
-        )
         defer_source_note(f"Missing Alert Center input(s): {_alert_center_source_summary(set(missing_sources))}")
         _render_advanced_alert_diagnostics(company, environment)
         return

@@ -81,31 +81,32 @@ Cortex AI is a first-class financial and operational risk lane, not a secondary
 cost footnote. Executive Landing, Cost & Contract, Alert Center, and Cortex AI
 surfaces must show Cortex spend, forecast/run-rate, predictive alerts, top
 driver, and cost-risk state from already-loaded/session data where available.
-When Cortex telemetry is unavailable, show an honest on-demand or unavailable
-state and route the operator to the explicit Cortex cost-driver workflow instead
-of hiding the signal under tables or expanders.
+When Cortex telemetry is unavailable, show an honest summary-unavailable state
+and route the operator to the explicit Cortex cost-driver workflow instead of
+hiding the signal under tables or expanders.
 
-Use `FirstPaintSummarySpec` through `render_section_first_paint_shell()` when a
-section needs the standard first-paint contract. Keep one-off shell rendering
-only for specialized loaded-context surfaces that already have a narrower
-contract.
+Primary sections should use the Command Brief layer for entry context. Use
+`FirstPaintSummarySpec` only for specialized legacy loaded-context surfaces that
+already have a narrower contract.
 
 ## Snowflake Browser Compatibility
 
 Section modules should treat the Snowflake browser as a conservative runtime:
-route shells must be small, query-on-demand, and resilient to hot-reloaded
+route shells must be small, mart-summary-first, and resilient to hot-reloaded
 helper modules. Optional captions, info copy, buttons, and expanders can use
 the lightweight wrappers in `sections.ui_compat` when a section needs
 empty-value guards or stable keys. Loaded chart surfaces inside section modules
 should import through `sections.chart_helpers`, not `utils.display`, so stale
 browser sessions keep the native Streamlit fallback path.
 
-## Primary Section First-Paint Contract
+## Primary Section Command Brief Contract
 
-Every canonical section must render useful operator context before any live
-Snowflake read. The central contract registry in
-`sections.first_paint_contracts` owns the primary view, expected lanes, safe
-load boundary, cached/session sources, and forbidden first-paint loaders.
+Every canonical section must render useful operator context on entry. The UI may
+read compact command summary marts; heavy detail, proof, and raw account-history
+rows remain behind explicit load or refresh buttons. The central contract
+registries in `sections.section_command_contracts` and
+`sections.first_paint_contracts` own the primary view, expected lanes, safe load
+boundary, mart/session sources, and forbidden detail loaders.
 
 | Section | Primary view | Expected lanes | Explicit load CTA |
 | --- | --- | --- | --- |
@@ -116,12 +117,18 @@ load boundary, cached/session sources, and forbidden first-paint loaders.
 | Cost & Contract | Cost Overview | Spend movement, run rate, warehouse drivers, Cortex AI cost risk, savings | Refresh Cost |
 | Security Monitoring | Security Overview | Logins, grants, sharing, access changes, security alerts | Refresh Security Summary |
 
+The Command Brief layout is status band, compact metric strip, top signal,
+recommended route actions, detail/evidence boundary, and source/freshness
+footer. It must not render empty board walls with placeholder KPIs. If the mart
+summary is unavailable, show "Summary unavailable" plus setup/remediation copy
+and keep the detail boundary visible.
+
 ## Primary Section Command Deck
 
-The Command Deck is the route-only action surface that sits beside the
-first-paint shell. Its contracts live in `sections.command_deck_contracts` and
+The Command Deck is the route-only action surface that complements the Command
+Brief. Its contracts live in `sections.command_deck_contracts` and
 reuse the first-paint registry for each section's primary CTA, evidence
-boundary, and no-query note. Command Deck buttons may set workflow/session
+boundary, and summary-source note. Command Deck buttons may set workflow/session
 state or queue section navigation, but they must not load Snowflake evidence on
 render and must not replace the explicit load/refresh buttons.
 

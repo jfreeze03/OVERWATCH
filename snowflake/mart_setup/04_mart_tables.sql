@@ -524,6 +524,72 @@ CREATE TRANSIENT TABLE IF NOT EXISTS MART_EXECUTIVE_OBSERVABILITY (
   LOAD_TS                      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
 );
 
+CREATE TRANSIENT TABLE IF NOT EXISTS MART_SECTION_COMMAND_BRIEF (
+  SECTION_NAME                 VARCHAR(200),
+  COMPANY                      VARCHAR(100),
+  ENVIRONMENT                  VARCHAR(100),
+  WINDOW_DAYS                  NUMBER,
+  SNAPSHOT_TS                  TIMESTAMP_NTZ,
+  STATE                        VARCHAR(100),
+  HEADLINE                     VARCHAR(1000),
+  SUMMARY                      VARCHAR(4000),
+  TOP_SIGNAL                   VARCHAR(1000),
+  TOP_ENTITY                   VARCHAR(500),
+  TOP_ACTION                   VARCHAR(2000),
+  SOURCE_STATUS                VARCHAR(200),
+  SOURCE_FRESHNESS             VARCHAR(500),
+  LOAD_TS                      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+CREATE TRANSIENT TABLE IF NOT EXISTS MART_SECTION_COMMAND_METRIC (
+  SECTION_NAME                 VARCHAR(200),
+  COMPANY                      VARCHAR(100),
+  ENVIRONMENT                  VARCHAR(100),
+  WINDOW_DAYS                  NUMBER,
+  METRIC_KEY                   VARCHAR(200),
+  METRIC_LABEL                 VARCHAR(300),
+  METRIC_VALUE                 VARCHAR(500),
+  METRIC_UNIT                  VARCHAR(100),
+  METRIC_DETAIL                VARCHAR(1000),
+  METRIC_TONE                  VARCHAR(80),
+  TREND_LABEL                  VARCHAR(500),
+  SORT_ORDER                   NUMBER,
+  SNAPSHOT_TS                  TIMESTAMP_NTZ,
+  LOAD_TS                      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+CREATE TRANSIENT TABLE IF NOT EXISTS MART_SECTION_COMMAND_EXCEPTION (
+  SECTION_NAME                 VARCHAR(200),
+  COMPANY                      VARCHAR(100),
+  ENVIRONMENT                  VARCHAR(100),
+  WINDOW_DAYS                  NUMBER,
+  SEVERITY                     VARCHAR(80),
+  SIGNAL                       VARCHAR(1000),
+  ENTITY_TYPE                  VARCHAR(200),
+  ENTITY_NAME                  VARCHAR(500),
+  DETAIL                       VARCHAR(4000),
+  ROUTE_SECTION                VARCHAR(200),
+  ROUTE_WORKFLOW               VARCHAR(200),
+  SORT_ORDER                   NUMBER,
+  SNAPSHOT_TS                  TIMESTAMP_NTZ,
+  LOAD_TS                      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+CREATE TRANSIENT TABLE IF NOT EXISTS MART_SECTION_COMMAND_ACTION (
+  SECTION_NAME                 VARCHAR(200),
+  COMPANY                      VARCHAR(100),
+  ENVIRONMENT                  VARCHAR(100),
+  WINDOW_DAYS                  NUMBER,
+  ACTION_LABEL                 VARCHAR(300),
+  ACTION_DETAIL                VARCHAR(1200),
+  TARGET_SECTION               VARCHAR(200),
+  TARGET_WORKFLOW              VARCHAR(200),
+  SESSION_STATE_UPDATES_JSON   VARCHAR(4000),
+  SORT_ORDER                   NUMBER,
+  SNAPSHOT_TS                  TIMESTAMP_NTZ,
+  LOAD_TS                      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
 -- -----------------------------------------------------------------------------
 -- Enterprise operating model: Finding -> Owner -> Trust -> Impact -> Action -> Value
 -- -----------------------------------------------------------------------------

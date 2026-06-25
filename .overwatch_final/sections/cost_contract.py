@@ -162,10 +162,9 @@ from sections.cost_contract_splash import (
 )
 from sections.cost_center_contracts import COST_EXPLORER_LENSES
 from sections.cost_contract_hierarchy import (
+    active_cost_days,
     apply_pending_cost_routes,
-    build_cost_hero_metrics,
     render_cost_explorer_lens_pills,
-    render_cost_action_cards,
     render_cost_primary_tabs,
     set_cost_lens,
     set_cost_workflow,
@@ -181,9 +180,10 @@ from sections.cost_contract_rendering import (
 )
 from sections.shell_helpers import (
     render_content_header,
-    render_kpi_hero_row,
     render_section_breadcrumb,
 )
+from sections.section_command_brief import autoload_section_command_brief
+from sections.section_command_rendering import render_section_command_brief
 from sections.cost_contract_workflow import (
     _apply_cost_workflow_preset,
     _normalize_cost_contract_workflow_state,
@@ -226,7 +226,10 @@ def render() -> None:
     if workflow == "Cost Explorer":
         breadcrumb.append(str(st.session_state.get("cc_explorer_lens") or "Warehouse"))
     render_section_breadcrumb(breadcrumb)
-    render_kpi_hero_row(build_cost_hero_metrics(company))
+    render_section_command_brief(
+        autoload_section_command_brief("Cost & Contract", company, environment, active_cost_days()),
+        key_prefix="cost_contract_command_brief",
+    )
 
     render_signal_confidence(
         source="ACCOUNT_USAGE",
@@ -256,8 +259,6 @@ def render() -> None:
             WORKFLOW_DETAILS.get(workflow, "Cost evidence remains behind explicit load actions."),
         )
 
-    if workflow != "Cost Explorer":
-        render_cost_action_cards()
     st.session_state["_cost_contract_local_hierarchy_rendered"] = True
     _render_cost_contract_workflow(workflow, company, environment)
 

@@ -230,8 +230,12 @@ class SecurityPostureSplitTests(unittest.TestCase):
             return_value=security_posture.SECURITY_OVERVIEW_WORKFLOW,
         ), patch.object(
             security_posture,
-            "render_section_first_paint_shell",
-        ) as render_shell, patch.object(
+            "render_section_command_brief",
+        ) as render_brief, patch.object(
+            security_posture,
+            "autoload_section_command_brief",
+            return_value="brief",
+        ) as autoload, patch.object(
             security_posture,
             "_load_security_brief",
             side_effect=AssertionError("Security route shell must not load security evidence directly"),
@@ -244,11 +248,8 @@ class SecurityPostureSplitTests(unittest.TestCase):
         ):
             security_posture.render()
 
-        render_shell.assert_called_once()
-        spec = render_shell.call_args.args[0]
-        self.assertEqual(spec.state, "Ready")
-        self.assertEqual(spec.view, security_posture.SECURITY_OVERVIEW_WORKFLOW)
-        self.assertIn(("Scope", "ALFA / PROD"), spec.snapshot)
+        autoload.assert_called_once_with("Security Monitoring", "ALFA", "PROD", 30)
+        render_brief.assert_called_once_with("brief", key_prefix="security_monitoring_command_brief")
         self.assertEqual(rendered, [("ALFA", "PROD", 30)])
 
     def test_security_overview_cold_first_paint_does_not_auto_load(self):
@@ -296,8 +297,8 @@ class SecurityPostureSplitTests(unittest.TestCase):
 
         load_brief.assert_not_called()
         self.assertIn("Refresh Security Summary", button_labels)
-        self.assertEqual(action_brief.call_args.args[0]["state"], "Ready")
-        self.assertEqual(operating_snapshot.call_args.args[0]["evidence"], "On demand")
+        self.assertEqual(action_brief.call_args.args[0]["state"], "Summary unavailable")
+        self.assertEqual(operating_snapshot.call_args.args[0]["evidence"], "Summary unavailable")
 
     def test_security_overview_uses_scope_compatible_summary_without_refresh(self):
         summary = pd.DataFrame([{

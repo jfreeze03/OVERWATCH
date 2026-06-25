@@ -955,6 +955,169 @@ code, pre, .stCodeBlock {
     margin-top: 0.2rem;
     overflow-wrap: anywhere;
 }
+.ow-command-brief {
+    min-width: 0;
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    background:
+        linear-gradient(135deg, rgba(var(--accent-rgb), 0.14), transparent 46%),
+        var(--bg-card);
+    box-shadow: var(--metric-shadow);
+    margin: 0.55rem 0 0.95rem;
+    padding: 0.85rem;
+}
+.ow-command-status-band {
+    display: grid;
+    gap: 0.18rem;
+    border-bottom: 1px solid var(--border-subtle);
+    padding-bottom: 0.7rem;
+}
+.ow-command-status-band span,
+.ow-command-signal-severity {
+    color: var(--accent);
+    font-size: 0.66rem;
+    font-weight: 900;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+.ow-command-status-band strong {
+    color: var(--text-primary);
+    font-size: 1.02rem;
+    font-weight: 900;
+    line-height: 1.22;
+    overflow-wrap: anywhere;
+}
+.ow-command-status-band p,
+.ow-command-top-signal p,
+.ow-command-footer,
+.ow-command-fallback {
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+    line-height: 1.42;
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+.ow-command-metric-strip {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(8.7rem, 1fr));
+    gap: 0.48rem;
+    margin-top: 0.7rem;
+}
+.ow-command-metric {
+    min-width: 0;
+    border: 1px solid var(--border-subtle);
+    border-radius: 7px;
+    background: var(--bg-card);
+    padding: 0.58rem 0.64rem;
+}
+.ow-command-metric[data-tone="warning"],
+.ow-command-metric[data-tone="risk"] {
+    border-color: rgba(255, 181, 91, 0.42);
+}
+.ow-command-metric[data-tone="cortex"] {
+    border-color: rgba(162, 109, 255, 0.52);
+}
+.ow-command-metric span,
+.ow-command-detail-boundary strong {
+    display: block;
+    color: var(--text-muted);
+    font-size: 0.6rem;
+    font-weight: 900;
+    letter-spacing: 0.06em;
+    line-height: 1.15;
+    text-transform: uppercase;
+}
+.ow-command-metric strong {
+    display: block;
+    color: var(--text-primary);
+    font-size: 0.98rem;
+    font-weight: 900;
+    line-height: 1.15;
+    margin-top: 0.28rem;
+    overflow-wrap: anywhere;
+}
+.ow-command-metric small {
+    display: block;
+    color: var(--text-secondary);
+    font-size: 0.7rem;
+    line-height: 1.32;
+    margin-top: 0.22rem;
+    overflow-wrap: anywhere;
+}
+.ow-command-top-signal {
+    min-width: 0;
+    border: 1px solid rgba(var(--accent-rgb), 0.35);
+    border-radius: 8px;
+    background: rgba(var(--accent-rgb), 0.08);
+    margin-top: 0.78rem;
+    padding: 0.7rem 0.76rem;
+}
+.ow-command-top-signal strong {
+    display: block;
+    color: var(--text-primary);
+    font-size: 0.96rem;
+    font-weight: 900;
+    margin-top: 0.14rem;
+}
+.ow-command-signal-entity {
+    display: block;
+    color: var(--text-secondary);
+    font-size: 0.76rem;
+    font-weight: 800;
+    margin-top: 0.1rem;
+}
+.ow-command-detail-boundary {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.28rem 0.5rem;
+    border-top: 1px solid var(--border-subtle);
+    margin-top: 0.78rem;
+    padding-top: 0.65rem;
+}
+.ow-command-detail-boundary span {
+    color: var(--text-secondary);
+    font-size: 0.76rem;
+}
+.ow-command-footer {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.28rem 0.8rem;
+    border-top: 1px solid var(--border-subtle);
+    margin-top: 0.68rem;
+    padding-top: 0.62rem;
+}
+.ow-command-fallback {
+    color: #fbbf24;
+    margin-top: 0.55rem;
+}
+.ow-command-action-strip {
+    margin: 0.2rem 0 0.35rem;
+}
+.ow-command-brief-action {
+    min-width: 0;
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    background: var(--bg-card);
+    margin-bottom: 0.38rem;
+    padding: 0.62rem 0.68rem;
+}
+.ow-command-brief-action strong {
+    display: block;
+    color: var(--text-primary);
+    font-size: 0.85rem;
+    font-weight: 900;
+    line-height: 1.22;
+    overflow-wrap: anywhere;
+}
+.ow-command-brief-action span {
+    display: block;
+    color: var(--text-secondary);
+    font-size: 0.72rem;
+    line-height: 1.34;
+    margin-top: 0.2rem;
+    overflow-wrap: anywhere;
+}
 .ow-command-deck {
     min-width: 0;
     border-bottom: 1px solid var(--border-subtle);

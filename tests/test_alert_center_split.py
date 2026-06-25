@@ -269,13 +269,14 @@ class AlertCenterSplitTests(unittest.TestCase):
         self.assertIn('st.button(f"Load {active_view}"', render_source)
         self.assertIn("render_primary_section_tabs", render_source)
         self.assertIn("render_secondary_lens_pills", render_source)
-        self.assertIn("_render_alert_center_first_paint_shell(", render_source)
+        self.assertIn("autoload_section_command_brief", render_source)
+        self.assertIn("render_section_command_brief", render_source)
         self.assertLess(
             render_source.index('st.button(f"Load {active_view}"'),
             render_source.index("_load_alert_center_view_data("),
         )
         first_paint_source = inspect.getsource(alert_center._render_alert_center_first_paint_shell)
-        self.assertIn("First paint does not query Snowflake", first_paint_source)
+        self.assertIn("Entry summaries come from compact marts", first_paint_source)
         self.assertIn("render_section_first_paint_shell(", first_paint_source)
 
     def test_alert_center_first_paint_shell_executes_without_loading_data(self):
@@ -302,12 +303,12 @@ class AlertCenterSplitTests(unittest.TestCase):
         spec = render_shell.call_args.args[0]
         self.assertEqual(spec.section, "Alert Center")
         self.assertEqual(spec.state, "Load on demand")
-        self.assertIn(("Critical / High", "On demand"), spec.metrics)
+        self.assertIn(("Critical / High", "Summary unavailable"), spec.metrics)
         self.assertIn(("Window", "7 days / 200 rows"), spec.snapshot)
         self.assertEqual(spec.view, "Active Alerts")
         self.assertEqual(spec.load_cta, "Load Active Alerts")
         self.assertIn("Load Active Alerts", info.call_args.args[0])
-        self.assertIn("First paint does not query Snowflake", info.call_args.args[0])
+        self.assertIn("Entry summaries come from compact marts", info.call_args.args[0])
 
     def test_alert_center_load_and_admin_button_keys_stay_distinct(self):
         sources = {
@@ -329,14 +330,14 @@ class AlertCenterSplitTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertEqual(combined.count(token), 1)
 
-    def test_alert_center_first_paint_summary_cold_state_is_on_demand(self):
+    def test_alert_center_first_paint_summary_cold_state_is_unavailable(self):
         summary = alert_center._alert_center_first_paint_summary(None, "Active Alerts")
 
-        self.assertEqual(summary["critical_high"], "On demand")
-        self.assertEqual(summary["overdue"], "On demand")
-        self.assertEqual(summary["open_queue"], "On demand")
+        self.assertEqual(summary["critical_high"], "Summary unavailable")
+        self.assertEqual(summary["overdue"], "Summary unavailable")
+        self.assertEqual(summary["open_queue"], "Summary unavailable")
         self.assertEqual(summary["top_lane"], "Selected view")
-        self.assertEqual(summary["freshness"], "Not loaded")
+        self.assertEqual(summary["freshness"], "Summary mart unavailable")
 
     def test_alert_center_first_paint_summary_uses_cached_summary(self):
         cached_summary = {

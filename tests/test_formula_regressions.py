@@ -2763,7 +2763,7 @@ class FormulaRegressionTests(unittest.TestCase):
             flags=re.MULTILINE,
         )
 
-        self.assertEqual(len(tables), 94)
+        self.assertEqual(len(tables), 98)
         self.assertEqual(len(views), 3)
         self.assertEqual(len(tasks), 14)
         self.assertEqual(len(functions), 1)

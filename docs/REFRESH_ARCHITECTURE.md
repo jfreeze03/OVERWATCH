@@ -42,16 +42,21 @@ Do not use materialized views for the primary monitoring app. The app needs
 multi-source, windowed exception logic with explicit refresh and
 audit behavior.
 
-## First-Paint Sources
+## Entry Command Brief Sources
 
-| Surface | First-paint source | Target freshness | Live fallback |
+Primary section entry now uses mart-backed Command Briefs. The UI may read one
+compact summary contract on entry so the section has an operational story
+immediately. Heavy detail/live proof remains explicit behind the section's
+Load, Refresh, investigation, or evidence controls.
+
+| Surface | Entry command brief source | Target freshness | Live fallback |
 |---|---|---:|---|
-| Executive Landing | `MART_EXECUTIVE_OBSERVABILITY` | 60 min | No |
-| DBA Control Room | `MART_EXECUTIVE_OBSERVABILITY`, then `MART_DBA_CONTROL_ROOM` | 30-60 min | Explicit only |
-| Alert Center | `MART_EXECUTIVE_OBSERVABILITY`, `ALERT_EVENTS`, notification/action tables | 15-60 min | No |
-| Cost & Contract | `MART_EXECUTIVE_OBSERVABILITY`, cost/Cortex facts, bounded official cost lens | 60 min | Explicit proof refresh |
-| Workload Operations | `MART_EXECUTIVE_OBSERVABILITY`, query/task facts and task history summaries | 30-60 min | Explicit live triage |
-| Security Monitoring | Access posture and security facts | 60 min | Explicit drilldown only |
+| Executive Landing | `MART_SECTION_COMMAND_BRIEF`, `MART_SECTION_COMMAND_METRIC`, `MART_EXECUTIVE_OBSERVABILITY` | 60 min | No |
+| DBA Control Room | `MART_SECTION_COMMAND_BRIEF`, `MART_SECTION_COMMAND_METRIC`, `MART_DBA_CONTROL_ROOM` | 30-60 min | Explicit only |
+| Alert Center | `MART_SECTION_COMMAND_BRIEF`, alert/action summary marts | 15-60 min | No |
+| Cost & Contract | `MART_SECTION_COMMAND_BRIEF`, cost/Cortex summary facts | 60 min | Explicit proof refresh |
+| Workload Operations | `MART_SECTION_COMMAND_BRIEF`, query/task/reliability summaries | 30-60 min | Explicit live triage |
+| Security Monitoring | `MART_SECTION_COMMAND_BRIEF`, access/security summary marts | 60 min | Explicit drilldown only |
 
 The refresh contract stays in this document and in the read-only validation SQL
 instead of a static mart table. Run `snowflake/OVERWATCH_MART_VALIDATION.sql`
@@ -59,21 +64,22 @@ after setup to verify the first-paint mart, required panels, alert lifecycle
 tables, compare/recon tables, refresh contract, and caller context. Role-level proof belongs in
 `docs/LIVE_ROLE_PROOF_CHECKLIST.md`.
 
-The UI should still render the metric frame immediately. If a Snowflake session
-or mart lookup would block the first paint, show the precomputed-board frame and
-let the global Refresh action read the compact mart. Do not fall back to live
-account-history scans from the executive landing page.
+The UI should render a populated Command Brief immediately when the summary mart
+is available. If a Snowflake session or mart lookup is unavailable, show a clear
+"summary unavailable" brief with setup guidance and keep detail evidence behind
+explicit load buttons. Do not fall back to live account-history scans from the
+executive landing page.
 
 Executive Landing is not allowed to start raw `SNOWFLAKE.ACCOUNT_USAGE` scans on
-navigation. It may reuse already-loaded session values and then hydrate
-`MART_EXECUTIVE_OBSERVABILITY` only after explicit Refresh. If the compact mart
-is unavailable, the page still shows the graphics frame, scoped "not loaded"
-lanes, data freshness status, and the next refresh action.
+navigation. It may reuse already-loaded session values and may hydrate compact
+summary marts. If the command brief mart is unavailable, the page still shows a
+summary-unavailable command brief, data freshness status, and the next setup or
+detail action.
 
-The same first-paint rule applies to DBA Control Room, Workload Operations, Cost
-& Contract, Alert Center, and Security Monitoring: show the summary frame immediately,
-reuse already-loaded session state when present, and allow only compact
-precomputed mart reads during navigation. Raw `ACCOUNT_USAGE`,
+The same entry rule applies to DBA Control Room, Workload Operations, Cost &
+Contract, Alert Center, and Security Monitoring: show the command brief
+immediately, reuse already-loaded session state when present, and allow only
+compact precomputed mart reads during navigation. Raw `ACCOUNT_USAGE`,
 `INFORMATION_SCHEMA`, schema compare, data hash, remediation, and proof queries
 stay behind explicit refresh/load actions or scheduled Snowflake tasks.
 

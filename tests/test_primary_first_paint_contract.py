@@ -29,7 +29,7 @@ class PrimaryFirstPaintContractTests(unittest.TestCase):
                 self.assertTrue(contract.default_view)
                 self.assertTrue(contract.expected_lanes)
                 self.assertTrue(contract.explicit_load_cta)
-                self.assertIn("First paint", contract.no_query_note)
+                self.assertIn("Entry", contract.no_query_note)
                 self.assertTrue(contract.allowed_cached_sources)
                 self.assertTrue(contract.forbidden_first_paint_loaders)
 
@@ -119,7 +119,7 @@ class PrimaryFirstPaintContractTests(unittest.TestCase):
             route_actions=(),
             advanced_label="",
             evidence_boundary="<img src=x onerror=alert(1)>",
-            no_query_note="First paint",
+            no_query_note="Entry",
         )
         action = CommandDeckAction(
             label="<b>Route</b>",
@@ -256,7 +256,7 @@ class PrimaryFirstPaintContractTests(unittest.TestCase):
         self.assertEqual(spec.view, "Cost Alerts")
         self.assertEqual(spec.load_cta, "Load Cost Alerts")
         self.assertIn("Critical and high alerts", spec.expected_lanes)
-        self.assertIn("does not query Snowflake", spec.no_query_note)
+        self.assertIn("Entry", spec.no_query_note)
         self.assertIn(("Open Queue", "0"), spec.metrics)
         self.assertIn(("Scope", "ALFA / PROD"), spec.snapshot)
 
@@ -288,11 +288,12 @@ class PrimaryFirstPaintContractTests(unittest.TestCase):
         from sections import workload_operations
 
         with contextlib.ExitStack() as stack:
-            render_shell = stack.enter_context(patch.object(workload_operations, "render_section_first_paint_shell"))
+            render_brief = stack.enter_context(patch.object(workload_operations, "render_section_command_brief"))
+            autoload = stack.enter_context(patch.object(workload_operations, "autoload_section_command_brief", return_value="brief"))
             stack.enter_context(patch.object(workload_operations, "build_loaded_section_alert_signal_board", return_value=pd.DataFrame()))
             stack.enter_context(patch.object(workload_operations.st, "columns", side_effect=lambda count: [contextlib.nullcontext() for _ in range(count)]))
             stack.enter_context(patch.object(workload_operations.st, "button", return_value=False))
-            stack.enter_context(patch.object(workload_operations.st, "info"))
+            stack.enter_context(patch.object(workload_operations.st, "caption"))
             stack.enter_context(patch.object(workload_operations.st, "markdown"))
             for loader_name in (
                 "load_change_correlation_detail",
@@ -313,9 +314,8 @@ class PrimaryFirstPaintContractTests(unittest.TestCase):
 
             workload_operations._render_workload_overview("ALFA", "PROD")
 
-        spec = render_shell.call_args.args[0]
-        self.assertEqual(spec.section, "Workload Operations")
-        self.assertEqual(spec.load_cta, "Open the right tool")
+        autoload.assert_called_once_with("Workload Operations", "ALFA", "PROD", 7)
+        render_brief.assert_called_once_with("brief", key_prefix="workload_operations_command_brief")
 
     def test_dba_morning_cockpit_contract_does_not_load_until_button(self):
         from sections import dba_control_room
@@ -343,20 +343,21 @@ class PrimaryFirstPaintContractTests(unittest.TestCase):
 
     def test_security_and_cost_first_paint_use_registry_contracts(self):
         security_source = (APP_ROOT / "sections" / "security_posture.py").read_text(encoding="utf-8")
-        cost_source = (APP_ROOT / "sections" / "cost_contract_overview_floor.py").read_text(encoding="utf-8")
+        cost_source = (APP_ROOT / "sections" / "cost_contract.py").read_text(encoding="utf-8")
 
-        self.assertIn("build_first_paint_summary_spec", security_source)
+        self.assertIn("autoload_section_command_brief", security_source)
+        self.assertIn("render_section_command_brief", security_source)
         self.assertIn('"Security Monitoring"', security_source)
         self.assertNotIn("_load_security_brief(", security_source.split("def render_security_admin_advanced", 1)[0])
-        self.assertIn("build_first_paint_summary_spec", cost_source)
+        self.assertIn("autoload_section_command_brief", cost_source)
+        self.assertIn("render_section_command_brief", cost_source)
         self.assertIn('"Cost & Contract"', cost_source)
-        self.assertNotIn("_ensure_cost_splash(", cost_source.split("def _render_cost_watch_floor", 1)[0])
 
-    def test_docs_list_primary_first_paint_contracts(self):
+    def test_docs_list_primary_command_brief_contracts(self):
         from sections.first_paint_contracts import PRIMARY_FIRST_PAINT_CONTRACTS
 
         docs = (ROOT / "UX_PRODUCTION_GUIDELINES.md").read_text(encoding="utf-8")
-        self.assertIn("Primary Section First-Paint Contract", docs)
+        self.assertIn("Primary Section Command Brief Contract", docs)
         for section, contract in PRIMARY_FIRST_PAINT_CONTRACTS.items():
             with self.subTest(section=section):
                 self.assertIn(section, docs)

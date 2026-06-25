@@ -302,7 +302,7 @@ class CostContractRenderingWorkflowTests(unittest.TestCase):
         spec = render_shell.call_args.args[0]
         self.assertEqual(spec.section, "Cost & Contract")
         self.assertEqual(spec.load_cta, "Refresh Cost")
-        self.assertIn("does not query Snowflake", spec.no_query_note)
+        self.assertIn("Entry may read compact cost summary marts", spec.no_query_note)
 
     def test_cost_overview_floor_advanced_detail_gate_stays_hidden_by_default(self):
         from sections import cost_contract_overview_floor

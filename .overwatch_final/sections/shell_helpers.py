@@ -46,7 +46,7 @@ def _clean_display_text(value: object) -> str:
     if not text:
         return ""
     replacements = {
-        "Not loaded": "On demand",
+        "Not loaded": "Summary unavailable",
         "Awaiting mart": "Awaiting data",
         "MART_EXECUTIVE_OBSERVABILITY": "fast summary facts",
         "MART_DBA_CONTROL_ROOM": "DBA summary facts",
@@ -159,9 +159,6 @@ def _clean_display_text(value: object) -> str:
         "sources": "inputs",
         "Sources": "Inputs",
         "ACCOUNT_USAGE": "account history",
-        "mart sources": "fast summaries",
-        "mart": "fast summary",
-        "Mart": "Fast Summary",
     }
     for old, new in replacements.items():
         text = text.replace(old, new)
@@ -516,13 +513,13 @@ def render_kpi_hero_row(metrics: Sequence[Mapping[str, object] | tuple[object, o
     for raw_metric in metrics or ():
         if isinstance(raw_metric, Mapping):
             label = _clean_display_text(raw_metric.get("label", ""))
-            value = _clean_display_text(raw_metric.get("value", "On demand"))
+            value = _clean_display_text(raw_metric.get("value", "Summary unavailable"))
             detail = _clean_display_text(raw_metric.get("detail", ""))
             tone = _clean_display_text(raw_metric.get("tone", "neutral")).lower() or "neutral"
         else:
             values = tuple(raw_metric)
             label = _clean_display_text(values[0] if len(values) > 0 else "")
-            value = _clean_display_text(values[1] if len(values) > 1 else "On demand")
+            value = _clean_display_text(values[1] if len(values) > 1 else "Summary unavailable")
             detail = _clean_display_text(values[2] if len(values) > 2 else "")
             tone = "neutral"
         if not label:
@@ -531,7 +528,7 @@ def render_kpi_hero_row(metrics: Sequence[Mapping[str, object] | tuple[object, o
             '<article class="ow-kpi-hero-card" data-tone="'
             f'{_escape_markup(tone)}">'
             f'<span class="ow-kpi-hero-label">{_escape_markup(label)}</span>'
-            f'<strong class="ow-kpi-hero-value">{_escape_markup(value or "On demand")}</strong>'
+            f'<strong class="ow-kpi-hero-value">{_escape_markup(value or "Summary unavailable")}</strong>'
             f'<span class="ow-kpi-hero-detail">{_escape_markup(detail)}</span>'
             '</article>'
         )
@@ -793,7 +790,7 @@ def render_signal_lane_board(
     cards: list[str] = []
     for row in rows:
         label = _clean_display_text(row.get("label") or row.get("LANE") or "Signal")
-        value = _clean_display_text(row.get("value") or row.get("VALUE") or "On demand")
+        value = _clean_display_text(row.get("value") or row.get("VALUE") or "Summary unavailable")
         state = _clean_display_text(row.get("state") or row.get("STATE") or "Review")
         detail = _clean_display_text(row.get("detail") or row.get("DETAIL") or row.get("next") or row.get("NEXT_ACTION") or "")
         show_detail = bool(row.get("show_detail") or row.get("SHOW_DETAIL"))

@@ -9,6 +9,10 @@ layer. The full source of truth remains `snowflake/OVERWATCH_MART_SETUP.sql`.
 |---|---|---|
 | `OVERWATCH_USAGE_LOG` | Table | Runtime/query event log used for app self-observability summaries. |
 | `MART_EXECUTIVE_OBSERVABILITY` | Transient mart | Executive monitoring wall: spend, Cortex, runtime, queue, spill, alerts, actions, storage, cost drivers, query database mix, execution status, and warehouse pressure. |
+| `MART_SECTION_COMMAND_BRIEF` | Transient mart | Primary-section command brief header: state, headline, summary, top signal, source status, and freshness. |
+| `MART_SECTION_COMMAND_METRIC` | Transient mart | Compact 4-8 metric strip rows for each primary-section command brief. |
+| `MART_SECTION_COMMAND_EXCEPTION` | Transient mart | Top signal/exception rows for command brief triage and route context. |
+| `MART_SECTION_COMMAND_ACTION` | Transient mart | Recommended route-only next actions for primary-section command briefs. |
 
 The refresh contract and capability notes now live in documentation and
 validation SQL instead of static mart tables.

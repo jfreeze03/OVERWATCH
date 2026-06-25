@@ -8,7 +8,7 @@ from typing import Mapping
 
 @dataclass(frozen=True)
 class PrimaryFirstPaintContract:
-    """Static contract for query-on-demand first paint."""
+    """Static contract for mart-summary entry and explicit detail evidence."""
 
     section: str
     default_view: str
@@ -33,10 +33,10 @@ PRIMARY_FIRST_PAINT_CONTRACTS: Mapping[str, PrimaryFirstPaintContract] = {
         ),
         explicit_load_cta="Refresh Summary",
         no_query_note=(
-            "First paint uses the local summary frame; Refresh Summary reads the compact observability mart."
+            "Entry may read compact summary marts; full executive evidence remains behind explicit load."
         ),
-        allowed_cached_sources=("local summary frame", "executive observability snapshot"),
-        forbidden_first_paint_loaders=("_load_executive_observability", "run_query", "run_query_or_raise"),
+        allowed_cached_sources=("section command brief mart", "local summary frame", "executive observability snapshot"),
+        forbidden_first_paint_loaders=("_load_executive_snapshot", "run_query_or_raise"),
     ),
     "DBA Control Room": PrimaryFirstPaintContract(
         section="DBA Control Room",
@@ -51,10 +51,10 @@ PRIMARY_FIRST_PAINT_CONTRACTS: Mapping[str, PrimaryFirstPaintContract] = {
         ),
         explicit_load_cta="Load Morning Cockpit",
         no_query_note=(
-            "First paint shows the control-room frame; Load Morning Cockpit reads current DBA exceptions."
+            "Entry may read the latest control-room summary mart; investigation detail remains explicit."
         ),
-        allowed_cached_sources=("session control-room mart", "loaded control-room evidence"),
-        forbidden_first_paint_loaders=("load_latest_control_room_mart", "run_query", "run_query_or_raise"),
+        allowed_cached_sources=("section command brief mart", "session control-room mart", "loaded control-room evidence"),
+        forbidden_first_paint_loaders=("_load_control_room", "run_query_or_raise"),
     ),
     "Alert Center": PrimaryFirstPaintContract(
         section="Alert Center",
@@ -67,9 +67,9 @@ PRIMARY_FIRST_PAINT_CONTRACTS: Mapping[str, PrimaryFirstPaintContract] = {
             "Delivery status",
         ),
         explicit_load_cta="Load Active Alerts",
-        no_query_note="First paint does not query Snowflake; Load Active Alerts reads detailed alert rows.",
-        allowed_cached_sources=("session alert summary", "loaded alert center data"),
-        forbidden_first_paint_loaders=("_load_center_data", "run_query", "run_query_or_raise"),
+        no_query_note="Entry may read compact alert summary marts; Load Active Alerts reads detailed alert rows.",
+        allowed_cached_sources=("section command brief mart", "session alert summary", "loaded alert center data"),
+        forbidden_first_paint_loaders=("_load_center_data", "run_query_or_raise"),
     ),
     "Cost & Contract": PrimaryFirstPaintContract(
         section="Cost & Contract",
@@ -82,8 +82,8 @@ PRIMARY_FIRST_PAINT_CONTRACTS: Mapping[str, PrimaryFirstPaintContract] = {
             "Savings",
         ),
         explicit_load_cta="Refresh Cost",
-        no_query_note="First paint does not query Snowflake; Refresh Cost loads cost facts and detail evidence.",
-        allowed_cached_sources=("session cost splash", "loaded cost cockpit data"),
+        no_query_note="Entry may read compact cost summary marts; Refresh Cost loads cost facts and detail evidence.",
+        allowed_cached_sources=("section command brief mart", "session cost splash", "loaded cost cockpit data"),
         forbidden_first_paint_loaders=("_ensure_cost_splash", "_load_cost_splash_query", "run_query_or_raise"),
     ),
     "Workload Operations": PrimaryFirstPaintContract(
@@ -97,13 +97,12 @@ PRIMARY_FIRST_PAINT_CONTRACTS: Mapping[str, PrimaryFirstPaintContract] = {
             "Advanced DBA tools",
         ),
         explicit_load_cta="Open the right tool",
-        no_query_note="First paint runs no live Snowflake reads; specialist workload evidence stays workflow gated.",
-        allowed_cached_sources=("session alert context", "loaded workload alert context"),
+        no_query_note="Entry may read compact workload summary marts; specialist workload evidence stays workflow gated.",
+        allowed_cached_sources=("section command brief mart", "session alert context", "loaded workload alert context"),
         forbidden_first_paint_loaders=(
             "_render_workload_forecast_detail",
             "_render_workload_closed_loop_detail",
             "_render_workload_command_findings",
-            "run_query",
             "run_query_or_raise",
         ),
     ),
@@ -119,10 +118,10 @@ PRIMARY_FIRST_PAINT_CONTRACTS: Mapping[str, PrimaryFirstPaintContract] = {
         ),
         explicit_load_cta="Refresh Security Summary",
         no_query_note=(
-            "First paint does not query Snowflake; Refresh Security Summary or workflow loads provide current security evidence."
+            "Entry may read compact security summary marts; Refresh Security Summary or workflow loads provide current security evidence."
         ),
-        allowed_cached_sources=("session security summary", "loaded security alert context"),
-        forbidden_first_paint_loaders=("_load_security_brief", "run_query", "run_query_or_raise"),
+        allowed_cached_sources=("section command brief mart", "session security summary", "loaded security alert context"),
+        forbidden_first_paint_loaders=("_load_security_brief", "run_query_or_raise"),
     ),
 }
 

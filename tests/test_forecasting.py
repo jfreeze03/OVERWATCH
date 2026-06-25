@@ -73,7 +73,7 @@ class ForecastingTests(unittest.TestCase):
                 self.assertIn(name, validation)
         self.assertIn("2026.06.18-EXECUTIVE-FORECASTING", setup)
         self.assertIn("CALL SP_OVERWATCH_REFRESH_FORECASTING()", setup)
-        self.assertIn("('TABLE', 94)", validation)
+        self.assertIn("('TABLE', 98)", validation)
         self.assertIn("('PROCEDURE', 17)", validation)
 
     def test_forecast_labels_and_keys_are_constrained(self):

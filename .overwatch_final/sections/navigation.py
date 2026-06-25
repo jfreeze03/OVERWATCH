@@ -91,8 +91,9 @@ def apply_navigation_state(section: str, *, mark_pending: bool = True) -> str:
         reset_workflow=reset_workflow,
         request_autoload=reset_workflow,
     )
-    for key, value in compatibility_state_for_section(raw_section).items():
-        set_state(key, value)
+    if reset_workflow or raw_section != target:
+        for key, value in compatibility_state_for_section(raw_section).items():
+            set_state(key, value)
     set_state(NAV_SECTION, target)
     return target
 

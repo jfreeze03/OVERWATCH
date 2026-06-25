@@ -86,7 +86,8 @@ def queue_section_navigation(section: str) -> None:
         reset_workflow=section_changed,
         request_autoload=section_changed,
     )
-    apply_section_compatibility_state(raw_section)
+    if section_changed or raw_section != target:
+        apply_section_compatibility_state(raw_section)
     set_state(NAV_SECTION, target)
 
 

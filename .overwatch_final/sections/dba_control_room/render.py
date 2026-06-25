@@ -6,6 +6,9 @@ import streamlit as st
 from sections.shell_helpers import (
     consume_section_autoload_request,
     render_data_freshness,
+    render_content_header,
+    render_primary_section_tabs,
+    render_section_breadcrumb,
     render_shell_snapshot,
     with_loaded_at,
 )
@@ -124,23 +127,24 @@ from .types import (
     load_production_validation_detail,
     render_load_status,
     render_priority_dataframe,
-    render_workflow_selector,
 )
 
 
 def _render_dba_control_room_workflow_selector() -> str:
     """Render DBA workflow navigation without hiding the selected deep-link target."""
-    return render_workflow_selector(
-        "DBA Control Room view",
-        "dba_control_room_active_view",
-        DBA_CONTROL_ROOM_PANES,
-        DBA_CONTROL_ROOM_PANE_DETAILS,
-        labels=DBA_CONTROL_ROOM_PANE_LABELS,
-        columns=4,
-        compact_details=True,
-        collapse_after=2,
-        collapsed_label="More DBA workflows",
+    selected = render_primary_section_tabs(
+        label="DBA Control Room primary navigation",
+        options=DBA_CONTROL_ROOM_PANES,
+        active_value=st.session_state.get("dba_control_room_active_view", MORNING_COCKPIT_WORKFLOW),
+        key="dba_control_room_active_view",
+        format_func=lambda value: DBA_CONTROL_ROOM_PANE_LABELS.get(str(value), str(value)),
     )
+    selected = normalize_dba_control_room_pane(selected)
+    render_content_header(
+        DBA_CONTROL_ROOM_PANE_LABELS.get(selected, selected),
+        DBA_CONTROL_ROOM_PANE_DETAILS.get(selected, "DBA evidence stays behind explicit load actions."),
+    )
+    return selected
 
 
 def _render_consolidated_service_posture() -> None:
@@ -1032,6 +1036,11 @@ def render() -> None:
         lookback_hours = st.selectbox("Lookback", [12, 24, 48, 168], index=1, format_func=lambda h: f"{h} hours")
     with c2:
         render_shell_snapshot((("Scope", f"{company} / {environment}"),))
+    render_section_breadcrumb([
+        "DBA Control Room",
+        DBA_CONTROL_ROOM_PANE_LABELS.get(normalized_view, normalized_view),
+    ])
+    active_view = _render_dba_control_room_workflow_selector()
     defer_section_note(
         f"{freshness_note('ACCOUNT_USAGE')} | "
         f"Cost basis: {metric_confidence_label('allocated')} | "
@@ -1187,13 +1196,11 @@ def render() -> None:
     data = st.session_state.get("dba_control_room_data", {})
     if st.session_state.get("dba_control_room_active_view") == CONTROL_ROOM_ADMIN_WORKFLOW:
         st.divider()
-        active_view = _render_dba_control_room_workflow_selector()
         if active_view == CONTROL_ROOM_ADMIN_WORKFLOW:
             _render_control_room_admin_advanced(company, environment)
             return
     if not data:
         st.divider()
-        active_view = _render_dba_control_room_workflow_selector()
         if active_view == MORNING_COCKPIT_WORKFLOW:
             _render_morning_cockpit_empty(_load_control_room_evidence)
             return
@@ -1293,8 +1300,6 @@ def render() -> None:
     )
 
     st.divider()
-
-    active_view = _render_dba_control_room_workflow_selector()
 
     if active_view == MORNING_COCKPIT_WORKFLOW:
         _render_morning_cockpit(data, exceptions, row, period_credits, credit_delta, credit_price)

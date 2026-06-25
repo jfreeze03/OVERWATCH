@@ -1083,6 +1083,95 @@ code, pre, .stCodeBlock {
 .ow-cost-layout {
     margin-top: 0.35rem;
 }
+.ow-cost-main-content {
+    width: 100%;
+}
+.ow-section-tabs,
+.ow-primary-tabs,
+.ow-lens-pills {
+    min-width: 0;
+    margin: 0.7rem 0 0.35rem;
+}
+.ow-section-tabs-label,
+.ow-primary-tabs-label,
+.ow-lens-pills-label {
+    display: block;
+    color: var(--text-muted);
+    font-size: 0.66rem;
+    font-weight: 900;
+    letter-spacing: 0.08em;
+    line-height: 1.2;
+    margin-bottom: 0.35rem;
+    text-transform: uppercase;
+}
+.ow-section-tab,
+.ow-primary-tab,
+.ow-lens-pill {
+    border-radius: 8px;
+    font-weight: 850;
+}
+.ow-section-tab-active,
+.ow-primary-tab-active,
+.ow-lens-pill-active {
+    background: rgba(var(--accent-rgb), 0.2);
+    color: var(--text-primary);
+}
+.ow-section-tabs + div [data-testid="stSegmentedControl"] button,
+.ow-primary-tabs + div [data-testid="stSegmentedControl"] button,
+.ow-lens-pills + div [data-testid="stSegmentedControl"] button {
+    min-height: 2.45rem;
+    border-color: var(--border-subtle);
+    background: rgba(6, 18, 25, 0.72);
+    color: var(--text-secondary);
+    font-weight: 850;
+    white-space: normal;
+}
+.ow-section-tabs + div [data-testid="stSegmentedControl"] button[aria-pressed="true"],
+.ow-primary-tabs + div [data-testid="stSegmentedControl"] button[aria-pressed="true"],
+.ow-lens-pills + div [data-testid="stSegmentedControl"] button[aria-pressed="true"] {
+    border-color: rgba(var(--accent-rgb), 0.72);
+    background: linear-gradient(180deg, rgba(var(--accent-rgb), 0.35), rgba(var(--accent-rgb), 0.16));
+    color: var(--text-primary);
+    box-shadow: inset 0 -2px 0 var(--accent);
+}
+.ow-kpi-status-strip {
+    width: 100%;
+}
+.ow-content-header,
+.ow-cost-content-header {
+    width: 100%;
+}
+.ow-cost-filter-row {
+    margin: 0.6rem 0 0.25rem;
+}
+.ow-cost-action-strip {
+    border-top: 1px solid var(--border-subtle);
+    margin-top: 0.9rem;
+    padding-top: 0.1rem;
+}
+.ow-recommended-actions {
+    border-top: 1px solid var(--border-subtle);
+    margin-top: 0.9rem;
+    padding-top: 0.1rem;
+}
+.ow-advanced-evidence {
+    border-top: 1px solid var(--border-subtle);
+    margin-top: 1rem;
+    padding-top: 0.2rem;
+}
+.ow-load-boundary {
+    border: 1px solid rgba(var(--accent-rgb), 0.35);
+    border-radius: 8px;
+    background: rgba(var(--accent-rgb), 0.08);
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+    line-height: 1.35;
+    margin: 0.65rem 0;
+    padding: 0.65rem 0.75rem;
+}
+.ow-page-breadcrumb {
+    width: 100%;
+}
 .ow-cost-local-menu,
 .ow-local-nav {
     min-width: 0;

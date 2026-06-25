@@ -71,31 +71,55 @@ def render_cost_explorer(session, company: str, credit_price: float, max_wh_size
     st.caption("Cost drilldown by company, route, warehouse, database, role, and user.")
 
     embedded = bool(st.session_state.get("_cost_center_embedded_in_cost_contract"))
-    c1, c2, c3, c4 = st.columns([1, 1.35, 1, 1.2])
-    with c1:
-        explorer_days = day_window_selectbox("Lookback", key="cc_explorer_days", default=30)
-    with c2:
-        if embedded:
-            explorer_lens = str(st.session_state.get("cc_explorer_lens") or "Warehouse")
-            st.caption(f"Explore Cost By: {explorer_lens}")
-        else:
-            explorer_lens = st.selectbox("Break down by", COST_EXPLORER_LENSES, key="cc_explorer_lens")
-    with c3:
-        min_est_cost = st.number_input(
-            "Min cost",
-            min_value=0.0,
-            value=0.0,
-            step=50.0,
-            key="cc_explorer_min_cost",
-        )
-    with c4:
-        department_contains = st.text_input(
-            "Department contains",
-            value="",
-            key="cc_explorer_department_contains",
-        )
+    if embedded:
+        explorer_lens = str(st.session_state.get("cc_explorer_lens") or "Warehouse")
+        st.caption(f"Current lens: {explorer_lens}")
+        st.html('<div class="ow-cost-filter-row" aria-label="Cost Explorer filters"></div>')
+        c1, c2, c3, c4 = st.columns([0.9, 0.9, 1.45, 1.05], gap="medium")
+        with c1:
+            explorer_days = day_window_selectbox("Lookback", key="cc_explorer_days", default=30)
+        with c2:
+            min_est_cost = st.number_input(
+                "Min cost",
+                min_value=0.0,
+                value=0.0,
+                step=50.0,
+                key="cc_explorer_min_cost",
+            )
+        with c3:
+            department_contains = st.text_input(
+                "Department contains",
+                value="",
+                key="cc_explorer_department_contains",
+            )
+        with c4:
+            load_explorer = st.button("Load Cost Explorer", key="cc_explorer_load", type="primary", width="stretch")
+        from sections.cost_contract_hierarchy import render_cost_action_cards
 
-    if st.button("Load Cost Explorer", key="cc_explorer_load", type="primary"):
+        render_cost_action_cards()
+    else:
+        c1, c2, c3, c4 = st.columns([1, 1.35, 1, 1.2])
+        with c1:
+            explorer_days = day_window_selectbox("Lookback", key="cc_explorer_days", default=30)
+        with c2:
+            explorer_lens = st.selectbox("Break down by", COST_EXPLORER_LENSES, key="cc_explorer_lens")
+        with c3:
+            min_est_cost = st.number_input(
+                "Min cost",
+                min_value=0.0,
+                value=0.0,
+                step=50.0,
+                key="cc_explorer_min_cost",
+            )
+        with c4:
+            department_contains = st.text_input(
+                "Department contains",
+                value="",
+                key="cc_explorer_department_contains",
+            )
+        load_explorer = st.button("Load Cost Explorer", key="cc_explorer_load", type="primary")
+
+    if load_explorer:
         try:
             mart_sql = build_mart_cost_explorer_sql(
                 explorer_days,

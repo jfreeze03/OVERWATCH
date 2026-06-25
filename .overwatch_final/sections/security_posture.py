@@ -57,11 +57,16 @@ from sections.security_posture_privilege_sprawl_view import (
 from sections.security_posture_privilege_sprawl_view import *  # noqa: F403
 from sections.command_deck import render_command_deck
 from sections.command_deck_contracts import get_command_deck_contract
-from sections.shell_helpers import build_first_paint_summary_spec, render_section_first_paint_shell
+from sections.shell_helpers import (
+    build_first_paint_summary_spec,
+    render_content_header,
+    render_primary_section_tabs,
+    render_secondary_lens_pills,
+    render_section_breadcrumb,
+    render_section_first_paint_shell,
+)
 
 
-render_mode_selector = _lazy_util("render_mode_selector")
-render_workflow_selector = _lazy_util("render_workflow_selector")
 day_window_selectbox = _lazy_util("day_window_selectbox")
 
 
@@ -189,13 +194,42 @@ def render() -> None:
         key="security_posture_brief_days",
         default=30,
     )
-    active_view = render_mode_selector(
-        "Access & Security view",
-        "security_posture_view",
-        SECURITY_POSTURE_VIEWS,
-        default=SECURITY_POSTURE_VIEWS[0],
-        details=SECURITY_POSTURE_VIEW_DETAILS,
-        columns=4,
+    security_labels = {
+        SECURITY_OVERVIEW_WORKFLOW: "Overview",
+        FAILED_LOGINS_WORKFLOW: "Failed Logins",
+        RISKY_GRANTS_WORKFLOW: "Risky Grants",
+        PRIVILEGE_SPRAWL_WORKFLOW: "Privilege Sprawl",
+        ACCESS_CHANGES_WORKFLOW: "Access Changes",
+        DATA_SHARING_EXPOSURE_WORKFLOW: "Data Sharing",
+        SECURITY_ALERTS_WORKFLOW: "Security Alerts",
+        SECURITY_ADMIN_ADVANCED_WORKFLOW: "Admin",
+    }
+    active_view = render_primary_section_tabs(
+        label="Security Monitoring primary navigation",
+        options=SECURITY_POSTURE_VIEWS,
+        active_value=st.session_state.get("security_posture_view", SECURITY_OVERVIEW_WORKFLOW),
+        key="security_posture_view",
+        format_func=lambda value: security_labels.get(str(value), str(value)),
+    )
+    active_view = SECURITY_VIEW_ALIASES.get(str(active_view or ""), active_view)
+    if active_view == RISKY_GRANTS_WORKFLOW:
+        render_secondary_lens_pills(
+            label="Risky Grants lens",
+            options=("Users", "Roles", "Databases", "Schemas", "Future Grants", "Ownership"),
+            active_value=st.session_state.get("security_risky_grants_lens", "Users"),
+            key="security_risky_grants_lens",
+        )
+    elif active_view == ACCESS_CHANGES_WORKFLOW:
+        render_secondary_lens_pills(
+            label="Access Changes lens",
+            options=("Recent Grants", "Revokes", "Role Changes", "Admin Changes"),
+            active_value=st.session_state.get("security_access_changes_lens", "Recent Grants"),
+            key="security_access_changes_lens",
+        )
+    render_section_breadcrumb(["Security Monitoring", security_labels.get(active_view, active_view)])
+    render_content_header(
+        security_labels.get(active_view, active_view),
+        SECURITY_POSTURE_VIEW_DETAILS.get(active_view, "Security evidence stays behind explicit load actions."),
     )
     _render_security_first_paint_shell(active_view, company, environment, int(days or 30))
     renderer = SECURITY_POSTURE_RENDERERS.get(active_view)

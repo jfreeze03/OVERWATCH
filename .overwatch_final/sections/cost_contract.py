@@ -162,11 +162,11 @@ from sections.cost_contract_splash import (
 )
 from sections.cost_center_contracts import COST_EXPLORER_LENSES
 from sections.cost_contract_hierarchy import (
-    COST_EXPLORER_PRIMARY_LENSES,
-    COST_LOCAL_MENU,
     apply_pending_cost_routes,
     build_cost_hero_metrics,
+    render_cost_explorer_lens_pills,
     render_cost_action_cards,
+    render_cost_primary_tabs,
     set_cost_lens,
     set_cost_workflow,
     workflow_label,
@@ -180,11 +180,9 @@ from sections.cost_contract_rendering import (
     render_workflow_module,
 )
 from sections.shell_helpers import (
-    render_breadcrumb,
-    render_content_panel,
-    render_explore_lens_selector,
+    render_content_header,
     render_kpi_hero_row,
-    render_local_section_menu,
+    render_section_breadcrumb,
 )
 from sections.cost_contract_workflow import (
     _apply_cost_workflow_preset,
@@ -227,7 +225,7 @@ def render() -> None:
     breadcrumb = ["Cost & Contract", workflow_label(workflow)]
     if workflow == "Cost Explorer":
         breadcrumb.append(str(st.session_state.get("cc_explorer_lens") or "Warehouse"))
-    render_breadcrumb(breadcrumb)
+    render_section_breadcrumb(breadcrumb)
     render_kpi_hero_row(build_cost_hero_metrics(company))
 
     render_signal_confidence(
@@ -237,39 +235,31 @@ def render() -> None:
     )
     _render_cost_filter_indicator()
 
-    st.html('<div class="ow-cost-layout"></div>')
-    menu_col, content_col = st.columns([0.24, 0.76], gap="medium")
-    with menu_col:
-        render_local_section_menu(
-            title="Cost & Contract",
-            items=COST_LOCAL_MENU,
-            active_value=workflow,
-            key_prefix="cost_contract_local_nav",
-            on_select=set_cost_workflow,
+    st.html('<div class="ow-cost-layout ow-cost-main-content"></div>')
+    selected_workflow = render_cost_primary_tabs(workflow)
+    if selected_workflow != workflow:
+        set_cost_workflow(selected_workflow)
+
+    workflow = str(st.session_state.get("cost_contract_workflow") or "Cost Overview")
+    if workflow == "Cost Explorer":
+        lens = str(st.session_state.get("cc_explorer_lens") or "Warehouse")
+        selected_lens = render_cost_explorer_lens_pills(lens)
+        if selected_lens != lens:
+            set_cost_lens(selected_lens)
+        render_content_header(
+            f"Cost Explorer: {st.session_state.get('cc_explorer_lens', 'Warehouse')}",
+            "Use the filters and Load Cost Explorer when you need detailed rows.",
+        )
+    else:
+        render_content_header(
+            workflow_label(workflow),
+            WORKFLOW_DETAILS.get(workflow, "Cost evidence remains behind explicit load actions."),
         )
 
-    with content_col:
-        if workflow == "Cost Explorer":
-            lens = str(st.session_state.get("cc_explorer_lens") or "Warehouse")
-            render_explore_lens_selector(
-                label="Explore Cost By",
-                lenses=COST_EXPLORER_PRIMARY_LENSES,
-                active_value=lens,
-                key_prefix="cost_contract_explore_lens",
-                on_select=set_cost_lens,
-            )
-            render_content_panel(
-                f"Cost Explorer: {st.session_state.get('cc_explorer_lens', 'Warehouse')}",
-                "Choose a lens, then use Load Cost Explorer when you need detailed rows.",
-            )
-        else:
-            render_content_panel(
-                workflow_label(workflow),
-                WORKFLOW_DETAILS.get(workflow, "Cost evidence remains behind explicit load actions."),
-            )
-        st.session_state["_cost_contract_local_hierarchy_rendered"] = True
-        _render_cost_contract_workflow(workflow, company, environment)
+    if workflow != "Cost Explorer":
         render_cost_action_cards()
+    st.session_state["_cost_contract_local_hierarchy_rendered"] = True
+    _render_cost_contract_workflow(workflow, company, environment)
 
     advanced_open = bool(st.session_state.get(_ADVANCED_COST_TOOLS_VISIBLE_KEY))
     with st.expander("Advanced cost tools and evidence", expanded=advanced_open):

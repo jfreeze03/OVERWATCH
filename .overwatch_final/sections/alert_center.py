@@ -6,7 +6,21 @@ import streamlit as st
 from config import DAY_WINDOW_OPTIONS, DEFAULT_ALERT_EMAIL, DEFAULT_DAY_WINDOW
 from sections.command_deck import render_command_deck_for_section
 from sections.alert_center_case import render_alert_center_add_to_case
-from sections.shell_helpers import build_first_paint_summary_spec, consume_section_autoload_request, render_data_freshness, render_escaped_bold_text, render_section_first_paint_shell, render_shell_kpi_row, render_shell_snapshot, render_shell_status_strip, with_loaded_at
+from sections.shell_helpers import (
+    build_first_paint_summary_spec,
+    consume_section_autoload_request,
+    render_content_header,
+    render_data_freshness,
+    render_escaped_bold_text,
+    render_primary_section_tabs,
+    render_secondary_lens_pills,
+    render_section_breadcrumb,
+    render_section_first_paint_shell,
+    render_shell_kpi_row,
+    render_shell_snapshot,
+    render_shell_status_strip,
+    with_loaded_at,
+)
 from sections.alert_center_contracts import (
     ALERT_CENTER_ADMIN_VIEW_DETAILS,
     ALERT_CENTER_ADMIN_VIEW_KEY,
@@ -131,12 +145,6 @@ def _render_priority_dataframe(*args, **kwargs) -> None:
     from utils.workflows import render_priority_dataframe
 
     render_priority_dataframe(*args, **kwargs)
-
-
-def _render_workflow_selector(*args, **kwargs) -> str:
-    from utils.workflows import render_workflow_selector
-
-    return render_workflow_selector(*args, **kwargs)
 
 
 def _alert_actor() -> str:
@@ -514,7 +522,9 @@ def _render_alert_settings_admin_pane(source_view: str = "Delivery & Automation"
 
 ALERT_CENTER_RENDERERS = {
     ALERT_CENTER_DEFAULT_VIEW: _render_active_alerts,
+    "Critical / High": _render_active_alerts,
     "Cost Alerts": render_cost_alerts_pane,
+    "Cortex Predictive Alerts": render_cost_alerts_pane,
     "Reliability Alerts": render_reliability_alerts_pane,
     "Security Alerts": render_security_alerts_pane,
     "Alert History": render_alert_history_pane,
@@ -608,25 +618,39 @@ def render() -> None:
     _apply_alert_center_brief_first_default()
     _apply_queued_alert_center_view()
 
-    active_view = _render_workflow_selector(
-        "Alert Center view",
-        "alert_center_active_view",
-        ALERT_CENTER_PANES,
-        labels=ALERT_CENTER_PANE_LABELS,
-        columns=4,
+    active_view = render_primary_section_tabs(
+        label="Alert Center primary navigation",
+        options=ALERT_CENTER_PANES,
+        active_value=st.session_state.get("alert_center_active_view", ALERT_CENTER_DEFAULT_VIEW),
+        key="alert_center_active_view",
+        format_func=lambda value: ALERT_CENTER_PANE_LABELS.get(str(value), str(value)),
     )
+    active_view = _normalize_alert_center_view(active_view)
+    renderer_view = {
+        "Critical / High": ALERT_CENTER_DEFAULT_VIEW,
+        "Cortex Predictive Alerts": "Cost Alerts",
+    }.get(active_view, active_view)
     source_view = active_view
     if active_view == "Alert Settings / Admin":
-        source_view = _render_workflow_selector(
-            "Advanced alert admin tool",
-            ALERT_CENTER_ADMIN_VIEW_KEY,
-            ALERT_CENTER_ADMIN_VIEWS,
-            ALERT_CENTER_ADMIN_VIEW_DETAILS,
-            columns=3,
-            compact_details=True,
-            collapse_after=1,
-            collapsed_label="More alert admin tools",
+        source_view = render_secondary_lens_pills(
+            label="Admin evidence",
+            options=ALERT_CENTER_ADMIN_VIEWS,
+            active_value=st.session_state.get(ALERT_CENTER_ADMIN_VIEW_KEY, ALERT_CENTER_ADMIN_VIEWS[0]),
+            key=ALERT_CENTER_ADMIN_VIEW_KEY,
         )
+        renderer_view = source_view
+    elif active_view != "Alert History":
+        render_secondary_lens_pills(
+            label="Alert state",
+            options=("Open", "Overdue", "Routed", "Suppressed", "Delivered", "Failed Delivery"),
+            active_value=st.session_state.get("alert_center_status_lens", "Open"),
+            key="alert_center_status_lens",
+        )
+    render_section_breadcrumb(["Alert Center", ALERT_CENTER_PANE_LABELS.get(active_view, active_view)])
+    render_content_header(
+        ALERT_CENTER_PANE_LABELS.get(active_view, active_view),
+        ALERT_CENTER_ADMIN_VIEW_DETAILS.get(source_view, f"Load {active_view} when fresh alert telemetry is needed."),
+    )
 
     required_sources = _alert_center_sources_for_view(source_view)
 
@@ -669,7 +693,7 @@ def render() -> None:
     ):
         st.caption(
             "Alert Center opened without live Snowflake reads. "
-            f"Load {source_view} when fresh alert telemetry is needed."
+            f"Load {active_view} when fresh alert telemetry is needed."
         )
         defer_source_note(f"Inputs on load: {_alert_center_source_summary(required_sources)}")
     render_data_freshness(
@@ -679,7 +703,7 @@ def render() -> None:
         delayed_note="Alert Center reads bounded alert/action sources on demand; ACCOUNT_USAGE-backed inputs can lag.",
     )
     with c3:
-        if st.button(f"Load {source_view}", key="alert_center_load", type="primary"):
+        if st.button(f"Load {active_view}", key="alert_center_load", type="primary"):
             if _load_alert_center_view_data(source_view, company, environment, int(days), int(limit), required_sources):
                 st.rerun()
 
@@ -727,7 +751,7 @@ def render() -> None:
             data=data,
             cached_summary=cached_summary,
             state="Inputs needed",
-            note=f"Load {source_view} to fetch missing input(s): {_alert_center_source_summary(set(missing_sources))}.",
+            note=f"Load {active_view} to fetch missing input(s): {_alert_center_source_summary(set(missing_sources))}.",
         )
         defer_source_note(f"Missing Alert Center input(s): {_alert_center_source_summary(set(missing_sources))}")
         _render_advanced_alert_diagnostics(company, environment)
@@ -828,7 +852,7 @@ def render() -> None:
     )
     _render_alert_command_lane_board(
         _alert_command_lanes(
-            active_view=source_view,
+            active_view=active_view,
             required_sources=required_sources,
             alerts=alerts,
             queue=queue,
@@ -843,7 +867,7 @@ def render() -> None:
                                     open_queue_count, exception_rows, alerts)
 
     _render_loaded_alert_center_pane(
-        source_view,
+        renderer_view,
         alerts,
         queue,
         delivery_log,

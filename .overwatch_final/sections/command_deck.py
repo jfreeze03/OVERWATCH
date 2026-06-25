@@ -26,10 +26,10 @@ def apply_command_deck_action(
     state: MutableMapping[str, object],
 ) -> None:
     """Apply route-only state updates for a Command Deck action."""
-    for key, value in action.session_state_updates:
-        state[str(key)] = value
     if action.target_section:
         queue_section_navigation(action.target_section)
+    for key, value in action.session_state_updates:
+        state[str(key)] = value
 
 
 def _render_deck_header(contract: SectionCommandDeckContract) -> None:

@@ -86,10 +86,13 @@ def _drill_to(
     user_filter: str = "",
     workflow_key: str = "",
     workflow: str = "",
+    extra_state: dict[str, object] | None = None,
 ):
     apply_navigation_state(section)
     if workflow_key and workflow:
         st.session_state[workflow_key] = workflow
+    for key, value in (extra_state or {}).items():
+        st.session_state[str(key)] = value
     if wh_filter:
         st.session_state["lm_wh"]     = wh_filter
         st.session_state["wh_filter"] = wh_filter
@@ -872,7 +875,8 @@ def render_account_health_overview(company: str, environment: str, credit_price:
                             "Cost & Contract",
                             user_filter=sel_user,
                             workflow_key="cost_contract_workflow",
-                            workflow="Cortex AI",
+                            workflow="Cost Explorer",
+                            extra_state={"cost_center_view": "Cost Explorer", "cc_explorer_lens": "User / Role"},
                         )
         else:
             st.info("No cost driver data yet.")

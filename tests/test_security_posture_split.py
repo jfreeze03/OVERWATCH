@@ -226,7 +226,7 @@ class SecurityPostureSplitTests(unittest.TestCase):
             return_value=30,
         ), patch.object(
             security_posture,
-            "render_mode_selector",
+            "render_primary_section_tabs",
             return_value=security_posture.SECURITY_OVERVIEW_WORKFLOW,
         ), patch.object(
             security_posture,

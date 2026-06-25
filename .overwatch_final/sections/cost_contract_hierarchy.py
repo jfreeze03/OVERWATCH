@@ -19,7 +19,7 @@ from sections.cost_contract_contracts import (
 from sections.cost_contract_helpers import get_credit_price
 from sections.cost_contract_splash import _cached_cost_splash, _cost_splash_summary
 from sections.cortex_signals import build_cortex_signal
-from sections.shell_helpers import render_action_cards
+from sections.shell_helpers import render_action_cards, render_primary_section_tabs, render_secondary_lens_pills
 from utils.primitives import safe_float, safe_int
 
 
@@ -31,6 +31,16 @@ COST_EXPLORER_PRIMARY_LENSES = (
     "Tag / Application",
     "Department / Cost Center",
     "Environment",
+)
+
+COST_PRIMARY_NAV = (
+    "Cost Overview",
+    "Cost Explorer",
+    "Burn Rate & Forecast",
+    "Budget vs Actual",
+    "Chargeback / Company Split",
+    "Cost Recommendations",
+    "Cortex AI",
 )
 
 COST_LOCAL_MENU = (
@@ -156,11 +166,42 @@ def build_cost_hero_metrics(company: str) -> tuple[dict[str, str], ...]:
 def workflow_label(workflow: str) -> str:
     labels = {
         "Cost Overview": "Overview",
+        "Cost Explorer": "Explorer",
         "Burn Rate & Forecast": "Forecast",
+        "Budget vs Actual": "Budget",
         "Chargeback / Company Split": "Chargeback",
         "Cost Recommendations": "Recommendations",
     }
     return labels.get(str(workflow), str(workflow))
+
+
+def lens_label(lens: object) -> str:
+    """Return compact labels for the Explorer lens control."""
+    if str(lens) == "Department / Cost Center":
+        return "Department"
+    return str(lens)
+
+
+def render_cost_primary_tabs(active_workflow: str) -> str:
+    """Render the Cost & Contract primary navigation as one horizontal control."""
+    return render_primary_section_tabs(
+        label="Primary navigation",
+        options=COST_PRIMARY_NAV,
+        active_value=active_workflow,
+        key="cost_contract_workflow",
+        format_func=workflow_label,
+    )
+
+
+def render_cost_explorer_lens_pills(active_lens: str) -> str:
+    """Render the Cost Explorer lenses as one horizontal control."""
+    return render_secondary_lens_pills(
+        label="Explore Cost By",
+        options=COST_EXPLORER_PRIMARY_LENSES,
+        active_value=active_lens,
+        key="cc_explorer_lens",
+        format_func=lambda value: lens_label(value),
+    )
 
 
 def set_cost_workflow(workflow: str) -> None:
@@ -189,6 +230,7 @@ def set_cost_action(action: dict[str, object]) -> None:
 
 
 def render_cost_action_cards() -> None:
+    st.html('<div class="ow-cost-action-strip" aria-label="Recommended Cost actions"></div>')
     render_action_cards(
         (
             {

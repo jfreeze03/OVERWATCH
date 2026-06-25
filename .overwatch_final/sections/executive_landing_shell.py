@@ -54,12 +54,12 @@ from sections.executive_landing_models import (
     _summary_from_observability,
     _with_platform_operating_score,
 )
+from sections.shell_helpers import render_content_header, render_primary_section_tabs, render_section_breadcrumb
 from perf_trace import trace
 from utils.section_guidance import defer_source_note
 
 
 get_session_for_action = _lazy_util("get_session_for_action")
-render_workflow_selector = _lazy_util("render_workflow_selector")
 
 EXECUTIVE_LANDING_RENDERER_PATHS = {
     EXECUTIVE_OVERVIEW_WORKFLOW: (
@@ -134,18 +134,27 @@ def _render_loaded_executive_landing_workflow(
 
 
 def _render_executive_landing_workflow_controls(active_workflow: str) -> str:
-    active_workflow = render_workflow_selector(
-        "Executive Landing workflow",
-        EXECUTIVE_LANDING_WORKFLOW,
-        EXECUTIVE_LANDING_WORKFLOWS,
-        EXECUTIVE_LANDING_WORKFLOW_DETAILS,
-        columns=4,
-        compact_details=True,
-        collapse_after=2,
-        collapsed_label="More executive workflows",
+    labels = {
+        EXECUTIVE_OVERVIEW_WORKFLOW: "Overview",
+        EXECUTIVE_COST_MOVEMENT_WORKFLOW: "Cost",
+        EXECUTIVE_OPERATIONAL_RISK_WORKFLOW: "Operations",
+        EXECUTIVE_SECURITY_RISK_WORKFLOW: "Security",
+        EXECUTIVE_CHANGE_SUMMARY_WORKFLOW: "Changes",
+        EXECUTIVE_ACTIONS_WORKFLOW: "Actions",
+        EXECUTIVE_ADMIN_WORKFLOW: "Evidence",
+    }
+    selected = render_primary_section_tabs(
+        label="Executive Landing primary navigation",
+        options=EXECUTIVE_LANDING_WORKFLOWS,
+        active_value=active_workflow,
+        key=EXECUTIVE_LANDING_WORKFLOW,
+        format_func=lambda value: labels.get(str(value), str(value)),
     )
-    active_workflow = normalize_executive_landing_workflow(active_workflow)
-    st.session_state[EXECUTIVE_LANDING_WORKFLOW] = active_workflow
+    active_workflow = normalize_executive_landing_workflow(selected)
+    render_content_header(
+        labels.get(active_workflow, active_workflow),
+        EXECUTIVE_LANDING_WORKFLOW_DETAILS.get(active_workflow, "Executive evidence stays behind explicit load actions."),
+    )
     render_command_deck(
         get_command_deck_contract("Executive Landing"),
         key_prefix="executive_landing_command_deck",
@@ -244,9 +253,9 @@ def render() -> None:
             summary = _with_platform_operating_score(summary, source_health)
             _persist_platform_summary(summary)
 
-    if active_workflow != EXECUTIVE_OVERVIEW_WORKFLOW:
-        with trace("executive_shell:workflow_selector", active_section="Executive Landing"):
-            active_workflow = _render_executive_landing_workflow_controls(active_workflow)
+    render_section_breadcrumb(["Executive Landing", active_workflow])
+    with trace("executive_shell:workflow_selector", active_section="Executive Landing"):
+        active_workflow = _render_executive_landing_workflow_controls(active_workflow)
 
     load = _render_loaded_executive_landing_workflow(
         active_workflow,
@@ -262,8 +271,6 @@ def render() -> None:
     )
 
     if active_workflow == EXECUTIVE_OVERVIEW_WORKFLOW:
-        with trace("executive_shell:workflow_selector", active_section="Executive Landing"):
-            _render_executive_landing_workflow_controls(active_workflow)
         render_mission_control_queue(
             st.session_state,
             company=company,

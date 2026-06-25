@@ -576,6 +576,133 @@ def render_local_section_menu(
     return selected
 
 
+def render_single_choice_navigation(
+    *,
+    label: str,
+    options: Sequence[object],
+    active_value: object,
+    key: str,
+    class_name: str,
+    label_class: str,
+    format_func: Callable[[object], str] | None = None,
+) -> str:
+    """Render one real horizontal selection control for section navigation.
+
+    This intentionally avoids the old decorative-card-plus-button pattern:
+    the Streamlit segmented/radio widget is the single visible control.
+    """
+    values = tuple(str(option) for option in (options or ()))
+    if not values:
+        return str(active_value or "")
+    active = str(active_value or values[0])
+    if active not in values:
+        active = values[0]
+    if st.session_state.get(key) not in values:
+        st.session_state[key] = active
+
+    formatter = format_func or (lambda value: _clean_display_text(value))
+    st.html(
+        f'<div class="{_escape_markup(class_name)}" data-active="{_escape_markup(active)}">'
+        f'<span class="{_escape_markup(label_class)}">{_escape_markup(_clean_display_text(label))}</span>'
+        '</div>'
+    )
+    if hasattr(st, "segmented_control"):
+        selected = st.segmented_control(
+            label,
+            values,
+            selection_mode="single",
+            required=True,
+            format_func=formatter,
+            key=key,
+            label_visibility="collapsed",
+            width="stretch",
+        )
+    else:
+        selected = st.radio(
+            label,
+            values,
+            index=values.index(active),
+            format_func=formatter,
+            key=key,
+            horizontal=True,
+            label_visibility="collapsed",
+            width="stretch",
+        )
+    return str(selected or active)
+
+
+def render_section_breadcrumb(parts: Sequence[object]) -> None:
+    """Render the standard primary-section breadcrumb."""
+    render_breadcrumb(parts)
+
+
+def render_primary_section_tabs(
+    *,
+    label: str,
+    options: Sequence[object],
+    active_value: object,
+    key: str,
+    format_func: Callable[[object], str] | None = None,
+) -> str:
+    """Render app-wide primary section navigation as one horizontal control."""
+    return render_single_choice_navigation(
+        label=label,
+        options=options,
+        active_value=active_value,
+        key=key,
+        class_name="ow-section-tabs",
+        label_class="ow-section-tabs-label",
+        format_func=format_func,
+    )
+
+
+def render_secondary_lens_pills(
+    *,
+    label: str,
+    options: Sequence[object],
+    active_value: object,
+    key: str,
+    format_func: Callable[[object], str] | None = None,
+) -> str:
+    """Render app-wide secondary/lens navigation as one horizontal control."""
+    return render_single_choice_navigation(
+        label=label,
+        options=options,
+        active_value=active_value,
+        key=key,
+        class_name="ow-lens-pills",
+        label_class="ow-lens-pills-label",
+        format_func=format_func,
+    )
+
+
+def render_kpi_status_strip(metrics: Sequence[Mapping[str, object] | Sequence[object]]) -> None:
+    """Render the standard first-paint KPI/status strip."""
+    render_kpi_hero_row(metrics)
+
+
+def render_content_header(title: object, detail: object = "") -> None:
+    """Render the standard selected-content header."""
+    render_content_panel(title, detail)
+
+
+def render_recommended_action_strip(
+    actions: Sequence[Mapping[str, object]],
+    *,
+    key_prefix: str,
+    on_select: Callable[[Mapping[str, object]], None] | None = None,
+) -> None:
+    """Render recommended actions using the app-wide action card system."""
+    st.html('<div class="ow-recommended-actions" aria-label="Recommended actions"></div>')
+    render_action_cards(actions, key_prefix=key_prefix, on_select=on_select)
+
+
+def render_advanced_evidence_area(label: str, *, expanded: bool = False):
+    """Return a standard advanced/evidence expander context manager."""
+    st.html('<div class="ow-advanced-evidence" aria-label="Advanced evidence"></div>')
+    return st.expander(label, expanded=expanded)
+
+
 def render_explore_lens_selector(
     *,
     label: str,
@@ -584,24 +711,20 @@ def render_explore_lens_selector(
     key_prefix: str,
     on_select: Callable[[str], None] | None = None,
 ) -> str:
-    """Render tertiary explore lenses without using eager Streamlit tabs."""
-    active = str(active_value or "")
-    st.html(f'<div class="ow-explore-tabs-label">{_escape_markup(_clean_display_text(label))}</div>')
-    selected = active
-    cols = st.columns(min(max(len(tuple(lenses or ())), 1), 4))
-    for idx, lens in enumerate(lenses or ()):
-        value = str(lens)
-        with cols[idx % len(cols)]:
-            active_class = " ow-explore-tab-active" if value == active else ""
-            st.html(f'<div class="ow-explore-tab{active_class}">{_escape_markup(_clean_display_text(value))}</div>')
-            if value != active and st.button(
-                value,
-                key=f"{key_prefix}_{idx}_{_key_fragment(value)}",
-                width="stretch",
-            ):
-                selected = value
-                if on_select is not None:
-                    on_select(value)
+    """Render tertiary explore lenses as one real control, not duplicate cards."""
+    selected = render_single_choice_navigation(
+        label=label,
+        options=tuple(str(lens) for lens in (lenses or ())),
+        active_value=active_value,
+        key=key_prefix,
+        class_name="ow-lens-pills",
+        label_class="ow-lens-pills-label",
+        format_func=lambda value: _clean_display_text(
+            "Department" if str(value) == "Department / Cost Center" else value
+        ),
+    )
+    if selected != str(active_value or "") and on_select is not None:
+        on_select(selected)
     return selected
 
 
@@ -636,7 +759,7 @@ def render_action_cards(
 def render_content_panel(title: object, detail: object = "") -> None:
     """Render the selected content panel header."""
     st.html(
-        '<section class="ow-content-panel">'
+        '<section class="ow-content-panel ow-cost-content-header">'
         f'<div class="ow-content-panel-title">{_escape_markup(_clean_display_text(title))}</div>'
         f'<div class="ow-content-panel-detail">{_escape_markup(_clean_display_text(detail))}</div>'
         '</section>'

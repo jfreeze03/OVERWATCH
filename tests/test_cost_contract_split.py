@@ -88,26 +88,55 @@ class CostContractSplitTests(unittest.TestCase):
         theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")
 
         self.assertNotIn('render_workflow_selector(\n        "Cost workflow"', cost_contract_text)
-        self.assertIn("render_breadcrumb", cost_contract_text)
+        self.assertNotIn("st.columns([0.24, 0.76]", cost_contract_text)
+        self.assertNotIn("render_local_section_menu", cost_contract_text)
+        self.assertNotIn("render_explore_lens_selector", cost_contract_text)
+        self.assertIn("render_section_breadcrumb", cost_contract_text)
         self.assertIn("render_kpi_hero_row", cost_contract_text)
-        self.assertIn("render_local_section_menu", cost_contract_text)
-        self.assertIn("render_explore_lens_selector", cost_contract_text)
+        self.assertIn("render_cost_primary_tabs", cost_contract_text)
+        self.assertIn("render_cost_explorer_lens_pills", cost_contract_text)
+        self.assertLess(
+            cost_contract_text.rindex("render_cost_action_cards()"),
+            cost_contract_text.rindex("_render_cost_contract_workflow(workflow, company, environment)"),
+        )
+        self.assertIn("render_primary_section_tabs", hierarchy_text)
+        self.assertIn("render_secondary_lens_pills", hierarchy_text)
+        self.assertIn("COST_PRIMARY_NAV", hierarchy_text)
+        self.assertIn('"Cost Overview"', hierarchy_text)
+        self.assertIn('"Cost Explorer"', hierarchy_text)
+        self.assertIn('"Cortex AI"', hierarchy_text)
+        primary_nav_literal = hierarchy_text.split("COST_PRIMARY_NAV = (", 1)[1].split(")", 1)[0]
+        self.assertIn('"Cortex AI"', primary_nav_literal)
+        self.assertNotIn('"Waste Detection"', primary_nav_literal)
         self.assertIn('"Cortex AI"', hierarchy_text)
         self.assertIn('"Cortex AI Spend"', hierarchy_text)
         self.assertIn('"Cortex Predictive Alerts"', hierarchy_text)
         self.assertIn('"Review Cortex AI Costs"', hierarchy_text)
         self.assertIn("_cost_center_embedded_in_cost_contract", cost_center_text)
         self.assertIn("Cost & Contract owns section navigation", cost_center_text)
-        self.assertIn("Explore Cost By", explorer_text)
+        self.assertIn("Current lens:", explorer_text)
+        embedded_block = explorer_text.split("if embedded:", 1)[1].split("else:", 1)[0]
+        self.assertNotIn("Break down by", embedded_block)
         for css_class in (
             "ow-breadcrumb",
-            "ow-local-nav",
-            "ow-explore-tab",
+            "ow-primary-tabs",
+            "ow-primary-tab",
+            "ow-lens-pills",
+            "ow-lens-pill",
             "ow-kpi-hero",
             "ow-action-card",
+            "ow-cost-filter-row",
+            "ow-cost-action-strip",
             "ow-content-panel",
         ):
             self.assertIn(css_class, theme_text)
+
+    def test_account_health_user_cost_drilldown_targets_explorer_user_lens(self):
+        account_health_text = (APP_ROOT / "sections" / "account_health_overview_view.py").read_text(encoding="utf-8")
+
+        self.assertIn('workflow="Cost Explorer"', account_health_text)
+        self.assertIn('"cc_explorer_lens": "User / Role"', account_health_text)
+        self.assertNotIn('workflow="Cortex AI",\n                        )', account_health_text)
 
 
 if __name__ == "__main__":

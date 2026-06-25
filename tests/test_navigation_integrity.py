@@ -596,9 +596,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('CONTROL_ROOM_ADMIN_WORKFLOW: "Advanced"', full_workspace_text)
         self.assertIn("DBA_CONTROL_ROOM_PANE_DETAILS", full_workspace_text)
         self.assertIn("def _render_dba_control_room_workflow_selector", full_workspace_text)
-        self.assertIn("compact_details=True", full_workspace_text)
-        self.assertIn("collapse_after=2", full_workspace_text)
-        self.assertIn('collapsed_label="More DBA workflows"', full_workspace_text)
+        self.assertIn("render_primary_section_tabs", full_workspace_text)
+        self.assertIn("render_content_header", full_workspace_text)
+        self.assertIn("render_section_breadcrumb", full_workspace_text)
         self.assertIn('elif active_view == ACTION_QUEUE_WORKFLOW:', full_workspace_text)
         self.assertIn('load_label = "Load Action Queue"', full_workspace_text)
         self.assertIn('ops_detail_options = ("Queue", "Daily Brief", "Priority"', full_workspace_text)
@@ -787,8 +787,11 @@ class NavigationIntegrityTests(unittest.TestCase):
         nav_text = (APP_ROOT / "sections" / "navigation.py").read_text(encoding="utf-8")
         self.assertIn('"Cost Overview"', cost_contract_surface)
         self.assertIn('"Cost Explorer"', cost_contract_surface)
-        self.assertIn("render_local_section_menu", full_workspace_text)
-        self.assertIn("render_explore_lens_selector", full_workspace_text)
+        self.assertIn("render_cost_primary_tabs", full_workspace_text)
+        self.assertIn("render_cost_explorer_lens_pills", full_workspace_text)
+        self.assertNotIn("st.columns([0.24, 0.76]", full_workspace_text)
+        self.assertNotIn("render_local_section_menu", full_workspace_text)
+        self.assertNotIn("render_explore_lens_selector", full_workspace_text)
         self.assertNotIn('render_workflow_selector(\n        "Cost workflow"', full_workspace_text)
         self.assertIn('set_state(COST_CONTRACT_WORKFLOW, "Cost Overview")', nav_text)
         self.assertNotIn("Cost Signal Summary", cost_contract_surface)
@@ -1279,7 +1282,9 @@ class NavigationIntegrityTests(unittest.TestCase):
             tuple(alert_center.ALERT_CENTER_PANES),
             (
                 "Active Alerts",
+                "Critical / High",
                 "Cost Alerts",
+                "Cortex Predictive Alerts",
                 "Reliability Alerts",
                 "Security Alerts",
                 "Alert History",
@@ -1465,33 +1470,32 @@ class NavigationIntegrityTests(unittest.TestCase):
                 self.assertNotIn("st.header(", section_text)
                 self.assertIn("st.subheader(", section_text)
 
-    def test_consolidated_shells_use_shared_workflow_selector(self):
-        consolidated_files = [
-            "change_drift.py",
+    def test_primary_sections_use_platform_tabs_not_workflow_button_walls(self):
+        platform_tab_files = [
+            "executive_landing_shell.py",
             "security_posture.py",
-            "warehouse_health.py",
             "workload_operations.py",
+            "alert_center.py",
         ]
-        for filename in consolidated_files:
+        for filename in platform_tab_files:
             with self.subTest(filename=filename):
-                if filename == "change_drift.py":
-                    section_text = "\n".join(
-                        path.read_text(encoding="utf-8")
-                        for path in [
-                            APP_ROOT / "sections" / "change_drift.py",
-                            APP_ROOT / "sections" / "change_drift_workflows_view.py",
-                        ]
-                    )
-                else:
-                    section_text = (APP_ROOT / "sections" / filename).read_text(encoding="utf-8")
+                section_text = (APP_ROOT / "sections" / filename).read_text(encoding="utf-8")
                 self.assertNotIn("def render_workflow_selector", section_text)
-                self.assertIn('render_workflow_selector = _lazy_util("render_workflow_selector")', section_text)
+                self.assertIn("render_primary_section_tabs", section_text)
+                self.assertIn("render_content_header", section_text)
                 self.assertNotIn("return str(st.selectbox(label, list(workflows), key=key))", section_text)
 
         cost_contract_text = (APP_ROOT / "sections" / "cost_contract.py").read_text(encoding="utf-8")
-        self.assertNotIn('render_workflow_selector = _lazy_util("render_workflow_selector")', cost_contract_text)
-        self.assertIn("render_local_section_menu", cost_contract_text)
-        self.assertIn("render_explore_lens_selector", cost_contract_text)
+        cost_contract_hierarchy_text = (APP_ROOT / "sections" / "cost_contract_hierarchy.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("render_cost_primary_tabs", cost_contract_text)
+        self.assertIn("render_cost_explorer_lens_pills", cost_contract_text)
+        self.assertIn("render_content_header", cost_contract_text)
+        self.assertIn("render_primary_section_tabs", cost_contract_hierarchy_text)
+        self.assertIn("render_secondary_lens_pills", cost_contract_hierarchy_text)
+        self.assertNotIn("render_local_section_menu", cost_contract_text)
+        self.assertNotIn("render_explore_lens_selector", cost_contract_text)
 
     def test_global_filter_and_metric_changes_clear_loaded_state(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")

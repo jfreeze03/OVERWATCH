@@ -33,7 +33,9 @@ def defer_source_note(*parts: object, section: str | None = None) -> None:
 
 ALERT_CENTER_PANES = [
     "Active Alerts",
+    "Critical / High",
     "Cost Alerts",
+    "Cortex Predictive Alerts",
     "Reliability Alerts",
     "Security Alerts",
     "Alert History",
@@ -41,12 +43,14 @@ ALERT_CENTER_PANES = [
 ]
 
 ALERT_CENTER_PANE_LABELS = {
-    "Active Alerts": "Active Alerts",
-    "Cost Alerts": "Cost Alerts",
-    "Reliability Alerts": "Reliability Alerts",
-    "Security Alerts": "Security Alerts",
-    "Alert History": "Alert History",
-    "Alert Settings / Admin": "Alert Settings / Admin",
+    "Active Alerts": "Active",
+    "Critical / High": "Critical / High",
+    "Cost Alerts": "Cost",
+    "Cortex Predictive Alerts": "Cortex Predictive",
+    "Reliability Alerts": "Reliability",
+    "Security Alerts": "Security",
+    "Alert History": "History",
+    "Alert Settings / Admin": "Admin",
 }
 
 ALERT_CENTER_BRIEF_FIRST_VERSION = 3
@@ -100,7 +104,9 @@ ALERT_CENTER_BRIEF_WORKFLOWS = (
 
 ALERT_CENTER_SOURCES_BY_PANE = {
     "Active Alerts": {"alerts", "action_queue", "delivery_log", "rules"},
+    "Critical / High": {"alerts", "action_queue", "delivery_log", "rules"},
     "Cost Alerts": {"alerts", "action_queue", "rules"},
+    "Cortex Predictive Alerts": {"alerts", "action_queue", "rules"},
     "Reliability Alerts": {"alerts", "action_queue", "rules"},
     "Security Alerts": {"alerts", "action_queue", "rules"},
     "Alert History": {"alerts", "action_queue", "delivery_log"},

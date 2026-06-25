@@ -32,11 +32,11 @@ from sections.executive_landing_change_view import *  # noqa: F403
 from config import DAY_WINDOW_OPTIONS, DEFAULT_DAY_WINDOW
 from runtime_state import EXECUTIVE_LANDING_WORKFLOW
 from sections.base import lazy_util as _lazy_util
+from sections.shell_helpers import render_content_header, render_primary_section_tabs, render_section_breadcrumb
 from utils.section_guidance import defer_source_note
 
 
 get_session_for_action = _lazy_util("get_session_for_action")
-render_workflow_selector = _lazy_util("render_workflow_selector")
 
 EXECUTIVE_LANDING_RENDERERS = {
     EXECUTIVE_OVERVIEW_WORKFLOW: render_executive_overview,
@@ -69,18 +69,35 @@ def render() -> None:
         days = st.selectbox("Executive window", DAY_WINDOW_OPTIONS, index=DAY_WINDOW_OPTIONS.index(DEFAULT_DAY_WINDOW), format_func=lambda value: f"{value} days")
     with refresh_col:
         refresh_board = st.button("Refresh Summary", key="executive_landing_observability_refresh", type="primary", width="stretch")
-    active_workflow = render_workflow_selector("Executive Landing workflow", EXECUTIVE_LANDING_WORKFLOW, EXECUTIVE_LANDING_WORKFLOWS, columns=4)
+    workflow_labels = {
+        EXECUTIVE_OVERVIEW_WORKFLOW: "Overview",
+        EXECUTIVE_COST_MOVEMENT_WORKFLOW: "Cost",
+        EXECUTIVE_OPERATIONAL_RISK_WORKFLOW: "Operations",
+        EXECUTIVE_SECURITY_RISK_WORKFLOW: "Security",
+        EXECUTIVE_CHANGE_SUMMARY_WORKFLOW: "Changes",
+        EXECUTIVE_ACTIONS_WORKFLOW: "Actions",
+        EXECUTIVE_ADMIN_WORKFLOW: "Evidence",
+    }
+    render_section_breadcrumb(["Executive Landing", workflow_labels.get(str(st.session_state.get(EXECUTIVE_LANDING_WORKFLOW) or EXECUTIVE_OVERVIEW_WORKFLOW), "Overview")])
+    active_workflow = render_primary_section_tabs(
+        label="Executive Landing primary navigation",
+        options=EXECUTIVE_LANDING_WORKFLOWS,
+        active_value=st.session_state.get(EXECUTIVE_LANDING_WORKFLOW, EXECUTIVE_OVERVIEW_WORKFLOW),
+        key=EXECUTIVE_LANDING_WORKFLOW,
+        format_func=lambda value: workflow_labels.get(str(value), str(value)),
+    )
     active_workflow = normalize_executive_landing_workflow(active_workflow)
-    st.session_state[EXECUTIVE_LANDING_WORKFLOW] = active_workflow
+    render_content_header(
+        workflow_labels.get(active_workflow, active_workflow),
+        EXECUTIVE_LANDING_WORKFLOW_DETAILS.get(active_workflow, "Executive evidence stays behind explicit load actions."),
+    )
 
     expected_scope = _executive_snapshot_scope(company, environment, int(days))
     board, board_payload = _current_observability_board(company, environment, int(days))
     board_empty = _executive_observability_board_empty(board)
     needs_first_load = board_empty or _observability_payload_is_offline(board_payload)
     if needs_first_load:
-        if _executive_observability_autoload_allowed():
-            _load_executive_observability(company, environment, int(days), credit_price=credit_price)
-        elif board_empty and _executive_observability_connection_unavailable():
+        if board_empty and _executive_observability_connection_unavailable():
             _store_connection_unavailable_observability(company, environment, int(days))
         elif board_empty:
             defer_source_note(

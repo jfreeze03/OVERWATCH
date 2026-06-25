@@ -195,6 +195,21 @@ class CostContractRenderingWorkflowTests(unittest.TestCase):
         self.assertEqual(module_render.call_args.args[0], "Cost Recommendations")
         cost_contract_workflow.set_cost_overview_renderer(_render_cost_watch_floor)
 
+    def test_cost_explorer_preset_preserves_existing_lens_widget_state(self):
+        from sections import cost_contract_workflow
+        from sections.cost_contract_contracts import _LAST_COST_WORKFLOW_KEY
+
+        state = {
+            _LAST_COST_WORKFLOW_KEY: "Cost Overview",
+            "cost_center_view": "Cost Explorer",
+            "cc_explorer_lens": "User / Role",
+        }
+        with patch.object(cost_contract_workflow.st, "session_state", state):
+            cost_contract_workflow._apply_cost_workflow_preset("Cost Explorer")
+
+        self.assertEqual(state["cost_center_view"], "Cost Explorer")
+        self.assertEqual(state["cc_explorer_lens"], "User / Role")
+
     def test_cost_overview_floor_refresh_uses_existing_button_and_session_contract(self):
         from sections import cost_contract_overview_floor
         from sections.cost_contract_contracts import (

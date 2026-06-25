@@ -182,7 +182,8 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
         self.assertIsNotNone(match)
 
         self.assertEqual(profile["load_buttons"]["Alert Center"], f"Load {match.group(1)}")
-        self.assertIn('st.button(f"Load {source_view}"', alert_center)
+        self.assertIn('st.button(f"Load {active_view}"', alert_center)
+        self.assertIn('key="alert_center_load"', alert_center)
 
     def test_release_evidence_records_power_user_metrics(self):
         text = RELEASE_EVIDENCE.read_text(encoding="utf-8")

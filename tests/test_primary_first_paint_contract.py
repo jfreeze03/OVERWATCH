@@ -207,6 +207,22 @@ class PrimaryFirstPaintContractTests(unittest.TestCase):
         self.assertEqual(state["workload_pipeline_focus"], "Failed Tasks")
         self.assertEqual(set(state), {"workload_operations_workflow", "workload_pipeline_focus"})
 
+    def test_command_deck_cross_section_updates_win_after_default_navigation(self):
+        from sections import command_deck
+        from sections.command_deck_contracts import get_command_deck_contract
+
+        state: dict[str, object] = {}
+        contract = get_command_deck_contract("Executive Landing")
+        action = next(item for item in contract.route_actions if item.label == "Cortex AI Cost")
+
+        def _default_navigation(_section: str) -> None:
+            state["cost_contract_workflow"] = "Cost Overview"
+
+        with patch.object(command_deck, "queue_section_navigation", side_effect=_default_navigation):
+            command_deck.apply_command_deck_action(action, state)
+
+        self.assertEqual(state["cost_contract_workflow"], "Cortex AI")
+
     def test_command_deck_preserves_benchmark_load_boundaries(self):
         from sections.command_deck_contracts import get_command_deck_contract
 

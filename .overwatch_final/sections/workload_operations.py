@@ -10,7 +10,14 @@ from sections.base import lazy_pandas, lazy_util as _lazy_util
 from sections.command_deck import render_command_deck
 from sections.command_deck_contracts import get_command_deck_contract
 from sections.navigation import apply_section_workflow_navigation
-from sections.shell_helpers import build_first_paint_summary_spec, render_section_first_paint_shell
+from sections.shell_helpers import (
+    build_first_paint_summary_spec,
+    render_content_header,
+    render_primary_section_tabs,
+    render_secondary_lens_pills,
+    render_section_breadcrumb,
+    render_section_first_paint_shell,
+)
 from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_section_note
 
@@ -25,7 +32,6 @@ load_closed_loop_workflow_detail = _lazy_util("load_closed_loop_workflow_detail"
 load_command_center_finding_detail = _lazy_util("load_command_center_finding_detail")
 load_command_center_recommendation_detail = _lazy_util("load_command_center_recommendation_detail")
 load_forecast_detail = _lazy_util("load_forecast_detail")
-render_workflow_selector = _lazy_util("render_workflow_selector")
 render_priority_dataframe = _lazy_util("render_priority_dataframe")
 build_loaded_section_alert_signal_board = _lazy_util("build_loaded_section_alert_signal_board")
 
@@ -565,20 +571,35 @@ def _render_workload_overview(company: str, environment: str) -> None:
 
 
 def _render_query_investigation_surface() -> None:
-    st.session_state.setdefault("query_analysis_active_view", "AI Diagnosis")
+    query_lens = render_secondary_lens_pills(
+        label="Query Investigation lens",
+        options=("History Search", "Detailed Diagnosis", "Top SQL", "User / Role", "Warehouse"),
+        active_value=st.session_state.get("workload_query_lens", "History Search"),
+        key="workload_query_lens",
+    )
+    query_view_map = {
+        "History Search": "Query Search",
+        "Detailed Diagnosis": "Detailed Diagnosis",
+        "Top SQL": "Patterns",
+        "User / Role": "User / Role",
+        "Warehouse": "Warehouse",
+    }
+    st.session_state["query_analysis_active_view"] = query_view_map.get(str(query_lens), "AI Diagnosis")
     if st.session_state.pop("workload_query_diagnosis_mode", "") == "Detailed diagnosis":
         st.session_state["query_analysis_active_view"] = "Detailed Diagnosis"
     render_workflow_module(QUERY_INVESTIGATION_WORKFLOW, WORKFLOW_MODULES)
 
 
 def _render_pipeline_task_health_surface() -> None:
-    focus = render_workflow_selector(
-        "Pipeline & task focus",
-        PIPELINE_FOCUS_KEY,
-        (PIPELINE_TASK_FOCUS, PIPELINE_STORED_PROC_FOCUS, PIPELINE_LOAD_FOCUS),
-        PIPELINE_FOCUS_DETAILS,
-        columns=3,
+    focus = render_secondary_lens_pills(
+        label="Pipeline & Tasks lens",
+        options=(PIPELINE_TASK_FOCUS, PIPELINE_STORED_PROC_FOCUS, PIPELINE_LOAD_FOCUS, "SLA Risk", "Suspended Tasks"),
+        active_value=st.session_state.get(PIPELINE_FOCUS_KEY, PIPELINE_TASK_FOCUS),
+        key=PIPELINE_FOCUS_KEY,
     )
+    if focus in {"SLA Risk", "Suspended Tasks"}:
+        focus = PIPELINE_TASK_FOCUS
+        st.session_state[PIPELINE_FOCUS_KEY] = focus
     if focus == PIPELINE_STORED_PROC_FOCUS:
         render_workflow_module(focus, {focus: "sections.stored_proc_tracker"})
         return
@@ -638,6 +659,13 @@ def _render_workload_surface(workflow: str, company: str, environment: str) -> N
     if workflow == ADVANCED_DBA_TOOLS_WORKFLOW:
         _render_advanced_workload_tools(company, environment)
         return
+    if workflow == CONTENTION_PERFORMANCE_WORKFLOW:
+        render_secondary_lens_pills(
+            label="Performance lens",
+            options=("Queued", "Blocked", "Spilling", "Long Running", "Contention", "Warehouse Pressure"),
+            active_value=st.session_state.get("workload_performance_lens", "Queued"),
+            key="workload_performance_lens",
+        )
     render_workflow_module(workflow, WORKFLOW_MODULES)
 
 
@@ -658,15 +686,25 @@ def render() -> None:
     environment = get_active_environment()
 
     workflow = str(st.session_state.get("workload_operations_workflow") or WORKLOAD_OVERVIEW_WORKFLOW)
-    if workflow == WORKLOAD_OVERVIEW_WORKFLOW:
-        st.session_state["workload_operations_workflow"] = WORKLOAD_OVERVIEW_WORKFLOW
-    else:
-        workflow = render_workflow_selector(
-            "Workload workflow",
-            "workload_operations_workflow",
-            WORKFLOWS,
-            WORKFLOW_DETAILS,
-            columns=5,
-        )
+    workflow_labels = {
+        WORKLOAD_OVERVIEW_WORKFLOW: "Overview",
+        QUERY_INVESTIGATION_WORKFLOW: "Query Investigation",
+        PIPELINE_TASK_HEALTH_WORKFLOW: "Pipeline & Tasks",
+        CONTENTION_PERFORMANCE_WORKFLOW: "Performance",
+        CHANGE_DRIFT_WORKFLOW: "Changes",
+        ADVANCED_DBA_TOOLS_WORKFLOW: "Advanced Tools",
+    }
+    render_section_breadcrumb(["Workload Operations", workflow_labels.get(workflow, workflow)])
+    workflow = render_primary_section_tabs(
+        label="Workload Operations primary navigation",
+        options=WORKFLOWS,
+        active_value=workflow,
+        key="workload_operations_workflow",
+        format_func=lambda value: workflow_labels.get(str(value), str(value)),
+    )
+    render_content_header(
+        workflow_labels.get(workflow, workflow),
+        WORKFLOW_DETAILS.get(workflow, "Workload evidence stays behind explicit workflow actions."),
+    )
 
     _render_workload_surface(workflow, company, environment)

@@ -31,7 +31,9 @@ class AlertCenterSplitTests(unittest.TestCase):
             alert_center.ALERT_CENTER_PANES,
             [
                 "Active Alerts",
+                "Critical / High",
                 "Cost Alerts",
+                "Cortex Predictive Alerts",
                 "Reliability Alerts",
                 "Security Alerts",
                 "Alert History",
@@ -92,7 +94,9 @@ class AlertCenterSplitTests(unittest.TestCase):
 
     def test_alert_center_renderer_identity(self):
         self.assertIs(alert_center.ALERT_CENTER_RENDERERS["Active Alerts"], active_view.render_active_alerts_pane)
+        self.assertIs(alert_center.ALERT_CENTER_RENDERERS["Critical / High"], active_view.render_active_alerts_pane)
         self.assertIs(alert_center.ALERT_CENTER_RENDERERS["Cost Alerts"], category_views.render_cost_alerts_pane)
+        self.assertIs(alert_center.ALERT_CENTER_RENDERERS["Cortex Predictive Alerts"], category_views.render_cost_alerts_pane)
         self.assertIs(alert_center.ALERT_CENTER_RENDERERS["Reliability Alerts"], category_views.render_reliability_alerts_pane)
         self.assertIs(alert_center.ALERT_CENTER_RENDERERS["Security Alerts"], category_views.render_security_alerts_pane)
         self.assertIs(alert_center.ALERT_CENTER_RENDERERS["Alert History"], history_view.render_alert_history_pane)
@@ -262,10 +266,12 @@ class AlertCenterSplitTests(unittest.TestCase):
         render_source = inspect.getsource(alert_center.render)
 
         self.assertNotIn("_load_center_data(", render_source)
-        self.assertIn('st.button(f"Load {source_view}"', render_source)
+        self.assertIn('st.button(f"Load {active_view}"', render_source)
+        self.assertIn("render_primary_section_tabs", render_source)
+        self.assertIn("render_secondary_lens_pills", render_source)
         self.assertIn("_render_alert_center_first_paint_shell(", render_source)
         self.assertLess(
-            render_source.index('st.button(f"Load {source_view}"'),
+            render_source.index('st.button(f"Load {active_view}"'),
             render_source.index("_load_alert_center_view_data("),
         )
         first_paint_source = inspect.getsource(alert_center._render_alert_center_first_paint_shell)

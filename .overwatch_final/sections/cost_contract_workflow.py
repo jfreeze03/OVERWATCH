@@ -57,6 +57,8 @@ def _apply_cost_workflow_preset(workflow: str) -> None:
     workflow_changed = st.session_state.get(_LAST_COST_WORKFLOW_KEY) != workflow_name
     preserve_cost_center_view = bool(st.session_state.pop(_PRESERVE_COST_CENTER_VIEW_KEY, False))
     for key, value in presets.items():
+        if key == "cc_explorer_lens" and st.session_state.get(key):
+            continue
         if (
             key in {"cost_center_view", "cc_explorer_lens"}
             and preserve_cost_center_view

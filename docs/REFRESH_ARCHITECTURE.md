@@ -44,11 +44,12 @@ audit behavior.
 
 ## Entry Command Brief Sources
 
-Primary section entry uses mart-backed Command Briefs. The UI reads one compact
-packet from `MART_SECTION_COMMAND_BRIEF` and its BRIEF_ID-linked child rows on
-entry so the section has an operational story immediately. Heavy detail/live
-proof remains explicit behind the section's Load, Refresh, investigation, or
-evidence controls.
+Primary section entry uses mart-backed Decision Briefs. The UI reads one compact
+packet from `MART_SECTION_DECISION_CURRENT` on entry, parses the embedded parent,
+metric, finding, source, and action payload, and renders an operational story
+immediately. The normalized BRIEF_ID-linked history tables remain available for
+audit, validation, and diagnostics. Heavy detail/live proof remains explicit
+behind the section's Load, Refresh, investigation, or evidence controls.
 
 | Surface | Entry command brief source | Target freshness | Live fallback |
 |---|---|---:|---|
@@ -59,14 +60,31 @@ evidence controls.
 | Workload Operations | `MART_SECTION_COMMAND_BRIEF` packet from query, task, procedure, copy/load, change, and reliability summaries | 30 min | Explicit live triage |
 | Security Monitoring | `MART_SECTION_COMMAND_BRIEF` packet from security, alert, owner coverage, and change summaries | 60 min | Explicit drilldown only |
 
-`SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS()` populates the parent brief,
-typed metrics, priority exceptions, source-coverage fields, and allowlisted
-action references for canonical 1, 7, 14, 30, 60, and 90 day windows. The task
+`SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS()` runs six explicit decision
+builders (`executive_decision`, `dba_decision`, `alert_decision`,
+`cost_decision`, `workload_decision`, and `security_decision`) before packaging
+the current packet. Each builder owns the section state, headline, top signal,
+impact, owner route, evidence source, primary route key, and action label.
+Cost movement cannot change Security state, workload failures cannot become Cost
+state without cost evidence, and Cortex predictive alerts route to Cortex/Cost
+unless the source signal is genuinely security-related.
+
+The procedure populates the parent brief, typed metrics, source-level trust
+rows, priority findings, and allowlisted action references for canonical 1, 7,
+14, 30, 60, and 90 day windows. The task
 `OVERWATCH_SECTION_COMMAND_BRIEF_REFRESH` runs every 15 minutes against compact
 summary marts; it does not perform raw app-entry `ACCOUNT_USAGE` proof scans.
 Validation calls the procedure and checks all six sections, BRIEF_ID
-relationships, child-row orphans, typed metrics, route keys, source coverage,
-freshness targets, and canonical window coverage.
+relationships, child-row orphans, typed metrics, route keys, current packet
+coverage, source rows, source coverage, freshness targets, and canonical window
+coverage.
+
+Source trust is measured per source through
+`OVERWATCH_SECTION_COMMAND_SOURCE_CONFIG` and `MART_SECTION_COMMAND_SOURCE`.
+Missing sources remain missing, stale sources remain stale, and
+`SOURCE_COVERAGE_PCT` is the share of required sources that were available for
+the selected scope/window. The UI displays requested versus resolved scope when
+the current packet falls back to an ALL/GLOBAL row.
 
 The refresh contract stays in this document and in the read-only validation SQL
 instead of a static mart table. Run `snowflake/OVERWATCH_MART_VALIDATION.sql`

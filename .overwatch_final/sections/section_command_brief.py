@@ -11,7 +11,6 @@ import time
 import pandas as pd
 import streamlit as st
 
-from sections.command_deck_contracts import get_command_deck_contract
 from sections.section_command_contracts import SectionCommandContract, get_section_command_contract
 from utils.mart_names import mart_object_name
 from utils.query import run_query, sql_literal
@@ -25,6 +24,7 @@ NEGATIVE_CACHE_SECONDS = 45
 class SectionCommandMetric:
     label: str
     value: str
+    key: str = ""
     detail: str = ""
     tone: str = "neutral"
     trend: str = ""
@@ -33,11 +33,12 @@ class SectionCommandMetric:
     numeric_value: float | None = None
     text_value: str = ""
     metric_format: str = ""
-    trend_points: tuple[float, ...] = ()
+    trend_points: tuple[object, ...] = ()
     prior_value: float | None = None
     delta_numeric_value: float | None = None
     delta_percent: float | None = None
     trend_direction: str = ""
+    directionality: str = "higher_is_worse"
 
 
 @dataclass(frozen=True)
@@ -55,6 +56,9 @@ class SectionCommandSignal:
     owner_gap: bool = False
     age_minutes: float | None = None
     sla_state: str = ""
+    route_key: str = ""
+    evidence_source: str = ""
+    confidence: str = ""
 
 
 @dataclass(frozen=True)
@@ -227,8 +231,8 @@ def _variant_records(value: object) -> list[Mapping[str, object]]:
     return records
 
 
-def _trend_points(value: object) -> tuple[float, ...]:
-    points: list[float] = []
+def _trend_points(value: object) -> tuple[object, ...]:
+    points: list[object] = []
     if isinstance(value, str) and value.strip():
         try:
             value = json.loads(value)
@@ -242,7 +246,11 @@ def _trend_points(value: object) -> tuple[float, ...]:
         return ()
     for item in value[:14]:
         if isinstance(item, Mapping):
-            item = item.get("value", item.get("VALUE"))
+            ts = item.get("ts", item.get("TS", item.get("date", item.get("DATE", ""))))
+            numeric = _float_or_none(item.get("value", item.get("VALUE")))
+            if numeric is not None:
+                points.append({"ts": str(ts or ""), "value": numeric})
+            continue
         numeric = _float_or_none(item)
         if numeric is not None:
             points.append(numeric)
@@ -254,6 +262,7 @@ def _metric_from_row(row: Mapping[str, object]) -> SectionCommandMetric:
     text_value = _string(_column(row, "METRIC_TEXT_VALUE", "TEXT_VALUE"))
     value = _string(_column(row, "METRIC_VALUE", "VALUE"), text_value or "Unavailable")
     return SectionCommandMetric(
+        key=_string(_column(row, "METRIC_KEY", "KEY")),
         label=_string(_column(row, "METRIC_LABEL", "LABEL"), "Metric"),
         value=value,
         detail=_string(_column(row, "METRIC_DETAIL", "DETAIL")),
@@ -269,6 +278,7 @@ def _metric_from_row(row: Mapping[str, object]) -> SectionCommandMetric:
         delta_numeric_value=_float_or_none(_column(row, "DELTA_NUMERIC_VALUE")),
         delta_percent=_float_or_none(_column(row, "DELTA_PERCENT")),
         trend_direction=_string(_column(row, "TREND_DIRECTION")),
+        directionality=_string(_column(row, "DIRECTIONALITY"), "higher_is_worse"),
     )
 
 
@@ -287,6 +297,9 @@ def _signal_from_row(row: Mapping[str, object]) -> SectionCommandSignal:
         owner_gap=_bool_value(_column(row, "OWNER_GAP", default=False)),
         age_minutes=_float_or_none(_column(row, "AGE_MINUTES")),
         sla_state=_string(_column(row, "SLA_STATE")),
+        route_key=_string(_column(row, "ROUTE_KEY")),
+        evidence_source=_string(_column(row, "EVIDENCE_SOURCE")),
+        confidence=_string(_column(row, "CONFIDENCE")),
     )
 
 
@@ -303,23 +316,6 @@ def _action_from_row(row: Mapping[str, object]) -> SectionCommandAction:
 
 
 def _default_actions(contract: SectionCommandContract) -> tuple[SectionCommandAction, ...]:
-    deck_actions = ()
-    try:
-        deck_actions = tuple(get_command_deck_contract(contract.section).route_actions or ())
-    except Exception:
-        deck_actions = ()
-    if deck_actions:
-        return tuple(
-            SectionCommandAction(
-                label=str(action.label),
-                detail=str(action.description),
-                target_section=str(action.target_section or contract.section),
-                target_workflow=str(action.target_workflow or ""),
-                cta=str(action.label),
-                action_key=str(action.label).lower().replace(" ", "_"),
-            )
-            for action in deck_actions[:3]
-        )
     return tuple(
         SectionCommandAction(
             label=label,
@@ -328,8 +324,9 @@ def _default_actions(contract: SectionCommandContract) -> tuple[SectionCommandAc
             target_workflow=target_workflow,
             cta=label,
             action_key=label.lower().replace(" ", "_"),
+            route_key=contract.fallback_route_keys[index] if index < len(contract.fallback_route_keys) else "",
         )
-        for label, detail, target_section, target_workflow in contract.next_actions[:3]
+        for index, (label, detail, target_section, target_workflow) in enumerate(contract.next_actions[:3])
     )
 
 
@@ -417,15 +414,49 @@ def _scoped_where(section: str, company: str, environment: str, window_days: int
 
 
 def _packet_sql(section: str, company: str, environment: str, window_days: int) -> str:
-    brief_table = mart_object_name("MART_SECTION_COMMAND_BRIEF")
-    metric_table = mart_object_name("MART_SECTION_COMMAND_METRIC")
-    exception_table = mart_object_name("MART_SECTION_COMMAND_EXCEPTION")
-    action_table = mart_object_name("MART_SECTION_COMMAND_ACTION")
+    current_table = mart_object_name("MART_SECTION_DECISION_CURRENT")
     where = _scoped_where(section, company, environment, window_days)
     return f"""
-WITH latest_brief AS (
-    SELECT *
-    FROM {brief_table}
+SELECT
+    DECISION_PACKET:"BRIEF_ID"::VARCHAR AS BRIEF_ID,
+    DECISION_PACKET:"SECTION_NAME"::VARCHAR AS SECTION_NAME,
+    DECISION_PACKET:"COMPANY"::VARCHAR AS COMPANY,
+    DECISION_PACKET:"ENVIRONMENT"::VARCHAR AS ENVIRONMENT,
+    DECISION_PACKET:"WINDOW_DAYS"::NUMBER AS WINDOW_DAYS,
+    DECISION_PACKET:"SNAPSHOT_TS"::TIMESTAMP_NTZ AS SNAPSHOT_TS,
+    DECISION_PACKET:"STATE"::VARCHAR AS STATE,
+    DECISION_PACKET:"HEADLINE"::VARCHAR AS HEADLINE,
+    DECISION_PACKET:"SUMMARY"::VARCHAR AS SUMMARY,
+    DECISION_PACKET:"TOP_SIGNAL"::VARCHAR AS TOP_SIGNAL,
+    DECISION_PACKET:"TOP_ENTITY"::VARCHAR AS TOP_ENTITY,
+    DECISION_PACKET:"TOP_ACTION"::VARCHAR AS TOP_ACTION,
+    DECISION_PACKET:"SOURCE_STATUS"::VARCHAR AS SOURCE_STATUS,
+    DECISION_PACKET:"SOURCE_FRESHNESS"::VARCHAR AS SOURCE_FRESHNESS,
+    DECISION_PACKET:"SOURCE_OBJECTS"::VARCHAR AS SOURCE_OBJECTS,
+    DECISION_PACKET:"SOURCE_SNAPSHOT_TS"::TIMESTAMP_NTZ AS SOURCE_SNAPSHOT_TS,
+    DECISION_PACKET:"FRESHNESS_MINUTES"::NUMBER AS FRESHNESS_MINUTES,
+    DECISION_PACKET:"TARGET_FRESHNESS_MINUTES"::NUMBER AS TARGET_FRESHNESS_MINUTES,
+    DECISION_PACKET:"IS_STALE"::BOOLEAN AS IS_STALE,
+    DECISION_PACKET:"RESOLVED_COMPANY"::VARCHAR AS RESOLVED_COMPANY,
+    DECISION_PACKET:"RESOLVED_ENVIRONMENT"::VARCHAR AS RESOLVED_ENVIRONMENT,
+    DECISION_PACKET:"RESOLVED_WINDOW_DAYS"::NUMBER AS RESOLVED_WINDOW_DAYS,
+    DECISION_PACKET:"CONFIDENCE"::VARCHAR AS CONFIDENCE,
+    DECISION_PACKET:"REQUIRED_SOURCE_COUNT"::NUMBER AS REQUIRED_SOURCE_COUNT,
+    DECISION_PACKET:"AVAILABLE_SOURCE_COUNT"::NUMBER AS AVAILABLE_SOURCE_COUNT,
+    DECISION_PACKET:"MISSING_SOURCE_COUNT"::NUMBER AS MISSING_SOURCE_COUNT,
+    DECISION_PACKET:"SOURCE_COVERAGE_PCT"::NUMBER AS SOURCE_COVERAGE_PCT,
+    DECISION_PACKET:"DATA_AVAILABILITY_STATE"::VARCHAR AS DATA_AVAILABILITY_STATE,
+    DECISION_PACKET:"STALE_SOURCE_COUNT"::NUMBER AS STALE_SOURCE_COUNT,
+    DECISION_PACKET:"SOURCE_GAP_DETAIL"::VARCHAR AS SOURCE_GAP_DETAIL,
+    DECISION_PACKET:"PRIMARY_ACTION_KEY"::VARCHAR AS PRIMARY_ACTION_KEY,
+    DECISION_PACKET:"PRIMARY_ROUTE_KEY"::VARCHAR AS PRIMARY_ROUTE_KEY,
+    DECISION_PACKET:"PRIMARY_ACTION_LABEL"::VARCHAR AS PRIMARY_ACTION_LABEL,
+    DECISION_PACKET:"PRIMARY_ACTION_DETAIL"::VARCHAR AS PRIMARY_ACTION_DETAIL,
+    DECISION_PACKET:"LOAD_TS"::TIMESTAMP_NTZ AS LOAD_TS,
+    DECISION_PACKET:"METRICS" AS METRICS,
+    DECISION_PACKET:"EXCEPTIONS" AS EXCEPTIONS,
+    DECISION_PACKET:"ACTIONS" AS ACTIONS
+    FROM {current_table}
     WHERE {where}
     ORDER BY
         IFF(UPPER(COMPANY) = UPPER({sql_literal(company, 100)}), 1, 0) DESC,
@@ -433,105 +464,7 @@ WITH latest_brief AS (
         IFF(WINDOW_DAYS = {int(window_days)}, 1, 0) DESC,
         SNAPSHOT_TS DESC,
         LOAD_TS DESC
-    LIMIT 1
-),
-metric_packet AS (
-    SELECT
-        BRIEF_ID,
-        ARRAY_AGG(
-            OBJECT_CONSTRUCT_KEEP_NULL(
-                'METRIC_KEY', METRIC_KEY,
-                'METRIC_LABEL', METRIC_LABEL,
-                'METRIC_VALUE', METRIC_VALUE,
-                'METRIC_NUMERIC_VALUE', METRIC_NUMERIC_VALUE,
-                'METRIC_TEXT_VALUE', METRIC_TEXT_VALUE,
-                'METRIC_FORMAT', METRIC_FORMAT,
-                'METRIC_UNIT', METRIC_UNIT,
-                'METRIC_DETAIL', METRIC_DETAIL,
-                'METRIC_TONE', METRIC_TONE,
-                'TREND_POINTS', TREND_POINTS,
-                'PRIOR_VALUE', PRIOR_VALUE,
-                'DELTA_NUMERIC_VALUE', DELTA_NUMERIC_VALUE,
-                'DELTA_PERCENT', DELTA_PERCENT,
-                'TREND_DIRECTION', TREND_DIRECTION,
-                'TREND_NUMERIC_VALUE', TREND_NUMERIC_VALUE,
-                'TREND_LABEL', TREND_LABEL,
-                'SORT_ORDER', SORT_ORDER
-            )
-        ) WITHIN GROUP (ORDER BY SORT_ORDER, METRIC_LABEL) AS METRICS
-    FROM {metric_table}
-    WHERE BRIEF_ID IN (SELECT BRIEF_ID FROM latest_brief)
-    GROUP BY BRIEF_ID
-),
-exception_packet AS (
-    SELECT
-        BRIEF_ID,
-        ARRAY_AGG(
-            OBJECT_CONSTRUCT_KEEP_NULL(
-                'SEVERITY', SEVERITY,
-                'SIGNAL', SIGNAL,
-                'ENTITY_TYPE', ENTITY_TYPE,
-                'ENTITY_NAME', ENTITY_NAME,
-                'DETAIL', DETAIL,
-                'ROUTE_SECTION', ROUTE_SECTION,
-                'ROUTE_WORKFLOW', ROUTE_WORKFLOW,
-                'PRIORITY_SCORE', PRIORITY_SCORE,
-                'IMPACT_VALUE', IMPACT_VALUE,
-                'IMPACT_UNIT', IMPACT_UNIT,
-                'OWNER_ROUTE', OWNER_ROUTE,
-                'OWNER_GAP', OWNER_GAP,
-                'AGE_MINUTES', AGE_MINUTES,
-                'SLA_STATE', SLA_STATE,
-                'SORT_ORDER', SORT_ORDER
-            )
-        ) WITHIN GROUP (
-            ORDER BY
-                CASE UPPER(SEVERITY)
-                    WHEN 'CRITICAL' THEN 10
-                    WHEN 'HIGH' THEN 20
-                    WHEN 'MEDIUM' THEN 30
-                    WHEN 'WATCH' THEN 40
-                    WHEN 'LOW' THEN 50
-                    WHEN 'INFO' THEN 60
-                    WHEN 'CLEAR' THEN 90
-                    ELSE 80
-                END,
-                PRIORITY_SCORE DESC,
-                SORT_ORDER,
-                SIGNAL
-        ) AS EXCEPTIONS
-    FROM {exception_table}
-    WHERE BRIEF_ID IN (SELECT BRIEF_ID FROM latest_brief)
-    GROUP BY BRIEF_ID
-),
-action_packet AS (
-    SELECT
-        BRIEF_ID,
-        ARRAY_AGG(
-            OBJECT_CONSTRUCT_KEEP_NULL(
-                'ACTION_KEY', ACTION_KEY,
-                'ROUTE_KEY', ROUTE_KEY,
-                'ACTION_LABEL', ACTION_LABEL,
-                'ACTION_DETAIL', ACTION_DETAIL,
-                'CTA_LABEL', CTA_LABEL,
-                'TARGET_SECTION', TARGET_SECTION,
-                'TARGET_WORKFLOW', TARGET_WORKFLOW,
-                'SORT_ORDER', SORT_ORDER
-            )
-        ) WITHIN GROUP (ORDER BY SORT_ORDER, ACTION_LABEL) AS ACTIONS
-    FROM {action_table}
-    WHERE BRIEF_ID IN (SELECT BRIEF_ID FROM latest_brief)
-    GROUP BY BRIEF_ID
-)
-SELECT
-    b.*,
-    COALESCE(m.METRICS, ARRAY_CONSTRUCT()) AS METRICS,
-    COALESCE(e.EXCEPTIONS, ARRAY_CONSTRUCT()) AS EXCEPTIONS,
-    COALESCE(a.ACTIONS, ARRAY_CONSTRUCT()) AS ACTIONS
-FROM latest_brief b
-LEFT JOIN metric_packet m ON m.BRIEF_ID = b.BRIEF_ID
-LEFT JOIN exception_packet e ON e.BRIEF_ID = b.BRIEF_ID
-LEFT JOIN action_packet a ON a.BRIEF_ID = b.BRIEF_ID
+LIMIT 1
 """
 
 
@@ -576,7 +509,23 @@ def _brief_from_packet(
         entity=_string(_column(row, "TOP_ENTITY")),
         detail=_string(_column(row, "TOP_ACTION"), contract.top_signal_detail),
     )
-    actions = tuple(_action_from_row(item) for item in _variant_records(_column(row, "ACTIONS"))) or _default_actions(contract)
+    packet_actions = tuple(_action_from_row(item) for item in _variant_records(_column(row, "ACTIONS")))
+    primary_route_key = _string(_column(row, "PRIMARY_ROUTE_KEY"))
+    primary_label = _string(_column(row, "PRIMARY_ACTION_LABEL"))
+    primary_detail = _string(_column(row, "PRIMARY_ACTION_DETAIL"))
+    primary_action = (
+        SectionCommandAction(
+            label=primary_label or _string(_column(row, "TOP_SIGNAL"), "Open top route"),
+            detail=primary_detail or _string(_column(row, "TOP_ACTION"), "Open the highest-priority route."),
+            cta=primary_label or "Open top route",
+            action_key=_string(_column(row, "PRIMARY_ACTION_KEY"), "primary_action"),
+            route_key=primary_route_key,
+        )
+        if primary_route_key
+        else None
+    )
+    actions = ((primary_action,) if primary_action else ()) + packet_actions
+    actions = actions or _default_actions(contract)
     loaded_at = _string(_column(row, "LOAD_TS", "SNAPSHOT_TS"), _now_label())
     source_status = _string(_column(row, "SOURCE_STATUS"), "Summary loaded from mart")
     source_freshness = _string(_column(row, "SOURCE_FRESHNESS"), loaded_at)

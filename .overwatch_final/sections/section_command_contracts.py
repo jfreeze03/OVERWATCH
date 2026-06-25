@@ -9,6 +9,25 @@ from sections.first_paint_contracts import get_first_paint_contract
 
 
 @dataclass(frozen=True)
+class SectionCommandSource:
+    source_key: str
+    source_object: str
+    required: bool = True
+    target_freshness_minutes: int = 60
+    default_confidence: str = "allocated"
+
+
+@dataclass(frozen=True)
+class SectionCommandMetricContract:
+    key: str
+    label: str
+    primary: bool = False
+    metric_format: str = "integer"
+    unit: str = ""
+    directionality: str = "higher_is_worse"
+
+
+@dataclass(frozen=True)
 class SectionCommandContract:
     """Static copy and fallback shape for an auto-populated command brief."""
 
@@ -19,12 +38,17 @@ class SectionCommandContract:
     expected_lanes: tuple[str, ...]
     source_table: str
     required_sources: tuple[str, ...]
+    source_configs: tuple[SectionCommandSource, ...]
     target_freshness_minutes: int
+    metric_keys: tuple[str, ...]
+    primary_metric_keys: tuple[str, ...]
+    metric_contracts: tuple[SectionCommandMetricContract, ...]
     unavailable_headline: str
     unavailable_summary: str
     top_signal_label: str
     top_signal_detail: str
     next_actions: tuple[tuple[str, str, str, str], ...]
+    fallback_route_keys: tuple[str, ...] = ()
 
 
 def _contract(
@@ -32,15 +56,18 @@ def _contract(
     *,
     metric_labels: tuple[str, ...],
     source_table: str,
-    required_sources: tuple[str, ...],
+    source_configs: tuple[SectionCommandSource, ...],
     target_freshness_minutes: int,
     unavailable_headline: str,
     unavailable_summary: str,
     top_signal_label: str,
     top_signal_detail: str,
     next_actions: tuple[tuple[str, str, str, str], ...],
+    metric_contracts: tuple[SectionCommandMetricContract, ...],
+    fallback_route_keys: tuple[str, ...],
 ) -> SectionCommandContract:
     first_paint = get_first_paint_contract(section)
+    required_sources = tuple(source.source_object for source in source_configs if source.required)
     return SectionCommandContract(
         section=first_paint.section,
         default_view=first_paint.default_view,
@@ -49,12 +76,50 @@ def _contract(
         expected_lanes=first_paint.expected_lanes,
         source_table=source_table,
         required_sources=required_sources,
+        source_configs=source_configs,
         target_freshness_minutes=int(target_freshness_minutes),
+        metric_keys=tuple(metric.key for metric in metric_contracts),
+        primary_metric_keys=tuple(metric.key for metric in metric_contracts if metric.primary),
+        metric_contracts=metric_contracts,
         unavailable_headline=unavailable_headline,
         unavailable_summary=unavailable_summary,
         top_signal_label=top_signal_label,
         top_signal_detail=top_signal_detail,
         next_actions=next_actions,
+        fallback_route_keys=fallback_route_keys,
+    )
+
+
+def _sources(
+    section_target: int,
+    *sources: tuple[str, str, bool, str] | tuple[str, str, bool],
+) -> tuple[SectionCommandSource, ...]:
+    rows: list[SectionCommandSource] = []
+    for item in sources:
+        source_key, source_object, required, *rest = item
+        rows.append(
+            SectionCommandSource(
+                source_key=source_key,
+                source_object=source_object,
+                required=bool(required),
+                target_freshness_minutes=section_target,
+                default_confidence=str(rest[0]) if rest else "allocated",
+            )
+        )
+    return tuple(rows)
+
+
+def _metrics(*items: tuple[str, str, bool, str, str, str]) -> tuple[SectionCommandMetricContract, ...]:
+    return tuple(
+        SectionCommandMetricContract(
+            key=key,
+            label=label,
+            primary=primary,
+            metric_format=metric_format,
+            unit=unit,
+            directionality=directionality,
+        )
+        for key, label, primary, metric_format, unit, directionality in items
     )
 
 
@@ -62,8 +127,31 @@ SECTION_COMMAND_CONTRACTS: Mapping[str, SectionCommandContract] = {
     "Executive Landing": _contract(
         "Executive Landing",
         source_table="MART_SECTION_COMMAND_BRIEF",
-        required_sources=("MART_EXECUTIVE_OBSERVABILITY", "MART_DBA_CONTROL_ROOM", "FACT_COST_DAILY", "ALERT_EVENTS"),
+        source_configs=_sources(
+            60,
+            ("executive_observability", "MART_EXECUTIVE_OBSERVABILITY", True, "allocated"),
+            ("executive_scorecard", "MART_EXECUTIVE_SCORECARD_SUMMARY", True, "allocated"),
+            ("executive_forecast", "MART_EXECUTIVE_FORECAST_SUMMARY", True, "estimated"),
+            ("closed_loop", "MART_CLOSED_LOOP_OPERATIONS_SUMMARY", True, "allocated"),
+            ("production_readiness", "MART_PRODUCTION_READINESS_SUMMARY", True, "allocated"),
+            ("data_trust", "MART_DATA_TRUST_SUMMARY", False, "allocated"),
+            ("app_observability", "MART_APP_OBSERVABILITY_SUMMARY", False, "allocated"),
+        ),
         target_freshness_minutes=60,
+        metric_contracts=_metrics(
+            ("platform_health", "Platform Health", True, "percentage", "score", "lower_is_worse"),
+            ("spend_movement_pct", "Spend Movement", True, "percentage", "percent", "higher_is_worse"),
+            ("critical_high_issues", "Critical / High Issues", True, "integer", "issues", "higher_is_worse"),
+            ("open_actions", "Open Actions", True, "integer", "actions", "higher_is_worse"),
+            ("cortex_spend", "Cortex AI Spend", False, "currency", "USD", "higher_is_worse"),
+            ("cortex_risk", "Cortex Risk", False, "integer", "signals", "higher_is_worse"),
+            ("operational_risk", "Operational Risk", False, "integer", "signals", "higher_is_worse"),
+            ("security_risk", "Security Risk", False, "integer", "signals", "higher_is_worse"),
+            ("production_readiness", "Production Readiness", False, "percentage", "percent", "lower_is_worse"),
+            ("data_trust", "Data Trust", False, "percentage", "percent", "lower_is_worse"),
+            ("verified_value", "Verified Value", False, "currency", "USD", "higher_is_better"),
+            ("monitoring_overhead", "Monitoring Overhead", False, "currency", "USD", "higher_is_worse"),
+        ),
         metric_labels=(
             "Platform state",
             "Major issues",
@@ -86,12 +174,34 @@ SECTION_COMMAND_CONTRACTS: Mapping[str, SectionCommandContract] = {
             ("Investigate Active Alerts", "Open current alert families and route the highest-severity item.", "Alert Center", "Active Alerts"),
             ("Open DBA Cockpit", "Open DBA-owned failures, queue pressure, and action status.", "DBA Control Room", "Morning Cockpit"),
         ),
+        fallback_route_keys=("cost_contract_cortex_ai", "alert_center_active", "dba_overview"),
     ),
     "DBA Control Room": _contract(
         "DBA Control Room",
         source_table="MART_SECTION_COMMAND_BRIEF",
-        required_sources=("MART_DBA_CONTROL_ROOM", "FACT_QUERY_HOURLY", "FACT_TASK_RUN", "OVERWATCH_ACTION_QUEUE"),
+        source_configs=_sources(
+            30,
+            ("dba_control_room", "MART_DBA_CONTROL_ROOM", True, "allocated"),
+            ("query_summary", "FACT_QUERY_HOURLY", True, "allocated"),
+            ("task_runs", "FACT_TASK_RUN", True, "allocated"),
+            ("action_queue", "OVERWATCH_ACTION_QUEUE", True, "allocated"),
+            ("change_summary", "MART_CHANGE_INTELLIGENCE_SUMMARY", False, "allocated"),
+            ("security_summary", "FACT_SECURITY_OPERABILITY_DAILY", False, "allocated"),
+            ("cost_summary", "FACT_COST_DAILY", False, "allocated"),
+        ),
         target_freshness_minutes=30,
+        metric_contracts=_metrics(
+            ("failed_queries", "Failed Queries", True, "integer", "queries", "higher_is_worse"),
+            ("pipeline_failures", "Pipeline Failures", True, "integer", "events", "higher_is_worse"),
+            ("queue_pressure", "Queue Pressure", True, "duration", "seconds", "higher_is_worse"),
+            ("cost_24h", "Cost 24h", True, "currency", "USD", "higher_is_worse"),
+            ("cortex_cost", "Cortex Cost", False, "currency", "USD", "higher_is_worse"),
+            ("security_warnings", "Security Warnings", False, "integer", "warnings", "higher_is_worse"),
+            ("recent_changes", "Recent Changes", False, "integer", "changes", "higher_is_worse"),
+            ("overdue_actions", "Overdue Actions", False, "integer", "actions", "higher_is_worse"),
+            ("hottest_warehouse", "Hottest Warehouse", False, "text", "warehouse", "neutral"),
+            ("top_dba_risk", "Top DBA Risk", False, "text", "risk", "neutral"),
+        ),
         metric_labels=(
             "Failed queries",
             "Failed tasks",
@@ -114,12 +224,31 @@ SECTION_COMMAND_CONTRACTS: Mapping[str, SectionCommandContract] = {
             ("Performance Watch", "Review queue, spilling, blocked, and long-running pressure.", "DBA Control Room", "Performance Watch"),
             ("Cost Watch", "Review spend pressure, Cortex cost, and largest drivers.", "DBA Control Room", "Cost Watch"),
         ),
+        fallback_route_keys=("dba_failures", "dba_performance", "cost_contract_explorer_warehouse"),
     ),
     "Alert Center": _contract(
         "Alert Center",
         source_table="MART_SECTION_COMMAND_BRIEF",
-        required_sources=("ALERT_EVENTS", "OVERWATCH_ACTION_QUEUE", "ALERT_NOTIFICATION_LOG"),
+        source_configs=_sources(
+            15,
+            ("alert_events", "ALERT_EVENTS", True, "exact"),
+            ("action_queue", "OVERWATCH_ACTION_QUEUE", True, "allocated"),
+            ("notification_log", "ALERT_NOTIFICATION_LOG", True, "exact"),
+            ("acknowledgements", "ALERT_ACKNOWLEDGEMENTS", False, "exact"),
+        ),
         target_freshness_minutes=15,
+        metric_contracts=_metrics(
+            ("active_alerts", "Active Alerts", True, "integer", "alerts", "higher_is_worse"),
+            ("critical_high", "Critical / High", True, "integer", "alerts", "higher_is_worse"),
+            ("overdue_alerts", "Overdue Alerts", True, "integer", "alerts", "higher_is_worse"),
+            ("cortex_predictive", "Cortex Predictive", True, "integer", "alerts", "higher_is_worse"),
+            ("cost_alerts", "Cost Alerts", False, "integer", "alerts", "higher_is_worse"),
+            ("reliability_alerts", "Reliability Alerts", False, "integer", "alerts", "higher_is_worse"),
+            ("security_alerts", "Security Alerts", False, "integer", "alerts", "higher_is_worse"),
+            ("notification_failures", "Notification Failures", False, "integer", "events", "higher_is_worse"),
+            ("unassigned_alerts", "Unassigned Alerts", False, "integer", "alerts", "higher_is_worse"),
+            ("open_action_queue", "Open Action Queue", False, "integer", "actions", "higher_is_worse"),
+        ),
         metric_labels=(
             "Active alerts",
             "Critical / high",
@@ -138,16 +267,38 @@ SECTION_COMMAND_CONTRACTS: Mapping[str, SectionCommandContract] = {
         top_signal_label="Top alert family",
         top_signal_detail="Work the highest severity family first; load alert rows only when row-level evidence is needed.",
         next_actions=(
-            ("Load Alert Rows", "Load detailed rows for the selected alert family.", "Alert Center", "Active Alerts"),
             ("Open Cortex Predictive", "Review forecasted Cortex spend and anomaly alerts.", "Alert Center", "Cortex Predictive Alerts"),
             ("Review Security Alerts", "Open security alert family and access-risk routes.", "Alert Center", "Security Alerts"),
+            ("Review Critical / High", "Open the highest-severity active alert family.", "Alert Center", "Critical / High"),
         ),
+        fallback_route_keys=("alert_cortex_predictive", "alert_center_security", "alert_center_critical_high"),
     ),
     "Cost & Contract": _contract(
         "Cost & Contract",
         source_table="MART_SECTION_COMMAND_BRIEF",
-        required_sources=("FACT_COST_DAILY", "FACT_CORTEX_DAILY", "FACT_COST_MONITORING_SIGNAL"),
+        source_configs=_sources(
+            60,
+            ("cost_daily", "FACT_COST_DAILY", True, "allocated"),
+            ("cortex_daily", "FACT_CORTEX_DAILY", True, "estimated"),
+            ("cost_signals", "FACT_COST_MONITORING_SIGNAL", True, "allocated"),
+            ("forecast", "MART_EXECUTIVE_FORECAST_SUMMARY", False, "estimated"),
+            ("value_ledger", "MART_EXECUTIVE_VALUE_LEDGER", False, "allocated"),
+            ("settings", "OVERWATCH_SETTINGS", True, "exact"),
+        ),
         target_freshness_minutes=60,
+        metric_contracts=_metrics(
+            ("total_spend", "Total Spend", True, "currency", "USD", "higher_is_worse"),
+            ("spend_movement_pct", "Spend Movement", True, "percentage", "percent", "higher_is_worse"),
+            ("forecast_run_rate", "Forecast / Run-rate", True, "currency", "USD", "higher_is_worse"),
+            ("cortex_spend_share", "Cortex Spend Share", True, "percentage", "percent", "higher_is_worse"),
+            ("cortex_spend", "Cortex AI Spend", False, "currency", "USD", "higher_is_worse"),
+            ("cortex_predictive_alerts", "Cortex Predictive Alerts", False, "integer", "alerts", "higher_is_worse"),
+            ("budget_contract_risk", "Budget / Contract Risk", False, "integer", "signals", "higher_is_worse"),
+            ("top_cost_driver", "Top Cost Driver", False, "text", "driver", "neutral"),
+            ("verified_savings", "Verified Savings", False, "currency", "USD", "higher_is_better"),
+            ("unverified_savings", "Unverified Savings", False, "currency", "USD", "higher_is_worse"),
+            ("open_cost_actions", "Open Cost Actions", False, "integer", "actions", "higher_is_worse"),
+        ),
         metric_labels=(
             "Total spend",
             "Spend movement",
@@ -170,12 +321,33 @@ SECTION_COMMAND_CONTRACTS: Mapping[str, SectionCommandContract] = {
             ("Open Warehouse Drivers", "Open Cost Explorer by warehouse without loading detail rows.", "Cost & Contract", "Cost Explorer"),
             ("Check Budget Risk", "Open budget, allocation, and contract posture.", "Cost & Contract", "Budget vs Actual"),
         ),
+        fallback_route_keys=("cost_contract_cortex_ai", "cost_contract_explorer_warehouse", "cost_contract_budget"),
     ),
     "Workload Operations": _contract(
         "Workload Operations",
         source_table="MART_SECTION_COMMAND_BRIEF",
-        required_sources=("FACT_QUERY_HOURLY", "FACT_TASK_RUN", "FACT_PROCEDURE_RUN", "FACT_COPY_LOAD_DAILY"),
+        source_configs=_sources(
+            30,
+            ("query_hourly", "FACT_QUERY_HOURLY", True, "allocated"),
+            ("query_recent", "FACT_QUERY_DETAIL_RECENT", False, "allocated"),
+            ("task_runs", "FACT_TASK_RUN", True, "allocated"),
+            ("procedure_runs", "FACT_PROCEDURE_RUN", True, "allocated"),
+            ("copy_load", "FACT_COPY_LOAD_DAILY", True, "allocated"),
+            ("change_summary", "MART_CHANGE_INTELLIGENCE_SUMMARY", False, "allocated"),
+        ),
         target_freshness_minutes=30,
+        metric_contracts=_metrics(
+            ("failed_queries", "Failed Queries", True, "integer", "queries", "higher_is_worse"),
+            ("pipeline_failures", "Pipeline Failures", True, "integer", "events", "higher_is_worse"),
+            ("queue_blocked_pressure", "Queue / Blocked Pressure", True, "duration", "seconds", "higher_is_worse"),
+            ("sla_risk", "SLA Risk", True, "integer", "items", "higher_is_worse"),
+            ("spill_bytes", "Spill Bytes", False, "bytes", "bytes", "higher_is_worse"),
+            ("long_running_queries", "Long Running Queries", False, "integer", "queries", "higher_is_worse"),
+            ("hottest_warehouse", "Hottest Warehouse", False, "text", "warehouse", "neutral"),
+            ("recent_workload_changes", "Recent Workload Changes", False, "integer", "changes", "higher_is_worse"),
+            ("suspended_tasks", "Suspended Tasks", False, "integer", "tasks", "higher_is_worse"),
+            ("copy_load_failures", "Copy / Load Failures", False, "integer", "events", "higher_is_worse"),
+        ),
         metric_labels=(
             "Active workload incidents",
             "Failed SQL",
@@ -198,12 +370,33 @@ SECTION_COMMAND_CONTRACTS: Mapping[str, SectionCommandContract] = {
             ("Pipeline & Tasks", "Open failed tasks, procedures, copy/load, and SLA risk.", "Workload Operations", "Pipeline & Task Health"),
             ("Performance Pressure", "Open queue, blocked, spilling, and warehouse pressure lanes.", "Workload Operations", "Performance & Contention"),
         ),
+        fallback_route_keys=("workload_query_investigation", "workload_pipeline_tasks", "workload_performance"),
     ),
     "Security Monitoring": _contract(
         "Security Monitoring",
         source_table="MART_SECTION_COMMAND_BRIEF",
-        required_sources=("FACT_SECURITY_OPERABILITY_DAILY", "ALERT_EVENTS", "MART_OPERATIONAL_OWNER_COVERAGE"),
+        source_configs=_sources(
+            60,
+            ("security_operability", "FACT_SECURITY_OPERABILITY_DAILY", True, "allocated"),
+            ("login_daily", "FACT_LOGIN_DAILY", True, "allocated"),
+            ("grant_daily", "FACT_GRANT_DAILY", True, "allocated"),
+            ("security_alerts", "ALERT_EVENTS", True, "allocated"),
+            ("owner_coverage", "MART_OPERATIONAL_OWNER_COVERAGE", True, "allocated"),
+            ("change_summary", "MART_CHANGE_INTELLIGENCE_SUMMARY", False, "allocated"),
+        ),
         target_freshness_minutes=60,
+        metric_contracts=_metrics(
+            ("failed_logins", "Failed Logins", True, "integer", "logins", "higher_is_worse"),
+            ("mfa_gaps", "MFA Gaps", True, "integer", "users", "higher_is_worse"),
+            ("risky_grants", "Risky Grants", True, "integer", "grants", "higher_is_worse"),
+            ("sharing_exposure", "Sharing Exposure", True, "integer", "databases", "higher_is_worse"),
+            ("privilege_changes", "Privilege Changes", False, "integer", "changes", "higher_is_worse"),
+            ("security_alerts", "Security Alerts", False, "integer", "alerts", "higher_is_worse"),
+            ("access_changes", "Access Changes", False, "integer", "changes", "higher_is_worse"),
+            ("unassigned_findings", "Unassigned Findings", False, "integer", "findings", "higher_is_worse"),
+            ("overdue_security_actions", "Overdue Security Actions", False, "integer", "actions", "higher_is_worse"),
+            ("owner_coverage", "Owner Coverage", False, "percentage", "percent", "lower_is_worse"),
+        ),
         metric_labels=(
             "Failed logins",
             "MFA signal",
@@ -226,6 +419,7 @@ SECTION_COMMAND_CONTRACTS: Mapping[str, SectionCommandContract] = {
             ("Review Risky Grants", "Open grants, role scope, and ownership exposure.", "Security Monitoring", "Risky Grants"),
             ("Review Access Changes", "Open recent grants, revokes, role changes, and admin changes.", "Security Monitoring", "Access Changes"),
         ),
+        fallback_route_keys=("security_risky_grants", "security_access_changes", "security_failed_logins"),
     ),
 }
 
@@ -241,6 +435,8 @@ def get_section_command_contract(section: str) -> SectionCommandContract:
 __all__ = [
     "CANONICAL_COMMAND_BRIEF_SECTIONS",
     "SECTION_COMMAND_CONTRACTS",
+    "SectionCommandMetricContract",
+    "SectionCommandSource",
     "SectionCommandContract",
     "get_section_command_contract",
 ]

@@ -70,7 +70,10 @@ class SectionCommandBriefTests(unittest.TestCase):
                     "METRIC_NUMERIC_VALUE": 120,
                     "METRIC_FORMAT": "currency",
                     "METRIC_DETAIL": "7d",
-                    "TREND_POINTS": [101, 120],
+                    "TREND_POINTS": [
+                        {"ts": "2026-06-18", "value": 101},
+                        {"ts": "2026-06-25", "value": 120},
+                    ],
                     "DELTA_PERCENT": 18.8,
                     "SORT_ORDER": 10,
                 },
@@ -120,7 +123,10 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertEqual(brief.headline, "Cost movement needs review.")
         self.assertEqual(brief.metrics[0].label, "Total spend")
         self.assertEqual(brief.metrics[0].numeric_value, 120)
-        self.assertEqual(brief.metrics[0].trend_points, (101.0, 120.0))
+        self.assertEqual(
+            brief.metrics[0].trend_points,
+            ({"ts": "2026-06-18", "value": 101.0}, {"ts": "2026-06-25", "value": 120.0}),
+        )
         self.assertEqual(brief.metrics[1].tone, "cortex")
         self.assertEqual(brief.top_signal.signal, "Cortex AI spend")
         self.assertEqual(brief.top_signal.priority_score, 95)
@@ -273,6 +279,9 @@ class SectionCommandBriefTests(unittest.TestCase):
             "MART_SECTION_COMMAND_METRIC",
             "MART_SECTION_COMMAND_EXCEPTION",
             "MART_SECTION_COMMAND_ACTION",
+            "MART_SECTION_COMMAND_SOURCE",
+            "MART_SECTION_DECISION_CURRENT",
+            "MART_EXECUTIVE_DECISION_INBOX",
         ):
             self.assertIn(name, setup)
             self.assertIn(name, validation)
@@ -303,10 +312,30 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertIn("MART_SECTION_COMMAND_METRIC", procs)
         self.assertIn("MART_SECTION_COMMAND_EXCEPTION", procs)
         self.assertIn("MART_SECTION_COMMAND_ACTION", procs)
+        self.assertIn("MART_SECTION_COMMAND_SOURCE", procs)
+        self.assertIn("MART_SECTION_DECISION_CURRENT", procs)
+        for builder in (
+            "EXECUTIVE_DECISION",
+            "DBA_DECISION",
+            "ALERT_DECISION",
+            "COST_DECISION",
+            "WORKLOAD_DECISION",
+            "SECURITY_DECISION",
+        ):
+            self.assertIn(builder, procs)
+        self.assertIn("DECISION_STATE AS STATE", procs)
+        self.assertIn("FROM TMP_SECTION_DECISION_LOGIC", procs)
+        self.assertIn("WHERE DECISION_SEVERITY <> 'CLEAR'", procs)
+        self.assertIn("OBJECT_CONSTRUCT_KEEP_NULL", procs)
+        self.assertIn("'TS'", procs)
+        self.assertIn("SETTING_NAME) = 'CREDIT_PRICE_USD'", procs)
+        self.assertNotIn("SETTING_KEY) = 'CREDIT_PRICE_USD'", procs)
         self.assertIn("CREATE OR REPLACE TASK OVERWATCH_SECTION_COMMAND_BRIEF_REFRESH", tasks)
         self.assertIn("SCHEDULE = '15 MINUTE'", tasks)
         self.assertIn("ALLOW_OVERLAPPING_EXECUTION = FALSE", tasks)
         self.assertIn("CALL SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS()", validation)
+        self.assertIn("SECTION_DECISION_CURRENT_PACKET_COVERAGE", validation)
+        self.assertIn("SECTION_COMMAND_SOURCE_ROWS", validation)
         self.assertIn("SECTION_COMMAND_BRIEF_ORPHAN_CHILD_ROWS", validation)
         self.assertIn("SECTION_COMMAND_BRIEF_CANONICAL_WINDOWS", validation)
         self.assertIn("DROP TASK IF EXISTS OVERWATCH_SECTION_COMMAND_BRIEF_REFRESH", drop)
@@ -316,16 +345,62 @@ class SectionCommandBriefTests(unittest.TestCase):
         from sections import section_command_brief as brief_module
 
         sql = brief_module._packet_sql("Cost & Contract", "ALFA", "ALL", 7).upper()
-        self.assertIn("LATEST_BRIEF", sql)
-        self.assertIn("ARRAY_AGG", sql)
-        self.assertIn("OBJECT_CONSTRUCT_KEEP_NULL", sql)
+        self.assertIn("MART_SECTION_DECISION_CURRENT", sql)
+        self.assertIn("DECISION_PACKET", sql)
         self.assertIn("BRIEF_ID", sql)
         self.assertIn("METRICS", sql)
         self.assertIn("EXCEPTIONS", sql)
         self.assertIn("ACTIONS", sql)
+        self.assertNotIn("ARRAY_AGG", sql)
+
+    def test_contract_metric_keys_are_explicit_and_primary(self):
+        from sections.section_command_contracts import SECTION_COMMAND_CONTRACTS
+
+        required = {
+            "Executive Landing": ("platform_health", "spend_movement_pct", "critical_high_issues", "open_actions"),
+            "DBA Control Room": ("failed_queries", "pipeline_failures", "queue_pressure", "cost_24h"),
+            "Alert Center": ("active_alerts", "critical_high", "overdue_alerts", "cortex_predictive"),
+            "Cost & Contract": ("total_spend", "spend_movement_pct", "forecast_run_rate", "cortex_spend_share"),
+            "Workload Operations": ("failed_queries", "pipeline_failures", "queue_blocked_pressure", "sla_risk"),
+            "Security Monitoring": ("failed_logins", "mfa_gaps", "risky_grants", "sharing_exposure"),
+        }
+        for section, keys in required.items():
+            with self.subTest(section=section):
+                contract = SECTION_COMMAND_CONTRACTS[section]
+                self.assertEqual(contract.primary_metric_keys, keys)
+                self.assertTrue(set(keys).issubset(set(contract.metric_keys)))
+                self.assertTrue(contract.source_configs)
+                self.assertTrue(contract.fallback_route_keys)
 
     def test_command_brief_routes_are_allowlisted_and_apply_after_defaults(self):
         from sections import command_brief_routes
+
+        emitted_route_keys = (
+            "executive_overview",
+            "dba_overview",
+            "dba_failures",
+            "dba_performance",
+            "alert_center_active",
+            "alert_center_critical_high",
+            "alert_cortex_predictive",
+            "alert_center_cost",
+            "alert_center_security",
+            "cost_contract_overview",
+            "cost_contract_cortex_ai",
+            "cost_contract_explorer_warehouse",
+            "cost_contract_budget",
+            "workload_query_investigation",
+            "workload_pipeline_tasks",
+            "workload_performance",
+            "security_overview",
+            "security_risky_grants",
+            "security_access_changes",
+            "security_alerts",
+            "security_failed_logins",
+        )
+        for route_key in emitted_route_keys:
+            with self.subTest(route_key=route_key):
+                self.assertIn(route_key, command_brief_routes.COMMAND_BRIEF_ROUTES)
 
         state = {}
         with patch.object(command_brief_routes.st, "session_state", state), patch.object(

@@ -13,11 +13,21 @@ layer. The full source of truth remains `snowflake/OVERWATCH_MART_SETUP.sql`.
 | `MART_SECTION_COMMAND_METRIC` | Transient mart | Typed metric rows keyed by `BRIEF_ID`, including numeric/text value fields, format, unit, trend points, delta fields, tone, and display order for the compact metric strip. |
 | `MART_SECTION_COMMAND_EXCEPTION` | Transient mart | Top signal/exception rows keyed by `BRIEF_ID` with deterministic severity, priority score, impact, owner route, SLA, and route context. |
 | `MART_SECTION_COMMAND_ACTION` | Transient mart | Allowlisted route action references keyed by `BRIEF_ID`; action rows provide `ACTION_KEY`, `ROUTE_KEY`, and `CTA_LABEL` instead of arbitrary app state mutation. |
+| `OVERWATCH_SECTION_COMMAND_SOURCE_CONFIG` | Table | Authoritative source-trust catalog for each primary section: source key/object, required flag, target freshness, default confidence, and enabled state. |
+| `MART_SECTION_COMMAND_SOURCE` | Transient mart | Source-level availability, freshness, stale/data-gap, confidence, and gap-reason rows keyed by `BRIEF_ID`. Missing sources stay missing and cannot be converted into healthy zeros. |
+| `MART_SECTION_DECISION_CURRENT` | Transient mart | One-row current decision packet per section/scope/window. App entry queries this table once and parses `DECISION_PACKET` instead of aggregating child tables at first paint. |
+| `MART_EXECUTIVE_DECISION_INBOX` | Transient mart | Latest cross-section priority rows derived from current decision findings for executive handoff and routing. |
 | `SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS` | Procedure | Populates command brief parent, metric, exception, and action rows for all six primary sections and canonical 1/7/14/30/60/90 day windows. |
 | `OVERWATCH_SECTION_COMMAND_BRIEF_REFRESH` | Task | Runs the compact command brief refresh every 15 minutes from scheduled summary marts. |
 
-The refresh contract and capability notes now live in documentation and
-validation SQL instead of static mart tables.
+Decision Brief 3.0 keeps normalized history for audit while serving the app from
+`MART_SECTION_DECISION_CURRENT`. Route behavior is allowlisted in code; mart
+actions choose an `ACTION_KEY`/`ROUTE_KEY` and cannot inject arbitrary Streamlit
+session-state updates. The refresh procedure uses six explicit decision-builder
+groups (`executive_decision`, `dba_decision`, `alert_decision`,
+`cost_decision`, `workload_decision`, and `security_decision`) so cost movement,
+workload failures, Cortex alerts, and security exposure do not leak into
+unrelated section state.
 
 ## Enterprise Operating Model
 

@@ -2191,6 +2191,68 @@ CREATE TRANSIENT TABLE IF NOT EXISTS MART_SECTION_COMMAND_ACTION (
   LOAD_TS                      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
 );
 
+CREATE TABLE IF NOT EXISTS OVERWATCH_SECTION_COMMAND_SOURCE_CONFIG (
+  SECTION_NAME                 VARCHAR(200),
+  SOURCE_KEY                   VARCHAR(200),
+  SOURCE_OBJECT                VARCHAR(500),
+  REQUIRED                     BOOLEAN DEFAULT TRUE,
+  TARGET_FRESHNESS_MINUTES     NUMBER,
+  DEFAULT_CONFIDENCE           VARCHAR(40),
+  ENABLED                      BOOLEAN DEFAULT TRUE,
+  LOAD_TS                      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+CREATE TRANSIENT TABLE IF NOT EXISTS MART_SECTION_COMMAND_SOURCE (
+  BRIEF_ID                     VARCHAR(64),
+  SECTION_NAME                 VARCHAR(200),
+  COMPANY                      VARCHAR(100),
+  ENVIRONMENT                  VARCHAR(100),
+  WINDOW_DAYS                  NUMBER,
+  SOURCE_KEY                   VARCHAR(200),
+  SOURCE_OBJECT                VARCHAR(500),
+  REQUIRED                     BOOLEAN,
+  AVAILABLE                    BOOLEAN,
+  SOURCE_SNAPSHOT_TS           TIMESTAMP_NTZ,
+  AGE_MINUTES                  NUMBER,
+  TARGET_FRESHNESS_MINUTES     NUMBER,
+  IS_STALE                     BOOLEAN,
+  CONFIDENCE                   VARCHAR(40),
+  GAP_REASON                   VARCHAR(1000),
+  SNAPSHOT_TS                  TIMESTAMP_NTZ,
+  LOAD_TS                      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+CREATE TRANSIENT TABLE IF NOT EXISTS MART_SECTION_DECISION_CURRENT (
+  SECTION_NAME                 VARCHAR(200),
+  COMPANY                      VARCHAR(100),
+  ENVIRONMENT                  VARCHAR(100),
+  WINDOW_DAYS                  NUMBER,
+  BRIEF_ID                     VARCHAR(64),
+  DECISION_PACKET              VARIANT,
+  SNAPSHOT_TS                  TIMESTAMP_NTZ,
+  SOURCE_SNAPSHOT_TS           TIMESTAMP_NTZ,
+  FRESHNESS_MINUTES            NUMBER,
+  PACKET_BYTES                 NUMBER,
+  LOAD_TS                      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+CREATE TRANSIENT TABLE IF NOT EXISTS MART_EXECUTIVE_DECISION_INBOX (
+  PRIORITY                     NUMBER,
+  SEVERITY                     VARCHAR(80),
+  SECTION_NAME                 VARCHAR(200),
+  SIGNAL                       VARCHAR(1000),
+  ENTITY                       VARCHAR(500),
+  IMPACT_VALUE                 NUMBER(18,2),
+  IMPACT_UNIT                  VARCHAR(80),
+  OWNER_ROUTE                  VARCHAR(200),
+  OWNER_GAP                    BOOLEAN,
+  AGE_MINUTES                  NUMBER,
+  SLA_STATE                    VARCHAR(80),
+  ROUTE_KEY                    VARCHAR(200),
+  SNAPSHOT_TS                  TIMESTAMP_NTZ,
+  LOAD_TS                      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
 ALTER TABLE IF EXISTS MART_SECTION_COMMAND_BRIEF ADD COLUMN IF NOT EXISTS BRIEF_ID VARCHAR(64);
 ALTER TABLE IF EXISTS MART_SECTION_COMMAND_BRIEF ADD COLUMN IF NOT EXISTS SOURCE_OBJECTS VARCHAR(2000);
 ALTER TABLE IF EXISTS MART_SECTION_COMMAND_BRIEF ADD COLUMN IF NOT EXISTS SOURCE_SNAPSHOT_TS TIMESTAMP_NTZ;
@@ -2230,6 +2292,14 @@ ALTER TABLE IF EXISTS MART_SECTION_COMMAND_ACTION ADD COLUMN IF NOT EXISTS BRIEF
 ALTER TABLE IF EXISTS MART_SECTION_COMMAND_ACTION ADD COLUMN IF NOT EXISTS ACTION_KEY VARCHAR(200);
 ALTER TABLE IF EXISTS MART_SECTION_COMMAND_ACTION ADD COLUMN IF NOT EXISTS ROUTE_KEY VARCHAR(200);
 ALTER TABLE IF EXISTS MART_SECTION_COMMAND_ACTION ADD COLUMN IF NOT EXISTS CTA_LABEL VARCHAR(300);
+ALTER TABLE IF EXISTS MART_SECTION_COMMAND_METRIC ADD COLUMN IF NOT EXISTS DIRECTIONALITY VARCHAR(80);
+ALTER TABLE IF EXISTS MART_SECTION_COMMAND_EXCEPTION ADD COLUMN IF NOT EXISTS ROUTE_KEY VARCHAR(200);
+ALTER TABLE IF EXISTS MART_SECTION_COMMAND_EXCEPTION ADD COLUMN IF NOT EXISTS EVIDENCE_SOURCE VARCHAR(500);
+ALTER TABLE IF EXISTS MART_SECTION_COMMAND_EXCEPTION ADD COLUMN IF NOT EXISTS CONFIDENCE VARCHAR(40);
+ALTER TABLE IF EXISTS MART_SECTION_COMMAND_BRIEF ADD COLUMN IF NOT EXISTS PRIMARY_ACTION_KEY VARCHAR(200);
+ALTER TABLE IF EXISTS MART_SECTION_COMMAND_BRIEF ADD COLUMN IF NOT EXISTS PRIMARY_ROUTE_KEY VARCHAR(200);
+ALTER TABLE IF EXISTS MART_SECTION_COMMAND_BRIEF ADD COLUMN IF NOT EXISTS PRIMARY_ACTION_LABEL VARCHAR(300);
+ALTER TABLE IF EXISTS MART_SECTION_COMMAND_BRIEF ADD COLUMN IF NOT EXISTS PRIMARY_ACTION_DETAIL VARCHAR(1200);
 
 -- -----------------------------------------------------------------------------
 -- Enterprise operating model: Finding -> Owner -> Trust -> Impact -> Action -> Value
@@ -9399,7 +9469,63 @@ BEGIN
   DELETE FROM MART_SECTION_COMMAND_ACTION WHERE SNAPSHOT_TS < DATEADD('DAY', -14, :snapshot_ts);
   DELETE FROM MART_SECTION_COMMAND_EXCEPTION WHERE SNAPSHOT_TS < DATEADD('DAY', -14, :snapshot_ts);
   DELETE FROM MART_SECTION_COMMAND_METRIC WHERE SNAPSHOT_TS < DATEADD('DAY', -14, :snapshot_ts);
+  DELETE FROM MART_SECTION_COMMAND_SOURCE WHERE SNAPSHOT_TS < DATEADD('DAY', -14, :snapshot_ts);
   DELETE FROM MART_SECTION_COMMAND_BRIEF WHERE SNAPSHOT_TS < DATEADD('DAY', -14, :snapshot_ts);
+
+  DELETE FROM OVERWATCH_SECTION_COMMAND_SOURCE_CONFIG
+  WHERE SECTION_NAME IN (
+    'Executive Landing',
+    'DBA Control Room',
+    'Alert Center',
+    'Cost & Contract',
+    'Workload Operations',
+    'Security Monitoring'
+  );
+
+  INSERT INTO OVERWATCH_SECTION_COMMAND_SOURCE_CONFIG (
+    SECTION_NAME,
+    SOURCE_KEY,
+    SOURCE_OBJECT,
+    REQUIRED,
+    TARGET_FRESHNESS_MINUTES,
+    DEFAULT_CONFIDENCE,
+    ENABLED
+  )
+  SELECT
+    SECTION_NAME,
+    SOURCE_KEY,
+    SOURCE_OBJECT,
+    REQUIRED,
+    TARGET_FRESHNESS_MINUTES,
+    DEFAULT_CONFIDENCE,
+    ENABLED
+  FROM VALUES
+      ('Executive Landing','executive_observability','MART_EXECUTIVE_OBSERVABILITY',TRUE,60,'allocated',TRUE),
+      ('Executive Landing','executive_scorecard','MART_EXECUTIVE_SCORECARD_SUMMARY',TRUE,60,'allocated',TRUE),
+      ('Executive Landing','executive_forecast','MART_EXECUTIVE_FORECAST_SUMMARY',TRUE,60,'estimated',TRUE),
+      ('Executive Landing','closed_loop','MART_CLOSED_LOOP_OPERATIONS_SUMMARY',TRUE,60,'allocated',TRUE),
+      ('Executive Landing','production_readiness','MART_PRODUCTION_READINESS_SUMMARY',TRUE,60,'allocated',TRUE),
+      ('DBA Control Room','dba_control_room','MART_DBA_CONTROL_ROOM',TRUE,30,'allocated',TRUE),
+      ('DBA Control Room','query_summary','FACT_QUERY_HOURLY',TRUE,30,'allocated',TRUE),
+      ('DBA Control Room','task_runs','FACT_TASK_RUN',TRUE,30,'allocated',TRUE),
+      ('DBA Control Room','action_queue','OVERWATCH_ACTION_QUEUE',TRUE,30,'allocated',TRUE),
+      ('Alert Center','alert_events','ALERT_EVENTS',TRUE,15,'exact',TRUE),
+      ('Alert Center','action_queue','OVERWATCH_ACTION_QUEUE',TRUE,15,'allocated',TRUE),
+      ('Alert Center','notification_log','ALERT_NOTIFICATION_LOG',TRUE,15,'exact',TRUE),
+      ('Cost & Contract','cost_daily','FACT_COST_DAILY',TRUE,60,'allocated',TRUE),
+      ('Cost & Contract','cortex_daily','FACT_CORTEX_DAILY',TRUE,60,'estimated',TRUE),
+      ('Cost & Contract','cost_signals','FACT_COST_MONITORING_SIGNAL',TRUE,60,'allocated',TRUE),
+      ('Cost & Contract','settings','OVERWATCH_SETTINGS',TRUE,60,'exact',TRUE),
+      ('Workload Operations','query_hourly','FACT_QUERY_HOURLY',TRUE,30,'allocated',TRUE),
+      ('Workload Operations','task_runs','FACT_TASK_RUN',TRUE,30,'allocated',TRUE),
+      ('Workload Operations','procedure_runs','FACT_PROCEDURE_RUN',TRUE,30,'allocated',TRUE),
+      ('Workload Operations','copy_load','FACT_COPY_LOAD_DAILY',TRUE,30,'allocated',TRUE),
+      ('Security Monitoring','security_operability','FACT_SECURITY_OPERABILITY_DAILY',TRUE,60,'allocated',TRUE),
+      ('Security Monitoring','login_daily','FACT_LOGIN_DAILY',TRUE,60,'allocated',TRUE),
+      ('Security Monitoring','grant_daily','FACT_GRANT_DAILY',TRUE,60,'allocated',TRUE),
+      ('Security Monitoring','security_alerts','ALERT_EVENTS',TRUE,60,'allocated',TRUE),
+      ('Security Monitoring','owner_coverage','MART_OPERATIONAL_OWNER_COVERAGE',TRUE,60,'allocated',TRUE)
+    AS v(SECTION_NAME, SOURCE_KEY, SOURCE_OBJECT, REQUIRED, TARGET_FRESHNESS_MINUTES, DEFAULT_CONFIDENCE, ENABLED);
 
   CREATE OR REPLACE TEMPORARY TABLE TMP_SECTION_COMMAND_FACTS AS
   WITH
@@ -9417,6 +9543,12 @@ BEGIN
     SELECT DISTINCT COALESCE(COMPANY, 'ALL') FROM ALERT_EVENTS WHERE COALESCE(COMPANY, '') <> ''
     UNION
     SELECT DISTINCT COALESCE(COMPANY, 'ALL') FROM OVERWATCH_ACTION_QUEUE WHERE COALESCE(COMPANY, '') <> ''
+  ),
+  settings AS (
+    SELECT
+      COALESCE(MAX(IFF(UPPER(SETTING_NAME) = 'CREDIT_PRICE_USD', TRY_TO_DOUBLE(SETTING_VALUE), NULL)), 3.68) AS CREDIT_PRICE_USD,
+      COALESCE(MAX(IFF(UPPER(SETTING_NAME) = 'AI_CREDIT_PRICE_USD', TRY_TO_DOUBLE(SETTING_VALUE), NULL)), 2.20) AS AI_CREDIT_PRICE_USD
+    FROM OVERWATCH_SETTINGS
   ),
   scopes AS (
     SELECT COMPANY, 'ALL' AS ENVIRONMENT, WINDOW_DAYS
@@ -9436,10 +9568,11 @@ BEGIN
     SELECT
       s.COMPANY,
       s.WINDOW_DAYS,
-      SUM(IFF(c.USAGE_DATE >= DATEADD('DAY', -1 * s.WINDOW_DAYS, CURRENT_DATE()), COALESCE(c.EST_COST_USD, COALESCE(c.CREDITS_BILLED, c.CREDITS_USED_COMPUTE, 0) * COALESCE(c.RATE_USD, 3.68)), 0)) AS COST_USD,
-      SUM(IFF(c.USAGE_DATE >= DATEADD('DAY', -2 * s.WINDOW_DAYS, CURRENT_DATE()) AND c.USAGE_DATE < DATEADD('DAY', -1 * s.WINDOW_DAYS, CURRENT_DATE()), COALESCE(c.EST_COST_USD, COALESCE(c.CREDITS_BILLED, c.CREDITS_USED_COMPUTE, 0) * COALESCE(c.RATE_USD, 3.68)), 0)) AS PRIOR_COST_USD,
+      SUM(IFF(c.USAGE_DATE >= DATEADD('DAY', -1 * s.WINDOW_DAYS, CURRENT_DATE()), COALESCE(c.EST_COST_USD, COALESCE(c.CREDITS_BILLED, c.CREDITS_USED_COMPUTE, 0) * COALESCE(c.RATE_USD, cfg.CREDIT_PRICE_USD)), 0)) AS COST_USD,
+      SUM(IFF(c.USAGE_DATE >= DATEADD('DAY', -2 * s.WINDOW_DAYS, CURRENT_DATE()) AND c.USAGE_DATE < DATEADD('DAY', -1 * s.WINDOW_DAYS, CURRENT_DATE()), COALESCE(c.EST_COST_USD, COALESCE(c.CREDITS_BILLED, c.CREDITS_USED_COMPUTE, 0) * COALESCE(c.RATE_USD, cfg.CREDIT_PRICE_USD)), 0)) AS PRIOR_COST_USD,
       MAX(c.LOAD_TS) AS LOAD_TS
     FROM scopes s
+    CROSS JOIN settings cfg
     LEFT JOIN FACT_COST_DAILY c
       ON (s.COMPANY = 'ALL' OR c.COMPANY = s.COMPANY)
      AND c.USAGE_DATE >= DATEADD('DAY', -2 * s.WINDOW_DAYS, CURRENT_DATE())
@@ -9454,9 +9587,10 @@ BEGIN
         COALESCE(c.SERVICE_CATEGORY, 'Unknown') || ' / ' || COALESCE(c.SERVICE_TYPE, 'Unknown') AS DRIVER,
         ROW_NUMBER() OVER (
           PARTITION BY s.COMPANY, s.WINDOW_DAYS
-          ORDER BY SUM(COALESCE(c.EST_COST_USD, COALESCE(c.CREDITS_BILLED, c.CREDITS_USED_COMPUTE, 0) * COALESCE(c.RATE_USD, 3.68))) DESC
+          ORDER BY SUM(COALESCE(c.EST_COST_USD, COALESCE(c.CREDITS_BILLED, c.CREDITS_USED_COMPUTE, 0) * COALESCE(c.RATE_USD, cfg.CREDIT_PRICE_USD))) DESC
         ) AS RN
       FROM scopes s
+      CROSS JOIN settings cfg
       JOIN FACT_COST_DAILY c
         ON (s.COMPANY = 'ALL' OR c.COMPANY = s.COMPANY)
        AND c.USAGE_DATE >= DATEADD('DAY', -1 * s.WINDOW_DAYS, CURRENT_DATE())
@@ -9468,10 +9602,11 @@ BEGIN
     SELECT
       s.COMPANY,
       s.WINDOW_DAYS,
-      SUM(COALESCE(cx.EST_COST_USD, COALESCE(cx.CREDITS_USED, 0) * 2.20)) AS CORTEX_COST_USD,
+      SUM(COALESCE(cx.EST_COST_USD, COALESCE(cx.CREDITS_USED, 0) * cfg.AI_CREDIT_PRICE_USD)) AS CORTEX_COST_USD,
       SUM(COALESCE(cx.REQUEST_COUNT, 0)) AS CORTEX_REQUESTS,
       MAX(cx.LOAD_TS) AS LOAD_TS
     FROM scopes s
+    CROSS JOIN settings cfg
     LEFT JOIN FACT_CORTEX_DAILY cx
       ON (s.COMPANY = 'ALL' OR cx.COMPANY = s.COMPANY)
      AND cx.USAGE_DATE >= DATEADD('DAY', -1 * s.WINDOW_DAYS, CURRENT_DATE())
@@ -9685,6 +9820,242 @@ BEGIN
     IFF(SOURCE_SNAPSHOT_TS IS NULL, SOURCE_OBJECTS, '') AS SOURCE_GAP_DETAIL
   FROM facts;
 
+  CREATE OR REPLACE TEMPORARY TABLE TMP_SECTION_DECISION_LOGIC AS
+  WITH executive_decision AS (
+    SELECT f.*,
+      CASE
+        WHEN SOURCE_SNAPSHOT_TS IS NULL THEN 'Data Gap'
+        WHEN FRESHNESS_MINUTES > TARGET_FRESHNESS_MINUTES THEN 'Stale'
+        WHEN CRITICAL_HIGH_ALERTS > 0 OR RISKY_GRANTS > 0 THEN 'At Risk'
+        WHEN CORTEX_ALERTS > 0 OR COST_DELTA_USD > 0 OR FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES > 0 THEN 'Watch'
+        ELSE 'Healthy'
+      END AS DECISION_STATE,
+      CASE
+        WHEN SOURCE_SNAPSHOT_TS IS NULL THEN 'Executive evidence has not reached the decision mart.'
+        WHEN CRITICAL_HIGH_ALERTS > 0 THEN TO_VARCHAR(CRITICAL_HIGH_ALERTS) || ' critical/high issues need executive attention.'
+        WHEN CORTEX_ALERTS > 0 THEN 'Cortex predictive alerts are active in the executive cost posture.'
+        WHEN COST_DELTA_USD > 0 THEN 'Spend increased by $' || TO_VARCHAR(ROUND(COST_DELTA_USD, 2)) || ' in the selected window.'
+        WHEN FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES > 0 THEN 'Workload failures are the top operating risk.'
+        ELSE 'No executive exception is above the action threshold.'
+      END AS DECISION_HEADLINE,
+      'Leadership view of cost, Cortex AI, alerts, workload risk, security exposure, and open action ownership.' AS DECISION_SUMMARY,
+      CASE
+        WHEN CRITICAL_HIGH_ALERTS > 0 THEN 'Critical/high platform issue'
+        WHEN CORTEX_ALERTS > 0 THEN 'Cortex predictive cost risk'
+        WHEN COST_DELTA_USD > 0 THEN 'Cost movement'
+        WHEN FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES > 0 THEN 'Operational reliability risk'
+        WHEN RISKY_GRANTS > 0 THEN 'Security exposure'
+        ELSE 'Executive baseline clear'
+      END AS DECISION_TOP_SIGNAL,
+      CASE
+        WHEN CORTEX_ALERTS > 0 THEN 'Cortex AI'
+        WHEN COST_DELTA_USD > 0 THEN TOP_COST_DRIVER
+        WHEN FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES > 0 THEN 'Workload Operations'
+        WHEN RISKY_GRANTS > 0 THEN 'Security Monitoring'
+        ELSE 'Executive Landing'
+      END AS DECISION_TOP_ENTITY,
+      CASE
+        WHEN CORTEX_ALERTS > 0 THEN 'Review Cortex AI cost and predictive alerts.'
+        WHEN CRITICAL_HIGH_ALERTS > 0 THEN 'Open Alert Center and work the highest severity family.'
+        WHEN COST_DELTA_USD > 0 THEN 'Review cost movement and largest cost drivers.'
+        WHEN FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES > 0 THEN 'Open workload investigation for the active failure class.'
+        WHEN RISKY_GRANTS > 0 THEN 'Open security risk review.'
+        ELSE 'Keep monitoring; load full snapshot only when executive proof is required.'
+      END AS DECISION_TOP_ACTION,
+      CASE
+        WHEN CORTEX_ALERTS > 0 THEN 'cost_contract_cortex_ai'
+        WHEN CRITICAL_HIGH_ALERTS > 0 THEN 'alert_center_critical_high'
+        WHEN COST_DELTA_USD > 0 THEN 'cost_contract_explorer_warehouse'
+        WHEN FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES > 0 THEN 'workload_query_investigation'
+        WHEN RISKY_GRANTS > 0 THEN 'security_risky_grants'
+        ELSE 'executive_overview'
+      END AS DECISION_ROUTE_KEY,
+      CASE
+        WHEN CORTEX_ALERTS > 0 THEN 'Review Cortex AI'
+        WHEN CRITICAL_HIGH_ALERTS > 0 THEN 'Open Critical / High'
+        WHEN COST_DELTA_USD > 0 THEN 'Review Cost Movement'
+        WHEN FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES > 0 THEN 'Investigate Workload'
+        WHEN RISKY_GRANTS > 0 THEN 'Review Security Risk'
+        ELSE 'Open Overview'
+      END AS DECISION_ACTION_LABEL,
+      CASE
+        WHEN CORTEX_ALERTS > 0 THEN 'Route to the Cortex AI cost and predictive alert lane.'
+        WHEN CRITICAL_HIGH_ALERTS > 0 THEN 'Route to active critical/high alerts without loading rows.'
+        WHEN COST_DELTA_USD > 0 THEN 'Route to Cost Explorer by warehouse before loading detail.'
+        WHEN FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES > 0 THEN 'Route to workload investigation before loading detail.'
+        WHEN RISKY_GRANTS > 0 THEN 'Route to risky grants before loading proof tables.'
+        ELSE 'Stay on the executive overview.'
+      END AS DECISION_ACTION_DETAIL,
+      CASE
+        WHEN CRITICAL_HIGH_ALERTS > 0 OR RISKY_GRANTS > 0 THEN 'High'
+        WHEN CORTEX_ALERTS > 0 OR COST_DELTA_USD > 0 OR FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES > 0 THEN 'Watch'
+        ELSE 'Clear'
+      END AS DECISION_SEVERITY,
+      CASE
+        WHEN CRITICAL_HIGH_ALERTS > 0 OR RISKY_GRANTS > 0 THEN 95
+        WHEN CORTEX_ALERTS > 0 THEN 90
+        WHEN FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES > 0 THEN 80
+        WHEN COST_DELTA_USD > 0 THEN 70
+        ELSE 0
+      END AS DECISION_PRIORITY_SCORE,
+      GREATEST(CORTEX_COST_USD, COST_DELTA_USD, FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES, RISKY_GRANTS) AS DECISION_IMPACT_VALUE,
+      CASE WHEN CORTEX_ALERTS > 0 OR COST_DELTA_USD > 0 THEN 'USD' WHEN FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES > 0 THEN 'failures' WHEN RISKY_GRANTS > 0 THEN 'grants' ELSE '' END AS DECISION_IMPACT_UNIT,
+      IFF(CORTEX_ALERTS > 0 OR COST_DELTA_USD > 0, 'DBA / Cost owner', IFF(RISKY_GRANTS > 0, 'IAM / Security route', 'DBA On-Call')) AS DECISION_OWNER_ROUTE,
+      FALSE AS DECISION_OWNER_GAP,
+      FRESHNESS_MINUTES AS DECISION_AGE_MINUTES,
+      IFF(FRESHNESS_MINUTES > TARGET_FRESHNESS_MINUTES, 'Stale', 'Within target') AS DECISION_SLA_STATE,
+      SOURCE_OBJECTS AS DECISION_EVIDENCE_SOURCE
+    FROM TMP_SECTION_COMMAND_FACTS f WHERE SECTION_NAME = 'Executive Landing'
+  ),
+  dba_decision AS (
+    SELECT f.*,
+      CASE WHEN SOURCE_SNAPSHOT_TS IS NULL THEN 'Data Gap' WHEN FRESHNESS_MINUTES > TARGET_FRESHNESS_MINUTES THEN 'Stale' WHEN DBA_FAILED_QUERIES + DBA_FAILED_TASKS > 0 OR DBA_QUEUED_MS > 0 THEN 'At Risk' WHEN DBA_SECURITY_EVENTS > 0 OR DBA_CORTEX_COST > 0 THEN 'Watch' ELSE 'Healthy' END AS DECISION_STATE,
+      CASE WHEN SOURCE_SNAPSHOT_TS IS NULL THEN 'Control-room mart has no current decision row.' WHEN DBA_FAILED_QUERIES + DBA_FAILED_TASKS > 0 THEN TO_VARCHAR(DBA_FAILED_QUERIES + DBA_FAILED_TASKS) || ' DBA failure signals need triage.' WHEN DBA_QUEUED_MS > 0 THEN 'Warehouse queue pressure is active.' WHEN DBA_SECURITY_EVENTS > 0 THEN 'Security warnings need DBA coordination.' ELSE 'DBA cockpit is clear for the selected scope.' END AS DECISION_HEADLINE,
+      'DBA operating view of failures, queue pressure, cost, Cortex cost, security warnings, changes, and owner action state.' AS DECISION_SUMMARY,
+      CASE WHEN DBA_FAILED_QUERIES + DBA_FAILED_TASKS > 0 THEN 'DBA failures' WHEN DBA_QUEUED_MS > 0 THEN 'Queue pressure' WHEN DBA_SECURITY_EVENTS > 0 THEN 'Security warning' WHEN DBA_CORTEX_COST > 0 THEN 'Cortex cost watch' ELSE 'DBA baseline clear' END AS DECISION_TOP_SIGNAL,
+      CASE WHEN DBA_TOP_RISK <> '' THEN DBA_TOP_RISK ELSE 'DBA Control Room' END AS DECISION_TOP_ENTITY,
+      CASE WHEN DBA_FAILED_QUERIES + DBA_FAILED_TASKS > 0 THEN 'Open failure triage before loading full evidence.' WHEN DBA_QUEUED_MS > 0 THEN 'Open performance pressure.' WHEN DBA_SECURITY_EVENTS > 0 THEN 'Open security risk context.' ELSE 'Load investigation detail only when proof is required.' END AS DECISION_TOP_ACTION,
+      CASE WHEN DBA_FAILED_QUERIES + DBA_FAILED_TASKS > 0 THEN 'dba_failures' WHEN DBA_QUEUED_MS > 0 THEN 'dba_performance' WHEN DBA_CORTEX_COST > 0 THEN 'cost_contract_cortex_ai' ELSE 'dba_overview' END AS DECISION_ROUTE_KEY,
+      CASE WHEN DBA_FAILED_QUERIES + DBA_FAILED_TASKS > 0 THEN 'Open Failures' WHEN DBA_QUEUED_MS > 0 THEN 'Open Performance' WHEN DBA_CORTEX_COST > 0 THEN 'Review Cortex AI' ELSE 'Open Overview' END AS DECISION_ACTION_LABEL,
+      'Route to the DBA workflow that owns the top operating signal.' AS DECISION_ACTION_DETAIL,
+      CASE WHEN DBA_FAILED_QUERIES + DBA_FAILED_TASKS > 0 OR DBA_QUEUED_MS > 0 THEN 'High' WHEN DBA_SECURITY_EVENTS > 0 OR DBA_CORTEX_COST > 0 THEN 'Watch' ELSE 'Clear' END AS DECISION_SEVERITY,
+      CASE WHEN DBA_FAILED_QUERIES + DBA_FAILED_TASKS > 0 THEN 90 WHEN DBA_QUEUED_MS > 0 THEN 80 WHEN DBA_SECURITY_EVENTS > 0 THEN 70 ELSE 0 END AS DECISION_PRIORITY_SCORE,
+      GREATEST(DBA_FAILED_QUERIES + DBA_FAILED_TASKS, DBA_QUEUED_MS / 1000, DBA_SECURITY_EVENTS, DBA_CORTEX_COST) AS DECISION_IMPACT_VALUE,
+      CASE WHEN DBA_QUEUED_MS > 0 THEN 'seconds queued' WHEN DBA_CORTEX_COST > 0 THEN 'USD' ELSE 'events' END AS DECISION_IMPACT_UNIT,
+      'DBA On-Call' AS DECISION_OWNER_ROUTE,
+      FALSE AS DECISION_OWNER_GAP,
+      FRESHNESS_MINUTES AS DECISION_AGE_MINUTES,
+      IFF(FRESHNESS_MINUTES > TARGET_FRESHNESS_MINUTES, 'Stale', 'Within target') AS DECISION_SLA_STATE,
+      'MART_DBA_CONTROL_ROOM; FACT_QUERY_HOURLY; FACT_TASK_RUN' AS DECISION_EVIDENCE_SOURCE
+    FROM TMP_SECTION_COMMAND_FACTS f WHERE SECTION_NAME = 'DBA Control Room'
+  ),
+  alert_decision AS (
+    SELECT f.*,
+      CASE WHEN SOURCE_SNAPSHOT_TS IS NULL THEN 'Data Gap' WHEN FRESHNESS_MINUTES > TARGET_FRESHNESS_MINUTES THEN 'Stale' WHEN CRITICAL_HIGH_ALERTS > 0 THEN 'Critical' WHEN ACTIVE_ALERTS > 0 OR CORTEX_ALERTS > 0 OR NOTIFICATION_FAILURES > 0 THEN 'Watch' ELSE 'Healthy' END AS DECISION_STATE,
+      CASE WHEN SOURCE_SNAPSHOT_TS IS NULL THEN 'Alert summaries have not reached the decision mart.' WHEN CRITICAL_HIGH_ALERTS > 0 THEN TO_VARCHAR(CRITICAL_HIGH_ALERTS) || ' critical/high alerts are open.' WHEN CORTEX_ALERTS > 0 THEN TO_VARCHAR(CORTEX_ALERTS) || ' Cortex predictive alerts are open.' WHEN ACTIVE_ALERTS > 0 THEN TO_VARCHAR(ACTIVE_ALERTS) || ' active alerts need routing.' ELSE 'No active alert family is above threshold.' END AS DECISION_HEADLINE,
+      'Alert family view of active, critical/high, Cortex predictive, cost, reliability, security, delivery, and owner routing state.' AS DECISION_SUMMARY,
+      CASE WHEN CRITICAL_HIGH_ALERTS > 0 THEN 'Critical/high alerts' WHEN CORTEX_ALERTS > 0 THEN 'Cortex predictive alerts' WHEN NOTIFICATION_FAILURES > 0 THEN 'Notification delivery failures' WHEN ACTIVE_ALERTS > 0 THEN 'Active alerts' ELSE 'Alert baseline clear' END AS DECISION_TOP_SIGNAL,
+      CASE WHEN CORTEX_ALERTS > 0 THEN 'Cortex AI' WHEN SECURITY_ALERTS > 0 THEN 'Security Alerts' WHEN COST_ALERTS > 0 THEN 'Cost Alerts' ELSE 'Alert Center' END AS DECISION_TOP_ENTITY,
+      CASE WHEN CORTEX_ALERTS > 0 THEN 'Open Cortex Predictive and load rows only if evidence is needed.' WHEN CRITICAL_HIGH_ALERTS > 0 THEN 'Open Critical / High and load alert rows.' ELSE 'Open Active Alerts when row evidence is needed.' END AS DECISION_TOP_ACTION,
+      CASE WHEN CORTEX_ALERTS > 0 THEN 'alert_cortex_predictive' WHEN CRITICAL_HIGH_ALERTS > 0 THEN 'alert_center_critical_high' WHEN SECURITY_ALERTS > 0 THEN 'alert_center_security' WHEN COST_ALERTS > 0 THEN 'alert_center_cost' ELSE 'alert_center_active' END AS DECISION_ROUTE_KEY,
+      CASE WHEN CORTEX_ALERTS > 0 THEN 'Open Cortex Alerts' WHEN CRITICAL_HIGH_ALERTS > 0 THEN 'Open Critical / High' WHEN SECURITY_ALERTS > 0 THEN 'Open Security Alerts' WHEN COST_ALERTS > 0 THEN 'Open Cost Alerts' ELSE 'Open Active Alerts' END AS DECISION_ACTION_LABEL,
+      'Route to the relevant alert family without loading row detail.' AS DECISION_ACTION_DETAIL,
+      CASE WHEN CRITICAL_HIGH_ALERTS > 0 THEN 'Critical' WHEN CORTEX_ALERTS > 0 OR ACTIVE_ALERTS > 0 THEN 'Watch' ELSE 'Clear' END AS DECISION_SEVERITY,
+      CASE WHEN CRITICAL_HIGH_ALERTS > 0 THEN 98 WHEN CORTEX_ALERTS > 0 THEN 90 WHEN ACTIVE_ALERTS > 0 THEN 70 ELSE 0 END AS DECISION_PRIORITY_SCORE,
+      GREATEST(CRITICAL_HIGH_ALERTS, CORTEX_ALERTS, ACTIVE_ALERTS, NOTIFICATION_FAILURES) AS DECISION_IMPACT_VALUE,
+      'alerts' AS DECISION_IMPACT_UNIT,
+      IFF(ACTIVE_ALERTS > 0, 'Alert Owner Route', 'DBA On-Call') AS DECISION_OWNER_ROUTE,
+      FALSE AS DECISION_OWNER_GAP,
+      FRESHNESS_MINUTES AS DECISION_AGE_MINUTES,
+      IFF(FRESHNESS_MINUTES > TARGET_FRESHNESS_MINUTES, 'Stale', 'Within target') AS DECISION_SLA_STATE,
+      'ALERT_EVENTS; ALERT_NOTIFICATION_LOG; OVERWATCH_ACTION_QUEUE' AS DECISION_EVIDENCE_SOURCE
+    FROM TMP_SECTION_COMMAND_FACTS f WHERE SECTION_NAME = 'Alert Center'
+  ),
+  cost_decision AS (
+    SELECT f.*,
+      CASE WHEN SOURCE_SNAPSHOT_TS IS NULL THEN 'Data Gap' WHEN FRESHNESS_MINUTES > TARGET_FRESHNESS_MINUTES THEN 'Stale' WHEN CORTEX_ALERTS > 0 OR COST_DELTA_USD > 100 THEN 'At Risk' WHEN COST_DELTA_USD > 0 OR CORTEX_COST_USD > 0 THEN 'Watch' ELSE 'Healthy' END AS DECISION_STATE,
+      CASE WHEN SOURCE_SNAPSHOT_TS IS NULL THEN 'Cost summaries have not reached the decision mart.' WHEN CORTEX_ALERTS > 0 THEN 'Cortex predictive alerts are active for the cost window.' WHEN COST_DELTA_USD > 0 THEN 'Spend increased by $' || TO_VARCHAR(ROUND(COST_DELTA_USD, 2)) || ' in the selected window.' ELSE 'Cost posture is inside the current action threshold.' END AS DECISION_HEADLINE,
+      'Financial view of spend, movement, forecast, Cortex AI cost, contract risk, drivers, and savings actions.' AS DECISION_SUMMARY,
+      CASE WHEN CORTEX_ALERTS > 0 THEN 'Cortex predictive cost risk' WHEN COST_DELTA_USD > 0 THEN 'Spend movement' WHEN CORTEX_COST_USD > 0 THEN 'Cortex spend watch' ELSE 'Cost baseline clear' END AS DECISION_TOP_SIGNAL,
+      CASE WHEN CORTEX_ALERTS > 0 OR CORTEX_COST_USD > 0 THEN 'Cortex AI' WHEN COST_DELTA_USD > 0 THEN TOP_COST_DRIVER ELSE 'Cost & Contract' END AS DECISION_TOP_ENTITY,
+      CASE WHEN CORTEX_ALERTS > 0 OR CORTEX_COST_USD > 0 THEN 'Review Cortex AI costs and predictive alerts.' WHEN COST_DELTA_USD > 0 THEN 'Open warehouse drivers before loading Cost Explorer detail.' ELSE 'Force refresh summary only when current cost proof is required.' END AS DECISION_TOP_ACTION,
+      CASE WHEN CORTEX_ALERTS > 0 OR CORTEX_COST_USD > 0 THEN 'cost_contract_cortex_ai' WHEN COST_DELTA_USD > 0 THEN 'cost_contract_explorer_warehouse' ELSE 'cost_contract_overview' END AS DECISION_ROUTE_KEY,
+      CASE WHEN CORTEX_ALERTS > 0 OR CORTEX_COST_USD > 0 THEN 'Review Cortex AI' WHEN COST_DELTA_USD > 0 THEN 'Open Cost Drivers' ELSE 'Open Overview' END AS DECISION_ACTION_LABEL,
+      'Route to the cost workflow that owns the top financial signal.' AS DECISION_ACTION_DETAIL,
+      CASE WHEN CORTEX_ALERTS > 0 OR COST_DELTA_USD > 100 THEN 'High' WHEN COST_DELTA_USD > 0 OR CORTEX_COST_USD > 0 THEN 'Watch' ELSE 'Clear' END AS DECISION_SEVERITY,
+      CASE WHEN CORTEX_ALERTS > 0 THEN 92 WHEN COST_DELTA_USD > 100 THEN 85 WHEN COST_DELTA_USD > 0 THEN 70 ELSE 0 END AS DECISION_PRIORITY_SCORE,
+      GREATEST(CORTEX_COST_USD, COST_DELTA_USD) AS DECISION_IMPACT_VALUE,
+      'USD' AS DECISION_IMPACT_UNIT,
+      'DBA / Cost owner' AS DECISION_OWNER_ROUTE,
+      FALSE AS DECISION_OWNER_GAP,
+      FRESHNESS_MINUTES AS DECISION_AGE_MINUTES,
+      IFF(FRESHNESS_MINUTES > TARGET_FRESHNESS_MINUTES, 'Stale', 'Within target') AS DECISION_SLA_STATE,
+      'FACT_COST_DAILY; FACT_CORTEX_DAILY; FACT_COST_MONITORING_SIGNAL' AS DECISION_EVIDENCE_SOURCE
+    FROM TMP_SECTION_COMMAND_FACTS f WHERE SECTION_NAME = 'Cost & Contract'
+  ),
+  workload_decision AS (
+    SELECT f.*,
+      CASE WHEN SOURCE_SNAPSHOT_TS IS NULL THEN 'Data Gap' WHEN FRESHNESS_MINUTES > TARGET_FRESHNESS_MINUTES THEN 'Stale' WHEN FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES + COPY_ERRORS > 0 THEN 'At Risk' WHEN QUEUED_MS > 0 OR SPILL_BYTES > 0 THEN 'Watch' ELSE 'Healthy' END AS DECISION_STATE,
+      CASE WHEN SOURCE_SNAPSHOT_TS IS NULL THEN 'Workload summaries have not reached the decision mart.' WHEN FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES + COPY_ERRORS > 0 THEN TO_VARCHAR(FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES + COPY_ERRORS) || ' workload failure signals need triage.' WHEN QUEUED_MS > 0 THEN 'Queue or blocked pressure is active.' ELSE 'Workload telemetry is inside the current action threshold.' END AS DECISION_HEADLINE,
+      'Operational view of failed SQL, pipelines, tasks, procedures, copy/load, queue pressure, SLA risk, and recent changes.' AS DECISION_SUMMARY,
+      CASE WHEN FAILED_QUERIES > 0 THEN 'Failed SQL' WHEN FAILED_TASKS + FAILED_PROCEDURES + COPY_ERRORS > 0 THEN 'Pipeline failures' WHEN QUEUED_MS > 0 THEN 'Queue pressure' WHEN SPILL_BYTES > 0 THEN 'Spill pressure' ELSE 'Workload baseline clear' END AS DECISION_TOP_SIGNAL,
+      CASE WHEN QUEUED_MS > 0 THEN 'Warehouse Pressure' WHEN FAILED_TASKS + FAILED_PROCEDURES + COPY_ERRORS > 0 THEN 'Pipeline & Tasks' ELSE 'Query Investigation' END AS DECISION_TOP_ENTITY,
+      CASE WHEN FAILED_QUERIES > 0 THEN 'Open Query Investigation and load selected query proof.' WHEN FAILED_TASKS + FAILED_PROCEDURES + COPY_ERRORS > 0 THEN 'Open Pipeline & Tasks and load selected evidence.' WHEN QUEUED_MS > 0 THEN 'Open Performance pressure.' ELSE 'Load detail only when a specialist investigation is needed.' END AS DECISION_TOP_ACTION,
+      CASE WHEN FAILED_TASKS + FAILED_PROCEDURES + COPY_ERRORS > 0 THEN 'workload_pipeline_tasks' WHEN QUEUED_MS > 0 OR SPILL_BYTES > 0 THEN 'workload_performance' ELSE 'workload_query_investigation' END AS DECISION_ROUTE_KEY,
+      CASE WHEN FAILED_TASKS + FAILED_PROCEDURES + COPY_ERRORS > 0 THEN 'Open Pipelines' WHEN QUEUED_MS > 0 OR SPILL_BYTES > 0 THEN 'Open Performance' ELSE 'Investigate SQL' END AS DECISION_ACTION_LABEL,
+      'Route to the specialist workload workflow without loading row detail.' AS DECISION_ACTION_DETAIL,
+      CASE WHEN FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES + COPY_ERRORS > 0 THEN 'High' WHEN QUEUED_MS > 0 OR SPILL_BYTES > 0 THEN 'Watch' ELSE 'Clear' END AS DECISION_SEVERITY,
+      CASE WHEN FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES + COPY_ERRORS > 0 THEN 88 WHEN QUEUED_MS > 0 THEN 75 ELSE 0 END AS DECISION_PRIORITY_SCORE,
+      GREATEST(FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES + COPY_ERRORS, QUEUED_MS / 1000, SPILL_BYTES / 1024 / 1024) AS DECISION_IMPACT_VALUE,
+      CASE WHEN QUEUED_MS > 0 THEN 'seconds queued' WHEN SPILL_BYTES > 0 THEN 'MB spilled' ELSE 'failures' END AS DECISION_IMPACT_UNIT,
+      'DBA / Workload owner' AS DECISION_OWNER_ROUTE,
+      FALSE AS DECISION_OWNER_GAP,
+      FRESHNESS_MINUTES AS DECISION_AGE_MINUTES,
+      IFF(FRESHNESS_MINUTES > TARGET_FRESHNESS_MINUTES, 'Stale', 'Within target') AS DECISION_SLA_STATE,
+      'FACT_QUERY_HOURLY; FACT_TASK_RUN; FACT_PROCEDURE_RUN; FACT_COPY_LOAD_DAILY' AS DECISION_EVIDENCE_SOURCE
+    FROM TMP_SECTION_COMMAND_FACTS f WHERE SECTION_NAME = 'Workload Operations'
+  ),
+  security_decision AS (
+    SELECT f.*,
+      CASE WHEN SOURCE_SNAPSHOT_TS IS NULL THEN 'Data Gap' WHEN FRESHNESS_MINUTES > TARGET_FRESHNESS_MINUTES THEN 'Stale' WHEN RISKY_GRANTS > 0 OR SECURITY_ALERTS > 0 THEN 'At Risk' WHEN SECURITY_EVENTS > 0 OR SECURITY_OPEN_ACTIONS > 0 THEN 'Watch' ELSE 'Healthy' END AS DECISION_STATE,
+      CASE WHEN SOURCE_SNAPSHOT_TS IS NULL THEN 'Security summaries have not reached the decision mart.' WHEN RISKY_GRANTS > 0 THEN TO_VARCHAR(RISKY_GRANTS) || ' risky grants need review.' WHEN SECURITY_ALERTS > 0 THEN TO_VARCHAR(SECURITY_ALERTS) || ' security alerts are open.' WHEN SECURITY_EVENTS > 0 THEN 'Security activity needs review.' ELSE 'Security posture is inside the current action threshold.' END AS DECISION_HEADLINE,
+      'Security view of failed logins, risky grants, privilege changes, sharing exposure, security alerts, and owner coverage.' AS DECISION_SUMMARY,
+      CASE WHEN RISKY_GRANTS > 0 THEN 'Risky grants' WHEN SECURITY_ALERTS > 0 THEN 'Security alerts' WHEN SECURITY_EVENTS > 0 THEN 'Security activity' ELSE 'Security baseline clear' END AS DECISION_TOP_SIGNAL,
+      CASE WHEN RISKY_GRANTS > 0 THEN 'Risky Grants' WHEN SECURITY_ALERTS > 0 THEN 'Security Alerts' ELSE 'Security Monitoring' END AS DECISION_TOP_ENTITY,
+      CASE WHEN RISKY_GRANTS > 0 THEN 'Open risky grants and load proof only when needed.' WHEN SECURITY_ALERTS > 0 THEN 'Open security alerts.' ELSE 'Refresh summary only when current proof is required.' END AS DECISION_TOP_ACTION,
+      CASE WHEN RISKY_GRANTS > 0 THEN 'security_risky_grants' WHEN SECURITY_ALERTS > 0 THEN 'security_alerts' ELSE 'security_overview' END AS DECISION_ROUTE_KEY,
+      CASE WHEN RISKY_GRANTS > 0 THEN 'Review Risky Grants' WHEN SECURITY_ALERTS > 0 THEN 'Open Security Alerts' ELSE 'Open Overview' END AS DECISION_ACTION_LABEL,
+      'Route to the security workflow that owns the top exposure.' AS DECISION_ACTION_DETAIL,
+      CASE WHEN RISKY_GRANTS > 0 OR SECURITY_ALERTS > 0 THEN 'High' WHEN SECURITY_EVENTS > 0 THEN 'Watch' ELSE 'Clear' END AS DECISION_SEVERITY,
+      CASE WHEN RISKY_GRANTS > 0 THEN 92 WHEN SECURITY_ALERTS > 0 THEN 88 WHEN SECURITY_EVENTS > 0 THEN 65 ELSE 0 END AS DECISION_PRIORITY_SCORE,
+      GREATEST(RISKY_GRANTS, SECURITY_ALERTS, SECURITY_EVENTS, SECURITY_OPEN_ACTIONS) AS DECISION_IMPACT_VALUE,
+      'findings' AS DECISION_IMPACT_UNIT,
+      'IAM / Security route' AS DECISION_OWNER_ROUTE,
+      FALSE AS DECISION_OWNER_GAP,
+      FRESHNESS_MINUTES AS DECISION_AGE_MINUTES,
+      IFF(FRESHNESS_MINUTES > TARGET_FRESHNESS_MINUTES, 'Stale', 'Within target') AS DECISION_SLA_STATE,
+      'FACT_SECURITY_OPERABILITY_DAILY; ALERT_EVENTS; MART_OPERATIONAL_OWNER_COVERAGE' AS DECISION_EVIDENCE_SOURCE
+    FROM TMP_SECTION_COMMAND_FACTS f WHERE SECTION_NAME = 'Security Monitoring'
+  )
+  SELECT * FROM executive_decision
+  UNION ALL SELECT * FROM dba_decision
+  UNION ALL SELECT * FROM alert_decision
+  UNION ALL SELECT * FROM cost_decision
+  UNION ALL SELECT * FROM workload_decision
+  UNION ALL SELECT * FROM security_decision;
+
+  INSERT INTO MART_SECTION_COMMAND_SOURCE (
+    BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, SOURCE_KEY, SOURCE_OBJECT,
+    REQUIRED, AVAILABLE, SOURCE_SNAPSHOT_TS, AGE_MINUTES, TARGET_FRESHNESS_MINUTES,
+    IS_STALE, CONFIDENCE, GAP_REASON, SNAPSHOT_TS, LOAD_TS
+  )
+  SELECT
+    f.BRIEF_ID,
+    f.SECTION_NAME,
+    f.COMPANY,
+    f.ENVIRONMENT,
+    f.WINDOW_DAYS,
+    cfg.SOURCE_KEY,
+    cfg.SOURCE_OBJECT,
+    cfg.REQUIRED,
+    f.SOURCE_SNAPSHOT_TS IS NOT NULL AS AVAILABLE,
+    f.SOURCE_SNAPSHOT_TS,
+    f.FRESHNESS_MINUTES AS AGE_MINUTES,
+    cfg.TARGET_FRESHNESS_MINUTES,
+    f.SOURCE_SNAPSHOT_TS IS NULL OR f.FRESHNESS_MINUTES > cfg.TARGET_FRESHNESS_MINUTES AS IS_STALE,
+    cfg.DEFAULT_CONFIDENCE,
+    CASE
+      WHEN f.SOURCE_SNAPSHOT_TS IS NULL THEN cfg.SOURCE_OBJECT || ' has no current summary row'
+      WHEN f.FRESHNESS_MINUTES > cfg.TARGET_FRESHNESS_MINUTES THEN cfg.SOURCE_OBJECT || ' is stale'
+      ELSE ''
+    END AS GAP_REASON,
+    :snapshot_ts,
+    CURRENT_TIMESTAMP()
+  FROM TMP_SECTION_DECISION_LOGIC f
+  JOIN OVERWATCH_SECTION_COMMAND_SOURCE_CONFIG cfg
+    ON cfg.SECTION_NAME = f.SECTION_NAME
+   AND COALESCE(cfg.ENABLED, TRUE);
+
   INSERT INTO MART_SECTION_COMMAND_BRIEF (
     BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, SNAPSHOT_TS,
     STATE, HEADLINE, SUMMARY, TOP_SIGNAL, TOP_ENTITY, TOP_ACTION,
@@ -9693,6 +10064,7 @@ BEGIN
     RESOLVED_COMPANY, RESOLVED_ENVIRONMENT, RESOLVED_WINDOW_DAYS, CONFIDENCE,
     REQUIRED_SOURCE_COUNT, AVAILABLE_SOURCE_COUNT, MISSING_SOURCE_COUNT,
     SOURCE_COVERAGE_PCT, DATA_AVAILABILITY_STATE, STALE_SOURCE_COUNT, SOURCE_GAP_DETAIL,
+    PRIMARY_ACTION_KEY, PRIMARY_ROUTE_KEY, PRIMARY_ACTION_LABEL, PRIMARY_ACTION_DETAIL,
     LOAD_TS
   )
   SELECT
@@ -9702,52 +10074,12 @@ BEGIN
     ENVIRONMENT,
     WINDOW_DAYS,
     :snapshot_ts,
-    CASE
-      WHEN SOURCE_SNAPSHOT_TS IS NULL THEN 'Data Gap'
-      WHEN FRESHNESS_MINUTES > TARGET_FRESHNESS_MINUTES THEN 'Stale'
-      WHEN CRITICAL_HIGH_ALERTS > 0 OR FAILED_QUERIES > 0 OR FAILED_TASKS > 0 OR RISKY_GRANTS > 0 THEN 'Watch'
-      ELSE 'Ready'
-    END AS STATE,
-    CASE SECTION_NAME
-      WHEN 'Executive Landing' THEN 'Executive command brief is loaded.'
-      WHEN 'DBA Control Room' THEN 'DBA command brief is loaded.'
-      WHEN 'Alert Center' THEN 'Alert command brief is loaded.'
-      WHEN 'Cost & Contract' THEN 'Cost command brief is loaded.'
-      WHEN 'Workload Operations' THEN 'Workload command brief is loaded.'
-      ELSE 'Security command brief is loaded.'
-    END AS HEADLINE,
-    CASE SECTION_NAME
-      WHEN 'Executive Landing' THEN 'Platform status, cost movement, Cortex risk, operations, security, and actions are summarized from compact marts.'
-      WHEN 'DBA Control Room' THEN 'Failures, queue pressure, cost, Cortex, changes, and action state are summarized from compact marts.'
-      WHEN 'Alert Center' THEN 'Active, critical/high, Cortex predictive, cost, reliability, security, and delivery signals are summarized.'
-      WHEN 'Cost & Contract' THEN 'Spend, run-rate, Cortex AI cost, predictive alerts, top driver, and savings actions are summarized.'
-      WHEN 'Workload Operations' THEN 'SQL, task, procedure, load, queue, SLA, and change risk are summarized from workload marts.'
-      ELSE 'Failed login, grant, sharing, access-change, alert, and owner coverage signals are summarized.'
-    END AS SUMMARY,
-    CASE
-      WHEN CORTEX_ALERTS > 0 THEN 'Cortex predictive alerts require review'
-      WHEN CRITICAL_HIGH_ALERTS > 0 THEN 'Critical or high alerts require review'
-      WHEN FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES > 0 THEN 'Workload failures require triage'
-      WHEN RISKY_GRANTS > 0 THEN 'Risky grants require security review'
-      WHEN COST_DELTA_USD > 0 THEN 'Spend increased in the selected window'
-      ELSE 'No urgent exception detected'
-    END AS TOP_SIGNAL,
-    CASE
-      WHEN CORTEX_ALERTS > 0 THEN 'Cortex AI'
-      WHEN CRITICAL_HIGH_ALERTS > 0 THEN 'Alert Center'
-      WHEN FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES > 0 THEN 'Workload Operations'
-      WHEN RISKY_GRANTS > 0 THEN 'Security Monitoring'
-      WHEN COST_DELTA_USD > 0 THEN TOP_COST_DRIVER
-      ELSE SECTION_NAME
-    END AS TOP_ENTITY,
-    CASE
-      WHEN CORTEX_ALERTS > 0 THEN 'Review Cortex AI cost and predictive alert evidence.'
-      WHEN CRITICAL_HIGH_ALERTS > 0 THEN 'Load alert rows for the highest-severity family.'
-      WHEN FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES > 0 THEN 'Open workload investigation and load selected evidence.'
-      WHEN RISKY_GRANTS > 0 THEN 'Open risky grants and load proof tables when needed.'
-      WHEN COST_DELTA_USD > 0 THEN 'Open cost explorer or Cortex AI before tuning.'
-      ELSE 'Use the detail button only when row-level proof is needed.'
-    END AS TOP_ACTION,
+    DECISION_STATE AS STATE,
+    DECISION_HEADLINE AS HEADLINE,
+    DECISION_SUMMARY AS SUMMARY,
+    DECISION_TOP_SIGNAL AS TOP_SIGNAL,
+    DECISION_TOP_ENTITY AS TOP_ENTITY,
+    DECISION_TOP_ACTION AS TOP_ACTION,
     'Summary loaded from mart' AS SOURCE_STATUS,
     'Source age ' || COALESCE(TO_VARCHAR(FRESHNESS_MINUTES), '0') || ' minutes; target ' || TO_VARCHAR(TARGET_FRESHNESS_MINUTES) || ' minutes' AS SOURCE_FRESHNESS,
     SOURCE_OBJECTS,
@@ -9766,22 +10098,32 @@ BEGIN
     DATA_AVAILABILITY_STATE,
     STALE_SOURCE_COUNT,
     SOURCE_GAP_DETAIL,
+    LOWER(REGEXP_REPLACE(DECISION_TOP_SIGNAL, '[^A-Za-z0-9]+', '_')) AS PRIMARY_ACTION_KEY,
+    DECISION_ROUTE_KEY AS PRIMARY_ROUTE_KEY,
+    DECISION_ACTION_LABEL AS PRIMARY_ACTION_LABEL,
+    DECISION_ACTION_DETAIL AS PRIMARY_ACTION_DETAIL,
     CURRENT_TIMESTAMP()
-  FROM TMP_SECTION_COMMAND_FACTS;
+  FROM TMP_SECTION_DECISION_LOGIC;
 
   INSERT INTO MART_SECTION_COMMAND_METRIC (
     BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS,
     METRIC_KEY, METRIC_LABEL, METRIC_VALUE, METRIC_NUMERIC_VALUE, METRIC_TEXT_VALUE,
     METRIC_FORMAT, METRIC_UNIT, METRIC_DETAIL, METRIC_TONE, TREND_NUMERIC_VALUE,
     TREND_LABEL, TREND_POINTS, PRIOR_VALUE, DELTA_NUMERIC_VALUE, DELTA_PERCENT,
-    TREND_DIRECTION, SORT_ORDER, SNAPSHOT_TS, LOAD_TS
+    TREND_DIRECTION, DIRECTIONALITY, SORT_ORDER, SNAPSHOT_TS, LOAD_TS
   )
   SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, METRIC_KEY, METRIC_LABEL,
          METRIC_VALUE, METRIC_NUMERIC_VALUE, METRIC_TEXT_VALUE, METRIC_FORMAT, METRIC_UNIT,
          METRIC_DETAIL, METRIC_TONE, TREND_NUMERIC_VALUE, TREND_LABEL,
          ARRAY_CONSTRUCT(
-           IFF(METRIC_NUMERIC_VALUE IS NULL OR TREND_NUMERIC_VALUE IS NULL, NULL, METRIC_NUMERIC_VALUE - TREND_NUMERIC_VALUE),
-           METRIC_NUMERIC_VALUE
+           OBJECT_CONSTRUCT_KEEP_NULL(
+             'ts', TO_VARCHAR(DATEADD('DAY', -1 * WINDOW_DAYS, CURRENT_DATE()), 'YYYY-MM-DD'),
+             'value', IFF(METRIC_NUMERIC_VALUE IS NULL OR TREND_NUMERIC_VALUE IS NULL, NULL, METRIC_NUMERIC_VALUE - TREND_NUMERIC_VALUE)
+           ),
+           OBJECT_CONSTRUCT_KEEP_NULL(
+             'ts', TO_VARCHAR(CURRENT_DATE(), 'YYYY-MM-DD'),
+             'value', METRIC_NUMERIC_VALUE
+           )
          ) AS TREND_POINTS,
          IFF(METRIC_NUMERIC_VALUE IS NULL OR TREND_NUMERIC_VALUE IS NULL, NULL, METRIC_NUMERIC_VALUE - TREND_NUMERIC_VALUE) AS PRIOR_VALUE,
          TREND_NUMERIC_VALUE AS DELTA_NUMERIC_VALUE,
@@ -9789,6 +10131,11 @@ BEGIN
            (TREND_NUMERIC_VALUE / NULLIF(ABS(METRIC_NUMERIC_VALUE - TREND_NUMERIC_VALUE), 0)) * 100
          ) AS DELTA_PERCENT,
          CASE WHEN TREND_NUMERIC_VALUE > 0 THEN 'Up' WHEN TREND_NUMERIC_VALUE < 0 THEN 'Down' ELSE 'Flat' END AS TREND_DIRECTION,
+         CASE
+           WHEN METRIC_KEY IN ('platform_health','production_readiness','data_trust','verified_value','owner_coverage') THEN 'lower_is_worse'
+           WHEN METRIC_KEY IN ('top_driver','hottest_warehouse','top_dba_risk') THEN 'neutral'
+           ELSE 'higher_is_worse'
+         END AS DIRECTIONALITY,
          SORT_ORDER, :snapshot_ts, CURRENT_TIMESTAMP()
   FROM (
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'total_spend' AS METRIC_KEY, 'Total Spend' AS METRIC_LABEL,
@@ -9852,7 +10199,8 @@ BEGIN
     BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS,
     SEVERITY, SIGNAL, ENTITY_TYPE, ENTITY_NAME, DETAIL,
     ROUTE_SECTION, ROUTE_WORKFLOW, PRIORITY_SCORE, IMPACT_VALUE, IMPACT_UNIT,
-    OWNER_ROUTE, OWNER_GAP, AGE_MINUTES, SLA_STATE, SORT_ORDER, SNAPSHOT_TS, LOAD_TS
+    OWNER_ROUTE, OWNER_GAP, AGE_MINUTES, SLA_STATE, ROUTE_KEY, EVIDENCE_SOURCE, CONFIDENCE,
+    SORT_ORDER, SNAPSHOT_TS, LOAD_TS
   )
   SELECT
     BRIEF_ID,
@@ -9860,90 +10208,28 @@ BEGIN
     COMPANY,
     ENVIRONMENT,
     WINDOW_DAYS,
-    CASE
-      WHEN CRITICAL_HIGH_ALERTS > 0 OR RISKY_GRANTS > 0 THEN 'High'
-      WHEN CORTEX_ALERTS > 0 OR FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES > 0 THEN 'Watch'
-      WHEN COST_DELTA_USD > 0 THEN 'Watch'
-      ELSE 'Clear'
-    END,
-    CASE
-      WHEN CORTEX_ALERTS > 0 THEN 'Cortex predictive alerts require review'
-      WHEN CRITICAL_HIGH_ALERTS > 0 THEN 'Critical/high alerts require review'
-      WHEN RISKY_GRANTS > 0 THEN 'Risky grants require review'
-      WHEN FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES > 0 THEN 'Workload failures require triage'
-      WHEN COST_DELTA_USD > 0 THEN 'Spend moved upward'
-      ELSE 'No urgent exception detected'
-    END,
+    DECISION_SEVERITY,
+    DECISION_TOP_SIGNAL,
     'section',
-    CASE
-      WHEN CORTEX_ALERTS > 0 THEN 'Cortex AI'
-      WHEN CRITICAL_HIGH_ALERTS > 0 THEN 'Alert Center'
-      WHEN RISKY_GRANTS > 0 THEN 'Security Monitoring'
-      WHEN FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES > 0 THEN 'Workload Operations'
-      WHEN COST_DELTA_USD > 0 THEN TOP_COST_DRIVER
-      ELSE SECTION_NAME
-    END,
-    CASE
-      WHEN CORTEX_ALERTS > 0 THEN 'Open Cortex AI cost and predictive alert context.'
-      WHEN CRITICAL_HIGH_ALERTS > 0 THEN 'Load alert rows for the selected family.'
-      WHEN RISKY_GRANTS > 0 THEN 'Load risky grant proof only if remediation evidence is needed.'
-      WHEN FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES > 0 THEN 'Open workload investigation, then load selected detail.'
-      WHEN COST_DELTA_USD > 0 THEN 'Review top driver before tuning.'
-      ELSE 'Keep monitoring; load detail only when proof is required.'
-    END,
-    CASE
-      WHEN CORTEX_ALERTS > 0 THEN 'Cost & Contract'
-      WHEN CRITICAL_HIGH_ALERTS > 0 THEN 'Alert Center'
-      WHEN RISKY_GRANTS > 0 THEN 'Security Monitoring'
-      WHEN FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES > 0 THEN 'Workload Operations'
-      ELSE SECTION_NAME
-    END,
-    CASE
-      WHEN CORTEX_ALERTS > 0 THEN 'Cortex AI'
-      WHEN CRITICAL_HIGH_ALERTS > 0 THEN 'Active Alerts'
-      WHEN RISKY_GRANTS > 0 THEN 'Risky Grants'
-      WHEN FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES > 0 THEN 'Query Investigation'
-      ELSE NULL
-    END,
-    CASE
-      WHEN CRITICAL_HIGH_ALERTS > 0 OR RISKY_GRANTS > 0 THEN 95
-      WHEN CORTEX_ALERTS > 0 THEN 90
-      WHEN FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES > 0 THEN 80
-      WHEN COST_DELTA_USD > 0 THEN 70
-      ELSE 10
-    END AS PRIORITY_SCORE,
-    CASE
-      WHEN CORTEX_ALERTS > 0 THEN CORTEX_COST_USD
-      WHEN COST_DELTA_USD > 0 THEN COST_DELTA_USD
-      WHEN FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES > 0 THEN FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES
-      WHEN RISKY_GRANTS > 0 THEN RISKY_GRANTS
-      ELSE 0
-    END AS IMPACT_VALUE,
-    CASE
-      WHEN CORTEX_ALERTS > 0 OR COST_DELTA_USD > 0 THEN 'USD'
-      WHEN FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES > 0 THEN 'failures'
-      WHEN RISKY_GRANTS > 0 THEN 'grants'
-      ELSE ''
-    END AS IMPACT_UNIT,
-    CASE
-      WHEN CORTEX_ALERTS > 0 THEN 'DBA / AI cost route'
-      WHEN RISKY_GRANTS > 0 THEN 'IAM / Security route'
-      WHEN FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES > 0 THEN 'DBA / Workload owner'
-      WHEN COST_DELTA_USD > 0 THEN 'DBA / Cost owner'
-      ELSE 'DBA On-Call'
-    END AS OWNER_ROUTE,
-    FALSE AS OWNER_GAP,
-    FRESHNESS_MINUTES AS AGE_MINUTES,
-    CASE WHEN FRESHNESS_MINUTES > TARGET_FRESHNESS_MINUTES THEN 'Stale' ELSE 'Within target' END AS SLA_STATE,
-    CASE
-      WHEN CRITICAL_HIGH_ALERTS > 0 OR RISKY_GRANTS > 0 THEN 10
-      WHEN CORTEX_ALERTS > 0 OR FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES > 0 THEN 20
-      WHEN COST_DELTA_USD > 0 THEN 30
-      ELSE 90
-    END,
+    DECISION_TOP_ENTITY,
+    DECISION_TOP_ACTION,
+    SECTION_NAME,
+    NULL,
+    DECISION_PRIORITY_SCORE,
+    DECISION_IMPACT_VALUE,
+    DECISION_IMPACT_UNIT,
+    DECISION_OWNER_ROUTE,
+    DECISION_OWNER_GAP,
+    DECISION_AGE_MINUTES,
+    DECISION_SLA_STATE,
+    DECISION_ROUTE_KEY,
+    DECISION_EVIDENCE_SOURCE,
+    CONFIDENCE,
+    CASE WHEN DECISION_SEVERITY = 'Critical' THEN 10 WHEN DECISION_SEVERITY = 'High' THEN 20 WHEN DECISION_SEVERITY = 'Watch' THEN 30 ELSE 90 END,
     :snapshot_ts,
     CURRENT_TIMESTAMP()
-  FROM TMP_SECTION_COMMAND_FACTS;
+  FROM TMP_SECTION_DECISION_LOGIC
+  WHERE DECISION_SEVERITY <> 'Clear';
 
   INSERT INTO MART_SECTION_COMMAND_ACTION (
     BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS,
@@ -9976,8 +10262,8 @@ BEGIN
       ('Executive Landing', 'open_dba_cockpit', 'dba_overview', 'Open DBA Cockpit', 'Open failures, queue pressure, and action status.', 'Open DBA Cockpit', 'DBA Control Room', 'Morning Cockpit', 30),
       ('DBA Control Room', 'failure_triage', 'dba_failures', 'Failure Triage', 'Review failed SQL, task, procedure, copy, and SLA signals.', 'Open Failures', 'DBA Control Room', 'Failure Triage', 10),
       ('DBA Control Room', 'performance_watch', 'dba_performance', 'Performance Watch', 'Review queue, spilling, blocked, and long-running pressure.', 'Open Performance', 'DBA Control Room', 'Performance Watch', 20),
-      ('Alert Center', 'load_alert_rows', 'alert_center_active', 'Load Alert Rows', 'Load detailed rows for the selected alert family.', 'Load Rows', 'Alert Center', 'Active Alerts', 10),
-      ('Alert Center', 'cortex_predictive_alerts', 'alert_cortex_predictive', 'Cortex Predictive Alerts', 'Review forecasted Cortex spend and anomaly alerts.', 'Open Cortex Alerts', 'Alert Center', 'Cortex Predictive Alerts', 20),
+      ('Alert Center', 'cortex_predictive_alerts', 'alert_cortex_predictive', 'Cortex Predictive Alerts', 'Review forecasted Cortex spend and anomaly alerts.', 'Open Cortex Alerts', 'Alert Center', 'Cortex Predictive Alerts', 10),
+      ('Alert Center', 'critical_high_alerts', 'alert_center_critical_high', 'Critical / High Alerts', 'Open the highest-severity alert family.', 'Open Critical / High', 'Alert Center', 'Critical / High', 20),
       ('Cost & Contract', 'review_cortex_costs', 'cost_contract_cortex_ai', 'Review Cortex AI Costs', 'Open Cortex spend, forecast, top drivers, and predictive alerts.', 'Review Cortex', 'Cost & Contract', 'Cortex AI', 10),
       ('Cost & Contract', 'open_warehouse_drivers', 'cost_contract_explorer_warehouse', 'Open Warehouse Drivers', 'Open Cost Explorer by warehouse without loading detail rows.', 'Open Drivers', 'Cost & Contract', 'Cost Explorer', 20),
       ('Workload Operations', 'query_investigation', 'workload_query_investigation', 'Query Investigation', 'Open SQL history, diagnosis, and top SQL routes.', 'Investigate SQL', 'Workload Operations', 'Query Investigation', 10),
@@ -9988,18 +10274,189 @@ BEGIN
   ) a
     ON a.SECTION_NAME = f.SECTION_NAME;
 
+  CREATE OR REPLACE TEMPORARY TABLE TMP_SECTION_DECISION_PACKET AS
+  WITH latest AS (
+    SELECT * FROM MART_SECTION_COMMAND_BRIEF WHERE SNAPSHOT_TS = :snapshot_ts
+  ),
+  metrics AS (
+    SELECT BRIEF_ID,
+      ARRAY_AGG(OBJECT_CONSTRUCT_KEEP_NULL(
+        'METRIC_KEY', METRIC_KEY,
+        'METRIC_LABEL', METRIC_LABEL,
+        'METRIC_VALUE', METRIC_VALUE,
+        'METRIC_NUMERIC_VALUE', METRIC_NUMERIC_VALUE,
+        'METRIC_TEXT_VALUE', METRIC_TEXT_VALUE,
+        'METRIC_FORMAT', METRIC_FORMAT,
+        'METRIC_UNIT', METRIC_UNIT,
+        'METRIC_DETAIL', METRIC_DETAIL,
+        'METRIC_TONE', METRIC_TONE,
+        'TREND_NUMERIC_VALUE', TREND_NUMERIC_VALUE,
+        'TREND_LABEL', TREND_LABEL,
+        'TREND_POINTS', TREND_POINTS,
+        'PRIOR_VALUE', PRIOR_VALUE,
+        'DELTA_NUMERIC_VALUE', DELTA_NUMERIC_VALUE,
+        'DELTA_PERCENT', DELTA_PERCENT,
+        'TREND_DIRECTION', TREND_DIRECTION,
+        'DIRECTIONALITY', DIRECTIONALITY,
+        'SORT_ORDER', SORT_ORDER
+      )) WITHIN GROUP (ORDER BY SORT_ORDER) AS METRICS
+    FROM MART_SECTION_COMMAND_METRIC
+    WHERE SNAPSHOT_TS = :snapshot_ts
+    GROUP BY BRIEF_ID
+  ),
+  exceptions AS (
+    SELECT BRIEF_ID,
+      ARRAY_AGG(OBJECT_CONSTRUCT_KEEP_NULL(
+        'SEVERITY', SEVERITY,
+        'SIGNAL', SIGNAL,
+        'ENTITY_TYPE', ENTITY_TYPE,
+        'ENTITY_NAME', ENTITY_NAME,
+        'DETAIL', DETAIL,
+        'ROUTE_SECTION', ROUTE_SECTION,
+        'ROUTE_WORKFLOW', ROUTE_WORKFLOW,
+        'ROUTE_KEY', ROUTE_KEY,
+        'EVIDENCE_SOURCE', EVIDENCE_SOURCE,
+        'CONFIDENCE', CONFIDENCE,
+        'PRIORITY_SCORE', PRIORITY_SCORE,
+        'IMPACT_VALUE', IMPACT_VALUE,
+        'IMPACT_UNIT', IMPACT_UNIT,
+        'OWNER_ROUTE', OWNER_ROUTE,
+        'OWNER_GAP', OWNER_GAP,
+        'AGE_MINUTES', AGE_MINUTES,
+        'SLA_STATE', SLA_STATE,
+        'SORT_ORDER', SORT_ORDER
+      )) WITHIN GROUP (ORDER BY PRIORITY_SCORE DESC, SORT_ORDER ASC) AS EXCEPTIONS
+    FROM MART_SECTION_COMMAND_EXCEPTION
+    WHERE SNAPSHOT_TS = :snapshot_ts
+    GROUP BY BRIEF_ID
+  ),
+  actions AS (
+    SELECT BRIEF_ID,
+      ARRAY_AGG(OBJECT_CONSTRUCT_KEEP_NULL(
+        'ACTION_KEY', ACTION_KEY,
+        'ROUTE_KEY', ROUTE_KEY,
+        'ACTION_LABEL', ACTION_LABEL,
+        'ACTION_DETAIL', ACTION_DETAIL,
+        'CTA_LABEL', CTA_LABEL,
+        'TARGET_SECTION', TARGET_SECTION,
+        'TARGET_WORKFLOW', TARGET_WORKFLOW,
+        'SORT_ORDER', SORT_ORDER
+      )) WITHIN GROUP (ORDER BY SORT_ORDER) AS ACTIONS
+    FROM MART_SECTION_COMMAND_ACTION
+    WHERE SNAPSHOT_TS = :snapshot_ts
+    GROUP BY BRIEF_ID
+  ),
+  sources AS (
+    SELECT BRIEF_ID,
+      ARRAY_AGG(OBJECT_CONSTRUCT_KEEP_NULL(
+        'SOURCE_KEY', SOURCE_KEY,
+        'SOURCE_OBJECT', SOURCE_OBJECT,
+        'REQUIRED', REQUIRED,
+        'AVAILABLE', AVAILABLE,
+        'SOURCE_SNAPSHOT_TS', SOURCE_SNAPSHOT_TS,
+        'AGE_MINUTES', AGE_MINUTES,
+        'TARGET_FRESHNESS_MINUTES', TARGET_FRESHNESS_MINUTES,
+        'IS_STALE', IS_STALE,
+        'CONFIDENCE', CONFIDENCE,
+        'GAP_REASON', GAP_REASON
+      )) WITHIN GROUP (ORDER BY REQUIRED DESC, SOURCE_KEY) AS SOURCES
+    FROM MART_SECTION_COMMAND_SOURCE
+    WHERE SNAPSHOT_TS = :snapshot_ts
+    GROUP BY BRIEF_ID
+  )
+  SELECT
+    l.SECTION_NAME,
+    l.COMPANY,
+    l.ENVIRONMENT,
+    l.WINDOW_DAYS,
+    l.BRIEF_ID,
+    OBJECT_CONSTRUCT_KEEP_NULL(
+      'BRIEF_ID', l.BRIEF_ID,
+      'SECTION_NAME', l.SECTION_NAME,
+      'COMPANY', l.COMPANY,
+      'ENVIRONMENT', l.ENVIRONMENT,
+      'WINDOW_DAYS', l.WINDOW_DAYS,
+      'SNAPSHOT_TS', l.SNAPSHOT_TS,
+      'STATE', l.STATE,
+      'HEADLINE', l.HEADLINE,
+      'SUMMARY', l.SUMMARY,
+      'TOP_SIGNAL', l.TOP_SIGNAL,
+      'TOP_ENTITY', l.TOP_ENTITY,
+      'TOP_ACTION', l.TOP_ACTION,
+      'SOURCE_STATUS', l.SOURCE_STATUS,
+      'SOURCE_FRESHNESS', l.SOURCE_FRESHNESS,
+      'SOURCE_OBJECTS', l.SOURCE_OBJECTS,
+      'SOURCE_SNAPSHOT_TS', l.SOURCE_SNAPSHOT_TS,
+      'FRESHNESS_MINUTES', l.FRESHNESS_MINUTES,
+      'TARGET_FRESHNESS_MINUTES', l.TARGET_FRESHNESS_MINUTES,
+      'IS_STALE', l.IS_STALE,
+      'RESOLVED_COMPANY', l.RESOLVED_COMPANY,
+      'RESOLVED_ENVIRONMENT', l.RESOLVED_ENVIRONMENT,
+      'RESOLVED_WINDOW_DAYS', l.RESOLVED_WINDOW_DAYS,
+      'CONFIDENCE', l.CONFIDENCE,
+      'REQUIRED_SOURCE_COUNT', l.REQUIRED_SOURCE_COUNT,
+      'AVAILABLE_SOURCE_COUNT', l.AVAILABLE_SOURCE_COUNT,
+      'MISSING_SOURCE_COUNT', l.MISSING_SOURCE_COUNT,
+      'SOURCE_COVERAGE_PCT', l.SOURCE_COVERAGE_PCT,
+      'DATA_AVAILABILITY_STATE', l.DATA_AVAILABILITY_STATE,
+      'STALE_SOURCE_COUNT', l.STALE_SOURCE_COUNT,
+      'SOURCE_GAP_DETAIL', l.SOURCE_GAP_DETAIL,
+      'PRIMARY_ACTION_KEY', l.PRIMARY_ACTION_KEY,
+      'PRIMARY_ROUTE_KEY', l.PRIMARY_ROUTE_KEY,
+      'PRIMARY_ACTION_LABEL', l.PRIMARY_ACTION_LABEL,
+      'PRIMARY_ACTION_DETAIL', l.PRIMARY_ACTION_DETAIL,
+      'LOAD_TS', l.LOAD_TS,
+      'METRICS', COALESCE(m.METRICS, ARRAY_CONSTRUCT()),
+      'EXCEPTIONS', COALESCE(e.EXCEPTIONS, ARRAY_CONSTRUCT()),
+      'ACTIONS', COALESCE(a.ACTIONS, ARRAY_CONSTRUCT()),
+      'SOURCES', COALESCE(src.SOURCES, ARRAY_CONSTRUCT())
+    ) AS DECISION_PACKET,
+    l.SNAPSHOT_TS,
+    l.SOURCE_SNAPSHOT_TS,
+    l.FRESHNESS_MINUTES,
+    l.LOAD_TS
+  FROM latest l
+  LEFT JOIN metrics m ON m.BRIEF_ID = l.BRIEF_ID
+  LEFT JOIN exceptions e ON e.BRIEF_ID = l.BRIEF_ID
+  LEFT JOIN actions a ON a.BRIEF_ID = l.BRIEF_ID
+  LEFT JOIN sources src ON src.BRIEF_ID = l.BRIEF_ID;
+
+  DELETE FROM MART_SECTION_DECISION_CURRENT;
+  INSERT INTO MART_SECTION_DECISION_CURRENT (
+    SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, BRIEF_ID, DECISION_PACKET,
+    SNAPSHOT_TS, SOURCE_SNAPSHOT_TS, FRESHNESS_MINUTES, PACKET_BYTES, LOAD_TS
+  )
+  SELECT SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, BRIEF_ID, DECISION_PACKET,
+         SNAPSHOT_TS, SOURCE_SNAPSHOT_TS, FRESHNESS_MINUTES,
+         LENGTH(TO_JSON(DECISION_PACKET)) AS PACKET_BYTES,
+         LOAD_TS
+  FROM TMP_SECTION_DECISION_PACKET;
+
+  INSERT INTO MART_EXECUTIVE_DECISION_INBOX (
+    PRIORITY, SEVERITY, SECTION_NAME, SIGNAL, ENTITY, IMPACT_VALUE, IMPACT_UNIT,
+    OWNER_ROUTE, OWNER_GAP, AGE_MINUTES, SLA_STATE, ROUTE_KEY, SNAPSHOT_TS, LOAD_TS
+  )
+  SELECT ROW_NUMBER() OVER (ORDER BY PRIORITY_SCORE DESC, SORT_ORDER ASC) AS PRIORITY,
+         SEVERITY, SECTION_NAME, SIGNAL, ENTITY_NAME, IMPACT_VALUE, IMPACT_UNIT,
+         OWNER_ROUTE, OWNER_GAP, AGE_MINUTES, SLA_STATE, ROUTE_KEY, SNAPSHOT_TS, LOAD_TS
+  FROM MART_SECTION_COMMAND_EXCEPTION
+  WHERE SNAPSHOT_TS = :snapshot_ts
+  QUALIFY ROW_NUMBER() OVER (ORDER BY PRIORITY_SCORE DESC, SORT_ORDER ASC) <= 5;
+
   SELECT COUNT(*) INTO :parent_rows FROM MART_SECTION_COMMAND_BRIEF WHERE SNAPSHOT_TS = :snapshot_ts;
   SELECT
     (SELECT COUNT(*) FROM MART_SECTION_COMMAND_METRIC WHERE SNAPSHOT_TS = :snapshot_ts)
     + (SELECT COUNT(*) FROM MART_SECTION_COMMAND_EXCEPTION WHERE SNAPSHOT_TS = :snapshot_ts)
     + (SELECT COUNT(*) FROM MART_SECTION_COMMAND_ACTION WHERE SNAPSHOT_TS = :snapshot_ts)
+    + (SELECT COUNT(*) FROM MART_SECTION_COMMAND_SOURCE WHERE SNAPSHOT_TS = :snapshot_ts)
     INTO :child_rows;
+  SELECT COUNT(*) INTO :current_rows FROM MART_SECTION_DECISION_CURRENT;
 
   UPDATE OVERWATCH_LOAD_AUDIT
      SET LOAD_FINISHED_AT = CURRENT_TIMESTAMP(),
          STATUS = 'SUCCESS',
-         ROWS_LOADED = :parent_rows + :child_rows,
-         MESSAGE = 'Refreshed command brief parents=' || :parent_rows || ', children=' || :child_rows || '.'
+         ROWS_LOADED = :parent_rows + :child_rows + :current_rows,
+         MESSAGE = 'Refreshed Decision Brief parents=' || :parent_rows || ', children=' || :child_rows || ', current_packets=' || :current_rows || '.'
    WHERE LOAD_NAME = 'SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS'
      AND LOAD_STARTED_AT = :started_at;
 
@@ -11032,6 +11489,12 @@ SELECT 'MART_SECTION_COMMAND_EXCEPTION', COUNT(*) FROM MART_SECTION_COMMAND_EXCE
 UNION ALL
 SELECT 'MART_SECTION_COMMAND_ACTION', COUNT(*) FROM MART_SECTION_COMMAND_ACTION
 UNION ALL
+SELECT 'MART_SECTION_COMMAND_SOURCE', COUNT(*) FROM MART_SECTION_COMMAND_SOURCE
+UNION ALL
+SELECT 'MART_SECTION_DECISION_CURRENT', COUNT(*) FROM MART_SECTION_DECISION_CURRENT
+UNION ALL
+SELECT 'MART_EXECUTIVE_DECISION_INBOX', COUNT(*) FROM MART_EXECUTIVE_DECISION_INBOX
+UNION ALL
 SELECT 'MART_DATA_TRUST_SUMMARY', COUNT(*) FROM MART_DATA_TRUST_SUMMARY
 UNION ALL
 SELECT 'MART_OPERATIONAL_OWNER_COVERAGE', COUNT(*) FROM MART_OPERATIONAL_OWNER_COVERAGE
@@ -11106,6 +11569,8 @@ FROM (
   SELECT COUNT(*) FROM MART_SECTION_COMMAND_EXCEPTION c LEFT JOIN MART_SECTION_COMMAND_BRIEF b ON b.BRIEF_ID = c.BRIEF_ID WHERE b.BRIEF_ID IS NULL
   UNION ALL
   SELECT COUNT(*) FROM MART_SECTION_COMMAND_ACTION c LEFT JOIN MART_SECTION_COMMAND_BRIEF b ON b.BRIEF_ID = c.BRIEF_ID WHERE b.BRIEF_ID IS NULL
+  UNION ALL
+  SELECT COUNT(*) FROM MART_SECTION_COMMAND_SOURCE c LEFT JOIN MART_SECTION_COMMAND_BRIEF b ON b.BRIEF_ID = c.BRIEF_ID WHERE b.BRIEF_ID IS NULL
 );
 
 SELECT
@@ -11157,3 +11622,36 @@ SELECT
   IFF(COUNT_IF(ROUTE_KEY IS NULL OR CTA_LABEL IS NULL) = 0, 'PASS', 'FAIL') AS STATUS
 FROM MART_SECTION_COMMAND_ACTION
 WHERE SNAPSHOT_TS = (SELECT MAX(SNAPSHOT_TS) FROM MART_SECTION_COMMAND_ACTION);
+
+SELECT
+  'SECTION_DECISION_CURRENT_PACKET_COVERAGE' AS CHECK_NAME,
+  COUNT(DISTINCT SECTION_NAME) AS OBSERVED_SECTIONS,
+  IFF(COUNT(DISTINCT SECTION_NAME) = 6 AND COUNT_IF(DECISION_PACKET IS NULL) = 0, 'PASS', 'FAIL') AS STATUS
+FROM MART_SECTION_DECISION_CURRENT;
+
+SELECT
+  'SECTION_COMMAND_SOURCE_ROWS' AS CHECK_NAME,
+  COUNT(*) AS SOURCE_ROWS,
+  IFF(COUNT(*) > 0 AND COUNT_IF(REQUIRED IS NULL OR AVAILABLE IS NULL) = 0, 'PASS', 'FAIL') AS STATUS
+FROM MART_SECTION_COMMAND_SOURCE
+WHERE SNAPSHOT_TS = (SELECT MAX(SNAPSHOT_TS) FROM MART_SECTION_COMMAND_SOURCE);
+
+SELECT
+  'SECTION_COMMAND_REQUIRED_METRIC_KEYS' AS CHECK_NAME,
+  COUNT(*) AS MISSING_KEYS,
+  IFF(COUNT(*) = 0, 'PASS', 'FAIL') AS STATUS
+FROM (
+  SELECT * FROM VALUES
+    ('Executive Landing','platform_health'), ('Executive Landing','spend_movement_pct'), ('Executive Landing','critical_high_issues'), ('Executive Landing','open_actions'),
+    ('DBA Control Room','failed_queries'), ('DBA Control Room','pipeline_failures'), ('DBA Control Room','queue_pressure'), ('DBA Control Room','cost_24h'),
+    ('Alert Center','active_alerts'), ('Alert Center','critical_high'), ('Alert Center','overdue_alerts'), ('Alert Center','cortex_predictive'),
+    ('Cost & Contract','total_spend'), ('Cost & Contract','spend_movement_pct'), ('Cost & Contract','forecast_run_rate'), ('Cost & Contract','cortex_spend_share'),
+    ('Workload Operations','failed_queries'), ('Workload Operations','pipeline_failures'), ('Workload Operations','queue_blocked_pressure'), ('Workload Operations','sla_risk'),
+    ('Security Monitoring','failed_logins'), ('Security Monitoring','mfa_gaps'), ('Security Monitoring','risky_grants'), ('Security Monitoring','sharing_exposure')
+  AS required(SECTION_NAME, METRIC_KEY)
+  LEFT JOIN MART_SECTION_COMMAND_METRIC m
+    ON m.SECTION_NAME = required.SECTION_NAME
+   AND m.METRIC_KEY = required.METRIC_KEY
+   AND m.SNAPSHOT_TS = (SELECT MAX(SNAPSHOT_TS) FROM MART_SECTION_COMMAND_METRIC)
+  WHERE m.METRIC_KEY IS NULL
+);

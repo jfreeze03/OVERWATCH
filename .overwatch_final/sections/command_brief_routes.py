@@ -27,6 +27,7 @@ COMMAND_BRIEF_ROUTES: Mapping[str, CommandBriefRoute] = {
     "executive_overview": CommandBriefRoute("Executive Landing", "executive_landing_workflow", "Executive Overview"),
     "executive_cost": CommandBriefRoute("Executive Landing", "executive_landing_workflow", "Cost Movement"),
     "cost_contract_cortex_ai": CommandBriefRoute("Cost & Contract", "cost_contract_workflow", "Cortex AI"),
+    "cost_contract_overview": CommandBriefRoute("Cost & Contract", "cost_contract_workflow", "Cost Overview"),
     "cost_contract_explorer_warehouse": CommandBriefRoute(
         "Cost & Contract",
         "cost_contract_workflow",
@@ -44,6 +45,7 @@ COMMAND_BRIEF_ROUTES: Mapping[str, CommandBriefRoute] = {
     "alert_center_critical_high": CommandBriefRoute("Alert Center", "alert_center_active_view", "Critical / High"),
     "alert_cortex_predictive": CommandBriefRoute("Alert Center", "alert_center_active_view", "Cortex Predictive Alerts"),
     "alert_center_cost": CommandBriefRoute("Alert Center", "alert_center_active_view", "Cost Alerts"),
+    "alert_center_reliability": CommandBriefRoute("Alert Center", "alert_center_active_view", "Reliability Alerts"),
     "alert_center_security": CommandBriefRoute("Alert Center", "alert_center_active_view", "Security Alerts"),
     "dba_overview": CommandBriefRoute("DBA Control Room", "dba_control_room_active_view", "Morning Cockpit"),
     "dba_failures": CommandBriefRoute("DBA Control Room", "dba_control_room_active_view", "Failure Triage"),
@@ -80,6 +82,12 @@ COMMAND_BRIEF_ROUTES: Mapping[str, CommandBriefRoute] = {
         "security_posture_workflow",
         "Access Changes",
         (("security_posture_view", "Access Changes"),),
+    ),
+    "security_alerts": CommandBriefRoute(
+        "Security Monitoring",
+        "security_posture_workflow",
+        "Security Alerts",
+        (("security_posture_view", "Security Alerts"),),
     ),
     "security_failed_logins": CommandBriefRoute(
         "Security Monitoring",

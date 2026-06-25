@@ -88,10 +88,18 @@ def _delta_label(metric: SectionCommandMetric) -> str:
     return metric.trend or metric.detail
 
 
-def _sparkline(points: tuple[float, ...]) -> str:
+def _sparkline(points: tuple[object, ...]) -> str:
     if len(points) < 2:
         return ""
-    finite = [float(point) for point in points if point is not None and math.isfinite(float(point))]
+    finite: list[float] = []
+    for point in points:
+        value = point.get("value") if isinstance(point, dict) else point
+        try:
+            numeric = float(value)
+        except Exception:
+            continue
+        if math.isfinite(numeric):
+            finite.append(numeric)
     if len(finite) < 2:
         return ""
     low = min(finite)
@@ -219,6 +227,8 @@ def _render_action_row(
     compact: bool,
 ) -> None:
     if compact:
+        if detail_action is not None:
+            _render_detail_action(key_prefix=key_prefix, detail_action=detail_action)
         return
     actions = tuple(brief.next_actions or ())[:3]
     secondary_count = max(min(len(actions) - 1, 2), 0)
@@ -229,14 +239,15 @@ def _render_action_row(
             if st.button(primary.cta or primary.label, key=f"{key_prefix}_primary_{_key_token(primary.action_key or primary.label)}", type="primary", width="stretch"):
                 if primary_action is not None:
                     primary_action()
+                    st.rerun()
                 else:
-                    _route_action(primary)
-                st.rerun()
+                    if _route_action(primary):
+                        st.rerun()
         for index, action in enumerate(actions[1:3], start=1):
             with cols[index]:
                 if st.button(action.cta or action.label, key=f"{key_prefix}_secondary_{index}_{_key_token(action.action_key or action.label)}", width="stretch"):
-                    _route_action(action)
-                    st.rerun()
+                    if _route_action(action):
+                        st.rerun()
     if detail_action is not None:
         with cols[-1]:
             _render_detail_action(key_prefix=key_prefix, detail_action=detail_action)
@@ -300,8 +311,6 @@ def render_section_command_brief(
         f'{priority_body}'
         '</section>'
     )
-    with st.expander("Data Trust", expanded=False):
-        st.html(f'<div class="ow-decision-trust-panel">{_trust_detail_html(brief)}</div>')
     _render_action_row(
         brief,
         key_prefix=key_prefix,
@@ -309,6 +318,8 @@ def render_section_command_brief(
         detail_action=detail_action,
         compact=compact,
     )
+    with st.expander("Data Trust", expanded=False):
+        st.html(f'<div class="ow-decision-trust-panel">{_trust_detail_html(brief)}</div>')
     if not compact and len(tuple(brief.metrics or ())) > 4:
         extra = "".join(
             f'<div class="ow-decision-extra-metric"><strong>{_html(metric.label)}</strong>'

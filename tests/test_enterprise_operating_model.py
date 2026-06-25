@@ -68,7 +68,7 @@ class EnterpriseOperatingModelTests(unittest.TestCase):
 
     def test_validation_contract_tracks_new_objects_and_confidence_labels(self):
         validation = _validation_sql().upper()
-        self.assertIn("('TABLE', 98)", validation)
+        self.assertIn("('TABLE', 102)", validation)
         self.assertIn("('PROCEDURE', 17)", validation)
         for name in [
             "MART_DATA_TRUST_SUMMARY",

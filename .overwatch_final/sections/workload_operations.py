@@ -7,8 +7,6 @@ from importlib import import_module
 import streamlit as st
 
 from sections.base import lazy_pandas, lazy_util as _lazy_util
-from sections.command_deck import render_command_deck
-from sections.command_deck_contracts import get_command_deck_contract
 from sections.navigation import apply_section_workflow_navigation
 from sections.shell_helpers import (
     build_first_paint_summary_spec,
@@ -537,11 +535,6 @@ def _render_workload_overview(company: str, environment: str) -> None:
             f"{safe_int(category.str.contains('TASK|PIPELINE|PROCEDURE|LOAD', regex=True).sum()):,} pipeline/task."
         )
         _render_loaded_workload_alert_context()
-
-    render_command_deck(
-        get_command_deck_contract("Workload Operations"),
-        key_prefix="workload_command_deck",
-    )
 
 
 def _render_query_investigation_surface() -> None:

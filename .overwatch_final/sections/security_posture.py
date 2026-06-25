@@ -55,8 +55,6 @@ from sections.security_posture_privilege_sprawl_view import (
     render_security_privilege_sprawl,
 )
 from sections.security_posture_privilege_sprawl_view import *  # noqa: F403
-from sections.command_deck import render_command_deck
-from sections.command_deck_contracts import get_command_deck_contract
 from sections.shell_helpers import (
     build_first_paint_summary_spec,
     render_content_header,
@@ -85,14 +83,11 @@ def _apply_queued_security_workflow() -> None:
 
 
 def _render_security_first_paint_shell(active_view: str, company: str, environment: str, days: int) -> None:
-    _ = active_view
     render_section_command_brief(
         autoload_section_command_brief("Security Monitoring", company, environment, int(days or 30)),
         key_prefix="security_monitoring_command_brief",
-    )
-    render_command_deck(
-        get_command_deck_contract("Security Monitoring"),
-        key_prefix="security_command_deck",
+        on_detail=lambda: st.session_state.__setitem__("security_posture_command_brief_force_refresh", True),
+        compact=active_view != SECURITY_OVERVIEW_WORKFLOW,
     )
 
 

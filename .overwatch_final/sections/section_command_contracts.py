@@ -18,6 +18,7 @@ class SectionCommandContract:
     metric_labels: tuple[str, ...]
     expected_lanes: tuple[str, ...]
     source_table: str
+    target_freshness_minutes: int
     unavailable_headline: str
     unavailable_summary: str
     top_signal_label: str
@@ -30,6 +31,7 @@ def _contract(
     *,
     metric_labels: tuple[str, ...],
     source_table: str,
+    target_freshness_minutes: int,
     unavailable_headline: str,
     unavailable_summary: str,
     top_signal_label: str,
@@ -44,6 +46,7 @@ def _contract(
         metric_labels=metric_labels,
         expected_lanes=first_paint.expected_lanes,
         source_table=source_table,
+        target_freshness_minutes=int(target_freshness_minutes),
         unavailable_headline=unavailable_headline,
         unavailable_summary=unavailable_summary,
         top_signal_label=top_signal_label,
@@ -55,7 +58,8 @@ def _contract(
 SECTION_COMMAND_CONTRACTS: Mapping[str, SectionCommandContract] = {
     "Executive Landing": _contract(
         "Executive Landing",
-        source_table="MART_EXECUTIVE_OBSERVABILITY",
+        source_table="MART_SECTION_COMMAND_BRIEF",
+        target_freshness_minutes=60,
         metric_labels=(
             "Platform state",
             "Major issues",
@@ -81,7 +85,8 @@ SECTION_COMMAND_CONTRACTS: Mapping[str, SectionCommandContract] = {
     ),
     "DBA Control Room": _contract(
         "DBA Control Room",
-        source_table="MART_DBA_CONTROL_ROOM",
+        source_table="MART_SECTION_COMMAND_BRIEF",
+        target_freshness_minutes=30,
         metric_labels=(
             "Failed queries",
             "Failed tasks",
@@ -108,6 +113,7 @@ SECTION_COMMAND_CONTRACTS: Mapping[str, SectionCommandContract] = {
     "Alert Center": _contract(
         "Alert Center",
         source_table="MART_SECTION_COMMAND_BRIEF",
+        target_freshness_minutes=15,
         metric_labels=(
             "Active alerts",
             "Critical / high",
@@ -134,6 +140,7 @@ SECTION_COMMAND_CONTRACTS: Mapping[str, SectionCommandContract] = {
     "Cost & Contract": _contract(
         "Cost & Contract",
         source_table="MART_SECTION_COMMAND_BRIEF",
+        target_freshness_minutes=60,
         metric_labels=(
             "Total spend",
             "Spend movement",
@@ -160,6 +167,7 @@ SECTION_COMMAND_CONTRACTS: Mapping[str, SectionCommandContract] = {
     "Workload Operations": _contract(
         "Workload Operations",
         source_table="MART_SECTION_COMMAND_BRIEF",
+        target_freshness_minutes=30,
         metric_labels=(
             "Active workload incidents",
             "Failed SQL",
@@ -186,6 +194,7 @@ SECTION_COMMAND_CONTRACTS: Mapping[str, SectionCommandContract] = {
     "Security Monitoring": _contract(
         "Security Monitoring",
         source_table="MART_SECTION_COMMAND_BRIEF",
+        target_freshness_minutes=60,
         metric_labels=(
             "Failed logins",
             "MFA signal",

@@ -13,8 +13,6 @@ import streamlit as st
 from config import DAY_WINDOW_OPTIONS, DEFAULT_DAY_WINDOW
 from runtime_state import EXECUTIVE_LANDING_WORKFLOW
 from sections.base import lazy_util as _lazy_util
-from sections.command_deck import render_command_deck
-from sections.command_deck_contracts import get_command_deck_contract
 from sections.triage_queue import render_mission_control_queue
 from sections.executive_landing_common import (
     _active_company,
@@ -157,10 +155,6 @@ def _render_executive_landing_workflow_controls(active_workflow: str) -> str:
         labels.get(active_workflow, active_workflow),
         EXECUTIVE_LANDING_WORKFLOW_DETAILS.get(active_workflow, "Executive evidence stays behind explicit load actions."),
     )
-    render_command_deck(
-        get_command_deck_contract("Executive Landing"),
-        key_prefix="executive_landing_command_deck",
-    )
     return active_workflow
 
 
@@ -259,6 +253,8 @@ def render() -> None:
     render_section_command_brief(
         autoload_section_command_brief("Executive Landing", company, environment, int(days)),
         key_prefix="executive_landing_command_brief",
+        on_detail=lambda: st.session_state.__setitem__("_executive_landing_command_brief_load_detail", True),
+        compact=active_workflow != EXECUTIVE_OVERVIEW_WORKFLOW,
     )
     with trace("executive_shell:workflow_selector", active_section="Executive Landing"):
         active_workflow = _render_executive_landing_workflow_controls(active_workflow)
@@ -283,7 +279,8 @@ def render() -> None:
             environment=environment,
         )
 
-    if load and _load_executive_snapshot(company, environment, int(days)):
+    command_brief_load = bool(st.session_state.pop("_executive_landing_command_brief_load_detail", False))
+    if (load or command_brief_load) and _load_executive_snapshot(company, environment, int(days)):
         st.rerun()
 
 

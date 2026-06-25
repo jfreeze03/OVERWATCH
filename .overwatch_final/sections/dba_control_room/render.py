@@ -12,8 +12,6 @@ from sections.shell_helpers import (
     render_shell_snapshot,
     with_loaded_at,
 )
-from sections.command_deck import render_command_deck
-from sections.command_deck_contracts import get_command_deck_contract
 from sections.section_command_brief import autoload_section_command_brief
 from sections.section_command_rendering import render_section_command_brief
 from utils.evidence_mode import (
@@ -767,10 +765,6 @@ def _render_morning_cockpit_empty(load_callback) -> None:
         ("Changes", "Pending"),
     ))
     st.caption("Load the morning cockpit when you need current DBA-owned exceptions, owner routes, and action status.")
-    render_command_deck(
-        get_command_deck_contract("DBA Control Room"),
-        key_prefix="dba_control_room_command_deck",
-    )
     c1, _spacer = st.columns(2)
     with c1:
         if st.button("Load Morning Cockpit", key="dba_morning_cockpit_load_empty", type="primary", width="stretch"):
@@ -1045,6 +1039,8 @@ def render() -> None:
     render_section_command_brief(
         autoload_section_command_brief("DBA Control Room", company, environment, int(lookback_hours) // 24 or 1),
         key_prefix="dba_control_room_command_brief",
+        on_detail=lambda: st.session_state.__setitem__("dba_control_room_command_brief_load_detail", True),
+        compact=normalized_view != MORNING_COCKPIT_WORKFLOW,
     )
     active_view = _render_dba_control_room_workflow_selector()
     defer_section_note(
@@ -1194,7 +1190,7 @@ def render() -> None:
         delayed_note="DBA Control Room shows cached triage immediately; guarded live checks are reserved for explicit detail loads.",
     )
 
-    if st.button(load_label, key="dba_control_room_load", type="primary"):
+    if st.button(load_label, key="dba_control_room_load", type="primary") or st.session_state.pop("dba_control_room_command_brief_load_detail", False):
         _load_control_room_evidence()
 
     data = st.session_state.get("dba_control_room_data", {})
@@ -1298,10 +1294,6 @@ def render() -> None:
         failed_queries=failed_queries,
     )
     _render_dba_command_intelligence_contract()
-    render_command_deck(
-        get_command_deck_contract("DBA Control Room"),
-        key_prefix="dba_control_room_command_deck_loaded",
-    )
 
     st.divider()
 

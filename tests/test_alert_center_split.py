@@ -271,10 +271,8 @@ class AlertCenterSplitTests(unittest.TestCase):
         self.assertIn("render_secondary_lens_pills", render_source)
         self.assertIn("autoload_section_command_brief", render_source)
         self.assertIn("render_section_command_brief", render_source)
-        self.assertLess(
-            render_source.index('st.button(f"Load {active_view}"'),
-            render_source.index("_load_alert_center_view_data("),
-        )
+        self.assertIn("on_detail=lambda: _load_alert_center_view_data", render_source)
+        self.assertIn('st.button(f"Load {active_view}"', render_source)
         first_paint_source = inspect.getsource(alert_center._render_alert_center_first_paint_shell)
         self.assertIn("Entry summaries come from compact marts", first_paint_source)
         self.assertIn("render_section_first_paint_shell(", first_paint_source)

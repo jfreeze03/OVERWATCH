@@ -778,6 +778,7 @@ class AdminControlTests(unittest.TestCase):
                 "OVERWATCH_REFRESH_CONTROL_ROOM",
                 "OVERWATCH_COST_MONITORING_REFRESH",
                 "OVERWATCH_EXECUTIVE_OBSERVABILITY_REFRESH",
+                "OVERWATCH_SECTION_COMMAND_BRIEF_REFRESH",
                 "OVERWATCH_LOAD_DAILY",
             },
         )
@@ -797,6 +798,7 @@ class AdminControlTests(unittest.TestCase):
                 "OVERWATCH_REFRESH_CONTROL_ROOM": "COMPUTE_WH",
                 "OVERWATCH_COST_MONITORING_REFRESH": "COMPUTE_WH",
                 "OVERWATCH_EXECUTIVE_OBSERVABILITY_REFRESH": "COMPUTE_WH",
+                "OVERWATCH_SECTION_COMMAND_BRIEF_REFRESH": "COMPUTE_WH",
                 "OVERWATCH_LOAD_DAILY": "COMPUTE_WH",
             },
         )

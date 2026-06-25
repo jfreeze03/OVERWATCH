@@ -33,11 +33,15 @@ class SectionCommandBriefTests(unittest.TestCase):
     def test_loader_uses_mart_rows_and_does_not_require_detail_load(self):
         from sections import section_command_brief as brief_module
 
-        brief_rows = pd.DataFrame([{
+        packet_rows = pd.DataFrame([{
+            "BRIEF_ID": "brief-1",
             "SECTION_NAME": "Cost & Contract",
             "COMPANY": "ALFA",
             "ENVIRONMENT": "ALL",
             "WINDOW_DAYS": 7,
+            "RESOLVED_COMPANY": "ALFA",
+            "RESOLVED_ENVIRONMENT": "ALL",
+            "RESOLVED_WINDOW_DAYS": 7,
             "STATE": "Summary loaded",
             "HEADLINE": "Cost movement needs review.",
             "SUMMARY": "Cortex cost is the top movement.",
@@ -46,35 +50,42 @@ class SectionCommandBriefTests(unittest.TestCase):
             "TOP_ACTION": "Review Cortex AI Costs",
             "SOURCE_STATUS": "Summary loaded from mart",
             "SOURCE_FRESHNESS": "5 minutes ago",
+            "SOURCE_OBJECTS": "FACT_COST_DAILY; FACT_CORTEX_DAILY",
+            "FRESHNESS_MINUTES": 5,
+            "TARGET_FRESHNESS_MINUTES": 60,
+            "IS_STALE": False,
+            "CONFIDENCE": "allocated",
             "SNAPSHOT_TS": "2026-06-25 10:00:00",
             "LOAD_TS": "2026-06-25 10:05:00",
-        }])
-        metric_rows = pd.DataFrame([
-            {"METRIC_LABEL": "Total spend", "METRIC_VALUE": "$120", "METRIC_DETAIL": "7d", "SORT_ORDER": 10},
-            {"METRIC_LABEL": "Cortex AI spend", "METRIC_VALUE": "$42", "METRIC_DETAIL": "35%", "METRIC_TONE": "cortex", "SORT_ORDER": 20},
-        ])
-        exception_rows = pd.DataFrame([{
-            "SEVERITY": "High",
-            "SIGNAL": "Cortex AI spend",
-            "ENTITY_NAME": "Cortex",
-            "DETAIL": "Spend accelerated.",
-            "ROUTE_SECTION": "Cost & Contract",
-            "ROUTE_WORKFLOW": "Cortex AI",
-            "SORT_ORDER": 1,
-        }])
-        action_rows = pd.DataFrame([{
-            "ACTION_LABEL": "Review Cortex AI Costs",
-            "ACTION_DETAIL": "Open the Cortex lane.",
-            "TARGET_SECTION": "Cost & Contract",
-            "TARGET_WORKFLOW": "Cortex AI",
-            "SESSION_STATE_UPDATES_JSON": '{"cost_contract_workflow":"Cortex AI"}',
-            "SORT_ORDER": 1,
+            "METRICS": [
+                {"METRIC_LABEL": "Total spend", "METRIC_VALUE": "$120", "METRIC_DETAIL": "7d", "SORT_ORDER": 10},
+                {"METRIC_LABEL": "Cortex AI spend", "METRIC_VALUE": "$42", "METRIC_DETAIL": "35%", "METRIC_TONE": "cortex", "SORT_ORDER": 20},
+            ],
+            "EXCEPTIONS": [{
+                "SEVERITY": "High",
+                "SIGNAL": "Cortex AI spend",
+                "ENTITY_NAME": "Cortex",
+                "DETAIL": "Spend accelerated.",
+                "ROUTE_SECTION": "Cost & Contract",
+                "ROUTE_WORKFLOW": "Cortex AI",
+                "SORT_ORDER": 1,
+            }],
+            "ACTIONS": [{
+                "ACTION_KEY": "review_cortex_costs",
+                "ROUTE_KEY": "cost_contract_cortex_ai",
+                "ACTION_LABEL": "Review Cortex AI Costs",
+                "ACTION_DETAIL": "Open the Cortex lane.",
+                "CTA_LABEL": "Review Cortex",
+                "TARGET_SECTION": "Cost & Contract",
+                "TARGET_WORKFLOW": "Cortex AI",
+                "SORT_ORDER": 1,
+            }],
         }])
 
         with patch.object(brief_module.st, "session_state", {}), patch.object(
             brief_module,
             "run_query",
-            side_effect=[brief_rows, metric_rows, exception_rows, action_rows],
+            return_value=packet_rows,
         ) as run_query:
             brief = brief_module.autoload_section_command_brief("Cost & Contract", "ALFA", "ALL", 7)
 
@@ -84,7 +95,57 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertEqual(brief.metrics[1].tone, "cortex")
         self.assertEqual(brief.top_signal.signal, "Cortex AI spend")
         self.assertEqual(brief.next_actions[0].target_workflow, "Cortex AI")
-        self.assertEqual(run_query.call_count, 4)
+        self.assertEqual(brief.resolved_company, "ALFA")
+        self.assertEqual(brief.source_objects, "FACT_COST_DAILY; FACT_CORTEX_DAILY")
+        self.assertEqual(brief.command_brief_query_count, 1)
+        self.assertEqual(run_query.call_count, 1)
+
+    def test_loader_session_cache_hit_uses_zero_queries(self):
+        from sections import section_command_brief as brief_module
+
+        packet_rows = pd.DataFrame([{
+            "BRIEF_ID": "brief-cache",
+            "SECTION_NAME": "Alert Center",
+            "COMPANY": "ALFA",
+            "ENVIRONMENT": "ALL",
+            "WINDOW_DAYS": 7,
+            "RESOLVED_COMPANY": "ALFA",
+            "RESOLVED_ENVIRONMENT": "ALL",
+            "RESOLVED_WINDOW_DAYS": 7,
+            "STATE": "Summary loaded",
+            "HEADLINE": "Alerts are current.",
+            "SUMMARY": "Critical alerts are summarized from the mart.",
+            "TOP_SIGNAL": "Critical / high alerts",
+            "TOP_ENTITY": "Alert Center",
+            "TOP_ACTION": "Load Active Alerts",
+            "SOURCE_STATUS": "Summary loaded from mart",
+            "SOURCE_FRESHNESS": "2 minutes ago",
+            "SOURCE_OBJECTS": "ALERT_EVENTS",
+            "FRESHNESS_MINUTES": 2,
+            "TARGET_FRESHNESS_MINUTES": 15,
+            "IS_STALE": False,
+            "CONFIDENCE": "exact",
+            "SNAPSHOT_TS": "2026-06-25 10:00:00",
+            "LOAD_TS": "2026-06-25 10:02:00",
+            "METRICS": [{"METRIC_LABEL": "Active alerts", "METRIC_VALUE": "4", "SORT_ORDER": 10}],
+            "EXCEPTIONS": [],
+            "ACTIONS": [],
+        }])
+
+        session_state = {}
+        with patch.object(brief_module.st, "session_state", session_state), patch.object(
+            brief_module,
+            "run_query",
+            return_value=packet_rows,
+        ) as run_query:
+            first = brief_module.autoload_section_command_brief("Alert Center", "ALFA", "ALL", 7)
+            second = brief_module.autoload_section_command_brief("Alert Center", "ALFA", "ALL", 7)
+
+        self.assertEqual(first.command_brief_query_count, 1)
+        self.assertFalse(first.command_brief_cache_hit)
+        self.assertEqual(second.command_brief_query_count, 0)
+        self.assertTrue(second.command_brief_cache_hit)
+        self.assertEqual(run_query.call_count, 1)
 
     def test_loader_fallback_is_non_crashing_when_mart_unavailable(self):
         from sections import section_command_brief as brief_module
@@ -98,7 +159,7 @@ class SectionCommandBriefTests(unittest.TestCase):
 
         self.assertEqual(brief.state, "Summary unavailable")
         self.assertIn("Mart summary unavailable", brief.fallback_reason)
-        self.assertGreaterEqual(len(brief.metrics), 4)
+        self.assertEqual(len(brief.metrics), 0)
         self.assertEqual(brief.detail_cta, "Refresh Security Summary")
 
     def test_renderer_idle_actions_do_not_load_or_query(self):
@@ -136,8 +197,9 @@ class SectionCommandBriefTests(unittest.TestCase):
 
         markup = "\n".join(call.args[0] for call in html.call_args_list)
         self.assertIn("ow-command-brief", markup)
-        self.assertIn("Load Active Alerts", markup)
-        button.assert_called_once()
+        labels = [call.args[0] for call in button.call_args_list]
+        self.assertIn("Open Active Alerts", labels)
+        self.assertIn("Load Active Alerts", labels)
 
     def test_primary_sections_import_command_brief_path(self):
         required = {
@@ -166,6 +228,49 @@ class SectionCommandBriefTests(unittest.TestCase):
         ):
             self.assertIn(name, setup)
             self.assertIn(name, validation)
+
+    def test_command_brief_sql_pipeline_is_wired(self):
+        tables = (ROOT / "snowflake" / "mart_setup" / "04_mart_tables.sql").read_text(encoding="utf-8").upper()
+        procs = (ROOT / "snowflake" / "mart_setup" / "05_load_procedures.sql").read_text(encoding="utf-8").upper()
+        tasks = (ROOT / "snowflake" / "mart_setup" / "07_tasks.sql").read_text(encoding="utf-8").upper()
+        validation = (ROOT / "snowflake" / "mart_setup" / "08_validation.sql").read_text(encoding="utf-8").upper()
+        drop = (ROOT / "snowflake" / "OVERWATCH_MART_DROP.sql").read_text(encoding="utf-8").upper()
+
+        for token in (
+            "BRIEF_ID",
+            "SOURCE_OBJECTS",
+            "SOURCE_SNAPSHOT_TS",
+            "FRESHNESS_MINUTES",
+            "METRIC_NUMERIC_VALUE",
+            "ACTION_KEY",
+            "ROUTE_KEY",
+            "CTA_LABEL",
+        ):
+            self.assertIn(token, tables)
+        self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS()", procs)
+        self.assertIn("MART_SECTION_COMMAND_BRIEF", procs)
+        self.assertIn("MART_SECTION_COMMAND_METRIC", procs)
+        self.assertIn("MART_SECTION_COMMAND_EXCEPTION", procs)
+        self.assertIn("MART_SECTION_COMMAND_ACTION", procs)
+        self.assertIn("CREATE OR REPLACE TASK OVERWATCH_SECTION_COMMAND_BRIEF_REFRESH", tasks)
+        self.assertIn("AFTER OVERWATCH_EXECUTIVE_OBSERVABILITY_REFRESH", tasks)
+        self.assertIn("CALL SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS()", validation)
+        self.assertIn("SECTION_COMMAND_BRIEF_ORPHAN_CHILD_ROWS", validation)
+        self.assertIn("SECTION_COMMAND_BRIEF_CANONICAL_WINDOWS", validation)
+        self.assertIn("DROP TASK IF EXISTS OVERWATCH_SECTION_COMMAND_BRIEF_REFRESH", drop)
+        self.assertIn("DROP PROCEDURE IF EXISTS SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS()", drop)
+
+    def test_loader_builds_single_packet_query(self):
+        from sections import section_command_brief as brief_module
+
+        sql = brief_module._packet_sql("Cost & Contract", "ALFA", "ALL", 7).upper()
+        self.assertIn("LATEST_BRIEF", sql)
+        self.assertIn("ARRAY_AGG", sql)
+        self.assertIn("OBJECT_CONSTRUCT_KEEP_NULL", sql)
+        self.assertIn("BRIEF_ID", sql)
+        self.assertIn("METRICS", sql)
+        self.assertIn("EXCEPTIONS", sql)
+        self.assertIn("ACTIONS", sql)
 
 
 if __name__ == "__main__":

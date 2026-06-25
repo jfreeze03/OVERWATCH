@@ -43,8 +43,6 @@ from sections.cost_contract_splash import (
     _cost_splash_summary,
     _render_cost_splash,
 )
-from sections.command_deck import render_command_deck
-from sections.command_deck_contracts import get_command_deck_contract
 from sections.cortex_signals import build_cortex_signal, render_cortex_signal_panel
 from sections.operator_case import make_case_evidence, render_add_to_case_button
 from sections.shell_helpers import (
@@ -95,10 +93,6 @@ def _render_cost_first_paint_shell(company: str, days: int, splash: dict, credit
         cta_label="Open Cortex Cost Drivers",
         cta_key="cost_contract_command_deck_cortex_cost_drivers",
     )
-    render_command_deck(
-        get_command_deck_contract("Cost & Contract"),
-        key_prefix="cost_contract_command_deck",
-    )
 
 
 def _render_cost_watch_floor(company: str, credit_price: float) -> None:
@@ -120,6 +114,7 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
         )
     with controls[1]:
         refresh_cost = st.button("Refresh Cost", key="cost_contract_refresh", type="primary", width="stretch")
+    refresh_cost = bool(refresh_cost or st.session_state.pop("cost_contract_command_brief_force_refresh", False))
 
     if refresh_cost:
         st.session_state.pop(_COST_SPLASH_KEY, None)

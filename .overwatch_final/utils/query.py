@@ -50,6 +50,7 @@ from .sql_safe import sql_literal
 
 CACHE_TIERS: dict[str, int] = {
     "live":       30,     # INFORMATION_SCHEMA - real-time, 30s stale is fine
+    "command_summary": 300,  # Primary-section command briefs - compact mart packet, 5-min cache
     "standard":   300,    # App marts and ordinary section reads - 5-min cache
     "recent":     300,    # ACCOUNT_USAGE last 4h - 5-min cache
     "historical": 3600,   # ACCOUNT_USAGE 7d+ - 60-min cache
@@ -58,6 +59,7 @@ CACHE_TIERS: dict[str, int] = {
 
 STATEMENT_TIMEOUTS_SECONDS: dict[str, int] = {
     "live": 30,
+    "command_summary": 30,
     "metadata": 30,
     "standard": 60,
     "recent": 120,
@@ -712,6 +714,22 @@ def _cached_standard(
         return pd.DataFrame()
 
 
+@st.cache_data(ttl=CACHE_TIERS["command_summary"], show_spinner=False)
+def _cached_command_summary(
+    query_text: str,
+    cache_context: str = "",
+    cache_salt: str = "",
+    _query_tag: str = "",
+    _ttl_key: str = "",
+    _section: str = "",
+) -> pd.DataFrame:
+    try:
+        return _execute_snowflake_query(query_text, _query_tag, ttl_key=_ttl_key, tier="command_summary", section=_section)
+    except Exception as e:
+        _show_query_warning("Command brief unavailable", e)
+        return pd.DataFrame()
+
+
 @st.cache_data(ttl=CACHE_TIERS["historical"], show_spinner=False)
 def _cached_historical(
     query_text: str,
@@ -780,6 +798,18 @@ def _cached_raise_standard(
     return _execute_snowflake_query(query_text, _query_tag, ttl_key=_ttl_key, tier="standard", section=_section)
 
 
+@st.cache_data(ttl=CACHE_TIERS["command_summary"], show_spinner=False)
+def _cached_raise_command_summary(
+    query_text: str,
+    cache_context: str = "",
+    cache_salt: str = "",
+    _query_tag: str = "",
+    _ttl_key: str = "",
+    _section: str = "",
+) -> pd.DataFrame:
+    return _execute_snowflake_query(query_text, _query_tag, ttl_key=_ttl_key, tier="command_summary", section=_section)
+
+
 @st.cache_data(ttl=CACHE_TIERS["historical"], show_spinner=False)
 def _cached_raise_historical(
     query_text: str,
@@ -824,6 +854,7 @@ def run_query_cached(
 
 _TIER_FN = {
     "live":       _cached_live,
+    "command_summary": _cached_command_summary,
     "standard":   _cached_standard,
     "recent":     _cached_recent,
     "historical": _cached_historical,
@@ -833,6 +864,7 @@ _TIER_FN = {
 
 _RAISE_TIER_FN = {
     "live":       _cached_raise_live,
+    "command_summary": _cached_raise_command_summary,
     "standard":   _cached_raise_standard,
     "recent":     _cached_raise_recent,
     "historical": _cached_raise_historical,

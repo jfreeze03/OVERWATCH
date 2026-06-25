@@ -45,10 +45,11 @@ section that owns the workflow.
 
 ## UI Direction
 
-Facts come first, evidence opens on demand, and first paint must be useful
-without live Snowflake reads. A section entry should show the active view,
-scope, freshness, expected lanes, and the next safe load action before detailed
-rows, exports, and specialist diagnostics appear.
+Facts come first, evidence opens on demand, and section entry may read compact
+mart command summaries. A section entry should show the active view, scope,
+freshness, expected lanes, and the next safe load action before detailed rows,
+exports, and specialist diagnostics appear. Heavy live proof and row-level
+account-history reads stay behind explicit load buttons.
 
 Executive Landing owns the Mission Control queue. That queue answers "what
 needs attention now" from already-loaded session evidence only: active alerts,
@@ -62,8 +63,9 @@ workflow remains visible and deep-link/session-state behavior is preserved.
 High-traffic workflow hubs such as Executive Landing and DBA Control Room should
 show the selected workflow detail inline, keep the primary/default workflow in
 the first row, and move less common workflows into a clearly named expander.
-Alert Center first paint should show cached counts when they are already in
-session state, otherwise it should stay explicitly on demand until Load is used.
+Alert Center first paint should show the mart-backed command brief and cached
+counts when they are already in session state; detailed alert rows stay behind
+Load.
 Use shared first-paint shell helpers for status strips, KPI rows, and snapshots
 when a section can do so without moving data-load decisions out of the owning
 section. Workload Operations uses this pattern for its session-only overview;
@@ -71,8 +73,8 @@ specialist workload evidence remains behind the selected workflow and explicit
 load actions. Security Monitoring uses the same shell for active-view, scope,
 expected evidence lanes, and next-action wayfinding while detailed security
 evidence stays in the selected workflow or explicit load path. Security
-Monitoring first paint must not auto-load the security summary; Refresh
-Security Summary is the current-facts boundary. Cost & Contract uses the same
+Monitoring entry may read the compact command brief mart; Refresh Security
+Summary remains the proof/detail boundary. Cost & Contract uses the same
 contract for Cost Overview: scope, window, evidence state, expected cost lanes,
 and Refresh Cost are visible before official spend, forecast, reconciliation,
 or contract evidence loads.
@@ -101,9 +103,10 @@ browser sessions keep the native Streamlit fallback path.
 
 ## Primary Section Command Brief Contract
 
-Every canonical section must render useful operator context on entry. The UI may
-read compact command summary marts; heavy detail, proof, and raw account-history
-rows remain behind explicit load or refresh buttons. The central contract
+Every canonical section must render useful operator context on entry. The UI
+reads at most one command brief packet query from compact command summary marts;
+heavy detail, proof, and raw account-history rows remain behind explicit load
+or refresh buttons. The central contract
 registries in `sections.section_command_contracts` and
 `sections.first_paint_contracts` own the primary view, expected lanes, safe load
 boundary, mart/session sources, and forbidden detail loaders.
@@ -117,20 +120,20 @@ boundary, mart/session sources, and forbidden detail loaders.
 | Cost & Contract | Cost Overview | Spend movement, run rate, warehouse drivers, Cortex AI cost risk, savings | Refresh Cost |
 | Security Monitoring | Security Overview | Logins, grants, sharing, access changes, security alerts | Refresh Security Summary |
 
-The Command Brief layout is status band, compact metric strip, top signal,
-recommended route actions, detail/evidence boundary, and source/freshness
-footer. It must not render empty board walls with placeholder KPIs. If the mart
-summary is unavailable, show "Summary unavailable" plus setup/remediation copy
-and keep the detail boundary visible.
+The Command Brief layout is status band, four primary metrics maximum, top
+signal, one primary action, up to two secondary actions, a real detail/evidence
+button, and source/freshness footer. Additional metrics belong in a collapsed
+area. It must not render empty board walls with placeholder KPIs. If the mart
+summary is unavailable, show one "Summary unavailable" diagnostics panel plus
+setup/remediation copy and keep the detail boundary visible.
 
 ## Primary Section Command Deck
 
-The Command Deck is the route-only action surface that complements the Command
-Brief. Its contracts live in `sections.command_deck_contracts` and
-reuse the first-paint registry for each section's primary CTA, evidence
-boundary, and summary-source note. Command Deck buttons may set workflow/session
-state or queue section navigation, but they must not load Snowflake evidence on
-render and must not replace the explicit load/refresh buttons.
+Legacy Command Deck contracts remain the static route catalog, but the Command
+Brief is the authoritative entry summary and action surface. Command Brief route
+actions resolve through allowlisted section/workflow targets; mart rows may
+select action keys and labels, but they must not inject arbitrary Streamlit
+session state.
 
 Command Deck v2 owns route actions and evidence-boundary context across primary
 sections. Primary CTAs are actionable only when a section passes an explicit

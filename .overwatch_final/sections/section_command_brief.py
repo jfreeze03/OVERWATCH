@@ -1,11 +1,12 @@
-"""Mart-backed command brief loader for primary OVERWATCH sections."""
+"""Mart-backed command brief packet loader for primary OVERWATCH sections."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
-from datetime import datetime
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
+from datetime import datetime, timedelta
 import json
+import time
 
 import pandas as pd
 import streamlit as st
@@ -14,6 +15,10 @@ from sections.command_deck_contracts import get_command_deck_contract
 from sections.section_command_contracts import SectionCommandContract, get_section_command_contract
 from utils.mart_names import mart_object_name
 from utils.query import run_query, sql_literal
+
+
+SESSION_CACHE_SECONDS = 300
+NEGATIVE_CACHE_SECONDS = 45
 
 
 @dataclass(frozen=True)
@@ -25,6 +30,9 @@ class SectionCommandMetric:
     trend: str = ""
     unit: str = ""
     sort_order: int = 100
+    numeric_value: float | None = None
+    text_value: str = ""
+    metric_format: str = ""
 
 
 @dataclass(frozen=True)
@@ -45,6 +53,8 @@ class SectionCommandAction:
     target_workflow: str = ""
     session_state_updates: tuple[tuple[str, object], ...] = ()
     cta: str = ""
+    action_key: str = ""
+    route_key: str = ""
 
 
 @dataclass(frozen=True)
@@ -66,16 +76,62 @@ class SectionCommandBrief:
     fallback_reason: str = ""
     detail_cta: str = ""
     detail_available: bool = False
+    requested_company: str = ""
+    requested_environment: str = ""
+    requested_window_days: int = 0
+    resolved_company: str = ""
+    resolved_environment: str = ""
+    resolved_window_days: int = 0
+    source_objects: str = ""
+    source_snapshot_ts: str = ""
+    freshness_minutes: float | None = None
+    target_freshness_minutes: int = 0
+    stale: bool = False
+    confidence: str = ""
+    cache_expires_at: str = ""
+    app_query_loaded_at: str = ""
+    command_brief_query_count: int = 0
+    command_brief_elapsed_ms: float = 0.0
+    command_brief_cache_hit: bool = False
+    command_brief_fallback_used: bool = False
     raw_payload: Mapping[str, object] = field(default_factory=dict)
 
 
+def _now() -> datetime:
+    return datetime.now()
+
+
 def _now_label() -> str:
-    return datetime.now().isoformat(timespec="seconds")
+    return _now().isoformat(timespec="seconds")
+
+
+def _expiry_label(seconds: int = SESSION_CACHE_SECONDS) -> str:
+    return (_now() + timedelta(seconds=max(int(seconds), 1))).isoformat(timespec="seconds")
+
+
+def _parse_dt(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).replace(tzinfo=None)
+    except Exception:
+        return None
 
 
 def _cache_key(section: str, company: str, environment: str, window_days: int) -> str:
     token = "::".join((str(section), str(company), str(environment), str(int(window_days))))
     return f"section_command_brief::{token}"
+
+
+def _negative_key(key: str) -> str:
+    return f"{key}::negative_until"
+
+
+def _last_good_key(key: str) -> str:
+    return f"{key}::last_good"
 
 
 def _column(row: Mapping[str, object], *names: str, default: object = "") -> object:
@@ -94,15 +150,66 @@ def _string(value: object, default: str = "") -> str:
     return text or default
 
 
+def _float_or_none(value: object) -> float | None:
+    try:
+        if value in (None, ""):
+            return None
+        return float(value)
+    except Exception:
+        return None
+
+
+def _int_value(value: object, default: int = 0) -> int:
+    try:
+        return int(float(value))
+    except Exception:
+        return int(default)
+
+
+def _variant_records(value: object) -> list[Mapping[str, object]]:
+    if value is None:
+        return []
+    if isinstance(value, str) and not value.strip():
+        return []
+    parsed = value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except Exception:
+            return []
+    if isinstance(parsed, pd.Series):
+        parsed = parsed.tolist()
+    if isinstance(parsed, tuple):
+        parsed = list(parsed)
+    if not isinstance(parsed, list):
+        return []
+    records: list[Mapping[str, object]] = []
+    for item in parsed:
+        if isinstance(item, str):
+            try:
+                item = json.loads(item)
+            except Exception:
+                continue
+        if isinstance(item, Mapping):
+            records.append(item)
+    return records
+
+
 def _metric_from_row(row: Mapping[str, object]) -> SectionCommandMetric:
+    numeric_value = _float_or_none(_column(row, "METRIC_NUMERIC_VALUE", "NUMERIC_VALUE"))
+    text_value = _string(_column(row, "METRIC_TEXT_VALUE", "TEXT_VALUE"))
+    value = _string(_column(row, "METRIC_VALUE", "VALUE"), text_value or "Unavailable")
     return SectionCommandMetric(
         label=_string(_column(row, "METRIC_LABEL", "LABEL"), "Metric"),
-        value=_string(_column(row, "METRIC_VALUE", "VALUE"), "Unavailable"),
+        value=value,
         detail=_string(_column(row, "METRIC_DETAIL", "DETAIL")),
         tone=_string(_column(row, "METRIC_TONE", "TONE"), "neutral").lower(),
         trend=_string(_column(row, "TREND_LABEL", "TREND")),
         unit=_string(_column(row, "METRIC_UNIT", "UNIT")),
-        sort_order=int(float(_column(row, "SORT_ORDER", default=100) or 100)),
+        sort_order=_int_value(_column(row, "SORT_ORDER", default=100), 100),
+        numeric_value=numeric_value,
+        text_value=text_value,
+        metric_format=_string(_column(row, "METRIC_FORMAT", "FORMAT")),
     )
 
 
@@ -118,22 +225,14 @@ def _signal_from_row(row: Mapping[str, object]) -> SectionCommandSignal:
 
 
 def _action_from_row(row: Mapping[str, object]) -> SectionCommandAction:
-    updates: tuple[tuple[str, object], ...] = ()
-    raw_updates = _string(_column(row, "SESSION_STATE_UPDATES_JSON"))
-    if raw_updates:
-        try:
-            parsed = json.loads(raw_updates)
-            if isinstance(parsed, dict):
-                updates = tuple((str(key), value) for key, value in parsed.items())
-        except Exception:
-            updates = ()
     return SectionCommandAction(
         label=_string(_column(row, "ACTION_LABEL", "LABEL"), "Open workflow"),
         detail=_string(_column(row, "ACTION_DETAIL", "DETAIL"), "Route to the next workflow."),
         target_section=_string(_column(row, "TARGET_SECTION", "ROUTE_SECTION")),
         target_workflow=_string(_column(row, "TARGET_WORKFLOW", "ROUTE_WORKFLOW")),
-        session_state_updates=updates,
-        cta=_string(_column(row, "CTA"), "Open"),
+        cta=_string(_column(row, "CTA_LABEL", "CTA"), "Open"),
+        action_key=_string(_column(row, "ACTION_KEY")),
+        route_key=_string(_column(row, "ROUTE_KEY")),
     )
 
 
@@ -150,8 +249,8 @@ def _default_actions(contract: SectionCommandContract) -> tuple[SectionCommandAc
                 detail=str(action.description),
                 target_section=str(action.target_section or contract.section),
                 target_workflow=str(action.target_workflow or ""),
-                session_state_updates=tuple(action.session_state_updates or ()),
                 cta=str(action.label),
+                action_key=str(action.label).lower().replace(" ", "_"),
             )
             for action in deck_actions[:3]
         )
@@ -162,25 +261,9 @@ def _default_actions(contract: SectionCommandContract) -> tuple[SectionCommandAc
             target_section=target_section or contract.section,
             target_workflow=target_workflow,
             cta=label,
+            action_key=label.lower().replace(" ", "_"),
         )
         for label, detail, target_section, target_workflow in contract.next_actions[:3]
-    )
-
-
-def _fallback_metrics(contract: SectionCommandContract) -> tuple[SectionCommandMetric, ...]:
-    return tuple(
-        SectionCommandMetric(
-            label=label,
-            value="Summary unavailable" if idx == 0 else "Setup required",
-            detail=(
-                "Command brief mart is unavailable for this scope."
-                if idx == 0
-                else "Heavy detail remains behind explicit load."
-            ),
-            tone="warning" if idx == 0 else "neutral",
-            sort_order=idx * 10,
-        )
-        for idx, label in enumerate(contract.metric_labels[:8])
     )
 
 
@@ -191,7 +274,18 @@ def _fallback_brief(
     environment: str,
     window_days: int,
     reason: str,
+    last_known_good: SectionCommandBrief | None = None,
 ) -> SectionCommandBrief:
+    if isinstance(last_known_good, SectionCommandBrief) and not last_known_good.fallback_reason:
+        return replace(
+            last_known_good,
+            stale=True,
+            state="Stale",
+            freshness_label=f"Last known good retained. {reason}",
+            fallback_reason=reason,
+            command_brief_cache_hit=False,
+            command_brief_fallback_used=True,
+        )
     loaded_at = _now_label()
     return SectionCommandBrief(
         section=contract.section,
@@ -202,9 +296,9 @@ def _fallback_brief(
         headline=contract.unavailable_headline,
         summary=contract.unavailable_summary,
         source=contract.source_table,
-        freshness_label="Summary mart unavailable",
+        freshness_label="Mart summary unavailable",
         loaded_at=loaded_at,
-        metrics=_fallback_metrics(contract),
+        metrics=(),
         top_signal=SectionCommandSignal(
             severity="Setup",
             signal=contract.top_signal_label,
@@ -218,6 +312,20 @@ def _fallback_brief(
         fallback_reason=reason or "Mart summary unavailable; live fallback disabled for speed.",
         detail_cta=contract.detail_cta,
         detail_available=False,
+        requested_company=str(company),
+        requested_environment=str(environment),
+        requested_window_days=int(window_days),
+        resolved_company="",
+        resolved_environment="",
+        resolved_window_days=int(window_days),
+        source_objects=contract.source_table,
+        target_freshness_minutes=int(contract.target_freshness_minutes),
+        stale=True,
+        confidence="unavailable",
+        cache_expires_at=_expiry_label(NEGATIVE_CACHE_SECONDS),
+        app_query_loaded_at=loaded_at,
+        command_brief_query_count=0,
+        command_brief_fallback_used=True,
         raw_payload={},
     )
 
@@ -234,90 +342,172 @@ def _scoped_where(section: str, company: str, environment: str, window_days: int
     """
 
 
-def _latest_brief_rows(section: str, company: str, environment: str, window_days: int) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def _packet_sql(section: str, company: str, environment: str, window_days: int) -> str:
     brief_table = mart_object_name("MART_SECTION_COMMAND_BRIEF")
     metric_table = mart_object_name("MART_SECTION_COMMAND_METRIC")
     exception_table = mart_object_name("MART_SECTION_COMMAND_EXCEPTION")
     action_table = mart_object_name("MART_SECTION_COMMAND_ACTION")
     where = _scoped_where(section, company, environment, window_days)
-    common_order = f"""
+    return f"""
+WITH latest_brief AS (
+    SELECT *
+    FROM {brief_table}
+    WHERE {where}
+    ORDER BY
         IFF(UPPER(COMPANY) = UPPER({sql_literal(company, 100)}), 1, 0) DESC,
         IFF(UPPER(ENVIRONMENT) = UPPER({sql_literal(environment, 100)}), 1, 0) DESC,
         IFF(WINDOW_DAYS = {int(window_days)}, 1, 0) DESC,
         SNAPSHOT_TS DESC,
         LOAD_TS DESC
-    """
-    brief_sql = f"""
-        SELECT *
-        FROM {brief_table}
-        WHERE {where}
-        ORDER BY {common_order}
-        LIMIT 1
-    """
-    brief = run_query(brief_sql, ttl_key=f"section_command_brief_{section}", tier="historical", section="Command Brief")
-    if brief.empty:
-        return brief, pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
-    row = brief.iloc[0].to_dict()
-    snapshot_ts = _column(row, "SNAPSHOT_TS")
-    snapshot_filter = ""
-    if snapshot_ts not in (None, ""):
-        snapshot_filter = f"AND SNAPSHOT_TS = TO_TIMESTAMP_NTZ({sql_literal(str(snapshot_ts), 80)})"
-    metric_sql = f"""
-        SELECT *
-        FROM {metric_table}
-        WHERE {where}
-          {snapshot_filter}
-        ORDER BY SORT_ORDER, METRIC_LABEL
-        LIMIT 8
-    """
-    exception_sql = f"""
-        SELECT *
-        FROM {exception_table}
-        WHERE {where}
-          {snapshot_filter}
-        ORDER BY SORT_ORDER, SEVERITY, SIGNAL
-        LIMIT 5
-    """
-    action_sql = f"""
-        SELECT *
-        FROM {action_table}
-        WHERE {where}
-          {snapshot_filter}
-        ORDER BY SORT_ORDER, ACTION_LABEL
-        LIMIT 4
-    """
-    metrics = run_query(metric_sql, ttl_key=f"section_command_metric_{section}", tier="historical", section="Command Brief")
-    exceptions = run_query(exception_sql, ttl_key=f"section_command_exception_{section}", tier="historical", section="Command Brief")
-    actions = run_query(action_sql, ttl_key=f"section_command_action_{section}", tier="historical", section="Command Brief")
-    return brief, metrics, exceptions, actions
+    LIMIT 1
+),
+metric_packet AS (
+    SELECT
+        BRIEF_ID,
+        ARRAY_AGG(
+            OBJECT_CONSTRUCT_KEEP_NULL(
+                'METRIC_KEY', METRIC_KEY,
+                'METRIC_LABEL', METRIC_LABEL,
+                'METRIC_VALUE', METRIC_VALUE,
+                'METRIC_NUMERIC_VALUE', METRIC_NUMERIC_VALUE,
+                'METRIC_TEXT_VALUE', METRIC_TEXT_VALUE,
+                'METRIC_FORMAT', METRIC_FORMAT,
+                'METRIC_UNIT', METRIC_UNIT,
+                'METRIC_DETAIL', METRIC_DETAIL,
+                'METRIC_TONE', METRIC_TONE,
+                'TREND_NUMERIC_VALUE', TREND_NUMERIC_VALUE,
+                'TREND_LABEL', TREND_LABEL,
+                'SORT_ORDER', SORT_ORDER
+            )
+        ) WITHIN GROUP (ORDER BY SORT_ORDER, METRIC_LABEL) AS METRICS
+    FROM {metric_table}
+    WHERE BRIEF_ID IN (SELECT BRIEF_ID FROM latest_brief)
+    GROUP BY BRIEF_ID
+),
+exception_packet AS (
+    SELECT
+        BRIEF_ID,
+        ARRAY_AGG(
+            OBJECT_CONSTRUCT_KEEP_NULL(
+                'SEVERITY', SEVERITY,
+                'SIGNAL', SIGNAL,
+                'ENTITY_TYPE', ENTITY_TYPE,
+                'ENTITY_NAME', ENTITY_NAME,
+                'DETAIL', DETAIL,
+                'ROUTE_SECTION', ROUTE_SECTION,
+                'ROUTE_WORKFLOW', ROUTE_WORKFLOW,
+                'SORT_ORDER', SORT_ORDER
+            )
+        ) WITHIN GROUP (
+            ORDER BY
+                CASE UPPER(SEVERITY)
+                    WHEN 'CRITICAL' THEN 10
+                    WHEN 'HIGH' THEN 20
+                    WHEN 'MEDIUM' THEN 30
+                    WHEN 'WATCH' THEN 40
+                    WHEN 'LOW' THEN 50
+                    WHEN 'INFO' THEN 60
+                    WHEN 'CLEAR' THEN 90
+                    ELSE 80
+                END,
+                SORT_ORDER,
+                SIGNAL
+        ) AS EXCEPTIONS
+    FROM {exception_table}
+    WHERE BRIEF_ID IN (SELECT BRIEF_ID FROM latest_brief)
+    GROUP BY BRIEF_ID
+),
+action_packet AS (
+    SELECT
+        BRIEF_ID,
+        ARRAY_AGG(
+            OBJECT_CONSTRUCT_KEEP_NULL(
+                'ACTION_KEY', ACTION_KEY,
+                'ROUTE_KEY', ROUTE_KEY,
+                'ACTION_LABEL', ACTION_LABEL,
+                'ACTION_DETAIL', ACTION_DETAIL,
+                'CTA_LABEL', CTA_LABEL,
+                'TARGET_SECTION', TARGET_SECTION,
+                'TARGET_WORKFLOW', TARGET_WORKFLOW,
+                'SORT_ORDER', SORT_ORDER
+            )
+        ) WITHIN GROUP (ORDER BY SORT_ORDER, ACTION_LABEL) AS ACTIONS
+    FROM {action_table}
+    WHERE BRIEF_ID IN (SELECT BRIEF_ID FROM latest_brief)
+    GROUP BY BRIEF_ID
+)
+SELECT
+    b.*,
+    COALESCE(m.METRICS, ARRAY_CONSTRUCT()) AS METRICS,
+    COALESCE(e.EXCEPTIONS, ARRAY_CONSTRUCT()) AS EXCEPTIONS,
+    COALESCE(a.ACTIONS, ARRAY_CONSTRUCT()) AS ACTIONS
+FROM latest_brief b
+LEFT JOIN metric_packet m ON m.BRIEF_ID = b.BRIEF_ID
+LEFT JOIN exception_packet e ON e.BRIEF_ID = b.BRIEF_ID
+LEFT JOIN action_packet a ON a.BRIEF_ID = b.BRIEF_ID
+"""
 
 
-def _brief_from_rows(
+def _load_packet(
+    section: str,
+    company: str,
+    environment: str,
+    window_days: int,
+    *,
+    force: bool = False,
+) -> tuple[pd.DataFrame, float]:
+    sql = _packet_sql(section, company, environment, window_days)
+    started = time.perf_counter()
+    df = run_query(
+        sql,
+        ttl_key=f"section_command_packet_{section}_{company}_{environment}_{int(window_days)}",
+        tier="command_summary",
+        section="Command Brief",
+        use_cache=not bool(force),
+        max_rows=1,
+    )
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    return df, elapsed_ms
+
+
+def _brief_from_packet(
     contract: SectionCommandContract,
     *,
     company: str,
     environment: str,
     window_days: int,
-    brief_rows: pd.DataFrame,
-    metric_rows: pd.DataFrame,
-    exception_rows: pd.DataFrame,
-    action_rows: pd.DataFrame,
+    packet: pd.DataFrame,
+    elapsed_ms: float,
+    cache_hit: bool,
 ) -> SectionCommandBrief:
-    row = brief_rows.iloc[0].to_dict()
-    metrics = tuple(_metric_from_row(item) for item in metric_rows.to_dict("records"))
-    if not metrics:
-        metrics = _fallback_metrics(contract)
-    exceptions = tuple(_signal_from_row(item) for item in exception_rows.to_dict("records"))
+    row = packet.iloc[0].to_dict()
+    metrics = tuple(_metric_from_row(item) for item in _variant_records(_column(row, "METRICS")))
+    exceptions = tuple(_signal_from_row(item) for item in _variant_records(_column(row, "EXCEPTIONS")))
     top_signal = exceptions[0] if exceptions else SectionCommandSignal(
         severity=_string(_column(row, "STATE"), "Clear"),
         signal=_string(_column(row, "TOP_SIGNAL"), contract.top_signal_label),
         entity=_string(_column(row, "TOP_ENTITY")),
         detail=_string(_column(row, "TOP_ACTION"), contract.top_signal_detail),
     )
-    actions = tuple(_action_from_row(item) for item in action_rows.to_dict("records")) or _default_actions(contract)
+    actions = tuple(_action_from_row(item) for item in _variant_records(_column(row, "ACTIONS"))) or _default_actions(contract)
     loaded_at = _string(_column(row, "LOAD_TS", "SNAPSHOT_TS"), _now_label())
     source_status = _string(_column(row, "SOURCE_STATUS"), "Summary loaded from mart")
     source_freshness = _string(_column(row, "SOURCE_FRESHNESS"), loaded_at)
+    resolved_company = _string(_column(row, "RESOLVED_COMPANY", "COMPANY"), str(company))
+    resolved_environment = _string(_column(row, "RESOLVED_ENVIRONMENT", "ENVIRONMENT"), str(environment))
+    resolved_window = _int_value(_column(row, "RESOLVED_WINDOW_DAYS", "WINDOW_DAYS", default=window_days), int(window_days))
+    freshness_minutes = _float_or_none(_column(row, "FRESHNESS_MINUTES"))
+    target_freshness = _int_value(_column(row, "TARGET_FRESHNESS_MINUTES", default=contract.target_freshness_minutes), contract.target_freshness_minutes)
+    stale = bool(_column(row, "IS_STALE", default=False)) or (
+        freshness_minutes is not None and target_freshness > 0 and freshness_minutes > target_freshness
+    )
+    scope_note = f"Requested: {company} / {environment} / {int(window_days)} days"
+    if (
+        resolved_company.upper() != str(company).upper()
+        or resolved_environment.upper() != str(environment).upper()
+        or resolved_window != int(window_days)
+    ):
+        scope_note += f" | Resolved: {resolved_company} / {resolved_environment} / {resolved_window} days"
     return SectionCommandBrief(
         section=contract.section,
         company=str(company),
@@ -326,18 +516,63 @@ def _brief_from_rows(
         state=_string(_column(row, "STATE"), "Summary loaded"),
         headline=_string(_column(row, "HEADLINE"), f"{contract.section} command brief is loaded."),
         summary=_string(_column(row, "SUMMARY"), "Review the top signal and next action."),
-        source=contract.source_table,
-        freshness_label=f"{source_status} | {source_freshness}",
+        source="MART_SECTION_COMMAND_BRIEF",
+        freshness_label=f"{source_status} | {source_freshness} | {scope_note}",
         loaded_at=loaded_at,
         metrics=metrics,
         top_signal=top_signal,
         exceptions=exceptions,
-        next_actions=actions[:4],
+        next_actions=actions[:3],
         fallback_reason="",
         detail_cta=contract.detail_cta,
         detail_available=True,
+        requested_company=str(company),
+        requested_environment=str(environment),
+        requested_window_days=int(window_days),
+        resolved_company=resolved_company,
+        resolved_environment=resolved_environment,
+        resolved_window_days=resolved_window,
+        source_objects=_string(_column(row, "SOURCE_OBJECTS"), contract.source_table),
+        source_snapshot_ts=_string(_column(row, "SOURCE_SNAPSHOT_TS", "SNAPSHOT_TS")),
+        freshness_minutes=freshness_minutes,
+        target_freshness_minutes=target_freshness,
+        stale=stale,
+        confidence=_string(_column(row, "CONFIDENCE"), "unknown"),
+        cache_expires_at=_expiry_label(),
+        app_query_loaded_at=_now_label(),
+        command_brief_query_count=0 if cache_hit else 1,
+        command_brief_elapsed_ms=round(float(elapsed_ms or 0), 2),
+        command_brief_cache_hit=bool(cache_hit),
+        command_brief_fallback_used=False,
         raw_payload=row,
     )
+
+
+def _session_brief_is_current(brief: object) -> bool:
+    if not isinstance(brief, SectionCommandBrief):
+        return False
+    expires_at = _parse_dt(brief.cache_expires_at)
+    return expires_at is not None and expires_at > _now()
+
+
+def _record_telemetry(brief: SectionCommandBrief) -> None:
+    telemetry = {
+        "command_brief_query_count": int(brief.command_brief_query_count or 0),
+        "command_brief_elapsed_ms": float(brief.command_brief_elapsed_ms or 0),
+        "command_brief_cache_hit": bool(brief.command_brief_cache_hit),
+        "command_brief_source_age_minutes": brief.freshness_minutes,
+        "command_brief_fallback_used": bool(brief.command_brief_fallback_used),
+        "command_brief_section": brief.section,
+        "command_brief_scope": f"{brief.requested_company}/{brief.requested_environment}/{brief.requested_window_days}",
+    }
+    try:
+        st.session_state["section_command_brief_last_telemetry"] = telemetry
+        entries = st.session_state.setdefault("section_command_brief_telemetry", [])
+        entries.append({**telemetry, "timestamp": _now_label()})
+        if len(entries) > 100:
+            del entries[:-100]
+    except Exception:
+        pass
 
 
 def autoload_section_command_brief(
@@ -347,51 +582,72 @@ def autoload_section_command_brief(
     window_days: int,
     *,
     force: bool = False,
-    allow_live_fallback: bool = False,
 ) -> SectionCommandBrief:
-    """Return a cached or mart-backed section command brief without loading detail rows."""
-    _ = allow_live_fallback
+    """Return a session-cached or mart-backed command brief without loading detail rows."""
     contract = get_section_command_contract(section)
     key = _cache_key(contract.section, company, environment, int(window_days))
     cached = st.session_state.get(key)
-    if isinstance(cached, SectionCommandBrief) and not force:
-        return cached
+    if not force and _session_brief_is_current(cached):
+        brief = replace(cached, command_brief_cache_hit=True, command_brief_query_count=0)
+        _record_telemetry(brief)
+        return brief
+
+    negative_until = _parse_dt(st.session_state.get(_negative_key(key)))
+    last_good = st.session_state.get(_last_good_key(key))
+    if not force and negative_until is not None and negative_until > _now():
+        brief = _fallback_brief(
+            contract,
+            company=company,
+            environment=environment,
+            window_days=int(window_days),
+            reason="Command brief summary unavailable; retry window is still open.",
+            last_known_good=last_good if isinstance(last_good, SectionCommandBrief) else None,
+        )
+        _record_telemetry(brief)
+        return brief
+
     try:
-        brief_rows, metric_rows, exception_rows, action_rows = _latest_brief_rows(
+        packet, elapsed_ms = _load_packet(
             contract.section,
             str(company),
             str(environment),
             int(window_days),
+            force=force,
         )
-        if brief_rows.empty:
+        if packet.empty:
+            st.session_state[_negative_key(key)] = _expiry_label(NEGATIVE_CACHE_SECONDS)
             brief = _fallback_brief(
                 contract,
                 company=company,
                 environment=environment,
                 window_days=int(window_days),
-                reason="No command brief rows matched the active scope.",
+                reason=f"The command brief mart has no current row for {company} / {environment} / {int(window_days)} days.",
+                last_known_good=last_good if isinstance(last_good, SectionCommandBrief) else None,
             )
         else:
-            brief = _brief_from_rows(
+            brief = _brief_from_packet(
                 contract,
                 company=company,
                 environment=environment,
                 window_days=int(window_days),
-                brief_rows=brief_rows,
-                metric_rows=metric_rows,
-                exception_rows=exception_rows,
-                action_rows=action_rows,
+                packet=packet,
+                elapsed_ms=elapsed_ms,
+                cache_hit=False,
             )
+            st.session_state[key] = brief
+            st.session_state[_last_good_key(key)] = brief
+            st.session_state.pop(_negative_key(key), None)
     except Exception as exc:
+        st.session_state[_negative_key(key)] = _expiry_label(NEGATIVE_CACHE_SECONDS)
         brief = _fallback_brief(
             contract,
             company=company,
             environment=environment,
             window_days=int(window_days),
             reason=f"Mart summary unavailable; live fallback disabled for speed. {exc}",
+            last_known_good=last_good if isinstance(last_good, SectionCommandBrief) else None,
         )
-    st.session_state[key] = brief
-    st.session_state[f"{key}::loaded_at"] = brief.loaded_at
+    _record_telemetry(brief)
     return brief
 
 

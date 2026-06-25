@@ -4,7 +4,6 @@ from __future__ import annotations
 import streamlit as st
 
 from config import DAY_WINDOW_OPTIONS, DEFAULT_ALERT_EMAIL, DEFAULT_DAY_WINDOW
-from sections.command_deck import render_command_deck_for_section
 from sections.alert_center_case import render_alert_center_add_to_case
 from sections.shell_helpers import (
     build_first_paint_summary_spec,
@@ -460,7 +459,6 @@ def _render_alert_center_first_paint_shell(
         ),
     )
     render_section_first_paint_shell(spec)
-    render_command_deck_for_section("Alert Center", key_prefix="alert_center_command_deck")
     loaded_for_summary = isinstance(data, dict)
     _render_alert_command_lane_board(
         _alert_command_lanes(
@@ -680,6 +678,8 @@ def render() -> None:
     render_section_command_brief(
         autoload_section_command_brief("Alert Center", company, environment, int(days)),
         key_prefix="alert_center_command_brief",
+        on_detail=lambda: _load_alert_center_view_data(source_view, company, environment, int(days), int(limit), required_sources),
+        compact=active_view != "Active Alerts",
     )
     data = st.session_state.get("alert_center_data")
     expected_scope = (company, environment, int(days), int(limit))

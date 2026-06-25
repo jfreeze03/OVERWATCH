@@ -44,19 +44,27 @@ audit behavior.
 
 ## Entry Command Brief Sources
 
-Primary section entry now uses mart-backed Command Briefs. The UI may read one
-compact summary contract on entry so the section has an operational story
-immediately. Heavy detail/live proof remains explicit behind the section's
-Load, Refresh, investigation, or evidence controls.
+Primary section entry uses mart-backed Command Briefs. The UI reads one compact
+packet from `MART_SECTION_COMMAND_BRIEF` and its BRIEF_ID-linked child rows on
+entry so the section has an operational story immediately. Heavy detail/live
+proof remains explicit behind the section's Load, Refresh, investigation, or
+evidence controls.
 
 | Surface | Entry command brief source | Target freshness | Live fallback |
 |---|---|---:|---|
-| Executive Landing | `MART_SECTION_COMMAND_BRIEF`, `MART_SECTION_COMMAND_METRIC`, `MART_EXECUTIVE_OBSERVABILITY` | 60 min | No |
-| DBA Control Room | `MART_SECTION_COMMAND_BRIEF`, `MART_SECTION_COMMAND_METRIC`, `MART_DBA_CONTROL_ROOM` | 30-60 min | Explicit only |
-| Alert Center | `MART_SECTION_COMMAND_BRIEF`, alert/action summary marts | 15-60 min | No |
-| Cost & Contract | `MART_SECTION_COMMAND_BRIEF`, cost/Cortex summary facts | 60 min | Explicit proof refresh |
-| Workload Operations | `MART_SECTION_COMMAND_BRIEF`, query/task/reliability summaries | 30-60 min | Explicit live triage |
-| Security Monitoring | `MART_SECTION_COMMAND_BRIEF`, access/security summary marts | 60 min | Explicit drilldown only |
+| Executive Landing | `MART_SECTION_COMMAND_BRIEF` packet from executive, cost, Cortex, alert, action, readiness, and scorecard marts | 60 min | No |
+| DBA Control Room | `MART_SECTION_COMMAND_BRIEF` packet from `MART_DBA_CONTROL_ROOM`, alert/action/change summaries, and workload facts | 30 min | Explicit only |
+| Alert Center | `MART_SECTION_COMMAND_BRIEF` packet from alert, action, and notification summaries | 15 min | No |
+| Cost & Contract | `MART_SECTION_COMMAND_BRIEF` packet from cost, Cortex, forecast, value, and monitoring facts | 60 min | Explicit proof refresh |
+| Workload Operations | `MART_SECTION_COMMAND_BRIEF` packet from query, task, procedure, copy/load, change, and reliability summaries | 30 min | Explicit live triage |
+| Security Monitoring | `MART_SECTION_COMMAND_BRIEF` packet from security, alert, owner coverage, and change summaries | 60 min | Explicit drilldown only |
+
+`SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS()` populates the parent brief,
+metrics, exceptions, and action references for canonical 1, 7, 14, 30, 60, and
+90 day windows. The task `OVERWATCH_SECTION_COMMAND_BRIEF_REFRESH` runs after
+the executive observability refresh in the mart task graph. Validation calls the
+procedure and checks all six sections, BRIEF_ID relationships, child-row
+orphans, freshness targets, and canonical window coverage.
 
 The refresh contract stays in this document and in the read-only validation SQL
 instead of a static mart table. Run `snowflake/OVERWATCH_MART_VALIDATION.sql`
@@ -64,11 +72,11 @@ after setup to verify the first-paint mart, required panels, alert lifecycle
 tables, compare/recon tables, refresh contract, and caller context. Role-level proof belongs in
 `docs/LIVE_ROLE_PROOF_CHECKLIST.md`.
 
-The UI should render a populated Command Brief immediately when the summary mart
-is available. If a Snowflake session or mart lookup is unavailable, show a clear
-"summary unavailable" brief with setup guidance and keep detail evidence behind
-explicit load buttons. Do not fall back to live account-history scans from the
-executive landing page.
+The UI should render a populated Command Brief immediately when the packet mart
+is available. If a Snowflake session or mart lookup is unavailable, show one
+concise "summary unavailable" brief with setup guidance and keep detail evidence
+behind explicit load buttons. Do not render eight setup cards and do not fall
+back to live account-history scans from the executive landing page.
 
 Executive Landing is not allowed to start raw `SNOWFLAKE.ACCOUNT_USAGE` scans on
 navigation. It may reuse already-loaded session values and may hydrate compact

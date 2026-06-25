@@ -249,7 +249,12 @@ class SecurityPostureSplitTests(unittest.TestCase):
             security_posture.render()
 
         autoload.assert_called_once_with("Security Monitoring", "ALFA", "PROD", 30)
-        render_brief.assert_called_once_with("brief", key_prefix="security_monitoring_command_brief")
+        render_brief.assert_called_once()
+        args, kwargs = render_brief.call_args
+        self.assertEqual(args, ("brief",))
+        self.assertEqual(kwargs["key_prefix"], "security_monitoring_command_brief")
+        self.assertIn("on_detail", kwargs)
+        self.assertFalse(kwargs["compact"])
         self.assertEqual(rendered, [("ALFA", "PROD", 30)])
 
     def test_security_overview_cold_first_paint_does_not_auto_load(self):

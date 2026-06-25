@@ -229,6 +229,8 @@ def render() -> None:
     render_section_command_brief(
         autoload_section_command_brief("Cost & Contract", company, environment, active_cost_days()),
         key_prefix="cost_contract_command_brief",
+        on_detail=lambda: st.session_state.__setitem__("cost_contract_command_brief_force_refresh", True),
+        compact=workflow != "Cost Overview",
     )
 
     render_signal_confidence(

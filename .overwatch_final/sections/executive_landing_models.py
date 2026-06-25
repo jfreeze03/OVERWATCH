@@ -327,6 +327,11 @@ def _default_platform_summary() -> dict:
         "high_actions": 0,
         "migration_blockers": 0,
         "top_cost_driver": "On demand",
+        "cortex_spend_usd": 0.0,
+        "cortex_trend": "Predictive data not loaded",
+        "cortex_forecast_usd": 0.0,
+        "cortex_predictive_alerts": 0,
+        "top_cortex_driver": "Not loaded",
     }
     summary.update(_advisor_overlay_totals(pd.DataFrame()))
     return _with_platform_operating_score(summary, source_health)
@@ -349,6 +354,16 @@ def _decision_rows(summary: dict) -> pd.DataFrame:
         },
         {
             "PRIORITY": "3",
+            "DECISION_AREA": "Cortex AI cost risk",
+            "SIGNAL": (
+                f"{_money(safe_float(summary.get('cortex_spend_usd')))} Cortex spend; "
+                f"{safe_int(summary.get('cortex_predictive_alerts')):,} predictive alert(s)"
+            ),
+            "NEXT_ACTION": "Review Cortex AI cost and predictive alerts before explaining cost movement.",
+            "WORKFLOW": "Cost & Contract > Cortex Spend",
+        },
+        {
+            "PRIORITY": "4",
             "DECISION_AREA": "Loaded advisors",
             "SIGNAL": (
                 f"{safe_int(summary.get('advisor_findings')):,} finding(s), "
@@ -359,14 +374,14 @@ def _decision_rows(summary: dict) -> pd.DataFrame:
             "WORKFLOW": "Cost & Contract",
         },
         {
-            "PRIORITY": "4",
+            "PRIORITY": "5",
             "DECISION_AREA": "Measured closure",
             "SIGNAL": f"{summary['open_actions']:,} open action(s), {summary['high_actions']:,} high-priority",
             "NEXT_ACTION": "Work routed queue rows with telemetry status.",
             "WORKFLOW": "DBA Control Room",
         },
         {
-            "PRIORITY": "5",
+            "PRIORITY": "6",
             "DECISION_AREA": "Deployment trust",
             "SIGNAL": f"{summary['migration_blockers']:,} monitoring coverage blocker(s)",
             "NEXT_ACTION": "Open Workload Operations > Change Analysis or Security Monitoring > Access Changes.",

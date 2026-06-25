@@ -27,6 +27,7 @@ from sections.alert_center_navigation import (
     _alert_center_sources_for_view,
     _normalize_alert_center_view,
 )
+from sections.alert_center_lanes import _alert_command_lanes
 from sections.alert_center_data import _load_center_data
 from sections.alert_center_admin_catalog_view import render_alert_detection_catalog_tool
 from sections.alert_center_admin_delivery_view import (
@@ -459,149 +460,6 @@ def _render_alert_center_first_paint_shell(
     st.info(f"Use Load {source_view} for detailed Alert Center rows. First paint does not query Snowflake.")
 
 
-def _alert_command_lanes(
-    *,
-    active_view: str,
-    required_sources: set[str],
-    alerts: object | None = None,
-    queue: object | None = None,
-    issues: object | None = None,
-    delivery_log: object | None = None,
-    loaded: bool = False,
-) -> list[dict[str, str]]:
-    """Return alert monitoring lanes without loading new data."""
-    if not loaded:
-        source_text = ", ".join(sorted(required_sources)) if required_sources else "no source load required"
-        return [
-            {
-                "label": "Critical / high",
-                "value": "On demand",
-                "state": "Severity",
-                "detail": f"{active_view} will read: {source_text}.",
-            },
-            {
-                "label": "Overdue SLA",
-                "value": "On demand",
-                "state": "Aging",
-                "detail": "Open alerts need route, acknowledgement, suppression, or resolution.",
-            },
-            {
-                "label": "Security risk",
-                "value": "On demand",
-                "state": "Security",
-                "detail": "Failed logins, risky grants, exfiltration, and policy drift route here.",
-            },
-            {
-                "label": "Cost",
-                "value": "On demand",
-                "state": "Spend",
-                "detail": "Runaway spend, warehouse spikes, Cortex spend, and spend risk.",
-            },
-            {
-                "label": "Performance",
-                "value": "On demand",
-                "state": "Queries",
-                "detail": "Long, queued, failed, spilling, and blocked query signals.",
-            },
-            {
-                "label": "Pipeline reliability",
-                "value": "On demand",
-                "state": "Tasks",
-                "detail": "Failed, skipped, late, or suspended task/procedure paths.",
-            },
-            {
-                "label": "Data quality",
-                "value": "Configured",
-                "state": "Rules",
-                "detail": "Metadata-driven freshness, row count, null, duplicate, and schema checks.",
-            },
-            {
-                "label": "Notification route",
-                "value": "On demand",
-                "state": "Delivery",
-                "detail": "Email/webhook/native-alert delivery remains audit-backed.",
-            },
-        ]
-
-    pd = _pd()
-    alerts = alerts if isinstance(alerts, pd.DataFrame) else pd.DataFrame()
-    queue = queue if isinstance(queue, pd.DataFrame) else pd.DataFrame()
-    issues = issues if isinstance(issues, pd.DataFrame) else pd.DataFrame()
-    delivery_log = delivery_log if isinstance(delivery_log, pd.DataFrame) else pd.DataFrame()
-    open_alerts = _open_alert_mask(alerts) if not alerts.empty else pd.Series(dtype=bool)
-    severity = alerts.get("SEVERITY", pd.Series(index=alerts.index, dtype=str)).fillna("").astype(str) if not alerts.empty else pd.Series(dtype=str)
-    category = alerts.get("CATEGORY", pd.Series(index=alerts.index, dtype=str)).fillna("").astype(str).str.upper() if not alerts.empty else pd.Series(dtype=str)
-    critical_high = int((severity.isin(["Critical", "High"]) & open_alerts).sum()) if not alerts.empty else 0
-    overdue = 0
-    if not alerts.empty and "SLA_STATE" in alerts.columns:
-        overdue = int((alerts["SLA_STATE"].fillna("").astype(str).eq("Overdue") & open_alerts).sum())
-    open_queue = 0
-    if not queue.empty and "STATUS" in queue.columns:
-        open_queue = int((~queue["STATUS"].fillna("New").astype(str).str.title().isin(["Fixed", "Ignored"])).sum())
-    delivery_failures = 0
-    if not delivery_log.empty and "DELIVERY_STATUS" in delivery_log.columns:
-        delivery_failures = int(delivery_log["DELIVERY_STATUS"].fillna("").astype(str).str.upper().str.contains("FAILED|ERROR|BOUNCED", regex=True).sum())
-
-    def cat_count(*needles: str) -> int:
-        if category.empty:
-            return 0
-        mask = pd.Series(False, index=category.index)
-        for needle in needles:
-            mask = mask | category.str.contains(needle, regex=False)
-        return int((mask & open_alerts).sum())
-
-    return [
-        {
-            "label": "Critical / high",
-            "value": f"{critical_high:,}",
-            "state": "Severity" if critical_high else "Clear",
-            "detail": f"{int(open_alerts.sum()) if not open_alerts.empty else 0:,} open alert(s) in loaded scope.",
-        },
-        {
-            "label": "Overdue SLA",
-            "value": f"{overdue:,}",
-            "state": "Aging" if overdue else "Clear",
-            "detail": "Overdue high-severity rows should be acknowledged or escalated first.",
-        },
-        {
-            "label": "Security risk",
-            "value": f"{cat_count('SECURITY'):,}",
-            "state": "Security",
-            "detail": "Login, privilege, sharing, and access anomalies.",
-        },
-        {
-            "label": "Cost",
-            "value": f"{cat_count('COST', 'COST'):,}",
-            "state": "Spend",
-            "detail": "Warehouse, Cortex, service-cost, and spend risk signals.",
-        },
-        {
-            "label": "Performance",
-            "value": f"{cat_count('PERFORMANCE', 'QUERY', 'WAREHOUSE'):,}",
-            "state": "Queries",
-            "detail": "Long, queued, failed, spilling, and blocked queries.",
-        },
-        {
-            "label": "Pipeline reliability",
-            "value": f"{cat_count('TASK', 'PIPELINE', 'PROCEDURE'):,}",
-            "state": "Tasks",
-            "detail": "Task/procedure failures, late runs, and recovery alerts.",
-        },
-        {
-            "label": "Action queue",
-            "value": f"{open_queue:,}",
-            "state": "Routes",
-            "detail": f"{len(issues):,} unified issue row(s) loaded.",
-        },
-        {
-            "label": "Delivery failures",
-            "value": f"{delivery_failures:,}",
-            "state": "Delivery" if delivery_failures else "Ready",
-            "detail": f"{len(delivery_log):,} notification audit row(s).",
-        },
-    ]
-
-
 def _render_alert_command_lane_board(lanes: list[dict[str, str]]) -> None:
     pd = _pd()
     lane_rows = pd.DataFrame(lanes)
@@ -612,8 +470,8 @@ def _render_alert_command_lane_board(lanes: list[dict[str, str]]) -> None:
         title="Alert operating lanes",
         priority_columns=["label", "value", "state", "detail"],
         raw_label="All alert operating lanes",
-        height=260,
-        max_rows=8,
+        height=300,
+        max_rows=10,
     )
 
 

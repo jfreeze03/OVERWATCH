@@ -45,6 +45,7 @@ from sections.executive_landing_contracts import *
 from sections.executive_landing_common import _format_delta_credits, _format_gb, _format_seconds, _money, _nav_button
 from sections.executive_landing_data_health_view import _render_loaded_executive_alert_context
 from sections.executive_landing_models import _decision_rows, _executive_action_brief, _platform_score_state
+from sections.cortex_signals import build_cortex_signal, cortex_cost_route_updates, render_cortex_signal_panel
 
 
 def _render_executive_action_brief(summary: dict | None, days: int, *, show_strip: bool = True) -> bool:
@@ -78,7 +79,7 @@ def _render_snapshot_prompt(workflow: str, summary: dict, days: int) -> bool:
     return _render_executive_action_brief(summary, int(days), show_strip=False)
 
 def _render_executive_next_clicks() -> None:
-    cols = st.columns(5)
+    cols = st.columns(6)
     with cols[0]:
         _nav_button(
             "Investigate Active Alerts",
@@ -112,6 +113,14 @@ def _render_executive_next_clicks() -> None:
             "Workload Operations",
             workflow_key="workload_operations_workflow",
             workflow="Workload Overview",
+        )
+    with cols[5]:
+        _nav_button(
+            "Review Cortex AI Cost & Predictive Alerts",
+            "Cost & Contract",
+            workflow_key="cost_contract_workflow",
+            workflow="Cost Overview",
+            state_updates=cortex_cost_route_updates(),
         )
 
 def _executive_freshness_label(board: pd.DataFrame, board_payload: dict, snapshot: dict | None) -> str:
@@ -231,6 +240,16 @@ def _render_executive_overview(
         board=board,
         board_payload=board_payload,
         snapshot=snapshot,
+    )
+    render_cortex_signal_panel(
+        build_cortex_signal(
+            summary,
+            days=int(days),
+            total_spend_usd=summary.get("current_spend_usd"),
+        ),
+        title="Cortex AI executive cost lane",
+        cta_label="Review Cortex AI Cost & Predictive Alerts",
+        cta_key="executive_cortex_ai_cost_alerts",
     )
 
     render_priority_dataframe(

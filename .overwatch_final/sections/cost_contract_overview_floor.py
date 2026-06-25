@@ -40,10 +40,12 @@ from sections.cost_contract_panels import (
 from sections.cost_contract_splash import (
     _ensure_cost_splash,
     _maybe_autoload_cost_splash,
+    _cost_splash_summary,
     _render_cost_splash,
 )
 from sections.command_deck import render_command_deck
 from sections.command_deck_contracts import get_command_deck_contract
+from sections.cortex_signals import build_cortex_signal, render_cortex_signal_panel
 from sections.operator_case import make_case_evidence, render_add_to_case_button
 from sections.shell_helpers import (
     _clean_display_text,
@@ -63,9 +65,10 @@ get_active_environment = _lazy_util("get_active_environment")
 get_session_for_action = _lazy_util("get_session_for_action")
 
 
-def _render_cost_first_paint_shell(company: str, days: int, splash: dict) -> None:
+def _render_cost_first_paint_shell(company: str, days: int, splash: dict, credit_price: float) -> None:
     loaded = bool(splash.get("loaded"))
     environment = str(get_active_environment() or DEFAULTS.get("default_environment") or "ALL")
+    cost_summary = _cost_splash_summary(splash, credit_price, days)
     render_section_first_paint_shell(build_first_paint_summary_spec(
         section="Cost & Contract",
         state="Loaded context" if loaded else "Ready",
@@ -82,6 +85,16 @@ def _render_cost_first_paint_shell(company: str, days: int, splash: dict) -> Non
             ("Decision path", "Spend movement -> top driver -> savings queue"),
         ),
     ))
+    render_cortex_signal_panel(
+        build_cortex_signal(
+            cost_summary,
+            days=int(days),
+            total_spend_usd=cost_summary.get("spend"),
+        ),
+        title="Cortex AI cost lane",
+        cta_label="Open Cortex Cost Drivers",
+        cta_key="cost_contract_command_deck_cortex_cost_drivers",
+    )
     render_command_deck(
         get_command_deck_contract("Cost & Contract"),
         key_prefix="cost_contract_command_deck",
@@ -114,7 +127,7 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
         splash = _ensure_cost_splash(company, int(days), credit_price)
     else:
         splash = _maybe_autoload_cost_splash(company, int(days), credit_price)
-    _render_cost_first_paint_shell(company, int(days), splash)
+    _render_cost_first_paint_shell(company, int(days), splash, credit_price)
     _render_cost_splash(splash, company=company, days=int(days), credit_price=credit_price)
 
     proof_data = st.session_state.get("cost_contract_cockpit")

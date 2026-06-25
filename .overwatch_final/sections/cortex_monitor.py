@@ -2,6 +2,7 @@
 import streamlit as st
 import pandas as pd
 from sections.chart_helpers import render_ranked_bar_chart, render_time_series_chart
+from sections.cortex_signals import build_cortex_signal, render_cortex_signal_panel
 from sections.shell_helpers import render_shell_snapshot
 from utils.workflows import render_load_status, render_priority_dataframe, render_workflow_selector
 from utils import (
@@ -738,6 +739,14 @@ def render():
     )
     defer_source_note(
         "Live sources: Cortex Code Snowsight/CLI usage views; Spend Control also includes Cortex AI Functions when Snowflake exposes that view."
+    )
+    render_cortex_signal_panel(
+        build_cortex_signal(state=st.session_state, days=30),
+        title="Cortex AI executive command lane",
+        cta_label="Review Cortex Predictive Alerts",
+        cta_key="cortex_monitor_predictive_alerts_cta",
+        route_to_cost=False,
+        session_state_updates={"cortex_monitor_view": "Predictive Alerts"},
     )
 
     cortex_view = render_workflow_selector(

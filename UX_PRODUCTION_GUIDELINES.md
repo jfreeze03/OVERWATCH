@@ -77,6 +77,14 @@ contract for Cost Overview: scope, window, evidence state, expected cost lanes,
 and Refresh Cost are visible before official spend, forecast, reconciliation,
 or contract evidence loads.
 
+Cortex AI is a first-class financial and operational risk lane, not a secondary
+cost footnote. Executive Landing, Cost & Contract, Alert Center, and Cortex AI
+surfaces must show Cortex spend, forecast/run-rate, predictive alerts, top
+driver, and cost-risk state from already-loaded/session data where available.
+When Cortex telemetry is unavailable, show an honest on-demand or unavailable
+state and route the operator to the explicit Cortex cost-driver workflow instead
+of hiding the signal under tables or expanders.
+
 Use `FirstPaintSummarySpec` through `render_section_first_paint_shell()` when a
 section needs the standard first-paint contract. Keep one-off shell rendering
 only for specialized loaded-context surfaces that already have a narrower
@@ -101,11 +109,11 @@ load boundary, cached/session sources, and forbidden first-paint loaders.
 
 | Section | Primary view | Expected lanes | Explicit load CTA |
 | --- | --- | --- | --- |
-| Executive Landing | Executive Overview | Cost movement, operational risk, security risk, change summary, executive actions | Refresh Summary |
+| Executive Landing | Executive Overview | Cost movement, Cortex AI cost risk, operational risk, security risk, change summary, executive actions | Refresh Summary |
 | DBA Control Room | Morning Cockpit | Failures, cost, queue, security, changes, action status | Load Morning Cockpit |
-| Alert Center | Active Alerts | Critical and high alerts, overdue alerts, action queue, delivery status | Load Active Alerts |
+| Alert Center | Active Alerts | Critical and high alerts, Cortex predictive alerts, overdue alerts, action queue, delivery status | Load Active Alerts |
 | Workload Operations | Workload Overview | Slow or failed SQL, task and load failures, performance contention, recent changes, advanced DBA tools | Open the right tool |
-| Cost & Contract | Cost Overview | Spend movement, run rate, warehouse drivers, Cortex, savings | Refresh Cost |
+| Cost & Contract | Cost Overview | Spend movement, run rate, warehouse drivers, Cortex AI cost risk, savings | Refresh Cost |
 | Security Monitoring | Security Overview | Logins, grants, sharing, access changes, security alerts | Refresh Security Summary |
 
 ## Primary Section Command Deck
@@ -128,11 +136,11 @@ contextual "next move" actions from real rows.
 
 | Section | Primary CTA | Route actions |
 | --- | --- | --- |
-| Executive Landing | Refresh Summary | Cost movement, operational risk, security risk, executive actions |
+| Executive Landing | Refresh Summary | Cost movement, Cortex AI cost, operational risk, security risk, executive actions |
 | DBA Control Room | Load Morning Cockpit | Failure triage, cost watch, performance watch, action queue |
-| Alert Center | Load Active Alerts | Active, cost, reliability, and security alert lanes |
+| Alert Center | Load Active Alerts | Active, Cortex predictive, cost, reliability, and security alert lanes |
 | Workload Operations | Open the right tool | SQL, task/load, performance, change, and comparison workflows |
-| Cost & Contract | Refresh Cost | Warehouse cost, forecast, budget, and recommendation workflows |
+| Cost & Contract | Refresh Cost | Warehouse cost, Cortex cost drivers, forecast, budget, and recommendation workflows |
 | Security Monitoring | Refresh Security Summary | Failed logins, risky grants, access changes, and sharing exposure |
 
 ## Operator Case File

@@ -25,6 +25,7 @@ PRIMARY_FIRST_PAINT_CONTRACTS: Mapping[str, PrimaryFirstPaintContract] = {
         default_view="Executive Overview",
         expected_lanes=(
             "Cost movement",
+            "Cortex AI cost risk",
             "Operational risk",
             "Security risk",
             "Change summary",
@@ -60,6 +61,7 @@ PRIMARY_FIRST_PAINT_CONTRACTS: Mapping[str, PrimaryFirstPaintContract] = {
         default_view="Active Alerts",
         expected_lanes=(
             "Critical and high alerts",
+            "Cortex predictive alerts",
             "Overdue alerts",
             "Action queue",
             "Delivery status",
@@ -76,7 +78,7 @@ PRIMARY_FIRST_PAINT_CONTRACTS: Mapping[str, PrimaryFirstPaintContract] = {
             "Spend movement",
             "Run rate",
             "Warehouse drivers",
-            "Cortex",
+            "Cortex AI cost risk",
             "Savings",
         ),
         explicit_load_cta="Refresh Cost",

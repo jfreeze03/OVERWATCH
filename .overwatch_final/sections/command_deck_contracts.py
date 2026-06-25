@@ -75,6 +75,17 @@ COMMAND_DECK_CONTRACTS: Mapping[str, SectionCommandDeckContract] = {
                 session_state_updates=(("executive_landing_workflow", "Cost Movement"),),
             ),
             CommandDeckAction(
+                "Cortex AI Cost",
+                "Review Cortex spend, forecast, and predictive cost alerts.",
+                target_section="Cost & Contract",
+                target_workflow="Cost Overview",
+                session_state_updates=(
+                    ("cost_contract_workflow", "Cost Overview"),
+                    ("cost_contract_advanced_tool", "Cortex Spend"),
+                    ("_cost_contract_show_advanced_tools", True),
+                ),
+            ),
+            CommandDeckAction(
                 "Operational Risk",
                 "Open failures, workload, and action risk context.",
                 target_workflow="Operational Risk",
@@ -141,6 +152,18 @@ COMMAND_DECK_CONTRACTS: Mapping[str, SectionCommandDeckContract] = {
                 session_state_updates=(("alert_center_requested_view", "Cost Alerts"),),
             ),
             CommandDeckAction(
+                "Cortex Predictive Alerts",
+                "Open Cortex forecast, anomaly, and cost-exposure alert lanes.",
+                target_section="Cost & Contract",
+                target_workflow="Cost Overview",
+                session_state_updates=(
+                    ("alert_center_requested_view", "Cost Alerts"),
+                    ("cost_contract_workflow", "Cost Overview"),
+                    ("cost_contract_advanced_tool", "Cortex Spend"),
+                    ("_cost_contract_show_advanced_tools", True),
+                ),
+            ),
+            CommandDeckAction(
                 "Reliability Alerts",
                 "Open workload, task, and SLA alerts.",
                 target_workflow="Reliability Alerts",
@@ -169,6 +192,16 @@ COMMAND_DECK_CONTRACTS: Mapping[str, SectionCommandDeckContract] = {
                 "Open daily spend trend and run-rate forecast.",
                 target_workflow="Burn Rate & Forecast",
                 session_state_updates=(("cost_contract_workflow", "Burn Rate & Forecast"),),
+            ),
+            CommandDeckAction(
+                "Cortex Cost Drivers",
+                "Open Cortex spend, top users, forecast, and predictive alert context.",
+                target_workflow="Cost Overview",
+                session_state_updates=(
+                    ("cost_contract_workflow", "Cost Overview"),
+                    ("cost_contract_advanced_tool", "Cortex Spend"),
+                    ("_cost_contract_show_advanced_tools", True),
+                ),
             ),
             CommandDeckAction(
                 "Budget vs Actual",

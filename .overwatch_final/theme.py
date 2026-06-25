@@ -1174,6 +1174,188 @@ code, pre, .stCodeBlock {
     min-width: 0;
     margin: 0.18rem 0 0.38rem;
 }
+.ow-decision-brief {
+    min-width: 0;
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    background:
+        linear-gradient(135deg, rgba(var(--accent-rgb), 0.12), transparent 52%),
+        var(--bg-card);
+    box-shadow: var(--metric-shadow);
+    margin: 0.58rem 0 0.82rem;
+    overflow: hidden;
+}
+.ow-decision-status {
+    display: grid;
+    gap: 0.25rem;
+    border-left: 4px solid var(--accent);
+    padding: 0.78rem 0.9rem;
+}
+.ow-decision-status[data-state="data-gap"],
+.ow-decision-status[data-state="stale"],
+.ow-decision-status[data-state="warning"],
+.ow-decision-status[data-state="watch"] {
+    border-left-color: #fbbf24;
+}
+.ow-decision-status span,
+.ow-decision-severity {
+    color: var(--accent);
+    font-size: 0.64rem;
+    font-weight: 900;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+.ow-decision-status strong {
+    color: var(--text-primary);
+    font-size: 1.03rem;
+    font-weight: 900;
+    line-height: 1.2;
+    overflow-wrap: anywhere;
+}
+.ow-decision-narrative,
+.ow-decision-freshness,
+.ow-decision-priority-row small,
+.ow-decision-trust {
+    color: var(--text-secondary);
+    font-size: 0.76rem;
+    line-height: 1.4;
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+.ow-decision-metric-ribbon {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9.4rem, 1fr));
+    gap: 0.5rem;
+    border-top: 1px solid var(--border-subtle);
+    padding: 0.72rem 0.78rem;
+}
+.ow-decision-metric {
+    min-width: 0;
+    border: 1px solid var(--border-subtle);
+    border-radius: 7px;
+    background: rgba(var(--accent-rgb), 0.045);
+    padding: 0.56rem 0.62rem;
+}
+.ow-decision-metric[data-tone="risk"],
+.ow-decision-metric[data-tone="warning"] {
+    border-color: rgba(251, 191, 36, 0.4);
+}
+.ow-decision-metric[data-tone="cortex"] {
+    border-color: rgba(162, 109, 255, 0.52);
+}
+.ow-decision-metric span,
+.ow-decision-extra-metric strong,
+.ow-decision-trust-detail strong {
+    display: block;
+    color: var(--text-muted);
+    font-size: 0.6rem;
+    font-weight: 900;
+    letter-spacing: 0.06em;
+    line-height: 1.15;
+    text-transform: uppercase;
+}
+.ow-decision-metric strong {
+    display: block;
+    color: var(--text-primary);
+    font-size: 1.02rem;
+    font-weight: 900;
+    line-height: 1.12;
+    margin-top: 0.26rem;
+    overflow-wrap: anywhere;
+}
+.ow-decision-delta {
+    display: block;
+    color: var(--text-secondary);
+    font-size: 0.69rem;
+    line-height: 1.3;
+    margin-top: 0.18rem;
+    overflow-wrap: anywhere;
+}
+.ow-decision-sparkline {
+    display: block;
+    color: var(--accent);
+    height: 22px;
+    margin-top: 0.32rem;
+    width: 100%;
+}
+.ow-decision-what-changed {
+    border-top: 1px solid var(--border-subtle);
+    padding: 0.62rem 0.78rem;
+}
+.ow-decision-what-changed strong {
+    color: var(--text-primary);
+    font-size: 0.86rem;
+    font-weight: 900;
+}
+.ow-decision-what-changed span,
+.ow-decision-what-changed p {
+    color: var(--text-secondary);
+    font-size: 0.74rem;
+    margin: 0.12rem 0 0;
+}
+.ow-decision-priority-list {
+    display: grid;
+    gap: 0.4rem;
+    border-top: 1px solid var(--border-subtle);
+    padding: 0.72rem 0.78rem;
+}
+.ow-decision-priority-row {
+    display: grid;
+    grid-template-columns: minmax(4.5rem, 0.55fr) minmax(9rem, 1.1fr) minmax(7rem, 0.9fr) minmax(5rem, 0.65fr) minmax(6rem, 0.75fr);
+    gap: 0.45rem;
+    align-items: start;
+    min-width: 0;
+    border: 1px solid var(--border-subtle);
+    border-radius: 7px;
+    background: var(--bg-panel);
+    padding: 0.48rem 0.56rem;
+}
+.ow-decision-priority-row strong,
+.ow-decision-priority-row span {
+    min-width: 0;
+    color: var(--text-primary);
+    font-size: 0.75rem;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+}
+.ow-decision-impact,
+.ow-decision-owner {
+    color: var(--text-secondary) !important;
+}
+.ow-decision-trust-panel,
+.ow-decision-extra-metrics {
+    display: grid;
+    gap: 0.35rem;
+}
+.ow-decision-trust-detail,
+.ow-decision-extra-metric {
+    display: grid;
+    grid-template-columns: minmax(8rem, 0.45fr) minmax(0, 1fr);
+    gap: 0.5rem;
+    min-width: 0;
+}
+.ow-decision-trust-detail span,
+.ow-decision-extra-metric span,
+.ow-decision-extra-metric small {
+    color: var(--text-secondary);
+    font-size: 0.74rem;
+    overflow-wrap: anywhere;
+}
+.ow-decision-compact .ow-decision-status {
+    padding: 0.62rem 0.78rem;
+}
+.ow-decision-compact .ow-decision-metric-ribbon,
+.ow-decision-compact .ow-decision-priority-list,
+.ow-decision-compact .ow-decision-what-changed {
+    display: none;
+}
+@media (max-width: 760px) {
+    .ow-decision-priority-row,
+    .ow-decision-trust-detail,
+    .ow-decision-extra-metric {
+        grid-template-columns: 1fr;
+    }
+}
 .ow-breadcrumb {
     display: flex;
     align-items: center;

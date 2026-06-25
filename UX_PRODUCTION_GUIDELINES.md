@@ -113,11 +113,11 @@ boundary, mart/session sources, and forbidden detail loaders.
 
 | Section | Primary view | Expected lanes | Explicit load CTA |
 | --- | --- | --- | --- |
-| Executive Landing | Executive Overview | Cost movement, Cortex AI cost risk, operational risk, security risk, change summary, executive actions | Refresh Summary |
-| DBA Control Room | Morning Cockpit | Failures, cost, queue, security, changes, action status | Load Morning Cockpit |
+| Executive Landing | Executive Overview | Cost movement, Cortex AI cost risk, operational risk, security risk, change summary, executive actions | Load Full Executive Snapshot |
+| DBA Control Room | Morning Cockpit | Failures, cost, queue, security, changes, action status | Load Investigation Detail |
 | Alert Center | Active Alerts | Critical and high alerts, Cortex predictive alerts, overdue alerts, action queue, delivery status | Load Active Alerts |
-| Workload Operations | Workload Overview | Slow or failed SQL, task and load failures, performance contention, recent changes, advanced DBA tools | Open the right tool |
-| Cost & Contract | Cost Overview | Spend movement, run rate, warehouse drivers, Cortex AI cost risk, savings | Refresh Cost |
+| Workload Operations | Workload Overview | Slow or failed SQL, task and load failures, performance contention, recent changes, advanced DBA tools | Open the specialist workflow |
+| Cost & Contract | Cost Overview | Spend movement, run rate, warehouse drivers, Cortex AI cost risk, savings | Refresh Cost Summary |
 | Security Monitoring | Security Overview | Logins, grants, sharing, access changes, security alerts | Refresh Security Summary |
 
 The Command Brief layout is status band, four primary metrics maximum, top
@@ -135,14 +135,13 @@ actions resolve through allowlisted section/workflow targets; mart rows may
 select action keys and labels, but they must not inject arbitrary Streamlit
 session state.
 
-Command Deck v2 owns route actions and evidence-boundary context across primary
-sections. Primary CTAs are actionable only when a section passes an explicit
-callback; otherwise the deck displays the preserved load/refresh label and key
-while the existing section button remains the actual evidence boundary. As
-sections migrate, duplicate ad hoc route-button rows should be removed in favor
-of the deck, but benchmark load labels and keys must remain stable. Avoid
-secondary route-button rows beside a Command Deck unless loaded evidence creates
-contextual "next move" actions from real rows.
+The Decision Brief owns the entry route actions and the visible evidence
+boundary. Primary CTAs are actionable only when a section passes an explicit
+callback; route CTAs resolve through allowlisted `ROUTE_KEY` values. Legacy
+Command Deck contracts may still seed static route catalogs, but primary
+sections should not render a duplicate Command Deck beside the Decision Brief.
+Benchmark load labels and keys must remain stable when a load action moves into
+the brief.
 
 | Section | Primary CTA | Route actions |
 | --- | --- | --- |

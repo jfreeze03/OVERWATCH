@@ -766,8 +766,7 @@ def render_security_overview(company: str, environment: str, days: int) -> None:
     if summary_error and not security_current:
         defer_source_note(f"Fast security summary unavailable: {summary_error}")
 
-    refresh_security_summary = st.button("Refresh Security Summary", key="security_posture_brief_load", type="primary")
-    refresh_security_summary = bool(refresh_security_summary or st.session_state.pop("security_posture_command_brief_force_refresh", False))
+    refresh_security_summary = bool(st.session_state.pop("security_posture_command_brief_force_refresh", False))
     if refresh_security_summary:
         _refresh_security_summary(company, environment, days)
         summary = st.session_state.get("security_posture_summary")

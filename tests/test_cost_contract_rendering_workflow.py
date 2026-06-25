@@ -229,7 +229,7 @@ class CostContractRenderingWorkflowTests(unittest.TestCase):
 
         def _button(_label, *, key, **_kwargs):
             button_keys.append(key)
-            return key == "cost_contract_refresh"
+            return False
 
         with (
             patch.object(cost_contract_overview_floor.st, "session_state", state),
@@ -243,9 +243,10 @@ class CostContractRenderingWorkflowTests(unittest.TestCase):
             patch.object(cost_contract_overview_floor, "_refresh_cost_detail_state") as refresh_detail,
             patch.object(cost_contract_overview_floor, "defer_section_note"),
         ):
+            state["cost_contract_command_brief_force_refresh"] = True
             cost_contract_overview_floor._render_cost_watch_floor("ALFA", 4.0)
 
-        self.assertIn("cost_contract_refresh", button_keys)
+        self.assertNotIn("cost_contract_refresh", button_keys)
         self.assertNotIn(_COST_SPLASH_KEY, state)
         self.assertNotIn(_COST_SPLASH_AUTOLOAD_BLOCKED_SCOPE_KEY, state)
         ensure_splash.assert_called_once_with("ALFA", 7, 4.0)
@@ -293,8 +294,8 @@ class CostContractRenderingWorkflowTests(unittest.TestCase):
         ):
             cost_contract_overview_floor._render_cost_watch_floor("ALFA", 4.0)
 
-        self.assertEqual(button_keys[0], "cost_contract_refresh")
-        self.assertTrue(all(key.startswith("cost_contract_command_deck_") for key in button_keys[1:]))
+        self.assertNotIn("cost_contract_refresh", button_keys)
+        self.assertTrue(all(key.startswith("cost_contract_command_deck_") for key in button_keys))
         maybe_splash.assert_called_once_with("ALFA", 7, 4.0)
         ensure_splash.assert_not_called()
         get_session.assert_not_called()
@@ -344,7 +345,6 @@ class CostContractRenderingWorkflowTests(unittest.TestCase):
         ):
             cost_contract_overview_floor._render_cost_watch_floor("ALFA", 4.0)
 
-        self.assertEqual(button_keys[0], "cost_contract_refresh")
         self.assertIn("cost_contract_view_advanced_details", button_keys)
         route_keys = [
             key for key in button_keys
@@ -359,7 +359,7 @@ class CostContractRenderingWorkflowTests(unittest.TestCase):
         from sections.command_deck import _key_token
         from sections.command_deck_contracts import get_command_deck_contract
 
-        source = (APP_ROOT / "sections" / "cost_contract_overview_floor.py").read_text(encoding="utf-8")
+        source = (APP_ROOT / "sections" / "cost_contract.py").read_text(encoding="utf-8")
         self.assertEqual(source.count('key="cost_contract_refresh"'), 1)
 
         contract = get_command_deck_contract("Cost & Contract")

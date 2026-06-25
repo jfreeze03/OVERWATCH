@@ -183,7 +183,7 @@ from sections.shell_helpers import (
     render_section_breadcrumb,
 )
 from sections.section_command_brief import autoload_section_command_brief
-from sections.section_command_rendering import render_section_command_brief
+from sections.section_command_rendering import CommandBriefDetailAction, render_section_command_brief
 from sections.cost_contract_workflow import (
     _apply_cost_workflow_preset,
     _normalize_cost_contract_workflow_state,
@@ -226,13 +226,6 @@ def render() -> None:
     if workflow == "Cost Explorer":
         breadcrumb.append(str(st.session_state.get("cc_explorer_lens") or "Warehouse"))
     render_section_breadcrumb(breadcrumb)
-    render_section_command_brief(
-        autoload_section_command_brief("Cost & Contract", company, environment, active_cost_days()),
-        key_prefix="cost_contract_command_brief",
-        on_detail=lambda: st.session_state.__setitem__("cost_contract_command_brief_force_refresh", True),
-        compact=workflow != "Cost Overview",
-    )
-
     render_signal_confidence(
         source="ACCOUNT_USAGE",
         confidence="allocated",
@@ -260,6 +253,21 @@ def render() -> None:
             workflow_label(workflow),
             WORKFLOW_DETAILS.get(workflow, "Cost evidence remains behind explicit load actions."),
         )
+    cost_brief = autoload_section_command_brief("Cost & Contract", company, environment, active_cost_days())
+    detail_action = None
+    if workflow == "Cost Overview":
+        detail_action = CommandBriefDetailAction(
+            "Refresh Cost",
+            "Reload official cost summary facts for the current scope.",
+            lambda: st.session_state.__setitem__("cost_contract_command_brief_force_refresh", True),
+            key="cost_contract_refresh",
+        )
+    render_section_command_brief(
+        cost_brief,
+        key_prefix="cost_contract_command_brief",
+        detail_action=detail_action,
+        compact=workflow != "Cost Overview",
+    )
 
     st.session_state["_cost_contract_local_hierarchy_rendered"] = True
     _render_cost_contract_workflow(workflow, company, environment)

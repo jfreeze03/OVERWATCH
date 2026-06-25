@@ -9,12 +9,12 @@ layer. The full source of truth remains `snowflake/OVERWATCH_MART_SETUP.sql`.
 |---|---|---|
 | `OVERWATCH_USAGE_LOG` | Table | Runtime/query event log used for app self-observability summaries. |
 | `MART_EXECUTIVE_OBSERVABILITY` | Transient mart | Executive monitoring wall: spend, Cortex, runtime, queue, spill, alerts, actions, storage, cost drivers, query database mix, execution status, and warehouse pressure. |
-| `MART_SECTION_COMMAND_BRIEF` | Transient mart | Primary-section command brief parent packet keyed by `BRIEF_ID`: state, headline, summary, resolved scope, source objects, source snapshot, freshness, stale flag, confidence, and top signal. |
-| `MART_SECTION_COMMAND_METRIC` | Transient mart | Typed metric rows keyed by `BRIEF_ID`, including numeric/text value fields, format, unit, trend, tone, and display order for the compact metric strip. |
-| `MART_SECTION_COMMAND_EXCEPTION` | Transient mart | Top signal/exception rows keyed by `BRIEF_ID` with deterministic severity route context. |
+| `MART_SECTION_COMMAND_BRIEF` | Transient mart | Primary-section command brief parent packet keyed by `BRIEF_ID`: state, headline, summary, resolved scope, source objects, source snapshot, freshness, stale flag, source coverage, confidence, and top signal. |
+| `MART_SECTION_COMMAND_METRIC` | Transient mart | Typed metric rows keyed by `BRIEF_ID`, including numeric/text value fields, format, unit, trend points, delta fields, tone, and display order for the compact metric strip. |
+| `MART_SECTION_COMMAND_EXCEPTION` | Transient mart | Top signal/exception rows keyed by `BRIEF_ID` with deterministic severity, priority score, impact, owner route, SLA, and route context. |
 | `MART_SECTION_COMMAND_ACTION` | Transient mart | Allowlisted route action references keyed by `BRIEF_ID`; action rows provide `ACTION_KEY`, `ROUTE_KEY`, and `CTA_LABEL` instead of arbitrary app state mutation. |
 | `SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS` | Procedure | Populates command brief parent, metric, exception, and action rows for all six primary sections and canonical 1/7/14/30/60/90 day windows. |
-| `OVERWATCH_SECTION_COMMAND_BRIEF_REFRESH` | Task | Runs the command brief refresh after the dependent summary mart chain. |
+| `OVERWATCH_SECTION_COMMAND_BRIEF_REFRESH` | Task | Runs the compact command brief refresh every 15 minutes from scheduled summary marts. |
 
 The refresh contract and capability notes now live in documentation and
 validation SQL instead of static mart tables.

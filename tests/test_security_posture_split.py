@@ -207,7 +207,8 @@ class SecurityPostureSplitTests(unittest.TestCase):
         source = (APP_ROOT / "sections" / "security_posture.py").read_text(encoding="utf-8")
         self.assertNotIn("if active_view == SECURITY_OVERVIEW_WORKFLOW and not security_current", source)
         self.assertNotIn("if active_view == SECURITY_OVERVIEW_WORKFLOW:\n        _render_security_overview_entry", source)
-        self.assertNotIn("security_posture_brief_load", source)
+        self.assertIn("CommandBriefDetailAction", source)
+        self.assertEqual(source.count("security_posture_brief_load"), 1)
         self.assertIn("SECURITY_POSTURE_RENDERERS.get(active_view)", source)
 
     def test_security_posture_route_shell_does_not_call_security_loaders(self):
@@ -253,7 +254,9 @@ class SecurityPostureSplitTests(unittest.TestCase):
         args, kwargs = render_brief.call_args
         self.assertEqual(args, ("brief",))
         self.assertEqual(kwargs["key_prefix"], "security_monitoring_command_brief")
-        self.assertIn("on_detail", kwargs)
+        self.assertIn("detail_action", kwargs)
+        self.assertEqual(kwargs["detail_action"].label, "Refresh Security Summary")
+        self.assertEqual(kwargs["detail_action"].key, "security_posture_brief_load")
         self.assertFalse(kwargs["compact"])
         self.assertEqual(rendered, [("ALFA", "PROD", 30)])
 
@@ -301,7 +304,7 @@ class SecurityPostureSplitTests(unittest.TestCase):
             overview_view.render_security_overview("ALFA", "PROD", 30)
 
         load_brief.assert_not_called()
-        self.assertIn("Refresh Security Summary", button_labels)
+        self.assertNotIn("Refresh Security Summary", button_labels)
         self.assertEqual(action_brief.call_args.args[0]["state"], "Summary unavailable")
         self.assertEqual(operating_snapshot.call_args.args[0]["evidence"], "Summary unavailable")
 
@@ -359,7 +362,7 @@ class SecurityPostureSplitTests(unittest.TestCase):
             overview_view.render_security_overview("ALFA", "PROD", 30)
 
         load_brief.assert_not_called()
-        self.assertIn("Refresh Security Summary", button_labels)
+        self.assertNotIn("Refresh Security Summary", button_labels)
         watch_floor.assert_called_once()
         fact_gate.assert_called_once_with("ALFA", "PROD", 30)
         exception_gate.assert_called_once_with("ALFA", "PROD", 30)
@@ -398,9 +401,10 @@ class SecurityPostureSplitTests(unittest.TestCase):
         self.assertEqual(stale["state"], "Stale")
 
     def test_overview_source_keeps_refresh_and_proof_gate_keys(self):
-        source = (APP_ROOT / "sections" / "security_posture_overview_view.py").read_text(encoding="utf-8")
+        overview_source = (APP_ROOT / "sections" / "security_posture_overview_view.py").read_text(encoding="utf-8")
+        route_source = (APP_ROOT / "sections" / "security_posture.py").read_text(encoding="utf-8")
+        self.assertIn("security_posture_brief_load", route_source)
         for token in [
-            "security_posture_brief_load",
             "security_posture_load_exceptions",
             "security_posture_queue",
             "security_posture_hide_proof_tables",
@@ -408,7 +412,7 @@ class SecurityPostureSplitTests(unittest.TestCase):
             "_security_proof_tables_visible",
         ]:
             with self.subTest(token=token):
-                self.assertIn(token, source)
+                self.assertIn(token, overview_source)
 
     def test_security_access_changes_uses_distinct_change_loader_keys(self):
         route_source = (APP_ROOT / "sections" / "security_posture.py").read_text(encoding="utf-8")

@@ -55,11 +55,33 @@ class SectionCommandBriefTests(unittest.TestCase):
             "TARGET_FRESHNESS_MINUTES": 60,
             "IS_STALE": False,
             "CONFIDENCE": "allocated",
+            "REQUIRED_SOURCE_COUNT": 2,
+            "AVAILABLE_SOURCE_COUNT": 2,
+            "MISSING_SOURCE_COUNT": 0,
+            "SOURCE_COVERAGE_PCT": 100,
+            "DATA_AVAILABILITY_STATE": "Scheduled mart",
+            "STALE_SOURCE_COUNT": 0,
+            "SOURCE_GAP_DETAIL": "",
             "SNAPSHOT_TS": "2026-06-25 10:00:00",
             "LOAD_TS": "2026-06-25 10:05:00",
             "METRICS": [
-                {"METRIC_LABEL": "Total spend", "METRIC_VALUE": "$120", "METRIC_DETAIL": "7d", "SORT_ORDER": 10},
-                {"METRIC_LABEL": "Cortex AI spend", "METRIC_VALUE": "$42", "METRIC_DETAIL": "35%", "METRIC_TONE": "cortex", "SORT_ORDER": 20},
+                {
+                    "METRIC_LABEL": "Total spend",
+                    "METRIC_NUMERIC_VALUE": 120,
+                    "METRIC_FORMAT": "currency",
+                    "METRIC_DETAIL": "7d",
+                    "TREND_POINTS": [101, 120],
+                    "DELTA_PERCENT": 18.8,
+                    "SORT_ORDER": 10,
+                },
+                {
+                    "METRIC_LABEL": "Cortex AI spend",
+                    "METRIC_NUMERIC_VALUE": 42,
+                    "METRIC_FORMAT": "currency",
+                    "METRIC_DETAIL": "35%",
+                    "METRIC_TONE": "cortex",
+                    "SORT_ORDER": 20,
+                },
             ],
             "EXCEPTIONS": [{
                 "SEVERITY": "High",
@@ -68,6 +90,11 @@ class SectionCommandBriefTests(unittest.TestCase):
                 "DETAIL": "Spend accelerated.",
                 "ROUTE_SECTION": "Cost & Contract",
                 "ROUTE_WORKFLOW": "Cortex AI",
+                "PRIORITY_SCORE": 95,
+                "IMPACT_VALUE": 42,
+                "IMPACT_UNIT": "USD",
+                "OWNER_ROUTE": "DBA / AI cost route",
+                "OWNER_GAP": False,
                 "SORT_ORDER": 1,
             }],
             "ACTIONS": [{
@@ -92,11 +119,17 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertEqual(brief.state, "Summary loaded")
         self.assertEqual(brief.headline, "Cost movement needs review.")
         self.assertEqual(brief.metrics[0].label, "Total spend")
+        self.assertEqual(brief.metrics[0].numeric_value, 120)
+        self.assertEqual(brief.metrics[0].trend_points, (101.0, 120.0))
         self.assertEqual(brief.metrics[1].tone, "cortex")
         self.assertEqual(brief.top_signal.signal, "Cortex AI spend")
+        self.assertEqual(brief.top_signal.priority_score, 95)
+        self.assertEqual(brief.top_signal.owner_route, "DBA / AI cost route")
         self.assertEqual(brief.next_actions[0].target_workflow, "Cortex AI")
         self.assertEqual(brief.resolved_company, "ALFA")
         self.assertEqual(brief.source_objects, "FACT_COST_DAILY; FACT_CORTEX_DAILY")
+        self.assertEqual(brief.source_coverage_pct, 100)
+        self.assertEqual(brief.data_availability_state, "Scheduled mart")
         self.assertEqual(brief.command_brief_query_count, 1)
         self.assertEqual(run_query.call_count, 1)
 
@@ -125,6 +158,11 @@ class SectionCommandBriefTests(unittest.TestCase):
             "TARGET_FRESHNESS_MINUTES": 15,
             "IS_STALE": False,
             "CONFIDENCE": "exact",
+            "REQUIRED_SOURCE_COUNT": 1,
+            "AVAILABLE_SOURCE_COUNT": 1,
+            "MISSING_SOURCE_COUNT": 0,
+            "SOURCE_COVERAGE_PCT": 100,
+            "DATA_AVAILABILITY_STATE": "Scheduled mart",
             "SNAPSHOT_TS": "2026-06-25 10:00:00",
             "LOAD_TS": "2026-06-25 10:02:00",
             "METRICS": [{"METRIC_LABEL": "Active alerts", "METRIC_VALUE": "4", "SORT_ORDER": 10}],
@@ -187,16 +225,26 @@ class SectionCommandBriefTests(unittest.TestCase):
         with patch.object(section_command_rendering.st, "html") as html, patch.object(
             section_command_rendering.st,
             "columns",
-            return_value=[contextlib.nullcontext()],
+            return_value=[contextlib.nullcontext(), contextlib.nullcontext()],
         ), patch.object(section_command_rendering.st, "button", return_value=False) as button, patch.object(
             section_command_rendering.st,
             "rerun",
             side_effect=AssertionError("idle command brief must not rerun"),
         ):
             section_command_rendering.render_section_command_brief(brief, key_prefix="test_alert_brief")
+            section_command_rendering.render_section_command_brief(
+                brief,
+                key_prefix="test_alert_brief",
+                detail_action=section_command_rendering.CommandBriefDetailAction(
+                    "Load Active Alerts",
+                    "Load rows.",
+                    lambda: None,
+                ),
+            )
 
         markup = "\n".join(call.args[0] for call in html.call_args_list)
-        self.assertIn("ow-command-brief", markup)
+        self.assertIn("ow-decision-brief", markup)
+        self.assertIn("ow-decision-metric-ribbon", markup)
         labels = [call.args[0] for call in button.call_args_list]
         self.assertIn("Open Active Alerts", labels)
         self.assertIn("Load Active Alerts", labels)
@@ -242,6 +290,9 @@ class SectionCommandBriefTests(unittest.TestCase):
             "SOURCE_SNAPSHOT_TS",
             "FRESHNESS_MINUTES",
             "METRIC_NUMERIC_VALUE",
+            "TREND_POINTS",
+            "PRIORITY_SCORE",
+            "SOURCE_COVERAGE_PCT",
             "ACTION_KEY",
             "ROUTE_KEY",
             "CTA_LABEL",
@@ -253,7 +304,8 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertIn("MART_SECTION_COMMAND_EXCEPTION", procs)
         self.assertIn("MART_SECTION_COMMAND_ACTION", procs)
         self.assertIn("CREATE OR REPLACE TASK OVERWATCH_SECTION_COMMAND_BRIEF_REFRESH", tasks)
-        self.assertIn("AFTER OVERWATCH_EXECUTIVE_OBSERVABILITY_REFRESH", tasks)
+        self.assertIn("SCHEDULE = '15 MINUTE'", tasks)
+        self.assertIn("ALLOW_OVERLAPPING_EXECUTION = FALSE", tasks)
         self.assertIn("CALL SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS()", validation)
         self.assertIn("SECTION_COMMAND_BRIEF_ORPHAN_CHILD_ROWS", validation)
         self.assertIn("SECTION_COMMAND_BRIEF_CANONICAL_WINDOWS", validation)
@@ -271,6 +323,27 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertIn("METRICS", sql)
         self.assertIn("EXCEPTIONS", sql)
         self.assertIn("ACTIONS", sql)
+
+    def test_command_brief_routes_are_allowlisted_and_apply_after_defaults(self):
+        from sections import command_brief_routes
+
+        state = {}
+        with patch.object(command_brief_routes.st, "session_state", state), patch.object(
+            command_brief_routes,
+            "queue_section_navigation",
+        ) as queue:
+            self.assertTrue(command_brief_routes.apply_command_brief_route("cost_contract_explorer_user_role"))
+
+        queue.assert_called_once_with("Cost & Contract")
+        self.assertEqual(state["cost_contract_workflow"], "Cost Explorer")
+        self.assertEqual(state["cc_explorer_lens"], "User / Role")
+
+        with patch.object(command_brief_routes.st, "session_state", {}), patch.object(
+            command_brief_routes,
+            "queue_section_navigation",
+        ) as queue:
+            self.assertFalse(command_brief_routes.apply_command_brief_route("not_real"))
+        queue.assert_not_called()
 
 
 if __name__ == "__main__":

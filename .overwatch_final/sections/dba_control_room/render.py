@@ -13,7 +13,7 @@ from sections.shell_helpers import (
     with_loaded_at,
 )
 from sections.section_command_brief import autoload_section_command_brief
-from sections.section_command_rendering import render_section_command_brief
+from sections.section_command_rendering import CommandBriefDetailAction, render_section_command_brief
 from utils.evidence_mode import (
     TRIAGE_MODE_ALL_EVIDENCE,
     TRIAGE_MODE_INVESTIGATE,
@@ -1013,6 +1013,13 @@ def render() -> None:
     all_evidence_mode = evidence_mode_is_all_evidence(st.session_state)
     normalized_view = normalize_dba_control_room_pane(st.session_state.get("dba_control_room_active_view"))
     st.session_state["dba_control_room_active_view"] = normalized_view
+    load_label = (
+        "Load Full Detail Packet"
+        if all_evidence_mode
+        else "Load Investigation Detail"
+        if investigation_mode
+        else "Load Triage"
+    )
 
     if evidence_mode == TRIAGE_MODE_TRIAGE:
         defer_section_note("Start with Morning Cockpit or load triage when current DBA telemetry is needed.")
@@ -1036,13 +1043,19 @@ def render() -> None:
         "DBA Control Room",
         DBA_CONTROL_ROOM_PANE_LABELS.get(normalized_view, normalized_view),
     ])
+    active_view = _render_dba_control_room_workflow_selector()
     render_section_command_brief(
         autoload_section_command_brief("DBA Control Room", company, environment, int(lookback_hours) // 24 or 1),
         key_prefix="dba_control_room_command_brief",
-        on_detail=lambda: st.session_state.__setitem__("dba_control_room_command_brief_load_detail", True),
-        compact=normalized_view != MORNING_COCKPIT_WORKFLOW,
+        detail_action=CommandBriefDetailAction(
+            load_label,
+            "Load the DBA investigation packet for this scope and evidence mode.",
+            lambda: st.session_state.__setitem__("dba_control_room_command_brief_load_detail", True),
+        )
+        if active_view == MORNING_COCKPIT_WORKFLOW
+        else None,
+        compact=active_view != MORNING_COCKPIT_WORKFLOW,
     )
-    active_view = _render_dba_control_room_workflow_selector()
     defer_section_note(
         f"{freshness_note('ACCOUNT_USAGE')} | "
         f"Cost basis: {metric_confidence_label('allocated')} | "
@@ -1074,14 +1087,6 @@ def render() -> None:
         defer_section_note("DBA Control Room opened with the latest compact mart snapshot when available.")
     if snapshot_result is not None and snapshot_result.available and not snapshot_result.data.empty:
         snapshot = snapshot_result.data.copy()
-        render_shell_snapshot(
-            (
-                ("Failed Queries", f"{safe_int(snapshot['FAILED_QUERIES_24H'].sum()):,}"),
-                ("Failed Tasks", f"{safe_int(snapshot['FAILED_TASKS_24H'].sum()):,}"),
-                ("Credits 24h", format_credits(snapshot["CREDITS_24H"].sum())),
-                ("Cortex 7d", f"${safe_float(snapshot['CORTEX_COST_7D_USD'].sum()):,.0f}"),
-            )
-        )
         snapshot_expected_meta = _dba_control_scope_meta(
             company,
             environment,
@@ -1164,13 +1169,6 @@ def render() -> None:
             if auto_build_ops:
                 st.session_state["_dba_control_room_auto_build_ops"] = True
 
-    load_label = (
-        "Load Full Detail Packet"
-        if all_evidence_mode
-        else "Load Investigation Detail"
-        if investigation_mode
-        else "Load Triage"
-    )
     auto_load_meta = _dba_control_scope_meta(
         company,
         environment,
@@ -1190,7 +1188,10 @@ def render() -> None:
         delayed_note="DBA Control Room shows cached triage immediately; guarded live checks are reserved for explicit detail loads.",
     )
 
-    if st.button(load_label, key="dba_control_room_load", type="primary") or st.session_state.pop("dba_control_room_command_brief_load_detail", False):
+    load_requested = bool(st.session_state.pop("dba_control_room_command_brief_load_detail", False))
+    if active_view != MORNING_COCKPIT_WORKFLOW:
+        load_requested = st.button(load_label, key="dba_control_room_load", type="primary") or load_requested
+    if load_requested:
         _load_control_room_evidence()
 
     data = st.session_state.get("dba_control_room_data", {})

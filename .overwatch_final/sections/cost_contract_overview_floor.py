@@ -103,7 +103,7 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
     if selected_days not in DAY_WINDOW_OPTIONS:
         selected_days = DEFAULT_DAY_WINDOW
 
-    controls = st.columns([1.0, 1.0, 2.6])
+    controls = st.columns([1.0, 3.6])
     with controls[0]:
         days = st.selectbox(
             "Cost window",
@@ -113,8 +113,8 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
             key="cost_contract_cockpit_window",
         )
     with controls[1]:
-        refresh_cost = st.button("Refresh Cost", key="cost_contract_refresh", type="primary", width="stretch")
-    refresh_cost = bool(refresh_cost or st.session_state.pop("cost_contract_command_brief_force_refresh", False))
+        st.caption("Use Refresh Cost Summary in the Decision Brief to reload official cost facts.")
+    refresh_cost = bool(st.session_state.pop("cost_contract_command_brief_force_refresh", False))
 
     if refresh_cost:
         st.session_state.pop(_COST_SPLASH_KEY, None)

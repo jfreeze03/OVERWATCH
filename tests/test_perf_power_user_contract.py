@@ -174,7 +174,7 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
         self.assertIn("def download_text(", helper_source)
         self.assertIn("def download_csv(", helper_source)
 
-    def test_alert_center_profile_label_matches_default_visible_load_button(self):
+    def test_alert_center_profile_label_matches_default_visible_detail_cta(self):
         profile = json.loads(PROFILE_PATH.read_text(encoding="utf-8"))
         contracts = (APP_ROOT / "sections" / "alert_center_contracts.py").read_text(encoding="utf-8")
         alert_center = (APP_ROOT / "sections" / "alert_center.py").read_text(encoding="utf-8")
@@ -182,7 +182,8 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
         self.assertIsNotNone(match)
 
         self.assertEqual(profile["load_buttons"]["Alert Center"], f"Load {match.group(1)}")
-        self.assertIn('st.button(f"Load {active_view}"', alert_center)
+        self.assertIn("CommandBriefDetailAction(", alert_center)
+        self.assertIn("load_label", alert_center)
         self.assertIn('key="alert_center_load"', alert_center)
 
     def test_release_evidence_records_power_user_metrics(self):

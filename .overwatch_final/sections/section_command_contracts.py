@@ -18,6 +18,7 @@ class SectionCommandContract:
     metric_labels: tuple[str, ...]
     expected_lanes: tuple[str, ...]
     source_table: str
+    required_sources: tuple[str, ...]
     target_freshness_minutes: int
     unavailable_headline: str
     unavailable_summary: str
@@ -31,6 +32,7 @@ def _contract(
     *,
     metric_labels: tuple[str, ...],
     source_table: str,
+    required_sources: tuple[str, ...],
     target_freshness_minutes: int,
     unavailable_headline: str,
     unavailable_summary: str,
@@ -46,6 +48,7 @@ def _contract(
         metric_labels=metric_labels,
         expected_lanes=first_paint.expected_lanes,
         source_table=source_table,
+        required_sources=required_sources,
         target_freshness_minutes=int(target_freshness_minutes),
         unavailable_headline=unavailable_headline,
         unavailable_summary=unavailable_summary,
@@ -59,6 +62,7 @@ SECTION_COMMAND_CONTRACTS: Mapping[str, SectionCommandContract] = {
     "Executive Landing": _contract(
         "Executive Landing",
         source_table="MART_SECTION_COMMAND_BRIEF",
+        required_sources=("MART_EXECUTIVE_OBSERVABILITY", "MART_DBA_CONTROL_ROOM", "FACT_COST_DAILY", "ALERT_EVENTS"),
         target_freshness_minutes=60,
         metric_labels=(
             "Platform state",
@@ -86,6 +90,7 @@ SECTION_COMMAND_CONTRACTS: Mapping[str, SectionCommandContract] = {
     "DBA Control Room": _contract(
         "DBA Control Room",
         source_table="MART_SECTION_COMMAND_BRIEF",
+        required_sources=("MART_DBA_CONTROL_ROOM", "FACT_QUERY_HOURLY", "FACT_TASK_RUN", "OVERWATCH_ACTION_QUEUE"),
         target_freshness_minutes=30,
         metric_labels=(
             "Failed queries",
@@ -113,6 +118,7 @@ SECTION_COMMAND_CONTRACTS: Mapping[str, SectionCommandContract] = {
     "Alert Center": _contract(
         "Alert Center",
         source_table="MART_SECTION_COMMAND_BRIEF",
+        required_sources=("ALERT_EVENTS", "OVERWATCH_ACTION_QUEUE", "ALERT_NOTIFICATION_LOG"),
         target_freshness_minutes=15,
         metric_labels=(
             "Active alerts",
@@ -140,6 +146,7 @@ SECTION_COMMAND_CONTRACTS: Mapping[str, SectionCommandContract] = {
     "Cost & Contract": _contract(
         "Cost & Contract",
         source_table="MART_SECTION_COMMAND_BRIEF",
+        required_sources=("FACT_COST_DAILY", "FACT_CORTEX_DAILY", "FACT_COST_MONITORING_SIGNAL"),
         target_freshness_minutes=60,
         metric_labels=(
             "Total spend",
@@ -167,6 +174,7 @@ SECTION_COMMAND_CONTRACTS: Mapping[str, SectionCommandContract] = {
     "Workload Operations": _contract(
         "Workload Operations",
         source_table="MART_SECTION_COMMAND_BRIEF",
+        required_sources=("FACT_QUERY_HOURLY", "FACT_TASK_RUN", "FACT_PROCEDURE_RUN", "FACT_COPY_LOAD_DAILY"),
         target_freshness_minutes=30,
         metric_labels=(
             "Active workload incidents",
@@ -194,6 +202,7 @@ SECTION_COMMAND_CONTRACTS: Mapping[str, SectionCommandContract] = {
     "Security Monitoring": _contract(
         "Security Monitoring",
         source_table="MART_SECTION_COMMAND_BRIEF",
+        required_sources=("FACT_SECURITY_OPERABILITY_DAILY", "ALERT_EVENTS", "MART_OPERATIONAL_OWNER_COVERAGE"),
         target_freshness_minutes=60,
         metric_labels=(
             "Failed logins",

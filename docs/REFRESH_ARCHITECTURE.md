@@ -60,11 +60,13 @@ evidence controls.
 | Security Monitoring | `MART_SECTION_COMMAND_BRIEF` packet from security, alert, owner coverage, and change summaries | 60 min | Explicit drilldown only |
 
 `SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS()` populates the parent brief,
-metrics, exceptions, and action references for canonical 1, 7, 14, 30, 60, and
-90 day windows. The task `OVERWATCH_SECTION_COMMAND_BRIEF_REFRESH` runs after
-the executive observability refresh in the mart task graph. Validation calls the
-procedure and checks all six sections, BRIEF_ID relationships, child-row
-orphans, freshness targets, and canonical window coverage.
+typed metrics, priority exceptions, source-coverage fields, and allowlisted
+action references for canonical 1, 7, 14, 30, 60, and 90 day windows. The task
+`OVERWATCH_SECTION_COMMAND_BRIEF_REFRESH` runs every 15 minutes against compact
+summary marts; it does not perform raw app-entry `ACCOUNT_USAGE` proof scans.
+Validation calls the procedure and checks all six sections, BRIEF_ID
+relationships, child-row orphans, typed metrics, route keys, source coverage,
+freshness targets, and canonical window coverage.
 
 The refresh contract stays in this document and in the read-only validation SQL
 instead of a static mart table. Run `snowflake/OVERWATCH_MART_VALIDATION.sql`

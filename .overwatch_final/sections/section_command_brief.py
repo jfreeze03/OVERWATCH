@@ -33,6 +33,11 @@ class SectionCommandMetric:
     numeric_value: float | None = None
     text_value: str = ""
     metric_format: str = ""
+    trend_points: tuple[float, ...] = ()
+    prior_value: float | None = None
+    delta_numeric_value: float | None = None
+    delta_percent: float | None = None
+    trend_direction: str = ""
 
 
 @dataclass(frozen=True)
@@ -43,6 +48,13 @@ class SectionCommandSignal:
     detail: str = ""
     route_section: str = ""
     route_workflow: str = ""
+    priority_score: float | None = None
+    impact_value: float | None = None
+    impact_unit: str = ""
+    owner_route: str = ""
+    owner_gap: bool = False
+    age_minutes: float | None = None
+    sla_state: str = ""
 
 
 @dataclass(frozen=True)
@@ -88,12 +100,21 @@ class SectionCommandBrief:
     target_freshness_minutes: int = 0
     stale: bool = False
     confidence: str = ""
+    required_source_count: int = 0
+    available_source_count: int = 0
+    missing_source_count: int = 0
+    source_coverage_pct: float | None = None
+    data_availability_state: str = ""
+    stale_source_count: int = 0
+    source_gap_detail: str = ""
     cache_expires_at: str = ""
     app_query_loaded_at: str = ""
     command_brief_query_count: int = 0
     command_brief_elapsed_ms: float = 0.0
     command_brief_cache_hit: bool = False
+    command_brief_session_cache_hit: bool = False
     command_brief_fallback_used: bool = False
+    command_brief_packet_result_bytes: int = 0
     raw_payload: Mapping[str, object] = field(default_factory=dict)
 
 
@@ -159,6 +180,17 @@ def _float_or_none(value: object) -> float | None:
         return None
 
 
+def _bool_value(value: object, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    text = str(value if value is not None else "").strip().lower()
+    if text in {"true", "1", "yes", "y"}:
+        return True
+    if text in {"false", "0", "no", "n"}:
+        return False
+    return bool(default)
+
+
 def _int_value(value: object, default: int = 0) -> int:
     try:
         return int(float(value))
@@ -195,6 +227,28 @@ def _variant_records(value: object) -> list[Mapping[str, object]]:
     return records
 
 
+def _trend_points(value: object) -> tuple[float, ...]:
+    points: list[float] = []
+    if isinstance(value, str) and value.strip():
+        try:
+            value = json.loads(value)
+        except Exception:
+            value = []
+    if isinstance(value, Mapping):
+        value = value.get("points") or value.get("values") or []
+    if isinstance(value, tuple):
+        value = list(value)
+    if not isinstance(value, list):
+        return ()
+    for item in value[:14]:
+        if isinstance(item, Mapping):
+            item = item.get("value", item.get("VALUE"))
+        numeric = _float_or_none(item)
+        if numeric is not None:
+            points.append(numeric)
+    return tuple(points)
+
+
 def _metric_from_row(row: Mapping[str, object]) -> SectionCommandMetric:
     numeric_value = _float_or_none(_column(row, "METRIC_NUMERIC_VALUE", "NUMERIC_VALUE"))
     text_value = _string(_column(row, "METRIC_TEXT_VALUE", "TEXT_VALUE"))
@@ -210,6 +264,11 @@ def _metric_from_row(row: Mapping[str, object]) -> SectionCommandMetric:
         numeric_value=numeric_value,
         text_value=text_value,
         metric_format=_string(_column(row, "METRIC_FORMAT", "FORMAT")),
+        trend_points=_trend_points(_column(row, "TREND_POINTS")),
+        prior_value=_float_or_none(_column(row, "PRIOR_VALUE")),
+        delta_numeric_value=_float_or_none(_column(row, "DELTA_NUMERIC_VALUE")),
+        delta_percent=_float_or_none(_column(row, "DELTA_PERCENT")),
+        trend_direction=_string(_column(row, "TREND_DIRECTION")),
     )
 
 
@@ -221,6 +280,13 @@ def _signal_from_row(row: Mapping[str, object]) -> SectionCommandSignal:
         detail=_string(_column(row, "DETAIL", "TOP_ACTION")),
         route_section=_string(_column(row, "ROUTE_SECTION")),
         route_workflow=_string(_column(row, "ROUTE_WORKFLOW")),
+        priority_score=_float_or_none(_column(row, "PRIORITY_SCORE")),
+        impact_value=_float_or_none(_column(row, "IMPACT_VALUE")),
+        impact_unit=_string(_column(row, "IMPACT_UNIT")),
+        owner_route=_string(_column(row, "OWNER_ROUTE")),
+        owner_gap=_bool_value(_column(row, "OWNER_GAP", default=False)),
+        age_minutes=_float_or_none(_column(row, "AGE_MINUTES")),
+        sla_state=_string(_column(row, "SLA_STATE")),
     )
 
 
@@ -284,6 +350,7 @@ def _fallback_brief(
             freshness_label=f"Last known good retained. {reason}",
             fallback_reason=reason,
             command_brief_cache_hit=False,
+            command_brief_session_cache_hit=False,
             command_brief_fallback_used=True,
         )
     loaded_at = _now_label()
@@ -322,6 +389,13 @@ def _fallback_brief(
         target_freshness_minutes=int(contract.target_freshness_minutes),
         stale=True,
         confidence="unavailable",
+        required_source_count=len(contract.required_sources),
+        available_source_count=0,
+        missing_source_count=len(contract.required_sources),
+        source_coverage_pct=0.0,
+        data_availability_state="Data Gap",
+        stale_source_count=0,
+        source_gap_detail="; ".join(contract.required_sources),
         cache_expires_at=_expiry_label(NEGATIVE_CACHE_SECONDS),
         app_query_loaded_at=loaded_at,
         command_brief_query_count=0,
@@ -375,6 +449,11 @@ metric_packet AS (
                 'METRIC_UNIT', METRIC_UNIT,
                 'METRIC_DETAIL', METRIC_DETAIL,
                 'METRIC_TONE', METRIC_TONE,
+                'TREND_POINTS', TREND_POINTS,
+                'PRIOR_VALUE', PRIOR_VALUE,
+                'DELTA_NUMERIC_VALUE', DELTA_NUMERIC_VALUE,
+                'DELTA_PERCENT', DELTA_PERCENT,
+                'TREND_DIRECTION', TREND_DIRECTION,
                 'TREND_NUMERIC_VALUE', TREND_NUMERIC_VALUE,
                 'TREND_LABEL', TREND_LABEL,
                 'SORT_ORDER', SORT_ORDER
@@ -396,6 +475,13 @@ exception_packet AS (
                 'DETAIL', DETAIL,
                 'ROUTE_SECTION', ROUTE_SECTION,
                 'ROUTE_WORKFLOW', ROUTE_WORKFLOW,
+                'PRIORITY_SCORE', PRIORITY_SCORE,
+                'IMPACT_VALUE', IMPACT_VALUE,
+                'IMPACT_UNIT', IMPACT_UNIT,
+                'OWNER_ROUTE', OWNER_ROUTE,
+                'OWNER_GAP', OWNER_GAP,
+                'AGE_MINUTES', AGE_MINUTES,
+                'SLA_STATE', SLA_STATE,
                 'SORT_ORDER', SORT_ORDER
             )
         ) WITHIN GROUP (
@@ -410,6 +496,7 @@ exception_packet AS (
                     WHEN 'CLEAR' THEN 90
                     ELSE 80
                 END,
+                PRIORITY_SCORE DESC,
                 SORT_ORDER,
                 SIGNAL
         ) AS EXCEPTIONS
@@ -498,9 +585,16 @@ def _brief_from_packet(
     resolved_window = _int_value(_column(row, "RESOLVED_WINDOW_DAYS", "WINDOW_DAYS", default=window_days), int(window_days))
     freshness_minutes = _float_or_none(_column(row, "FRESHNESS_MINUTES"))
     target_freshness = _int_value(_column(row, "TARGET_FRESHNESS_MINUTES", default=contract.target_freshness_minutes), contract.target_freshness_minutes)
-    stale = bool(_column(row, "IS_STALE", default=False)) or (
+    stale = _bool_value(_column(row, "IS_STALE", default=False)) or (
         freshness_minutes is not None and target_freshness > 0 and freshness_minutes > target_freshness
     )
+    required_source_count = _int_value(_column(row, "REQUIRED_SOURCE_COUNT"), 0)
+    available_source_count = _int_value(_column(row, "AVAILABLE_SOURCE_COUNT"), 0)
+    missing_source_count = _int_value(_column(row, "MISSING_SOURCE_COUNT"), 0)
+    stale_source_count = _int_value(_column(row, "STALE_SOURCE_COUNT"), 0)
+    source_coverage_pct = _float_or_none(_column(row, "SOURCE_COVERAGE_PCT"))
+    data_availability_state = _string(_column(row, "DATA_AVAILABILITY_STATE"))
+    source_gap_detail = _string(_column(row, "SOURCE_GAP_DETAIL"))
     scope_note = f"Requested: {company} / {environment} / {int(window_days)} days"
     if (
         resolved_company.upper() != str(company).upper()
@@ -538,12 +632,21 @@ def _brief_from_packet(
         target_freshness_minutes=target_freshness,
         stale=stale,
         confidence=_string(_column(row, "CONFIDENCE"), "unknown"),
+        required_source_count=required_source_count,
+        available_source_count=available_source_count,
+        missing_source_count=missing_source_count,
+        source_coverage_pct=source_coverage_pct,
+        data_availability_state=data_availability_state,
+        stale_source_count=stale_source_count,
+        source_gap_detail=source_gap_detail,
         cache_expires_at=_expiry_label(),
         app_query_loaded_at=_now_label(),
         command_brief_query_count=0 if cache_hit else 1,
         command_brief_elapsed_ms=round(float(elapsed_ms or 0), 2),
         command_brief_cache_hit=bool(cache_hit),
+        command_brief_session_cache_hit=bool(cache_hit),
         command_brief_fallback_used=False,
+        command_brief_packet_result_bytes=len(str(row).encode("utf-8", errors="ignore")),
         raw_payload=row,
     )
 
@@ -560,10 +663,15 @@ def _record_telemetry(brief: SectionCommandBrief) -> None:
         "command_brief_query_count": int(brief.command_brief_query_count or 0),
         "command_brief_elapsed_ms": float(brief.command_brief_elapsed_ms or 0),
         "command_brief_cache_hit": bool(brief.command_brief_cache_hit),
+        "command_brief_session_cache_hit": bool(brief.command_brief_session_cache_hit),
         "command_brief_source_age_minutes": brief.freshness_minutes,
+        "command_brief_source_coverage_pct": brief.source_coverage_pct,
         "command_brief_fallback_used": bool(brief.command_brief_fallback_used),
+        "command_brief_stale_used": bool(brief.stale),
+        "command_brief_packet_result_bytes": int(brief.command_brief_packet_result_bytes or 0),
         "command_brief_section": brief.section,
-        "command_brief_scope": f"{brief.requested_company}/{brief.requested_environment}/{brief.requested_window_days}",
+        "command_brief_requested_scope": f"{brief.requested_company}/{brief.requested_environment}/{brief.requested_window_days}",
+        "command_brief_resolved_scope": f"{brief.resolved_company}/{brief.resolved_environment}/{brief.resolved_window_days}",
     }
     try:
         st.session_state["section_command_brief_last_telemetry"] = telemetry
@@ -588,7 +696,12 @@ def autoload_section_command_brief(
     key = _cache_key(contract.section, company, environment, int(window_days))
     cached = st.session_state.get(key)
     if not force and _session_brief_is_current(cached):
-        brief = replace(cached, command_brief_cache_hit=True, command_brief_query_count=0)
+        brief = replace(
+            cached,
+            command_brief_cache_hit=True,
+            command_brief_session_cache_hit=True,
+            command_brief_query_count=0,
+        )
         _record_telemetry(brief)
         return brief
 

@@ -64,7 +64,7 @@ from sections.shell_helpers import (
     render_section_first_paint_shell,
 )
 from sections.section_command_brief import autoload_section_command_brief
-from sections.section_command_rendering import render_section_command_brief
+from sections.section_command_rendering import CommandBriefDetailAction, render_section_command_brief
 
 
 day_window_selectbox = _lazy_util("day_window_selectbox")
@@ -86,7 +86,12 @@ def _render_security_first_paint_shell(active_view: str, company: str, environme
     render_section_command_brief(
         autoload_section_command_brief("Security Monitoring", company, environment, int(days or 30)),
         key_prefix="security_monitoring_command_brief",
-        on_detail=lambda: st.session_state.__setitem__("security_posture_command_brief_force_refresh", True),
+        detail_action=CommandBriefDetailAction(
+            "Refresh Security Summary",
+            "Reload compact security summary and proof counts for the current scope.",
+            lambda: st.session_state.__setitem__("security_posture_command_brief_force_refresh", True),
+            key="security_posture_brief_load",
+        ) if active_view == SECURITY_OVERVIEW_WORKFLOW else None,
         compact=active_view != SECURITY_OVERVIEW_WORKFLOW,
     )
 

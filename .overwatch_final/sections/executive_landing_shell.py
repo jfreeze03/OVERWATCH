@@ -54,7 +54,7 @@ from sections.executive_landing_models import (
 )
 from sections.shell_helpers import render_content_header, render_primary_section_tabs, render_section_breadcrumb
 from sections.section_command_brief import autoload_section_command_brief
-from sections.section_command_rendering import render_section_command_brief
+from sections.section_command_rendering import CommandBriefDetailAction, render_section_command_brief
 from perf_trace import trace
 from utils.section_guidance import defer_source_note
 
@@ -250,14 +250,20 @@ def render() -> None:
             _persist_platform_summary(summary)
 
     render_section_breadcrumb(["Executive Landing", active_workflow])
+    with trace("executive_shell:workflow_selector", active_section="Executive Landing"):
+        active_workflow = _render_executive_landing_workflow_controls(active_workflow)
     render_section_command_brief(
         autoload_section_command_brief("Executive Landing", company, environment, int(days)),
         key_prefix="executive_landing_command_brief",
-        on_detail=lambda: st.session_state.__setitem__("_executive_landing_command_brief_load_detail", True),
+        detail_action=CommandBriefDetailAction(
+            "Load Full Executive Snapshot",
+            "Load the heavier Executive Landing detail packet for the selected scope.",
+            lambda: st.session_state.__setitem__("_executive_landing_command_brief_load_detail", True),
+        )
+        if active_workflow == EXECUTIVE_OVERVIEW_WORKFLOW
+        else None,
         compact=active_workflow != EXECUTIVE_OVERVIEW_WORKFLOW,
     )
-    with trace("executive_shell:workflow_selector", active_section="Executive Landing"):
-        active_workflow = _render_executive_landing_workflow_controls(active_workflow)
 
     load = _render_loaded_executive_landing_workflow(
         active_workflow,

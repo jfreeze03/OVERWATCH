@@ -21,7 +21,7 @@ from sections.shell_helpers import (
     with_loaded_at,
 )
 from sections.section_command_brief import autoload_section_command_brief
-from sections.section_command_rendering import render_section_command_brief
+from sections.section_command_rendering import CommandBriefDetailAction, render_section_command_brief
 from sections.alert_center_contracts import (
     ALERT_CENTER_ADMIN_VIEW_DETAILS,
     ALERT_CENTER_ADMIN_VIEW_KEY,
@@ -675,10 +675,16 @@ def render() -> None:
         )
     with c2:
         limit = st.selectbox("Rows", [50, 100, 200, 500], index=2)
+    load_label = f"Load {active_view}"
     render_section_command_brief(
         autoload_section_command_brief("Alert Center", company, environment, int(days)),
         key_prefix="alert_center_command_brief",
-        on_detail=lambda: _load_alert_center_view_data(source_view, company, environment, int(days), int(limit), required_sources),
+        detail_action=CommandBriefDetailAction(
+            load_label,
+            "Load row-level alert evidence for the selected alert family.",
+            lambda: _load_alert_center_view_data(source_view, company, environment, int(days), int(limit), required_sources),
+            key="alert_center_load",
+        ),
         compact=active_view != "Active Alerts",
     )
     data = st.session_state.get("alert_center_data")
@@ -715,9 +721,7 @@ def render() -> None:
         delayed_note="Alert Center reads bounded alert/action sources on demand; ACCOUNT_USAGE-backed inputs can lag.",
     )
     with c3:
-        if st.button(f"Load {active_view}", key="alert_center_load", type="primary"):
-            if _load_alert_center_view_data(source_view, company, environment, int(days), int(limit), required_sources):
-                st.rerun()
+        st.caption(f"{load_label} is available in the Decision Brief.")
 
     if not isinstance(data, dict):
         defer_source_note(f"Inputs on load: {_alert_center_source_summary(required_sources)}")

@@ -14,6 +14,7 @@ sys.path.insert(0, str(APP_ROOT))
 
 from utils.admin import clamp_global_date_range  # noqa: E402
 from utils.mart import load_mart_table  # noqa: E402
+import utils.query as query_utils  # noqa: E402
 
 
 class GuardrailTests(unittest.TestCase):
@@ -143,3 +144,20 @@ class GuardrailTests(unittest.TestCase):
         self.assertIn("Fallback for Snowflake stages that refresh filters before utils.admin", filters_text)
         self.assertNotIn("render_admin_mode_control", app_text + filters_text)
         self.assertNotIn('st.session_state["_global_date_range_input"] =', app_text + filters_text)
+
+    def test_query_guardrail_messages_are_hash_deduped(self):
+        previous = dict(st.session_state)
+        try:
+            st.session_state.clear()
+            with patch("utils.query.st.warning") as warning:
+                query_utils._show_query_warning("Cost guard", RuntimeError("boom"))
+                query_utils._show_query_warning("Cost guard", RuntimeError("boom"))
+            warning.assert_called_once()
+
+            with patch("utils.query.st.warning") as warning:
+                query_utils._show_result_guard_message("Large result guard")
+                query_utils._show_result_guard_message("Large result guard")
+            warning.assert_called_once()
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)

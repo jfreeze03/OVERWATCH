@@ -6,6 +6,7 @@
 #      that crashed the entire section render with a red error page)
 #   3. Tiered cache TTLs: live=30s, standard=300s, historical=3600s, metadata=14400s
 #      (previous version had a single flat 300s TTL for all query types)
+import hashlib
 import os
 import re
 import time

@@ -128,6 +128,11 @@ class CostCenterSplitTests(unittest.TestCase):
         self.assertEqual(annotated["COST_OWNER"].iloc[0], "ANALYST")
         self.assertEqual(annotated["OWNER_SOURCE"].iloc[0], "QUERY_USER")
 
+    def test_chargeback_renderer_imports_shared_aggregation_labels(self):
+        self.assertIs(chargeback_view._mixed_label, models._mixed_label)
+        self.assertIs(chargeback_view._chargeback_readiness_label, models._chargeback_readiness_label)
+        self.assertIs(chargeback_view._route_telemetry_label, models._route_telemetry_label)
+
     def test_prepare_cost_forecast_rows_returns_normalized_30_day_window(self):
         rows = pd.DataFrame({
             "day": ["2026-06-22T12:00:00Z", "2026-06-23T01:00:00Z"],

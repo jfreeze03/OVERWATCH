@@ -259,6 +259,8 @@ class ThemeRegistryTests(unittest.TestCase):
     def test_primary_dashboard_layout_uses_responsive_grids(self):
         self.assertIn(".ow-signal-grid", theme._STRUCTURAL_CSS)
         self.assertIn("repeat(auto-fit, minmax(175px, 1fr))", theme._STRUCTURAL_CSS)
+        self.assertIn(".ow-shell-kpi-grid", theme._STRUCTURAL_CSS)
+        self.assertIn(".ow-shell-kpi-card", theme._STRUCTURAL_CSS)
         self.assertIn(".ow-chart-title", theme._STRUCTURAL_CSS)
         self.assertIn('[data-testid="stVegaLiteChart"]', theme._STRUCTURAL_CSS)
 

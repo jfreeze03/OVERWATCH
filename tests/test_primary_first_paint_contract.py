@@ -69,9 +69,6 @@ class PrimaryFirstPaintContractTests(unittest.TestCase):
             command_deck.st,
             "columns",
             side_effect=lambda count: [contextlib.nullcontext() for _ in range(count)],
-        ), patch.object(command_deck, "render_escaped_bold_text"), patch.object(
-            command_deck,
-            "render_shell_snapshot",
         ), patch.object(
             command_deck,
             "safe_caption",
@@ -152,9 +149,6 @@ class PrimaryFirstPaintContractTests(unittest.TestCase):
             command_deck.st,
             "columns",
             side_effect=lambda count: [contextlib.nullcontext() for _ in range(count)],
-        ), patch.object(command_deck, "render_escaped_bold_text"), patch.object(
-            command_deck,
-            "render_shell_snapshot",
         ), patch.object(
             command_deck,
             "safe_caption",
@@ -179,9 +173,6 @@ class PrimaryFirstPaintContractTests(unittest.TestCase):
             command_deck.st,
             "columns",
             side_effect=lambda count: [contextlib.nullcontext() for _ in range(count)],
-        ), patch.object(command_deck, "render_escaped_bold_text"), patch.object(
-            command_deck,
-            "render_shell_snapshot",
         ), patch.object(
             command_deck,
             "safe_caption",
@@ -213,8 +204,8 @@ class PrimaryFirstPaintContractTests(unittest.TestCase):
         apply_command_deck_action(action, state)
 
         self.assertEqual(state["workload_operations_workflow"], "Pipeline & Task Health")
-        self.assertEqual(state["workload_pipeline_focus"], "Failed Tasks")
-        self.assertEqual(set(state), {"workload_operations_workflow", "workload_pipeline_focus"})
+        self.assertEqual(state["workload_operations_pipeline_focus"], "Failed Tasks")
+        self.assertEqual(set(state), {"workload_operations_workflow", "workload_operations_pipeline_focus"})
 
     def test_command_deck_preserves_benchmark_load_boundaries(self):
         from sections.command_deck_contracts import get_command_deck_contract

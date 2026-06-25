@@ -40,11 +40,11 @@ def _global_date_label() -> str:
     start = st.session_state.get("global_start_date")
     end = st.session_state.get("global_end_date")
     if start and end:
-        return f"Triage Filters date range: {start} to {end}"
+        return f"Operating Scope date range: {start} to {end}"
     if start:
-        return f"Triage Filters date range: from {start}"
+        return f"Operating Scope date range: from {start}"
     if end:
-        return f"Triage Filters date range: through {end}"
+        return f"Operating Scope date range: through {end}"
     return ""
 
 

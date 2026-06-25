@@ -132,6 +132,12 @@ def _render_priority_dataframe(*args, **kwargs) -> None:
     render_priority_dataframe(*args, **kwargs)
 
 
+def _render_signal_lane_board(*args, **kwargs) -> None:
+    from sections.shell_helpers import render_signal_lane_board
+
+    render_signal_lane_board(*args, **kwargs)
+
+
 def _render_workflow_selector(*args, **kwargs) -> str:
     from utils.workflows import render_workflow_selector
 
@@ -603,18 +609,9 @@ def _alert_command_lanes(
 
 
 def _render_alert_command_lane_board(lanes: list[dict[str, str]]) -> None:
-    pd = _pd()
-    lane_rows = pd.DataFrame(lanes)
-    if lane_rows.empty:
+    if not lanes:
         return
-    _render_priority_dataframe(
-        lane_rows,
-        title="Alert operating lanes",
-        priority_columns=["label", "value", "state", "detail"],
-        raw_label="All alert operating lanes",
-        height=260,
-        max_rows=8,
-    )
+    _render_signal_lane_board("Alert operating lanes", lanes, max_lanes=8)
 
 
 def _render_alert_center_exception_strip(exceptions: pd.DataFrame) -> None:

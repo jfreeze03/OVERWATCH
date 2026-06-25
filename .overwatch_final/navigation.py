@@ -30,7 +30,7 @@ from runtime_state import (
     pop_state,
     set_state,
 )
-from sections.navigation import request_executive_landing_hydration, request_section_workspace
+from sections.navigation import request_section_workspace
 
 
 CONNECTION_OPTIONAL_SECTIONS = set(ALL_SECTIONS)
@@ -74,14 +74,18 @@ def queue_section_navigation(section: str) -> None:
     current = normalize_nav_section(get_state(NAV_SECTION, ""))
     pop_state(PENDING_AUTOLOAD_SECTION, None)
     pop_state(PENDING_AUTOLOAD_STARTED_AT, None)
-    if target == "Executive Landing":
-        request_executive_landing_hydration()
+    section_changed = target != current
+    if target == "Executive Landing" and section_changed:
         set_state(PENDING_SECTION, target)
         set_state(SECTION_TRANSITION_STARTED_AT, datetime.now().isoformat(timespec="seconds"))
-    elif target != current:
+    elif section_changed:
         set_state(PENDING_SECTION, target)
         set_state(SECTION_TRANSITION_STARTED_AT, datetime.now().isoformat(timespec="seconds"))
-    request_section_workspace(target)
+    request_section_workspace(
+        target,
+        reset_workflow=section_changed,
+        request_autoload=section_changed,
+    )
     apply_section_compatibility_state(raw_section)
     set_state(NAV_SECTION, target)
 

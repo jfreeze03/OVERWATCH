@@ -12,7 +12,6 @@ from navigation import queue_section_navigation
 from sections.command_deck_contracts import CommandDeckAction, SectionCommandDeckContract
 from sections.command_deck_contracts import get_command_deck_contract
 from sections.operator_case import render_case_drawer
-from sections.shell_helpers import render_escaped_bold_text, render_shell_snapshot
 from sections.ui_compat import safe_button, safe_caption
 
 
@@ -72,12 +71,6 @@ def render_command_deck(
     prefix = key_prefix or f"command_deck_{_key_token(contract.section)}"
     with st.container(border=True):
         _render_deck_header(contract)
-        render_shell_snapshot(
-            (
-                ("Route status", "Ready"),
-                ("Evidence boundary", "Explicit load only"),
-            )
-        )
         if contract.primary_cta_description:
             safe_caption(contract.primary_cta_description)
         if on_primary_cta is not None:

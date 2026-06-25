@@ -64,6 +64,7 @@ def _render_security_watch_floor(score: int, exceptions: pd.DataFrame, row) -> N
     failed_logins = safe_int(row.get("FAILED_LOGINS", 0))
     users_without_mfa = safe_int(row.get("USERS_WITHOUT_MFA", 0))
     shared_databases = safe_int(row.get("SHARED_DATABASES", 0))
+    st.markdown("**Security Watch Floor**")
     render_shell_snapshot((
         ("Priority Findings", f"{len(priority):,}"),
         ("Identity Signals", f"{failed_logins + users_without_mfa:,}"),
@@ -78,7 +79,6 @@ def _render_security_watch_floor(score: int, exceptions: pd.DataFrame, row) -> N
             f"{first.get('ENTITY', 'unknown')} -> {first.get('NEXT_ACTION', 'Review access telemetry.')}"
         )
 
-    st.markdown("**Security Watch Floor**")
     if priority.empty:
         if shared_databases:
             st.caption("No urgent findings, but shared/imported database exposure exists. Review routes and consumers periodically.")
@@ -196,18 +196,26 @@ def _render_security_exception_strip(rows: list[dict], *, loaded: bool = False) 
     if not rows:
         st.success("No immediate security exceptions in the loaded summary.")
         return
+    display_rows = []
     for row in rows[:4]:
-        severity = str(row.get("severity") or "Watch")
-        signal = str(row.get("signal") or "Security signal")
-        entity = str(row.get("entity") or "Scope")
-        detail = str(row.get("detail") or "")
         route = str(row.get("route") or "Security Monitoring / Access")
         if route == "Security Posture":
             route = "Security Monitoring / Access"
-        if severity.lower() in {"critical", "high"}:
-            st.warning(f"{severity}: {signal} - {entity}. {detail} Route: {route}.")
-        else:
-            st.info(f"{severity}: {signal} - {entity}. {detail} Route: {route}.")
+        display_rows.append({
+            "SEVERITY": str(row.get("severity") or "Watch"),
+            "SIGNAL": str(row.get("signal") or "Security signal"),
+            "ENTITY": str(row.get("entity") or "Scope"),
+            "DETAIL": str(row.get("detail") or ""),
+            "ROUTE": route,
+        })
+    render_priority_dataframe(
+        pd.DataFrame(display_rows),
+        title="Security exceptions to work first",
+        priority_columns=["SEVERITY", "SIGNAL", "ENTITY", "DETAIL", "ROUTE"],
+        raw_label="All security exceptions",
+        height=220,
+        max_rows=4,
+    )
 
 def _security_action_brief(summary, exceptions, meta: dict, company: str, environment: str, days: int) -> dict:
     expected_meta = _security_scope_meta(company, environment, days)
@@ -317,16 +325,16 @@ def _render_security_overview_entry(summary, exceptions, meta: dict, company: st
         row = summary.iloc[0]
         render_shell_kpi_row((
             ("Failed Logins", f"{safe_int(row.get('FAILED_LOGINS', 0)):,}"),
-            ("Risky Grants", f"{safe_int(row.get('RECENT_GRANTS', 0)):,}"),
-            ("Privilege Changes", f"{safe_int(row.get('RECENT_GRANTS', 0)):,}"),
+            ("MFA Gaps", f"{safe_int(row.get('USERS_WITHOUT_MFA', 0)):,}"),
+            ("Grant Changes", f"{safe_int(row.get('RECENT_GRANTS', 0)):,}"),
             ("Shared DBs", f"{safe_int(row.get('SHARED_DATABASES', 0)):,}"),
         ))
         action_rows = _security_exception_strip_rows(summary, exceptions, meta, company, environment, days)
     else:
         render_shell_kpi_row((
             ("Failed Logins", "Pending"),
-            ("Risky Grants", "Pending"),
-            ("Privilege Changes", "Pending"),
+            ("MFA Gaps", "Pending"),
+            ("Grant Changes", "Pending"),
             ("Shared DBs", "Pending"),
         ))
         action_rows = [

@@ -358,19 +358,23 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("SECTION_WORKSPACE_STATE_KEYS = {", app_text)
         self.assertIn("from shell import render_app", app_text)
         self.assertIn("def queue_section_navigation", top_navigation_text)
-        self.assertIn("request_section_workspace(target)", top_navigation_text)
-        self.assertIn("request_executive_landing_hydration()", top_navigation_text)
+        self.assertIn("request_section_workspace(", top_navigation_text)
+        self.assertIn("section_changed = target != current", top_navigation_text)
+        self.assertIn("reset_workflow=section_changed", top_navigation_text)
+        self.assertIn("request_autoload=section_changed", top_navigation_text)
         self.assertIn('target == "Executive Landing"', top_navigation_text)
-        self.assertIn('if target == "Executive Landing":', top_navigation_text)
+        self.assertIn('if target == "Executive Landing" and section_changed:', top_navigation_text)
         self.assertIn('pop_state(PENDING_AUTOLOAD_SECTION, None)', top_navigation_text)
         self.assertIn('pop_state(PENDING_AUTOLOAD_STARTED_AT, None)', top_navigation_text)
         self.assertNotIn('st.session_state["_overwatch_pending_autoload_section"] = target', top_navigation_text)
         self.assertLess(
-            top_navigation_text.index("request_section_workspace(target)"),
+            top_navigation_text.index("request_section_workspace("),
             top_navigation_text.index("set_state(NAV_SECTION, target)"),
         )
         self.assertIn("def request_section_workspace", navigation_text)
-        self.assertIn("request_section_workspace(target)", navigation_text)
+        self.assertIn("reset_workflow: bool = True", navigation_text)
+        self.assertIn("request_autoload: bool = True", navigation_text)
+        self.assertIn("request_section_workspace(", navigation_text)
         self.assertIn("set_state(EXECUTIVE_LANDING_WORKSPACE_REQUESTED, True)", navigation_text)
         self.assertIn("set_state(EXECUTIVE_LANDING_BRIEF_MODE, False)", navigation_text)
         self.assertIn('set_state(EXECUTIVE_LANDING_WORKFLOW, "Executive Overview")', navigation_text)
@@ -388,7 +392,10 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("def request_section_workspace", navigation_text)
         self.assertIn("normalize_section_name(raw_section)", navigation_text)
         self.assertIn("compatibility_state_for_section(raw_section)", navigation_text)
-        self.assertIn("request_section_workspace(target)", navigation_text)
+        self.assertIn("request_section_workspace(", navigation_text)
+        self.assertIn("reset_workflow = target != current", navigation_text)
+        self.assertIn("reset_workflow=reset_workflow", navigation_text)
+        self.assertIn("request_autoload=reset_workflow", navigation_text)
         self.assertIn("request_executive_landing_hydration()", navigation_text)
         self.assertIn('set_state(EXECUTIVE_LANDING_WORKFLOW, "Executive Overview")', navigation_text)
         self.assertIn('set_state(DBA_CONTROL_ROOM_ACTIVE_VIEW, "Morning Cockpit")', navigation_text)
@@ -398,7 +405,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('set_state("workload_operations_pipeline_focus", "Failed Procedures")', navigation_text)
         self.assertIn('set_state(SECURITY_POSTURE_VIEW, "Security Overview")', navigation_text)
         self.assertIn('set_state(SECURITY_POSTURE_WORKFLOW, "Security Overview")', navigation_text)
-        self.assertIn('target != current or target == "Executive Landing"', navigation_text)
+        self.assertIn("reset_workflow = target != current", navigation_text)
         self.assertIn("set_state(PENDING_SECTION, target)", navigation_text)
         self.assertIn("set_state(NAV_SECTION, target)", navigation_text)
 
@@ -463,6 +470,37 @@ class NavigationIntegrityTests(unittest.TestCase):
             target = apply_navigation_state("Access posture")
             self.assertEqual(target, "Security Monitoring")
             self.assertEqual(st.session_state[SECURITY_POSTURE_VIEW], "Security Overview")
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)
+
+    def test_same_section_navigation_preserves_selected_workflow(self):
+        from runtime_state import (
+            COST_CONTRACT_WORKFLOW,
+            NAV_SECTION,
+            PENDING_AUTOLOAD_SECTION,
+            PENDING_AUTOLOAD_STARTED_AT,
+            WORKLOAD_OPERATIONS_WORKFLOW,
+        )
+        from navigation import queue_section_navigation
+        from sections.navigation import apply_navigation_state
+
+        previous = dict(st.session_state)
+        try:
+            st.session_state.clear()
+            st.session_state[NAV_SECTION] = "Cost & Contract"
+            st.session_state[COST_CONTRACT_WORKFLOW] = "Burn Rate & Forecast"
+            queue_section_navigation("Cost & Contract")
+            self.assertEqual(st.session_state[COST_CONTRACT_WORKFLOW], "Burn Rate & Forecast")
+            self.assertNotIn(PENDING_AUTOLOAD_SECTION, st.session_state)
+            self.assertNotIn(PENDING_AUTOLOAD_STARTED_AT, st.session_state)
+
+            st.session_state.clear()
+            st.session_state[NAV_SECTION] = "Workload Operations"
+            st.session_state[WORKLOAD_OPERATIONS_WORKFLOW] = "Performance & Contention"
+            target = apply_navigation_state("Workload Operations")
+            self.assertEqual(target, "Workload Operations")
+            self.assertEqual(st.session_state[WORKLOAD_OPERATIONS_WORKFLOW], "Performance & Contention")
         finally:
             st.session_state.clear()
             st.session_state.update(previous)
@@ -2245,6 +2283,14 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Morning Cockpit", dba_visible)
         self.assertIn("Control Room Admin / Advanced", dba_hidden)
 
+    def test_long_workflow_selectors_collapse_by_default(self):
+        workflows_text = (APP_ROOT / "utils" / "workflows.py").read_text(encoding="utf-8")
+
+        self.assertIn("if collapse_after is None and len(items) > 4:", workflows_text)
+        self.assertIn("if collapse_after is None and len(options) > 4:", workflows_text)
+        self.assertIn('collapsed_label: str = "More views"', workflows_text)
+        self.assertIn("workflow_selector_groups(selected, options, collapse_after=collapse_after)", workflows_text)
+
     def test_first_paint_summary_shell_skips_empty_metric_groups(self):
         from sections import shell_helpers
 
@@ -2271,6 +2317,19 @@ class NavigationIntegrityTests(unittest.TestCase):
 
         kpis.assert_called_once_with((("Active View", "Active Alerts"),))
         snapshot.assert_called_once_with((("Freshness", "Not loaded"),))
+
+    def test_shell_kpis_render_as_primary_cards(self):
+        from sections import shell_helpers
+
+        with patch.object(shell_helpers.st, "html") as html:
+            shell_helpers.render_shell_kpi_row((("Open Alerts", "7"), ("Telemetry", "On demand")))
+
+        markup = html.call_args.args[0]
+        self.assertIn("ow-shell-kpi-grid", markup)
+        self.assertIn("ow-shell-kpi-card", markup)
+        self.assertIn("Open Alerts", markup)
+        self.assertIn("7", markup)
+        self.assertNotIn("Telemetry", markup)
 
     def test_section_first_paint_spec_adds_view_lanes_cta_and_no_query_note(self):
         from sections import shell_helpers

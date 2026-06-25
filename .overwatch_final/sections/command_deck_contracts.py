@@ -200,7 +200,7 @@ COMMAND_DECK_CONTRACTS: Mapping[str, SectionCommandDeckContract] = {
                 target_workflow="Pipeline & Task Health",
                 session_state_updates=(
                     ("workload_operations_workflow", "Pipeline & Task Health"),
-                    ("workload_pipeline_focus", "Failed Tasks"),
+                    ("workload_operations_pipeline_focus", "Failed Tasks"),
                 ),
             ),
             CommandDeckAction(

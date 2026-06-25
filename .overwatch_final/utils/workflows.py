@@ -472,6 +472,8 @@ def render_workflow_selector(
         st.caption(label)
     items = list(workflows)
     columns = max(1, min(int(columns or 4), 5))
+    if collapse_after is None and len(items) > 4:
+        collapse_after = 4
     visible_items, hidden_items = workflow_selector_groups(selected, items, collapse_after=collapse_after)
     if compact_details:
         _render_selector_context(label=label, selected=selected, details=details, labels=labels)
@@ -505,6 +507,8 @@ def render_mode_selector(
     details: Mapping[str, str] | None = None,
     labels: Mapping[str, str] | None = None,
     columns: int = 4,
+    collapse_after: int | None = None,
+    collapsed_label: str = "More views",
 ) -> str:
     """Render a compact mode selector that honors deep-link state."""
     if not modes:
@@ -520,20 +524,26 @@ def render_mode_selector(
     labels = labels or {}
     if details:
         columns = max(1, min(int(columns or 4), 5))
-        for start in range(0, len(options), columns):
-            row = options[start:start + columns]
-            cols = st.columns(len(row))
-            for col, mode in zip(cols, row):
-                with col:
-                    is_selected = mode == selected
-                    if st.button(
-                        labels.get(mode, mode),
-                        key=f"{key}_{start}_{mode}",
-                        type="primary" if is_selected else "secondary",
-                        width="stretch",
-                    ):
-                        st.session_state[key] = mode
-                        st.rerun()
+        if collapse_after is None and len(options) > 4:
+            collapse_after = 4
+        visible_modes, hidden_modes = workflow_selector_groups(selected, options, collapse_after=collapse_after)
+        _render_workflow_button_rows(
+            key=key,
+            workflows=visible_modes,
+            selected=selected,
+            columns=columns,
+            labels=labels,
+        )
+        if hidden_modes:
+            with st.expander(collapsed_label, expanded=False):
+                _render_workflow_button_rows(
+                    key=key,
+                    workflows=hidden_modes,
+                    selected=selected,
+                    columns=columns,
+                    labels=labels,
+                    key_suffix="collapsed",
+                )
         return str(st.session_state.get(key, selected))
 
     segmented = getattr(st, "segmented_control", None)

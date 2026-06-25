@@ -254,7 +254,7 @@ def render_topbar_filter_strip(active_company: str) -> str:
     st.markdown(
         """
         <div class="ow-filter-strip-shell">
-            <div class="ow-filter-strip-kicker">Triage Filters</div>
+            <div class="ow-filter-strip-kicker">Operating Scope</div>
         </div>
         """,
         unsafe_allow_html=True,

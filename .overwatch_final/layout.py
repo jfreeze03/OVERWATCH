@@ -161,7 +161,7 @@ def render_app_header(section: str, company: str, credit_price: float, role: str
         st.markdown(
             f"""
             <div class="ow-topbar">
-                <div class="ow-section-kicker">OVERWATCH SNOWFLAKE MONITOR</div>
+                <div class="ow-section-kicker">OVERWATCH SNOWFLAKE CONTROL CENTER</div>
                 <div class="ow-section-row">
                     <span class="ow-section-icon">{safe_icon}</span>
                     <div>
@@ -329,7 +329,7 @@ def render_sidebar(
         st.markdown("""
         <div class="ow-sidebar-brand">
             <div class="ow-brand-row"><span class="ow-brand-dot"></span><span>OVERWATCH</span></div>
-            <div class="ow-sidebar-subtitle">Snowflake Usage Monitor</div>
+            <div class="ow-sidebar-subtitle">Snowflake Control Center</div>
             <div class="ow-live-pill">LIVE</div>
         </div>
         """, unsafe_allow_html=True)

@@ -1132,6 +1132,42 @@ code, pre, .stCodeBlock {
     margin-top: 0.26rem;
     overflow-wrap: anywhere;
 }
+.ow-shell-kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 0.78rem;
+    margin: 0.45rem 0 1rem;
+}
+.ow-shell-kpi-card {
+    min-width: 0;
+    border: 1px solid var(--border-normal);
+    border-left: 4px solid var(--accent);
+    border-radius: 10px;
+    background:
+        linear-gradient(135deg, rgba(var(--accent-rgb), 0.14), rgba(var(--accent-rgb), 0.035) 46%),
+        var(--bg-card);
+    box-shadow: var(--metric-shadow);
+    padding: 0.86rem 0.95rem;
+}
+.ow-shell-kpi-label {
+    display: block;
+    color: var(--text-muted);
+    font-size: 0.68rem;
+    font-weight: 850;
+    letter-spacing: 0.05em;
+    line-height: 1.22;
+    text-transform: uppercase;
+    overflow-wrap: anywhere;
+}
+.ow-shell-kpi-value {
+    display: block;
+    color: var(--text-primary);
+    font-size: clamp(1.18rem, 1.35vw, 1.55rem);
+    font-weight: 900;
+    line-height: 1.12;
+    margin-top: 0.34rem;
+    overflow-wrap: anywhere;
+}
 .ow-workload-lane-card {
     min-height: 7.1rem;
     display: flex;
@@ -1340,6 +1376,9 @@ code, pre, .stCodeBlock {
     .ow-shell-snapshot-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
     }
+    .ow-shell-kpi-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    }
     .ow-signal-grid {
         grid-template-columns: repeat(auto-fit, minmax(165px, 1fr)) !important;
     }
@@ -1366,6 +1405,9 @@ code, pre, .stCodeBlock {
         grid-template-columns: 1fr !important;
     }
     .ow-shell-snapshot-grid {
+        grid-template-columns: 1fr !important;
+    }
+    .ow-shell-kpi-grid {
         grid-template-columns: 1fr !important;
     }
     .ow-signal-grid {

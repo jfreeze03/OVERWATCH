@@ -419,8 +419,8 @@ def _format_expected_lanes(lanes: Sequence[object] | object) -> str:
     return ", ".join(value for value in values if value)
 
 
-def render_shell_snapshot(metrics: tuple[tuple[str, object], ...]) -> None:
-    """Render lightweight shell snapshot cards without the bulk of metric widgets."""
+def _visible_metric_pairs(metrics: tuple[tuple[str, object], ...]) -> list[tuple[str, str]]:
+    """Return displayable metric pairs after removing first-paint placeholders."""
     visible_metrics = []
     empty_values = {"", "on demand", "not loaded", "board frame only", "no snowflake scan", "explicit only"}
     for label, value in metrics or ():
@@ -428,6 +428,12 @@ def render_shell_snapshot(metrics: tuple[tuple[str, object], ...]) -> None:
         if clean_value.strip().lower() in empty_values:
             continue
         visible_metrics.append((_clean_display_text(label), clean_value))
+    return visible_metrics
+
+
+def render_shell_snapshot(metrics: tuple[tuple[str, object], ...]) -> None:
+    """Render lightweight secondary snapshot cards."""
+    visible_metrics = _visible_metric_pairs(metrics)
     if not visible_metrics:
         return
     cards = "".join(
@@ -457,8 +463,16 @@ def render_shell_status_strip(
 
 
 def render_shell_kpi_row(metrics: tuple[tuple[str, object], ...]) -> None:
-    """Render the shell KPI row with the existing compact card treatment."""
-    render_shell_snapshot(metrics)
+    """Render primary operating KPIs with stronger hierarchy than snapshots."""
+    visible_metrics = _visible_metric_pairs(metrics)
+    if not visible_metrics:
+        return
+    cards = "".join(
+        f'<div class="ow-shell-kpi-card"><span class="ow-shell-kpi-label">{_escape_markup(label)}</span>'
+        f'<strong class="ow-shell-kpi-value">{_escape_markup(value)}</strong></div>'
+        for label, value in visible_metrics
+    )
+    st.html(f'<div class="ow-shell-kpi-grid">{cards}</div>')
 
 
 def render_first_paint_summary_shell(

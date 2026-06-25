@@ -48,27 +48,33 @@ def request_executive_landing_hydration() -> None:
     set_state(EXECUTIVE_LANDING_REFRESH_STARTED_AT, datetime.now().isoformat(timespec="seconds"))
 
 
-def request_section_workspace(section: str) -> None:
+def request_section_workspace(
+    section: str,
+    *,
+    reset_workflow: bool = True,
+    request_autoload: bool = True,
+) -> None:
     """Make a section jump render the useful working surface."""
     target = normalize_section_name(section)
-    if target == "Executive Landing":
+    if target == "Executive Landing" and reset_workflow:
         set_state(EXECUTIVE_LANDING_WORKSPACE_REQUESTED, True)
         set_state(EXECUTIVE_LANDING_BRIEF_MODE, False)
         set_state(EXECUTIVE_LANDING_WORKFLOW, "Executive Overview")
         request_executive_landing_hydration()
-    elif target == "DBA Control Room":
+    elif target == "DBA Control Room" and reset_workflow:
         set_state(DBA_CONTROL_ROOM_ACTIVE_VIEW, "Morning Cockpit")
-    elif target == "Alert Center":
+    elif target == "Alert Center" and reset_workflow:
         set_state(ALERT_CENTER_ACTIVE_VIEW, "Active Alerts")
-    elif target == "Cost & Contract":
+    elif target == "Cost & Contract" and reset_workflow:
         set_state(COST_CONTRACT_WORKFLOW, "Cost Overview")
-    elif target == "Workload Operations":
+    elif target == "Workload Operations" and reset_workflow:
         set_state(WORKLOAD_OPERATIONS_WORKFLOW, "Workload Overview")
-    elif target == "Security Monitoring":
+    elif target == "Security Monitoring" and reset_workflow:
         set_state(SECURITY_POSTURE_VIEW, "Security Overview")
         set_state(SECURITY_POSTURE_WORKFLOW, "Security Overview")
-    set_state(PENDING_AUTOLOAD_SECTION, target)
-    set_state(PENDING_AUTOLOAD_STARTED_AT, datetime.now().isoformat(timespec="seconds"))
+    if request_autoload:
+        set_state(PENDING_AUTOLOAD_SECTION, target)
+        set_state(PENDING_AUTOLOAD_STARTED_AT, datetime.now().isoformat(timespec="seconds"))
 
 
 def apply_navigation_state(section: str, *, mark_pending: bool = True) -> str:
@@ -79,7 +85,12 @@ def apply_navigation_state(section: str, *, mark_pending: bool = True) -> str:
     if mark_pending and (target != current or target == "Executive Landing"):
         set_state(PENDING_SECTION, target)
         set_state(SECTION_TRANSITION_STARTED_AT, datetime.now().isoformat(timespec="seconds"))
-    request_section_workspace(target)
+    reset_workflow = target != current
+    request_section_workspace(
+        target,
+        reset_workflow=reset_workflow,
+        request_autoload=reset_workflow,
+    )
     for key, value in compatibility_state_for_section(raw_section).items():
         set_state(key, value)
     set_state(NAV_SECTION, target)

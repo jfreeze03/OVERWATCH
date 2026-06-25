@@ -164,6 +164,7 @@ def render_app_header(section: str, company: str, credit_price: float, role: str
                     <span class="ow-section-icon">{safe_icon}</span>
                     <div>
                         <div class="ow-section-title" title="{safe_subtitle}">{safe_section}</div>
+                        <div class="ow-section-subtitle">{safe_subtitle}</div>
                     </div>
                 </div>
                 <div class="ow-scope-row">{scope_chips}</div>

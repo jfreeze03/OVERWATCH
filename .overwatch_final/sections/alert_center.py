@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from config import DAY_WINDOW_OPTIONS, DEFAULT_ALERT_EMAIL, DEFAULT_DAY_WINDOW
+from config import DAY_WINDOW_OPTIONS, DEFAULT_ALERT_EMAIL, DEFAULTS, DEFAULT_DAY_WINDOW
 from sections.shell_helpers import (
     consume_section_autoload_request,
     render_data_freshness,
@@ -155,12 +155,60 @@ def _render_annotations() -> None:
     )
 
 
-def _alert_center_pending_brief(active_view: str, required_sources: set[str]) -> dict:
+def _safe_int_metric(summary: dict | None, key: str) -> int:
+    if not isinstance(summary, dict):
+        return 0
+    try:
+        return int(float(summary.get(key, 0) or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _alert_center_fast_summary(company: str, environment: str, days: int) -> tuple[dict, dict]:
+    """Reuse already-loaded executive observability facts without starting a detail load."""
+    try:
+        from sections.executive_landing_data import _current_observability_board
+        from sections.executive_landing_models import _summary_from_observability
+    except Exception:
+        return {}, {}
+
+    try:
+        credit_price = float(st.session_state.get("credit_price", DEFAULTS["credit_price"]) or DEFAULTS["credit_price"])
+    except (TypeError, ValueError):
+        credit_price = float(DEFAULTS["credit_price"])
+    board, payload = _current_observability_board(company, environment, int(days))
+    summary = _summary_from_observability(board, credit_price=credit_price, state=st.session_state)
+    if not isinstance(summary, dict):
+        return {}, {}
+    return summary, payload if isinstance(payload, dict) else {}
+
+
+def _alert_center_pending_brief_from_summary(
+    active_view: str,
+    required_sources: set[str],
+    summary: dict | None,
+) -> dict:
     active_view = _normalize_alert_center_view(active_view)
+    critical_high = _safe_int_metric(summary, "critical_high_alerts")
+    open_actions = _safe_int_metric(summary, "open_actions")
+    failed_queries = _safe_int_metric(summary, "failed_queries")
+    failed_tasks = _safe_int_metric(summary, "failed_tasks")
+    if isinstance(summary, dict) and summary:
+        state = "Escalate" if critical_high else "Ready"
+        headline = f"{critical_high:,} Critical/High alert(s), {open_actions:,} open action(s) in summary facts."
+        detail = (
+            f"{failed_queries:,} failed query(s) and {failed_tasks:,} failed task(s) are visible in the loaded summary. "
+            f"Load {active_view} for row-level route, SLA, delivery, and suppression detail."
+        )
+        return {"state": state, "headline": headline, "detail": detail}
     return {
         "state": "Ready",
-        "headline": f"Load {active_view} before routing alert work.",
-        "detail": f"Inputs on load: {_alert_center_source_summary(required_sources)}.",
+        "headline": f"{active_view} detail is on demand.",
+        "detail": (
+            "No summary facts are loaded for this scope yet. "
+            f"Load {active_view} when fresh alert telemetry is needed. Inputs on load: "
+            f"{_alert_center_source_summary(required_sources)}."
+        ),
     }
 
 
@@ -298,12 +346,23 @@ def _render_alert_center_metric_rows(
     email_logged: int,
     open_queue: int,
     loaded: bool = True,
+    summary: dict | None = None,
 ) -> None:
     if not loaded:
+        if isinstance(summary, dict) and summary:
+            failed_queries = _safe_int_metric(summary, "failed_queries")
+            failed_tasks = _safe_int_metric(summary, "failed_tasks")
+            render_shell_kpi_row((
+                ("Critical/High", f"{_safe_int_metric(summary, 'critical_high_alerts'):,}"),
+                ("Open Actions", f"{_safe_int_metric(summary, 'open_actions'):,}"),
+                ("Failed Query/Task", f"{failed_queries:,} / {failed_tasks:,}"),
+                ("Detail Rows", "Load view"),
+            ))
+            return
         render_shell_kpi_row((
             ("Scope", "Company"),
             ("Window", "Selected"),
-            ("Telemetry", "Load view"),
+            ("Telemetry", "On demand"),
             ("Route", "Command"),
         ))
         return
@@ -331,9 +390,65 @@ def _alert_command_lanes(
     issues: object | None = None,
     delivery_log: object | None = None,
     loaded: bool = False,
+    summary: dict | None = None,
 ) -> list[dict[str, str]]:
     """Return alert monitoring lanes without loading new data."""
     if not loaded:
+        if isinstance(summary, dict) and summary:
+            critical_high = _safe_int_metric(summary, "critical_high_alerts")
+            open_actions = _safe_int_metric(summary, "open_actions")
+            failed_queries = _safe_int_metric(summary, "failed_queries")
+            failed_tasks = _safe_int_metric(summary, "failed_tasks")
+            return [
+                {
+                    "label": "Critical / high",
+                    "value": f"{critical_high:,}",
+                    "state": "Escalate" if critical_high else "Clear",
+                    "detail": "Loaded summary fact; load the active view for row-level SLA and route detail.",
+                },
+                {
+                    "label": "Open actions",
+                    "value": f"{open_actions:,}",
+                    "state": "Routes" if open_actions else "Clear",
+                    "detail": "Action backlog from the summary wall; load queue detail before closure.",
+                },
+                {
+                    "label": "Failed queries",
+                    "value": f"{failed_queries:,}",
+                    "state": "Queries" if failed_queries else "Clear",
+                    "detail": "Reliability pressure from the loaded executive facts.",
+                },
+                {
+                    "label": "Failed tasks",
+                    "value": f"{failed_tasks:,}",
+                    "state": "Tasks" if failed_tasks else "Clear",
+                    "detail": "Pipeline reliability pressure from the loaded executive facts.",
+                },
+                {
+                    "label": "Security risk",
+                    "value": "On demand",
+                    "state": "Security",
+                    "detail": "Load Security or Active Alerts detail for failed login, privilege, and sharing rows.",
+                },
+                {
+                    "label": "Cost",
+                    "value": "On demand",
+                    "state": "Spend",
+                    "detail": "Load Cost Alerts or Cost & Contract for warehouse, Cortex, and spend route detail.",
+                },
+                {
+                    "label": "Data quality",
+                    "value": "Configured",
+                    "state": "Rules",
+                    "detail": "Metadata-driven freshness, row count, null, duplicate, and schema checks.",
+                },
+                {
+                    "label": "Notification route",
+                    "value": "On demand",
+                    "state": "Delivery",
+                    "detail": "Load Delivery & Automation for email/webhook/native-alert audit rows.",
+                },
+            ]
         source_text = ", ".join(sorted(required_sources)) if required_sources else "no source load required"
         return [
             {
@@ -648,6 +763,7 @@ def render() -> None:
     with c2:
         limit = st.selectbox("Rows", [50, 100, 200, 500], index=2)
     data = st.session_state.get("alert_center_data")
+    fast_summary, fast_summary_meta = _alert_center_fast_summary(company, environment, int(days))
     expected_scope = (company, environment, int(days), int(limit))
     loaded_sources = set(data.get("_loaded_sources") or []) if isinstance(data, dict) else set()
     current_data = (
@@ -666,11 +782,16 @@ def render() -> None:
             f"Load {source_view} when fresh alert telemetry is needed."
         )
         defer_source_note(f"Inputs on load: {_alert_center_source_summary(required_sources)}")
+    freshness_meta = _alert_center_loaded_meta(data, source_view) if current_data else fast_summary_meta
     render_data_freshness(
-        _alert_center_loaded_meta(data, source_view) if current_data else {},
-        source=f"{source_view} inputs",
+        freshness_meta,
+        source=f"{source_view} inputs" if current_data else "Executive alert summary facts",
         target_minutes=60,
-        delayed_note="Alert Center reads bounded alert/action sources on demand; ACCOUNT_USAGE-backed inputs can lag.",
+        delayed_note=(
+            "Alert Center detail rows stay behind explicit Load actions; summary facts reuse already-loaded monitoring context."
+            if not current_data and fast_summary_meta
+            else "Alert Center reads bounded alert/action sources on demand; ACCOUNT_USAGE-backed inputs can lag."
+        ),
     )
     with c3:
         if st.button(f"Load {source_view}", key="alert_center_load", type="primary"):
@@ -678,7 +799,9 @@ def render() -> None:
                 st.rerun()
 
     if not isinstance(data, dict):
-        _render_alert_center_action_brief(_alert_center_pending_brief(source_view, required_sources))
+        _render_alert_center_action_brief(
+            _alert_center_pending_brief_from_summary(source_view, required_sources, fast_summary)
+        )
         _render_alert_center_metric_rows(
             open_issues=0,
             open_alerts=0,
@@ -688,16 +811,25 @@ def render() -> None:
             email_logged=0,
             open_queue=0,
             loaded=False,
+            summary=fast_summary,
         )
-        _render_alert_command_lane_board(_alert_command_lanes(active_view=source_view, required_sources=required_sources))
-        st.info(f"Load {source_view} when ready.")
+        _render_alert_command_lane_board(
+            _alert_command_lanes(
+                active_view=source_view,
+                required_sources=required_sources,
+                summary=fast_summary,
+            )
+        )
+        st.info(f"Load {source_view} for alert rows, route state, delivery audit, and suppression detail.")
         defer_source_note(f"Inputs on load: {_alert_center_source_summary(required_sources)}")
         _render_advanced_alert_diagnostics(company, environment)
         return
 
     loaded_scope = st.session_state.get("alert_center_scope")
     if loaded_scope != expected_scope:
-        _render_alert_center_action_brief(_alert_center_pending_brief(source_view, required_sources))
+        _render_alert_center_action_brief(
+            _alert_center_pending_brief_from_summary(source_view, required_sources, fast_summary)
+        )
         _render_alert_center_metric_rows(
             open_issues=0,
             open_alerts=0,
@@ -707,8 +839,15 @@ def render() -> None:
             email_logged=0,
             open_queue=0,
             loaded=False,
+            summary=fast_summary,
         )
-        _render_alert_command_lane_board(_alert_command_lanes(active_view=source_view, required_sources=required_sources))
+        _render_alert_command_lane_board(
+            _alert_command_lanes(
+                active_view=source_view,
+                required_sources=required_sources,
+                summary=fast_summary,
+            )
+        )
         st.warning("Company, environment, or window changed after this load. Reload before triaging alerts.")
         defer_source_note(f"Loaded scope: {loaded_scope or 'none'} | Current scope: {expected_scope}")
         _render_advanced_alert_diagnostics(company, environment)
@@ -716,7 +855,9 @@ def render() -> None:
     loaded_sources = set(data.get("_loaded_sources") or [])
     missing_sources = sorted(required_sources - loaded_sources)
     if missing_sources:
-        _render_alert_center_action_brief(_alert_center_pending_brief(source_view, required_sources))
+        _render_alert_center_action_brief(
+            _alert_center_pending_brief_from_summary(source_view, required_sources, fast_summary)
+        )
         _render_alert_center_metric_rows(
             open_issues=0,
             open_alerts=0,
@@ -726,8 +867,15 @@ def render() -> None:
             email_logged=0,
             open_queue=0,
             loaded=False,
+            summary=fast_summary,
         )
-        _render_alert_command_lane_board(_alert_command_lanes(active_view=source_view, required_sources=required_sources))
+        _render_alert_command_lane_board(
+            _alert_command_lanes(
+                active_view=source_view,
+                required_sources=required_sources,
+                summary=fast_summary,
+            )
+        )
         st.info(f"Load {source_view} to fetch missing input(s).")
         defer_source_note(f"Missing Alert Center input(s): {_alert_center_source_summary(set(missing_sources))}")
         _render_advanced_alert_diagnostics(company, environment)

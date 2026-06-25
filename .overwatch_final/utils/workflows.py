@@ -380,6 +380,30 @@ def coerce_workflow_state(key: str, workflows: Sequence[str]) -> str:
     return str(selected)
 
 
+def _render_selector_context(
+    *,
+    label: str,
+    selected: str,
+    details: Mapping[str, str],
+    labels: Mapping[str, str],
+) -> None:
+    """Render the selected workflow's operating context when one is provided."""
+    detail = str(details.get(selected) or "").strip()
+    if not detail:
+        return
+    selected_label = str(labels.get(selected, selected))
+    eyebrow = html.escape(str(label or "Selected workflow"))
+    title = html.escape(str(_clean_operator_display_value(selected_label) or selected_label))
+    body = html.escape(str(_clean_operator_display_value(detail) or detail))
+    st.html(
+        '<div class="ow-workflow-context" role="note">'
+        f'<div class="ow-workflow-context-kicker">{eyebrow}</div>'
+        f'<div class="ow-workflow-context-title">{title}</div>'
+        f'<div class="ow-workflow-context-detail">{body}</div>'
+        '</div>'
+    )
+
+
 def render_workflow_selector(
     label: str,
     key: str,
@@ -412,7 +436,9 @@ def render_workflow_selector(
                 ):
                     st.session_state[key] = workflow
                     st.rerun()
-    return str(st.session_state.get(key, selected))
+    selected = str(st.session_state.get(key, selected))
+    _render_selector_context(label=label, selected=selected, details=details, labels=labels)
+    return selected
 
 
 def render_mode_selector(
@@ -454,7 +480,9 @@ def render_mode_selector(
                     ):
                         st.session_state[key] = mode
                         st.rerun()
-        return str(st.session_state.get(key, selected))
+        selected = str(st.session_state.get(key, selected))
+        _render_selector_context(label=label, selected=selected, details=details, labels=labels)
+        return selected
 
     segmented = getattr(st, "segmented_control", None)
     if callable(segmented):

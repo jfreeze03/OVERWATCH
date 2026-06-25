@@ -747,7 +747,9 @@ code, pre, .stCodeBlock {
 .ow-section-subtitle {
     color: var(--text-secondary);
     font-size: 0.86rem;
+    line-height: 1.35;
     margin-top: 0.3rem;
+    max-width: 780px;
 }
 .ow-scope-row {
     display: flex;
@@ -797,6 +799,37 @@ code, pre, .stCodeBlock {
     font-weight: 850;
     letter-spacing: 0.08em;
     text-transform: uppercase;
+}
+.ow-workflow-context {
+    border: 1px solid var(--border-subtle);
+    border-left: 3px solid var(--accent);
+    border-radius: 8px;
+    background:
+        linear-gradient(135deg, rgba(var(--accent-rgb), 0.10), transparent 42%),
+        var(--bg-card);
+    box-shadow: var(--metric-shadow);
+    padding: 0.68rem 0.78rem;
+    margin: 0.35rem 0 0.85rem;
+}
+.ow-workflow-context-kicker {
+    color: var(--text-muted);
+    font-size: 0.62rem;
+    font-weight: 850;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+.ow-workflow-context-title {
+    color: var(--text-primary);
+    font-size: 0.92rem;
+    font-weight: 850;
+    line-height: 1.25;
+    margin-top: 0.18rem;
+}
+.ow-workflow-context-detail {
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+    line-height: 1.4;
+    margin-top: 0.2rem;
 }
 .ow-empty-state {
     max-width: 780px;

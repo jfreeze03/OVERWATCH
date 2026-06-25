@@ -55,6 +55,8 @@ from sections.security_posture_privilege_sprawl_view import (
     render_security_privilege_sprawl,
 )
 from sections.security_posture_privilege_sprawl_view import *  # noqa: F403
+from sections.command_deck import render_command_deck
+from sections.command_deck_contracts import get_command_deck_contract
 from sections.shell_helpers import build_first_paint_summary_spec, render_section_first_paint_shell
 
 
@@ -92,6 +94,10 @@ def _render_security_first_paint_shell(active_view: str, company: str, environme
         ),
         load_cta="Use selected workflow or Refresh Security Summary",
     ))
+    render_command_deck(
+        get_command_deck_contract("Security Monitoring"),
+        key_prefix="security_command_deck",
+    )
 
 
 def render_security_admin_advanced(company: str, environment: str, days: int) -> None:

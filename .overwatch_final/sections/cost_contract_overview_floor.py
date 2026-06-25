@@ -42,6 +42,8 @@ from sections.cost_contract_splash import (
     _maybe_autoload_cost_splash,
     _render_cost_splash,
 )
+from sections.command_deck import render_command_deck
+from sections.command_deck_contracts import get_command_deck_contract
 from sections.shell_helpers import (
     _clean_display_text,
     build_first_paint_summary_spec,
@@ -77,6 +79,10 @@ def _render_cost_first_paint_shell(company: str, days: int, splash: dict) -> Non
             ("Scope", f"{company} / {environment}"),
         ),
     ))
+    render_command_deck(
+        get_command_deck_contract("Cost & Contract"),
+        key_prefix="cost_contract_command_deck",
+    )
 
 
 def _render_cost_watch_floor(company: str, credit_price: float) -> None:

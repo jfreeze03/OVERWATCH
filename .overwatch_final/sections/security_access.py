@@ -1,6 +1,7 @@
 # sections/security_access.py - Login audit, roles & privileges, data lineage, MFA, exfiltration
 import streamlit as st
 import pandas as pd
+from sections.chart_helpers import render_time_series_chart
 from utils import (
     defer_source_note,
     download_csv,
@@ -648,12 +649,17 @@ def render():
 
         if st.session_state.get("sec_df_login_trend") is not None and not st.session_state["sec_df_login_trend"].empty:
             df_t = st.session_state["sec_df_login_trend"]
-            pivot = df_t.pivot_table(index="DAY", columns="IS_SUCCESS", values="EVENT_COUNT", aggfunc="sum").fillna(0)
             st.subheader("Login Trend")
             render_chart_with_data_toggle(
                 "Login trend",
                 "security_login_trend",
-                lambda: st.line_chart(pivot),
+                lambda: render_time_series_chart(
+                    df_t,
+                    "DAY",
+                    "EVENT_COUNT",
+                    series_column="IS_SUCCESS",
+                    title="Login trend",
+                ),
                 df_t,
                 priority_columns=["DAY", "IS_SUCCESS", "EVENT_COUNT"],
                 sort_by=["DAY", "EVENT_COUNT"],

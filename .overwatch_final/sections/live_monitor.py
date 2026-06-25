@@ -12,6 +12,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+from sections.chart_helpers import render_time_series_chart
 from sections.shell_helpers import render_shell_snapshot
 from utils import (
     get_session,
@@ -420,14 +421,16 @@ def render():
         if st.session_state.get("lm_df_tl") is not None and not st.session_state["lm_df_tl"].empty:
             df_t = st.session_state["lm_df_tl"]
             try:
-                pivot = df_t.pivot_table(
-                    index="TIME_BUCKET", columns="EXECUTION_STATUS",
-                    values="QUERY_COUNT", aggfunc="sum"
-                ).fillna(0)
                 render_chart_with_data_toggle(
                     "Query timeline by status",
                     "live_query_timeline",
-                    lambda: st.line_chart(pivot),
+                    lambda: render_time_series_chart(
+                        df_t,
+                        "TIME_BUCKET",
+                        "QUERY_COUNT",
+                        series_column="EXECUTION_STATUS",
+                        title="Query timeline by status",
+                    ),
                     df_t,
                     priority_columns=["TIME_BUCKET", "EXECUTION_STATUS", "QUERY_COUNT", "AVG_ELAPSED_SEC"],
                     sort_by=["TIME_BUCKET", "QUERY_COUNT"],

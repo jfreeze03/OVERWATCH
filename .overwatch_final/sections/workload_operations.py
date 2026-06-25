@@ -7,6 +7,8 @@ from importlib import import_module
 import streamlit as st
 
 from sections.base import lazy_pandas, lazy_util as _lazy_util
+from sections.command_deck import render_command_deck
+from sections.command_deck_contracts import get_command_deck_contract
 from sections.navigation import apply_section_workflow_navigation
 from sections.shell_helpers import build_first_paint_summary_spec, render_section_first_paint_shell
 from utils.primitives import safe_float, safe_int
@@ -556,23 +558,10 @@ def _render_workload_overview(company: str, environment: str) -> None:
         )
         st.info("No loaded workload incidents are in session. Use Query Investigation, Pipeline & Task Health, or Performance & Contention when an issue starts.")
 
-    st.markdown("**Open the right tool**")
-    cols = st.columns(5)
-    with cols[0]:
-        if st.button("Slow or failed SQL", key="workload_overview_open_query", width="stretch"):
-            _set_workload_workflow(QUERY_INVESTIGATION_WORKFLOW)
-    with cols[1]:
-        if st.button("Task or load failure", key="workload_overview_open_pipeline", width="stretch"):
-            _set_workload_workflow(PIPELINE_TASK_HEALTH_WORKFLOW, pipeline_focus=PIPELINE_TASK_FOCUS)
-    with cols[2]:
-        if st.button("Performance issue", key="workload_overview_open_contention", width="stretch"):
-            _set_workload_workflow(CONTENTION_PERFORMANCE_WORKFLOW)
-    with cols[3]:
-        if st.button("What changed?", key="workload_overview_open_change", width="stretch"):
-            _set_workload_workflow(CHANGE_DRIFT_WORKFLOW)
-    with cols[4]:
-        if st.button("Compare / admin", key="workload_overview_open_advanced", width="stretch"):
-            _set_workload_workflow(ADVANCED_DBA_TOOLS_WORKFLOW)
+    render_command_deck(
+        get_command_deck_contract("Workload Operations"),
+        key_prefix="workload_command_deck",
+    )
 
 
 def _render_query_investigation_surface() -> None:

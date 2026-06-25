@@ -76,6 +76,16 @@ section needs the standard first-paint contract. Keep one-off shell rendering
 only for specialized loaded-context surfaces that already have a narrower
 contract.
 
+## Snowflake Browser Compatibility
+
+Section modules should treat the Snowflake browser as a conservative runtime:
+route shells must be small, query-on-demand, and resilient to hot-reloaded
+helper modules. Optional captions, info copy, buttons, and expanders can use
+the lightweight wrappers in `sections.ui_compat` when a section needs
+empty-value guards or stable keys. Loaded chart surfaces inside section modules
+should import through `sections.chart_helpers`, not `utils.display`, so stale
+browser sessions keep the native Streamlit fallback path.
+
 ## Primary Section First-Paint Contract
 
 Every canonical section must render useful operator context before any live
@@ -91,6 +101,24 @@ load boundary, cached/session sources, and forbidden first-paint loaders.
 | Workload Operations | Workload Overview | Slow or failed SQL, task and load failures, performance contention, recent changes, advanced DBA tools | Open the right tool |
 | Cost & Contract | Cost Overview | Spend movement, run rate, warehouse drivers, Cortex, savings | Refresh Cost |
 | Security Monitoring | Security Overview | Logins, grants, sharing, access changes, security alerts | Refresh Security Summary |
+
+## Primary Section Command Deck
+
+The Command Deck is the route-only action surface that sits beside the
+first-paint shell. Its contracts live in `sections.command_deck_contracts` and
+reuse the first-paint registry for each section's primary CTA, evidence
+boundary, and no-query note. Command Deck buttons may set workflow/session
+state or queue section navigation, but they must not load Snowflake evidence on
+render and must not replace the explicit load/refresh buttons.
+
+| Section | Primary CTA | Route actions |
+| --- | --- | --- |
+| Executive Landing | Refresh Summary | Cost movement, operational risk, security risk, executive actions |
+| DBA Control Room | Load Morning Cockpit | Failure triage, cost watch, performance watch, action queue |
+| Alert Center | Load Active Alerts | Active, cost, reliability, and security alert lanes |
+| Workload Operations | Open the right tool | SQL, task/load, performance, change, and comparison workflows |
+| Cost & Contract | Refresh Cost | Warehouse cost, forecast, budget, and recommendation workflows |
+| Security Monitoring | Refresh Security Summary | Failed logins, risky grants, access changes, and sharing exposure |
 
 ## Charts And Tables
 

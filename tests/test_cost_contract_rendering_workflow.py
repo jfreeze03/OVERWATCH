@@ -259,7 +259,8 @@ class CostContractRenderingWorkflowTests(unittest.TestCase):
         ):
             cost_contract_overview_floor._render_cost_watch_floor("ALFA", 4.0)
 
-        self.assertEqual(button_keys, ["cost_contract_refresh"])
+        self.assertEqual(button_keys[0], "cost_contract_refresh")
+        self.assertTrue(all(key.startswith("cost_contract_command_deck_") for key in button_keys[1:]))
         maybe_splash.assert_called_once_with("ALFA", 7, 4.0)
         ensure_splash.assert_not_called()
         get_session.assert_not_called()
@@ -309,7 +310,13 @@ class CostContractRenderingWorkflowTests(unittest.TestCase):
         ):
             cost_contract_overview_floor._render_cost_watch_floor("ALFA", 4.0)
 
-        self.assertEqual(button_keys, ["cost_contract_refresh", "cost_contract_view_advanced_details"])
+        self.assertEqual(button_keys[0], "cost_contract_refresh")
+        self.assertIn("cost_contract_view_advanced_details", button_keys)
+        route_keys = [
+            key for key in button_keys
+            if key not in {"cost_contract_refresh", "cost_contract_view_advanced_details"}
+        ]
+        self.assertTrue(all(key.startswith("cost_contract_command_deck_") for key in route_keys))
         self.assertTrue(state[_ADVANCED_COST_DETAIL_VISIBLE_KEY])
         rerun.assert_called_once()
         run_rate_lens.assert_not_called()

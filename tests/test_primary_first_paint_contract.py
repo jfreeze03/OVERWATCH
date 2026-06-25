@@ -33,6 +33,86 @@ class PrimaryFirstPaintContractTests(unittest.TestCase):
                 self.assertTrue(contract.allowed_cached_sources)
                 self.assertTrue(contract.forbidden_first_paint_loaders)
 
+    def test_command_deck_contracts_cover_primary_sections_and_stay_import_safe(self):
+        from route_registry import PRIMARY_SECTION_TITLES
+        from sections.command_deck_contracts import COMMAND_DECK_CONTRACTS
+
+        self.assertEqual(tuple(COMMAND_DECK_CONTRACTS), PRIMARY_SECTION_TITLES)
+        source = (APP_ROOT / "sections" / "command_deck_contracts.py").read_text(encoding="utf-8")
+        self.assertNotIn("import streamlit", source)
+        self.assertNotIn("SNOWFLAKE", source)
+        self.assertNotRegex(source, r"\brun_query(?:_or_raise)?\s*\(")
+
+        for section, contract in COMMAND_DECK_CONTRACTS.items():
+            with self.subTest(section=section):
+                self.assertEqual(contract.section, section)
+                self.assertTrue(contract.primary_cta)
+                self.assertTrue(contract.primary_cta_key)
+                self.assertGreaterEqual(len(contract.route_actions), 2)
+                self.assertTrue(contract.evidence_boundary)
+                self.assertTrue(contract.no_query_note)
+                for action in contract.route_actions:
+                    self.assertTrue(action.label)
+                    self.assertTrue(action.description)
+                    self.assertTrue(
+                        action.target_section or action.target_workflow or action.session_state_updates
+                    )
+
+    def test_command_deck_renderer_does_not_load_when_route_buttons_are_idle(self):
+        from sections import command_deck
+        from sections.command_deck_contracts import get_command_deck_contract
+
+        with patch.object(command_deck.st, "container", return_value=contextlib.nullcontext()), patch.object(
+            command_deck.st,
+            "columns",
+            side_effect=lambda count: [contextlib.nullcontext() for _ in range(count)],
+        ), patch.object(command_deck, "render_escaped_bold_text"), patch.object(
+            command_deck,
+            "render_shell_snapshot",
+        ), patch.object(
+            command_deck,
+            "safe_caption",
+        ), patch.object(command_deck, "safe_button", return_value=False) as safe_button, patch.object(
+            command_deck.st,
+            "rerun",
+            side_effect=AssertionError("idle command deck must not rerun"),
+        ):
+            command_deck.render_command_deck(
+                get_command_deck_contract("Alert Center"),
+                key_prefix="test_alert_command_deck",
+            )
+
+        self.assertGreaterEqual(safe_button.call_count, 2)
+
+    def test_command_deck_action_only_sets_routing_state(self):
+        from sections.command_deck import apply_command_deck_action
+        from sections.command_deck_contracts import get_command_deck_contract
+
+        state: dict[str, object] = {}
+        contract = get_command_deck_contract("Workload Operations")
+        action = next(item for item in contract.route_actions if item.label == "Task or load failure")
+
+        apply_command_deck_action(action, state)
+
+        self.assertEqual(state["workload_operations_workflow"], "Pipeline & Task Health")
+        self.assertEqual(state["workload_pipeline_focus"], "Failed Tasks")
+        self.assertEqual(set(state), {"workload_operations_workflow", "workload_pipeline_focus"})
+
+    def test_command_deck_preserves_benchmark_load_boundaries(self):
+        from sections.command_deck_contracts import get_command_deck_contract
+
+        expected = {
+            "Alert Center": ("Load Active Alerts", "alert_center_load"),
+            "Cost & Contract": ("Refresh Cost", "cost_contract_refresh"),
+            "Security Monitoring": ("Refresh Security Summary", "security_posture_brief_load"),
+            "DBA Control Room": ("Load Morning Cockpit", "dba_morning_cockpit_load_empty"),
+        }
+        for section, (label, key) in expected.items():
+            with self.subTest(section=section):
+                contract = get_command_deck_contract(section)
+                self.assertEqual(contract.primary_cta, label)
+                self.assertEqual(contract.primary_cta_key, key)
+
     def test_shell_builder_uses_registry_defaults_with_overrides(self):
         from sections.shell_helpers import build_first_paint_summary_spec
 

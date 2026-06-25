@@ -1664,6 +1664,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         advanced_scope_block = filters_text[filters_text.index("def render_advanced_scope_controls"):]
         self.assertNotIn('"User contains"', topbar_filter_block)
         self.assertNotIn("filters live in Advanced Scope", topbar_filter_block)
+        self.assertIn("c_company, c_env, c_date, c_wh, c_clear = st.columns", topbar_filter_block)
+        self.assertNotIn("_scope_spacer", topbar_filter_block)
         self.assertIn('"User contains"', advanced_scope_block)
         self.assertIn('if sidebar_panel_toggle("Advanced Scope", "advanced_scope")', layout_text)
         self.assertIn('if sidebar_panel_toggle("Settings", "settings")', layout_text)
@@ -2183,8 +2185,6 @@ class NavigationIntegrityTests(unittest.TestCase):
         legacy_native_chart_allowlist = {
             "sections/cortex_monitor.py",
             "sections/cost_center_explain_view.py",
-            "sections/live_monitor.py",
-            "sections/security_access.py",
         }
         offenders = []
         remaining_legacy_usage = set()
@@ -2408,6 +2408,8 @@ class NavigationIntegrityTests(unittest.TestCase):
             "cost_center_forecast_view.py",
             "data_sharing.py",
             "dba_tools_cost_health_view.py",
+            "live_monitor.py",
+            "security_access.py",
             "spcs_tracker.py",
             "storage_monitor.py",
         )

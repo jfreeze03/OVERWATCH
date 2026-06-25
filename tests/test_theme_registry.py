@@ -209,6 +209,12 @@ class ThemeRegistryTests(unittest.TestCase):
         self.assertIn('[data-baseweb="input"]', theme._STRUCTURAL_CSS)
         self.assertIn('[data-baseweb="base-input"]', theme._STRUCTURAL_CSS)
         self.assertIn('[data-baseweb="select"] > div', theme._STRUCTURAL_CSS)
+        self.assertIn('min-width: min(340px, calc(100vw - 2rem))', theme._STRUCTURAL_CSS)
+        self.assertIn('width: min(340px, calc(100vw - 2rem))', theme._STRUCTURAL_CSS)
+        self.assertIn('[data-baseweb="popover"]:has([data-testid="stSelectboxVirtualDropdown"])', theme._STRUCTURAL_CSS)
+        self.assertIn('[data-baseweb="popover"]:has([data-baseweb="calendar"]) [role="listbox"]', theme._STRUCTURAL_CSS)
+        self.assertIn('[data-baseweb="popover"] [data-baseweb="menu"][role="listbox"]', theme._STRUCTURAL_CSS)
+        self.assertIn('[data-baseweb="calendar"]', theme._STRUCTURAL_CSS)
         for theme_key in ("carbon", "terminal"):
             with self.subTest(theme=theme_key):
                 extra = theme._THEME_EXTRAS[theme_key]

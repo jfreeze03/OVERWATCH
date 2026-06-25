@@ -463,29 +463,78 @@ hr {
     fill: var(--text-input) !important;
 }
 [data-testid="stSelectboxVirtualDropdown"],
+[data-baseweb="popover"]:has([data-testid="stSelectboxVirtualDropdown"]),
+[data-baseweb="popover"] [data-testid="stSelectboxVirtualDropdown"],
 div:has(> [data-testid="stSelectboxVirtualDropdown"]),
 div:has(> div > [data-testid="stSelectboxVirtualDropdown"]) {
     background: var(--bg-card) !important;
     border-color: var(--border-normal) !important;
     color: var(--text-primary) !important;
+    min-width: min(340px, calc(100vw - 2rem)) !important;
+    width: min(340px, calc(100vw - 2rem)) !important;
+    max-width: min(420px, calc(100vw - 2rem)) !important;
 }
-[data-testid="stSelectboxVirtualDropdown"] [role="option"],
-[data-testid="stSelectboxVirtualDropdown"] [role="option"] *,
-ul[data-testid="stSelectboxVirtualDropdown"] li,
-ul[data-testid="stSelectboxVirtualDropdown"] li * {
+[data-baseweb="popover"]:has([data-testid="stSelectboxVirtualDropdown"]) * {
     color: var(--text-primary) !important;
     -webkit-text-fill-color: var(--text-primary) !important;
 }
 [data-testid="stSelectboxVirtualDropdown"] [role="option"],
+[data-baseweb="popover"] [data-testid="stSelectboxVirtualDropdown"] [role="option"],
+[data-testid="stSelectboxVirtualDropdown"] [role="option"] *,
+[data-baseweb="popover"] [data-testid="stSelectboxVirtualDropdown"] [role="option"] *,
+ul[data-testid="stSelectboxVirtualDropdown"] li,
+ul[data-testid="stSelectboxVirtualDropdown"] li * {
+    color: var(--text-primary) !important;
+    -webkit-text-fill-color: var(--text-primary) !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+    white-space: nowrap !important;
+}
+[data-testid="stSelectboxVirtualDropdown"] [role="option"],
+[data-baseweb="popover"] [data-testid="stSelectboxVirtualDropdown"] [role="option"],
 ul[data-testid="stSelectboxVirtualDropdown"] li {
     background: var(--bg-card) !important;
 }
 [data-testid="stSelectboxVirtualDropdown"] [role="option"]:hover,
 [data-testid="stSelectboxVirtualDropdown"] [role="option"][aria-selected="true"],
+[data-baseweb="popover"] [data-testid="stSelectboxVirtualDropdown"] [role="option"]:hover,
+[data-baseweb="popover"] [data-testid="stSelectboxVirtualDropdown"] [role="option"][aria-selected="true"],
 ul[data-testid="stSelectboxVirtualDropdown"] li:hover,
 ul[data-testid="stSelectboxVirtualDropdown"] li[aria-selected="true"] {
     background: rgba(var(--accent-rgb), 0.16) !important;
     color: var(--text-primary) !important;
+}
+.stApp [data-baseweb="calendar"],
+.stApp [data-baseweb="calendar"] *,
+.stApp [data-baseweb="popover"] [data-baseweb="calendar"],
+.stApp [data-baseweb="popover"] [data-baseweb="calendar"] * {
+    color: #102a43 !important;
+    -webkit-text-fill-color: #102a43 !important;
+}
+[data-baseweb="popover"]:has([data-baseweb="calendar"]) [role="listbox"],
+[data-baseweb="popover"]:has([data-baseweb="calendar"]) [role="option"] {
+    background: #f6fbff !important;
+    color: #102a43 !important;
+    -webkit-text-fill-color: #102a43 !important;
+}
+[data-baseweb="popover"]:has([data-baseweb="calendar"]) [role="option"]:hover,
+[data-baseweb="popover"]:has([data-baseweb="calendar"]) [role="option"][aria-selected="true"] {
+    background: #d9eefb !important;
+    color: #102a43 !important;
+    -webkit-text-fill-color: #102a43 !important;
+}
+[data-baseweb="popover"] [data-baseweb="menu"][role="listbox"],
+[data-baseweb="popover"] [data-baseweb="menu"][role="listbox"] [role="option"],
+[data-baseweb="popover"] [data-baseweb="menu"][role="listbox"] [role="option"] * {
+    background: #f6fbff !important;
+    color: #102a43 !important;
+    -webkit-text-fill-color: #102a43 !important;
+}
+[data-baseweb="popover"] [data-baseweb="menu"][role="listbox"] [role="option"]:hover,
+[data-baseweb="popover"] [data-baseweb="menu"][role="listbox"] [role="option"][aria-selected="true"] {
+    background: #d9eefb !important;
+    color: #102a43 !important;
+    -webkit-text-fill-color: #102a43 !important;
 }
 .stNumberInput button,
 .stNumberInput [role="button"],

@@ -1665,6 +1665,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn('"User contains"', topbar_filter_block)
         self.assertNotIn("filters live in Advanced Scope", topbar_filter_block)
         self.assertIn("c_company, c_env, c_date, c_wh, c_clear = st.columns", topbar_filter_block)
+        self.assertIn("st.columns([1.0, 1.08, 2.2, 1.8, 0.68])", topbar_filter_block)
         self.assertNotIn("_scope_spacer", topbar_filter_block)
         self.assertIn('"User contains"', advanced_scope_block)
         self.assertIn('if sidebar_panel_toggle("Advanced Scope", "advanced_scope")', layout_text)

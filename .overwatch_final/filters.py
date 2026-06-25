@@ -259,7 +259,7 @@ def render_topbar_filter_strip(active_company: str) -> str:
         """,
         unsafe_allow_html=True,
     )
-    c_company, c_env, c_date, c_wh, c_clear = st.columns([1.05, 1.1, 1.45, 1.7, 0.7])
+    c_company, c_env, c_date, c_wh, c_clear = st.columns([1.0, 1.08, 2.2, 1.8, 0.68])
     with c_company:
         selected_company = st.selectbox(
             "Company view",

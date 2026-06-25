@@ -2183,21 +2183,41 @@ class NavigationIntegrityTests(unittest.TestCase):
         # Remaining native Streamlit charts live in older specialist tools with
         # loaded-data-only chart paths. New production surfaces should use the
         # shared OVERWATCH chart helpers instead of adding to this allowlist.
+        # ``sections/chart_helpers.py`` is the one compatibility fallback module:
+        # it may call native charts only when Snowflake browser hot-reload leaves
+        # a stale ``utils.display`` module in memory.
+        compatibility_fallback_modules = {"sections/chart_helpers.py"}
         legacy_native_chart_allowlist = {
             "sections/cortex_monitor.py",
             "sections/cost_center_explain_view.py",
         }
+        native_chart_tokens = (
+            "st.line_chart",
+            "st.area_chart",
+            "st.bar_chart",
+            'getattr(st, "line_chart")',
+            'getattr(st, "area_chart")',
+            'getattr(st, "bar_chart")',
+            "getattr(st, 'line_chart')",
+            "getattr(st, 'area_chart')",
+            "getattr(st, 'bar_chart')",
+        )
         offenders = []
         remaining_legacy_usage = set()
+        compatibility_usage = set()
         for path in sorted((APP_ROOT / "sections").rglob("*.py")):
             rel = path.relative_to(APP_ROOT).as_posix()
             text = path.read_text(encoding="utf-8")
-            if any(token in text for token in ("st.line_chart", "st.area_chart", "st.bar_chart")):
+            if any(token in text for token in native_chart_tokens):
+                if rel in compatibility_fallback_modules:
+                    compatibility_usage.add(rel)
+                    continue
                 remaining_legacy_usage.add(rel)
                 if rel not in legacy_native_chart_allowlist:
                     offenders.append(rel)
 
         self.assertEqual(offenders, [])
+        self.assertEqual(compatibility_usage, compatibility_fallback_modules)
         stale_allowlist = sorted(legacy_native_chart_allowlist - remaining_legacy_usage)
         self.assertEqual(
             stale_allowlist,

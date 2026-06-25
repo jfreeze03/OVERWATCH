@@ -48,18 +48,26 @@ def render() -> None:
     credit_price = get_credit_price()
     company = st.session_state.get("active_company", "ALFA")
     max_wh_size_expr, bytes_scanned_sum_expr, query_tag_dimension_expr = _cost_center_query_history_expressions(session)
+    embedded = bool(st.session_state.get("_cost_center_embedded_in_cost_contract"))
 
-    cost_view = render_workflow_selector(
-        "Cost allocation workflow",
-        "cost_center_view",
-        COST_CENTER_VIEWS,
-        COST_CENTER_VIEW_DETAILS,
-        columns=3,
-        labels=COST_CENTER_VIEW_LABELS,
-    )
-    defer_source_note(
-        "Progressive load is enabled: each cost view runs only when its Load or Calculate button is selected."
-    )
+    if embedded:
+        cost_view = str(st.session_state.get("cost_center_view") or "Cost Explorer")
+        defer_source_note(
+            "Cost & Contract owns section navigation. This embedded cost view still loads only when its "
+            "explicit Load or Calculate button is selected."
+        )
+    else:
+        cost_view = render_workflow_selector(
+            "Cost allocation workflow",
+            "cost_center_view",
+            COST_CENTER_VIEWS,
+            COST_CENTER_VIEW_DETAILS,
+            columns=3,
+            labels=COST_CENTER_VIEW_LABELS,
+        )
+        defer_source_note(
+            "Progressive load is enabled: each cost view runs only when its Load or Calculate button is selected."
+        )
 
     renderer = COST_CENTER_RENDERERS.get(cost_view)
     if renderer is None:

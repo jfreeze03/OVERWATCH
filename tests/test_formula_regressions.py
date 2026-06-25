@@ -1269,12 +1269,12 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(summary["active_services"], 2)
 
         next_move = _cost_splash_next_move(summary)
-        self.assertEqual(next_move[0], "Cost by Warehouse")
+        self.assertEqual(next_move[0], "Cost Explorer")
         self.assertEqual(next_move[1], "Usage movement")
 
         cortex_summary = dict(summary, delta_pct=0.0, top_warehouse_delta_spend=0.0)
         cortex_move = _cost_splash_next_move(cortex_summary)
-        self.assertEqual(cortex_move[0], "Cost by User / Role")
+        self.assertEqual(cortex_move[0], "Cortex AI")
 
         value_summary = dict(cortex_summary, cortex_spend=0.0, projected_30d_spend=0.0)
         value_move = _cost_splash_next_move(value_summary)
@@ -9385,7 +9385,7 @@ class FormulaRegressionTests(unittest.TestCase):
         by_move = {row["MOVE"]: row for _, row in moves.iterrows()}
 
         self.assertIn("Cortex spend spike", by_move["Confirm signal"]["DETAIL"])
-        self.assertIn("Cost & Contract > Cost by User / Role", by_move["Open owner workflow"]["DETAIL"])
+        self.assertIn("Cost & Contract > Cortex AI", by_move["Open owner workflow"]["DETAIL"])
         self.assertIn("FACT_CORTEX_DAILY", by_move["Capture evidence"]["DETAIL"])
         self.assertEqual(by_move["Respect boundary"]["STATE"], "Recommend only")
         self.assertIn("Do not disable Cortex access", by_move["Respect boundary"]["DETAIL"])
@@ -9546,7 +9546,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(cost_rows.iloc[0]["SECTION_FOCUS"], "Cortex spend")
         self.assertEqual(cost_rows.iloc[0]["ENTITY"], "SNOW_DTI_ANALYST")
         self.assertEqual(cost_rows.iloc[0]["DESTINATION_SECTION"], "Cost & Contract")
-        self.assertEqual(cost_rows.iloc[0]["DESTINATION_WORKFLOW"], "Cost by User / Role")
+        self.assertEqual(cost_rows.iloc[0]["DESTINATION_WORKFLOW"], "Cortex AI")
         self.assertEqual(cost_rows.iloc[0]["ALERT_CENTER_VIEW"], "Cost Alerts")
         self.assertIn("quota", cost_rows.iloc[0]["DRILLDOWN_HINT"].lower())
         self.assertEqual(cost_rows.iloc[0]["AUTOMATION_READINESS"], "Recommend only")
@@ -9564,8 +9564,8 @@ class FormulaRegressionTests(unittest.TestCase):
         drilldown = build_cost_cortex_alert_drilldown(alerts, limit=4)
         self.assertFalse(drilldown.empty)
         self.assertEqual(drilldown.iloc[0]["FOCUS"], "Cortex spend")
-        self.assertIn("Open Cost by User / Role", drilldown.iloc[0]["SAFE_ACTION"])
-        self.assertIn("Advanced Cost Tools", drilldown.iloc[0]["SAFE_ACTION"])
+        self.assertIn("Cost & Contract > Cortex AI", drilldown.iloc[0]["SAFE_ACTION"])
+        self.assertIn("model-level evidence", drilldown.iloc[0]["SAFE_ACTION"])
 
     def test_alert_surfaces_are_consolidated_to_alert_center(self):
         config_text = (APP_ROOT / "config.py").read_text(encoding="utf-8")

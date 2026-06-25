@@ -70,11 +70,16 @@ def render_cost_explorer(session, company: str, credit_price: float, max_wh_size
     st.subheader("Cost Explorer")
     st.caption("Cost drilldown by company, route, warehouse, database, role, and user.")
 
+    embedded = bool(st.session_state.get("_cost_center_embedded_in_cost_contract"))
     c1, c2, c3, c4 = st.columns([1, 1.35, 1, 1.2])
     with c1:
         explorer_days = day_window_selectbox("Lookback", key="cc_explorer_days", default=30)
     with c2:
-        explorer_lens = st.selectbox("Break down by", COST_EXPLORER_LENSES, key="cc_explorer_lens")
+        if embedded:
+            explorer_lens = str(st.session_state.get("cc_explorer_lens") or "Warehouse")
+            st.caption(f"Explore Cost By: {explorer_lens}")
+        else:
+            explorer_lens = st.selectbox("Break down by", COST_EXPLORER_LENSES, key="cc_explorer_lens")
     with c3:
         min_est_cost = st.number_input(
             "Min cost",

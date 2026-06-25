@@ -445,7 +445,7 @@ def _annotate_cost_routes(df: pd.DataFrame, finding_type: str) -> pd.DataFrame:
         return df
     routed = df.copy()
     if finding_type == "Warehouse Delta":
-        routed["NEXT_WORKFLOW"] = "Cost by Warehouse"
+        routed["NEXT_WORKFLOW"] = "Cost Explorer"
         routed["NEXT_ACTION"] = (
             "Drill into the warehouse delta, separate workload growth from idle/service overhead, "
             "then validate top users and query types before resizing."

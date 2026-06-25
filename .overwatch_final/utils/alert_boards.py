@@ -501,17 +501,17 @@ def _alert_route_for_focus(section: str, focus: str) -> tuple[str, str, str, str
     if "CORTEX" in focus_key:
         return (
             "Cost & Contract",
-            "Cost by User / Role",
+            "Cortex AI",
             "Cost Alerts",
-            "Open Cost & Contract > Cost by User / Role, then use Advanced Cost Tools for model-level Cortex evidence.",
+            "Open Cost & Contract > Cortex AI for model-level Cortex evidence.",
             "Review Cortex user/source, baseline, quota, grants, and company scope before changing access.",
         )
     if "SPEND" in focus_key or "COST" in focus_key:
         return (
             "Cost & Contract",
-            "Cost by Warehouse",
+            "Cost Explorer",
             "Cost Alerts",
-            "Open Cost & Contract > Cost by Warehouse.",
+            "Open Cost & Contract > Cost Explorer > Warehouse.",
             "Compare completed-window metering, run-rate baseline, chargeback, and open savings actions.",
         )
     if "SECURITY" in focus_key:
@@ -757,7 +757,7 @@ def build_cost_cortex_alert_drilldown(
                 f"{signal} is active for {entity}; validate user/source usage, request count, "
                 "baseline, company route, and quota settings."
             )
-            safe_action = "Open Cost by User / Role; use Advanced Cost Tools for Cortex model evidence before changing access."
+            safe_action = "Open Cost & Contract > Cortex AI for model-level evidence before changing access."
             boundary = "Recommend only until quota/grant changes have named DBA status review."
         elif focus == "Spend spike":
             why = f"{signal} indicates spend is above the loaded baseline for {entity}."

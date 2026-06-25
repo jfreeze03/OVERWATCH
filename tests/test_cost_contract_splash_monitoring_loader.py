@@ -235,7 +235,7 @@ class CostContractSplashMonitoringLoaderTests(unittest.TestCase):
             "DBA action and measurement",
         ])
         self.assertEqual(timeline["ROUTE"].tolist(), [
-            "Cost & Contract > Cost by Warehouse",
+            "Cost & Contract > Cost Explorer > Warehouse",
             "Cost & Contract",
             "Security Monitoring",
             "Alert Center",

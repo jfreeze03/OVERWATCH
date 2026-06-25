@@ -49,9 +49,9 @@ class CostContractOverviewTests(unittest.TestCase):
         self.assertEqual(len(frame), 4)
         self.assertTrue(frame["SIGNAL"].eq("On demand").all())
         self.assertEqual(frame["ROUTE"].tolist(), [
-            "Cost by Warehouse",
+            "Cost Explorer > Warehouse",
             "Burn Rate & Forecast",
-            "Cost by User / Role",
+            "Cortex AI",
             "Cost Recommendations",
         ])
 

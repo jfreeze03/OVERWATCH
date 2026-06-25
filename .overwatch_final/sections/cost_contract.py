@@ -160,6 +160,17 @@ from sections.cost_contract_splash import (
     _render_cost_splash,
     _slide_number,
 )
+from sections.cost_center_contracts import COST_EXPLORER_LENSES
+from sections.cost_contract_hierarchy import (
+    COST_EXPLORER_PRIMARY_LENSES,
+    COST_LOCAL_MENU,
+    apply_pending_cost_routes,
+    build_cost_hero_metrics,
+    render_cost_action_cards,
+    set_cost_lens,
+    set_cost_workflow,
+    workflow_label,
+)
 from sections.cost_contract_rendering import (
     _compact_time,
     _freshness_note,
@@ -167,6 +178,13 @@ from sections.cost_contract_rendering import (
     render_operator_briefing,
     render_signal_confidence,
     render_workflow_module,
+)
+from sections.shell_helpers import (
+    render_breadcrumb,
+    render_content_panel,
+    render_explore_lens_selector,
+    render_kpi_hero_row,
+    render_local_section_menu,
 )
 from sections.cost_contract_workflow import (
     _apply_cost_workflow_preset,
@@ -180,7 +198,6 @@ from sections.cost_contract_overview_floor import _render_cost_watch_floor
 
 
 get_active_environment = _lazy_util("get_active_environment")
-render_workflow_selector = _lazy_util("render_workflow_selector")
 
 
 def get_active_company() -> str:
@@ -196,6 +213,23 @@ def render() -> None:
     _normalize_cost_contract_workflow_state()
     if st.session_state.get("cost_contract_workflow") not in WORKFLOWS:
         st.session_state["cost_contract_workflow"] = "Cost Overview"
+    workflow = str(st.session_state.get("cost_contract_workflow") or "Cost Overview")
+    routed_workflow = apply_pending_cost_routes(workflow)
+    if routed_workflow != workflow:
+        st.session_state["cost_contract_workflow"] = routed_workflow
+        st.rerun()
+    workflow = str(st.session_state.get("cost_contract_workflow") or "Cost Overview")
+    if workflow == "Cost Explorer":
+        st.session_state["cost_center_view"] = "Cost Explorer"
+        if st.session_state.get("cc_explorer_lens") not in COST_EXPLORER_LENSES:
+            st.session_state["cc_explorer_lens"] = "Warehouse"
+
+    breadcrumb = ["Cost & Contract", workflow_label(workflow)]
+    if workflow == "Cost Explorer":
+        breadcrumb.append(str(st.session_state.get("cc_explorer_lens") or "Warehouse"))
+    render_breadcrumb(breadcrumb)
+    render_kpi_hero_row(build_cost_hero_metrics(company))
+
     render_signal_confidence(
         source="ACCOUNT_USAGE",
         confidence="allocated",
@@ -203,34 +237,39 @@ def render() -> None:
     )
     _render_cost_filter_indicator()
 
-    workflow = render_workflow_selector(
-        "Cost workflow",
-        "cost_contract_workflow",
-        WORKFLOWS,
-        WORKFLOW_DETAILS,
-        columns=5,
-    )
+    st.html('<div class="ow-cost-layout"></div>')
+    menu_col, content_col = st.columns([0.24, 0.76], gap="medium")
+    with menu_col:
+        render_local_section_menu(
+            title="Cost & Contract",
+            items=COST_LOCAL_MENU,
+            active_value=workflow,
+            key_prefix="cost_contract_local_nav",
+            on_select=set_cost_workflow,
+        )
 
-    routed_workflow = st.session_state.pop(_PENDING_DETAIL_WORKFLOW_KEY, None)
-    legacy_detail_workflow = st.session_state.pop(_DETAIL_WORKFLOW_KEY, None)
-    for raw_workflow in (routed_workflow, legacy_detail_workflow):
-        advanced_tool = LEGACY_COST_ADVANCED_TOOL_ALIASES.get(str(raw_workflow or ""))
-        if advanced_tool:
-            st.session_state["cost_contract_advanced_tool"] = advanced_tool
-            st.session_state[_ADVANCED_COST_TOOLS_VISIBLE_KEY] = True
-        inner_aliases = LEGACY_COST_INNER_VIEW_ALIASES.get(str(raw_workflow or ""), {})
-        for key, value in inner_aliases.items():
-            st.session_state[key] = value
-        if "cost_center_view" in inner_aliases:
-            st.session_state[_PRESERVE_COST_CENTER_VIEW_KEY] = True
-    routed_workflow = LEGACY_COST_WORKFLOW_ALIASES.get(str(routed_workflow or ""), routed_workflow)
-    legacy_detail_workflow = LEGACY_COST_WORKFLOW_ALIASES.get(str(legacy_detail_workflow or ""), legacy_detail_workflow)
-    routed_workflow = routed_workflow if routed_workflow in WORKFLOWS else legacy_detail_workflow
-    if routed_workflow in WORKFLOWS and routed_workflow != workflow:
-        st.session_state["cost_contract_workflow"] = routed_workflow
-        st.rerun()
-
-    _render_cost_contract_workflow(workflow, company, environment)
+    with content_col:
+        if workflow == "Cost Explorer":
+            lens = str(st.session_state.get("cc_explorer_lens") or "Warehouse")
+            render_explore_lens_selector(
+                label="Explore Cost By",
+                lenses=COST_EXPLORER_PRIMARY_LENSES,
+                active_value=lens,
+                key_prefix="cost_contract_explore_lens",
+                on_select=set_cost_lens,
+            )
+            render_content_panel(
+                f"Cost Explorer: {st.session_state.get('cc_explorer_lens', 'Warehouse')}",
+                "Choose a lens, then use Load Cost Explorer when you need detailed rows.",
+            )
+        else:
+            render_content_panel(
+                workflow_label(workflow),
+                WORKFLOW_DETAILS.get(workflow, "Cost evidence remains behind explicit load actions."),
+            )
+        st.session_state["_cost_contract_local_hierarchy_rendered"] = True
+        _render_cost_contract_workflow(workflow, company, environment)
+        render_cost_action_cards()
 
     advanced_open = bool(st.session_state.get(_ADVANCED_COST_TOOLS_VISIBLE_KEY))
     with st.expander("Advanced cost tools and evidence", expanded=advanced_open):

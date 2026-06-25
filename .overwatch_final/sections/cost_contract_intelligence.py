@@ -494,7 +494,7 @@ def _build_cost_drilldown_command_map(
         loaded_rows(cockpit),
         f"{current_credits:,.2f} current credits; {prior_credits:,.2f} prior credits",
         f"Explain top warehouse movement first{f': {top_wh}' if top_wh else ''}.",
-        "Cost by Warehouse",
+        "Cost Explorer",
         0 if exact_loaded else 1,
     )
 
@@ -550,7 +550,7 @@ def _build_cost_drilldown_command_map(
         loaded_rows(explorer),
         "Role/user/department drivers ready" if human_loaded else "Human driver rows are available after refresh",
         "Sort by estimated dollars before assigning work to a department or user.",
-        "Cost by User / Role",
+        "Cost Explorer",
         2 if human_loaded else 3,
     )
 
@@ -578,13 +578,13 @@ def _build_cost_drilldown_command_map(
     )
 
     add(
-        "Cortex Spend",
+        "Cortex AI",
         "Ready" if cortex_projection > 0 or cortex_exceptions > 0 else "No Rows",
         "Allocated/Estimated",
         cortex_exceptions,
         f"${cortex_projection:,.0f}/30d projection; {cortex_exceptions:,} exception(s)",
         "Review first/last usage, user attribution, and projected token-credit spend.",
-        "Cost by User / Role",
+        "Cortex AI",
         2 if cortex_projection > 0 or cortex_exceptions > 0 else 4,
     )
 
@@ -796,7 +796,7 @@ def _build_cost_spike_root_cause_board(
         "Exact warehouse metering",
         "Start here. Confirm owner demand, task/query mix, size/auto-suspend changes, and monitor coverage for this warehouse.",
         "WAREHOUSE_METERING_HISTORY current/prior window and top delta.",
-        "Cost & Contract > Cost by Warehouse",
+        "Cost & Contract > Cost Explorer > Warehouse",
         max(credits_to_dollars(top_delta, credit_price), credits_to_dollars(current_credits - prior_credits, credit_price), 0),
         0,
     )
@@ -868,7 +868,7 @@ def _build_cost_spike_root_cause_board(
         "Allocated / Estimated",
         "Assign optimization work only after the cost row has role/user/department telemetry and route context.",
         "Cost Explorer detail with role, user, department, query count, and allocation measurement.",
-        "Cost & Contract > Cost by User / Role",
+        "Cost & Contract > Cost Explorer > User / Role",
         human_driver["value_usd"],
         4,
     )
@@ -899,9 +899,9 @@ def _build_cost_spike_root_cause_board(
         f"Projection ${cortex_projection:,.0f}/30d; {cortex_exceptions:,} exception(s).",
         "Medium" if cortex_projection > 0 or cortex_exceptions > 0 else "Low",
         "Allocated / Estimated",
-        "Use Cost by User / Role for spend ownership, then open Cortex Spend under Advanced Cost Tools only when model-level evidence is needed.",
+        "Use Cortex AI for spend ownership, forecast, and model-level evidence before changing access or quotas.",
         "Cortex usage history, user attribution, shared AI spend threshold, and per-user quota action rows.",
-        "Cost & Contract > Cost by User / Role",
+        "Cost & Contract > Cortex AI",
         cortex_projection,
         6,
     )
@@ -1030,7 +1030,7 @@ def _build_change_cost_correlation_board(
             "AI spend jumps can be caused by access expansion, tag mistakes, or policy changes as much as workload growth.",
             "Compare Cortex first/last usage to access and tag changes before enforcing per-user quotas.",
             "Cortex usage history, Security Monitoring grants/policy rows, and tag assignments.",
-            "Cost & Contract > Cost by User / Role",
+            "Cost & Contract > Cortex AI",
             2,
         )
 

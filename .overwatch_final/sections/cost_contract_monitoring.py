@@ -183,7 +183,7 @@ def _build_cost_incident_timeline(
         f"{top_wh}: {top_delta:+,.2f} credit delta; current {current_credits:,.2f} vs prior {prior_credits:,.2f}; 7d vs 30d {pct_vs_30d_float:+.1f}%.",
         "Explain the top cost mover before changing warehouse settings or workload routing.",
         "Complete-day run-rate plus FACT_WAREHOUSE_HOURLY current/prior warehouse metering.",
-        "Cost & Contract > Cost by Warehouse",
+        "Cost & Contract > Cost Explorer > Warehouse",
     )
 
     if isinstance(root_cause, pd.DataFrame) and not root_cause.empty:

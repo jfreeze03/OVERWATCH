@@ -872,7 +872,7 @@ def render_account_health_overview(company: str, environment: str, credit_price:
                             "Cost & Contract",
                             user_filter=sel_user,
                             workflow_key="cost_contract_workflow",
-                            workflow="Cost by User / Role",
+                            workflow="Cortex AI",
                         )
         else:
             st.info("No cost driver data yet.")

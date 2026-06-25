@@ -1011,6 +1011,216 @@ code, pre, .stCodeBlock {
     min-width: 0;
     margin: 0.18rem 0 0.38rem;
 }
+.ow-breadcrumb {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    color: var(--text-muted);
+    font-size: 0.76rem;
+    font-weight: 800;
+    margin: 0.1rem 0 0.55rem;
+}
+.ow-breadcrumb-item {
+    color: var(--text-secondary);
+    overflow-wrap: anywhere;
+}
+.ow-breadcrumb-item:last-child {
+    color: var(--text-primary);
+}
+.ow-breadcrumb-separator {
+    color: var(--accent);
+    font-weight: 900;
+}
+.ow-kpi-hero-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(10.5rem, 1fr));
+    gap: 0.65rem;
+    margin: 0.45rem 0 0.95rem;
+}
+.ow-kpi-hero-card {
+    min-width: 0;
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    background:
+        linear-gradient(145deg, rgba(var(--accent-rgb), 0.12), transparent 52%),
+        var(--bg-card);
+    box-shadow: var(--metric-shadow);
+    padding: 0.75rem 0.8rem;
+}
+.ow-kpi-hero-card[data-tone="risk"] {
+    border-color: rgba(255, 109, 109, 0.45);
+}
+.ow-kpi-hero-card[data-tone="cortex"] {
+    border-color: rgba(162, 109, 255, 0.52);
+}
+.ow-kpi-hero-label {
+    display: block;
+    color: var(--text-muted);
+    font-size: 0.63rem;
+    font-weight: 900;
+    letter-spacing: 0.06em;
+    line-height: 1.2;
+    text-transform: uppercase;
+}
+.ow-kpi-hero-value {
+    display: block;
+    color: var(--text-primary);
+    font-size: 1.12rem;
+    font-weight: 900;
+    line-height: 1.15;
+    margin-top: 0.32rem;
+    overflow-wrap: anywhere;
+}
+.ow-kpi-hero-detail {
+    display: block;
+    color: var(--text-secondary);
+    font-size: 0.74rem;
+    line-height: 1.35;
+    margin-top: 0.25rem;
+    overflow-wrap: anywhere;
+}
+.ow-cost-layout {
+    margin-top: 0.35rem;
+}
+.ow-cost-local-menu,
+.ow-local-nav {
+    min-width: 0;
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    background: var(--bg-card);
+    padding: 0.72rem;
+}
+.ow-local-nav-title,
+.ow-local-nav-group {
+    color: var(--text-muted);
+    font-size: 0.62rem;
+    font-weight: 900;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+.ow-local-nav-group {
+    border-top: 1px solid var(--border-subtle);
+    margin: 0.72rem 0 0.35rem;
+    padding-top: 0.55rem;
+}
+.ow-local-nav-item {
+    min-width: 0;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    margin: 0.36rem 0;
+    padding: 0.52rem 0.58rem;
+}
+.ow-local-nav-item strong {
+    display: block;
+    color: var(--text-primary);
+    font-size: 0.82rem;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+}
+.ow-local-nav-item span {
+    display: block;
+    color: var(--text-muted);
+    font-size: 0.68rem;
+    line-height: 1.35;
+    margin-top: 0.18rem;
+    overflow-wrap: anywhere;
+}
+.ow-local-nav-item-active {
+    border-color: rgba(var(--accent-rgb), 0.55);
+    background: rgba(var(--accent-rgb), 0.16);
+    box-shadow: inset 3px 0 0 var(--accent);
+}
+.ow-explore-tabs-label {
+    color: var(--text-muted);
+    font-size: 0.66rem;
+    font-weight: 900;
+    letter-spacing: 0.08em;
+    margin: 0.45rem 0 0.35rem;
+    text-transform: uppercase;
+}
+.ow-explore-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+}
+.ow-explore-tab {
+    min-height: 2.2rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    font-size: 0.76rem;
+    font-weight: 800;
+    margin-bottom: 0.25rem;
+    padding: 0.44rem 0.55rem;
+    text-align: center;
+    overflow-wrap: anywhere;
+}
+.ow-explore-tab-active {
+    border-color: rgba(var(--accent-rgb), 0.72);
+    background: rgba(var(--accent-rgb), 0.2);
+    color: var(--text-primary);
+}
+.ow-content-panel {
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    background:
+        linear-gradient(180deg, rgba(var(--accent-rgb), 0.08), transparent 46%),
+        var(--bg-card);
+    margin: 0.2rem 0 0.75rem;
+    padding: 0.82rem 0.9rem;
+}
+.ow-content-panel-title {
+    color: var(--text-primary);
+    font-size: 1rem;
+    font-weight: 900;
+    line-height: 1.25;
+}
+.ow-content-panel-detail {
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+    line-height: 1.4;
+    margin-top: 0.25rem;
+}
+.ow-action-card-heading {
+    color: var(--text-muted);
+    font-size: 0.66rem;
+    font-weight: 900;
+    letter-spacing: 0.08em;
+    margin: 1rem 0 0.4rem;
+    text-transform: uppercase;
+}
+.ow-action-card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+    gap: 0.65rem;
+}
+.ow-action-card {
+    min-width: 0;
+    border: 1px solid var(--border-subtle);
+    border-left: 3px solid var(--accent2);
+    border-radius: 8px;
+    background: var(--bg-card);
+    min-height: 5.2rem;
+    padding: 0.7rem 0.75rem;
+}
+.ow-action-card strong {
+    display: block;
+    color: var(--text-primary);
+    font-size: 0.84rem;
+    font-weight: 900;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+}
+.ow-action-card span {
+    display: block;
+    color: var(--text-secondary);
+    font-size: 0.74rem;
+    line-height: 1.35;
+    margin-top: 0.28rem;
+    overflow-wrap: anywhere;
+}
 .ow-executive-command-hero {
     display: grid;
     grid-template-columns: minmax(0, 1.8fr) minmax(13rem, 0.72fr);

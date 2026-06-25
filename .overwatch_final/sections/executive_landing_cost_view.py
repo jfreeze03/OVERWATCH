@@ -92,7 +92,13 @@ def _render_cost_movement(summary: dict, *, company: str, environment: str, days
     with cols[0]:
         _nav_button("Cost Overview", "Cost & Contract", workflow_key="cost_contract_workflow", workflow="Cost Overview")
     with cols[1]:
-        _nav_button("Warehouse Spend", "Cost & Contract", workflow_key="cost_contract_workflow", workflow="Cost by Warehouse")
+        _nav_button(
+            "Warehouse Spend",
+            "Cost & Contract",
+            workflow_key="cost_contract_workflow",
+            workflow="Cost Explorer",
+            state_updates={"cost_center_view": "Cost Explorer", "cc_explorer_lens": "Warehouse"},
+        )
     with cols[2]:
         _nav_button("Burn / Forecast", "Cost & Contract", workflow_key="cost_contract_workflow", workflow="Burn Rate & Forecast")
     return False

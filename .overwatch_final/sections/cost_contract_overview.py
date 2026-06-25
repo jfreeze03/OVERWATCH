@@ -41,13 +41,13 @@ def _cost_splash_next_move(summary: dict) -> tuple[str, str, str]:
 
     if delta_pct >= 20 or top_wh_delta > 0:
         return (
-            "Cost by Warehouse",
+            "Cost Explorer",
             "Usage movement",
             f"{top_wh} is the first cost driver to explain ({_slide_money(top_wh_delta, signed=True)}).",
         )
     if cortex_spend > 0:
         return (
-            "Cost by User / Role",
+            "Cortex AI",
             "AI spend",
             f"Cortex spend is {_slide_money(cortex_spend)}; top user is {top_user}.",
         )
@@ -77,7 +77,7 @@ def _cost_executive_decision_stack(summary: dict, action_summary: dict) -> pd.Da
             "SIGNAL": _slide_money(delta, signed=True),
             "FIRST_QUESTION": f"Is {summary.get('top_warehouse')} the real driver or just the largest warehouse mover?",
             "OWNER": "DBA / Cost owner",
-            "ROUTE": "Cost by Warehouse",
+            "ROUTE": "Cost Explorer > Warehouse",
         },
         {
             "DECISION": "Validate contract burn",
@@ -91,7 +91,7 @@ def _cost_executive_decision_stack(summary: dict, action_summary: dict) -> pd.Da
             "SIGNAL": _slide_money(cortex),
             "FIRST_QUESTION": f"Is {summary.get('top_cortex_user')} expected to be the top AI spender?",
             "OWNER": "DBA / AI platform",
-            "ROUTE": "Cost by User / Role",
+            "ROUTE": "Cortex AI",
         },
         {
             "DECISION": "Close owned savings",

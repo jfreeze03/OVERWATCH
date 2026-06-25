@@ -162,6 +162,20 @@ class CostContractRenderingWorkflowTests(unittest.TestCase):
         self.assertEqual(state["cost_center_view"], "Forecast")
         self.assertTrue(state[_PRESERVE_COST_CENTER_VIEW_KEY])
 
+        state = {"cost_contract_workflow": "Cost by User / Role"}
+        with patch.object(cost_contract_workflow.st, "session_state", state):
+            cost_contract_workflow._normalize_cost_contract_workflow_state()
+        self.assertEqual(state["cost_contract_workflow"], "Cost Explorer")
+        self.assertEqual(state["cost_center_view"], "Cost Explorer")
+        self.assertEqual(state["cc_explorer_lens"], "User / Role")
+        self.assertTrue(state[_PRESERVE_COST_CENTER_VIEW_KEY])
+
+        state = {"cost_contract_workflow": "Cortex Spend"}
+        with patch.object(cost_contract_workflow.st, "session_state", state):
+            cost_contract_workflow._normalize_cost_contract_workflow_state()
+        self.assertEqual(state["cost_contract_workflow"], "Cortex AI")
+        self.assertNotIn("cost_contract_advanced_tool", state)
+
     def test_workflow_dispatch_preserves_cost_overview_and_delegated_module_routing(self):
         from sections import cost_contract_workflow
         from sections.cost_contract_overview_floor import _render_cost_watch_floor
@@ -368,7 +382,7 @@ class CostContractRenderingWorkflowTests(unittest.TestCase):
 
         def _button(_label, *, key, **_kwargs):
             button_keys.append(key)
-            return key == "cost_contract_next_0_Cost by Warehouse"
+            return key == "cost_contract_next_0_Cost Explorer"
 
         with ExitStack() as stack:
             stack.enter_context(patch.object(cost_contract_overview_floor.st, "session_state", state))
@@ -404,8 +418,10 @@ class CostContractRenderingWorkflowTests(unittest.TestCase):
             stack.enter_context(patch.object(cost_contract_overview_floor, "render_escaped_bold_text"))
             cost_contract_overview_floor._render_cost_watch_floor("ALFA", 4.0)
 
-        self.assertIn("cost_contract_next_0_Cost by Warehouse", button_keys)
-        self.assertEqual(state["cost_contract_workflow"], "Cost by Warehouse")
+        self.assertIn("cost_contract_next_0_Cost Explorer", button_keys)
+        self.assertEqual(state["cost_contract_workflow"], "Cost Explorer")
+        self.assertEqual(state["cost_center_view"], "Cost Explorer")
+        self.assertEqual(state["cc_explorer_lens"], "Warehouse")
         rerun.assert_called_once()
 
 

@@ -499,6 +499,155 @@ def render_section_first_paint_shell(spec: FirstPaintSummarySpec) -> None:
         st.caption(_clean_display_text(spec.no_query_note))
 
 
+def render_breadcrumb(parts: Sequence[object]) -> None:
+    """Render a compact section hierarchy breadcrumb."""
+    visible = [_clean_display_text(part) for part in parts or () if _clean_display_text(part)]
+    if not visible:
+        return
+    body = '<span class="ow-breadcrumb-separator">›</span>'.join(
+        f'<span class="ow-breadcrumb-item">{_escape_markup(part)}</span>' for part in visible
+    )
+    st.html(f'<nav class="ow-breadcrumb" aria-label="Page location">{body}</nav>')
+
+
+def render_kpi_hero_row(metrics: Sequence[Mapping[str, object] | tuple[object, object, object]]) -> None:
+    """Render first-class KPI cards that tolerate unloaded/on-demand values."""
+    cards: list[str] = []
+    for raw_metric in metrics or ():
+        if isinstance(raw_metric, Mapping):
+            label = _clean_display_text(raw_metric.get("label", ""))
+            value = _clean_display_text(raw_metric.get("value", "On demand"))
+            detail = _clean_display_text(raw_metric.get("detail", ""))
+            tone = _clean_display_text(raw_metric.get("tone", "neutral")).lower() or "neutral"
+        else:
+            values = tuple(raw_metric)
+            label = _clean_display_text(values[0] if len(values) > 0 else "")
+            value = _clean_display_text(values[1] if len(values) > 1 else "On demand")
+            detail = _clean_display_text(values[2] if len(values) > 2 else "")
+            tone = "neutral"
+        if not label:
+            continue
+        cards.append(
+            '<article class="ow-kpi-hero-card" data-tone="'
+            f'{_escape_markup(tone)}">'
+            f'<span class="ow-kpi-hero-label">{_escape_markup(label)}</span>'
+            f'<strong class="ow-kpi-hero-value">{_escape_markup(value or "On demand")}</strong>'
+            f'<span class="ow-kpi-hero-detail">{_escape_markup(detail)}</span>'
+            '</article>'
+        )
+    if cards:
+        st.html(f'<section class="ow-kpi-hero-grid" aria-label="Key metrics">{"".join(cards)}</section>')
+
+
+def render_local_section_menu(
+    *,
+    title: str,
+    items: Sequence[Mapping[str, object]],
+    active_value: object,
+    key_prefix: str,
+    on_select: Callable[[str], None] | None = None,
+) -> str:
+    """Render a section-local menu that is visually distinct from workflow button grids."""
+    st.html(
+        '<aside class="ow-local-nav" aria-label="Local section navigation">'
+        f'<div class="ow-local-nav-title">{_escape_markup(_clean_display_text(title))}</div>'
+        '</aside>'
+    )
+    active = str(active_value or "")
+    selected = active
+    for idx, item in enumerate(items or ()):
+        label = _clean_display_text(item.get("label", ""))
+        value = str(item.get("value", label))
+        detail = _clean_display_text(item.get("detail", ""))
+        group = _clean_display_text(item.get("group", ""))
+        if group:
+            st.html(f'<div class="ow-local-nav-group">{_escape_markup(group)}</div>')
+        active_class = " ow-local-nav-item-active" if value == active else ""
+        st.html(
+            f'<div class="ow-local-nav-item{active_class}">'
+            f'<strong>{_escape_markup(label)}</strong>'
+            f'<span>{_escape_markup(detail)}</span>'
+            '</div>'
+        )
+        if value != active and st.button(label, key=f"{key_prefix}_{idx}_{_key_fragment(value)}", width="stretch"):
+            selected = value
+            if on_select is not None:
+                on_select(value)
+    return selected
+
+
+def render_explore_lens_selector(
+    *,
+    label: str,
+    lenses: Sequence[object],
+    active_value: object,
+    key_prefix: str,
+    on_select: Callable[[str], None] | None = None,
+) -> str:
+    """Render tertiary explore lenses without using eager Streamlit tabs."""
+    active = str(active_value or "")
+    st.html(f'<div class="ow-explore-tabs-label">{_escape_markup(_clean_display_text(label))}</div>')
+    selected = active
+    cols = st.columns(min(max(len(tuple(lenses or ())), 1), 4))
+    for idx, lens in enumerate(lenses or ()):
+        value = str(lens)
+        with cols[idx % len(cols)]:
+            active_class = " ow-explore-tab-active" if value == active else ""
+            st.html(f'<div class="ow-explore-tab{active_class}">{_escape_markup(_clean_display_text(value))}</div>')
+            if value != active and st.button(
+                value,
+                key=f"{key_prefix}_{idx}_{_key_fragment(value)}",
+                width="stretch",
+            ):
+                selected = value
+                if on_select is not None:
+                    on_select(value)
+    return selected
+
+
+def render_action_cards(
+    actions: Sequence[Mapping[str, object]],
+    *,
+    key_prefix: str,
+    on_select: Callable[[Mapping[str, object]], None] | None = None,
+) -> None:
+    """Render recommended next actions as cards, not another workflow nav row."""
+    cards = tuple(actions or ())
+    if not cards:
+        return
+    st.html('<div class="ow-action-card-heading">Recommended next actions</div>')
+    cols = st.columns(min(3, len(cards)))
+    for idx, action in enumerate(cards):
+        label = _clean_display_text(action.get("label", "Action"))
+        reason = _clean_display_text(action.get("reason", action.get("description", "")))
+        cta = _clean_display_text(action.get("cta", label))
+        with cols[idx % len(cols)]:
+            st.html(
+                '<article class="ow-action-card">'
+                f'<strong>{_escape_markup(label)}</strong>'
+                f'<span>{_escape_markup(reason)}</span>'
+                '</article>'
+            )
+            if st.button(cta, key=f"{key_prefix}_{idx}_{_key_fragment(label)}", width="stretch"):
+                if on_select is not None:
+                    on_select(action)
+
+
+def render_content_panel(title: object, detail: object = "") -> None:
+    """Render the selected content panel header."""
+    st.html(
+        '<section class="ow-content-panel">'
+        f'<div class="ow-content-panel-title">{_escape_markup(_clean_display_text(title))}</div>'
+        f'<div class="ow-content-panel-detail">{_escape_markup(_clean_display_text(detail))}</div>'
+        '</section>'
+    )
+
+
+def _key_fragment(value: object) -> str:
+    text = re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().lower())
+    return text.strip("_") or "item"
+
+
 def render_signal_lane_board(
     title: str,
     lanes: Sequence[Mapping[str, object]],

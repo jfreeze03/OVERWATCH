@@ -78,11 +78,9 @@ COMMAND_DECK_CONTRACTS: Mapping[str, SectionCommandDeckContract] = {
                 "Cortex AI Cost",
                 "Review Cortex spend, forecast, and predictive cost alerts.",
                 target_section="Cost & Contract",
-                target_workflow="Cost Overview",
+                target_workflow="Cortex AI",
                 session_state_updates=(
-                    ("cost_contract_workflow", "Cost Overview"),
-                    ("cost_contract_advanced_tool", "Cortex Spend"),
-                    ("_cost_contract_show_advanced_tools", True),
+                    ("cost_contract_workflow", "Cortex AI"),
                 ),
             ),
             CommandDeckAction(
@@ -155,12 +153,10 @@ COMMAND_DECK_CONTRACTS: Mapping[str, SectionCommandDeckContract] = {
                 "Cortex Predictive Alerts",
                 "Open Cortex forecast, anomaly, and cost-exposure alert lanes.",
                 target_section="Cost & Contract",
-                target_workflow="Cost Overview",
+                target_workflow="Cortex AI",
                 session_state_updates=(
                     ("alert_center_requested_view", "Cost Alerts"),
-                    ("cost_contract_workflow", "Cost Overview"),
-                    ("cost_contract_advanced_tool", "Cortex Spend"),
-                    ("_cost_contract_show_advanced_tools", True),
+                    ("cost_contract_workflow", "Cortex AI"),
                 ),
             ),
             CommandDeckAction(
@@ -182,10 +178,14 @@ COMMAND_DECK_CONTRACTS: Mapping[str, SectionCommandDeckContract] = {
         primary_cta_key="cost_contract_refresh",
         route_actions=(
             CommandDeckAction(
-                "Cost by Warehouse",
+                "Open Warehouse Drivers",
                 "Open warehouse spend drivers and movement.",
-                target_workflow="Cost by Warehouse",
-                session_state_updates=(("cost_contract_workflow", "Cost by Warehouse"),),
+                target_workflow="Cost Explorer",
+                session_state_updates=(
+                    ("cost_contract_workflow", "Cost Explorer"),
+                    ("cost_center_view", "Cost Explorer"),
+                    ("cc_explorer_lens", "Warehouse"),
+                ),
             ),
             CommandDeckAction(
                 "Burn Rate & Forecast",
@@ -194,14 +194,10 @@ COMMAND_DECK_CONTRACTS: Mapping[str, SectionCommandDeckContract] = {
                 session_state_updates=(("cost_contract_workflow", "Burn Rate & Forecast"),),
             ),
             CommandDeckAction(
-                "Cortex Cost Drivers",
+                "Review Cortex AI Costs",
                 "Open Cortex spend, top users, forecast, and predictive alert context.",
-                target_workflow="Cost Overview",
-                session_state_updates=(
-                    ("cost_contract_workflow", "Cost Overview"),
-                    ("cost_contract_advanced_tool", "Cortex Spend"),
-                    ("_cost_contract_show_advanced_tools", True),
-                ),
+                target_workflow="Cortex AI",
+                session_state_updates=(("cost_contract_workflow", "Cortex AI"),),
             ),
             CommandDeckAction(
                 "Budget vs Actual",

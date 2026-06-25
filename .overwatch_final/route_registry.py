@@ -51,13 +51,13 @@ SECTION_WORKFLOW_CONTRACT = {
     ),
     "Cost & Contract": (
         "Cost Overview",
-        "Cost by Warehouse",
-        "Cost by User / Role",
+        "Cost Explorer",
         "Burn Rate & Forecast",
         "Budget vs Actual",
-        "Waste Detection",
         "Chargeback / Company Split",
         "Cost Recommendations",
+        "Cortex AI",
+        "Waste Detection",
     ),
     "Workload Operations": (
         "Workload Overview",
@@ -163,19 +163,19 @@ SECTION_ROUTE_STATE = {
         "_cost_contract_full_workspace_requested": True,
         "_cost_contract_brief_mode": False,
     },
-    "Cost Center": {"cost_contract_workflow": "Cost by Warehouse"},
+    "Cost Center": {
+        "cost_contract_workflow": "Cost Explorer",
+        "cost_center_view": "Cost Explorer",
+        "cc_explorer_lens": "Warehouse",
+    },
     "Credit Contract": {"cost_contract_workflow": "Budget vs Actual"},
     "Recommendations & Anomalies": {"cost_contract_workflow": "Cost Recommendations"},
     "Recommendations": {"cost_contract_workflow": "Cost Recommendations"},
     "Cortex Monitor": {
-        "cost_contract_workflow": "Cost Overview",
-        "cost_contract_advanced_tool": "Cortex Spend",
-        "_cost_contract_show_advanced_tools": True,
+        "cost_contract_workflow": "Cortex AI",
     },
     "AI & Cortex Monitor": {
-        "cost_contract_workflow": "Cost Overview",
-        "cost_contract_advanced_tool": "Cortex Spend",
-        "_cost_contract_show_advanced_tools": True,
+        "cost_contract_workflow": "Cortex AI",
     },
     "Storage Monitor": {
         "cost_contract_workflow": "Cost Overview",

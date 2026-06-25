@@ -89,7 +89,7 @@ class CostContractAdvisorTests(unittest.TestCase):
         self.assertEqual(_cost_advisor_priority(12), "Low")
         self.assertEqual(
             _cost_advisor_action_for("Warehouse pressure"),
-            ("Investigate pressure before capacity change", "Cost by Warehouse"),
+            ("Investigate pressure before capacity change", "Cost Explorer"),
         )
         self.assertEqual(
             _cost_advisor_action_for("Something else"),
@@ -109,7 +109,7 @@ class CostContractAdvisorTests(unittest.TestCase):
         decorated = _decorate_cost_advisor_board(board)
 
         self.assertEqual(decorated.loc[0, "ACTION_TYPE"], "Review right-size or suspend policy")
-        self.assertEqual(decorated.loc[0, "WORKFLOW_ROUTE"], "Cost by Warehouse")
+        self.assertEqual(decorated.loc[0, "WORKFLOW_ROUTE"], "Cost Explorer")
         self.assertEqual(decorated.loc[0, "PRIMARY_METRIC"], "$125/mo savings")
         self.assertEqual(decorated.loc[0, "EXECUTION_MODE"], "Savings candidate")
         self.assertEqual(decorated.loc[1, "ACTION_TYPE"], "Investigate cost signal")

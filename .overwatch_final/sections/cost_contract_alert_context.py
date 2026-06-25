@@ -76,7 +76,7 @@ def _render_loaded_cost_alert_context() -> None:
         if st.button("Open Cost Drilldown", key="cost_alert_open_cost_drilldown", width="stretch"):
             apply_section_workflow_navigation(
                 str(top.get("DESTINATION_SECTION") or "Cost & Contract"),
-                workflow=str(top.get("DESTINATION_WORKFLOW") or "Cost by Warehouse"),
+                workflow=str(top.get("DESTINATION_WORKFLOW") or "Cost Explorer"),
             )
             st.rerun()
     defer_source_note("Loaded Cost and Cortex Alerts reuse Alert Center data and do not run a separate Snowflake query.")

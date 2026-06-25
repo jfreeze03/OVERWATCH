@@ -1510,8 +1510,8 @@ def render() -> None:
             st.subheader("Cost and Capacity")
             st.write("Bill explanations, run-rate pacing, warehouse pressure, rightsizing, recommendations, and action telemetry.")
             for label, title, workflow in [
-                ("Cost & Contract", "Cost & Contract", "Cost by Warehouse"),
-                ("AI / Cortex Spend", "Cost & Contract", "Cost by User / Role"),
+                ("Cost & Contract", "Cost & Contract", "Cost Explorer"),
+                ("AI / Cortex Spend", "Cost & Contract", "Cortex AI"),
                 ("Warehouse Capacity", "Cost & Contract", "Cost Recommendations"),
             ]:
                 if st.button(label, key=f"dba_control_cost_{label}", width="stretch"):

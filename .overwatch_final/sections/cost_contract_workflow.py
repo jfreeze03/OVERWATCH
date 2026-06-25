@@ -57,7 +57,11 @@ def _apply_cost_workflow_preset(workflow: str) -> None:
     workflow_changed = st.session_state.get(_LAST_COST_WORKFLOW_KEY) != workflow_name
     preserve_cost_center_view = bool(st.session_state.pop(_PRESERVE_COST_CENTER_VIEW_KEY, False))
     for key, value in presets.items():
-        if key == "cost_center_view" and preserve_cost_center_view and st.session_state.get(key):
+        if (
+            key in {"cost_center_view", "cc_explorer_lens"}
+            and preserve_cost_center_view
+            and st.session_state.get(key)
+        ):
             continue
         if workflow_changed or not st.session_state.get(key):
             st.session_state[key] = value
@@ -83,6 +87,8 @@ def _render_cost_contract_workflow(workflow: str, company: str, environment: str
         _COST_OVERVIEW_RENDERER(company, safe_float(get_credit_price()) or 3.68)
         return
     _apply_cost_workflow_preset(workflow)
+    if WORKFLOW_MODULES.get(str(workflow)) == "sections.cost_center":
+        st.session_state["_cost_center_embedded_in_cost_contract"] = True
     render_workflow_module(workflow, WORKFLOW_MODULES)
 
 

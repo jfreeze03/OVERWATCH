@@ -18,9 +18,7 @@ from utils.primitives import safe_float, safe_int
 pd = lazy_pandas()
 
 CORTEX_COST_ROUTE_STATE: tuple[tuple[str, object], ...] = (
-    ("cost_contract_workflow", "Cost Overview"),
-    ("cost_contract_advanced_tool", "Cortex Spend"),
-    ("_cost_contract_show_advanced_tools", True),
+    ("cost_contract_workflow", "Cortex AI"),
 )
 
 

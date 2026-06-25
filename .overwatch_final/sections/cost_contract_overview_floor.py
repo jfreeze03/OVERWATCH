@@ -127,7 +127,8 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
         splash = _ensure_cost_splash(company, int(days), credit_price)
     else:
         splash = _maybe_autoload_cost_splash(company, int(days), credit_price)
-    _render_cost_first_paint_shell(company, int(days), splash, credit_price)
+    if not st.session_state.get("_cost_contract_local_hierarchy_rendered"):
+        _render_cost_first_paint_shell(company, int(days), splash, credit_price)
     _render_cost_splash(splash, company=company, days=int(days), credit_price=credit_price)
 
     proof_data = st.session_state.get("cost_contract_cockpit")
@@ -345,7 +346,7 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
             "Explain the usage movement",
             f"Top increase: {row.get('TOP_INCREASE_WAREHOUSE', 'unknown')} "
             f"({safe_float(row.get('TOP_INCREASE_CREDITS', 0)):,.2f} credits).",
-            "Cost by Warehouse",
+            "Cost Explorer",
         ))
     if high_actions > 0 or total_savings > 0:
         moves.append((
@@ -357,7 +358,7 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
         moves.append((
             "Inspect AI / Cortex spend",
             f"Projected Cortex spend ${cortex_projected:,.0f}/30d with {cortex_exception_count:,} exception(s).",
-            "Cost by User / Role",
+            "Cortex AI",
         ))
     if not moves:
         moves.append((
@@ -374,4 +375,7 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
             st.caption(_clean_display_text(evidence))
             if st.button(f"Open {workflow}", key=f"cost_contract_next_{idx}_{workflow}", width="stretch"):
                 st.session_state["cost_contract_workflow"] = workflow
+                if workflow == "Cost Explorer":
+                    st.session_state["cost_center_view"] = "Cost Explorer"
+                    st.session_state["cc_explorer_lens"] = "Warehouse"
                 st.rerun()

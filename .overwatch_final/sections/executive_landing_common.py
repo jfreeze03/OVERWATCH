@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import re
 
 import streamlit as st
 
@@ -122,7 +123,16 @@ def _nav_button(
     workflow: str = "",
     state_updates: dict[str, str] | None = None,
 ) -> None:
-    if st.button(label, key=f"executive_nav_{section}_{workflow or label}", width="stretch"):
+    key_seed = "_".join(
+        token
+        for token in (
+            re.sub(r"[^a-z0-9]+", "_", str(label).strip().lower()).strip("_"),
+            re.sub(r"[^a-z0-9]+", "_", str(section).strip().lower()).strip("_"),
+            re.sub(r"[^a-z0-9]+", "_", str(workflow or "").strip().lower()).strip("_"),
+        )
+        if token
+    )
+    if st.button(label, key=f"executive_nav_{key_seed or 'route'}", width="stretch"):
         apply_navigation_state(section)
         if workflow_key and workflow:
             st.session_state[workflow_key] = workflow

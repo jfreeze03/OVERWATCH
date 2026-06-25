@@ -137,7 +137,7 @@ class CortexFirstClassSignalTests(unittest.TestCase):
         alert_labels = {action.label for action in get_command_deck_contract("Alert Center").route_actions}
 
         self.assertIn("Cortex AI Cost", executive_labels)
-        self.assertIn("Cortex Cost Drivers", cost_labels)
+        self.assertIn("Review Cortex AI Costs", cost_labels)
         self.assertIn("Cortex Predictive Alerts", alert_labels)
 
     def test_cortex_monitor_top_summary_is_visible_before_detail_workflows(self):

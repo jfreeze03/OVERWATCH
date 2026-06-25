@@ -265,8 +265,8 @@ def _cost_advisor_add_row(
 
 _COST_ADVISOR_ACTION_MAP = {
     "Failed query waste": ("Fix failed workload", "Waste Detection"),
-    "Warehouse pressure": ("Investigate pressure before capacity change", "Cost by Warehouse"),
-    "Warehouse right-size review": ("Review right-size or suspend policy", "Cost by Warehouse"),
+    "Warehouse pressure": ("Investigate pressure before capacity change", "Cost Explorer"),
+    "Warehouse right-size review": ("Review right-size or suspend policy", "Cost Explorer"),
     "Automatic clustering": ("Validate clustering value", "Waste Detection"),
     "Attribution gap": ("Reconcile spend attribution", "Budget vs Actual"),
     "Service spend movement": ("Map non-warehouse service spend", "Budget vs Actual"),

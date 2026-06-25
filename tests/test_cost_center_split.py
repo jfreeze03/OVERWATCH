@@ -229,6 +229,38 @@ class CostCenterSplitTests(unittest.TestCase):
             with self.subTest(view=view):
                 self.assertIs(cost_center.COST_CENTER_RENDERERS[view], renderer)
 
+    def test_embedded_cost_center_suppresses_nested_workflow_selector(self):
+        calls = []
+
+        def _fake_renderer(*args):
+            calls.append(args)
+
+        state = {
+            "_cost_center_embedded_in_cost_contract": True,
+            "cost_center_view": "Cost Explorer",
+        }
+        with (
+            patch.object(cost_center.st, "session_state", state),
+            patch.object(cost_center, "get_session", return_value=object()),
+            patch.object(cost_center, "get_credit_price", return_value=4.0),
+            patch.object(
+                cost_center,
+                "_cost_center_query_history_expressions",
+                return_value=("MAX(q.warehouse_size)", "SUM(q.bytes_scanned)", "q.query_tag"),
+            ),
+            patch.object(
+                cost_center,
+                "render_workflow_selector",
+                side_effect=AssertionError("Embedded Cost Center must not render a second workflow selector"),
+            ),
+            patch.object(cost_center, "defer_source_note"),
+            patch.dict(cost_center.COST_CENTER_RENDERERS, {"Cost Explorer": _fake_renderer}),
+        ):
+            cost_center.render()
+
+        self.assertEqual(len(calls), 1)
+
+    def test_cost_center_view_files_keep_stable_widget_keys(self):
         expected_tokens = {
             "cost_center_explorer_view.py": ["cc_explorer_load", "cc_explorer_lens", "cc_explorer_queue"],
             "cost_center_explain_view.py": [

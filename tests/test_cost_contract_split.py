@@ -80,6 +80,35 @@ class CostContractSplitTests(unittest.TestCase):
             with self.subTest(path=path.name):
                 self.assertNotIn(alert_facade_import, path.read_text(encoding="utf-8"))
 
+    def test_cost_contract_uses_single_local_navigation_hierarchy(self):
+        cost_contract_text = (APP_ROOT / "sections" / "cost_contract.py").read_text(encoding="utf-8")
+        hierarchy_text = (APP_ROOT / "sections" / "cost_contract_hierarchy.py").read_text(encoding="utf-8")
+        cost_center_text = (APP_ROOT / "sections" / "cost_center.py").read_text(encoding="utf-8")
+        explorer_text = (APP_ROOT / "sections" / "cost_center_explorer_view.py").read_text(encoding="utf-8")
+        theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")
+
+        self.assertNotIn('render_workflow_selector(\n        "Cost workflow"', cost_contract_text)
+        self.assertIn("render_breadcrumb", cost_contract_text)
+        self.assertIn("render_kpi_hero_row", cost_contract_text)
+        self.assertIn("render_local_section_menu", cost_contract_text)
+        self.assertIn("render_explore_lens_selector", cost_contract_text)
+        self.assertIn('"Cortex AI"', hierarchy_text)
+        self.assertIn('"Cortex AI Spend"', hierarchy_text)
+        self.assertIn('"Cortex Predictive Alerts"', hierarchy_text)
+        self.assertIn('"Review Cortex AI Costs"', hierarchy_text)
+        self.assertIn("_cost_center_embedded_in_cost_contract", cost_center_text)
+        self.assertIn("Cost & Contract owns section navigation", cost_center_text)
+        self.assertIn("Explore Cost By", explorer_text)
+        for css_class in (
+            "ow-breadcrumb",
+            "ow-local-nav",
+            "ow-explore-tab",
+            "ow-kpi-hero",
+            "ow-action-card",
+            "ow-content-panel",
+        ):
+            self.assertIn(css_class, theme_text)
+
 
 if __name__ == "__main__":
     unittest.main()

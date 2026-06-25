@@ -231,7 +231,12 @@ def _render_security_command_findings(company: str, environment: str) -> None:
         )
 
 
-def _render_advanced_security_evidence(company: str, environment: str) -> None:
+def _render_advanced_security_evidence(
+    company: str,
+    environment: str,
+    *,
+    skip_change_detail: bool = True,
+) -> None:
     """Render security evidence after the active security workflow."""
     st.divider()
     with st.expander("Advanced security evidence and workflow guide", expanded=False):
@@ -255,7 +260,8 @@ def _render_advanced_security_evidence(company: str, environment: str) -> None:
         )
         _render_security_ownership_coverage(company, environment)
         _render_security_score_explanation(company, environment)
-        _render_security_change_detail(company, environment)
+        if not skip_change_detail:
+            _render_security_change_detail(company, environment)
         _render_security_action_approval(company, environment)
         _render_security_command_findings(company, environment)
 

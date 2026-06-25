@@ -12,11 +12,16 @@ load_change_event_detail = _lazy_util("load_change_event_detail")
 render_priority_dataframe = _lazy_util("render_priority_dataframe")
 
 
-def _render_security_change_detail(company: str, environment: str) -> None:
+def _render_security_change_detail(
+    company: str,
+    environment: str,
+    *,
+    button_key: str = "security_load_change_intelligence",
+) -> None:
     """Expose security-sensitive change events only after an operator asks for them."""
     st.markdown("**Security-Sensitive Changes**")
     st.caption("Loads role, grant, network policy, integration, and security-sensitive change evidence from the change mart.")
-    if st.button("Load Security-Sensitive Changes", key="security_load_change_intelligence", width="stretch"):
+    if st.button("Load Security-Sensitive Changes", key=button_key, width="stretch"):
         st.session_state["security_change_intelligence_detail"] = load_change_event_detail(
             company,
             environment,

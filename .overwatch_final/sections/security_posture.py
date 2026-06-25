@@ -97,7 +97,7 @@ def _render_security_first_paint_shell(active_view: str, company: str, environme
 def render_security_admin_advanced(company: str, environment: str, days: int) -> None:
     _render_security_source_health(company, environment)
     _render_privileged_grant_readiness(company, environment, days)
-    _render_advanced_security_evidence(company, environment)
+    _render_advanced_security_evidence(company, environment, skip_change_detail=False)
 
 
 def render_security_alerts(company: str, environment: str, days: int) -> None:
@@ -112,8 +112,12 @@ def render_security_alerts(company: str, environment: str, days: int) -> None:
 
 def render_security_access_changes(company: str, environment: str, days: int) -> None:
     _ = days
-    _render_security_change_detail(company, environment)
-    _render_advanced_security_evidence(company, environment)
+    _render_security_change_detail(
+        company,
+        environment,
+        button_key="security_load_access_changes_intelligence",
+    )
+    _render_advanced_security_evidence(company, environment, skip_change_detail=True)
 
 
 SECURITY_POSTURE_RENDERERS = {

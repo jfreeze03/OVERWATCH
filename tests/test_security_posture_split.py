@@ -130,6 +130,39 @@ class SecurityPostureSplitTests(unittest.TestCase):
             privilege_view.render_security_privilege_sprawl,
         )
 
+    def test_access_changes_view_does_not_duplicate_change_loader_key(self):
+        with patch.object(security_posture, "_render_security_change_detail") as change_detail, patch.object(
+            security_posture,
+            "_render_advanced_security_evidence",
+        ) as advanced:
+            security_posture.render_security_access_changes("ALFA", "PROD", 30)
+
+        change_detail.assert_called_once_with(
+            "ALFA",
+            "PROD",
+            button_key="security_load_access_changes_intelligence",
+        )
+        advanced.assert_called_once_with("ALFA", "PROD", skip_change_detail=True)
+
+    def test_advanced_security_evidence_skips_change_loader_by_default(self):
+        patches = [
+            patch.object(admin_view.st, "divider"),
+            patch.object(admin_view.st, "expander", return_value=_UiBlock()),
+            patch.object(admin_view, "render_operator_briefing"),
+            patch.object(admin_view, "render_workflow_guide"),
+            patch.object(admin_view, "_render_security_ownership_coverage"),
+            patch.object(admin_view, "_render_security_score_explanation"),
+            patch.object(admin_view, "_render_security_change_detail"),
+            patch.object(admin_view, "_render_security_action_approval"),
+            patch.object(admin_view, "_render_security_command_findings"),
+        ]
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6] as change_detail, patches[7], patches[8]:
+            admin_view._render_advanced_security_evidence("ALFA", "PROD")
+            change_detail.assert_not_called()
+
+            admin_view._render_advanced_security_evidence("ALFA", "PROD", skip_change_detail=False)
+            change_detail.assert_called_once_with("ALFA", "PROD")
+
     def test_security_posture_shell_is_shrinking_without_moved_definitions(self):
         source = (APP_ROOT / "sections" / "security_posture.py").read_text(encoding="utf-8")
         self.assertLess(len(source.splitlines()), 250)

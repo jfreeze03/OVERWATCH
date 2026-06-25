@@ -259,7 +259,7 @@ def render_topbar_filter_strip(active_company: str) -> str:
         """,
         unsafe_allow_html=True,
     )
-    c_company, c_env, c_date = st.columns([1.2, 1.35, 2.45])
+    c_company, c_env, c_date, c_clear = st.columns([1.15, 1.25, 2.35, 0.75])
     with c_company:
         selected_company = st.selectbox(
             "Company view",
@@ -272,21 +272,23 @@ def render_topbar_filter_strip(active_company: str) -> str:
         render_global_environment_control(selected_company)
     with c_date:
         render_global_date_range_control()
-    c_wh, c_user, c_clear = st.columns([2.5, 1.7, 0.75])
-    with c_wh:
-        render_global_warehouse_control(selected_company)
-    with c_user:
-        st.text_input("User contains", key=GLOBAL_USER)
     with c_clear:
         st.write("")
         if st.button("Clear", key=WIDGET_GLOBAL_FILTERS_CLEAR_TOPBAR, width="stretch"):
             clear_global_filters()
+    c_wh, _scope_spacer = st.columns([2.3, 2.15])
+    with c_wh:
+        render_global_warehouse_control(selected_company)
     return str(selected_company or active_company)
 
 
 def render_advanced_scope_controls(active_company: str) -> None:
-    """Render optional role, database, and schema narrowing controls."""
-    st.caption("Optional role, database, and schema narrowing. Primary triage filters live above the page.")
+    """Render optional user, role, database, and schema narrowing controls."""
+    st.caption(
+        "Optional user, role, database, and schema narrowing. "
+        "Primary triage filters live above the page."
+    )
+    st.text_input("User contains", key=GLOBAL_USER)
     st.text_input("Role contains", key=GLOBAL_ROLE)
     ensure_global_database_options(active_company)
 

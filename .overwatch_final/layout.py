@@ -338,11 +338,6 @@ def render_sidebar(
 
         ensure_default_state(CURRENT_ROLE, "")
 
-        if sidebar_panel_toggle("Advanced Scope", "advanced_scope"):
-            render_advanced_scope_controls(active_company)
-
-        st.divider()
-
         ensure_triage_mode_state(True)
         sync_exceptions_only_mode()
 
@@ -375,6 +370,11 @@ def render_sidebar(
                     on_click=_set_section,
                     args=(section_name,),
                 )
+
+        st.divider()
+
+        if sidebar_panel_toggle("Advanced Scope", "advanced_scope"):
+            render_advanced_scope_controls(active_company)
 
         st.divider()
 

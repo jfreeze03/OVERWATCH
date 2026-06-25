@@ -6,6 +6,7 @@ import json
 import re
 import subprocess
 import sys
+import types
 import unittest
 from dataclasses import fields, is_dataclass
 from datetime import datetime, timedelta
@@ -1493,7 +1494,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("maybe_clear_scope_cache_on_filter_change()", shell_text)
         self.assertIn("WIDGET_GLOBAL_FILTERS_CLEAR_TOPBAR", filters_text)
         self.assertIn('WIDGET_GLOBAL_FILTERS_CLEAR_TOPBAR = "global_filters_clear_topbar"', runtime_text)
-        self.assertIn("Optional role, database, and schema narrowing.", filters_text)
+        self.assertIn("Optional user, role, database, and schema narrowing.", filters_text)
         self.assertIn("get_global_schema_filter_clause", company_filter_text)
         self.assertIn("schema_col", company_filter_text)
         self.assertIn("previous_filter_signature != current_filter_signature", filters_text)
@@ -1656,12 +1657,20 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('"Date range"', filters_text)
         self.assertIn('"Warehouse"', filters_text)
         self.assertIn('"User contains"', filters_text)
+        topbar_filter_block = filters_text[
+            filters_text.index("def render_topbar_filter_strip"):
+            filters_text.index("def render_advanced_scope_controls")
+        ]
+        advanced_scope_block = filters_text[filters_text.index("def render_advanced_scope_controls"):]
+        self.assertNotIn('"User contains"', topbar_filter_block)
+        self.assertNotIn("filters live in Advanced Scope", topbar_filter_block)
+        self.assertIn('"User contains"', advanced_scope_block)
         self.assertIn('if sidebar_panel_toggle("Advanced Scope", "advanced_scope")', layout_text)
         self.assertIn('if sidebar_panel_toggle("Settings", "settings")', layout_text)
         self.assertEqual(layout_text.count('if sidebar_panel_toggle("Advanced Scope", "advanced_scope")'), 1)
         self.assertNotIn('if sidebar_panel_toggle("Saved Views", "saved_views")', layout_text)
         self.assertNotIn('if sidebar_panel_toggle("Global Filters", "global_filters")', layout_text)
-        self.assertIn("Optional role, database, and schema narrowing.", filters_text)
+        self.assertIn("Optional user, role, database, and schema narrowing.", filters_text)
         self.assertNotIn("TRIAGE_MODE_OPTIONS", runtime_text)
         self.assertNotIn('"Evidence Mode"', layout_text)
         self.assertIn("triage_view_mode", runtime_text)
@@ -1682,7 +1691,14 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn('with st.expander("Global Filters", expanded=False)', app_text + shell_text + layout_text)
         self.assertNotIn('with st.expander("Settings", expanded=False)', app_text + shell_text + layout_text)
         self.assertLess(shell_text.index("render_topbar_filter_strip"), shell_text.index("render_sidebar("))
-        self.assertLess(layout_text.index('if sidebar_panel_toggle("Advanced Scope", "advanced_scope")'), layout_text.index('if sidebar_panel_toggle("Settings", "settings")'))
+        self.assertLess(
+            layout_text.index("for group_name, group_all in NAV_GROUPS.items():"),
+            layout_text.index('if sidebar_panel_toggle("Advanced Scope", "advanced_scope")'),
+        )
+        self.assertLess(
+            layout_text.index('if sidebar_panel_toggle("Advanced Scope", "advanced_scope")'),
+            layout_text.index('if sidebar_panel_toggle("Settings", "settings")'),
+        )
 
     def test_idle_shell_render_does_not_probe_snowflake(self):
         import shell
@@ -2390,7 +2406,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         direct_import_files = (
             "cost_center_burn_view.py",
             "cost_center_forecast_view.py",
+            "data_sharing.py",
             "dba_tools_cost_health_view.py",
+            "spcs_tracker.py",
             "storage_monitor.py",
         )
         for filename in direct_import_files:
@@ -2403,9 +2421,33 @@ class NavigationIntegrityTests(unittest.TestCase):
                     if isinstance(node, ast.ImportFrom) and node.module == "utils"
                     for alias in node.names
                 }
-                self.assertIn("from utils.display import", section_text)
+                self.assertIn("from sections.chart_helpers import", section_text)
+                self.assertNotIn("from utils.display import", section_text)
                 self.assertNotIn("render_time_series_chart", package_level_utils_imports)
                 self.assertNotIn("render_area_time_series_chart", package_level_utils_imports)
+
+    def test_section_chart_helpers_survive_stale_display_module(self):
+        from sections import chart_helpers
+
+        stale_display = types.ModuleType("utils.display")
+        sample = pd.DataFrame({"DAY": pd.to_datetime(["2026-06-24"]), "VALUE": [1]})
+        with patch.dict(sys.modules, {"utils.display": stale_display}), patch.object(
+            chart_helpers.st,
+            "line_chart",
+        ) as line_chart, patch.object(
+            chart_helpers.st,
+            "area_chart",
+        ) as area_chart, patch.object(
+            chart_helpers.st,
+            "bar_chart",
+        ) as bar_chart:
+            self.assertIs(chart_helpers.render_time_series_chart(sample, "DAY", "VALUE"), sample)
+            self.assertIs(chart_helpers.render_area_time_series_chart(sample, "DAY", "VALUE"), sample)
+            self.assertIs(chart_helpers.render_ranked_bar_chart(sample, "DAY", "VALUE"), sample)
+
+        line_chart.assert_called_once()
+        area_chart.assert_called_once()
+        bar_chart.assert_called_once()
 
     def test_dead_ui_helpers_stay_removed(self):
         display_text = (APP_ROOT / "utils" / "display.py").read_text(encoding="utf-8")

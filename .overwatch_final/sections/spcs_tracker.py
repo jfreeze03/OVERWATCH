@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 from config import DEFAULTS
 from sections.shell_helpers import render_shell_snapshot
-from utils.display import render_area_time_series_chart, render_ranked_bar_chart
+from sections.chart_helpers import render_area_time_series_chart, render_ranked_bar_chart
 from utils import (
     day_window_selectbox,
     format_snowflake_error,

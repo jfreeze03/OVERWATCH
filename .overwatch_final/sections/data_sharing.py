@@ -3,7 +3,7 @@ import pandas as pd
 import streamlit as st
 from config import DEFAULTS
 from sections.shell_helpers import render_shell_snapshot
-from utils.display import render_time_series_chart
+from sections.chart_helpers import render_time_series_chart
 from utils import (
     get_active_company,
     day_window_selectbox,

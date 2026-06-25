@@ -17,7 +17,7 @@ from utils import (
     run_query,
     safe_float,
 )
-from utils.display import render_area_time_series_chart
+from sections.chart_helpers import render_area_time_series_chart
 from utils.workflows import render_priority_dataframe
 
 

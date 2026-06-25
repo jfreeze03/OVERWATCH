@@ -1,14 +1,16 @@
-definition_version: 1
-
 # -----------------------------------------------------------------------------
 # OVERWATCH - Streamlit-in-Snowflake (SiS) Deployment Manifest
 # Account:   ALFA Insurance
 # App:       DBA_MAINT_DB.OVERWATCH.OVERWATCH
-# Stage:     DBA_MAINT_DB.OVERWATCH.OVERWATCH_STAGE
 # Roles:     SNOW_ACCOUNTADMINS, SNOW_SYSADMINS
 # Warehouse: COMPUTE_WH
 #
-# execute_as: CALLER (SiS default - intentionally not set to OWNER)
+# Deployment:
+#   snow streamlit deploy --replace
+#
+# execute_as: CALLER keeps OVERWATCH as an operator-read app. Do not switch this
+# manifest to OWNER unless the release process explicitly accepts owner-rights
+# action execution.
 # -----------------------------------------------------------------------------
 # CALLER MODE MEANS:
 #   Every SQL statement executes with the privileges of whoever opened the app.
@@ -32,36 +34,45 @@ definition_version: 1
 #     -- Required to run the Streamlit app and its Snowflake queries
 #     GRANT USAGE ON WAREHOUSE COMPUTE_WH TO ROLE <role>;
 #
-#   Without IMPORTED PRIVILEGES on SNOWFLAKE, every ACCOUNT_USAGE query
-#   returns a permissions error and the section shows an empty state.
-#   This is the single most common misconfiguration when expanding OVERWATCH
-#   to non-admin users.
+#   Without IMPORTED PRIVILEGES on SNOWFLAKE, every ACCOUNT_USAGE query returns
+#   a permissions error and the section shows an empty state. This is the single
+#   most common misconfiguration when expanding OVERWATCH to non-admin users.
 # -----------------------------------------------------------------------------
 
-streamlit:
-  name: OVERWATCH
-  stage: DBA_MAINT_DB.OVERWATCH.OVERWATCH_STAGE
-  main_file: app.py
-  title: "OVERWATCH - Snowflake DBA Monitor"
-  comment: "DBA monitoring app for ALFA Insurance"
+definition_version: 1
+entities:
+  streamlit_app:
+    type: streamlit
+    identifier:
+      database: DBA_MAINT_DB
+      schema: OVERWATCH
+      name: OVERWATCH
+    title: "OVERWATCH - Snowflake DBA Monitor"
+    comment: "DBA monitoring app for ALFA Insurance"
 
-  # Warehouse used by SiS for Python execution. SQL queries run here unless
-  # the session executes USE WAREHOUSE first.
-  query_warehouse: COMPUTE_WH
-
-  artifacts:
-    - app.py
-    - access_control.py
-    - config.py
-    - filters.py
-    - layout.py
-    - navigation.py
-    - perf_trace.py
-    - refresh.py
-    - runtime_state.py
-    - section_dispatch.py
-    - shell.py
-    - theme.py
-    - environment.yml
-    - utils/
-    - sections/
+    # Warehouse used by SiS for Python execution. SQL queries run here unless
+    # the session executes USE WAREHOUSE first.
+    query_warehouse: COMPUTE_WH
+    execute_as: CALLER
+    main_file: app.py
+    artifacts:
+      - app.py
+      - access_control.py
+      - app_entry_timing.py
+      - config.py
+      - filters.py
+      - layout.py
+      - navigation.py
+      - perf_trace.py
+      - refresh.py
+      - route_registry.py
+      - runtime_state.py
+      - section_dispatch.py
+      - shell.py
+      - theme.py
+      - version.py
+      - workflow_contracts.py
+      - environment.yml
+      - pyproject.toml
+      - utils/
+      - sections/

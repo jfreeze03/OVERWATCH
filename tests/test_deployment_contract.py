@@ -3,6 +3,8 @@ import re
 import sys
 import unittest
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = ROOT / ".overwatch_final"
@@ -114,6 +116,25 @@ class DeploymentContractTests(unittest.TestCase):
                 self.assertTrue((APP_ROOT / artifact.rstrip("/")).exists())
 
         self.assertNotIn("execute_as: OWNER", manifest)
+
+    def test_snowflake_manifest_uses_entities_streamlit_schema_and_parses_yaml(self):
+        manifest = (APP_ROOT / "snowflake.yml").read_text(encoding="utf-8")
+        parsed = yaml.safe_load(manifest)
+
+        self.assertIsInstance(parsed, dict)
+        self.assertEqual(parsed["definition_version"], 1)
+        self.assertNotIn("streamlit", parsed)
+
+        streamlit_app = parsed["entities"]["streamlit_app"]
+        self.assertEqual(streamlit_app["type"], "streamlit")
+        self.assertEqual(streamlit_app["identifier"]["database"], "DBA_MAINT_DB")
+        self.assertEqual(streamlit_app["identifier"]["schema"], "OVERWATCH")
+        self.assertEqual(streamlit_app["identifier"]["name"], "OVERWATCH")
+        self.assertEqual(streamlit_app["query_warehouse"], "COMPUTE_WH")
+        self.assertEqual(streamlit_app["execute_as"], "CALLER")
+        self.assertEqual(streamlit_app["main_file"], "app.py")
+        self.assertIsInstance(streamlit_app["artifacts"], list)
+        self.assertEqual(streamlit_app["artifacts"], list(STREAMLIT_SNOWFLAKE_ARTIFACTS))
 
     def test_mart_setup_avoids_dynamic_tables_and_secure_views(self):
         setup_sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8").upper()

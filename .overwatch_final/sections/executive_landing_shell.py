@@ -133,6 +133,26 @@ def _render_loaded_executive_landing_workflow(
         )
 
 
+def _render_executive_landing_workflow_controls(active_workflow: str) -> str:
+    active_workflow = render_workflow_selector(
+        "Executive Landing workflow",
+        EXECUTIVE_LANDING_WORKFLOW,
+        EXECUTIVE_LANDING_WORKFLOWS,
+        EXECUTIVE_LANDING_WORKFLOW_DETAILS,
+        columns=4,
+        compact_details=True,
+        collapse_after=2,
+        collapsed_label="More executive workflows",
+    )
+    active_workflow = normalize_executive_landing_workflow(active_workflow)
+    st.session_state[EXECUTIVE_LANDING_WORKFLOW] = active_workflow
+    render_command_deck(
+        get_command_deck_contract("Executive Landing"),
+        key_prefix="executive_landing_command_deck",
+    )
+    return active_workflow
+
+
 def render() -> None:
     with trace("executive_shell:state_helpers", active_section="Executive Landing"):
         company = _active_company()
@@ -143,7 +163,7 @@ def render() -> None:
         )
         _ensure_executive_landing_workflow_state()
 
-    with trace("executive_shell:workflow_selector", active_section="Executive Landing"):
+    with trace("executive_shell:scope_controls", active_section="Executive Landing"):
         window_col, refresh_col, _window_spacer = st.columns([1.2, 1.0, 2.2])
         with window_col:
             days = st.selectbox(
@@ -159,21 +179,8 @@ def render() -> None:
                 type="primary",
                 width="stretch",
             )
-        active_workflow = render_workflow_selector(
-            "Executive Landing workflow",
-            EXECUTIVE_LANDING_WORKFLOW,
-            EXECUTIVE_LANDING_WORKFLOWS,
-            EXECUTIVE_LANDING_WORKFLOW_DETAILS,
-            columns=4,
-            compact_details=True,
-            collapse_after=2,
-            collapsed_label="More executive workflows",
-        )
-        active_workflow = normalize_executive_landing_workflow(active_workflow)
-        st.session_state[EXECUTIVE_LANDING_WORKFLOW] = active_workflow
-        render_command_deck(
-            get_command_deck_contract("Executive Landing"),
-            key_prefix="executive_landing_command_deck",
+        active_workflow = normalize_executive_landing_workflow(
+            st.session_state.get(EXECUTIVE_LANDING_WORKFLOW, EXECUTIVE_OVERVIEW_WORKFLOW)
         )
 
     with trace("executive_shell:observability_board_state", active_section="Executive Landing"):
@@ -237,12 +244,9 @@ def render() -> None:
             summary = _with_platform_operating_score(summary, source_health)
             _persist_platform_summary(summary)
 
-    if active_workflow == EXECUTIVE_OVERVIEW_WORKFLOW:
-        render_mission_control_queue(
-            st.session_state,
-            company=company,
-            environment=environment,
-        )
+    if active_workflow != EXECUTIVE_OVERVIEW_WORKFLOW:
+        with trace("executive_shell:workflow_selector", active_section="Executive Landing"):
+            active_workflow = _render_executive_landing_workflow_controls(active_workflow)
 
     load = _render_loaded_executive_landing_workflow(
         active_workflow,
@@ -256,6 +260,15 @@ def render() -> None:
         snapshot=loaded_snapshot,
         source_health=source_health,
     )
+
+    if active_workflow == EXECUTIVE_OVERVIEW_WORKFLOW:
+        with trace("executive_shell:workflow_selector", active_section="Executive Landing"):
+            _render_executive_landing_workflow_controls(active_workflow)
+        render_mission_control_queue(
+            st.session_state,
+            company=company,
+            environment=environment,
+        )
 
     if load and _load_executive_snapshot(company, environment, int(days)):
         st.rerun()

@@ -1,32 +1,17 @@
 """Executive Landing overview renderer."""
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from html import escape as _escape_markup
 
 import streamlit as st
 
-from config import (
-    ACTION_QUEUE_TABLE,
-    ALERT_DB,
-    ALERT_SCHEMA,
-    DEFAULT_COMPANY,
-    DEFAULT_DAY_WINDOW,
-    DEFAULT_ENVIRONMENT,
-    DEFAULTS,
-    DAY_WINDOW_OPTIONS,
-)
 from sections.base import lazy_pandas, lazy_util as _lazy_util
-from sections.navigation import apply_navigation_state, apply_section_workflow_navigation
 from sections.shell_helpers import (
-    render_escaped_bold_text,
     render_refresh_contract,
     render_shell_kpi_row,
-    render_shell_snapshot,
     render_shell_status_strip,
 )
-from runtime_state import EXECUTIVE_LANDING_WORKFLOW
 from utils.primitives import safe_float, safe_int
-from utils.section_guidance import defer_source_note
 
 
 pd = lazy_pandas()
@@ -77,7 +62,7 @@ def _render_executive_action_brief(summary: dict | None, days: int, *, show_stri
     with load_col:
         return bool(
             st.button(
-                "Load Snapshot",
+                "Load Full Executive Snapshot",
                 key="executive_landing_load",
                 help=button_help or None,
                 type="primary",
@@ -87,8 +72,8 @@ def _render_executive_action_brief(summary: dict | None, days: int, *, show_stri
 
 def _render_snapshot_prompt(workflow: str, summary: dict, days: int) -> bool:
     st.info(
-        f"{workflow} is showing fast summary facts. Load Snapshot only when you need "
-        "alert, action, source-health, or export detail for the selected scope."
+        f"{workflow} is showing the executive command-center summary. Load Full Executive Snapshot "
+        "only when you need detailed alert rows, action queue rows, source health, or export-ready evidence."
     )
     return _render_executive_action_brief(summary, int(days), show_strip=False)
 
@@ -96,12 +81,17 @@ def _render_executive_next_clicks() -> None:
     cols = st.columns(5)
     with cols[0]:
         _nav_button(
-            "Active Alerts",
+            "Investigate Active Alerts",
             "Alert Center",
             state_updates={"alert_center_active_view": "Active Alerts"},
         )
     with cols[1]:
-        _nav_button("Open Cost", "Cost & Contract", workflow_key="cost_contract_workflow", workflow="Cost Overview")
+        _nav_button(
+            "Review Cost Movement",
+            "Cost & Contract",
+            workflow_key="cost_contract_workflow",
+            workflow="Cost Overview",
+        )
     with cols[2]:
         _nav_button(
             "Open DBA Cockpit",
@@ -110,47 +100,73 @@ def _render_executive_next_clicks() -> None:
         )
     with cols[3]:
         _nav_button(
-            "Open Workload",
-            "Workload Operations",
-            workflow_key="workload_operations_workflow",
-            workflow="Workload Overview",
-        )
-    with cols[4]:
-        _nav_button(
-            "Open Security",
+            "Review Security Risk",
             "Security Monitoring",
             workflow_key="security_posture_workflow",
             workflow="Security Overview",
             state_updates={"security_posture_view": "Security Overview"},
         )
+    with cols[4]:
+        _nav_button(
+            "Review Workload Operations",
+            "Workload Operations",
+            workflow_key="workload_operations_workflow",
+            workflow="Workload Overview",
+        )
 
-def _render_executive_overview(
+def _executive_freshness_label(board: pd.DataFrame, board_payload: dict, snapshot: dict | None) -> str:
+    if isinstance(snapshot, dict):
+        return "Full snapshot loaded"
+    if isinstance(board, pd.DataFrame) and not board.empty:
+        return "Summary loaded"
+    source = str((board_payload or {}).get("source") or "").strip()
+    if source:
+        return source
+    return "Ready to refresh"
+
+def _render_executive_hero(
     summary: dict,
     *,
     company: str,
     environment: str,
     days: int,
+    board: pd.DataFrame,
+    board_payload: dict,
+    snapshot: dict | None,
+) -> None:
+    brief = _executive_action_brief(summary)
+    scope = f"{company} / {get_environment_label(environment)}"
+    freshness = _executive_freshness_label(board, board_payload, snapshot)
+    state = str(brief.get("state") or summary.get("state") or "Review")
+    headline = str(brief.get("headline") or "Review the executive command center.")
+    detail = str(brief.get("detail") or "Use the visible KPIs, attention table, and next actions to route the first decision.")
+    st.html(
+        '<section class="ow-executive-command-hero" role="region" aria-label="Executive command center status">'
+        '<div class="ow-executive-hero-copy">'
+        '<div class="ow-executive-hero-kicker">Executive command center</div>'
+        f'<div class="ow-executive-hero-title">{_escape_markup(headline)}</div>'
+        f'<div class="ow-executive-hero-detail">{_escape_markup(detail)}</div>'
+        '</div>'
+        '<div class="ow-executive-hero-status">'
+        f'<span>{_escape_markup(state)}</span>'
+        f'<strong>{_escape_markup(scope)}</strong>'
+        f'<em>{_escape_markup(str(days))}-day window · {_escape_markup(freshness)}</em>'
+        '</div>'
+        '<div class="ow-executive-hero-load-note">'
+        '<strong>Load Full Executive Snapshot</strong> collects detailed alert rows, action queue rows, '
+        'source health, and export-ready evidence for this selected scope. It does not run until you click it.'
+        '</div>'
+        '</section>'
+    )
+
+def _render_executive_kpi_grid(
+    summary: dict,
+    *,
     credit_price: float,
     board: pd.DataFrame,
     board_payload: dict,
     snapshot: dict | None,
-) -> bool:
-    st.markdown("**Executive Overview**")
-    render_shell_status_strip(
-        state=str(summary.get("state") or "Review"),
-        headline="Environment status, movement, and next actions.",
-        detail=(
-            "Fast summary facts only; open a workflow or load the snapshot when leadership needs more context."
-        ),
-    )
-    render_refresh_contract(
-        board_payload,
-        source="Executive summary facts",
-        target_minutes=60,
-        refresh_method="Scheduled data refresh",
-        live_fallback="On demand",
-    )
-    st.markdown("**Snowflake Observability Wall**")
+) -> None:
     current_spend = safe_float(
         summary.get("current_spend_usd"),
         credits_to_dollars(safe_float(summary.get("current_credits")), credit_price),
@@ -174,52 +190,61 @@ def _render_executive_overview(
         ("Major Issues", f"{safe_int(summary.get('critical_high_alerts')):,}"),
         ("Cost Movement", _format_delta_credits(summary, credit_price=credit_price)),
         ("Security Risk", security_signal),
+        ("Spend", _money(current_spend)),
+        ("Workload Risk", biggest_workload),
+        ("Open Actions", f"{safe_int(summary.get('open_actions')):,}"),
+        ("Freshness", _executive_freshness_label(board, board_payload, snapshot)),
     ))
-    detail_open = bool(st.session_state.get("executive_landing_summary_detail_open"))
-    if not isinstance(snapshot, dict):
-        detail_col, _ = st.columns([1.15, 4.0])
-        with detail_col:
-            if st.button(
-                "Show Summary Detail",
-                key="executive_landing_show_summary_detail",
-                width="stretch",
-            ):
-                st.session_state["executive_landing_summary_detail_open"] = True
-                detail_open = True
 
-    if detail_open or isinstance(snapshot, dict):
-        render_shell_kpi_row((
-            ("Spend", _money(current_spend)),
-            ("Workload Risk", biggest_workload),
-            ("Open Actions", f"{safe_int(summary.get('open_actions')):,}"),
-            ("Freshness", "Loaded" if isinstance(board, pd.DataFrame) and not board.empty else "On demand"),
-        ))
+def _render_executive_overview(
+    summary: dict,
+    *,
+    company: str,
+    environment: str,
+    days: int,
+    credit_price: float,
+    board: pd.DataFrame,
+    board_payload: dict,
+    snapshot: dict | None,
+) -> bool:
+    st.markdown("**Executive Overview**")
+    _render_executive_hero(
+        summary,
+        company=company,
+        environment=environment,
+        days=int(days),
+        board=board,
+        board_payload=board_payload,
+        snapshot=snapshot,
+    )
+    render_refresh_contract(
+        board_payload,
+        source="Executive summary facts",
+        target_minutes=60,
+        refresh_method="Scheduled data refresh",
+        live_fallback="On demand",
+    )
+    st.markdown("**Core executive KPIs**")
+    _render_executive_kpi_grid(
+        summary,
+        credit_price=credit_price,
+        board=board,
+        board_payload=board_payload,
+        snapshot=snapshot,
+    )
 
-        render_priority_dataframe(
-            _decision_rows(summary).head(5),
-            title="Executive decisions to make first",
-            priority_columns=["PRIORITY", "DECISION_AREA", "SIGNAL", "NEXT_ACTION", "WORKFLOW"],
-            sort_by=["PRIORITY"],
-            ascending=True,
-            raw_label="All executive decision rows",
-            height=230,
-            max_rows=5,
-        )
-    shortcuts_open = bool(st.session_state.get("executive_landing_workflow_shortcuts_open"))
-    if not shortcuts_open:
-        shortcut_col, _ = st.columns([1.25, 3.9])
-        with shortcut_col:
-            if st.button(
-                "Show Workflow Shortcuts",
-                key="executive_landing_show_workflow_shortcuts",
-                width="stretch",
-            ):
-                st.session_state["executive_landing_workflow_shortcuts_open"] = True
-                shortcuts_open = True
-        if not shortcuts_open:
-            st.caption("Workflow shortcuts stay collapsed during first paint.")
-    if shortcuts_open:
-        _render_executive_next_clicks()
+    render_priority_dataframe(
+        _decision_rows(summary).head(5),
+        title="What needs attention first",
+        priority_columns=["PRIORITY", "DECISION_AREA", "SIGNAL", "NEXT_ACTION", "WORKFLOW"],
+        sort_by=["PRIORITY"],
+        ascending=True,
+        raw_label="All executive decision rows",
+        height=230,
+        max_rows=5,
+    )
+    st.markdown("**Next best actions**")
+    _render_executive_next_clicks()
 
     if isinstance(snapshot, dict):
         _render_loaded_executive_alert_context()
@@ -245,4 +270,4 @@ def render_executive_overview(*, summary: dict, company: str, environment: str, 
     return _render_executive_overview(summary, company=company, environment=environment, days=int(days), credit_price=credit_price, board=board, board_payload=board_payload, snapshot=snapshot)
 
 
-__all__ = ['_render_executive_action_brief', '_render_snapshot_prompt', '_render_executive_next_clicks', '_render_executive_overview', 'render_executive_overview']
+__all__ = ['_render_executive_action_brief', '_render_snapshot_prompt', '_render_executive_next_clicks', '_executive_freshness_label', '_render_executive_hero', '_render_executive_kpi_grid', '_render_executive_overview', 'render_executive_overview']

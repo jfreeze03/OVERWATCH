@@ -257,7 +257,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         executive_shell = (APP_ROOT / "sections" / "executive_landing_shell.py").read_text(encoding="utf-8")
         executive_overview = (APP_ROOT / "sections" / "executive_landing_overview_view.py").read_text(encoding="utf-8")
         executive_security = (APP_ROOT / "sections" / "executive_landing_security_view.py").read_text(encoding="utf-8")
-        self.assertIn("Snowflake Observability Wall", executive_overview)
+        self.assertIn("Executive command center", executive_overview)
+        self.assertIn("Core executive KPIs", executive_overview)
+        self.assertIn("What needs attention first", executive_overview)
         self.assertNotIn("Executive Summary Signals", executive_text)
         self.assertIn("Refresh Summary", executive_shell)
 
@@ -522,7 +524,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         first_load_block = route_shell_text.split("if needs_first_load:", 1)[1].split("if refresh_board:", 1)[0]
         self.assertNotIn("_load_executive_observability(", first_load_block)
         self.assertNotIn("st.session_state.get(autoload_scope_key) != expected_scope", full_workspace_text + observability_text)
-        self.assertIn("Snowflake Observability Wall", overview_text)
+        self.assertIn("Executive command center", overview_text)
+        self.assertIn("Core executive KPIs", overview_text)
+        self.assertIn("What needs attention first", overview_text)
         self.assertNotIn("Executive Summary Signals", full_workspace_text)
         self.assertIn("Refresh Summary", route_shell_text)
         self.assertNotIn("Refresh Board", full_workspace_text)

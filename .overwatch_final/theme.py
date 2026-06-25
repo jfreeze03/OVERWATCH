@@ -1011,6 +1011,97 @@ code, pre, .stCodeBlock {
     min-width: 0;
     margin: 0.18rem 0 0.38rem;
 }
+.ow-executive-command-hero {
+    display: grid;
+    grid-template-columns: minmax(0, 1.8fr) minmax(13rem, 0.72fr);
+    gap: 0.85rem 1rem;
+    align-items: stretch;
+    border: 1px solid var(--border-subtle);
+    border-left: 4px solid var(--accent2);
+    border-radius: 8px;
+    background:
+        linear-gradient(135deg, rgba(var(--accent-rgb), 0.14), transparent 44%),
+        var(--bg-card);
+    box-shadow: var(--metric-shadow);
+    margin: 0.4rem 0 0.85rem;
+    padding: 0.95rem 1rem;
+}
+.ow-executive-hero-copy,
+.ow-executive-hero-status,
+.ow-executive-hero-load-note {
+    min-width: 0;
+}
+.ow-executive-hero-kicker {
+    color: var(--text-muted);
+    font-size: 0.64rem;
+    font-weight: 850;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+.ow-executive-hero-title {
+    color: var(--text-primary);
+    font-size: 1.18rem;
+    font-weight: 900;
+    line-height: 1.22;
+    margin-top: 0.18rem;
+    overflow-wrap: anywhere;
+}
+.ow-executive-hero-detail {
+    color: var(--text-secondary);
+    font-size: 0.84rem;
+    line-height: 1.45;
+    margin-top: 0.28rem;
+    overflow-wrap: anywhere;
+}
+.ow-executive-hero-status {
+    border: 1px solid rgba(var(--accent-rgb), 0.28);
+    border-radius: 8px;
+    background: rgba(var(--accent-rgb), 0.055);
+    padding: 0.72rem 0.82rem;
+}
+.ow-executive-hero-status span {
+    display: inline-flex;
+    width: fit-content;
+    border: 1px solid rgba(var(--accent-rgb), 0.36);
+    border-radius: 999px;
+    color: var(--text-primary);
+    font-size: 0.68rem;
+    font-weight: 850;
+    letter-spacing: 0.05em;
+    line-height: 1.1;
+    padding: 0.26rem 0.54rem;
+    text-transform: uppercase;
+}
+.ow-executive-hero-status strong {
+    display: block;
+    color: var(--text-primary);
+    font-size: 0.92rem;
+    font-weight: 850;
+    line-height: 1.25;
+    margin-top: 0.48rem;
+    overflow-wrap: anywhere;
+}
+.ow-executive-hero-status em {
+    display: block;
+    color: var(--text-secondary);
+    font-size: 0.76rem;
+    font-style: normal;
+    line-height: 1.34;
+    margin-top: 0.16rem;
+    overflow-wrap: anywhere;
+}
+.ow-executive-hero-load-note {
+    grid-column: 1 / -1;
+    border-top: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    line-height: 1.4;
+    padding-top: 0.72rem;
+}
+.ow-executive-hero-load-note strong {
+    color: var(--text-primary);
+    font-weight: 850;
+}
 .ow-mission-control {
     border: 1px solid var(--border-subtle);
     border-radius: 8px;
@@ -1482,6 +1573,9 @@ code, pre, .stCodeBlock {
         grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
     }
     .ow-evidence-contract {
+        grid-template-columns: 1fr !important;
+    }
+    .ow-executive-command-hero {
         grid-template-columns: 1fr !important;
     }
     .ow-run-context {

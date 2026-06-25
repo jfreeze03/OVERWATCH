@@ -218,9 +218,10 @@ class ExecutiveLandingSplitTests(unittest.TestCase):
             ],
             "executive_landing_overview_view.py": [
                 "executive_landing_load",
-                "executive_landing_show_workflow_shortcuts",
-                "Snowflake Observability Wall",
-                "Executive decisions to make first",
+                "Load Full Executive Snapshot",
+                "Core executive KPIs",
+                "What needs attention first",
+                "Next best actions",
             ],
             "executive_landing_common.py": ["executive_nav_"],
             "executive_landing_data_health_view.py": [
@@ -241,28 +242,89 @@ class ExecutiveLandingSplitTests(unittest.TestCase):
                 with self.subTest(file=file_name, token=token):
                     self.assertIn(token, source)
 
-    def test_executive_overview_detail_grid_is_explicit_after_first_paint(self):
+    def test_executive_overview_metrics_and_decisions_are_visible_by_default(self):
         source = (APP_ROOT / "sections" / "executive_landing_overview_view.py").read_text(encoding="utf-8")
 
-        detail_button_pos = source.index("executive_landing_show_summary_detail")
-        detail_gate_pos = source.index("if detail_open or isinstance(snapshot, dict):")
-        table_pos = source.index("render_priority_dataframe(", detail_gate_pos)
+        self.assertNotIn("executive_landing_show_summary_detail", source)
+        self.assertNotIn("executive_landing_summary_detail_open", source)
+        self.assertNotIn("Show Summary Detail", source)
+
+        kpi_pos = source.index("_render_executive_kpi_grid(")
+        table_pos = source.index("render_priority_dataframe(")
+        snapshot_prompt_pos = source.index("_render_snapshot_prompt(EXECUTIVE_OVERVIEW_WORKFLOW")
         loaded_alert_context_pos = source.index("_render_loaded_executive_alert_context()")
         snapshot_gate_pos = source.index("if isinstance(snapshot, dict):")
 
-        self.assertLess(detail_button_pos, detail_gate_pos)
-        self.assertLess(detail_gate_pos, table_pos)
+        self.assertLess(kpi_pos, table_pos)
+        self.assertLess(table_pos, snapshot_prompt_pos)
         self.assertLess(snapshot_gate_pos, loaded_alert_context_pos)
 
-    def test_executive_workflow_shortcuts_are_explicit_after_first_paint(self):
+    def test_executive_workflow_actions_are_visible_by_default(self):
         source = (APP_ROOT / "sections" / "executive_landing_overview_view.py").read_text(encoding="utf-8")
 
-        shortcut_button_pos = source.index("executive_landing_show_workflow_shortcuts")
-        next_click_pos = source.index("        _render_executive_next_clicks()")
+        self.assertNotIn("executive_landing_show_workflow_shortcuts", source)
+        self.assertNotIn("executive_landing_workflow_shortcuts_open", source)
+        self.assertNotIn("Show Workflow Shortcuts", source)
+
+        for label in [
+            "Investigate Active Alerts",
+            "Review Cost Movement",
+            "Open DBA Cockpit",
+            "Review Security Risk",
+            "Review Workload Operations",
+        ]:
+            with self.subTest(label=label):
+                self.assertIn(label, source)
+
+        next_click_pos = source.index("    _render_executive_next_clicks()")
         snapshot_prompt_pos = source.index("_render_snapshot_prompt(EXECUTIVE_OVERVIEW_WORKFLOW")
 
-        self.assertLess(shortcut_button_pos, next_click_pos)
         self.assertLess(next_click_pos, snapshot_prompt_pos)
+
+    def test_executive_overview_first_paint_renders_metrics_decisions_and_actions(self):
+        summary = models._default_platform_summary()
+        board = pd.DataFrame()
+
+        with (
+            patch("sections.executive_landing_overview_view.st.markdown"),
+            patch("sections.executive_landing_overview_view.st.html"),
+            patch("sections.executive_landing_overview_view.render_refresh_contract"),
+            patch("sections.executive_landing_overview_view.render_shell_kpi_row") as kpi_row,
+            patch("sections.executive_landing_overview_view.render_priority_dataframe") as priority_table,
+            patch("sections.executive_landing_overview_view._render_executive_next_clicks") as next_clicks,
+            patch("sections.executive_landing_overview_view._render_snapshot_prompt", return_value=False) as snapshot_prompt,
+        ):
+            result = overview_view._render_executive_overview(
+                summary,
+                company="ALFA",
+                environment="PROD",
+                days=7,
+                credit_price=3.68,
+                board=board,
+                board_payload={},
+                snapshot=None,
+            )
+
+        self.assertFalse(result)
+        kpi_row.assert_called_once()
+        rendered_labels = [label for label, _value in kpi_row.call_args.args[0]]
+        self.assertEqual(
+            rendered_labels,
+            [
+                "Health",
+                "Major Issues",
+                "Cost Movement",
+                "Security Risk",
+                "Spend",
+                "Workload Risk",
+                "Open Actions",
+                "Freshness",
+            ],
+        )
+        priority_table.assert_called_once()
+        self.assertEqual(priority_table.call_args.kwargs["title"], "What needs attention first")
+        next_clicks.assert_called_once()
+        snapshot_prompt.assert_called_once()
 
     def test_executive_landing_facade_remains_thin(self):
         source = (APP_ROOT / "sections" / "executive_landing.py").read_text(encoding="utf-8")

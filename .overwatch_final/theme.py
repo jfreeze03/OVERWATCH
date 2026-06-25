@@ -14,7 +14,7 @@
 #   render_theme_picker()
 import streamlit as st
 
-THEME_VERSION = "2026-06-16-theme-contrast-v9"
+THEME_VERSION = "2026-06-25-command-signal-v1"
 
 _DEFAULT_THEME = "carbon"
 _ACTIVE_THEME_KEY = "_overwatch_active_theme"
@@ -1185,6 +1185,33 @@ code, pre, .stCodeBlock {
     background: var(--bg-card);
     box-shadow: var(--metric-shadow);
     padding: 0.78rem 0.86rem;
+}
+.ow-signal-state-critical,
+.ow-signal-state-severity,
+.ow-signal-state-aging,
+.ow-signal-state-overdue {
+    border-color: rgba(239, 68, 68, 0.50);
+    background:
+        linear-gradient(135deg, rgba(239, 68, 68, 0.14), transparent 48%),
+        var(--bg-card);
+}
+.ow-signal-state-critical .ow-signal-pill,
+.ow-signal-state-severity .ow-signal-pill,
+.ow-signal-state-aging .ow-signal-pill,
+.ow-signal-state-overdue .ow-signal-pill {
+    border-color: rgba(239, 68, 68, 0.38);
+    background: rgba(239, 68, 68, 0.16);
+    color: #f87171;
+}
+.ow-signal-state-clear,
+.ow-signal-state-ready {
+    border-color: rgba(34, 197, 94, 0.32);
+}
+.ow-signal-state-clear .ow-signal-pill,
+.ow-signal-state-ready .ow-signal-pill {
+    border-color: rgba(34, 197, 94, 0.28);
+    background: rgba(34, 197, 94, 0.14);
+    color: #4ade80;
 }
 .ow-signal-card-top {
     display: flex;

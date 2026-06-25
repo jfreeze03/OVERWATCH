@@ -77,7 +77,7 @@ def _render_executive_action_brief(summary: dict | None, days: int, *, show_stri
     with load_col:
         return bool(
             st.button(
-                "Load Snapshot",
+                "Load investigation snapshot",
                 key="executive_landing_load",
                 help=button_help or None,
                 type="primary",
@@ -175,6 +175,16 @@ def _render_executive_overview(
         ("Cost Movement", _format_delta_credits(summary, credit_price=credit_price)),
         ("Security Risk", security_signal),
     ))
+    render_priority_dataframe(
+        _decision_rows(summary).head(5),
+        title="Executive decisions to make first",
+        priority_columns=["PRIORITY", "DECISION_AREA", "SIGNAL", "NEXT_ACTION", "WORKFLOW"],
+        sort_by=["PRIORITY"],
+        ascending=True,
+        raw_label="All executive decision rows",
+        height=230,
+        max_rows=5,
+    )
     detail_open = bool(st.session_state.get("executive_landing_summary_detail_open"))
     if not isinstance(snapshot, dict):
         detail_col, _ = st.columns([1.15, 4.0])
@@ -195,17 +205,7 @@ def _render_executive_overview(
             ("Freshness", "Loaded" if isinstance(board, pd.DataFrame) and not board.empty else "On demand"),
         ))
 
-        render_priority_dataframe(
-            _decision_rows(summary).head(5),
-            title="Executive decisions to make first",
-            priority_columns=["PRIORITY", "DECISION_AREA", "SIGNAL", "NEXT_ACTION", "WORKFLOW"],
-            sort_by=["PRIORITY"],
-            ascending=True,
-            raw_label="All executive decision rows",
-            height=230,
-            max_rows=5,
-        )
-    shortcuts_open = bool(st.session_state.get("executive_landing_workflow_shortcuts_open"))
+    shortcuts_open = bool(st.session_state.get("executive_landing_workflow_shortcuts_open", True))
     if not shortcuts_open:
         shortcut_col, _ = st.columns([1.25, 3.9])
         with shortcut_col:

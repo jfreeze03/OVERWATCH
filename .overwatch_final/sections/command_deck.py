@@ -67,17 +67,12 @@ def render_command_deck(
     key_prefix: str | None = None,
     on_action: Callable[[CommandDeckAction], None] | None = None,
     on_primary_cta: Callable[[], None] | None = None,
+    route_actions_expanded: bool = False,
 ) -> None:
     """Render first-paint route actions without starting telemetry work."""
     prefix = key_prefix or f"command_deck_{_key_token(contract.section)}"
     with st.container(border=True):
         _render_deck_header(contract)
-        render_shell_snapshot(
-            (
-                ("Route status", "Ready"),
-                ("Evidence boundary", "Explicit load only"),
-            )
-        )
         if contract.primary_cta_description:
             safe_caption(contract.primary_cta_description)
         if on_primary_cta is not None:
@@ -90,23 +85,25 @@ def render_command_deck(
             ):
                 on_primary_cta()
         elif contract.primary_cta_preserve_existing:
-            safe_caption("Primary evidence loading remains on the existing section control.")
+            pass
         safe_caption(contract.no_query_note)
 
         actions = tuple(contract.route_actions or ())
         if not actions:
             return
 
-        cols = st.columns(min(3, len(actions)))
-        for idx, action in enumerate(actions):
-            with cols[idx % len(cols)]:
-                _render_action_context(action)
-                button_key = f"{prefix}_{idx}_{_key_token(action.label)}"
-                if safe_button(action.label, key=button_key, width="stretch"):
-                    apply_command_deck_action(action, st.session_state)
-                    if on_action is not None:
-                        on_action(action)
-                    st.rerun()
+        with st.expander("Route to specialist workflow", expanded=route_actions_expanded):
+            render_shell_snapshot((("Route status", "Ready"),))
+            cols = st.columns(min(3, len(actions)))
+            for idx, action in enumerate(actions):
+                with cols[idx % len(cols)]:
+                    _render_action_context(action)
+                    button_key = f"{prefix}_{idx}_{_key_token(action.label)}"
+                    if safe_button(action.label, key=button_key, width="stretch"):
+                        apply_command_deck_action(action, st.session_state)
+                        if on_action is not None:
+                            on_action(action)
+                        st.rerun()
         render_case_drawer()
 
 

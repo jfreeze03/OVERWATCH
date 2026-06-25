@@ -208,7 +208,10 @@ def render() -> None:
         "cost_contract_workflow",
         WORKFLOWS,
         WORKFLOW_DETAILS,
-        columns=5,
+        columns=3,
+        compact_details=True,
+        collapse_after=3,
+        collapsed_label="More cost workflows",
     )
 
     routed_workflow = st.session_state.pop(_PENDING_DETAIL_WORKFLOW_KEY, None)

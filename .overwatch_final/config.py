@@ -302,12 +302,12 @@ class SectionDefinition:
 # first-class in front of DBAs and leadership. Legacy redirect aliases below
 # keep deep links working without keeping weak standalone pages alive.
 SECTION_DEFINITIONS = (
-    SectionDefinition("MONITORING CORE", "briefcase", "Executive Landing", "sections.executive_landing_shell"),
-    SectionDefinition("MONITORING CORE", "target", "DBA Control Room", "sections.dba_control_room"),
-    SectionDefinition("MONITORING CORE", "bell", "Alert Center", "sections.alert_center"),
-    SectionDefinition("FINANCIAL CONTROL", "cost", "Cost & Contract", "sections.cost_contract"),
-    SectionDefinition("OPERATIONS", "work", "Workload Operations", "sections.workload_operations"),
-    SectionDefinition("SECURITY", "security", "Security Monitoring", "sections.security_posture"),
+    SectionDefinition("MONITORING CORE", "EX", "Executive Landing", "sections.executive_landing_shell"),
+    SectionDefinition("MONITORING CORE", "DBA", "DBA Control Room", "sections.dba_control_room"),
+    SectionDefinition("MONITORING CORE", "ALT", "Alert Center", "sections.alert_center"),
+    SectionDefinition("FINANCIAL CONTROL", "$", "Cost & Contract", "sections.cost_contract"),
+    SectionDefinition("OPERATIONS", "OPS", "Workload Operations", "sections.workload_operations"),
+    SectionDefinition("SECURITY", "SEC", "Security Monitoring", "sections.security_posture"),
 )
 
 PRIMARY_NAV_HIDDEN_SECTIONS = frozenset()

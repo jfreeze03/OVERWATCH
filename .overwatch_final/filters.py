@@ -250,11 +250,11 @@ def maybe_clear_scope_cache_on_filter_change() -> None:
 
 
 def render_topbar_filter_strip(active_company: str) -> str:
-    """Render the high-use operator filters above every section."""
+    """Render only the global scope controls DBAs need on every first paint."""
     st.markdown(
         """
         <div class="ow-filter-strip-shell">
-            <div class="ow-filter-strip-kicker">Triage Filters</div>
+            <div class="ow-filter-strip-kicker">Operating Scope</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -276,13 +276,14 @@ def render_topbar_filter_strip(active_company: str) -> str:
         render_global_warehouse_control(selected_company)
     with c_clear:
         st.write("")
-        if st.button("Clear", key=WIDGET_GLOBAL_FILTERS_CLEAR_TOPBAR, width="stretch"):
+        if st.button("Reset", key=WIDGET_GLOBAL_FILTERS_CLEAR_TOPBAR, width="stretch"):
             clear_global_filters()
     return str(selected_company or active_company)
 
 
 def render_advanced_scope_controls(active_company: str) -> None:
     """Render optional user, role, database, and schema narrowing controls."""
+    st.caption("Use these only when the command view needs a narrower investigation scope.")
     st.text_input("User contains", key=GLOBAL_USER)
     st.text_input("Role contains", key=GLOBAL_ROLE)
     ensure_global_database_options(active_company)

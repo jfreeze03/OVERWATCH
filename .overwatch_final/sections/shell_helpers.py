@@ -530,8 +530,9 @@ def render_signal_lane_board(
             if detail and show_detail
             else ""
         )
+        state_class = "".join(ch.lower() if ch.isalnum() else "-" for ch in state).strip("-")
         cards.append(
-            f'<div class="ow-signal-card"><div class="ow-signal-card-top">'
+            f'<div class="ow-signal-card ow-signal-state-{_escape_markup(state_class or "review")}"><div class="ow-signal-card-top">'
             f'<span class="ow-signal-label">{_escape_markup(label)}</span>'
             f'<span class="ow-signal-pill">{_escape_markup(state)}</span></div>'
             f'<div class="ow-signal-value">{_escape_markup(value)}</div>{detail_html}</div>'

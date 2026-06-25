@@ -6,7 +6,7 @@ import streamlit as st
 from config import DAY_WINDOW_OPTIONS, DEFAULT_ALERT_EMAIL, DEFAULT_DAY_WINDOW
 from sections.command_deck import render_command_deck_for_section
 from sections.alert_center_case import render_alert_center_add_to_case
-from sections.shell_helpers import build_first_paint_summary_spec, consume_section_autoload_request, render_data_freshness, render_escaped_bold_text, render_section_first_paint_shell, render_shell_kpi_row, render_shell_snapshot, render_shell_status_strip, with_loaded_at
+from sections.shell_helpers import build_first_paint_summary_spec, consume_section_autoload_request, render_data_freshness, render_escaped_bold_text, render_section_first_paint_shell, render_shell_kpi_row, render_shell_snapshot, render_shell_status_strip, render_signal_lane_board, with_loaded_at
 from sections.alert_center_contracts import (
     ALERT_CENTER_ADMIN_VIEW_DETAILS,
     ALERT_CENTER_ADMIN_VIEW_KEY,
@@ -456,7 +456,10 @@ def _render_alert_center_first_paint_shell(
             loaded=loaded_for_summary,
         )
     )
-    st.info(f"Use Load {source_view} for detailed Alert Center rows. First paint does not query Snowflake.")
+    st.info(
+        f"First paint does not query Snowflake. Use Load {source_view} only when you need "
+        "the full Alert Center table."
+    )
 
 
 def _alert_command_lanes(
@@ -603,17 +606,10 @@ def _alert_command_lanes(
 
 
 def _render_alert_command_lane_board(lanes: list[dict[str, str]]) -> None:
-    pd = _pd()
-    lane_rows = pd.DataFrame(lanes)
-    if lane_rows.empty:
-        return
-    _render_priority_dataframe(
-        lane_rows,
-        title="Alert operating lanes",
-        priority_columns=["label", "value", "state", "detail"],
-        raw_label="All alert operating lanes",
-        height=260,
-        max_rows=8,
+    render_signal_lane_board(
+        "Alert operating lanes",
+        [dict(row, show_detail=True) for row in lanes or ()],
+        max_lanes=8,
     )
 
 

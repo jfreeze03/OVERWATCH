@@ -329,8 +329,8 @@ def render_sidebar(
         st.markdown("""
         <div class="ow-sidebar-brand">
             <div class="ow-brand-row"><span class="ow-brand-dot"></span><span>OVERWATCH</span></div>
-            <div class="ow-sidebar-subtitle">Snowflake Usage Monitor</div>
-            <div class="ow-live-pill">LIVE</div>
+            <div class="ow-sidebar-subtitle">Snowflake DBA Control Plane</div>
+            <div class="ow-live-pill">LIVE COMMAND</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -362,8 +362,10 @@ def render_sidebar(
             st.caption(group_name)
             for section_name in group_visible:
                 is_active = section_name == active_section
+                nav_token = str(SECTION_ICONS.get(section_name, "") or "").upper()
+                nav_label = f"{nav_token}  {section_name}" if nav_token else section_name
                 st.button(
-                    section_name,
+                    nav_label,
                     key=f"{WIDGET_NAV_BUTTON_PREFIX}_{group_name}_{section_name}",
                     type="primary" if is_active else "secondary",
                     width="stretch",

@@ -657,16 +657,15 @@ def render() -> None:
     company = get_active_company()
     environment = get_active_environment()
 
-    workflow = str(st.session_state.get("workload_operations_workflow") or WORKLOAD_OVERVIEW_WORKFLOW)
-    if workflow == WORKLOAD_OVERVIEW_WORKFLOW:
-        st.session_state["workload_operations_workflow"] = WORKLOAD_OVERVIEW_WORKFLOW
-    else:
-        workflow = render_workflow_selector(
-            "Workload workflow",
-            "workload_operations_workflow",
-            WORKFLOWS,
-            WORKFLOW_DETAILS,
-            columns=5,
-        )
+    workflow = render_workflow_selector(
+        "Workload workflow",
+        "workload_operations_workflow",
+        WORKFLOWS,
+        WORKFLOW_DETAILS,
+        columns=3,
+        compact_details=True,
+        collapse_after=2,
+        collapsed_label="More workload workflows",
+    )
 
     _render_workload_surface(workflow, company, environment)

@@ -5,11 +5,8 @@ import streamlit as st
 
 from config import DAY_WINDOW_OPTIONS, DEFAULT_ALERT_EMAIL, DEFAULT_DAY_WINDOW
 from sections.command_deck import render_command_deck_for_section
-from sections.shell_helpers import (
-    build_first_paint_summary_spec, consume_section_autoload_request, render_data_freshness,
-    render_escaped_bold_text, render_section_first_paint_shell, render_shell_kpi_row,
-    render_shell_snapshot, render_shell_status_strip, with_loaded_at,
-)
+from sections.alert_center_case import render_alert_center_add_to_case
+from sections.shell_helpers import build_first_paint_summary_spec, consume_section_autoload_request, render_data_freshness, render_escaped_bold_text, render_section_first_paint_shell, render_shell_kpi_row, render_shell_snapshot, render_shell_status_strip, with_loaded_at
 from sections.alert_center_contracts import (
     ALERT_CENTER_ADMIN_VIEW_DETAILS,
     ALERT_CENTER_ADMIN_VIEW_KEY,
@@ -983,6 +980,9 @@ def render() -> None:
         )
     )
     _render_alert_center_exception_strip(exception_rows)
+    render_alert_center_add_to_case(source_view, company, environment, int(days), int(limit), data, loaded_summary,
+                                    loaded_sources, open_alert_count, critical_high_count, overdue_count,
+                                    open_queue_count, exception_rows, alerts)
 
     _render_loaded_alert_center_pane(
         source_view,

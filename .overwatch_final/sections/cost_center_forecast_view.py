@@ -29,6 +29,7 @@ from sections.cost_center_sql import (
     _cost_explorer_live_sql,
     _snowflake_admin_reconciliation_sql,
 )
+from sections.chart_helpers import render_area_time_series_chart, render_ranked_bar_chart
 from sections.shell_helpers import render_escaped_bold_text, render_shell_snapshot
 from utils import (
     build_cost_reconciliation_sql,
@@ -59,12 +60,10 @@ from utils import (
     render_drillable_bar_chart,
     render_entity_query_drilldown,
     render_priority_dataframe,
-    render_ranked_bar_chart,
     run_query,
     safe_float,
     safe_int,
 )
-from sections.chart_helpers import render_area_time_series_chart
 
 
 def render_cost_forecast(session, company: str, credit_price: float, max_wh_size_expr: str, bytes_scanned_sum_expr: str, query_tag_dimension_expr: str) -> None:

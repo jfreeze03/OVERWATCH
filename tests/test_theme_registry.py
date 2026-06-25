@@ -1,6 +1,7 @@
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch
 
 import streamlit as st
 
@@ -226,11 +227,31 @@ class ThemeRegistryTests(unittest.TestCase):
         self.assertIn(".ow-topbar", theme._STRUCTURAL_CSS)
         self.assertIn(".ow-section-title", theme._STRUCTURAL_CSS)
         self.assertIn(".ow-section-subtitle", theme._STRUCTURAL_CSS)
+        self.assertIn(".ow-workflow-context", theme._STRUCTURAL_CSS)
+        self.assertIn(".ow-workflow-context-kicker", theme._STRUCTURAL_CSS)
+        self.assertIn(".ow-workflow-context-title", theme._STRUCTURAL_CSS)
+        self.assertIn(".ow-workflow-context-detail", theme._STRUCTURAL_CSS)
+        self.assertIn(".ow-command-deck", theme._STRUCTURAL_CSS)
+        self.assertIn(".ow-command-deck-kicker", theme._STRUCTURAL_CSS)
+        self.assertIn(".ow-command-deck-title", theme._STRUCTURAL_CSS)
+        self.assertIn(".ow-command-deck-primary", theme._STRUCTURAL_CSS)
+        self.assertIn(".ow-command-deck-boundary", theme._STRUCTURAL_CSS)
+        self.assertIn(".ow-command-action", theme._STRUCTURAL_CSS)
+        self.assertIn(".ow-command-action-label", theme._STRUCTURAL_CSS)
+        self.assertIn(".ow-command-action-detail", theme._STRUCTURAL_CSS)
         self.assertIn("line-height: 1.35", theme._STRUCTURAL_CSS)
         self.assertIn("max-width: min(880px, 100%)", theme._STRUCTURAL_CSS)
+        self.assertIn('[data-testid="stMain"] [data-testid="stExpander"] details[open] > summary', theme._STRUCTURAL_CSS)
+        self.assertIn('[data-testid="stMain"] [data-testid="stExpander"] summary:hover', theme._STRUCTURAL_CSS)
+        self.assertIn("-webkit-text-fill-color: #ffffff", theme._STRUCTURAL_CSS)
         self.assertIn('[data-testid="stButton"] button:focus-visible', theme._STRUCTURAL_CSS)
+        self.assertIn('[data-testid="stExpander"] summary:focus-visible', theme._STRUCTURAL_CSS)
+        self.assertIn('[data-baseweb="select"] [role="combobox"]:focus-visible', theme._STRUCTURAL_CSS)
+        self.assertIn('[data-baseweb="input"] input:focus-visible', theme._STRUCTURAL_CSS)
         self.assertIn("outline-offset: 2px", theme._STRUCTURAL_CSS)
         self.assertIn(".ow-filter-strip-shell", theme._STRUCTURAL_CSS)
+        self.assertIn('[data-testid="stExpander"].stExpander [data-testid="stExpander"].stExpander > details[open] > summary', theme._THEME_EXTRAS["carbon"])
+        self.assertIn("background-color: rgba(9,23,32,0.98)", theme._THEME_EXTRAS["carbon"])
         button_css = theme._STRUCTURAL_CSS.split("/* Buttons */", 1)[1].split("/* Expanders */", 1)[0]
         self.assertNotIn("backdrop-filter", button_css)
         self.assertNotIn("backdrop-filter", theme._STRUCTURAL_CSS)
@@ -240,6 +261,24 @@ class ThemeRegistryTests(unittest.TestCase):
         self.assertIn("repeat(auto-fit, minmax(175px, 1fr))", theme._STRUCTURAL_CSS)
         self.assertIn(".ow-chart-title", theme._STRUCTURAL_CSS)
         self.assertIn('[data-testid="stVegaLiteChart"]', theme._STRUCTURAL_CSS)
+
+    def test_workflow_context_escapes_markup(self):
+        from utils import workflows
+
+        with patch.object(workflows.st, "html") as html:
+            workflows._render_selector_context(
+                label="<script>alert(1)</script>",
+                selected="bad",
+                labels={"bad": "<b>Selected</b>"},
+                details={"bad": "<img src=x onerror=alert(1)>"},
+            )
+
+        markup = html.call_args.args[0]
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", markup)
+        self.assertIn("&lt;b&gt;Selected&lt;/b&gt;", markup)
+        self.assertIn("&lt;img src=x onerror=alert(1)&gt;", markup)
+        self.assertNotIn("<script>", markup)
+        self.assertNotIn("<img src=x", markup)
 
 
 if __name__ == "__main__":

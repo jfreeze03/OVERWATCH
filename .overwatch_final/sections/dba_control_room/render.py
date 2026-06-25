@@ -9,6 +9,8 @@ from sections.shell_helpers import (
     render_shell_snapshot,
     with_loaded_at,
 )
+from sections.command_deck import render_command_deck
+from sections.command_deck_contracts import get_command_deck_contract
 from utils.evidence_mode import (
     TRIAGE_MODE_ALL_EVIDENCE,
     TRIAGE_MODE_INVESTIGATE,
@@ -759,6 +761,10 @@ def _render_morning_cockpit_empty(load_callback) -> None:
         ("Changes", "Pending"),
     ))
     st.caption("Load the morning cockpit when you need current DBA-owned exceptions, owner routes, and action status.")
+    render_command_deck(
+        get_command_deck_contract("DBA Control Room"),
+        key_prefix="dba_control_room_command_deck",
+    )
     c1, c2, c3 = st.columns(3)
     with c1:
         if st.button("Load Morning Cockpit", key="dba_morning_cockpit_load_empty", type="primary", width="stretch"):
@@ -1287,6 +1293,10 @@ def render() -> None:
         failed_queries=failed_queries,
     )
     _render_dba_command_intelligence_contract()
+    render_command_deck(
+        get_command_deck_contract("DBA Control Room"),
+        key_prefix="dba_control_room_command_deck_loaded",
+    )
 
     st.divider()
 

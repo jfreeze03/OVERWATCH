@@ -37,6 +37,7 @@ from sections.security_posture_models import (
     _security_score,
     _show_security_proof_tables,
 )
+from sections.operator_case import make_case_evidence, render_add_to_case_button
 from sections.shell_helpers import (
     consume_section_autoload_request,
     render_data_freshness,
@@ -806,6 +807,23 @@ def render_security_overview(company: str, environment: str, days: int) -> None:
             active_users=active_users,
             recent_grants=recent_grants,
             shared_databases=shared_databases,
+        )
+        render_add_to_case_button(
+            make_case_evidence(
+                section="Security Monitoring",
+                workflow="Security Overview",
+                scope=f"{company} / {environment} / {int(days)} days",
+                freshness=str(meta.get("loaded_at") or "Loaded security summary"),
+                source=str(meta.get("source") or st.session_state.get("security_posture_source") or "Security summary"),
+                summary=(
+                    f"Security score {score}; {failed_logins:,} failed logins, "
+                    f"{users_without_mfa:,} users without MFA, {recent_grants:,} recent grants, "
+                    f"{shared_databases:,} shared databases."
+                ),
+                next_action="Review failed login, grant, and sharing exposure lanes before escalation.",
+                evidence_rows_preview=exceptions if exceptions is not None and not exceptions.empty else summary,
+            ),
+            key="security_posture_add_to_case",
         )
         if score < 85:
             st.warning("Access & Security needs DBA review before this can be called clean.")

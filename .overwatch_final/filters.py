@@ -283,10 +283,6 @@ def render_topbar_filter_strip(active_company: str) -> str:
 
 def render_advanced_scope_controls(active_company: str) -> None:
     """Render optional user, role, database, and schema narrowing controls."""
-    st.caption(
-        "Optional user, role, database, and schema narrowing. "
-        "Primary triage filters live above the page."
-    )
     st.text_input("User contains", key=GLOBAL_USER)
     st.text_input("Role contains", key=GLOBAL_ROLE)
     ensure_global_database_options(active_company)

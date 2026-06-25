@@ -385,6 +385,37 @@ button[data-testid^="stBaseButton"]:disabled p {
     border: 1px solid var(--border-subtle) !important;
     border-radius: 8px;
 }
+.stApp [data-testid="stMain"] [data-testid="stExpander"] summary,
+.stApp [data-testid="stMain"] [data-testid="stExpander"] details[open] > summary,
+.stApp [data-testid="stMain"] [data-testid="stExpander"] summary:hover,
+.stApp [data-testid="stMain"] [data-testid="stExpander"] summary:focus,
+.stApp [data-testid="stMain"] [data-testid="stExpander"] summary:focus-visible {
+    background: linear-gradient(135deg, rgba(9, 23, 32, 0.98), rgba(13, 39, 52, 0.94)) !important;
+    border-bottom: 1px solid var(--border-subtle) !important;
+    color: var(--text-primary) !important;
+    -webkit-text-fill-color: var(--text-primary) !important;
+}
+.stApp [data-testid="stMain"] [data-testid="stExpander"] summary,
+.stApp [data-testid="stMain"] [data-testid="stExpander"] summary > div,
+.stApp [data-testid="stMain"] [data-testid="stExpander"] summary > span,
+.stApp [data-testid="stMain"] [data-testid="stExpander"] summary p,
+.stApp [data-testid="stMain"] [data-testid="stExpander"] summary span {
+    color: var(--text-primary) !important;
+    -webkit-text-fill-color: var(--text-primary) !important;
+}
+.stApp [data-testid="stMain"] [data-testid="stExpander"] summary:hover,
+.stApp [data-testid="stMain"] [data-testid="stExpander"] summary:hover > div,
+.stApp [data-testid="stMain"] [data-testid="stExpander"] summary:hover > span,
+.stApp [data-testid="stMain"] [data-testid="stExpander"] summary:hover p,
+.stApp [data-testid="stMain"] [data-testid="stExpander"] summary:hover span,
+.stApp [data-testid="stMain"] [data-testid="stExpander"] details[open] > summary,
+.stApp [data-testid="stMain"] [data-testid="stExpander"] details[open] > summary > div,
+.stApp [data-testid="stMain"] [data-testid="stExpander"] details[open] > summary > span,
+.stApp [data-testid="stMain"] [data-testid="stExpander"] details[open] > summary p,
+.stApp [data-testid="stMain"] [data-testid="stExpander"] details[open] > summary span {
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+}
 
 /* Dividers */
 hr {
@@ -565,7 +596,14 @@ ul[data-testid="stSelectboxVirtualDropdown"] li[aria-selected="true"] {
     box-shadow: 0 0 12px rgba(var(--accent-rgb), 0.12) !important;
 }
 .stApp [data-testid="stButton"] button:focus-visible,
-.stApp button[data-testid^="stBaseButton"]:focus-visible {
+.stApp button[data-testid^="stBaseButton"]:focus-visible,
+.stApp [data-testid="stExpander"] summary:focus-visible,
+.stApp [data-baseweb="select"] [role="combobox"]:focus-visible,
+.stApp [data-baseweb="input"] input:focus-visible,
+.stApp [data-baseweb="base-input"] input:focus-visible,
+.stApp textarea:focus-visible,
+.stApp input:focus-visible,
+.stApp [role="button"]:focus-visible {
     outline: 2px solid var(--accent) !important;
     outline-offset: 2px !important;
 }
@@ -855,6 +893,7 @@ code, pre, .stCodeBlock {
     text-transform: uppercase;
 }
 .ow-workflow-context {
+    min-width: 0;
     border: 1px solid var(--border-subtle);
     border-left: 3px solid var(--accent);
     border-radius: 8px;
@@ -878,12 +917,70 @@ code, pre, .stCodeBlock {
     font-weight: 850;
     line-height: 1.25;
     margin-top: 0.18rem;
+    overflow-wrap: anywhere;
 }
 .ow-workflow-context-detail {
     color: var(--text-secondary);
     font-size: 0.78rem;
     line-height: 1.4;
     margin-top: 0.2rem;
+    overflow-wrap: anywhere;
+}
+.ow-command-deck {
+    min-width: 0;
+    border-bottom: 1px solid var(--border-subtle);
+    margin-bottom: 0.62rem;
+    padding-bottom: 0.55rem;
+}
+.ow-command-deck-kicker,
+.ow-command-action-label {
+    color: var(--text-muted);
+    font-size: 0.64rem;
+    font-weight: 850;
+    letter-spacing: 0.06em;
+    line-height: 1.2;
+    text-transform: uppercase;
+    overflow-wrap: anywhere;
+}
+.ow-command-deck-title {
+    color: var(--text-primary);
+    font-size: 1rem;
+    font-weight: 850;
+    line-height: 1.25;
+    margin-top: 0.18rem;
+    overflow-wrap: anywhere;
+}
+.ow-command-deck-primary {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.35rem 0.5rem;
+    margin-top: 0.38rem;
+}
+.ow-command-deck-primary span {
+    color: var(--text-muted);
+    font-size: 0.64rem;
+    font-weight: 850;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+.ow-command-deck-primary strong {
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    font-weight: 850;
+    overflow-wrap: anywhere;
+}
+.ow-command-deck-boundary,
+.ow-command-action-detail {
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+    line-height: 1.35;
+    margin-top: 0.2rem;
+    overflow-wrap: anywhere;
+}
+.ow-command-action {
+    min-width: 0;
+    margin: 0.18rem 0 0.38rem;
 }
 .ow-empty-state {
     max-width: 780px;
@@ -1147,7 +1244,7 @@ code, pre, .stCodeBlock {
     font-weight: 850;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
 }
 .ow-section-guide-detail {
     color: var(--text-secondary);
@@ -1445,6 +1542,26 @@ _THEME_EXTRAS = {
 _THEME_EXTRAS["carbon"] += """
 <style>
 /* Snowflake Dark: broad main-surface button contrast so subsection hover states cannot inherit light text on light backgrounds. */
+.stApp [data-testid="stMain"] [data-testid="stExpander"].stExpander > details > summary,
+.stApp [data-testid="stMain"] [data-testid="stExpander"].stExpander > details[open] > summary,
+.stApp [data-testid="stMain"] [data-testid="stExpander"].stExpander [data-testid="stExpander"].stExpander > details > summary,
+.stApp [data-testid="stMain"] [data-testid="stExpander"].stExpander [data-testid="stExpander"].stExpander > details[open] > summary,
+.stApp [data-testid="stMain"] [data-testid="stExpander"].stExpander > details > summary:hover,
+.stApp [data-testid="stMain"] [data-testid="stExpander"].stExpander > details > summary:focus,
+.stApp [data-testid="stMain"] [data-testid="stExpander"].stExpander > details > summary:focus-visible {
+    background: linear-gradient(135deg, rgba(9,23,32,0.98), rgba(13,39,52,0.94)) !important;
+    background-color: rgba(9,23,32,0.98) !important;
+    background-image: linear-gradient(135deg, rgba(9,23,32,0.98), rgba(13,39,52,0.94)) !important;
+    border-color: rgba(41,181,232,0.30) !important;
+    border-bottom: 1px solid rgba(41,181,232,0.22) !important;
+    color: #eef8fb !important;
+    -webkit-text-fill-color: #eef8fb !important;
+}
+.stApp [data-testid="stMain"] [data-testid="stExpander"].stExpander > details > summary *,
+.stApp [data-testid="stMain"] [data-testid="stExpander"].stExpander [data-testid="stExpander"].stExpander > details > summary * {
+    color: #eef8fb !important;
+    -webkit-text-fill-color: #eef8fb !important;
+}
 .stApp [data-testid="stMain"] .stButton > button,
 .stApp [data-testid="stMain"] [data-testid="stButton"] button,
 .stApp [data-testid="stMain"] button[data-testid^="stBaseButton"] {

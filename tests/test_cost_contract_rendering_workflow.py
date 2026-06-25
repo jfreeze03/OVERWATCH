@@ -256,6 +256,11 @@ class CostContractRenderingWorkflowTests(unittest.TestCase):
                 side_effect=AssertionError("Cold Cost Overview first paint must not request Snowflake"),
             ) as get_session,
             patch.object(cost_contract_overview_floor, "defer_section_note"),
+            patch.object(
+                cost_contract_overview_floor,
+                "render_add_to_case_button",
+                side_effect=AssertionError("Cost Add to Case should wait for loaded cost data"),
+            ),
         ):
             cost_contract_overview_floor._render_cost_watch_floor("ALFA", 4.0)
 
@@ -314,12 +319,27 @@ class CostContractRenderingWorkflowTests(unittest.TestCase):
         self.assertIn("cost_contract_view_advanced_details", button_keys)
         route_keys = [
             key for key in button_keys
-            if key not in {"cost_contract_refresh", "cost_contract_view_advanced_details"}
+            if key not in {"cost_contract_refresh", "cost_contract_view_advanced_details", "cost_contract_add_to_case"}
         ]
         self.assertTrue(all(key.startswith("cost_contract_command_deck_") for key in route_keys))
         self.assertTrue(state[_ADVANCED_COST_DETAIL_VISIBLE_KEY])
         rerun.assert_called_once()
         run_rate_lens.assert_not_called()
+
+    def test_cost_refresh_key_does_not_collide_with_command_deck_routes(self):
+        from sections.command_deck import _key_token
+        from sections.command_deck_contracts import get_command_deck_contract
+
+        source = (APP_ROOT / "sections" / "cost_contract_overview_floor.py").read_text(encoding="utf-8")
+        self.assertEqual(source.count('key="cost_contract_refresh"'), 1)
+
+        contract = get_command_deck_contract("Cost & Contract")
+        route_keys = [
+            f"cost_contract_command_deck_{idx}_{_key_token(action.label)}"
+            for idx, action in enumerate(contract.route_actions)
+        ]
+        self.assertNotIn(contract.primary_cta_key, route_keys)
+        self.assertEqual(len(route_keys), len(set(route_keys)))
 
     def test_cost_overview_floor_next_move_buttons_keep_route_key_contract(self):
         from sections import cost_contract_overview_floor

@@ -1,6 +1,7 @@
 # sections/cortex_monitor.py - AI & Cortex Code usage: users, trends, anomalies, predictive alerts
 import streamlit as st
 import pandas as pd
+from sections.chart_helpers import render_ranked_bar_chart, render_time_series_chart
 from sections.shell_helpers import render_shell_snapshot
 from utils.workflows import render_load_status, render_priority_dataframe, render_workflow_selector
 from utils import (
@@ -20,7 +21,6 @@ from utils import (
     render_chart_with_data_toggle,
     day_window_selectbox,
     make_action_id,
-    render_ranked_bar_chart,
     run_query,
     safe_float,
     safe_int,
@@ -668,7 +668,18 @@ def _render_cortex_control_brief(session, company: str) -> None:
             render_chart_with_data_toggle(
                 "Daily Cortex Burn",
                 "cortex_budget_daily_burn",
-                lambda: st.line_chart(daily_rollup.set_index("USAGE_DATE")[["COST_USD", "ROLLING_7D_COST"]]),
+                lambda: render_time_series_chart(
+                    daily_rollup.melt(
+                        id_vars=["USAGE_DATE"],
+                        value_vars=["COST_USD", "ROLLING_7D_COST"],
+                        var_name="METRIC",
+                        value_name="VALUE",
+                    ),
+                    "USAGE_DATE",
+                    "VALUE",
+                    series_column="METRIC",
+                    title="Daily Cortex Burn",
+                ),
                 daily_rollup,
                 priority_columns=["USAGE_DATE", "COST_USD", "ROLLING_7D_COST", "TOTAL_CREDITS", "TOTAL_REQUESTS"],
                 sort_by=["USAGE_DATE"],
@@ -837,7 +848,18 @@ def render():
             render_chart_with_data_toggle(
                 "Cortex Service Daily Cost",
                 "cortex_service_detail_daily_cost",
-                lambda: st.line_chart(daily.set_index("USAGE_DATE")[["COST_USD", "TOTAL_CREDITS"]]),
+                lambda: render_time_series_chart(
+                    daily.melt(
+                        id_vars=["USAGE_DATE"],
+                        value_vars=["COST_USD", "TOTAL_CREDITS"],
+                        var_name="METRIC",
+                        value_name="VALUE",
+                    ),
+                    "USAGE_DATE",
+                    "VALUE",
+                    series_column="METRIC",
+                    title="Cortex Service Daily Cost",
+                ),
                 daily,
                 priority_columns=["USAGE_DATE", "COST_USD", "TOTAL_CREDITS", "TOTAL_REQUESTS"],
                 sort_by=["USAGE_DATE"],
@@ -1116,7 +1138,7 @@ def render():
                 render_chart_with_data_toggle(
                     "Daily AI Credits",
                     "cortex_trends_daily_credits",
-                    lambda: st.line_chart(daily.set_index("USAGE_DATE")["TOTAL_CREDITS"]),
+                    lambda: render_time_series_chart(daily, "USAGE_DATE", "TOTAL_CREDITS", title="Daily AI Credits"),
                     daily,
                     priority_columns=["USAGE_DATE", "TOTAL_CREDITS", "AI_COST_USD", "TOTAL_REQUESTS", "ACTIVE_USERS"],
                     sort_by=["USAGE_DATE"],
@@ -1128,7 +1150,7 @@ def render():
                 render_chart_with_data_toggle(
                     "Daily Active Users",
                     "cortex_trends_active_users",
-                    lambda: st.line_chart(daily.set_index("USAGE_DATE")["ACTIVE_USERS"]),
+                    lambda: render_time_series_chart(daily, "USAGE_DATE", "ACTIVE_USERS", title="Daily Active Users"),
                     daily,
                     priority_columns=["USAGE_DATE", "ACTIVE_USERS", "TOTAL_CREDITS", "AI_COST_USD", "TOTAL_REQUESTS"],
                     sort_by=["USAGE_DATE"],
@@ -1140,7 +1162,7 @@ def render():
             render_chart_with_data_toggle(
                 "Daily Requests",
                 "cortex_trends_daily_requests",
-                lambda: st.bar_chart(daily.set_index("USAGE_DATE")["TOTAL_REQUESTS"]),
+                lambda: render_ranked_bar_chart(daily, "USAGE_DATE", "TOTAL_REQUESTS", title="Daily Requests", top_n=90),
                 daily,
                 priority_columns=["USAGE_DATE", "TOTAL_REQUESTS", "TOTAL_CREDITS", "AI_COST_USD", "ACTIVE_USERS"],
                 sort_by=["USAGE_DATE"],
@@ -1170,7 +1192,18 @@ def render():
             render_chart_with_data_toggle(
                 "Credits + 7-day Rolling Avg",
                 "cortex_trends_rolling_credits",
-                lambda: st.line_chart(daily.set_index("USAGE_DATE")[["TOTAL_CREDITS","ROLLING_7D"]]),
+                lambda: render_time_series_chart(
+                    daily.melt(
+                        id_vars=["USAGE_DATE"],
+                        value_vars=["TOTAL_CREDITS", "ROLLING_7D"],
+                        var_name="METRIC",
+                        value_name="VALUE",
+                    ),
+                    "USAGE_DATE",
+                    "VALUE",
+                    series_column="METRIC",
+                    title="Credits + 7-day Rolling Avg",
+                ),
                 daily,
                 priority_columns=["USAGE_DATE", "TOTAL_CREDITS", "ROLLING_7D", "AI_COST_USD", "ROLLING_7D_COST_USD"],
                 sort_by=["USAGE_DATE"],
@@ -1379,7 +1412,12 @@ def render():
             render_chart_with_data_toggle(
                 "Daily Credit Trend (last 30 days)",
                 "cortex_predictive_daily_credits",
-                lambda: st.line_chart(df_p.set_index("USAGE_DATE")["DAILY_CREDITS"]),
+                lambda: render_time_series_chart(
+                    df_p,
+                    "USAGE_DATE",
+                    "DAILY_CREDITS",
+                    title="Daily Credit Trend (last 30 days)",
+                ),
                 df_p,
                 priority_columns=["USAGE_DATE", "DAILY_CREDITS", "DAILY_COST_USD"],
                 sort_by=["USAGE_DATE"],

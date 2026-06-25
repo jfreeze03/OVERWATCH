@@ -276,7 +276,11 @@ class AlertCenterSplitTests(unittest.TestCase):
         with patch.object(alert_center, "render_section_first_paint_shell") as render_shell, patch.object(
             alert_center,
             "_render_alert_command_lane_board",
-        ) as render_lanes, patch.object(alert_center.st, "info") as info:
+        ) as render_lanes, patch.object(alert_center.st, "info") as info, patch.object(
+            alert_center,
+            "render_alert_center_add_to_case",
+            side_effect=AssertionError("Add to Case should wait for loaded alert data"),
+        ):
             alert_center._render_alert_center_first_paint_shell(
                 source_view="Active Alerts",
                 company="ALFA",
@@ -298,6 +302,26 @@ class AlertCenterSplitTests(unittest.TestCase):
         self.assertEqual(spec.load_cta, "Load Active Alerts")
         self.assertIn("Load Active Alerts", info.call_args.args[0])
         self.assertIn("First paint does not query Snowflake", info.call_args.args[0])
+
+    def test_alert_center_load_and_admin_button_keys_stay_distinct(self):
+        sources = {
+            path.name: path.read_text(encoding="utf-8")
+            for path in (APP_ROOT / "sections").glob("alert_center*.py")
+        }
+        combined = "\n".join(sources.values())
+
+        expected_once = (
+            'key="alert_center_load"',
+            'button_key="alert_catalog_load_native_registry"',
+            'button_key="alert_center_load_annotations"',
+            'key="alert_center_load_operational_score_drivers"',
+            'key="alert_center_load_related_changes"',
+            'key="alert_center_load_closed_loop_workflows"',
+            'key="alert_center_load_command_findings"',
+        )
+        for token in expected_once:
+            with self.subTest(token=token):
+                self.assertEqual(combined.count(token), 1)
 
     def test_alert_center_first_paint_summary_cold_state_is_on_demand(self):
         summary = alert_center._alert_center_first_paint_summary(None, "Active Alerts")

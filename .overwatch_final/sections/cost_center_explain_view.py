@@ -4,6 +4,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from sections.chart_helpers import render_ranked_bar_chart
 from sections.cost_center_action_queue import _queue_bill_exceptions, _queue_cost_outliers
 from sections.cost_center_contracts import COST_EXPLORER_LENSES, NO_DATABASE_CONTEXT_VALUES
 from sections.cost_center_models import (
@@ -59,7 +60,6 @@ from utils import (
     render_drillable_bar_chart,
     render_entity_query_drilldown,
     render_priority_dataframe,
-    render_ranked_bar_chart,
     run_query,
     safe_float,
     safe_int,
@@ -423,7 +423,7 @@ def render_explain_this_bill(session, company: str, credit_price: float, max_wh_
         render_chart_with_data_toggle(
             "Bill Movement Waterfall",
             "cc_bill_movement_waterfall",
-            lambda: st.bar_chart(waterfall, x="Driver", y="Credits", color="Type"),
+            lambda: render_ranked_bar_chart(waterfall, "Driver", "Credits", title="Bill Movement Waterfall"),
             waterfall,
             priority_columns=["Driver", "Credits", "Estimated Cost", "Type"],
             sort_by=["Credits"],

@@ -1,6 +1,7 @@
 # sections/adoption_analytics.py - user and workload adoption analytics
 import streamlit as st
 
+from sections.chart_helpers import render_ranked_bar_chart
 from sections.shell_helpers import render_shell_snapshot
 from utils import (
     build_mart_adoption_role_type_sql,
@@ -19,7 +20,6 @@ from utils import (
     format_snowflake_error,
     render_chart_with_data_toggle,
     render_drillable_bar_chart,
-    render_ranked_bar_chart,
     run_query,
     safe_float,
 )

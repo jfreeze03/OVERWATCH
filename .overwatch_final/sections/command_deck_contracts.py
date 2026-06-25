@@ -30,6 +30,9 @@ class SectionCommandDeckContract:
     advanced_label: str
     evidence_boundary: str
     no_query_note: str
+    primary_cta_behavior: str = "existing_button"
+    primary_cta_description: str = ""
+    primary_cta_preserve_existing: bool = True
 
 
 def _deck(
@@ -38,8 +41,14 @@ def _deck(
     primary_cta_key: str,
     route_actions: tuple[CommandDeckAction, ...],
     advanced_label: str = "Advanced / diagnostics",
+    primary_cta_behavior: str = "existing_button",
+    primary_cta_description: str = "",
+    primary_cta_preserve_existing: bool = True,
 ) -> SectionCommandDeckContract:
     first_paint = get_first_paint_contract(section)
+    description = primary_cta_description or (
+        f"Use {first_paint.explicit_load_cta} when current evidence is needed."
+    )
     return SectionCommandDeckContract(
         section=first_paint.section,
         primary_cta=first_paint.explicit_load_cta,
@@ -48,6 +57,9 @@ def _deck(
         advanced_label=advanced_label,
         evidence_boundary=f"{first_paint.explicit_load_cta} is the explicit evidence boundary.",
         no_query_note=first_paint.no_query_note,
+        primary_cta_behavior=primary_cta_behavior,
+        primary_cta_description=description,
+        primary_cta_preserve_existing=primary_cta_preserve_existing,
     )
 
 

@@ -48,6 +48,9 @@ class PrimaryFirstPaintContractTests(unittest.TestCase):
                 self.assertEqual(contract.section, section)
                 self.assertTrue(contract.primary_cta)
                 self.assertTrue(contract.primary_cta_key)
+                self.assertIn(contract.primary_cta_behavior, {"existing_button", "route_only", "callback"})
+                self.assertTrue(contract.primary_cta_description)
+                self.assertTrue(contract.primary_cta_preserve_existing)
                 self.assertGreaterEqual(len(contract.route_actions), 2)
                 self.assertTrue(contract.evidence_boundary)
                 self.assertTrue(contract.no_query_note)
@@ -60,7 +63,7 @@ class PrimaryFirstPaintContractTests(unittest.TestCase):
 
     def test_command_deck_renderer_does_not_load_when_route_buttons_are_idle(self):
         from sections import command_deck
-        from sections.command_deck_contracts import get_command_deck_contract
+        from sections.command_deck_contracts import COMMAND_DECK_CONTRACTS
 
         with patch.object(command_deck.st, "container", return_value=contextlib.nullcontext()), patch.object(
             command_deck.st,
@@ -76,13 +79,128 @@ class PrimaryFirstPaintContractTests(unittest.TestCase):
             command_deck.st,
             "rerun",
             side_effect=AssertionError("idle command deck must not rerun"),
-        ):
+        ), patch.object(command_deck, "render_case_drawer"):
+            for section, contract in COMMAND_DECK_CONTRACTS.items():
+                with self.subTest(section=section):
+                    command_deck.render_command_deck(
+                        contract,
+                        key_prefix=f"test_{section.lower().replace(' ', '_')}_command_deck",
+                    )
+
+        self.assertGreaterEqual(safe_button.call_count, 12)
+
+    def test_command_deck_renderer_has_no_query_loader_imports(self):
+        source = (APP_ROOT / "sections" / "command_deck.py").read_text(encoding="utf-8")
+
+        self.assertNotRegex(source, r"\brun_query(?:_or_raise)?\b")
+        self.assertNotRegex(source, r"\bget_session(?:_for_action)?\b")
+        self.assertNotIn("load_latest_control_room_mart", source)
+        self.assertIn("from sections.ui_compat import safe_button, safe_caption", source)
+
+    def test_command_deck_route_keys_are_unique_and_do_not_shadow_primary_cta_keys(self):
+        from sections.command_deck import _key_token
+        from sections.command_deck_contracts import COMMAND_DECK_CONTRACTS
+
+        for section, contract in COMMAND_DECK_CONTRACTS.items():
+            with self.subTest(section=section):
+                prefix = f"command_deck_{_key_token(contract.section)}"
+                route_keys = [
+                    f"{prefix}_{idx}_{_key_token(action.label)}"
+                    for idx, action in enumerate(contract.route_actions)
+                ]
+                self.assertEqual(len(route_keys), len(set(route_keys)))
+                self.assertNotIn(contract.primary_cta_key, route_keys)
+
+    def test_command_deck_html_escapes_header_and_action_copy(self):
+        from sections import command_deck
+        from sections.command_deck_contracts import CommandDeckAction, SectionCommandDeckContract
+
+        contract = SectionCommandDeckContract(
+            section="<script>alert(1)</script>",
+            primary_cta="<b>Load</b>",
+            primary_cta_key="safe_primary",
+            route_actions=(),
+            advanced_label="",
+            evidence_boundary="<img src=x onerror=alert(1)>",
+            no_query_note="First paint",
+        )
+        action = CommandDeckAction(
+            label="<b>Route</b>",
+            description="<svg onload=alert(1)>",
+            target_workflow="Route",
+        )
+        with patch.object(command_deck.st, "html") as html:
+            command_deck._render_deck_header(contract)
+            command_deck._render_action_context(action)
+
+        markup = "\n".join(call.args[0] for call in html.call_args_list)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", markup)
+        self.assertIn("&lt;b&gt;Load&lt;/b&gt;", markup)
+        self.assertIn("&lt;img src=x onerror=alert(1)&gt;", markup)
+        self.assertIn("&lt;b&gt;Route&lt;/b&gt;", markup)
+        self.assertIn("&lt;svg onload=alert(1)&gt;", markup)
+        self.assertNotIn("<script>", markup)
+        self.assertNotIn("<img src=x", markup)
+        self.assertNotIn("<svg onload", markup)
+
+    def test_command_deck_primary_cta_is_callback_only(self):
+        from sections import command_deck
+        from sections.command_deck_contracts import get_command_deck_contract
+
+        primary_callback = Mock()
+        with patch.object(command_deck.st, "container", return_value=contextlib.nullcontext()), patch.object(
+            command_deck.st,
+            "columns",
+            side_effect=lambda count: [contextlib.nullcontext() for _ in range(count)],
+        ), patch.object(command_deck, "render_escaped_bold_text"), patch.object(
+            command_deck,
+            "render_shell_snapshot",
+        ), patch.object(
+            command_deck,
+            "safe_caption",
+        ), patch.object(command_deck, "safe_button", side_effect=lambda label, **kwargs: label == "Load Active Alerts"), patch.object(
+            command_deck.st,
+            "rerun",
+            side_effect=AssertionError("primary CTA callback should not force a rerun"),
+        ), patch.object(command_deck, "render_case_drawer"):
             command_deck.render_command_deck(
                 get_command_deck_contract("Alert Center"),
                 key_prefix="test_alert_command_deck",
+                on_primary_cta=primary_callback,
             )
 
-        self.assertGreaterEqual(safe_button.call_count, 2)
+        primary_callback.assert_called_once()
+
+    def test_command_deck_route_button_only_sets_state_and_reruns(self):
+        from sections import command_deck
+        from sections.command_deck_contracts import get_command_deck_contract
+
+        with patch.object(command_deck.st, "container", return_value=contextlib.nullcontext()), patch.object(
+            command_deck.st,
+            "columns",
+            side_effect=lambda count: [contextlib.nullcontext() for _ in range(count)],
+        ), patch.object(command_deck, "render_escaped_bold_text"), patch.object(
+            command_deck,
+            "render_shell_snapshot",
+        ), patch.object(
+            command_deck,
+            "safe_caption",
+        ), patch.object(
+            command_deck,
+            "safe_button",
+            side_effect=lambda label, **kwargs: label == "Task or load failure",
+        ), patch.object(command_deck, "apply_command_deck_action") as apply_action, patch.object(
+            command_deck.st,
+            "rerun",
+        ) as rerun, patch.object(command_deck, "render_case_drawer"):
+            command_deck.render_command_deck(
+                get_command_deck_contract("Workload Operations"),
+                key_prefix="test_workload_command_deck",
+            )
+
+        apply_action.assert_called_once()
+        self.assertEqual(apply_action.call_args.args[0].label, "Task or load failure")
+        rerun.assert_called_once()
 
     def test_command_deck_action_only_sets_routing_state(self):
         from sections.command_deck import apply_command_deck_action
@@ -102,6 +220,7 @@ class PrimaryFirstPaintContractTests(unittest.TestCase):
         from sections.command_deck_contracts import get_command_deck_contract
 
         expected = {
+            "Executive Landing": ("Refresh Summary", "executive_landing_observability_refresh"),
             "Alert Center": ("Load Active Alerts", "alert_center_load"),
             "Cost & Contract": ("Refresh Cost", "cost_contract_refresh"),
             "Security Monitoring": ("Refresh Security Summary", "security_posture_brief_load"),

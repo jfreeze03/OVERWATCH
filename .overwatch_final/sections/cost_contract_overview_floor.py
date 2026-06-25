@@ -44,6 +44,7 @@ from sections.cost_contract_splash import (
 )
 from sections.command_deck import render_command_deck
 from sections.command_deck_contracts import get_command_deck_contract
+from sections.operator_case import make_case_evidence, render_add_to_case_button
 from sections.shell_helpers import (
     _clean_display_text,
     build_first_paint_summary_spec,
@@ -197,6 +198,22 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
     top_delta = safe_float(row.get("TOP_INCREASE_CREDITS", 0))
     top_delta_usd = credits_to_dollars(top_delta, credit_price)
     top_delta_usd_label = f"{'+' if top_delta_usd >= 0 else '-'}${abs(top_delta_usd):,.0f}"
+    render_add_to_case_button(
+        make_case_evidence(
+            section="Cost & Contract",
+            workflow="Cost Overview",
+            scope=f"{company} / {int(days)} days",
+            freshness=str(proof_meta.get("loaded_at") or "Loaded cost cockpit"),
+            source=str(st.session_state.get("cost_contract_cockpit_source") or "Cost detail workspace"),
+            summary=(
+                f"{current_credits:,.2f} current credits vs {prior_credits:,.2f} prior "
+                f"({delta_pct:+.1f}%); top increase {top_wh} at {top_delta:,.2f} credits."
+            ),
+            next_action="Review the top warehouse driver and open advanced cost details only if reconciliation is needed.",
+            evidence_rows_preview=data,
+        ),
+        key="cost_contract_add_to_case",
+    )
     cortex_projected, cortex_exception_count = _loaded_cortex_state()
     secondary_metrics = []
     if total_savings > 0:

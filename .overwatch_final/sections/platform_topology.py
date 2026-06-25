@@ -1,6 +1,7 @@
 # sections/platform_topology.py - relationship maps for teams, objects, and workloads
 import streamlit as st
 
+from sections.chart_helpers import render_ranked_bar_chart
 from sections.shell_helpers import render_shell_snapshot
 from utils import (
     day_window_selectbox,
@@ -16,7 +17,6 @@ from utils import (
     metric_confidence_label,
     render_chart_with_data_toggle,
     render_drillable_bar_chart,
-    render_ranked_bar_chart,
     run_query,
 )
 from utils.workflows import render_load_status, render_priority_dataframe, render_workflow_selector

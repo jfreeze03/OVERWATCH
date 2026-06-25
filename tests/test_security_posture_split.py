@@ -287,7 +287,11 @@ class SecurityPostureSplitTests(unittest.TestCase):
         ) as operating_snapshot, patch.object(
             overview_view,
             "_render_security_brief_launchpad",
-        ), patch.object(overview_view, "_render_advanced_security_evidence"):
+        ), patch.object(overview_view, "_render_advanced_security_evidence"), patch.object(
+            overview_view,
+            "render_add_to_case_button",
+            side_effect=AssertionError("Security Add to Case should wait for a loaded summary"),
+        ):
             overview_view.render_security_overview("ALFA", "PROD", 30)
 
         load_brief.assert_not_called()
@@ -399,6 +403,17 @@ class SecurityPostureSplitTests(unittest.TestCase):
         ]:
             with self.subTest(token=token):
                 self.assertIn(token, source)
+
+    def test_security_access_changes_uses_distinct_change_loader_keys(self):
+        route_source = (APP_ROOT / "sections" / "security_posture.py").read_text(encoding="utf-8")
+        change_source = (APP_ROOT / "sections" / "security_posture_access_changes_view.py").read_text(encoding="utf-8")
+        admin_source = (APP_ROOT / "sections" / "security_posture_admin_view.py").read_text(encoding="utf-8")
+
+        self.assertIn('button_key: str = "security_load_change_intelligence"', change_source)
+        self.assertEqual(route_source.count('button_key="security_load_access_changes_intelligence"'), 1)
+        self.assertIn("_render_advanced_security_evidence(company, environment, skip_change_detail=True)", route_source)
+        default_admin_block = admin_source.split("if not skip_change_detail:", 1)[1].split("def ", 1)[0]
+        self.assertIn("_render_security_change_detail(company, environment)", default_admin_block)
 
     def test_access_review_sql_builders_and_readiness_contracts(self):
         ddl = access_review.build_security_access_review_ddl(db="APP_DB", schema="SECURITY", table="REVIEW")

@@ -1494,7 +1494,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("maybe_clear_scope_cache_on_filter_change()", shell_text)
         self.assertIn("WIDGET_GLOBAL_FILTERS_CLEAR_TOPBAR", filters_text)
         self.assertIn('WIDGET_GLOBAL_FILTERS_CLEAR_TOPBAR = "global_filters_clear_topbar"', runtime_text)
-        self.assertIn("Optional user, role, database, and schema narrowing.", filters_text)
+        self.assertNotIn("Optional user, role, database, and schema narrowing.", filters_text)
         self.assertIn("get_global_schema_filter_clause", company_filter_text)
         self.assertIn("schema_col", company_filter_text)
         self.assertIn("previous_filter_signature != current_filter_signature", filters_text)
@@ -1673,7 +1673,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(layout_text.count('if sidebar_panel_toggle("Advanced Scope", "advanced_scope")'), 1)
         self.assertNotIn('if sidebar_panel_toggle("Saved Views", "saved_views")', layout_text)
         self.assertNotIn('if sidebar_panel_toggle("Global Filters", "global_filters")', layout_text)
-        self.assertIn("Optional user, role, database, and schema narrowing.", filters_text)
+        self.assertNotIn("Optional user, role, database, and schema narrowing.", filters_text)
         self.assertNotIn("TRIAGE_MODE_OPTIONS", runtime_text)
         self.assertNotIn('"Evidence Mode"', layout_text)
         self.assertIn("triage_view_mode", runtime_text)
@@ -2180,17 +2180,13 @@ class NavigationIntegrityTests(unittest.TestCase):
         altair_chart.assert_called_once()
 
     def test_native_streamlit_chart_usage_is_legacy_allowlisted(self):
-        # Remaining native Streamlit charts live in older specialist tools with
-        # loaded-data-only chart paths. New production surfaces should use the
-        # shared OVERWATCH chart helpers instead of adding to this allowlist.
+        # Production section surfaces should use the shared OVERWATCH chart
+        # helpers instead of native Streamlit chart calls.
         # ``sections/chart_helpers.py`` is the one compatibility fallback module:
         # it may call native charts only when Snowflake browser hot-reload leaves
         # a stale ``utils.display`` module in memory.
         compatibility_fallback_modules = {"sections/chart_helpers.py"}
-        legacy_native_chart_allowlist = {
-            "sections/cortex_monitor.py",
-            "sections/cost_center_explain_view.py",
-        }
+        legacy_native_chart_allowlist = set()
         native_chart_tokens = (
             "st.line_chart",
             "st.area_chart",
@@ -2424,19 +2420,16 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(render_area_time_series_chart.__name__, "render_area_time_series_chart")
         self.assertEqual(render_ranked_bar_chart.__name__, "render_ranked_bar_chart")
 
-        direct_import_files = (
-            "cost_center_burn_view.py",
-            "cost_center_forecast_view.py",
-            "data_sharing.py",
-            "dba_tools_cost_health_view.py",
-            "live_monitor.py",
-            "security_access.py",
-            "spcs_tracker.py",
-            "storage_monitor.py",
-        )
-        for filename in direct_import_files:
-            with self.subTest(filename=filename):
-                section_text = (APP_ROOT / "sections" / filename).read_text(encoding="utf-8")
+        helper_names = {
+            "render_area_time_series_chart",
+            "render_ranked_bar_chart",
+            "render_time_series_chart",
+        }
+        for path in sorted((APP_ROOT / "sections").glob("*.py")):
+            if path.name == "chart_helpers.py":
+                continue
+            with self.subTest(filename=path.name):
+                section_text = path.read_text(encoding="utf-8")
                 parsed = ast.parse(section_text)
                 package_level_utils_imports = {
                     alias.name
@@ -2444,10 +2437,36 @@ class NavigationIntegrityTests(unittest.TestCase):
                     if isinstance(node, ast.ImportFrom) and node.module == "utils"
                     for alias in node.names
                 }
-                self.assertIn("from sections.chart_helpers import", section_text)
+                helper_usage = {node.id for node in ast.walk(parsed) if isinstance(node, ast.Name)} & helper_names
                 self.assertNotIn("from utils.display import", section_text)
-                self.assertNotIn("render_time_series_chart", package_level_utils_imports)
-                self.assertNotIn("render_area_time_series_chart", package_level_utils_imports)
+                self.assertEqual(package_level_utils_imports & helper_names, set())
+                if helper_usage:
+                    self.assertIn("from sections.chart_helpers import", section_text)
+
+    def test_snowflake_browser_smoke_checklist_covers_primary_flows(self):
+        doc = (ROOT / "docs" / "OVERWATCH_SNOWFLAKE_BROWSER_SMOKE_CHECKLIST.md").read_text(encoding="utf-8")
+        for section in (
+            "Executive Landing",
+            "DBA Control Room",
+            "Alert Center",
+            "Workload Operations",
+            "Cost & Contract",
+            "Security Monitoring",
+        ):
+            with self.subTest(section=section):
+                self.assertIn(section, doc)
+        for token in (
+            "Command Deck",
+            "Advanced Scope",
+            "Refresh Summary",
+            "Load Morning Cockpit",
+            "Load Active Alerts",
+            "Refresh Cost",
+            "Refresh Security Summary",
+            "Operator Case Markdown",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, doc)
 
     def test_section_chart_helpers_survive_stale_display_module(self):
         from sections import chart_helpers

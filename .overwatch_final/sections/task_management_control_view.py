@@ -2,6 +2,7 @@
 import pandas as pd
 import streamlit as st
 
+from sections.chart_helpers import render_ranked_bar_chart
 from sections.shell_helpers import render_escaped_bold_text, render_shell_snapshot
 from utils.workflows import render_priority_dataframe
 from utils import (
@@ -18,7 +19,6 @@ from utils import (
     safe_int,
     safe_float,
     sql_literal,
-    render_ranked_bar_chart,
 )
 from sections.task_management_action_queue import *
 from sections.task_management_common import *

@@ -1,7 +1,7 @@
 # sections/security_access.py - Login audit, roles & privileges, data lineage, MFA, exfiltration
 import streamlit as st
 import pandas as pd
-from sections.chart_helpers import render_time_series_chart
+from sections.chart_helpers import render_ranked_bar_chart, render_time_series_chart
 from utils import (
     defer_source_note,
     download_csv,
@@ -20,7 +20,6 @@ from utils import (
     format_snowflake_error,
     render_priority_dataframe,
     render_chart_with_data_toggle,
-    render_ranked_bar_chart,
     render_load_status,
     render_workflow_selector,
     run_query,

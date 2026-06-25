@@ -13,6 +13,8 @@ import streamlit as st
 from config import DAY_WINDOW_OPTIONS, DEFAULT_DAY_WINDOW
 from runtime_state import EXECUTIVE_LANDING_WORKFLOW
 from sections.base import lazy_util as _lazy_util
+from sections.command_deck import render_command_deck
+from sections.command_deck_contracts import get_command_deck_contract
 from sections.executive_landing_common import (
     _active_company,
     _active_environment,
@@ -168,6 +170,10 @@ def render() -> None:
         )
         active_workflow = normalize_executive_landing_workflow(active_workflow)
         st.session_state[EXECUTIVE_LANDING_WORKFLOW] = active_workflow
+        render_command_deck(
+            get_command_deck_contract("Executive Landing"),
+            key_prefix="executive_landing_command_deck",
+        )
 
     with trace("executive_shell:observability_board_state", active_section="Executive Landing"):
         expected_scope = _executive_snapshot_scope(company, environment, int(days))

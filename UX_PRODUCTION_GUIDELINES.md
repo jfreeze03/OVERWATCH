@@ -111,6 +111,13 @@ boundary, and no-query note. Command Deck buttons may set workflow/session
 state or queue section navigation, but they must not load Snowflake evidence on
 render and must not replace the explicit load/refresh buttons.
 
+Command Deck v2 owns route actions and evidence-boundary context across primary
+sections. Primary CTAs are actionable only when a section passes an explicit
+callback; otherwise the deck displays the preserved load/refresh label and key
+while the existing section button remains the actual evidence boundary. As
+sections migrate, duplicate ad hoc route-button rows should be removed in favor
+of the deck, but benchmark load labels and keys must remain stable.
+
 | Section | Primary CTA | Route actions |
 | --- | --- | --- |
 | Executive Landing | Refresh Summary | Cost movement, operational risk, security risk, executive actions |
@@ -119,6 +126,22 @@ render and must not replace the explicit load/refresh buttons.
 | Workload Operations | Open the right tool | SQL, task/load, performance, change, and comparison workflows |
 | Cost & Contract | Refresh Cost | Warehouse cost, forecast, budget, and recommendation workflows |
 | Security Monitoring | Refresh Security Summary | Failed logins, risky grants, access changes, and sharing exposure |
+
+## Operator Case File
+
+The Operator Case File is a local handoff packet for already-loaded evidence. It
+does not query Snowflake, save to Snowflake, or mutate action queues. Operators
+must load evidence explicitly in a section before using Add to Case.
+
+Rules:
+
+- Add to Case is visible only on loaded evidence paths.
+- Case export is a Markdown handoff artifact, not an approval, retry, queue, or
+  remediation action.
+- Each case item must carry section, scope, freshness/source notes, a summary,
+  a recommended next action, and a small preview of loaded rows when available.
+- Export/copy actions must be explicit and use stable download helpers rather
+  than writing files into the repository.
 
 ## Charts And Tables
 
@@ -130,13 +153,32 @@ Rules:
 - Provide a way back to the chart after exposing the chart data table.
 - Avoid duplicate chart/table pairs that show the same fact twice.
 - Prefer ranking charts for top spenders and trend charts for movement.
-- Prefer shared OVERWATCH Altair helpers for time-series and area charts.
-- Treat native `st.line_chart`, `st.area_chart`, and `st.bar_chart` usage as
-  legacy-only unless a source-level test allowlists the specialist surface.
-- Remove legacy chart allowlist entries when the final native chart call leaves
-  that file. New loaded-data charts should use `render_time_series_chart`,
+- Use shared OVERWATCH Altair helpers for time-series, area, and ranked bar
+  charts.
+- Section modules import chart helpers through `sections.chart_helpers`, never
+  direct `utils.display` imports or package-level `utils` chart helper exports.
+- `sections.chart_helpers` is the only native Streamlit chart fallback module;
+  it may call `st.line_chart`, `st.area_chart`, or `st.bar_chart` only when
+  Snowflake browser hot-reload leaves a stale `utils.display` module in memory.
+- New loaded-data charts should use `render_time_series_chart`,
   `render_area_time_series_chart`, or `render_ranked_bar_chart`.
 - Use source/freshness help where a metric depends on delayed Snowflake views.
+
+## Snowflake Browser Smoke
+
+Use `docs/OVERWATCH_SNOWFLAKE_BROWSER_SMOKE_CHECKLIST.md` after UI shell,
+Command Deck, chart-helper, or browser-compatibility changes. The smoke is
+read-only except local session state and explicit export/download actions.
+
+## Accessibility And Snowflake Browser Safety
+
+- Custom HTML fragments must escape generated labels and descriptions before
+  rendering.
+- Status surfaces must include text labels; color is supporting context only.
+- Keyboard focus must remain visible on buttons, expanders, select controls,
+  date inputs, text inputs, and other actionable controls.
+- Command Deck route actions and workflow context cards must wrap labels at
+  narrow widths instead of clipping or forcing horizontal scroll.
 
 ## Text And Labels
 

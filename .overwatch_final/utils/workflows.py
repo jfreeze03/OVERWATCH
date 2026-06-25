@@ -426,6 +426,31 @@ def _render_workflow_button_rows(
                     st.rerun()
 
 
+def _render_selector_context(
+    *,
+    label: str,
+    selected: str,
+    details: Mapping[str, str],
+    labels: Mapping[str, str],
+) -> None:
+    """Render the selected workflow's operating context when one is provided."""
+    detail = str(details.get(selected) or "").strip()
+    selected_label = str(labels.get(selected, selected))
+    if not detail and not selected_label:
+        return
+    eyebrow = html.escape(str(label or "Selected workflow"))
+    title = html.escape(str(_clean_operator_display_value(selected_label) or selected_label))
+    body = html.escape(str(_clean_operator_display_value(detail) or detail))
+    detail_markup = f'<div class="ow-workflow-context-detail">{body}</div>' if body else ""
+    st.html(
+        '<div class="ow-workflow-context" role="note">'
+        f'<div class="ow-workflow-context-kicker">{eyebrow}</div>'
+        f'<div class="ow-workflow-context-title">{title}</div>'
+        f"{detail_markup}"
+        '</div>'
+    )
+
+
 def render_workflow_selector(
     label: str,
     key: str,
@@ -449,12 +474,7 @@ def render_workflow_selector(
     columns = max(1, min(int(columns or 4), 5))
     visible_items, hidden_items = workflow_selector_groups(selected, items, collapse_after=collapse_after)
     if compact_details:
-        selected_label = labels.get(selected, selected)
-        selected_detail = details.get(selected, "")
-        if selected_detail:
-            st.caption(f"{selected_label}: {selected_detail}")
-        elif selected_label:
-            st.caption(f"Selected: {selected_label}")
+        _render_selector_context(label=label, selected=selected, details=details, labels=labels)
     _render_workflow_button_rows(
         key=key,
         workflows=visible_items,

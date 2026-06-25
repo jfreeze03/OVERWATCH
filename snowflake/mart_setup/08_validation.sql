@@ -175,6 +175,12 @@ SELECT
 FROM MART_SECTION_DECISION_CURRENT;
 
 SELECT
+  'SECTION_DECISION_CURRENT_PACKET_SOURCES' AS CHECK_NAME,
+  COUNT_IF(DECISION_PACKET:"SOURCES" IS NULL OR ARRAY_SIZE(DECISION_PACKET:"SOURCES") = 0) AS PACKETS_WITHOUT_SOURCES,
+  IFF(COUNT_IF(DECISION_PACKET:"SOURCES" IS NULL OR ARRAY_SIZE(DECISION_PACKET:"SOURCES") = 0) = 0, 'PASS', 'FAIL') AS STATUS
+FROM MART_SECTION_DECISION_CURRENT;
+
+SELECT
   'SECTION_COMMAND_SOURCE_ROWS' AS CHECK_NAME,
   COUNT(*) AS SOURCE_ROWS,
   IFF(COUNT(*) > 0 AND COUNT_IF(REQUIRED IS NULL OR AVAILABLE IS NULL) = 0, 'PASS', 'FAIL') AS STATUS
@@ -188,11 +194,23 @@ SELECT
 FROM (
   SELECT * FROM VALUES
     ('Executive Landing','platform_health'), ('Executive Landing','spend_movement_pct'), ('Executive Landing','critical_high_issues'), ('Executive Landing','open_actions'),
+    ('Executive Landing','cortex_spend'), ('Executive Landing','cortex_risk'), ('Executive Landing','operational_risk'), ('Executive Landing','security_risk'),
+    ('Executive Landing','production_readiness'), ('Executive Landing','data_trust'), ('Executive Landing','verified_value'), ('Executive Landing','monitoring_overhead'),
     ('DBA Control Room','failed_queries'), ('DBA Control Room','pipeline_failures'), ('DBA Control Room','queue_pressure'), ('DBA Control Room','cost_24h'),
+    ('DBA Control Room','cortex_cost'), ('DBA Control Room','security_warnings'), ('DBA Control Room','recent_changes'), ('DBA Control Room','overdue_actions'),
+    ('DBA Control Room','hottest_warehouse'), ('DBA Control Room','top_dba_risk'),
     ('Alert Center','active_alerts'), ('Alert Center','critical_high'), ('Alert Center','overdue_alerts'), ('Alert Center','cortex_predictive'),
+    ('Alert Center','cost_alerts'), ('Alert Center','reliability_alerts'), ('Alert Center','security_alerts'), ('Alert Center','notification_failures'),
+    ('Alert Center','unassigned_alerts'), ('Alert Center','open_action_queue'),
     ('Cost & Contract','total_spend'), ('Cost & Contract','spend_movement_pct'), ('Cost & Contract','forecast_run_rate'), ('Cost & Contract','cortex_spend_share'),
+    ('Cost & Contract','cortex_spend'), ('Cost & Contract','cortex_predictive_alerts'), ('Cost & Contract','budget_contract_risk'), ('Cost & Contract','top_cost_driver'),
+    ('Cost & Contract','verified_savings'), ('Cost & Contract','unverified_savings'), ('Cost & Contract','open_cost_actions'),
     ('Workload Operations','failed_queries'), ('Workload Operations','pipeline_failures'), ('Workload Operations','queue_blocked_pressure'), ('Workload Operations','sla_risk'),
-    ('Security Monitoring','failed_logins'), ('Security Monitoring','mfa_gaps'), ('Security Monitoring','risky_grants'), ('Security Monitoring','sharing_exposure')
+    ('Workload Operations','spill_bytes'), ('Workload Operations','long_running_queries'), ('Workload Operations','hottest_warehouse'), ('Workload Operations','recent_workload_changes'),
+    ('Workload Operations','suspended_tasks'), ('Workload Operations','copy_load_failures'),
+    ('Security Monitoring','failed_logins'), ('Security Monitoring','mfa_gaps'), ('Security Monitoring','risky_grants'), ('Security Monitoring','sharing_exposure'),
+    ('Security Monitoring','privilege_changes'), ('Security Monitoring','security_alerts'), ('Security Monitoring','access_changes'), ('Security Monitoring','unassigned_findings'),
+    ('Security Monitoring','overdue_security_actions'), ('Security Monitoring','owner_coverage')
   AS required(SECTION_NAME, METRIC_KEY)
   LEFT JOIN MART_SECTION_COMMAND_METRIC m
     ON m.SECTION_NAME = required.SECTION_NAME

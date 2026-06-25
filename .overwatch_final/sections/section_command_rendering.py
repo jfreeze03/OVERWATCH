@@ -168,7 +168,10 @@ def _data_trust_summary(brief: SectionCommandBrief) -> str:
         age = f"Updated {int(round(float(brief.freshness_minutes)))}m ago"
     method = brief.data_availability_state or ("Stale" if brief.stale else "Scheduled mart")
     confidence = brief.confidence or "unknown"
-    return f"{age} | {method} | {confidence}"
+    source_note = ""
+    if brief.required_source_count:
+        source_note = f" | {brief.available_source_count}/{brief.required_source_count} required sources"
+    return f"{age} | {method}{source_note} | {confidence}"
 
 
 def _trust_detail_html(brief: SectionCommandBrief) -> str:
@@ -184,10 +187,30 @@ def _trust_detail_html(brief: SectionCommandBrief) -> str:
         ("Missing sources", brief.source_gap_detail or "None reported"),
         ("Confidence", brief.confidence),
     )
-    return "".join(
+    detail = "".join(
         f'<div class="ow-decision-trust-detail"><strong>{_html(label)}</strong><span>{_html(value)}</span></div>'
         for label, value in rows
     )
+    source_rows = []
+    for source in tuple(brief.sources or ()):
+        status = "Unavailable"
+        if source.available and source.stale:
+            status = "Stale"
+        elif source.available:
+            status = "Available"
+        age = "unknown age" if source.age_minutes is None else f"{int(round(float(source.age_minutes)))}m old"
+        required = "required" if source.required else "optional"
+        source_rows.append(
+            '<div class="ow-decision-source-row">'
+            f'<strong>{_html(source.source_key)}</strong>'
+            f'<span>{_html(source.source_object)}</span>'
+            f'<span>{_html(status)} / {_html(required)} / {_html(age)}</span>'
+            f'<small>{_html(source.gap_reason or source.confidence or "No source gap reported")}</small>'
+            '</div>'
+        )
+    if source_rows:
+        detail += '<div class="ow-decision-source-table" aria-label="Command brief source health">' + "".join(source_rows) + "</div>"
+    return detail
 
 
 def _render_fallback(brief: SectionCommandBrief, *, key_prefix: str, detail_action: CommandBriefDetailAction | None) -> None:

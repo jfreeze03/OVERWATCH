@@ -74,6 +74,20 @@ class SectionCommandAction:
 
 
 @dataclass(frozen=True)
+class SectionCommandSourceState:
+    source_key: str
+    source_object: str
+    required: bool = True
+    available: bool = False
+    source_snapshot_ts: str = ""
+    age_minutes: float | None = None
+    target_freshness_minutes: int = 0
+    stale: bool = False
+    confidence: str = ""
+    gap_reason: str = ""
+
+
+@dataclass(frozen=True)
 class SectionCommandBrief:
     section: str
     company: str
@@ -119,6 +133,7 @@ class SectionCommandBrief:
     command_brief_session_cache_hit: bool = False
     command_brief_fallback_used: bool = False
     command_brief_packet_result_bytes: int = 0
+    sources: tuple[SectionCommandSourceState, ...] = ()
     raw_payload: Mapping[str, object] = field(default_factory=dict)
 
 
@@ -315,6 +330,39 @@ def _action_from_row(row: Mapping[str, object]) -> SectionCommandAction:
     )
 
 
+def _source_from_row(row: Mapping[str, object]) -> SectionCommandSourceState:
+    return SectionCommandSourceState(
+        source_key=_string(_column(row, "SOURCE_KEY")),
+        source_object=_string(_column(row, "SOURCE_OBJECT")),
+        required=_bool_value(_column(row, "REQUIRED", default=True), True),
+        available=_bool_value(_column(row, "AVAILABLE", default=False), False),
+        source_snapshot_ts=_string(_column(row, "SOURCE_SNAPSHOT_TS")),
+        age_minutes=_float_or_none(_column(row, "AGE_MINUTES")),
+        target_freshness_minutes=_int_value(_column(row, "TARGET_FRESHNESS_MINUTES"), 0),
+        stale=_bool_value(_column(row, "IS_STALE", default=False), False),
+        confidence=_string(_column(row, "CONFIDENCE")),
+        gap_reason=_string(_column(row, "GAP_REASON")),
+    )
+
+
+def _ordered_metrics(
+    contract: SectionCommandContract,
+    metrics: tuple[SectionCommandMetric, ...],
+) -> tuple[SectionCommandMetric, ...]:
+    contract_order = {metric.key: index for index, metric in enumerate(contract.metric_contracts)}
+    primary_order = {key: index for index, key in enumerate(contract.primary_metric_keys)}
+
+    def sort_key(metric: SectionCommandMetric) -> tuple[int, int, int, str]:
+        key = metric.key or ""
+        if key in primary_order:
+            return (0, primary_order[key], metric.sort_order, key)
+        if key in contract_order:
+            return (1, contract_order[key], metric.sort_order, key)
+        return (2, metric.sort_order, metric.sort_order, key)
+
+    return tuple(sorted(metrics, key=sort_key))
+
+
 def _default_actions(contract: SectionCommandContract) -> tuple[SectionCommandAction, ...]:
     return tuple(
         SectionCommandAction(
@@ -455,7 +503,9 @@ SELECT
     DECISION_PACKET:"LOAD_TS"::TIMESTAMP_NTZ AS LOAD_TS,
     DECISION_PACKET:"METRICS" AS METRICS,
     DECISION_PACKET:"EXCEPTIONS" AS EXCEPTIONS,
-    DECISION_PACKET:"ACTIONS" AS ACTIONS
+    DECISION_PACKET:"ACTIONS" AS ACTIONS,
+    DECISION_PACKET:"SOURCES" AS SOURCES,
+    PACKET_BYTES
     FROM {current_table}
     WHERE {where}
     ORDER BY
@@ -501,8 +551,12 @@ def _brief_from_packet(
     cache_hit: bool,
 ) -> SectionCommandBrief:
     row = packet.iloc[0].to_dict()
-    metrics = tuple(_metric_from_row(item) for item in _variant_records(_column(row, "METRICS")))
+    metrics = _ordered_metrics(
+        contract,
+        tuple(_metric_from_row(item) for item in _variant_records(_column(row, "METRICS"))),
+    )
     exceptions = tuple(_signal_from_row(item) for item in _variant_records(_column(row, "EXCEPTIONS")))
+    sources = tuple(_source_from_row(item) for item in _variant_records(_column(row, "SOURCES")))
     top_signal = exceptions[0] if exceptions else SectionCommandSignal(
         severity=_string(_column(row, "STATE"), "Clear"),
         signal=_string(_column(row, "TOP_SIGNAL"), contract.top_signal_label),
@@ -559,7 +613,7 @@ def _brief_from_packet(
         state=_string(_column(row, "STATE"), "Summary loaded"),
         headline=_string(_column(row, "HEADLINE"), f"{contract.section} command brief is loaded."),
         summary=_string(_column(row, "SUMMARY"), "Review the top signal and next action."),
-        source="MART_SECTION_COMMAND_BRIEF",
+        source="MART_SECTION_DECISION_CURRENT",
         freshness_label=f"{source_status} | {source_freshness} | {scope_note}",
         loaded_at=loaded_at,
         metrics=metrics,
@@ -595,7 +649,11 @@ def _brief_from_packet(
         command_brief_cache_hit=bool(cache_hit),
         command_brief_session_cache_hit=bool(cache_hit),
         command_brief_fallback_used=False,
-        command_brief_packet_result_bytes=len(str(row).encode("utf-8", errors="ignore")),
+        command_brief_packet_result_bytes=_int_value(
+            _column(row, "PACKET_BYTES", default=len(str(row).encode("utf-8", errors="ignore"))),
+            len(str(row).encode("utf-8", errors="ignore")),
+        ),
+        sources=sources,
         raw_payload=row,
     )
 
@@ -717,6 +775,7 @@ __all__ = [
     "SectionCommandAction",
     "SectionCommandBrief",
     "SectionCommandMetric",
+    "SectionCommandSourceState",
     "SectionCommandSignal",
     "autoload_section_command_brief",
 ]

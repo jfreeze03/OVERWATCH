@@ -250,6 +250,7 @@ class ThemeRegistryTests(unittest.TestCase):
         self.assertIn(".ow-decision-metric-ribbon", theme._STRUCTURAL_CSS)
         self.assertIn(".ow-decision-priority-list", theme._STRUCTURAL_CSS)
         self.assertIn(".ow-decision-trust-detail", theme._STRUCTURAL_CSS)
+        self.assertIn(".ow-decision-source-row", theme._STRUCTURAL_CSS)
         self.assertIn(".ow-decision-sparkline", theme._STRUCTURAL_CSS)
         self.assertIn(".ow-executive-command-hero", theme._STRUCTURAL_CSS)
         self.assertIn(".ow-executive-hero-kicker", theme._STRUCTURAL_CSS)

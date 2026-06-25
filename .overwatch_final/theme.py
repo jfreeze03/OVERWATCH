@@ -1341,6 +1341,28 @@ code, pre, .stCodeBlock {
     font-size: 0.74rem;
     overflow-wrap: anywhere;
 }
+.ow-decision-source-table {
+    display: grid;
+    gap: 0.35rem;
+    margin-top: 0.35rem;
+}
+.ow-decision-source-row {
+    display: grid;
+    grid-template-columns: minmax(6rem, 0.3fr) minmax(8rem, 0.45fr) minmax(8rem, 0.4fr) minmax(0, 1fr);
+    gap: 0.45rem;
+    align-items: start;
+    padding: 0.42rem 0.5rem;
+    border: 1px solid var(--border-subtle);
+    background: color-mix(in srgb, var(--surface-elevated) 82%, transparent);
+    border-radius: 0.5rem;
+}
+.ow-decision-source-row span,
+.ow-decision-source-row small {
+    color: var(--text-secondary);
+    font-size: 0.72rem;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+}
 .ow-decision-compact .ow-decision-status {
     padding: 0.62rem 0.78rem;
 }
@@ -1352,7 +1374,8 @@ code, pre, .stCodeBlock {
 @media (max-width: 760px) {
     .ow-decision-priority-row,
     .ow-decision-trust-detail,
-    .ow-decision-extra-metric {
+    .ow-decision-extra-metric,
+    .ow-decision-source-row {
         grid-template-columns: 1fr;
     }
 }

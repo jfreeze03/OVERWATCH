@@ -79,6 +79,15 @@ relationships, child-row orphans, typed metrics, route keys, current packet
 coverage, source rows, source coverage, freshness targets, and canonical window
 coverage.
 
+Decision Brief 3.1 makes the packet contract stricter. Source configuration is
+seeded during setup and then treated as operator-owned configuration; the
+scheduled refresh reads it but does not delete or reinsert it. Current packets
+are published append-first per section/scope/window, then older packets for the
+same logical key are removed, so readers do not see an intentionally emptied
+`MART_SECTION_DECISION_CURRENT` table during refresh. The packet includes the
+embedded source-health array and byte size, and the app displays both the packet
+source and upstream source rows in Data Trust.
+
 Source trust is measured per source through
 `OVERWATCH_SECTION_COMMAND_SOURCE_CONFIG` and `MART_SECTION_COMMAND_SOURCE`.
 Missing sources remain missing, stale sources remain stale, and

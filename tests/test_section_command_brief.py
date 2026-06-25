@@ -62,6 +62,7 @@ class SectionCommandBriefTests(unittest.TestCase):
             "DATA_AVAILABILITY_STATE": "Scheduled mart",
             "STALE_SOURCE_COUNT": 0,
             "SOURCE_GAP_DETAIL": "",
+            "PACKET_BYTES": 4096,
             "SNAPSHOT_TS": "2026-06-25 10:00:00",
             "LOAD_TS": "2026-06-25 10:05:00",
             "METRICS": [
@@ -110,6 +111,29 @@ class SectionCommandBriefTests(unittest.TestCase):
                 "TARGET_WORKFLOW": "Cortex AI",
                 "SORT_ORDER": 1,
             }],
+            "SOURCES": [{
+                "SOURCE_KEY": "cost_daily",
+                "SOURCE_OBJECT": "FACT_COST_DAILY",
+                "REQUIRED": True,
+                "AVAILABLE": True,
+                "SOURCE_SNAPSHOT_TS": "2026-06-25 10:00:00",
+                "AGE_MINUTES": 5,
+                "TARGET_FRESHNESS_MINUTES": 60,
+                "IS_STALE": False,
+                "CONFIDENCE": "allocated",
+                "GAP_REASON": "",
+            }, {
+                "SOURCE_KEY": "cortex_daily",
+                "SOURCE_OBJECT": "FACT_CORTEX_DAILY",
+                "REQUIRED": True,
+                "AVAILABLE": True,
+                "SOURCE_SNAPSHOT_TS": "2026-06-25 10:00:00",
+                "AGE_MINUTES": 5,
+                "TARGET_FRESHNESS_MINUTES": 60,
+                "IS_STALE": False,
+                "CONFIDENCE": "estimated",
+                "GAP_REASON": "",
+            }],
         }])
 
         with patch.object(brief_module.st, "session_state", {}), patch.object(
@@ -133,8 +157,13 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertEqual(brief.top_signal.owner_route, "DBA / AI cost route")
         self.assertEqual(brief.next_actions[0].target_workflow, "Cortex AI")
         self.assertEqual(brief.resolved_company, "ALFA")
+        self.assertEqual(brief.source, "MART_SECTION_DECISION_CURRENT")
         self.assertEqual(brief.source_objects, "FACT_COST_DAILY; FACT_CORTEX_DAILY")
         self.assertEqual(brief.source_coverage_pct, 100)
+        self.assertEqual(brief.command_brief_packet_result_bytes, 4096)
+        self.assertEqual(len(brief.sources), 2)
+        self.assertEqual(brief.sources[0].source_key, "cost_daily")
+        self.assertEqual(brief.sources[1].confidence, "estimated")
         self.assertEqual(brief.data_availability_state, "Scheduled mart")
         self.assertEqual(brief.command_brief_query_count, 1)
         self.assertEqual(run_query.call_count, 1)
@@ -314,6 +343,11 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertIn("MART_SECTION_COMMAND_ACTION", procs)
         self.assertIn("MART_SECTION_COMMAND_SOURCE", procs)
         self.assertIn("MART_SECTION_DECISION_CURRENT", procs)
+        self.assertIn("SOURCES", procs)
+        self.assertIn("PACKET_BYTES", procs)
+        self.assertNotIn("DELETE FROM OVERWATCH_SECTION_COMMAND_SOURCE_CONFIG", procs)
+        self.assertNotIn("DELETE FROM MART_SECTION_DECISION_CURRENT;", procs)
+        self.assertNotIn("'TOP_DRIVER'", procs)
         for builder in (
             "EXECUTIVE_DECISION",
             "DBA_DECISION",
@@ -351,7 +385,19 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertIn("METRICS", sql)
         self.assertIn("EXCEPTIONS", sql)
         self.assertIn("ACTIONS", sql)
+        self.assertIn("SOURCES", sql)
+        self.assertIn("PACKET_BYTES", sql)
         self.assertNotIn("ARRAY_AGG", sql)
+
+    def test_sql_emits_every_contract_metric_key(self):
+        from sections.section_command_contracts import SECTION_COMMAND_CONTRACTS
+
+        procs = (ROOT / "snowflake" / "mart_setup" / "05_load_procedures.sql").read_text(encoding="utf-8")
+        upper = procs.upper()
+        for section, contract in SECTION_COMMAND_CONTRACTS.items():
+            for metric_key in contract.metric_keys:
+                with self.subTest(section=section, metric_key=metric_key):
+                    self.assertIn(f"'{metric_key.upper()}'", upper)
 
     def test_contract_metric_keys_are_explicit_and_primary(self):
         from sections.section_command_contracts import SECTION_COMMAND_CONTRACTS

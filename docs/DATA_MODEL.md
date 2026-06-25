@@ -20,14 +20,17 @@ layer. The full source of truth remains `snowflake/OVERWATCH_MART_SETUP.sql`.
 | `SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS` | Procedure | Populates command brief parent, metric, exception, and action rows for all six primary sections and canonical 1/7/14/30/60/90 day windows. |
 | `OVERWATCH_SECTION_COMMAND_BRIEF_REFRESH` | Task | Runs the compact command brief refresh every 15 minutes from scheduled summary marts. |
 
-Decision Brief 3.0 keeps normalized history for audit while serving the app from
+Decision Brief 3.1 keeps normalized history for audit while serving the app from
 `MART_SECTION_DECISION_CURRENT`. Route behavior is allowlisted in code; mart
 actions choose an `ACTION_KEY`/`ROUTE_KEY` and cannot inject arbitrary Streamlit
 session-state updates. The refresh procedure uses six explicit decision-builder
 groups (`executive_decision`, `dba_decision`, `alert_decision`,
 `cost_decision`, `workload_decision`, and `security_decision`) so cost movement,
 workload failures, Cortex alerts, and security exposure do not leak into
-unrelated section state.
+unrelated section state. Source configuration is seeded during setup and remains
+operator-owned after deployment; scheduled command-brief refreshes read the
+configuration, emit source-health rows into the packet, and publish current
+packets append-first instead of clearing `MART_SECTION_DECISION_CURRENT`.
 
 ## Enterprise Operating Model
 

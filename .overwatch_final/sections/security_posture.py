@@ -81,16 +81,18 @@ def _render_security_first_paint_shell(active_view: str, company: str, environme
     render_section_first_paint_shell(build_first_paint_summary_spec(
         section="Security Monitoring",
         state="Ready",
-        headline=f"{active_view} is ready for security review.",
-        detail="Security Monitoring opens with workflow context first; detailed evidence stays behind explicit load or workflow actions.",
+        headline=f"{active_view} starts with risk triage, then loads proof on request.",
+        detail="Use Refresh Security Summary for current risk counts; login, grant, sharing, and access-change detail stays workflow gated.",
         view=active_view,
         metrics=(
             ("Window", f"{days} days"),
-            ("Evidence", "Workflow gated"),
-            ("Detail rows", "Explicit load"),
+            ("Security risks", "Refresh needed"),
+            ("Proof rows", "Explicit load"),
+            ("Access drilldowns", "Workflow gated"),
         ),
         snapshot=(
             ("Scope", f"{company} / {environment}"),
+            ("Decision path", "Failed logins -> grants -> sharing -> access changes"),
         ),
         load_cta="Use selected workflow or Refresh Security Summary",
     ))

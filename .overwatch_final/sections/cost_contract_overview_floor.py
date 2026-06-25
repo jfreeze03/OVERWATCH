@@ -69,15 +69,17 @@ def _render_cost_first_paint_shell(company: str, days: int, splash: dict) -> Non
     render_section_first_paint_shell(build_first_paint_summary_spec(
         section="Cost & Contract",
         state="Loaded context" if loaded else "Ready",
-        headline="Cost Overview is ready for explicit spend review.",
-        detail="First paint keeps cost, forecast, and reconciliation evidence on demand until Refresh Cost is used.",
+        headline="Cost Overview starts with spend triage, then loads proof on request.",
+        detail="Use Refresh Cost for the current cost story; forecasts, reconciliation, and driver rows stay behind explicit actions.",
         metrics=(
             ("Window", f"{int(days)} days"),
-            ("Spend evidence", "Loaded" if loaded else "Explicit refresh"),
-            ("Forecast/chart state", "Loaded" if loaded else "On demand"),
+            ("Spend story", "Loaded" if loaded else "Refresh needed"),
+            ("Top driver", "Loaded" if loaded else "On demand"),
+            ("Forecast/chart", "Loaded" if loaded else "On demand"),
         ),
         snapshot=(
             ("Scope", f"{company} / {environment}"),
+            ("Decision path", "Spend movement -> top driver -> savings queue"),
         ),
     ))
     render_command_deck(

@@ -2,6 +2,7 @@
 import streamlit as st
 import pandas as pd
 from config import DAY_WINDOW_OPTIONS, DEFAULT_DAY_WINDOW
+from sections.empty_states import render_chart_empty_state
 from sections.shell_helpers import render_escaped_bold_text, render_shell_snapshot
 from .cache import clear_all_cache
 from .cost import format_credits
@@ -77,8 +78,12 @@ def rank_chart_frame(
         return pd.DataFrame(columns=[dimension, measure])
     chart_df = df[[dimension, measure]].dropna(subset=[dimension]).copy()
     chart_df[dimension] = chart_df[dimension].astype(str)
-    chart_df[measure] = pd.to_numeric(chart_df[measure], errors="coerce").fillna(0)
+    chart_df[measure] = pd.to_numeric(chart_df[measure], errors="coerce")
+    chart_df = chart_df.replace([float("inf"), float("-inf")], pd.NA).dropna(subset=[measure])
+    if chart_df.empty:
+        return pd.DataFrame(columns=[dimension, measure])
     chart_df = chart_df.groupby(dimension, as_index=False, dropna=False, sort=False)[measure].sum()
+    chart_df = chart_df.replace([float("inf"), float("-inf")], pd.NA).dropna(subset=[measure])
     chart_df = chart_df.sort_values(measure, ascending=ascending, kind="mergesort")
     return chart_df.head(max(1, int(top_n or 20)))
 
@@ -103,6 +108,7 @@ def time_series_chart_frame(
     chart_df = df[columns].copy()
     chart_df[time_column] = pd.to_datetime(chart_df[time_column], errors="coerce")
     chart_df[value_column] = pd.to_numeric(chart_df[value_column], errors="coerce")
+    chart_df = chart_df.replace([float("inf"), float("-inf")], pd.NA)
     chart_df = chart_df.dropna(subset=[time_column, value_column])
     if series_column:
         chart_df[series_column] = chart_df[series_column].fillna("Unknown").astype(str)
@@ -175,6 +181,8 @@ def render_time_series_chart(
     )
     if chart is not None:
         st.altair_chart(chart, width="stretch")
+    else:
+        render_chart_empty_state(title or "No trend data", "No valid time-series rows are loaded for this scope.")
     return chart_df
 
 
@@ -209,6 +217,7 @@ def render_ranked_bar_chart(
     """Render a horizontal top-to-bottom ranked bar chart and return plotted rows."""
     chart_df = add_cost_companion_columns(rank_chart_frame(df, dimension, measure, top_n=top_n))
     if chart_df.empty:
+        render_chart_empty_state(title or "No ranked data", "No valid ranked rows are loaded for this scope.")
         return chart_df
     if title:
         st.subheader(title)

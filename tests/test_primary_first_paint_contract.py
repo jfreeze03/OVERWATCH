@@ -69,9 +69,6 @@ class PrimaryFirstPaintContractTests(unittest.TestCase):
             command_deck.st,
             "columns",
             side_effect=lambda count: [contextlib.nullcontext() for _ in range(count)],
-        ), patch.object(command_deck, "render_escaped_bold_text"), patch.object(
-            command_deck,
-            "render_shell_snapshot",
         ), patch.object(
             command_deck,
             "safe_caption",
@@ -152,9 +149,6 @@ class PrimaryFirstPaintContractTests(unittest.TestCase):
             command_deck.st,
             "columns",
             side_effect=lambda count: [contextlib.nullcontext() for _ in range(count)],
-        ), patch.object(command_deck, "render_escaped_bold_text"), patch.object(
-            command_deck,
-            "render_shell_snapshot",
         ), patch.object(
             command_deck,
             "safe_caption",
@@ -179,9 +173,6 @@ class PrimaryFirstPaintContractTests(unittest.TestCase):
             command_deck.st,
             "columns",
             side_effect=lambda count: [contextlib.nullcontext() for _ in range(count)],
-        ), patch.object(command_deck, "render_escaped_bold_text"), patch.object(
-            command_deck,
-            "render_shell_snapshot",
         ), patch.object(
             command_deck,
             "safe_caption",

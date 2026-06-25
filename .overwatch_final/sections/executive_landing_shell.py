@@ -15,6 +15,7 @@ from runtime_state import EXECUTIVE_LANDING_WORKFLOW
 from sections.base import lazy_util as _lazy_util
 from sections.command_deck import render_command_deck
 from sections.command_deck_contracts import get_command_deck_contract
+from sections.triage_queue import render_mission_control_queue
 from sections.executive_landing_common import (
     _active_company,
     _active_environment,
@@ -235,6 +236,13 @@ def render() -> None:
             source_health = _source_health_rows(loaded_snapshot)
             summary = _with_platform_operating_score(summary, source_health)
             _persist_platform_summary(summary)
+
+    if active_workflow == EXECUTIVE_OVERVIEW_WORKFLOW:
+        render_mission_control_queue(
+            st.session_state,
+            company=company,
+            environment=environment,
+        )
 
     load = _render_loaded_executive_landing_workflow(
         active_workflow,

@@ -50,6 +50,12 @@ without live Snowflake reads. A section entry should show the active view,
 scope, freshness, expected lanes, and the next safe load action before detailed
 rows, exports, and specialist diagnostics appear.
 
+Executive Landing owns the Mission Control queue. That queue answers "what
+needs attention now" from already-loaded session evidence only: active alerts,
+loaded cost cockpit facts, and loaded security summary facts. It must never
+query Snowflake. If no evidence is loaded, it should clearly direct the operator
+to the explicit load boundaries instead of pretending a healthy state is known.
+
 Visible section subtitles should explain the current operating surface in one
 short line. Workflow selectors may collapse advanced choices when the selected
 workflow remains visible and deep-link/session-state behavior is preserved.
@@ -116,7 +122,9 @@ sections. Primary CTAs are actionable only when a section passes an explicit
 callback; otherwise the deck displays the preserved load/refresh label and key
 while the existing section button remains the actual evidence boundary. As
 sections migrate, duplicate ad hoc route-button rows should be removed in favor
-of the deck, but benchmark load labels and keys must remain stable.
+of the deck, but benchmark load labels and keys must remain stable. Avoid
+secondary route-button rows beside a Command Deck unless loaded evidence creates
+contextual "next move" actions from real rows.
 
 | Section | Primary CTA | Route actions |
 | --- | --- | --- |
@@ -155,6 +163,9 @@ Rules:
 - Prefer ranking charts for top spenders and trend charts for movement.
 - Use shared OVERWATCH Altair helpers for time-series, area, and ranked bar
   charts.
+- Chart helpers must drop invalid dates, nonnumeric values, and infinite values
+  before a chart reaches Altair/Vega. Empty or invalid chart inputs get a
+  text-first empty chart state, not a blank chart or browser warning.
 - Section modules import chart helpers through `sections.chart_helpers`, never
   direct `utils.display` imports or package-level `utils` chart helper exports.
 - `sections.chart_helpers` is the only native Streamlit chart fallback module;

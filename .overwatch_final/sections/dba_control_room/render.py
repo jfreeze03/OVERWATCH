@@ -765,17 +765,11 @@ def _render_morning_cockpit_empty(load_callback) -> None:
         get_command_deck_contract("DBA Control Room"),
         key_prefix="dba_control_room_command_deck",
     )
-    c1, c2, c3 = st.columns(3)
+    c1, _spacer = st.columns(2)
     with c1:
         if st.button("Load Morning Cockpit", key="dba_morning_cockpit_load_empty", type="primary", width="stretch"):
             load_callback(status_label="Loading Morning Cockpit", auto_build_ops=True)
             st.rerun()
-    with c2:
-        if st.button("Open Alert Center", key="dba_morning_open_alerts_empty", width="stretch"):
-            _jump("Alert Center", workflow="Active Alerts")
-    with c3:
-        if st.button("Open Workload Operations", key="dba_morning_open_workload_empty", width="stretch"):
-            _jump("Workload Operations", workflow="Workload Overview")
 
 
 def _render_morning_cockpit(

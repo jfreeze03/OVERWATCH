@@ -216,6 +216,12 @@ class ThemeRegistryTests(unittest.TestCase):
         self.assertIn('[data-baseweb="popover"]:has([data-baseweb="calendar"]) [role="listbox"]', theme._STRUCTURAL_CSS)
         self.assertIn('[data-baseweb="popover"] [data-baseweb="menu"][role="listbox"]', theme._STRUCTURAL_CSS)
         self.assertIn('[data-baseweb="calendar"]', theme._STRUCTURAL_CSS)
+        self.assertIn('[data-baseweb="calendar"] button', theme._STRUCTURAL_CSS)
+        self.assertIn('[data-baseweb="calendar"] [role="gridcell"]:hover', theme._STRUCTURAL_CSS)
+        calendar_css = theme._STRUCTURAL_CSS.split('[data-baseweb="calendar"]', 1)[1].split(".stNumberInput button", 1)[0]
+        self.assertIn("background: var(--bg-card) !important", calendar_css)
+        self.assertIn("color: var(--text-primary) !important", calendar_css)
+        self.assertNotIn("background: #f6fbff !important", calendar_css)
         for theme_key in ("carbon", "terminal"):
             with self.subTest(theme=theme_key):
                 extra = theme._THEME_EXTRAS[theme_key]
@@ -239,6 +245,11 @@ class ThemeRegistryTests(unittest.TestCase):
         self.assertIn(".ow-command-action", theme._STRUCTURAL_CSS)
         self.assertIn(".ow-command-action-label", theme._STRUCTURAL_CSS)
         self.assertIn(".ow-command-action-detail", theme._STRUCTURAL_CSS)
+        self.assertIn(".ow-mission-control", theme._STRUCTURAL_CSS)
+        self.assertIn(".ow-mission-row", theme._STRUCTURAL_CSS)
+        self.assertIn(".ow-mission-severity", theme._STRUCTURAL_CSS)
+        self.assertIn(".ow-chart-empty", theme._STRUCTURAL_CSS)
+        self.assertIn(".ow-chart-empty-title", theme._STRUCTURAL_CSS)
         self.assertIn("line-height: 1.35", theme._STRUCTURAL_CSS)
         self.assertIn("max-width: min(880px, 100%)", theme._STRUCTURAL_CSS)
         self.assertIn('[data-testid="stMain"] [data-testid="stExpander"] details[open] > summary', theme._STRUCTURAL_CSS)

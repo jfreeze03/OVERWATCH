@@ -12,7 +12,6 @@ from navigation import queue_section_navigation
 from sections.command_deck_contracts import CommandDeckAction, SectionCommandDeckContract
 from sections.command_deck_contracts import get_command_deck_contract
 from sections.operator_case import render_case_drawer
-from sections.shell_helpers import render_escaped_bold_text, render_shell_snapshot
 from sections.ui_compat import safe_button, safe_caption
 
 
@@ -43,7 +42,7 @@ def _render_deck_header(contract: SectionCommandDeckContract) -> None:
         f'aria-label="{section} command deck">'
         '<div class="ow-command-deck-kicker">Command Deck</div>'
         f'<div class="ow-command-deck-title">{section}</div>'
-        f'<div class="ow-command-deck-primary"><span>Primary CTA</span><strong>{primary}</strong></div>'
+        f'<div class="ow-command-deck-primary"><span>Primary move</span><strong>{primary}</strong></div>'
         f'<div class="ow-command-deck-boundary">{boundary}</div>'
         '</section>'
     )
@@ -72,12 +71,6 @@ def render_command_deck(
     prefix = key_prefix or f"command_deck_{_key_token(contract.section)}"
     with st.container(border=True):
         _render_deck_header(contract)
-        render_shell_snapshot(
-            (
-                ("Route status", "Ready"),
-                ("Evidence boundary", "Explicit load only"),
-            )
-        )
         if contract.primary_cta_description:
             safe_caption(contract.primary_cta_description)
         if on_primary_cta is not None:
@@ -90,7 +83,7 @@ def render_command_deck(
             ):
                 on_primary_cta()
         elif contract.primary_cta_preserve_existing:
-            safe_caption("Primary evidence loading remains on the existing section control.")
+            safe_caption("The primary load button remains in the section header so evidence loading stays explicit.")
         safe_caption(contract.no_query_note)
 
         actions = tuple(contract.route_actions or ())

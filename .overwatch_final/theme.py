@@ -535,37 +535,66 @@ ul[data-testid="stSelectboxVirtualDropdown"] li[aria-selected="true"] {
     background: rgba(var(--accent-rgb), 0.16) !important;
     color: var(--text-primary) !important;
 }
-.stApp [data-baseweb="calendar"],
-.stApp [data-baseweb="calendar"] *,
-.stApp [data-baseweb="popover"] [data-baseweb="calendar"],
-.stApp [data-baseweb="popover"] [data-baseweb="calendar"] * {
-    color: #102a43 !important;
-    -webkit-text-fill-color: #102a43 !important;
+[data-baseweb="calendar"],
+[data-baseweb="calendar"] *,
+[data-baseweb="popover"] [data-baseweb="calendar"],
+[data-baseweb="popover"] [data-baseweb="calendar"] * {
+    color: var(--text-primary) !important;
+    -webkit-text-fill-color: var(--text-primary) !important;
+}
+[data-baseweb="calendar"],
+[data-baseweb="calendar"] > div,
+[data-baseweb="calendar"] > div > div {
+    background: var(--bg-card) !important;
+    border-color: var(--border-normal) !important;
+}
+[data-baseweb="calendar"] button,
+[data-baseweb="calendar"] button *,
+[data-baseweb="calendar"] [role="button"],
+[data-baseweb="calendar"] [role="button"] * {
+    background: transparent !important;
+    color: var(--text-primary) !important;
+    -webkit-text-fill-color: var(--text-primary) !important;
+}
+[data-baseweb="calendar"] [role="gridcell"]:hover {
+    background: rgba(var(--accent-rgb), 0.14) !important;
+}
+[data-baseweb="calendar"] [aria-selected="true"],
+[data-baseweb="calendar"] [aria-current="date"],
+[data-baseweb="calendar"] [aria-label*="Selected"] {
+    background: rgba(var(--accent-rgb), 0.25) !important;
+    color: var(--text-primary) !important;
+    -webkit-text-fill-color: var(--text-primary) !important;
+}
+[data-baseweb="calendar"] input {
+    background: var(--bg-input) !important;
+    color: var(--text-input) !important;
+    -webkit-text-fill-color: var(--text-input) !important;
 }
 [data-baseweb="popover"]:has([data-baseweb="calendar"]) [role="listbox"],
 [data-baseweb="popover"]:has([data-baseweb="calendar"]) [role="option"] {
-    background: #f6fbff !important;
-    color: #102a43 !important;
-    -webkit-text-fill-color: #102a43 !important;
+    background: var(--bg-card) !important;
+    color: var(--text-primary) !important;
+    -webkit-text-fill-color: var(--text-primary) !important;
 }
 [data-baseweb="popover"]:has([data-baseweb="calendar"]) [role="option"]:hover,
 [data-baseweb="popover"]:has([data-baseweb="calendar"]) [role="option"][aria-selected="true"] {
-    background: #d9eefb !important;
-    color: #102a43 !important;
-    -webkit-text-fill-color: #102a43 !important;
+    background: rgba(var(--accent-rgb), 0.18) !important;
+    color: var(--text-primary) !important;
+    -webkit-text-fill-color: var(--text-primary) !important;
 }
 [data-baseweb="popover"] [data-baseweb="menu"][role="listbox"],
 [data-baseweb="popover"] [data-baseweb="menu"][role="listbox"] [role="option"],
 [data-baseweb="popover"] [data-baseweb="menu"][role="listbox"] [role="option"] * {
-    background: #f6fbff !important;
-    color: #102a43 !important;
-    -webkit-text-fill-color: #102a43 !important;
+    background: var(--bg-card) !important;
+    color: var(--text-primary) !important;
+    -webkit-text-fill-color: var(--text-primary) !important;
 }
 [data-baseweb="popover"] [data-baseweb="menu"][role="listbox"] [role="option"]:hover,
 [data-baseweb="popover"] [data-baseweb="menu"][role="listbox"] [role="option"][aria-selected="true"] {
-    background: #d9eefb !important;
-    color: #102a43 !important;
-    -webkit-text-fill-color: #102a43 !important;
+    background: rgba(var(--accent-rgb), 0.18) !important;
+    color: var(--text-primary) !important;
+    -webkit-text-fill-color: var(--text-primary) !important;
 }
 .stNumberInput button,
 .stNumberInput [role="button"],
@@ -982,6 +1011,109 @@ code, pre, .stCodeBlock {
     min-width: 0;
     margin: 0.18rem 0 0.38rem;
 }
+.ow-mission-control {
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    background:
+        linear-gradient(135deg, rgba(var(--accent-rgb), 0.11), transparent 38%),
+        var(--bg-card);
+    box-shadow: var(--metric-shadow);
+    margin: 0.4rem 0 0.95rem;
+    padding: 0.9rem;
+}
+.ow-mission-kicker {
+    color: var(--text-muted);
+    font-size: 0.64rem;
+    font-weight: 850;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+}
+.ow-mission-title {
+    color: var(--text-primary);
+    font-size: 1.08rem;
+    font-weight: 850;
+    line-height: 1.25;
+    margin-top: 0.15rem;
+}
+.ow-mission-copy {
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+    line-height: 1.35;
+    margin-top: 0.18rem;
+}
+.ow-mission-list {
+    display: grid;
+    gap: 0.5rem;
+    margin-top: 0.72rem;
+}
+.ow-mission-row {
+    display: grid;
+    grid-template-columns: minmax(5.2rem, 0.72fr) minmax(12rem, 1.6fr) minmax(12rem, 1.35fr);
+    gap: 0.7rem;
+    align-items: stretch;
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    background: rgba(var(--accent-rgb), 0.045);
+    padding: 0.68rem 0.78rem;
+}
+.ow-mission-severity {
+    align-self: start;
+    width: fit-content;
+    border: 1px solid rgba(var(--accent-rgb), 0.32);
+    border-radius: 999px;
+    color: var(--text-primary);
+    font-size: 0.68rem;
+    font-weight: 850;
+    letter-spacing: 0.05em;
+    line-height: 1.1;
+    padding: 0.28rem 0.55rem;
+    text-transform: uppercase;
+}
+.ow-mission-section,
+.ow-mission-next span {
+    color: var(--text-muted);
+    font-size: 0.64rem;
+    font-weight: 850;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+.ow-mission-signal,
+.ow-mission-next strong {
+    color: var(--text-primary);
+    display: block;
+    font-size: 0.9rem;
+    font-weight: 850;
+    line-height: 1.28;
+    overflow-wrap: anywhere;
+}
+.ow-mission-evidence,
+.ow-mission-next em {
+    color: var(--text-secondary);
+    display: block;
+    font-size: 0.76rem;
+    font-style: normal;
+    line-height: 1.34;
+    margin-top: 0.12rem;
+    overflow-wrap: anywhere;
+}
+.ow-chart-empty {
+    border: 1px dashed var(--border-subtle);
+    border-radius: 8px;
+    background: rgba(var(--accent-rgb), 0.035);
+    margin: 0.35rem 0 0.85rem;
+    padding: 0.82rem 0.9rem;
+}
+.ow-chart-empty-title {
+    color: var(--text-primary);
+    font-size: 0.88rem;
+    font-weight: 850;
+}
+.ow-chart-empty-detail {
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+    line-height: 1.35;
+    margin-top: 0.16rem;
+}
 .ow-empty-state {
     max-width: 780px;
     margin: 2.25rem 0;
@@ -1333,6 +1465,9 @@ code, pre, .stCodeBlock {
     .block-container {
         padding-left: 1rem !important;
         padding-right: 1rem !important;
+    }
+    .ow-mission-row {
+        grid-template-columns: 1fr;
     }
     .ow-brief-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr)) !important;

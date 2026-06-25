@@ -122,12 +122,16 @@ def render_global_date_range_control(*, label: str = "Date range") -> None:
             set_state(GLOBAL_END_DATE, clamped_end)
             clamp_key = f"{clamped_start}|{clamped_end}|{max_days}"
             set_state(GLOBAL_DATE_CLAMP_PENDING_WARNING, (clamp_key, max_days))
+    else:
+        set_state(
+            GLOBAL_DATE_RANGE_INPUT,
+            (
+                get_state(GLOBAL_START_DATE, default_start),
+                get_state(GLOBAL_END_DATE, default_end),
+            ),
+        )
     date_range = st.date_input(
         label,
-        value=(
-            get_state(GLOBAL_START_DATE, default_start),
-            get_state(GLOBAL_END_DATE, default_end),
-        ),
         key=GLOBAL_DATE_RANGE_INPUT,
     )
     if isinstance(date_range, tuple) and len(date_range) == 2:

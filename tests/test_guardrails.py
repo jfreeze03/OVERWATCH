@@ -134,6 +134,11 @@ class GuardrailTests(unittest.TestCase):
         self.assertIn("from shell import render_app", app_text)
         self.assertIn("GLOBAL_DATE_RANGE_INPUT", filters_text)
         self.assertIn("key=GLOBAL_DATE_RANGE_INPUT", filters_text)
+        date_input_block = filters_text[
+            filters_text.index("date_range = st.date_input"):
+            filters_text.index("if isinstance(date_range, tuple)")
+        ]
+        self.assertNotIn("value=", date_input_block)
         self.assertIn("try:\n    from utils.admin import clamp_global_date_range", filters_text)
         self.assertIn("Fallback for Snowflake stages that refresh filters before utils.admin", filters_text)
         self.assertNotIn("render_admin_mode_control", app_text + filters_text)

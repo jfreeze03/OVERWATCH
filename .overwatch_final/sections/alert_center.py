@@ -24,6 +24,7 @@ from sections.shell_helpers import (
 from sections.section_command_brief import autoload_section_command_brief
 from sections.section_command_rendering import render_section_command_brief
 from sections.decision_workspace_controls import (
+    filter_evidence_rows_for_target,
     make_decision_refresh_action,
     make_evidence_action,
     should_render_daily_diagnostics,
@@ -847,6 +848,9 @@ def render() -> None:
         active_view,
         status_lens,
     )
+    alerts, target_label = filter_evidence_rows_for_target(alerts, "Alert Center")
+    queue, _ = filter_evidence_rows_for_target(queue, "Alert Center")
+    delivery_log, _ = filter_evidence_rows_for_target(delivery_log, "Alert Center")
     if data.get("alerts_error"):
         st.info("Alert history unavailable.")
         defer_source_note(
@@ -909,13 +913,18 @@ def render() -> None:
         delivery_log=delivery_log,
         readiness_rows=readiness_rows,
     )
-    render_decision_evidence_panel(
-        f"{ALERT_CENTER_PANE_LABELS.get(active_view, active_view)} Evidence",
-        str(data.get("loaded_at") or "Loaded alert evidence"),
-        (
+    target_copy = f" for {target_label}" if target_label else ""
+    if target_label and alerts.empty:
+        evidence_summary = f"No rows for selected finding target ({target_label})."
+    else:
+        evidence_summary = (
             f"{open_alert_count:,} open alert(s), {critical_high_count:,} critical/high, "
             f"{overdue_count:,} overdue, {open_queue_count:,} open action queue item(s)."
-        ),
+        )
+    render_decision_evidence_panel(
+        f"{ALERT_CENTER_PANE_LABELS.get(active_view, active_view)} Evidence{target_copy}",
+        str(data.get("loaded_at") or "Loaded alert evidence"),
+        evidence_summary,
         (
             ("Open alerts", f"{open_alert_count:,}"),
             ("Critical / High", f"{critical_high_count:,}"),

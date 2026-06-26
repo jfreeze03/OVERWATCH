@@ -38,7 +38,7 @@ from sections.security_posture_models import (
     _show_security_proof_tables,
 )
 from sections.operator_case import make_case_evidence, render_add_to_case_button
-from sections.decision_workspace_controls import should_render_daily_diagnostics
+from sections.decision_workspace_controls import filter_evidence_rows_for_target, should_render_daily_diagnostics
 from sections.shell_helpers import (
     consume_section_autoload_request,
     render_decision_evidence_panel,
@@ -780,13 +780,20 @@ def render_security_overview(company: str, environment: str, days: int) -> None:
             recent_grants=recent_grants,
             shared_databases=shared_databases,
         )
+        proof_rows = exceptions if exceptions is not None and not exceptions.empty else summary
+        proof_rows, target_label = filter_evidence_rows_for_target(proof_rows, "Security Monitoring")
+        target_copy = f" for {target_label}" if target_label else ""
         render_decision_evidence_panel(
-            "Security Evidence",
+            f"Security Evidence{target_copy}",
             str(meta.get("loaded_at") or st.session_state.get("security_posture_source") or "Loaded security evidence"),
             (
-                f"Security score {score}; {failed_logins:,} failed logins, "
-                f"{users_without_mfa:,} MFA gap(s), {recent_grants:,} recent grant(s), "
-                f"{shared_databases:,} shared database signal(s)."
+                f"No rows for selected finding target ({target_label})."
+                if target_label and getattr(proof_rows, "empty", False)
+                else (
+                    f"Security score {score}; {failed_logins:,} failed logins, "
+                    f"{users_without_mfa:,} MFA gap(s), {recent_grants:,} recent grant(s), "
+                    f"{shared_databases:,} shared database signal(s)."
+                )
             ),
             (
                 ("Failed logins", f"{failed_logins:,}"),
@@ -794,9 +801,11 @@ def render_security_overview(company: str, environment: str, days: int) -> None:
                 ("Risky grants", f"{recent_grants:,}"),
                 ("Shared DBs", f"{shared_databases:,}"),
             ),
-            rows=exceptions if exceptions is not None and not exceptions.empty else summary,
+            rows=proof_rows,
             source_note=str(st.session_state.get("security_posture_source") or meta.get("source") or "Security evidence"),
         )
+        if target_label:
+            return
         render_data_freshness(
             meta,
             source=st.session_state.get("security_posture_source", "Security evidence"),

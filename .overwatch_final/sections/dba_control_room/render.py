@@ -16,6 +16,7 @@ from sections.shell_helpers import (
 from sections.section_command_brief import autoload_section_command_brief
 from sections.section_command_rendering import render_section_command_brief
 from sections.decision_workspace_controls import (
+    filter_evidence_rows_for_target,
     make_decision_refresh_action,
     make_evidence_action,
     should_render_daily_diagnostics,
@@ -1329,12 +1330,18 @@ def render() -> None:
         source_issue_count = int(
             release_source_health["STATE"].fillna("").astype(str).isin(["Unavailable", "Stale"]).sum()
         )
+    exceptions, target_label = filter_evidence_rows_for_target(exceptions, "DBA Control Room")
+    target_copy = f" for {target_label}" if target_label else ""
     render_decision_evidence_panel(
-        "DBA Investigation Evidence",
+        f"DBA Investigation Evidence{target_copy}",
         str(loaded_meta.get("loaded_at") or source_mode or "Loaded DBA evidence"),
         (
-            f"{failed_queries:,} failed querie(s), {failed_tasks:,} failed task/procedure signal(s), "
-            f"{queued_queries:,} queued query signal(s)."
+            f"No rows for selected finding target ({target_label})."
+            if target_label and exceptions.empty
+            else (
+                f"{failed_queries:,} failed querie(s), {failed_tasks:,} failed task/procedure signal(s), "
+                f"{queued_queries:,} queued query signal(s)."
+            )
         ),
         (
             ("Failed queries", f"{failed_queries:,}"),
@@ -1346,6 +1353,8 @@ def render() -> None:
         rows=exceptions,
         source_note=str(source_mode),
     )
+    if target_label:
+        return
     _render_dba_action_brief(
         release_gate_summary,
         exceptions,

@@ -44,6 +44,7 @@ class DecisionFinding:
     evidence_source: str = ""
     evidence_query: str = ""
     owner_gap: bool = False
+    route_key: str = ""
 
 
 @dataclass(frozen=True)
@@ -451,6 +452,7 @@ def build_decision_workspace_view_model(
             evidence_source=str(getattr(item, "evidence_source", "") or ""),
             evidence_query=str(getattr(item, "evidence_query", "") or ""),
             owner_gap=bool(getattr(item, "owner_gap", False)),
+            route_key=str(getattr(item, "route_key", "") or ""),
         )
         for item in tuple(getattr(brief, "exceptions", ()) or ())[:3]
     )

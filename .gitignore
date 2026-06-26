@@ -9,3 +9,4 @@ __pycache__/
 .streamlit/*.toml
 !.streamlit/config.toml
 perf_tests/results/
+artifacts/

@@ -70,6 +70,21 @@ def _search_date_predicate(days_back: int, day_cap: int | None) -> tuple[str, st
 def render():
     session = get_session()
     company = get_active_company()
+    workload_target = st.session_state.get("workload_operations_evidence_target")
+    workload_target = workload_target if isinstance(workload_target, dict) else {}
+    target_entity_type = str(workload_target.get("entity_type") or "").lower()
+    target_value = str(
+        workload_target.get("entity_id")
+        or workload_target.get("entity_name")
+        or workload_target.get("evidence_id")
+        or ""
+    ).strip()
+    target_warehouse = target_value if target_entity_type == "warehouse" else ""
+    target_query = target_value if target_entity_type in {"query", "query_id", "query_signature"} else ""
+    if target_query and not str(st.session_state.get("qs_text") or "").strip():
+        st.session_state["qs_text"] = target_query
+        st.session_state["qs_mode"] = "Exact query ID" if _looks_like_query_id(target_query) else "Text contains"
+        st.session_state["qs_autorun"] = True
     qh_cols = set(filter_existing_columns(
         session,
         "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
@@ -99,6 +114,9 @@ def render():
 
     st.subheader("Query Search & History")
     st.caption("Search company-scoped ACCOUNT_USAGE.QUERY_HISTORY by exact query ID or query-text keyword.")
+    if target_warehouse:
+        st.caption(f"Focused on finding target: warehouse {target_warehouse}")
+        st.session_state["qs_autorun"] = True
 
     c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
     with c1:
@@ -130,13 +148,16 @@ def render():
         st.caption(f"Using {global_date_label}; the Days back slider applies only when Triage Filter dates are cleared.")
 
     autorun = bool(st.session_state.pop("qs_autorun", False))
-    if (st.button("Search", key="qs_run") or autorun) and search_text:
+    if (st.button("Search", key="qs_run") or autorun) and (search_text or target_warehouse):
         search_value = search_text.strip()
-        try:
-            search_cl, resolved_mode, day_cap = _query_search_clause(search_value, search_mode)
-        except ValueError as exc:
-            st.warning(str(exc))
-            return
+        if search_value:
+            try:
+                search_cl, resolved_mode, day_cap = _query_search_clause(search_value, search_mode)
+            except ValueError as exc:
+                st.warning(str(exc))
+                return
+        else:
+            search_cl, resolved_mode, day_cap = "", "Warehouse target", None
         date_predicate, date_label, effective_days = _search_date_predicate(days_back, day_cap)
         if day_cap and (days_back > day_cap or global_date_label):
             st.warning(
@@ -151,6 +172,7 @@ def render():
 
         user_cl = f"AND user_name ILIKE '%' || {sql_literal(user_filter)} || '%'" if user_filter else ""
         status_cl = f"AND execution_status = {sql_literal(status_filter)}" if status_filter != "ALL" else ""
+        target_wh_cl = f"AND warehouse_name ILIKE '%' || {sql_literal(target_warehouse)} || '%'" if target_warehouse else ""
         scoped_filters = get_global_filter_clause(
             date_col="start_time",
             wh_col="warehouse_name",
@@ -172,10 +194,10 @@ def render():
                   {date_predicate}
                   {search_cl}
                   {scoped_filters}
-                  {user_cl} {status_cl}
+                  {user_cl} {status_cl} {target_wh_cl}
                 ORDER BY start_time DESC
                 LIMIT {row_limit}
-            """, ttl_key=f"query_search_{company}_{resolved_mode}_{search_value}_{user_filter}_{status_filter}_{effective_days}_{row_limit}", tier="historical", section="Query Search & History")
+            """, ttl_key=f"query_search_{company}_{resolved_mode}_{search_value}_{target_warehouse}_{user_filter}_{status_filter}_{effective_days}_{row_limit}", tier="historical", section="Query Search & History")
             st.session_state["qs_df_qs"] = df_qs
             st.session_state["qs_search_mode"] = resolved_mode
             st.session_state["qs_effective_days"] = effective_days

@@ -123,6 +123,156 @@ def _finding_field(finding: object, name: str) -> str:
     return str(getattr(finding, name, "") or "").strip()
 
 
+SECTION_TARGET_KEYS: dict[str, str] = {
+    "Alert Center": "alert_center_evidence_target",
+    "Cost & Contract": "cost_contract_evidence_target",
+    "DBA Control Room": "dba_control_room_evidence_target",
+    "Workload Operations": "workload_operations_evidence_target",
+    "Security Monitoring": "security_posture_evidence_target",
+}
+
+
+SECTION_TARGET_COLUMNS: dict[str, tuple[str, ...]] = {
+    "Alert Center": (
+        "EVENT_ID",
+        "ALERT_ID",
+        "ALERT_KEY",
+        "ALERT_FAMILY",
+        "ALERT_TYPE",
+        "FAMILY",
+        "CATEGORY",
+        "ENTITY_NAME",
+        "ENTITY_ID",
+        "WAREHOUSE_NAME",
+        "DATABASE_NAME",
+        "USER_NAME",
+        "ROLE_NAME",
+        "ACTION_ID",
+    ),
+    "Cost & Contract": (
+        "WAREHOUSE_NAME",
+        "WAREHOUSE",
+        "SERVICE_CATEGORY",
+        "SERVICE_TYPE",
+        "DATABASE_NAME",
+        "USER_NAME",
+        "ROLE_NAME",
+        "TAG_VALUE",
+        "DEPARTMENT",
+        "APPLICATION",
+        "DRIVER",
+        "DIMENSION",
+        "ENTITY_NAME",
+        "ENTITY_ID",
+    ),
+    "DBA Control Room": (
+        "QUERY_ID",
+        "QUERY_HASH",
+        "QUERY_SIGNATURE",
+        "WAREHOUSE_NAME",
+        "TASK_NAME",
+        "ROOT_TASK_NAME",
+        "PROCEDURE_NAME",
+        "DATABASE_NAME",
+        "ENTITY_NAME",
+        "ENTITY_ID",
+    ),
+    "Workload Operations": (
+        "QUERY_ID",
+        "QUERY_HASH",
+        "QUERY_SIGNATURE",
+        "WAREHOUSE_NAME",
+        "TASK_NAME",
+        "ROOT_TASK_NAME",
+        "PROCEDURE_NAME",
+        "PIPELINE_NAME",
+        "ENTITY_NAME",
+        "ENTITY_ID",
+    ),
+    "Security Monitoring": (
+        "USER_NAME",
+        "LOGIN_NAME",
+        "ROLE_NAME",
+        "GRANTEE_NAME",
+        "GRANTED_TO",
+        "GRANTED_ON",
+        "DATABASE_NAME",
+        "SHARE_NAME",
+        "OBJECT_NAME",
+        "ENTITY_NAME",
+        "ENTITY_ID",
+        "GRANT_ID",
+    ),
+}
+
+
+def current_finding_evidence_target(section: str) -> dict[str, str]:
+    target = st.session_state.get(SECTION_TARGET_KEYS.get(str(section), ""))
+    if not isinstance(target, dict):
+        target = st.session_state.get("decision_workspace_evidence_target")
+    if not isinstance(target, dict):
+        return {}
+    return {str(key): str(value) for key, value in target.items() if str(value or "").strip()}
+
+
+def evidence_target_label(target: dict[str, str]) -> str:
+    if not target:
+        return ""
+    entity_type = str(target.get("entity_type") or "target").strip()
+    value = str(
+        target.get("entity_name")
+        or target.get("entity_id")
+        or target.get("evidence_id")
+        or target.get("dedupe_key")
+        or ""
+    ).strip()
+    if not value:
+        return ""
+    return f"{entity_type}: {value}"
+
+
+def _target_values(target: dict[str, str]) -> tuple[str, ...]:
+    values = []
+    for key in ("evidence_id", "entity_id", "entity_name", "dedupe_key", "finding_key"):
+        value = str(target.get(key) or "").strip()
+        if value and value.upper() not in {item.upper() for item in values}:
+            values.append(value)
+    return tuple(values)
+
+
+def filter_evidence_rows_for_target(rows: object, section: str) -> tuple[object, str]:
+    """Filter a dataframe-like evidence result to the selected finding target."""
+    target = current_finding_evidence_target(section)
+    label = evidence_target_label(target)
+    values = _target_values(target)
+    if not values or rows is None or not hasattr(rows, "empty") or getattr(rows, "empty", True):
+        return rows, label
+    try:
+        columns = [str(column) for column in rows.columns]
+    except Exception:
+        return rows, label
+    preferred = [column for column in SECTION_TARGET_COLUMNS.get(str(section), ()) if column in columns]
+    if not preferred:
+        preferred = [
+            column
+            for column in columns
+            if any(token in column.upper() for token in ("ID", "KEY", "NAME", "ENTITY", "WAREHOUSE", "USER", "ROLE"))
+        ]
+    if not preferred:
+        return rows, label
+
+    mask = None
+    for column in preferred:
+        series = rows[column].fillna("").astype(str)
+        column_mask = series.str.upper().apply(
+            lambda text: any(value.upper() in text for value in values)
+        )
+        mask = column_mask if mask is None else (mask | column_mask)
+    if mask is None:
+        return rows, label
+    return rows[mask].copy(), label
+
+
 def apply_finding_evidence_target(finding: object | None, section: str, workflow: str = "") -> dict[str, str]:
     """Store allowlisted evidence target fields before a section loader runs.
 
@@ -177,8 +327,13 @@ def apply_finding_evidence_target(finding: object | None, section: str, workflow
         st.session_state["workload_operations_evidence_target"] = target
         if entity_type in {"query", "query_signature", "query_id"} and entity_value:
             st.session_state["workload_operations_query_filter"] = entity_value
+            st.session_state["workload_query_lens"] = "Detailed Diagnosis"
+            st.session_state["query_analysis_active_view"] = "Detailed Diagnosis"
         if entity_type in {"task", "procedure", "pipeline"} and entity_value:
             st.session_state["workload_operations_pipeline_filter"] = entity_value
+            st.session_state["workload_operations_pipeline_focus"] = (
+                "Failed Procedures" if entity_type == "procedure" else "Failed Tasks"
+            )
     elif section_name == "Security Monitoring":
         st.session_state["security_posture_evidence_target"] = target
         if entity_type in {"user", "role"}:
@@ -219,6 +374,9 @@ __all__ = [
     "DecisionWorkspaceControls",
     "apply_finding_evidence_target",
     "decision_refresh_key",
+    "current_finding_evidence_target",
+    "evidence_target_label",
+    "filter_evidence_rows_for_target",
     "make_decision_refresh_action",
     "make_evidence_action",
     "render_evidence_settings",

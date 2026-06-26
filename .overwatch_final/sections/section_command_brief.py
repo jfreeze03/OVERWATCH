@@ -614,6 +614,7 @@ def _scoped_where(section: str, company: str, environment: str, window_days: int
             OR UPPER(ENVIRONMENT) IN ('ALL', 'ALL ENVIRONMENTS', 'GLOBAL')
         )
         AND (WINDOW_DAYS = {int(window_days)} OR WINDOW_DAYS IS NULL)
+        AND COALESCE(IS_ACTIVE, TRUE)
     """
 
 

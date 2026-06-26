@@ -1937,6 +1937,194 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         self.assertEqual(state["cost_contract_evidence_entity_filter"], "PROD_WH")
         self.assertNotIn("SELECT * FROM ADMIN_ONLY", str(state))
 
+    def test_primary_route_action_applies_top_finding_target(self):
+        from sections import section_command_rendering
+        from sections.section_command_brief import SectionCommandAction, SectionCommandBrief, SectionCommandSignal
+
+        state: dict[str, object] = {}
+        brief = SectionCommandBrief(
+            section="Cost & Contract",
+            company="ALFA",
+            environment="ALL",
+            window_label="7 days",
+            state="At Risk",
+            headline="Spend needs review",
+            summary="Packet summary",
+            source="MART_SECTION_DECISION_CURRENT",
+            freshness_label="Updated 8m ago",
+            loaded_at="2026-06-25T10:08:00",
+            exceptions=(
+                SectionCommandSignal(
+                    severity="High",
+                    signal="Warehouse driver",
+                    entity="PROD_WH",
+                    entity_type="warehouse",
+                    entity_id="PROD_WH",
+                    evidence_id="COST-EVIDENCE-1",
+                    route_key="cost_contract_explorer_warehouse",
+                    evidence_query="SELECT * FROM ADMIN_ONLY",
+                ),
+            ),
+            next_actions=(
+                SectionCommandAction(
+                    "Open Warehouse Drivers",
+                    "Open matching driver",
+                    "Cost & Contract",
+                    "Cost Explorer",
+                    cta="Open Warehouse Drivers",
+                    route_key="cost_contract_explorer_warehouse",
+                ),
+            ),
+        )
+
+        def _button(label, *args, **kwargs):
+            return str(label).startswith("Open Warehouse Drivers")
+
+        with patch.object(section_command_rendering.st, "session_state", state), patch.object(
+            section_command_rendering.st,
+            "html",
+        ), patch.object(section_command_rendering.st, "markdown"), patch.object(
+            section_command_rendering.st,
+            "columns",
+            side_effect=lambda spec: [contextlib.nullcontext() for _ in range(int(spec) if isinstance(spec, int) else len(spec))],
+        ), patch.object(section_command_rendering.st, "button", side_effect=_button), patch.object(
+            section_command_rendering,
+            "apply_command_brief_route",
+            return_value=True,
+        ), patch.object(section_command_rendering.st, "rerun"):
+            section_command_rendering.render_decision_workspace(
+                brief,
+                key_prefix="route_target",
+                current_workflow="Cost Overview",
+            )
+
+        self.assertEqual(state["decision_workspace_evidence_target"]["entity_id"], "PROD_WH")
+        self.assertEqual(state["cost_contract_evidence_entity_filter"], "PROD_WH")
+        self.assertEqual(state["cc_explorer_lens"], "Warehouse")
+        self.assertNotIn("SELECT * FROM ADMIN_ONLY", str(state))
+
+    def test_secondary_route_action_applies_matching_finding_target(self):
+        from sections import section_command_rendering
+        from sections.section_command_brief import SectionCommandAction, SectionCommandBrief, SectionCommandSignal
+
+        state: dict[str, object] = {}
+        brief = SectionCommandBrief(
+            section="Cost & Contract",
+            company="ALFA",
+            environment="ALL",
+            window_label="7 days",
+            state="At Risk",
+            headline="Spend needs review",
+            summary="Packet summary",
+            source="MART_SECTION_DECISION_CURRENT",
+            freshness_label="Updated 8m ago",
+            loaded_at="2026-06-25T10:08:00",
+            exceptions=(
+                SectionCommandSignal(
+                    severity="High",
+                    signal="Cortex risk",
+                    entity="Cortex",
+                    entity_type="service",
+                    entity_id="CORTEX",
+                    route_key="cost_contract_cortex_ai",
+                ),
+                SectionCommandSignal(
+                    severity="High",
+                    signal="Warehouse driver",
+                    entity="PROD_WH",
+                    entity_type="warehouse",
+                    entity_id="PROD_WH",
+                    route_key="cost_contract_explorer_warehouse",
+                ),
+            ),
+            next_actions=(
+                SectionCommandAction("Review Cortex", "Open Cortex", "Cost & Contract", "Cortex AI", cta="Review Cortex", route_key="cost_contract_cortex_ai"),
+                SectionCommandAction("Open Warehouse Drivers", "Open driver", "Cost & Contract", "Cost Explorer", cta="Open Warehouse Drivers", route_key="cost_contract_explorer_warehouse"),
+            ),
+        )
+
+        def _button(label, *args, **kwargs):
+            return str(label).startswith("Open Warehouse Drivers")
+
+        with patch.object(section_command_rendering.st, "session_state", state), patch.object(
+            section_command_rendering.st,
+            "html",
+        ), patch.object(section_command_rendering.st, "markdown"), patch.object(
+            section_command_rendering.st,
+            "columns",
+            side_effect=lambda spec: [contextlib.nullcontext() for _ in range(int(spec) if isinstance(spec, int) else len(spec))],
+        ), patch.object(section_command_rendering.st, "button", side_effect=_button), patch.object(
+            section_command_rendering,
+            "apply_command_brief_route",
+            return_value=True,
+        ), patch.object(section_command_rendering.st, "rerun"):
+            section_command_rendering.render_decision_workspace(
+                brief,
+                key_prefix="secondary_route_target",
+                current_workflow="Cost Overview",
+            )
+
+        self.assertEqual(state["decision_workspace_evidence_target"]["entity_id"], "PROD_WH")
+        self.assertEqual(state["cc_explorer_lens"], "Warehouse")
+        self.assertNotEqual(state["decision_workspace_evidence_target"]["entity_id"], "CORTEX")
+
+    def test_evidence_row_filter_consumes_section_targets(self):
+        from sections import decision_workspace_controls as controls
+
+        rows = pd.DataFrame(
+            [
+                {"EVENT_ID": "EVT-1", "ALERT_KEY": "ALERT-A", "WAREHOUSE_NAME": "DEV_WH"},
+                {"EVENT_ID": "EVT-2", "ALERT_KEY": "ALERT-B", "WAREHOUSE_NAME": "PROD_WH"},
+            ]
+        )
+        state = {
+            "alert_center_evidence_target": {
+                "entity_type": "alert",
+                "entity_id": "ALERT-B",
+                "evidence_id": "EVT-2",
+            }
+        }
+        with patch.object(controls.st, "session_state", state):
+            filtered, label = controls.filter_evidence_rows_for_target(rows, "Alert Center")
+        self.assertEqual(label, "alert: ALERT-B")
+        self.assertEqual(filtered["EVENT_ID"].tolist(), ["EVT-2"])
+
+    def test_evidence_row_filter_returns_compact_empty_target_state(self):
+        from sections import decision_workspace_controls as controls
+
+        rows = pd.DataFrame([{"USER_NAME": "JDOE", "ROLE_NAME": "ANALYST"}])
+        state = {
+            "security_posture_evidence_target": {
+                "entity_type": "role",
+                "entity_id": "SECURITYADMIN",
+            }
+        }
+        with patch.object(controls.st, "session_state", state):
+            filtered, label = controls.filter_evidence_rows_for_target(rows, "Security Monitoring")
+        self.assertEqual(label, "role: SECURITYADMIN")
+        self.assertTrue(filtered.empty)
+
+    def test_query_search_consumes_workload_finding_target(self):
+        source = (ROOT / ".overwatch_final" / "sections" / "query_search.py").read_text(encoding="utf-8")
+        self.assertIn("workload_operations_evidence_target", source)
+        self.assertIn("target_warehouse", source)
+        self.assertIn("target_wh_cl", source)
+        self.assertIn("qs_autorun", source)
+        self.assertNotIn("EVIDENCE_QUERY", source)
+
+    def test_targeted_evidence_paths_do_not_fall_through_to_legacy_boards(self):
+        cost = (ROOT / ".overwatch_final" / "sections" / "cost_contract_overview_floor.py").read_text(encoding="utf-8")
+        security = (ROOT / ".overwatch_final" / "sections" / "security_posture_overview_view.py").read_text(encoding="utf-8")
+        dba = (ROOT / ".overwatch_final" / "sections" / "dba_control_room" / "render.py").read_text(encoding="utf-8")
+
+        cost_guard = cost.index("if not refresh_cost:")
+        security_guard = security.index("if target_label:")
+        dba_guard = dba.index("if target_label:")
+
+        self.assertLess(cost_guard, cost.index("_render_cost_splash(", cost_guard))
+        self.assertLess(security.index("return", security_guard), security.index("_render_security_watch_floor(", security_guard))
+        self.assertLess(dba.index("return", dba_guard), dba.index("_render_dba_action_brief(", dba_guard))
+
     def test_trend_metadata_flows_into_view_model_and_markup(self):
         from sections.section_command_brief import SectionCommandBrief, SectionCommandMetric
         from sections.decision_workspace_view_model import build_decision_workspace_view_model

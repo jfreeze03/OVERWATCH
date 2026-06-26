@@ -301,7 +301,17 @@ def dedupe_command_actions(
     return tuple(selected)
 
 
-def _apply_route_action(action: object) -> bool:
+def _finding_for_action(model: DecisionWorkspaceViewModel, action: object) -> object | None:
+    route_key = _action_route_key(action)
+    if route_key:
+        for finding in model.findings:
+            if str(getattr(finding, "route_key", "") or "").strip() == route_key:
+                return finding
+    return model.findings[0] if model.findings else None
+
+
+def _apply_route_action(action: object, *, finding: object | None, section: str, workflow: str) -> bool:
+    apply_finding_evidence_target(finding, section, workflow)
     route_key = _action_route_key(action)
     return bool(route_key and apply_command_brief_route(route_key))
 
@@ -331,7 +341,7 @@ def _render_model_attention_panel(model: DecisionWorkspaceViewModel) -> str:
         age_due = " / ".join(part for part in (item.first_seen_label, item.due_label) if part)
         evidence_hint = f"Evidence {item.evidence_id}" if item.evidence_id else (item.evidence_source or "")
         detail_parts = [item.detail or item.entity, entity_meta, age_due, evidence_hint]
-        detail = " · ".join(part for part in detail_parts if part)
+        detail = " | ".join(part for part in detail_parts if part)
         rows.append(
             '<div class="ow-decision-attention-row">'
             f'<span class="ow-attention-icon" data-severity="{_html(item.severity).lower()}"></span>'
@@ -434,7 +444,12 @@ def _render_workspace_actions(
             type="primary",
             width="stretch",
         ):
-            if _apply_route_action(primary):
+            if _apply_route_action(
+                primary,
+                finding=_finding_for_action(model, primary),
+                section=model.section,
+                workflow=model.workflow,
+            ):
                 st.rerun()
         for index, action in enumerate(actions[1:3], start=1):
             label = str(getattr(action, "cta", "") or getattr(action, "label", "") or "Open")
@@ -445,7 +460,12 @@ def _render_workspace_actions(
                 type="secondary",
                 width="stretch",
             ):
-                if _apply_route_action(action):
+                if _apply_route_action(
+                    action,
+                    finding=_finding_for_action(model, action),
+                    section=model.section,
+                    workflow=model.workflow,
+                ):
                     st.rerun()
     if controls.evidence_action is not None:
         st.markdown('<div class="ow-decision-evidence-action-shell">', unsafe_allow_html=True)

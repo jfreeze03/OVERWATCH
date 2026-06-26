@@ -44,6 +44,7 @@ from sections.cost_contract_splash import (
     _render_cost_splash,
 )
 from sections.cortex_signals import build_cortex_signal, render_cortex_signal_panel
+from sections.decision_workspace_controls import filter_evidence_rows_for_target
 from sections.operator_case import make_case_evidence, render_add_to_case_button
 from sections.shell_helpers import (
     _clean_display_text,
@@ -125,14 +126,21 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
         _render_cost_first_paint_shell(company, int(days), splash, credit_price)
     cost_summary = _cost_splash_summary(splash, credit_price, int(days))
     if refresh_cost or splash.get("loaded"):
-        render_decision_evidence_panel(
-            "Cost Evidence",
-            str(splash.get("source") or "Loaded cost evidence"),
-            (
+        proof_rows, target_label = filter_evidence_rows_for_target(splash.get("warehouse_delta"), "Cost & Contract")
+        target_copy = f" for {target_label}" if target_label else ""
+        evidence_summary = (
+            f"No rows for selected finding target ({target_label})."
+            if target_label and getattr(proof_rows, "empty", False)
+            else (
                 f"${safe_float(cost_summary.get('spend')):,.0f} spend; "
                 f"{safe_float(cost_summary.get('delta_pct')):+.1f}% movement; "
                 f"${safe_float(cost_summary.get('cortex_spend')):,.0f} Cortex AI spend."
-            ),
+            )
+        )
+        render_decision_evidence_panel(
+            f"Cost Evidence{target_copy}",
+            str(splash.get("source") or "Loaded cost evidence"),
+            evidence_summary,
             (
                 ("Total spend", f"${safe_float(cost_summary.get('spend')):,.0f}"),
                 ("Movement", f"{safe_float(cost_summary.get('delta_pct')):+.1f}%"),
@@ -140,10 +148,11 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
                 ("Cortex AI", f"${safe_float(cost_summary.get('cortex_spend')):,.0f}"),
                 ("Top driver", str(cost_summary.get("top_warehouse") or "Unavailable")),
             ),
-            rows=splash.get("warehouse_delta"),
+            rows=proof_rows,
             source_note=str(splash.get("source") or "Cost evidence"),
         )
-    _render_cost_splash(splash, company=company, days=int(days), credit_price=credit_price)
+    if not refresh_cost:
+        _render_cost_splash(splash, company=company, days=int(days), credit_price=credit_price)
 
     proof_data = st.session_state.get("cost_contract_cockpit")
     proof_meta = st.session_state.get("cost_contract_cockpit_meta", {})

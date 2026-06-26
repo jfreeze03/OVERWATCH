@@ -261,7 +261,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Core executive KPIs", executive_overview)
         self.assertIn("What needs attention first", executive_overview)
         self.assertNotIn("Executive Summary Signals", executive_text)
-        self.assertIn("Refresh Decision Brief", executive_shell)
+        self.assertNotIn("Executive window", executive_shell)
+        self.assertNotIn("Refresh Decision Brief", executive_shell)
+        self.assertIn("_active_window_days()", executive_shell)
 
     def test_app_shell_first_paint_stays_lazy_and_query_builder_clean(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
@@ -528,7 +530,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Core executive KPIs", overview_text)
         self.assertIn("What needs attention first", overview_text)
         self.assertNotIn("Executive Summary Signals", full_workspace_text)
-        self.assertIn("Refresh Decision Brief", route_shell_text)
+        self.assertNotIn("Executive window", route_shell_text)
+        self.assertNotIn("Refresh Decision Brief", route_shell_text)
+        self.assertIn("_active_window_days()", route_shell_text)
         self.assertNotIn("Refresh Board", full_workspace_text)
         self.assertNotIn("Executive Command Wall", full_workspace_text)
         self.assertNotIn("Setup Readiness", full_workspace_text)
@@ -1513,7 +1517,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("schema_col", company_filter_text)
         self.assertIn("previous_filter_signature != current_filter_signature", filters_text)
         self.assertIn("previous_metric_signature != current_metric_signature", layout_text)
-        self.assertIn("clear_all_cache()", layout_text)
+        self.assertNotIn("clear_all_cache()", layout_text)
         self.assertIn("clear_all_cache(clear_streamlit_cache=False, clear_metadata=False)", filters_text)
         self.assertIn("clear_all_cache(clear_streamlit_cache=False, clear_metadata=False)", layout_text)
         self.assertIn("bump_global_cache_salt", cache_text)
@@ -1620,12 +1624,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")
         evidence_mode_text = (APP_ROOT / "utils" / "evidence_mode.py").read_text(encoding="utf-8")
 
-        header_index = shell_text.index("render_app_header(active_section, active_company, credit_price, current_role)")
-        topbar_index = shell_text.index("active_company = render_topbar_filter_strip(active_company)")
+        command_bar_index = shell_text.index("active_company = render_global_command_bar(active_company, credit_price=credit_price)")
         sidebar_index = shell_text.index("render_sidebar(")
-        self.assertLess(header_index, sidebar_index)
-        self.assertLess(header_index, topbar_index)
-        self.assertLess(topbar_index, sidebar_index)
+        self.assertLess(command_bar_index, sidebar_index)
         self.assertIn("def current_active_section", (APP_ROOT / "navigation.py").read_text(encoding="utf-8"))
         self.assertIn("def current_credit_price", (APP_ROOT / "refresh.py").read_text(encoding="utf-8"))
         self.assertIn("@dataclass(frozen=True)", layout_text)
@@ -1663,11 +1664,14 @@ class NavigationIntegrityTests(unittest.TestCase):
         ]
         self.assertIn('type="secondary"', sidebar_toggle_block)
         self.assertNotIn('type="primary" if is_active else "secondary"', sidebar_toggle_block)
-        self.assertIn("ow-compact-scope-bar", filters_text)
-        self.assertIn("ow-inline-scope-heading", filters_text)
-        self.assertIn("ow-run-context", layout_text)
-        self.assertNotIn('${float(credit_price):.2f}/credit', layout_text)
-        self.assertNotIn('${credit_price:.2f}/credit', layout_text)
+        self.assertIn("def render_global_command_bar", filters_text)
+        self.assertIn("ow-global-command-bar", filters_text)
+        self.assertIn("ow-inline-scope-control", filters_text)
+        self.assertIn("ow-command-context", filters_text)
+        self.assertNotIn("ow-compact-scope-bar", filters_text)
+        self.assertNotIn("ow-inline-scope-heading", filters_text)
+        self.assertIn('${float(credit_price):.2f} / credit', layout_text)
+        self.assertIn('${float(credit_price):.2f} / credit', filters_text)
         self.assertNotIn("def _render_priority_brief_empty_state", app_text + shell_text + layout_text)
         self.assertNotIn("Open Executive Landing for the ranked platform brief.", app_text + shell_text + layout_text)
         self.assertNotIn(".ow-priority-empty", theme_text)
@@ -1676,17 +1680,17 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('"Warehouse"', filters_text)
         self.assertIn('"User contains"', filters_text)
         topbar_filter_block = filters_text[
-            filters_text.index("def render_topbar_filter_strip"):
+            filters_text.index("def render_global_command_bar"):
             filters_text.index("def render_advanced_scope_controls")
         ]
         advanced_scope_block = filters_text[filters_text.index("def render_advanced_scope_controls"):]
         self.assertNotIn('"User contains"', topbar_filter_block)
         self.assertNotIn("filters live in Advanced Scope", topbar_filter_block)
         self.assertNotIn("st.popover", topbar_filter_block)
-        self.assertNotIn("Edit scope", topbar_filter_block)
+        self.assertIn("Edit scope", filters_text)
         self.assertNotIn("Pin expanded scope controls", topbar_filter_block)
-        self.assertIn("c_company, c_env, c_date, c_wh, c_clear = st.columns", topbar_filter_block)
-        self.assertIn("st.columns([1.0, 1.08, 1.75, 1.65, 0.62])", topbar_filter_block)
+        self.assertIn("c_company, c_env, c_date, c_wh, c_edit, c_context = st.columns", topbar_filter_block)
+        self.assertIn("st.columns([1.18, 1.42, 1.66, 1.82, 0.94, 0.92])", topbar_filter_block)
         self.assertNotIn("_scope_spacer", topbar_filter_block)
         dba_render_text = (APP_ROOT / "sections" / "dba_control_room" / "render.py").read_text(encoding="utf-8")
         self.assertNotIn('render_shell_snapshot((("Scope"', dba_render_text)
@@ -1716,7 +1720,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn('with st.expander("Saved Views", expanded=False)', app_text + shell_text + layout_text)
         self.assertNotIn('with st.expander("Global Filters", expanded=False)', app_text + shell_text + layout_text)
         self.assertNotIn('with st.expander("Settings", expanded=False)', app_text + shell_text + layout_text)
-        self.assertLess(shell_text.index("render_topbar_filter_strip"), shell_text.index("render_sidebar("))
+        self.assertLess(shell_text.index("render_global_command_bar"), shell_text.index("render_sidebar("))
         self.assertLess(
             layout_text.index("for group_name, group_all in NAV_GROUPS.items():"),
             layout_text.index('if sidebar_panel_toggle("Advanced Scope", "advanced_scope")'),
@@ -2360,8 +2364,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('getattr(st, "segmented_control", None)', workflows_text)
         self.assertIn("st.selectbox(", workflows_text)
         self.assertNotIn("help=_section_subtitle(section_name)", app_text)
-        self.assertIn("safe_subtitle_text = html.escape(subtitle)", layout_text)
-        self.assertIn('class="ow-section-subtitle"', layout_text)
+        self.assertIn("Compatibility no-op; the global command bar owns top chrome now.", layout_text)
+        self.assertNotIn('class="ow-section-subtitle"', layout_text)
         self.assertNotIn('st.caption("NAVIGATE")', app_text)
 
         section_texts = {

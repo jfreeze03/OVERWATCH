@@ -107,7 +107,7 @@ def sync_company_environment_state(company: str) -> list[str]:
     return environment_options
 
 
-def render_global_date_range_control(*, label: str = "Date range") -> None:
+def render_global_date_range_control(*, label: str = "Date range", label_visibility: str = "visible") -> None:
     """Render the bounded global date range control."""
     default_end = datetime.now().date()
     default_start = default_end - timedelta(days=7)
@@ -134,6 +134,7 @@ def render_global_date_range_control(*, label: str = "Date range") -> None:
     date_range = st.date_input(
         label,
         key=GLOBAL_DATE_RANGE_INPUT,
+        label_visibility=label_visibility,
     )
     if isinstance(date_range, tuple) and len(date_range) == 2:
         clamped_start, clamped_end, was_clamped, max_days = clamp_global_date_range(date_range[0], date_range[1])
@@ -187,7 +188,7 @@ def ensure_global_database_options(company: str) -> None:
     ))
 
 
-def render_global_environment_control(active_company: str) -> list[str]:
+def render_global_environment_control(active_company: str, *, label_visibility: str = "visible") -> list[str]:
     """Render the company-scoped environment selector."""
     environment_options = sync_company_environment_state(active_company)
     st.selectbox(
@@ -200,6 +201,7 @@ def render_global_environment_control(active_company: str) -> list[str]:
         ),
         format_func=lambda key: get_environment_label(key, active_company),
         key=GLOBAL_ENVIRONMENT,
+        label_visibility=label_visibility,
         help=(
             "Trexis PROD uses _PRD databases; All DEV/SIT uses _DEV and _SIT."
             if str(active_company).upper() == "TREXIS"
@@ -212,7 +214,7 @@ def render_global_environment_control(active_company: str) -> list[str]:
     return environment_options
 
 
-def render_global_warehouse_control(active_company: str) -> None:
+def render_global_warehouse_control(active_company: str, *, label_visibility: str = "visible") -> None:
     """Render the global warehouse selector or free-text fallback."""
     ensure_global_warehouse_options(active_company)
     global_warehouse_options = list(get_state(GLOBAL_WAREHOUSE_OPTIONS) or [])
@@ -228,12 +230,13 @@ def render_global_warehouse_control(active_company: str) -> None:
             "Warehouse",
             warehouse_choices,
             key=GLOBAL_WAREHOUSE_SELECT,
+            label_visibility=label_visibility,
         )
         set_state(GLOBAL_WAREHOUSE, (
             "" if selected_global_warehouse == "All scoped warehouses" else selected_global_warehouse
         ))
     else:
-        st.text_input("Warehouse contains", key=GLOBAL_WAREHOUSE)
+        st.text_input("Warehouse contains", key=GLOBAL_WAREHOUSE, label_visibility=label_visibility)
 
 
 def clear_global_filters() -> None:
@@ -254,8 +257,88 @@ def maybe_clear_scope_cache_on_filter_change() -> None:
         set_state(PREV_GLOBAL_FILTER_SIGNATURE, current_filter_signature)
 
 
-def render_topbar_filter_strip(active_company: str) -> str:
-    """Render the current scope and primary triage filters inline."""
+def render_inline_scope_field(label: object, value: object, *, selectable: bool = True) -> None:
+    """Render the compact command-bar field chrome used around native widgets."""
+    chevron = '<span class="ow-inline-scope-chevron">⌄</span>' if selectable else ""
+    st.markdown(
+        f"""
+        <div class="ow-inline-scope-control" aria-hidden="true">
+            <span class="ow-inline-scope-label">{_escape_html(label)}</span>
+            <strong class="ow-inline-scope-value">{_escape_html(value)}</strong>
+            {chevron}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_scope_popover(active_company: str) -> None:
+    """Render the advanced scope drawer inline rather than as a floating popout."""
+    if st.button("Edit scope", key="global_scope_edit_scope", width="stretch"):
+        set_state("_overwatch_scope_drawer_open", not bool(get_state("_overwatch_scope_drawer_open")))
+    if not get_state("_overwatch_scope_drawer_open"):
+        return
+    with st.container():
+        st.markdown('<div class="ow-scope-drawer" aria-label="Advanced scope controls">', unsafe_allow_html=True)
+        c_user, c_role, c_db, c_schema, c_clear = st.columns([1.05, 1.05, 1.25, 1.25, 0.8])
+        with c_user:
+            st.text_input("User contains", key=GLOBAL_USER)
+        with c_role:
+            st.text_input("Role contains", key=GLOBAL_ROLE)
+        with c_db:
+            ensure_global_database_options(active_company)
+            global_database_options = list(get_state(GLOBAL_DATABASE_OPTIONS) or [])
+            if global_database_options:
+                database_choices = ["All scoped databases"] + global_database_options
+                if get_state(GLOBAL_DATABASE_SELECT) not in database_choices:
+                    set_state(GLOBAL_DATABASE_SELECT, "All scoped databases")
+                selected_global_database = st.selectbox(
+                    "Database",
+                    database_choices,
+                    key=GLOBAL_DATABASE_SELECT,
+                )
+                set_state(GLOBAL_DATABASE, (
+                    "" if selected_global_database == "All scoped databases" else selected_global_database
+                ))
+            else:
+                st.text_input("Database contains", key=GLOBAL_DATABASE)
+        with c_schema:
+            selected_database = str(get_state(GLOBAL_DATABASE, "") or "").strip()
+            schema_choice_scope = (
+                active_company,
+                get_state(GLOBAL_ENVIRONMENT, DEFAULT_ENVIRONMENT),
+                selected_database,
+            )
+            if selected_database and get_state(GLOBAL_SCHEMA_CHOICE_SCOPE) != schema_choice_scope:
+                set_state(GLOBAL_SCHEMA_CHOICE_SCOPE, schema_choice_scope)
+                set_state(GLOBAL_SCHEMA_OPTIONS, [])
+            elif not selected_database:
+                pop_state(GLOBAL_SCHEMA_CHOICE_SCOPE, None)
+                pop_state(GLOBAL_SCHEMA_OPTIONS, None)
+            global_schema_options = list(get_state(GLOBAL_SCHEMA_OPTIONS) or [])
+            if selected_database and global_schema_options:
+                schema_choices = ["All schemas in database"] + global_schema_options
+                if get_state(GLOBAL_SCHEMA_SELECT) not in schema_choices:
+                    set_state(GLOBAL_SCHEMA_SELECT, "All schemas in database")
+                selected_global_schema = st.selectbox(
+                    "Schema",
+                    schema_choices,
+                    key=GLOBAL_SCHEMA_SELECT,
+                )
+                set_state(GLOBAL_SCHEMA, (
+                    "" if selected_global_schema == "All schemas in database" else selected_global_schema
+                ))
+            else:
+                st.text_input("Schema contains", key=GLOBAL_SCHEMA)
+        with c_clear:
+            st.write("")
+            if st.button("Clear all filters", key=WIDGET_GLOBAL_FILTERS_CLEAR, width="stretch"):
+                clear_global_filters()
+        st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_global_command_bar(active_company: str, *, credit_price: float | None = None) -> str:
+    """Render the single global scope command bar above the Decision Workspace."""
     selected_company = str(get_state(ACTIVE_COMPANY, active_company) or active_company)
     if selected_company not in COMPANY_CONFIG:
         selected_company = active_company if active_company in COMPANY_CONFIG else DEFAULT_COMPANY
@@ -264,47 +347,54 @@ def render_topbar_filter_strip(active_company: str) -> str:
     start_date = get_state(GLOBAL_START_DATE)
     end_date = get_state(GLOBAL_END_DATE)
     if start_date and end_date:
-        window_label = f"{start_date:%Y/%m/%d} - {end_date:%Y/%m/%d}"
+        window_label = f"{(end_date - start_date).days + 1} days ({start_date:%b %d} - {end_date:%b %d})"
     else:
         window_label = "Default window"
     wh_value = str(get_state(GLOBAL_WAREHOUSE, "") or "").strip() or "All warehouses"
-    scope_summary = _escape_html(f"{selected_company} / {env_label} / {window_label} / {wh_value}")
-    st.markdown(
-        f"""
-        <div class="ow-compact-scope-bar" aria-label="Current scope">
-            <span>{scope_summary}</span>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
     st.markdown(
         """
-        <div class="ow-inline-scope-heading" aria-label="Triage filters">Triage filters</div>
+        <div class="ow-global-command-bar" aria-label="Global command bar"></div>
         """,
         unsafe_allow_html=True,
     )
-    c_company, c_env, c_date, c_wh, c_clear = st.columns([1.0, 1.08, 1.75, 1.65, 0.62])
+    c_company, c_env, c_date, c_wh, c_edit, c_context = st.columns([1.18, 1.42, 1.66, 1.82, 0.94, 0.92])
     with c_company:
         chosen_company = st.selectbox(
-            "Company view",
+            "Company",
             list(COMPANY_CONFIG.keys()),
             index=list(COMPANY_CONFIG.keys()).index(selected_company)
             if selected_company in COMPANY_CONFIG else 0,
             key=ACTIVE_COMPANY,
+            label_visibility="visible",
         )
     with c_env:
-        render_global_environment_control(chosen_company)
+        render_global_environment_control(chosen_company, label_visibility="visible")
     with c_date:
-        render_global_date_range_control()
+        render_global_date_range_control(label="Window", label_visibility="visible")
     with c_wh:
-        render_global_warehouse_control(chosen_company)
-    with c_clear:
-        st.write("")
-        if st.button("Clear", key=WIDGET_GLOBAL_FILTERS_CLEAR_TOPBAR, width="stretch"):
-            clear_global_filters()
+        render_global_warehouse_control(chosen_company, label_visibility="visible")
+    with c_edit:
+        render_scope_popover(chosen_company)
+    with c_context:
+        now_label = datetime.now().strftime("%Y-%m-%d %H:%M")
+        credit = "" if credit_price is None else f"<strong>${float(credit_price):.2f} / credit</strong>"
+        st.markdown(
+            f"""
+            <div class="ow-command-context">
+                <span>{_escape_html(now_label)}</span>
+                {credit}
+                <span class="ow-command-help" aria-label="Help">?</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
     selected_company = str(chosen_company or selected_company)
     return str(selected_company or active_company)
+
+
+def render_topbar_filter_strip(active_company: str) -> str:
+    """Compatibility wrapper for the old topbar name."""
+    return render_global_command_bar(active_company)
 
 
 def render_advanced_scope_controls(active_company: str) -> None:

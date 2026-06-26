@@ -20,7 +20,7 @@ from access_control import (
     seed_current_role_from_secrets,
 )
 from config import DEFAULT_COMPANY
-from filters import maybe_clear_scope_cache_on_filter_change, render_topbar_filter_strip
+from filters import maybe_clear_scope_cache_on_filter_change, render_global_command_bar, render_topbar_filter_strip
 from layout import (
     fresh_section_container,
     render_admin_access_required,
@@ -118,11 +118,9 @@ def _render_app_body() -> None:
     admin_allowed = admin_access_is_allowed(current_role, connection_available)
     credit_price = current_credit_price()
 
-    # Paint the main app shell before the sidebar and selected section hydrate.
-    with trace("shell:render_app_header", active_section=active_section):
-        render_app_header(active_section, active_company, credit_price, current_role)
-    with trace("shell:render_topbar_filter_strip", active_section=active_section):
-        active_company = render_topbar_filter_strip(active_company)
+    # Paint one compact global command bar before the sidebar and selected section hydrate.
+    with trace("shell:render_global_command_bar", active_section=active_section):
+        active_company = render_global_command_bar(active_company, credit_price=credit_price)
 
     with trace("shell:render_sidebar", active_section=active_section):
         sidebar_state = render_sidebar(

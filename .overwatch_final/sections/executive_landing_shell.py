@@ -10,8 +10,8 @@ import importlib
 
 import streamlit as st
 
-from config import DAY_WINDOW_OPTIONS, DEFAULT_DAY_WINDOW
-from runtime_state import EXECUTIVE_LANDING_WORKFLOW
+from config import DEFAULT_DAY_WINDOW
+from runtime_state import EXECUTIVE_LANDING_WORKFLOW, GLOBAL_END_DATE, GLOBAL_START_DATE, get_state
 from sections.base import lazy_util as _lazy_util
 from sections.triage_queue import render_mission_control_queue
 from sections.executive_landing_common import (
@@ -61,6 +61,18 @@ from utils.section_guidance import defer_source_note
 
 
 get_session_for_action = _lazy_util("get_session_for_action")
+
+
+def _active_window_days() -> int:
+    """Return the command-bar window in days without rendering a second section widget."""
+    start_date = get_state(GLOBAL_START_DATE)
+    end_date = get_state(GLOBAL_END_DATE)
+    if start_date and end_date:
+        try:
+            return max(1, int((end_date - start_date).days))
+        except Exception:
+            return int(DEFAULT_DAY_WINDOW)
+    return int(DEFAULT_DAY_WINDOW)
 
 EXECUTIVE_LANDING_RENDERER_PATHS = {
     EXECUTIVE_OVERVIEW_WORKFLOW: (
@@ -170,21 +182,7 @@ def render() -> None:
         _ensure_executive_landing_workflow_state()
 
     with trace("executive_shell:scope_controls", active_section="Executive Landing"):
-        window_col, refresh_col, _window_spacer = st.columns([1.2, 1.0, 2.2])
-        with window_col:
-            days = st.selectbox(
-                "Executive window",
-                DAY_WINDOW_OPTIONS,
-                index=DAY_WINDOW_OPTIONS.index(DEFAULT_DAY_WINDOW),
-                format_func=lambda value: f"{value} days",
-            )
-        with refresh_col:
-            refresh_board = st.button(
-                "Refresh Decision Brief",
-                key="executive_landing_observability_refresh",
-                type="secondary",
-                width="stretch",
-            )
+        days = _active_window_days()
         active_workflow = normalize_executive_landing_workflow(
             st.session_state.get(EXECUTIVE_LANDING_WORKFLOW, EXECUTIVE_OVERVIEW_WORKFLOW)
         )
@@ -199,9 +197,6 @@ def render() -> None:
                 _store_connection_unavailable_observability(company, environment, int(days))
             st.session_state["_executive_landing_observability_autoload_scope"] = expected_scope
             board, board_payload = _current_observability_board(company, environment, int(days))
-    if refresh_board:
-        st.session_state["_executive_landing_command_brief_force_refresh"] = True
-
     with trace("executive_shell:summary_build", active_section="Executive Landing"):
         snapshot = st.session_state.get("executive_landing_snapshot")
         if isinstance(snapshot, dict) and not _snapshot_matches_scope(snapshot, company, environment, int(days)):

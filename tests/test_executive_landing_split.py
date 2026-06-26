@@ -207,9 +207,9 @@ class ExecutiveLandingSplitTests(unittest.TestCase):
     def test_view_source_preserves_keys_and_navigation_targets(self):
         expected_tokens = {
             "executive_landing.py": [
-                "executive_landing_observability_refresh",
                 "_executive_landing_observability_autoload_scope",
                 "executive_landing_snapshot",
+                "_active_window_days",
             ],
             "executive_landing_data.py": [
                 "_OBS_COLUMNS",

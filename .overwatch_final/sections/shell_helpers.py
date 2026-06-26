@@ -754,9 +754,9 @@ def render_action_cards(
 
 
 def render_content_panel(title: object, detail: object = "") -> None:
-    """Render the selected content panel header."""
+    """Render a minimal selected-content line without creating another card."""
     st.html(
-        '<section class="ow-content-panel ow-cost-content-header">'
+        '<section class="ow-content-header-line" aria-label="Selected workflow context">'
         f'<div class="ow-content-panel-title">{_escape_markup(_clean_display_text(title))}</div>'
         f'<div class="ow-content-panel-detail">{_escape_markup(_clean_display_text(detail))}</div>'
         '</section>'

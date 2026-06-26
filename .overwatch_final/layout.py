@@ -146,46 +146,8 @@ def active_scope_chips(company: str) -> str:
 
 
 def render_app_header(section: str, company: str, credit_price: float, role: str) -> None:
-    """Render the top shell header before section hydration."""
-    section = normalize_nav_section(section)
-    icon = SECTION_ICONS.get(section, "target")
-    now_label = datetime.now().strftime("%Y-%m-%d %H:%M")
-    safe_section = html.escape(section)
-    subtitle = section_subtitle(section)
-    safe_subtitle = html.escape(subtitle, quote=True)
-    safe_subtitle_text = html.escape(subtitle)
-    safe_icon = html.escape(str(icon).upper())
-    scope_chips = active_scope_chips(company)
-    left, right = st.columns([5.4, 1.6])
-    with left:
-        st.markdown(
-            f"""
-            <div class="ow-topbar">
-                <div class="ow-section-kicker">OVERWATCH SNOWFLAKE MONITOR</div>
-                <div class="ow-section-row">
-                    <span class="ow-section-icon">{safe_icon}</span>
-                    <div>
-                        <div class="ow-section-title" title="{safe_subtitle}">{safe_section}</div>
-                        <div class="ow-section-subtitle">{safe_subtitle_text}</div>
-                    </div>
-                </div>
-                <div class="ow-scope-row">{scope_chips}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    with right:
-        st.markdown(
-            f"""
-            <div class="ow-run-context">
-                <div>{html.escape(now_label)}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        if st.button("Refresh", key=WIDGET_GLOBAL_REFRESH, width="stretch"):
-            clear_all_cache()
-            st.rerun()
+    """Compatibility no-op; the global command bar owns top chrome now."""
+    return None
 
 
 def sidebar_panel_toggle(label: str, panel_key: str) -> bool:
@@ -327,8 +289,19 @@ def render_sidebar(
     with st.sidebar:
         st.markdown("""
         <div class="ow-sidebar-brand">
-            <div class="ow-brand-row"><span class="ow-brand-dot"></span><span>OVERWATCH</span></div>
-            <div class="ow-sidebar-subtitle">Snowflake Usage Monitor</div>
+            <div class="ow-brand-lockup">
+                <span class="ow-sidebar-logo" aria-hidden="true">
+                    <svg viewBox="0 0 40 40" focusable="false" role="img">
+                        <path d="M20 3 34 11v18L20 37 6 29V11Z" fill="none" stroke="currentColor" stroke-width="2.5"/>
+                        <path d="M20 11 27 15v10l-7 4-7-4V15Z" fill="none" stroke="currentColor" stroke-width="1.8"/>
+                        <path d="M20 15v9M16 19h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                    </svg>
+                </span>
+                <span>
+                    <strong>OVERWATCH</strong>
+                    <small>SNOWFLAKE MONITOR</small>
+                </span>
+            </div>
             <div class="ow-live-pill">LIVE</div>
         </div>
         """, unsafe_allow_html=True)
@@ -453,9 +426,11 @@ def render_sidebar(
 
         company_color = COMPANY_CONFIG.get(active_company, {}).get("color", "#38bdf8")
         st.markdown(f"""
-        <div style="font-size:0.65rem; color:#475569; text-align:center;">
-            <div style="color:{company_color}; font-weight:700; margin-bottom:4px;">{active_company} view</div>
-            <div style="margin-top:4px;">Live metadata is current; account history may lag up to 45 minutes.</div>
+        <div class="ow-sidebar-status-card">
+            <strong style="color:{company_color};">{html.escape(active_company)} view</strong>
+            <span>${float(credit_price):.2f} / credit</span>
+            <p>Live metadata is current. Account history may lag up to 45 minutes.</p>
+            <div class="ow-sidebar-health-row"><span>System Health</span><i aria-hidden="true"></i></div>
         </div>
         """, unsafe_allow_html=True)
 

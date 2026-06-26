@@ -404,12 +404,12 @@ class SectionCommandBriefTests(unittest.TestCase):
             )
 
         markup = "\n".join(call.args[0] for call in html.call_args_list)
-        self.assertIn("ow-decision-brief", markup)
-        self.assertIn("ow-decision-operating-loop", markup)
+        self.assertIn("ow-decision-workspace", markup)
+        self.assertIn("ow-decision-hero", markup)
         self.assertIn("WHAT NEEDS ATTENTION".lower(), markup.lower())
         self.assertIn("ow-decision-metric-ribbon", markup)
         labels = [call.args[0] for call in button.call_args_list]
-        self.assertIn("Open Active Alerts", labels)
+        self.assertTrue(any(str(label).startswith("Open Active Alerts") for label in labels))
         self.assertIn("Load Active Alerts", labels)
 
     def test_renderer_fallback_is_compact_and_hides_raw_objects(self):
@@ -450,7 +450,7 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertNotIn("FACT_COST_DAILY", first_markup)
         renderer_source = (APP_ROOT / "sections" / "section_command_rendering.py").read_text(encoding="utf-8")
         self.assertNotIn('"Technical details"', renderer_source)
-        self.assertNotIn('"Data Trust"', renderer_source)
+        self.assertIn("ow-decision-trust-footer", renderer_source)
 
     def test_command_actions_are_deduped_and_unknown_routes_removed(self):
         from sections.section_command_brief import SectionCommandAction

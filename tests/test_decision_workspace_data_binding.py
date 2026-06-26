@@ -92,7 +92,20 @@ def _packet(section: str, metrics: list[dict[str, object]], *, headline: str = "
                     "ROUTE_SECTION": section,
                     "ROUTE_WORKFLOW": "Overview",
                     "OWNER_ROUTE": "Owner route",
+                    "OWNER_ID": "owner-123",
+                    "OWNER_NAME": "Packet Owner",
+                    "OWNER_GAP": False,
                     "SLA_STATE": "Due soon",
+                    "FINDING_KEY": "finding-123",
+                    "DEDUPE_KEY": "dedupe-123",
+                    "ENTITY_TYPE": "warehouse",
+                    "ENTITY_ID": "PROD_WH",
+                    "EVIDENCE_ID": "EVT-123",
+                    "EVIDENCE_QUERY": "SELECT * FROM ADMIN_ONLY",
+                    "FIRST_SEEN_TS": "2026-06-25 09:00:00",
+                    "DUE_TS": "2026-06-25 12:00:00",
+                    "AGE_MINUTES": 68,
+                    "EVIDENCE_SOURCE": "FACT_QUERY_HOURLY",
                     "SORT_ORDER": 1,
                 }
             ],
@@ -1849,6 +1862,119 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
             exceptions=(SectionCommandSignal(severity="Watch", signal="Aged without SLA", age_minutes=80),),
         )
         self.assertEqual(build_decision_workspace_view_model(aged, current_workflow="Overview").findings[0].sla, "No SLA")
+
+    def test_decision_workspace_renders_entity_owner_age_sla_without_evidence_query(self):
+        from sections.section_command_brief import SectionCommandBrief, SectionCommandSignal
+        from sections.decision_workspace_view_model import build_decision_workspace_view_model
+
+        brief = SectionCommandBrief(
+            section="Cost & Contract",
+            company="ALFA",
+            environment="ALL",
+            window_label="7 days",
+            state="At Risk",
+            headline="Spend needs review",
+            summary="Packet summary",
+            source="MART_SECTION_DECISION_CURRENT",
+            freshness_label="Updated 8m ago",
+            loaded_at="2026-06-25T10:08:00",
+            exceptions=(
+                SectionCommandSignal(
+                    severity="High",
+                    signal="Warehouse driver",
+                    entity="PROD_WH",
+                    entity_type="warehouse",
+                    entity_id="PROD_WH",
+                    detail="$6.7K movement",
+                    owner_name="Warehouse Owner",
+                    owner_id="owner-123",
+                    first_seen_ts="2026-06-25 09:00:00",
+                    due_ts="2026-06-25 12:00:00",
+                    age_minutes=68,
+                    sla_state="Due in 2h",
+                    evidence_id="COST-EVIDENCE-1",
+                    evidence_source="FACT_COST_DAILY",
+                    evidence_query="SELECT * FROM ADMIN_ONLY",
+                ),
+            ),
+        )
+        model = build_decision_workspace_view_model(brief, current_workflow="Cost Overview")
+        finding = model.findings[0]
+        self.assertEqual(finding.entity_type, "warehouse")
+        self.assertEqual(finding.entity_id, "PROD_WH")
+        self.assertEqual(finding.owner, "Warehouse Owner")
+        self.assertIn("Seen 1h ago", finding.first_seen_label)
+        self.assertIn("Due in 2h", finding.due_label)
+        self.assertEqual(finding.evidence_id, "COST-EVIDENCE-1")
+
+        markup = _render_markup(brief)
+        self.assertIn("PROD_WH", markup)
+        self.assertIn("Warehouse Owner", markup)
+        self.assertIn("Seen 1h ago", markup)
+        self.assertIn("Due in 2h", markup)
+        self.assertIn("Evidence COST-EVIDENCE-1", markup)
+        self.assertNotIn("SELECT * FROM ADMIN_ONLY", markup)
+
+    def test_evidence_action_applies_safe_finding_target_without_executing_query(self):
+        from sections.decision_workspace_controls import apply_finding_evidence_target
+        from sections.decision_workspace_view_model import DecisionFinding
+
+        state: dict[str, object] = {}
+        finding = DecisionFinding(
+            severity="High",
+            signal="Warehouse driver",
+            entity_type="warehouse",
+            entity_id="PROD_WH",
+            entity_name="PROD_WH",
+            evidence_id="COST-EVIDENCE-1",
+            evidence_source="FACT_COST_DAILY",
+            evidence_query="SELECT * FROM ADMIN_ONLY",
+        )
+        with patch("sections.decision_workspace_controls.st.session_state", state):
+            target = apply_finding_evidence_target(finding, "Cost & Contract", "Cost Overview")
+        self.assertEqual(target["evidence_id"], "COST-EVIDENCE-1")
+        self.assertEqual(state["cc_explorer_lens"], "Warehouse")
+        self.assertEqual(state["cost_contract_evidence_entity_filter"], "PROD_WH")
+        self.assertNotIn("SELECT * FROM ADMIN_ONLY", str(state))
+
+    def test_trend_metadata_flows_into_view_model_and_markup(self):
+        from sections.section_command_brief import SectionCommandBrief, SectionCommandMetric
+        from sections.decision_workspace_view_model import build_decision_workspace_view_model
+
+        brief = SectionCommandBrief(
+            section="Executive Landing",
+            company="ALFA",
+            environment="ALL",
+            window_label="7 days",
+            state="At Risk",
+            headline="Trend quality",
+            summary="Packet summary",
+            source="MART_SECTION_DECISION_CURRENT",
+            freshness_label="Updated 8m ago",
+            loaded_at="2026-06-25T10:08:00",
+            metrics=(
+                SectionCommandMetric(
+                    key="total_spend",
+                    label="Total Spend",
+                    value="",
+                    numeric_value=100,
+                    metric_format="currency",
+                    trend_points=tuple({"ts": f"2026-06-{day:02d}", "value": day} for day in range(19, 26)),
+                    trend_period="daily",
+                    trend_point_count=7,
+                    trend_quality="partial",
+                    zero_fill_policy="count_zero_fill",
+                ),
+            ),
+        )
+        model = build_decision_workspace_view_model(brief, current_workflow="Overview")
+        self.assertEqual(model.metric_cells[0].trend_period, "daily")
+        self.assertEqual(model.metric_cells[0].trend_point_count, 7)
+        self.assertEqual(model.metric_cells[0].trend_quality, "partial")
+        self.assertEqual(model.metric_cells[0].zero_fill_policy, "count_zero_fill")
+        markup = _render_markup(brief)
+        self.assertEqual(markup.count("partial source history"), 1)
+        self.assertIn("Trend history: 1 partial", markup)
 
     def test_trend_unavailable_is_single_compact_message(self):
         from sections.section_command_brief import SectionCommandBrief, SectionCommandMetric

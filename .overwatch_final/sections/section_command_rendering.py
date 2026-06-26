@@ -13,6 +13,7 @@ from sections.command_brief_routes import COMMAND_BRIEF_ROUTES, apply_command_br
 from sections.decision_workspace_controls import (
     CommandBriefDetailAction,
     DecisionWorkspaceControls,
+    apply_finding_evidence_target,
     render_evidence_settings,
 )
 from sections.decision_workspace_setup_health import can_open_decision_setup_health, open_decision_setup_health
@@ -177,7 +178,14 @@ def _trust_detail_html(model: DecisionWorkspaceViewModel) -> str:
     return detail
 
 
-def _render_detail_action(*, key_prefix: str, detail_action: CommandBriefDetailAction) -> None:
+def _render_detail_action(
+    *,
+    key_prefix: str,
+    detail_action: CommandBriefDetailAction,
+    evidence_target: object | None = None,
+    section: str = "",
+    workflow: str = "",
+) -> None:
     if st.button(
         detail_action.label,
         key=detail_action.key or f"{key_prefix}_detail_{_key_token(detail_action.label)}",
@@ -185,6 +193,7 @@ def _render_detail_action(*, key_prefix: str, detail_action: CommandBriefDetailA
         width="stretch",
         help=detail_action.help_text or None,
     ):
+        apply_finding_evidence_target(evidence_target, section, workflow)
         detail_action.callback()
         st.rerun()
 
@@ -316,11 +325,19 @@ def _metric_ribbon(model: DecisionWorkspaceViewModel, *, compact: bool) -> str:
 def _render_model_attention_panel(model: DecisionWorkspaceViewModel) -> str:
     rows: list[str] = []
     for item in model.findings[:3]:
+        entity_meta = " / ".join(
+            part for part in (item.entity_type, item.entity_id or item.entity_name or item.entity) if part
+        )
+        age_due = " / ".join(part for part in (item.first_seen_label, item.due_label) if part)
+        evidence_hint = f"Evidence {item.evidence_id}" if item.evidence_id else (item.evidence_source or "")
+        detail_parts = [item.detail or item.entity, entity_meta, age_due, evidence_hint]
+        detail = " · ".join(part for part in detail_parts if part)
         rows.append(
             '<div class="ow-decision-attention-row">'
             f'<span class="ow-attention-icon" data-severity="{_html(item.severity).lower()}"></span>'
             f'<strong>{_html(item.severity)}</strong>'
-            f'<div class="ow-attention-copy"><b>{_html(item.signal)}</b><small>{_html(item.detail or item.entity)}</small></div>'
+            f'<div class="ow-attention-copy"><b>{_html(item.signal)}</b><small>{_html(detail)}</small></div>'
+            f'<div class="ow-attention-meta"><span>Entity</span><b>{_html(item.entity_name or item.entity or item.entity_id or "Entity unavailable")}</b></div>'
             f'<div class="ow-attention-meta"><span>Owner</span><b>{_html(item.owner or "Owner unavailable")}</b></div>'
             f'<div class="ow-attention-meta"><span>SLA</span><b>{_html(item.sla or "SLA unavailable")}</b></div>'
             '</div>'
@@ -348,6 +365,8 @@ def _render_model_attention_panel(model: DecisionWorkspaceViewModel) -> str:
 def _render_model_trend_band(model: DecisionWorkspaceViewModel) -> str:
     tiles: list[str] = []
     candidates = tuple(model.trends or model.metric_cells)
+    has_partial = any(str(metric.trend_quality or "").lower() == "partial" for metric in candidates)
+    partial_badge = '<span class="ow-decision-trend-quality">partial source history</span>' if has_partial else ""
     for metric in candidates[:5]:
         trend_svg = _trend_bar_svg(metric.trend_points, tone=metric.tone or "neutral")
         if not trend_svg:
@@ -373,7 +392,7 @@ def _render_model_trend_band(model: DecisionWorkspaceViewModel) -> str:
         )
     return (
         '<section class="ow-decision-trend-band">'
-        '<h4>What changed</h4>'
+        f'<h4>What changed {partial_badge}</h4>'
         '<div class="ow-decision-trend-grid">'
         + "".join(tiles)
         + "</div></section>"
@@ -391,8 +410,9 @@ def _render_model_trust_footer(model: DecisionWorkspaceViewModel) -> str:
         f'<span>{_html(model.trust.target_label)}</span>'
         f'<span>{_html(model.trust.coverage_label)}</span>'
         f'<span>Data quality <b>{_html(model.trust.quality_label)}</b></span>'
-        '<span class="ow-decision-source-trigger">View sources &dtri;</span>'
-        '</footer>'
+        + (f'<span>{_html(model.trust.trend_quality_label)}</span>' if model.trust.trend_quality_label else "")
+        + '<span class="ow-decision-source-trigger">View sources &dtri;</span>'
+        + '</footer>'
     )
 
 
@@ -429,7 +449,14 @@ def _render_workspace_actions(
                     st.rerun()
     if controls.evidence_action is not None:
         st.markdown('<div class="ow-decision-evidence-action-shell">', unsafe_allow_html=True)
-        _render_detail_action(key_prefix=key_prefix, detail_action=controls.evidence_action)
+        top_finding = model.findings[0] if model.findings else None
+        _render_detail_action(
+            key_prefix=key_prefix,
+            detail_action=controls.evidence_action,
+            evidence_target=top_finding,
+            section=model.section,
+            workflow=model.workflow,
+        )
         settings_renderer = controls.evidence_action.settings_renderer or controls.evidence_settings
         if settings_renderer is not None:
             render_evidence_settings(controls.evidence_action.settings_label, settings_renderer)
@@ -440,7 +467,7 @@ def _extra_metrics_panel(metrics: tuple[DecisionMetricCell, ...]) -> str:
     extra = "".join(
         f'<div class="ow-decision-extra-metric"><strong>{_html(metric.label)}</strong>'
         f'<span>{_html(metric.value if metric.available else metric.availability_state)}</span>'
-        f'<small>{_html(metric.detail)}</small></div>'
+        f'<small>{_html(" / ".join(part for part in (metric.detail, metric.trend_quality, metric.zero_fill_policy) if part))}</small></div>'
         for metric in metrics
     )
     return f'<div class="ow-decision-extra-metrics">{extra}</div>'
@@ -491,7 +518,14 @@ def render_decision_workspace(
             '</section>'
         )
         if controls.evidence_action is not None:
-            _render_detail_action(key_prefix=key_prefix, detail_action=controls.evidence_action)
+            top_finding = model.findings[0] if model.findings else None
+            _render_detail_action(
+                key_prefix=key_prefix,
+                detail_action=controls.evidence_action,
+                evidence_target=top_finding,
+                section=model.section,
+                workflow=model.workflow,
+            )
         return
 
     state = model.state_token

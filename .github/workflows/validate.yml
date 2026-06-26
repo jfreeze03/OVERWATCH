@@ -62,6 +62,12 @@ jobs:
       - name: Run Decision Workspace data-binding and setup-health tests
         run: python -m unittest tests.test_decision_workspace_data_binding
 
+      - name: Run Decision Workspace HTML snapshot tests
+        run: |
+          python -m unittest \
+            tests.test_decision_workspace_data_binding.DecisionWorkspaceDataBindingTests.test_html_snapshot_fallback_has_workspace_without_legacy_instruction_copy \
+            tests.test_decision_workspace_data_binding.DecisionWorkspaceDataBindingTests.test_html_snapshot_all_primary_sections_have_workspace_without_legacy_card_wall
+
       - name: Run theme and popover accessibility tests
         run: python -m unittest tests.test_theme_registry
 

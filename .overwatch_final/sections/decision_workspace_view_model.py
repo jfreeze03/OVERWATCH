@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Sequence
 
 
@@ -16,6 +17,10 @@ class DecisionMetricCell:
     trend_points: tuple[object, ...] = ()
     available: bool = True
     availability_state: str = "Available"
+    trend_period: str = ""
+    trend_point_count: int = 0
+    trend_quality: str = ""
+    zero_fill_policy: str = ""
 
 
 @dataclass(frozen=True)
@@ -26,6 +31,19 @@ class DecisionFinding:
     detail: str = ""
     owner: str = ""
     sla: str = ""
+    finding_key: str = ""
+    dedupe_key: str = ""
+    entity_type: str = ""
+    entity_id: str = ""
+    entity_name: str = ""
+    evidence_id: str = ""
+    owner_id: str = ""
+    owner_name: str = ""
+    first_seen_label: str = ""
+    due_label: str = ""
+    evidence_source: str = ""
+    evidence_query: str = ""
+    owner_gap: bool = False
 
 
 @dataclass(frozen=True)
@@ -45,6 +63,7 @@ class DecisionTrustView:
     coverage_label: str
     quality_label: str
     fixture_badge: bool = False
+    trend_quality_label: str = ""
 
 
 @dataclass(frozen=True)
@@ -163,15 +182,20 @@ def _preferred_metrics(section: str) -> tuple[str, ...]:
 
 
 def _to_metric_cell(metric: object) -> DecisionMetricCell:
+    trend_points = tuple(getattr(metric, "trend_points", ()) or ())
     return DecisionMetricCell(
         key=str(getattr(metric, "key", "") or ""),
         label=str(getattr(metric, "label", "") or "Metric"),
         value=format_metric_value(metric),
         detail=_delta_label(metric),
         tone=str(getattr(metric, "tone", "") or "neutral").lower(),
-        trend_points=tuple(getattr(metric, "trend_points", ()) or ()),
+        trend_points=trend_points,
         available=bool(getattr(metric, "available", True)),
         availability_state=str(getattr(metric, "availability_state", "") or "Available"),
+        trend_period=str(getattr(metric, "trend_period", "") or ""),
+        trend_point_count=int(getattr(metric, "trend_point_count", 0) or len(trend_points)),
+        trend_quality=str(getattr(metric, "trend_quality", "") or ("complete" if len(trend_points) >= 7 else "")),
+        zero_fill_policy=str(getattr(metric, "zero_fill_policy", "") or ""),
     )
 
 
@@ -231,6 +255,20 @@ def _source_mode(brief: object) -> str:
     return "scheduled_mart"
 
 
+def _trend_quality_label(metrics: Sequence[object]) -> str:
+    qualities = [str(getattr(metric, "trend_quality", "") or "").strip().lower() for metric in tuple(metrics or ())]
+    partial = sum(1 for quality in qualities if quality == "partial")
+    unavailable = sum(1 for quality in qualities if quality == "unavailable")
+    complete = sum(1 for quality in qualities if quality == "complete")
+    if partial:
+        return f"Trend history: {partial} partial"
+    if unavailable and not complete:
+        return "Trend history unavailable"
+    if complete:
+        return f"Trend history: {complete} complete"
+    return ""
+
+
 def _trust_view(brief: object, source_mode: str) -> DecisionTrustView:
     freshness_minutes = getattr(brief, "freshness_minutes", None)
     if freshness_minutes is None:
@@ -258,6 +296,7 @@ def _trust_view(brief: object, source_mode: str) -> DecisionTrustView:
         coverage_label=coverage,
         quality_label=quality,
         fixture_badge=source_mode == "fixture",
+        trend_quality_label=_trend_quality_label(tuple(getattr(brief, "metrics", ()) or ())),
     )
 
 
@@ -328,9 +367,12 @@ def _fallback_view(brief: object, source_mode: str, *, evidence_action: object |
 
 
 def _owner_label(signal: object) -> str:
-    owner = str(getattr(signal, "owner_route", "") or "").strip()
-    if owner:
-        return owner
+    for attr in ("owner_name", "owner_id", "owner_route"):
+        owner = str(getattr(signal, attr, "") or "").strip()
+        if owner:
+            if attr == "owner_route" and bool(getattr(signal, "owner_gap", False)):
+                return "Owner gap"
+            return owner
     if bool(getattr(signal, "owner_gap", False)):
         return "Owner gap"
     return "Owner unavailable"
@@ -343,6 +385,37 @@ def _sla_label(signal: object) -> str:
     if getattr(signal, "age_minutes", None) is not None:
         return "No SLA"
     return "SLA unavailable"
+
+
+def _format_ts_label(prefix: str, value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00")).replace(tzinfo=None)
+        return f"{prefix} {parsed.strftime('%Y-%m-%d %H:%M')}"
+    except Exception:
+        return f"{prefix} {text}"
+
+
+def _first_seen_label(signal: object) -> str:
+    age = getattr(signal, "age_minutes", None)
+    if age is not None:
+        minutes = max(int(round(float(age))), 0)
+        if minutes >= 1440:
+            return f"Seen {minutes // 1440}d ago"
+        if minutes >= 60:
+            return f"Seen {minutes // 60}h ago"
+        return f"Seen {minutes}m ago"
+    return _format_ts_label("First seen", getattr(signal, "first_seen_ts", ""))
+
+
+def _due_label(signal: object) -> str:
+    sla = str(getattr(signal, "sla_state", "") or "").strip()
+    due = _format_ts_label("Due", getattr(signal, "due_ts", ""))
+    if sla and due:
+        return f"{sla} / {due}"
+    return sla or due or _sla_label(signal)
 
 
 def build_decision_workspace_view_model(
@@ -364,7 +437,20 @@ def build_decision_workspace_view_model(
             entity=str(getattr(item, "entity", "") or ""),
             detail=str(getattr(item, "detail", "") or ""),
             owner=_owner_label(item),
-            sla=_sla_label(item),
+            sla=_due_label(item),
+            finding_key=str(getattr(item, "finding_key", "") or ""),
+            dedupe_key=str(getattr(item, "dedupe_key", "") or ""),
+            entity_type=str(getattr(item, "entity_type", "") or ""),
+            entity_id=str(getattr(item, "entity_id", "") or ""),
+            entity_name=str(getattr(item, "entity", "") or ""),
+            evidence_id=str(getattr(item, "evidence_id", "") or ""),
+            owner_id=str(getattr(item, "owner_id", "") or ""),
+            owner_name=str(getattr(item, "owner_name", "") or ""),
+            first_seen_label=_first_seen_label(item),
+            due_label=_due_label(item),
+            evidence_source=str(getattr(item, "evidence_source", "") or ""),
+            evidence_query=str(getattr(item, "evidence_query", "") or ""),
+            owner_gap=bool(getattr(item, "owner_gap", False)),
         )
         for item in tuple(getattr(brief, "exceptions", ()) or ())[:3]
     )

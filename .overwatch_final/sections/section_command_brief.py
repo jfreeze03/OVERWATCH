@@ -46,6 +46,10 @@ class SectionCommandMetric:
     unavailable_reason: str = ""
     source_key: str = ""
     confidence: str = ""
+    trend_period: str = ""
+    trend_point_count: int = 0
+    trend_quality: str = ""
+    zero_fill_policy: str = ""
 
 
 @dataclass(frozen=True)
@@ -66,6 +70,16 @@ class SectionCommandSignal:
     route_key: str = ""
     evidence_source: str = ""
     confidence: str = ""
+    finding_key: str = ""
+    dedupe_key: str = ""
+    entity_type: str = ""
+    entity_id: str = ""
+    evidence_id: str = ""
+    evidence_query: str = ""
+    first_seen_ts: str = ""
+    due_ts: str = ""
+    owner_id: str = ""
+    owner_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -313,6 +327,10 @@ def _metric_from_row(row: Mapping[str, object]) -> SectionCommandMetric:
         unavailable_reason=_string(_column(row, "UNAVAILABLE_REASON")),
         source_key=_string(_column(row, "SOURCE_KEY")),
         confidence=_string(_column(row, "CONFIDENCE")),
+        trend_period=_string(_column(row, "TREND_PERIOD")),
+        trend_point_count=_int_value(_column(row, "TREND_POINT_COUNT"), len(_trend_points(_column(row, "TREND_POINTS")))),
+        trend_quality=_string(_column(row, "TREND_QUALITY")),
+        zero_fill_policy=_string(_column(row, "ZERO_FILL_POLICY")),
     )
 
 
@@ -334,6 +352,16 @@ def _signal_from_row(row: Mapping[str, object]) -> SectionCommandSignal:
         route_key=_string(_column(row, "ROUTE_KEY")),
         evidence_source=_string(_column(row, "EVIDENCE_SOURCE")),
         confidence=_string(_column(row, "CONFIDENCE")),
+        finding_key=_string(_column(row, "FINDING_KEY")),
+        dedupe_key=_string(_column(row, "DEDUPE_KEY")),
+        entity_type=_string(_column(row, "ENTITY_TYPE")),
+        entity_id=_string(_column(row, "ENTITY_ID")),
+        evidence_id=_string(_column(row, "EVIDENCE_ID")),
+        evidence_query=_string(_column(row, "EVIDENCE_QUERY")),
+        first_seen_ts=_string(_column(row, "FIRST_SEEN_TS")),
+        due_ts=_string(_column(row, "DUE_TS")),
+        owner_id=_string(_column(row, "OWNER_ID")),
+        owner_name=_string(_column(row, "OWNER_NAME")),
     )
 
 

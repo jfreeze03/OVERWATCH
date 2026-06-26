@@ -224,6 +224,10 @@ class SectionCommandBriefTests(unittest.TestCase):
                         {"ts": "2026-06-18", "value": 101},
                         {"ts": "2026-06-25", "value": 120},
                     ],
+                    "TREND_PERIOD": "daily",
+                    "TREND_POINT_COUNT": 2,
+                    "TREND_QUALITY": "partial",
+                    "ZERO_FILL_POLICY": "count_zero_fill",
                     "DELTA_PERCENT": 18.8,
                     "SORT_ORDER": 10,
                 },
@@ -265,6 +269,19 @@ class SectionCommandBriefTests(unittest.TestCase):
                 "IMPACT_UNIT": "USD",
                 "OWNER_ROUTE": "DBA / AI cost route",
                 "OWNER_GAP": False,
+                "FINDING_KEY": "cost:cortex:spend",
+                "DEDUPE_KEY": "cost:cortex",
+                "ENTITY_TYPE": "service",
+                "ENTITY_ID": "CORTEX_AI",
+                "EVIDENCE_ID": "COST-42",
+                "EVIDENCE_QUERY": "SELECT * FROM ADMIN_ONLY",
+                "FIRST_SEEN_TS": "2026-06-25 09:00:00",
+                "DUE_TS": "2026-06-25 12:00:00",
+                "OWNER_ID": "ai-cost-route",
+                "OWNER_NAME": "AI Cost Owner",
+                "AGE_MINUTES": 65,
+                "SLA_STATE": "Due in 2h",
+                "EVIDENCE_SOURCE": "FACT_CORTEX_DAILY",
                 "SORT_ORDER": 1,
             }],
             "ACTIONS": [{
@@ -315,6 +332,10 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertEqual(brief.metrics[0].numeric_value, 120)
         self.assertTrue(brief.metrics[0].available)
         self.assertEqual(brief.metrics[0].source_key, "cost_daily")
+        self.assertEqual(brief.metrics[0].trend_period, "daily")
+        self.assertEqual(brief.metrics[0].trend_point_count, 2)
+        self.assertEqual(brief.metrics[0].trend_quality, "partial")
+        self.assertEqual(brief.metrics[0].zero_fill_policy, "count_zero_fill")
         self.assertEqual(
             brief.metrics[0].trend_points,
             ({"ts": "2026-06-18", "value": 101.0}, {"ts": "2026-06-25", "value": 120.0}),
@@ -325,7 +346,13 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertEqual(metrics_by_key["forecast_run_rate"].unavailable_reason, "Forecast mart has no current row")
         self.assertEqual(brief.top_signal.signal, "Cortex AI spend")
         self.assertEqual(brief.top_signal.priority_score, 95)
-        self.assertEqual(brief.top_signal.owner_route, "DBA / AI cost route")
+        self.assertEqual(brief.top_signal.owner_name, "AI Cost Owner")
+        self.assertEqual(brief.top_signal.entity_type, "service")
+        self.assertEqual(brief.top_signal.entity_id, "CORTEX_AI")
+        self.assertEqual(brief.top_signal.evidence_id, "COST-42")
+        self.assertEqual(brief.top_signal.first_seen_ts, "2026-06-25 09:00:00")
+        self.assertEqual(brief.top_signal.due_ts, "2026-06-25 12:00:00")
+        self.assertEqual(brief.top_signal.evidence_query, "SELECT * FROM ADMIN_ONLY")
         self.assertEqual(brief.next_actions[0].target_workflow, "Cortex AI")
         self.assertEqual(brief.resolved_company, "ALFA")
         self.assertEqual(brief.source, "MART_SECTION_DECISION_CURRENT")
@@ -792,7 +819,7 @@ class SectionCommandBriefTests(unittest.TestCase):
             self.assertIn(column, tables)
             self.assertIn(column, procs)
             self.assertIn(column, validation)
-        self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS()", procs)
+        self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS(REFRESH_MODE VARCHAR DEFAULT 'FULL')", procs)
         self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST()", procs)
         self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL()", procs)
         self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS()", procs)
@@ -862,7 +889,7 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertIn("SECTION_COMMAND_BRIEF_CANONICAL_WINDOWS", validation)
         self.assertIn("DROP TASK IF EXISTS OVERWATCH_SECTION_COMMAND_BRIEF_REFRESH", drop)
         self.assertIn("DROP TASK IF EXISTS OVERWATCH_DECISION_BRIEF_FULL_REFRESH", drop)
-        self.assertIn("DROP PROCEDURE IF EXISTS SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS()", drop)
+        self.assertIn("DROP PROCEDURE IF EXISTS SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS(VARCHAR)", drop)
         self.assertIn("DROP PROCEDURE IF EXISTS SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST()", drop)
         self.assertIn("DROP TABLE IF EXISTS OVERWATCH_DECISION_SETUP_HEALTH", drop)
         self.assertIn("DROP TABLE IF EXISTS OVERWATCH_DECISION_REFRESH_AUDIT", drop)
@@ -870,10 +897,19 @@ class SectionCommandBriefTests(unittest.TestCase):
 
         fast_block = procs.split("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST()", 1)[1].split("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL()", 1)[0]
         full_block = procs.split("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL()", 1)[1].split("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS()", 1)[0]
-        self.assertIn("WINDOW_DAYS NOT IN (1, 7)", fast_block)
+        self.assertIn("CALL SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS('FAST')", fast_block)
+        self.assertIn("CALL SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS('FULL')", full_block)
+        self.assertNotIn("DELETE FROM MART_SECTION_DECISION_CURRENT", fast_block)
+        self.assertNotIn("OVERWATCH_DECISION_REFRESH_AUDIT", fast_block)
         self.assertNotIn("WINDOW_DAYS NOT IN (1, 7)", full_block)
         self.assertIn("SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST", fast_block)
         self.assertIn("SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL", full_block)
+        self.assertIn("WHERE :REFRESH_MODE_NORMALIZED = 'FULL' OR COLUMN1::NUMBER IN (1, 7)", procs)
+        self.assertIn("MERGE INTO MART_SECTION_DECISION_CURRENT", procs)
+        self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS(REFRESH_MODE", procs)
+        self.assertIn("ENVIRONMENTS AS", procs)
+        self.assertIn("C.COMPANY <> 'ALL' OR E.ENVIRONMENT = 'ALL'", procs)
+        self.assertIn("COMPANY || '|' || ENVIRONMENT", procs)
 
     def test_loader_builds_single_packet_query(self):
         from sections import section_command_brief as brief_module

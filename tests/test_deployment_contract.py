@@ -252,11 +252,7 @@ class DeploymentContractTests(unittest.TestCase):
             "SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL",
         }
         wrapper_allowed_targets = {
-            "SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST": {
-                "MART_SECTION_DECISION_CURRENT",
-                "OVERWATCH_DECISION_REFRESH_AUDIT",
-                "OVERWATCH_LOAD_AUDIT",
-            },
+            "SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST": {"OVERWATCH_LOAD_AUDIT"},
             "SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL": {"OVERWATCH_LOAD_AUDIT"},
         }
 
@@ -271,10 +267,11 @@ class DeploymentContractTests(unittest.TestCase):
                             body,
                         )
                     )
+                    - {"SET"}
                 )
                 if proc_name in wrapper_procedures:
                     self.assertEqual(set(targets), wrapper_allowed_targets[proc_name])
-                    self.assertIn("CALL SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS()", body)
+                    self.assertIn("CALL SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS(", body)
                     continue
                 self.assertTrue(targets)
                 for target in targets:
@@ -389,6 +386,8 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertIn("python -m unittest tests.test_cortex_guard", workflow)
         self.assertIn("Run Decision Workspace data-binding and setup-health tests", workflow)
         self.assertIn("python -m unittest tests.test_decision_workspace_data_binding", workflow)
+        self.assertIn("Run Decision Workspace HTML snapshot tests", workflow)
+        self.assertIn("test_html_snapshot_all_primary_sections_have_workspace_without_legacy_card_wall", workflow)
         self.assertIn("Run theme and popover accessibility tests", workflow)
         self.assertIn("python -m unittest tests.test_theme_registry", workflow)
         self.assertLess(
@@ -405,6 +404,10 @@ class DeploymentContractTests(unittest.TestCase):
         )
         self.assertLess(
             workflow.index("Run Decision Workspace data-binding and setup-health tests"),
+            workflow.index("Run Decision Workspace HTML snapshot tests"),
+        )
+        self.assertLess(
+            workflow.index("Run Decision Workspace HTML snapshot tests"),
             workflow.index("Run theme and popover accessibility tests"),
         )
         self.assertLess(

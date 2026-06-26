@@ -115,6 +115,87 @@ def render_evidence_settings(label: str, render_body: Callable[[], None] | None,
         render_body()
 
 
+def _slug(value: object) -> str:
+    return str(value or "").strip().lower().replace("&", "and").replace(" ", "_")
+
+
+def _finding_field(finding: object, name: str) -> str:
+    return str(getattr(finding, name, "") or "").strip()
+
+
+def apply_finding_evidence_target(finding: object | None, section: str, workflow: str = "") -> dict[str, str]:
+    """Store allowlisted evidence target fields before a section loader runs.
+
+    The database may provide an EVIDENCE_QUERY for admin diagnostics, but the app
+    never executes it or turns it into session state. Only stable entity/evidence
+    identifiers are copied into safe, section-owned keys.
+    """
+    if finding is None:
+        return {}
+    target = {
+        "section": str(section or ""),
+        "workflow": str(workflow or ""),
+        "finding_key": _finding_field(finding, "finding_key"),
+        "dedupe_key": _finding_field(finding, "dedupe_key"),
+        "entity_type": _finding_field(finding, "entity_type"),
+        "entity_id": _finding_field(finding, "entity_id"),
+        "entity_name": _finding_field(finding, "entity_name") or _finding_field(finding, "entity"),
+        "evidence_id": _finding_field(finding, "evidence_id"),
+        "evidence_source": _finding_field(finding, "evidence_source"),
+    }
+    target = {key: value for key, value in target.items() if value}
+    if not target:
+        return {}
+
+    section_name = str(section or "")
+    slug = _slug(section_name)
+    st.session_state["decision_workspace_evidence_target"] = target
+    st.session_state[f"{slug}_evidence_target"] = target
+    if target.get("evidence_id"):
+        st.session_state[f"{slug}_evidence_id"] = target["evidence_id"]
+
+    entity_type = target.get("entity_type", "").lower()
+    entity_value = target.get("entity_id") or target.get("entity_name") or target.get("evidence_id") or ""
+    if section_name == "Alert Center":
+        st.session_state["alert_center_evidence_target"] = target
+        if target.get("evidence_id"):
+            st.session_state["alert_center_evidence_id"] = target["evidence_id"]
+            st.session_state["alert_center_alert_key_filter"] = target["evidence_id"]
+        if entity_value:
+            st.session_state["alert_center_entity_filter"] = entity_value
+    elif section_name == "Cost & Contract":
+        st.session_state["cost_contract_evidence_target"] = target
+        if entity_type in {"warehouse", "warehouse_name"}:
+            st.session_state["cc_explorer_lens"] = "Warehouse"
+        elif entity_type in {"user", "role", "user_role"}:
+            st.session_state["cc_explorer_lens"] = "User / Role"
+        elif entity_type in {"service", "cortex", "database"}:
+            st.session_state["cc_explorer_lens"] = "Service" if entity_type in {"service", "cortex"} else "Database"
+        if entity_value:
+            st.session_state["cost_contract_evidence_entity_filter"] = entity_value
+    elif section_name == "Workload Operations":
+        st.session_state["workload_operations_evidence_target"] = target
+        if entity_type in {"query", "query_signature", "query_id"} and entity_value:
+            st.session_state["workload_operations_query_filter"] = entity_value
+        if entity_type in {"task", "procedure", "pipeline"} and entity_value:
+            st.session_state["workload_operations_pipeline_filter"] = entity_value
+    elif section_name == "Security Monitoring":
+        st.session_state["security_posture_evidence_target"] = target
+        if entity_type in {"user", "role"}:
+            st.session_state["security_posture_view"] = "Failed Logins" if entity_type == "user" else "Risky Grants"
+        elif entity_type in {"database", "share", "grant"}:
+            st.session_state["security_posture_view"] = "Data Sharing" if entity_type == "share" else "Risky Grants"
+        if entity_value:
+            st.session_state["security_posture_entity_filter"] = entity_value
+    elif section_name == "DBA Control Room":
+        st.session_state["dba_control_room_evidence_target"] = target
+        if entity_type in {"query", "query_signature", "query_id"} and entity_value:
+            st.session_state["dba_control_room_query_filter"] = entity_value
+        if entity_type in {"warehouse", "task", "procedure"} and entity_value:
+            st.session_state["dba_control_room_entity_filter"] = entity_value
+    return target
+
+
 def should_render_daily_diagnostics(section: str, workflow: str, decision_mode: str) -> bool:
     """Return whether raw setup diagnostics belong on the current user surface."""
     workflow_text = str(workflow or "").lower()
@@ -136,6 +217,7 @@ __all__ = [
     "DECISION_REFRESH_KEYS",
     "CommandBriefDetailAction",
     "DecisionWorkspaceControls",
+    "apply_finding_evidence_target",
     "decision_refresh_key",
     "make_decision_refresh_action",
     "make_evidence_action",

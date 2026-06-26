@@ -195,6 +195,7 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
                 "FLATTENED_AVAILABLE_OPTIONAL_SOURCE_COUNT": 1,
                 "FLATTENED_OPTIONAL_MISSING_SOURCE_COUNT": 0,
                 "FLATTENED_OPTIONAL_STALE_SOURCE_COUNT": 0,
+                "DUPLICATE_SOURCE_KEY_COUNT": 0,
                 "SOURCE_COUNTER_MISMATCH_COUNT": 0,
                 "STALE_SOURCE_COUNT": 0,
                 "SOURCE_COVERAGE_PCT": 100,
@@ -364,6 +365,7 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         self.assertEqual(_validate({"FLATTENED_REQUIRED_MISSING_SOURCE_COUNT": 1}).status, "FAILED")
         self.assertEqual(_validate({"FLATTENED_REQUIRED_STALE_SOURCE_COUNT": 1}).status, "FAILED")
         self.assertEqual(_validate({"SOURCE_COUNTER_MISMATCH_COUNT": 1}).status, "FAILED")
+        self.assertEqual(_validate({"DUPLICATE_SOURCE_KEY_COUNT": 1}).status, "FAILED")
 
         optional = _validate({
             "OPTIONAL_SOURCE_COUNT": 2,

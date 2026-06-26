@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 
@@ -18,10 +19,57 @@ PY_OUT = ROOT / ".overwatch_final" / "sections" / "section_command_contracts_gen
 SQL_DIR = ROOT / "snowflake" / "generated"
 SEED_SQL = SQL_DIR / "decision_brief_contract_seed.sql"
 METRIC_SQL = SQL_DIR / "decision_brief_metric_validation.sql"
+ROUTES_PY = ROOT / ".overwatch_final" / "sections" / "command_brief_routes.py"
 
 
 def _load_manifest() -> dict:
     return json.loads(MANIFEST.read_text(encoding="utf-8"))
+
+
+def _allowlisted_route_keys() -> set[str]:
+    if not ROUTES_PY.exists():
+        return set()
+    source = ROUTES_PY.read_text(encoding="utf-8")
+    return set(re.findall(r'^\s*"([^"]+)":\s*CommandBriefRoute\(', source, flags=re.MULTILINE))
+
+
+def validate_manifest(manifest: dict) -> list[str]:
+    """Return contract errors that should block generated artifact output."""
+    errors: list[str] = []
+    allowed_routes = _allowlisted_route_keys()
+    for section in manifest.get("sections", []):
+        section_name = str(section.get("section", "")).strip()
+        source_keys: list[str] = []
+        source_required: dict[str, bool] = {}
+        for source in section.get("sources", []):
+            key = str(source.get("source_key", "")).strip()
+            if not key:
+                errors.append(f"{section_name}: source is missing source_key")
+                continue
+            if key in source_required:
+                errors.append(f"{section_name}: duplicate source_key {key}")
+            source_keys.append(key)
+            source_required[key] = bool(source.get("required", True))
+        declared_sources = set(source_keys)
+        for metric in section.get("metrics", []):
+            metric_key = str(metric.get("key", "")).strip()
+            source_key = str(metric.get("source_key", "")).strip()
+            if source_key not in declared_sources:
+                errors.append(f"{section_name}.{metric_key}: source_key {source_key or '<empty>'} is not declared")
+            is_primary = bool(metric.get("primary", False))
+            is_required_metric = str(metric.get("availability_policy", "optional")).lower() == "required"
+            explicitly_allowed = bool(metric.get("allow_required_optional_source", False))
+            if is_primary and is_required_metric and source_key in source_required and not source_required[source_key] and not explicitly_allowed:
+                errors.append(
+                    f"{section_name}.{metric_key}: required primary metric uses optional source {source_key}"
+                )
+        for action in section.get("actions", []):
+            route_key = str(action.get("route_key", "")).strip()
+            if not route_key:
+                errors.append(f"{section_name}: action {action.get('action_key', '<unknown>')} is missing route_key")
+            elif route_key not in allowed_routes:
+                errors.append(f"{section_name}: action route_key {route_key} is not allowlisted")
+    return errors
 
 
 def _quote(value: object) -> str:
@@ -204,8 +252,30 @@ def _generate_metric_validation_sql(manifest: dict) -> str:
             ",\n".join(values),
             "  AS v(SECTION_NAME, METRIC_KEY, IS_PRIMARY, SOURCE_KEY, AVAILABILITY_POLICY)",
             ")",
-            "SELECT 'SECTION_DECISION_CONTRACT_METRICS', COUNT(*) AS EXPECTED_METRICS",
-            "FROM expected_metrics;",
+            "SELECT 'SECTION_DECISION_CONTRACT_METRICS' AS CHECK_NAME, COUNT(*) AS OBSERVED_VALUE, 'PASS' AS STATUS",
+            "FROM expected_metrics",
+            "UNION ALL",
+            "SELECT",
+            "  'SECTION_DECISION_CONTRACT_METRIC_SOURCE_KEYS' AS CHECK_NAME,",
+            "  COUNT(*) AS OBSERVED_VALUE,",
+            "  IFF(COUNT(*) = 0, 'PASS', 'FAIL') AS STATUS",
+            "FROM expected_metrics e",
+            "LEFT JOIN OVERWATCH_SECTION_COMMAND_SOURCE_CONFIG cfg",
+            "  ON cfg.SECTION_NAME = e.SECTION_NAME",
+            " AND cfg.SOURCE_KEY = e.SOURCE_KEY",
+            "WHERE COALESCE(e.SOURCE_KEY, '') <> ''",
+            "  AND cfg.SOURCE_KEY IS NULL",
+            "UNION ALL",
+            "SELECT",
+            "  'SECTION_COMMAND_SOURCE_CONFIG_UNIQUE_SOURCE_KEYS' AS CHECK_NAME,",
+            "  COUNT(*) AS OBSERVED_VALUE,",
+            "  IFF(COUNT(*) = 0, 'PASS', 'FAIL') AS STATUS",
+            "FROM (",
+            "  SELECT SECTION_NAME, SOURCE_KEY",
+            "  FROM OVERWATCH_SECTION_COMMAND_SOURCE_CONFIG",
+            "  GROUP BY SECTION_NAME, SOURCE_KEY",
+            "  HAVING COUNT(*) > 1",
+            ");",
             "",
         ]
     )
@@ -229,6 +299,11 @@ def main() -> int:
     parser.add_argument("--check", action="store_true", help="Fail if generated artifacts differ.")
     args = parser.parse_args()
     manifest = _load_manifest()
+    errors = validate_manifest(manifest)
+    if errors:
+        for error in errors:
+            print(f"Manifest validation error: {error}")
+        return 1
     outputs = {
         PY_OUT: _generate_python(manifest),
         SEED_SQL: _generate_seed_sql(manifest),

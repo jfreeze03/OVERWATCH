@@ -2,22 +2,22 @@
 WITH expected_metrics AS (
   SELECT * FROM VALUES
     ('Executive Landing', 'platform_health', TRUE, 'executive_observability', 'required'),
-    ('Executive Landing', 'spend_movement_pct', TRUE, 'executive_observability', 'required'),
-    ('Executive Landing', 'critical_high_issues', TRUE, 'executive_observability', 'required'),
-    ('Executive Landing', 'open_actions', TRUE, 'executive_observability', 'required'),
-    ('Executive Landing', 'cortex_spend', FALSE, 'executive_observability', 'optional'),
-    ('Executive Landing', 'cortex_risk', FALSE, 'executive_observability', 'optional'),
-    ('Executive Landing', 'operational_risk', FALSE, 'executive_observability', 'optional'),
-    ('Executive Landing', 'security_risk', FALSE, 'executive_observability', 'optional'),
+    ('Executive Landing', 'spend_movement_pct', TRUE, 'cost_daily', 'required'),
+    ('Executive Landing', 'critical_high_issues', TRUE, 'alert_events', 'required'),
+    ('Executive Landing', 'open_actions', TRUE, 'action_queue', 'required'),
+    ('Executive Landing', 'cortex_spend', FALSE, 'cortex_daily', 'optional'),
+    ('Executive Landing', 'cortex_risk', FALSE, 'cortex_daily', 'optional'),
+    ('Executive Landing', 'operational_risk', FALSE, 'query_hourly', 'optional'),
+    ('Executive Landing', 'security_risk', FALSE, 'security_operability', 'optional'),
     ('Executive Landing', 'production_readiness', FALSE, 'production_readiness', 'optional'),
     ('Executive Landing', 'data_trust', FALSE, 'data_trust', 'optional'),
-    ('Executive Landing', 'verified_value', FALSE, 'executive_observability', 'optional'),
-    ('Executive Landing', 'monitoring_overhead', FALSE, 'executive_observability', 'optional'),
+    ('Executive Landing', 'verified_value', FALSE, 'value_ledger', 'optional'),
+    ('Executive Landing', 'monitoring_overhead', FALSE, 'app_observability', 'optional'),
     ('DBA Control Room', 'failed_queries', TRUE, 'query_hourly', 'required'),
     ('DBA Control Room', 'pipeline_failures', TRUE, 'task_runs', 'required'),
     ('DBA Control Room', 'queue_pressure', TRUE, 'query_hourly', 'required'),
-    ('DBA Control Room', 'cost_24h', TRUE, 'cost_daily', 'required'),
-    ('DBA Control Room', 'cortex_cost', FALSE, 'cortex_daily', 'optional'),
+    ('DBA Control Room', 'cost_24h', TRUE, 'dba_control_room', 'required'),
+    ('DBA Control Room', 'cortex_cost', FALSE, 'dba_control_room', 'optional'),
     ('DBA Control Room', 'security_warnings', FALSE, 'security_operability', 'optional'),
     ('DBA Control Room', 'recent_changes', FALSE, 'change_summary', 'optional'),
     ('DBA Control Room', 'overdue_actions', FALSE, 'action_queue', 'optional'),
@@ -39,32 +39,54 @@ WITH expected_metrics AS (
     ('Cost & Contract', 'cortex_spend_share', TRUE, 'cortex_daily', 'required'),
     ('Cost & Contract', 'cortex_spend', FALSE, 'cortex_daily', 'optional'),
     ('Cost & Contract', 'cortex_predictive_alerts', FALSE, 'cortex_daily', 'optional'),
-    ('Cost & Contract', 'budget_contract_risk', FALSE, 'cost_daily', 'optional'),
+    ('Cost & Contract', 'budget_contract_risk', FALSE, 'forecast', 'optional'),
     ('Cost & Contract', 'top_cost_driver', FALSE, 'cost_daily', 'optional'),
-    ('Cost & Contract', 'verified_savings', FALSE, 'cost_daily', 'optional'),
-    ('Cost & Contract', 'unverified_savings', FALSE, 'cost_daily', 'optional'),
-    ('Cost & Contract', 'open_cost_actions', FALSE, 'cost_daily', 'optional'),
+    ('Cost & Contract', 'verified_savings', FALSE, 'value_ledger', 'optional'),
+    ('Cost & Contract', 'unverified_savings', FALSE, 'value_ledger', 'optional'),
+    ('Cost & Contract', 'open_cost_actions', FALSE, 'action_queue', 'optional'),
     ('Workload Operations', 'failed_queries', TRUE, 'query_hourly', 'required'),
-    ('Workload Operations', 'pipeline_failures', TRUE, 'query_hourly', 'required'),
+    ('Workload Operations', 'pipeline_failures', TRUE, 'task_runs', 'required'),
     ('Workload Operations', 'queue_blocked_pressure', TRUE, 'query_hourly', 'required'),
-    ('Workload Operations', 'sla_risk', TRUE, 'query_hourly', 'required'),
+    ('Workload Operations', 'sla_risk', TRUE, 'task_runs', 'required'),
     ('Workload Operations', 'spill_bytes', FALSE, 'query_hourly', 'optional'),
     ('Workload Operations', 'long_running_queries', FALSE, 'query_hourly', 'optional'),
     ('Workload Operations', 'hottest_warehouse', FALSE, 'query_hourly', 'optional'),
-    ('Workload Operations', 'recent_workload_changes', FALSE, 'query_recent', 'optional'),
-    ('Workload Operations', 'suspended_tasks', FALSE, 'query_hourly', 'optional'),
+    ('Workload Operations', 'recent_workload_changes', FALSE, 'change_summary', 'optional'),
+    ('Workload Operations', 'suspended_tasks', FALSE, 'task_runs', 'optional'),
     ('Workload Operations', 'copy_load_failures', FALSE, 'copy_load', 'optional'),
     ('Security Monitoring', 'failed_logins', TRUE, 'login_daily', 'required'),
     ('Security Monitoring', 'mfa_gaps', TRUE, 'security_operability', 'required'),
     ('Security Monitoring', 'risky_grants', TRUE, 'grant_daily', 'required'),
     ('Security Monitoring', 'sharing_exposure', TRUE, 'security_operability', 'required'),
     ('Security Monitoring', 'privilege_changes', FALSE, 'security_operability', 'optional'),
-    ('Security Monitoring', 'security_alerts', FALSE, 'security_operability', 'optional'),
-    ('Security Monitoring', 'access_changes', FALSE, 'security_operability', 'optional'),
-    ('Security Monitoring', 'unassigned_findings', FALSE, 'security_operability', 'optional'),
+    ('Security Monitoring', 'security_alerts', FALSE, 'security_alerts', 'optional'),
+    ('Security Monitoring', 'access_changes', FALSE, 'change_summary', 'optional'),
+    ('Security Monitoring', 'unassigned_findings', FALSE, 'owner_coverage', 'optional'),
     ('Security Monitoring', 'overdue_security_actions', FALSE, 'security_operability', 'optional'),
     ('Security Monitoring', 'owner_coverage', FALSE, 'owner_coverage', 'optional')
   AS v(SECTION_NAME, METRIC_KEY, IS_PRIMARY, SOURCE_KEY, AVAILABILITY_POLICY)
 )
-SELECT 'SECTION_DECISION_CONTRACT_METRICS', COUNT(*) AS EXPECTED_METRICS
-FROM expected_metrics;
+SELECT 'SECTION_DECISION_CONTRACT_METRICS' AS CHECK_NAME, COUNT(*) AS OBSERVED_VALUE, 'PASS' AS STATUS
+FROM expected_metrics
+UNION ALL
+SELECT
+  'SECTION_DECISION_CONTRACT_METRIC_SOURCE_KEYS' AS CHECK_NAME,
+  COUNT(*) AS OBSERVED_VALUE,
+  IFF(COUNT(*) = 0, 'PASS', 'FAIL') AS STATUS
+FROM expected_metrics e
+LEFT JOIN OVERWATCH_SECTION_COMMAND_SOURCE_CONFIG cfg
+  ON cfg.SECTION_NAME = e.SECTION_NAME
+ AND cfg.SOURCE_KEY = e.SOURCE_KEY
+WHERE COALESCE(e.SOURCE_KEY, '') <> ''
+  AND cfg.SOURCE_KEY IS NULL
+UNION ALL
+SELECT
+  'SECTION_COMMAND_SOURCE_CONFIG_UNIQUE_SOURCE_KEYS' AS CHECK_NAME,
+  COUNT(*) AS OBSERVED_VALUE,
+  IFF(COUNT(*) = 0, 'PASS', 'FAIL') AS STATUS
+FROM (
+  SELECT SECTION_NAME, SOURCE_KEY
+  FROM OVERWATCH_SECTION_COMMAND_SOURCE_CONFIG
+  GROUP BY SECTION_NAME, SOURCE_KEY
+  HAVING COUNT(*) > 1
+);

@@ -69,6 +69,70 @@
           "tier": "enrichment",
           "target_freshness_minutes": 60,
           "confidence": "allocated"
+        },
+        {
+          "source_key": "value_ledger",
+          "source_object": "MART_EXECUTIVE_VALUE_LEDGER",
+          "required": false,
+          "tier": "enrichment",
+          "target_freshness_minutes": 60,
+          "confidence": "allocated"
+        },
+        {
+          "source_key": "cost_daily",
+          "source_object": "FACT_COST_DAILY",
+          "required": true,
+          "tier": "core",
+          "target_freshness_minutes": 60,
+          "confidence": "allocated"
+        },
+        {
+          "source_key": "cortex_daily",
+          "source_object": "FACT_CORTEX_DAILY",
+          "required": false,
+          "tier": "enrichment",
+          "target_freshness_minutes": 60,
+          "confidence": "estimated"
+        },
+        {
+          "source_key": "alert_events",
+          "source_object": "ALERT_EVENTS",
+          "required": true,
+          "tier": "core",
+          "target_freshness_minutes": 15,
+          "confidence": "exact"
+        },
+        {
+          "source_key": "action_queue",
+          "source_object": "OVERWATCH_ACTION_QUEUE",
+          "required": true,
+          "tier": "core",
+          "target_freshness_minutes": 60,
+          "confidence": "allocated"
+        },
+        {
+          "source_key": "query_hourly",
+          "source_object": "FACT_QUERY_HOURLY",
+          "required": false,
+          "tier": "enrichment",
+          "target_freshness_minutes": 30,
+          "confidence": "allocated"
+        },
+        {
+          "source_key": "task_runs",
+          "source_object": "FACT_TASK_RUN",
+          "required": false,
+          "tier": "enrichment",
+          "target_freshness_minutes": 30,
+          "confidence": "allocated"
+        },
+        {
+          "source_key": "security_operability",
+          "source_object": "FACT_SECURITY_OPERABILITY_DAILY",
+          "required": false,
+          "tier": "enrichment",
+          "target_freshness_minutes": 60,
+          "confidence": "allocated"
         }
       ],
       "metrics": [
@@ -91,7 +155,7 @@
           "format": "percentage",
           "unit": "percent",
           "directionality": "higher_is_worse",
-          "source_key": "executive_observability",
+          "source_key": "cost_daily",
           "availability_policy": "required"
         },
         {
@@ -102,7 +166,7 @@
           "format": "integer",
           "unit": "issues",
           "directionality": "higher_is_worse",
-          "source_key": "executive_observability",
+          "source_key": "alert_events",
           "availability_policy": "required"
         },
         {
@@ -113,7 +177,7 @@
           "format": "integer",
           "unit": "actions",
           "directionality": "higher_is_worse",
-          "source_key": "executive_observability",
+          "source_key": "action_queue",
           "availability_policy": "required"
         },
         {
@@ -124,7 +188,7 @@
           "format": "currency",
           "unit": "USD",
           "directionality": "higher_is_worse",
-          "source_key": "executive_observability",
+          "source_key": "cortex_daily",
           "availability_policy": "optional"
         },
         {
@@ -135,7 +199,7 @@
           "format": "integer",
           "unit": "signals",
           "directionality": "higher_is_worse",
-          "source_key": "executive_observability",
+          "source_key": "cortex_daily",
           "availability_policy": "optional"
         },
         {
@@ -146,7 +210,7 @@
           "format": "integer",
           "unit": "signals",
           "directionality": "higher_is_worse",
-          "source_key": "executive_observability",
+          "source_key": "query_hourly",
           "availability_policy": "optional"
         },
         {
@@ -157,7 +221,7 @@
           "format": "integer",
           "unit": "signals",
           "directionality": "higher_is_worse",
-          "source_key": "executive_observability",
+          "source_key": "security_operability",
           "availability_policy": "optional"
         },
         {
@@ -190,7 +254,7 @@
           "format": "currency",
           "unit": "USD",
           "directionality": "higher_is_better",
-          "source_key": "executive_observability",
+          "source_key": "value_ledger",
           "availability_policy": "optional"
         },
         {
@@ -201,7 +265,7 @@
           "format": "currency",
           "unit": "USD",
           "directionality": "higher_is_worse",
-          "source_key": "executive_observability",
+          "source_key": "app_observability",
           "availability_policy": "optional"
         }
       ],
@@ -248,7 +312,7 @@
       "unavailable_summary": "Enable the latest control-room snapshot to populate failures, cost pressure, queue pressure, security warnings, and recent changes automatically.",
       "sources": [
         {
-          "source_key": "query_hourly",
+          "source_key": "dba_control_room",
           "source_object": "MART_DBA_CONTROL_ROOM",
           "required": true,
           "tier": "core",
@@ -346,7 +410,7 @@
           "format": "currency",
           "unit": "USD",
           "directionality": "higher_is_worse",
-          "source_key": "cost_daily",
+          "source_key": "dba_control_room",
           "availability_policy": "required"
         },
         {
@@ -357,7 +421,7 @@
           "format": "currency",
           "unit": "USD",
           "directionality": "higher_is_worse",
-          "source_key": "cortex_daily",
+          "source_key": "dba_control_room",
           "availability_policy": "optional"
         },
         {
@@ -686,6 +750,14 @@
           "confidence": "allocated"
         },
         {
+          "source_key": "action_queue",
+          "source_object": "OVERWATCH_ACTION_QUEUE",
+          "required": false,
+          "tier": "enrichment",
+          "target_freshness_minutes": 60,
+          "confidence": "allocated"
+        },
+        {
           "source_key": "settings",
           "source_object": "OVERWATCH_SETTINGS",
           "required": true,
@@ -726,7 +798,8 @@
           "unit": "USD",
           "directionality": "higher_is_worse",
           "source_key": "forecast",
-          "availability_policy": "required"
+          "availability_policy": "required",
+          "allow_required_optional_source": true
         },
         {
           "key": "cortex_spend_share",
@@ -769,7 +842,7 @@
           "format": "integer",
           "unit": "signals",
           "directionality": "higher_is_worse",
-          "source_key": "cost_daily",
+          "source_key": "forecast",
           "availability_policy": "optional"
         },
         {
@@ -791,7 +864,7 @@
           "format": "currency",
           "unit": "USD",
           "directionality": "higher_is_better",
-          "source_key": "cost_daily",
+          "source_key": "value_ledger",
           "availability_policy": "optional"
         },
         {
@@ -802,7 +875,7 @@
           "format": "currency",
           "unit": "USD",
           "directionality": "higher_is_worse",
-          "source_key": "cost_daily",
+          "source_key": "value_ledger",
           "availability_policy": "optional"
         },
         {
@@ -813,7 +886,7 @@
           "format": "integer",
           "unit": "actions",
           "directionality": "higher_is_worse",
-          "source_key": "cost_daily",
+          "source_key": "action_queue",
           "availability_policy": "optional"
         }
       ],
@@ -928,7 +1001,7 @@
           "format": "integer",
           "unit": "events",
           "directionality": "higher_is_worse",
-          "source_key": "query_hourly",
+          "source_key": "task_runs",
           "availability_policy": "required"
         },
         {
@@ -950,7 +1023,7 @@
           "format": "integer",
           "unit": "items",
           "directionality": "higher_is_worse",
-          "source_key": "query_hourly",
+          "source_key": "task_runs",
           "availability_policy": "required"
         },
         {
@@ -994,7 +1067,7 @@
           "format": "integer",
           "unit": "changes",
           "directionality": "higher_is_worse",
-          "source_key": "query_recent",
+          "source_key": "change_summary",
           "availability_policy": "optional"
         },
         {
@@ -1005,7 +1078,7 @@
           "format": "integer",
           "unit": "tasks",
           "directionality": "higher_is_worse",
-          "source_key": "query_hourly",
+          "source_key": "task_runs",
           "availability_policy": "optional"
         },
         {
@@ -1175,7 +1248,7 @@
           "format": "integer",
           "unit": "alerts",
           "directionality": "higher_is_worse",
-          "source_key": "security_operability",
+          "source_key": "security_alerts",
           "availability_policy": "optional"
         },
         {
@@ -1186,7 +1259,7 @@
           "format": "integer",
           "unit": "changes",
           "directionality": "higher_is_worse",
-          "source_key": "security_operability",
+          "source_key": "change_summary",
           "availability_policy": "optional"
         },
         {
@@ -1197,7 +1270,7 @@
           "format": "integer",
           "unit": "findings",
           "directionality": "higher_is_worse",
-          "source_key": "security_operability",
+          "source_key": "owner_coverage",
           "availability_policy": "optional"
         },
         {

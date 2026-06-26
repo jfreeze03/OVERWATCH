@@ -45,6 +45,101 @@ class SectionCommandBriefTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_decision_brief_contract_generator_rejects_invalid_manifest(self):
+        from scripts.generate_decision_brief_contracts import validate_manifest
+
+        bad_manifest = {
+            "sections": [{
+                "section": "Executive Landing",
+                "sources": [
+                    {"source_key": "duplicate", "source_object": "MART_A", "required": True},
+                    {"source_key": "duplicate", "source_object": "MART_B", "required": True},
+                    {"source_key": "optional_source", "source_object": "MART_OPTIONAL", "required": False},
+                ],
+                "metrics": [
+                    {
+                        "key": "missing_source_metric",
+                        "primary": True,
+                        "source_key": "not_declared",
+                        "availability_policy": "required",
+                    },
+                    {
+                        "key": "required_optional_metric",
+                        "primary": True,
+                        "source_key": "optional_source",
+                        "availability_policy": "required",
+                    },
+                ],
+                "actions": [{"action_key": "bad", "route_key": "not_allowlisted"}],
+            }]
+        }
+
+        errors = "\n".join(validate_manifest(bad_manifest))
+        self.assertIn("duplicate source_key duplicate", errors)
+        self.assertIn("source_key not_declared is not declared", errors)
+        self.assertIn("required primary metric uses optional source optional_source", errors)
+        self.assertIn("route_key not_allowlisted is not allowlisted", errors)
+
+    def test_decision_brief_manifest_source_keys_are_unique_and_declared(self):
+        import json
+
+        manifest = json.loads((ROOT / "config" / "decision_brief_contracts.json").read_text(encoding="utf-8"))
+        for section in manifest["sections"]:
+            name = section["section"]
+            source_keys = [source["source_key"] for source in section.get("sources", [])]
+            with self.subTest(section=name):
+                self.assertEqual(len(source_keys), len(set(source_keys)))
+                declared = set(source_keys)
+                for metric in section.get("metrics", []):
+                    self.assertIn(metric["source_key"], declared, metric["key"])
+                if name == "DBA Control Room":
+                    sources = {source["source_key"]: source["source_object"] for source in section["sources"]}
+                    self.assertEqual(sources["dba_control_room"], "MART_DBA_CONTROL_ROOM")
+                    self.assertEqual(sources["query_hourly"], "FACT_QUERY_HOURLY")
+
+    def test_decision_brief_sql_has_explicit_source_watermarks_and_no_generic_metric_fallback(self):
+        import json
+
+        manifest = json.loads((ROOT / "config" / "decision_brief_contracts.json").read_text(encoding="utf-8"))
+        sql = (ROOT / "snowflake" / "mart_setup" / "05_load_procedures.sql").read_text(encoding="utf-8")
+        for key in sorted({source["source_key"] for section in manifest["sections"] for source in section["sources"]}):
+            with self.subTest(source_key=key):
+                self.assertIn(f"'{key}'", sql)
+        self.assertIn("JOIN ALERT_NOTIFICATION_LOG n", sql)
+        self.assertIn("JOIN FACT_LOGIN_DAILY l", sql)
+        self.assertIn("JOIN FACT_GRANT_DAILY g", sql)
+        self.assertIn("MART_OPERATIONAL_OWNER_COVERAGE", sql)
+        self.assertIn("MART_EXECUTIVE_SCORECARD_SUMMARY", sql)
+        self.assertIn("MART_EXECUTIVE_VALUE_LEDGER", sql)
+        self.assertIn("OVERWATCH_SETTINGS", sql)
+        self.assertNotIn("ELSE 'data_trust'", sql)
+        self.assertNotIn("LOWER(REGEXP_REPLACE(SECTION_NAME", sql)
+
+    def test_decision_brief_sql_uses_real_findings_and_date_spine_trends(self):
+        sql = (ROOT / "snowflake" / "mart_setup" / "05_load_procedures.sql").read_text(encoding="utf-8")
+        self.assertIn("CREATE OR REPLACE TEMPORARY TABLE TMP_DECISION_FINDING_CANDIDATE AS\n  WITH candidates AS", sql)
+        self.assertIn("QUALIFY ROW_NUMBER() OVER", sql)
+        self.assertNotIn("TMP_DECISION_FINDING_CANDIDATE AS SELECT * FROM TMP_SECTION_DECISION_LOGIC", sql)
+        self.assertNotIn("FRESHNESS_MINUTES AS DECISION_AGE_MINUTES", sql)
+        self.assertNotIn("SOURCE_SNAPSHOT_TS AS FIRST_SEEN_TS", sql)
+
+        trend_block = sql.split("CREATE OR REPLACE TEMPORARY TABLE TMP_SECTION_METRIC_TRENDS AS", 1)[1].split(
+            "CREATE OR REPLACE TEMPORARY TABLE TMP_SECTION_DECISION_LOGIC AS",
+            1,
+        )[0]
+        self.assertIn("date_spine AS", trend_block)
+        self.assertIn("TABLE(GENERATOR(ROWCOUNT => 14))", trend_block)
+        self.assertNotIn("HAVING COUNT(*) BETWEEN 7 AND 14", trend_block)
+        self.assertNotIn("3.68", trend_block)
+        self.assertNotIn("2.20", trend_block)
+
+    def test_decision_brief_deployment_validation_checks_source_key_truth(self):
+        validation = (ROOT / "snowflake" / "mart_setup" / "08_validation.sql").read_text(encoding="utf-8")
+        self.assertIn("SECTION_COMMAND_SOURCE_CONFIG_UNIQUE_SOURCE_KEYS", validation)
+        self.assertIn("SECTION_COMMAND_METRIC_SOURCE_KEYS_CONFIGURED", validation)
+        self.assertIn("SECTION_DECISION_CURRENT_SOURCE_KEYS_CONFIGURED", validation)
+        self.assertIn("DUPLICATE_SOURCE_KEY_COUNT", validation)
+
     def test_loader_uses_mart_rows_and_does_not_require_detail_load(self):
         from sections import section_command_brief as brief_module
 
@@ -642,7 +737,9 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertIn("COUNT_IF(NOT REQUIRED AND SOURCE_SNAPSHOT_TS IS NULL) AS OPTIONAL_MISSING_SOURCE_COUNT", procs)
         self.assertIn("DECISION_PACKET:\"REQUIRED_MISSING_SOURCE_COUNT\"::NUMBER", procs)
         self.assertIn("TMP_SECTION_METRIC_TRENDS", procs)
-        self.assertIn("HAVING COUNT(*) BETWEEN 7 AND 14", procs)
+        self.assertIn("DATE_SPINE AS", procs)
+        self.assertIn("TABLE(GENERATOR(ROWCOUNT => 14))", procs)
+        self.assertNotIn("HAVING COUNT(*) BETWEEN 7 AND 14", procs)
         self.assertIn("ACTION_DUE_DATE IS NULL THEN 'SLA UNAVAILABLE'", procs)
         self.assertIn("ALERT_FIRST_SEEN_TS", procs)
         self.assertNotIn("FRESHNESS_MINUTES AS DECISION_AGE_MINUTES", procs)
@@ -766,7 +863,10 @@ class SectionCommandBriefTests(unittest.TestCase):
             ("DBA Control Room", "failed_queries"): "query_hourly",
             ("DBA Control Room", "pipeline_failures"): "task_runs",
             ("DBA Control Room", "queue_pressure"): "query_hourly",
-            ("DBA Control Room", "cost_24h"): "cost_daily",
+            ("DBA Control Room", "cost_24h"): "dba_control_room",
+            ("Executive Landing", "spend_movement_pct"): "cost_daily",
+            ("Executive Landing", "critical_high_issues"): "alert_events",
+            ("Executive Landing", "open_actions"): "action_queue",
             ("Cost & Contract", "forecast_run_rate"): "forecast",
             ("Cost & Contract", "cortex_spend_share"): "cortex_daily",
             ("Security Monitoring", "failed_logins"): "login_daily",
@@ -778,7 +878,9 @@ class SectionCommandBriefTests(unittest.TestCase):
             with self.subTest(section=section, metric_key=metric_key):
                 metric = next(item for item in contract.metric_contracts if item.key == metric_key)
                 self.assertEqual(metric.source_key, source_key)
-                self.assertNotEqual(metric.source_key, section.lower().replace(" ", "_"))
+                self.assertIn(metric.source_key, {source.source_key for source in contract.source_configs})
+                if (section, metric_key) != ("DBA Control Room", "cost_24h"):
+                    self.assertNotEqual(metric.source_key, section.lower().replace(" ", "_"))
 
     def test_command_brief_routes_are_allowlisted_and_apply_after_defaults(self):
         from sections import command_brief_routes

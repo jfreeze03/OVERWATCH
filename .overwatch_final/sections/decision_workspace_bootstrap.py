@@ -371,7 +371,8 @@ flattened_sources AS (
         COUNT_IF(NOT REQUIRED) AS FLATTENED_OPTIONAL_SOURCE_COUNT,
         COUNT_IF(NOT REQUIRED AND AVAILABLE) AS FLATTENED_AVAILABLE_OPTIONAL_SOURCE_COUNT,
         COUNT_IF(NOT REQUIRED AND NOT AVAILABLE) AS FLATTENED_OPTIONAL_MISSING_SOURCE_COUNT,
-        COUNT_IF(NOT REQUIRED AND IS_STALE) AS FLATTENED_OPTIONAL_STALE_SOURCE_COUNT
+        COUNT_IF(NOT REQUIRED AND IS_STALE) AS FLATTENED_OPTIONAL_STALE_SOURCE_COUNT,
+        COUNT(*) - COUNT(DISTINCT SOURCE_KEY) AS FLATTENED_DUPLICATE_SOURCE_KEY_COUNT
     FROM source_rows
     GROUP BY SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, BRIEF_ID
 ),
@@ -454,6 +455,7 @@ SELECT
     COALESCE(MAX(f.FLATTENED_AVAILABLE_OPTIONAL_SOURCE_COUNT), 0) AS FLATTENED_AVAILABLE_OPTIONAL_SOURCE_COUNT,
     COALESCE(MAX(f.FLATTENED_OPTIONAL_MISSING_SOURCE_COUNT), 0) AS FLATTENED_OPTIONAL_MISSING_SOURCE_COUNT,
     COALESCE(MAX(f.FLATTENED_OPTIONAL_STALE_SOURCE_COUNT), 0) AS FLATTENED_OPTIONAL_STALE_SOURCE_COUNT,
+    COALESCE(MAX(f.FLATTENED_DUPLICATE_SOURCE_KEY_COUNT), 0) AS DUPLICATE_SOURCE_KEY_COUNT,
     MAX(
         IFF(COALESCE(p.SOURCE_ROW_COUNT, -1) <> COALESCE(f.FLATTENED_SOURCE_ROW_COUNT, -2), 1, 0)
         + IFF(COALESCE(p.REQUIRED_SOURCE_COUNT, -1) <> COALESCE(f.FLATTENED_REQUIRED_SOURCE_COUNT, -2), 1, 0)
@@ -559,6 +561,11 @@ def validate_decision_bootstrap_output(
                 mismatch_count += 1
         return mismatch_count
 
+    def _duplicate_source_key_count(row: Mapping[str, Any] | None) -> int:
+        if row is None:
+            return 0
+        return _int_value(row.get("DUPLICATE_SOURCE_KEY_COUNT"), 0)
+
     stale_sections = tuple(sorted({
         str(row.get("SECTION_NAME", ""))
         for row in rows
@@ -595,6 +602,7 @@ def validate_decision_bootstrap_output(
             or float(_float_value(row.get("SOURCE_COVERAGE_PCT")) or 0.0) < 100.0
             or _source_counter(row, "REQUIRED_STALE_SOURCE_COUNT", "FLATTENED_REQUIRED_STALE_SOURCE_COUNT") > 0
             or _source_counter_mismatch_count(row) > 0
+            or _duplicate_source_key_count(row) > 0
         )
     }))
     optional_warning_sections = tuple(sorted({
@@ -668,6 +676,8 @@ def validate_decision_bootstrap_output(
             if row.get(field) is None:
                 return max(_int_value(row.get("REQUIRED_SOURCE_COUNT"), 0), 1)
         if _source_counter_mismatch_count(row) > 0:
+            return 1
+        if _duplicate_source_key_count(row) > 0:
             return 1
         required = _source_counter(row, "REQUIRED_SOURCE_COUNT", "FLATTENED_REQUIRED_SOURCE_COUNT")
         available = _source_counter(row, "AVAILABLE_REQUIRED_SOURCE_COUNT", "FLATTENED_AVAILABLE_REQUIRED_SOURCE_COUNT")
@@ -794,6 +804,15 @@ def validate_decision_bootstrap_output(
                 str(row.get("SECTION_NAME", ""))
                 for row in rows
                 if _source_counter_mismatch_count(row) > 0
+            )
+            or "none"
+        ),
+        "Duplicate source keys: "
+        + (
+            ", ".join(
+                str(row.get("SECTION_NAME", ""))
+                for row in rows
+                if _duplicate_source_key_count(row) > 0
             )
             or "none"
         ),

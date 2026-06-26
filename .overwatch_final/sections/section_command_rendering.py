@@ -15,7 +15,7 @@ from sections.decision_workspace_controls import (
     DecisionWorkspaceControls,
     render_evidence_settings,
 )
-from sections.decision_workspace_setup_health import open_decision_setup_health
+from sections.decision_workspace_setup_health import can_open_decision_setup_health, open_decision_setup_health
 from sections.decision_workspace_view_model import (
     DecisionActionView,
     DecisionMetricCell,
@@ -217,7 +217,8 @@ def _render_fallback(
             actions.append("refresh")
         if fallback.can_initialize:
             actions.append("initialize")
-            actions.append("setup_health")
+            if can_open_decision_setup_health():
+                actions.append("setup_health")
         if detail_action is not None and fallback.can_show_evidence:
             actions.append("evidence")
         if not actions:

@@ -29,6 +29,9 @@ BOOTSTRAP_SETUP_MESSAGE = (
     "OVERWATCH mart setup and initialize the Decision summary marts."
 )
 BOOTSTRAP_SUCCESS_MESSAGE = "Decision summaries initialized. Refreshing the current command brief."
+BOOTSTRAP_DEGRADED_MESSAGE = (
+    "Decision summaries initialized for this section with setup warnings. Review Setup Health in Settings."
+)
 DECISION_CURRENT_TABLE = "MART_SECTION_DECISION_CURRENT"
 DEFAULT_PACKET_BYTE_LIMIT = 100_000
 
@@ -46,6 +49,10 @@ SECTION_FORCE_REFRESH_KEYS = {
 @dataclass(frozen=True)
 class DecisionBootstrapValidation:
     ok: bool
+    status: str = "FAILED"
+    global_status: str = "FAILED"
+    selected_scope_status: str = "FAILED"
+    current_section_status: str = "FAILED"
     global_ok: bool = False
     selected_scope_ok: bool = False
     current_section_ok: bool = False
@@ -69,6 +76,9 @@ class DecisionBootstrapValidation:
     stale_sections: tuple[str, ...] = ()
     data_gap_sections: tuple[str, ...] = ()
     missing_metric_sections: tuple[str, ...] = ()
+    degraded_sections: tuple[str, ...] = ()
+    invalid_sections: tuple[str, ...] = ()
+    warning_sections: tuple[str, ...] = ()
     max_packet_bytes: int | None = None
     message: str = ""
     admin_detail: str = ""
@@ -329,6 +339,21 @@ SELECT
     MAX(TRY_TO_NUMBER(DECISION_PACKET:"AVAILABLE_SOURCE_COUNT")) AS AVAILABLE_SOURCE_COUNT,
     MAX(TRY_TO_NUMBER(DECISION_PACKET:"MISSING_SOURCE_COUNT")) AS MISSING_SOURCE_COUNT,
     MAX(TRY_TO_NUMBER(DECISION_PACKET:"STALE_SOURCE_COUNT")) AS STALE_SOURCE_COUNT,
+    MAX(COALESCE(
+        TRY_TO_NUMBER(DECISION_PACKET:"REQUIRED_STALE_SOURCE_COUNT"),
+        TRY_TO_NUMBER(DECISION_PACKET:"STALE_REQUIRED_SOURCE_COUNT"),
+        TRY_TO_NUMBER(DECISION_PACKET:"STALE_SOURCE_COUNT")
+    )) AS REQUIRED_STALE_SOURCE_COUNT,
+    MAX(COALESCE(
+        TRY_TO_NUMBER(DECISION_PACKET:"OPTIONAL_MISSING_SOURCE_COUNT"),
+        TRY_TO_NUMBER(DECISION_PACKET:"MISSING_OPTIONAL_SOURCE_COUNT"),
+        0
+    )) AS OPTIONAL_MISSING_SOURCE_COUNT,
+    MAX(COALESCE(
+        TRY_TO_NUMBER(DECISION_PACKET:"OPTIONAL_STALE_SOURCE_COUNT"),
+        TRY_TO_NUMBER(DECISION_PACKET:"STALE_OPTIONAL_SOURCE_COUNT"),
+        0
+    )) AS OPTIONAL_STALE_SOURCE_COUNT,
     MAX(TRY_TO_NUMBER(DECISION_PACKET:"SOURCE_COVERAGE_PCT")) AS SOURCE_COVERAGE_PCT,
     MAX(UPPER(COALESCE(
         DECISION_PACKET:"DATA_AVAILABILITY_STATE"::VARCHAR,
@@ -412,11 +437,27 @@ def validate_decision_bootstrap_output(
         for row in rows
         if (
             _int_value(row.get("SOURCE_ROW_COUNT"), 0) <= 0
+            or _int_value(row.get("REQUIRED_SOURCE_COUNT"), 0) <= 0
             or row.get("REQUIRED_SOURCE_COUNT") is None
             or row.get("AVAILABLE_SOURCE_COUNT") is None
             or row.get("MISSING_SOURCE_COUNT") is None
             or row.get("SOURCE_COVERAGE_PCT") is None
+            or _int_value(row.get("AVAILABLE_SOURCE_COUNT"), 0) < _int_value(row.get("REQUIRED_SOURCE_COUNT"), 0)
+            or _int_value(row.get("MISSING_SOURCE_COUNT"), 0) > 0
+            or float(_float_value(row.get("SOURCE_COVERAGE_PCT")) or 0.0) < 100.0
+            or _int_value(row.get("REQUIRED_STALE_SOURCE_COUNT"), 0) > 0
         )
+    }))
+    optional_warning_sections = tuple(sorted({
+        str(row.get("SECTION_NAME", ""))
+        for row in rows
+        if _int_value(row.get("OPTIONAL_MISSING_SOURCE_COUNT"), 0) > 0
+        or _int_value(row.get("OPTIONAL_STALE_SOURCE_COUNT"), 0) > 0
+    }))
+    oversized_sections = tuple(sorted({
+        str(row.get("SECTION_NAME", ""))
+        for row in rows
+        if _int_value(row.get("PACKET_TOO_LARGE"), 0) > 0
     }))
     max_packet_bytes = max((_int_value(row.get("MAX_PACKET_BYTES"), 0) for row in rows), default=0)
     packet_too_large = any(_int_value(row.get("PACKET_TOO_LARGE"), 0) > 0 for row in rows)
@@ -472,7 +513,22 @@ def validate_decision_bootstrap_output(
         for field in ("REQUIRED_SOURCE_COUNT", "AVAILABLE_SOURCE_COUNT", "MISSING_SOURCE_COUNT", "SOURCE_COVERAGE_PCT"):
             if row.get(field) is None:
                 return max(_int_value(row.get("REQUIRED_SOURCE_COUNT"), 0), 1)
-        return _int_value(row.get("MISSING_SOURCE_COUNT"), 0)
+        required = _int_value(row.get("REQUIRED_SOURCE_COUNT"), 0)
+        available = _int_value(row.get("AVAILABLE_SOURCE_COUNT"), 0)
+        missing = _int_value(row.get("MISSING_SOURCE_COUNT"), 0)
+        coverage = _float_value(row.get("SOURCE_COVERAGE_PCT")) or 0.0
+        stale_required = _int_value(row.get("REQUIRED_STALE_SOURCE_COUNT"), 0)
+        if required <= 0:
+            return 1
+        if available < required:
+            return max(required - available, 1)
+        if missing > 0:
+            return missing
+        if coverage < 100.0:
+            return 1
+        if stale_required > 0:
+            return stale_required
+        return 0
 
     def _row_is_data_gap(row: Mapping[str, Any] | None) -> bool:
         if row is None:
@@ -487,7 +543,7 @@ def validate_decision_bootstrap_output(
         target = _float_value(row.get("TARGET_FRESHNESS_MINUTES"))
         if freshness is not None and target is not None and freshness > target:
             return True
-        return _int_value(row.get("STALE_SOURCE_COUNT"), 0) > 0
+        return _int_value(row.get("REQUIRED_STALE_SOURCE_COUNT"), 0) > 0
 
     selected_has_metrics = selected_row is not None and _int_value(selected_row.get("HAS_METRICS"), 0) > 0
     selected_missing_sources = _row_missing_sources(selected_row)
@@ -507,16 +563,55 @@ def validate_decision_bootstrap_output(
         and not selected_data_gap
         and not selected_duplicate
     )
-    global_ok = (
+    global_success = (
         current_packet_count > 0
         and not missing
         and duplicate_current_keys == 0
         and not missing_metric_sections
         and not missing_source_sections
+        and not stale_sections
+        and not data_gap_sections
+        and not optional_warning_sections
         and not packet_too_large
-        and len(data_gap_sections) < max(len(canonical) - 1, 1)
     )
-    ok = bool(global_ok and selected_scope_ok)
+    degraded_sections = tuple(sorted({
+        *(section for section in missing),
+        *(section for section in stale_sections),
+        *(section for section in data_gap_sections),
+        *(section for section in missing_metric_sections),
+        *(section for section in missing_source_sections),
+        *(section for section in optional_warning_sections),
+        *(section for section in oversized_sections),
+    }))
+    duplicate_sections = tuple(sorted({
+        str(row.get("SECTION_NAME", ""))
+        for row in rows
+        if _int_value(row.get("CURRENT_KEY_COUNT"), 0) > 1
+    }))
+    warning_sections = tuple(sorted({*(section for section in optional_warning_sections), *(section for section in stale_sections)}))
+    invalid_sections = tuple(sorted({
+        *(section for section in data_gap_sections),
+        *(section for section in missing_metric_sections),
+        *(section for section in missing_source_sections),
+        *(section for section in oversized_sections),
+        *(section for section in duplicate_sections),
+    }))
+    if not rows:
+        global_status = "FAILED"
+    elif global_success:
+        global_status = "SUCCESS"
+    else:
+        global_status = "DEGRADED"
+    selected_scope_status = "SUCCESS" if selected_scope_ok else "FAILED"
+    current_section_status = "SUCCESS" if current_section_ok and selected_scope_ok else "FAILED"
+    if not selected_scope_ok:
+        status = "FAILED"
+    elif global_success:
+        status = "SUCCESS"
+    else:
+        status = "DEGRADED"
+    global_ok = global_success
+    ok = status in {"SUCCESS", "DEGRADED"}
     resolved_company = _norm_scope(selected_row.get("RESOLVED_COMPANY") if selected_row else "")
     resolved_environment = _norm_scope(selected_row.get("RESOLVED_ENVIRONMENT") if selected_row else "")
     resolved_window_days = _int_value(selected_row.get("RESOLVED_WINDOW_DAYS") if selected_row else 0, 0)
@@ -527,7 +622,7 @@ def validate_decision_bootstrap_output(
             selected_row.get("ENVIRONMENT"),
             selected_row.get("WINDOW_DAYS"),
         )
-        validated_packet_keys = (selected_packet_key,) if ok else ()
+        validated_packet_keys = (selected_packet_key,) if selected_scope_ok else ()
     else:
         validated_packet_keys = ()
     admin_parts = [
@@ -536,6 +631,7 @@ def validate_decision_bootstrap_output(
         f"Sections present: {', '.join(present) or 'none'}",
         f"Missing sections: {', '.join(missing) or 'none'}",
         f"Missing source metadata: {', '.join(missing_source_sections) or 'none'}",
+        f"Optional source warnings: {', '.join(optional_warning_sections) or 'none'}",
         f"Duplicate current keys: {duplicate_current_keys}",
         f"Max packet bytes: {max_packet_bytes}",
         f"Requested scope: {requested_company} / {requested_environment} / {requested_window_days} days",
@@ -544,10 +640,15 @@ def validate_decision_bootstrap_output(
             f"{resolved_window_days or 0} days"
         ),
         f"Selected packet: {str(selected_row.get('BRIEF_ID', 'none')) if selected_row else 'none'}",
+        f"Validation status: {status}",
         f"Selected scope ok: {selected_scope_ok}",
     ]
     return DecisionBootstrapValidation(
         ok=ok,
+        status=status,
+        global_status=global_status,
+        selected_scope_status=selected_scope_status,
+        current_section_status=current_section_status,
         global_ok=global_ok,
         selected_scope_ok=selected_scope_ok,
         current_section_ok=current_section_ok,
@@ -571,8 +672,15 @@ def validate_decision_bootstrap_output(
         stale_sections=stale_sections,
         data_gap_sections=data_gap_sections,
         missing_metric_sections=missing_metric_sections,
+        degraded_sections=degraded_sections,
+        invalid_sections=invalid_sections,
+        warning_sections=warning_sections,
         max_packet_bytes=max_packet_bytes,
-        message=BOOTSTRAP_SUCCESS_MESSAGE if ok else BOOTSTRAP_SETUP_MESSAGE,
+        message=(
+            BOOTSTRAP_SUCCESS_MESSAGE if status == "SUCCESS"
+            else BOOTSTRAP_DEGRADED_MESSAGE if status == "DEGRADED"
+            else BOOTSTRAP_SETUP_MESSAGE
+        ),
         admin_detail="; ".join(admin_parts),
         validated_sections=present if ok else (),
         validated_packet_keys=validated_packet_keys,
@@ -583,7 +691,10 @@ def maybe_run_decision_workspace_bootstrap(current_section: str | None = None) -
     """Consume the bootstrap request flag and run the setup procedure once."""
     success = st.session_state.pop(BOOTSTRAP_SUCCESS_KEY, "")
     if success:
-        st.success(success)
+        if "warning" in str(success).lower():
+            st.warning(success)
+        else:
+            st.success(success)
     failure = st.session_state.pop(BOOTSTRAP_FAILURE_KEY, "")
     if failure:
         st.warning(_clean_bootstrap_failure_message(failure))
@@ -612,7 +723,7 @@ def maybe_run_decision_workspace_bootstrap(current_section: str | None = None) -
             _clear_command_brief_caches(clear_last_good=False)
             st.session_state[BOOTSTRAP_FAILURE_KEY] = validation.message or BOOTSTRAP_SETUP_MESSAGE
             record_decision_bootstrap_health(
-                status="failed",
+                status=validation.status.lower(),
                 user_message=st.session_state[BOOTSTRAP_FAILURE_KEY],
                 selected_procedure=procedure_result.procedure_name,
                 fallback_used=procedure_result.fallback_used,
@@ -631,7 +742,7 @@ def maybe_run_decision_workspace_bootstrap(current_section: str | None = None) -
         _force_current_section_refresh(current_section)
         st.session_state[BOOTSTRAP_SUCCESS_KEY] = validation.message or BOOTSTRAP_SUCCESS_MESSAGE
         record_decision_bootstrap_health(
-            status="success",
+            status=validation.status.lower(),
             user_message=st.session_state[BOOTSTRAP_SUCCESS_KEY],
             selected_procedure=procedure_result.procedure_name,
             fallback_used=procedure_result.fallback_used,

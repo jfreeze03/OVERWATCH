@@ -206,6 +206,7 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         )
 
         self.assertFalse(validation.ok)
+        self.assertEqual(validation.status, "FAILED")
         self.assertFalse(validation.current_section_ok)
         self.assertFalse(validation.selected_scope_ok)
         self.assertIn("Executive Landing", validation.missing_sections)
@@ -229,6 +230,7 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         )
 
         self.assertTrue(validation.ok)
+        self.assertEqual(validation.status, "SUCCESS")
         self.assertTrue(validation.global_ok)
         self.assertTrue(validation.selected_scope_ok)
         self.assertEqual(validation.resolved_company, "ALL")
@@ -257,21 +259,88 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
 
         rows = self._valid_bootstrap_rows()
         rows[5] = {**rows[5], "DATA_AVAILABILITY_STATE": "DATA GAP"}
-        self.assertFalse(_validate(rows).ok)
+        validation = _validate(rows)
+        self.assertFalse(validation.ok)
+        self.assertEqual(validation.status, "FAILED")
 
         rows = self._valid_bootstrap_rows()
         rows[5] = {**rows[5], "SOURCE_ROW_COUNT": 0, "REQUIRED_SOURCE_COUNT": None}
         validation = _validate(rows)
         self.assertFalse(validation.ok)
+        self.assertEqual(validation.status, "FAILED")
         self.assertGreater(validation.current_section_missing_sources, 0)
 
         rows = self._valid_bootstrap_rows()
         rows[5] = {**rows[5], "CURRENT_KEY_COUNT": 2}
-        self.assertFalse(_validate(rows).ok)
+        validation = _validate(rows)
+        self.assertFalse(validation.ok)
+        self.assertEqual(validation.status, "FAILED")
 
         rows = self._valid_bootstrap_rows()
         rows[5] = {**rows[5], "MAX_PACKET_BYTES": 200000, "PACKET_TOO_LARGE": 1}
-        self.assertFalse(_validate(rows).ok)
+        validation = _validate(rows)
+        self.assertFalse(validation.ok)
+        self.assertEqual(validation.status, "FAILED")
+
+    def test_bootstrap_validation_tristate_degraded_when_current_section_is_usable(self):
+        from sections import decision_workspace_bootstrap as bootstrap
+
+        rows = self._valid_bootstrap_rows()
+        rows[1] = {**rows[1], "DATA_AVAILABILITY_STATE": "DATA GAP"}
+
+        class ValidationSession:
+            def sql(self, text: str) -> "ValidationSession":
+                return self
+
+            def collect(self) -> list[dict[str, object]]:
+                return rows
+
+        validation = bootstrap.validate_decision_bootstrap_output(
+            ValidationSession(),
+            current_section="Executive Landing",
+            company="ALL",
+            environment="ALL",
+            window_days=7,
+        )
+        self.assertTrue(validation.ok)
+        self.assertEqual(validation.status, "DEGRADED")
+        self.assertEqual(validation.global_status, "DEGRADED")
+        self.assertEqual(validation.selected_scope_status, "SUCCESS")
+        self.assertIn("DBA Control Room", validation.degraded_sections)
+
+    def test_bootstrap_validation_strict_required_sources(self):
+        from sections import decision_workspace_bootstrap as bootstrap
+
+        def _validate(row_updates: dict[str, object]):
+            rows = self._valid_bootstrap_rows()
+            rows[0] = {**rows[0], **row_updates}
+
+            class ValidationSession:
+                def sql(self, text: str) -> "ValidationSession":
+                    return self
+
+                def collect(self) -> list[dict[str, object]]:
+                    return rows
+
+            return bootstrap.validate_decision_bootstrap_output(
+                ValidationSession(),
+                current_section="Executive Landing",
+                company="ALL",
+                environment="ALL",
+                window_days=7,
+            )
+
+        self.assertEqual(_validate({"SOURCE_ROW_COUNT": 0}).status, "FAILED")
+        self.assertEqual(_validate({"REQUIRED_SOURCE_COUNT": 0}).status, "FAILED")
+        self.assertEqual(_validate({"AVAILABLE_SOURCE_COUNT": 2}).status, "FAILED")
+        self.assertEqual(_validate({"MISSING_SOURCE_COUNT": 1}).status, "FAILED")
+        self.assertEqual(_validate({"SOURCE_COVERAGE_PCT": 99}).status, "FAILED")
+        self.assertEqual(_validate({"REQUIRED_STALE_SOURCE_COUNT": 1}).status, "FAILED")
+
+        optional = _validate({"OPTIONAL_MISSING_SOURCE_COUNT": 1})
+        self.assertTrue(optional.ok)
+        self.assertEqual(optional.status, "DEGRADED")
+        self.assertIn("Executive Landing", optional.warning_sections)
 
     def test_bootstrap_validation_rejects_global_five_section_data_gap(self):
         from sections import decision_workspace_bootstrap as bootstrap
@@ -297,7 +366,8 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
             environment="ALL",
             window_days=7,
         )
-        self.assertFalse(validation.ok)
+        self.assertTrue(validation.ok)
+        self.assertEqual(validation.status, "DEGRADED")
         self.assertFalse(validation.global_ok)
         self.assertEqual(len(validation.data_gap_sections), 5)
 
@@ -1091,6 +1161,8 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
 
         rendered = "\n".join(str(call.args[0]) for call in markdown.call_args_list) + "\n".join(writes)
         self.assertIn("Decision summaries are not initialized", rendered)
+        self.assertIn("ow-setup-health-badge", rendered)
+        self.assertIn("Persistence", rendered)
         self.assertIn("SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS", rendered)
         self.assertGreaterEqual(code.call_count, 1)
         self.assertIn("MART_SECTION_DECISION_CURRENT", code.call_args_list[0].args[0])
@@ -1142,7 +1214,8 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
                 admin_detail="MART_SECTION_DECISION_CURRENT validated.",
                 session=session,
             )
-        self.assertEqual(health.status, "success")
+        self.assertEqual(health.status, "SUCCESS")
+        self.assertEqual(health.persistence_status, "persisted")
         self.assertTrue(any("CREATE TABLE IF NOT EXISTS OVERWATCH_DECISION_SETUP_HEALTH" in call for call in session.sql_calls))
         self.assertTrue(any("INSERT INTO OVERWATCH_DECISION_SETUP_HEALTH" in call for call in session.sql_calls))
 
@@ -1152,6 +1225,38 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         self.assertIsNotNone(loaded)
         self.assertEqual(loaded.selected_procedure, "SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS")
         self.assertEqual(loaded.requested_scope, "ALFA / ALL / 7 days")
+        self.assertEqual(loaded.persistence_status, "persisted")
+
+    def test_setup_health_records_local_only_and_unavailable_persistence_status(self):
+        from sections import decision_workspace_setup_health as setup_health
+
+        state: dict[str, object] = {}
+        with patch.object(setup_health.st, "session_state", state):
+            local = setup_health.record_decision_bootstrap_health(
+                status="failed",
+                user_message="Decision summaries are not initialized.",
+            )
+        self.assertEqual(local.status, "FAILED")
+        self.assertEqual(local.persistence_status, "local_only")
+        self.assertEqual(state[setup_health.SETUP_HEALTH_KEY]["persistence_status"], "local_only")
+
+        class FailingPersistSession:
+            def sql(self, text: str) -> "FailingPersistSession":
+                return self
+
+            def collect(self) -> list[object]:
+                raise RuntimeError("permission denied on setup health table")
+
+        state.clear()
+        with patch.object(setup_health.st, "session_state", state):
+            unavailable = setup_health.record_decision_bootstrap_health(
+                status="degraded",
+                user_message="Decision summaries initialized with setup warnings.",
+                session=FailingPersistSession(),
+            )
+        self.assertEqual(unavailable.status, "DEGRADED")
+        self.assertEqual(unavailable.persistence_status, "unavailable")
+        self.assertIn("permission denied", unavailable.persistence_error)
 
     def test_fallback_open_setup_health_routes_to_settings_without_raw_sql(self):
         from runtime_state import SIDEBAR_PANEL
@@ -1200,6 +1305,53 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         self.assertTrue(state[SETUP_HEALTH_PANEL_OPEN_KEY])
         for raw in ("CALL ", "SP_", "MART_", "FACT_", "ACCOUNT_USAGE"):
             self.assertNotIn(raw, rendered)
+
+    def test_fallback_hides_setup_health_action_for_non_admin_role(self):
+        from runtime_state import CURRENT_ROLE
+        from sections import section_command_rendering
+        from sections.section_command_brief import SectionCommandBrief
+
+        labels: list[str] = []
+
+        def _columns(spec):
+            count = int(spec) if isinstance(spec, int) else len(spec)
+            return [contextlib.nullcontext() for _ in range(count)]
+
+        def _button(label, *args, **kwargs):
+            labels.append(str(label))
+            return False
+
+        state: dict[str, object] = {CURRENT_ROLE: "PUBLIC"}
+        brief = SectionCommandBrief(
+            section="Executive Landing",
+            company="ALFA",
+            environment="ALL",
+            window_label="8 days",
+            state="Setup required",
+            headline="Summary not initialized",
+            summary="No packet row.",
+            source="MART_SECTION_DECISION_CURRENT",
+            freshness_label="Freshness unavailable",
+            loaded_at="",
+            fallback_reason="No packet row.",
+        )
+        with patch.object(section_command_rendering.st, "session_state", state), patch.object(
+            section_command_rendering.st,
+            "html",
+        ), patch.object(section_command_rendering.st, "columns", side_effect=_columns), patch.object(
+            section_command_rendering.st,
+            "button",
+            side_effect=_button,
+        ):
+            section_command_rendering.render_decision_workspace(
+                brief,
+                key_prefix="no_admin_setup_health",
+                refresh_action=lambda: None,
+            )
+
+        self.assertIn("Refresh", labels)
+        self.assertIn("Initialize summaries", labels)
+        self.assertNotIn("Open Setup Health", labels)
 
     def test_bootstrap_missing_procedure_shows_clean_setup_message(self):
         from sections import decision_workspace_bootstrap as bootstrap
@@ -1571,6 +1723,47 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         self.assertIn("Data Trust", markup)
         self.assertNotIn("available in the Decision Brief", markup)
         self.assertNotIn("Refresh Decision Brief", markup)
+
+    def test_html_snapshot_all_primary_sections_have_workspace_without_legacy_card_wall(self):
+        from sections.section_command_brief import SectionCommandAction, SectionCommandBrief, SectionCommandMetric
+
+        forbidden = (
+            "ow-kpi-hero-card",
+            "ow-shell-snapshot-card",
+            "ow-action-card",
+            "ow-command-deck",
+            "ow-executive-command-hero",
+            "Pending",
+            "available in the Decision Brief",
+        )
+        for section in self.VALIDATION_SECTIONS:
+            with self.subTest(section=section):
+                brief = SectionCommandBrief(
+                    section=section,
+                    company="ALFA",
+                    environment="ALL",
+                    window_label="8 days",
+                    state="At Risk",
+                    headline=f"{section} packet headline",
+                    summary="Packet-driven summary",
+                    source="MART_SECTION_DECISION_CURRENT",
+                    freshness_label="Updated 8m ago",
+                    loaded_at="2026-06-25T10:08:00",
+                    metrics=(
+                        SectionCommandMetric(key="total_spend", label="Total Spend", value="", numeric_value=12345, metric_format="currency"),
+                        SectionCommandMetric(key="critical_high_issues", label="Critical / High", value="", numeric_value=2, metric_format="count"),
+                        SectionCommandMetric(key="open_actions", label="Open Actions", value="", numeric_value=9, metric_format="count"),
+                        SectionCommandMetric(key="cortex_spend", label="Cortex AI Spend", value="", numeric_value=987, metric_format="currency"),
+                    ),
+                    next_actions=(SectionCommandAction(label="Open detail", detail="Route", cta="Open detail", route_key="executive_overview"),),
+                )
+                markup = _render_markup(brief)
+                self.assertIn("ow-decision-workspace", markup)
+                self.assertIn("What needs attention", markup)
+                self.assertIn("Recommended actions", markup)
+                self.assertIn("Data Trust", markup)
+                for token in forbidden:
+                    self.assertNotIn(token, markup)
 
 
 if __name__ == "__main__":

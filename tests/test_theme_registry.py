@@ -134,8 +134,14 @@ class ThemeRegistryTests(unittest.TestCase):
             '.ow-global-command-bar + div [data-testid="stSelectbox"] [data-baseweb="select"] input[role="combobox"]',
             combined_css,
         )
-        self.assertIn("caret-color: transparent !important", combined_css)
-        self.assertIn("background: transparent !important", combined_css)
+        command_bar_select_block = combined_css[
+            combined_css.index('.ow-global-command-bar + div [data-testid="stSelectbox"] [data-baseweb="select"] input[role="combobox"]'):
+            combined_css.index(".ow-command-context")
+        ]
+        self.assertNotIn("caret-color: transparent !important", command_bar_select_block)
+        self.assertNotIn("-webkit-text-fill-color: transparent !important", command_bar_select_block)
+        self.assertIn("caret-color: var(--ow-cyan) !important", command_bar_select_block)
+        self.assertIn("color: var(--ow-text) !important", command_bar_select_block)
         self.assertIn('[role="option"]:hover', theme._STRUCTURAL_CSS)
         self.assertIn("background: rgba(var(--accent-rgb), 0.16) !important", theme._STRUCTURAL_CSS)
 
@@ -294,6 +300,8 @@ class ThemeRegistryTests(unittest.TestCase):
         self.assertIn(".ow-decision-status", theme._STRUCTURAL_CSS)
         self.assertIn(".ow-decision-workspace-marker", theme._STRUCTURAL_CSS)
         self.assertIn('[data-testid="stVerticalBlock"]:has(.ow-decision-workspace-marker)', theme._STRUCTURAL_CSS)
+        self.assertIn(".ow-setup-health-panel", theme._STRUCTURAL_CSS)
+        self.assertIn(".ow-setup-health-badge", theme._STRUCTURAL_CSS)
         self.assertIn('[data-testid^="stBaseButton-segmented_control"]', theme._STRUCTURAL_CSS)
         self.assertIn('[data-testid="stBaseButton-segmented_controlActive"]', theme._STRUCTURAL_CSS)
         self.assertIn("background-image: none !important", theme._STRUCTURAL_CSS)

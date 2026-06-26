@@ -530,7 +530,10 @@ class SectionCommandBriefTests(unittest.TestCase):
 
     def test_snowflake_setup_declares_command_brief_marts(self):
         setup = (ROOT / "snowflake" / "mart_setup" / "04_mart_tables.sql").read_text(encoding="utf-8")
+        combined_setup = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8")
+        modular_validation = (ROOT / "snowflake" / "mart_setup" / "08_validation.sql").read_text(encoding="utf-8")
         validation = (ROOT / "snowflake" / "OVERWATCH_MART_VALIDATION.sql").read_text(encoding="utf-8")
+        drop = (ROOT / "snowflake" / "OVERWATCH_MART_DROP.sql").read_text(encoding="utf-8")
         for name in (
             "MART_SECTION_COMMAND_BRIEF",
             "MART_SECTION_COMMAND_METRIC",
@@ -539,10 +542,14 @@ class SectionCommandBriefTests(unittest.TestCase):
             "MART_SECTION_COMMAND_SOURCE",
             "MART_SECTION_DECISION_CURRENT",
             "MART_SECTION_DECISION_LAST_GOOD",
+            "OVERWATCH_DECISION_SETUP_HEALTH",
             "MART_EXECUTIVE_DECISION_INBOX",
         ):
             self.assertIn(name, setup)
+            self.assertIn(name, combined_setup)
+            self.assertIn(name, modular_validation)
             self.assertIn(name, validation)
+        self.assertIn("DROP TABLE IF EXISTS OVERWATCH_DECISION_SETUP_HEALTH", drop)
 
     def test_command_brief_sql_pipeline_is_wired(self):
         tables = (ROOT / "snowflake" / "mart_setup" / "04_mart_tables.sql").read_text(encoding="utf-8").upper()
@@ -570,6 +577,31 @@ class SectionCommandBriefTests(unittest.TestCase):
             "OVERWATCH_DECISION_SETUP_HEALTH",
         ):
             self.assertIn(token, tables)
+        setup_health_block = tables.split("CREATE TABLE IF NOT EXISTS OVERWATCH_DECISION_SETUP_HEALTH", 1)[1].split(");", 1)[0]
+        for column in (
+            "EVENT_ID",
+            "EVENT_TS",
+            "STATUS",
+            "USER_MESSAGE",
+            "SELECTED_PROCEDURE",
+            "FALLBACK_USED",
+            "CURRENT_PACKET_COUNT",
+            "SECTIONS_PRESENT",
+            "MISSING_SECTIONS",
+            "DUPLICATE_CURRENT_KEYS",
+            "STALE_SECTIONS",
+            "DATA_GAP_SECTIONS",
+            "MISSING_METRIC_SECTIONS",
+            "MAX_PACKET_BYTES",
+            "REQUESTED_SCOPE",
+            "RESOLVED_SCOPE",
+            "ADMIN_DETAIL",
+            "SUGGESTED_REMEDIATION",
+            "ACTOR_ROLE",
+            "APP_VERSION",
+            "LOAD_TS",
+        ):
+            self.assertIn(column, setup_health_block)
         self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS()", procs)
         self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST()", procs)
         self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL()", procs)

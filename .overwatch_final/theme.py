@@ -1308,6 +1308,34 @@ div[class*="st-key-"][class*="_decision_workspace_shell"],
 .ow-decision-workspace {
     display: contents;
 }
+.ow-setup-health-panel {
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+    background:
+        linear-gradient(135deg, rgba(var(--accent-rgb), 0.10), transparent 48%),
+        var(--bg-card);
+    padding: 0.85rem;
+    display: grid;
+    gap: 0.75rem;
+}
+.ow-setup-health-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.8rem;
+}
+.ow-setup-health-badge {
+    border: 1px solid rgba(71, 212, 135, 0.44);
+    border-radius: 999px;
+    padding: 0.28rem 0.62rem;
+    font-size: 0.7rem;
+    letter-spacing: 0.04em;
+}
+.ow-setup-health-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
+    gap: 0.55rem;
+}
 .ow-decision-loop-header {
     display: flex;
     align-items: center;
@@ -3207,14 +3235,14 @@ details summary span[translate="no"] {
     font-weight: 650 !important;
 }
 .ow-global-command-bar + div [data-testid="stSelectbox"] [data-baseweb="select"] input[role="combobox"] {
-    caret-color: transparent !important;
-    color: transparent !important;
-    -webkit-text-fill-color: transparent !important;
+    caret-color: var(--ow-cyan) !important;
+    color: var(--ow-text) !important;
+    -webkit-text-fill-color: var(--ow-text) !important;
 }
 .ow-global-command-bar + div [data-testid="stSelectbox"] [data-baseweb="select"] input[role="combobox"]::selection {
-    background: transparent !important;
-    color: transparent !important;
-    -webkit-text-fill-color: transparent !important;
+    background: rgba(37, 184, 242, .14) !important;
+    color: var(--ow-text) !important;
+    -webkit-text-fill-color: var(--ow-text) !important;
 }
 .ow-command-context {
     text-align: right;
@@ -3350,6 +3378,68 @@ div[class*="st-key-"][class*="_decision_workspace_shell"] .ow-decision-workspace
     border: 0;
     background: transparent;
     box-shadow: none;
+}
+.ow-setup-health-panel {
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+    background:
+        linear-gradient(135deg, rgba(var(--accent-rgb), .10), transparent 48%),
+        rgba(7, 22, 31, .82);
+    padding: .85rem;
+    display: grid;
+    gap: .75rem;
+}
+.ow-setup-health-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .8rem;
+}
+.ow-setup-health-header span {
+    color: var(--ow-text-secondary) !important;
+    font-size: .82rem;
+    line-height: 1.35;
+}
+.ow-setup-health-badge {
+    border: 1px solid rgba(71, 212, 135, .44);
+    border-radius: 999px;
+    color: var(--ow-green) !important;
+    background: rgba(71, 212, 135, .10);
+    padding: .28rem .62rem;
+    font-size: .7rem;
+    letter-spacing: .04em;
+}
+.ow-setup-health-badge[data-status="DEGRADED"] {
+    color: var(--ow-amber) !important;
+    border-color: rgba(255, 174, 36, .52);
+    background: rgba(255, 174, 36, .12);
+}
+.ow-setup-health-badge[data-status="FAILED"],
+.ow-setup-health-badge[data-status="UNKNOWN"] {
+    color: var(--ow-red) !important;
+    border-color: rgba(255, 83, 83, .52);
+    background: rgba(255, 83, 83, .12);
+}
+.ow-setup-health-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
+    gap: .55rem;
+}
+.ow-setup-health-grid span {
+    display: grid;
+    gap: .14rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    background: rgba(4, 15, 22, .42);
+    padding: .55rem .62rem;
+    color: var(--ow-text) !important;
+    font-size: .78rem;
+}
+.ow-setup-health-grid b {
+    color: var(--ow-text-secondary) !important;
+    font-size: .66rem;
+    letter-spacing: .03em;
+    text-transform: uppercase;
 }
 .ow-page-breadcrumb {
     display: flex;

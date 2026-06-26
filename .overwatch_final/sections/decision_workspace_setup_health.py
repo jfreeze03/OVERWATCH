@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
 from html import escape as _escape_html
 from typing import Mapping
@@ -11,6 +11,7 @@ from uuid import uuid4
 
 import streamlit as st
 
+from config import ADMIN_ACCESS_ROLES
 from runtime_state import CURRENT_ROLE, SIDEBAR_PANEL
 
 
@@ -39,6 +40,8 @@ class DecisionBootstrapHealth:
     suggested_remediation: str = ""
     actor_role: str = ""
     app_version: str = ""
+    persistence_status: str = "local_only"
+    persistence_error: str = ""
     recorded_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
 
 
@@ -73,6 +76,8 @@ def _health_from_mapping(raw: Mapping[str, object]) -> DecisionBootstrapHealth:
         suggested_remediation=str(raw.get("suggested_remediation", "")),
         actor_role=str(raw.get("actor_role", "")),
         app_version=str(raw.get("app_version", "")),
+        persistence_status=str(raw.get("persistence_status", "") or "local_only"),
+        persistence_error=str(raw.get("persistence_error", "")),
         recorded_at=str(raw.get("recorded_at", "")),
     )
 
@@ -119,6 +124,12 @@ CREATE TABLE IF NOT EXISTS {SETUP_HEALTH_TABLE} (
 def persist_decision_setup_health(session: object | None, health: DecisionBootstrapHealth) -> bool:
     """Persist setup health when Snowflake is available; never fail daily UI."""
     if session is None:
+        raw = st.session_state.get(SETUP_HEALTH_KEY)
+        if isinstance(raw, Mapping):
+            updated = dict(raw)
+            updated["persistence_status"] = "local_only"
+            updated["persistence_error"] = ""
+            st.session_state[SETUP_HEALTH_KEY] = updated
         return False
     try:
         session.sql(_health_table_ddl()).collect()
@@ -153,6 +164,12 @@ SELECT
   {_sql_literal(health.app_version, 120)}
 """
         session.sql(sql).collect()
+        raw = st.session_state.get(SETUP_HEALTH_KEY)
+        if isinstance(raw, Mapping):
+            updated = dict(raw)
+            updated["persistence_status"] = "persisted"
+            updated["persistence_error"] = ""
+            st.session_state[SETUP_HEALTH_KEY] = updated
         return True
     except Exception as exc:
         raw = st.session_state.get(SETUP_HEALTH_KEY)
@@ -162,6 +179,8 @@ SELECT
             updated["admin_detail"] = "; ".join(
                 part for part in (detail, f"Setup health persistence failed: {exc}") if part
             )
+            updated["persistence_status"] = "unavailable"
+            updated["persistence_error"] = str(exc)
             st.session_state[SETUP_HEALTH_KEY] = updated
         return False
 
@@ -187,7 +206,7 @@ def record_decision_bootstrap_health(
         return f"{company or 'Unknown'} / {environment or 'Unknown'} / {window_days or 'Unknown'} days"
 
     health = DecisionBootstrapHealth(
-        status=str(status or "unknown"),
+        status=str(status or "unknown").upper(),
         user_message=str(user_message or ""),
         selected_procedure=str(selected_procedure or ""),
         fallback_used=bool(fallback_used),
@@ -210,7 +229,16 @@ def record_decision_bootstrap_health(
         app_version="OVERWATCH Decision Workspace",
     )
     st.session_state[SETUP_HEALTH_KEY] = asdict(health)
-    persist_decision_setup_health(session, health)
+    persisted = persist_decision_setup_health(session, health)
+    if session is None:
+        health = replace(health, persistence_status="local_only", persistence_error="")
+    elif persisted:
+        health = replace(health, persistence_status="persisted", persistence_error="")
+    else:
+        raw = st.session_state.get(SETUP_HEALTH_KEY, {})
+        error = raw.get("persistence_error", "") if isinstance(raw, Mapping) else ""
+        health = replace(health, persistence_status="unavailable", persistence_error=str(error or "Persistence failed"))
+    st.session_state[SETUP_HEALTH_KEY] = asdict(health)
     return health
 
 
@@ -247,6 +275,8 @@ LIMIT 1
             else:
                 mapping = {}
             normalized = {str(k).lower(): v for k, v in mapping.items()}
+            normalized["persistence_status"] = "persisted"
+            normalized["persistence_error"] = ""
             health = _health_from_mapping(normalized)
             st.session_state[SETUP_HEALTH_KEY] = asdict(health)
             return health
@@ -263,6 +293,14 @@ def open_decision_setup_health() -> None:
     st.session_state[SETUP_HEALTH_PANEL_OPEN_KEY] = True
 
 
+def can_open_decision_setup_health() -> bool:
+    """Return whether the daily fallback may show a safe Settings route."""
+    role = str(st.session_state.get(CURRENT_ROLE, "") or "").strip().upper()
+    if not role:
+        return True
+    return role in set(ADMIN_ACCESS_ROLES)
+
+
 def render_decision_setup_health_panel(session: object | None = None) -> None:
     """Render admin diagnostics without leaking them into daily Decision Workspace UI."""
     health = load_decision_setup_health(session=session)
@@ -273,29 +311,37 @@ def render_decision_setup_health_panel(session: object | None = None) -> None:
         st.markdown(
             f"""
             <div class="ow-setup-health-panel">
-                <strong>{_escape_html(health.status.upper())}</strong>
-                <span>{_escape_html(health.user_message)}</span>
+                <div class="ow-setup-health-header">
+                    <strong class="ow-setup-health-badge" data-status="{_escape_html(health.status.upper())}">
+                        {_escape_html(health.status.upper())}
+                    </strong>
+                    <span>{_escape_html(health.user_message)}</span>
+                </div>
+                <div class="ow-setup-health-grid">
+                    <span><b>Recorded</b>{_escape_html(health.recorded_at or "Unavailable")}</span>
+                    <span><b>Procedure</b>{_escape_html(health.selected_procedure or "Unavailable")}</span>
+                    <span><b>Fallback</b>{'Yes' if health.fallback_used else 'No'}</span>
+                    <span><b>Packets</b>{int(health.current_packet_count or 0)}</span>
+                    <span><b>Requested</b>{_escape_html(health.requested_scope or "Unavailable")}</span>
+                    <span><b>Resolved</b>{_escape_html(health.resolved_scope or "Unavailable")}</span>
+                    <span><b>Duplicates</b>{int(health.duplicate_current_keys or 0)}</span>
+                    <span><b>Persistence</b>{_escape_html(health.persistence_status or "local_only")}</span>
+                </div>
             </div>
             """,
             unsafe_allow_html=True,
         )
-        st.write(f"Recorded: {health.recorded_at}")
-        st.write(f"Selected procedure: {health.selected_procedure or 'Unavailable'}")
-        st.write(f"Fallback procedure used: {'Yes' if health.fallback_used else 'No'}")
-        st.write(f"Current packet count: {health.current_packet_count}")
         st.write(f"Sections present: {_list_text(health.sections_present)}")
         st.write(f"Missing sections: {_list_text(health.missing_sections)}")
-        st.write(f"Duplicate current keys: {health.duplicate_current_keys}")
         st.write(f"Stale sections: {_list_text(health.stale_sections)}")
         st.write(f"Data Gap sections: {_list_text(health.data_gap_sections)}")
         st.write(f"Missing metric sections: {_list_text(health.missing_metric_sections)}")
-        st.write(f"Max packet bytes: {health.max_packet_bytes if health.max_packet_bytes is not None else 'Unavailable'}")
-        if health.requested_scope:
-            st.write(f"Requested scope: {health.requested_scope}")
-        if health.resolved_scope:
-            st.write(f"Resolved scope: {health.resolved_scope}")
+        st.write(f"Packet budget: {health.max_packet_bytes if health.max_packet_bytes is not None else 'Unavailable'} bytes")
         if health.admin_detail:
-            st.code(health.admin_detail)
+            admin_detail = health.admin_detail
+            if health.persistence_error:
+                admin_detail = "; ".join((admin_detail, f"Persistence error: {health.persistence_error}"))
+            st.code(admin_detail)
             st.code(
                 "\n".join(
                     part for part in (
@@ -305,6 +351,7 @@ def render_decision_setup_health_panel(session: object | None = None) -> None:
                         f"Resolved: {health.resolved_scope or 'Unavailable'}",
                         f"Missing sections: {_list_text(health.missing_sections)}",
                         f"Data gaps: {_list_text(health.data_gap_sections)}",
+                        f"Persistence: {health.persistence_status}",
                         f"Remediation: {health.suggested_remediation}",
                     )
                 ),
@@ -320,6 +367,7 @@ __all__ = [
     "SETUP_HEALTH_TABLE",
     "load_decision_setup_health",
     "open_decision_setup_health",
+    "can_open_decision_setup_health",
     "persist_decision_setup_health",
     "record_decision_bootstrap_health",
     "render_decision_setup_health_panel",

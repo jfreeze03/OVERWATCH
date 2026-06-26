@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta
 import streamlit as st
 from sections.shell_helpers import (
     consume_section_autoload_request,
+    render_decision_evidence_panel,
     render_data_freshness,
     render_content_header,
     render_primary_section_tabs,
@@ -1086,6 +1087,8 @@ def render() -> None:
     lookback_hours = int(st.session_state.get("dba_control_room_evidence_lookback_hours", lookback_hours) or lookback_hours)
     dba_decision_state = section_state_from_brief(dba_brief)
     pending_detail_load = bool(st.session_state.get("dba_control_room_command_brief_load_detail"))
+    if active_view == MORNING_COCKPIT_WORKFLOW and not pending_detail_load and not st.session_state.get("dba_control_room_data"):
+        return
     if (
         dba_decision_state.decision_mode in {"OFFLINE", "UNINITIALIZED"}
         and not st.session_state.get("dba_control_room_data")
@@ -1326,6 +1329,23 @@ def render() -> None:
         source_issue_count = int(
             release_source_health["STATE"].fillna("").astype(str).isin(["Unavailable", "Stale"]).sum()
         )
+    render_decision_evidence_panel(
+        "DBA Investigation Evidence",
+        str(loaded_meta.get("loaded_at") or source_mode or "Loaded DBA evidence"),
+        (
+            f"{failed_queries:,} failed querie(s), {failed_tasks:,} failed task/procedure signal(s), "
+            f"{queued_queries:,} queued query signal(s)."
+        ),
+        (
+            ("Failed queries", f"{failed_queries:,}"),
+            ("Queued queries", f"{queued_queries:,}"),
+            ("Failed tasks", f"{failed_tasks:,}"),
+            ("Source gaps", f"{source_issue_count:,}"),
+            ("Credits delta", f"{credit_delta:+.1f}%"),
+        ),
+        rows=exceptions,
+        source_note=str(source_mode),
+    )
     _render_dba_action_brief(
         release_gate_summary,
         exceptions,

@@ -128,7 +128,7 @@ def _render_markup(brief: object) -> str:
     with patch.object(section_command_rendering.st, "html") as html, patch.object(
         section_command_rendering.st,
         "markdown",
-    ), patch.object(
+    ) as markdown, patch.object(
         section_command_rendering.st,
         "columns",
         side_effect=_columns,
@@ -139,7 +139,10 @@ def _render_markup(brief: object) -> str:
     ):
         section_command_rendering.render_section_command_brief(brief, key_prefix="binding")
 
-    return "\n".join(str(call.args[0]) for call in html.call_args_list)
+    return "\n".join(
+        [str(call.args[0]) for call in markdown.call_args_list]
+        + [str(call.args[0]) for call in html.call_args_list]
+    )
 
 
 class DecisionWorkspaceDataBindingTests(unittest.TestCase):
@@ -615,12 +618,53 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
 
     def test_renderer_uses_view_model_not_raw_brief_payload(self):
         renderer = (APP_ROOT / "sections" / "section_command_rendering.py").read_text(encoding="utf-8")
+        self.assertNotIn("def _data_trust_summary", renderer)
+        self.assertNotIn("brief.freshness_minutes", renderer)
         self.assertNotIn("brief.sources", renderer)
         self.assertNotIn("brief.source_objects", renderer)
         self.assertNotIn("brief.raw_payload", renderer)
+        self.assertNotIn("brief.metrics", renderer)
+        self.assertNotIn("brief.exceptions", renderer)
+        self.assertNotIn("brief.next_actions", renderer)
         self.assertIn("model.source_rows", renderer)
         self.assertIn("model.fallback", renderer)
         self.assertIn("model.fixture_badge_label", renderer)
+
+    def test_decision_workspace_wrapper_contains_full_workspace_source_order(self):
+        renderer = (APP_ROOT / "sections" / "section_command_rendering.py").read_text(encoding="utf-8")
+        open_idx = renderer.index('<section class="ow-decision-workspace"')
+        breadcrumb_idx = renderer.index("st.html(_breadcrumb_html(parts))")
+        hero_idx = renderer.index("ow-decision-hero ow-decision-hero-copy-only")
+        trust_idx = renderer.index("_render_model_trust_footer(model)")
+        close_idx = renderer.index('st.markdown("</section>"')
+        self.assertLess(open_idx, breadcrumb_idx)
+        self.assertLess(breadcrumb_idx, hero_idx)
+        self.assertLess(hero_idx, trust_idx)
+        self.assertLess(trust_idx, close_idx)
+        early_close = renderer[open_idx:hero_idx]
+        self.assertNotIn("</section>", early_close)
+
+    def test_shared_decision_evidence_panel_contract_exists_and_is_used(self):
+        shell = (APP_ROOT / "sections" / "shell_helpers.py").read_text(encoding="utf-8")
+        self.assertIn("def render_decision_evidence_panel", shell)
+        for relative in (
+            "security_posture_overview_view.py",
+            "alert_center.py",
+            "cost_contract_overview_floor.py",
+            "dba_control_room/render.py",
+        ):
+            source = (APP_ROOT / "sections" / relative).read_text(encoding="utf-8")
+            self.assertIn("render_decision_evidence_panel", source, relative)
+
+    def test_daily_diagnostics_are_shared_gate_on_primary_surfaces(self):
+        for relative in (
+            "security_posture_overview_view.py",
+            "alert_center.py",
+            "cost_contract.py",
+            "dba_control_room/render.py",
+        ):
+            source = (APP_ROOT / "sections" / relative).read_text(encoding="utf-8")
+            self.assertIn("should_render_daily_diagnostics", source, relative)
 
     def test_renderer_uses_single_decision_workspace_control_contract(self):
         renderer = (APP_ROOT / "sections" / "section_command_rendering.py").read_text(encoding="utf-8")

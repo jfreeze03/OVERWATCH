@@ -48,6 +48,7 @@ from sections.operator_case import make_case_evidence, render_add_to_case_button
 from sections.shell_helpers import (
     _clean_display_text,
     build_first_paint_summary_spec,
+    render_decision_evidence_panel,
     render_data_freshness,
     render_escaped_bold_text,
     render_section_first_paint_shell,
@@ -122,6 +123,26 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
         splash = _maybe_autoload_cost_splash(company, int(days), credit_price)
     if not st.session_state.get("_cost_contract_local_hierarchy_rendered"):
         _render_cost_first_paint_shell(company, int(days), splash, credit_price)
+    cost_summary = _cost_splash_summary(splash, credit_price, int(days))
+    if refresh_cost or splash.get("loaded"):
+        render_decision_evidence_panel(
+            "Cost Evidence",
+            str(splash.get("source") or "Loaded cost evidence"),
+            (
+                f"${safe_float(cost_summary.get('spend')):,.0f} spend; "
+                f"{safe_float(cost_summary.get('delta_pct')):+.1f}% movement; "
+                f"${safe_float(cost_summary.get('cortex_spend')):,.0f} Cortex AI spend."
+            ),
+            (
+                ("Total spend", f"${safe_float(cost_summary.get('spend')):,.0f}"),
+                ("Movement", f"{safe_float(cost_summary.get('delta_pct')):+.1f}%"),
+                ("Forecast", f"${safe_float(cost_summary.get('projected_30d_spend')):,.0f}"),
+                ("Cortex AI", f"${safe_float(cost_summary.get('cortex_spend')):,.0f}"),
+                ("Top driver", str(cost_summary.get("top_warehouse") or "Unavailable")),
+            ),
+            rows=splash.get("warehouse_delta"),
+            source_note=str(splash.get("source") or "Cost evidence"),
+        )
     _render_cost_splash(splash, company=company, days=int(days), credit_price=credit_price)
 
     proof_data = st.session_state.get("cost_contract_cockpit")

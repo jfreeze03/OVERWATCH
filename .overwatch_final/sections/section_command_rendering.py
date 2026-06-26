@@ -133,23 +133,6 @@ def _breadcrumb_html(parts: tuple[object, ...]) -> str:
     ) + "</nav>"
 
 
-def _data_trust_summary(brief: SectionCommandBrief) -> str:
-    age = "freshness unavailable"
-    if brief.freshness_minutes is not None:
-        age = f"Updated {int(round(float(brief.freshness_minutes)))}m ago"
-    method = brief.data_availability_state or ("Stale" if brief.stale else "Allocated")
-    confidence = brief.confidence or "unknown"
-    source_note = ""
-    if brief.required_source_count:
-        source_note = f"{brief.available_source_count}/{brief.required_source_count} required sources"
-    parts = [age]
-    if source_note:
-        parts.append(source_note)
-    parts.append(method)
-    parts.append(confidence)
-    return " · ".join(str(part) for part in parts if part)
-
-
 def _trust_detail_html(model: DecisionWorkspaceViewModel) -> str:
     fixture_badge = (
         '<div class="ow-fixture-badge">FIXTURE DATA</div>'
@@ -215,46 +198,47 @@ def _render_fallback(
     fallback = model.fallback
     if fallback is None:
         return
-    st.html(
-        f'<section class="ow-decision-brief ow-decision-recovery ow-decision-operating-loop" '
-        f'role="region" aria-label="Decision workspace {fallback.mode}">'
-        f'<div class="ow-decision-loop-header" data-state="{_html(fallback.mode)}">'
-        f'<strong>{_html(fallback.title)}</strong>'
-        f'<span>{_html(model.trust.summary)}</span>'
-        '</div>'
-        f'<p class="ow-decision-loop-summary">{_html(_public_text(fallback.message))}</p>'
-        '</section>'
-    )
-    actions = []
-    if refresh_action is not None:
-        actions.append("refresh")
-    if fallback.can_initialize:
-        actions.append("initialize")
-    if detail_action is not None and fallback.can_show_evidence:
-        actions.append("evidence")
-    if not actions:
-        return
-    cols = st.columns(len(actions))
-    for idx, action in enumerate(actions):
-        with cols[idx]:
-            if action == "refresh" and st.button(
-                "Refresh",
-                key=f"{key_prefix}_fallback_refresh_packet",
-                type="secondary",
-                width="stretch",
-                help="Refresh the Decision packet for this scope",
-            ):
-                refresh_action()
-                st.rerun()
-            elif action == "initialize" and st.button(
-                fallback.recovery_label,
-                key=f"{key_prefix}_initialize_summaries",
-                width="stretch",
-            ):
-                st.session_state["_overwatch_decision_bootstrap_requested"] = True
-                st.rerun()
-            elif action == "evidence":
-                _render_detail_action(key_prefix=key_prefix, detail_action=detail_action)
+    with st.container(key=f"{key_prefix}_decision_workspace_shell", border=False):
+        st.html(
+            f'<section class="ow-decision-workspace ow-decision-brief ow-decision-recovery '
+            f'ow-decision-operating-loop" role="region" aria-label="Decision workspace {fallback.mode}">'
+            f'<div class="ow-decision-loop-header" data-state="{_html(fallback.mode)}">'
+            f'<strong>{_html(fallback.title)}</strong>'
+            f'<span>{_html(model.trust.summary)}</span>'
+            '</div>'
+            f'<p class="ow-decision-loop-summary">{_html(_public_text(fallback.message))}</p>'
+            '</section>'
+        )
+        actions = []
+        if refresh_action is not None:
+            actions.append("refresh")
+        if fallback.can_initialize:
+            actions.append("initialize")
+        if detail_action is not None and fallback.can_show_evidence:
+            actions.append("evidence")
+        if not actions:
+            return
+        cols = st.columns(len(actions))
+        for idx, action in enumerate(actions):
+            with cols[idx]:
+                if action == "refresh" and st.button(
+                    "Refresh",
+                    key=f"{key_prefix}_fallback_refresh_packet",
+                    type="secondary",
+                    width="stretch",
+                    help="Refresh the Decision packet for this scope",
+                ):
+                    refresh_action()
+                    st.rerun()
+                elif action == "initialize" and st.button(
+                    fallback.recovery_label,
+                    key=f"{key_prefix}_initialize_summaries",
+                    width="stretch",
+                ):
+                    st.session_state["_overwatch_decision_bootstrap_requested"] = True
+                    st.rerun()
+                elif action == "evidence":
+                    _render_detail_action(key_prefix=key_prefix, detail_action=detail_action)
 
 
 def _action_route_key(action: object) -> str:
@@ -405,7 +389,7 @@ def _render_workspace_actions(
         label = str(getattr(primary, "cta", "") or getattr(primary, "label", "") or "Open")
         key_source = str(getattr(primary, "action_key", "") or getattr(primary, "label", "") or "primary")
         if st.button(
-            f"{label}  →",
+            f"{label} ->",
             key=f"{key_prefix}_primary_{_key_token(key_source)}",
             type="primary",
             width="stretch",
@@ -416,7 +400,7 @@ def _render_workspace_actions(
             label = str(getattr(action, "cta", "") or getattr(action, "label", "") or "Open")
             key_source = str(getattr(action, "action_key", "") or getattr(action, "label", "") or f"secondary_{index}")
             if st.button(
-                f"{label}  →",
+                f"{label} ->",
                 key=f"{key_prefix}_secondary_{index}_{_key_token(key_source)}",
                 type="secondary",
                 width="stretch",
@@ -493,56 +477,60 @@ def render_decision_workspace(
     state = model.state_token
     parts = tuple(breadcrumb or (model.section, model.workflow))
     fixture_badge = '<b class="ow-fixture-badge">FIXTURE DATA</b>' if model.fixture_mode else ""
-    st.html(
-        '<section class="ow-decision-workspace" role="region" aria-label="OVERWATCH Decision Workspace">'
-        f'{_breadcrumb_html(parts)}'
-        '</section>'
-    )
-    hero_left, hero_right = st.columns([0.72, 0.28])
-    with hero_left:
-        st.html(
-            '<div class="ow-decision-hero ow-decision-hero-copy-only">'
-            f'<div class="ow-decision-state-icon" data-state="{_html(state)}">{_state_icon_svg(state)}</div>'
-            '<div class="ow-decision-state-copy">'
-            f'<strong>{_html(model.state)} {fixture_badge}</strong>'
-            f'<h2>{_html(model.headline)}</h2>'
-            f'<p>{_html(model.summary)}</p>'
-            '</div>'
-            '</div>'
+    with st.container(key=f"{key_prefix}_decision_workspace_shell", border=False):
+        st.markdown(
+            '<section class="ow-decision-workspace" role="region" aria-label="OVERWATCH Decision Workspace">',
+            unsafe_allow_html=True,
         )
-    with hero_right:
-        st.html(
-            '<div class="ow-decision-refresh ow-decision-refresh-inline">'
-            f'<b>{_html(model.trust.freshness_label)}</b>'
-            f'<span>{_html(model.trust.target_label)}</span>'
-            '</div>'
-        )
-        if controls.can_refresh and controls.refresh_packet is not None and st.button(
-            "Refresh",
-            key=f"{key_prefix}_refresh_packet",
-            type="secondary",
-            width="stretch",
-            help="Refresh the Decision packet for this scope",
-        ):
-            controls.refresh_packet()
-            st.rerun()
-    st.html(_metric_ribbon(model, compact=False))
-    left, right = st.columns([2.05, 0.95])
-    with left:
-        st.html(_render_model_attention_panel(model))
-    with right:
-        _render_workspace_actions(
-            model,
-            controls,
-            key_prefix=key_prefix,
-        )
-    st.html(_render_model_trend_band(model) + _render_model_trust_footer(model))
-    if model.has_sources:
-        with st.expander("View sources", expanded=False):
-            st.html(f'<div class="ow-decision-source-drawer">{_trust_detail_html(model)}</div>')
-    if getattr(model, "additional_metrics", ()):
-        with st.expander("Additional brief metrics", expanded=False):
-            st.html(_extra_metrics_panel(tuple(model.additional_metrics)))
+        try:
+            st.html(_breadcrumb_html(parts))
+            hero_left, hero_right = st.columns([0.72, 0.28])
+            with hero_left:
+                st.html(
+                    '<div class="ow-decision-hero ow-decision-hero-copy-only">'
+                    f'<div class="ow-decision-state-icon" data-state="{_html(state)}">{_state_icon_svg(state)}</div>'
+                    '<div class="ow-decision-state-copy">'
+                    f'<strong>{_html(model.state)} {fixture_badge}</strong>'
+                    f'<h2>{_html(model.headline)}</h2>'
+                    f'<p>{_html(model.summary)}</p>'
+                    '</div>'
+                    '</div>'
+                )
+            with hero_right:
+                st.html(
+                    '<div class="ow-decision-refresh ow-decision-refresh-inline">'
+                    f'<b>{_html(model.trust.freshness_label)}</b>'
+                    f'<span>{_html(model.trust.target_label)}</span>'
+                    '</div>'
+                )
+                if controls.can_refresh and controls.refresh_packet is not None and st.button(
+                    "Refresh",
+                    key=f"{key_prefix}_refresh_packet",
+                    type="secondary",
+                    width="stretch",
+                    help="Refresh the Decision packet for this scope",
+                ):
+                    controls.refresh_packet()
+                    st.rerun()
+            st.html(_metric_ribbon(model, compact=False))
+            left, right = st.columns([2.05, 0.95])
+            with left:
+                st.html(_render_model_attention_panel(model))
+            with right:
+                _render_workspace_actions(
+                    model,
+                    controls,
+                    key_prefix=key_prefix,
+                )
+            st.html(_render_model_trend_band(model) + _render_model_trust_footer(model))
+            if model.has_sources:
+                with st.expander("View sources", expanded=False):
+                    st.html(f'<div class="ow-decision-source-drawer">{_trust_detail_html(model)}</div>')
+            if getattr(model, "additional_metrics", ()):
+                with st.expander("Additional brief metrics", expanded=False):
+                    st.html(_extra_metrics_panel(tuple(model.additional_metrics)))
+        finally:
+            st.markdown("</section>", unsafe_allow_html=True)
 
 
 def render_section_command_brief(

@@ -38,8 +38,10 @@ from sections.security_posture_models import (
     _show_security_proof_tables,
 )
 from sections.operator_case import make_case_evidence, render_add_to_case_button
+from sections.decision_workspace_controls import should_render_daily_diagnostics
 from sections.shell_helpers import (
     consume_section_autoload_request,
+    render_decision_evidence_panel,
     render_data_freshness,
     render_escaped_bold_text,
     render_shell_kpi_row,
@@ -729,9 +731,6 @@ def render_security_overview(company: str, environment: str, days: int) -> None:
     summary = st.session_state.get("security_posture_summary")
     exceptions = st.session_state.get("security_posture_exceptions")
     meta = st.session_state.get("security_posture_meta", {})
-    brief_slot = st.empty()
-    snapshot_slot = st.empty()
-    exception_slot = st.empty()
 
     security_expected_meta = _security_scope_meta(company, environment, days)
     security_current = (
@@ -739,28 +738,8 @@ def render_security_overview(company: str, environment: str, days: int) -> None:
         and not getattr(summary, "empty", True)
         and _security_meta_matches(meta, security_expected_meta)
     )
-    if not security_current:
-        _paint_security_brief_chrome(
-            brief_slot,
-            snapshot_slot,
-            exception_slot,
-            summary,
-            exceptions,
-            meta,
-            company,
-            environment,
-            days,
-        )
-
-    _render_security_overview_entry(summary, exceptions, meta, company, environment, days)
     if consume_section_autoload_request("Security Posture") and not security_current:
-        st.caption("Access & Security opened without loading security facts. Refresh the security summary when current account-history telemetry is needed.")
-    render_data_freshness(
-        meta if security_current else {},
-        source=st.session_state.get("security_posture_source", "Security summary"),
-        target_minutes=60,
-        delayed_note="Security summary uses fast OVERWATCH rows when available; live ACCOUNT_USAGE refresh is explicit.",
-    )
+        defer_source_note("Security evidence remains behind the Decision Workspace evidence action.")
 
     summary_error = str(st.session_state.get("security_posture_summary_error", "") or "")
     if summary_error and not security_current:
@@ -772,19 +751,11 @@ def render_security_overview(company: str, environment: str, days: int) -> None:
         summary = st.session_state.get("security_posture_summary")
         exceptions = st.session_state.get("security_posture_exceptions")
         meta = st.session_state.get("security_posture_meta", {})
-        _paint_security_brief_chrome(
-            brief_slot,
-            snapshot_slot,
-            exception_slot,
-            summary,
-            exceptions,
-            meta,
-            company,
-            environment,
-            days,
+        security_current = (
+            summary is not None
+            and not getattr(summary, "empty", True)
+            and _security_meta_matches(meta, _security_scope_meta(company, environment, days))
         )
-
-    _render_security_brief_launchpad()
 
     summary = st.session_state.get("security_posture_summary")
     exceptions = st.session_state.get("security_posture_exceptions")
@@ -808,6 +779,29 @@ def render_security_overview(company: str, environment: str, days: int) -> None:
             active_users=active_users,
             recent_grants=recent_grants,
             shared_databases=shared_databases,
+        )
+        render_decision_evidence_panel(
+            "Security Evidence",
+            str(meta.get("loaded_at") or st.session_state.get("security_posture_source") or "Loaded security evidence"),
+            (
+                f"Security score {score}; {failed_logins:,} failed logins, "
+                f"{users_without_mfa:,} MFA gap(s), {recent_grants:,} recent grant(s), "
+                f"{shared_databases:,} shared database signal(s)."
+            ),
+            (
+                ("Failed logins", f"{failed_logins:,}"),
+                ("MFA gaps", f"{users_without_mfa:,}"),
+                ("Risky grants", f"{recent_grants:,}"),
+                ("Shared DBs", f"{shared_databases:,}"),
+            ),
+            rows=exceptions if exceptions is not None and not exceptions.empty else summary,
+            source_note=str(st.session_state.get("security_posture_source") or meta.get("source") or "Security evidence"),
+        )
+        render_data_freshness(
+            meta,
+            source=st.session_state.get("security_posture_source", "Security evidence"),
+            target_minutes=60,
+            delayed_note="Security evidence uses fast rows first; row-level proof stays behind explicit controls.",
         )
         render_add_to_case_button(
             make_case_evidence(
@@ -839,11 +833,6 @@ def render_security_overview(company: str, environment: str, days: int) -> None:
             _render_security_operability_fact_gate(company, environment, days)
             _render_security_exceptions_gate(company, environment, days)
         exceptions = st.session_state.get("security_posture_exceptions")
-        with exception_slot.container():
-            _render_security_exception_strip(
-                _security_exception_strip_rows(summary, exceptions, meta, company, environment, days),
-                loaded=True,
-            )
         if exceptions is not None and not exceptions.empty:
             st.subheader("Security Exceptions")
             priority_exceptions = _security_priority_view(exceptions)
@@ -1085,7 +1074,12 @@ def render_security_overview(company: str, environment: str, days: int) -> None:
     elif summary is not None and not summary.empty:
         st.info("Loaded security summary is stale for the active scope. Load current security evidence before acting.")
 
-    _render_advanced_security_evidence(company, environment)
+    if should_render_daily_diagnostics(
+        "Security Monitoring",
+        SECURITY_OVERVIEW_WORKFLOW,
+        "READY" if security_current else "UNINITIALIZED",
+    ):
+        _render_advanced_security_evidence(company, environment)
 
 __all__ = [
     '_render_security_watch_floor',

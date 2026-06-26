@@ -9,6 +9,7 @@ from sections.shell_helpers import (
     build_first_paint_summary_spec,
     consume_section_autoload_request,
     render_content_header,
+    render_decision_evidence_panel,
     render_data_freshness,
     render_escaped_bold_text,
     render_primary_section_tabs,
@@ -908,6 +909,23 @@ def render() -> None:
         delivery_log=delivery_log,
         readiness_rows=readiness_rows,
     )
+    render_decision_evidence_panel(
+        f"{ALERT_CENTER_PANE_LABELS.get(active_view, active_view)} Evidence",
+        str(data.get("loaded_at") or "Loaded alert evidence"),
+        (
+            f"{open_alert_count:,} open alert(s), {critical_high_count:,} critical/high, "
+            f"{overdue_count:,} overdue, {open_queue_count:,} open action queue item(s)."
+        ),
+        (
+            ("Open alerts", f"{open_alert_count:,}"),
+            ("Critical / High", f"{critical_high_count:,}"),
+            ("Overdue", f"{overdue_count:,}"),
+            ("Action queue", f"{open_queue_count:,}"),
+            ("Notification failures", f"{max(email_ready_count - email_logged_count, 0):,}"),
+        ),
+        rows=alerts,
+        source_note=f"{source_view} inputs: {_alert_center_source_summary(loaded_sources)}",
+    )
 
     render_alert_center_add_to_case(source_view, company, environment, int(days), int(limit), data, loaded_summary,
                                     loaded_sources, open_alert_count, critical_high_count, overdue_count,
@@ -925,4 +943,5 @@ def render() -> None:
         remediation_dry_run,
     )
 
-    _render_advanced_alert_diagnostics(company, environment)
+    if should_render_daily_diagnostics("Alert Center", source_view, "READY"):
+        _render_advanced_alert_diagnostics(company, environment)

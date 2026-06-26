@@ -166,7 +166,7 @@ from sections.cost_contract_rendering import _compact_time, _freshness_note, _me
 from sections.shell_helpers import render_content_header, render_section_breadcrumb
 from sections.section_command_brief import autoload_section_command_brief
 from sections.section_command_rendering import render_section_command_brief
-from sections.decision_workspace_controls import make_decision_refresh_action, make_evidence_action
+from sections.decision_workspace_controls import make_decision_refresh_action, make_evidence_action, should_render_daily_diagnostics
 from sections.decision_workspace_scope import active_decision_window_days
 from sections.decision_workspace_state import section_state_from_brief
 from sections.cost_contract_workflow import (
@@ -261,33 +261,30 @@ def render() -> None:
     st.session_state["_cost_contract_local_hierarchy_rendered"] = True
     decision_state = section_state_from_brief(cost_brief)
     evidence_requested = bool(st.session_state.get("cost_contract_command_brief_load_evidence"))
-    if (
-        workflow != "Cost Overview"
-        or evidence_requested
-        or decision_state.decision_mode == "READY" and st.session_state.get("cost_contract_summary_loaded")
-    ):
+    if workflow != "Cost Overview" or evidence_requested:
         _render_cost_contract_workflow(workflow, company, environment)
 
     advanced_open = bool(st.session_state.get(_ADVANCED_COST_TOOLS_VISIBLE_KEY))
-    with st.expander("Advanced cost tools and evidence", expanded=advanced_open):
-        if st.button("Open Advanced Cost Tools", key="cost_contract_open_advanced_tools", width="stretch"):
-            st.session_state[_ADVANCED_COST_TOOLS_VISIBLE_KEY] = True
-            st.rerun()
-        if st.session_state.get(_ADVANCED_COST_TOOLS_VISIBLE_KEY):
-            _render_advanced_cost_tools(company, environment)
-        _render_loaded_cost_alert_context()
-        render_operator_briefing(
-            [
-                ("First move", "Explain why spend changed before tuning anything."),
-                ("Telemetry", "Reconcile warehouse metering, chargeback allocation, Cortex, and run-rate pace."),
-                ("Control", "Convert findings into routed actions with savings and status."),
-                ("Output", "Produce a DBA-ready usage narrative with the source and action route attached."),
-            ],
-            columns=4,
-        )
-        _render_executive_value_ledger(company, environment)
-        _render_cost_efficiency_score_explanation(company, environment)
-        _render_cost_forecast_detail(company, environment)
-        _render_cost_change_correlation(company, environment)
-        _render_savings_verification_workflow(company, environment)
-        _render_cost_command_findings(company, environment)
+    if advanced_open or should_render_daily_diagnostics("Cost & Contract", workflow, decision_state.decision_mode):
+        with st.expander("Advanced cost tools and evidence", expanded=advanced_open):
+            if st.button("Open Advanced Cost Tools", key="cost_contract_open_advanced_tools", width="stretch"):
+                st.session_state[_ADVANCED_COST_TOOLS_VISIBLE_KEY] = True
+                st.rerun()
+            if st.session_state.get(_ADVANCED_COST_TOOLS_VISIBLE_KEY):
+                _render_advanced_cost_tools(company, environment)
+            _render_loaded_cost_alert_context()
+            render_operator_briefing(
+                [
+                    ("First move", "Explain why spend changed before tuning anything."),
+                    ("Telemetry", "Reconcile warehouse metering, chargeback allocation, Cortex, and run-rate pace."),
+                    ("Control", "Convert findings into routed actions with savings and status."),
+                    ("Output", "Produce a DBA-ready usage narrative with the source and action route attached."),
+                ],
+                columns=4,
+            )
+            _render_executive_value_ledger(company, environment)
+            _render_cost_efficiency_score_explanation(company, environment)
+            _render_cost_forecast_detail(company, environment)
+            _render_cost_change_correlation(company, environment)
+            _render_savings_verification_workflow(company, environment)
+            _render_cost_command_findings(company, environment)

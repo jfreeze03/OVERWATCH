@@ -3135,11 +3135,8 @@ details summary span[translate="no"] {
     font-size: .8rem;
     margin-top: .12rem;
 }
-.ow-decision-workspace,
-.ow-decision-attention-panel,
-.ow-decision-actions-panel,
-.ow-decision-trend-band,
-.ow-decision-trust-footer {
+div[class*="st-key-"][class*="_decision_workspace_shell"],
+.ow-decision-workspace {
     border: 1px solid var(--ow-border-soft);
     background:
         radial-gradient(circle at 16% 0%, rgba(37, 184, 242, .11), transparent 34%),
@@ -3150,6 +3147,18 @@ details summary span[translate="no"] {
 .ow-decision-workspace {
     padding: 1.25rem 1.35rem 1rem;
     margin-top: .55rem;
+}
+div[class*="st-key-"][class*="_decision_workspace_shell"] {
+    padding: 1.25rem 1.35rem 1rem;
+    margin-top: .55rem;
+}
+div[class*="st-key-"][class*="_decision_workspace_shell"] .ow-decision-workspace {
+    display: contents;
+    padding: 0;
+    margin: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
 }
 .ow-page-breadcrumb {
     display: flex;
@@ -3262,6 +3271,9 @@ details summary span[translate="no"] {
 }
 .ow-decision-attention-panel,
 .ow-decision-actions-panel {
+    border: 1px solid rgba(170, 188, 200, .13);
+    background: rgba(6, 19, 28, .34);
+    border-radius: 9px;
     padding: 1rem 1rem .9rem;
     min-height: 272px;
 }
@@ -3334,6 +3346,7 @@ details summary span[translate="no"] {
     border-style: dashed !important;
 }
 .ow-decision-trend-band {
+    border-top: 1px solid rgba(170, 188, 200, .13);
     padding: .85rem 1rem;
     margin-top: .95rem;
 }
@@ -3380,6 +3393,7 @@ details summary span[translate="no"] {
     font-size: .72rem;
 }
 .ow-decision-trust-footer {
+    border-top: 1px solid rgba(170, 188, 200, .13);
     min-height: 58px;
     margin-top: .75rem;
     padding: .78rem 1rem;
@@ -3410,6 +3424,63 @@ details summary span[translate="no"] {
     border-radius: 7px;
     padding: .5rem .8rem !important;
     color: var(--ow-text) !important;
+}
+.ow-decision-evidence-panel {
+    border: 1px solid var(--ow-border-soft);
+    border-radius: 12px;
+    background:
+        radial-gradient(circle at 12% 0%, rgba(37, 184, 242, .10), transparent 32%),
+        rgba(8, 25, 35, .78);
+    padding: 1rem;
+    margin: .9rem 0 .75rem;
+}
+.ow-decision-evidence-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    align-items: flex-start;
+    border-bottom: 1px solid rgba(170, 188, 200, .14);
+    padding-bottom: .78rem;
+    margin-bottom: .78rem;
+}
+.ow-decision-evidence-header strong {
+    display: block;
+    color: var(--ow-text) !important;
+    font-size: 1rem;
+}
+.ow-decision-evidence-header p,
+.ow-decision-evidence-panel small {
+    margin: .18rem 0 0 !important;
+    color: var(--ow-text-secondary) !important;
+}
+.ow-decision-evidence-header > span {
+    color: var(--ow-cyan) !important;
+    white-space: nowrap;
+    font-size: .82rem;
+}
+.ow-decision-evidence-metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: .62rem;
+}
+.ow-decision-evidence-metric {
+    border: 1px solid rgba(170, 188, 200, .13);
+    border-radius: 8px;
+    background: rgba(4, 14, 22, .44);
+    padding: .72rem .8rem;
+}
+.ow-decision-evidence-metric span {
+    display: block;
+    color: var(--ow-text-secondary) !important;
+    text-transform: uppercase;
+    font-size: .72rem;
+    letter-spacing: .035em;
+}
+.ow-decision-evidence-metric strong {
+    display: block;
+    color: var(--ow-text) !important;
+    font-size: 1.12rem;
+    margin-top: .18rem;
 }
 .ow-fixture-badge {
     display: inline-flex;

@@ -418,6 +418,9 @@ class SectionCommandBriefTests(unittest.TestCase):
 
         with patch.object(section_command_rendering.st, "html") as html, patch.object(
             section_command_rendering.st,
+            "markdown",
+        ) as markdown, patch.object(
+            section_command_rendering.st,
             "columns",
             return_value=[contextlib.nullcontext(), contextlib.nullcontext()],
         ), patch.object(section_command_rendering.st, "button", return_value=False) as button, patch.object(
@@ -436,7 +439,10 @@ class SectionCommandBriefTests(unittest.TestCase):
                 ),
             )
 
-        markup = "\n".join(call.args[0] for call in html.call_args_list)
+        markup = "\n".join(
+            [call.args[0] for call in markdown.call_args_list]
+            + [call.args[0] for call in html.call_args_list]
+        )
         self.assertIn("ow-decision-workspace", markup)
         self.assertIn("ow-decision-hero", markup)
         self.assertIn("WHAT NEEDS ATTENTION".lower(), markup.lower())

@@ -305,8 +305,8 @@ class SecurityPostureSplitTests(unittest.TestCase):
 
         load_brief.assert_not_called()
         self.assertNotIn("Refresh Security Summary", button_labels)
-        self.assertEqual(action_brief.call_args.args[0]["state"], "Summary unavailable")
-        self.assertEqual(operating_snapshot.call_args.args[0]["evidence"], "Summary unavailable")
+        action_brief.assert_not_called()
+        operating_snapshot.assert_not_called()
 
     def test_security_overview_uses_scope_compatible_summary_without_refresh(self):
         summary = pd.DataFrame([{

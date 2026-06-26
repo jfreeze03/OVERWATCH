@@ -435,6 +435,57 @@ def render_shell_snapshot(metrics: tuple[tuple[str, object], ...]) -> None:
     st.html(f'<div class="ow-shell-snapshot-grid">{cards}</div>')
 
 
+def _panel_key_token(value: object) -> str:
+    text = re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().lower())
+    return text.strip("_") or "evidence"
+
+
+def render_decision_evidence_panel(
+    title: str,
+    freshness: str,
+    summary: str,
+    metrics: Sequence[tuple[str, object]] = (),
+    rows: object | None = None,
+    actions: Sequence[tuple[str, str, Callable[[], None]]] = (),
+    source_note: str = "",
+) -> None:
+    """Render a single compact proof surface below the Decision Workspace."""
+    safe_title = _escape_markup(_clean_display_text(title) or "Evidence")
+    safe_freshness = _escape_markup(_clean_display_text(freshness) or "Loaded evidence")
+    safe_summary = _escape_markup(_clean_display_text(summary) or "Evidence loaded for the selected scope.")
+    safe_source = _escape_markup(_clean_display_text(source_note))
+    metric_html = "".join(
+        '<div class="ow-decision-evidence-metric">'
+        f'<span>{_escape_markup(_clean_display_text(label))}</span>'
+        f'<strong>{_escape_markup(_clean_display_text(value))}</strong>'
+        '</div>'
+        for label, value in tuple(metrics or ())[:6]
+    )
+    source_html = f'<small>{safe_source}</small>' if safe_source else ""
+    st.html(
+        '<section class="ow-decision-evidence-panel" role="region" aria-label="Decision evidence panel">'
+        '<div class="ow-decision-evidence-header">'
+        f'<div><strong>{safe_title}</strong><p>{safe_summary}</p></div>'
+        f'<span>{safe_freshness}</span>'
+        '</div>'
+        f'<div class="ow-decision-evidence-metrics">{metric_html}</div>'
+        f'{source_html}'
+        '</section>'
+    )
+    for idx, action in enumerate(tuple(actions or ())[:3]):
+        label, help_text, callback = action
+        if st.button(
+            str(label),
+            key=f"decision_evidence_action_{_panel_key_token(title)}_{idx}",
+            help=str(help_text or "") or None,
+            width="stretch",
+        ):
+            callback()
+            st.rerun()
+    if rows is not None and hasattr(rows, "empty") and not getattr(rows, "empty", True):
+        st.dataframe(rows, width="stretch", hide_index=True)
+
+
 def render_shell_status_strip(
     *,
     state: object,

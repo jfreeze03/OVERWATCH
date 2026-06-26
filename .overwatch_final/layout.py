@@ -25,6 +25,7 @@ from config import (
 from filters import render_advanced_scope_controls
 from navigation import current_active_section, current_visible_sections, normalize_nav_section, queue_section_navigation
 from refresh import metric_settings_signature
+from sections.decision_workspace_setup_health import render_decision_setup_health_panel
 from runtime_state import (
     AI_CREDIT_PRICE,
     AI_CREDIT_PRICE_INPUT,
@@ -352,6 +353,7 @@ def render_sidebar(
 
         if sidebar_panel_toggle("Settings", "settings"):
             render_theme_picker()
+            render_decision_setup_health_panel()
             st.divider()
             credit_price = st.number_input(
                 "$/credit (compute)",

@@ -120,8 +120,22 @@ class ThemeRegistryTests(unittest.TestCase):
         self.assertIn("color: var(--text-muted) !important;", theme._STRUCTURAL_CSS)
         self.assertIn('[data-testid="stSelectboxVirtualDropdown"]', theme._STRUCTURAL_CSS)
         self.assertIn('[data-baseweb="select"] input[role="combobox"]', theme._STRUCTURAL_CSS)
-        self.assertIn("caret-color: transparent !important", theme._STRUCTURAL_CSS)
+        select_input_block = theme._STRUCTURAL_CSS[
+            theme._STRUCTURAL_CSS.index('.stApp [data-baseweb="select"] input[role="combobox"]'):
+            theme._STRUCTURAL_CSS.index('[data-testid="stSelectboxVirtualDropdown"]')
+        ]
+        self.assertNotIn("caret-color: transparent !important", select_input_block)
+        self.assertNotIn("-webkit-text-fill-color: transparent !important", select_input_block)
+        self.assertIn("caret-color: var(--accent) !important", theme._STRUCTURAL_CSS)
         self.assertIn("input[role=\"combobox\"]::selection", theme._STRUCTURAL_CSS)
+        self.assertIn("background: rgba(var(--accent-rgb), 0.24) !important", theme._STRUCTURAL_CSS)
+        combined_css = theme._combined_theme_css("carbon")
+        self.assertIn(
+            '.ow-global-command-bar + div [data-testid="stSelectbox"] [data-baseweb="select"] input[role="combobox"]',
+            combined_css,
+        )
+        self.assertIn("caret-color: transparent !important", combined_css)
+        self.assertIn("background: transparent !important", combined_css)
         self.assertIn('[role="option"]:hover', theme._STRUCTURAL_CSS)
         self.assertIn("background: rgba(var(--accent-rgb), 0.16) !important", theme._STRUCTURAL_CSS)
 

@@ -495,9 +495,9 @@ hr {
 }
 .stApp [data-baseweb="select"] input[role="combobox"],
 .stApp [data-baseweb="select"] input[aria-autocomplete="list"] {
-    caret-color: transparent !important;
-    color: transparent !important;
-    -webkit-text-fill-color: transparent !important;
+    caret-color: var(--accent) !important;
+    color: var(--text-input) !important;
+    -webkit-text-fill-color: var(--text-input) !important;
     background: transparent !important;
     border: 0 !important;
     box-shadow: none !important;
@@ -505,9 +505,9 @@ hr {
 }
 .stApp [data-baseweb="select"] input[role="combobox"]::selection,
 .stApp [data-baseweb="select"] input[aria-autocomplete="list"]::selection {
-    background: transparent !important;
-    color: transparent !important;
-    -webkit-text-fill-color: transparent !important;
+    background: rgba(var(--accent-rgb), 0.24) !important;
+    color: var(--text-input) !important;
+    -webkit-text-fill-color: var(--text-input) !important;
 }
 [data-testid="stSelectboxVirtualDropdown"],
 [data-baseweb="popover"]:has([data-testid="stSelectboxVirtualDropdown"]),
@@ -3205,6 +3205,16 @@ details summary span[translate="no"] {
 .ow-global-command-bar + div [data-testid="stDateInput"] input {
     color: var(--ow-text) !important;
     font-weight: 650 !important;
+}
+.ow-global-command-bar + div [data-testid="stSelectbox"] [data-baseweb="select"] input[role="combobox"] {
+    caret-color: transparent !important;
+    color: transparent !important;
+    -webkit-text-fill-color: transparent !important;
+}
+.ow-global-command-bar + div [data-testid="stSelectbox"] [data-baseweb="select"] input[role="combobox"]::selection {
+    background: transparent !important;
+    color: transparent !important;
+    -webkit-text-fill-color: transparent !important;
 }
 .ow-command-context {
     text-align: right;

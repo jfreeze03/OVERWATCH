@@ -255,7 +255,8 @@ class SecurityPostureSplitTests(unittest.TestCase):
         self.assertEqual(args, ("brief",))
         self.assertEqual(kwargs["key_prefix"], "security_monitoring_command_brief")
         self.assertIn("primary_action", kwargs)
-        self.assertNotIn("detail_action", kwargs)
+        self.assertIn("detail_action", kwargs)
+        self.assertEqual(kwargs["detail_action"].label, "Load Security Evidence")
         self.assertFalse(kwargs["compact"])
         self.assertEqual(rendered, [])
 

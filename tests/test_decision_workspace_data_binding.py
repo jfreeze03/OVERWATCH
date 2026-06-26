@@ -121,13 +121,17 @@ def _packet(section: str, metrics: list[dict[str, object]], *, headline: str = "
 def _render_markup(brief: object) -> str:
     from sections import section_command_rendering
 
+    def _columns(spec):
+        count = int(spec) if isinstance(spec, int) else len(spec)
+        return [contextlib.nullcontext() for _ in range(count)]
+
     with patch.object(section_command_rendering.st, "html") as html, patch.object(
         section_command_rendering.st,
         "markdown",
     ), patch.object(
         section_command_rendering.st,
         "columns",
-        return_value=[contextlib.nullcontext(), contextlib.nullcontext()],
+        side_effect=_columns,
     ), patch.object(section_command_rendering.st, "button", return_value=False), patch.object(
         section_command_rendering.st,
         "expander",
@@ -202,7 +206,8 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         self.assertIn(">9<", markup_a)
         self.assertIn("$987", markup_a)
         self.assertIn("Packet A headline", markup_a)
-        self.assertIn("Trend unavailable", markup_a)
+        self.assertIn("Trend data not available for this packet.", markup_a)
+        self.assertNotIn("ow-trend-unavailable", markup_a)
 
         packet_b = _packet(
             "Executive Landing",
@@ -617,6 +622,79 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         self.assertIn("model.fallback", renderer)
         self.assertIn("model.fixture_badge_label", renderer)
 
+    def test_renderer_uses_single_decision_workspace_control_contract(self):
+        renderer = (APP_ROOT / "sections" / "section_command_rendering.py").read_text(encoding="utf-8")
+        controls = (APP_ROOT / "sections" / "decision_workspace_controls.py").read_text(encoding="utf-8")
+        self.assertNotIn("CommandBriefControlSet", renderer)
+        self.assertIn("DecisionWorkspaceControls", renderer)
+        self.assertIn("class DecisionWorkspaceControls", controls)
+        self.assertIn("CommandBriefDetailAction", controls)
+
+    def test_refresh_lives_in_hero_contract_without_detached_refresh_class(self):
+        renderer = (APP_ROOT / "sections" / "section_command_rendering.py").read_text(encoding="utf-8")
+        self.assertNotIn("ow-decision-hero-refresh-control", renderer)
+        self.assertIn("ow-decision-refresh-inline", renderer)
+        self.assertIn("controls.refresh_packet()", renderer)
+
+    def test_fallback_panel_keeps_packet_refresh_action(self):
+        from sections import section_command_rendering
+        from sections.section_command_brief import SectionCommandBrief
+
+        calls = {"refresh": 0}
+
+        def _columns(spec):
+            count = int(spec) if isinstance(spec, int) else len(spec)
+            return [contextlib.nullcontext() for _ in range(count)]
+
+        def _button(label, *args, **kwargs):
+            return label == "Refresh"
+
+        brief = SectionCommandBrief(
+            section="Cost & Contract",
+            company="ALFA",
+            environment="ALL",
+            window_label="8 days",
+            state="Offline",
+            headline="Summary unavailable",
+            summary="Offline fallback",
+            source="MART_SECTION_DECISION_CURRENT",
+            freshness_label="Freshness unavailable",
+            loaded_at="",
+            fallback_reason="Snowflake offline",
+            raw_payload={"offline": True},
+        )
+        with patch.object(section_command_rendering.st, "html"), patch.object(
+            section_command_rendering.st,
+            "columns",
+            side_effect=_columns,
+        ), patch.object(section_command_rendering.st, "button", side_effect=_button), patch.object(
+            section_command_rendering.st,
+            "rerun",
+        ) as rerun:
+            section_command_rendering.render_decision_workspace(
+                brief,
+                key_prefix="fallback_refresh",
+                refresh_action=lambda: calls.__setitem__("refresh", calls["refresh"] + 1),
+            )
+
+        self.assertEqual(calls["refresh"], 1)
+        rerun.assert_called()
+
+    def test_primary_sections_do_not_render_standalone_evidence_settings(self):
+        section_files = (
+            "dba_control_room/render.py",
+            "alert_center.py",
+            "cost_contract.py",
+            "workload_operations.py",
+            "security_posture.py",
+            "executive_landing_shell.py",
+        )
+        for relative in section_files:
+            source = (APP_ROOT / "sections" / relative).read_text(encoding="utf-8")
+            self.assertNotIn('render_evidence_settings("Evidence settings"', source, relative)
+        renderer = (APP_ROOT / "sections" / "section_command_rendering.py").read_text(encoding="utf-8")
+        self.assertIn("settings_renderer = controls.evidence_action.settings_renderer", renderer)
+
     def test_view_model_owns_source_and_fallback_display_state(self):
         view_model = (APP_ROOT / "sections" / "decision_workspace_view_model.py").read_text(encoding="utf-8")
         self.assertIn("class DecisionSourceRow", view_model)
@@ -656,6 +734,71 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
             state_key="security_posture_command_brief_force_refresh",
         )
         self.assertIsNone(action)
+
+    def test_owner_and_sla_fallbacks_are_honest(self):
+        from sections.decision_workspace_view_model import build_decision_workspace_view_model
+        from sections.section_command_brief import SectionCommandBrief, SectionCommandSignal
+
+        brief = SectionCommandBrief(
+            section="Cost & Contract",
+            company="ALFA",
+            environment="ALL",
+            window_label="7 days",
+            state="At Risk",
+            headline="Spend needs review",
+            summary="Packet summary",
+            source="MART_SECTION_DECISION_CURRENT",
+            freshness_label="Updated 8m ago",
+            loaded_at="2026-06-25T10:08:00",
+            exceptions=(
+                SectionCommandSignal(severity="High", signal="Missing owner and SLA"),
+                SectionCommandSignal(severity="High", signal="Owner gap", owner_gap=True),
+                SectionCommandSignal(severity="Info", signal="Explicit route", owner_route="Assigned", sla_state="On track"),
+            ),
+        )
+        model = build_decision_workspace_view_model(brief, current_workflow="Overview")
+        self.assertEqual(model.findings[0].owner, "Owner unavailable")
+        self.assertEqual(model.findings[0].sla, "SLA unavailable")
+        self.assertEqual(model.findings[1].owner, "Owner gap")
+        self.assertEqual(model.findings[2].owner, "Assigned")
+        self.assertEqual(model.findings[2].sla, "On track")
+        aged = SectionCommandBrief(
+            section="Cost & Contract",
+            company="ALFA",
+            environment="ALL",
+            window_label="7 days",
+            state="At Risk",
+            headline="Spend needs review",
+            summary="Packet summary",
+            source="MART_SECTION_DECISION_CURRENT",
+            freshness_label="Updated 8m ago",
+            loaded_at="2026-06-25T10:08:00",
+            exceptions=(SectionCommandSignal(severity="Watch", signal="Aged without SLA", age_minutes=80),),
+        )
+        self.assertEqual(build_decision_workspace_view_model(aged, current_workflow="Overview").findings[0].sla, "No SLA")
+
+    def test_trend_unavailable_is_single_compact_message(self):
+        from sections.section_command_brief import SectionCommandBrief, SectionCommandMetric
+
+        brief = SectionCommandBrief(
+            section="Executive Landing",
+            company="ALFA",
+            environment="ALL",
+            window_label="7 days",
+            state="At Risk",
+            headline="No trend points",
+            summary="Packet summary",
+            source="MART_SECTION_DECISION_CURRENT",
+            freshness_label="Updated 8m ago",
+            loaded_at="2026-06-25T10:08:00",
+            metrics=(
+                SectionCommandMetric(key="total_spend", label="Total Spend", value="", numeric_value=100, metric_format="currency"),
+                SectionCommandMetric(key="open_actions", label="Open Actions", value="", numeric_value=2, metric_format="count"),
+            ),
+        )
+        markup = _render_markup(brief)
+        self.assertEqual(markup.count("Trend data not available for this packet."), 1)
+        self.assertNotIn("ow-trend-unavailable", markup)
 
     def test_decision_window_uses_inclusive_global_dates(self):
         from datetime import date

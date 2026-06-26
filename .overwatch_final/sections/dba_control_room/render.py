@@ -17,7 +17,7 @@ from sections.section_command_rendering import render_section_command_brief
 from sections.decision_workspace_controls import (
     make_decision_refresh_action,
     make_evidence_action,
-    render_evidence_settings,
+    should_render_daily_diagnostics,
 )
 from sections.decision_workspace_scope import active_decision_window_days
 from sections.decision_workspace_state import section_state_from_brief
@@ -1056,6 +1056,16 @@ def render() -> None:
         active_decision_window_days(1),
         force=bool(st.session_state.pop("dba_control_room_command_brief_force_refresh", False)),
     )
+
+    def _render_dba_evidence_settings() -> None:
+        st.selectbox(
+            "Lookback",
+            [12, 24, 48, 168],
+            index=[12, 24, 48, 168].index(lookback_hours if lookback_hours in [12, 24, 48, 168] else 24),
+            format_func=lambda h: f"{h} hours",
+            key="dba_control_room_evidence_lookback_hours",
+        )
+
     render_section_command_brief(
         dba_brief,
         key_prefix="dba_control_room_command_brief",
@@ -1066,21 +1076,12 @@ def render() -> None:
             label=load_label,
             help_text="Load the DBA investigation packet for this scope and evidence mode.",
             state_key="dba_control_room_command_brief_load_detail",
+            settings_renderer=_render_dba_evidence_settings,
         )
         if active_view == MORNING_COCKPIT_WORKFLOW
         else None,
         current_workflow=DBA_CONTROL_ROOM_PANE_LABELS.get(active_view, active_view),
         compact=active_view != MORNING_COCKPIT_WORKFLOW,
-    )
-    render_evidence_settings(
-        "Evidence settings",
-        lambda: st.selectbox(
-            "Lookback",
-            [12, 24, 48, 168],
-            index=[12, 24, 48, 168].index(lookback_hours if lookback_hours in [12, 24, 48, 168] else 24),
-            format_func=lambda h: f"{h} hours",
-            key="dba_control_room_evidence_lookback_hours",
-        ),
     )
     lookback_hours = int(st.session_state.get("dba_control_room_evidence_lookback_hours", lookback_hours) or lookback_hours)
     dba_decision_state = section_state_from_brief(dba_brief)
@@ -1090,7 +1091,8 @@ def render() -> None:
         and not st.session_state.get("dba_control_room_data")
         and not pending_detail_load
     ):
-        _render_advanced_diagnostics_expander(company, environment)
+        if should_render_daily_diagnostics("DBA Control Room", active_view, dba_decision_state.decision_mode):
+            _render_advanced_diagnostics_expander(company, environment)
         return
     defer_section_note(
         f"{freshness_note('ACCOUNT_USAGE')} | "

@@ -327,6 +327,24 @@ def _fallback_view(brief: object, source_mode: str, *, evidence_action: object |
     )
 
 
+def _owner_label(signal: object) -> str:
+    owner = str(getattr(signal, "owner_route", "") or "").strip()
+    if owner:
+        return owner
+    if bool(getattr(signal, "owner_gap", False)):
+        return "Owner gap"
+    return "Owner unavailable"
+
+
+def _sla_label(signal: object) -> str:
+    sla = str(getattr(signal, "sla_state", "") or "").strip()
+    if sla:
+        return sla
+    if getattr(signal, "age_minutes", None) is not None:
+        return "No SLA"
+    return "SLA unavailable"
+
+
 def build_decision_workspace_view_model(
     brief: object,
     *,
@@ -345,8 +363,8 @@ def build_decision_workspace_view_model(
             signal=str(getattr(item, "signal", "") or "Review summary"),
             entity=str(getattr(item, "entity", "") or ""),
             detail=str(getattr(item, "detail", "") or ""),
-            owner=str(getattr(item, "owner_route", "") or ("Owner gap" if getattr(item, "owner_gap", False) else "Assigned")),
-            sla=str(getattr(item, "sla_state", "") or ("Due soon" if getattr(item, "age_minutes", None) else "On track")),
+            owner=_owner_label(item),
+            sla=_sla_label(item),
         )
         for item in tuple(getattr(brief, "exceptions", ()) or ())[:3]
     )

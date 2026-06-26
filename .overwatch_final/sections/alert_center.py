@@ -25,7 +25,7 @@ from sections.section_command_rendering import render_section_command_brief
 from sections.decision_workspace_controls import (
     make_decision_refresh_action,
     make_evidence_action,
-    render_evidence_settings,
+    should_render_daily_diagnostics,
 )
 from sections.decision_workspace_scope import active_decision_window_days
 from sections.alert_center_contracts import (
@@ -740,6 +740,22 @@ def render() -> None:
     days = int(st.session_state.setdefault("alert_center_evidence_days", default_days))
     limit = int(st.session_state.setdefault("alert_center_evidence_rows", 200))
     load_label = f"Load {active_view}"
+
+    def _render_alert_evidence_settings() -> None:
+        st.selectbox(
+            "Alert window",
+            DAY_WINDOW_OPTIONS,
+            index=DAY_WINDOW_OPTIONS.index(default_days),
+            format_func=lambda value: f"{value} days",
+            key="alert_center_evidence_days",
+        )
+        st.selectbox(
+            "Rows",
+            [50, 100, 200, 500],
+            index=[50, 100, 200, 500].index(limit if limit in [50, 100, 200, 500] else 200),
+            key="alert_center_evidence_rows",
+        )
+
     render_section_command_brief(
         autoload_section_command_brief(
             "Alert Center",
@@ -757,27 +773,10 @@ def render() -> None:
             help_text="Load row-level alert evidence for the selected alert family.",
             callback=lambda: _load_alert_center_view_data(source_view, company, environment, int(days), int(limit), required_sources),
             key="alert_center_load",
+            settings_renderer=_render_alert_evidence_settings,
         ),
         current_workflow=ALERT_CENTER_PANE_LABELS.get(active_view, active_view),
         compact=active_view != "Active Alerts",
-    )
-    render_evidence_settings(
-        "Evidence settings",
-        lambda: (
-            st.selectbox(
-                "Alert window",
-                DAY_WINDOW_OPTIONS,
-                index=DAY_WINDOW_OPTIONS.index(default_days),
-                format_func=lambda value: f"{value} days",
-                key="alert_center_evidence_days",
-            ),
-            st.selectbox(
-                "Rows",
-                [50, 100, 200, 500],
-                index=[50, 100, 200, 500].index(limit if limit in [50, 100, 200, 500] else 200),
-                key="alert_center_evidence_rows",
-            ),
-        ),
     )
     days = int(st.session_state.get("alert_center_evidence_days", days) or days)
     limit = int(st.session_state.get("alert_center_evidence_rows", limit) or limit)
@@ -812,19 +811,22 @@ def render() -> None:
     )
     if not isinstance(data, dict):
         defer_source_note(f"Inputs on load: {_alert_center_source_summary(required_sources)}")
-        _render_advanced_alert_diagnostics(company, environment)
+        if should_render_daily_diagnostics("Alert Center", source_view, "UNINITIALIZED"):
+            _render_advanced_alert_diagnostics(company, environment)
         return
 
     loaded_scope = st.session_state.get("alert_center_scope")
     if loaded_scope != expected_scope:
         defer_source_note(f"Loaded scope: {loaded_scope or 'none'} | Current scope: {expected_scope}")
-        _render_advanced_alert_diagnostics(company, environment)
+        if should_render_daily_diagnostics("Alert Center", source_view, "UNINITIALIZED"):
+            _render_advanced_alert_diagnostics(company, environment)
         return
     loaded_sources = set(data.get("_loaded_sources") or [])
     missing_sources = sorted(required_sources - loaded_sources)
     if missing_sources:
         defer_source_note(f"Missing Alert Center input(s): {_alert_center_source_summary(set(missing_sources))}")
-        _render_advanced_alert_diagnostics(company, environment)
+        if should_render_daily_diagnostics("Alert Center", source_view, "UNINITIALIZED"):
+            _render_advanced_alert_diagnostics(company, environment)
         return
 
     pd = _pd()

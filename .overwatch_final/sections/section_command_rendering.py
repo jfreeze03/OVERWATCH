@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
 from html import escape as _escape_markup
 import math
 import re
@@ -11,6 +10,11 @@ import re
 import streamlit as st
 
 from sections.command_brief_routes import COMMAND_BRIEF_ROUTES, apply_command_brief_route
+from sections.decision_workspace_controls import (
+    CommandBriefDetailAction,
+    DecisionWorkspaceControls,
+    render_evidence_settings,
+)
 from sections.decision_workspace_view_model import (
     DecisionActionView,
     DecisionMetricCell,
@@ -19,21 +23,6 @@ from sections.decision_workspace_view_model import (
     format_metric_value,
 )
 from sections.section_command_brief import SectionCommandBrief
-
-
-@dataclass(frozen=True)
-class CommandBriefDetailAction:
-    label: str
-    help_text: str
-    callback: Callable[[], None]
-    key: str | None = None
-
-
-@dataclass(frozen=True)
-class CommandBriefControlSet:
-    refresh_action: Callable[[], None] | None = None
-    route_actions: tuple[DecisionActionView, ...] = ()
-    evidence_action: CommandBriefDetailAction | None = None
 
 
 def _key_token(value: object) -> str:
@@ -70,7 +59,7 @@ def _sparkline(points: tuple[object, ...]) -> str:
         if math.isfinite(numeric):
             finite.append(numeric)
     if len(finite) < 2:
-        return '<span class="ow-trend-unavailable">Trend unavailable</span>'
+        return ""
     low = min(finite)
     high = max(finite)
     span = high - low or 1.0
@@ -100,7 +89,7 @@ def _trend_bar_svg(points: tuple[object, ...], *, tone: str = "neutral") -> str:
         if math.isfinite(numeric):
             finite.append(numeric)
     if len(finite) < 2:
-        return '<span class="ow-trend-unavailable">Trend unavailable</span>'
+        return ""
     low = min(finite)
     high = max(finite)
     span = high - low or 1.0
@@ -216,7 +205,13 @@ def _render_detail_action(*, key_prefix: str, detail_action: CommandBriefDetailA
         st.rerun()
 
 
-def _render_fallback(model: DecisionWorkspaceViewModel, *, key_prefix: str, detail_action: CommandBriefDetailAction | None) -> None:
+def _render_fallback(
+    model: DecisionWorkspaceViewModel,
+    *,
+    key_prefix: str,
+    refresh_action: Callable[[], None] | None,
+    detail_action: CommandBriefDetailAction | None,
+) -> None:
     fallback = model.fallback
     if fallback is None:
         return
@@ -230,14 +225,36 @@ def _render_fallback(model: DecisionWorkspaceViewModel, *, key_prefix: str, deta
         f'<p class="ow-decision-loop-summary">{_html(_public_text(fallback.message))}</p>'
         '</section>'
     )
-    cols = st.columns(2)
-    with cols[0]:
-        if fallback.can_initialize and st.button(fallback.recovery_label, key=f"{key_prefix}_initialize_summaries", width="stretch"):
-            st.session_state["_overwatch_decision_bootstrap_requested"] = True
-            st.rerun()
-    with cols[1]:
-        if detail_action is not None and fallback.can_show_evidence:
-            _render_detail_action(key_prefix=key_prefix, detail_action=detail_action)
+    actions = []
+    if refresh_action is not None:
+        actions.append("refresh")
+    if fallback.can_initialize:
+        actions.append("initialize")
+    if detail_action is not None and fallback.can_show_evidence:
+        actions.append("evidence")
+    if not actions:
+        return
+    cols = st.columns(len(actions))
+    for idx, action in enumerate(actions):
+        with cols[idx]:
+            if action == "refresh" and st.button(
+                "Refresh",
+                key=f"{key_prefix}_fallback_refresh_packet",
+                type="secondary",
+                width="stretch",
+                help="Refresh the Decision packet for this scope",
+            ):
+                refresh_action()
+                st.rerun()
+            elif action == "initialize" and st.button(
+                fallback.recovery_label,
+                key=f"{key_prefix}_initialize_summaries",
+                width="stretch",
+            ):
+                st.session_state["_overwatch_decision_bootstrap_requested"] = True
+                st.rerun()
+            elif action == "evidence":
+                _render_detail_action(key_prefix=key_prefix, detail_action=detail_action)
 
 
 def _action_route_key(action: object) -> str:
@@ -300,8 +317,8 @@ def _render_model_attention_panel(model: DecisionWorkspaceViewModel) -> str:
             f'<span class="ow-attention-icon" data-severity="{_html(item.severity).lower()}"></span>'
             f'<strong>{_html(item.severity)}</strong>'
             f'<div class="ow-attention-copy"><b>{_html(item.signal)}</b><small>{_html(item.detail or item.entity)}</small></div>'
-            f'<div class="ow-attention-meta"><span>Owner</span><b>{_html(item.owner or "Assigned")}</b></div>'
-            f'<div class="ow-attention-meta"><span>SLA</span><b>{_html(item.sla or "On track")}</b></div>'
+            f'<div class="ow-attention-meta"><span>Owner</span><b>{_html(item.owner or "Owner unavailable")}</b></div>'
+            f'<div class="ow-attention-meta"><span>SLA</span><b>{_html(item.sla or "SLA unavailable")}</b></div>'
             '</div>'
         )
     if not rows:
@@ -311,8 +328,8 @@ def _render_model_attention_panel(model: DecisionWorkspaceViewModel) -> str:
             '<strong>CLEAR</strong>'
             '<div class="ow-attention-copy"><b>No threshold breach in the command brief</b>'
             '<small>Continue monitoring; load evidence only when proof is needed.</small></div>'
-            '<div class="ow-attention-meta"><span>Owner</span><b>Monitoring</b></div>'
-            '<div class="ow-attention-meta"><span>SLA</span><b>On track</b></div>'
+            '<div class="ow-attention-meta"><span>Owner</span><b>Owner unavailable</b></div>'
+            '<div class="ow-attention-meta"><span>SLA</span><b>SLA unavailable</b></div>'
             '</div>'
         )
     return (
@@ -328,25 +345,35 @@ def _render_model_trend_band(model: DecisionWorkspaceViewModel) -> str:
     tiles: list[str] = []
     candidates = tuple(model.trends or model.metric_cells)
     for metric in candidates[:5]:
+        trend_svg = _trend_bar_svg(metric.trend_points, tone=metric.tone or "neutral")
+        if not trend_svg:
+            continue
         tone = _html(metric.tone or "neutral").lower()
         tiles.append(
             f'<article class="ow-decision-trend-tile" data-tone="{tone}">'
             f'<span>{_html(metric.label)}</span>'
             f'<strong>{_html(metric.value)}</strong>'
             f'<small>{_html(metric.detail)}</small>'
-            f'{_trend_bar_svg(metric.trend_points, tone=tone)}'
+            f'{trend_svg}'
             '<div><em>Start</em><em>Now</em></div>'
             '</article>'
         )
         if len(tiles) == 5:
             break
+    if not tiles:
+        return (
+            '<section class="ow-decision-trend-band ow-decision-trend-empty">'
+            '<h4>What changed</h4>'
+            '<p>Trend data not available for this packet.</p>'
+            '</section>'
+        )
     return (
         '<section class="ow-decision-trend-band">'
         '<h4>What changed</h4>'
         '<div class="ow-decision-trend-grid">'
         + "".join(tiles)
         + "</div></section>"
-    ) if tiles else ""
+    )
 
 
 def _render_model_trust_footer(model: DecisionWorkspaceViewModel) -> str:
@@ -365,25 +392,9 @@ def _render_model_trust_footer(model: DecisionWorkspaceViewModel) -> str:
     )
 
 
-def _render_hero_refresh(*, key_prefix: str, refresh_action: Callable[[], None] | None) -> None:
-    if refresh_action is None:
-        return
-    st.markdown('<div class="ow-decision-hero-refresh-control">', unsafe_allow_html=True)
-    if st.button(
-        "Refresh",
-        key=f"{key_prefix}_refresh_packet",
-        type="secondary",
-        width="stretch",
-        help="Refresh the Decision packet for this scope",
-    ):
-        refresh_action()
-        st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
-
-
 def _render_workspace_actions(
     model: DecisionWorkspaceViewModel,
-    controls: CommandBriefControlSet,
+    controls: DecisionWorkspaceControls,
     *,
     key_prefix: str,
 ) -> None:
@@ -415,6 +426,9 @@ def _render_workspace_actions(
     if controls.evidence_action is not None:
         st.markdown('<div class="ow-decision-evidence-action-shell">', unsafe_allow_html=True)
         _render_detail_action(key_prefix=key_prefix, detail_action=controls.evidence_action)
+        settings_renderer = controls.evidence_action.settings_renderer or controls.evidence_settings
+        if settings_renderer is not None:
+            render_evidence_settings(controls.evidence_action.settings_label, settings_renderer)
         st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -437,6 +451,7 @@ def render_decision_workspace(
     refresh_action: Callable[[], None] | None = None,
     evidence_action: CommandBriefDetailAction | None = None,
     primary_action: Callable[[], None] | None = None,
+    controls: DecisionWorkspaceControls | None = None,
     compact: bool = False,
 ) -> None:
     """Render the target OVERWATCH Decision Workspace layout."""
@@ -446,14 +461,23 @@ def render_decision_workspace(
         current_workflow=workflow,
         evidence_action=evidence_action,
     )
-    if model.fallback is not None and not model.metric_cells:
-        _render_fallback(model, key_prefix=key_prefix, detail_action=evidence_action)
-        return
-    controls = CommandBriefControlSet(
-        refresh_action=refresh_action or primary_action,
+    controls = controls or DecisionWorkspaceControls(
+        section=model.section,
+        current_workflow=model.workflow,
+        refresh_packet=refresh_action or primary_action,
         route_actions=model.actions,
         evidence_action=evidence_action,
+        can_refresh=bool(refresh_action or primary_action),
+        can_load_evidence=evidence_action is not None,
     )
+    if model.fallback is not None and not model.metric_cells:
+        _render_fallback(
+            model,
+            key_prefix=key_prefix,
+            refresh_action=controls.refresh_packet if controls.can_refresh else None,
+            detail_action=controls.evidence_action,
+        )
+        return
     if compact:
         st.html(
             '<section class="ow-decision-context-strip">'
@@ -469,26 +493,40 @@ def render_decision_workspace(
     state = model.state_token
     parts = tuple(breadcrumb or (model.section, model.workflow))
     fixture_badge = '<b class="ow-fixture-badge">FIXTURE DATA</b>' if model.fixture_mode else ""
-    hero = (
+    st.html(
         '<section class="ow-decision-workspace" role="region" aria-label="OVERWATCH Decision Workspace">'
         f'{_breadcrumb_html(parts)}'
-        '<div class="ow-decision-hero">'
-        f'<div class="ow-decision-state-icon" data-state="{_html(state)}">{_state_icon_svg(state)}</div>'
-        '<div class="ow-decision-state-copy">'
-        f'<strong>{_html(model.state)} {fixture_badge}</strong>'
-        f'<h2>{_html(model.headline)}</h2>'
-        f'<p>{_html(model.summary)}</p>'
-        '</div>'
-        '<div class="ow-decision-refresh">'
-        f'<b>{_html(model.trust.freshness_label)}</b>'
-        f'<span>{_html(model.trust.target_label)}</span>'
-        '</div>'
-        '</div>'
-        f'{_metric_ribbon(model, compact=False)}'
         '</section>'
     )
-    st.html(hero)
-    _render_hero_refresh(key_prefix=key_prefix, refresh_action=controls.refresh_action)
+    hero_left, hero_right = st.columns([0.72, 0.28])
+    with hero_left:
+        st.html(
+            '<div class="ow-decision-hero ow-decision-hero-copy-only">'
+            f'<div class="ow-decision-state-icon" data-state="{_html(state)}">{_state_icon_svg(state)}</div>'
+            '<div class="ow-decision-state-copy">'
+            f'<strong>{_html(model.state)} {fixture_badge}</strong>'
+            f'<h2>{_html(model.headline)}</h2>'
+            f'<p>{_html(model.summary)}</p>'
+            '</div>'
+            '</div>'
+        )
+    with hero_right:
+        st.html(
+            '<div class="ow-decision-refresh ow-decision-refresh-inline">'
+            f'<b>{_html(model.trust.freshness_label)}</b>'
+            f'<span>{_html(model.trust.target_label)}</span>'
+            '</div>'
+        )
+        if controls.can_refresh and controls.refresh_packet is not None and st.button(
+            "Refresh",
+            key=f"{key_prefix}_refresh_packet",
+            type="secondary",
+            width="stretch",
+            help="Refresh the Decision packet for this scope",
+        ):
+            controls.refresh_packet()
+            st.rerun()
+    st.html(_metric_ribbon(model, compact=False))
     left, right = st.columns([2.05, 0.95])
     with left:
         st.html(_render_model_attention_panel(model))
@@ -531,12 +569,20 @@ def render_section_command_brief(
         key_prefix=key_prefix,
         refresh_action=primary_action,
         evidence_action=detail_action,
+        controls=DecisionWorkspaceControls(
+            section=brief.section,
+            current_workflow=current_workflow,
+            refresh_packet=primary_action,
+            route_actions=(),
+            evidence_action=detail_action,
+            can_refresh=primary_action is not None,
+            can_load_evidence=detail_action is not None,
+        ),
         compact=compact,
     )
 
 
 __all__ = [
-    "CommandBriefControlSet",
     "CommandBriefDetailAction",
     "dedupe_command_actions",
     "format_command_metric",

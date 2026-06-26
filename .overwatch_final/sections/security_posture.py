@@ -28,26 +28,12 @@ from sections.security_posture_admin_view import (
 )
 from sections.security_posture_alerts_view import _render_loaded_security_alert_context
 from sections.security_posture_common import (
-    _freshness_note,
-    _metric_confidence_label,
-    _mfa_count_expr,
-    _mfa_gap_predicate,
-    _mfa_proof_label,
     get_active_company,
     get_active_environment,
-    render_operator_briefing,
-    render_signal_confidence,
-    render_workflow_guide,
     render_workflow_module,
 )
 from sections.security_posture_contracts import *  # noqa: F403
-from sections.security_posture_data import (
-    _build_security_mart_brief_sql,
-    _build_security_summary_sql,
-    _clear_security_exception_state,
-    _load_security_brief,
-    _store_security_summary,
-)
+from sections.security_posture_data import _load_security_brief
 from sections.security_posture_models import *  # noqa: F403
 from sections.security_posture_overview_view import *  # noqa: F403
 from sections.security_posture_privilege_sprawl_view import (
@@ -56,21 +42,23 @@ from sections.security_posture_privilege_sprawl_view import (
 )
 from sections.security_posture_privilege_sprawl_view import *  # noqa: F403
 from sections.shell_helpers import (
-    build_first_paint_summary_spec,
     render_content_header,
     render_primary_section_tabs,
     render_secondary_lens_pills,
     render_section_breadcrumb,
-    render_section_first_paint_shell,
 )
 from sections.section_command_brief import autoload_section_command_brief
 from sections.section_command_rendering import render_section_command_brief
-from sections.decision_workspace_controls import make_decision_refresh_action, render_evidence_settings
+from sections.decision_workspace_controls import make_decision_refresh_action, make_evidence_action
 from sections.decision_workspace_scope import active_decision_window_days
 from sections.decision_workspace_state import section_state_from_brief
 
 
 day_window_selectbox = _lazy_util("day_window_selectbox")
+
+for _exports in (_common_exports, _data_exports):
+    for _name in getattr(_exports, "__all__", ()):
+        globals().setdefault(_name, getattr(_exports, _name))
 
 
 
@@ -94,10 +82,28 @@ def _render_security_first_paint_shell(active_view: str, company: str, environme
         force=bool(st.session_state.pop("security_posture_command_brief_force_refresh", False)),
     )
     st.session_state["_security_monitoring_decision_mode"] = section_state_from_brief(security_brief).decision_mode
+
+    def _render_security_evidence_settings() -> None:
+        day_window_selectbox(
+            "Security window",
+            key="security_posture_evidence_days",
+            default=30,
+        )
+
     render_section_command_brief(
         security_brief,
         key_prefix="security_monitoring_command_brief",
         primary_action=make_decision_refresh_action("Security Monitoring"),
+        detail_action=make_evidence_action(
+            "Security Monitoring",
+            active_view,
+            label="Load Security Evidence",
+            help_text="Load security proof rows for the current scope.",
+            state_key="security_posture_load_evidence",
+            settings_renderer=_render_security_evidence_settings,
+        )
+        if active_view == SECURITY_OVERVIEW_WORKFLOW
+        else None,
         current_workflow=active_view,
         compact=active_view != SECURITY_OVERVIEW_WORKFLOW,
     )
@@ -220,14 +226,6 @@ def render() -> None:
             SECURITY_POSTURE_VIEW_DETAILS.get(active_view, "Security evidence stays behind explicit load actions."),
         )
     _render_security_first_paint_shell(active_view, company, environment, int(days or 30))
-    render_evidence_settings(
-        "Evidence settings",
-        lambda: day_window_selectbox(
-            "Security window",
-            key="security_posture_evidence_days",
-            default=30,
-        ),
-    )
     days = int(st.session_state.get("security_posture_evidence_days", days) or days)
     renderer = SECURITY_POSTURE_RENDERERS.get(active_view)
     if renderer is not None:

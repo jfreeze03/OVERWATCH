@@ -109,6 +109,7 @@ USING (
     ('ALERT_EMAIL_NOTIFICATION_INTEGRATION', 'OVERWATCH_EMAIL_INT', 'STRING', 'Approved Snowflake notification integration name for optional Alert Center email delivery.'),
     ('AUTO_BOOTSTRAP_DECISION_BRIEFS', 'TRUE', 'BOOLEAN', 'Allow the setup flow to initialize Decision Brief packets after prerequisite marts are refreshed.'),
     ('DECISION_BRIEF_BOOTSTRAP_ROLE', 'SNOW_SYSADMINS', 'STRING', 'Role allowed to initialize Decision Brief packets during installation or setup health repair.'),
+    ('DECISION_BRIEF_BOOTSTRAP_PROCEDURE', 'SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS', 'STRING', 'Preferred procedure for Decision Brief setup health initialization.'),
     ('DECISION_BRIEF_WAREHOUSE', 'COMPUTE_WH', 'STRING', 'Warehouse used by scheduled Decision Brief refresh tasks when a dedicated warehouse is not configured.'),
     ('DECISION_BRIEF_ALLOW_LEGACY_ADAPTER', 'TRUE', 'BOOLEAN', 'Allow bounded compact legacy-mart adapters when the normalized Decision packet is not current.')
 ) src(SETTING_NAME, SETTING_VALUE, SETTING_TYPE, DESCRIPTION)
@@ -2319,6 +2320,30 @@ CREATE TRANSIENT TABLE IF NOT EXISTS MART_SECTION_DECISION_LAST_GOOD (
   FRESHNESS_MINUTES            NUMBER,
   PACKET_BYTES                 NUMBER,
   VALIDATED_AT                 TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+  LOAD_TS                      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+CREATE TABLE IF NOT EXISTS OVERWATCH_DECISION_SETUP_HEALTH (
+  EVENT_ID                     VARCHAR(64),
+  EVENT_TS                     TIMESTAMP_NTZ,
+  STATUS                       VARCHAR(40),
+  USER_MESSAGE                 VARCHAR(2000),
+  SELECTED_PROCEDURE           VARCHAR(300),
+  FALLBACK_USED                BOOLEAN,
+  CURRENT_PACKET_COUNT         NUMBER,
+  SECTIONS_PRESENT             VARIANT,
+  MISSING_SECTIONS             VARIANT,
+  DUPLICATE_CURRENT_KEYS       NUMBER,
+  STALE_SECTIONS               VARIANT,
+  DATA_GAP_SECTIONS            VARIANT,
+  MISSING_METRIC_SECTIONS      VARIANT,
+  MAX_PACKET_BYTES             NUMBER,
+  REQUESTED_SCOPE              VARCHAR(500),
+  RESOLVED_SCOPE               VARCHAR(500),
+  ADMIN_DETAIL                 VARCHAR(8000),
+  SUGGESTED_REMEDIATION        VARCHAR(4000),
+  ACTOR_ROLE                   VARCHAR(200),
+  APP_VERSION                  VARCHAR(120),
   LOAD_TS                      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
 );
 
@@ -12044,6 +12069,8 @@ UNION ALL
 SELECT 'MART_SECTION_DECISION_CURRENT', COUNT(*) FROM MART_SECTION_DECISION_CURRENT
 UNION ALL
 SELECT 'MART_SECTION_DECISION_LAST_GOOD', COUNT(*) FROM MART_SECTION_DECISION_LAST_GOOD
+UNION ALL
+SELECT 'OVERWATCH_DECISION_SETUP_HEALTH', COUNT(*) FROM OVERWATCH_DECISION_SETUP_HEALTH
 UNION ALL
 SELECT 'MART_EXECUTIVE_DECISION_INBOX', COUNT(*) FROM MART_EXECUTIVE_DECISION_INBOX
 UNION ALL

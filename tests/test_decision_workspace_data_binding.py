@@ -164,16 +164,183 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
                 "ENVIRONMENT": "ALL",
                 "WINDOW_DAYS": 7,
                 "CURRENT_KEY_COUNT": 1,
+                "BRIEF_ID": f"{section.lower().replace(' ', '-')}-brief",
                 "MAX_PACKET_BYTES": 2048,
                 "HAS_METRICS": 1,
-                "HAS_SOURCE_METADATA": 1,
+                "SOURCE_ROW_COUNT": 3,
+                "REQUIRED_SOURCE_COUNT": 3,
+                "AVAILABLE_SOURCE_COUNT": 3,
+                "MISSING_SOURCE_COUNT": 0,
+                "STALE_SOURCE_COUNT": 0,
+                "SOURCE_COVERAGE_PCT": 100,
                 "DATA_AVAILABILITY_STATE": "READY",
                 "FRESHNESS_MINUTES": 8,
                 "TARGET_FRESHNESS_MINUTES": 60,
+                "RESOLVED_COMPANY": "ALL",
+                "RESOLVED_ENVIRONMENT": "ALL",
+                "RESOLVED_WINDOW_DAYS": 7,
                 "PACKET_TOO_LARGE": 0,
             }
             for section in cls.VALIDATION_SECTIONS
         ]
+
+    def test_bootstrap_validation_requires_selected_section_packet(self):
+        from sections import decision_workspace_bootstrap as bootstrap
+
+        class ValidationSession:
+            def sql(self, text: str) -> "ValidationSession":
+                return self
+
+            def collect(self) -> list[dict[str, object]]:
+                return [
+                    row for row in DecisionWorkspaceDataBindingTests._valid_bootstrap_rows()
+                    if row["SECTION_NAME"] != "Executive Landing"
+                ]
+
+        validation = bootstrap.validate_decision_bootstrap_output(
+            ValidationSession(),
+            current_section="Executive Landing",
+            company="ALFA",
+            environment="PROD",
+            window_days=7,
+        )
+
+        self.assertFalse(validation.ok)
+        self.assertFalse(validation.current_section_ok)
+        self.assertFalse(validation.selected_scope_ok)
+        self.assertIn("Executive Landing", validation.missing_sections)
+
+    def test_bootstrap_validation_accepts_documented_scope_fallback(self):
+        from sections import decision_workspace_bootstrap as bootstrap
+
+        class ValidationSession:
+            def sql(self, text: str) -> "ValidationSession":
+                return self
+
+            def collect(self) -> list[dict[str, object]]:
+                return DecisionWorkspaceDataBindingTests._valid_bootstrap_rows()
+
+        validation = bootstrap.validate_decision_bootstrap_output(
+            ValidationSession(),
+            current_section="Cost & Contract",
+            company="ALFA",
+            environment="PROD",
+            window_days=8,
+        )
+
+        self.assertTrue(validation.ok)
+        self.assertTrue(validation.global_ok)
+        self.assertTrue(validation.selected_scope_ok)
+        self.assertEqual(validation.resolved_company, "ALL")
+        self.assertEqual(validation.resolved_environment, "ALL")
+        self.assertEqual(validation.resolved_window_days, 7)
+        self.assertEqual(validation.validated_packet_keys, (("Cost & Contract", "ALL", "ALL", 7),))
+
+    def test_bootstrap_validation_rejects_datagap_missing_sources_duplicates_and_size(self):
+        from sections import decision_workspace_bootstrap as bootstrap
+
+        def _validate(rows: list[dict[str, object]]):
+            class ValidationSession:
+                def sql(self, text: str) -> "ValidationSession":
+                    return self
+
+                def collect(self) -> list[dict[str, object]]:
+                    return rows
+
+            return bootstrap.validate_decision_bootstrap_output(
+                ValidationSession(),
+                current_section="Security Monitoring",
+                company="ALL",
+                environment="ALL",
+                window_days=7,
+            )
+
+        rows = self._valid_bootstrap_rows()
+        rows[5] = {**rows[5], "DATA_AVAILABILITY_STATE": "DATA GAP"}
+        self.assertFalse(_validate(rows).ok)
+
+        rows = self._valid_bootstrap_rows()
+        rows[5] = {**rows[5], "SOURCE_ROW_COUNT": 0, "REQUIRED_SOURCE_COUNT": None}
+        validation = _validate(rows)
+        self.assertFalse(validation.ok)
+        self.assertGreater(validation.current_section_missing_sources, 0)
+
+        rows = self._valid_bootstrap_rows()
+        rows[5] = {**rows[5], "CURRENT_KEY_COUNT": 2}
+        self.assertFalse(_validate(rows).ok)
+
+        rows = self._valid_bootstrap_rows()
+        rows[5] = {**rows[5], "MAX_PACKET_BYTES": 200000, "PACKET_TOO_LARGE": 1}
+        self.assertFalse(_validate(rows).ok)
+
+    def test_bootstrap_validation_rejects_global_five_section_data_gap(self):
+        from sections import decision_workspace_bootstrap as bootstrap
+
+        rows = self._valid_bootstrap_rows()
+        rows = [
+            row if row["SECTION_NAME"] == "Executive Landing"
+            else {**row, "DATA_AVAILABILITY_STATE": "DATA GAP"}
+            for row in rows
+        ]
+
+        class ValidationSession:
+            def sql(self, text: str) -> "ValidationSession":
+                return self
+
+            def collect(self) -> list[dict[str, object]]:
+                return rows
+
+        validation = bootstrap.validate_decision_bootstrap_output(
+            ValidationSession(),
+            current_section="Executive Landing",
+            company="ALL",
+            environment="ALL",
+            window_days=7,
+        )
+        self.assertFalse(validation.ok)
+        self.assertFalse(validation.global_ok)
+        self.assertEqual(len(validation.data_gap_sections), 5)
+
+    def test_clear_last_good_only_for_validated_packet_key(self):
+        from sections import decision_workspace_bootstrap as bootstrap
+        from sections.section_command_brief import SectionCommandBrief
+
+        def _brief(section: str, company: str, environment: str, window: str = "7 days") -> SectionCommandBrief:
+            return SectionCommandBrief(
+                section=section,
+                company=company,
+                environment=environment,
+                window_label=window,
+                state="Ready",
+                headline="Last good",
+                summary="Last good summary",
+                source="MART_SECTION_DECISION_CURRENT",
+                freshness_label="Updated",
+                loaded_at="2026-06-25T10:00:00",
+            )
+
+        fixture = _brief("Cost & Contract", "ALFA", "ALL")
+        object.__setattr__(fixture, "raw_payload", {"fixture_mode": True})
+        state = {
+            "section_command_brief::Cost & Contract::ALFA::ALL::7::last_good": _brief("Cost & Contract", "ALFA", "ALL"),
+            "section_command_brief::Cost & Contract::Trexis::ALL::7::last_good": _brief("Cost & Contract", "Trexis", "ALL"),
+            "section_command_brief::Cost & Contract::ALFA::PROD::7::last_good": _brief("Cost & Contract", "ALFA", "PROD"),
+            "section_command_brief::Cost & Contract::ALFA::ALL::30::last_good": _brief("Cost & Contract", "ALFA", "ALL", "30 days"),
+            "section_command_brief::Cost & Contract::fixture::ALL::7::last_good": fixture,
+            "section_command_brief::Cost & Contract::invalid::ALL::7::last_good": object(),
+        }
+        with patch.object(bootstrap.st, "session_state", state):
+            bootstrap._clear_command_brief_caches(
+                clear_last_good=True,
+                validated_packet_keys=(("Cost & Contract", "ALFA", "ALL", 7),),
+            )
+
+        self.assertNotIn("section_command_brief::Cost & Contract::ALFA::ALL::7::last_good", state)
+        self.assertIn("section_command_brief::Cost & Contract::Trexis::ALL::7::last_good", state)
+        self.assertIn("section_command_brief::Cost & Contract::ALFA::PROD::7::last_good", state)
+        self.assertIn("section_command_brief::Cost & Contract::ALFA::ALL::30::last_good", state)
+        self.assertNotIn("section_command_brief::Cost & Contract::fixture::ALL::7::last_good", state)
+        self.assertNotIn("section_command_brief::Cost & Contract::invalid::ALL::7::last_good", state)
 
     def test_renderer_has_no_legacy_brief_helper_paths(self):
         renderer_source = (APP_ROOT / "sections" / "section_command_rendering.py").read_text(encoding="utf-8")
@@ -580,7 +747,8 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
                 bootstrap.maybe_run_decision_workspace_bootstrap("Executive Landing")
             bootstrap.maybe_run_decision_workspace_bootstrap()
 
-        self.assertEqual(session.sql_calls[0], "SHOW PROCEDURES LIKE 'SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS'")
+        self.assertIn("FROM OVERWATCH_SETTINGS", session.sql_calls[0])
+        self.assertIn("SHOW PROCEDURES LIKE 'SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS'", session.sql_calls)
         self.assertIn("CALL SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS();", session.sql_calls)
         self.assertTrue(any("FROM MART_SECTION_DECISION_CURRENT" in call for call in session.sql_calls))
         self.assertNotIn(bootstrap.BOOTSTRAP_REQUEST_KEY, state)
@@ -746,16 +914,39 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 bootstrap.maybe_run_decision_workspace_bootstrap("Executive Landing")
 
-        self.assertEqual(
-            session.sql_calls[:3],
-            [
-                "SHOW PROCEDURES LIKE 'SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS'",
-                "SHOW PROCEDURES LIKE 'SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL'",
-                "CALL SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL();",
-            ],
-        )
+        self.assertIn("FROM OVERWATCH_SETTINGS", session.sql_calls[0])
+        self.assertIn("SHOW PROCEDURES LIKE 'SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS'", session.sql_calls)
+        self.assertIn("SHOW PROCEDURES LIKE 'SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL'", session.sql_calls)
+        self.assertIn("CALL SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL();", session.sql_calls)
         self.assertTrue(any("FROM MART_SECTION_DECISION_CURRENT" in call for call in session.sql_calls))
         warning.assert_not_called()
+
+    def test_bootstrap_version_marker_selects_configured_procedure_without_show(self):
+        from sections import decision_workspace_bootstrap as bootstrap
+
+        class VersionMarkerSession:
+            def __init__(self) -> None:
+                self.sql_calls: list[str] = []
+
+            def sql(self, text: str) -> "VersionMarkerSession":
+                self.sql_calls.append(text)
+                return self
+
+            def collect(self) -> list[object]:
+                current = self.sql_calls[-1]
+                if "FROM OVERWATCH_SETTINGS" in current:
+                    return [{"PROCEDURE_NAME": "SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL"}]
+                if current == "CALL SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL();":
+                    return []
+                raise AssertionError(f"unexpected SQL: {current}")
+
+        session = VersionMarkerSession()
+        result = bootstrap._run_bootstrap_procedure(session)
+
+        self.assertEqual(result.procedure_name, "SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL")
+        self.assertTrue(result.fallback_used)
+        self.assertIn("CALL SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL();", session.sql_calls)
+        self.assertFalse(any(call.startswith("SHOW PROCEDURES") for call in session.sql_calls))
 
     def test_bootstrap_show_denied_calls_first_successful_candidate_only(self):
         from sections import decision_workspace_bootstrap as bootstrap
@@ -901,8 +1092,114 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         rendered = "\n".join(str(call.args[0]) for call in markdown.call_args_list) + "\n".join(writes)
         self.assertIn("Decision summaries are not initialized", rendered)
         self.assertIn("SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS", rendered)
-        code.assert_called_once()
-        self.assertIn("MART_SECTION_DECISION_CURRENT", code.call_args.args[0])
+        self.assertGreaterEqual(code.call_count, 1)
+        self.assertIn("MART_SECTION_DECISION_CURRENT", code.call_args_list[0].args[0])
+
+    def test_setup_health_persists_and_loads_from_snowflake_when_available(self):
+        from sections import decision_workspace_setup_health as setup_health
+
+        class PersistSession:
+            def __init__(self) -> None:
+                self.sql_calls: list[str] = []
+
+            def sql(self, text: str) -> "PersistSession":
+                self.sql_calls.append(text)
+                return self
+
+            def collect(self) -> list[object]:
+                current = self.sql_calls[-1]
+                if "ORDER BY EVENT_TS DESC" in current:
+                    return [{
+                        "STATUS": "SUCCESS",
+                        "USER_MESSAGE": "Decision summaries initialized.",
+                        "SELECTED_PROCEDURE": "SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS",
+                        "FALLBACK_USED": False,
+                        "CURRENT_PACKET_COUNT": 6,
+                        "SECTIONS_PRESENT": ["Executive Landing"],
+                        "MISSING_SECTIONS": [],
+                        "DUPLICATE_CURRENT_KEYS": 0,
+                        "STALE_SECTIONS": [],
+                        "DATA_GAP_SECTIONS": [],
+                        "MISSING_METRIC_SECTIONS": [],
+                        "MAX_PACKET_BYTES": 2048,
+                        "REQUESTED_SCOPE": "ALFA / ALL / 7 days",
+                        "RESOLVED_SCOPE": "ALFA / ALL / 7 days",
+                        "ADMIN_DETAIL": "MART_SECTION_DECISION_CURRENT validated.",
+                        "SUGGESTED_REMEDIATION": "None",
+                        "ACTOR_ROLE": "SNOW_SYSADMINS",
+                        "APP_VERSION": "OVERWATCH Decision Workspace",
+                        "RECORDED_AT": "2026-06-26 12:00:00",
+                    }]
+                return []
+
+        state = {}
+        session = PersistSession()
+        with patch.object(setup_health.st, "session_state", state):
+            health = setup_health.record_decision_bootstrap_health(
+                status="success",
+                user_message="Decision summaries initialized.",
+                selected_procedure="SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS",
+                admin_detail="MART_SECTION_DECISION_CURRENT validated.",
+                session=session,
+            )
+        self.assertEqual(health.status, "success")
+        self.assertTrue(any("CREATE TABLE IF NOT EXISTS OVERWATCH_DECISION_SETUP_HEALTH" in call for call in session.sql_calls))
+        self.assertTrue(any("INSERT INTO OVERWATCH_DECISION_SETUP_HEALTH" in call for call in session.sql_calls))
+
+        state.clear()
+        with patch.object(setup_health.st, "session_state", state):
+            loaded = setup_health.load_decision_setup_health(session=session)
+        self.assertIsNotNone(loaded)
+        self.assertEqual(loaded.selected_procedure, "SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS")
+        self.assertEqual(loaded.requested_scope, "ALFA / ALL / 7 days")
+
+    def test_fallback_open_setup_health_routes_to_settings_without_raw_sql(self):
+        from runtime_state import SIDEBAR_PANEL
+        from sections import section_command_rendering
+        from sections.decision_workspace_setup_health import SETUP_HEALTH_PANEL_OPEN_KEY
+        from sections.section_command_brief import SectionCommandBrief
+
+        def _columns(spec):
+            count = int(spec) if isinstance(spec, int) else len(spec)
+            return [contextlib.nullcontext() for _ in range(count)]
+
+        def _button(label, *args, **kwargs):
+            return label == "Open Setup Health"
+
+        state: dict[str, object] = {}
+        brief = SectionCommandBrief(
+            section="Executive Landing",
+            company="ALFA",
+            environment="ALL",
+            window_label="8 days",
+            state="Setup required",
+            headline="Summary not initialized",
+            summary="No packet row.",
+            source="MART_SECTION_DECISION_CURRENT",
+            freshness_label="Freshness unavailable",
+            loaded_at="",
+            fallback_reason="No packet row.",
+        )
+        with patch.object(section_command_rendering.st, "session_state", state), patch.object(
+            section_command_rendering.st,
+            "html",
+        ) as html, patch.object(section_command_rendering.st, "columns", side_effect=_columns), patch.object(
+            section_command_rendering.st,
+            "button",
+            side_effect=_button,
+        ), patch.object(section_command_rendering.st, "rerun", side_effect=RuntimeError("rerun")):
+            with self.assertRaises(RuntimeError):
+                section_command_rendering.render_decision_workspace(
+                    brief,
+                    key_prefix="open_setup_health",
+                    refresh_action=lambda: None,
+                )
+
+        rendered = "\n".join(str(call.args[0]) for call in html.call_args_list)
+        self.assertEqual(state[SIDEBAR_PANEL], "settings")
+        self.assertTrue(state[SETUP_HEALTH_PANEL_OPEN_KEY])
+        for raw in ("CALL ", "SP_", "MART_", "FACT_", "ACCOUNT_USAGE"):
+            self.assertNotIn(raw, rendered)
 
     def test_bootstrap_missing_procedure_shows_clean_setup_message(self):
         from sections import decision_workspace_bootstrap as bootstrap
@@ -927,14 +1224,10 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         ), patch.object(bootstrap.st, "warning") as warning:
             bootstrap.maybe_run_decision_workspace_bootstrap("Executive Landing")
 
-        self.assertEqual(
-            session.sql_calls,
-            [
-                "SHOW PROCEDURES LIKE 'SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS'",
-                "SHOW PROCEDURES LIKE 'SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL'",
-                "SHOW PROCEDURES LIKE 'SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS'",
-            ],
-        )
+        self.assertIn("FROM OVERWATCH_SETTINGS", session.sql_calls[0])
+        self.assertIn("SHOW PROCEDURES LIKE 'SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS'", session.sql_calls)
+        self.assertIn("SHOW PROCEDURES LIKE 'SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL'", session.sql_calls)
+        self.assertIn("SHOW PROCEDURES LIKE 'SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS'", session.sql_calls)
         warning.assert_called_once()
         warning_text = warning.call_args.args[0]
         self.assertIn("Decision summaries are not initialized", warning_text)

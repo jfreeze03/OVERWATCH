@@ -353,7 +353,7 @@ def render_sidebar(
 
         if sidebar_panel_toggle("Settings", "settings"):
             render_theme_picker()
-            render_decision_setup_health_panel()
+            render_decision_setup_health_panel(session=get_state(SF_SESSION))
             st.divider()
             credit_price = st.number_input(
                 "$/credit (compute)",

@@ -15,6 +15,7 @@ from sections.decision_workspace_controls import (
     DecisionWorkspaceControls,
     render_evidence_settings,
 )
+from sections.decision_workspace_setup_health import open_decision_setup_health
 from sections.decision_workspace_view_model import (
     DecisionActionView,
     DecisionMetricCell,
@@ -216,6 +217,7 @@ def _render_fallback(
             actions.append("refresh")
         if fallback.can_initialize:
             actions.append("initialize")
+            actions.append("setup_health")
         if detail_action is not None and fallback.can_show_evidence:
             actions.append("evidence")
         if not actions:
@@ -238,6 +240,15 @@ def _render_fallback(
                     width="stretch",
                 ):
                     st.session_state["_overwatch_decision_bootstrap_requested"] = True
+                    st.rerun()
+                elif action == "setup_health" and st.button(
+                    "Open Setup Health",
+                    key=f"{key_prefix}_open_setup_health",
+                    type="secondary",
+                    width="stretch",
+                    help="Open Settings to review Decision summary setup health.",
+                ):
+                    open_decision_setup_health()
                     st.rerun()
                 elif action == "evidence":
                     _render_detail_action(key_prefix=key_prefix, detail_action=detail_action)

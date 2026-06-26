@@ -28,6 +28,7 @@ USING (
     ('ALERT_EMAIL_NOTIFICATION_INTEGRATION', 'OVERWATCH_EMAIL_INT', 'STRING', 'Approved Snowflake notification integration name for optional Alert Center email delivery.'),
     ('AUTO_BOOTSTRAP_DECISION_BRIEFS', 'TRUE', 'BOOLEAN', 'Allow the setup flow to initialize Decision Brief packets after prerequisite marts are refreshed.'),
     ('DECISION_BRIEF_BOOTSTRAP_ROLE', 'SNOW_SYSADMINS', 'STRING', 'Role allowed to initialize Decision Brief packets during installation or setup health repair.'),
+    ('DECISION_BRIEF_BOOTSTRAP_PROCEDURE', 'SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS', 'STRING', 'Preferred procedure for Decision Brief setup health initialization.'),
     ('DECISION_BRIEF_WAREHOUSE', 'COMPUTE_WH', 'STRING', 'Warehouse used by scheduled Decision Brief refresh tasks when a dedicated warehouse is not configured.'),
     ('DECISION_BRIEF_ALLOW_LEGACY_ADAPTER', 'TRUE', 'BOOLEAN', 'Allow bounded compact legacy-mart adapters when the normalized Decision packet is not current.')
 ) src(SETTING_NAME, SETTING_VALUE, SETTING_TYPE, DESCRIPTION)

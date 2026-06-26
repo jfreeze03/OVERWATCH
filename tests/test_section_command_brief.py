@@ -567,6 +567,7 @@ class SectionCommandBriefTests(unittest.TestCase):
             "ACTION_KEY",
             "ROUTE_KEY",
             "CTA_LABEL",
+            "OVERWATCH_DECISION_SETUP_HEALTH",
         ):
             self.assertIn(token, tables)
         self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS()", procs)
@@ -583,8 +584,10 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertIn("MART_SECTION_DECISION_LAST_GOOD", procs)
         self.assertIn("SOURCES", procs)
         self.assertIn("PACKET_BYTES", procs)
-        self.assertIn("AUTO_BOOTSTRAP_DECISION_BRIEFS", (ROOT / "snowflake" / "mart_setup" / "03_config_and_audit_tables.sql").read_text(encoding="utf-8").upper())
-        self.assertIn("DECISION_BRIEF_WAREHOUSE", (ROOT / "snowflake" / "mart_setup" / "03_config_and_audit_tables.sql").read_text(encoding="utf-8").upper())
+        config_tables = (ROOT / "snowflake" / "mart_setup" / "03_config_and_audit_tables.sql").read_text(encoding="utf-8").upper()
+        self.assertIn("AUTO_BOOTSTRAP_DECISION_BRIEFS", config_tables)
+        self.assertIn("DECISION_BRIEF_BOOTSTRAP_PROCEDURE", config_tables)
+        self.assertIn("DECISION_BRIEF_WAREHOUSE", config_tables)
         self.assertIn("ARRAY_SIZE(COALESCE(DECISION_PACKET:\"METRICS\", ARRAY_CONSTRUCT())) > 0", procs)
         self.assertNotIn("DELETE FROM OVERWATCH_SECTION_COMMAND_SOURCE_CONFIG", procs)
         self.assertNotIn("DELETE FROM MART_SECTION_DECISION_CURRENT;", procs)
@@ -621,6 +624,7 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertIn("DROP TASK IF EXISTS OVERWATCH_DECISION_BRIEF_FULL_REFRESH", drop)
         self.assertIn("DROP PROCEDURE IF EXISTS SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS()", drop)
         self.assertIn("DROP PROCEDURE IF EXISTS SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST()", drop)
+        self.assertIn("DROP TABLE IF EXISTS OVERWATCH_DECISION_SETUP_HEALTH", drop)
         self.assertIn("DROP TABLE IF EXISTS MART_SECTION_DECISION_LAST_GOOD", drop)
 
         fast_block = procs.split("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST()", 1)[1].split("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL()", 1)[0]

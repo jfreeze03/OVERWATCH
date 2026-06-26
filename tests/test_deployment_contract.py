@@ -252,7 +252,11 @@ class DeploymentContractTests(unittest.TestCase):
             "SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL",
         }
         wrapper_allowed_targets = {
-            "SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST": {"MART_SECTION_DECISION_CURRENT", "OVERWATCH_LOAD_AUDIT"},
+            "SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST": {
+                "MART_SECTION_DECISION_CURRENT",
+                "OVERWATCH_DECISION_REFRESH_AUDIT",
+                "OVERWATCH_LOAD_AUDIT",
+            },
             "SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL": {"OVERWATCH_LOAD_AUDIT"},
         }
 

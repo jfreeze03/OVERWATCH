@@ -112,6 +112,20 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertIn("MART_EXECUTIVE_SCORECARD_SUMMARY", sql)
         self.assertIn("MART_EXECUTIVE_VALUE_LEDGER", sql)
         self.assertIn("OVERWATCH_SETTINGS", sql)
+        for rollup in (
+            "executive_scorecard_rollup AS",
+            "closed_loop_rollup AS",
+            "data_trust_rollup AS",
+            "cost_signal_rollup AS",
+        ):
+            self.assertIn(rollup, sql)
+        for scalar_probe in (
+            "(SELECT MAX(COALESCE(s.LOAD_TS, s.SNAPSHOT_TS)) FROM MART_EXECUTIVE_SCORECARD_SUMMARY",
+            "(SELECT MAX(COALESCE(c.LOAD_TS, c.SNAPSHOT_TS)) FROM MART_CLOSED_LOOP_OPERATIONS_SUMMARY",
+            "(SELECT MAX(COALESCE(d.LOAD_TS, d.SNAPSHOT_TS)) FROM MART_DATA_TRUST_SUMMARY",
+            "(SELECT MAX(s.SNAPSHOT_TS) FROM FACT_COST_MONITORING_SIGNAL",
+        ):
+            self.assertNotIn(scalar_probe, sql)
         self.assertNotIn("ELSE 'data_trust'", sql)
         self.assertNotIn("LOWER(REGEXP_REPLACE(SECTION_NAME", sql)
 
@@ -122,6 +136,12 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertNotIn("TMP_DECISION_FINDING_CANDIDATE AS SELECT * FROM TMP_SECTION_DECISION_LOGIC", sql)
         self.assertNotIn("FRESHNESS_MINUTES AS DECISION_AGE_MINUTES", sql)
         self.assertNotIn("SOURCE_SNAPSHOT_TS AS FIRST_SEEN_TS", sql)
+        self.assertIn("DECISION_ENTITY_TYPE", sql)
+        self.assertIn("DECISION_ENTITY_ID", sql)
+        self.assertIn("DECISION_EVIDENCE_ID", sql)
+        self.assertIn("DECISION_OWNER_GAP_RESOLVED", sql)
+        self.assertIn("DECISION_PRIORITY_SCORE_RESOLVED", sql)
+        self.assertNotIn("    'section',", sql)
 
         trend_block = sql.split("CREATE OR REPLACE TEMPORARY TABLE TMP_SECTION_METRIC_TRENDS AS", 1)[1].split(
             "CREATE OR REPLACE TEMPORARY TABLE TMP_SECTION_DECISION_LOGIC AS",
@@ -129,9 +149,22 @@ class SectionCommandBriefTests(unittest.TestCase):
         )[0]
         self.assertIn("date_spine AS", trend_block)
         self.assertIn("TABLE(GENERATOR(ROWCOUNT => 14))", trend_block)
+        self.assertIn("TREND_PERIOD", trend_block)
+        self.assertIn("TREND_POINT_COUNT", trend_block)
+        self.assertIn("TREND_QUALITY", trend_block)
+        self.assertIn("ZERO_FILL_POLICY", trend_block)
         self.assertNotIn("HAVING COUNT(*) BETWEEN 7 AND 14", trend_block)
         self.assertNotIn("3.68", trend_block)
         self.assertNotIn("2.20", trend_block)
+
+    def test_decision_brief_parent_source_objects_derive_from_source_rows(self):
+        sql = (ROOT / "snowflake" / "mart_setup" / "05_load_procedures.sql").read_text(encoding="utf-8")
+        section_seed = sql.split("sections AS (", 1)[1].split("cost_rollup AS", 1)[0]
+        self.assertNotIn("MART_EXECUTIVE_OBSERVABILITY; MART_EXECUTIVE_SCORECARD_SUMMARY", section_seed)
+        self.assertNotIn("FACT_COST_DAILY; FACT_CORTEX_DAILY", section_seed)
+        self.assertIn("LISTAGG(SOURCE_OBJECT, '; ') WITHIN GROUP (ORDER BY SOURCE_KEY) AS SOURCE_OBJECTS", sql)
+        self.assertIn("t.SOURCE_OBJECTS AS SOURCE_OBJECTS", sql)
+        self.assertIn("'SOURCE_OBJECTS', l.SOURCE_OBJECTS", sql)
 
     def test_decision_brief_deployment_validation_checks_source_key_truth(self):
         validation = (ROOT / "snowflake" / "mart_setup" / "08_validation.sql").read_text(encoding="utf-8")
@@ -139,6 +172,7 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertIn("SECTION_COMMAND_METRIC_SOURCE_KEYS_CONFIGURED", validation)
         self.assertIn("SECTION_DECISION_CURRENT_SOURCE_KEYS_CONFIGURED", validation)
         self.assertIn("DUPLICATE_SOURCE_KEY_COUNT", validation)
+        self.assertIn("SECTION_DECISION_PARENT_SOURCE_OBJECTS_MATCH_SOURCES", validation)
 
     def test_loader_uses_mart_rows_and_does_not_require_detail_load(self):
         from sections import section_command_brief as brief_module
@@ -638,6 +672,7 @@ class SectionCommandBriefTests(unittest.TestCase):
             "MART_SECTION_DECISION_CURRENT",
             "MART_SECTION_DECISION_LAST_GOOD",
             "OVERWATCH_DECISION_SETUP_HEALTH",
+            "OVERWATCH_DECISION_REFRESH_AUDIT",
             "MART_EXECUTIVE_DECISION_INBOX",
         ):
             self.assertIn(name, setup)
@@ -645,6 +680,7 @@ class SectionCommandBriefTests(unittest.TestCase):
             self.assertIn(name, modular_validation)
             self.assertIn(name, validation)
         self.assertIn("DROP TABLE IF EXISTS OVERWATCH_DECISION_SETUP_HEALTH", drop)
+        self.assertIn("DROP TABLE IF EXISTS OVERWATCH_DECISION_REFRESH_AUDIT", drop)
 
     def test_command_brief_sql_pipeline_is_wired(self):
         tables = (ROOT / "snowflake" / "mart_setup" / "04_mart_tables.sql").read_text(encoding="utf-8").upper()
@@ -664,14 +700,51 @@ class SectionCommandBriefTests(unittest.TestCase):
             "UNAVAILABLE_REASON",
             "SOURCE_KEY",
             "TREND_POINTS",
+            "TREND_PERIOD",
+            "TREND_POINT_COUNT",
+            "TREND_QUALITY",
+            "ZERO_FILL_POLICY",
+            "FINDING_KEY",
+            "DEDUPE_KEY",
+            "ENTITY_ID",
+            "EVIDENCE_ID",
+            "EVIDENCE_QUERY",
+            "FIRST_SEEN_TS",
+            "DUE_TS",
+            "OWNER_ID",
+            "OWNER_NAME",
             "PRIORITY_SCORE",
             "SOURCE_COVERAGE_PCT",
             "ACTION_KEY",
             "ROUTE_KEY",
             "CTA_LABEL",
             "OVERWATCH_DECISION_SETUP_HEALTH",
+            "OVERWATCH_DECISION_REFRESH_AUDIT",
         ):
             self.assertIn(token, tables)
+        refresh_audit_block = tables.split("CREATE TABLE IF NOT EXISTS OVERWATCH_DECISION_REFRESH_AUDIT", 1)[1].split(");", 1)[0]
+        for column in (
+            "REFRESH_MODE",
+            "ELAPSED_SECONDS",
+            "PARENT_ROWS",
+            "METRIC_ROWS",
+            "EXCEPTION_ROWS",
+            "ACTION_ROWS",
+            "SOURCE_ROWS",
+            "CURRENT_PACKET_ROWS",
+            "LAST_GOOD_ROWS",
+            "MAX_PACKET_BYTES",
+            "AVG_PACKET_BYTES",
+            "MAX_SOURCE_ROW_COUNT",
+            "MAX_TREND_POINTS",
+            "DATA_GAP_COUNT",
+            "DEGRADED_COUNT",
+            "FAILED_SECTION_COUNT",
+            "ERROR_MESSAGE",
+        ):
+            self.assertIn(column, refresh_audit_block)
+            self.assertIn(column, procs)
+            self.assertIn(column, validation)
         setup_health_block = tables.split("CREATE TABLE IF NOT EXISTS OVERWATCH_DECISION_SETUP_HEALTH", 1)[1].split(");", 1)[0]
         for column in (
             "EVENT_ID",
@@ -739,6 +812,8 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertIn("TMP_SECTION_METRIC_TRENDS", procs)
         self.assertIn("DATE_SPINE AS", procs)
         self.assertIn("TABLE(GENERATOR(ROWCOUNT => 14))", procs)
+        self.assertIn("ZERO_FILL_POLICY", procs)
+        self.assertIn("TREND_POINT_COUNT", procs)
         self.assertNotIn("HAVING COUNT(*) BETWEEN 7 AND 14", procs)
         self.assertIn("ACTION_DUE_DATE IS NULL THEN 'SLA UNAVAILABLE'", procs)
         self.assertIn("ALERT_FIRST_SEEN_TS", procs)
@@ -781,6 +856,7 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertIn("SECTION_DECISION_CURRENT_PACKET_COVERAGE", validation)
         self.assertIn("SECTION_DECISION_CURRENT_SOURCE_COUNTER_CONSISTENCY", validation)
         self.assertIn("LATERAL FLATTEN(INPUT => DECISION_PACKET:\"SOURCES\")", validation)
+        self.assertIn("SECTION_DECISION_PARENT_SOURCE_OBJECTS_MATCH_SOURCES", validation)
         self.assertIn("SECTION_COMMAND_SOURCE_ROWS", validation)
         self.assertIn("SECTION_COMMAND_BRIEF_ORPHAN_CHILD_ROWS", validation)
         self.assertIn("SECTION_COMMAND_BRIEF_CANONICAL_WINDOWS", validation)
@@ -789,6 +865,7 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertIn("DROP PROCEDURE IF EXISTS SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS()", drop)
         self.assertIn("DROP PROCEDURE IF EXISTS SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST()", drop)
         self.assertIn("DROP TABLE IF EXISTS OVERWATCH_DECISION_SETUP_HEALTH", drop)
+        self.assertIn("DROP TABLE IF EXISTS OVERWATCH_DECISION_REFRESH_AUDIT", drop)
         self.assertIn("DROP TABLE IF EXISTS MART_SECTION_DECISION_LAST_GOOD", drop)
 
         fast_block = procs.split("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST()", 1)[1].split("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL()", 1)[0]

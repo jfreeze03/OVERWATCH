@@ -1,0 +1,1257 @@
+{
+  "version": "3.2",
+  "generated_from": "section_command_contracts.py at Decision Brief 3.1",
+  "sections": [
+    {
+      "section": "Executive Landing",
+      "default_workflow": "Executive Overview",
+      "default_window_days": 7,
+      "target_freshness_minutes": 60,
+      "source_table": "MART_SECTION_COMMAND_BRIEF",
+      "detail_cta": "Refresh Summary",
+      "top_signal_label": "Top executive decision",
+      "top_signal_detail": "Review cost, operational, and security signals before loading the full snapshot.",
+      "unavailable_headline": "Executive command brief needs the summary mart.",
+      "unavailable_summary": "Enable the executive observability mart to populate leadership status, cost movement, Cortex AI risk, and open actions automatically.",
+      "sources": [
+        {
+          "source_key": "executive_observability",
+          "source_object": "MART_EXECUTIVE_OBSERVABILITY",
+          "required": true,
+          "tier": "core",
+          "target_freshness_minutes": 60,
+          "confidence": "allocated"
+        },
+        {
+          "source_key": "executive_scorecard",
+          "source_object": "MART_EXECUTIVE_SCORECARD_SUMMARY",
+          "required": true,
+          "tier": "core",
+          "target_freshness_minutes": 60,
+          "confidence": "allocated"
+        },
+        {
+          "source_key": "executive_forecast",
+          "source_object": "MART_EXECUTIVE_FORECAST_SUMMARY",
+          "required": true,
+          "tier": "core",
+          "target_freshness_minutes": 60,
+          "confidence": "estimated"
+        },
+        {
+          "source_key": "closed_loop",
+          "source_object": "MART_CLOSED_LOOP_OPERATIONS_SUMMARY",
+          "required": true,
+          "tier": "core",
+          "target_freshness_minutes": 60,
+          "confidence": "allocated"
+        },
+        {
+          "source_key": "production_readiness",
+          "source_object": "MART_PRODUCTION_READINESS_SUMMARY",
+          "required": true,
+          "tier": "core",
+          "target_freshness_minutes": 60,
+          "confidence": "allocated"
+        },
+        {
+          "source_key": "data_trust",
+          "source_object": "MART_DATA_TRUST_SUMMARY",
+          "required": false,
+          "tier": "enrichment",
+          "target_freshness_minutes": 60,
+          "confidence": "allocated"
+        },
+        {
+          "source_key": "app_observability",
+          "source_object": "MART_APP_OBSERVABILITY_SUMMARY",
+          "required": false,
+          "tier": "enrichment",
+          "target_freshness_minutes": 60,
+          "confidence": "allocated"
+        }
+      ],
+      "metrics": [
+        {
+          "key": "platform_health",
+          "label": "Platform Health",
+          "primary": true,
+          "primary_order": 1,
+          "format": "percentage",
+          "unit": "score",
+          "directionality": "lower_is_worse",
+          "source_key": "executive_observability",
+          "availability_policy": "required"
+        },
+        {
+          "key": "spend_movement_pct",
+          "label": "Spend Movement",
+          "primary": true,
+          "primary_order": 2,
+          "format": "percentage",
+          "unit": "percent",
+          "directionality": "higher_is_worse",
+          "source_key": "executive_observability",
+          "availability_policy": "required"
+        },
+        {
+          "key": "critical_high_issues",
+          "label": "Critical / High Issues",
+          "primary": true,
+          "primary_order": 3,
+          "format": "integer",
+          "unit": "issues",
+          "directionality": "higher_is_worse",
+          "source_key": "executive_observability",
+          "availability_policy": "required"
+        },
+        {
+          "key": "open_actions",
+          "label": "Open Actions",
+          "primary": true,
+          "primary_order": 4,
+          "format": "integer",
+          "unit": "actions",
+          "directionality": "higher_is_worse",
+          "source_key": "executive_observability",
+          "availability_policy": "required"
+        },
+        {
+          "key": "cortex_spend",
+          "label": "Cortex AI Spend",
+          "primary": false,
+          "primary_order": null,
+          "format": "currency",
+          "unit": "USD",
+          "directionality": "higher_is_worse",
+          "source_key": "executive_observability",
+          "availability_policy": "optional"
+        },
+        {
+          "key": "cortex_risk",
+          "label": "Cortex Risk",
+          "primary": false,
+          "primary_order": null,
+          "format": "integer",
+          "unit": "signals",
+          "directionality": "higher_is_worse",
+          "source_key": "executive_observability",
+          "availability_policy": "optional"
+        },
+        {
+          "key": "operational_risk",
+          "label": "Operational Risk",
+          "primary": false,
+          "primary_order": null,
+          "format": "integer",
+          "unit": "signals",
+          "directionality": "higher_is_worse",
+          "source_key": "executive_observability",
+          "availability_policy": "optional"
+        },
+        {
+          "key": "security_risk",
+          "label": "Security Risk",
+          "primary": false,
+          "primary_order": null,
+          "format": "integer",
+          "unit": "signals",
+          "directionality": "higher_is_worse",
+          "source_key": "executive_observability",
+          "availability_policy": "optional"
+        },
+        {
+          "key": "production_readiness",
+          "label": "Production Readiness",
+          "primary": false,
+          "primary_order": null,
+          "format": "percentage",
+          "unit": "percent",
+          "directionality": "lower_is_worse",
+          "source_key": "production_readiness",
+          "availability_policy": "optional"
+        },
+        {
+          "key": "data_trust",
+          "label": "Data Trust",
+          "primary": false,
+          "primary_order": null,
+          "format": "percentage",
+          "unit": "percent",
+          "directionality": "lower_is_worse",
+          "source_key": "data_trust",
+          "availability_policy": "optional"
+        },
+        {
+          "key": "verified_value",
+          "label": "Verified Value",
+          "primary": false,
+          "primary_order": null,
+          "format": "currency",
+          "unit": "USD",
+          "directionality": "higher_is_better",
+          "source_key": "executive_observability",
+          "availability_policy": "optional"
+        },
+        {
+          "key": "monitoring_overhead",
+          "label": "Monitoring Overhead",
+          "primary": false,
+          "primary_order": null,
+          "format": "currency",
+          "unit": "USD",
+          "directionality": "higher_is_worse",
+          "source_key": "executive_observability",
+          "availability_policy": "optional"
+        }
+      ],
+      "actions": [
+        {
+          "action_key": "review_cortex_ai_cost_predictive_alerts",
+          "route_key": "cost_contract_cortex_ai",
+          "label": "Review Cortex AI Cost & Predictive Alerts",
+          "detail": "Open the Cortex AI financial-risk lane.",
+          "target_section": "Cost & Contract",
+          "target_workflow": "Cortex AI",
+          "fallback_order": 10
+        },
+        {
+          "action_key": "investigate_active_alerts",
+          "route_key": "alert_center_active",
+          "label": "Investigate Active Alerts",
+          "detail": "Open current alert families and route the highest-severity item.",
+          "target_section": "Alert Center",
+          "target_workflow": "Active Alerts",
+          "fallback_order": 20
+        },
+        {
+          "action_key": "open_dba_cockpit",
+          "route_key": "dba_overview",
+          "label": "Open DBA Cockpit",
+          "detail": "Open DBA-owned failures, queue pressure, and action status.",
+          "target_section": "DBA Control Room",
+          "target_workflow": "Morning Cockpit",
+          "fallback_order": 30
+        }
+      ]
+    },
+    {
+      "section": "DBA Control Room",
+      "default_workflow": "Morning Cockpit",
+      "default_window_days": 1,
+      "target_freshness_minutes": 30,
+      "source_table": "MART_SECTION_COMMAND_BRIEF",
+      "detail_cta": "Load Morning Cockpit",
+      "top_signal_label": "Top DBA action",
+      "top_signal_detail": "Start with the highest operational exception, then load investigation detail if proof is needed.",
+      "unavailable_headline": "DBA command brief needs the control-room mart.",
+      "unavailable_summary": "Enable the latest control-room snapshot to populate failures, cost pressure, queue pressure, security warnings, and recent changes automatically.",
+      "sources": [
+        {
+          "source_key": "dba_control_room",
+          "source_object": "MART_DBA_CONTROL_ROOM",
+          "required": true,
+          "tier": "core",
+          "target_freshness_minutes": 30,
+          "confidence": "allocated"
+        },
+        {
+          "source_key": "query_summary",
+          "source_object": "FACT_QUERY_HOURLY",
+          "required": true,
+          "tier": "core",
+          "target_freshness_minutes": 30,
+          "confidence": "allocated"
+        },
+        {
+          "source_key": "task_runs",
+          "source_object": "FACT_TASK_RUN",
+          "required": true,
+          "tier": "core",
+          "target_freshness_minutes": 30,
+          "confidence": "allocated"
+        },
+        {
+          "source_key": "action_queue",
+          "source_object": "OVERWATCH_ACTION_QUEUE",
+          "required": true,
+          "tier": "core",
+          "target_freshness_minutes": 30,
+          "confidence": "allocated"
+        },
+        {
+          "source_key": "change_summary",
+          "source_object": "MART_CHANGE_INTELLIGENCE_SUMMARY",
+          "required": false,
+          "tier": "enrichment",
+          "target_freshness_minutes": 30,
+          "confidence": "allocated"
+        },
+        {
+          "source_key": "security_summary",
+          "source_object": "FACT_SECURITY_OPERABILITY_DAILY",
+          "required": false,
+          "tier": "enrichment",
+          "target_freshness_minutes": 30,
+          "confidence": "allocated"
+        },
+        {
+          "source_key": "cost_summary",
+          "source_object": "FACT_COST_DAILY",
+          "required": false,
+          "tier": "enrichment",
+          "target_freshness_minutes": 30,
+          "confidence": "allocated"
+        }
+      ],
+      "metrics": [
+        {
+          "key": "failed_queries",
+          "label": "Failed Queries",
+          "primary": true,
+          "primary_order": 1,
+          "format": "integer",
+          "unit": "queries",
+          "directionality": "higher_is_worse",
+          "source_key": "dba_control_room",
+          "availability_policy": "required"
+        },
+        {
+          "key": "pipeline_failures",
+          "label": "Pipeline Failures",
+          "primary": true,
+          "primary_order": 2,
+          "format": "integer",
+          "unit": "events",
+          "directionality": "higher_is_worse",
+          "source_key": "dba_control_room",
+          "availability_policy": "required"
+        },
+        {
+          "key": "queue_pressure",
+          "label": "Queue Pressure",
+          "primary": true,
+          "primary_order": 3,
+          "format": "duration",
+          "unit": "seconds",
+          "directionality": "higher_is_worse",
+          "source_key": "action_queue",
+          "availability_policy": "required"
+        },
+        {
+          "key": "cost_24h",
+          "label": "Cost 24h",
+          "primary": true,
+          "primary_order": 4,
+          "format": "currency",
+          "unit": "USD",
+          "directionality": "higher_is_worse",
+          "source_key": "cost_summary",
+          "availability_policy": "required"
+        },
+        {
+          "key": "cortex_cost",
+          "label": "Cortex Cost",
+          "primary": false,
+          "primary_order": null,
+          "format": "currency",
+          "unit": "USD",
+          "directionality": "higher_is_worse",
+          "source_key": "dba_control_room",
+          "availability_policy": "optional"
+        },
+        {
+          "key": "security_warnings",
+          "label": "Security Warnings",
+          "primary": false,
+          "primary_order": null,
+          "format": "integer",
+          "unit": "warnings",
+          "directionality": "higher_is_worse",
+          "source_key": "security_summary",
+          "availability_policy": "optional"
+        },
+        {
+          "key": "recent_changes",
+          "label": "Recent Changes",
+          "primary": false,
+          "primary_order": null,
+          "format": "integer",
+          "unit": "changes",
+          "directionality": "higher_is_worse",
+          "source_key": "dba_control_room",
+          "availability_policy": "optional"
+        },
+        {
+          "key": "overdue_actions",
+          "label": "Overdue Actions",
+          "primary": false,
+          "primary_order": null,
+          "format": "integer",
+          "unit": "actions",
+          "directionality": "higher_is_worse",
+          "source_key": "dba_control_room",
+          "availability_policy": "optional"
+        },
+        {
+          "key": "hottest_warehouse",
+          "label": "Hottest Warehouse",
+          "primary": false,
+          "primary_order": null,
+          "format": "text",
+          "unit": "warehouse",
+          "directionality": "neutral",
+          "source_key": "dba_control_room",
+          "availability_policy": "optional"
+        },
+        {
+          "key": "top_dba_risk",
+          "label": "Top DBA Risk",
+          "primary": false,
+          "primary_order": null,
+          "format": "text",
+          "unit": "risk",
+          "directionality": "neutral",
+          "source_key": "dba_control_room",
+          "availability_policy": "optional"
+        }
+      ],
+      "actions": [
+        {
+          "action_key": "failure_triage",
+          "route_key": "dba_failures",
+          "label": "Failure Triage",
+          "detail": "Review failed SQL, task, procedure, copy, and SLA signals.",
+          "target_section": "DBA Control Room",
+          "target_workflow": "Failure Triage",
+          "fallback_order": 10
+        },
+        {
+          "action_key": "performance_watch",
+          "route_key": "dba_performance",
+          "label": "Performance Watch",
+          "detail": "Review queue, spilling, blocked, and long-running pressure.",
+          "target_section": "DBA Control Room",
+          "target_workflow": "Performance Watch",
+          "fallback_order": 20
+        },
+        {
+          "action_key": "cost_watch",
+          "route_key": "cost_contract_explorer_warehouse",
+          "label": "Cost Watch",
+          "detail": "Review spend pressure, Cortex cost, and largest drivers.",
+          "target_section": "DBA Control Room",
+          "target_workflow": "Cost Watch",
+          "fallback_order": 30
+        }
+      ]
+    },
+    {
+      "section": "Alert Center",
+      "default_workflow": "Active Alerts",
+      "default_window_days": 7,
+      "target_freshness_minutes": 15,
+      "source_table": "MART_SECTION_COMMAND_BRIEF",
+      "detail_cta": "Load Active Alerts",
+      "top_signal_label": "Top alert family",
+      "top_signal_detail": "Work the highest severity family first; load alert rows only when row-level evidence is needed.",
+      "unavailable_headline": "Alert command brief needs alert summary telemetry.",
+      "unavailable_summary": "Enable alert summary marts to populate active, critical, Cortex predictive, cost, reliability, security, and delivery lanes automatically.",
+      "sources": [
+        {
+          "source_key": "alert_events",
+          "source_object": "ALERT_EVENTS",
+          "required": true,
+          "tier": "core",
+          "target_freshness_minutes": 15,
+          "confidence": "exact"
+        },
+        {
+          "source_key": "action_queue",
+          "source_object": "OVERWATCH_ACTION_QUEUE",
+          "required": true,
+          "tier": "core",
+          "target_freshness_minutes": 15,
+          "confidence": "allocated"
+        },
+        {
+          "source_key": "notification_log",
+          "source_object": "ALERT_NOTIFICATION_LOG",
+          "required": true,
+          "tier": "core",
+          "target_freshness_minutes": 15,
+          "confidence": "exact"
+        },
+        {
+          "source_key": "acknowledgements",
+          "source_object": "ALERT_ACKNOWLEDGEMENTS",
+          "required": false,
+          "tier": "enrichment",
+          "target_freshness_minutes": 15,
+          "confidence": "exact"
+        }
+      ],
+      "metrics": [
+        {
+          "key": "active_alerts",
+          "label": "Active Alerts",
+          "primary": true,
+          "primary_order": 1,
+          "format": "integer",
+          "unit": "alerts",
+          "directionality": "higher_is_worse",
+          "source_key": "alert_events",
+          "availability_policy": "required"
+        },
+        {
+          "key": "critical_high",
+          "label": "Critical / High",
+          "primary": true,
+          "primary_order": 2,
+          "format": "integer",
+          "unit": "alerts",
+          "directionality": "higher_is_worse",
+          "source_key": "alert_events",
+          "availability_policy": "required"
+        },
+        {
+          "key": "overdue_alerts",
+          "label": "Overdue Alerts",
+          "primary": true,
+          "primary_order": 3,
+          "format": "integer",
+          "unit": "alerts",
+          "directionality": "higher_is_worse",
+          "source_key": "alert_events",
+          "availability_policy": "required"
+        },
+        {
+          "key": "cortex_predictive",
+          "label": "Cortex Predictive",
+          "primary": true,
+          "primary_order": 4,
+          "format": "integer",
+          "unit": "alerts",
+          "directionality": "higher_is_worse",
+          "source_key": "alert_events",
+          "availability_policy": "required"
+        },
+        {
+          "key": "cost_alerts",
+          "label": "Cost Alerts",
+          "primary": false,
+          "primary_order": null,
+          "format": "integer",
+          "unit": "alerts",
+          "directionality": "higher_is_worse",
+          "source_key": "alert_events",
+          "availability_policy": "optional"
+        },
+        {
+          "key": "reliability_alerts",
+          "label": "Reliability Alerts",
+          "primary": false,
+          "primary_order": null,
+          "format": "integer",
+          "unit": "alerts",
+          "directionality": "higher_is_worse",
+          "source_key": "alert_events",
+          "availability_policy": "optional"
+        },
+        {
+          "key": "security_alerts",
+          "label": "Security Alerts",
+          "primary": false,
+          "primary_order": null,
+          "format": "integer",
+          "unit": "alerts",
+          "directionality": "higher_is_worse",
+          "source_key": "alert_events",
+          "availability_policy": "optional"
+        },
+        {
+          "key": "notification_failures",
+          "label": "Notification Failures",
+          "primary": false,
+          "primary_order": null,
+          "format": "integer",
+          "unit": "events",
+          "directionality": "higher_is_worse",
+          "source_key": "notification_log",
+          "availability_policy": "optional"
+        },
+        {
+          "key": "unassigned_alerts",
+          "label": "Unassigned Alerts",
+          "primary": false,
+          "primary_order": null,
+          "format": "integer",
+          "unit": "alerts",
+          "directionality": "higher_is_worse",
+          "source_key": "alert_events",
+          "availability_policy": "optional"
+        },
+        {
+          "key": "open_action_queue",
+          "label": "Open Action Queue",
+          "primary": false,
+          "primary_order": null,
+          "format": "integer",
+          "unit": "actions",
+          "directionality": "higher_is_worse",
+          "source_key": "action_queue",
+          "availability_policy": "optional"
+        }
+      ],
+      "actions": [
+        {
+          "action_key": "open_cortex_predictive",
+          "route_key": "alert_cortex_predictive",
+          "label": "Open Cortex Predictive",
+          "detail": "Review forecasted Cortex spend and anomaly alerts.",
+          "target_section": "Alert Center",
+          "target_workflow": "Cortex Predictive Alerts",
+          "fallback_order": 10
+        },
+        {
+          "action_key": "review_security_alerts",
+          "route_key": "alert_center_security",
+          "label": "Review Security Alerts",
+          "detail": "Open security alert family and access-risk routes.",
+          "target_section": "Alert Center",
+          "target_workflow": "Security Alerts",
+          "fallback_order": 20
+        },
+        {
+          "action_key": "review_critical_high",
+          "route_key": "alert_center_critical_high",
+          "label": "Review Critical / High",
+          "detail": "Open the highest-severity active alert family.",
+          "target_section": "Alert Center",
+          "target_workflow": "Critical / High",
+          "fallback_order": 30
+        }
+      ]
+    },
+    {
+      "section": "Cost & Contract",
+      "default_workflow": "Cost Overview",
+      "default_window_days": 7,
+      "target_freshness_minutes": 60,
+      "source_table": "MART_SECTION_COMMAND_BRIEF",
+      "detail_cta": "Refresh Cost",
+      "top_signal_label": "Top cost signal",
+      "top_signal_detail": "Review the largest movement or Cortex risk before loading detailed cost explorer rows.",
+      "unavailable_headline": "Cost command brief needs cost summary telemetry.",
+      "unavailable_summary": "Enable cost summary marts to populate spend, run-rate, Cortex AI cost, predictive alerts, budget risk, top driver, and savings actions automatically.",
+      "sources": [
+        {
+          "source_key": "cost_daily",
+          "source_object": "FACT_COST_DAILY",
+          "required": true,
+          "tier": "core",
+          "target_freshness_minutes": 60,
+          "confidence": "allocated"
+        },
+        {
+          "source_key": "cortex_daily",
+          "source_object": "FACT_CORTEX_DAILY",
+          "required": true,
+          "tier": "core",
+          "target_freshness_minutes": 60,
+          "confidence": "estimated"
+        },
+        {
+          "source_key": "cost_signals",
+          "source_object": "FACT_COST_MONITORING_SIGNAL",
+          "required": true,
+          "tier": "core",
+          "target_freshness_minutes": 60,
+          "confidence": "allocated"
+        },
+        {
+          "source_key": "forecast",
+          "source_object": "MART_EXECUTIVE_FORECAST_SUMMARY",
+          "required": false,
+          "tier": "enrichment",
+          "target_freshness_minutes": 60,
+          "confidence": "estimated"
+        },
+        {
+          "source_key": "value_ledger",
+          "source_object": "MART_EXECUTIVE_VALUE_LEDGER",
+          "required": false,
+          "tier": "enrichment",
+          "target_freshness_minutes": 60,
+          "confidence": "allocated"
+        },
+        {
+          "source_key": "settings",
+          "source_object": "OVERWATCH_SETTINGS",
+          "required": true,
+          "tier": "core",
+          "target_freshness_minutes": 60,
+          "confidence": "exact"
+        }
+      ],
+      "metrics": [
+        {
+          "key": "total_spend",
+          "label": "Total Spend",
+          "primary": true,
+          "primary_order": 1,
+          "format": "currency",
+          "unit": "USD",
+          "directionality": "higher_is_worse",
+          "source_key": "cost_daily",
+          "availability_policy": "required"
+        },
+        {
+          "key": "spend_movement_pct",
+          "label": "Spend Movement",
+          "primary": true,
+          "primary_order": 2,
+          "format": "percentage",
+          "unit": "percent",
+          "directionality": "higher_is_worse",
+          "source_key": "cost_daily",
+          "availability_policy": "required"
+        },
+        {
+          "key": "forecast_run_rate",
+          "label": "Forecast / Run-rate",
+          "primary": true,
+          "primary_order": 3,
+          "format": "currency",
+          "unit": "USD",
+          "directionality": "higher_is_worse",
+          "source_key": "forecast",
+          "availability_policy": "required"
+        },
+        {
+          "key": "cortex_spend_share",
+          "label": "Cortex Spend Share",
+          "primary": true,
+          "primary_order": 4,
+          "format": "percentage",
+          "unit": "percent",
+          "directionality": "higher_is_worse",
+          "source_key": "cortex_daily",
+          "availability_policy": "required"
+        },
+        {
+          "key": "cortex_spend",
+          "label": "Cortex AI Spend",
+          "primary": false,
+          "primary_order": null,
+          "format": "currency",
+          "unit": "USD",
+          "directionality": "higher_is_worse",
+          "source_key": "cortex_daily",
+          "availability_policy": "optional"
+        },
+        {
+          "key": "cortex_predictive_alerts",
+          "label": "Cortex Predictive Alerts",
+          "primary": false,
+          "primary_order": null,
+          "format": "integer",
+          "unit": "alerts",
+          "directionality": "higher_is_worse",
+          "source_key": "cortex_daily",
+          "availability_policy": "optional"
+        },
+        {
+          "key": "budget_contract_risk",
+          "label": "Budget / Contract Risk",
+          "primary": false,
+          "primary_order": null,
+          "format": "integer",
+          "unit": "signals",
+          "directionality": "higher_is_worse",
+          "source_key": "cost_daily",
+          "availability_policy": "optional"
+        },
+        {
+          "key": "top_cost_driver",
+          "label": "Top Cost Driver",
+          "primary": false,
+          "primary_order": null,
+          "format": "text",
+          "unit": "driver",
+          "directionality": "neutral",
+          "source_key": "cost_daily",
+          "availability_policy": "optional"
+        },
+        {
+          "key": "verified_savings",
+          "label": "Verified Savings",
+          "primary": false,
+          "primary_order": null,
+          "format": "currency",
+          "unit": "USD",
+          "directionality": "higher_is_better",
+          "source_key": "cost_daily",
+          "availability_policy": "optional"
+        },
+        {
+          "key": "unverified_savings",
+          "label": "Unverified Savings",
+          "primary": false,
+          "primary_order": null,
+          "format": "currency",
+          "unit": "USD",
+          "directionality": "higher_is_worse",
+          "source_key": "cost_daily",
+          "availability_policy": "optional"
+        },
+        {
+          "key": "open_cost_actions",
+          "label": "Open Cost Actions",
+          "primary": false,
+          "primary_order": null,
+          "format": "integer",
+          "unit": "actions",
+          "directionality": "higher_is_worse",
+          "source_key": "cost_daily",
+          "availability_policy": "optional"
+        }
+      ],
+      "actions": [
+        {
+          "action_key": "review_cortex_ai_costs",
+          "route_key": "cost_contract_cortex_ai",
+          "label": "Review Cortex AI Costs",
+          "detail": "Open Cortex spend, forecast, top drivers, and predictive alerts.",
+          "target_section": "Cost & Contract",
+          "target_workflow": "Cortex AI",
+          "fallback_order": 10
+        },
+        {
+          "action_key": "open_warehouse_drivers",
+          "route_key": "cost_contract_explorer_warehouse",
+          "label": "Open Warehouse Drivers",
+          "detail": "Open Cost Explorer by warehouse without loading detail rows.",
+          "target_section": "Cost & Contract",
+          "target_workflow": "Cost Explorer",
+          "fallback_order": 20
+        },
+        {
+          "action_key": "check_budget_risk",
+          "route_key": "cost_contract_budget",
+          "label": "Check Budget Risk",
+          "detail": "Open budget, allocation, and contract posture.",
+          "target_section": "Cost & Contract",
+          "target_workflow": "Budget vs Actual",
+          "fallback_order": 30
+        }
+      ]
+    },
+    {
+      "section": "Workload Operations",
+      "default_workflow": "Workload Overview",
+      "default_window_days": 7,
+      "target_freshness_minutes": 30,
+      "source_table": "MART_SECTION_COMMAND_BRIEF",
+      "detail_cta": "Open the right tool",
+      "top_signal_label": "Top workload action",
+      "top_signal_detail": "Open the owning investigation workflow, then load detail only for the selected incident.",
+      "unavailable_headline": "Workload command brief needs workload summary telemetry.",
+      "unavailable_summary": "Enable workload/reliability summary marts to populate failed SQL, failed tasks, pipeline risk, queue pressure, and recent changes automatically.",
+      "sources": [
+        {
+          "source_key": "query_hourly",
+          "source_object": "FACT_QUERY_HOURLY",
+          "required": true,
+          "tier": "core",
+          "target_freshness_minutes": 30,
+          "confidence": "allocated"
+        },
+        {
+          "source_key": "query_recent",
+          "source_object": "FACT_QUERY_DETAIL_RECENT",
+          "required": false,
+          "tier": "enrichment",
+          "target_freshness_minutes": 30,
+          "confidence": "allocated"
+        },
+        {
+          "source_key": "task_runs",
+          "source_object": "FACT_TASK_RUN",
+          "required": true,
+          "tier": "core",
+          "target_freshness_minutes": 30,
+          "confidence": "allocated"
+        },
+        {
+          "source_key": "procedure_runs",
+          "source_object": "FACT_PROCEDURE_RUN",
+          "required": true,
+          "tier": "core",
+          "target_freshness_minutes": 30,
+          "confidence": "allocated"
+        },
+        {
+          "source_key": "copy_load",
+          "source_object": "FACT_COPY_LOAD_DAILY",
+          "required": true,
+          "tier": "core",
+          "target_freshness_minutes": 30,
+          "confidence": "allocated"
+        },
+        {
+          "source_key": "change_summary",
+          "source_object": "MART_CHANGE_INTELLIGENCE_SUMMARY",
+          "required": false,
+          "tier": "enrichment",
+          "target_freshness_minutes": 30,
+          "confidence": "allocated"
+        }
+      ],
+      "metrics": [
+        {
+          "key": "failed_queries",
+          "label": "Failed Queries",
+          "primary": true,
+          "primary_order": 1,
+          "format": "integer",
+          "unit": "queries",
+          "directionality": "higher_is_worse",
+          "source_key": "query_hourly",
+          "availability_policy": "required"
+        },
+        {
+          "key": "pipeline_failures",
+          "label": "Pipeline Failures",
+          "primary": true,
+          "primary_order": 2,
+          "format": "integer",
+          "unit": "events",
+          "directionality": "higher_is_worse",
+          "source_key": "query_hourly",
+          "availability_policy": "required"
+        },
+        {
+          "key": "queue_blocked_pressure",
+          "label": "Queue / Blocked Pressure",
+          "primary": true,
+          "primary_order": 3,
+          "format": "duration",
+          "unit": "seconds",
+          "directionality": "higher_is_worse",
+          "source_key": "query_hourly",
+          "availability_policy": "required"
+        },
+        {
+          "key": "sla_risk",
+          "label": "SLA Risk",
+          "primary": true,
+          "primary_order": 4,
+          "format": "integer",
+          "unit": "items",
+          "directionality": "higher_is_worse",
+          "source_key": "query_hourly",
+          "availability_policy": "required"
+        },
+        {
+          "key": "spill_bytes",
+          "label": "Spill Bytes",
+          "primary": false,
+          "primary_order": null,
+          "format": "bytes",
+          "unit": "bytes",
+          "directionality": "higher_is_worse",
+          "source_key": "query_hourly",
+          "availability_policy": "optional"
+        },
+        {
+          "key": "long_running_queries",
+          "label": "Long Running Queries",
+          "primary": false,
+          "primary_order": null,
+          "format": "integer",
+          "unit": "queries",
+          "directionality": "higher_is_worse",
+          "source_key": "query_hourly",
+          "availability_policy": "optional"
+        },
+        {
+          "key": "hottest_warehouse",
+          "label": "Hottest Warehouse",
+          "primary": false,
+          "primary_order": null,
+          "format": "text",
+          "unit": "warehouse",
+          "directionality": "neutral",
+          "source_key": "query_hourly",
+          "availability_policy": "optional"
+        },
+        {
+          "key": "recent_workload_changes",
+          "label": "Recent Workload Changes",
+          "primary": false,
+          "primary_order": null,
+          "format": "integer",
+          "unit": "changes",
+          "directionality": "higher_is_worse",
+          "source_key": "query_recent",
+          "availability_policy": "optional"
+        },
+        {
+          "key": "suspended_tasks",
+          "label": "Suspended Tasks",
+          "primary": false,
+          "primary_order": null,
+          "format": "integer",
+          "unit": "tasks",
+          "directionality": "higher_is_worse",
+          "source_key": "query_hourly",
+          "availability_policy": "optional"
+        },
+        {
+          "key": "copy_load_failures",
+          "label": "Copy / Load Failures",
+          "primary": false,
+          "primary_order": null,
+          "format": "integer",
+          "unit": "events",
+          "directionality": "higher_is_worse",
+          "source_key": "copy_load",
+          "availability_policy": "optional"
+        }
+      ],
+      "actions": [
+        {
+          "action_key": "query_investigation",
+          "route_key": "workload_query_investigation",
+          "label": "Query Investigation",
+          "detail": "Open SQL history, diagnosis, and top SQL routes.",
+          "target_section": "Workload Operations",
+          "target_workflow": "Query Investigation",
+          "fallback_order": 10
+        },
+        {
+          "action_key": "pipeline_tasks",
+          "route_key": "workload_pipeline_tasks",
+          "label": "Pipeline & Tasks",
+          "detail": "Open failed tasks, procedures, copy/load, and SLA risk.",
+          "target_section": "Workload Operations",
+          "target_workflow": "Pipeline & Task Health",
+          "fallback_order": 20
+        },
+        {
+          "action_key": "performance_pressure",
+          "route_key": "workload_performance",
+          "label": "Performance Pressure",
+          "detail": "Open queue, blocked, spilling, and warehouse pressure lanes.",
+          "target_section": "Workload Operations",
+          "target_workflow": "Performance & Contention",
+          "fallback_order": 30
+        }
+      ]
+    },
+    {
+      "section": "Security Monitoring",
+      "default_workflow": "Security Overview",
+      "default_window_days": 30,
+      "target_freshness_minutes": 60,
+      "source_table": "MART_SECTION_COMMAND_BRIEF",
+      "detail_cta": "Refresh Security Summary",
+      "top_signal_label": "Top security action",
+      "top_signal_detail": "Review the most exposed identity, grant, sharing, or access-change signal before loading proof tables.",
+      "unavailable_headline": "Security command brief needs security summary telemetry.",
+      "unavailable_summary": "Enable security summary marts to populate failed logins, risky grants, sharing, access changes, alerts, and the top security action automatically.",
+      "sources": [
+        {
+          "source_key": "security_operability",
+          "source_object": "FACT_SECURITY_OPERABILITY_DAILY",
+          "required": true,
+          "tier": "core",
+          "target_freshness_minutes": 60,
+          "confidence": "allocated"
+        },
+        {
+          "source_key": "login_daily",
+          "source_object": "FACT_LOGIN_DAILY",
+          "required": true,
+          "tier": "core",
+          "target_freshness_minutes": 60,
+          "confidence": "allocated"
+        },
+        {
+          "source_key": "grant_daily",
+          "source_object": "FACT_GRANT_DAILY",
+          "required": true,
+          "tier": "core",
+          "target_freshness_minutes": 60,
+          "confidence": "allocated"
+        },
+        {
+          "source_key": "security_alerts",
+          "source_object": "ALERT_EVENTS",
+          "required": true,
+          "tier": "core",
+          "target_freshness_minutes": 60,
+          "confidence": "allocated"
+        },
+        {
+          "source_key": "owner_coverage",
+          "source_object": "MART_OPERATIONAL_OWNER_COVERAGE",
+          "required": true,
+          "tier": "core",
+          "target_freshness_minutes": 60,
+          "confidence": "allocated"
+        },
+        {
+          "source_key": "change_summary",
+          "source_object": "MART_CHANGE_INTELLIGENCE_SUMMARY",
+          "required": false,
+          "tier": "enrichment",
+          "target_freshness_minutes": 60,
+          "confidence": "allocated"
+        }
+      ],
+      "metrics": [
+        {
+          "key": "failed_logins",
+          "label": "Failed Logins",
+          "primary": true,
+          "primary_order": 1,
+          "format": "integer",
+          "unit": "logins",
+          "directionality": "higher_is_worse",
+          "source_key": "security_operability",
+          "availability_policy": "required"
+        },
+        {
+          "key": "mfa_gaps",
+          "label": "MFA Gaps",
+          "primary": true,
+          "primary_order": 2,
+          "format": "integer",
+          "unit": "users",
+          "directionality": "higher_is_worse",
+          "source_key": "security_operability",
+          "availability_policy": "required"
+        },
+        {
+          "key": "risky_grants",
+          "label": "Risky Grants",
+          "primary": true,
+          "primary_order": 3,
+          "format": "integer",
+          "unit": "grants",
+          "directionality": "higher_is_worse",
+          "source_key": "security_operability",
+          "availability_policy": "required"
+        },
+        {
+          "key": "sharing_exposure",
+          "label": "Sharing Exposure",
+          "primary": true,
+          "primary_order": 4,
+          "format": "integer",
+          "unit": "databases",
+          "directionality": "higher_is_worse",
+          "source_key": "security_operability",
+          "availability_policy": "required"
+        },
+        {
+          "key": "privilege_changes",
+          "label": "Privilege Changes",
+          "primary": false,
+          "primary_order": null,
+          "format": "integer",
+          "unit": "changes",
+          "directionality": "higher_is_worse",
+          "source_key": "security_operability",
+          "availability_policy": "optional"
+        },
+        {
+          "key": "security_alerts",
+          "label": "Security Alerts",
+          "primary": false,
+          "primary_order": null,
+          "format": "integer",
+          "unit": "alerts",
+          "directionality": "higher_is_worse",
+          "source_key": "security_operability",
+          "availability_policy": "optional"
+        },
+        {
+          "key": "access_changes",
+          "label": "Access Changes",
+          "primary": false,
+          "primary_order": null,
+          "format": "integer",
+          "unit": "changes",
+          "directionality": "higher_is_worse",
+          "source_key": "security_operability",
+          "availability_policy": "optional"
+        },
+        {
+          "key": "unassigned_findings",
+          "label": "Unassigned Findings",
+          "primary": false,
+          "primary_order": null,
+          "format": "integer",
+          "unit": "findings",
+          "directionality": "higher_is_worse",
+          "source_key": "security_operability",
+          "availability_policy": "optional"
+        },
+        {
+          "key": "overdue_security_actions",
+          "label": "Overdue Security Actions",
+          "primary": false,
+          "primary_order": null,
+          "format": "integer",
+          "unit": "actions",
+          "directionality": "higher_is_worse",
+          "source_key": "security_operability",
+          "availability_policy": "optional"
+        },
+        {
+          "key": "owner_coverage",
+          "label": "Owner Coverage",
+          "primary": false,
+          "primary_order": null,
+          "format": "percentage",
+          "unit": "percent",
+          "directionality": "lower_is_worse",
+          "source_key": "owner_coverage",
+          "availability_policy": "optional"
+        }
+      ],
+      "actions": [
+        {
+          "action_key": "refresh_security_summary",
+          "route_key": "security_risky_grants",
+          "label": "Refresh Security Summary",
+          "detail": "Force-refresh compact security counts when needed.",
+          "target_section": "Security Monitoring",
+          "target_workflow": "Security Overview",
+          "fallback_order": 10
+        },
+        {
+          "action_key": "review_risky_grants",
+          "route_key": "security_access_changes",
+          "label": "Review Risky Grants",
+          "detail": "Open grants, role scope, and ownership exposure.",
+          "target_section": "Security Monitoring",
+          "target_workflow": "Risky Grants",
+          "fallback_order": 20
+        },
+        {
+          "action_key": "review_access_changes",
+          "route_key": "security_failed_logins",
+          "label": "Review Access Changes",
+          "detail": "Open recent grants, revokes, role changes, and admin changes.",
+          "target_section": "Security Monitoring",
+          "target_workflow": "Access Changes",
+          "fallback_order": 30
+        }
+      ]
+    }
+  ]
+}

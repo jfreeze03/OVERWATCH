@@ -10,7 +10,7 @@ import re
 
 import streamlit as st
 
-from sections.command_brief_routes import apply_command_brief_route
+from sections.command_brief_routes import COMMAND_BRIEF_ROUTES, apply_command_brief_route
 from sections.section_command_brief import SectionCommandAction, SectionCommandBrief, SectionCommandMetric
 
 
@@ -120,15 +120,43 @@ def _sparkline(points: tuple[object, ...]) -> str:
     )
 
 
+def _visible_metrics(brief: SectionCommandBrief, *, limit: int = 4) -> tuple[SectionCommandMetric, ...]:
+    available = tuple(metric for metric in tuple(brief.metrics or ()) if metric.available)
+    primary = tuple(metric for metric in available if metric.sort_order < 100 or metric.key in {
+        "platform_health",
+        "spend_movement_pct",
+        "critical_high_issues",
+        "open_actions",
+        "failed_queries",
+        "pipeline_failures",
+        "queue_pressure",
+        "cost_24h",
+        "active_alerts",
+        "critical_high",
+        "overdue_alerts",
+        "cortex_predictive",
+        "total_spend",
+        "forecast_run_rate",
+        "cortex_spend_share",
+        "queue_blocked_pressure",
+        "sla_risk",
+        "failed_logins",
+        "mfa_gaps",
+        "risky_grants",
+        "sharing_exposure",
+    })
+    return (primary or available)[:limit]
+
+
 def _metric_ribbon_html(brief: SectionCommandBrief, *, compact: bool) -> str:
     if compact:
         return ""
     rows: list[str] = []
-    for metric in tuple(brief.metrics or ())[:4]:
+    for metric in _visible_metrics(brief, limit=4):
         tone = _html(metric.tone or "neutral").lower()
         delta = _delta_label(metric)
         rows.append(
-            f'<article class="ow-decision-metric" data-tone="{tone}">'
+            f'<article class="ow-decision-metric" data-tone="{tone}" data-availability="{_html(metric.availability_state)}">'
             f'<span>{_html(metric.label)}</span>'
             f'<strong>{_html(format_command_metric(metric))}</strong>'
             f'<small class="ow-decision-delta">{_html(delta)}</small>'
@@ -147,19 +175,39 @@ def _priority_list_html(brief: SectionCommandBrief, *, compact: bool) -> str:
         if item.impact_value is not None:
             impact = f"{_compact_number(item.impact_value)} {item.impact_unit}".strip()
         owner = item.owner_route or ("Owner gap" if item.owner_gap else "Owner route")
+        age_sla = []
+        if item.age_minutes is not None:
+            age_sla.append(f"{int(round(float(item.age_minutes)))}m old")
+        if item.sla_state:
+            age_sla.append(item.sla_state)
         rows.append(
             '<div class="ow-decision-priority-row">'
             f'<span class="ow-decision-severity">{_html(item.severity)}</span>'
-            f'<strong>{_html(item.signal)}</strong>'
-            f'<span>{_html(item.entity)}</span>'
+            f'<div class="ow-decision-finding-main"><strong>{_html(item.signal)}</strong><span>{_html(item.entity)}</span></div>'
             f'<span class="ow-decision-impact">{_html(impact)}</span>'
             f'<span class="ow-decision-owner">{_html(owner)}</span>'
+            f'<span class="ow-decision-sla">{_html(" / ".join(age_sla))}</span>'
             f'<small>{_html(item.detail)}</small>'
             '</div>'
         )
     if not rows:
+        if (brief.state or "").strip().lower() in {"healthy", "clear", "summary loaded"}:
+            return (
+                '<h4 class="ow-decision-section-label">What needs attention</h4>'
+                '<section class="ow-decision-priority-list" aria-label="Priority findings">'
+                '<div class="ow-decision-priority-row ow-decision-clear-row">'
+                '<span class="ow-decision-severity">Clear</span>'
+                '<div class="ow-decision-finding-main"><strong>No exception above threshold</strong>'
+                '<span>Continue monitoring freshness and load detail only when proof is needed.</span></div>'
+                '</div></section>'
+            )
         return ""
-    return '<section class="ow-decision-priority-list" aria-label="Priority findings">' + "".join(rows) + "</section>"
+    return (
+        '<h4 class="ow-decision-section-label">What needs attention</h4>'
+        '<section class="ow-decision-priority-list" aria-label="Priority findings">'
+        + "".join(rows)
+        + "</section>"
+    )
 
 
 def _data_trust_summary(brief: SectionCommandBrief) -> str:
@@ -215,20 +263,18 @@ def _trust_detail_html(brief: SectionCommandBrief) -> str:
 
 def _render_fallback(brief: SectionCommandBrief, *, key_prefix: str, detail_action: CommandBriefDetailAction | None) -> None:
     st.html(
-        '<section class="ow-decision-brief ow-decision-fallback" role="region" aria-label="Decision brief unavailable">'
-        '<div class="ow-decision-status" data-state="data-gap">'
-        '<span>Data Gap</span>'
-        f'<strong>{_html(brief.headline)}</strong>'
-        f'<p>{_html(brief.fallback_reason or brief.summary)}</p>'
+        '<section class="ow-decision-brief ow-decision-fallback ow-decision-operating-loop" '
+        'role="region" aria-label="Decision brief unavailable">'
+        '<div class="ow-decision-loop-header" data-state="data-gap">'
+        '<strong>SUMMARY UNAVAILABLE</strong>'
+        f'<span>{_html(_data_trust_summary(brief))}</span>'
         '</div>'
-        '<section class="ow-decision-priority-list" aria-label="Unavailable summary">'
-        '<div class="ow-decision-priority-row">'
-        '<span class="ow-decision-severity">Setup</span>'
-        f'<strong>{_html(brief.top_signal.signal if brief.top_signal else "Command mart unavailable")}</strong>'
-        f'<span>{_html(brief.company)} / {_html(brief.environment)} / {_html(brief.window_label)}</span>'
-        f'<small>{_html(brief.source_gap_detail or "Refresh the command brief mart or review deployment status.")}</small>'
-        '</div></section>'
-        f'<div class="ow-decision-trust">{_html(_data_trust_summary(brief))}</div>'
+        f'<p class="ow-decision-loop-summary">{_html(brief.fallback_reason or brief.summary)}</p>'
+        '<div class="ow-decision-diagnostics-panel">'
+        f'<strong>{_html(brief.company)} / {_html(brief.environment)} / {_html(brief.window_label)}</strong>'
+        f'<span>{_html(brief.source_gap_detail or "Refresh the command mart or review deployment status.")}</span>'
+        f'<small>{_html(_data_trust_summary(brief))}</small>'
+        '</div>'
         '</section>'
     )
     if detail_action is not None:
@@ -239,6 +285,33 @@ def _route_action(action: SectionCommandAction) -> bool:
     if action.route_key:
         return apply_command_brief_route(action.route_key)
     return False
+
+
+def dedupe_command_actions(
+    actions: tuple[SectionCommandAction, ...] | list[SectionCommandAction],
+    current_section: str,
+    current_workflow: str = "",
+) -> tuple[SectionCommandAction, ...]:
+    """Return one primary and up to two secondary safe route actions."""
+    selected: list[SectionCommandAction] = []
+    seen_routes: set[str] = set()
+    for action in tuple(actions or ()):
+        route_key = str(action.route_key or "").strip()
+        if not route_key or route_key in seen_routes or route_key not in COMMAND_BRIEF_ROUTES:
+            continue
+        route = COMMAND_BRIEF_ROUTES[route_key]
+        if (
+            route.section == current_section
+            and current_workflow
+            and route.workflow
+            and route.workflow == current_workflow
+        ):
+            continue
+        selected.append(action)
+        seen_routes.add(route_key)
+        if len(selected) == 3:
+            break
+    return tuple(selected)
 
 
 def _render_action_row(
@@ -253,7 +326,7 @@ def _render_action_row(
         if detail_action is not None:
             _render_detail_action(key_prefix=key_prefix, detail_action=detail_action)
         return
-    actions = tuple(brief.next_actions or ())[:3]
+    actions = dedupe_command_actions(tuple(brief.next_actions or ()), brief.section)
     secondary_count = max(min(len(actions) - 1, 2), 0)
     cols = st.columns(1 + secondary_count + (1 if detail_action is not None else 0))
     if actions:
@@ -310,28 +383,30 @@ def render_section_command_brief(
     state = "data-gap" if brief.missing_source_count else ("stale" if brief.stale else str(brief.state or "Watch").lower())
     metric_body = _metric_ribbon_html(brief, compact=compact)
     priority_body = _priority_list_html(brief, compact=compact)
-    trend_metric = next((metric for metric in brief.metrics if metric.trend_points), None)
+    trend_metric = next((metric for metric in _visible_metrics(brief, limit=4) if metric.trend_points), None)
     trend_body = ""
     if trend_metric is not None and not compact:
         trend_body = (
             '<section class="ow-decision-what-changed" aria-label="What changed">'
-            f'<strong>What changed</strong><span>{_html(trend_metric.label)}</span>'
+            f'<strong>{_html(brief.window_label)} movement</strong><span>{_html(trend_metric.label)}</span>'
             f'{_sparkline(trend_metric.trend_points)}'
             f'<p>{_html(_delta_label(trend_metric) or trend_metric.detail)}</p>'
             '</section>'
         )
     compact_class = " ow-decision-compact" if compact else ""
     st.html(
-        f'<section class="ow-decision-brief{compact_class}" role="region" aria-label="OVERWATCH Decision Brief">'
-        f'<div class="ow-decision-status" data-state="{_html(state)}">'
-        f'<span>{_html("Data Gap" if brief.missing_source_count else ("Stale" if brief.stale else brief.state))}</span>'
-        f'<strong>{_html(brief.headline)}</strong>'
-        f'<p class="ow-decision-narrative">{_html(brief.summary)}</p>'
-        f'<small class="ow-decision-freshness">{_html(_data_trust_summary(brief))}</small>'
+        f'<section class="ow-decision-brief ow-decision-operating-loop{compact_class}" role="region" '
+        'aria-label="OVERWATCH Decision Brief">'
+        f'<div class="ow-decision-loop-header" data-state="{_html(state)}">'
+        f'<strong>{_html(brief.section.upper())} · {_html("DATA GAP" if brief.missing_source_count else ("STALE" if brief.stale else brief.state.upper()))}</strong>'
+        f'<span>{_html(_data_trust_summary(brief))}</span>'
         '</div>'
-        f'<div class="ow-decision-metric-ribbon">{metric_body}</div>'
+        f'<p class="ow-decision-loop-headline">{_html(brief.headline)}</p>'
+        f'<p class="ow-decision-loop-summary">{_html(brief.summary)}</p>'
+        f'<div class="ow-decision-metric-ribbon" aria-label="Decision metrics">{metric_body}</div>'
         f'{trend_body}'
         f'{priority_body}'
+        f'<div class="ow-decision-loop-footer">{_html(_data_trust_summary(brief))}</div>'
         '</section>'
     )
     _render_action_row(
@@ -346,11 +421,17 @@ def render_section_command_brief(
     if not compact and len(tuple(brief.metrics or ())) > 4:
         extra = "".join(
             f'<div class="ow-decision-extra-metric"><strong>{_html(metric.label)}</strong>'
-            f'<span>{_html(format_command_metric(metric))}</span><small>{_html(metric.detail)}</small></div>'
-            for metric in tuple(brief.metrics or ())[4:]
+            f'<span>{_html(format_command_metric(metric) if metric.available else metric.availability_state)}</span>'
+            f'<small>{_html(metric.detail or metric.unavailable_reason)}</small></div>'
+            for metric in tuple(brief.metrics or ()) if metric not in _visible_metrics(brief, limit=4)
         )
         with st.expander("Additional brief metrics", expanded=False):
             st.html(f'<div class="ow-decision-extra-metrics">{extra}</div>')
 
 
-__all__ = ["CommandBriefDetailAction", "format_command_metric", "render_section_command_brief"]
+__all__ = [
+    "CommandBriefDetailAction",
+    "dedupe_command_actions",
+    "format_command_metric",
+    "render_section_command_brief",
+]

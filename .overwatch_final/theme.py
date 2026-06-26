@@ -1185,6 +1185,60 @@ code, pre, .stCodeBlock {
     margin: 0.58rem 0 0.82rem;
     overflow: hidden;
 }
+.ow-decision-operating-loop {
+    background:
+        linear-gradient(135deg, rgba(var(--accent-rgb), 0.11), transparent 42%),
+        linear-gradient(180deg, color-mix(in srgb, var(--bg-card) 92%, black 8%), var(--bg-panel));
+}
+.ow-decision-loop-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    border-left: 4px solid var(--accent);
+    border-bottom: 1px solid var(--border-subtle);
+    padding: 0.72rem 0.88rem;
+}
+.ow-decision-loop-header[data-state="data-gap"],
+.ow-decision-loop-header[data-state="stale"],
+.ow-decision-loop-header[data-state="warning"],
+.ow-decision-loop-header[data-state="watch"] {
+    border-left-color: #fbbf24;
+}
+.ow-decision-loop-header strong {
+    color: var(--text-primary);
+    font-size: 0.86rem;
+    font-weight: 950;
+    letter-spacing: 0.03em;
+    line-height: 1.2;
+    text-transform: uppercase;
+    overflow-wrap: anywhere;
+}
+.ow-decision-loop-header span,
+.ow-decision-loop-footer {
+    color: var(--text-secondary);
+    font-size: 0.72rem;
+    line-height: 1.35;
+    text-align: right;
+    overflow-wrap: anywhere;
+}
+.ow-decision-loop-headline {
+    color: var(--text-primary);
+    font-size: 1.04rem;
+    font-weight: 900;
+    line-height: 1.32;
+    margin: 0;
+    padding: 0.72rem 0.88rem 0.12rem;
+    overflow-wrap: anywhere;
+}
+.ow-decision-loop-summary {
+    color: var(--text-secondary);
+    font-size: 0.86rem;
+    line-height: 1.45;
+    margin: 0;
+    padding: 0 0.88rem 0.72rem;
+    overflow-wrap: anywhere;
+}
 .ow-decision-status {
     display: grid;
     gap: 0.25rem;
@@ -1224,17 +1278,20 @@ code, pre, .stCodeBlock {
 }
 .ow-decision-metric-ribbon {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(9.4rem, 1fr));
-    gap: 0.5rem;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0;
     border-top: 1px solid var(--border-subtle);
-    padding: 0.72rem 0.78rem;
+    border-bottom: 1px solid var(--border-subtle);
+    padding: 0.54rem 0.78rem;
 }
 .ow-decision-metric {
     min-width: 0;
-    border: 1px solid var(--border-subtle);
-    border-radius: 7px;
-    background: rgba(var(--accent-rgb), 0.045);
-    padding: 0.56rem 0.62rem;
+    border-right: 1px solid var(--border-subtle);
+    background: transparent;
+    padding: 0.42rem 0.62rem;
+}
+.ow-decision-metric:last-child {
+    border-right: 0;
 }
 .ow-decision-metric[data-tone="risk"],
 .ow-decision-metric[data-tone="warning"] {
@@ -1279,8 +1336,12 @@ code, pre, .stCodeBlock {
     width: 100%;
 }
 .ow-decision-what-changed {
+    display: grid;
+    grid-template-columns: max-content minmax(6rem, 0.3fr) minmax(7rem, 0.55fr) minmax(0, 1fr);
+    gap: 0.65rem;
+    align-items: center;
     border-top: 1px solid var(--border-subtle);
-    padding: 0.62rem 0.78rem;
+    padding: 0.62rem 0.88rem;
 }
 .ow-decision-what-changed strong {
     color: var(--text-primary);
@@ -1296,19 +1357,39 @@ code, pre, .stCodeBlock {
 .ow-decision-priority-list {
     display: grid;
     gap: 0.4rem;
-    border-top: 1px solid var(--border-subtle);
-    padding: 0.72rem 0.78rem;
+    padding: 0.34rem 0.88rem 0.76rem;
+}
+.ow-decision-section-label {
+    color: var(--text-primary);
+    font-size: 0.72rem;
+    font-weight: 950;
+    letter-spacing: 0.06em;
+    margin: 0;
+    padding: 0.78rem 0.88rem 0.16rem;
+    text-transform: uppercase;
 }
 .ow-decision-priority-row {
     display: grid;
-    grid-template-columns: minmax(4.5rem, 0.55fr) minmax(9rem, 1.1fr) minmax(7rem, 0.9fr) minmax(5rem, 0.65fr) minmax(6rem, 0.75fr);
+    grid-template-columns: minmax(4.2rem, 0.42fr) minmax(12rem, 1.45fr) minmax(6rem, 0.62fr) minmax(7rem, 0.72fr) minmax(5.5rem, 0.58fr);
+    grid-template-areas:
+        "severity finding impact owner sla"
+        "severity detail detail detail detail";
     gap: 0.45rem;
     align-items: start;
     min-width: 0;
-    border: 1px solid var(--border-subtle);
-    border-radius: 7px;
-    background: var(--bg-panel);
-    padding: 0.48rem 0.56rem;
+    border-left: 3px solid rgba(251, 191, 36, 0.72);
+    border-radius: 0;
+    background: color-mix(in srgb, var(--surface-elevated) 72%, transparent);
+    padding: 0.5rem 0.62rem;
+}
+.ow-decision-severity { grid-area: severity; }
+.ow-decision-finding-main { grid-area: finding; }
+.ow-decision-impact { grid-area: impact; }
+.ow-decision-owner { grid-area: owner; }
+.ow-decision-sla { grid-area: sla; }
+.ow-decision-priority-row small { grid-area: detail; }
+.ow-decision-clear-row {
+    border-left-color: var(--accent);
 }
 .ow-decision-priority-row strong,
 .ow-decision-priority-row span {
@@ -1319,8 +1400,33 @@ code, pre, .stCodeBlock {
     overflow-wrap: anywhere;
 }
 .ow-decision-impact,
-.ow-decision-owner {
+.ow-decision-owner,
+.ow-decision-sla {
     color: var(--text-secondary) !important;
+}
+.ow-decision-loop-footer {
+    border-top: 1px solid var(--border-subtle);
+    padding: 0.5rem 0.88rem;
+    text-align: left;
+}
+.ow-decision-diagnostics-panel {
+    display: grid;
+    gap: 0.24rem;
+    margin: 0 0.88rem 0.88rem;
+    padding: 0.68rem 0.76rem;
+    border: 1px solid rgba(251, 191, 36, 0.36);
+    border-radius: 8px;
+    background: rgba(251, 191, 36, 0.08);
+}
+.ow-decision-diagnostics-panel strong {
+    color: var(--text-primary);
+    font-weight: 900;
+}
+.ow-decision-diagnostics-panel span,
+.ow-decision-diagnostics-panel small {
+    color: var(--text-secondary);
+    font-size: 0.76rem;
+    line-height: 1.35;
 }
 .ow-decision-trust-panel,
 .ow-decision-extra-metrics {
@@ -1366,17 +1472,47 @@ code, pre, .stCodeBlock {
 .ow-decision-compact .ow-decision-status {
     padding: 0.62rem 0.78rem;
 }
+.ow-decision-compact .ow-decision-loop-headline {
+    font-size: 0.86rem;
+    padding-bottom: 0.18rem;
+}
+.ow-decision-compact .ow-decision-loop-summary,
+.ow-decision-compact .ow-decision-loop-footer {
+    display: none;
+}
 .ow-decision-compact .ow-decision-metric-ribbon,
 .ow-decision-compact .ow-decision-priority-list,
+.ow-decision-compact .ow-decision-section-label,
 .ow-decision-compact .ow-decision-what-changed {
     display: none;
 }
 @media (max-width: 760px) {
+    .ow-decision-loop-header,
+    .ow-decision-what-changed {
+        grid-template-columns: 1fr;
+        display: grid;
+        text-align: left;
+    }
+    .ow-decision-metric-ribbon {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .ow-decision-metric:nth-child(even) {
+        border-right: 0;
+    }
     .ow-decision-priority-row,
     .ow-decision-trust-detail,
     .ow-decision-extra-metric,
     .ow-decision-source-row {
         grid-template-columns: 1fr;
+        grid-template-areas: none;
+    }
+    .ow-decision-severity,
+    .ow-decision-finding-main,
+    .ow-decision-impact,
+    .ow-decision-owner,
+    .ow-decision-sla,
+    .ow-decision-priority-row small {
+        grid-area: auto;
     }
 }
 .ow-breadcrumb {

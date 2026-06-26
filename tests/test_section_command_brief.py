@@ -19,7 +19,9 @@ class SectionCommandBriefTests(unittest.TestCase):
 
         self.assertEqual(tuple(SECTION_COMMAND_CONTRACTS), PRIMARY_SECTION_TITLES)
         source = (APP_ROOT / "sections" / "section_command_contracts.py").read_text(encoding="utf-8")
+        generated = (APP_ROOT / "sections" / "section_command_contracts_generated.py").read_text(encoding="utf-8")
         self.assertNotIn("import streamlit", source)
+        self.assertNotIn("import streamlit", generated)
         self.assertNotIn("SNOWFLAKE.ACCOUNT_USAGE", source)
         self.assertNotRegex(source, r"\brun_query(?:_or_raise)?\s*\(")
         for section, contract in SECTION_COMMAND_CONTRACTS.items():
@@ -29,6 +31,18 @@ class SectionCommandBriefTests(unittest.TestCase):
                 self.assertTrue(contract.detail_cta)
                 self.assertTrue(contract.source_table)
                 self.assertTrue(contract.next_actions)
+
+    def test_decision_brief_generated_contract_artifacts_are_current(self):
+        import subprocess
+
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "generate_decision_brief_contracts.py"), "--check"],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_loader_uses_mart_rows_and_does_not_require_detail_load(self):
         from sections import section_command_brief as brief_module
@@ -67,10 +81,15 @@ class SectionCommandBriefTests(unittest.TestCase):
             "LOAD_TS": "2026-06-25 10:05:00",
             "METRICS": [
                 {
+                    "METRIC_KEY": "total_spend",
                     "METRIC_LABEL": "Total spend",
                     "METRIC_NUMERIC_VALUE": 120,
                     "METRIC_FORMAT": "currency",
                     "METRIC_DETAIL": "7d",
+                    "IS_AVAILABLE": True,
+                    "AVAILABILITY_STATE": "Available",
+                    "SOURCE_KEY": "cost_daily",
+                    "CONFIDENCE": "allocated",
                     "TREND_POINTS": [
                         {"ts": "2026-06-18", "value": 101},
                         {"ts": "2026-06-25", "value": 120},
@@ -79,12 +98,29 @@ class SectionCommandBriefTests(unittest.TestCase):
                     "SORT_ORDER": 10,
                 },
                 {
+                    "METRIC_KEY": "cortex_spend",
                     "METRIC_LABEL": "Cortex AI spend",
                     "METRIC_NUMERIC_VALUE": 42,
                     "METRIC_FORMAT": "currency",
                     "METRIC_DETAIL": "35%",
                     "METRIC_TONE": "cortex",
+                    "IS_AVAILABLE": True,
+                    "AVAILABILITY_STATE": "Available",
+                    "SOURCE_KEY": "cortex_daily",
+                    "CONFIDENCE": "estimated",
                     "SORT_ORDER": 20,
+                },
+                {
+                    "METRIC_KEY": "forecast_run_rate",
+                    "METRIC_LABEL": "Forecast / Run-rate",
+                    "METRIC_VALUE": "Unavailable",
+                    "METRIC_FORMAT": "currency",
+                    "METRIC_DETAIL": "Forecast mart has no current row",
+                    "IS_AVAILABLE": False,
+                    "AVAILABILITY_STATE": "Unavailable",
+                    "UNAVAILABLE_REASON": "Forecast mart has no current row",
+                    "SOURCE_KEY": "forecast",
+                    "SORT_ORDER": 30,
                 },
             ],
             "EXCEPTIONS": [{
@@ -147,11 +183,16 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertEqual(brief.headline, "Cost movement needs review.")
         self.assertEqual(brief.metrics[0].label, "Total spend")
         self.assertEqual(brief.metrics[0].numeric_value, 120)
+        self.assertTrue(brief.metrics[0].available)
+        self.assertEqual(brief.metrics[0].source_key, "cost_daily")
         self.assertEqual(
             brief.metrics[0].trend_points,
             ({"ts": "2026-06-18", "value": 101.0}, {"ts": "2026-06-25", "value": 120.0}),
         )
-        self.assertEqual(brief.metrics[1].tone, "cortex")
+        metrics_by_key = {metric.key: metric for metric in brief.metrics}
+        self.assertEqual(metrics_by_key["cortex_spend"].tone, "cortex")
+        self.assertFalse(metrics_by_key["forecast_run_rate"].available)
+        self.assertEqual(metrics_by_key["forecast_run_rate"].unavailable_reason, "Forecast mart has no current row")
         self.assertEqual(brief.top_signal.signal, "Cortex AI spend")
         self.assertEqual(brief.top_signal.priority_score, 95)
         self.assertEqual(brief.top_signal.owner_route, "DBA / AI cost route")
@@ -167,6 +208,39 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertEqual(brief.data_availability_state, "Scheduled mart")
         self.assertEqual(brief.command_brief_query_count, 1)
         self.assertEqual(run_query.call_count, 1)
+
+    def test_trust_reconciliation_fails_closed_when_parent_disagrees(self):
+        from sections.section_command_brief import SectionCommandBrief, SectionCommandSourceState, reconcile_decision_brief_trust
+
+        brief = SectionCommandBrief(
+            section="Cost & Contract",
+            company="ALFA",
+            environment="PROD",
+            window_label="7 days",
+            state="Healthy",
+            headline="Cost posture is clear.",
+            summary="Parent row incorrectly claimed all sources were fresh.",
+            source="MART_SECTION_DECISION_CURRENT",
+            freshness_label="Summary loaded",
+            loaded_at="2026-06-25T10:00:00",
+            required_source_count=2,
+            available_source_count=2,
+            missing_source_count=0,
+            source_coverage_pct=100,
+            data_availability_state="Scheduled mart",
+            sources=(
+                SectionCommandSourceState("cost_daily", "FACT_COST_DAILY", True, True, age_minutes=8, target_freshness_minutes=60),
+                SectionCommandSourceState("cortex_daily", "FACT_CORTEX_DAILY", True, False, target_freshness_minutes=60),
+            ),
+        )
+
+        reconciled = reconcile_decision_brief_trust(brief)
+
+        self.assertEqual(reconciled.state, "Data Gap")
+        self.assertEqual(reconciled.missing_source_count, 1)
+        self.assertEqual(reconciled.source_coverage_pct, 50.0)
+        self.assertIn("FACT_CORTEX_DAILY", reconciled.source_gap_detail)
+        self.assertEqual(reconciled.raw_payload["trust_reconciliation"], "parent_packet_disagreed_with_sources")
 
     def test_loader_session_cache_hit_uses_zero_queries(self):
         from sections import section_command_brief as brief_module
@@ -252,7 +326,7 @@ class SectionCommandBriefTests(unittest.TestCase):
             loaded_at="2026-06-25T10:00:00",
             metrics=(SectionCommandMetric("Active alerts", "5"),),
             top_signal=SectionCommandSignal("High", "Critical alerts", "Alert Center", "Review active alerts."),
-            next_actions=(SectionCommandAction("Open Active Alerts", "Route only", "Alert Center", "Active Alerts"),),
+            next_actions=(SectionCommandAction("Open Active Alerts", "Route only", "Alert Center", "Active Alerts", route_key="alert_center_active", cta="Open Active Alerts"),),
             detail_cta="Load Active Alerts",
             detail_available=True,
         )
@@ -279,10 +353,33 @@ class SectionCommandBriefTests(unittest.TestCase):
 
         markup = "\n".join(call.args[0] for call in html.call_args_list)
         self.assertIn("ow-decision-brief", markup)
+        self.assertIn("ow-decision-operating-loop", markup)
+        self.assertIn("WHAT NEEDS ATTENTION".lower(), markup.lower())
         self.assertIn("ow-decision-metric-ribbon", markup)
         labels = [call.args[0] for call in button.call_args_list]
         self.assertIn("Open Active Alerts", labels)
         self.assertIn("Load Active Alerts", labels)
+
+    def test_command_actions_are_deduped_and_unknown_routes_removed(self):
+        from sections.section_command_brief import SectionCommandAction
+        from sections.section_command_rendering import dedupe_command_actions
+
+        actions = (
+            SectionCommandAction("Review Cortex", "Dynamic top action", route_key="cost_contract_cortex_ai", cta="Review Cortex"),
+            SectionCommandAction("Review Cortex Duplicate", "Duplicate", route_key="cost_contract_cortex_ai", cta="Review Cortex Again"),
+            SectionCommandAction("Unknown", "Bad route", route_key="not_real", cta="Bad"),
+            SectionCommandAction("Open Drivers", "Secondary", route_key="cost_contract_explorer_warehouse", cta="Open Drivers"),
+            SectionCommandAction("Check Budget", "Secondary", route_key="cost_contract_budget", cta="Check Budget"),
+            SectionCommandAction("Extra", "Too many", route_key="alert_center_active", cta="Extra"),
+        )
+
+        selected = dedupe_command_actions(actions, "Cost & Contract", "Overview")
+
+        self.assertEqual([action.route_key for action in selected], [
+            "cost_contract_cortex_ai",
+            "cost_contract_explorer_warehouse",
+            "cost_contract_budget",
+        ])
 
     def test_primary_sections_import_command_brief_path(self):
         required = {
@@ -328,6 +425,10 @@ class SectionCommandBriefTests(unittest.TestCase):
             "SOURCE_SNAPSHOT_TS",
             "FRESHNESS_MINUTES",
             "METRIC_NUMERIC_VALUE",
+            "IS_AVAILABLE",
+            "AVAILABILITY_STATE",
+            "UNAVAILABLE_REASON",
+            "SOURCE_KEY",
             "TREND_POINTS",
             "PRIORITY_SCORE",
             "SOURCE_COVERAGE_PCT",
@@ -337,6 +438,10 @@ class SectionCommandBriefTests(unittest.TestCase):
         ):
             self.assertIn(token, tables)
         self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS()", procs)
+        self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST()", procs)
+        self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL()", procs)
+        self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS()", procs)
+        self.assertIn("TMP_DECISION_SOURCE_WATERMARK", procs)
         self.assertIn("MART_SECTION_COMMAND_BRIEF", procs)
         self.assertIn("MART_SECTION_COMMAND_METRIC", procs)
         self.assertIn("MART_SECTION_COMMAND_EXCEPTION", procs)
@@ -368,12 +473,17 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertIn("SCHEDULE = '15 MINUTE'", tasks)
         self.assertIn("ALLOW_OVERLAPPING_EXECUTION = FALSE", tasks)
         self.assertIn("CALL SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS()", validation)
+        self.assertIn("CALL SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST()", validation)
+        self.assertIn("CALL SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS()", validation)
+        self.assertIn("SECTION_COMMAND_BRIEF_METRIC_AVAILABILITY", validation)
         self.assertIn("SECTION_DECISION_CURRENT_PACKET_COVERAGE", validation)
         self.assertIn("SECTION_COMMAND_SOURCE_ROWS", validation)
         self.assertIn("SECTION_COMMAND_BRIEF_ORPHAN_CHILD_ROWS", validation)
         self.assertIn("SECTION_COMMAND_BRIEF_CANONICAL_WINDOWS", validation)
         self.assertIn("DROP TASK IF EXISTS OVERWATCH_SECTION_COMMAND_BRIEF_REFRESH", drop)
+        self.assertIn("DROP TASK IF EXISTS OVERWATCH_DECISION_BRIEF_FULL_REFRESH", drop)
         self.assertIn("DROP PROCEDURE IF EXISTS SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS()", drop)
+        self.assertIn("DROP PROCEDURE IF EXISTS SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST()", drop)
 
     def test_loader_builds_single_packet_query(self):
         from sections import section_command_brief as brief_module

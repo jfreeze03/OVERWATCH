@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 import re
 import sys
 import unittest
@@ -177,6 +177,8 @@ class DeploymentContractTests(unittest.TestCase):
             "OVERWATCH_REFRESH_CONTROL_ROOM": "SP_OVERWATCH_REFRESH_CONTROL_ROOM",
             "OVERWATCH_COST_MONITORING_REFRESH": "SP_OVERWATCH_REFRESH_COST_MONITORING",
             "OVERWATCH_EXECUTIVE_OBSERVABILITY_REFRESH": "SP_OVERWATCH_REFRESH_EXECUTIVE_OBSERVABILITY",
+            "OVERWATCH_DECISION_BRIEF_FULL_REFRESH": "SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL",
+            "OVERWATCH_SECTION_COMMAND_BRIEF_REFRESH": "SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST",
             "OVERWATCH_LOAD_DAILY": "SP_OVERWATCH_LOAD_DAILY",
         }
 
@@ -245,6 +247,10 @@ class DeploymentContractTests(unittest.TestCase):
         )
         procedure_bodies = _procedure_bodies(setup_sql)
         self.assertGreaterEqual(len(procedure_bodies), 8)
+        wrapper_procedures = {
+            "SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST",
+            "SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL",
+        }
 
         for proc_name, body in procedure_bodies.items():
             with self.subTest(proc_name=proc_name):
@@ -258,6 +264,10 @@ class DeploymentContractTests(unittest.TestCase):
                         )
                     )
                 )
+                if proc_name in wrapper_procedures:
+                    self.assertEqual(targets, [])
+                    self.assertIn("CALL SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS()", body)
+                    continue
                 self.assertTrue(targets)
                 for target in targets:
                     self.assertIn(target, table_creates)
@@ -325,7 +335,7 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertIn("DROP PROCEDURE IF EXISTS SP_OVERWATCH_STAGE_ALERT_REMEDIATION_DRY_RUN", drop_sql)
         self.assertIn("('VIEW', 'ALERT_NATIVE_DEPLOYMENT_REVIEW_V')", validation_sql)
         self.assertIn("('VIEW', 3)", validation_sql)
-        self.assertIn("('PROCEDURE', 17)", validation_sql)
+        self.assertIn("('PROCEDURE', 21)", validation_sql)
 
     def test_alert_operations_review_script_is_read_only_and_covers_key_marts(self):
         review_sql = (ROOT / "snowflake" / "OVERWATCH_ALERT_OPERATIONS_REVIEW.sql").read_text(encoding="utf-8")
@@ -385,3 +395,4 @@ class DeploymentContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

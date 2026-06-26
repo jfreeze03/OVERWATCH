@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 import sys
 import unittest
 
@@ -70,7 +70,7 @@ class ClosedLoopOperationsTests(unittest.TestCase):
         self.assertIn("2026.06.18-CLOSED-LOOP-OPERATIONS", setup)
         self.assertIn("CALL SP_OVERWATCH_REFRESH_CLOSED_LOOP_OPERATIONS()", setup)
         self.assertIn("('TABLE', 102)", validation)
-        self.assertIn("('PROCEDURE', 17)", validation)
+        self.assertIn("('PROCEDURE', 21)", validation)
 
     def test_closed_loop_labels_are_constrained(self):
         from utils.closed_loop_operations import (
@@ -221,3 +221,4 @@ class ClosedLoopOperationsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

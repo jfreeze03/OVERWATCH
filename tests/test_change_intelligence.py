@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 import sys
 import unittest
 
@@ -68,7 +68,7 @@ class ChangeIntelligenceTests(unittest.TestCase):
         self.assertIn("2026.06.18-CHANGE-INTELLIGENCE", setup)
         self.assertIn("CALL SP_OVERWATCH_REFRESH_CHANGE_INTELLIGENCE()", setup)
         self.assertIn("('TABLE', 102)", validation)
-        self.assertIn("('PROCEDURE', 17)", validation)
+        self.assertIn("('PROCEDURE', 21)", validation)
 
     def test_change_labels_and_categories_are_constrained(self):
         from utils.change_intelligence import (
@@ -212,3 +212,4 @@ class ChangeIntelligenceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

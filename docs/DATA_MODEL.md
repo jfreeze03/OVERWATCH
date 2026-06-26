@@ -10,17 +10,20 @@ layer. The full source of truth remains `snowflake/OVERWATCH_MART_SETUP.sql`.
 | `OVERWATCH_USAGE_LOG` | Table | Runtime/query event log used for app self-observability summaries. |
 | `MART_EXECUTIVE_OBSERVABILITY` | Transient mart | Executive monitoring wall: spend, Cortex, runtime, queue, spill, alerts, actions, storage, cost drivers, query database mix, execution status, and warehouse pressure. |
 | `MART_SECTION_COMMAND_BRIEF` | Transient mart | Primary-section command brief parent packet keyed by `BRIEF_ID`: state, headline, summary, resolved scope, source objects, source snapshot, freshness, stale flag, source coverage, confidence, and top signal. |
-| `MART_SECTION_COMMAND_METRIC` | Transient mart | Typed metric rows keyed by `BRIEF_ID`, including numeric/text value fields, format, unit, trend points, delta fields, tone, and display order for the compact metric strip. |
+| `MART_SECTION_COMMAND_METRIC` | Transient mart | Typed metric rows keyed by `BRIEF_ID`, including numeric/text value fields, format, unit, trend points, delta fields, tone, availability state, unavailable reason, source key, confidence, and display order for the compact metric strip. |
 | `MART_SECTION_COMMAND_EXCEPTION` | Transient mart | Top signal/exception rows keyed by `BRIEF_ID` with deterministic severity, priority score, impact, owner route, SLA, and route context. |
 | `MART_SECTION_COMMAND_ACTION` | Transient mart | Allowlisted route action references keyed by `BRIEF_ID`; action rows provide `ACTION_KEY`, `ROUTE_KEY`, and `CTA_LABEL` instead of arbitrary app state mutation. |
 | `OVERWATCH_SECTION_COMMAND_SOURCE_CONFIG` | Table | Authoritative source-trust catalog for each primary section: source key/object, required flag, target freshness, default confidence, and enabled state. |
 | `MART_SECTION_COMMAND_SOURCE` | Transient mart | Source-level availability, freshness, stale/data-gap, confidence, and gap-reason rows keyed by `BRIEF_ID`. Missing sources stay missing and cannot be converted into healthy zeros. |
 | `MART_SECTION_DECISION_CURRENT` | Transient mart | One-row current decision packet per section/scope/window. App entry queries this table once and parses `DECISION_PACKET` instead of aggregating child tables at first paint. |
 | `MART_EXECUTIVE_DECISION_INBOX` | Transient mart | Latest cross-section priority rows derived from current decision findings for executive handoff and routing. |
-| `SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS` | Procedure | Populates command brief parent, metric, exception, and action rows for all six primary sections and canonical 1/7/14/30/60/90 day windows. |
-| `OVERWATCH_SECTION_COMMAND_BRIEF_REFRESH` | Task | Runs the compact command brief refresh every 15 minutes from scheduled summary marts. |
+| `SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS` | Procedure | Shared packet builder that populates command brief parent, metric, exception, action, source, and current packet rows for all six primary sections and canonical 1/7/14/30/60/90 day windows. |
+| `SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST` | Procedure | Fifteen-minute operational wrapper for current Decision Brief packets. |
+| `SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL` | Procedure | Hourly/full enrichment wrapper for broader Decision Brief windows and enrichment signals. |
+| `SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS` | Procedure | Installation bootstrap wrapper that creates current packets immediately and validates six-section coverage. |
+| `OVERWATCH_SECTION_COMMAND_BRIEF_REFRESH` | Task | Runs the fast compact Decision Brief refresh every 15 minutes from scheduled summary marts. |
 
-Decision Brief 3.1 keeps normalized history for audit while serving the app from
+Decision Brief 3.2 keeps normalized history for audit while serving the app from
 `MART_SECTION_DECISION_CURRENT`. Route behavior is allowlisted in code; mart
 actions choose an `ACTION_KEY`/`ROUTE_KEY` and cannot inject arbitrary Streamlit
 session-state updates. The refresh procedure uses six explicit decision-builder
@@ -31,6 +34,18 @@ unrelated section state. Source configuration is seeded during setup and remains
 operator-owned after deployment; scheduled command-brief refreshes read the
 configuration, emit source-health rows into the packet, and publish current
 packets append-first instead of clearing `MART_SECTION_DECISION_CURRENT`.
+
+`config/decision_brief_contracts.json` is the manifest for section sources,
+metric contracts, and route action keys. `scripts/generate_decision_brief_contracts.py`
+generates the import-safe Python contract module plus Snowflake seed/validation
+snippets, and tests fail when those artifacts drift.
+
+The visible Decision Brief is an operating loop, not a board: status, headline,
+four available primary metrics, top findings with impact/owner/SLA, one primary
+route, up to two secondary routes, the real detail-load action, and compact
+source trust. Missing required sources create `Data Gap`; stale required sources
+create `Stale`; unavailable metrics are omitted from the primary ribbon and
+shown only with explicit availability reasons.
 
 ## Enterprise Operating Model
 

@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 import re
 import sys
 import unittest
@@ -69,7 +69,7 @@ class EnterpriseOperatingModelTests(unittest.TestCase):
     def test_validation_contract_tracks_new_objects_and_confidence_labels(self):
         validation = _validation_sql().upper()
         self.assertIn("('TABLE', 102)", validation)
-        self.assertIn("('PROCEDURE', 17)", validation)
+        self.assertIn("('PROCEDURE', 21)", validation)
         for name in [
             "MART_DATA_TRUST_SUMMARY",
             "MART_OPERATIONAL_OWNER_COVERAGE",
@@ -177,3 +177,4 @@ class EnterpriseOperatingModelTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

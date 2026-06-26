@@ -127,6 +127,15 @@ area. It must not render empty board walls with placeholder KPIs. If the mart
 summary is unavailable, show one "Summary unavailable" diagnostics panel plus
 setup/remediation copy and keep the detail boundary visible.
 
+Decision Brief 3.2 is the operating loop for primary sections: section/state
+headline, plain-English summary, four available metrics, movement sparkline
+where available, "What needs attention" findings, the next action set, and a
+data-trust footer. Metrics with missing source coverage must render as
+unavailable in collapsed detail, not as zeros in the primary strip. Source
+trust is reconciled from per-source watermarks in the app; if the parent brief
+claims freshness that source rows do not support, the UI fails closed to Data
+Gap or Stale and shows the resolved scope/confidence.
+
 ## Primary Section Command Deck
 
 Legacy Command Deck contracts remain the static route catalog, but the Command

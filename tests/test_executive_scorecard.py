@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 import sys
 import unittest
 
@@ -66,7 +66,7 @@ class ExecutiveScorecardTests(unittest.TestCase):
                 self.assertIn(name, validation)
         self.assertIn("CALL SP_OVERWATCH_REFRESH_EXECUTIVE_SCORECARD()", setup)
         self.assertIn("('TABLE', 102)", validation)
-        self.assertIn("('PROCEDURE', 17)", validation)
+        self.assertIn("('PROCEDURE', 21)", validation)
 
     def test_score_labels_thresholds_and_keys_are_constrained(self):
         from utils.executive_scorecard import SCORE_KEYS, SCORE_STATUS_LABELS, score_status_for_value
@@ -186,3 +186,4 @@ class ExecutiveScorecardTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -39,6 +39,11 @@ class SectionCommandMetric:
     delta_percent: float | None = None
     trend_direction: str = ""
     directionality: str = "higher_is_worse"
+    available: bool = True
+    availability_state: str = "Available"
+    unavailable_reason: str = ""
+    source_key: str = ""
+    confidence: str = ""
 
 
 @dataclass(frozen=True)
@@ -276,6 +281,13 @@ def _metric_from_row(row: Mapping[str, object]) -> SectionCommandMetric:
     numeric_value = _float_or_none(_column(row, "METRIC_NUMERIC_VALUE", "NUMERIC_VALUE"))
     text_value = _string(_column(row, "METRIC_TEXT_VALUE", "TEXT_VALUE"))
     value = _string(_column(row, "METRIC_VALUE", "VALUE"), text_value or "Unavailable")
+    availability_raw = _column(row, "IS_AVAILABLE", "AVAILABLE", default=None)
+    available = (
+        _bool_value(availability_raw, True)
+        if availability_raw is not None
+        else str(value or text_value).strip().lower() != "unavailable"
+    )
+    availability_state = _string(_column(row, "AVAILABILITY_STATE"), "Available" if available else "Unavailable")
     return SectionCommandMetric(
         key=_string(_column(row, "METRIC_KEY", "KEY")),
         label=_string(_column(row, "METRIC_LABEL", "LABEL"), "Metric"),
@@ -294,6 +306,11 @@ def _metric_from_row(row: Mapping[str, object]) -> SectionCommandMetric:
         delta_percent=_float_or_none(_column(row, "DELTA_PERCENT")),
         trend_direction=_string(_column(row, "TREND_DIRECTION")),
         directionality=_string(_column(row, "DIRECTIONALITY"), "higher_is_worse"),
+        available=available,
+        availability_state=availability_state,
+        unavailable_reason=_string(_column(row, "UNAVAILABLE_REASON")),
+        source_key=_string(_column(row, "SOURCE_KEY")),
+        confidence=_string(_column(row, "CONFIDENCE")),
     )
 
 
@@ -342,6 +359,65 @@ def _source_from_row(row: Mapping[str, object]) -> SectionCommandSourceState:
         stale=_bool_value(_column(row, "IS_STALE", default=False), False),
         confidence=_string(_column(row, "CONFIDENCE")),
         gap_reason=_string(_column(row, "GAP_REASON")),
+    )
+
+
+def reconcile_decision_brief_trust(brief: SectionCommandBrief) -> SectionCommandBrief:
+    """Fail closed when embedded source rows contradict parent trust fields."""
+    sources = tuple(brief.sources or ())
+    if not sources:
+        return brief
+    required = tuple(source for source in sources if source.required)
+    required_count = len(required)
+    available_count = sum(1 for source in required if source.available)
+    missing_count = max(required_count - available_count, 0)
+    stale_count = sum(1 for source in required if source.available and source.stale)
+    coverage = round((available_count / required_count) * 100, 2) if required_count else 100.0
+    ages = [float(source.age_minutes) for source in required if source.available and source.age_minutes is not None]
+    oldest_age = max(ages) if ages else None
+    target = int(brief.target_freshness_minutes or max((source.target_freshness_minutes for source in required), default=0))
+    gap_detail = "; ".join(
+        source.source_object or source.source_key
+        for source in required
+        if not source.available
+    )
+    if missing_count:
+        availability_state = "Data Gap"
+        state = "Data Gap"
+        stale = True
+    elif stale_count or (oldest_age is not None and target > 0 and oldest_age > target):
+        availability_state = "Stale"
+        state = "Stale" if str(brief.state or "").lower() == "healthy" else brief.state
+        stale = True
+    else:
+        availability_state = brief.data_availability_state or "Scheduled mart"
+        state = brief.state
+        stale = bool(brief.stale)
+
+    contradicted = (
+        int(brief.required_source_count or 0) != required_count
+        or int(brief.available_source_count or 0) != available_count
+        or int(brief.missing_source_count or 0) != missing_count
+        or int(brief.stale_source_count or 0) != stale_count
+        or (brief.source_coverage_pct is not None and round(float(brief.source_coverage_pct), 2) != coverage)
+        or (missing_count > 0 and str(brief.state or "").strip().lower() in {"healthy", "summary loaded", "clear"})
+    )
+    raw_payload = dict(brief.raw_payload or {})
+    if contradicted:
+        raw_payload["trust_reconciliation"] = "parent_packet_disagreed_with_sources"
+    return replace(
+        brief,
+        state=state,
+        stale=stale,
+        required_source_count=required_count,
+        available_source_count=available_count,
+        missing_source_count=missing_count,
+        stale_source_count=stale_count,
+        source_coverage_pct=coverage,
+        freshness_minutes=oldest_age if oldest_age is not None else brief.freshness_minutes,
+        data_availability_state=availability_state,
+        source_gap_detail=gap_detail or brief.source_gap_detail,
+        raw_payload=raw_payload,
     )
 
 
@@ -399,7 +475,7 @@ def _fallback_brief(
             command_brief_fallback_used=True,
         )
     loaded_at = _now_label()
-    return SectionCommandBrief(
+    brief = SectionCommandBrief(
         section=contract.section,
         company=str(company),
         environment=str(environment),
@@ -447,6 +523,7 @@ def _fallback_brief(
         command_brief_fallback_used=True,
         raw_payload={},
     )
+    return brief
 
 
 def _scoped_where(section: str, company: str, environment: str, window_days: int) -> str:
@@ -656,6 +733,7 @@ def _brief_from_packet(
         sources=sources,
         raw_payload=row,
     )
+    return reconcile_decision_brief_trust(brief)
 
 
 def _session_brief_is_current(brief: object) -> bool:
@@ -778,4 +856,5 @@ __all__ = [
     "SectionCommandSourceState",
     "SectionCommandSignal",
     "autoload_section_command_brief",
+    "reconcile_decision_brief_trust",
 ]

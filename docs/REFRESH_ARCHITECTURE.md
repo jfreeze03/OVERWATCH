@@ -60,7 +60,10 @@ behind the section's Load, Refresh, investigation, or evidence controls.
 | Workload Operations | `MART_SECTION_COMMAND_BRIEF` packet from query, task, procedure, copy/load, change, and reliability summaries | 30 min | Explicit live triage |
 | Security Monitoring | `MART_SECTION_COMMAND_BRIEF` packet from security, alert, owner coverage, and change summaries | 60 min | Explicit drilldown only |
 
-`SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS()` runs six explicit decision
+`SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS()` is the shared packet builder
+called by `SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST()`,
+`SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL()`, and
+`SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS()`. It runs six explicit decision
 builders (`executive_decision`, `dba_decision`, `alert_decision`,
 `cost_decision`, `workload_decision`, and `security_decision`) before packaging
 the current packet. Each builder owns the section state, headline, top signal,
@@ -79,9 +82,12 @@ relationships, child-row orphans, typed metrics, route keys, current packet
 coverage, source rows, source coverage, freshness targets, and canonical window
 coverage.
 
-Decision Brief 3.1 makes the packet contract stricter. Source configuration is
+Decision Brief 3.2 makes the packet contract stricter. Source configuration is
 seeded during setup and then treated as operator-owned configuration; the
-scheduled refresh reads it but does not delete or reinsert it. Current packets
+scheduled refresh reads it but does not delete or reinsert it. Contract metadata
+comes from `config/decision_brief_contracts.json`, which generates the
+import-safe Python contract module and Snowflake seed/validation snippets.
+Current packets
 are published append-first per section/scope/window, then older packets for the
 same logical key are removed, so readers do not see an intentionally emptied
 `MART_SECTION_DECISION_CURRENT` table during refresh. The packet includes the
@@ -92,8 +98,21 @@ Source trust is measured per source through
 `OVERWATCH_SECTION_COMMAND_SOURCE_CONFIG` and `MART_SECTION_COMMAND_SOURCE`.
 Missing sources remain missing, stale sources remain stale, and
 `SOURCE_COVERAGE_PCT` is the share of required sources that were available for
-the selected scope/window. The UI displays requested versus resolved scope when
-the current packet falls back to an ALL/GLOBAL row.
+the selected scope/window. `TMP_DECISION_SOURCE_WATERMARK` resolves each
+configured source independently before parent trust is calculated, so one fresh
+source cannot make a missing source look healthy. The app also reconciles parent
+trust fields against embedded source rows and fails closed to `Data Gap` or
+`Stale` when the packet contradicts its source evidence. The UI displays
+requested versus resolved scope when the current packet falls back to an
+ALL/GLOBAL row.
+
+Metric availability is explicit. Unavailable metrics carry
+`IS_AVAILABLE = FALSE`, `AVAILABILITY_STATE`, `UNAVAILABLE_REASON`,
+`SOURCE_KEY`, and `CONFIDENCE`; they are omitted from the primary metric ribbon
+and shown only in the additional/trust detail area. The renderer presents one
+operating loop rather than a card wall: status, headline, four available metrics,
+top findings with impact/owner/SLA, a deduplicated primary route, up to two
+secondary routes, the real detail-load button, and a compact source footer.
 
 The refresh contract stays in this document and in the read-only validation SQL
 instead of a static mart table. Run `snowflake/OVERWATCH_MART_VALIDATION.sql`

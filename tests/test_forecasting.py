@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 import sys
 import unittest
 
@@ -74,7 +74,7 @@ class ForecastingTests(unittest.TestCase):
         self.assertIn("2026.06.18-EXECUTIVE-FORECASTING", setup)
         self.assertIn("CALL SP_OVERWATCH_REFRESH_FORECASTING()", setup)
         self.assertIn("('TABLE', 102)", validation)
-        self.assertIn("('PROCEDURE', 17)", validation)
+        self.assertIn("('PROCEDURE', 21)", validation)
 
     def test_forecast_labels_and_keys_are_constrained(self):
         from utils.forecasting import FORECAST_CONFIDENCE_LABELS, FORECAST_KEYS, FORECAST_TREND_LABELS
@@ -193,3 +193,4 @@ class ForecastingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -261,7 +261,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Core executive KPIs", executive_overview)
         self.assertIn("What needs attention first", executive_overview)
         self.assertNotIn("Executive Summary Signals", executive_text)
-        self.assertIn("Refresh Summary", executive_shell)
+        self.assertIn("Refresh Decision Brief", executive_shell)
 
     def test_app_shell_first_paint_stays_lazy_and_query_builder_clean(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
@@ -518,9 +518,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("def _executive_observability_connection_unavailable", observability_text)
         self.assertIn('st.session_state.get("_overwatch_connection_available") is not True', observability_text)
         self.assertIn("or snowflake_connection_known_unavailable()", observability_text)
-        self.assertIn("Use Refresh Summary to read the compact observability mart.", route_shell_text)
+        self.assertNotIn("Use Refresh Summary to read the compact observability mart.", route_shell_text)
         self.assertIn("_store_connection_unavailable_observability(company, environment, int(days))", route_shell_text)
-        self.assertIn("refresh_session = get_session_for_action", route_shell_text)
+        self.assertNotIn("refresh_session = get_session_for_action", route_shell_text)
         first_load_block = route_shell_text.split("if needs_first_load:", 1)[1].split("if refresh_board:", 1)[0]
         self.assertNotIn("_load_executive_observability(", first_load_block)
         self.assertNotIn("st.session_state.get(autoload_scope_key) != expected_scope", full_workspace_text + observability_text)
@@ -528,7 +528,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Core executive KPIs", overview_text)
         self.assertIn("What needs attention first", overview_text)
         self.assertNotIn("Executive Summary Signals", full_workspace_text)
-        self.assertIn("Refresh Summary", route_shell_text)
+        self.assertIn("Refresh Decision Brief", route_shell_text)
         self.assertNotIn("Refresh Board", full_workspace_text)
         self.assertNotIn("Executive Command Wall", full_workspace_text)
         self.assertNotIn("Setup Readiness", full_workspace_text)
@@ -1663,7 +1663,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         ]
         self.assertIn('type="secondary"', sidebar_toggle_block)
         self.assertNotIn('type="primary" if is_active else "secondary"', sidebar_toggle_block)
-        self.assertIn("ow-filter-strip-kicker", filters_text)
+        self.assertIn("ow-compact-scope-bar", filters_text)
         self.assertNotIn("def _render_priority_brief_empty_state", app_text + shell_text + layout_text)
         self.assertNotIn("Open Executive Landing for the ranked platform brief.", app_text + shell_text + layout_text)
         self.assertNotIn(".ow-priority-empty", theme_text)
@@ -1678,8 +1678,10 @@ class NavigationIntegrityTests(unittest.TestCase):
         advanced_scope_block = filters_text[filters_text.index("def render_advanced_scope_controls"):]
         self.assertNotIn('"User contains"', topbar_filter_block)
         self.assertNotIn("filters live in Advanced Scope", topbar_filter_block)
+        self.assertIn("Edit scope", topbar_filter_block)
+        self.assertIn("Pin expanded scope controls", topbar_filter_block)
         self.assertIn("c_company, c_env, c_date, c_wh, c_clear = st.columns", topbar_filter_block)
-        self.assertIn("st.columns([1.0, 1.08, 2.2, 1.8, 0.68])", topbar_filter_block)
+        self.assertIn("st.columns([1.0, 1.08, 1.75, 1.65, 0.62])", topbar_filter_block)
         self.assertNotIn("_scope_spacer", topbar_filter_block)
         self.assertIn('"User contains"', advanced_scope_block)
         self.assertIn('if sidebar_panel_toggle("Advanced Scope", "advanced_scope")', layout_text)
@@ -2472,7 +2474,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         for token in (
             "Command Deck",
             "Advanced Scope",
-            "Refresh Summary",
+            "Refresh Decision Brief",
             "Load Morning Cockpit",
             "Load Active Alerts",
             "Refresh Cost",

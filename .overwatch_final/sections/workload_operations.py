@@ -564,9 +564,17 @@ def _render_pipeline_task_health_surface() -> None:
         active_value=st.session_state.get(PIPELINE_FOCUS_KEY, PIPELINE_TASK_FOCUS),
         key=PIPELINE_FOCUS_KEY,
     )
-    if focus in {"SLA Risk", "Suspended Tasks"}:
-        focus = PIPELINE_TASK_FOCUS
-        st.session_state[PIPELINE_FOCUS_KEY] = focus
+    if focus == "SLA Risk":
+        st.session_state["task_management_view"] = "SLA & Cost Drift"
+        st.session_state["task_management_embedded_lens"] = "SLA Risk"
+        render_workflow_module(PIPELINE_TASK_FOCUS, {PIPELINE_TASK_FOCUS: "sections.task_management"})
+        return
+    if focus == "Suspended Tasks":
+        st.session_state["task_management_view"] = "Job Status Brief"
+        st.session_state["task_management_status_filter"] = "Suspended"
+        st.session_state["task_management_embedded_lens"] = "Suspended Tasks"
+        render_workflow_module(PIPELINE_TASK_FOCUS, {PIPELINE_TASK_FOCUS: "sections.task_management"})
+        return
     if focus == PIPELINE_STORED_PROC_FOCUS:
         render_workflow_module(focus, {focus: "sections.stored_proc_tracker"})
         return

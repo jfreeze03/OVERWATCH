@@ -227,7 +227,7 @@ class PrimaryFirstPaintContractTests(unittest.TestCase):
         from sections.command_deck_contracts import get_command_deck_contract
 
         expected = {
-            "Executive Landing": ("Refresh Summary", "executive_landing_observability_refresh"),
+            "Executive Landing": ("Refresh Decision Brief", "executive_landing_observability_refresh"),
             "Alert Center": ("Load Active Alerts", "alert_center_load"),
             "Cost & Contract": ("Refresh Cost", "cost_contract_refresh"),
             "Security Monitoring": ("Refresh Security Summary", "security_posture_brief_load"),

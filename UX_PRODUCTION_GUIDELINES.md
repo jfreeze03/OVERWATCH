@@ -113,7 +113,7 @@ boundary, mart/session sources, and forbidden detail loaders.
 
 | Section | Primary view | Expected lanes | Explicit load CTA |
 | --- | --- | --- | --- |
-| Executive Landing | Executive Overview | Cost movement, Cortex AI cost risk, operational risk, security risk, change summary, executive actions | Load Full Executive Snapshot |
+| Executive Landing | Executive Overview | Cost movement, Cortex AI cost risk, operational risk, security risk, change summary, executive actions | Refresh Decision Brief |
 | DBA Control Room | Morning Cockpit | Failures, cost, queue, security, changes, action status | Load Investigation Detail |
 | Alert Center | Active Alerts | Critical and high alerts, Cortex predictive alerts, overdue alerts, action queue, delivery status | Load Active Alerts |
 | Workload Operations | Workload Overview | Slow or failed SQL, task and load failures, performance contention, recent changes, advanced DBA tools | Open the specialist workflow |
@@ -154,7 +154,7 @@ the brief.
 
 | Section | Primary CTA | Route actions |
 | --- | --- | --- |
-| Executive Landing | Refresh Summary | Cost movement, Cortex AI cost, operational risk, security risk, executive actions |
+| Executive Landing | Refresh Decision Brief | Cost movement, Cortex AI cost, operational risk, security risk, executive actions |
 | DBA Control Room | Load Morning Cockpit | Failure triage, cost watch, performance watch, action queue |
 | Alert Center | Load Active Alerts | Active, Cortex predictive, cost, reliability, and security alert lanes |
 | Workload Operations | Open the right tool | SQL, task/load, performance, change, and comparison workflows |

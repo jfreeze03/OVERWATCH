@@ -600,7 +600,7 @@ def render_single_choice_navigation(
     formatter = format_func or (lambda value: _clean_display_text(value))
     st.html(
         f'<div class="{_escape_markup(class_name)}" data-active="{_escape_markup(active)}">'
-        f'<span class="{_escape_markup(label_class)}">{_escape_markup(_clean_display_text(label))}</span>'
+        f'<span class="{_escape_markup(label_class)} ow-sr-only">{_escape_markup(_clean_display_text(label))}</span>'
         '</div>'
     )
     if hasattr(st, "segmented_control"):

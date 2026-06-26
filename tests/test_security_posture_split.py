@@ -249,7 +249,7 @@ class SecurityPostureSplitTests(unittest.TestCase):
         ):
             security_posture.render()
 
-        autoload.assert_called_once_with("Security Monitoring", "ALFA", "PROD", 30)
+        autoload.assert_called_once_with("Security Monitoring", "ALFA", "PROD", 30, force=False)
         render_brief.assert_called_once()
         args, kwargs = render_brief.call_args
         self.assertEqual(args, ("brief",))
@@ -258,7 +258,7 @@ class SecurityPostureSplitTests(unittest.TestCase):
         self.assertEqual(kwargs["detail_action"].label, "Refresh Security Summary")
         self.assertEqual(kwargs["detail_action"].key, "security_posture_brief_load")
         self.assertFalse(kwargs["compact"])
-        self.assertEqual(rendered, [("ALFA", "PROD", 30)])
+        self.assertEqual(rendered, [])
 
     def test_security_overview_cold_first_paint_does_not_auto_load(self):
         button_labels: list[str] = []

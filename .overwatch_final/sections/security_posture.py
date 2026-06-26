@@ -65,6 +65,7 @@ from sections.shell_helpers import (
 )
 from sections.section_command_brief import autoload_section_command_brief
 from sections.section_command_rendering import CommandBriefDetailAction, render_section_command_brief
+from sections.decision_workspace_state import section_state_from_brief
 
 
 day_window_selectbox = _lazy_util("day_window_selectbox")
@@ -83,8 +84,16 @@ def _apply_queued_security_workflow() -> None:
 
 
 def _render_security_first_paint_shell(active_view: str, company: str, environment: str, days: int) -> None:
+    security_brief = autoload_section_command_brief(
+        "Security Monitoring",
+        company,
+        environment,
+        int(days or 30),
+        force=bool(st.session_state.pop("security_posture_command_brief_force_refresh", False)),
+    )
+    st.session_state["_security_monitoring_decision_mode"] = section_state_from_brief(security_brief).decision_mode
     render_section_command_brief(
-        autoload_section_command_brief("Security Monitoring", company, environment, int(days or 30)),
+        security_brief,
         key_prefix="security_monitoring_command_brief",
         detail_action=CommandBriefDetailAction(
             "Refresh Security Summary",
@@ -172,11 +181,6 @@ def render() -> None:
     if st.session_state.get("security_posture_view") not in SECURITY_POSTURE_VIEWS:
         st.session_state["security_posture_view"] = SECURITY_POSTURE_VIEWS[0]
     _apply_queued_security_workflow()
-    render_signal_confidence(
-        source="ACCOUNT_USAGE",
-        confidence="exact",
-        scope_note="Company scope uses user/database naming where Snowflake does not expose company routing.",
-    )
 
     days = day_window_selectbox(
         "Security window",
@@ -223,6 +227,8 @@ def render() -> None:
     _render_security_first_paint_shell(active_view, company, environment, int(days or 30))
     renderer = SECURITY_POSTURE_RENDERERS.get(active_view)
     if renderer is not None:
+        if active_view == SECURITY_OVERVIEW_WORKFLOW and not st.session_state.get("security_summary_current"):
+            return
         renderer(company, environment, days)
         return
     if active_view in WORKFLOW_MODULES:

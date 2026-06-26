@@ -11,6 +11,7 @@ import re
 import streamlit as st
 
 from sections.command_brief_routes import COMMAND_BRIEF_ROUTES, apply_command_brief_route
+from sections.decision_workspace_state import workspace_mode_for_brief
 from sections.section_command_brief import SectionCommandAction, SectionCommandBrief, SectionCommandMetric
 
 
@@ -30,6 +31,14 @@ def _key_token(value: object) -> str:
 
 def _html(value: object) -> str:
     return _escape_markup(str(value or "").strip())
+
+
+def _public_text(value: object) -> str:
+    """Remove Snowflake implementation names from first-viewport user copy."""
+    text = str(value or "").strip()
+    text = re.sub(r"\b(?:MART|FACT|OVERWATCH|ALERT)_[A-Z0-9_]+\b", "Decision source", text)
+    text = re.sub(r"\bsnowflake/[A-Za-z0-9_./-]+\.sql\b", "setup script", text, flags=re.IGNORECASE)
+    return text
 
 
 def _compact_number(value: float, *, decimals: int = 1) -> str:
@@ -262,23 +271,42 @@ def _trust_detail_html(brief: SectionCommandBrief) -> str:
 
 
 def _render_fallback(brief: SectionCommandBrief, *, key_prefix: str, detail_action: CommandBriefDetailAction | None) -> None:
+    mode = workspace_mode_for_brief(brief)
+    state = "offline" if mode == "OFFLINE" else "uninitialized"
+    title = (
+        "Offline summary is not available"
+        if mode == "OFFLINE"
+        else "Summary not initialized"
+    )
+    scope = f"{brief.company} / {brief.environment} / {brief.window_label}"
+    message = (
+        "Snowflake is not reachable from this session. Configure the connection or enable local fixture mode."
+        if mode == "OFFLINE"
+        else f"No current Decision packet exists for {scope}."
+    )
+    if tuple(brief.metrics or ()):
+        title = "Showing last successful summary"
+        message = brief.freshness_label or "Last-known-good Decision packet retained."
     st.html(
-        '<section class="ow-decision-brief ow-decision-fallback ow-decision-operating-loop" '
-        'role="region" aria-label="Decision brief unavailable">'
-        '<div class="ow-decision-loop-header" data-state="data-gap">'
-        '<strong>SUMMARY UNAVAILABLE</strong>'
+        f'<section class="ow-decision-brief ow-decision-recovery ow-decision-operating-loop" '
+        f'role="region" aria-label="Decision workspace {state}">'
+        f'<div class="ow-decision-loop-header" data-state="{_html(state)}">'
+        f'<strong>{_html(title)}</strong>'
         f'<span>{_html(_data_trust_summary(brief))}</span>'
         '</div>'
-        f'<p class="ow-decision-loop-summary">{_html(brief.fallback_reason or brief.summary)}</p>'
-        '<div class="ow-decision-diagnostics-panel">'
-        f'<strong>{_html(brief.company)} / {_html(brief.environment)} / {_html(brief.window_label)}</strong>'
-        f'<span>{_html(brief.source_gap_detail or "Refresh the command mart or review deployment status.")}</span>'
-        f'<small>{_html(_data_trust_summary(brief))}</small>'
-        '</div>'
+        f'<p class="ow-decision-loop-summary">{_html(_public_text(message))}</p>'
         '</section>'
     )
-    if detail_action is not None:
-        _render_detail_action(key_prefix=key_prefix, detail_action=detail_action)
+    cols = st.columns(2)
+    with cols[0]:
+        if st.button("Initialize summaries", key=f"{key_prefix}_initialize_summaries", width="stretch"):
+            st.session_state["_overwatch_decision_bootstrap_requested"] = True
+            st.rerun()
+    with cols[1]:
+        if detail_action is not None:
+            _render_detail_action(key_prefix=key_prefix, detail_action=detail_action)
+    with st.expander("Technical details", expanded=False):
+        st.html(f'<div class="ow-decision-trust-panel">{_trust_detail_html(brief)}</div>')
 
 
 def _route_action(action: SectionCommandAction) -> bool:
@@ -353,7 +381,7 @@ def _render_detail_action(*, key_prefix: str, detail_action: CommandBriefDetailA
     if st.button(
         detail_action.label,
         key=detail_action.key or f"{key_prefix}_detail_{_key_token(detail_action.label)}",
-        type="primary",
+        type="secondary",
         width="stretch",
         help=detail_action.help_text or None,
     ):

@@ -31,7 +31,7 @@ PRIMARY_FIRST_PAINT_CONTRACTS: Mapping[str, PrimaryFirstPaintContract] = {
             "Change summary",
             "Executive actions",
         ),
-        explicit_load_cta="Refresh Summary",
+        explicit_load_cta="Refresh Decision Brief",
         no_query_note=(
             "Entry may read compact summary marts; full executive evidence remains behind explicit load."
         ),

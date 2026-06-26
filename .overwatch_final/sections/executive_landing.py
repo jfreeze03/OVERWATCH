@@ -68,7 +68,7 @@ def render() -> None:
     with window_col:
         days = st.selectbox("Executive window", DAY_WINDOW_OPTIONS, index=DAY_WINDOW_OPTIONS.index(DEFAULT_DAY_WINDOW), format_func=lambda value: f"{value} days")
     with refresh_col:
-        refresh_board = st.button("Refresh Summary", key="executive_landing_observability_refresh", type="primary", width="stretch")
+        refresh_board = st.button("Refresh Decision Brief", key="executive_landing_observability_refresh", type="secondary", width="stretch")
     workflow_labels = {
         EXECUTIVE_OVERVIEW_WORKFLOW: "Overview",
         EXECUTIVE_COST_MOVEMENT_WORKFLOW: "Cost",
@@ -101,7 +101,7 @@ def render() -> None:
             _store_connection_unavailable_observability(company, environment, int(days))
         elif board_empty:
             defer_source_note(
-                "Executive Landing first paint is using the local summary frame. Use Refresh Summary to read the compact observability mart."
+                "Executive Landing is using the local summary frame. Use Refresh Decision Brief to retry the compact Decision packet."
             )
         st.session_state["_executive_landing_observability_autoload_scope"] = expected_scope
         board, board_payload = _current_observability_board(company, environment, int(days))

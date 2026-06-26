@@ -304,10 +304,62 @@ class SectionCommandBriefTests(unittest.TestCase):
         ):
             brief = brief_module.autoload_section_command_brief("Security Monitoring", "ALFA", "PROD", 30)
 
-        self.assertEqual(brief.state, "Summary unavailable")
+        self.assertEqual(brief.state, "Summary not initialized")
         self.assertIn("Mart summary unavailable", brief.fallback_reason)
         self.assertEqual(len(brief.metrics), 0)
         self.assertEqual(brief.detail_cta, "Refresh Security Summary")
+        self.assertEqual(brief.raw_payload.get("workspace_mode"), "UNINITIALIZED")
+
+    def test_loader_skips_query_when_snowflake_entry_is_unavailable(self):
+        from sections import section_command_brief as brief_module
+
+        with patch.object(brief_module.st, "session_state", {}), patch.object(
+            brief_module,
+            "snowflake_entry_available",
+            return_value=False,
+        ), patch.object(
+            brief_module,
+            "run_query",
+            side_effect=AssertionError("offline entry must not call the stopping query path"),
+        ):
+            brief = brief_module.autoload_section_command_brief("Cost & Contract", "ALFA", "ALL", 7)
+
+        self.assertEqual(brief.raw_payload.get("workspace_mode"), "OFFLINE")
+        self.assertEqual(brief.command_brief_query_count, 0)
+        self.assertIn("Snowflake session is unavailable", brief.fallback_reason)
+
+    def test_snowflake_entry_preflight_ignores_configured_secrets_without_active_session(self):
+        import builtins
+        from sections import decision_workspace_state as state_module
+
+        real_import = builtins.__import__
+
+        def _no_snowflake_context_import(name, *args, **kwargs):
+            if name == "snowflake.snowpark.context":
+                raise ImportError("no active Snowflake context")
+            return real_import(name, *args, **kwargs)
+
+        with patch.object(state_module.st, "session_state", {}), patch.object(
+            state_module.st,
+            "secrets",
+            {"connections": {"snowflake": {"account": "example"}}},
+        ), patch("builtins.__import__", side_effect=_no_snowflake_context_import):
+            self.assertFalse(state_module.snowflake_entry_available())
+
+    def test_fixture_mode_returns_populated_demo_brief_without_query(self):
+        from sections import section_command_brief as brief_module
+
+        with patch.object(brief_module.st, "session_state", {"OVERWATCH_UI_FIXTURE_MODE": True}), patch.object(
+            brief_module,
+            "run_query",
+            side_effect=AssertionError("fixture mode must not query Snowflake"),
+        ):
+            brief = brief_module.autoload_section_command_brief("Cost & Contract", "ALFA", "ALL", 7)
+
+        self.assertEqual(brief.raw_payload.get("workspace_mode"), "READY")
+        self.assertTrue(brief.raw_payload.get("fixture_mode"))
+        self.assertGreaterEqual(len(brief.metrics), 4)
+        self.assertIn("Cortex AI", " ".join(metric.label for metric in brief.metrics))
 
     def test_renderer_idle_actions_do_not_load_or_query(self):
         from sections.section_command_brief import SectionCommandAction, SectionCommandBrief, SectionCommandMetric, SectionCommandSignal
@@ -360,6 +412,43 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertIn("Open Active Alerts", labels)
         self.assertIn("Load Active Alerts", labels)
 
+    def test_renderer_fallback_is_compact_and_hides_raw_objects(self):
+        from sections.section_command_brief import SectionCommandBrief
+        from sections import section_command_rendering
+
+        brief = SectionCommandBrief(
+            section="Cost & Contract",
+            company="ALFA",
+            environment="PROD",
+            window_label="7 days",
+            state="Summary not initialized",
+            headline="Summary not initialized",
+            summary="No current Decision packet exists.",
+            source="Decision packet",
+            freshness_label="Setup required",
+            loaded_at="2026-06-25T10:00:00",
+            fallback_reason="MART_SECTION_DECISION_CURRENT has no row for FACT_COST_DAILY.",
+            source_gap_detail="FACT_COST_DAILY; FACT_CORTEX_DAILY",
+            raw_payload={"workspace_mode": "UNINITIALIZED"},
+        )
+
+        with patch.object(section_command_rendering.st, "html") as html, patch.object(
+            section_command_rendering.st,
+            "columns",
+            return_value=[contextlib.nullcontext(), contextlib.nullcontext()],
+        ), patch.object(section_command_rendering.st, "button", return_value=False), patch.object(
+            section_command_rendering.st,
+            "expander",
+            return_value=contextlib.nullcontext(),
+        ):
+            section_command_rendering.render_section_command_brief(brief, key_prefix="fallback")
+
+        first_markup = html.call_args_list[0].args[0]
+        self.assertNotIn("SUMMARY UNAVAILABLE", first_markup)
+        self.assertIn("Summary not initialized", first_markup)
+        self.assertNotIn("MART_SECTION_DECISION_CURRENT", first_markup)
+        self.assertNotIn("FACT_COST_DAILY", first_markup)
+
     def test_command_actions_are_deduped_and_unknown_routes_removed(self):
         from sections.section_command_brief import SectionCommandAction
         from sections.section_command_rendering import dedupe_command_actions
@@ -407,6 +496,7 @@ class SectionCommandBriefTests(unittest.TestCase):
             "MART_SECTION_COMMAND_ACTION",
             "MART_SECTION_COMMAND_SOURCE",
             "MART_SECTION_DECISION_CURRENT",
+            "MART_SECTION_DECISION_LAST_GOOD",
             "MART_EXECUTIVE_DECISION_INBOX",
         ):
             self.assertIn(name, setup)
@@ -448,8 +538,12 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertIn("MART_SECTION_COMMAND_ACTION", procs)
         self.assertIn("MART_SECTION_COMMAND_SOURCE", procs)
         self.assertIn("MART_SECTION_DECISION_CURRENT", procs)
+        self.assertIn("MART_SECTION_DECISION_LAST_GOOD", procs)
         self.assertIn("SOURCES", procs)
         self.assertIn("PACKET_BYTES", procs)
+        self.assertIn("AUTO_BOOTSTRAP_DECISION_BRIEFS", (ROOT / "snowflake" / "mart_setup" / "03_config_and_audit_tables.sql").read_text(encoding="utf-8").upper())
+        self.assertIn("DECISION_BRIEF_WAREHOUSE", (ROOT / "snowflake" / "mart_setup" / "03_config_and_audit_tables.sql").read_text(encoding="utf-8").upper())
+        self.assertIn("ARRAY_SIZE(COALESCE(DECISION_PACKET:\"METRICS\", ARRAY_CONSTRUCT())) > 0", procs)
         self.assertNotIn("DELETE FROM OVERWATCH_SECTION_COMMAND_SOURCE_CONFIG", procs)
         self.assertNotIn("DELETE FROM MART_SECTION_DECISION_CURRENT;", procs)
         self.assertNotIn("'TOP_DRIVER'", procs)
@@ -475,6 +569,7 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertIn("CALL SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS()", validation)
         self.assertIn("CALL SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST()", validation)
         self.assertIn("CALL SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS()", validation)
+        self.assertIn("SECTION_DECISION_LAST_GOOD_PACKET_COVERAGE", validation)
         self.assertIn("SECTION_COMMAND_BRIEF_METRIC_AVAILABILITY", validation)
         self.assertIn("SECTION_DECISION_CURRENT_PACKET_COVERAGE", validation)
         self.assertIn("SECTION_COMMAND_SOURCE_ROWS", validation)
@@ -484,6 +579,14 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertIn("DROP TASK IF EXISTS OVERWATCH_DECISION_BRIEF_FULL_REFRESH", drop)
         self.assertIn("DROP PROCEDURE IF EXISTS SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS()", drop)
         self.assertIn("DROP PROCEDURE IF EXISTS SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST()", drop)
+        self.assertIn("DROP TABLE IF EXISTS MART_SECTION_DECISION_LAST_GOOD", drop)
+
+        fast_block = procs.split("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST()", 1)[1].split("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL()", 1)[0]
+        full_block = procs.split("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL()", 1)[1].split("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS()", 1)[0]
+        self.assertIn("WINDOW_DAYS NOT IN (1, 7)", fast_block)
+        self.assertNotIn("WINDOW_DAYS NOT IN (1, 7)", full_block)
+        self.assertIn("SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST", fast_block)
+        self.assertIn("SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL", full_block)
 
     def test_loader_builds_single_packet_query(self):
         from sections import section_command_brief as brief_module

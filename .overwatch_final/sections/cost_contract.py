@@ -174,8 +174,7 @@ from sections.cost_contract_rendering import (
     _compact_time,
     _freshness_note,
     _metric_confidence_label,
-    render_operator_briefing,
-    render_signal_confidence,
+    render_operator_briefing, render_signal_confidence,
     render_workflow_module,
 )
 from sections.shell_helpers import (
@@ -184,6 +183,7 @@ from sections.shell_helpers import (
 )
 from sections.section_command_brief import autoload_section_command_brief
 from sections.section_command_rendering import CommandBriefDetailAction, render_section_command_brief
+from sections.decision_workspace_state import section_state_from_brief
 from sections.cost_contract_workflow import (
     _apply_cost_workflow_preset,
     _normalize_cost_contract_workflow_state,
@@ -196,8 +196,6 @@ from sections.cost_contract_overview_floor import _render_cost_watch_floor
 
 
 get_active_environment = _lazy_util("get_active_environment")
-
-
 def get_active_company() -> str:
     return str(st.session_state.get("active_company", DEFAULT_COMPANY) or DEFAULT_COMPANY)
 
@@ -226,11 +224,6 @@ def render() -> None:
     if workflow == "Cost Explorer":
         breadcrumb.append(str(st.session_state.get("cc_explorer_lens") or "Warehouse"))
     render_section_breadcrumb(breadcrumb)
-    render_signal_confidence(
-        source="ACCOUNT_USAGE",
-        confidence="allocated",
-        scope_note="Warehouse totals are exact; user/query chargeback is allocated unless noted.",
-    )
     _render_cost_filter_indicator()
 
     st.html('<div class="ow-cost-layout ow-cost-main-content"></div>')
@@ -253,7 +246,13 @@ def render() -> None:
             workflow_label(workflow),
             WORKFLOW_DETAILS.get(workflow, "Cost evidence remains behind explicit load actions."),
         )
-    cost_brief = autoload_section_command_brief("Cost & Contract", company, environment, active_cost_days())
+    cost_brief = autoload_section_command_brief(
+        "Cost & Contract",
+        company,
+        environment,
+        active_cost_days(),
+        force=bool(st.session_state.pop("cost_contract_command_brief_force_refresh", False)),
+    )
     detail_action = None
     if workflow == "Cost Overview":
         detail_action = CommandBriefDetailAction(
@@ -270,7 +269,9 @@ def render() -> None:
     )
 
     st.session_state["_cost_contract_local_hierarchy_rendered"] = True
-    _render_cost_contract_workflow(workflow, company, environment)
+    decision_state = section_state_from_brief(cost_brief)
+    if workflow != "Cost Overview" or decision_state.decision_mode == "READY" and st.session_state.get("cost_contract_summary_loaded"):
+        _render_cost_contract_workflow(workflow, company, environment)
 
     advanced_open = bool(st.session_state.get(_ADVANCED_COST_TOOLS_VISIBLE_KEY))
     with st.expander("Advanced cost tools and evidence", expanded=advanced_open):

@@ -28,7 +28,7 @@ For each section, confirm the first-paint shell shows text-first status, the vis
 - Confirm route-action labels wrap without horizontal overflow.
 - Click one route action per section and verify it only changes workflow/session routing.
 - Confirm explicit evidence buttons retain stable labels and keys:
-  - Refresh Summary
+  - Refresh Decision Brief
   - Load Morning Cockpit
   - Load Active Alerts
   - Refresh Cost
@@ -56,7 +56,7 @@ Confirm charts render through shared OVERWATCH chart helpers and no native chart
 
 When credentials and context are available, test explicit load actions:
 
-- Refresh Summary
+- Refresh Decision Brief
 - Load Morning Cockpit
 - Load Active Alerts
 - Refresh Cost

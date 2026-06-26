@@ -14,6 +14,7 @@ from sections.shell_helpers import (
 )
 from sections.section_command_brief import autoload_section_command_brief
 from sections.section_command_rendering import CommandBriefDetailAction, render_section_command_brief
+from sections.decision_workspace_state import section_state_from_brief
 from utils.evidence_mode import (
     TRIAGE_MODE_ALL_EVIDENCE,
     TRIAGE_MODE_INVESTIGATE,
@@ -1044,8 +1045,15 @@ def render() -> None:
         DBA_CONTROL_ROOM_PANE_LABELS.get(normalized_view, normalized_view),
     ])
     active_view = _render_dba_control_room_workflow_selector()
+    dba_brief = autoload_section_command_brief(
+        "DBA Control Room",
+        company,
+        environment,
+        int(lookback_hours) // 24 or 1,
+        force=bool(st.session_state.pop("dba_control_room_command_brief_force_refresh", False)),
+    )
     render_section_command_brief(
-        autoload_section_command_brief("DBA Control Room", company, environment, int(lookback_hours) // 24 or 1),
+        dba_brief,
         key_prefix="dba_control_room_command_brief",
         detail_action=CommandBriefDetailAction(
             load_label,
@@ -1056,6 +1064,12 @@ def render() -> None:
         else None,
         compact=active_view != MORNING_COCKPIT_WORKFLOW,
     )
+    dba_decision_state = section_state_from_brief(dba_brief)
+    if active_view == MORNING_COCKPIT_WORKFLOW and not st.session_state.get("dba_control_room_data"):
+        return
+    if dba_decision_state.decision_mode in {"OFFLINE", "UNINITIALIZED"} and not st.session_state.get("dba_control_room_data"):
+        _render_advanced_diagnostics_expander(company, environment)
+        return
     defer_section_note(
         f"{freshness_note('ACCOUNT_USAGE')} | "
         f"Cost basis: {metric_confidence_label('allocated')} | "

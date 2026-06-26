@@ -526,6 +526,68 @@ def _render_alert_settings_admin_pane(source_view: str = "Delivery & Automation"
         render_alert_delivery_automation_pane(**kwargs)
 
 
+def _frame_text_mask(df: pd.DataFrame, pattern: str) -> pd.Series:
+    if df is None or df.empty:
+        return pd.Series(dtype=bool)
+    text = df.astype(str).agg(" ".join, axis=1).str.lower()
+    return text.str.contains(pattern, regex=True, na=False)
+
+
+def _filter_related_frame(df: pd.DataFrame, alerts: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty or alerts is None or alerts.empty:
+        return df
+    for key in ("ALERT_ID", "EVENT_ID", "ALERT_KEY", "RULE_ID"):
+        if key in df.columns and key in alerts.columns:
+            keys = set(alerts[key].dropna().astype(str))
+            return df[df[key].astype(str).isin(keys)].copy()
+    return df
+
+
+def filter_alert_center_rows(
+    alerts: pd.DataFrame,
+    queue: pd.DataFrame,
+    delivery_log: pd.DataFrame,
+    active_view: str,
+    status_lens: str,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Apply visible Alert Center family/status lenses to already-loaded rows."""
+    if alerts is None or alerts.empty:
+        return alerts, queue, delivery_log
+    filtered = alerts.copy()
+    view = _normalize_alert_center_view(active_view)
+    severity = filtered.get("SEVERITY", pd.Series(index=filtered.index, dtype=str)).fillna("").astype(str)
+    if view == "Critical / High":
+        filtered = filtered[severity.str.title().isin(["Critical", "High"])].copy()
+    elif view == "Cortex Predictive Alerts":
+        filtered = filtered[_frame_text_mask(filtered, r"cortex|predictive|forecast|anomaly|run[- ]?rate|ai")].copy()
+    elif view == "Cost Alerts":
+        filtered = filtered[_frame_text_mask(filtered, r"cost|spend|credit|budget|contract|cortex|forecast")].copy()
+    elif view == "Reliability Alerts":
+        filtered = filtered[_frame_text_mask(filtered, r"reliability|query|task|procedure|warehouse|queue|blocked|failure|load|sla")].copy()
+    elif view == "Security Alerts":
+        filtered = filtered[_frame_text_mask(filtered, r"security|grant|login|role|share|mfa|privilege|access")].copy()
+
+    lens = str(status_lens or "Open")
+    if lens == "Open":
+        filtered = filtered[_open_alert_mask(filtered)].copy() if not filtered.empty else filtered
+    elif lens == "Overdue" and "SLA_STATE" in filtered.columns:
+        filtered = filtered[filtered["SLA_STATE"].fillna("").astype(str).str.title().eq("Overdue")].copy()
+    elif lens == "Suppressed":
+        filtered = filtered[_frame_text_mask(filtered, r"suppressed|muted|snoozed")].copy()
+    elif lens == "Delivered":
+        filtered = filtered[_frame_text_mask(filtered, r"delivered|email_logged|sent|notified")].copy()
+    elif lens == "Failed Delivery":
+        filtered = filtered[_frame_text_mask(filtered, r"delivery_failed|failed delivery|email_failed|error")].copy()
+    elif lens == "Routed":
+        filtered = filtered[_frame_text_mask(filtered, r"routed|assigned|owner|action queue")].copy()
+
+    return (
+        filtered,
+        _filter_related_frame(queue, filtered),
+        _filter_related_frame(delivery_log, filtered),
+    )
+
+
 ALERT_CENTER_RENDERERS = {
     ALERT_CENTER_DEFAULT_VIEW: _render_active_alerts,
     "Critical / High": _render_active_alerts,
@@ -749,6 +811,14 @@ def render() -> None:
     native_registry = data.get("native_registry") if isinstance(data.get("native_registry"), pd.DataFrame) else pd.DataFrame()
     remediation_policy = data.get("remediation_policy") if isinstance(data.get("remediation_policy"), pd.DataFrame) else pd.DataFrame()
     remediation_dry_run = data.get("remediation_dry_run") if isinstance(data.get("remediation_dry_run"), pd.DataFrame) else pd.DataFrame()
+    status_lens = str(st.session_state.get("alert_center_status_lens") or "Open")
+    alerts, queue, delivery_log = filter_alert_center_rows(
+        alerts,
+        queue,
+        delivery_log,
+        active_view,
+        status_lens,
+    )
     if data.get("alerts_error"):
         st.info("Alert history unavailable.")
         defer_source_note(
@@ -812,39 +882,6 @@ def render() -> None:
         readiness_rows=readiness_rows,
     )
 
-    _render_alert_center_action_brief(
-        _alert_center_action_brief(
-            open_issues=open_issue_count,
-            open_alerts=open_alert_count,
-            critical_high=critical_high_count,
-            overdue=overdue_count,
-            email_ready=email_ready_count,
-            email_logged=email_logged_count,
-            open_queue=open_queue_count,
-            readiness_rows=readiness_rows,
-        )
-    )
-    _render_alert_center_metric_rows(
-        open_issues=open_issue_count,
-        open_alerts=open_alert_count,
-        critical_high=critical_high_count,
-        overdue=overdue_count,
-        email_ready=email_ready_count,
-        email_logged=email_logged_count,
-        open_queue=open_queue_count,
-    )
-    _render_alert_command_lane_board(
-        _alert_command_lanes(
-            active_view=active_view,
-            required_sources=required_sources,
-            alerts=alerts,
-            queue=queue,
-            issues=issues,
-            delivery_log=delivery_log,
-            loaded=True,
-        )
-    )
-    _render_alert_center_exception_strip(exception_rows)
     render_alert_center_add_to_case(source_view, company, environment, int(days), int(limit), data, loaded_summary,
                                     loaded_sources, open_alert_count, critical_high_count, overdue_count,
                                     open_queue_count, exception_rows, alerts)

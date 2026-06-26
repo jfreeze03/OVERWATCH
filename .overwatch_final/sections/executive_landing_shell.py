@@ -55,6 +55,7 @@ from sections.executive_landing_models import (
 from sections.shell_helpers import render_content_header, render_primary_section_tabs, render_section_breadcrumb
 from sections.section_command_brief import autoload_section_command_brief
 from sections.section_command_rendering import CommandBriefDetailAction, render_section_command_brief
+from sections.decision_workspace_state import section_state_from_brief
 from perf_trace import trace
 from utils.section_guidance import defer_source_note
 
@@ -179,9 +180,9 @@ def render() -> None:
             )
         with refresh_col:
             refresh_board = st.button(
-                "Refresh Summary",
+                "Refresh Decision Brief",
                 key="executive_landing_observability_refresh",
-                type="primary",
+                type="secondary",
                 width="stretch",
             )
         active_workflow = normalize_executive_landing_workflow(
@@ -196,24 +197,10 @@ def render() -> None:
         if needs_first_load:
             if board_empty and _executive_observability_connection_unavailable():
                 _store_connection_unavailable_observability(company, environment, int(days))
-            elif board_empty:
-                defer_source_note(
-                    "Executive Landing first paint is using the local summary frame. Use Refresh Summary to read the compact observability mart."
-                )
             st.session_state["_executive_landing_observability_autoload_scope"] = expected_scope
             board, board_payload = _current_observability_board(company, environment, int(days))
     if refresh_board:
-        refresh_session = get_session_for_action(
-            "refresh executive summaries",
-            surface="Executive Landing",
-            offline_note="Executive Landing will keep showing the local shell state until Snowflake is configured.",
-        )
-        if refresh_session is None:
-            _store_connection_unavailable_observability(company, environment, int(days))
-        else:
-            _load_executive_observability(company, environment, int(days), credit_price=credit_price)
-        st.session_state["_executive_landing_observability_scope"] = expected_scope
-        board, board_payload = _current_observability_board(company, environment, int(days))
+        st.session_state["_executive_landing_command_brief_force_refresh"] = True
 
     with trace("executive_shell:summary_build", active_section="Executive Landing"):
         snapshot = st.session_state.get("executive_landing_snapshot")
@@ -252,8 +239,15 @@ def render() -> None:
     render_section_breadcrumb(["Executive Landing", active_workflow])
     with trace("executive_shell:workflow_selector", active_section="Executive Landing"):
         active_workflow = _render_executive_landing_workflow_controls(active_workflow)
+    executive_brief = autoload_section_command_brief(
+        "Executive Landing",
+        company,
+        environment,
+        int(days),
+        force=bool(st.session_state.pop("_executive_landing_command_brief_force_refresh", False)),
+    )
     render_section_command_brief(
-        autoload_section_command_brief("Executive Landing", company, environment, int(days)),
+        executive_brief,
         key_prefix="executive_landing_command_brief",
         detail_action=CommandBriefDetailAction(
             "Load Full Executive Snapshot",
@@ -265,20 +259,22 @@ def render() -> None:
         compact=active_workflow != EXECUTIVE_OVERVIEW_WORKFLOW,
     )
 
-    load = _render_loaded_executive_landing_workflow(
-        active_workflow,
-        summary=summary,
-        company=company,
-        environment=environment,
-        days=int(days),
-        credit_price=credit_price,
-        board=board,
-        board_payload=board_payload,
-        snapshot=loaded_snapshot,
-        source_health=source_health,
-    )
-
-    if active_workflow == EXECUTIVE_OVERVIEW_WORKFLOW:
+    decision_state = section_state_from_brief(executive_brief, detail_loaded=bool(loaded_snapshot))
+    load = False
+    if active_workflow != EXECUTIVE_OVERVIEW_WORKFLOW:
+        load = _render_loaded_executive_landing_workflow(
+            active_workflow,
+            summary=summary,
+            company=company,
+            environment=environment,
+            days=int(days),
+            credit_price=credit_price,
+            board=board,
+            board_payload=board_payload,
+            snapshot=loaded_snapshot,
+            source_health=source_health,
+        )
+    elif decision_state.decision_mode == "READY" and loaded_snapshot:
         render_mission_control_queue(
             st.session_state,
             company=company,

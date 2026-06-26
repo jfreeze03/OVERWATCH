@@ -1202,7 +1202,9 @@ code, pre, .stCodeBlock {
 .ow-decision-loop-header[data-state="data-gap"],
 .ow-decision-loop-header[data-state="stale"],
 .ow-decision-loop-header[data-state="warning"],
-.ow-decision-loop-header[data-state="watch"] {
+.ow-decision-loop-header[data-state="watch"],
+.ow-decision-loop-header[data-state="uninitialized"],
+.ow-decision-loop-header[data-state="offline"] {
     border-left-color: #fbbf24;
 }
 .ow-decision-loop-header strong {
@@ -1409,6 +1411,16 @@ code, pre, .stCodeBlock {
     padding: 0.5rem 0.88rem;
     text-align: left;
 }
+.ow-decision-recovery {
+    max-height: 140px;
+    min-height: 0;
+    background:
+        linear-gradient(135deg, rgba(251, 191, 36, 0.11), transparent 48%),
+        var(--bg-panel);
+}
+.ow-decision-recovery .ow-decision-loop-summary {
+    padding-bottom: 0.82rem;
+}
 .ow-decision-diagnostics-panel {
     display: grid;
     gap: 0.24rem;
@@ -1589,6 +1601,36 @@ code, pre, .stCodeBlock {
 }
 .ow-cost-main-content {
     width: 100%;
+}
+.ow-sr-only {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 0, 0) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
+}
+.ow-compact-scope-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    min-height: 2.05rem;
+    margin: 0.35rem 0 0.25rem;
+    padding: 0.38rem 0.62rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--surface-elevated) 78%, transparent);
+    color: var(--text-secondary);
+    font-size: 0.76rem;
+    font-weight: 850;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+}
+.ow-compact-scope-bar span {
+    min-width: 0;
 }
 .ow-section-tabs,
 .ow-primary-tabs,

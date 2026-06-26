@@ -251,6 +251,10 @@ class DeploymentContractTests(unittest.TestCase):
             "SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST",
             "SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL",
         }
+        wrapper_allowed_targets = {
+            "SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST": {"MART_SECTION_DECISION_CURRENT", "OVERWATCH_LOAD_AUDIT"},
+            "SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL": {"OVERWATCH_LOAD_AUDIT"},
+        }
 
         for proc_name, body in procedure_bodies.items():
             with self.subTest(proc_name=proc_name):
@@ -265,7 +269,7 @@ class DeploymentContractTests(unittest.TestCase):
                     )
                 )
                 if proc_name in wrapper_procedures:
-                    self.assertEqual(targets, [])
+                    self.assertEqual(set(targets), wrapper_allowed_targets[proc_name])
                     self.assertIn("CALL SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS()", body)
                     continue
                 self.assertTrue(targets)

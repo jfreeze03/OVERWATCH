@@ -630,19 +630,18 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         self.assertIn("model.fallback", renderer)
         self.assertIn("model.fixture_badge_label", renderer)
 
-    def test_decision_workspace_wrapper_contains_full_workspace_source_order(self):
+    def test_decision_workspace_uses_marker_backed_streamlit_container(self):
         renderer = (APP_ROOT / "sections" / "section_command_rendering.py").read_text(encoding="utf-8")
-        open_idx = renderer.index('<section class="ow-decision-workspace"')
+        marker_idx = renderer.index("ow-decision-workspace-marker")
         breadcrumb_idx = renderer.index("st.html(_breadcrumb_html(parts))")
         hero_idx = renderer.index("ow-decision-hero ow-decision-hero-copy-only")
         trust_idx = renderer.index("_render_model_trust_footer(model)")
-        close_idx = renderer.index('st.markdown("</section>"')
-        self.assertLess(open_idx, breadcrumb_idx)
+        self.assertLess(marker_idx, breadcrumb_idx)
         self.assertLess(breadcrumb_idx, hero_idx)
         self.assertLess(hero_idx, trust_idx)
-        self.assertLess(trust_idx, close_idx)
-        early_close = renderer[open_idx:hero_idx]
-        self.assertNotIn("</section>", early_close)
+        self.assertNotIn('st.markdown("</section>"', renderer)
+        self.assertNotIn('<section class="ow-decision-workspace"', renderer)
+        self.assertIn('role="region"', renderer)
 
     def test_shared_decision_evidence_panel_contract_exists_and_is_used(self):
         shell = (APP_ROOT / "sections" / "shell_helpers.py").read_text(encoding="utf-8")

@@ -272,73 +272,9 @@ def render_inline_scope_field(label: object, value: object, *, selectable: bool 
     )
 
 
-def render_scope_popover(active_company: str) -> None:
-    """Render the advanced scope drawer inline rather than as a floating popout."""
-    if st.button("Edit scope", key="global_scope_edit_scope", width="stretch"):
-        set_state("_overwatch_scope_drawer_open", not bool(get_state("_overwatch_scope_drawer_open")))
-    if not get_state("_overwatch_scope_drawer_open"):
-        return
-    with st.container():
-        st.markdown('<div class="ow-scope-drawer" aria-label="Advanced scope controls">', unsafe_allow_html=True)
-        c_user, c_role, c_db, c_schema, c_clear = st.columns([1.05, 1.05, 1.25, 1.25, 0.8])
-        with c_user:
-            st.text_input("User contains", key=GLOBAL_USER)
-        with c_role:
-            st.text_input("Role contains", key=GLOBAL_ROLE)
-        with c_db:
-            ensure_global_database_options(active_company)
-            global_database_options = list(get_state(GLOBAL_DATABASE_OPTIONS) or [])
-            if global_database_options:
-                database_choices = ["All scoped databases"] + global_database_options
-                if get_state(GLOBAL_DATABASE_SELECT) not in database_choices:
-                    set_state(GLOBAL_DATABASE_SELECT, "All scoped databases")
-                selected_global_database = st.selectbox(
-                    "Database",
-                    database_choices,
-                    key=GLOBAL_DATABASE_SELECT,
-                )
-                set_state(GLOBAL_DATABASE, (
-                    "" if selected_global_database == "All scoped databases" else selected_global_database
-                ))
-            else:
-                st.text_input("Database contains", key=GLOBAL_DATABASE)
-        with c_schema:
-            selected_database = str(get_state(GLOBAL_DATABASE, "") or "").strip()
-            schema_choice_scope = (
-                active_company,
-                get_state(GLOBAL_ENVIRONMENT, DEFAULT_ENVIRONMENT),
-                selected_database,
-            )
-            if selected_database and get_state(GLOBAL_SCHEMA_CHOICE_SCOPE) != schema_choice_scope:
-                set_state(GLOBAL_SCHEMA_CHOICE_SCOPE, schema_choice_scope)
-                set_state(GLOBAL_SCHEMA_OPTIONS, [])
-            elif not selected_database:
-                pop_state(GLOBAL_SCHEMA_CHOICE_SCOPE, None)
-                pop_state(GLOBAL_SCHEMA_OPTIONS, None)
-            global_schema_options = list(get_state(GLOBAL_SCHEMA_OPTIONS) or [])
-            if selected_database and global_schema_options:
-                schema_choices = ["All schemas in database"] + global_schema_options
-                if get_state(GLOBAL_SCHEMA_SELECT) not in schema_choices:
-                    set_state(GLOBAL_SCHEMA_SELECT, "All schemas in database")
-                selected_global_schema = st.selectbox(
-                    "Schema",
-                    schema_choices,
-                    key=GLOBAL_SCHEMA_SELECT,
-                )
-                set_state(GLOBAL_SCHEMA, (
-                    "" if selected_global_schema == "All schemas in database" else selected_global_schema
-                ))
-            else:
-                st.text_input("Schema contains", key=GLOBAL_SCHEMA)
-        with c_clear:
-            st.write("")
-            if st.button("Clear all filters", key=WIDGET_GLOBAL_FILTERS_CLEAR, width="stretch"):
-                clear_global_filters()
-        st.markdown("</div>", unsafe_allow_html=True)
-
-
 def render_global_command_bar(active_company: str, *, credit_price: float | None = None) -> str:
     """Render the single global scope command bar above the Decision Workspace."""
+    pop_state("_overwatch_scope_drawer_open", None)
     selected_company = str(get_state(ACTIVE_COMPANY, active_company) or active_company)
     if selected_company not in COMPANY_CONFIG:
         selected_company = active_company if active_company in COMPANY_CONFIG else DEFAULT_COMPANY
@@ -357,7 +293,7 @@ def render_global_command_bar(active_company: str, *, credit_price: float | None
         """,
         unsafe_allow_html=True,
     )
-    c_company, c_env, c_date, c_wh, c_edit, c_context = st.columns([1.18, 1.42, 1.66, 1.82, 0.94, 0.92])
+    c_company, c_env, c_date, c_wh, c_context = st.columns([1.18, 1.42, 1.66, 1.82, 0.92])
     with c_company:
         chosen_company = st.selectbox(
             "Company",
@@ -373,8 +309,6 @@ def render_global_command_bar(active_company: str, *, credit_price: float | None
         render_global_date_range_control(label="Window", label_visibility="visible")
     with c_wh:
         render_global_warehouse_control(chosen_company, label_visibility="visible")
-    with c_edit:
-        render_scope_popover(chosen_company)
     with c_context:
         now_label = datetime.now().strftime("%Y-%m-%d %H:%M")
         credit = "" if credit_price is None else f"<strong>${float(credit_price):.2f} / credit</strong>"

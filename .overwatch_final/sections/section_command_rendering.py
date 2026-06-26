@@ -200,14 +200,16 @@ def _render_fallback(
         return
     with st.container(key=f"{key_prefix}_decision_workspace_shell", border=False):
         st.html(
-            f'<section class="ow-decision-workspace ow-decision-brief ow-decision-recovery '
-            f'ow-decision-operating-loop" role="region" aria-label="Decision workspace {fallback.mode}">'
+            f'<div class="ow-decision-workspace-marker" data-section="{_html(model.section)}" '
+            f'data-workflow="{_html(model.workflow)}" aria-hidden="true"></div>'
+            f'<div class="ow-decision-recovery ow-decision-operating-loop" '
+            f'role="region" aria-label="Decision workspace {fallback.mode}">'
             f'<div class="ow-decision-loop-header" data-state="{_html(fallback.mode)}">'
             f'<strong>{_html(fallback.title)}</strong>'
             f'<span>{_html(model.trust.summary)}</span>'
             '</div>'
             f'<p class="ow-decision-loop-summary">{_html(_public_text(fallback.message))}</p>'
-            '</section>'
+            '</div>'
         )
         actions = []
         if refresh_action is not None:
@@ -478,59 +480,57 @@ def render_decision_workspace(
     parts = tuple(breadcrumb or (model.section, model.workflow))
     fixture_badge = '<b class="ow-fixture-badge">FIXTURE DATA</b>' if model.fixture_mode else ""
     with st.container(key=f"{key_prefix}_decision_workspace_shell", border=False):
-        st.markdown(
-            '<section class="ow-decision-workspace" role="region" aria-label="OVERWATCH Decision Workspace">',
-            unsafe_allow_html=True,
+        st.html(
+            f'<div class="ow-decision-workspace-marker" data-section="{_html(model.section)}" '
+            f'data-workflow="{_html(model.workflow)}" role="region" '
+            'aria-label="OVERWATCH Decision Workspace"></div>'
         )
-        try:
-            st.html(_breadcrumb_html(parts))
-            hero_left, hero_right = st.columns([0.72, 0.28])
-            with hero_left:
-                st.html(
-                    '<div class="ow-decision-hero ow-decision-hero-copy-only">'
-                    f'<div class="ow-decision-state-icon" data-state="{_html(state)}">{_state_icon_svg(state)}</div>'
-                    '<div class="ow-decision-state-copy">'
-                    f'<strong>{_html(model.state)} {fixture_badge}</strong>'
-                    f'<h2>{_html(model.headline)}</h2>'
-                    f'<p>{_html(model.summary)}</p>'
-                    '</div>'
-                    '</div>'
-                )
-            with hero_right:
-                st.html(
-                    '<div class="ow-decision-refresh ow-decision-refresh-inline">'
-                    f'<b>{_html(model.trust.freshness_label)}</b>'
-                    f'<span>{_html(model.trust.target_label)}</span>'
-                    '</div>'
-                )
-                if controls.can_refresh and controls.refresh_packet is not None and st.button(
-                    "Refresh",
-                    key=f"{key_prefix}_refresh_packet",
-                    type="secondary",
-                    width="stretch",
-                    help="Refresh the Decision packet for this scope",
-                ):
-                    controls.refresh_packet()
-                    st.rerun()
-            st.html(_metric_ribbon(model, compact=False))
-            left, right = st.columns([2.05, 0.95])
-            with left:
-                st.html(_render_model_attention_panel(model))
-            with right:
-                _render_workspace_actions(
-                    model,
-                    controls,
-                    key_prefix=key_prefix,
-                )
-            st.html(_render_model_trend_band(model) + _render_model_trust_footer(model))
-            if model.has_sources:
-                with st.expander("View sources", expanded=False):
-                    st.html(f'<div class="ow-decision-source-drawer">{_trust_detail_html(model)}</div>')
-            if getattr(model, "additional_metrics", ()):
-                with st.expander("Additional brief metrics", expanded=False):
-                    st.html(_extra_metrics_panel(tuple(model.additional_metrics)))
-        finally:
-            st.markdown("</section>", unsafe_allow_html=True)
+        st.html(_breadcrumb_html(parts))
+        hero_left, hero_right = st.columns([0.72, 0.28])
+        with hero_left:
+            st.html(
+                '<div class="ow-decision-hero ow-decision-hero-copy-only">'
+                f'<div class="ow-decision-state-icon" data-state="{_html(state)}">{_state_icon_svg(state)}</div>'
+                '<div class="ow-decision-state-copy">'
+                f'<strong>{_html(model.state)} {fixture_badge}</strong>'
+                f'<h2>{_html(model.headline)}</h2>'
+                f'<p>{_html(model.summary)}</p>'
+                '</div>'
+                '</div>'
+            )
+        with hero_right:
+            st.html(
+                '<div class="ow-decision-refresh ow-decision-refresh-inline">'
+                f'<b>{_html(model.trust.freshness_label)}</b>'
+                f'<span>{_html(model.trust.target_label)}</span>'
+                '</div>'
+            )
+            if controls.can_refresh and controls.refresh_packet is not None and st.button(
+                "Refresh",
+                key=f"{key_prefix}_refresh_packet",
+                type="secondary",
+                width="stretch",
+                help="Refresh the Decision packet for this scope",
+            ):
+                controls.refresh_packet()
+                st.rerun()
+        st.html(_metric_ribbon(model, compact=False))
+        left, right = st.columns([2.05, 0.95])
+        with left:
+            st.html(_render_model_attention_panel(model))
+        with right:
+            _render_workspace_actions(
+                model,
+                controls,
+                key_prefix=key_prefix,
+            )
+        st.html(_render_model_trend_band(model) + _render_model_trust_footer(model))
+        if model.has_sources:
+            with st.expander("View sources", expanded=False):
+                st.html(f'<div class="ow-decision-source-drawer">{_trust_detail_html(model)}</div>')
+        if getattr(model, "additional_metrics", ()):
+            with st.expander("Additional brief metrics", expanded=False):
+                st.html(_extra_metrics_panel(tuple(model.additional_metrics)))
 
 
 def render_section_command_brief(

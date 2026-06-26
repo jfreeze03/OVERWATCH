@@ -542,11 +542,36 @@ ul[data-testid="stSelectboxVirtualDropdown"] li[aria-selected="true"] {
     color: var(--text-primary) !important;
     -webkit-text-fill-color: var(--text-primary) !important;
 }
+[data-baseweb="popover"]:has([data-baseweb="calendar"]) {
+    background: var(--bg-card) !important;
+    border: 1px solid var(--border-normal) !important;
+    color: var(--text-primary) !important;
+    box-shadow: 0 16px 38px rgba(0, 0, 0, 0.44) !important;
+}
 [data-baseweb="calendar"],
 [data-baseweb="calendar"] > div,
-[data-baseweb="calendar"] > div > div {
+[data-baseweb="calendar"] > div > div,
+[data-baseweb="calendar"] > div > div > div {
     background: var(--bg-card) !important;
     border-color: var(--border-normal) !important;
+}
+[data-baseweb="popover"]:has([data-baseweb="calendar"]) > div,
+[data-baseweb="calendar"] [role="presentation"],
+[data-baseweb="calendar"] [data-baseweb="form-control-container"],
+[data-baseweb="calendar"] [data-baseweb="select"],
+[data-baseweb="calendar"] [data-baseweb="select"] > div,
+[data-baseweb="calendar"] [data-baseweb="select"] [role="combobox"],
+[data-baseweb="calendar"] [data-baseweb="select"] input,
+[data-baseweb="calendar"] [data-baseweb="input"],
+[data-baseweb="calendar"] [data-baseweb="base-input"] {
+    background: var(--bg-input) !important;
+    border-color: var(--border-normal) !important;
+    color: var(--text-input) !important;
+    -webkit-text-fill-color: var(--text-input) !important;
+}
+[data-baseweb="calendar"] [data-baseweb="select"] svg {
+    color: var(--text-input) !important;
+    fill: var(--text-input) !important;
 }
 [data-baseweb="calendar"] button,
 [data-baseweb="calendar"] button *,

@@ -150,6 +150,7 @@ WIDGET_RETRY_SNOWFLAKE_CONNECTION = "retry_snowflake_connection"
 WIDGET_RESUME_QUERIES = "overwatch_resume_queries"
 WIDGET_GLOBAL_FILTERS_CLEAR_TOPBAR = "global_filters_clear_topbar"
 WIDGET_GLOBAL_FILTERS_CLEAR = "global_filters_clear"
+WIDGET_ADVANCED_SCOPE_STATUS = "global_advanced_scope_status"
 WIDGET_SIDEBAR_PANEL_PREFIX = "sidebar_panel"
 WIDGET_NAV_BUTTON_PREFIX = "nav_btn"
 

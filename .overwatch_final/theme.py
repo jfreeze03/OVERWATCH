@@ -3229,6 +3229,29 @@ details summary span[translate="no"] {
     border-radius: 999px;
     color: var(--ow-text-secondary);
 }
+div[class*="st-key-global_advanced_scope_status"] {
+    margin-top: .35rem !important;
+}
+div[class*="st-key-global_advanced_scope_status"] button {
+    min-height: 28px !important;
+    padding: .22rem .48rem !important;
+    border: 1px solid rgba(var(--accent-rgb), .38) !important;
+    border-radius: 999px !important;
+    background: rgba(var(--accent-rgb), .08) !important;
+    background-image: none !important;
+    box-shadow: none !important;
+    color: var(--ow-text-secondary) !important;
+    font-size: .68rem !important;
+    font-weight: 750 !important;
+    line-height: 1.1 !important;
+    white-space: normal !important;
+}
+div[class*="st-key-global_advanced_scope_status"] button:hover,
+div[class*="st-key-global_advanced_scope_status"] button:focus-visible {
+    border-color: rgba(var(--accent-rgb), .72) !important;
+    background: rgba(var(--accent-rgb), .16) !important;
+    color: var(--ow-text) !important;
+}
 .ow-section-tabs,
 .ow-lens-pills {
     margin: .25rem 0 .5rem;

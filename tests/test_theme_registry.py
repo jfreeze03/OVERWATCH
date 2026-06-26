@@ -142,6 +142,14 @@ class ThemeRegistryTests(unittest.TestCase):
         self.assertIn('button[data-testid="stBaseButton-segmented_controlActive"]', carbon_extra)
         self.assertIn("box-shadow: inset 0 -2px 0 var(--accent) !important", carbon_extra)
 
+    def test_advanced_scope_status_chip_is_compact(self):
+        css = theme._combined_theme_css("carbon")
+        self.assertIn('st-key-global_advanced_scope_status', css)
+        self.assertIn("min-height: 28px !important", css)
+        self.assertIn("border-radius: 999px !important", css)
+        self.assertIn("background: rgba(var(--accent-rgb), .08) !important", css)
+        self.assertIn("white-space: normal !important", css)
+
     def test_executive_landing_charts_use_shared_theme_surface(self):
         executive_text = (APP_ROOT / "sections" / "executive_landing_charts.py").read_text(encoding="utf-8")
 

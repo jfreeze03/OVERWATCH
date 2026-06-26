@@ -42,6 +42,8 @@ from runtime_state import (
     GLOBAL_WAREHOUSE_SELECT,
     PREV_GLOBAL_FILTER_SIGNATURE,
     PREV_ACTIVE_COMPANY,
+    SIDEBAR_PANEL,
+    WIDGET_ADVANCED_SCOPE_STATUS,
     WIDGET_GLOBAL_FILTERS_CLEAR,
     WIDGET_GLOBAL_FILTERS_CLEAR_TOPBAR,
     clear_scoped_state,
@@ -246,6 +248,47 @@ def clear_global_filters() -> None:
     st.rerun()
 
 
+def _advanced_scope_value_is_active(value: object) -> bool:
+    """Return whether a deep-scope value should count as an active filter."""
+    text = str(value or "").strip()
+    if not text:
+        return False
+    return text.lower() not in {
+        "all",
+        "all scoped databases",
+        "all schemas in database",
+    }
+
+
+def active_advanced_scope_filter_count() -> int:
+    """Count deep scope filters that are active outside the daily command bar."""
+    return sum(
+        1
+        for key in (GLOBAL_USER, GLOBAL_ROLE, GLOBAL_DATABASE, GLOBAL_SCHEMA)
+        if _advanced_scope_value_is_active(get_state(key, ""))
+    )
+
+
+def route_to_advanced_scope() -> None:
+    """Open the canonical Advanced Scope panel without duplicating its controls."""
+    set_state(SIDEBAR_PANEL, "advanced_scope")
+
+
+def render_advanced_scope_status(count: int) -> None:
+    """Render a compact command-bar status chip only when deep filters are active."""
+    if int(count or 0) <= 0:
+        return
+    label = f"Advanced filters active · {int(count)}"
+    st.button(
+        label,
+        key=WIDGET_ADVANCED_SCOPE_STATUS,
+        type="secondary",
+        width="stretch",
+        help="Open Advanced Scope to review or clear deep filters.",
+        on_click=route_to_advanced_scope,
+    )
+
+
 def maybe_clear_scope_cache_on_filter_change() -> None:
     """Invalidate loaded telemetry when global filters change."""
     current_filter_signature = global_filter_signature()
@@ -293,7 +336,7 @@ def render_global_command_bar(active_company: str, *, credit_price: float | None
         """,
         unsafe_allow_html=True,
     )
-    c_company, c_env, c_date, c_wh, c_context = st.columns([1.18, 1.42, 1.66, 1.82, 0.92])
+    c_company, c_env, c_date, c_wh, c_context = st.columns([1.12, 1.3, 1.6, 1.68, 1.3])
     with c_company:
         chosen_company = st.selectbox(
             "Company",
@@ -310,6 +353,7 @@ def render_global_command_bar(active_company: str, *, credit_price: float | None
     with c_wh:
         render_global_warehouse_control(chosen_company, label_visibility="visible")
     with c_context:
+        advanced_filter_count = active_advanced_scope_filter_count()
         now_label = datetime.now().strftime("%Y-%m-%d %H:%M")
         credit = "" if credit_price is None else f"<strong>${float(credit_price):.2f} / credit</strong>"
         st.markdown(
@@ -322,6 +366,7 @@ def render_global_command_bar(active_company: str, *, credit_price: float | None
             """,
             unsafe_allow_html=True,
         )
+        render_advanced_scope_status(advanced_filter_count)
     selected_company = str(chosen_company or selected_company)
     return str(selected_company or active_company)
 

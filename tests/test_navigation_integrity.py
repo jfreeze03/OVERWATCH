@@ -1685,21 +1685,37 @@ class NavigationIntegrityTests(unittest.TestCase):
         ]
         advanced_scope_block = filters_text[filters_text.index("def render_advanced_scope_controls"):]
         self.assertNotIn('"User contains"', topbar_filter_block)
+        self.assertNotIn('"Role contains"', topbar_filter_block)
+        self.assertNotIn('"Database contains"', topbar_filter_block)
+        self.assertNotIn('"Schema contains"', topbar_filter_block)
         self.assertNotIn("filters live in Advanced Scope", topbar_filter_block)
         self.assertNotIn("st.popover", topbar_filter_block)
         self.assertNotIn("Edit scope", filters_text)
         self.assertNotIn("global_scope_edit_scope", filters_text)
         self.assertNotIn("def render_scope_popover", filters_text)
+        self.assertNotIn("Clear All Filters", topbar_filter_block)
+        self.assertIn("def active_advanced_scope_filter_count", filters_text)
+        self.assertIn("def render_advanced_scope_status", filters_text)
+        self.assertIn("def route_to_advanced_scope", filters_text)
+        self.assertIn('set_state(SIDEBAR_PANEL, "advanced_scope")', filters_text)
+        self.assertIn("advanced_filter_count = active_advanced_scope_filter_count()", topbar_filter_block)
+        self.assertIn("render_advanced_scope_status(advanced_filter_count)", topbar_filter_block)
         self.assertNotIn("ow-scope-drawer", topbar_filter_block)
         self.assertNotIn("ow-scope-drawer", theme_text)
         self.assertNotIn("Pin expanded scope controls", topbar_filter_block)
         self.assertIn("c_company, c_env, c_date, c_wh, c_context = st.columns", topbar_filter_block)
-        self.assertIn("st.columns([1.18, 1.42, 1.66, 1.82, 0.92])", topbar_filter_block)
+        self.assertIn("st.columns([1.12, 1.3, 1.6, 1.68, 1.3])", topbar_filter_block)
         self.assertNotIn("c_edit", topbar_filter_block)
         self.assertNotIn("_scope_spacer", topbar_filter_block)
+        self.assertIn("st.button(", filters_text[filters_text.index("def render_advanced_scope_status"):])
+        self.assertIn("WIDGET_ADVANCED_SCOPE_STATUS", runtime_text)
         dba_render_text = (APP_ROOT / "sections" / "dba_control_room" / "render.py").read_text(encoding="utf-8")
         self.assertNotIn('render_shell_snapshot((("Scope"', dba_render_text)
         self.assertIn('"User contains"', advanced_scope_block)
+        self.assertIn('"Role contains"', advanced_scope_block)
+        self.assertIn('"Database contains"', advanced_scope_block)
+        self.assertIn('"Schema contains"', advanced_scope_block)
+        self.assertIn('"Clear All Filters"', advanced_scope_block)
         self.assertIn('if sidebar_panel_toggle("Advanced Scope", "advanced_scope")', layout_text)
         self.assertIn('if sidebar_panel_toggle("Settings", "settings")', layout_text)
         self.assertEqual(layout_text.count('if sidebar_panel_toggle("Advanced Scope", "advanced_scope")'), 1)
@@ -1713,6 +1729,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("TRIAGE_MODE_TRIAGE", runtime_text)
         self.assertNotIn("TRIAGE_MODE_INVESTIGATE", runtime_text)
         self.assertNotIn("TRIAGE_MODE_ALL_EVIDENCE", runtime_text)
+
         self.assertIn("TRIAGE_MODE_LEGACY_ALIASES", evidence_mode_text)
         self.assertNotIn('"Exceptions-only mode"', app_text + shell_text + layout_text)
         for path in APP_ROOT.rglob("*.py"):
@@ -1734,6 +1751,27 @@ class NavigationIntegrityTests(unittest.TestCase):
             layout_text.index('if sidebar_panel_toggle("Advanced Scope", "advanced_scope")'),
             layout_text.index('if sidebar_panel_toggle("Settings", "settings")'),
         )
+
+    def test_advanced_scope_status_counts_and_routes_to_sidebar_panel(self):
+        import filters
+        from runtime_state import GLOBAL_DATABASE, GLOBAL_ROLE, GLOBAL_SCHEMA, GLOBAL_USER, SIDEBAR_PANEL
+
+        previous = dict(st.session_state)
+        try:
+            st.session_state.clear()
+            self.assertEqual(filters.active_advanced_scope_filter_count(), 0)
+
+            st.session_state[GLOBAL_USER] = "ANALYST"
+            st.session_state[GLOBAL_ROLE] = "  "
+            st.session_state[GLOBAL_DATABASE] = "All scoped databases"
+            st.session_state[GLOBAL_SCHEMA] = "PUBLIC"
+            self.assertEqual(filters.active_advanced_scope_filter_count(), 2)
+
+            filters.route_to_advanced_scope()
+            self.assertEqual(st.session_state[SIDEBAR_PANEL], "advanced_scope")
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)
 
     def test_idle_shell_render_does_not_probe_snowflake(self):
         import shell

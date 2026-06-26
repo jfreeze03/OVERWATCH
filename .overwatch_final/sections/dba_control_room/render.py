@@ -1035,11 +1035,7 @@ def render() -> None:
             st.session_state.get("cortex_control_budget_usd", 5000.0),
         )
     )
-    c1, c2 = st.columns([1, 1])
-    with c1:
-        lookback_hours = st.selectbox("Lookback", [12, 24, 48, 168], index=1, format_func=lambda h: f"{h} hours")
-    with c2:
-        render_shell_snapshot((("Scope", f"{company} / {environment}"),))
+    lookback_hours = st.selectbox("Lookback", [12, 24, 48, 168], index=1, format_func=lambda h: f"{h} hours")
     render_section_breadcrumb([
         "DBA Control Room",
         DBA_CONTROL_ROOM_PANE_LABELS.get(normalized_view, normalized_view),

@@ -179,7 +179,6 @@ def render_app_header(section: str, company: str, credit_price: float, role: str
             f"""
             <div class="ow-run-context">
                 <div>{html.escape(now_label)}</div>
-                <div>${float(credit_price):.2f}/credit</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -456,7 +455,6 @@ def render_sidebar(
         st.markdown(f"""
         <div style="font-size:0.65rem; color:#475569; text-align:center;">
             <div style="color:{company_color}; font-weight:700; margin-bottom:4px;">{active_company} view</div>
-            <div>${credit_price:.2f}/credit</div>
             <div style="margin-top:4px;">Live metadata is current; account history may lag up to 45 minutes.</div>
         </div>
         """, unsafe_allow_html=True)

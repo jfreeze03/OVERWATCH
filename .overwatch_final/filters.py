@@ -255,7 +255,7 @@ def maybe_clear_scope_cache_on_filter_change() -> None:
 
 
 def render_topbar_filter_strip(active_company: str) -> str:
-    """Render a compact scope summary with editable controls on demand."""
+    """Render the current scope and primary triage filters inline."""
     selected_company = str(get_state(ACTIVE_COMPANY, active_company) or active_company)
     if selected_company not in COMPANY_CONFIG:
         selected_company = active_company if active_company in COMPANY_CONFIG else DEFAULT_COMPANY
@@ -268,7 +268,7 @@ def render_topbar_filter_strip(active_company: str) -> str:
     else:
         window_label = "Default window"
     wh_value = str(get_state(GLOBAL_WAREHOUSE, "") or "").strip() or "All warehouses"
-    scope_summary = _escape_html(f"{selected_company} · {env_label} · {window_label} · {wh_value}")
+    scope_summary = _escape_html(f"{selected_company} / {env_label} / {window_label} / {wh_value}")
     st.markdown(
         f"""
         <div class="ow-compact-scope-bar" aria-label="Current scope">
@@ -278,38 +278,32 @@ def render_topbar_filter_strip(active_company: str) -> str:
         unsafe_allow_html=True,
     )
 
-    def _render_scope_editor() -> str:
-        c_company, c_env, c_date, c_wh, c_clear = st.columns([1.0, 1.08, 1.75, 1.65, 0.62])
-        with c_company:
-            chosen_company = st.selectbox(
-                "Company view",
-                list(COMPANY_CONFIG.keys()),
-                index=list(COMPANY_CONFIG.keys()).index(selected_company)
-                if selected_company in COMPANY_CONFIG else 0,
-                key=ACTIVE_COMPANY,
-            )
-        with c_env:
-            render_global_environment_control(chosen_company)
-        with c_date:
-            render_global_date_range_control()
-        with c_wh:
-            render_global_warehouse_control(chosen_company)
-        with c_clear:
-            st.write("")
-            if st.button("Clear", key=WIDGET_GLOBAL_FILTERS_CLEAR_TOPBAR, width="stretch"):
-                clear_global_filters()
-        st.toggle("Pin expanded scope controls", key="_overwatch_pin_scope_filters")
-        return str(chosen_company or selected_company)
-
-    if get_state("_overwatch_pin_scope_filters", False):
-        with st.expander("Edit scope", expanded=True):
-            selected_company = _render_scope_editor()
-    elif hasattr(st, "popover"):
-        with st.popover("Edit scope"):
-            selected_company = _render_scope_editor()
-    else:
-        with st.expander("Edit scope", expanded=False):
-            selected_company = _render_scope_editor()
+    st.markdown(
+        """
+        <div class="ow-inline-scope-heading" aria-label="Triage filters">Triage filters</div>
+        """,
+        unsafe_allow_html=True,
+    )
+    c_company, c_env, c_date, c_wh, c_clear = st.columns([1.0, 1.08, 1.75, 1.65, 0.62])
+    with c_company:
+        chosen_company = st.selectbox(
+            "Company view",
+            list(COMPANY_CONFIG.keys()),
+            index=list(COMPANY_CONFIG.keys()).index(selected_company)
+            if selected_company in COMPANY_CONFIG else 0,
+            key=ACTIVE_COMPANY,
+        )
+    with c_env:
+        render_global_environment_control(chosen_company)
+    with c_date:
+        render_global_date_range_control()
+    with c_wh:
+        render_global_warehouse_control(chosen_company)
+    with c_clear:
+        st.write("")
+        if st.button("Clear", key=WIDGET_GLOBAL_FILTERS_CLEAR_TOPBAR, width="stretch"):
+            clear_global_filters()
+    selected_company = str(chosen_company or selected_company)
     return str(selected_company or active_company)
 
 

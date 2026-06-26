@@ -448,6 +448,9 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertIn("Summary not initialized", first_markup)
         self.assertNotIn("MART_SECTION_DECISION_CURRENT", first_markup)
         self.assertNotIn("FACT_COST_DAILY", first_markup)
+        renderer_source = (APP_ROOT / "sections" / "section_command_rendering.py").read_text(encoding="utf-8")
+        self.assertNotIn('"Technical details"', renderer_source)
+        self.assertNotIn('"Data Trust"', renderer_source)
 
     def test_command_actions_are_deduped_and_unknown_routes_removed(self):
         from sections.section_command_brief import SectionCommandAction

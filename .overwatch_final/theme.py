@@ -501,9 +501,9 @@ div:has(> div > [data-testid="stSelectboxVirtualDropdown"]) {
     background: var(--bg-card) !important;
     border-color: var(--border-normal) !important;
     color: var(--text-primary) !important;
-    min-width: min(340px, calc(100vw - 2rem)) !important;
-    width: min(340px, calc(100vw - 2rem)) !important;
-    max-width: min(420px, calc(100vw - 2rem)) !important;
+    min-width: min(220px, calc(100vw - 2rem)) !important;
+    width: max-content !important;
+    max-width: min(360px, calc(100vw - 2rem)) !important;
 }
 [data-baseweb="popover"]:has([data-testid="stSelectboxVirtualDropdown"]) * {
     color: var(--text-primary) !important;
@@ -1631,6 +1631,14 @@ code, pre, .stCodeBlock {
 }
 .ow-compact-scope-bar span {
     min-width: 0;
+}
+.ow-inline-scope-heading {
+    margin: 0.58rem 0 0.35rem;
+    color: var(--text-primary);
+    font-size: 0.72rem;
+    font-weight: 950;
+    letter-spacing: 0;
+    text-transform: uppercase;
 }
 .ow-section-tabs,
 .ow-primary-tabs,

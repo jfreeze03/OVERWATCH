@@ -305,8 +305,6 @@ def _render_fallback(brief: SectionCommandBrief, *, key_prefix: str, detail_acti
     with cols[1]:
         if detail_action is not None:
             _render_detail_action(key_prefix=key_prefix, detail_action=detail_action)
-    with st.expander("Technical details", expanded=False):
-        st.html(f'<div class="ow-decision-trust-panel">{_trust_detail_html(brief)}</div>')
 
 
 def _route_action(action: SectionCommandAction) -> bool:
@@ -426,7 +424,7 @@ def render_section_command_brief(
         f'<section class="ow-decision-brief ow-decision-operating-loop{compact_class}" role="region" '
         'aria-label="OVERWATCH Decision Brief">'
         f'<div class="ow-decision-loop-header" data-state="{_html(state)}">'
-        f'<strong>{_html(brief.section.upper())} · {_html("DATA GAP" if brief.missing_source_count else ("STALE" if brief.stale else brief.state.upper()))}</strong>'
+        f'<strong>{_html(brief.section.upper())} / {_html("DATA GAP" if brief.missing_source_count else ("STALE" if brief.stale else brief.state.upper()))}</strong>'
         f'<span>{_html(_data_trust_summary(brief))}</span>'
         '</div>'
         f'<p class="ow-decision-loop-headline">{_html(brief.headline)}</p>'
@@ -444,8 +442,6 @@ def render_section_command_brief(
         detail_action=detail_action,
         compact=compact,
     )
-    with st.expander("Data Trust", expanded=False):
-        st.html(f'<div class="ow-decision-trust-panel">{_trust_detail_html(brief)}</div>')
     if not compact and len(tuple(brief.metrics or ())) > 4:
         extra = "".join(
             f'<div class="ow-decision-extra-metric"><strong>{_html(metric.label)}</strong>'

@@ -85,7 +85,11 @@ def render() -> None:
         EXECUTIVE_ACTIONS_WORKFLOW: "Actions",
         EXECUTIVE_ADMIN_WORKFLOW: "Evidence",
     }
-    render_section_breadcrumb(["Executive Landing", workflow_labels.get(str(st.session_state.get(EXECUTIVE_LANDING_WORKFLOW) or EXECUTIVE_OVERVIEW_WORKFLOW), "Overview")])
+    current_workflow = normalize_executive_landing_workflow(
+        st.session_state.get(EXECUTIVE_LANDING_WORKFLOW, EXECUTIVE_OVERVIEW_WORKFLOW)
+    )
+    if current_workflow != EXECUTIVE_OVERVIEW_WORKFLOW:
+        render_section_breadcrumb(["Executive Landing", workflow_labels.get(current_workflow, "Overview")])
     active_workflow = render_primary_section_tabs(
         label="Executive Landing primary navigation",
         options=EXECUTIVE_LANDING_WORKFLOWS,
@@ -94,10 +98,11 @@ def render() -> None:
         format_func=lambda value: workflow_labels.get(str(value), str(value)),
     )
     active_workflow = normalize_executive_landing_workflow(active_workflow)
-    render_content_header(
-        workflow_labels.get(active_workflow, active_workflow),
-        EXECUTIVE_LANDING_WORKFLOW_DETAILS.get(active_workflow, "Executive evidence stays behind explicit load actions."),
-    )
+    if active_workflow != EXECUTIVE_OVERVIEW_WORKFLOW:
+        render_content_header(
+            workflow_labels.get(active_workflow, active_workflow),
+            EXECUTIVE_LANDING_WORKFLOW_DETAILS.get(active_workflow, "Executive evidence stays behind explicit load actions."),
+        )
 
     expected_scope = _executive_snapshot_scope(company, environment, int(days))
     board, board_payload = _current_observability_board(company, environment, int(days))

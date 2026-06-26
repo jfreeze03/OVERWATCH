@@ -141,10 +141,11 @@ def _render_dba_control_room_workflow_selector() -> str:
         format_func=lambda value: DBA_CONTROL_ROOM_PANE_LABELS.get(str(value), str(value)),
     )
     selected = normalize_dba_control_room_pane(selected)
-    render_content_header(
-        DBA_CONTROL_ROOM_PANE_LABELS.get(selected, selected),
-        DBA_CONTROL_ROOM_PANE_DETAILS.get(selected, "DBA evidence stays behind explicit load actions."),
-    )
+    if selected != MORNING_COCKPIT_WORKFLOW:
+        render_content_header(
+            DBA_CONTROL_ROOM_PANE_LABELS.get(selected, selected),
+            DBA_CONTROL_ROOM_PANE_DETAILS.get(selected, "DBA evidence stays behind explicit load actions."),
+        )
     return selected
 
 
@@ -1036,10 +1037,11 @@ def render() -> None:
         )
     )
     lookback_hours = st.selectbox("Lookback", [12, 24, 48, 168], index=1, format_func=lambda h: f"{h} hours")
-    render_section_breadcrumb([
-        "DBA Control Room",
-        DBA_CONTROL_ROOM_PANE_LABELS.get(normalized_view, normalized_view),
-    ])
+    if normalized_view != MORNING_COCKPIT_WORKFLOW:
+        render_section_breadcrumb([
+            "DBA Control Room",
+            DBA_CONTROL_ROOM_PANE_LABELS.get(normalized_view, normalized_view),
+        ])
     active_view = _render_dba_control_room_workflow_selector()
     dba_brief = autoload_section_command_brief(
         "DBA Control Room",

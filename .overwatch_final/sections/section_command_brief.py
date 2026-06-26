@@ -837,6 +837,7 @@ def autoload_section_command_brief(
     )
     if not force and _session_brief_is_current(cached):
         if cached_is_fixture and not fixture_active:
+            st.session_state.pop(key, None)
             cached = None
         elif fixture_active and not cached_is_fixture:
             cached = None
@@ -858,6 +859,7 @@ def autoload_section_command_brief(
         and last_good.raw_payload.get("fixture_mode") is True
         and not fixture_active
     ):
+        st.session_state.pop(_last_good_key(key), None)
         last_good = None
 
     if fixture_active:
@@ -868,7 +870,6 @@ def autoload_section_command_brief(
             window_days=int(window_days),
         )
         st.session_state[key] = brief
-        st.session_state[_last_good_key(key)] = brief
         st.session_state.pop(_negative_key(key), None)
         _record_telemetry(brief)
         return brief

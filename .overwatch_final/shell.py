@@ -149,7 +149,7 @@ def _render_app_body() -> None:
         maybe_run_decision_workspace_bootstrap = import_module(
             "sections.decision_workspace_bootstrap"
         ).maybe_run_decision_workspace_bootstrap
-        maybe_run_decision_workspace_bootstrap()
+        maybe_run_decision_workspace_bootstrap(active_section)
     active_section = current_active_section(visible_sections)
     set_active_section(active_section)
 

@@ -223,7 +223,8 @@ def render() -> None:
     breadcrumb = ["Cost & Contract", workflow_label(workflow)]
     if workflow == "Cost Explorer":
         breadcrumb.append(str(st.session_state.get("cc_explorer_lens") or "Warehouse"))
-    render_section_breadcrumb(breadcrumb)
+    if workflow != "Cost Overview":
+        render_section_breadcrumb(breadcrumb)
     _render_cost_filter_indicator()
 
     st.html('<div class="ow-cost-layout ow-cost-main-content"></div>')
@@ -241,7 +242,7 @@ def render() -> None:
             f"Cost Explorer: {st.session_state.get('cc_explorer_lens', 'Warehouse')}",
             "Use the filters and Load Cost Explorer when you need detailed rows.",
         )
-    else:
+    elif workflow != "Cost Overview":
         render_content_header(
             workflow_label(workflow),
             WORKFLOW_DETAILS.get(workflow, "Cost evidence remains behind explicit load actions."),

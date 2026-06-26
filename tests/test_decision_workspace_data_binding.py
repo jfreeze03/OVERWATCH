@@ -139,6 +139,26 @@ def _render_markup(brief: object) -> str:
 
 
 class DecisionWorkspaceDataBindingTests(unittest.TestCase):
+    def test_renderer_has_no_legacy_brief_helper_paths(self):
+        renderer_source = (APP_ROOT / "sections" / "section_command_rendering.py").read_text(encoding="utf-8")
+        legacy_names = (
+            "_visible_metrics",
+            "_metric_ribbon_html",
+            "_priority_list_html",
+            "_state_token",
+            "_state_label",
+            "_metric_ribbon_panel",
+            "_attention_panel",
+            "_trend_band",
+            "_trust_footer",
+        )
+        for helper in legacy_names:
+            with self.subTest(helper=helper):
+                self.assertNotIn(f"def {helper}", renderer_source)
+        self.assertNotIn("brief.next_actions", renderer_source)
+        self.assertNotIn("brief.exceptions", renderer_source)
+        self.assertNotIn("brief.metrics", renderer_source)
+
     def test_no_mockup_literals_in_production_paths(self):
         allowed = {
             APP_ROOT / "sections" / "decision_workspace_fixtures.py",
@@ -259,6 +279,40 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
                 for literal in MOCKUP_LITERALS:
                     self.assertNotIn(literal, markup)
 
+    def test_fixture_last_good_cache_is_discarded_in_production_mode(self):
+        from sections import section_command_brief as brief_module
+        from sections.section_command_brief import SectionCommandBrief
+
+        fixture_lkg = SectionCommandBrief(
+            section="Executive Landing",
+            company="ALFA",
+            environment="ALL",
+            window_label="7 days",
+            state="FIXTURE DATA",
+            headline="Fixture headline",
+            summary="Fixture summary",
+            source="Fixture",
+            freshness_label="Fixture",
+            loaded_at="2026-06-25T10:00:00",
+            raw_payload={"fixture_mode": True},
+        )
+        state = {
+            "section_command_brief::Executive Landing::ALFA::ALL::7::last_good": fixture_lkg,
+        }
+        with patch.object(brief_module.st, "session_state", state), patch.object(
+            brief_module,
+            "decision_fixture_enabled",
+            return_value=False,
+        ), patch.object(brief_module, "snowflake_entry_available", return_value=False), patch.object(
+            brief_module,
+            "run_query",
+            side_effect=AssertionError("offline preflight should avoid packet query"),
+        ):
+            brief = brief_module.autoload_section_command_brief("Executive Landing", "ALFA", "ALL", 7)
+
+        self.assertFalse(brief.raw_payload.get("fixture_mode"))
+        self.assertNotIn("section_command_brief::Executive Landing::ALFA::ALL::7::last_good", state)
+
     def test_initialize_summaries_button_sets_bootstrap_request(self):
         from sections.section_command_brief import SectionCommandBrief
         from sections import section_command_rendering
@@ -295,6 +349,159 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
 
         self.assertTrue(state["_overwatch_decision_bootstrap_requested"])
 
+    def test_refresh_lives_in_hero_and_evidence_is_separate(self):
+        from sections.section_command_brief import SectionCommandAction, SectionCommandBrief, SectionCommandMetric
+        from sections import section_command_rendering
+
+        state: dict[str, object] = {}
+        brief = SectionCommandBrief(
+            section="Alert Center",
+            company="ALFA",
+            environment="ALL",
+            window_label="7 days",
+            state="At Risk",
+            headline="Packet headline",
+            summary="Packet summary",
+            source="MART_SECTION_DECISION_CURRENT",
+            freshness_label="Updated 4m ago",
+            loaded_at="2026-06-25T10:00:00",
+            metrics=(SectionCommandMetric("Active Alerts", "5", numeric_value=5, metric_format="integer", key="active_alerts"),),
+            next_actions=(
+                SectionCommandAction("Open Active Alerts", "Route only", route_key="alert_center_active", cta="Open Active Alerts"),
+            ),
+        )
+
+        def _button(label, *args, **kwargs):
+            return False
+
+        with patch.object(section_command_rendering.st, "html"), patch.object(
+            section_command_rendering.st,
+            "markdown",
+        ), patch.object(
+            section_command_rendering.st,
+            "columns",
+            return_value=[contextlib.nullcontext(), contextlib.nullcontext()],
+        ), patch.object(section_command_rendering.st, "button", side_effect=_button) as button, patch.object(
+            section_command_rendering.st,
+            "expander",
+            return_value=contextlib.nullcontext(),
+        ), patch.object(section_command_rendering.st, "rerun", side_effect=AssertionError("idle render must not rerun")):
+            section_command_rendering.render_section_command_brief(
+                brief,
+                key_prefix="action_hierarchy",
+                primary_action=lambda: state.__setitem__("force", True),
+                detail_action=section_command_rendering.CommandBriefDetailAction(
+                    "Load Active Alerts",
+                    "Load alert rows.",
+                    lambda: state.__setitem__("evidence", True),
+                    key="alert_center_load",
+                ),
+            )
+
+        labels = [str(call.args[0]) for call in button.call_args_list]
+        self.assertIn("Refresh", labels)
+        self.assertNotIn("Refresh Decision Brief", labels)
+        self.assertEqual(sum(label.startswith("Open Active Alerts") for label in labels), 1)
+        self.assertIn("Load Active Alerts", labels)
+
+    def test_refresh_button_sets_packet_flag_not_evidence_flag(self):
+        from sections.section_command_brief import SectionCommandBrief, SectionCommandMetric
+        from sections import section_command_rendering
+
+        state: dict[str, object] = {}
+        brief = SectionCommandBrief(
+            section="Executive Landing",
+            company="ALFA",
+            environment="ALL",
+            window_label="7 days",
+            state="At Risk",
+            headline="Packet headline",
+            summary="Packet summary",
+            source="MART_SECTION_DECISION_CURRENT",
+            freshness_label="Updated 4m ago",
+            loaded_at="2026-06-25T10:00:00",
+            metrics=(SectionCommandMetric("Spend", "$123", numeric_value=123, metric_format="currency", key="total_spend"),),
+        )
+
+        def _button(label, *args, **kwargs):
+            return label == "Refresh"
+
+        with patch.object(section_command_rendering.st, "html"), patch.object(
+            section_command_rendering.st,
+            "markdown",
+        ), patch.object(
+            section_command_rendering.st,
+            "columns",
+            return_value=[contextlib.nullcontext(), contextlib.nullcontext()],
+        ), patch.object(section_command_rendering.st, "button", side_effect=_button), patch.object(
+            section_command_rendering.st,
+            "expander",
+            return_value=contextlib.nullcontext(),
+        ), patch.object(section_command_rendering.st, "rerun", side_effect=RuntimeError("rerun")):
+            with self.assertRaises(RuntimeError):
+                section_command_rendering.render_section_command_brief(
+                    brief,
+                    key_prefix="refresh_only",
+                    primary_action=lambda: state.__setitem__("force", True),
+                    detail_action=section_command_rendering.CommandBriefDetailAction(
+                        "Load Full Executive Snapshot",
+                        "Load evidence.",
+                        lambda: state.__setitem__("evidence", True),
+                    ),
+                )
+
+        self.assertTrue(state.get("force"))
+        self.assertNotIn("evidence", state)
+
+    def test_evidence_button_sets_evidence_flag_not_packet_refresh(self):
+        from sections.section_command_brief import SectionCommandBrief, SectionCommandMetric
+        from sections import section_command_rendering
+
+        state: dict[str, object] = {}
+        brief = SectionCommandBrief(
+            section="Executive Landing",
+            company="ALFA",
+            environment="ALL",
+            window_label="7 days",
+            state="At Risk",
+            headline="Packet headline",
+            summary="Packet summary",
+            source="MART_SECTION_DECISION_CURRENT",
+            freshness_label="Updated 4m ago",
+            loaded_at="2026-06-25T10:00:00",
+            metrics=(SectionCommandMetric("Spend", "$123", numeric_value=123, metric_format="currency", key="total_spend"),),
+        )
+
+        def _button(label, *args, **kwargs):
+            return label == "Load Full Executive Snapshot"
+
+        with patch.object(section_command_rendering.st, "html"), patch.object(
+            section_command_rendering.st,
+            "markdown",
+        ), patch.object(
+            section_command_rendering.st,
+            "columns",
+            return_value=[contextlib.nullcontext(), contextlib.nullcontext()],
+        ), patch.object(section_command_rendering.st, "button", side_effect=_button), patch.object(
+            section_command_rendering.st,
+            "expander",
+            return_value=contextlib.nullcontext(),
+        ), patch.object(section_command_rendering.st, "rerun", side_effect=RuntimeError("rerun")):
+            with self.assertRaises(RuntimeError):
+                section_command_rendering.render_section_command_brief(
+                    brief,
+                    key_prefix="evidence_only",
+                    primary_action=lambda: state.__setitem__("force", True),
+                    detail_action=section_command_rendering.CommandBriefDetailAction(
+                        "Load Full Executive Snapshot",
+                        "Load evidence.",
+                        lambda: state.__setitem__("evidence", True),
+                    ),
+                )
+
+        self.assertTrue(state.get("evidence"))
+        self.assertNotIn("force", state)
+
     def test_bootstrap_request_is_consumed_once_and_clears_command_cache(self):
         from sections import decision_workspace_bootstrap as bootstrap
 
@@ -314,23 +521,77 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
             bootstrap.BOOTSTRAP_REQUEST_KEY: True,
             "section_command_brief::Executive Landing::ALFA::ALL::7": object(),
             "section_command_brief::Executive Landing::ALFA::ALL::7::negative_until": "later",
+            "section_command_brief::Executive Landing::ALFA::ALL::7::last_good": object(),
             "unrelated": "keep",
         }
         with patch.object(bootstrap.st, "session_state", state), patch.object(
             bootstrap,
             "lazy_util",
             return_value=lambda *args, **kwargs: session,
-        ), patch.object(bootstrap.st, "success") as success, patch.object(bootstrap.st, "warning") as warning:
-            bootstrap.maybe_run_decision_workspace_bootstrap()
+        ), patch.object(bootstrap.st, "success") as success, patch.object(bootstrap.st, "warning") as warning, patch.object(
+            bootstrap.st,
+            "rerun",
+            side_effect=RuntimeError("rerun"),
+        ) as rerun:
+            with self.assertRaises(RuntimeError):
+                bootstrap.maybe_run_decision_workspace_bootstrap("Executive Landing")
             bootstrap.maybe_run_decision_workspace_bootstrap()
 
         self.assertEqual(session.sql_calls, ["CALL SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS();"])
         self.assertNotIn(bootstrap.BOOTSTRAP_REQUEST_KEY, state)
         self.assertNotIn("section_command_brief::Executive Landing::ALFA::ALL::7", state)
         self.assertNotIn("section_command_brief::Executive Landing::ALFA::ALL::7::negative_until", state)
+        self.assertNotIn("section_command_brief::Executive Landing::ALFA::ALL::7::last_good", state)
+        self.assertTrue(state["_executive_landing_command_brief_force_refresh"])
         self.assertEqual(state["unrelated"], "keep")
         success.assert_called_once()
         warning.assert_not_called()
+        rerun.assert_called_once()
+
+    def test_bootstrap_failure_preserves_valid_last_good(self):
+        from sections import decision_workspace_bootstrap as bootstrap
+        from sections.section_command_brief import SectionCommandBrief
+
+        class FailingSession:
+            def sql(self, text: str) -> "FailingSession":
+                return self
+
+            def collect(self) -> list[object]:
+                raise RuntimeError("no grant")
+
+        last_good = SectionCommandBrief(
+            section="Cost & Contract",
+            company="ALFA",
+            environment="ALL",
+            window_label="7 days",
+            state="At Risk",
+            headline="Last good",
+            summary="Last good summary",
+            source="MART_SECTION_DECISION_CURRENT",
+            freshness_label="Updated 20m ago",
+            loaded_at="2026-06-25T10:00:00",
+        )
+        state = {
+            bootstrap.BOOTSTRAP_REQUEST_KEY: True,
+            "section_command_brief::Cost & Contract::ALFA::ALL::7": object(),
+            "section_command_brief::Cost & Contract::ALFA::ALL::7::negative_until": "later",
+            "section_command_brief::Cost & Contract::ALFA::ALL::7::last_good": last_good,
+        }
+        with patch.object(bootstrap.st, "session_state", state), patch.object(
+            bootstrap,
+            "lazy_util",
+            return_value=lambda *args, **kwargs: FailingSession(),
+        ), patch.object(bootstrap.st, "warning") as warning, patch.object(
+            bootstrap.st,
+            "rerun",
+            side_effect=AssertionError("failed bootstrap must not rerun"),
+        ):
+            bootstrap.maybe_run_decision_workspace_bootstrap("Cost & Contract")
+
+        self.assertIs(state["section_command_brief::Cost & Contract::ALFA::ALL::7::last_good"], last_good)
+        self.assertNotIn("section_command_brief::Cost & Contract::ALFA::ALL::7", state)
+        self.assertNotIn("section_command_brief::Cost & Contract::ALFA::ALL::7::negative_until", state)
+        warning.assert_called_once()
 
     def test_bootstrap_unauthorized_shows_compact_admin_instruction(self):
         from sections import decision_workspace_bootstrap as bootstrap

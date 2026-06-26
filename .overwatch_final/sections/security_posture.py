@@ -219,11 +219,12 @@ def render() -> None:
             active_value=st.session_state.get("security_access_changes_lens", "Recent Grants"),
             key="security_access_changes_lens",
         )
-    render_section_breadcrumb(["Security Monitoring", security_labels.get(active_view, active_view)])
-    render_content_header(
-        security_labels.get(active_view, active_view),
-        SECURITY_POSTURE_VIEW_DETAILS.get(active_view, "Security evidence stays behind explicit load actions."),
-    )
+    if active_view != SECURITY_OVERVIEW_WORKFLOW:
+        render_section_breadcrumb(["Security Monitoring", security_labels.get(active_view, active_view)])
+        render_content_header(
+            security_labels.get(active_view, active_view),
+            SECURITY_POSTURE_VIEW_DETAILS.get(active_view, "Security evidence stays behind explicit load actions."),
+        )
     _render_security_first_paint_shell(active_view, company, environment, int(days or 30))
     renderer = SECURITY_POSTURE_RENDERERS.get(active_view)
     if renderer is not None:

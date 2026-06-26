@@ -57,6 +57,7 @@ class DecisionWorkspaceViewModel:
     summary: str
     freshness_label: str
     metric_cells: tuple[DecisionMetricCell, ...]
+    additional_metrics: tuple[DecisionMetricCell, ...]
     findings: tuple[DecisionFinding, ...]
     actions: tuple[DecisionActionView, ...]
     trends: tuple[DecisionMetricCell, ...]
@@ -132,26 +133,30 @@ def _preferred_metrics(section: str) -> tuple[str, ...]:
     }.get(str(section or ""), ())
 
 
-def _metric_cells(section: str, metrics: Sequence[object]) -> tuple[DecisionMetricCell, ...]:
+def _to_metric_cell(metric: object) -> DecisionMetricCell:
+    return DecisionMetricCell(
+        key=str(getattr(metric, "key", "") or ""),
+        label=str(getattr(metric, "label", "") or "Metric"),
+        value=format_metric_value(metric),
+        detail=_delta_label(metric),
+        tone=str(getattr(metric, "tone", "") or "neutral").lower(),
+        trend_points=tuple(getattr(metric, "trend_points", ()) or ()),
+        available=bool(getattr(metric, "available", True)),
+        availability_state=str(getattr(metric, "availability_state", "") or "Available"),
+    )
+
+
+def _metric_cells(section: str, metrics: Sequence[object]) -> tuple[tuple[DecisionMetricCell, ...], tuple[DecisionMetricCell, ...]]:
     available = tuple(metric for metric in tuple(metrics or ()) if bool(getattr(metric, "available", True)))
     by_key = {str(getattr(metric, "key", "") or ""): metric for metric in available}
     preferred = tuple(by_key[key] for key in _preferred_metrics(section) if key in by_key)
     selected = preferred or available[:4]
     if len(selected) < 4:
         selected = selected + tuple(metric for metric in available if metric not in selected)[: 4 - len(selected)]
-    return tuple(
-        DecisionMetricCell(
-            key=str(getattr(metric, "key", "") or ""),
-            label=str(getattr(metric, "label", "") or "Metric"),
-            value=format_metric_value(metric),
-            detail=_delta_label(metric),
-            tone=str(getattr(metric, "tone", "") or "neutral").lower(),
-            trend_points=tuple(getattr(metric, "trend_points", ()) or ()),
-            available=bool(getattr(metric, "available", True)),
-            availability_state=str(getattr(metric, "availability_state", "") or "Available"),
-        )
-        for metric in selected[:4]
-    )
+    primary = tuple(_to_metric_cell(metric) for metric in selected[:4])
+    primary_keys = {cell.key for cell in primary}
+    extra = tuple(_to_metric_cell(metric) for metric in available if str(getattr(metric, "key", "") or "") not in primary_keys)
+    return primary, extra
 
 
 def _state_token(brief: object, source_mode: str) -> str:
@@ -235,7 +240,10 @@ def build_decision_workspace_view_model(
 ) -> DecisionWorkspaceViewModel:
     """Build the data-bound workspace model from a command brief packet."""
     source_mode = _source_mode(brief)
-    metrics = _metric_cells(str(getattr(brief, "section", "") or ""), tuple(getattr(brief, "metrics", ()) or ()))
+    metrics, additional_metrics = _metric_cells(
+        str(getattr(brief, "section", "") or ""),
+        tuple(getattr(brief, "metrics", ()) or ()),
+    )
     findings = tuple(
         DecisionFinding(
             severity=str(getattr(item, "severity", "") or "Info"),
@@ -267,6 +275,7 @@ def build_decision_workspace_view_model(
         summary=str(getattr(brief, "summary", "") or ""),
         freshness_label=trust.freshness_label,
         metric_cells=metrics,
+        additional_metrics=additional_metrics,
         findings=findings,
         actions=actions,
         trends=trends,

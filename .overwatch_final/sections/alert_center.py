@@ -714,11 +714,12 @@ def render() -> None:
             active_value=st.session_state.get("alert_center_status_lens", "Open"),
             key="alert_center_status_lens",
         )
-    render_section_breadcrumb(["Alert Center", ALERT_CENTER_PANE_LABELS.get(active_view, active_view)])
-    render_content_header(
-        ALERT_CENTER_PANE_LABELS.get(active_view, active_view),
-        ALERT_CENTER_ADMIN_VIEW_DETAILS.get(source_view, f"Load {active_view} when fresh alert telemetry is needed."),
-    )
+    if active_view != "Active Alerts":
+        render_section_breadcrumb(["Alert Center", ALERT_CENTER_PANE_LABELS.get(active_view, active_view)])
+        render_content_header(
+            ALERT_CENTER_PANE_LABELS.get(active_view, active_view),
+            ALERT_CENTER_ADMIN_VIEW_DETAILS.get(source_view, f"Load {active_view} when fresh alert telemetry is needed."),
+        )
 
     required_sources = _alert_center_sources_for_view(source_view)
 
@@ -739,7 +740,13 @@ def render() -> None:
         limit = st.selectbox("Rows", [50, 100, 200, 500], index=2)
     load_label = f"Load {active_view}"
     render_section_command_brief(
-        autoload_section_command_brief("Alert Center", company, environment, int(days)),
+        autoload_section_command_brief(
+            "Alert Center",
+            company,
+            environment,
+            int(days),
+            force=bool(st.session_state.pop("alert_center_command_brief_force_refresh", False)),
+        ),
         key_prefix="alert_center_command_brief",
         detail_action=CommandBriefDetailAction(
             load_label,

@@ -520,8 +520,14 @@ def _set_workload_workflow(workflow: str, *, pipeline_focus: str = "") -> None:
 
 
 def _render_workload_overview(company: str, environment: str) -> None:
+    force_brief_refresh = bool(st.session_state.pop("workload_operations_command_brief_force_refresh", False))
+    workload_brief = (
+        autoload_section_command_brief("Workload Operations", company, environment, 7, force=True)
+        if force_brief_refresh
+        else autoload_section_command_brief("Workload Operations", company, environment, 7)
+    )
     render_section_command_brief(
-        autoload_section_command_brief("Workload Operations", company, environment, 7),
+        workload_brief,
         key_prefix="workload_operations_command_brief",
     )
     board = build_loaded_section_alert_signal_board(st.session_state, section="Workload Operations", limit=12)
@@ -669,7 +675,8 @@ def render() -> None:
         CHANGE_DRIFT_WORKFLOW: "Changes",
         ADVANCED_DBA_TOOLS_WORKFLOW: "Advanced Tools",
     }
-    render_section_breadcrumb(["Workload Operations", workflow_labels.get(workflow, workflow)])
+    if workflow != WORKLOAD_OVERVIEW_WORKFLOW:
+        render_section_breadcrumb(["Workload Operations", workflow_labels.get(workflow, workflow)])
     workflow = render_primary_section_tabs(
         label="Workload Operations primary navigation",
         options=WORKFLOWS,
@@ -677,9 +684,10 @@ def render() -> None:
         key="workload_operations_workflow",
         format_func=lambda value: workflow_labels.get(str(value), str(value)),
     )
-    render_content_header(
-        workflow_labels.get(workflow, workflow),
-        WORKFLOW_DETAILS.get(workflow, "Workload evidence stays behind explicit workflow actions."),
-    )
+    if workflow != WORKLOAD_OVERVIEW_WORKFLOW:
+        render_content_header(
+            workflow_labels.get(workflow, workflow),
+            WORKFLOW_DETAILS.get(workflow, "Workload evidence stays behind explicit workflow actions."),
+        )
 
     _render_workload_surface(workflow, company, environment)

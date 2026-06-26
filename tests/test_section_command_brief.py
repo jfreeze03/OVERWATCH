@@ -1,5 +1,6 @@
 from pathlib import Path
 import contextlib
+import os
 import sys
 import unittest
 from unittest.mock import patch
@@ -346,10 +347,42 @@ class SectionCommandBriefTests(unittest.TestCase):
         ), patch("builtins.__import__", side_effect=_no_snowflake_context_import):
             self.assertFalse(state_module.snowflake_entry_available())
 
+    def test_fixture_mode_is_restricted_to_explicit_env_gate(self):
+        from sections import decision_workspace_state as state_module
+
+        with patch.dict(os.environ, {}, clear=True), patch.object(
+            state_module.st,
+            "session_state",
+            {"OVERWATCH_UI_FIXTURE_MODE": True},
+        ):
+            self.assertFalse(state_module.decision_fixture_enabled())
+
+        with patch.dict(os.environ, {"OVERWATCH_UI_FIXTURE_MODE": "1"}, clear=True), patch.object(
+            state_module.st,
+            "session_state",
+            {},
+        ):
+            self.assertTrue(state_module.decision_fixture_enabled())
+
+        with patch.dict(
+            os.environ,
+            {
+                "OVERWATCH_UI_FIXTURE_MODE": "1",
+                "OVERWATCH_ALLOW_FIXTURE_MODE": "1",
+                "SNOWFLAKE_NATIVE_APP": "1",
+            },
+            clear=True,
+        ), patch.object(state_module.st, "session_state", {}):
+            self.assertFalse(state_module.decision_fixture_enabled())
+
     def test_fixture_mode_returns_populated_demo_brief_without_query(self):
         from sections import section_command_brief as brief_module
 
-        with patch.object(brief_module.st, "session_state", {"OVERWATCH_UI_FIXTURE_MODE": True}), patch.object(
+        with patch.dict(os.environ, {"OVERWATCH_UI_FIXTURE_MODE": "1"}, clear=True), patch.object(
+            brief_module.st,
+            "session_state",
+            {},
+        ), patch.object(
             brief_module,
             "run_query",
             side_effect=AssertionError("fixture mode must not query Snowflake"),

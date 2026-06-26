@@ -164,10 +164,12 @@ def _render_executive_landing_workflow_controls(active_workflow: str) -> str:
         format_func=lambda value: labels.get(str(value), str(value)),
     )
     active_workflow = normalize_executive_landing_workflow(selected)
-    render_content_header(
-        labels.get(active_workflow, active_workflow),
-        EXECUTIVE_LANDING_WORKFLOW_DETAILS.get(active_workflow, "Executive evidence stays behind explicit load actions."),
-    )
+    if active_workflow != EXECUTIVE_OVERVIEW_WORKFLOW:
+        render_section_breadcrumb(["Executive Landing", labels.get(active_workflow, active_workflow)])
+        render_content_header(
+            labels.get(active_workflow, active_workflow),
+            EXECUTIVE_LANDING_WORKFLOW_DETAILS.get(active_workflow, "Executive evidence stays behind explicit load actions."),
+        )
     return active_workflow
 
 
@@ -231,7 +233,6 @@ def render() -> None:
             summary = _with_platform_operating_score(summary, source_health)
             _persist_platform_summary(summary)
 
-    render_section_breadcrumb(["Executive Landing", active_workflow])
     with trace("executive_shell:workflow_selector", active_section="Executive Landing"):
         active_workflow = _render_executive_landing_workflow_controls(active_workflow)
     executive_brief = autoload_section_command_brief(
@@ -244,6 +245,7 @@ def render() -> None:
     render_section_command_brief(
         executive_brief,
         key_prefix="executive_landing_command_brief",
+        primary_action=lambda: st.session_state.__setitem__("_executive_landing_command_brief_force_refresh", True),
         detail_action=CommandBriefDetailAction(
             "Load Full Executive Snapshot",
             "Load the heavier Executive Landing detail packet for the selected scope.",

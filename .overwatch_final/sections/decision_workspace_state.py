@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 import os
+import sys
 from typing import Literal
 
 import streamlit as st
@@ -19,6 +20,7 @@ DecisionMode = Literal["READY", "STALE", "OFFLINE", "UNINITIALIZED"]
 
 OFFLINE_BANNER_KEY = "_overwatch_decision_workspace_offline_banner_shown"
 FIXTURE_ENV_VAR = "OVERWATCH_UI_FIXTURE_MODE"
+FIXTURE_ALLOW_ENV_VAR = "OVERWATCH_ALLOW_FIXTURE_MODE"
 
 
 @dataclass(frozen=True)
@@ -43,15 +45,44 @@ class SectionDataState:
     detail_loaded: bool = False
 
 
+def _truthy_env(name: str) -> bool:
+    return str(os.environ.get(name, "") or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _running_under_tests() -> bool:
+    return bool(
+        os.environ.get("PYTEST_CURRENT_TEST")
+        or os.environ.get("OVERWATCH_TEST_MODE")
+        or "unittest" in sys.modules
+        or "pytest" in sys.modules
+    )
+
+
+def snowflake_native_app_runtime() -> bool:
+    """Return whether the app is running in a production Snowflake Native surface."""
+    return any(
+        _truthy_env(name)
+        for name in (
+            "SNOWFLAKE_NATIVE_APP",
+            "SNOWFLAKE_STREAMLIT_RUNTIME",
+            "SNOWFLAKE_SIS_RUNTIME",
+            "OVERWATCH_SNOWFLAKE_NATIVE_RUNTIME",
+        )
+    )
+
+
 def decision_fixture_enabled() -> bool:
-    """Return whether deterministic local Decision Briefs should be rendered."""
-    env_value = str(os.environ.get(FIXTURE_ENV_VAR, "") or "").strip().lower()
-    if env_value in {"1", "true", "yes", "on"}:
-        return True
-    try:
-        return bool(st.session_state.get(FIXTURE_ENV_VAR))
-    except Exception:
+    """Return whether deterministic visual Decision Briefs may be rendered.
+
+    Fixture mode is deliberately harder to enable than the old session-state
+    switch. A stale ``st.session_state`` value cannot activate mockup data in a
+    normal app session, and production Snowflake Native runtime always wins.
+    """
+    if snowflake_native_app_runtime():
         return False
+    if not _truthy_env(FIXTURE_ENV_VAR):
+        return False
+    return _truthy_env(FIXTURE_ALLOW_ENV_VAR) or _running_under_tests()
 
 
 def snowflake_entry_available() -> bool:
@@ -133,6 +164,7 @@ __all__ = [
     "DecisionMode",
     "DecisionWorkspaceState",
     "FIXTURE_ENV_VAR",
+    "FIXTURE_ALLOW_ENV_VAR",
     "OFFLINE_BANNER_KEY",
     "SectionDataState",
     "decision_fixture_enabled",
@@ -140,5 +172,6 @@ __all__ = [
     "section_state_from_brief",
     "should_render_legacy_overview",
     "snowflake_entry_available",
+    "snowflake_native_app_runtime",
     "workspace_mode_for_brief",
 ]

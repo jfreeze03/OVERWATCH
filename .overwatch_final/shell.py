@@ -6,6 +6,7 @@ Business logic remains in sections and Snowflake mart utilities.
 """
 from __future__ import annotations
 
+from importlib import import_module
 import time
 
 import streamlit as st
@@ -144,6 +145,11 @@ def _render_app_body() -> None:
 
     with trace("shell:filter_cache_check", active_section=active_section):
         maybe_clear_scope_cache_on_filter_change()
+    with trace("shell:decision_workspace_bootstrap", active_section=active_section):
+        maybe_run_decision_workspace_bootstrap = import_module(
+            "sections.decision_workspace_bootstrap"
+        ).maybe_run_decision_workspace_bootstrap
+        maybe_run_decision_workspace_bootstrap()
     active_section = current_active_section(visible_sections)
     set_active_section(active_section)
 

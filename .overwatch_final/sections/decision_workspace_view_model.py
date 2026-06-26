@@ -1,0 +1,287 @@
+"""Data-bound view model for the OVERWATCH Decision Workspace."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Sequence
+
+
+@dataclass(frozen=True)
+class DecisionMetricCell:
+    key: str
+    label: str
+    value: str
+    detail: str = ""
+    tone: str = "neutral"
+    trend_points: tuple[object, ...] = ()
+    available: bool = True
+    availability_state: str = "Available"
+
+
+@dataclass(frozen=True)
+class DecisionFinding:
+    severity: str
+    signal: str
+    entity: str = ""
+    detail: str = ""
+    owner: str = ""
+    sla: str = ""
+
+
+@dataclass(frozen=True)
+class DecisionActionView:
+    label: str
+    cta: str
+    action_key: str = ""
+    route_key: str = ""
+
+
+@dataclass(frozen=True)
+class DecisionTrustView:
+    summary: str
+    mode_label: str
+    freshness_label: str
+    target_label: str
+    coverage_label: str
+    quality_label: str
+    fixture_badge: bool = False
+
+
+@dataclass(frozen=True)
+class DecisionWorkspaceViewModel:
+    section: str
+    workflow: str
+    state: str
+    state_token: str
+    headline: str
+    summary: str
+    freshness_label: str
+    metric_cells: tuple[DecisionMetricCell, ...]
+    findings: tuple[DecisionFinding, ...]
+    actions: tuple[DecisionActionView, ...]
+    trends: tuple[DecisionMetricCell, ...]
+    trust: DecisionTrustView
+    fixture_mode: bool = False
+    source_mode: str = "scheduled_mart"
+
+
+def _compact_number(value: float, *, decimals: int = 1) -> str:
+    sign = "-" if value < 0 else ""
+    value = abs(float(value))
+    if value >= 1_000_000_000:
+        return f"{sign}{value / 1_000_000_000:.{decimals}f}B"
+    if value >= 1_000_000:
+        return f"{sign}{value / 1_000_000:.{decimals}f}M"
+    if value >= 1_000:
+        return f"{sign}{value / 1_000:.{decimals}f}K"
+    if value == int(value):
+        return f"{sign}{int(value)}"
+    return f"{sign}{value:.{decimals}f}"
+
+
+def format_metric_value(metric: object) -> str:
+    numeric = getattr(metric, "numeric_value", None)
+    fmt = str(getattr(metric, "metric_format", "") or "").strip().lower()
+    unit = str(getattr(metric, "unit", "") or "").strip()
+    if numeric is None:
+        return (
+            str(getattr(metric, "text_value", "") or "")
+            or str(getattr(metric, "value", "") or "")
+            or "Unavailable"
+        )
+    if fmt in {"currency", "compact_currency"}:
+        return f"${_compact_number(float(numeric))}"
+    if fmt in {"percentage", "percent"}:
+        return f"{float(numeric):.1f}%"
+    if fmt in {"integer", "count"}:
+        return _compact_number(float(numeric), decimals=0)
+    if fmt == "duration":
+        numeric = float(numeric)
+        if numeric >= 3600:
+            return f"{numeric / 3600:.1f}h"
+        if numeric >= 60:
+            return f"{numeric / 60:.1f}m"
+        return f"{numeric:.0f}s"
+    if fmt == "credits":
+        return f"{_compact_number(float(numeric))} credits"
+    if unit:
+        return f"{_compact_number(float(numeric))} {unit}"
+    return _compact_number(float(numeric))
+
+
+def _delta_label(metric: object) -> str:
+    delta_percent = getattr(metric, "delta_percent", None)
+    if delta_percent is not None:
+        sign = "+" if float(delta_percent) >= 0 else ""
+        return f"{sign}{float(delta_percent):.1f}%"
+    delta_numeric = getattr(metric, "delta_numeric_value", None)
+    if delta_numeric is not None:
+        sign = "+" if float(delta_numeric) >= 0 else ""
+        return f"{sign}{_compact_number(float(delta_numeric))}"
+    return str(getattr(metric, "trend", "") or getattr(metric, "detail", "") or "")
+
+
+def _preferred_metrics(section: str) -> tuple[str, ...]:
+    return {
+        "Executive Landing": ("total_spend", "critical_high_issues", "open_actions", "cortex_spend"),
+        "Cost & Contract": ("total_spend", "spend_movement_pct", "cortex_spend", "forecast_run_rate"),
+        "Alert Center": ("active_alerts", "critical_high", "overdue_alerts", "cortex_predictive"),
+        "DBA Control Room": ("failed_queries", "pipeline_failures", "queue_pressure", "cost_24h"),
+        "Workload Operations": ("failed_queries", "pipeline_failures", "queue_blocked_pressure", "sla_risk"),
+        "Security Monitoring": ("failed_logins", "mfa_gaps", "risky_grants", "sharing_exposure"),
+    }.get(str(section or ""), ())
+
+
+def _metric_cells(section: str, metrics: Sequence[object]) -> tuple[DecisionMetricCell, ...]:
+    available = tuple(metric for metric in tuple(metrics or ()) if bool(getattr(metric, "available", True)))
+    by_key = {str(getattr(metric, "key", "") or ""): metric for metric in available}
+    preferred = tuple(by_key[key] for key in _preferred_metrics(section) if key in by_key)
+    selected = preferred or available[:4]
+    if len(selected) < 4:
+        selected = selected + tuple(metric for metric in available if metric not in selected)[: 4 - len(selected)]
+    return tuple(
+        DecisionMetricCell(
+            key=str(getattr(metric, "key", "") or ""),
+            label=str(getattr(metric, "label", "") or "Metric"),
+            value=format_metric_value(metric),
+            detail=_delta_label(metric),
+            tone=str(getattr(metric, "tone", "") or "neutral").lower(),
+            trend_points=tuple(getattr(metric, "trend_points", ()) or ()),
+            available=bool(getattr(metric, "available", True)),
+            availability_state=str(getattr(metric, "availability_state", "") or "Available"),
+        )
+        for metric in selected[:4]
+    )
+
+
+def _state_token(brief: object, source_mode: str) -> str:
+    if source_mode == "fixture":
+        return "fixture"
+    if bool(getattr(brief, "fallback_reason", "")) and not tuple(getattr(brief, "metrics", ()) or ()):
+        raw = getattr(brief, "raw_payload", {}) or {}
+        return "offline" if isinstance(raw, dict) and raw.get("offline") else "uninitialized"
+    if int(getattr(brief, "missing_source_count", 0) or 0):
+        return "data-gap"
+    if bool(getattr(brief, "stale", False)):
+        return "stale"
+    text = str(getattr(brief, "state", "") or "").lower()
+    if any(word in text for word in ("critical", "fail", "blocked")):
+        return "critical"
+    if any(word in text for word in ("risk", "warning", "watch")):
+        return "at-risk"
+    if any(word in text for word in ("healthy", "clear", "ready", "loaded")):
+        return "healthy"
+    return "watch"
+
+
+def _state_label(brief: object, source_mode: str) -> str:
+    if source_mode == "fixture":
+        return "FIXTURE DATA"
+    if int(getattr(brief, "missing_source_count", 0) or 0):
+        return "DATA GAP"
+    if bool(getattr(brief, "stale", False)):
+        return "STALE"
+    return str(getattr(brief, "state", "") or "Watch").upper()
+
+
+def _source_mode(brief: object) -> str:
+    raw = getattr(brief, "raw_payload", {}) or {}
+    if isinstance(raw, dict) and raw.get("fixture_mode") is True:
+        return "fixture"
+    if isinstance(raw, dict) and raw.get("offline") is True:
+        return "offline"
+    if bool(getattr(brief, "fallback_reason", "")):
+        return "uninitialized"
+    if bool(getattr(brief, "stale", False)):
+        return "last_known_good"
+    return "scheduled_mart"
+
+
+def _trust_view(brief: object, source_mode: str) -> DecisionTrustView:
+    freshness_minutes = getattr(brief, "freshness_minutes", None)
+    if freshness_minutes is None:
+        age = "Freshness unavailable"
+    else:
+        age = f"Updated {int(round(float(freshness_minutes)))}m ago"
+    target = getattr(brief, "target_freshness_minutes", 0) or 0
+    coverage = "Sources tracked"
+    if getattr(brief, "required_source_count", 0):
+        coverage = f"{getattr(brief, 'available_source_count', 0)}/{getattr(brief, 'required_source_count', 0)} required sources"
+    quality = str(getattr(brief, "confidence", "") or getattr(brief, "data_availability_state", "") or "Allocated")
+    mode_label = {
+        "fixture": "FIXTURE DATA",
+        "offline": "Offline",
+        "uninitialized": "Setup required",
+        "last_known_good": "Last successful summary",
+        "scheduled_mart": "Scheduled mart",
+    }.get(source_mode, "Scheduled mart")
+    summary = " · ".join(part for part in (mode_label, age, coverage, quality) if part)
+    return DecisionTrustView(
+        summary=summary,
+        mode_label=mode_label,
+        freshness_label=age,
+        target_label=f"Target freshness: {int(target)}m" if target else "Target freshness set",
+        coverage_label=coverage,
+        quality_label=quality,
+        fixture_badge=source_mode == "fixture",
+    )
+
+
+def build_decision_workspace_view_model(
+    brief: object,
+    *,
+    current_workflow: str,
+    evidence_action: object | None = None,
+) -> DecisionWorkspaceViewModel:
+    """Build the data-bound workspace model from a command brief packet."""
+    source_mode = _source_mode(brief)
+    metrics = _metric_cells(str(getattr(brief, "section", "") or ""), tuple(getattr(brief, "metrics", ()) or ()))
+    findings = tuple(
+        DecisionFinding(
+            severity=str(getattr(item, "severity", "") or "Info"),
+            signal=str(getattr(item, "signal", "") or "Review summary"),
+            entity=str(getattr(item, "entity", "") or ""),
+            detail=str(getattr(item, "detail", "") or ""),
+            owner=str(getattr(item, "owner_route", "") or ("Owner gap" if getattr(item, "owner_gap", False) else "Assigned")),
+            sla=str(getattr(item, "sla_state", "") or ("Due soon" if getattr(item, "age_minutes", None) else "On track")),
+        )
+        for item in tuple(getattr(brief, "exceptions", ()) or ())[:3]
+    )
+    actions = tuple(
+        DecisionActionView(
+            label=str(getattr(action, "label", "") or ""),
+            cta=str(getattr(action, "cta", "") or getattr(action, "label", "") or ""),
+            action_key=str(getattr(action, "action_key", "") or ""),
+            route_key=str(getattr(action, "route_key", "") or ""),
+        )
+        for action in tuple(getattr(brief, "next_actions", ()) or ())
+    )
+    trends = tuple(cell for cell in metrics if cell.trend_points)
+    trust = _trust_view(brief, source_mode)
+    return DecisionWorkspaceViewModel(
+        section=str(getattr(brief, "section", "") or ""),
+        workflow=current_workflow or "Overview",
+        state=_state_label(brief, source_mode),
+        state_token=_state_token(brief, source_mode),
+        headline=str(getattr(brief, "headline", "") or ""),
+        summary=str(getattr(brief, "summary", "") or ""),
+        freshness_label=trust.freshness_label,
+        metric_cells=metrics,
+        findings=findings,
+        actions=actions,
+        trends=trends,
+        trust=trust,
+        fixture_mode=source_mode == "fixture",
+        source_mode=source_mode,
+    )
+
+
+__all__ = [
+    "DecisionActionView",
+    "DecisionFinding",
+    "DecisionMetricCell",
+    "DecisionTrustView",
+    "DecisionWorkspaceViewModel",
+    "build_decision_workspace_view_model",
+    "format_metric_value",
+]

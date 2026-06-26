@@ -3411,6 +3411,28 @@ details summary span[translate="no"] {
     padding: .5rem .8rem !important;
     color: var(--ow-text) !important;
 }
+.ow-fixture-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(245, 158, 11, .7);
+    border-radius: 999px;
+    padding: .18rem .48rem;
+    color: #fbbf24 !important;
+    background: rgba(245, 158, 11, .12);
+    font-size: .68rem;
+    letter-spacing: .05em;
+}
+.ow-trend-unavailable {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 48px;
+    border: 1px dashed rgba(170, 188, 200, .22);
+    border-radius: 7px;
+    color: var(--ow-text-secondary) !important;
+    font-size: .72rem;
+}
 .ow-decision-context-strip {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;

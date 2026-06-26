@@ -76,6 +76,7 @@ class DecisionSourceRow:
     age_label: str
     target_label: str
     confidence: str
+    environment_scope_label: str = ""
     gap_reason: str = ""
 
 
@@ -323,6 +324,7 @@ def _source_rows(brief: object) -> tuple[DecisionSourceRow, ...]:
                 age_label="unknown age" if age is None else f"{int(round(float(age)))}m old",
                 target_label="" if target is None else f"target {int(float(target))}m",
                 confidence=str(getattr(source, "confidence", "") or getattr(brief, "confidence", "") or ""),
+                environment_scope_label=str(getattr(source, "environment_scope_mode", "") or ""),
                 gap_reason=str(getattr(source, "gap_reason", "") or ""),
             )
         )

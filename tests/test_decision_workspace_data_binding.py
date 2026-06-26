@@ -2121,7 +2121,7 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         security_guard = security.index("if target_label:")
         dba_guard = dba.index("if target_label:")
 
-        self.assertLess(cost_guard, cost.index("_render_cost_splash(", cost_guard))
+        self.assertNotIn("_render_cost_splash(", cost[cost_guard:])
         self.assertLess(security.index("return", security_guard), security.index("_render_security_watch_floor(", security_guard))
         self.assertLess(dba.index("return", dba_guard), dba.index("_render_dba_action_brief(", dba_guard))
 
@@ -2302,6 +2302,113 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
                 self.assertIn("Data Trust", markup)
                 for token in forbidden:
                     self.assertNotIn(token, markup)
+
+    def test_performance_budget_constants_are_explicit(self):
+        import performance
+
+        self.assertEqual(performance.DECISION_FIRST_PAINT_QUERY_BUDGET, 1)
+        self.assertEqual(performance.DECISION_WARM_QUERY_BUDGET, 0)
+        self.assertEqual(performance.TARGETED_EVIDENCE_DEFAULT_LIMIT, 200)
+        self.assertEqual(performance.TARGETED_EVIDENCE_MAX_LIMIT, 500)
+        self.assertFalse(performance.ACCOUNT_USAGE_TARGETED_SCAN_ALLOWED)
+
+    def test_ui_query_telemetry_sanitizes_errors_and_records_cache_hits(self):
+        import performance
+
+        state = {}
+        with patch.object(performance.st, "session_state", state):
+            event = performance.record_ui_query_event(
+                section="Cost & Contract",
+                workflow="Overview",
+                query_tier="command_summary",
+                ttl_key="packet",
+                cache_hit_or_use_cache="session_cache_hit",
+                elapsed_ms=0,
+                row_count=0,
+                max_rows=1,
+                error="SELECT * FROM MART_SECTION_DECISION_CURRENT",
+            )
+            events = performance.get_ui_query_events()
+
+        self.assertEqual(event["error"], "Query failed; see admin diagnostics.")
+        self.assertEqual(events[0]["cache_hit_or_use_cache"], "session_cache_hit")
+        self.assertNotIn("query_text", events[0])
+        self.assertNotIn("SELECT", str(events[0]))
+
+    def test_target_sql_filters_are_allowlisted_and_exact(self):
+        from sections.decision_workspace_target_filters import build_target_sql_filter
+
+        alert_filter = build_target_sql_filter(
+            "Alert Center",
+            {"entity_type": "alert", "entity_id": "EVT-123", "evidence_query": "SELECT * FROM X"},
+            alias="a",
+            available_columns=("EVENT_ID", "ALERT_KEY", "QUERY_TEXT"),
+        )
+        cost_filter = build_target_sql_filter(
+            "Cost & Contract",
+            {"entity_type": "warehouse", "entity_id": "PROD_WH"},
+            alias="c",
+            available_columns=("WAREHOUSE_NAME", "QUERY_TEXT"),
+        )
+
+        self.assertIn("UPPER(a.EVENT_ID)", alert_filter)
+        self.assertIn("EVT-123", alert_filter)
+        self.assertNotIn("QUERY_TEXT", alert_filter)
+        self.assertNotIn("SELECT", alert_filter)
+        self.assertIn("UPPER(c.WAREHOUSE_NAME)", cost_filter)
+        self.assertIn("PROD_WH", cost_filter)
+
+    def test_dataframe_target_filter_is_vectorized_fallback(self):
+        helper = (APP_ROOT / "sections" / "decision_workspace_target_filters.py").read_text(encoding="utf-8")
+        self.assertIn(".str.upper().isin", helper)
+        self.assertIn(".str.contains", helper)
+        self.assertNotIn(".apply(", helper)
+        self.assertNotIn("lambda row", helper)
+
+    def test_query_search_blocks_broad_account_usage_autorun(self):
+        source = (APP_ROOT / "sections" / "query_search.py").read_text(encoding="utf-8")
+        autorun_assignment = 'st.session_state["qs_autorun"] = _looks_like_query_id(target_query)'
+        self.assertIn(autorun_assignment, source)
+        warehouse_block = source.split("if target_warehouse:", 1)[1].split("c1, c2, c3, c4", 1)[0]
+        self.assertNotIn("qs_autorun", warehouse_block)
+        self.assertLess(source.index('explicit_search = st.button("Search"'), source.index("filter_existing_columns("))
+        self.assertIn("ACCOUNT_USAGE_TARGETED_SCAN_ALLOWED", source)
+
+    def test_targeted_evidence_loaders_push_filters_before_rows(self):
+        alert_data = (APP_ROOT / "sections" / "alert_center_data.py").read_text(encoding="utf-8")
+        alert_query = (APP_ROOT / "utils" / "alert_triage.py").read_text(encoding="utf-8")
+        cost_splash = (APP_ROOT / "sections" / "cost_contract_splash.py").read_text(encoding="utf-8")
+        cost_floor = (APP_ROOT / "sections" / "cost_contract_overview_floor.py").read_text(encoding="utf-8")
+
+        self.assertIn('target=get_decision_evidence_target("Alert Center")', alert_data)
+        self.assertIn('build_target_sql_filter("Alert Center"', alert_query)
+        self.assertIn("_target_wrapped_sql", cost_splash)
+        self.assertIn('build_target_sql_filter(\n        "Cost & Contract"', cost_splash)
+        self.assertIn("full_proof=not bool(target)", cost_floor)
+        self.assertNotIn("_maybe_autoload_cost_splash", cost_floor)
+
+    def test_warm_command_brief_cache_records_zero_query_event(self):
+        source = (APP_ROOT / "sections" / "section_command_brief.py").read_text(encoding="utf-8")
+        self.assertIn("record_ui_query_event(", source)
+        self.assertIn('cache_hit_or_use_cache="session_cache_hit"', source)
+        self.assertIn("elapsed_ms=0", source)
+
+    def test_source_rows_include_environment_scope_in_drawer(self):
+        from sections.decision_workspace_view_model import DecisionSourceRow
+
+        row = DecisionSourceRow(
+            source_key="query_hourly",
+            source_object="FACT_QUERY_HOURLY",
+            status="Available",
+            required=True,
+            age_label="4m old",
+            target_label="target 30m",
+            confidence="allocated",
+            environment_scope_label="exact environment source",
+        )
+        self.assertEqual(row.environment_scope_label, "exact environment source")
+        renderer = (APP_ROOT / "sections" / "section_command_rendering.py").read_text(encoding="utf-8")
+        self.assertIn("environment_scope_label", renderer)
 
 
 if __name__ == "__main__":

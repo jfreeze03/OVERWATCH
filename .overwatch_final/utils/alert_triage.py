@@ -7,6 +7,7 @@ native alert setup remain in focused sibling modules.
 """
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 import pandas as pd
@@ -32,6 +33,7 @@ from .company_filter import (
     get_environment_db_patterns,
 )
 from .query import run_query, safe_identifier, sql_literal
+from sections.decision_workspace_target_filters import build_target_sql_filter
 from .alert_status import (
     ALERT_CLOSED_STATUSES,
     ALERT_OPEN_STATUSES,
@@ -461,6 +463,7 @@ def load_alert_history(
     days: int = 7,
     limit: int = 200,
     section: str = "Alert Center",
+    target: dict[str, str] | None = None,
 ) -> pd.DataFrame:
     """Load alert history from current or legacy OVERWATCH alert schemas."""
     requested = [
@@ -543,6 +546,8 @@ def load_alert_history(
             "OR ENVIRONMENT IS NULL "
             "OR UPPER(ENVIRONMENT) IN ('NO DATABASE CONTEXT', 'NO_DATABASE_CONTEXT'))"
         )
+    target_filter = build_target_sql_filter("Alert Center", target or {}, available_columns=tuple(columns))
+    target_filter_key = hashlib.sha1(str(target_filter or "").encode("utf-8", errors="ignore")).hexdigest()[:10]
 
     df = run_query(f"""
         SELECT
@@ -590,9 +595,10 @@ def load_alert_history(
           {ts_filter}
           {company_filter}
           {environment_filter}
+          {target_filter}
         ORDER BY ALERT_TS DESC
         LIMIT {limit}
-    """, ttl_key=f"alert_history_{company}_{environment or get_active_environment()}_{days}_{limit}", tier="recent", section=section)
+    """, ttl_key=f"alert_history_{company}_{environment or get_active_environment()}_{days}_{limit}_{target_filter_key}", tier="recent", section=section)
 
     if company != "ALL" and "COMPANY" not in columns:
         df = _company_scope_alert_rows(df, company)

@@ -47,6 +47,7 @@ from .session import apply_overwatch_query_tag, build_overwatch_query_tag, get_s
 from .data import normalize_df
 from .idle import empty_paused_result, queries_paused
 from .sql_safe import sql_literal
+from performance import record_ui_query_event
 
 CACHE_TIERS: dict[str, int] = {
     "live":       30,     # INFORMATION_SCHEMA - real-time, 30s stale is fine
@@ -931,6 +932,7 @@ def run_query(
 ) -> pd.DataFrame:
     """Execute a query through the cached runner and log lightweight telemetry."""
     started = time.perf_counter()
+    started_at = datetime.now().isoformat(timespec="milliseconds")
     result = _run_query_base(
         query_text=query_text,
         ttl_key=ttl_key,
@@ -941,8 +943,21 @@ def run_query(
         max_rows=max_rows,
     )
     elapsed_ms = (time.perf_counter() - started) * 1000
+    finished_at = datetime.now().isoformat(timespec="milliseconds")
     result_mb = _estimate_result_mb(result)
     _record_query_telemetry(query_text, ttl_key, tier, elapsed_ms, len(result), use_cache, result_mb, section)
+    record_ui_query_event(
+        section=_infer_telemetry_section(section, ttl_key),
+        workflow=str(get_state(NAV_SECTION, "") or ""),
+        query_tier=tier,
+        ttl_key=ttl_key,
+        cache_hit_or_use_cache=bool(use_cache),
+        elapsed_ms=elapsed_ms,
+        row_count=len(result),
+        max_rows=max_rows,
+        started_at=started_at,
+        finished_at=finished_at,
+    )
     return result
 
 
@@ -961,6 +976,7 @@ def run_query_or_raise(
     the original Snowflake exception to decide whether to run a fallback query.
     """
     started = time.perf_counter()
+    started_at = datetime.now().isoformat(timespec="milliseconds")
     result = pd.DataFrame()
     query_tag = _build_overwatch_query_tag(section, ttl_key, tier)
     executable_query = _inject_read_limit(query_text, max_rows=max_rows)
@@ -968,6 +984,7 @@ def run_query_or_raise(
         return empty_paused_result(ttl_key=ttl_key, section=section)
     if not _check_query_budget(tier, ttl_key, query_text):
         return result
+    error_message = ""
     try:
         if use_cache:
             cache_salt = _cache_salt(ttl_key)
@@ -980,8 +997,12 @@ def run_query_or_raise(
         _apply_statement_timeout(session, tier)
         result = normalize_df(session.sql(executable_query).to_pandas())
         return _apply_result_guard(executable_query, result, ttl_key=ttl_key, section=section, tier=tier)
+    except Exception as exc:
+        error_message = format_snowflake_error(exc)
+        raise
     finally:
         elapsed_ms = (time.perf_counter() - started) * 1000
+        finished_at = datetime.now().isoformat(timespec="milliseconds")
         _record_query_telemetry(
             query_text,
             ttl_key=ttl_key,
@@ -991,6 +1012,19 @@ def run_query_or_raise(
             used_cache=use_cache,
             result_mb=_estimate_result_mb(result),
             section=section,
+        )
+        record_ui_query_event(
+            section=_infer_telemetry_section(section, ttl_key),
+            workflow=str(get_state(NAV_SECTION, "") or ""),
+            query_tier=tier,
+            ttl_key=ttl_key,
+            cache_hit_or_use_cache=bool(use_cache),
+            elapsed_ms=elapsed_ms,
+            row_count=len(result),
+            max_rows=max_rows,
+            error=error_message,
+            started_at=started_at,
+            finished_at=finished_at,
         )
 
 

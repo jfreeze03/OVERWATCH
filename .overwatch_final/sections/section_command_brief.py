@@ -11,6 +11,7 @@ import time
 import pandas as pd
 import streamlit as st
 
+from performance import record_ui_query_event
 from sections.decision_workspace_fixtures import build_fixture_brief
 from sections.decision_workspace_state import decision_fixture_enabled, snowflake_entry_available
 from sections.section_command_contracts import SectionCommandContract, get_section_command_contract
@@ -105,6 +106,7 @@ class SectionCommandSourceState:
     target_freshness_minutes: int = 0
     stale: bool = False
     confidence: str = ""
+    environment_scope_mode: str = ""
     gap_reason: str = ""
 
 
@@ -388,6 +390,7 @@ def _source_from_row(row: Mapping[str, object]) -> SectionCommandSourceState:
         target_freshness_minutes=_int_value(_column(row, "TARGET_FRESHNESS_MINUTES"), 0),
         stale=_bool_value(_column(row, "IS_STALE", default=False), False),
         confidence=_string(_column(row, "CONFIDENCE")),
+        environment_scope_mode=_string(_column(row, "ENVIRONMENT_SCOPE_MODE")),
         gap_reason=_string(_column(row, "GAP_REASON")),
     )
 
@@ -889,6 +892,16 @@ def autoload_section_command_brief(
             command_brief_cache_hit=True,
             command_brief_session_cache_hit=True,
             command_brief_query_count=0,
+        )
+        record_ui_query_event(
+            section=contract.section,
+            workflow="Decision Workspace",
+            query_tier="command_summary",
+            ttl_key=f"section_command_packet_{contract.section}_{company}_{environment}_{int(window_days)}",
+            cache_hit_or_use_cache="session_cache_hit",
+            elapsed_ms=0,
+            row_count=0,
+            max_rows=1,
         )
         _record_telemetry(brief)
         return brief

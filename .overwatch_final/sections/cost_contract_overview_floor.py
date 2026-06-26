@@ -39,12 +39,11 @@ from sections.cost_contract_panels import (
 )
 from sections.cost_contract_splash import (
     _ensure_cost_splash,
-    _maybe_autoload_cost_splash,
     _cost_splash_summary,
-    _render_cost_splash,
 )
 from sections.cortex_signals import build_cortex_signal, render_cortex_signal_panel
 from sections.decision_workspace_controls import filter_evidence_rows_for_target
+from sections.decision_workspace_target_filters import get_decision_evidence_target
 from sections.operator_case import make_case_evidence, render_add_to_case_button
 from sections.shell_helpers import (
     _clean_display_text,
@@ -116,14 +115,23 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
         )
     refresh_cost = bool(st.session_state.pop("cost_contract_command_brief_load_evidence", False))
 
+    if not refresh_cost:
+        render_data_freshness(
+            {},
+            source="Cost evidence",
+            target_minutes=60,
+            delayed_note="Cost evidence stays unloaded until the explicit evidence action runs.",
+        )
+        defer_section_note(
+            "Load Cost Evidence when you need warehouse, Cortex, forecast, or account-history proof rows."
+        )
+        return
+
     if refresh_cost:
         st.session_state.pop(_COST_SPLASH_KEY, None)
         st.session_state.pop(_COST_SPLASH_AUTOLOAD_BLOCKED_SCOPE_KEY, None)
-        splash = _ensure_cost_splash(company, int(days), credit_price)
-    else:
-        splash = _maybe_autoload_cost_splash(company, int(days), credit_price)
-    if not st.session_state.get("_cost_contract_local_hierarchy_rendered"):
-        _render_cost_first_paint_shell(company, int(days), splash, credit_price)
+        target = get_decision_evidence_target("Cost & Contract")
+        splash = _ensure_cost_splash(company, int(days), credit_price, full_proof=not bool(target), target=target)
     cost_summary = _cost_splash_summary(splash, credit_price, int(days))
     if refresh_cost or splash.get("loaded"):
         proof_rows, target_label = filter_evidence_rows_for_target(splash.get("warehouse_delta"), "Cost & Contract")
@@ -151,8 +159,8 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
             rows=proof_rows,
             source_note=str(splash.get("source") or "Cost evidence"),
         )
-    if not refresh_cost:
-        _render_cost_splash(splash, company=company, days=int(days), credit_price=credit_price)
+        if target_label:
+            return
 
     proof_data = st.session_state.get("cost_contract_cockpit")
     proof_meta = st.session_state.get("cost_contract_cockpit_meta", {})

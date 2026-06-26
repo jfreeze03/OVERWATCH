@@ -767,6 +767,9 @@ class SectionCommandBriefTests(unittest.TestCase):
             "DATA_GAP_COUNT",
             "DEGRADED_COUNT",
             "FAILED_SECTION_COUNT",
+            "FAST_PRUNED_OPTIONAL_BRANCHES",
+            "GENERATED_WINDOW_COUNT",
+            "GENERATED_SCOPE_COUNT",
             "ERROR_MESSAGE",
         ):
             self.assertIn(column, refresh_audit_block)
@@ -819,6 +822,8 @@ class SectionCommandBriefTests(unittest.TestCase):
             self.assertIn(column, tables)
             self.assertIn(column, procs)
             self.assertIn(column, validation)
+        self.assertIn("ENVIRONMENT_SCOPE_MODE", tables)
+        self.assertIn("ENVIRONMENT_SCOPE_MODE", procs)
         self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS(REFRESH_MODE VARCHAR DEFAULT 'FULL')", procs)
         self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST()", procs)
         self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL()", procs)
@@ -901,17 +906,22 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertIn("CALL SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS('FULL')", full_block)
         self.assertNotIn("DELETE FROM MART_SECTION_DECISION_CURRENT", fast_block)
         self.assertNotIn("OVERWATCH_DECISION_REFRESH_AUDIT", fast_block)
+        self.assertNotIn("INSERT INTO OVERWATCH_LOAD_AUDIT", fast_block)
+        self.assertNotIn("INSERT INTO OVERWATCH_LOAD_AUDIT", full_block)
         self.assertNotIn("WINDOW_DAYS NOT IN (1, 7)", full_block)
-        self.assertIn("SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST", fast_block)
-        self.assertIn("SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL", full_block)
         self.assertIn("WHERE :REFRESH_MODE_NORMALIZED = 'FULL' OR COLUMN1::NUMBER IN (1, 7)", procs)
+        self.assertIn("FAST_PRUNED_OPTIONAL_BRANCHES", procs)
+        self.assertIn(":REFRESH_MODE_NORMALIZED = 'FAST'", procs)
+        self.assertIn("WHERE :REFRESH_MODE_NORMALIZED = 'FULL'\n     OR BASE.REQUIRED", procs)
         self.assertIn("MERGE INTO MART_SECTION_DECISION_CURRENT", procs)
         self.assertIn("IS_ACTIVE = TRUE", procs)
         self.assertIn("SET IS_ACTIVE = FALSE", procs)
         self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS(REFRESH_MODE", procs)
         self.assertIn("ENVIRONMENTS AS", procs)
         self.assertIn("C.COMPANY <> 'ALL' OR E.ENVIRONMENT = 'ALL'", procs)
-        self.assertIn("SC.SECTION_NAME IN ('ALERT CENTER', 'WORKLOAD OPERATIONS')", procs)
+        self.assertIn("SC.SECTION_NAME IN ('ALERT CENTER', 'WORKLOAD OPERATIONS', 'DBA CONTROL ROOM', 'SECURITY MONITORING')", procs)
+        self.assertIn("EXACT ENVIRONMENT SOURCE", procs)
+        self.assertIn("ALL-ENVIRONMENT FALLBACK SOURCE", procs)
         self.assertIn("Q.ENVIRONMENT = S.ENVIRONMENT", procs)
         self.assertIn("A.ENVIRONMENT = S.ENVIRONMENT", procs)
         self.assertIn("SEC.ENVIRONMENT = S.ENVIRONMENT", procs)

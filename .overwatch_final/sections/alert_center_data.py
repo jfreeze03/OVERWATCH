@@ -7,6 +7,7 @@ from datetime import datetime
 import pandas as pd
 
 from sections.alert_center_contracts import ALERT_CENTER_DEFAULT_VIEW, ALERT_CENTER_SOURCES_BY_PANE
+from sections.decision_workspace_target_filters import get_decision_evidence_target
 from utils import format_snowflake_error
 from utils.action_queue import load_action_queue
 from utils.alert_catalog import load_alert_rule_catalog
@@ -56,6 +57,7 @@ def _load_center_data(
                 days=days,
                 limit=limit,
                 section="Alert Center",
+                target=get_decision_evidence_target("Alert Center"),
             )
         except Exception as exc:
             data["alerts_error"] = format_snowflake_error(exc)

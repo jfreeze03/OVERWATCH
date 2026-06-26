@@ -13,6 +13,7 @@ from utils import (
     run_query,
     sql_literal,
 )
+from performance import ACCOUNT_USAGE_TARGETED_SCAN_ALLOWED
 
 
 def _looks_like_query_id(value: str) -> bool:
@@ -83,40 +84,14 @@ def render():
     target_query = target_value if target_entity_type in {"query", "query_id", "query_signature"} else ""
     if target_query and not str(st.session_state.get("qs_text") or "").strip():
         st.session_state["qs_text"] = target_query
-        st.session_state["qs_mode"] = "Exact query ID" if _looks_like_query_id(target_query) else "Text contains"
-        st.session_state["qs_autorun"] = True
-    qh_cols = set(filter_existing_columns(
-        session,
-        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
-        [
-            "WAREHOUSE_SIZE",
-            "BYTES_SCANNED",
-            "ROWS_PRODUCED",
-            "CREDITS_USED_CLOUD_SERVICES",
-        ],
-    ))
-    warehouse_size_expr = (
-        "warehouse_size AS warehouse_size"
-        if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR AS warehouse_size"
-    )
-    gb_scanned_expr = (
-        "bytes_scanned/POWER(1024,3) AS gb_scanned"
-        if "BYTES_SCANNED" in qh_cols else "0::FLOAT AS gb_scanned"
-    )
-    rows_produced_expr = (
-        "rows_produced AS rows_produced"
-        if "ROWS_PRODUCED" in qh_cols else "0::NUMBER AS rows_produced"
-    )
-    cloud_credits_expr = (
-        "credits_used_cloud_services AS cloud_credits"
-        if "CREDITS_USED_CLOUD_SERVICES" in qh_cols else "0::FLOAT AS cloud_credits"
-    )
+        st.session_state["qs_mode"] = "Exact query ID" if _looks_like_query_id(target_query) else "Prefix starts with"
+        st.session_state["qs_autorun"] = _looks_like_query_id(target_query)
 
     st.subheader("Query Search & History")
     st.caption("Search company-scoped ACCOUNT_USAGE.QUERY_HISTORY by exact query ID or query-text keyword.")
     if target_warehouse:
         st.caption(f"Focused on finding target: warehouse {target_warehouse}")
-        st.session_state["qs_autorun"] = True
+        st.session_state.setdefault("qs_warehouse", target_warehouse)
 
     c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
     with c1:
@@ -148,7 +123,11 @@ def render():
         st.caption(f"Using {global_date_label}; the Days back slider applies only when Triage Filter dates are cleared.")
 
     autorun = bool(st.session_state.pop("qs_autorun", False))
-    if (st.button("Search", key="qs_run") or autorun) and (search_text or target_warehouse):
+    explicit_search = st.button("Search", key="qs_run")
+    if (explicit_search or autorun) and (search_text or target_warehouse):
+        if autorun and target_warehouse and not ACCOUNT_USAGE_TARGETED_SCAN_ALLOWED:
+            st.info("Warehouse target is prefilled. Click Search to run a bounded warehouse query history lookup.")
+            return
         search_value = search_text.strip()
         if search_value:
             try:
@@ -173,6 +152,32 @@ def render():
         user_cl = f"AND user_name ILIKE '%' || {sql_literal(user_filter)} || '%'" if user_filter else ""
         status_cl = f"AND execution_status = {sql_literal(status_filter)}" if status_filter != "ALL" else ""
         target_wh_cl = f"AND warehouse_name ILIKE '%' || {sql_literal(target_warehouse)} || '%'" if target_warehouse else ""
+        qh_cols = set(filter_existing_columns(
+            session,
+            "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+            [
+                "WAREHOUSE_SIZE",
+                "BYTES_SCANNED",
+                "ROWS_PRODUCED",
+                "CREDITS_USED_CLOUD_SERVICES",
+            ],
+        ))
+        warehouse_size_expr = (
+            "warehouse_size AS warehouse_size"
+            if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR AS warehouse_size"
+        )
+        gb_scanned_expr = (
+            "bytes_scanned/POWER(1024,3) AS gb_scanned"
+            if "BYTES_SCANNED" in qh_cols else "0::FLOAT AS gb_scanned"
+        )
+        rows_produced_expr = (
+            "rows_produced AS rows_produced"
+            if "ROWS_PRODUCED" in qh_cols else "0::NUMBER AS rows_produced"
+        )
+        cloud_credits_expr = (
+            "credits_used_cloud_services AS cloud_credits"
+            if "CREDITS_USED_CLOUD_SERVICES" in qh_cols else "0::FLOAT AS cloud_credits"
+        )
         scoped_filters = get_global_filter_clause(
             date_col="start_time",
             wh_col="warehouse_name",

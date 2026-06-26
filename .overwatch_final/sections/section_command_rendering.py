@@ -157,7 +157,13 @@ def _trust_detail_html(model: DecisionWorkspaceViewModel) -> str:
         required = "required" if source.required else "optional"
         meta = " / ".join(
             part
-            for part in (source.status, required, source.age_label, source.target_label)
+            for part in (
+                source.status,
+                required,
+                source.environment_scope_label,
+                source.age_label,
+                source.target_label,
+            )
             if part
         )
         source_rows.append(

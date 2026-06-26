@@ -252,8 +252,8 @@ class DeploymentContractTests(unittest.TestCase):
             "SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL",
         }
         wrapper_allowed_targets = {
-            "SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST": {"OVERWATCH_LOAD_AUDIT"},
-            "SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL": {"OVERWATCH_LOAD_AUDIT"},
+            "SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST": set(),
+            "SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL": set(),
         }
 
         for proc_name, body in procedure_bodies.items():

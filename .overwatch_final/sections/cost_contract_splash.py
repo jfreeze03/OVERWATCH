@@ -34,6 +34,7 @@ from sections.cost_contract_sql import (
     _build_cost_splash_warehouse_delta_sql,
 )
 from sections.shell_helpers import consume_section_autoload_request
+from sections.decision_workspace_target_filters import build_target_sql_filter
 from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_source_note
 
@@ -126,7 +127,33 @@ def _cached_cost_splash(company: str, days: int, credit_price: float) -> dict:
     return _empty_cost_splash(company, days, credit_price)
 
 
-def _ensure_cost_splash(company: str, days: int, credit_price: float, *, full_proof: bool = True) -> dict:
+def _target_wrapped_sql(sql: str, target: dict[str, str] | None) -> str:
+    target_filter = build_target_sql_filter(
+        "Cost & Contract",
+        target or {},
+        alias="target",
+        available_columns=("WAREHOUSE_NAME", "ENTITY_NAME", "ENTITY_ID", "DRIVER", "DIMENSION"),
+    )
+    if not target_filter:
+        return sql
+    return f"""
+        SELECT *
+        FROM (
+            {sql}
+        ) target
+        WHERE 1 = 1
+          {target_filter}
+    """
+
+
+def _ensure_cost_splash(
+    company: str,
+    days: int,
+    credit_price: float,
+    *,
+    full_proof: bool = True,
+    target: dict[str, str] | None = None,
+) -> dict:
     meta = _cost_splash_meta(company, days, credit_price)
     cached = st.session_state.get(_COST_SPLASH_KEY)
     if (
@@ -174,8 +201,8 @@ def _ensure_cost_splash(company: str, days: int, credit_price: float, *, full_pr
             trend_source = ""
             trend_error = format_snowflake_error(exc)
     warehouse_delta, delta_source, delta_error = _load_cost_splash_query(
-        _build_cost_splash_warehouse_delta_sql(company, int(days), mart=True),
-        _build_cost_splash_warehouse_delta_sql(company, int(days), mart=False),
+        _target_wrapped_sql(_build_cost_splash_warehouse_delta_sql(company, int(days), mart=True), target),
+        _target_wrapped_sql(_build_cost_splash_warehouse_delta_sql(company, int(days), mart=False), target),
         f"cost_splash_warehouse_delta_{company}_{days}",
         allow_live_fallback=full_proof,
     )

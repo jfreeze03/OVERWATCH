@@ -522,6 +522,8 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
                 return self
 
             def collect(self) -> list[object]:
+                if self.sql_calls[-1] == "SHOW PROCEDURES LIKE 'SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS'":
+                    return [object()]
                 return []
 
         session = FakeSession()
@@ -545,7 +547,13 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
                 bootstrap.maybe_run_decision_workspace_bootstrap("Executive Landing")
             bootstrap.maybe_run_decision_workspace_bootstrap()
 
-        self.assertEqual(session.sql_calls, ["CALL SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS();"])
+        self.assertEqual(
+            session.sql_calls,
+            [
+                "SHOW PROCEDURES LIKE 'SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS'",
+                "CALL SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS();",
+            ],
+        )
         self.assertNotIn(bootstrap.BOOTSTRAP_REQUEST_KEY, state)
         self.assertNotIn("section_command_brief::Executive Landing::ALFA::ALL::7", state)
         self.assertNotIn("section_command_brief::Executive Landing::ALFA::ALL::7::negative_until", state)
@@ -561,11 +569,17 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         from sections.section_command_brief import SectionCommandBrief
 
         class FailingSession:
+            def __init__(self) -> None:
+                self.sql_calls: list[str] = []
+
             def sql(self, text: str) -> "FailingSession":
+                self.sql_calls.append(text)
                 return self
 
             def collect(self) -> list[object]:
-                raise RuntimeError("no grant")
+                if self.sql_calls[-1] == "SHOW PROCEDURES LIKE 'SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS'":
+                    return [object()]
+                raise RuntimeError("SQL compilation error: Unknown function SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS")
 
         last_good = SectionCommandBrief(
             section="Cost & Contract",
@@ -600,6 +614,107 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         self.assertNotIn("section_command_brief::Cost & Contract::ALFA::ALL::7", state)
         self.assertNotIn("section_command_brief::Cost & Contract::ALFA::ALL::7::negative_until", state)
         warning.assert_called_once()
+        warning_text = warning.call_args.args[0]
+        self.assertIn("Decision summaries are not initialized", warning_text)
+        self.assertNotIn("Unknown function", warning_text)
+        self.assertNotIn("SQL compilation", warning_text)
+
+    def test_bootstrap_uses_installed_full_refresh_fallback(self):
+        from sections import decision_workspace_bootstrap as bootstrap
+
+        class FallbackSession:
+            def __init__(self) -> None:
+                self.sql_calls: list[str] = []
+
+            def sql(self, text: str) -> "FallbackSession":
+                self.sql_calls.append(text)
+                return self
+
+            def collect(self) -> list[object]:
+                if self.sql_calls[-1] == "SHOW PROCEDURES LIKE 'SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL'":
+                    return [object()]
+                return []
+
+        session = FallbackSession()
+        state = {bootstrap.BOOTSTRAP_REQUEST_KEY: True}
+        with patch.object(bootstrap.st, "session_state", state), patch.object(
+            bootstrap,
+            "lazy_util",
+            return_value=lambda *args, **kwargs: session,
+        ), patch.object(bootstrap.st, "warning") as warning, patch.object(
+            bootstrap.st,
+            "rerun",
+            side_effect=RuntimeError("rerun"),
+        ):
+            with self.assertRaises(RuntimeError):
+                bootstrap.maybe_run_decision_workspace_bootstrap("Executive Landing")
+
+        self.assertEqual(
+            session.sql_calls,
+            [
+                "SHOW PROCEDURES LIKE 'SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS'",
+                "SHOW PROCEDURES LIKE 'SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL'",
+                "CALL SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL();",
+            ],
+        )
+        warning.assert_not_called()
+
+    def test_bootstrap_missing_procedure_shows_clean_setup_message(self):
+        from sections import decision_workspace_bootstrap as bootstrap
+
+        class MissingProcedureSession:
+            def __init__(self) -> None:
+                self.sql_calls: list[str] = []
+
+            def sql(self, text: str) -> "MissingProcedureSession":
+                self.sql_calls.append(text)
+                return self
+
+            def collect(self) -> list[object]:
+                return []
+
+        session = MissingProcedureSession()
+        state = {bootstrap.BOOTSTRAP_REQUEST_KEY: True}
+        with patch.object(bootstrap.st, "session_state", state), patch.object(
+            bootstrap,
+            "lazy_util",
+            return_value=lambda *args, **kwargs: session,
+        ), patch.object(bootstrap.st, "warning") as warning:
+            bootstrap.maybe_run_decision_workspace_bootstrap("Executive Landing")
+
+        self.assertEqual(
+            session.sql_calls,
+            [
+                "SHOW PROCEDURES LIKE 'SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS'",
+                "SHOW PROCEDURES LIKE 'SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL'",
+                "SHOW PROCEDURES LIKE 'SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS'",
+            ],
+        )
+        warning.assert_called_once()
+        warning_text = warning.call_args.args[0]
+        self.assertIn("Decision summaries are not initialized", warning_text)
+        self.assertNotIn("CALL ", warning_text)
+        self.assertNotIn("Unknown function", warning_text)
+
+    def test_bootstrap_replays_stored_failure_as_clean_setup_message(self):
+        from sections import decision_workspace_bootstrap as bootstrap
+
+        state = {
+            bootstrap.BOOTSTRAP_FAILURE_KEY: (
+                "Decision summaries could not be initialized. Ask an administrator to run "
+                "CALL SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS(); (SQL compilation error: Unknown function "
+                "SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS)"
+            )
+        }
+        with patch.object(bootstrap.st, "session_state", state), patch.object(bootstrap.st, "warning") as warning:
+            bootstrap.maybe_run_decision_workspace_bootstrap()
+
+        warning.assert_called_once()
+        warning_text = warning.call_args.args[0]
+        self.assertIn("Decision summaries are not initialized", warning_text)
+        self.assertNotIn("CALL ", warning_text)
+        self.assertNotIn("Unknown function", warning_text)
+        self.assertNotIn("SQL compilation", warning_text)
 
     def test_bootstrap_unauthorized_shows_compact_admin_instruction(self):
         from sections import decision_workspace_bootstrap as bootstrap
@@ -613,7 +728,8 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
             bootstrap.maybe_run_decision_workspace_bootstrap()
 
         warning.assert_called_once()
-        self.assertIn("CALL SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS();", warning.call_args.args[0])
+        self.assertIn("Decision summaries are not initialized", warning.call_args.args[0])
+        self.assertNotIn("CALL ", warning.call_args.args[0])
         self.assertNotIn("FACT_", warning.call_args.args[0])
 
     def test_renderer_uses_view_model_not_raw_brief_payload(self):

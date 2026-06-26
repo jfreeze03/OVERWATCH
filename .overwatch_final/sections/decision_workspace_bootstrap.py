@@ -12,6 +12,16 @@ from sections.base import lazy_util
 BOOTSTRAP_REQUEST_KEY = "_overwatch_decision_bootstrap_requested"
 BOOTSTRAP_SUCCESS_KEY = "_overwatch_decision_bootstrap_success"
 BOOTSTRAP_FAILURE_KEY = "_overwatch_decision_bootstrap_failure"
+BOOTSTRAP_PROCEDURE = "SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS"
+BOOTSTRAP_PROCEDURE_FALLBACKS = (
+    BOOTSTRAP_PROCEDURE,
+    "SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL",
+    "SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS",
+)
+BOOTSTRAP_SETUP_MESSAGE = (
+    "Decision summaries are not initialized. Ask an administrator to deploy the latest "
+    "OVERWATCH mart setup and initialize the Decision summary marts."
+)
 
 
 SECTION_FORCE_REFRESH_KEYS = {
@@ -50,6 +60,45 @@ def _force_current_section_refresh(current_section: str | None) -> None:
         st.session_state[key] = True
 
 
+def _clean_bootstrap_failure_message(exc: object | None = None) -> str:
+    """Return a daily-UI-safe bootstrap failure message without raw SQL details."""
+    if exc is None:
+        return BOOTSTRAP_SETUP_MESSAGE
+    text = str(exc or "")
+    lowered = text.lower()
+    if any(
+        token in lowered
+        for token in (
+            "unknown function",
+            "does not exist",
+            "not authorized",
+            "insufficient privileges",
+            "sql compilation error",
+        )
+    ):
+        return BOOTSTRAP_SETUP_MESSAGE
+    return "Decision summaries could not be initialized. Ask an administrator to review Decision summary setup health."
+
+
+def _candidate_procedure_available(session: object, procedure_name: str) -> bool:
+    """Return True when a bootstrap/refresh procedure is visible in the current schema."""
+    rows = session.sql(f"SHOW PROCEDURES LIKE '{procedure_name}'").collect()
+    return bool(rows)
+
+
+def _resolve_bootstrap_procedure(session: object) -> str | None:
+    """Find the best installed Decision summary refresh procedure for this app version."""
+    try:
+        for procedure_name in BOOTSTRAP_PROCEDURE_FALLBACKS:
+            if _candidate_procedure_available(session, procedure_name):
+                return procedure_name
+        return None
+    except Exception:
+        # Some runtimes restrict SHOW PROCEDURES even when CALL is allowed. In that case,
+        # try the current bootstrap procedure and let the sanitized failure path handle it.
+        return BOOTSTRAP_PROCEDURE
+
+
 def maybe_run_decision_workspace_bootstrap(current_section: str | None = None) -> None:
     """Consume the bootstrap request flag and run the setup procedure once."""
     success = st.session_state.pop(BOOTSTRAP_SUCCESS_KEY, "")
@@ -57,29 +106,31 @@ def maybe_run_decision_workspace_bootstrap(current_section: str | None = None) -
         st.success(success)
     failure = st.session_state.pop(BOOTSTRAP_FAILURE_KEY, "")
     if failure:
-        st.warning(failure)
+        st.warning(_clean_bootstrap_failure_message(failure))
     if not bool(st.session_state.pop(BOOTSTRAP_REQUEST_KEY, False)):
         return
     get_session_for_action = lazy_util("get_session_for_action")
     session = get_session_for_action(
         "initialize decision summaries",
         surface="Decision Workspace",
-        offline_note="Ask an administrator to run CALL SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS();",
+        offline_note=BOOTSTRAP_SETUP_MESSAGE,
     )
     if session is None:
-        st.warning("Ask an administrator to run CALL SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS();")
+        st.warning(BOOTSTRAP_SETUP_MESSAGE)
+        return
+    procedure_name = _resolve_bootstrap_procedure(session)
+    if not procedure_name:
+        st.session_state[BOOTSTRAP_FAILURE_KEY] = BOOTSTRAP_SETUP_MESSAGE
+        st.warning(st.session_state[BOOTSTRAP_FAILURE_KEY])
         return
     try:
-        session.sql("CALL SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS();").collect()
+        session.sql(f"CALL {procedure_name}();").collect()
         _clear_command_brief_caches(clear_last_good=True)
         _force_current_section_refresh(current_section)
         st.session_state[BOOTSTRAP_SUCCESS_KEY] = "Decision summaries initialized. Refreshing the current command brief."
     except Exception as exc:
         _clear_command_brief_caches(clear_last_good=False)
-        st.session_state[BOOTSTRAP_FAILURE_KEY] = (
-            "Decision summaries could not be initialized. Ask an administrator to run "
-            f"CALL SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS(); ({exc})"
-        )
+        st.session_state[BOOTSTRAP_FAILURE_KEY] = _clean_bootstrap_failure_message(exc)
         st.warning(st.session_state[BOOTSTRAP_FAILURE_KEY])
     else:
         st.rerun()
@@ -87,7 +138,10 @@ def maybe_run_decision_workspace_bootstrap(current_section: str | None = None) -
 
 __all__ = [
     "BOOTSTRAP_FAILURE_KEY",
+    "BOOTSTRAP_PROCEDURE",
+    "BOOTSTRAP_PROCEDURE_FALLBACKS",
     "BOOTSTRAP_REQUEST_KEY",
+    "BOOTSTRAP_SETUP_MESSAGE",
     "BOOTSTRAP_SUCCESS_KEY",
     "SECTION_FORCE_REFRESH_KEYS",
     "maybe_run_decision_workspace_bootstrap",

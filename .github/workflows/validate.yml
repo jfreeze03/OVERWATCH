@@ -59,6 +59,12 @@ jobs:
       - name: Run Decision Brief contracts
         run: python -m unittest tests.test_section_command_brief
 
+      - name: Run Decision Workspace data-binding and setup-health tests
+        run: python -m unittest tests.test_decision_workspace_data_binding
+
+      - name: Run theme and popover accessibility tests
+        run: python -m unittest tests.test_theme_registry
+
       - name: Run unit tests
         run: python -m unittest discover -s tests
 

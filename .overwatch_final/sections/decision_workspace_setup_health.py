@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
 from html import escape as _escape_html
@@ -24,6 +25,9 @@ SETUP_HEALTH_TABLE = "OVERWATCH_DECISION_SETUP_HEALTH"
 class DecisionBootstrapHealth:
     status: str
     user_message: str
+    global_status: str = "UNKNOWN"
+    selected_scope_status: str = "UNKNOWN"
+    current_section_status: str = "UNKNOWN"
     selected_procedure: str = ""
     fallback_used: bool = False
     current_packet_count: int = 0
@@ -33,6 +37,9 @@ class DecisionBootstrapHealth:
     stale_sections: tuple[str, ...] = ()
     data_gap_sections: tuple[str, ...] = ()
     missing_metric_sections: tuple[str, ...] = ()
+    degraded_sections: tuple[str, ...] = ()
+    invalid_sections: tuple[str, ...] = ()
+    warning_sections: tuple[str, ...] = ()
     max_packet_bytes: int | None = None
     requested_scope: str = ""
     resolved_scope: str = ""
@@ -60,6 +67,9 @@ def _health_from_mapping(raw: Mapping[str, object]) -> DecisionBootstrapHealth:
     return DecisionBootstrapHealth(
         status=str(raw.get("status", "")),
         user_message=str(raw.get("user_message", "")),
+        global_status=str(raw.get("global_status", "") or "UNKNOWN"),
+        selected_scope_status=str(raw.get("selected_scope_status", "") or "UNKNOWN"),
+        current_section_status=str(raw.get("current_section_status", "") or "UNKNOWN"),
         selected_procedure=str(raw.get("selected_procedure", "")),
         fallback_used=bool(raw.get("fallback_used", False)),
         current_packet_count=int(raw.get("current_packet_count") or 0),
@@ -69,6 +79,9 @@ def _health_from_mapping(raw: Mapping[str, object]) -> DecisionBootstrapHealth:
         stale_sections=_tuple_from(raw.get("stale_sections")),
         data_gap_sections=_tuple_from(raw.get("data_gap_sections")),
         missing_metric_sections=_tuple_from(raw.get("missing_metric_sections")),
+        degraded_sections=_tuple_from(raw.get("degraded_sections")),
+        invalid_sections=_tuple_from(raw.get("invalid_sections")),
+        warning_sections=_tuple_from(raw.get("warning_sections")),
         max_packet_bytes=raw.get("max_packet_bytes") if raw.get("max_packet_bytes") is None else int(raw.get("max_packet_bytes") or 0),
         requested_scope=str(raw.get("requested_scope", "")),
         resolved_scope=str(raw.get("resolved_scope", "")),
@@ -100,6 +113,9 @@ CREATE TABLE IF NOT EXISTS {SETUP_HEALTH_TABLE} (
   EVENT_TS TIMESTAMP_NTZ,
   STATUS VARCHAR(40),
   USER_MESSAGE VARCHAR(2000),
+  GLOBAL_STATUS VARCHAR(40),
+  SELECTED_SCOPE_STATUS VARCHAR(40),
+  CURRENT_SECTION_STATUS VARCHAR(40),
   SELECTED_PROCEDURE VARCHAR(300),
   FALLBACK_USED BOOLEAN,
   CURRENT_PACKET_COUNT NUMBER,
@@ -109,6 +125,9 @@ CREATE TABLE IF NOT EXISTS {SETUP_HEALTH_TABLE} (
   STALE_SECTIONS VARIANT,
   DATA_GAP_SECTIONS VARIANT,
   MISSING_METRIC_SECTIONS VARIANT,
+  DEGRADED_SECTIONS VARIANT,
+  INVALID_SECTIONS VARIANT,
+  WARNING_SECTIONS VARIANT,
   MAX_PACKET_BYTES NUMBER,
   REQUESTED_SCOPE VARCHAR(500),
   RESOLVED_SCOPE VARCHAR(500),
@@ -116,9 +135,22 @@ CREATE TABLE IF NOT EXISTS {SETUP_HEALTH_TABLE} (
   SUGGESTED_REMEDIATION VARCHAR(4000),
   ACTOR_ROLE VARCHAR(200),
   APP_VERSION VARCHAR(120),
+  PERSISTENCE_STATUS VARCHAR(40),
   LOAD_TS TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
 )
 """
+
+
+def _health_table_migration_sql() -> tuple[str, ...]:
+    return (
+        f"ALTER TABLE IF EXISTS {SETUP_HEALTH_TABLE} ADD COLUMN IF NOT EXISTS GLOBAL_STATUS VARCHAR(40)",
+        f"ALTER TABLE IF EXISTS {SETUP_HEALTH_TABLE} ADD COLUMN IF NOT EXISTS SELECTED_SCOPE_STATUS VARCHAR(40)",
+        f"ALTER TABLE IF EXISTS {SETUP_HEALTH_TABLE} ADD COLUMN IF NOT EXISTS CURRENT_SECTION_STATUS VARCHAR(40)",
+        f"ALTER TABLE IF EXISTS {SETUP_HEALTH_TABLE} ADD COLUMN IF NOT EXISTS DEGRADED_SECTIONS VARIANT",
+        f"ALTER TABLE IF EXISTS {SETUP_HEALTH_TABLE} ADD COLUMN IF NOT EXISTS INVALID_SECTIONS VARIANT",
+        f"ALTER TABLE IF EXISTS {SETUP_HEALTH_TABLE} ADD COLUMN IF NOT EXISTS WARNING_SECTIONS VARIANT",
+        f"ALTER TABLE IF EXISTS {SETUP_HEALTH_TABLE} ADD COLUMN IF NOT EXISTS PERSISTENCE_STATUS VARCHAR(40)",
+    )
 
 
 def persist_decision_setup_health(session: object | None, health: DecisionBootstrapHealth) -> bool:
@@ -133,19 +165,27 @@ def persist_decision_setup_health(session: object | None, health: DecisionBootst
         return False
     try:
         session.sql(_health_table_ddl()).collect()
+        for migration_sql in _health_table_migration_sql():
+            session.sql(migration_sql).collect()
         event_id = uuid4().hex
         sql = f"""
 INSERT INTO {SETUP_HEALTH_TABLE} (
-  EVENT_ID, EVENT_TS, STATUS, USER_MESSAGE, SELECTED_PROCEDURE, FALLBACK_USED,
+  EVENT_ID, EVENT_TS, STATUS, USER_MESSAGE, GLOBAL_STATUS, SELECTED_SCOPE_STATUS,
+  CURRENT_SECTION_STATUS, SELECTED_PROCEDURE, FALLBACK_USED,
   CURRENT_PACKET_COUNT, SECTIONS_PRESENT, MISSING_SECTIONS, DUPLICATE_CURRENT_KEYS,
-  STALE_SECTIONS, DATA_GAP_SECTIONS, MISSING_METRIC_SECTIONS, MAX_PACKET_BYTES,
-  REQUESTED_SCOPE, RESOLVED_SCOPE, ADMIN_DETAIL, SUGGESTED_REMEDIATION, ACTOR_ROLE, APP_VERSION
+  STALE_SECTIONS, DATA_GAP_SECTIONS, MISSING_METRIC_SECTIONS, DEGRADED_SECTIONS,
+  INVALID_SECTIONS, WARNING_SECTIONS, MAX_PACKET_BYTES,
+  REQUESTED_SCOPE, RESOLVED_SCOPE, ADMIN_DETAIL, SUGGESTED_REMEDIATION, ACTOR_ROLE,
+  APP_VERSION, PERSISTENCE_STATUS
 )
 SELECT
   {_sql_literal(event_id, 64)},
   CURRENT_TIMESTAMP(),
   {_sql_literal(health.status, 40)},
   {_sql_literal(health.user_message, 2000)},
+  {_sql_literal(health.global_status, 40)},
+  {_sql_literal(health.selected_scope_status, 40)},
+  {_sql_literal(health.current_section_status, 40)},
   {_sql_literal(health.selected_procedure, 300)},
   {str(bool(health.fallback_used)).upper()},
   {int(health.current_packet_count or 0)},
@@ -155,13 +195,17 @@ SELECT
   PARSE_JSON({_sql_literal(_json_array(health.stale_sections), 8000)}),
   PARSE_JSON({_sql_literal(_json_array(health.data_gap_sections), 8000)}),
   PARSE_JSON({_sql_literal(_json_array(health.missing_metric_sections), 8000)}),
+  PARSE_JSON({_sql_literal(_json_array(health.degraded_sections), 8000)}),
+  PARSE_JSON({_sql_literal(_json_array(health.invalid_sections), 8000)}),
+  PARSE_JSON({_sql_literal(_json_array(health.warning_sections), 8000)}),
   {"NULL" if health.max_packet_bytes is None else int(health.max_packet_bytes)},
   {_sql_literal(health.requested_scope, 500)},
   {_sql_literal(health.resolved_scope, 500)},
   {_sql_literal(health.admin_detail, 8000)},
   {_sql_literal(health.suggested_remediation, 4000)},
   {_sql_literal(health.actor_role, 200)},
-  {_sql_literal(health.app_version, 120)}
+  {_sql_literal(health.app_version, 120)},
+  'persisted'
 """
         session.sql(sql).collect()
         raw = st.session_state.get(SETUP_HEALTH_KEY)
@@ -208,6 +252,9 @@ def record_decision_bootstrap_health(
     health = DecisionBootstrapHealth(
         status=str(status or "unknown").upper(),
         user_message=str(user_message or ""),
+        global_status=str(getattr(validation, "global_status", "") or "UNKNOWN").upper(),
+        selected_scope_status=str(getattr(validation, "selected_scope_status", "") or "UNKNOWN").upper(),
+        current_section_status=str(getattr(validation, "current_section_status", "") or "UNKNOWN").upper(),
         selected_procedure=str(selected_procedure or ""),
         fallback_used=bool(fallback_used),
         current_packet_count=int(getattr(validation, "current_packet_count", 0) or 0),
@@ -217,6 +264,9 @@ def record_decision_bootstrap_health(
         stale_sections=tuple(getattr(validation, "stale_sections", ()) or ()),
         data_gap_sections=tuple(getattr(validation, "data_gap_sections", ()) or ()),
         missing_metric_sections=tuple(getattr(validation, "missing_metric_sections", ()) or ()),
+        degraded_sections=tuple(getattr(validation, "degraded_sections", ()) or ()),
+        invalid_sections=tuple(getattr(validation, "invalid_sections", ()) or ()),
+        warning_sections=tuple(getattr(validation, "warning_sections", ()) or ()),
         max_packet_bytes=getattr(validation, "max_packet_bytes", None),
         requested_scope=_scope_label("requested"),
         resolved_scope=_scope_label("resolved"),
@@ -254,11 +304,13 @@ def load_decision_setup_health(session: object | None = None) -> DecisionBootstr
             rows = session.sql(
                 f"""
 SELECT
-  STATUS, USER_MESSAGE, SELECTED_PROCEDURE, FALLBACK_USED, CURRENT_PACKET_COUNT,
+  STATUS, USER_MESSAGE, GLOBAL_STATUS, SELECTED_SCOPE_STATUS, CURRENT_SECTION_STATUS,
+  SELECTED_PROCEDURE, FALLBACK_USED, CURRENT_PACKET_COUNT,
   SECTIONS_PRESENT, MISSING_SECTIONS, DUPLICATE_CURRENT_KEYS, STALE_SECTIONS,
-  DATA_GAP_SECTIONS, MISSING_METRIC_SECTIONS, MAX_PACKET_BYTES, REQUESTED_SCOPE,
+  DATA_GAP_SECTIONS, MISSING_METRIC_SECTIONS, DEGRADED_SECTIONS, INVALID_SECTIONS,
+  WARNING_SECTIONS, MAX_PACKET_BYTES, REQUESTED_SCOPE,
   RESOLVED_SCOPE, ADMIN_DETAIL, SUGGESTED_REMEDIATION, ACTOR_ROLE, APP_VERSION,
-  TO_VARCHAR(EVENT_TS) AS RECORDED_AT
+  PERSISTENCE_STATUS, TO_VARCHAR(EVENT_TS) AS RECORDED_AT
 FROM {SETUP_HEALTH_TABLE}
 ORDER BY EVENT_TS DESC
 LIMIT 1
@@ -283,6 +335,43 @@ LIMIT 1
     return None
 
 
+def load_decision_setup_health_history(session: object | None = None, *, limit: int = 5) -> tuple[DecisionBootstrapHealth, ...]:
+    """Return recent persisted setup-health events for Settings/Admin surfaces."""
+    if session is None:
+        latest = load_decision_setup_health(session=None)
+        return (latest,) if latest is not None else ()
+    try:
+        rows = session.sql(
+            f"""
+SELECT
+  STATUS, USER_MESSAGE, GLOBAL_STATUS, SELECTED_SCOPE_STATUS, CURRENT_SECTION_STATUS,
+  SELECTED_PROCEDURE, FALLBACK_USED, CURRENT_PACKET_COUNT,
+  SECTIONS_PRESENT, MISSING_SECTIONS, DUPLICATE_CURRENT_KEYS, STALE_SECTIONS,
+  DATA_GAP_SECTIONS, MISSING_METRIC_SECTIONS, DEGRADED_SECTIONS, INVALID_SECTIONS,
+  WARNING_SECTIONS, MAX_PACKET_BYTES, REQUESTED_SCOPE,
+  RESOLVED_SCOPE, ADMIN_DETAIL, SUGGESTED_REMEDIATION, ACTOR_ROLE, APP_VERSION,
+  PERSISTENCE_STATUS, TO_VARCHAR(EVENT_TS) AS RECORDED_AT
+FROM {SETUP_HEALTH_TABLE}
+ORDER BY EVENT_TS DESC
+LIMIT {max(1, int(limit or 5))}
+"""
+        ).collect()
+    except Exception:
+        return ()
+    history: list[DecisionBootstrapHealth] = []
+    for row in rows:
+        if hasattr(row, "as_dict"):
+            mapping = row.as_dict()
+        elif isinstance(row, Mapping):
+            mapping = row
+        else:
+            mapping = {}
+        normalized = {str(k).lower(): v for k, v in mapping.items()}
+        normalized["persistence_status"] = normalized.get("persistence_status") or "persisted"
+        history.append(_health_from_mapping(normalized))
+    return tuple(history)
+
+
 def _list_text(values: tuple[str, ...]) -> str:
     return ", ".join(values) if values else "None"
 
@@ -296,9 +385,16 @@ def open_decision_setup_health() -> None:
 def can_open_decision_setup_health() -> bool:
     """Return whether the daily fallback may show a safe Settings route."""
     role = str(st.session_state.get(CURRENT_ROLE, "") or "").strip().upper()
-    if not role:
+    if os.environ.get("OVERWATCH_TEST_MODE") == "1" or os.environ.get("OVERWATCH_ALLOW_SETUP_HEALTH_LOCAL") == "1":
         return True
-    return role in set(ADMIN_ACCESS_ROLES)
+    if not role:
+        return False
+    try:
+        from access_control import admin_access_is_allowed
+
+        return bool(admin_access_is_allowed(role, True))
+    except Exception:
+        return role in set(ADMIN_ACCESS_ROLES)
 
 
 def render_decision_setup_health_panel(session: object | None = None) -> None:
@@ -318,6 +414,9 @@ def render_decision_setup_health_panel(session: object | None = None) -> None:
                     <span>{_escape_html(health.user_message)}</span>
                 </div>
                 <div class="ow-setup-health-grid">
+                    <span><b>Global</b>{_escape_html(health.global_status or "UNKNOWN")}</span>
+                    <span><b>Selected scope</b>{_escape_html(health.selected_scope_status or "UNKNOWN")}</span>
+                    <span><b>Current section</b>{_escape_html(health.current_section_status or "UNKNOWN")}</span>
                     <span><b>Recorded</b>{_escape_html(health.recorded_at or "Unavailable")}</span>
                     <span><b>Procedure</b>{_escape_html(health.selected_procedure or "Unavailable")}</span>
                     <span><b>Fallback</b>{'Yes' if health.fallback_used else 'No'}</span>
@@ -336,7 +435,18 @@ def render_decision_setup_health_panel(session: object | None = None) -> None:
         st.write(f"Stale sections: {_list_text(health.stale_sections)}")
         st.write(f"Data Gap sections: {_list_text(health.data_gap_sections)}")
         st.write(f"Missing metric sections: {_list_text(health.missing_metric_sections)}")
+        st.write(f"Degraded sections: {_list_text(health.degraded_sections)}")
+        st.write(f"Invalid sections: {_list_text(health.invalid_sections)}")
+        st.write(f"Warning sections: {_list_text(health.warning_sections)}")
         st.write(f"Packet budget: {health.max_packet_bytes if health.max_packet_bytes is not None else 'Unavailable'} bytes")
+        history = tuple(item for item in load_decision_setup_health_history(session=session) if item.recorded_at != health.recorded_at)
+        if history:
+            st.markdown("**Recent setup-health events**")
+            for item in history[:5]:
+                st.write(
+                    f"{item.recorded_at or 'Unknown time'} - {item.status or 'UNKNOWN'} - "
+                    f"{item.requested_scope or 'scope unavailable'} -> {item.resolved_scope or 'unresolved'}"
+                )
         if health.admin_detail:
             admin_detail = health.admin_detail
             if health.persistence_error:
@@ -366,6 +476,7 @@ __all__ = [
     "SETUP_HEALTH_PANEL_OPEN_KEY",
     "SETUP_HEALTH_TABLE",
     "load_decision_setup_health",
+    "load_decision_setup_health_history",
     "open_decision_setup_health",
     "can_open_decision_setup_health",
     "persist_decision_setup_health",

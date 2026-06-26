@@ -34,6 +34,8 @@ class ValidationWorkflowTests(unittest.TestCase):
             "python -m compileall .overwatch_final tests",
             "python -m unittest tests.test_deployment_contract",
             "python -m unittest tests.test_cortex_guard",
+            "python -m unittest tests.test_decision_workspace_data_binding",
+            "python -m unittest tests.test_theme_registry",
             "python -m unittest discover -s tests",
             "any(part == \"__pycache__\" for part in path.parts)",
             'Path(".overwatch_final")',
@@ -76,11 +78,15 @@ class ValidationWorkflowTests(unittest.TestCase):
         text = _workflow_text()
         deployment_index = text.index("python -m unittest tests.test_deployment_contract")
         cortex_index = text.index("python -m unittest tests.test_cortex_guard")
+        decision_index = text.index("python -m unittest tests.test_decision_workspace_data_binding")
+        theme_index = text.index("python -m unittest tests.test_theme_registry")
         discovery_index = text.index("python -m unittest discover -s tests")
         mojibake_index = text.index("Scan for mojibake characters")
 
         self.assertLess(deployment_index, discovery_index)
         self.assertLess(cortex_index, discovery_index)
+        self.assertLess(decision_index, discovery_index)
+        self.assertLess(theme_index, discovery_index)
         self.assertLess(discovery_index, mojibake_index)
 
 

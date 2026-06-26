@@ -583,6 +583,9 @@ class SectionCommandBriefTests(unittest.TestCase):
             "EVENT_TS",
             "STATUS",
             "USER_MESSAGE",
+            "GLOBAL_STATUS",
+            "SELECTED_SCOPE_STATUS",
+            "CURRENT_SECTION_STATUS",
             "SELECTED_PROCEDURE",
             "FALLBACK_USED",
             "CURRENT_PACKET_COUNT",
@@ -592,6 +595,9 @@ class SectionCommandBriefTests(unittest.TestCase):
             "STALE_SECTIONS",
             "DATA_GAP_SECTIONS",
             "MISSING_METRIC_SECTIONS",
+            "DEGRADED_SECTIONS",
+            "INVALID_SECTIONS",
+            "WARNING_SECTIONS",
             "MAX_PACKET_BYTES",
             "REQUESTED_SCOPE",
             "RESOLVED_SCOPE",
@@ -599,9 +605,24 @@ class SectionCommandBriefTests(unittest.TestCase):
             "SUGGESTED_REMEDIATION",
             "ACTOR_ROLE",
             "APP_VERSION",
+            "PERSISTENCE_STATUS",
             "LOAD_TS",
         ):
             self.assertIn(column, setup_health_block)
+            self.assertIn(column, tables)
+            self.assertIn(column, validation)
+        for column in (
+            "AVAILABLE_REQUIRED_SOURCE_COUNT",
+            "REQUIRED_MISSING_SOURCE_COUNT",
+            "REQUIRED_STALE_SOURCE_COUNT",
+            "OPTIONAL_SOURCE_COUNT",
+            "AVAILABLE_OPTIONAL_SOURCE_COUNT",
+            "OPTIONAL_MISSING_SOURCE_COUNT",
+            "OPTIONAL_STALE_SOURCE_COUNT",
+        ):
+            self.assertIn(column, tables)
+            self.assertIn(column, procs)
+            self.assertIn(column, validation)
         self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS()", procs)
         self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST()", procs)
         self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL()", procs)
@@ -616,6 +637,10 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertIn("MART_SECTION_DECISION_LAST_GOOD", procs)
         self.assertIn("SOURCES", procs)
         self.assertIn("PACKET_BYTES", procs)
+        self.assertIn("COUNT_IF(REQUIRED AND SOURCE_SNAPSHOT_TS IS NULL) AS REQUIRED_MISSING_SOURCE_COUNT", procs)
+        self.assertIn("COUNT_IF(NOT REQUIRED AND SOURCE_SNAPSHOT_TS IS NULL) AS OPTIONAL_MISSING_SOURCE_COUNT", procs)
+        self.assertIn("DECISION_PACKET:\"REQUIRED_MISSING_SOURCE_COUNT\"::NUMBER", procs)
+        self.assertNotIn('WHERE COALESCE(DECISION_PACKET:"MISSING_SOURCE_COUNT"::NUMBER, 0) = 0', procs)
         config_tables = (ROOT / "snowflake" / "mart_setup" / "03_config_and_audit_tables.sql").read_text(encoding="utf-8").upper()
         self.assertIn("AUTO_BOOTSTRAP_DECISION_BRIEFS", config_tables)
         self.assertIn("DECISION_BRIEF_BOOTSTRAP_PROCEDURE", config_tables)
@@ -678,6 +703,11 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertIn("ACTIONS", sql)
         self.assertIn("SOURCES", sql)
         self.assertIn("PACKET_BYTES", sql)
+        self.assertIn("AVAILABLE_REQUIRED_SOURCE_COUNT", sql)
+        self.assertIn("REQUIRED_MISSING_SOURCE_COUNT", sql)
+        self.assertIn("REQUIRED_STALE_SOURCE_COUNT", sql)
+        self.assertIn("OPTIONAL_SOURCE_COUNT", sql)
+        self.assertIn("OPTIONAL_MISSING_SOURCE_COUNT", sql)
         self.assertNotIn("ARRAY_AGG", sql)
 
     def test_sql_emits_every_contract_metric_key(self):

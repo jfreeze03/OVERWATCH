@@ -383,6 +383,10 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertIn("test_dead_ui_helpers_stay_removed", workflow)
         self.assertIn("Run Cortex guardrails", workflow)
         self.assertIn("python -m unittest tests.test_cortex_guard", workflow)
+        self.assertIn("Run Decision Workspace data-binding and setup-health tests", workflow)
+        self.assertIn("python -m unittest tests.test_decision_workspace_data_binding", workflow)
+        self.assertIn("Run theme and popover accessibility tests", workflow)
+        self.assertIn("python -m unittest tests.test_theme_registry", workflow)
         self.assertLess(
             workflow.index("Validate deployment contract"),
             workflow.index("Run production shell guards"),
@@ -393,6 +397,14 @@ class DeploymentContractTests(unittest.TestCase):
         )
         self.assertLess(
             workflow.index("Run Cortex guardrails"),
+            workflow.index("Run Decision Workspace data-binding and setup-health tests"),
+        )
+        self.assertLess(
+            workflow.index("Run Decision Workspace data-binding and setup-health tests"),
+            workflow.index("Run theme and popover accessibility tests"),
+        )
+        self.assertLess(
+            workflow.index("Run theme and popover accessibility tests"),
             workflow.index("Run unit tests"),
         )
 

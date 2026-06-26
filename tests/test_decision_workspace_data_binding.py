@@ -1,5 +1,6 @@
 from pathlib import Path
 import contextlib
+import os
 import sys
 import unittest
 from unittest.mock import patch
@@ -69,6 +70,13 @@ def _packet(section: str, metrics: list[dict[str, object]], *, headline: str = "
             "REQUIRED_SOURCE_COUNT": 3,
             "AVAILABLE_SOURCE_COUNT": 3,
             "MISSING_SOURCE_COUNT": 0,
+            "AVAILABLE_REQUIRED_SOURCE_COUNT": 3,
+            "REQUIRED_MISSING_SOURCE_COUNT": 0,
+            "REQUIRED_STALE_SOURCE_COUNT": 0,
+            "OPTIONAL_SOURCE_COUNT": 1,
+            "AVAILABLE_OPTIONAL_SOURCE_COUNT": 1,
+            "OPTIONAL_MISSING_SOURCE_COUNT": 0,
+            "OPTIONAL_STALE_SOURCE_COUNT": 0,
             "SOURCE_COVERAGE_PCT": 100,
             "DATA_AVAILABILITY_STATE": "Scheduled mart",
             "PACKET_BYTES": 2048,
@@ -171,6 +179,13 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
                 "REQUIRED_SOURCE_COUNT": 3,
                 "AVAILABLE_SOURCE_COUNT": 3,
                 "MISSING_SOURCE_COUNT": 0,
+                "AVAILABLE_REQUIRED_SOURCE_COUNT": 3,
+                "REQUIRED_MISSING_SOURCE_COUNT": 0,
+                "REQUIRED_STALE_SOURCE_COUNT": 0,
+                "OPTIONAL_SOURCE_COUNT": 1,
+                "AVAILABLE_OPTIONAL_SOURCE_COUNT": 1,
+                "OPTIONAL_MISSING_SOURCE_COUNT": 0,
+                "OPTIONAL_STALE_SOURCE_COUNT": 0,
                 "STALE_SOURCE_COUNT": 0,
                 "SOURCE_COVERAGE_PCT": 100,
                 "DATA_AVAILABILITY_STATE": "READY",
@@ -332,15 +347,32 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
 
         self.assertEqual(_validate({"SOURCE_ROW_COUNT": 0}).status, "FAILED")
         self.assertEqual(_validate({"REQUIRED_SOURCE_COUNT": 0}).status, "FAILED")
-        self.assertEqual(_validate({"AVAILABLE_SOURCE_COUNT": 2}).status, "FAILED")
-        self.assertEqual(_validate({"MISSING_SOURCE_COUNT": 1}).status, "FAILED")
+        self.assertEqual(_validate({"AVAILABLE_REQUIRED_SOURCE_COUNT": 2}).status, "FAILED")
+        self.assertEqual(_validate({"REQUIRED_MISSING_SOURCE_COUNT": 1}).status, "FAILED")
         self.assertEqual(_validate({"SOURCE_COVERAGE_PCT": 99}).status, "FAILED")
         self.assertEqual(_validate({"REQUIRED_STALE_SOURCE_COUNT": 1}).status, "FAILED")
 
-        optional = _validate({"OPTIONAL_MISSING_SOURCE_COUNT": 1})
+        optional = _validate({
+            "OPTIONAL_SOURCE_COUNT": 2,
+            "AVAILABLE_OPTIONAL_SOURCE_COUNT": 1,
+            "OPTIONAL_MISSING_SOURCE_COUNT": 1,
+            "MISSING_SOURCE_COUNT": 1,
+        })
         self.assertTrue(optional.ok)
         self.assertEqual(optional.status, "DEGRADED")
         self.assertIn("Executive Landing", optional.warning_sections)
+
+        optional_stale = _validate({"OPTIONAL_STALE_SOURCE_COUNT": 1, "STALE_SOURCE_COUNT": 1})
+        self.assertTrue(optional_stale.ok)
+        self.assertEqual(optional_stale.status, "DEGRADED")
+
+        source_text_only = _validate({
+            "SOURCE_ROW_COUNT": 0,
+            "REQUIRED_SOURCE_COUNT": 3,
+            "AVAILABLE_REQUIRED_SOURCE_COUNT": 3,
+            "REQUIRED_MISSING_SOURCE_COUNT": 0,
+        })
+        self.assertEqual(source_text_only.status, "FAILED")
 
     def test_bootstrap_validation_rejects_global_five_section_data_gap(self):
         from sections import decision_workspace_bootstrap as bootstrap
@@ -606,7 +638,11 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
             fallback_reason="No packet row.",
             raw_payload={"workspace_mode": "UNINITIALIZED"},
         )
-        with patch.object(section_command_rendering.st, "session_state", state), patch.object(
+        with patch.dict(os.environ, {"OVERWATCH_TEST_MODE": "1"}), patch.object(
+            section_command_rendering.st,
+            "session_state",
+            state,
+        ), patch.object(
             section_command_rendering.st,
             "html",
         ), patch.object(
@@ -1163,6 +1199,12 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         self.assertIn("Decision summaries are not initialized", rendered)
         self.assertIn("ow-setup-health-badge", rendered)
         self.assertIn("Persistence", rendered)
+        self.assertIn("Global", rendered)
+        self.assertIn("Selected scope", rendered)
+        self.assertIn("Current section", rendered)
+        self.assertIn("Degraded sections", rendered)
+        self.assertIn("Invalid sections", rendered)
+        self.assertIn("Warning sections", rendered)
         self.assertIn("SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS", rendered)
         self.assertGreaterEqual(code.call_count, 1)
         self.assertIn("MART_SECTION_DECISION_CURRENT", code.call_args_list[0].args[0])
@@ -1184,6 +1226,9 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
                     return [{
                         "STATUS": "SUCCESS",
                         "USER_MESSAGE": "Decision summaries initialized.",
+                        "GLOBAL_STATUS": "SUCCESS",
+                        "SELECTED_SCOPE_STATUS": "SUCCESS",
+                        "CURRENT_SECTION_STATUS": "SUCCESS",
                         "SELECTED_PROCEDURE": "SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS",
                         "FALLBACK_USED": False,
                         "CURRENT_PACKET_COUNT": 6,
@@ -1193,6 +1238,9 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
                         "STALE_SECTIONS": [],
                         "DATA_GAP_SECTIONS": [],
                         "MISSING_METRIC_SECTIONS": [],
+                        "DEGRADED_SECTIONS": [],
+                        "INVALID_SECTIONS": [],
+                        "WARNING_SECTIONS": [],
                         "MAX_PACKET_BYTES": 2048,
                         "REQUESTED_SCOPE": "ALFA / ALL / 7 days",
                         "RESOLVED_SCOPE": "ALFA / ALL / 7 days",
@@ -1200,7 +1248,35 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
                         "SUGGESTED_REMEDIATION": "None",
                         "ACTOR_ROLE": "SNOW_SYSADMINS",
                         "APP_VERSION": "OVERWATCH Decision Workspace",
+                        "PERSISTENCE_STATUS": "persisted",
                         "RECORDED_AT": "2026-06-26 12:00:00",
+                    }, {
+                        "STATUS": "DEGRADED",
+                        "USER_MESSAGE": "Decision summaries initialized with setup warnings.",
+                        "GLOBAL_STATUS": "DEGRADED",
+                        "SELECTED_SCOPE_STATUS": "SUCCESS",
+                        "CURRENT_SECTION_STATUS": "SUCCESS",
+                        "SELECTED_PROCEDURE": "SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL",
+                        "FALLBACK_USED": True,
+                        "CURRENT_PACKET_COUNT": 5,
+                        "SECTIONS_PRESENT": ["Executive Landing"],
+                        "MISSING_SECTIONS": ["Security Monitoring"],
+                        "DUPLICATE_CURRENT_KEYS": 0,
+                        "STALE_SECTIONS": [],
+                        "DATA_GAP_SECTIONS": ["Security Monitoring"],
+                        "MISSING_METRIC_SECTIONS": [],
+                        "DEGRADED_SECTIONS": ["Security Monitoring"],
+                        "INVALID_SECTIONS": [],
+                        "WARNING_SECTIONS": ["Security Monitoring"],
+                        "MAX_PACKET_BYTES": 4096,
+                        "REQUESTED_SCOPE": "ALFA / ALL / 7 days",
+                        "RESOLVED_SCOPE": "ALFA / ALL / 7 days",
+                        "ADMIN_DETAIL": "Historical degraded event.",
+                        "SUGGESTED_REMEDIATION": "Review source health.",
+                        "ACTOR_ROLE": "SNOW_SYSADMINS",
+                        "APP_VERSION": "OVERWATCH Decision Workspace",
+                        "PERSISTENCE_STATUS": "persisted",
+                        "RECORDED_AT": "2026-06-26 11:45:00",
                     }]
                 return []
 
@@ -1215,17 +1291,35 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
                 session=session,
             )
         self.assertEqual(health.status, "SUCCESS")
+        self.assertEqual(health.global_status, "UNKNOWN")
         self.assertEqual(health.persistence_status, "persisted")
         self.assertTrue(any("CREATE TABLE IF NOT EXISTS OVERWATCH_DECISION_SETUP_HEALTH" in call for call in session.sql_calls))
+        self.assertTrue(any("ALTER TABLE IF EXISTS OVERWATCH_DECISION_SETUP_HEALTH ADD COLUMN IF NOT EXISTS GLOBAL_STATUS" in call for call in session.sql_calls))
+        self.assertTrue(any("ALTER TABLE IF EXISTS OVERWATCH_DECISION_SETUP_HEALTH ADD COLUMN IF NOT EXISTS PERSISTENCE_STATUS" in call for call in session.sql_calls))
         self.assertTrue(any("INSERT INTO OVERWATCH_DECISION_SETUP_HEALTH" in call for call in session.sql_calls))
+        insert_sql = "\n".join(session.sql_calls)
+        self.assertIn("GLOBAL_STATUS", insert_sql)
+        self.assertIn("SELECTED_SCOPE_STATUS", insert_sql)
+        self.assertIn("CURRENT_SECTION_STATUS", insert_sql)
+        self.assertIn("DEGRADED_SECTIONS", insert_sql)
+        self.assertIn("INVALID_SECTIONS", insert_sql)
+        self.assertIn("WARNING_SECTIONS", insert_sql)
+        self.assertIn("PERSISTENCE_STATUS", insert_sql)
 
         state.clear()
         with patch.object(setup_health.st, "session_state", state):
             loaded = setup_health.load_decision_setup_health(session=session)
         self.assertIsNotNone(loaded)
         self.assertEqual(loaded.selected_procedure, "SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS")
+        self.assertEqual(loaded.global_status, "SUCCESS")
+        self.assertEqual(loaded.selected_scope_status, "SUCCESS")
+        self.assertEqual(loaded.current_section_status, "SUCCESS")
         self.assertEqual(loaded.requested_scope, "ALFA / ALL / 7 days")
         self.assertEqual(loaded.persistence_status, "persisted")
+        history = setup_health.load_decision_setup_health_history(session=session)
+        self.assertEqual(len(history), 2)
+        self.assertEqual(history[0].status, "SUCCESS")
+        self.assertEqual(history[1].status, "DEGRADED")
 
     def test_setup_health_records_local_only_and_unavailable_persistence_status(self):
         from sections import decision_workspace_setup_health as setup_health
@@ -1285,7 +1379,11 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
             loaded_at="",
             fallback_reason="No packet row.",
         )
-        with patch.object(section_command_rendering.st, "session_state", state), patch.object(
+        with patch.dict(os.environ, {"OVERWATCH_TEST_MODE": "1"}), patch.object(
+            section_command_rendering.st,
+            "session_state",
+            state,
+        ), patch.object(
             section_command_rendering.st,
             "html",
         ) as html, patch.object(section_command_rendering.st, "columns", side_effect=_columns), patch.object(
@@ -1335,14 +1433,15 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
             loaded_at="",
             fallback_reason="No packet row.",
         )
-        with patch.object(section_command_rendering.st, "session_state", state), patch.object(
+        with patch.dict(os.environ, {}, clear=True), patch.object(
             section_command_rendering.st,
-            "html",
-        ), patch.object(section_command_rendering.st, "columns", side_effect=_columns), patch.object(
+            "session_state",
+            state,
+        ), patch.object(section_command_rendering.st, "html"), patch.object(
             section_command_rendering.st,
-            "button",
-            side_effect=_button,
-        ):
+            "columns",
+            side_effect=_columns,
+        ), patch.object(section_command_rendering.st, "button", side_effect=_button):
             section_command_rendering.render_decision_workspace(
                 brief,
                 key_prefix="no_admin_setup_health",
@@ -1352,6 +1451,99 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         self.assertIn("Refresh", labels)
         self.assertIn("Initialize summaries", labels)
         self.assertNotIn("Open Setup Health", labels)
+
+    def test_fallback_shows_setup_health_action_for_admin_role(self):
+        from runtime_state import CURRENT_ROLE
+        from sections import section_command_rendering
+        from sections.section_command_brief import SectionCommandBrief
+
+        labels: list[str] = []
+
+        def _columns(spec):
+            count = int(spec) if isinstance(spec, int) else len(spec)
+            return [contextlib.nullcontext() for _ in range(count)]
+
+        def _button(label, *args, **kwargs):
+            labels.append(str(label))
+            return False
+
+        state: dict[str, object] = {CURRENT_ROLE: "SNOW_ACCOUNTADMINS"}
+        brief = SectionCommandBrief(
+            section="Executive Landing",
+            company="ALFA",
+            environment="ALL",
+            window_label="8 days",
+            state="Setup required",
+            headline="Summary not initialized",
+            summary="No packet row.",
+            source="MART_SECTION_DECISION_CURRENT",
+            freshness_label="Freshness unavailable",
+            loaded_at="",
+            fallback_reason="No packet row.",
+        )
+        with patch.dict(os.environ, {}, clear=True), patch.object(
+            section_command_rendering.st,
+            "session_state",
+            state,
+        ), patch.object(section_command_rendering.st, "html"), patch.object(
+            section_command_rendering.st,
+            "columns",
+            side_effect=_columns,
+        ), patch.object(section_command_rendering.st, "button", side_effect=_button):
+            section_command_rendering.render_decision_workspace(
+                brief,
+                key_prefix="admin_setup_health",
+                refresh_action=lambda: None,
+            )
+
+        self.assertIn("Open Setup Health", labels)
+
+    def test_fallback_hides_setup_health_action_for_empty_production_role(self):
+        from sections import section_command_rendering
+        from sections.section_command_brief import SectionCommandBrief
+
+        labels: list[str] = []
+
+        def _columns(spec):
+            count = int(spec) if isinstance(spec, int) else len(spec)
+            return [contextlib.nullcontext() for _ in range(count)]
+
+        def _button(label, *args, **kwargs):
+            labels.append(str(label))
+            return False
+
+        state: dict[str, object] = {}
+        brief = SectionCommandBrief(
+            section="Executive Landing",
+            company="ALFA",
+            environment="ALL",
+            window_label="8 days",
+            state="Setup required",
+            headline="Summary not initialized",
+            summary="No packet row.",
+            source="MART_SECTION_DECISION_CURRENT",
+            freshness_label="Freshness unavailable",
+            loaded_at="",
+            fallback_reason="No packet row.",
+        )
+        with patch.dict(os.environ, {}, clear=True), patch.object(
+            section_command_rendering.st,
+            "session_state",
+            state,
+        ), patch.object(section_command_rendering.st, "html") as html, patch.object(
+            section_command_rendering.st,
+            "columns",
+            side_effect=_columns,
+        ), patch.object(section_command_rendering.st, "button", side_effect=_button):
+            section_command_rendering.render_decision_workspace(
+                brief,
+                key_prefix="empty_role_setup_health",
+                refresh_action=lambda: None,
+            )
+
+        self.assertNotIn("Open Setup Health", labels)
+        rendered = "\n".join(str(call.args[0]) for call in html.call_args_list)
+        self.assertIn("Ask an administrator", rendered)
 
     def test_bootstrap_missing_procedure_shows_clean_setup_message(self):
         from sections import decision_workspace_bootstrap as bootstrap

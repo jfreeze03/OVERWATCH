@@ -219,6 +219,12 @@ def _render_fallback(
             actions.append("initialize")
             if can_open_decision_setup_health():
                 actions.append("setup_health")
+            else:
+                st.html(
+                    '<p class="ow-decision-admin-note">'
+                    "Ask an administrator to review Decision summary setup health."
+                    "</p>"
+                )
         if detail_action is not None and fallback.can_show_evidence:
             actions.append("evidence")
         if not actions:

@@ -207,8 +207,8 @@ class SecurityPostureSplitTests(unittest.TestCase):
         source = (APP_ROOT / "sections" / "security_posture.py").read_text(encoding="utf-8")
         self.assertNotIn("if active_view == SECURITY_OVERVIEW_WORKFLOW and not security_current", source)
         self.assertNotIn("if active_view == SECURITY_OVERVIEW_WORKFLOW:\n        _render_security_overview_entry", source)
-        self.assertIn("CommandBriefDetailAction", source)
-        self.assertEqual(source.count("security_posture_brief_load"), 1)
+        self.assertIn("make_decision_refresh_action", source)
+        self.assertNotIn("security_posture_brief_load", source)
         self.assertIn("SECURITY_POSTURE_RENDERERS.get(active_view)", source)
 
     def test_security_posture_route_shell_does_not_call_security_loaders(self):
@@ -254,9 +254,8 @@ class SecurityPostureSplitTests(unittest.TestCase):
         args, kwargs = render_brief.call_args
         self.assertEqual(args, ("brief",))
         self.assertEqual(kwargs["key_prefix"], "security_monitoring_command_brief")
-        self.assertIn("detail_action", kwargs)
-        self.assertEqual(kwargs["detail_action"].label, "Refresh Security Summary")
-        self.assertEqual(kwargs["detail_action"].key, "security_posture_brief_load")
+        self.assertIn("primary_action", kwargs)
+        self.assertNotIn("detail_action", kwargs)
         self.assertFalse(kwargs["compact"])
         self.assertEqual(rendered, [])
 
@@ -403,7 +402,8 @@ class SecurityPostureSplitTests(unittest.TestCase):
     def test_overview_source_keeps_refresh_and_proof_gate_keys(self):
         overview_source = (APP_ROOT / "sections" / "security_posture_overview_view.py").read_text(encoding="utf-8")
         route_source = (APP_ROOT / "sections" / "security_posture.py").read_text(encoding="utf-8")
-        self.assertIn("security_posture_brief_load", route_source)
+        self.assertNotIn("security_posture_brief_load", route_source)
+        self.assertIn("make_decision_refresh_action", route_source)
         for token in [
             "security_posture_load_exceptions",
             "security_posture_queue",

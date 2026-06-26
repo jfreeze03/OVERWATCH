@@ -301,12 +301,12 @@ SECTION_COMMAND_CONTRACTS: Mapping[str, SectionCommandContract] = {
         top_signal_label='Top security action',
         top_signal_detail='Review the most exposed identity, grant, sharing, or access-change signal before loading proof tables.',
         next_actions=(
-            ('Refresh Security Summary', 'Force-refresh compact security counts when needed.', 'Security Monitoring', 'Security Overview'),
+            ('Review Security Alerts', 'Open active security alert context when evidence is loaded.', 'Security Monitoring', 'Security Alerts'),
             ('Review Risky Grants', 'Open grants, role scope, and ownership exposure.', 'Security Monitoring', 'Risky Grants'),
             ('Review Access Changes', 'Open recent grants, revokes, role changes, and admin changes.', 'Security Monitoring', 'Access Changes'),
         ),
         fallback_route_keys=(
-            'security_risky_grants',
+            'security_alerts',
             'security_access_changes',
             'security_failed_logins',
         ),

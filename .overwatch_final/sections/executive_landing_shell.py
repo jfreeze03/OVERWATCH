@@ -54,7 +54,9 @@ from sections.executive_landing_models import (
 )
 from sections.shell_helpers import render_content_header, render_primary_section_tabs, render_section_breadcrumb
 from sections.section_command_brief import autoload_section_command_brief
-from sections.section_command_rendering import CommandBriefDetailAction, render_section_command_brief
+from sections.section_command_rendering import render_section_command_brief
+from sections.decision_workspace_controls import make_decision_refresh_action, make_evidence_action
+from sections.decision_workspace_scope import active_decision_window_days
 from sections.decision_workspace_state import section_state_from_brief
 from perf_trace import trace
 from utils.section_guidance import defer_source_note
@@ -184,10 +186,50 @@ def render() -> None:
         _ensure_executive_landing_workflow_state()
 
     with trace("executive_shell:scope_controls", active_section="Executive Landing"):
-        days = _active_window_days()
+        days = active_decision_window_days(_active_window_days())
         active_workflow = normalize_executive_landing_workflow(
             st.session_state.get(EXECUTIVE_LANDING_WORKFLOW, EXECUTIVE_OVERVIEW_WORKFLOW)
         )
+
+    with trace("executive_shell:workflow_selector", active_section="Executive Landing"):
+        active_workflow = _render_executive_landing_workflow_controls(active_workflow)
+
+    executive_brief = autoload_section_command_brief(
+        "Executive Landing",
+        company,
+        environment,
+        int(days),
+        force=bool(st.session_state.pop("_executive_landing_command_brief_force_refresh", False)),
+    )
+    render_section_command_brief(
+        executive_brief,
+        key_prefix="executive_landing_command_brief",
+        primary_action=make_decision_refresh_action("Executive Landing"),
+        detail_action=make_evidence_action(
+            "Executive Landing",
+            active_workflow,
+            label="Load Full Executive Snapshot",
+            help_text="Load the heavier Executive Landing detail packet for the selected scope.",
+            state_key="_executive_landing_command_brief_load_detail",
+        )
+        if active_workflow == EXECUTIVE_OVERVIEW_WORKFLOW
+        else None,
+        current_workflow="Overview" if active_workflow == EXECUTIVE_OVERVIEW_WORKFLOW else active_workflow,
+        compact=active_workflow != EXECUTIVE_OVERVIEW_WORKFLOW,
+    )
+
+    if active_workflow == EXECUTIVE_OVERVIEW_WORKFLOW:
+        command_brief_load = bool(st.session_state.pop("_executive_landing_command_brief_load_detail", False))
+        if command_brief_load and _load_executive_snapshot(company, environment, int(days)):
+            st.rerun()
+        snapshot = st.session_state.get("executive_landing_snapshot")
+        if isinstance(snapshot, dict) and _snapshot_matches_scope(snapshot, company, environment, int(days)):
+            render_mission_control_queue(
+                st.session_state,
+                company=company,
+                environment=environment,
+            )
+        return
 
     with trace("executive_shell:observability_board_state", active_section="Executive Landing"):
         expected_scope = _executive_snapshot_scope(company, environment, int(days))
@@ -233,29 +275,6 @@ def render() -> None:
             summary = _with_platform_operating_score(summary, source_health)
             _persist_platform_summary(summary)
 
-    with trace("executive_shell:workflow_selector", active_section="Executive Landing"):
-        active_workflow = _render_executive_landing_workflow_controls(active_workflow)
-    executive_brief = autoload_section_command_brief(
-        "Executive Landing",
-        company,
-        environment,
-        int(days),
-        force=bool(st.session_state.pop("_executive_landing_command_brief_force_refresh", False)),
-    )
-    render_section_command_brief(
-        executive_brief,
-        key_prefix="executive_landing_command_brief",
-        primary_action=lambda: st.session_state.__setitem__("_executive_landing_command_brief_force_refresh", True),
-        detail_action=CommandBriefDetailAction(
-            "Load Full Executive Snapshot",
-            "Load the heavier Executive Landing detail packet for the selected scope.",
-            lambda: st.session_state.__setitem__("_executive_landing_command_brief_load_detail", True),
-        )
-        if active_workflow == EXECUTIVE_OVERVIEW_WORKFLOW
-        else None,
-        compact=active_workflow != EXECUTIVE_OVERVIEW_WORKFLOW,
-    )
-
     decision_state = section_state_from_brief(executive_brief, detail_loaded=bool(loaded_snapshot))
     load = False
     if active_workflow != EXECUTIVE_OVERVIEW_WORKFLOW:
@@ -278,8 +297,7 @@ def render() -> None:
             environment=environment,
         )
 
-    command_brief_load = bool(st.session_state.pop("_executive_landing_command_brief_load_detail", False))
-    if (load or command_brief_load) and _load_executive_snapshot(company, environment, int(days)):
+    if load and _load_executive_snapshot(company, environment, int(days)):
         st.rerun()
 
 

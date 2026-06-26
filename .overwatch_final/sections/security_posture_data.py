@@ -91,7 +91,7 @@ def _load_security_brief(
             if not quiet:
                 st.info(
                     "Fast security summary is unavailable for this scope. "
-                    "Use Refresh Security Summary for bounded live account-history telemetry."
+                    "Load security evidence for bounded live account-history telemetry."
                 )
             return
         try:

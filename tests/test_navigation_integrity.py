@@ -714,8 +714,8 @@ class NavigationIntegrityTests(unittest.TestCase):
 
             workload_operations._render_workload_overview("ALFA", "PROD")
 
-        autoload.assert_called_once_with("Workload Operations", "ALFA", "PROD", 7)
-        render_brief.assert_called_once_with("brief", key_prefix="workload_operations_command_brief")
+        autoload.assert_called_once_with("Workload Operations", "ALFA", "PROD", 7, force=False)
+        render_brief.assert_called_once()
 
     def test_workload_overview_loaded_context_uses_shell_without_detail_loads(self):
         from sections import workload_operations
@@ -749,8 +749,8 @@ class NavigationIntegrityTests(unittest.TestCase):
                 ))
             workload_operations._render_workload_overview("ALFA", "PROD")
 
-        autoload.assert_called_once_with("Workload Operations", "ALFA", "PROD", 7)
-        render_brief.assert_called_once_with("brief", key_prefix="workload_operations_command_brief")
+        autoload.assert_called_once_with("Workload Operations", "ALFA", "PROD", 7, force=False)
+        render_brief.assert_called_once()
         loaded_context.assert_called_once()
         info.assert_not_called()
 
@@ -796,7 +796,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Open Advanced Cost Tools", full_workspace_text)
         self.assertEqual(cost_contract_contracts.ADVANCED_COST_TOOL_MODULES["Storage & Retention"], "sections.storage_monitor")
         self.assertIn('"Storage & Retention": "sections.storage_monitor"', contract_text)
-        self.assertIn('"Refresh Cost"', cost_contract_surface)
+        self.assertIn('"Load Cost Evidence"', cost_contract_surface)
         self.assertIn("render_section_command_brief", full_workspace_text)
         first_paint_contracts_text = (APP_ROOT / "sections" / "first_paint_contracts.py").read_text(encoding="utf-8")
         self.assertIn("Entry may read compact cost summary marts", first_paint_contracts_text)
@@ -2311,7 +2311,7 @@ class NavigationIntegrityTests(unittest.TestCase):
             metrics=(("Window", "30 days"),),
             snapshot=(("Scope", "ALFA / PROD"),),
             expected_lanes=("Logins", "Grants"),
-            load_cta="Refresh Security Summary",
+            load_cta="Load Security Evidence",
             no_query_note="Entry may read compact summary marts.",
         )
         with patch.object(shell_helpers, "render_first_paint_summary_shell") as render_shell, patch.object(
@@ -2327,7 +2327,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn(("Window", "30 days"), kwargs["metrics"])
         self.assertIn(("Scope", "ALFA / PROD"), kwargs["snapshot"])
         self.assertIn(("Expected lanes", "Logins, Grants"), kwargs["snapshot"])
-        self.assertIn(("Next safe action", "Refresh Security Summary"), kwargs["snapshot"])
+        self.assertIn(("Next safe action", "Load Security Evidence"), kwargs["snapshot"])
         caption.assert_called_once_with("Entry may read compact summary marts.")
 
     def test_workflow_helpers_keep_landing_pages_compact(self):
@@ -2485,11 +2485,11 @@ class NavigationIntegrityTests(unittest.TestCase):
         for token in (
             "Command Deck",
             "Advanced Scope",
-            "Refresh Decision Brief",
+            "Decision Workspace",
             "Load Morning Cockpit",
             "Load Active Alerts",
-            "Refresh Cost",
-            "Refresh Security Summary",
+            "Load Cost Evidence",
+            "Load Security Evidence",
             "Operator Case Markdown",
         ):
             with self.subTest(token=token):

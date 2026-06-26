@@ -308,7 +308,7 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertEqual(brief.state, "Summary not initialized")
         self.assertIn("Mart summary unavailable", brief.fallback_reason)
         self.assertEqual(len(brief.metrics), 0)
-        self.assertEqual(brief.detail_cta, "Refresh Security Summary")
+        self.assertEqual(brief.detail_cta, "Load Security Evidence")
         self.assertEqual(brief.raw_payload.get("workspace_mode"), "UNINITIALIZED")
 
     def test_loader_skips_query_when_snowflake_entry_is_unavailable(self):

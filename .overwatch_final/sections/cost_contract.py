@@ -161,28 +161,13 @@ from sections.cost_contract_splash import (
     _slide_number,
 )
 from sections.cost_center_contracts import COST_EXPLORER_LENSES
-from sections.cost_contract_hierarchy import (
-    active_cost_days,
-    apply_pending_cost_routes,
-    render_cost_explorer_lens_pills,
-    render_cost_primary_tabs,
-    set_cost_lens,
-    set_cost_workflow,
-    workflow_label,
-)
-from sections.cost_contract_rendering import (
-    _compact_time,
-    _freshness_note,
-    _metric_confidence_label,
-    render_operator_briefing, render_signal_confidence,
-    render_workflow_module,
-)
-from sections.shell_helpers import (
-    render_content_header,
-    render_section_breadcrumb,
-)
+from sections.cost_contract_hierarchy import active_cost_days, apply_pending_cost_routes, render_cost_explorer_lens_pills, render_cost_primary_tabs, set_cost_lens, set_cost_workflow, workflow_label
+from sections.cost_contract_rendering import _compact_time, _freshness_note, _metric_confidence_label, render_operator_briefing, render_signal_confidence, render_workflow_module
+from sections.shell_helpers import render_content_header, render_section_breadcrumb
 from sections.section_command_brief import autoload_section_command_brief
-from sections.section_command_rendering import CommandBriefDetailAction, render_section_command_brief
+from sections.section_command_rendering import render_section_command_brief
+from sections.decision_workspace_controls import make_decision_refresh_action, make_evidence_action
+from sections.decision_workspace_scope import active_decision_window_days
 from sections.decision_workspace_state import section_state_from_brief
 from sections.cost_contract_workflow import (
     _apply_cost_workflow_preset,
@@ -251,27 +236,36 @@ def render() -> None:
         "Cost & Contract",
         company,
         environment,
-        active_cost_days(),
+        active_decision_window_days(active_cost_days()),
         force=bool(st.session_state.pop("cost_contract_command_brief_force_refresh", False)),
     )
     detail_action = None
     if workflow == "Cost Overview":
-        detail_action = CommandBriefDetailAction(
-            "Refresh Cost",
-            "Reload official cost summary facts for the current scope.",
-            lambda: st.session_state.__setitem__("cost_contract_command_brief_force_refresh", True),
+        detail_action = make_evidence_action(
+            "Cost & Contract",
+            workflow,
+            label="Load Cost Evidence",
+            help_text="Load official spend facts and supporting cost evidence for the current scope.",
+            state_key="cost_contract_command_brief_load_evidence",
             key="cost_contract_refresh",
         )
     render_section_command_brief(
         cost_brief,
         key_prefix="cost_contract_command_brief",
+        primary_action=make_decision_refresh_action("Cost & Contract"),
         detail_action=detail_action,
+        current_workflow=workflow_label(workflow),
         compact=workflow != "Cost Overview",
     )
 
     st.session_state["_cost_contract_local_hierarchy_rendered"] = True
     decision_state = section_state_from_brief(cost_brief)
-    if workflow != "Cost Overview" or decision_state.decision_mode == "READY" and st.session_state.get("cost_contract_summary_loaded"):
+    evidence_requested = bool(st.session_state.get("cost_contract_command_brief_load_evidence"))
+    if (
+        workflow != "Cost Overview"
+        or evidence_requested
+        or decision_state.decision_mode == "READY" and st.session_state.get("cost_contract_summary_loaded")
+    ):
         _render_cost_contract_workflow(workflow, company, environment)
 
     advanced_open = bool(st.session_state.get(_ADVANCED_COST_TOOLS_VISIBLE_KEY))

@@ -64,7 +64,9 @@ from sections.shell_helpers import (
     render_section_first_paint_shell,
 )
 from sections.section_command_brief import autoload_section_command_brief
-from sections.section_command_rendering import CommandBriefDetailAction, render_section_command_brief
+from sections.section_command_rendering import render_section_command_brief
+from sections.decision_workspace_controls import make_decision_refresh_action, render_evidence_settings
+from sections.decision_workspace_scope import active_decision_window_days
 from sections.decision_workspace_state import section_state_from_brief
 
 
@@ -88,19 +90,15 @@ def _render_security_first_paint_shell(active_view: str, company: str, environme
         "Security Monitoring",
         company,
         environment,
-        int(days or 30),
+        active_decision_window_days(days or 30),
         force=bool(st.session_state.pop("security_posture_command_brief_force_refresh", False)),
     )
     st.session_state["_security_monitoring_decision_mode"] = section_state_from_brief(security_brief).decision_mode
     render_section_command_brief(
         security_brief,
         key_prefix="security_monitoring_command_brief",
-        detail_action=CommandBriefDetailAction(
-            "Refresh Security Summary",
-            "Reload compact security summary and proof counts for the current scope.",
-            lambda: st.session_state.__setitem__("security_posture_command_brief_force_refresh", True),
-            key="security_posture_brief_load",
-        ) if active_view == SECURITY_OVERVIEW_WORKFLOW else None,
+        primary_action=make_decision_refresh_action("Security Monitoring"),
+        current_workflow=active_view,
         compact=active_view != SECURITY_OVERVIEW_WORKFLOW,
     )
 
@@ -182,11 +180,7 @@ def render() -> None:
         st.session_state["security_posture_view"] = SECURITY_POSTURE_VIEWS[0]
     _apply_queued_security_workflow()
 
-    days = day_window_selectbox(
-        "Security window",
-        key="security_posture_brief_days",
-        default=30,
-    )
+    days = int(st.session_state.setdefault("security_posture_evidence_days", 30) or 30)
     security_labels = {
         SECURITY_OVERVIEW_WORKFLOW: "Overview",
         FAILED_LOGINS_WORKFLOW: "Failed Logins",
@@ -226,6 +220,15 @@ def render() -> None:
             SECURITY_POSTURE_VIEW_DETAILS.get(active_view, "Security evidence stays behind explicit load actions."),
         )
     _render_security_first_paint_shell(active_view, company, environment, int(days or 30))
+    render_evidence_settings(
+        "Evidence settings",
+        lambda: day_window_selectbox(
+            "Security window",
+            key="security_posture_evidence_days",
+            default=30,
+        ),
+    )
+    days = int(st.session_state.get("security_posture_evidence_days", days) or days)
     renderer = SECURITY_POSTURE_RENDERERS.get(active_view)
     if renderer is not None:
         if active_view == SECURITY_OVERVIEW_WORKFLOW and not st.session_state.get("security_summary_current"):

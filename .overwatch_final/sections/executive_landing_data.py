@@ -224,7 +224,7 @@ def _store_connection_unavailable_observability(company: str, environment: str, 
             "state": "Unavailable",
             "detail": (
                 "Snowflake connection is not available yet. Executive Landing is showing local shell "
-                "state until the app has a live Snowflake session or Refresh Decision Brief is used after configuration."
+                "state until the app has a live Snowflake session or the scheduled Decision packet is refreshed after configuration."
             ),
         }]),
         company=company,

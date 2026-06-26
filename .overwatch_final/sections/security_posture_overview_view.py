@@ -226,7 +226,7 @@ def _security_action_brief(summary, exceptions, meta: dict, company: str, enviro
         return {
             "state": "Summary unavailable",
             "headline": "Security command brief is the entry summary.",
-            "detail": "Entry reads compact summary marts when available; use Refresh Security Summary for current proof counts.",
+            "detail": "Entry reads compact summary marts when available; load security evidence for current proof counts.",
         }
 
     row = summary.iloc[0]
@@ -766,7 +766,7 @@ def render_security_overview(company: str, environment: str, days: int) -> None:
     if summary_error and not security_current:
         defer_source_note(f"Fast security summary unavailable: {summary_error}")
 
-    refresh_security_summary = bool(st.session_state.pop("security_posture_command_brief_force_refresh", False))
+    refresh_security_summary = bool(st.session_state.pop("security_posture_load_evidence", False))
     if refresh_security_summary:
         _refresh_security_summary(company, environment, days)
         summary = st.session_state.get("security_posture_summary")
@@ -1083,7 +1083,7 @@ def render_security_overview(company: str, environment: str, days: int) -> None:
             _render_advanced_security_evidence(company, environment)
             st.stop()
     elif summary is not None and not summary.empty:
-        st.info("Loaded security summary is stale for the active scope. Refresh Security Summary before acting.")
+        st.info("Loaded security summary is stale for the active scope. Load current security evidence before acting.")
 
     _render_advanced_security_evidence(company, environment)
 

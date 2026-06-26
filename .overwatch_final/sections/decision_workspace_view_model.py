@@ -48,6 +48,29 @@ class DecisionTrustView:
 
 
 @dataclass(frozen=True)
+class DecisionSourceRow:
+    source_key: str
+    source_object: str
+    status: str
+    required: bool
+    age_label: str
+    target_label: str
+    confidence: str
+    gap_reason: str = ""
+
+
+@dataclass(frozen=True)
+class DecisionFallbackView:
+    mode: str
+    title: str
+    message: str
+    recovery_label: str
+    technical_summary: str
+    can_initialize: bool = False
+    can_show_evidence: bool = False
+
+
+@dataclass(frozen=True)
 class DecisionWorkspaceViewModel:
     section: str
     workflow: str
@@ -62,6 +85,12 @@ class DecisionWorkspaceViewModel:
     actions: tuple[DecisionActionView, ...]
     trends: tuple[DecisionMetricCell, ...]
     trust: DecisionTrustView
+    source_rows: tuple[DecisionSourceRow, ...] = ()
+    fallback: DecisionFallbackView | None = None
+    has_sources: bool = False
+    fixture_badge_label: str = ""
+    can_refresh: bool = True
+    can_load_evidence: bool = False
     fixture_mode: bool = False
     source_mode: str = "scheduled_mart"
 
@@ -232,6 +261,72 @@ def _trust_view(brief: object, source_mode: str) -> DecisionTrustView:
     )
 
 
+def _source_rows(brief: object) -> tuple[DecisionSourceRow, ...]:
+    rows: list[DecisionSourceRow] = []
+    for source in tuple(getattr(brief, "sources", ()) or ()):
+        available = bool(getattr(source, "available", False))
+        stale = bool(getattr(source, "stale", False))
+        if available and stale:
+            status = "Stale"
+        elif available:
+            status = "Available"
+        else:
+            status = "Unavailable"
+        age = getattr(source, "age_minutes", None)
+        target = getattr(source, "target_freshness_minutes", None)
+        rows.append(
+            DecisionSourceRow(
+                source_key=str(getattr(source, "source_key", "") or "source"),
+                source_object=str(getattr(source, "source_object", "") or ""),
+                status=status,
+                required=bool(getattr(source, "required", False)),
+                age_label="unknown age" if age is None else f"{int(round(float(age)))}m old",
+                target_label="" if target is None else f"target {int(float(target))}m",
+                confidence=str(getattr(source, "confidence", "") or getattr(brief, "confidence", "") or ""),
+                gap_reason=str(getattr(source, "gap_reason", "") or ""),
+            )
+        )
+    return tuple(rows)
+
+
+def _source_technical_summary(brief: object) -> str:
+    requested = (
+        f"{getattr(brief, 'requested_company', '') or getattr(brief, 'company', '')} / "
+        f"{getattr(brief, 'requested_environment', '') or getattr(brief, 'environment', '')} / "
+        f"{getattr(brief, 'requested_window_days', '') or getattr(brief, 'window_label', '')}"
+    )
+    resolved = (
+        f"{getattr(brief, 'resolved_company', '') or getattr(brief, 'company', '')} / "
+        f"{getattr(brief, 'resolved_environment', '') or getattr(brief, 'environment', '')} / "
+        f"{getattr(brief, 'resolved_window_days', '') or getattr(brief, 'requested_window_days', '')} days"
+    )
+    upstream = str(getattr(brief, "source_objects", "") or "Decision packet")
+    gaps = str(getattr(brief, "source_gap_detail", "") or "No source gap reported")
+    return f"Requested {requested}; resolved {resolved}; upstream {upstream}; gaps {gaps}."
+
+
+def _fallback_view(brief: object, source_mode: str, *, evidence_action: object | None) -> DecisionFallbackView | None:
+    if not bool(getattr(brief, "fallback_reason", "")):
+        return None
+    scope = f"{getattr(brief, 'company', '')} / {getattr(brief, 'environment', '')} / {getattr(brief, 'window_label', '')}"
+    offline = source_mode == "offline"
+    title = "Offline summary is not available" if offline else "Summary not initialized"
+    message = (
+        "Snowflake is not reachable from this session. Configure the connection or ask an administrator to refresh the Decision summary marts."
+        if offline
+        else f"No current Decision packet exists for {scope}."
+    )
+    return DecisionFallbackView(
+        mode=source_mode,
+        title=title,
+        message=message,
+        recovery_label="Initialize summaries",
+        technical_summary=_source_technical_summary(brief),
+        can_initialize=not offline,
+        can_show_evidence=evidence_action is not None,
+    )
+
+
 def build_decision_workspace_view_model(
     brief: object,
     *,
@@ -266,6 +361,8 @@ def build_decision_workspace_view_model(
     )
     trends = tuple(cell for cell in metrics if cell.trend_points)
     trust = _trust_view(brief, source_mode)
+    source_rows = _source_rows(brief)
+    fallback = _fallback_view(brief, source_mode, evidence_action=evidence_action)
     return DecisionWorkspaceViewModel(
         section=str(getattr(brief, "section", "") or ""),
         workflow=current_workflow or "Overview",
@@ -280,6 +377,12 @@ def build_decision_workspace_view_model(
         actions=actions,
         trends=trends,
         trust=trust,
+        source_rows=source_rows,
+        fallback=fallback,
+        has_sources=bool(source_rows or getattr(brief, "source_objects", "") or source_mode == "fixture"),
+        fixture_badge_label="FIXTURE DATA" if source_mode == "fixture" else "",
+        can_refresh=True,
+        can_load_evidence=evidence_action is not None,
         fixture_mode=source_mode == "fixture",
         source_mode=source_mode,
     )
@@ -287,8 +390,10 @@ def build_decision_workspace_view_model(
 
 __all__ = [
     "DecisionActionView",
+    "DecisionFallbackView",
     "DecisionFinding",
     "DecisionMetricCell",
+    "DecisionSourceRow",
     "DecisionTrustView",
     "DecisionWorkspaceViewModel",
     "build_decision_workspace_view_model",

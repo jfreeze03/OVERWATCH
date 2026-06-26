@@ -30,7 +30,8 @@ from sections.executive_landing_overview_view import *  # noqa: F403
 from sections.executive_landing_security_view import *  # noqa: F403
 from sections.executive_landing_change_view import *  # noqa: F403
 from config import DEFAULT_DAY_WINDOW
-from runtime_state import EXECUTIVE_LANDING_WORKFLOW, GLOBAL_END_DATE, GLOBAL_START_DATE, get_state
+from runtime_state import EXECUTIVE_LANDING_WORKFLOW
+from sections.decision_workspace_scope import active_decision_window_days
 from sections.base import lazy_util as _lazy_util
 from sections.shell_helpers import render_content_header, render_primary_section_tabs, render_section_breadcrumb
 from utils.section_guidance import defer_source_note
@@ -40,14 +41,7 @@ get_session_for_action = _lazy_util("get_session_for_action")
 
 
 def _active_window_days() -> int:
-    start_date = get_state(GLOBAL_START_DATE)
-    end_date = get_state(GLOBAL_END_DATE)
-    if start_date and end_date:
-        try:
-            return max(1, int((end_date - start_date).days))
-        except Exception:
-            return int(DEFAULT_DAY_WINDOW)
-    return int(DEFAULT_DAY_WINDOW)
+    return active_decision_window_days(DEFAULT_DAY_WINDOW)
 
 EXECUTIVE_LANDING_RENDERERS = {
     EXECUTIVE_OVERVIEW_WORKFLOW: render_executive_overview,
@@ -113,7 +107,7 @@ def render() -> None:
             _store_connection_unavailable_observability(company, environment, int(days))
         elif board_empty:
             defer_source_note(
-                "Executive Landing is using the local summary frame. Use Refresh Decision Brief to retry the compact Decision packet."
+                "Executive Landing is using the local summary frame until the scheduled Decision packet is available."
             )
         st.session_state["_executive_landing_observability_autoload_scope"] = expected_scope
         board, board_payload = _current_observability_board(company, environment, int(days))

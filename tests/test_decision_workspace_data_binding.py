@@ -608,6 +608,130 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         self.assertIn("CALL SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS();", warning.call_args.args[0])
         self.assertNotIn("FACT_", warning.call_args.args[0])
 
+    def test_renderer_uses_view_model_not_raw_brief_payload(self):
+        renderer = (APP_ROOT / "sections" / "section_command_rendering.py").read_text(encoding="utf-8")
+        self.assertNotIn("brief.sources", renderer)
+        self.assertNotIn("brief.source_objects", renderer)
+        self.assertNotIn("brief.raw_payload", renderer)
+        self.assertIn("model.source_rows", renderer)
+        self.assertIn("model.fallback", renderer)
+        self.assertIn("model.fixture_badge_label", renderer)
+
+    def test_view_model_owns_source_and_fallback_display_state(self):
+        view_model = (APP_ROOT / "sections" / "decision_workspace_view_model.py").read_text(encoding="utf-8")
+        self.assertIn("class DecisionSourceRow", view_model)
+        self.assertIn("class DecisionFallbackView", view_model)
+        self.assertIn("source_rows=source_rows", view_model)
+        self.assertIn("fallback=fallback", view_model)
+        self.assertIn("fixture_badge_label=", view_model)
+
+    def test_refresh_and_evidence_callbacks_touch_separate_state(self):
+        from sections.decision_workspace_controls import make_decision_refresh_action, make_evidence_action
+
+        state: dict[str, object] = {}
+        with patch("sections.decision_workspace_controls.st.session_state", state):
+            refresh = make_decision_refresh_action("Cost & Contract")
+            refresh()
+            self.assertEqual(state, {"cost_contract_command_brief_force_refresh": True})
+
+            action = make_evidence_action(
+                "Cost & Contract",
+                "Cost Overview",
+                label="Load Cost Evidence",
+                state_key="cost_contract_command_brief_load_evidence",
+            )
+            self.assertIsNotNone(action)
+            action.callback()
+
+        self.assertTrue(state["cost_contract_command_brief_force_refresh"])
+        self.assertTrue(state["cost_contract_command_brief_load_evidence"])
+
+    def test_evidence_action_cannot_be_packet_refresh(self):
+        from sections.decision_workspace_controls import make_evidence_action
+
+        action = make_evidence_action(
+            "Security Monitoring",
+            "Security Overview",
+            label="Refresh Security Summary",
+            state_key="security_posture_command_brief_force_refresh",
+        )
+        self.assertIsNone(action)
+
+    def test_decision_window_uses_inclusive_global_dates(self):
+        from datetime import date
+        from sections import decision_workspace_scope
+
+        values = {
+            "global_start_date": date(2026, 6, 18),
+            "global_end_date": date(2026, 6, 25),
+        }
+        with patch.object(decision_workspace_scope, "get_state", side_effect=lambda key, default=None: values.get(key, default)):
+            self.assertEqual(decision_workspace_scope.active_decision_window_days(), 8)
+        with patch.object(decision_workspace_scope, "get_state", return_value=None):
+            self.assertEqual(decision_workspace_scope.active_decision_window_days(11), 11)
+
+    def test_primary_sections_use_shared_decision_window(self):
+        section_files = (
+            "executive_landing_shell.py",
+            "dba_control_room/render.py",
+            "alert_center.py",
+            "cost_contract.py",
+            "workload_operations.py",
+            "security_posture.py",
+        )
+        for relative in section_files:
+            source = (APP_ROOT / "sections" / relative).read_text(encoding="utf-8")
+            self.assertIn("active_decision_window_days", source, relative)
+        workload = (APP_ROOT / "sections" / "workload_operations.py").read_text(encoding="utf-8")
+        self.assertNotIn('autoload_section_command_brief("Workload Operations", company, environment, 7', workload)
+
+    def test_primary_section_sources_do_not_send_users_to_another_button(self):
+        forbidden = (
+            "available in the Decision Brief",
+            "Use Refresh Cost Summary in the Decision Brief",
+            "Refresh Decision Brief",
+        )
+        section_files = (
+            "executive_landing_shell.py",
+            "dba_control_room/render.py",
+            "alert_center.py",
+            "cost_contract.py",
+            "workload_operations.py",
+            "security_posture.py",
+        )
+        combined = "\n".join((APP_ROOT / "sections" / relative).read_text(encoding="utf-8") for relative in section_files)
+        for needle in forbidden:
+            self.assertNotIn(needle, combined)
+
+    def test_html_snapshot_fallback_has_workspace_without_legacy_instruction_copy(self):
+        from sections.section_command_brief import SectionCommandAction, SectionCommandBrief, SectionCommandMetric
+
+        brief = SectionCommandBrief(
+            section="Executive Landing",
+            company="ALFA",
+            environment="ALL",
+            window_label="8 days",
+            state="At Risk",
+            headline="Packet-driven headline",
+            summary="Packet-driven summary",
+            source="MART_SECTION_DECISION_CURRENT",
+            freshness_label="Updated 8m ago",
+            loaded_at="2026-06-25T10:08:00",
+            metrics=(
+                SectionCommandMetric(key="total_spend", label="Total Spend", value="", numeric_value=12345, metric_format="currency"),
+                SectionCommandMetric(key="critical_high_issues", label="Critical / High", value="", numeric_value=2, metric_format="count"),
+                SectionCommandMetric(key="open_actions", label="Open Actions", value="", numeric_value=9, metric_format="count"),
+                SectionCommandMetric(key="cortex_spend", label="Cortex AI Spend", value="", numeric_value=987, metric_format="currency"),
+            ),
+            next_actions=(SectionCommandAction(label="Review Cortex", detail="Review Cortex details", cta="Review Cortex", route_key="cost_cortex_ai"),),
+        )
+        markup = _render_markup(brief)
+        self.assertIn("ow-decision-workspace", markup)
+        self.assertIn("What needs attention", markup)
+        self.assertIn("Data Trust", markup)
+        self.assertNotIn("available in the Decision Brief", markup)
+        self.assertNotIn("Refresh Decision Brief", markup)
+
 
 if __name__ == "__main__":
     unittest.main()

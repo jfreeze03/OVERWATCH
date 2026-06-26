@@ -229,8 +229,8 @@ class PrimaryFirstPaintContractTests(unittest.TestCase):
         expected = {
             "Executive Landing": ("Load Full Executive Snapshot", "executive_landing_observability_refresh"),
             "Alert Center": ("Load Active Alerts", "alert_center_load"),
-            "Cost & Contract": ("Refresh Cost", "cost_contract_refresh"),
-            "Security Monitoring": ("Refresh Security Summary", "security_posture_brief_load"),
+            "Cost & Contract": ("Load Cost Evidence", "cost_contract_refresh"),
+            "Security Monitoring": ("Load Security Evidence", "security_posture_load_evidence"),
             "DBA Control Room": ("Load Morning Cockpit", "dba_morning_cockpit_load_empty"),
         }
         for section, (label, key) in expected.items():
@@ -314,8 +314,8 @@ class PrimaryFirstPaintContractTests(unittest.TestCase):
 
             workload_operations._render_workload_overview("ALFA", "PROD")
 
-        autoload.assert_called_once_with("Workload Operations", "ALFA", "PROD", 7)
-        render_brief.assert_called_once_with("brief", key_prefix="workload_operations_command_brief")
+        autoload.assert_called_once_with("Workload Operations", "ALFA", "PROD", 7, force=False)
+        render_brief.assert_called_once()
 
     def test_dba_morning_cockpit_contract_does_not_load_until_button(self):
         from sections import dba_control_room

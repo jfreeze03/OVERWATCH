@@ -76,7 +76,7 @@ evidence stays in the selected workflow or explicit load path. Security
 Monitoring entry may read the compact command brief mart; Refresh Security
 Summary remains the proof/detail boundary. Cost & Contract uses the same
 contract for Cost Overview: scope, window, evidence state, expected cost lanes,
-and Refresh Cost are visible before official spend, forecast, reconciliation,
+and Load Cost Evidence are visible before official spend, forecast, reconciliation,
 or contract evidence loads.
 
 Cortex AI is a first-class financial and operational risk lane, not a secondary
@@ -117,8 +117,8 @@ boundary, mart/session sources, and forbidden detail loaders.
 | DBA Control Room | Morning Cockpit | Failures, cost, queue, security, changes, action status | Load Investigation Detail |
 | Alert Center | Active Alerts | Critical and high alerts, Cortex predictive alerts, overdue alerts, action queue, delivery status | Load Active Alerts |
 | Workload Operations | Workload Overview | Slow or failed SQL, task and load failures, performance contention, recent changes, advanced DBA tools | Open the specialist workflow |
-| Cost & Contract | Cost Overview | Spend movement, run rate, warehouse drivers, Cortex AI cost risk, savings | Refresh Cost Summary |
-| Security Monitoring | Security Overview | Logins, grants, sharing, access changes, security alerts | Refresh Security Summary |
+| Cost & Contract | Cost Overview | Spend movement, run rate, warehouse drivers, Cortex AI cost risk, savings | Load Cost Evidence |
+| Security Monitoring | Security Overview | Logins, grants, sharing, access changes, security alerts | Load Security Evidence |
 
 The Command Brief layout is status band, four primary metrics maximum, top
 signal, one primary action, up to two secondary actions, a real detail/evidence
@@ -158,8 +158,8 @@ the brief.
 | DBA Control Room | Load Morning Cockpit | Failure triage, cost watch, performance watch, action queue |
 | Alert Center | Load Active Alerts | Active, Cortex predictive, cost, reliability, and security alert lanes |
 | Workload Operations | Open the right tool | SQL, task/load, performance, change, and comparison workflows |
-| Cost & Contract | Refresh Cost | Warehouse cost, Cortex cost drivers, forecast, budget, and recommendation workflows |
-| Security Monitoring | Refresh Security Summary | Failed logins, risky grants, access changes, and sharing exposure |
+| Cost & Contract | Load Cost Evidence | Warehouse cost, Cortex cost drivers, forecast, budget, and recommendation workflows |
+| Security Monitoring | Load Security Evidence | Failed logins, risky grants, access changes, and sharing exposure |
 
 ## Operator Case File
 

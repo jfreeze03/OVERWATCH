@@ -639,7 +639,7 @@
       "default_window_days": 7,
       "target_freshness_minutes": 60,
       "source_table": "MART_SECTION_COMMAND_BRIEF",
-      "detail_cta": "Refresh Cost",
+      "detail_cta": "Load Cost Evidence",
       "top_signal_label": "Top cost signal",
       "top_signal_detail": "Review the largest movement or Cortex risk before loading detailed cost explorer rows.",
       "unavailable_headline": "Cost command brief needs cost summary telemetry.",
@@ -1056,7 +1056,7 @@
       "default_window_days": 30,
       "target_freshness_minutes": 60,
       "source_table": "MART_SECTION_COMMAND_BRIEF",
-      "detail_cta": "Refresh Security Summary",
+      "detail_cta": "Load Security Evidence",
       "top_signal_label": "Top security action",
       "top_signal_detail": "Review the most exposed identity, grant, sharing, or access-change signal before loading proof tables.",
       "unavailable_headline": "Security command brief needs security summary telemetry.",
@@ -1225,12 +1225,12 @@
       ],
       "actions": [
         {
-          "action_key": "refresh_security_summary",
-          "route_key": "security_risky_grants",
-          "label": "Refresh Security Summary",
-          "detail": "Force-refresh compact security counts when needed.",
+          "action_key": "review_security_alerts",
+          "route_key": "security_alerts",
+          "label": "Review Security Alerts",
+          "detail": "Open active security alert context when evidence is loaded.",
           "target_section": "Security Monitoring",
-          "target_workflow": "Security Overview",
+          "target_workflow": "Security Alerts",
           "fallback_order": 10
         },
         {

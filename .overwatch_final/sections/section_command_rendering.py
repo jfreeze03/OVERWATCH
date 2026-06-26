@@ -11,7 +11,6 @@ import re
 import streamlit as st
 
 from sections.command_brief_routes import COMMAND_BRIEF_ROUTES, apply_command_brief_route
-from sections.decision_workspace_state import workspace_mode_for_brief
 from sections.decision_workspace_view_model import (
     DecisionActionView,
     DecisionMetricCell,
@@ -162,56 +161,46 @@ def _data_trust_summary(brief: SectionCommandBrief) -> str:
     return " · ".join(str(part) for part in parts if part)
 
 
-def _trust_detail_html(brief: SectionCommandBrief) -> str:
-    requested = (
-        f"{brief.requested_company or brief.company} / "
-        f"{brief.requested_environment or brief.environment} / "
-        f"{brief.requested_window_days or brief.window_label}"
+def _trust_detail_html(model: DecisionWorkspaceViewModel) -> str:
+    fixture_badge = (
+        '<div class="ow-fixture-badge">FIXTURE DATA</div>'
+        if model.fixture_badge_label
+        else ""
     )
-    resolved = (
-        f"{brief.resolved_company or brief.company} / "
-        f"{brief.resolved_environment or brief.environment} / "
-        f"{brief.resolved_window_days or brief.requested_window_days} days"
-    )
-    fixture_badge = ""
-    if isinstance(brief.raw_payload, dict) and brief.raw_payload.get("fixture_mode") is True:
-        fixture_badge = '<div class="ow-fixture-badge">FIXTURE DATA</div>'
     rows = (
-        ("Packet source", brief.source),
-        ("Upstream sources", brief.source_objects),
-        ("Requested scope", requested),
-        ("Resolved scope", resolved),
-        ("Target freshness", f"{brief.target_freshness_minutes} minutes"),
-        (
-            "Source coverage",
-            f"{brief.available_source_count}/{brief.required_source_count} sources ({brief.source_coverage_pct or 0:.1f}%)",
-        ),
-        ("Missing sources", brief.source_gap_detail or "None reported"),
-        ("Confidence", brief.confidence),
+        ("Mode", model.trust.mode_label),
+        ("Freshness", model.trust.freshness_label),
+        ("Target", model.trust.target_label),
+        ("Coverage", model.trust.coverage_label),
+        ("Confidence", model.trust.quality_label),
     )
     detail = fixture_badge + "".join(
         f'<div class="ow-decision-trust-detail"><strong>{_html(label)}</strong><span>{_html(value)}</span></div>'
         for label, value in rows
     )
     source_rows = []
-    for source in tuple(brief.sources or ()):
-        status = "Unavailable"
-        if source.available and source.stale:
-            status = "Stale"
-        elif source.available:
-            status = "Available"
-        age = "unknown age" if source.age_minutes is None else f"{int(round(float(source.age_minutes)))}m old"
+    for source in model.source_rows:
         required = "required" if source.required else "optional"
+        meta = " / ".join(
+            part
+            for part in (source.status, required, source.age_label, source.target_label)
+            if part
+        )
         source_rows.append(
             '<div class="ow-decision-source-row">'
             f'<strong>{_html(source.source_key)}</strong>'
             f'<span>{_html(source.source_object)}</span>'
-            f'<span>{_html(status)} / {_html(required)} / {_html(age)}</span>'
+            f'<span>{_html(meta)}</span>'
             f'<small>{_html(source.gap_reason or source.confidence or "No source gap reported")}</small>'
             '</div>'
         )
     if source_rows:
         detail += '<div class="ow-decision-source-table" aria-label="Command brief source health">' + "".join(source_rows) + "</div>"
+    if model.fallback is not None and model.fallback.technical_summary:
+        detail += (
+            '<div class="ow-decision-trust-detail"><strong>Summary</strong>'
+            f'<span>{_html(model.fallback.technical_summary)}</span></div>'
+        )
     return detail
 
 
@@ -227,33 +216,27 @@ def _render_detail_action(*, key_prefix: str, detail_action: CommandBriefDetailA
         st.rerun()
 
 
-def _render_fallback(brief: SectionCommandBrief, *, key_prefix: str, detail_action: CommandBriefDetailAction | None) -> None:
-    mode = workspace_mode_for_brief(brief)
-    state = "offline" if mode == "OFFLINE" else "uninitialized"
-    title = "Offline summary is not available" if mode == "OFFLINE" else "Summary not initialized"
-    scope = f"{brief.company} / {brief.environment} / {brief.window_label}"
-    message = (
-        "Snowflake is not reachable from this session. Configure the connection or ask an administrator to refresh the Decision summary marts."
-        if mode == "OFFLINE"
-        else f"No current Decision packet exists for {scope}."
-    )
+def _render_fallback(model: DecisionWorkspaceViewModel, *, key_prefix: str, detail_action: CommandBriefDetailAction | None) -> None:
+    fallback = model.fallback
+    if fallback is None:
+        return
     st.html(
         f'<section class="ow-decision-brief ow-decision-recovery ow-decision-operating-loop" '
-        f'role="region" aria-label="Decision workspace {state}">'
-        f'<div class="ow-decision-loop-header" data-state="{_html(state)}">'
-        f'<strong>{_html(title)}</strong>'
-        f'<span>{_html(_data_trust_summary(brief))}</span>'
+        f'role="region" aria-label="Decision workspace {fallback.mode}">'
+        f'<div class="ow-decision-loop-header" data-state="{_html(fallback.mode)}">'
+        f'<strong>{_html(fallback.title)}</strong>'
+        f'<span>{_html(model.trust.summary)}</span>'
         '</div>'
-        f'<p class="ow-decision-loop-summary">{_html(_public_text(message))}</p>'
+        f'<p class="ow-decision-loop-summary">{_html(_public_text(fallback.message))}</p>'
         '</section>'
     )
     cols = st.columns(2)
     with cols[0]:
-        if st.button("Initialize summaries", key=f"{key_prefix}_initialize_summaries", width="stretch"):
+        if fallback.can_initialize and st.button(fallback.recovery_label, key=f"{key_prefix}_initialize_summaries", width="stretch"):
             st.session_state["_overwatch_decision_bootstrap_requested"] = True
             st.rerun()
     with cols[1]:
-        if detail_action is not None:
+        if detail_action is not None and fallback.can_show_evidence:
             _render_detail_action(key_prefix=key_prefix, detail_action=detail_action)
 
 
@@ -457,14 +440,14 @@ def render_decision_workspace(
     compact: bool = False,
 ) -> None:
     """Render the target OVERWATCH Decision Workspace layout."""
-    workflow = current_workflow or str(brief.raw_payload.get("view") if isinstance(brief.raw_payload, dict) else "") or "Overview"
+    workflow = current_workflow or "Overview"
     model = build_decision_workspace_view_model(
         brief,
         current_workflow=workflow,
         evidence_action=evidence_action,
     )
-    if brief.fallback_reason and not model.metric_cells:
-        _render_fallback(brief, key_prefix=key_prefix, detail_action=evidence_action)
+    if model.fallback is not None and not model.metric_cells:
+        _render_fallback(model, key_prefix=key_prefix, detail_action=evidence_action)
         return
     controls = CommandBriefControlSet(
         refresh_action=refresh_action or primary_action,
@@ -516,9 +499,9 @@ def render_decision_workspace(
             key_prefix=key_prefix,
         )
     st.html(_render_model_trend_band(model) + _render_model_trust_footer(model))
-    if tuple(brief.sources or ()) or brief.source_objects or model.fixture_mode:
+    if model.has_sources:
         with st.expander("View sources", expanded=False):
-            st.html(f'<div class="ow-decision-source-drawer">{_trust_detail_html(brief)}</div>')
+            st.html(f'<div class="ow-decision-source-drawer">{_trust_detail_html(model)}</div>')
     if getattr(model, "additional_metrics", ()):
         with st.expander("Additional brief metrics", expanded=False):
             st.html(_extra_metrics_panel(tuple(model.additional_metrics)))
@@ -528,6 +511,7 @@ def render_section_command_brief(
     brief: SectionCommandBrief,
     *,
     key_prefix: str,
+    current_workflow: str = "",
     primary_action: Callable[[], None] | None = None,
     detail_action: CommandBriefDetailAction | None = None,
     compact: bool = False,
@@ -539,10 +523,7 @@ def render_section_command_brief(
         detail_action = CommandBriefDetailAction(brief.detail_cta, "", on_detail)
     if primary_action is None and on_primary_action is not None:
         primary_action = on_primary_action
-    current_workflow = str(
-        (brief.raw_payload.get("view") if isinstance(brief.raw_payload, dict) else "")
-        or ("Overview" if not compact else "")
-    )
+    current_workflow = current_workflow or ("Overview" if not compact else "")
     render_decision_workspace(
         brief,
         breadcrumb=(brief.section, current_workflow or "Overview"),

@@ -21,7 +21,13 @@ from sections.shell_helpers import (
     with_loaded_at,
 )
 from sections.section_command_brief import autoload_section_command_brief
-from sections.section_command_rendering import CommandBriefDetailAction, render_section_command_brief
+from sections.section_command_rendering import render_section_command_brief
+from sections.decision_workspace_controls import (
+    make_decision_refresh_action,
+    make_evidence_action,
+    render_evidence_settings,
+)
+from sections.decision_workspace_scope import active_decision_window_days
 from sections.alert_center_contracts import (
     ALERT_CENTER_ADMIN_VIEW_DETAILS,
     ALERT_CENTER_ADMIN_VIEW_KEY,
@@ -728,34 +734,53 @@ def render() -> None:
         _render_advanced_alert_diagnostics(company, environment)
         return
 
-    c1, c2, c3 = st.columns([1, 1, 2])
-    with c1:
-        days = st.selectbox(
-            "Alert window",
-            DAY_WINDOW_OPTIONS,
-            index=DAY_WINDOW_OPTIONS.index(DEFAULT_DAY_WINDOW),
-            format_func=lambda value: f"{value} days",
-        )
-    with c2:
-        limit = st.selectbox("Rows", [50, 100, 200, 500], index=2)
+    default_days = int(st.session_state.get("alert_center_evidence_days", DEFAULT_DAY_WINDOW) or DEFAULT_DAY_WINDOW)
+    if default_days not in DAY_WINDOW_OPTIONS:
+        default_days = DEFAULT_DAY_WINDOW
+    days = int(st.session_state.setdefault("alert_center_evidence_days", default_days))
+    limit = int(st.session_state.setdefault("alert_center_evidence_rows", 200))
     load_label = f"Load {active_view}"
     render_section_command_brief(
         autoload_section_command_brief(
             "Alert Center",
             company,
             environment,
-            int(days),
+            active_decision_window_days(DEFAULT_DAY_WINDOW),
             force=bool(st.session_state.pop("alert_center_command_brief_force_refresh", False)),
         ),
         key_prefix="alert_center_command_brief",
-        detail_action=CommandBriefDetailAction(
-            load_label,
-            "Load row-level alert evidence for the selected alert family.",
-            lambda: _load_alert_center_view_data(source_view, company, environment, int(days), int(limit), required_sources),
+        primary_action=make_decision_refresh_action("Alert Center"),
+        detail_action=make_evidence_action(
+            "Alert Center",
+            active_view,
+            label=load_label,
+            help_text="Load row-level alert evidence for the selected alert family.",
+            callback=lambda: _load_alert_center_view_data(source_view, company, environment, int(days), int(limit), required_sources),
             key="alert_center_load",
         ),
+        current_workflow=ALERT_CENTER_PANE_LABELS.get(active_view, active_view),
         compact=active_view != "Active Alerts",
     )
+    render_evidence_settings(
+        "Evidence settings",
+        lambda: (
+            st.selectbox(
+                "Alert window",
+                DAY_WINDOW_OPTIONS,
+                index=DAY_WINDOW_OPTIONS.index(default_days),
+                format_func=lambda value: f"{value} days",
+                key="alert_center_evidence_days",
+            ),
+            st.selectbox(
+                "Rows",
+                [50, 100, 200, 500],
+                index=[50, 100, 200, 500].index(limit if limit in [50, 100, 200, 500] else 200),
+                key="alert_center_evidence_rows",
+            ),
+        ),
+    )
+    days = int(st.session_state.get("alert_center_evidence_days", days) or days)
+    limit = int(st.session_state.get("alert_center_evidence_rows", limit) or limit)
     data = st.session_state.get("alert_center_data")
     expected_scope = (company, environment, int(days), int(limit))
     cached_summary = _alert_center_cached_summary_for_scope(
@@ -778,10 +803,6 @@ def render() -> None:
         and source_view not in {"Suppression Windows", "Detection Catalog"}
         and not current_data
     ):
-        st.caption(
-            "Alert Center opened with the command brief first. "
-            f"Load {active_view} when row-level alert telemetry is needed."
-        )
         defer_source_note(f"Inputs on load: {_alert_center_source_summary(required_sources)}")
     render_data_freshness(
         _alert_center_loaded_meta(data, source_view) if current_data else {},
@@ -789,9 +810,6 @@ def render() -> None:
         target_minutes=60,
         delayed_note="Alert Center reads bounded alert/action sources on demand; ACCOUNT_USAGE-backed inputs can lag.",
     )
-    with c3:
-        st.caption(f"{load_label} is available in the Decision Brief.")
-
     if not isinstance(data, dict):
         defer_source_note(f"Inputs on load: {_alert_center_source_summary(required_sources)}")
         _render_advanced_alert_diagnostics(company, environment)

@@ -81,8 +81,8 @@ PRIMARY_FIRST_PAINT_CONTRACTS: Mapping[str, PrimaryFirstPaintContract] = {
             "Cortex AI cost risk",
             "Savings",
         ),
-        explicit_load_cta="Refresh Cost",
-        no_query_note="Entry may read compact cost summary marts; Refresh Cost loads cost facts and detail evidence.",
+        explicit_load_cta="Load Cost Evidence",
+        no_query_note="Entry may read compact cost summary marts; Load Cost Evidence loads cost facts and detail evidence.",
         allowed_cached_sources=("section command brief mart", "session cost splash", "loaded cost cockpit data"),
         forbidden_first_paint_loaders=("_ensure_cost_splash", "_load_cost_splash_query", "run_query_or_raise"),
     ),
@@ -116,9 +116,9 @@ PRIMARY_FIRST_PAINT_CONTRACTS: Mapping[str, PrimaryFirstPaintContract] = {
             "Access changes",
             "Security alerts",
         ),
-        explicit_load_cta="Refresh Security Summary",
+        explicit_load_cta="Load Security Evidence",
         no_query_note=(
-            "Entry may read compact security summary marts; Refresh Security Summary or workflow loads provide current security evidence."
+            "Entry may read compact security summary marts; workflow loads provide current security evidence."
         ),
         allowed_cached_sources=("section command brief mart", "session security summary", "loaded security alert context"),
         forbidden_first_paint_loaders=("_load_security_brief", "run_query_or_raise"),

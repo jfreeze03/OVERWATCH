@@ -254,7 +254,7 @@ COMMAND_DECK_CONTRACTS: Mapping[str, SectionCommandDeckContract] = {
     ),
     "Security Monitoring": _deck(
         "Security Monitoring",
-        primary_cta_key="security_posture_brief_load",
+        primary_cta_key="security_posture_load_evidence",
         route_actions=(
             CommandDeckAction(
                 "Failed Logins",

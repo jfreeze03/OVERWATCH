@@ -1,6 +1,6 @@
 # OVERWATCH Snowflake Browser Smoke Checklist
 
-Use this checklist after UI shell, chart, Command Deck, or Snowflake browser compatibility changes. The checklist is read-only except for local session state and explicit export/download actions.
+Use this checklist after UI shell, chart, Decision Workspace, Command Deck, or Snowflake browser compatibility changes. The checklist is read-only except for local session state and explicit export/download actions.
 
 ## Preconditions
 
@@ -28,11 +28,11 @@ For each section, confirm the first-paint shell shows text-first status, the vis
 - Confirm route-action labels wrap without horizontal overflow.
 - Click one route action per section and verify it only changes workflow/session routing.
 - Confirm explicit evidence buttons retain stable labels and keys:
-  - Refresh Decision Brief
+  - Decision Workspace
   - Load Morning Cockpit
   - Load Active Alerts
-  - Refresh Cost
-  - Refresh Security Summary
+  - Load Cost Evidence
+  - Load Security Evidence
 
 ## Advanced Scope
 
@@ -56,19 +56,19 @@ Confirm charts render through shared OVERWATCH chart helpers and no native chart
 
 When credentials and context are available, test explicit load actions:
 
-- Refresh Decision Brief
+- Decision Workspace
 - Load Morning Cockpit
 - Load Active Alerts
-- Refresh Cost
-- Refresh Security Summary
+- Load Cost Evidence
+- Load Security Evidence
 
 Confirm no duplicate widget-key error appears.
 
 ## Operator Case File
 
 - Load Active Alerts, then Add to Case.
-- Refresh Cost, then Add to Case.
-- Refresh Security Summary, then Add to Case.
+- Load Cost Evidence, then Add to Case.
+- Load Security Evidence, then Add to Case.
 - Open the Case Drawer.
 - Export Operator Case Markdown.
 

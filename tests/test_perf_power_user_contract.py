@@ -182,7 +182,7 @@ class PowerUserBenchmarkContractTests(unittest.TestCase):
         self.assertIsNotNone(match)
 
         self.assertEqual(profile["load_buttons"]["Alert Center"], f"Load {match.group(1)}")
-        self.assertIn("CommandBriefDetailAction(", alert_center)
+        self.assertIn("make_evidence_action(", alert_center)
         self.assertIn("load_label", alert_center)
         self.assertIn('key="alert_center_load"', alert_center)
 

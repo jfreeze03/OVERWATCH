@@ -112,9 +112,7 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
             format_func=lambda d: f"{d} days",
             key="cost_contract_cockpit_window",
         )
-    with controls[1]:
-        st.caption("Use Refresh Cost Summary in the Decision Brief to reload official cost facts.")
-    refresh_cost = bool(st.session_state.pop("cost_contract_command_brief_force_refresh", False))
+    refresh_cost = bool(st.session_state.pop("cost_contract_command_brief_load_evidence", False))
 
     if refresh_cost:
         st.session_state.pop(_COST_SPLASH_KEY, None)

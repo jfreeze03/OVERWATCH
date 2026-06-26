@@ -270,7 +270,7 @@ class AlertCenterSplitTests(unittest.TestCase):
         self.assertIn("render_secondary_lens_pills", render_source)
         self.assertIn("autoload_section_command_brief", render_source)
         self.assertIn("render_section_command_brief", render_source)
-        self.assertIn("CommandBriefDetailAction(", render_source)
+        self.assertIn("make_evidence_action(", render_source)
         self.assertIn('key="alert_center_load"', render_source)
         self.assertIn("_load_alert_center_view_data", render_source)
         first_paint_source = inspect.getsource(alert_center._render_alert_center_first_paint_shell)

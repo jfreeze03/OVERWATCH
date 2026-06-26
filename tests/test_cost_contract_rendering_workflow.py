@@ -243,7 +243,7 @@ class CostContractRenderingWorkflowTests(unittest.TestCase):
             patch.object(cost_contract_overview_floor, "_refresh_cost_detail_state") as refresh_detail,
             patch.object(cost_contract_overview_floor, "defer_section_note"),
         ):
-            state["cost_contract_command_brief_force_refresh"] = True
+            state["cost_contract_command_brief_load_evidence"] = True
             cost_contract_overview_floor._render_cost_watch_floor("ALFA", 4.0)
 
         self.assertNotIn("cost_contract_refresh", button_keys)
@@ -302,7 +302,7 @@ class CostContractRenderingWorkflowTests(unittest.TestCase):
         render_shell.assert_called_once()
         spec = render_shell.call_args.args[0]
         self.assertEqual(spec.section, "Cost & Contract")
-        self.assertEqual(spec.load_cta, "Refresh Cost")
+        self.assertEqual(spec.load_cta, "Load Cost Evidence")
         self.assertIn("Entry may read compact cost summary marts", spec.no_query_note)
 
     def test_cost_overview_floor_advanced_detail_gate_stays_hidden_by_default(self):

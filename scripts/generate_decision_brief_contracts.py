@@ -81,6 +81,8 @@ def _generate_python(manifest: dict) -> str:
                     _py_string(metric.get("format", "integer")),
                     _py_string(metric.get("unit", "")),
                     _py_string(metric.get("directionality", "higher_is_worse")),
+                    _py_string(metric.get("source_key", "")),
+                    _py_string(metric.get("availability_policy", "optional")),
                 )
             )
             + ")"

@@ -248,7 +248,7 @@
       "unavailable_summary": "Enable the latest control-room snapshot to populate failures, cost pressure, queue pressure, security warnings, and recent changes automatically.",
       "sources": [
         {
-          "source_key": "dba_control_room",
+          "source_key": "query_hourly",
           "source_object": "MART_DBA_CONTROL_ROOM",
           "required": true,
           "tier": "core",
@@ -256,7 +256,7 @@
           "confidence": "allocated"
         },
         {
-          "source_key": "query_summary",
+          "source_key": "query_hourly",
           "source_object": "FACT_QUERY_HOURLY",
           "required": true,
           "tier": "core",
@@ -288,7 +288,7 @@
           "confidence": "allocated"
         },
         {
-          "source_key": "security_summary",
+          "source_key": "security_operability",
           "source_object": "FACT_SECURITY_OPERABILITY_DAILY",
           "required": false,
           "tier": "enrichment",
@@ -296,7 +296,7 @@
           "confidence": "allocated"
         },
         {
-          "source_key": "cost_summary",
+          "source_key": "cost_daily",
           "source_object": "FACT_COST_DAILY",
           "required": false,
           "tier": "enrichment",
@@ -313,7 +313,7 @@
           "format": "integer",
           "unit": "queries",
           "directionality": "higher_is_worse",
-          "source_key": "dba_control_room",
+          "source_key": "query_hourly",
           "availability_policy": "required"
         },
         {
@@ -324,7 +324,7 @@
           "format": "integer",
           "unit": "events",
           "directionality": "higher_is_worse",
-          "source_key": "dba_control_room",
+          "source_key": "task_runs",
           "availability_policy": "required"
         },
         {
@@ -335,7 +335,7 @@
           "format": "duration",
           "unit": "seconds",
           "directionality": "higher_is_worse",
-          "source_key": "action_queue",
+          "source_key": "query_hourly",
           "availability_policy": "required"
         },
         {
@@ -346,7 +346,7 @@
           "format": "currency",
           "unit": "USD",
           "directionality": "higher_is_worse",
-          "source_key": "cost_summary",
+          "source_key": "cost_daily",
           "availability_policy": "required"
         },
         {
@@ -357,7 +357,7 @@
           "format": "currency",
           "unit": "USD",
           "directionality": "higher_is_worse",
-          "source_key": "dba_control_room",
+          "source_key": "cortex_daily",
           "availability_policy": "optional"
         },
         {
@@ -368,7 +368,7 @@
           "format": "integer",
           "unit": "warnings",
           "directionality": "higher_is_worse",
-          "source_key": "security_summary",
+          "source_key": "security_operability",
           "availability_policy": "optional"
         },
         {
@@ -379,7 +379,7 @@
           "format": "integer",
           "unit": "changes",
           "directionality": "higher_is_worse",
-          "source_key": "dba_control_room",
+          "source_key": "change_summary",
           "availability_policy": "optional"
         },
         {
@@ -390,7 +390,7 @@
           "format": "integer",
           "unit": "actions",
           "directionality": "higher_is_worse",
-          "source_key": "dba_control_room",
+          "source_key": "action_queue",
           "availability_policy": "optional"
         },
         {
@@ -1120,7 +1120,7 @@
           "format": "integer",
           "unit": "logins",
           "directionality": "higher_is_worse",
-          "source_key": "security_operability",
+          "source_key": "login_daily",
           "availability_policy": "required"
         },
         {
@@ -1142,7 +1142,7 @@
           "format": "integer",
           "unit": "grants",
           "directionality": "higher_is_worse",
-          "source_key": "security_operability",
+          "source_key": "grant_daily",
           "availability_policy": "required"
         },
         {

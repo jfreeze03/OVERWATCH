@@ -33,6 +33,8 @@ class SectionCommandMetricContract:
     metric_format: str = "integer"
     unit: str = ""
     directionality: str = "higher_is_worse"
+    source_key: str = ""
+    availability_policy: str = "optional"
 
 
 @dataclass(frozen=True)
@@ -117,18 +119,25 @@ def _sources(
     return tuple(rows)
 
 
-def _metrics(*items: tuple[str, str, bool, str, str, str]) -> tuple[SectionCommandMetricContract, ...]:
-    return tuple(
-        SectionCommandMetricContract(
-            key=key,
-            label=label,
-            primary=primary,
-            metric_format=metric_format,
-            unit=unit,
-            directionality=directionality,
+def _metrics(*items: tuple[str, ...]) -> tuple[SectionCommandMetricContract, ...]:
+    metrics: list[SectionCommandMetricContract] = []
+    for item in items:
+        key, label, primary, metric_format, unit, directionality, *rest = item
+        source_key = rest[0] if len(rest) >= 1 else ""
+        availability_policy = rest[1] if len(rest) >= 2 else "optional"
+        metrics.append(
+            SectionCommandMetricContract(
+                key=key,
+                label=label,
+                primary=bool(primary),
+                metric_format=metric_format,
+                unit=unit,
+                directionality=directionality,
+                source_key=source_key,
+                availability_policy=availability_policy,
+            )
         )
-        for key, label, primary, metric_format, unit, directionality in items
-    )
+    return tuple(metrics)
 
 
 from sections.section_command_contracts_generated import (  # noqa: E402

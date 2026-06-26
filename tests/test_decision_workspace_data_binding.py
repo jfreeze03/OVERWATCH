@@ -186,6 +186,16 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
                 "AVAILABLE_OPTIONAL_SOURCE_COUNT": 1,
                 "OPTIONAL_MISSING_SOURCE_COUNT": 0,
                 "OPTIONAL_STALE_SOURCE_COUNT": 0,
+                "FLATTENED_SOURCE_ROW_COUNT": 3,
+                "FLATTENED_REQUIRED_SOURCE_COUNT": 3,
+                "FLATTENED_AVAILABLE_REQUIRED_SOURCE_COUNT": 3,
+                "FLATTENED_REQUIRED_MISSING_SOURCE_COUNT": 0,
+                "FLATTENED_REQUIRED_STALE_SOURCE_COUNT": 0,
+                "FLATTENED_OPTIONAL_SOURCE_COUNT": 1,
+                "FLATTENED_AVAILABLE_OPTIONAL_SOURCE_COUNT": 1,
+                "FLATTENED_OPTIONAL_MISSING_SOURCE_COUNT": 0,
+                "FLATTENED_OPTIONAL_STALE_SOURCE_COUNT": 0,
+                "SOURCE_COUNTER_MISMATCH_COUNT": 0,
                 "STALE_SOURCE_COUNT": 0,
                 "SOURCE_COVERAGE_PCT": 100,
                 "DATA_AVAILABILITY_STATE": "READY",
@@ -351,23 +361,36 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         self.assertEqual(_validate({"REQUIRED_MISSING_SOURCE_COUNT": 1}).status, "FAILED")
         self.assertEqual(_validate({"SOURCE_COVERAGE_PCT": 99}).status, "FAILED")
         self.assertEqual(_validate({"REQUIRED_STALE_SOURCE_COUNT": 1}).status, "FAILED")
+        self.assertEqual(_validate({"FLATTENED_REQUIRED_MISSING_SOURCE_COUNT": 1}).status, "FAILED")
+        self.assertEqual(_validate({"FLATTENED_REQUIRED_STALE_SOURCE_COUNT": 1}).status, "FAILED")
+        self.assertEqual(_validate({"SOURCE_COUNTER_MISMATCH_COUNT": 1}).status, "FAILED")
 
         optional = _validate({
             "OPTIONAL_SOURCE_COUNT": 2,
             "AVAILABLE_OPTIONAL_SOURCE_COUNT": 1,
             "OPTIONAL_MISSING_SOURCE_COUNT": 1,
             "MISSING_SOURCE_COUNT": 1,
+            "FLATTENED_OPTIONAL_SOURCE_COUNT": 2,
+            "FLATTENED_AVAILABLE_OPTIONAL_SOURCE_COUNT": 1,
+            "FLATTENED_OPTIONAL_MISSING_SOURCE_COUNT": 1,
         })
         self.assertTrue(optional.ok)
         self.assertEqual(optional.status, "DEGRADED")
         self.assertIn("Executive Landing", optional.warning_sections)
 
-        optional_stale = _validate({"OPTIONAL_STALE_SOURCE_COUNT": 1, "STALE_SOURCE_COUNT": 1})
+        optional_stale = _validate({
+            "OPTIONAL_STALE_SOURCE_COUNT": 1,
+            "STALE_SOURCE_COUNT": 1,
+            "FLATTENED_OPTIONAL_STALE_SOURCE_COUNT": 1,
+        })
         self.assertTrue(optional_stale.ok)
         self.assertEqual(optional_stale.status, "DEGRADED")
 
         source_text_only = _validate({
             "SOURCE_ROW_COUNT": 0,
+            "FLATTENED_SOURCE_ROW_COUNT": 0,
+            "FLATTENED_REQUIRED_SOURCE_COUNT": 0,
+            "FLATTENED_AVAILABLE_REQUIRED_SOURCE_COUNT": 0,
             "REQUIRED_SOURCE_COUNT": 3,
             "AVAILABLE_REQUIRED_SOURCE_COUNT": 3,
             "REQUIRED_MISSING_SOURCE_COUNT": 0,
@@ -1249,6 +1272,7 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
                         "ACTOR_ROLE": "SNOW_SYSADMINS",
                         "APP_VERSION": "OVERWATCH Decision Workspace",
                         "PERSISTENCE_STATUS": "persisted",
+                        "PERSISTENCE_ERROR": "",
                         "RECORDED_AT": "2026-06-26 12:00:00",
                     }, {
                         "STATUS": "DEGRADED",
@@ -1276,6 +1300,7 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
                         "ACTOR_ROLE": "SNOW_SYSADMINS",
                         "APP_VERSION": "OVERWATCH Decision Workspace",
                         "PERSISTENCE_STATUS": "persisted",
+                        "PERSISTENCE_ERROR": "historical persistence warning",
                         "RECORDED_AT": "2026-06-26 11:45:00",
                     }]
                 return []
@@ -1296,6 +1321,7 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         self.assertTrue(any("CREATE TABLE IF NOT EXISTS OVERWATCH_DECISION_SETUP_HEALTH" in call for call in session.sql_calls))
         self.assertTrue(any("ALTER TABLE IF EXISTS OVERWATCH_DECISION_SETUP_HEALTH ADD COLUMN IF NOT EXISTS GLOBAL_STATUS" in call for call in session.sql_calls))
         self.assertTrue(any("ALTER TABLE IF EXISTS OVERWATCH_DECISION_SETUP_HEALTH ADD COLUMN IF NOT EXISTS PERSISTENCE_STATUS" in call for call in session.sql_calls))
+        self.assertTrue(any("ALTER TABLE IF EXISTS OVERWATCH_DECISION_SETUP_HEALTH ADD COLUMN IF NOT EXISTS PERSISTENCE_ERROR" in call for call in session.sql_calls))
         self.assertTrue(any("INSERT INTO OVERWATCH_DECISION_SETUP_HEALTH" in call for call in session.sql_calls))
         insert_sql = "\n".join(session.sql_calls)
         self.assertIn("GLOBAL_STATUS", insert_sql)
@@ -1305,6 +1331,7 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         self.assertIn("INVALID_SECTIONS", insert_sql)
         self.assertIn("WARNING_SECTIONS", insert_sql)
         self.assertIn("PERSISTENCE_STATUS", insert_sql)
+        self.assertIn("PERSISTENCE_ERROR", insert_sql)
 
         state.clear()
         with patch.object(setup_health.st, "session_state", state):
@@ -1316,10 +1343,12 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         self.assertEqual(loaded.current_section_status, "SUCCESS")
         self.assertEqual(loaded.requested_scope, "ALFA / ALL / 7 days")
         self.assertEqual(loaded.persistence_status, "persisted")
+        self.assertEqual(loaded.persistence_error, "")
         history = setup_health.load_decision_setup_health_history(session=session)
         self.assertEqual(len(history), 2)
         self.assertEqual(history[0].status, "SUCCESS")
         self.assertEqual(history[1].status, "DEGRADED")
+        self.assertEqual(history[1].persistence_error, "historical persistence warning")
 
     def test_setup_health_records_local_only_and_unavailable_persistence_status(self):
         from sections import decision_workspace_setup_health as setup_health
@@ -1403,6 +1432,7 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         self.assertTrue(state[SETUP_HEALTH_PANEL_OPEN_KEY])
         for raw in ("CALL ", "SP_", "MART_", "FACT_", "ACCOUNT_USAGE"):
             self.assertNotIn(raw, rendered)
+        self.assertNotIn("permission denied", rendered.lower())
 
     def test_fallback_hides_setup_health_action_for_non_admin_role(self):
         from runtime_state import CURRENT_ROLE

@@ -325,6 +325,57 @@ def _run_bootstrap_procedure(session: object) -> BootstrapProcedureResult:
 
 def _validation_sql(packet_byte_limit: int) -> str:
     return f"""
+WITH current_packets AS (
+    SELECT
+        SECTION_NAME,
+        COMPANY,
+        ENVIRONMENT,
+        WINDOW_DAYS,
+        BRIEF_ID,
+        DECISION_PACKET,
+        SNAPSHOT_TS,
+        SOURCE_SNAPSHOT_TS,
+        FRESHNESS_MINUTES,
+        PACKET_BYTES
+    FROM {DECISION_CURRENT_TABLE}
+),
+source_rows AS (
+    SELECT
+        SECTION_NAME,
+        COMPANY,
+        ENVIRONMENT,
+        WINDOW_DAYS,
+        BRIEF_ID,
+        src.value:"SOURCE_KEY"::VARCHAR AS SOURCE_KEY,
+        src.value:"SOURCE_OBJECT"::VARCHAR AS SOURCE_OBJECT,
+        COALESCE(src.value:"REQUIRED"::BOOLEAN, FALSE) AS REQUIRED,
+        COALESCE(src.value:"AVAILABLE"::BOOLEAN, FALSE) AS AVAILABLE,
+        COALESCE(src.value:"IS_STALE"::BOOLEAN, FALSE) AS IS_STALE,
+        src.value:"CONFIDENCE"::VARCHAR AS CONFIDENCE,
+        src.value:"GAP_REASON"::VARCHAR AS GAP_REASON
+    FROM current_packets,
+    LATERAL FLATTEN(INPUT => DECISION_PACKET:"SOURCES") src
+),
+flattened_sources AS (
+    SELECT
+        SECTION_NAME,
+        COMPANY,
+        ENVIRONMENT,
+        WINDOW_DAYS,
+        BRIEF_ID,
+        COUNT(*) AS FLATTENED_SOURCE_ROW_COUNT,
+        COUNT_IF(REQUIRED) AS FLATTENED_REQUIRED_SOURCE_COUNT,
+        COUNT_IF(REQUIRED AND AVAILABLE) AS FLATTENED_AVAILABLE_REQUIRED_SOURCE_COUNT,
+        COUNT_IF(REQUIRED AND NOT AVAILABLE) AS FLATTENED_REQUIRED_MISSING_SOURCE_COUNT,
+        COUNT_IF(REQUIRED AND IS_STALE) AS FLATTENED_REQUIRED_STALE_SOURCE_COUNT,
+        COUNT_IF(NOT REQUIRED) AS FLATTENED_OPTIONAL_SOURCE_COUNT,
+        COUNT_IF(NOT REQUIRED AND AVAILABLE) AS FLATTENED_AVAILABLE_OPTIONAL_SOURCE_COUNT,
+        COUNT_IF(NOT REQUIRED AND NOT AVAILABLE) AS FLATTENED_OPTIONAL_MISSING_SOURCE_COUNT,
+        COUNT_IF(NOT REQUIRED AND IS_STALE) AS FLATTENED_OPTIONAL_STALE_SOURCE_COUNT
+    FROM source_rows
+    GROUP BY SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, BRIEF_ID
+),
+parent_rollup AS (
 SELECT
     SECTION_NAME,
     COMPANY,
@@ -389,8 +440,49 @@ SELECT
     MAX(COALESCE(DECISION_PACKET:"RESOLVED_ENVIRONMENT"::VARCHAR, ENVIRONMENT)) AS RESOLVED_ENVIRONMENT,
     MAX(COALESCE(TRY_TO_NUMBER(DECISION_PACKET:"RESOLVED_WINDOW_DAYS"), WINDOW_DAYS)) AS RESOLVED_WINDOW_DAYS,
     MAX(IFF(COALESCE(PACKET_BYTES, 0) > {int(packet_byte_limit)}, 1, 0)) AS PACKET_TOO_LARGE
-FROM {DECISION_CURRENT_TABLE}
+FROM current_packets
 GROUP BY SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS
+)
+SELECT
+    p.*,
+    COALESCE(MAX(f.FLATTENED_SOURCE_ROW_COUNT), 0) AS FLATTENED_SOURCE_ROW_COUNT,
+    COALESCE(MAX(f.FLATTENED_REQUIRED_SOURCE_COUNT), 0) AS FLATTENED_REQUIRED_SOURCE_COUNT,
+    COALESCE(MAX(f.FLATTENED_AVAILABLE_REQUIRED_SOURCE_COUNT), 0) AS FLATTENED_AVAILABLE_REQUIRED_SOURCE_COUNT,
+    COALESCE(MAX(f.FLATTENED_REQUIRED_MISSING_SOURCE_COUNT), 0) AS FLATTENED_REQUIRED_MISSING_SOURCE_COUNT,
+    COALESCE(MAX(f.FLATTENED_REQUIRED_STALE_SOURCE_COUNT), 0) AS FLATTENED_REQUIRED_STALE_SOURCE_COUNT,
+    COALESCE(MAX(f.FLATTENED_OPTIONAL_SOURCE_COUNT), 0) AS FLATTENED_OPTIONAL_SOURCE_COUNT,
+    COALESCE(MAX(f.FLATTENED_AVAILABLE_OPTIONAL_SOURCE_COUNT), 0) AS FLATTENED_AVAILABLE_OPTIONAL_SOURCE_COUNT,
+    COALESCE(MAX(f.FLATTENED_OPTIONAL_MISSING_SOURCE_COUNT), 0) AS FLATTENED_OPTIONAL_MISSING_SOURCE_COUNT,
+    COALESCE(MAX(f.FLATTENED_OPTIONAL_STALE_SOURCE_COUNT), 0) AS FLATTENED_OPTIONAL_STALE_SOURCE_COUNT,
+    MAX(
+        IFF(COALESCE(p.SOURCE_ROW_COUNT, -1) <> COALESCE(f.FLATTENED_SOURCE_ROW_COUNT, -2), 1, 0)
+        + IFF(COALESCE(p.REQUIRED_SOURCE_COUNT, -1) <> COALESCE(f.FLATTENED_REQUIRED_SOURCE_COUNT, -2), 1, 0)
+        + IFF(COALESCE(p.AVAILABLE_REQUIRED_SOURCE_COUNT, -1) <> COALESCE(f.FLATTENED_AVAILABLE_REQUIRED_SOURCE_COUNT, -2), 1, 0)
+        + IFF(COALESCE(p.REQUIRED_MISSING_SOURCE_COUNT, -1) <> COALESCE(f.FLATTENED_REQUIRED_MISSING_SOURCE_COUNT, -2), 1, 0)
+        + IFF(COALESCE(p.REQUIRED_STALE_SOURCE_COUNT, -1) <> COALESCE(f.FLATTENED_REQUIRED_STALE_SOURCE_COUNT, -2), 1, 0)
+        + IFF(COALESCE(p.OPTIONAL_SOURCE_COUNT, -1) <> COALESCE(f.FLATTENED_OPTIONAL_SOURCE_COUNT, -2), 1, 0)
+        + IFF(COALESCE(p.AVAILABLE_OPTIONAL_SOURCE_COUNT, -1) <> COALESCE(f.FLATTENED_AVAILABLE_OPTIONAL_SOURCE_COUNT, -2), 1, 0)
+        + IFF(COALESCE(p.OPTIONAL_MISSING_SOURCE_COUNT, -1) <> COALESCE(f.FLATTENED_OPTIONAL_MISSING_SOURCE_COUNT, -2), 1, 0)
+        + IFF(COALESCE(p.OPTIONAL_STALE_SOURCE_COUNT, -1) <> COALESCE(f.FLATTENED_OPTIONAL_STALE_SOURCE_COUNT, -2), 1, 0)
+    ) AS SOURCE_COUNTER_MISMATCH_COUNT
+FROM parent_rollup p
+LEFT JOIN flattened_sources f
+  ON f.SECTION_NAME = p.SECTION_NAME
+ AND f.COMPANY = p.COMPANY
+ AND f.ENVIRONMENT = p.ENVIRONMENT
+ AND f.WINDOW_DAYS = p.WINDOW_DAYS
+ AND f.BRIEF_ID = p.BRIEF_ID
+GROUP BY
+    p.SECTION_NAME, p.COMPANY, p.ENVIRONMENT, p.WINDOW_DAYS, p.CURRENT_KEY_COUNT,
+    p.BRIEF_ID, p.MAX_PACKET_BYTES, p.HAS_METRICS, p.SOURCE_ROW_COUNT,
+    p.REQUIRED_SOURCE_COUNT, p.AVAILABLE_REQUIRED_SOURCE_COUNT,
+    p.REQUIRED_MISSING_SOURCE_COUNT, p.REQUIRED_STALE_SOURCE_COUNT,
+    p.OPTIONAL_SOURCE_COUNT, p.AVAILABLE_OPTIONAL_SOURCE_COUNT,
+    p.OPTIONAL_MISSING_SOURCE_COUNT, p.MISSING_SOURCE_COUNT,
+    p.OPTIONAL_STALE_SOURCE_COUNT, p.STALE_SOURCE_COUNT, p.SOURCE_COVERAGE_PCT,
+    p.DATA_AVAILABILITY_STATE, p.FRESHNESS_MINUTES, p.TARGET_FRESHNESS_MINUTES,
+    p.RESOLVED_COMPANY, p.RESOLVED_ENVIRONMENT, p.RESOLVED_WINDOW_DAYS,
+    p.PACKET_TOO_LARGE
 """
 
 
@@ -434,6 +526,39 @@ def validate_decision_bootstrap_output(
         max(_int_value(row.get("CURRENT_KEY_COUNT"), 0) - 1, 0)
         for row in rows
     )
+    def _source_counter(row: Mapping[str, Any] | None, parent_field: str, flattened_field: str, default: int = 0) -> int:
+        if row is None:
+            return default
+        if flattened_field in row and row.get(flattened_field) is not None:
+            return _int_value(row.get(flattened_field), default)
+        return _int_value(row.get(parent_field), default)
+
+    def _source_counter_mismatch_count(row: Mapping[str, Any] | None) -> int:
+        if row is None:
+            return 0
+        mismatch_count = _int_value(row.get("SOURCE_COUNTER_MISMATCH_COUNT"), 0)
+        counter_pairs = (
+            ("SOURCE_ROW_COUNT", "FLATTENED_SOURCE_ROW_COUNT"),
+            ("REQUIRED_SOURCE_COUNT", "FLATTENED_REQUIRED_SOURCE_COUNT"),
+            ("AVAILABLE_REQUIRED_SOURCE_COUNT", "FLATTENED_AVAILABLE_REQUIRED_SOURCE_COUNT"),
+            ("REQUIRED_MISSING_SOURCE_COUNT", "FLATTENED_REQUIRED_MISSING_SOURCE_COUNT"),
+            ("REQUIRED_STALE_SOURCE_COUNT", "FLATTENED_REQUIRED_STALE_SOURCE_COUNT"),
+            ("OPTIONAL_SOURCE_COUNT", "FLATTENED_OPTIONAL_SOURCE_COUNT"),
+            ("AVAILABLE_OPTIONAL_SOURCE_COUNT", "FLATTENED_AVAILABLE_OPTIONAL_SOURCE_COUNT"),
+            ("OPTIONAL_MISSING_SOURCE_COUNT", "FLATTENED_OPTIONAL_MISSING_SOURCE_COUNT"),
+            ("OPTIONAL_STALE_SOURCE_COUNT", "FLATTENED_OPTIONAL_STALE_SOURCE_COUNT"),
+        )
+        for parent_field, flattened_field in counter_pairs:
+            if (
+                parent_field in row
+                and flattened_field in row
+                and row.get(parent_field) is not None
+                and row.get(flattened_field) is not None
+                and _int_value(row.get(parent_field), 0) != _int_value(row.get(flattened_field), 0)
+            ):
+                mismatch_count += 1
+        return mismatch_count
+
     stale_sections = tuple(sorted({
         str(row.get("SECTION_NAME", ""))
         for row in rows
@@ -459,23 +584,24 @@ def validate_decision_bootstrap_output(
         str(row.get("SECTION_NAME", ""))
         for row in rows
         if (
-            _int_value(row.get("SOURCE_ROW_COUNT"), 0) <= 0
-            or _int_value(row.get("REQUIRED_SOURCE_COUNT"), 0) <= 0
+            _source_counter(row, "SOURCE_ROW_COUNT", "FLATTENED_SOURCE_ROW_COUNT") <= 0
+            or _source_counter(row, "REQUIRED_SOURCE_COUNT", "FLATTENED_REQUIRED_SOURCE_COUNT") <= 0
             or row.get("REQUIRED_SOURCE_COUNT") is None
             or row.get("AVAILABLE_REQUIRED_SOURCE_COUNT") is None
             or row.get("REQUIRED_MISSING_SOURCE_COUNT") is None
             or row.get("SOURCE_COVERAGE_PCT") is None
-            or _int_value(row.get("AVAILABLE_REQUIRED_SOURCE_COUNT"), 0) < _int_value(row.get("REQUIRED_SOURCE_COUNT"), 0)
-            or _int_value(row.get("REQUIRED_MISSING_SOURCE_COUNT"), 0) > 0
+            or _source_counter(row, "AVAILABLE_REQUIRED_SOURCE_COUNT", "FLATTENED_AVAILABLE_REQUIRED_SOURCE_COUNT") < _source_counter(row, "REQUIRED_SOURCE_COUNT", "FLATTENED_REQUIRED_SOURCE_COUNT")
+            or _source_counter(row, "REQUIRED_MISSING_SOURCE_COUNT", "FLATTENED_REQUIRED_MISSING_SOURCE_COUNT") > 0
             or float(_float_value(row.get("SOURCE_COVERAGE_PCT")) or 0.0) < 100.0
-            or _int_value(row.get("REQUIRED_STALE_SOURCE_COUNT"), 0) > 0
+            or _source_counter(row, "REQUIRED_STALE_SOURCE_COUNT", "FLATTENED_REQUIRED_STALE_SOURCE_COUNT") > 0
+            or _source_counter_mismatch_count(row) > 0
         )
     }))
     optional_warning_sections = tuple(sorted({
         str(row.get("SECTION_NAME", ""))
         for row in rows
-        if _int_value(row.get("OPTIONAL_MISSING_SOURCE_COUNT"), 0) > 0
-        or _int_value(row.get("OPTIONAL_STALE_SOURCE_COUNT"), 0) > 0
+        if _source_counter(row, "OPTIONAL_MISSING_SOURCE_COUNT", "FLATTENED_OPTIONAL_MISSING_SOURCE_COUNT") > 0
+        or _source_counter(row, "OPTIONAL_STALE_SOURCE_COUNT", "FLATTENED_OPTIONAL_STALE_SOURCE_COUNT") > 0
     }))
     oversized_sections = tuple(sorted({
         str(row.get("SECTION_NAME", ""))
@@ -531,8 +657,8 @@ def validate_decision_bootstrap_output(
     def _row_missing_sources(row: Mapping[str, Any] | None) -> int:
         if row is None:
             return 1
-        if _int_value(row.get("SOURCE_ROW_COUNT"), 0) <= 0:
-            return max(_int_value(row.get("REQUIRED_SOURCE_COUNT"), 0), 1)
+        if _source_counter(row, "SOURCE_ROW_COUNT", "FLATTENED_SOURCE_ROW_COUNT") <= 0:
+            return max(_source_counter(row, "REQUIRED_SOURCE_COUNT", "FLATTENED_REQUIRED_SOURCE_COUNT"), 1)
         for field in (
             "REQUIRED_SOURCE_COUNT",
             "AVAILABLE_REQUIRED_SOURCE_COUNT",
@@ -541,11 +667,13 @@ def validate_decision_bootstrap_output(
         ):
             if row.get(field) is None:
                 return max(_int_value(row.get("REQUIRED_SOURCE_COUNT"), 0), 1)
-        required = _int_value(row.get("REQUIRED_SOURCE_COUNT"), 0)
-        available = _int_value(row.get("AVAILABLE_REQUIRED_SOURCE_COUNT"), 0)
-        missing = _int_value(row.get("REQUIRED_MISSING_SOURCE_COUNT"), 0)
+        if _source_counter_mismatch_count(row) > 0:
+            return 1
+        required = _source_counter(row, "REQUIRED_SOURCE_COUNT", "FLATTENED_REQUIRED_SOURCE_COUNT")
+        available = _source_counter(row, "AVAILABLE_REQUIRED_SOURCE_COUNT", "FLATTENED_AVAILABLE_REQUIRED_SOURCE_COUNT")
+        missing = _source_counter(row, "REQUIRED_MISSING_SOURCE_COUNT", "FLATTENED_REQUIRED_MISSING_SOURCE_COUNT")
         coverage = _float_value(row.get("SOURCE_COVERAGE_PCT")) or 0.0
-        stale_required = _int_value(row.get("REQUIRED_STALE_SOURCE_COUNT"), 0)
+        stale_required = _source_counter(row, "REQUIRED_STALE_SOURCE_COUNT", "FLATTENED_REQUIRED_STALE_SOURCE_COUNT")
         if required <= 0:
             return 1
         if available < required:
@@ -571,7 +699,7 @@ def validate_decision_bootstrap_output(
         target = _float_value(row.get("TARGET_FRESHNESS_MINUTES"))
         if freshness is not None and target is not None and freshness > target:
             return True
-        return _int_value(row.get("REQUIRED_STALE_SOURCE_COUNT"), 0) > 0
+        return _source_counter(row, "REQUIRED_STALE_SOURCE_COUNT", "FLATTENED_REQUIRED_STALE_SOURCE_COUNT") > 0
 
     selected_has_metrics = selected_row is not None and _int_value(selected_row.get("HAS_METRICS"), 0) > 0
     selected_missing_sources = _row_missing_sources(selected_row)
@@ -660,6 +788,15 @@ def validate_decision_bootstrap_output(
         f"Missing sections: {', '.join(missing) or 'none'}",
         f"Missing source metadata: {', '.join(missing_source_sections) or 'none'}",
         f"Optional source warnings: {', '.join(optional_warning_sections) or 'none'}",
+        "Source counter mismatches: "
+        + (
+            ", ".join(
+                str(row.get("SECTION_NAME", ""))
+                for row in rows
+                if _source_counter_mismatch_count(row) > 0
+            )
+            or "none"
+        ),
         f"Duplicate current keys: {duplicate_current_keys}",
         f"Max packet bytes: {max_packet_bytes}",
         f"Requested scope: {requested_company} / {requested_environment} / {requested_window_days} days",

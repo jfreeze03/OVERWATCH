@@ -606,6 +606,7 @@ class SectionCommandBriefTests(unittest.TestCase):
             "ACTOR_ROLE",
             "APP_VERSION",
             "PERSISTENCE_STATUS",
+            "PERSISTENCE_ERROR",
             "LOAD_TS",
         ):
             self.assertIn(column, setup_health_block)
@@ -640,6 +641,13 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertIn("COUNT_IF(REQUIRED AND SOURCE_SNAPSHOT_TS IS NULL) AS REQUIRED_MISSING_SOURCE_COUNT", procs)
         self.assertIn("COUNT_IF(NOT REQUIRED AND SOURCE_SNAPSHOT_TS IS NULL) AS OPTIONAL_MISSING_SOURCE_COUNT", procs)
         self.assertIn("DECISION_PACKET:\"REQUIRED_MISSING_SOURCE_COUNT\"::NUMBER", procs)
+        self.assertIn("TMP_SECTION_METRIC_TRENDS", procs)
+        self.assertIn("HAVING COUNT(*) BETWEEN 7 AND 14", procs)
+        self.assertIn("ACTION_DUE_DATE IS NULL THEN 'SLA UNAVAILABLE'", procs)
+        self.assertIn("ALERT_FIRST_SEEN_TS", procs)
+        self.assertNotIn("FRESHNESS_MINUTES AS DECISION_AGE_MINUTES", procs)
+        self.assertNotIn("IFF(FRESHNESS_MINUTES > TARGET_FRESHNESS_MINUTES, 'STALE', 'WITHIN TARGET') AS DECISION_SLA_STATE", procs)
+        self.assertNotIn("LOWER(REGEXP_REPLACE(SECTION_NAME", procs)
         self.assertNotIn('WHERE COALESCE(DECISION_PACKET:"MISSING_SOURCE_COUNT"::NUMBER, 0) = 0', procs)
         config_tables = (ROOT / "snowflake" / "mart_setup" / "03_config_and_audit_tables.sql").read_text(encoding="utf-8").upper()
         self.assertIn("AUTO_BOOTSTRAP_DECISION_BRIEFS", config_tables)
@@ -674,6 +682,8 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertIn("SECTION_DECISION_LAST_GOOD_PACKET_COVERAGE", validation)
         self.assertIn("SECTION_COMMAND_BRIEF_METRIC_AVAILABILITY", validation)
         self.assertIn("SECTION_DECISION_CURRENT_PACKET_COVERAGE", validation)
+        self.assertIn("SECTION_DECISION_CURRENT_SOURCE_COUNTER_CONSISTENCY", validation)
+        self.assertIn("LATERAL FLATTEN(INPUT => DECISION_PACKET:\"SOURCES\")", validation)
         self.assertIn("SECTION_COMMAND_SOURCE_ROWS", validation)
         self.assertIn("SECTION_COMMAND_BRIEF_ORPHAN_CHILD_ROWS", validation)
         self.assertIn("SECTION_COMMAND_BRIEF_CANONICAL_WINDOWS", validation)
@@ -710,6 +720,16 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertIn("OPTIONAL_MISSING_SOURCE_COUNT", sql)
         self.assertNotIn("ARRAY_AGG", sql)
 
+    def test_bootstrap_validation_sql_flattens_sources_and_cross_checks_counters(self):
+        from sections import decision_workspace_bootstrap as bootstrap
+
+        sql = bootstrap._validation_sql(100000).upper()
+        self.assertIn("LATERAL FLATTEN(INPUT => DECISION_PACKET:\"SOURCES\")", sql)
+        self.assertIn("FLATTENED_REQUIRED_SOURCE_COUNT", sql)
+        self.assertIn("FLATTENED_REQUIRED_MISSING_SOURCE_COUNT", sql)
+        self.assertIn("FLATTENED_REQUIRED_STALE_SOURCE_COUNT", sql)
+        self.assertIn("SOURCE_COUNTER_MISMATCH_COUNT", sql)
+
     def test_sql_emits_every_contract_metric_key(self):
         from sections.section_command_contracts import SECTION_COMMAND_CONTRACTS
 
@@ -738,6 +758,27 @@ class SectionCommandBriefTests(unittest.TestCase):
                 self.assertTrue(set(keys).issubset(set(contract.metric_keys)))
                 self.assertTrue(contract.source_configs)
                 self.assertTrue(contract.fallback_route_keys)
+
+    def test_primary_metric_source_keys_are_specific(self):
+        from sections.section_command_contracts import SECTION_COMMAND_CONTRACTS
+
+        expected_sources = {
+            ("DBA Control Room", "failed_queries"): "query_hourly",
+            ("DBA Control Room", "pipeline_failures"): "task_runs",
+            ("DBA Control Room", "queue_pressure"): "query_hourly",
+            ("DBA Control Room", "cost_24h"): "cost_daily",
+            ("Cost & Contract", "forecast_run_rate"): "forecast",
+            ("Cost & Contract", "cortex_spend_share"): "cortex_daily",
+            ("Security Monitoring", "failed_logins"): "login_daily",
+            ("Security Monitoring", "risky_grants"): "grant_daily",
+            ("Security Monitoring", "sharing_exposure"): "security_operability",
+        }
+        for (section, metric_key), source_key in expected_sources.items():
+            contract = SECTION_COMMAND_CONTRACTS[section]
+            with self.subTest(section=section, metric_key=metric_key):
+                metric = next(item for item in contract.metric_contracts if item.key == metric_key)
+                self.assertEqual(metric.source_key, source_key)
+                self.assertNotEqual(metric.source_key, section.lower().replace(" ", "_"))
 
     def test_command_brief_routes_are_allowlisted_and_apply_after_defaults(self):
         from sections import command_brief_routes

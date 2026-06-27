@@ -14,6 +14,8 @@ from performance import (
 )
 from utils.sql_safe import sql_literal
 
+TARGET_PREDICATE_MARKER = "/* OVERWATCH_TARGET_PREDICATE */"
+
 
 SECTION_TARGET_KEYS: dict[str, str] = {
     "Alert Center": "alert_center_evidence_target",
@@ -182,13 +184,17 @@ class TargetPredicatePlan:
     display_predicates: tuple[str, ...] = ()
     exact_columns_by_field: dict[str, tuple[str, ...]] | None = None
     display_columns_by_field: dict[str, tuple[str, ...]] | None = None
+    columns_used: tuple[str, ...] = ()
+    values_count: int = 0
+    fallback_used: bool = False
+    target_marker: str = TARGET_PREDICATE_MARKER
 
     @property
     def sql_filter(self) -> str:
         if self.exact_predicates:
-            return "AND (" + " OR ".join(self.exact_predicates) + ")"
+            return f"AND {self.target_marker} (" + " OR ".join(self.exact_predicates) + ")"
         if self.display_predicates:
-            return "AND (" + " OR ".join(self.display_predicates) + ")"
+            return f"AND {self.target_marker} (" + " OR ".join(self.display_predicates) + ")"
         return ""
 
 
@@ -316,10 +322,14 @@ def build_target_predicate_plan(
             exact_predicates.extend(_predicate(column, value, alias) for column in columns)
 
     if exact_predicates:
+        columns_used = tuple(sorted({column for columns in exact_columns_by_field.values() for column in columns}))
         return TargetPredicatePlan(
             exact_predicates=tuple(exact_predicates),
             exact_columns_by_field=exact_columns_by_field,
             display_columns_by_field={},
+            columns_used=columns_used,
+            values_count=sum(1 for field in exact_columns_by_field if str(target.get(field) or "").strip()),
+            fallback_used=False,
         )
 
     value = str(target.get("entity_name") or "").strip()
@@ -333,6 +343,9 @@ def build_target_predicate_plan(
         display_predicates=tuple(display_predicates),
         exact_columns_by_field={},
         display_columns_by_field=display_columns_by_field,
+        columns_used=tuple(sorted({column for columns in display_columns_by_field.values() for column in columns})),
+        values_count=sum(1 for field in display_columns_by_field if str(target.get(field) or "").strip()),
+        fallback_used=bool(display_predicates),
     )
 
 
@@ -416,6 +429,7 @@ __all__ = [
     "SECTION_TARGET_COLUMNS",
     "TARGETED_EVIDENCE_DEFAULT_LIMIT",
     "TARGETED_EVIDENCE_MAX_LIMIT",
+    "TARGET_PREDICATE_MARKER",
     "TargetPredicatePlan",
     "apply_target_dataframe_filter",
     "build_target_predicate_plan",

@@ -2371,11 +2371,13 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         self.assertIn(autorun_assignment, source)
         warehouse_block = source.split("if target_warehouse:", 1)[1].split("c1, c2, c3, c4", 1)[0]
         self.assertNotIn("qs_autorun", warehouse_block)
-        self.assertLess(source.index('explicit_search = st.button("Search recent mart detail"'), source.index("qh_cols = set(filter_existing_columns("))
+        self.assertNotIn("filter_existing_columns(", source)
+        self.assertNotIn("get_session()", source)
         self.assertIn('with st.expander("Advanced Account Usage fallback"', source)
         self.assertIn('"I understand this may scan Account Usage."', source)
         self.assertIn('"Search Account Usage fallback"', source)
         self.assertIn("ACCOUNT_USAGE_TARGETED_SCAN_ALLOWED", source)
+        self.assertIn('query_boundary="account_usage"', source)
 
     def test_targeted_evidence_loaders_push_filters_before_rows(self):
         alert_data = (APP_ROOT / "sections" / "alert_center_data.py").read_text(encoding="utf-8")

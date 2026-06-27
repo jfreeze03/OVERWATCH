@@ -31,8 +31,11 @@ from runtime_state import (
     set_state,
 )
 from performance import (
+    assert_direct_sql_allowed,
     assert_first_paint_session_open_allowed,
     current_first_paint_section,
+    is_first_paint_active,
+    record_role_capture_event,
     record_snowflake_session_open_event,
 )
 
@@ -195,7 +198,31 @@ def _format_connection_error(error: Exception) -> str:
     return text[:420] + ("..." if len(text) > 420 else "")
 
 
-def _make_session():
+class GuardedSnowflakeSession:
+    """Proxy Snowpark sessions so direct SQL cannot bypass first-paint gates."""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def __getattr__(self, name: str):
+        return getattr(self._inner, name)
+
+    def sql(self, query_text, *args, **kwargs):
+        assert_direct_sql_allowed(
+            query_text,
+            section=_active_section_label(),
+            reason="session.sql",
+        )
+        return self._inner.sql(query_text, *args, **kwargs)
+
+
+def _guard_session(sess):
+    if isinstance(sess, GuardedSnowflakeSession):
+        return sess
+    return GuardedSnowflakeSession(sess)
+
+
+def _make_session(*, defer_role_capture: bool = False):
     """Create a Snowflake session and apply OVERWATCH session parameters."""
     if _has_streamlit_snowflake_secrets():
         try:
@@ -228,12 +255,29 @@ def _make_session():
     set_state(ACTIVE_QUERY_TAG, _QUERY_TAG)
     set_state(ACTIVE_QUERY_TAG_SECTION, "")
 
-    _capture_current_role(sess)
-    return sess
+    guarded = _guard_session(sess)
+    if defer_role_capture:
+        record_role_capture_event(
+            section=_active_section_label(),
+            query_boundary="decision_packet",
+            deferred=True,
+            executed=False,
+            reason="first_paint_packet_session",
+        )
+    else:
+        _capture_current_role(guarded)
+    return guarded
 
 
 def _capture_current_role(sess) -> str:
     """Cache CURRENT_ROLE for role-based navigation without blocking startup."""
+    record_role_capture_event(
+        section=_active_section_label(),
+        query_boundary="metadata",
+        deferred=False,
+        executed=True,
+        reason="capture_current_role",
+    )
     try:
         rows = sess.sql("SELECT CURRENT_ROLE() AS R").collect()
         role = rows[0]["R"] if rows else ""
@@ -281,6 +325,7 @@ def get_session(
     query_boundary: str = "other",
     section: str = "",
     max_rows: int | None = None,
+    defer_role_capture: bool = False,
 ):
     """Return a live, validated Snowflake session."""
     now = datetime.now()
@@ -293,7 +338,7 @@ def get_session(
         set_state(SF_SESSION_CREATED_AT, now)
 
     session = get_state(SF_SESSION)
-    if needs_check and session is not None:
+    if needs_check and session is not None and not is_first_paint_active():
         if not _session_is_alive(session):
             pop_state(SF_SESSION, None)
             session = None
@@ -314,12 +359,13 @@ def get_session(
             reason=reason,
             query_boundary=query_boundary,
             allowed=True,
+            role_capture_deferred=defer_role_capture,
         )
-        sess = _make_session()
+        sess = _make_session(defer_role_capture=defer_role_capture)
         set_state(SF_SESSION, sess)
         set_state(SF_SESSION_CREATED_AT, now)
         session = sess
-    elif get_state(CURRENT_ROLE) is None:
+    elif get_state(CURRENT_ROLE) is None and not is_first_paint_active():
         _capture_current_role(session)
 
     _ensure_active_section_query_tag(session)

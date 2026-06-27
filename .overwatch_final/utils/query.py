@@ -49,8 +49,11 @@ from .idle import empty_paused_result, queries_paused
 from .sql_safe import sql_literal
 from performance import (
     assert_first_paint_query_allowed,
+    begin_direct_sql_allowance,
     current_first_paint_render_id,
+    end_direct_sql_allowance,
     increment_snowflake_execution_counter,
+    is_first_paint_active,
     record_query_lint_finding,
     record_ui_query_event,
 )
@@ -313,6 +316,59 @@ def _infer_query_boundary(query_text: str = "", ttl_key: str = "", tier: str = "
     if any(token in key for token in ("evidence", "proof", "detail", "history", "splash", "cockpit")):
         return "evidence"
     return "other"
+
+
+_CRITICAL_TTL_BOUNDARIES: tuple[tuple[str, str], ...] = (
+    (r"^section_command_packet_", "decision_packet"),
+    (r"^query_search_recent_detail_", "query_search"),
+    (r"^query_text_preview_", "query_preview"),
+    (r"^query_search_account_usage_", "account_usage"),
+    (r"setup_health|decision_setup_health", "setup_health"),
+    (r"cost_targeted_evidence|cost_bounded_evidence|cc_targeted_evidence", "evidence"),
+    (r"alert_.*(evidence|history|delivery|action)", "evidence"),
+    (r"dba_.*(evidence|proof|failed)|dba_control_room_.*", "evidence"),
+    (r"workload_.*(evidence|pipeline)|query_search_recent_detail", "query_search"),
+    (r"security_.*(evidence|proof)", "evidence"),
+)
+
+
+def _critical_boundary_for_ttl(ttl_key: str) -> str:
+    key = str(ttl_key or "")
+    for pattern, boundary in _CRITICAL_TTL_BOUNDARIES:
+        if re.search(pattern, key, flags=re.IGNORECASE):
+            return boundary
+    return ""
+
+
+def _enforce_explicit_critical_boundary(
+    *,
+    query_boundary: str | None,
+    resolved_boundary: str,
+    section: str,
+    ttl_key: str,
+    tier: str,
+) -> None:
+    required = _critical_boundary_for_ttl(ttl_key)
+    if not required:
+        return
+    if query_boundary and str(query_boundary) == required:
+        return
+    message = (
+        "Critical Decision Workspace query loaders must pass an explicit "
+        f"{required} boundary."
+    )
+    record_query_lint_finding(
+        fingerprint="",
+        code="MISSING_EXPLICIT_BOUNDARY",
+        severity="error",
+        message=message,
+        boundary=resolved_boundary,
+        section=section,
+        ttl_key=ttl_key,
+        tier=tier,
+    )
+    if _strict_query_contract_mode():
+        raise AssertionError(message)
 
 
 def _first_paint_sensitive_boundary(boundary: str) -> bool:
@@ -736,6 +792,13 @@ def _execute_snowflake_query(
     executable_query = _inject_read_limit(query_text, max_rows=max_rows)
     boundary = str(query_boundary or _infer_query_boundary(executable_query, ttl_key, tier))
     telemetry_section = _infer_telemetry_section(section, ttl_key)
+    _enforce_explicit_critical_boundary(
+        query_boundary=query_boundary,
+        resolved_boundary=boundary,
+        section=telemetry_section,
+        ttl_key=ttl_key,
+        tier=tier,
+    )
     _enforce_query_contract(
         executable_query,
         boundary=boundary,
@@ -756,6 +819,7 @@ def _execute_snowflake_query(
         query_boundary=boundary,
         section=telemetry_section,
         max_rows=max_rows,
+        defer_role_capture=bool(boundary == "decision_packet" and max_rows == 1 and is_first_paint_active()),
     )
     _apply_overwatch_query_tag(session, query_tag)
     _apply_statement_timeout(session, tier)
@@ -765,7 +829,16 @@ def _execute_snowflake_query(
         ttl_key=ttl_key,
         tier=tier,
     )
-    result = normalize_df(session.sql(executable_query).to_pandas())
+    token = begin_direct_sql_allowance(
+        query_boundary=boundary,
+        section=telemetry_section,
+        ttl_key=ttl_key,
+        max_rows=max_rows,
+    )
+    try:
+        result = normalize_df(session.sql(executable_query).to_pandas())
+    finally:
+        end_direct_sql_allowance(token)
     return _apply_result_guard(executable_query, result, ttl_key=ttl_key, section=section, tier=tier)
 
 
@@ -1091,6 +1164,13 @@ def _run_query_base(
     """
     boundary = str(query_boundary or _infer_query_boundary(query_text, ttl_key, tier))
     telemetry_section = _infer_telemetry_section(section, ttl_key)
+    _enforce_explicit_critical_boundary(
+        query_boundary=query_boundary,
+        resolved_boundary=boundary,
+        section=telemetry_section,
+        ttl_key=ttl_key,
+        tier=tier,
+    )
     meta: dict[str, object] = {
         "actual_query_executed": None,
         "cache_layer": "unknown",
@@ -1220,6 +1300,13 @@ def run_query_or_raise(
     executable_query = _inject_read_limit(query_text, max_rows=max_rows)
     boundary = str(query_boundary or _infer_query_boundary(query_text, ttl_key, tier))
     telemetry_section = _infer_telemetry_section(section, ttl_key)
+    _enforce_explicit_critical_boundary(
+        query_boundary=query_boundary,
+        resolved_boundary=boundary,
+        section=telemetry_section,
+        ttl_key=ttl_key,
+        tier=tier,
+    )
     _enforce_query_contract(
         executable_query,
         boundary=boundary,

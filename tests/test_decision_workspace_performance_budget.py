@@ -253,6 +253,83 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         self.assertEqual(len(violations), 1)
         self.assertNotIn("SELECT", json.dumps(events + violations))
 
+    def test_first_paint_direct_session_sql_is_guarded_and_sql_free(self):
+        import performance
+        from utils.session import GuardedSnowflakeSession
+
+        class FakeInnerSession:
+            def __init__(self):
+                self.calls: list[str] = []
+
+            def sql(self, statement):
+                self.calls.append(str(statement))
+                return object()
+
+        state: dict[str, object] = {}
+        inner = FakeInnerSession()
+        guarded = GuardedSnowflakeSession(inner)
+        with patch.dict(os.environ, {"OVERWATCH_TEST_MODE": "1"}, clear=False):
+            with patch.object(performance.st, "session_state", state):
+                render_id = performance.begin_first_paint("Executive Landing", "Overview")
+                with self.assertRaises(AssertionError):
+                    guarded.sql("SELECT 1")
+                with self.assertRaises(AssertionError):
+                    guarded.sql("SELECT CURRENT_ROLE()")
+                token = performance.begin_direct_sql_allowance(
+                    query_boundary="decision_packet",
+                    section="Executive Landing",
+                    ttl_key="section_command_packet_Executive Landing_ALFA_ALL_7",
+                    max_rows=1,
+                )
+                try:
+                    guarded.sql("SELECT BRIEF_ID FROM MART_SECTION_DECISION_CURRENT_FLAT LIMIT 1")
+                finally:
+                    performance.end_direct_sql_allowance(token)
+                performance.end_first_paint(render_id)
+                events = performance.get_direct_sql_events()
+                violations = performance.get_first_paint_budget_violations()
+
+        self.assertEqual(len(inner.calls), 1)
+        self.assertEqual(sum(1 for event in events if not event["allowed"]), 2)
+        self.assertEqual(len(violations), 2)
+        self.assertNotIn("SELECT", json.dumps(events + violations))
+        self.assertNotIn("CURRENT_ROLE", json.dumps(events + violations))
+
+    def test_first_paint_packet_session_defers_role_capture(self):
+        import performance
+        from utils import session as session_utils
+
+        class FakeRows:
+            def __init__(self, rows):
+                self._rows = rows
+
+            def collect(self):
+                return self._rows
+
+        class FakeInnerSession:
+            def __init__(self):
+                self.calls: list[str] = []
+
+            def sql(self, statement):
+                self.calls.append(str(statement))
+                return FakeRows([{"R": "SNOW_SYSADMINS"}])
+
+        state: dict[str, object] = {}
+        inner = FakeInnerSession()
+        with patch.object(performance.st, "session_state", state), patch.object(session_utils.st, "session_state", state):
+            with patch.object(session_utils, "_has_streamlit_snowflake_secrets", return_value=True):
+                with patch.object(session_utils, "_make_streamlit_connection_session", return_value=inner):
+                    guarded = session_utils._make_session(defer_role_capture=True)
+                    self.assertEqual(inner.calls, [])
+                    deferred_events = performance.get_role_capture_events()
+                    self.assertTrue(deferred_events[0]["deferred"])
+                    session_utils._capture_current_role(guarded)
+                    role_events = performance.get_role_capture_events()
+
+        self.assertEqual(inner.calls, ["SELECT CURRENT_ROLE() AS R"])
+        self.assertTrue(any(event["executed"] for event in role_events))
+        self.assertNotIn("CURRENT_ROLE", json.dumps(role_events))
+
     def test_snowflake_execution_counter_records_only_real_execution(self):
         import performance
 
@@ -299,6 +376,19 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         self.assertIn("end_first_paint(render_id)", helper)
         self.assertIn("render_section_entry_first_paint", helper)
 
+    def test_primary_section_entrypoints_do_not_call_session_sql_directly(self):
+        files = {
+            "Executive Landing": APP_ROOT / "sections" / "executive_landing_shell.py",
+            "DBA Control Room": APP_ROOT / "sections" / "dba_control_room" / "render.py",
+            "Alert Center": APP_ROOT / "sections" / "alert_center.py",
+            "Cost & Contract": APP_ROOT / "sections" / "cost_contract.py",
+            "Workload Operations": APP_ROOT / "sections" / "workload_operations.py",
+            "Security Monitoring": APP_ROOT / "sections" / "security_posture.py",
+        }
+        for section, path in files.items():
+            source = path.read_text(encoding="utf-8")
+            self.assertNotIn(".sql(", source, section)
+
     def test_target_sql_filter_uses_semantic_field_column_mapping(self):
         from sections.decision_workspace_target_filters import (
             apply_target_dataframe_filter,
@@ -317,6 +407,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             alert_target,
             available_columns=("EVENT_ID", "WAREHOUSE_NAME", "EVIDENCE_QUERY"),
         )
+        self.assertIn("OVERWATCH_TARGET_PREDICATE", alert_sql)
         self.assertIn("UPPER(EVENT_ID) = UPPER('EVT-1')", alert_sql)
         self.assertNotIn("UPPER(WAREHOUSE_NAME) = UPPER('EVT-1')", alert_sql)
         self.assertNotIn("EVIDENCE_QUERY", alert_sql)
@@ -326,6 +417,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             {"entity_type": "warehouse", "entity_id": "PROD_WH"},
             available_columns=("WAREHOUSE_NAME", "USER_NAME", "DEDUPE_KEY"),
         )
+        self.assertIn("OVERWATCH_TARGET_PREDICATE", cost_sql)
         self.assertIn("UPPER(WAREHOUSE_NAME) = UPPER('PROD_WH')", cost_sql)
         self.assertNotIn("UPPER(USER_NAME) = UPPER('PROD_WH')", cost_sql)
 
@@ -337,6 +429,8 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         self.assertIn("QUERY_ID", query_plan.exact_columns_by_field["entity_id"])
         self.assertIn("QUERY_HASH", query_plan.exact_columns_by_field["entity_id"])
         self.assertEqual(query_plan.exact_columns_by_field["dedupe_key"], ("DEDUPE_KEY",))
+        self.assertIn("QUERY_HASH", query_plan.columns_used)
+        self.assertFalse(query_plan.fallback_used)
 
         large = pd.DataFrame({"ENTITY_NAME": [f"entity-{idx}" for idx in range(600)]})
         filtered, label = apply_target_dataframe_filter(
@@ -363,16 +457,17 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
 
         fallback_pos = source.index("if account_usage_fallback:")
         self.assertNotIn("session = get_session()\n    company =", source)
-        metadata_pos = source.index("qh_cols = set(filter_existing_columns(")
         account_usage_sql_pos = source.index("FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY")
-        self.assertGreater(metadata_pos, fallback_pos)
         self.assertGreater(account_usage_sql_pos, fallback_pos)
+        self.assertNotIn("filter_existing_columns", source)
+        self.assertNotIn("confirmed_account_usage_query_search_fallback", source)
         self.assertIn('st.session_state["qs_autorun"] = target_kind in {"query_id", "query_signature"}', source)
         self.assertIn('tier="recent"', source)
         self.assertIn('tier="historical"', source)
         self.assertIn('query_boundary="query_search"', source)
         self.assertIn('query_boundary="query_preview"', source)
         self.assertIn('query_boundary="account_usage"', source)
+        self.assertIn("row_limit = 1", source)
         recent_sql = query_search._recent_query_detail_sql(
             search_cl="AND query_id = '01a'",
             date_predicate="AND start_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())",
@@ -612,7 +707,12 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         self.assertIn("DROP VIEW IF EXISTS MART_SECTION_DECISION_CURRENT_FLAT", setup)
         self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS MART_SECTION_DECISION_CURRENT_FLAT", setup)
         self.assertIn("MERGE INTO MART_SECTION_DECISION_CURRENT_FLAT", setup)
-        self.assertIn("INSERT INTO MART_SECTION_DECISION_CURRENT_FLAT", (ROOT / "snowflake" / "mart_setup" / "05_load_procedures.sql").read_text(encoding="utf-8"))
+        load_proc = (ROOT / "snowflake" / "mart_setup" / "05_load_procedures.sql").read_text(encoding="utf-8")
+        self.assertIn("CREATE OR REPLACE TEMPORARY TABLE TMP_SECTION_DECISION_PACKET_FLAT", load_proc)
+        self.assertIn("INSERT INTO MART_SECTION_DECISION_CURRENT_FLAT", load_proc)
+        flat_insert_block = load_proc.split("INSERT INTO MART_SECTION_DECISION_CURRENT_FLAT", 1)[1].split("UPDATE MART_SECTION_DECISION_CURRENT_FLAT", 1)[0]
+        self.assertIn("FROM TMP_SECTION_DECISION_PACKET_FLAT", flat_insert_block)
+        self.assertNotIn('DECISION_PACKET:"', flat_insert_block)
         self.assertIn("SECTION_DECISION_CURRENT_OPTIMIZED_LOOKUP_SCHEMA", validation)
         self.assertIn("SECTION_DECISION_CURRENT_FLAT_TABLE", validation)
         self.assertIn("SECTION_DECISION_CURRENT_FLAT_ACTIVE_MATCHES_CURRENT", validation)
@@ -655,10 +755,33 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                 boundary="evidence",
                 section="Workload Operations",
                 requires_target_predicate=True,
+                target_predicate_marker_required=True,
                 target_predicate_markers=("QUERY_ID",),
             ),
         )
         self.assertIn("TARGET_MARKER_MISSING", {finding.code for finding in marker_findings})
+        generic_column_findings = lint_query_text(
+            "SELECT query_id FROM FACT_QUERY_DETAIL_RECENT WHERE QUERY_ID IS NOT NULL LIMIT 200",
+            QueryContract(
+                boundary="evidence",
+                section="Workload Operations",
+                requires_target_predicate=True,
+                target_predicate_marker_required=True,
+                target_predicate_markers=("QUERY_ID",),
+            ),
+        )
+        self.assertIn("TARGET_MARKER_MISSING", {finding.code for finding in generic_column_findings})
+        marked_findings = lint_query_text(
+            "SELECT query_id FROM FACT_QUERY_DETAIL_RECENT WHERE /* OVERWATCH_TARGET_PREDICATE */ QUERY_ID = '01a' LIMIT 200",
+            QueryContract(
+                boundary="evidence",
+                section="Workload Operations",
+                requires_target_predicate=True,
+                target_predicate_marker_required=True,
+                target_predicate_markers=("QUERY_ID",),
+            ),
+        )
+        self.assertFalse([finding for finding in marked_findings if finding.severity == "error"])
         query_search_contract = resolve_query_contract(
             boundary="query_search",
             section="Workload Operations",
@@ -685,12 +808,68 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                         max_rows=10,
                         query_boundary="other",
                     )
+                with self.assertRaises(AssertionError):
+                    query.run_query(
+                        "SELECT BRIEF_ID FROM MART_SECTION_DECISION_CURRENT_FLAT LIMIT 1",
+                        ttl_key="section_command_packet_Executive Landing_ALFA_ALL_7",
+                        tier="command_summary",
+                        section="Executive Landing",
+                        max_rows=1,
+                    )
+                with self.assertRaises(AssertionError):
+                    query.run_query(
+                        "SELECT QUERY_ID FROM FACT_QUERY_DETAIL_RECENT WHERE /* OVERWATCH_TARGET_PREDICATE */ QUERY_ID = '01a' LIMIT 1",
+                        ttl_key="query_search_recent_detail_ALFA_Exact query ID_01a__ALL_7_1",
+                        tier="recent",
+                        section="Query Search & History",
+                        max_rows=1,
+                    )
                 findings = performance.get_query_lint_findings()
 
         codes = {finding["code"] for finding in findings}
         self.assertIn("ACCOUNT_USAGE_FORBIDDEN", codes)
         self.assertIn("STAR_PROJECTION", codes)
+        self.assertIn("MISSING_EXPLICIT_BOUNDARY", codes)
         self.assertNotIn("SELECT", json.dumps(findings))
+
+    def test_contextual_query_budget_contexts_count_actual_executions(self):
+        import performance
+
+        state: dict[str, object] = {}
+        with patch.object(performance.st, "session_state", state):
+            performance.clear_ui_query_events()
+            route_token = performance.begin_query_budget_context(
+                "route_action",
+                section="Alert Center",
+                workflow="Active Alerts",
+            )
+            performance.increment_snowflake_execution_counter(
+                "evidence",
+                section="Alert Center",
+                ttl_key="alert_center_evidence",
+                tier="recent",
+            )
+            route_summary = performance.end_query_budget_context(route_token)
+            self.assertFalse(route_summary["passed_budget"])
+            self.assertEqual(route_summary["budget"], 0)
+            self.assertEqual(route_summary["actual_snowflake_executions"], 1)
+
+            evidence_token = performance.begin_query_budget_context(
+                "evidence_click",
+                section="Alert Center",
+                workflow="Active Alerts",
+            )
+            performance.increment_snowflake_execution_counter(
+                "evidence",
+                section="Alert Center",
+                ttl_key="alert_center_evidence",
+                tier="recent",
+            )
+            evidence_summary = performance.end_query_budget_context(evidence_token)
+            self.assertTrue(evidence_summary["passed_budget"])
+            self.assertEqual(evidence_summary["budget"], 1)
+            self.assertEqual(evidence_summary["boundaries"], {"evidence": 1})
+            self.assertEqual(len(performance.get_query_budget_context_events()), 2)
 
     def test_button_contracts_do_not_grant_account_usage_to_generic_admin(self):
         contracts = list(iter_button_action_contracts())
@@ -1521,6 +1700,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         dict[str, str],
         list[dict[str, object]],
         list[dict[str, object]],
+        dict[str, list[dict[str, object]]],
     ]:
         import performance
         from sections import section_command_brief
@@ -1530,6 +1710,14 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         snapshots: dict[str, str] = {}
         button_manifest: list[dict[str, object]] = []
         button_results: list[dict[str, object]] = []
+        perf_events: dict[str, list[dict[str, object]]] = {
+            "first_paint_budget_violations": [],
+            "session_open_events": [],
+            "direct_sql_events": [],
+            "role_capture_events": [],
+            "query_lint_findings": [],
+            "query_budget_contexts": [],
+        }
         for section_name in PRIMARY_SECTIONS:
             state = self._base_state(section_name)
             html_fragments: list[str] = []
@@ -1759,6 +1947,12 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                 events = performance.get_ui_query_events()
                 executions = performance.get_snowflake_execution_counter()
                 all_telemetry.extend(events)
+                perf_events["first_paint_budget_violations"].extend(performance.get_first_paint_budget_violations())
+                perf_events["session_open_events"].extend(performance.get_snowflake_session_open_events())
+                perf_events["direct_sql_events"].extend(performance.get_direct_sql_events())
+                perf_events["role_capture_events"].extend(performance.get_role_capture_events())
+                perf_events["query_lint_findings"].extend(performance.get_query_lint_findings())
+                perf_events["query_budget_contexts"].extend(performance.get_query_budget_context_events())
                 cold_execs = [
                     event for event in performance.get_snowflake_execution_counter(cold_render_id)
                     if event.get("query_boundary") == "decision_packet"
@@ -1803,7 +1997,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                     and event.get("cache_layer") == "session"
                 ])
                 self.assertTrue(any("ow-decision-workspace-marker" in fragment for fragment in html_fragments))
-        return rows, all_telemetry, snapshots, button_manifest, button_results
+        return rows, all_telemetry, snapshots, button_manifest, button_results, perf_events
 
     def test_performance_artifacts_are_emitted_from_render_harness(self):
         artifact_dir = ROOT / "artifacts"
@@ -1815,13 +2009,16 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         query_perf_path = artifact_dir / "query_performance_summary.json"
         query_plan_path = artifact_dir / "query_plan_findings.json"
         query_elapsed_path = artifact_dir / "query_elapsed_by_section.json"
+        query_history_skipped_path = artifact_dir / "query_history_by_tag_SKIPPED.txt"
+        query_bytes_path = artifact_dir / "query_bytes_by_boundary.json"
+        query_slow_path = artifact_dir / "query_slow_findings.json"
         button_manifest_path = artifact_dir / "button_route_manifest.json"
         button_results_path = artifact_dir / "button_route_results.json"
         snapshot_dir = artifact_dir / "decision_workspace_html_snapshots"
         screenshot_dir = artifact_dir / "browser_screenshots"
         generated_artifact_dir = artifact_dir / "generated_button_artifacts"
         brand_dir = artifact_dir / "brand"
-        rows, telemetry, snapshots, button_manifest, button_results = self._run_render_harness()
+        rows, telemetry, snapshots, button_manifest, button_results, perf_events = self._run_render_harness()
         from query_contracts import iter_query_contracts, lint_query_text, query_fingerprint, resolve_query_contract
         from sections import section_command_brief
 
@@ -1851,9 +2048,36 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             max_rows = event.get("max_rows")
             if max_rows is not None:
                 max_rows_by_boundary[boundary] = max(max_rows_by_boundary.get(boundary, 0), int(max_rows or 0))
+        session_events = perf_events["session_open_events"]
+        direct_sql_events = perf_events["direct_sql_events"]
+        role_capture_events = perf_events["role_capture_events"]
+        lint_events = perf_events["query_lint_findings"]
+        violation_events = perf_events["first_paint_budget_violations"]
+        sessions_by_boundary: dict[str, int] = {}
+        for event in session_events:
+            boundary = str(event.get("query_boundary") or "other")
+            sessions_by_boundary[boundary] = sessions_by_boundary.get(boundary, 0) + 1
+        lint_error_count = sum(1 for event in lint_events if str(event.get("severity") or "").lower() == "error")
+        lint_warning_count = sum(1 for event in lint_events if str(event.get("severity") or "").lower() == "warning")
+        first_paint_disallowed_sessions = sum(
+            1 for event in session_events
+            if bool(event.get("first_paint_active")) and not bool(event.get("allowed"))
+        )
+        role_capture_first_paint = sum(
+            1 for event in role_capture_events
+            if bool(event.get("first_paint_active")) and bool(event.get("executed"))
+        )
+        direct_sql_violation_count = sum(1 for event in direct_sql_events if not bool(event.get("allowed")))
         query_perf_summary = {
             "first_paint_allowed_queries": sum(int(row["cold_packet_queries"]) for row in rows),
-            "first_paint_blocked_queries": 0,
+            "first_paint_blocked_queries": len(violation_events),
+            "first_paint_session_open_events": sum(1 for event in session_events if bool(event.get("first_paint_active"))),
+            "first_paint_disallowed_session_open_events": first_paint_disallowed_sessions,
+            "role_capture_queries_first_paint": role_capture_first_paint,
+            "query_lint_error_count": lint_error_count,
+            "query_lint_warning_count": lint_warning_count,
+            "direct_sql_violation_count": direct_sql_violation_count,
+            "query_events_by_boundary": query_events_by_boundary,
             "route_action_queries": sum(int(row["route_action_queries_before_evidence"]) for row in rows),
             "evidence_click_queries": sum(int(row["evidence_queries_after_click"]) for row in rows),
             "account_usage_fallback_queries": query_events_by_boundary.get("account_usage", 0),
@@ -1865,15 +2089,22 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             "rows_by_boundary": rows_by_boundary,
             "elapsed_ms_by_boundary": elapsed_by_boundary,
             "max_rows_by_boundary": max_rows_by_boundary,
+            "sessions_by_boundary": sessions_by_boundary,
+            "query_budget_contexts": perf_events.get("query_budget_contexts", []),
             "packet_lookup_fingerprint": query_fingerprint(packet_sql),
         }
+        self.assertEqual(query_perf_summary["first_paint_blocked_queries"], 0)
+        self.assertEqual(query_perf_summary["first_paint_disallowed_session_open_events"], 0)
+        self.assertEqual(query_perf_summary["role_capture_queries_first_paint"], 0)
+        self.assertEqual(query_perf_summary["query_lint_error_count"], 0)
+        self.assertEqual(query_perf_summary["direct_sql_violation_count"], 0)
         summary_path.write_text(json.dumps(rows, indent=2), encoding="utf-8")
         telemetry_path.write_text(json.dumps(telemetry, indent=2), encoding="utf-8")
         query_registry_path.write_text(
             json.dumps([contract.to_artifact() for contract in iter_query_contracts()], indent=2),
             encoding="utf-8",
         )
-        query_lint_path.write_text(json.dumps(lint_findings, indent=2), encoding="utf-8")
+        query_lint_path.write_text(json.dumps(lint_findings + lint_events, indent=2), encoding="utf-8")
         query_perf_path.write_text(json.dumps(query_perf_summary, indent=2), encoding="utf-8")
         query_plan_path.write_text(
             json.dumps(
@@ -1890,6 +2121,37 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             encoding="utf-8",
         )
         query_elapsed_path.write_text(json.dumps(elapsed_by_boundary, indent=2), encoding="utf-8")
+        query_history_skipped_path.write_text(
+            "Live Snowflake query-history proof skipped in deterministic fixture harness; "
+            "query telemetry, execution counters, and static lint artifacts are generated.",
+            encoding="utf-8",
+        )
+        query_bytes_path.write_text(
+            json.dumps(
+                {
+                    boundary: {
+                        "bytes_scanned": None,
+                        "rows_produced": rows_by_boundary.get(boundary, 0),
+                        "source": "deterministic_fixture",
+                        "raw_sql_included": False,
+                    }
+                    for boundary in sorted(set(query_events_by_boundary) | set(rows_by_boundary))
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        query_slow_path.write_text(
+            json.dumps(
+                {
+                    "slow_findings": [],
+                    "source": "deterministic_fixture",
+                    "raw_sql_included": False,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
         button_manifest_path.write_text(json.dumps(button_manifest, indent=2), encoding="utf-8")
         button_results_path.write_text(json.dumps(button_results, indent=2), encoding="utf-8")
         snapshot_dir.mkdir(exist_ok=True)
@@ -2019,7 +2281,19 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         self.assertIn("packet_lookup_fingerprint", json.loads(query_perf_path.read_text(encoding="utf-8")))
         self.assertTrue(json.loads(query_plan_path.read_text(encoding="utf-8")))
         self.assertTrue(json.loads(query_elapsed_path.read_text(encoding="utf-8")))
-        for path in (query_registry_path, query_lint_path, query_perf_path, query_plan_path, query_elapsed_path):
+        self.assertTrue(query_history_skipped_path.exists())
+        self.assertTrue(json.loads(query_bytes_path.read_text(encoding="utf-8")))
+        self.assertEqual(json.loads(query_slow_path.read_text(encoding="utf-8"))["slow_findings"], [])
+        for path in (
+            query_registry_path,
+            query_lint_path,
+            query_perf_path,
+            query_plan_path,
+            query_elapsed_path,
+            query_history_skipped_path,
+            query_bytes_path,
+            query_slow_path,
+        ):
             text = path.read_text(encoding="utf-8")
             self.assertNotIn("SELECT ", text)
             self.assertNotIn("WITH ", text)

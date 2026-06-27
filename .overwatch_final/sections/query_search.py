@@ -6,11 +6,9 @@ import streamlit as st
 from utils import (
     day_window_selectbox,
     download_csv,
-    filter_existing_columns,
     format_snowflake_error,
     get_active_company,
     get_global_filter_clause,
-    get_session,
     render_query_drilldown,
     run_query,
     sql_literal,
@@ -248,7 +246,7 @@ def render():
                 "when the query ID or leading SQL token is known."
             )
         if resolved_mode == "Exact query ID":
-            row_limit = min(int(row_limit), 10)
+            row_limit = 1
         elif resolved_mode == "Query signature":
             row_limit = min(int(row_limit), 200)
 
@@ -265,44 +263,12 @@ def render():
 
         try:
             if account_usage_fallback:
-                session = get_session(
-                    reason="confirmed_account_usage_query_search_fallback",
-                    query_boundary="account_usage",
-                    section="Query Search & History",
-                    max_rows=min(int(row_limit), 200),
-                )
-                qh_cols = set(filter_existing_columns(
-                    session,
-                    "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
-                    [
-                        "WAREHOUSE_SIZE",
-                        "BYTES_SCANNED",
-                        "ROWS_PRODUCED",
-                        "CREDITS_USED_CLOUD_SERVICES",
-                    ],
-                ))
-                warehouse_size_expr = (
-                    "warehouse_size AS warehouse_size"
-                    if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR AS warehouse_size"
-                )
-                gb_scanned_expr = (
-                    "bytes_scanned/POWER(1024,3) AS gb_scanned"
-                    if "BYTES_SCANNED" in qh_cols else "0::FLOAT AS gb_scanned"
-                )
-                rows_produced_expr = (
-                    "rows_produced AS rows_produced"
-                    if "ROWS_PRODUCED" in qh_cols else "0::NUMBER AS rows_produced"
-                )
-                cloud_credits_expr = (
-                    "credits_used_cloud_services AS cloud_credits"
-                    if "CREDITS_USED_CLOUD_SERVICES" in qh_cols else "0::FLOAT AS cloud_credits"
-                )
                 sql = f"""
-                    SELECT query_id, user_name, warehouse_name, {warehouse_size_expr}, execution_status,
+                    SELECT query_id, user_name, warehouse_name, warehouse_size AS warehouse_size, execution_status,
                            start_time, total_elapsed_time/1000 AS elapsed_sec,
-                           {gb_scanned_expr},
-                           {rows_produced_expr},
-                           {cloud_credits_expr},
+                           bytes_scanned/POWER(1024,3) AS gb_scanned,
+                           rows_produced AS rows_produced,
+                           credits_used_cloud_services AS cloud_credits,
                            SUBSTR(query_text,1,500) AS query_text
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                     WHERE 1=1

@@ -20,6 +20,7 @@ class QueryContract:
     allow_select_star: bool = False
     allow_contains_search: bool = False
     requires_target_predicate: bool = False
+    target_predicate_marker_required: bool = False
     target_predicate_markers: tuple[str, ...] = ()
     first_paint_allowed: bool = False
     expected_table_family: str = ""
@@ -132,6 +133,7 @@ def lint_query_text(sql: str, contract: QueryContract) -> list[QueryLintFinding]
         limit_pos = _limit_position(masked)
         where_pos = _where_position(masked)
         predicate_region = masked[where_pos:limit_pos] if limit_pos >= 0 and where_pos >= 0 else masked[where_pos:]
+        marker_pos = predicate_region.upper().find("OVERWATCH_TARGET_PREDICATE")
         markers = contract.target_predicate_markers or (
             "QUERY_ID", "QUERY_HASH", "QUERY_SIGNATURE",
             "ALERT_ID", "ALERT_KEY", "EVENT_ID",
@@ -143,6 +145,8 @@ def lint_query_text(sql: str, contract: QueryContract) -> list[QueryLintFinding]
             add("MISSING_TARGET_PREDICATE", "error", "Targeted evidence query has no predicate before LIMIT.")
         elif limit_pos >= 0 and where_pos > limit_pos:
             add("PREDICATE_AFTER_LIMIT", "error", "Target predicate must appear before LIMIT.")
+        elif contract.target_predicate_marker_required and marker_pos < 0:
+            add("TARGET_MARKER_MISSING", "error", "Targeted evidence query lacks the explicit target predicate marker.")
         elif not any(marker.upper() in predicate_region.upper() for marker in markers):
             add("TARGET_MARKER_MISSING", "error", "Targeted evidence query lacks an allowlisted target marker before LIMIT.")
     if contract.expected_table_family and contract.expected_table_family.upper() not in upper:
@@ -188,6 +192,7 @@ for _ttl_pattern, _section, _markers in (
             tier="",
             max_rows=500,
             requires_target_predicate=True,
+            target_predicate_marker_required=True,
             target_predicate_markers=_markers,
         )
     )

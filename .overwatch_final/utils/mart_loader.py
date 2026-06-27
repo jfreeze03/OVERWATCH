@@ -44,7 +44,20 @@ def load_latest_control_room_mart(company: str = "ALFA", max_age_hours: int = 6)
         company_filter = f"AND COMPANY = {sql_literal(company, 100)}"
     sql = f"""
         WITH latest AS (
-            SELECT *,
+            SELECT
+                   SNAPSHOT_TS,
+                   COMPANY,
+                   HEALTH_SCORE,
+                   FAILED_QUERIES_24H,
+                   FAILED_TASKS_24H,
+                   QUEUED_MS_24H,
+                   CREDITS_24H,
+                   COST_24H_USD,
+                   CORTEX_COST_7D_USD,
+                   SECURITY_EVENTS_24H,
+                   OBJECT_CHANGES_24H,
+                   TOP_RISK,
+                   LOAD_TS,
                    ROW_NUMBER() OVER (
                        PARTITION BY COMPANY
                        ORDER BY SNAPSHOT_TS DESC

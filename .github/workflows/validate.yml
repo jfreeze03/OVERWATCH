@@ -94,6 +94,10 @@ jobs:
             artifacts/query_registry.json
             artifacts/query_lint_findings.json
             artifacts/query_elapsed_by_section.json
+            artifacts/query_history_by_tag.json
+            artifacts/query_history_by_tag_SKIPPED.txt
+            artifacts/query_bytes_by_boundary.json
+            artifacts/query_slow_findings.json
             artifacts/brand/**
             artifacts/button_route_manifest.json
             artifacts/button_route_results.json

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from hashlib import sha1
 from uuid import uuid4
 from typing import Any
 import os
@@ -27,6 +28,11 @@ _SNOWFLAKE_EXECUTION_EVENTS_KEY = "_overwatch_snowflake_execution_events"
 _FIRST_PAINT_BUDGET_VIOLATIONS_KEY = "_overwatch_first_paint_budget_violations"
 _SNOWFLAKE_SESSION_OPEN_EVENTS_KEY = "_overwatch_snowflake_session_open_events"
 _QUERY_LINT_FINDINGS_KEY = "_overwatch_query_lint_findings"
+_DIRECT_SQL_EVENTS_KEY = "_overwatch_direct_sql_events"
+_DIRECT_SQL_ALLOWANCE_STACK_KEY = "_overwatch_direct_sql_allowance_stack"
+_ROLE_CAPTURE_EVENTS_KEY = "_overwatch_role_capture_events"
+_QUERY_BUDGET_CONTEXT_STACK_KEY = "_overwatch_query_budget_context_stack"
+_QUERY_BUDGET_CONTEXT_EVENTS_KEY = "_overwatch_query_budget_context_events"
 _VALID_CACHE_LAYERS = {"none", "session", "streamlit_cache", "paused", "budget_blocked", "unknown"}
 _VALID_QUERY_BOUNDARIES = {
     "decision_packet",
@@ -48,6 +54,18 @@ _FIRST_PAINT_BOUNDARIES = {
     "account_usage",
     "setup_health",
     "admin",
+}
+_QUERY_BUDGET_LIMITS = {
+    "first_paint": DECISION_FIRST_PAINT_QUERY_BUDGET,
+    "warm_first_paint": DECISION_WARM_QUERY_BUDGET,
+    "route_action": SECTION_ROUTE_QUERY_BUDGET,
+    "evidence_click": EVIDENCE_CLICK_QUERY_BUDGET,
+    "query_search_exact": 1,
+    "query_search_signature": 1,
+    "query_preview": 1,
+    "account_usage_fallback": ACCOUNT_USAGE_FALLBACK_QUERY_BUDGET,
+    "admin_setup": ADMIN_CLICK_QUERY_BUDGET,
+    "advanced_diagnostics": ADMIN_CLICK_QUERY_BUDGET,
 }
 
 
@@ -110,6 +128,115 @@ def is_first_paint_active() -> bool:
 def current_first_paint_section() -> str:
     """Return the section currently protected by the first-paint query gate."""
     return str(_current_first_paint_context().get("section") or "")
+
+
+def _query_budget_limit(name: str, budget: int | None = None) -> int:
+    if budget is not None:
+        return max(int(budget), 0)
+    return int(_QUERY_BUDGET_LIMITS.get(str(name or "").strip().lower(), ADMIN_CLICK_QUERY_BUDGET))
+
+
+def begin_query_budget_context(
+    name: str,
+    *,
+    section: str = "",
+    workflow: str = "",
+    budget: int | None = None,
+) -> str:
+    """Open a scoped query budget for route, evidence, search, or admin actions."""
+    token = uuid4().hex[:16]
+    _session_list(_QUERY_BUDGET_CONTEXT_STACK_KEY).append({
+        "token": token,
+        "name": str(name or "other"),
+        "section": str(section or ""),
+        "workflow": str(workflow or ""),
+        "budget": _query_budget_limit(name, budget),
+        "actual_snowflake_executions": 0,
+        "query_events": 0,
+        "boundaries": {},
+        "started_at": datetime.now().isoformat(timespec="milliseconds"),
+    })
+    return token
+
+
+def _active_query_budget_context() -> dict[str, Any]:
+    stack = _session_list(_QUERY_BUDGET_CONTEXT_STACK_KEY)
+    if not stack:
+        return {}
+    top = stack[-1]
+    return top if isinstance(top, dict) else {}
+
+
+def _record_query_budget_context_event(*, query_boundary: str, actual_execution: bool = False) -> None:
+    context = _active_query_budget_context()
+    if not context:
+        return
+    context["query_events"] = int(context.get("query_events") or 0) + 1
+    if actual_execution:
+        context["actual_snowflake_executions"] = int(context.get("actual_snowflake_executions") or 0) + 1
+    boundaries = context.setdefault("boundaries", {})
+    if isinstance(boundaries, dict):
+        boundary = str(query_boundary or "other")
+        boundaries[boundary] = int(boundaries.get(boundary, 0) or 0) + 1
+
+
+def end_query_budget_context(token: str) -> dict[str, Any]:
+    """Close a query budget and record a pass/fail summary."""
+    summary: dict[str, Any] = {
+        "token": str(token or ""),
+        "name": "",
+        "section": "",
+        "workflow": "",
+        "budget": 0,
+        "actual_snowflake_executions": 0,
+        "query_events": 0,
+        "passed_budget": True,
+        "boundaries": {},
+        "finished_at": datetime.now().isoformat(timespec="milliseconds"),
+    }
+    stack = _session_list(_QUERY_BUDGET_CONTEXT_STACK_KEY)
+    selected: dict[str, Any] | None = None
+    for idx in range(len(stack) - 1, -1, -1):
+        item = stack[idx]
+        if isinstance(item, dict) and item.get("token") == token:
+            selected = dict(item)
+            del stack[idx:]
+            break
+    if selected:
+        actual = int(selected.get("actual_snowflake_executions") or 0)
+        budget = int(selected.get("budget") or 0)
+        summary.update({
+            "name": str(selected.get("name") or ""),
+            "section": str(selected.get("section") or ""),
+            "workflow": str(selected.get("workflow") or ""),
+            "budget": budget,
+            "actual_snowflake_executions": actual,
+            "query_events": int(selected.get("query_events") or 0),
+            "passed_budget": actual <= budget,
+            "boundaries": dict(selected.get("boundaries") or {}),
+            "started_at": selected.get("started_at"),
+        })
+    try:
+        events = _session_list(_QUERY_BUDGET_CONTEXT_EVENTS_KEY)
+        events.append(summary)
+        if len(events) > 250:
+            del events[:-250]
+    except Exception:
+        pass
+    return summary
+
+
+def get_query_budget_context_events() -> list[dict[str, Any]]:
+    events = _session_list(_QUERY_BUDGET_CONTEXT_EVENTS_KEY)
+    return [dict(event) for event in events if isinstance(event, dict)]
+
+
+def clear_query_budget_context_events() -> None:
+    try:
+        st.session_state[_QUERY_BUDGET_CONTEXT_STACK_KEY] = []
+        st.session_state[_QUERY_BUDGET_CONTEXT_EVENTS_KEY] = []
+    except Exception:
+        pass
 
 
 def first_paint_gate_mode() -> str:
@@ -214,6 +341,7 @@ def record_snowflake_session_open_event(
     reason: str = "",
     query_boundary: str = "other",
     allowed: bool = True,
+    role_capture_deferred: bool = False,
 ) -> dict[str, Any]:
     """Record SQL-free Snowflake session creation telemetry."""
     context = _current_first_paint_context()
@@ -228,6 +356,7 @@ def record_snowflake_session_open_event(
         "reason": str(reason or "session_open")[:200],
         "query_boundary": boundary,
         "allowed": bool(allowed),
+        "role_capture_deferred": bool(role_capture_deferred),
         "first_paint_active": bool(context.get("render_id")),
         "gate_mode": first_paint_gate_mode(),
         "recorded_at": datetime.now().isoformat(timespec="milliseconds"),
@@ -288,6 +417,194 @@ def assert_first_paint_session_open_allowed(
     )
     if _strict_first_paint_mode():
         raise AssertionError(violation_reason)
+
+
+def _sql_fingerprint(sql: object) -> str:
+    text = re.sub(r"'(?:''|[^'])*'", "''", str(sql or ""), flags=re.DOTALL)
+    normalized = re.sub(r"\s+", " ", text.strip().upper())
+    return sha1(normalized.encode("utf-8", errors="ignore")).hexdigest()[:16]
+
+
+def begin_direct_sql_allowance(
+    *,
+    query_boundary: str = "other",
+    section: str = "",
+    ttl_key: str = "",
+    max_rows: int | None = None,
+) -> str:
+    """Allow the central query runner to cross the guarded session.sql boundary."""
+    token = uuid4().hex[:16]
+    context = _current_first_paint_context()
+    _session_list(_DIRECT_SQL_ALLOWANCE_STACK_KEY).append({
+        "token": token,
+        "render_id": str(context.get("render_id") or ""),
+        "query_boundary": str(query_boundary or "other"),
+        "section": str(section or context.get("section") or ""),
+        "ttl_key": str(ttl_key or "")[:160],
+        "max_rows": None if max_rows is None else int(max_rows),
+    })
+    return token
+
+
+def end_direct_sql_allowance(token: str) -> None:
+    if not token:
+        return
+    stack = _session_list(_DIRECT_SQL_ALLOWANCE_STACK_KEY)
+    for idx in range(len(stack) - 1, -1, -1):
+        item = stack[idx]
+        if isinstance(item, dict) and item.get("token") == token:
+            del stack[idx:]
+            return
+
+
+def _current_direct_sql_allowance() -> dict[str, Any]:
+    stack = _session_list(_DIRECT_SQL_ALLOWANCE_STACK_KEY)
+    if not stack:
+        return {}
+    top = stack[-1]
+    return dict(top) if isinstance(top, dict) else {}
+
+
+def record_direct_sql_event(
+    *,
+    query_text: object = "",
+    section: str = "",
+    workflow: str = "",
+    query_boundary: str = "other",
+    allowed: bool = True,
+    reason: str = "",
+    role_capture: bool = False,
+) -> dict[str, Any]:
+    """Record a SQL-free direct session.sql call event."""
+    context = _current_first_paint_context()
+    boundary = str(query_boundary or "other")
+    if boundary not in _VALID_QUERY_BOUNDARIES:
+        boundary = "other"
+    event = {
+        "event_id": uuid4().hex[:16],
+        "render_id": str(context.get("render_id") or ""),
+        "section": str(section or context.get("section") or ""),
+        "workflow": str(workflow or context.get("workflow") or ""),
+        "query_boundary": boundary,
+        "allowed": bool(allowed),
+        "reason": _safe_message(reason) or str(reason or "")[:240],
+        "fingerprint": _sql_fingerprint(query_text),
+        "first_paint_active": bool(context.get("render_id")),
+        "role_capture": bool(role_capture),
+        "recorded_at": datetime.now().isoformat(timespec="milliseconds"),
+    }
+    try:
+        events = _session_list(_DIRECT_SQL_EVENTS_KEY)
+        events.append(event)
+        if len(events) > 250:
+            del events[:-250]
+    except Exception:
+        pass
+    return event
+
+
+def get_direct_sql_events() -> list[dict[str, Any]]:
+    events = _session_list(_DIRECT_SQL_EVENTS_KEY)
+    return [dict(event) for event in events if isinstance(event, dict)]
+
+
+def clear_direct_sql_events() -> None:
+    try:
+        st.session_state[_DIRECT_SQL_EVENTS_KEY] = []
+        st.session_state[_DIRECT_SQL_ALLOWANCE_STACK_KEY] = []
+    except Exception:
+        pass
+
+
+def assert_direct_sql_allowed(
+    query_text: object = "",
+    *,
+    section: str = "",
+    workflow: str = "",
+    reason: str = "session.sql",
+    role_capture: bool = False,
+) -> None:
+    """Block direct session.sql during first paint unless the query runner allowed it."""
+    allowance = _current_direct_sql_allowance()
+    boundary = str(allowance.get("query_boundary") or "other")
+    max_rows = allowance.get("max_rows")
+    allowed = True
+    violation_reason = ""
+    if is_first_paint_active():
+        allowed = (
+            boundary == "decision_packet"
+            and max_rows == 1
+            and bool(allowance.get("render_id"))
+        )
+        if not allowed:
+            violation_reason = "Direct Snowflake SQL is not allowed during first paint outside the packet query."
+    record_direct_sql_event(
+        query_text=query_text,
+        section=section or str(allowance.get("section") or ""),
+        workflow=workflow,
+        query_boundary=boundary,
+        allowed=allowed,
+        reason=reason if allowed else violation_reason,
+        role_capture=role_capture,
+    )
+    if not allowed:
+        record_first_paint_budget_violation(
+            query_boundary=boundary,
+            section=section or current_first_paint_section(),
+            ttl_key="direct_session_sql",
+            tier="direct",
+            max_rows=max_rows if isinstance(max_rows, int) else None,
+            reason=violation_reason,
+        )
+        if _strict_first_paint_mode():
+            raise AssertionError(violation_reason)
+
+
+def record_role_capture_event(
+    *,
+    section: str = "",
+    query_boundary: str = "other",
+    deferred: bool = False,
+    executed: bool = False,
+    reason: str = "",
+) -> dict[str, Any]:
+    """Record role-capture behavior without storing SQL."""
+    context = _current_first_paint_context()
+    boundary = str(query_boundary or "other")
+    if boundary not in _VALID_QUERY_BOUNDARIES:
+        boundary = "other"
+    event = {
+        "event_id": uuid4().hex[:16],
+        "render_id": str(context.get("render_id") or ""),
+        "section": str(section or context.get("section") or ""),
+        "workflow": str(context.get("workflow") or ""),
+        "query_boundary": boundary,
+        "deferred": bool(deferred),
+        "executed": bool(executed),
+        "first_paint_active": bool(context.get("render_id")),
+        "reason": str(reason or "")[:240],
+        "recorded_at": datetime.now().isoformat(timespec="milliseconds"),
+    }
+    try:
+        events = _session_list(_ROLE_CAPTURE_EVENTS_KEY)
+        events.append(event)
+        if len(events) > 100:
+            del events[:-100]
+    except Exception:
+        pass
+    return event
+
+
+def get_role_capture_events() -> list[dict[str, Any]]:
+    events = _session_list(_ROLE_CAPTURE_EVENTS_KEY)
+    return [dict(event) for event in events if isinstance(event, dict)]
+
+
+def clear_role_capture_events() -> None:
+    try:
+        st.session_state[_ROLE_CAPTURE_EVENTS_KEY] = []
+    except Exception:
+        pass
 
 
 def record_query_lint_finding(
@@ -403,6 +720,10 @@ def record_ui_query_event(
             del events[:-250]
     except Exception:
         pass
+    _record_query_budget_context_event(
+        query_boundary=query_boundary,
+        actual_execution=bool(actual_query_executed),
+    )
     return event
 
 
@@ -444,6 +765,14 @@ def summarize_first_paint_query_budget(section: str | None = None) -> dict[str, 
             event for event in get_snowflake_session_open_events()
             if str(event.get("render_id") or "") in render_ids
         ]),
+        "direct_sql_violation_events": len([
+            event for event in get_direct_sql_events()
+            if str(event.get("render_id") or "") in render_ids and not bool(event.get("allowed"))
+        ]),
+        "role_capture_queries_first_paint": len([
+            event for event in get_role_capture_events()
+            if str(event.get("render_id") or "") in render_ids and bool(event.get("executed"))
+        ]),
         "budget_blocked_events": len([event for event in events if event.get("cache_layer") == "budget_blocked"]),
         "paused_events": len([event for event in events if event.get("cache_layer") == "paused"]),
         "render_ids": sorted(render_ids),
@@ -482,6 +811,7 @@ def increment_snowflake_execution_counter(
             del events[:-250]
     except Exception:
         pass
+    _record_query_budget_context_event(query_boundary=boundary, actual_execution=True)
     return event
 
 
@@ -518,6 +848,11 @@ def clear_ui_query_events() -> None:
         st.session_state[_FIRST_PAINT_BUDGET_VIOLATIONS_KEY] = []
         st.session_state[_SNOWFLAKE_SESSION_OPEN_EVENTS_KEY] = []
         st.session_state[_QUERY_LINT_FINDINGS_KEY] = []
+        st.session_state[_DIRECT_SQL_EVENTS_KEY] = []
+        st.session_state[_DIRECT_SQL_ALLOWANCE_STACK_KEY] = []
+        st.session_state[_ROLE_CAPTURE_EVENTS_KEY] = []
+        st.session_state[_QUERY_BUDGET_CONTEXT_STACK_KEY] = []
+        st.session_state[_QUERY_BUDGET_CONTEXT_EVENTS_KEY] = []
     except Exception:
         pass
 

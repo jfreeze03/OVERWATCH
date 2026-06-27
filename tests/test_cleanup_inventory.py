@@ -50,12 +50,19 @@ class CleanupInventoryTests(unittest.TestCase):
             "artifacts/cleanup/cleanup_summary.json",
             "artifacts/cleanup/deletion_candidates.json",
             "artifacts/cleanup/deleted_routes.json",
+            "artifacts/cleanup/retained_routes.json",
             "artifacts/cleanup/route_state_inventory.json",
             "artifacts/cleanup/object_inventory.json",
+            "artifacts/cleanup/sql_object_inventory.json",
             "artifacts/cleanup/drop_plan.json",
+            "artifacts/cleanup/deleted_sql_objects.json",
+            "artifacts/cleanup/sql_drop_plan.sql",
+            "artifacts/cleanup/query_path_inventory.json",
             "artifacts/cleanup/forbidden_token_scan.json",
             "artifacts/cleanup/test_inventory.json",
             "artifacts/cleanup/test_reduction_summary.json",
+            "artifacts/cleanup/deleted_tests.json",
+            "artifacts/cleanup/deleted_artifacts.json",
             "artifacts/cleanup/contract_registry.json",
             "artifacts/cleanup/artifact_manifest.json",
         }
@@ -67,7 +74,10 @@ class CleanupInventoryTests(unittest.TestCase):
         summary = json.loads((ROOT / "artifacts/cleanup/cleanup_summary.json").read_text(encoding="utf-8"))
         route_inventory = json.loads((ROOT / "artifacts/cleanup/route_state_inventory.json").read_text(encoding="utf-8"))
         deleted_routes = json.loads((ROOT / "artifacts/cleanup/deleted_routes.json").read_text(encoding="utf-8"))
+        retained_routes = json.loads((ROOT / "artifacts/cleanup/retained_routes.json").read_text(encoding="utf-8"))
         object_inventory = json.loads((ROOT / "artifacts/cleanup/object_inventory.json").read_text(encoding="utf-8"))
+        deleted_sql = json.loads((ROOT / "artifacts/cleanup/deleted_sql_objects.json").read_text(encoding="utf-8"))
+        query_paths = json.loads((ROOT / "artifacts/cleanup/query_path_inventory.json").read_text(encoding="utf-8"))
         module_inventory = json.loads((ROOT / "artifacts/cleanup/module_inventory.json").read_text(encoding="utf-8"))
         retained_modules = json.loads((ROOT / "artifacts/cleanup/retained_runtime_modules.json").read_text(encoding="utf-8"))
         deleted_modules = json.loads((ROOT / "artifacts/cleanup/deleted_modules.json").read_text(encoding="utf-8"))
@@ -82,8 +92,10 @@ class CleanupInventoryTests(unittest.TestCase):
         self.assertEqual(summary["deletion_candidate_count"], 0)
         self.assertEqual(summary["retained_generic_reason_count"], 0)
         self.assertEqual(summary["unknown_sql_object_count"], 0)
+        self.assertEqual(summary["stale_generated_artifact_count"], 0)
         self.assertEqual(route_inventory["dead_routes"], [])
         self.assertEqual(deleted_routes["dead_routes"], [])
+        self.assertEqual(retained_routes["dead_route_count"], 0)
         self.assertFalse(inventory["production_forbidden_token_findings"])
         self.assertEqual(deletion_candidates["candidate_count"], 0)
         self.assertEqual(forbidden_scan["blocked_count"], 0)
@@ -93,8 +105,12 @@ class CleanupInventoryTests(unittest.TestCase):
         self.assertIn("artifacts/cleanup/deletion_candidates.json", manifest["files"])
         self.assertIn("artifacts/cleanup/module_inventory.json", manifest["files"])
         self.assertIn("artifacts/cleanup/deleted_routes.json", manifest["files"])
+        self.assertIn("artifacts/cleanup/sql_drop_plan.sql", manifest["files"])
         self.assertFalse(retained_modules["broad_prefix_rules_allowed"])
         self.assertIn("deleted_modules", deleted_modules)
+        self.assertEqual(deleted_sql["active_drop_collision_count"], 0)
+        self.assertFalse(query_paths["account_usage_normal_evidence_allowed"])
+        self.assertTrue((ROOT / "artifacts/cleanup/sql_drop_plan.sql").read_text(encoding="utf-8").startswith("-- OVERWATCH"))
         cleanup_source = (ROOT / "tools" / "contracts" / "cleanup_inventory.py").read_text(encoding="utf-8")
         self.assertNotIn("ACTIVE_ADMIN_MODULE_PREFIXES", cleanup_source)
         self.assertNotIn("ACTIVE_CONTRACT_MODULE_PREFIXES", cleanup_source)

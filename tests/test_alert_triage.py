@@ -110,14 +110,15 @@ class AlertTriageTests(unittest.TestCase):
                 "DELIVERY_STATUS": "EMAIL_READY",
             }])
 
-        with patch("utils.alert_triage.filter_existing_columns", return_value=columns), patch(
+        with patch("utils.alert_triage.filter_existing_columns", return_value=columns) as filter_mock, patch(
             "utils.alert_triage.run_query",
             side_effect=fake_run_query,
         ):
             result = alerts.load_alert_history(object(), company="ALFA", environment="PROD", days=999, limit=9999)
 
         self.assertEqual(result.iloc[0]["ALERT_ID"], 9)
-        self.assertIn("FROM DBA_MAINT_DB.OVERWATCH.OVERWATCH_ALERT_TRIAGE_V", str(captured["sql"]))
+        self.assertIn("FROM DBA_MAINT_DB.OVERWATCH.MART_ALERT_EVIDENCE_RECENT", str(captured["sql"]))
+        self.assertEqual(filter_mock.call_args[0][1], "DBA_MAINT_DB.OVERWATCH.MART_ALERT_EVIDENCE_RECENT")
         self.assertIn("DATEADD('day', -365", str(captured["sql"]))
         self.assertIn("LIMIT 5000", str(captured["sql"]))
         self.assertEqual(captured["kwargs"]["tier"], "recent")

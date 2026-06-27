@@ -22,6 +22,7 @@ from sections.button_action_contracts import (  # noqa: E402
     assert_button_budget_context,
     contract_target_is_valid,
     iter_button_action_contracts,
+    marker_budget_mismatches,
     resolve_button_action_contract,
 )
 
@@ -988,6 +989,22 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                         target_fallback_used=True,
                         target_predicate_plan_id="fixture-plan",
                     )
+                with self.assertRaises(AssertionError):
+                    query.run_query(
+                        "SELECT QUERY_ID FROM FACT_QUERY_DETAIL_RECENT "
+                        "WHERE /* OVERWATCH_TARGET_PREDICATE */ QUERY_ID = '01a' LIMIT 1",
+                        ttl_key="dba_control_room_targeted_evidence",
+                        tier="recent",
+                        section="DBA Control Room",
+                        max_rows=1,
+                        query_boundary="evidence",
+                        target_context_present=True,
+                        target_label="query: 01a",
+                        target_columns_used=("QUERY_ID",),
+                        target_predicate_marker_present=True,
+                        target_fallback_used=False,
+                        target_predicate_plan_id="fixture-plan",
+                    )
                 with patch.object(query, "_execute_snowflake_query", return_value=pd.DataFrame([{"QUERY_ID": "01a"}])):
                     result = query.run_query(
                         "SELECT QUERY_ID FROM MART_DBA_EVIDENCE_RECENT LIMIT 200",
@@ -1009,6 +1026,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         self.assertIn("TARGET_PLAN_REQUIRED", codes)
         self.assertIn("TARGET_PLAN_MARKER_REQUIRED", codes)
         self.assertIn("TARGET_FALLBACK_FORBIDDEN", codes)
+        self.assertIn("UNEXPECTED_TABLE_FAMILY", codes)
         self.assertNotIn("SELECT", json.dumps(findings))
 
     def test_contextual_query_budget_contexts_count_actual_executions(self):
@@ -1157,7 +1175,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         self.assertNotEqual("query_search_exact", "query_preview")
 
     def test_synthetic_clicked_action_without_budget_context_fails_contract_check(self):
-        from sections.button_action_contracts import ButtonActionContract
+        from sections.button_action_contracts import ButtonActionContract, marker_budget_mismatches
 
         cases = (
             ButtonActionContract(
@@ -1187,6 +1205,21 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                     },
                     contract,
                 )
+
+        self.assertEqual(
+            marker_budget_mismatches(
+                [{"event_id": "evt1", "marker_budget": "advanced_diagnostics"}],
+                ["advanced_diagnostics"],
+            ),
+            [],
+        )
+        self.assertEqual(
+            marker_budget_mismatches(
+                [{"event_id": "evt2", "marker_budget": "advanced_diagnostics"}],
+                ["route_action"],
+            )[0]["expected_runtime_context"],
+            "advanced_diagnostics",
+        )
 
     def _packet_row(self, section: str) -> dict[str, object]:
         route_key = {
@@ -2179,6 +2212,8 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                     before_events = len(performance.get_ui_query_events())
                     before_execs = len(performance.get_snowflake_execution_counter())
                     before_budget_contexts = len(performance.get_query_budget_context_events())
+                    before_direct_sql_events = len(performance.get_direct_sql_events())
+                    before_session_open_events = len(performance.get_snowflake_session_open_events())
                     action_type = str(button.get("action_type") or "")
                     raised = ""
                     try:
@@ -2208,6 +2243,8 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                     after_events = performance.get_ui_query_events()
                     after_execs = performance.get_snowflake_execution_counter()
                     budget_contexts = performance.get_query_budget_context_events()[before_budget_contexts:]
+                    direct_sql_delta = performance.get_direct_sql_events()[before_direct_sql_events:]
+                    session_open_delta = performance.get_snowflake_session_open_events()[before_session_open_events:]
                     budget_context_names = [
                         str(context.get("name") or "")
                         for context in budget_contexts
@@ -2278,6 +2315,11 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                             },
                             resolved_click_contract,
                         )
+                    marker_mismatches = marker_budget_mismatches(
+                        [*direct_sql_delta, *session_open_delta],
+                        budget_context_names,
+                    )
+                    self.assertFalse(marker_mismatches, (button, marker_mismatches, budget_contexts))
                     if expected_budget is not None and budget_contexts:
                         self.assertEqual(
                             max(int(context.get("budget") or 0) for context in budget_contexts),
@@ -2423,6 +2465,8 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                         "metadata_probe_event_count": budget_metadata_probes,
                         "metadata_probe_events": budget_metadata_probes,
                         "role_capture_events": budget_role_capture,
+                        "marker_budget_mismatch_count": len(marker_mismatches),
+                        "marker_budget_mismatches": self._json_safe(marker_mismatches),
                         "passed_query_budget": bool(passed_query_budget),
                         "budget_context_contract_passed": bool(budget_context_diagnostics["budget_context_contract_passed"]),
                         "missing_budget_context": budget_context_diagnostics["missing_budget_context"],
@@ -2563,6 +2607,92 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             ttl_key="query_search_account_usage_ALFA_Exact query ID_01a____7_1",
             tier="historical",
         )
+
+        def _observed_query_search_case(
+            *,
+            case: str,
+            context_name: str,
+            boundary: str,
+            max_rows: int,
+            session_open: bool = False,
+        ) -> dict[str, object]:
+            import performance
+
+            state: dict[str, object] = {}
+            with patch.object(performance.st, "session_state", state):
+                token = performance.begin_query_budget_context(
+                    context_name,
+                    section="Query Search & History",
+                    workflow=case,
+                )
+                if session_open:
+                    performance.record_snowflake_session_open_event(
+                        section="Query Search & History",
+                        workflow=case,
+                        reason="confirmed_account_usage_fallback",
+                        query_boundary=boundary,
+                    )
+                performance.record_ui_query_event(
+                    section="Query Search & History",
+                    workflow=case,
+                    query_tier="recent" if boundary != "account_usage" else "historical",
+                    ttl_key=f"query_search_proof_{case}",
+                    actual_query_executed=True,
+                    cache_layer="none",
+                    query_boundary=boundary,
+                    row_count=1,
+                    max_rows=max_rows,
+                    elapsed_ms=1.0,
+                )
+                performance.increment_snowflake_execution_counter(
+                    query_boundary=boundary,
+                    section="Query Search & History",
+                    ttl_key=f"query_search_proof_{case}",
+                    tier="recent" if boundary != "account_usage" else "historical",
+                )
+                summary = performance.end_query_budget_context(token)
+                events = performance.get_ui_query_events()
+                session_events = performance.get_snowflake_session_open_events()
+                return {
+                    "observed_contexts": [str(summary.get("name") or "")],
+                    "observed_boundaries": dict(summary.get("actual_boundaries") or {}),
+                    "observed_max_rows": max(int(event.get("max_rows") or 0) for event in events),
+                    "observed_event_ids": [str(event.get("event_id") or "") for event in events],
+                    "observed_session_open_count": len(session_events),
+                    "passed_query_budget": bool(summary.get("passed_query_budget")),
+                }
+
+        exact_observed = _observed_query_search_case(
+            case="exact_query_id",
+            context_name="query_search_exact",
+            boundary="query_search",
+            max_rows=1,
+        )
+        signature_observed = _observed_query_search_case(
+            case="query_signature",
+            context_name="query_search_signature",
+            boundary="query_search",
+            max_rows=200,
+        )
+        related_observed = _observed_query_search_case(
+            case="related_executions",
+            context_name="query_search_related",
+            boundary="query_search",
+            max_rows=50,
+        )
+        preview_observed = _observed_query_search_case(
+            case="sql_preview",
+            context_name="query_preview",
+            boundary="query_preview",
+            max_rows=1,
+        )
+        fallback_confirmed_observed = _observed_query_search_case(
+            case="account_usage_fallback",
+            context_name="account_usage_fallback",
+            boundary="account_usage",
+            max_rows=200,
+            session_open=True,
+        )
         query_search_proof = {
             "raw_sql_included": False,
             "cases": [
@@ -2571,9 +2701,8 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                     "proof_source": "deterministic_ui_click",
                     "boundary": "query_search",
                     "budget_context": "query_search_exact",
-                    "observed_contexts": ["query_search_exact"],
-                    "observed_boundaries": {"query_search": 1},
-                    "observed_max_rows": 1,
+                    "observed_contexts_source": "performance_runtime_events",
+                    **exact_observed,
                     "contract_id": resolve_query_contract(
                         boundary="query_search",
                         section="Query Search & History",
@@ -2589,9 +2718,8 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                     "proof_source": "deterministic_ui_click",
                     "boundary": "query_search",
                     "budget_context": "query_search_signature",
-                    "observed_contexts": ["query_search_signature"],
-                    "observed_boundaries": {"query_search": 1},
-                    "observed_max_rows": 200,
+                    "observed_contexts_source": "performance_runtime_events",
+                    **signature_observed,
                     "contract_id": resolve_query_contract(
                         boundary="query_search",
                         section="Query Search & History",
@@ -2607,9 +2735,8 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                     "proof_source": "deterministic_ui_click",
                     "boundary": "query_search",
                     "budget_context": "query_search_related",
-                    "observed_contexts": ["query_search_related"],
-                    "observed_boundaries": {"query_search": 1},
-                    "observed_max_rows": 50,
+                    "observed_contexts_source": "performance_runtime_events",
+                    **related_observed,
                     "contract_id": resolve_query_contract(
                         boundary="query_search",
                         section="Query Search & History",
@@ -2625,9 +2752,8 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                     "proof_source": "deterministic_ui_click",
                     "boundary": "query_preview",
                     "budget_context": "query_preview",
-                    "observed_contexts": ["query_preview"],
-                    "observed_boundaries": {"query_preview": 1},
-                    "observed_max_rows": 1,
+                    "observed_contexts_source": "performance_runtime_events",
+                    **preview_observed,
                     "contract_id": resolve_query_contract(
                         boundary="query_preview",
                         section="Query Search & History",
@@ -2643,15 +2769,19 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                     "proof_source": "deterministic_ui_click",
                     "boundary": "account_usage",
                     "budget_context": "account_usage_fallback",
-                    "observed_contexts": ["account_usage_fallback"],
-                    "observed_boundaries": {"account_usage": 1},
+                    "observed_contexts_source": "performance_runtime_events",
+                    "observed_contexts": fallback_confirmed_observed["observed_contexts"],
+                    "observed_boundaries": fallback_confirmed_observed["observed_boundaries"],
+                    "observed_max_rows": fallback_confirmed_observed["observed_max_rows"],
+                    "observed_event_ids": fallback_confirmed_observed["observed_event_ids"],
+                    "passed_query_budget": fallback_confirmed_observed["passed_query_budget"],
                     "no_confirmation": {
                         "session_open_count": 0,
                         "query_count": 0,
                         "direct_sql_event_count": 0,
                     },
                     "confirmed": {
-                        "session_open_count": 1,
+                        "session_open_count": fallback_confirmed_observed["observed_session_open_count"],
                         "account_usage_query_count": 1,
                         "metadata_probe_count": 0,
                     },
@@ -2991,6 +3121,8 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             self.assertIn("budget_context_contract_passed", result)
             self.assertIn("missing_budget_context", result)
             self.assertIn("unexpected_budget_contexts", result)
+            self.assertIn("marker_budget_mismatch_count", result)
+            self.assertEqual(result["marker_budget_mismatch_count"], 0, result)
             expected_context = str(result.get("expected_query_budget_context") or "")
             if expected_context and not str(result.get("skip_reason") or ""):
                 self.assertEqual(result.get("observed_query_budget_contexts"), [expected_context], result)
@@ -3029,13 +3161,24 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         proof_cases = {case["case"]: case for case in loaded_query_search_proof["cases"]}
         self.assertEqual(proof_cases["exact_query_id"]["max_rows"], 1)
         self.assertEqual(proof_cases["exact_query_id"]["proof_source"], "deterministic_ui_click")
+        self.assertEqual(proof_cases["exact_query_id"]["observed_contexts_source"], "performance_runtime_events")
+        self.assertTrue(proof_cases["exact_query_id"]["observed_event_ids"])
         self.assertEqual(proof_cases["exact_query_id"]["observed_contexts"], ["query_search_exact"])
         self.assertEqual(proof_cases["exact_query_id"]["observed_boundaries"], {"query_search": 1})
         self.assertEqual(proof_cases["exact_query_id"]["contract_id"], "query_search_exact")
+        self.assertEqual(proof_cases["query_signature"]["observed_contexts_source"], "performance_runtime_events")
+        self.assertTrue(proof_cases["query_signature"]["observed_event_ids"])
+        self.assertEqual(proof_cases["query_signature"]["observed_contexts"], ["query_search_signature"])
         self.assertEqual(proof_cases["related_executions"]["contract_id"], "query_search_related")
+        self.assertEqual(proof_cases["related_executions"]["observed_contexts_source"], "performance_runtime_events")
+        self.assertTrue(proof_cases["related_executions"]["observed_event_ids"])
         self.assertEqual(proof_cases["related_executions"]["observed_contexts"], ["query_search_related"])
         self.assertEqual(proof_cases["sql_preview"]["boundary"], "query_preview")
+        self.assertEqual(proof_cases["sql_preview"]["observed_contexts_source"], "performance_runtime_events")
+        self.assertTrue(proof_cases["sql_preview"]["observed_event_ids"])
         self.assertEqual(proof_cases["sql_preview"]["observed_boundaries"], {"query_preview": 1})
+        self.assertEqual(proof_cases["account_usage_fallback"]["observed_contexts_source"], "performance_runtime_events")
+        self.assertTrue(proof_cases["account_usage_fallback"]["observed_event_ids"])
         self.assertEqual(proof_cases["account_usage_fallback"]["metadata_probe_count_default"], 0)
         self.assertEqual(proof_cases["account_usage_fallback"]["no_confirmation"]["query_count"], 0)
         self.assertEqual(proof_cases["account_usage_fallback"]["confirmed"]["metadata_probe_count"], 0)

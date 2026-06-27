@@ -67,6 +67,48 @@ def _marker_before_limit(upper: str) -> bool:
     return limit_pos >= 0
 
 
+_SEVERITY_ORDER = {"error": 0, "warning": 1, "info": 2}
+
+
+def _risk_score(code: str, severity: str, mode: str) -> int:
+    score = {"error": 90, "warning": 55, "info": 20}.get(str(severity or "").lower(), 40)
+    if str(mode or "") in {"app_first_paint", "refresh_fast", "account_usage_fallback"}:
+        score += 8
+    if any(token in str(code or "") for token in ("ACCOUNT_USAGE", "SELECT_STAR", "UNBOUNDED", "FULL_WINDOW")):
+        score += 5
+    return min(score, 100)
+
+
+def _expected_pruning_key(code: str, mode: str) -> str:
+    code = str(code or "")
+    if "ACCOUNT_USAGE" in code:
+        return "time predicate plus LIMIT"
+    if str(mode or "") == "app_first_paint":
+        return "IS_ACTIVE, SECTION_NAME_NORM, COMPANY_NORM, ENVIRONMENT_NORM, WINDOW_DAYS_NORM"
+    if str(mode or "") == "evidence":
+        return "OVERWATCH_TARGET_PREDICATE and target lookup columns"
+    if str(mode or "") == "query_search":
+        return "QUERY_ID, QUERY_HASH, QUERY_SIGNATURE, WAREHOUSE_NAME"
+    if str(mode or "") == "refresh_fast":
+        return "1/7 day compact source facts"
+    return "bounded scope predicate"
+
+
+def _recommendation_for(code: str, mode: str) -> str:
+    code = str(code or "")
+    if "ACCOUNT_USAGE" in code:
+        return "Move to confirmed fallback/admin path and include a recent time predicate plus LIMIT."
+    if "SELECT_STAR" in code:
+        return "Project only app-facing columns required by the view or proof artifact."
+    if "TARGET_MARKER" in code:
+        return "Build predicates through the target predicate planner before LIMIT."
+    if "QUERY_TEXT" in code:
+        return "Load query text only through the explicit query_preview action."
+    if str(mode or "") == "refresh_fast":
+        return "Use compact source snapshots and first-viewport staging instead of full refresh branches."
+    return "Add bounded predicates and route heavy work behind an explicit action."
+
+
 def lint_sql_text(
     sql: str,
     *,
@@ -84,11 +126,17 @@ def lint_sql_text(
     findings: list[dict[str, object]] = []
 
     def add(code: str, severity: str, message: str) -> None:
+        normalized_severity = str(severity or "").lower()
         findings.append({
             "path": path,
             "mode": mode,
             "code": code,
-            "severity": severity,
+            "severity": normalized_severity,
+            "risk_score": _risk_score(code, normalized_severity, mode),
+            "surface": mode,
+            "estimated_bytes_risk": "high" if normalized_severity == "error" else "medium",
+            "expected_pruning_key": _expected_pruning_key(code, mode),
+            "recommended_replacement": _recommendation_for(code, mode),
             "message": message,
             "raw_sql_included": False,
         })
@@ -204,7 +252,14 @@ def lint_sql_text(
         has_scope = bool(re.search(r"\b(SECTION_NAME_NORM|COMPANY_NORM|ENVIRONMENT_NORM|WINDOW_DAYS_NORM|QUERY_ID|ALERT_ID|EVENT_ID|GRANT_ID)\b", window))
         if not has_limit and not has_scope:
             add("ORDER_BY_BEFORE_PRUNING", "warning", "ORDER BY should follow scope pruning or LIMIT on app-facing paths.")
-    return findings
+    return sorted(
+        findings,
+        key=lambda finding: (
+            _SEVERITY_ORDER.get(str(finding.get("severity") or "").lower(), 9),
+            -int(str(finding.get("risk_score") or 0)),
+            str(finding.get("code") or ""),
+        ),
+    )
 
 
 def lint_sql_files(paths: Iterable[Path], *, root: Path, mode_by_path: dict[str, str] | None = None) -> list[dict[str, object]]:
@@ -226,7 +281,14 @@ def lint_sql_files(paths: Iterable[Path], *, root: Path, mode_by_path: dict[str,
                 mode=mode_by_path.get(normalized, mode_by_path.get(path.name, "auto")),
             )
         )
-    return findings
+    return sorted(
+        findings,
+        key=lambda finding: (
+            _SEVERITY_ORDER.get(str(finding.get("severity") or "").lower(), 9),
+            -int(str(finding.get("risk_score") or 0)),
+            str(finding.get("code") or ""),
+        ),
+    )
 
 
 __all__ = ["lint_sql_files", "lint_sql_text"]

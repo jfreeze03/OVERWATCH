@@ -452,6 +452,9 @@ def record_snowflake_session_open_event(
     query_boundary: str = "other",
     allowed: bool = True,
     role_capture_deferred: bool = False,
+    marker_boundary: str = "",
+    marker_budget: str = "",
+    marker_owner: str = "",
 ) -> dict[str, Any]:
     """Record SQL-free Snowflake session creation telemetry."""
     context = _current_first_paint_context()
@@ -467,6 +470,9 @@ def record_snowflake_session_open_event(
         "query_boundary": boundary,
         "allowed": bool(allowed),
         "role_capture_deferred": bool(role_capture_deferred),
+        "marker_boundary": str(marker_boundary or ""),
+        "marker_budget": str(marker_budget or ""),
+        "marker_owner": str(marker_owner or ""),
         "first_paint_active": bool(context.get("render_id")),
         "gate_mode": first_paint_gate_mode(),
         "recorded_at": datetime.now().isoformat(timespec="milliseconds"),
@@ -588,6 +594,9 @@ def record_direct_sql_event(
     allowed: bool = True,
     reason: str = "",
     role_capture: bool = False,
+    marker_boundary: str = "",
+    marker_budget: str = "",
+    marker_owner: str = "",
 ) -> dict[str, Any]:
     """Record a SQL-free direct session.sql call event."""
     context = _current_first_paint_context()
@@ -621,6 +630,9 @@ def record_direct_sql_event(
         "allowed": bool(allowed),
         "reason": _safe_message(reason) or str(reason or "")[:240],
         "direct_sql_kind": direct_sql_kind,
+        "marker_boundary": str(marker_boundary or ""),
+        "marker_budget": str(marker_budget or ""),
+        "marker_owner": str(marker_owner or ""),
         "fingerprint": _sql_fingerprint(query_text),
         "first_paint_active": bool(context.get("render_id")),
         "role_capture": bool(role_capture),

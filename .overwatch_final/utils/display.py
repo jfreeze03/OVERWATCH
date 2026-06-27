@@ -308,6 +308,7 @@ def _query_history_detail_exprs(prefix: str = "") -> dict:
         return cached
 
     cols = set(filter_existing_columns(
+        # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
         get_session(),
         "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
         [
@@ -416,6 +417,7 @@ def render_query_drilldown(
         st.code(str(row.get("QUERY_TEXT","")), language="text")
 
         from .session import get_session
+        # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
         _session = get_session()
 
         if st.button("Load operator stats", key=f"{key}_opstats"):

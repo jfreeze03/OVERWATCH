@@ -186,6 +186,7 @@ def render_change_brief(company: str, environment: str, days: int) -> None:
             st.session_state.pop("change_drift_error", None)
         except Exception as exc:
             try:
+                # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
                 session = get_session()
                 summary_sql, exceptions_sql = _build_change_drift_sql(session, days, company)
                 source_label = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
@@ -436,6 +437,7 @@ def render_change_brief(company: str, environment: str, days: int) -> None:
             with save_col:
                 if st.button("Save Change Telemetry Snapshot", key="change_drift_evidence_snapshot", width="stretch"):
                     _save_change_control_evidence_snapshot(
+                        # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
                         get_session(),
                         readiness,
                         company=company,
@@ -563,6 +565,7 @@ def render_change_brief(company: str, environment: str, days: int) -> None:
                 elif closure is not None and closure_current:
                     st.info("No object-change action-queue rows found for the selected scope.")
             if st.button("Save Change Exceptions to Action Queue", key="change_drift_queue"):
+                # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
                 _queue_change_exceptions(get_session(), exceptions)
         elif exceptions is not None:
             st.success("No change/drift exceptions crossed the default thresholds.")

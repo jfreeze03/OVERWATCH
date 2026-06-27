@@ -23,6 +23,14 @@ ACTION_TYPES = {
     "fallback",
 }
 
+MARKER_BUDGET_RUNTIME_CONTEXTS: dict[str, str] = {
+    "admin_setup": "admin_setup",
+    "advanced_diagnostics": "advanced_diagnostics",
+    "account_usage_fallback": "account_usage_fallback",
+    "metadata_probe": "metadata_probe",
+    "query_preview": "query_preview",
+}
+
 
 @dataclass(frozen=True)
 class ButtonActionContract:
@@ -483,6 +491,25 @@ def assert_button_budget_context(result: dict[str, Any], contract: ButtonActionC
     return diagnostics
 
 
+def marker_budget_mismatches(events: Iterable[dict[str, Any]], observed_contexts: Iterable[str]) -> list[dict[str, str]]:
+    """Return marker-budget/runtime-context mismatches without exposing SQL text."""
+    observed = {str(context or "") for context in observed_contexts if str(context or "")}
+    mismatches: list[dict[str, str]] = []
+    for event in events:
+        marker_budget = str(event.get("marker_budget") or "")
+        if not marker_budget:
+            continue
+        expected_context = MARKER_BUDGET_RUNTIME_CONTEXTS.get(marker_budget, marker_budget)
+        if expected_context not in observed:
+            mismatches.append({
+                "event_id": str(event.get("event_id") or ""),
+                "marker_budget": marker_budget,
+                "expected_runtime_context": expected_context,
+                "observed_runtime_contexts": ",".join(sorted(observed)),
+            })
+    return mismatches
+
+
 def contract_to_manifest_row(contract: ButtonActionContract) -> dict[str, Any]:
     return contract.to_artifact()
 
@@ -499,11 +526,13 @@ def contract_target_is_valid(contract: ButtonActionContract) -> bool:
 __all__ = [
     "ACTION_TYPES",
     "ButtonActionContract",
+    "MARKER_BUDGET_RUNTIME_CONTEXTS",
     "assert_button_budget_context",
     "assert_button_contract_resolved",
     "contract_to_manifest_row",
     "contract_target_is_valid",
     "expected_route_state_for_contract",
     "iter_button_action_contracts",
+    "marker_budget_mismatches",
     "resolve_button_action_contract",
 ]

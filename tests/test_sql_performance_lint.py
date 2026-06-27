@@ -184,6 +184,11 @@ class SqlPerformanceLintTests(unittest.TestCase):
 
         findings = lint_sql_text("SELECT * FROM APP_FACING_TABLE LIMIT 10", path="synthetic.sql")
         self.assertIn("APP_FACING_SELECT_STAR", {finding["code"] for finding in findings})
+        finding = findings[0]
+        self.assertGreater(int(finding["risk_score"]), 0)
+        self.assertTrue(finding["expected_pruning_key"])
+        self.assertTrue(finding["recommended_replacement"])
+        self.assertFalse(finding["raw_sql_included"])
 
     def test_repo_sql_performance_lint_artifact_has_no_errors(self):
         from sql_performance_lint import lint_sql_files
@@ -195,6 +200,16 @@ class SqlPerformanceLintTests(unittest.TestCase):
         findings = lint_sql_files(paths, root=ROOT)
         errors = [finding for finding in findings if finding["severity"] == "error"]
         self.assertFalse(errors)
+        severity_order = {"error": 0, "warning": 1, "info": 2}
+        sorted_findings = sorted(
+            findings,
+            key=lambda finding: (
+                severity_order.get(str(finding.get("severity") or "").lower(), 9),
+                -int(finding.get("risk_score") or 0),
+                str(finding.get("code") or ""),
+            ),
+        )
+        self.assertEqual(findings, sorted_findings)
 
 
 if __name__ == "__main__":

@@ -117,7 +117,7 @@ def _session_open_calls(text: str) -> list[dict[str, object]]:
         if token.type == tokenize.NAME and name == "action_session_factory":
             if following and following.string == "(":
                 calls.append({"line": int(token.start[0]), "call_type": "action_session_factory"})
-    return sorted(calls, key=lambda item: (int(item["line"]), str(item["call_type"])))
+    return sorted(calls, key=lambda item: (int(str(item["line"])), str(item["call_type"])))
 
 
 def _is_primary_surface(normalized: str) -> bool:
@@ -137,7 +137,7 @@ def _allowance_for_path(relative_path: str, lines: list[str], line_no: int) -> t
         return False, "invalid local SESSION_OPEN_ADMIN_OK marker", "primary" if _is_primary_surface(normalized) else "helper", marker
     if _is_primary_surface(normalized):
         return False, "unmarked primary-surface session open", "primary", {}
-    return True, "non_primary_legacy_session_surface", "legacy", {}
+    return False, "unmarked helper session open", "helper", {}
 
 
 def scan_session_open_usage(paths: Iterable[Path], *, root: Path) -> list[dict[str, object]]:
@@ -157,7 +157,7 @@ def scan_session_open_usage(paths: Iterable[Path], *, root: Path) -> list[dict[s
             lines = path.read_text(errors="ignore").splitlines()
         calls = _session_open_calls("\n".join(lines))
         for call in calls:
-            line_no = int(call["line"])
+            line_no = int(str(call["line"]))
             allowed, reason, surface, marker = _allowance_for_path(relative, lines, line_no)
             findings.append({
                 "path": relative,

@@ -141,6 +141,7 @@ def render():
             if "lm_warehouse_options" not in st.session_state:
                 try:
                     st.session_state["lm_warehouse_options"] = load_warehouse_options(
+                        # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
                         get_session(),
                         company=company,
                     )
@@ -176,6 +177,7 @@ def render():
         if refresh_live or auto_refresh:
             try:
                 query_history_optional = set(filter_existing_columns(
+                    # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
                     get_session(),
                     "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
                     QUERY_HISTORY_OPTIONAL_COLUMNS,
@@ -317,6 +319,7 @@ def render():
                         try:
                             if not require_admin_enabled("query cancellation"):
                                 return
+                            # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
                             action_session = get_session()
                             # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics owner=platform
                             action_session.sql(cancel_sql).collect()
@@ -336,6 +339,7 @@ def render():
                             st.success(f"Cancel sent for `{kill_qid}`")
                         except Exception as e:
                             log_admin_action(
+                                # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
                                 get_session(),
                                 action_type="CANCEL QUERY",
                                 target_object=str(kill_qid),
@@ -474,6 +478,7 @@ def render():
             if st.button("Load Lock Waits", key="lm_lock_load"):
                 try:
                     lock_cols = set(filter_existing_columns(
+                        # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
                         get_session(),
                         "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
                         ["WAREHOUSE_SIZE", "TRANSACTION_BLOCKED_TIME"],

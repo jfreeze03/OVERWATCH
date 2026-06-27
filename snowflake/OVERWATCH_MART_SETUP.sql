@@ -13274,6 +13274,11 @@ BEGIN
   SELECT
     b.BRIEF_ID,
     b.SECTION_NAME,
+    b.COMPANY,
+    b.ENVIRONMENT,
+    b.WINDOW_DAYS,
+    'MART_SECTION_COMMAND_BRIEF_WITH_COMPACT_SOURCE_SNAPSHOT' AS COMMAND_ROW_SOURCE,
+    MAX(s.SOURCE_FACT_MAX_TS) AS SOURCE_FACT_MAX_TS,
     b.SOURCE_SNAPSHOT_TS AS COMMAND_SOURCE_SNAPSHOT_TS,
     MAX(s.SOURCE_FACT_MAX_TS) AS RELEVANT_SOURCE_FACT_MAX_TS,
     SUM(COALESCE(s.SOURCE_ROW_COUNT, 0)) AS RELEVANT_SOURCE_ROW_COUNT,
@@ -13283,7 +13288,24 @@ BEGIN
     IFF(SUM(COALESCE(s.SOURCE_ROW_COUNT, 0)) = 0, TRUE, FALSE) AS IS_REUSED_COMMAND_ROW,
     IFF(SUM(COALESCE(s.SOURCE_ROW_COUNT, 0)) > 0
         AND b.SOURCE_SNAPSHOT_TS < COALESCE(MAX(s.SOURCE_FACT_MAX_TS), b.SOURCE_SNAPSHOT_TS),
-        TRUE, FALSE) AS IS_STALE_COMMAND_ROW
+        TRUE, FALSE) AS IS_STALE_COMMAND_ROW,
+    CASE
+      WHEN SUM(COALESCE(s.SOURCE_ROW_COUNT, 0)) > 0
+       AND b.SOURCE_SNAPSHOT_TS >= COALESCE(MAX(s.SOURCE_FACT_MAX_TS), b.SOURCE_SNAPSHOT_TS)
+        THEN 'fresh_from_compact_fact'
+      WHEN SUM(COALESCE(s.SOURCE_ROW_COUNT, 0)) > 0
+       AND b.SOURCE_SNAPSHOT_TS < COALESCE(MAX(s.SOURCE_FACT_MAX_TS), b.SOURCE_SNAPSHOT_TS)
+        THEN 'stale_reused_command_row'
+      ELSE 'reused_compact_command_row'
+    END AS FRESHNESS_MODE,
+    CASE
+      WHEN SUM(COALESCE(s.SOURCE_ROW_COUNT, 0)) > 0
+       AND b.SOURCE_SNAPSHOT_TS < COALESCE(MAX(s.SOURCE_FACT_MAX_TS), b.SOURCE_SNAPSHOT_TS)
+        THEN 'degrade_confidence'
+      WHEN SUM(COALESCE(s.SOURCE_ROW_COUNT, 0)) = 0
+        THEN 'label_reused_source'
+      ELSE 'none'
+    END AS CONFIDENCE_ADJUSTMENT
   FROM TMP_FAST_SECTION_COMMAND_BRIEF b
   LEFT JOIN TMP_FAST_SOURCE_SNAPSHOT s
     ON (UPPER(b.SECTION_NAME) LIKE '%WORKLOAD%' AND s.SOURCE_KEY IN ('query_recent', 'query_hourly', 'query_evidence_recent'))
@@ -13292,7 +13314,7 @@ BEGIN
     OR (UPPER(b.SECTION_NAME) LIKE '%COST%' AND s.SOURCE_KEY IN ('cost_daily', 'cost_evidence_recent'))
     OR (UPPER(b.SECTION_NAME) LIKE '%SECURITY%' AND s.SOURCE_KEY IN ('login_daily', 'grant_daily', 'security_evidence_recent'))
     OR (UPPER(b.SECTION_NAME) LIKE '%EXECUTIVE%' AND s.SOURCE_KEY IN ('query_recent', 'alert_events', 'cost_daily', 'login_daily', 'grant_daily'))
-  GROUP BY b.BRIEF_ID, b.SECTION_NAME, b.SOURCE_SNAPSHOT_TS;
+  GROUP BY b.BRIEF_ID, b.SECTION_NAME, b.COMPANY, b.ENVIRONMENT, b.WINDOW_DAYS, b.SOURCE_SNAPSHOT_TS;
 
   UPDATE TMP_FAST_SECTION_COMMAND_BRIEF b
      SET IS_STALE = IFF(f.IS_STALE_COMMAND_ROW, TRUE, b.IS_STALE),
@@ -13302,7 +13324,10 @@ BEGIN
          SOURCE_GAP_DETAIL = IFF(
            f.IS_STALE_COMMAND_ROW,
            'FAST refresh reused compact command row with stale source-fact timestamp proof.',
-           b.SOURCE_GAP_DETAIL
+           IFF(f.IS_REUSED_COMMAND_ROW,
+             'FAST refresh reused compact command row because compact source facts were unavailable.',
+             b.SOURCE_GAP_DETAIL
+           )
          )
     FROM TMP_FAST_COMMAND_FRESHNESS f
    WHERE b.BRIEF_ID = f.BRIEF_ID;

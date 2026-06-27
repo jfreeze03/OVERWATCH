@@ -204,6 +204,7 @@ def _load_topology(session, days: int, row_limit: int) -> dict:
 
 
 def render():
+    # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
     session = get_session()
     st.subheader("Platform Topology")
     st.caption("Relationship maps showing who uses which warehouses, databases, roles, and client applications.")

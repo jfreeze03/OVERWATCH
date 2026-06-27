@@ -1568,6 +1568,7 @@ def _run_live_incident_query(key: str, label: str, sql: str) -> pd.DataFrame:
 
 
 def _load_live_incident_snapshot(minutes: int, warehouse_name: str = "", root_task_name: str = "") -> None:
+    # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
     session = get_session()
     st.session_state["contention_live_source_errors"] = {}
     try:
@@ -1673,6 +1674,7 @@ def _load_contention_evidence(days: int) -> None:
 
 
 def _check_active_locks() -> None:
+    # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
     session = get_session()
     try:
         locks = show_to_df(session, "SHOW LOCKS IN ACCOUNT", force_refresh=True)

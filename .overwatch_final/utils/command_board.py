@@ -208,6 +208,7 @@ def _quiet_first_paint_query(sql: str, *, section: str, max_rows: int = 500) -> 
     if snowflake_connection_known_unavailable():
         return pd.DataFrame(), False
     try:
+        # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
         session = get_session()
         tag = build_overwatch_query_tag(section=section, tier="first_paint")
         apply_overwatch_query_tag(session, tag, section=section)

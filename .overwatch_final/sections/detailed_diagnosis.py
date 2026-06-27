@@ -250,6 +250,7 @@ def _queue_diagnosis(session, df, mode: str):
 
 
 def render():
+    # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
     session = get_session()
     st.subheader("Detailed Diagnosis")
     st.caption("High-signal drilldowns for slow, queued, blocked, spilling, and scan-heavy queries.")

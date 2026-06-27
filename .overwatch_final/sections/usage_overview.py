@@ -428,6 +428,7 @@ def _queue_top_warehouses(session, df):
 
 
 def render():
+    # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
     session = get_session()
     st.subheader("Usage Overview")
     st.caption("Admin summary of Snowflake activity, cost, storage, and top usage drivers.")

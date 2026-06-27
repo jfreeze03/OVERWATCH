@@ -21,6 +21,7 @@ class SessionOpenContractTests(unittest.TestCase):
             good_admin = temp_root / ".overwatch_final" / "sections" / "decision_workspace_setup_health.py"
             bad_header = temp_root / ".overwatch_final" / "sections" / "alert_center.py"
             bad_owner = temp_root / ".overwatch_final" / "sections" / "security_posture_overview_view.py"
+            bad_helper = temp_root / ".overwatch_final" / "sections" / "legacy_helper.py"
             good_runner = temp_root / ".overwatch_final" / "utils" / "query.py"
             string_literal = temp_root / ".overwatch_final" / "sections" / "string_literal.py"
             bad_primary.parent.mkdir(parents=True, exist_ok=True)
@@ -42,20 +43,22 @@ class SessionOpenContractTests(unittest.TestCase):
                 "session = get_session()\n",
                 encoding="utf-8",
             )
+            bad_helper.write_text("session = get_session()\n", encoding="utf-8")
             good_runner.write_text("_make_session(defer_role_capture=True)\n", encoding="utf-8")
             string_literal.write_text(
                 "text = 'get_session() in docs'\n"
                 "# get_session() in a comment\n",
                 encoding="utf-8",
             )
-            files = (bad_primary, good_admin, bad_header, bad_owner, good_runner, string_literal)
+            files = (bad_primary, good_admin, bad_header, bad_owner, bad_helper, good_runner, string_literal)
             findings = scan_session_open_usage(files, root=temp_root)
             blocked = [finding for finding in findings if not finding["allowed"]]
-            self.assertEqual(len(blocked), 3)
+            self.assertEqual(len(blocked), 4)
             blocked_paths = {str(finding["path"]).replace("\\", "/") for finding in blocked}
             self.assertTrue(any("query_search.py" in path for path in blocked_paths))
             self.assertTrue(any("alert_center.py" in path for path in blocked_paths))
             self.assertTrue(any("security_posture_overview_view.py" in path for path in blocked_paths))
+            self.assertTrue(any("legacy_helper.py" in path for path in blocked_paths))
             allowed = [finding for finding in findings if finding["allowed"]]
             admin = next(finding for finding in allowed if "decision_workspace_setup_health.py" in str(finding["path"]))
             self.assertEqual(admin["marker_boundary"], "setup_health")
@@ -63,7 +66,7 @@ class SessionOpenContractTests(unittest.TestCase):
             self.assertEqual(admin["marker_owner"], "platform")
             self.assertFalse(any("string_literal.py" in str(finding["path"]) for finding in findings))
             artifact = session_open_scan_artifact(findings, files, root=temp_root)
-            self.assertEqual(artifact["blocked_count"], 3)
+            self.assertEqual(artifact["blocked_count"], 4)
             self.assertFalse(artifact["raw_sql_included"])
             self.assertFalse(artifact["credentials_included"])
             self.assertNotIn("SELECT", json.dumps(artifact))

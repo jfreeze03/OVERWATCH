@@ -154,6 +154,7 @@ def log_section_load(section: str, duration_ms: int = 0) -> None:
         return
     try:
         from utils.session import get_session
+        # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
         session = get_session()
 
         user = str(get_state(OVERWATCH_ACTOR, "OVERWATCH") or "OVERWATCH")
@@ -196,6 +197,7 @@ def log_query_event(
         return
     try:
         from utils.session import get_session
+        # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
         session = get_session()
 
         user = str(get_state(OVERWATCH_ACTOR, "OVERWATCH") or "OVERWATCH")

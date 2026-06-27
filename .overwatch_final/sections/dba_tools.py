@@ -220,6 +220,7 @@ __all__ = [
 
 
 def render():
+    # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
     session = get_session()
     company = get_active_company()
 

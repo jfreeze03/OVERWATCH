@@ -158,8 +158,15 @@ def lint_query_text(sql: str, contract: QueryContract) -> list[QueryLintFinding]
             add("TARGET_MARKER_MISSING", "error", "Targeted evidence query lacks the explicit target predicate marker.")
         elif not any(marker.upper() in predicate_region.upper() for marker in markers):
             add("TARGET_MARKER_MISSING", "error", "Targeted evidence query lacks an allowlisted target marker before LIMIT.")
-    if contract.expected_table_family and contract.expected_table_family.upper() not in upper:
-        add("UNEXPECTED_TABLE_FAMILY", "warning", "Query does not reference the expected table family.")
+    if contract.expected_table_family:
+        expected_families = [
+            family.strip().upper()
+            for family in re.split(r"\s*\|\s*", contract.expected_table_family)
+            if family.strip()
+        ]
+        if expected_families and not any(family in upper for family in expected_families):
+            severity = "error" if contract.boundary == "evidence" else "warning"
+            add("UNEXPECTED_TABLE_FAMILY", severity, "Query does not reference the expected table family.")
     return findings
 
 
@@ -189,12 +196,37 @@ register_query_contract(
         requires_target_plan_metadata=True,
     )
 )
-for _ttl_pattern, _section, _markers in (
-    (r"alert_.*evidence|alert_.*history|alert_.*delivery|alert_.*action", "Alert Center", ("ALERT_ID", "ALERT_KEY", "EVENT_ID", "ACTION_ID")),
-    (r"cost_targeted_evidence|cc_targeted_evidence", "Cost & Contract", ("WAREHOUSE_NAME", "USER_NAME", "ROLE_NAME", "DATABASE_NAME", "DEPARTMENT", "SERVICE_CATEGORY", "SERVICE_TYPE")),
-    (r"dba_control_room_.*evidence|dba_.*proof|dba_.*failed", "DBA Control Room", ("QUERY_ID", "QUERY_HASH", "QUERY_SIGNATURE", "WAREHOUSE_NAME", "TASK_NAME", "ROOT_TASK_NAME", "PROCEDURE_NAME")),
-    (r"query_search_recent_detail|workload_.*evidence|workload_.*pipeline", "Workload Operations", ("QUERY_ID", "QUERY_HASH", "QUERY_SIGNATURE", "WAREHOUSE_NAME", "TASK_NAME", "ROOT_TASK_NAME", "PROCEDURE_NAME")),
-    (r"security_.*evidence|security_.*proof", "Security Monitoring", ("USER_NAME", "LOGIN_NAME", "ROLE_NAME", "GRANTEE_NAME", "GRANT_ID", "SHARE_NAME", "DATABASE_NAME", "OBJECT_NAME")),
+for _ttl_pattern, _section, _markers, _table_family in (
+    (
+        r"alert_.*evidence|alert_.*history|alert_.*delivery|alert_.*action",
+        "Alert Center",
+        ("ALERT_ID", "ALERT_KEY", "EVENT_ID", "ACTION_ID"),
+        "MART_ALERT_EVIDENCE_RECENT|ALERT_EVENTS",
+    ),
+    (
+        r"cost_targeted_evidence|cc_targeted_evidence",
+        "Cost & Contract",
+        ("WAREHOUSE_NAME", "USER_NAME", "ROLE_NAME", "DATABASE_NAME", "DEPARTMENT", "SERVICE_CATEGORY", "SERVICE_TYPE"),
+        "MART_COST_EVIDENCE_RECENT",
+    ),
+    (
+        r"dba_control_room_.*evidence|dba_.*proof|dba_.*failed",
+        "DBA Control Room",
+        ("QUERY_ID", "QUERY_HASH", "QUERY_SIGNATURE", "WAREHOUSE_NAME", "TASK_NAME", "ROOT_TASK_NAME", "PROCEDURE_NAME"),
+        "MART_DBA_EVIDENCE_RECENT",
+    ),
+    (
+        r"query_search_recent_detail|workload_.*evidence|workload_.*pipeline",
+        "Workload Operations",
+        ("QUERY_ID", "QUERY_HASH", "QUERY_SIGNATURE", "WAREHOUSE_NAME", "TASK_NAME", "ROOT_TASK_NAME", "PROCEDURE_NAME"),
+        "MART_QUERY_EVIDENCE_RECENT|FACT_QUERY_DETAIL_RECENT",
+    ),
+    (
+        r"security_.*evidence|security_.*proof",
+        "Security Monitoring",
+        ("USER_NAME", "LOGIN_NAME", "ROLE_NAME", "GRANTEE_NAME", "GRANT_ID", "SHARE_NAME", "DATABASE_NAME", "OBJECT_NAME"),
+        "MART_SECURITY_EVIDENCE_RECENT",
+    ),
 ):
     register_query_contract(
         QueryContract(
@@ -208,6 +240,7 @@ for _ttl_pattern, _section, _markers in (
             target_predicate_marker_required=True,
             target_predicate_markers=_markers,
             requires_target_plan_metadata=True,
+            expected_table_family=_table_family,
         )
     )
 register_query_contract(

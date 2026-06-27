@@ -33,6 +33,7 @@ from .company_filter import (
     get_environment_db_patterns,
 )
 from .query import run_query, safe_identifier, sql_literal
+from .mart_names import mart_object_name
 from sections.decision_workspace_target_filters import build_target_predicate_plan, evidence_target_label
 from .alert_status import (
     ALERT_CLOSED_STATUSES,
@@ -512,12 +513,17 @@ def load_alert_history(
         "ESCALATION_TARGET",
         "TRIAGE_PRIORITY",
     ]
-    probe_table = alert_triage_view_fqn()
-    table = alert_triage_view_fqn(quoted=True)
+    compact_table = mart_object_name("MART_ALERT_EVIDENCE_RECENT")
+    probe_table = compact_table
+    table = compact_table
     columns = set(filter_existing_columns(session, probe_table, requested))
     if not columns:
         probe_table = alert_table_fqn()
         table = alert_table_fqn(quoted=True)
+        columns = set(filter_existing_columns(session, probe_table, requested))
+    if not columns:
+        probe_table = alert_triage_view_fqn()
+        table = alert_triage_view_fqn(quoted=True)
         columns = set(filter_existing_columns(session, probe_table, requested))
     if not columns:
         raise ValueError(f"{probe_table} is unavailable or has no recognized alert columns.")

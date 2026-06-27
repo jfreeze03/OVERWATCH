@@ -194,7 +194,6 @@ def render():
         if qh_caps is not None:
             return qh_caps
         qh_cols = set(filter_existing_columns(
-            # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
             get_session(),
             "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
             ["QUERY_TAG"],
@@ -345,7 +344,6 @@ def render():
             )
             download_csv(df, "object_changes.csv")
             if st.button("Save object changes to Action Queue", key="ocm_obj_queue"):
-                # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
                 _queue_changes(get_session(), df, "Object Change Monitor", "Object Monitoring", "Object", "Medium")
 
     elif active_view == "Grants & Roles":
@@ -404,7 +402,6 @@ def render():
                 raw_label="All access changes",
             )
             if st.button("Save access changes to Action Queue", key="ocm_access_queue"):
-                # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
                 _queue_changes(get_session(), df, "Access Activity Monitor", "Security", "Grant/Role", "High")
 
     elif active_view == "Policies & Tags":
@@ -460,5 +457,4 @@ def render():
                 raw_label="All policy changes",
             )
             if st.button("Save policy changes to Action Queue", key="ocm_policy_queue"):
-                # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
                 _queue_changes(get_session(), df, "Policy Change Monitor", "Security", "Policy/Tag", "High")

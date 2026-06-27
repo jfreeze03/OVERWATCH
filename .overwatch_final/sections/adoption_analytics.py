@@ -281,7 +281,6 @@ def render():
     if st.button("Load Adoption Analytics", key="aa_load"):
         with render_load_status("Loading adoption telemetry", "Adoption telemetry ready"):
             try:
-                # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
                 session = get_session()
                 st.session_state["aa_data"] = _load_adoption(session, days)
             except Exception as e:

@@ -668,7 +668,6 @@ def _render_ai_evidence_snapshot(evidence: dict) -> None:
 
 
 def render():
-    # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
     session = get_session()
     company = get_active_company()
     qh_exprs = None

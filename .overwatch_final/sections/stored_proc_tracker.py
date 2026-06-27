@@ -1343,7 +1343,6 @@ def _render_procedure_advisor_overview() -> None:
 
 
 def render():
-    # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
     session = get_session()
     credit_price = st.session_state.get("credit_price", DEFAULTS["credit_price"])
     company = get_active_company()

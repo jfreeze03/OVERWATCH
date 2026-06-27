@@ -125,7 +125,6 @@ def update_alert_status(
     ))
     if "STATUS" not in columns:
         raise ValueError("OVERWATCH_ALERTS does not expose STATUS for alert lifecycle updates.")
-    # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics owner=platform
     session.sql(build_alert_status_update_sql(
         alert_id=alert_id,
         status=status,
@@ -200,7 +199,6 @@ def acknowledge_alert_escalation(
             "LAST_STATUS_AT",
         ],
     ))
-    # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics owner=platform
     session.sql(build_alert_escalation_ack_sql(
         alert_id=alert_id,
         actor=actor,

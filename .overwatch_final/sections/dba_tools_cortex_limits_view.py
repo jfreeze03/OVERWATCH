@@ -220,7 +220,6 @@ def render_cortex_ai_limits_tool(session, company: str) -> None:
                         failed = []
                         for stmt in [_cortex_apply_statement(cortex_daily_limit)]:
                             try:
-                                # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics owner=platform
                                 session.sql(stmt).collect()
                                 applied.append(stmt)
                             except Exception as e:

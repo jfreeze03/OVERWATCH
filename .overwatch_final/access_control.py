@@ -78,7 +78,6 @@ def refresh_current_role_for_access(connection_available: bool) -> str:
     if not role and get_last_allowed_role():
         return get_last_allowed_role()
     try:
-        # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
         get_session()
     except StopException:
         set_state(CONNECTION_UNAVAILABLE, True)
@@ -127,7 +126,6 @@ def probe_snowflake_available(force: bool = False) -> bool:
                 return cached_snowflake_available(default=False)
         if force:
             try:
-                # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
                 get_session()
                 available = True
             except StopException:

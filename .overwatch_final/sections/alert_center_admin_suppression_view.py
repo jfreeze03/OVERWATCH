@@ -118,11 +118,9 @@ def render_suppression_windows_pane(
                 st.warning("Entity, window start, and window end are required.")
             else:
                 try:
-                    # SESSION_OPEN_ADMIN_OK boundary=admin reason=post_click_session budget=advanced_diagnostics owner=platform
                     session = action_session_factory("create a suppression window")
                     if session is None:
                         return
-                    # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics owner=platform
                     session.sql(_suppression_window_insert_sql(
                         table_name=table_name,
                         entity=entity,
@@ -143,7 +141,6 @@ def render_suppression_windows_pane(
         def _load_suppression_windows() -> pd.DataFrame:
             from utils import run_query
 
-            # SESSION_OPEN_ADMIN_OK boundary=admin reason=post_click_session budget=advanced_diagnostics owner=platform
             session = action_session_factory("load suppression windows")
             if session is None:
                 return pd.DataFrame()
@@ -188,11 +185,9 @@ def render_suppression_windows_pane(
             selected_id = st.selectbox("Deactivate window", active_ids, key="alert_center_deactivate_id")
             if st.button("Deactivate Suppression Window", key="alert_center_deactivate_annotation"):
                 try:
-                    # SESSION_OPEN_ADMIN_OK boundary=admin reason=post_click_session budget=advanced_diagnostics owner=platform
                     session = action_session_factory("deactivate a suppression window")
                     if session is None:
                         return
-                    # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics owner=platform
                     session.sql(_suppression_window_deactivate_sql(int(selected_id), table_name)).collect()
                     st.success(f"Suppression window {int(selected_id)} deactivated.")
                     st.session_state.pop("alert_center_annotations", None)

@@ -210,7 +210,6 @@ def _load_dynamic_table_inventory(session, company: str, days: int) -> pd.DataFr
 
 
 def render():
-    # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
     session = get_session()
     company = st.session_state.get("active_company", "ALFA")
     active_view = render_workflow_selector(

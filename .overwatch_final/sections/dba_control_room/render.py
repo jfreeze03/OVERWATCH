@@ -1179,7 +1179,6 @@ def render() -> None:
     allow_live_fallback = bool(st.session_state.get("dba_control_room_allow_live_fallback", False))
     def _load_control_room_evidence(*, status_label: str = "Loading exception signals", auto_build_ops: bool = False) -> None:
         with render_load_status(status_label, "Control Room telemetry ready"):
-            # SESSION_OPEN_ADMIN_OK boundary=admin reason=post_click_session budget=advanced_diagnostics owner=platform
             session = get_session(
                 reason="dba_control_room_evidence_load",
                 query_boundary="evidence",
@@ -1752,7 +1751,6 @@ def render() -> None:
         elif st.button("Compare Release Windows", key="dba_release_compare_load", type="primary"):
             with render_load_status("Comparing task graphs and stored procedure runs", "Release comparison ready"):
                 try:
-                    # SESSION_OPEN_ADMIN_OK boundary=admin reason=post_click_session budget=advanced_diagnostics owner=platform
                     session = get_session(
                         reason="dba_release_compare_admin_load",
                         query_boundary="admin",

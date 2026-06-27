@@ -41,7 +41,6 @@ TASK_MANAGEMENT_RENDERERS = {
 
 
 def render():
-    # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
     session = get_session()
 
     if st.session_state.get("exceptions_only_mode"):

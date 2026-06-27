@@ -195,7 +195,6 @@ def render_optimization_advisor():
 
         if st.button("Find Duplicates", key="dup_load"):
             try:
-                # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
                 session = get_session()
                 duplicate_result = load_shared_duplicate_query_patterns(
                     session,
@@ -251,7 +250,6 @@ def render_optimization_advisor():
 
         if st.button("Analyze Sizing", key="sz_load"):
             try:
-                # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
                 session = get_session()
                 sizing_result = load_shared_warehouse_right_sizing(
                     session,

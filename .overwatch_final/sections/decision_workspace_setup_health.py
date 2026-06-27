@@ -166,10 +166,8 @@ def persist_decision_setup_health(session: object | None, health: DecisionBootst
             st.session_state[SETUP_HEALTH_KEY] = updated
         return False
     try:
-        # DIRECT_SQL_ADMIN_OK boundary=setup_health reason=setup_health_admin budget=admin_setup owner=platform
         session.sql(_health_table_ddl()).collect()
         for migration_sql in _health_table_migration_sql():
-            # DIRECT_SQL_ADMIN_OK boundary=setup_health reason=setup_health_admin budget=admin_setup owner=platform
             session.sql(migration_sql).collect()
         event_id = uuid4().hex
         sql = f"""
@@ -212,7 +210,6 @@ SELECT
   'persisted',
   {_sql_literal(health.persistence_error, 4000)}
 """
-        # DIRECT_SQL_ADMIN_OK boundary=setup_health reason=setup_health_admin budget=admin_setup owner=platform
         session.sql(sql).collect()
         raw = st.session_state.get(SETUP_HEALTH_KEY)
         if isinstance(raw, Mapping):
@@ -307,7 +304,6 @@ def load_decision_setup_health(session: object | None = None) -> DecisionBootstr
         return _health_from_mapping(raw)
     if session is not None:
         try:
-            # DIRECT_SQL_ADMIN_OK boundary=setup_health reason=setup_health_admin budget=admin_setup owner=platform
             rows = session.sql(
                 f"""
 SELECT
@@ -347,7 +343,6 @@ def load_decision_setup_health_history(session: object | None = None, *, limit: 
         latest = load_decision_setup_health(session=None)
         return (latest,) if latest is not None else ()
     try:
-        # DIRECT_SQL_ADMIN_OK boundary=setup_health reason=setup_health_admin budget=admin_setup owner=platform
         rows = session.sql(
             f"""
 SELECT

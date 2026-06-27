@@ -62,7 +62,6 @@ def _load_security_brief(
 ) -> None:
     session = None
     try:
-        # SESSION_OPEN_ADMIN_OK boundary=admin reason=post_click_session budget=advanced_diagnostics owner=platform
         session = get_session()
         summary_sql, exceptions_sql = _build_security_mart_brief_sql(session, days, company)
         summary = run_query(
@@ -96,7 +95,6 @@ def _load_security_brief(
                 )
             return
         try:
-            # SESSION_OPEN_ADMIN_OK boundary=admin reason=post_click_session budget=advanced_diagnostics owner=platform
             session = session or get_session()
             summary_sql, exceptions_sql = _build_security_summary_sql(session, days, company)
             summary = run_query(

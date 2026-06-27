@@ -88,7 +88,6 @@ def render_query_kill_list_tool(session, company: str) -> None:
         ):
             if _require_typed_confirmation(kill_confirmed, "CANCEL"):
                 try:
-                    # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics owner=platform
                     session.sql(_cancel_query_sql(kill_id)).collect()
                     st.success(f"Cancel sent for `{kill_id}`")
                 except Exception as e:

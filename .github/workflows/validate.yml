@@ -76,6 +76,9 @@ jobs:
       - name: Run SQL performance linter tests
         run: python -m unittest tests.test_sql_performance_lint
 
+      - name: Run cleanup inventory tests
+        run: python -m unittest tests.test_cleanup_inventory
+
       - name: Run Decision Workspace HTML snapshot tests
         run: |
           python -m unittest \
@@ -110,6 +113,7 @@ jobs:
             artifacts/direct_sql_static_scan.json
             artifacts/session_open_static_scan.json
             artifacts/sql_performance_lint_findings.json
+            artifacts/cleanup/**
             artifacts/brand/**
             artifacts/button_route_manifest.json
             artifacts/button_route_results.json

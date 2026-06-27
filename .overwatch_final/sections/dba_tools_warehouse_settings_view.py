@@ -306,7 +306,6 @@ def render_warehouse_settings_tool(session, company: str) -> None:
                                         company=active_company,
                                         environment=get_active_environment(),
                                     )
-                                    # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics owner=platform
                                     session.sql(plan["alter_sql"]).collect()
                                     audited = log_admin_action(
                                         session,

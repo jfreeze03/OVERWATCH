@@ -8,7 +8,7 @@ from hashlib import sha1
 import inspect
 from pathlib import Path
 from uuid import uuid4
-from typing import Any
+from typing import Any, Iterable, Mapping
 import os
 import re
 
@@ -464,7 +464,7 @@ def record_snowflake_session_open_event(
     if boundary not in _VALID_QUERY_BOUNDARIES:
         boundary = "other"
     if not (marker_boundary or marker_budget or marker_owner):
-        marker_metadata = _runtime_marker_metadata("SESSION_OPEN_ADMIN_OK")
+        marker_metadata = _runtime_marker_metadata(_SESSION_OPEN_MARKER)
         marker_boundary = marker_metadata.get("marker_boundary", "")
         marker_budget = marker_metadata.get("marker_budget", "")
         marker_owner = marker_metadata.get("marker_owner", "")
@@ -553,6 +553,42 @@ def _sql_fingerprint(sql: object) -> str:
 
 
 _RUNTIME_MARKER_FIELDS = {"boundary", "reason", "budget", "owner"}
+_SESSION_OPEN_MARKER = "SESSION_OPEN" + "_ADMIN_OK"
+_DIRECT_SQL_MARKER = "DIRECT_SQL" + "_ADMIN_OK"
+
+
+def _registry_runtime_marker_metadata(filename: str, function_name: str, marker_name: str) -> dict[str, str]:
+    try:
+        root = Path(__file__).resolve().parents[1]
+        relative = Path(filename).resolve().relative_to(root)
+        module = str(relative).replace("\\", "/")
+    except Exception:
+        return {}
+    if not module.startswith(".overwatch_final/"):
+        module = f".overwatch_final/{module}" if module.startswith("overwatch_final/") else module
+    try:
+        entries: Iterable[Mapping[str, object]]
+        if marker_name == _SESSION_OPEN_MARKER:
+            from contracts.session_open_allowlist import SESSION_OPEN_ALLOWLIST
+
+            entries = SESSION_OPEN_ALLOWLIST
+        else:
+            from contracts.direct_sql_allowlist import DIRECT_SQL_ALLOWLIST
+
+            entries = DIRECT_SQL_ALLOWLIST
+    except Exception:
+        return {}
+    for entry in entries:
+        if str(entry.get("module") or "") != module:
+            continue
+        if str(entry.get("function") or "") != str(function_name or ""):
+            continue
+        return {
+            "marker_boundary": str(entry.get("boundary") or ""),
+            "marker_budget": str(entry.get("budget") or ""),
+            "marker_owner": str(entry.get("owner") or ""),
+        }
+    return {}
 
 
 def _parse_runtime_marker(line: str, marker_name: str) -> dict[str, str]:
@@ -584,6 +620,9 @@ def _runtime_marker_metadata(marker_name: str) -> dict[str, str]:
         normalized = filename.replace("\\", "/").lower()
         if not filename or any(normalized.endswith(suffix) for suffix in skip_suffixes):
             continue
+        registry = _registry_runtime_marker_metadata(filename, str(getattr(frame, "function", "") or ""), marker_name)
+        if registry:
+            return registry
         try:
             lines = Path(filename).read_text(encoding="utf-8", errors="ignore").splitlines()
         except Exception:
@@ -659,7 +698,7 @@ def record_direct_sql_event(
     if boundary not in _VALID_QUERY_BOUNDARIES:
         boundary = "other"
     if not (marker_boundary or marker_budget or marker_owner):
-        marker_metadata = _runtime_marker_metadata("DIRECT_SQL_ADMIN_OK")
+        marker_metadata = _runtime_marker_metadata(_DIRECT_SQL_MARKER)
         marker_boundary = marker_metadata.get("marker_boundary", "")
         marker_budget = marker_metadata.get("marker_budget", "")
         marker_owner = marker_metadata.get("marker_owner", "")

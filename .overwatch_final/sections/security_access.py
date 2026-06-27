@@ -542,7 +542,6 @@ def render():
         nonlocal query_history_cols
         if query_history_cols is None:
             query_history_cols = set(filter_existing_columns(
-                # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
                 get_session(),
                 "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
                 ["WAREHOUSE_SIZE", "ROWS_PRODUCED", "BYTES_WRITTEN_TO_RESULT"],
@@ -553,7 +552,6 @@ def render():
         nonlocal user_cols
         if user_cols is None:
             user_cols = set(filter_existing_columns(
-                # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
                 get_session(),
                 "SNOWFLAKE.ACCOUNT_USAGE.USERS",
                 ["LAST_SUCCESS_LOGIN", "HAS_PASSWORD", "HAS_MFA", "EXT_AUTHN_DUO"],
@@ -646,7 +644,6 @@ def render():
             )
             download_csv(failed_logins, "failed_logins.csv")
             if st.button("Save failed-login findings to Action Queue", key="sec_failed_login_queue"):
-                # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
                 _queue_security_findings(get_session(), failed_logins, "Failed Login", "Medium")
 
         if st.session_state.get("sec_df_login_trend") is not None and not st.session_state["sec_df_login_trend"].empty:
@@ -833,7 +830,6 @@ def render():
         if st.button("Load Connected Programs", key="sec_connected_programs_load"):
             with render_load_status("Tracing connected programs", "Connected program telemetry ready"):
                 try:
-                    # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
                     for key, df in _load_connected_programs(get_session(), company, program_days).items():
                         st.session_state[key] = df
                     st.session_state["sec_connected_program_source"] = "SESSIONS, LOGIN_HISTORY, and QUERY_HISTORY linkage"
@@ -1070,7 +1066,6 @@ def render():
             )
             download_csv(df_d, "dormant_users.csv")
             if st.button("Save dormant users to Action Queue", key="sec_dormant_queue"):
-                # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
                 _queue_security_findings(get_session(), df_d, "Dormant User", "Medium")
 
     # -- MFA COVERAGE ----------------------------------------------------------
@@ -1080,7 +1075,6 @@ def render():
             with render_load_status("Checking MFA coverage", "MFA coverage ready"):
                 try:
                     mfa_result = load_shared_mfa_coverage(
-                        # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
                         get_session(),
                         company,
                         force=True,
@@ -1138,7 +1132,6 @@ def render():
                 )
                 download_csv(no_mfa, "users_without_mfa.csv")
                 if st.button("Save MFA findings to Action Queue", key="sec_mfa_queue"):
-                    # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
                     _queue_security_findings(get_session(), no_mfa, "No MFA", "High")
             else:
                 st.success("All active users have MFA enabled.")
@@ -1216,7 +1209,6 @@ def render():
                 )
                 download_csv(df_ex, "exfiltration_signals.csv")
                 if st.button("Save exfiltration signals to Action Queue", key="sec_exfil_queue"):
-                    # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
                     _queue_security_findings(get_session(), df_ex, "Exfiltration", "Critical")
             else:
                 st.success("No unusual data exfiltration patterns detected.")

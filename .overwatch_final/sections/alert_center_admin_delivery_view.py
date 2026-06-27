@@ -265,7 +265,6 @@ def render_alert_action_queue_routing(
             )
         if st.button("Send Open Alerts To Action Queue", key="alert_center_to_action_queue"):
             try:
-                # SESSION_OPEN_ADMIN_OK boundary=admin reason=post_click_session budget=advanced_diagnostics owner=platform
                 session = action_session_factory("route alerts to the action queue")
                 if session is None:
                     return

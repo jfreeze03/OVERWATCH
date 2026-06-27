@@ -143,7 +143,6 @@ def render_alert_history_pane(
                 st.warning("A reason or status note is required before changing alert status.")
             else:
                 try:
-                    # SESSION_OPEN_ADMIN_OK boundary=admin reason=post_click_session budget=advanced_diagnostics owner=platform
                     session = action_session_factory("update alert status")
                     if session is None:
                         return
@@ -172,7 +171,6 @@ def render_alert_history_pane(
                 st.warning("Acknowledgment note is required for escalation audit.")
             else:
                 try:
-                    # SESSION_OPEN_ADMIN_OK boundary=admin reason=post_click_session budget=advanced_diagnostics owner=platform
                     session = action_session_factory("acknowledge alert escalation")
                     if session is None:
                         return
@@ -234,12 +232,10 @@ def render_alert_history_pane(
                 width="stretch",
             ):
                 try:
-                    # SESSION_OPEN_ADMIN_OK boundary=admin reason=post_click_session budget=advanced_diagnostics owner=platform
                     session = action_session_factory("record alert lifecycle audit")
                     if session is None:
                         return
                     for statement in audit_sql_parts:
-                        # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics owner=platform
                         session.sql(statement).collect()
                     st.success(f"Lifecycle audit recorded for alert {audit_alert}. Reload the Alert Center to refresh.")
                     st.session_state.pop("alert_center_data", None)

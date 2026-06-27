@@ -49,7 +49,6 @@ def render_alert_detection_catalog_tool(
     c1, c2 = st.columns([1, 3])
     with c1:
         def _load_native_registry() -> pd.DataFrame:
-            # SESSION_OPEN_ADMIN_OK boundary=admin reason=post_click_session budget=advanced_diagnostics owner=platform
             session = action_session_factory("load native alert registry")
             if session is None:
                 return pd.DataFrame()

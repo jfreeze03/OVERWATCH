@@ -44,7 +44,6 @@ COST_CENTER_RENDERERS = {
 
 
 def render() -> None:
-    # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
     session = get_session()
     credit_price = get_credit_price()
     company = st.session_state.get("active_company", "ALFA")

@@ -102,7 +102,6 @@ def _queue_service_findings(session, services: pd.DataFrame):
 
 
 def render():
-    # SESSION_OPEN_ADMIN_OK boundary=admin reason=legacy_session budget=advanced_diagnostics owner=platform
     session = get_session()
     st.subheader("Service Health")
     st.caption("Availability-style posture across query execution, warehouses, login/auth, tasks, and data loading.")

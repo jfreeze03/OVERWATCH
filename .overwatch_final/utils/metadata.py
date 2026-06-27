@@ -53,7 +53,6 @@ def show_to_df(session, stmt: str, force_refresh: bool = False) -> pd.DataFrame:
             return frame.copy()
 
     try:
-        # DIRECT_SQL_ADMIN_OK boundary=metadata reason=metadata_probe budget=advanced_diagnostics owner=platform
         df = normalize_df(session.sql(stmt).to_pandas())
     except Exception:
         return pd.DataFrame()
@@ -310,7 +309,6 @@ def load_live_task_runs(
             ORDER BY SCHEDULED_TIME DESC
         """
         try:
-            # DIRECT_SQL_ADMIN_OK boundary=metadata reason=metadata_probe budget=advanced_diagnostics owner=platform
             rows = session.sql(sql).collect()
         except Exception:
             continue

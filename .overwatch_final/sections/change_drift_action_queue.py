@@ -198,12 +198,9 @@ def _save_change_control_evidence_snapshot(
     source: str = "",
 ) -> None:
     try:
-        # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics owner=platform
         session.sql(build_change_control_evidence_ddl()).collect()
         for migration_sql in build_change_control_evidence_migration_sql():
-            # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics owner=platform
             session.sql(migration_sql).collect()
-        # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics owner=platform
         session.sql(_change_control_evidence_insert_sql(
             readiness,
             company=company,

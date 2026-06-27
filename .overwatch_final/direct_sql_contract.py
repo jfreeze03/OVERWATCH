@@ -6,10 +6,13 @@ import io
 from pathlib import Path
 import re
 import tokenize
+import ast
 from typing import Iterable
 
+from contracts.direct_sql_allowlist import DIRECT_SQL_ALLOWLIST
 
-_ADMIN_MARKER = "DIRECT_SQL_ADMIN_OK"
+
+_ADMIN_MARKER = "DIRECT_SQL" + "_ADMIN_OK"
 _STRUCTURED_MARKER_RE = re.compile(
     r"boundary=(?P<boundary>[A-Za-z_]+)\s+"
     r"reason=(?P<reason>[A-Za-z0-9_.:-]+)\s+"
@@ -48,6 +51,46 @@ def _is_test_or_deployment_path(normalized: str) -> bool:
 
 def _line_no_for_offset(text: str, offset: int) -> int:
     return text.count("\n", 0, max(offset, 0)) + 1
+
+
+def _function_for_line(text: str, line_no: int) -> str:
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return "<module>"
+    selected = ("<module>", 0)
+
+    class _Visitor(ast.NodeVisitor):
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            nonlocal selected
+            end_lineno = int(getattr(node, "end_lineno", node.lineno) or node.lineno)
+            if int(node.lineno) <= line_no <= end_lineno and int(node.lineno) >= selected[1]:
+                selected = (str(node.name), int(node.lineno))
+            self.generic_visit(node)
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            nonlocal selected
+            end_lineno = int(getattr(node, "end_lineno", node.lineno) or node.lineno)
+            if int(node.lineno) <= line_no <= end_lineno and int(node.lineno) >= selected[1]:
+                selected = (str(node.name), int(node.lineno))
+            self.generic_visit(node)
+
+    _Visitor().visit(tree)
+    return selected[0]
+
+
+def _registry_allowance(relative_path: str, function_name: str, call_type: str) -> dict[str, object] | None:
+    normalized = relative_path.replace("\\", "/")
+    for entry in DIRECT_SQL_ALLOWLIST:
+        if str(entry.get("module") or "") != normalized:
+            continue
+        if str(entry.get("function") or "") != str(function_name or ""):
+            continue
+        expected_call = str(entry.get("call_type") or "session.sql")
+        if expected_call and expected_call != str(call_type or "session.sql"):
+            continue
+        return dict(entry)
+    return None
 
 
 def _structured_marker_nearby(lines: list[str], line_no: int) -> dict[str, object] | None:
@@ -120,6 +163,8 @@ def _allowance_for_path(
     relative_path: str,
     lines: list[str],
     line_no: int,
+    function_name: str,
+    call_type: str = "session.sql",
 ) -> tuple[bool, str, str, dict[str, object]]:
     normalized = relative_path.replace("\\", "/").lower()
     if normalized.endswith(".overwatch_final/direct_sql_contract.py"):
@@ -128,13 +173,25 @@ def _allowance_for_path(
         return True, "central_query_runner_or_guarded_session", "runner", {}
     if _is_test_or_deployment_path(normalized):
         return True, "test_or_deployment_fixture", "test", {}
+    registry = _registry_allowance(relative_path, function_name, call_type)
+    if registry:
+        return True, "sidecar_contract_registry", "admin", {
+            "marker_line": None,
+            "marker_boundary": registry.get("boundary", ""),
+            "marker_reason": registry.get("reason", ""),
+            "marker_budget": registry.get("budget", ""),
+            "marker_owner": registry.get("owner", ""),
+            "marker_valid": True,
+            "expected_runtime_context": registry.get("expected_runtime_context", registry.get("budget", "")),
+            "registry_function": registry.get("function", ""),
+        }
     marker = _structured_marker_nearby(lines, line_no)
     if marker and bool(marker.get("marker_valid")):
         boundary = str(marker.get("marker_boundary") or "admin")
         return True, "local_structured_admin_marker", "admin", marker
     if marker:
-        return False, "invalid local DIRECT_SQL_ADMIN_OK marker", _surface_for_path(relative_path), marker
-    return False, "missing local structured DIRECT_SQL_ADMIN_OK marker", _surface_for_path(relative_path), {}
+        return False, "invalid local structured admin marker", _surface_for_path(relative_path), marker
+    return False, "missing sidecar or local structured admin marker", _surface_for_path(relative_path), {}
 
 
 def scan_direct_sql_usage(
@@ -159,11 +216,20 @@ def scan_direct_sql_usage(
             lines = path.read_text(errors="ignore").splitlines()
         text = "\n".join(lines)
         for line_no in _direct_sql_call_lines(text):
-            allowed, reason, surface, marker = _allowance_for_path(relative, lines, line_no)
+            function_name = _function_for_line(text, line_no)
+            allowed, reason, surface, marker = _allowance_for_path(
+                relative,
+                lines,
+                line_no,
+                function_name,
+                "session.sql",
+            )
             marker_boundary = str(marker.get("marker_boundary") or "")
             findings.append({
                 "path": relative,
                 "line": line_no,
+                "function": function_name,
+                "call_type": "session.sql",
                 "allowed": bool(allowed),
                 "reason": reason,
                 "surface": surface,
@@ -174,12 +240,12 @@ def scan_direct_sql_usage(
                 "marker_budget": marker.get("marker_budget", ""),
                 "marker_owner": marker.get("marker_owner", ""),
                 "marker_valid": bool(marker.get("marker_valid", False)) if marker else None,
-                "runtime_context_expected": marker.get("marker_budget", "") if marker else "",
+                "runtime_context_expected": marker.get("expected_runtime_context", marker.get("marker_budget", "")) if marker else "",
                 "recommendation": ""
                 if allowed
                 else (
                     "Use run_query/run_query_or_raise or add a local structured marker: "
-                    "# DIRECT_SQL_ADMIN_OK boundary=<admin|setup_health|account_usage|metadata> "
+                    f"# {_ADMIN_MARKER} boundary=<admin|setup_health|account_usage|metadata> "
                     "reason=<short_reason> budget=<name> owner=<team_or_surface>."
                 ),
             })

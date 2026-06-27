@@ -592,7 +592,7 @@ class RuntimeValidationHarness:
             return selected
 
         def _multiselect(label: object, options: Iterable[object], *args: object, key: object = None, default: object = None, **kwargs: object) -> list[Any]:
-            default_values = list(default or [])
+            default_values = list(default) if isinstance(default, (list, tuple, set)) else ([] if default is None else [default])
             selected = state.get(str(key), default_values) if key else default_values
             if not isinstance(selected, list):
                 selected = list(selected) if isinstance(selected, tuple) else [selected]
@@ -1483,6 +1483,15 @@ class RuntimeValidationHarness:
                 requires_admin=False,
             )
             if no_result or runtime_error:
+                target_context_present = kwargs.get("target_context_present")
+                target_fallback_used = kwargs.get("target_fallback_used")
+                target_marker_present = kwargs.get("target_predicate_marker_present")
+                target_columns_raw = kwargs.get("target_columns_used")
+                target_columns_used = (
+                    tuple(str(item) for item in target_columns_raw)
+                    if isinstance(target_columns_raw, (list, tuple))
+                    else ()
+                )
                 performance.record_ui_query_event(
                     section="Workload Operations",
                     workflow="Query Investigation",
@@ -1496,10 +1505,10 @@ class RuntimeValidationHarness:
                     query_boundary="query_search",
                     query_contract_id=str(kwargs.get("contract_id") or ""),
                     target_label=str(kwargs.get("target_label") or ""),
-                    target_context_present=kwargs.get("target_context_present") if isinstance(kwargs.get("target_context_present"), bool) else None,
-                    target_columns_used=tuple(kwargs.get("target_columns_used") or ()),
-                    target_fallback_used=kwargs.get("target_fallback_used") if isinstance(kwargs.get("target_fallback_used"), bool) else None,
-                    target_predicate_marker_present=kwargs.get("target_predicate_marker_present") if isinstance(kwargs.get("target_predicate_marker_present"), bool) else None,
+                    target_context_present=target_context_present if isinstance(target_context_present, bool) else None,
+                    target_columns_used=target_columns_used,
+                    target_fallback_used=target_fallback_used if isinstance(target_fallback_used, bool) else None,
+                    target_predicate_marker_present=target_marker_present if isinstance(target_marker_present, bool) else None,
                     target_predicate_plan_id=str(kwargs.get("target_predicate_plan_id") or ""),
                 )
                 performance.increment_snowflake_execution_counter(

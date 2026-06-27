@@ -14,6 +14,20 @@ if str(ROOT) not in sys.path:
 
 
 class FullAppRuntimeValidationTests(unittest.TestCase):
+    def _assert_runtime_proof_source(self, rel: str) -> None:
+        payload = json.loads((ROOT / rel).read_text(encoding="utf-8"))
+        allowed = {"runtime_render", "runtime_click", "runtime_export", "runtime_stress"}
+        if isinstance(payload, list):
+            self.assertTrue(payload, rel)
+            for row in payload:
+                self.assertIsInstance(row, dict, rel)
+                self.assertIn(row.get("proof_source"), allowed, row)
+                self.assertNotEqual(row.get("proof_source"), "inventory_only", row)
+            return
+        self.assertIsInstance(payload, dict, rel)
+        self.assertIn(payload.get("proof_source"), allowed, payload)
+        self.assertNotEqual(payload.get("proof_source"), "inventory_only", payload)
+
     def test_full_app_validation_artifacts_cover_current_surface_from_runtime_clicks(self):
         from route_registry import PRIMARY_SECTION_TITLES, SECTION_WORKFLOW_CONTRACT
         from tools.contracts.full_app_runtime_validation import write_full_app_validation_artifacts
@@ -24,6 +38,7 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
             "artifacts/full_app_validation/view_results.json",
             "artifacts/full_app_validation/rendered_fragments.json",
             "artifacts/full_app_validation/button_results.json",
+            "artifacts/full_app_validation/control_inventory.json",
             "artifacts/full_app_validation/export_results.json",
             "artifacts/full_app_validation/settings_results.json",
             "artifacts/full_app_validation/live_feature_results.json",
@@ -59,9 +74,13 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
         evidence = json.loads((ROOT / "artifacts/full_app_validation/evidence_loader_results.json").read_text())
         live = json.loads((ROOT / "artifacts/full_app_validation/live_feature_results.json").read_text())
         stress = json.loads((ROOT / "artifacts/full_app_validation/stress_results.json").read_text())
+        controls = json.loads((ROOT / "artifacts/full_app_validation/control_inventory.json").read_text())
         manifest = json.loads((ROOT / "artifacts/full_app_validation/artifact_manifest.json").read_text())
 
+        for rel in required:
+            self._assert_runtime_proof_source(rel)
         self.assertTrue(summary["all_passed"])
+        self.assertEqual(summary["proof_source"], "runtime_render")
         self.assertEqual(summary["validation_source"], "runtime_render_and_click")
         self.assertFalse(summary["static_inventory_only"])
         self.assertNotIn("inventory_only", summary)
@@ -75,6 +94,9 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
         self.assertGreater(summary["live_feature_count"], 0)
         self.assertGreater(summary["stress_case_count"], 0)
         self.assertEqual(set(manifest["files"]), required)
+        self.assertGreater(len(controls), 0)
+        self.assertTrue(any(row.get("kind") == "button" for row in controls), controls[:5])
+        self.assertTrue(any(row.get("kind") in {"select", "segmented_control", "text_input"} for row in controls), controls[:5])
 
         rendered_pairs = {(row["section"], row["workflow"]) for row in views}
         for section, workflows in SECTION_WORKFLOW_CONTRACT.items():
@@ -82,7 +104,9 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
                 self.assertIn((section, workflow), rendered_pairs)
         for row in views:
             self.assertEqual(row["source"], "runtime_section_render")
+            self.assertEqual(row["proof_source"], "runtime_render")
             self.assertTrue(row["passed"], row)
+            self.assertGreater(row["rendered_fragment_count"], 0, row)
             self.assertEqual(row["first_paint"]["cold_packet_queries"], 1)
             self.assertEqual(row["first_paint"]["warm_packet_queries"], 0)
             self.assertEqual(row["first_paint"]["first_paint_account_usage"], 0)
@@ -93,6 +117,7 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
         self.assertTrue({"route", "refresh_packet", "evidence_load", "admin_load", "advanced_load"}.issubset(action_types))
         for row in buttons:
             self.assertEqual(row["source"], "runtime_button_click")
+            self.assertEqual(row["proof_source"], "runtime_click")
             self.assertTrue(row["label"], row)
             self.assertTrue(row["key"], row)
             self.assertTrue(row["passed"] or row["skip_reason"], row)
@@ -106,6 +131,7 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
 
         for row in exports:
             self.assertEqual(row["source"], "runtime_export_payload")
+            self.assertEqual(row["proof_source"], "runtime_export")
             self.assertGreater(row["content_length"], 0, row)
             self.assertGreaterEqual(row["row_count"], 1, row)
             self.assertFalse(row["query_text_included"], row)
@@ -114,9 +140,19 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
         query_cases = {row["case"]: row for row in query_search}
         self.assertTrue(query_cases)
         for row in query_search:
-            self.assertEqual(row["source"], "runtime_query_search_click", row)
-            self.assertTrue(row["observed_contexts"], row)
-            self.assertTrue(row["observed_boundaries"] or row["case"] == "account_usage_fallback_unconfirmed", row)
+            if row["case"] == "render_no_click":
+                self.assertEqual(row["source"], "runtime_query_search_render", row)
+                self.assertEqual(row["proof_source"], "runtime_render", row)
+                self.assertFalse(row["observed_contexts"], row)
+                self.assertFalse(row["observed_boundaries"], row)
+                self.assertEqual(row["session_open_count"], 0, row)
+                self.assertEqual(row["direct_sql_event_count"], 0, row)
+                self.assertEqual(row["snowflake_execution_count"], 0, row)
+            else:
+                self.assertEqual(row["source"], "runtime_query_search_click", row)
+                self.assertEqual(row["proof_source"], "runtime_click", row)
+                self.assertTrue(row["observed_contexts"], row)
+                self.assertTrue(row["observed_boundaries"] or row["case"] == "account_usage_fallback_unconfirmed", row)
         self.assertEqual(query_cases["exact_query_id"]["max_rows"], 1)
         self.assertFalse(query_cases["exact_query_id"]["projects_query_text"])
         self.assertFalse(query_cases["sql_preview"]["raw_sql_visible_in_daily_ui"])
@@ -124,18 +160,26 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
         self.assertEqual(query_cases["account_usage_fallback_confirmed"]["metadata_probe_count"], 0)
 
         for row in evidence:
+            self.assertEqual(row["proof_source"], "runtime_click", row)
             self.assertFalse(row["account_usage_used"], row)
             self.assertTrue(row["target_marker_before_limit"], row)
             self.assertTrue(row["target_plan_id_present"], row)
             self.assertLessEqual(row["max_rows"], 200)
             self.assertLessEqual(row["hard_cap"], 500)
         for row in live:
+            self.assertEqual(row["proof_source"], "runtime_click", row)
             self.assertTrue(row["explicit_click_required"], row)
             self.assertTrue(row["admin_or_advanced_gated"], row)
             self.assertFalse(row["first_paint_invocation"], row)
             self.assertFalse(row["route_invocation"], row)
         for row in stress:
+            self.assertEqual(row["proof_source"], "runtime_stress", row)
+            self.assertTrue(row["sequence_steps"], row)
             self.assertTrue(row["passed"], row)
+
+        query_search_proof = json.loads((ROOT / "artifacts/query_search_proof.json").read_text(encoding="utf-8"))
+        self.assertEqual(query_search_proof["proof_source"], "runtime_click")
+        self.assertEqual(query_search_proof["cases"], query_search)
 
     def test_static_full_app_inventory_cannot_claim_runtime_validation(self):
         from tools.contracts.full_app_validation_inventory import write_full_app_contract_inventory_artifacts

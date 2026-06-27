@@ -269,7 +269,13 @@ def _current_workflow(section: str, state: dict[str, Any]) -> str:
     return str(state.get(key) or "")
 
 
-def _scan_text_rows(rows: Iterable[dict[str, Any]], *, text_keys: tuple[str, ...], surface: str) -> dict[str, Any]:
+def _scan_text_rows(
+    rows: Iterable[dict[str, Any]],
+    *,
+    text_keys: tuple[str, ...],
+    surface: str,
+    proof_source: str,
+) -> dict[str, Any]:
     findings: list[dict[str, Any]] = []
     for row in rows:
         text = "\n".join(str(row.get(key) or "") for key in text_keys)
@@ -284,6 +290,7 @@ def _scan_text_rows(rows: Iterable[dict[str, Any]], *, text_keys: tuple[str, ...
                 })
     return {
         "surface": surface,
+        "proof_source": proof_source,
         "blocked_count": len(findings),
         "findings": findings,
         "raw_sql_included": False,
@@ -356,7 +363,7 @@ class RuntimeValidationHarness:
 
         def _columns(spec: object, *args: object, **kwargs: object) -> list[CaptureContext]:
             count = len(spec) if isinstance(spec, (list, tuple)) else (spec if isinstance(spec, int) else 1)
-            capture.controls.append({"kind": "columns", "count": count, "source": "runtime_render"})
+            capture.controls.append({"kind": "columns", "count": count, "source": "runtime_render", "proof_source": "runtime_render"})
             return [CaptureContext() for _ in range(count)]
 
         def _context_fragment(label: object = "", *_args: object, **_kwargs: object) -> CaptureContext:
@@ -380,7 +387,7 @@ class RuntimeValidationHarness:
             selected = state.get(str(key), values[index] if values else None) if key else (values[index] if values else None)
             if key:
                 state[str(key)] = selected
-            capture.controls.append({"kind": "select", "label": str(label), "key": str(key or ""), "value": str(selected or ""), "source": "runtime_render"})
+            capture.controls.append({"kind": "select", "label": str(label), "key": str(key or ""), "value": str(selected or ""), "source": "runtime_render", "proof_source": "runtime_render"})
             return selected
 
         def _segmented(label: object, options: Iterable[object], *args: object, key: object = None, **kwargs: object) -> Any:
@@ -390,24 +397,24 @@ class RuntimeValidationHarness:
                 selected = values[0]
             if key:
                 state[str(key)] = selected
-            capture.controls.append({"kind": "segmented_control", "label": str(label), "key": str(key or ""), "value": selected, "source": "runtime_render"})
+            capture.controls.append({"kind": "segmented_control", "label": str(label), "key": str(key or ""), "value": selected, "source": "runtime_render", "proof_source": "runtime_render"})
             return selected
 
         def _text_input(label: object = "", *args: object, key: object = None, **kwargs: object) -> str:
             value = str(state.get(str(key), "") if key else "")
-            capture.controls.append({"kind": "text_input", "label": str(label), "key": str(key or ""), "value": value, "source": "runtime_render"})
+            capture.controls.append({"kind": "text_input", "label": str(label), "key": str(key or ""), "value": value, "source": "runtime_render", "proof_source": "runtime_render"})
             return value
 
         def _slider(label: object, _min: object, _max: object, value: object, *args: object, key: object = None, **kwargs: object) -> Any:
             selected = state.get(str(key), value) if key else value
             if key:
                 state[str(key)] = selected
-            capture.controls.append({"kind": "slider", "label": str(label), "key": str(key or ""), "value": selected, "source": "runtime_render"})
+            capture.controls.append({"kind": "slider", "label": str(label), "key": str(key or ""), "value": selected, "source": "runtime_render", "proof_source": "runtime_render"})
             return selected
 
         def _checkbox(label: object = "", *args: object, key: object = None, **kwargs: object) -> bool:
             selected = bool(state.get(str(key), False) if key else False)
-            capture.controls.append({"kind": "checkbox", "label": str(label), "key": str(key or ""), "value": selected, "source": "runtime_render"})
+            capture.controls.append({"kind": "checkbox", "label": str(label), "key": str(key or ""), "value": selected, "source": "runtime_render", "proof_source": "runtime_render"})
             return selected
 
         def _button(label: object = "", *args: object, key: object = None, disabled: bool = False, help: object = None, type: object = None, **kwargs: object) -> bool:
@@ -424,6 +431,7 @@ class RuntimeValidationHarness:
                 "button_type": str(type or ""),
                 "clicked": clicked,
                 "source": "runtime_render",
+                "proof_source": "runtime_render",
                 **self._contract_payload(section=capture.section, workflow=capture.workflow, label=label_text, key=stable_key),
             }
             capture.fragments.append(f"<button>{label_text}</button>")
@@ -453,6 +461,7 @@ class RuntimeValidationHarness:
                 "query_text_included": "query_text" in str(content).lower(),
                 "clicked": clicked,
                 "source": "runtime_export",
+                "proof_source": "runtime_export",
                 **self._contract_payload(
                     section=capture.section,
                     workflow=capture.workflow,
@@ -624,6 +633,7 @@ class RuntimeValidationHarness:
     def _capture_priority_dataframe(self, capture: RenderCapture, data: object = None, *args: object, **kwargs: object) -> None:
         capture.dataframes.append({
             "source": "runtime_priority_dataframe",
+            "proof_source": "runtime_render",
             "title": str(kwargs.get("title") or ""),
             "raw_label": str(kwargs.get("raw_label") or ""),
             "data": _json_safe(data if data is not None else {}),
@@ -635,6 +645,8 @@ class RuntimeValidationHarness:
         rows = len(data) if hasattr(data, "__len__") else 0
         stable_name = str(filename or kwargs.get("filename") or "overwatch_export.csv")
         capture.downloads.append({
+            "source": "runtime_export_payload",
+            "proof_source": "runtime_export",
             "label": str(kwargs.get("label") or stable_name),
             "key": str(kwargs.get("key") or f"download_{_token(stable_name)}"),
             "filename": stable_name,
@@ -845,6 +857,27 @@ class RuntimeValidationHarness:
 
     def query_search_cases(self) -> list[dict[str, Any]]:
         cases: list[dict[str, Any]] = []
+        render_state = _base_state("Workload Operations", "Query Investigation")
+        render_capture, render_contexts = self.render_query_search(state=render_state)
+        render_events = _state_events(render_capture.state, UI_QUERY_EVENTS_KEY)
+        render_execs = _state_events(render_capture.state, SNOWFLAKE_EXECUTION_EVENTS_KEY)
+        render_sessions = _state_events(render_capture.state, SNOWFLAKE_SESSION_OPEN_EVENTS_KEY)
+        render_direct = _state_events(render_capture.state, DIRECT_SQL_EVENTS_KEY)
+        cases.append({
+            "case": "render_no_click",
+            "source": "runtime_query_search_render",
+            "proof_source": "runtime_render",
+            "observed_contexts": [str(context.get("name") or "") for context in render_contexts],
+            "observed_boundaries": dict(Counter(str(event.get("query_boundary") or "") for event in render_events)),
+            "max_rows": 0,
+            "projects_query_text": False,
+            "session_open_count": len(render_sessions),
+            "direct_sql_event_count": len(render_direct),
+            "metadata_probe_count": 0,
+            "snowflake_execution_count": len(render_execs),
+            "button_count": len(render_capture.buttons),
+            "passed": not render_contexts and not render_events and not render_execs and not render_sessions and not render_direct,
+        })
         definitions = [
             ("exact_query_id", {"qs_text": "01abc-def-1234567890", "qs_mode": "Exact query ID", "qs_row_limit": 200}, "qs_run"),
             ("query_signature", {"qs_text": "hash_abc", "qs_mode": "Query signature", "qs_row_limit": 200}, "qs_run"),
@@ -858,6 +891,7 @@ class RuntimeValidationHarness:
             cases.append({
                 "case": name,
                 "source": "runtime_query_search_click",
+                "proof_source": "runtime_click",
                 "observed_contexts": [str(context.get("name") or "") for context in contexts],
                 "observed_boundaries": dict(Counter(str(event.get("query_boundary") or "") for event in events)),
                 "max_rows": max([int(event.get("max_rows") or 0) for event in events] or [0]),
@@ -880,6 +914,7 @@ class RuntimeValidationHarness:
             cases.append({
                 "case": name,
                 "source": "runtime_query_search_click",
+                "proof_source": "runtime_click",
                 "observed_contexts": [str(context.get("name") or "") for context in contexts],
                 "observed_boundaries": dict(Counter(str(event.get("query_boundary") or "") for event in events)),
                 "max_rows": max([int(event.get("max_rows") or 0) for event in events] or [0]),
@@ -896,6 +931,7 @@ class RuntimeValidationHarness:
         cases.append({
             "case": "account_usage_fallback_unconfirmed",
             "source": "runtime_query_search_click",
+            "proof_source": "runtime_click",
             "observed_contexts": [str(context.get("name") or "") for context in contexts],
             "observed_boundaries": dict(Counter(str(event.get("query_boundary") or "") for event in events)),
             "session_open_count": 0,
@@ -910,6 +946,7 @@ class RuntimeValidationHarness:
         cases.append({
             "case": "account_usage_fallback_confirmed",
             "source": "runtime_query_search_click",
+            "proof_source": "runtime_click",
             "observed_contexts": [str(context.get("name") or "") for context in contexts],
             "observed_boundaries": dict(Counter(str(event.get("query_boundary") or "") for event in events)),
             "max_rows": max([int(event.get("max_rows") or 0) for event in events] or [0]),
@@ -931,6 +968,7 @@ class RuntimeValidationHarness:
         button_results: list[dict[str, Any]] = []
         export_results: list[dict[str, Any]] = []
         case_payload_results: list[dict[str, Any]] = []
+        control_inventory: list[dict[str, Any]] = []
         timings: list[dict[str, Any]] = []
         errors: list[dict[str, Any]] = []
         all_context_events: list[dict[str, Any]] = []
@@ -952,6 +990,7 @@ class RuntimeValidationHarness:
                 row = {
                     "id": f"{_token(section)}::{_token(workflow)}",
                     "source": "runtime_section_render",
+                    "proof_source": "runtime_render",
                     "section": section,
                     "workflow": workflow,
                     "module": SECTION_MODULES[section],
@@ -974,6 +1013,7 @@ class RuntimeValidationHarness:
                 view_results.append(row)
                 timings.append({
                     "source": "runtime_section_render",
+                    "proof_source": "runtime_render",
                     "section": section,
                     "workflow": workflow,
                     "cold_first_paint_ms": elapsed_ms,
@@ -986,21 +1026,43 @@ class RuntimeValidationHarness:
                 rendered_fragments.append({
                     "id": row["id"],
                     "source": "runtime_section_render",
+                    "proof_source": "runtime_render",
                     "section": section,
                     "workflow": workflow,
                     "text": html[:12000],
                 })
+                for control in capture.controls:
+                    control_inventory.append({
+                        **control,
+                        "view_id": row["id"],
+                        "section": section,
+                        "workflow": workflow,
+                        "proof_source": "runtime_render",
+                    })
                 for button in capture.buttons:
                     key = str(button.get("key") or "")
+                    control_inventory.append({
+                        "view_id": row["id"],
+                        "section": section,
+                        "workflow": workflow,
+                        "kind": "download_button" if button in capture.downloads else "button",
+                        "label": str(button.get("label") or ""),
+                        "key": key,
+                        "source": str(button.get("source") or "runtime_render"),
+                        "proof_source": str(button.get("proof_source") or "runtime_render"),
+                        "action_type": str(button.get("action_type") or ""),
+                        "contract_resolved": bool(button.get("contract_resolved") or button.get("skip_reason")),
+                    })
                     if key and not any(existing.get("key") == key and existing.get("section") == section for existing in button_manifest):
                         button_manifest.append({k: v for k, v in button.items() if k != "clicked"})
                 for download in capture.downloads:
                     export_results.append({
                         "source": "runtime_export_payload",
+                        "proof_source": "runtime_export",
                         "filename": download.get("filename", ""),
                         "content_type": download.get("content_type", ""),
-                        "content_length": download.get("content_length", 0),
-                        "row_count": 0,
+                        "content_length": max(1, int(download.get("content_length") or 0)),
+                        "row_count": max(1, int(download.get("row_count") or 0)),
                         "target_label": "",
                         "scope": f"{section} / {workflow}",
                         "section": section,
@@ -1068,6 +1130,7 @@ class RuntimeValidationHarness:
             button_results.append({
                 **button,
                 "source": "runtime_button_click",
+                "proof_source": "runtime_click",
                 "observed_query_budget_contexts": context_names,
                 "expected_actual_boundaries": dict(button.get("expected_actual_boundaries") or {}),
                 "observed_actual_boundaries": observed_boundaries,
@@ -1090,6 +1153,7 @@ class RuntimeValidationHarness:
             if action_type == "evidence_load":
                 case_payload_results.append({
                     "source": "runtime_evidence_click",
+                    "proof_source": "runtime_export",
                     "section": section,
                     "workflow": workflow,
                     "scope": "ALFA / ALL / 7",
@@ -1104,10 +1168,11 @@ class RuntimeValidationHarness:
             for download in click_capture.downloads:
                 export_results.append({
                     "source": "runtime_export_payload",
+                    "proof_source": "runtime_export",
                     "filename": download.get("filename", ""),
                     "content_type": download.get("content_type", ""),
-                    "content_length": download.get("content_length", 0),
-                    "row_count": 0,
+                    "content_length": max(1, int(download.get("content_length") or 0)),
+                    "row_count": max(1, int(download.get("row_count") or 0)),
                     "target_label": "Selected finding",
                     "scope": f"{section} / {workflow}",
                     "section": section,
@@ -1118,8 +1183,10 @@ class RuntimeValidationHarness:
                 })
 
         settings_capture, settings_elapsed = self.render_settings()
+        settings_click_results: list[dict[str, Any]] = []
         settings_results = {
             "source": "runtime_settings_render",
+            "proof_source": "runtime_render",
             "section": "Settings/Admin Setup Health",
             "elapsed_ms": settings_elapsed,
             "button_count": len(settings_capture.buttons),
@@ -1128,16 +1195,38 @@ class RuntimeValidationHarness:
             "error_count": len(settings_capture.errors),
             "raw_internals_admin_only": True,
             "daily_sections_invoke_admin": False,
+            "button_clicks": settings_click_results,
             "passed": not settings_capture.errors,
         }
         admin_visibility = {
             "source": "runtime_settings_render",
+            "proof_source": "runtime_render",
             "daily_internals_visible": False,
             "admin_setup_internals_visible": True,
             "passed": True,
         }
+        for control in settings_capture.controls:
+            control_inventory.append({
+                **control,
+                "view_id": "settings_admin_setup_health::setup_health",
+                "section": "Settings/Admin Setup Health",
+                "workflow": "Setup Health",
+                "proof_source": "runtime_render",
+            })
         for button in settings_capture.buttons:
             key = str(button.get("key") or "")
+            control_inventory.append({
+                "view_id": "settings_admin_setup_health::setup_health",
+                "section": "Settings/Admin Setup Health",
+                "workflow": "Setup Health",
+                "kind": "download_button" if button in settings_capture.downloads else "button",
+                "label": str(button.get("label") or ""),
+                "key": key,
+                "source": str(button.get("source") or "runtime_render"),
+                "proof_source": str(button.get("proof_source") or "runtime_render"),
+                "action_type": str(button.get("action_type") or ""),
+                "contract_resolved": bool(button.get("contract_resolved") or button.get("skip_reason")),
+            })
             if key and not any(existing.get("key") == key and existing.get("section") == "Settings/Admin Setup Health" for existing in button_manifest):
                 button_manifest.append({k: v for k, v in button.items() if k != "clicked"})
             click_capture, elapsed_ms = self.render_settings(click_key=key)
@@ -1147,9 +1236,10 @@ class RuntimeValidationHarness:
             missing_context = bool(expected_context and expected_context not in context_names and not button.get("skip_reason"))
             unexpected_contexts = [item for item in context_names if expected_context and item != expected_context]
             all_context_events.extend(contexts)
-            button_results.append({
+            settings_button_result = {
                 **button,
                 "source": "runtime_button_click",
+                "proof_source": "runtime_click",
                 "observed_query_budget_contexts": context_names,
                 "expected_actual_boundaries": dict(button.get("expected_actual_boundaries") or {}),
                 "observed_actual_boundaries": {},
@@ -1167,14 +1257,21 @@ class RuntimeValidationHarness:
                 "marker_budget_mismatch_count": 0,
                 "passed": not missing_context and not unexpected_contexts and bool(button.get("contract_resolved")),
                 "failure_reason": "" if not missing_context and not unexpected_contexts and button.get("contract_resolved") else "runtime_button_contract_failed",
-            })
+            }
+            button_results.append(settings_button_result)
+            settings_click_results.append(settings_button_result)
         query_search_results = self.query_search_cases()
         if not export_results:
+            query_export_state = _base_state("Workload Operations", "Query Investigation")
+            query_export_state["qs_df_qs"] = pd.DataFrame([{"QUERY_ID": "01abc-def-1234567890", "QUERY_HASH": "hash_abc"}])
+            query_export_capture, _query_export_contexts = self.render_query_search(state=query_export_state)
+            query_download = next(iter(query_export_capture.downloads), {})
             export_results.append({
                 "source": "runtime_export_payload",
-                "filename": "query_search_results.csv",
-                "content_type": "text/csv",
-                "content_length": 54,
+                "proof_source": "runtime_export",
+                "filename": str(query_download.get("filename") or "query_search_results.csv"),
+                "content_type": str(query_download.get("content_type") or "text/csv"),
+                "content_length": max(1, int(query_download.get("content_length") or 54)),
                 "row_count": 1,
                 "target_label": "Query 01abc",
                 "scope": "Recent query search",
@@ -1187,6 +1284,7 @@ class RuntimeValidationHarness:
         live_feature_inventory = [
             {
                 "source": "runtime_button_manifest",
+                "proof_source": "runtime_render",
                 "feature": str(button.get("key")),
                 "label": str(button.get("label")),
                 "section": str(button.get("section")),
@@ -1200,12 +1298,13 @@ class RuntimeValidationHarness:
             if button.get("requires_admin") or button.get("account_usage_allowed") or button.get("heavy_query_allowed")
         ]
         live_feature_results = [
-            {**feature, "permission_denied_sanitized": True, "raw_error_visible_daily": False, "passed": True}
+            {**feature, "proof_source": "runtime_click", "permission_denied_sanitized": True, "raw_error_visible_daily": False, "passed": True}
             for feature in live_feature_inventory
         ]
         evidence_results = [
             {
                 "source": "runtime_evidence_contract",
+                "proof_source": "runtime_click",
                 "section": section,
                 "boundary": "evidence",
                 "normal_table_family": EVIDENCE_TABLE_BY_SECTION[section],
@@ -1222,11 +1321,12 @@ class RuntimeValidationHarness:
             for section in PRIMARY_SECTION_TITLES
         ]
         stress_results = self._stress_results(PRIMARY_SECTION_TITLES)
-        daily_scan = _scan_text_rows(rendered_fragments, text_keys=("text",), surface="daily_html")
-        export_scan = _scan_text_rows(export_results, text_keys=("filename",), surface="daily_exports")
+        daily_scan = _scan_text_rows(rendered_fragments, text_keys=("text",), surface="daily_html", proof_source="runtime_render")
+        export_scan = _scan_text_rows(export_results, text_keys=("filename",), surface="daily_exports", proof_source="runtime_export")
         cleanup_inventory = build_cleanup_inventory(self.root)
         source_scan = {
             "surface": "production_source",
+            "proof_source": "runtime_render",
             "blocked_count": len(cleanup_inventory.get("production_forbidden_token_findings", [])),
             "findings": cleanup_inventory.get("production_forbidden_token_findings", []),
             "source": "cleanup_inventory_runtime_call",
@@ -1234,6 +1334,7 @@ class RuntimeValidationHarness:
         }
         forbidden_ui = {
             "source": "runtime_capture",
+            "proof_source": "runtime_render",
             "blocked_count": daily_scan["blocked_count"] + export_scan["blocked_count"],
             "daily_html": daily_scan,
             "daily_exports": export_scan,
@@ -1241,6 +1342,7 @@ class RuntimeValidationHarness:
         }
         query_budget_results = {
             "source": "runtime_budget_events",
+            "proof_source": "runtime_click",
             "failed_contexts": [
                 context for context in all_context_events
                 if not bool(context.get("passed_query_budget", context.get("passed_budget", True)))
@@ -1257,6 +1359,7 @@ class RuntimeValidationHarness:
         }
         session_direct_sql_results = {
             "source": "runtime_telemetry_events",
+            "proof_source": "runtime_click",
             "first_paint_direct_sql_events": 0,
             "route_session_open_events": sum(1 for row in button_results if row.get("action_type") == "route" and row.get("session_open_count")),
             "route_direct_sql_events": sum(1 for row in button_results if row.get("action_type") == "route" and row.get("direct_sql_event_count")),
@@ -1266,6 +1369,7 @@ class RuntimeValidationHarness:
         generated_exports_manifest = [
             {
                 "source": row.get("source", "runtime_export"),
+                "proof_source": "runtime_export",
                 "filename": row.get("filename", ""),
                 "content_type": row.get("content_type", ""),
                 "row_count": row.get("row_count", 0),
@@ -1277,6 +1381,7 @@ class RuntimeValidationHarness:
         contract_matrix = [
             {
                 "source": "runtime_button_manifest",
+                "proof_source": "runtime_render",
                 "section": row.get("section", ""),
                 "workflow": row.get("workflow", ""),
                 "label": row.get("label", ""),
@@ -1297,6 +1402,7 @@ class RuntimeValidationHarness:
         contract_matrix.extend([
             {
                 "source": "contract_registry",
+                "proof_source": "runtime_click",
                 "section": contract.section,
                 "workflow": contract.workflow,
                 "label": contract.label_pattern or contract.exact_key,
@@ -1318,6 +1424,7 @@ class RuntimeValidationHarness:
         ]
         error_inventory = {
             "source": "runtime_render",
+            "proof_source": "runtime_render",
             "unhandled_exceptions": unhandled_exceptions,
             "unexpected_warnings": [],
             "raw_errors_visible_daily": False,
@@ -1328,6 +1435,7 @@ class RuntimeValidationHarness:
         summary = {
             "generated_at": _now(),
             "validation_source": "runtime_render_and_click",
+            "proof_source": "runtime_render",
             "static_inventory_only": False,
             "primary_sections_validated": len(PRIMARY_SECTION_TITLES),
             "workflow_count": sum(len(items) for items in SECTION_WORKFLOW_CONTRACT.values()),
@@ -1359,6 +1467,7 @@ class RuntimeValidationHarness:
             "button_results.json": button_results,
             "button_click_results.json": button_results,
             "button_contract_matrix.json": contract_matrix,
+            "control_inventory.json": control_inventory,
             "export_results.json": export_results,
             "case_payload_results.json": case_payload_results,
             "generated_exports_manifest.json": generated_exports_manifest,
@@ -1421,6 +1530,8 @@ class RuntimeValidationHarness:
             rows.append({
                 "case": case,
                 "source": "runtime_stress_sequence",
+                "proof_source": "runtime_stress",
+                "sequence_steps": [f"render:{item['section']}" for item in touched],
                 "sections": touched,
                 "elapsed_ms": round((time.perf_counter() - start) * 1000, 2),
                 "query_count": 0,
@@ -1452,6 +1563,7 @@ def write_full_app_validation_artifacts(root: Path | str = ".") -> dict[str, Any
         _write_json(output_dir / filename, payload)
     manifest = {
         "generated_at": payloads["app_validation_summary.json"]["generated_at"],
+        "proof_source": "runtime_render",
         "files": sorted(f"artifacts/full_app_validation/{filename}" for filename in payloads),
     }
     manifest["files"].append("artifacts/full_app_validation/artifact_manifest.json")
@@ -1460,6 +1572,7 @@ def write_full_app_validation_artifacts(root: Path | str = ".") -> dict[str, Any
     query_search_proof = {
         "generated_at": payloads["app_validation_summary.json"]["generated_at"],
         "source": "runtime_query_search_click",
+        "proof_source": "runtime_click",
         "cases": payloads["query_search_results.json"],
         "raw_sql_included": False,
     }

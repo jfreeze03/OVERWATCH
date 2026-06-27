@@ -6,7 +6,7 @@ from importlib import import_module
 
 import streamlit as st
 
-from performance import ADMIN_CLICK_QUERY_BUDGET, query_budget_context
+from performance import EVIDENCE_CLICK_QUERY_BUDGET, query_budget_context
 from sections.base import lazy_pandas, lazy_util as _lazy_util
 from sections.navigation import apply_section_workflow_navigation
 from sections.shell_helpers import (
@@ -165,10 +165,10 @@ def _render_workload_change_detail(company: str, environment: str) -> None:
     st.caption("Loads task, procedure, and object changes plus possible workload correlations. No live metadata scan is run.")
     if st.button("Load Workload Changes", key="workload_load_change_intelligence", width="stretch"):
         with query_budget_context(
-            "advanced_diagnostics",
+            "evidence_click",
             section="Workload Operations",
             workflow="Change Analysis",
-            budget=ADMIN_CLICK_QUERY_BUDGET,
+            budget=EVIDENCE_CLICK_QUERY_BUDGET,
         ):
             change_types = ("TASK_CHANGE", "PROCEDURE_CHANGE", "OBJECT_CHANGE")
             st.session_state["workload_change_event_detail"] = load_change_event_detail(

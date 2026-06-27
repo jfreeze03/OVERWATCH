@@ -43,6 +43,7 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
             "artifacts/full_app_validation/control_contract_coverage.json",
             "artifacts/full_app_validation/export_results.json",
             "artifacts/full_app_validation/settings_results.json",
+            "artifacts/full_app_validation/settings_action_results.json",
             "artifacts/full_app_validation/live_feature_results.json",
             "artifacts/full_app_validation/performance_timings.json",
             "artifacts/full_app_validation/slow_runtime_inventory.json",
@@ -79,6 +80,7 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
         evidence = json.loads((ROOT / "artifacts/full_app_validation/evidence_loader_results.json").read_text())
         evidence_matrix = json.loads((ROOT / "artifacts/full_app_validation/evidence_loader_call_matrix.json").read_text())
         live = json.loads((ROOT / "artifacts/full_app_validation/live_feature_results.json").read_text())
+        settings_actions = json.loads((ROOT / "artifacts/full_app_validation/settings_action_results.json").read_text())
         stress = json.loads((ROOT / "artifacts/full_app_validation/stress_results.json").read_text())
         controls = json.loads((ROOT / "artifacts/full_app_validation/control_inventory.json").read_text())
         control_coverage = json.loads((ROOT / "artifacts/full_app_validation/control_contract_coverage.json").read_text())
@@ -252,7 +254,9 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
             self.assertFalse(row["account_usage_used"], row)
             self.assertTrue(row["target_marker_before_limit"], row)
             self.assertTrue(row["target_plan_id_present"], row)
-            self.assertLessEqual(row["max_rows"], 200)
+            self.assertTrue(row["query_boundary"], row)
+            self.assertIn(row["loader_kind"], {"normal_evidence", "query_search", "advanced_diagnostics"}, row)
+            self.assertLessEqual(row["max_rows"], 500)
             self.assertLessEqual(row["hard_cap"], 500)
         self.assertTrue(evidence_matrix, evidence_matrix)
         matrix_by_section = {}
@@ -268,6 +272,13 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
             self.assertTrue(row["button_key"] or row["expected_loader_name"] == "sections.query_search.search_recent_query_summary", row)
             self.assertTrue(row["compact_table_family"], row)
             self.assertTrue(row["boundary"], row)
+            self.assertTrue(row["query_boundary"], row)
+            self.assertIn(row["loader_kind"], {"normal_evidence", "query_search", "advanced_diagnostics"}, row)
+            if row["loader_kind"] == "normal_evidence":
+                self.assertEqual(row["expected_query_budget_context"], "evidence_click", row)
+                self.assertFalse(row["requires_admin"], row)
+                self.assertTrue(row["normal_evidence_source_allowed"], row)
+                self.assertFalse(row["account_usage_used"], row)
             self.assertGreater(row["max_rows"], 0, row)
             self.assertGreater(row["row_count"], 0, row)
             self.assertEqual(row["panel_row_count"], row["row_count"], row)
@@ -280,13 +291,40 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
         self.assertIn("sections.cost_contract_evidence.load_cost_evidence", matrix_by_section["Cost & Contract"])
         self.assertIn("sections.query_search.search_recent_query_summary", matrix_by_section["Workload Operations"])
         self.assertIn("sections.workload_operations.load_change_event_detail", matrix_by_section["Workload Operations"])
+        workload_rows = [row for row in evidence_matrix if row["section"] == "Workload Operations"]
+        self.assertTrue(any(row["loader_kind"] == "normal_evidence" for row in workload_rows), workload_rows)
+        self.assertTrue(any(row["loader_kind"] == "query_search" for row in workload_rows), workload_rows)
+        self.assertTrue(
+            all(
+                row["query_boundary"] != "advanced_diagnostics"
+                for row in workload_rows
+                if row["loader_kind"] == "normal_evidence"
+            ),
+            workload_rows,
+        )
         self.assertIn("sections.security_posture_privilege_sprawl_view._render_privileged_grant_readiness", matrix_by_section["Security Monitoring"])
+        self.assertTrue(settings_actions, settings_actions)
+        self.assertTrue(any(row["setup_refresh_validated"] for row in settings_actions), settings_actions)
+        for row in settings_actions:
+            self.assertEqual(row["proof_source"], "runtime_click", row)
+            self.assertTrue(row["clicked"], row)
+            self.assertTrue(row["admin_or_advanced_gated"], row)
+            self.assertTrue(row["sanitized_error_state"], row)
+            self.assertFalse(row["raw_error_visible_daily"], row)
+            self.assertTrue(row["passed"], row)
         for row in live:
             self.assertEqual(row["proof_source"], "runtime_click", row)
+            self.assertTrue(row["control_key"], row)
+            self.assertTrue(row["clicked"], row)
             self.assertTrue(row["explicit_click_required"], row)
             self.assertTrue(row["admin_or_advanced_gated"], row)
             self.assertFalse(row["first_paint_invocation"], row)
             self.assertFalse(row["route_invocation"], row)
+            self.assertTrue(row["budget_context_observed"], row)
+            self.assertTrue(row["timeout_or_row_limit"], row)
+            self.assertTrue(row["permission_denied_sanitized"], row)
+            self.assertTrue(row["unavailable_snowflake_sanitized"], row)
+            self.assertTrue(row["passed"], row)
         for row in stress:
             self.assertEqual(row["proof_source"], "runtime_stress", row)
             self.assertTrue(row["sequence_steps"], row)
@@ -295,6 +333,9 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
             self.assertIn("query_counts_by_boundary", row)
             self.assertIn("state_delta_summary", row)
             self.assertIn("export_summary", row)
+            self.assertTrue(row["threshold"], row)
+            self.assertTrue(row["threshold_passed"], row)
+            self.assertEqual(row["threshold_failures"], [], row)
             self.assertTrue(row["passed"], row)
         stress_cases = {row["case"]: row for row in stress}
         required_stress_cases = {

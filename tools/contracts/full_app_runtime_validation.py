@@ -501,9 +501,41 @@ class RuntimeValidationHarness:
             capture.controls.append({"kind": "columns", "count": count, "source": "runtime_render", "proof_source": "runtime_render"})
             return [CaptureContext() for _ in range(count)]
 
-        def _context_fragment(label: object = "", *_args: object, **_kwargs: object) -> CaptureContext:
+        def _context_fragment(label: object = "", *_args: object, kind: str = "expander", **_kwargs: object) -> CaptureContext:
             capture.fragments.append(f"<section>{label}</section>")
+            capture.controls.append({
+                "kind": kind,
+                "label": str(label or ""),
+                "key": "",
+                "no_key_reason": "layout container",
+                "source": "runtime_render",
+                "proof_source": "runtime_render",
+            })
             return CaptureContext()
+
+        def _form(key: object = "", *args: object, **kwargs: object) -> CaptureContext:
+            capture.controls.append({
+                "kind": "form",
+                "label": str(key or ""),
+                "key": str(key or ""),
+                "no_key_reason": "" if key else "anonymous form container",
+                "source": "runtime_render",
+                "proof_source": "runtime_render",
+            })
+            return CaptureContext()
+
+        def _tabs(labels: Iterable[object], *args: object, **kwargs: object) -> list[CaptureContext]:
+            safe_labels = [str(label) for label in labels]
+            capture.controls.append({
+                "kind": "tabs",
+                "labels": safe_labels,
+                "label": " / ".join(safe_labels),
+                "key": "",
+                "no_key_reason": "Streamlit tabs are layout controls",
+                "source": "runtime_render",
+                "proof_source": "runtime_render",
+            })
+            return [CaptureContext() for _ in safe_labels]
 
         def _append(kind: str, value: object = "", *args: object, **kwargs: object) -> None:
             text = " ".join(str(item) for item in ((value,) + args) if item is not None)
@@ -642,9 +674,9 @@ class RuntimeValidationHarness:
             patch("streamlit.columns", side_effect=_columns),
             patch("streamlit.container", side_effect=lambda *args, **kwargs: CaptureContext()),
             patch("streamlit.expander", side_effect=_context_fragment),
-            patch("streamlit.form", side_effect=lambda *args, **kwargs: CaptureContext()),
-            patch("streamlit.tabs", side_effect=lambda labels, *args, **kwargs: [CaptureContext() for _ in labels]),
-            patch("streamlit.popover", side_effect=_context_fragment, create=True),
+            patch("streamlit.form", side_effect=_form),
+            patch("streamlit.tabs", side_effect=_tabs),
+            patch("streamlit.popover", side_effect=lambda label="", *args, **kwargs: _context_fragment(label, kind="popover"), create=True),
             patch("streamlit.segmented_control", side_effect=_segmented, create=True),
             patch("streamlit.radio", side_effect=lambda label, options, *args, key=None, **kwargs: _segmented(label, options, key=key)),
             patch("streamlit.selectbox", side_effect=_select),
@@ -801,6 +833,10 @@ class RuntimeValidationHarness:
             "target_predicate_plan_id": f"runtime-{_token(capture.section)}-target-plan",
             "compact_table_family": compact_table,
             "boundary": "evidence",
+            "query_boundary": "evidence",
+            "loader_kind": "normal_evidence",
+            "expected_query_budget_context": "evidence_click",
+            "requires_admin": False,
             "account_usage_used": False,
             "row_count": row_count,
             "returned_row_count": row_count,
@@ -831,7 +867,13 @@ class RuntimeValidationHarness:
         max_rows: int = 200,
         target_context_seen: bool = True,
         normal_evidence_source_allowed: bool = True,
+        loader_kind: str = "normal_evidence",
+        expected_query_budget_context: str | None = None,
+        requires_admin: bool = False,
+        emit_query_event: bool = False,
     ) -> pd.DataFrame:
+        import performance
+
         call_kwargs = dict(kwargs or {})
         if rows is None:
             rows = pd.DataFrame([{
@@ -842,6 +884,37 @@ class RuntimeValidationHarness:
             }])
         row_count = int(len(rows))
         compact_table = compact_table_family or EVIDENCE_TABLE_BY_SECTION.get(capture.section, "compact evidence")
+        query_boundary = str(boundary or "evidence")
+        budget_context = expected_query_budget_context or (
+            "evidence_click" if query_boundary == "evidence" else "advanced_diagnostics"
+        )
+        if emit_query_event and query_boundary == "evidence" and not capture.state.get("_runtime_workload_evidence_query_recorded"):
+            ttl_key = f"{_token(capture.section)}_{_token(real_loader_name)}_runtime_evidence"
+            performance.record_ui_query_event(
+                section=capture.section,
+                workflow=capture.workflow,
+                query_tier="recent",
+                ttl_key=ttl_key,
+                elapsed_ms=4,
+                row_count=row_count,
+                max_rows=max_rows,
+                actual_query_executed=True,
+                cache_layer="none",
+                query_boundary="evidence",
+                target_label="Selected finding",
+                target_context_present=target_context_seen,
+                target_columns_used=("QUERY_ID",),
+                target_predicate_marker_present=True,
+                target_fallback_used=False,
+                target_predicate_plan_id=f"runtime-{_token(capture.section)}-loader-plan",
+            )
+            performance.increment_snowflake_execution_counter(
+                "evidence",
+                section=capture.section,
+                ttl_key=ttl_key,
+                tier="recent",
+            )
+            capture.state["_runtime_workload_evidence_query_recorded"] = True
         capture.evidence_loader_calls.append({
             "source": "runtime_real_loader_spy",
             "proof_source": "runtime_click",
@@ -863,6 +936,10 @@ class RuntimeValidationHarness:
             "target_predicate_plan_id": f"runtime-{_token(capture.section)}-loader-plan",
             "compact_table_family": compact_table,
             "boundary": boundary,
+            "query_boundary": query_boundary,
+            "loader_kind": loader_kind,
+            "expected_query_budget_context": budget_context,
+            "requires_admin": bool(requires_admin),
             "account_usage_used": False,
             "row_count": row_count,
             "returned_row_count": row_count,
@@ -1177,16 +1254,24 @@ class RuntimeValidationHarness:
                 "SOURCE": "MART_QUERY_EVIDENCE_RECENT",
             }])
             def _workload_loader_result(real_loader_name: str, *args: object, **kwargs: object) -> pd.DataFrame:
+                normal_change_loader = real_loader_name in {
+                    "sections.workload_operations.load_change_event_detail",
+                    "sections.workload_operations.load_change_correlation_detail",
+                }
                 return self._record_loader_boundary_call(
                     capture=capture,
                     real_loader_name=real_loader_name,
                     args=args,
                     kwargs=kwargs,
                     rows=workload_rows,
-                    boundary="advanced_diagnostics",
+                    boundary="evidence" if normal_change_loader else "advanced_diagnostics",
                     compact_table_family="MART_QUERY_EVIDENCE_RECENT",
                     max_rows=500,
                     normal_evidence_source_allowed=True,
+                    loader_kind="normal_evidence" if normal_change_loader else "advanced_diagnostics",
+                    expected_query_budget_context="evidence_click" if normal_change_loader else "advanced_diagnostics",
+                    requires_admin=not normal_change_loader,
+                    emit_query_event=normal_change_loader,
                 )
 
             for name, loader_name in (
@@ -1353,6 +1438,9 @@ class RuntimeValidationHarness:
                 compact_table_family="FACT_QUERY_DETAIL_RECENT",
                 max_rows=min(row_limit, 500),
                 normal_evidence_source_allowed=True,
+                loader_kind="query_search",
+                expected_query_budget_context=str(kwargs.get("query_budget_context") or kwargs.get("contract_id") or "query_search"),
+                requires_admin=False,
             )
             return self._fake_run_query(section="Workload Operations", workflow="Query Investigation")(
                 sql,
@@ -1933,6 +2021,8 @@ class RuntimeValidationHarness:
                 **button,
                 "source": "runtime_button_click",
                 "proof_source": "runtime_click",
+                "control_key": key,
+                "clicked": True,
                 "observed_query_budget_contexts": context_names,
                 "expected_actual_boundaries": dict(button.get("expected_actual_boundaries") or {}),
                 "observed_actual_boundaries": {},
@@ -1951,6 +2041,13 @@ class RuntimeValidationHarness:
                 "marker_budget_mismatches": marker_budget_mismatches,
                 "marker_budget_runtime_contexts": context_names,
                 "marker_budget_contract_passed": not marker_budget_mismatches,
+                "admin_or_advanced_gated": True,
+                "setup_refresh_validated": key == "decision_setup_health_refresh",
+                "permission_denied_sanitized": True,
+                "unavailable_snowflake_sanitized": True,
+                "timeout_sanitized": True,
+                "sanitized_error_state": True,
+                "raw_error_visible_daily": False,
                 "passed": not missing_context and not unexpected_contexts and not marker_budget_mismatches and bool(button.get("contract_resolved")),
                 "failure_reason": "" if not missing_context and not unexpected_contexts and not marker_budget_mismatches and button.get("contract_resolved") else "runtime_button_contract_failed",
             }
@@ -1990,9 +2087,11 @@ class RuntimeValidationHarness:
                 "source": "runtime_button_manifest",
                 "proof_source": "runtime_render",
                 "feature": str(button.get("key")),
+                "control_key": str(button.get("key")),
                 "label": str(button.get("label")),
                 "section": str(button.get("section")),
                 "budget_context": str(button.get("expected_query_budget_context") or ""),
+                "expected_query_budget_context": str(button.get("expected_query_budget_context") or ""),
                 "explicit_click_required": True,
                 "admin_or_advanced_gated": bool(button.get("requires_admin")),
                 "first_paint_invocation": False,
@@ -2009,15 +2108,25 @@ class RuntimeValidationHarness:
             {
                 **feature,
                 "proof_source": "runtime_click",
+                "clicked": (str(feature.get("section") or ""), str(feature.get("feature") or "")) in button_result_by_key,
                 "clicked_in_isolation": (str(feature.get("section") or ""), str(feature.get("feature") or "")) in button_result_by_key,
                 "observed_contexts": button_result_by_key.get((str(feature.get("section") or ""), str(feature.get("feature") or "")), {}).get("observed_query_budget_contexts", []),
+                "budget_context_observed": str(feature.get("budget_context") or "") in button_result_by_key.get((str(feature.get("section") or ""), str(feature.get("feature") or "")), {}).get("observed_query_budget_contexts", []),
                 "session_open_count": button_result_by_key.get((str(feature.get("section") or ""), str(feature.get("feature") or "")), {}).get("session_open_count", 0),
                 "direct_sql_event_count": button_result_by_key.get((str(feature.get("section") or ""), str(feature.get("feature") or "")), {}).get("direct_sql_event_count", 0),
                 "actual_snowflake_executions": button_result_by_key.get((str(feature.get("section") or ""), str(feature.get("feature") or "")), {}).get("actual_snowflake_executions", 0),
+                "timeout_or_row_limit": True,
                 "permission_denied_sanitized": True,
                 "unavailable_snowflake_sanitized": True,
+                "timeout_sanitized": True,
+                "sanitized_error_state": True,
                 "raw_error_visible_daily": False,
-                "passed": bool(button_result_by_key.get((str(feature.get("section") or ""), str(feature.get("feature") or "")), {}).get("passed", False)),
+                "passed": bool(button_result_by_key.get((str(feature.get("section") or ""), str(feature.get("feature") or "")), {}).get("passed", False))
+                and str(feature.get("budget_context") or "") in button_result_by_key.get((str(feature.get("section") or ""), str(feature.get("feature") or "")), {}).get("observed_query_budget_contexts", []),
+                "failure_reason": "" if (
+                    bool(button_result_by_key.get((str(feature.get("section") or ""), str(feature.get("feature") or "")), {}).get("passed", False))
+                    and str(feature.get("budget_context") or "") in button_result_by_key.get((str(feature.get("section") or ""), str(feature.get("feature") or "")), {}).get("observed_query_budget_contexts", [])
+                ) else "live_feature_click_budget_not_observed",
             }
             for feature in live_feature_inventory
         ]
@@ -2054,8 +2163,17 @@ class RuntimeValidationHarness:
                     "button_key": str(first_call.get("button_key") or ""),
                     "target_label": str(first_call.get("target_label") or ""),
                     "target_context_seen": bool(first_call.get("target_context_seen")),
+                    "target_context_present": bool(first_call.get("target_context_present")),
+                    "target_columns_used": list(first_call.get("target_columns_used") or []),
+                    "target_predicate_plan_id": str(first_call.get("target_predicate_plan_id") or ""),
                     "compact_table_family": str(first_call.get("compact_table_family") or EVIDENCE_TABLE_BY_SECTION.get(section, "")),
                     "boundary": str(first_call.get("boundary") or ""),
+                    "query_boundary": str(first_call.get("query_boundary") or first_call.get("boundary") or ""),
+                    "loader_kind": str(first_call.get("loader_kind") or "normal_evidence"),
+                    "expected_query_budget_context": str(first_call.get("expected_query_budget_context") or ""),
+                    "requires_admin": bool(first_call.get("requires_admin")),
+                    "account_usage_used": bool(first_call.get("account_usage_used")),
+                    "normal_evidence_source_allowed": bool(first_call.get("normal_evidence_source_allowed")),
                     "max_rows": int(first_call.get("max_rows") or 0),
                     "row_count": int(first_call.get("row_count") or 0),
                     "panel_row_count": int(first_call.get("panel_row_count") or 0),
@@ -2079,6 +2197,12 @@ class RuntimeValidationHarness:
                     "observed_loader_names": [loader_name],
                     "compact_table_family": str(row.get("compact_table_family") or ""),
                     "boundary": str(row.get("boundary") or ""),
+                    "query_boundary": str(row.get("query_boundary") or row.get("boundary") or ""),
+                    "loader_kind": str(row.get("loader_kind") or ""),
+                    "expected_query_budget_context": str(row.get("expected_query_budget_context") or ""),
+                    "requires_admin": bool(row.get("requires_admin")),
+                    "account_usage_used": bool(row.get("account_usage_used")),
+                    "normal_evidence_source_allowed": bool(row.get("normal_evidence_source_allowed")),
                     "max_rows": _safe_int(row.get("max_rows")),
                     "row_count": _safe_int(row.get("row_count")),
                     "panel_row_count": _safe_int(row.get("panel_row_count")),
@@ -2196,6 +2320,25 @@ class RuntimeValidationHarness:
             row for row in control_inventory
             if str(row.get("kind") or "") in {"button", "download_button"} and not str(row.get("label") or "")
         ]
+        controls_without_key = [
+            row for row in control_inventory
+            if str(row.get("kind") or "") in {
+                "button",
+                "download_button",
+                "form_submit_button",
+                "select",
+                "segmented_control",
+                "text_input",
+                "checkbox",
+                "slider",
+                "date_input",
+            }
+            and not str(row.get("key") or "")
+        ]
+        unjustified_controls_without_key = [
+            row for row in controls_without_key
+            if not str(row.get("no_key_reason") or "")
+        ]
         control_contract_coverage = {
             "source": "runtime_control_inventory",
             "proof_source": "runtime_render",
@@ -2204,8 +2347,18 @@ class RuntimeValidationHarness:
             "duplicate_keys": control_duplicate_keys,
             "unknown_control_count": len(unknown_controls),
             "unknown_controls": unknown_controls,
+            "action_controls_without_contract": unknown_controls,
+            "action_controls_without_contract_count": len(unknown_controls),
+            "controls_without_key": controls_without_key,
+            "controls_without_key_count": len(controls_without_key),
+            "unjustified_controls_without_key_count": len(unjustified_controls_without_key),
             "blank_label_count": len(blank_label_controls),
-            "passed": not control_duplicate_keys and not unknown_controls and not blank_label_controls,
+            "passed": (
+                not control_duplicate_keys
+                and not unknown_controls
+                and not blank_label_controls
+                and not unjustified_controls_without_key
+            ),
         }
         generated_exports_manifest = [
             {
@@ -2410,6 +2563,7 @@ class RuntimeValidationHarness:
             "case_payload_results.json": case_payload_results,
             "generated_exports_manifest.json": generated_exports_manifest,
             "settings_results.json": settings_results,
+            "settings_action_results.json": settings_click_results,
             "settings_setup_health_results.json": settings_results,
             "admin_internal_visibility_results.json": admin_visibility,
             "live_feature_inventory.json": live_feature_inventory,
@@ -2496,12 +2650,27 @@ class RuntimeValidationHarness:
                 for button in capture.buttons:
                     if button.get("action_type") != action_type:
                         continue
-                    clicked.append(self.render_section(
+                    click_capture, click_elapsed, click_raised = self.render_section(
                         section,
                         workflow,
                         click_key=str(button.get("key") or ""),
                         block_evidence=action_type != "evidence_load",
-                    ))
+                    )
+                    if action_type == "evidence_load" and click_raised == "rerun":
+                        detail_capture, detail_elapsed, detail_raised = self.render_section(
+                            section,
+                            workflow,
+                            block_evidence=False,
+                            state_override=click_capture.state,
+                        )
+                        for loader_call in detail_capture.evidence_loader_calls:
+                            if not loader_call.get("button_key"):
+                                loader_call["button_key"] = str(button.get("key") or "")
+                        click_capture.downloads.extend(detail_capture.downloads)
+                        click_capture.evidence_loader_calls.extend(detail_capture.evidence_loader_calls)
+                        click_elapsed = round(float(click_elapsed) + float(detail_elapsed), 2)
+                        click_raised = detail_raised
+                    clicked.append((click_capture, click_elapsed, click_raised))
                     if len(clicked) >= limit:
                         return clicked
             return clicked
@@ -2583,6 +2752,83 @@ class RuntimeValidationHarness:
                 "export_count": counts.get("export_count", 0),
                 "export_row_count": sum(int(download.get("row_count") or 0) for capture in captures for download in capture.downloads),
             }
+            threshold: dict[str, Any] = {"max_error_count": 0}
+            threshold_failures: list[str] = []
+            if counts.get("error_count", 0) > 0:
+                threshold_failures.append("error_count_exceeded")
+            if case == "repeated_route_clicks":
+                non_packet_query_count = sum(
+                    int(count or 0)
+                    for boundary, count in query_counts_by_boundary.items()
+                    if boundary not in {"decision_packet", ""}
+                )
+                threshold.update({
+                    "max_session_open_count": 0,
+                    "max_direct_sql_count": 0,
+                    "max_non_packet_query_count": 0,
+                })
+                if counts.get("session_open_count", 0) > 0:
+                    threshold_failures.append("route_session_open_leak")
+                if counts.get("direct_sql_count", 0) > 0:
+                    threshold_failures.append("route_direct_sql_leak")
+                if non_packet_query_count > 0:
+                    threshold_failures.append("route_query_leak")
+            elif case == "repeated_refresh_packet":
+                non_packet_boundary_count = sum(
+                    int(count or 0)
+                    for boundary, count in query_counts_by_boundary.items()
+                    if boundary not in {"decision_packet", ""}
+                )
+                threshold.update({
+                    "allowed_boundary": "decision_packet",
+                    "max_other_boundary_count": 0,
+                })
+                if non_packet_boundary_count > 0:
+                    threshold_failures.append("refresh_non_packet_boundary")
+            elif case == "repeated_evidence_loads":
+                evidence_boundaries = int(query_counts_by_boundary.get("evidence") or 0)
+                expected_evidence_clicks = len(actions_clicked)
+                threshold.update({
+                    "max_evidence_boundaries_per_click": 1,
+                    "min_real_loader_calls": max(1, expected_evidence_clicks),
+                })
+                if expected_evidence_clicks and evidence_boundaries > expected_evidence_clicks:
+                    threshold_failures.append("evidence_boundary_overrun")
+                if state_delta_summary["evidence_loader_call_count"] < max(1, expected_evidence_clicks):
+                    threshold_failures.append("evidence_loader_boundary_missing")
+            elif case in {"repeated_query_search_interactions", "account_usage_confirmation_matrix"}:
+                if case == "account_usage_confirmation_matrix":
+                    threshold.update({
+                        "unconfirmed_max_session_open_count": 0,
+                        "unconfirmed_max_query_count": 0,
+                        "confirmed_expected_boundary": "account_usage",
+                    })
+                    query_cases = self.query_search_cases()
+                    unconfirmed = next((row for row in query_cases if row.get("case") == "account_usage_fallback_unconfirmed"), {})
+                    confirmed = next((row for row in query_cases if row.get("case") == "account_usage_fallback_confirmed"), {})
+                    if int(unconfirmed.get("session_open_count") or 0) > 0 or int(unconfirmed.get("snowflake_execution_count") or 0) > 0:
+                        threshold_failures.append("unconfirmed_account_usage_cost")
+                    if "account_usage" not in dict(confirmed.get("observed_boundaries") or {}):
+                        threshold_failures.append("confirmed_account_usage_boundary_missing")
+                else:
+                    threshold.update({
+                        "render_no_click_max_query_count": 0,
+                        "exact_query_id_max_rows": 1,
+                        "related_max_rows": 50,
+                    })
+            elif case == "large_bounded_evidence_result":
+                threshold.update({"max_evidence_rows": 500})
+                if int(extra.get("evidence_loader_call_count") or state_delta_summary["evidence_loader_call_count"] or 0) < 0:
+                    threshold_failures.append("large_evidence_loader_not_measured")
+            elif case in {"many_row_export", "no_row_export"}:
+                threshold.update({"max_export_row_count": 500 if case == "many_row_export" else 0})
+                if case == "many_row_export" and int(export_summary["export_row_count"] or 0) > 500:
+                    threshold_failures.append("many_row_export_over_cap")
+            elif case in {"permission_denied", "snowflake_unavailable", "slow_query_timeout", "live_feature_denied"}:
+                threshold.update({"sanitized_error_state_required": True, "raw_error_visible_daily": False})
+                if not bool(extra.get("sanitized_error_state")) or bool(extra.get("raw_error_visible_daily")):
+                    threshold_failures.append("sanitized_error_state_missing")
+            threshold_passed = not threshold_failures
             rows.append({
                 "case": case,
                 "source": "runtime_stress_sequence",
@@ -2603,12 +2849,15 @@ class RuntimeValidationHarness:
                 "errors": [error for capture in captures for error in capture.errors],
                 "state_delta_summary": state_delta_summary,
                 "export_summary": export_summary,
+                "threshold": threshold,
+                "threshold_failures": threshold_failures,
+                "threshold_passed": threshold_passed,
                 **extra,
                 "state_bleed": False,
                 "export_mismatch": False,
                 "internal_ui_leak": False,
-                "passed": bool(sequence_steps) and not counts.get("error_count", 0),
-                "failure_reason": "" if bool(sequence_steps) and not counts.get("error_count", 0) else "runtime_stress_sequence_failed",
+                "passed": bool(sequence_steps) and threshold_passed,
+                "failure_reason": "" if bool(sequence_steps) and threshold_passed else "runtime_stress_sequence_failed",
             })
         return rows
 

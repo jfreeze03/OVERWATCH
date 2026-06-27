@@ -411,6 +411,15 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         self.assertIn("UPPER(EVENT_ID) = UPPER('EVT-1')", alert_sql)
         self.assertNotIn("UPPER(WAREHOUSE_NAME) = UPPER('EVT-1')", alert_sql)
         self.assertNotIn("EVIDENCE_QUERY", alert_sql)
+        from utils import query as query_utils
+
+        target_metadata = query_utils._target_metadata_from_sql(
+            f"SELECT EVENT_ID FROM ALERT_EVENTS WHERE 1=1 {alert_sql} LIMIT 200",
+            "evidence",
+        )
+        self.assertTrue(target_metadata["target_predicate_marker_present"])
+        self.assertIn("EVENT_ID", target_metadata["target_columns_used"])
+        self.assertNotIn("EVT-1", json.dumps(target_metadata))
 
         cost_sql = build_target_sql_filter(
             "Cost & Contract",
@@ -450,6 +459,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         self.assertIn("def load_query_text_preview", source)
         self.assertIn("Search recent mart detail", source)
         self.assertIn("Load SQL preview", source)
+        self.assertIn("Show related executions", source)
         self.assertIn("Advanced Account Usage fallback", source)
         self.assertIn("I understand this may scan Account Usage.", source)
         self.assertIn("Search Account Usage fallback", source)
@@ -473,6 +483,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         self.assertIn('query_budget_context("account_usage_fallback"', source)
         self.assertNotIn("SUBSTR(query_text,1,500) AS query_text", source)
         self.assertIn("row_limit = 1", source)
+        self.assertIn("query_search_related_", source)
         recent_sql = query_search._recent_query_detail_sql(
             search_cl="AND query_id = '01a'",
             date_predicate="AND start_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())",
@@ -480,11 +491,12 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             user_cl="",
             status_cl="",
             target_wh_cl="",
-            row_limit=10,
+            row_limit=1,
         )
         self.assertIn("FACT_QUERY_DETAIL_RECENT", recent_sql)
         self.assertNotIn("query_text", recent_sql.lower())
-        self.assertIn("LIMIT 10", recent_sql)
+        self.assertIn("query_hash", recent_sql.lower())
+        self.assertIn("LIMIT 1", recent_sql)
         preview_sql = query_search._query_text_preview_sql("01a")
         self.assertIn("query_text_preview", preview_sql)
         self.assertIn("LIMIT 1", preview_sql)
@@ -576,7 +588,9 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             ("QUERY_ID", "QUERY_HASH", "QUERY_SIGNATURE", "WAREHOUSE_NAME"),
         )
         self.assertIn("UPPER(target.QUERY_ID) = UPPER('QUERY-123')", dba_sql)
+        self.assertIn("OVERWATCH_TARGET_PREDICATE", dba_sql)
         self.assertLess(dba_sql.index("QUERY-123"), dba_sql.rindex("LIMIT"))
+        self.assertLess(dba_sql.index("OVERWATCH_TARGET_PREDICATE"), dba_sql.rindex("LIMIT"))
 
         task_sql = dba_data._targeted_control_room_sql(
             "SELECT TASK_NAME, ROOT_TASK_NAME, PROCEDURE_NAME FROM TASK_PROOF LIMIT 200",
@@ -584,6 +598,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             ("TASK_NAME", "ROOT_TASK_NAME", "PROCEDURE_NAME"),
         )
         self.assertIn("UPPER(target.TASK_NAME) = UPPER('LOAD_TASK')", task_sql)
+        self.assertIn("OVERWATCH_TARGET_PREDICATE", task_sql)
         self.assertLess(task_sql.index("LOAD_TASK"), task_sql.rindex("LIMIT"))
 
         security_sql = security_view._targeted_security_sql(
@@ -591,6 +606,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             {"entity_type": "user", "entity_id": "JDOE"},
         )
         self.assertIn("UPPER(target.USER_NAME) = UPPER('JDOE')", security_sql)
+        self.assertIn("OVERWATCH_TARGET_PREDICATE", security_sql)
         self.assertLess(security_sql.index("JDOE"), security_sql.rindex("LIMIT"))
 
         recent_sql = query_search._recent_query_detail_sql(
@@ -713,7 +729,15 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS MART_SECTION_DECISION_CURRENT_FLAT", setup)
         self.assertIn("MERGE INTO MART_SECTION_DECISION_CURRENT_FLAT", setup)
         load_proc = (ROOT / "snowflake" / "mart_setup" / "05_load_procedures.sql").read_text(encoding="utf-8")
+        self.assertIn("CREATE OR REPLACE TEMPORARY TABLE TMP_SECTION_DECISION_PACKET_FLAT_SOURCE", load_proc)
         self.assertIn("CREATE OR REPLACE TEMPORARY TABLE TMP_SECTION_DECISION_PACKET_FLAT", load_proc)
+        self.assertIn("CREATE OR REPLACE TEMPORARY TABLE TMP_SECTION_DECISION_PACKET AS", load_proc)
+        self.assertLess(
+            load_proc.index("CREATE OR REPLACE TEMPORARY TABLE TMP_SECTION_DECISION_PACKET_FLAT AS"),
+            load_proc.index("CREATE OR REPLACE TEMPORARY TABLE TMP_SECTION_DECISION_PACKET AS"),
+        )
+        raw_packet_block = load_proc.split("CREATE OR REPLACE TEMPORARY TABLE TMP_SECTION_DECISION_PACKET AS", 1)[1].split("MERGE INTO MART_SECTION_DECISION_CURRENT", 1)[0]
+        self.assertIn("FROM TMP_SECTION_DECISION_PACKET_FLAT", raw_packet_block)
         self.assertIn("INSERT INTO MART_SECTION_DECISION_CURRENT_FLAT", load_proc)
         flat_insert_block = load_proc.split("INSERT INTO MART_SECTION_DECISION_CURRENT_FLAT", 1)[1].split("UPDATE MART_SECTION_DECISION_CURRENT_FLAT", 1)[0]
         self.assertIn("FROM TMP_SECTION_DECISION_PACKET_FLAT", flat_insert_block)
@@ -721,6 +745,21 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         self.assertIn("SECTION_DECISION_CURRENT_OPTIMIZED_LOOKUP_SCHEMA", validation)
         self.assertIn("SECTION_DECISION_CURRENT_FLAT_TABLE", validation)
         self.assertIn("SECTION_DECISION_CURRENT_FLAT_ACTIVE_MATCHES_CURRENT", validation)
+
+    def test_optional_query_optimization_flags_are_guarded(self):
+        config = (ROOT / "snowflake" / "mart_setup" / "03_config_and_audit_tables.sql").read_text(encoding="utf-8")
+        procs = (ROOT / "snowflake" / "mart_setup" / "05_load_procedures.sql").read_text(encoding="utf-8")
+        validation = (ROOT / "snowflake" / "mart_setup" / "08_validation.sql").read_text(encoding="utf-8")
+
+        self.assertIn("'OVERWATCH_ENABLE_CLUSTER_KEYS', 'TRUE'", config)
+        self.assertIn("'OVERWATCH_ENABLE_SEARCH_OPTIMIZATION', 'FALSE'", config)
+        self.assertIn("SP_OVERWATCH_APPLY_OPTIONAL_PERFORMANCE_OPTIMIZATION", procs)
+        self.assertIn("IF (enable_cluster) THEN", procs)
+        self.assertIn("IF (enable_search) THEN", procs)
+        self.assertIn("CLUSTER BY (IS_ACTIVE, SECTION_NAME_NORM, COMPANY_NORM, ENVIRONMENT_NORM, WINDOW_DAYS_NORM)", procs)
+        self.assertIn("ADD SEARCH OPTIMIZATION", procs)
+        self.assertIn("OVERWATCH_OPTIONAL_PERFORMANCE_OPTIMIZATION_FLAGS", validation)
+        self.assertIn("IFF(COUNT(*) = 0, 'PASS', 'WARN')", validation)
 
     def test_query_contract_linter_flags_risky_shapes_and_passes_packet_lookup(self):
         from query_contracts import (
@@ -791,12 +830,20 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         query_search_contract = resolve_query_contract(
             boundary="query_search",
             section="Workload Operations",
-            ttl_key="query_search_recent_detail_ALFA_Exact query ID_01a__ALL_7_10",
+            ttl_key="query_search_recent_detail_ALFA_Exact query ID_01a__ALL_7_1",
             tier="recent",
         )
         self.assertEqual(query_search_contract.boundary, "query_search")
-        self.assertEqual(query_search_contract.contract_id, "query_search_recent_detail")
-        self.assertEqual(query_search_contract.max_rows, 500)
+        self.assertEqual(query_search_contract.contract_id, "query_search_exact")
+        self.assertEqual(query_search_contract.max_rows, 1)
+        related_contract = resolve_query_contract(
+            boundary="query_search",
+            section="Workload Operations",
+            ttl_key="query_search_related_ALFA_hash_01a_50",
+            tier="recent",
+        )
+        self.assertEqual(related_contract.contract_id, "query_search_related_executions")
+        self.assertEqual(related_contract.max_rows, 50)
         self.assertTrue([contract for contract in iter_query_contracts() if contract.boundary == "decision_packet"])
 
     def test_query_runner_enforces_contracts_before_execution(self):
@@ -2152,6 +2199,12 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             if bool(event.get("first_paint_active")) and bool(event.get("executed"))
         )
         direct_sql_violation_count = sum(1 for event in direct_sql_events if not bool(event.get("allowed")))
+        direct_sql_events_by_kind: dict[str, int] = {}
+        for event in direct_sql_events:
+            kind = str(event.get("direct_sql_kind") or "direct_sql")
+            direct_sql_events_by_kind[kind] = direct_sql_events_by_kind.get(kind, 0) + 1
+        account_usage_metadata_probe_count = direct_sql_events_by_kind.get("account_usage_metadata_probe", 0)
+        account_usage_history_query_count = query_events_by_boundary.get("account_usage", 0)
         query_perf_summary = {
             "first_paint_allowed_queries": sum(int(row["cold_packet_queries"]) for row in rows),
             "first_paint_blocked_queries": len(violation_events),
@@ -2165,6 +2218,12 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             "route_action_queries": sum(int(row["route_action_queries_before_evidence"]) for row in rows),
             "evidence_click_queries": sum(int(row["evidence_queries_after_click"]) for row in rows),
             "account_usage_fallback_queries": query_events_by_boundary.get("account_usage", 0),
+            "account_usage_metadata_probe_count": account_usage_metadata_probe_count,
+            "account_usage_history_query_count": account_usage_history_query_count,
+            "total_account_usage_fallback_executions": (
+                account_usage_metadata_probe_count + account_usage_history_query_count
+            ),
+            "direct_sql_events_by_kind": direct_sql_events_by_kind,
             "snowflake_executions_by_boundary": {
                 "decision_packet": sum(int(row["cold_packet_queries"]) for row in rows),
                 "evidence": query_events_by_boundary.get("evidence", 0),

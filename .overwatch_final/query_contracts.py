@@ -208,6 +208,36 @@ for _ttl_pattern, _section, _markers in (
 register_query_contract(
     QueryContract(
         boundary="query_search",
+        contract_id="query_search_exact",
+        ttl_key_pattern=r"^query_search_recent_detail_.*Exact query ID",
+        tier="recent",
+        max_rows=1,
+        expected_table_family="FACT_QUERY_DETAIL_RECENT",
+    )
+)
+register_query_contract(
+    QueryContract(
+        boundary="query_search",
+        contract_id="query_search_signature",
+        ttl_key_pattern=r"^query_search_recent_detail_.*Query signature",
+        tier="recent",
+        max_rows=200,
+        expected_table_family="FACT_QUERY_DETAIL_RECENT",
+    )
+)
+register_query_contract(
+    QueryContract(
+        boundary="query_search",
+        contract_id="query_search_related_executions",
+        ttl_key_pattern=r"^query_search_related_",
+        tier="recent",
+        max_rows=50,
+        expected_table_family="FACT_QUERY_DETAIL_RECENT",
+    )
+)
+register_query_contract(
+    QueryContract(
+        boundary="query_search",
         contract_id="query_search_recent_detail",
         ttl_key_pattern=r"^query_search_recent_detail_",
         tier="recent",

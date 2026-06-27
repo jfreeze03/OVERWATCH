@@ -99,6 +99,7 @@ def _recent_query_detail_sql(
             total_elapsed_time/1000 AS elapsed_sec,
             bytes_scanned/POWER(1024,3) AS gb_scanned,
             rows_produced AS rows_produced,
+            query_hash,
             credits_used_cloud_services AS cloud_credits
         FROM {table}
         WHERE 1=1
@@ -315,6 +316,13 @@ def render():
             st.session_state["qs_search_mode"] = resolved_mode
             st.session_state["qs_effective_days"] = effective_days
             st.session_state["qs_date_label"] = date_label
+            st.session_state["qs_last_search_filters"] = {
+                "scoped_filters": scoped_filters,
+                "user_cl": user_cl,
+                "status_cl": status_cl,
+                "target_wh_cl": target_wh_cl,
+                "effective_days": effective_days,
+            }
         except Exception as e:
             st.warning(f"Query search unavailable: {format_snowflake_error(e)}")
 
@@ -339,6 +347,41 @@ def render():
                 st.session_state["qs_sql_preview_query_id"] = selected_preview_id
             if st.session_state.get("qs_sql_preview_query_id"):
                 st.caption("SQL preview loaded. Open admin detail to inspect full text.")
-            download_csv(df_q, "query_search_results.csv")
+            selected_row = df_q.iloc[0].to_dict() if hasattr(df_q, "iloc") and len(df_q) else {}
+            selected_hash = str(
+                selected_row.get("QUERY_HASH")
+                or selected_row.get("query_hash")
+                or ""
+            ).strip()
+            if selected_hash and selected_preview_id and st.button("Show related executions", key="qs_show_related_executions"):
+                last_filters = st.session_state.get("qs_last_search_filters")
+                last_filters = last_filters if isinstance(last_filters, dict) else {}
+                related_days = max(1, min(int(last_filters.get("effective_days") or 7), 7))
+                related_sql = _recent_query_detail_sql(
+                    search_cl=(
+                        f"AND query_hash = {sql_literal(selected_hash)} "
+                        f"AND query_id <> {sql_literal(selected_preview_id)}"
+                    ),
+                    date_predicate=f"AND start_time >= DATEADD('day', -{related_days}, CURRENT_TIMESTAMP())",
+                    scoped_filters=str(last_filters.get("scoped_filters") or ""),
+                    user_cl=str(last_filters.get("user_cl") or ""),
+                    status_cl=str(last_filters.get("status_cl") or ""),
+                    target_wh_cl=str(last_filters.get("target_wh_cl") or ""),
+                    row_limit=50,
+                )
+                with query_budget_context("query_search_signature", section="Workload Operations", workflow="Query Investigation", budget=1):
+                    st.session_state["qs_related_df"] = search_recent_query_summary(
+                        related_sql,
+                        ttl_key=f"query_search_related_{company}_{selected_hash}_{selected_preview_id}_50",
+                        row_limit=50,
+                    )
+            related_df = st.session_state.get("qs_related_df")
+            if related_df is not None and hasattr(related_df, "empty") and not related_df.empty:
+                st.caption(f"Related executions loaded: {len(related_df):,}.")
+            export_df = df_q.drop(
+                columns=[column for column in getattr(df_q, "columns", []) if str(column).lower() == "query_text"],
+                errors="ignore",
+            )
+            download_csv(export_df, "query_search_results.csv")
         else:
             st.info("No queries matched the search criteria.")

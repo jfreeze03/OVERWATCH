@@ -30,7 +30,9 @@ USING (
     ('DECISION_BRIEF_BOOTSTRAP_ROLE', 'SNOW_SYSADMINS', 'STRING', 'Role allowed to initialize Decision Brief packets during installation or setup health repair.'),
     ('DECISION_BRIEF_BOOTSTRAP_PROCEDURE', 'SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS', 'STRING', 'Preferred procedure for Decision Brief setup health initialization.'),
     ('DECISION_BRIEF_WAREHOUSE', 'COMPUTE_WH', 'STRING', 'Warehouse used by scheduled Decision Brief refresh tasks when a dedicated warehouse is not configured.'),
-    ('DECISION_BRIEF_ALLOW_LEGACY_ADAPTER', 'TRUE', 'BOOLEAN', 'Allow bounded compact legacy-mart adapters when the normalized Decision packet is not current.')
+    ('DECISION_BRIEF_ALLOW_LEGACY_ADAPTER', 'TRUE', 'BOOLEAN', 'Allow bounded compact legacy-mart adapters when the normalized Decision packet is not current.'),
+    ('OVERWATCH_ENABLE_CLUSTER_KEYS', 'TRUE', 'BOOLEAN', 'Edition-safe optional clustering for compact packet and evidence lookup marts.'),
+    ('OVERWATCH_ENABLE_SEARCH_OPTIMIZATION', 'FALSE', 'BOOLEAN', 'Enterprise-only search optimization guard. Disabled by default and applied only by explicit admin choice.')
 ) src(SETTING_NAME, SETTING_VALUE, SETTING_TYPE, DESCRIPTION)
 ON tgt.SETTING_NAME = src.SETTING_NAME
 WHEN MATCHED THEN UPDATE SET

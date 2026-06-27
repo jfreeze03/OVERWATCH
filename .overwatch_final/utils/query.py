@@ -318,9 +318,45 @@ def _infer_query_boundary(query_text: str = "", ttl_key: str = "", tier: str = "
     return "other"
 
 
+_TARGET_METADATA_COLUMNS = (
+    "QUERY_ID", "QUERY_HASH", "QUERY_SIGNATURE",
+    "ALERT_ID", "ALERT_KEY", "EVENT_ID", "ACTION_ID",
+    "WAREHOUSE_NAME", "USER_NAME", "LOGIN_NAME", "ROLE_NAME",
+    "GRANTEE_NAME", "GRANT_ID", "DATABASE_NAME", "SHARE_NAME",
+    "OBJECT_NAME", "TASK_NAME", "ROOT_TASK_NAME", "PROCEDURE_NAME",
+    "SERVICE_CATEGORY", "SERVICE_TYPE", "DEPARTMENT", "APPLICATION",
+)
+
+
+def _target_metadata_from_sql(query_text: str, boundary: str) -> dict[str, object]:
+    """Extract SQL-free target predicate metadata for telemetry artifacts."""
+    if str(boundary or "") not in {"evidence", "query_search"}:
+        return {
+            "target_predicate_marker_present": None,
+            "target_columns_used": [],
+            "target_fallback_used": None,
+        }
+    masked = re.sub(r"'(?:''|[^'])*'", "''", str(query_text or ""), flags=re.DOTALL)
+    upper = masked.upper()
+    marker_present = "OVERWATCH_TARGET_PREDICATE" in upper
+    limit_match = re.search(r"\bLIMIT\s+\d+\b", upper)
+    limit_pos = limit_match.start() if limit_match else len(upper)
+    marker_pos = upper.find("OVERWATCH_TARGET_PREDICATE")
+    predicate_region = upper[marker_pos:limit_pos] if marker_pos >= 0 else upper[:limit_pos]
+    return {
+        "target_predicate_marker_present": bool(marker_present),
+        "target_columns_used": [
+            column for column in _TARGET_METADATA_COLUMNS
+            if re.search(rf"\b{re.escape(column)}\b", predicate_region)
+        ],
+        "target_fallback_used": bool(" ILIKE " in predicate_region) if marker_present else None,
+    }
+
+
 _CRITICAL_TTL_BOUNDARIES: tuple[tuple[str, str], ...] = (
     (r"^section_command_packet_", "decision_packet"),
     (r"^query_search_recent_detail_", "query_search"),
+    (r"^query_search_related_", "query_search"),
     (r"^query_text_preview_", "query_preview"),
     (r"^query_search_account_usage_", "account_usage"),
     (r"setup_health|decision_setup_health", "setup_health"),
@@ -399,7 +435,7 @@ def _enforce_query_contract(
     ttl_key: str,
     tier: str,
     max_rows: int | None,
-) -> None:
+) -> object:
     """Lint and optionally block query shapes before Snowflake execution."""
     contract = resolve_query_contract(boundary=boundary, section=section, ttl_key=ttl_key, tier=tier)
     findings = list(lint_query_text(query_text, contract))
@@ -1190,6 +1226,7 @@ def _run_query_base(
         "first_paint_sensitive": bool(current_first_paint_render_id()) and _first_paint_sensitive_boundary(boundary),
         "error": "",
     }
+    meta.update(_target_metadata_from_sql(executable_query, boundary))
     assert_first_paint_query_allowed(
         boundary,
         section=telemetry_section,
@@ -1277,6 +1314,9 @@ def run_query(
         cache_layer=str(query_meta.get("cache_layer") or "unknown"),
         query_boundary=str(query_meta.get("query_boundary") or "other"),
         query_contract_id=str(query_meta.get("query_contract_id") or ""),
+        target_columns_used=list(query_meta.get("target_columns_used") or []),
+        target_predicate_marker_present=query_meta.get("target_predicate_marker_present"),
+        target_fallback_used=query_meta.get("target_fallback_used"),
         first_paint_sensitive=bool(query_meta.get("first_paint_sensitive")),
     )
     return result
@@ -1319,6 +1359,7 @@ def run_query_or_raise(
         tier=tier,
         max_rows=max_rows,
     )
+    target_metadata = _target_metadata_from_sql(executable_query, boundary)
     assert_first_paint_query_allowed(
         boundary,
         section=telemetry_section,
@@ -1343,6 +1384,9 @@ def run_query_or_raise(
             cache_layer="paused",
             query_boundary=boundary,
             query_contract_id=str(getattr(contract, "contract_id", "") or ""),
+            target_columns_used=list(target_metadata.get("target_columns_used") or []),
+            target_predicate_marker_present=target_metadata.get("target_predicate_marker_present"),
+            target_fallback_used=target_metadata.get("target_fallback_used"),
             first_paint_sensitive=bool(current_first_paint_render_id()) and _first_paint_sensitive_boundary(boundary),
         )
         return empty_paused_result(ttl_key=ttl_key, section=section)
@@ -1363,6 +1407,9 @@ def run_query_or_raise(
             cache_layer="budget_blocked",
             query_boundary=boundary,
             query_contract_id=str(getattr(contract, "contract_id", "") or ""),
+            target_columns_used=list(target_metadata.get("target_columns_used") or []),
+            target_predicate_marker_present=target_metadata.get("target_predicate_marker_present"),
+            target_fallback_used=target_metadata.get("target_fallback_used"),
             first_paint_sensitive=bool(current_first_paint_render_id()) and _first_paint_sensitive_boundary(boundary),
         )
         return result
@@ -1416,6 +1463,9 @@ def run_query_or_raise(
             cache_layer="streamlit_cache" if use_cache else "none",
             query_boundary=boundary,
             query_contract_id=str(getattr(contract, "contract_id", "") or ""),
+            target_columns_used=list(target_metadata.get("target_columns_used") or []),
+            target_predicate_marker_present=target_metadata.get("target_predicate_marker_present"),
+            target_fallback_used=target_metadata.get("target_fallback_used"),
             first_paint_sensitive=bool(current_first_paint_render_id()) and _first_paint_sensitive_boundary(boundary),
         )
 

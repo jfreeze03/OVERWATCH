@@ -763,6 +763,10 @@ def record_ui_query_event(
     cache_layer: str = "unknown",
     query_boundary: str = "other",
     query_contract_id: str = "",
+    target_label: str = "",
+    target_columns_used: tuple[str, ...] | list[str] | None = None,
+    target_predicate_marker_present: bool | None = None,
+    target_fallback_used: bool | None = None,
     first_paint_sensitive: bool = False,
     render_id: str | None = None,
 ) -> dict[str, Any]:
@@ -797,6 +801,10 @@ def record_ui_query_event(
         "cache_layer": cache_layer,
         "query_boundary": query_boundary,
         "query_contract_id": str(query_contract_id or "")[:120],
+        "target_label": str(target_label or "")[:250],
+        "target_columns_used": [str(column)[:120] for column in (target_columns_used or [])],
+        "target_predicate_marker_present": target_predicate_marker_present,
+        "target_fallback_used": target_fallback_used,
         "first_paint_sensitive": bool(first_paint_sensitive),
     }
     try:

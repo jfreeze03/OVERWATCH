@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -114,6 +115,15 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
         self.assertEqual(control_coverage["duplicate_key_count"], 0)
         self.assertTrue(risk_inventory["passed"], risk_inventory)
         self.assertFalse(risk_inventory["marker_budget_mismatches"], risk_inventory)
+        for risk_key in (
+            "query_budget_failures",
+            "route_leaks",
+            "evidence_over_budget",
+            "live_feature_budget_failures",
+            "export_payload_risks",
+        ):
+            self.assertIn(risk_key, risk_inventory)
+            self.assertFalse(risk_inventory[risk_key], risk_inventory)
         self.assertTrue(any(row.get("kind") == "button" for row in controls), controls[:5])
         self.assertTrue(any(row.get("kind") in {"select", "segmented_control", "text_input"} for row in controls), controls[:5])
 
@@ -156,6 +166,7 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
         for row in exports:
             self.assertEqual(row["source"], "runtime_export_payload")
             self.assertEqual(row["proof_source"], "runtime_export")
+            self.assertNotIn("payload_text", row)
             self.assertGreater(row["content_length"], 0, row)
             self.assertGreaterEqual(row["row_count"], 1, row)
             self.assertEqual(row["row_count"], row["parsed_row_count"], row)
@@ -167,6 +178,24 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
             self.assertTrue(payload_file.exists(), row)
             self.assertIn(str(row["payload_file"]), manifest["files"], row)
             self.assertGreater(payload_file.stat().st_size, 0, row)
+            payload_bytes = payload_file.read_bytes()
+            payload_text = payload_bytes.decode("utf-8")
+            self.assertEqual(hashlib.sha256(payload_bytes).hexdigest(), row["sha256"], row)
+            forbidden_export_tokens = (
+                "query_text",
+                "SELECT",
+                "WITH",
+                "JOIN",
+                "CALL",
+                "SP_",
+                "MART_",
+                "FACT_",
+                "ACCOUNT_USAGE",
+                "Traceback",
+                "SnowflakeSQLException",
+            )
+            for token in forbidden_export_tokens:
+                self.assertNotIn(token, payload_text, row)
             self.assertTrue(row["passed"], row)
 
         query_cases = {row["case"]: row for row in query_search}
@@ -200,6 +229,8 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
         self.assertEqual(query_cases["text_contains_no_autorun"]["snowflake_execution_count"], 0)
         self.assertEqual(query_cases["warehouse_prefill_no_autorun"]["snowflake_execution_count"], 0)
         self.assertLessEqual(query_cases["text_contains_explicit_search"]["max_rows"], 200)
+        self.assertTrue(query_cases["exact_query_id"].get("loader_calls"), query_cases["exact_query_id"])
+        self.assertTrue(query_cases["query_signature"].get("loader_calls"), query_cases["query_signature"])
         self.assertEqual(query_cases["account_usage_fallback_unconfirmed"]["session_open_count"], 0)
         self.assertEqual(query_cases["account_usage_fallback_confirmed"]["metadata_probe_count"], 0)
 
@@ -224,12 +255,32 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
             self.assertLessEqual(row["max_rows"], 200)
             self.assertLessEqual(row["hard_cap"], 500)
         self.assertTrue(evidence_matrix, evidence_matrix)
+        matrix_by_section = {}
         for row in evidence_matrix:
             self.assertEqual(row["source"], "runtime_real_loader_spy_matrix", row)
             self.assertEqual(row["proof_source"], "runtime_click", row)
             self.assertTrue(row["expected_loader_name"], row)
+            self.assertNotEqual(row["expected_loader_name"], "sections.security_posture_privilege_sprawl_view.run_query", row)
+            self.assertNotIn("._render_cost_contract_workflow", row["expected_loader_name"], row)
+            self.assertNotEqual(row["expected_loader_name"].rsplit(".", 1)[-1], "run_query", row)
+            self.assertTrue(row["observed_loader_name"], row)
+            self.assertTrue(row["loader_called"], row)
+            self.assertTrue(row["button_key"] or row["expected_loader_name"] == "sections.query_search.search_recent_query_summary", row)
+            self.assertTrue(row["compact_table_family"], row)
+            self.assertTrue(row["boundary"], row)
+            self.assertGreater(row["max_rows"], 0, row)
+            self.assertGreater(row["row_count"], 0, row)
+            self.assertEqual(row["panel_row_count"], row["row_count"], row)
+            self.assertEqual(row["export_row_count"], row["row_count"], row)
+            self.assertEqual(row["case_row_count"], row["row_count"], row)
             self.assertTrue(row["observed"], row)
             self.assertTrue(row["passed"], row)
+            matrix_by_section.setdefault(row["section"], set()).add(row["expected_loader_name"])
+        self.assertEqual(set(matrix_by_section), set(PRIMARY_SECTION_TITLES))
+        self.assertIn("sections.cost_contract_evidence.load_cost_evidence", matrix_by_section["Cost & Contract"])
+        self.assertIn("sections.query_search.search_recent_query_summary", matrix_by_section["Workload Operations"])
+        self.assertIn("sections.workload_operations.load_change_event_detail", matrix_by_section["Workload Operations"])
+        self.assertIn("sections.security_posture_privilege_sprawl_view._render_privileged_grant_readiness", matrix_by_section["Security Monitoring"])
         for row in live:
             self.assertEqual(row["proof_source"], "runtime_click", row)
             self.assertTrue(row["explicit_click_required"], row)
@@ -246,9 +297,35 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
             self.assertIn("export_summary", row)
             self.assertTrue(row["passed"], row)
         stress_cases = {row["case"]: row for row in stress}
+        required_stress_cases = {
+            "rapid_section_switching",
+            "repeated_route_clicks",
+            "repeated_evidence_loads",
+            "repeated_refresh_packet",
+            "repeated_query_search_interactions",
+            "account_usage_confirmation_matrix",
+            "advanced_scope_filters",
+            "empty_evidence_result",
+            "large_bounded_evidence_result",
+            "snowflake_unavailable",
+            "permission_denied",
+            "slow_query_timeout",
+            "stale_source_data",
+            "fixture_data_mode",
+            "live_feature_denied",
+            "many_row_export",
+            "no_row_export",
+            "cache_expiry_force_refresh",
+            "state_bleed_across_sections",
+            "duplicate_session_state_collision",
+        }
+        self.assertTrue(required_stress_cases.issubset(stress_cases), stress_cases)
         self.assertEqual(stress_cases["rapid_section_switching"]["touched_primary_section_count"], len(PRIMARY_SECTION_TITLES))
         self.assertGreater(len(stress_cases["repeated_route_clicks"]["sequence_steps"]), 0, stress_cases["repeated_route_clicks"])
         self.assertGreater(stress_cases["repeated_evidence_loads"]["evidence_loader_call_count"], 0)
+        self.assertIn("decision_packet", stress_cases["repeated_refresh_packet"]["query_counts_by_boundary"])
+        self.assertTrue(stress_cases["permission_denied"]["sanitized_error_state"], stress_cases["permission_denied"])
+        self.assertTrue(stress_cases["slow_query_timeout"]["sanitized_error_state"], stress_cases["slow_query_timeout"])
 
         query_search_proof = json.loads((ROOT / "artifacts/query_search_proof.json").read_text(encoding="utf-8"))
         self.assertEqual(query_search_proof["proof_source"], "runtime_click")

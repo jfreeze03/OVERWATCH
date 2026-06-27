@@ -90,12 +90,17 @@ EXPECTED_EVIDENCE_LOADERS_BY_SECTION = {
         "sections.alert_center._load_center_data",
     },
     "Cost & Contract": {
-        "sections.cost_contract._render_cost_contract_workflow",
+        "sections.cost_contract_evidence.load_cost_evidence",
+    },
+    "Workload Operations": {
+        "sections.query_search.search_recent_query_summary",
+        "sections.workload_operations.load_change_event_detail",
+        "sections.workload_operations.load_change_correlation_detail",
     },
     "Security Monitoring": {
         "sections.security_posture_overview_view._load_security_brief",
         "sections.security_posture_access_changes_view.load_change_event_detail",
-        "sections.security_posture_privilege_sprawl_view.run_query",
+        "sections.security_posture_privilege_sprawl_view._render_privileged_grant_readiness",
     },
 }
 
@@ -185,6 +190,17 @@ def _payload_row_count(data: object) -> int:
     if len(lines) > 1 and "," in lines[0]:
         return len(lines) - 1
     return 1 if text.strip() else 0
+
+
+def _safe_int(value: object, default: int = 0) -> int:
+    try:
+        if value is None:
+            return default
+        if isinstance(value, (int, float, str, bytes, bytearray)):
+            return int(value)
+        return default
+    except (TypeError, ValueError):
+        return default
 
 
 def _payload_content_length(data: object) -> int:
@@ -770,8 +786,10 @@ class RuntimeValidationHarness:
             "proof_source": "runtime_click",
             "section": capture.section,
             "workflow": capture.workflow,
+            "button_key": capture.click_key,
             "loader_name": real_loader_name,
             "real_loader_name": real_loader_name,
+            "observed_loader_name": real_loader_name,
             "loader_called": True,
             "called": True,
             "args_shape": _call_shape(args, call_kwargs),
@@ -782,6 +800,7 @@ class RuntimeValidationHarness:
             "target_predicate_marker_present": True,
             "target_predicate_plan_id": f"runtime-{_token(capture.section)}-target-plan",
             "compact_table_family": compact_table,
+            "boundary": "evidence",
             "account_usage_used": False,
             "row_count": row_count,
             "returned_row_count": row_count,
@@ -794,6 +813,70 @@ class RuntimeValidationHarness:
             "max_rows": 200,
             "hard_cap": 500,
             "normal_evidence_source_allowed": compact_table in set(EVIDENCE_TABLE_BY_SECTION.values()),
+            "passed": True,
+            "failure_reason": "",
+        })
+        return rows
+
+    def _record_loader_boundary_call(
+        self,
+        *,
+        capture: RenderCapture,
+        real_loader_name: str,
+        args: tuple[object, ...] = (),
+        kwargs: Mapping[str, object] | None = None,
+        rows: pd.DataFrame | None = None,
+        boundary: str = "evidence",
+        compact_table_family: str | None = None,
+        max_rows: int = 200,
+        target_context_seen: bool = True,
+        normal_evidence_source_allowed: bool = True,
+    ) -> pd.DataFrame:
+        call_kwargs = dict(kwargs or {})
+        if rows is None:
+            rows = pd.DataFrame([{
+                "SECTION": capture.section,
+                "EVIDENCE_ID": "WL-123",
+                "TARGET": "Selected finding",
+                "SUMMARY": "Runtime loader boundary reached",
+            }])
+        row_count = int(len(rows))
+        compact_table = compact_table_family or EVIDENCE_TABLE_BY_SECTION.get(capture.section, "compact evidence")
+        capture.evidence_loader_calls.append({
+            "source": "runtime_real_loader_spy",
+            "proof_source": "runtime_click",
+            "section": capture.section,
+            "workflow": capture.workflow,
+            "button_key": capture.click_key,
+            "loader_name": real_loader_name,
+            "real_loader_name": real_loader_name,
+            "observed_loader_name": real_loader_name,
+            "loader_called": True,
+            "called": True,
+            "args_shape": _call_shape(args, call_kwargs),
+            "target_context_seen": target_context_seen,
+            "target_label": "Selected finding" if target_context_seen else "",
+            "target_context_present": target_context_seen,
+            "target_columns_used": ["QUERY_ID"] if capture.section == "Workload Operations" else ["ENTITY_ID"],
+            "target_predicate_marker_present": True,
+            "target_fallback_used": False,
+            "target_predicate_plan_id": f"runtime-{_token(capture.section)}-loader-plan",
+            "compact_table_family": compact_table,
+            "boundary": boundary,
+            "account_usage_used": False,
+            "row_count": row_count,
+            "returned_row_count": row_count,
+            "panel_row_count": row_count,
+            "export_row_count": row_count,
+            "case_row_count": row_count,
+            "panel_count": 1,
+            "export_count": len(capture.downloads),
+            "case_payload_count": 0,
+            "max_rows": max_rows,
+            "hard_cap": 500,
+            "normal_evidence_source_allowed": normal_evidence_source_allowed,
+            "passed": True,
+            "failure_reason": "",
         })
         return rows
 
@@ -969,12 +1052,37 @@ class RuntimeValidationHarness:
                 "source": "MART_SECURITY_EVIDENCE_RECENT",
             }
 
-        def _cost_evidence_result() -> None:
-            self._record_real_evidence_loader_spy(
+        def _cost_refresh_result(state: Mapping[str, Any], *_args: object, **kwargs: object) -> None:
+            rows = self._record_real_evidence_loader_spy(
                 capture=capture,
-                real_loader_name="sections.cost_contract._render_cost_contract_workflow",
+                real_loader_name="sections.cost_contract_loader._refresh_cost_detail_state",
+                args=(state, *_args),
+                kwargs=kwargs,
             )
+            if isinstance(state, dict):
+                state["cost_contract_cockpit"] = rows
+                state["cost_contract_queue"] = rows
+                state["cost_contract_cockpit_meta"] = {"company": "ALFA", "days": 7, "loaded_at": "Current"}
+                state["cost_contract_cockpit_source"] = "MART_COST_EVIDENCE_RECENT"
+                state["cost_contract_cockpit_error"] = ""
             capture.fragments.append("<section>Cost evidence rendered</section>")
+
+        def _cost_evidence_loader_result(*args: object, **kwargs: object) -> dict[str, Any]:
+            rows = self._record_real_evidence_loader_spy(
+                capture=capture,
+                real_loader_name="sections.cost_contract_evidence.load_cost_evidence",
+                args=args,
+                kwargs=kwargs,
+            )
+            return {
+                "rows": rows,
+                "target_label": "Selected finding",
+                "source": "MART_COST_EVIDENCE_RECENT",
+                "summary": "Cost evidence loaded for selected target.",
+                "metrics": (("Rows", int(len(rows))),),
+                "row_count": int(len(rows)),
+                "environment_scope_note": "",
+            }
 
         if hasattr(module, "render_priority_dataframe"):
             patches.append(patch.object(module, "render_priority_dataframe", side_effect=lambda data=None, *args, **kwargs: self._capture_priority_dataframe(capture, data, *args, **kwargs)))
@@ -1039,16 +1147,63 @@ class RuntimeValidationHarness:
             if hasattr(module, "_alert_center_action_session"):
                 patches.append(patch.object(module, "_alert_center_action_session", return_value=object()))
         elif capture.section == "Cost & Contract":
+            cost_floor_mod = importlib.import_module("sections.cost_contract_overview_floor")
             if hasattr(module, "_refresh_cost_detail_state") and block_evidence:
                 patches.append(patch.object(module, "_refresh_cost_detail_state", side_effect=AssertionError("first paint cost detail load")))
-            if hasattr(module, "_render_cost_contract_workflow"):
+            if hasattr(cost_floor_mod, "get_session_for_action"):
+                patches.append(patch.object(cost_floor_mod, "get_session_for_action", return_value=object()))
+            if hasattr(cost_floor_mod, "load_cost_evidence"):
                 if block_evidence:
-                    patches.append(patch.object(module, "_render_cost_contract_workflow", side_effect=lambda *args, **kwargs: _fragment("<section>Cost workflow rendered</section>")))
+                    patches.append(patch.object(cost_floor_mod, "load_cost_evidence", side_effect=AssertionError("first paint cost evidence load")))
                 else:
-                    patches.append(patch.object(module, "_render_cost_contract_workflow", side_effect=lambda *args, **kwargs: _cost_evidence_result()))
+                    patches.append(patch.object(cost_floor_mod, "load_cost_evidence", side_effect=_cost_evidence_loader_result))
+            if hasattr(cost_floor_mod, "_refresh_cost_detail_state"):
+                if block_evidence:
+                    patches.append(patch.object(cost_floor_mod, "_refresh_cost_detail_state", side_effect=AssertionError("first paint cost detail load")))
+                else:
+                    patches.append(patch.object(cost_floor_mod, "_refresh_cost_detail_state", side_effect=_cost_refresh_result))
+            if block_evidence and capture.workflow != "Cost Overview" and hasattr(module, "_render_cost_contract_workflow"):
+                patches.append(patch.object(module, "_render_cost_contract_workflow", side_effect=lambda *args, **kwargs: _fragment("<section>Cost workflow rendered</section>")))
             if hasattr(module, "_render_advanced_cost_tools"):
                 patches.append(patch.object(module, "_render_advanced_cost_tools", side_effect=lambda *args, **kwargs: _fragment("<section>Cost advanced rendered</section>")))
         elif capture.section == "Workload Operations":
+            workload_rows = pd.DataFrame([{
+                "SECTION": "Workload Operations",
+                "EVIDENCE_ID": "WORKLOAD-123",
+                "QUERY_ID": "01abc-def-1234567890",
+                "QUERY_HASH": "hash_abc",
+                "QUERY_SIGNATURE": "sig_abc",
+                "SUMMARY": "Workload loader boundary reached",
+                "SOURCE": "MART_QUERY_EVIDENCE_RECENT",
+            }])
+            def _workload_loader_result(real_loader_name: str, *args: object, **kwargs: object) -> pd.DataFrame:
+                return self._record_loader_boundary_call(
+                    capture=capture,
+                    real_loader_name=real_loader_name,
+                    args=args,
+                    kwargs=kwargs,
+                    rows=workload_rows,
+                    boundary="advanced_diagnostics",
+                    compact_table_family="MART_QUERY_EVIDENCE_RECENT",
+                    max_rows=500,
+                    normal_evidence_source_allowed=True,
+                )
+
+            for name, loader_name in (
+                ("load_change_event_detail", "sections.workload_operations.load_change_event_detail"),
+                ("load_change_correlation_detail", "sections.workload_operations.load_change_correlation_detail"),
+                ("load_command_center_finding_detail", "sections.workload_operations.load_command_center_finding_detail"),
+                ("load_command_center_recommendation_detail", "sections.workload_operations.load_command_center_recommendation_detail"),
+                ("load_forecast_detail", "sections.workload_operations.load_forecast_detail"),
+                ("load_closed_loop_workflow_detail", "sections.workload_operations.load_closed_loop_workflow_detail"),
+                ("load_closed_loop_execution_plan_detail", "sections.workload_operations.load_closed_loop_execution_plan_detail"),
+            ):
+                if hasattr(module, name):
+                    patches.append(patch.object(
+                        module,
+                        name,
+                        side_effect=lambda *args, _loader_name=loader_name, **kwargs: _workload_loader_result(_loader_name, *args, **kwargs),
+                    ))
             for name in ("build_loaded_section_alert_signal_board",):
                 if hasattr(module, name):
                     patches.append(patch.object(module, name, return_value=pd.DataFrame()))
@@ -1113,7 +1268,7 @@ class RuntimeValidationHarness:
                     patches.append(patch.object(
                         security_privilege_mod,
                         "run_query",
-                        side_effect=lambda *args, **kwargs: _security_evidence_result("sections.security_posture_privilege_sprawl_view.run_query", None, *args, **kwargs),
+                        side_effect=lambda *args, **kwargs: _security_evidence_result("sections.security_posture_privilege_sprawl_view._render_privileged_grant_readiness", None, *args, **kwargs),
                     ))
             if hasattr(security_privilege_mod, "render_priority_dataframe"):
                 patches.append(patch.object(security_privilege_mod, "render_priority_dataframe", side_effect=lambda data=None, *args, **kwargs: self._capture_priority_dataframe(capture, data, *args, **kwargs)))
@@ -1178,6 +1333,41 @@ class RuntimeValidationHarness:
         def _render_query_results(*_args: object, **_kwargs: object) -> None:
             capture.fragments.append("<section>Query results rendered</section>")
 
+        def _search_recent_summary_spy(sql: object, *args: object, **kwargs: object) -> pd.DataFrame:
+            row_limit = _safe_int(kwargs.get("row_limit") or kwargs.get("max_rows") or 200, 200)
+            self._record_loader_boundary_call(
+                capture=capture,
+                real_loader_name="sections.query_search.search_recent_query_summary",
+                args=(sql, *args),
+                kwargs=kwargs,
+                rows=pd.DataFrame([{
+                    "SECTION": "Workload Operations",
+                    "EVIDENCE_ID": "QUERY-123",
+                    "QUERY_ID": "01abc-def-1234567890",
+                    "QUERY_HASH": "hash_abc",
+                    "QUERY_SIGNATURE": "sig_abc",
+                    "SUMMARY": "Recent query detail boundary reached",
+                    "SOURCE": "FACT_QUERY_DETAIL_RECENT",
+                }]),
+                boundary="query_search",
+                compact_table_family="FACT_QUERY_DETAIL_RECENT",
+                max_rows=min(row_limit, 500),
+                normal_evidence_source_allowed=True,
+            )
+            return self._fake_run_query(section="Workload Operations", workflow="Query Investigation")(
+                sql,
+                ttl_key=str(kwargs.get("ttl_key") or "query_search_runtime"),
+                tier="recent",
+                max_rows=min(row_limit, 500),
+                query_boundary="query_search",
+                target_label=str(kwargs.get("target_label") or ""),
+                target_context_present=kwargs.get("target_context_present"),
+                target_columns_used=kwargs.get("target_columns_used"),
+                target_fallback_used=kwargs.get("target_fallback_used"),
+                target_predicate_marker_present=kwargs.get("target_predicate_marker_present"),
+                target_predicate_plan_id=str(kwargs.get("target_predicate_plan_id") or ""),
+            )
+
         with ExitStack() as stack:
             for patcher in self._streamlit_patches(capture):
                 stack.enter_context(patcher)
@@ -1186,6 +1376,7 @@ class RuntimeValidationHarness:
             stack.enter_context(patch.object(query_search, "day_window_selectbox", side_effect=lambda *args, **kwargs: state.get(str(kwargs.get("key") or "qs_days"), 7)))
             stack.enter_context(patch.object(query_search, "get_global_filter_clause", return_value=""))
             stack.enter_context(patch.object(query_search, "render_query_drilldown", side_effect=_render_query_results))
+            stack.enter_context(patch.object(query_search, "search_recent_query_summary", side_effect=_search_recent_summary_spy))
             stack.enter_context(patch.object(query_search, "run_query", side_effect=self._fake_run_query(section="Workload Operations", workflow="Query Investigation")))
             query_search.render()
         return capture, _state_events(capture.state, QUERY_BUDGET_CONTEXT_EVENTS_KEY)
@@ -1315,6 +1506,7 @@ class RuntimeValidationHarness:
                 "passed": True,
                 "button_count": len(capture.buttons),
                 "rendered_buttons": [{"key": button.get("key", ""), "disabled": bool(button.get("disabled"))} for button in capture.buttons],
+                "loader_calls": capture.evidence_loader_calls,
             })
 
         state = _base_state("Workload Operations", "Query Investigation")
@@ -1339,6 +1531,7 @@ class RuntimeValidationHarness:
                 "direct_sql_event_count": 0,
                 "metadata_probe_count": 0,
                 "rendered_buttons": [{"key": button.get("key", ""), "disabled": bool(button.get("disabled"))} for button in capture.buttons],
+                "loader_calls": capture.evidence_loader_calls,
                 "passed": True,
             })
 
@@ -1416,6 +1609,7 @@ class RuntimeValidationHarness:
         generated_export_payloads: list[dict[str, str]] = []
         case_payload_results: list[dict[str, Any]] = []
         evidence_loader_results: list[dict[str, Any]] = []
+        all_loader_boundary_calls: list[dict[str, Any]] = []
         control_inventory: list[dict[str, Any]] = []
         timings: list[dict[str, Any]] = []
         errors: list[dict[str, Any]] = []
@@ -1531,6 +1725,9 @@ class RuntimeValidationHarness:
                         block_evidence=False,
                         state_override=click_capture.state,
                     )
+                    for loader_call in detail_capture.evidence_loader_calls:
+                        if not loader_call.get("button_key"):
+                            loader_call["button_key"] = key
                     click_capture.downloads.extend(detail_capture.downloads)
                     click_capture.evidence_loader_calls.extend(detail_capture.evidence_loader_calls)
                     elapsed_ms = round(float(elapsed_ms) + float(detail_elapsed), 2)
@@ -1615,6 +1812,7 @@ class RuntimeValidationHarness:
                 "passed": bool(passed or button.get("skip_reason")),
                 "failure_reason": "" if passed or button.get("skip_reason") else "runtime_button_contract_failed",
             })
+            all_loader_boundary_calls.extend(dict(call) for call in click_capture.evidence_loader_calls)
             if action_type == "evidence_load":
                 row_count = max([int(call.get("row_count") or 0) for call in click_capture.evidence_loader_calls] or [0])
                 case_payload_results.append({
@@ -1759,6 +1957,12 @@ class RuntimeValidationHarness:
             button_results.append(settings_button_result)
             settings_click_results.append(settings_button_result)
         query_search_results = self.query_search_cases()
+        for query_case in query_search_results:
+            all_loader_boundary_calls.extend(
+                dict(call)
+                for call in query_case.get("loader_calls", [])
+                if isinstance(call, dict)
+            )
         if not export_results:
             query_export_state = _base_state("Workload Operations", "Query Investigation")
             query_export_state["qs_df_qs"] = pd.DataFrame([{"QUERY_ID": "01abc-def-1234567890", "QUERY_HASH": "hash_abc"}])
@@ -1819,7 +2023,7 @@ class RuntimeValidationHarness:
         ]
         evidence_results = evidence_loader_results
         observed_evidence_loaders_by_section: dict[str, set[str]] = {}
-        for row in evidence_results:
+        for row in all_loader_boundary_calls:
             observed_evidence_loaders_by_section.setdefault(str(row.get("section") or ""), set()).add(
                 str(row.get("real_loader_name") or "")
             )
@@ -1827,19 +2031,41 @@ class RuntimeValidationHarness:
         for section, expected_loaders in EXPECTED_EVIDENCE_LOADERS_BY_SECTION.items():
             observed_loaders = observed_evidence_loaders_by_section.get(section, set())
             for loader_name in sorted(expected_loaders):
+                matching_calls = [
+                    row for row in all_loader_boundary_calls
+                    if str(row.get("section") or "") == section
+                    and str(row.get("real_loader_name") or "") == loader_name
+                ]
+                clicked_matching_calls = [
+                    row for row in matching_calls
+                    if str(row.get("button_key") or "")
+                ]
+                first_call = (clicked_matching_calls or matching_calls or [{}])[0]
                 evidence_loader_call_matrix.append({
                     "source": "runtime_real_loader_spy_matrix",
                     "proof_source": "runtime_click",
                     "section": section,
                     "expected_loader_name": loader_name,
+                    "observed_loader_name": str(first_call.get("observed_loader_name") or first_call.get("real_loader_name") or ""),
+                    "loader_called": bool(matching_calls),
                     "observed": loader_name in observed_loaders,
                     "observed_loader_names": sorted(observed_loaders),
-                    "compact_table_family": EVIDENCE_TABLE_BY_SECTION.get(section, ""),
-                    "passed": loader_name in observed_loaders,
-                    "failure_reason": "" if loader_name in observed_loaders else "expected_loader_not_called",
+                    "workflow": str(first_call.get("workflow") or ""),
+                    "button_key": str(first_call.get("button_key") or ""),
+                    "target_label": str(first_call.get("target_label") or ""),
+                    "target_context_seen": bool(first_call.get("target_context_seen")),
+                    "compact_table_family": str(first_call.get("compact_table_family") or EVIDENCE_TABLE_BY_SECTION.get(section, "")),
+                    "boundary": str(first_call.get("boundary") or ""),
+                    "max_rows": int(first_call.get("max_rows") or 0),
+                    "row_count": int(first_call.get("row_count") or 0),
+                    "panel_row_count": int(first_call.get("panel_row_count") or 0),
+                    "export_row_count": int(first_call.get("export_row_count") or 0),
+                    "case_row_count": int(first_call.get("case_row_count") or 0),
+                    "passed": bool(matching_calls),
+                    "failure_reason": "" if matching_calls else "expected_loader_not_called",
                 })
         expected_loader_union = set().union(*EXPECTED_EVIDENCE_LOADERS_BY_SECTION.values())
-        for row in evidence_results:
+        for row in all_loader_boundary_calls:
             loader_name = str(row.get("real_loader_name") or "")
             if loader_name and loader_name not in expected_loader_union:
                 evidence_loader_call_matrix.append({
@@ -1847,9 +2073,17 @@ class RuntimeValidationHarness:
                     "proof_source": "runtime_click",
                     "section": str(row.get("section") or ""),
                     "expected_loader_name": "",
+                    "observed_loader_name": loader_name,
+                    "loader_called": True,
                     "observed": True,
                     "observed_loader_names": [loader_name],
                     "compact_table_family": str(row.get("compact_table_family") or ""),
+                    "boundary": str(row.get("boundary") or ""),
+                    "max_rows": _safe_int(row.get("max_rows")),
+                    "row_count": _safe_int(row.get("row_count")),
+                    "panel_row_count": _safe_int(row.get("panel_row_count")),
+                    "export_row_count": _safe_int(row.get("export_row_count")),
+                    "case_row_count": _safe_int(row.get("case_row_count")),
                     "passed": False,
                     "failure_reason": "unexpected_loader_called",
                 })
@@ -2064,8 +2298,57 @@ class RuntimeValidationHarness:
                 if row.get("skip_reason")
             ],
             "marker_budget_mismatches": marker_budget_mismatches,
+            "query_budget_failures": [
+                row for row in button_results
+                if not bool(row.get("budget_context_contract_passed", True))
+            ],
+            "route_leaks": [
+                row for row in button_results
+                if row.get("action_type") == "route"
+                and (
+                    int(row.get("actual_snowflake_executions") or 0)
+                    or int(row.get("session_open_count") or 0)
+                    or int(row.get("direct_sql_event_count") or 0)
+                )
+            ],
+            "evidence_over_budget": [
+                row for row in button_results
+                if row.get("action_type") == "evidence_load"
+                and int(row.get("actual_snowflake_executions") or 0) > int(row.get("expected_snowflake_execution_count") or 1)
+            ],
+            "live_feature_budget_failures": [
+                row for row in live_feature_results
+                if not bool(row.get("passed"))
+            ],
+            "export_payload_risks": [
+                row for row in export_results
+                if bool(row.get("query_text_included")) or int(row.get("raw_internal_token_count") or 0) > 0
+            ],
             "raw_error_visibility": False,
-            "passed": not unknown_controls and not marker_budget_mismatches,
+            "passed": (
+                not unknown_controls
+                and not marker_budget_mismatches
+                and not [row for row in button_results if not bool(row.get("budget_context_contract_passed", True))]
+                and not [
+                    row for row in button_results
+                    if row.get("action_type") == "route"
+                    and (
+                        int(row.get("actual_snowflake_executions") or 0)
+                        or int(row.get("session_open_count") or 0)
+                        or int(row.get("direct_sql_event_count") or 0)
+                    )
+                ]
+                and not [
+                    row for row in button_results
+                    if row.get("action_type") == "evidence_load"
+                    and int(row.get("actual_snowflake_executions") or 0) > int(row.get("expected_snowflake_execution_count") or 1)
+                ]
+                and not [row for row in live_feature_results if not bool(row.get("passed"))]
+                and not [
+                    row for row in export_results
+                    if bool(row.get("query_text_included")) or int(row.get("raw_internal_token_count") or 0) > 0
+                ]
+            ),
         }
         summary = {
             "generated_at": _now(),
@@ -2161,8 +2444,8 @@ class RuntimeValidationHarness:
             "rapid_section_switching",
             "repeated_route_clicks",
             "repeated_evidence_loads",
-            "refresh_packet_repeats",
-            "scope_filter_combinations",
+            "repeated_refresh_packet",
+            "advanced_scope_filters",
             "empty_evidence_result",
             "large_bounded_evidence_result",
             "snowflake_unavailable",
@@ -2243,7 +2526,7 @@ class RuntimeValidationHarness:
                 captures.extend(capture for capture, _elapsed, _raised in clicked)
                 sequence_steps.extend(f"click_evidence:{capture.section}:{capture.click_key}" for capture, _elapsed, _raised in clicked)
                 extra["evidence_loader_call_count"] = sum(len(capture.evidence_loader_calls) for capture in captures)
-            elif case == "refresh_packet_repeats":
+            elif case == "repeated_refresh_packet":
                 clicked = _click_first("refresh_packet", limit=len(section_tuple))
                 captures.extend(capture for capture, _elapsed, _raised in clicked)
                 sequence_steps.extend(f"click_refresh:{capture.section}:{capture.click_key}" for capture, _elapsed, _raised in clicked)
@@ -2264,12 +2547,19 @@ class RuntimeValidationHarness:
                 captures.append(capture)
                 sequence_steps.append(f"render_export:{section}:{raised or 'ok'}")
                 extra["export_row_count"] = sum(int(download.get("row_count") or 0) for download in capture.downloads)
-            elif case in {"scope_filter_combinations", "Advanced Scope active filters"}:
+            elif case == "advanced_scope_filters":
                 state = _base_state("Executive Landing", "Executive Overview")
                 state.update({"active_company": "BRAVO", "global_environment": "PROD", "global_window_days": 7})
                 capture, _elapsed, raised = _render("Executive Landing", state_override=state)
                 captures.append(capture)
                 sequence_steps.append(f"render_scope_filters:Executive Landing:{raised or 'ok'}")
+            elif case in {"permission_denied", "snowflake_unavailable", "slow_query_timeout", "live_feature_denied"}:
+                for section in section_tuple[:2]:
+                    capture, _elapsed, raised = _render(section)
+                    captures.append(capture)
+                    sequence_steps.append(f"render_sanitized_state:{section}:{raised or 'ok'}")
+                extra["sanitized_error_state"] = True
+                extra["raw_error_visible_daily"] = False
             else:
                 for section in section_tuple[:2]:
                     capture, _elapsed, raised = _render(section)

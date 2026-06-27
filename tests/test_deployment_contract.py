@@ -386,6 +386,8 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertIn("python -m unittest tests.test_cortex_guard", workflow)
         self.assertIn("Run Decision Workspace data-binding and setup-health tests", workflow)
         self.assertIn("python -m unittest tests.test_decision_workspace_data_binding", workflow)
+        self.assertIn("Run Decision Workspace performance budget tests", workflow)
+        self.assertIn("python -m unittest tests.test_decision_workspace_performance_budget", workflow)
         self.assertIn("Run Decision Workspace HTML snapshot tests", workflow)
         self.assertIn("test_html_snapshot_all_primary_sections_have_workspace_without_legacy_card_wall", workflow)
         self.assertIn("Run theme and popover accessibility tests", workflow)
@@ -404,6 +406,10 @@ class DeploymentContractTests(unittest.TestCase):
         )
         self.assertLess(
             workflow.index("Run Decision Workspace data-binding and setup-health tests"),
+            workflow.index("Run Decision Workspace performance budget tests"),
+        )
+        self.assertLess(
+            workflow.index("Run Decision Workspace performance budget tests"),
             workflow.index("Run Decision Workspace HTML snapshot tests"),
         )
         self.assertLess(

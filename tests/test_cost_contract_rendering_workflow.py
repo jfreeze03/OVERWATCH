@@ -210,7 +210,7 @@ class CostContractRenderingWorkflowTests(unittest.TestCase):
         self.assertEqual(state["cost_center_view"], "Cost Explorer")
         self.assertEqual(state["cc_explorer_lens"], "User / Role")
 
-    def test_cost_overview_floor_refresh_uses_existing_button_and_session_contract(self):
+    def test_cost_overview_floor_refresh_uses_targeted_evidence_loader(self):
         from sections import cost_contract_overview_floor
         from sections.cost_contract_contracts import (
             _COST_SPLASH_AUTOLOAD_BLOCKED_SCOPE_KEY,
@@ -236,10 +236,14 @@ class CostContractRenderingWorkflowTests(unittest.TestCase):
             patch.object(cost_contract_overview_floor.st, "columns", side_effect=_columns),
             patch.object(cost_contract_overview_floor.st, "selectbox", return_value=7),
             patch.object(cost_contract_overview_floor.st, "button", side_effect=_button),
-            patch.object(cost_contract_overview_floor, "_ensure_cost_splash", return_value={}) as ensure_splash,
-            patch.object(cost_contract_overview_floor, "get_decision_evidence_target", return_value={}),
-            patch.object(cost_contract_overview_floor, "render_decision_evidence_panel"),
-            patch.object(cost_contract_overview_floor, "render_data_freshness"),
+            patch.object(cost_contract_overview_floor, "get_decision_evidence_target", return_value={"entity_type": "warehouse", "entity_id": "PROD_WH"}),
+            patch.object(
+                cost_contract_overview_floor,
+                "load_cost_evidence",
+                return_value={"rows": pd.DataFrame([{"WAREHOUSE_NAME": "PROD_WH"}]), "metrics": (("Rows", "1"),), "row_count": 1, "target_label": "warehouse: PROD_WH"},
+            ) as load_evidence,
+            patch.object(cost_contract_overview_floor, "render_decision_evidence_panel") as evidence_panel,
+            patch.object(cost_contract_overview_floor, "render_data_freshness") as freshness,
             patch.object(cost_contract_overview_floor, "get_session_for_action", return_value=object()) as get_session,
             patch.object(cost_contract_overview_floor, "_refresh_cost_detail_state") as refresh_detail,
             patch.object(cost_contract_overview_floor, "defer_section_note"),
@@ -250,9 +254,11 @@ class CostContractRenderingWorkflowTests(unittest.TestCase):
         self.assertNotIn("cost_contract_refresh", button_keys)
         self.assertNotIn(_COST_SPLASH_KEY, state)
         self.assertNotIn(_COST_SPLASH_AUTOLOAD_BLOCKED_SCOPE_KEY, state)
-        ensure_splash.assert_called_once_with("ALFA", 7, 4.0, full_proof=True, target={})
-        get_session.assert_called_once()
-        refresh_detail.assert_called_once()
+        load_evidence.assert_called_once()
+        evidence_panel.assert_called_once()
+        freshness.assert_not_called()
+        get_session.assert_not_called()
+        refresh_detail.assert_not_called()
 
     def test_cost_overview_floor_first_paint_shell_does_not_autoload(self):
         from sections import cost_contract_overview_floor
@@ -274,9 +280,9 @@ class CostContractRenderingWorkflowTests(unittest.TestCase):
             patch.object(cost_contract_overview_floor.st, "button", side_effect=_button),
             patch.object(
                 cost_contract_overview_floor,
-                "_ensure_cost_splash",
-                side_effect=AssertionError("Cold Cost Overview first paint must not load cost splash"),
-            ) as ensure_splash,
+                "load_cost_evidence",
+                side_effect=AssertionError("Cold Cost Overview first paint must not load cost evidence"),
+            ) as load_evidence,
             patch.object(
                 cost_contract_overview_floor,
                 "render_section_first_paint_shell",
@@ -299,10 +305,10 @@ class CostContractRenderingWorkflowTests(unittest.TestCase):
 
         self.assertNotIn("cost_contract_refresh", button_keys)
         self.assertEqual(button_keys, [])
-        ensure_splash.assert_not_called()
+        load_evidence.assert_not_called()
         get_session.assert_not_called()
         render_shell.assert_not_called()
-        freshness.assert_called_once()
+        freshness.assert_not_called()
 
     def test_cost_overview_floor_advanced_detail_gate_stays_hidden_by_default(self):
         from sections import cost_contract_overview_floor
@@ -327,7 +333,7 @@ class CostContractRenderingWorkflowTests(unittest.TestCase):
 
         def _button(_label, *, key, **_kwargs):
             button_keys.append(key)
-            return key == "cost_contract_view_advanced_details"
+            return False
 
         with (
             patch.object(cost_contract_overview_floor.st, "session_state", state),
@@ -336,8 +342,12 @@ class CostContractRenderingWorkflowTests(unittest.TestCase):
             patch.object(cost_contract_overview_floor.st, "button", side_effect=_button),
             patch.object(cost_contract_overview_floor.st, "caption"),
             patch.object(cost_contract_overview_floor.st, "rerun") as rerun,
-            patch.object(cost_contract_overview_floor, "_ensure_cost_splash", return_value={"loaded": True, "source": "Cost evidence"}),
             patch.object(cost_contract_overview_floor, "get_decision_evidence_target", return_value={}),
+            patch.object(
+                cost_contract_overview_floor,
+                "load_cost_evidence",
+                return_value={"rows": pd.DataFrame([{"WAREHOUSE_NAME": "COMPUTE_WH"}]), "metrics": (("Rows", "1"),), "row_count": 1},
+            ),
             patch.object(cost_contract_overview_floor, "render_decision_evidence_panel"),
             patch.object(cost_contract_overview_floor, "render_data_freshness"),
             patch.object(cost_contract_overview_floor, "get_session_for_action", return_value=object()),
@@ -348,14 +358,14 @@ class CostContractRenderingWorkflowTests(unittest.TestCase):
         ):
             cost_contract_overview_floor._render_cost_watch_floor("ALFA", 4.0)
 
-        self.assertIn("cost_contract_view_advanced_details", button_keys)
+        self.assertIn("cost_contract_open_advanced_details", button_keys)
         route_keys = [
             key for key in button_keys
-            if key not in {"cost_contract_refresh", "cost_contract_view_advanced_details", "cost_contract_add_to_case"}
+            if key not in {"cost_contract_refresh", "cost_contract_open_advanced_details", "cost_contract_add_to_case"}
         ]
         self.assertTrue(all(key.startswith("cost_contract_command_deck_") for key in route_keys))
-        self.assertTrue(state[_ADVANCED_COST_DETAIL_VISIBLE_KEY])
-        rerun.assert_called_once()
+        self.assertFalse(state.get(_ADVANCED_COST_DETAIL_VISIBLE_KEY, False))
+        rerun.assert_not_called()
         run_rate_lens.assert_not_called()
 
     def test_cost_refresh_key_does_not_collide_with_command_deck_routes(self):
@@ -411,7 +421,6 @@ class CostContractRenderingWorkflowTests(unittest.TestCase):
             stack.enter_context(patch.object(cost_contract_overview_floor.st, "expander", return_value=_Column()))
             stack.enter_context(patch.object(cost_contract_overview_floor.st, "markdown"))
             rerun = stack.enter_context(patch.object(cost_contract_overview_floor.st, "rerun"))
-            stack.enter_context(patch.object(cost_contract_overview_floor, "_ensure_cost_splash", return_value={"loaded": True, "source": "Cost evidence"}))
             stack.enter_context(patch.object(cost_contract_overview_floor, "get_decision_evidence_target", return_value={}))
             stack.enter_context(patch.object(cost_contract_overview_floor, "render_decision_evidence_panel"))
             stack.enter_context(patch.object(cost_contract_overview_floor, "render_data_freshness"))
@@ -437,7 +446,7 @@ class CostContractRenderingWorkflowTests(unittest.TestCase):
             stack.enter_context(patch.object(cost_contract_overview_floor, "_render_cost_drilldown_command_map"))
             stack.enter_context(patch.object(cost_contract_overview_floor, "_render_cost_decomposition_board"))
             stack.enter_context(patch.object(cost_contract_overview_floor, "render_escaped_bold_text"))
-            state["cost_contract_command_brief_load_evidence"] = True
+            state[_ADVANCED_COST_DETAIL_VISIBLE_KEY] = True
             cost_contract_overview_floor._render_cost_watch_floor("ALFA", 4.0)
 
         self.assertIn("cost_contract_next_0_Cost Explorer", button_keys)

@@ -13,6 +13,7 @@ from utils import (
     run_query,
     sql_literal,
 )
+from utils.mart_names import mart_object_name
 from performance import ACCOUNT_USAGE_TARGETED_SCAN_ALLOWED
 
 
@@ -28,6 +29,14 @@ def _query_search_clause(search_value: str, mode: str) -> tuple[str, str, int | 
     normalized_mode = str(mode or "Auto").strip()
     if normalized_mode == "Exact query ID" or (normalized_mode == "Auto" and _looks_like_query_id(search_value)):
         return f"AND query_id = {sql_literal(search_value)}", "Exact query ID", None
+    if normalized_mode == "Query signature":
+        if len(search_value) < 6:
+            raise ValueError("Enter at least 6 characters for query signature search.")
+        return (
+            f"AND (query_hash = {sql_literal(search_value)} OR query_signature = {sql_literal(search_value)})",
+            "Query signature",
+            None,
+        )
     if normalized_mode == "Prefix starts with":
         if len(search_value) < 3:
             raise ValueError("Enter at least 3 characters for prefix search.")
@@ -68,6 +77,41 @@ def _search_date_predicate(days_back: int, day_cap: int | None) -> tuple[str, st
     )
 
 
+def _recent_query_detail_sql(
+    *,
+    search_cl: str,
+    date_predicate: str,
+    scoped_filters: str,
+    user_cl: str,
+    status_cl: str,
+    target_wh_cl: str,
+    row_limit: int,
+) -> str:
+    table = mart_object_name("FACT_QUERY_DETAIL_RECENT")
+    return f"""
+        SELECT
+            query_id,
+            user_name,
+            warehouse_name,
+            warehouse_size AS warehouse_size,
+            execution_status,
+            start_time,
+            total_elapsed_time/1000 AS elapsed_sec,
+            bytes_scanned/POWER(1024,3) AS gb_scanned,
+            rows_produced AS rows_produced,
+            credits_used_cloud_services AS cloud_credits,
+            SUBSTR(query_text,1,500) AS query_text
+        FROM {table}
+        WHERE 1=1
+          {date_predicate}
+          {search_cl}
+          {scoped_filters}
+          {user_cl} {status_cl} {target_wh_cl}
+        ORDER BY start_time DESC
+        LIMIT {int(row_limit)}
+    """
+
+
 def render():
     session = get_session()
     company = get_active_company()
@@ -83,12 +127,19 @@ def render():
     target_warehouse = target_value if target_entity_type == "warehouse" else ""
     target_query = target_value if target_entity_type in {"query", "query_id", "query_signature"} else ""
     if target_query and not str(st.session_state.get("qs_text") or "").strip():
+        target_kind = "query_id" if _looks_like_query_id(target_query) else target_entity_type
         st.session_state["qs_text"] = target_query
-        st.session_state["qs_mode"] = "Exact query ID" if _looks_like_query_id(target_query) else "Prefix starts with"
-        st.session_state["qs_autorun"] = _looks_like_query_id(target_query)
+        st.session_state["qs_mode"] = (
+            "Exact query ID"
+            if target_kind == "query_id"
+            else "Query signature"
+            if target_kind == "query_signature"
+            else "Prefix starts with"
+        )
+        st.session_state["qs_autorun"] = target_kind in {"query_id", "query_signature"}
 
     st.subheader("Query Search & History")
-    st.caption("Search company-scoped ACCOUNT_USAGE.QUERY_HISTORY by exact query ID or query-text keyword.")
+    st.caption("Search recent mart-backed query detail first. Account Usage fallback runs only after explicit request.")
     if target_warehouse:
         st.caption(f"Focused on finding target: warehouse {target_warehouse}")
         st.session_state.setdefault("qs_warehouse", target_warehouse)
@@ -110,7 +161,7 @@ def render():
     )
     search_mode = st.selectbox(
         "Search mode",
-        ["Auto", "Exact query ID", "Prefix starts with", "Text contains"],
+        ["Auto", "Exact query ID", "Query signature", "Prefix starts with", "Text contains"],
         key="qs_mode",
     )
     st.caption(
@@ -123,8 +174,9 @@ def render():
         st.caption(f"Using {global_date_label}; the Days back slider applies only when Triage Filter dates are cleared.")
 
     autorun = bool(st.session_state.pop("qs_autorun", False))
-    explicit_search = st.button("Search", key="qs_run")
-    if (explicit_search or autorun) and (search_text or target_warehouse):
+    explicit_search = st.button("Search recent mart detail", key="qs_run")
+    account_usage_fallback = st.button("Search Account Usage fallback", key="qs_account_usage_fallback")
+    if (explicit_search or autorun or account_usage_fallback) and (search_text or target_warehouse):
         if autorun and target_warehouse and not ACCOUNT_USAGE_TARGETED_SCAN_ALLOWED:
             st.info("Warehouse target is prefilled. Click Search to run a bounded warehouse query history lookup.")
             return
@@ -145,39 +197,13 @@ def render():
             )
         if resolved_mode == "Text contains":
             st.info(
-                "Text contains mode scans query text in ACCOUNT_USAGE. Prefer exact query ID or prefix search "
+                "Text contains mode scans query text. Prefer exact query ID or prefix search "
                 "when the query ID or leading SQL token is known."
             )
 
         user_cl = f"AND user_name ILIKE '%' || {sql_literal(user_filter)} || '%'" if user_filter else ""
         status_cl = f"AND execution_status = {sql_literal(status_filter)}" if status_filter != "ALL" else ""
         target_wh_cl = f"AND warehouse_name ILIKE '%' || {sql_literal(target_warehouse)} || '%'" if target_warehouse else ""
-        qh_cols = set(filter_existing_columns(
-            session,
-            "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
-            [
-                "WAREHOUSE_SIZE",
-                "BYTES_SCANNED",
-                "ROWS_PRODUCED",
-                "CREDITS_USED_CLOUD_SERVICES",
-            ],
-        ))
-        warehouse_size_expr = (
-            "warehouse_size AS warehouse_size"
-            if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR AS warehouse_size"
-        )
-        gb_scanned_expr = (
-            "bytes_scanned/POWER(1024,3) AS gb_scanned"
-            if "BYTES_SCANNED" in qh_cols else "0::FLOAT AS gb_scanned"
-        )
-        rows_produced_expr = (
-            "rows_produced AS rows_produced"
-            if "ROWS_PRODUCED" in qh_cols else "0::NUMBER AS rows_produced"
-        )
-        cloud_credits_expr = (
-            "credits_used_cloud_services AS cloud_credits"
-            if "CREDITS_USED_CLOUD_SERVICES" in qh_cols else "0::FLOAT AS cloud_credits"
-        )
         scoped_filters = get_global_filter_clause(
             date_col="start_time",
             wh_col="warehouse_name",
@@ -187,22 +213,68 @@ def render():
         )
 
         try:
-            df_qs = run_query(f"""
-                SELECT query_id, user_name, warehouse_name, {warehouse_size_expr}, execution_status,
-                       start_time, total_elapsed_time/1000 AS elapsed_sec,
-                       {gb_scanned_expr},
-                       {rows_produced_expr},
-                       {cloud_credits_expr},
-                       SUBSTR(query_text,1,500) AS query_text
-                FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-                WHERE 1=1
-                  {date_predicate}
-                  {search_cl}
-                  {scoped_filters}
-                  {user_cl} {status_cl} {target_wh_cl}
-                ORDER BY start_time DESC
-                LIMIT {row_limit}
-            """, ttl_key=f"query_search_{company}_{resolved_mode}_{search_value}_{target_warehouse}_{user_filter}_{status_filter}_{effective_days}_{row_limit}", tier="historical", section="Query Search & History")
+            if account_usage_fallback:
+                qh_cols = set(filter_existing_columns(
+                    session,
+                    "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+                    [
+                        "WAREHOUSE_SIZE",
+                        "BYTES_SCANNED",
+                        "ROWS_PRODUCED",
+                        "CREDITS_USED_CLOUD_SERVICES",
+                    ],
+                ))
+                warehouse_size_expr = (
+                    "warehouse_size AS warehouse_size"
+                    if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR AS warehouse_size"
+                )
+                gb_scanned_expr = (
+                    "bytes_scanned/POWER(1024,3) AS gb_scanned"
+                    if "BYTES_SCANNED" in qh_cols else "0::FLOAT AS gb_scanned"
+                )
+                rows_produced_expr = (
+                    "rows_produced AS rows_produced"
+                    if "ROWS_PRODUCED" in qh_cols else "0::NUMBER AS rows_produced"
+                )
+                cloud_credits_expr = (
+                    "credits_used_cloud_services AS cloud_credits"
+                    if "CREDITS_USED_CLOUD_SERVICES" in qh_cols else "0::FLOAT AS cloud_credits"
+                )
+                sql = f"""
+                    SELECT query_id, user_name, warehouse_name, {warehouse_size_expr}, execution_status,
+                           start_time, total_elapsed_time/1000 AS elapsed_sec,
+                           {gb_scanned_expr},
+                           {rows_produced_expr},
+                           {cloud_credits_expr},
+                           SUBSTR(query_text,1,500) AS query_text
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+                    WHERE 1=1
+                      {date_predicate}
+                      {search_cl}
+                      {scoped_filters}
+                      {user_cl} {status_cl} {target_wh_cl}
+                    ORDER BY start_time DESC
+                    LIMIT {row_limit}
+                """
+                ttl_prefix = "query_search_account_usage"
+            else:
+                sql = _recent_query_detail_sql(
+                    search_cl=search_cl,
+                    date_predicate=date_predicate,
+                    scoped_filters=scoped_filters,
+                    user_cl=user_cl,
+                    status_cl=status_cl,
+                    target_wh_cl=target_wh_cl,
+                    row_limit=row_limit,
+                )
+                ttl_prefix = "query_search_recent_detail"
+            df_qs = run_query(
+                sql,
+                ttl_key=f"{ttl_prefix}_{company}_{resolved_mode}_{search_value}_{target_warehouse}_{user_filter}_{status_filter}_{effective_days}_{row_limit}",
+                tier="historical",
+                section="Query Search & History",
+                max_rows=row_limit,
+            )
             st.session_state["qs_df_qs"] = df_qs
             st.session_state["qs_search_mode"] = resolved_mode
             st.session_state["qs_effective_days"] = effective_days

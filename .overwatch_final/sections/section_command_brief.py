@@ -106,6 +106,7 @@ class SectionCommandSourceState:
     target_freshness_minutes: int = 0
     stale: bool = False
     confidence: str = ""
+    supports_environment: bool = False
     environment_scope_mode: str = ""
     gap_reason: str = ""
 
@@ -390,6 +391,7 @@ def _source_from_row(row: Mapping[str, object]) -> SectionCommandSourceState:
         target_freshness_minutes=_int_value(_column(row, "TARGET_FRESHNESS_MINUTES"), 0),
         stale=_bool_value(_column(row, "IS_STALE", default=False), False),
         confidence=_string(_column(row, "CONFIDENCE")),
+        supports_environment=_bool_value(_column(row, "SUPPORTS_ENVIRONMENT", default=False), False),
         environment_scope_mode=_string(_column(row, "ENVIRONMENT_SCOPE_MODE")),
         gap_reason=_string(_column(row, "GAP_REASON")),
     )
@@ -410,7 +412,7 @@ def reconcile_decision_brief_trust(brief: SectionCommandBrief) -> SectionCommand
     oldest_age = max(ages) if ages else None
     target = int(brief.target_freshness_minutes or max((source.target_freshness_minutes for source in required), default=0))
     gap_detail = "; ".join(
-        source.source_object or source.source_key
+        source.source_key.replace("_", " ").title()
         for source in required
         if not source.available
     )
@@ -902,6 +904,10 @@ def autoload_section_command_brief(
             elapsed_ms=0,
             row_count=0,
             max_rows=1,
+            actual_query_executed=False,
+            cache_layer="session",
+            query_boundary="decision_packet",
+            first_paint_sensitive=True,
         )
         _record_telemetry(brief)
         return brief

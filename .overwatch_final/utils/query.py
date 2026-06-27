@@ -286,6 +286,28 @@ def _infer_telemetry_section(section: str = "", ttl_key: str = "") -> str:
     return nav_section or "Unknown"
 
 
+def _infer_query_boundary(query_text: str = "", ttl_key: str = "", tier: str = "") -> str:
+    """Classify query purpose for first-paint budgets without storing SQL."""
+    sql = str(query_text or "").upper()
+    key = str(ttl_key or "").lower()
+    tier_text = str(tier or "").lower()
+    if key.startswith("section_command_packet_") or "MART_SECTION_DECISION_CURRENT" in sql:
+        return "decision_packet"
+    if "OVERWATCH_DECISION_SETUP_HEALTH" in sql or "setup_health" in key:
+        return "setup_health"
+    if "SNOWFLAKE.ACCOUNT_USAGE" in sql:
+        return "account_usage"
+    if tier_text == "metadata" or _query_is_metadata_probe(sql):
+        return "metadata"
+    if any(token in key for token in ("evidence", "proof", "detail", "history", "splash", "cockpit")):
+        return "evidence"
+    return "other"
+
+
+def _first_paint_sensitive_boundary(boundary: str) -> bool:
+    return str(boundary or "") in {"decision_packet", "evidence", "metadata", "account_usage"}
+
+
 def _record_query_telemetry(
     query_text: str,
     ttl_key: str,
@@ -881,7 +903,7 @@ def _run_query_base(
     tier: str = "recent",
     section: str = "",
     max_rows: int | None = None,
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, dict[str, object]]:
     """
     Central query runner with tiered caching and full error handling.
 
@@ -895,12 +917,22 @@ def _run_query_base(
         max_rows:    Optional SQL-side read cap for unbounded SELECT/WITH queries.
 
     Returns:
-        Normalized DataFrame. Empty DataFrame on any error (never raises).
+        Normalized DataFrame and SQL-free execution metadata.
     """
+    boundary = _infer_query_boundary(query_text, ttl_key, tier)
+    meta: dict[str, object] = {
+        "actual_query_executed": None,
+        "cache_layer": "unknown",
+        "query_boundary": boundary,
+        "first_paint_sensitive": _first_paint_sensitive_boundary(boundary),
+        "error": "",
+    }
     if queries_paused():
-        return empty_paused_result(ttl_key=ttl_key, section=section)
+        meta.update(actual_query_executed=False, cache_layer="paused")
+        return empty_paused_result(ttl_key=ttl_key, section=section), meta
     if not _check_query_budget(tier, ttl_key, query_text):
-        return pd.DataFrame()
+        meta.update(actual_query_executed=False, cache_layer="budget_blocked")
+        return pd.DataFrame(), meta
     with st.spinner(spinner_msg):
         try:
             executable_query = _inject_read_limit(query_text, max_rows=max_rows)
@@ -909,16 +941,20 @@ def _run_query_base(
                 cache_salt = _cache_salt(ttl_key)
                 context = _cache_context()
                 fn   = _TIER_FN.get(tier, _cached_recent)
-                return fn(executable_query, context, cache_salt, query_tag, ttl_key, section)
+                meta.update(actual_query_executed=None, cache_layer="streamlit_cache")
+                return fn(executable_query, context, cache_salt, query_tag, ttl_key, section), meta
             # Bypass cache - always wrapped in try/except
             try:
-                return _execute_snowflake_query(executable_query, query_tag, ttl_key=ttl_key, tier=tier, section=section)
+                meta.update(actual_query_executed=True, cache_layer="none")
+                return _execute_snowflake_query(executable_query, query_tag, ttl_key=ttl_key, tier=tier, section=section), meta
             except Exception as e:
                 _show_query_warning("Data unavailable", e)
-                return pd.DataFrame()
+                meta.update(actual_query_executed=True, cache_layer="none", error=format_snowflake_error(e))
+                return pd.DataFrame(), meta
         except Exception as e:
             _show_query_warning("Query runner issue", e)
-            return pd.DataFrame()
+            meta.update(error=format_snowflake_error(e))
+            return pd.DataFrame(), meta
 
 
 def run_query(
@@ -933,7 +969,7 @@ def run_query(
     """Execute a query through the cached runner and log lightweight telemetry."""
     started = time.perf_counter()
     started_at = datetime.now().isoformat(timespec="milliseconds")
-    result = _run_query_base(
+    result, query_meta = _run_query_base(
         query_text=query_text,
         ttl_key=ttl_key,
         use_cache=use_cache,
@@ -955,8 +991,13 @@ def run_query(
         elapsed_ms=elapsed_ms,
         row_count=len(result),
         max_rows=max_rows,
+        error=query_meta.get("error", ""),
         started_at=started_at,
         finished_at=finished_at,
+        actual_query_executed=query_meta.get("actual_query_executed"),
+        cache_layer=str(query_meta.get("cache_layer") or "unknown"),
+        query_boundary=str(query_meta.get("query_boundary") or "other"),
+        first_paint_sensitive=bool(query_meta.get("first_paint_sensitive")),
     )
     return result
 
@@ -980,9 +1021,44 @@ def run_query_or_raise(
     result = pd.DataFrame()
     query_tag = _build_overwatch_query_tag(section, ttl_key, tier)
     executable_query = _inject_read_limit(query_text, max_rows=max_rows)
+    boundary = _infer_query_boundary(query_text, ttl_key, tier)
     if queries_paused():
+        finished_at = datetime.now().isoformat(timespec="milliseconds")
+        record_ui_query_event(
+            section=_infer_telemetry_section(section, ttl_key),
+            workflow=str(get_state(NAV_SECTION, "") or ""),
+            query_tier=tier,
+            ttl_key=ttl_key,
+            cache_hit_or_use_cache=bool(use_cache),
+            elapsed_ms=(time.perf_counter() - started) * 1000,
+            row_count=0,
+            max_rows=max_rows,
+            started_at=started_at,
+            finished_at=finished_at,
+            actual_query_executed=False,
+            cache_layer="paused",
+            query_boundary=boundary,
+            first_paint_sensitive=_first_paint_sensitive_boundary(boundary),
+        )
         return empty_paused_result(ttl_key=ttl_key, section=section)
     if not _check_query_budget(tier, ttl_key, query_text):
+        finished_at = datetime.now().isoformat(timespec="milliseconds")
+        record_ui_query_event(
+            section=_infer_telemetry_section(section, ttl_key),
+            workflow=str(get_state(NAV_SECTION, "") or ""),
+            query_tier=tier,
+            ttl_key=ttl_key,
+            cache_hit_or_use_cache=bool(use_cache),
+            elapsed_ms=(time.perf_counter() - started) * 1000,
+            row_count=0,
+            max_rows=max_rows,
+            started_at=started_at,
+            finished_at=finished_at,
+            actual_query_executed=False,
+            cache_layer="budget_blocked",
+            query_boundary=boundary,
+            first_paint_sensitive=_first_paint_sensitive_boundary(boundary),
+        )
         return result
     error_message = ""
     try:
@@ -1025,6 +1101,10 @@ def run_query_or_raise(
             error=error_message,
             started_at=started_at,
             finished_at=finished_at,
+            actual_query_executed=None if use_cache else True,
+            cache_layer="streamlit_cache" if use_cache else "none",
+            query_boundary=boundary,
+            first_paint_sensitive=_first_paint_sensitive_boundary(boundary),
         )
 
 

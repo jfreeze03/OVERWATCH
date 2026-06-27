@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
-import re
 
 import streamlit as st
 
-from performance import TARGETED_EVIDENCE_DEFAULT_LIMIT, TARGETED_EVIDENCE_MAX_LIMIT
+from performance import (
+    TARGETED_EVIDENCE_DEFAULT_LIMIT,
+    TARGETED_EVIDENCE_MAX_LIMIT,
+    record_ui_query_event,
+)
 from utils.sql_safe import sql_literal
 
 
@@ -24,6 +28,9 @@ SECTION_TARGET_COLUMNS: dict[str, tuple[str, ...]] = {
         "EVENT_ID",
         "ALERT_ID",
         "ALERT_KEY",
+        "ACTION_ID",
+        "DEDUPE_KEY",
+        "FINDING_KEY",
         "ALERT_FAMILY",
         "ALERT_TYPE",
         "FAMILY",
@@ -34,7 +41,6 @@ SECTION_TARGET_COLUMNS: dict[str, tuple[str, ...]] = {
         "DATABASE_NAME",
         "USER_NAME",
         "ROLE_NAME",
-        "ACTION_ID",
     ),
     "Cost & Contract": (
         "WAREHOUSE_NAME",
@@ -51,6 +57,8 @@ SECTION_TARGET_COLUMNS: dict[str, tuple[str, ...]] = {
         "DIMENSION",
         "ENTITY_NAME",
         "ENTITY_ID",
+        "DEDUPE_KEY",
+        "FINDING_KEY",
     ),
     "DBA Control Room": (
         "QUERY_ID",
@@ -63,6 +71,9 @@ SECTION_TARGET_COLUMNS: dict[str, tuple[str, ...]] = {
         "DATABASE_NAME",
         "ENTITY_NAME",
         "ENTITY_ID",
+        "EVIDENCE_ID",
+        "DEDUPE_KEY",
+        "FINDING_KEY",
     ),
     "Workload Operations": (
         "QUERY_ID",
@@ -75,6 +86,9 @@ SECTION_TARGET_COLUMNS: dict[str, tuple[str, ...]] = {
         "PIPELINE_NAME",
         "ENTITY_NAME",
         "ENTITY_ID",
+        "EVIDENCE_ID",
+        "DEDUPE_KEY",
+        "FINDING_KEY",
     ),
     "Security Monitoring": (
         "USER_NAME",
@@ -89,13 +103,18 @@ SECTION_TARGET_COLUMNS: dict[str, tuple[str, ...]] = {
         "ENTITY_NAME",
         "ENTITY_ID",
         "GRANT_ID",
+        "ACTION_ID",
+        "DEDUPE_KEY",
+        "FINDING_KEY",
     ),
 }
 
-ENTITY_COLUMN_PRIORITY: dict[str, tuple[str, ...]] = {
+EVIDENCE_ID_COLUMNS = ("EVENT_ID", "ALERT_ID", "ALERT_KEY", "QUERY_ID", "GRANT_ID", "ACTION_ID")
+
+ENTITY_ID_COLUMNS: dict[str, tuple[str, ...]] = {
     "alert": ("EVENT_ID", "ALERT_ID", "ALERT_KEY"),
     "event": ("EVENT_ID", "ALERT_ID", "ALERT_KEY"),
-    "action": ("ACTION_ID", "WORKFLOW_ID"),
+    "action": ("ACTION_ID",),
     "warehouse": ("WAREHOUSE_NAME", "WAREHOUSE"),
     "warehouse_name": ("WAREHOUSE_NAME", "WAREHOUSE"),
     "query": ("QUERY_ID", "QUERY_HASH", "QUERY_SIGNATURE"),
@@ -105,15 +124,43 @@ ENTITY_COLUMN_PRIORITY: dict[str, tuple[str, ...]] = {
     "procedure": ("PROCEDURE_NAME",),
     "pipeline": ("PIPELINE_NAME", "TASK_NAME", "ROOT_TASK_NAME", "PROCEDURE_NAME"),
     "service": ("SERVICE_CATEGORY", "SERVICE_TYPE"),
-    "cortex": ("SERVICE_CATEGORY", "SERVICE_TYPE", "APPLICATION"),
+    "service_category": ("SERVICE_CATEGORY", "SERVICE_TYPE"),
+    "service_type": ("SERVICE_TYPE", "SERVICE_CATEGORY"),
+    "cortex": ("SERVICE_CATEGORY", "SERVICE_TYPE", "APPLICATION", "USER_NAME"),
+    "cortex_service": ("SERVICE_CATEGORY", "SERVICE_TYPE", "APPLICATION"),
     "user": ("USER_NAME", "LOGIN_NAME", "GRANTEE_NAME"),
     "role": ("ROLE_NAME", "GRANTEE_NAME", "GRANTED_TO"),
     "database": ("DATABASE_NAME",),
-    "grant": ("GRANT_ID", "ROLE_NAME", "GRANTEE_NAME", "GRANTED_ON"),
+    "grant": ("GRANT_ID",),
     "share": ("SHARE_NAME", "DATABASE_NAME", "OBJECT_NAME"),
-    "tag": ("TAG_VALUE", "DEPARTMENT", "APPLICATION"),
+    "tag": ("TAG_VALUE",),
     "department": ("DEPARTMENT", "TAG_VALUE"),
     "application": ("APPLICATION", "TAG_VALUE"),
+}
+
+ENTITY_DISPLAY_COLUMNS: dict[str, tuple[str, ...]] = {
+    "alert": ("ALERT_FAMILY", "ALERT_TYPE", "FAMILY", "CATEGORY", "ENTITY_NAME"),
+    "event": ("ALERT_FAMILY", "ALERT_TYPE", "FAMILY", "CATEGORY", "ENTITY_NAME"),
+    "action": ("ENTITY_NAME",),
+    "warehouse": ("ENTITY_NAME", "DRIVER", "DIMENSION"),
+    "warehouse_name": ("ENTITY_NAME", "DRIVER", "DIMENSION"),
+    "service": ("ENTITY_NAME", "DRIVER", "DIMENSION", "SERVICE_CATEGORY", "SERVICE_TYPE"),
+    "service_category": ("ENTITY_NAME", "DRIVER", "DIMENSION", "SERVICE_CATEGORY"),
+    "service_type": ("ENTITY_NAME", "DRIVER", "DIMENSION", "SERVICE_TYPE"),
+    "query": ("ENTITY_NAME",),
+    "query_id": ("ENTITY_NAME",),
+    "query_signature": ("ENTITY_NAME",),
+    "task": ("ENTITY_NAME",),
+    "procedure": ("ENTITY_NAME",),
+    "pipeline": ("ENTITY_NAME",),
+    "user": ("ENTITY_NAME", "USER_NAME", "LOGIN_NAME", "GRANTEE_NAME"),
+    "role": ("ENTITY_NAME", "ROLE_NAME", "GRANTEE_NAME", "GRANTED_TO"),
+    "database": ("ENTITY_NAME", "DATABASE_NAME"),
+    "grant": ("ENTITY_NAME", "GRANTED_ON", "ROLE_NAME", "GRANTEE_NAME"),
+    "share": ("ENTITY_NAME", "SHARE_NAME", "OBJECT_NAME"),
+    "tag": ("TAG_VALUE", "ENTITY_NAME", "DRIVER", "DIMENSION"),
+    "department": ("DEPARTMENT", "TAG_VALUE", "ENTITY_NAME", "DRIVER", "DIMENSION"),
+    "application": ("APPLICATION", "TAG_VALUE", "ENTITY_NAME", "DRIVER", "DIMENSION"),
 }
 
 DISPLAY_FALLBACK_COLUMNS = {
@@ -127,6 +174,22 @@ DISPLAY_FALLBACK_COLUMNS = {
     "OBJECT_NAME",
     "APPLICATION",
 }
+
+
+@dataclass(frozen=True)
+class TargetPredicatePlan:
+    exact_predicates: tuple[str, ...] = ()
+    display_predicates: tuple[str, ...] = ()
+    exact_columns_by_field: dict[str, tuple[str, ...]] | None = None
+    display_columns_by_field: dict[str, tuple[str, ...]] | None = None
+
+    @property
+    def sql_filter(self) -> str:
+        if self.exact_predicates:
+            return "AND (" + " OR ".join(self.exact_predicates) + ")"
+        if self.display_predicates:
+            return "AND (" + " OR ".join(self.display_predicates) + ")"
+        return ""
 
 
 def get_decision_evidence_target(section: str) -> dict[str, str]:
@@ -186,15 +249,91 @@ def _alias(alias: str) -> str:
     return text if text.endswith(".") else f"{text}."
 
 
-def _candidate_columns(section: str, target: dict[str, str], available_columns: tuple[str, ...] | list[str] | set[str]) -> list[str]:
+def _available_columns(section: str, available_columns: tuple[str, ...] | list[str] | set[str]) -> set[str]:
+    allowed = set(SECTION_TARGET_COLUMNS.get(str(section), ()))
     available = _normalize_columns(available_columns)
-    allowed = SECTION_TARGET_COLUMNS.get(str(section), ())
-    entity_type = str(target.get("entity_type") or "").lower()
-    preferred = [col for col in ENTITY_COLUMN_PRIORITY.get(entity_type, ()) if col in allowed]
-    ordered = preferred + [col for col in allowed if col not in preferred]
-    if available:
-        ordered = [col for col in ordered if col.upper() in available]
-    return ordered
+    return allowed & available if available else allowed
+
+
+def _entity_type(target: dict[str, str]) -> str:
+    return str(target.get("entity_type") or "").strip().lower()
+
+
+def _columns_for_field(
+    section: str,
+    field: str,
+    target: dict[str, str],
+    available_columns: tuple[str, ...] | list[str] | set[str],
+    *,
+    display: bool = False,
+) -> tuple[str, ...]:
+    available = _available_columns(section, available_columns)
+    entity_type = _entity_type(target)
+    if field == "evidence_id":
+        candidates = EVIDENCE_ID_COLUMNS
+    elif field == "dedupe_key":
+        candidates = ("DEDUPE_KEY",)
+    elif field == "finding_key":
+        candidates = ("FINDING_KEY",)
+    elif field == "entity_id":
+        candidates = ENTITY_ID_COLUMNS.get(entity_type, ("ENTITY_ID",))
+    elif field == "entity_name":
+        candidates = ENTITY_DISPLAY_COLUMNS.get(entity_type, ("ENTITY_NAME",)) if display else ENTITY_ID_COLUMNS.get(entity_type, ())
+    else:
+        candidates = ()
+    return tuple(column for column in candidates if column in available)
+
+
+def _predicate(column: str, value: str, alias: str = "", *, display: bool = False) -> str:
+    prefix = _alias(alias)
+    if display:
+        return f"{prefix}{column} ILIKE '%' || {sql_literal(value, 500)} || '%'"
+    return f"UPPER({prefix}{column}) = UPPER({sql_literal(value, 500)})"
+
+
+def build_target_predicate_plan(
+    section: str,
+    target: dict[str, str] | None,
+    available_columns: tuple[str, ...] | list[str] | set[str] = (),
+    *,
+    alias: str = "",
+) -> TargetPredicatePlan:
+    target = target or {}
+    if not target:
+        return TargetPredicatePlan()
+    exact_predicates: list[str] = []
+    display_predicates: list[str] = []
+    exact_columns_by_field: dict[str, tuple[str, ...]] = {}
+    display_columns_by_field: dict[str, tuple[str, ...]] = {}
+
+    for field in ("evidence_id", "entity_id", "dedupe_key", "finding_key", "entity_name"):
+        value = str(target.get(field) or "").strip()
+        if not value:
+            continue
+        columns = _columns_for_field(section, field, target, available_columns)
+        if columns:
+            exact_columns_by_field[field] = columns
+            exact_predicates.extend(_predicate(column, value, alias) for column in columns)
+
+    if exact_predicates:
+        return TargetPredicatePlan(
+            exact_predicates=tuple(exact_predicates),
+            exact_columns_by_field=exact_columns_by_field,
+            display_columns_by_field={},
+        )
+
+    value = str(target.get("entity_name") or "").strip()
+    if value:
+        display_columns = _columns_for_field(section, "entity_name", target, available_columns, display=True)
+        if display_columns:
+            display_columns_by_field["entity_name"] = display_columns
+            display_predicates.extend(_predicate(column, value, alias, display=True) for column in display_columns)
+
+    return TargetPredicatePlan(
+        display_predicates=tuple(display_predicates),
+        exact_columns_by_field={},
+        display_columns_by_field=display_columns_by_field,
+    )
 
 
 def build_target_sql_filter(
@@ -204,60 +343,70 @@ def build_target_sql_filter(
     available_columns: tuple[str, ...] | list[str] | set[str] = (),
 ) -> str:
     """Return a SQL predicate for an allowlisted finding target."""
-    target = target or {}
-    if not target:
-        return ""
-    values = target_values(target)
-    if not values:
-        return ""
-    columns = _candidate_columns(str(section), target, available_columns)
-    if not columns:
-        return ""
-    exact_columns = [column for column in columns if column not in DISPLAY_FALLBACK_COLUMNS]
-    display_columns = [column for column in columns if column in DISPLAY_FALLBACK_COLUMNS]
-    prefix = _alias(alias)
-    exact_predicates = [
-        f"UPPER({prefix}{column}) = UPPER({sql_literal(value, 500)})"
-        for column in exact_columns
-        for value in values
-    ]
-    if exact_predicates:
-        return "AND (" + " OR ".join(exact_predicates) + ")"
-    display_predicates = [
-        f"{prefix}{column} ILIKE '%' || {sql_literal(value, 500)} || '%'"
-        for column in display_columns
-        for value in values
-    ]
-    if display_predicates:
-        return "AND (" + " OR ".join(display_predicates) + ")"
-    return ""
+    return build_target_predicate_plan(section, target, available_columns, alias=alias).sql_filter
+
+
+def _series_mask(rows: Any, column: str, value: str, *, display: bool = False):
+    series = rows[column].fillna("").astype(str)
+    if display:
+        return series.str.contains(value, case=False, regex=False, na=False)
+    return series.str.upper().isin([value.upper()])
 
 
 def apply_target_dataframe_filter(rows: object, section: str, target: dict[str, str] | None = None) -> tuple[object, str]:
-    """Vectorized fallback filter for small evidence dataframes."""
+    """Vectorized fallback filter for evidence dataframes."""
     target = target or get_decision_evidence_target(section)
     label = evidence_target_label(target)
-    values = target_values(target)
-    if not values or rows is None or not hasattr(rows, "empty") or getattr(rows, "empty", True):
+    if rows is None or not hasattr(rows, "empty") or getattr(rows, "empty", True):
         return rows, label
     try:
         columns = [str(column) for column in rows.columns]
     except Exception:
         return rows, label
-    preferred = _candidate_columns(str(section), target, columns)
-    if not preferred:
+    plan = build_target_predicate_plan(str(section), target, columns)
+    mask = None
+    for field, field_columns in (plan.exact_columns_by_field or {}).items():
+        value = str(target.get(field) or "").strip()
+        if not value:
+            continue
+        for column in field_columns:
+            column_mask = _series_mask(rows, column, value)
+            mask = column_mask if mask is None else (mask | column_mask)
+    if mask is not None:
+        return rows[mask].copy(), label
+
+    display_columns_by_field = plan.display_columns_by_field or {}
+    if not display_columns_by_field:
+        return rows, label
+    try:
+        row_count = len(rows)
+    except Exception:
+        row_count = 0
+    if row_count > TARGETED_EVIDENCE_MAX_LIMIT:
+        record_ui_query_event(
+            section=str(section),
+            workflow="Decision Evidence",
+            query_tier="target_filter",
+            ttl_key="large_dataframe_display_filter_skipped",
+            cache_hit_or_use_cache="dataframe",
+            elapsed_ms=0,
+            row_count=row_count,
+            max_rows=TARGETED_EVIDENCE_MAX_LIMIT,
+            error="Display target fallback skipped for large evidence frame.",
+            actual_query_executed=False,
+            cache_layer="none",
+            query_boundary="evidence",
+            first_paint_sensitive=False,
+        )
         return rows, label
 
-    upper_values = [value.upper() for value in values]
-    contains_pattern = "|".join(re.escape(value) for value in values if value)
-    mask = None
-    for column in preferred:
-        series = rows[column].fillna("").astype(str)
-        if column in DISPLAY_FALLBACK_COLUMNS:
-            column_mask = series.str.contains(contains_pattern, case=False, regex=True, na=False)
-        else:
-            column_mask = series.str.upper().isin(upper_values)
-        mask = column_mask if mask is None else (mask | column_mask)
+    for field, field_columns in display_columns_by_field.items():
+        value = str(target.get(field) or "").strip()
+        if not value:
+            continue
+        for column in field_columns:
+            column_mask = _series_mask(rows, column, value, display=True)
+            mask = column_mask if mask is None else (mask | column_mask)
     if mask is None:
         return rows, label
     return rows[mask].copy(), label
@@ -267,7 +416,9 @@ __all__ = [
     "SECTION_TARGET_COLUMNS",
     "TARGETED_EVIDENCE_DEFAULT_LIMIT",
     "TARGETED_EVIDENCE_MAX_LIMIT",
+    "TargetPredicatePlan",
     "apply_target_dataframe_filter",
+    "build_target_predicate_plan",
     "build_target_sql_filter",
     "clear_decision_evidence_target",
     "evidence_row_limit",

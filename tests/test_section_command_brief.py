@@ -396,7 +396,8 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertEqual(reconciled.state, "Data Gap")
         self.assertEqual(reconciled.missing_source_count, 1)
         self.assertEqual(reconciled.source_coverage_pct, 50.0)
-        self.assertIn("FACT_CORTEX_DAILY", reconciled.source_gap_detail)
+        self.assertIn("Cortex Daily", reconciled.source_gap_detail)
+        self.assertNotIn("FACT_", reconciled.source_gap_detail)
         self.assertEqual(reconciled.raw_payload["trust_reconciliation"], "parent_packet_disagreed_with_sources")
 
     def test_loader_session_cache_hit_uses_zero_queries(self):

@@ -2117,7 +2117,7 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         security = (ROOT / ".overwatch_final" / "sections" / "security_posture_overview_view.py").read_text(encoding="utf-8")
         dba = (ROOT / ".overwatch_final" / "sections" / "dba_control_room" / "render.py").read_text(encoding="utf-8")
 
-        cost_guard = cost.index("if not refresh_cost:")
+        cost_guard = cost.index("if not refresh_cost and not advanced_requested")
         security_guard = security.index("if target_label:")
         dba_guard = dba.index("if target_label:")
 
@@ -2367,24 +2367,27 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
 
     def test_query_search_blocks_broad_account_usage_autorun(self):
         source = (APP_ROOT / "sections" / "query_search.py").read_text(encoding="utf-8")
-        autorun_assignment = 'st.session_state["qs_autorun"] = _looks_like_query_id(target_query)'
+        autorun_assignment = 'st.session_state["qs_autorun"] = target_kind in {"query_id", "query_signature"}'
         self.assertIn(autorun_assignment, source)
         warehouse_block = source.split("if target_warehouse:", 1)[1].split("c1, c2, c3, c4", 1)[0]
         self.assertNotIn("qs_autorun", warehouse_block)
-        self.assertLess(source.index('explicit_search = st.button("Search"'), source.index("filter_existing_columns("))
+        self.assertLess(source.index('explicit_search = st.button("Search recent mart detail"'), source.index("qh_cols = set(filter_existing_columns("))
+        self.assertIn('account_usage_fallback = st.button("Search Account Usage fallback"', source)
         self.assertIn("ACCOUNT_USAGE_TARGETED_SCAN_ALLOWED", source)
 
     def test_targeted_evidence_loaders_push_filters_before_rows(self):
         alert_data = (APP_ROOT / "sections" / "alert_center_data.py").read_text(encoding="utf-8")
         alert_query = (APP_ROOT / "utils" / "alert_triage.py").read_text(encoding="utf-8")
-        cost_splash = (APP_ROOT / "sections" / "cost_contract_splash.py").read_text(encoding="utf-8")
+        cost_evidence = (APP_ROOT / "sections" / "cost_contract_evidence.py").read_text(encoding="utf-8")
         cost_floor = (APP_ROOT / "sections" / "cost_contract_overview_floor.py").read_text(encoding="utf-8")
 
         self.assertIn('target=get_decision_evidence_target("Alert Center")', alert_data)
         self.assertIn('build_target_sql_filter("Alert Center"', alert_query)
-        self.assertIn("_target_wrapped_sql", cost_splash)
-        self.assertIn('build_target_sql_filter(\n        "Cost & Contract"', cost_splash)
-        self.assertIn("full_proof=not bool(target)", cost_floor)
+        self.assertIn("def load_cost_evidence(", cost_evidence)
+        self.assertIn("build_target_sql_filter(", cost_evidence)
+        self.assertIn('"Cost & Contract"', cost_evidence)
+        self.assertIn("TARGETED_EVIDENCE_DEFAULT_LIMIT", cost_evidence)
+        self.assertIn("load_cost_evidence(", cost_floor)
         self.assertNotIn("_maybe_autoload_cost_splash", cost_floor)
 
     def test_warm_command_brief_cache_records_zero_query_event(self):

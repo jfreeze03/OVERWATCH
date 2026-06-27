@@ -38,11 +38,10 @@ from sections.cost_contract_panels import (
     _render_query_attribution_gap,
 )
 from sections.cost_contract_splash import (
-    _ensure_cost_splash,
     _cost_splash_summary,
 )
+from sections.cost_contract_evidence import load_cost_evidence
 from sections.cortex_signals import build_cortex_signal, render_cortex_signal_panel
-from sections.decision_workspace_controls import filter_evidence_rows_for_target
 from sections.decision_workspace_target_filters import get_decision_evidence_target
 from sections.operator_case import make_case_evidence, render_add_to_case_button
 from sections.shell_helpers import (
@@ -103,6 +102,12 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
     )
     if selected_days not in DAY_WINDOW_OPTIONS:
         selected_days = DEFAULT_DAY_WINDOW
+    days = selected_days
+    refresh_cost = bool(st.session_state.pop("cost_contract_command_brief_load_evidence", False))
+    advanced_requested = bool(st.session_state.get(_ADVANCED_COST_DETAIL_VISIBLE_KEY))
+
+    if not refresh_cost and not advanced_requested and not st.session_state.get("cost_contract_evidence_result"):
+        return
 
     controls = st.columns([1.0, 3.6])
     with controls[0]:
@@ -113,53 +118,37 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
             format_func=lambda d: f"{d} days",
             key="cost_contract_cockpit_window",
         )
-    refresh_cost = bool(st.session_state.pop("cost_contract_command_brief_load_evidence", False))
-
-    if not refresh_cost:
-        render_data_freshness(
-            {},
-            source="Cost evidence",
-            target_minutes=60,
-            delayed_note="Cost evidence stays unloaded until the explicit evidence action runs.",
-        )
-        defer_section_note(
-            "Load Cost Evidence when you need warehouse, Cortex, forecast, or account-history proof rows."
-        )
-        return
 
     if refresh_cost:
         st.session_state.pop(_COST_SPLASH_KEY, None)
         st.session_state.pop(_COST_SPLASH_AUTOLOAD_BLOCKED_SCOPE_KEY, None)
         target = get_decision_evidence_target("Cost & Contract")
-        splash = _ensure_cost_splash(company, int(days), credit_price, full_proof=not bool(target), target=target)
-    cost_summary = _cost_splash_summary(splash, credit_price, int(days))
-    if refresh_cost or splash.get("loaded"):
-        proof_rows, target_label = filter_evidence_rows_for_target(splash.get("warehouse_delta"), "Cost & Contract")
-        target_copy = f" for {target_label}" if target_label else ""
-        evidence_summary = (
-            f"No rows for selected finding target ({target_label})."
-            if target_label and getattr(proof_rows, "empty", False)
-            else (
-                f"${safe_float(cost_summary.get('spend')):,.0f} spend; "
-                f"{safe_float(cost_summary.get('delta_pct')):+.1f}% movement; "
-                f"${safe_float(cost_summary.get('cortex_spend')):,.0f} Cortex AI spend."
-            )
+        evidence = load_cost_evidence(
+            company,
+            str(get_active_environment() or DEFAULTS.get("default_environment") or "ALL"),
+            int(days),
+            target,
         )
+        st.session_state["cost_contract_evidence_result"] = evidence
+
+    evidence = st.session_state.get("cost_contract_evidence_result")
+    if isinstance(evidence, dict):
+        target_label = str(evidence.get("target_label") or "")
+        target_copy = f" for {target_label}" if target_label else ""
         render_decision_evidence_panel(
             f"Cost Evidence{target_copy}",
-            str(splash.get("source") or "Loaded cost evidence"),
-            evidence_summary,
-            (
-                ("Total spend", f"${safe_float(cost_summary.get('spend')):,.0f}"),
-                ("Movement", f"{safe_float(cost_summary.get('delta_pct')):+.1f}%"),
-                ("Forecast", f"${safe_float(cost_summary.get('projected_30d_spend')):,.0f}"),
-                ("Cortex AI", f"${safe_float(cost_summary.get('cortex_spend')):,.0f}"),
-                ("Top driver", str(cost_summary.get("top_warehouse") or "Unavailable")),
-            ),
-            rows=proof_rows,
-            source_note=str(splash.get("source") or "Cost evidence"),
+            str(evidence.get("source") or "Loaded cost evidence"),
+            str(evidence.get("summary") or "Cost evidence loaded."),
+            tuple(evidence.get("metrics") or (("Rows", str(evidence.get("row_count", 0))),)),
+            rows=evidence.get("rows"),
+            source_note=str(evidence.get("source") or "Cost evidence"),
         )
-        if target_label:
+        if evidence.get("error"):
+            st.warning(f"Cost evidence unavailable: {evidence.get('error')}")
+        if not advanced_requested:
+            if st.button("Open Advanced Cost Details", key="cost_contract_open_advanced_details", width="stretch"):
+                st.session_state[_ADVANCED_COST_DETAIL_VISIBLE_KEY] = True
+                st.rerun()
             return
 
     proof_data = st.session_state.get("cost_contract_cockpit")
@@ -177,7 +166,7 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
         delayed_note="Cost detail uses fast summaries first; full account-history refresh is explicit.",
     )
 
-    if refresh_cost:
+    if advanced_requested and not proof_current:
         session = get_session_for_action(
             "load the Cost Control Cockpit",
             surface="Cost & Contract",

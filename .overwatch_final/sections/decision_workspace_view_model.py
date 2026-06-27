@@ -76,8 +76,10 @@ class DecisionSourceRow:
     age_label: str
     target_label: str
     confidence: str
+    supports_environment: bool = False
     environment_scope_label: str = ""
     gap_reason: str = ""
+    source_label: str = ""
 
 
 @dataclass(frozen=True)
@@ -158,6 +160,69 @@ def format_metric_value(metric: object) -> str:
     if unit:
         return f"{_compact_number(float(numeric))} {unit}"
     return _compact_number(float(numeric))
+
+
+_SOURCE_LABEL_OVERRIDES: dict[str, str] = {
+    "action_queue": "Action queue",
+    "acknowledgements": "Acknowledgements",
+    "alert_events": "Alert events",
+    "app_observability": "App observability",
+    "change_summary": "Change intelligence",
+    "closed_loop": "Closed-loop operations",
+    "copy_load": "Copy load history",
+    "cortex_daily": "Cortex usage",
+    "cost_daily": "Cost usage",
+    "cost_signals": "Cost signals",
+    "data_trust": "Data trust",
+    "dba_control_room": "DBA control summary",
+    "executive_forecast": "Executive forecast",
+    "executive_observability": "Executive observability",
+    "executive_scorecard": "Executive scorecard",
+    "forecast": "Forecast",
+    "grant_daily": "Access grants",
+    "login_daily": "Login activity",
+    "notification_log": "Notification delivery",
+    "owner_coverage": "Owner coverage",
+    "procedure_runs": "Procedure runs",
+    "production_readiness": "Production readiness",
+    "query_hourly": "Query history summary",
+    "query_recent": "Recent query detail",
+    "security_alerts": "Security alerts",
+    "security_operability": "Security operability",
+    "settings": "Settings",
+    "task_runs": "Task runs",
+    "value_ledger": "Value ledger",
+}
+
+
+def _friendly_source_label(source_key: str) -> str:
+    cleaned = (source_key or "source").strip().lower()
+    return _SOURCE_LABEL_OVERRIDES.get(cleaned, cleaned.replace("_", " ").title())
+
+
+def _environment_scope_label(scope_mode: str, supports_environment: bool) -> str:
+    normalized = (scope_mode or "").strip().lower().replace("_", " ")
+    if "exact" in normalized:
+        return "Exact environment source"
+    if "fallback" in normalized or normalized == "all":
+        return "All-environment fallback source"
+    if not supports_environment or "not applicable" in normalized:
+        return "Not environment-scoped source"
+    return normalized.title() if normalized else ""
+
+
+def _friendly_gap_reason(gap_reason: str, *, required: bool) -> str:
+    normalized = (gap_reason or "").strip()
+    if not normalized:
+        return "No source gap reported"
+    unsafe_tokens = ("MART_", "FACT_", "ACCOUNT_USAGE", "SP_", "CALL ", "SELECT ", "WITH ", "JOIN ")
+    if any(token in normalized.upper() for token in unsafe_tokens):
+        return "Source unavailable" if required else "Optional source missing"
+    if "stale" in normalized.lower():
+        return "Source stale"
+    if "missing" in normalized.lower() or "unavailable" in normalized.lower():
+        return "Source unavailable" if required else "Optional source missing"
+    return normalized
 
 
 def _delta_label(metric: object) -> str:
@@ -315,17 +380,23 @@ def _source_rows(brief: object) -> tuple[DecisionSourceRow, ...]:
             status = "Unavailable"
         age = getattr(source, "age_minutes", None)
         target = getattr(source, "target_freshness_minutes", None)
+        source_key = str(getattr(source, "source_key", "") or "source")
         rows.append(
             DecisionSourceRow(
-                source_key=str(getattr(source, "source_key", "") or "source"),
-                source_object=str(getattr(source, "source_object", "") or ""),
+                source_key=source_key,
+                source_object=_friendly_source_label(source_key),
                 status=status,
                 required=bool(getattr(source, "required", False)),
                 age_label="unknown age" if age is None else f"{int(round(float(age)))}m old",
                 target_label="" if target is None else f"target {int(float(target))}m",
                 confidence=str(getattr(source, "confidence", "") or getattr(brief, "confidence", "") or ""),
-                environment_scope_label=str(getattr(source, "environment_scope_mode", "") or ""),
-                gap_reason=str(getattr(source, "gap_reason", "") or ""),
+                supports_environment=bool(getattr(source, "supports_environment", False)),
+                environment_scope_label=_environment_scope_label(
+                    str(getattr(source, "environment_scope_mode", "") or ""),
+                    bool(getattr(source, "supports_environment", False)),
+                ),
+                gap_reason=_friendly_gap_reason(str(getattr(source, "gap_reason", "") or ""), required=bool(getattr(source, "required", False))),
+                source_label=_friendly_source_label(source_key),
             )
         )
     return tuple(rows)
@@ -342,9 +413,7 @@ def _source_technical_summary(brief: object) -> str:
         f"{getattr(brief, 'resolved_environment', '') or getattr(brief, 'environment', '')} / "
         f"{getattr(brief, 'resolved_window_days', '') or getattr(brief, 'requested_window_days', '')} days"
     )
-    upstream = str(getattr(brief, "source_objects", "") or "Decision packet")
-    gaps = str(getattr(brief, "source_gap_detail", "") or "No source gap reported")
-    return f"Requested {requested}; resolved {resolved}; upstream {upstream}; gaps {gaps}."
+    return f"Requested {requested}; resolved {resolved}; source trust details are available in Setup Health."
 
 
 def _fallback_view(brief: object, source_mode: str, *, evidence_action: object | None) -> DecisionFallbackView | None:

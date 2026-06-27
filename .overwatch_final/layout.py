@@ -13,6 +13,7 @@ from datetime import datetime
 import streamlit as st
 
 from access_control import admin_access_is_allowed, get_stable_current_role
+from brand import render_sidebar_brand
 from config import (
     ADMIN_ACCESS_ROLES,
     COMPANY_CONFIG,
@@ -288,32 +289,7 @@ def render_sidebar(
 ) -> SidebarState:
     """Render sidebar navigation/settings and return refreshed shell state."""
     with st.sidebar:
-        st.markdown("""
-        <div class="ow-sidebar-brand">
-            <div class="ow-brand-lockup">
-                <span class="ow-sidebar-logo" aria-hidden="true">
-                    <svg viewBox="0 0 48 48" focusable="false" role="img">
-                        <defs>
-                            <linearGradient id="ow-orbit-gradient" x1="8" y1="8" x2="40" y2="40" gradientUnits="userSpaceOnUse">
-                                <stop offset="0" stop-color="#A7F3FF"/>
-                                <stop offset="0.48" stop-color="#29B5E8"/>
-                                <stop offset="1" stop-color="#7C5CFF"/>
-                            </linearGradient>
-                        </defs>
-                        <path class="ow-logo-orbit" d="M8 24c4.4-8.9 11.5-14 21.1-15.2L40 19.6C36 28 28.8 33.4 18.9 35.2Z"/>
-                        <path class="ow-logo-orbit ow-logo-orbit-secondary" d="M40 24c-4.4 8.9-11.5 14-21.1 15.2L8 28.4C12 20 19.2 14.6 29.1 12.8Z"/>
-                        <path class="ow-logo-core" d="M24 14.5 33.4 20v8L24 33.5 14.6 28v-8Z"/>
-                        <path class="ow-logo-scan" d="M24 18.8v10.4M18.8 24h10.4"/>
-                        <circle class="ow-logo-node" cx="24" cy="24" r="2.6"/>
-                    </svg>
-                </span>
-                <span>
-                    <strong>OVERWATCH</strong>
-                    <small style="white-space: nowrap;">SNOWFLAKE MONITOR</small>
-                </span>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(render_sidebar_brand(), unsafe_allow_html=True)
 
         st.divider()
 

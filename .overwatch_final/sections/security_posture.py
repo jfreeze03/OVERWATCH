@@ -230,7 +230,11 @@ def render() -> None:
     days = int(st.session_state.get("security_posture_evidence_days", days) or days)
     renderer = SECURITY_POSTURE_RENDERERS.get(active_view)
     if renderer is not None:
-        if active_view == SECURITY_OVERVIEW_WORKFLOW and not st.session_state.get("security_summary_current"):
+        if (
+            active_view == SECURITY_OVERVIEW_WORKFLOW
+            and not st.session_state.get("security_summary_current")
+            and not st.session_state.get("security_posture_load_evidence")
+        ):
             return
         renderer(company, environment, days)
         return

@@ -11,6 +11,7 @@ APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
 
 import theme  # noqa: E402
+from brand import render_overwatch_logo_svg, render_sidebar_brand  # noqa: E402
 
 
 class ThemeRegistryTests(unittest.TestCase):
@@ -26,6 +27,29 @@ class ThemeRegistryTests(unittest.TestCase):
         )
         self.assertEqual(theme._DEFAULT_THEME, "carbon")
         self.assertEqual(theme._normalize_theme_key(None), "carbon")
+
+    def test_overwatch_brand_mark_is_prism_accessible_and_not_crosshair(self):
+        svg = render_overwatch_logo_svg(24)
+        sidebar = render_sidebar_brand()
+        layout_text = (APP_ROOT / "layout.py").read_text(encoding="utf-8")
+
+        self.assertIn('role="img"', svg)
+        self.assertIn("aria-label", svg)
+        self.assertIn("<title>OVERWATCH</title>", svg)
+        self.assertIn('viewBox="0 0 48 48"', svg)
+        self.assertEqual(svg.count("<path"), 3)
+        self.assertIn("ow-logo-prism", svg)
+        self.assertIn("ow-logo-cut", svg)
+        self.assertIn("ow-logo-core", svg)
+        self.assertIn('fill="currentColor"', svg)
+        self.assertNotIn("ow-logo-orbit", svg)
+        self.assertNotIn("ow-logo-scan", svg)
+        self.assertNotIn("ow-logo-node", svg)
+        self.assertNotIn("M24 18.8v10.4M18.8 24", svg)
+        self.assertNotIn("LIVE", sidebar)
+        self.assertIn("SNOWFLAKE MONITOR", sidebar)
+        self.assertIn("render_sidebar_brand()", layout_text)
+        self.assertNotIn("<svg", layout_text)
 
     def test_removed_and_nonproduction_themes_alias_to_snowflake_dark(self):
         labels = {key: value["label"] for key, value in theme.THEMES.items()}
@@ -204,8 +228,12 @@ class ThemeRegistryTests(unittest.TestCase):
         )
         combined_shell_css = theme._combined_theme_css("carbon")
         self.assertIn(".ow-sidebar-logo", combined_shell_css)
-        self.assertIn(".ow-logo-orbit", combined_shell_css)
-        self.assertIn(".ow-logo-scan", combined_shell_css)
+        self.assertIn(".ow-logo-mark", combined_shell_css)
+        self.assertIn(".ow-logo-prism", combined_shell_css)
+        self.assertIn(".ow-logo-cut", combined_shell_css)
+        self.assertIn(".ow-logo-core", combined_shell_css)
+        self.assertNotIn(".ow-logo-orbit", combined_shell_css)
+        self.assertNotIn(".ow-logo-scan", combined_shell_css)
         self.assertIn("background: linear-gradient(135deg, #ffffff, #eaf6fb) !important", theme._THEME_EXTRAS["terminal"])
         self.assertIn('[data-testid="stButton"] button', theme._THEME_EXTRAS["terminal"])
         self.assertIn('button[data-testid^="stBaseButton"]', theme._THEME_EXTRAS["terminal"])

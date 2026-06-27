@@ -86,6 +86,7 @@ jobs:
           path: |
             artifacts/decision_workspace_performance_summary.json
             artifacts/ui_query_telemetry.json
+            artifacts/brand/**
             artifacts/button_route_manifest.json
             artifacts/button_route_results.json
             artifacts/generated_button_artifacts/**

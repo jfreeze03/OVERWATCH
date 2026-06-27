@@ -34,8 +34,10 @@ class ButtonActionContract:
     action_type: str = "fallback"
     expected_target_section: str = ""
     expected_target_workflow: str = ""
+    expected_lens_state: dict[str, Any] = field(default_factory=dict)
     expected_state_updates: dict[str, Any] = field(default_factory=dict)
     expected_artifact: str = ""
+    exact_route_key: str = ""
     heavy_query_allowed: bool = False
     account_usage_allowed: bool = False
     requires_admin: bool = False
@@ -55,15 +57,6 @@ def _matches(pattern: str, value: str) -> bool:
     return bool(pattern and _rx(pattern).search(str(value or "")))
 
 
-DEFAULT_COMMAND_ROUTE_KEY_BY_SOURCE_SECTION: dict[str, str] = {
-    "Executive Landing": "executive_cost",
-    "DBA Control Room": "workload_query_investigation",
-    "Alert Center": "alert_center_critical_high",
-    "Cost & Contract": "cost_contract_explorer_warehouse",
-    "Workload Operations": "workload_pipeline_tasks",
-    "Security Monitoring": "security_risky_grants",
-}
-
 WORKFLOW_STATE_KEY_BY_SECTION: dict[str, str] = {
     "Executive Landing": "executive_landing_workflow",
     "DBA Control Room": "dba_control_room_active_view",
@@ -72,6 +65,11 @@ WORKFLOW_STATE_KEY_BY_SECTION: dict[str, str] = {
     "Workload Operations": "workload_operations_workflow",
     "Security Monitoring": "security_posture_view",
 }
+
+
+def _key_token(value: object) -> str:
+    token = re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().lower())
+    return token.strip("_") or "action"
 
 
 SECTION_REFRESH_BUTTON_KEYS: dict[str, str] = {
@@ -158,33 +156,81 @@ def _refresh_contract(section: str) -> ButtonActionContract:
     )
 
 
-def _route_contract(section: str) -> ButtonActionContract:
-    route_key = DEFAULT_COMMAND_ROUTE_KEY_BY_SOURCE_SECTION.get(section, "")
-    route = COMMAND_BRIEF_ROUTES.get(route_key)
-    target_section = route.section if route else section
-    target_workflow = route.workflow if route else SECTION_WORKFLOW_CONTRACT.get(section, ("",))[0]
+def expected_route_state_for_contract(contract: ButtonActionContract) -> dict[str, Any]:
+    updates = dict(contract.expected_state_updates or {})
+    updates.update(dict(contract.expected_lens_state or {}))
+    return updates
+
+
+def _route_contracts_for_source_section(section: str) -> Iterable[ButtonActionContract]:
+    source_workflow = SECTION_WORKFLOW_CONTRACT.get(section, ("",))[0]
+    for route_key, route in COMMAND_BRIEF_ROUTES.items():
+        if not route.workflow:
+            continue
+        target_section = route.section
+        target_workflow = route.workflow
+        workflow_key = WORKFLOW_STATE_KEY_BY_SECTION.get(target_section, "")
+        route_updates: dict[str, Any] = {}
+        if route.workflow_key and route.workflow:
+            route_updates[route.workflow_key] = route.workflow
+        if workflow_key and target_workflow:
+            route_updates.setdefault(workflow_key, target_workflow)
+        route_updates.update(dict(route.state_updates))
+        if target_section == "Alert Center" and target_workflow:
+            route_updates.setdefault("alert_center_requested_view", target_workflow)
+        lens_state = {
+            key: value
+            for key, value in route_updates.items()
+            if key
+            and key
+            not in {
+                route.workflow_key,
+                workflow_key,
+                "nav_section",
+                "decision_workspace_evidence_target",
+                "alert_center_requested_view",
+            }
+        }
+        yield ButtonActionContract(
+            section=section,
+            workflow=source_workflow,
+            key_pattern=rf"_(?:primary|secondary)(?:_\d+)?_{re.escape(_key_token(route_key))}$",
+            label_pattern=r"\b(Open|Review|Investigate|Route).*(->)?",
+            action_type="route",
+            expected_target_section=target_section,
+            expected_target_workflow=target_workflow,
+            expected_lens_state=lens_state,
+            expected_state_updates={
+                "nav_section": target_section,
+                **route_updates,
+                "decision_workspace_evidence_target": "present",
+            },
+            expected_artifact="navigation_state_delta",
+            exact_route_key=route_key,
+        )
+
+
+def _fallback_route_contract(section: str) -> ButtonActionContract:
+    target_workflow = SECTION_WORKFLOW_CONTRACT.get(section, ("",))[0]
     updates: dict[str, Any] = {}
-    if route and route.workflow_key and route.workflow:
-        updates[route.workflow_key] = route.workflow
-    if route:
-        updates.update(dict(route.state_updates))
-    workflow_key = WORKFLOW_STATE_KEY_BY_SECTION.get(target_section, "")
+    workflow_key = WORKFLOW_STATE_KEY_BY_SECTION.get(section, "")
     if workflow_key and target_workflow:
         updates.setdefault(workflow_key, target_workflow)
     return ButtonActionContract(
         section=section,
-        workflow=SECTION_WORKFLOW_CONTRACT.get(section, ("",))[0],
-        key_pattern=r"_(primary|secondary)_",
-        label_pattern=r"\b(Open|Review|Investigate|Route).*(->)?",
+        workflow=target_workflow,
+        key_pattern=r"_fallback_(?:refresh|initialize|open_setup_health)$",
+        label_pattern=r"\b(Refresh|Initialize|Open Setup Health)\b",
         action_type="route",
-        expected_target_section=target_section,
+        expected_target_section=section,
         expected_target_workflow=target_workflow,
         expected_state_updates={
-            "nav_section": target_section,
+            "nav_section": section,
             **updates,
-            "decision_workspace_evidence_target": "present",
         },
-        expected_artifact="navigation_state_delta",
+        expected_artifact="fallback_action_state",
+        can_be_absent=True,
+        skip_reason="Fallback actions only render for setup/packet recovery states.",
     )
 
 
@@ -205,7 +251,8 @@ def _advanced_contract(section: str) -> ButtonActionContract:
 def iter_button_action_contracts() -> Iterable[ButtonActionContract]:
     for section in PRIMARY_SECTION_TITLES:
         yield _refresh_contract(section)
-        yield _route_contract(section)
+        yield from _route_contracts_for_source_section(section)
+        yield _fallback_route_contract(section)
         if section in SECTION_EVIDENCE_CONTRACTS:
             yield SECTION_EVIDENCE_CONTRACTS[section]
         yield _advanced_contract(section)
@@ -242,12 +289,28 @@ def resolve_button_action_contract(
         and (not contract.workflow or contract.workflow == workflow or workflow in SECTION_WORKFLOW_CONTRACT.get(section, ()))
     ]
     for contract in candidates:
-        exact_match = bool(contract.exact_key and contract.exact_key == key)
+        if contract.exact_key and contract.exact_key == key:
+            return contract
+    for contract in candidates:
         key_match = _matches(contract.key_pattern, key)
+        if key_match:
+            return contract
+    for contract in candidates:
         label_match = _matches(contract.label_pattern, label)
-        if exact_match or (key_match and (not contract.label_pattern or label_match)) or label_match:
+        if label_match and not contract.exact_route_key:
             return contract
     return None
+
+
+def assert_button_contract_resolved(contract: ButtonActionContract | None) -> None:
+    if contract is None:
+        raise AssertionError("Button action did not resolve to an explicit contract")
+    if contract.action_type == "route" and not contract.exact_route_key and not contract.skip_reason:
+        raise AssertionError("Route button resolved to a non-exact route contract")
+
+
+def contract_to_manifest_row(contract: ButtonActionContract) -> dict[str, Any]:
+    return contract.to_artifact()
 
 
 def contract_target_is_valid(contract: ButtonActionContract) -> bool:
@@ -262,7 +325,10 @@ def contract_target_is_valid(contract: ButtonActionContract) -> bool:
 __all__ = [
     "ACTION_TYPES",
     "ButtonActionContract",
+    "assert_button_contract_resolved",
+    "contract_to_manifest_row",
     "contract_target_is_valid",
+    "expected_route_state_for_contract",
     "iter_button_action_contracts",
     "resolve_button_action_contract",
 ]

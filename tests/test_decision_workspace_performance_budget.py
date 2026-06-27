@@ -16,8 +16,10 @@ APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
 
 from route_registry import SECTION_WORKFLOW_CONTRACT  # noqa: E402
+from brand import render_overwatch_logo_svg, render_sidebar_brand  # noqa: E402
 from sections.button_action_contracts import (  # noqa: E402
     contract_target_is_valid,
+    iter_button_action_contracts,
     resolve_button_action_contract,
 )
 
@@ -530,7 +532,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         ]
         actions = [
             {
-                "ACTION_KEY": f"{section.lower().replace(' ', '_')}_route",
+                "ACTION_KEY": route_key,
                 "ACTION_LABEL": "Investigate target",
                 "CTA": "Investigate",
                 "ACTION_DETAIL": "Open the owning workflow with target context.",
@@ -672,8 +674,10 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                 "action_type": "unknown",
                 "expected_target_section": "",
                 "expected_target_workflow": "",
+                "expected_lens_state": {},
                 "expected_state_updates": {},
                 "expected_artifact": expected_artifact,
+                "exact_route_key": "",
                 "heavy_query_allowed": False,
                 "account_usage_allowed": False,
                 "requires_admin": False,
@@ -687,8 +691,10 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             "action_type": str(payload.get("action_type") or fallback_action_type),
             "expected_target_section": str(payload.get("expected_target_section") or ""),
             "expected_target_workflow": str(payload.get("expected_target_workflow") or ""),
+            "expected_lens_state": dict(payload.get("expected_lens_state") or {}),
             "expected_state_updates": dict(payload.get("expected_state_updates") or {}),
             "expected_artifact": str(payload.get("expected_artifact") or expected_artifact),
+            "exact_route_key": str(payload.get("exact_route_key") or ""),
             "heavy_query_allowed": bool(payload.get("heavy_query_allowed")),
             "account_usage_allowed": bool(payload.get("account_usage_allowed")),
             "requires_admin": bool(payload.get("requires_admin")),
@@ -896,11 +902,45 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                 stack.enter_context(patch.object(module, "_current_observability_board", return_value=(pd.DataFrame(), {})))
                 stack.enter_context(patch.object(module, "_executive_observability_connection_unavailable", return_value=True))
                 stack.enter_context(patch.object(module, "_render_loaded_executive_landing_workflow", side_effect=lambda *_, **__: html_fragments.append("<section>Executive workflow shell</section>") or False))
+                if block_evidence:
+                    stack.enter_context(patch.object(module, "_load_executive_snapshot", side_effect=AssertionError("First paint must not load Executive evidence")))
+                else:
+                    def _fake_load_executive_snapshot(*_args, **_kwargs):
+                        self._run_deterministic_evidence_loader(
+                            section_name=section_name,
+                            state=state,
+                            expected_artifact="executive_snapshot_state",
+                            html_fragments=html_fragments,
+                        )
+                        state["executive_landing_snapshot"] = {"scope": ("ALFA", "ALL", 7), "deterministic": True}
+                        return True
+
+                    stack.enter_context(patch.object(module, "_load_executive_snapshot", side_effect=_fake_load_executive_snapshot))
             elif section_name == "DBA Control Room":
                 stack.enter_context(patch.object(module, "get_active_company", return_value="ALFA"))
                 stack.enter_context(patch.object(module, "get_active_environment", return_value="ALL"))
                 stack.enter_context(patch.object(module, "get_credit_price", return_value=3.68))
-                stack.enter_context(patch.object(module, "_load_control_room", side_effect=AssertionError("First paint must not load DBA evidence")))
+                if hasattr(module, "get_session"):
+                    stack.enter_context(patch.object(module, "get_session", return_value=object()))
+                if hasattr(module, "render_load_status"):
+                    stack.enter_context(patch.object(module, "render_load_status", side_effect=lambda *_args, **_kwargs: _Context()))
+                if block_evidence:
+                    stack.enter_context(patch.object(module, "_load_control_room", side_effect=AssertionError("First paint must not load DBA evidence")))
+                else:
+                    def _fake_load_control_room(*_args, **_kwargs):
+                        self._run_deterministic_evidence_loader(
+                            section_name=section_name,
+                            state=state,
+                            expected_artifact="dba_control_room_evidence_rows",
+                            html_fragments=html_fragments,
+                        )
+                        return {
+                            "summary": pd.DataFrame([{"SECTION": section_name, "EVIDENCE_ID": "QUERY-123"}]),
+                            "failed_queries": pd.DataFrame([{"QUERY_ID": "QUERY-123", "EVIDENCE_ID": "QUERY-123"}]),
+                            "action_queue": pd.DataFrame([{"ACTION_ID": "ACTION-123", "EVIDENCE_ID": "QUERY-123"}]),
+                        }
+
+                    stack.enter_context(patch.object(module, "_load_control_room", side_effect=_fake_load_control_room))
                 stack.enter_context(patch.object(module, "_render_control_room_admin_advanced", side_effect=lambda *_args, **_kwargs: html_fragments.append("<section>DBA admin shell</section>")))
             elif section_name == "Alert Center":
                 stack.enter_context(patch.object(module, "get_active_company", return_value="ALFA"))
@@ -937,7 +977,23 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                 stack.enter_context(patch.object(module, "get_active_company", return_value="ALFA"))
                 stack.enter_context(patch.object(module, "get_active_environment", return_value="ALL"))
                 stack.enter_context(patch.object(module, "_refresh_cost_detail_state", side_effect=AssertionError("First paint must not load Cost detail")))
-                stack.enter_context(patch.object(module, "_render_cost_contract_workflow", side_effect=lambda *_args, **_kwargs: html_fragments.append("<section>Cost workflow shell</section>")))
+                if hasattr(module, "render_cost_primary_tabs"):
+                    stack.enter_context(patch.object(module, "render_cost_primary_tabs", side_effect=lambda current: current))
+                if hasattr(module, "render_cost_explorer_lens_pills"):
+                    stack.enter_context(patch.object(module, "render_cost_explorer_lens_pills", side_effect=lambda current: current))
+                if block_evidence:
+                    stack.enter_context(patch.object(module, "_render_cost_contract_workflow", side_effect=lambda *_args, **_kwargs: html_fragments.append("<section>Cost workflow shell</section>")))
+                else:
+                    def _fake_render_cost_workflow(*_args, **_kwargs):
+                        self._run_deterministic_evidence_loader(
+                            section_name=section_name,
+                            state=state,
+                            expected_artifact="cost_contract_evidence_rows",
+                            html_fragments=html_fragments,
+                        )
+                        html_fragments.append("<section>Cost focused workbench</section>")
+
+                    stack.enter_context(patch.object(module, "_render_cost_contract_workflow", side_effect=_fake_render_cost_workflow))
                 stack.enter_context(patch.object(module, "_render_advanced_cost_tools", side_effect=lambda *_args, **_kwargs: html_fragments.append("<section>Cost advanced shell</section>")))
             elif section_name == "Workload Operations":
                 stack.enter_context(patch.object(module, "get_active_company", return_value="ALFA"))
@@ -950,11 +1006,44 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             elif section_name == "Security Monitoring":
                 stack.enter_context(patch.object(module, "get_active_company", return_value="ALFA"))
                 stack.enter_context(patch.object(module, "get_active_environment", return_value="ALL"))
-                stack.enter_context(patch.object(module, "_load_security_brief", side_effect=AssertionError("First paint must not load security evidence")))
+                if block_evidence:
+                    stack.enter_context(patch.object(module, "_load_security_brief", side_effect=AssertionError("First paint must not load security evidence")))
+                else:
+                    def _fake_refresh_security_summary(*_args, **_kwargs):
+                        self._run_deterministic_evidence_loader(
+                            section_name=section_name,
+                            state=state,
+                            expected_artifact="security_evidence_rows",
+                            html_fragments=html_fragments,
+                        )
+                        state["security_posture_summary"] = pd.DataFrame([{"FAILED_LOGINS": 1, "FAILED_USERS": 1, "ACTIVE_USERS": 10, "USERS_WITHOUT_MFA": 0, "RECENT_GRANTS": 1, "SHARED_DATABASES": 0}])
+                        state["security_posture_exceptions"] = pd.DataFrame([{"USER_NAME": "QUERY-123", "EVIDENCE_ID": "QUERY-123"}])
+                        state["security_posture_meta"] = {"company": "ALFA", "environment": "ALL", "days": 30, "loaded_at": "Loaded now"}
+
+                    stack.enter_context(patch.object(module, "_load_security_brief", side_effect=_fake_refresh_security_summary))
+                    if hasattr(module, "_refresh_security_summary"):
+                        stack.enter_context(patch.object(module, "_refresh_security_summary", side_effect=_fake_refresh_security_summary))
                 stack.enter_context(patch.object(module, "render_workflow_module", side_effect=lambda workflow, *_args, **_kwargs: html_fragments.append(f"<section>Security {workflow} shell</section>")))
                 stack.enter_context(patch.object(module, "_render_advanced_security_evidence", side_effect=lambda *_args, **_kwargs: html_fragments.append("<section>Security advanced shell</section>")))
+                def _security_renderer(key):
+                    def _render(*_args, **_kwargs):
+                        if (
+                            not block_evidence
+                            and key == "Security Overview"
+                            and state.pop("security_posture_load_evidence", False)
+                        ):
+                            self._run_deterministic_evidence_loader(
+                                section_name=section_name,
+                                state=state,
+                                expected_artifact="security_evidence_rows",
+                                html_fragments=html_fragments,
+                            )
+                        html_fragments.append(f"<section>Security {key} shell</section>")
+
+                    return _render
+
                 security_renderers = {
-                    key: (lambda *_args, key=key, **_kwargs: html_fragments.append(f"<section>Security {key} shell</section>"))
+                    key: _security_renderer(key)
                     for key in getattr(module, "SECURITY_POSTURE_RENDERERS", {})
                 }
                 stack.enter_context(patch.object(module, "SECURITY_POSTURE_RENDERERS", security_renderers))
@@ -1081,6 +1170,51 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             stack.enter_context(patch.object(filters, "ensure_global_database_options", return_value=None))
             filters.render_advanced_scope_controls("ALFA")
         return "\n".join(fragment for fragment in fragments if fragment)
+
+    def _write_brand_artifacts(self, brand_dir: Path) -> None:
+        brand_dir.mkdir(exist_ok=True)
+        logo_dark = render_overwatch_logo_svg(48, "OVERWATCH")
+        logo_light = render_overwatch_logo_svg(48, "OVERWATCH")
+        brand_dir.joinpath("overwatch_logo_dark.svg").write_text(logo_dark, encoding="utf-8")
+        brand_dir.joinpath("overwatch_logo_light.svg").write_text(logo_light, encoding="utf-8")
+        base_css = """
+<style>
+.ow-sidebar-brand { display: flex; align-items: flex-start; padding: 14px; }
+.ow-brand-lockup { display: flex; align-items: center; gap: 12px; }
+.ow-sidebar-logo { width: 42px; height: 42px; display: inline-flex; color: var(--brand-accent); }
+.ow-logo-mark { color: currentColor; }
+.ow-logo-prism, .ow-logo-cut, .ow-logo-core { fill: currentColor; }
+.ow-logo-cut { opacity: .62; }
+.ow-logo-core { opacity: .92; }
+.ow-brand-copy strong { display: block; color: var(--brand-text); font: 800 15px system-ui, sans-serif; }
+.ow-brand-copy small { display: block; color: var(--brand-muted); font: 700 10px system-ui, sans-serif; letter-spacing: .04em; white-space: nowrap; }
+</style>
+""".strip()
+        dark_html = (
+            '<section data-brand-theme="dark" style="--brand-accent:#5fd7ff;--brand-text:#f4f7fa;'
+            '--brand-muted:#aabcc8;background:#06111a;">'
+            f"{base_css}{render_sidebar_brand()}</section>"
+        )
+        light_html = (
+            '<section data-brand-theme="light" style="--brand-accent:#0068b7;--brand-text:#102a43;'
+            '--brand-muted:#526b7a;background:#ffffff;">'
+            f"{base_css}{render_sidebar_brand()}</section>"
+        )
+        brand_dir.joinpath("sidebar_brand_dark.html").write_text(dark_html, encoding="utf-8")
+        brand_dir.joinpath("sidebar_brand_light.html").write_text(light_html, encoding="utf-8")
+
+        for svg in (logo_dark, logo_light, render_overwatch_logo_svg(24, "OVERWATCH")):
+            self.assertIn('viewBox="0 0 48 48"', svg)
+            self.assertIn('role="img"', svg)
+            self.assertIn("currentColor", svg)
+            self.assertEqual(svg.count("<path"), 3)
+            self.assertNotIn("ow-logo-orbit", svg)
+            self.assertNotIn("ow-logo-scan", svg)
+            self.assertNotIn("ow-logo-node", svg)
+            self.assertNotIn("M24 18.8v10.4M18.8 24", svg)
+        self.assertIn("white-space: nowrap", dark_html)
+        self.assertNotIn("LIVE", dark_html)
+        self.assertNotIn("LIVE", light_html)
 
     def test_primary_workflow_matrix_renders_entry_decision_workspace_without_first_paint_debt(self):
         import performance
@@ -1254,6 +1388,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                     if button.get("action_type") == "route":
                         self.assertTrue(button.get("expected_target_section"), button)
                         self.assertTrue(button.get("expected_target_workflow"), button)
+                        self.assertTrue(button.get("exact_route_key"), button)
                     if button.get("action_type") in {"export", "add_to_case"}:
                         self.assertTrue(button.get("expected_artifact"), button)
                     button_manifest.append(button)
@@ -1304,6 +1439,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                     if action_type == "route":
                         self.assertFalse(evidence_events, button)
                         self.assertFalse(account_usage_events, button)
+                        self.assertTrue(button.get("exact_route_key"), button)
                         expected_updates = dict(button.get("expected_state_updates") or {})
                         for expected_key, expected_value in expected_updates.items():
                             if not expected_key:
@@ -1318,19 +1454,29 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                         for expected_key, expected_value in expected_updates.items():
                             self.assertEqual(click_state.get(expected_key), expected_value, (button, state_delta))
                     if action_type == "evidence_load":
-                        if not evidence_events:
-                            artifact_result = self._run_deterministic_evidence_loader(
-                                section_name=section_name,
-                                state=click_state,
-                                expected_artifact=str(button.get("expected_artifact") or ""),
-                                html_fragments=click_html,
-                            )
+                        if not evidence_events and raised == "rerun":
+                            try:
+                                self._render_primary_section_entrypoint(
+                                    section_name,
+                                    click_state,
+                                    click_html,
+                                    buttons=click_buttons,
+                                    block_evidence=False,
+                                )
+                            except _RerunSignal:
+                                pass
                             evidence_events = [
                                 event for event in performance.get_ui_query_events()[before_events:]
                                 if event.get("query_boundary") == "evidence"
                             ]
                         self.assertEqual(len(evidence_events), 1, button)
                         self.assertLessEqual(int(evidence_events[0].get("max_rows") or 0), 500, button)
+                        artifact_result = {
+                            "artifact_type": button.get("expected_artifact") or "evidence_rows",
+                            "row_count": int(evidence_events[0].get("row_count") or 0),
+                            "target_present": bool(click_state.get("decision_workspace_evidence_target")),
+                            "max_rows": int(evidence_events[0].get("max_rows") or 0),
+                        }
                         if not any("ow-decision-evidence-panel" in fragment for fragment in click_html):
                             from sections.shell_helpers import render_decision_evidence_panel
 
@@ -1370,8 +1516,10 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                         "action_type": action_type,
                         "expected_target_section": button.get("expected_target_section", ""),
                         "expected_target_workflow": button.get("expected_target_workflow", ""),
+                        "expected_lens_state": button.get("expected_lens_state", {}),
                         "expected_state_updates": button.get("expected_state_updates", {}),
                         "expected_artifact": button.get("expected_artifact", ""),
+                        "exact_route_key": button.get("exact_route_key", ""),
                         "clicked": True,
                         "rerun": raised == "rerun",
                         "state_delta_keys": sorted(state_delta),
@@ -1443,6 +1591,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         snapshot_dir = artifact_dir / "decision_workspace_html_snapshots"
         screenshot_dir = artifact_dir / "browser_screenshots"
         generated_artifact_dir = artifact_dir / "generated_button_artifacts"
+        brand_dir = artifact_dir / "brand"
         rows, telemetry, snapshots, button_manifest, button_results = self._run_render_harness()
         summary_path.write_text(json.dumps(rows, indent=2), encoding="utf-8")
         telemetry_path.write_text(json.dumps(telemetry, indent=2), encoding="utf-8")
@@ -1451,6 +1600,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         snapshot_dir.mkdir(exist_ok=True)
         screenshot_dir.mkdir(exist_ok=True)
         generated_artifact_dir.mkdir(exist_ok=True)
+        self._write_brand_artifacts(brand_dir)
         for name, html in snapshots.items():
             section_token = str(name).lower().replace(" ", "_").replace("&", "and")
             self.assertIn("ow-decision-workspace-marker", html)
@@ -1481,6 +1631,32 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+        for result in button_results:
+            artifact = dict(result.get("artifact_result") or {})
+            if not artifact:
+                continue
+            token = "_".join(
+                part
+                for part in (
+                    str(result["section"]).lower().replace(" ", "_").replace("&", "and"),
+                    str(result["action_type"]).lower(),
+                    str(result["key"]).lower().replace(" ", "_").replace("&", "and"),
+                )
+                if part
+            )
+            (generated_artifact_dir / f"{token}.json").write_text(
+                json.dumps(
+                    {
+                        "section": result["section"],
+                        "workflow": result["workflow"],
+                        "label": result["label"],
+                        "target_label": "Selected finding",
+                        "artifact": artifact,
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
         (screenshot_dir / "SKIPPED.txt").write_text(
             "Browser screenshots skipped in deterministic unit harness; HTML snapshots and telemetry artifacts are generated.",
             encoding="utf-8",
@@ -1494,12 +1670,19 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         self.assertGreater(len(loaded_results), 0)
         self.assertTrue(any(row["action_type"] == "route" for row in loaded_manifest))
         self.assertTrue(any(row["action_type"] == "evidence_load" for row in loaded_manifest))
+        route_contracts = [
+            contract for contract in iter_button_action_contracts()
+            if contract.action_type == "route" and not contract.skip_reason
+        ]
+        self.assertTrue(route_contracts)
+        self.assertTrue(all(contract.exact_route_key for contract in route_contracts), route_contracts)
         for row in loaded_manifest:
             self.assertTrue(row.get("contract_resolved") or row.get("skip_reason"), row)
             self.assertNotEqual(row["action_type"], "unknown", row)
             if row["action_type"] == "route":
                 self.assertTrue(row.get("expected_target_section"), row)
                 self.assertTrue(row.get("expected_target_workflow"), row)
+                self.assertTrue(row.get("exact_route_key"), row)
                 self.assertIn(row["expected_target_section"], PRIMARY_SECTIONS, row)
             if row["action_type"] in {"export", "add_to_case", "evidence_load", "refresh_packet"}:
                 self.assertTrue(row.get("expected_artifact"), row)
@@ -1552,6 +1735,15 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         self.assertIn("Clear filters", advanced_snapshot)
         self.assertTrue((screenshot_dir / "SKIPPED.txt").exists())
         self.assertTrue((generated_artifact_dir / "button_artifacts_summary.json").exists())
+        self.assertTrue((brand_dir / "overwatch_logo_dark.svg").exists())
+        self.assertTrue((brand_dir / "overwatch_logo_light.svg").exists())
+        self.assertTrue((brand_dir / "sidebar_brand_dark.html").exists())
+        self.assertTrue((brand_dir / "sidebar_brand_light.html").exists())
+        brand_snapshot = "\n".join(path.read_text(encoding="utf-8") for path in brand_dir.glob("*"))
+        self.assertIn("ow-logo-prism", brand_snapshot)
+        self.assertNotIn("ow-logo-orbit", brand_snapshot)
+        self.assertNotIn("ow-logo-scan", brand_snapshot)
+        self.assertNotIn("LIVE", brand_snapshot)
 
 
 if __name__ == "__main__":

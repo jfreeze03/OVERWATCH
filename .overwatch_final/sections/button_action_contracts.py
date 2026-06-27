@@ -238,9 +238,36 @@ def _advanced_contract(section: str) -> ButtonActionContract:
     return ButtonActionContract(
         section=section,
         workflow="",
-        label_pattern=r"\b(Advanced|Admin|Diagnostics|Setup|Account Usage fallback)\b",
+        label_pattern=r"\b(Advanced|Diagnostics)\b",
+        action_type="advanced_load",
+        expected_artifact="explicit_advanced_control",
+        heavy_query_allowed=True,
+        requires_admin=True,
+        expected_rerun=False,
+    )
+
+
+def _admin_contract(section: str) -> ButtonActionContract:
+    return ButtonActionContract(
+        section=section,
+        workflow="",
+        label_pattern=r"\b(Admin|Setup|Setup Health)\b",
+        action_type="admin_load",
+        expected_artifact="explicit_admin_control",
+        heavy_query_allowed=True,
+        requires_admin=True,
+        expected_rerun=False,
+    )
+
+
+def _account_usage_fallback_contract(section: str) -> ButtonActionContract:
+    return ButtonActionContract(
+        section=section,
+        workflow="",
+        key_pattern=r"account_usage_fallback",
+        label_pattern=r"\b(Search Account Usage fallback|Account Usage fallback)\b",
         action_type="account_usage_fallback",
-        expected_artifact="explicit_admin_or_account_usage_control",
+        expected_artifact="explicit_account_usage_fallback_query",
         heavy_query_allowed=True,
         account_usage_allowed=True,
         requires_admin=True,
@@ -255,6 +282,8 @@ def iter_button_action_contracts() -> Iterable[ButtonActionContract]:
         yield _fallback_route_contract(section)
         if section in SECTION_EVIDENCE_CONTRACTS:
             yield SECTION_EVIDENCE_CONTRACTS[section]
+        yield _account_usage_fallback_contract(section)
+        yield _admin_contract(section)
         yield _advanced_contract(section)
     yield ButtonActionContract(
         section="*",

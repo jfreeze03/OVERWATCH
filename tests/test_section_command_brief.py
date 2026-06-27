@@ -942,8 +942,11 @@ class SectionCommandBriefTests(unittest.TestCase):
         from sections import section_command_brief as brief_module
 
         sql = brief_module._packet_sql("Cost & Contract", "ALFA", "ALL", 7).upper()
-        self.assertIn("MART_SECTION_DECISION_CURRENT", sql)
-        self.assertIn("DECISION_PACKET", sql)
+        self.assertIn("MART_SECTION_DECISION_CURRENT_FLAT", sql)
+        self.assertIn("SECTION_NAME_NORM", sql)
+        self.assertIn("COMPANY_NORM", sql)
+        self.assertIn("ENVIRONMENT_NORM", sql)
+        self.assertNotIn("DECISION_PACKET:\"", sql)
         self.assertIn("BRIEF_ID", sql)
         self.assertIn("METRICS", sql)
         self.assertIn("EXCEPTIONS", sql)

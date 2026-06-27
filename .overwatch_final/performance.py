@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import uuid4
 from typing import Any
+import os
 import re
 
 import streamlit as st
@@ -12,6 +13,10 @@ import streamlit as st
 
 DECISION_FIRST_PAINT_QUERY_BUDGET = 1
 DECISION_WARM_QUERY_BUDGET = 0
+SECTION_ROUTE_QUERY_BUDGET = 0
+EVIDENCE_CLICK_QUERY_BUDGET = 1
+ADMIN_CLICK_QUERY_BUDGET = 3
+ACCOUNT_USAGE_FALLBACK_QUERY_BUDGET = 1
 TARGETED_EVIDENCE_DEFAULT_LIMIT = 200
 TARGETED_EVIDENCE_MAX_LIMIT = 500
 ACCOUNT_USAGE_TARGETED_SCAN_ALLOWED = False
@@ -19,6 +24,7 @@ ACCOUNT_USAGE_TARGETED_SCAN_ALLOWED = False
 _UI_QUERY_EVENTS_KEY = "_overwatch_ui_query_events"
 _FIRST_PAINT_STACK_KEY = "_overwatch_first_paint_stack"
 _SNOWFLAKE_EXECUTION_EVENTS_KEY = "_overwatch_snowflake_execution_events"
+_FIRST_PAINT_BUDGET_VIOLATIONS_KEY = "_overwatch_first_paint_budget_violations"
 _VALID_CACHE_LAYERS = {"none", "session", "streamlit_cache", "paused", "budget_blocked", "unknown"}
 _VALID_QUERY_BOUNDARIES = {
     "decision_packet",
@@ -80,6 +86,106 @@ def end_first_paint(render_id: str) -> None:
 def current_first_paint_render_id() -> str:
     """Return the active first-paint render id, if any."""
     return str(_current_first_paint_context().get("render_id") or "")
+
+
+def is_first_paint_active() -> bool:
+    """Return True while a section-entry first-paint window is open."""
+    return bool(current_first_paint_render_id())
+
+
+def current_first_paint_section() -> str:
+    """Return the section currently protected by the first-paint query gate."""
+    return str(_current_first_paint_context().get("section") or "")
+
+
+def _strict_first_paint_mode() -> bool:
+    """Return whether first-paint violations should fail before execution."""
+    return any(
+        str(os.environ.get(name, "")).strip().lower() in {"1", "true", "yes", "on"}
+        for name in ("OVERWATCH_TEST_MODE", "OVERWATCH_UI_FIXTURE_MODE", "OVERWATCH_ALLOW_FIXTURE_MODE")
+    )
+
+
+def record_first_paint_budget_violation(
+    *,
+    query_boundary: str = "other",
+    section: str = "",
+    ttl_key: str = "",
+    tier: str = "",
+    max_rows: int | None = None,
+    reason: str = "",
+    render_id: str | None = None,
+) -> dict[str, Any]:
+    """Record a SQL-free first-paint SLO violation for admin diagnostics."""
+    context = _current_first_paint_context()
+    boundary = str(query_boundary or "other")
+    if boundary not in _VALID_QUERY_BOUNDARIES:
+        boundary = "other"
+    event = {
+        "event_id": uuid4().hex[:16],
+        "render_id": str(render_id or context.get("render_id") or ""),
+        "section": str(section or context.get("section") or ""),
+        "workflow": str(context.get("workflow") or ""),
+        "query_boundary": boundary,
+        "ttl_key": str(ttl_key or "")[:160],
+        "tier": str(tier or ""),
+        "max_rows": None if max_rows is None else int(max_rows),
+        "reason": str(reason or "First-paint query budget violation.")[:500],
+        "recorded_at": datetime.now().isoformat(timespec="milliseconds"),
+    }
+    try:
+        events = _session_list(_FIRST_PAINT_BUDGET_VIOLATIONS_KEY)
+        events.append(event)
+        if len(events) > 100:
+            del events[:-100]
+    except Exception:
+        pass
+    return event
+
+
+def get_first_paint_budget_violations() -> list[dict[str, Any]]:
+    """Return SQL-free first-paint SLO violations."""
+    events = _session_list(_FIRST_PAINT_BUDGET_VIOLATIONS_KEY)
+    return [dict(event) for event in events if isinstance(event, dict)]
+
+
+def clear_first_paint_budget_violations() -> None:
+    try:
+        st.session_state[_FIRST_PAINT_BUDGET_VIOLATIONS_KEY] = []
+    except Exception:
+        pass
+
+
+def assert_first_paint_query_allowed(
+    query_boundary: str,
+    section: str = "",
+    ttl_key: str = "",
+    tier: str = "",
+    max_rows: int | None = None,
+) -> None:
+    """Enforce the first-paint SLO before any Snowflake execution can start."""
+    if not is_first_paint_active():
+        return
+    boundary = str(query_boundary or "other")
+    if boundary not in _VALID_QUERY_BOUNDARIES:
+        boundary = "other"
+    violation_reason = ""
+    if boundary != "decision_packet":
+        violation_reason = f"First paint allows only decision_packet queries, not {boundary}."
+    elif max_rows is not None and int(max_rows) != 1:
+        violation_reason = "Decision packet first-paint queries must request max_rows=1."
+    if not violation_reason:
+        return
+    record_first_paint_budget_violation(
+        query_boundary=boundary,
+        section=section or current_first_paint_section(),
+        ttl_key=ttl_key,
+        tier=tier,
+        max_rows=max_rows,
+        reason=violation_reason,
+    )
+    if _strict_first_paint_mode():
+        raise AssertionError(violation_reason)
 
 
 def _safe_message(error: object) -> str:
@@ -174,6 +280,8 @@ def summarize_first_paint_query_budget(section: str | None = None) -> dict[str, 
     return {
         "section": section or "",
         "first_paint_event_count": len(events),
+        "first_paint_allowed_queries": _count("decision_packet"),
+        "first_paint_blocked_queries": len(get_first_paint_budget_violations()),
         "decision_packet_events": _count("decision_packet"),
         "decision_packet_actual_queries": _count("decision_packet", actual_only=True),
         "decision_packet_session_hits": len(
@@ -255,6 +363,7 @@ def clear_ui_query_events() -> None:
     try:
         st.session_state[_UI_QUERY_EVENTS_KEY] = []
         st.session_state[_FIRST_PAINT_STACK_KEY] = []
+        st.session_state[_FIRST_PAINT_BUDGET_VIOLATIONS_KEY] = []
     except Exception:
         pass
 

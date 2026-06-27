@@ -2764,7 +2764,7 @@ class FormulaRegressionTests(unittest.TestCase):
         )
 
         self.assertEqual(len(tables), 105)
-        self.assertEqual(len(views), 3)
+        self.assertEqual(len(views), 4)
         self.assertEqual(len(tasks), 16)
         self.assertEqual(len(functions), 1)
         self.assertEqual(len(procedures), 21)

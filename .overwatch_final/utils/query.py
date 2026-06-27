@@ -47,7 +47,12 @@ from .session import apply_overwatch_query_tag, build_overwatch_query_tag, get_s
 from .data import normalize_df
 from .idle import empty_paused_result, queries_paused
 from .sql_safe import sql_literal
-from performance import current_first_paint_render_id, increment_snowflake_execution_counter, record_ui_query_event
+from performance import (
+    assert_first_paint_query_allowed,
+    current_first_paint_render_id,
+    increment_snowflake_execution_counter,
+    record_ui_query_event,
+)
 
 CACHE_TIERS: dict[str, int] = {
     "live":       30,     # INFORMATION_SCHEMA - real-time, 30s stale is fine
@@ -656,13 +661,22 @@ def _execute_snowflake_query(
     ttl_key: str = "",
     tier: str = "recent",
     section: str = "",
+    max_rows: int | None = None,
 ) -> pd.DataFrame:
-    executable_query = _inject_read_limit(query_text)
+    executable_query = _inject_read_limit(query_text, max_rows=max_rows)
+    boundary = _infer_query_boundary(executable_query, ttl_key, tier)
+    assert_first_paint_query_allowed(
+        boundary,
+        section=_infer_telemetry_section(section, ttl_key),
+        ttl_key=ttl_key,
+        tier=tier,
+        max_rows=max_rows,
+    )
     session = get_session()
     _apply_overwatch_query_tag(session, query_tag)
     _apply_statement_timeout(session, tier)
     increment_snowflake_execution_counter(
-        _infer_query_boundary(executable_query, ttl_key, tier),
+        boundary,
         section=_infer_telemetry_section(section, ttl_key),
         ttl_key=ttl_key,
         tier=tier,
@@ -933,6 +947,13 @@ def _run_query_base(
         "first_paint_sensitive": bool(current_first_paint_render_id()) and _first_paint_sensitive_boundary(boundary),
         "error": "",
     }
+    assert_first_paint_query_allowed(
+        boundary,
+        section=_infer_telemetry_section(section, ttl_key),
+        ttl_key=ttl_key,
+        tier=tier,
+        max_rows=max_rows,
+    )
     if queries_paused():
         meta.update(actual_query_executed=False, cache_layer="paused")
         return empty_paused_result(ttl_key=ttl_key, section=section), meta
@@ -952,7 +973,14 @@ def _run_query_base(
             # Bypass cache - always wrapped in try/except
             try:
                 meta.update(actual_query_executed=True, cache_layer="none")
-                return _execute_snowflake_query(executable_query, query_tag, ttl_key=ttl_key, tier=tier, section=section), meta
+                return _execute_snowflake_query(
+                    executable_query,
+                    query_tag,
+                    ttl_key=ttl_key,
+                    tier=tier,
+                    section=section,
+                    max_rows=max_rows,
+                ), meta
             except Exception as e:
                 _show_query_warning("Data unavailable", e)
                 meta.update(actual_query_executed=True, cache_layer="none", error=format_snowflake_error(e))
@@ -1028,6 +1056,13 @@ def run_query_or_raise(
     query_tag = _build_overwatch_query_tag(section, ttl_key, tier)
     executable_query = _inject_read_limit(query_text, max_rows=max_rows)
     boundary = _infer_query_boundary(query_text, ttl_key, tier)
+    assert_first_paint_query_allowed(
+        boundary,
+        section=_infer_telemetry_section(section, ttl_key),
+        ttl_key=ttl_key,
+        tier=tier,
+        max_rows=max_rows,
+    )
     if queries_paused():
         finished_at = datetime.now().isoformat(timespec="milliseconds")
         record_ui_query_event(
@@ -1080,6 +1115,7 @@ def run_query_or_raise(
             ttl_key=ttl_key,
             tier=tier,
             section=section,
+            max_rows=max_rows,
         )
         return result
     except Exception as exc:

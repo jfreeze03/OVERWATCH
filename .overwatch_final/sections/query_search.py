@@ -101,8 +101,7 @@ def _recent_query_detail_sql(
             total_elapsed_time/1000 AS elapsed_sec,
             bytes_scanned/POWER(1024,3) AS gb_scanned,
             rows_produced AS rows_produced,
-            credits_used_cloud_services AS cloud_credits,
-            SUBSTR(query_text,1,500) AS query_text
+            credits_used_cloud_services AS cloud_credits
         FROM {table}
         WHERE 1=1
           {date_predicate}
@@ -112,6 +111,37 @@ def _recent_query_detail_sql(
         ORDER BY start_time DESC
         LIMIT {int(row_limit)}
     """
+
+
+def _query_text_preview_sql(query_id: str) -> str:
+    table = mart_object_name("FACT_QUERY_DETAIL_RECENT")
+    return f"""
+        SELECT query_id, SUBSTR(query_text, 1, 1200) AS query_text_preview
+        FROM {table}
+        WHERE query_id = {sql_literal(query_id)}
+        ORDER BY start_time DESC
+        LIMIT 1
+    """
+
+
+def search_recent_query_summary(sql: str, *, ttl_key: str, row_limit: int):
+    return run_query(
+        sql,
+        ttl_key=ttl_key,
+        tier="recent",
+        section="Query Search & History",
+        max_rows=min(int(row_limit), 500),
+    )
+
+
+def load_query_text_preview(query_id: str):
+    return run_query(
+        _query_text_preview_sql(query_id),
+        ttl_key=f"query_text_preview_{query_id}",
+        tier="recent",
+        section="Query Search & History",
+        max_rows=1,
+    )
 
 
 def render():
@@ -216,10 +246,14 @@ def render():
                 "Text contains mode scans query text. Prefer exact query ID or prefix search "
                 "when the query ID or leading SQL token is known."
             )
+        if resolved_mode == "Exact query ID":
+            row_limit = min(int(row_limit), 10)
+        elif resolved_mode == "Query signature":
+            row_limit = min(int(row_limit), 200)
 
         user_cl = f"AND user_name ILIKE '%' || {sql_literal(user_filter)} || '%'" if user_filter else ""
         status_cl = f"AND execution_status = {sql_literal(status_filter)}" if status_filter != "ALL" else ""
-        target_wh_cl = f"AND warehouse_name ILIKE '%' || {sql_literal(target_warehouse)} || '%'" if target_warehouse else ""
+        target_wh_cl = f"AND UPPER(warehouse_name) = UPPER({sql_literal(target_warehouse)})" if target_warehouse else ""
         scoped_filters = get_global_filter_clause(
             date_col="start_time",
             wh_col="warehouse_name",
@@ -284,13 +318,17 @@ def render():
                     row_limit=row_limit,
                 )
                 ttl_prefix = "query_search_recent_detail"
-            df_qs = run_query(
-                sql,
-                ttl_key=f"{ttl_prefix}_{company}_{resolved_mode}_{search_value}_{target_warehouse}_{user_filter}_{status_filter}_{effective_days}_{row_limit}",
-                tier="historical",
-                section="Query Search & History",
-                max_rows=row_limit,
-            )
+            ttl_key = f"{ttl_prefix}_{company}_{resolved_mode}_{search_value}_{target_warehouse}_{user_filter}_{status_filter}_{effective_days}_{row_limit}"
+            if account_usage_fallback:
+                df_qs = run_query(
+                    sql,
+                    ttl_key=ttl_key,
+                    tier="historical",
+                    section="Query Search & History",
+                    max_rows=min(int(row_limit), 200),
+                )
+            else:
+                df_qs = search_recent_query_summary(sql, ttl_key=ttl_key, row_limit=row_limit)
             st.session_state["qs_df_qs"] = df_qs
             st.session_state["qs_search_mode"] = resolved_mode
             st.session_state["qs_effective_days"] = effective_days

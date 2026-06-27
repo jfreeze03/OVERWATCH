@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import ExitStack
 import importlib
 import json
+import os
 from pathlib import Path
 import sys
 import unittest
@@ -172,6 +173,42 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         self.assertEqual(summary["evidence_events"], 0)
         self.assertEqual(summary["account_usage_events"], 0)
 
+    def test_first_paint_query_gate_blocks_non_packet_queries_in_test_mode(self):
+        import performance
+
+        state: dict[str, object] = {}
+        with patch.dict(os.environ, {"OVERWATCH_TEST_MODE": "1"}, clear=False):
+            with patch.object(performance.st, "session_state", state):
+                render_id = performance.begin_first_paint("Alert Center", "Overview")
+                with self.assertRaises(AssertionError):
+                    performance.assert_first_paint_query_allowed(
+                        "evidence",
+                        section="Alert Center",
+                        ttl_key="alert_evidence_loader",
+                        tier="recent",
+                        max_rows=200,
+                    )
+                performance.assert_first_paint_query_allowed(
+                    "decision_packet",
+                    section="Alert Center",
+                    ttl_key="section_command_packet_Alert Center_ALFA_ALL_7",
+                    tier="command_summary",
+                    max_rows=1,
+                )
+                performance.end_first_paint(render_id)
+                performance.assert_first_paint_query_allowed(
+                    "evidence",
+                    section="Alert Center",
+                    ttl_key="alert_evidence_loader",
+                    tier="recent",
+                    max_rows=200,
+                )
+                violations = performance.get_first_paint_budget_violations()
+
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0]["query_boundary"], "evidence")
+        self.assertNotIn("SELECT", json.dumps(violations))
+
     def test_snowflake_execution_counter_records_only_real_execution(self):
         import performance
 
@@ -267,8 +304,12 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         self.assertEqual(label, "service: entity-42")
 
     def test_query_search_is_mart_first_and_account_usage_is_explicit_fallback(self):
+        from sections import query_search
+
         source = (APP_ROOT / "sections" / "query_search.py").read_text(encoding="utf-8")
         self.assertIn("def _recent_query_detail_sql", source)
+        self.assertIn("def search_recent_query_summary", source)
+        self.assertIn("def load_query_text_preview", source)
         self.assertIn("Search recent mart detail", source)
         self.assertIn("Advanced Account Usage fallback", source)
         self.assertIn("I understand this may scan Account Usage.", source)
@@ -282,6 +323,23 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         self.assertGreater(metadata_pos, fallback_pos)
         self.assertGreater(account_usage_sql_pos, fallback_pos)
         self.assertIn('st.session_state["qs_autorun"] = target_kind in {"query_id", "query_signature"}', source)
+        self.assertIn('tier="recent"', source)
+        self.assertIn('tier="historical"', source)
+        recent_sql = query_search._recent_query_detail_sql(
+            search_cl="AND query_id = '01a'",
+            date_predicate="AND start_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())",
+            scoped_filters="",
+            user_cl="",
+            status_cl="",
+            target_wh_cl="",
+            row_limit=10,
+        )
+        self.assertIn("FACT_QUERY_DETAIL_RECENT", recent_sql)
+        self.assertNotIn("query_text", recent_sql.lower())
+        self.assertIn("LIMIT 10", recent_sql)
+        preview_sql = query_search._query_text_preview_sql("01a")
+        self.assertIn("query_text_preview", preview_sql)
+        self.assertIn("LIMIT 1", preview_sql)
 
     def test_alert_delivery_uses_exact_alert_id_filter_before_text_fallback(self):
         from utils.alert_delivery import _alert_delivery_related_filter
@@ -486,6 +544,71 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         self.assertIn("SECTION_COMMAND_SOURCE_ENVIRONMENT_METADATA", validation)
         self.assertIn("SECTION_DECISION_CURRENT_ONE_ACTIVE_ROW_PER_KEY", validation)
         self.assertIn("WHERE COALESCE(IS_ACTIVE, TRUE)", validation)
+
+    def test_current_packet_lookup_uses_flat_active_normalized_path(self):
+        from sections import section_command_brief
+
+        sql = section_command_brief._packet_sql("Cost & Contract", "ALFA", "PROD", 7)
+        self.assertIn("MART_SECTION_DECISION_CURRENT_FLAT", sql)
+        self.assertIn("SECTION_NAME_NORM", sql)
+        self.assertIn("COMPANY_NORM", sql)
+        self.assertIn("ENVIRONMENT_NORM", sql)
+        self.assertIn("WINDOW_DAYS_NORM", sql)
+        self.assertIn("COALESCE(IS_ACTIVE, TRUE)", sql)
+        self.assertIn("LIMIT 1", sql)
+        self.assertNotIn("UPPER(SECTION_NAME)", sql)
+        self.assertNotIn('DECISION_PACKET:"', sql)
+
+        setup = (ROOT / "snowflake" / "mart_setup" / "04_mart_tables.sql").read_text(encoding="utf-8")
+        validation = (ROOT / "snowflake" / "mart_setup" / "08_validation.sql").read_text(encoding="utf-8")
+        self.assertIn("CREATE OR REPLACE VIEW MART_SECTION_DECISION_CURRENT_FLAT", setup)
+        self.assertIn("SECTION_DECISION_CURRENT_OPTIMIZED_LOOKUP_SCHEMA", validation)
+        self.assertIn("SECTION_DECISION_CURRENT_FLAT_VIEW", validation)
+
+    def test_query_contract_linter_flags_risky_shapes_and_passes_packet_lookup(self):
+        from query_contracts import (
+            QueryContract,
+            iter_query_contracts,
+            lint_query_text,
+            resolve_query_contract,
+        )
+        from sections import section_command_brief
+
+        packet_contract = resolve_query_contract(
+            boundary="decision_packet",
+            section="Cost & Contract",
+            ttl_key="section_command_packet_Cost & Contract_ALFA_PROD_7",
+            tier="command_summary",
+        )
+        self.assertTrue(packet_contract.first_paint_allowed)
+        self.assertFalse(lint_query_text(section_command_brief._packet_sql("Cost & Contract", "ALFA", "PROD", 7), packet_contract))
+
+        account_usage_findings = lint_query_text(
+            "SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+            QueryContract(boundary="route", section="Workload Operations", max_rows=200),
+        )
+        codes = {finding.code for finding in account_usage_findings}
+        self.assertIn("ACCOUNT_USAGE_FORBIDDEN", codes)
+        self.assertIn("SELECT_STAR", codes)
+        self.assertIn("MISSING_LIMIT", codes)
+
+        evidence_findings = lint_query_text(
+            "SELECT query_id FROM FACT_QUERY_DETAIL_RECENT LIMIT 200",
+            QueryContract(boundary="evidence", section="Workload Operations", requires_target_predicate=True),
+        )
+        self.assertIn("MISSING_TARGET_PREDICATE", {finding.code for finding in evidence_findings})
+        self.assertTrue([contract for contract in iter_query_contracts() if contract.boundary == "decision_packet"])
+
+    def test_button_contracts_do_not_grant_account_usage_to_generic_admin(self):
+        contracts = list(iter_button_action_contracts())
+        fallback_contracts = [contract for contract in contracts if contract.action_type == "account_usage_fallback"]
+        self.assertTrue(fallback_contracts)
+        for contract in contracts:
+            if contract.action_type in {"admin_load", "advanced_load", "setup_health"}:
+                self.assertFalse(contract.account_usage_allowed, contract)
+            if contract.account_usage_allowed:
+                self.assertEqual(contract.action_type, "account_usage_fallback", contract)
+                self.assertTrue(contract.requires_admin, contract)
 
     def _packet_row(self, section: str) -> dict[str, object]:
         route_key = {
@@ -1586,6 +1709,11 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         artifact_dir.mkdir(exist_ok=True)
         summary_path = artifact_dir / "decision_workspace_performance_summary.json"
         telemetry_path = artifact_dir / "ui_query_telemetry.json"
+        query_registry_path = artifact_dir / "query_registry.json"
+        query_lint_path = artifact_dir / "query_lint_findings.json"
+        query_perf_path = artifact_dir / "query_performance_summary.json"
+        query_plan_path = artifact_dir / "query_plan_findings.json"
+        query_elapsed_path = artifact_dir / "query_elapsed_by_section.json"
         button_manifest_path = artifact_dir / "button_route_manifest.json"
         button_results_path = artifact_dir / "button_route_results.json"
         snapshot_dir = artifact_dir / "decision_workspace_html_snapshots"
@@ -1593,8 +1721,74 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         generated_artifact_dir = artifact_dir / "generated_button_artifacts"
         brand_dir = artifact_dir / "brand"
         rows, telemetry, snapshots, button_manifest, button_results = self._run_render_harness()
+        from query_contracts import iter_query_contracts, lint_query_text, query_fingerprint, resolve_query_contract
+        from sections import section_command_brief
+
+        packet_sql = section_command_brief._packet_sql("Executive Landing", "ALFA", "ALL", 7)
+        packet_contract = resolve_query_contract(
+            boundary="decision_packet",
+            section="Executive Landing",
+            ttl_key="section_command_packet_Executive Landing_ALFA_ALL_7",
+            tier="command_summary",
+        )
+        lint_findings = [
+            finding.to_artifact()
+            for finding in lint_query_text(packet_sql, packet_contract)
+        ]
+        query_events_by_boundary: dict[str, int] = {}
+        rows_by_boundary: dict[str, int] = {}
+        elapsed_by_boundary: dict[str, float] = {}
+        max_rows_by_boundary: dict[str, int] = {}
+        for event in telemetry:
+            boundary = str(event.get("query_boundary") or "other")
+            query_events_by_boundary[boundary] = query_events_by_boundary.get(boundary, 0) + 1
+            rows_by_boundary[boundary] = rows_by_boundary.get(boundary, 0) + int(event.get("row_count") or 0)
+            elapsed_by_boundary[boundary] = round(
+                elapsed_by_boundary.get(boundary, 0.0) + float(event.get("elapsed_ms") or 0),
+                2,
+            )
+            max_rows = event.get("max_rows")
+            if max_rows is not None:
+                max_rows_by_boundary[boundary] = max(max_rows_by_boundary.get(boundary, 0), int(max_rows or 0))
+        query_perf_summary = {
+            "first_paint_allowed_queries": sum(int(row["cold_packet_queries"]) for row in rows),
+            "first_paint_blocked_queries": 0,
+            "route_action_queries": sum(int(row["route_action_queries_before_evidence"]) for row in rows),
+            "evidence_click_queries": sum(int(row["evidence_queries_after_click"]) for row in rows),
+            "account_usage_fallback_queries": query_events_by_boundary.get("account_usage", 0),
+            "snowflake_executions_by_boundary": {
+                "decision_packet": sum(int(row["cold_packet_queries"]) for row in rows),
+                "evidence": query_events_by_boundary.get("evidence", 0),
+                "account_usage": query_events_by_boundary.get("account_usage", 0),
+            },
+            "rows_by_boundary": rows_by_boundary,
+            "elapsed_ms_by_boundary": elapsed_by_boundary,
+            "max_rows_by_boundary": max_rows_by_boundary,
+            "packet_lookup_fingerprint": query_fingerprint(packet_sql),
+        }
         summary_path.write_text(json.dumps(rows, indent=2), encoding="utf-8")
         telemetry_path.write_text(json.dumps(telemetry, indent=2), encoding="utf-8")
+        query_registry_path.write_text(
+            json.dumps([contract.to_artifact() for contract in iter_query_contracts()], indent=2),
+            encoding="utf-8",
+        )
+        query_lint_path.write_text(json.dumps(lint_findings, indent=2), encoding="utf-8")
+        query_perf_path.write_text(json.dumps(query_perf_summary, indent=2), encoding="utf-8")
+        query_plan_path.write_text(
+            json.dumps(
+                [
+                    {
+                        "fingerprint": query_fingerprint(packet_sql),
+                        "classification": "first_paint_packet_lookup",
+                        "raw_sql_included": False,
+                        "finding_count": len(lint_findings),
+                    }
+                ],
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        query_elapsed_path.write_text(json.dumps(elapsed_by_boundary, indent=2), encoding="utf-8")
         button_manifest_path.write_text(json.dumps(button_manifest, indent=2), encoding="utf-8")
         button_results_path.write_text(json.dumps(button_results, indent=2), encoding="utf-8")
         snapshot_dir.mkdir(exist_ok=True)
@@ -1719,6 +1913,15 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             if result["action_type"] == "evidence_load":
                 self.assertGreaterEqual(result["evidence_query_events"], 1, result)
         self.assertGreater(len(json.loads(telemetry_path.read_text(encoding="utf-8"))), 0)
+        self.assertTrue(json.loads(query_registry_path.read_text(encoding="utf-8")))
+        self.assertEqual(json.loads(query_lint_path.read_text(encoding="utf-8")), [])
+        self.assertIn("packet_lookup_fingerprint", json.loads(query_perf_path.read_text(encoding="utf-8")))
+        self.assertTrue(json.loads(query_plan_path.read_text(encoding="utf-8")))
+        self.assertTrue(json.loads(query_elapsed_path.read_text(encoding="utf-8")))
+        for path in (query_registry_path, query_lint_path, query_perf_path, query_plan_path, query_elapsed_path):
+            text = path.read_text(encoding="utf-8")
+            self.assertNotIn("SELECT ", text)
+            self.assertNotIn("WITH ", text)
         snapshot_text = "\n".join(
             path.read_text(encoding="utf-8")
             for path in snapshot_dir.glob("*.html")

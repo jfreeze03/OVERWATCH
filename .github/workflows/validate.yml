@@ -65,6 +65,9 @@ jobs:
       - name: Run Decision Workspace performance budget tests and button-route tests
         run: python -m unittest tests.test_decision_workspace_performance_budget
 
+      - name: Run query-performance contract tests
+        run: python -m unittest tests.test_decision_workspace_performance_budget.DecisionWorkspacePerformanceBudgetTests.test_query_contract_linter_flags_risky_shapes_and_passes_packet_lookup
+
       - name: Run Decision Workspace HTML snapshot tests
         run: |
           python -m unittest \
@@ -86,6 +89,11 @@ jobs:
           path: |
             artifacts/decision_workspace_performance_summary.json
             artifacts/ui_query_telemetry.json
+            artifacts/query_performance_summary.json
+            artifacts/query_plan_findings.json
+            artifacts/query_registry.json
+            artifacts/query_lint_findings.json
+            artifacts/query_elapsed_by_section.json
             artifacts/brand/**
             artifacts/button_route_manifest.json
             artifacts/button_route_results.json

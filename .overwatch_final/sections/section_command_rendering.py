@@ -9,7 +9,12 @@ import re
 
 import streamlit as st
 
-from performance import current_first_paint_render_id, end_first_paint
+from performance import (
+    SECTION_ROUTE_QUERY_BUDGET,
+    current_first_paint_render_id,
+    end_first_paint,
+    query_budget_context,
+)
 from sections.command_brief_routes import COMMAND_BRIEF_ROUTES, apply_command_brief_route
 from sections.decision_workspace_controls import (
     CommandBriefDetailAction,
@@ -329,9 +334,10 @@ def _finding_for_action(model: DecisionWorkspaceViewModel, action: object) -> ob
 
 
 def _apply_route_action(action: object, *, finding: object | None, section: str, workflow: str) -> bool:
-    apply_finding_evidence_target(finding, section, workflow)
-    route_key = _action_route_key(action)
-    return bool(route_key and apply_command_brief_route(route_key))
+    with query_budget_context("route_action", section=section, workflow=workflow, budget=SECTION_ROUTE_QUERY_BUDGET):
+        apply_finding_evidence_target(finding, section, workflow)
+        route_key = _action_route_key(action)
+        return bool(route_key and apply_command_brief_route(route_key))
 
 
 def _metric_ribbon(model: DecisionWorkspaceViewModel, *, compact: bool) -> str:

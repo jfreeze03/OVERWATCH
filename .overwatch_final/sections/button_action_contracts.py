@@ -46,6 +46,7 @@ class ButtonActionContract:
     expected_query_count: int | None = None
     expected_max_rows: int | None = None
     expected_query_contract_id: str = ""
+    expected_query_budget_context: str = ""
     expected_session_open_count: int | None = None
     expected_snowflake_execution_count: int | None = None
     can_be_absent: bool = False
@@ -110,6 +111,8 @@ SECTION_EVIDENCE_CONTRACTS: dict[str, ButtonActionContract] = {
         expected_query_boundary="evidence",
         expected_query_count=1,
         expected_max_rows=500,
+        expected_query_contract_id="evidence_default_bounded",
+        expected_query_budget_context="evidence_click",
         expected_snowflake_execution_count=1,
     ),
     "DBA Control Room": ButtonActionContract(
@@ -124,6 +127,8 @@ SECTION_EVIDENCE_CONTRACTS: dict[str, ButtonActionContract] = {
         expected_query_boundary="evidence",
         expected_query_count=1,
         expected_max_rows=500,
+        expected_query_contract_id="dba_control_room_targeted_evidence",
+        expected_query_budget_context="evidence_click",
         expected_snowflake_execution_count=1,
     ),
     "Alert Center": ButtonActionContract(
@@ -137,6 +142,8 @@ SECTION_EVIDENCE_CONTRACTS: dict[str, ButtonActionContract] = {
         expected_query_boundary="evidence",
         expected_query_count=1,
         expected_max_rows=500,
+        expected_query_contract_id="alert_center_targeted_evidence",
+        expected_query_budget_context="evidence_click",
         expected_snowflake_execution_count=1,
     ),
     "Cost & Contract": ButtonActionContract(
@@ -151,6 +158,8 @@ SECTION_EVIDENCE_CONTRACTS: dict[str, ButtonActionContract] = {
         expected_query_boundary="evidence",
         expected_query_count=1,
         expected_max_rows=500,
+        expected_query_contract_id="cost_and_contract_targeted_evidence",
+        expected_query_budget_context="evidence_click",
         expected_snowflake_execution_count=1,
     ),
     "Security Monitoring": ButtonActionContract(
@@ -165,6 +174,8 @@ SECTION_EVIDENCE_CONTRACTS: dict[str, ButtonActionContract] = {
         expected_query_boundary="evidence",
         expected_query_count=1,
         expected_max_rows=500,
+        expected_query_contract_id="security_monitoring_targeted_evidence",
+        expected_query_budget_context="evidence_click",
         expected_snowflake_execution_count=1,
     ),
 }
@@ -182,6 +193,8 @@ def _refresh_contract(section: str) -> ButtonActionContract:
         expected_query_boundary="decision_packet",
         expected_query_count=1,
         expected_max_rows=1,
+        expected_query_contract_id="decision_packet_current_flat",
+        expected_query_budget_context="refresh_packet",
         expected_snowflake_execution_count=1,
     )
 
@@ -238,6 +251,7 @@ def _route_contracts_for_source_section(section: str) -> Iterable[ButtonActionCo
             expected_artifact="navigation_state_delta",
             exact_route_key=route_key,
             expected_query_count=0,
+            expected_query_budget_context="route_action",
             expected_session_open_count=0,
             expected_snowflake_execution_count=0,
         )
@@ -263,6 +277,7 @@ def _fallback_route_contract(section: str) -> ButtonActionContract:
         },
         expected_artifact="fallback_action_state",
         expected_query_count=0,
+        expected_query_budget_context="route_action",
         expected_session_open_count=0,
         expected_snowflake_execution_count=0,
         can_be_absent=True,
@@ -316,6 +331,8 @@ def _account_usage_fallback_contract(section: str) -> ButtonActionContract:
         expected_query_boundary="account_usage",
         expected_query_count=1,
         expected_max_rows=200,
+        expected_query_contract_id="account_usage_confirmed_fallback",
+        expected_query_budget_context="account_usage_fallback",
         expected_session_open_count=1,
         expected_snowflake_execution_count=1,
         expected_rerun=False,

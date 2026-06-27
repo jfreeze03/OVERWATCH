@@ -11,6 +11,7 @@ from typing import Any
 @dataclass(frozen=True)
 class QueryContract:
     boundary: str
+    contract_id: str = ""
     section: str = ""
     ttl_key_pattern: str = ""
     tier: str = "standard"
@@ -83,7 +84,12 @@ def resolve_query_contract(
         if contract.tier and tier and contract.tier != tier:
             continue
         return contract
-    return QueryContract(boundary=boundary, section=section, tier=tier or "standard")
+    return QueryContract(
+        boundary=boundary,
+        contract_id=f"default_{boundary or 'other'}",
+        section=section,
+        tier=tier or "standard",
+    )
 
 
 def _strip_literals(sql: str) -> str:
@@ -163,6 +169,7 @@ def query_fingerprint(sql: str) -> str:
 register_query_contract(
     QueryContract(
         boundary="decision_packet",
+        contract_id="decision_packet_current_flat",
         ttl_key_pattern=r"^section_command_packet_",
         tier="command_summary",
         max_rows=1,
@@ -173,6 +180,7 @@ register_query_contract(
 register_query_contract(
     QueryContract(
         boundary="evidence",
+        contract_id="evidence_default_bounded",
         tier="",
         max_rows=500,
     )
@@ -187,6 +195,7 @@ for _ttl_pattern, _section, _markers in (
     register_query_contract(
         QueryContract(
             boundary="evidence",
+            contract_id=f"{_section.lower().replace(' ', '_').replace('&', 'and')}_targeted_evidence",
             section=_section,
             ttl_key_pattern=_ttl_pattern,
             tier="",
@@ -199,6 +208,7 @@ for _ttl_pattern, _section, _markers in (
 register_query_contract(
     QueryContract(
         boundary="query_search",
+        contract_id="query_search_recent_detail",
         ttl_key_pattern=r"^query_search_recent_detail_",
         tier="recent",
         max_rows=500,
@@ -208,6 +218,7 @@ register_query_contract(
 register_query_contract(
     QueryContract(
         boundary="query_preview",
+        contract_id="query_preview_text",
         ttl_key_pattern=r"^query_text_preview_",
         tier="recent",
         max_rows=1,
@@ -217,6 +228,7 @@ register_query_contract(
 register_query_contract(
     QueryContract(
         boundary="account_usage",
+        contract_id="account_usage_confirmed_fallback",
         tier="historical",
         max_rows=200,
         allow_account_usage=True,
@@ -224,9 +236,9 @@ register_query_contract(
         first_paint_allowed=False,
     )
 )
-register_query_contract(QueryContract(boundary="metadata", tier="metadata", allow_metadata=True))
-register_query_contract(QueryContract(boundary="setup_health", tier="metadata", allow_metadata=True))
-register_query_contract(QueryContract(boundary="other", tier="standard", max_rows=5000))
+register_query_contract(QueryContract(boundary="metadata", contract_id="metadata_probe", tier="metadata", allow_metadata=True))
+register_query_contract(QueryContract(boundary="setup_health", contract_id="setup_health_admin", tier="metadata", allow_metadata=True))
+register_query_contract(QueryContract(boundary="other", contract_id="other_bounded", tier="standard", max_rows=5000))
 
 
 __all__ = [

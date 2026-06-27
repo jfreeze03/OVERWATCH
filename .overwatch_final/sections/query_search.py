@@ -14,7 +14,7 @@ from utils import (
     sql_literal,
 )
 from utils.mart_names import mart_object_name
-from performance import ACCOUNT_USAGE_TARGETED_SCAN_ALLOWED
+from performance import ACCOUNT_USAGE_TARGETED_SCAN_ALLOWED, query_budget_context
 
 
 def _looks_like_query_id(value: str) -> bool:
@@ -268,8 +268,7 @@ def render():
                            start_time, total_elapsed_time/1000 AS elapsed_sec,
                            bytes_scanned/POWER(1024,3) AS gb_scanned,
                            rows_produced AS rows_produced,
-                           credits_used_cloud_services AS cloud_credits,
-                           SUBSTR(query_text,1,500) AS query_text
+                           credits_used_cloud_services AS cloud_credits
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                     WHERE 1=1
                       {date_predicate}
@@ -293,16 +292,25 @@ def render():
                 ttl_prefix = "query_search_recent_detail"
             ttl_key = f"{ttl_prefix}_{company}_{resolved_mode}_{search_value}_{target_warehouse}_{user_filter}_{status_filter}_{effective_days}_{row_limit}"
             if account_usage_fallback:
-                df_qs = run_query(
-                    sql,
-                    ttl_key=ttl_key,
-                    tier="historical",
-                    section="Query Search & History",
-                    max_rows=min(int(row_limit), 200),
-                    query_boundary="account_usage",
-                )
+                with query_budget_context("account_usage_fallback", section="Workload Operations", workflow="Query Investigation", budget=1):
+                    df_qs = run_query(
+                        sql,
+                        ttl_key=ttl_key,
+                        tier="historical",
+                        section="Query Search & History",
+                        max_rows=min(int(row_limit), 200),
+                        query_boundary="account_usage",
+                    )
             else:
-                df_qs = search_recent_query_summary(sql, ttl_key=ttl_key, row_limit=row_limit)
+                context_name = (
+                    "query_search_exact"
+                    if resolved_mode == "Exact query ID"
+                    else "query_search_signature"
+                    if resolved_mode == "Query signature"
+                    else "query_search_text"
+                )
+                with query_budget_context(context_name, section="Workload Operations", workflow="Query Investigation", budget=1):
+                    df_qs = search_recent_query_summary(sql, ttl_key=ttl_key, row_limit=row_limit)
             st.session_state["qs_df_qs"] = df_qs
             st.session_state["qs_search_mode"] = resolved_mode
             st.session_state["qs_effective_days"] = effective_days
@@ -318,6 +326,19 @@ def render():
                 f"({st.session_state.get('qs_search_mode', 'Search')}, {st.session_state.get('qs_date_label', str(st.session_state.get('qs_effective_days', days_back)) + 'd')})."
             )
             render_query_drilldown(df_q, key="qs_result")
+            query_ids = [
+                str(value).strip()
+                for value in df_q.get("QUERY_ID", df_q.get("query_id", [])).tolist()
+                if str(value).strip()
+            ] if hasattr(df_q, "get") else []
+            selected_preview_id = query_ids[0] if query_ids else ""
+            if selected_preview_id and st.button("Load SQL preview", key="qs_load_sql_preview"):
+                with query_budget_context("query_preview", section="Workload Operations", workflow="Query Investigation", budget=1):
+                    preview_df = load_query_text_preview(selected_preview_id)
+                st.session_state["qs_sql_preview_df"] = preview_df
+                st.session_state["qs_sql_preview_query_id"] = selected_preview_id
+            if st.session_state.get("qs_sql_preview_query_id"):
+                st.caption("SQL preview loaded. Open admin detail to inspect full text.")
             download_csv(df_q, "query_search_results.csv")
         else:
             st.info("No queries matched the search criteria.")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime
 from hashlib import sha1
 from uuid import uuid4
@@ -60,8 +61,10 @@ _QUERY_BUDGET_LIMITS = {
     "warm_first_paint": DECISION_WARM_QUERY_BUDGET,
     "route_action": SECTION_ROUTE_QUERY_BUDGET,
     "evidence_click": EVIDENCE_CLICK_QUERY_BUDGET,
+    "refresh_packet": 1,
     "query_search_exact": 1,
     "query_search_signature": 1,
+    "query_search_text": 1,
     "query_preview": 1,
     "account_usage_fallback": ACCOUNT_USAGE_FALLBACK_QUERY_BUDGET,
     "admin_setup": ADMIN_CLICK_QUERY_BUDGET,
@@ -152,6 +155,10 @@ def begin_query_budget_context(
         "workflow": str(workflow or ""),
         "budget": _query_budget_limit(name, budget),
         "actual_snowflake_executions": 0,
+        "session_open_count": 0,
+        "direct_sql_events": 0,
+        "metadata_probe_events": 0,
+        "role_capture_events": 0,
         "query_events": 0,
         "boundaries": {},
         "started_at": datetime.now().isoformat(timespec="milliseconds"),
@@ -167,13 +174,30 @@ def _active_query_budget_context() -> dict[str, Any]:
     return top if isinstance(top, dict) else {}
 
 
-def _record_query_budget_context_event(*, query_boundary: str, actual_execution: bool = False) -> None:
+def _record_query_budget_context_event(
+    *,
+    query_boundary: str,
+    actual_execution: bool = False,
+    session_open: bool = False,
+    direct_sql: bool = False,
+    metadata_probe: bool = False,
+    role_capture: bool = False,
+) -> None:
     context = _active_query_budget_context()
     if not context:
         return
-    context["query_events"] = int(context.get("query_events") or 0) + 1
+    if not session_open and not direct_sql and not metadata_probe and not role_capture:
+        context["query_events"] = int(context.get("query_events") or 0) + 1
     if actual_execution:
         context["actual_snowflake_executions"] = int(context.get("actual_snowflake_executions") or 0) + 1
+    if session_open:
+        context["session_open_count"] = int(context.get("session_open_count") or 0) + 1
+    if direct_sql:
+        context["direct_sql_events"] = int(context.get("direct_sql_events") or 0) + 1
+    if metadata_probe:
+        context["metadata_probe_events"] = int(context.get("metadata_probe_events") or 0) + 1
+    if role_capture:
+        context["role_capture_events"] = int(context.get("role_capture_events") or 0) + 1
     boundaries = context.setdefault("boundaries", {})
     if isinstance(boundaries, dict):
         boundary = str(query_boundary or "other")
@@ -189,8 +213,13 @@ def end_query_budget_context(token: str) -> dict[str, Any]:
         "workflow": "",
         "budget": 0,
         "actual_snowflake_executions": 0,
+        "session_open_count": 0,
+        "direct_sql_events": 0,
+        "metadata_probe_events": 0,
+        "role_capture_events": 0,
         "query_events": 0,
         "passed_budget": True,
+        "passed_query_budget": True,
         "boundaries": {},
         "finished_at": datetime.now().isoformat(timespec="milliseconds"),
     }
@@ -211,8 +240,13 @@ def end_query_budget_context(token: str) -> dict[str, Any]:
             "workflow": str(selected.get("workflow") or ""),
             "budget": budget,
             "actual_snowflake_executions": actual,
+            "session_open_count": int(selected.get("session_open_count") or 0),
+            "direct_sql_events": int(selected.get("direct_sql_events") or 0),
+            "metadata_probe_events": int(selected.get("metadata_probe_events") or 0),
+            "role_capture_events": int(selected.get("role_capture_events") or 0),
             "query_events": int(selected.get("query_events") or 0),
             "passed_budget": actual <= budget,
+            "passed_query_budget": actual <= budget,
             "boundaries": dict(selected.get("boundaries") or {}),
             "started_at": selected.get("started_at"),
         })
@@ -224,6 +258,22 @@ def end_query_budget_context(token: str) -> dict[str, Any]:
     except Exception:
         pass
     return summary
+
+
+@contextmanager
+def query_budget_context(
+    name: str,
+    *,
+    section: str = "",
+    workflow: str = "",
+    budget: int | None = None,
+):
+    """Context manager for user-action query budgets."""
+    token = begin_query_budget_context(name, section=section, workflow=workflow, budget=budget)
+    try:
+        yield token
+    finally:
+        end_query_budget_context(token)
 
 
 def get_query_budget_context_events() -> list[dict[str, Any]]:
@@ -368,6 +418,10 @@ def record_snowflake_session_open_event(
             del events[:-100]
     except Exception:
         pass
+    _record_query_budget_context_event(
+        query_boundary=boundary,
+        session_open=True,
+    )
     return event
 
 
@@ -480,6 +534,20 @@ def record_direct_sql_event(
     boundary = str(query_boundary or "other")
     if boundary not in _VALID_QUERY_BOUNDARIES:
         boundary = "other"
+    allowance = _current_direct_sql_allowance()
+    reason_text = str(reason or "")
+    if role_capture:
+        direct_sql_kind = "role_capture"
+    elif boundary == "decision_packet":
+        direct_sql_kind = "packet_direct_sql"
+    elif boundary == "account_usage" and re.search(r"metadata|probe|columns|filter_existing", reason_text, re.IGNORECASE):
+        direct_sql_kind = "account_usage_metadata_probe"
+    elif boundary == "metadata" or re.search(r"\b(show|describe|desc|metadata|current_role|select 1)\b", reason_text, re.IGNORECASE):
+        direct_sql_kind = "metadata_probe"
+    elif boundary == "admin":
+        direct_sql_kind = "admin_direct_sql"
+    else:
+        direct_sql_kind = "direct_sql"
     event = {
         "event_id": uuid4().hex[:16],
         "render_id": str(context.get("render_id") or ""),
@@ -488,6 +556,7 @@ def record_direct_sql_event(
         "query_boundary": boundary,
         "allowed": bool(allowed),
         "reason": _safe_message(reason) or str(reason or "")[:240],
+        "direct_sql_kind": direct_sql_kind,
         "fingerprint": _sql_fingerprint(query_text),
         "first_paint_active": bool(context.get("render_id")),
         "role_capture": bool(role_capture),
@@ -500,6 +569,14 @@ def record_direct_sql_event(
             del events[:-250]
     except Exception:
         pass
+    metadata_probe = direct_sql_kind in {"metadata_probe", "account_usage_metadata_probe", "role_capture"}
+    _record_query_budget_context_event(
+        query_boundary=boundary,
+        actual_execution=bool(allowed and not allowance),
+        direct_sql=True,
+        metadata_probe=metadata_probe,
+        role_capture=bool(role_capture),
+    )
     return event
 
 
@@ -592,6 +669,11 @@ def record_role_capture_event(
             del events[:-100]
     except Exception:
         pass
+    _record_query_budget_context_event(
+        query_boundary=boundary,
+        metadata_probe=bool(executed),
+        role_capture=True,
+    )
     return event
 
 
@@ -617,6 +699,7 @@ def record_query_lint_finding(
     section: str = "",
     ttl_key: str = "",
     tier: str = "",
+    contract_id: str = "",
 ) -> dict[str, Any]:
     """Record sanitized query lint findings from the central runner."""
     event = {
@@ -629,6 +712,7 @@ def record_query_lint_finding(
         "section": str(section or ""),
         "ttl_key": str(ttl_key or "")[:160],
         "tier": str(tier or ""),
+        "contract_id": str(contract_id or "")[:120],
         "recorded_at": datetime.now().isoformat(timespec="milliseconds"),
     }
     try:
@@ -678,6 +762,7 @@ def record_ui_query_event(
     actual_query_executed: bool | None = None,
     cache_layer: str = "unknown",
     query_boundary: str = "other",
+    query_contract_id: str = "",
     first_paint_sensitive: bool = False,
     render_id: str | None = None,
 ) -> dict[str, Any]:
@@ -711,6 +796,7 @@ def record_ui_query_event(
         "actual_query_executed": actual_query_executed,
         "cache_layer": cache_layer,
         "query_boundary": query_boundary,
+        "query_contract_id": str(query_contract_id or "")[:120],
         "first_paint_sensitive": bool(first_paint_sensitive),
     }
     try:

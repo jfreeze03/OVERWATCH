@@ -449,6 +449,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         self.assertIn("def search_recent_query_summary", source)
         self.assertIn("def load_query_text_preview", source)
         self.assertIn("Search recent mart detail", source)
+        self.assertIn("Load SQL preview", source)
         self.assertIn("Advanced Account Usage fallback", source)
         self.assertIn("I understand this may scan Account Usage.", source)
         self.assertIn("Search Account Usage fallback", source)
@@ -467,6 +468,10 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         self.assertIn('query_boundary="query_search"', source)
         self.assertIn('query_boundary="query_preview"', source)
         self.assertIn('query_boundary="account_usage"', source)
+        self.assertIn('"query_search_exact"', source)
+        self.assertIn("query_budget_context(context_name", source)
+        self.assertIn('query_budget_context("account_usage_fallback"', source)
+        self.assertNotIn("SUBSTR(query_text,1,500) AS query_text", source)
         self.assertIn("row_limit = 1", source)
         recent_sql = query_search._recent_query_detail_sql(
             search_cl="AND query_id = '01a'",
@@ -733,6 +738,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             tier="command_summary",
         )
         self.assertTrue(packet_contract.first_paint_allowed)
+        self.assertEqual(packet_contract.contract_id, "decision_packet_current_flat")
         self.assertFalse(lint_query_text(section_command_brief._packet_sql("Cost & Contract", "ALFA", "PROD", 7), packet_contract))
 
         account_usage_findings = lint_query_text(
@@ -789,6 +795,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             tier="recent",
         )
         self.assertEqual(query_search_contract.boundary, "query_search")
+        self.assertEqual(query_search_contract.contract_id, "query_search_recent_detail")
         self.assertEqual(query_search_contract.max_rows, 500)
         self.assertTrue([contract for contract in iter_query_contracts() if contract.boundary == "decision_packet"])
 
@@ -854,6 +861,24 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             self.assertEqual(route_summary["budget"], 0)
             self.assertEqual(route_summary["actual_snowflake_executions"], 1)
 
+            direct_token = performance.begin_query_budget_context(
+                "route_action",
+                section="Alert Center",
+                workflow="Active Alerts",
+            )
+            performance.record_direct_sql_event(
+                query_text="SELECT 1",
+                section="Alert Center",
+                query_boundary="metadata",
+                allowed=True,
+                reason="metadata_probe",
+            )
+            direct_summary = performance.end_query_budget_context(direct_token)
+            self.assertFalse(direct_summary["passed_budget"])
+            self.assertEqual(direct_summary["direct_sql_events"], 1)
+            self.assertEqual(direct_summary["metadata_probe_events"], 1)
+            self.assertEqual(direct_summary["actual_snowflake_executions"], 1)
+
             evidence_token = performance.begin_query_budget_context(
                 "evidence_click",
                 section="Alert Center",
@@ -869,7 +894,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             self.assertTrue(evidence_summary["passed_budget"])
             self.assertEqual(evidence_summary["budget"], 1)
             self.assertEqual(evidence_summary["boundaries"], {"evidence": 1})
-            self.assertEqual(len(performance.get_query_budget_context_events()), 2)
+            self.assertEqual(len(performance.get_query_budget_context_events()), 3)
 
     def test_button_contracts_do_not_grant_account_usage_to_generic_admin(self):
         contracts = list(iter_button_action_contracts())
@@ -1085,6 +1110,13 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                 "account_usage_allowed": False,
                 "requires_admin": False,
                 "expected_rerun": True,
+                "expected_query_boundary": "",
+                "expected_query_count": None,
+                "expected_max_rows": None,
+                "expected_query_contract_id": "",
+                "expected_query_budget_context": "",
+                "expected_session_open_count": None,
+                "expected_snowflake_execution_count": None,
                 "contract_resolved": False,
                 "contract_valid": False,
                 "skip_reason": "",
@@ -1102,6 +1134,13 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             "account_usage_allowed": bool(payload.get("account_usage_allowed")),
             "requires_admin": bool(payload.get("requires_admin")),
             "expected_rerun": bool(payload.get("expected_rerun")),
+            "expected_query_boundary": str(payload.get("expected_query_boundary") or ""),
+            "expected_query_count": payload.get("expected_query_count"),
+            "expected_max_rows": payload.get("expected_max_rows"),
+            "expected_query_contract_id": str(payload.get("expected_query_contract_id") or ""),
+            "expected_query_budget_context": str(payload.get("expected_query_budget_context") or ""),
+            "expected_session_open_count": payload.get("expected_session_open_count"),
+            "expected_snowflake_execution_count": payload.get("expected_snowflake_execution_count"),
             "contract_resolved": True,
             "contract_valid": contract_target_is_valid(contract),
             "skip_reason": str(payload.get("skip_reason") or ""),
@@ -1816,6 +1855,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                     key = str(button["key"])
                     before_events = len(performance.get_ui_query_events())
                     before_execs = len(performance.get_snowflake_execution_counter())
+                    before_budget_contexts = len(performance.get_query_budget_context_events())
                     raised = ""
                     try:
                         self._render_primary_section_entrypoint(
@@ -1832,6 +1872,29 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                         raised = f"assertion: {exc}"
                     after_events = performance.get_ui_query_events()
                     after_execs = performance.get_snowflake_execution_counter()
+                    budget_contexts = performance.get_query_budget_context_events()[before_budget_contexts:]
+                    budget_context_names = [
+                        str(context.get("name") or "")
+                        for context in budget_contexts
+                        if str(context.get("name") or "")
+                    ]
+                    budget_actual_execs = sum(
+                        int(context.get("actual_snowflake_executions") or 0)
+                        for context in budget_contexts
+                    )
+                    budget_session_opens = sum(
+                        int(context.get("session_open_count") or 0)
+                        for context in budget_contexts
+                    )
+                    budget_direct_sql = sum(
+                        int(context.get("direct_sql_events") or 0)
+                        for context in budget_contexts
+                    )
+                    budget_metadata_probes = sum(
+                        int(context.get("metadata_probe_events") or 0)
+                        for context in budget_contexts
+                    )
+                    passed_query_budget = all(bool(context.get("passed_query_budget", context.get("passed_budget", True))) for context in budget_contexts)
                     state_delta = {
                         state_key: value
                         for state_key, value in click_state.items()
@@ -1851,6 +1914,9 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                     if action_type == "route":
                         self.assertFalse(evidence_events, button)
                         self.assertFalse(account_usage_events, button)
+                        self.assertEqual(budget_actual_execs, 0, (button, budget_contexts))
+                        self.assertEqual(budget_session_opens, 0, (button, budget_contexts))
+                        self.assertEqual(budget_direct_sql, 0, (button, budget_contexts))
                         self.assertTrue(button.get("exact_route_key"), button)
                         expected_updates = dict(button.get("expected_state_updates") or {})
                         for expected_key, expected_value in expected_updates.items():
@@ -1932,6 +1998,11 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                         "expected_state_updates": button.get("expected_state_updates", {}),
                         "expected_artifact": button.get("expected_artifact", ""),
                         "exact_route_key": button.get("exact_route_key", ""),
+                        "expected_query_count": button.get("expected_query_count"),
+                        "expected_max_rows": button.get("expected_max_rows"),
+                        "expected_query_budget_context": button.get("expected_query_budget_context", ""),
+                        "expected_session_open_count": button.get("expected_session_open_count"),
+                        "expected_snowflake_execution_count": button.get("expected_snowflake_execution_count"),
                         "clicked": True,
                         "rerun": raised == "rerun",
                         "state_delta_keys": sorted(state_delta),
@@ -1939,6 +2010,18 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                         "evidence_query_events": len(evidence_events),
                         "account_usage_query_events": len(account_usage_events),
                         "snowflake_execution_events": len(actual_execs),
+                        "query_budget_context_name": ",".join(sorted(set(budget_context_names))),
+                        "query_budget": max(
+                            [int(context.get("budget") or 0) for context in budget_contexts] or [0]
+                        ),
+                        "actual_snowflake_executions": budget_actual_execs,
+                        "session_open_count": budget_session_opens,
+                        "direct_sql_event_count": budget_direct_sql,
+                        "metadata_probe_event_count": budget_metadata_probes,
+                        "passed_query_budget": bool(passed_query_budget),
+                        "query_budget_contexts": self._json_safe(budget_contexts),
+                        "expected_query_boundary": button.get("expected_query_boundary", ""),
+                        "expected_query_contract_id": button.get("expected_query_contract_id", ""),
                         "artifact_result": artifact_result,
                         "passed": not raised.startswith("assertion"),
                         "diagnostic": raised,
@@ -2012,6 +2095,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         query_history_skipped_path = artifact_dir / "query_history_by_tag_SKIPPED.txt"
         query_bytes_path = artifact_dir / "query_bytes_by_boundary.json"
         query_slow_path = artifact_dir / "query_slow_findings.json"
+        direct_sql_static_scan_path = artifact_dir / "direct_sql_static_scan.json"
         button_manifest_path = artifact_dir / "button_route_manifest.json"
         button_results_path = artifact_dir / "button_route_results.json"
         snapshot_dir = artifact_dir / "decision_workspace_html_snapshots"
@@ -2152,6 +2236,44 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+        direct_sql_scan_files = [
+            APP_ROOT / "sections" / "executive_landing.py",
+            APP_ROOT / "sections" / "dba_control_room" / "render.py",
+            APP_ROOT / "sections" / "dba_control_room" / "data.py",
+            APP_ROOT / "sections" / "alert_center_overview_floor.py",
+            APP_ROOT / "sections" / "cost_contract_overview_floor.py",
+            APP_ROOT / "sections" / "cost_contract_evidence.py",
+            APP_ROOT / "sections" / "workload_operations.py",
+            APP_ROOT / "sections" / "query_search.py",
+            APP_ROOT / "sections" / "security_posture_overview_view.py",
+        ]
+        direct_sql_findings: list[dict[str, object]] = []
+        for path in direct_sql_scan_files:
+            if not path.exists():
+                continue
+            for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+                if ".sql(" not in line:
+                    continue
+                direct_sql_findings.append({
+                    "file": str(path.relative_to(ROOT)),
+                    "line": line_no,
+                    "allowed": False,
+                    "reason": "primary section/evidence direct SQL",
+                    "raw_sql_included": False,
+                })
+        direct_sql_static_scan_path.write_text(
+            json.dumps(
+                {
+                    "scanned_files": [str(path.relative_to(ROOT)) for path in direct_sql_scan_files if path.exists()],
+                    "findings": direct_sql_findings,
+                    "blocked_count": sum(1 for finding in direct_sql_findings if not finding["allowed"]),
+                    "raw_sql_included": False,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        self.assertFalse([finding for finding in direct_sql_findings if not finding["allowed"]])
         button_manifest_path.write_text(json.dumps(button_manifest, indent=2), encoding="utf-8")
         button_results_path.write_text(json.dumps(button_results, indent=2), encoding="utf-8")
         snapshot_dir.mkdir(exist_ok=True)
@@ -2263,9 +2385,17 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             self.assertTrue(row["passed_budget"])
         for result in loaded_results:
             self.assertTrue(result["passed"], result)
+            self.assertIn("query_budget_context_name", result)
+            self.assertIn("actual_snowflake_executions", result)
+            self.assertIn("session_open_count", result)
+            self.assertIn("direct_sql_event_count", result)
+            self.assertIn("passed_query_budget", result)
             if result["action_type"] == "route":
                 self.assertEqual(result["evidence_query_events"], 0, result)
                 self.assertEqual(result["account_usage_query_events"], 0, result)
+                self.assertEqual(result["actual_snowflake_executions"], 0, result)
+                self.assertEqual(result["session_open_count"], 0, result)
+                self.assertEqual(result["direct_sql_event_count"], 0, result)
                 state_delta = dict(result.get("state_delta") or {})
                 expected_updates = dict(result.get("expected_state_updates") or {})
                 for expected_key, expected_value in expected_updates.items():
@@ -2284,6 +2414,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         self.assertTrue(query_history_skipped_path.exists())
         self.assertTrue(json.loads(query_bytes_path.read_text(encoding="utf-8")))
         self.assertEqual(json.loads(query_slow_path.read_text(encoding="utf-8"))["slow_findings"], [])
+        self.assertEqual(json.loads(direct_sql_static_scan_path.read_text(encoding="utf-8"))["blocked_count"], 0)
         for path in (
             query_registry_path,
             query_lint_path,
@@ -2293,6 +2424,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             query_history_skipped_path,
             query_bytes_path,
             query_slow_path,
+            direct_sql_static_scan_path,
         ):
             text = path.read_text(encoding="utf-8")
             self.assertNotIn("SELECT ", text)

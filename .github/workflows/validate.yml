@@ -98,6 +98,7 @@ jobs:
             artifacts/query_history_by_tag_SKIPPED.txt
             artifacts/query_bytes_by_boundary.json
             artifacts/query_slow_findings.json
+            artifacts/direct_sql_static_scan.json
             artifacts/brand/**
             artifacts/button_route_manifest.json
             artifacts/button_route_results.json

@@ -10,6 +10,7 @@ from datetime import datetime
 import streamlit as st
 
 from config import compatibility_state_for_section, normalize_section_name
+from performance import SECTION_ROUTE_QUERY_BUDGET, query_budget_context
 from runtime_state import (
     ALERT_CENTER_ACTIVE_VIEW,
     COST_CONTRACT_WORKFLOW,
@@ -94,21 +95,22 @@ def apply_section_workflow_navigation(
     mark_pending: bool = True,
 ) -> str:
     """Navigate to a section and optionally select its most useful workflow."""
-    target = apply_navigation_state(section, mark_pending=mark_pending)
-    workflow_value = str(workflow or "").strip()
-    if target == "Alert Center":
-        set_state(ALERT_CENTER_ACTIVE_VIEW, str(alert_center_view or workflow_value or "Active Alerts"))
-    elif target == "Cost & Contract" and workflow_value:
-        set_state(COST_CONTRACT_WORKFLOW, workflow_value)
-    elif target == "Workload Operations" and workflow_value:
-        set_state(WORKLOAD_OPERATIONS_WORKFLOW, workflow_value)
-        if workflow_value in {"Task graphs", "Task & procedure health", "Task Management"}:
-            set_state("workload_operations_pipeline_focus", "Failed Tasks")
-        elif workflow_value in {"Stored procedures", "Stored procedure lineage", "Stored Proc Tracker"}:
-            set_state("workload_operations_pipeline_focus", "Failed Procedures")
-        elif workflow_value in {"Pipeline health", "Pipeline / SLA risk"}:
-            set_state("workload_operations_pipeline_focus", "Load Issues & SLA")
-    elif target == "Security Monitoring" and workflow_value:
-        set_state(SECURITY_POSTURE_VIEW, workflow_value)
-        set_state(SECURITY_POSTURE_WORKFLOW, workflow_value)
-    return target
+    with query_budget_context("route_action", section=section, workflow=workflow, budget=SECTION_ROUTE_QUERY_BUDGET):
+        target = apply_navigation_state(section, mark_pending=mark_pending)
+        workflow_value = str(workflow or "").strip()
+        if target == "Alert Center":
+            set_state(ALERT_CENTER_ACTIVE_VIEW, str(alert_center_view or workflow_value or "Active Alerts"))
+        elif target == "Cost & Contract" and workflow_value:
+            set_state(COST_CONTRACT_WORKFLOW, workflow_value)
+        elif target == "Workload Operations" and workflow_value:
+            set_state(WORKLOAD_OPERATIONS_WORKFLOW, workflow_value)
+            if workflow_value in {"Task graphs", "Task & procedure health", "Task Management"}:
+                set_state("workload_operations_pipeline_focus", "Failed Tasks")
+            elif workflow_value in {"Stored procedures", "Stored procedure lineage", "Stored Proc Tracker"}:
+                set_state("workload_operations_pipeline_focus", "Failed Procedures")
+            elif workflow_value in {"Pipeline health", "Pipeline / SLA risk"}:
+                set_state("workload_operations_pipeline_focus", "Load Issues & SLA")
+        elif target == "Security Monitoring" and workflow_value:
+            set_state(SECURITY_POSTURE_VIEW, workflow_value)
+            set_state(SECURITY_POSTURE_WORKFLOW, workflow_value)
+        return target

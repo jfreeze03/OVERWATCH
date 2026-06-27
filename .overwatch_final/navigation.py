@@ -16,6 +16,7 @@ from config import (
     compatibility_state_for_section,
     normalize_section_name,
 )
+from performance import SECTION_ROUTE_QUERY_BUDGET, query_budget_context
 from runtime_state import (
     ACTIVE_SECTION,
     LAST_RENDERED_SECTION,
@@ -70,20 +71,21 @@ def apply_section_compatibility_state(section: str) -> None:
 def queue_section_navigation(section: str) -> None:
     """Mark a section switch before the next rerun starts rendering."""
     raw_section = str(section or "").strip()
-    target = normalize_nav_section(raw_section)
-    current = normalize_nav_section(get_state(NAV_SECTION, ""))
-    pop_state(PENDING_AUTOLOAD_SECTION, None)
-    pop_state(PENDING_AUTOLOAD_STARTED_AT, None)
-    if target == "Executive Landing":
-        request_executive_landing_hydration()
-        set_state(PENDING_SECTION, target)
-        set_state(SECTION_TRANSITION_STARTED_AT, datetime.now().isoformat(timespec="seconds"))
-    elif target != current:
-        set_state(PENDING_SECTION, target)
-        set_state(SECTION_TRANSITION_STARTED_AT, datetime.now().isoformat(timespec="seconds"))
-    request_section_workspace(target)
-    apply_section_compatibility_state(raw_section)
-    set_state(NAV_SECTION, target)
+    with query_budget_context("route_action", section=normalize_nav_section(raw_section), workflow="", budget=SECTION_ROUTE_QUERY_BUDGET):
+        target = normalize_nav_section(raw_section)
+        current = normalize_nav_section(get_state(NAV_SECTION, ""))
+        pop_state(PENDING_AUTOLOAD_SECTION, None)
+        pop_state(PENDING_AUTOLOAD_STARTED_AT, None)
+        if target == "Executive Landing":
+            request_executive_landing_hydration()
+            set_state(PENDING_SECTION, target)
+            set_state(SECTION_TRANSITION_STARTED_AT, datetime.now().isoformat(timespec="seconds"))
+        elif target != current:
+            set_state(PENDING_SECTION, target)
+            set_state(SECTION_TRANSITION_STARTED_AT, datetime.now().isoformat(timespec="seconds"))
+        request_section_workspace(target)
+        apply_section_compatibility_state(raw_section)
+        set_state(NAV_SECTION, target)
 
 
 def section_requires_connection(section: str) -> bool:

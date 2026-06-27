@@ -347,7 +347,7 @@ def _enforce_explicit_critical_boundary(
     section: str,
     ttl_key: str,
     tier: str,
-) -> None:
+) -> object:
     required = _critical_boundary_for_ttl(ttl_key)
     if not required:
         return
@@ -431,11 +431,13 @@ def _enforce_query_contract(
             section=section,
             ttl_key=ttl_key,
             tier=tier,
+            contract_id=str(getattr(contract, "contract_id", "") or ""),
         )
     if _strict_query_contract_mode():
         errors = [finding for finding in findings if str(finding.severity).lower() == "error"]
         if errors:
             raise AssertionError(errors[0].message)
+    return contract
 
 
 def _record_query_telemetry(
@@ -799,7 +801,7 @@ def _execute_snowflake_query(
         ttl_key=ttl_key,
         tier=tier,
     )
-    _enforce_query_contract(
+    contract = _enforce_query_contract(
         executable_query,
         boundary=boundary,
         section=telemetry_section,
@@ -1171,10 +1173,20 @@ def _run_query_base(
         ttl_key=ttl_key,
         tier=tier,
     )
+    executable_query = _inject_read_limit(query_text, max_rows=max_rows)
+    contract = _enforce_query_contract(
+        executable_query,
+        boundary=boundary,
+        section=telemetry_section,
+        ttl_key=ttl_key,
+        tier=tier,
+        max_rows=max_rows,
+    )
     meta: dict[str, object] = {
         "actual_query_executed": None,
         "cache_layer": "unknown",
         "query_boundary": boundary,
+        "query_contract_id": str(getattr(contract, "contract_id", "") or ""),
         "first_paint_sensitive": bool(current_first_paint_render_id()) and _first_paint_sensitive_boundary(boundary),
         "error": "",
     }
@@ -1191,15 +1203,6 @@ def _run_query_base(
     if not _check_query_budget(tier, ttl_key, query_text):
         meta.update(actual_query_executed=False, cache_layer="budget_blocked")
         return pd.DataFrame(), meta
-    executable_query = _inject_read_limit(query_text, max_rows=max_rows)
-    _enforce_query_contract(
-        executable_query,
-        boundary=boundary,
-        section=telemetry_section,
-        ttl_key=ttl_key,
-        tier=tier,
-        max_rows=max_rows,
-    )
     with st.spinner(spinner_msg):
         try:
             query_tag = _build_overwatch_query_tag(section, ttl_key, tier)
@@ -1273,6 +1276,7 @@ def run_query(
         actual_query_executed=query_meta.get("actual_query_executed"),
         cache_layer=str(query_meta.get("cache_layer") or "unknown"),
         query_boundary=str(query_meta.get("query_boundary") or "other"),
+        query_contract_id=str(query_meta.get("query_contract_id") or ""),
         first_paint_sensitive=bool(query_meta.get("first_paint_sensitive")),
     )
     return result
@@ -1307,7 +1311,7 @@ def run_query_or_raise(
         ttl_key=ttl_key,
         tier=tier,
     )
-    _enforce_query_contract(
+    contract = _enforce_query_contract(
         executable_query,
         boundary=boundary,
         section=telemetry_section,
@@ -1338,6 +1342,7 @@ def run_query_or_raise(
             actual_query_executed=False,
             cache_layer="paused",
             query_boundary=boundary,
+            query_contract_id=str(getattr(contract, "contract_id", "") or ""),
             first_paint_sensitive=bool(current_first_paint_render_id()) and _first_paint_sensitive_boundary(boundary),
         )
         return empty_paused_result(ttl_key=ttl_key, section=section)
@@ -1357,6 +1362,7 @@ def run_query_or_raise(
             actual_query_executed=False,
             cache_layer="budget_blocked",
             query_boundary=boundary,
+            query_contract_id=str(getattr(contract, "contract_id", "") or ""),
             first_paint_sensitive=bool(current_first_paint_render_id()) and _first_paint_sensitive_boundary(boundary),
         )
         return result
@@ -1409,6 +1415,7 @@ def run_query_or_raise(
             actual_query_executed=None if use_cache else True,
             cache_layer="streamlit_cache" if use_cache else "none",
             query_boundary=boundary,
+            query_contract_id=str(getattr(contract, "contract_id", "") or ""),
             first_paint_sensitive=bool(current_first_paint_render_id()) and _first_paint_sensitive_boundary(boundary),
         )
 

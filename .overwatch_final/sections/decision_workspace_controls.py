@@ -8,6 +8,7 @@ from typing import Any
 
 import streamlit as st
 
+from performance import EVIDENCE_CLICK_QUERY_BUDGET, query_budget_context
 from sections.decision_workspace_target_filters import (
     SECTION_TARGET_COLUMNS,
     apply_target_dataframe_filter,
@@ -73,7 +74,8 @@ def make_decision_refresh_action(section: str) -> Callable[[], None]:
     refresh_key = decision_refresh_key(section)
 
     def _refresh() -> None:
-        st.session_state[refresh_key] = True
+        with query_budget_context("refresh_packet", section=section, workflow="", budget=1):
+            st.session_state[refresh_key] = True
 
     return _refresh
 
@@ -96,11 +98,17 @@ def make_evidence_action(
     refresh_key = DECISION_REFRESH_KEYS.get(str(section))
 
     def _load() -> None:
-        if callback is not None:
-            callback()
-            return
-        if state_key:
-            st.session_state[state_key] = True
+        with query_budget_context(
+            "evidence_click",
+            section=section,
+            workflow=workflow,
+            budget=EVIDENCE_CLICK_QUERY_BUDGET,
+        ):
+            if callback is not None:
+                callback()
+                return
+            if state_key:
+                st.session_state[state_key] = True
 
     # Guard the contract: evidence must not be modeled as packet refresh.
     if state_key and refresh_key and state_key == refresh_key:

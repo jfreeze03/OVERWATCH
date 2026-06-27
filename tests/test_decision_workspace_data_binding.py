@@ -1796,7 +1796,8 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         with patch("sections.decision_workspace_controls.st.session_state", state):
             refresh = make_decision_refresh_action("Cost & Contract")
             refresh()
-            self.assertEqual(state, {"cost_contract_command_brief_force_refresh": True})
+            self.assertTrue(state["cost_contract_command_brief_force_refresh"])
+            self.assertFalse(state.get("cost_contract_command_brief_load_evidence"))
 
             action = make_evidence_action(
                 "Cost & Contract",

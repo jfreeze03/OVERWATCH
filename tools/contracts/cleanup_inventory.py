@@ -526,6 +526,7 @@ def artifact_inventory(root: Path) -> dict[str, Any]:
             or rel.startswith("artifacts/cleanup/")
             or rel.startswith("artifacts/full_app_validation/")
             or rel.startswith("artifacts/full_app_inventory/")
+            or rel.startswith("artifacts/launch_readiness/")
             or rel.startswith("artifacts/brand/")
         ):
             category = "CI proof artifact"

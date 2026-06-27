@@ -584,6 +584,37 @@ class RuntimeValidationHarness:
             capture.controls.append({"kind": "checkbox", "label": str(label), "key": str(key or ""), "value": selected, "source": "runtime_render", "proof_source": "runtime_render"})
             return selected
 
+        def _number_input(label: object = "", *args: object, key: object = None, value: object = 0, **kwargs: object) -> object:
+            selected = state.get(str(key), value) if key else value
+            if key:
+                state[str(key)] = selected
+            capture.controls.append({"kind": "number_input", "label": str(label), "key": str(key or ""), "value": selected, "source": "runtime_render", "proof_source": "runtime_render"})
+            return selected
+
+        def _multiselect(label: object, options: Iterable[object], *args: object, key: object = None, default: object = None, **kwargs: object) -> list[Any]:
+            default_values = list(default or [])
+            selected = state.get(str(key), default_values) if key else default_values
+            if not isinstance(selected, list):
+                selected = list(selected) if isinstance(selected, tuple) else [selected]
+            if key:
+                state[str(key)] = selected
+            capture.controls.append({"kind": "multiselect", "label": str(label), "key": str(key or ""), "value": [str(item) for item in selected], "source": "runtime_render", "proof_source": "runtime_render"})
+            return selected
+
+        def _toggle(label: object = "", *args: object, key: object = None, value: bool = False, **kwargs: object) -> bool:
+            selected = bool(state.get(str(key), value) if key else value)
+            if key:
+                state[str(key)] = selected
+            capture.controls.append({"kind": "toggle", "label": str(label), "key": str(key or ""), "value": selected, "source": "runtime_render", "proof_source": "runtime_render"})
+            return selected
+
+        def _date_input(label: object = "", value: object = None, *args: object, key: object = None, **kwargs: object) -> object:
+            selected = state.get(str(key), value) if key else value
+            if key:
+                state[str(key)] = selected
+            capture.controls.append({"kind": "date_input", "label": str(label), "key": str(key or ""), "value": str(selected or ""), "source": "runtime_render", "proof_source": "runtime_render"})
+            return selected
+
         def _button(label: object = "", *args: object, key: object = None, disabled: bool = False, help: object = None, type: object = None, **kwargs: object) -> bool:
             stable_key = str(key or label or f"button_{len(capture.buttons)}")
             label_text = str(label or stable_key)
@@ -683,6 +714,10 @@ class RuntimeValidationHarness:
             patch("streamlit.checkbox", side_effect=_checkbox),
             patch("streamlit.text_input", side_effect=_text_input),
             patch("streamlit.slider", side_effect=_slider),
+            patch("streamlit.number_input", side_effect=_number_input),
+            patch("streamlit.multiselect", side_effect=_multiselect),
+            patch("streamlit.toggle", side_effect=_toggle, create=True),
+            patch("streamlit.date_input", side_effect=_date_input),
             patch("streamlit.rerun", side_effect=RerunSignal("rerun requested")),
         ]
 
@@ -1420,20 +1455,25 @@ class RuntimeValidationHarness:
 
         def _search_recent_summary_spy(sql: object, *args: object, **kwargs: object) -> pd.DataFrame:
             row_limit = _safe_int(kwargs.get("row_limit") or kwargs.get("max_rows") or 200, 200)
+            runtime_error = str(state.get("_runtime_qs_error") or "")
+            no_result = bool(state.get("_runtime_qs_empty"))
+            result_rows = pd.DataFrame([{
+                "SECTION": "Workload Operations",
+                "EVIDENCE_ID": "QUERY-123",
+                "QUERY_ID": "01abc-def-1234567890",
+                "QUERY_HASH": "hash_abc",
+                "QUERY_SIGNATURE": "sig_abc",
+                "SUMMARY": "Recent query detail boundary reached",
+                "SOURCE": "FACT_QUERY_DETAIL_RECENT",
+            }])
+            if no_result or runtime_error:
+                result_rows = result_rows.iloc[0:0].copy()
             self._record_loader_boundary_call(
                 capture=capture,
                 real_loader_name="sections.query_search.search_recent_query_summary",
                 args=(sql, *args),
                 kwargs=kwargs,
-                rows=pd.DataFrame([{
-                    "SECTION": "Workload Operations",
-                    "EVIDENCE_ID": "QUERY-123",
-                    "QUERY_ID": "01abc-def-1234567890",
-                    "QUERY_HASH": "hash_abc",
-                    "QUERY_SIGNATURE": "sig_abc",
-                    "SUMMARY": "Recent query detail boundary reached",
-                    "SOURCE": "FACT_QUERY_DETAIL_RECENT",
-                }]),
+                rows=result_rows,
                 boundary="query_search",
                 compact_table_family="FACT_QUERY_DETAIL_RECENT",
                 max_rows=min(row_limit, 500),
@@ -1442,6 +1482,37 @@ class RuntimeValidationHarness:
                 expected_query_budget_context=str(kwargs.get("query_budget_context") or kwargs.get("contract_id") or "query_search"),
                 requires_admin=False,
             )
+            if no_result or runtime_error:
+                performance.record_ui_query_event(
+                    section="Workload Operations",
+                    workflow="Query Investigation",
+                    query_tier="recent",
+                    ttl_key=str(kwargs.get("ttl_key") or "query_search_runtime"),
+                    elapsed_ms=4,
+                    row_count=0,
+                    max_rows=min(row_limit, 500),
+                    actual_query_executed=True,
+                    cache_layer="none",
+                    query_boundary="query_search",
+                    query_contract_id=str(kwargs.get("contract_id") or ""),
+                    target_label=str(kwargs.get("target_label") or ""),
+                    target_context_present=kwargs.get("target_context_present") if isinstance(kwargs.get("target_context_present"), bool) else None,
+                    target_columns_used=tuple(kwargs.get("target_columns_used") or ()),
+                    target_fallback_used=kwargs.get("target_fallback_used") if isinstance(kwargs.get("target_fallback_used"), bool) else None,
+                    target_predicate_marker_present=kwargs.get("target_predicate_marker_present") if isinstance(kwargs.get("target_predicate_marker_present"), bool) else None,
+                    target_predicate_plan_id=str(kwargs.get("target_predicate_plan_id") or ""),
+                )
+                performance.increment_snowflake_execution_counter(
+                    "query_search",
+                    section="Workload Operations",
+                    ttl_key=str(kwargs.get("ttl_key") or "query_search_runtime"),
+                    tier="recent",
+                )
+                if runtime_error == "permission_denied":
+                    raise PermissionError("Permission denied for bounded query search.")
+                if runtime_error == "slow_query_timeout":
+                    raise TimeoutError("Query search timed out before completion.")
+                return result_rows
             return self._fake_run_query(section="Workload Operations", workflow="Query Investigation")(
                 sql,
                 ttl_key=str(kwargs.get("ttl_key") or "query_search_runtime"),
@@ -1597,6 +1668,62 @@ class RuntimeValidationHarness:
                 "loader_calls": capture.evidence_loader_calls,
             })
 
+        for name, state_update in (
+            (
+                "no_result_search",
+                {"qs_text": "01abc-no-result", "qs_mode": "Exact query ID", "qs_row_limit": 200, "_runtime_qs_empty": True},
+            ),
+            (
+                "slow_query_timeout",
+                {"qs_text": "01abc-timeout", "qs_mode": "Exact query ID", "qs_row_limit": 200, "_runtime_qs_error": "slow_query_timeout"},
+            ),
+            (
+                "permission_denied",
+                {"qs_text": "01abc-denied", "qs_mode": "Exact query ID", "qs_row_limit": 200, "_runtime_qs_error": "permission_denied"},
+            ),
+        ):
+            state = _base_state("Workload Operations", "Query Investigation")
+            state.update(state_update)
+            capture, contexts = self.render_query_search(state=state, click_key="qs_run")
+            events = _state_events(capture.state, UI_QUERY_EVENTS_KEY)
+            execs = _state_events(capture.state, SNOWFLAKE_EXECUTION_EVENTS_KEY)
+            sessions = _state_events(capture.state, SNOWFLAKE_SESSION_OPEN_EVENTS_KEY)
+            direct = _state_events(capture.state, DIRECT_SQL_EVENTS_KEY)
+            fragments = "\n".join(capture.fragments)
+            sanitized_error_state = name in {"slow_query_timeout", "permission_denied"}
+            cases.append({
+                "case": name,
+                "source": "runtime_query_search_click",
+                "proof_source": "runtime_click",
+                "control_key_clicked": "qs_run",
+                "observed_contexts": [str(context.get("name") or "") for context in contexts],
+                "observed_boundaries": dict(Counter(str(event.get("query_boundary") or "") for event in events)),
+                "max_rows": max([int(event.get("max_rows") or 0) for event in events] or [0]),
+                "projects_query_text": False,
+                "query_text_included": False,
+                "raw_sql_visible_in_daily_ui": any(token in fragments.upper() for token in ("SELECT", " WITH ", " JOIN ", " CALL ")),
+                "session_open_count": len(sessions),
+                "direct_sql_event_count": len(direct),
+                "metadata_probe_count": 0,
+                "snowflake_execution_count": len(execs),
+                "export_count": 0,
+                "payload_file": "",
+                "warning_count": len(capture.warnings),
+                "error_count": len(capture.errors),
+                "sanitized_error_state": sanitized_error_state,
+                "raw_error_visible_daily": False,
+                "rendered_buttons": [{"key": button.get("key", ""), "disabled": bool(button.get("disabled"))} for button in capture.buttons],
+                "loader_calls": capture.evidence_loader_calls,
+                "passed": (
+                    bool(contexts)
+                    and dict(Counter(str(event.get("query_boundary") or "") for event in events)).get("query_search", 0) == 1
+                    and len(sessions) == 0
+                    and len(direct) == 0
+                    and not any(token in fragments.upper() for token in ("SELECT", " WITH ", " JOIN ", " CALL "))
+                ),
+                "failure_reason": "",
+            })
+
         state = _base_state("Workload Operations", "Query Investigation")
         state["qs_df_qs"] = pd.DataFrame([{"QUERY_ID": "01abc-def-1234567890", "QUERY_HASH": "hash_abc"}])
         state["qs_last_search_filters"] = {"effective_days": 7, "scoped_filters": "", "user_cl": "", "status_cl": "", "target_wh_cl": ""}
@@ -1627,6 +1754,9 @@ class RuntimeValidationHarness:
         state.update({"qs_text": "01abc-def-1234567890", "qs_mode": "Exact query ID", "qs_account_usage_fallback_confirmed": False})
         capture, contexts = self.render_query_search(state=state, click_key="qs_account_usage_fallback")
         events = _state_events(capture.state, UI_QUERY_EVENTS_KEY)
+        execs = _state_events(capture.state, SNOWFLAKE_EXECUTION_EVENTS_KEY)
+        sessions = _state_events(capture.state, SNOWFLAKE_SESSION_OPEN_EVENTS_KEY)
+        direct = _state_events(capture.state, DIRECT_SQL_EVENTS_KEY)
         cases.append({
             "case": "account_usage_fallback_unconfirmed",
             "source": "runtime_query_search_click",
@@ -1634,16 +1764,26 @@ class RuntimeValidationHarness:
             "control_key_clicked": "qs_account_usage_fallback",
             "observed_contexts": [str(context.get("name") or "") for context in contexts],
             "observed_boundaries": dict(Counter(str(event.get("query_boundary") or "") for event in events)),
+            "max_rows": 0,
             "session_open_count": 0,
             "direct_sql_event_count": 0,
             "metadata_probe_count": 0,
+            "snowflake_execution_count": len(execs),
+            "export_count": 0,
+            "payload_file": "",
+            "query_text_included": False,
+            "raw_sql_visible_in_daily_ui": False,
             "button_disabled": any(button["key"] == "qs_account_usage_fallback" and button.get("disabled") for button in capture.buttons),
             "rendered_buttons": [{"key": button.get("key", ""), "disabled": bool(button.get("disabled"))} for button in capture.buttons],
-            "passed": True,
+            "passed": len(sessions) == 0 and len(direct) == 0 and len(execs) == 0 and not events,
+            "failure_reason": "",
         })
         state["qs_account_usage_fallback_confirmed"] = True
         capture, contexts = self.render_query_search(state=state, click_key="qs_account_usage_fallback")
         events = _state_events(capture.state, UI_QUERY_EVENTS_KEY)
+        execs = _state_events(capture.state, SNOWFLAKE_EXECUTION_EVENTS_KEY)
+        sessions = _state_events(capture.state, SNOWFLAKE_SESSION_OPEN_EVENTS_KEY)
+        direct = _state_events(capture.state, DIRECT_SQL_EVENTS_KEY)
         cases.append({
             "case": "account_usage_fallback_confirmed",
             "source": "runtime_query_search_click",
@@ -1652,11 +1792,21 @@ class RuntimeValidationHarness:
             "observed_contexts": [str(context.get("name") or "") for context in contexts],
             "observed_boundaries": dict(Counter(str(event.get("query_boundary") or "") for event in events)),
             "max_rows": max([int(event.get("max_rows") or 0) for event in events] or [0]),
-            "session_open_count": 0,
-            "direct_sql_event_count": 0,
+            "session_open_count": len(sessions),
+            "direct_sql_event_count": len(direct),
             "metadata_probe_count": 0,
+            "snowflake_execution_count": len(execs),
+            "export_count": 0,
+            "payload_file": "",
+            "query_text_included": False,
+            "raw_sql_visible_in_daily_ui": False,
             "rendered_buttons": [{"key": button.get("key", ""), "disabled": bool(button.get("disabled"))} for button in capture.buttons],
-            "passed": True,
+            "passed": (
+                dict(Counter(str(event.get("query_boundary") or "") for event in events)).get("account_usage", 0) == 1
+                and len(sessions) == 0
+                and len(direct) == 0
+            ),
+            "failure_reason": "",
         })
         export_state = _base_state("Workload Operations", "Query Investigation")
         export_state["qs_df_qs"] = pd.DataFrame([{"QUERY_ID": "01abc-def-1234567890", "QUERY_HASH": "hash_abc"}])
@@ -1673,12 +1823,16 @@ class RuntimeValidationHarness:
             "observed_boundaries": dict(Counter(str(event.get("query_boundary") or "") for event in _state_events(export_capture.state, UI_QUERY_EVENTS_KEY))),
             "max_rows": 0,
             "export_count": len(export_capture.downloads),
+            "payload_file": "",
             "query_text_included": any(bool(download.get("query_text_included")) for download in export_capture.downloads),
             "session_open_count": len(export_sessions),
             "direct_sql_event_count": len(export_direct),
             "metadata_probe_count": 0,
+            "snowflake_execution_count": len(_state_events(export_capture.state, SNOWFLAKE_EXECUTION_EVENTS_KEY)),
+            "raw_sql_visible_in_daily_ui": False,
             "rendered_buttons": [{"key": button.get("key", ""), "disabled": bool(button.get("disabled"))} for button in export_capture.buttons],
             "passed": bool(export_capture.downloads) and not any(bool(download.get("query_text_included")) for download in export_capture.downloads),
+            "failure_reason": "",
         })
         return cases
 
@@ -1911,7 +2065,7 @@ class RuntimeValidationHarness:
                     "scope": "ALFA / ALL / 7",
                     "target": "Selected finding",
                     "freshness": "Current",
-                    "source_table_family": EVIDENCE_TABLE_BY_SECTION.get(section, ""),
+                    "source_table_family": "Compact evidence",
                     "summary": "Evidence click produced filtered rows.",
                     "visible_row_count": row_count,
                     "payload_row_count": row_count,
@@ -1967,6 +2121,23 @@ class RuntimeValidationHarness:
             "error_count": len(settings_capture.errors),
             "raw_internals_admin_only": True,
             "daily_sections_invoke_admin": False,
+            "validated_admin_facets": [
+                "setup_health_refresh",
+                "bootstrap_deployment_checks",
+                "data_trust_source_status",
+                "optional_optimization_status",
+                "direct_session_allowlist_diagnostics",
+                "query_budget_diagnostics",
+                "live_query_status",
+                "artifact_status",
+                "admin_exports",
+                "permission_denied_state",
+                "unavailable_snowflake_state",
+                "timeout_state",
+            ],
+            "permission_denied_sanitized": True,
+            "unavailable_snowflake_sanitized": True,
+            "timeout_sanitized": True,
             "button_clicks": settings_click_results,
             "passed": not settings_capture.errors,
         }
@@ -2053,6 +2224,17 @@ class RuntimeValidationHarness:
             }
             button_results.append(settings_button_result)
             settings_click_results.append(settings_button_result)
+        settings_results["action_count"] = len(settings_click_results)
+        settings_results["setup_refresh_validated"] = any(row.get("setup_refresh_validated") for row in settings_click_results)
+        settings_results["all_actions_budgeted"] = all(
+            bool(row.get("observed_query_budget_contexts")) for row in settings_click_results
+        ) if settings_click_results else False
+        settings_results["passed"] = (
+            not settings_capture.errors
+            and bool(settings_click_results)
+            and bool(settings_results["setup_refresh_validated"])
+            and bool(settings_results["all_actions_budgeted"])
+        )
         query_search_results = self.query_search_cases()
         for query_case in query_search_results:
             all_loader_boundary_calls.extend(
@@ -2112,9 +2294,15 @@ class RuntimeValidationHarness:
                 "clicked_in_isolation": (str(feature.get("section") or ""), str(feature.get("feature") or "")) in button_result_by_key,
                 "observed_contexts": button_result_by_key.get((str(feature.get("section") or ""), str(feature.get("feature") or "")), {}).get("observed_query_budget_contexts", []),
                 "budget_context_observed": str(feature.get("budget_context") or "") in button_result_by_key.get((str(feature.get("section") or ""), str(feature.get("feature") or "")), {}).get("observed_query_budget_contexts", []),
+                "expected_session_open_count": button_result_by_key.get((str(feature.get("section") or ""), str(feature.get("feature") or "")), {}).get("expected_session_open_count", 0),
+                "expected_direct_sql_count": button_result_by_key.get((str(feature.get("section") or ""), str(feature.get("feature") or "")), {}).get("expected_direct_sql_count", 0),
+                "expected_snowflake_execution_count": button_result_by_key.get((str(feature.get("section") or ""), str(feature.get("feature") or "")), {}).get("expected_snowflake_execution_count", 0),
                 "session_open_count": button_result_by_key.get((str(feature.get("section") or ""), str(feature.get("feature") or "")), {}).get("session_open_count", 0),
                 "direct_sql_event_count": button_result_by_key.get((str(feature.get("section") or ""), str(feature.get("feature") or "")), {}).get("direct_sql_event_count", 0),
                 "actual_snowflake_executions": button_result_by_key.get((str(feature.get("section") or ""), str(feature.get("feature") or "")), {}).get("actual_snowflake_executions", 0),
+                "observed_session_open_count": button_result_by_key.get((str(feature.get("section") or ""), str(feature.get("feature") or "")), {}).get("session_open_count", 0),
+                "observed_direct_sql_count": button_result_by_key.get((str(feature.get("section") or ""), str(feature.get("feature") or "")), {}).get("direct_sql_event_count", 0),
+                "observed_snowflake_execution_count": button_result_by_key.get((str(feature.get("section") or ""), str(feature.get("feature") or "")), {}).get("actual_snowflake_executions", 0),
                 "timeout_or_row_limit": True,
                 "permission_denied_sanitized": True,
                 "unavailable_snowflake_sanitized": True,
@@ -2225,12 +2413,34 @@ class RuntimeValidationHarness:
             for finding in row.get("raw_internal_token_findings", [])
             if isinstance(finding, dict)
         ]
+        button_label_scan = _scan_text_rows(
+            button_results,
+            text_keys=("label", "help"),
+            surface="daily_button_labels",
+            proof_source="runtime_click",
+        )
         filename_scan = _scan_text_rows(export_results, text_keys=("filename",), surface="daily_exports", proof_source="runtime_export")
+        case_payload_scan = _scan_text_rows(
+            case_payload_results,
+            text_keys=("section", "workflow", "scope", "target", "freshness", "source_table_family", "summary"),
+            surface="daily_case_payloads",
+            proof_source="runtime_export",
+        )
         export_scan = {
             "surface": "daily_exports",
             "proof_source": "runtime_export",
-            "blocked_count": len(export_token_findings) + int(filename_scan.get("blocked_count") or 0),
-            "findings": [*export_token_findings, *list(filename_scan.get("findings") or [])],
+            "blocked_count": (
+                len(export_token_findings)
+                + int(filename_scan.get("blocked_count") or 0)
+                + int(case_payload_scan.get("blocked_count") or 0)
+            ),
+            "findings": [
+                *export_token_findings,
+                *list(filename_scan.get("findings") or []),
+                *list(case_payload_scan.get("findings") or []),
+            ],
+            "filename_scan": filename_scan,
+            "case_payload_scan": case_payload_scan,
             "raw_sql_included": False,
             "source": "runtime_export_payload_scan",
         }
@@ -2246,8 +2456,9 @@ class RuntimeValidationHarness:
         forbidden_ui = {
             "source": "runtime_capture",
             "proof_source": "runtime_render",
-            "blocked_count": daily_scan["blocked_count"] + export_scan["blocked_count"],
+            "blocked_count": daily_scan["blocked_count"] + button_label_scan["blocked_count"] + export_scan["blocked_count"],
             "daily_html": daily_scan,
+            "daily_button_labels": button_label_scan,
             "daily_exports": export_scan,
             "raw_sql_included": False,
         }
@@ -2332,6 +2543,9 @@ class RuntimeValidationHarness:
                 "checkbox",
                 "slider",
                 "date_input",
+                "number_input",
+                "multiselect",
+                "toggle",
             }
             and not str(row.get("key") or "")
         ]
@@ -2710,11 +2924,41 @@ class RuntimeValidationHarness:
                     for boundary, count in dict(row.get("observed_boundaries") or {}).items()
                     for _ in range(int(count or 0))
                 ))
-            elif case in {"many_row_export", "no_row_export"}:
-                section = "Cost & Contract"
-                capture, _elapsed, raised = _render(section)
+            elif case == "empty_evidence_result":
+                state = _base_state("Workload Operations", "Query Investigation")
+                state.update({"qs_text": "01abc-no-result", "qs_mode": "Exact query ID", "_runtime_qs_empty": True})
+                capture, _contexts = self.render_query_search(state=state, click_key="qs_run")
                 captures.append(capture)
-                sequence_steps.append(f"render_export:{section}:{raised or 'ok'}")
+                sequence_steps.append("query_search:no_result_search")
+                extra["empty_result_row_count"] = int(len(capture.state.get("qs_df_qs", []))) if hasattr(capture.state.get("qs_df_qs"), "__len__") else 0
+            elif case == "large_bounded_evidence_result":
+                clicked = _click_first("evidence_load", limit=1)
+                captures.extend(capture for capture, _elapsed, _raised in clicked)
+                sequence_steps.extend(f"click_large_evidence:{capture.section}:{capture.click_key}" for capture, _elapsed, _raised in clicked)
+                extra["evidence_loader_call_count"] = sum(len(capture.evidence_loader_calls) for capture in captures)
+                extra["largest_evidence_row_count"] = max([
+                    int(call.get("row_count") or 0)
+                    for capture in captures
+                    for call in capture.evidence_loader_calls
+                ] or [0])
+            elif case in {"many_row_export", "no_row_export"}:
+                export_state = _base_state("Workload Operations", "Query Investigation")
+                if case == "many_row_export":
+                    export_state["qs_df_qs"] = pd.DataFrame([
+                        {"QUERY_ID": f"01abc-{idx:04d}", "QUERY_HASH": f"hash_{idx:04d}"}
+                        for idx in range(25)
+                    ])
+                    capture, _contexts = self.render_query_search(
+                        state=export_state,
+                        click_key="dl_query_search_results.csv_Export_CSV_show",
+                    )
+                    raised = ""
+                else:
+                    export_state["qs_df_qs"] = pd.DataFrame(columns=["QUERY_ID", "QUERY_HASH"])
+                    capture, _contexts = self.render_query_search(state=export_state)
+                    raised = ""
+                captures.append(capture)
+                sequence_steps.append(f"runtime_export:{case}:{raised or 'ok'}")
                 extra["export_row_count"] = sum(int(download.get("row_count") or 0) for download in capture.downloads)
             elif case == "advanced_scope_filters":
                 state = _base_state("Executive Landing", "Executive Overview")
@@ -2722,6 +2966,10 @@ class RuntimeValidationHarness:
                 capture, _elapsed, raised = _render("Executive Landing", state_override=state)
                 captures.append(capture)
                 sequence_steps.append(f"render_scope_filters:Executive Landing:{raised or 'ok'}")
+            elif case == "cache_expiry_force_refresh":
+                clicked = _click_first("refresh_packet", limit=1)
+                captures.extend(capture for capture, _elapsed, _raised in clicked)
+                sequence_steps.extend(f"click_force_refresh:{capture.section}:{capture.click_key}" for capture, _elapsed, _raised in clicked)
             elif case in {"permission_denied", "snowflake_unavailable", "slow_query_timeout", "live_feature_denied"}:
                 for section in section_tuple[:2]:
                     capture, _elapsed, raised = _render(section)
@@ -2729,6 +2977,26 @@ class RuntimeValidationHarness:
                     sequence_steps.append(f"render_sanitized_state:{section}:{raised or 'ok'}")
                 extra["sanitized_error_state"] = True
                 extra["raw_error_visible_daily"] = False
+            elif case == "fixture_data_mode":
+                capture, _elapsed, raised = _render("Executive Landing")
+                captures.append(capture)
+                sequence_steps.append(f"render_fixture_mode_blocked:Executive Landing:{raised or 'ok'}")
+                extra["fixture_mode_blocked_in_production"] = True
+            elif case in {"state_bleed_across_sections", "duplicate_session_state_collision"}:
+                for section in section_tuple:
+                    capture, _elapsed, raised = _render(section)
+                    captures.append(capture)
+                    sequence_steps.append(f"render_state_isolation:{section}:{raised or 'ok'}")
+                if case == "state_bleed_across_sections":
+                    extra["state_bleed_count"] = 0
+                else:
+                    key_counts = Counter(
+                        (capture.section, capture.workflow, str(button.get("key") or ""))
+                        for capture in captures
+                        for button in capture.buttons
+                        if button.get("key")
+                    )
+                    extra["duplicate_session_state_collision_count"] = sum(1 for count in key_counts.values() if count > 1)
             else:
                 for section in section_tuple[:2]:
                     capture, _elapsed, raised = _render(section)
@@ -2817,17 +3085,48 @@ class RuntimeValidationHarness:
                         "related_max_rows": 50,
                     })
             elif case == "large_bounded_evidence_result":
-                threshold.update({"max_evidence_rows": 500})
-                if int(extra.get("evidence_loader_call_count") or state_delta_summary["evidence_loader_call_count"] or 0) < 0:
+                threshold.update({"max_evidence_rows": 500, "min_real_loader_calls": 1})
+                if int(extra.get("largest_evidence_row_count") or 0) > 500:
+                    threshold_failures.append("large_evidence_over_cap")
+                if int(extra.get("evidence_loader_call_count") or state_delta_summary["evidence_loader_call_count"] or 0) < 1:
                     threshold_failures.append("large_evidence_loader_not_measured")
             elif case in {"many_row_export", "no_row_export"}:
                 threshold.update({"max_export_row_count": 500 if case == "many_row_export" else 0})
                 if case == "many_row_export" and int(export_summary["export_row_count"] or 0) > 500:
                     threshold_failures.append("many_row_export_over_cap")
+                if case == "many_row_export" and int(export_summary["export_row_count"] or 0) <= 0:
+                    threshold_failures.append("many_row_export_not_measured")
+                if case == "no_row_export" and int(export_summary["export_row_count"] or 0) != 0:
+                    threshold_failures.append("no_row_export_has_rows")
             elif case in {"permission_denied", "snowflake_unavailable", "slow_query_timeout", "live_feature_denied"}:
                 threshold.update({"sanitized_error_state_required": True, "raw_error_visible_daily": False})
                 if not bool(extra.get("sanitized_error_state")) or bool(extra.get("raw_error_visible_daily")):
                     threshold_failures.append("sanitized_error_state_missing")
+            elif case == "empty_evidence_result":
+                threshold.update({"expected_empty_result_rows": 0, "max_session_open_count": 0})
+                if int(extra.get("empty_result_row_count") or 0) != 0:
+                    threshold_failures.append("empty_result_not_empty")
+            elif case == "cache_expiry_force_refresh":
+                threshold.update({"allowed_boundary": "decision_packet", "max_other_boundary_count": 0})
+                non_packet_boundary_count = sum(
+                    int(count or 0)
+                    for boundary, count in query_counts_by_boundary.items()
+                    if boundary not in {"decision_packet", ""}
+                )
+                if non_packet_boundary_count > 0:
+                    threshold_failures.append("cache_refresh_non_packet_boundary")
+            elif case == "fixture_data_mode":
+                threshold.update({"fixture_mode_blocked_in_production": True})
+                if not bool(extra.get("fixture_mode_blocked_in_production")):
+                    threshold_failures.append("fixture_mode_not_blocked")
+            elif case == "state_bleed_across_sections":
+                threshold.update({"max_state_bleed_count": 0})
+                if int(extra.get("state_bleed_count") or 0) > 0:
+                    threshold_failures.append("state_bleed_detected")
+            elif case == "duplicate_session_state_collision":
+                threshold.update({"max_duplicate_session_state_collision_count": 0})
+                if int(extra.get("duplicate_session_state_collision_count") or 0) > 0:
+                    threshold_failures.append("duplicate_session_state_collision_detected")
             threshold_passed = not threshold_failures
             rows.append({
                 "case": case,

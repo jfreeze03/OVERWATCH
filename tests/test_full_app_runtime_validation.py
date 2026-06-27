@@ -85,6 +85,8 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
         controls = json.loads((ROOT / "artifacts/full_app_validation/control_inventory.json").read_text())
         control_coverage = json.loads((ROOT / "artifacts/full_app_validation/control_contract_coverage.json").read_text())
         risk_inventory = json.loads((ROOT / "artifacts/full_app_validation/risk_inventory.json").read_text())
+        forbidden_ui = json.loads((ROOT / "artifacts/full_app_validation/forbidden_ui_token_scan.json").read_text())
+        settings_results = json.loads((ROOT / "artifacts/full_app_validation/settings_results.json").read_text())
         manifest = json.loads((ROOT / "artifacts/full_app_validation/artifact_manifest.json").read_text())
 
         for rel in required:
@@ -128,6 +130,11 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
             self.assertFalse(risk_inventory[risk_key], risk_inventory)
         self.assertTrue(any(row.get("kind") == "button" for row in controls), controls[:5])
         self.assertTrue(any(row.get("kind") in {"select", "segmented_control", "text_input"} for row in controls), controls[:5])
+        self.assertIn("daily_button_labels", forbidden_ui)
+        self.assertIn("daily_exports", forbidden_ui)
+        self.assertIn("case_payload_scan", forbidden_ui["daily_exports"])
+        self.assertEqual(forbidden_ui["daily_button_labels"]["blocked_count"], 0, forbidden_ui)
+        self.assertEqual(forbidden_ui["daily_exports"]["case_payload_scan"]["blocked_count"], 0, forbidden_ui)
 
         rendered_pairs = {(row["section"], row["workflow"]) for row in views}
         for section, workflows in SECTION_WORKFLOW_CONTRACT.items():
@@ -202,6 +209,23 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
 
         query_cases = {row["case"]: row for row in query_search}
         self.assertTrue(query_cases)
+        required_query_cases = {
+            "render_no_click",
+            "exact_query_id",
+            "query_signature",
+            "related_executions",
+            "sql_preview",
+            "default_export_no_query_text",
+            "text_contains_no_autorun",
+            "text_contains_explicit_search",
+            "warehouse_prefill_no_autorun",
+            "account_usage_fallback_unconfirmed",
+            "account_usage_fallback_confirmed",
+            "no_result_search",
+            "slow_query_timeout",
+            "permission_denied",
+        }
+        self.assertTrue(required_query_cases.issubset(query_cases), query_cases)
         for row in query_search:
             if row["case"] in {"render_no_click", "text_contains_no_autorun", "warehouse_prefill_no_autorun"}:
                 self.assertEqual(row["source"], "runtime_query_search_render", row)
@@ -223,6 +247,11 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
                 self.assertEqual(row["proof_source"], "runtime_click", row)
                 self.assertTrue(row["observed_contexts"], row)
                 self.assertTrue(row["observed_boundaries"] or row["case"] == "account_usage_fallback_unconfirmed", row)
+            self.assertIn("session_open_count", row)
+            self.assertIn("direct_sql_event_count", row)
+            self.assertIn("metadata_probe_count", row)
+            self.assertIn("snowflake_execution_count", row)
+            self.assertFalse(row.get("raw_sql_visible_in_daily_ui", False), row)
         self.assertEqual(query_cases["exact_query_id"]["max_rows"], 1)
         self.assertFalse(query_cases["exact_query_id"]["projects_query_text"])
         self.assertFalse(query_cases["sql_preview"]["raw_sql_visible_in_daily_ui"])
@@ -234,7 +263,14 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
         self.assertTrue(query_cases["exact_query_id"].get("loader_calls"), query_cases["exact_query_id"])
         self.assertTrue(query_cases["query_signature"].get("loader_calls"), query_cases["query_signature"])
         self.assertEqual(query_cases["account_usage_fallback_unconfirmed"]["session_open_count"], 0)
+        self.assertEqual(query_cases["account_usage_fallback_unconfirmed"]["snowflake_execution_count"], 0)
         self.assertEqual(query_cases["account_usage_fallback_confirmed"]["metadata_probe_count"], 0)
+        self.assertEqual(query_cases["no_result_search"]["max_rows"], 1, query_cases["no_result_search"])
+        self.assertTrue(query_cases["no_result_search"].get("loader_calls"), query_cases["no_result_search"])
+        self.assertTrue(query_cases["slow_query_timeout"]["sanitized_error_state"], query_cases["slow_query_timeout"])
+        self.assertTrue(query_cases["permission_denied"]["sanitized_error_state"], query_cases["permission_denied"])
+        self.assertFalse(query_cases["slow_query_timeout"]["raw_error_visible_daily"], query_cases["slow_query_timeout"])
+        self.assertFalse(query_cases["permission_denied"]["raw_error_visible_daily"], query_cases["permission_denied"])
 
         for row in evidence:
             self.assertEqual(row["source"], "runtime_real_loader_spy", row)
@@ -304,6 +340,23 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
         )
         self.assertIn("sections.security_posture_privilege_sprawl_view._render_privileged_grant_readiness", matrix_by_section["Security Monitoring"])
         self.assertTrue(settings_actions, settings_actions)
+        self.assertTrue(settings_results["passed"], settings_results)
+        self.assertTrue(settings_results["setup_refresh_validated"], settings_results)
+        self.assertTrue(settings_results["all_actions_budgeted"], settings_results)
+        self.assertTrue({
+            "setup_health_refresh",
+            "bootstrap_deployment_checks",
+            "data_trust_source_status",
+            "optional_optimization_status",
+            "direct_session_allowlist_diagnostics",
+            "query_budget_diagnostics",
+            "live_query_status",
+            "artifact_status",
+            "admin_exports",
+            "permission_denied_state",
+            "unavailable_snowflake_state",
+            "timeout_state",
+        }.issubset(set(settings_results["validated_admin_facets"])), settings_results)
         self.assertTrue(any(row["setup_refresh_validated"] for row in settings_actions), settings_actions)
         for row in settings_actions:
             self.assertEqual(row["proof_source"], "runtime_click", row)
@@ -321,6 +374,12 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
             self.assertFalse(row["first_paint_invocation"], row)
             self.assertFalse(row["route_invocation"], row)
             self.assertTrue(row["budget_context_observed"], row)
+            self.assertIn("expected_session_open_count", row)
+            self.assertIn("observed_session_open_count", row)
+            self.assertIn("expected_direct_sql_count", row)
+            self.assertIn("observed_direct_sql_count", row)
+            self.assertIn("expected_snowflake_execution_count", row)
+            self.assertIn("observed_snowflake_execution_count", row)
             self.assertTrue(row["timeout_or_row_limit"], row)
             self.assertTrue(row["permission_denied_sanitized"], row)
             self.assertTrue(row["unavailable_snowflake_sanitized"], row)

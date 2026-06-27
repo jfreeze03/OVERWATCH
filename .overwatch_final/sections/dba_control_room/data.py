@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+import re
 from sections.decision_workspace_target_filters import build_target_sql_filter
 from utils.primitives import (
     safe_float,
@@ -556,13 +557,20 @@ def _targeted_control_room_sql(sql: str, target: dict | None, columns: tuple[str
     )
     if not target_filter:
         return sql
+    source_sql = str(sql).strip().rstrip(";")
+    limit_match = re.search(r"\s+LIMIT\s+\d+\s*$", source_sql, flags=re.IGNORECASE)
+    limit_clause = ""
+    if limit_match:
+        limit_clause = source_sql[limit_match.start():]
+        source_sql = source_sql[:limit_match.start()].strip()
     return f"""
         SELECT *
         FROM (
-            {str(sql).strip().rstrip(';')}
+            {source_sql}
         ) target
         WHERE 1 = 1
           {target_filter}
+          {limit_clause}
     """
 
 

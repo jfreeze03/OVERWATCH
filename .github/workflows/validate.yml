@@ -62,7 +62,7 @@ jobs:
       - name: Run Decision Workspace data-binding and setup-health tests
         run: python -m unittest tests.test_decision_workspace_data_binding
 
-      - name: Run Decision Workspace performance budget tests
+      - name: Run Decision Workspace performance budget tests and button-route tests
         run: python -m unittest tests.test_decision_workspace_performance_budget
 
       - name: Run Decision Workspace HTML snapshot tests
@@ -86,6 +86,8 @@ jobs:
           path: |
             artifacts/decision_workspace_performance_summary.json
             artifacts/ui_query_telemetry.json
+            artifacts/button_route_manifest.json
+            artifacts/button_route_results.json
             artifacts/decision_workspace_html_snapshots/**
             artifacts/browser_screenshots/**
 

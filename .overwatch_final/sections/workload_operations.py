@@ -18,7 +18,7 @@ from sections.shell_helpers import (
 )
 from sections.section_command_brief import autoload_section_command_brief
 from sections.decision_workspace_controls import make_decision_refresh_action
-from sections.decision_workspace_performance import with_decision_first_paint
+from sections.decision_workspace_performance import with_section_first_paint_entry
 from sections.decision_workspace_scope import active_decision_window_days
 from sections.section_command_rendering import render_section_command_brief
 from utils.primitives import safe_float, safe_int
@@ -523,22 +523,21 @@ def _set_workload_workflow(workflow: str, *, pipeline_focus: str = "") -> None:
 
 
 def _render_workload_overview(company: str, environment: str) -> None:
-    with with_decision_first_paint("Workload Operations", "Overview"):
-        force_brief_refresh = bool(st.session_state.pop("workload_operations_command_brief_force_refresh", False))
-        decision_days = active_decision_window_days(7)
-        workload_brief = autoload_section_command_brief(
-            "Workload Operations",
-            company,
-            environment,
-            decision_days,
-            force=force_brief_refresh,
-        )
-        render_section_command_brief(
-            workload_brief,
-            key_prefix="workload_operations_command_brief",
-            primary_action=make_decision_refresh_action("Workload Operations"),
-            current_workflow="Overview",
-        )
+    force_brief_refresh = bool(st.session_state.pop("workload_operations_command_brief_force_refresh", False))
+    decision_days = active_decision_window_days(7)
+    workload_brief = autoload_section_command_brief(
+        "Workload Operations",
+        company,
+        environment,
+        decision_days,
+        force=force_brief_refresh,
+    )
+    render_section_command_brief(
+        workload_brief,
+        key_prefix="workload_operations_command_brief",
+        primary_action=make_decision_refresh_action("Workload Operations"),
+        current_workflow="Overview",
+    )
     board = build_loaded_section_alert_signal_board(st.session_state, section="Workload Operations", limit=12)
     if isinstance(board, pd.DataFrame) and not board.empty:
         severity = board.get("SEVERITY", pd.Series(dtype=str)).fillna("").astype(str).str.upper()
@@ -660,43 +659,48 @@ def _render_workload_surface(workflow: str, company: str, environment: str) -> N
 
 
 def render() -> None:
-    _apply_fast_entry_default()
-    if st.session_state.get("exceptions_only_mode") and "workload_operations_workflow" not in st.session_state:
-        st.session_state["workload_operations_workflow"] = WORKLOAD_OVERVIEW_WORKFLOW
-    migrate_legacy_workflow_state(
-        "query_workbench_workflow",
-        "workload_operations_workflow",
-        LEGACY_WORKFLOW_MAP,
-    )
-    _normalize_workload_workflow_state()
-    if st.session_state.get("workload_operations_workflow") not in WORKFLOWS:
-        st.session_state["workload_operations_workflow"] = WORKLOAD_OVERVIEW_WORKFLOW
-
-    company = get_active_company()
-    environment = get_active_environment()
-
-    workflow = str(st.session_state.get("workload_operations_workflow") or WORKLOAD_OVERVIEW_WORKFLOW)
-    workflow_labels = {
-        WORKLOAD_OVERVIEW_WORKFLOW: "Overview",
-        QUERY_INVESTIGATION_WORKFLOW: "Query Investigation",
-        PIPELINE_TASK_HEALTH_WORKFLOW: "Pipeline & Tasks",
-        CONTENTION_PERFORMANCE_WORKFLOW: "Performance",
-        CHANGE_DRIFT_WORKFLOW: "Changes",
-        ADVANCED_DBA_TOOLS_WORKFLOW: "Advanced Tools",
-    }
-    if workflow != WORKLOAD_OVERVIEW_WORKFLOW:
-        render_section_breadcrumb(["Workload Operations", workflow_labels.get(workflow, workflow)])
-    workflow = render_primary_section_tabs(
-        label="Workload Operations primary navigation",
-        options=WORKFLOWS,
-        active_value=workflow,
-        key="workload_operations_workflow",
-        format_func=lambda value: workflow_labels.get(str(value), str(value)),
-    )
-    if workflow != WORKLOAD_OVERVIEW_WORKFLOW:
-        render_content_header(
-            workflow_labels.get(workflow, workflow),
-            WORKFLOW_DETAILS.get(workflow, "Workload evidence stays behind explicit workflow actions."),
+    with with_section_first_paint_entry("Workload Operations", "Entry"):
+        _apply_fast_entry_default()
+        if st.session_state.get("exceptions_only_mode") and "workload_operations_workflow" not in st.session_state:
+            st.session_state["workload_operations_workflow"] = WORKLOAD_OVERVIEW_WORKFLOW
+        migrate_legacy_workflow_state(
+            "query_workbench_workflow",
+            "workload_operations_workflow",
+            LEGACY_WORKFLOW_MAP,
         )
+        _normalize_workload_workflow_state()
+        if st.session_state.get("workload_operations_workflow") not in WORKFLOWS:
+            st.session_state["workload_operations_workflow"] = WORKLOAD_OVERVIEW_WORKFLOW
+
+        company = get_active_company()
+        environment = get_active_environment()
+
+        workflow = str(st.session_state.get("workload_operations_workflow") or WORKLOAD_OVERVIEW_WORKFLOW)
+        workflow_labels = {
+            WORKLOAD_OVERVIEW_WORKFLOW: "Overview",
+            QUERY_INVESTIGATION_WORKFLOW: "Query Investigation",
+            PIPELINE_TASK_HEALTH_WORKFLOW: "Pipeline & Tasks",
+            CONTENTION_PERFORMANCE_WORKFLOW: "Performance",
+            CHANGE_DRIFT_WORKFLOW: "Changes",
+            ADVANCED_DBA_TOOLS_WORKFLOW: "Advanced Tools",
+        }
+        if workflow != WORKLOAD_OVERVIEW_WORKFLOW:
+            render_section_breadcrumb(["Workload Operations", workflow_labels.get(workflow, workflow)])
+        workflow = render_primary_section_tabs(
+            label="Workload Operations primary navigation",
+            options=WORKFLOWS,
+            active_value=workflow,
+            key="workload_operations_workflow",
+            format_func=lambda value: workflow_labels.get(str(value), str(value)),
+        )
+        if workflow != WORKLOAD_OVERVIEW_WORKFLOW:
+            render_content_header(
+                workflow_labels.get(workflow, workflow),
+                WORKFLOW_DETAILS.get(workflow, "Workload evidence stays behind explicit workflow actions."),
+            )
+
+        if workflow == WORKLOAD_OVERVIEW_WORKFLOW:
+            _render_workload_surface(workflow, company, environment)
+            return
 
     _render_workload_surface(workflow, company, environment)

@@ -27,4 +27,22 @@ def render_with_decision_first_paint(section: str, workflow: str, callback: Call
         return callback()
 
 
-__all__ = ["render_with_decision_first_paint", "with_decision_first_paint"]
+@contextmanager
+def with_section_first_paint_entry(section: str, workflow: str = "") -> Iterator[str]:
+    """Open one first-paint window around the full visible section entry render."""
+    with with_decision_first_paint(section, workflow) as render_id:
+        yield render_id
+
+
+def render_section_entry_first_paint(section: str, workflow: str, callback: Callable[[], T]) -> T:
+    """Run a section entry callback inside one render-scoped first-paint window."""
+    with with_section_first_paint_entry(section, workflow):
+        return callback()
+
+
+__all__ = [
+    "render_section_entry_first_paint",
+    "render_with_decision_first_paint",
+    "with_decision_first_paint",
+    "with_section_first_paint_entry",
+]

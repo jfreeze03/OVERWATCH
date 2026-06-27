@@ -167,7 +167,7 @@ from sections.shell_helpers import render_content_header, render_section_breadcr
 from sections.section_command_brief import autoload_section_command_brief
 from sections.section_command_rendering import render_section_command_brief
 from sections.decision_workspace_controls import make_decision_refresh_action, make_evidence_action, should_render_daily_diagnostics
-from sections.decision_workspace_performance import with_decision_first_paint
+from sections.decision_workspace_performance import with_section_first_paint_entry
 from sections.decision_workspace_scope import active_decision_window_days
 from sections.decision_workspace_state import section_state_from_brief
 from sections.cost_contract_workflow import (
@@ -190,61 +190,61 @@ set_cost_overview_renderer(_render_cost_watch_floor)
 
 
 def render() -> None:
-    company = get_active_company()
-    environment = get_active_environment()
-    _normalize_cost_contract_workflow_state()
-    if st.session_state.get("cost_contract_workflow") not in WORKFLOWS:
-        st.session_state["cost_contract_workflow"] = "Cost Overview"
-    workflow = str(st.session_state.get("cost_contract_workflow") or "Cost Overview")
-    routed_workflow = apply_pending_cost_routes(workflow)
-    if routed_workflow != workflow:
-        st.session_state["cost_contract_workflow"] = routed_workflow
-        st.rerun()
-    workflow = str(st.session_state.get("cost_contract_workflow") or "Cost Overview")
-    if workflow == "Cost Explorer":
-        st.session_state["cost_center_view"] = "Cost Explorer"
-        if st.session_state.get("cc_explorer_lens") not in COST_EXPLORER_LENSES:
-            st.session_state["cc_explorer_lens"] = "Warehouse"
+    with with_section_first_paint_entry("Cost & Contract", "Entry"):
+        company = get_active_company()
+        environment = get_active_environment()
+        _normalize_cost_contract_workflow_state()
+        if st.session_state.get("cost_contract_workflow") not in WORKFLOWS:
+            st.session_state["cost_contract_workflow"] = "Cost Overview"
+        workflow = str(st.session_state.get("cost_contract_workflow") or "Cost Overview")
+        routed_workflow = apply_pending_cost_routes(workflow)
+        if routed_workflow != workflow:
+            st.session_state["cost_contract_workflow"] = routed_workflow
+            st.rerun()
+        workflow = str(st.session_state.get("cost_contract_workflow") or "Cost Overview")
+        if workflow == "Cost Explorer":
+            st.session_state["cost_center_view"] = "Cost Explorer"
+            if st.session_state.get("cc_explorer_lens") not in COST_EXPLORER_LENSES:
+                st.session_state["cc_explorer_lens"] = "Warehouse"
 
-    breadcrumb = ["Cost & Contract", workflow_label(workflow)]
-    if workflow == "Cost Explorer":
-        breadcrumb.append(str(st.session_state.get("cc_explorer_lens") or "Warehouse"))
-    if workflow != "Cost Overview":
-        render_section_breadcrumb(breadcrumb)
-    _render_cost_filter_indicator()
+        breadcrumb = ["Cost & Contract", workflow_label(workflow)]
+        if workflow == "Cost Explorer":
+            breadcrumb.append(str(st.session_state.get("cc_explorer_lens") or "Warehouse"))
+        if workflow != "Cost Overview":
+            render_section_breadcrumb(breadcrumb)
+        _render_cost_filter_indicator()
 
-    st.html('<div class="ow-cost-layout ow-cost-main-content"></div>')
-    selected_workflow = render_cost_primary_tabs(workflow)
-    if selected_workflow != workflow:
-        set_cost_workflow(selected_workflow)
+        st.html('<div class="ow-cost-layout ow-cost-main-content"></div>')
+        selected_workflow = render_cost_primary_tabs(workflow)
+        if selected_workflow != workflow:
+            set_cost_workflow(selected_workflow)
 
-    workflow = str(st.session_state.get("cost_contract_workflow") or "Cost Overview")
-    if workflow == "Cost Explorer":
-        lens = str(st.session_state.get("cc_explorer_lens") or "Warehouse")
-        selected_lens = render_cost_explorer_lens_pills(lens)
-        if selected_lens != lens:
-            set_cost_lens(selected_lens)
-        render_content_header(
-            f"Cost Explorer: {st.session_state.get('cc_explorer_lens', 'Warehouse')}",
-            "Use the filters and Load Cost Explorer when you need detailed rows.",
-        )
-    elif workflow != "Cost Overview":
-        render_content_header(
-            workflow_label(workflow),
-            WORKFLOW_DETAILS.get(workflow, "Cost evidence remains behind explicit load actions."),
-        )
-    detail_action = None
-    if workflow == "Cost Overview":
-        detail_action = make_evidence_action(
-            "Cost & Contract",
-            workflow,
-            label="Load Cost Evidence",
-            help_text="Load official spend facts and supporting cost evidence for the current scope.",
-            state_key="cost_contract_command_brief_load_evidence",
-            key="cost_contract_refresh",
-        )
-    current_workflow_label = workflow_label(workflow)
-    with with_decision_first_paint("Cost & Contract", current_workflow_label):
+        workflow = str(st.session_state.get("cost_contract_workflow") or "Cost Overview")
+        if workflow == "Cost Explorer":
+            lens = str(st.session_state.get("cc_explorer_lens") or "Warehouse")
+            selected_lens = render_cost_explorer_lens_pills(lens)
+            if selected_lens != lens:
+                set_cost_lens(selected_lens)
+            render_content_header(
+                f"Cost Explorer: {st.session_state.get('cc_explorer_lens', 'Warehouse')}",
+                "Use the filters and Load Cost Explorer when you need detailed rows.",
+            )
+        elif workflow != "Cost Overview":
+            render_content_header(
+                workflow_label(workflow),
+                WORKFLOW_DETAILS.get(workflow, "Cost evidence remains behind explicit load actions."),
+            )
+        detail_action = None
+        if workflow == "Cost Overview":
+            detail_action = make_evidence_action(
+                "Cost & Contract",
+                workflow,
+                label="Load Cost Evidence",
+                help_text="Load official spend facts and supporting cost evidence for the current scope.",
+                state_key="cost_contract_command_brief_load_evidence",
+                key="cost_contract_refresh",
+            )
+        current_workflow_label = workflow_label(workflow)
         cost_brief = autoload_section_command_brief(
             "Cost & Contract",
             company,

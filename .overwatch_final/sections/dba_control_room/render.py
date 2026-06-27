@@ -21,7 +21,7 @@ from sections.decision_workspace_controls import (
     make_evidence_action,
     should_render_daily_diagnostics,
 )
-from sections.decision_workspace_performance import with_decision_first_paint
+from sections.decision_workspace_performance import with_section_first_paint_entry
 from sections.decision_workspace_scope import active_decision_window_days
 from sections.decision_workspace_state import section_state_from_brief
 from sections.decision_workspace_target_filters import get_decision_evidence_target
@@ -1017,53 +1017,53 @@ def _render_control_room_admin_advanced(company: str, environment: str) -> None:
 
 
 def render() -> None:
-    company = get_active_company()
-    environment = get_active_environment()
-    credit_price = safe_float(get_credit_price()) or 3.68
-    evidence_mode = current_evidence_mode(st.session_state)
-    investigation_mode = evidence_mode_is_investigation(st.session_state)
-    all_evidence_mode = evidence_mode_is_all_evidence(st.session_state)
-    normalized_view = normalize_dba_control_room_pane(st.session_state.get("dba_control_room_active_view"))
-    st.session_state["dba_control_room_active_view"] = normalized_view
-    load_label = (
-        "Load Full Detail Packet"
-        if all_evidence_mode
-        else "Load Investigation Detail"
-        if investigation_mode
-        else "Load Triage"
-    )
-
-    if evidence_mode == TRIAGE_MODE_TRIAGE:
-        defer_section_note("Start with Morning Cockpit or load triage when current DBA telemetry is needed.")
-    elif evidence_mode == TRIAGE_MODE_INVESTIGATE:
-        defer_section_note("Investigation mode loads deeper root-cause telemetry only after you ask for it.")
-    elif evidence_mode == TRIAGE_MODE_ALL_EVIDENCE:
-        defer_section_note("Full detail depth enables bounded live fallback only after explicit load.")
-
-    cortex_budget_usd = float(
-        st.session_state.get(
-            "dba_control_room_cortex_budget_usd",
-            st.session_state.get("cortex_control_budget_usd", 5000.0),
-        )
-    )
-    lookback_hours = int(st.session_state.setdefault("dba_control_room_evidence_lookback_hours", 24) or 24)
-    if normalized_view != MORNING_COCKPIT_WORKFLOW:
-        render_section_breadcrumb([
-            "DBA Control Room",
-            DBA_CONTROL_ROOM_PANE_LABELS.get(normalized_view, normalized_view),
-        ])
-    active_view = _render_dba_control_room_workflow_selector()
-    def _render_dba_evidence_settings() -> None:
-        st.selectbox(
-            "Lookback",
-            [12, 24, 48, 168],
-            index=[12, 24, 48, 168].index(lookback_hours if lookback_hours in [12, 24, 48, 168] else 24),
-            format_func=lambda h: f"{h} hours",
-            key="dba_control_room_evidence_lookback_hours",
+    with with_section_first_paint_entry("DBA Control Room", "Entry"):
+        company = get_active_company()
+        environment = get_active_environment()
+        credit_price = safe_float(get_credit_price()) or 3.68
+        evidence_mode = current_evidence_mode(st.session_state)
+        investigation_mode = evidence_mode_is_investigation(st.session_state)
+        all_evidence_mode = evidence_mode_is_all_evidence(st.session_state)
+        normalized_view = normalize_dba_control_room_pane(st.session_state.get("dba_control_room_active_view"))
+        st.session_state["dba_control_room_active_view"] = normalized_view
+        load_label = (
+            "Load Full Detail Packet"
+            if all_evidence_mode
+            else "Load Investigation Detail"
+            if investigation_mode
+            else "Load Triage"
         )
 
-    current_workflow_label = DBA_CONTROL_ROOM_PANE_LABELS.get(active_view, active_view)
-    with with_decision_first_paint("DBA Control Room", current_workflow_label):
+        if evidence_mode == TRIAGE_MODE_TRIAGE:
+            defer_section_note("Start with Morning Cockpit or load triage when current DBA telemetry is needed.")
+        elif evidence_mode == TRIAGE_MODE_INVESTIGATE:
+            defer_section_note("Investigation mode loads deeper root-cause telemetry only after you ask for it.")
+        elif evidence_mode == TRIAGE_MODE_ALL_EVIDENCE:
+            defer_section_note("Full detail depth enables bounded live fallback only after explicit load.")
+
+        cortex_budget_usd = float(
+            st.session_state.get(
+                "dba_control_room_cortex_budget_usd",
+                st.session_state.get("cortex_control_budget_usd", 5000.0),
+            )
+        )
+        lookback_hours = int(st.session_state.setdefault("dba_control_room_evidence_lookback_hours", 24) or 24)
+        if normalized_view != MORNING_COCKPIT_WORKFLOW:
+            render_section_breadcrumb([
+                "DBA Control Room",
+                DBA_CONTROL_ROOM_PANE_LABELS.get(normalized_view, normalized_view),
+            ])
+        active_view = _render_dba_control_room_workflow_selector()
+        def _render_dba_evidence_settings() -> None:
+            st.selectbox(
+                "Lookback",
+                [12, 24, 48, 168],
+                index=[12, 24, 48, 168].index(lookback_hours if lookback_hours in [12, 24, 48, 168] else 24),
+                format_func=lambda h: f"{h} hours",
+                key="dba_control_room_evidence_lookback_hours",
+            )
+
+        current_workflow_label = DBA_CONTROL_ROOM_PANE_LABELS.get(active_view, active_view)
         dba_brief = autoload_section_command_brief(
             "DBA Control Room",
             company,

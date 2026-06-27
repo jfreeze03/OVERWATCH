@@ -1,6 +1,8 @@
 # sections/security_posture_overview_view.py - Security Overview controller and renderer
 from __future__ import annotations
 
+import re
+
 import streamlit as st
 
 from sections.base import lazy_pandas, lazy_util as _lazy_util
@@ -90,13 +92,20 @@ def _targeted_security_sql(sql: str, target: dict | None) -> str:
     )
     if not target_filter:
         return sql
+    source_sql = str(sql).strip().rstrip(";")
+    limit_match = re.search(r"\s+LIMIT\s+\d+\s*$", source_sql, flags=re.IGNORECASE)
+    limit_clause = ""
+    if limit_match:
+        limit_clause = source_sql[limit_match.start():]
+        source_sql = source_sql[:limit_match.start()].strip()
     return f"""
         SELECT *
         FROM (
-            {str(sql).strip().rstrip(';')}
+            {source_sql}
         ) target
         WHERE 1 = 1
           {target_filter}
+          {limit_clause}
     """
 
 def _render_security_watch_floor(score: int, exceptions: pd.DataFrame, row) -> None:

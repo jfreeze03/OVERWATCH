@@ -9,6 +9,7 @@ import re
 
 import streamlit as st
 
+from performance import current_first_paint_render_id, end_first_paint
 from sections.command_brief_routes import COMMAND_BRIEF_ROUTES, apply_command_brief_route
 from sections.decision_workspace_controls import (
     CommandBriefDetailAction,
@@ -43,6 +44,13 @@ def _public_text(value: object) -> str:
     text = re.sub(r"\b(?:MART|FACT|OVERWATCH|ALERT)_[A-Z0-9_]+\b", "Decision source", text)
     text = re.sub(r"\bsnowflake/[A-Za-z0-9_./-]+\.sql\b", "setup script", text, flags=re.IGNORECASE)
     return text
+
+
+def _close_first_paint_for_user_action() -> None:
+    """Keep explicit button work out of first-paint performance accounting."""
+    render_id = current_first_paint_render_id()
+    if render_id:
+        end_first_paint(render_id)
 
 
 def format_command_metric(metric: object) -> str:
@@ -199,6 +207,7 @@ def _render_detail_action(
         width="stretch",
         help=detail_action.help_text or None,
     ):
+        _close_first_paint_for_user_action()
         apply_finding_evidence_target(evidence_target, section, workflow)
         detail_action.callback()
         st.rerun()
@@ -254,6 +263,7 @@ def _render_fallback(
                     width="stretch",
                     help="Refresh the Decision packet for this scope",
                 ):
+                    _close_first_paint_for_user_action()
                     refresh_action()
                     st.rerun()
                 elif action == "initialize" and st.button(
@@ -261,6 +271,7 @@ def _render_fallback(
                     key=f"{key_prefix}_initialize_summaries",
                     width="stretch",
                 ):
+                    _close_first_paint_for_user_action()
                     st.session_state["_overwatch_decision_bootstrap_requested"] = True
                     st.rerun()
                 elif action == "setup_health" and st.button(
@@ -270,6 +281,7 @@ def _render_fallback(
                     width="stretch",
                     help="Open Settings to review Decision summary setup health.",
                 ):
+                    _close_first_paint_for_user_action()
                     open_decision_setup_health()
                     st.rerun()
                 elif action == "evidence":
@@ -450,6 +462,7 @@ def _render_workspace_actions(
             type="primary",
             width="stretch",
         ):
+            _close_first_paint_for_user_action()
             if _apply_route_action(
                 primary,
                 finding=_finding_for_action(model, primary),
@@ -466,6 +479,7 @@ def _render_workspace_actions(
                 type="secondary",
                 width="stretch",
             ):
+                _close_first_paint_for_user_action()
                 if _apply_route_action(
                     action,
                     finding=_finding_for_action(model, action),
@@ -590,6 +604,7 @@ def render_decision_workspace(
                 width="stretch",
                 help="Refresh the Decision packet for this scope",
             ):
+                _close_first_paint_for_user_action()
                 controls.refresh_packet()
                 st.rerun()
         st.html(_metric_ribbon(model, compact=False))

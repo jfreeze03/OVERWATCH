@@ -29,7 +29,7 @@ from sections.decision_workspace_controls import (
     make_evidence_action,
     should_render_daily_diagnostics,
 )
-from sections.decision_workspace_performance import with_decision_first_paint
+from sections.decision_workspace_performance import with_section_first_paint_entry
 from sections.decision_workspace_scope import active_decision_window_days
 from sections.alert_center_contracts import (
     ALERT_CENTER_ADMIN_VIEW_DETAILS,
@@ -690,77 +690,77 @@ def _render_loaded_alert_center_pane(
 
 
 def render() -> None:
-    company = get_active_company()
-    environment = get_active_environment()
-    _apply_alert_center_brief_first_default()
-    _apply_queued_alert_center_view()
+    with with_section_first_paint_entry("Alert Center", "Entry"):
+        company = get_active_company()
+        environment = get_active_environment()
+        _apply_alert_center_brief_first_default()
+        _apply_queued_alert_center_view()
 
-    active_view = render_primary_section_tabs(
-        label="Alert Center primary navigation",
-        options=ALERT_CENTER_PANES,
-        active_value=st.session_state.get("alert_center_active_view", ALERT_CENTER_DEFAULT_VIEW),
-        key="alert_center_active_view",
-        format_func=lambda value: ALERT_CENTER_PANE_LABELS.get(str(value), str(value)),
-    )
-    active_view = _normalize_alert_center_view(active_view)
-    renderer_view = {
-        "Critical / High": ALERT_CENTER_DEFAULT_VIEW,
-        "Cortex Predictive Alerts": "Cost Alerts",
-    }.get(active_view, active_view)
-    source_view = active_view
-    if active_view == "Alert Settings / Admin":
-        source_view = render_secondary_lens_pills(
-            label="Admin evidence",
-            options=ALERT_CENTER_ADMIN_VIEWS,
-            active_value=st.session_state.get(ALERT_CENTER_ADMIN_VIEW_KEY, ALERT_CENTER_ADMIN_VIEWS[0]),
-            key=ALERT_CENTER_ADMIN_VIEW_KEY,
+        active_view = render_primary_section_tabs(
+            label="Alert Center primary navigation",
+            options=ALERT_CENTER_PANES,
+            active_value=st.session_state.get("alert_center_active_view", ALERT_CENTER_DEFAULT_VIEW),
+            key="alert_center_active_view",
+            format_func=lambda value: ALERT_CENTER_PANE_LABELS.get(str(value), str(value)),
         )
-        renderer_view = source_view
-    elif active_view != "Alert History":
-        render_secondary_lens_pills(
-            label="Alert state",
-            options=("Open", "Overdue", "Routed", "Suppressed", "Delivered", "Failed Delivery"),
-            active_value=st.session_state.get("alert_center_status_lens", "Open"),
-            key="alert_center_status_lens",
-        )
-    if active_view != "Active Alerts":
-        render_section_breadcrumb(["Alert Center", ALERT_CENTER_PANE_LABELS.get(active_view, active_view)])
-        render_content_header(
-            ALERT_CENTER_PANE_LABELS.get(active_view, active_view),
-            ALERT_CENTER_ADMIN_VIEW_DETAILS.get(source_view, f"Load {active_view} when fresh alert telemetry is needed."),
-        )
+        active_view = _normalize_alert_center_view(active_view)
+        renderer_view = {
+            "Critical / High": ALERT_CENTER_DEFAULT_VIEW,
+            "Cortex Predictive Alerts": "Cost Alerts",
+        }.get(active_view, active_view)
+        source_view = active_view
+        if active_view == "Alert Settings / Admin":
+            source_view = render_secondary_lens_pills(
+                label="Admin evidence",
+                options=ALERT_CENTER_ADMIN_VIEWS,
+                active_value=st.session_state.get(ALERT_CENTER_ADMIN_VIEW_KEY, ALERT_CENTER_ADMIN_VIEWS[0]),
+                key=ALERT_CENTER_ADMIN_VIEW_KEY,
+            )
+            renderer_view = source_view
+        elif active_view != "Alert History":
+            render_secondary_lens_pills(
+                label="Alert state",
+                options=("Open", "Overdue", "Routed", "Suppressed", "Delivered", "Failed Delivery"),
+                active_value=st.session_state.get("alert_center_status_lens", "Open"),
+                key="alert_center_status_lens",
+            )
+        if active_view != "Active Alerts":
+            render_section_breadcrumb(["Alert Center", ALERT_CENTER_PANE_LABELS.get(active_view, active_view)])
+            render_content_header(
+                ALERT_CENTER_PANE_LABELS.get(active_view, active_view),
+                ALERT_CENTER_ADMIN_VIEW_DETAILS.get(source_view, f"Load {active_view} when fresh alert telemetry is needed."),
+            )
 
-    required_sources = _alert_center_sources_for_view(source_view)
+        required_sources = _alert_center_sources_for_view(source_view)
 
-    if source_view in {"Suppression Windows", "Detection Catalog"}:
-        _render_admin_alert_center_pane(source_view)
-        _render_advanced_alert_diagnostics(company, environment)
-        return
+        if source_view in {"Suppression Windows", "Detection Catalog"}:
+            _render_admin_alert_center_pane(source_view)
+            _render_advanced_alert_diagnostics(company, environment)
+            return
 
-    default_days = int(st.session_state.get("alert_center_evidence_days", DEFAULT_DAY_WINDOW) or DEFAULT_DAY_WINDOW)
-    if default_days not in DAY_WINDOW_OPTIONS:
-        default_days = DEFAULT_DAY_WINDOW
-    days = int(st.session_state.setdefault("alert_center_evidence_days", default_days))
-    limit = int(st.session_state.setdefault("alert_center_evidence_rows", 200))
-    load_label = f"Load {active_view}"
+        default_days = int(st.session_state.get("alert_center_evidence_days", DEFAULT_DAY_WINDOW) or DEFAULT_DAY_WINDOW)
+        if default_days not in DAY_WINDOW_OPTIONS:
+            default_days = DEFAULT_DAY_WINDOW
+        days = int(st.session_state.setdefault("alert_center_evidence_days", default_days))
+        limit = int(st.session_state.setdefault("alert_center_evidence_rows", 200))
+        load_label = f"Load {active_view}"
 
-    def _render_alert_evidence_settings() -> None:
-        st.selectbox(
-            "Alert window",
-            DAY_WINDOW_OPTIONS,
-            index=DAY_WINDOW_OPTIONS.index(default_days),
-            format_func=lambda value: f"{value} days",
-            key="alert_center_evidence_days",
-        )
-        st.selectbox(
-            "Rows",
-            [50, 100, 200, 500],
-            index=[50, 100, 200, 500].index(limit if limit in [50, 100, 200, 500] else 200),
-            key="alert_center_evidence_rows",
-        )
+        def _render_alert_evidence_settings() -> None:
+            st.selectbox(
+                "Alert window",
+                DAY_WINDOW_OPTIONS,
+                index=DAY_WINDOW_OPTIONS.index(default_days),
+                format_func=lambda value: f"{value} days",
+                key="alert_center_evidence_days",
+            )
+            st.selectbox(
+                "Rows",
+                [50, 100, 200, 500],
+                index=[50, 100, 200, 500].index(limit if limit in [50, 100, 200, 500] else 200),
+                key="alert_center_evidence_rows",
+            )
 
-    current_workflow_label = ALERT_CENTER_PANE_LABELS.get(active_view, active_view)
-    with with_decision_first_paint("Alert Center", current_workflow_label):
+        current_workflow_label = ALERT_CENTER_PANE_LABELS.get(active_view, active_view)
         render_section_command_brief(
             autoload_section_command_brief(
                 "Alert Center",

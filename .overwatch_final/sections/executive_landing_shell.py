@@ -56,7 +56,7 @@ from sections.shell_helpers import render_content_header, render_primary_section
 from sections.section_command_brief import autoload_section_command_brief
 from sections.section_command_rendering import render_section_command_brief
 from sections.decision_workspace_controls import make_decision_refresh_action, make_evidence_action
-from sections.decision_workspace_performance import with_decision_first_paint
+from sections.decision_workspace_performance import with_section_first_paint_entry
 from sections.decision_workspace_scope import active_decision_window_days
 from sections.decision_workspace_state import section_state_from_brief
 from perf_trace import trace
@@ -177,26 +177,26 @@ def _render_executive_landing_workflow_controls(active_workflow: str) -> str:
 
 
 def render() -> None:
-    with trace("executive_shell:state_helpers", active_section="Executive Landing"):
-        company = _active_company()
-        environment = _active_environment()
-        credit_price = _credit_price()
-        defer_source_note(
-            "Executive Landing opens with precomputed observability facts; workflow detail and exports stay action-gated."
-        )
-        _ensure_executive_landing_workflow_state()
+    with with_section_first_paint_entry("Executive Landing", "Entry"):
+        with trace("executive_shell:state_helpers", active_section="Executive Landing"):
+            company = _active_company()
+            environment = _active_environment()
+            credit_price = _credit_price()
+            defer_source_note(
+                "Executive Landing opens with precomputed observability facts; workflow detail and exports stay action-gated."
+            )
+            _ensure_executive_landing_workflow_state()
 
-    with trace("executive_shell:scope_controls", active_section="Executive Landing"):
-        days = active_decision_window_days(_active_window_days())
-        active_workflow = normalize_executive_landing_workflow(
-            st.session_state.get(EXECUTIVE_LANDING_WORKFLOW, EXECUTIVE_OVERVIEW_WORKFLOW)
-        )
+        with trace("executive_shell:scope_controls", active_section="Executive Landing"):
+            days = active_decision_window_days(_active_window_days())
+            active_workflow = normalize_executive_landing_workflow(
+                st.session_state.get(EXECUTIVE_LANDING_WORKFLOW, EXECUTIVE_OVERVIEW_WORKFLOW)
+            )
 
-    with trace("executive_shell:workflow_selector", active_section="Executive Landing"):
-        active_workflow = _render_executive_landing_workflow_controls(active_workflow)
+        with trace("executive_shell:workflow_selector", active_section="Executive Landing"):
+            active_workflow = _render_executive_landing_workflow_controls(active_workflow)
 
-    current_workflow_label = "Overview" if active_workflow == EXECUTIVE_OVERVIEW_WORKFLOW else active_workflow
-    with with_decision_first_paint("Executive Landing", current_workflow_label):
+        current_workflow_label = "Overview" if active_workflow == EXECUTIVE_OVERVIEW_WORKFLOW else active_workflow
         executive_brief = autoload_section_command_brief(
             "Executive Landing",
             company,

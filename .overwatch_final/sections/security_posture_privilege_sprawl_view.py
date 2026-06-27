@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import streamlit as st
 
+from performance import EVIDENCE_CLICK_QUERY_BUDGET, query_budget_context
 from sections.base import lazy_pandas, lazy_util as _lazy_util
 from sections.security_posture_access_review import _security_exception_environment, _security_owner_context
 from sections.security_posture_action_queue import _queue_privileged_grant_actions
+from sections.security_posture_admin_view import _render_advanced_security_evidence
 from sections.security_posture_models import _security_meta_matches, _security_scope_meta
 from sections.shell_helpers import render_escaped_bold_text, render_shell_snapshot
 
@@ -155,18 +157,26 @@ def _render_privileged_grant_readiness(
         )
         if st.button(load_label, key=load_key, type="primary" if not as_expander else "secondary"):
             try:
-                grant_sql = _security_privileged_grant_review_sql(grant_days, company, environment)
-                grant_rows = run_query(
-                    grant_sql,
-                    ttl_key=f"security_privileged_grants_{company}_{environment}_{grant_days}",
-                    tier="standard",
-                    section="Security Posture",
-                )
-                st.session_state["security_privileged_grants"] = _annotate_security_privileged_grant_readiness(grant_rows)
-                st.session_state["security_privileged_grants_sql"] = grant_sql
-                st.session_state["security_privileged_grants_meta"] = _security_scope_meta(
-                    company, environment, grant_days
-                )
+                with query_budget_context(
+                    "evidence_click",
+                    section="Security Monitoring",
+                    workflow="Privilege Sprawl",
+                    budget=EVIDENCE_CLICK_QUERY_BUDGET,
+                ):
+                    grant_sql = _security_privileged_grant_review_sql(grant_days, company, environment)
+                    grant_rows = run_query(
+                        grant_sql,
+                        ttl_key=f"security_privileged_grants_{company}_{environment}_{grant_days}",
+                        tier="standard",
+                        section="Security Posture",
+                        max_rows=500,
+                        query_boundary="evidence",
+                    )
+                    st.session_state["security_privileged_grants"] = _annotate_security_privileged_grant_readiness(grant_rows)
+                    st.session_state["security_privileged_grants_sql"] = grant_sql
+                    st.session_state["security_privileged_grants_meta"] = _security_scope_meta(
+                        company, environment, grant_days
+                    )
             except Exception as exc:
                 st.session_state["security_privileged_grants"] = pd.DataFrame()
                 st.warning(f"Privileged grant status unavailable: {format_snowflake_error(exc)}")

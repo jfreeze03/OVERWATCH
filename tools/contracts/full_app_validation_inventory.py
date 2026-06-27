@@ -1,7 +1,8 @@
-"""Deterministic full-app validation artifacts for Decision Workspace.
+"""Static full-app contract inventory for Decision Workspace.
 
-This module is intentionally CI/tooling-only. It must not be imported by the
-Streamlit runtime package.
+This module is intentionally CI/tooling-only. It records the expected app
+surface, but it is not allowed to prove runtime pass/fail behavior. Runtime
+validation lives in tools.contracts.full_app_runtime_validation.
 """
 
 from __future__ import annotations
@@ -477,14 +478,14 @@ def _write_json(path: Path, payload: Any) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
 
-def write_full_app_validation_artifacts(root: Path | str = ".") -> dict[str, Any]:
+def write_full_app_contract_inventory_artifacts(root: Path | str = ".") -> dict[str, Any]:
     root = Path(root).resolve()
     _ensure_app_path(root)
     from route_registry import PRIMARY_SECTION_TITLES, SECTION_WORKFLOW_CONTRACT
     from sections.button_action_contracts import contract_target_is_valid, iter_button_action_contracts
     from tools.contracts.cleanup_inventory import build_cleanup_inventory
 
-    output_dir = root / "artifacts" / "full_app_validation"
+    output_dir = root / "artifacts" / "full_app_inventory"
     output_dir.mkdir(parents=True, exist_ok=True)
     for path in output_dir.iterdir():
         if path.is_file():
@@ -588,10 +589,11 @@ def write_full_app_validation_artifacts(root: Path | str = ".") -> dict[str, Any
         "unhandled_exception_count": 0,
         "query_budget_passed": query_budget_results["passed"],
         "session_direct_sql_passed": session_direct_sql_results["passed"],
-        "all_passed": True,
+        "inventory_only": True,
+        "runtime_validated": False,
         "raw_sql_included": False,
     }
-    summary["all_passed"] = (
+    summary["inventory_clean"] = (
         summary["failure_count"] == 0
         and summary["forbidden_ui_token_count"] == 0
         and summary["source_forbidden_token_count"] == 0
@@ -632,18 +634,18 @@ def write_full_app_validation_artifacts(root: Path | str = ".") -> dict[str, Any
         _write_json(output_dir / filename, payload)
     manifest = {
         "generated_at": summary["generated_at"],
-        "files": sorted(f"artifacts/full_app_validation/{filename}" for filename in artifacts),
+        "files": sorted(f"artifacts/full_app_inventory/{filename}" for filename in artifacts),
     }
-    manifest["files"].append("artifacts/full_app_validation/artifact_manifest.json")
+    manifest["files"].append("artifacts/full_app_inventory/artifact_manifest.json")
     manifest["files"] = sorted(manifest["files"])
     _write_json(output_dir / "artifact_manifest.json", manifest)
     return {
-        f"artifacts/full_app_validation/{filename}": payload
+        f"artifacts/full_app_inventory/{filename}": payload
         for filename, payload in {**artifacts, "artifact_manifest.json": manifest}.items()
     }
 
 
 __all__ = [
     "FORBIDDEN_DAILY_TOKENS",
-    "write_full_app_validation_artifacts",
+    "write_full_app_contract_inventory_artifacts",
 ]

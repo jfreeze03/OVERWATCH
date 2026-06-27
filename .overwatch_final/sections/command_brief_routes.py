@@ -60,6 +60,11 @@ COMMAND_BRIEF_ROUTES: Mapping[str, CommandBriefRoute] = {
         "workload_operations_workflow",
         "Pipeline & Task Health",
     ),
+    "workload_change_analysis": CommandBriefRoute(
+        "Workload Operations",
+        "workload_operations_workflow",
+        "Change Analysis",
+    ),
     "workload_performance": CommandBriefRoute(
         "Workload Operations",
         "workload_operations_workflow",

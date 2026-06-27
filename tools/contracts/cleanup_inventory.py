@@ -524,6 +524,7 @@ def artifact_inventory(root: Path) -> dict[str, Any]:
             name in ci_proof_names
             or rel.startswith("artifacts/cleanup/")
             or rel.startswith("artifacts/full_app_validation/")
+            or rel.startswith("artifacts/full_app_inventory/")
             or rel.startswith("artifacts/brand/")
         ):
             category = "CI proof artifact"

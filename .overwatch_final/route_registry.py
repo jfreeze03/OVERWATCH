@@ -59,7 +59,6 @@ SECTION_WORKFLOW_CONTRACT = {
         "Chargeback / Company Split",
         "Cost Recommendations",
         "Cortex AI",
-        "Waste Detection",
     ),
     "Workload Operations": (
         "Workload Overview",

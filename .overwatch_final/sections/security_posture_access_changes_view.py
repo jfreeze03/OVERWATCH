@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import streamlit as st
 
+from performance import EVIDENCE_CLICK_QUERY_BUDGET, query_budget_context
 from sections.base import lazy_pandas, lazy_util as _lazy_util
 
 
@@ -22,19 +23,25 @@ def _render_security_change_detail(
     st.markdown("**Security-Sensitive Changes**")
     st.caption("Loads role, grant, network policy, integration, and security-sensitive change evidence from the change mart.")
     if st.button("Load Security-Sensitive Changes", key=button_key, width="stretch"):
-        st.session_state["security_change_intelligence_detail"] = load_change_event_detail(
-            company,
-            environment,
-            change_types=(
-                "ROLE_CHANGE",
-                "GRANT_CHANGE",
-                "NETWORK_POLICY_CHANGE",
-                "INTEGRATION_CHANGE",
-                "SECURITY_SENSITIVE_CHANGE",
-            ),
-            days=180,
-        )
-        st.session_state["security_change_intelligence_scope"] = (company, environment)
+        with query_budget_context(
+            "evidence_click",
+            section="Security Monitoring",
+            workflow="Access Changes",
+            budget=EVIDENCE_CLICK_QUERY_BUDGET,
+        ):
+            st.session_state["security_change_intelligence_detail"] = load_change_event_detail(
+                company,
+                environment,
+                change_types=(
+                    "ROLE_CHANGE",
+                    "GRANT_CHANGE",
+                    "NETWORK_POLICY_CHANGE",
+                    "INTEGRATION_CHANGE",
+                    "SECURITY_SENSITIVE_CHANGE",
+                ),
+                days=180,
+            )
+            st.session_state["security_change_intelligence_scope"] = (company, environment)
 
     detail = st.session_state.get("security_change_intelligence_detail")
     if (

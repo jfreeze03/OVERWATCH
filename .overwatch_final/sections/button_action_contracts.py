@@ -399,6 +399,160 @@ def _account_usage_fallback_contract(section: str) -> ButtonActionContract:
     )
 
 
+def _active_detail_action_contracts() -> Iterable[ButtonActionContract]:
+    route_specs = (
+        (
+            "DBA Control Room",
+            "Cost Watch",
+            "dba_cost_watch_open_cost_contract",
+            "Cost & Contract",
+            "Cost Overview",
+            "cost_contract_overview",
+        ),
+        (
+            "DBA Control Room",
+            "Performance Watch",
+            "dba_performance_watch_open_workload",
+            "Workload Operations",
+            "Performance & Contention",
+            "workload_performance",
+        ),
+        (
+            "DBA Control Room",
+            "Change Watch",
+            "dba_change_watch_open_workload",
+            "Workload Operations",
+            "Change Analysis",
+            "workload_change_analysis",
+        ),
+        (
+            "DBA Control Room",
+            "Change Watch",
+            "dba_change_watch_open_security",
+            "Security Monitoring",
+            "Access Changes",
+            "security_access_changes",
+        ),
+    )
+    for section, workflow, key, target_section, target_workflow, route_key in route_specs:
+        yield ButtonActionContract(
+            section=section,
+            workflow=workflow,
+            exact_key=key,
+            action_type="route",
+            expected_target_section=target_section,
+            expected_target_workflow=target_workflow,
+            expected_artifact="navigation_state_delta",
+            exact_route_key=route_key,
+            expected_query_budget_context="route_action",
+            expected_query_count=0,
+            expected_budget=0,
+            expected_actual_boundaries={},
+            expected_session_open_count=0,
+            expected_direct_sql_count=0,
+            expected_metadata_probe_count=0,
+            expected_snowflake_execution_count=0,
+        )
+    for key in ("dba_control_room_build_ops", "dba_control_room_build_ops_from_empty"):
+        yield ButtonActionContract(
+            section="DBA Control Room",
+            workflow="Action Queue",
+            exact_key=key,
+            label_pattern=r"\bLoad Action Queue\b",
+            action_type="evidence_load",
+            expected_artifact="dba_action_queue_rows",
+            expected_query_boundary="evidence",
+            expected_query_count=1,
+            expected_max_rows=500,
+            expected_query_budget_context="evidence_click",
+            expected_budget=1,
+            expected_actual_boundaries={"evidence": 1},
+            expected_direct_sql_count=0,
+            expected_metadata_probe_count=0,
+            expected_snowflake_execution_count=1,
+        )
+    yield ButtonActionContract(
+        section="Workload Operations",
+        workflow="Change Analysis",
+        exact_key="workload_load_change_intelligence",
+        label_pattern=r"\bLoad Workload Changes\b",
+        action_type="advanced_load",
+        expected_artifact="workload_change_detail_rows",
+        heavy_query_allowed=True,
+        requires_admin=True,
+        expected_query_budget_context="advanced_diagnostics",
+        expected_query_count=0,
+        expected_budget=3,
+        expected_actual_boundaries={},
+        expected_direct_sql_count=0,
+        expected_metadata_probe_count=0,
+        expected_snowflake_execution_count=0,
+    )
+    for key, label in (
+        ("security_load_score_drivers", r"\bLoad Security Score Drivers\b"),
+        ("security_load_closed_loop_approvals", r"\bLoad Security Approvals\b"),
+        ("security_load_command_center", r"\bLoad Security Investigation Findings\b"),
+    ):
+        yield ButtonActionContract(
+            section="Security Monitoring",
+            workflow="Security Admin / Advanced",
+            exact_key=key,
+            label_pattern=label,
+            action_type="advanced_load",
+            expected_artifact="security_admin_detail_rows",
+            heavy_query_allowed=True,
+            requires_admin=True,
+            expected_query_budget_context="advanced_diagnostics",
+            expected_query_count=0,
+            expected_budget=3,
+            expected_actual_boundaries={},
+            expected_direct_sql_count=0,
+            expected_metadata_probe_count=0,
+            expected_snowflake_execution_count=0,
+        )
+    for key, workflow, label in (
+        ("security_privilege_sprawl_load", "Privilege Sprawl", r"\bLoad Privilege Sprawl\b"),
+        ("security_priv_grant_load", "Security Admin / Advanced", r"\bLoad Privileged Grant Status\b"),
+        ("security_load_access_changes_intelligence", "Access Changes", r"\bLoad Security-Sensitive Changes\b"),
+    ):
+        yield ButtonActionContract(
+            section="Security Monitoring",
+            workflow=workflow,
+            exact_key=key,
+            label_pattern=label,
+            action_type="evidence_load",
+            expected_artifact="security_evidence_rows",
+            expected_query_boundary="evidence",
+            expected_query_count=1,
+            expected_max_rows=500,
+            expected_query_budget_context="evidence_click",
+            expected_budget=1,
+            expected_actual_boundaries={"evidence": 1},
+            expected_direct_sql_count=0,
+            expected_metadata_probe_count=0,
+            expected_snowflake_execution_count=1,
+        )
+    yield ButtonActionContract(
+        section="Settings/Admin Setup Health",
+        workflow="Setup Health",
+        exact_key="decision_setup_health_refresh",
+        label_pattern=r"\bRefresh Setup Health\b",
+        action_type="admin_load",
+        expected_artifact="setup_health_refresh_state",
+        heavy_query_allowed=True,
+        requires_admin=True,
+        expected_query_budget_context="admin_setup",
+        expected_query_count=0,
+        expected_budget=3,
+        expected_actual_boundaries={},
+        expected_session_open_count=0,
+        expected_direct_sql_count=0,
+        expected_metadata_probe_count=0,
+        expected_snowflake_execution_count=0,
+        expected_rerun=False,
+    )
+
+
 def iter_button_action_contracts() -> Iterable[ButtonActionContract]:
     for section in PRIMARY_SECTION_TITLES:
         yield _refresh_contract(section)
@@ -409,6 +563,7 @@ def iter_button_action_contracts() -> Iterable[ButtonActionContract]:
         yield _account_usage_fallback_contract(section)
         yield _admin_contract(section)
         yield _advanced_contract(section)
+    yield from _active_detail_action_contracts()
     yield ButtonActionContract(
         section="*",
         label_pattern=r"\b(Download|Export)\b",

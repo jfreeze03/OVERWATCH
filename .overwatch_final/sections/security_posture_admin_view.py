@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import streamlit as st
 
+from performance import ADMIN_CLICK_QUERY_BUDGET, query_budget_context
 from sections.base import lazy_pandas, lazy_util as _lazy_util
 from sections.security_posture_access_changes_view import _render_security_change_detail
 from sections.security_posture_common import render_operator_briefing, render_workflow_guide
@@ -61,13 +62,19 @@ def _render_security_score_explanation(company: str, environment: str) -> None:
     st.markdown("**Security Score**")
     st.caption("Loads security score drivers from the Executive Scorecard history.")
     if st.button("Load Security Score Drivers", key="security_load_score_drivers", width="stretch"):
-        st.session_state["security_scorecard_detail"] = load_executive_scorecard_detail(
-            company,
-            environment,
-            score_key="SECURITY",
-            days=180,
-        )
-        st.session_state["security_scorecard_scope"] = (company, environment)
+        with query_budget_context(
+            "advanced_diagnostics",
+            section="Security Monitoring",
+            workflow="Security Admin / Advanced",
+            budget=ADMIN_CLICK_QUERY_BUDGET,
+        ):
+            st.session_state["security_scorecard_detail"] = load_executive_scorecard_detail(
+                company,
+                environment,
+                score_key="SECURITY",
+                days=180,
+            )
+            st.session_state["security_scorecard_scope"] = (company, environment)
 
     detail = st.session_state.get("security_scorecard_detail")
     if (
@@ -110,19 +117,25 @@ def _render_security_action_approval(company: str, environment: str) -> None:
     )
     domains = ("Security",)
     if st.button("Load Security Approvals", key="security_load_closed_loop_approvals", width="stretch"):
-        st.session_state["security_closed_loop_workflow_detail"] = load_closed_loop_workflow_detail(
-            company,
-            environment,
-            domains=domains,
-            days=180,
-        )
-        st.session_state["security_closed_loop_execution_plan_detail"] = load_closed_loop_execution_plan_detail(
-            company,
-            environment,
-            domains=domains,
-            days=180,
-        )
-        st.session_state["security_closed_loop_scope"] = (company, environment)
+        with query_budget_context(
+            "advanced_diagnostics",
+            section="Security Monitoring",
+            workflow="Security Admin / Advanced",
+            budget=ADMIN_CLICK_QUERY_BUDGET,
+        ):
+            st.session_state["security_closed_loop_workflow_detail"] = load_closed_loop_workflow_detail(
+                company,
+                environment,
+                domains=domains,
+                days=180,
+            )
+            st.session_state["security_closed_loop_execution_plan_detail"] = load_closed_loop_execution_plan_detail(
+                company,
+                environment,
+                domains=domains,
+                days=180,
+            )
+            st.session_state["security_closed_loop_scope"] = (company, environment)
 
     if st.session_state.get("security_closed_loop_scope") != (company, environment):
         return
@@ -175,19 +188,25 @@ def _render_security_command_findings(company: str, environment: str) -> None:
     st.caption("Loads security-risk root-cause candidates, owner gaps, related changes, and review-gated recommendations.")
     types = ("Security Risk",)
     if st.button("Load Security Investigation Findings", key="security_load_command_center", width="stretch"):
-        st.session_state["security_command_findings"] = load_command_center_finding_detail(
-            company,
-            environment,
-            investigation_types=types,
-            days=180,
-        )
-        st.session_state["security_command_recommendations"] = load_command_center_recommendation_detail(
-            company,
-            environment,
-            investigation_types=types,
-            days=180,
-        )
-        st.session_state["security_command_scope"] = (company, environment)
+        with query_budget_context(
+            "advanced_diagnostics",
+            section="Security Monitoring",
+            workflow="Security Admin / Advanced",
+            budget=ADMIN_CLICK_QUERY_BUDGET,
+        ):
+            st.session_state["security_command_findings"] = load_command_center_finding_detail(
+                company,
+                environment,
+                investigation_types=types,
+                days=180,
+            )
+            st.session_state["security_command_recommendations"] = load_command_center_recommendation_detail(
+                company,
+                environment,
+                investigation_types=types,
+                days=180,
+            )
+            st.session_state["security_command_scope"] = (company, environment)
 
     if st.session_state.get("security_command_scope") != (company, environment):
         return

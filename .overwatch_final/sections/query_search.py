@@ -238,11 +238,16 @@ def render():
             "I understand this may scan Account Usage.",
             key="qs_account_usage_fallback_confirmed",
         )
-        account_usage_fallback = st.button(
+        account_usage_requested = st.button(
             "Search Account Usage fallback",
             key="qs_account_usage_fallback",
-            disabled=not fallback_confirmed,
         )
+        if account_usage_requested and not fallback_confirmed:
+            with query_budget_context("account_usage_fallback", section="Workload Operations", workflow="Query Investigation", budget=1):
+                st.warning("Confirm Account Usage fallback before running this slower history search.")
+            account_usage_fallback = False
+        else:
+            account_usage_fallback = bool(account_usage_requested)
     if (explicit_search or autorun or account_usage_fallback) and (search_text or target_warehouse):
         if autorun and target_warehouse and not ACCOUNT_USAGE_TARGETED_SCAN_ALLOWED:
             st.info("Warehouse target is prefilled. Click Search to run a bounded warehouse query history lookup.")

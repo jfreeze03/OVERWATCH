@@ -13,6 +13,7 @@ from uuid import uuid4
 import streamlit as st
 
 from config import ADMIN_ACCESS_ROLES
+from performance import ADMIN_CLICK_QUERY_BUDGET, query_budget_context
 from runtime_state import CURRENT_ROLE, SIDEBAR_PANEL
 
 
@@ -441,6 +442,15 @@ def render_decision_setup_health_panel(session: object | None = None) -> None:
         st.write(f"Invalid sections: {_list_text(health.invalid_sections)}")
         st.write(f"Warning sections: {_list_text(health.warning_sections)}")
         st.write(f"Packet budget: {health.max_packet_bytes if health.max_packet_bytes is not None else 'Unavailable'} bytes")
+        if st.button("Refresh Setup Health", key="decision_setup_health_refresh", type="secondary"):
+            with query_budget_context(
+                "admin_setup",
+                section="Settings/Admin Setup Health",
+                workflow="Setup Health",
+                budget=ADMIN_CLICK_QUERY_BUDGET,
+            ):
+                st.session_state[SETUP_HEALTH_PANEL_OPEN_KEY] = True
+                st.session_state["_overwatch_decision_setup_health_refresh_requested"] = True
         history = tuple(item for item in load_decision_setup_health_history(session=session) if item.recorded_at != health.recorded_at)
         if history:
             st.markdown("**Recent setup-health events**")

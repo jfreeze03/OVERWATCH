@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 import streamlit as st
 
-from performance import EVIDENCE_CLICK_QUERY_BUDGET, query_budget_context
+from performance import ADMIN_CLICK_QUERY_BUDGET, EVIDENCE_CLICK_QUERY_BUDGET, query_budget_context
 from sections.shell_helpers import (
     consume_section_autoload_request,
     render_decision_evidence_panel,
@@ -696,18 +696,30 @@ def _render_advanced_diagnostics_expander(company: str, environment: str) -> Non
     st.divider()
     if not st.session_state.get("dba_control_room_show_advanced_diagnostics"):
         if st.button("Show Advanced Diagnostics", key="dba_control_room_show_advanced_diagnostics", width="stretch"):
-            st.session_state["dba_control_room_show_advanced_diagnostics"] = True
+            with query_budget_context(
+                "advanced_diagnostics",
+                section="DBA Control Room",
+                workflow="Control Room Admin / Advanced",
+                budget=ADMIN_CLICK_QUERY_BUDGET,
+            ):
+                st.session_state["dba_control_room_show_advanced_diagnostics"] = True
         else:
             st.caption("Advanced diagnostics stay unloaded until requested.")
             return
-    with st.expander("Advanced diagnostics and enterprise evidence", expanded=False):
-        _render_enterprise_diagnostics_gate(company, environment)
-        _render_production_readiness_gate(company, environment)
-        _render_executive_scorecard_driver_gate(company, environment)
-        _render_forecast_exception_gate(company, environment)
-        _render_change_intelligence_gate(company, environment)
-        _render_closed_loop_operations_gate(company, environment)
-        _render_command_center_investigation_gate(company, environment)
+    with query_budget_context(
+        "advanced_diagnostics",
+        section="DBA Control Room",
+        workflow="Control Room Admin / Advanced",
+        budget=ADMIN_CLICK_QUERY_BUDGET,
+    ):
+        with st.expander("Advanced diagnostics and enterprise evidence", expanded=False):
+            _render_enterprise_diagnostics_gate(company, environment)
+            _render_production_readiness_gate(company, environment)
+            _render_executive_scorecard_driver_gate(company, environment)
+            _render_forecast_exception_gate(company, environment)
+            _render_change_intelligence_gate(company, environment)
+            _render_closed_loop_operations_gate(company, environment)
+            _render_command_center_investigation_gate(company, environment)
 
 
 def _set_admin_tool_focus(tool: str, group: str, focus: str) -> None:
@@ -1436,7 +1448,13 @@ def render() -> None:
             st.caption("Build the DBA action queue from route priority, morning brief, escalation, handoff, incident, and advisor telemetry.")
             load_label = "Load Action Queue"
             if st.button(load_label, key="dba_control_room_build_ops", type="primary"):
-                st.session_state["dba_control_room_ops_ready"] = True
+                with query_budget_context(
+                    "evidence_click",
+                    section="DBA Control Room",
+                    workflow=ACTION_QUEUE_WORKFLOW,
+                    budget=EVIDENCE_CLICK_QUERY_BUDGET,
+                ):
+                    st.session_state["dba_control_room_ops_ready"] = True
                 st.rerun()
         else:
             action_queue = data.get("action_queue", _empty_df())

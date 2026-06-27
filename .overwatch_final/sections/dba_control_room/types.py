@@ -8,6 +8,7 @@ from config import (
     SECTION_BY_TITLE,
     normalize_section_name,
 )
+from performance import SECTION_ROUTE_QUERY_BUDGET, query_budget_context
 from utils.primitives import (
     safe_float,
     safe_int,
@@ -353,46 +354,47 @@ def _clear_dba_control_room_derived_state() -> None:
 
 def _jump(title: str, *, warehouse: str = "", user: str = "", workflow: str = "") -> None:
     """Navigate to a registered section and carry useful filter context."""
-    raw_target = SECTION_BY_TITLE.get(title, title)
-    target = normalize_section_name(raw_target)
-    if target not in set(SECTION_BY_TITLE.values()):
-        return
-    apply_navigation_state(raw_target)
-    if workflow:
-        if title in {"Query Workbench", "Workload Operations"}:
-            st.session_state["_workload_operations_explicit_workflow_request"] = True
-            if workflow == "Diagnosis":
-                st.session_state["workload_operations_workflow"] = "Query Investigation"
-            elif workflow == "History Search":
-                st.session_state["workload_operations_workflow"] = "Query Investigation"
-                st.session_state["query_analysis_active_view"] = "History Search"
-            else:
-                st.session_state["workload_operations_workflow"] = workflow
-        elif title == "DBA Control Room":
-            st.session_state["dba_control_room_active_view"] = normalize_dba_control_room_pane(workflow)
-        elif title == "Cost & Contract":
-            st.session_state["cost_contract_workflow"] = workflow
-        elif title == "Security Monitoring":
-            security_workflow = workflow if workflow in {
-                "Security Overview",
-                "Failed Logins",
-                "Risky Grants",
-                "Privilege Sprawl",
-                "Access Changes",
-                "Data Sharing Exposure",
-                "Security Alerts",
-                "Security Admin / Advanced",
-            } else "Security Overview"
-            st.session_state["security_posture_view"] = security_workflow
-            st.session_state["security_posture_workflow"] = security_workflow
-        elif title == "Security Posture":
-            st.session_state["security_posture_view"] = workflow
-            st.session_state["security_posture_workflow"] = workflow
-    if warehouse:
-        st.session_state["global_warehouse"] = warehouse
-        st.session_state["wh_filter"] = warehouse
-    if user:
-        st.session_state["global_user"] = user
+    with query_budget_context("route_action", section="DBA Control Room", workflow=workflow, budget=SECTION_ROUTE_QUERY_BUDGET):
+        raw_target = SECTION_BY_TITLE.get(title, title)
+        target = normalize_section_name(raw_target)
+        if target not in set(SECTION_BY_TITLE.values()):
+            return
+        apply_navigation_state(raw_target)
+        if workflow:
+            if title in {"Query Workbench", "Workload Operations"}:
+                st.session_state["_workload_operations_explicit_workflow_request"] = True
+                if workflow == "Diagnosis":
+                    st.session_state["workload_operations_workflow"] = "Query Investigation"
+                elif workflow == "History Search":
+                    st.session_state["workload_operations_workflow"] = "Query Investigation"
+                    st.session_state["query_analysis_active_view"] = "History Search"
+                else:
+                    st.session_state["workload_operations_workflow"] = workflow
+            elif title == "DBA Control Room":
+                st.session_state["dba_control_room_active_view"] = normalize_dba_control_room_pane(workflow)
+            elif title == "Cost & Contract":
+                st.session_state["cost_contract_workflow"] = workflow
+            elif title == "Security Monitoring":
+                security_workflow = workflow if workflow in {
+                    "Security Overview",
+                    "Failed Logins",
+                    "Risky Grants",
+                    "Privilege Sprawl",
+                    "Access Changes",
+                    "Data Sharing Exposure",
+                    "Security Alerts",
+                    "Security Admin / Advanced",
+                } else "Security Overview"
+                st.session_state["security_posture_view"] = security_workflow
+                st.session_state["security_posture_workflow"] = security_workflow
+            elif title == "Security Posture":
+                st.session_state["security_posture_view"] = workflow
+                st.session_state["security_posture_workflow"] = workflow
+        if warehouse:
+            st.session_state["global_warehouse"] = warehouse
+            st.session_state["wh_filter"] = warehouse
+        if user:
+            st.session_state["global_user"] = user
     st.rerun()
 
 

@@ -513,6 +513,7 @@ def artifact_inventory(root: Path) -> dict[str, Any]:
         "direct_sql_static_scan.json",
         "session_open_static_scan.json",
         "sql_performance_lint_findings.json",
+        "sql_performance_lint_file_inventory.json",
         "button_route_manifest.json",
         "button_route_results.json",
     }

@@ -338,7 +338,7 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
             ),
             workload_rows,
         )
-        self.assertIn("sections.security_posture_privilege_sprawl_view._render_privileged_grant_readiness", matrix_by_section["Security Monitoring"])
+        self.assertIn("sections.security_posture_privilege_sprawl_view.load_privileged_grant_readiness", matrix_by_section["Security Monitoring"])
         self.assertTrue(settings_actions, settings_actions)
         self.assertTrue(settings_results["passed"], settings_results)
         self.assertTrue(settings_results["setup_refresh_validated"], settings_results)

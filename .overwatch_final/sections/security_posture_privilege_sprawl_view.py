@@ -134,6 +134,23 @@ def _privilege_sprawl_summary(grants: pd.DataFrame | None) -> dict:
         "stale_admin_grants": int((admin_role_mask & (age_days >= 90)).sum()),
     }
 
+def load_privileged_grant_readiness(company: str, environment: str, grant_days: int) -> tuple[pd.DataFrame, str, dict]:
+    """Load and annotate privileged-grant evidence for the current security scope."""
+    grant_sql = _security_privileged_grant_review_sql(grant_days, company, environment)
+    grant_rows = run_query(
+        grant_sql,
+        ttl_key=f"security_privileged_grants_{company}_{environment}_{grant_days}",
+        tier="standard",
+        section="Security Posture",
+        max_rows=500,
+        query_boundary="evidence",
+    )
+    return (
+        _annotate_security_privileged_grant_readiness(grant_rows),
+        grant_sql,
+        _security_scope_meta(company, environment, grant_days),
+    )
+
 def _render_privileged_grant_readiness(
     company: str,
     environment: str,
@@ -163,20 +180,10 @@ def _render_privileged_grant_readiness(
                     workflow="Privilege Sprawl",
                     budget=EVIDENCE_CLICK_QUERY_BUDGET,
                 ):
-                    grant_sql = _security_privileged_grant_review_sql(grant_days, company, environment)
-                    grant_rows = run_query(
-                        grant_sql,
-                        ttl_key=f"security_privileged_grants_{company}_{environment}_{grant_days}",
-                        tier="standard",
-                        section="Security Posture",
-                        max_rows=500,
-                        query_boundary="evidence",
-                    )
-                    st.session_state["security_privileged_grants"] = _annotate_security_privileged_grant_readiness(grant_rows)
+                    grants, grant_sql, grant_meta = load_privileged_grant_readiness(company, environment, grant_days)
+                    st.session_state["security_privileged_grants"] = grants
                     st.session_state["security_privileged_grants_sql"] = grant_sql
-                    st.session_state["security_privileged_grants_meta"] = _security_scope_meta(
-                        company, environment, grant_days
-                    )
+                    st.session_state["security_privileged_grants_meta"] = grant_meta
             except Exception as exc:
                 st.session_state["security_privileged_grants"] = pd.DataFrame()
                 st.warning(f"Privileged grant status unavailable: {format_snowflake_error(exc)}")
@@ -279,6 +286,7 @@ __all__ = [
     '_security_privileged_grant_review_sql',
     '_annotate_security_privileged_grant_readiness',
     '_privilege_sprawl_summary',
+    'load_privileged_grant_readiness',
     '_render_privileged_grant_readiness',
     '_render_privilege_sprawl_workflow',
     'render_security_privilege_sprawl',

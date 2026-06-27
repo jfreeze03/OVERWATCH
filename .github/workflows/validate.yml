@@ -97,6 +97,9 @@ jobs:
       - name: Run unit tests
         run: python -m unittest discover -s tests
 
+      - name: Regenerate full app gauntlet proof artifacts
+        run: python -m unittest tests.test_full_app_gauntlet
+
       - name: Upload Decision Workspace proof artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -121,6 +124,7 @@ jobs:
             artifacts/direct_sql_static_scan.json
             artifacts/session_open_static_scan.json
             artifacts/sql_performance_lint_findings.json
+            artifacts/sql_performance_lint_file_inventory.json
             artifacts/cleanup/**
             artifacts/brand/**
             artifacts/button_route_manifest.json

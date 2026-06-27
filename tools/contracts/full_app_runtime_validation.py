@@ -100,7 +100,7 @@ EXPECTED_EVIDENCE_LOADERS_BY_SECTION = {
     "Security Monitoring": {
         "sections.security_posture_overview_view._load_security_brief",
         "sections.security_posture_access_changes_view.load_change_event_detail",
-        "sections.security_posture_privilege_sprawl_view._render_privileged_grant_readiness",
+        "sections.security_posture_privilege_sprawl_view.load_privileged_grant_readiness",
     },
 }
 
@@ -1385,14 +1385,28 @@ class RuntimeValidationHarness:
                     ))
             if hasattr(security_access_mod, "render_priority_dataframe"):
                 patches.append(patch.object(security_access_mod, "render_priority_dataframe", side_effect=lambda data=None, *args, **kwargs: self._capture_priority_dataframe(capture, data, *args, **kwargs)))
-            if hasattr(security_privilege_mod, "run_query"):
+            if hasattr(security_privilege_mod, "load_privileged_grant_readiness"):
                 if block_evidence:
-                    patches.append(patch.object(security_privilege_mod, "run_query", side_effect=AssertionError("first paint security privilege evidence load")))
+                    patches.append(patch.object(security_privilege_mod, "load_privileged_grant_readiness", side_effect=AssertionError("first paint security privilege evidence load")))
                 else:
                     patches.append(patch.object(
                         security_privilege_mod,
-                        "run_query",
-                        side_effect=lambda *args, **kwargs: _security_evidence_result("sections.security_posture_privilege_sprawl_view._render_privileged_grant_readiness", None, *args, **kwargs),
+                        "load_privileged_grant_readiness",
+                        side_effect=lambda *args, **kwargs: (
+                            _security_evidence_result(
+                                "sections.security_posture_privilege_sprawl_view.load_privileged_grant_readiness",
+                                None,
+                                *args,
+                                **kwargs,
+                            ),
+                            "",
+                            {
+                                "company": args[0] if args else "ALFA",
+                                "environment": args[1] if len(args) > 1 else "ALL",
+                                "days": args[2] if len(args) > 2 else 30,
+                                "source": "MART_SECURITY_EVIDENCE_RECENT",
+                            },
+                        ),
                     ))
             if hasattr(security_privilege_mod, "render_priority_dataframe"):
                 patches.append(patch.object(security_privilege_mod, "render_priority_dataframe", side_effect=lambda data=None, *args, **kwargs: self._capture_priority_dataframe(capture, data, *args, **kwargs)))
@@ -2209,6 +2223,8 @@ class RuntimeValidationHarness:
                 "proof_source": "runtime_click",
                 "control_key": key,
                 "clicked": True,
+                "owner": "Decision Workspace setup/admin",
+                "review_note": "Current Settings/Admin Setup Health action validated by runtime gauntlet.",
                 "observed_query_budget_contexts": context_names,
                 "expected_actual_boundaries": dict(button.get("expected_actual_boundaries") or {}),
                 "observed_actual_boundaries": {},
@@ -2289,6 +2305,8 @@ class RuntimeValidationHarness:
                 "section": str(button.get("section")),
                 "budget_context": str(button.get("expected_query_budget_context") or ""),
                 "expected_query_budget_context": str(button.get("expected_query_budget_context") or ""),
+                "owner": "Decision Workspace live/admin",
+                "review_note": "Current live/admin feature validated by runtime gauntlet.",
                 "explicit_click_required": True,
                 "admin_or_advanced_gated": bool(button.get("requires_admin")),
                 "first_paint_invocation": False,
@@ -2639,6 +2657,14 @@ class RuntimeValidationHarness:
             row for row in skipped_action_controls
             if str(row.get("skip_reason") or "").strip().lower() in generic_skip_reasons
         ]
+        unowned_skipped_action_controls = [
+            row for row in skipped_action_controls
+            if not str(row.get("owner") or "")
+        ]
+        expired_skipped_action_controls = [
+            row for row in skipped_action_controls
+            if str(row.get("expiration_or_review_note") or "").strip().lower() in {"", "expired", "past due", "todo"}
+        ]
         missing_action_controls = [
             row for row in skipped_action_controls
             if not str(row.get("skip_reason") or "")
@@ -2661,6 +2687,10 @@ class RuntimeValidationHarness:
             "missing_action_controls": missing_action_controls,
             "generic_skip_reason_count": len(generic_skipped_action_controls),
             "generic_skip_reason_controls": generic_skipped_action_controls,
+            "unowned_skip_reason_count": len(unowned_skipped_action_controls),
+            "unowned_skip_reason_controls": unowned_skipped_action_controls,
+            "expired_skip_reason_count": len(expired_skipped_action_controls),
+            "expired_skip_reason_controls": expired_skipped_action_controls,
             "duplicate_key_count": len(control_duplicate_keys),
             "blank_label_count": len(blank_label_controls),
             "unknown_action_control_count": len(unknown_controls),
@@ -2669,6 +2699,8 @@ class RuntimeValidationHarness:
             "passed": (
                 not missing_action_controls
                 and not generic_skipped_action_controls
+                and not unowned_skipped_action_controls
+                and not expired_skipped_action_controls
                 and not control_duplicate_keys
                 and not blank_label_controls
                 and not unknown_controls

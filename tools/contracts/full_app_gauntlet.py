@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import hashlib
 from typing import Any, Iterable, Mapping
 
 from tools.contracts.cleanup_inventory import write_cleanup_artifacts
@@ -45,6 +46,7 @@ REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS = {
     "artifacts/full_app_validation/forbidden_export_scan.json",
     "artifacts/full_app_validation/gauntlet_results.json",
     "artifacts/full_app_validation/gauntlet_failures.json",
+    "artifacts/full_app_validation/gauntlet_recomputed_invariants.json",
     "artifacts/full_app_validation/artifact_manifest.json",
     "artifacts/full_app_inventory/artifact_manifest.json",
     "artifacts/cleanup/cleanup_summary.json",
@@ -54,6 +56,7 @@ REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS = {
     "artifacts/direct_sql_static_scan.json",
     "artifacts/session_open_static_scan.json",
     "artifacts/sql_performance_lint_findings.json",
+    "artifacts/sql_performance_lint_file_inventory.json",
     "artifacts/query_search_proof.json",
 }
 
@@ -65,10 +68,7 @@ def _write_json(path: Path, payload: Any) -> None:
 
 def _scan_files(root: Path) -> tuple[list[Path], list[Path]]:
     python_files = sorted((root / ".overwatch_final").rglob("*.py"))
-    sql_files = [
-        *sorted((root / "snowflake" / "mart_setup").glob("*.sql")),
-        root / "snowflake" / "OVERWATCH_MART_SETUP.sql",
-    ]
+    sql_files = sorted((root / "snowflake").rglob("*.sql"))
     return python_files, sql_files
 
 
@@ -90,11 +90,28 @@ def write_static_contract_artifacts(root: Path | str = ".") -> dict[str, Any]:
 
     sql_findings = lint_sql_files(sql_files, root=root_path)
     _write_json(artifacts_dir / "sql_performance_lint_findings.json", sql_findings)
+    sql_inventory = {
+        "source": "full_app_gauntlet_static_scan",
+        "proof_source": "inventory_only",
+        "scanned_files": [
+            str(path.relative_to(root_path)).replace("\\", "/")
+            for path in sql_files
+        ],
+        "sql_file_count": len(sql_files),
+        "includes_validation_sql": any(path.name == "OVERWATCH_MART_VALIDATION.sql" for path in sql_files),
+        "includes_drop_sql": any(path.name == "OVERWATCH_MART_DROP.sql" for path in sql_files),
+        "includes_full_snowflake_tree": True,
+        "passed": any(path.name == "OVERWATCH_MART_VALIDATION.sql" for path in sql_files)
+        and any(path.name == "OVERWATCH_MART_DROP.sql" for path in sql_files),
+        "raw_sql_included": False,
+    }
+    _write_json(artifacts_dir / "sql_performance_lint_file_inventory.json", sql_inventory)
 
     return {
         "artifacts/direct_sql_static_scan.json": direct_artifact,
         "artifacts/session_open_static_scan.json": session_artifact,
         "artifacts/sql_performance_lint_findings.json": sql_findings,
+        "artifacts/sql_performance_lint_file_inventory.json": sql_inventory,
     }
 
 
@@ -141,11 +158,467 @@ def _manifest_failures(root: Path, manifest_rel: str) -> list[str]:
     return sorted(str(rel) for rel in missing)
 
 
+def _load_manifest_files(root: Path, manifest_rel: str) -> set[str]:
+    manifest_path = root / manifest_rel
+    if not manifest_path.exists():
+        return set()
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return set()
+    files = manifest.get("files", [])
+    return {str(path).replace("\\", "/") for path in files if isinstance(path, str)}
+
+
+def _manifest_unlisted_files(root: Path, manifest_rel: str, directory_rel: str) -> list[str]:
+    directory = root / directory_rel
+    if not directory.exists():
+        return []
+    listed = _load_manifest_files(root, manifest_rel)
+    actual = {
+        str(path.relative_to(root)).replace("\\", "/")
+        for path in directory.rglob("*")
+        if path.is_file()
+    }
+    return sorted(actual - listed)
+
+
+def _as_list(payload: object) -> list[Any]:
+    return list(payload) if isinstance(payload, list) else []
+
+
+def _as_mapping(payload: object) -> Mapping[str, Any]:
+    return payload if isinstance(payload, Mapping) else {}
+
+
+def _as_int(value: object) -> int:
+    try:
+        if value is None:
+            return 0
+        if isinstance(value, (int, float, str, bytes, bytearray)):
+            return int(value)
+    except (TypeError, ValueError):
+        return 0
+    return 0
+
+
+def _is_generic_skip(reason: object) -> bool:
+    return str(reason or "").strip().lower() in {
+        "",
+        "skip",
+        "skipped",
+        "n/a",
+        "none",
+        "not tested",
+        "todo",
+        "compatibility",
+        "legacy",
+        "historical",
+        "just in case",
+    }
+
+
+def _is_expired_review_note(note: object) -> bool:
+    normalized = str(note or "").strip().lower()
+    return not normalized or normalized in {"expired", "past due", "remove", "todo"}
+
+
+def _file_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+PRIMARY_SECTIONS = {
+    "Executive Landing",
+    "DBA Control Room",
+    "Alert Center",
+    "Cost & Contract",
+    "Workload Operations",
+    "Security Monitoring",
+}
+
+
+REQUIRED_QUERY_SEARCH_CASES = {
+    "render_no_click",
+    "exact_query_id",
+    "query_signature",
+    "related_executions",
+    "sql_preview",
+    "default_export_no_query_text",
+    "text_contains_no_autorun",
+    "text_contains_explicit_search",
+    "warehouse_prefill_no_autorun",
+    "account_usage_fallback_unconfirmed",
+    "account_usage_fallback_confirmed",
+    "no_result_search",
+    "slow_query_timeout",
+    "permission_denied",
+}
+
+
+REQUIRED_STRESS_CASES = {
+    "rapid_section_switching",
+    "repeated_route_clicks",
+    "repeated_evidence_loads",
+    "repeated_refresh_packet",
+    "repeated_query_search_interactions",
+    "account_usage_confirmation_matrix",
+    "advanced_scope_filters",
+    "empty_evidence_result",
+    "large_bounded_evidence_result",
+    "snowflake_unavailable",
+    "permission_denied",
+    "slow_query_timeout",
+    "stale_source_data",
+    "fixture_data_mode",
+    "live_feature_denied",
+    "many_row_export",
+    "no_row_export",
+    "cache_expiry_force_refresh",
+    "state_bleed_across_sections",
+    "duplicate_session_state_collision",
+}
+
+
+def recompute_full_app_invariants(payloads: Mapping[str, Any], *, root: Path | None = None) -> dict[str, Any]:
+    """Recompute hard product invariants from raw row artifacts."""
+
+    failures: list[dict[str, Any]] = []
+
+    def fail(gate: str, reason: str, *, count: int | None = None, rows: list[Any] | None = None) -> None:
+        row: dict[str, Any] = {
+            "gate": gate,
+            "reason": reason,
+            "recommendation": "Fix the raw runtime rows or owning app path, then rerun the full app gauntlet.",
+        }
+        if count is not None:
+            row["count"] = count
+        if rows is not None:
+            row["examples"] = rows[:5]
+        failures.append(row)
+
+    views = _as_list(payloads.get("artifacts/full_app_validation/view_results.json", []))
+    buttons = _as_list(payloads.get("artifacts/full_app_validation/button_click_results.json", []))
+    controls = _as_list(payloads.get("artifacts/full_app_validation/control_inventory.json", []))
+    control_click = _as_mapping(payloads.get("artifacts/full_app_validation/control_click_coverage.json", {}))
+    exports = _as_list(payloads.get("artifacts/full_app_validation/export_results.json", []))
+    case_payloads = _as_list(payloads.get("artifacts/full_app_validation/case_payload_results.json", []))
+    settings_rows = _as_list(payloads.get("artifacts/full_app_validation/settings_action_results.json", []))
+    live_rows = _as_list(payloads.get("artifacts/full_app_validation/live_feature_results.json", []))
+    evidence_rows = _as_list(payloads.get("artifacts/full_app_validation/evidence_loader_call_matrix.json", []))
+    query_search_rows = _as_list(payloads.get("artifacts/full_app_validation/query_search_results.json", []))
+    stress_rows = _as_list(payloads.get("artifacts/full_app_validation/stress_results.json", []))
+    forbidden_ui = _as_mapping(payloads.get("artifacts/full_app_validation/forbidden_ui_token_scan.json", {}))
+    forbidden_export = _as_mapping(payloads.get("artifacts/full_app_validation/forbidden_export_scan.json", {}))
+    cleanup_summary = _as_mapping(payloads.get("artifacts/cleanup/cleanup_summary.json", {}))
+    object_inventory = _as_mapping(payloads.get("artifacts/cleanup/sql_object_inventory.json", {}))
+    route_inventory = _as_mapping(payloads.get("artifacts/cleanup/route_state_inventory.json", {}))
+    direct_scan = _as_mapping(payloads.get("artifacts/direct_sql_static_scan.json", {}))
+    session_scan = _as_mapping(payloads.get("artifacts/session_open_static_scan.json", {}))
+    sql_lint = _as_list(payloads.get("artifacts/sql_performance_lint_findings.json", []))
+    sql_scan_inventory = _as_mapping(payloads.get("artifacts/sql_performance_lint_file_inventory.json", {}))
+
+    route_leaks = [
+        row for row in buttons
+        if _as_mapping(row).get("action_type") == "route"
+        and (
+            _as_int(_as_mapping(row).get("actual_snowflake_executions"))
+            or _as_int(_as_mapping(row).get("session_open_count"))
+            or _as_int(_as_mapping(row).get("direct_sql_event_count"))
+        )
+    ]
+    if route_leaks:
+        fail("recomputed_route_action_zero_cost", "Route actions opened sessions, ran queries, or emitted direct SQL.", count=len(route_leaks), rows=route_leaks)
+
+    first_paint_leaks = [
+        row for row in views
+        if _as_int(_as_mapping(_as_mapping(row).get("first_paint")).get("observed_non_packet_first_paint_events")) > 0
+    ]
+    if first_paint_leaks:
+        fail("recomputed_first_paint_zero_non_packet", "First paint emitted non-packet query events.", count=len(first_paint_leaks), rows=first_paint_leaks)
+    warm_first_paint_leaks = [
+        row for row in views
+        if _as_int(_as_mapping(_as_mapping(row).get("first_paint")).get("observed_warm_packet_queries")) > 0
+    ]
+    if warm_first_paint_leaks:
+        fail("recomputed_warm_first_paint_zero_packet", "Warm first paint emitted packet queries.", count=len(warm_first_paint_leaks), rows=warm_first_paint_leaks)
+
+    evidence_budget_violations = [
+        row for row in buttons
+        if _as_mapping(row).get("action_type") == "evidence_load"
+        and _as_int(_as_mapping(row).get("actual_snowflake_executions")) > _as_int(_as_mapping(row).get("expected_snowflake_execution_count") or 1)
+    ]
+    if evidence_budget_violations:
+        fail("recomputed_evidence_boundary_budget", "Evidence clicks exceeded expected evidence boundary count.", count=len(evidence_budget_violations), rows=evidence_budget_violations)
+
+    evidence_sections = {str(_as_mapping(row).get("section") or "") for row in evidence_rows if _as_mapping(row).get("loader_called")}
+    missing_sections = sorted(PRIMARY_SECTIONS - evidence_sections)
+    if missing_sections:
+        fail("recomputed_evidence_primary_section_coverage", "Primary sections are missing evidence loader coverage.", count=len(missing_sections), rows=missing_sections)
+    workload_kinds = {
+        str(_as_mapping(row).get("loader_kind") or "")
+        for row in evidence_rows
+        if _as_mapping(row).get("section") == "Workload Operations"
+    }
+    workload_loader_names = " ".join(
+        str(_as_mapping(row).get("expected_loader_name") or _as_mapping(row).get("observed_loader_name") or "")
+        for row in evidence_rows
+        if _as_mapping(row).get("section") == "Workload Operations"
+    ).lower()
+    workload_missing: list[str] = []
+    if "normal_evidence" not in workload_kinds:
+        workload_missing.append("normal_evidence")
+    if "query_search" not in workload_kinds:
+        workload_missing.append("query_search")
+    if "change" not in workload_loader_names and "pipeline" not in workload_loader_names and "task" not in workload_loader_names:
+        workload_missing.append("change_or_pipeline_task")
+    if workload_missing:
+        fail("recomputed_workload_evidence_coverage", "Workload evidence coverage is missing required loader kinds.", count=len(workload_missing), rows=workload_missing)
+
+    broad_loader_rows = [
+        row for row in evidence_rows
+        if str(_as_mapping(row).get("expected_loader_name") or "").endswith("run_query")
+        or str(_as_mapping(row).get("observed_loader_name") or "").endswith("run_query")
+        or any(token in str(_as_mapping(row).get("expected_loader_name") or "") for token in ("_render_", "renderer"))
+    ]
+    if broad_loader_rows:
+        fail("recomputed_evidence_loader_specificity", "Evidence loader rows use broad renderers or generic run_query.", count=len(broad_loader_rows), rows=broad_loader_rows)
+    evidence_source_violations = [
+        row for row in evidence_rows
+        if str(_as_mapping(row).get("loader_kind") or "") == "normal_evidence"
+        and (
+            bool(_as_mapping(row).get("requires_admin"))
+            or str(_as_mapping(row).get("query_boundary") or "") == "advanced_diagnostics"
+            or bool(_as_mapping(row).get("account_usage_used"))
+            or not bool(_as_mapping(row).get("normal_evidence_source_allowed"))
+            or _as_int(_as_mapping(row).get("max_rows")) > 500
+        )
+    ]
+    if evidence_source_violations:
+        fail("recomputed_normal_evidence_source", "Normal evidence source/boundary/account usage invariant failed.", count=len(evidence_source_violations), rows=evidence_source_violations)
+    evidence_count_mismatches = [
+        row for row in evidence_rows
+        if len({
+            _as_int(_as_mapping(row).get("row_count")),
+            _as_int(_as_mapping(row).get("returned_row_count", _as_mapping(row).get("row_count"))),
+            _as_int(_as_mapping(row).get("panel_row_count")),
+            _as_int(_as_mapping(row).get("export_row_count")),
+            _as_int(_as_mapping(row).get("case_row_count")),
+        }) > 1
+    ]
+    if evidence_count_mismatches:
+        fail("recomputed_evidence_row_count_match", "Evidence returned/panel/export/case row counts disagree.", count=len(evidence_count_mismatches), rows=evidence_count_mismatches)
+
+    export_failures: list[Any] = []
+    for row in exports:
+        item = _as_mapping(row)
+        parsed = _as_int(item.get("parsed_row_count"))
+        visible = _as_int(item.get("visible_row_count"))
+        content_length = _as_int(item.get("content_length"))
+        if parsed != visible:
+            export_failures.append({"reason": "row_count_mismatch", "row": item})
+        if visible > 0 and (not str(item.get("payload_file") or "") or not str(item.get("sha256") or "") or content_length <= 0):
+            export_failures.append({"reason": "missing_payload_hash_or_content", "row": item})
+        if bool(item.get("query_text_included")) and not bool(item.get("admin_only")):
+            export_failures.append({"reason": "query_text_in_daily_export", "row": item})
+        if _as_int(item.get("raw_internal_token_count")):
+            export_failures.append({"reason": "raw_internal_token_in_export", "row": item})
+        if root is not None and str(item.get("payload_file") or ""):
+            payload_path = root / str(item.get("payload_file"))
+            if not payload_path.exists():
+                export_failures.append({"reason": "missing_payload_file", "row": item})
+            else:
+                if str(item.get("sha256") or "") and _file_sha256(payload_path) != str(item.get("sha256")):
+                    export_failures.append({"reason": "payload_hash_mismatch", "row": item})
+                if payload_path.stat().st_size != content_length:
+                    export_failures.append({"reason": "payload_size_mismatch", "row": item})
+    if export_failures:
+        fail("recomputed_export_payload_integrity", "Export payload integrity or row-count validation failed.", count=len(export_failures), rows=export_failures)
+    default_export_violations = [
+        row for row in exports
+        if _as_mapping(row).get("section") == "Workload Operations"
+        and bool(_as_mapping(row).get("query_text_included"))
+    ]
+    if default_export_violations:
+        fail("recomputed_query_search_default_export", "Default Query Search export included query_text.", count=len(default_export_violations), rows=default_export_violations)
+    case_failures = [
+        row for row in case_payloads
+        if any(not str(_as_mapping(row).get(field) or "") for field in ("section", "workflow", "scope", "target", "freshness", "source", "summary"))
+        or _as_int(_as_mapping(row).get("row_count")) != _as_int(_as_mapping(row).get("visible_row_count"))
+    ]
+    if case_failures:
+        fail("recomputed_case_payload_integrity", "Case payloads are missing required fields or row counts disagree.", count=len(case_failures), rows=case_failures)
+
+    def _unclicked_without_current_skip(rows: list[Any], gate: str, label: str) -> None:
+        bad_rows = [
+            row for row in rows
+            if not bool(_as_mapping(row).get("clicked"))
+            and (
+                _is_generic_skip(_as_mapping(row).get("skip_reason"))
+                or not str(_as_mapping(row).get("owner") or "")
+                or _is_expired_review_note(_as_mapping(row).get("review_note") or _as_mapping(row).get("expiration_or_review_note"))
+            )
+        ]
+        if bad_rows:
+            fail(gate, f"{label} rows are neither clicked nor explicitly skipped with owner/review.", count=len(bad_rows), rows=bad_rows)
+
+    _unclicked_without_current_skip(settings_rows, "recomputed_settings_click_or_skip", "Settings/Admin action")
+    _unclicked_without_current_skip(live_rows, "recomputed_live_click_or_skip", "Live feature")
+    settings_budget_failures = [
+        row for row in settings_rows
+        if bool(_as_mapping(row).get("clicked"))
+        and str(_as_mapping(row).get("expected_query_budget_context") or "")
+        and str(_as_mapping(row).get("expected_query_budget_context") or "") not in _as_list(_as_mapping(row).get("observed_query_budget_contexts") or _as_mapping(row).get("observed_contexts") or [])
+    ]
+    if settings_budget_failures:
+        fail("recomputed_settings_budget_context", "Clicked Settings/Admin action lacks expected budget context.", count=len(settings_budget_failures), rows=settings_budget_failures)
+    live_budget_failures = [
+        row for row in live_rows
+        if bool(_as_mapping(row).get("clicked"))
+        and (
+            str(_as_mapping(row).get("expected_query_budget_context") or "") not in _as_list(_as_mapping(row).get("observed_contexts") or _as_mapping(row).get("observed_query_budget_contexts") or [])
+            or bool(_as_mapping(row).get("first_paint_invocation"))
+            or bool(_as_mapping(row).get("route_invocation"))
+            or bool(_as_mapping(row).get("raw_error_visible_daily"))
+        )
+    ]
+    if live_budget_failures:
+        fail("recomputed_live_budget_gating", "Clicked live feature lacks budget/gating/sanitization guarantees.", count=len(live_budget_failures), rows=live_budget_failures)
+
+    query_cases = {str(_as_mapping(row).get("case") or ""): _as_mapping(row) for row in query_search_rows}
+    missing_query_cases = sorted(REQUIRED_QUERY_SEARCH_CASES - set(query_cases))
+    if missing_query_cases:
+        fail("recomputed_query_search_case_coverage", "Query Search required cases are missing.", count=len(missing_query_cases), rows=missing_query_cases)
+    query_failures: list[Any] = []
+    zero_cost_cases = {"render_no_click", "text_contains_no_autorun", "warehouse_prefill_no_autorun", "account_usage_fallback_unconfirmed"}
+    for case in zero_cost_cases:
+        row = query_cases.get(case, {})
+        if _as_int(row.get("session_open_count")) or _as_int(row.get("snowflake_execution_count")) or _as_int(row.get("direct_sql_event_count")):
+            query_failures.append({"case": case, "reason": "expected_zero_cost", "row": row})
+    bounds = {"exact_query_id": 1, "query_signature": 200, "related_executions": 50, "sql_preview": 1}
+    for case, limit in bounds.items():
+        row = query_cases.get(case, {})
+        if row and _as_int(row.get("max_rows")) > limit:
+            query_failures.append({"case": case, "reason": "max_rows_over_limit", "row": row})
+    preview = query_cases.get("sql_preview", {})
+    if preview and bool(preview.get("raw_sql_visible_in_daily_ui")):
+        query_failures.append({"case": "sql_preview", "reason": "raw_sql_visible", "row": preview})
+    default_export = query_cases.get("default_export_no_query_text", {})
+    if default_export and bool(default_export.get("query_text_included")):
+        query_failures.append({"case": "default_export_no_query_text", "reason": "query_text_included", "row": default_export})
+    confirmed = query_cases.get("account_usage_fallback_confirmed", {})
+    if confirmed:
+        boundaries = _as_mapping(confirmed.get("observed_boundaries"))
+        if set(boundaries) - {"account_usage"}:
+            query_failures.append({"case": "account_usage_fallback_confirmed", "reason": "unexpected_boundary", "row": confirmed})
+    for case in ("permission_denied", "slow_query_timeout"):
+        row = query_cases.get(case, {})
+        if row and (bool(row.get("raw_error_visible_daily")) or not bool(row.get("sanitized_error_state", True))):
+            query_failures.append({"case": case, "reason": "unsanitized_error", "row": row})
+    if query_failures:
+        fail("recomputed_query_search_invariants", "Query Search runtime invariants failed.", count=len(query_failures), rows=query_failures)
+
+    stress_cases = {str(_as_mapping(row).get("case") or ""): _as_mapping(row) for row in stress_rows}
+    missing_stress = sorted(REQUIRED_STRESS_CASES - set(stress_cases))
+    if missing_stress:
+        fail("recomputed_stress_case_coverage", "Required stress cases are missing.", count=len(missing_stress), rows=missing_stress)
+    stress_failures = [
+        row for row in stress_rows
+        if not isinstance(_as_mapping(row).get("threshold"), Mapping)
+        or "query_counts_by_boundary" not in _as_mapping(row)
+        or not bool(_as_mapping(row).get("threshold_passed"))
+        or bool(_as_list(_as_mapping(row).get("threshold_failures")))
+        or not _as_list(_as_mapping(row).get("sequence_steps"))
+    ]
+    if stress_failures:
+        fail("recomputed_stress_thresholds", "Stress rows are missing thresholds/actuals or failed thresholds.", count=len(stress_failures), rows=stress_failures)
+    large_evidence = stress_cases.get("large_bounded_evidence_result", {})
+    if large_evidence and _as_int(_as_mapping(large_evidence.get("export_summary")).get("export_row_count")) > 500:
+        fail("recomputed_large_evidence_bound", "Large bounded evidence stress exceeded 500 rows.", count=1, rows=[large_evidence])
+
+    forbidden_count = _as_int(forbidden_ui.get("blocked_count")) + _as_int(forbidden_export.get("blocked_count"))
+    if forbidden_count:
+        fail("recomputed_forbidden_token_scan", "Forbidden token scans reported blocked findings.", count=forbidden_count)
+    unknown_sql_count = len(_as_list(object_inventory.get("unknown")))
+    if unknown_sql_count:
+        fail("recomputed_unknown_sql_objects", "SQL object inventory contains unknown objects.", count=unknown_sql_count, rows=_as_list(object_inventory.get("unknown")))
+    dead_route_count = len(_as_list(route_inventory.get("dead_routes")))
+    if dead_route_count:
+        fail("recomputed_dead_routes", "Route inventory contains dead routes.", count=dead_route_count, rows=_as_list(route_inventory.get("dead_routes")))
+    stale_count = _as_int(cleanup_summary.get("stale_generated_artifact_count"))
+    if stale_count:
+        fail("recomputed_stale_artifacts", "Cleanup summary contains stale artifacts.", count=stale_count)
+    if _as_int(direct_scan.get("blocked_count")):
+        fail("recomputed_direct_sql_scan", "Direct-SQL static scan has blocking findings.", count=_as_int(direct_scan.get("blocked_count")))
+    if _as_int(session_scan.get("blocked_count")):
+        fail("recomputed_session_open_scan", "Session-open static scan has blocking findings.", count=_as_int(session_scan.get("blocked_count")))
+    sql_errors = [row for row in sql_lint if _as_mapping(row).get("severity") == "error"]
+    if sql_errors:
+        fail("recomputed_sql_lint_errors", "SQL performance linter has error findings.", count=len(sql_errors), rows=sql_errors)
+    if sql_scan_inventory and (
+        not bool(sql_scan_inventory.get("includes_validation_sql"))
+        or not bool(sql_scan_inventory.get("includes_drop_sql"))
+        or not bool(sql_scan_inventory.get("includes_full_snowflake_tree"))
+    ):
+        fail("recomputed_sql_scan_file_coverage", "SQL static scan inventory is missing validation, drop, or full-tree coverage.", rows=[sql_scan_inventory])
+
+    if root is not None:
+        unlisted = [
+            *_manifest_unlisted_files(root, "artifacts/full_app_validation/artifact_manifest.json", "artifacts/full_app_validation"),
+            *_manifest_unlisted_files(root, "artifacts/full_app_inventory/artifact_manifest.json", "artifacts/full_app_inventory"),
+            *_manifest_unlisted_files(root, "artifacts/cleanup/artifact_manifest.json", "artifacts/cleanup"),
+        ]
+        if unlisted:
+            fail("recomputed_manifest_unlisted_files", "Generated artifact files are not listed in their manifest.", count=len(unlisted), rows=unlisted)
+
+    control_counts_reconcile = (
+        _as_int(control_click.get("action_control_count"))
+        == _as_int(control_click.get("clicked_action_control_count"))
+        + _as_int(control_click.get("explicitly_skipped_action_control_count"))
+    )
+    control_hard_failures = [
+        name for name in (
+            "missing_action_control_count",
+            "generic_skip_reason_count",
+            "unowned_skip_reason_count",
+            "expired_skip_reason_count",
+            "duplicate_key_count",
+            "blank_label_count",
+            "unknown_action_control_count",
+        )
+        if _as_int(control_click.get(name)) > 0
+    ]
+    if not control_counts_reconcile or control_hard_failures:
+        fail("recomputed_control_click_coverage", "Control click coverage counts do not reconcile or contain hard failures.", rows=[control_click])
+
+    passed = not failures
+    return {
+        "source": "full_app_gauntlet",
+        "proof_source": "runtime_click",
+        "passed": passed,
+        "failure_count": len(failures),
+        "failures": failures,
+        "raw_sql_included": False,
+        "checked_counts": {
+            "view_count": len(views),
+            "button_click_count": len(buttons),
+            "control_count": len(controls),
+            "export_count": len(exports),
+            "case_payload_count": len(case_payloads),
+            "settings_action_count": len(settings_rows),
+            "live_feature_count": len(live_rows),
+            "evidence_loader_row_count": len(evidence_rows),
+            "query_search_case_count": len(query_search_rows),
+            "stress_case_count": len(stress_rows),
+        },
+    }
+
+
 def evaluate_full_app_gauntlet(
     payloads: Mapping[str, Any],
     *,
     missing_artifacts: Iterable[str] = (),
     manifest_missing_artifacts: Iterable[str] = (),
+    root: Path | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Evaluate the hard gate from artifact payloads without touching disk."""
 
@@ -167,6 +640,17 @@ def evaluate_full_app_gauntlet(
     for path, payload in payloads.items():
         for failure in _walk_failed_passed_flags(payload, path):
             _append_failure(failures, "sub_artifact_passed_flag", failure["reason"], path=failure["path"])
+
+    recomputed = recompute_full_app_invariants(payloads, root=root)
+    if not bool(recomputed.get("passed")):
+        for failure in _as_list(recomputed.get("failures")):
+            if isinstance(failure, Mapping):
+                _append_failure(
+                    failures,
+                    str(failure.get("gate") or "recomputed_invariants"),
+                    str(failure.get("reason") or "Raw-row invariant recomputation failed."),
+                    count=_as_int(failure.get("count")) if "count" in failure else None,
+                )
 
     summary = payloads.get("artifacts/full_app_validation/app_validation_summary.json", {})
     if not isinstance(summary, Mapping):
@@ -273,10 +757,13 @@ def evaluate_full_app_gauntlet(
         "proof_source": "runtime_click",
         "passed": passed,
         "hard_gate_passed": passed,
+        "recomputed_invariants_passed": bool(recomputed.get("passed")),
+        "recomputed_invariant_failure_count": _as_int(recomputed.get("failure_count")),
         "checked_artifact_count": len(payloads),
         "required_artifact_count": len(REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS),
         "failure_count": len(failures),
         "failures": failures,
+        "recomputed_invariants": recomputed,
         "raw_sql_included": False,
     }
     failure_payload = {
@@ -288,6 +775,27 @@ def evaluate_full_app_gauntlet(
         "raw_sql_included": False,
     }
     return results, failure_payload
+
+
+def _ensure_manifest_entries(root: Path, manifest_rel: str, entries: Iterable[str]) -> dict[str, Any]:
+    manifest_path = root / manifest_rel
+    if manifest_path.exists():
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            manifest = {}
+    else:
+        manifest = {}
+    files = {
+        str(path).replace("\\", "/")
+        for path in manifest.get("files", [])
+        if isinstance(path, str)
+    }
+    files.update(str(path).replace("\\", "/") for path in entries)
+    manifest["files"] = sorted(files)
+    manifest.setdefault("proof_source", "runtime_render")
+    _write_json(manifest_path, manifest)
+    return manifest
 
 
 def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
@@ -304,6 +812,20 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
         **validation_artifacts,
         **static_artifacts,
     }
+    recomputed = recompute_full_app_invariants(artifacts, root=root_path)
+    recomputed_rel = "artifacts/full_app_validation/gauntlet_recomputed_invariants.json"
+    _write_json(root_path / recomputed_rel, recomputed)
+    artifacts[recomputed_rel] = recomputed
+    manifest = _ensure_manifest_entries(
+        root_path,
+        "artifacts/full_app_validation/artifact_manifest.json",
+        {
+            recomputed_rel,
+            "artifacts/full_app_validation/gauntlet_results.json",
+            "artifacts/full_app_validation/gauntlet_failures.json",
+        },
+    )
+    artifacts["artifacts/full_app_validation/artifact_manifest.json"] = manifest
     missing = sorted(
         rel for rel in REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS
         if rel not in artifacts or not (root_path / rel).exists()
@@ -317,6 +839,7 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
         artifacts,
         missing_artifacts=missing,
         manifest_missing_artifacts=manifest_missing,
+        root=root_path,
     )
     _write_json(root_path / "artifacts" / "full_app_validation" / "gauntlet_results.json", results)
     _write_json(root_path / "artifacts" / "full_app_validation" / "gauntlet_failures.json", failures)

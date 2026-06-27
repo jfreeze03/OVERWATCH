@@ -68,6 +68,9 @@ jobs:
       - name: Run full app validation tests
         run: python -m unittest tests.test_full_app_runtime_validation
 
+      - name: Run full app gauntlet tests
+        run: python -m unittest tests.test_full_app_gauntlet
+
       - name: Run query-performance contract tests
         run: python -m unittest tests.test_decision_workspace_performance_budget.DecisionWorkspacePerformanceBudgetTests.test_query_contract_linter_flags_risky_shapes_and_passes_packet_lookup
 

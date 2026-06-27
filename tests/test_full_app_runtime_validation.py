@@ -471,8 +471,10 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
 
     def test_runtime_package_does_not_import_full_validation_tools(self):
         forbidden = (
+            "tools.contracts.full_app_gauntlet",
             "tools.contracts.full_app_runtime_validation",
             "tools.contracts.full_app_validation_inventory",
+            "full_app_gauntlet",
             "full_app_runtime_validation",
             "full_app_validation_inventory",
         )

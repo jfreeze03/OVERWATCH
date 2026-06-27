@@ -1909,6 +1909,7 @@ class RuntimeValidationHarness:
                     "proof_source": "runtime_render",
                     "section": section,
                     "workflow": workflow,
+                    "elapsed_ms": elapsed_ms,
                     "cold_first_paint_ms": elapsed_ms,
                     "warm_first_paint_ms": 0,
                     "route_action_ms": 0,
@@ -2646,6 +2647,18 @@ class RuntimeValidationHarness:
         unhandled_exceptions = [
             row for row in view_results if row.get("raised") and row.get("raised") != "rerun"
         ]
+        permission_denied_rows = [
+            row for row in [*query_search_results, *stress_results]
+            if str(row.get("case") or "") in {"permission_denied", "live_feature_denied"}
+        ]
+        unavailable_snowflake_rows = [
+            row for row in stress_results
+            if str(row.get("case") or "") == "snowflake_unavailable"
+        ]
+        timeout_rows = [
+            row for row in [*query_search_results, *stress_results]
+            if str(row.get("case") or "") in {"slow_query_timeout"}
+        ]
         error_inventory = {
             "source": "runtime_render",
             "proof_source": "runtime_render",
@@ -2654,16 +2667,151 @@ class RuntimeValidationHarness:
             "raw_errors_visible_daily": False,
             "settings_errors": settings_capture.errors,
             "section_errors": errors,
-            "passed": True,
+            "permission_denied_states": permission_denied_rows,
+            "unavailable_snowflake_states": unavailable_snowflake_rows,
+            "timeout_simulations": timeout_rows,
+            "sanitized_error_state_tests": [
+                {
+                    "case": str(row.get("case") or ""),
+                    "sanitized_error_state": bool(row.get("sanitized_error_state", True)),
+                    "raw_error_visible_daily": bool(row.get("raw_error_visible_daily", False)),
+                }
+                for row in [*permission_denied_rows, *unavailable_snowflake_rows, *timeout_rows]
+            ],
+            "passed": (
+                not unhandled_exceptions
+                and not settings_capture.errors
+                and not [
+                    row for row in [*permission_denied_rows, *unavailable_snowflake_rows, *timeout_rows]
+                    if bool(row.get("raw_error_visible_daily", False))
+                ]
+            ),
         }
+        slowest_views = [
+            _with_runtime_recommendation(
+                row,
+                "Keep first paint to the current decision packet lookup and avoid adding live/evidence work.",
+            )
+            for row in sorted(timings, key=lambda item: float(item.get("elapsed_ms") or 0), reverse=True)[:10]
+        ]
+        slowest_clicks = [
+            _with_runtime_recommendation(
+                row,
+                "Check budget context, query boundary, and rerun behavior before adding work to this action.",
+            )
+            for row in sorted(button_results, key=lambda item: float(item.get("elapsed_ms") or 0), reverse=True)[:10]
+        ]
+        slowest_exports = [
+            _with_runtime_recommendation(
+                row,
+                "Keep export rows bounded and continue scanning the payload file instead of storing payload text in JSON.",
+            )
+            for row in sorted(export_results, key=lambda item: int(item.get("content_length") or 0), reverse=True)[:10]
+        ]
+        slowest_live_features = [
+            _with_runtime_recommendation(
+                row,
+                "Keep live/admin work behind explicit gated clicks with row limits or timeout controls.",
+            )
+            for row in sorted(live_feature_results, key=lambda item: float(item.get("elapsed_ms") or 0), reverse=True)[:10]
+        ]
+        views_with_most_controls = [
+            _with_runtime_recommendation(
+                {
+                    "view_id": view_id,
+                    "control_count": count,
+                    "source": "runtime_control_inventory",
+                    "proof_source": "runtime_render",
+                },
+                "Split or group controls only if the current workflow becomes hard to scan.",
+            )
+            for view_id, count in Counter(str(row.get("view_id") or "") for row in control_inventory).most_common(10)
+        ]
+        skipped_controls_by_reason = [
+            {
+                "skip_reason": reason,
+                "count": count,
+                "source": "runtime_button_click",
+                "proof_source": "runtime_click",
+                "recommendation": "Keep skip reasons current and remove the control if the action is no longer reachable.",
+            }
+            for reason, count in sorted(Counter(str(row.get("skip_reason") or "") for row in button_results if row.get("skip_reason")).items())
+        ]
+        slow_action_threshold_ms = 500
+        slow_action_rows = [
+            row for row in button_results
+            if float(row.get("elapsed_ms") or 0) > slow_action_threshold_ms
+        ]
         slow_runtime_inventory = {
             "source": "runtime_timing_capture",
             "proof_source": "runtime_render",
-            "slowest_views": sorted(timings, key=lambda row: float(row.get("cold_first_paint_ms") or 0), reverse=True)[:10],
-            "slowest_clicks": sorted(button_results, key=lambda row: float(row.get("elapsed_ms") or 0), reverse=True)[:10],
-            "slowest_exports": sorted(export_results, key=lambda row: int(row.get("content_length") or 0), reverse=True)[:10],
+            "slow_action_threshold_ms": slow_action_threshold_ms,
+            "slow_action_count": len(slow_action_rows),
+            "slow_actions": [
+                _with_runtime_recommendation(
+                    row,
+                    "Investigate this click path if it crosses the product threshold in live runs.",
+                )
+                for row in slow_action_rows
+            ],
+            "slowest_views": slowest_views,
+            "slowest_clicks": slowest_clicks,
+            "slowest_exports": slowest_exports,
+            "slowest_live_features": slowest_live_features,
+            "views_with_most_controls": views_with_most_controls,
+            "buttons_with_no_contract": unknown_controls,
+            "skipped_controls_by_reason": skipped_controls_by_reason,
+            "warnings_errors_by_view": [
+                {
+                    "section": row.get("section", ""),
+                    "workflow": row.get("workflow", ""),
+                    "warning_count": row.get("warning_count", 0),
+                    "error_count": row.get("error_count", 0),
+                    "recommendation": "Keep warning and error states sanitized and tied to the owning view.",
+                }
+                for row in view_results
+                if row.get("warning_count") or row.get("error_count")
+            ],
+            "query_session_direct_sql_hot_spots": [
+                _with_runtime_recommendation(
+                    row,
+                    "Keep route actions at zero cost and evidence actions to one bounded evidence boundary.",
+                )
+                for row in button_results
+                if int(row.get("actual_snowflake_executions") or 0)
+                or int(row.get("session_open_count") or 0)
+                or int(row.get("direct_sql_event_count") or 0)
+            ][:10],
             "passed": True,
         }
+        route_query_leaks = [
+            row for row in button_results
+            if row.get("action_type") == "route"
+            and (
+                int(row.get("actual_snowflake_executions") or 0)
+                or int(row.get("session_open_count") or 0)
+                or int(row.get("direct_sql_event_count") or 0)
+            )
+        ]
+        first_paint_query_leaks = [
+            row for row in view_results
+            if int(dict(row.get("first_paint") or {}).get("observed_non_packet_first_paint_events") or 0) > 0
+        ]
+        account_usage_unconfirmed_leaks = [
+            row for row in query_search_results
+            if row.get("case") == "account_usage_fallback_unconfirmed"
+            and (
+                int(row.get("snowflake_execution_count") or 0)
+                or int(row.get("session_open_count") or 0)
+                or int(row.get("direct_sql_event_count") or 0)
+            )
+        ]
+        stale_artifact_count = int(len(cleanup_inventory.get("artifacts", {}).get("stale_generated_artifacts", [])))
+        deleted_or_drop_candidate_count = (
+            int(cleanup_inventory.get("python_modules", {}).get("deletion_candidate_count") or 0)
+            + int(cleanup_inventory.get("snowflake_objects", {}).get("obsolete_drop_candidate_count") or 0)
+            + int(len(cleanup_inventory.get("removed_stale_artifacts", [])))
+        )
         risk_inventory = {
             "source": "runtime_validation_risk_capture",
             "proof_source": "runtime_click",
@@ -2700,6 +2848,13 @@ class RuntimeValidationHarness:
                 row for row in export_results
                 if bool(row.get("query_text_included")) or int(row.get("raw_internal_token_count") or 0) > 0
             ],
+            "cleanup_risks": {
+                "stale_artifact_count": stale_artifact_count,
+                "deleted_or_drop_candidate_count": deleted_or_drop_candidate_count,
+                "unknown_sql_object_count": len(cleanup_inventory.get("snowflake_objects", {}).get("unknown", [])),
+                "dead_route_count": len(cleanup_inventory.get("routes", {}).get("dead_routes", [])),
+            },
+            "slow_action_risks": slow_action_rows,
             "raw_error_visibility": False,
             "passed": (
                 not unknown_controls
@@ -2724,8 +2879,13 @@ class RuntimeValidationHarness:
                     row for row in export_results
                     if bool(row.get("query_text_included")) or int(row.get("raw_internal_token_count") or 0) > 0
                 ]
+                and len(cleanup_inventory.get("snowflake_objects", {}).get("unknown", [])) == 0
+                and len(cleanup_inventory.get("routes", {}).get("dead_routes", [])) == 0
             ),
         }
+        total_controls_clicked = sum(1 for row in button_results if row.get("clicked"))
+        total_settings_actions_clicked = sum(1 for row in settings_click_results if row.get("clicked"))
+        total_live_features_clicked = sum(1 for row in live_feature_results if row.get("clicked"))
         summary = {
             "generated_at": _now(),
             "validation_source": "runtime_render_and_click",
@@ -2763,6 +2923,20 @@ class RuntimeValidationHarness:
             "unhandled_exception_count": len(unhandled_exceptions),
             "query_budget_passed": query_budget_results["passed"],
             "session_direct_sql_passed": session_direct_sql_results["passed"],
+            "total_views_rendered": len(view_results),
+            "total_controls_found": len(control_inventory),
+            "total_controls_clicked": total_controls_clicked,
+            "total_exports_validated": len(export_results),
+            "total_settings_actions_clicked": total_settings_actions_clicked,
+            "total_live_features_clicked": total_live_features_clicked,
+            "total_evidence_loaders_reached": sum(1 for row in evidence_loader_call_matrix if row.get("loader_called")),
+            "total_stress_cases_executed": len(stress_results),
+            "slow_action_count": len(slow_action_rows),
+            "route_query_leak_count": len(route_query_leaks),
+            "first_paint_query_leak_count": len(first_paint_query_leaks),
+            "account_usage_unconfirmed_leak_count": len(account_usage_unconfirmed_leaks),
+            "stale_artifact_count": stale_artifact_count,
+            "deleted_or_drop_candidate_count": deleted_or_drop_candidate_count,
             "raw_sql_included": False,
         }
         summary["all_passed"] = (
@@ -3172,6 +3346,12 @@ class RuntimeValidationHarness:
 
 def _write_json(path: Path, payload: Any) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _with_runtime_recommendation(row: Mapping[str, Any], recommendation: str) -> dict[str, Any]:
+    enriched = dict(row)
+    enriched.setdefault("recommendation", recommendation)
+    return enriched
 
 
 def write_full_app_validation_artifacts(root: Path | str = ".") -> dict[str, Any]:

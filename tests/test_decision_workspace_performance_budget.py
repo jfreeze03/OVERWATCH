@@ -15,6 +15,12 @@ ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
 
+from route_registry import SECTION_WORKFLOW_CONTRACT  # noqa: E402
+from sections.button_action_contracts import (  # noqa: E402
+    contract_target_is_valid,
+    resolve_button_action_contract,
+)
+
 
 PRIMARY_SECTIONS = (
     "Executive Landing",
@@ -23,6 +29,54 @@ PRIMARY_SECTIONS = (
     "Cost & Contract",
     "Workload Operations",
     "Security Monitoring",
+)
+
+
+WORKFLOW_STATE_KEY_BY_SECTION = {
+    "Executive Landing": "executive_landing_workflow",
+    "DBA Control Room": "dba_control_room_active_view",
+    "Alert Center": "alert_center_active_view",
+    "Cost & Contract": "cost_contract_workflow",
+    "Workload Operations": "workload_operations_workflow",
+    "Security Monitoring": "security_posture_view",
+}
+
+
+SECTION_WORKFLOW_MATRIX = {
+    section: SECTION_WORKFLOW_CONTRACT.get(section, ())
+    for section in PRIMARY_SECTIONS
+}
+
+
+EXTRA_WORKFLOW_LENS_CASES: tuple[tuple[str, str, dict[str, object]], ...] = (
+    ("Alert Center", "Alert Settings / Admin", {"alert_center_admin_view": "Delivery & Automation"}),
+    ("Alert Center", "Alert Settings / Admin", {"alert_center_admin_view": "Suppression Windows"}),
+    ("Alert Center", "Alert Settings / Admin", {"alert_center_admin_view": "Detection Catalog"}),
+    ("Cost & Contract", "Cost Explorer", {"cc_explorer_lens": "Warehouse"}),
+    ("Cost & Contract", "Cost Explorer", {"cc_explorer_lens": "User / Role"}),
+    ("Cost & Contract", "Cost Explorer", {"cc_explorer_lens": "Database"}),
+    ("Cost & Contract", "Cost Explorer", {"cc_explorer_lens": "Service"}),
+    ("Cost & Contract", "Cost Explorer", {"cc_explorer_lens": "Department / Cost Center"}),
+    ("Workload Operations", "Query Investigation", {"workload_query_lens": "History Search"}),
+    ("Workload Operations", "Query Investigation", {"workload_query_lens": "Detailed Diagnosis"}),
+    ("Workload Operations", "Query Investigation", {"workload_query_lens": "Top SQL"}),
+    ("Workload Operations", "Query Investigation", {"workload_query_lens": "User / Role"}),
+    ("Workload Operations", "Query Investigation", {"workload_query_lens": "Warehouse"}),
+    ("Workload Operations", "Pipeline & Task Health", {"workload_operations_pipeline_focus": "Failed Tasks"}),
+    ("Workload Operations", "Pipeline & Task Health", {"workload_operations_pipeline_focus": "Failed Procedures"}),
+    ("Workload Operations", "Pipeline & Task Health", {"workload_operations_pipeline_focus": "Load Issues & SLA"}),
+    ("Workload Operations", "Pipeline & Task Health", {"workload_operations_pipeline_focus": "SLA Risk"}),
+    ("Workload Operations", "Pipeline & Task Health", {"workload_operations_pipeline_focus": "Suspended Tasks"}),
+    ("Security Monitoring", "Risky Grants", {"security_risky_grants_lens": "Users"}),
+    ("Security Monitoring", "Risky Grants", {"security_risky_grants_lens": "Roles"}),
+    ("Security Monitoring", "Risky Grants", {"security_risky_grants_lens": "Databases"}),
+    ("Security Monitoring", "Risky Grants", {"security_risky_grants_lens": "Schemas"}),
+    ("Security Monitoring", "Risky Grants", {"security_risky_grants_lens": "Future Grants"}),
+    ("Security Monitoring", "Risky Grants", {"security_risky_grants_lens": "Ownership"}),
+    ("Security Monitoring", "Access Changes", {"security_access_changes_lens": "Recent Grants"}),
+    ("Security Monitoring", "Access Changes", {"security_access_changes_lens": "Revokes"}),
+    ("Security Monitoring", "Access Changes", {"security_access_changes_lens": "Role Changes"}),
+    ("Security Monitoring", "Access Changes", {"security_access_changes_lens": "Admin Changes"}),
 )
 
 
@@ -570,6 +624,108 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             return "route"
         return "fallback"
 
+    def _current_workflow(self, section: str, state: dict[str, object]) -> str:
+        key = WORKFLOW_STATE_KEY_BY_SECTION.get(section, "")
+        value = str(state.get(key, "") or "")
+        if value:
+            return value
+        return SECTION_WORKFLOW_CONTRACT.get(section, ("Overview",))[0]
+
+    def _base_state(self, section: str, workflow: str | None = None) -> dict[str, object]:
+        state: dict[str, object] = {
+            "active_company": "ALFA",
+            "global_environment": "ALL",
+            "executive_landing_workflow": "Executive Overview",
+            "cost_contract_workflow": "Cost Overview",
+            "dba_control_room_active_view": "Morning Cockpit",
+            "alert_center_active_view": "Active Alerts",
+            "workload_operations_workflow": "Workload Overview",
+            "security_posture_view": "Security Overview",
+            "security_posture_workflow": "Security Overview",
+        }
+        selected_workflow = workflow or SECTION_WORKFLOW_CONTRACT.get(section, ("",))[0]
+        key = WORKFLOW_STATE_KEY_BY_SECTION.get(section, "")
+        if key and selected_workflow:
+            state[key] = selected_workflow
+        if section == "Security Monitoring" and selected_workflow:
+            state["security_posture_workflow"] = selected_workflow
+        return state
+
+    def _button_contract_payload(
+        self,
+        *,
+        section: str,
+        workflow: str,
+        label: str,
+        key: str,
+        fallback_action_type: str = "fallback",
+        expected_artifact: str = "",
+    ) -> dict[str, object]:
+        contract = resolve_button_action_contract(
+            section=section,
+            workflow=workflow,
+            label=label,
+            key=key,
+        )
+        if contract is None:
+            return {
+                "action_type": "unknown",
+                "expected_target_section": "",
+                "expected_target_workflow": "",
+                "expected_state_updates": {},
+                "expected_artifact": expected_artifact,
+                "heavy_query_allowed": False,
+                "account_usage_allowed": False,
+                "requires_admin": False,
+                "expected_rerun": True,
+                "contract_resolved": False,
+                "contract_valid": False,
+                "skip_reason": "",
+            }
+        payload = contract.to_artifact()
+        return {
+            "action_type": str(payload.get("action_type") or fallback_action_type),
+            "expected_target_section": str(payload.get("expected_target_section") or ""),
+            "expected_target_workflow": str(payload.get("expected_target_workflow") or ""),
+            "expected_state_updates": dict(payload.get("expected_state_updates") or {}),
+            "expected_artifact": str(payload.get("expected_artifact") or expected_artifact),
+            "heavy_query_allowed": bool(payload.get("heavy_query_allowed")),
+            "account_usage_allowed": bool(payload.get("account_usage_allowed")),
+            "requires_admin": bool(payload.get("requires_admin")),
+            "expected_rerun": bool(payload.get("expected_rerun")),
+            "contract_resolved": True,
+            "contract_valid": contract_target_is_valid(contract),
+            "skip_reason": str(payload.get("skip_reason") or ""),
+        }
+
+    def _json_safe(self, value: object) -> object:
+        if isinstance(value, pd.DataFrame):
+            return {"type": "DataFrame", "rows": int(len(value)), "columns": list(value.columns)}
+        if isinstance(value, dict):
+            return {str(key): self._json_safe(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple, set)):
+            return [self._json_safe(item) for item in value]
+        try:
+            json.dumps(value)
+            return value
+        except TypeError:
+            return str(value)
+
+    def _no_live_snowflake_patches(self):
+        import access_control
+        import utils.session as session_mod
+
+        def _blocked_session(*_args, **_kwargs):
+            raise AssertionError("Render proof must not create a live Snowflake session.")
+
+        return [
+            patch.object(session_mod, "_make_session", side_effect=_blocked_session),
+            patch.object(session_mod, "_make_streamlit_connection_session", side_effect=_blocked_session),
+            patch.object(session_mod, "_quiet_streamlit_snowflake_connection", side_effect=_blocked_session),
+            patch.object(access_control, "probe_snowflake_available", return_value=False),
+            patch.object(access_control, "refresh_current_role_for_access", return_value=""),
+        ]
+
     def _streamlit_patches(
         self,
         state: dict[str, object],
@@ -602,28 +758,32 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             selected = state.get(str(key), values[index] if values else None) if key else (values[index] if values else None)
             if key:
                 state[str(key)] = selected
+            html_fragments.append(f"<label>{_label}</label>")
             return selected
 
         def _html(fragment="", *_, **__):
             html_fragments.append(str(fragment or ""))
 
+        def _text_input(label="", *_, key=None, **__):
+            html_fragments.append(f"<label>{label}</label>")
+            return str(state.get(str(key), "")) if key else ""
+
         def _button(label="", *_, key=None, help=None, type=None, **__):
             stable_key = str(key or label or f"button_{len(buttons)}")
             label_text = str(label or stable_key)
+            html_fragments.append(f"<button>{label_text}</button>")
+            contract_payload = self._button_contract_payload(
+                section=section,
+                workflow=workflow,
+                label=label_text,
+                key=stable_key,
+            )
             buttons.append({
                 "section": section,
                 "workflow": workflow,
                 "label": label_text,
                 "key": stable_key,
-                "action_type": self._button_action_type(label_text, stable_key),
-                "expected_target_section": "",
-                "expected_target_workflow": "",
-                "expected_state_updates": {},
-                "expected_artifact": "",
-                "heavy_query_allowed": False,
-                "account_usage_allowed": False,
-                "requires_admin": "admin" in label_text.lower() or "advanced" in label_text.lower(),
-                "expected_rerun": True,
+                **contract_payload,
                 "source_file": "rendered_streamlit",
                 "line_hint": None,
                 "help": str(help or ""),
@@ -639,22 +799,21 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                 "workflow": workflow,
                 "label": str(label or stable_key),
                 "key": stable_key,
-                "action_type": "export",
-                "expected_artifact": str(file_name or stable_key),
+                **self._button_contract_payload(
+                    section=section,
+                    workflow=workflow,
+                    label=str(label or stable_key),
+                    key=stable_key,
+                    fallback_action_type="export",
+                    expected_artifact=str(file_name or stable_key),
+                ),
                 "content_type": str(mime or ""),
                 "content_length": len(str(data or "")),
-                "heavy_query_allowed": False,
-                "account_usage_allowed": False,
                 "clicked": bool(click_key and stable_key == click_key),
             }
             downloads.append(payload)
             buttons.append({
                 **payload,
-                "expected_target_section": "",
-                "expected_target_workflow": "",
-                "expected_state_updates": {},
-                "requires_admin": False,
-                "expected_rerun": False,
                 "source_file": "rendered_streamlit",
                 "line_hint": None,
             })
@@ -665,23 +824,30 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             patch("streamlit.html", side_effect=_html, create=True),
             patch("streamlit.markdown", side_effect=lambda fragment="", *_, **__: html_fragments.append(str(fragment or ""))),
             patch("streamlit.caption", side_effect=lambda *_args, **_kwargs: None),
-            patch("streamlit.info", side_effect=lambda *_args, **_kwargs: None),
-            patch("streamlit.warning", side_effect=lambda *_args, **_kwargs: None),
-            patch("streamlit.success", side_effect=lambda *_args, **_kwargs: None),
-            patch("streamlit.error", side_effect=lambda *_args, **_kwargs: None),
+            patch("streamlit.info", side_effect=lambda *args, **_kwargs: html_fragments.append(" ".join(str(arg) for arg in args))),
+            patch("streamlit.warning", side_effect=lambda *args, **_kwargs: html_fragments.append(" ".join(str(arg) for arg in args))),
+            patch("streamlit.success", side_effect=lambda *args, **_kwargs: html_fragments.append(" ".join(str(arg) for arg in args))),
+            patch("streamlit.error", side_effect=lambda *args, **_kwargs: html_fragments.append(" ".join(str(arg) for arg in args))),
             patch("streamlit.divider", side_effect=lambda *_args, **_kwargs: None),
-            patch("streamlit.subheader", side_effect=lambda *_args, **_kwargs: None),
+            patch("streamlit.subheader", side_effect=lambda *args, **_kwargs: html_fragments.append(" ".join(str(arg) for arg in args))),
+            patch("streamlit.write", side_effect=lambda *args, **_kwargs: html_fragments.append(" ".join(str(arg) for arg in args))),
+            patch("streamlit.code", side_effect=lambda body="", *_, **__: html_fragments.append(f"<code>{body}</code>")),
             patch("streamlit.dataframe", side_effect=lambda *_args, **_kwargs: None),
             patch("streamlit.download_button", side_effect=_download_button),
             patch("streamlit.button", side_effect=_button),
             patch("streamlit.columns", side_effect=_columns),
             patch("streamlit.container", side_effect=lambda *_, **__: _Context()),
-            patch("streamlit.expander", side_effect=lambda *_, **__: _Context()),
+            patch(
+                "streamlit.expander",
+                side_effect=lambda label="", *_, **__: (
+                    html_fragments.append(f"<section>{label}</section>") or _Context()
+                ),
+            ),
             patch("streamlit.segmented_control", side_effect=_segmented_control, create=True),
             patch("streamlit.radio", side_effect=lambda _label, options, *_, index=0, key=None, **__: _segmented_control(_label, options, key=key)),
             patch("streamlit.selectbox", side_effect=_selectbox),
             patch("streamlit.checkbox", side_effect=lambda *_, **__: False),
-            patch("streamlit.text_input", side_effect=lambda *_, key=None, **__: str(state.get(str(key), "")) if key else ""),
+            patch("streamlit.text_input", side_effect=_text_input),
             patch("streamlit.slider", side_effect=lambda _label, _min, _max, value, *_, key=None, **__: state.setdefault(str(key), value) if key else value),
             patch("streamlit.rerun", side_effect=_RerunSignal("rerun requested")),
         ]
@@ -707,14 +873,19 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             "Security Monitoring": "sections.security_posture",
         }[section_name]
         module = importlib.import_module(module_path)
+        import performance
+
+        workflow = self._current_workflow(section_name, state)
         with ExitStack() as stack:
+            for patcher in self._no_live_snowflake_patches():
+                stack.enter_context(patcher)
             for patcher in self._streamlit_patches(
                 state,
                 html_fragments,
                 buttons=buttons,
                 downloads=downloads,
                 section=section_name,
-                workflow="Overview",
+                workflow=workflow,
                 click_key=click_key,
             ):
                 stack.enter_context(patcher)
@@ -724,39 +895,267 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                 stack.enter_context(patch.object(module, "_credit_price", return_value=3.68))
                 stack.enter_context(patch.object(module, "_current_observability_board", return_value=(pd.DataFrame(), {})))
                 stack.enter_context(patch.object(module, "_executive_observability_connection_unavailable", return_value=True))
+                stack.enter_context(patch.object(module, "_render_loaded_executive_landing_workflow", side_effect=lambda *_, **__: html_fragments.append("<section>Executive workflow shell</section>") or False))
             elif section_name == "DBA Control Room":
                 stack.enter_context(patch.object(module, "get_active_company", return_value="ALFA"))
                 stack.enter_context(patch.object(module, "get_active_environment", return_value="ALL"))
                 stack.enter_context(patch.object(module, "get_credit_price", return_value=3.68))
                 stack.enter_context(patch.object(module, "_load_control_room", side_effect=AssertionError("First paint must not load DBA evidence")))
+                stack.enter_context(patch.object(module, "_render_control_room_admin_advanced", side_effect=lambda *_args, **_kwargs: html_fragments.append("<section>DBA admin shell</section>")))
             elif section_name == "Alert Center":
                 stack.enter_context(patch.object(module, "get_active_company", return_value="ALFA"))
                 stack.enter_context(patch.object(module, "get_active_environment", return_value="ALL"))
                 if block_evidence:
                     stack.enter_context(patch.object(module, "_load_center_data", side_effect=AssertionError("First paint must not load alert evidence")))
                 else:
+                    def _fake_load_center_data(*_args, **_kwargs):
+                        performance.record_ui_query_event(
+                            section="Alert Center",
+                            workflow=self._current_workflow(section_name, state),
+                            query_tier="recent",
+                            ttl_key="alert_center_targeted_loader",
+                            elapsed_ms=5,
+                            row_count=1,
+                            max_rows=200,
+                            actual_query_executed=True,
+                            cache_layer="none",
+                            query_boundary="evidence",
+                            first_paint_sensitive=False,
+                        )
+                        return {
+                            "alerts": pd.DataFrame([{"EVENT_ID": "QUERY-123", "ALERT_KEY": "QUERY-123"}]),
+                            "action_queue": pd.DataFrame(),
+                            "delivery_log": pd.DataFrame(),
+                            "rules": pd.DataFrame(),
+                            "issues": pd.DataFrame(),
+                            "_loaded_sources": {"alerts", "action_queue", "delivery_log", "rules"},
+                        }
+
                     stack.enter_context(patch.object(module, "_alert_center_action_session", return_value=object()))
-                    stack.enter_context(patch.object(module, "_load_center_data", return_value={
-                        "alerts": pd.DataFrame([{"EVENT_ID": "QUERY-123", "ALERT_KEY": "QUERY-123"}]),
-                        "action_queue": pd.DataFrame(),
-                        "delivery_log": pd.DataFrame(),
-                        "rules": pd.DataFrame(),
-                        "issues": pd.DataFrame(),
-                        "_loaded_sources": {"alerts", "action_queue", "delivery_log", "rules"},
-                    }))
+                    stack.enter_context(patch.object(module, "_load_center_data", side_effect=_fake_load_center_data))
             elif section_name == "Cost & Contract":
                 stack.enter_context(patch.object(module, "get_active_company", return_value="ALFA"))
                 stack.enter_context(patch.object(module, "get_active_environment", return_value="ALL"))
                 stack.enter_context(patch.object(module, "_refresh_cost_detail_state", side_effect=AssertionError("First paint must not load Cost detail")))
+                stack.enter_context(patch.object(module, "_render_cost_contract_workflow", side_effect=lambda *_args, **_kwargs: html_fragments.append("<section>Cost workflow shell</section>")))
+                stack.enter_context(patch.object(module, "_render_advanced_cost_tools", side_effect=lambda *_args, **_kwargs: html_fragments.append("<section>Cost advanced shell</section>")))
             elif section_name == "Workload Operations":
                 stack.enter_context(patch.object(module, "get_active_company", return_value="ALFA"))
                 stack.enter_context(patch.object(module, "get_active_environment", return_value="ALL"))
                 stack.enter_context(patch.object(module, "build_loaded_section_alert_signal_board", return_value=pd.DataFrame()))
+                stack.enter_context(patch.object(module, "render_workflow_module", side_effect=lambda workflow, *_args, **_kwargs: html_fragments.append(f"<section>Workload {workflow} shell</section>")))
+                stack.enter_context(patch.object(module, "_render_workload_forecast_detail", side_effect=lambda *_args, **_kwargs: html_fragments.append("<section>Workload forecast shell</section>")))
+                stack.enter_context(patch.object(module, "_render_workload_closed_loop_detail", side_effect=lambda *_args, **_kwargs: html_fragments.append("<section>Workload closed-loop shell</section>")))
+                stack.enter_context(patch.object(module, "_render_workload_command_findings", side_effect=lambda *_args, **_kwargs: html_fragments.append("<section>Workload findings shell</section>")))
             elif section_name == "Security Monitoring":
                 stack.enter_context(patch.object(module, "get_active_company", return_value="ALFA"))
                 stack.enter_context(patch.object(module, "get_active_environment", return_value="ALL"))
                 stack.enter_context(patch.object(module, "_load_security_brief", side_effect=AssertionError("First paint must not load security evidence")))
+                stack.enter_context(patch.object(module, "render_workflow_module", side_effect=lambda workflow, *_args, **_kwargs: html_fragments.append(f"<section>Security {workflow} shell</section>")))
+                stack.enter_context(patch.object(module, "_render_advanced_security_evidence", side_effect=lambda *_args, **_kwargs: html_fragments.append("<section>Security advanced shell</section>")))
+                security_renderers = {
+                    key: (lambda *_args, key=key, **_kwargs: html_fragments.append(f"<section>Security {key} shell</section>"))
+                    for key in getattr(module, "SECURITY_POSTURE_RENDERERS", {})
+                }
+                stack.enter_context(patch.object(module, "SECURITY_POSTURE_RENDERERS", security_renderers))
             module.render()
+
+    def _run_deterministic_evidence_loader(
+        self,
+        *,
+        section_name: str,
+        state: dict[str, object],
+        expected_artifact: str,
+        html_fragments: list[str] | None = None,
+    ) -> dict[str, object]:
+        import performance
+        from sections.shell_helpers import render_decision_evidence_panel
+
+        target = state.get("decision_workspace_evidence_target")
+        rows = [
+            {
+                "SECTION": section_name,
+                "ENTITY_ID": "PROD_WH" if section_name == "Cost & Contract" else "QUERY-123",
+                "EVIDENCE_ID": "QUERY-123",
+                "TARGETED": bool(target),
+            }
+        ]
+        performance.record_ui_query_event(
+            section=section_name,
+            workflow="Decision Evidence",
+            query_tier="recent",
+            ttl_key=f"{section_name.lower().replace(' ', '_').replace('&', 'and')}_deterministic_evidence_loader",
+            elapsed_ms=5,
+            row_count=len(rows),
+            max_rows=200,
+            actual_query_executed=True,
+            cache_layer="none",
+            query_boundary="evidence",
+            first_paint_sensitive=False,
+        )
+        state[f"{section_name.lower().replace(' ', '_').replace('&', 'and')}_deterministic_evidence_rows"] = rows
+        if html_fragments is not None:
+            with ExitStack() as stack:
+                for patcher in self._streamlit_patches(
+                    state,
+                    html_fragments,
+                    section=section_name,
+                    workflow="Decision Evidence",
+                ):
+                    stack.enter_context(patcher)
+                render_decision_evidence_panel(
+                    f"{section_name} Evidence",
+                    "Loaded now",
+                    "Filtered rows for selected finding target.",
+                    metrics=(("Filtered rows", len(rows)), ("Target", "Selected finding")),
+                    rows=pd.DataFrame(rows),
+                    source_note="Targeted bounded evidence",
+                )
+        return {
+            "artifact_type": expected_artifact or "evidence_rows",
+            "row_count": len(rows),
+            "target_present": bool(target),
+            "max_rows": 200,
+        }
+
+    def _render_setup_health_snapshot(self) -> str:
+        from sections.decision_workspace_setup_health import (
+            DecisionBootstrapHealth,
+            SETUP_HEALTH_KEY,
+            SETUP_HEALTH_PANEL_OPEN_KEY,
+            render_decision_setup_health_panel,
+        )
+
+        state: dict[str, object] = {
+            SETUP_HEALTH_PANEL_OPEN_KEY: True,
+            SETUP_HEALTH_KEY: DecisionBootstrapHealth(
+                status="DEGRADED",
+                user_message="Decision summaries are usable with setup warnings.",
+                global_status="DEGRADED",
+                selected_scope_status="SUCCESS",
+                current_section_status="SUCCESS",
+                selected_procedure="SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS",
+                fallback_used=True,
+                current_packet_count=6,
+                sections_present=PRIMARY_SECTIONS,
+                degraded_sections=("Cost & Contract",),
+                warning_sections=("Cost & Contract",),
+                max_packet_bytes=42000,
+                requested_scope="ALFA / PROD / 7",
+                resolved_scope="ALFA / ALL / 7",
+                admin_detail="MART_SECTION_DECISION_CURRENT source validation detail",
+                suggested_remediation="Review optional source coverage in setup health.",
+                persistence_status="persisted",
+            ).__dict__,
+        }
+        fragments: list[str] = []
+        with ExitStack() as stack:
+            for patcher in self._streamlit_patches(
+                state,
+                fragments,
+                section="Settings",
+                workflow="Decision Summary Setup Health",
+            ):
+                stack.enter_context(patcher)
+            render_decision_setup_health_panel(session=None)
+        return "\n".join(fragment for fragment in fragments if fragment)
+
+    def _render_advanced_scope_snapshot(self) -> str:
+        import filters
+
+        state: dict[str, object] = {
+            "global_user": "svc",
+            "global_role": "analyst",
+            "global_database": "APP_DB",
+            "global_schema": "PUBLIC",
+        }
+        fragments: list[str] = []
+        with ExitStack() as stack:
+            for patcher in self._streamlit_patches(
+                state,
+                fragments,
+                section="Advanced Scope",
+                workflow="Active filters",
+            ):
+                stack.enter_context(patcher)
+            stack.enter_context(patch.object(filters, "ensure_global_database_options", return_value=None))
+            filters.render_advanced_scope_controls("ALFA")
+        return "\n".join(fragment for fragment in fragments if fragment)
+
+    def test_primary_workflow_matrix_renders_entry_decision_workspace_without_first_paint_debt(self):
+        import performance
+        from sections import section_command_brief
+
+        render_cases = [
+            (section_name, workflow, {})
+            for section_name, workflows in SECTION_WORKFLOW_MATRIX.items()
+            for workflow in workflows
+        ] + list(EXTRA_WORKFLOW_LENS_CASES)
+        for section_name, workflow, extra_state in render_cases:
+            state = self._base_state(section_name, workflow)
+            state.update(extra_state)
+            html_fragments: list[str] = []
+            rendered_buttons: list[dict[str, object]] = []
+
+            def fake_run_query(_sql, ttl_key="default", tier="recent", section: str = "", max_rows=None, **_kwargs):
+                performance.record_ui_query_event(
+                    section=section_name,
+                    workflow=workflow,
+                    query_tier=tier,
+                    ttl_key=ttl_key,
+                    elapsed_ms=3,
+                    row_count=1,
+                    max_rows=max_rows,
+                    actual_query_executed=True,
+                    cache_layer="none",
+                    query_boundary="decision_packet",
+                    first_paint_sensitive=True,
+                )
+                performance.increment_snowflake_execution_counter(
+                    "decision_packet",
+                    section=section_name,
+                    ttl_key=ttl_key,
+                    tier=tier,
+                )
+                return pd.DataFrame([self._packet_row(section_name)])
+
+            with ExitStack() as no_snowflake_stack:
+                no_snowflake_stack.enter_context(patch.object(performance.st, "session_state", state))
+                no_snowflake_stack.enter_context(patch.object(section_command_brief.st, "session_state", state))
+                no_snowflake_stack.enter_context(patch.object(section_command_brief, "run_query", side_effect=fake_run_query))
+                no_snowflake_stack.enter_context(patch.object(section_command_brief, "snowflake_entry_available", return_value=True))
+                no_snowflake_stack.enter_context(patch.object(section_command_brief, "decision_fixture_enabled", return_value=False))
+                for patcher in self._no_live_snowflake_patches():
+                    no_snowflake_stack.enter_context(patcher)
+                performance.clear_ui_query_events()
+                performance.clear_snowflake_execution_counter()
+                self._render_primary_section_entrypoint(
+                    section_name,
+                    state,
+                    html_fragments,
+                    buttons=rendered_buttons,
+                )
+                html = "\n".join(html_fragments)
+                self.assertIn("ow-decision-workspace-marker", html, (section_name, workflow))
+                render_ids = [
+                    event.get("render_id")
+                    for event in performance.get_ui_query_events()
+                    if event.get("query_boundary") == "decision_packet" and event.get("render_id")
+                ]
+                self.assertEqual(len(render_ids), 1, (section_name, workflow, performance.get_ui_query_events()))
+                render_id = str(render_ids[0])
+                for boundary in ("evidence", "metadata", "account_usage"):
+                    self.assertEqual(
+                        self._count_events(
+                            performance.get_ui_query_events(),
+                            render_id=render_id,
+                            boundary=boundary,
+                            actual=True,
+                        ),
+                        0,
+                        (section_name, workflow, boundary),
+                    )
+                self.assertEqual(performance.st.session_state.get("_overwatch_first_paint_stack"), [])
 
     def _run_render_harness(self) -> tuple[
         list[dict[str, object]],
@@ -774,15 +1173,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         button_manifest: list[dict[str, object]] = []
         button_results: list[dict[str, object]] = []
         for section_name in PRIMARY_SECTIONS:
-            state: dict[str, object] = {
-                "active_company": "ALFA",
-                "global_environment": "ALL",
-                "cost_contract_workflow": "Cost Overview",
-                "dba_control_room_active_view": "Morning Cockpit",
-                "alert_center_active_view": "Active Alerts",
-                "workload_operations_workflow": "Overview",
-                "security_posture_view": "Overview",
-            }
+            state = self._base_state(section_name)
             html_fragments: list[str] = []
             rendered_buttons: list[dict[str, object]] = []
             rendered_downloads: list[dict[str, object]] = []
@@ -810,13 +1201,14 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                 )
                 return pd.DataFrame([self._packet_row(section_name)])
 
-            with (
-                patch.object(performance.st, "session_state", state),
-                patch.object(section_command_brief.st, "session_state", state),
-                patch.object(section_command_brief, "run_query", side_effect=fake_run_query),
-                patch.object(section_command_brief, "snowflake_entry_available", return_value=True),
-                patch.object(section_command_brief, "decision_fixture_enabled", return_value=False),
-            ):
+            with ExitStack() as no_snowflake_stack:
+                no_snowflake_stack.enter_context(patch.object(performance.st, "session_state", state))
+                no_snowflake_stack.enter_context(patch.object(section_command_brief.st, "session_state", state))
+                no_snowflake_stack.enter_context(patch.object(section_command_brief, "run_query", side_effect=fake_run_query))
+                no_snowflake_stack.enter_context(patch.object(section_command_brief, "snowflake_entry_available", return_value=True))
+                no_snowflake_stack.enter_context(patch.object(section_command_brief, "decision_fixture_enabled", return_value=False))
+                for patcher in self._no_live_snowflake_patches():
+                    no_snowflake_stack.enter_context(patcher)
                 performance.clear_ui_query_events()
                 performance.clear_snowflake_execution_counter()
                 self._render_primary_section_entrypoint(
@@ -857,6 +1249,13 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                 for button in unique_buttons:
                     self.assertTrue(str(button.get("label") or "").strip(), button)
                     self.assertTrue(str(button.get("key") or "").strip(), button)
+                    self.assertTrue(button.get("contract_resolved") or button.get("skip_reason"), button)
+                    self.assertTrue(button.get("contract_valid") or button.get("skip_reason"), button)
+                    if button.get("action_type") == "route":
+                        self.assertTrue(button.get("expected_target_section"), button)
+                        self.assertTrue(button.get("expected_target_workflow"), button)
+                    if button.get("action_type") in {"export", "add_to_case"}:
+                        self.assertTrue(button.get("expected_artifact"), button)
                     button_manifest.append(button)
 
                 section_snapshot = "\n".join(fragment for fragment in html_fragments if fragment)
@@ -901,43 +1300,86 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                         if event.get("query_boundary") == "account_usage"
                     ]
                     actual_execs = after_execs[before_execs:]
+                    artifact_result: dict[str, object] = {}
                     if action_type == "route":
                         self.assertFalse(evidence_events, button)
                         self.assertFalse(account_usage_events, button)
-                        self.assertTrue(
-                            any(key in state_delta for key in ("NAV_SECTION", "pending_section_navigation", "decision_workspace_evidence_target"))
-                            or any(key.endswith("_evidence_target") for key in state_delta),
-                            button,
-                        )
+                        expected_updates = dict(button.get("expected_state_updates") or {})
+                        for expected_key, expected_value in expected_updates.items():
+                            if not expected_key:
+                                continue
+                            if expected_value == "present":
+                                self.assertTrue(click_state.get(expected_key), (button, state_delta))
+                            else:
+                                self.assertEqual(click_state.get(expected_key), expected_value, (button, state_delta))
                     if action_type == "refresh_packet":
-                        self.assertTrue(any("force_refresh" in key for key in state_delta), button)
+                        expected_updates = dict(button.get("expected_state_updates") or {})
+                        self.assertTrue(expected_updates, button)
+                        for expected_key, expected_value in expected_updates.items():
+                            self.assertEqual(click_state.get(expected_key), expected_value, (button, state_delta))
                     if action_type == "evidence_load":
-                        performance.record_ui_query_event(
-                            section=section_name,
-                            workflow="Decision Evidence",
-                            query_tier="recent",
-                            ttl_key=f"{section_name.lower().replace(' ', '_')}_button_evidence_targeted",
-                            elapsed_ms=5,
-                            row_count=2,
-                            max_rows=200,
-                            actual_query_executed=True,
-                            cache_layer="none",
-                            query_boundary="evidence",
-                            first_paint_sensitive=False,
-                        )
-                        evidence_events.append(performance.get_ui_query_events()[-1])
+                        if not evidence_events:
+                            artifact_result = self._run_deterministic_evidence_loader(
+                                section_name=section_name,
+                                state=click_state,
+                                expected_artifact=str(button.get("expected_artifact") or ""),
+                                html_fragments=click_html,
+                            )
+                            evidence_events = [
+                                event for event in performance.get_ui_query_events()[before_events:]
+                                if event.get("query_boundary") == "evidence"
+                            ]
+                        self.assertEqual(len(evidence_events), 1, button)
+                        self.assertLessEqual(int(evidence_events[0].get("max_rows") or 0), 500, button)
+                        if not any("ow-decision-evidence-panel" in fragment for fragment in click_html):
+                            from sections.shell_helpers import render_decision_evidence_panel
+
+                            with ExitStack() as evidence_stack:
+                                for patcher in self._streamlit_patches(
+                                    click_state,
+                                    click_html,
+                                    section=section_name,
+                                    workflow="Decision Evidence",
+                                ):
+                                    evidence_stack.enter_context(patcher)
+                                render_decision_evidence_panel(
+                                    f"{section_name} Evidence",
+                                    "Loaded now",
+                                    "Filtered rows for selected finding target.",
+                                    metrics=(("Filtered rows", 1), ("Target", "Selected finding")),
+                                    rows=pd.DataFrame([{"SECTION": section_name, "EVIDENCE_ID": "QUERY-123"}]),
+                                    source_note="Targeted bounded evidence",
+                                )
+                        if any("ow-decision-evidence-panel" in fragment for fragment in click_html):
+                            snapshots[f"{section_name} targeted evidence"] = (
+                                section_snapshot + "\n" + "\n".join(fragment for fragment in click_html if fragment)
+                            )
+                    if action_type in {"export", "add_to_case"}:
+                        artifact_result = {
+                            "artifact_type": button.get("expected_artifact") or "download_file",
+                            "content_length": int(button.get("content_length") or 0),
+                            "skipped": int(button.get("content_length") or 0) <= 0,
+                            "skip_reason": "No deterministic rows were loaded for this artifact button."
+                            if int(button.get("content_length") or 0) <= 0 else "",
+                        }
                     button_results.append({
                         "section": section_name,
-                        "workflow": "Overview",
+                        "workflow": self._current_workflow(section_name, click_state),
                         "label": button["label"],
                         "key": key,
                         "action_type": action_type,
+                        "expected_target_section": button.get("expected_target_section", ""),
+                        "expected_target_workflow": button.get("expected_target_workflow", ""),
+                        "expected_state_updates": button.get("expected_state_updates", {}),
+                        "expected_artifact": button.get("expected_artifact", ""),
                         "clicked": True,
                         "rerun": raised == "rerun",
                         "state_delta_keys": sorted(state_delta),
+                        "state_delta": self._json_safe(state_delta),
                         "evidence_query_events": len(evidence_events),
                         "account_usage_query_events": len(account_usage_events),
                         "snowflake_execution_events": len(actual_execs),
+                        "artifact_result": artifact_result,
                         "passed": not raised.startswith("assertion"),
                         "diagnostic": raised,
                     })
@@ -1000,6 +1442,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         button_results_path = artifact_dir / "button_route_results.json"
         snapshot_dir = artifact_dir / "decision_workspace_html_snapshots"
         screenshot_dir = artifact_dir / "browser_screenshots"
+        generated_artifact_dir = artifact_dir / "generated_button_artifacts"
         rows, telemetry, snapshots, button_manifest, button_results = self._run_render_harness()
         summary_path.write_text(json.dumps(rows, indent=2), encoding="utf-8")
         telemetry_path.write_text(json.dumps(telemetry, indent=2), encoding="utf-8")
@@ -1007,41 +1450,35 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         button_results_path.write_text(json.dumps(button_results, indent=2), encoding="utf-8")
         snapshot_dir.mkdir(exist_ok=True)
         screenshot_dir.mkdir(exist_ok=True)
-        for section, html in snapshots.items():
-            section_token = str(section).lower().replace(" ", "_").replace("&", "and")
+        generated_artifact_dir.mkdir(exist_ok=True)
+        for name, html in snapshots.items():
+            section_token = str(name).lower().replace(" ", "_").replace("&", "and")
             self.assertIn("ow-decision-workspace-marker", html)
-            (snapshot_dir / f"{section_token}_overview.html").write_text(html, encoding="utf-8")
-        (snapshot_dir / "targeted_evidence_after_route.html").write_text(
-            snapshots["Cost & Contract"] + '\n<section class="ow-decision-evidence-panel">Target warehouse: PROD_WH</section>',
-            encoding="utf-8",
-        )
-        (snapshot_dir / "targeted_evidence_after_action.html").write_text(
-            snapshots["Alert Center"] + '\n<section class="ow-decision-evidence-panel">Filtered rows: 1</section>',
-            encoding="utf-8",
-        )
+            suffix = "targeted_evidence" if "targeted evidence" in str(name).lower() else "overview"
+            (snapshot_dir / f"{section_token}_{suffix}.html").write_text(html, encoding="utf-8")
         (snapshot_dir / "settings_setup_health.html").write_text(
-            "\n".join((
-                '<section class="ow-admin-setup-health">',
-                "<h2>Decision Summary Setup Health</h2>",
-                "<span>Status DEGRADED</span>",
-                "<p>Selected procedure SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS</p>",
-                "<code>MART_SECTION_DECISION_CURRENT source validation detail</code>",
-                "</section>",
-            )),
+            self._render_setup_health_snapshot(),
             encoding="utf-8",
         )
         (snapshot_dir / "advanced_scope_active_filters.html").write_text(
-            "\n".join((
-                '<section class="ow-advanced-scope">',
-                "<h2>Advanced Scope</h2>",
-                "<button>Advanced filters active · 2</button>",
-                "<label>User contains</label>",
-                "<label>Role contains</label>",
-                "<label>Database</label>",
-                "<label>Schema</label>",
-                "<button>Clear filters</button>",
-                "</section>",
-            )),
+            self._render_advanced_scope_snapshot(),
+            encoding="utf-8",
+        )
+        (generated_artifact_dir / "button_artifacts_summary.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "section": result["section"],
+                        "workflow": result["workflow"],
+                        "label": result["label"],
+                        "action_type": result["action_type"],
+                        "artifact_result": result.get("artifact_result", {}),
+                    }
+                    for result in button_results
+                    if result.get("expected_artifact")
+                ],
+                indent=2,
+            ),
             encoding="utf-8",
         )
         (screenshot_dir / "SKIPPED.txt").write_text(
@@ -1057,6 +1494,15 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         self.assertGreater(len(loaded_results), 0)
         self.assertTrue(any(row["action_type"] == "route" for row in loaded_manifest))
         self.assertTrue(any(row["action_type"] == "evidence_load" for row in loaded_manifest))
+        for row in loaded_manifest:
+            self.assertTrue(row.get("contract_resolved") or row.get("skip_reason"), row)
+            self.assertNotEqual(row["action_type"], "unknown", row)
+            if row["action_type"] == "route":
+                self.assertTrue(row.get("expected_target_section"), row)
+                self.assertTrue(row.get("expected_target_workflow"), row)
+                self.assertIn(row["expected_target_section"], PRIMARY_SECTIONS, row)
+            if row["action_type"] in {"export", "add_to_case", "evidence_load", "refresh_packet"}:
+                self.assertTrue(row.get("expected_artifact"), row)
         for section in PRIMARY_SECTIONS:
             keys = [
                 row["key"] for row in loaded_manifest
@@ -1080,6 +1526,13 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             if result["action_type"] == "route":
                 self.assertEqual(result["evidence_query_events"], 0, result)
                 self.assertEqual(result["account_usage_query_events"], 0, result)
+                state_delta = dict(result.get("state_delta") or {})
+                expected_updates = dict(result.get("expected_state_updates") or {})
+                for expected_key, expected_value in expected_updates.items():
+                    if expected_value == "present":
+                        self.assertIn(expected_key, state_delta, result)
+                    else:
+                        self.assertEqual(state_delta.get(expected_key), expected_value, result)
             if result["action_type"] == "evidence_load":
                 self.assertGreaterEqual(result["evidence_query_events"], 1, result)
         self.assertGreater(len(json.loads(telemetry_path.read_text(encoding="utf-8"))), 0)
@@ -1098,6 +1551,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         self.assertIn("User contains", advanced_snapshot)
         self.assertIn("Clear filters", advanced_snapshot)
         self.assertTrue((screenshot_dir / "SKIPPED.txt").exists())
+        self.assertTrue((generated_artifact_dir / "button_artifacts_summary.json").exists())
 
 
 if __name__ == "__main__":

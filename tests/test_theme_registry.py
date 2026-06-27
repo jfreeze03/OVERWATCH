@@ -202,10 +202,10 @@ class ThemeRegistryTests(unittest.TestCase):
             '[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] .ow-brand-row',
             theme._STRUCTURAL_CSS,
         )
-        self.assertIn(
-            '[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] .ow-live-pill',
-            theme._STRUCTURAL_CSS,
-        )
+        combined_shell_css = theme._combined_theme_css("carbon")
+        self.assertIn(".ow-sidebar-logo", combined_shell_css)
+        self.assertIn(".ow-logo-orbit", combined_shell_css)
+        self.assertIn(".ow-logo-scan", combined_shell_css)
         self.assertIn("background: linear-gradient(135deg, #ffffff, #eaf6fb) !important", theme._THEME_EXTRAS["terminal"])
         self.assertIn('[data-testid="stButton"] button', theme._THEME_EXTRAS["terminal"])
         self.assertIn('button[data-testid^="stBaseButton"]', theme._THEME_EXTRAS["terminal"])

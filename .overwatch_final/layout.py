@@ -292,18 +292,26 @@ def render_sidebar(
         <div class="ow-sidebar-brand">
             <div class="ow-brand-lockup">
                 <span class="ow-sidebar-logo" aria-hidden="true">
-                    <svg viewBox="0 0 40 40" focusable="false" role="img">
-                        <path d="M20 3 34 11v18L20 37 6 29V11Z" fill="none" stroke="currentColor" stroke-width="2.5"/>
-                        <path d="M20 11 27 15v10l-7 4-7-4V15Z" fill="none" stroke="currentColor" stroke-width="1.8"/>
-                        <path d="M20 15v9M16 19h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                    <svg viewBox="0 0 48 48" focusable="false" role="img">
+                        <defs>
+                            <linearGradient id="ow-orbit-gradient" x1="8" y1="8" x2="40" y2="40" gradientUnits="userSpaceOnUse">
+                                <stop offset="0" stop-color="#A7F3FF"/>
+                                <stop offset="0.48" stop-color="#29B5E8"/>
+                                <stop offset="1" stop-color="#7C5CFF"/>
+                            </linearGradient>
+                        </defs>
+                        <path class="ow-logo-orbit" d="M8 24c4.4-8.9 11.5-14 21.1-15.2L40 19.6C36 28 28.8 33.4 18.9 35.2Z"/>
+                        <path class="ow-logo-orbit ow-logo-orbit-secondary" d="M40 24c-4.4 8.9-11.5 14-21.1 15.2L8 28.4C12 20 19.2 14.6 29.1 12.8Z"/>
+                        <path class="ow-logo-core" d="M24 14.5 33.4 20v8L24 33.5 14.6 28v-8Z"/>
+                        <path class="ow-logo-scan" d="M24 18.8v10.4M18.8 24h10.4"/>
+                        <circle class="ow-logo-node" cx="24" cy="24" r="2.6"/>
                     </svg>
                 </span>
                 <span>
                     <strong>OVERWATCH</strong>
-                    <small>SNOWFLAKE MONITOR</small>
+                    <small style="white-space: nowrap;">SNOWFLAKE MONITOR</small>
                 </span>
             </div>
-            <div class="ow-live-pill">LIVE</div>
         </div>
         """, unsafe_allow_html=True)
 

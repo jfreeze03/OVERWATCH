@@ -830,7 +830,6 @@ code, pre, .stCodeBlock {
     letter-spacing: 0.08em;
     text-transform: uppercase;
 }
-.ow-live-pill,
 .ow-company-pill {
     display: inline-flex;
     align-items: center;
@@ -844,9 +843,6 @@ code, pre, .stCodeBlock {
     font-weight: 900;
     letter-spacing: 0.05em;
     text-transform: uppercase;
-}
-.ow-live-pill {
-    margin: 8px auto 0;
 }
 [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
     gap: 0.45rem;
@@ -895,9 +891,6 @@ code, pre, .stCodeBlock {
 }
 [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] .ow-sidebar-subtitle {
     color: var(--text-muted) !important;
-}
-[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] .ow-live-pill {
-    color: var(--accent) !important;
 }
 [data-testid="stSidebar"] .stExpander {
     border-radius: 8px !important;
@@ -2747,9 +2740,6 @@ _THEME_EXTRAS = {
     background: linear-gradient(135deg, #29B5E8, #0068b7) !important;
     border-color: rgba(113,211,220,0.95) !important;
 }
-[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] .ow-live-pill {
-    color: #71D3DC !important;
-}
 [data-testid="stMetric"] {
     border-top: 3px solid rgba(41,181,232,0.75) !important;
 }
@@ -3072,7 +3062,7 @@ details summary span[translate="no"] {
 .ow-sidebar-brand {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
+    gap: .65rem;
     align-items: flex-start;
 }
 .ow-brand-lockup {
@@ -3080,14 +3070,47 @@ details summary span[translate="no"] {
     align-items: center;
     gap: .72rem;
 }
+.ow-brand-lockup span:last-child {
+    min-width: 0;
+}
 .ow-sidebar-logo {
-    width: 38px;
-    height: 38px;
-    color: #4ca3ff;
+    width: 42px;
+    height: 42px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #7be8ff;
+    filter: drop-shadow(0 0 14px rgba(41, 181, 232, .24));
+    flex: 0 0 auto;
 }
 .ow-sidebar-logo svg {
-    width: 38px;
-    height: 38px;
+    width: 42px;
+    height: 42px;
+    overflow: visible;
+}
+.ow-logo-orbit,
+.ow-logo-core {
+    fill: rgba(8, 21, 31, .40);
+    stroke: url(#ow-orbit-gradient);
+    stroke-width: 2.2;
+    stroke-linejoin: round;
+}
+.ow-logo-orbit-secondary {
+    opacity: .54;
+}
+.ow-logo-core {
+    fill: rgba(41, 181, 232, .08);
+    stroke-width: 1.9;
+}
+.ow-logo-scan {
+    fill: none;
+    stroke: #dffcff;
+    stroke-width: 1.9;
+    stroke-linecap: round;
+}
+.ow-logo-node {
+    fill: #dffcff;
+    filter: drop-shadow(0 0 7px rgba(113, 211, 220, .70));
 }
 .ow-brand-lockup strong {
     display: block;
@@ -3098,17 +3121,9 @@ details summary span[translate="no"] {
 .ow-brand-lockup small {
     display: block;
     color: var(--ow-text-secondary);
-    font-size: .72rem;
-    letter-spacing: .04em;
-}
-.ow-live-pill {
-    align-self: center;
-    border: 1px solid rgba(71, 212, 135, .42);
-    border-radius: 999px;
-    padding: .28rem .85rem;
-    background: rgba(71, 212, 135, .08);
-    color: var(--ow-green) !important;
-    font-weight: 800;
+    font-size: .68rem;
+    letter-spacing: .035em;
+    white-space: nowrap;
 }
 [data-testid="stSidebar"] hr {
     border-color: rgba(170, 188, 200, .10) !important;

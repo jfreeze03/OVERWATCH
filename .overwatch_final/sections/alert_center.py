@@ -690,6 +690,7 @@ def _render_loaded_alert_center_pane(
 
 
 def render() -> None:
+    render_admin_detail_after_first_paint = False
     with with_section_first_paint_entry("Alert Center", "Entry"):
         company = get_active_company()
         environment = get_active_environment()
@@ -733,56 +734,71 @@ def render() -> None:
 
         required_sources = _alert_center_sources_for_view(source_view)
 
-        if source_view in {"Suppression Windows", "Detection Catalog"}:
-            _render_admin_alert_center_pane(source_view)
-            _render_advanced_alert_diagnostics(company, environment)
-            return
-
-        default_days = int(st.session_state.get("alert_center_evidence_days", DEFAULT_DAY_WINDOW) or DEFAULT_DAY_WINDOW)
-        if default_days not in DAY_WINDOW_OPTIONS:
-            default_days = DEFAULT_DAY_WINDOW
-        days = int(st.session_state.setdefault("alert_center_evidence_days", default_days))
-        limit = int(st.session_state.setdefault("alert_center_evidence_rows", 200))
-        load_label = f"Load {active_view}"
-
-        def _render_alert_evidence_settings() -> None:
-            st.selectbox(
-                "Alert window",
-                DAY_WINDOW_OPTIONS,
-                index=DAY_WINDOW_OPTIONS.index(default_days),
-                format_func=lambda value: f"{value} days",
-                key="alert_center_evidence_days",
-            )
-            st.selectbox(
-                "Rows",
-                [50, 100, 200, 500],
-                index=[50, 100, 200, 500].index(limit if limit in [50, 100, 200, 500] else 200),
-                key="alert_center_evidence_rows",
-            )
-
         current_workflow_label = ALERT_CENTER_PANE_LABELS.get(active_view, active_view)
-        render_section_command_brief(
-            autoload_section_command_brief(
-                "Alert Center",
-                company,
-                environment,
-                active_decision_window_days(DEFAULT_DAY_WINDOW),
-                force=bool(st.session_state.pop("alert_center_command_brief_force_refresh", False)),
-            ),
-            key_prefix="alert_center_command_brief",
-            primary_action=make_decision_refresh_action("Alert Center"),
-            detail_action=make_evidence_action(
-                "Alert Center",
-                active_view,
-                label=load_label,
-                help_text="Load row-level alert evidence for the selected alert family.",
-                callback=lambda: _load_alert_center_view_data(source_view, company, environment, int(days), int(limit), required_sources),
-                key="alert_center_load",
-                settings_renderer=_render_alert_evidence_settings,
-            ),
-            current_workflow=current_workflow_label,
-            compact=active_view != "Active Alerts",
-        )
+        if source_view in {"Suppression Windows", "Detection Catalog"}:
+            render_section_command_brief(
+                autoload_section_command_brief(
+                    "Alert Center",
+                    company,
+                    environment,
+                    active_decision_window_days(DEFAULT_DAY_WINDOW),
+                    force=bool(st.session_state.pop("alert_center_command_brief_force_refresh", False)),
+                ),
+                key_prefix="alert_center_command_brief",
+                primary_action=make_decision_refresh_action("Alert Center"),
+                current_workflow=current_workflow_label,
+                compact=True,
+            )
+            render_admin_detail_after_first_paint = True
+        else:
+            default_days = int(st.session_state.get("alert_center_evidence_days", DEFAULT_DAY_WINDOW) or DEFAULT_DAY_WINDOW)
+            if default_days not in DAY_WINDOW_OPTIONS:
+                default_days = DEFAULT_DAY_WINDOW
+            days = int(st.session_state.setdefault("alert_center_evidence_days", default_days))
+            limit = int(st.session_state.setdefault("alert_center_evidence_rows", 200))
+            load_label = f"Load {active_view}"
+
+            def _render_alert_evidence_settings() -> None:
+                st.selectbox(
+                    "Alert window",
+                    DAY_WINDOW_OPTIONS,
+                    index=DAY_WINDOW_OPTIONS.index(default_days),
+                    format_func=lambda value: f"{value} days",
+                    key="alert_center_evidence_days",
+                )
+                st.selectbox(
+                    "Rows",
+                    [50, 100, 200, 500],
+                    index=[50, 100, 200, 500].index(limit if limit in [50, 100, 200, 500] else 200),
+                    key="alert_center_evidence_rows",
+                )
+
+            render_section_command_brief(
+                autoload_section_command_brief(
+                    "Alert Center",
+                    company,
+                    environment,
+                    active_decision_window_days(DEFAULT_DAY_WINDOW),
+                    force=bool(st.session_state.pop("alert_center_command_brief_force_refresh", False)),
+                ),
+                key_prefix="alert_center_command_brief",
+                primary_action=make_decision_refresh_action("Alert Center"),
+                detail_action=make_evidence_action(
+                    "Alert Center",
+                    active_view,
+                    label=load_label,
+                    help_text="Load row-level alert evidence for the selected alert family.",
+                    callback=lambda: _load_alert_center_view_data(source_view, company, environment, int(days), int(limit), required_sources),
+                    key="alert_center_load",
+                    settings_renderer=_render_alert_evidence_settings,
+                ),
+                current_workflow=current_workflow_label,
+                compact=active_view != "Active Alerts",
+            )
+    if render_admin_detail_after_first_paint:
+        _render_admin_alert_center_pane(source_view)
+        _render_advanced_alert_diagnostics(company, environment)
+        return
     days = int(st.session_state.get("alert_center_evidence_days", days) or days)
     limit = int(st.session_state.get("alert_center_evidence_rows", limit) or limit)
     data = st.session_state.get("alert_center_data")

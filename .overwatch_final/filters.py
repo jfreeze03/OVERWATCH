@@ -427,5 +427,5 @@ def render_advanced_scope_controls(active_company: str) -> None:
     else:
         st.text_input("Schema contains", key=GLOBAL_SCHEMA)
 
-    if st.button("Clear All Filters", key=WIDGET_GLOBAL_FILTERS_CLEAR):
+    if st.button("Clear filters", key=WIDGET_GLOBAL_FILTERS_CLEAR):
         clear_global_filters()

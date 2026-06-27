@@ -551,7 +551,7 @@ def render_decision_workspace(
         return
     if compact:
         st.html(
-            '<section class="ow-decision-context-strip">'
+            '<section class="ow-decision-context-strip ow-decision-workspace-marker">'
             f'<strong>{_html(model.state)}</strong>'
             f'<span>{_html(model.headline)}</span>'
             f'<small>{_html(model.trust.summary)}</small>'

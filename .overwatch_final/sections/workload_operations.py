@@ -522,7 +522,13 @@ def _set_workload_workflow(workflow: str, *, pipeline_focus: str = "") -> None:
     st.rerun()
 
 
-def _render_workload_overview(company: str, environment: str) -> None:
+def _render_workload_command_brief(
+    company: str,
+    environment: str,
+    *,
+    current_workflow: str,
+    compact: bool = False,
+) -> None:
     force_brief_refresh = bool(st.session_state.pop("workload_operations_command_brief_force_refresh", False))
     decision_days = active_decision_window_days(7)
     workload_brief = autoload_section_command_brief(
@@ -536,6 +542,15 @@ def _render_workload_overview(company: str, environment: str) -> None:
         workload_brief,
         key_prefix="workload_operations_command_brief",
         primary_action=make_decision_refresh_action("Workload Operations"),
+        current_workflow=current_workflow,
+        compact=compact,
+    )
+
+
+def _render_workload_overview(company: str, environment: str) -> None:
+    _render_workload_command_brief(
+        company,
+        environment,
         current_workflow="Overview",
     )
     board = build_loaded_section_alert_signal_board(st.session_state, section="Workload Operations", limit=12)
@@ -702,5 +717,11 @@ def render() -> None:
         if workflow == WORKLOAD_OVERVIEW_WORKFLOW:
             _render_workload_surface(workflow, company, environment)
             return
+        _render_workload_command_brief(
+            company,
+            environment,
+            current_workflow=workflow_labels.get(workflow, workflow),
+            compact=True,
+        )
 
     _render_workload_surface(workflow, company, environment)

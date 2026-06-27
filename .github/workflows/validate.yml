@@ -88,6 +88,7 @@ jobs:
             artifacts/ui_query_telemetry.json
             artifacts/button_route_manifest.json
             artifacts/button_route_results.json
+            artifacts/generated_button_artifacts/**
             artifacts/decision_workspace_html_snapshots/**
             artifacts/browser_screenshots/**
 

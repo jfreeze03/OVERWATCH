@@ -11,7 +11,7 @@ if str(APP_ROOT) not in sys.path:
 
 class SqlPerformanceLintTests(unittest.TestCase):
     def test_linter_flags_fast_impl_shared_core_and_full_windows(self):
-        from sql_performance_lint import lint_sql_text
+        from tools.contracts.sql_performance_lint import lint_sql_text
 
         findings = lint_sql_text(
             """
@@ -38,7 +38,7 @@ class SqlPerformanceLintTests(unittest.TestCase):
         self.assertNotIn("CALL SP_OVERWATCH", str(findings))
 
     def test_linter_flags_fast_impl_republish_from_current_flat(self):
-        from sql_performance_lint import lint_sql_text
+        from tools.contracts.sql_performance_lint import lint_sql_text
 
         findings = lint_sql_text(
             """
@@ -63,7 +63,7 @@ class SqlPerformanceLintTests(unittest.TestCase):
         self.assertIn("FAST_IMPL_REPUBLISH_CURRENT_FLAT", codes)
 
     def test_linter_warns_fast_command_reuse_without_fresh_source_snapshot(self):
-        from sql_performance_lint import lint_sql_text
+        from tools.contracts.sql_performance_lint import lint_sql_text
 
         findings = lint_sql_text(
             """
@@ -94,7 +94,7 @@ class SqlPerformanceLintTests(unittest.TestCase):
         )
 
     def test_linter_modes_cover_first_paint_evidence_and_account_usage(self):
-        from sql_performance_lint import lint_sql_text
+        from tools.contracts.sql_performance_lint import lint_sql_text
 
         good_packet = lint_sql_text(
             """
@@ -137,7 +137,7 @@ class SqlPerformanceLintTests(unittest.TestCase):
         self.assertFalse([finding for finding in good_account_usage if finding["severity"] == "error"])
 
     def test_linter_requires_account_usage_time_predicate_and_limit(self):
-        from sql_performance_lint import lint_sql_text
+        from tools.contracts.sql_performance_lint import lint_sql_text
 
         bad = lint_sql_text(
             "SELECT QUERY_ID FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY LIMIT 10",
@@ -157,7 +157,7 @@ class SqlPerformanceLintTests(unittest.TestCase):
         self.assertNotIn("ACCOUNT_USAGE_UNBOUNDED", {finding["code"] for finding in good})
 
     def test_linter_query_search_mode_enforces_exact_related_and_projection(self):
-        from sql_performance_lint import lint_sql_text
+        from tools.contracts.sql_performance_lint import lint_sql_text
 
         bad_exact = lint_sql_text(
             "SELECT QUERY_ID FROM FACT_QUERY_DETAIL_RECENT WHERE QUERY_ID = '01a' LIMIT 10",
@@ -180,7 +180,7 @@ class SqlPerformanceLintTests(unittest.TestCase):
         self.assertFalse([finding for finding in good_related if finding["severity"] == "error"])
 
     def test_linter_flags_select_star_app_facing_sql(self):
-        from sql_performance_lint import lint_sql_text
+        from tools.contracts.sql_performance_lint import lint_sql_text
 
         findings = lint_sql_text("SELECT * FROM APP_FACING_TABLE LIMIT 10", path="synthetic.sql")
         self.assertIn("APP_FACING_SELECT_STAR", {finding["code"] for finding in findings})
@@ -191,7 +191,7 @@ class SqlPerformanceLintTests(unittest.TestCase):
         self.assertFalse(finding["raw_sql_included"])
 
     def test_repo_sql_performance_lint_artifact_has_no_errors(self):
-        from sql_performance_lint import lint_sql_files
+        from tools.contracts.sql_performance_lint import lint_sql_files
 
         paths = [
             *sorted((ROOT / "snowflake" / "mart_setup").glob("*.sql")),

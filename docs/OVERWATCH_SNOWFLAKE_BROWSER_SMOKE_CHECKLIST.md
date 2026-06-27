@@ -1,6 +1,6 @@
 # OVERWATCH Snowflake Browser Smoke Checklist
 
-Use this checklist after UI shell, chart, Decision Workspace, Command Deck, or Snowflake browser compatibility changes. The checklist is read-only except for local session state and explicit export/download actions.
+Use this checklist after UI shell, chart, Decision Workspace route-action, or Snowflake browser compatibility changes. The checklist is read-only except for local session state and explicit export/download actions.
 
 ## Preconditions
 
@@ -22,9 +22,9 @@ Cold navigate all six canonical sections and confirm first paint renders without
 
 For each section, confirm the first-paint shell shows text-first status, the visible subtitle remains readable, and no automatic Snowflake evidence load starts.
 
-## Command Decks
+## Route Actions
 
-- Open each primary section Command Deck.
+- Open each primary section route-action area.
 - Confirm route-action labels wrap without horizontal overflow.
 - Click one route action per section and verify it only changes workflow/session routing.
 - Confirm explicit evidence buttons retain stable labels and keys:

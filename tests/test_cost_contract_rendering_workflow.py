@@ -363,25 +363,17 @@ class CostContractRenderingWorkflowTests(unittest.TestCase):
             key for key in button_keys
             if key not in {"cost_contract_refresh", "cost_contract_open_advanced_details", "cost_contract_add_to_case"}
         ]
-        self.assertTrue(all(key.startswith("cost_contract_command_deck_") for key in route_keys))
+        self.assertTrue(all(key.startswith("cost_contract_next_move_") for key in route_keys))
         self.assertFalse(state.get(_ADVANCED_COST_DETAIL_VISIBLE_KEY, False))
         rerun.assert_not_called()
         run_rate_lens.assert_not_called()
 
-    def test_cost_refresh_key_does_not_collide_with_command_deck_routes(self):
-        from sections.command_deck import _key_token
-        from sections.command_deck_contracts import get_command_deck_contract
-
+    def test_cost_refresh_key_does_not_collide_with_next_move_routes(self):
         source = (APP_ROOT / "sections" / "cost_contract.py").read_text(encoding="utf-8")
+        overview_source = (APP_ROOT / "sections" / "cost_contract_overview_floor.py").read_text(encoding="utf-8")
         self.assertEqual(source.count('key="cost_contract_refresh"'), 1)
-
-        contract = get_command_deck_contract("Cost & Contract")
-        route_keys = [
-            f"cost_contract_command_deck_{idx}_{_key_token(action.label)}"
-            for idx, action in enumerate(contract.route_actions)
-        ]
-        self.assertNotIn(contract.primary_cta_key, route_keys)
-        self.assertEqual(len(route_keys), len(set(route_keys)))
+        self.assertIn("cost_contract_next_move_cortex_cost_drivers", overview_source)
+        self.assertNotIn("cost_contract_command_deck", overview_source)
 
     def test_cost_overview_floor_next_move_buttons_keep_route_key_contract(self):
         from sections import cost_contract_overview_floor

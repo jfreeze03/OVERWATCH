@@ -12,6 +12,10 @@ from typing import Any, Iterable
 
 from contracts.direct_sql_allowlist import DIRECT_SQL_ALLOWLIST
 from contracts.session_open_allowlist import SESSION_OPEN_ALLOWLIST
+from tools.contracts.retained_runtime_modules import (
+    RETAINED_RUNTIME_MODULES,
+    RETAINED_RUNTIME_MODULE_BY_NAME,
+)
 from route_registry import (
     LEGACY_SECTION_ALIASES,
     PRIMARY_SECTION_TITLES,
@@ -36,6 +40,7 @@ STRICT_CLASSIFICATIONS = {
     "active_admin_setup_surface",
     "active_deployment_bootstrap",
     "active_contract_test",
+    "active_contract_runtime",
     "active_compact_evidence",
     "deleted",
     "deletion_candidate",
@@ -60,6 +65,18 @@ PACKET_OBJECT_HINTS = (
     "MART_SECTION_DECISION_LAST_GOOD",
 )
 AUDIT_OBJECT_HINTS = ("AUDIT", "SETUP", "VALIDATION", "OPTIMIZATION")
+DELETED_RUNTIME_MODULES_THIS_PASS = (
+    {
+        "module": "sections.command_deck",
+        "path": ".overwatch_final/sections/command_deck.py",
+        "reason": "Deleted unused route-action renderer that was only referenced by tests.",
+    },
+    {
+        "module": "sections.command_deck_contracts",
+        "path": ".overwatch_final/sections/command_deck_contracts.py",
+        "reason": "Deleted unused route-action contracts that were only referenced by tests.",
+    },
+)
 LEGACY_TOKENS = (
     "legacy",
     "old",
@@ -70,73 +87,6 @@ LEGACY_TOKENS = (
     "command_deck",
     "synthetic",
     "fallback_shell",
-)
-ACTIVE_CONTRACT_MODULE_PREFIXES = (
-    "cleanup_inventory",
-    "direct_sql_contract",
-    "session_open_contract",
-    "sql_performance_lint",
-    "query_contracts",
-    "performance",
-    "route_registry",
-    "workflow_contracts",
-    "theme",
-    "runtime_state",
-    "filters",
-    "utils.__init__",
-    "utils.alerts",
-    "utils.ask_overwatch",
-    "utils.command_board",
-    "utils.cortex",
-    "utils.native_snowflake",
-    "utils.recommendation_intelligence",
-    "utils.scorecards",
-    "sections.button_action_contracts",
-    "sections.command_deck",
-    "sections.command_brief_routes",
-    "sections.first_paint_contracts",
-    "sections.section_command",
-    "sections.section_command_brief",
-    "sections.section_command_contracts",
-    "sections.section_command_contracts_generated",
-    "sections.section_command_rendering",
-    "sections.decision_workspace_",
-    "utils.query",
-    "utils.session",
-    "utils.display",
-    "utils.sql_builder",
-)
-ACTIVE_ADMIN_MODULE_PREFIXES = (
-    "access_control",
-    "sections.account_health",
-    "sections.adoption_analytics",
-    "sections.alert_center_admin",
-    "sections.alert_center_history",
-    "sections.change_drift",
-    "sections.contention_center",
-    "sections.cortex_monitor",
-    "sections.dba_tools",
-    "sections.detailed_diagnosis",
-    "sections.live_monitor",
-    "sections.object_change_monitor",
-    "sections.pipeline_health",
-    "sections.platform_topology",
-    "sections.query_analysis",
-    "sections.query_search",
-    "sections.query_workbench",
-    "sections.recommendations",
-    "sections.security_access",
-    "sections.service_health",
-    "sections.stored_proc_tracker",
-    "sections.storage_monitor",
-    "sections.task_management",
-    "sections.usage_overview",
-    "sections.warehouse_health",
-    "sections.cost_center",
-    "utils.admin",
-    "utils.compatibility",
-    "utils.metadata",
-    "utils.optimization_advisor",
 )
 SESSION_OPEN_MARKER_TOKEN = "SESSION_OPEN" + "_ADMIN_OK"
 DIRECT_SQL_MARKER_TOKEN = "DIRECT_SQL" + "_ADMIN_OK"
@@ -225,55 +175,62 @@ def _path_text(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="ignore")
 
 
-def _module_startswith(module: str, prefixes: Iterable[str]) -> bool:
-    return any(
-        module == prefix
-        or module.startswith(f"{prefix}.")
-        or module.startswith(f"{prefix}_")
-        for prefix in prefixes
-    )
-
-
-def _classify_module(module: str, route_reachable: set[str], admin_reachable: set[str]) -> tuple[str, str, str, str, str]:
-    if module in route_reachable or _module_startswith(module, PRIMARY_SECTION_MODULES):
-        return (
-            "active_primary_surface",
-            "decision_workspace",
-            "six-primary-section route graph",
-            "Imported by current Decision Workspace entry, dispatcher, or primary section.",
-            "Remove only after the owning primary route is deleted.",
-        )
-    if module in admin_reachable or _module_startswith(module, ACTIVE_ADMIN_MODULE_PREFIXES):
-        return (
-            "active_admin_setup_surface",
-            "platform_admin",
-            "Settings/Admin Setup Health or explicit advanced diagnostics route",
-            "Admin/setup diagnostic surface with post-click budget contracts.",
-            "Review with setup-health owner before removal.",
-        )
-    if module.startswith("contracts.") or _module_startswith(module, ACTIVE_CONTRACT_MODULE_PREFIXES):
-        return (
-            "active_contract_test",
-            "decision_workspace_contracts",
-            "cleanup/performance/static contract tests",
-            "Contract infrastructure for query, session, route, and cleanup proof.",
-            "Remove only with replacement contract coverage.",
-        )
+def _classify_module(module: str, route_reachable: set[str], admin_reachable: set[str]) -> dict[str, Any]:
+    if module in route_reachable or module in PRIMARY_SECTION_MODULES:
+        return {
+            "classification": "active_primary_surface",
+            "owner": "decision_workspace",
+            "current_route_or_test": "six-primary-section route graph",
+            "reason": "Imported by current Decision Workspace entry, dispatcher, or primary section.",
+            "expiration_or_review_note": "Remove only after the owning primary route is deleted.",
+            "deletion_blocker": "Current primary route import graph.",
+            "active_button_key_or_route_key": "primary Decision Workspace navigation",
+            "runtime_budget_context": "first_paint",
+        }
+    retained = RETAINED_RUNTIME_MODULE_BY_NAME.get(module)
+    if retained:
+        return {
+            "classification": retained["category"],
+            "owner": retained["owner"],
+            "current_route_or_test": retained["owning_section_or_admin_route"],
+            "reason": retained["reason"],
+            "expiration_or_review_note": retained["expiration_or_review_note"],
+            "deletion_blocker": retained["active_button_key_or_route_key"],
+            "active_button_key_or_route_key": retained["active_button_key_or_route_key"],
+            "runtime_budget_context": retained["runtime_budget_context"],
+        }
     if module.startswith("utils.deployment") or "bootstrap" in module:
-        return (
-            "active_deployment_bootstrap",
-            "platform_deployment",
-            "deployment/bootstrap setup contract",
-            "Deployment or bootstrap code path used by setup validation.",
-            "Review with deployment setup owner before removal.",
-        )
-    return (
-        "deletion_candidate",
-        "unowned",
-        "",
-        "No active route, setup, deployment, or contract reference was found.",
-        "Delete or attach to an active route/test before the next cleanup gate.",
-    )
+        return {
+            "classification": "active_deployment_bootstrap",
+            "owner": "platform_deployment",
+            "current_route_or_test": "deployment/bootstrap setup contract",
+            "reason": "Deployment or bootstrap code path used by setup validation.",
+            "expiration_or_review_note": "Review with deployment setup owner before removal.",
+            "deletion_blocker": "Current deployment/setup validation contract.",
+            "active_button_key_or_route_key": "setup/bootstrap deployment",
+            "runtime_budget_context": "admin_setup",
+        }
+    if module in admin_reachable:
+        return {
+            "classification": "deletion_candidate",
+            "owner": "unregistered_admin_surface",
+            "current_route_or_test": "",
+            "reason": "Admin reachability was detected but no retained-runtime registry entry exists.",
+            "expiration_or_review_note": "Register the exact module with route/action ownership or delete it.",
+            "deletion_blocker": "",
+            "active_button_key_or_route_key": "",
+            "runtime_budget_context": "",
+        }
+    return {
+        "classification": "deletion_candidate",
+        "owner": "unowned",
+        "current_route_or_test": "",
+        "reason": "No active route, setup, deployment, or contract reference was found.",
+        "expiration_or_review_note": "Delete or attach to an active route/test before the next cleanup gate.",
+        "deletion_blocker": "",
+        "active_button_key_or_route_key": "",
+        "runtime_budget_context": "",
+    }
 
 
 def _retained_row_has_generic_reason(row: dict[str, Any]) -> bool:
@@ -311,19 +268,14 @@ def python_module_inventory(root: Path) -> dict[str, Any]:
         matched = sorted({token for token in LEGACY_TOKENS if token in text or token in module.lower()})
         if not matched:
             continue
-        classification, owner, reference, reason, blocker = _classify_module(module, route_reachable, admin_reachable)
+        classification = _classify_module(module, route_reachable, admin_reachable)
         row: dict[str, Any] = {
             "module": module,
             "path": str(path.relative_to(root)).replace("\\", "/"),
-            "classification": classification,
-            "owner": owner,
-            "current_route_or_test": reference,
-            "reason": reason,
-            "expiration_or_review_note": blocker,
-            "deletion_blocker": blocker if classification != "deletion_candidate" else "",
+            **classification,
             "tokens": matched[:8],
         }
-        if classification == "deletion_candidate":
+        if row["classification"] == "deletion_candidate":
             deletion_candidates.append(row)
         else:
             legacy_kept.append(row)
@@ -366,10 +318,10 @@ def route_state_inventory() -> dict[str, Any]:
         owner = "decision_workspace"
         if is_alias and category != "dead_route":
             route_reason = (
-                f"Current route-normalization contract maps this external section key to {target} "
+                f"Current route-normalization test maps this section key to {target} "
                 "without opening a Snowflake session."
             )
-            route_review = "Review external bookmarks and remove this alias once no active deep link uses it."
+            route_review = "Review with navigation owner and remove once route-normalization test coverage is updated."
             source = "tests/test_navigation_integrity.py and active command-route normalization"
         routes.append({
             "route": route,
@@ -386,6 +338,14 @@ def route_state_inventory() -> dict[str, Any]:
         "dead_routes": dead_routes,
         "active_alias_contract_count": len(LEGACY_SECTION_ALIASES) + len(RETIRED_SECTION_ALIASES),
         "primary_sections": list(PRIMARY_SECTION_TITLES),
+    }
+
+
+def deleted_routes_artifact(route_inventory: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "deleted_routes": [],
+        "deleted_route_count": 0,
+        "dead_routes": list(route_inventory.get("dead_routes", [])),
     }
 
 
@@ -634,6 +594,33 @@ def deletion_candidates_artifact(inventory: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def module_inventory_artifact(inventory: dict[str, Any]) -> dict[str, Any]:
+    modules = inventory["python_modules"]
+    return {
+        "reachable_from_primary_sections": modules.get("reachable_from_primary_sections", []),
+        "reachable_from_settings_admin_setup_health": modules.get("reachable_from_settings_admin_setup_health", []),
+        "retained_legacy_looking_modules": modules.get("legacy_looking_kept_with_reason", []),
+        "deletion_candidates": modules.get("deletion_candidates", []),
+        "module_count": modules.get("module_count", 0),
+    }
+
+
+def retained_runtime_modules_artifact() -> dict[str, Any]:
+    return {
+        "retained_modules": [dict(entry) for entry in RETAINED_RUNTIME_MODULES],
+        "retained_module_count": len(RETAINED_RUNTIME_MODULES),
+        "broad_prefix_rules_allowed": False,
+    }
+
+
+def deleted_modules_artifact() -> dict[str, Any]:
+    return {
+        "deleted_modules": [dict(row) for row in DELETED_RUNTIME_MODULES_THIS_PASS],
+        "deleted_module_count": len(DELETED_RUNTIME_MODULES_THIS_PASS),
+        "note": "Runtime modules listed here are absent from source and no longer retained by tests.",
+    }
+
+
 def drop_plan_artifact(inventory: dict[str, Any]) -> dict[str, Any]:
     plan = list(inventory["snowflake_objects"].get("drop_plan") or [])
     active_names = {
@@ -716,11 +703,12 @@ def cleanup_summary(inventory: dict[str, Any]) -> dict[str, Any]:
         "compact_evidence_marts_with_load_path": snowflake_objects["compact_evidence_load_path"],
         "test_file_count": tests["test_file_count"],
         "stale_generated_artifact_count": len(artifacts["stale_generated_artifacts"]),
-        "deleted_files_this_pass": [],
+        "deleted_files_this_pass": [row["path"] for row in DELETED_RUNTIME_MODULES_THIS_PASS],
         "removed_stale_artifacts": inventory.get("removed_stale_artifacts", []),
         "cleanup_actions": [
             "Moved direct SQL and session-open proof markers to sidecar registries.",
             "Removed production inline marker comments.",
+            "Deleted command-deck runtime modules that were preserved only by stale tests.",
             "Recorded enforcing route, object, module, test, and artifact inventory.",
         ],
     }
@@ -739,14 +727,22 @@ def write_cleanup_artifacts(root: Path | str = ".") -> dict[str, Any]:
     object_inv = inventory["snowflake_objects"]
     registry = contract_registry_artifact()
     deletion_candidates = deletion_candidates_artifact(inventory)
+    module_inventory = module_inventory_artifact(inventory)
+    retained_modules = retained_runtime_modules_artifact()
+    deleted_modules = deleted_modules_artifact()
+    deleted_routes = deleted_routes_artifact(route_inventory)
     drop_plan = drop_plan_artifact(inventory)
     forbidden_scan = forbidden_token_scan(root)
     test_inv = inventory["tests"]
     test_reduction = test_reduction_summary(test_inv)
     written = {
         "artifacts/cleanup/legacy_inventory.json": inventory,
+        "artifacts/cleanup/module_inventory.json": module_inventory,
+        "artifacts/cleanup/retained_runtime_modules.json": retained_modules,
+        "artifacts/cleanup/deleted_modules.json": deleted_modules,
         "artifacts/cleanup/cleanup_summary.json": summary,
         "artifacts/cleanup/deletion_candidates.json": deletion_candidates,
+        "artifacts/cleanup/deleted_routes.json": deleted_routes,
         "artifacts/cleanup/route_state_inventory.json": route_inventory,
         "artifacts/cleanup/object_inventory.json": object_inv,
         "artifacts/cleanup/drop_plan.json": drop_plan,
@@ -772,10 +768,14 @@ __all__ = [
     "cleanup_summary",
     "contract_registry_artifact",
     "deletion_candidates_artifact",
+    "deleted_modules_artifact",
+    "deleted_routes_artifact",
     "drop_plan_artifact",
     "forbidden_token_scan",
+    "module_inventory_artifact",
     "object_inventory",
     "production_forbidden_token_findings",
+    "retained_runtime_modules_artifact",
     "route_state_inventory",
     "test_reduction_summary",
     "write_cleanup_artifacts",

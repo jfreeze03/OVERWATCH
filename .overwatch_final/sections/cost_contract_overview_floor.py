@@ -92,7 +92,7 @@ def _render_cost_first_paint_shell(company: str, days: int, splash: dict, credit
         ),
         title="Cortex AI cost lane",
         cta_label="Open Cortex Cost Drivers",
-        cta_key="cost_contract_command_deck_cortex_cost_drivers",
+        cta_key="cost_contract_next_move_cortex_cost_drivers",
     )
 
 

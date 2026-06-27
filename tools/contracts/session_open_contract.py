@@ -24,7 +24,7 @@ _ALLOWED_BUDGETS = {"admin_setup", "advanced_diagnostics", "account_usage_fallba
 _CENTRAL_FILES = {
     ".overwatch_final/utils/query.py",
     ".overwatch_final/utils/session.py",
-    ".overwatch_final/session_open_contract.py",
+    "tools/contracts/session_open_contract.py",
 }
 _PRIMARY_SURFACE_PATTERNS = (
     ".overwatch_final/sections/executive",

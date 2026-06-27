@@ -13,7 +13,7 @@ if str(APP_ROOT) not in sys.path:
 
 class DirectSqlContractTests(unittest.TestCase):
     def test_direct_sql_scanner_allows_runner_and_blocks_primary_fixture(self):
-        from direct_sql_contract import direct_sql_scan_artifact, scan_direct_sql_usage
+        from tools.contracts.direct_sql_contract import direct_sql_scan_artifact, scan_direct_sql_usage
 
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
@@ -125,7 +125,7 @@ class DirectSqlContractTests(unittest.TestCase):
             self.assertIn("marker_owner", json.dumps(artifact))
 
     def test_repo_direct_sql_scan_has_no_unallowlisted_daily_surface(self):
-        from direct_sql_contract import scan_direct_sql_usage
+        from tools.contracts.direct_sql_contract import scan_direct_sql_usage
 
         files = sorted(APP_ROOT.rglob("*.py"))
         findings = scan_direct_sql_usage(files, root=ROOT)

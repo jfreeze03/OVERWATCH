@@ -3202,7 +3202,7 @@ def emit_session():
             encoding="utf-8",
         )
         query_search_proof_path.write_text(json.dumps(query_search_proof, indent=2), encoding="utf-8")
-        from direct_sql_contract import direct_sql_scan_artifact, scan_direct_sql_usage
+        from tools.contracts.direct_sql_contract import direct_sql_scan_artifact, scan_direct_sql_usage
 
         direct_sql_scan_files = sorted(APP_ROOT.rglob("*.py"))
         direct_sql_findings = scan_direct_sql_usage(direct_sql_scan_files, root=ROOT)
@@ -3211,7 +3211,7 @@ def emit_session():
             encoding="utf-8",
         )
         self.assertFalse([finding for finding in direct_sql_findings if not finding["allowed"]])
-        from session_open_contract import scan_session_open_usage, session_open_scan_artifact
+        from tools.contracts.session_open_contract import scan_session_open_usage, session_open_scan_artifact
 
         session_open_findings = scan_session_open_usage(direct_sql_scan_files, root=ROOT)
         session_open_static_scan_path.write_text(
@@ -3222,7 +3222,7 @@ def emit_session():
             encoding="utf-8",
         )
         self.assertFalse([finding for finding in session_open_findings if not finding["allowed"]])
-        from sql_performance_lint import lint_sql_files
+        from tools.contracts.sql_performance_lint import lint_sql_files
 
         sql_lint_paths = [
             *sorted((ROOT / "snowflake" / "mart_setup").glob("*.sql")),

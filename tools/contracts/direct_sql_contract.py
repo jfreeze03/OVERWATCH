@@ -167,7 +167,7 @@ def _allowance_for_path(
     call_type: str = "session.sql",
 ) -> tuple[bool, str, str, dict[str, object]]:
     normalized = relative_path.replace("\\", "/").lower()
-    if normalized.endswith(".overwatch_final/direct_sql_contract.py"):
+    if normalized.endswith("tools/contracts/direct_sql_contract.py"):
         return True, "static_scanner_self_reference", "runner", {}
     if normalized.endswith(".overwatch_final/utils/query.py") or normalized.endswith(".overwatch_final/utils/session.py"):
         return True, "central_query_runner_or_guarded_session", "runner", {}

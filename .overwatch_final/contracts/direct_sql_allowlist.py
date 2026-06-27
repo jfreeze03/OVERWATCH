@@ -440,6 +440,7 @@ def _with_cleanup_fields(entry: dict[str, str]) -> dict[str, str]:
     else:
         active_route = "Explicit advanced diagnostics control"
     enriched.setdefault("active_ui_action_or_admin_route", active_route)
+    enriched.setdefault("deletion_candidate", False)
     return enriched
 
 

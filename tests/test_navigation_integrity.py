@@ -2534,7 +2534,7 @@ class NavigationIntegrityTests(unittest.TestCase):
             with self.subTest(section=section):
                 self.assertIn(section, doc)
         for token in (
-            "Command Deck",
+            "Route Actions",
             "Advanced Scope",
             "Decision Workspace",
             "Load Morning Cockpit",

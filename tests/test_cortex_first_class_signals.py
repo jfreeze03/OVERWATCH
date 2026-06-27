@@ -129,17 +129,6 @@ class CortexFirstClassSignalTests(unittest.TestCase):
         self.assertEqual(cortex_lane["value"], "1")
         self.assertEqual(cortex_lane["state"], "AI cost")
 
-    def test_command_deck_contracts_include_cortex_routes(self):
-        from sections.command_deck_contracts import get_command_deck_contract
-
-        executive_labels = {action.label for action in get_command_deck_contract("Executive Landing").route_actions}
-        cost_labels = {action.label for action in get_command_deck_contract("Cost & Contract").route_actions}
-        alert_labels = {action.label for action in get_command_deck_contract("Alert Center").route_actions}
-
-        self.assertIn("Cortex AI Cost", executive_labels)
-        self.assertIn("Review Cortex AI Costs", cost_labels)
-        self.assertIn("Cortex Predictive Alerts", alert_labels)
-
     def test_cortex_monitor_top_summary_is_visible_before_detail_workflows(self):
         source = (APP_ROOT / "sections" / "cortex_monitor.py").read_text(encoding="utf-8")
 

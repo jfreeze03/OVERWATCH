@@ -13,7 +13,7 @@ if str(APP_ROOT) not in sys.path:
 
 class SessionOpenContractTests(unittest.TestCase):
     def test_session_open_scanner_blocks_primary_and_allows_marked_admin(self):
-        from session_open_contract import scan_session_open_usage, session_open_scan_artifact
+        from tools.contracts.session_open_contract import scan_session_open_usage, session_open_scan_artifact
 
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
@@ -72,7 +72,7 @@ class SessionOpenContractTests(unittest.TestCase):
             self.assertNotIn("SELECT", json.dumps(artifact))
 
     def test_repo_session_open_scan_has_no_unallowlisted_primary_surface(self):
-        from session_open_contract import scan_session_open_usage
+        from tools.contracts.session_open_contract import scan_session_open_usage
 
         findings = scan_session_open_usage(sorted(APP_ROOT.rglob("*.py")), root=ROOT)
         blocked = [finding for finding in findings if not finding["allowed"]]

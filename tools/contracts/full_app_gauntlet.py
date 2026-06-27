@@ -74,6 +74,7 @@ def _clean_artifact_directories(root: Path) -> None:
         "artifacts/full_app_validation",
         "artifacts/full_app_inventory",
         "artifacts/cleanup",
+        "artifacts/launch_readiness",
     ):
         target = (root / rel).resolve()
         if target == artifacts_root or artifacts_root not in target.parents:

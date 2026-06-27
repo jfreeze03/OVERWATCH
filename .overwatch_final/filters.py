@@ -355,13 +355,10 @@ def render_global_command_bar(active_company: str, *, credit_price: float | None
     with c_context:
         advanced_filter_count = active_advanced_scope_filter_count()
         now_label = datetime.now().strftime("%Y-%m-%d %H:%M")
-        credit = "" if credit_price is None else f"<strong>${float(credit_price):.2f} / credit</strong>"
         st.markdown(
             f"""
             <div class="ow-command-context">
                 <span>{_escape_html(now_label)}</span>
-                {credit}
-                <span class="ow-command-help" aria-label="Help">?</span>
             </div>
             """,
             unsafe_allow_html=True,

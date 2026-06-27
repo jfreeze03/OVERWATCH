@@ -408,18 +408,6 @@ def render_sidebar(
                 help="Pauses OVERWATCH Snowflake queries after inactivity. Resume keeps Live Monitor auto-refresh off.",
             )
 
-        st.divider()
-
-        company_color = COMPANY_CONFIG.get(active_company, {}).get("color", "#38bdf8")
-        st.markdown(f"""
-        <div class="ow-sidebar-status-card">
-            <strong style="color:{company_color};">{html.escape(active_company)} view</strong>
-            <span>${float(credit_price):.2f} / credit</span>
-            <p>Live metadata is current. Account history may lag up to 45 minutes.</p>
-            <div class="ow-sidebar-health-row"><span>System Health</span><i aria-hidden="true"></i></div>
-        </div>
-        """, unsafe_allow_html=True)
-
     return SidebarState(
         active_company=active_company,
         active_section=active_section,

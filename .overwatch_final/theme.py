@@ -3144,40 +3144,6 @@ details summary span[translate="no"] {
     box-shadow: inset 4px 0 0 var(--ow-cyan), 0 0 18px rgba(37, 184, 242, .12) !important;
     color: #fff !important;
 }
-.ow-sidebar-status-card {
-    border: 1px solid var(--ow-border-soft);
-    border-radius: 10px;
-    background: rgba(8, 25, 35, .72);
-    padding: .9rem;
-    display: grid;
-    gap: .45rem;
-}
-.ow-sidebar-status-card strong,
-.ow-sidebar-status-card span {
-    color: var(--ow-text) !important;
-}
-.ow-sidebar-status-card p {
-    color: var(--ow-text-secondary) !important;
-    font-size: .78rem;
-    line-height: 1.45;
-    margin: .25rem 0 .4rem;
-}
-.ow-sidebar-health-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    border: 1px solid rgba(37, 184, 242, .28);
-    border-radius: 7px;
-    padding: .5rem .7rem;
-    color: var(--ow-text);
-}
-.ow-sidebar-health-row i {
-    width: 8px;
-    height: 8px;
-    border-radius: 999px;
-    background: var(--ow-green);
-    box-shadow: 0 0 10px rgba(71, 212, 135, .45);
-}
 .ow-global-command-bar {
     height: .15rem;
     margin: .15rem 0 .15rem;
@@ -3254,22 +3220,6 @@ details summary span[translate="no"] {
     font-size: .78rem;
     line-height: 1.4;
     padding-top: .25rem;
-}
-.ow-command-context strong {
-    display: block;
-    color: var(--ow-text) !important;
-    font-weight: 650;
-}
-.ow-command-help {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 18px;
-    height: 18px;
-    margin-left: .45rem;
-    border: 1px solid var(--ow-border);
-    border-radius: 999px;
-    color: var(--ow-text-secondary);
 }
 div[class*="st-key-global_advanced_scope_status"] {
     margin-top: .35rem !important;

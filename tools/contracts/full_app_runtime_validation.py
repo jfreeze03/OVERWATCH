@@ -203,6 +203,10 @@ def _safe_int(value: object, default: int = 0) -> int:
         return default
 
 
+def _safe_list(value: object) -> list[Any]:
+    return list(value) if isinstance(value, list) else []
+
+
 def _payload_content_length(data: object) -> int:
     if isinstance(data, bytes):
         return len(data)
@@ -2040,6 +2044,7 @@ class RuntimeValidationHarness:
                 **button,
                 "source": "runtime_button_click",
                 "proof_source": "runtime_click",
+                "clicked": not bool(button.get("skip_reason")),
                 "observed_query_budget_contexts": context_names,
                 "expected_actual_boundaries": dict(button.get("expected_actual_boundaries") or {}),
                 "observed_actual_boundaries": observed_boundaries,
@@ -2584,6 +2589,92 @@ class RuntimeValidationHarness:
                 and not unjustified_controls_without_key
             ),
         }
+        action_control_kinds = {"button", "download_button", "form_submit_button", "data_editor_action", "custom_action"}
+        action_controls = [
+            row for row in control_inventory
+            if str(row.get("kind") or "") in action_control_kinds
+        ]
+        clicked_action_keys = {
+            str(row.get("key") or "")
+            for row in button_results
+            if row.get("clicked") and str(row.get("key") or "")
+        }
+        skipped_action_controls = [
+            {
+                "view_id": row.get("view_id", ""),
+                "section": row.get("section", ""),
+                "workflow": row.get("workflow", ""),
+                "kind": row.get("kind", ""),
+                "label": row.get("label", ""),
+                "key": row.get("key", ""),
+                "skip_reason": next(
+                    (
+                        str(result.get("skip_reason") or "")
+                        for result in button_results
+                        if str(result.get("key") or "") == str(row.get("key") or "")
+                    ),
+                    "download payload validated through runtime export harness"
+                    if str(row.get("kind") or "") == "download_button"
+                    and str(row.get("key") or "").startswith("download_")
+                    else "",
+                ),
+                "owner": "Decision Workspace runtime validation",
+                "expiration_or_review_note": "Remove this skip if the control becomes a mutable app action.",
+            }
+            for row in action_controls
+            if str(row.get("key") or "") not in clicked_action_keys
+        ]
+        generic_skip_reasons = {
+            "",
+            "skip",
+            "skipped",
+            "n/a",
+            "none",
+            "compatibility",
+            "legacy",
+            "not tested",
+            "todo",
+        }
+        generic_skipped_action_controls = [
+            row for row in skipped_action_controls
+            if str(row.get("skip_reason") or "").strip().lower() in generic_skip_reasons
+        ]
+        missing_action_controls = [
+            row for row in skipped_action_controls
+            if not str(row.get("skip_reason") or "")
+        ]
+        control_click_coverage = {
+            "source": "runtime_control_click_coverage",
+            "proof_source": "runtime_click",
+            "action_control_count": len(action_controls),
+            "clicked_action_control_count": sum(
+                1 for row in action_controls
+                if str(row.get("key") or "") in clicked_action_keys
+            ),
+            "explicitly_skipped_action_control_count": len(skipped_action_controls) - len(missing_action_controls),
+            "download_actions_validated_by_export_payloads": [
+                row for row in skipped_action_controls
+                if str(row.get("kind") or "") == "download_button"
+                and str(row.get("key") or "").startswith("download_")
+            ],
+            "missing_action_control_count": len(missing_action_controls),
+            "missing_action_controls": missing_action_controls,
+            "generic_skip_reason_count": len(generic_skipped_action_controls),
+            "generic_skip_reason_controls": generic_skipped_action_controls,
+            "duplicate_key_count": len(control_duplicate_keys),
+            "blank_label_count": len(blank_label_controls),
+            "unknown_action_control_count": len(unknown_controls),
+            "controls_without_key_count": len(controls_without_key),
+            "unjustified_controls_without_key_count": len(unjustified_controls_without_key),
+            "passed": (
+                not missing_action_controls
+                and not generic_skipped_action_controls
+                and not control_duplicate_keys
+                and not blank_label_controls
+                and not unknown_controls
+                and not unjustified_controls_without_key
+            ),
+        }
         generated_exports_manifest = [
             {
                 "source": row.get("source", "runtime_export"),
@@ -2886,6 +2977,119 @@ class RuntimeValidationHarness:
         total_controls_clicked = sum(1 for row in button_results if row.get("clicked"))
         total_settings_actions_clicked = sum(1 for row in settings_click_results if row.get("clicked"))
         total_live_features_clicked = sum(1 for row in live_feature_results if row.get("clicked"))
+        cleanup_unknown_sql_object_count = len(cleanup_inventory.get("snowflake_objects", {}).get("unknown", []))
+        cleanup_dead_route_count = len(cleanup_inventory.get("routes", {}).get("dead_routes", []))
+        export_payload_risk_count = len(_safe_list(risk_inventory["export_payload_risks"]))
+        live_feature_failure_count = len(_safe_list(risk_inventory["live_feature_budget_failures"]))
+        evidence_over_budget_count = len(_safe_list(risk_inventory["evidence_over_budget"]))
+        settings_action_failures = [row for row in settings_click_results if not bool(row.get("passed", True))]
+        query_search_failures = [row for row in query_search_results if not bool(row.get("passed", True))]
+        export_failures = [row for row in export_results if not bool(row.get("passed", True))]
+        case_payload_failures = [row for row in case_payload_results if not bool(row.get("passed", True))]
+        evidence_failures = [
+            row for row in [*evidence_results, *evidence_loader_call_matrix]
+            if not bool(row.get("passed", True))
+        ]
+        slow_action_owner_gap_count = sum(
+            1 for row in slow_action_rows
+            if not str(row.get("owner") or row.get("recommendation") or "")
+        )
+        hard_gate_failures: list[dict[str, Any]] = []
+
+        def add_hard_gate_failure(gate: str, failed: bool, reason: str, count: int | None = None) -> None:
+            if not failed:
+                return
+            row: dict[str, Any] = {
+                "gate": gate,
+                "reason": reason,
+                "recommendation": "Open the referenced artifact, fix the runtime path, and rerun the gauntlet.",
+            }
+            if count is not None:
+                row["count"] = count
+            hard_gate_failures.append(row)
+
+        add_hard_gate_failure("runtime_failures", bool(summary_failure_count := sum(
+            1
+            for row in [
+                *view_results,
+                *button_results,
+                *query_search_results,
+                *stress_results,
+                *evidence_results,
+                *evidence_loader_call_matrix,
+                *live_feature_results,
+                *export_results,
+                *case_payload_results,
+            ]
+            if not row.get("passed", True)
+        )), "One or more runtime render, click, export, live, evidence, or stress rows failed.", summary_failure_count)
+        add_hard_gate_failure("forbidden_ui_tokens", forbidden_ui["blocked_count"] > 0, "Daily runtime output or exports contain forbidden UI/internal tokens.", int(forbidden_ui["blocked_count"]))
+        add_hard_gate_failure("forbidden_source_tokens", source_scan["blocked_count"] > 0, "Production source contains forbidden inline marker or retired-session tokens.", int(source_scan["blocked_count"]))
+        add_hard_gate_failure("unhandled_exceptions", bool(unhandled_exceptions), "A rendered runtime view raised an unhandled exception.", len(unhandled_exceptions))
+        add_hard_gate_failure("marker_budget_mismatches", bool(marker_budget_mismatches), "Static marker budgets did not match observed runtime contexts.", len(marker_budget_mismatches))
+        add_hard_gate_failure("control_contract_coverage", not bool(control_contract_coverage["passed"]), "Rendered controls are missing keys, contracts, labels, or duplicate-key cleanup.", None)
+        add_hard_gate_failure("control_click_coverage", not bool(control_click_coverage["passed"]), "Rendered action controls were not clicked or explicitly skipped with a current reason.", None)
+        add_hard_gate_failure("query_budget", not bool(query_budget_results["passed"]), "Query-budget context validation failed.", len(_safe_list(query_budget_results.get("failed_contexts", []))))
+        add_hard_gate_failure("session_direct_sql", not bool(session_direct_sql_results["passed"]), "Session/direct-SQL runtime validation failed.", _safe_int(session_direct_sql_results.get("marker_budget_mismatch_count")))
+        add_hard_gate_failure("route_query_leaks", bool(route_query_leaks), "Route actions opened sessions, ran queries, or emitted direct SQL.", len(route_query_leaks))
+        add_hard_gate_failure("first_paint_query_leaks", bool(first_paint_query_leaks), "First paint did more than the current packet lookup.", len(first_paint_query_leaks))
+        add_hard_gate_failure("account_usage_unconfirmed_leaks", bool(account_usage_unconfirmed_leaks), "Account Usage fallback incurred cost before confirmation.", len(account_usage_unconfirmed_leaks))
+        add_hard_gate_failure("stale_artifacts", stale_artifact_count > 0, "Cleanup inventory found stale generated artifacts.", stale_artifact_count)
+        add_hard_gate_failure("risk_inventory", not bool(risk_inventory["passed"]), "Runtime risk inventory has hard failures.", None)
+        add_hard_gate_failure("cleanup_unknown_sql_objects", cleanup_unknown_sql_object_count > 0, "Cleanup inventory found unknown SQL objects.", cleanup_unknown_sql_object_count)
+        add_hard_gate_failure("cleanup_dead_routes", cleanup_dead_route_count > 0, "Cleanup inventory found dead routes.", cleanup_dead_route_count)
+        add_hard_gate_failure("export_payload_risks", export_payload_risk_count > 0, "Export payload validation found SQL/internal leakage.", export_payload_risk_count)
+        add_hard_gate_failure("live_feature_failures", live_feature_failure_count > 0, "Live feature gating, budget, or sanitization failed.", live_feature_failure_count)
+        add_hard_gate_failure("evidence_over_budget", evidence_over_budget_count > 0, "Evidence actions exceeded their bounded evidence budget.", evidence_over_budget_count)
+        add_hard_gate_failure("settings_actions", bool(settings_action_failures), "Settings/Admin action validation failed.", len(settings_action_failures))
+        add_hard_gate_failure("query_search", bool(query_search_failures), "Query Search runtime validation failed.", len(query_search_failures))
+        add_hard_gate_failure("exports", bool(export_failures or case_payload_failures), "Export/download/case payload validation failed.", len(export_failures) + len(case_payload_failures))
+        add_hard_gate_failure("evidence_loader_boundaries", bool(evidence_failures), "Evidence loader boundary validation failed.", len(evidence_failures))
+        add_hard_gate_failure("slow_actions_without_owner", slow_action_owner_gap_count > 0, "Slow actions exceeded threshold without an owner or recommendation.", slow_action_owner_gap_count)
+        cleanup_gate_passed = cleanup_unknown_sql_object_count == 0 and cleanup_dead_route_count == 0 and stale_artifact_count == 0
+        performance_gate_passed = (
+            bool(query_budget_results["passed"])
+            and bool(session_direct_sql_results["passed"])
+            and not route_query_leaks
+            and not first_paint_query_leaks
+            and not account_usage_unconfirmed_leaks
+            and slow_action_owner_gap_count == 0
+        )
+        live_feature_gate_passed = live_feature_failure_count == 0 and all(bool(row.get("passed", True)) for row in live_feature_results)
+        export_gate_passed = export_payload_risk_count == 0 and not export_failures and not case_payload_failures
+        settings_gate_passed = bool(settings_results.get("passed", True)) and not settings_action_failures
+        evidence_gate_passed = evidence_over_budget_count == 0 and not evidence_failures
+        query_search_gate_passed = not query_search_failures
+        hard_gate_passed = not hard_gate_failures
+        gauntlet_results = {
+            "source": "runtime_hard_gate",
+            "proof_source": "runtime_click",
+            "passed": hard_gate_passed,
+            "hard_gate_passed": hard_gate_passed,
+            "gate_count": 9,
+            "gates": {
+                "cleanup_gate_passed": cleanup_gate_passed,
+                "performance_gate_passed": performance_gate_passed,
+                "live_feature_gate_passed": live_feature_gate_passed,
+                "export_gate_passed": export_gate_passed,
+                "settings_gate_passed": settings_gate_passed,
+                "evidence_gate_passed": evidence_gate_passed,
+                "query_search_gate_passed": query_search_gate_passed,
+                "control_contract_gate_passed": bool(control_contract_coverage["passed"]),
+                "control_click_gate_passed": bool(control_click_coverage["passed"]),
+            },
+            "failure_count": len(hard_gate_failures),
+            "failures": hard_gate_failures,
+            "raw_sql_included": False,
+        }
+        gauntlet_failures = {
+            "source": "runtime_hard_gate",
+            "proof_source": "runtime_click",
+            "passed": hard_gate_passed,
+            "failure_count": len(hard_gate_failures),
+            "failures": hard_gate_failures,
+            "raw_sql_included": False,
+        }
         summary = {
             "generated_at": _now(),
             "validation_source": "runtime_render_and_click",
@@ -2903,26 +3107,22 @@ class RuntimeValidationHarness:
             "evidence_loader_count": len(evidence_results),
             "marker_budget_mismatch_count": len(marker_budget_mismatches),
             "control_contract_coverage_passed": control_contract_coverage["passed"],
-            "failure_count": sum(
-                1
-                for row in [
-                    *view_results,
-                    *button_results,
-                    *query_search_results,
-                    *stress_results,
-                    *evidence_results,
-                    *evidence_loader_call_matrix,
-                    *live_feature_results,
-                    *export_results,
-                    *case_payload_results,
-                ]
-                if not row.get("passed", True)
-            ),
+            "control_click_coverage_passed": control_click_coverage["passed"],
+            "failure_count": summary_failure_count,
             "forbidden_ui_token_count": forbidden_ui["blocked_count"],
             "source_forbidden_token_count": source_scan["blocked_count"],
             "unhandled_exception_count": len(unhandled_exceptions),
             "query_budget_passed": query_budget_results["passed"],
             "session_direct_sql_passed": session_direct_sql_results["passed"],
+            "hard_gate_passed": hard_gate_passed,
+            "hard_gate_failures": hard_gate_failures,
+            "cleanup_gate_passed": cleanup_gate_passed,
+            "performance_gate_passed": performance_gate_passed,
+            "live_feature_gate_passed": live_feature_gate_passed,
+            "export_gate_passed": export_gate_passed,
+            "settings_gate_passed": settings_gate_passed,
+            "evidence_gate_passed": evidence_gate_passed,
+            "query_search_gate_passed": query_search_gate_passed,
             "total_views_rendered": len(view_results),
             "total_controls_found": len(control_inventory),
             "total_controls_clicked": total_controls_clicked,
@@ -2937,16 +3137,15 @@ class RuntimeValidationHarness:
             "account_usage_unconfirmed_leak_count": len(account_usage_unconfirmed_leaks),
             "stale_artifact_count": stale_artifact_count,
             "deleted_or_drop_candidate_count": deleted_or_drop_candidate_count,
+            "cleanup_unknown_sql_object_count": cleanup_unknown_sql_object_count,
+            "cleanup_dead_route_count": cleanup_dead_route_count,
+            "export_payload_risk_count": export_payload_risk_count,
+            "live_feature_failure_count": live_feature_failure_count,
+            "evidence_over_budget_count": evidence_over_budget_count,
+            "slow_action_owner_gap_count": slow_action_owner_gap_count,
             "raw_sql_included": False,
         }
-        summary["all_passed"] = (
-            summary["failure_count"] == 0
-            and summary["forbidden_ui_token_count"] == 0
-            and summary["source_forbidden_token_count"] == 0
-            and summary["unhandled_exception_count"] == 0
-            and summary["marker_budget_mismatch_count"] == 0
-            and summary["control_contract_coverage_passed"]
-        )
+        summary["all_passed"] = hard_gate_passed
         return {
             "app_validation_summary.json": summary,
             "view_results.json": view_results,
@@ -2956,6 +3155,7 @@ class RuntimeValidationHarness:
             "button_contract_matrix.json": contract_matrix,
             "control_inventory.json": control_inventory,
             "control_contract_coverage.json": control_contract_coverage,
+            "control_click_coverage.json": control_click_coverage,
             "export_results.json": export_results,
             "case_payload_results.json": case_payload_results,
             "generated_exports_manifest.json": generated_exports_manifest,
@@ -2969,6 +3169,8 @@ class RuntimeValidationHarness:
             "error_inventory.json": error_inventory,
             "slow_runtime_inventory.json": slow_runtime_inventory,
             "risk_inventory.json": risk_inventory,
+            "gauntlet_results.json": gauntlet_results,
+            "gauntlet_failures.json": gauntlet_failures,
             "forbidden_ui_token_scan.json": forbidden_ui,
             "forbidden_source_token_scan.json": source_scan,
             "forbidden_daily_ui_scan.json": daily_scan,

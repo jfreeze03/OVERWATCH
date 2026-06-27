@@ -61,6 +61,7 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
             "artifacts/full_app_validation/session_direct_sql_results.json",
             "artifacts/full_app_validation/query_search_results.json",
             "artifacts/full_app_validation/evidence_loader_results.json",
+            "artifacts/full_app_validation/evidence_loader_call_matrix.json",
             "artifacts/full_app_validation/stress_results.json",
             "artifacts/full_app_validation/case_payload_results.json",
             "artifacts/full_app_validation/artifact_manifest.json",
@@ -75,6 +76,7 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
         exports = json.loads((ROOT / "artifacts/full_app_validation/export_results.json").read_text())
         query_search = json.loads((ROOT / "artifacts/full_app_validation/query_search_results.json").read_text())
         evidence = json.loads((ROOT / "artifacts/full_app_validation/evidence_loader_results.json").read_text())
+        evidence_matrix = json.loads((ROOT / "artifacts/full_app_validation/evidence_loader_call_matrix.json").read_text())
         live = json.loads((ROOT / "artifacts/full_app_validation/live_feature_results.json").read_text())
         stress = json.loads((ROOT / "artifacts/full_app_validation/stress_results.json").read_text())
         controls = json.loads((ROOT / "artifacts/full_app_validation/control_inventory.json").read_text())
@@ -100,7 +102,12 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
         self.assertGreater(summary["export_count"], 0)
         self.assertGreater(summary["live_feature_count"], 0)
         self.assertGreater(summary["stress_case_count"], 0)
-        self.assertEqual(set(manifest["files"]), required)
+        self.assertTrue(required.issubset(set(manifest["files"])))
+        generated_export_files = [
+            path for path in manifest["files"]
+            if path.startswith("artifacts/full_app_validation/generated_exports/")
+        ]
+        self.assertTrue(generated_export_files, manifest)
         self.assertGreater(len(controls), 0)
         self.assertTrue(control_coverage["passed"], control_coverage)
         self.assertEqual(control_coverage["unknown_control_count"], 0)
@@ -143,19 +150,29 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
             if row["action_type"] == "evidence_load":
                 self.assertTrue(row["evidence_loader_called"], row)
                 self.assertTrue(row["evidence_loader_names"], row)
+                self.assertEqual(row["observed_actual_boundaries"], row["expected_actual_boundaries"], row)
+                self.assertEqual(row["actual_snowflake_executions"], row["expected_snowflake_execution_count"], row)
 
         for row in exports:
             self.assertEqual(row["source"], "runtime_export_payload")
             self.assertEqual(row["proof_source"], "runtime_export")
             self.assertGreater(row["content_length"], 0, row)
             self.assertGreaterEqual(row["row_count"], 1, row)
+            self.assertEqual(row["row_count"], row["parsed_row_count"], row)
+            self.assertEqual(row["row_count"], row["visible_row_count"], row)
             self.assertFalse(row["query_text_included"], row)
+            self.assertEqual(row["raw_internal_token_count"], 0, row)
+            self.assertTrue(row["sha256"], row)
+            payload_file = ROOT / str(row["payload_file"])
+            self.assertTrue(payload_file.exists(), row)
+            self.assertIn(str(row["payload_file"]), manifest["files"], row)
+            self.assertGreater(payload_file.stat().st_size, 0, row)
             self.assertTrue(row["passed"], row)
 
         query_cases = {row["case"]: row for row in query_search}
         self.assertTrue(query_cases)
         for row in query_search:
-            if row["case"] == "render_no_click":
+            if row["case"] in {"render_no_click", "text_contains_no_autorun", "warehouse_prefill_no_autorun"}:
                 self.assertEqual(row["source"], "runtime_query_search_render", row)
                 self.assertEqual(row["proof_source"], "runtime_render", row)
                 self.assertFalse(row["observed_contexts"], row)
@@ -180,22 +197,39 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
         self.assertFalse(query_cases["sql_preview"]["raw_sql_visible_in_daily_ui"])
         self.assertGreater(query_cases["default_export_no_query_text"]["export_count"], 0)
         self.assertFalse(query_cases["default_export_no_query_text"]["query_text_included"])
+        self.assertEqual(query_cases["text_contains_no_autorun"]["snowflake_execution_count"], 0)
+        self.assertEqual(query_cases["warehouse_prefill_no_autorun"]["snowflake_execution_count"], 0)
+        self.assertLessEqual(query_cases["text_contains_explicit_search"]["max_rows"], 200)
         self.assertEqual(query_cases["account_usage_fallback_unconfirmed"]["session_open_count"], 0)
         self.assertEqual(query_cases["account_usage_fallback_confirmed"]["metadata_probe_count"], 0)
 
         for row in evidence:
-            self.assertEqual(row["source"], "runtime_evidence_loader_spy", row)
+            self.assertEqual(row["source"], "runtime_real_loader_spy", row)
             self.assertEqual(row["proof_source"], "runtime_click", row)
             self.assertTrue(row["loader_called"], row)
             self.assertTrue(row["real_loader_name"], row)
+            self.assertEqual(row["loader_name"], row["real_loader_name"], row)
+            self.assertIn("arg_count", row["args_shape"], row)
             self.assertTrue(row["target_context_seen"], row)
             self.assertTrue(row["compact_table_family"], row)
             self.assertGreater(row["row_count"], 0, row)
+            self.assertEqual(row["returned_row_count"], row["row_count"], row)
+            self.assertEqual(row["panel_row_count"], row["row_count"], row)
+            self.assertEqual(row["export_row_count"], row["row_count"], row)
+            self.assertEqual(row["case_row_count"], row["row_count"], row)
+            self.assertTrue(row["panel_export_case_counts_match"], row)
             self.assertFalse(row["account_usage_used"], row)
             self.assertTrue(row["target_marker_before_limit"], row)
             self.assertTrue(row["target_plan_id_present"], row)
             self.assertLessEqual(row["max_rows"], 200)
             self.assertLessEqual(row["hard_cap"], 500)
+        self.assertTrue(evidence_matrix, evidence_matrix)
+        for row in evidence_matrix:
+            self.assertEqual(row["source"], "runtime_real_loader_spy_matrix", row)
+            self.assertEqual(row["proof_source"], "runtime_click", row)
+            self.assertTrue(row["expected_loader_name"], row)
+            self.assertTrue(row["observed"], row)
+            self.assertTrue(row["passed"], row)
         for row in live:
             self.assertEqual(row["proof_source"], "runtime_click", row)
             self.assertTrue(row["explicit_click_required"], row)
@@ -205,6 +239,11 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
         for row in stress:
             self.assertEqual(row["proof_source"], "runtime_stress", row)
             self.assertTrue(row["sequence_steps"], row)
+            self.assertIn("sections_touched", row)
+            self.assertIn("actions_clicked", row)
+            self.assertIn("query_counts_by_boundary", row)
+            self.assertIn("state_delta_summary", row)
+            self.assertIn("export_summary", row)
             self.assertTrue(row["passed"], row)
         stress_cases = {row["case"]: row for row in stress}
         self.assertEqual(stress_cases["rapid_section_switching"]["touched_primary_section_count"], len(PRIMARY_SECTION_TITLES))

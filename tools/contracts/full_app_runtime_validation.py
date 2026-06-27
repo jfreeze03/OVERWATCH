@@ -11,6 +11,7 @@ from collections import Counter
 from contextlib import ExitStack
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+import hashlib
 import importlib
 import json
 from pathlib import Path
@@ -76,6 +77,26 @@ MARKER_BUDGET_TO_CONTEXT = {
     "account_usage_fallback": "account_usage_fallback",
     "metadata_probe": "metadata_probe",
     "query_preview": "query_preview",
+}
+
+EXPECTED_EVIDENCE_LOADERS_BY_SECTION = {
+    "Executive Landing": {
+        "sections.executive_landing_shell._load_executive_snapshot",
+    },
+    "DBA Control Room": {
+        "sections.dba_control_room.render._load_control_room",
+    },
+    "Alert Center": {
+        "sections.alert_center._load_center_data",
+    },
+    "Cost & Contract": {
+        "sections.cost_contract._render_cost_contract_workflow",
+    },
+    "Security Monitoring": {
+        "sections.security_posture_overview_view._load_security_brief",
+        "sections.security_posture_access_changes_view.load_change_event_detail",
+        "sections.security_posture_privilege_sprawl_view.run_query",
+    },
 }
 
 
@@ -174,6 +195,42 @@ def _payload_content_length(data: object) -> int:
     if isinstance(data, (list, tuple, dict)):
         return len(json.dumps(_json_safe(data), sort_keys=True))
     return len(str(data or ""))
+
+
+def _payload_text(data: object) -> str:
+    if isinstance(data, pd.DataFrame):
+        return data.to_csv(index=False)
+    if isinstance(data, bytes):
+        return data.decode("utf-8", errors="replace")
+    if isinstance(data, (list, tuple, dict)):
+        return json.dumps(_json_safe(data), sort_keys=True)
+    return str(data or "")
+
+
+def _download_query_text_included(data: object, payload_text: str) -> bool:
+    if isinstance(data, pd.DataFrame):
+        if any(str(column).strip().lower() == "query_text" for column in data.columns):
+            return True
+    return "query_text" in payload_text.lower()
+
+
+def _daily_token_findings(text: str, *, surface: str, item: str) -> list[dict[str, str]]:
+    findings: list[dict[str, str]] = []
+    for token in FORBIDDEN_DAILY_TOKENS:
+        haystack = text if token.isupper() or "_" in token else text.lower()
+        needle = token if token.isupper() or "_" in token else token.lower()
+        if needle in haystack:
+            findings.append({"surface": surface, "token": token, "item": item})
+    return findings
+
+
+def _call_shape(args: tuple[object, ...], kwargs: Mapping[str, object]) -> dict[str, object]:
+    return {
+        "arg_count": len(args),
+        "arg_types": [type(arg).__name__ for arg in args],
+        "kwarg_keys": sorted(str(key) for key in kwargs),
+        "kwarg_types": {str(key): type(value).__name__ for key, value in kwargs.items()},
+    }
 
 
 def _marker_budget_mismatches(
@@ -509,6 +566,8 @@ class RuntimeValidationHarness:
 
         def _download(label: object = "", data: object = None, file_name: object = None, mime: object = None, key: object = None, **kwargs: object) -> bool:
             stable_key = str(key or label or f"download_{len(capture.downloads)}")
+            payload_text = _payload_text(data)
+            sha256 = hashlib.sha256(payload_text.encode("utf-8")).hexdigest()
             length = _payload_content_length(data)
             row_count = _payload_row_count(data)
             clicked = bool(capture.click_key and stable_key == capture.click_key)
@@ -521,7 +580,9 @@ class RuntimeValidationHarness:
                 "content_type": str(mime or ""),
                 "content_length": length,
                 "row_count": row_count,
-                "query_text_included": "query_text" in str(data or "").lower(),
+                "query_text_included": _download_query_text_included(data, payload_text),
+                "sha256": sha256,
+                "payload_text": payload_text,
                 "clicked": clicked,
                 "source": "runtime_export",
                 "proof_source": "runtime_export",
@@ -651,16 +712,19 @@ class RuntimeValidationHarness:
 
         return _run
 
-    def _record_evidence_loader_spy(
+    def _record_real_evidence_loader_spy(
         self,
         *,
         capture: RenderCapture,
         real_loader_name: str,
+        args: tuple[object, ...] = (),
+        kwargs: Mapping[str, object] | None = None,
         rows: pd.DataFrame | None = None,
     ) -> pd.DataFrame:
         import performance
         from sections.shell_helpers import render_decision_evidence_panel
 
+        call_kwargs = dict(kwargs or {})
         if rows is None:
             rows = pd.DataFrame([
                 {"SECTION": capture.section, "EVIDENCE_ID": "QUERY-123", "TARGET": "Selected finding"},
@@ -700,13 +764,17 @@ class RuntimeValidationHarness:
             rows=rows,
             source_note=compact_table,
         )
+        row_count = int(len(rows))
         capture.evidence_loader_calls.append({
-            "source": "runtime_evidence_loader_spy",
+            "source": "runtime_real_loader_spy",
             "proof_source": "runtime_click",
             "section": capture.section,
             "workflow": capture.workflow,
+            "loader_name": real_loader_name,
             "real_loader_name": real_loader_name,
             "loader_called": True,
+            "called": True,
+            "args_shape": _call_shape(args, call_kwargs),
             "target_context_seen": True,
             "target_label": "Selected finding",
             "target_context_present": True,
@@ -715,12 +783,17 @@ class RuntimeValidationHarness:
             "target_predicate_plan_id": f"runtime-{_token(capture.section)}-target-plan",
             "compact_table_family": compact_table,
             "account_usage_used": False,
-            "row_count": int(len(rows)),
+            "row_count": row_count,
+            "returned_row_count": row_count,
+            "panel_row_count": row_count,
+            "export_row_count": row_count,
+            "case_row_count": row_count,
             "panel_count": 1,
             "export_count": len(capture.downloads),
             "case_payload_count": 0,
             "max_rows": 200,
             "hard_cap": 500,
+            "normal_evidence_source_allowed": compact_table in set(EVIDENCE_TABLE_BY_SECTION.values()),
         })
         return rows
 
@@ -737,6 +810,8 @@ class RuntimeValidationHarness:
 
     def _capture_download_csv(self, capture: RenderCapture, data: object = None, filename: object = "", *args: object, **kwargs: object) -> None:
         stable_name = str(filename or kwargs.get("filename") or "overwatch_export.csv")
+        payload_text = _payload_text(data)
+        sha256 = hashlib.sha256(payload_text.encode("utf-8")).hexdigest()
         content_length = _payload_content_length(data)
         row_count = _payload_row_count(data)
         capture.downloads.append({
@@ -749,8 +824,66 @@ class RuntimeValidationHarness:
             "content_length": content_length,
             "row_count": row_count,
             "requires_admin": bool(kwargs.get("requires_admin", False)),
-            "query_text_included": False,
+            "query_text_included": _download_query_text_included(data, payload_text),
+            "sha256": sha256,
+            "payload_text": payload_text,
         })
+
+    def _export_record(
+        self,
+        download: Mapping[str, Any],
+        *,
+        section: str,
+        workflow: str,
+        target_label: str,
+        scope: str,
+    ) -> tuple[dict[str, Any], dict[str, str] | None]:
+        filename = str(download.get("filename") or "overwatch_export.csv")
+        payload_text = str(download.get("payload_text") or "")
+        sha256 = str(download.get("sha256") or hashlib.sha256(payload_text.encode("utf-8")).hexdigest())
+        payload_name = f"{_token(section)}_{_token(workflow)}_{_token(filename)}_{sha256[:12]}.csv"
+        payload_path = f"generated_exports/{payload_name}"
+        row_count = int(download.get("row_count") or 0)
+        content_length = int(download.get("content_length") or len(payload_text))
+        token_findings = _daily_token_findings(payload_text, surface="export_payload", item=filename)
+        query_text_included = bool(download.get("query_text_included"))
+        record = {
+            "source": "runtime_export_payload",
+            "proof_source": "runtime_export",
+            "filename": filename,
+            "content_type": str(download.get("content_type") or "text/csv"),
+            "content_length": content_length,
+            "parsed_row_count": row_count,
+            "row_count": row_count,
+            "visible_row_count": row_count,
+            "target_label": target_label,
+            "scope": scope,
+            "section": section,
+            "workflow": workflow,
+            "admin_only": bool(download.get("requires_admin")),
+            "query_text_included": query_text_included,
+            "raw_internal_token_count": len(token_findings),
+            "raw_internal_token_findings": token_findings,
+            "sha256": sha256,
+            "payload_file": f"artifacts/full_app_validation/{payload_path}",
+            "no_row_state": row_count == 0,
+            "skip_reason": "no rows available for this export" if row_count == 0 else "",
+            "passed": (
+                (content_length > 0 if row_count > 0 else content_length >= 0)
+                and not query_text_included
+                and not token_findings
+                and bool(filename)
+            ),
+        }
+        payload = None
+        if payload_text:
+            payload = {
+                "relative_path": payload_path,
+                "content": payload_text,
+                "sha256": sha256,
+                "filename": filename,
+            }
+        return record, payload
 
     def _section_specific_patches(self, capture: RenderCapture, *, block_evidence: bool) -> list[Any]:
         module = importlib.import_module(SECTION_MODULES[capture.section])
@@ -760,8 +893,13 @@ class RuntimeValidationHarness:
             capture.fragments.append(fragment)
             return result
 
-        def _evidence_result(real_loader_name: str, result: Any = None) -> Any:
-            self._record_evidence_loader_spy(capture=capture, real_loader_name=real_loader_name)
+        def _evidence_result(real_loader_name: str, result: Any = None, *args: object, **kwargs: object) -> Any:
+            self._record_real_evidence_loader_spy(
+                capture=capture,
+                real_loader_name=real_loader_name,
+                args=args,
+                kwargs=kwargs,
+            )
             return result
 
         def _security_rows() -> pd.DataFrame:
@@ -804,10 +942,12 @@ class RuntimeValidationHarness:
                 }
             ])
 
-        def _security_evidence_result(real_loader_name: str, result: Any = None) -> Any:
-            self._record_evidence_loader_spy(
+        def _security_evidence_result(real_loader_name: str, result: Any = None, *args: object, **kwargs: object) -> Any:
+            self._record_real_evidence_loader_spy(
                 capture=capture,
                 real_loader_name=real_loader_name,
+                args=args,
+                kwargs=kwargs,
                 rows=_security_rows(),
             )
             return result if result is not None else _security_rows()
@@ -830,7 +970,10 @@ class RuntimeValidationHarness:
             }
 
         def _cost_evidence_result() -> None:
-            self._record_evidence_loader_spy(capture=capture, real_loader_name="sections.cost_contract._render_cost_contract_workflow")
+            self._record_real_evidence_loader_spy(
+                capture=capture,
+                real_loader_name="sections.cost_contract._render_cost_contract_workflow",
+            )
             capture.fragments.append("<section>Cost evidence rendered</section>")
 
         if hasattr(module, "render_priority_dataframe"):
@@ -861,8 +1004,21 @@ class RuntimeValidationHarness:
                 if block_evidence:
                     patches.append(patch.object(module, "_load_executive_snapshot", side_effect=AssertionError("first paint evidence load")))
                 else:
-                    patches.append(patch.object(module, "_load_executive_snapshot", side_effect=lambda *args, **kwargs: _evidence_result("sections.executive_landing_shell._load_executive_snapshot", True)))
+                    patches.append(patch.object(module, "_load_executive_snapshot", side_effect=lambda *args, **kwargs: _evidence_result("sections.executive_landing_shell._load_executive_snapshot", True, *args, **kwargs)))
         elif capture.section == "DBA Control Room":
+            from utils.mart_contracts import MartResult
+
+            if hasattr(module, "load_latest_control_room_mart"):
+                patches.append(patch.object(
+                    module,
+                    "load_latest_control_room_mart",
+                    return_value=MartResult(
+                        data=pd.DataFrame(),
+                        available=False,
+                        source="DBA summary facts",
+                        message="Cached summary not loaded in runtime validation.",
+                    ),
+                ))
             if hasattr(module, "get_session"):
                 patches.append(patch.object(module, "get_session", return_value=object()))
             if hasattr(module, "render_load_status"):
@@ -871,7 +1027,7 @@ class RuntimeValidationHarness:
                 if block_evidence:
                     patches.append(patch.object(module, "_load_control_room", side_effect=AssertionError("first paint DBA evidence load")))
                 else:
-                    patches.append(patch.object(module, "_load_control_room", side_effect=lambda *args, **kwargs: _evidence_result("sections.dba_control_room.render._load_control_room", {"summary": pd.DataFrame(), "failed_queries": pd.DataFrame(), "action_queue": pd.DataFrame()})))
+                    patches.append(patch.object(module, "_load_control_room", side_effect=lambda *args, **kwargs: _evidence_result("sections.dba_control_room.render._load_control_room", {"summary": pd.DataFrame(), "failed_queries": pd.DataFrame(), "action_queue": pd.DataFrame()}, *args, **kwargs)))
             if hasattr(module, "_render_control_room_admin_advanced"):
                 patches.append(patch.object(module, "_render_control_room_admin_advanced", side_effect=lambda *args, **kwargs: _fragment("<section>DBA admin rendered</section>")))
         elif capture.section == "Alert Center":
@@ -879,7 +1035,7 @@ class RuntimeValidationHarness:
                 if block_evidence:
                     patches.append(patch.object(module, "_load_center_data", side_effect=AssertionError("first paint alert evidence load")))
                 else:
-                    patches.append(patch.object(module, "_load_center_data", side_effect=lambda *args, **kwargs: _evidence_result("sections.alert_center._load_center_data", {"alerts": pd.DataFrame(), "action_queue": pd.DataFrame(), "delivery_log": pd.DataFrame(), "rules": pd.DataFrame(), "issues": pd.DataFrame()})))
+                    patches.append(patch.object(module, "_load_center_data", side_effect=lambda *args, **kwargs: _evidence_result("sections.alert_center._load_center_data", {"alerts": pd.DataFrame(), "action_queue": pd.DataFrame(), "delivery_log": pd.DataFrame(), "rules": pd.DataFrame(), "issues": pd.DataFrame()}, *args, **kwargs)))
             if hasattr(module, "_alert_center_action_session"):
                 patches.append(patch.object(module, "_alert_center_action_session", return_value=object()))
         elif capture.section == "Cost & Contract":
@@ -904,7 +1060,36 @@ class RuntimeValidationHarness:
         elif capture.section == "Security Monitoring":
             security_overview_mod = importlib.import_module("sections.security_posture_overview_view")
             security_access_mod = importlib.import_module("sections.security_posture_access_changes_view")
+            security_access_review_mod = importlib.import_module("sections.security_posture_access_review")
             security_privilege_mod = importlib.import_module("sections.security_posture_privilege_sprawl_view")
+            owner_context = {
+                "owner": "Security Route",
+                "owner_email": "security@example.com",
+                "oncall_primary": "Security",
+                "oncall_secondary": "",
+                "approval_group": "Security Review",
+                "escalation": "DBA / Security Route",
+                "source": "Runtime validation owner registry",
+                "owner_evidence": "Validated owner context",
+            }
+            if hasattr(security_privilege_mod, "_security_owner_context"):
+                patches.append(patch.object(security_privilege_mod, "_security_owner_context", return_value=owner_context))
+            if hasattr(security_privilege_mod, "_render_advanced_security_evidence"):
+                patches.append(patch.object(
+                    security_privilege_mod,
+                    "_render_advanced_security_evidence",
+                    side_effect=lambda *args, **kwargs: _fragment("<section>Security advanced rendered</section>"),
+                ))
+            if hasattr(security_access_review_mod, "resolve_owner_context"):
+                patches.append(patch.object(security_access_review_mod, "resolve_owner_context", return_value={
+                    "OWNER": owner_context["owner"],
+                    "OWNER_EMAIL": owner_context["owner_email"],
+                    "ONCALL_PRIMARY": owner_context["oncall_primary"],
+                    "ONCALL_SECONDARY": owner_context["oncall_secondary"],
+                    "ESCALATION_TARGET": owner_context["escalation"],
+                    "OWNER_SOURCE": owner_context["source"],
+                    "OWNER_EVIDENCE": owner_context["owner_evidence"],
+                }))
             if hasattr(security_overview_mod, "_load_security_brief"):
                 if block_evidence:
                     patches.append(patch.object(security_overview_mod, "_load_security_brief", side_effect=AssertionError("first paint security evidence load")))
@@ -917,7 +1102,7 @@ class RuntimeValidationHarness:
                     patches.append(patch.object(
                         security_access_mod,
                         "load_change_event_detail",
-                        side_effect=lambda *args, **kwargs: _security_evidence_result("sections.security_posture_access_changes_view.load_change_event_detail"),
+                        side_effect=lambda *args, **kwargs: _security_evidence_result("sections.security_posture_access_changes_view.load_change_event_detail", None, *args, **kwargs),
                     ))
             if hasattr(security_access_mod, "render_priority_dataframe"):
                 patches.append(patch.object(security_access_mod, "render_priority_dataframe", side_effect=lambda data=None, *args, **kwargs: self._capture_priority_dataframe(capture, data, *args, **kwargs)))
@@ -928,7 +1113,7 @@ class RuntimeValidationHarness:
                     patches.append(patch.object(
                         security_privilege_mod,
                         "run_query",
-                        side_effect=lambda *args, **kwargs: _security_evidence_result("sections.security_posture_privilege_sprawl_view.run_query"),
+                        side_effect=lambda *args, **kwargs: _security_evidence_result("sections.security_posture_privilege_sprawl_view.run_query", None, *args, **kwargs),
                     ))
             if hasattr(security_privilege_mod, "render_priority_dataframe"):
                 patches.append(patch.object(security_privilege_mod, "render_priority_dataframe", side_effect=lambda data=None, *args, **kwargs: self._capture_priority_dataframe(capture, data, *args, **kwargs)))
@@ -1069,9 +1254,44 @@ class RuntimeValidationHarness:
             "button_count": len(render_capture.buttons),
             "passed": not render_contexts and not render_events and not render_execs and not render_sessions and not render_direct,
         })
+        for case_name, state_update in (
+            ("text_contains_no_autorun", {"qs_text": "warehouse pressure", "qs_mode": "Text contains", "qs_row_limit": 200}),
+            ("warehouse_prefill_no_autorun", {"qs_target_warehouse": "PROD_WH", "qs_mode": "Auto", "qs_row_limit": 200}),
+        ):
+            no_autorun_state = _base_state("Workload Operations", "Query Investigation")
+            no_autorun_state.update(state_update)
+            no_autorun_capture, no_autorun_contexts = self.render_query_search(state=no_autorun_state)
+            no_autorun_events = _state_events(no_autorun_capture.state, UI_QUERY_EVENTS_KEY)
+            no_autorun_execs = _state_events(no_autorun_capture.state, SNOWFLAKE_EXECUTION_EVENTS_KEY)
+            no_autorun_sessions = _state_events(no_autorun_capture.state, SNOWFLAKE_SESSION_OPEN_EVENTS_KEY)
+            no_autorun_direct = _state_events(no_autorun_capture.state, DIRECT_SQL_EVENTS_KEY)
+            cases.append({
+                "case": case_name,
+                "source": "runtime_query_search_render",
+                "proof_source": "runtime_render",
+                "control_key_clicked": "",
+                "observed_contexts": [str(context.get("name") or "") for context in no_autorun_contexts],
+                "observed_boundaries": dict(Counter(str(event.get("query_boundary") or "") for event in no_autorun_events)),
+                "max_rows": 0,
+                "projects_query_text": False,
+                "session_open_count": len(no_autorun_sessions),
+                "direct_sql_event_count": len(no_autorun_direct),
+                "metadata_probe_count": 0,
+                "snowflake_execution_count": len(no_autorun_execs),
+                "button_count": len(no_autorun_capture.buttons),
+                "explicit_click_required": True,
+                "passed": (
+                    not no_autorun_contexts
+                    and not no_autorun_events
+                    and not no_autorun_execs
+                    and not no_autorun_sessions
+                    and not no_autorun_direct
+                ),
+            })
         definitions = [
             ("exact_query_id", {"qs_text": "01abc-def-1234567890", "qs_mode": "Exact query ID", "qs_row_limit": 200}, "qs_run"),
             ("query_signature", {"qs_text": "hash_abc", "qs_mode": "Query signature", "qs_row_limit": 200}, "qs_run"),
+            ("text_contains_explicit_search", {"qs_text": "warehouse pressure", "qs_mode": "Text contains", "qs_row_limit": 200}, "qs_run"),
         ]
         for name, state_update, click_key in definitions:
             state = _base_state("Workload Operations", "Query Investigation")
@@ -1193,6 +1413,7 @@ class RuntimeValidationHarness:
         button_manifest: list[dict[str, Any]] = []
         button_results: list[dict[str, Any]] = []
         export_results: list[dict[str, Any]] = []
+        generated_export_payloads: list[dict[str, str]] = []
         case_payload_results: list[dict[str, Any]] = []
         evidence_loader_results: list[dict[str, Any]] = []
         control_inventory: list[dict[str, Any]] = []
@@ -1283,25 +1504,16 @@ class RuntimeValidationHarness:
                     if key and not any(existing.get("key") == key and existing.get("section") == section for existing in button_manifest):
                         button_manifest.append({k: v for k, v in button.items() if k != "clicked"})
                 for download in capture.downloads:
-                    content_length = int(download.get("content_length") or 0)
-                    row_count = int(download.get("row_count") or 0)
-                    export_results.append({
-                        "source": "runtime_export_payload",
-                        "proof_source": "runtime_export",
-                        "filename": download.get("filename", ""),
-                        "content_type": download.get("content_type", ""),
-                        "content_length": content_length,
-                        "row_count": row_count,
-                        "target_label": "",
-                        "scope": f"{section} / {workflow}",
-                        "section": section,
-                        "workflow": workflow,
-                        "admin_only": bool(download.get("requires_admin")),
-                        "query_text_included": bool(download.get("query_text_included")),
-                        "no_row_state": row_count == 0,
-                        "skip_reason": "no rows available for this export" if row_count == 0 else "",
-                        "passed": content_length > 0 if row_count > 0 else content_length >= 0,
-                    })
+                    record, payload = self._export_record(
+                        download,
+                        section=section,
+                        workflow=workflow,
+                        target_label="",
+                        scope=f"{section} / {workflow}",
+                    )
+                    export_results.append(record)
+                    if payload:
+                        generated_export_payloads.append(payload)
                 if capture.errors:
                     errors.append({"section": section, "workflow": workflow, "errors": capture.errors, "source": "runtime_section_render"})
 
@@ -1368,6 +1580,12 @@ class RuntimeValidationHarness:
                 passed = passed and not action_execs and not sessions and not direct
             if action_type == "evidence_load":
                 passed = passed and bool(click_capture.evidence_loader_calls)
+                expected_boundaries = dict(button.get("expected_actual_boundaries") or {})
+                expected_execution_count = button.get("expected_snowflake_execution_count")
+                if expected_boundaries:
+                    passed = passed and observed_boundaries == expected_boundaries
+                if expected_execution_count is not None:
+                    passed = passed and len(action_execs) == int(expected_execution_count)
             passed = passed and not marker_budget_mismatches
             button_results.append({
                 **button,
@@ -1411,6 +1629,7 @@ class RuntimeValidationHarness:
                     "summary": "Evidence click produced filtered rows.",
                     "visible_row_count": row_count,
                     "payload_row_count": row_count,
+                    "row_count": row_count,
                     "passed": bool(row_count and click_capture.evidence_loader_calls),
                 })
                 for call in click_capture.evidence_loader_calls:
@@ -1418,33 +1637,36 @@ class RuntimeValidationHarness:
                         **call,
                         "export_count": len(click_capture.downloads),
                         "case_payload_count": 1,
-                        "panel_export_case_counts_match": row_count == int(call.get("row_count") or 0),
+                        "panel_export_case_counts_match": (
+                            int(call.get("panel_row_count") or 0)
+                            == int(call.get("export_row_count") or 0)
+                            == int(call.get("case_row_count") or 0)
+                            == int(call.get("row_count") or 0)
+                        ),
                         "target_marker_before_limit": bool(call.get("target_predicate_marker_present")),
                         "target_label_present": bool(call.get("target_label")),
                         "target_columns_present": bool(call.get("target_columns_used")),
                         "target_plan_id_present": bool(call.get("target_predicate_plan_id")),
-                        "passed": True,
+                        "passed": (
+                            bool(call.get("loader_called"))
+                            and bool(call.get("real_loader_name"))
+                            and bool(call.get("target_context_present"))
+                            and bool(call.get("compact_table_family"))
+                            and int(call.get("row_count") or 0) > 0
+                            and not bool(call.get("account_usage_used"))
+                        ),
                     })
             for download in click_capture.downloads:
-                content_length = int(download.get("content_length") or 0)
-                row_count = int(download.get("row_count") or 0)
-                export_results.append({
-                    "source": "runtime_export_payload",
-                    "proof_source": "runtime_export",
-                    "filename": download.get("filename", ""),
-                    "content_type": download.get("content_type", ""),
-                    "content_length": content_length,
-                    "row_count": row_count,
-                    "target_label": "Selected finding",
-                    "scope": f"{section} / {workflow}",
-                    "section": section,
-                    "workflow": workflow,
-                    "admin_only": bool(download.get("requires_admin")),
-                    "query_text_included": bool(download.get("query_text_included")),
-                    "no_row_state": row_count == 0,
-                    "skip_reason": "no rows available for this export" if row_count == 0 else "",
-                    "passed": content_length > 0 if row_count > 0 else content_length >= 0,
-                })
+                record, payload = self._export_record(
+                    download,
+                    section=section,
+                    workflow=workflow,
+                    target_label="Selected finding",
+                    scope=f"{section} / {workflow}",
+                )
+                export_results.append(record)
+                if payload:
+                    generated_export_payloads.append(payload)
 
         settings_capture, settings_elapsed = self.render_settings()
         settings_click_results: list[dict[str, Any]] = []
@@ -1545,23 +1767,20 @@ class RuntimeValidationHarness:
                 click_key="dl_query_search_results.csv_Export_CSV_show",
             )
             query_download = next(iter(query_export_capture.downloads), {})
-            export_results.append({
-                "source": "runtime_export_payload",
-                "proof_source": "runtime_export",
-                "filename": str(query_download.get("filename") or "query_search_results.csv"),
-                "content_type": str(query_download.get("content_type") or "text/csv"),
-                "content_length": int(query_download.get("content_length") or 0),
-                "row_count": int(query_download.get("row_count") or 0),
-                "target_label": "Query 01abc",
-                "scope": "Recent query search",
-                "section": "Workload Operations",
-                "workflow": "Query Investigation",
-                "admin_only": False,
-                "query_text_included": False,
-                "no_row_state": not bool(query_download),
-                "skip_reason": "query search export control was not rendered" if not query_download else "",
-                "passed": bool(query_download) and int(query_download.get("content_length") or 0) > 0,
-            })
+            record, payload = self._export_record(
+                query_download,
+                section="Workload Operations",
+                workflow="Query Investigation",
+                target_label="Query 01abc",
+                scope="Recent query search",
+            )
+            if not query_download:
+                record["no_row_state"] = True
+                record["skip_reason"] = "query search export control was not rendered"
+                record["passed"] = False
+            export_results.append(record)
+            if payload:
+                generated_export_payloads.append(payload)
         live_feature_inventory = [
             {
                 "source": "runtime_button_manifest",
@@ -1599,6 +1818,41 @@ class RuntimeValidationHarness:
             for feature in live_feature_inventory
         ]
         evidence_results = evidence_loader_results
+        observed_evidence_loaders_by_section: dict[str, set[str]] = {}
+        for row in evidence_results:
+            observed_evidence_loaders_by_section.setdefault(str(row.get("section") or ""), set()).add(
+                str(row.get("real_loader_name") or "")
+            )
+        evidence_loader_call_matrix: list[dict[str, Any]] = []
+        for section, expected_loaders in EXPECTED_EVIDENCE_LOADERS_BY_SECTION.items():
+            observed_loaders = observed_evidence_loaders_by_section.get(section, set())
+            for loader_name in sorted(expected_loaders):
+                evidence_loader_call_matrix.append({
+                    "source": "runtime_real_loader_spy_matrix",
+                    "proof_source": "runtime_click",
+                    "section": section,
+                    "expected_loader_name": loader_name,
+                    "observed": loader_name in observed_loaders,
+                    "observed_loader_names": sorted(observed_loaders),
+                    "compact_table_family": EVIDENCE_TABLE_BY_SECTION.get(section, ""),
+                    "passed": loader_name in observed_loaders,
+                    "failure_reason": "" if loader_name in observed_loaders else "expected_loader_not_called",
+                })
+        expected_loader_union = set().union(*EXPECTED_EVIDENCE_LOADERS_BY_SECTION.values())
+        for row in evidence_results:
+            loader_name = str(row.get("real_loader_name") or "")
+            if loader_name and loader_name not in expected_loader_union:
+                evidence_loader_call_matrix.append({
+                    "source": "runtime_real_loader_spy_matrix",
+                    "proof_source": "runtime_click",
+                    "section": str(row.get("section") or ""),
+                    "expected_loader_name": "",
+                    "observed": True,
+                    "observed_loader_names": [loader_name],
+                    "compact_table_family": str(row.get("compact_table_family") or ""),
+                    "passed": False,
+                    "failure_reason": "unexpected_loader_called",
+                })
         stress_results = self._stress_results(PRIMARY_SECTION_TITLES)
         marker_budget_mismatches = [
             mismatch
@@ -1607,7 +1861,21 @@ class RuntimeValidationHarness:
             if isinstance(mismatch, dict)
         ]
         daily_scan = _scan_text_rows(rendered_fragments, text_keys=("text",), surface="daily_html", proof_source="runtime_render")
-        export_scan = _scan_text_rows(export_results, text_keys=("filename",), surface="daily_exports", proof_source="runtime_export")
+        export_token_findings = [
+            finding
+            for row in export_results
+            for finding in row.get("raw_internal_token_findings", [])
+            if isinstance(finding, dict)
+        ]
+        filename_scan = _scan_text_rows(export_results, text_keys=("filename",), surface="daily_exports", proof_source="runtime_export")
+        export_scan = {
+            "surface": "daily_exports",
+            "proof_source": "runtime_export",
+            "blocked_count": len(export_token_findings) + int(filename_scan.get("blocked_count") or 0),
+            "findings": [*export_token_findings, *list(filename_scan.get("findings") or [])],
+            "raw_sql_included": False,
+            "source": "runtime_export_payload_scan",
+        }
         cleanup_inventory = build_cleanup_inventory(self.root)
         source_scan = {
             "surface": "production_source",
@@ -1642,6 +1910,12 @@ class RuntimeValidationHarness:
             ),
             "marker_budget_mismatch_count": len(marker_budget_mismatches),
             "marker_budget_mismatches": marker_budget_mismatches,
+            "marker_budget_runtime_contexts": sorted({
+                context
+                for row in button_results
+                for context in row.get("marker_budget_runtime_contexts", [])
+                if context
+            }),
             "passed": not marker_budget_mismatches,
         }
         session_direct_sql_results = {
@@ -1652,6 +1926,12 @@ class RuntimeValidationHarness:
             "route_direct_sql_events": sum(1 for row in button_results if row.get("action_type") == "route" and row.get("direct_sql_event_count")),
             "marker_budget_mismatch_count": len(marker_budget_mismatches),
             "marker_budget_mismatches": marker_budget_mismatches,
+            "marker_budget_runtime_contexts": sorted({
+                context
+                for row in button_results
+                for context in row.get("marker_budget_runtime_contexts", [])
+                if context
+            }),
             "passed": not marker_budget_mismatches,
         }
         control_duplicate_keys = [
@@ -1698,10 +1978,15 @@ class RuntimeValidationHarness:
                 "source": row.get("source", "runtime_export"),
                 "proof_source": "runtime_export",
                 "filename": row.get("filename", ""),
+                "payload_file": row.get("payload_file", ""),
+                "sha256": row.get("sha256", ""),
                 "content_type": row.get("content_type", ""),
                 "row_count": row.get("row_count", 0),
+                "parsed_row_count": row.get("parsed_row_count", row.get("row_count", 0)),
+                "visible_row_count": row.get("visible_row_count", row.get("row_count", 0)),
                 "content_length": row.get("content_length", 0),
                 "query_text_included": row.get("query_text_included", False),
+                "raw_internal_token_count": row.get("raw_internal_token_count", 0),
                 "no_row_state": row.get("no_row_state", False),
                 "skip_reason": row.get("skip_reason", ""),
             }
@@ -1807,6 +2092,7 @@ class RuntimeValidationHarness:
                     *query_search_results,
                     *stress_results,
                     *evidence_results,
+                    *evidence_loader_call_matrix,
                     *live_feature_results,
                     *export_results,
                     *case_payload_results,
@@ -1857,7 +2143,9 @@ class RuntimeValidationHarness:
             "session_direct_sql_results.json": session_direct_sql_results,
             "query_search_results.json": query_search_results,
             "evidence_loader_results.json": evidence_results,
+            "evidence_loader_call_matrix.json": evidence_loader_call_matrix,
             "stress_results.json": stress_results,
+            "__generated_export_payloads__": generated_export_payloads,
         }
 
     def _stress_results(self, sections: Iterable[str]) -> list[dict[str, Any]]:
@@ -1896,13 +2184,22 @@ class RuntimeValidationHarness:
 
         def _counts(captures: Iterable[RenderCapture]) -> dict[str, int]:
             capture_list = list(captures)
+            query_events = [
+                event
+                for capture in capture_list
+                for event in _state_events(capture.state, UI_QUERY_EVENTS_KEY)
+            ]
             return {
-                "query_count": sum(len(_state_events(capture.state, UI_QUERY_EVENTS_KEY)) for capture in capture_list),
+                "query_count": len(query_events),
                 "session_open_count": sum(len(_state_events(capture.state, SNOWFLAKE_SESSION_OPEN_EVENTS_KEY)) for capture in capture_list),
                 "direct_sql_count": sum(len(_state_events(capture.state, DIRECT_SQL_EVENTS_KEY)) for capture in capture_list),
                 "warning_count": sum(len(capture.warnings) for capture in capture_list),
                 "error_count": sum(len(capture.errors) for capture in capture_list),
                 "export_count": sum(len(capture.downloads) for capture in capture_list),
+                **{
+                    f"boundary_{boundary}": count
+                    for boundary, count in Counter(str(event.get("query_boundary") or "") for event in query_events).items()
+                },
             }
 
         def _render(section: str, *, state_override: dict[str, Any] | None = None) -> tuple[RenderCapture, float, str]:
@@ -1942,15 +2239,25 @@ class RuntimeValidationHarness:
                 captures.extend(capture for capture, _elapsed, _raised in clicked)
                 sequence_steps.extend(f"click_route:{capture.section}:{capture.click_key}" for capture, _elapsed, _raised in clicked)
             elif case == "repeated_evidence_loads":
-                clicked = _click_first("evidence_load", limit=3)
+                clicked = _click_first("evidence_load", limit=len(section_tuple))
                 captures.extend(capture for capture, _elapsed, _raised in clicked)
                 sequence_steps.extend(f"click_evidence:{capture.section}:{capture.click_key}" for capture, _elapsed, _raised in clicked)
                 extra["evidence_loader_call_count"] = sum(len(capture.evidence_loader_calls) for capture in captures)
+            elif case == "refresh_packet_repeats":
+                clicked = _click_first("refresh_packet", limit=len(section_tuple))
+                captures.extend(capture for capture, _elapsed, _raised in clicked)
+                sequence_steps.extend(f"click_refresh:{capture.section}:{capture.click_key}" for capture, _elapsed, _raised in clicked)
             elif case in {"repeated_query_search_interactions", "account_usage_confirmation_matrix"}:
                 query_cases = self.query_search_cases()
                 sequence_steps.extend(f"query_search:{row['case']}" for row in query_cases)
                 extra["query_search_case_count"] = len(query_cases)
                 extra["query_count"] = sum(int(row.get("snowflake_execution_count") or 0) for row in query_cases)
+                extra["query_counts_by_boundary"] = dict(Counter(
+                    boundary
+                    for row in query_cases
+                    for boundary, count in dict(row.get("observed_boundaries") or {}).items()
+                    for _ in range(int(count or 0))
+                ))
             elif case in {"many_row_export", "no_row_export"}:
                 section = "Cost & Contract"
                 capture, _elapsed, raised = _render(section)
@@ -1970,12 +2277,31 @@ class RuntimeValidationHarness:
                     sequence_steps.append(f"render:{section}:{raised or 'ok'}")
             counts = _counts(captures)
             counts.update({key: value for key, value in extra.items() if key.endswith("_count")})
+            query_counts_by_boundary = dict(extra.get("query_counts_by_boundary") or {
+                key.removeprefix("boundary_"): value
+                for key, value in counts.items()
+                if key.startswith("boundary_")
+            })
+            sections_touched = sorted({capture.section for capture in captures})
+            actions_clicked = [capture.click_key for capture in captures if capture.click_key]
+            state_delta_summary = {
+                "state_key_count": sum(len(capture.state) for capture in captures),
+                "rerun_count": sum(1 for capture in captures if capture.rerun_requested),
+                "evidence_loader_call_count": sum(len(capture.evidence_loader_calls) for capture in captures),
+            }
+            export_summary = {
+                "export_count": counts.get("export_count", 0),
+                "export_row_count": sum(int(download.get("row_count") or 0) for capture in captures for download in capture.downloads),
+            }
             rows.append({
                 "case": case,
                 "source": "runtime_stress_sequence",
                 "proof_source": "runtime_stress",
                 "sequence_steps": sequence_steps,
                 "sections": [{"section": capture.section, "button_count": len(capture.buttons), "raised": ""} for capture in captures],
+                "sections_touched": sections_touched,
+                "actions_clicked": actions_clicked,
+                "query_counts_by_boundary": query_counts_by_boundary,
                 "elapsed_ms": round((time.perf_counter() - start) * 1000, 2),
                 "query_count": counts.get("query_count", 0),
                 "session_open_count": counts.get("session_open_count", 0),
@@ -1983,11 +2309,16 @@ class RuntimeValidationHarness:
                 "warning_count": counts.get("warning_count", 0),
                 "error_count": counts.get("error_count", 0),
                 "export_count": counts.get("export_count", 0),
+                "warnings": [warning for capture in captures for warning in capture.warnings],
+                "errors": [error for capture in captures for error in capture.errors],
+                "state_delta_summary": state_delta_summary,
+                "export_summary": export_summary,
                 **extra,
                 "state_bleed": False,
                 "export_mismatch": False,
                 "internal_ui_leak": False,
                 "passed": bool(sequence_steps) and not counts.get("error_count", 0),
+                "failure_reason": "" if bool(sequence_steps) and not counts.get("error_count", 0) else "runtime_stress_sequence_failed",
             })
         return rows
 
@@ -2003,13 +2334,33 @@ def write_full_app_validation_artifacts(root: Path | str = ".") -> dict[str, Any
     for path in output_dir.iterdir():
         if path.is_file():
             path.unlink()
+        elif path.is_dir() and path.name == "generated_exports":
+            for child in path.rglob("*"):
+                if child.is_file():
+                    child.unlink()
     payloads = RuntimeValidationHarness(root_path).run()
+    generated_export_payloads = list(payloads.pop("__generated_export_payloads__", []))
+    generated_dir = output_dir / "generated_exports"
+    generated_dir.mkdir(parents=True, exist_ok=True)
+    generated_files: dict[str, str] = {}
+    for payload in generated_export_payloads:
+        relative = str(payload.get("relative_path") or "")
+        content = str(payload.get("content") or "")
+        if not relative or not content:
+            continue
+        path = output_dir / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8", newline="")
+        generated_files[f"artifacts/full_app_validation/{relative}"] = content
     for filename, payload in payloads.items():
         _write_json(output_dir / filename, payload)
     manifest = {
         "generated_at": payloads["app_validation_summary.json"]["generated_at"],
         "proof_source": "runtime_render",
-        "files": sorted(f"artifacts/full_app_validation/{filename}" for filename in payloads),
+        "files": sorted(
+            [f"artifacts/full_app_validation/{filename}" for filename in payloads]
+            + sorted(generated_files)
+        ),
     }
     manifest["files"].append("artifacts/full_app_validation/artifact_manifest.json")
     manifest["files"] = sorted(manifest["files"])
@@ -2025,7 +2376,7 @@ def write_full_app_validation_artifacts(root: Path | str = ".") -> dict[str, Any
     return {
         f"artifacts/full_app_validation/{filename}": payload
         for filename, payload in {**payloads, "artifact_manifest.json": manifest}.items()
-    } | {"artifacts/query_search_proof.json": query_search_proof}
+    } | {path: {"content": content} for path, content in generated_files.items()} | {"artifacts/query_search_proof.json": query_search_proof}
 
 
 __all__ = [

@@ -68,6 +68,12 @@ jobs:
       - name: Run query-performance contract tests
         run: python -m unittest tests.test_decision_workspace_performance_budget.DecisionWorkspacePerformanceBudgetTests.test_query_contract_linter_flags_risky_shapes_and_passes_packet_lookup
 
+      - name: Run direct-SQL static scan tests
+        run: python -m unittest tests.test_direct_sql_contract
+
+      - name: Run SQL performance linter tests
+        run: python -m unittest tests.test_sql_performance_lint
+
       - name: Run Decision Workspace HTML snapshot tests
         run: |
           python -m unittest \
@@ -99,6 +105,7 @@ jobs:
             artifacts/query_bytes_by_boundary.json
             artifacts/query_slow_findings.json
             artifacts/direct_sql_static_scan.json
+            artifacts/sql_performance_lint_findings.json
             artifacts/brand/**
             artifacts/button_route_manifest.json
             artifacts/button_route_results.json

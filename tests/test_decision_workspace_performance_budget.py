@@ -758,7 +758,11 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         self.assertIn("IF (enable_search) THEN", procs)
         self.assertIn("CLUSTER BY (IS_ACTIVE, SECTION_NAME_NORM, COMPANY_NORM, ENVIRONMENT_NORM, WINDOW_DAYS_NORM)", procs)
         self.assertIn("ADD SEARCH OPTIMIZATION", procs)
+        self.assertIn("OVERWATCH_PERFORMANCE_OPTIMIZATION_AUDIT", procs)
+        self.assertIn("'WARN'", procs)
+        self.assertIn("Search Optimization is disabled by default", procs)
         self.assertIn("OVERWATCH_OPTIONAL_PERFORMANCE_OPTIMIZATION_FLAGS", validation)
+        self.assertIn("OVERWATCH_PERFORMANCE_OPTIMIZATION_AUDIT_TABLE", validation)
         self.assertIn("IFF(COUNT(*) = 0, 'PASS', 'WARN')", validation)
 
     def test_query_contract_linter_flags_risky_shapes_and_passes_packet_lookup(self):
@@ -842,7 +846,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             ttl_key="query_search_related_ALFA_hash_01a_50",
             tier="recent",
         )
-        self.assertEqual(related_contract.contract_id, "query_search_related_executions")
+        self.assertEqual(related_contract.contract_id, "query_search_related")
         self.assertEqual(related_contract.max_rows, 50)
         self.assertTrue([contract for contract in iter_query_contracts() if contract.boundary == "decision_packet"])
 
@@ -905,6 +909,9 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             )
             route_summary = performance.end_query_budget_context(route_token)
             self.assertFalse(route_summary["passed_budget"])
+            self.assertIn("exceeded budget", route_summary["failure_reason"])
+            with self.assertRaises(AssertionError):
+                performance.assert_query_budget_context_passed(route_summary)
             self.assertEqual(route_summary["budget"], 0)
             self.assertEqual(route_summary["actual_snowflake_executions"], 1)
 
@@ -922,6 +929,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             )
             direct_summary = performance.end_query_budget_context(direct_token)
             self.assertFalse(direct_summary["passed_budget"])
+            self.assertIn("route_action emitted direct SQL", direct_summary["failure_reason"])
             self.assertEqual(direct_summary["direct_sql_events"], 1)
             self.assertEqual(direct_summary["metadata_probe_events"], 1)
             self.assertEqual(direct_summary["actual_snowflake_executions"], 1)
@@ -937,11 +945,29 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                 ttl_key="alert_center_evidence",
                 tier="recent",
             )
+            performance.increment_snowflake_execution_counter(
+                "evidence",
+                section="Alert Center",
+                ttl_key="alert_center_evidence_second",
+                tier="recent",
+            )
             evidence_summary = performance.end_query_budget_context(evidence_token)
-            self.assertTrue(evidence_summary["passed_budget"])
+            self.assertFalse(evidence_summary["passed_budget"])
+            self.assertIn("more than one evidence boundary", evidence_summary["failure_reason"])
             self.assertEqual(evidence_summary["budget"], 1)
-            self.assertEqual(evidence_summary["boundaries"], {"evidence": 1})
-            self.assertEqual(len(performance.get_query_budget_context_events()), 3)
+            self.assertEqual(evidence_summary["boundaries"], {"evidence": 2})
+
+            exact_token = performance.begin_query_budget_context(
+                "query_search_exact",
+                section="Workload Operations",
+                workflow="Query Investigation",
+            )
+            performance.increment_snowflake_execution_counter("query_search", section="Workload Operations", ttl_key="q1", tier="recent")
+            performance.increment_snowflake_execution_counter("query_search", section="Workload Operations", ttl_key="q2", tier="recent")
+            exact_summary = performance.end_query_budget_context(exact_token)
+            self.assertFalse(exact_summary["passed_query_budget"])
+            self.assertIn("query_search_exact", exact_summary["failure_reason"])
+            self.assertEqual(len(performance.get_query_budget_context_events()), 4)
 
     def test_button_contracts_do_not_grant_account_usage_to_generic_admin(self):
         contracts = list(iter_button_action_contracts())
@@ -1438,6 +1464,12 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                     stack.enter_context(patch.object(module, "_load_center_data", side_effect=AssertionError("First paint must not load alert evidence")))
                 else:
                     def _fake_load_center_data(*_args, **_kwargs):
+                        performance.increment_snowflake_execution_counter(
+                            "evidence",
+                            section="Alert Center",
+                            ttl_key="alert_center_targeted_loader",
+                            tier="recent",
+                        )
                         performance.record_ui_query_event(
                             section="Alert Center",
                             workflow=self._current_workflow(section_name, state),
@@ -1449,6 +1481,10 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                             actual_query_executed=True,
                             cache_layer="none",
                             query_boundary="evidence",
+                            target_label="Selected finding",
+                            target_columns_used=("EVENT_ID", "ALERT_KEY"),
+                            target_predicate_marker_present=True,
+                            target_fallback_used=False,
                             first_paint_sensitive=False,
                         )
                         return {
@@ -1569,7 +1605,17 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             actual_query_executed=True,
             cache_layer="none",
             query_boundary="evidence",
+            target_label="Selected finding" if target else "",
+            target_columns_used=("ENTITY_ID", "EVIDENCE_ID") if target else (),
+            target_predicate_marker_present=True if target else False,
+            target_fallback_used=False if target else None,
             first_paint_sensitive=False,
+        )
+        performance.increment_snowflake_execution_counter(
+            "evidence",
+            section=section_name,
+            ttl_key=f"{section_name.lower().replace(' ', '_').replace('&', 'and')}_deterministic_evidence_loader",
+            tier="recent",
         )
         state[f"{section_name.lower().replace(' ', '_').replace('&', 'and')}_deterministic_evidence_rows"] = rows
         if html_fragments is not None:
@@ -1941,7 +1987,16 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                         int(context.get("metadata_probe_events") or 0)
                         for context in budget_contexts
                     )
+                    budget_role_capture = sum(
+                        int(context.get("role_capture_events") or 0)
+                        for context in budget_contexts
+                    )
                     passed_query_budget = all(bool(context.get("passed_query_budget", context.get("passed_budget", True))) for context in budget_contexts)
+                    budget_failure_reason = "; ".join(
+                        str(context.get("failure_reason") or "")
+                        for context in budget_contexts
+                        if str(context.get("failure_reason") or "")
+                    )
                     state_delta = {
                         state_key: value
                         for state_key, value in click_state.items()
@@ -2064,8 +2119,12 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                         "actual_snowflake_executions": budget_actual_execs,
                         "session_open_count": budget_session_opens,
                         "direct_sql_event_count": budget_direct_sql,
+                        "direct_sql_events": budget_direct_sql,
                         "metadata_probe_event_count": budget_metadata_probes,
+                        "metadata_probe_events": budget_metadata_probes,
+                        "role_capture_events": budget_role_capture,
                         "passed_query_budget": bool(passed_query_budget),
+                        "failure_reason": budget_failure_reason,
                         "query_budget_contexts": self._json_safe(budget_contexts),
                         "expected_query_boundary": button.get("expected_query_boundary", ""),
                         "expected_query_contract_id": button.get("expected_query_contract_id", ""),
@@ -2143,6 +2202,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         query_bytes_path = artifact_dir / "query_bytes_by_boundary.json"
         query_slow_path = artifact_dir / "query_slow_findings.json"
         direct_sql_static_scan_path = artifact_dir / "direct_sql_static_scan.json"
+        sql_performance_lint_path = artifact_dir / "sql_performance_lint_findings.json"
         button_manifest_path = artifact_dir / "button_route_manifest.json"
         button_results_path = artifact_dir / "button_route_results.json"
         snapshot_dir = artifact_dir / "decision_workspace_html_snapshots"
@@ -2205,6 +2265,29 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             direct_sql_events_by_kind[kind] = direct_sql_events_by_kind.get(kind, 0) + 1
         account_usage_metadata_probe_count = direct_sql_events_by_kind.get("account_usage_metadata_probe", 0)
         account_usage_history_query_count = query_events_by_boundary.get("account_usage", 0)
+        targeted_evidence_events = [
+            event for event in telemetry
+            if event.get("query_boundary") == "evidence" and str(event.get("target_label") or "").strip()
+        ]
+        missing_target_marker_count = sum(
+            1 for event in targeted_evidence_events
+            if not bool(event.get("target_predicate_marker_present")) or not event.get("target_columns_used")
+        )
+        fallback_target_predicate_count = sum(
+            1 for event in targeted_evidence_events
+            if bool(event.get("target_fallback_used"))
+        )
+        target_columns_used_by_section: dict[str, list[str]] = {}
+        for event in targeted_evidence_events:
+            section = str(event.get("section") or "Unknown")
+            columns = target_columns_used_by_section.setdefault(section, [])
+            for column in event.get("target_columns_used") or []:
+                if column not in columns:
+                    columns.append(str(column))
+        failed_query_budget_context_count = sum(
+            1 for context in perf_events.get("query_budget_contexts", [])
+            if not bool(context.get("passed_query_budget", context.get("passed_budget", True)))
+        )
         query_perf_summary = {
             "first_paint_allowed_queries": sum(int(row["cold_packet_queries"]) for row in rows),
             "first_paint_blocked_queries": len(violation_events),
@@ -2223,6 +2306,11 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             "total_account_usage_fallback_executions": (
                 account_usage_metadata_probe_count + account_usage_history_query_count
             ),
+            "targeted_evidence_events": len(targeted_evidence_events),
+            "missing_target_marker_count": missing_target_marker_count,
+            "fallback_target_predicate_count": fallback_target_predicate_count,
+            "target_columns_used_by_section": target_columns_used_by_section,
+            "failed_query_budget_context_count": failed_query_budget_context_count,
             "direct_sql_events_by_kind": direct_sql_events_by_kind,
             "snowflake_executions_by_boundary": {
                 "decision_packet": sum(int(row["cold_packet_queries"]) for row in rows),
@@ -2241,6 +2329,8 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         self.assertEqual(query_perf_summary["role_capture_queries_first_paint"], 0)
         self.assertEqual(query_perf_summary["query_lint_error_count"], 0)
         self.assertEqual(query_perf_summary["direct_sql_violation_count"], 0)
+        self.assertEqual(query_perf_summary["missing_target_marker_count"], 0)
+        self.assertEqual(query_perf_summary["failed_query_budget_context_count"], 0)
         summary_path.write_text(json.dumps(rows, indent=2), encoding="utf-8")
         telemetry_path.write_text(json.dumps(telemetry, indent=2), encoding="utf-8")
         query_registry_path.write_text(
@@ -2295,44 +2385,24 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        direct_sql_scan_files = [
-            APP_ROOT / "sections" / "executive_landing.py",
-            APP_ROOT / "sections" / "dba_control_room" / "render.py",
-            APP_ROOT / "sections" / "dba_control_room" / "data.py",
-            APP_ROOT / "sections" / "alert_center_overview_floor.py",
-            APP_ROOT / "sections" / "cost_contract_overview_floor.py",
-            APP_ROOT / "sections" / "cost_contract_evidence.py",
-            APP_ROOT / "sections" / "workload_operations.py",
-            APP_ROOT / "sections" / "query_search.py",
-            APP_ROOT / "sections" / "security_posture_overview_view.py",
-        ]
-        direct_sql_findings: list[dict[str, object]] = []
-        for path in direct_sql_scan_files:
-            if not path.exists():
-                continue
-            for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-                if ".sql(" not in line:
-                    continue
-                direct_sql_findings.append({
-                    "file": str(path.relative_to(ROOT)),
-                    "line": line_no,
-                    "allowed": False,
-                    "reason": "primary section/evidence direct SQL",
-                    "raw_sql_included": False,
-                })
+        from direct_sql_contract import direct_sql_scan_artifact, scan_direct_sql_usage
+
+        direct_sql_scan_files = sorted(APP_ROOT.rglob("*.py"))
+        direct_sql_findings = scan_direct_sql_usage(direct_sql_scan_files, root=ROOT)
         direct_sql_static_scan_path.write_text(
-            json.dumps(
-                {
-                    "scanned_files": [str(path.relative_to(ROOT)) for path in direct_sql_scan_files if path.exists()],
-                    "findings": direct_sql_findings,
-                    "blocked_count": sum(1 for finding in direct_sql_findings if not finding["allowed"]),
-                    "raw_sql_included": False,
-                },
-                indent=2,
-            ),
+            json.dumps(direct_sql_scan_artifact(direct_sql_findings, direct_sql_scan_files, root=ROOT), indent=2),
             encoding="utf-8",
         )
         self.assertFalse([finding for finding in direct_sql_findings if not finding["allowed"]])
+        from sql_performance_lint import lint_sql_files
+
+        sql_lint_paths = [
+            *sorted((ROOT / "snowflake" / "mart_setup").glob("*.sql")),
+            ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql",
+        ]
+        sql_perf_findings = lint_sql_files(sql_lint_paths, root=ROOT)
+        sql_performance_lint_path.write_text(json.dumps(sql_perf_findings, indent=2), encoding="utf-8")
+        self.assertFalse([finding for finding in sql_perf_findings if finding.get("severity") == "error"])
         button_manifest_path.write_text(json.dumps(button_manifest, indent=2), encoding="utf-8")
         button_results_path.write_text(json.dumps(button_results, indent=2), encoding="utf-8")
         snapshot_dir.mkdir(exist_ok=True)
@@ -2448,13 +2518,19 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             self.assertIn("actual_snowflake_executions", result)
             self.assertIn("session_open_count", result)
             self.assertIn("direct_sql_event_count", result)
+            self.assertIn("direct_sql_events", result)
+            self.assertIn("metadata_probe_events", result)
+            self.assertIn("role_capture_events", result)
             self.assertIn("passed_query_budget", result)
+            self.assertTrue(result["passed_query_budget"], result)
+            self.assertEqual(result.get("failure_reason", ""), "", result)
             if result["action_type"] == "route":
                 self.assertEqual(result["evidence_query_events"], 0, result)
                 self.assertEqual(result["account_usage_query_events"], 0, result)
                 self.assertEqual(result["actual_snowflake_executions"], 0, result)
                 self.assertEqual(result["session_open_count"], 0, result)
                 self.assertEqual(result["direct_sql_event_count"], 0, result)
+                self.assertEqual(result["metadata_probe_events"], 0, result)
                 state_delta = dict(result.get("state_delta") or {})
                 expected_updates = dict(result.get("expected_state_updates") or {})
                 for expected_key, expected_value in expected_updates.items():
@@ -2474,6 +2550,13 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         self.assertTrue(json.loads(query_bytes_path.read_text(encoding="utf-8")))
         self.assertEqual(json.loads(query_slow_path.read_text(encoding="utf-8"))["slow_findings"], [])
         self.assertEqual(json.loads(direct_sql_static_scan_path.read_text(encoding="utf-8"))["blocked_count"], 0)
+        self.assertEqual(
+            [
+                finding for finding in json.loads(sql_performance_lint_path.read_text(encoding="utf-8"))
+                if finding.get("severity") == "error"
+            ],
+            [],
+        )
         for path in (
             query_registry_path,
             query_lint_path,
@@ -2484,6 +2567,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             query_bytes_path,
             query_slow_path,
             direct_sql_static_scan_path,
+            sql_performance_lint_path,
         ):
             text = path.read_text(encoding="utf-8")
             self.assertNotIn("SELECT ", text)

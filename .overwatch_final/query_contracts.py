@@ -228,7 +228,7 @@ register_query_contract(
 register_query_contract(
     QueryContract(
         boundary="query_search",
-        contract_id="query_search_related_executions",
+        contract_id="query_search_related",
         ttl_key_pattern=r"^query_search_related_",
         tier="recent",
         max_rows=50,

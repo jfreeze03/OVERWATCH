@@ -369,7 +369,7 @@ def render():
                     target_wh_cl=str(last_filters.get("target_wh_cl") or ""),
                     row_limit=50,
                 )
-                with query_budget_context("query_search_signature", section="Workload Operations", workflow="Query Investigation", budget=1):
+                with query_budget_context("query_search_related", section="Workload Operations", workflow="Query Investigation", budget=1):
                     st.session_state["qs_related_df"] = search_recent_query_summary(
                         related_sql,
                         ttl_key=f"query_search_related_{company}_{selected_hash}_{selected_preview_id}_50",

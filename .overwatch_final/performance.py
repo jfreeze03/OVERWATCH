@@ -161,6 +161,7 @@ def begin_query_budget_context(
         "role_capture_events": 0,
         "query_events": 0,
         "boundaries": {},
+        "actual_boundaries": {},
         "started_at": datetime.now().isoformat(timespec="milliseconds"),
     })
     return token
@@ -202,6 +203,11 @@ def _record_query_budget_context_event(
     if isinstance(boundaries, dict):
         boundary = str(query_boundary or "other")
         boundaries[boundary] = int(boundaries.get(boundary, 0) or 0) + 1
+    if actual_execution:
+        actual_boundaries = context.setdefault("actual_boundaries", {})
+        if isinstance(actual_boundaries, dict):
+            boundary = str(query_boundary or "other")
+            actual_boundaries[boundary] = int(actual_boundaries.get(boundary, 0) or 0) + 1
 
 
 def end_query_budget_context(token: str) -> dict[str, Any]:
@@ -220,7 +226,9 @@ def end_query_budget_context(token: str) -> dict[str, Any]:
         "query_events": 0,
         "passed_budget": True,
         "passed_query_budget": True,
+        "failure_reason": "",
         "boundaries": {},
+        "actual_boundaries": {},
         "finished_at": datetime.now().isoformat(timespec="milliseconds"),
     }
     stack = _session_list(_QUERY_BUDGET_CONTEXT_STACK_KEY)
@@ -234,20 +242,59 @@ def end_query_budget_context(token: str) -> dict[str, Any]:
     if selected:
         actual = int(selected.get("actual_snowflake_executions") or 0)
         budget = int(selected.get("budget") or 0)
+        name = str(selected.get("name") or "")
+        boundaries = dict(selected.get("boundaries") or {})
+        actual_boundaries = dict(selected.get("actual_boundaries") or {})
+        session_open_count = int(selected.get("session_open_count") or 0)
+        direct_sql_events = int(selected.get("direct_sql_events") or 0)
+        metadata_probe_events = int(selected.get("metadata_probe_events") or 0)
+        role_capture_events = int(selected.get("role_capture_events") or 0)
+        failure_reasons: list[str] = []
+        if actual > budget:
+            failure_reasons.append(f"actual_snowflake_executions {actual} exceeded budget {budget}")
+        if name == "route_action":
+            if session_open_count:
+                failure_reasons.append("route_action opened a Snowflake session")
+            if direct_sql_events:
+                failure_reasons.append("route_action emitted direct SQL")
+            if metadata_probe_events:
+                failure_reasons.append("route_action emitted a metadata probe")
+            if role_capture_events:
+                failure_reasons.append("route_action captured role metadata")
+        if name == "evidence_click":
+            if int(actual_boundaries.get("evidence") or 0) > 1:
+                failure_reasons.append("evidence_click emitted more than one evidence boundary")
+            if metadata_probe_events:
+                failure_reasons.append("evidence_click emitted an unallowlisted metadata probe")
+            if int(actual_boundaries.get("account_usage") or 0):
+                failure_reasons.append("evidence_click emitted Account Usage work")
+        if name == "query_search_exact" and int(actual_boundaries.get("query_search") or 0) > 1:
+            failure_reasons.append("query_search_exact emitted more than one query_search boundary")
+        if name == "query_search_related" and int(actual_boundaries.get("query_search") or 0) > 1:
+            failure_reasons.append("query_search_related emitted more than one query_search boundary")
+        if name == "query_preview" and int(actual_boundaries.get("query_preview") or 0) > 1:
+            failure_reasons.append("query_preview emitted more than one query_preview boundary")
+        if name == "account_usage_fallback":
+            account_cost = int(actual_boundaries.get("account_usage") or 0) + metadata_probe_events
+            if account_cost > budget:
+                failure_reasons.append(f"account_usage_fallback cost {account_cost} exceeded budget {budget}")
+        passed = not failure_reasons
         summary.update({
-            "name": str(selected.get("name") or ""),
+            "name": name,
             "section": str(selected.get("section") or ""),
             "workflow": str(selected.get("workflow") or ""),
             "budget": budget,
             "actual_snowflake_executions": actual,
-            "session_open_count": int(selected.get("session_open_count") or 0),
-            "direct_sql_events": int(selected.get("direct_sql_events") or 0),
-            "metadata_probe_events": int(selected.get("metadata_probe_events") or 0),
-            "role_capture_events": int(selected.get("role_capture_events") or 0),
+            "session_open_count": session_open_count,
+            "direct_sql_events": direct_sql_events,
+            "metadata_probe_events": metadata_probe_events,
+            "role_capture_events": role_capture_events,
             "query_events": int(selected.get("query_events") or 0),
-            "passed_budget": actual <= budget,
-            "passed_query_budget": actual <= budget,
-            "boundaries": dict(selected.get("boundaries") or {}),
+            "passed_budget": passed,
+            "passed_query_budget": passed,
+            "failure_reason": "; ".join(failure_reasons),
+            "boundaries": boundaries,
+            "actual_boundaries": actual_boundaries,
             "started_at": selected.get("started_at"),
         })
     try:
@@ -258,6 +305,14 @@ def end_query_budget_context(token: str) -> dict[str, Any]:
     except Exception:
         pass
     return summary
+
+
+def assert_query_budget_context_passed(summary: dict[str, Any]) -> None:
+    """Raise when a query-budget context exceeded its section/action SLO."""
+    if bool(summary.get("passed_query_budget", summary.get("passed_budget", True))):
+        return
+    reason = _safe_message(summary.get("failure_reason") or "Query budget context failed.")
+    raise AssertionError(reason or "Query budget context failed.")
 
 
 @contextmanager
@@ -273,7 +328,8 @@ def query_budget_context(
     try:
         yield token
     finally:
-        end_query_budget_context(token)
+        summary = end_query_budget_context(token)
+        assert_query_budget_context_passed(summary)
 
 
 def get_query_budget_context_events() -> list[dict[str, Any]]:
@@ -816,7 +872,10 @@ def record_ui_query_event(
         pass
     _record_query_budget_context_event(
         query_boundary=query_boundary,
-        actual_execution=bool(actual_query_executed),
+        # UI query events are diagnostic. Actual Snowflake execution budgets are
+        # driven by increment_snowflake_execution_counter() and direct SQL
+        # events so a single runner call is not counted twice.
+        actual_execution=False,
     )
     return event
 

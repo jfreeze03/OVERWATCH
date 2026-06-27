@@ -250,22 +250,19 @@ class DeploymentContractTests(unittest.TestCase):
         wrapper_procedures = {
             "SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST",
             "SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL",
-            "SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS_FAST_IMPL",
             "SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS_FULL_IMPL",
         }
         wrapper_allowed_targets = {
             "SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST": set(),
             "SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL": set(),
-            "SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS_FAST_IMPL": set(),
             "SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS_FULL_IMPL": set(),
         }
         wrapper_expected_call = {
             "SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST": "CALL SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS_FAST_IMPL()",
             "SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL": "CALL SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS_FULL_IMPL()",
-            "SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS_FAST_IMPL": "CALL SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS('FAST')",
             "SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS_FULL_IMPL": "CALL SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS('FULL')",
         }
-        ddl_only_procedures = {"SP_OVERWATCH_APPLY_OPTIONAL_PERFORMANCE_OPTIMIZATION"}
+        optional_ddl_procedures = {"SP_OVERWATCH_APPLY_OPTIONAL_PERFORMANCE_OPTIMIZATION"}
 
         for proc_name, body in procedure_bodies.items():
             with self.subTest(proc_name=proc_name):
@@ -284,10 +281,13 @@ class DeploymentContractTests(unittest.TestCase):
                     self.assertEqual(set(targets), wrapper_allowed_targets[proc_name])
                     self.assertIn(wrapper_expected_call[proc_name], body)
                     continue
-                if proc_name in ddl_only_procedures:
-                    self.assertFalse(targets)
+                if proc_name in optional_ddl_procedures:
+                    self.assertEqual(set(targets), {"OVERWATCH_PERFORMANCE_OPTIMIZATION_AUDIT"})
+                    self.assertIn("OVERWATCH_PERFORMANCE_OPTIMIZATION_AUDIT", table_creates)
                     self.assertIn("IF (ENABLE_SEARCH) THEN", body)
                     self.assertIn("ADD SEARCH OPTIMIZATION", body)
+                    self.assertIn("STATUS", body)
+                    self.assertIn("'WARN'", body)
                     continue
                 self.assertTrue(targets)
                 for target in targets:

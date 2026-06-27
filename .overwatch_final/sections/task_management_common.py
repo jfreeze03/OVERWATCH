@@ -43,7 +43,7 @@ def _run_admin_sql_list(
     completed = 0
     for sql_text in sql_statements:
         try:
-            # DIRECT_SQL_ADMIN_OK boundary=metadata reason=metadata_probe budget=advanced_diagnostics
+            # DIRECT_SQL_ADMIN_OK boundary=metadata reason=metadata_probe budget=advanced_diagnostics owner=platform
             session.sql(sql_text).collect()
             _log_admin_action(
                 session,
@@ -87,7 +87,7 @@ def _current_execution_context(session) -> dict:
             }
     warehouse = ""
     try:
-        # DIRECT_SQL_ADMIN_OK boundary=metadata reason=metadata_probe budget=advanced_diagnostics
+        # DIRECT_SQL_ADMIN_OK boundary=metadata reason=metadata_probe budget=advanced_diagnostics owner=platform
         row = session.sql("SELECT CURRENT_WAREHOUSE() AS current_warehouse").collect()[0]
         warehouse = str(row["CURRENT_WAREHOUSE"] or "")
     except Exception:

@@ -38,6 +38,8 @@ def _infer_mode(path: str, upper: str) -> str:
         return "refresh_full"
     if "account_usage" in normalized:
         return "account_usage_fallback"
+    if "query_search" in normalized:
+        return "query_search"
     if "evidence" in normalized:
         return "evidence"
     if "first_paint" in normalized or "packet_lookup" in normalized:
@@ -84,6 +86,7 @@ def lint_sql_text(
     def add(code: str, severity: str, message: str) -> None:
         findings.append({
             "path": path,
+            "mode": mode,
             "code": code,
             "severity": severity,
             "message": message,
@@ -111,6 +114,10 @@ def lint_sql_text(
         has_fresh_snapshot = "TMP_FAST_SOURCE_SNAPSHOT" in fast_region or "REUSE_LATEST_COMPACT_SOURCE" in fast_region
         if reads_command_marts and not has_fresh_snapshot:
             add("FAST_IMPL_REUSES_COMMAND_MARTS_WITHOUT_SOURCE_SNAPSHOT", "warning", "FAST_IMPL command reuse must be backed by a fresh compact source snapshot.")
+        if reads_command_marts and "TMP_FAST_COMMAND_FRESHNESS" not in fast_region:
+            add("FAST_IMPL_COMMAND_FRESHNESS_UNPROVEN", "error", "FAST_IMPL command reuse must emit fresh/reused/stale command-row proof.")
+        if reads_command_marts and "OBJECT_AGG(SOURCE_KEY, SOURCE_FACT_MAX_TS)" not in fast_region:
+            add("FAST_IMPL_SOURCE_TS_AUDIT_MISSING", "error", "FAST_IMPL audit must include source fact max timestamps by source.")
         if "TMP_FAST_SOURCE_SNAPSHOT" in fast_region:
             source_tokens = (
                 "FACT_QUERY_DETAIL_RECENT",
@@ -168,6 +175,16 @@ def lint_sql_text(
                 add("ACCOUNT_USAGE_NO_LIMIT", "error", "Account Usage fallback must include LIMIT.")
         if not metadata_probe_declared and re.search(r"\b(SHOW|DESCRIBE|DESC|LIMIT\s+0)\b", upper):
             add("ACCOUNT_USAGE_METADATA_PROBE_UNDECLARED", "error", "Account Usage fallback metadata probes must be declared in budget artifacts.")
+    if mode == "query_search":
+        limit = _limit_value(upper)
+        if re.search(r"\bQUERY_ID\s*=", upper) and limit != 1 and "QUERY_ID <>" not in upper:
+            add("QUERY_SEARCH_EXACT_LIMIT_ONE", "error", "Exact query-id search must default to LIMIT 1.")
+        if re.search(r"\b(QUERY_HASH|QUERY_SIGNATURE)\s*=", upper) and limit is not None and limit > 200:
+            add("QUERY_SEARCH_SIGNATURE_LIMIT", "error", "Query signature search must cap rows at 200 or fewer.")
+        if "QUERY_SEARCH_RELATED" in upper and limit is not None and limit > 50:
+            add("QUERY_SEARCH_RELATED_LIMIT", "error", "Related executions search must cap rows at 50 or fewer.")
+        if "QUERY_TEXT" in upper and "QUERY_TEXT_PREVIEW" not in upper:
+            add("QUERY_SEARCH_QUERY_TEXT_PROJECTION", "error", "Default Query Search results and exports must not project query_text.")
     first_paint_region = _body_between(
         upper,
         "CREATE TRANSIENT TABLE IF NOT EXISTS MART_SECTION_DECISION_CURRENT_FLAT",
@@ -190,8 +207,9 @@ def lint_sql_text(
     return findings
 
 
-def lint_sql_files(paths: Iterable[Path], *, root: Path) -> list[dict[str, object]]:
+def lint_sql_files(paths: Iterable[Path], *, root: Path, mode_by_path: dict[str, str] | None = None) -> list[dict[str, object]]:
     findings: list[dict[str, object]] = []
+    mode_by_path = mode_by_path or {}
     for path in paths:
         path = Path(path)
         if not path.exists() or path.suffix.lower() != ".sql":
@@ -200,7 +218,14 @@ def lint_sql_files(paths: Iterable[Path], *, root: Path) -> list[dict[str, objec
             relative = str(path.relative_to(root))
         except ValueError:
             relative = str(path)
-        findings.extend(lint_sql_text(path.read_text(encoding="utf-8", errors="ignore"), path=relative))
+        normalized = relative.replace("\\", "/")
+        findings.extend(
+            lint_sql_text(
+                path.read_text(encoding="utf-8", errors="ignore"),
+                path=relative,
+                mode=mode_by_path.get(normalized, mode_by_path.get(path.name, "auto")),
+            )
+        )
     return findings
 
 

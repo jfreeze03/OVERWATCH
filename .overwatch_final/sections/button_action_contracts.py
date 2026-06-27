@@ -454,6 +454,35 @@ def assert_button_contract_resolved(contract: ButtonActionContract | None) -> No
         raise AssertionError("Route button resolved to a non-exact route contract")
 
 
+def _observed_context_names(result: dict[str, Any]) -> list[str]:
+    observed = result.get("observed_query_budget_contexts")
+    if isinstance(observed, (list, tuple, set)):
+        return [str(item) for item in observed if str(item or "")]
+    if isinstance(observed, str):
+        return [item.strip() for item in observed.split(",") if item.strip()]
+    return []
+
+
+def assert_button_budget_context(result: dict[str, Any], contract: ButtonActionContract) -> dict[str, Any]:
+    """Validate that a clicked button observed the exact budget context promised by its contract."""
+    expected = str(contract.expected_query_budget_context or "")
+    observed = _observed_context_names(result)
+    allow_missing = bool(contract.skip_reason) or contract.action_type in {"export", "add_to_case"}
+    missing = bool(expected and expected not in observed and not allow_missing)
+    unexpected = sorted(context for context in observed if expected and context != expected)
+    passed = not missing and not unexpected
+    diagnostics = {
+        "budget_context_contract_passed": passed,
+        "missing_budget_context": expected if missing else "",
+        "unexpected_budget_contexts": unexpected,
+        "expected_actual_boundaries": dict(contract.expected_actual_boundaries or {}),
+        "observed_actual_boundaries": dict(result.get("actual_boundaries") or {}),
+    }
+    if not passed:
+        raise AssertionError(f"Button budget context contract failed: {diagnostics}")
+    return diagnostics
+
+
 def contract_to_manifest_row(contract: ButtonActionContract) -> dict[str, Any]:
     return contract.to_artifact()
 
@@ -470,6 +499,7 @@ def contract_target_is_valid(contract: ButtonActionContract) -> bool:
 __all__ = [
     "ACTION_TYPES",
     "ButtonActionContract",
+    "assert_button_budget_context",
     "assert_button_contract_resolved",
     "contract_to_manifest_row",
     "contract_target_is_valid",

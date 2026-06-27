@@ -234,6 +234,7 @@ def _render_privileged_grant_readiness(
             height=320,
         )
         if st.button("Save Privileged Grants to Action Queue", key="security_priv_grants_queue"):
+            # SESSION_OPEN_ADMIN_OK boundary=admin reason=post_click_session budget=advanced_diagnostics owner=platform
             _queue_privileged_grant_actions(get_session(), grants, company=company, environment=environment)
         with st.expander("Privileged Grant Status", expanded=False):
             render_shell_snapshot((

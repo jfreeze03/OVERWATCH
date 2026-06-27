@@ -421,9 +421,9 @@ def update_alert_rule(
         is_active=is_active,
         actor=actor,
     )
-    # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
+    # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics owner=platform
     session.sql(build_alert_rule_audit_ddl()).collect()
-    # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
+    # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics owner=platform
     session.sql(build_alert_rule_audit_insert_sql(
         rule_id=rule_id,
         default_severity=default_severity,
@@ -435,5 +435,5 @@ def update_alert_rule(
         actor=actor,
         reason=reason,
     )).collect()
-    # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
+    # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics owner=platform
     session.sql(update_sql).collect()

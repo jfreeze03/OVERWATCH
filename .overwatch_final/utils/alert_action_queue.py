@@ -377,7 +377,7 @@ def mark_alerts_routed(
         set_parts.append("LAST_STATUS_AT = CURRENT_TIMESTAMP()")
     if not set_parts:
         return
-    # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
+    # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics owner=platform
     session.sql(f"""
         UPDATE {_alert_table_fqn(quoted=True)}
         SET {", ".join(set_parts)}

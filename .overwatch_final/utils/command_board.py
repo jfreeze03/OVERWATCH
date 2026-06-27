@@ -211,7 +211,7 @@ def _quiet_first_paint_query(sql: str, *, section: str, max_rows: int = 500) -> 
         session = get_session()
         tag = build_overwatch_query_tag(section=section, tier="first_paint")
         apply_overwatch_query_tag(session, tag, section=section)
-        # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
+        # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics owner=platform
         frame = session.sql(_bounded_query(sql, max_rows)).to_pandas()
         return normalize_df(frame), True
     except BaseException as exc:

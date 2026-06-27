@@ -13132,6 +13132,9 @@ DECLARE
   source_rows NUMBER DEFAULT 0;
   fresh_source_rows NUMBER DEFAULT 0;
   reused_source_rows NUMBER DEFAULT 0;
+  fresh_command_rows NUMBER DEFAULT 0;
+  reused_command_rows NUMBER DEFAULT 0;
+  stale_command_rows NUMBER DEFAULT 0;
   packet_rows NUMBER DEFAULT 0;
   max_packet_bytes NUMBER DEFAULT 0;
 BEGIN
@@ -13266,6 +13269,50 @@ BEGIN
            :snapshot_ts
          ),
          LOAD_TS = CURRENT_TIMESTAMP();
+
+  CREATE OR REPLACE TEMPORARY TABLE TMP_FAST_COMMAND_FRESHNESS AS
+  SELECT
+    b.BRIEF_ID,
+    b.SECTION_NAME,
+    b.SOURCE_SNAPSHOT_TS AS COMMAND_SOURCE_SNAPSHOT_TS,
+    MAX(s.SOURCE_FACT_MAX_TS) AS RELEVANT_SOURCE_FACT_MAX_TS,
+    SUM(COALESCE(s.SOURCE_ROW_COUNT, 0)) AS RELEVANT_SOURCE_ROW_COUNT,
+    IFF(SUM(COALESCE(s.SOURCE_ROW_COUNT, 0)) > 0
+        AND b.SOURCE_SNAPSHOT_TS >= COALESCE(MAX(s.SOURCE_FACT_MAX_TS), b.SOURCE_SNAPSHOT_TS),
+        TRUE, FALSE) AS IS_FRESH_COMMAND_ROW,
+    IFF(SUM(COALESCE(s.SOURCE_ROW_COUNT, 0)) = 0, TRUE, FALSE) AS IS_REUSED_COMMAND_ROW,
+    IFF(SUM(COALESCE(s.SOURCE_ROW_COUNT, 0)) > 0
+        AND b.SOURCE_SNAPSHOT_TS < COALESCE(MAX(s.SOURCE_FACT_MAX_TS), b.SOURCE_SNAPSHOT_TS),
+        TRUE, FALSE) AS IS_STALE_COMMAND_ROW
+  FROM TMP_FAST_SECTION_COMMAND_BRIEF b
+  LEFT JOIN TMP_FAST_SOURCE_SNAPSHOT s
+    ON (UPPER(b.SECTION_NAME) LIKE '%WORKLOAD%' AND s.SOURCE_KEY IN ('query_recent', 'query_hourly', 'query_evidence_recent'))
+    OR (UPPER(b.SECTION_NAME) LIKE '%DBA%' AND s.SOURCE_KEY IN ('query_recent', 'query_hourly', 'dba_evidence_recent'))
+    OR (UPPER(b.SECTION_NAME) LIKE '%ALERT%' AND s.SOURCE_KEY IN ('alert_events', 'alert_evidence_recent'))
+    OR (UPPER(b.SECTION_NAME) LIKE '%COST%' AND s.SOURCE_KEY IN ('cost_daily', 'cost_evidence_recent'))
+    OR (UPPER(b.SECTION_NAME) LIKE '%SECURITY%' AND s.SOURCE_KEY IN ('login_daily', 'grant_daily', 'security_evidence_recent'))
+    OR (UPPER(b.SECTION_NAME) LIKE '%EXECUTIVE%' AND s.SOURCE_KEY IN ('query_recent', 'alert_events', 'cost_daily', 'login_daily', 'grant_daily'))
+  GROUP BY b.BRIEF_ID, b.SECTION_NAME, b.SOURCE_SNAPSHOT_TS;
+
+  UPDATE TMP_FAST_SECTION_COMMAND_BRIEF b
+     SET IS_STALE = IFF(f.IS_STALE_COMMAND_ROW, TRUE, b.IS_STALE),
+         CONFIDENCE = IFF(f.IS_STALE_COMMAND_ROW, 'Degraded', b.CONFIDENCE),
+         DATA_AVAILABILITY_STATE = IFF(f.IS_STALE_COMMAND_ROW, 'Stale', b.DATA_AVAILABILITY_STATE),
+         STALE_SOURCE_COUNT = IFF(f.IS_STALE_COMMAND_ROW, COALESCE(b.STALE_SOURCE_COUNT, 0) + 1, b.STALE_SOURCE_COUNT),
+         SOURCE_GAP_DETAIL = IFF(
+           f.IS_STALE_COMMAND_ROW,
+           'FAST refresh reused compact command row with stale source-fact timestamp proof.',
+           b.SOURCE_GAP_DETAIL
+         )
+    FROM TMP_FAST_COMMAND_FRESHNESS f
+   WHERE b.BRIEF_ID = f.BRIEF_ID;
+
+  SELECT
+    COUNT_IF(IS_FRESH_COMMAND_ROW),
+    COUNT_IF(IS_REUSED_COMMAND_ROW),
+    COUNT_IF(IS_STALE_COMMAND_ROW)
+    INTO :fresh_command_rows, :reused_command_rows, :stale_command_rows
+    FROM TMP_FAST_COMMAND_FRESHNESS;
 
   SELECT COUNT(*) INTO :parent_rows FROM TMP_FAST_SECTION_COMMAND_BRIEF;
   SELECT COUNT(*) INTO :metric_rows FROM TMP_FAST_SECTION_COMMAND_METRIC;
@@ -13558,7 +13605,18 @@ BEGIN
                           'action_rows', :action_rows, 'source_rows', :source_rows,
                           'source_snapshot_rows', (SELECT COUNT(*) FROM TMP_FAST_SOURCE_SNAPSHOT),
                           'fresh_source_count', :fresh_source_rows, 'reused_source_count', :reused_source_rows,
+                          'fresh_command_row_count', :fresh_command_rows,
+                          'reused_command_row_count', :reused_command_rows,
+                          'stale_command_row_count', :stale_command_rows,
                           'source_fact_max_ts', (SELECT MAX(SOURCE_FACT_MAX_TS) FROM TMP_FAST_SOURCE_SNAPSHOT),
+                          'source_fact_max_ts_by_source', (SELECT OBJECT_AGG(SOURCE_KEY, SOURCE_FACT_MAX_TS) FROM TMP_FAST_SOURCE_SNAPSHOT),
+                          'command_source_snapshot_ts_by_section',
+                            (SELECT OBJECT_AGG(SECTION_NAME, MAX_SOURCE_SNAPSHOT_TS)
+                               FROM (
+                                 SELECT SECTION_NAME, MAX(COMMAND_SOURCE_SNAPSHOT_TS) AS MAX_SOURCE_SNAPSHOT_TS
+                                   FROM TMP_FAST_COMMAND_FRESHNESS
+                                  GROUP BY SECTION_NAME
+                               )),
                           'packet_flat_rows', :packet_rows,
                           'packet_raw_rows', (SELECT COUNT(*) FROM TMP_FAST_SECTION_DECISION_PACKET_RAW),
                           'flat_publish_rows', :packet_rows, 'raw_publish_rows', :packet_rows),

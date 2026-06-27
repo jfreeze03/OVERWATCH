@@ -318,7 +318,7 @@ def render():
                             if not require_admin_enabled("query cancellation"):
                                 return
                             action_session = get_session()
-                            # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
+                            # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics owner=platform
                             action_session.sql(cancel_sql).collect()
                             log_admin_action(
                                 action_session,

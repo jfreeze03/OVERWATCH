@@ -13,9 +13,17 @@ _ADMIN_MARKER = "DIRECT_SQL_ADMIN_OK"
 _STRUCTURED_MARKER_RE = re.compile(
     r"boundary=(?P<boundary>[A-Za-z_]+)\s+"
     r"reason=(?P<reason>[A-Za-z0-9_.:-]+)\s+"
-    r"budget=(?P<budget>[A-Za-z0-9_.:-]+)"
+    r"budget=(?P<budget>[A-Za-z0-9_.:-]+)\s+"
+    r"owner=(?P<owner>[A-Za-z0-9_.:-]+)"
 )
 _ALLOWED_MARKER_BOUNDARIES = {"admin", "setup_health", "account_usage", "metadata"}
+_ALLOWED_MARKER_BUDGETS = {
+    "admin_setup",
+    "advanced_diagnostics",
+    "account_usage_fallback",
+    "metadata_probe",
+    "query_preview",
+}
 
 
 def _surface_for_path(relative_path: str) -> str:
@@ -58,15 +66,23 @@ def _structured_marker_nearby(lines: list[str], line_no: int) -> dict[str, objec
                 "marker_boundary": "",
                 "marker_reason": "",
                 "marker_budget": "",
+                "marker_owner": "",
                 "marker_valid": False,
             }
         boundary = str(match.group("boundary") or "").strip().lower()
+        budget = str(match.group("budget") or "").strip()
+        owner = str(match.group("owner") or "").strip()
         return {
             "marker_line": idx + 1,
             "marker_boundary": boundary,
             "marker_reason": str(match.group("reason") or "").strip(),
-            "marker_budget": str(match.group("budget") or "").strip(),
-            "marker_valid": boundary in _ALLOWED_MARKER_BOUNDARIES,
+            "marker_budget": budget,
+            "marker_owner": owner,
+            "marker_valid": (
+                boundary in _ALLOWED_MARKER_BOUNDARIES
+                and budget in _ALLOWED_MARKER_BUDGETS
+                and bool(owner)
+            ),
         }
     return None
 
@@ -156,13 +172,15 @@ def scan_direct_sql_usage(
                 "marker_boundary": marker_boundary,
                 "marker_reason": marker.get("marker_reason", ""),
                 "marker_budget": marker.get("marker_budget", ""),
+                "marker_owner": marker.get("marker_owner", ""),
                 "marker_valid": bool(marker.get("marker_valid", False)) if marker else None,
+                "runtime_context_expected": marker.get("marker_budget", "") if marker else "",
                 "recommendation": ""
                 if allowed
                 else (
                     "Use run_query/run_query_or_raise or add a local structured marker: "
                     "# DIRECT_SQL_ADMIN_OK boundary=<admin|setup_health|account_usage|metadata> "
-                    "reason=<short_reason> budget=<name>."
+                    "reason=<short_reason> budget=<name> owner=<team_or_surface>."
                 ),
             })
     return findings

@@ -124,12 +124,12 @@ def _save_warehouse_setting_review_snapshot(
     source: str = "",
 ) -> None:
     try:
-        # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
+        # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics owner=platform
         session.sql(build_warehouse_setting_review_ddl()).collect()
         for migration_sql in build_warehouse_setting_review_migration_sql():
-            # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
+            # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics owner=platform
             session.sql(migration_sql).collect()
-        # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
+        # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics owner=platform
         session.sql(_warehouse_setting_review_insert_sql(
             findings,
             company=company,

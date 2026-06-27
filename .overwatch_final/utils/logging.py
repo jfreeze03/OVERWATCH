@@ -162,7 +162,7 @@ def log_section_load(section: str, duration_ms: int = 0) -> None:
         sess_id = get_state(SESSION_ID, "")
         perf_run_id = _perf_run_id()
 
-        # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
+        # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics owner=platform
         session.sql(f"""
             INSERT INTO {LOG_TABLE}
                 (SF_USER, SF_ROLE, COMPANY_VIEW, SECTION, QUERY_DURATION_MS, SESSION_ID, PERF_RUN_ID)
@@ -205,7 +205,7 @@ def log_query_event(
         perf_run_id = _perf_run_id()
         used_cache_sql = "TRUE" if used_cache else "FALSE"
 
-        # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
+        # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics owner=platform
         session.sql(f"""
             INSERT INTO {LOG_TABLE}
                 (

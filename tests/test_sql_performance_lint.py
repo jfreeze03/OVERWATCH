@@ -88,6 +88,10 @@ class SqlPerformanceLintTests(unittest.TestCase):
             "FAST_IMPL_REUSES_COMMAND_MARTS_WITHOUT_SOURCE_SNAPSHOT",
             {finding["code"] for finding in findings},
         )
+        self.assertIn(
+            "FAST_IMPL_COMMAND_FRESHNESS_UNPROVEN",
+            {finding["code"] for finding in findings},
+        )
 
     def test_linter_modes_cover_first_paint_evidence_and_account_usage(self):
         from sql_performance_lint import lint_sql_text
@@ -151,6 +155,29 @@ class SqlPerformanceLintTests(unittest.TestCase):
             mode="account_usage_fallback",
         )
         self.assertNotIn("ACCOUNT_USAGE_UNBOUNDED", {finding["code"] for finding in good})
+
+    def test_linter_query_search_mode_enforces_exact_related_and_projection(self):
+        from sql_performance_lint import lint_sql_text
+
+        bad_exact = lint_sql_text(
+            "SELECT QUERY_ID FROM FACT_QUERY_DETAIL_RECENT WHERE QUERY_ID = '01a' LIMIT 10",
+            path="query_search_exact.sql",
+            mode="query_search",
+        )
+        self.assertIn("QUERY_SEARCH_EXACT_LIMIT_ONE", {finding["code"] for finding in bad_exact})
+        bad_projection = lint_sql_text(
+            "SELECT QUERY_ID, QUERY_TEXT FROM FACT_QUERY_DETAIL_RECENT WHERE QUERY_ID = '01a' LIMIT 1",
+            path="query_search_exact.sql",
+            mode="query_search",
+        )
+        self.assertIn("QUERY_SEARCH_QUERY_TEXT_PROJECTION", {finding["code"] for finding in bad_projection})
+        good_related = lint_sql_text(
+            "SELECT 'query_search_related' AS PATH, QUERY_ID FROM FACT_QUERY_DETAIL_RECENT "
+            "WHERE QUERY_HASH = 'abc' AND QUERY_ID <> '01a' LIMIT 50",
+            path="query_search_related.sql",
+            mode="query_search",
+        )
+        self.assertFalse([finding for finding in good_related if finding["severity"] == "error"])
 
     def test_linter_flags_select_star_app_facing_sql(self):
         from sql_performance_lint import lint_sql_text

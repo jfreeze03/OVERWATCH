@@ -213,7 +213,7 @@ def _action_queue_column_names(session) -> set[str]:
             set_state(_ACTION_QUEUE_COLUMN_CACHE_KEY, process_cached)
             return process_cached
         try:
-            # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
+            # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics owner=platform
             rows = session.sql(f"SHOW COLUMNS IN TABLE {ACTION_QUEUE_FQN}").collect()
         except Exception:
             rows = []
@@ -765,7 +765,7 @@ def upsert_actions(session, actions: list[dict]) -> int:
             optional_update += f", RECOVERY_AUDIT_STATE = COALESCE(NULLIF({recovery_audit_state}, ''), tgt.RECOVERY_AUDIT_STATE)"
             optional_insert_cols += ", RECOVERY_AUDIT_STATE"
             optional_insert_vals += f", {recovery_audit_state}"
-        # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
+        # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics owner=platform
         session.sql(f"""
             MERGE INTO {ACTION_QUEUE_FQN} tgt
             USING (
@@ -999,7 +999,7 @@ def update_action_status_with_evidence(
             extra += f", VERIFIED_BY = {actor_safe}"
         if _action_queue_has_column(session, "VERIFIED_AT"):
             extra += ", VERIFIED_AT = CURRENT_TIMESTAMP()"
-    # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
+    # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics owner=platform
     session.sql(f"""
         UPDATE {ACTION_QUEUE_FQN}
         SET STATUS = {status_safe},

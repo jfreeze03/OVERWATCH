@@ -57,7 +57,7 @@ from performance import (
     record_query_lint_finding,
     record_ui_query_event,
 )
-from query_contracts import lint_query_text, query_fingerprint, resolve_query_contract
+from query_contracts import QueryLintFinding, lint_query_text, query_fingerprint, resolve_query_contract
 
 CACHE_TIERS: dict[str, int] = {
     "live":       30,     # INFORMATION_SCHEMA - real-time, 30s stale is fine
@@ -435,6 +435,12 @@ def _enforce_query_contract(
     ttl_key: str,
     tier: str,
     max_rows: int | None,
+    target_label: str = "",
+    target_context_present: bool | None = None,
+    target_columns_used: tuple[str, ...] | list[str] | None = None,
+    target_fallback_used: bool | None = None,
+    target_predicate_marker_present: bool | None = None,
+    target_predicate_plan_id: str = "",
 ) -> object:
     """Lint and optionally block query shapes before Snowflake execution."""
     contract = resolve_query_contract(boundary=boundary, section=section, ttl_key=ttl_key, tier=tier)
@@ -447,12 +453,88 @@ def _enforce_query_contract(
         "account_usage",
     }:
         if max_rows is None or int(max_rows) > int(contract.max_rows):
-            from query_contracts import QueryLintFinding
-
             findings.append(QueryLintFinding(
                 code="MAX_ROWS_CONTRACT",
                 severity="error",
                 message=f"Query boundary {boundary} must request max_rows <= {int(contract.max_rows)}.",
+                boundary=boundary,
+                section=section,
+            ))
+    if bool(getattr(contract, "requires_target_context", False)) and target_context_present is not True:
+        findings.append(QueryLintFinding(
+            code="TARGET_CONTEXT_REQUIRED",
+            severity="error",
+            message="This query contract requires an explicit target context.",
+            boundary=boundary,
+            section=section,
+        ))
+    if target_context_present is True and bool(getattr(contract, "requires_target_plan_metadata", False)):
+        sql_target_metadata = _target_metadata_from_sql(query_text, boundary)
+        marker_present = (
+            bool(target_predicate_marker_present)
+            if target_predicate_marker_present is not None
+            else bool(sql_target_metadata.get("target_predicate_marker_present"))
+        )
+        columns_used = [
+            str(column)
+            for column in (target_columns_used if target_columns_used is not None else (sql_target_metadata.get("target_columns_used") or []))
+            if str(column or "").strip()
+        ]
+        fallback_used = (
+            bool(target_fallback_used)
+            if target_fallback_used is not None
+            else bool(sql_target_metadata.get("target_fallback_used"))
+        )
+        masked = re.sub(r"'(?:''|[^'])*'", "''", str(query_text or ""), flags=re.DOTALL)
+        upper = masked.upper()
+        marker_pos = upper.find("OVERWATCH_TARGET_PREDICATE")
+        limit_match = re.search(r"\bLIMIT\s+\d+\b", upper)
+        limit_pos = limit_match.start() if limit_match else len(upper)
+        if not str(target_label or "").strip():
+            findings.append(QueryLintFinding(
+                code="TARGET_LABEL_REQUIRED",
+                severity="error",
+                message="Targeted evidence must provide a sanitized target label.",
+                boundary=boundary,
+                section=section,
+            ))
+        if not columns_used:
+            findings.append(QueryLintFinding(
+                code="TARGET_COLUMNS_REQUIRED",
+                severity="error",
+                message="Targeted evidence must provide target predicate columns from the target planner.",
+                boundary=boundary,
+                section=section,
+            ))
+        if not str(target_predicate_plan_id or "").strip():
+            findings.append(QueryLintFinding(
+                code="TARGET_PLAN_REQUIRED",
+                severity="error",
+                message="Targeted evidence must provide a target predicate plan id.",
+                boundary=boundary,
+                section=section,
+            ))
+        if not marker_present or marker_pos < 0:
+            findings.append(QueryLintFinding(
+                code="TARGET_PLAN_MARKER_REQUIRED",
+                severity="error",
+                message="Targeted evidence must include a planner-emitted target predicate marker.",
+                boundary=boundary,
+                section=section,
+            ))
+        elif marker_pos > limit_pos:
+            findings.append(QueryLintFinding(
+                code="TARGET_PLAN_MARKER_AFTER_LIMIT",
+                severity="error",
+                message="Target predicate marker must appear before LIMIT.",
+                boundary=boundary,
+                section=section,
+            ))
+        if fallback_used and not bool(getattr(contract, "allow_target_fallback", False)):
+            findings.append(QueryLintFinding(
+                code="TARGET_FALLBACK_FORBIDDEN",
+                severity="error",
+                message="Target predicate fallback requires an explicit query contract allowance.",
                 boundary=boundary,
                 section=section,
             ))
@@ -1184,6 +1266,12 @@ def _run_query_base(
     section: str = "",
     max_rows: int | None = None,
     query_boundary: str | None = None,
+    target_label: str = "",
+    target_context_present: bool | None = None,
+    target_columns_used: tuple[str, ...] | list[str] | None = None,
+    target_fallback_used: bool | None = None,
+    target_predicate_marker_present: bool | None = None,
+    target_predicate_plan_id: str = "",
 ) -> tuple[pd.DataFrame, dict[str, object]]:
     """
     Central query runner with tiered caching and full error handling.
@@ -1217,6 +1305,12 @@ def _run_query_base(
         ttl_key=ttl_key,
         tier=tier,
         max_rows=max_rows,
+        target_label=target_label,
+        target_context_present=target_context_present,
+        target_columns_used=target_columns_used,
+        target_fallback_used=target_fallback_used,
+        target_predicate_marker_present=target_predicate_marker_present,
+        target_predicate_plan_id=target_predicate_plan_id,
     )
     meta: dict[str, object] = {
         "actual_query_executed": None,
@@ -1299,6 +1393,12 @@ def run_query(
         section=section,
         max_rows=max_rows,
         query_boundary=query_boundary,
+        target_label=target_label,
+        target_context_present=target_context_present,
+        target_columns_used=target_columns_used,
+        target_fallback_used=target_fallback_used,
+        target_predicate_marker_present=target_predicate_marker_present,
+        target_predicate_plan_id=target_predicate_plan_id,
     )
     elapsed_ms = (time.perf_counter() - started) * 1000
     finished_at = datetime.now().isoformat(timespec="milliseconds")
@@ -1381,6 +1481,12 @@ def run_query_or_raise(
         ttl_key=ttl_key,
         tier=tier,
         max_rows=max_rows,
+        target_label=target_label,
+        target_context_present=target_context_present,
+        target_columns_used=target_columns_used,
+        target_fallback_used=target_fallback_used,
+        target_predicate_marker_present=target_predicate_marker_present,
+        target_predicate_plan_id=target_predicate_plan_id,
     )
     target_metadata = _target_metadata_from_sql(executable_query, boundary)
     event_target_columns = list(target_columns_used if target_columns_used is not None else (target_metadata.get("target_columns_used") or []))

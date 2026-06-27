@@ -15,6 +15,10 @@ from utils import (
 )
 from utils.mart_names import mart_object_name
 from performance import ACCOUNT_USAGE_TARGETED_SCAN_ALLOWED, query_budget_context
+from sections.decision_workspace_target_filters import build_target_predicate_plan, evidence_target_label
+
+
+QUERY_SEARCH_TARGET_COLUMNS = ("QUERY_ID", "QUERY_HASH", "QUERY_SIGNATURE", "WAREHOUSE_NAME")
 
 
 def _looks_like_query_id(value: str) -> bool:
@@ -28,12 +32,12 @@ def _query_search_clause(search_value: str, mode: str) -> tuple[str, str, int | 
     """Return SQL predicate, display mode, and an optional day cap for safe query search."""
     normalized_mode = str(mode or "Auto").strip()
     if normalized_mode == "Exact query ID" or (normalized_mode == "Auto" and _looks_like_query_id(search_value)):
-        return f"AND query_id = {sql_literal(search_value)}", "Exact query ID", None
+        return f"AND /* OVERWATCH_TARGET_PREDICATE */ query_id = {sql_literal(search_value)}", "Exact query ID", None
     if normalized_mode == "Query signature":
         if len(search_value) < 6:
             raise ValueError("Enter at least 6 characters for query signature search.")
         return (
-            f"AND (query_hash = {sql_literal(search_value)} OR query_signature = {sql_literal(search_value)})",
+            f"AND /* OVERWATCH_TARGET_PREDICATE */ (query_hash = {sql_literal(search_value)} OR query_signature = {sql_literal(search_value)})",
             "Query signature",
             None,
         )
@@ -123,7 +127,18 @@ def _query_text_preview_sql(query_id: str) -> str:
     """
 
 
-def search_recent_query_summary(sql: str, *, ttl_key: str, row_limit: int):
+def search_recent_query_summary(
+    sql: str,
+    *,
+    ttl_key: str,
+    row_limit: int,
+    target_label: str = "",
+    target_context_present: bool | None = None,
+    target_columns_used: tuple[str, ...] | list[str] | None = None,
+    target_fallback_used: bool | None = None,
+    target_predicate_marker_present: bool | None = None,
+    target_predicate_plan_id: str = "",
+):
     return run_query(
         sql,
         ttl_key=ttl_key,
@@ -131,6 +146,12 @@ def search_recent_query_summary(sql: str, *, ttl_key: str, row_limit: int):
         section="Query Search & History",
         max_rows=min(int(row_limit), 500),
         query_boundary="query_search",
+        target_label=target_label,
+        target_context_present=target_context_present,
+        target_columns_used=target_columns_used,
+        target_fallback_used=target_fallback_used,
+        target_predicate_marker_present=target_predicate_marker_present,
+        target_predicate_plan_id=target_predicate_plan_id,
     )
 
 
@@ -253,7 +274,7 @@ def render():
 
         user_cl = f"AND user_name ILIKE '%' || {sql_literal(user_filter)} || '%'" if user_filter else ""
         status_cl = f"AND execution_status = {sql_literal(status_filter)}" if status_filter != "ALL" else ""
-        target_wh_cl = f"AND UPPER(warehouse_name) = UPPER({sql_literal(target_warehouse)})" if target_warehouse else ""
+        target_wh_cl = f"AND /* OVERWATCH_TARGET_PREDICATE */ UPPER(warehouse_name) = UPPER({sql_literal(target_warehouse)})" if target_warehouse else ""
         scoped_filters = get_global_filter_clause(
             date_col="start_time",
             wh_col="warehouse_name",
@@ -292,6 +313,20 @@ def render():
                 )
                 ttl_prefix = "query_search_recent_detail"
             ttl_key = f"{ttl_prefix}_{company}_{resolved_mode}_{search_value}_{target_warehouse}_{user_filter}_{status_filter}_{effective_days}_{row_limit}"
+            proof_target: dict[str, str] = workload_target if workload_target else {}
+            if not proof_target and resolved_mode == "Exact query ID" and search_value:
+                proof_target = {"entity_type": "query_id", "entity_id": search_value}
+            elif not proof_target and resolved_mode == "Query signature" and search_value:
+                proof_target = {"entity_type": "query_signature", "entity_id": search_value}
+            elif not proof_target and target_warehouse:
+                proof_target = {"entity_type": "warehouse", "entity_id": target_warehouse}
+            target_plan = build_target_predicate_plan(
+                "Workload Operations",
+                proof_target,
+                available_columns=QUERY_SEARCH_TARGET_COLUMNS,
+            ).with_fingerprint()
+            query_target_label = evidence_target_label(proof_target) if proof_target else ""
+            marker_present = "OVERWATCH_TARGET_PREDICATE" in sql.upper()
             if account_usage_fallback:
                 with query_budget_context("account_usage_fallback", section="Workload Operations", workflow="Query Investigation", budget=1):
                     df_qs = run_query(
@@ -301,6 +336,12 @@ def render():
                         section="Query Search & History",
                         max_rows=min(int(row_limit), 200),
                         query_boundary="account_usage",
+                        target_label=query_target_label,
+                        target_context_present=bool(proof_target),
+                        target_columns_used=target_plan.columns_used,
+                        target_fallback_used=target_plan.fallback_used,
+                        target_predicate_marker_present=marker_present,
+                        target_predicate_plan_id=target_plan.plan_id,
                     )
             else:
                 context_name = (
@@ -311,7 +352,17 @@ def render():
                     else "query_search_text"
                 )
                 with query_budget_context(context_name, section="Workload Operations", workflow="Query Investigation", budget=1):
-                    df_qs = search_recent_query_summary(sql, ttl_key=ttl_key, row_limit=row_limit)
+                    df_qs = search_recent_query_summary(
+                        sql,
+                        ttl_key=ttl_key,
+                        row_limit=row_limit,
+                        target_label=query_target_label,
+                        target_context_present=bool(proof_target),
+                        target_columns_used=target_plan.columns_used,
+                        target_fallback_used=target_plan.fallback_used,
+                        target_predicate_marker_present=marker_present,
+                        target_predicate_plan_id=target_plan.plan_id,
+                    )
             st.session_state["qs_df_qs"] = df_qs
             st.session_state["qs_search_mode"] = resolved_mode
             st.session_state["qs_effective_days"] = effective_days
@@ -359,7 +410,7 @@ def render():
                 related_days = max(1, min(int(last_filters.get("effective_days") or 7), 7))
                 related_sql = _recent_query_detail_sql(
                     search_cl=(
-                        f"AND query_hash = {sql_literal(selected_hash)} "
+                        f"AND /* OVERWATCH_TARGET_PREDICATE */ query_hash = {sql_literal(selected_hash)} "
                         f"AND query_id <> {sql_literal(selected_preview_id)}"
                     ),
                     date_predicate=f"AND start_time >= DATEADD('day', -{related_days}, CURRENT_TIMESTAMP())",
@@ -374,6 +425,12 @@ def render():
                         related_sql,
                         ttl_key=f"query_search_related_{company}_{selected_hash}_{selected_preview_id}_50",
                         row_limit=50,
+                        target_label=f"query hash: {selected_hash[:12]}",
+                        target_context_present=True,
+                        target_columns_used=("QUERY_HASH", "QUERY_ID"),
+                        target_fallback_used=False,
+                        target_predicate_marker_present="OVERWATCH_TARGET_PREDICATE" in related_sql.upper(),
+                        target_predicate_plan_id=f"query-search-related-{selected_hash[:12]}",
                     )
             related_df = st.session_state.get("qs_related_df")
             if related_df is not None and hasattr(related_df, "empty") and not related_df.empty:

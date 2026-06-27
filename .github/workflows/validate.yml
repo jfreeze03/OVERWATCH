@@ -70,6 +70,8 @@ jobs:
 
       - name: Run direct-SQL static scan tests
         run: python -m unittest tests.test_direct_sql_contract
+      - name: Run session-open static scan tests
+        run: python -m unittest tests.test_session_open_contract
 
       - name: Run SQL performance linter tests
         run: python -m unittest tests.test_sql_performance_lint
@@ -106,6 +108,7 @@ jobs:
             artifacts/query_slow_findings.json
             artifacts/query_search_proof.json
             artifacts/direct_sql_static_scan.json
+            artifacts/session_open_static_scan.json
             artifacts/sql_performance_lint_findings.json
             artifacts/brand/**
             artifacts/button_route_manifest.json

@@ -103,7 +103,7 @@ def require_admin_enabled(action: str = "this action") -> bool:
 def _current_execution_context(session) -> dict:
     """Best-effort Snowflake execution context for audit rows."""
     try:
-        # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
+        # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics owner=platform
         rows = session.sql("""
             SELECT CURRENT_USER() AS SNOWFLAKE_USER,
                    CURRENT_ROLE() AS SNOWFLAKE_ROLE
@@ -177,7 +177,7 @@ def log_admin_action(
         app_user = str(get_state(OVERWATCH_ACTOR, "OVERWATCH") or "OVERWATCH")
         company = str(company or get_state(ACTIVE_COMPANY, "") or "")
         environment = str(environment or get_active_environment() or "")
-        # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
+        # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics owner=platform
         session.sql(build_admin_audit_insert_sql(
             company=company,
             environment=environment,

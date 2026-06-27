@@ -23,6 +23,9 @@ class QueryContract:
     requires_target_predicate: bool = False
     target_predicate_marker_required: bool = False
     target_predicate_markers: tuple[str, ...] = ()
+    requires_target_context: bool = False
+    requires_target_plan_metadata: bool = False
+    allow_target_fallback: bool = False
     first_paint_allowed: bool = False
     expected_table_family: str = ""
 
@@ -183,6 +186,7 @@ register_query_contract(
         contract_id="evidence_default_bounded",
         tier="",
         max_rows=500,
+        requires_target_plan_metadata=True,
     )
 )
 for _ttl_pattern, _section, _markers in (
@@ -203,6 +207,7 @@ for _ttl_pattern, _section, _markers in (
             requires_target_predicate=True,
             target_predicate_marker_required=True,
             target_predicate_markers=_markers,
+            requires_target_plan_metadata=True,
         )
     )
 register_query_contract(

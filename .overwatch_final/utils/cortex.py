@@ -345,7 +345,7 @@ def run_cortex_completion(
     )
     try:
         query_tag = _cortex_query_tag(session, feature=normalized_feature)
-        # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
+        # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics owner=platform
         result = session.sql(sql).collect()
         if not result:
             answer = ""

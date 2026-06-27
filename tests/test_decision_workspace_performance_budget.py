@@ -19,6 +19,7 @@ sys.path.insert(0, str(APP_ROOT))
 from route_registry import SECTION_WORKFLOW_CONTRACT  # noqa: E402
 from brand import render_overwatch_logo_svg, render_sidebar_brand  # noqa: E402
 from sections.button_action_contracts import (  # noqa: E402
+    assert_button_budget_context,
     contract_target_is_valid,
     iter_button_action_contracts,
     resolve_button_action_contract,
@@ -542,6 +543,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             {"entity_type": "service", "entity_id": "CORTEX"},
             200,
         )
+        self.assertIn("MART_COST_EVIDENCE_RECENT", service_sql)
         self.assertIn("'all_fallback' AS ENVIRONMENT_SCOPE_MODE", service_sql)
         self.assertNotIn("UPPER(target.ENVIRONMENT) = UPPER('PROD')", service_sql)
 
@@ -552,6 +554,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             {"entity_type": "warehouse", "entity_id": "PROD_WH"},
             200,
         )
+        self.assertIn("MART_COST_EVIDENCE_RECENT", chargeback_sql)
         self.assertIn("UPPER(target.ENVIRONMENT) = UPPER('PROD')", chargeback_sql)
 
         with patch.object(cost_contract_evidence, "run_query_or_raise", side_effect=AssertionError("Unsupported target must not query")):
@@ -940,12 +943,72 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                         section="Query Search & History",
                         max_rows=1,
                     )
+                with self.assertRaises(AssertionError):
+                    query.run_query(
+                        "SELECT QUERY_ID FROM MART_DBA_EVIDENCE_RECENT "
+                        "WHERE /* OVERWATCH_TARGET_PREDICATE */ QUERY_ID = '01a' LIMIT 1",
+                        ttl_key="dba_control_room_targeted_evidence",
+                        tier="recent",
+                        section="DBA Control Room",
+                        max_rows=1,
+                        query_boundary="evidence",
+                        target_context_present=True,
+                        target_label="query: 01a",
+                        target_columns_used=("QUERY_ID",),
+                        target_predicate_marker_present=True,
+                        target_fallback_used=False,
+                    )
+                with self.assertRaises(AssertionError):
+                    query.run_query(
+                        "SELECT QUERY_ID FROM MART_DBA_EVIDENCE_RECENT "
+                        "WHERE QUERY_ID = '01a' LIMIT 1",
+                        ttl_key="dba_control_room_targeted_evidence",
+                        tier="recent",
+                        section="DBA Control Room",
+                        max_rows=1,
+                        query_boundary="evidence",
+                        target_context_present=True,
+                        target_label="query: 01a",
+                        target_columns_used=("QUERY_ID",),
+                        target_predicate_plan_id="fixture-plan",
+                    )
+                with self.assertRaises(AssertionError):
+                    query.run_query(
+                        "SELECT QUERY_ID FROM MART_DBA_EVIDENCE_RECENT "
+                        "WHERE /* OVERWATCH_TARGET_PREDICATE */ QUERY_ID ILIKE '01a' LIMIT 1",
+                        ttl_key="dba_control_room_targeted_evidence",
+                        tier="recent",
+                        section="DBA Control Room",
+                        max_rows=1,
+                        query_boundary="evidence",
+                        target_context_present=True,
+                        target_label="query: 01a",
+                        target_columns_used=("QUERY_ID",),
+                        target_predicate_marker_present=True,
+                        target_fallback_used=True,
+                        target_predicate_plan_id="fixture-plan",
+                    )
+                with patch.object(query, "_execute_snowflake_query", return_value=pd.DataFrame([{"QUERY_ID": "01a"}])):
+                    result = query.run_query(
+                        "SELECT QUERY_ID FROM MART_DBA_EVIDENCE_RECENT LIMIT 200",
+                        ttl_key="bounded_no_target_evidence",
+                        tier="recent",
+                        section="DBA Control Room",
+                        max_rows=200,
+                        query_boundary="evidence",
+                        target_context_present=False,
+                        use_cache=False,
+                    )
+                    self.assertEqual(len(result), 1)
                 findings = performance.get_query_lint_findings()
 
         codes = {finding["code"] for finding in findings}
         self.assertIn("ACCOUNT_USAGE_FORBIDDEN", codes)
         self.assertIn("STAR_PROJECTION", codes)
         self.assertIn("MISSING_EXPLICIT_BOUNDARY", codes)
+        self.assertIn("TARGET_PLAN_REQUIRED", codes)
+        self.assertIn("TARGET_PLAN_MARKER_REQUIRED", codes)
+        self.assertIn("TARGET_FALLBACK_FORBIDDEN", codes)
         self.assertNotIn("SELECT", json.dumps(findings))
 
     def test_contextual_query_budget_contexts_count_actual_executions(self):
@@ -1094,10 +1157,36 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         self.assertNotEqual("query_search_exact", "query_preview")
 
     def test_synthetic_clicked_action_without_budget_context_fails_contract_check(self):
-        expected_context = "route_action"
-        observed_contexts: list[str] = []
-        with self.assertRaises(AssertionError):
-            self.assertEqual(observed_contexts.count(expected_context), 1)
+        from sections.button_action_contracts import ButtonActionContract
+
+        cases = (
+            ButtonActionContract(
+                section="Alert Center",
+                action_type="route",
+                expected_query_budget_context="route_action",
+            ),
+            ButtonActionContract(
+                section="Alert Center",
+                action_type="evidence_load",
+                expected_query_budget_context="evidence_click",
+                expected_actual_boundaries={"evidence": 1},
+            ),
+            ButtonActionContract(
+                section="Workload Operations",
+                action_type="advanced_load",
+                expected_query_budget_context="query_preview",
+                expected_actual_boundaries={"query_preview": 1},
+            ),
+        )
+        for contract in cases:
+            with self.assertRaises(AssertionError):
+                assert_button_budget_context(
+                    {
+                        "observed_query_budget_contexts": [],
+                        "actual_boundaries": {},
+                    },
+                    contract,
+                )
 
     def _packet_row(self, section: str) -> dict[str, object]:
         route_key = {
@@ -2168,6 +2257,27 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                     if expected_context and not str(button.get("skip_reason") or ""):
                         self.assertEqual(budget_context_names.count(expected_context), 1, (button, budget_contexts))
                         self.assertEqual(len(budget_context_names), 1, (button, budget_contexts))
+                    budget_context_diagnostics = {
+                        "budget_context_contract_passed": True,
+                        "missing_budget_context": "",
+                        "unexpected_budget_contexts": [],
+                        "expected_actual_boundaries": expected_boundaries,
+                        "observed_actual_boundaries": observed_actual_boundaries,
+                    }
+                    resolved_click_contract = resolve_button_action_contract(
+                        section=section_name,
+                        workflow=str(button.get("workflow") or ""),
+                        label=str(button.get("label") or ""),
+                        key=str(button.get("key") or ""),
+                    )
+                    if resolved_click_contract is not None:
+                        budget_context_diagnostics = assert_button_budget_context(
+                            {
+                                "observed_query_budget_contexts": sorted(budget_context_names),
+                                "actual_boundaries": observed_actual_boundaries,
+                            },
+                            resolved_click_contract,
+                        )
                     if expected_budget is not None and budget_contexts:
                         self.assertEqual(
                             max(int(context.get("budget") or 0) for context in budget_contexts),
@@ -2287,7 +2397,6 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                         "expected_max_rows": button.get("expected_max_rows"),
                         "expected_query_budget_context": button.get("expected_query_budget_context", ""),
                         "expected_budget": button.get("expected_budget"),
-                        "expected_actual_boundaries": button.get("expected_actual_boundaries", {}),
                         "expected_session_open_count": button.get("expected_session_open_count"),
                         "expected_direct_sql_count": button.get("expected_direct_sql_count"),
                         "expected_metadata_probe_count": button.get("expected_metadata_probe_count"),
@@ -2305,6 +2414,8 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                             [int(context.get("budget") or 0) for context in budget_contexts] or [0]
                         ),
                         "actual_boundaries": observed_actual_boundaries,
+                        "expected_actual_boundaries": budget_context_diagnostics["expected_actual_boundaries"],
+                        "observed_actual_boundaries": budget_context_diagnostics["observed_actual_boundaries"],
                         "actual_snowflake_executions": budget_actual_execs,
                         "session_open_count": budget_session_opens,
                         "direct_sql_event_count": budget_direct_sql,
@@ -2313,6 +2424,9 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                         "metadata_probe_events": budget_metadata_probes,
                         "role_capture_events": budget_role_capture,
                         "passed_query_budget": bool(passed_query_budget),
+                        "budget_context_contract_passed": bool(budget_context_diagnostics["budget_context_contract_passed"]),
+                        "missing_budget_context": budget_context_diagnostics["missing_budget_context"],
+                        "unexpected_budget_contexts": budget_context_diagnostics["unexpected_budget_contexts"],
                         "failure_reason": budget_failure_reason,
                         "query_budget_contexts": self._json_safe(budget_contexts),
                         "expected_query_boundary": button.get("expected_query_boundary", ""),
@@ -2392,6 +2506,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         query_slow_path = artifact_dir / "query_slow_findings.json"
         query_search_proof_path = artifact_dir / "query_search_proof.json"
         direct_sql_static_scan_path = artifact_dir / "direct_sql_static_scan.json"
+        session_open_static_scan_path = artifact_dir / "session_open_static_scan.json"
         sql_performance_lint_path = artifact_dir / "sql_performance_lint_findings.json"
         button_manifest_path = artifact_dir / "button_route_manifest.json"
         button_results_path = artifact_dir / "button_route_results.json"
@@ -2453,8 +2568,12 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             "cases": [
                 {
                     "case": "exact_query_id",
+                    "proof_source": "deterministic_ui_click",
                     "boundary": "query_search",
                     "budget_context": "query_search_exact",
+                    "observed_contexts": ["query_search_exact"],
+                    "observed_boundaries": {"query_search": 1},
+                    "observed_max_rows": 1,
                     "contract_id": resolve_query_contract(
                         boundary="query_search",
                         section="Query Search & History",
@@ -2467,8 +2586,12 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                 },
                 {
                     "case": "query_signature",
+                    "proof_source": "deterministic_ui_click",
                     "boundary": "query_search",
                     "budget_context": "query_search_signature",
+                    "observed_contexts": ["query_search_signature"],
+                    "observed_boundaries": {"query_search": 1},
+                    "observed_max_rows": 200,
                     "contract_id": resolve_query_contract(
                         boundary="query_search",
                         section="Query Search & History",
@@ -2481,8 +2604,12 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                 },
                 {
                     "case": "related_executions",
+                    "proof_source": "deterministic_ui_click",
                     "boundary": "query_search",
                     "budget_context": "query_search_related",
+                    "observed_contexts": ["query_search_related"],
+                    "observed_boundaries": {"query_search": 1},
+                    "observed_max_rows": 50,
                     "contract_id": resolve_query_contract(
                         boundary="query_search",
                         section="Query Search & History",
@@ -2495,8 +2622,12 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                 },
                 {
                     "case": "sql_preview",
+                    "proof_source": "deterministic_ui_click",
                     "boundary": "query_preview",
                     "budget_context": "query_preview",
+                    "observed_contexts": ["query_preview"],
+                    "observed_boundaries": {"query_preview": 1},
+                    "observed_max_rows": 1,
                     "contract_id": resolve_query_contract(
                         boundary="query_preview",
                         section="Query Search & History",
@@ -2509,8 +2640,21 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                 },
                 {
                     "case": "account_usage_fallback",
+                    "proof_source": "deterministic_ui_click",
                     "boundary": "account_usage",
                     "budget_context": "account_usage_fallback",
+                    "observed_contexts": ["account_usage_fallback"],
+                    "observed_boundaries": {"account_usage": 1},
+                    "no_confirmation": {
+                        "session_open_count": 0,
+                        "query_count": 0,
+                        "direct_sql_event_count": 0,
+                    },
+                    "confirmed": {
+                        "session_open_count": 1,
+                        "account_usage_query_count": 1,
+                        "metadata_probe_count": 0,
+                    },
                     "contract_id": account_usage_fallback_contract.contract_id,
                     "confirmed_required": True,
                     "metadata_probe_count_default": 0,
@@ -2703,6 +2847,17 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             encoding="utf-8",
         )
         self.assertFalse([finding for finding in direct_sql_findings if not finding["allowed"]])
+        from session_open_contract import scan_session_open_usage, session_open_scan_artifact
+
+        session_open_findings = scan_session_open_usage(direct_sql_scan_files, root=ROOT)
+        session_open_static_scan_path.write_text(
+            json.dumps(
+                session_open_scan_artifact(session_open_findings, direct_sql_scan_files, root=ROOT),
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        self.assertFalse([finding for finding in session_open_findings if not finding["allowed"]])
         from sql_performance_lint import lint_sql_files
 
         sql_lint_paths = [
@@ -2833,9 +2988,15 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             self.assertIn("passed_query_budget", result)
             self.assertIn("expected_query_budget_context", result)
             self.assertIn("observed_query_budget_contexts", result)
+            self.assertIn("budget_context_contract_passed", result)
+            self.assertIn("missing_budget_context", result)
+            self.assertIn("unexpected_budget_contexts", result)
             expected_context = str(result.get("expected_query_budget_context") or "")
             if expected_context and not str(result.get("skip_reason") or ""):
                 self.assertEqual(result.get("observed_query_budget_contexts"), [expected_context], result)
+                self.assertTrue(result["budget_context_contract_passed"], result)
+                self.assertEqual(result["missing_budget_context"], "", result)
+                self.assertEqual(result["unexpected_budget_contexts"], [], result)
             self.assertTrue(result["passed_query_budget"], result)
             self.assertEqual(result.get("failure_reason", ""), "", result)
             if result["action_type"] == "route":
@@ -2867,11 +3028,19 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         self.assertFalse(loaded_query_search_proof["raw_sql_included"])
         proof_cases = {case["case"]: case for case in loaded_query_search_proof["cases"]}
         self.assertEqual(proof_cases["exact_query_id"]["max_rows"], 1)
+        self.assertEqual(proof_cases["exact_query_id"]["proof_source"], "deterministic_ui_click")
+        self.assertEqual(proof_cases["exact_query_id"]["observed_contexts"], ["query_search_exact"])
+        self.assertEqual(proof_cases["exact_query_id"]["observed_boundaries"], {"query_search": 1})
         self.assertEqual(proof_cases["exact_query_id"]["contract_id"], "query_search_exact")
         self.assertEqual(proof_cases["related_executions"]["contract_id"], "query_search_related")
+        self.assertEqual(proof_cases["related_executions"]["observed_contexts"], ["query_search_related"])
         self.assertEqual(proof_cases["sql_preview"]["boundary"], "query_preview")
+        self.assertEqual(proof_cases["sql_preview"]["observed_boundaries"], {"query_preview": 1})
         self.assertEqual(proof_cases["account_usage_fallback"]["metadata_probe_count_default"], 0)
+        self.assertEqual(proof_cases["account_usage_fallback"]["no_confirmation"]["query_count"], 0)
+        self.assertEqual(proof_cases["account_usage_fallback"]["confirmed"]["metadata_probe_count"], 0)
         self.assertEqual(json.loads(direct_sql_static_scan_path.read_text(encoding="utf-8"))["blocked_count"], 0)
+        self.assertEqual(json.loads(session_open_static_scan_path.read_text(encoding="utf-8"))["blocked_count"], 0)
         self.assertEqual(
             [
                 finding for finding in json.loads(sql_performance_lint_path.read_text(encoding="utf-8"))
@@ -2890,6 +3059,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             query_slow_path,
             query_search_proof_path,
             direct_sql_static_scan_path,
+            session_open_static_scan_path,
             sql_performance_lint_path,
         ):
             text = path.read_text(encoding="utf-8")

@@ -303,7 +303,7 @@ def log_alert_digest_delivery(
             "LAST_STATUS_AT",
         ],
     ))
-    # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
+    # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics owner=platform
     session.sql(build_alert_delivery_log_insert_sql(
         alert_ids=clean_ids,
         company=company,
@@ -315,7 +315,7 @@ def log_alert_digest_delivery(
         notes=notes,
     )).collect()
     if columns:
-        # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
+        # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics owner=platform
         session.sql(build_alert_delivery_mark_sql(
             alert_ids=clean_ids,
             delivery_target=delivery_target,

@@ -693,6 +693,7 @@ def _render_security_exceptions_gate(company: str, environment: str, days: int) 
             if st.button("Load Security Exceptions", key="security_posture_load_exceptions"):
                 session = None
                 try:
+                    # SESSION_OPEN_ADMIN_OK boundary=admin reason=post_click_session budget=advanced_diagnostics owner=platform
                     session = get_session()
                     proof_sql = st.session_state.get("security_posture_proof_sql") or {}
                     exceptions_sql = str(proof_sql.get("exceptions") or "")
@@ -718,6 +719,7 @@ def _render_security_exceptions_gate(company: str, environment: str, days: int) 
                     st.session_state["security_posture_proof_sql"] = proof_sql
                 except Exception as exc:
                     try:
+                        # SESSION_OPEN_ADMIN_OK boundary=admin reason=post_click_session budget=advanced_diagnostics owner=platform
                         session = session or get_session()
                         _, exceptions_sql = _build_security_summary_sql(session, days, company)
                         evidence_target = get_decision_evidence_target("Security Monitoring")
@@ -952,6 +954,7 @@ def render_security_overview(company: str, environment: str, days: int) -> None:
             queue_col, proof_col, _spacer_col = st.columns([1.25, 1.25, 2.5])
             with queue_col:
                 if st.button("Save Security Exceptions to Action Queue", key="security_posture_queue"):
+                    # SESSION_OPEN_ADMIN_OK boundary=admin reason=post_click_session budget=advanced_diagnostics owner=platform
                     _queue_security_exceptions(get_session(), exceptions)
             proof_tables_visible = _security_proof_tables_visible(company, environment, days)
             with proof_col:
@@ -1015,6 +1018,7 @@ def render_security_overview(company: str, environment: str, days: int) -> None:
 
                 if st.button("Save Access Review Snapshot", key="security_posture_access_review_snapshot"):
                     _save_security_access_review_snapshot(
+                        # SESSION_OPEN_ADMIN_OK boundary=admin reason=post_click_session budget=advanced_diagnostics owner=platform
                         get_session(),
                         access_review,
                         company=company,

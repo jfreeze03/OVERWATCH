@@ -13,7 +13,6 @@ from sections.decision_workspace_target_filters import (
     evidence_row_limit,
     evidence_target_label,
 )
-from utils.mart_cost import build_mart_cost_explorer_sql
 from utils.mart_names import mart_object_name
 from utils.primitives import safe_float, safe_int
 from utils.sql_safe import sql_literal
@@ -140,11 +139,8 @@ def _unsupported_target_reason(target: dict[str, str] | None) -> str:
 
 
 def _chargeback_evidence_sql(company: str, environment: str, days: int, target: dict[str, str] | None, limit: int) -> str:
-    base_sql = build_mart_cost_explorer_sql(
-        days_back=int(days),
-        company=company,
-        **_chargeback_builder_kwargs(target),
-    )
+    table = mart_object_name("MART_COST_EVIDENCE_RECENT")
+    company_filter = "" if str(company or "").upper() == "ALL" else f"AND COMPANY = {sql_literal(company, 100)}"
     target_filter = build_target_sql_filter(
         "Cost & Contract",
         target or {},
@@ -157,26 +153,41 @@ def _chargeback_evidence_sql(company: str, environment: str, days: int, target: 
             {_projection()}
         FROM (
             SELECT
-                target.*,
-                'exact' AS ENVIRONMENT_SCOPE_MODE,
-                NULL::VARCHAR AS SERVICE_CATEGORY,
-                NULL::VARCHAR AS SERVICE_TYPE,
+                target.COMPANY,
+                target.ENVIRONMENT,
+                target.ENVIRONMENT AS ENVIRONMENT_ROLLUP,
+                target.DATABASE_NAME,
+                target.USER_NAME,
+                target.ROLE_NAME,
+                target.WAREHOUSE_NAME,
+                NULL::VARCHAR AS WAREHOUSE_SIZE,
+                target.DEPARTMENT,
+                NULL::VARCHAR AS COST_OWNER,
+                'compact_cost_evidence' AS OWNER_SOURCE,
+                COALESCE(target.SUMMARY, 'Compact cost evidence') AS OWNER_EVIDENCE,
+                'estimated' AS ALLOCATION_CONFIDENCE,
+                'recent evidence mart' AS ALLOCATION_BASIS,
+                TRUE AS CHARGEBACK_READY,
+                COALESCE(target.EVIDENCE_KIND, 'cost evidence') AS SCOPE_REVIEW,
+                target.SERVICE_CATEGORY,
+                target.SERVICE_TYPE,
                 NULL::VARCHAR AS TAG_VALUE,
-                NULL::VARCHAR AS APPLICATION,
-                COALESCE(target.WAREHOUSE_NAME, target.USER_NAME, target.ROLE_NAME, target.DATABASE_NAME, target.DEPARTMENT) AS DRIVER,
-                CASE
-                    WHEN target.WAREHOUSE_NAME IS NOT NULL THEN 'warehouse'
-                    WHEN target.USER_NAME IS NOT NULL THEN 'user'
-                    WHEN target.ROLE_NAME IS NOT NULL THEN 'role'
-                    WHEN target.DATABASE_NAME IS NOT NULL THEN 'database'
-                    WHEN target.DEPARTMENT IS NOT NULL THEN 'department'
-                    ELSE 'chargeback'
-                END AS DIMENSION,
-                COALESCE(target.WAREHOUSE_NAME, target.USER_NAME, target.ROLE_NAME, target.DATABASE_NAME, target.DEPARTMENT) AS ENTITY_NAME,
-                COALESCE(target.WAREHOUSE_NAME, target.USER_NAME, target.ROLE_NAME, target.DATABASE_NAME, target.DEPARTMENT) AS ENTITY_ID
-            FROM (
-                {base_sql}
-            ) target
+                target.APPLICATION,
+                COALESCE(target.ENTITY_NAME, target.WAREHOUSE_NAME, target.USER_NAME, target.ROLE_NAME, target.DATABASE_NAME, target.DEPARTMENT) AS DRIVER,
+                COALESCE(target.EVIDENCE_KIND, 'chargeback') AS DIMENSION,
+                COALESCE(target.ENTITY_NAME, target.WAREHOUSE_NAME, target.USER_NAME, target.ROLE_NAME, target.DATABASE_NAME, target.DEPARTMENT) AS ENTITY_NAME,
+                COALESCE(target.ENTITY_ID, target.WAREHOUSE_NAME, target.USER_NAME, target.ROLE_NAME, target.DATABASE_NAME, target.DEPARTMENT) AS ENTITY_ID,
+                target.QUERY_COUNT,
+                target.TOTAL_CREDITS,
+                target.EST_COST,
+                TO_DATE(target.SNAPSHOT_TS) AS FIRST_USAGE_DATE,
+                TO_DATE(target.SNAPSHOT_TS) AS LAST_USAGE_DATE,
+                NULL::NUMBER AS ACTIVE_DAYS,
+                target.LOAD_TS AS MART_LOAD_TS,
+                'exact' AS ENVIRONMENT_SCOPE_MODE,
+            FROM {table} target
+            WHERE target.SNAPSHOT_TS >= DATEADD('DAY', -{int(days)}, CURRENT_TIMESTAMP())
+              {company_filter}
         ) target
         WHERE 1 = 1
           {env_filter}
@@ -188,7 +199,7 @@ def _chargeback_evidence_sql(company: str, environment: str, days: int, target: 
 
 def _service_evidence_sql(company: str, environment: str, days: int, target: dict[str, str] | None, limit: int) -> str:
     _ = environment
-    table = mart_object_name("FACT_COST_DAILY")
+    table = mart_object_name("MART_COST_EVIDENCE_RECENT")
     company_filter = "" if str(company or "").upper() == "ALL" else f"AND COMPANY = {sql_literal(company, 100)}"
     target_filter = build_target_sql_filter(
         "Cost & Contract",
@@ -212,8 +223,8 @@ def _service_evidence_sql(company: str, environment: str, days: int, target: dic
                 NULL::VARCHAR AS WAREHOUSE_SIZE,
                 NULL::VARCHAR AS DEPARTMENT,
                 NULL::VARCHAR AS COST_OWNER,
-                'cost_daily' AS OWNER_SOURCE,
-                'service cost daily' AS OWNER_EVIDENCE,
+                'compact_cost_evidence' AS OWNER_SOURCE,
+                'service cost evidence' AS OWNER_EVIDENCE,
                 'estimated' AS ALLOCATION_CONFIDENCE,
                 'service daily rollup' AS ALLOCATION_BASIS,
                 FALSE AS CHARGEBACK_READY,
@@ -226,15 +237,15 @@ def _service_evidence_sql(company: str, environment: str, days: int, target: dic
                 'service' AS DIMENSION,
                 COALESCE(SERVICE_TYPE, SERVICE_CATEGORY, 'Snowflake service') AS ENTITY_NAME,
                 COALESCE(SERVICE_TYPE, SERVICE_CATEGORY, 'Snowflake service') AS ENTITY_ID,
-                COUNT(*) AS QUERY_COUNT,
-                ROUND(SUM(COALESCE(CREDITS_BILLED, CREDITS_USED_COMPUTE, 0)), 4) AS TOTAL_CREDITS,
-                ROUND(SUM(COALESCE(EST_COST_USD, 0)), 2) AS EST_COST,
-                MIN(USAGE_DATE) AS FIRST_USAGE_DATE,
-                MAX(USAGE_DATE) AS LAST_USAGE_DATE,
-                COUNT(DISTINCT USAGE_DATE) AS ACTIVE_DAYS,
+                SUM(COALESCE(QUERY_COUNT, 0)) AS QUERY_COUNT,
+                ROUND(SUM(COALESCE(TOTAL_CREDITS, 0)), 4) AS TOTAL_CREDITS,
+                ROUND(SUM(COALESCE(EST_COST, 0)), 2) AS EST_COST,
+                MIN(TO_DATE(SNAPSHOT_TS)) AS FIRST_USAGE_DATE,
+                MAX(TO_DATE(SNAPSHOT_TS)) AS LAST_USAGE_DATE,
+                COUNT(DISTINCT TO_DATE(SNAPSHOT_TS)) AS ACTIVE_DAYS,
                 MAX(LOAD_TS) AS MART_LOAD_TS
             FROM {table}
-            WHERE USAGE_DATE >= DATEADD('DAY', -{int(days)}, CURRENT_DATE())
+            WHERE SNAPSHOT_TS >= DATEADD('DAY', -{int(days)}, CURRENT_TIMESTAMP())
               {company_filter}
             GROUP BY COMPANY, SERVICE_CATEGORY, SERVICE_TYPE
         ) target

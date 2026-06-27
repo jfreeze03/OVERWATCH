@@ -1,3 +1,4 @@
+# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.
 # utils/action_queue.py - persistent recommendation/action queue helpers
 import hashlib
 import re
@@ -990,3 +991,4 @@ def update_action_status_with_evidence(
             {extra}
         WHERE ACTION_ID = {action_safe}
     """).collect()
+# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.

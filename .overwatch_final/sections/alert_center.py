@@ -560,6 +560,7 @@ def filter_alert_center_rows(
     status_lens: str,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Apply visible Alert Center family/status lenses to already-loaded rows."""
+    pd = _pd()
     if alerts is None or alerts.empty:
         return alerts, queue, delivery_log
     filtered = alerts.copy()

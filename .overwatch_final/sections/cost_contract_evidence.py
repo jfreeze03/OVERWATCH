@@ -8,6 +8,7 @@ from typing import Any
 
 from sections.base import lazy_pandas, lazy_util as _lazy_util
 from sections.decision_workspace_target_filters import (
+    build_target_predicate_plan,
     build_target_sql_filter,
     evidence_row_limit,
     evidence_target_label,
@@ -307,6 +308,7 @@ def load_cost_evidence(
             "environment_scope_note": "",
         }
     sql = _cost_evidence_sql(company, environment, int(days), target, row_limit)
+    target_plan = build_target_predicate_plan("Cost & Contract", target, COST_EVIDENCE_COLUMNS).with_fingerprint()
     try:
         rows = run_query_or_raise(
             sql,
@@ -316,6 +318,10 @@ def load_cost_evidence(
             max_rows=row_limit,
             use_cache=False,
             query_boundary="evidence",
+            target_label=target_label,
+            target_context_present=bool(target),
+            target_columns_used=target_plan.columns_used,
+            target_predicate_plan_id=target_plan.plan_id,
         )
         error = ""
     except Exception as exc:

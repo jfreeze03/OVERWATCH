@@ -1,3 +1,4 @@
+# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.
 """One-shot bootstrap flow for Decision Workspace command summaries."""
 
 from __future__ import annotations
@@ -962,3 +963,4 @@ __all__ = [
     "validate_decision_bootstrap_output",
     "maybe_run_decision_workspace_bootstrap",
 ]
+# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.

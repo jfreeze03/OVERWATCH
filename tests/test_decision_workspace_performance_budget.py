@@ -754,16 +754,37 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         self.assertIn("'OVERWATCH_ENABLE_CLUSTER_KEYS', 'TRUE'", config)
         self.assertIn("'OVERWATCH_ENABLE_SEARCH_OPTIMIZATION', 'FALSE'", config)
         self.assertIn("SP_OVERWATCH_APPLY_OPTIONAL_PERFORMANCE_OPTIMIZATION", procs)
-        self.assertIn("IF (enable_cluster) THEN", procs)
-        self.assertIn("IF (enable_search) THEN", procs)
+        self.assertIn("TMP_PERFORMANCE_OPTIMIZATION_TARGETS", procs)
+        self.assertIn("FOR target_row IN", procs)
+        self.assertIn("IF (target_row.ENABLED) THEN", procs)
+        self.assertIn("EXECUTE IMMEDIATE target_row.STATEMENT_TEXT", procs)
         self.assertIn("CLUSTER BY (IS_ACTIVE, SECTION_NAME_NORM, COMPANY_NORM, ENVIRONMENT_NORM, WINDOW_DAYS_NORM)", procs)
         self.assertIn("ADD SEARCH OPTIMIZATION", procs)
         self.assertIn("OVERWATCH_PERFORMANCE_OPTIMIZATION_AUDIT", procs)
         self.assertIn("'WARN'", procs)
+        self.assertIn("'INFO'", procs)
         self.assertIn("Search Optimization is disabled by default", procs)
+        self.assertIn("MART_QUERY_EVIDENCE_RECENT", procs)
+        self.assertIn("MART_ALERT_EVIDENCE_RECENT", procs)
+        self.assertIn("MART_SECURITY_EVIDENCE_RECENT", procs)
+        self.assertIn("MART_COST_EVIDENCE_RECENT", procs)
+        self.assertIn("MART_DBA_EVIDENCE_RECENT", procs)
         self.assertIn("OVERWATCH_OPTIONAL_PERFORMANCE_OPTIMIZATION_FLAGS", validation)
         self.assertIn("OVERWATCH_PERFORMANCE_OPTIMIZATION_AUDIT_TABLE", validation)
         self.assertIn("IFF(COUNT(*) = 0, 'PASS', 'WARN')", validation)
+
+    def test_compact_recent_evidence_marts_are_declared(self):
+        setup = (ROOT / "snowflake" / "mart_setup" / "04_mart_tables.sql").read_text(encoding="utf-8")
+        combined = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8")
+        for table_name in (
+            "MART_QUERY_EVIDENCE_RECENT",
+            "MART_ALERT_EVIDENCE_RECENT",
+            "MART_SECURITY_EVIDENCE_RECENT",
+            "MART_COST_EVIDENCE_RECENT",
+            "MART_DBA_EVIDENCE_RECENT",
+        ):
+            self.assertIn(f"CREATE TRANSIENT TABLE IF NOT EXISTS {table_name}", setup)
+            self.assertIn(f"CREATE TRANSIENT TABLE IF NOT EXISTS {table_name}", combined)
 
     def test_query_contract_linter_flags_risky_shapes_and_passes_packet_lookup(self):
         from query_contracts import (
@@ -983,10 +1004,35 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                 self.assertEqual(contract.expected_query_count, 1, contract)
             if contract.action_type == "route" and not contract.skip_reason:
                 self.assertEqual(contract.expected_query_count, 0, contract)
+                self.assertEqual(contract.expected_query_budget_context, "route_action", contract)
+                self.assertEqual(contract.expected_budget, 0, contract)
+                self.assertEqual(contract.expected_actual_boundaries, {}, contract)
                 self.assertEqual(contract.expected_session_open_count, 0, contract)
+                self.assertEqual(contract.expected_direct_sql_count, 0, contract)
+                self.assertEqual(contract.expected_metadata_probe_count, 0, contract)
             if contract.action_type == "evidence_load":
                 self.assertEqual(contract.expected_query_boundary, "evidence", contract)
+                self.assertEqual(contract.expected_query_budget_context, "evidence_click", contract)
+                self.assertEqual(contract.expected_budget, 1, contract)
+                self.assertEqual(contract.expected_actual_boundaries, {"evidence": 1}, contract)
                 self.assertLessEqual(contract.expected_max_rows or 0, 500, contract)
+            if contract.action_type == "refresh_packet":
+                self.assertEqual(contract.expected_query_budget_context, "refresh_packet", contract)
+                self.assertEqual(contract.expected_actual_boundaries, {}, contract)
+                self.assertEqual(contract.expected_session_open_count, 0, contract)
+                self.assertEqual(contract.expected_direct_sql_count, 0, contract)
+                self.assertEqual(contract.expected_metadata_probe_count, 0, contract)
+            if contract.action_type == "account_usage_fallback":
+                self.assertEqual(contract.expected_query_budget_context, "account_usage_fallback", contract)
+                self.assertEqual(contract.expected_actual_boundaries, {"account_usage": 1}, contract)
+        self.assertNotEqual("route_action", "evidence_click")
+        self.assertNotEqual("query_search_exact", "query_preview")
+
+    def test_synthetic_clicked_action_without_budget_context_fails_contract_check(self):
+        expected_context = "route_action"
+        observed_contexts: list[str] = []
+        with self.assertRaises(AssertionError):
+            self.assertEqual(observed_contexts.count(expected_context), 1)
 
     def _packet_row(self, section: str) -> dict[str, object]:
         route_key = {
@@ -1188,7 +1234,11 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                 "expected_max_rows": None,
                 "expected_query_contract_id": "",
                 "expected_query_budget_context": "",
+                "expected_budget": None,
+                "expected_actual_boundaries": {},
                 "expected_session_open_count": None,
+                "expected_direct_sql_count": None,
+                "expected_metadata_probe_count": None,
                 "expected_snowflake_execution_count": None,
                 "contract_resolved": False,
                 "contract_valid": False,
@@ -1212,7 +1262,11 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             "expected_max_rows": payload.get("expected_max_rows"),
             "expected_query_contract_id": str(payload.get("expected_query_contract_id") or ""),
             "expected_query_budget_context": str(payload.get("expected_query_budget_context") or ""),
+            "expected_budget": payload.get("expected_budget"),
+            "expected_actual_boundaries": dict(payload.get("expected_actual_boundaries") or {}),
             "expected_session_open_count": payload.get("expected_session_open_count"),
+            "expected_direct_sql_count": payload.get("expected_direct_sql_count"),
+            "expected_metadata_probe_count": payload.get("expected_metadata_probe_count"),
             "expected_snowflake_execution_count": payload.get("expected_snowflake_execution_count"),
             "contract_resolved": True,
             "contract_valid": contract_target_is_valid(contract),
@@ -1482,9 +1536,11 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                             cache_layer="none",
                             query_boundary="evidence",
                             target_label="Selected finding",
+                            target_context_present=True,
                             target_columns_used=("EVENT_ID", "ALERT_KEY"),
                             target_predicate_marker_present=True,
                             target_fallback_used=False,
+                            target_predicate_plan_id="fixture-alert-plan",
                             first_paint_sensitive=False,
                         )
                         return {
@@ -1510,12 +1566,18 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                     stack.enter_context(patch.object(module, "_render_cost_contract_workflow", side_effect=lambda *_args, **_kwargs: html_fragments.append("<section>Cost workflow shell</section>")))
                 else:
                     def _fake_render_cost_workflow(*_args, **_kwargs):
-                        self._run_deterministic_evidence_loader(
-                            section_name=section_name,
-                            state=state,
-                            expected_artifact="cost_contract_evidence_rows",
-                            html_fragments=html_fragments,
-                        )
+                        with performance.query_budget_context(
+                            "evidence_click",
+                            section="Cost & Contract",
+                            workflow="Cost Overview",
+                            budget=1,
+                        ):
+                            self._run_deterministic_evidence_loader(
+                                section_name=section_name,
+                                state=state,
+                                expected_artifact="cost_contract_evidence_rows",
+                                html_fragments=html_fragments,
+                            )
                         html_fragments.append("<section>Cost focused workbench</section>")
 
                     stack.enter_context(patch.object(module, "_render_cost_contract_workflow", side_effect=_fake_render_cost_workflow))
@@ -1535,12 +1597,18 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                     stack.enter_context(patch.object(module, "_load_security_brief", side_effect=AssertionError("First paint must not load security evidence")))
                 else:
                     def _fake_refresh_security_summary(*_args, **_kwargs):
-                        self._run_deterministic_evidence_loader(
-                            section_name=section_name,
-                            state=state,
-                            expected_artifact="security_evidence_rows",
-                            html_fragments=html_fragments,
-                        )
+                        with performance.query_budget_context(
+                            "evidence_click",
+                            section="Security Monitoring",
+                            workflow="Security Overview",
+                            budget=1,
+                        ):
+                            self._run_deterministic_evidence_loader(
+                                section_name=section_name,
+                                state=state,
+                                expected_artifact="security_evidence_rows",
+                                html_fragments=html_fragments,
+                            )
                         state["security_posture_summary"] = pd.DataFrame([{"FAILED_LOGINS": 1, "FAILED_USERS": 1, "ACTIVE_USERS": 10, "USERS_WITHOUT_MFA": 0, "RECENT_GRANTS": 1, "SHARED_DATABASES": 0}])
                         state["security_posture_exceptions"] = pd.DataFrame([{"USER_NAME": "QUERY-123", "EVIDENCE_ID": "QUERY-123"}])
                         state["security_posture_meta"] = {"company": "ALFA", "environment": "ALL", "days": 30, "loaded_at": "Loaded now"}
@@ -1557,12 +1625,18 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                             and key == "Security Overview"
                             and state.pop("security_posture_load_evidence", False)
                         ):
-                            self._run_deterministic_evidence_loader(
-                                section_name=section_name,
-                                state=state,
-                                expected_artifact="security_evidence_rows",
-                                html_fragments=html_fragments,
-                            )
+                            with performance.query_budget_context(
+                                "evidence_click",
+                                section="Security Monitoring",
+                                workflow="Security Overview",
+                                budget=1,
+                            ):
+                                self._run_deterministic_evidence_loader(
+                                    section_name=section_name,
+                                    state=state,
+                                    expected_artifact="security_evidence_rows",
+                                    html_fragments=html_fragments,
+                                )
                         html_fragments.append(f"<section>Security {key} shell</section>")
 
                     return _render
@@ -1606,9 +1680,11 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             cache_layer="none",
             query_boundary="evidence",
             target_label="Selected finding" if target else "",
+            target_context_present=bool(target),
             target_columns_used=("ENTITY_ID", "EVIDENCE_ID") if target else (),
             target_predicate_marker_present=True if target else False,
             target_fallback_used=False if target else None,
+            target_predicate_plan_id="fixture-target-plan" if target else "",
             first_paint_sensitive=False,
         )
         performance.increment_snowflake_execution_counter(
@@ -1949,6 +2025,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                     before_events = len(performance.get_ui_query_events())
                     before_execs = len(performance.get_snowflake_execution_counter())
                     before_budget_contexts = len(performance.get_query_budget_context_events())
+                    action_type = str(button.get("action_type") or "")
                     raised = ""
                     try:
                         self._render_primary_section_entrypoint(
@@ -1963,6 +2040,17 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                         raised = "rerun"
                     except AssertionError as exc:
                         raised = f"assertion: {exc}"
+                    if action_type == "evidence_load" and raised == "rerun":
+                        try:
+                            self._render_primary_section_entrypoint(
+                                section_name,
+                                click_state,
+                                click_html,
+                                buttons=click_buttons,
+                                block_evidence=False,
+                            )
+                        except _RerunSignal:
+                            pass
                     after_events = performance.get_ui_query_events()
                     after_execs = performance.get_snowflake_execution_counter()
                     budget_contexts = performance.get_query_budget_context_events()[before_budget_contexts:]
@@ -1971,6 +2059,13 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                         for context in budget_contexts
                         if str(context.get("name") or "")
                     ]
+                    observed_actual_boundaries: dict[str, int] = {}
+                    for context in budget_contexts:
+                        for boundary, count in dict(context.get("actual_boundaries") or {}).items():
+                            key_boundary = str(boundary)
+                            observed_actual_boundaries[key_boundary] = (
+                                observed_actual_boundaries.get(key_boundary, 0) + int(count or 0)
+                            )
                     budget_actual_execs = sum(
                         int(context.get("actual_snowflake_executions") or 0)
                         for context in budget_contexts
@@ -2002,7 +2097,29 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                         for state_key, value in click_state.items()
                         if state.get(state_key) != value
                     }
-                    action_type = str(button.get("action_type") or "")
+                    expected_context = str(button.get("expected_query_budget_context") or "")
+                    expected_budget = button.get("expected_budget")
+                    expected_boundaries = dict(button.get("expected_actual_boundaries") or {})
+                    if expected_context and not str(button.get("skip_reason") or ""):
+                        self.assertEqual(budget_context_names.count(expected_context), 1, (button, budget_contexts))
+                        self.assertEqual(len(budget_context_names), 1, (button, budget_contexts))
+                    if expected_budget is not None and budget_contexts:
+                        self.assertEqual(
+                            max(int(context.get("budget") or 0) for context in budget_contexts),
+                            int(expected_budget),
+                            (button, budget_contexts),
+                        )
+                    if expected_boundaries:
+                        self.assertEqual(observed_actual_boundaries, expected_boundaries, (button, budget_contexts))
+                    expected_session_open_count = button.get("expected_session_open_count")
+                    if expected_session_open_count is not None:
+                        self.assertEqual(budget_session_opens, int(expected_session_open_count), (button, budget_contexts))
+                    expected_direct_sql_count = button.get("expected_direct_sql_count")
+                    if expected_direct_sql_count is not None:
+                        self.assertEqual(budget_direct_sql, int(expected_direct_sql_count), (button, budget_contexts))
+                    expected_metadata_probe_count = button.get("expected_metadata_probe_count")
+                    if expected_metadata_probe_count is not None:
+                        self.assertEqual(budget_metadata_probes, int(expected_metadata_probe_count), (button, budget_contexts))
                     evidence_events = [
                         event for event in after_events[before_events:]
                         if event.get("query_boundary") == "evidence"
@@ -2099,11 +2216,16 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                         "expected_lens_state": button.get("expected_lens_state", {}),
                         "expected_state_updates": button.get("expected_state_updates", {}),
                         "expected_artifact": button.get("expected_artifact", ""),
+                        "skip_reason": button.get("skip_reason", ""),
                         "exact_route_key": button.get("exact_route_key", ""),
                         "expected_query_count": button.get("expected_query_count"),
                         "expected_max_rows": button.get("expected_max_rows"),
                         "expected_query_budget_context": button.get("expected_query_budget_context", ""),
+                        "expected_budget": button.get("expected_budget"),
+                        "expected_actual_boundaries": button.get("expected_actual_boundaries", {}),
                         "expected_session_open_count": button.get("expected_session_open_count"),
+                        "expected_direct_sql_count": button.get("expected_direct_sql_count"),
+                        "expected_metadata_probe_count": button.get("expected_metadata_probe_count"),
                         "expected_snowflake_execution_count": button.get("expected_snowflake_execution_count"),
                         "clicked": True,
                         "rerun": raised == "rerun",
@@ -2113,9 +2235,11 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                         "account_usage_query_events": len(account_usage_events),
                         "snowflake_execution_events": len(actual_execs),
                         "query_budget_context_name": ",".join(sorted(set(budget_context_names))),
+                        "observed_query_budget_contexts": sorted(budget_context_names),
                         "query_budget": max(
                             [int(context.get("budget") or 0) for context in budget_contexts] or [0]
                         ),
+                        "actual_boundaries": observed_actual_boundaries,
                         "actual_snowflake_executions": budget_actual_execs,
                         "session_open_count": budget_session_opens,
                         "direct_sql_event_count": budget_direct_sql,
@@ -2271,7 +2395,14 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         ]
         missing_target_marker_count = sum(
             1 for event in targeted_evidence_events
-            if not bool(event.get("target_predicate_marker_present")) or not event.get("target_columns_used")
+            if not bool(event.get("target_predicate_marker_present"))
+            or not event.get("target_columns_used")
+            or not str(event.get("target_predicate_plan_id") or "").strip()
+        )
+        missing_target_context_count = sum(
+            1 for event in targeted_evidence_events
+            if event.get("target_context_present") is not True
+            or not str(event.get("target_label") or "").strip()
         )
         fallback_target_predicate_count = sum(
             1 for event in targeted_evidence_events
@@ -2308,6 +2439,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             ),
             "targeted_evidence_events": len(targeted_evidence_events),
             "missing_target_marker_count": missing_target_marker_count,
+            "missing_target_context_count": missing_target_context_count,
             "fallback_target_predicate_count": fallback_target_predicate_count,
             "target_columns_used_by_section": target_columns_used_by_section,
             "failed_query_budget_context_count": failed_query_budget_context_count,
@@ -2330,6 +2462,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         self.assertEqual(query_perf_summary["query_lint_error_count"], 0)
         self.assertEqual(query_perf_summary["direct_sql_violation_count"], 0)
         self.assertEqual(query_perf_summary["missing_target_marker_count"], 0)
+        self.assertEqual(query_perf_summary["missing_target_context_count"], 0)
         self.assertEqual(query_perf_summary["failed_query_budget_context_count"], 0)
         summary_path.write_text(json.dumps(rows, indent=2), encoding="utf-8")
         telemetry_path.write_text(json.dumps(telemetry, indent=2), encoding="utf-8")
@@ -2522,6 +2655,11 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             self.assertIn("metadata_probe_events", result)
             self.assertIn("role_capture_events", result)
             self.assertIn("passed_query_budget", result)
+            self.assertIn("expected_query_budget_context", result)
+            self.assertIn("observed_query_budget_contexts", result)
+            expected_context = str(result.get("expected_query_budget_context") or "")
+            if expected_context and not str(result.get("skip_reason") or ""):
+                self.assertEqual(result.get("observed_query_budget_contexts"), [expected_context], result)
             self.assertTrue(result["passed_query_budget"], result)
             self.assertEqual(result.get("failure_reason", ""), "", result)
             if result["action_type"] == "route":

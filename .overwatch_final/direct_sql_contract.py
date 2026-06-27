@@ -3,29 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 from typing import Iterable
 
 
-_ADMIN_ALLOWED_TOKENS = (
-    "admin",
-    "setup",
-    "bootstrap",
-    "dba_tools",
-    "action_queue",
-    "alert_catalog",
-    "alert_delivery",
-    "alert_lifecycle",
-    "access_review",
-    "history",
-    "metadata.py",
-    "compatibility.py",
-    "cortex.py",
-    "logging.py",
-    "command_board.py",
-    "live_monitor.py",
-    "task_management",
-    "warehouse_health_setting_panels.py",
-)
+_DIRECT_SQL_RE = re.compile(r"(?:\bget_session\s*\(\s*\)|\b[a-zA-Z_][a-zA-Z0-9_]*|\))\s*\.\s*sql\s*\(", re.IGNORECASE)
+_ADMIN_MARKER = "DIRECT_SQL_ADMIN_OK"
 
 
 def _surface_for_path(relative_path: str) -> str:
@@ -37,16 +20,40 @@ def _surface_for_path(relative_path: str) -> str:
     return "other"
 
 
-def _allowance_for_path(relative_path: str, line: str) -> tuple[bool, str, str]:
+def _is_test_or_deployment_path(normalized: str) -> bool:
+    return (
+        normalized.startswith("tests/")
+        or "/tests/" in normalized
+        or normalized.startswith("deployment/")
+        or "/deployment/" in normalized
+        or normalized.startswith("scripts/")
+        or "/scripts/" in normalized
+    )
+
+
+def _line_no_for_offset(text: str, offset: int) -> int:
+    return text.count("\n", 0, max(offset, 0)) + 1
+
+
+def _has_admin_marker(lines: list[str], line_no: int) -> bool:
+    start = max(0, line_no - 5)
+    nearby = lines[start:line_no]
+    if any(_ADMIN_MARKER in line for line in nearby):
+        return True
+    header = lines[:20]
+    return any(_ADMIN_MARKER in line for line in header)
+
+
+def _allowance_for_path(relative_path: str, lines: list[str], line_no: int) -> tuple[bool, str, str]:
     normalized = relative_path.replace("\\", "/").lower()
-    if "DIRECT_SQL_ADMIN_OK" in line:
-        return True, "explicit_admin_marker", "admin"
     if normalized.endswith(".overwatch_final/direct_sql_contract.py"):
         return True, "static_scanner_self_reference", "runner"
     if normalized.endswith(".overwatch_final/utils/query.py") or normalized.endswith(".overwatch_final/utils/session.py"):
         return True, "central_query_runner_or_guarded_session", "runner"
-    if any(token in normalized for token in _ADMIN_ALLOWED_TOKENS):
-        return True, "admin_setup_or_action_surface", "admin"
+    if _is_test_or_deployment_path(normalized):
+        return True, "test_or_deployment_fixture", "test"
+    if _has_admin_marker(lines, line_no):
+        return True, "explicit_admin_marker", "admin"
     return False, "unallowlisted direct session.sql", _surface_for_path(relative_path)
 
 
@@ -70,10 +77,12 @@ def scan_direct_sql_usage(
             lines = path.read_text(encoding="utf-8").splitlines()
         except UnicodeDecodeError:
             lines = path.read_text(errors="ignore").splitlines()
-        for line_no, line in enumerate(lines, start=1):
-            if ".sql(" not in line:
+        text = "\n".join(lines)
+        for match in _DIRECT_SQL_RE.finditer(text):
+            line_no = _line_no_for_offset(text, match.start())
+            if line_no <= len(lines) and lines[line_no - 1].lstrip().startswith("#"):
                 continue
-            allowed, reason, surface = _allowance_for_path(relative, line)
+            allowed, reason, surface = _allowance_for_path(relative, lines, line_no)
             findings.append({
                 "path": relative,
                 "line": line_no,

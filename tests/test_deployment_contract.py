@@ -282,15 +282,20 @@ class DeploymentContractTests(unittest.TestCase):
                     self.assertIn(wrapper_expected_call[proc_name], body)
                     continue
                 if proc_name in optional_ddl_procedures:
-                    self.assertEqual(set(targets), {"OVERWATCH_PERFORMANCE_OPTIMIZATION_AUDIT"})
+                    self.assertEqual(
+                        set(targets) - {"TMP_PERFORMANCE_OPTIMIZATION_TARGETS"},
+                        {"OVERWATCH_PERFORMANCE_OPTIMIZATION_AUDIT"},
+                    )
                     self.assertIn("OVERWATCH_PERFORMANCE_OPTIMIZATION_AUDIT", table_creates)
-                    self.assertIn("IF (ENABLE_SEARCH) THEN", body)
+                    self.assertIn("IF (TARGET_ROW.ENABLED) THEN", body)
                     self.assertIn("ADD SEARCH OPTIMIZATION", body)
                     self.assertIn("STATUS", body)
                     self.assertIn("'WARN'", body)
                     continue
                 self.assertTrue(targets)
                 for target in targets:
+                    if target.startswith("TMP_"):
+                        continue
                     self.assertIn(target, table_creates)
 
     def test_drop_script_covers_retired_scope_cleanup_objects(self):

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 import streamlit as st
+
+from performance import EVIDENCE_CLICK_QUERY_BUDGET, query_budget_context
 from sections.shell_helpers import (
     consume_section_autoload_request,
     render_decision_evidence_panel,
@@ -1243,7 +1245,13 @@ def render() -> None:
     if active_view != MORNING_COCKPIT_WORKFLOW:
         load_requested = st.button(load_label, key="dba_control_room_load", type="primary") or load_requested
     if load_requested:
-        _load_control_room_evidence()
+        with query_budget_context(
+            "evidence_click",
+            section="DBA Control Room",
+            workflow=active_view,
+            budget=EVIDENCE_CLICK_QUERY_BUDGET,
+        ):
+            _load_control_room_evidence()
 
     data = st.session_state.get("dba_control_room_data", {})
     if st.session_state.get("dba_control_room_active_view") == CONTROL_ROOM_ADMIN_WORKFLOW:
@@ -1263,7 +1271,13 @@ def render() -> None:
             st.warning("Load the Action Queue to see DBA-owned actions, status, owner, and closure detail.")
             st.caption("Workflow: triage refresh -> route priority -> routed action -> closure status.")
             if st.button("Load Action Queue", key="dba_control_room_build_ops_from_empty", type="primary"):
-                _load_control_room_evidence(status_label="Loading Action Queue", auto_build_ops=True)
+                with query_budget_context(
+                    "evidence_click",
+                    section="DBA Control Room",
+                    workflow=active_view,
+                    budget=EVIDENCE_CLICK_QUERY_BUDGET,
+                ):
+                    _load_control_room_evidence(status_label="Loading Action Queue", auto_build_ops=True)
                 st.rerun()
         else:
             st.warning(f"{load_label} to see this workflow's DBA telemetry.")

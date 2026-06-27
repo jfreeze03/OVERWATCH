@@ -1,3 +1,4 @@
+# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.
 # sections/dba_tools_task_graph_control_view.py - Task Graph Control render branch.
 
 import pandas as pd
@@ -466,3 +467,4 @@ def render_task_graph_control_tool(session, company: str) -> None:
                     raw_label="All DAG rows",
                 )
                 download_csv(df_dag, f"dag_{sel_dag}.csv")
+# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.

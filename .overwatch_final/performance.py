@@ -324,6 +324,10 @@ def query_budget_context(
     budget: int | None = None,
 ):
     """Context manager for user-action query budgets."""
+    active = _active_query_budget_context()
+    if str(active.get("name") or "") == str(name or "other"):
+        yield str(active.get("token") or "")
+        return
     token = begin_query_budget_context(name, section=section, workflow=workflow, budget=budget)
     try:
         yield token
@@ -820,9 +824,11 @@ def record_ui_query_event(
     query_boundary: str = "other",
     query_contract_id: str = "",
     target_label: str = "",
+    target_context_present: bool | None = None,
     target_columns_used: tuple[str, ...] | list[str] | None = None,
     target_predicate_marker_present: bool | None = None,
     target_fallback_used: bool | None = None,
+    target_predicate_plan_id: str = "",
     first_paint_sensitive: bool = False,
     render_id: str | None = None,
 ) -> dict[str, Any]:
@@ -858,9 +864,11 @@ def record_ui_query_event(
         "query_boundary": query_boundary,
         "query_contract_id": str(query_contract_id or "")[:120],
         "target_label": str(target_label or "")[:250],
+        "target_context_present": target_context_present,
         "target_columns_used": [str(column)[:120] for column in (target_columns_used or [])],
         "target_predicate_marker_present": target_predicate_marker_present,
         "target_fallback_used": target_fallback_used,
+        "target_predicate_plan_id": str(target_predicate_plan_id or "")[:80],
         "first_paint_sensitive": bool(first_paint_sensitive),
     }
     try:

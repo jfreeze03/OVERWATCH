@@ -1,3 +1,4 @@
+# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.
 """Alert rule catalog and audit helpers for OVERWATCH.
 
 This module owns DBA-managed alert rule defaults, rule normalization, rule
@@ -434,3 +435,4 @@ def update_alert_rule(
         reason=reason,
     )).collect()
     session.sql(update_sql).collect()
+# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.

@@ -1,3 +1,4 @@
+# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.
 # sections/task_management_execute_view.py - Execute Task renderer
 import pandas as pd
 import streamlit as st
@@ -107,3 +108,4 @@ def render_task_execute_task(session) -> None:
 
 
 __all__ = ['render_task_execute_task']
+# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.

@@ -1,3 +1,4 @@
+# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.
 """Alert lifecycle SQL and mutation helpers.
 
 This module owns inserts into OVERWATCH_ALERTS plus review-gated status and
@@ -205,3 +206,4 @@ def acknowledge_alert_escalation(
         note=note,
         columns=columns,
     )).collect()
+# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.

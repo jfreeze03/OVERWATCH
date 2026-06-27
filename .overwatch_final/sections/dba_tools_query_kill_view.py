@@ -1,3 +1,4 @@
+# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.
 # sections/dba_tools_query_kill_view.py - Query Kill List render branch.
 
 import pandas as pd
@@ -94,3 +95,4 @@ def render_query_kill_list_tool(session, company: str) -> None:
                     st.error(f"Cancel failed: {format_snowflake_error(e)}")
     elif st.session_state.get("dba_df_kl") is not None:
         st.success(f"No queries running > {kill_min}s")
+# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.

@@ -5,6 +5,7 @@ import re
 
 import streamlit as st
 
+from performance import EVIDENCE_CLICK_QUERY_BUDGET, query_budget_context
 from sections.base import lazy_pandas, lazy_util as _lazy_util
 from sections.security_posture_access_review import (
     _build_security_access_review,
@@ -802,7 +803,13 @@ def render_security_overview(company: str, environment: str, days: int) -> None:
 
     refresh_security_summary = bool(st.session_state.pop("security_posture_load_evidence", False))
     if refresh_security_summary:
-        _refresh_security_summary(company, environment, days)
+        with query_budget_context(
+            "evidence_click",
+            section="Security Monitoring",
+            workflow=SECURITY_OVERVIEW_WORKFLOW,
+            budget=EVIDENCE_CLICK_QUERY_BUDGET,
+        ):
+            _refresh_security_summary(company, environment, days)
         summary = st.session_state.get("security_posture_summary")
         exceptions = st.session_state.get("security_posture_exceptions")
         meta = st.session_state.get("security_posture_meta", {})

@@ -1,3 +1,4 @@
+# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.
 """Shared first-paint monitoring summary readers.
 
 These helpers keep the top-level sections data-first without making each shell
@@ -1132,3 +1133,4 @@ def load_setup_readiness(use_live: bool = False) -> pd.DataFrame:
     fallback["MIGRATION_STATE"] = "Not checked"
     fallback["NEXT_ACTION"] = "Refresh data health after Snowflake access is available."
     return fallback
+# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.

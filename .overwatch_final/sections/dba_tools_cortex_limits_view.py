@@ -1,3 +1,4 @@
+# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.
 # sections/dba_tools_cortex_limits_view.py - Cortex AI account limit render branch.
 
 import pandas as pd
@@ -256,3 +257,4 @@ def render_cortex_ai_limits_tool(session, company: str) -> None:
             ("Quota enforcement", "Dry-run first"),
             ("Parameter review", "On demand"),
         ))
+# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.

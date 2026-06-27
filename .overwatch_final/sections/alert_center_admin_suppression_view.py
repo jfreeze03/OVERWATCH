@@ -1,3 +1,4 @@
+# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.
 """Alert Center Suppression Windows admin renderer."""
 
 from __future__ import annotations
@@ -193,3 +194,4 @@ def render_suppression_windows_pane(
                     st.session_state.pop("alert_center_annotations", None)
                 except Exception as exc:
                     st.error(f"Deactivate failed: {format_error(exc)}")
+# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.

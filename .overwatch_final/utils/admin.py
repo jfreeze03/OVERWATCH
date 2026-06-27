@@ -1,3 +1,4 @@
+# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.
 """Shared guardrails and audit helpers for live DBA actions."""
 from __future__ import annotations
 
@@ -193,3 +194,4 @@ def log_admin_action(
         return True
     except Exception:
         return False
+# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.

@@ -1280,6 +1280,10 @@ def run_query(
     section: str = "",
     max_rows: int | None = None,
     query_boundary: str | None = None,
+    target_label: str = "",
+    target_context_present: bool | None = None,
+    target_columns_used: tuple[str, ...] | list[str] | None = None,
+    target_predicate_plan_id: str = "",
 ) -> pd.DataFrame:
     """Execute a query through the cached runner and log lightweight telemetry."""
     started = time.perf_counter()
@@ -1314,9 +1318,12 @@ def run_query(
         cache_layer=str(query_meta.get("cache_layer") or "unknown"),
         query_boundary=str(query_meta.get("query_boundary") or "other"),
         query_contract_id=str(query_meta.get("query_contract_id") or ""),
-        target_columns_used=list(query_meta.get("target_columns_used") or []),
+        target_label=target_label,
+        target_context_present=target_context_present,
+        target_columns_used=list(target_columns_used if target_columns_used is not None else (query_meta.get("target_columns_used") or [])),
         target_predicate_marker_present=query_meta.get("target_predicate_marker_present"),
         target_fallback_used=query_meta.get("target_fallback_used"),
+        target_predicate_plan_id=target_predicate_plan_id,
         first_paint_sensitive=bool(query_meta.get("first_paint_sensitive")),
     )
     return result
@@ -1330,6 +1337,10 @@ def run_query_or_raise(
     max_rows: int | None = None,
     use_cache: bool = True,
     query_boundary: str | None = None,
+    target_label: str = "",
+    target_context_present: bool | None = None,
+    target_columns_used: tuple[str, ...] | list[str] | None = None,
+    target_predicate_plan_id: str = "",
 ) -> pd.DataFrame:
     """
     Execute SQL and return a normalized DataFrame, preserving exceptions.
@@ -1360,6 +1371,7 @@ def run_query_or_raise(
         max_rows=max_rows,
     )
     target_metadata = _target_metadata_from_sql(executable_query, boundary)
+    event_target_columns = list(target_columns_used if target_columns_used is not None else (target_metadata.get("target_columns_used") or []))
     assert_first_paint_query_allowed(
         boundary,
         section=telemetry_section,
@@ -1384,9 +1396,12 @@ def run_query_or_raise(
             cache_layer="paused",
             query_boundary=boundary,
             query_contract_id=str(getattr(contract, "contract_id", "") or ""),
-            target_columns_used=list(target_metadata.get("target_columns_used") or []),
+            target_label=target_label,
+            target_context_present=target_context_present,
+            target_columns_used=event_target_columns,
             target_predicate_marker_present=target_metadata.get("target_predicate_marker_present"),
             target_fallback_used=target_metadata.get("target_fallback_used"),
+            target_predicate_plan_id=target_predicate_plan_id,
             first_paint_sensitive=bool(current_first_paint_render_id()) and _first_paint_sensitive_boundary(boundary),
         )
         return empty_paused_result(ttl_key=ttl_key, section=section)
@@ -1407,9 +1422,12 @@ def run_query_or_raise(
             cache_layer="budget_blocked",
             query_boundary=boundary,
             query_contract_id=str(getattr(contract, "contract_id", "") or ""),
-            target_columns_used=list(target_metadata.get("target_columns_used") or []),
+            target_label=target_label,
+            target_context_present=target_context_present,
+            target_columns_used=event_target_columns,
             target_predicate_marker_present=target_metadata.get("target_predicate_marker_present"),
             target_fallback_used=target_metadata.get("target_fallback_used"),
+            target_predicate_plan_id=target_predicate_plan_id,
             first_paint_sensitive=bool(current_first_paint_render_id()) and _first_paint_sensitive_boundary(boundary),
         )
         return result
@@ -1463,9 +1481,12 @@ def run_query_or_raise(
             cache_layer="streamlit_cache" if use_cache else "none",
             query_boundary=boundary,
             query_contract_id=str(getattr(contract, "contract_id", "") or ""),
-            target_columns_used=list(target_metadata.get("target_columns_used") or []),
+            target_label=target_label,
+            target_context_present=target_context_present,
+            target_columns_used=event_target_columns,
             target_predicate_marker_present=target_metadata.get("target_predicate_marker_present"),
             target_fallback_used=target_metadata.get("target_fallback_used"),
+            target_predicate_plan_id=target_predicate_plan_id,
             first_paint_sensitive=bool(current_first_paint_render_id()) and _first_paint_sensitive_boundary(boundary),
         )
 

@@ -1,3 +1,4 @@
+# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.
 """Alert delivery helpers for OVERWATCH.
 
 This module owns recipient resolution, email/webhook payload construction,
@@ -502,3 +503,4 @@ def load_alert_delivery_log(
         ORDER BY DELIVERY_TS DESC
         LIMIT {limit}
     """, ttl_key=f"alert_delivery_log_{days}_{limit}_{target_hash}", tier="recent", section=section)
+# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.

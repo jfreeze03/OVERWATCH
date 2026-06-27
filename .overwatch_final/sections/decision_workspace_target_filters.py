@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from hashlib import sha1
 from typing import Any
 
 import streamlit as st
@@ -187,6 +188,8 @@ class TargetPredicatePlan:
     columns_used: tuple[str, ...] = ()
     values_count: int = 0
     fallback_used: bool = False
+    predicate_kind: str = ""
+    plan_id: str = ""
     target_marker: str = TARGET_PREDICATE_MARKER
 
     @property
@@ -196,6 +199,26 @@ class TargetPredicatePlan:
         if self.display_predicates:
             return f"AND {self.target_marker} (" + " OR ".join(self.display_predicates) + ")"
         return ""
+
+    def with_fingerprint(self) -> "TargetPredicatePlan":
+        basis = "|".join([
+            self.predicate_kind or ("exact" if self.exact_predicates else "display" if self.display_predicates else "none"),
+            ",".join(self.columns_used),
+            str(self.values_count),
+            "fallback" if self.fallback_used else "exact",
+        ])
+        return TargetPredicatePlan(
+            exact_predicates=self.exact_predicates,
+            display_predicates=self.display_predicates,
+            exact_columns_by_field=self.exact_columns_by_field,
+            display_columns_by_field=self.display_columns_by_field,
+            columns_used=self.columns_used,
+            values_count=self.values_count,
+            fallback_used=self.fallback_used,
+            predicate_kind=self.predicate_kind or ("exact" if self.exact_predicates else "display" if self.display_predicates else "none"),
+            plan_id=self.plan_id or sha1(basis.encode("utf-8", errors="ignore")).hexdigest()[:12],
+            target_marker=self.target_marker,
+        )
 
 
 def get_decision_evidence_target(section: str) -> dict[str, str]:
@@ -330,7 +353,8 @@ def build_target_predicate_plan(
             columns_used=columns_used,
             values_count=sum(1 for field in exact_columns_by_field if str(target.get(field) or "").strip()),
             fallback_used=False,
-        )
+            predicate_kind="exact",
+        ).with_fingerprint()
 
     value = str(target.get("entity_name") or "").strip()
     if value:
@@ -346,7 +370,8 @@ def build_target_predicate_plan(
         columns_used=tuple(sorted({column for columns in display_columns_by_field.values() for column in columns})),
         values_count=sum(1 for field in display_columns_by_field if str(target.get(field) or "").strip()),
         fallback_used=bool(display_predicates),
-    )
+        predicate_kind="display" if display_predicates else "none",
+    ).with_fingerprint()
 
 
 def build_target_sql_filter(

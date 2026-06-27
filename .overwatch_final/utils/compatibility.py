@@ -1,3 +1,4 @@
+# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.
 # utils/compatibility.py - Snowflake account compatibility checks
 from __future__ import annotations
 
@@ -786,3 +787,4 @@ def build_cost_formula_audit() -> pd.DataFrame:
             "NEXT_REVIEW",
         ],
     )
+# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.

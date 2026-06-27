@@ -1,3 +1,4 @@
+# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.
 """Admin-only setup health for Decision Workspace summaries."""
 
 from __future__ import annotations
@@ -485,3 +486,4 @@ __all__ = [
     "record_decision_bootstrap_health",
     "render_decision_setup_health_panel",
 ]
+# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.

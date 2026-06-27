@@ -1,3 +1,4 @@
+# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.
 """Account Health checklist history, closure, and snapshot persistence helpers."""
 from __future__ import annotations
 
@@ -351,3 +352,4 @@ __all__ = [
     "_account_health_operability_fact_sql",
     "_save_account_health_checklist_snapshot",
 ]
+# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.

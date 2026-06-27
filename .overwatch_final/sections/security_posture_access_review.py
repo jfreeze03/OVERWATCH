@@ -1,3 +1,4 @@
+# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.
 # sections/security_posture_access_review.py - Security access-review SQL and models
 from __future__ import annotations
 
@@ -1011,3 +1012,4 @@ __all__ = [
     '_security_control_board',
     '_save_security_access_review_snapshot',
 ]
+# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.

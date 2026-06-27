@@ -1,3 +1,4 @@
+# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.
 # sections/live_monitor.py - Real-time query history, timeline, sessions
 # -----------------------------------------------------------------------------
 # FIXES vs previous version:
@@ -572,3 +573,4 @@ def render():
                 download_csv(df_lk, "lock_wait_history.csv")
             else:
                 st.success("No significant lock waits in the last 24h.")
+# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.

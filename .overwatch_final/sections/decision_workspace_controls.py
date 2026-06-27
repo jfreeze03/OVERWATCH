@@ -98,17 +98,17 @@ def make_evidence_action(
     refresh_key = DECISION_REFRESH_KEYS.get(str(section))
 
     def _load() -> None:
-        with query_budget_context(
-            "evidence_click",
-            section=section,
-            workflow=workflow,
-            budget=EVIDENCE_CLICK_QUERY_BUDGET,
-        ):
-            if callback is not None:
+        if callback is not None:
+            with query_budget_context(
+                "evidence_click",
+                section=section,
+                workflow=workflow,
+                budget=EVIDENCE_CLICK_QUERY_BUDGET,
+            ):
                 callback()
-                return
-            if state_key:
-                st.session_state[state_key] = True
+            return
+        if state_key:
+            st.session_state[state_key] = True
 
     # Guard the contract: evidence must not be modeled as packet refresh.
     if state_key and refresh_key and state_key == refresh_key:

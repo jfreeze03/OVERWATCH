@@ -4,6 +4,7 @@ from __future__ import annotations
 import streamlit as st
 
 from config import DAY_WINDOW_OPTIONS, DEFAULTS, DEFAULT_DAY_WINDOW
+from performance import EVIDENCE_CLICK_QUERY_BUDGET, query_budget_context
 from sections.base import lazy_pandas, lazy_util as _lazy_util
 from sections.cost_contract_advisor_panels import (
     _render_account_service_cost_lens,
@@ -123,12 +124,18 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
         st.session_state.pop(_COST_SPLASH_KEY, None)
         st.session_state.pop(_COST_SPLASH_AUTOLOAD_BLOCKED_SCOPE_KEY, None)
         target = get_decision_evidence_target("Cost & Contract")
-        evidence = load_cost_evidence(
-            company,
-            str(get_active_environment() or DEFAULTS.get("default_environment") or "ALL"),
-            int(days),
-            target,
-        )
+        with query_budget_context(
+            "evidence_click",
+            section="Cost & Contract",
+            workflow="Cost Overview",
+            budget=EVIDENCE_CLICK_QUERY_BUDGET,
+        ):
+            evidence = load_cost_evidence(
+                company,
+                str(get_active_environment() or DEFAULTS.get("default_environment") or "ALL"),
+                int(days),
+                target,
+            )
         st.session_state["cost_contract_evidence_result"] = evidence
 
     evidence = st.session_state.get("cost_contract_evidence_result")

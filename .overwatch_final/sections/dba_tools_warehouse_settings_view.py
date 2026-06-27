@@ -1,3 +1,4 @@
+# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.
 # sections/dba_tools_warehouse_settings_view.py - Warehouse Settings render branch.
 
 from html import escape as html_escape
@@ -357,3 +358,4 @@ def render_warehouse_settings_tool(session, company: str) -> None:
                             "Audit path: OVERWATCH_ADMIN_ACTION_AUDIT captures company, environment, "
                             "Snowflake role/user, SQL hash, confirmation text, control context, and result."
                         )
+# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.

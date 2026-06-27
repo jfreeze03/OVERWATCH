@@ -1215,6 +1215,106 @@ CREATE TRANSIENT TABLE IF NOT EXISTS MART_EXECUTIVE_DECISION_INBOX (
   LOAD_TS                      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
 );
 
+CREATE TRANSIENT TABLE IF NOT EXISTS MART_QUERY_EVIDENCE_RECENT (
+  SNAPSHOT_TS                  TIMESTAMP_NTZ,
+  COMPANY                      VARCHAR(100),
+  ENVIRONMENT                  VARCHAR(100),
+  QUERY_ID                     VARCHAR(200),
+  QUERY_HASH                   VARCHAR(200),
+  QUERY_SIGNATURE              VARCHAR(500),
+  WAREHOUSE_NAME               VARCHAR(300),
+  USER_NAME                    VARCHAR(300),
+  ROLE_NAME                    VARCHAR(300),
+  DATABASE_NAME                VARCHAR(300),
+  TASK_NAME                    VARCHAR(500),
+  PROCEDURE_NAME               VARCHAR(500),
+  EVIDENCE_KIND                VARCHAR(100),
+  SEVERITY                     VARCHAR(80),
+  SUMMARY                      VARCHAR(2000),
+  DETAILS                      VARIANT,
+  LOAD_TS                      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+CREATE TRANSIENT TABLE IF NOT EXISTS MART_ALERT_EVIDENCE_RECENT (
+  SNAPSHOT_TS                  TIMESTAMP_NTZ,
+  COMPANY                      VARCHAR(100),
+  ENVIRONMENT                  VARCHAR(100),
+  ALERT_ID                     VARCHAR(200),
+  ALERT_KEY                    VARCHAR(500),
+  EVENT_ID                     VARCHAR(500),
+  ACTION_ID                    VARCHAR(500),
+  WAREHOUSE_NAME               VARCHAR(300),
+  USER_NAME                    VARCHAR(300),
+  ROLE_NAME                    VARCHAR(300),
+  DATABASE_NAME                VARCHAR(300),
+  EVIDENCE_KIND                VARCHAR(100),
+  SEVERITY                     VARCHAR(80),
+  SUMMARY                      VARCHAR(2000),
+  DETAILS                      VARIANT,
+  LOAD_TS                      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+CREATE TRANSIENT TABLE IF NOT EXISTS MART_SECURITY_EVIDENCE_RECENT (
+  SNAPSHOT_TS                  TIMESTAMP_NTZ,
+  COMPANY                      VARCHAR(100),
+  ENVIRONMENT                  VARCHAR(100),
+  USER_NAME                    VARCHAR(300),
+  LOGIN_NAME                   VARCHAR(300),
+  ROLE_NAME                    VARCHAR(300),
+  GRANTEE_NAME                 VARCHAR(300),
+  GRANT_ID                     VARCHAR(500),
+  SHARE_NAME                   VARCHAR(500),
+  DATABASE_NAME                VARCHAR(300),
+  OBJECT_NAME                  VARCHAR(500),
+  EVIDENCE_KIND                VARCHAR(100),
+  SEVERITY                     VARCHAR(80),
+  SUMMARY                      VARCHAR(2000),
+  DETAILS                      VARIANT,
+  LOAD_TS                      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+CREATE TRANSIENT TABLE IF NOT EXISTS MART_COST_EVIDENCE_RECENT (
+  SNAPSHOT_TS                  TIMESTAMP_NTZ,
+  COMPANY                      VARCHAR(100),
+  ENVIRONMENT                  VARCHAR(100),
+  WAREHOUSE_NAME               VARCHAR(300),
+  USER_NAME                    VARCHAR(300),
+  ROLE_NAME                    VARCHAR(300),
+  DATABASE_NAME                VARCHAR(300),
+  SERVICE_CATEGORY             VARCHAR(300),
+  SERVICE_TYPE                 VARCHAR(300),
+  DEPARTMENT                   VARCHAR(300),
+  APPLICATION                  VARCHAR(300),
+  ENTITY_NAME                  VARCHAR(500),
+  ENTITY_ID                    VARCHAR(500),
+  EST_COST                     NUMBER(18,4),
+  TOTAL_CREDITS                NUMBER(18,4),
+  QUERY_COUNT                  NUMBER,
+  EVIDENCE_KIND                VARCHAR(100),
+  SUMMARY                      VARCHAR(2000),
+  DETAILS                      VARIANT,
+  LOAD_TS                      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+CREATE TRANSIENT TABLE IF NOT EXISTS MART_DBA_EVIDENCE_RECENT (
+  SNAPSHOT_TS                  TIMESTAMP_NTZ,
+  COMPANY                      VARCHAR(100),
+  ENVIRONMENT                  VARCHAR(100),
+  QUERY_ID                     VARCHAR(200),
+  QUERY_HASH                   VARCHAR(200),
+  QUERY_SIGNATURE              VARCHAR(500),
+  WAREHOUSE_NAME               VARCHAR(300),
+  TASK_NAME                    VARCHAR(500),
+  ROOT_TASK_NAME               VARCHAR(500),
+  PROCEDURE_NAME               VARCHAR(500),
+  DATABASE_NAME                VARCHAR(300),
+  EVIDENCE_KIND                VARCHAR(100),
+  SEVERITY                     VARCHAR(80),
+  SUMMARY                      VARCHAR(2000),
+  DETAILS                      VARIANT,
+  LOAD_TS                      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
 CREATE TABLE IF NOT EXISTS OVERWATCH_DECISION_REFRESH_AUDIT (
   EVENT_ID                     VARCHAR(64),
   EVENT_TS                     TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),

@@ -31,8 +31,10 @@ def _alert_email_target_label() -> str:
 
 
 def _open_alert_mask(df: pd.DataFrame) -> pd.Series:
-    if df is None or df.empty or "STATUS" not in df.columns:
+    if df is None or df.empty:
         return pd.Series(dtype=bool)
+    if "STATUS" not in df.columns:
+        return pd.Series(False, index=df.index, dtype=bool)
     return df["STATUS"].apply(_status_key).isin(_alert_open_statuses())
 
 

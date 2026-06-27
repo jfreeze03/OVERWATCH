@@ -1,3 +1,4 @@
+# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.
 # sections/dba_tools_setup.py - DBA Tools setup/status checks.
 
 import pandas as pd
@@ -58,3 +59,4 @@ def _setup_status_df(session) -> pd.DataFrame:
             "STATUS": status,
         })
     return pd.DataFrame(rows)
+# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.

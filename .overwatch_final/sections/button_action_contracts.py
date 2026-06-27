@@ -42,6 +42,12 @@ class ButtonActionContract:
     account_usage_allowed: bool = False
     requires_admin: bool = False
     expected_rerun: bool = True
+    expected_query_boundary: str = ""
+    expected_query_count: int | None = None
+    expected_max_rows: int | None = None
+    expected_query_contract_id: str = ""
+    expected_session_open_count: int | None = None
+    expected_snowflake_execution_count: int | None = None
     can_be_absent: bool = False
     skip_reason: str = ""
 
@@ -101,6 +107,10 @@ SECTION_EVIDENCE_CONTRACTS: dict[str, ButtonActionContract] = {
         expected_target_workflow="Executive Overview",
         expected_state_updates={"_executive_landing_command_brief_load_detail": True},
         expected_artifact="executive_snapshot_state",
+        expected_query_boundary="evidence",
+        expected_query_count=1,
+        expected_max_rows=500,
+        expected_snowflake_execution_count=1,
     ),
     "DBA Control Room": ButtonActionContract(
         "DBA Control Room",
@@ -111,6 +121,10 @@ SECTION_EVIDENCE_CONTRACTS: dict[str, ButtonActionContract] = {
         expected_target_workflow="Morning Cockpit",
         expected_state_updates={"dba_control_room_command_brief_load_detail": True},
         expected_artifact="dba_control_room_evidence_rows",
+        expected_query_boundary="evidence",
+        expected_query_count=1,
+        expected_max_rows=500,
+        expected_snowflake_execution_count=1,
     ),
     "Alert Center": ButtonActionContract(
         "Alert Center",
@@ -120,6 +134,10 @@ SECTION_EVIDENCE_CONTRACTS: dict[str, ButtonActionContract] = {
         expected_target_section="Alert Center",
         expected_target_workflow="Active Alerts",
         expected_artifact="alert_center_evidence_rows",
+        expected_query_boundary="evidence",
+        expected_query_count=1,
+        expected_max_rows=500,
+        expected_snowflake_execution_count=1,
     ),
     "Cost & Contract": ButtonActionContract(
         "Cost & Contract",
@@ -130,6 +148,10 @@ SECTION_EVIDENCE_CONTRACTS: dict[str, ButtonActionContract] = {
         expected_target_workflow="Cost Overview",
         expected_state_updates={"cost_contract_command_brief_load_evidence": True},
         expected_artifact="cost_contract_evidence_rows",
+        expected_query_boundary="evidence",
+        expected_query_count=1,
+        expected_max_rows=500,
+        expected_snowflake_execution_count=1,
     ),
     "Security Monitoring": ButtonActionContract(
         "Security Monitoring",
@@ -140,6 +162,10 @@ SECTION_EVIDENCE_CONTRACTS: dict[str, ButtonActionContract] = {
         expected_target_workflow="Security Overview",
         expected_state_updates={"security_posture_load_evidence": True},
         expected_artifact="security_evidence_rows",
+        expected_query_boundary="evidence",
+        expected_query_count=1,
+        expected_max_rows=500,
+        expected_snowflake_execution_count=1,
     ),
 }
 
@@ -153,6 +179,10 @@ def _refresh_contract(section: str) -> ButtonActionContract:
         action_type="refresh_packet",
         expected_state_updates={SECTION_REFRESH_STATE_KEYS.get(section, ""): True},
         expected_artifact="command_packet_refresh_request",
+        expected_query_boundary="decision_packet",
+        expected_query_count=1,
+        expected_max_rows=1,
+        expected_snowflake_execution_count=1,
     )
 
 
@@ -207,6 +237,9 @@ def _route_contracts_for_source_section(section: str) -> Iterable[ButtonActionCo
             },
             expected_artifact="navigation_state_delta",
             exact_route_key=route_key,
+            expected_query_count=0,
+            expected_session_open_count=0,
+            expected_snowflake_execution_count=0,
         )
 
 
@@ -229,6 +262,9 @@ def _fallback_route_contract(section: str) -> ButtonActionContract:
             **updates,
         },
         expected_artifact="fallback_action_state",
+        expected_query_count=0,
+        expected_session_open_count=0,
+        expected_snowflake_execution_count=0,
         can_be_absent=True,
         skip_reason="Fallback actions only render for setup/packet recovery states.",
     )
@@ -243,6 +279,9 @@ def _advanced_contract(section: str) -> ButtonActionContract:
         expected_artifact="explicit_advanced_control",
         heavy_query_allowed=True,
         requires_admin=True,
+        expected_query_boundary="admin",
+        expected_query_count=0,
+        expected_session_open_count=0,
         expected_rerun=False,
     )
 
@@ -256,6 +295,9 @@ def _admin_contract(section: str) -> ButtonActionContract:
         expected_artifact="explicit_admin_control",
         heavy_query_allowed=True,
         requires_admin=True,
+        expected_query_boundary="admin",
+        expected_query_count=0,
+        expected_session_open_count=0,
         expected_rerun=False,
     )
 
@@ -271,6 +313,11 @@ def _account_usage_fallback_contract(section: str) -> ButtonActionContract:
         heavy_query_allowed=True,
         account_usage_allowed=True,
         requires_admin=True,
+        expected_query_boundary="account_usage",
+        expected_query_count=1,
+        expected_max_rows=200,
+        expected_session_open_count=1,
+        expected_snowflake_execution_count=1,
         expected_rerun=False,
     )
 

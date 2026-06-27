@@ -188,6 +188,14 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                         tier="recent",
                         max_rows=200,
                     )
+                with self.assertRaises(AssertionError):
+                    performance.assert_first_paint_query_allowed(
+                        "decision_packet",
+                        section="Alert Center",
+                        ttl_key="section_command_packet_Alert Center_ALFA_ALL_7",
+                        tier="command_summary",
+                        max_rows=None,
+                    )
                 performance.assert_first_paint_query_allowed(
                     "decision_packet",
                     section="Alert Center",
@@ -205,9 +213,45 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                 )
                 violations = performance.get_first_paint_budget_violations()
 
-        self.assertEqual(len(violations), 1)
+        self.assertEqual(len(violations), 2)
         self.assertEqual(violations[0]["query_boundary"], "evidence")
         self.assertNotIn("SELECT", json.dumps(violations))
+
+    def test_first_paint_session_open_gate_blocks_direct_session_creation(self):
+        import performance
+
+        state: dict[str, object] = {}
+        with patch.dict(os.environ, {"OVERWATCH_TEST_MODE": "1"}, clear=False):
+            with patch.object(performance.st, "session_state", state):
+                render_id = performance.begin_first_paint("Workload Operations", "Query Investigation")
+                with self.assertRaises(AssertionError):
+                    performance.assert_first_paint_session_open_allowed(
+                        section="Workload Operations",
+                        workflow="Query Investigation",
+                        reason="query_search_render",
+                        query_boundary="other",
+                    )
+                performance.assert_first_paint_session_open_allowed(
+                    section="Workload Operations",
+                    workflow="Query Investigation",
+                    reason="packet_lookup",
+                    query_boundary="decision_packet",
+                    max_rows=1,
+                )
+                performance.end_first_paint(render_id)
+                performance.assert_first_paint_session_open_allowed(
+                    section="Workload Operations",
+                    workflow="Query Investigation",
+                    reason="post_first_paint",
+                    query_boundary="other",
+                )
+                events = performance.get_snowflake_session_open_events()
+                violations = performance.get_first_paint_budget_violations()
+
+        self.assertEqual(len(events), 1)
+        self.assertFalse(events[0]["allowed"])
+        self.assertEqual(len(violations), 1)
+        self.assertNotIn("SELECT", json.dumps(events + violations))
 
     def test_snowflake_execution_counter_records_only_real_execution(self):
         import performance
@@ -318,6 +362,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         self.assertIn("FACT_QUERY_DETAIL_RECENT", source)
 
         fallback_pos = source.index("if account_usage_fallback:")
+        self.assertNotIn("session = get_session()\n    company =", source)
         metadata_pos = source.index("qh_cols = set(filter_existing_columns(")
         account_usage_sql_pos = source.index("FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY")
         self.assertGreater(metadata_pos, fallback_pos)
@@ -325,6 +370,9 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         self.assertIn('st.session_state["qs_autorun"] = target_kind in {"query_id", "query_signature"}', source)
         self.assertIn('tier="recent"', source)
         self.assertIn('tier="historical"', source)
+        self.assertIn('query_boundary="query_search"', source)
+        self.assertIn('query_boundary="query_preview"', source)
+        self.assertIn('query_boundary="account_usage"', source)
         recent_sql = query_search._recent_query_detail_sql(
             search_cl="AND query_id = '01a'",
             date_predicate="AND start_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())",
@@ -561,9 +609,13 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
 
         setup = (ROOT / "snowflake" / "mart_setup" / "04_mart_tables.sql").read_text(encoding="utf-8")
         validation = (ROOT / "snowflake" / "mart_setup" / "08_validation.sql").read_text(encoding="utf-8")
-        self.assertIn("CREATE OR REPLACE VIEW MART_SECTION_DECISION_CURRENT_FLAT", setup)
+        self.assertIn("DROP VIEW IF EXISTS MART_SECTION_DECISION_CURRENT_FLAT", setup)
+        self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS MART_SECTION_DECISION_CURRENT_FLAT", setup)
+        self.assertIn("MERGE INTO MART_SECTION_DECISION_CURRENT_FLAT", setup)
+        self.assertIn("INSERT INTO MART_SECTION_DECISION_CURRENT_FLAT", (ROOT / "snowflake" / "mart_setup" / "05_load_procedures.sql").read_text(encoding="utf-8"))
         self.assertIn("SECTION_DECISION_CURRENT_OPTIMIZED_LOOKUP_SCHEMA", validation)
-        self.assertIn("SECTION_DECISION_CURRENT_FLAT_VIEW", validation)
+        self.assertIn("SECTION_DECISION_CURRENT_FLAT_TABLE", validation)
+        self.assertIn("SECTION_DECISION_CURRENT_FLAT_ACTIVE_MATCHES_CURRENT", validation)
 
     def test_query_contract_linter_flags_risky_shapes_and_passes_packet_lookup(self):
         from query_contracts import (
@@ -589,7 +641,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         )
         codes = {finding.code for finding in account_usage_findings}
         self.assertIn("ACCOUNT_USAGE_FORBIDDEN", codes)
-        self.assertIn("SELECT_STAR", codes)
+        self.assertIn("STAR_PROJECTION", codes)
         self.assertIn("MISSING_LIMIT", codes)
 
         evidence_findings = lint_query_text(
@@ -597,7 +649,48 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             QueryContract(boundary="evidence", section="Workload Operations", requires_target_predicate=True),
         )
         self.assertIn("MISSING_TARGET_PREDICATE", {finding.code for finding in evidence_findings})
+        marker_findings = lint_query_text(
+            "SELECT query_id FROM FACT_QUERY_DETAIL_RECENT WHERE company = 'ALFA' LIMIT 200",
+            QueryContract(
+                boundary="evidence",
+                section="Workload Operations",
+                requires_target_predicate=True,
+                target_predicate_markers=("QUERY_ID",),
+            ),
+        )
+        self.assertIn("TARGET_MARKER_MISSING", {finding.code for finding in marker_findings})
+        query_search_contract = resolve_query_contract(
+            boundary="query_search",
+            section="Workload Operations",
+            ttl_key="query_search_recent_detail_ALFA_Exact query ID_01a__ALL_7_10",
+            tier="recent",
+        )
+        self.assertEqual(query_search_contract.boundary, "query_search")
+        self.assertEqual(query_search_contract.max_rows, 500)
         self.assertTrue([contract for contract in iter_query_contracts() if contract.boundary == "decision_packet"])
+
+    def test_query_runner_enforces_contracts_before_execution(self):
+        import performance
+        from utils import query
+
+        state: dict[str, object] = {}
+        with patch.dict(os.environ, {"OVERWATCH_TEST_MODE": "1"}, clear=False):
+            with patch.object(performance.st, "session_state", state), patch.object(query.st, "session_state", state):
+                with self.assertRaises(AssertionError):
+                    query.run_query(
+                        "SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY LIMIT 10",
+                        ttl_key="route_bad",
+                        tier="recent",
+                        section="Workload Operations",
+                        max_rows=10,
+                        query_boundary="other",
+                    )
+                findings = performance.get_query_lint_findings()
+
+        codes = {finding["code"] for finding in findings}
+        self.assertIn("ACCOUNT_USAGE_FORBIDDEN", codes)
+        self.assertIn("STAR_PROJECTION", codes)
+        self.assertNotIn("SELECT", json.dumps(findings))
 
     def test_button_contracts_do_not_grant_account_usage_to_generic_admin(self):
         contracts = list(iter_button_action_contracts())
@@ -609,6 +702,14 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             if contract.account_usage_allowed:
                 self.assertEqual(contract.action_type, "account_usage_fallback", contract)
                 self.assertTrue(contract.requires_admin, contract)
+                self.assertEqual(contract.expected_query_boundary, "account_usage", contract)
+                self.assertEqual(contract.expected_query_count, 1, contract)
+            if contract.action_type == "route" and not contract.skip_reason:
+                self.assertEqual(contract.expected_query_count, 0, contract)
+                self.assertEqual(contract.expected_session_open_count, 0, contract)
+            if contract.action_type == "evidence_load":
+                self.assertEqual(contract.expected_query_boundary, "evidence", contract)
+                self.assertLessEqual(contract.expected_max_rows or 0, 500, contract)
 
     def _packet_row(self, section: str) -> dict[str, object]:
         route_key = {

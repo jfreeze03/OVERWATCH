@@ -706,6 +706,7 @@ def _load_packet(
         section="Command Brief",
         use_cache=not bool(force),
         max_rows=1,
+        query_boundary="decision_packet",
     )
     elapsed_ms = (time.perf_counter() - started) * 1000
     return df, elapsed_ms

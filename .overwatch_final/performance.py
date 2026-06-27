@@ -25,16 +25,30 @@ _UI_QUERY_EVENTS_KEY = "_overwatch_ui_query_events"
 _FIRST_PAINT_STACK_KEY = "_overwatch_first_paint_stack"
 _SNOWFLAKE_EXECUTION_EVENTS_KEY = "_overwatch_snowflake_execution_events"
 _FIRST_PAINT_BUDGET_VIOLATIONS_KEY = "_overwatch_first_paint_budget_violations"
+_SNOWFLAKE_SESSION_OPEN_EVENTS_KEY = "_overwatch_snowflake_session_open_events"
+_QUERY_LINT_FINDINGS_KEY = "_overwatch_query_lint_findings"
 _VALID_CACHE_LAYERS = {"none", "session", "streamlit_cache", "paused", "budget_blocked", "unknown"}
 _VALID_QUERY_BOUNDARIES = {
     "decision_packet",
     "evidence",
+    "query_search",
+    "query_preview",
     "metadata",
     "account_usage",
     "setup_health",
+    "admin",
     "other",
 }
-_FIRST_PAINT_BOUNDARIES = {"decision_packet", "evidence", "metadata", "account_usage"}
+_FIRST_PAINT_BOUNDARIES = {
+    "decision_packet",
+    "evidence",
+    "query_search",
+    "query_preview",
+    "metadata",
+    "account_usage",
+    "setup_health",
+    "admin",
+}
 
 
 def _session_list(key: str) -> list[Any]:
@@ -96,6 +110,11 @@ def is_first_paint_active() -> bool:
 def current_first_paint_section() -> str:
     """Return the section currently protected by the first-paint query gate."""
     return str(_current_first_paint_context().get("section") or "")
+
+
+def first_paint_gate_mode() -> str:
+    """Return the current first-paint gate mode."""
+    return "strict" if _strict_first_paint_mode() else "record-only"
 
 
 def _strict_first_paint_mode() -> bool:
@@ -172,7 +191,7 @@ def assert_first_paint_query_allowed(
     violation_reason = ""
     if boundary != "decision_packet":
         violation_reason = f"First paint allows only decision_packet queries, not {boundary}."
-    elif max_rows is not None and int(max_rows) != 1:
+    elif max_rows is None or int(max_rows) != 1:
         violation_reason = "Decision packet first-paint queries must request max_rows=1."
     if not violation_reason:
         return
@@ -186,6 +205,135 @@ def assert_first_paint_query_allowed(
     )
     if _strict_first_paint_mode():
         raise AssertionError(violation_reason)
+
+
+def record_snowflake_session_open_event(
+    *,
+    section: str = "",
+    workflow: str = "",
+    reason: str = "",
+    query_boundary: str = "other",
+    allowed: bool = True,
+) -> dict[str, Any]:
+    """Record SQL-free Snowflake session creation telemetry."""
+    context = _current_first_paint_context()
+    boundary = str(query_boundary or "other")
+    if boundary not in _VALID_QUERY_BOUNDARIES:
+        boundary = "other"
+    event = {
+        "event_id": uuid4().hex[:16],
+        "render_id": str(context.get("render_id") or ""),
+        "section": str(section or context.get("section") or ""),
+        "workflow": str(workflow or context.get("workflow") or ""),
+        "reason": str(reason or "session_open")[:200],
+        "query_boundary": boundary,
+        "allowed": bool(allowed),
+        "first_paint_active": bool(context.get("render_id")),
+        "gate_mode": first_paint_gate_mode(),
+        "recorded_at": datetime.now().isoformat(timespec="milliseconds"),
+    }
+    try:
+        events = _session_list(_SNOWFLAKE_SESSION_OPEN_EVENTS_KEY)
+        events.append(event)
+        if len(events) > 100:
+            del events[:-100]
+    except Exception:
+        pass
+    return event
+
+
+def get_snowflake_session_open_events() -> list[dict[str, Any]]:
+    """Return Snowflake session-open events without SQL or credentials."""
+    events = _session_list(_SNOWFLAKE_SESSION_OPEN_EVENTS_KEY)
+    return [dict(event) for event in events if isinstance(event, dict)]
+
+
+def clear_snowflake_session_open_events() -> None:
+    try:
+        st.session_state[_SNOWFLAKE_SESSION_OPEN_EVENTS_KEY] = []
+    except Exception:
+        pass
+
+
+def assert_first_paint_session_open_allowed(
+    *,
+    section: str = "",
+    workflow: str = "",
+    reason: str = "",
+    query_boundary: str = "other",
+    max_rows: int | None = None,
+) -> None:
+    """Prevent direct session creation during first paint outside packet lookup."""
+    if not is_first_paint_active():
+        return
+    boundary = str(query_boundary or "other")
+    allowed = boundary == "decision_packet" and max_rows == 1
+    if allowed:
+        return
+    violation_reason = "First paint may open a Snowflake session only for the single decision packet lookup."
+    record_snowflake_session_open_event(
+        section=section or current_first_paint_section(),
+        workflow=workflow,
+        reason=reason or violation_reason,
+        query_boundary=boundary,
+        allowed=False,
+    )
+    record_first_paint_budget_violation(
+        query_boundary=boundary,
+        section=section or current_first_paint_section(),
+        ttl_key="session_open",
+        tier="session",
+        max_rows=max_rows,
+        reason=violation_reason,
+    )
+    if _strict_first_paint_mode():
+        raise AssertionError(violation_reason)
+
+
+def record_query_lint_finding(
+    *,
+    fingerprint: str = "",
+    code: str = "",
+    severity: str = "",
+    message: str = "",
+    boundary: str = "other",
+    section: str = "",
+    ttl_key: str = "",
+    tier: str = "",
+) -> dict[str, Any]:
+    """Record sanitized query lint findings from the central runner."""
+    event = {
+        "event_id": uuid4().hex[:16],
+        "fingerprint": str(fingerprint or "")[:32],
+        "code": str(code or "")[:80],
+        "severity": str(severity or "")[:40],
+        "message": _safe_message(message) or str(message or "")[:300],
+        "boundary": str(boundary or "other"),
+        "section": str(section or ""),
+        "ttl_key": str(ttl_key or "")[:160],
+        "tier": str(tier or ""),
+        "recorded_at": datetime.now().isoformat(timespec="milliseconds"),
+    }
+    try:
+        events = _session_list(_QUERY_LINT_FINDINGS_KEY)
+        events.append(event)
+        if len(events) > 250:
+            del events[:-250]
+    except Exception:
+        pass
+    return event
+
+
+def get_query_lint_findings() -> list[dict[str, Any]]:
+    events = _session_list(_QUERY_LINT_FINDINGS_KEY)
+    return [dict(event) for event in events if isinstance(event, dict)]
+
+
+def clear_query_lint_findings() -> None:
+    try:
+        st.session_state[_QUERY_LINT_FINDINGS_KEY] = []
+    except Exception:
+        pass
 
 
 def _safe_message(error: object) -> str:
@@ -292,6 +440,10 @@ def summarize_first_paint_query_budget(section: str | None = None) -> dict[str, 
         "metadata_events": _count("metadata"),
         "account_usage_events": _count("account_usage"),
         "account_usage_actual_queries": _count("account_usage", actual_only=True),
+        "session_open_events": len([
+            event for event in get_snowflake_session_open_events()
+            if str(event.get("render_id") or "") in render_ids
+        ]),
         "budget_blocked_events": len([event for event in events if event.get("cache_layer") == "budget_blocked"]),
         "paused_events": len([event for event in events if event.get("cache_layer") == "paused"]),
         "render_ids": sorted(render_ids),
@@ -364,6 +516,8 @@ def clear_ui_query_events() -> None:
         st.session_state[_UI_QUERY_EVENTS_KEY] = []
         st.session_state[_FIRST_PAINT_STACK_KEY] = []
         st.session_state[_FIRST_PAINT_BUDGET_VIOLATIONS_KEY] = []
+        st.session_state[_SNOWFLAKE_SESSION_OPEN_EVENTS_KEY] = []
+        st.session_state[_QUERY_LINT_FINDINGS_KEY] = []
     except Exception:
         pass
 

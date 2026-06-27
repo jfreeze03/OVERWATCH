@@ -131,6 +131,7 @@ def search_recent_query_summary(sql: str, *, ttl_key: str, row_limit: int):
         tier="recent",
         section="Query Search & History",
         max_rows=min(int(row_limit), 500),
+        query_boundary="query_search",
     )
 
 
@@ -141,11 +142,11 @@ def load_query_text_preview(query_id: str):
         tier="recent",
         section="Query Search & History",
         max_rows=1,
+        query_boundary="query_preview",
     )
 
 
 def render():
-    session = get_session()
     company = get_active_company()
     workload_target = st.session_state.get("workload_operations_evidence_target")
     workload_target = workload_target if isinstance(workload_target, dict) else {}
@@ -264,6 +265,12 @@ def render():
 
         try:
             if account_usage_fallback:
+                session = get_session(
+                    reason="confirmed_account_usage_query_search_fallback",
+                    query_boundary="account_usage",
+                    section="Query Search & History",
+                    max_rows=min(int(row_limit), 200),
+                )
                 qh_cols = set(filter_existing_columns(
                     session,
                     "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
@@ -326,6 +333,7 @@ def render():
                     tier="historical",
                     section="Query Search & History",
                     max_rows=min(int(row_limit), 200),
+                    query_boundary="account_usage",
                 )
             else:
                 df_qs = search_recent_query_summary(sql, ttl_key=ttl_key, row_limit=row_limit)

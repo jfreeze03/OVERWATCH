@@ -75,6 +75,10 @@ def _environment_filter(environment: str, *, alias: str = "target") -> str:
     )
 
 
+def _projection() -> str:
+    return ",\n            ".join(COST_EVIDENCE_COLUMNS)
+
+
 def _target_hash(target: dict[str, str] | None) -> str:
     payload = json.dumps(target or {}, sort_keys=True)
     return hashlib.sha1(payload.encode("utf-8", errors="ignore")).hexdigest()[:12]
@@ -148,7 +152,8 @@ def _chargeback_evidence_sql(company: str, environment: str, days: int, target: 
     )
     env_filter = _environment_filter(environment)
     return f"""
-        SELECT *
+        SELECT
+            {_projection()}
         FROM (
             SELECT
                 target.*,
@@ -191,7 +196,8 @@ def _service_evidence_sql(company: str, environment: str, days: int, target: dic
         available_columns=COST_EVIDENCE_COLUMNS,
     )
     return f"""
-        SELECT *
+        SELECT
+            {_projection()}
         FROM (
             SELECT
                 COMPANY,
@@ -285,6 +291,7 @@ def load_cost_evidence(
     row_limit = evidence_row_limit(requested_limit)
     target = target or {}
     target_label = evidence_target_label(target)
+    ttl_prefix = "cost_targeted_evidence" if _target_value(target) else "cost_bounded_evidence"
     unsupported_reason = _unsupported_target_reason(target)
     if unsupported_reason:
         return {
@@ -303,11 +310,12 @@ def load_cost_evidence(
     try:
         rows = run_query_or_raise(
             sql,
-            ttl_key=f"cost_evidence_{company}_{environment}_{int(days)}_{_target_hash(target)}_{row_limit}",
+            ttl_key=f"{ttl_prefix}_{company}_{environment}_{int(days)}_{_target_hash(target)}_{row_limit}",
             tier="historical",
             section="Cost & Contract",
             max_rows=row_limit,
             use_cache=False,
+            query_boundary="evidence",
         )
         error = ""
     except Exception as exc:

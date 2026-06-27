@@ -51,8 +51,10 @@ from performance import (
     assert_first_paint_query_allowed,
     current_first_paint_render_id,
     increment_snowflake_execution_counter,
+    record_query_lint_finding,
     record_ui_query_event,
 )
+from query_contracts import lint_query_text, query_fingerprint, resolve_query_contract
 
 CACHE_TIERS: dict[str, int] = {
     "live":       30,     # INFORMATION_SCHEMA - real-time, 30s stale is fine
@@ -296,6 +298,10 @@ def _infer_query_boundary(query_text: str = "", ttl_key: str = "", tier: str = "
     sql = str(query_text or "").upper()
     key = str(ttl_key or "").lower()
     tier_text = str(tier or "").lower()
+    if key.startswith("query_search_"):
+        return "query_search"
+    if key.startswith("query_text_preview_"):
+        return "query_preview"
     if key.startswith("section_command_packet_") or "MART_SECTION_DECISION_CURRENT" in sql:
         return "decision_packet"
     if "OVERWATCH_DECISION_SETUP_HEALTH" in sql or "setup_health" in key:
@@ -310,7 +316,70 @@ def _infer_query_boundary(query_text: str = "", ttl_key: str = "", tier: str = "
 
 
 def _first_paint_sensitive_boundary(boundary: str) -> bool:
-    return str(boundary or "") in {"decision_packet", "evidence", "metadata", "account_usage"}
+    return str(boundary or "") in {
+        "decision_packet",
+        "evidence",
+        "query_search",
+        "query_preview",
+        "metadata",
+        "account_usage",
+        "setup_health",
+        "admin",
+    }
+
+
+def _strict_query_contract_mode() -> bool:
+    return any(
+        str(os.environ.get(name, "")).strip().lower() in {"1", "true", "yes", "on"}
+        for name in ("OVERWATCH_TEST_MODE", "OVERWATCH_UI_FIXTURE_MODE", "OVERWATCH_ALLOW_FIXTURE_MODE")
+    )
+
+
+def _enforce_query_contract(
+    query_text: str,
+    *,
+    boundary: str,
+    section: str,
+    ttl_key: str,
+    tier: str,
+    max_rows: int | None,
+) -> None:
+    """Lint and optionally block query shapes before Snowflake execution."""
+    contract = resolve_query_contract(boundary=boundary, section=section, ttl_key=ttl_key, tier=tier)
+    findings = list(lint_query_text(query_text, contract))
+    if contract.max_rows is not None and boundary in {
+        "decision_packet",
+        "evidence",
+        "query_search",
+        "query_preview",
+        "account_usage",
+    }:
+        if max_rows is None or int(max_rows) > int(contract.max_rows):
+            from query_contracts import QueryLintFinding
+
+            findings.append(QueryLintFinding(
+                code="MAX_ROWS_CONTRACT",
+                severity="error",
+                message=f"Query boundary {boundary} must request max_rows <= {int(contract.max_rows)}.",
+                boundary=boundary,
+                section=section,
+            ))
+    fingerprint = query_fingerprint(query_text)
+    for finding in findings:
+        record_query_lint_finding(
+            fingerprint=fingerprint,
+            code=finding.code,
+            severity=finding.severity,
+            message=finding.message,
+            boundary=boundary,
+            section=section,
+            ttl_key=ttl_key,
+            tier=tier,
+        )
+    if _strict_query_contract_mode():
+        errors = [finding for finding in findings if str(finding.severity).lower() == "error"]
+        if errors:
+            raise AssertionError(errors[0].message)
 
 
 def _record_query_telemetry(
@@ -662,22 +731,37 @@ def _execute_snowflake_query(
     tier: str = "recent",
     section: str = "",
     max_rows: int | None = None,
+    query_boundary: str | None = None,
 ) -> pd.DataFrame:
     executable_query = _inject_read_limit(query_text, max_rows=max_rows)
-    boundary = _infer_query_boundary(executable_query, ttl_key, tier)
-    assert_first_paint_query_allowed(
-        boundary,
-        section=_infer_telemetry_section(section, ttl_key),
+    boundary = str(query_boundary or _infer_query_boundary(executable_query, ttl_key, tier))
+    telemetry_section = _infer_telemetry_section(section, ttl_key)
+    _enforce_query_contract(
+        executable_query,
+        boundary=boundary,
+        section=telemetry_section,
         ttl_key=ttl_key,
         tier=tier,
         max_rows=max_rows,
     )
-    session = get_session()
+    assert_first_paint_query_allowed(
+        boundary,
+        section=telemetry_section,
+        ttl_key=ttl_key,
+        tier=tier,
+        max_rows=max_rows,
+    )
+    session = get_session(
+        reason="query_execution",
+        query_boundary=boundary,
+        section=telemetry_section,
+        max_rows=max_rows,
+    )
     _apply_overwatch_query_tag(session, query_tag)
     _apply_statement_timeout(session, tier)
     increment_snowflake_execution_counter(
         boundary,
-        section=_infer_telemetry_section(section, ttl_key),
+        section=telemetry_section,
         ttl_key=ttl_key,
         tier=tier,
     )
@@ -717,9 +801,14 @@ def _cached_live(
     _query_tag: str = "",
     _ttl_key: str = "",
     _section: str = "",
+    _query_boundary: str = "",
+    _max_rows: int | None = None,
 ) -> pd.DataFrame:
     try:
-        return _execute_snowflake_query(query_text, _query_tag, ttl_key=_ttl_key, tier="live", section=_section)
+        return _execute_snowflake_query(
+            query_text, _query_tag, ttl_key=_ttl_key, tier="live", section=_section,
+            max_rows=_max_rows, query_boundary=_query_boundary
+        )
     except Exception as e:
         _show_query_warning("Live data unavailable", e)
         return pd.DataFrame()
@@ -733,9 +822,14 @@ def _cached_recent(
     _query_tag: str = "",
     _ttl_key: str = "",
     _section: str = "",
+    _query_boundary: str = "",
+    _max_rows: int | None = None,
 ) -> pd.DataFrame:
     try:
-        return _execute_snowflake_query(query_text, _query_tag, ttl_key=_ttl_key, tier="recent", section=_section)
+        return _execute_snowflake_query(
+            query_text, _query_tag, ttl_key=_ttl_key, tier="recent", section=_section,
+            max_rows=_max_rows, query_boundary=_query_boundary
+        )
     except Exception as e:
         _show_query_warning("Data unavailable", e)
         return pd.DataFrame()
@@ -749,9 +843,14 @@ def _cached_standard(
     _query_tag: str = "",
     _ttl_key: str = "",
     _section: str = "",
+    _query_boundary: str = "",
+    _max_rows: int | None = None,
 ) -> pd.DataFrame:
     try:
-        return _execute_snowflake_query(query_text, _query_tag, ttl_key=_ttl_key, tier="standard", section=_section)
+        return _execute_snowflake_query(
+            query_text, _query_tag, ttl_key=_ttl_key, tier="standard", section=_section,
+            max_rows=_max_rows, query_boundary=_query_boundary
+        )
     except Exception as e:
         _show_query_warning("Data unavailable", e)
         return pd.DataFrame()
@@ -765,9 +864,14 @@ def _cached_command_summary(
     _query_tag: str = "",
     _ttl_key: str = "",
     _section: str = "",
+    _query_boundary: str = "",
+    _max_rows: int | None = None,
 ) -> pd.DataFrame:
     try:
-        return _execute_snowflake_query(query_text, _query_tag, ttl_key=_ttl_key, tier="command_summary", section=_section)
+        return _execute_snowflake_query(
+            query_text, _query_tag, ttl_key=_ttl_key, tier="command_summary", section=_section,
+            max_rows=_max_rows, query_boundary=_query_boundary
+        )
     except Exception as e:
         _show_query_warning("Command brief unavailable", e)
         return pd.DataFrame()
@@ -781,9 +885,14 @@ def _cached_historical(
     _query_tag: str = "",
     _ttl_key: str = "",
     _section: str = "",
+    _query_boundary: str = "",
+    _max_rows: int | None = None,
 ) -> pd.DataFrame:
     try:
-        return _execute_snowflake_query(query_text, _query_tag, ttl_key=_ttl_key, tier="historical", section=_section)
+        return _execute_snowflake_query(
+            query_text, _query_tag, ttl_key=_ttl_key, tier="historical", section=_section,
+            max_rows=_max_rows, query_boundary=_query_boundary
+        )
     except Exception as e:
         _show_query_warning("Historical data unavailable", e)
         return pd.DataFrame()
@@ -797,9 +906,14 @@ def _cached_metadata(
     _query_tag: str = "",
     _ttl_key: str = "",
     _section: str = "",
+    _query_boundary: str = "",
+    _max_rows: int | None = None,
 ) -> pd.DataFrame:
     try:
-        return _execute_snowflake_query(query_text, _query_tag, ttl_key=_ttl_key, tier="metadata", section=_section)
+        return _execute_snowflake_query(
+            query_text, _query_tag, ttl_key=_ttl_key, tier="metadata", section=_section,
+            max_rows=_max_rows, query_boundary=_query_boundary
+        )
     except Exception as e:
         _show_query_warning("Metadata unavailable", e)
         return pd.DataFrame()
@@ -813,8 +927,13 @@ def _cached_raise_live(
     _query_tag: str = "",
     _ttl_key: str = "",
     _section: str = "",
+    _query_boundary: str = "",
+    _max_rows: int | None = None,
 ) -> pd.DataFrame:
-    return _execute_snowflake_query(query_text, _query_tag, ttl_key=_ttl_key, tier="live", section=_section)
+    return _execute_snowflake_query(
+        query_text, _query_tag, ttl_key=_ttl_key, tier="live", section=_section,
+        max_rows=_max_rows, query_boundary=_query_boundary
+    )
 
 
 @st.cache_data(ttl=CACHE_TIERS["recent"], show_spinner=False)
@@ -825,8 +944,13 @@ def _cached_raise_recent(
     _query_tag: str = "",
     _ttl_key: str = "",
     _section: str = "",
+    _query_boundary: str = "",
+    _max_rows: int | None = None,
 ) -> pd.DataFrame:
-    return _execute_snowflake_query(query_text, _query_tag, ttl_key=_ttl_key, tier="recent", section=_section)
+    return _execute_snowflake_query(
+        query_text, _query_tag, ttl_key=_ttl_key, tier="recent", section=_section,
+        max_rows=_max_rows, query_boundary=_query_boundary
+    )
 
 
 @st.cache_data(ttl=CACHE_TIERS["standard"], show_spinner=False)
@@ -837,8 +961,13 @@ def _cached_raise_standard(
     _query_tag: str = "",
     _ttl_key: str = "",
     _section: str = "",
+    _query_boundary: str = "",
+    _max_rows: int | None = None,
 ) -> pd.DataFrame:
-    return _execute_snowflake_query(query_text, _query_tag, ttl_key=_ttl_key, tier="standard", section=_section)
+    return _execute_snowflake_query(
+        query_text, _query_tag, ttl_key=_ttl_key, tier="standard", section=_section,
+        max_rows=_max_rows, query_boundary=_query_boundary
+    )
 
 
 @st.cache_data(ttl=CACHE_TIERS["command_summary"], show_spinner=False)
@@ -849,8 +978,13 @@ def _cached_raise_command_summary(
     _query_tag: str = "",
     _ttl_key: str = "",
     _section: str = "",
+    _query_boundary: str = "",
+    _max_rows: int | None = None,
 ) -> pd.DataFrame:
-    return _execute_snowflake_query(query_text, _query_tag, ttl_key=_ttl_key, tier="command_summary", section=_section)
+    return _execute_snowflake_query(
+        query_text, _query_tag, ttl_key=_ttl_key, tier="command_summary", section=_section,
+        max_rows=_max_rows, query_boundary=_query_boundary
+    )
 
 
 @st.cache_data(ttl=CACHE_TIERS["historical"], show_spinner=False)
@@ -861,8 +995,13 @@ def _cached_raise_historical(
     _query_tag: str = "",
     _ttl_key: str = "",
     _section: str = "",
+    _query_boundary: str = "",
+    _max_rows: int | None = None,
 ) -> pd.DataFrame:
-    return _execute_snowflake_query(query_text, _query_tag, ttl_key=_ttl_key, tier="historical", section=_section)
+    return _execute_snowflake_query(
+        query_text, _query_tag, ttl_key=_ttl_key, tier="historical", section=_section,
+        max_rows=_max_rows, query_boundary=_query_boundary
+    )
 
 
 @st.cache_data(ttl=CACHE_TIERS["metadata"], show_spinner=False)
@@ -873,8 +1012,13 @@ def _cached_raise_metadata(
     _query_tag: str = "",
     _ttl_key: str = "",
     _section: str = "",
+    _query_boundary: str = "",
+    _max_rows: int | None = None,
 ) -> pd.DataFrame:
-    return _execute_snowflake_query(query_text, _query_tag, ttl_key=_ttl_key, tier="metadata", section=_section)
+    return _execute_snowflake_query(
+        query_text, _query_tag, ttl_key=_ttl_key, tier="metadata", section=_section,
+        max_rows=_max_rows, query_boundary=_query_boundary
+    )
 
 
 # Backward-compatible 5-min cache - for callers that don't pass tier=
@@ -886,10 +1030,15 @@ def run_query_cached(
     _query_tag: str = "",
     _ttl_key: str = "",
     _section: str = "",
+    _query_boundary: str = "",
+    _max_rows: int | None = None,
 ) -> pd.DataFrame:
     """Backward-compatible runner. Prefer run_query(tier=...) for new code."""
     try:
-        return _execute_snowflake_query(query_text, _query_tag, ttl_key=_ttl_key, tier="recent", section=_section)
+        return _execute_snowflake_query(
+            query_text, _query_tag, ttl_key=_ttl_key, tier="recent", section=_section,
+            max_rows=_max_rows, query_boundary=_query_boundary
+        )
     except Exception as e:
         _show_query_warning("Data unavailable", e)
         return pd.DataFrame()
@@ -923,6 +1072,7 @@ def _run_query_base(
     tier: str = "recent",
     section: str = "",
     max_rows: int | None = None,
+    query_boundary: str | None = None,
 ) -> tuple[pd.DataFrame, dict[str, object]]:
     """
     Central query runner with tiered caching and full error handling.
@@ -939,7 +1089,8 @@ def _run_query_base(
     Returns:
         Normalized DataFrame and SQL-free execution metadata.
     """
-    boundary = _infer_query_boundary(query_text, ttl_key, tier)
+    boundary = str(query_boundary or _infer_query_boundary(query_text, ttl_key, tier))
+    telemetry_section = _infer_telemetry_section(section, ttl_key)
     meta: dict[str, object] = {
         "actual_query_executed": None,
         "cache_layer": "unknown",
@@ -949,7 +1100,7 @@ def _run_query_base(
     }
     assert_first_paint_query_allowed(
         boundary,
-        section=_infer_telemetry_section(section, ttl_key),
+        section=telemetry_section,
         ttl_key=ttl_key,
         tier=tier,
         max_rows=max_rows,
@@ -960,16 +1111,24 @@ def _run_query_base(
     if not _check_query_budget(tier, ttl_key, query_text):
         meta.update(actual_query_executed=False, cache_layer="budget_blocked")
         return pd.DataFrame(), meta
+    executable_query = _inject_read_limit(query_text, max_rows=max_rows)
+    _enforce_query_contract(
+        executable_query,
+        boundary=boundary,
+        section=telemetry_section,
+        ttl_key=ttl_key,
+        tier=tier,
+        max_rows=max_rows,
+    )
     with st.spinner(spinner_msg):
         try:
-            executable_query = _inject_read_limit(query_text, max_rows=max_rows)
             query_tag = _build_overwatch_query_tag(section, ttl_key, tier)
             if use_cache:
                 cache_salt = _cache_salt(ttl_key)
                 context = _cache_context()
                 fn   = _TIER_FN.get(tier, _cached_recent)
                 meta.update(actual_query_executed=None, cache_layer="streamlit_cache")
-                return fn(executable_query, context, cache_salt, query_tag, ttl_key, section), meta
+                return fn(executable_query, context, cache_salt, query_tag, ttl_key, section, boundary, max_rows), meta
             # Bypass cache - always wrapped in try/except
             try:
                 meta.update(actual_query_executed=True, cache_layer="none")
@@ -980,6 +1139,7 @@ def _run_query_base(
                     tier=tier,
                     section=section,
                     max_rows=max_rows,
+                    query_boundary=boundary,
                 ), meta
             except Exception as e:
                 _show_query_warning("Data unavailable", e)
@@ -999,6 +1159,7 @@ def run_query(
     tier: str = "recent",
     section: str = "",
     max_rows: int | None = None,
+    query_boundary: str | None = None,
 ) -> pd.DataFrame:
     """Execute a query through the cached runner and log lightweight telemetry."""
     started = time.perf_counter()
@@ -1011,6 +1172,7 @@ def run_query(
         tier=tier,
         section=section,
         max_rows=max_rows,
+        query_boundary=query_boundary,
     )
     elapsed_ms = (time.perf_counter() - started) * 1000
     finished_at = datetime.now().isoformat(timespec="milliseconds")
@@ -1043,6 +1205,7 @@ def run_query_or_raise(
     tier: str = "live",
     max_rows: int | None = None,
     use_cache: bool = True,
+    query_boundary: str | None = None,
 ) -> pd.DataFrame:
     """
     Execute SQL and return a normalized DataFrame, preserving exceptions.
@@ -1055,10 +1218,19 @@ def run_query_or_raise(
     result = pd.DataFrame()
     query_tag = _build_overwatch_query_tag(section, ttl_key, tier)
     executable_query = _inject_read_limit(query_text, max_rows=max_rows)
-    boundary = _infer_query_boundary(query_text, ttl_key, tier)
+    boundary = str(query_boundary or _infer_query_boundary(query_text, ttl_key, tier))
+    telemetry_section = _infer_telemetry_section(section, ttl_key)
+    _enforce_query_contract(
+        executable_query,
+        boundary=boundary,
+        section=telemetry_section,
+        ttl_key=ttl_key,
+        tier=tier,
+        max_rows=max_rows,
+    )
     assert_first_paint_query_allowed(
         boundary,
-        section=_infer_telemetry_section(section, ttl_key),
+        section=telemetry_section,
         ttl_key=ttl_key,
         tier=tier,
         max_rows=max_rows,
@@ -1066,7 +1238,7 @@ def run_query_or_raise(
     if queries_paused():
         finished_at = datetime.now().isoformat(timespec="milliseconds")
         record_ui_query_event(
-            section=_infer_telemetry_section(section, ttl_key),
+            section=telemetry_section,
             workflow=str(get_state(NAV_SECTION, "") or ""),
             query_tier=tier,
             ttl_key=ttl_key,
@@ -1085,7 +1257,7 @@ def run_query_or_raise(
     if not _check_query_budget(tier, ttl_key, query_text):
         finished_at = datetime.now().isoformat(timespec="milliseconds")
         record_ui_query_event(
-            section=_infer_telemetry_section(section, ttl_key),
+            section=telemetry_section,
             workflow=str(get_state(NAV_SECTION, "") or ""),
             query_tier=tier,
             ttl_key=ttl_key,
@@ -1107,7 +1279,7 @@ def run_query_or_raise(
             cache_salt = _cache_salt(ttl_key)
             context = _cache_context()
             fn = _RAISE_TIER_FN.get(tier, _cached_raise_recent)
-            result = fn(executable_query, context, cache_salt, query_tag, ttl_key, section)
+            result = fn(executable_query, context, cache_salt, query_tag, ttl_key, section, boundary, max_rows)
             return result
         result = _execute_snowflake_query(
             executable_query,
@@ -1116,6 +1288,7 @@ def run_query_or_raise(
             tier=tier,
             section=section,
             max_rows=max_rows,
+            query_boundary=boundary,
         )
         return result
     except Exception as exc:
@@ -1135,7 +1308,7 @@ def run_query_or_raise(
             section=section,
         )
         record_ui_query_event(
-            section=_infer_telemetry_section(section, ttl_key),
+            section=telemetry_section,
             workflow=str(get_state(NAV_SECTION, "") or ""),
             query_tier=tier,
             ttl_key=ttl_key,

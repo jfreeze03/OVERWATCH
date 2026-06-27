@@ -30,6 +30,11 @@ from runtime_state import (
     pop_state,
     set_state,
 )
+from performance import (
+    assert_first_paint_session_open_allowed,
+    current_first_paint_section,
+    record_snowflake_session_open_event,
+)
 
 
 # How long before we force a session health check.
@@ -270,7 +275,13 @@ def _session_is_alive(sess) -> bool:
         return False
 
 
-def get_session():
+def get_session(
+    *,
+    reason: str = "direct_session_request",
+    query_boundary: str = "other",
+    section: str = "",
+    max_rows: int | None = None,
+):
     """Return a live, validated Snowflake session."""
     now = datetime.now()
     last_created = get_state(SF_SESSION_CREATED_AT)
@@ -289,6 +300,21 @@ def get_session():
         set_state(SF_SESSION_CREATED_AT, now)
 
     if session is None:
+        active_section = section or current_first_paint_section() or _active_section_label()
+        assert_first_paint_session_open_allowed(
+            section=active_section,
+            workflow="",
+            reason=reason,
+            query_boundary=query_boundary,
+            max_rows=max_rows,
+        )
+        record_snowflake_session_open_event(
+            section=active_section,
+            workflow="",
+            reason=reason,
+            query_boundary=query_boundary,
+            allowed=True,
+        )
         sess = _make_session()
         set_state(SF_SESSION, sess)
         set_state(SF_SESSION_CREATED_AT, now)

@@ -20,6 +20,7 @@ class QueryContract:
     allow_select_star: bool = False
     allow_contains_search: bool = False
     requires_target_predicate: bool = False
+    target_predicate_markers: tuple[str, ...] = ()
     first_paint_allowed: bool = False
     expected_table_family: str = ""
 
@@ -67,7 +68,11 @@ def resolve_query_contract(
     ttl_key = str(ttl_key or "")
     tier = str(tier or "")
     for contract in _QUERY_CONTRACTS:
-        if contract.ttl_key_pattern and _matches(contract.ttl_key_pattern, ttl_key):
+        if (
+            contract.ttl_key_pattern
+            and _matches(contract.ttl_key_pattern, ttl_key)
+            and (not contract.boundary or contract.boundary == boundary)
+        ):
             return contract
     for contract in _QUERY_CONTRACTS:
         if contract.boundary != boundary:
@@ -115,7 +120,7 @@ def lint_query_text(sql: str, contract: QueryContract) -> list[QueryLintFinding]
     ):
         add("METADATA_FORBIDDEN", "error", "Metadata probes are not allowed for this query contract.")
     if re.search(r"\bSELECT\s+\*", upper) and not contract.allow_select_star:
-        add("SELECT_STAR", "error", "SELECT * is forbidden for daily app-facing query loaders.")
+        add("STAR_PROJECTION", "error", "Wildcard projection is forbidden for daily app-facing query loaders.")
     if re.search(r"\b(SELECT|WITH)\b", upper) and not re.search(r"\bLIMIT\s+\d+\b", upper):
         add("MISSING_LIMIT", "error", "App-facing read queries must be bounded with LIMIT.")
     if (
@@ -126,10 +131,20 @@ def lint_query_text(sql: str, contract: QueryContract) -> list[QueryLintFinding]
     if contract.requires_target_predicate:
         limit_pos = _limit_position(masked)
         where_pos = _where_position(masked)
+        predicate_region = masked[where_pos:limit_pos] if limit_pos >= 0 and where_pos >= 0 else masked[where_pos:]
+        markers = contract.target_predicate_markers or (
+            "QUERY_ID", "QUERY_HASH", "QUERY_SIGNATURE",
+            "ALERT_ID", "ALERT_KEY", "EVENT_ID",
+            "WAREHOUSE_NAME", "USER_NAME", "LOGIN_NAME", "ROLE_NAME",
+            "DATABASE_NAME", "GRANT_ID", "SHARE_NAME",
+            "TASK_NAME", "ROOT_TASK_NAME", "PROCEDURE_NAME",
+        )
         if where_pos < 0:
             add("MISSING_TARGET_PREDICATE", "error", "Targeted evidence query has no predicate before LIMIT.")
         elif limit_pos >= 0 and where_pos > limit_pos:
             add("PREDICATE_AFTER_LIMIT", "error", "Target predicate must appear before LIMIT.")
+        elif not any(marker.upper() in predicate_region.upper() for marker in markers):
+            add("TARGET_MARKER_MISSING", "error", "Targeted evidence query lacks an allowlisted target marker before LIMIT.")
     if contract.expected_table_family and contract.expected_table_family.upper() not in upper:
         add("UNEXPECTED_TABLE_FAMILY", "warning", "Query does not reference the expected table family.")
     return findings
@@ -154,9 +169,44 @@ register_query_contract(
 register_query_contract(
     QueryContract(
         boundary="evidence",
+        tier="",
+        max_rows=500,
+    )
+)
+for _ttl_pattern, _section, _markers in (
+    (r"alert_.*evidence|alert_.*history|alert_.*delivery|alert_.*action", "Alert Center", ("ALERT_ID", "ALERT_KEY", "EVENT_ID", "ACTION_ID")),
+    (r"cost_targeted_evidence|cc_targeted_evidence", "Cost & Contract", ("WAREHOUSE_NAME", "USER_NAME", "ROLE_NAME", "DATABASE_NAME", "DEPARTMENT", "SERVICE_CATEGORY", "SERVICE_TYPE")),
+    (r"dba_control_room_.*evidence|dba_.*proof|dba_.*failed", "DBA Control Room", ("QUERY_ID", "QUERY_HASH", "QUERY_SIGNATURE", "WAREHOUSE_NAME", "TASK_NAME", "ROOT_TASK_NAME", "PROCEDURE_NAME")),
+    (r"query_search_recent_detail|workload_.*evidence|workload_.*pipeline", "Workload Operations", ("QUERY_ID", "QUERY_HASH", "QUERY_SIGNATURE", "WAREHOUSE_NAME", "TASK_NAME", "ROOT_TASK_NAME", "PROCEDURE_NAME")),
+    (r"security_.*evidence|security_.*proof", "Security Monitoring", ("USER_NAME", "LOGIN_NAME", "ROLE_NAME", "GRANTEE_NAME", "GRANT_ID", "SHARE_NAME", "DATABASE_NAME", "OBJECT_NAME")),
+):
+    register_query_contract(
+        QueryContract(
+            boundary="evidence",
+            section=_section,
+            ttl_key_pattern=_ttl_pattern,
+            tier="",
+            max_rows=500,
+            requires_target_predicate=True,
+            target_predicate_markers=_markers,
+        )
+    )
+register_query_contract(
+    QueryContract(
+        boundary="query_search",
+        ttl_key_pattern=r"^query_search_recent_detail_",
         tier="recent",
         max_rows=500,
-        requires_target_predicate=True,
+        expected_table_family="FACT_QUERY_DETAIL_RECENT",
+    )
+)
+register_query_contract(
+    QueryContract(
+        boundary="query_preview",
+        ttl_key_pattern=r"^query_text_preview_",
+        tier="recent",
+        max_rows=1,
+        expected_table_family="FACT_QUERY_DETAIL_RECENT",
     )
 )
 register_query_contract(

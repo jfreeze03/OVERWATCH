@@ -20,8 +20,13 @@ class CleanupInventoryTests(unittest.TestCase):
         required = {
             "artifacts/cleanup/legacy_inventory.json",
             "artifacts/cleanup/cleanup_summary.json",
+            "artifacts/cleanup/deletion_candidates.json",
             "artifacts/cleanup/route_state_inventory.json",
             "artifacts/cleanup/object_inventory.json",
+            "artifacts/cleanup/drop_plan.json",
+            "artifacts/cleanup/forbidden_token_scan.json",
+            "artifacts/cleanup/test_inventory.json",
+            "artifacts/cleanup/test_reduction_summary.json",
             "artifacts/cleanup/contract_registry.json",
             "artifacts/cleanup/artifact_manifest.json",
         }
@@ -33,18 +38,54 @@ class CleanupInventoryTests(unittest.TestCase):
         summary = json.loads((ROOT / "artifacts/cleanup/cleanup_summary.json").read_text(encoding="utf-8"))
         route_inventory = json.loads((ROOT / "artifacts/cleanup/route_state_inventory.json").read_text(encoding="utf-8"))
         object_inventory = json.loads((ROOT / "artifacts/cleanup/object_inventory.json").read_text(encoding="utf-8"))
+        deletion_candidates = json.loads((ROOT / "artifacts/cleanup/deletion_candidates.json").read_text(encoding="utf-8"))
+        drop_plan = json.loads((ROOT / "artifacts/cleanup/drop_plan.json").read_text(encoding="utf-8"))
+        forbidden_scan = json.loads((ROOT / "artifacts/cleanup/forbidden_token_scan.json").read_text(encoding="utf-8"))
         registry = json.loads((ROOT / "artifacts/cleanup/contract_registry.json").read_text(encoding="utf-8"))
+        manifest = json.loads((ROOT / "artifacts/cleanup/artifact_manifest.json").read_text(encoding="utf-8"))
 
         self.assertEqual(summary["inline_marker_comments_remaining"], 0)
         self.assertEqual(summary["unreachable_production_modules"], 0)
+        self.assertEqual(summary["deletion_candidate_count"], 0)
+        self.assertEqual(summary["retained_generic_reason_count"], 0)
+        self.assertEqual(summary["unknown_sql_object_count"], 0)
         self.assertEqual(route_inventory["dead_routes"], [])
         self.assertFalse(inventory["production_forbidden_token_findings"])
+        self.assertEqual(deletion_candidates["candidate_count"], 0)
+        self.assertEqual(forbidden_scan["blocked_count"], 0)
         self.assertGreater(registry["entry_count"], 0)
         self.assertFalse(registry["inline_marker_source"])
+        self.assertIn("drop_plan", drop_plan)
+        self.assertIn("artifacts/cleanup/deletion_candidates.json", manifest["files"])
 
         kept = inventory["python_modules"]["legacy_looking_kept_with_reason"]
         self.assertTrue(kept)
-        self.assertTrue(all(row.get("owner") and row.get("reason") and row.get("active_reference") for row in kept))
+        generic = ("compatibility", "legacy retained", "route/admin/test inventory", "historical", "just in case")
+        for row in kept:
+            self.assertIn(row.get("classification"), {
+                "active_primary_surface",
+                "active_admin_setup_surface",
+                "active_deployment_bootstrap",
+                "active_contract_test",
+                "active_compact_evidence",
+                "deleted",
+            })
+            self.assertTrue(row.get("owner"), row)
+            self.assertTrue(row.get("current_route_or_test"), row)
+            self.assertTrue(row.get("reason"), row)
+            self.assertTrue(row.get("expiration_or_review_note"), row)
+            self.assertTrue(row.get("deletion_blocker"), row)
+            reason_text = " ".join(str(row.get(key, "")) for key in ("reason", "current_route_or_test", "deletion_blocker")).lower()
+            self.assertFalse(any(token in reason_text for token in generic), row)
+        for route in route_inventory["routes"]:
+            if route["category"] == "active_alias_route":
+                self.assertTrue(route["owner"], route)
+                self.assertTrue(route["reason"], route)
+                self.assertTrue(route["active_source_button_or_deep_link"], route)
+                self.assertTrue(route["expiration_or_review_note"], route)
+        for entry in [*registry["direct_sql_allowlist"], *registry["session_open_allowlist"]]:
+            self.assertTrue(entry.get("expiration_or_review_note"), entry)
+            self.assertTrue(entry.get("active_ui_action_or_admin_route"), entry)
         self.assertTrue(all(object_inventory["compact_evidence_load_path"].values()))
 
     def test_production_source_has_no_inline_marker_comments(self):

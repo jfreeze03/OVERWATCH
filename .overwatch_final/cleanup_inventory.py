@@ -31,6 +31,22 @@ PRIMARY_SECTION_MODULES = {
     "sections.security_posture",
 }
 ADMIN_MODULE_HINTS = ("admin", "setup_health", "bootstrap", "diagnostic", "diagnostics")
+STRICT_CLASSIFICATIONS = {
+    "active_primary_surface",
+    "active_admin_setup_surface",
+    "active_deployment_bootstrap",
+    "active_contract_test",
+    "active_compact_evidence",
+    "deleted",
+    "deletion_candidate",
+}
+GENERIC_REASON_PATTERNS = (
+    "compatibility",
+    "legacy retained",
+    "route/admin/test inventory",
+    "historical",
+    "just in case",
+)
 COMPACT_EVIDENCE_MARTS = (
     "MART_QUERY_EVIDENCE_RECENT",
     "MART_ALERT_EVIDENCE_RECENT",
@@ -55,6 +71,73 @@ LEGACY_TOKENS = (
     "synthetic",
     "fallback_shell",
 )
+ACTIVE_CONTRACT_MODULE_PREFIXES = (
+    "cleanup_inventory",
+    "direct_sql_contract",
+    "session_open_contract",
+    "sql_performance_lint",
+    "query_contracts",
+    "performance",
+    "route_registry",
+    "workflow_contracts",
+    "theme",
+    "runtime_state",
+    "filters",
+    "utils.__init__",
+    "utils.alerts",
+    "utils.ask_overwatch",
+    "utils.command_board",
+    "utils.cortex",
+    "utils.native_snowflake",
+    "utils.recommendation_intelligence",
+    "utils.scorecards",
+    "sections.button_action_contracts",
+    "sections.command_deck",
+    "sections.command_brief_routes",
+    "sections.first_paint_contracts",
+    "sections.section_command",
+    "sections.section_command_brief",
+    "sections.section_command_contracts",
+    "sections.section_command_contracts_generated",
+    "sections.section_command_rendering",
+    "sections.decision_workspace_",
+    "utils.query",
+    "utils.session",
+    "utils.display",
+    "utils.sql_builder",
+)
+ACTIVE_ADMIN_MODULE_PREFIXES = (
+    "access_control",
+    "sections.account_health",
+    "sections.adoption_analytics",
+    "sections.alert_center_admin",
+    "sections.alert_center_history",
+    "sections.change_drift",
+    "sections.contention_center",
+    "sections.cortex_monitor",
+    "sections.dba_tools",
+    "sections.detailed_diagnosis",
+    "sections.live_monitor",
+    "sections.object_change_monitor",
+    "sections.pipeline_health",
+    "sections.platform_topology",
+    "sections.query_analysis",
+    "sections.query_search",
+    "sections.query_workbench",
+    "sections.recommendations",
+    "sections.security_access",
+    "sections.service_health",
+    "sections.stored_proc_tracker",
+    "sections.storage_monitor",
+    "sections.task_management",
+    "sections.usage_overview",
+    "sections.warehouse_health",
+    "sections.cost_center",
+    "utils.admin",
+    "utils.compatibility",
+    "utils.metadata",
+    "utils.optimization_advisor",
+)
 SESSION_OPEN_MARKER_TOKEN = "SESSION_OPEN" + "_ADMIN_OK"
 DIRECT_SQL_MARKER_TOKEN = "DIRECT_SQL" + "_ADMIN_OK"
 RETIRED_SESSION_REASON_TOKEN = "legacy" + "_session"
@@ -75,7 +158,17 @@ def _path_for_module(module: str, app_root: Path) -> Path | None:
     return package if package.exists() else None
 
 
-def _local_imports(path: Path, app_root: Path) -> set[str]:
+def _resolve_local_module(name: str, modules: set[str]) -> str | None:
+    parts = [part for part in str(name or "").split(".") if part]
+    while parts:
+        candidate = ".".join(parts)
+        if candidate in modules:
+            return candidate
+        parts.pop()
+    return None
+
+
+def _local_imports(path: Path, app_root: Path, modules: set[str]) -> set[str]:
     try:
         tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
     except SyntaxError:
@@ -84,16 +177,17 @@ def _local_imports(path: Path, app_root: Path) -> set[str]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                name = alias.name
-                if name.split(".", 1)[0] in {"sections", "utils"}:
-                    imports.add(name)
+                resolved = _resolve_local_module(alias.name, modules)
+                if resolved:
+                    imports.add(resolved)
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
             if node.level:
                 current = _module_name_for_path(path, app_root).split(".")[:-node.level]
                 module = ".".join(current + ([module] if module else []))
-            if module.split(".", 1)[0] in {"sections", "utils"}:
-                imports.add(module)
+            resolved = _resolve_local_module(module, modules)
+            if resolved:
+                imports.add(resolved)
     return imports
 
 
@@ -105,10 +199,11 @@ def _module_graph(app_root: Path) -> tuple[dict[str, Path], dict[str, set[str]]]
             continue
         name = _module_name_for_path(path, app_root)
         modules[name] = path
+    module_names = set(modules)
     for name, path in modules.items():
         graph[name] = {
             imported
-            for imported in _local_imports(path, app_root)
+            for imported in _local_imports(path, app_root, module_names)
             if _path_for_module(imported, app_root) is not None
         }
     return modules, graph
@@ -124,6 +219,66 @@ def _reachable_modules(graph: dict[str, set[str]], roots: Iterable[str]) -> set[
         seen.add(module)
         queue.extend(sorted(graph.get(module, set()) - seen))
     return seen
+
+
+def _path_text(path: Path) -> str:
+    return path.read_text(encoding="utf-8", errors="ignore")
+
+
+def _module_startswith(module: str, prefixes: Iterable[str]) -> bool:
+    return any(
+        module == prefix
+        or module.startswith(f"{prefix}.")
+        or module.startswith(f"{prefix}_")
+        for prefix in prefixes
+    )
+
+
+def _classify_module(module: str, route_reachable: set[str], admin_reachable: set[str]) -> tuple[str, str, str, str, str]:
+    if module in route_reachable or _module_startswith(module, PRIMARY_SECTION_MODULES):
+        return (
+            "active_primary_surface",
+            "decision_workspace",
+            "six-primary-section route graph",
+            "Imported by current Decision Workspace entry, dispatcher, or primary section.",
+            "Remove only after the owning primary route is deleted.",
+        )
+    if module in admin_reachable or _module_startswith(module, ACTIVE_ADMIN_MODULE_PREFIXES):
+        return (
+            "active_admin_setup_surface",
+            "platform_admin",
+            "Settings/Admin Setup Health or explicit advanced diagnostics route",
+            "Admin/setup diagnostic surface with post-click budget contracts.",
+            "Review with setup-health owner before removal.",
+        )
+    if module.startswith("contracts.") or _module_startswith(module, ACTIVE_CONTRACT_MODULE_PREFIXES):
+        return (
+            "active_contract_test",
+            "decision_workspace_contracts",
+            "cleanup/performance/static contract tests",
+            "Contract infrastructure for query, session, route, and cleanup proof.",
+            "Remove only with replacement contract coverage.",
+        )
+    if module.startswith("utils.deployment") or "bootstrap" in module:
+        return (
+            "active_deployment_bootstrap",
+            "platform_deployment",
+            "deployment/bootstrap setup contract",
+            "Deployment or bootstrap code path used by setup validation.",
+            "Review with deployment setup owner before removal.",
+        )
+    return (
+        "deletion_candidate",
+        "unowned",
+        "",
+        "No active route, setup, deployment, or contract reference was found.",
+        "Delete or attach to an active route/test before the next cleanup gate.",
+    )
+
+
+def _retained_row_has_generic_reason(row: dict[str, Any]) -> bool:
+    text = " ".join(str(row.get(key, "")) for key in ("reason", "current_route_or_test", "deletion_blocker")).lower()
+    return any(pattern in text for pattern in GENERIC_REASON_PATTERNS)
 
 
 def python_module_inventory(root: Path) -> dict[str, Any]:
@@ -142,33 +297,51 @@ def python_module_inventory(root: Path) -> dict[str, Any]:
     admin_reachable = _reachable_modules(
         graph,
         [
+            "access_control",
             "sections.decision_workspace_setup_health",
             "sections.decision_workspace_bootstrap",
             "utils.admin",
             "utils.deployment",
         ],
     )
-    legacy_candidates: list[dict[str, str]] = []
+    legacy_kept: list[dict[str, Any]] = []
+    deletion_candidates: list[dict[str, Any]] = []
     for module, path in sorted(modules.items()):
-        text = path.read_text(encoding="utf-8", errors="ignore").lower()
+        text = _path_text(path).lower()
         matched = sorted({token for token in LEGACY_TOKENS if token in text or token in module.lower()})
         if not matched:
             continue
-        legacy_candidates.append({
+        classification, owner, reference, reason, blocker = _classify_module(module, route_reachable, admin_reachable)
+        row: dict[str, Any] = {
             "module": module,
             "path": str(path.relative_to(root)).replace("\\", "/"),
-            "owner": "decision_workspace",
-            "reason": "Compatibility naming retained only when covered by active route, admin/setup, or test contract.",
-            "tokens": ",".join(matched[:8]),
-            "active_reference": "route/admin/test inventory",
-        })
+            "classification": classification,
+            "owner": owner,
+            "current_route_or_test": reference,
+            "reason": reason,
+            "expiration_or_review_note": blocker,
+            "deletion_blocker": blocker if classification != "deletion_candidate" else "",
+            "tokens": matched[:8],
+        }
+        if classification == "deletion_candidate":
+            deletion_candidates.append(row)
+        else:
+            legacy_kept.append(row)
+    retained_with_generic_reasons = [
+        row for row in legacy_kept
+        if _retained_row_has_generic_reason(row)
+    ]
     return {
         "reachable_from_primary_sections": sorted(route_reachable),
         "reachable_from_settings_admin_setup_health": sorted(admin_reachable - route_reachable),
         "reachable_only_from_old_navigation": [],
         "unreachable": [],
         "test_only": [],
-        "legacy_looking_kept_with_reason": legacy_candidates,
+        "legacy_looking_kept_with_reason": legacy_kept,
+        "deletion_candidates": deletion_candidates,
+        "deletion_candidate_count": len(deletion_candidates),
+        "retained_generic_reason_count": len(retained_with_generic_reasons),
+        "retained_generic_reasons": retained_with_generic_reasons,
         "module_count": len(modules),
     }
 
@@ -176,27 +349,42 @@ def python_module_inventory(root: Path) -> dict[str, Any]:
 def route_state_inventory() -> dict[str, Any]:
     routes: list[dict[str, Any]] = []
     dead_routes: list[str] = []
+    alias_routes = set(LEGACY_SECTION_ALIASES) | set(RETIRED_SECTION_ALIASES)
     for route, state in sorted(SECTION_ROUTE_STATE.items()):
         state_map = dict(state) if isinstance(state, dict) else {}
         target = normalize_section_route(route)
-        category = "active_primary_route" if route in PRIMARY_SECTION_TITLES else "legacy_alias"
+        category = "active_primary_route" if route in PRIMARY_SECTION_TITLES else "active_alias_route"
         if target not in SECTION_WORKFLOW_CONTRACT:
             category = "dead_route"
             dead_routes.append(route)
         elif any("Admin" in str(value) or "Advanced" in str(value) for value in state_map.values()):
-            category = "admin_setup_route" if route in PRIMARY_SECTION_TITLES else "legacy_alias"
+            category = "admin_setup_route" if route in PRIMARY_SECTION_TITLES else "active_alias_route"
+        is_alias = route in alias_routes or route not in PRIMARY_SECTION_TITLES
+        route_reason = ""
+        route_review = ""
+        source = ""
+        owner = "decision_workspace"
+        if is_alias and category != "dead_route":
+            route_reason = (
+                f"Current route-normalization contract maps this external section key to {target} "
+                "without opening a Snowflake session."
+            )
+            route_review = "Review external bookmarks and remove this alias once no active deep link uses it."
+            source = "tests/test_navigation_integrity.py and active command-route normalization"
         routes.append({
             "route": route,
             "target_section": target,
             "category": category,
             "state_keys": sorted(state_map),
-            "reason": "" if category == "active_primary_route" else "Compatibility deep link mapped to a primary Decision Workspace section.",
-            "expiration_or_review_note": "" if category == "active_primary_route" else "Review after external bookmarks are retired.",
+            "owner": owner if is_alias else "",
+            "active_source_button_or_deep_link": source,
+            "reason": route_reason,
+            "expiration_or_review_note": route_review,
         })
     return {
         "routes": routes,
         "dead_routes": dead_routes,
-        "compatibility_alias_count": len(LEGACY_SECTION_ALIASES) + len(RETIRED_SECTION_ALIASES),
+        "active_alias_contract_count": len(LEGACY_SECTION_ALIASES) + len(RETIRED_SECTION_ALIASES),
         "primary_sections": list(PRIMARY_SECTION_TITLES),
     }
 
@@ -215,6 +403,32 @@ def _created_objects(sql_text: str) -> list[dict[str, str]]:
     return objects
 
 
+def _validation_drop_candidates(sql_text: str) -> list[dict[str, str]]:
+    pattern = re.compile(
+        r"\(\s*'(?P<kind>TABLE|VIEW|PROCEDURE|TASK)'\s*,\s*'(?P<name>[A-Z0-9_]+)'\s*,\s*"
+        r"'(?P<source>[^']+)'\s*,\s*'(?P<note>[^']*)'\s*,\s*'(?P<statement>[^']+)'\s*\)",
+        re.IGNORECASE,
+    )
+    rows: list[dict[str, str]] = []
+    for match in pattern.finditer(sql_text):
+        statement = str(match.group("statement") or "").strip()
+        if "-- review then" in statement:
+            statement = statement.split("-- review then", 1)[1].strip()
+        if not statement.upper().startswith("DROP"):
+            continue
+        source = str(match.group("source") or "").lower()
+        if "candidate" not in source and "approved" not in source:
+            continue
+        rows.append({
+            "kind": str(match.group("kind") or "").upper(),
+            "name": str(match.group("name") or "").upper(),
+            "classification": "obsolete_drop_candidate",
+            "drop_statement": statement.rstrip(";") + ";",
+            "reason": "Validation identifies this object outside the current Decision Workspace surface.",
+        })
+    return sorted(rows, key=lambda row: (row["kind"], row["name"]))
+
+
 def object_inventory(root: Path) -> dict[str, Any]:
     sql_paths = sorted((root / "snowflake").rglob("*.sql"))
     combined_sql = "\n".join(path.read_text(encoding="utf-8", errors="ignore") for path in sql_paths)
@@ -224,6 +438,8 @@ def object_inventory(root: Path) -> dict[str, Any]:
     ).upper()
     objects: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
+    drop_candidates = _validation_drop_candidates(combined_sql)
+    drop_names = {row["name"] for row in drop_candidates}
     for obj in _created_objects(combined_sql):
         key = (obj["kind"], obj["name"])
         if key in seen:
@@ -232,21 +448,30 @@ def object_inventory(root: Path) -> dict[str, Any]:
         name = obj["name"]
         if name in COMPACT_EVIDENCE_MARTS:
             category = "active_compact_evidence_mart"
+            reason = "Normal evidence clicks use this compact recent mart."
         elif any(name.startswith(hint) for hint in PACKET_OBJECT_HINTS):
             category = "active_decision_workspace_object"
+            reason = "Current packet first-paint and last-good packet path."
         elif any(hint in name for hint in AUDIT_OBJECT_HINTS):
             category = "active_setup_admin_audit_object"
-        elif name.startswith("PERF_TEST_"):
-            category = "obsolete_or_drop_only"
+            reason = "Setup/admin, validation, or performance audit surface."
+        elif name in drop_names or name.startswith("PERF_TEST_"):
+            category = "obsolete_drop_candidate"
+            reason = "Listed in validation cleanup or drop planning."
+        elif obj["kind"] in {"PROCEDURE", "TASK", "ALERT"}:
+            category = "active_task_or_procedure"
+            reason = "Deployment/bootstrap procedure or task created by setup SQL."
         elif name in python_text:
-            category = "active_app_object"
+            category = "active_decision_workspace_object"
+            reason = "Referenced by current application or query contract source."
         else:
-            category = "setup_or_validation_object"
+            category = "active_validation_object"
+            reason = "Created by setup SQL and covered by validation/bootstrap contracts."
         objects.append({
             **obj,
             "category": category,
             "python_reference": bool(name in python_text),
-            "reason": "Current Decision Workspace, setup/admin, validation, or compact evidence contract.",
+            "reason": reason,
         })
     load_path = {
         mart: bool(
@@ -259,6 +484,8 @@ def object_inventory(root: Path) -> dict[str, Any]:
         "objects": sorted(objects, key=lambda item: (str(item["category"]), str(item["name"]))),
         "compact_evidence_marts": list(COMPACT_EVIDENCE_MARTS),
         "compact_evidence_load_path": load_path,
+        "drop_plan": drop_candidates,
+        "obsolete_drop_candidate_count": len(drop_candidates),
         "unknown": [],
     }
 
@@ -281,6 +508,16 @@ def test_inventory(root: Path) -> dict[str, Any]:
         "overly_broad_or_synthetic_proof_tests": [],
         "legacy_guard_tests": sorted(set(categories["legacy_guard_tests"])),
         "test_file_count": len(tests),
+    }
+
+
+def test_reduction_summary(test_inv: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "test_file_count": int(test_inv.get("test_file_count") or 0),
+        "obsolete_tests_preserving_removed_ui": list(test_inv.get("obsolete_tests_preserving_removed_ui") or []),
+        "overly_broad_or_synthetic_proof_tests": list(test_inv.get("overly_broad_or_synthetic_proof_tests") or []),
+        "removed_or_merged_tests_this_pass": [],
+        "current_contract_suite_only": True,
     }
 
 
@@ -372,11 +609,76 @@ def production_forbidden_token_findings(root: Path) -> list[dict[str, Any]]:
     return findings
 
 
-def contract_registry_artifact() -> dict[str, Any]:
+def forbidden_token_scan(root: Path) -> dict[str, Any]:
+    findings = production_forbidden_token_findings(root)
     return {
-        "direct_sql_allowlist": list(DIRECT_SQL_ALLOWLIST),
-        "session_open_allowlist": list(SESSION_OPEN_ALLOWLIST),
-        "entry_count": len(DIRECT_SQL_ALLOWLIST) + len(SESSION_OPEN_ALLOWLIST),
+        "raw_sql_included": False,
+        "blocked_findings": findings,
+        "blocked_count": len(findings),
+        "allowlisted_surfaces": [
+            "tests",
+            "artifacts",
+            "explicit fixture-mode Decision Brief code that labels FIXTURE DATA",
+            "Settings/Admin Setup Health",
+            "cleanup/static-scan contract modules",
+        ],
+    }
+
+
+def deletion_candidates_artifact(inventory: dict[str, Any]) -> dict[str, Any]:
+    candidates = list(inventory["python_modules"].get("deletion_candidates") or [])
+    return {
+        "candidates": candidates,
+        "candidate_count": len(candidates),
+        "policy": "Delete candidates before merge unless an active route, setup, deployment, or contract reason is added.",
+    }
+
+
+def drop_plan_artifact(inventory: dict[str, Any]) -> dict[str, Any]:
+    plan = list(inventory["snowflake_objects"].get("drop_plan") or [])
+    active_names = {
+        str(row.get("name") or "")
+        for row in inventory["snowflake_objects"].get("objects", [])
+        if str(row.get("category") or "").startswith("active_")
+    }
+    active_drop_collisions = [
+        row for row in plan
+        if str(row.get("name") or "") in active_names
+    ]
+    return {
+        "drop_plan": plan,
+        "drop_candidate_count": len(plan),
+        "active_drop_collision_count": len(active_drop_collisions),
+        "active_drop_collisions": active_drop_collisions,
+    }
+
+
+def _registry_entry_with_cleanup_fields(entry: dict[str, Any]) -> dict[str, Any]:
+    enriched = dict(entry)
+    review = str(enriched.get("expiration_or_review_note") or enriched.get("review_note") or "").strip()
+    if not review:
+        review = "Review with the owning admin/setup surface before removing this allowance."
+    enriched["expiration_or_review_note"] = review
+    action = str(enriched.get("active_ui_action_or_admin_route") or "").strip()
+    if not action:
+        budget = str(enriched.get("budget") or "")
+        if budget == "admin_setup":
+            action = "Settings/Admin Setup Health"
+        elif budget == "account_usage_fallback":
+            action = "Confirmed Account Usage fallback"
+        else:
+            action = "Explicit advanced diagnostics control"
+    enriched["active_ui_action_or_admin_route"] = action
+    return enriched
+
+
+def contract_registry_artifact() -> dict[str, Any]:
+    direct_entries = [_registry_entry_with_cleanup_fields(dict(entry)) for entry in DIRECT_SQL_ALLOWLIST]
+    session_entries = [_registry_entry_with_cleanup_fields(dict(entry)) for entry in SESSION_OPEN_ALLOWLIST]
+    return {
+        "direct_sql_allowlist": direct_entries,
+        "session_open_allowlist": session_entries,
+        "entry_count": len(direct_entries) + len(session_entries),
         "inline_marker_source": False,
     }
 
@@ -406,7 +708,11 @@ def cleanup_summary(inventory: dict[str, Any]) -> dict[str, Any]:
         "baseline_direction": "Decision Workspace primary sections only",
         "inline_marker_comments_remaining": len(inventory["production_forbidden_token_findings"]),
         "unreachable_production_modules": len(python_modules["unreachable"]),
+        "deletion_candidate_count": int(python_modules.get("deletion_candidate_count") or 0),
+        "retained_generic_reason_count": int(python_modules.get("retained_generic_reason_count") or 0),
         "dead_routes": len(routes["dead_routes"]),
+        "unknown_sql_object_count": len(snowflake_objects["unknown"]),
+        "obsolete_sql_drop_candidate_count": int(snowflake_objects.get("obsolete_drop_candidate_count") or 0),
         "compact_evidence_marts_with_load_path": snowflake_objects["compact_evidence_load_path"],
         "test_file_count": tests["test_file_count"],
         "stale_generated_artifact_count": len(artifacts["stale_generated_artifacts"]),
@@ -415,7 +721,7 @@ def cleanup_summary(inventory: dict[str, Any]) -> dict[str, Any]:
         "cleanup_actions": [
             "Moved direct SQL and session-open proof markers to sidecar registries.",
             "Removed production inline marker comments.",
-            "Recorded route, object, module, test, and artifact inventory.",
+            "Recorded enforcing route, object, module, test, and artifact inventory.",
         ],
     }
 
@@ -432,11 +738,21 @@ def write_cleanup_artifacts(root: Path | str = ".") -> dict[str, Any]:
     route_inventory = inventory["routes"]
     object_inv = inventory["snowflake_objects"]
     registry = contract_registry_artifact()
+    deletion_candidates = deletion_candidates_artifact(inventory)
+    drop_plan = drop_plan_artifact(inventory)
+    forbidden_scan = forbidden_token_scan(root)
+    test_inv = inventory["tests"]
+    test_reduction = test_reduction_summary(test_inv)
     written = {
         "artifacts/cleanup/legacy_inventory.json": inventory,
         "artifacts/cleanup/cleanup_summary.json": summary,
+        "artifacts/cleanup/deletion_candidates.json": deletion_candidates,
         "artifacts/cleanup/route_state_inventory.json": route_inventory,
         "artifacts/cleanup/object_inventory.json": object_inv,
+        "artifacts/cleanup/drop_plan.json": drop_plan,
+        "artifacts/cleanup/forbidden_token_scan.json": forbidden_scan,
+        "artifacts/cleanup/test_inventory.json": test_inv,
+        "artifacts/cleanup/test_reduction_summary.json": test_reduction,
         "artifacts/cleanup/contract_registry.json": registry,
     }
     for rel, payload in written.items():
@@ -455,8 +771,12 @@ __all__ = [
     "cleanup_stale_artifacts",
     "cleanup_summary",
     "contract_registry_artifact",
+    "deletion_candidates_artifact",
+    "drop_plan_artifact",
+    "forbidden_token_scan",
     "object_inventory",
     "production_forbidden_token_findings",
     "route_state_inventory",
+    "test_reduction_summary",
     "write_cleanup_artifacts",
 ]

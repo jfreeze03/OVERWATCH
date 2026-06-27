@@ -425,4 +425,24 @@ DIRECT_SQL_ALLOWLIST = (
                 'Workspace cleanup.'},
 )
 
+
+def _with_cleanup_fields(entry: dict[str, str]) -> dict[str, str]:
+    enriched = dict(entry)
+    review = enriched.get("expiration_or_review_note") or enriched.get("review_note") or ""
+    enriched["expiration_or_review_note"] = review or "Review with the owning admin/setup surface before removal."
+    budget = enriched.get("budget", "")
+    if budget == "admin_setup":
+        active_route = "Settings/Admin Setup Health"
+    elif budget == "account_usage_fallback":
+        active_route = "Confirmed Account Usage fallback"
+    elif budget == "query_preview":
+        active_route = "Explicit Query Search SQL preview"
+    else:
+        active_route = "Explicit advanced diagnostics control"
+    enriched.setdefault("active_ui_action_or_admin_route", active_route)
+    return enriched
+
+
+DIRECT_SQL_ALLOWLIST = tuple(_with_cleanup_fields(entry) for entry in DIRECT_SQL_ALLOWLIST)
+
 __all__ = ["DIRECT_SQL_ALLOWLIST"]

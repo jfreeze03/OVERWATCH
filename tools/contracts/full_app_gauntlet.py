@@ -8,9 +8,10 @@ scan block fails the gate.
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
 import hashlib
+import json
+import shutil
+from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from tools.contracts.cleanup_inventory import write_cleanup_artifacts
@@ -47,6 +48,7 @@ REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS = {
     "artifacts/full_app_validation/gauntlet_results.json",
     "artifacts/full_app_validation/gauntlet_failures.json",
     "artifacts/full_app_validation/gauntlet_recomputed_invariants.json",
+    "artifacts/full_app_validation/gauntlet_artifact_reconciliation.json",
     "artifacts/full_app_validation/artifact_manifest.json",
     "artifacts/full_app_inventory/artifact_manifest.json",
     "artifacts/cleanup/cleanup_summary.json",
@@ -64,6 +66,20 @@ REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS = {
 def _write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _clean_artifact_directories(root: Path) -> None:
+    artifacts_root = (root / "artifacts").resolve()
+    for rel in (
+        "artifacts/full_app_validation",
+        "artifacts/full_app_inventory",
+        "artifacts/cleanup",
+    ):
+        target = (root / rel).resolve()
+        if target == artifacts_root or artifacts_root not in target.parents:
+            raise ValueError(f"refusing to clean outside artifacts root: {target}")
+        if target.exists():
+            shutil.rmtree(target)
 
 
 def _scan_files(root: Path) -> tuple[list[Path], list[Path]]:
@@ -90,19 +106,30 @@ def write_static_contract_artifacts(root: Path | str = ".") -> dict[str, Any]:
 
     sql_findings = lint_sql_files(sql_files, root=root_path)
     _write_json(artifacts_dir / "sql_performance_lint_findings.json", sql_findings)
+    expected_sql_files = {
+        "snowflake/OVERWATCH_MART_SETUP.sql",
+        "snowflake/OVERWATCH_MART_VALIDATION.sql",
+        "snowflake/OVERWATCH_MART_DROP.sql",
+        "snowflake/OVERWATCH_DYNAMIC_TABLE_SECURE_VIEW_AUDIT.sql",
+    }
+    scanned_files = [
+        str(path.relative_to(root_path)).replace("\\", "/")
+        for path in sql_files
+    ]
+    scanned_set = set(scanned_files)
+    missing_expected_files = sorted(expected_sql_files - scanned_set)
     sql_inventory = {
         "source": "full_app_gauntlet_static_scan",
         "proof_source": "inventory_only",
-        "scanned_files": [
-            str(path.relative_to(root_path)).replace("\\", "/")
-            for path in sql_files
-        ],
+        "scanned_files": scanned_files,
         "sql_file_count": len(sql_files),
         "includes_validation_sql": any(path.name == "OVERWATCH_MART_VALIDATION.sql" for path in sql_files),
         "includes_drop_sql": any(path.name == "OVERWATCH_MART_DROP.sql" for path in sql_files),
+        "includes_secure_view_audit_sql": any(path.name == "OVERWATCH_DYNAMIC_TABLE_SECURE_VIEW_AUDIT.sql" for path in sql_files),
         "includes_full_snowflake_tree": True,
-        "passed": any(path.name == "OVERWATCH_MART_VALIDATION.sql" for path in sql_files)
-        and any(path.name == "OVERWATCH_MART_DROP.sql" for path in sql_files),
+        "missing_expected_files": missing_expected_files,
+        "skipped_files": [],
+        "passed": not missing_expected_files,
         "raw_sql_included": False,
     }
     _write_json(artifacts_dir / "sql_performance_lint_file_inventory.json", sql_inventory)
@@ -181,6 +208,39 @@ def _manifest_unlisted_files(root: Path, manifest_rel: str, directory_rel: str) 
         if path.is_file()
     }
     return sorted(actual - listed)
+
+
+def _reconcile_artifact_manifests(root: Path) -> dict[str, Any]:
+    manifest_pairs = (
+        ("artifacts/full_app_validation/artifact_manifest.json", "artifacts/full_app_validation"),
+        ("artifacts/full_app_inventory/artifact_manifest.json", "artifacts/full_app_inventory"),
+        ("artifacts/cleanup/artifact_manifest.json", "artifacts/cleanup"),
+    )
+    missing: list[str] = []
+    unlisted: list[str] = []
+    for manifest_rel, directory_rel in manifest_pairs:
+        missing.extend(_manifest_failures(root, manifest_rel))
+        unlisted.extend(_manifest_unlisted_files(root, manifest_rel, directory_rel))
+    required_root_artifacts = [
+        "artifacts/direct_sql_static_scan.json",
+        "artifacts/session_open_static_scan.json",
+        "artifacts/sql_performance_lint_findings.json",
+        "artifacts/sql_performance_lint_file_inventory.json",
+    ]
+    missing.extend(rel for rel in required_root_artifacts if not (root / rel).exists())
+    passed = not missing and not unlisted
+    return {
+        "source": "full_app_gauntlet_artifact_reconciliation",
+        "proof_source": "runtime_click",
+        "passed": passed,
+        "missing_manifest_files": sorted(set(missing)),
+        "missing_manifest_file_count": len(set(missing)),
+        "unlisted_files": sorted(set(unlisted)),
+        "unlisted_file_count": len(set(unlisted)),
+        "checked_manifests": [pair[0] for pair in manifest_pairs],
+        "root_artifacts_checked": required_root_artifacts,
+        "raw_sql_included": False,
+    }
 
 
 def _as_list(payload: object) -> list[Any]:
@@ -308,6 +368,8 @@ def recompute_full_app_invariants(payloads: Mapping[str, Any], *, root: Path | N
     query_search_rows = _as_list(payloads.get("artifacts/full_app_validation/query_search_results.json", []))
     stress_rows = _as_list(payloads.get("artifacts/full_app_validation/stress_results.json", []))
     forbidden_ui = _as_mapping(payloads.get("artifacts/full_app_validation/forbidden_ui_token_scan.json", {}))
+    forbidden_daily = _as_mapping(payloads.get("artifacts/full_app_validation/forbidden_daily_ui_scan.json", {}))
+    forbidden_source = _as_mapping(payloads.get("artifacts/full_app_validation/forbidden_source_token_scan.json", {}))
     forbidden_export = _as_mapping(payloads.get("artifacts/full_app_validation/forbidden_export_scan.json", {}))
     cleanup_summary = _as_mapping(payloads.get("artifacts/cleanup/cleanup_summary.json", {}))
     object_inventory = _as_mapping(payloads.get("artifacts/cleanup/sql_object_inventory.json", {}))
@@ -316,6 +378,7 @@ def recompute_full_app_invariants(payloads: Mapping[str, Any], *, root: Path | N
     session_scan = _as_mapping(payloads.get("artifacts/session_open_static_scan.json", {}))
     sql_lint = _as_list(payloads.get("artifacts/sql_performance_lint_findings.json", []))
     sql_scan_inventory = _as_mapping(payloads.get("artifacts/sql_performance_lint_file_inventory.json", {}))
+    artifact_reconciliation = _as_mapping(payloads.get("artifacts/full_app_validation/gauntlet_artifact_reconciliation.json", {}))
 
     route_leaks = [
         row for row in buttons
@@ -444,6 +507,7 @@ def recompute_full_app_invariants(payloads: Mapping[str, Any], *, root: Path | N
         row for row in case_payloads
         if any(not str(_as_mapping(row).get(field) or "") for field in ("section", "workflow", "scope", "target", "freshness", "source", "summary"))
         or _as_int(_as_mapping(row).get("row_count")) != _as_int(_as_mapping(row).get("visible_row_count"))
+        or not (str(_as_mapping(row).get("payload_file") or "") or str(_as_mapping(row).get("payload_hash") or ""))
     ]
     if case_failures:
         fail("recomputed_case_payload_integrity", "Case payloads are missing required fields or row counts disagree.", count=len(case_failures), rows=case_failures)
@@ -466,19 +530,33 @@ def recompute_full_app_invariants(payloads: Mapping[str, Any], *, root: Path | N
     settings_budget_failures = [
         row for row in settings_rows
         if bool(_as_mapping(row).get("clicked"))
-        and str(_as_mapping(row).get("expected_query_budget_context") or "")
-        and str(_as_mapping(row).get("expected_query_budget_context") or "") not in _as_list(_as_mapping(row).get("observed_query_budget_contexts") or _as_mapping(row).get("observed_contexts") or [])
+        and (
+            not str(_as_mapping(row).get("control_key") or "")
+            or not bool(_as_mapping(row).get("admin_or_advanced_gated", True))
+            or not bool(_as_mapping(row).get("sanitized_error_state", True))
+            or bool(_as_mapping(row).get("raw_error_visible_daily"))
+            or (
+                str(_as_mapping(row).get("expected_query_budget_context") or "")
+                and str(_as_mapping(row).get("expected_query_budget_context") or "") not in _as_list(_as_mapping(row).get("observed_query_budget_contexts") or _as_mapping(row).get("observed_contexts") or [])
+            )
+        )
     ]
     if settings_budget_failures:
-        fail("recomputed_settings_budget_context", "Clicked Settings/Admin action lacks expected budget context.", count=len(settings_budget_failures), rows=settings_budget_failures)
+        fail("recomputed_settings_budget_context", "Clicked Settings/Admin action lacks control, budget, gating, or sanitization guarantees.", count=len(settings_budget_failures), rows=settings_budget_failures)
     live_budget_failures = [
         row for row in live_rows
         if bool(_as_mapping(row).get("clicked"))
         and (
-            str(_as_mapping(row).get("expected_query_budget_context") or "") not in _as_list(_as_mapping(row).get("observed_contexts") or _as_mapping(row).get("observed_query_budget_contexts") or [])
+            not str(_as_mapping(row).get("control_key") or "")
+            or not bool(_as_mapping(row).get("explicit_click_required"))
+            or not bool(_as_mapping(row).get("admin_or_advanced_gated"))
+            or not bool(_as_mapping(row).get("timeout_or_row_limit"))
+            or str(_as_mapping(row).get("expected_query_budget_context") or "") not in _as_list(_as_mapping(row).get("observed_contexts") or _as_mapping(row).get("observed_query_budget_contexts") or [])
             or bool(_as_mapping(row).get("first_paint_invocation"))
             or bool(_as_mapping(row).get("route_invocation"))
             or bool(_as_mapping(row).get("raw_error_visible_daily"))
+            or not bool(_as_mapping(row).get("permission_denied_sanitized", True))
+            or not bool(_as_mapping(row).get("unavailable_snowflake_sanitized", True))
         )
     ]
     if live_budget_failures:
@@ -524,10 +602,15 @@ def recompute_full_app_invariants(payloads: Mapping[str, Any], *, root: Path | N
     stress_failures = [
         row for row in stress_rows
         if not isinstance(_as_mapping(row).get("threshold"), Mapping)
+        or not isinstance(_as_mapping(row).get("actuals"), Mapping)
         or "query_counts_by_boundary" not in _as_mapping(row)
         or not bool(_as_mapping(row).get("threshold_passed"))
         or bool(_as_list(_as_mapping(row).get("threshold_failures")))
         or not _as_list(_as_mapping(row).get("sequence_steps"))
+        or any(
+            str(value).strip().lower() in {"", "placeholder", "todo", "n/a"}
+            for value in _as_mapping(_as_mapping(row).get("actuals")).values()
+        )
     ]
     if stress_failures:
         fail("recomputed_stress_thresholds", "Stress rows are missing thresholds/actuals or failed thresholds.", count=len(stress_failures), rows=stress_failures)
@@ -535,7 +618,12 @@ def recompute_full_app_invariants(payloads: Mapping[str, Any], *, root: Path | N
     if large_evidence and _as_int(_as_mapping(large_evidence.get("export_summary")).get("export_row_count")) > 500:
         fail("recomputed_large_evidence_bound", "Large bounded evidence stress exceeded 500 rows.", count=1, rows=[large_evidence])
 
-    forbidden_count = _as_int(forbidden_ui.get("blocked_count")) + _as_int(forbidden_export.get("blocked_count"))
+    forbidden_count = (
+        _as_int(forbidden_ui.get("blocked_count"))
+        + _as_int(forbidden_daily.get("blocked_count"))
+        + _as_int(forbidden_export.get("blocked_count"))
+        + _as_int(forbidden_source.get("blocked_count"))
+    )
     if forbidden_count:
         fail("recomputed_forbidden_token_scan", "Forbidden token scans reported blocked findings.", count=forbidden_count)
     unknown_sql_count = len(_as_list(object_inventory.get("unknown")))
@@ -557,11 +645,23 @@ def recompute_full_app_invariants(payloads: Mapping[str, Any], *, root: Path | N
     if sql_scan_inventory and (
         not bool(sql_scan_inventory.get("includes_validation_sql"))
         or not bool(sql_scan_inventory.get("includes_drop_sql"))
+        or not bool(sql_scan_inventory.get("includes_secure_view_audit_sql"))
         or not bool(sql_scan_inventory.get("includes_full_snowflake_tree"))
+        or _as_list(sql_scan_inventory.get("missing_expected_files"))
+        or [row for row in _as_list(sql_scan_inventory.get("skipped_files")) if not str(_as_mapping(row).get("reason") or "")]
     ):
-        fail("recomputed_sql_scan_file_coverage", "SQL static scan inventory is missing validation, drop, or full-tree coverage.", rows=[sql_scan_inventory])
+        fail("recomputed_sql_scan_file_coverage", "SQL static scan inventory is missing expected files, skip reasons, or full-tree coverage.", rows=[sql_scan_inventory])
+    if artifact_reconciliation and not bool(artifact_reconciliation.get("passed", True)):
+        fail("recomputed_artifact_reconciliation", "Artifact manifest reconciliation found stale, missing, or unlisted files.", rows=[artifact_reconciliation])
 
     if root is not None:
+        missing_manifest_files = [
+            *_manifest_failures(root, "artifacts/full_app_validation/artifact_manifest.json"),
+            *_manifest_failures(root, "artifacts/full_app_inventory/artifact_manifest.json"),
+            *_manifest_failures(root, "artifacts/cleanup/artifact_manifest.json"),
+        ]
+        if missing_manifest_files:
+            fail("recomputed_manifest_missing_files", "Artifact manifests reference files that do not exist.", count=len(missing_manifest_files), rows=missing_manifest_files)
         unlisted = [
             *_manifest_unlisted_files(root, "artifacts/full_app_validation/artifact_manifest.json", "artifacts/full_app_validation"),
             *_manifest_unlisted_files(root, "artifacts/full_app_inventory/artifact_manifest.json", "artifacts/full_app_inventory"),
@@ -802,6 +902,7 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
     """Run the full app gauntlet and raise if any hard product gate fails."""
 
     root_path = Path(root).resolve()
+    _clean_artifact_directories(root_path)
     cleanup_artifacts = write_cleanup_artifacts(root_path)
     inventory_artifacts = write_full_app_contract_inventory_artifacts(root_path)
     validation_artifacts = write_full_app_validation_artifacts(root_path)
@@ -814,6 +915,7 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
     }
     recomputed = recompute_full_app_invariants(artifacts, root=root_path)
     recomputed_rel = "artifacts/full_app_validation/gauntlet_recomputed_invariants.json"
+    reconciliation_rel = "artifacts/full_app_validation/gauntlet_artifact_reconciliation.json"
     _write_json(root_path / recomputed_rel, recomputed)
     artifacts[recomputed_rel] = recomputed
     manifest = _ensure_manifest_entries(
@@ -821,11 +923,20 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
         "artifacts/full_app_validation/artifact_manifest.json",
         {
             recomputed_rel,
+            reconciliation_rel,
             "artifacts/full_app_validation/gauntlet_results.json",
             "artifacts/full_app_validation/gauntlet_failures.json",
+            "artifacts/direct_sql_static_scan.json",
+            "artifacts/session_open_static_scan.json",
+            "artifacts/sql_performance_lint_findings.json",
+            "artifacts/sql_performance_lint_file_inventory.json",
         },
     )
     artifacts["artifacts/full_app_validation/artifact_manifest.json"] = manifest
+    _write_json(root_path / reconciliation_rel, {"passed": True, "source": "full_app_gauntlet_artifact_reconciliation"})
+    reconciliation = _reconcile_artifact_manifests(root_path)
+    _write_json(root_path / reconciliation_rel, reconciliation)
+    artifacts[reconciliation_rel] = reconciliation
     missing = sorted(
         rel for rel in REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS
         if rel not in artifacts or not (root_path / rel).exists()

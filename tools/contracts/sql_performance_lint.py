@@ -20,13 +20,59 @@ def _body_between(sql: str, start: str, end: str) -> str:
     return sql[start_pos:end_pos if end_pos >= 0 else len(sql)]
 
 
-def _has_time_predicate(window: str) -> bool:
+_TIME_PRUNING_COLUMNS = (
+    "START_TIME",
+    "END_TIME",
+    "USAGE_DATE",
+    "USAGE_TIME",
+    "QUERY_START_TIME",
+    "SNAPSHOT_DATE",
+    "LOGIN_DATE",
+    "COMPLETED_TIME",
+    "SCHEDULED_TIME",
+    "EVENT_TS",
+    "LOAD_TS",
+    "LAST_ALTERED",
+    "CREATED_ON",
+)
+
+
+def _has_always_true_time_predicate(window: str) -> bool:
+    current_expr = r"CURRENT_(?:TIMESTAMP|DATE)\s*(?:\(\s*\))?"
     return bool(
-        re.search(
-            r"\b(DATEADD|CURRENT_DATE|CURRENT_TIMESTAMP|START_TIME|END_TIME|USAGE_DATE|QUERY_START_TIME|"
-            r"SNAPSHOT_DATE|LOGIN_DATE|COMPLETED_TIME|SCHEDULED_TIME|EVENT_TS|LOAD_TS)\b",
-            window,
-        )
+        re.search(rf"\b{current_expr}\s*(?:>=|>|<=|<|=)\s*DATEADD\s*\(", window)
+        or re.search(rf"\bDATEADD\s*\([^)]*{current_expr}[^)]*\)\s*(?:>=|>|<=|<|=)\s*{current_expr}", window)
+    )
+
+
+def _has_time_predicate(window: str) -> bool:
+    columns = "|".join(_TIME_PRUNING_COLUMNS)
+    return bool(
+        re.search(rf"\b({columns})\b\s*(?:>=|>|<=|<|=|BETWEEN)\s+", window)
+        or re.search(rf"\bDATE(?:ADD|_TRUNC)\s*\([^)]*\b({columns})\b", window)
+    )
+
+
+def _has_order_before_limit(window: str) -> bool:
+    order_pos = window.find("ORDER BY")
+    limit_pos = window.find("LIMIT")
+    return order_pos >= 0 and (limit_pos < 0 or order_pos < limit_pos)
+
+
+def _is_bounded_admin_account_usage_scan(table_name: str, marker_window: str, query_window: str) -> bool:
+    return (
+        table_name == "OBJECT_DEPENDENCIES"
+        and "OVERWATCH_ADMIN_BOUNDED_ACCOUNT_USAGE_SCAN" in marker_window
+        and _has_order_before_limit(query_window)
+        and bool(re.search(r"\bLIMIT\s+\d+\b", query_window))
+    )
+
+
+def _is_current_object_snapshot_scan(table_name: str, marker_window: str, query_window: str) -> bool:
+    return (
+        table_name in {"TASKS", "PROCEDURES", "GRANTS_TO_USERS"}
+        and "OVERWATCH_CURRENT_OBJECT_SNAPSHOT_SCAN" in marker_window
+        and ("DELETED IS NULL" in query_window or "DELETED_ON IS NULL" in query_window)
     )
 
 
@@ -82,7 +128,7 @@ def _risk_score(code: str, severity: str, mode: str) -> int:
 def _expected_pruning_key(code: str, mode: str) -> str:
     code = str(code or "")
     if "ACCOUNT_USAGE" in code:
-        return "time predicate plus LIMIT"
+        return "source time predicate plus LIMIT; OBJECT_DEPENDENCIES requires documented admin marker, ORDER BY, and LIMIT"
     if str(mode or "") == "app_first_paint":
         return "IS_ACTIVE, SECTION_NAME_NORM, COMPANY_NORM, ENVIRONMENT_NORM, WINDOW_DAYS_NORM"
     if str(mode or "") == "evidence":
@@ -97,7 +143,7 @@ def _expected_pruning_key(code: str, mode: str) -> str:
 def _recommendation_for(code: str, mode: str) -> str:
     code = str(code or "")
     if "ACCOUNT_USAGE" in code:
-        return "Move to confirmed fallback/admin path and include a recent time predicate plus LIMIT."
+        return "Move to confirmed fallback/admin path and include a real source time predicate plus LIMIT; if no source timestamp exists, add an explicit admin-only marker, ORDER BY, and LIMIT."
     if "SELECT_STAR" in code:
         return "Project only app-facing columns required by the view or proof artifact."
     if "TARGET_MARKER" in code:
@@ -182,13 +228,21 @@ def lint_sql_text(
             )
             if not any(token in fast_region for token in source_tokens):
                 add("FAST_IMPL_SOURCE_SNAPSHOT_NOT_FACT_BACKED", "error", "FAST source snapshot must read compact source facts or recent evidence marts.")
-    for match in re.finditer(r"\bFROM\s+SNOWFLAKE\.ACCOUNT_USAGE\.[A-Z0-9_]+", upper):
-        window = upper[match.start():match.start() + 1200]
-        has_bound = _has_time_predicate(window)
-        has_limit = bool(re.search(r"\bLIMIT\s+\d+\b", window))
-        if not has_bound:
+    for match in re.finditer(r"\bFROM\s+SNOWFLAKE\.ACCOUNT_USAGE\.([A-Z0-9_]+)", upper):
+        table_name = match.group(1)
+        marker_window = upper[max(0, match.start() - 500):match.start() + 1600]
+        query_window = upper[match.start():match.start() + 1600]
+        if _has_always_true_time_predicate(marker_window):
+            add("ALWAYS_TRUE_TIME_PREDICATE", "error", "Time predicates must compare source timestamp columns, not CURRENT_TIMESTAMP to DATEADD of itself.")
+        has_bound = _has_time_predicate(query_window)
+        has_limit = bool(re.search(r"\bLIMIT\s+\d+\b", query_window))
+        has_bounded_admin_scan = _is_bounded_admin_account_usage_scan(table_name, marker_window, query_window)
+        has_current_object_snapshot_scan = _is_current_object_snapshot_scan(table_name, marker_window, query_window)
+        if not has_bound and has_limit and not _has_order_before_limit(query_window):
+            add("ACCOUNT_USAGE_LIMIT_WITHOUT_ORDER_OR_PREDICATE", "warning", "LIMIT-only Account Usage scans need deterministic ORDER BY or a real source time predicate.")
+        if not has_bound and not has_bounded_admin_scan and not has_current_object_snapshot_scan:
             add("ACCOUNT_USAGE_UNBOUNDED", "error", "Account Usage reads must include a time predicate.")
-        elif not has_limit:
+        elif has_bound and not has_limit:
             add("ACCOUNT_USAGE_NO_LIMIT", "warning", "Account Usage reads should include LIMIT on app-facing/fallback paths.")
     if re.search(r"\bSELECT\s+\*", upper):
         severity = "error" if "APP_FACING" in upper else "warning"
@@ -217,6 +271,8 @@ def lint_sql_text(
             add("EVIDENCE_ACCOUNT_USAGE_FORBIDDEN", "error", "Normal evidence clicks must use compact marts, not Account Usage.")
     if mode == "account_usage_fallback":
         if "SNOWFLAKE.ACCOUNT_USAGE" in upper:
+            if _has_always_true_time_predicate(upper):
+                add("ALWAYS_TRUE_TIME_PREDICATE", "error", "Account Usage fallback must use a source timestamp predicate, not CURRENT_TIMESTAMP tautologies.")
             if not _has_time_predicate(upper):
                 add("ACCOUNT_USAGE_UNBOUNDED", "error", "Account Usage fallback must include a time predicate.")
             if _limit_value(upper) is None:

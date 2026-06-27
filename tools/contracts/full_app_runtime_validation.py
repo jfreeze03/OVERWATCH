@@ -2086,9 +2086,7 @@ class RuntimeValidationHarness:
             all_loader_boundary_calls.extend(dict(call) for call in click_capture.evidence_loader_calls)
             if action_type == "evidence_load":
                 row_count = max([int(call.get("row_count") or 0) for call in click_capture.evidence_loader_calls] or [0])
-                case_payload_results.append({
-                    "source": "runtime_evidence_click",
-                    "proof_source": "runtime_export",
+                case_payload_seed = {
                     "section": section,
                     "workflow": workflow,
                     "scope": "ALFA / ALL / 7",
@@ -2096,9 +2094,18 @@ class RuntimeValidationHarness:
                     "freshness": "Current",
                     "source_table_family": "Compact evidence",
                     "summary": "Evidence click produced filtered rows.",
+                    "row_count": row_count,
+                }
+                case_payload_results.append({
+                    "source": "runtime_evidence_click",
+                    "proof_source": "runtime_export",
+                    **case_payload_seed,
                     "visible_row_count": row_count,
                     "payload_row_count": row_count,
                     "row_count": row_count,
+                    "payload_hash": hashlib.sha256(
+                        json.dumps(case_payload_seed, sort_keys=True).encode("utf-8")
+                    ).hexdigest(),
                     "passed": bool(row_count and click_capture.evidence_loader_calls),
                 })
                 for call in click_capture.evidence_loader_calls:
@@ -3566,6 +3573,15 @@ class RuntimeValidationHarness:
                 "state_delta_summary": state_delta_summary,
                 "export_summary": export_summary,
                 "threshold": threshold,
+                "actuals": {
+                    "query_count": counts.get("query_count", 0),
+                    "session_open_count": counts.get("session_open_count", 0),
+                    "direct_sql_count": counts.get("direct_sql_count", 0),
+                    "warning_count": counts.get("warning_count", 0),
+                    "error_count": counts.get("error_count", 0),
+                    "export_row_count": export_summary.get("export_row_count", 0),
+                    "evidence_loader_call_count": state_delta_summary.get("evidence_loader_call_count", 0),
+                },
                 "threshold_failures": threshold_failures,
                 "threshold_passed": threshold_passed,
                 **extra,

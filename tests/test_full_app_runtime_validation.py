@@ -1,4 +1,5 @@
 import hashlib
+import importlib
 import json
 from pathlib import Path
 import sys
@@ -28,6 +29,24 @@ class FullAppRuntimeValidationTests(unittest.TestCase):
         self.assertIsInstance(payload, dict, rel)
         self.assertIn(payload.get("proof_source"), allowed, payload)
         self.assertNotEqual(payload.get("proof_source"), "inventory_only", payload)
+
+    def test_primary_section_imports_include_runtime_budget_constants(self):
+        performance = importlib.import_module("performance")
+        self.assertEqual(getattr(performance, "EVIDENCE_CLICK_QUERY_BUDGET"), 1)
+        for module_name in (
+            "sections.executive_landing_shell",
+            "sections.dba_control_room.render",
+            "sections.alert_center",
+            "sections.cost_contract_overview_floor",
+            "sections.cost_contract_evidence",
+            "sections.workload_operations",
+            "sections.query_search",
+            "sections.security_posture_overview_view",
+            "sections.security_posture_access_changes_view",
+            "sections.security_posture_privilege_sprawl_view",
+        ):
+            with self.subTest(module=module_name):
+                self.assertIsNotNone(importlib.import_module(module_name))
 
     def test_full_app_validation_artifacts_cover_current_surface_from_runtime_clicks(self):
         from route_registry import PRIMARY_SECTION_TITLES, SECTION_WORKFLOW_CONTRACT

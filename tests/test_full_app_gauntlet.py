@@ -2,6 +2,7 @@ import copy
 import json
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 
 
@@ -168,8 +169,12 @@ class FullAppGauntletTests(unittest.TestCase):
         self.assertTrue(sql_scan_inventory["passed"], sql_scan_inventory)
         self.assertTrue(sql_scan_inventory["includes_validation_sql"], sql_scan_inventory)
         self.assertTrue(sql_scan_inventory["includes_drop_sql"], sql_scan_inventory)
+        self.assertTrue(sql_scan_inventory["includes_secure_view_audit_sql"], sql_scan_inventory)
+        self.assertEqual(sql_scan_inventory["missing_expected_files"], [], sql_scan_inventory)
+        self.assertEqual(sql_scan_inventory["skipped_files"], [], sql_scan_inventory)
         self.assertIn("snowflake/OVERWATCH_MART_VALIDATION.sql", sql_scan_inventory["scanned_files"])
         self.assertIn("snowflake/OVERWATCH_MART_DROP.sql", sql_scan_inventory["scanned_files"])
+        self.assertIn("snowflake/OVERWATCH_DYNAMIC_TABLE_SECURE_VIEW_AUDIT.sql", sql_scan_inventory["scanned_files"])
         self.assertTrue(risk["passed"], risk)
         self.assertIn("cleanup_risks", risk)
         self.assertIn("slow_action_risks", risk)
@@ -248,6 +253,13 @@ class FullAppGauntletTests(unittest.TestCase):
                 "recomputed_first_paint_zero_non_packet",
             ),
             (
+                "warm first paint packet leak",
+                lambda payloads: payloads["artifacts/full_app_validation/view_results.json"][0]["first_paint"].update(
+                    {"observed_warm_packet_queries": 1}
+                ),
+                "recomputed_warm_first_paint_zero_packet",
+            ),
+            (
                 "missing primary evidence",
                 lambda payloads: payloads.__setitem__(
                     "artifacts/full_app_validation/evidence_loader_call_matrix.json",
@@ -264,6 +276,24 @@ class FullAppGauntletTests(unittest.TestCase):
                     {"query_boundary": "advanced_diagnostics"}
                 ),
                 "recomputed_normal_evidence_source",
+            ),
+            (
+                "normal evidence Account Usage",
+                lambda payloads: payloads["artifacts/full_app_validation/evidence_loader_call_matrix.json"][0].update(
+                    {"account_usage_used": True}
+                ),
+                "recomputed_normal_evidence_source",
+            ),
+            (
+                "Workload missing normal evidence",
+                lambda payloads: payloads.__setitem__(
+                    "artifacts/full_app_validation/evidence_loader_call_matrix.json",
+                    [
+                        row for row in payloads["artifacts/full_app_validation/evidence_loader_call_matrix.json"]
+                        if row["section"] != "Workload Operations" or row["loader_kind"] != "normal_evidence"
+                    ],
+                ),
+                "recomputed_workload_evidence_coverage",
             ),
             (
                 "generic loader",
@@ -283,6 +313,11 @@ class FullAppGauntletTests(unittest.TestCase):
                 "recomputed_export_payload_integrity",
             ),
             (
+                "export missing payload file",
+                lambda payloads: payloads["artifacts/full_app_validation/export_results.json"][0].update({"payload_file": ""}),
+                "recomputed_export_payload_integrity",
+            ),
+            (
                 "default export query text",
                 lambda payloads: payloads["artifacts/full_app_validation/export_results.json"][0].update({"query_text_included": True}),
                 "recomputed_export_payload_integrity",
@@ -290,6 +325,11 @@ class FullAppGauntletTests(unittest.TestCase):
             (
                 "case payload missing freshness",
                 lambda payloads: payloads["artifacts/full_app_validation/case_payload_results.json"][0].update({"freshness": ""}),
+                "recomputed_case_payload_integrity",
+            ),
+            (
+                "case payload missing source",
+                lambda payloads: payloads["artifacts/full_app_validation/case_payload_results.json"][0].update({"source": ""}),
                 "recomputed_case_payload_integrity",
             ),
             (
@@ -317,6 +357,16 @@ class FullAppGauntletTests(unittest.TestCase):
                 "recomputed_live_budget_gating",
             ),
             (
+                "live missing control key",
+                lambda payloads: payloads["artifacts/full_app_validation/live_feature_results.json"][0].update({"control_key": ""}),
+                "recomputed_live_budget_gating",
+            ),
+            (
+                "live missing admin gating",
+                lambda payloads: payloads["artifacts/full_app_validation/live_feature_results.json"][0].update({"admin_or_advanced_gated": False}),
+                "recomputed_live_budget_gating",
+            ),
+            (
                 "query search missing no result",
                 lambda payloads: payloads.__setitem__(
                     "artifacts/full_app_validation/query_search_results.json",
@@ -340,6 +390,11 @@ class FullAppGauntletTests(unittest.TestCase):
                 "recomputed_query_search_invariants",
             ),
             (
+                "exact query ID over limit",
+                lambda payloads: self._query_case(payloads, "exact_query_id").update({"max_rows": 2}),
+                "recomputed_query_search_invariants",
+            ),
+            (
                 "stress threshold failure",
                 lambda payloads: payloads["artifacts/full_app_validation/stress_results.json"][0].update(
                     {"threshold_passed": False, "threshold_failures": ["route query cost exceeded"]}
@@ -356,6 +411,16 @@ class FullAppGauntletTests(unittest.TestCase):
             (
                 "forbidden export token",
                 lambda payloads: payloads["artifacts/full_app_validation/forbidden_export_scan.json"].update({"blocked_count": 1}),
+                "recomputed_forbidden_token_scan",
+            ),
+            (
+                "forbidden daily UI token",
+                lambda payloads: payloads["artifacts/full_app_validation/forbidden_daily_ui_scan.json"].update({"blocked_count": 1}),
+                "recomputed_forbidden_token_scan",
+            ),
+            (
+                "forbidden source token",
+                lambda payloads: payloads["artifacts/full_app_validation/forbidden_source_token_scan.json"].update({"blocked_count": 1}),
                 "recomputed_forbidden_token_scan",
             ),
             (
@@ -386,6 +451,11 @@ class FullAppGauntletTests(unittest.TestCase):
                 "recomputed_sql_scan_file_coverage",
             ),
             (
+                "SQL scan misses secure view audit",
+                lambda payloads: payloads["artifacts/sql_performance_lint_file_inventory.json"].update({"includes_secure_view_audit_sql": False}),
+                "recomputed_sql_scan_file_coverage",
+            ),
+            (
                 "generic skipped action control",
                 lambda payloads: payloads["artifacts/full_app_validation/control_click_coverage.json"].update({"generic_skip_reason_count": 1}),
                 "recomputed_control_click_coverage",
@@ -404,6 +474,40 @@ class FullAppGauntletTests(unittest.TestCase):
         for name, mutator, gate in cases:
             with self.subTest(name=name):
                 self._assert_injected_failure(mutator, gate)
+
+    def test_gauntlet_recomputes_payload_hash_and_manifest_failures_from_disk(self):
+        from tools.contracts.full_app_gauntlet import evaluate_full_app_gauntlet
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payloads = self._passing_payloads()
+            payload_rel = payloads["artifacts/full_app_validation/export_results.json"][0]["payload_file"]
+            payload_path = root / payload_rel
+            payload_path.parent.mkdir(parents=True, exist_ok=True)
+            payload_path.write_text("id,name\n1,alpha\n", encoding="utf-8")
+            payloads["artifacts/full_app_validation/export_results.json"][0].update(
+                {
+                    "sha256": "bad",
+                    "content_length": payload_path.stat().st_size,
+                }
+            )
+            results, failures = evaluate_full_app_gauntlet(payloads, root=root)
+        self.assertFalse(results["passed"], failures)
+        self.assertTrue(any(row["gate"] == "recomputed_export_payload_integrity" for row in failures["failures"]), failures)
+
+    def test_gauntlet_rejects_unlisted_stale_artifact_file(self):
+        from tools.contracts.full_app_gauntlet import evaluate_full_app_gauntlet
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            stale = root / "artifacts" / "full_app_validation" / "stale.json"
+            stale.parent.mkdir(parents=True, exist_ok=True)
+            stale.write_text("{}", encoding="utf-8")
+            manifest = stale.parent / "artifact_manifest.json"
+            manifest.write_text(json.dumps({"files": ["artifacts/full_app_validation/artifact_manifest.json"]}), encoding="utf-8")
+            results, failures = evaluate_full_app_gauntlet(self._passing_payloads(), root=root)
+        self.assertFalse(results["passed"], failures)
+        self.assertTrue(any(row["gate"] == "recomputed_manifest_unlisted_files" for row in failures["failures"]), failures)
 
     def _assert_injected_failure(self, mutator, expected_gate: str) -> None:
         from tools.contracts.full_app_gauntlet import evaluate_full_app_gauntlet
@@ -565,6 +669,7 @@ class FullAppGauntletTests(unittest.TestCase):
                     "summary": "Targeted cost evidence",
                     "row_count": 1,
                     "visible_row_count": 1,
+                    "payload_hash": "1" * 64,
                     "passed": True,
                     "proof_source": "runtime_export",
                 }
@@ -578,6 +683,7 @@ class FullAppGauntletTests(unittest.TestCase):
                     "review_note": "Current Settings/Admin Setup Health action validated by runtime gauntlet.",
                     "expected_query_budget_context": "admin_setup",
                     "observed_query_budget_contexts": ["admin_setup"],
+                    "admin_or_advanced_gated": True,
                     "sanitized_error_state": True,
                     "raw_error_visible_daily": False,
                     "passed": True,
@@ -596,6 +702,8 @@ class FullAppGauntletTests(unittest.TestCase):
                     "explicit_click_required": True,
                     "admin_or_advanced_gated": True,
                     "timeout_or_row_limit": True,
+                    "permission_denied_sanitized": True,
+                    "unavailable_snowflake_sanitized": True,
                     "first_paint_invocation": False,
                     "route_invocation": False,
                     "raw_error_visible_daily": False,
@@ -607,7 +715,10 @@ class FullAppGauntletTests(unittest.TestCase):
             "artifacts/full_app_validation/query_search_results.json": query_search_rows,
             "artifacts/full_app_validation/stress_results.json": stress_rows,
             "artifacts/full_app_validation/forbidden_ui_token_scan.json": {"blocked_count": 0, "passed": True},
+            "artifacts/full_app_validation/forbidden_daily_ui_scan.json": {"blocked_count": 0, "passed": True},
+            "artifacts/full_app_validation/forbidden_source_token_scan.json": {"blocked_count": 0, "passed": True},
             "artifacts/full_app_validation/forbidden_export_scan.json": {"blocked_count": 0, "passed": True},
+            "artifacts/full_app_validation/gauntlet_artifact_reconciliation.json": {"passed": True},
             "artifacts/full_app_validation/risk_inventory.json": {"passed": True, "proof_source": "runtime_click"},
             "artifacts/full_app_validation/query_budget_results.json": {"passed": True, "proof_source": "runtime_click"},
             "artifacts/full_app_validation/session_direct_sql_results.json": {"passed": True, "proof_source": "runtime_click"},
@@ -621,10 +732,15 @@ class FullAppGauntletTests(unittest.TestCase):
                 "passed": True,
                 "includes_validation_sql": True,
                 "includes_drop_sql": True,
+                "includes_secure_view_audit_sql": True,
                 "includes_full_snowflake_tree": True,
+                "missing_expected_files": [],
+                "skipped_files": [],
                 "scanned_files": [
+                    "snowflake/OVERWATCH_MART_SETUP.sql",
                     "snowflake/OVERWATCH_MART_VALIDATION.sql",
                     "snowflake/OVERWATCH_MART_DROP.sql",
+                    "snowflake/OVERWATCH_DYNAMIC_TABLE_SECURE_VIEW_AUDIT.sql",
                 ],
             },
         })

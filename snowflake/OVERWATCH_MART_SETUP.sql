@@ -4501,6 +4501,7 @@ BEGIN
     t.PREDECESSORS,
     t.DEFINITION,
     REGEXP_SUBSTR(t.DEFINITION, 'CALL[[:space:]]+([^[:space:];(]+)', 1, 1, 'ie', 1) AS PROCEDURE_NAME
+  -- OVERWATCH_CURRENT_OBJECT_SNAPSHOT_SCAN: TASKS is a current-object snapshot; time pruning would hide unchanged active tasks.
   FROM SNOWFLAKE.ACCOUNT_USAGE.TASKS t
   WHERE t.DELETED IS NULL;
 
@@ -4530,6 +4531,7 @@ BEGIN
     p.ARGUMENT_SIGNATURE,
     p.LAST_ALTERED,
     IFF(rc.PROCEDURE_NAME IS NULL, TRUE, FALSE) AS IS_ORPHAN_CANDIDATE
+  -- OVERWATCH_CURRENT_OBJECT_SNAPSHOT_SCAN: PROCEDURES is a current-object snapshot; time pruning would hide unchanged active procedures.
   FROM SNOWFLAKE.ACCOUNT_USAGE.PROCEDURES p
   LEFT JOIN recent_calls rc
     ON rc.PROCEDURE_NAME ILIKE '%' || UPPER(p.PROCEDURE_NAME) || '%'
@@ -6224,6 +6226,7 @@ BEGIN
         GRANTEE_NAME AS USER_NAME,
         MAX(IFF("ROLE" ILIKE '%TRXS%', 1, 0)) AS HAS_TRXS_ROLE,
         MAX(IFF("ROLE" NOT ILIKE '%TRXS%', 1, 0)) AS HAS_NON_TRXS_ROLE
+      -- OVERWATCH_CURRENT_OBJECT_SNAPSHOT_SCAN: GRANTS_TO_USERS supplies active role classification; time pruning would hide unchanged active grants.
       FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS
       WHERE DELETED_ON IS NULL
       GROUP BY GRANTEE_NAME

@@ -156,6 +156,47 @@ class SqlPerformanceLintTests(unittest.TestCase):
         )
         self.assertNotIn("ACCOUNT_USAGE_UNBOUNDED", {finding["code"] for finding in good})
 
+    def test_linter_rejects_always_true_timestamp_predicates(self):
+        from tools.contracts.sql_performance_lint import lint_sql_text
+
+        findings = lint_sql_text(
+            """
+            SELECT REFERENCING_OBJECT_NAME
+            FROM SNOWFLAKE.ACCOUNT_USAGE.OBJECT_DEPENDENCIES
+            WHERE CURRENT_TIMESTAMP() >= DATEADD(day, -30, CURRENT_TIMESTAMP())
+            LIMIT 100
+            """,
+            path="snowflake/OVERWATCH_DYNAMIC_TABLE_SECURE_VIEW_AUDIT.sql",
+        )
+        codes = {finding["code"] for finding in findings}
+        self.assertIn("ALWAYS_TRUE_TIME_PREDICATE", codes)
+        self.assertIn("ACCOUNT_USAGE_UNBOUNDED", codes)
+
+    def test_secure_view_audit_uses_bounded_admin_object_dependency_scan(self):
+        from tools.contracts.sql_performance_lint import lint_sql_files
+
+        findings = lint_sql_files(
+            [ROOT / "snowflake" / "OVERWATCH_DYNAMIC_TABLE_SECURE_VIEW_AUDIT.sql"],
+            root=ROOT,
+        )
+        codes = {finding["code"] for finding in findings}
+        self.assertNotIn("ALWAYS_TRUE_TIME_PREDICATE", codes)
+        self.assertNotIn("ACCOUNT_USAGE_UNBOUNDED", codes)
+        self.assertFalse([finding for finding in findings if finding["severity"] == "error"], findings)
+
+    def test_linter_warns_limit_only_account_usage_without_order_or_predicate(self):
+        from tools.contracts.sql_performance_lint import lint_sql_text
+
+        findings = lint_sql_text(
+            """
+            SELECT QUERY_ID
+            FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+            LIMIT 25
+            """,
+            path="synthetic.sql",
+        )
+        self.assertIn("ACCOUNT_USAGE_LIMIT_WITHOUT_ORDER_OR_PREDICATE", {finding["code"] for finding in findings})
+
     def test_linter_query_search_mode_enforces_exact_related_and_projection(self):
         from tools.contracts.sql_performance_lint import lint_sql_text
 
@@ -194,8 +235,7 @@ class SqlPerformanceLintTests(unittest.TestCase):
         from tools.contracts.sql_performance_lint import lint_sql_files
 
         paths = [
-            *sorted((ROOT / "snowflake" / "mart_setup").glob("*.sql")),
-            ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql",
+            *sorted((ROOT / "snowflake").rglob("*.sql")),
         ]
         findings = lint_sql_files(paths, root=ROOT)
         errors = [finding for finding in findings if finding["severity"] == "error"]

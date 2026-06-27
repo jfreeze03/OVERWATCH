@@ -169,7 +169,7 @@ def _trust_detail_html(model: DecisionWorkspaceViewModel) -> str:
         source_rows.append(
             '<div class="ow-decision-source-row">'
             f'<strong>{_html(source.source_label or source.source_object or source.source_key)}</strong>'
-            f'<span>{_html(source.source_object)}</span>'
+            f'<span>{_html(source.environment_scope_label or source.status)}</span>'
             f'<span>{_html(meta)}</span>'
             f'<small>{_html(source.gap_reason or source.confidence or "No source gap reported")}</small>'
             '</div>'

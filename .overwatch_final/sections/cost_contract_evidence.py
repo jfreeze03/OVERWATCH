@@ -13,6 +13,7 @@ from sections.decision_workspace_target_filters import (
     evidence_target_label,
 )
 from utils.mart_cost import build_mart_cost_explorer_sql
+from utils.mart_names import mart_object_name
 from utils.primitives import safe_float, safe_int
 from utils.sql_safe import sql_literal
 from performance import TARGETED_EVIDENCE_DEFAULT_LIMIT, TARGETED_EVIDENCE_MAX_LIMIT
@@ -41,6 +42,14 @@ COST_EVIDENCE_COLUMNS: tuple[str, ...] = (
     "ALLOCATION_BASIS",
     "CHARGEBACK_READY",
     "SCOPE_REVIEW",
+    "SERVICE_CATEGORY",
+    "SERVICE_TYPE",
+    "TAG_VALUE",
+    "APPLICATION",
+    "DRIVER",
+    "DIMENSION",
+    "ENTITY_NAME",
+    "ENTITY_ID",
     "QUERY_COUNT",
     "TOTAL_CREDITS",
     "EST_COST",
@@ -69,8 +78,58 @@ def _target_hash(target: dict[str, str] | None) -> str:
     return hashlib.sha1(payload.encode("utf-8", errors="ignore")).hexdigest()[:12]
 
 
-def _cost_evidence_sql(company: str, environment: str, days: int, target: dict[str, str] | None, limit: int) -> str:
-    base_sql = build_mart_cost_explorer_sql(days_back=int(days), company=company)
+def _target_value(target: dict[str, str] | None) -> str:
+    target = target or {}
+    return str(target.get("entity_id") or target.get("entity_name") or target.get("evidence_id") or "").strip()
+
+
+def _chargeback_builder_kwargs(target: dict[str, str] | None) -> dict[str, str]:
+    target = target or {}
+    entity_type = str(target.get("entity_type") or "").strip().lower()
+    value = _target_value(target)
+    kwargs = {
+        "warehouse_contains": "",
+        "user_contains": "",
+        "role_contains": "",
+        "database_contains": "",
+        "department_contains": "",
+    }
+    if not value:
+        return kwargs
+    if entity_type in {"warehouse", "warehouse_name"}:
+        kwargs["warehouse_contains"] = value
+    elif entity_type == "user":
+        kwargs["user_contains"] = value
+    elif entity_type == "role":
+        kwargs["role_contains"] = value
+    elif entity_type == "database":
+        kwargs["database_contains"] = value
+    elif entity_type == "department":
+        kwargs["department_contains"] = value
+    return kwargs
+
+
+def _prefers_service_cost(target: dict[str, str] | None) -> bool:
+    entity_type = str((target or {}).get("entity_type") or "").strip().lower()
+    return entity_type in {
+        "service",
+        "service_category",
+        "service_type",
+        "cortex",
+        "cortex_service",
+        "application",
+        "tag",
+        "driver",
+        "dimension",
+    }
+
+
+def _chargeback_evidence_sql(company: str, environment: str, days: int, target: dict[str, str] | None, limit: int) -> str:
+    base_sql = build_mart_cost_explorer_sql(
+        days_back=int(days),
+        company=company,
+        **_chargeback_builder_kwargs(target),
+    )
     target_filter = build_target_sql_filter(
         "Cost & Contract",
         target or {},
@@ -81,7 +140,26 @@ def _cost_evidence_sql(company: str, environment: str, days: int, target: dict[s
     return f"""
         SELECT *
         FROM (
-            {base_sql}
+            SELECT
+                target.*,
+                NULL::VARCHAR AS SERVICE_CATEGORY,
+                NULL::VARCHAR AS SERVICE_TYPE,
+                NULL::VARCHAR AS TAG_VALUE,
+                NULL::VARCHAR AS APPLICATION,
+                COALESCE(target.WAREHOUSE_NAME, target.USER_NAME, target.ROLE_NAME, target.DATABASE_NAME, target.DEPARTMENT) AS DRIVER,
+                CASE
+                    WHEN target.WAREHOUSE_NAME IS NOT NULL THEN 'warehouse'
+                    WHEN target.USER_NAME IS NOT NULL THEN 'user'
+                    WHEN target.ROLE_NAME IS NOT NULL THEN 'role'
+                    WHEN target.DATABASE_NAME IS NOT NULL THEN 'database'
+                    WHEN target.DEPARTMENT IS NOT NULL THEN 'department'
+                    ELSE 'chargeback'
+                END AS DIMENSION,
+                COALESCE(target.WAREHOUSE_NAME, target.USER_NAME, target.ROLE_NAME, target.DATABASE_NAME, target.DEPARTMENT) AS ENTITY_NAME,
+                COALESCE(target.WAREHOUSE_NAME, target.USER_NAME, target.ROLE_NAME, target.DATABASE_NAME, target.DEPARTMENT) AS ENTITY_ID
+            FROM (
+                {base_sql}
+            ) target
         ) target
         WHERE 1 = 1
           {env_filter}
@@ -89,6 +167,70 @@ def _cost_evidence_sql(company: str, environment: str, days: int, target: dict[s
         ORDER BY EST_COST DESC, TOTAL_CREDITS DESC, QUERY_COUNT DESC
         LIMIT {int(limit)}
     """
+
+
+def _service_evidence_sql(company: str, environment: str, days: int, target: dict[str, str] | None, limit: int) -> str:
+    table = mart_object_name("FACT_COST_DAILY")
+    company_filter = "" if str(company or "").upper() == "ALL" else f"AND COMPANY = {sql_literal(company, 100)}"
+    target_filter = build_target_sql_filter(
+        "Cost & Contract",
+        target or {},
+        alias="target",
+        available_columns=COST_EVIDENCE_COLUMNS,
+    )
+    env_filter = _environment_filter(environment)
+    return f"""
+        SELECT *
+        FROM (
+            SELECT
+                COMPANY,
+                'ALL' AS ENVIRONMENT,
+                'ALL' AS ENVIRONMENT_ROLLUP,
+                NULL::VARCHAR AS DATABASE_NAME,
+                NULL::VARCHAR AS USER_NAME,
+                NULL::VARCHAR AS ROLE_NAME,
+                NULL::VARCHAR AS WAREHOUSE_NAME,
+                NULL::VARCHAR AS WAREHOUSE_SIZE,
+                NULL::VARCHAR AS DEPARTMENT,
+                NULL::VARCHAR AS COST_OWNER,
+                'cost_daily' AS OWNER_SOURCE,
+                'service cost daily' AS OWNER_EVIDENCE,
+                'estimated' AS ALLOCATION_CONFIDENCE,
+                'service daily rollup' AS ALLOCATION_BASIS,
+                FALSE AS CHARGEBACK_READY,
+                'service evidence' AS SCOPE_REVIEW,
+                SERVICE_CATEGORY,
+                SERVICE_TYPE,
+                NULL::VARCHAR AS TAG_VALUE,
+                NULL::VARCHAR AS APPLICATION,
+                COALESCE(SERVICE_TYPE, SERVICE_CATEGORY, 'Snowflake service') AS DRIVER,
+                'service' AS DIMENSION,
+                COALESCE(SERVICE_TYPE, SERVICE_CATEGORY, 'Snowflake service') AS ENTITY_NAME,
+                COALESCE(SERVICE_TYPE, SERVICE_CATEGORY, 'Snowflake service') AS ENTITY_ID,
+                COUNT(*) AS QUERY_COUNT,
+                ROUND(SUM(COALESCE(CREDITS_BILLED, CREDITS_USED_COMPUTE, 0)), 4) AS TOTAL_CREDITS,
+                ROUND(SUM(COALESCE(EST_COST_USD, 0)), 2) AS EST_COST,
+                MIN(USAGE_DATE) AS FIRST_USAGE_DATE,
+                MAX(USAGE_DATE) AS LAST_USAGE_DATE,
+                COUNT(DISTINCT USAGE_DATE) AS ACTIVE_DAYS,
+                MAX(LOAD_TS) AS MART_LOAD_TS
+            FROM {table}
+            WHERE USAGE_DATE >= DATEADD('DAY', -{int(days)}, CURRENT_DATE())
+              {company_filter}
+            GROUP BY COMPANY, SERVICE_CATEGORY, SERVICE_TYPE
+        ) target
+        WHERE 1 = 1
+          {env_filter}
+          {target_filter}
+        ORDER BY EST_COST DESC, TOTAL_CREDITS DESC, QUERY_COUNT DESC
+        LIMIT {int(limit)}
+    """
+
+
+def _cost_evidence_sql(company: str, environment: str, days: int, target: dict[str, str] | None, limit: int) -> str:
+    if _prefers_service_cost(target):
+        return _service_evidence_sql(company, environment, days, target, limit)
+    return _chargeback_evidence_sql(company, environment, days, target, limit)
 
 
 def _summary(rows: object, target_label: str) -> tuple[str, tuple[tuple[str, str], ...]]:
@@ -103,7 +245,7 @@ def _summary(rows: object, target_label: str) -> tuple[str, tuple[tuple[str, str
     credits = safe_float(pd.to_numeric(rows.get("TOTAL_CREDITS", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
     query_count = safe_int(pd.to_numeric(rows.get("QUERY_COUNT", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
     top_driver = ""
-    for column in ("WAREHOUSE_NAME", "SERVICE_CATEGORY", "USER_NAME", "ROLE_NAME", "DATABASE_NAME", "DEPARTMENT"):
+    for column in ("WAREHOUSE_NAME", "SERVICE_CATEGORY", "SERVICE_TYPE", "ENTITY_NAME", "DRIVER", "USER_NAME", "ROLE_NAME", "DATABASE_NAME", "DEPARTMENT"):
         if column in rows.columns and not rows.empty:
             top_driver = str(rows.iloc[0].get(column) or "").strip()
             if top_driver:

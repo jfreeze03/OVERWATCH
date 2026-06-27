@@ -2372,7 +2372,9 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         warehouse_block = source.split("if target_warehouse:", 1)[1].split("c1, c2, c3, c4", 1)[0]
         self.assertNotIn("qs_autorun", warehouse_block)
         self.assertLess(source.index('explicit_search = st.button("Search recent mart detail"'), source.index("qh_cols = set(filter_existing_columns("))
-        self.assertIn('account_usage_fallback = st.button("Search Account Usage fallback"', source)
+        self.assertIn('with st.expander("Advanced Account Usage fallback"', source)
+        self.assertIn('"I understand this may scan Account Usage."', source)
+        self.assertIn('"Search Account Usage fallback"', source)
         self.assertIn("ACCOUNT_USAGE_TARGETED_SCAN_ALLOWED", source)
 
     def test_targeted_evidence_loaders_push_filters_before_rows(self):
@@ -2381,7 +2383,9 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         cost_evidence = (APP_ROOT / "sections" / "cost_contract_evidence.py").read_text(encoding="utf-8")
         cost_floor = (APP_ROOT / "sections" / "cost_contract_overview_floor.py").read_text(encoding="utf-8")
 
-        self.assertIn('target=get_decision_evidence_target("Alert Center")', alert_data)
+        self.assertIn('target = get_decision_evidence_target("Alert Center")', alert_data)
+        self.assertIn("target=target", alert_data)
+        self.assertIn("alert_ids=tuple(dict.fromkeys(alert_ids))", alert_data)
         self.assertIn('build_target_sql_filter("Alert Center"', alert_query)
         self.assertIn("def load_cost_evidence(", cost_evidence)
         self.assertIn("build_target_sql_filter(", cost_evidence)

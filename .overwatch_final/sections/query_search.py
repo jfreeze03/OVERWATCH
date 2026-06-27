@@ -1,4 +1,6 @@
 # sections/query_search.py - Query search and history browser
+import os
+
 import streamlit as st
 
 from utils import (
@@ -175,7 +177,21 @@ def render():
 
     autorun = bool(st.session_state.pop("qs_autorun", False))
     explicit_search = st.button("Search recent mart detail", key="qs_run")
-    account_usage_fallback = st.button("Search Account Usage fallback", key="qs_account_usage_fallback")
+    account_usage_fallback = False
+    with st.expander("Advanced Account Usage fallback", expanded=False):
+        st.warning(
+            "Account Usage fallback can scan Snowflake history and may be slower or costlier. "
+            "Use recent mart detail first unless an admin specifically needs older proof."
+        )
+        fallback_confirmed = os.environ.get("OVERWATCH_TEST_MODE") == "1" or st.checkbox(
+            "I understand this may scan Account Usage.",
+            key="qs_account_usage_fallback_confirmed",
+        )
+        account_usage_fallback = st.button(
+            "Search Account Usage fallback",
+            key="qs_account_usage_fallback",
+            disabled=not fallback_confirmed,
+        )
     if (explicit_search or autorun or account_usage_fallback) and (search_text or target_warehouse):
         if autorun and target_warehouse and not ACCOUNT_USAGE_TARGETED_SCAN_ALLOWED:
             st.info("Warehouse target is prefilled. Click Search to run a bounded warehouse query history lookup.")

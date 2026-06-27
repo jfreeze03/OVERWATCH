@@ -2328,6 +2328,83 @@ WHERE NOT EXISTS (
     AND cfg.SOURCE_KEY = v.SOURCE_KEY
 );
 
+MERGE INTO OVERWATCH_SECTION_COMMAND_SOURCE_CONFIG cfg
+USING (
+  SELECT
+    SECTION_NAME,
+    SOURCE_KEY,
+    CASE
+      WHEN SOURCE_KEY IN (
+        'alert_events', 'security_alerts', 'query_hourly', 'query_recent', 'task_runs',
+        'procedure_runs', 'copy_load', 'security_operability', 'change_summary'
+      ) THEN 'exact'
+      WHEN SOURCE_KEY IN (
+        'cost_daily', 'cortex_daily', 'cost_signals', 'forecast', 'value_ledger',
+        'settings', 'action_queue', 'executive_observability', 'executive_scorecard',
+        'executive_forecast', 'closed_loop', 'production_readiness', 'data_trust',
+        'app_observability', 'dba_control_room', 'notification_log',
+        'acknowledgements', 'owner_coverage', 'login_daily', 'grant_daily'
+      ) THEN 'all_fallback'
+      ELSE 'not_applicable'
+    END AS ENVIRONMENT_MODE,
+    SOURCE_KEY IN (
+      'alert_events', 'security_alerts', 'query_hourly', 'query_recent', 'task_runs',
+      'procedure_runs', 'copy_load', 'security_operability', 'change_summary'
+    ) AS SUPPORTS_ENVIRONMENT
+  FROM VALUES
+    ('Executive Landing','executive_observability'),
+    ('Executive Landing','executive_scorecard'),
+    ('Executive Landing','executive_forecast'),
+    ('Executive Landing','closed_loop'),
+    ('Executive Landing','production_readiness'),
+    ('Executive Landing','data_trust'),
+    ('Executive Landing','app_observability'),
+    ('Executive Landing','value_ledger'),
+    ('Executive Landing','cost_daily'),
+    ('Executive Landing','cortex_daily'),
+    ('Executive Landing','alert_events'),
+    ('Executive Landing','action_queue'),
+    ('Executive Landing','query_hourly'),
+    ('Executive Landing','task_runs'),
+    ('Executive Landing','security_operability'),
+    ('DBA Control Room','dba_control_room'),
+    ('DBA Control Room','query_hourly'),
+    ('DBA Control Room','task_runs'),
+    ('DBA Control Room','action_queue'),
+    ('DBA Control Room','change_summary'),
+    ('DBA Control Room','security_operability'),
+    ('DBA Control Room','cost_daily'),
+    ('Alert Center','alert_events'),
+    ('Alert Center','action_queue'),
+    ('Alert Center','notification_log'),
+    ('Alert Center','acknowledgements'),
+    ('Cost & Contract','cost_daily'),
+    ('Cost & Contract','cortex_daily'),
+    ('Cost & Contract','cost_signals'),
+    ('Cost & Contract','forecast'),
+    ('Cost & Contract','value_ledger'),
+    ('Cost & Contract','action_queue'),
+    ('Cost & Contract','settings'),
+    ('Workload Operations','query_hourly'),
+    ('Workload Operations','query_recent'),
+    ('Workload Operations','task_runs'),
+    ('Workload Operations','procedure_runs'),
+    ('Workload Operations','copy_load'),
+    ('Workload Operations','change_summary'),
+    ('Security Monitoring','security_operability'),
+    ('Security Monitoring','login_daily'),
+    ('Security Monitoring','grant_daily'),
+    ('Security Monitoring','security_alerts'),
+    ('Security Monitoring','owner_coverage'),
+    ('Security Monitoring','change_summary')
+  AS v(SECTION_NAME, SOURCE_KEY)
+) src
+ON cfg.SECTION_NAME = src.SECTION_NAME
+AND cfg.SOURCE_KEY = src.SOURCE_KEY
+WHEN MATCHED THEN UPDATE SET
+  cfg.ENVIRONMENT_MODE = src.ENVIRONMENT_MODE,
+  cfg.SUPPORTS_ENVIRONMENT = src.SUPPORTS_ENVIRONMENT;
+
 CREATE TRANSIENT TABLE IF NOT EXISTS MART_SECTION_COMMAND_SOURCE (
   BRIEF_ID                     VARCHAR(64),
   SECTION_NAME                 VARCHAR(200),
@@ -13791,16 +13868,30 @@ FROM MART_SECTION_COMMAND_ACTION
 WHERE SNAPSHOT_TS = (SELECT MAX(SNAPSHOT_TS) FROM MART_SECTION_COMMAND_ACTION);
 
 SELECT
+  'SECTION_DECISION_CURRENT_ONE_ACTIVE_ROW_PER_KEY' AS CHECK_NAME,
+  COUNT(*) AS DUPLICATE_ACTIVE_KEYS,
+  IFF(COUNT(*) = 0, 'PASS', 'FAIL') AS STATUS
+FROM (
+  SELECT SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS
+  FROM MART_SECTION_DECISION_CURRENT
+  WHERE COALESCE(IS_ACTIVE, TRUE)
+  GROUP BY SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS
+  HAVING COUNT(*) > 1
+);
+
+SELECT
   'SECTION_DECISION_CURRENT_PACKET_COVERAGE' AS CHECK_NAME,
   COUNT(DISTINCT SECTION_NAME) AS OBSERVED_SECTIONS,
   IFF(COUNT(DISTINCT SECTION_NAME) = 6 AND COUNT_IF(DECISION_PACKET IS NULL) = 0, 'PASS', 'FAIL') AS STATUS
-FROM MART_SECTION_DECISION_CURRENT;
+FROM MART_SECTION_DECISION_CURRENT
+WHERE COALESCE(IS_ACTIVE, TRUE);
 
 SELECT
   'SECTION_DECISION_CURRENT_PACKET_SOURCES' AS CHECK_NAME,
   COUNT_IF(DECISION_PACKET:"SOURCES" IS NULL OR ARRAY_SIZE(DECISION_PACKET:"SOURCES") = 0) AS PACKETS_WITHOUT_SOURCES,
   IFF(COUNT_IF(DECISION_PACKET:"SOURCES" IS NULL OR ARRAY_SIZE(DECISION_PACKET:"SOURCES") = 0) = 0, 'PASS', 'FAIL') AS STATUS
-FROM MART_SECTION_DECISION_CURRENT;
+FROM MART_SECTION_DECISION_CURRENT
+WHERE COALESCE(IS_ACTIVE, TRUE);
 
 WITH current_packets AS (
   SELECT
@@ -13811,6 +13902,7 @@ WITH current_packets AS (
     BRIEF_ID,
     DECISION_PACKET
   FROM MART_SECTION_DECISION_CURRENT
+  WHERE COALESCE(IS_ACTIVE, TRUE)
 ),
 source_rows AS (
   SELECT
@@ -13883,6 +13975,7 @@ LEFT JOIN flattened f
 WITH current_packets AS (
   SELECT SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, BRIEF_ID, DECISION_PACKET
   FROM MART_SECTION_DECISION_CURRENT
+  WHERE COALESCE(IS_ACTIVE, TRUE)
 ),
 source_rollup AS (
   SELECT
@@ -13946,6 +14039,7 @@ WHERE m.SNAPSHOT_TS = (SELECT MAX(SNAPSHOT_TS) FROM MART_SECTION_COMMAND_METRIC)
 WITH current_packets AS (
   SELECT SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, BRIEF_ID, DECISION_PACKET
   FROM MART_SECTION_DECISION_CURRENT
+  WHERE COALESCE(IS_ACTIVE, TRUE)
 ),
 source_rows AS (
   SELECT

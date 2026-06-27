@@ -797,7 +797,7 @@ def upsert_actions(session, actions: list[dict]) -> int:
     return count
 
 
-def load_action_queue(session, limit: int = 500) -> pd.DataFrame:
+def load_action_queue(session, limit: int = 500, *, target: dict | None = None, section: str = "") -> pd.DataFrame:
     company = get_active_company()
     has_environment = _action_queue_has_column(session, "ENVIRONMENT")
     where_clauses = []
@@ -807,11 +807,33 @@ def load_action_queue(session, limit: int = 500) -> pd.DataFrame:
         env_clause = action_queue_environment_clause("ENVIRONMENT")
         if env_clause:
             where_clauses.append(env_clause)
-    where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+    where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else "WHERE 1 = 1"
     optional_selects = [
         _optional_column_select(session, column)
         for column in ACTION_QUEUE_OPTIONAL_COLUMN_TYPES
     ]
+    target_filter = ""
+    target_hash = "none"
+    if target:
+        try:
+            from sections.decision_workspace_target_filters import build_target_sql_filter
+
+            target_filter = build_target_sql_filter(
+                str(section or "Alert Center"),
+                target,
+                available_columns=(
+                    "ACTION_ID",
+                    "ENTITY_TYPE",
+                    "ENTITY_NAME",
+                    "OWNER",
+                    "CATEGORY",
+                    "SOURCE",
+                ),
+            )
+            target_hash = hashlib.sha1(str(target_filter or target).encode("utf-8", errors="ignore")).hexdigest()[:10]
+        except Exception:
+            target_filter = ""
+            target_hash = "target"
     df = run_query(f"""
         SELECT ACTION_ID, CREATED_AT, UPDATED_AT, SOURCE, CATEGORY, SEVERITY,
                ENTITY_TYPE, ENTITY_NAME, OWNER, STATUS, FINDING, RECOMMENDED_ACTION,
@@ -820,6 +842,7 @@ def load_action_queue(session, limit: int = 500) -> pd.DataFrame:
                LAST_SEEN_AT, SEEN_COUNT
         FROM {ACTION_QUEUE_FQN}
         {where_clause}
+        {target_filter}
         ORDER BY
             CASE STATUS
                 WHEN 'New' THEN 1
@@ -838,7 +861,7 @@ def load_action_queue(session, limit: int = 500) -> pd.DataFrame:
             END,
             UPDATED_AT DESC
         LIMIT {int(limit)}
-    """, ttl_key=f"action_queue_{company}_{get_active_environment()}_{int(limit)}", tier="recent")
+    """, ttl_key=f"action_queue_{company}_{get_active_environment()}_{int(limit)}_{target_hash}", tier="recent", section=section)
     return enrich_action_queue_view(df)
 
 

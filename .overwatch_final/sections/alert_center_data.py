@@ -48,6 +48,7 @@ def _load_center_data(
         "loaded_at": datetime.now().isoformat(timespec="seconds"),
         "_loaded_sources": sorted(sources),
     }
+    target = get_decision_evidence_target("Alert Center")
     if "alerts" in sources:
         try:
             data["alerts"] = load_alert_history(
@@ -57,18 +58,35 @@ def _load_center_data(
                 days=days,
                 limit=limit,
                 section="Alert Center",
-                target=get_decision_evidence_target("Alert Center"),
+                target=target,
             )
         except Exception as exc:
             data["alerts_error"] = format_snowflake_error(exc)
     if "action_queue" in sources:
         try:
-            data["action_queue"] = load_action_queue(session, limit=max(200, limit))
+            data["action_queue"] = load_action_queue(
+                session,
+                limit=max(200, limit),
+                target=target,
+                section="Alert Center",
+            )
         except Exception as exc:
             data["queue_error"] = format_snowflake_error(exc)
     if "delivery_log" in sources:
         try:
-            data["delivery_log"] = load_alert_delivery_log(days=max(days, 14), limit=100, section="Alert Center")
+            alert_ids = []
+            alerts = data.get("alerts")
+            if isinstance(alerts, pd.DataFrame) and not alerts.empty:
+                for column in ("EVENT_ID", "ALERT_ID", "ALERT_KEY"):
+                    if column in alerts.columns:
+                        alert_ids.extend(str(value) for value in alerts[column].dropna().head(limit).tolist())
+            data["delivery_log"] = load_alert_delivery_log(
+                days=max(days, 14),
+                limit=100,
+                section="Alert Center",
+                target=target,
+                alert_ids=tuple(dict.fromkeys(alert_ids)),
+            )
         except Exception as exc:
             data["delivery_error"] = format_snowflake_error(exc)
     if "rules" in sources:

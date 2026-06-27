@@ -445,9 +445,27 @@ def load_alert_delivery_log(
     days: int = 14,
     limit: int = 100,
     section: str = "Alert Center",
+    target: dict | None = None,
+    alert_ids: tuple[str, ...] = (),
 ) -> pd.DataFrame:
     days = max(1, min(int(days), 365))
     limit = max(1, min(int(limit), 1000))
+    related_values = [str(value).strip() for value in alert_ids if str(value or "").strip()]
+    target = target or {}
+    for key in ("evidence_id", "entity_id", "entity_name"):
+        value = str(target.get(key) or "").strip()
+        if value:
+            related_values.append(value)
+    related_values = list(dict.fromkeys(related_values))[:25]
+    related_filter = ""
+    if related_values:
+        predicates = [
+            f"EMAIL_SUBJECT ILIKE '%' || {sql_literal(value, 300)} || '%'"
+            f" OR DELIVERY_NOTES ILIKE '%' || {sql_literal(value, 300)} || '%'"
+            for value in related_values
+        ]
+        related_filter = "AND (" + " OR ".join(f"({predicate})" for predicate in predicates) + ")"
+    target_hash = str(abs(hash(tuple(related_values))))[:10] if related_values else "none"
     return run_query(f"""
         SELECT
             DELIVERY_ID,
@@ -463,6 +481,7 @@ def load_alert_delivery_log(
             DELIVERY_NOTES
         FROM {alert_delivery_log_fqn(quoted=True)}
         WHERE DELIVERY_TS >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+          {related_filter}
         ORDER BY DELIVERY_TS DESC
         LIMIT {limit}
-    """, ttl_key=f"alert_delivery_log_{days}_{limit}", tier="recent", section=section)
+    """, ttl_key=f"alert_delivery_log_{days}_{limit}_{target_hash}", tier="recent", section=section)

@@ -47,7 +47,7 @@ from .session import apply_overwatch_query_tag, build_overwatch_query_tag, get_s
 from .data import normalize_df
 from .idle import empty_paused_result, queries_paused
 from .sql_safe import sql_literal
-from performance import record_ui_query_event
+from performance import current_first_paint_render_id, increment_snowflake_execution_counter, record_ui_query_event
 
 CACHE_TIERS: dict[str, int] = {
     "live":       30,     # INFORMATION_SCHEMA - real-time, 30s stale is fine
@@ -661,6 +661,12 @@ def _execute_snowflake_query(
     session = get_session()
     _apply_overwatch_query_tag(session, query_tag)
     _apply_statement_timeout(session, tier)
+    increment_snowflake_execution_counter(
+        _infer_query_boundary(executable_query, ttl_key, tier),
+        section=_infer_telemetry_section(section, ttl_key),
+        ttl_key=ttl_key,
+        tier=tier,
+    )
     result = normalize_df(session.sql(executable_query).to_pandas())
     return _apply_result_guard(executable_query, result, ttl_key=ttl_key, section=section, tier=tier)
 
@@ -924,7 +930,7 @@ def _run_query_base(
         "actual_query_executed": None,
         "cache_layer": "unknown",
         "query_boundary": boundary,
-        "first_paint_sensitive": _first_paint_sensitive_boundary(boundary),
+        "first_paint_sensitive": bool(current_first_paint_render_id()) and _first_paint_sensitive_boundary(boundary),
         "error": "",
     }
     if queries_paused():
@@ -1038,7 +1044,7 @@ def run_query_or_raise(
             actual_query_executed=False,
             cache_layer="paused",
             query_boundary=boundary,
-            first_paint_sensitive=_first_paint_sensitive_boundary(boundary),
+            first_paint_sensitive=bool(current_first_paint_render_id()) and _first_paint_sensitive_boundary(boundary),
         )
         return empty_paused_result(ttl_key=ttl_key, section=section)
     if not _check_query_budget(tier, ttl_key, query_text):
@@ -1057,7 +1063,7 @@ def run_query_or_raise(
             actual_query_executed=False,
             cache_layer="budget_blocked",
             query_boundary=boundary,
-            first_paint_sensitive=_first_paint_sensitive_boundary(boundary),
+            first_paint_sensitive=bool(current_first_paint_render_id()) and _first_paint_sensitive_boundary(boundary),
         )
         return result
     error_message = ""
@@ -1068,11 +1074,14 @@ def run_query_or_raise(
             fn = _RAISE_TIER_FN.get(tier, _cached_raise_recent)
             result = fn(executable_query, context, cache_salt, query_tag, ttl_key, section)
             return result
-        session = get_session()
-        _apply_overwatch_query_tag(session, query_tag)
-        _apply_statement_timeout(session, tier)
-        result = normalize_df(session.sql(executable_query).to_pandas())
-        return _apply_result_guard(executable_query, result, ttl_key=ttl_key, section=section, tier=tier)
+        result = _execute_snowflake_query(
+            executable_query,
+            query_tag,
+            ttl_key=ttl_key,
+            tier=tier,
+            section=section,
+        )
+        return result
     except Exception as exc:
         error_message = format_snowflake_error(exc)
         raise
@@ -1104,7 +1113,7 @@ def run_query_or_raise(
             actual_query_executed=None if use_cache else True,
             cache_layer="streamlit_cache" if use_cache else "none",
             query_boundary=boundary,
-            first_paint_sensitive=_first_paint_sensitive_boundary(boundary),
+            first_paint_sensitive=bool(current_first_paint_render_id()) and _first_paint_sensitive_boundary(boundary),
         )
 
 

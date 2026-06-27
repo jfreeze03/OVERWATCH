@@ -50,6 +50,7 @@ from sections.shell_helpers import (
 from sections.section_command_brief import autoload_section_command_brief
 from sections.section_command_rendering import render_section_command_brief
 from sections.decision_workspace_controls import make_decision_refresh_action, make_evidence_action
+from sections.decision_workspace_performance import with_decision_first_paint
 from sections.decision_workspace_scope import active_decision_window_days
 from sections.decision_workspace_state import section_state_from_brief
 
@@ -74,15 +75,6 @@ def _apply_queued_security_workflow() -> None:
 
 
 def _render_security_first_paint_shell(active_view: str, company: str, environment: str, days: int) -> None:
-    security_brief = autoload_section_command_brief(
-        "Security Monitoring",
-        company,
-        environment,
-        active_decision_window_days(days or 30),
-        force=bool(st.session_state.pop("security_posture_command_brief_force_refresh", False)),
-    )
-    st.session_state["_security_monitoring_decision_mode"] = section_state_from_brief(security_brief).decision_mode
-
     def _render_security_evidence_settings() -> None:
         day_window_selectbox(
             "Security window",
@@ -90,23 +82,32 @@ def _render_security_first_paint_shell(active_view: str, company: str, environme
             default=30,
         )
 
-    render_section_command_brief(
-        security_brief,
-        key_prefix="security_monitoring_command_brief",
-        primary_action=make_decision_refresh_action("Security Monitoring"),
-        detail_action=make_evidence_action(
+    with with_decision_first_paint("Security Monitoring", active_view):
+        security_brief = autoload_section_command_brief(
             "Security Monitoring",
-            active_view,
-            label="Load Security Evidence",
-            help_text="Load security proof rows for the current scope.",
-            state_key="security_posture_load_evidence",
-            settings_renderer=_render_security_evidence_settings,
+            company,
+            environment,
+            active_decision_window_days(days or 30),
+            force=bool(st.session_state.pop("security_posture_command_brief_force_refresh", False)),
         )
-        if active_view == SECURITY_OVERVIEW_WORKFLOW
-        else None,
-        current_workflow=active_view,
-        compact=active_view != SECURITY_OVERVIEW_WORKFLOW,
-    )
+        st.session_state["_security_monitoring_decision_mode"] = section_state_from_brief(security_brief).decision_mode
+        render_section_command_brief(
+            security_brief,
+            key_prefix="security_monitoring_command_brief",
+            primary_action=make_decision_refresh_action("Security Monitoring"),
+            detail_action=make_evidence_action(
+                "Security Monitoring",
+                active_view,
+                label="Load Security Evidence",
+                help_text="Load security proof rows for the current scope.",
+                state_key="security_posture_load_evidence",
+                settings_renderer=_render_security_evidence_settings,
+            )
+            if active_view == SECURITY_OVERVIEW_WORKFLOW
+            else None,
+            current_workflow=active_view,
+            compact=active_view != SECURITY_OVERVIEW_WORKFLOW,
+        )
 
 
 def render_security_admin_advanced(company: str, environment: str, days: int) -> None:

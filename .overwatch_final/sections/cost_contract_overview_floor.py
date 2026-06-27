@@ -135,13 +135,17 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
     if isinstance(evidence, dict):
         target_label = str(evidence.get("target_label") or "")
         target_copy = f" for {target_label}" if target_label else ""
+        source_note = str(evidence.get("source") or "Cost evidence")
+        environment_scope_note = str(evidence.get("environment_scope_note") or "").strip()
+        if environment_scope_note:
+            source_note = f"{source_note} - {environment_scope_note}"
         render_decision_evidence_panel(
             f"Cost Evidence{target_copy}",
-            str(evidence.get("source") or "Loaded cost evidence"),
+            source_note,
             str(evidence.get("summary") or "Cost evidence loaded."),
             tuple(evidence.get("metrics") or (("Rows", str(evidence.get("row_count", 0))),)),
             rows=evidence.get("rows"),
-            source_note=str(evidence.get("source") or "Cost evidence"),
+            source_note=source_note,
         )
         if evidence.get("error"):
             st.warning(f"Cost evidence unavailable: {evidence.get('error')}")

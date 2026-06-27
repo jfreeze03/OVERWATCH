@@ -167,6 +167,7 @@ from sections.shell_helpers import render_content_header, render_section_breadcr
 from sections.section_command_brief import autoload_section_command_brief
 from sections.section_command_rendering import render_section_command_brief
 from sections.decision_workspace_controls import make_decision_refresh_action, make_evidence_action, should_render_daily_diagnostics
+from sections.decision_workspace_performance import with_decision_first_paint
 from sections.decision_workspace_scope import active_decision_window_days
 from sections.decision_workspace_state import section_state_from_brief
 from sections.cost_contract_workflow import (
@@ -232,13 +233,6 @@ def render() -> None:
             workflow_label(workflow),
             WORKFLOW_DETAILS.get(workflow, "Cost evidence remains behind explicit load actions."),
         )
-    cost_brief = autoload_section_command_brief(
-        "Cost & Contract",
-        company,
-        environment,
-        active_decision_window_days(active_cost_days()),
-        force=bool(st.session_state.pop("cost_contract_command_brief_force_refresh", False)),
-    )
     detail_action = None
     if workflow == "Cost Overview":
         detail_action = make_evidence_action(
@@ -249,14 +243,23 @@ def render() -> None:
             state_key="cost_contract_command_brief_load_evidence",
             key="cost_contract_refresh",
         )
-    render_section_command_brief(
-        cost_brief,
-        key_prefix="cost_contract_command_brief",
-        primary_action=make_decision_refresh_action("Cost & Contract"),
-        detail_action=detail_action,
-        current_workflow=workflow_label(workflow),
-        compact=workflow != "Cost Overview",
-    )
+    current_workflow_label = workflow_label(workflow)
+    with with_decision_first_paint("Cost & Contract", current_workflow_label):
+        cost_brief = autoload_section_command_brief(
+            "Cost & Contract",
+            company,
+            environment,
+            active_decision_window_days(active_cost_days()),
+            force=bool(st.session_state.pop("cost_contract_command_brief_force_refresh", False)),
+        )
+        render_section_command_brief(
+            cost_brief,
+            key_prefix="cost_contract_command_brief",
+            primary_action=make_decision_refresh_action("Cost & Contract"),
+            detail_action=detail_action,
+            current_workflow=current_workflow_label,
+            compact=workflow != "Cost Overview",
+        )
 
     st.session_state["_cost_contract_local_hierarchy_rendered"] = True
     decision_state = section_state_from_brief(cost_brief)

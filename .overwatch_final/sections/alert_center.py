@@ -29,6 +29,7 @@ from sections.decision_workspace_controls import (
     make_evidence_action,
     should_render_daily_diagnostics,
 )
+from sections.decision_workspace_performance import with_decision_first_paint
 from sections.decision_workspace_scope import active_decision_window_days
 from sections.alert_center_contracts import (
     ALERT_CENTER_ADMIN_VIEW_DETAILS,
@@ -758,28 +759,30 @@ def render() -> None:
             key="alert_center_evidence_rows",
         )
 
-    render_section_command_brief(
-        autoload_section_command_brief(
-            "Alert Center",
-            company,
-            environment,
-            active_decision_window_days(DEFAULT_DAY_WINDOW),
-            force=bool(st.session_state.pop("alert_center_command_brief_force_refresh", False)),
-        ),
-        key_prefix="alert_center_command_brief",
-        primary_action=make_decision_refresh_action("Alert Center"),
-        detail_action=make_evidence_action(
-            "Alert Center",
-            active_view,
-            label=load_label,
-            help_text="Load row-level alert evidence for the selected alert family.",
-            callback=lambda: _load_alert_center_view_data(source_view, company, environment, int(days), int(limit), required_sources),
-            key="alert_center_load",
-            settings_renderer=_render_alert_evidence_settings,
-        ),
-        current_workflow=ALERT_CENTER_PANE_LABELS.get(active_view, active_view),
-        compact=active_view != "Active Alerts",
-    )
+    current_workflow_label = ALERT_CENTER_PANE_LABELS.get(active_view, active_view)
+    with with_decision_first_paint("Alert Center", current_workflow_label):
+        render_section_command_brief(
+            autoload_section_command_brief(
+                "Alert Center",
+                company,
+                environment,
+                active_decision_window_days(DEFAULT_DAY_WINDOW),
+                force=bool(st.session_state.pop("alert_center_command_brief_force_refresh", False)),
+            ),
+            key_prefix="alert_center_command_brief",
+            primary_action=make_decision_refresh_action("Alert Center"),
+            detail_action=make_evidence_action(
+                "Alert Center",
+                active_view,
+                label=load_label,
+                help_text="Load row-level alert evidence for the selected alert family.",
+                callback=lambda: _load_alert_center_view_data(source_view, company, environment, int(days), int(limit), required_sources),
+                key="alert_center_load",
+                settings_renderer=_render_alert_evidence_settings,
+            ),
+            current_workflow=current_workflow_label,
+            compact=active_view != "Active Alerts",
+        )
     days = int(st.session_state.get("alert_center_evidence_days", days) or days)
     limit = int(st.session_state.get("alert_center_evidence_rows", limit) or limit)
     data = st.session_state.get("alert_center_data")

@@ -7,6 +7,7 @@ alert triage, alert catalog, native alert deployment, or action-queue routing.
 from __future__ import annotations
 
 import json
+import re
 import urllib.request
 from typing import Any
 
@@ -440,6 +441,35 @@ END;
 $$;"""
 
 
+def _alert_delivery_related_filter(
+    *,
+    target: dict | None = None,
+    alert_ids: tuple[str, ...] = (),
+) -> tuple[str, tuple[str, ...], str]:
+    """Return a safe bounded delivery-log predicate, preferring exact alert-id array matches."""
+    target = target or {}
+    explicit_values = [str(value).strip() for value in alert_ids if str(value or "").strip()]
+    numeric_alert_ids = tuple(dict.fromkeys(value for value in explicit_values if re.fullmatch(r"\d+", value)))[:25]
+    if numeric_alert_ids:
+        predicates = [f"ARRAY_CONTAINS({int(value)}::VARIANT, ALERT_IDS)" for value in numeric_alert_ids]
+        return "AND (" + " OR ".join(predicates) + ")", numeric_alert_ids, "alert_ids"
+
+    related_values = [value for value in explicit_values if value not in numeric_alert_ids]
+    for key in ("evidence_id", "entity_id", "entity_name"):
+        value = str(target.get(key) or "").strip()
+        if value:
+            related_values.append(value)
+    related_values = tuple(dict.fromkeys(related_values))[:25]
+    if not related_values:
+        return "", (), "none"
+    predicates = [
+        f"EMAIL_SUBJECT ILIKE '%' || {sql_literal(value, 300)} || '%'"
+        f" OR DELIVERY_NOTES ILIKE '%' || {sql_literal(value, 300)} || '%'"
+        for value in related_values
+    ]
+    return "AND (" + " OR ".join(f"({predicate})" for predicate in predicates) + ")", related_values, "text"
+
+
 def load_alert_delivery_log(
     *,
     days: int = 14,
@@ -450,28 +480,15 @@ def load_alert_delivery_log(
 ) -> pd.DataFrame:
     days = max(1, min(int(days), 365))
     limit = max(1, min(int(limit), 1000))
-    related_values = [str(value).strip() for value in alert_ids if str(value or "").strip()]
-    target = target or {}
-    for key in ("evidence_id", "entity_id", "entity_name"):
-        value = str(target.get(key) or "").strip()
-        if value:
-            related_values.append(value)
-    related_values = list(dict.fromkeys(related_values))[:25]
-    related_filter = ""
-    if related_values:
-        predicates = [
-            f"EMAIL_SUBJECT ILIKE '%' || {sql_literal(value, 300)} || '%'"
-            f" OR DELIVERY_NOTES ILIKE '%' || {sql_literal(value, 300)} || '%'"
-            for value in related_values
-        ]
-        related_filter = "AND (" + " OR ".join(f"({predicate})" for predicate in predicates) + ")"
-    target_hash = str(abs(hash(tuple(related_values))))[:10] if related_values else "none"
+    related_filter, related_values, related_mode = _alert_delivery_related_filter(target=target, alert_ids=alert_ids)
+    target_hash = str(abs(hash((related_mode, tuple(related_values)))))[:10] if related_values else "none"
     return run_query(f"""
         SELECT
             DELIVERY_ID,
             DELIVERY_TS,
             COMPANY,
             ENVIRONMENT,
+            ALERT_IDS,
             ALERT_COUNT,
             DELIVERY_METHOD,
             DELIVERY_TARGET,

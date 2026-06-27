@@ -57,17 +57,19 @@ COST_EVIDENCE_COLUMNS: tuple[str, ...] = (
     "LAST_USAGE_DATE",
     "ACTIVE_DAYS",
     "MART_LOAD_TS",
+    "ENVIRONMENT_SCOPE_MODE",
 )
 
 
-def _environment_filter(environment: str) -> str:
+def _environment_filter(environment: str, *, alias: str = "target") -> str:
     env = str(environment or "").strip()
     if not env or env.upper() in {"ALL", "ALL ENVIRONMENTS", "GLOBAL"}:
         return ""
+    prefix = f"{str(alias or 'target').strip()}."
     return (
-        "AND (UPPER(target.ENVIRONMENT) = UPPER("
+        f"AND (UPPER({prefix}ENVIRONMENT) = UPPER("
         f"{sql_literal(env, 100)}"
-        ") OR UPPER(target.ENVIRONMENT_ROLLUP) = UPPER("
+        f") OR UPPER({prefix}ENVIRONMENT_ROLLUP) = UPPER("
         f"{sql_literal(env, 100)}"
         "))"
     )
@@ -124,6 +126,14 @@ def _prefers_service_cost(target: dict[str, str] | None) -> bool:
     }
 
 
+def _unsupported_target_reason(target: dict[str, str] | None) -> str:
+    target = target or {}
+    entity_type = str(target.get("entity_type") or "").strip().lower()
+    if entity_type in {"tag", "application"}:
+        return "This target is not supported by the installed Cost evidence marts."
+    return ""
+
+
 def _chargeback_evidence_sql(company: str, environment: str, days: int, target: dict[str, str] | None, limit: int) -> str:
     base_sql = build_mart_cost_explorer_sql(
         days_back=int(days),
@@ -142,6 +152,7 @@ def _chargeback_evidence_sql(company: str, environment: str, days: int, target: 
         FROM (
             SELECT
                 target.*,
+                'exact' AS ENVIRONMENT_SCOPE_MODE,
                 NULL::VARCHAR AS SERVICE_CATEGORY,
                 NULL::VARCHAR AS SERVICE_TYPE,
                 NULL::VARCHAR AS TAG_VALUE,
@@ -170,6 +181,7 @@ def _chargeback_evidence_sql(company: str, environment: str, days: int, target: 
 
 
 def _service_evidence_sql(company: str, environment: str, days: int, target: dict[str, str] | None, limit: int) -> str:
+    _ = environment
     table = mart_object_name("FACT_COST_DAILY")
     company_filter = "" if str(company or "").upper() == "ALL" else f"AND COMPANY = {sql_literal(company, 100)}"
     target_filter = build_target_sql_filter(
@@ -178,7 +190,6 @@ def _service_evidence_sql(company: str, environment: str, days: int, target: dic
         alias="target",
         available_columns=COST_EVIDENCE_COLUMNS,
     )
-    env_filter = _environment_filter(environment)
     return f"""
         SELECT *
         FROM (
@@ -186,6 +197,7 @@ def _service_evidence_sql(company: str, environment: str, days: int, target: dic
                 COMPANY,
                 'ALL' AS ENVIRONMENT,
                 'ALL' AS ENVIRONMENT_ROLLUP,
+                'all_fallback' AS ENVIRONMENT_SCOPE_MODE,
                 NULL::VARCHAR AS DATABASE_NAME,
                 NULL::VARCHAR AS USER_NAME,
                 NULL::VARCHAR AS ROLE_NAME,
@@ -220,7 +232,6 @@ def _service_evidence_sql(company: str, environment: str, days: int, target: dic
             GROUP BY COMPANY, SERVICE_CATEGORY, SERVICE_TYPE
         ) target
         WHERE 1 = 1
-          {env_filter}
           {target_filter}
         ORDER BY EST_COST DESC, TOTAL_CREDITS DESC, QUERY_COUNT DESC
         LIMIT {int(limit)}
@@ -274,6 +285,20 @@ def load_cost_evidence(
     row_limit = evidence_row_limit(requested_limit)
     target = target or {}
     target_label = evidence_target_label(target)
+    unsupported_reason = _unsupported_target_reason(target)
+    if unsupported_reason:
+        return {
+            "rows": pd.DataFrame(),
+            "summary": unsupported_reason,
+            "metrics": (("Rows", "0"), ("Target", target_label or "Unsupported")),
+            "source": "Cost evidence mart",
+            "target_label": target_label,
+            "row_count": 0,
+            "limit": row_limit,
+            "error": "",
+            "unsupported_target": True,
+            "environment_scope_note": "",
+        }
     sql = _cost_evidence_sql(company, environment, int(days), target, row_limit)
     try:
         rows = run_query_or_raise(
@@ -298,6 +323,8 @@ def load_cost_evidence(
         "row_count": len(rows) if hasattr(rows, "__len__") else 0,
         "limit": row_limit,
         "error": error,
+        "unsupported_target": False,
+        "environment_scope_note": "All-environment fallback source." if _prefers_service_cost(target) else "Exact environment source.",
     }
 
 

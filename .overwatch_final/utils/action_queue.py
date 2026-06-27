@@ -818,17 +818,34 @@ def load_action_queue(session, limit: int = 500, *, target: dict | None = None, 
         try:
             from sections.decision_workspace_target_filters import build_target_sql_filter
 
+            target_columns = {
+                "ACTION_ID",
+                "ENTITY_TYPE",
+                "ENTITY_NAME",
+                "OWNER",
+                "CATEGORY",
+                "SOURCE",
+            }
+            optional_target_columns = {
+                "TICKET_ID",
+                "OWNER_SOURCE",
+                "OWNER_EVIDENCE",
+                "RECOVERY_EVIDENCE",
+                "VERIFICATION_STATUS",
+                "RECOVERY_AUDIT_STATE",
+                "ALERT_ID",
+                "ALERT_KEY",
+                "EVENT_ID",
+                "EVIDENCE_ID",
+                "GRANT_ID",
+            }
+            for column in optional_target_columns:
+                if _action_queue_has_column(session, column):
+                    target_columns.add(column)
             target_filter = build_target_sql_filter(
                 str(section or "Alert Center"),
                 target,
-                available_columns=(
-                    "ACTION_ID",
-                    "ENTITY_TYPE",
-                    "ENTITY_NAME",
-                    "OWNER",
-                    "CATEGORY",
-                    "SOURCE",
-                ),
+                available_columns=tuple(sorted(target_columns)),
             )
             target_hash = hashlib.sha1(str(target_filter or target).encode("utf-8", errors="ignore")).hexdigest()[:10]
         except Exception:

@@ -18,6 +18,7 @@ from sections.shell_helpers import (
 )
 from sections.section_command_brief import autoload_section_command_brief
 from sections.decision_workspace_controls import make_decision_refresh_action
+from sections.decision_workspace_performance import with_decision_first_paint
 from sections.decision_workspace_scope import active_decision_window_days
 from sections.section_command_rendering import render_section_command_brief
 from utils.primitives import safe_float, safe_int
@@ -522,21 +523,22 @@ def _set_workload_workflow(workflow: str, *, pipeline_focus: str = "") -> None:
 
 
 def _render_workload_overview(company: str, environment: str) -> None:
-    force_brief_refresh = bool(st.session_state.pop("workload_operations_command_brief_force_refresh", False))
-    decision_days = active_decision_window_days(7)
-    workload_brief = autoload_section_command_brief(
-        "Workload Operations",
-        company,
-        environment,
-        decision_days,
-        force=force_brief_refresh,
-    )
-    render_section_command_brief(
-        workload_brief,
-        key_prefix="workload_operations_command_brief",
-        primary_action=make_decision_refresh_action("Workload Operations"),
-        current_workflow="Overview",
-    )
+    with with_decision_first_paint("Workload Operations", "Overview"):
+        force_brief_refresh = bool(st.session_state.pop("workload_operations_command_brief_force_refresh", False))
+        decision_days = active_decision_window_days(7)
+        workload_brief = autoload_section_command_brief(
+            "Workload Operations",
+            company,
+            environment,
+            decision_days,
+            force=force_brief_refresh,
+        )
+        render_section_command_brief(
+            workload_brief,
+            key_prefix="workload_operations_command_brief",
+            primary_action=make_decision_refresh_action("Workload Operations"),
+            current_workflow="Overview",
+        )
     board = build_loaded_section_alert_signal_board(st.session_state, section="Workload Operations", limit=12)
     if isinstance(board, pd.DataFrame) and not board.empty:
         severity = board.get("SEVERITY", pd.Series(dtype=str)).fillna("").astype(str).str.upper()

@@ -21,8 +21,10 @@ from sections.decision_workspace_controls import (
     make_evidence_action,
     should_render_daily_diagnostics,
 )
+from sections.decision_workspace_performance import with_decision_first_paint
 from sections.decision_workspace_scope import active_decision_window_days
 from sections.decision_workspace_state import section_state_from_brief
+from sections.decision_workspace_target_filters import get_decision_evidence_target
 from utils.evidence_mode import (
     TRIAGE_MODE_ALL_EVIDENCE,
     TRIAGE_MODE_INVESTIGATE,
@@ -1051,14 +1053,6 @@ def render() -> None:
             DBA_CONTROL_ROOM_PANE_LABELS.get(normalized_view, normalized_view),
         ])
     active_view = _render_dba_control_room_workflow_selector()
-    dba_brief = autoload_section_command_brief(
-        "DBA Control Room",
-        company,
-        environment,
-        active_decision_window_days(1),
-        force=bool(st.session_state.pop("dba_control_room_command_brief_force_refresh", False)),
-    )
-
     def _render_dba_evidence_settings() -> None:
         st.selectbox(
             "Lookback",
@@ -1068,23 +1062,32 @@ def render() -> None:
             key="dba_control_room_evidence_lookback_hours",
         )
 
-    render_section_command_brief(
-        dba_brief,
-        key_prefix="dba_control_room_command_brief",
-        primary_action=make_decision_refresh_action("DBA Control Room"),
-        detail_action=make_evidence_action(
+    current_workflow_label = DBA_CONTROL_ROOM_PANE_LABELS.get(active_view, active_view)
+    with with_decision_first_paint("DBA Control Room", current_workflow_label):
+        dba_brief = autoload_section_command_brief(
             "DBA Control Room",
-            active_view,
-            label=load_label,
-            help_text="Load the DBA investigation packet for this scope and evidence mode.",
-            state_key="dba_control_room_command_brief_load_detail",
-            settings_renderer=_render_dba_evidence_settings,
+            company,
+            environment,
+            active_decision_window_days(1),
+            force=bool(st.session_state.pop("dba_control_room_command_brief_force_refresh", False)),
         )
-        if active_view == MORNING_COCKPIT_WORKFLOW
-        else None,
-        current_workflow=DBA_CONTROL_ROOM_PANE_LABELS.get(active_view, active_view),
-        compact=active_view != MORNING_COCKPIT_WORKFLOW,
-    )
+        render_section_command_brief(
+            dba_brief,
+            key_prefix="dba_control_room_command_brief",
+            primary_action=make_decision_refresh_action("DBA Control Room"),
+            detail_action=make_evidence_action(
+                "DBA Control Room",
+                active_view,
+                label=load_label,
+                help_text="Load the DBA investigation packet for this scope and evidence mode.",
+                state_key="dba_control_room_command_brief_load_detail",
+                settings_renderer=_render_dba_evidence_settings,
+            )
+            if active_view == MORNING_COCKPIT_WORKFLOW
+            else None,
+            current_workflow=current_workflow_label,
+            compact=active_view != MORNING_COCKPIT_WORKFLOW,
+        )
     lookback_hours = int(st.session_state.get("dba_control_room_evidence_lookback_hours", lookback_hours) or lookback_hours)
     dba_decision_state = section_state_from_brief(dba_brief)
     pending_detail_load = bool(st.session_state.get("dba_control_room_command_brief_load_detail"))
@@ -1183,6 +1186,7 @@ def render() -> None:
                 safe_float(cortex_budget_usd),
                 include_deep_evidence=bool(include_deep_evidence),
                 allow_live_fallback=bool(allow_live_fallback),
+                target=get_decision_evidence_target("DBA Control Room"),
             )
             st.session_state["dba_control_room_company"] = company
             st.session_state["dba_control_room_lookback"] = int(lookback_hours)

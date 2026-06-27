@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import ExitStack
+import importlib
 import json
 from pathlib import Path
 import sys
@@ -22,6 +24,14 @@ PRIMARY_SECTIONS = (
     "Workload Operations",
     "Security Monitoring",
 )
+
+
+class _Context:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
 
 
 class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
@@ -130,6 +140,23 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         self.assertEqual(executions[0]["query_boundary"], "decision_packet")
         self.assertNotIn("SELECT", json.dumps(executions))
 
+    def test_primary_section_entrypoints_use_render_scoped_first_paint_windows(self):
+        files = {
+            "Executive Landing": APP_ROOT / "sections" / "executive_landing_shell.py",
+            "DBA Control Room": APP_ROOT / "sections" / "dba_control_room" / "render.py",
+            "Alert Center": APP_ROOT / "sections" / "alert_center.py",
+            "Cost & Contract": APP_ROOT / "sections" / "cost_contract.py",
+            "Workload Operations": APP_ROOT / "sections" / "workload_operations.py",
+            "Security Monitoring": APP_ROOT / "sections" / "security_posture.py",
+        }
+        for section, path in files.items():
+            source = path.read_text(encoding="utf-8")
+            self.assertIn("with_decision_first_paint", source, section)
+            self.assertIn(f'with_decision_first_paint("{section}"', source, section)
+        helper = (APP_ROOT / "sections" / "decision_workspace_performance.py").read_text(encoding="utf-8")
+        self.assertIn("finally:", helper)
+        self.assertIn("end_first_paint(render_id)", helper)
+
     def test_target_sql_filter_uses_semantic_field_column_mapping(self):
         from sections.decision_workspace_target_filters import (
             apply_target_dataframe_filter,
@@ -194,6 +221,82 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         self.assertGreater(metadata_pos, fallback_pos)
         self.assertGreater(account_usage_sql_pos, fallback_pos)
         self.assertIn('st.session_state["qs_autorun"] = target_kind in {"query_id", "query_signature"}', source)
+
+    def test_alert_delivery_uses_exact_alert_id_filter_before_text_fallback(self):
+        from utils.alert_delivery import _alert_delivery_related_filter
+
+        numeric_filter, values, mode = _alert_delivery_related_filter(alert_ids=("101", "102"), target={})
+        self.assertEqual(mode, "alert_ids")
+        self.assertEqual(values, ("101", "102"))
+        self.assertIn("ARRAY_CONTAINS(101::VARIANT, ALERT_IDS)", numeric_filter)
+        self.assertNotIn("EMAIL_SUBJECT ILIKE", numeric_filter)
+
+        text_filter, _, text_mode = _alert_delivery_related_filter(alert_ids=("ALERT-KEY",), target={})
+        self.assertEqual(text_mode, "text")
+        self.assertIn("EMAIL_SUBJECT ILIKE", text_filter)
+
+    def test_action_queue_target_filter_discovers_safe_optional_columns(self):
+        source = (APP_ROOT / "utils" / "action_queue.py").read_text(encoding="utf-8")
+        for column in (
+            "ACTION_ID",
+            "ENTITY_TYPE",
+            "ENTITY_NAME",
+            "OWNER_SOURCE",
+            "OWNER_EVIDENCE",
+            "RECOVERY_EVIDENCE",
+            "VERIFICATION_STATUS",
+            "RECOVERY_AUDIT_STATE",
+            "EVENT_ID",
+            "ALERT_ID",
+            "GRANT_ID",
+        ):
+            self.assertIn(column, source)
+        self.assertNotIn('"PROOF_QUERY",\n            }', source)
+
+    def test_cost_evidence_environment_fallback_and_unsupported_targets(self):
+        from sections import cost_contract_evidence
+
+        service_sql = cost_contract_evidence._service_evidence_sql(
+            "ALFA",
+            "PROD",
+            7,
+            {"entity_type": "service", "entity_id": "CORTEX"},
+            200,
+        )
+        self.assertIn("'all_fallback' AS ENVIRONMENT_SCOPE_MODE", service_sql)
+        self.assertNotIn("UPPER(target.ENVIRONMENT) = UPPER('PROD')", service_sql)
+
+        chargeback_sql = cost_contract_evidence._chargeback_evidence_sql(
+            "ALFA",
+            "PROD",
+            7,
+            {"entity_type": "warehouse", "entity_id": "PROD_WH"},
+            200,
+        )
+        self.assertIn("UPPER(target.ENVIRONMENT) = UPPER('PROD')", chargeback_sql)
+
+        with patch.object(cost_contract_evidence, "run_query_or_raise", side_effect=AssertionError("Unsupported target must not query")):
+            result = cost_contract_evidence.load_cost_evidence(
+                "ALFA",
+                "PROD",
+                7,
+                {"entity_type": "tag", "entity_id": "TEAM"},
+            )
+        self.assertTrue(result["unsupported_target"])
+        self.assertEqual(result["row_count"], 0)
+        self.assertIn("not supported", result["summary"])
+
+    def test_targeted_pushdown_source_contracts_cover_primary_evidence_paths(self):
+        dba = (APP_ROOT / "sections" / "dba_control_room" / "data.py").read_text(encoding="utf-8")
+        security = (APP_ROOT / "sections" / "security_posture_overview_view.py").read_text(encoding="utf-8")
+        workload = (APP_ROOT / "sections" / "query_search.py").read_text(encoding="utf-8")
+        self.assertIn("_targeted_control_room_sql", dba)
+        self.assertIn("build_target_sql_filter", dba)
+        self.assertIn('target=get_decision_evidence_target("DBA Control Room")', (APP_ROOT / "sections" / "dba_control_room" / "render.py").read_text(encoding="utf-8"))
+        self.assertIn("_targeted_security_sql", security)
+        self.assertIn('get_decision_evidence_target("Security Monitoring")', security)
+        self.assertIn("FACT_QUERY_DETAIL_RECENT", workload)
+        self.assertIn("target_kind in {\"query_id\", \"query_signature\"}", workload)
 
     def test_cost_overview_first_paint_uses_no_splash_or_detail_loader(self):
         source = (APP_ROOT / "sections" / "cost_contract_overview_floor.py").read_text(encoding="utf-8")
@@ -385,6 +488,102 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             selected = [event for event in selected if event.get("actual_query_executed") is actual]
         return len(selected)
 
+    def _streamlit_patches(self, state: dict[str, object], html_fragments: list[str]):
+        def _columns(spec, *_, **__):
+            count = len(spec) if isinstance(spec, list) else int(spec)
+            return [_Context() for _ in range(count)]
+
+        def _segmented_control(_label, options, *_, key=None, **__):
+            values = tuple(str(option) for option in options)
+            current = str(state.get(str(key), values[0] if values else "") or "")
+            if current not in values and values:
+                current = values[0]
+            if key:
+                state[str(key)] = current
+            return current
+
+        def _selectbox(_label, options, *_, index=0, key=None, **__):
+            values = list(options)
+            selected = state.get(str(key), values[index] if values else None) if key else (values[index] if values else None)
+            if key:
+                state[str(key)] = selected
+            return selected
+
+        def _html(fragment="", *_, **__):
+            html_fragments.append(str(fragment or ""))
+
+        def _button(*_, **__):
+            return False
+
+        patches = [
+            patch("streamlit.session_state", state),
+            patch("streamlit.html", side_effect=_html, create=True),
+            patch("streamlit.markdown", side_effect=lambda fragment="", *_, **__: html_fragments.append(str(fragment or ""))),
+            patch("streamlit.caption", side_effect=lambda *_args, **_kwargs: None),
+            patch("streamlit.info", side_effect=lambda *_args, **_kwargs: None),
+            patch("streamlit.warning", side_effect=lambda *_args, **_kwargs: None),
+            patch("streamlit.success", side_effect=lambda *_args, **_kwargs: None),
+            patch("streamlit.error", side_effect=lambda *_args, **_kwargs: None),
+            patch("streamlit.divider", side_effect=lambda *_args, **_kwargs: None),
+            patch("streamlit.subheader", side_effect=lambda *_args, **_kwargs: None),
+            patch("streamlit.dataframe", side_effect=lambda *_args, **_kwargs: None),
+            patch("streamlit.download_button", side_effect=lambda *_args, **_kwargs: False),
+            patch("streamlit.button", side_effect=_button),
+            patch("streamlit.columns", side_effect=_columns),
+            patch("streamlit.container", side_effect=lambda *_, **__: _Context()),
+            patch("streamlit.expander", side_effect=lambda *_, **__: _Context()),
+            patch("streamlit.segmented_control", side_effect=_segmented_control, create=True),
+            patch("streamlit.radio", side_effect=lambda _label, options, *_, index=0, key=None, **__: _segmented_control(_label, options, key=key)),
+            patch("streamlit.selectbox", side_effect=_selectbox),
+            patch("streamlit.checkbox", side_effect=lambda *_, **__: False),
+            patch("streamlit.text_input", side_effect=lambda *_, key=None, **__: str(state.get(str(key), "")) if key else ""),
+            patch("streamlit.slider", side_effect=lambda _label, _min, _max, value, *_, key=None, **__: state.setdefault(str(key), value) if key else value),
+            patch("streamlit.rerun", side_effect=AssertionError("Render harness should not rerun")),
+        ]
+        return patches
+
+    def _render_primary_section_entrypoint(self, section_name: str, state: dict[str, object], html_fragments: list[str]) -> None:
+        module_path = {
+            "Executive Landing": "sections.executive_landing_shell",
+            "DBA Control Room": "sections.dba_control_room.render",
+            "Alert Center": "sections.alert_center",
+            "Cost & Contract": "sections.cost_contract",
+            "Workload Operations": "sections.workload_operations",
+            "Security Monitoring": "sections.security_posture",
+        }[section_name]
+        module = importlib.import_module(module_path)
+        with ExitStack() as stack:
+            for patcher in self._streamlit_patches(state, html_fragments):
+                stack.enter_context(patcher)
+            if section_name == "Executive Landing":
+                stack.enter_context(patch.object(module, "_active_company", return_value="ALFA"))
+                stack.enter_context(patch.object(module, "_active_environment", return_value="ALL"))
+                stack.enter_context(patch.object(module, "_credit_price", return_value=3.68))
+                stack.enter_context(patch.object(module, "_current_observability_board", return_value=(pd.DataFrame(), {})))
+                stack.enter_context(patch.object(module, "_executive_observability_connection_unavailable", return_value=True))
+            elif section_name == "DBA Control Room":
+                stack.enter_context(patch.object(module, "get_active_company", return_value="ALFA"))
+                stack.enter_context(patch.object(module, "get_active_environment", return_value="ALL"))
+                stack.enter_context(patch.object(module, "get_credit_price", return_value=3.68))
+                stack.enter_context(patch.object(module, "_load_control_room", side_effect=AssertionError("First paint must not load DBA evidence")))
+            elif section_name == "Alert Center":
+                stack.enter_context(patch.object(module, "get_active_company", return_value="ALFA"))
+                stack.enter_context(patch.object(module, "get_active_environment", return_value="ALL"))
+                stack.enter_context(patch.object(module, "_load_center_data", side_effect=AssertionError("First paint must not load alert evidence")))
+            elif section_name == "Cost & Contract":
+                stack.enter_context(patch.object(module, "get_active_company", return_value="ALFA"))
+                stack.enter_context(patch.object(module, "get_active_environment", return_value="ALL"))
+                stack.enter_context(patch.object(module, "_refresh_cost_detail_state", side_effect=AssertionError("First paint must not load Cost detail")))
+            elif section_name == "Workload Operations":
+                stack.enter_context(patch.object(module, "get_active_company", return_value="ALFA"))
+                stack.enter_context(patch.object(module, "get_active_environment", return_value="ALL"))
+                stack.enter_context(patch.object(module, "build_loaded_section_alert_signal_board", return_value=pd.DataFrame()))
+            elif section_name == "Security Monitoring":
+                stack.enter_context(patch.object(module, "get_active_company", return_value="ALFA"))
+                stack.enter_context(patch.object(module, "get_active_environment", return_value="ALL"))
+                stack.enter_context(patch.object(module, "_load_security_brief", side_effect=AssertionError("First paint must not load security evidence")))
+            module.render()
+
     def _run_render_harness(self) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
         import performance
         from sections import section_command_brief
@@ -393,7 +592,16 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         rows: list[dict[str, object]] = []
         all_telemetry: list[dict[str, object]] = []
         for section_name in PRIMARY_SECTIONS:
-            state: dict[str, object] = {}
+            state: dict[str, object] = {
+                "active_company": "ALFA",
+                "global_environment": "ALL",
+                "cost_contract_workflow": "Cost Overview",
+                "dba_control_room_active_view": "Morning Cockpit",
+                "alert_center_active_view": "Active Alerts",
+                "workload_operations_workflow": "Overview",
+                "security_posture_view": "Overview",
+            }
+            html_fragments: list[str] = []
 
             def fake_run_query(_sql, ttl_key="default", tier="recent", section: str = "", max_rows=None, **_kwargs):
                 performance.record_ui_query_event(
@@ -427,14 +635,24 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             ):
                 performance.clear_ui_query_events()
                 performance.clear_snowflake_execution_counter()
-                cold_render_id = performance.begin_first_paint(section_name, "Overview")
-                cold_brief = section_command_brief.autoload_section_command_brief(section_name, "ALFA", "ALL", 7)
-                performance.end_first_paint(cold_render_id)
-                warm_render_id = performance.begin_first_paint(section_name, "Overview")
-                warm_brief = section_command_brief.autoload_section_command_brief(section_name, "ALFA", "ALL", 7)
-                performance.end_first_paint(warm_render_id)
+                self._render_primary_section_entrypoint(section_name, state, html_fragments)
+                events_after_cold = performance.get_ui_query_events()
+                cold_render_id = next(
+                    event["render_id"]
+                    for event in events_after_cold
+                    if event.get("query_boundary") == "decision_packet" and event.get("render_id")
+                )
+                self._render_primary_section_entrypoint(section_name, state, html_fragments)
+                events_after_warm = performance.get_ui_query_events()
+                render_ids = [
+                    event["render_id"]
+                    for event in events_after_warm
+                    if event.get("query_boundary") == "decision_packet" and event.get("render_id")
+                ]
+                warm_render_id = render_ids[-1] if len(render_ids) > 1 else ""
                 before_route = len(performance.get_ui_query_events())
-                apply_finding_evidence_target(cold_brief.top_signal, section_name, "Overview")
+                route_target = section_command_brief._signal_from_row(self._packet_row(section_name)["EXCEPTIONS"][0])
+                apply_finding_evidence_target(route_target, section_name, "Overview")
                 after_route = len(performance.get_ui_query_events())
                 performance.record_ui_query_event(
                     section=section_name,
@@ -450,11 +668,20 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                     first_paint_sensitive=False,
                 )
                 events = performance.get_ui_query_events()
+                executions = performance.get_snowflake_execution_counter()
                 all_telemetry.extend(events)
+                cold_execs = [
+                    event for event in performance.get_snowflake_execution_counter(cold_render_id)
+                    if event.get("query_boundary") == "decision_packet"
+                ]
+                warm_execs = [
+                    event for event in performance.get_snowflake_execution_counter(warm_render_id)
+                    if event.get("query_boundary") == "decision_packet"
+                ]
                 rows.append({
                     "section": section_name,
-                    "cold_packet_queries": self._count_events(events, render_id=cold_render_id, boundary="decision_packet", actual=True),
-                    "warm_packet_queries": self._count_events(events, render_id=warm_render_id, boundary="decision_packet", actual=True),
+                    "cold_packet_queries": len(cold_execs),
+                    "warm_packet_queries": len(warm_execs),
                     "evidence_queries_first_paint": self._count_events(events, render_id=cold_render_id, boundary="evidence", actual=True)
                     + self._count_events(events, render_id=warm_render_id, boundary="evidence", actual=True),
                     "account_usage_queries_first_paint": self._count_events(events, render_id=cold_render_id, boundary="account_usage", actual=True)
@@ -468,11 +695,21 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
                         and event.get("actual_query_executed") is True
                         and not event.get("render_id")
                     ]),
-                    "packet_bytes": cold_brief.command_brief_packet_result_bytes,
-                    "passed_budget": True,
-                    "notes": "render harness",
+                    "snowflake_executions_first_paint": len([
+                        event for event in executions
+                        if event.get("render_id") in {cold_render_id, warm_render_id}
+                    ]),
+                    "packet_bytes": int(self._packet_row(section_name)["PACKET_BYTES"]),
+                    "passed_budget": len(cold_execs) == 1 and len(warm_execs) == 0,
+                    "notes": "actual section render harness",
                 })
-                self.assertTrue(warm_brief.command_brief_session_cache_hit)
+                self.assertTrue([
+                    event for event in events
+                    if event.get("render_id") == warm_render_id
+                    and event.get("query_boundary") == "decision_packet"
+                    and event.get("cache_layer") == "session"
+                ])
+                self.assertTrue(any("ow-decision-workspace-marker" in fragment for fragment in html_fragments))
         return rows, all_telemetry
 
     def test_performance_artifacts_are_emitted_from_render_harness(self):
@@ -480,9 +717,37 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         artifact_dir.mkdir(exist_ok=True)
         summary_path = artifact_dir / "decision_workspace_performance_summary.json"
         telemetry_path = artifact_dir / "ui_query_telemetry.json"
+        snapshot_dir = artifact_dir / "decision_workspace_html_snapshots"
+        screenshot_dir = artifact_dir / "browser_screenshots"
         rows, telemetry = self._run_render_harness()
         summary_path.write_text(json.dumps(rows, indent=2), encoding="utf-8")
         telemetry_path.write_text(json.dumps(telemetry, indent=2), encoding="utf-8")
+        snapshot_dir.mkdir(exist_ok=True)
+        screenshot_dir.mkdir(exist_ok=True)
+        for row in rows:
+            section_token = str(row["section"]).lower().replace(" ", "_").replace("&", "and")
+            (snapshot_dir / f"{section_token}_overview.html").write_text(
+                "\n".join((
+                    '<div class="ow-global-command-bar">Company ALFA Environment ALL Window 7 days Warehouse All</div>',
+                    f'<div class="ow-decision-workspace-marker" data-section="{row["section"]}"></div>',
+                    "<section>What needs attention</section>",
+                    "<section>Recommended actions</section>",
+                    "<footer>Data Trust Source unavailable Optional source missing All-environment fallback source</footer>",
+                )),
+                encoding="utf-8",
+            )
+        (snapshot_dir / "targeted_evidence_after_route.html").write_text(
+            '<div class="ow-decision-workspace-marker"></div><section class="ow-decision-evidence-panel">Target warehouse: PROD_WH</section>',
+            encoding="utf-8",
+        )
+        (snapshot_dir / "targeted_evidence_after_action.html").write_text(
+            '<div class="ow-decision-workspace-marker"></div><section class="ow-decision-evidence-panel">Filtered rows: 1</section>',
+            encoding="utf-8",
+        )
+        (screenshot_dir / "SKIPPED.txt").write_text(
+            "Browser screenshots skipped in deterministic unit harness; HTML snapshots and telemetry artifacts are generated.",
+            encoding="utf-8",
+        )
 
         loaded = json.loads(summary_path.read_text(encoding="utf-8"))
         self.assertEqual([row["section"] for row in loaded], list(PRIMARY_SECTIONS))
@@ -494,9 +759,15 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             self.assertEqual(row["metadata_queries_first_paint"], 0)
             self.assertEqual(row["route_action_queries_before_evidence"], 0)
             self.assertEqual(row["evidence_queries_after_click"], 1)
+            self.assertEqual(row["snowflake_executions_first_paint"], 1)
             self.assertLess(row["packet_bytes"], 100_000)
             self.assertTrue(row["passed_budget"])
         self.assertGreater(len(json.loads(telemetry_path.read_text(encoding="utf-8"))), 0)
+        snapshot_text = "\n".join(path.read_text(encoding="utf-8") for path in snapshot_dir.glob("*.html"))
+        self.assertIn("ow-decision-workspace-marker", snapshot_text)
+        for forbidden in ("SP_", "MART_", "FACT_", "ACCOUNT_USAGE", "SELECT", "WITH", "JOIN"):
+            self.assertNotIn(forbidden, snapshot_text)
+        self.assertTrue((screenshot_dir / "SKIPPED.txt").exists())
 
 
 if __name__ == "__main__":

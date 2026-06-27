@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from sections.decision_workspace_target_filters import build_target_sql_filter
 from utils.primitives import (
     safe_float,
     safe_int,
@@ -546,6 +547,37 @@ def _finalize_control_room_data(
     return data
 
 
+def _targeted_control_room_sql(sql: str, target: dict | None, columns: tuple[str, ...]) -> str:
+    target_filter = build_target_sql_filter(
+        "DBA Control Room",
+        target or {},
+        alias="target",
+        available_columns=columns,
+    )
+    if not target_filter:
+        return sql
+    return f"""
+        SELECT *
+        FROM (
+            {str(sql).strip().rstrip(';')}
+        ) target
+        WHERE 1 = 1
+          {target_filter}
+    """
+
+
+_DBA_TARGET_COLUMNS_BY_KEY: dict[str, tuple[str, ...]] = {
+    "summary": (),
+    "credits": (),
+    "cost_drivers": ("WAREHOUSE_NAME", "USER_NAME"),
+    "warehouse_pressure": ("WAREHOUSE_NAME", "QUERY_ID", "QUERY_HASH", "QUERY_SIGNATURE"),
+    "failed_queries": ("QUERY_ID", "QUERY_HASH", "QUERY_SIGNATURE", "WAREHOUSE_NAME", "USER_NAME", "ROLE_NAME", "DATABASE_NAME"),
+    "object_changes": ("QUERY_ID", "WAREHOUSE_NAME", "USER_NAME", "ROLE_NAME", "DATABASE_NAME"),
+    "failed_logins": ("USER_NAME",),
+    "task_failures": ("TASK_NAME", "ROOT_TASK_NAME", "PROCEDURE_NAME", "DATABASE_NAME"),
+}
+
+
 def _load_control_room(
     session,
     company: str,
@@ -555,6 +587,7 @@ def _load_control_room(
     *,
     include_deep_evidence: bool = False,
     allow_live_fallback: bool = False,
+    target: dict | None = None,
 ) -> dict:
     _build_task_ops_frames, _, _, _, _query_detail_sql = _task_management_helpers()
     _build_procedure_sla_frames, _build_procedure_sla_sql, _, _query_history_has_root_query_id = _procedure_helpers()
@@ -714,7 +747,11 @@ def _load_control_room(
         try:
             try:
                 data[key] = run_query(
-                    mart_queries[key],
+                    _targeted_control_room_sql(
+                        mart_queries[key],
+                        target,
+                        _DBA_TARGET_COLUMNS_BY_KEY.get(key, ()),
+                    ),
                     ttl_key=f"dba_control_room_mart_{company}_{lookback_hours}_{key}",
                     tier="historical",
                     section="DBA Control Room",
@@ -740,7 +777,11 @@ def _load_control_room(
                     })
                     continue
                 data[key] = run_query(
-                    sql,
+                    _targeted_control_room_sql(
+                        sql,
+                        target,
+                        _DBA_TARGET_COLUMNS_BY_KEY.get(key, ()),
+                    ),
                     ttl_key=f"dba_control_room_live_{company}_{live_lookback_hours}_{key}",
                     tier="recent",
                     section="DBA Control Room",
@@ -760,7 +801,11 @@ def _load_control_room(
     try:
         try:
             data["task_failures"] = run_query(
-                build_mart_control_room_task_failures_sql(lookback_hours, company),
+                _targeted_control_room_sql(
+                    build_mart_control_room_task_failures_sql(lookback_hours, company),
+                    target,
+                    _DBA_TARGET_COLUMNS_BY_KEY["task_failures"],
+                ),
                 ttl_key=f"dba_control_room_mart_{company}_{lookback_hours}_task_failures",
                 tier="historical",
                 section="DBA Control Room",
@@ -857,7 +902,12 @@ def _load_control_room(
             },
         ])
         try:
-            data["action_queue"] = load_action_queue(session, limit=25)
+            data["action_queue"] = load_action_queue(
+                session,
+                limit=25,
+                target=target,
+                section="DBA Control Room",
+            )
         except Exception as exc:
             data["action_queue"] = _empty_df()
             data["action_queue_error"] = pd.DataFrame({"ERROR": [format_snowflake_error(exc)]})
@@ -952,7 +1002,12 @@ def _load_control_room(
         data["procedure_sla_cost_error"] = pd.DataFrame({"ERROR": [format_snowflake_error(exc)]})
 
     try:
-        data["action_queue"] = load_action_queue(session, limit=100)
+        data["action_queue"] = load_action_queue(
+            session,
+            limit=100,
+            target=target,
+            section="DBA Control Room",
+        )
     except Exception as exc:
         data["action_queue"] = _empty_df()
         data["action_queue_error"] = pd.DataFrame({"ERROR": [format_snowflake_error(exc)]})

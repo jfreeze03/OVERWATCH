@@ -56,6 +56,7 @@ from sections.shell_helpers import render_content_header, render_primary_section
 from sections.section_command_brief import autoload_section_command_brief
 from sections.section_command_rendering import render_section_command_brief
 from sections.decision_workspace_controls import make_decision_refresh_action, make_evidence_action
+from sections.decision_workspace_performance import with_decision_first_paint
 from sections.decision_workspace_scope import active_decision_window_days
 from sections.decision_workspace_state import section_state_from_brief
 from perf_trace import trace
@@ -194,29 +195,31 @@ def render() -> None:
     with trace("executive_shell:workflow_selector", active_section="Executive Landing"):
         active_workflow = _render_executive_landing_workflow_controls(active_workflow)
 
-    executive_brief = autoload_section_command_brief(
-        "Executive Landing",
-        company,
-        environment,
-        int(days),
-        force=bool(st.session_state.pop("_executive_landing_command_brief_force_refresh", False)),
-    )
-    render_section_command_brief(
-        executive_brief,
-        key_prefix="executive_landing_command_brief",
-        primary_action=make_decision_refresh_action("Executive Landing"),
-        detail_action=make_evidence_action(
+    current_workflow_label = "Overview" if active_workflow == EXECUTIVE_OVERVIEW_WORKFLOW else active_workflow
+    with with_decision_first_paint("Executive Landing", current_workflow_label):
+        executive_brief = autoload_section_command_brief(
             "Executive Landing",
-            active_workflow,
-            label="Load Full Executive Snapshot",
-            help_text="Load the heavier Executive Landing detail packet for the selected scope.",
-            state_key="_executive_landing_command_brief_load_detail",
+            company,
+            environment,
+            int(days),
+            force=bool(st.session_state.pop("_executive_landing_command_brief_force_refresh", False)),
         )
-        if active_workflow == EXECUTIVE_OVERVIEW_WORKFLOW
-        else None,
-        current_workflow="Overview" if active_workflow == EXECUTIVE_OVERVIEW_WORKFLOW else active_workflow,
-        compact=active_workflow != EXECUTIVE_OVERVIEW_WORKFLOW,
-    )
+        render_section_command_brief(
+            executive_brief,
+            key_prefix="executive_landing_command_brief",
+            primary_action=make_decision_refresh_action("Executive Landing"),
+            detail_action=make_evidence_action(
+                "Executive Landing",
+                active_workflow,
+                label="Load Full Executive Snapshot",
+                help_text="Load the heavier Executive Landing detail packet for the selected scope.",
+                state_key="_executive_landing_command_brief_load_detail",
+            )
+            if active_workflow == EXECUTIVE_OVERVIEW_WORKFLOW
+            else None,
+            current_workflow=current_workflow_label,
+            compact=active_workflow != EXECUTIVE_OVERVIEW_WORKFLOW,
+        )
 
     if active_workflow == EXECUTIVE_OVERVIEW_WORKFLOW:
         command_brief_load = bool(st.session_state.pop("_executive_landing_command_brief_load_detail", False))

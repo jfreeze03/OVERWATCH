@@ -1283,6 +1283,8 @@ def run_query(
     target_label: str = "",
     target_context_present: bool | None = None,
     target_columns_used: tuple[str, ...] | list[str] | None = None,
+    target_fallback_used: bool | None = None,
+    target_predicate_marker_present: bool | None = None,
     target_predicate_plan_id: str = "",
 ) -> pd.DataFrame:
     """Execute a query through the cached runner and log lightweight telemetry."""
@@ -1321,8 +1323,16 @@ def run_query(
         target_label=target_label,
         target_context_present=target_context_present,
         target_columns_used=list(target_columns_used if target_columns_used is not None else (query_meta.get("target_columns_used") or [])),
-        target_predicate_marker_present=query_meta.get("target_predicate_marker_present"),
-        target_fallback_used=query_meta.get("target_fallback_used"),
+        target_predicate_marker_present=(
+            target_predicate_marker_present
+            if target_predicate_marker_present is not None
+            else query_meta.get("target_predicate_marker_present")
+        ),
+        target_fallback_used=(
+            target_fallback_used
+            if target_fallback_used is not None
+            else query_meta.get("target_fallback_used")
+        ),
         target_predicate_plan_id=target_predicate_plan_id,
         first_paint_sensitive=bool(query_meta.get("first_paint_sensitive")),
     )
@@ -1340,6 +1350,8 @@ def run_query_or_raise(
     target_label: str = "",
     target_context_present: bool | None = None,
     target_columns_used: tuple[str, ...] | list[str] | None = None,
+    target_fallback_used: bool | None = None,
+    target_predicate_marker_present: bool | None = None,
     target_predicate_plan_id: str = "",
 ) -> pd.DataFrame:
     """
@@ -1399,8 +1411,16 @@ def run_query_or_raise(
             target_label=target_label,
             target_context_present=target_context_present,
             target_columns_used=event_target_columns,
-            target_predicate_marker_present=target_metadata.get("target_predicate_marker_present"),
-            target_fallback_used=target_metadata.get("target_fallback_used"),
+            target_predicate_marker_present=(
+                target_predicate_marker_present
+                if target_predicate_marker_present is not None
+                else target_metadata.get("target_predicate_marker_present")
+            ),
+            target_fallback_used=(
+                target_fallback_used
+                if target_fallback_used is not None
+                else target_metadata.get("target_fallback_used")
+            ),
             target_predicate_plan_id=target_predicate_plan_id,
             first_paint_sensitive=bool(current_first_paint_render_id()) and _first_paint_sensitive_boundary(boundary),
         )
@@ -1425,8 +1445,16 @@ def run_query_or_raise(
             target_label=target_label,
             target_context_present=target_context_present,
             target_columns_used=event_target_columns,
-            target_predicate_marker_present=target_metadata.get("target_predicate_marker_present"),
-            target_fallback_used=target_metadata.get("target_fallback_used"),
+            target_predicate_marker_present=(
+                target_predicate_marker_present
+                if target_predicate_marker_present is not None
+                else target_metadata.get("target_predicate_marker_present")
+            ),
+            target_fallback_used=(
+                target_fallback_used
+                if target_fallback_used is not None
+                else target_metadata.get("target_fallback_used")
+            ),
             target_predicate_plan_id=target_predicate_plan_id,
             first_paint_sensitive=bool(current_first_paint_render_id()) and _first_paint_sensitive_boundary(boundary),
         )
@@ -1484,8 +1512,16 @@ def run_query_or_raise(
             target_label=target_label,
             target_context_present=target_context_present,
             target_columns_used=event_target_columns,
-            target_predicate_marker_present=target_metadata.get("target_predicate_marker_present"),
-            target_fallback_used=target_metadata.get("target_fallback_used"),
+            target_predicate_marker_present=(
+                target_predicate_marker_present
+                if target_predicate_marker_present is not None
+                else target_metadata.get("target_predicate_marker_present")
+            ),
+            target_fallback_used=(
+                target_fallback_used
+                if target_fallback_used is not None
+                else target_metadata.get("target_fallback_used")
+            ),
             target_predicate_plan_id=target_predicate_plan_id,
             first_paint_sensitive=bool(current_first_paint_render_id()) and _first_paint_sensitive_boundary(boundary),
         )

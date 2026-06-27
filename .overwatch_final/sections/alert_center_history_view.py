@@ -1,4 +1,3 @@
-# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.
 """Alert Center history pane renderer."""
 
 from __future__ import annotations
@@ -237,6 +236,7 @@ def render_alert_history_pane(
                     if session is None:
                         return
                     for statement in audit_sql_parts:
+                        # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
                         session.sql(statement).collect()
                     st.success(f"Lifecycle audit recorded for alert {audit_alert}. Reload the Alert Center to refresh.")
                     st.session_state.pop("alert_center_data", None)
@@ -244,4 +244,3 @@ def render_alert_history_pane(
                     st.error(f"Could not record lifecycle audit: {format_error(exc)}")
         else:
             st.caption("Enter an audit note to record acknowledgement and remediation-log status.")
-# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.

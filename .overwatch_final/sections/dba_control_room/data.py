@@ -3,7 +3,10 @@ from __future__ import annotations
 
 from datetime import date, datetime
 import re
-from sections.decision_workspace_target_filters import build_target_sql_filter
+from sections.decision_workspace_target_filters import (
+    build_target_predicate_plan,
+    evidence_target_label,
+)
 from utils.primitives import (
     safe_float,
     safe_int,
@@ -549,12 +552,13 @@ def _finalize_control_room_data(
 
 
 def _targeted_control_room_sql(sql: str, target: dict | None, columns: tuple[str, ...]) -> str:
-    target_filter = build_target_sql_filter(
+    target_plan = build_target_predicate_plan(
         "DBA Control Room",
         target or {},
         alias="target",
         available_columns=columns,
-    )
+    ).with_fingerprint()
+    target_filter = target_plan.sql_filter
     if not target_filter:
         return sql
     source_sql = str(sql).strip().rstrip(";")
@@ -572,6 +576,25 @@ def _targeted_control_room_sql(sql: str, target: dict | None, columns: tuple[str
           {target_filter}
           {limit_clause}
     """
+
+
+def _target_query_kwargs(target: dict | None, columns: tuple[str, ...]) -> dict[str, object]:
+    target_plan = build_target_predicate_plan(
+        "DBA Control Room",
+        target or {},
+        alias="target",
+        available_columns=columns,
+    ).with_fingerprint()
+    return {
+        "query_boundary": "evidence",
+        "max_rows": 500,
+        "target_label": evidence_target_label(target or {}),
+        "target_context_present": bool(target),
+        "target_columns_used": target_plan.columns_used,
+        "target_fallback_used": target_plan.fallback_used,
+        "target_predicate_marker_present": bool(target_plan.sql_filter),
+        "target_predicate_plan_id": target_plan.plan_id,
+    }
 
 
 _DBA_TARGET_COLUMNS_BY_KEY: dict[str, tuple[str, ...]] = {
@@ -763,6 +786,7 @@ def _load_control_room(
                     ttl_key=f"dba_control_room_mart_{company}_{lookback_hours}_{key}",
                     tier="historical",
                     section="DBA Control Room",
+                    **_target_query_kwargs(target, _DBA_TARGET_COLUMNS_BY_KEY.get(key, ())),
                 )
                 source_rows.append({"Source": key, "Mode": "Fast summary"})
             except Exception as mart_exc:
@@ -793,6 +817,7 @@ def _load_control_room(
                     ttl_key=f"dba_control_room_live_{company}_{live_lookback_hours}_{key}",
                     tier="recent",
                     section="DBA Control Room",
+                    **_target_query_kwargs(target, _DBA_TARGET_COLUMNS_BY_KEY.get(key, ())),
                 )
                 source_rows.append({
                     "Source": key,
@@ -817,6 +842,7 @@ def _load_control_room(
                 ttl_key=f"dba_control_room_mart_{company}_{lookback_hours}_task_failures",
                 tier="historical",
                 section="DBA Control Room",
+                **_target_query_kwargs(target, _DBA_TARGET_COLUMNS_BY_KEY["task_failures"]),
             )
             source_rows.append({"Source": "task_failures", "Mode": "Fast summary"})
         except Exception as mart_exc:

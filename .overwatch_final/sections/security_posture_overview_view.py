@@ -42,7 +42,11 @@ from sections.security_posture_models import (
 )
 from sections.operator_case import make_case_evidence, render_add_to_case_button
 from sections.decision_workspace_controls import filter_evidence_rows_for_target, should_render_daily_diagnostics
-from sections.decision_workspace_target_filters import build_target_sql_filter, get_decision_evidence_target
+from sections.decision_workspace_target_filters import (
+    build_target_predicate_plan,
+    evidence_target_label,
+    get_decision_evidence_target,
+)
 from sections.shell_helpers import (
     consume_section_autoload_request,
     render_decision_evidence_panel,
@@ -85,12 +89,13 @@ SECURITY_TARGET_COLUMNS = (
 
 
 def _targeted_security_sql(sql: str, target: dict | None) -> str:
-    target_filter = build_target_sql_filter(
+    target_plan = build_target_predicate_plan(
         "Security Monitoring",
         target or {},
         alias="target",
         available_columns=SECURITY_TARGET_COLUMNS,
-    )
+    ).with_fingerprint()
+    target_filter = target_plan.sql_filter
     if not target_filter:
         return sql
     source_sql = str(sql).strip().rstrip(";")
@@ -108,6 +113,26 @@ def _targeted_security_sql(sql: str, target: dict | None) -> str:
           {target_filter}
           {limit_clause}
     """
+
+
+def _security_target_query_kwargs(target: dict | None) -> dict[str, object]:
+    target_plan = build_target_predicate_plan(
+        "Security Monitoring",
+        target or {},
+        alias="target",
+        available_columns=SECURITY_TARGET_COLUMNS,
+    ).with_fingerprint()
+    return {
+        "query_boundary": "evidence",
+        "max_rows": 500,
+        "section": "Security Monitoring",
+        "target_label": evidence_target_label(target or {}),
+        "target_context_present": bool(target),
+        "target_columns_used": target_plan.columns_used,
+        "target_fallback_used": target_plan.fallback_used,
+        "target_predicate_marker_present": bool(target_plan.sql_filter),
+        "target_predicate_plan_id": target_plan.plan_id,
+    }
 
 def _render_security_watch_floor(score: int, exceptions: pd.DataFrame, row) -> None:
     priority = _security_priority_view(exceptions).head(3)
@@ -675,15 +700,17 @@ def _render_security_exceptions_gate(company: str, environment: str, days: int) 
                     if not exceptions_sql:
                         _, exceptions_sql = _build_security_mart_brief_sql(session, days, company)
                         preferred_source = "Fast security summary; MFA/sharing: account history"
+                    evidence_target = get_decision_evidence_target("Security Monitoring")
                     exceptions_sql = _targeted_security_sql(
                         exceptions_sql,
-                        get_decision_evidence_target("Security Monitoring"),
+                        evidence_target,
                     )
                     source_kind = "live" if "live" in preferred_source.lower() else "mart"
                     st.session_state["security_posture_exceptions"] = run_query(
                         exceptions_sql,
                         ttl_key=f"security_posture_exceptions_{source_kind}_{company}_{environment}_{days}",
                         tier="standard",
+                        **_security_target_query_kwargs(evidence_target),
                     )
                     st.session_state["security_posture_exception_source"] = preferred_source
                     st.session_state.pop("security_posture_exception_error", None)
@@ -693,14 +720,16 @@ def _render_security_exceptions_gate(company: str, environment: str, days: int) 
                     try:
                         session = session or get_session()
                         _, exceptions_sql = _build_security_summary_sql(session, days, company)
+                        evidence_target = get_decision_evidence_target("Security Monitoring")
                         exceptions_sql = _targeted_security_sql(
                             exceptions_sql,
-                            get_decision_evidence_target("Security Monitoring"),
+                            evidence_target,
                         )
                         st.session_state["security_posture_exceptions"] = run_query(
                             exceptions_sql,
                             ttl_key=f"security_posture_exceptions_live_{company}_{environment}_{days}",
                             tier="standard",
+                            **_security_target_query_kwargs(evidence_target),
                         )
                         st.session_state["security_posture_exception_source"] = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE"
                         st.session_state.pop("security_posture_exception_error", None)

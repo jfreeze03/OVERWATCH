@@ -1,4 +1,3 @@
-# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.
 """Shared Cortex completion guardrails for operator-triggered AI calls."""
 
 from __future__ import annotations
@@ -346,6 +345,7 @@ def run_cortex_completion(
     )
     try:
         query_tag = _cortex_query_tag(session, feature=normalized_feature)
+        # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
         result = session.sql(sql).collect()
         if not result:
             answer = ""
@@ -378,4 +378,3 @@ def run_cortex_completion(
             query_tag=query_tag,
         )
         raise
-# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.

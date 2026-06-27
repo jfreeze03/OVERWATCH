@@ -1,4 +1,3 @@
-# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.
 """Account Health checklist history, closure, and snapshot persistence helpers."""
 from __future__ import annotations
 
@@ -329,9 +328,12 @@ def _save_account_health_checklist_snapshot(
     detail_source: str = "",
 ) -> None:
     try:
+        # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
         session.sql(build_account_health_checklist_history_ddl()).collect()
         for migration_sql in build_account_health_checklist_history_migration_sql():
+            # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
             session.sql(migration_sql).collect()
+        # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
         session.sql(_account_health_checklist_history_insert_sql(
             checklist,
             company=company,
@@ -352,4 +354,3 @@ __all__ = [
     "_account_health_operability_fact_sql",
     "_save_account_health_checklist_snapshot",
 ]
-# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.

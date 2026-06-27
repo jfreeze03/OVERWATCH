@@ -1,4 +1,3 @@
-# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.
 # sections/change_drift_action_queue.py - Change Drift action/evidence writers
 from __future__ import annotations
 
@@ -199,9 +198,12 @@ def _save_change_control_evidence_snapshot(
     source: str = "",
 ) -> None:
     try:
+        # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
         session.sql(build_change_control_evidence_ddl()).collect()
         for migration_sql in build_change_control_evidence_migration_sql():
+            # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
             session.sql(migration_sql).collect()
+        # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
         session.sql(_change_control_evidence_insert_sql(
             readiness,
             company=company,
@@ -214,4 +216,3 @@ def _save_change_control_evidence_snapshot(
         st.info("Object-change telemetry history is not available in this environment yet. Ask the DBA route to enable it, then retry this save.")
 
 __all__ = ['_change_action_payload', '_queue_change_exceptions', '_change_control_evidence_insert_sql', '_save_change_control_evidence_snapshot']
-# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.

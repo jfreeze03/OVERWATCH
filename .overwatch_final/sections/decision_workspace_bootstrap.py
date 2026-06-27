@@ -1,4 +1,3 @@
-# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.
 """One-shot bootstrap flow for Decision Workspace command summaries."""
 
 from __future__ import annotations
@@ -212,6 +211,7 @@ def _clean_bootstrap_failure_message(exc: object | None = None) -> str:
 
 def _candidate_procedure_available(session: object, procedure_name: str) -> bool:
     """Return True when a bootstrap/refresh procedure is visible in the current schema."""
+    # DIRECT_SQL_ADMIN_OK boundary=setup_health reason=setup_health_admin budget=admin_setup
     rows = session.sql(f"SHOW PROCEDURES LIKE '{procedure_name}'").collect()
     return bool(rows)
 
@@ -251,12 +251,14 @@ def _float_value(value: object) -> float | None:
 
 
 def _run_call(session: object, procedure_name: str) -> None:
+    # DIRECT_SQL_ADMIN_OK boundary=setup_health reason=setup_health_admin budget=admin_setup
     session.sql(f"CALL {procedure_name}();").collect()
 
 
 def detect_decision_setup_version(session: object) -> str | None:
     """Return the configured Decision setup procedure when the marker is visible."""
     try:
+        # DIRECT_SQL_ADMIN_OK boundary=setup_health reason=setup_health_admin budget=admin_setup
         rows = session.sql(
             """
 SELECT MAX(NULLIF(TRIM(SETTING_VALUE), '')) AS PROCEDURE_NAME
@@ -503,6 +505,7 @@ def validate_decision_bootstrap_output(
     requested_environment = _norm_scope(environment)
     requested_window_days = _int_value(window_days, 7) or 7
     try:
+        # DIRECT_SQL_ADMIN_OK boundary=setup_health reason=setup_health_admin budget=admin_setup
         rows = [_row_to_dict(row) for row in session.sql(_validation_sql(packet_byte_limit)).collect()]
     except Exception as exc:
         return DecisionBootstrapValidation(
@@ -963,4 +966,3 @@ __all__ = [
     "validate_decision_bootstrap_output",
     "maybe_run_decision_workspace_bootstrap",
 ]
-# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.

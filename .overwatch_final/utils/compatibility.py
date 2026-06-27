@@ -1,4 +1,3 @@
-# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.
 # utils/compatibility.py - Snowflake account compatibility checks
 from __future__ import annotations
 
@@ -280,6 +279,7 @@ def get_available_columns(session, object_name: str) -> set[str]:
     if _process_unavailable(object_name):
         raise RuntimeError(f"{object_name} unavailable in recent compatibility probe.")
     try:
+        # DIRECT_SQL_ADMIN_OK boundary=metadata reason=metadata_probe budget=advanced_diagnostics
         df = normalize_df(session.sql(f"SELECT * FROM {object_name} LIMIT 0").to_pandas())
     except Exception:
         _mark_process_unavailable(object_name)
@@ -343,6 +343,7 @@ def filter_existing_columns(session, object_name: str, columns: Iterable[str]) -
             unprobed = [col for col in candidates if f"{object_name}:{col}" not in probe_cache]
             if unprobed:
                 try:
+                    # DIRECT_SQL_ADMIN_OK boundary=metadata reason=metadata_probe budget=advanced_diagnostics
                     session.sql(f"SELECT {', '.join(unprobed)} FROM {object_name} LIMIT 0").collect()
                     for col in unprobed:
                         probe_cache[f"{object_name}:{col}"] = True
@@ -353,6 +354,7 @@ def filter_existing_columns(session, object_name: str, columns: Iterable[str]) -
                         if cache_key in probe_cache:
                             continue
                         try:
+                            # DIRECT_SQL_ADMIN_OK boundary=metadata reason=metadata_probe budget=advanced_diagnostics
                             session.sql(f"SELECT {col} FROM {object_name} LIMIT 0").collect()
                             probe_cache[cache_key] = True
                         except Exception:
@@ -547,6 +549,7 @@ def run_compatibility_checks(session) -> pd.DataFrame:
 
     for category, statement, used_by in SHOW_CHECKS:
         try:
+            # DIRECT_SQL_ADMIN_OK boundary=metadata reason=metadata_probe budget=advanced_diagnostics
             session.sql(statement).collect()
             status = "Ready"
             detail = "SHOW command succeeded."
@@ -787,4 +790,3 @@ def build_cost_formula_audit() -> pd.DataFrame:
             "NEXT_REVIEW",
         ],
     )
-# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.

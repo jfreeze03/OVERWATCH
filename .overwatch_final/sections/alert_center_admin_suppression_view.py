@@ -1,4 +1,3 @@
-# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.
 """Alert Center Suppression Windows admin renderer."""
 
 from __future__ import annotations
@@ -122,6 +121,7 @@ def render_suppression_windows_pane(
                     session = action_session_factory("create a suppression window")
                     if session is None:
                         return
+                    # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
                     session.sql(_suppression_window_insert_sql(
                         table_name=table_name,
                         entity=entity,
@@ -189,9 +189,9 @@ def render_suppression_windows_pane(
                     session = action_session_factory("deactivate a suppression window")
                     if session is None:
                         return
+                    # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
                     session.sql(_suppression_window_deactivate_sql(int(selected_id), table_name)).collect()
                     st.success(f"Suppression window {int(selected_id)} deactivated.")
                     st.session_state.pop("alert_center_annotations", None)
                 except Exception as exc:
                     st.error(f"Deactivate failed: {format_error(exc)}")
-# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.

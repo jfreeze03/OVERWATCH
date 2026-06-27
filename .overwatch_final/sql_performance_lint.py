@@ -30,10 +30,55 @@ def _has_time_predicate(window: str) -> bool:
     )
 
 
-def lint_sql_text(sql: str, *, path: str = "") -> list[dict[str, object]]:
+def _infer_mode(path: str, upper: str) -> str:
+    normalized = str(path or "").replace("\\", "/").lower()
+    if "fast_impl" in normalized:
+        return "refresh_fast"
+    if "full_impl" in normalized:
+        return "refresh_full"
+    if "account_usage" in normalized:
+        return "account_usage_fallback"
+    if "evidence" in normalized:
+        return "evidence"
+    if "first_paint" in normalized or "packet_lookup" in normalized:
+        return "app_first_paint"
+    if "SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS_FAST_IMPL" in upper:
+        return "auto"
+    return "auto"
+
+
+def _limit_value(upper: str) -> int | None:
+    matches = re.findall(r"\bLIMIT\s+(\d+)\b", upper)
+    if not matches:
+        return None
+    try:
+        return int(matches[-1])
+    except Exception:
+        return None
+
+
+def _marker_before_limit(upper: str) -> bool:
+    marker_pos = upper.find("OVERWATCH_TARGET_PREDICATE")
+    if marker_pos < 0:
+        return False
+    limit_pos = upper.find("LIMIT", marker_pos)
+    return limit_pos >= 0
+
+
+def lint_sql_text(
+    sql: str,
+    *,
+    path: str = "",
+    mode: str = "auto",
+    target_context_present: bool = False,
+    metadata_probe_declared: bool = False,
+) -> list[dict[str, object]]:
     """Return SQL-free performance findings for deployment SQL."""
     text = _strip_literals(sql)
     upper = text.upper()
+    mode = str(mode or "auto").strip().lower()
+    if mode == "auto":
+        mode = _infer_mode(path, upper)
     findings: list[dict[str, object]] = []
 
     def add(code: str, severity: str, message: str) -> None:
@@ -50,15 +95,38 @@ def lint_sql_text(sql: str, *, path: str = "") -> list[dict[str, object]]:
         "CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS_FAST_IMPL()",
         "CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS_FULL_IMPL()",
     )
-    if fast_body:
-        if "CALL SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS(" in fast_body:
+    fast_region = fast_body if fast_body else (upper if mode == "refresh_fast" else "")
+    if fast_region:
+        if "CALL SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS(" in fast_region:
             add("FAST_IMPL_SHARED_CORE_CALL", "error", "FAST_IMPL must not call the shared full-heavy command brief procedure.")
-        if re.search(r"\b(14|30|60|90)\b", fast_body):
+        if re.search(r"\b(14|30|60|90)\b", fast_region):
             add("FAST_IMPL_FULL_WINDOW", "error", "FAST_IMPL must not contain full-only windows.")
-        if re.search(r"\bTMP_FAST_SECTION_DECISION_PACKET_FLAT\b[\s\S]{0,600}\bFROM\s+MART_SECTION_DECISION_CURRENT_FLAT\b", fast_body):
+        if re.search(r"\bTMP_FAST_SECTION_DECISION_PACKET_FLAT\b[\s\S]{0,900}\bFROM\s+MART_SECTION_DECISION_CURRENT_FLAT\b", fast_region):
             add("FAST_IMPL_REPUBLISH_CURRENT_FLAT", "error", "FAST_IMPL flat packet staging must not source from current flat packets.")
-        if re.search(r"\bARRAY_AGG\s*\(", fast_body) and not re.search(r"\b(ROW_NUMBER|QUALIFY|LIMIT|ARRAY_SLICE)\b", fast_body):
+        if "DATE_SPINE" in fast_region or "CALENDAR_SPINE" in fast_region:
+            add("FAST_IMPL_HISTORICAL_DATE_SPINE", "error", "FAST_IMPL must not build broad historical date spines.")
+        if re.search(r"\bARRAY_AGG\s*\(", fast_region) and not re.search(r"\b(ROW_NUMBER|QUALIFY|LIMIT|ARRAY_SLICE|TMP_FAST_SECTION_COMMAND_)\b", fast_region):
             add("FAST_IMPL_UNBOUNDED_ARRAY_AGG", "error", "FAST_IMPL array aggregation must be capped for first viewport packets.")
+        reads_command_marts = bool(re.search(r"\bFROM\s+MART_SECTION_COMMAND_", fast_region))
+        has_fresh_snapshot = "TMP_FAST_SOURCE_SNAPSHOT" in fast_region or "REUSE_LATEST_COMPACT_SOURCE" in fast_region
+        if reads_command_marts and not has_fresh_snapshot:
+            add("FAST_IMPL_REUSES_COMMAND_MARTS_WITHOUT_SOURCE_SNAPSHOT", "warning", "FAST_IMPL command reuse must be backed by a fresh compact source snapshot.")
+        if "TMP_FAST_SOURCE_SNAPSHOT" in fast_region:
+            source_tokens = (
+                "FACT_QUERY_DETAIL_RECENT",
+                "FACT_QUERY_HOURLY",
+                "ALERT_EVENTS",
+                "FACT_COST_DAILY",
+                "FACT_GRANT_DAILY",
+                "FACT_LOGIN_DAILY",
+                "MART_QUERY_EVIDENCE_RECENT",
+                "MART_ALERT_EVIDENCE_RECENT",
+                "MART_SECURITY_EVIDENCE_RECENT",
+                "MART_COST_EVIDENCE_RECENT",
+                "MART_DBA_EVIDENCE_RECENT",
+            )
+            if not any(token in fast_region for token in source_tokens):
+                add("FAST_IMPL_SOURCE_SNAPSHOT_NOT_FACT_BACKED", "error", "FAST source snapshot must read compact source facts or recent evidence marts.")
     for match in re.finditer(r"\bFROM\s+SNOWFLAKE\.ACCOUNT_USAGE\.[A-Z0-9_]+", upper):
         window = upper[match.start():match.start() + 1200]
         has_bound = _has_time_predicate(window)
@@ -70,6 +138,36 @@ def lint_sql_text(sql: str, *, path: str = "") -> list[dict[str, object]]:
     if re.search(r"\bSELECT\s+\*", upper):
         severity = "error" if "APP_FACING" in upper else "warning"
         add("APP_FACING_SELECT_STAR", severity, "Wildcard projection is forbidden in app-facing deployment SQL unless explicitly allowlisted.")
+    if mode == "app_first_paint":
+        if 'DECISION_PACKET:"' in upper:
+            add("FIRST_PAINT_VARIANT_EXTRACTION", "error", "First-paint packet lookup must read materialized flat columns.")
+        if re.search(r"\bSELECT\s+\*", upper):
+            add("FIRST_PAINT_SELECT_STAR", "error", "First-paint packet lookup must use explicit columns.")
+        if "SNOWFLAKE.ACCOUNT_USAGE" in upper:
+            add("FIRST_PAINT_ACCOUNT_USAGE", "error", "First paint must not read Account Usage.")
+        if re.search(r"\b(SHOW|DESCRIBE|DESC)\b", upper):
+            add("FIRST_PAINT_METADATA_PROBE", "error", "First paint must not run metadata probes.")
+        limit = _limit_value(upper)
+        if limit != 1:
+            add("FIRST_PAINT_LIMIT_ONE_REQUIRED", "error", "First-paint packet lookup must use LIMIT 1.")
+    if mode == "evidence":
+        limit = _limit_value(upper)
+        if limit is None or limit > 500:
+            add("EVIDENCE_LIMIT_REQUIRED", "error", "Evidence queries must be bounded to 500 rows or fewer.")
+        if target_context_present and not _marker_before_limit(upper):
+            add("EVIDENCE_TARGET_MARKER_REQUIRED", "error", "Targeted evidence SQL must include the target predicate marker before LIMIT.")
+        if "EVIDENCE_QUERY" in upper and re.search(r"\b(CALL|EXECUTE IMMEDIATE|SESSION\.SQL)\b", upper):
+            add("EXECUTABLE_EVIDENCE_QUERY", "error", "Packet EVIDENCE_QUERY must never be executable SQL.")
+        if "SNOWFLAKE.ACCOUNT_USAGE" in upper and "DEEP_FALLBACK" not in upper:
+            add("EVIDENCE_ACCOUNT_USAGE_FORBIDDEN", "error", "Normal evidence clicks must use compact marts, not Account Usage.")
+    if mode == "account_usage_fallback":
+        if "SNOWFLAKE.ACCOUNT_USAGE" in upper:
+            if not _has_time_predicate(upper):
+                add("ACCOUNT_USAGE_UNBOUNDED", "error", "Account Usage fallback must include a time predicate.")
+            if _limit_value(upper) is None:
+                add("ACCOUNT_USAGE_NO_LIMIT", "error", "Account Usage fallback must include LIMIT.")
+        if not metadata_probe_declared and re.search(r"\b(SHOW|DESCRIBE|DESC|LIMIT\s+0)\b", upper):
+            add("ACCOUNT_USAGE_METADATA_PROBE_UNDECLARED", "error", "Account Usage fallback metadata probes must be declared in budget artifacts.")
     first_paint_region = _body_between(
         upper,
         "CREATE TRANSIENT TABLE IF NOT EXISTS MART_SECTION_DECISION_CURRENT_FLAT",

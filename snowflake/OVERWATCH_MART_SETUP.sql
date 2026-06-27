@@ -13130,11 +13130,62 @@ DECLARE
   exception_rows NUMBER DEFAULT 0;
   action_rows NUMBER DEFAULT 0;
   source_rows NUMBER DEFAULT 0;
+  fresh_source_rows NUMBER DEFAULT 0;
+  reused_source_rows NUMBER DEFAULT 0;
   packet_rows NUMBER DEFAULT 0;
   max_packet_bytes NUMBER DEFAULT 0;
 BEGIN
   INSERT INTO OVERWATCH_LOAD_AUDIT (LOAD_NAME, LOAD_STARTED_AT, STATUS, MESSAGE)
   VALUES ('SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS_FAST_IMPL', :started_at, 'RUNNING', 'Started compact FAST packet refresh.');
+
+  CREATE OR REPLACE TEMPORARY TABLE TMP_FAST_SOURCE_SNAPSHOT AS
+  SELECT 'query_recent' AS SOURCE_KEY, MAX(START_TIME) AS SOURCE_FACT_MAX_TS, COUNT(*) AS SOURCE_ROW_COUNT
+    FROM FACT_QUERY_DETAIL_RECENT
+   WHERE START_TIME >= DATEADD('day', -7, CURRENT_TIMESTAMP())
+  UNION ALL
+  SELECT 'query_hourly', MAX(HOUR_START), COUNT(*)
+    FROM FACT_QUERY_HOURLY
+   WHERE HOUR_START >= DATEADD('day', -7, CURRENT_TIMESTAMP())
+  UNION ALL
+  SELECT 'alert_events', MAX(EVENT_TS), COUNT(*)
+    FROM ALERT_EVENTS
+   WHERE EVENT_TS >= DATEADD('day', -7, CURRENT_TIMESTAMP())
+  UNION ALL
+  SELECT 'cost_daily', MAX(TO_TIMESTAMP_NTZ(USAGE_DATE)), COUNT(*)
+    FROM FACT_COST_DAILY
+   WHERE USAGE_DATE >= DATEADD('day', -7, CURRENT_DATE())
+  UNION ALL
+  SELECT 'login_daily', MAX(TO_TIMESTAMP_NTZ(LOGIN_DATE)), COUNT(*)
+    FROM FACT_LOGIN_DAILY
+   WHERE LOGIN_DATE >= DATEADD('day', -7, CURRENT_DATE())
+  UNION ALL
+  SELECT 'grant_daily', MAX(TO_TIMESTAMP_NTZ(SNAPSHOT_DATE)), COUNT(*)
+    FROM FACT_GRANT_DAILY
+   WHERE SNAPSHOT_DATE >= DATEADD('day', -7, CURRENT_DATE())
+  UNION ALL
+  SELECT 'query_evidence_recent', MAX(START_TIME), COUNT(*)
+    FROM MART_QUERY_EVIDENCE_RECENT
+   WHERE START_TIME >= DATEADD('day', -7, CURRENT_TIMESTAMP())
+  UNION ALL
+  SELECT 'alert_evidence_recent', MAX(EVENT_TS), COUNT(*)
+    FROM MART_ALERT_EVIDENCE_RECENT
+   WHERE EVENT_TS >= DATEADD('day', -7, CURRENT_TIMESTAMP())
+  UNION ALL
+  SELECT 'security_evidence_recent', MAX(EVENT_TS), COUNT(*)
+    FROM MART_SECURITY_EVIDENCE_RECENT
+   WHERE EVENT_TS >= DATEADD('day', -7, CURRENT_TIMESTAMP())
+  UNION ALL
+  SELECT 'cost_evidence_recent', MAX(TO_TIMESTAMP_NTZ(USAGE_DATE)), COUNT(*)
+    FROM MART_COST_EVIDENCE_RECENT
+   WHERE USAGE_DATE >= DATEADD('day', -7, CURRENT_DATE())
+  UNION ALL
+  SELECT 'dba_evidence_recent', MAX(EVENT_TS), COUNT(*)
+    FROM MART_DBA_EVIDENCE_RECENT
+   WHERE EVENT_TS >= DATEADD('day', -7, CURRENT_TIMESTAMP());
+
+  SELECT COUNT_IF(SOURCE_ROW_COUNT > 0), COUNT_IF(SOURCE_ROW_COUNT = 0)
+    INTO :fresh_source_rows, :reused_source_rows
+    FROM TMP_FAST_SOURCE_SNAPSHOT;
 
   CREATE OR REPLACE TEMPORARY TABLE TMP_FAST_SECTION_COMMAND_BRIEF AS
   SELECT b.*
@@ -13147,6 +13198,7 @@ BEGIN
 
   UPDATE TMP_FAST_SECTION_COMMAND_BRIEF
      SET SNAPSHOT_TS = :snapshot_ts,
+         SOURCE_SNAPSHOT_TS = COALESCE((SELECT MAX(SOURCE_FACT_MAX_TS) FROM TMP_FAST_SOURCE_SNAPSHOT), SOURCE_SNAPSHOT_TS, :snapshot_ts),
          LOAD_TS = CURRENT_TIMESTAMP();
 
   CREATE OR REPLACE TEMPORARY TABLE TMP_FAST_SECTION_COMMAND_METRIC AS
@@ -13205,6 +13257,14 @@ BEGIN
 
   UPDATE TMP_FAST_SECTION_COMMAND_SOURCE
      SET SNAPSHOT_TS = :snapshot_ts,
+         SOURCE_SNAPSHOT_TS = COALESCE(
+           (SELECT MAX(s.SOURCE_FACT_MAX_TS)
+              FROM TMP_FAST_SOURCE_SNAPSHOT s
+             WHERE UPPER(s.SOURCE_KEY) = UPPER(TMP_FAST_SECTION_COMMAND_SOURCE.SOURCE_KEY)
+                OR UPPER(TMP_FAST_SECTION_COMMAND_SOURCE.SOURCE_KEY) LIKE '%' || UPPER(s.SOURCE_KEY) || '%'),
+           SOURCE_SNAPSHOT_TS,
+           :snapshot_ts
+         ),
          LOAD_TS = CURRENT_TIMESTAMP();
 
   SELECT COUNT(*) INTO :parent_rows FROM TMP_FAST_SECTION_COMMAND_BRIEF;
@@ -13495,7 +13555,11 @@ BEGIN
          (SELECT COUNT_IF(COALESCE(OPTIONAL_MISSING_SOURCE_COUNT, 0) > 0 OR COALESCE(OPTIONAL_STALE_SOURCE_COUNT, 0) > 0 OR DATA_AVAILABILITY_STATE = 'Stale') FROM TMP_FAST_SECTION_COMMAND_BRIEF),
          0, TRUE, COUNT(DISTINCT WINDOW_DAYS_NORM), :packet_rows, NULL,
          OBJECT_CONSTRUCT('brief_rows', :parent_rows, 'metric_rows', :metric_rows, 'exception_rows', :exception_rows,
-                          'action_rows', :action_rows, 'source_rows', :source_rows, 'packet_flat_rows', :packet_rows,
+                          'action_rows', :action_rows, 'source_rows', :source_rows,
+                          'source_snapshot_rows', (SELECT COUNT(*) FROM TMP_FAST_SOURCE_SNAPSHOT),
+                          'fresh_source_count', :fresh_source_rows, 'reused_source_count', :reused_source_rows,
+                          'source_fact_max_ts', (SELECT MAX(SOURCE_FACT_MAX_TS) FROM TMP_FAST_SOURCE_SNAPSHOT),
+                          'packet_flat_rows', :packet_rows,
                           'packet_raw_rows', (SELECT COUNT(*) FROM TMP_FAST_SECTION_DECISION_PACKET_RAW),
                           'flat_publish_rows', :packet_rows, 'raw_publish_rows', :packet_rows),
          OBJECT_CONSTRUCT('max_packet_bytes', :max_packet_bytes), CURRENT_TIMESTAMP()

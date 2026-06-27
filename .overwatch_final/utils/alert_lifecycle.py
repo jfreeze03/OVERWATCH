@@ -1,4 +1,3 @@
-# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.
 """Alert lifecycle SQL and mutation helpers.
 
 This module owns inserts into OVERWATCH_ALERTS plus review-gated status and
@@ -126,6 +125,7 @@ def update_alert_status(
     ))
     if "STATUS" not in columns:
         raise ValueError("OVERWATCH_ALERTS does not expose STATUS for alert lifecycle updates.")
+    # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
     session.sql(build_alert_status_update_sql(
         alert_id=alert_id,
         status=status,
@@ -200,10 +200,10 @@ def acknowledge_alert_escalation(
             "LAST_STATUS_AT",
         ],
     ))
+    # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
     session.sql(build_alert_escalation_ack_sql(
         alert_id=alert_id,
         actor=actor,
         note=note,
         columns=columns,
     )).collect()
-# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.

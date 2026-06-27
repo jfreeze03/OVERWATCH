@@ -596,10 +596,14 @@ def record_direct_sql_event(
         boundary = "other"
     allowance = _current_direct_sql_allowance()
     reason_text = str(reason or "")
-    if role_capture:
+    if not allowed:
+        direct_sql_kind = "unallowlisted_direct_sql"
+    elif role_capture:
         direct_sql_kind = "role_capture"
-    elif boundary == "decision_packet":
+    elif allowance and boundary == "decision_packet":
         direct_sql_kind = "packet_direct_sql"
+    elif allowance:
+        direct_sql_kind = "runner_sql"
     elif boundary == "account_usage" and re.search(r"metadata|probe|columns|filter_existing", reason_text, re.IGNORECASE):
         direct_sql_kind = "account_usage_metadata_probe"
     elif boundary == "metadata" or re.search(r"\b(show|describe|desc|metadata|current_role|select 1)\b", reason_text, re.IGNORECASE):

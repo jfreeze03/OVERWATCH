@@ -906,6 +906,17 @@ class SectionCommandBriefTests(unittest.TestCase):
         fast_block = procs.split("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST()", 1)[1].split("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL()", 1)[0]
         full_block = procs.split("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL()", 1)[1].split("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS()", 1)[0]
         self.assertNotIn("CALL SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS('FAST')", fast_impl_block)
+        self.assertIn("TMP_FAST_SOURCE_SNAPSHOT", fast_impl_block)
+        self.assertIn("FACT_QUERY_DETAIL_RECENT", fast_impl_block)
+        self.assertIn("ALERT_EVENTS", fast_impl_block)
+        self.assertIn("FACT_COST_DAILY", fast_impl_block)
+        self.assertIn("FACT_GRANT_DAILY", fast_impl_block)
+        self.assertIn("MART_QUERY_EVIDENCE_RECENT", fast_impl_block)
+        self.assertIn("SOURCE_FACT_MAX_TS", fast_impl_block)
+        self.assertLess(
+            fast_impl_block.index("CREATE OR REPLACE TEMPORARY TABLE TMP_FAST_SOURCE_SNAPSHOT"),
+            fast_impl_block.index("CREATE OR REPLACE TEMPORARY TABLE TMP_FAST_SECTION_COMMAND_BRIEF"),
+        )
         self.assertIn("TMP_FAST_SECTION_DECISION_PACKET_FLAT", fast_impl_block)
         self.assertIn("WINDOW_DAYS_NORM IN (1, 7)", fast_impl_block)
         self.assertIn("INSERT INTO MART_SECTION_DECISION_CURRENT_FLAT", fast_impl_block)

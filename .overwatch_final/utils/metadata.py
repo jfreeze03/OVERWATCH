@@ -1,4 +1,3 @@
-# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.
 # utils/metadata.py - shared Snowflake metadata helpers
 import time
 
@@ -54,6 +53,7 @@ def show_to_df(session, stmt: str, force_refresh: bool = False) -> pd.DataFrame:
             return frame.copy()
 
     try:
+        # DIRECT_SQL_ADMIN_OK boundary=metadata reason=metadata_probe budget=advanced_diagnostics
         df = normalize_df(session.sql(stmt).to_pandas())
     except Exception:
         return pd.DataFrame()
@@ -310,6 +310,7 @@ def load_live_task_runs(
             ORDER BY SCHEDULED_TIME DESC
         """
         try:
+            # DIRECT_SQL_ADMIN_OK boundary=metadata reason=metadata_probe budget=advanced_diagnostics
             rows = session.sql(sql).collect()
         except Exception:
             continue
@@ -399,4 +400,3 @@ def build_unclassified_assets_sql(days_back: int = 30) -> str:
     ORDER BY object_type, credits_30d DESC NULLS LAST, object_name
     LIMIT 500
     """
-# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.

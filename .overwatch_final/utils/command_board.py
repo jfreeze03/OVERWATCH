@@ -1,4 +1,3 @@
-# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.
 """Shared first-paint monitoring summary readers.
 
 These helpers keep the top-level sections data-first without making each shell
@@ -212,6 +211,7 @@ def _quiet_first_paint_query(sql: str, *, section: str, max_rows: int = 500) -> 
         session = get_session()
         tag = build_overwatch_query_tag(section=section, tier="first_paint")
         apply_overwatch_query_tag(session, tag, section=section)
+        # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
         frame = session.sql(_bounded_query(sql, max_rows)).to_pandas()
         return normalize_df(frame), True
     except BaseException as exc:
@@ -1133,4 +1133,3 @@ def load_setup_readiness(use_live: bool = False) -> pd.DataFrame:
     fallback["MIGRATION_STATE"] = "Not checked"
     fallback["NEXT_ACTION"] = "Refresh data health after Snowflake access is available."
     return fallback
-# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.

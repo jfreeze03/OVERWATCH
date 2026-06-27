@@ -1,4 +1,3 @@
-# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.
 # sections/dba_tools_task_graph_control_view.py - Task Graph Control render branch.
 
 import pandas as pd
@@ -108,6 +107,7 @@ def render_task_graph_control_tool(session, company: str) -> None:
                 ):
                     if _require_typed_confirmation(cancel_confirmed, "CANCEL"):
                         try:
+                            # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
                             session.sql(_cancel_task_query_sql(cancel_qid)).collect()
                             st.success(f"Cancel sent for `{cancel_qid}`")
                         except Exception as e:
@@ -181,6 +181,7 @@ def render_task_graph_control_tool(session, company: str) -> None:
                                 graph_confirmed = str(graph_confirm_text or "").strip() == "CANCEL"
                                 if _require_typed_confirmation(graph_confirmed, "CANCEL"):
                                     try:
+                                        # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
                                         session.sql(_cancel_task_graph_sql(str(sel_graph))).collect()
                                         st.success(f"Graph run `{sel_graph}` cancelled.")
                                         st.session_state.pop("dba_df_task_runs", None)
@@ -211,6 +212,7 @@ def render_task_graph_control_tool(session, company: str) -> None:
                             run_confirmed = str(run_confirm_text or "").strip() == "CANCEL"
                             if _require_typed_confirmation(run_confirmed, "CANCEL"):
                                 try:
+                                    # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
                                     session.sql(_cancel_task_query_sql(str(sel_qid))).collect()
                                     st.success(f"Cancel sent for `{sel_qid}`")
                                 except Exception as e:
@@ -296,6 +298,7 @@ def render_task_graph_control_tool(session, company: str) -> None:
                     if st.button("Suspend", key="tg_suspend", disabled=admin_button_disabled(state == "suspended")):
                         if _require_typed_confirmation(task_confirmed, sel_task):
                             try:
+                                # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
                                 session.sql(_alter_task_suspend_sql(full_n)).collect()
                                 st.success(f"`{sel_task}` suspended.")
                                 st.session_state.pop("dba_df_tg_tasks", None)
@@ -307,6 +310,7 @@ def render_task_graph_control_tool(session, company: str) -> None:
                     if st.button("Resume", key="tg_resume", disabled=admin_button_disabled(state == "started")):
                         if _require_typed_confirmation(task_confirmed, sel_task):
                             try:
+                                # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
                                 session.sql(_alter_task_resume_sql(full_n)).collect()
                                 st.success(f"`{sel_task}` resumed.")
                                 st.session_state.pop("dba_df_tg_tasks", None)
@@ -318,6 +322,7 @@ def render_task_graph_control_tool(session, company: str) -> None:
                     if st.button("Execute Now", key="tg_execute", disabled=admin_button_disabled()):
                         if _require_typed_confirmation(task_confirmed, sel_task):
                             try:
+                                # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
                                 session.sql(_execute_task_sql(full_n)).collect()
                                 st.success(f"`{sel_task}` triggered.")
                             except Exception as e:
@@ -327,6 +332,7 @@ def render_task_graph_control_tool(session, company: str) -> None:
                     if st.button("Retry Last Failed", key="tg_retry", disabled=admin_button_disabled()):
                         if _require_typed_confirmation(task_confirmed, sel_task):
                             try:
+                                # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
                                 session.sql(_execute_task_sql(full_n)).collect()
                                 st.success(f"Retry triggered for `{sel_task}`.")
                                 st.caption(
@@ -370,6 +376,7 @@ def render_task_graph_control_tool(session, company: str) -> None:
                         if st.button("Suspend Entire Graph", type="primary", key="tg_bulk_suspend", disabled=admin_button_disabled()):
                             if _require_typed_confirmation(graph_confirmed, sel_root):
                                 try:
+                                    # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
                                     session.sql(_alter_task_suspend_sql(root_full)).collect()
                                     st.success(f"Root task `{sel_root}` suspended - entire graph will stop scheduling.")
                                     st.session_state.pop("dba_df_tg_tasks", None)
@@ -384,6 +391,7 @@ def render_task_graph_control_tool(session, company: str) -> None:
                                 resume_targets = child_fqns + [root_full]
                                 for task_fqn, stmt in zip(resume_targets, _resume_task_graph_sql(root_full, child_fqns)):
                                     try:
+                                        # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
                                         session.sql(stmt).collect()
                                     except Exception as e:
                                         errors_seen.append(f"{task_fqn}: {format_snowflake_error(e)}")
@@ -467,4 +475,3 @@ def render_task_graph_control_tool(session, company: str) -> None:
                     raw_label="All DAG rows",
                 )
                 download_csv(df_dag, f"dag_{sel_dag}.csv")
-# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.

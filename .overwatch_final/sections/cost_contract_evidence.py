@@ -321,6 +321,8 @@ def load_cost_evidence(
             target_label=target_label,
             target_context_present=bool(target),
             target_columns_used=target_plan.columns_used,
+            target_fallback_used=target_plan.fallback_used,
+            target_predicate_marker_present=bool(target_plan.sql_filter),
             target_predicate_plan_id=target_plan.plan_id,
         )
         error = ""

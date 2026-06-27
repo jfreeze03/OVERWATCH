@@ -1,4 +1,3 @@
-# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.
 # utils/logging.py — Structured usage logging for OVERWATCH
 # ─────────────────────────────────────────────────────────────────────────────
 # Writes one row per section load to OVERWATCH_USAGE_LOG.
@@ -163,6 +162,7 @@ def log_section_load(section: str, duration_ms: int = 0) -> None:
         sess_id = get_state(SESSION_ID, "")
         perf_run_id = _perf_run_id()
 
+        # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
         session.sql(f"""
             INSERT INTO {LOG_TABLE}
                 (SF_USER, SF_ROLE, COMPANY_VIEW, SECTION, QUERY_DURATION_MS, SESSION_ID, PERF_RUN_ID)
@@ -205,6 +205,7 @@ def log_query_event(
         perf_run_id = _perf_run_id()
         used_cache_sql = "TRUE" if used_cache else "FALSE"
 
+        # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
         session.sql(f"""
             INSERT INTO {LOG_TABLE}
                 (
@@ -254,4 +255,3 @@ class SectionTimer:
     def __exit__(self, *args):
         ms = int((time.time() - self._start) * 1000)
         log_section_load(self.section, ms)
-# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.

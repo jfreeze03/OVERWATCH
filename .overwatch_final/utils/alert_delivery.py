@@ -1,4 +1,3 @@
-# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.
 """Alert delivery helpers for OVERWATCH.
 
 This module owns recipient resolution, email/webhook payload construction,
@@ -29,6 +28,11 @@ from .compatibility import filter_existing_columns
 from .alert_status import normalize_alert_severity as _normalize_alert_severity
 from .query import format_snowflake_error, run_query, safe_identifier
 from .sql_safe import sql_literal
+from sections.decision_workspace_target_filters import (
+    TARGET_PREDICATE_MARKER,
+    build_target_predicate_plan,
+    evidence_target_label,
+)
 
 
 ALERT_DELIVERY_LOG_TABLE = "OVERWATCH_ALERT_DELIVERY_LOG"
@@ -299,6 +303,7 @@ def log_alert_digest_delivery(
             "LAST_STATUS_AT",
         ],
     ))
+    # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
     session.sql(build_alert_delivery_log_insert_sql(
         alert_ids=clean_ids,
         company=company,
@@ -310,6 +315,7 @@ def log_alert_digest_delivery(
         notes=notes,
     )).collect()
     if columns:
+        # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
         session.sql(build_alert_delivery_mark_sql(
             alert_ids=clean_ids,
             delivery_target=delivery_target,
@@ -453,7 +459,7 @@ def _alert_delivery_related_filter(
     numeric_alert_ids = tuple(dict.fromkeys(value for value in explicit_values if re.fullmatch(r"\d+", value)))[:25]
     if numeric_alert_ids:
         predicates = [f"ARRAY_CONTAINS({int(value)}::VARIANT, ALERT_IDS)" for value in numeric_alert_ids]
-        return "AND (" + " OR ".join(predicates) + ")", numeric_alert_ids, "alert_ids"
+        return f"AND {TARGET_PREDICATE_MARKER} (" + " OR ".join(predicates) + ")", numeric_alert_ids, "alert_ids"
 
     related_values = [value for value in explicit_values if value not in numeric_alert_ids]
     for key in ("evidence_id", "entity_id", "entity_name"):
@@ -468,7 +474,7 @@ def _alert_delivery_related_filter(
         f" OR DELIVERY_NOTES ILIKE '%' || {sql_literal(value, 300)} || '%'"
         for value in related_values
     ]
-    return "AND (" + " OR ".join(f"({predicate})" for predicate in predicates) + ")", related_values, "text"
+    return f"AND {TARGET_PREDICATE_MARKER} (" + " OR ".join(f"({predicate})" for predicate in predicates) + ")", related_values, "text"
 
 
 def load_alert_delivery_log(
@@ -482,6 +488,13 @@ def load_alert_delivery_log(
     days = max(1, min(int(days), 365))
     limit = max(1, min(int(limit), 1000))
     related_filter, related_values, related_mode = _alert_delivery_related_filter(target=target, alert_ids=alert_ids)
+    target_plan = build_target_predicate_plan(
+        "Alert Center",
+        target or {},
+        available_columns=("ALERT_ID", "ALERT_KEY", "EVENT_ID", "ACTION_ID", "ENTITY_NAME"),
+    ).with_fingerprint()
+    target_label = evidence_target_label(target or {}) or (f"alert ids: {len(alert_ids)}" if alert_ids else "")
+    target_columns = target_plan.columns_used or (("ALERT_IDS",) if related_values else ())
     target_hash = str(abs(hash((related_mode, tuple(related_values)))))[:10] if related_values else "none"
     return run_query(f"""
         SELECT
@@ -502,5 +515,16 @@ def load_alert_delivery_log(
           {related_filter}
         ORDER BY DELIVERY_TS DESC
         LIMIT {limit}
-    """, ttl_key=f"alert_delivery_log_{days}_{limit}_{target_hash}", tier="recent", section=section)
-# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.
+    """,
+        ttl_key=f"alert_delivery_log_{days}_{limit}_{target_hash}",
+        tier="recent",
+        section=section,
+        max_rows=limit,
+        query_boundary="evidence",
+        target_label=target_label,
+        target_context_present=bool(target or alert_ids),
+        target_columns_used=target_columns,
+        target_fallback_used=related_mode == "text",
+        target_predicate_marker_present=bool(related_filter),
+        target_predicate_plan_id=target_plan.plan_id or target_hash,
+    )

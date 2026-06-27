@@ -570,9 +570,12 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         security = (APP_ROOT / "sections" / "security_posture_overview_view.py").read_text(encoding="utf-8")
         workload = (APP_ROOT / "sections" / "query_search.py").read_text(encoding="utf-8")
         self.assertIn("_targeted_control_room_sql", dba)
-        self.assertIn("build_target_sql_filter", dba)
+        self.assertIn("build_target_predicate_plan", dba)
+        self.assertIn("target_predicate_plan_id", dba)
         self.assertIn('target=get_decision_evidence_target("DBA Control Room")', (APP_ROOT / "sections" / "dba_control_room" / "render.py").read_text(encoding="utf-8"))
         self.assertIn("_targeted_security_sql", security)
+        self.assertIn("build_target_predicate_plan", security)
+        self.assertIn("target_predicate_plan_id", security)
         self.assertIn('get_decision_evidence_target("Security Monitoring")', security)
         self.assertIn("FACT_QUERY_DETAIL_RECENT", workload)
         self.assertIn("target_kind in {\"query_id\", \"query_signature\"}", workload)
@@ -871,6 +874,40 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         self.assertEqual(related_contract.max_rows, 50)
         self.assertTrue([contract for contract in iter_query_contracts() if contract.boundary == "decision_packet"])
 
+    def test_targeted_evidence_proof_requires_plan_metadata(self):
+        handwritten_marker_event = {
+            "query_boundary": "evidence",
+            "target_context_present": True,
+            "target_label": "query: 01a",
+            "target_predicate_marker_present": True,
+            "target_columns_used": ["QUERY_ID"],
+            "target_predicate_plan_id": "",
+        }
+        valid_plan_event = {
+            "query_boundary": "evidence",
+            "target_context_present": True,
+            "target_label": "query: 01a",
+            "target_predicate_marker_present": True,
+            "target_columns_used": ["QUERY_ID"],
+            "target_predicate_plan_id": "fixture-plan",
+        }
+        events = [handwritten_marker_event, valid_plan_event]
+        targeted = [
+            event for event in events
+            if event.get("query_boundary") == "evidence"
+            and (
+                event.get("target_context_present") is True
+                or str(event.get("target_label") or "").strip()
+            )
+        ]
+        missing = sum(
+            1 for event in targeted
+            if not bool(event.get("target_predicate_marker_present"))
+            or not event.get("target_columns_used")
+            or not str(event.get("target_predicate_plan_id") or "").strip()
+        )
+        self.assertEqual(missing, 1)
+
     def test_query_runner_enforces_contracts_before_execution(self):
         import performance
         from utils import query
@@ -954,6 +991,34 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             self.assertEqual(direct_summary["direct_sql_events"], 1)
             self.assertEqual(direct_summary["metadata_probe_events"], 1)
             self.assertEqual(direct_summary["actual_snowflake_executions"], 1)
+            self.assertEqual(performance.get_direct_sql_events()[-1]["direct_sql_kind"], "metadata_probe")
+
+            runner_token = performance.begin_query_budget_context(
+                "refresh_packet",
+                section="Executive Landing",
+                workflow="Overview",
+            )
+            allowance = performance.begin_direct_sql_allowance(
+                query_boundary="decision_packet",
+                section="Executive Landing",
+                ttl_key="section_command_packet_Executive Landing_ALFA_ALL_7",
+                max_rows=1,
+            )
+            try:
+                performance.record_direct_sql_event(
+                    query_text="SELECT BRIEF_ID FROM MART_SECTION_DECISION_CURRENT_FLAT LIMIT 1",
+                    section="Executive Landing",
+                    query_boundary="decision_packet",
+                    allowed=True,
+                    reason="central_runner_packet",
+                )
+            finally:
+                performance.end_direct_sql_allowance(allowance)
+            runner_summary = performance.end_query_budget_context(runner_token)
+            self.assertTrue(runner_summary["passed_query_budget"], runner_summary)
+            self.assertEqual(runner_summary["direct_sql_events"], 1)
+            self.assertEqual(runner_summary["actual_snowflake_executions"], 0)
+            self.assertEqual(performance.get_direct_sql_events()[-1]["direct_sql_kind"], "packet_direct_sql")
 
             evidence_token = performance.begin_query_budget_context(
                 "evidence_click",
@@ -988,7 +1053,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             exact_summary = performance.end_query_budget_context(exact_token)
             self.assertFalse(exact_summary["passed_query_budget"])
             self.assertIn("query_search_exact", exact_summary["failure_reason"])
-            self.assertEqual(len(performance.get_query_budget_context_events()), 4)
+            self.assertEqual(len(performance.get_query_budget_context_events()), 5)
 
     def test_button_contracts_do_not_grant_account_usage_to_generic_admin(self):
         contracts = list(iter_button_action_contracts())
@@ -2325,6 +2390,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         query_history_skipped_path = artifact_dir / "query_history_by_tag_SKIPPED.txt"
         query_bytes_path = artifact_dir / "query_bytes_by_boundary.json"
         query_slow_path = artifact_dir / "query_slow_findings.json"
+        query_search_proof_path = artifact_dir / "query_search_proof.json"
         direct_sql_static_scan_path = artifact_dir / "direct_sql_static_scan.json"
         sql_performance_lint_path = artifact_dir / "sql_performance_lint_findings.json"
         button_manifest_path = artifact_dir / "button_route_manifest.json"
@@ -2335,7 +2401,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         brand_dir = artifact_dir / "brand"
         rows, telemetry, snapshots, button_manifest, button_results, perf_events = self._run_render_harness()
         from query_contracts import iter_query_contracts, lint_query_text, query_fingerprint, resolve_query_contract
-        from sections import section_command_brief
+        from sections import query_search, section_command_brief
 
         packet_sql = section_command_brief._packet_sql("Executive Landing", "ALFA", "ALL", 7)
         packet_contract = resolve_query_contract(
@@ -2348,6 +2414,111 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             finding.to_artifact()
             for finding in lint_query_text(packet_sql, packet_contract)
         ]
+        query_search_exact_sql = query_search._recent_query_detail_sql(
+            search_cl="AND query_id = ''",
+            date_predicate="AND start_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())",
+            scoped_filters="",
+            user_cl="",
+            status_cl="",
+            target_wh_cl="",
+            row_limit=1,
+        )
+        query_search_signature_sql = query_search._recent_query_detail_sql(
+            search_cl="AND (query_hash = '' OR query_signature = '')",
+            date_predicate="AND start_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())",
+            scoped_filters="",
+            user_cl="",
+            status_cl="",
+            target_wh_cl="",
+            row_limit=200,
+        )
+        query_search_related_sql = query_search._recent_query_detail_sql(
+            search_cl="AND query_hash = '' AND query_id <> ''",
+            date_predicate="AND start_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())",
+            scoped_filters="",
+            user_cl="",
+            status_cl="",
+            target_wh_cl="",
+            row_limit=50,
+        )
+        query_preview_sql = query_search._query_text_preview_sql("01a")
+        account_usage_fallback_contract = resolve_query_contract(
+            boundary="account_usage",
+            section="Query Search & History",
+            ttl_key="query_search_account_usage_ALFA_Exact query ID_01a____7_1",
+            tier="historical",
+        )
+        query_search_proof = {
+            "raw_sql_included": False,
+            "cases": [
+                {
+                    "case": "exact_query_id",
+                    "boundary": "query_search",
+                    "budget_context": "query_search_exact",
+                    "contract_id": resolve_query_contract(
+                        boundary="query_search",
+                        section="Query Search & History",
+                        ttl_key="query_search_recent_detail_ALFA_Exact query ID_01a____7_1",
+                        tier="recent",
+                    ).contract_id,
+                    "max_rows": 1,
+                    "fingerprint": query_fingerprint(query_search_exact_sql),
+                    "projects_query_text": "QUERY_TEXT" in query_search_exact_sql.upper(),
+                },
+                {
+                    "case": "query_signature",
+                    "boundary": "query_search",
+                    "budget_context": "query_search_signature",
+                    "contract_id": resolve_query_contract(
+                        boundary="query_search",
+                        section="Query Search & History",
+                        ttl_key="query_search_recent_detail_ALFA_Query signature_hash____7_200",
+                        tier="recent",
+                    ).contract_id,
+                    "max_rows": 200,
+                    "fingerprint": query_fingerprint(query_search_signature_sql),
+                    "projects_query_text": "QUERY_TEXT" in query_search_signature_sql.upper(),
+                },
+                {
+                    "case": "related_executions",
+                    "boundary": "query_search",
+                    "budget_context": "query_search_related",
+                    "contract_id": resolve_query_contract(
+                        boundary="query_search",
+                        section="Query Search & History",
+                        ttl_key="query_search_related_ALFA_hash_01a_50",
+                        tier="recent",
+                    ).contract_id,
+                    "max_rows": 50,
+                    "fingerprint": query_fingerprint(query_search_related_sql),
+                    "projects_query_text": "QUERY_TEXT" in query_search_related_sql.upper(),
+                },
+                {
+                    "case": "sql_preview",
+                    "boundary": "query_preview",
+                    "budget_context": "query_preview",
+                    "contract_id": resolve_query_contract(
+                        boundary="query_preview",
+                        section="Query Search & History",
+                        ttl_key="query_text_preview_01a",
+                        tier="recent",
+                    ).contract_id,
+                    "max_rows": 1,
+                    "fingerprint": query_fingerprint(query_preview_sql),
+                    "default_export_includes_query_text": False,
+                },
+                {
+                    "case": "account_usage_fallback",
+                    "boundary": "account_usage",
+                    "budget_context": "account_usage_fallback",
+                    "contract_id": account_usage_fallback_contract.contract_id,
+                    "confirmed_required": True,
+                    "metadata_probe_count_default": 0,
+                    "max_rows": 200,
+                },
+            ],
+        }
+        self.assertFalse([case for case in query_search_proof["cases"] if case.get("projects_query_text")])
         query_events_by_boundary: dict[str, int] = {}
         rows_by_boundary: dict[str, int] = {}
         elapsed_by_boundary: dict[str, float] = {}
@@ -2391,7 +2562,11 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         account_usage_history_query_count = query_events_by_boundary.get("account_usage", 0)
         targeted_evidence_events = [
             event for event in telemetry
-            if event.get("query_boundary") == "evidence" and str(event.get("target_label") or "").strip()
+            if event.get("query_boundary") == "evidence"
+            and (
+                event.get("target_context_present") is True
+                or str(event.get("target_label") or "").strip()
+            )
         ]
         missing_target_marker_count = sum(
             1 for event in targeted_evidence_events
@@ -2518,6 +2693,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+        query_search_proof_path.write_text(json.dumps(query_search_proof, indent=2), encoding="utf-8")
         from direct_sql_contract import direct_sql_scan_artifact, scan_direct_sql_usage
 
         direct_sql_scan_files = sorted(APP_ROOT.rglob("*.py"))
@@ -2687,6 +2863,14 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
         self.assertTrue(query_history_skipped_path.exists())
         self.assertTrue(json.loads(query_bytes_path.read_text(encoding="utf-8")))
         self.assertEqual(json.loads(query_slow_path.read_text(encoding="utf-8"))["slow_findings"], [])
+        loaded_query_search_proof = json.loads(query_search_proof_path.read_text(encoding="utf-8"))
+        self.assertFalse(loaded_query_search_proof["raw_sql_included"])
+        proof_cases = {case["case"]: case for case in loaded_query_search_proof["cases"]}
+        self.assertEqual(proof_cases["exact_query_id"]["max_rows"], 1)
+        self.assertEqual(proof_cases["exact_query_id"]["contract_id"], "query_search_exact")
+        self.assertEqual(proof_cases["related_executions"]["contract_id"], "query_search_related")
+        self.assertEqual(proof_cases["sql_preview"]["boundary"], "query_preview")
+        self.assertEqual(proof_cases["account_usage_fallback"]["metadata_probe_count_default"], 0)
         self.assertEqual(json.loads(direct_sql_static_scan_path.read_text(encoding="utf-8"))["blocked_count"], 0)
         self.assertEqual(
             [
@@ -2704,6 +2888,7 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             query_history_skipped_path,
             query_bytes_path,
             query_slow_path,
+            query_search_proof_path,
             direct_sql_static_scan_path,
             sql_performance_lint_path,
         ):

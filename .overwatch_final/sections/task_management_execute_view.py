@@ -1,4 +1,3 @@
-# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.
 # sections/task_management_execute_view.py - Execute Task renderer
 import pandas as pd
 import streamlit as st
@@ -80,6 +79,7 @@ def render_task_execute_task(session) -> None:
                     if _require_typed_confirmation(exec_confirmed, "EXECUTE"):
                         sql_text = _execute_task_sql(full)
                         try:
+                            # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
                             session.sql(sql_text).collect()
                             _log_admin_action(
                                 session,
@@ -108,4 +108,3 @@ def render_task_execute_task(session) -> None:
 
 
 __all__ = ['render_task_execute_task']
-# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.

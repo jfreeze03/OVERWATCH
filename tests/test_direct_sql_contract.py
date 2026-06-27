@@ -22,13 +22,38 @@ class DirectSqlContractTests(unittest.TestCase):
             good_runner = temp_root / ".overwatch_final" / "utils" / "query.py"
             admin_file = temp_root / ".overwatch_final" / "sections" / "decision_workspace_setup_health.py"
             good_admin_file = temp_root / ".overwatch_final" / "sections" / "good_admin.py"
+            header_only_admin = temp_root / ".overwatch_final" / "sections" / "header_admin.py"
+            bad_marker_admin = temp_root / ".overwatch_final" / "sections" / "bad_marker_admin.py"
+            route_marker_admin = temp_root / ".overwatch_final" / "sections" / "route_marker_admin.py"
+            string_literal_file = temp_root / ".overwatch_final" / "sections" / "string_literal.py"
             compatibility_file = temp_root / ".overwatch_final" / "utils" / "compatibility.py"
             bad_section.parent.mkdir(parents=True, exist_ok=True)
             good_runner.parent.mkdir(parents=True, exist_ok=True)
             admin_file.write_text("session.sql('SHOW TABLES').collect()\n", encoding="utf-8")
             good_admin_file.write_text(
-                "# DIRECT_SQL_ADMIN_OK: setup diagnostics only\n"
+                "# DIRECT_SQL_ADMIN_OK boundary=setup_health reason=setup_diagnostics budget=admin_setup\n"
                 "sess . sql('SHOW TABLES').collect()\n",
+                encoding="utf-8",
+            )
+            header_only_admin.write_text(
+                "# DIRECT_SQL_ADMIN_OK boundary=setup_health reason=file_header budget=admin_setup\n"
+                "\n\n\n\n"
+                "session.sql('SHOW TABLES').collect()\n",
+                encoding="utf-8",
+            )
+            bad_marker_admin.write_text(
+                "# DIRECT_SQL_ADMIN_OK reason=missing_boundary budget=admin_setup\n"
+                "session.sql('SHOW TABLES').collect()\n",
+                encoding="utf-8",
+            )
+            route_marker_admin.write_text(
+                "# DIRECT_SQL_ADMIN_OK boundary=route reason=bad_route budget=route_action\n"
+                "session.sql('SHOW TABLES').collect()\n",
+                encoding="utf-8",
+            )
+            string_literal_file.write_text(
+                "text = \"session.sql('SELECT 1')\"\n"
+                "# get_session().sql('SELECT 1') in a comment\n",
                 encoding="utf-8",
             )
             bad_section.write_text("session.sql('SELECT 1').collect()\n", encoding="utf-8")
@@ -37,26 +62,56 @@ class DirectSqlContractTests(unittest.TestCase):
             compatibility_file.write_text("sf.sql('SHOW COLUMNS').collect()\n", encoding="utf-8")
 
             findings = scan_direct_sql_usage(
-                (bad_section, bad_evidence, good_runner, admin_file, good_admin_file, compatibility_file),
+                (
+                    bad_section,
+                    bad_evidence,
+                    good_runner,
+                    admin_file,
+                    good_admin_file,
+                    header_only_admin,
+                    bad_marker_admin,
+                    route_marker_admin,
+                    string_literal_file,
+                    compatibility_file,
+                ),
                 root=temp_root,
             )
             blocked = [finding for finding in findings if not finding["allowed"]]
             allowed = [finding for finding in findings if finding["allowed"]]
             blocked_paths = {str(finding["path"]).replace("\\", "/") for finding in blocked}
-            self.assertEqual(len(blocked), 4)
+            self.assertEqual(len(blocked), 7)
             self.assertTrue(any("bad_primary.py" in path for path in blocked_paths))
             self.assertTrue(any("bad_evidence_loader.py" in path for path in blocked_paths))
             self.assertTrue(any("decision_workspace_setup_health.py" in path for path in blocked_paths))
+            self.assertTrue(any("header_admin.py" in path for path in blocked_paths))
+            self.assertTrue(any("bad_marker_admin.py" in path for path in blocked_paths))
+            self.assertTrue(any("route_marker_admin.py" in path for path in blocked_paths))
             self.assertTrue(any("compatibility.py" in path for path in blocked_paths))
             self.assertTrue(allowed)
+            self.assertFalse(any("string_literal.py" in str(finding["path"]) for finding in findings))
+            good_admin_finding = next(finding for finding in allowed if "good_admin.py" in str(finding["path"]))
+            self.assertEqual(good_admin_finding["marker_boundary"], "setup_health")
+            self.assertEqual(good_admin_finding["marker_budget"], "admin_setup")
             artifact = direct_sql_scan_artifact(
                 findings,
-                (bad_section, bad_evidence, good_runner, admin_file, good_admin_file, compatibility_file),
+                (
+                    bad_section,
+                    bad_evidence,
+                    good_runner,
+                    admin_file,
+                    good_admin_file,
+                    header_only_admin,
+                    bad_marker_admin,
+                    route_marker_admin,
+                    string_literal_file,
+                    compatibility_file,
+                ),
                 root=temp_root,
             )
-            self.assertEqual(artifact["blocked_count"], 4)
+            self.assertEqual(artifact["blocked_count"], 7)
             self.assertFalse(artifact["raw_sql_included"])
             self.assertNotIn("SELECT 1", json.dumps(artifact))
+            self.assertIn("marker_boundary", json.dumps(artifact))
 
     def test_repo_direct_sql_scan_has_no_unallowlisted_daily_surface(self):
         from direct_sql_contract import scan_direct_sql_usage

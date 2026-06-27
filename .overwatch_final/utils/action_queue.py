@@ -1,4 +1,3 @@
-# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.
 # utils/action_queue.py - persistent recommendation/action queue helpers
 import hashlib
 import re
@@ -11,6 +10,7 @@ from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE
 from runtime_state import CURRENT_ROLE, OVERWATCH_ACTOR, get_state, set_state
 from .company_filter import get_active_company, get_active_environment, get_environment_db_patterns
 from .query import run_query, safe_identifier, sql_literal
+from sections.decision_workspace_target_filters import build_target_predicate_plan, evidence_target_label
 
 
 ACTION_QUEUE_FQN = (
@@ -213,6 +213,7 @@ def _action_queue_column_names(session) -> set[str]:
             set_state(_ACTION_QUEUE_COLUMN_CACHE_KEY, process_cached)
             return process_cached
         try:
+            # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
             rows = session.sql(f"SHOW COLUMNS IN TABLE {ACTION_QUEUE_FQN}").collect()
         except Exception:
             rows = []
@@ -764,6 +765,7 @@ def upsert_actions(session, actions: list[dict]) -> int:
             optional_update += f", RECOVERY_AUDIT_STATE = COALESCE(NULLIF({recovery_audit_state}, ''), tgt.RECOVERY_AUDIT_STATE)"
             optional_insert_cols += ", RECOVERY_AUDIT_STATE"
             optional_insert_vals += f", {recovery_audit_state}"
+        # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
         session.sql(f"""
             MERGE INTO {ACTION_QUEUE_FQN} tgt
             USING (
@@ -815,10 +817,10 @@ def load_action_queue(session, limit: int = 500, *, target: dict | None = None, 
     ]
     target_filter = ""
     target_hash = "none"
+    target_plan = build_target_predicate_plan(str(section or "Alert Center"), target or {}, ())
+    target_label = evidence_target_label(target or {})
     if target:
         try:
-            from sections.decision_workspace_target_filters import build_target_sql_filter
-
             target_columns = {
                 "ACTION_ID",
                 "ENTITY_TYPE",
@@ -843,11 +845,12 @@ def load_action_queue(session, limit: int = 500, *, target: dict | None = None, 
             for column in optional_target_columns:
                 if _action_queue_has_column(session, column):
                     target_columns.add(column)
-            target_filter = build_target_sql_filter(
+            target_plan = build_target_predicate_plan(
                 str(section or "Alert Center"),
                 target,
                 available_columns=tuple(sorted(target_columns)),
-            )
+            ).with_fingerprint()
+            target_filter = target_plan.sql_filter
             target_hash = hashlib.sha1(str(target_filter or target).encode("utf-8", errors="ignore")).hexdigest()[:10]
         except Exception:
             target_filter = ""
@@ -879,7 +882,19 @@ def load_action_queue(session, limit: int = 500, *, target: dict | None = None, 
             END,
             UPDATED_AT DESC
         LIMIT {int(limit)}
-    """, ttl_key=f"action_queue_{company}_{get_active_environment()}_{int(limit)}_{target_hash}", tier="recent", section=section)
+    """,
+        ttl_key=f"action_queue_{company}_{get_active_environment()}_{int(limit)}_{target_hash}",
+        tier="recent",
+        section=section,
+        max_rows=int(limit),
+        query_boundary="evidence",
+        target_label=target_label,
+        target_context_present=bool(target),
+        target_columns_used=target_plan.columns_used,
+        target_fallback_used=target_plan.fallback_used,
+        target_predicate_marker_present=bool(target_filter),
+        target_predicate_plan_id=target_plan.plan_id,
+    )
     return enrich_action_queue_view(df)
 
 
@@ -984,6 +999,7 @@ def update_action_status_with_evidence(
             extra += f", VERIFIED_BY = {actor_safe}"
         if _action_queue_has_column(session, "VERIFIED_AT"):
             extra += ", VERIFIED_AT = CURRENT_TIMESTAMP()"
+    # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
     session.sql(f"""
         UPDATE {ACTION_QUEUE_FQN}
         SET STATUS = {status_safe},
@@ -991,4 +1007,3 @@ def update_action_status_with_evidence(
             {extra}
         WHERE ACTION_ID = {action_safe}
     """).collect()
-# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.

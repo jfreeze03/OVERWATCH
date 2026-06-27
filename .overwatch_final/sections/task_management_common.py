@@ -1,4 +1,3 @@
-# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.
 # sections/task_management_common.py - Shared Task Management controls/helpers
 import time
 
@@ -44,6 +43,7 @@ def _run_admin_sql_list(
     completed = 0
     for sql_text in sql_statements:
         try:
+            # DIRECT_SQL_ADMIN_OK boundary=metadata reason=metadata_probe budget=advanced_diagnostics
             session.sql(sql_text).collect()
             _log_admin_action(
                 session,
@@ -87,6 +87,7 @@ def _current_execution_context(session) -> dict:
             }
     warehouse = ""
     try:
+        # DIRECT_SQL_ADMIN_OK boundary=metadata reason=metadata_probe budget=advanced_diagnostics
         row = session.sql("SELECT CURRENT_WAREHOUSE() AS current_warehouse").collect()[0]
         warehouse = str(row["CURRENT_WAREHOUSE"] or "")
     except Exception:
@@ -123,4 +124,3 @@ def _log_admin_action(
     )
 
 __all__ = ['_qualified_name', '_typed_confirmation', '_require_typed_confirmation', '_show_tasks', '_run_admin_sql_list', '_current_execution_context', '_log_admin_action', '_EXECUTION_CONTEXT_CACHE_TTL_SECONDS']
-# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.

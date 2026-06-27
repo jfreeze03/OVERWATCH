@@ -1,4 +1,3 @@
-# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.
 """Active-alert routing helpers for the DBA action queue.
 
 This module owns the narrow path that converts active alert rows into action
@@ -378,9 +377,9 @@ def mark_alerts_routed(
         set_parts.append("LAST_STATUS_AT = CURRENT_TIMESTAMP()")
     if not set_parts:
         return
+    # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
     session.sql(f"""
         UPDATE {_alert_table_fqn(quoted=True)}
         SET {", ".join(set_parts)}
         WHERE ALERT_ID IN ({", ".join(str(value) for value in clean_ids)})
     """).collect()
-# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.

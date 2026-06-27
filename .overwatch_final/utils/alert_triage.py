@@ -33,7 +33,7 @@ from .company_filter import (
     get_environment_db_patterns,
 )
 from .query import run_query, safe_identifier, sql_literal
-from sections.decision_workspace_target_filters import build_target_sql_filter
+from sections.decision_workspace_target_filters import build_target_predicate_plan, evidence_target_label
 from .alert_status import (
     ALERT_CLOSED_STATUSES,
     ALERT_OPEN_STATUSES,
@@ -546,7 +546,9 @@ def load_alert_history(
             "OR ENVIRONMENT IS NULL "
             "OR UPPER(ENVIRONMENT) IN ('NO DATABASE CONTEXT', 'NO_DATABASE_CONTEXT'))"
         )
-    target_filter = build_target_sql_filter("Alert Center", target or {}, available_columns=tuple(columns))
+    target_plan = build_target_predicate_plan("Alert Center", target or {}, available_columns=tuple(columns)).with_fingerprint()
+    target_filter = target_plan.sql_filter
+    target_label = evidence_target_label(target or {})
     target_filter_key = hashlib.sha1(str(target_filter or "").encode("utf-8", errors="ignore")).hexdigest()[:10]
 
     df = run_query(f"""
@@ -598,7 +600,19 @@ def load_alert_history(
           {target_filter}
         ORDER BY ALERT_TS DESC
         LIMIT {limit}
-    """, ttl_key=f"alert_history_{company}_{environment or get_active_environment()}_{days}_{limit}_{target_filter_key}", tier="recent", section=section)
+    """,
+        ttl_key=f"alert_history_{company}_{environment or get_active_environment()}_{days}_{limit}_{target_filter_key}",
+        tier="recent",
+        section=section,
+        max_rows=limit,
+        query_boundary="evidence",
+        target_label=target_label,
+        target_context_present=bool(target),
+        target_columns_used=target_plan.columns_used,
+        target_fallback_used=target_plan.fallback_used,
+        target_predicate_marker_present=bool(target_plan.sql_filter),
+        target_predicate_plan_id=target_plan.plan_id,
+    )
 
     if company != "ALL" and "COMPANY" not in columns:
         df = _company_scope_alert_rows(df, company)

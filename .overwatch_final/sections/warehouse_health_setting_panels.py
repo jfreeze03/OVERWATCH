@@ -1,4 +1,3 @@
-# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.
 # sections/warehouse_health_setting_panels.py - Warehouse Health setting/action panels.
 from __future__ import annotations
 
@@ -125,9 +124,12 @@ def _save_warehouse_setting_review_snapshot(
     source: str = "",
 ) -> None:
     try:
+        # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
         session.sql(build_warehouse_setting_review_ddl()).collect()
         for migration_sql in build_warehouse_setting_review_migration_sql():
+            # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
             session.sql(migration_sql).collect()
+        # DIRECT_SQL_ADMIN_OK boundary=admin reason=post_click_admin budget=advanced_diagnostics
         session.sql(_warehouse_setting_review_insert_sql(
             findings,
             company=company,
@@ -138,4 +140,3 @@ def _save_warehouse_setting_review_snapshot(
     except Exception as exc:
         st.error(f"Could not save Warehouse Setting Review snapshot: {format_snowflake_error(exc)}")
         st.info("Warehouse setting review history is not available in this environment yet. Ask the DBA team to enable it, then retry this save.")
-# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.

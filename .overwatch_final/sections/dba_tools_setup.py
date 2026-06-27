@@ -1,4 +1,3 @@
-# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.
 # sections/dba_tools_setup.py - DBA Tools setup/status checks.
 
 import pandas as pd
@@ -10,6 +9,7 @@ from utils import safe_identifier, sql_literal
 def _table_exists(session, db: str, schema: str, table: str):
     try:
         db_ident = safe_identifier(db)
+        # DIRECT_SQL_ADMIN_OK boundary=metadata reason=metadata_probe budget=advanced_diagnostics
         row = session.sql(f"""
             SELECT COUNT(*) AS CNT
             FROM {db_ident}.INFORMATION_SCHEMA.TABLES
@@ -24,6 +24,7 @@ def _table_exists(session, db: str, schema: str, table: str):
 def _task_exists(session, db: str, schema: str, task_name: str):
     try:
         schema_fqn = _qualified_name(db, schema)
+        # DIRECT_SQL_ADMIN_OK boundary=metadata reason=metadata_probe budget=advanced_diagnostics
         rows = session.sql(
             f"SHOW TASKS LIKE {sql_literal(task_name.upper())} IN SCHEMA {schema_fqn}"
         ).collect()
@@ -59,4 +60,3 @@ def _setup_status_df(session) -> pd.DataFrame:
             "STATUS": status,
         })
     return pd.DataFrame(rows)
-# DIRECT_SQL_ADMIN_OK: explicit post-click/admin Snowflake action; never first-paint.

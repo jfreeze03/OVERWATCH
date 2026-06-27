@@ -924,11 +924,14 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertIn("SOURCE_FACT_MAX_TS", fast_impl_block)
         self.assertIn("COMMAND_SOURCE_SNAPSHOT_TS", fast_impl_block)
         self.assertIn("FRESHNESS_MODE", fast_impl_block)
+        self.assertIn("FRESHNESS_NOTE", fast_impl_block)
         self.assertIn("FRESH_FROM_COMPACT_FACT", fast_impl_block)
         self.assertIn("REUSED_COMPACT_COMMAND_ROW", fast_impl_block)
         self.assertIn("STALE_REUSED_COMMAND_ROW", fast_impl_block)
         self.assertIn("CONFIDENCE_ADJUSTMENT", fast_impl_block)
         self.assertIn("DEGRADE_CONFIDENCE", fast_impl_block)
+        self.assertIn("FRESHNESS_NOTE_COUNT", fast_impl_block)
+        self.assertIn("COMMAND_FRESHNESS_MODES", fast_impl_block)
         self.assertIn("FAST REFRESH REUSED COMPACT COMMAND ROW", fast_impl_block)
         self.assertLess(
             fast_impl_block.index("CREATE OR REPLACE TEMPORARY TABLE TMP_FAST_SOURCE_SNAPSHOT"),

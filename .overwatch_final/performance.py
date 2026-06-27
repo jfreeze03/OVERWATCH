@@ -5,6 +5,8 @@ from __future__ import annotations
 from contextlib import contextmanager
 from datetime import datetime
 from hashlib import sha1
+import inspect
+from pathlib import Path
 from uuid import uuid4
 from typing import Any
 import os
@@ -461,6 +463,11 @@ def record_snowflake_session_open_event(
     boundary = str(query_boundary or "other")
     if boundary not in _VALID_QUERY_BOUNDARIES:
         boundary = "other"
+    if not (marker_boundary or marker_budget or marker_owner):
+        marker_metadata = _runtime_marker_metadata("SESSION_OPEN_ADMIN_OK")
+        marker_boundary = marker_metadata.get("marker_boundary", "")
+        marker_budget = marker_metadata.get("marker_budget", "")
+        marker_owner = marker_metadata.get("marker_owner", "")
     event = {
         "event_id": uuid4().hex[:16],
         "render_id": str(context.get("render_id") or ""),
@@ -545,6 +552,54 @@ def _sql_fingerprint(sql: object) -> str:
     return sha1(normalized.encode("utf-8", errors="ignore")).hexdigest()[:16]
 
 
+_RUNTIME_MARKER_FIELDS = {"boundary", "reason", "budget", "owner"}
+
+
+def _parse_runtime_marker(line: str, marker_name: str) -> dict[str, str]:
+    if marker_name not in str(line or ""):
+        return {}
+    payload = str(line or "").split(marker_name, 1)[1]
+    fields: dict[str, str] = {}
+    for match in re.finditer(r"\b(boundary|reason|budget|owner)=([A-Za-z0-9_.:-]+)", payload):
+        key = match.group(1).strip().lower()
+        value = match.group(2).strip()
+        if key in _RUNTIME_MARKER_FIELDS:
+            fields[key] = value
+    return fields
+
+
+def _runtime_marker_metadata(marker_name: str) -> dict[str, str]:
+    """Attach local structured marker metadata from marked helper call sites."""
+    try:
+        frames = inspect.stack(context=0)
+    except Exception:
+        return {}
+    skip_suffixes = (
+        "/performance.py",
+        "/utils/session.py",
+        "/utils/query.py",
+    )
+    for frame in frames[2:12]:
+        filename = str(getattr(frame, "filename", "") or "")
+        normalized = filename.replace("\\", "/").lower()
+        if not filename or any(normalized.endswith(suffix) for suffix in skip_suffixes):
+            continue
+        try:
+            lines = Path(filename).read_text(encoding="utf-8", errors="ignore").splitlines()
+        except Exception:
+            continue
+        call_line = int(getattr(frame, "lineno", 0) or 0)
+        for idx in range(max(0, call_line - 4), max(0, call_line - 1)):
+            fields = _parse_runtime_marker(lines[idx], marker_name)
+            if fields:
+                return {
+                    "marker_boundary": fields.get("boundary", ""),
+                    "marker_budget": fields.get("budget", ""),
+                    "marker_owner": fields.get("owner", ""),
+                }
+    return {}
+
+
 def begin_direct_sql_allowance(
     *,
     query_boundary: str = "other",
@@ -603,6 +658,11 @@ def record_direct_sql_event(
     boundary = str(query_boundary or "other")
     if boundary not in _VALID_QUERY_BOUNDARIES:
         boundary = "other"
+    if not (marker_boundary or marker_budget or marker_owner):
+        marker_metadata = _runtime_marker_metadata("DIRECT_SQL_ADMIN_OK")
+        marker_boundary = marker_metadata.get("marker_boundary", "")
+        marker_budget = marker_metadata.get("marker_budget", "")
+        marker_owner = marker_metadata.get("marker_owner", "")
     allowance = _current_direct_sql_allowance()
     reason_text = str(reason or "")
     if not allowed:

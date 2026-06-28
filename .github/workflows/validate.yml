@@ -138,6 +138,7 @@ jobs:
             artifacts/full_app_validation/**
             artifacts/full_app_inventory/**
             artifacts/launch_readiness/**
+            artifacts/release_candidate/**
             artifacts/encoding_hygiene_results.json
             artifacts/snowflake_validation/**
             artifacts/direct_sql_static_scan.json

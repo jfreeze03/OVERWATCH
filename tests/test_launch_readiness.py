@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -90,6 +91,10 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertEqual(summary["encoding_blocked_count"], 0)
         self.assertTrue(summary["ci_artifact_reality_passed"])
         self.assertEqual(summary["ci_artifact_reality_failure_count"], 0)
+        self.assertTrue(summary["release_candidate_bundle_passed"])
+        self.assertEqual(summary["release_candidate_bundle_failure_count"], 0)
+        self.assertGreater(summary["release_candidate_artifact_count"], 0)
+        self.assertGreater(summary["release_candidate_artifact_hash_count"], 0)
         self.assertGreaterEqual(summary["required_artifact_count"], len(REQUIRED_LAUNCH_READINESS_ARTIFACTS))
         self.assertIn("decision-workspace-proof", summary["uploaded_artifact_names"])
         self.assertFalse(summary["raw_sql_included"])
@@ -136,6 +141,7 @@ class LaunchReadinessTests(unittest.TestCase):
             "delete_first_release",
             "docs_readiness",
             "ci_upload_paths",
+            "release_candidate_bundle",
         ):
             self.assertIn(gate, matrix_by_gate)
             self.assertTrue(matrix_by_gate[gate]["passed"], matrix_by_gate[gate])
@@ -178,6 +184,131 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertTrue(REQUIRED_LAUNCH_READINESS_ARTIFACTS.issubset(set(manifest["files"])))
         for rel in REQUIRED_LAUNCH_READINESS_ARTIFACTS:
             self.assertTrue((ROOT / rel).exists(), rel)
+
+    def test_release_candidate_bundle_has_hashes_and_product_gauntlet(self):
+        summary = self._read_json("artifacts/release_candidate/release_candidate_summary.json")
+        manifest = self._read_json("artifacts/release_candidate/artifact_manifest.json")
+        hashes = self._read_json("artifacts/release_candidate/artifact_hashes.json")
+        reconciliation = self._read_json("artifacts/release_candidate/artifact_reconciliation_results.json")
+        product = self._read_json("artifacts/release_candidate/product_gauntlet_release_results.json")
+        gate_matrix = self._read_json("artifacts/release_candidate/release_gate_matrix.json")
+        notes = self._read_json("artifacts/release_candidate/release_notes.json")
+
+        self.assertTrue(summary["all_passed"], summary)
+        self.assertEqual(summary["hard_gate_failure_count"], 0, summary)
+        self.assertTrue(reconciliation["passed"], reconciliation)
+        self.assertEqual(reconciliation["missing_required_categories"], [])
+        self.assertEqual(reconciliation["raw_sql_or_secret_count"], 0)
+        self.assertGreater(manifest["artifact_count"], 0)
+        self.assertEqual(manifest["artifact_count"], hashes["hash_count"])
+        self.assertEqual(manifest["artifact_count"], reconciliation["artifact_count"])
+        self.assertEqual(hashes["hash_count"], reconciliation["hash_count"])
+        self.assertTrue(product["passed"], product)
+        self.assertTrue(product["checks"], product)
+        self.assertIn("known_skips_or_waivers", notes)
+        self.assertIn("hard_blockers", notes)
+        self.assertTrue(all(row["passed"] for row in gate_matrix), gate_matrix)
+
+    def test_release_artifact_reconciliation_rejects_manifest_drift(self):
+        from tools.contracts import launch_readiness as readiness
+
+        manifest = self._read_json("artifacts/release_candidate/artifact_manifest.json")
+        hashes = self._read_json("artifacts/release_candidate/artifact_hashes.json")
+        baseline = readiness._release_artifact_reconciliation_results(ROOT, manifest, hashes)
+        self.assertTrue(baseline["passed"], baseline)
+        non_self = next(row["path"] for row in manifest["files"] if not row.get("self_referential_hash"))
+
+        unlisted_manifest = copy.deepcopy(manifest)
+        unlisted_manifest["files"] = [row for row in unlisted_manifest["files"] if row["path"] != non_self]
+        result = readiness._release_artifact_reconciliation_results(ROOT, unlisted_manifest, hashes)
+        self.assertFalse(result["passed"])
+        self.assertIn("RELEASE_UNLISTED_ARTIFACT", {row["code"] for row in result["failures"]})
+
+        missing_manifest = copy.deepcopy(manifest)
+        missing_manifest["files"][0]["path"] = "artifacts/release_candidate/does_not_exist.json"
+        result = readiness._release_artifact_reconciliation_results(ROOT, missing_manifest, hashes)
+        self.assertFalse(result["passed"])
+        self.assertIn("RELEASE_MANIFEST_FILE_MISSING", {row["code"] for row in result["failures"]})
+
+        hash_manifest = copy.deepcopy(manifest)
+        for row in hash_manifest["files"]:
+            if row["path"] == non_self:
+                row["sha256"] = "0" * 64
+                break
+        result = readiness._release_artifact_reconciliation_results(ROOT, hash_manifest, hashes)
+        self.assertFalse(result["passed"])
+        self.assertIn("RELEASE_HASH_MISMATCH", {row["code"] for row in result["failures"]})
+
+        missing_category_manifest = copy.deepcopy(manifest)
+        missing_category_manifest["files"] = [
+            row for row in missing_category_manifest["files"] if row["category"] != "snowflake_validation"
+        ]
+        result = readiness._release_artifact_reconciliation_results(ROOT, missing_category_manifest, hashes)
+        self.assertFalse(result["passed"])
+        self.assertIn("RELEASE_CATEGORY_MISSING", {row["code"] for row in result["failures"]})
+
+    def test_release_summary_fails_when_launch_readiness_fails(self):
+        from tools.contracts import launch_readiness as readiness
+
+        launch_summary = self._read_json("artifacts/launch_readiness/launch_readiness_summary.json")
+        launch_summary = copy.deepcopy(launch_summary)
+        launch_summary.update({"all_passed": False, "ci_artifact_reality_passed": True})
+        summary, failures, matrix, notes = readiness._release_candidate_summary_bundle(
+            launch_summary=launch_summary,
+            launch_failures={"failures": []},
+            matrix=self._read_json("artifacts/launch_readiness/release_gate_matrix.json"),
+            release_gate=self._read_json("artifacts/launch_readiness/release_candidate_gate_results.json"),
+            product_gauntlet=self._read_json("artifacts/release_candidate/product_gauntlet_release_results.json"),
+            reconciliation=self._read_json("artifacts/release_candidate/artifact_reconciliation_results.json"),
+            ci_context=self._read_json("artifacts/launch_readiness/release_candidate_ci_context.json"),
+        )
+        self.assertFalse(summary["all_passed"], summary)
+        self.assertFalse(failures["passed"], failures)
+        self.assertIn("launch_readiness", {row["gate"] for row in failures["failures"]})
+        self.assertIn("launch_readiness", {row["gate"] for row in matrix})
+        self.assertTrue(notes["waiver_section_present"])
+        self.assertTrue(notes["blocker_section_present"])
+
+    def test_ci_release_context_uses_github_actions_metadata_without_leaking_tokens(self):
+        from tools.contracts import launch_readiness as readiness
+
+        head = readiness._git_output("rev-parse", "HEAD")
+        env = {
+            "GITHUB_ACTIONS": "true",
+            "GITHUB_RUN_ID": "123456789",
+            "GITHUB_RUN_ATTEMPT": "2",
+            "GITHUB_SERVER_URL": "https://github.com",
+            "GITHUB_REPOSITORY": "jfreeze03/OVERWATCH",
+            "GITHUB_SHA": head,
+            "GITHUB_REF": "refs/heads/main",
+            "GITHUB_WORKFLOW": "Validate",
+            "GITHUB_JOB": "release-validation",
+            "GITHUB_EVENT_NAME": "push",
+            "GITHUB_TOKEN": "ghp_do_not_record_this_token",
+        }
+        with patch.dict("os.environ", env, clear=False):
+            ci_run = readiness._ci_run_review_results("prod_candidate", [])
+            context = readiness._release_candidate_ci_context("prod_candidate", [])
+        self.assertTrue(ci_run["passed"], ci_run)
+        self.assertEqual(ci_run["workflow_url"], "https://github.com/jfreeze03/OVERWATCH/actions/runs/123456789")
+        self.assertEqual(context["proof_source"], "github_actions_metadata")
+        self.assertNotIn("GITHUB_TOKEN", json.dumps(context))
+        self.assertNotIn("ghp_do_not_record", json.dumps(context))
+
+        mismatch_env = dict(env)
+        mismatch_env["GITHUB_SHA"] = "0" * 40
+        with patch.dict("os.environ", mismatch_env, clear=False):
+            ci_run = readiness._ci_run_review_results("prod_candidate", [])
+        self.assertFalse(ci_run["passed"], ci_run)
+        self.assertFalse(ci_run["commit_sha_matches_source"])
+
+        local_env = {key: "" for key in env}
+        local_env["GITHUB_ACTIONS"] = "false"
+        with patch.dict("os.environ", local_env, clear=False):
+            ci_run = readiness._ci_run_review_results("prod_candidate", [])
+        self.assertFalse(ci_run["passed"], ci_run)
+        self.assertTrue(ci_run["workflow_metadata_required"])
+        self.assertTrue(ci_run["workflow_metadata_missing"])
 
     def test_launch_readiness_records_browser_skip_or_screenshots(self):
         browser = self._read_json("artifacts/launch_readiness/browser_smoke_results.json")
@@ -969,9 +1100,15 @@ class LaunchReadinessTests(unittest.TestCase):
 
     def test_launch_readiness_workflow_uploads_launch_artifacts(self):
         ci_review = self._read_json("artifacts/launch_readiness/ci_artifact_review_results.json")
+        ci_reality = self._read_json("artifacts/launch_readiness/ci_artifact_reality_results.json")
         self.assertTrue(ci_review["passed"], ci_review)
         self.assertEqual(ci_review["missing_upload_paths"], [])
         self.assertEqual(ci_review["missing_steps"], [])
+        self.assertIn("artifacts/release_candidate/**", ci_review["required_upload_paths"])
+        self.assertIn("artifacts/snowflake_validation/**", ci_review["required_upload_paths"])
+        self.assertIn("artifacts/encoding_hygiene_results.json", ci_review["required_upload_paths"])
+        self.assertTrue(ci_reality["passed"], ci_reality)
+        self.assertIn("decision-workspace-proof", ci_reality["uploaded_artifact_names"])
 
     def _assert_launch_failure(self, mutator, expected_gate: str) -> None:
         from tools.contracts.launch_readiness import evaluate_launch_readiness

@@ -157,6 +157,13 @@ class SnowflakeExecutionValidationTests(unittest.TestCase):
         category_names = {row["category"] for row in category_coverage["categories"]}
         self.assertIn("procedure_compile", category_names)
         self.assertIn("compact_evidence_mart", category_names)
+        coverage_by_category = {row["category"]: row for row in category_coverage["categories"]}
+        self.assertGreaterEqual(coverage_by_category["procedure_compile"]["observed_artifact_row_count"], len(artifact_payloads["procedure_compile_results.json"]))
+        self.assertGreaterEqual(coverage_by_category["procedure_smoke_call"]["observed_artifact_row_count"], len(artifact_payloads["procedure_smoke_call_results.json"]))
+        for row in category_coverage["categories"]:
+            self.assertIn("row_index_mismatch_count", row)
+            self.assertIn("row_key_mismatch_count", row)
+            self.assertIn("failures", row)
 
         category_gap_payloads = json.loads(json.dumps(artifact_payloads))
         category_gap_payloads["procedure_compile_results.json"][0]["live_execution_manifest_id"] = "unknown-ledger-row"

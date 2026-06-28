@@ -28,6 +28,7 @@ from tools.contracts.snowflake_execution_validation import write_snowflake_valid
 
 
 LAUNCH_READINESS_DIR = "artifacts/launch_readiness"
+RELEASE_CANDIDATE_DIR = "artifacts/release_candidate"
 
 REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     f"{LAUNCH_READINESS_DIR}/launch_readiness_summary.json",
@@ -66,10 +67,24 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     f"{LAUNCH_READINESS_DIR}/ci_artifact_review_results.json",
     f"{LAUNCH_READINESS_DIR}/artifact_upload_review_results.json",
     f"{LAUNCH_READINESS_DIR}/ci_artifact_reality_results.json",
+    f"{LAUNCH_READINESS_DIR}/release_candidate_ci_context.json",
+    f"{LAUNCH_READINESS_DIR}/release_candidate_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/artifact_manifest.json",
 }
 
+REQUIRED_RELEASE_CANDIDATE_ARTIFACTS = {
+    f"{RELEASE_CANDIDATE_DIR}/artifact_manifest.json",
+    f"{RELEASE_CANDIDATE_DIR}/artifact_hashes.json",
+    f"{RELEASE_CANDIDATE_DIR}/artifact_reconciliation_results.json",
+    f"{RELEASE_CANDIDATE_DIR}/product_gauntlet_release_results.json",
+    f"{RELEASE_CANDIDATE_DIR}/release_candidate_summary.json",
+    f"{RELEASE_CANDIDATE_DIR}/release_candidate_failures.json",
+    f"{RELEASE_CANDIDATE_DIR}/release_gate_matrix.json",
+    f"{RELEASE_CANDIDATE_DIR}/release_notes.json",
+}
+
 CI_UPLOAD_PATHS = {
+    "artifacts/release_candidate/**",
     "artifacts/launch_readiness/**",
     "artifacts/encoding_hygiene_results.json",
     "artifacts/full_app_validation/**",
@@ -86,6 +101,50 @@ CI_UPLOAD_PATHS = {
     "artifacts/brand/**",
     "artifacts/decision_workspace_html_snapshots/**",
     "artifacts/browser_screenshots/**",
+}
+
+RELEASE_ARTIFACT_ROOTS = (
+    "artifacts/launch_readiness",
+    "artifacts/full_app_validation",
+    "artifacts/full_app_inventory",
+    "artifacts/snowflake_validation",
+    "artifacts/cleanup",
+    "artifacts/generated_button_artifacts",
+    "artifacts/decision_workspace_html_snapshots",
+    "artifacts/browser_screenshots",
+    "artifacts/release_candidate",
+)
+
+RELEASE_ROOT_ARTIFACT_GLOBS = (
+    "artifacts/encoding_hygiene_results.json",
+    "artifacts/query_*",
+    "artifacts/direct_sql_static_scan.json",
+    "artifacts/session_open_static_scan.json",
+    "artifacts/sql_performance_lint_findings.json",
+    "artifacts/sql_performance_lint_file_inventory.json",
+    "artifacts/button_route_manifest.json",
+    "artifacts/button_route_results.json",
+)
+
+RELEASE_REQUIRED_CATEGORIES = {
+    "launch_readiness",
+    "full_app_validation",
+    "full_app_inventory",
+    "snowflake_validation",
+    "encoding_hygiene",
+    "cleanup",
+    "query_performance",
+    "direct_session_sql",
+    "snapshots",
+    "browser",
+    "exports",
+    "release_candidate",
+}
+
+RELEASE_SELF_REFERENTIAL_FILES = {
+    f"{RELEASE_CANDIDATE_DIR}/artifact_manifest.json",
+    f"{RELEASE_CANDIDATE_DIR}/artifact_hashes.json",
+    f"{RELEASE_CANDIDATE_DIR}/artifact_reconciliation_results.json",
 }
 
 PRIMARY_SECTIONS = {
@@ -359,6 +418,67 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _artifact_text_contains_raw_sql_or_secret(path: Path) -> bool:
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return False
+    if re.search(r'"raw_sql_included"\s*:\s*true', text, flags=re.IGNORECASE):
+        return True
+    if re.search(r"(?i)(snowflake://|password\s*[:=]|private[_ -]?key\s*[:=]|github_pat_|ghp_[A-Za-z0-9]{20,})", text):
+        return True
+    return bool(re.search(r"(?is)\bCREATE\s+OR\s+REPLACE\b|\bSELECT\s+\*\b|Traceback \(most recent call last\):", text))
+
+
+def _release_artifact_category(rel: str) -> str:
+    if rel.startswith("artifacts/release_candidate/"):
+        return "release_candidate"
+    if rel.startswith("artifacts/launch_readiness/"):
+        return "launch_readiness"
+    if rel.startswith("artifacts/full_app_validation/"):
+        if "export" in rel.lower() or "case_payload" in rel.lower():
+            return "exports"
+        return "full_app_validation"
+    if rel.startswith("artifacts/full_app_inventory/"):
+        return "full_app_inventory"
+    if rel.startswith("artifacts/snowflake_validation/"):
+        return "snowflake_validation"
+    if rel.startswith("artifacts/cleanup/"):
+        return "cleanup"
+    if rel.startswith("artifacts/decision_workspace_html_snapshots/"):
+        return "snapshots"
+    if rel.startswith("artifacts/browser_screenshots/"):
+        return "browser"
+    if rel.startswith("artifacts/query_") or "/query_" in rel:
+        return "query_performance"
+    if rel.endswith("direct_sql_static_scan.json") or rel.endswith("session_open_static_scan.json"):
+        return "direct_session_sql"
+    if rel.endswith("encoding_hygiene_results.json"):
+        return "encoding_hygiene"
+    if "button" in rel:
+        return "full_app_inventory"
+    return "launch_readiness"
+
+
+def _release_artifact_files(root: Path) -> list[str]:
+    files: set[str] = set()
+    for rel_root in RELEASE_ARTIFACT_ROOTS:
+        path_root = root / rel_root
+        if path_root.exists():
+            files.update(
+                str(path.relative_to(root)).replace("\\", "/")
+                for path in path_root.rglob("*")
+                if path.is_file()
+            )
+    for pattern in RELEASE_ROOT_ARTIFACT_GLOBS:
+        files.update(
+            str(path.relative_to(root)).replace("\\", "/")
+            for path in root.glob(pattern)
+            if path.is_file()
+        )
+    return sorted(files)
+
+
 def _append_failure(
     failures: list[dict[str, Any]],
     gate: str,
@@ -389,6 +509,16 @@ def _clean_launch_artifact_directory(root: Path) -> None:
     if launch_dir.exists():
         shutil.rmtree(launch_dir)
     launch_dir.mkdir(parents=True, exist_ok=True)
+
+
+def _clean_release_candidate_directory(root: Path) -> None:
+    artifacts_root = (root / "artifacts").resolve()
+    release_dir = (root / RELEASE_CANDIDATE_DIR).resolve()
+    if release_dir == artifacts_root or artifacts_root not in release_dir.parents:
+        raise ValueError(f"refusing to clean outside artifacts root: {release_dir}")
+    if release_dir.exists():
+        shutil.rmtree(release_dir)
+    release_dir.mkdir(parents=True, exist_ok=True)
 
 
 def _load_payloads(root: Path, rels: Iterable[str]) -> tuple[dict[str, Any], list[str]]:
@@ -438,10 +568,12 @@ def _workflow_upload_review(root: Path) -> dict[str, Any]:
 
 def _ci_run_review_results(profile: str, waivers: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     meta = _ci_metadata()
-    missing_metadata = not bool(meta["workflow_run_id"] and meta["workflow_url"])
-    metadata_required = profile == "prod_candidate"
+    missing_metadata = not bool(meta["github_actions"] and meta["workflow_run_id"] and meta["workflow_url"])
+    metadata_required = profile in {"internal_live", "prod_candidate"}
     waiver_used = missing_metadata and _has_valid_waiver(waivers, "ci_metadata")
-    passed = not missing_metadata or not metadata_required or waiver_used
+    commit_mismatch = bool(meta["github_sha"] and meta["source_commit_sha"] and meta["github_sha"] != meta["source_commit_sha"])
+    workflow_url_missing = bool(meta["github_actions"] and meta["workflow_run_id"] and not meta["workflow_url"])
+    passed = (not missing_metadata or not metadata_required or waiver_used) and not commit_mismatch and not workflow_url_missing
     warning = ""
     if missing_metadata and profile == "internal_fixture":
         warning = "Workflow metadata is unavailable outside GitHub Actions; internal_fixture records this as an explicit local-run warning."
@@ -451,23 +583,74 @@ def _ci_run_review_results(profile: str, waivers: Iterable[Mapping[str, Any]]) -
         warning = "Workflow metadata is waived for this launch profile by an owner-approved waiver."
     elif missing_metadata:
         warning = "Workflow metadata is required for this launch profile."
+    if commit_mismatch:
+        warning = "GitHub Actions commit SHA does not match the evaluated source commit."
+    elif workflow_url_missing:
+        warning = "GitHub Actions metadata is present but workflow_url could not be constructed."
     return {
         "source": "launch_readiness_ci_run_review",
-        "proof_source": "inventory_only",
+        "proof_source": "github_actions_metadata" if meta["github_actions"] else "local_inventory",
         "passed": passed,
         "launch_profile": profile,
+        "github_actions": meta["github_actions"],
         "workflow_run_id": meta["workflow_run_id"],
         "workflow_url": meta["workflow_url"],
         "commit_sha": meta["commit_sha"],
+        "source_commit_sha": meta["source_commit_sha"],
         "branch_ref": meta["branch_ref"],
         "run_attempt": meta["run_attempt"],
         "workflow_name": meta["workflow_name"],
+        "workflow_job": meta["workflow_job"],
+        "event_name": meta["event_name"],
+        "repository": meta["repository"],
         "github_sha": meta["github_sha"],
+        "commit_sha_matches_source": not commit_mismatch,
         "workflow_metadata_missing": missing_metadata,
         "workflow_metadata_required": metadata_required,
+        "workflow_url_missing": workflow_url_missing,
         "waiver_used": waiver_used,
         "artifact_upload_names": ["decision-workspace-proof"],
         "warning": warning,
+        "raw_sql_included": False,
+    }
+
+
+def _release_candidate_ci_context(profile: str, waivers: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    ci_run = _ci_run_review_results(profile, waivers)
+    return {
+        "source": "release_candidate_ci_context",
+        "proof_source": ci_run.get("proof_source") or "local_inventory",
+        "passed": bool(ci_run.get("passed")),
+        "launch_profile": profile,
+        "github_actions": bool(ci_run.get("github_actions")),
+        "commit_sha": str(ci_run.get("commit_sha") or ""),
+        "source_commit_sha": str(ci_run.get("source_commit_sha") or ""),
+        "commit_sha_matches_source": bool(ci_run.get("commit_sha_matches_source")),
+        "branch_ref": str(ci_run.get("branch_ref") or ""),
+        "workflow_run_id": str(ci_run.get("workflow_run_id") or ""),
+        "workflow_url": str(ci_run.get("workflow_url") or ""),
+        "run_attempt": str(ci_run.get("run_attempt") or ""),
+        "workflow_name": str(ci_run.get("workflow_name") or ""),
+        "workflow_job": str(ci_run.get("workflow_job") or ""),
+        "event_name": str(ci_run.get("event_name") or ""),
+        "repository": str(ci_run.get("repository") or ""),
+        "workflow_metadata_missing": bool(ci_run.get("workflow_metadata_missing")),
+        "workflow_metadata_required": bool(ci_run.get("workflow_metadata_required")),
+        "workflow_url_missing": bool(ci_run.get("workflow_url_missing")),
+        "waiver_used": bool(ci_run.get("waiver_used")),
+        "warning": str(ci_run.get("warning") or ""),
+        "recorded_env_keys": [
+            "GITHUB_ACTIONS",
+            "GITHUB_RUN_ID",
+            "GITHUB_RUN_ATTEMPT",
+            "GITHUB_SERVER_URL",
+            "GITHUB_REPOSITORY",
+            "GITHUB_SHA",
+            "GITHUB_REF",
+            "GITHUB_WORKFLOW",
+            "GITHUB_JOB",
+            "GITHUB_EVENT_NAME",
+        ],
         "raw_sql_included": False,
     }
 
@@ -478,6 +661,7 @@ def _ci_artifact_reality_results(
     upload_review: Mapping[str, Any],
     artifact_review: Mapping[str, Any],
     missing_payloads: Iterable[str],
+    release_reconciliation: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     failures: list[dict[str, Any]] = []
 
@@ -501,10 +685,20 @@ def _ci_artifact_reality_results(
     missing_upload_paths = _as_list(upload_review.get("missing_upload_paths"))
     missing_steps = _as_list(upload_review.get("missing_steps"))
     uploaded_artifact_names = _as_list(upload_review.get("uploaded_artifact_names"))
+    release_reconciliation = _as_mapping(release_reconciliation)
+    release_missing = _as_list(release_reconciliation.get("missing_files"))
+    release_unlisted = _as_list(release_reconciliation.get("unlisted_files"))
+    release_hash_mismatch = _as_list(release_reconciliation.get("hash_mismatches"))
+    release_missing_categories = _as_list(release_reconciliation.get("missing_required_categories"))
+    release_raw = _as_int(release_reconciliation.get("raw_sql_or_secret_count"))
     workflow_metadata_missing = bool(ci_run_review.get("workflow_metadata_missing"))
     workflow_metadata_required = bool(ci_run_review.get("workflow_metadata_required"))
     if workflow_metadata_missing and workflow_metadata_required:
         fail("CI_METADATA_MISSING", "Workflow metadata is required for this launch profile.", details=profile)
+    if not bool(ci_run_review.get("commit_sha_matches_source", True)):
+        fail("CI_COMMIT_SHA_MISMATCH", "Workflow commit SHA does not match the evaluated source commit.")
+    if bool(ci_run_review.get("workflow_url_missing")):
+        fail("CI_WORKFLOW_URL_MISSING", "Workflow URL must be constructed when GitHub Actions metadata is available.")
     if missing_required_artifacts:
         fail("REQUIRED_ARTIFACT_MISSING", "Required launch/gauntlet artifacts are missing.", count=len(missing_required_artifacts), details=missing_required_artifacts)
     if stale_artifacts:
@@ -515,6 +709,18 @@ def _ci_artifact_reality_results(
         fail("CI_REQUIRED_STEP_MISSING", "CI is missing required release-candidate validation steps.", count=len(missing_steps), details=missing_steps)
     if not uploaded_artifact_names:
         fail("UPLOADED_ARTIFACT_NAME_MISSING", "CI artifact upload name inventory is missing.")
+    if release_reconciliation and not bool(release_reconciliation.get("passed")):
+        fail("RELEASE_ARTIFACT_RECONCILIATION_FAILED", "Release-candidate artifact manifest/hash reconciliation failed.", details=release_reconciliation.get("failures"))
+    if release_missing:
+        fail("RELEASE_MANIFEST_FILE_MISSING", "Release-candidate manifest lists files missing from disk.", count=len(release_missing), details=release_missing)
+    if release_unlisted:
+        fail("RELEASE_UNLISTED_ARTIFACT", "Generated artifact exists outside the release-candidate manifest.", count=len(release_unlisted), details=release_unlisted)
+    if release_hash_mismatch:
+        fail("RELEASE_HASH_MISMATCH", "Release-candidate artifact hash mismatch detected.", count=len(release_hash_mismatch), details=release_hash_mismatch)
+    if release_missing_categories:
+        fail("RELEASE_ARTIFACT_CATEGORY_MISSING", "Required release-candidate artifact category has zero files.", count=len(release_missing_categories), details=release_missing_categories)
+    if release_raw:
+        fail("RELEASE_ARTIFACT_RAW_SQL_OR_SECRET", "Release-candidate artifact bundle contains raw SQL or secret-like text.", count=release_raw)
 
     return {
         "source": "launch_readiness_ci_artifact_reality",
@@ -529,7 +735,7 @@ def _ci_artifact_reality_results(
         "branch_ref": ci_run_review.get("branch_ref") or "",
         "run_attempt": ci_run_review.get("run_attempt") or "",
         "uploaded_artifact_names": uploaded_artifact_names,
-        "required_artifact_count": len(REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS) + len(REQUIRED_LAUNCH_READINESS_ARTIFACTS),
+        "required_artifact_count": len(REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS) + len(REQUIRED_LAUNCH_READINESS_ARTIFACTS) + len(REQUIRED_RELEASE_CANDIDATE_ARTIFACTS),
         "missing_artifacts": missing_required_artifacts,
         "missing_artifact_count": len(missing_required_artifacts),
         "stale_artifacts": stale_artifacts,
@@ -540,6 +746,12 @@ def _ci_artifact_reality_results(
         "missing_step_count": len(missing_steps),
         "workflow_metadata_missing": workflow_metadata_missing,
         "workflow_metadata_required": workflow_metadata_required,
+        "release_artifact_reconciliation_passed": bool(release_reconciliation.get("passed")) if release_reconciliation else False,
+        "release_artifact_count": _as_int(release_reconciliation.get("artifact_count")) if release_reconciliation else 0,
+        "release_artifact_hash_count": _as_int(release_reconciliation.get("hash_count")) if release_reconciliation else 0,
+        "release_missing_required_categories": release_missing_categories,
+        "release_unlisted_artifacts": release_unlisted,
+        "release_hash_mismatches": release_hash_mismatch,
         "warning": str(ci_run_review.get("warning") or ""),
         "raw_sql_included": False,
     }
@@ -1597,6 +1809,388 @@ def _artifact_review_results(root: Path, payloads: Mapping[str, Any], missing_pa
     }
 
 
+def _release_candidate_artifact_manifest(
+    root: Path,
+    *,
+    profile: str,
+    commit_sha: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    hashes: list[dict[str, Any]] = []
+    for rel in _release_artifact_files(root):
+        path = root / rel
+        category = _release_artifact_category(rel)
+        self_referential = (
+            rel in RELEASE_SELF_REFERENTIAL_FILES
+            or rel.startswith(f"{LAUNCH_READINESS_DIR}/")
+            or rel.startswith(f"{RELEASE_CANDIDATE_DIR}/")
+        )
+        contains_raw = _artifact_text_contains_raw_sql_or_secret(path)
+        sha = _file_sha256(path) if path.exists() else ""
+        row = {
+            "path": rel,
+            "sha256": sha,
+            "size_bytes": path.stat().st_size if path.exists() else 0,
+            "created_at": _utc_now(),
+            "producer": "launch_readiness",
+            "launch_profile": profile,
+            "commit_sha": commit_sha,
+            "proof_source": "runtime_click",
+            "category": category,
+            "contains_raw_sql": contains_raw,
+            "contains_secrets": contains_raw,
+            "self_referential_hash": self_referential,
+        }
+        rows.append(row)
+        hashes.append(
+            {
+                "path": rel,
+                "sha256": sha,
+                "size_bytes": row["size_bytes"],
+                "category": category,
+                "self_referential_hash": self_referential,
+            }
+        )
+    categories: dict[str, int] = {}
+    for row in rows:
+        categories[str(row["category"])] = categories.get(str(row["category"]), 0) + 1
+    manifest = {
+        "source": "release_candidate_artifact_manifest",
+        "proof_source": "runtime_click",
+        "generated_at": _utc_now(),
+        "launch_profile": profile,
+        "commit_sha": commit_sha,
+        "artifact_count": len(rows),
+        "categories": categories,
+        "required_categories": sorted(RELEASE_REQUIRED_CATEGORIES),
+        "files": rows,
+        "raw_sql_included": False,
+    }
+    hash_payload = {
+        "source": "release_candidate_artifact_hashes",
+        "proof_source": "runtime_click",
+        "generated_at": _utc_now(),
+        "launch_profile": profile,
+        "commit_sha": commit_sha,
+        "hash_count": len(hashes),
+        "hashes": hashes,
+        "raw_sql_included": False,
+    }
+    return manifest, hash_payload
+
+
+def _release_artifact_reconciliation_results(
+    root: Path,
+    manifest: Mapping[str, Any],
+    hashes: Mapping[str, Any],
+) -> dict[str, Any]:
+    manifest_rows = [_as_mapping(row) for row in _as_list(manifest.get("files"))]
+    hash_rows = {_as_mapping(row).get("path"): _as_mapping(row) for row in _as_list(hashes.get("hashes"))}
+    manifest_paths = {str(row.get("path") or "") for row in manifest_rows}
+    observed_paths = set(_release_artifact_files(root))
+    missing_files = sorted(path for path in manifest_paths if path and not (root / path).exists())
+    unlisted_files = sorted(path for path in observed_paths - manifest_paths if path not in RELEASE_SELF_REFERENTIAL_FILES)
+    hash_mismatches: list[dict[str, Any]] = []
+    raw_sql_or_secret_files: list[str] = []
+    category_counts: dict[str, int] = {}
+    failures: list[dict[str, Any]] = []
+    for row in manifest_rows:
+        rel = str(row.get("path") or "")
+        if not rel or rel in missing_files:
+            continue
+        path = root / rel
+        category = str(row.get("category") or _release_artifact_category(rel))
+        category_counts[category] = category_counts.get(category, 0) + 1
+        contains_raw = bool(row.get("contains_raw_sql")) or bool(row.get("contains_secrets")) or _artifact_text_contains_raw_sql_or_secret(path)
+        if contains_raw:
+            raw_sql_or_secret_files.append(rel)
+        hash_row = _as_mapping(hash_rows.get(rel))
+        if rel not in RELEASE_SELF_REFERENTIAL_FILES and not bool(row.get("self_referential_hash")):
+            actual_hash = _file_sha256(path)
+            expected_hash = str(row.get("sha256") or hash_row.get("sha256") or "")
+            if expected_hash != actual_hash:
+                hash_mismatches.append({"path": rel, "expected": expected_hash, "actual": actual_hash})
+    missing_categories = sorted(category for category in RELEASE_REQUIRED_CATEGORIES if category_counts.get(category, 0) == 0)
+    if missing_files:
+        failures.append({"code": "RELEASE_MANIFEST_FILE_MISSING", "files": missing_files})
+    if unlisted_files:
+        failures.append({"code": "RELEASE_UNLISTED_ARTIFACT", "files": unlisted_files})
+    if hash_mismatches:
+        failures.append({"code": "RELEASE_HASH_MISMATCH", "files": hash_mismatches})
+    if missing_categories:
+        failures.append({"code": "RELEASE_CATEGORY_MISSING", "categories": missing_categories})
+    if raw_sql_or_secret_files:
+        failures.append({"code": "RELEASE_RAW_SQL_OR_SECRET", "files": raw_sql_or_secret_files})
+    for skipped, proof_pattern in (
+        ("artifacts/browser_screenshots/SKIPPED.txt", "artifacts/browser_screenshots/*.png"),
+        ("artifacts/query_history_by_tag_SKIPPED.txt", "artifacts/query_history_by_tag.json"),
+    ):
+        if (root / skipped).exists() and list(root.glob(proof_pattern)):
+            failures.append({"code": "STALE_SKIPPED_FILE_WITH_PROOF", "file": skipped})
+    return {
+        "source": "release_candidate_artifact_reconciliation",
+        "proof_source": "runtime_click",
+        "generated_at": _utc_now(),
+        "passed": not failures,
+        "failure_count": len(failures),
+        "failures": failures,
+        "artifact_count": len(manifest_rows),
+        "hash_count": len(_as_list(hashes.get("hashes"))),
+        "missing_files": missing_files,
+        "missing_file_count": len(missing_files),
+        "unlisted_files": unlisted_files,
+        "unlisted_file_count": len(unlisted_files),
+        "hash_mismatches": hash_mismatches,
+        "hash_mismatch_count": len(hash_mismatches),
+        "missing_required_categories": missing_categories,
+        "missing_required_category_count": len(missing_categories),
+        "raw_sql_or_secret_files": raw_sql_or_secret_files,
+        "raw_sql_or_secret_count": len(raw_sql_or_secret_files),
+        "categories": category_counts,
+        "raw_sql_included": False,
+    }
+
+
+def _product_gauntlet_release_results(root: Path, payloads: Mapping[str, Any], launch_artifacts: Mapping[str, Any]) -> dict[str, Any]:
+    summary = _as_mapping(payloads.get("artifacts/full_app_validation/app_validation_summary.json"))
+    view_rows = [_as_mapping(row) for row in _as_list(payloads.get("artifacts/full_app_validation/view_results.json"))]
+    button_rows = [_as_mapping(row) for row in _as_list(payloads.get("artifacts/full_app_validation/button_click_results.json"))]
+    evidence_rows = [_as_mapping(row) for row in _as_list(payloads.get("artifacts/full_app_validation/evidence_loader_call_matrix.json"))]
+    query_rows = [_as_mapping(row) for row in _as_list(payloads.get("artifacts/full_app_validation/query_search_results.json"))]
+    export_rows = [_as_mapping(row) for row in _as_list(payloads.get("artifacts/full_app_validation/export_results.json"))]
+    case_rows = [_as_mapping(row) for row in _as_list(payloads.get("artifacts/full_app_validation/case_payload_results.json"))]
+    stress_rows = [_as_mapping(row) for row in _as_list(payloads.get("artifacts/full_app_validation/stress_results.json"))]
+    checks: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = []
+
+    def add(name: str, passed: bool, recommendation: str, *, actual: Any = None, expected: Any = None) -> None:
+        row = {
+            "check_name": name,
+            "passed": bool(passed),
+            "actual": actual,
+            "expected": expected,
+            "recommendation": "" if passed else recommendation,
+        }
+        checks.append(row)
+        if not passed:
+            failures.append(row)
+
+    sections = {str(row.get("section") or "") for row in view_rows if row.get("section")}
+    route_leaks = [
+        row for row in button_rows
+        if bool(row.get("route_action")) and _raw_count(row, "session_count", "query_count", "direct_sql_count", "snowflake_execution_count") > 0
+    ]
+    normal_evidence_bad = [
+        row for row in evidence_rows
+        if str(row.get("loader_kind") or "") == "normal_evidence"
+        and (bool(row.get("account_usage_used")) or not bool(row.get("normal_evidence_source_allowed", True)))
+    ]
+    no_click = [
+        row for row in query_rows
+        if str(row.get("case") or "") == "render_no_click" and _raw_count(row, "session_open_count", "direct_sql_event_count", "snowflake_execution_count", "query_count") > 0
+    ]
+    query_text_exports = [row for row in export_rows if bool(row.get("query_text_included")) and not bool(row.get("admin_only"))]
+    export_failures = [
+        row for row in export_rows
+        if not row.get("payload_file")
+        or bool(row.get("hash_mismatch"))
+        or _as_int(row.get("parsed_row_count")) != _as_int(row.get("visible_row_count"))
+    ]
+    case_failures = [
+        row for row in case_rows
+        if any(not row.get(field) for field in REQUIRED_CASE_FIELDS)
+        or _as_int(row.get("row_count")) != _as_int(row.get("visible_row_count"))
+    ]
+    stress_failures = [
+        row for row in stress_rows
+        if not row.get("threshold")
+        or not row.get("actuals")
+        or not bool(row.get("threshold_passed", True))
+        or _as_list(row.get("threshold_failures"))
+    ]
+    add("six_primary_overviews_rendered", PRIMARY_SECTIONS.issubset(sections), "Render all six launch Decision Workspace sections.", actual=sorted(sections), expected=sorted(PRIMARY_SECTIONS))
+    add("first_paint_slo_passed", bool(summary.get("performance_gate_passed", summary.get("all_passed"))), "Fix first-paint packet/query budget failures.", actual=summary.get("performance_gate_passed"), expected=True)
+    add("route_actions_zero_query", not route_leaks, "Route actions must not open sessions, run queries, or execute direct SQL.", actual=len(route_leaks), expected=0)
+    add("normal_evidence_compact_mart_backed", not normal_evidence_bad, "Normal evidence must use compact marts or exact recent-detail paths only.", actual=len(normal_evidence_bad), expected=0)
+    add("query_search_no_click_zero_cost", not no_click, "Query Search render/no-click proof must have zero Snowflake cost.", actual=len(no_click), expected=0)
+    add("query_search_export_no_query_text", not query_text_exports, "Default Query Search exports must not include query text.", actual=len(query_text_exports), expected=0)
+    add("export_payloads_hash_and_row_valid", not export_failures, "Every export payload must exist and match visible row counts and hash.", actual=len(export_failures), expected=0)
+    add("case_payloads_complete", not case_failures, "Case payload rows require section/workflow/scope/target/freshness/source/summary/row_count and visible row agreement.", actual=len(case_failures), expected=0)
+    add("daily_forbidden_token_scans_zero", bool(summary.get("evidence_gate_passed", True)) and _as_int(summary.get("forbidden_ui_token_count")) == 0, "Daily UI/export scans must have zero forbidden tokens.", actual=_as_int(summary.get("forbidden_ui_token_count")), expected=0)
+    add("stress_thresholds_pass", not stress_failures, "All stress rows require real thresholds, actuals, and zero threshold failures.", actual=len(stress_failures), expected=0)
+    add("settings_live_gating_passed", bool(_as_mapping(launch_artifacts.get("settings_live_closure_results")).get("passed")), "Settings/Admin and live features must remain gated, budgeted, and sanitized.", actual=_as_mapping(launch_artifacts.get("settings_live_closure_results")).get("passed"), expected=True)
+    add("browser_or_snapshot_passed", bool(_as_mapping(launch_artifacts.get("browser_smoke_results")).get("passed")), "Browser or deterministic snapshot proof must pass for the selected profile.", actual=_as_mapping(launch_artifacts.get("browser_smoke_results")).get("passed"), expected=True)
+    return {
+        "source": "release_candidate_product_gauntlet",
+        "proof_source": "runtime_click",
+        "generated_at": _utc_now(),
+        "passed": not failures,
+        "check_count": len(checks),
+        "failure_count": len(failures),
+        "checks": checks,
+        "failures": failures,
+        "raw_sql_included": False,
+    }
+
+
+def _release_candidate_gate_results(reconciliation: Mapping[str, Any], product_gauntlet: Mapping[str, Any]) -> dict[str, Any]:
+    failures: list[dict[str, Any]] = []
+    if not bool(reconciliation.get("passed")):
+        failures.append({"gate": "artifact_reconciliation", "details": reconciliation.get("failures")})
+    if not bool(product_gauntlet.get("passed")):
+        failures.append({"gate": "product_gauntlet_release", "details": product_gauntlet.get("failures")})
+    return {
+        "source": "release_candidate_gate",
+        "proof_source": "runtime_click",
+        "passed": not failures,
+        "failure_count": len(failures),
+        "failures": failures,
+        "artifact_count": _as_int(reconciliation.get("artifact_count")),
+        "artifact_hash_count": _as_int(reconciliation.get("hash_count")),
+        "raw_sql_included": False,
+    }
+
+
+def _release_candidate_summary_bundle(
+    *,
+    launch_summary: Mapping[str, Any],
+    launch_failures: Mapping[str, Any],
+    matrix: Iterable[Mapping[str, Any]],
+    release_gate: Mapping[str, Any],
+    product_gauntlet: Mapping[str, Any],
+    reconciliation: Mapping[str, Any],
+    ci_context: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
+    matrix_rows = [_as_mapping(row) for row in matrix]
+    release_matrix = [
+        {
+            "gate": "launch_readiness",
+            "passed": bool(launch_summary.get("all_passed")),
+            "artifact": f"{LAUNCH_READINESS_DIR}/launch_readiness_summary.json",
+        },
+        {
+            "gate": "release_artifact_reconciliation",
+            "passed": bool(reconciliation.get("passed")),
+            "artifact": f"{RELEASE_CANDIDATE_DIR}/artifact_reconciliation_results.json",
+        },
+        {
+            "gate": "product_gauntlet_release",
+            "passed": bool(product_gauntlet.get("passed")),
+            "artifact": f"{RELEASE_CANDIDATE_DIR}/product_gauntlet_release_results.json",
+        },
+        {
+            "gate": "ci_artifact_reality",
+            "passed": bool(launch_summary.get("ci_artifact_reality_passed")),
+            "artifact": f"{LAUNCH_READINESS_DIR}/ci_artifact_reality_results.json",
+        },
+        {
+            "gate": "live_execution_manifest",
+            "passed": bool(launch_summary.get("live_execution_manifest_gate_passed")),
+            "artifact": f"{LAUNCH_READINESS_DIR}/live_execution_manifest_gate_results.json",
+        },
+        {
+            "gate": "encoding_hygiene",
+            "passed": bool(launch_summary.get("encoding_hygiene_passed")),
+            "artifact": "artifacts/encoding_hygiene_results.json",
+        },
+    ]
+    release_matrix.extend(
+        {
+            "gate": str(row.get("gate") or ""),
+            "passed": bool(row.get("passed")),
+            "artifact": str(row.get("artifact") or ""),
+        }
+        for row in matrix_rows
+    )
+    hard_failures = [
+        row for row in release_matrix
+        if not bool(row.get("passed"))
+    ] + _as_list(launch_failures.get("failures")) + _as_list(release_gate.get("failures"))
+    all_passed = not hard_failures
+    warning_count = 1 if str(launch_summary.get("ci_metadata_warning") or "") else 0
+    waiver_count = 1 if str(launch_summary.get("live_validation_waiver_id") or "") else 0
+    summary = {
+        "source": "release_candidate_summary",
+        "proof_source": "runtime_click",
+        "generated_at": _utc_now(),
+        "commit_sha": str(launch_summary.get("commit_sha") or ci_context.get("commit_sha") or ""),
+        "launch_profile": str(launch_summary.get("launch_profile") or DEFAULT_LAUNCH_PROFILE),
+        "workflow_url": str(launch_summary.get("workflow_url") or ci_context.get("workflow_url") or ""),
+        "workflow_run_id": str(launch_summary.get("workflow_run_id") or ci_context.get("workflow_run_id") or ""),
+        "all_passed": all_passed,
+        "hard_gate_failure_count": len(hard_failures),
+        "warning_count": warning_count,
+        "waiver_count": waiver_count,
+        "artifact_count": _as_int(reconciliation.get("artifact_count")),
+        "artifact_hash_count": _as_int(reconciliation.get("hash_count")),
+        "ci_artifact_reality_passed": bool(launch_summary.get("ci_artifact_reality_passed")),
+        "full_app_gauntlet_passed": bool(launch_summary.get("gauntlet_passed")),
+        "launch_readiness_passed": bool(launch_summary.get("all_passed")),
+        "snowflake_validation_passed": bool(launch_summary.get("snowflake_validation_passed")),
+        "live_execution_manifest_passed": bool(launch_summary.get("live_execution_manifest_gate_passed")),
+        "encoding_hygiene_passed": bool(launch_summary.get("encoding_hygiene_passed")),
+        "cleanup_passed": _gate_passed(matrix_rows, "cleanup_closure"),
+        "browser_or_snapshot_passed": _gate_passed(matrix_rows, "browser_or_rendered_snapshot"),
+        "first_paint_slo_passed": bool(_check_passed(product_gauntlet, "first_paint_slo_passed")),
+        "route_zero_query_passed": bool(_check_passed(product_gauntlet, "route_actions_zero_query")),
+        "normal_evidence_compact_mart_passed": bool(_check_passed(product_gauntlet, "normal_evidence_compact_mart_backed")),
+        "account_usage_explicit_only_passed": bool(launch_summary.get("snowflake_live_validation_skipped") or launch_summary.get("snowflake_validation_passed")),
+        "export_case_validation_passed": _gate_passed(matrix_rows, "export_case_closure"),
+        "settings_live_gating_passed": _gate_passed(matrix_rows, "settings_live_closure"),
+        "deployment_readiness_passed": _gate_passed(matrix_rows, "deployment_readiness"),
+        "docs_readiness_passed": _gate_passed(matrix_rows, "docs_readiness"),
+        "artifact_bundle_name": "decision-workspace-proof",
+        "raw_sql_included": False,
+    }
+    failures = {
+        "source": "release_candidate_failures",
+        "proof_source": "runtime_click",
+        "passed": all_passed,
+        "failure_count": len(hard_failures),
+        "failures": hard_failures,
+        "raw_sql_included": False,
+    }
+    notes = {
+        "source": "release_candidate_notes",
+        "proof_source": "runtime_click",
+        "commit_range": f"HEAD~1..{summary['commit_sha']}",
+        "changed_files_summary": "Release-candidate proof bundle, CI context, artifact hashes, and manifest reconciliation.",
+        "launch_profile": summary["launch_profile"],
+        "known_skips_or_waivers": [
+            value for value in (
+                str(launch_summary.get("snowflake_validation_skip_reason") or ""),
+                str(launch_summary.get("ci_metadata_warning") or ""),
+            )
+            if value
+        ],
+        "hard_blockers": hard_failures,
+        "artifact_bundle_name": summary["artifact_bundle_name"],
+        "validation_commands": [
+            "python -m unittest tests.test_snowflake_execution_validation",
+            "python -m unittest tests.test_launch_readiness",
+            "python -m tools.contracts.encoding_hygiene",
+            "python -m unittest discover -s tests",
+        ],
+        "operator_next_steps": [
+            "Review artifacts/release_candidate/release_candidate_summary.json.",
+            "Confirm CI uploaded decision-workspace-proof for the evaluated commit.",
+            "Promote only when live Snowflake proof or signed profile waiver is present for non-fixture profiles.",
+        ],
+        "waiver_section_present": True,
+        "blocker_section_present": True,
+        "raw_sql_included": False,
+    }
+    return summary, failures, release_matrix, notes
+
+
+def _gate_passed(matrix_rows: Iterable[Mapping[str, Any]], gate: str) -> bool:
+    return any(str(row.get("gate") or "") == gate and bool(row.get("passed")) for row in matrix_rows)
+
+
+def _check_passed(payload: Mapping[str, Any], check_name: str) -> bool:
+    return any(str(row.get("check_name") or "") == check_name and bool(row.get("passed")) for row in _as_list(payload.get("checks")))
+
+
 def _raw_count(row: Mapping[str, Any], *keys: str) -> int:
     return sum(_as_int(row.get(key)) for key in keys)
 
@@ -1886,18 +2480,25 @@ def _raw_invariant_artifacts(root: Path, payloads: Mapping[str, Any]) -> tuple[d
 
 
 def _ci_metadata() -> dict[str, Any]:
-    server = os.environ.get("GITHUB_SERVER_URL", "https://github.com")
-    repo = os.environ.get("GITHUB_REPOSITORY", "jfreeze03/OVERWATCH")
+    github_actions = os.environ.get("GITHUB_ACTIONS", "").lower() == "true"
+    server = os.environ.get("GITHUB_SERVER_URL", "https://github.com").rstrip("/")
+    repo = os.environ.get("GITHUB_REPOSITORY", "jfreeze03/OVERWATCH").strip("/")
     run_id = os.environ.get("GITHUB_RUN_ID", "")
     run_url = f"{server}/{repo}/actions/runs/{run_id}" if run_id else ""
-    commit_sha = os.environ.get("GITHUB_SHA", "") or _git_output("rev-parse", "HEAD")
-    branch_ref = os.environ.get("GITHUB_REF_NAME", "") or _git_output("branch", "--show-current")
+    source_commit_sha = _git_output("rev-parse", "HEAD")
+    commit_sha = os.environ.get("GITHUB_SHA", "") or source_commit_sha
+    branch_ref = os.environ.get("GITHUB_REF", "") or os.environ.get("GITHUB_REF_NAME", "") or _git_output("branch", "--show-current")
     return {
+        "github_actions": github_actions,
         "workflow_run_id": run_id,
         "workflow_url": run_url,
         "workflow_name": os.environ.get("GITHUB_WORKFLOW", ""),
+        "workflow_job": os.environ.get("GITHUB_JOB", ""),
+        "event_name": os.environ.get("GITHUB_EVENT_NAME", ""),
+        "repository": repo,
         "github_sha": os.environ.get("GITHUB_SHA", ""),
         "commit_sha": commit_sha,
+        "source_commit_sha": source_commit_sha,
         "branch_ref": branch_ref,
         "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT", ""),
     }
@@ -1957,6 +2558,8 @@ def _snowflake_manifest_row_status(row: Mapping[str, Any]) -> str:
 
 
 def _snowflake_manifest_row_mode(artifact: str, row: Mapping[str, Any], live_enabled: bool) -> str:
+    if artifact in {"procedure_compile_coverage_results.json", "procedure_smoke_call_coverage_results.json"}:
+        return "live" if live_enabled else "static"
     if _snowflake_manifest_row_status(row) == "skipped":
         return "skipped"
     if artifact == "procedure_compile_results.json":
@@ -2107,7 +2710,9 @@ def _snowflake_raw_validation_recheck(
         "live_validation_session_results.json": live_session,
         "setup_execution_results.json": payloads.get("artifacts/snowflake_validation/setup_execution_results.json"),
         "procedure_compile_results.json": payloads.get("artifacts/snowflake_validation/procedure_compile_results.json"),
+        "procedure_compile_coverage_results.json": payloads.get("artifacts/snowflake_validation/procedure_compile_coverage_results.json"),
         "procedure_smoke_call_results.json": payloads.get("artifacts/snowflake_validation/procedure_smoke_call_results.json"),
+        "procedure_smoke_call_coverage_results.json": payloads.get("artifacts/snowflake_validation/procedure_smoke_call_coverage_results.json"),
         "validation_sql_results.json": payloads.get("artifacts/snowflake_validation/validation_sql_results.json"),
         "refresh_fast_results.json": payloads.get("artifacts/snowflake_validation/refresh_fast_results.json"),
         "refresh_full_results.json": payloads.get("artifacts/snowflake_validation/refresh_full_results.json"),
@@ -2126,15 +2731,13 @@ def _snowflake_raw_validation_recheck(
         "sql_encoding_scan_results.json": payloads.get("artifacts/snowflake_validation/sql_encoding_scan_results.json"),
         "snowflake_error_sanitization_results.json": payloads.get("artifacts/snowflake_validation/snowflake_error_sanitization_results.json"),
     }
-    referential_manifest_artifact_payloads: dict[str, Any] = {
-        "procedure_compile_coverage_results.json": payloads.get("artifacts/snowflake_validation/procedure_compile_coverage_results.json"),
-        "procedure_smoke_call_coverage_results.json": payloads.get("artifacts/snowflake_validation/procedure_smoke_call_coverage_results.json"),
-    }
     required_manifest_artifacts = {
         "live_validation_environment_results.json",
         "live_validation_session_results.json",
         "procedure_compile_results.json",
+        "procedure_compile_coverage_results.json",
         "procedure_smoke_call_results.json",
+        "procedure_smoke_call_coverage_results.json",
         "refresh_fast_results.json",
         "refresh_full_results.json",
         "validation_sql_results.json",
@@ -2181,16 +2784,6 @@ def _snowflake_raw_validation_recheck(
                 raw_manifest_row_key_mismatch_count += 1
                 fail("live_execution_manifest", "Live execution manifest row_key contradicts its validation artifact row.", path=f"artifacts/snowflake_validation/{artifact_name}")
             rows_by_manifest_key[(artifact_name, manifest_id)] = row
-    for artifact_name, artifact_payload in referential_manifest_artifact_payloads.items():
-        for row in _snowflake_manifest_rows(artifact_payload):
-            manifest_id = str(row.get("live_execution_manifest_id") or "")
-            if not manifest_id:
-                raw_manifest_missing_id_count += 1
-                fail("live_execution_manifest", "Coverage artifact row is missing a referenced live execution manifest ID.", path=f"artifacts/snowflake_validation/{artifact_name}")
-                continue
-            if manifest_id not in manifest_ids:
-                raw_manifest_unknown_id_count += 1
-                fail("live_execution_manifest", "Coverage artifact row references an unknown live execution manifest ID.", path=f"artifacts/snowflake_validation/{artifact_name}")
     for entry in manifest_entries:
         artifact_name = str(entry.get("artifact") or "")
         manifest_id = str(entry.get("validation_id") or "")
@@ -2834,6 +3427,7 @@ def _release_gate_matrix(
     browser_failures = _as_mapping(launch_artifacts.get("browser_or_snapshot_failures"))
     live_query = _as_mapping(launch_artifacts.get("live_query_history_results"))
     manifest_gate = _as_mapping(launch_artifacts.get("live_execution_manifest_gate_results"))
+    release_candidate_gate = _as_mapping(launch_artifacts.get("release_candidate_gate_results"))
     snowflake_gate = _as_mapping(launch_artifacts.get("snowflake_validation_gate_results"))
     snowflake_raw = _as_mapping(launch_artifacts.get("snowflake_raw_validation_recheck"))
     encoding_hygiene = _as_mapping(launch_artifacts.get("encoding_hygiene_results"))
@@ -2897,6 +3491,12 @@ def _release_gate_matrix(
             "artifact": f"{LAUNCH_READINESS_DIR}/ci_artifact_reality_results.json",
             "passed": bool(ci_artifact_reality.get("passed")),
             "failure_reason": "" if ci_artifact_reality.get("passed") else "CI artifact reality gate found missing metadata, uploads, artifacts, or stale proof.",
+        },
+        {
+            "gate": "release_candidate_bundle",
+            "artifact": f"{LAUNCH_READINESS_DIR}/release_candidate_gate_results.json",
+            "passed": bool(release_candidate_gate.get("passed")),
+            "failure_reason": "" if release_candidate_gate.get("passed") else "Release-candidate bundle, hashes, or product gauntlet release proof failed.",
         },
         {
             "gate": "browser_or_rendered_snapshot",
@@ -3114,6 +3714,7 @@ def evaluate_launch_readiness(
     artifact_review = _as_mapping(launch_artifacts.get("artifact_review_results"))
     ci_artifact_reality = _as_mapping(launch_artifacts.get("ci_artifact_reality_results"))
     manifest_gate = _as_mapping(launch_artifacts.get("live_execution_manifest_gate_results"))
+    release_candidate_gate = _as_mapping(launch_artifacts.get("release_candidate_gate_results"))
     encoding_hygiene = _as_mapping(launch_artifacts.get("encoding_hygiene_results"))
     launch_summary = {
         "source": "launch_readiness",
@@ -3128,7 +3729,7 @@ def evaluate_launch_readiness(
         "check_count": len(matrix),
         "pass_count": sum(1 for row in matrix if row.get("passed")),
         "fail_count": sum(1 for row in matrix if not row.get("passed")),
-        "required_artifact_count": len(REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS) + len(REQUIRED_LAUNCH_READINESS_ARTIFACTS),
+        "required_artifact_count": len(REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS) + len(REQUIRED_LAUNCH_READINESS_ARTIFACTS) + len(REQUIRED_RELEASE_CANDIDATE_ARTIFACTS),
         "uploaded_artifact_names": _as_list(artifact_upload_review.get("uploaded_artifact_names")) or ["decision-workspace-proof"],
         "workflow_run_id": ci_meta["workflow_run_id"],
         "workflow_url": ci_meta["workflow_url"],
@@ -3140,6 +3741,10 @@ def evaluate_launch_readiness(
         "ci_metadata_missing": bool(ci_run_review.get("workflow_metadata_missing")),
         "ci_artifact_reality_passed": bool(ci_artifact_reality.get("passed")),
         "ci_artifact_reality_failure_count": _as_int(ci_artifact_reality.get("failure_count")),
+        "release_candidate_bundle_passed": bool(release_candidate_gate.get("passed")),
+        "release_candidate_bundle_failure_count": _as_int(release_candidate_gate.get("failure_count")),
+        "release_candidate_artifact_count": _as_int(release_candidate_gate.get("artifact_count")),
+        "release_candidate_artifact_hash_count": _as_int(release_candidate_gate.get("artifact_hash_count")),
         "missing_artifacts": _as_list(artifact_review.get("missing_required_gauntlet_artifacts")),
         "stale_artifacts": _as_list(artifact_review.get("stale_artifacts")),
         "stale_artifact_count": _as_int(artifact_review.get("stale_artifact_count")),
@@ -3226,6 +3831,7 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     profile = _selected_launch_profile()
     waivers = _load_launch_waivers()
     _clean_launch_artifact_directory(root_path)
+    _clean_release_candidate_directory(root_path)
     gauntlet_artifacts = write_full_app_gauntlet_artifacts(root_path)
     payloads, missing_payloads = _load_payloads(root_path, REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS)
     payloads.update(gauntlet_artifacts)
@@ -3242,6 +3848,7 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     launch_artifacts["launch_profile_results"] = _launch_profile_results(profile, waivers)
     launch_artifacts["profile_gate_failures"] = _profile_gate_failures(launch_artifacts["launch_profile_results"], waivers)
     launch_artifacts["ci_run_review_results"] = _ci_run_review_results(profile, waivers)
+    launch_artifacts["release_candidate_ci_context"] = _release_candidate_ci_context(profile, waivers)
     ci_upload_review = _workflow_upload_review(root_path)
     launch_artifacts["ci_artifact_review_results"] = ci_upload_review
     launch_artifacts["artifact_upload_review_results"] = ci_upload_review
@@ -3268,6 +3875,16 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     launch_artifacts["docs_readiness_results"] = _docs_readiness_results(root_path)
     launch_artifacts["secrets_scan_results"] = _secrets_scan_results(root_path)
     launch_artifacts["artifact_review_results"] = _artifact_review_results(root_path, payloads, missing_payloads)
+    launch_artifacts["release_candidate_gate_results"] = {
+        "source": "release_candidate_gate",
+        "proof_source": "runtime_click",
+        "passed": True,
+        "failure_count": 0,
+        "failures": [],
+        "artifact_count": 0,
+        "artifact_hash_count": 0,
+        "raw_sql_included": False,
+    }
     launch_artifacts["ci_artifact_reality_results"] = _ci_artifact_reality_results(
         profile,
         launch_artifacts["ci_run_review_results"],
@@ -3324,6 +3941,117 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
         "raw_sql_included": False,
     }
     manifest_rel = f"{LAUNCH_READINESS_DIR}/artifact_manifest.json"
+    _write_json(root_path / manifest_rel, manifest)
+    written[manifest_rel] = manifest
+
+    product_gauntlet = _product_gauntlet_release_results(root_path, payloads, launch_artifacts)
+    release_dir = root_path / RELEASE_CANDIDATE_DIR
+    release_dir.mkdir(parents=True, exist_ok=True)
+    _write_json(release_dir / "product_gauntlet_release_results.json", product_gauntlet)
+    provisional_reconciliation = {
+        "source": "release_candidate_artifact_reconciliation",
+        "proof_source": "runtime_click",
+        "passed": True,
+        "failure_count": 0,
+        "failures": [],
+        "artifact_count": 0,
+        "hash_count": 0,
+        "raw_sql_included": False,
+    }
+    provisional_gate = _release_candidate_gate_results(provisional_reconciliation, product_gauntlet)
+    rel_summary, rel_failures, rel_matrix, rel_notes = _release_candidate_summary_bundle(
+        launch_summary=launch_summary,
+        launch_failures=launch_failures,
+        matrix=matrix,
+        release_gate=provisional_gate,
+        product_gauntlet=product_gauntlet,
+        reconciliation=provisional_reconciliation,
+        ci_context=launch_artifacts["release_candidate_ci_context"],
+    )
+    _write_json(release_dir / "release_candidate_summary.json", rel_summary)
+    _write_json(release_dir / "release_candidate_failures.json", rel_failures)
+    _write_json(release_dir / "release_gate_matrix.json", rel_matrix)
+    _write_json(release_dir / "release_notes.json", rel_notes)
+    release_manifest, release_hashes = _release_candidate_artifact_manifest(
+        root_path,
+        profile=profile,
+        commit_sha=str(launch_summary.get("commit_sha") or ""),
+    )
+    _write_json(release_dir / "artifact_manifest.json", release_manifest)
+    _write_json(release_dir / "artifact_hashes.json", release_hashes)
+    release_reconciliation = _release_artifact_reconciliation_results(root_path, release_manifest, release_hashes)
+    release_gate = _release_candidate_gate_results(release_reconciliation, product_gauntlet)
+    rel_summary, rel_failures, rel_matrix, rel_notes = _release_candidate_summary_bundle(
+        launch_summary=launch_summary,
+        launch_failures=launch_failures,
+        matrix=matrix,
+        release_gate=release_gate,
+        product_gauntlet=product_gauntlet,
+        reconciliation=release_reconciliation,
+        ci_context=launch_artifacts["release_candidate_ci_context"],
+    )
+    _write_json(release_dir / "artifact_reconciliation_results.json", release_reconciliation)
+    _write_json(release_dir / "release_candidate_summary.json", rel_summary)
+    _write_json(release_dir / "release_candidate_failures.json", rel_failures)
+    _write_json(release_dir / "release_gate_matrix.json", rel_matrix)
+    _write_json(release_dir / "release_notes.json", rel_notes)
+    release_manifest, release_hashes = _release_candidate_artifact_manifest(
+        root_path,
+        profile=profile,
+        commit_sha=str(launch_summary.get("commit_sha") or ""),
+    )
+    _write_json(release_dir / "artifact_manifest.json", release_manifest)
+    _write_json(release_dir / "artifact_hashes.json", release_hashes)
+    release_reconciliation = _release_artifact_reconciliation_results(root_path, release_manifest, release_hashes)
+    release_gate = _release_candidate_gate_results(release_reconciliation, product_gauntlet)
+    rel_summary, rel_failures, rel_matrix, rel_notes = _release_candidate_summary_bundle(
+        launch_summary=launch_summary,
+        launch_failures=launch_failures,
+        matrix=matrix,
+        release_gate=release_gate,
+        product_gauntlet=product_gauntlet,
+        reconciliation=release_reconciliation,
+        ci_context=launch_artifacts["release_candidate_ci_context"],
+    )
+    _write_json(release_dir / "artifact_reconciliation_results.json", release_reconciliation)
+    _write_json(release_dir / "release_candidate_summary.json", rel_summary)
+    _write_json(release_dir / "release_candidate_failures.json", rel_failures)
+    _write_json(release_dir / "release_gate_matrix.json", rel_matrix)
+    _write_json(release_dir / "release_notes.json", rel_notes)
+    for name, payload in {
+        "artifact_manifest": release_manifest,
+        "artifact_hashes": release_hashes,
+        "artifact_reconciliation_results": release_reconciliation,
+        "product_gauntlet_release_results": product_gauntlet,
+        "release_candidate_summary": rel_summary,
+        "release_candidate_failures": rel_failures,
+        "release_gate_matrix": rel_matrix,
+        "release_notes": rel_notes,
+    }.items():
+        written[f"{RELEASE_CANDIDATE_DIR}/{name}.json"] = payload
+
+    launch_artifacts["release_candidate_gate_results"] = release_gate
+    launch_artifacts["ci_artifact_reality_results"] = _ci_artifact_reality_results(
+        profile,
+        launch_artifacts["ci_run_review_results"],
+        launch_artifacts["artifact_upload_review_results"],
+        launch_artifacts["artifact_review_results"],
+        missing_payloads,
+        release_reconciliation,
+    )
+    launch_summary, launch_failures, matrix = evaluate_launch_readiness(
+        payloads,
+        launch_artifacts,
+        missing_artifacts=missing_payloads,
+        root=root_path,
+    )
+    launch_artifacts["launch_readiness_summary"] = launch_summary
+    launch_artifacts["launch_readiness_failures"] = launch_failures
+    launch_artifacts["release_gate_matrix"] = matrix
+    for name, payload in launch_artifacts.items():
+        rel = f"{LAUNCH_READINESS_DIR}/{name}.json"
+        _write_json(root_path / rel, payload)
+        written[rel] = payload
     _write_json(root_path / manifest_rel, manifest)
     written[manifest_rel] = manifest
 

@@ -93,6 +93,12 @@ class CleanupInventoryTests(unittest.TestCase):
         self.assertEqual(summary["retained_generic_reason_count"], 0)
         self.assertEqual(summary["unknown_sql_object_count"], 0)
         self.assertEqual(summary["stale_generated_artifact_count"], 0)
+        release_rows = [
+            row for row in inventory["artifacts"]["artifacts"]
+            if row["path"].startswith("artifacts/release_candidate/")
+        ]
+        self.assertTrue(release_rows)
+        self.assertTrue(all(row["category"] == "CI proof artifact" for row in release_rows))
         self.assertEqual(route_inventory["dead_routes"], [])
         self.assertEqual(deleted_routes["dead_routes"], [])
         self.assertEqual(retained_routes["dead_route_count"], 0)

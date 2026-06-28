@@ -107,8 +107,14 @@ REQUIRED_VALIDATION_PHASES = (
 MANIFEST_CATEGORY_ARTIFACTS = {
     "live_environment": ("live_validation_environment_results.json",),
     "live_session": ("live_validation_session_results.json",),
-    "procedure_compile": ("procedure_compile_results.json",),
-    "procedure_smoke_call": ("procedure_smoke_call_results.json",),
+    "procedure_compile": (
+        "procedure_compile_results.json",
+        "procedure_compile_coverage_results.json",
+    ),
+    "procedure_smoke_call": (
+        "procedure_smoke_call_results.json",
+        "procedure_smoke_call_coverage_results.json",
+    ),
     "refresh_fast": ("refresh_fast_results.json",),
     "refresh_full": ("refresh_full_results.json",),
     "validation_sql": ("validation_sql_results.json",),
@@ -2333,6 +2339,58 @@ def _live_execution_manifest_results(
     )
 
 
+def _append_manifest_payload_rows(
+    live_manifest: dict[str, Any],
+    payload: Mapping[str, Any],
+    *,
+    artifact: str,
+    live_enabled: bool,
+    expected_mode: str | None = None,
+    observed_mode: str | None = None,
+    safe_execution_class: str = "safe_read",
+) -> None:
+    entries = _as_list(live_manifest.get("entries"))
+    failures = _as_list(live_manifest.get("failures"))
+    context = _manifest_context(live_enabled)
+    artifact_row_indexes: dict[str, int] = Counter(
+        str(row.get("artifact") or "") for row in entries if isinstance(row, Mapping)
+    )
+    index = len(entries)
+    if isinstance(payload, Mapping):
+        rows = [
+            row for row in payload.get("rows", [])
+            if isinstance(row, dict)
+        ]
+    elif isinstance(payload, list):
+        rows = [row for row in payload if isinstance(row, dict)]
+    else:
+        rows = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        index += 1
+        artifact_row_indexes[artifact] = artifact_row_indexes.get(artifact, 0) + 1
+        mode = expected_mode or ("live" if live_enabled else "static")
+        observed = observed_mode or mode
+        _attach_manifest_id(
+            entries,
+            failures,
+            row,
+            artifact=artifact,
+            index=index,
+            row_index=artifact_row_indexes[artifact],
+            expected_mode=mode,
+            observed_mode=observed,
+            context=context,
+            safe_execution_class=safe_execution_class,
+        )
+    live_manifest["entries"] = entries
+    live_manifest["failures"] = failures
+    live_manifest["entry_count"] = len(entries)
+    live_manifest["failure_count"] = len(failures)
+    live_manifest["passed"] = not failures
+
+
 def _artifact_rows_for_manifest_reconciliation(artifact: str, payload: Any) -> list[dict[str, Any]]:
     if isinstance(payload, list):
         return [_as_mapping(row) for row in payload if isinstance(row, Mapping)]
@@ -2361,6 +2419,8 @@ def _row_status_for_manifest(row: Mapping[str, Any]) -> str:
 
 
 def _row_observed_mode_for_manifest(artifact: str, row: Mapping[str, Any], live_enabled: bool) -> str:
+    if artifact in {"procedure_compile_coverage_results.json", "procedure_smoke_call_coverage_results.json"}:
+        return "live" if live_enabled else "static"
     if _row_status_for_manifest(row) == "skipped":
         return "skipped"
     if artifact == "procedure_smoke_call_results.json":
@@ -2461,7 +2521,9 @@ def _live_execution_manifest_reconciliation_results(
                     "live_validation_environment_results.json",
                     "live_validation_session_results.json",
                     "procedure_compile_results.json",
+                    "procedure_compile_coverage_results.json",
                     "procedure_smoke_call_results.json",
+                    "procedure_smoke_call_coverage_results.json",
                     "refresh_fast_results.json",
                     "refresh_full_results.json",
                     "validation_sql_results.json",
@@ -2547,7 +2609,9 @@ def _live_execution_manifest_reconciliation_results(
         "environment_rows": 1,
         "session_rows": 1,
         "compile_rows": artifact_row_counts.get("procedure_compile_results.json", 0),
+        "compile_coverage_rows": artifact_row_counts.get("procedure_compile_coverage_results.json", 0),
         "smoke_rows": artifact_row_counts.get("procedure_smoke_call_results.json", 0),
+        "smoke_coverage_rows": artifact_row_counts.get("procedure_smoke_call_coverage_results.json", 0),
         "refresh_rows": artifact_row_counts.get("refresh_fast_results.json", 0)
         + artifact_row_counts.get("refresh_full_results.json", 0),
         "packet_rows": artifact_row_counts.get("packet_validation_detail_results.json", 0),
@@ -2559,7 +2623,9 @@ def _live_execution_manifest_reconciliation_results(
         "environment_rows": manifest_id_counts.get("live_validation_environment_results.json", 0),
         "session_rows": manifest_id_counts.get("live_validation_session_results.json", 0),
         "compile_rows": manifest_id_counts.get("procedure_compile_results.json", 0),
+        "compile_coverage_rows": manifest_id_counts.get("procedure_compile_coverage_results.json", 0),
         "smoke_rows": manifest_id_counts.get("procedure_smoke_call_results.json", 0),
+        "smoke_coverage_rows": manifest_id_counts.get("procedure_smoke_call_coverage_results.json", 0),
         "refresh_rows": manifest_id_counts.get("refresh_fast_results.json", 0)
         + manifest_id_counts.get("refresh_full_results.json", 0),
         "packet_rows": manifest_id_counts.get("packet_validation_detail_results.json", 0),
@@ -2626,9 +2692,12 @@ def _live_execution_manifest_category_coverage_results(
         linked_artifact_row_count = 0
         unknown_manifest_id_count = 0
         missing_manifest_id_count = 0
+        row_index_mismatch_count = 0
+        row_key_mismatch_count = 0
         status_mismatch_count = 0
         mode_mismatch_count = 0
         raw_sql_or_secret_count = 0
+        category_failures: list[dict[str, Any]] = []
         matched_manifest_ids: set[str] = set()
 
         for artifact in category_artifacts:
@@ -2636,27 +2705,41 @@ def _live_execution_manifest_category_coverage_results(
             artifact_rows = _artifact_rows_for_manifest_reconciliation(artifact, payload)
             expected_row_count += len(artifact_rows)
             observed_artifact_row_count += len(artifact_rows)
-            for row in artifact_rows:
+            for ordinal, row in enumerate(artifact_rows, start=1):
                 if bool(row.get("raw_sql_included")) or _raw_sql_or_secret_value(row):
                     raw_sql_or_secret_count += 1
+                    category_failures.append({"code": "CATEGORY_RAW_SQL_OR_SECRET", "artifact": artifact, "row_index": ordinal})
                 manifest_id = str(row.get("live_execution_manifest_id") or "")
                 if not manifest_id:
                     missing_manifest_id_count += 1
+                    category_failures.append({"code": "CATEGORY_ROW_MISSING_MANIFEST_ID", "artifact": artifact, "row_index": ordinal})
                     continue
                 entry = entries_by_id.get(manifest_id)
                 if not entry or str(entry.get("artifact") or "") != artifact:
                     unknown_manifest_id_count += 1
+                    category_failures.append({"code": "CATEGORY_ROW_UNKNOWN_MANIFEST_ID", "artifact": artifact, "row_index": ordinal, "validation_id": manifest_id})
                     continue
                 linked_artifact_row_count += 1
                 matched_manifest_ids.add(manifest_id)
+                if _as_int(entry.get("row_index")) != ordinal:
+                    row_index_mismatch_count += 1
+                    category_failures.append({"code": "CATEGORY_ROW_INDEX_MISMATCH", "artifact": artifact, "row_index": ordinal, "validation_id": manifest_id})
+                if str(entry.get("row_key") or "") != str(row.get("live_execution_row_key") or ""):
+                    row_key_mismatch_count += 1
+                    category_failures.append({"code": "CATEGORY_ROW_KEY_MISMATCH", "artifact": artifact, "row_index": ordinal, "validation_id": manifest_id})
                 if str(entry.get("status") or "") != _row_status_for_manifest(row):
                     status_mismatch_count += 1
+                    category_failures.append({"code": "CATEGORY_STATUS_MISMATCH", "artifact": artifact, "row_index": ordinal, "validation_id": manifest_id})
                 if str(entry.get("observed_mode") or "") != _row_observed_mode_for_manifest(artifact, row, live_enabled):
                     mode_mismatch_count += 1
+                    category_failures.append({"code": "CATEGORY_MODE_MISMATCH", "artifact": artifact, "row_index": ordinal, "validation_id": manifest_id})
                 if bool(entry.get("raw_sql_included")) or _raw_sql_or_secret_value(entry):
                     raw_sql_or_secret_count += 1
+                    category_failures.append({"code": "CATEGORY_MANIFEST_RAW_SQL_OR_SECRET", "artifact": artifact, "row_index": ordinal, "validation_id": manifest_id})
 
         orphan_manifest_entry_count = sum(1 for row in category_entries if str(row.get("validation_id") or "") not in matched_manifest_ids)
+        if orphan_manifest_entry_count:
+            category_failures.append({"code": "CATEGORY_ORPHAN_MANIFEST_ENTRY", "count": orphan_manifest_entry_count})
         manifest_entry_count = len(category_entries)
         passed = (
             (not category_required or expected_row_count > 0)
@@ -2666,10 +2749,18 @@ def _live_execution_manifest_category_coverage_results(
             and orphan_manifest_entry_count == 0
             and unknown_manifest_id_count == 0
             and missing_manifest_id_count == 0
+            and row_index_mismatch_count == 0
+            and row_key_mismatch_count == 0
             and status_mismatch_count == 0
             and mode_mismatch_count == 0
             and raw_sql_or_secret_count == 0
         )
+        if category_required and expected_row_count == 0:
+            category_failures.append({"code": "CATEGORY_EXPECTED_ROWS_ABSENT"})
+        if manifest_entry_count != expected_row_count:
+            category_failures.append({"code": "CATEGORY_MANIFEST_COUNT_MISMATCH", "expected": expected_row_count, "actual": manifest_entry_count})
+        if linked_artifact_row_count != expected_row_count:
+            category_failures.append({"code": "CATEGORY_LINKED_ROW_COUNT_MISMATCH", "expected": expected_row_count, "actual": linked_artifact_row_count})
         row = {
             "category": category,
             "artifacts": list(category_artifacts),
@@ -2680,11 +2771,14 @@ def _live_execution_manifest_category_coverage_results(
             "orphan_manifest_entry_count": orphan_manifest_entry_count,
             "unknown_manifest_id_count": unknown_manifest_id_count,
             "missing_manifest_id_count": missing_manifest_id_count,
+            "row_index_mismatch_count": row_index_mismatch_count,
+            "row_key_mismatch_count": row_key_mismatch_count,
             "status_mismatch_count": status_mismatch_count,
             "mode_mismatch_count": mode_mismatch_count,
             "raw_sql_or_secret_count": raw_sql_or_secret_count,
             "required": category_required,
             "passed": passed,
+            "failures": category_failures,
             "recommendation": ""
             if passed
             else "Reconcile this manifest category so every expected validation row has one matching sanitized ledger entry.",
@@ -3118,6 +3212,18 @@ def write_snowflake_validation_artifacts(root: Path | str = ".") -> dict[str, An
         smoke_rows,
         live_enabled=live_enabled,
         profile=os.environ.get("OVERWATCH_LAUNCH_PROFILE", "internal_fixture"),
+    )
+    _append_manifest_payload_rows(
+        live_execution_manifest,
+        compile_coverage,
+        artifact="procedure_compile_coverage_results.json",
+        live_enabled=live_enabled,
+    )
+    _append_manifest_payload_rows(
+        live_execution_manifest,
+        smoke_coverage,
+        artifact="procedure_smoke_call_coverage_results.json",
+        live_enabled=live_enabled,
     )
     object_inventory_live = _live_object_inventory(live_enabled)
     manifest_validation = _streamlit_manifest_validation(root_path)

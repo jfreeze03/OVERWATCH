@@ -46,8 +46,6 @@ from utils import (
     download_csv,
     format_credits,
     format_snowflake_error,
-    get_ai_credit_price,
-    freshness_note,
     get_active_environment,
     get_company_case_expr,
     get_environment_case_expr,
@@ -55,7 +53,7 @@ from utils import (
     load_mart_table,
     load_shared_bill_metering_summary,
     load_shared_bill_warehouse_delta,
-    load_shared_service_cost_trend,
+    load_shared_account_billing_reconciliation,
     load_shared_warehouse_daily_credits,
     load_shared_warehouse_daily_credits_by_warehouse,
     mart_source_caption,
@@ -68,6 +66,7 @@ from utils import (
     run_query,
     safe_float,
     safe_int,
+    summarize_billing_reconciliation,
 )
 
 
@@ -105,17 +104,18 @@ def _account_billing_summary(account_billing: pd.DataFrame | None, warehouse_cre
             "avg_daily_account_credits": 0.0,
             "service_other_credits": 0.0,
         }
-    credits = pd.to_numeric(account_billing.get("DAILY_CREDITS", pd.Series(dtype=float)), errors="coerce").fillna(0)
-    spend = pd.to_numeric(account_billing.get("DAILY_SPEND_USD", pd.Series(dtype=float)), errors="coerce").fillna(0)
-    account_credits = safe_float(credits.sum())
-    account_cost = safe_float(spend.sum()) or credits_to_dollars(account_credits, credit_price)
-    observed_days = max(int(credits.astype(float).ne(0).sum()), 1)
+    bridge = pd.DataFrame({"WAREHOUSE_CREDITS": [warehouse_credits]})
+    reconciled = summarize_billing_reconciliation(account_billing, bridge, credit_price=credit_price)
+    account_credits = safe_float(reconciled.get("ACCOUNT_BILLED_CREDITS"))
+    account_cost = safe_float(reconciled.get("ACCOUNT_BILLED_COST_USD"))
+    observed_days = max(safe_int(reconciled.get("OBSERVED_BILLING_DAYS")), 1)
     return {
         "available": True,
         "account_credits": account_credits,
         "account_cost_usd": account_cost,
         "avg_daily_account_credits": account_credits / observed_days,
-        "service_other_credits": max(account_credits - safe_float(warehouse_credits), 0.0),
+        "service_other_credits": safe_float(reconciled.get("SERVICE_OTHER_CREDITS")),
+        "reconciliation": reconciled,
     }
 
 
@@ -142,13 +142,12 @@ def render_burn_rate(session, company: str, credit_price: float, max_wh_size_exp
         except Exception as e:
             st.warning(f"Warehouse burn-rate data unavailable in this role/context: {format_snowflake_error(e)}")
             st.session_state["df_br"] = pd.DataFrame()
-            st.session_state["cc_burn_source"] = freshness_note("WAREHOUSE_METERING_HISTORY")
+            st.session_state["cc_burn_source"] = "Warehouse metering bridge"
         try:
-            account_result = load_shared_service_cost_trend(
+            account_result = load_shared_account_billing_reconciliation(
                 br_days,
                 company,
                 credit_price=credit_price,
-                ai_credit_price=get_ai_credit_price(),
                 start_date=window_start,
                 end_date=window_end,
                 force=True,
@@ -180,8 +179,8 @@ def render_burn_rate(session, company: str, credit_price: float, max_wh_size_exp
             ))
             defer_source_note(
                 metric_confidence_label("exact"),
-                "Account billed metrics use completed METERING_HISTORY windows like Snowsight Admin Cost Management; "
-                f"warehouse rows below use {st.session_state.get('cc_burn_source', freshness_note('WAREHOUSE_METERING_HISTORY'))}.",
+                "Account billed metrics use completed account billing history like Snowsight Admin Cost Management; "
+                f"warehouse rows below use {st.session_state.get('cc_burn_source', 'warehouse metering bridge')}.",
             )
         else:
             render_shell_snapshot((
@@ -197,7 +196,7 @@ def render_burn_rate(session, company: str, credit_price: float, max_wh_size_exp
                 )
             defer_source_note(
                 metric_confidence_label("exact"),
-                st.session_state.get("cc_burn_source", freshness_note("WAREHOUSE_METERING_HISTORY")),
+                st.session_state.get("cc_burn_source", "Warehouse metering bridge"),
             )
         if has_warehouse_rows:
             daily = df_b.groupby("DAY")["DAILY_CREDITS"].sum().reset_index()

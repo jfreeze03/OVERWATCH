@@ -342,6 +342,32 @@ def _warehouse_monthly_run_rate(metered_credits: object, days: int, credit_price
     return round(credits_to_dollars(safe_float(metered_credits) / days * 30.0, credit_price), 2)
 
 
+def _row_first_float(row: object, *columns: str) -> float:
+    if not hasattr(row, "get"):
+        return 0.0
+    for column in columns:
+        value = row.get(column)
+        if value is None:
+            continue
+        numeric = safe_float(value)
+        if numeric != 0.0:
+            return numeric
+    return 0.0
+
+
+def _row_first_int(row: object, *columns: str) -> int:
+    if not hasattr(row, "get"):
+        return 0
+    for column in columns:
+        value = row.get(column)
+        if value is None:
+            continue
+        numeric = safe_int(value)
+        if numeric:
+            return numeric
+    return 0
+
+
 def _auto_suspend_savings_rate(auto_suspend: object) -> float:
     if auto_suspend is None:
         return 0.0
@@ -439,7 +465,11 @@ def _build_warehouse_advisor_recommendations(
             safe_int(row.get("RECOMMENDED_AUTO_SUSPEND_SEC"), WAREHOUSE_ADVISOR_CONFIG["default_auto_suspend_sec"])
             or WAREHOUSE_ADVISOR_CONFIG["default_auto_suspend_sec"]
         )
-        monthly = _warehouse_monthly_run_rate(row.get("METERED_CREDITS"), days, credit_price)
+        monthly = _warehouse_monthly_run_rate(
+            _row_first_float(row, "METERED_CREDITS", "TOTAL_CREDITS", "CREDITS_USED", "CREDITS_USED_COMPUTE"),
+            days,
+            credit_price,
+        )
         savings_rate = _auto_suspend_savings_rate(row.get("AUTO_SUSPEND_SEC"))
         savings = round(monthly * savings_rate, 2)
         auto_resume = row.get("AUTO_RESUME")
@@ -463,9 +493,9 @@ def _build_warehouse_advisor_recommendations(
             "SAVINGS_ASSUMPTION": f"{savings_rate:.0%} recoverable idle/suspend run-rate from loaded metering.",
             "SAVINGS_TYPE": "Estimated idle/suspend savings" if savings else "No savings claimed",
             "MONTHLY_RUN_RATE_USD": monthly,
-            "REMOTE_SPILL_GB": safe_float(row.get("TOTAL_REMOTE_SPILL_GB")),
-            "AVG_QUEUE_SEC": safe_float(row.get("AVG_QUEUED_SEC")),
-            "P95_ELAPSED_SEC": safe_float(row.get("P95_ELAPSED_SEC")),
+            "REMOTE_SPILL_GB": _row_first_float(row, "TOTAL_REMOTE_SPILL_GB", "REMOTE_SPILL_GB"),
+            "AVG_QUEUE_SEC": _row_first_float(row, "AVG_QUEUED_SEC", "AVG_QUEUE_SEC", "QUEUE_SECONDS"),
+            "P95_ELAPSED_SEC": _row_first_float(row, "P95_ELAPSED_SEC", "P95_SEC", "P95_RUNTIME_SEC"),
             "PERFORMANCE_RISK": "Validate p95, queue, spill, and failed-query behavior before shortening suspend.",
             "ACTION_POSTURE": "Guarded admin change candidate",
             "SAFE_NEXT_STEP": "Open DBA Control Room > Admin > Warehouse Settings, preview the change, and use typed confirmation only after review.",
@@ -499,12 +529,12 @@ def _build_warehouse_advisor_recommendations(
     for _, row in overview_view.iterrows():
         wh = str(row.get("WAREHOUSE_NAME") or "Unknown warehouse")
         posture_row = posture_by_wh.get(wh.upper(), {})
-        metered = safe_float(row.get("METERED_CREDITS"))
+        metered = _row_first_float(row, "METERED_CREDITS", "TOTAL_CREDITS", "CREDITS_USED", "CREDITS_USED_COMPUTE")
         monthly = _warehouse_monthly_run_rate(metered, days, credit_price)
-        queue = safe_float(row.get("AVG_QUEUED_SEC"))
-        spill = safe_float(row.get("TOTAL_REMOTE_SPILL_GB"))
-        p95 = safe_float(row.get("P95_ELAPSED_SEC"))
-        total_queries = safe_int(row.get("TOTAL_QUERIES"), 0)
+        queue = _row_first_float(row, "AVG_QUEUED_SEC", "AVG_QUEUE_SEC", "QUEUE_SECONDS")
+        spill = _row_first_float(row, "TOTAL_REMOTE_SPILL_GB", "REMOTE_SPILL_GB")
+        p95 = _row_first_float(row, "P95_ELAPSED_SEC", "P95_SEC", "P95_RUNTIME_SEC")
+        total_queries = _row_first_int(row, "TOTAL_QUERIES", "QUERY_COUNT", "QUERIES")
         size = row.get("WAREHOUSE_SIZE") or posture_row.get("WAREHOUSE_SIZE", "")
         if spill >= spill_threshold or queue >= queue_threshold or p95 >= p95_threshold:
             signals = []
@@ -591,7 +621,16 @@ def _build_warehouse_advisor_recommendations(
         wh = str(row.get("WAREHOUSE_NAME") or "Unknown warehouse")
         state = str(row.get("CURRENT_STATE") or "Review")
         overview_row = overview_by_wh.get(wh.upper(), {})
-        monthly = _warehouse_monthly_run_rate(overview_row.get("METERED_CREDITS"), days, credit_price) if overview_row else 0.0
+        overview_present = hasattr(overview_row, "get") and bool(str(overview_row.get("WAREHOUSE_NAME") or "").strip())
+        monthly = (
+            _warehouse_monthly_run_rate(
+                _row_first_float(overview_row, "METERED_CREDITS", "TOTAL_CREDITS", "CREDITS_USED", "CREDITS_USED_COMPUTE"),
+                days,
+                credit_price,
+            )
+            if overview_present
+            else 0.0
+        )
         add({
             "PRIORITY": "High" if state == "Blocked" else "Medium",
             "WAREHOUSE_NAME": wh,
@@ -607,9 +646,9 @@ def _build_warehouse_advisor_recommendations(
             "SAVINGS_ASSUMPTION": "Guardrail finding only; no savings claimed.",
             "SAVINGS_TYPE": "No savings claimed",
             "MONTHLY_RUN_RATE_USD": monthly,
-            "REMOTE_SPILL_GB": safe_float(overview_row.get("TOTAL_REMOTE_SPILL_GB")) if overview_row else 0.0,
-            "AVG_QUEUE_SEC": safe_float(overview_row.get("AVG_QUEUED_SEC")) if overview_row else 0.0,
-            "P95_ELAPSED_SEC": safe_float(overview_row.get("P95_ELAPSED_SEC")) if overview_row else 0.0,
+            "REMOTE_SPILL_GB": _row_first_float(overview_row, "TOTAL_REMOTE_SPILL_GB", "REMOTE_SPILL_GB") if overview_present else 0.0,
+            "AVG_QUEUE_SEC": _row_first_float(overview_row, "AVG_QUEUED_SEC", "AVG_QUEUE_SEC", "QUEUE_SECONDS") if overview_present else 0.0,
+            "P95_ELAPSED_SEC": _row_first_float(overview_row, "P95_ELAPSED_SEC", "P95_SEC", "P95_RUNTIME_SEC") if overview_present else 0.0,
             "PERFORMANCE_RISK": str(row.get("ROLLBACK_CHECK") or "Verify workload telemetry after any change."),
             "ACTION_POSTURE": "Guardrail review",
             "SAFE_NEXT_STEP": "Route the recommendation through the guarded Admin workflow if a setting change is still needed.",
@@ -1058,20 +1097,20 @@ def render():
 
     if active_view == "Recommendations":
         st.subheader("Automated Recommendations Feed")
-        st.caption("Fast mode reads advisor summaries. Deep mode runs bounded ACCOUNT_USAGE scans only when detail is needed.")
+        st.caption("Fast mode reads advisor summaries. Deep mode runs bounded account-history scans only when detail is needed.")
 
         scan_cols = st.columns([1.1, 1.2, 3.0])
         with scan_cols[0]:
             run_fast_scan = st.button("Generate Fast Recommendations", key="recs_gen", type="primary")
         with scan_cols[1]:
-            run_deep_scan = st.button("Run Deep ACCOUNT_USAGE Scan", key="recs_deep_gen")
+            run_deep_scan = st.button("Run Deep Account History Scan", key="recs_deep_gen")
 
         if run_fast_scan or run_deep_scan:
             recs = []
             source_notes = []
             company = _active_company()
             include_live = bool(run_deep_scan)
-            scan_mode = "deep ACCOUNT_USAGE scan" if include_live else "fast advisor-summary scan"
+            scan_mode = "deep account-history scan" if include_live else "fast advisor-summary scan"
             source_notes.append(f"Scan mode: {scan_mode}")
 
             try:
@@ -1371,7 +1410,7 @@ def render():
             ))
             defer_source_note(
                 metric_confidence_label("estimated"),
-                freshness_note("ACCOUNT_USAGE"),
+                "Completed account history and advisor telemetry",
                 "Savings are directional until post-period telemetry confirms the action outcome.",
             )
             top_rec = df_recs.iloc[0]

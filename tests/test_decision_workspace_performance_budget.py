@@ -1207,6 +1207,32 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
 
         with patch.object(performance.st, "session_state", {}), patch.dict(
             os.environ,
+            {**env_off, "OVERWATCH_ALLOW_FIXTURE_MODE": "1"},
+            clear=False,
+        ):
+            with performance.query_budget_context(
+                "evidence_click",
+                section="DBA Control Room",
+                workflow="Overview",
+                budget=1,
+            ):
+                performance.increment_snowflake_execution_counter(
+                    "evidence",
+                    section="DBA Control Room",
+                    ttl_key="one",
+                    tier="recent",
+                )
+                performance.increment_snowflake_execution_counter(
+                    "evidence",
+                    section="DBA Control Room",
+                    ttl_key="two",
+                    tier="recent",
+                )
+            self.assertEqual(performance.first_paint_gate_mode(), "record-only")
+            self.assertFalse(performance.get_query_budget_context_events()[-1]["passed_budget"])
+
+        with patch.object(performance.st, "session_state", {}), patch.dict(
+            os.environ,
             {**env_off, "OVERWATCH_STRICT_QUERY_BUDGETS": "1"},
             clear=False,
         ):

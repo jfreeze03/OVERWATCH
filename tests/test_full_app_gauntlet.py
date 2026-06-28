@@ -260,6 +260,13 @@ class FullAppGauntletTests(unittest.TestCase):
                 "recomputed_warm_first_paint_zero_packet",
             ),
             (
+                "summary board Account Usage first paint",
+                lambda payloads: payloads["artifacts/full_app_validation/summary_board_results.json"][0].update(
+                    {"passed": False, "account_usage_query_count": 1, "failed_checks": ["account_usage_on_first_paint"]}
+                ),
+                "recomputed_summary_board_packet_only_first_paint",
+            ),
+            (
                 "missing primary evidence",
                 lambda payloads: payloads.__setitem__(
                     "artifacts/full_app_validation/evidence_loader_call_matrix.json",
@@ -582,6 +589,31 @@ class FullAppGauntletTests(unittest.TestCase):
         ]
         query_search_rows = [self._query_search_row(case) for case in QUERY_SEARCH_CASES]
         stress_rows = [self._stress_row(case) for case in STRESS_CASES]
+        summary_board_rows = [
+            {
+                "source": "summary_board_first_paint_contract",
+                "proof_source": "runtime_render",
+                "section": section,
+                "workflow": "Runtime validation",
+                "rendered": True,
+                "packet_only": True,
+                "packet_query_count": 1,
+                "warm_packet_query_count": 0,
+                "non_packet_first_paint_event_count": 0,
+                "session_open_count": 0,
+                "direct_sql_event_count": 0,
+                "account_usage_query_count": 0,
+                "evidence_query_count": 0,
+                "semantic_regions_missing": [],
+                "packet_fields_missing": [],
+                "optional_detail_state_reads": [],
+                "old_surface_marker_count": 0,
+                "raw_internal_token_count": 0,
+                "passed": True,
+                "failed_checks": [],
+            }
+            for section in PRIMARY_SECTIONS
+        ]
         return copy.deepcopy({
             "artifacts/full_app_validation/app_validation_summary.json": summary,
             "artifacts/full_app_validation/view_results.json": [
@@ -589,8 +621,11 @@ class FullAppGauntletTests(unittest.TestCase):
                     "section": section,
                     "proof_source": "runtime_render",
                     "first_paint": {
+                        "observed_packet_queries": 1,
                         "observed_non_packet_first_paint_events": 0,
                         "observed_warm_packet_queries": 0,
+                        "observed_session_opens": 0,
+                        "observed_direct_sql_events": 0,
                     },
                     "passed": True,
                 }
@@ -722,6 +757,25 @@ class FullAppGauntletTests(unittest.TestCase):
             "artifacts/full_app_validation/risk_inventory.json": {"passed": True, "proof_source": "runtime_click"},
             "artifacts/full_app_validation/query_budget_results.json": {"passed": True, "proof_source": "runtime_click"},
             "artifacts/full_app_validation/session_direct_sql_results.json": {"passed": True, "proof_source": "runtime_click"},
+            "artifacts/full_app_validation/summary_board_results.json": summary_board_rows,
+            "artifacts/full_app_validation/summary_board_query_budget_results.json": {
+                "passed": True,
+                "failure_count": 0,
+                "failures": [],
+                "proof_source": "runtime_render",
+            },
+            "artifacts/full_app_validation/summary_board_error_inventory.json": {
+                "passed": True,
+                "failure_count": 0,
+                "failures_by_section": {},
+                "proof_source": "runtime_render",
+            },
+            "artifacts/full_app_validation/summary_board_failure_diagnostics.json": {
+                "passed": True,
+                "failure_count": 0,
+                "diagnostics": [],
+                "proof_source": "runtime_render",
+            },
             "artifacts/cleanup/cleanup_summary.json": {"stale_generated_artifact_count": 0},
             "artifacts/cleanup/sql_object_inventory.json": {"unknown": []},
             "artifacts/cleanup/route_state_inventory.json": {"dead_routes": []},

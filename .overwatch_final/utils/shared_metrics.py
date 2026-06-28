@@ -55,6 +55,7 @@ from .shared_metrics_service_cost import (
     load_shared_service_cost_lens,
     load_shared_service_cost_trend,
 )
+from .shared_metrics_billing import load_shared_account_billing_reconciliation
 from .shared_metrics_service_health import (
     _first_numeric_value,
     _service_query_history_exprs,
@@ -119,6 +120,7 @@ __all__ = (
     "build_shared_security_privileged_grant_review_sql",
     "build_shared_security_summary_sql",
     "load_shared_access_hygiene_snapshot",
+    "load_shared_account_billing_reconciliation",
     "load_shared_bill_metering_summary",
     "load_shared_bill_warehouse_delta",
     "load_shared_duplicate_query_patterns",

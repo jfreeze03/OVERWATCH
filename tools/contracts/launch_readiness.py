@@ -15,6 +15,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -61,6 +62,10 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     f"{LAUNCH_READINESS_DIR}/encoding_hygiene_results.json",
     f"{LAUNCH_READINESS_DIR}/snowflake_validation_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/live_execution_manifest_gate_results.json",
+    f"{LAUNCH_READINESS_DIR}/summary_board_gate_results.json",
+    f"{LAUNCH_READINESS_DIR}/billing_reconciliation_gate_results.json",
+    f"{LAUNCH_READINESS_DIR}/billing_reconciliation_live_gate_results.json",
+    f"{LAUNCH_READINESS_DIR}/query_budget_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/snowflake_raw_validation_recheck.json",
     f"{LAUNCH_READINESS_DIR}/snowflake_validation_failures.json",
     f"{LAUNCH_READINESS_DIR}/ci_run_review_results.json",
@@ -2054,6 +2059,8 @@ def _product_gauntlet_release_results(root: Path, payloads: Mapping[str, Any], l
     settings_rows = [_as_mapping(row) for row in _as_list(payloads.get("artifacts/full_app_validation/settings_action_results.json"))]
     live_rows = [_as_mapping(row) for row in _as_list(payloads.get("artifacts/full_app_validation/live_feature_results.json"))]
     stress_rows = [_as_mapping(row) for row in _as_list(payloads.get("artifacts/full_app_validation/stress_results.json"))]
+    summary_board_rows = [_as_mapping(row) for row in _as_list(payloads.get("artifacts/full_app_validation/summary_board_results.json"))]
+    summary_board_budget = _as_mapping(payloads.get("artifacts/full_app_validation/summary_board_query_budget_results.json"))
     forbidden_daily = _as_mapping(payloads.get("artifacts/full_app_validation/forbidden_daily_ui_scan.json"))
     checks: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
@@ -2133,6 +2140,19 @@ def _product_gauntlet_release_results(root: Path, payloads: Mapping[str, Any], l
         or not _owner_skipped(row) and not bool(row.get("clicked"))
     ]
     add("six_primary_overviews_rendered", PRIMARY_SECTIONS.issubset(sections), "Render all six launch Decision Workspace sections.", actual=sorted(sections), expected=sorted(PRIMARY_SECTIONS))
+    summary_sections = {str(row.get("section") or "") for row in summary_board_rows if row.get("section")}
+    summary_failures = [row for row in summary_board_rows if not bool(row.get("passed"))]
+    add(
+        "summary_board_packet_only_first_paint",
+        PRIMARY_SECTIONS.issubset(summary_sections) and not summary_failures and bool(summary_board_budget.get("passed", False)),
+        "Summary boards must render from packet-only first paint across all six primary sections.",
+        actual={
+            "sections": sorted(summary_sections),
+            "failure_count": len(summary_failures),
+            "budget_passed": bool(summary_board_budget.get("passed", False)),
+        },
+        expected={"sections": sorted(PRIMARY_SECTIONS), "failure_count": 0, "budget_passed": True},
+    )
     add("first_paint_slo_passed", bool(summary.get("performance_gate_passed", summary.get("all_passed"))), "Fix first-paint packet/query budget failures.", actual=summary.get("performance_gate_passed"), expected=True)
     add("route_actions_zero_query", not route_leaks, "Route actions must not open sessions, run queries, or execute direct SQL.", actual=len(route_leaks), expected=0)
     add("normal_evidence_compact_mart_backed", not normal_evidence_bad, "Normal evidence must use compact marts or exact recent-detail paths only.", actual=len(normal_evidence_bad), expected=0)
@@ -2284,6 +2304,10 @@ def _release_candidate_summary_bundle(
         "launch_readiness_passed": bool(launch_summary.get("all_passed")),
         "snowflake_validation_passed": bool(launch_summary.get("snowflake_validation_passed")),
         "live_execution_manifest_passed": bool(launch_summary.get("live_execution_manifest_gate_passed")),
+        "summary_board_first_paint_passed": bool(launch_summary.get("summary_board_first_paint_passed")),
+        "billing_reconciliation_passed": bool(launch_summary.get("billing_reconciliation_passed")),
+        "billing_reconciliation_live_passed": bool(launch_summary.get("billing_reconciliation_live_passed")),
+        "query_budget_gate_passed": bool(launch_summary.get("query_budget_gate_passed")),
         "encoding_hygiene_passed": bool(launch_summary.get("encoding_hygiene_passed")),
         "cleanup_passed": _gate_passed(matrix_rows, "cleanup_closure"),
         "artifact_reconciliation_passed": bool(reconciliation.get("passed")),
@@ -2483,6 +2507,8 @@ def _raw_invariant_artifacts(root: Path, payloads: Mapping[str, Any]) -> tuple[d
     evidence_rows = [_as_mapping(row) for row in _as_list(payloads.get("artifacts/full_app_validation/evidence_loader_call_matrix.json"))]
     query_rows = [_as_mapping(row) for row in _as_list(payloads.get("artifacts/full_app_validation/query_search_results.json"))]
     stress_rows = [_as_mapping(row) for row in _as_list(payloads.get("artifacts/full_app_validation/stress_results.json"))]
+    summary_board_rows = [_as_mapping(row) for row in _as_list(payloads.get("artifacts/full_app_validation/summary_board_results.json"))]
+    summary_board_budget = _as_mapping(payloads.get("artifacts/full_app_validation/summary_board_query_budget_results.json"))
     query_budget = _as_mapping(payloads.get("artifacts/full_app_validation/query_budget_results.json"))
     session_direct = _as_mapping(payloads.get("artifacts/full_app_validation/session_direct_sql_results.json"))
     cleanup_summary = _as_mapping(payloads.get("artifacts/cleanup/cleanup_summary.json"))
@@ -2542,6 +2568,30 @@ def _raw_invariant_artifacts(root: Path, payloads: Mapping[str, Any]) -> tuple[d
             warm_failures.append(row.get("id") or row.get("section"))
     add_check("first_paint_no_non_packet_queries", not first_paint_failures, "First paint may only run the packet lookup.", count=len(first_paint_failures), details=first_paint_failures[:10])
     add_check("warm_first_paint_zero_packet_queries", not warm_failures, "Warm first paint must run zero packet queries.", count=len(warm_failures), details=warm_failures[:10])
+
+    summary_sections = {str(row.get("section") or "") for row in summary_board_rows if row.get("section")}
+    summary_failures = [
+        row for row in summary_board_rows
+        if not bool(row.get("passed"))
+        or _as_int(row.get("packet_query_count")) != 1
+        or _as_int(row.get("warm_packet_query_count"))
+        or _as_int(row.get("non_packet_first_paint_event_count"))
+        or _as_int(row.get("session_open_count"))
+        or _as_int(row.get("direct_sql_event_count"))
+        or _as_int(row.get("account_usage_query_count"))
+        or _as_int(row.get("evidence_query_count"))
+        or _as_int(row.get("raw_internal_token_count"))
+        or _as_list(row.get("optional_detail_state_reads"))
+    ]
+    add_check(
+        "summary_board_packet_only_first_paint",
+        PRIMARY_SECTIONS.issubset(summary_sections)
+        and not summary_failures
+        and bool(summary_board_budget.get("passed", False)),
+        "Summary boards must render from packet-only first paint across all six primary sections.",
+        count=len(PRIMARY_SECTIONS - summary_sections) + len(summary_failures) + (0 if summary_board_budget.get("passed") else 1),
+        details={"missing_sections": sorted(PRIMARY_SECTIONS - summary_sections), "failures": summary_failures[:10]},
+    )
 
     evidence_over = [
         row for row in button_rows
@@ -2747,6 +2797,12 @@ def _rows_have_no_failures(rows: Iterable[Any]) -> bool:
         if mapped.get("passed") is False:
             return False
     return True
+
+
+def _ensure_app_root_on_path(root: Path) -> None:
+    app_root = str(root / ".overwatch_final")
+    if app_root not in sys.path:
+        sys.path.insert(0, app_root)
 
 
 def _component_row(
@@ -3638,6 +3694,197 @@ def _live_execution_manifest_gate_results(
     }
 
 
+def _summary_board_gate_results(payloads: Mapping[str, Any]) -> dict[str, Any]:
+    rows = [_as_mapping(row) for row in _as_list(payloads.get("artifacts/full_app_validation/summary_board_results.json"))]
+    budget = _as_mapping(payloads.get("artifacts/full_app_validation/summary_board_query_budget_results.json"))
+    observed = {str(row.get("section") or "") for row in rows if row.get("section")}
+    missing_sections = sorted(PRIMARY_SECTIONS - observed)
+    failing_rows = [
+        row for row in rows
+        if not bool(row.get("passed"))
+        or _as_int(row.get("packet_query_count")) != 1
+        or _as_int(row.get("warm_packet_query_count"))
+        or _as_int(row.get("non_packet_first_paint_event_count"))
+        or _as_int(row.get("session_open_count"))
+        or _as_int(row.get("direct_sql_event_count"))
+        or _as_int(row.get("account_usage_query_count"))
+        or _as_int(row.get("evidence_query_count"))
+        or _as_int(row.get("raw_internal_token_count"))
+        or _as_int(row.get("old_surface_marker_count"))
+        or _as_list(row.get("optional_detail_state_reads"))
+    ]
+    failures: list[dict[str, Any]] = []
+    if missing_sections:
+        failures.append({"code": "SUMMARY_BOARD_SECTION_MISSING", "sections": missing_sections})
+    if failing_rows:
+        failures.append({"code": "SUMMARY_BOARD_FIRST_PAINT_FAILED", "rows": failing_rows[:10]})
+    if budget and not bool(budget.get("passed", True)):
+        failures.append({"code": "SUMMARY_BOARD_BUDGET_FAILED", "failure_count": _as_int(budget.get("failure_count"))})
+    return {
+        "source": "launch_readiness_summary_board_gate",
+        "proof_source": "runtime_render",
+        "passed": not failures,
+        "failure_count": len(failures),
+        "failures": failures,
+        "section_count": len(rows),
+        "missing_section_count": len(missing_sections),
+        "first_paint_failure_count": len(failing_rows),
+        "raw_sql_included": False,
+    }
+
+
+def _billing_reconciliation_gate_results(root: Path) -> dict[str, Any]:
+    _ensure_app_root_on_path(root)
+    import pandas as pd
+    from utils.billing_reconciliation import (
+        BILLING_RECONCILIATION_PACKET_FIELDS,
+        billing_reconciliation_contract_results,
+        build_account_billing_reconciliation_sql,
+        daily_safe_billing_labels,
+        summarize_billing_reconciliation,
+    )
+
+    sql = build_account_billing_reconciliation_sql(
+        8,
+        credit_price=3.68,
+        start_date="2026-06-21",
+        end_date="2026-06-28",
+    ).upper()
+    account_rows = pd.DataFrame(
+        {
+            "USAGE_DATE": ["2026-06-21", "2026-06-22"],
+            "CREDITS_BILLED": [10.0, 4.0],
+            "CREDITS_USED": [9.0, 3.5],
+            "CREDITS_ADJUSTMENT_CLOUD_SERVICES": [-0.2, -0.1],
+            "DAILY_SPEND_USD": [36.8, 14.72],
+        }
+    )
+    warehouse_rows = pd.DataFrame({"WAREHOUSE_CREDITS": [6.0, 2.0]})
+    summary = summarize_billing_reconciliation(account_rows, warehouse_rows, credit_price=3.68)
+    contract = billing_reconciliation_contract_results(summary)
+    labels_text = " ".join(daily_safe_billing_labels().values()).upper()
+    checks = [
+        {
+            "check_name": "uses_metering_daily_history",
+            "passed": "METERING_DAILY_HISTORY" in sql,
+            "recommendation": "Use account daily billing history for Snowsight reconciliation.",
+        },
+        {
+            "check_name": "uses_billed_credits",
+            "passed": "CREDITS_BILLED" in sql and "CREDITS_USED" in sql,
+            "recommendation": "Carry billed and used credits separately.",
+        },
+        {
+            "check_name": "uses_cloud_services_adjustment",
+            "passed": "CREDITS_ADJUSTMENT_CLOUD_SERVICES" in sql,
+            "recommendation": "Include cloud-services adjustment in reconciliation metadata.",
+        },
+        {
+            "check_name": "groups_service_type",
+            "passed": "SERVICE_TYPE" in sql,
+            "recommendation": "Expose service type breakdown for account-billing bridge.",
+        },
+        {
+            "check_name": "excludes_partial_current_day",
+            "passed": "USAGE_DATE < CURRENT_DATE()" in sql,
+            "recommendation": "Exclude incomplete current-day billing rows by default.",
+        },
+        {
+            "check_name": "account_total_not_warehouse_only",
+            "passed": summary["ACCOUNT_BILLED_CREDITS"] != summary["WAREHOUSE_CREDITS"]
+            and not bool(summary["WAREHOUSE_BRIDGE_IS_PRIMARY_TOTAL"]),
+            "recommendation": "Use warehouse metering as the bridge/breakdown only.",
+        },
+        {
+            "check_name": "daily_labels_are_safe",
+            "passed": all(token not in labels_text for token in ("ACCOUNT_USAGE", "SELECT ", "JOIN ", "CALL ", "SP_", "MART_", "FACT_")),
+            "recommendation": "Keep raw object/procedure/SQL words out of daily UI labels.",
+        },
+        {
+            "check_name": "packet_fields_complete",
+            "passed": bool(contract.get("passed")) and not [
+                field for field in BILLING_RECONCILIATION_PACKET_FIELDS if field not in summary
+            ],
+            "recommendation": "Cost packets must carry account billing, warehouse bridge, service/other, status, window, and freshness fields.",
+        },
+    ]
+    failed = [row for row in checks if not bool(row.get("passed"))]
+    if not bool(contract.get("passed")):
+        failed.append({"check_name": "contract_results", "passed": False, "recommendation": "Fix billing reconciliation summary contract.", "details": contract.get("failures")})
+    return {
+        "source": "launch_readiness_billing_reconciliation_gate",
+        "proof_source": "formula_recompute",
+        "passed": not failed,
+        "failure_count": len(failed),
+        "checks": checks,
+        "failures": failed,
+        "summary": summary,
+        "raw_sql_included": False,
+    }
+
+
+def _billing_reconciliation_live_gate_results(profile: str, waivers: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    live_enabled = os.environ.get("OVERWATCH_SNOWFLAKE_VALIDATION") == "1" or os.environ.get("OVERWATCH_BILLING_RECONCILIATION_LIVE") == "1"
+    skipped = not live_enabled
+    waiver_valid = _has_valid_waiver(waivers, "billing_reconciliation_live")
+    required = profile in {"internal_live", "prod_candidate"}
+    failures: list[dict[str, Any]] = []
+    if skipped and profile == "prod_candidate" and not waiver_valid:
+        failures.append({"code": "PROD_BILLING_RECONCILIATION_LIVE_MISSING", "recommendation": "Run live billing reconciliation or provide a signed waiver."})
+    if skipped and profile == "internal_live" and not waiver_valid:
+        failures.append({"code": "INTERNAL_LIVE_BILLING_RECONCILIATION_SKIPPED_WITHOUT_OWNER", "recommendation": "Provide owner/reason/review waiver or run live billing reconciliation."})
+    return {
+        "source": "launch_readiness_billing_reconciliation_live_gate",
+        "proof_source": "profile_gate",
+        "passed": not failures,
+        "failure_count": len(failures),
+        "failures": failures,
+        "live_enabled": live_enabled,
+        "live_required": required,
+        "skipped": skipped,
+        "skip_reason": "" if live_enabled else "OVERWATCH_SNOWFLAKE_VALIDATION/OVERWATCH_BILLING_RECONCILIATION_LIVE not enabled for local fixture run.",
+        "waived": waiver_valid,
+        "raw_sql_included": False,
+    }
+
+
+def _query_budget_gate_results(payloads: Mapping[str, Any]) -> dict[str, Any]:
+    runtime = _as_mapping(payloads.get("artifacts/full_app_validation/query_budget_results.json"))
+    session_direct = _as_mapping(payloads.get("artifacts/full_app_validation/session_direct_sql_results.json"))
+    summary_budget = _as_mapping(payloads.get("artifacts/full_app_validation/summary_board_query_budget_results.json"))
+    failures: list[dict[str, Any]] = []
+    for code, payload, count_keys in (
+        ("QUERY_BUDGET_CONTEXT_FAILURE", runtime, ("failed_contexts",)),
+        ("ROUTE_QUERY_LEAK", runtime, ("route_query_leaks",)),
+        ("EVIDENCE_CLICK_OVER_BUDGET", runtime, ("evidence_clicks_over_budget",)),
+        ("MARKER_BUDGET_MISMATCH", runtime, ("marker_budget_mismatch_count",)),
+        ("SESSION_DIRECT_SQL_FAILURE", session_direct, ("marker_budget_mismatch_count", "route_session_open_events", "route_direct_sql_events")),
+        ("SUMMARY_BOARD_QUERY_BUDGET_FAILURE", summary_budget, ("failure_count",)),
+    ):
+        count = 0
+        for key in count_keys:
+            value = payload.get(key)
+            count += len(value) if isinstance(value, list) else _as_int(value)
+        if count:
+            failures.append({"code": code, "count": count})
+    if runtime and not bool(runtime.get("passed", True)):
+        failures.append({"code": "RUNTIME_QUERY_BUDGET_NOT_PASSED"})
+    if summary_budget and not bool(summary_budget.get("passed", True)):
+        failures.append({"code": "SUMMARY_BOARD_QUERY_BUDGET_NOT_PASSED"})
+    return {
+        "source": "launch_readiness_query_budget_gate",
+        "proof_source": "runtime_click",
+        "passed": not failures,
+        "failure_count": len(failures),
+        "failures": failures,
+        "production_interrupting": False,
+        "always_recorded": True,
+        "runtime_query_budget_passed": bool(runtime.get("passed", True)),
+        "summary_board_query_budget_passed": bool(summary_budget.get("passed", True)),
+        "raw_sql_included": False,
+    }
+
+
 def _release_gate_matrix(
     payloads: Mapping[str, Any],
     launch_artifacts: Mapping[str, Any],
@@ -3666,6 +3913,10 @@ def _release_gate_matrix(
     snowflake_gate = _as_mapping(launch_artifacts.get("snowflake_validation_gate_results"))
     snowflake_raw = _as_mapping(launch_artifacts.get("snowflake_raw_validation_recheck"))
     encoding_hygiene = _as_mapping(launch_artifacts.get("encoding_hygiene_results"))
+    summary_board_gate = _as_mapping(launch_artifacts.get("summary_board_gate_results"))
+    billing_gate = _as_mapping(launch_artifacts.get("billing_reconciliation_gate_results"))
+    billing_live_gate = _as_mapping(launch_artifacts.get("billing_reconciliation_live_gate_results"))
+    query_budget_gate = _as_mapping(launch_artifacts.get("query_budget_gate_results"))
     rows = [
         {
             "gate": "launch_profile",
@@ -3690,6 +3941,30 @@ def _release_gate_matrix(
             "artifact": "artifacts/full_app_validation/gauntlet_results.json",
             "passed": bool(gauntlet.get("passed")),
             "failure_reason": "" if gauntlet.get("passed") else "Full app gauntlet failed.",
+        },
+        {
+            "gate": "summary_board_first_paint",
+            "artifact": f"{LAUNCH_READINESS_DIR}/summary_board_gate_results.json",
+            "passed": bool(summary_board_gate.get("passed")),
+            "failure_reason": "" if summary_board_gate.get("passed") else "Summary board packet-only first-paint gate failed.",
+        },
+        {
+            "gate": "billing_reconciliation",
+            "artifact": f"{LAUNCH_READINESS_DIR}/billing_reconciliation_gate_results.json",
+            "passed": bool(billing_gate.get("passed")),
+            "failure_reason": "" if billing_gate.get("passed") else "Snowsight billing reconciliation formula gate failed.",
+        },
+        {
+            "gate": "billing_reconciliation_live",
+            "artifact": f"{LAUNCH_READINESS_DIR}/billing_reconciliation_live_gate_results.json",
+            "passed": bool(billing_live_gate.get("passed")),
+            "failure_reason": "" if billing_live_gate.get("passed") else "Live billing reconciliation is required for this launch profile or needs a signed waiver.",
+        },
+        {
+            "gate": "query_budget_recording",
+            "artifact": f"{LAUNCH_READINESS_DIR}/query_budget_gate_results.json",
+            "passed": bool(query_budget_gate.get("passed")),
+            "failure_reason": "" if query_budget_gate.get("passed") else "Recorded query-budget rows contain launch-blocking first-paint/route/evidence violations.",
         },
         {
             "gate": "runtime_validation",
@@ -3895,6 +4170,12 @@ def evaluate_launch_readiness(
             snowflake_gate,
             snowflake_raw_recheck,
         ),
+        "summary_board_gate_results": _summary_board_gate_results(payloads),
+        "billing_reconciliation_gate_results": _as_mapping(launch_artifacts.get("billing_reconciliation_gate_results"))
+        or _billing_reconciliation_gate_results(root_path),
+        "billing_reconciliation_live_gate_results": _as_mapping(launch_artifacts.get("billing_reconciliation_live_gate_results"))
+        or _billing_reconciliation_live_gate_results(profile, launch_waiver_rows),
+        "query_budget_gate_results": _query_budget_gate_results(payloads),
         "encoding_hygiene_results": _as_mapping(payloads.get("artifacts/encoding_hygiene_results.json"))
         or _as_mapping(launch_artifacts.get("encoding_hygiene_results")),
     }
@@ -3951,6 +4232,10 @@ def evaluate_launch_readiness(
     manifest_gate = _as_mapping(launch_artifacts.get("live_execution_manifest_gate_results"))
     release_candidate_gate = _as_mapping(launch_artifacts.get("release_candidate_gate_results"))
     encoding_hygiene = _as_mapping(launch_artifacts.get("encoding_hygiene_results"))
+    summary_board_gate = _as_mapping(launch_artifacts.get("summary_board_gate_results"))
+    billing_gate = _as_mapping(launch_artifacts.get("billing_reconciliation_gate_results"))
+    billing_live_gate = _as_mapping(launch_artifacts.get("billing_reconciliation_live_gate_results"))
+    query_budget_gate = _as_mapping(launch_artifacts.get("query_budget_gate_results"))
     launch_summary = {
         "source": "launch_readiness",
         "proof_source": "runtime_click",
@@ -3984,6 +4269,16 @@ def evaluate_launch_readiness(
         "release_candidate_bundle_failure_count": _as_int(release_candidate_gate.get("failure_count")),
         "release_candidate_artifact_count": _as_int(release_candidate_gate.get("artifact_count")),
         "release_candidate_artifact_hash_count": _as_int(release_candidate_gate.get("artifact_hash_count")),
+        "summary_board_first_paint_passed": bool(summary_board_gate.get("passed")),
+        "summary_board_first_paint_failure_count": _as_int(summary_board_gate.get("failure_count")),
+        "summary_board_section_count": _as_int(summary_board_gate.get("section_count")),
+        "billing_reconciliation_passed": bool(billing_gate.get("passed")),
+        "billing_reconciliation_failure_count": _as_int(billing_gate.get("failure_count")),
+        "billing_reconciliation_live_passed": bool(billing_live_gate.get("passed")),
+        "billing_reconciliation_live_skipped": bool(billing_live_gate.get("skipped")),
+        "billing_reconciliation_live_required": bool(billing_live_gate.get("live_required")),
+        "query_budget_gate_passed": bool(query_budget_gate.get("passed")),
+        "query_budget_gate_failure_count": _as_int(query_budget_gate.get("failure_count")),
         "browser_or_snapshot_passed": _gate_passed(matrix, "browser_or_rendered_snapshot"),
         "missing_artifacts": _as_list(artifact_review.get("missing_required_gauntlet_artifacts")),
         "stale_artifacts": _as_list(artifact_review.get("stale_artifacts")),
@@ -4152,6 +4447,10 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
         launch_artifacts["snowflake_validation_gate_results"],
         snowflake_raw_recheck,
     )
+    launch_artifacts["summary_board_gate_results"] = _summary_board_gate_results(payloads)
+    launch_artifacts["billing_reconciliation_gate_results"] = _billing_reconciliation_gate_results(root_path)
+    launch_artifacts["billing_reconciliation_live_gate_results"] = _billing_reconciliation_live_gate_results(profile, waivers)
+    launch_artifacts["query_budget_gate_results"] = _query_budget_gate_results(payloads)
     raw_results, raw_failures = _raw_invariant_artifacts(root_path, payloads)
     launch_artifacts["raw_invariant_results"] = raw_results
     launch_artifacts["raw_invariant_failures"] = raw_failures

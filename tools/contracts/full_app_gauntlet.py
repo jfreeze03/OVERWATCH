@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+import sys
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
@@ -41,6 +42,10 @@ REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS = {
     "artifacts/full_app_validation/risk_inventory.json",
     "artifacts/full_app_validation/query_budget_results.json",
     "artifacts/full_app_validation/session_direct_sql_results.json",
+    "artifacts/full_app_validation/summary_board_results.json",
+    "artifacts/full_app_validation/summary_board_query_budget_results.json",
+    "artifacts/full_app_validation/summary_board_error_inventory.json",
+    "artifacts/full_app_validation/summary_board_failure_diagnostics.json",
     "artifacts/full_app_validation/forbidden_ui_token_scan.json",
     "artifacts/full_app_validation/forbidden_source_token_scan.json",
     "artifacts/full_app_validation/forbidden_daily_ui_scan.json",
@@ -87,6 +92,16 @@ def _scan_files(root: Path) -> tuple[list[Path], list[Path]]:
     python_files = sorted((root / ".overwatch_final").rglob("*.py"))
     sql_files = sorted((root / "snowflake").rglob("*.sql"))
     return python_files, sql_files
+
+
+def _write_summary_board_contract_artifacts(root: Path) -> dict[str, Any]:
+    app_root = root / ".overwatch_final"
+    app_root_text = str(app_root)
+    if app_root_text not in sys.path:
+        sys.path.insert(0, app_root_text)
+    from sections.summary_board_contract import write_summary_board_artifacts
+
+    return write_summary_board_artifacts(root)
 
 
 def write_static_contract_artifacts(root: Path | str = ".") -> dict[str, Any]:
@@ -368,6 +383,8 @@ def recompute_full_app_invariants(payloads: Mapping[str, Any], *, root: Path | N
     evidence_rows = _as_list(payloads.get("artifacts/full_app_validation/evidence_loader_call_matrix.json", []))
     query_search_rows = _as_list(payloads.get("artifacts/full_app_validation/query_search_results.json", []))
     stress_rows = _as_list(payloads.get("artifacts/full_app_validation/stress_results.json", []))
+    summary_board_rows = _as_list(payloads.get("artifacts/full_app_validation/summary_board_results.json", []))
+    summary_board_budget = _as_mapping(payloads.get("artifacts/full_app_validation/summary_board_query_budget_results.json", {}))
     forbidden_ui = _as_mapping(payloads.get("artifacts/full_app_validation/forbidden_ui_token_scan.json", {}))
     forbidden_daily = _as_mapping(payloads.get("artifacts/full_app_validation/forbidden_daily_ui_scan.json", {}))
     forbidden_source = _as_mapping(payloads.get("artifacts/full_app_validation/forbidden_source_token_scan.json", {}))
@@ -405,6 +422,36 @@ def recompute_full_app_invariants(payloads: Mapping[str, Any], *, root: Path | N
     ]
     if warm_first_paint_leaks:
         fail("recomputed_warm_first_paint_zero_packet", "Warm first paint emitted packet queries.", count=len(warm_first_paint_leaks), rows=warm_first_paint_leaks)
+
+    summary_sections = {
+        str(_as_mapping(row).get("section") or "")
+        for row in summary_board_rows
+        if _as_mapping(row).get("section")
+    }
+    missing_summary_sections = sorted(PRIMARY_SECTIONS - summary_sections)
+    if missing_summary_sections:
+        fail("recomputed_summary_board_primary_coverage", "Summary board first-paint results are missing primary sections.", count=len(missing_summary_sections), rows=missing_summary_sections)
+    summary_board_failures = [
+        row for row in summary_board_rows
+        if not bool(_as_mapping(row).get("passed"))
+        or _as_int(_as_mapping(row).get("packet_query_count")) != 1
+        or _as_int(_as_mapping(row).get("warm_packet_query_count"))
+        or _as_int(_as_mapping(row).get("non_packet_first_paint_event_count"))
+        or _as_int(_as_mapping(row).get("session_open_count"))
+        or _as_int(_as_mapping(row).get("direct_sql_event_count"))
+        or _as_int(_as_mapping(row).get("account_usage_query_count"))
+        or _as_int(_as_mapping(row).get("evidence_query_count"))
+        or _as_int(_as_mapping(row).get("old_surface_marker_count"))
+        or _as_int(_as_mapping(row).get("raw_internal_token_count"))
+        or _as_list(_as_mapping(row).get("optional_detail_state_reads"))
+    ]
+    if summary_board_failures or (summary_board_budget and not bool(summary_board_budget.get("passed", True))):
+        fail(
+            "recomputed_summary_board_packet_only_first_paint",
+            "Summary boards must render from the packet only on cold/warm first paint.",
+            count=len(summary_board_failures) + (0 if bool(summary_board_budget.get("passed", True)) else 1),
+            rows=summary_board_failures or [summary_board_budget],
+        )
 
     evidence_budget_violations = [
         row for row in buttons
@@ -804,6 +851,9 @@ def evaluate_full_app_gauntlet(
     query_budget = payloads.get("artifacts/full_app_validation/query_budget_results.json", {})
     if isinstance(query_budget, Mapping) and not bool(query_budget.get("passed", False)):
         _append_failure(failures, "query_budget_results", "Query budget artifact did not pass.")
+    summary_board = payloads.get("artifacts/full_app_validation/summary_board_query_budget_results.json", {})
+    if isinstance(summary_board, Mapping) and not bool(summary_board.get("passed", False)):
+        _append_failure(failures, "summary_board_first_paint", "Summary board first-paint packet-only artifact did not pass.")
     session_direct = payloads.get("artifacts/full_app_validation/session_direct_sql_results.json", {})
     if isinstance(session_direct, Mapping) and not bool(session_direct.get("passed", False)):
         _append_failure(failures, "session_direct_sql_results", "Session/direct-SQL artifact did not pass.")
@@ -907,11 +957,13 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
     cleanup_artifacts = write_cleanup_artifacts(root_path)
     inventory_artifacts = write_full_app_contract_inventory_artifacts(root_path)
     validation_artifacts = write_full_app_validation_artifacts(root_path)
+    summary_board_artifacts = _write_summary_board_contract_artifacts(root_path)
     static_artifacts = write_static_contract_artifacts(root_path)
     artifacts = {
         **cleanup_artifacts,
         **inventory_artifacts,
         **validation_artifacts,
+        **summary_board_artifacts,
         **static_artifacts,
     }
     recomputed = recompute_full_app_invariants(artifacts, root=root_path)
@@ -927,6 +979,10 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
             reconciliation_rel,
             "artifacts/full_app_validation/gauntlet_results.json",
             "artifacts/full_app_validation/gauntlet_failures.json",
+            "artifacts/full_app_validation/summary_board_results.json",
+            "artifacts/full_app_validation/summary_board_query_budget_results.json",
+            "artifacts/full_app_validation/summary_board_error_inventory.json",
+            "artifacts/full_app_validation/summary_board_failure_diagnostics.json",
             "artifacts/direct_sql_static_scan.json",
             "artifacts/session_open_static_scan.json",
             "artifacts/sql_performance_lint_findings.json",

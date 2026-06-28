@@ -95,6 +95,16 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertEqual(summary["release_candidate_bundle_failure_count"], 0)
         self.assertGreater(summary["release_candidate_artifact_count"], 0)
         self.assertGreater(summary["release_candidate_artifact_hash_count"], 0)
+        self.assertTrue(summary["summary_board_first_paint_passed"])
+        self.assertEqual(summary["summary_board_first_paint_failure_count"], 0)
+        self.assertEqual(summary["summary_board_section_count"], 6)
+        self.assertTrue(summary["billing_reconciliation_passed"])
+        self.assertEqual(summary["billing_reconciliation_failure_count"], 0)
+        self.assertTrue(summary["billing_reconciliation_live_passed"])
+        self.assertTrue(summary["billing_reconciliation_live_skipped"])
+        self.assertFalse(summary["billing_reconciliation_live_required"])
+        self.assertTrue(summary["query_budget_gate_passed"])
+        self.assertEqual(summary["query_budget_gate_failure_count"], 0)
         self.assertGreaterEqual(summary["required_artifact_count"], len(REQUIRED_LAUNCH_READINESS_ARTIFACTS))
         self.assertIn("decision-workspace-proof", summary["uploaded_artifact_names"])
         self.assertFalse(summary["raw_sql_included"])
@@ -105,6 +115,10 @@ class LaunchReadinessTests(unittest.TestCase):
             "profile_gate_failures",
             "raw_invariants",
             "full_app_gauntlet",
+            "summary_board_first_paint",
+            "billing_reconciliation",
+            "billing_reconciliation_live",
+            "query_budget_recording",
             "runtime_validation",
             "required_artifacts",
             "artifact_upload_review",
@@ -342,6 +356,13 @@ class LaunchReadinessTests(unittest.TestCase):
                     {"query_count": 1},
                 ),
                 "route_actions_zero_query",
+            ),
+            (
+                "summary board first paint leak",
+                lambda payloads: payloads["artifacts/full_app_validation/summary_board_results.json"][0].update(
+                    {"passed": False, "account_usage_query_count": 1}
+                ),
+                "summary_board_packet_only_first_paint",
             ),
             (
                 "evidence account usage",

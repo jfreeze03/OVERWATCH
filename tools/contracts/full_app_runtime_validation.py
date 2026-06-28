@@ -3631,6 +3631,28 @@ def write_full_app_validation_artifacts(root: Path | str = ".") -> dict[str, Any
         generated_files[f"artifacts/full_app_validation/{relative}"] = content
     for filename, payload in payloads.items():
         _write_json(output_dir / filename, payload)
+    from sections.summary_board_contract import (
+        build_summary_board_error_inventory,
+        build_summary_board_failure_diagnostics,
+        build_summary_board_query_budget_results,
+        build_summary_board_rows,
+    )
+
+    summary_board_rows = build_summary_board_rows(
+        {
+            "artifacts/full_app_validation/view_results.json": payloads["view_results.json"],
+            "artifacts/full_app_validation/rendered_fragments.json": payloads["rendered_fragments.json"],
+        }
+    )
+    summary_board_payloads = {
+        "summary_board_results.json": summary_board_rows,
+        "summary_board_query_budget_results.json": build_summary_board_query_budget_results(summary_board_rows),
+        "summary_board_error_inventory.json": build_summary_board_error_inventory(summary_board_rows),
+        "summary_board_failure_diagnostics.json": build_summary_board_failure_diagnostics(summary_board_rows),
+    }
+    for filename, payload in summary_board_payloads.items():
+        _write_json(output_dir / filename, payload)
+    payloads.update(summary_board_payloads)
     manifest = {
         "generated_at": payloads["app_validation_summary.json"]["generated_at"],
         "proof_source": "runtime_render",

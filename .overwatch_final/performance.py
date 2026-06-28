@@ -318,17 +318,17 @@ def assert_query_budget_context_passed(summary: dict[str, Any]) -> None:
     raise AssertionError(reason or "Query budget context failed.")
 
 
+def _env_flag(name: str) -> bool:
+    return str(os.environ.get(name, "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _fixture_mode_enabled() -> bool:
+    return _env_flag("OVERWATCH_UI_FIXTURE_MODE")
+
+
 def _strict_query_budget_context_mode() -> bool:
     """Return whether live UI query-budget accounting should interrupt rendering."""
-    return any(
-        str(os.environ.get(name, "")).strip().lower() in {"1", "true", "yes", "on"}
-        for name in (
-            "OVERWATCH_TEST_MODE",
-            "OVERWATCH_UI_FIXTURE_MODE",
-            "OVERWATCH_ALLOW_FIXTURE_MODE",
-            "OVERWATCH_STRICT_QUERY_BUDGETS",
-        )
-    )
+    return _env_flag("OVERWATCH_TEST_MODE") or _fixture_mode_enabled() or _env_flag("OVERWATCH_STRICT_QUERY_BUDGETS")
 
 
 @contextmanager
@@ -373,10 +373,7 @@ def first_paint_gate_mode() -> str:
 
 def _strict_first_paint_mode() -> bool:
     """Return whether first-paint violations should fail before execution."""
-    return any(
-        str(os.environ.get(name, "")).strip().lower() in {"1", "true", "yes", "on"}
-        for name in ("OVERWATCH_TEST_MODE", "OVERWATCH_UI_FIXTURE_MODE", "OVERWATCH_ALLOW_FIXTURE_MODE")
-    )
+    return _env_flag("OVERWATCH_TEST_MODE") or _fixture_mode_enabled()
 
 
 def record_first_paint_budget_violation(

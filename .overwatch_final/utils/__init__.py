@@ -48,6 +48,14 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "metric_confidence_label",
         "freshness_note", "CREDIT_RATES", "CREDIT_SOURCE_LABELS", "COMPUTE_CREDIT_CASE",
     ),
+    "billing_reconciliation": (
+        "BILLING_RECONCILIATION_PACKET_FIELDS",
+        "billing_reconciliation_contract_results",
+        "build_account_billing_reconciliation_sql",
+        "build_warehouse_billing_bridge_sql",
+        "daily_safe_billing_labels",
+        "summarize_billing_reconciliation",
+    ),
     "scorecards": (
         "clamp_score", "score_label", "bad_ratio_score", "trend_score",
         "weighted_score", "burn_trend_label", "executive_health_score",
@@ -73,6 +81,7 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "SharedMetricResult", "load_shared_storage_trend", "load_shared_usage_storage_kpis",
         "load_shared_usage_metering_kpis", "load_shared_storage_db_detail",
         "load_shared_service_cost_lens", "load_shared_service_cost_trend",
+        "load_shared_account_billing_reconciliation",
         "build_shared_bill_metering_summary_live_sql",
         "build_shared_bill_warehouse_delta_live_sql",
         "load_shared_bill_metering_summary", "load_shared_bill_warehouse_delta",

@@ -6182,6 +6182,59 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertNotIn("ALTER WAREHOUSE", advisor.to_string().upper())
         self.assertIn("DBA Control Room > Admin > Warehouse Settings", advisor.to_string())
 
+    def test_warehouse_advisor_recommendations_accept_live_cost_and_spill_aliases(self):
+        overview = pd.DataFrame([
+            {
+                "WAREHOUSE_NAME": "SAVE_WH",
+                "WAREHOUSE_SIZE": "LARGE",
+                "QUERY_COUNT": 450,
+                "AVG_QUEUE_SEC": 0.1,
+                "REMOTE_SPILL_GB": 0.0,
+                "P95_SEC": 10.0,
+                "TOTAL_CREDITS": 120.0,
+            },
+            {
+                "WAREHOUSE_NAME": "SPILL_WH",
+                "WAREHOUSE_SIZE": "MEDIUM",
+                "QUERY_COUNT": 300,
+                "AVG_QUEUE_SEC": 0.5,
+                "REMOTE_SPILL_GB": 14.2,
+                "P95_SEC": 30.0,
+                "TOTAL_CREDITS": 48.0,
+            },
+        ])
+        plan = pd.DataFrame([
+            {
+                "PRIORITY": "Medium",
+                "WAREHOUSE_NAME": "SAVE_WH",
+                "ACTION_TYPE": "Cost movement review",
+                "CURRENT_STATE": "Review",
+                "CURRENT_SETTING": "credits moved",
+                "SAFE_SETTING_MOVE": "Explain credit movement before changing settings.",
+                "WHY": "Credit movement needs review.",
+                "ROLLBACK_CHECK": "Compare credits, queue, spill, and p95.",
+            }
+        ])
+
+        advisor = _build_warehouse_advisor_recommendations(
+            plan,
+            pd.DataFrame(),
+            overview,
+            days=14,
+            credit_price=3.68,
+        )
+
+        savings_rows = advisor[advisor["ADVISOR_TYPE"].eq("Downsize savings candidate")]
+        spill_rows = advisor[advisor["WAREHOUSE_NAME"].eq("SPILL_WH")]
+        plan_rows = advisor[advisor["ADVISOR_TYPE"].eq("Cost movement review")]
+
+        self.assertFalse(savings_rows.empty)
+        self.assertGreater(float(savings_rows["EST_MONTHLY_SAVINGS_USD"].sum()), 0)
+        self.assertFalse(spill_rows.empty)
+        self.assertGreater(float(spill_rows["REMOTE_SPILL_GB"].sum()), 0)
+        self.assertFalse(plan_rows.empty)
+        self.assertGreater(float(plan_rows["EST_MONTHLY_COST_BASIS_USD"].sum()), 0)
+
     def test_warehouse_guardrail_coverage_marks_missing_metadata_as_data_gap(self):
         overview = pd.DataFrame(
             {

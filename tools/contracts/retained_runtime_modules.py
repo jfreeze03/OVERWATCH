@@ -75,11 +75,14 @@ _CONTRACT_MODULES = (
     "utils.alerts",
     "utils.ask_overwatch",
     "utils.command_board",
+    "utils.billing_reconciliation",
     "utils.cortex",
     "utils.native_snowflake",
     "utils.recommendation_intelligence",
     "utils.scorecards",
     "utils.sql_builder",
+    "utils.shared_metrics_billing",
+    "sections.summary_board_contract",
     "workflow_contracts",
 )
 

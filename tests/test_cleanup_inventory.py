@@ -161,6 +161,9 @@ class CleanupInventoryTests(unittest.TestCase):
             self.assertTrue(entry.get("expiration_or_review_note"), entry)
             self.assertTrue(entry.get("runtime_budget_context"), entry)
         retained_names = {entry["module"] for entry in retained_modules["retained_modules"]}
+        self.assertIn("sections.summary_board_contract", retained_names)
+        self.assertIn("utils.billing_reconciliation", retained_names)
+        self.assertIn("utils.shared_metrics_billing", retained_names)
         for row in module_inventory["retained_legacy_looking_modules"]:
             if row["classification"] != "active_primary_surface":
                 self.assertIn(row["module"], retained_names, row)

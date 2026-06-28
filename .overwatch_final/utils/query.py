@@ -423,7 +423,7 @@ def _first_paint_sensitive_boundary(boundary: str) -> bool:
 def _strict_query_contract_mode() -> bool:
     return any(
         str(os.environ.get(name, "")).strip().lower() in {"1", "true", "yes", "on"}
-        for name in ("OVERWATCH_TEST_MODE", "OVERWATCH_UI_FIXTURE_MODE", "OVERWATCH_ALLOW_FIXTURE_MODE")
+        for name in ("OVERWATCH_TEST_MODE", "OVERWATCH_UI_FIXTURE_MODE")
     )
 
 

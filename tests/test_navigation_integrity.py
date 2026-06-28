@@ -2364,6 +2364,51 @@ class NavigationIntegrityTests(unittest.TestCase):
         kpis.assert_called_once_with((("Active View", "Active Alerts"),))
         snapshot.assert_called_once_with((("Freshness", "Not loaded"),))
 
+    def test_single_choice_navigation_filters_streamlit_runtime_kwargs(self):
+        from sections import shell_helpers
+
+        captured: dict[str, object] = {}
+
+        def legacy_segmented_control(
+            label,
+            options,
+            *,
+            selection_mode="single",
+            format_func=None,
+            key=None,
+            label_visibility="visible",
+        ):
+            captured.update(
+                {
+                    "label": label,
+                    "options": options,
+                    "selection_mode": selection_mode,
+                    "format_func": format_func,
+                    "key": key,
+                    "label_visibility": label_visibility,
+                }
+            )
+            return options[1]
+
+        with patch.object(shell_helpers.st, "html"), patch.object(
+            shell_helpers.st,
+            "session_state",
+            {},
+        ), patch.object(shell_helpers.st, "segmented_control", new=legacy_segmented_control):
+            selected = shell_helpers.render_single_choice_navigation(
+                label="Workflow",
+                options=("Overview", "Cost Movement"),
+                active_value="Overview",
+                key="executive_landing_workflow",
+                class_name="ow-test-nav",
+                label_class="ow-test-label",
+            )
+
+        self.assertEqual(selected, "Cost Movement")
+        self.assertEqual(captured["selection_mode"], "single")
+        self.assertEqual(captured["key"], "executive_landing_workflow")
+        self.assertEqual(captured["label_visibility"], "collapsed")
+
     def test_section_first_paint_spec_adds_view_lanes_cta_and_no_query_note(self):
         from sections import shell_helpers
 

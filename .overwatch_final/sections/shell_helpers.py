@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from html import escape as _escape_markup
+from inspect import Parameter, signature
 import re
 
 import streamlit as st
@@ -30,6 +31,17 @@ def _badge(label: object) -> None:
         badge(text)
     else:
         st.caption(text)
+
+
+def _supported_widget_kwargs(widget: Callable[..., object], kwargs: Mapping[str, object]) -> dict[str, object]:
+    """Drop widget kwargs that are unavailable in older Streamlit-in-Snowflake runtimes."""
+    try:
+        params = signature(widget).parameters
+    except (TypeError, ValueError):
+        return dict(kwargs)
+    if any(param.kind == Parameter.VAR_KEYWORD for param in params.values()):
+        return dict(kwargs)
+    return {key: value for key, value in kwargs.items() if key in params}
 
 
 _INTERNAL_OBJECT_RE = re.compile(
@@ -654,27 +666,39 @@ def render_single_choice_navigation(
         f'<span class="{_escape_markup(label_class)} ow-sr-only">{_escape_markup(_clean_display_text(label))}</span>'
         '</div>'
     )
-    if hasattr(st, "segmented_control"):
-        selected = st.segmented_control(
+    segmented_control = getattr(st, "segmented_control", None)
+    if callable(segmented_control):
+        selected = segmented_control(
             label,
             values,
-            selection_mode="single",
-            required=True,
-            format_func=formatter,
-            key=key,
-            label_visibility="collapsed",
-            width="stretch",
+            **_supported_widget_kwargs(
+                segmented_control,
+                {
+                    "selection_mode": "single",
+                    "required": True,
+                    "format_func": formatter,
+                    "key": key,
+                    "label_visibility": "collapsed",
+                    "width": "stretch",
+                },
+            ),
         )
     else:
+        radio_kwargs = _supported_widget_kwargs(
+            st.radio,
+            {
+                "index": values.index(active),
+                "format_func": formatter,
+                "key": key,
+                "horizontal": True,
+                "label_visibility": "collapsed",
+                "width": "stretch",
+            },
+        )
         selected = st.radio(
             label,
             values,
-            index=values.index(active),
-            format_func=formatter,
-            key=key,
-            horizontal=True,
-            label_visibility="collapsed",
-            width="stretch",
+            **radio_kwargs,
         )
     return str(selected or active)
 

@@ -637,6 +637,20 @@ class LaunchReadinessTests(unittest.TestCase):
                 "procedure_compile_validation",
             ),
             (
+                "snowflake compile coverage",
+                lambda payloads, launch: payloads["artifacts/snowflake_validation/procedure_compile_coverage_results.json"].update(
+                    {"passed": False, "failure_count": 1}
+                ),
+                "procedure_compile_validation",
+            ),
+            (
+                "snowflake smoke coverage",
+                lambda payloads, launch: payloads["artifacts/snowflake_validation/procedure_smoke_call_coverage_results.json"].update(
+                    {"passed": False, "failure_count": 1}
+                ),
+                "procedure_smoke_call_validation",
+            ),
+            (
                 "missing packet raw artifact",
                 lambda payloads, launch: payloads.pop("artifacts/snowflake_validation/packet_publication_validation_results.json", None),
                 "snowflake_raw_validation_recheck",
@@ -649,9 +663,23 @@ class LaunchReadinessTests(unittest.TestCase):
                 "packet_publication_validation",
             ),
             (
+                "packet detail failure",
+                lambda payloads, launch: payloads["artifacts/snowflake_validation/packet_validation_detail_results.json"]["checks"][0].update(
+                    {"passed": False}
+                ),
+                "packet_publication_validation",
+            ),
+            (
                 "compact status lies",
                 lambda payloads, launch: payloads["artifacts/snowflake_validation/compact_evidence_mart_validation_results.json"]["marts"][0].update(
                     {"passed": False}
+                ),
+                "compact_evidence_mart_validation",
+            ),
+            (
+                "compact detail failure",
+                lambda payloads, launch: payloads["artifacts/snowflake_validation/compact_evidence_mart_detail_results.json"]["marts"][0].update(
+                    {"retention_bounded": False, "passed": False}
                 ),
                 "compact_evidence_mart_validation",
             ),
@@ -669,6 +697,13 @@ class LaunchReadinessTests(unittest.TestCase):
                 "schema drift raw failure",
                 lambda payloads, launch: payloads["artifacts/snowflake_validation/schema_drift_results.json"].update({"passed": False, "failure_count": 1}),
                 "snowflake_raw_validation_recheck",
+            ),
+            (
+                "snowflake error sanitizer failure",
+                lambda payloads, launch: payloads["artifacts/snowflake_validation/snowflake_error_sanitization_results.json"].update(
+                    {"passed": False, "failure_count": 1}
+                ),
+                "recent_snowflake_fix_validation",
             ),
             (
                 "missing snowflake skip reason",
@@ -690,6 +725,11 @@ class LaunchReadinessTests(unittest.TestCase):
             (
                 "snowflake fast refresh",
                 lambda payloads, launch: payloads["artifacts/snowflake_validation/refresh_fast_results.json"].update({"passed": False}),
+                "refresh_performance_validation",
+            ),
+            (
+                "snowflake refresh detail",
+                lambda payloads, launch: payloads["artifacts/snowflake_validation/refresh_detail_results.json"].update({"passed": False, "failure_count": 1}),
                 "refresh_performance_validation",
             ),
             (

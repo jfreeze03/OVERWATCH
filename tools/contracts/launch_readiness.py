@@ -138,20 +138,27 @@ GENERIC_WAIVER_TEXT = {"", "n/a", "na", "none", "todo", "tbd", "future", "option
 
 SNOWFLAKE_RAW_RECHECK_ARTIFACTS = (
     "artifacts/snowflake_validation/snowflake_validation_summary.json",
+    "artifacts/snowflake_validation/procedure_dependency_graph.json",
     "artifacts/snowflake_validation/procedure_compile_results.json",
+    "artifacts/snowflake_validation/procedure_compile_coverage_results.json",
     "artifacts/snowflake_validation/procedure_smoke_call_results.json",
+    "artifacts/snowflake_validation/procedure_smoke_call_coverage_results.json",
     "artifacts/snowflake_validation/packet_publication_validation_results.json",
     "artifacts/snowflake_validation/packet_shape_results.json",
     "artifacts/snowflake_validation/packet_size_results.json",
     "artifacts/snowflake_validation/packet_source_truth_results.json",
+    "artifacts/snowflake_validation/packet_validation_detail_results.json",
     "artifacts/snowflake_validation/compact_evidence_mart_validation_results.json",
+    "artifacts/snowflake_validation/compact_evidence_mart_detail_results.json",
     "artifacts/snowflake_validation/refresh_fast_results.json",
     "artifacts/snowflake_validation/refresh_full_results.json",
+    "artifacts/snowflake_validation/refresh_detail_results.json",
     "artifacts/snowflake_validation/recent_snowflake_fix_validation_results.json",
     "artifacts/snowflake_validation/metric_candidate_shape_results.json",
     "artifacts/snowflake_validation/trend_cardinality_results.json",
     "artifacts/snowflake_validation/sql_encoding_scan_results.json",
     "artifacts/snowflake_validation/schema_drift_results.json",
+    "artifacts/snowflake_validation/snowflake_error_sanitization_results.json",
 )
 
 
@@ -1870,6 +1877,20 @@ def _snowflake_raw_validation_recheck(
         if bool(row.get("raw_sql_included")):
             fail("snowflake_raw_sql_leak", "Procedure compile row includes raw SQL.", path=compile_path)
 
+    graph_path = "artifacts/snowflake_validation/procedure_dependency_graph.json"
+    dependency_graph = _as_mapping(payloads.get(graph_path))
+    if not dependency_graph or not bool(dependency_graph.get("passed")) or _as_list(dependency_graph.get("unresolved_call_targets")):
+        fail("procedure_dependency_graph", "Procedure dependency graph has unresolved call targets.", path=graph_path)
+
+    compile_coverage_path = "artifacts/snowflake_validation/procedure_compile_coverage_results.json"
+    compile_coverage = _as_mapping(payloads.get(compile_coverage_path))
+    if not compile_coverage or not bool(compile_coverage.get("passed")) or _as_int(compile_coverage.get("failure_count")):
+        fail("procedure_compile_validation", "Procedure compile coverage is incomplete.", path=compile_coverage_path)
+    for row in _as_list(compile_coverage.get("rows")):
+        item = _as_mapping(row)
+        if not bool(item.get("passed")):
+            fail("procedure_compile_validation", "Procedure compile coverage row failed.", path=compile_coverage_path)
+
     smoke_path = "artifacts/snowflake_validation/procedure_smoke_call_results.json"
     smoke_rows = [_as_mapping(row) for row in _as_list(payloads.get(smoke_path))]
     if not smoke_rows:
@@ -1880,6 +1901,15 @@ def _snowflake_raw_validation_recheck(
             fail("procedure_smoke_call_validation", "Stored procedure smoke-call validation failed.", path=smoke_path)
         if bool(row.get("raw_sql_included")):
             fail("snowflake_raw_sql_leak", "Procedure smoke-call row includes raw SQL.", path=smoke_path)
+
+    smoke_coverage_path = "artifacts/snowflake_validation/procedure_smoke_call_coverage_results.json"
+    smoke_coverage = _as_mapping(payloads.get(smoke_coverage_path))
+    if not smoke_coverage or not bool(smoke_coverage.get("passed")) or _as_int(smoke_coverage.get("failure_count")):
+        fail("procedure_smoke_call_validation", "Procedure smoke-call coverage is incomplete.", path=smoke_coverage_path)
+    for row in _as_list(smoke_coverage.get("rows")):
+        item = _as_mapping(row)
+        if not bool(item.get("passed")):
+            fail("procedure_smoke_call_validation", "Procedure smoke-call coverage row failed.", path=smoke_coverage_path)
 
     packet_paths = (
         "artifacts/snowflake_validation/packet_publication_validation_results.json",
@@ -1899,6 +1929,16 @@ def _snowflake_raw_validation_recheck(
         if path.endswith("packet_size_results.json") and _as_int(payload.get("max_packet_bytes")) > 100000:
             packet_passed = False
             fail("packet_publication_validation", "Packet byte threshold exceeds 100 KB.", path=path)
+    packet_detail_path = "artifacts/snowflake_validation/packet_validation_detail_results.json"
+    packet_detail = _as_mapping(payloads.get(packet_detail_path))
+    detail_checks = [_as_mapping(row) for row in _as_list(packet_detail.get("checks"))]
+    if not packet_detail or not bool(packet_detail.get("passed")) or _as_int(packet_detail.get("failure_count")) or not detail_checks:
+        packet_passed = False
+        fail("packet_publication_validation", "Packet validation detail artifact is missing or failed.", path=packet_detail_path)
+    for row in detail_checks:
+        if not bool(row.get("passed")):
+            packet_passed = False
+            fail("packet_publication_validation", "Packet validation detail check failed.", path=packet_detail_path)
 
     compact_path = "artifacts/snowflake_validation/compact_evidence_mart_validation_results.json"
     compact = _as_mapping(payloads.get(compact_path))
@@ -1911,6 +1951,20 @@ def _snowflake_raw_validation_recheck(
         if any(not bool(row.get(flag)) for flag in required_flags):
             compact_passed = False
             fail("compact_evidence_mart_validation", "Compact evidence mart raw row failed required checks.", path=compact_path)
+        if bool(row.get("normal_account_usage_used")) or _as_int(row.get("max_rows")) > 500:
+            compact_passed = False
+            fail("compact_evidence_mart_validation", "Compact evidence mart raw row violates Account Usage or max row policy.", path=compact_path)
+
+    compact_detail_path = "artifacts/snowflake_validation/compact_evidence_mart_detail_results.json"
+    compact_detail = _as_mapping(payloads.get(compact_detail_path))
+    detail_marts = [_as_mapping(row) for row in _as_list(compact_detail.get("marts"))]
+    if not compact_detail or not bool(compact_detail.get("passed")) or _as_int(compact_detail.get("failure_count")) or len(detail_marts) != 5:
+        compact_passed = False
+        fail("compact_evidence_mart_validation", "Compact evidence mart detail artifact is missing or failed.", path=compact_detail_path)
+    for row in detail_marts:
+        if not bool(row.get("passed")):
+            compact_passed = False
+            fail("compact_evidence_mart_validation", "Compact evidence mart detail row failed.", path=compact_detail_path)
 
     refresh_statuses: dict[str, str] = {}
     for rel, gate in (
@@ -1932,12 +1986,21 @@ def _snowflake_raw_validation_recheck(
         if _as_int(payload.get("max_packet_bytes")) > 100000:
             fail(gate, "Refresh validation packet bytes exceed 100 KB.", path=rel)
 
+    refresh_detail_path = "artifacts/snowflake_validation/refresh_detail_results.json"
+    refresh_detail = _as_mapping(payloads.get(refresh_detail_path))
+    if not refresh_detail or not bool(refresh_detail.get("passed")) or _as_int(refresh_detail.get("failure_count")):
+        fail("refresh_detail_validation", "FAST/FULL refresh detail validation is missing or failed.", path=refresh_detail_path)
+    for row in _as_list(refresh_detail.get("checks")):
+        if not bool(_as_mapping(row).get("passed")):
+            fail("refresh_detail_validation", "FAST/FULL refresh detail check failed.", path=refresh_detail_path)
+
     for rel, gate in (
         ("artifacts/snowflake_validation/recent_snowflake_fix_validation_results.json", "recent_snowflake_fix_validation"),
         ("artifacts/snowflake_validation/metric_candidate_shape_results.json", "metric_candidate_shape_validation"),
         ("artifacts/snowflake_validation/trend_cardinality_results.json", "trend_cardinality_validation"),
         ("artifacts/snowflake_validation/sql_encoding_scan_results.json", "sql_encoding_scan"),
         ("artifacts/snowflake_validation/schema_drift_results.json", "schema_drift_validation"),
+        ("artifacts/snowflake_validation/snowflake_error_sanitization_results.json", "snowflake_error_sanitization"),
     ):
         payload = _as_mapping(payloads.get(rel))
         if not payload or not bool(payload.get("passed")) or _as_int(payload.get("failure_count")):
@@ -1998,20 +2061,26 @@ def _snowflake_validation_gate_results(
 ) -> dict[str, Any]:
     summary = _as_mapping(payloads.get("artifacts/snowflake_validation/snowflake_validation_summary.json"))
     compile_rows = _as_list(payloads.get("artifacts/snowflake_validation/procedure_compile_results.json"))
+    compile_coverage = _as_mapping(payloads.get("artifacts/snowflake_validation/procedure_compile_coverage_results.json"))
     smoke_rows = _as_list(payloads.get("artifacts/snowflake_validation/procedure_smoke_call_results.json"))
+    smoke_coverage = _as_mapping(payloads.get("artifacts/snowflake_validation/procedure_smoke_call_coverage_results.json"))
     compact = _as_mapping(payloads.get("artifacts/snowflake_validation/compact_evidence_mart_validation_results.json"))
+    compact_detail = _as_mapping(payloads.get("artifacts/snowflake_validation/compact_evidence_mart_detail_results.json"))
     recent_fixes = _as_mapping(payloads.get("artifacts/snowflake_validation/recent_snowflake_fix_validation_results.json"))
     manifest_validation = _as_mapping(payloads.get("artifacts/snowflake_validation/streamlit_manifest_validation_results.json"))
     encoding_scan = _as_mapping(payloads.get("artifacts/snowflake_validation/sql_encoding_scan_results.json"))
     schema_drift = _as_mapping(payloads.get("artifacts/snowflake_validation/schema_drift_results.json"))
+    sanitizer = _as_mapping(payloads.get("artifacts/snowflake_validation/snowflake_error_sanitization_results.json"))
     phase_validation = _as_mapping(payloads.get("artifacts/snowflake_validation/phase_validation_results.json"))
     packet_publication = _as_mapping(payloads.get("artifacts/snowflake_validation/packet_publication_validation_results.json"))
     packet_shape = _as_mapping(payloads.get("artifacts/snowflake_validation/packet_shape_results.json"))
     packet_size = _as_mapping(payloads.get("artifacts/snowflake_validation/packet_size_results.json"))
     packet_truth = _as_mapping(payloads.get("artifacts/snowflake_validation/packet_source_truth_results.json"))
+    packet_detail = _as_mapping(payloads.get("artifacts/snowflake_validation/packet_validation_detail_results.json"))
     refresh_perf = _as_mapping(payloads.get("artifacts/snowflake_validation/refresh_performance_results.json"))
     refresh_fast = _as_mapping(payloads.get("artifacts/snowflake_validation/refresh_fast_results.json"))
     refresh_full = _as_mapping(payloads.get("artifacts/snowflake_validation/refresh_full_results.json"))
+    refresh_detail = _as_mapping(payloads.get("artifacts/snowflake_validation/refresh_detail_results.json"))
     raw_recheck = _as_mapping(raw_recheck)
     live_enabled = bool(summary.get("live_mode_enabled"))
     live_skipped = str(summary.get("live_status") or "") == "skipped"
@@ -2049,26 +2118,27 @@ def _snowflake_validation_gate_results(
         ),
         _component_row(
             "procedure_compile_validation",
-            bool(compile_rows) and _rows_have_no_failures(compile_rows),
+            bool(compile_rows) and _rows_have_no_failures(compile_rows) and bool(compile_coverage.get("passed")),
             failure_reason="One or more stored procedures failed compile/static validation.",
-            details={"procedure_compile_count": len(compile_rows)},
+            details={"procedure_compile_count": len(compile_rows), "coverage_failures": compile_coverage.get("failures")},
         ),
         _component_row(
             "procedure_smoke_call_validation",
-            bool(smoke_rows) and _rows_have_no_failures(smoke_rows) and (live_enabled or live_skip_allowed),
+            bool(smoke_rows) and _rows_have_no_failures(smoke_rows) and bool(smoke_coverage.get("passed")) and (live_enabled or live_skip_allowed),
             status="skipped" if live_skipped else "passed",
             failure_reason="Procedure smoke calls require live Snowflake validation for this profile.",
             recommendation="Enable live validation or add a signed waiver for Snowflake smoke calls.",
-            details={"procedure_smoke_call_count": len(smoke_rows), "live_mode_enabled": live_enabled},
+            details={"procedure_smoke_call_count": len(smoke_rows), "live_mode_enabled": live_enabled, "coverage_failures": smoke_coverage.get("failures")},
         ),
         _component_row(
             "recent_snowflake_fix_validation",
-            bool(recent_fixes.get("passed")) and bool(encoding_scan.get("passed")) and bool(schema_drift.get("passed")),
+            bool(recent_fixes.get("passed")) and bool(encoding_scan.get("passed")) and bool(schema_drift.get("passed")) and bool(sanitizer.get("passed")),
             failure_reason="Recent Snowflake correction classes, SQL encoding, or schema-drift proof failed.",
             details={
                 "recent_fix_failures": recent_fixes.get("failures"),
                 "encoding_failures": encoding_scan.get("failures"),
                 "schema_drift_failures": schema_drift.get("failures"),
+                "sanitizer_failures": sanitizer.get("failures"),
             },
         ),
         _component_row(
@@ -2085,28 +2155,29 @@ def _snowflake_validation_gate_results(
         ),
         _component_row(
             "compact_evidence_mart_validation",
-            compact_validation_passed,
+            compact_validation_passed and bool(compact_detail.get("passed")),
             failure_reason="Compact evidence mart validation failed.",
-            details=compact.get("failures"),
+            details={"summary_failures": compact.get("failures"), "detail_failures": compact_detail.get("failures")},
         ),
         _component_row(
             "packet_publication_validation",
-            packet_validation_passed,
+            packet_validation_passed and bool(packet_detail.get("passed")),
             failure_reason="Decision packet publication, shape, size, or source-truth validation failed.",
             details={
                 "publication": packet_publication.get("passed"),
                 "shape": packet_shape.get("passed"),
                 "size": packet_size.get("passed"),
                 "source_truth": packet_truth.get("passed"),
+                "detail": packet_detail.get("passed"),
             },
         ),
         _component_row(
             "refresh_performance_validation",
-            bool(refresh_perf.get("passed")) and bool(refresh_fast.get("passed", True)) and bool(refresh_full.get("passed", True)) and (live_enabled or live_skip_allowed),
+            bool(refresh_perf.get("passed")) and bool(refresh_fast.get("passed", True)) and bool(refresh_full.get("passed", True)) and bool(refresh_detail.get("passed")) and (live_enabled or live_skip_allowed),
             status="skipped" if live_skipped else "passed",
             failure_reason="FAST/FULL refresh performance proof requires live Snowflake validation for this profile.",
             recommendation="Enable live refresh validation or add a signed waiver for the selected launch profile.",
-            details={"refresh_performance": refresh_perf.get("passed"), "fast_status": refresh_fast.get("status"), "full_status": refresh_full.get("status")},
+            details={"refresh_performance": refresh_perf.get("passed"), "fast_status": refresh_fast.get("status"), "full_status": refresh_full.get("status"), "detail_failures": refresh_detail.get("failures")},
         ),
     ]
     failures = [row for row in components if not row["passed"]]

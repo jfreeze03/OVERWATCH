@@ -1,0 +1,66 @@
+# -----------------------------------------------------------------------------
+# OVERWATCH - Snowsight/Git Streamlit deployment manifest
+#
+# Snowsight deploys from the repository root, so this manifest maps the
+# app package from .overwatch_final into the Streamlit deploy root and pins
+# MAIN_FILE to app.py. The package-local manifest remains available at
+# .overwatch_final/snowflake.yml for CLI deploys from that directory.
+# -----------------------------------------------------------------------------
+
+definition_version: 2
+entities:
+  streamlit_app:
+    type: streamlit
+    identifier:
+      database: DBA_MAINT_DB
+      schema: OVERWATCH
+      name: OVERWATCH
+    title: "OVERWATCH - Snowflake DBA Monitor"
+    comment: "DBA monitoring app for ALFA Insurance"
+
+    query_warehouse: COMPUTE_WH
+    compute_pool: SYSTEM_COMPUTE_POOL_CPU
+    runtime_name: SYSTEM$ST_CONTAINER_RUNTIME_PY3_11
+    execute_as: CALLER
+    main_file: app.py
+    artifacts:
+      - src: .overwatch_final/app.py
+        dest: app.py
+      - src: .overwatch_final/access_control.py
+        dest: access_control.py
+      - src: .overwatch_final/app_entry_timing.py
+        dest: app_entry_timing.py
+      - src: .overwatch_final/config.py
+        dest: config.py
+      - src: .overwatch_final/filters.py
+        dest: filters.py
+      - src: .overwatch_final/layout.py
+        dest: layout.py
+      - src: .overwatch_final/navigation.py
+        dest: navigation.py
+      - src: .overwatch_final/perf_trace.py
+        dest: perf_trace.py
+      - src: .overwatch_final/refresh.py
+        dest: refresh.py
+      - src: .overwatch_final/route_registry.py
+        dest: route_registry.py
+      - src: .overwatch_final/runtime_state.py
+        dest: runtime_state.py
+      - src: .overwatch_final/section_dispatch.py
+        dest: section_dispatch.py
+      - src: .overwatch_final/shell.py
+        dest: shell.py
+      - src: .overwatch_final/theme.py
+        dest: theme.py
+      - src: .overwatch_final/version.py
+        dest: version.py
+      - src: .overwatch_final/workflow_contracts.py
+        dest: workflow_contracts.py
+      - src: .overwatch_final/environment.yml
+        dest: environment.yml
+      - src: .overwatch_final/pyproject.toml
+        dest: pyproject.toml
+      - src: .overwatch_final/utils/
+        dest: utils/
+      - src: .overwatch_final/sections/
+        dest: sections/

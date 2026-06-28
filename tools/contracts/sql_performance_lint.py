@@ -142,6 +142,10 @@ def _expected_pruning_key(code: str, mode: str) -> str:
 
 def _recommendation_for(code: str, mode: str) -> str:
     code = str(code or "")
+    if "METRIC" in code or "TREND" in code:
+        return "Keep metric candidate branches column-aligned, project CONFIDENCE, and join trend rows through the documented unique key."
+    if "COALESCE_MIXED_TYPE" in code:
+        return "Cast mixed identifier/key COALESCE arguments to a common VARCHAR type before combining them."
     if "ACCOUNT_USAGE" in code:
         return "Move to confirmed fallback/admin path and include a real source time predicate plus LIMIT; if no source timestamp exists, add an explicit admin-only marker, ORDER BY, and LIMIT."
     if "SELECT_STAR" in code:
@@ -187,6 +191,21 @@ def lint_sql_text(
             "raw_sql_included": False,
         })
 
+    if re.search(r"\bCOALESCE\s*\([^)]*(?<![:])\b[A-Z0-9_]*_ID\b(?!\s*(?:::|AS)\s*VARCHAR)[^)]*\b[A-Z0-9_]*_KEY\b", upper):
+        add("COALESCE_MIXED_TYPE_RISK", "error", "COALESCE between identifier and key columns must cast to a common type.")
+    if "INSERT INTO MART_SECTION_COMMAND_METRIC" in upper:
+        try:
+            from tools.contracts.snowflake_execution_validation import validate_metric_candidate_union_shape
+
+            metric_shape = validate_metric_candidate_union_shape(sql)
+        except Exception:
+            metric_shape = {"passed": False, "failures": [{"code": "METRIC_SHAPE_VALIDATION_ERROR"}]}
+        for failure in metric_shape.get("failures", []):
+            if not isinstance(failure, dict):
+                continue
+            code = str(failure.get("code") or "METRIC_SHAPE_FAILURE")
+            add(code, "error", "Command metric candidate UNION shape is not safe for stored procedure compilation.")
+
     fast_body = _body_between(
         upper,
         "CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS_FAST_IMPL()",
@@ -210,7 +229,10 @@ def lint_sql_text(
             add("FAST_IMPL_REUSES_COMMAND_MARTS_WITHOUT_SOURCE_SNAPSHOT", "warning", "FAST_IMPL command reuse must be backed by a fresh compact source snapshot.")
         if reads_command_marts and "TMP_FAST_COMMAND_FRESHNESS" not in fast_region:
             add("FAST_IMPL_COMMAND_FRESHNESS_UNPROVEN", "error", "FAST_IMPL command reuse must emit fresh/reused/stale command-row proof.")
-        if reads_command_marts and "OBJECT_AGG(SOURCE_KEY, SOURCE_FACT_MAX_TS)" not in fast_region:
+        has_source_ts_audit = bool(
+            re.search(r"\bOBJECT_AGG\s*\(\s*SOURCE_KEY\s*,\s*(?:TO_VARIANT\s*\(\s*)?SOURCE_FACT_MAX_TS", fast_region)
+        )
+        if reads_command_marts and not has_source_ts_audit:
             add("FAST_IMPL_SOURCE_TS_AUDIT_MISSING", "error", "FAST_IMPL audit must include source fact max timestamps by source.")
         if "TMP_FAST_SOURCE_SNAPSHOT" in fast_region:
             source_tokens = (

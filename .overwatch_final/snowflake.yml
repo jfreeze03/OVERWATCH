@@ -39,7 +39,7 @@
 #   most common misconfiguration when expanding OVERWATCH to non-admin users.
 # -----------------------------------------------------------------------------
 
-definition_version: 1
+definition_version: 2
 entities:
   streamlit_app:
     type: streamlit

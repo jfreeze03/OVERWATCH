@@ -2994,7 +2994,7 @@ ALTER TABLE IF EXISTS MART_SECTION_COMMAND_EXCEPTION ADD COLUMN IF NOT EXISTS DE
 ALTER TABLE IF EXISTS MART_SECTION_COMMAND_EXCEPTION ADD COLUMN IF NOT EXISTS ENTITY_ID VARCHAR(500);
 ALTER TABLE IF EXISTS MART_SECTION_COMMAND_EXCEPTION ADD COLUMN IF NOT EXISTS EVIDENCE_ID VARCHAR(500);
 ALTER TABLE IF EXISTS MART_SECTION_COMMAND_EXCEPTION ADD COLUMN IF NOT EXISTS EVIDENCE_QUERY VARCHAR(16000);
-ALTER TABLE IF EXISTS MART_SECTION_COMMAND_EXCEPTION ADD COLUMN IF NOT EXISTS FIRST_SEEN_TS TIMESTAMP_NTZ;
+--ALTER TABLE IF EXISTS MART_SECTION_COMMAND_EXCEPTION ADD COLUMN IF NOT EXISTS FIRST_SEEN_TS TIMESTAMP_NTZ;
 ALTER TABLE IF EXISTS MART_SECTION_COMMAND_EXCEPTION ADD COLUMN IF NOT EXISTS DUE_TS TIMESTAMP_NTZ;
 ALTER TABLE IF EXISTS MART_SECTION_COMMAND_EXCEPTION ADD COLUMN IF NOT EXISTS OWNER_ID VARCHAR(300);
 ALTER TABLE IF EXISTS MART_SECTION_COMMAND_EXCEPTION ADD COLUMN IF NOT EXISTS OWNER_NAME VARCHAR(300);
@@ -4103,7 +4103,7 @@ ALTER TABLE IF EXISTS FACT_CHARGEBACK_DAILY ADD COLUMN IF NOT EXISTS ENVIRONMENT
 ALTER TABLE IF EXISTS FACT_CHARGEBACK_DAILY ADD COLUMN IF NOT EXISTS ENVIRONMENT_ROLLUP VARCHAR(100);
 ALTER TABLE IF EXISTS MART_EXECUTIVE_OBSERVABILITY ADD COLUMN IF NOT EXISTS SOURCE VARCHAR(500);
 
--- -----------------------------------------------------------------------------
+﻿-- -----------------------------------------------------------------------------
 -- 4. Load procedures
 -- -----------------------------------------------------------------------------
 
@@ -4514,7 +4514,7 @@ BEGIN
     SNAPSHOT_TS, COMPANY, DATABASE_NAME, ENVIRONMENT, SCHEMA_NAME, PROCEDURE_NAME,
     OWNER_ROLE, PROCEDURE_LANGUAGE, ARGUMENT_SIGNATURE, LAST_ALTERED, IS_ORPHAN_CANDIDATE
   )
-  WITH recent_calls AS (
+  (WITH recent_calls AS (
     SELECT DISTINCT UPPER(COALESCE(PROCEDURE_NAME, '')) AS PROCEDURE_NAME
     FROM FACT_PROCEDURE_RUN
     WHERE START_TIME >= DATEADD('DAY', -35, CURRENT_TIMESTAMP())
@@ -4535,7 +4535,7 @@ BEGIN
   FROM SNOWFLAKE.ACCOUNT_USAGE.PROCEDURES p
   LEFT JOIN recent_calls rc
     ON rc.PROCEDURE_NAME ILIKE '%' || UPPER(p.PROCEDURE_NAME) || '%'
-  WHERE p.DELETED IS NULL;
+  WHERE p.DELETED IS NULL);
 
   rows_loaded := rows_loaded + SQLROWCOUNT;
   EXCEPTION
@@ -4557,7 +4557,7 @@ BEGIN
       LAST_RUN_AT, BLAST_RADIUS, WAREHOUSES, PROCEDURES, OWNER_ROLE,
       APPROVAL_PATH, SOURCE_FRESHNESS
     )
-    WITH RECURSIVE latest AS (
+    (WITH RECURSIVE latest AS (
       SELECT MAX(SNAPSHOT_TS) AS SNAPSHOT_TS
       FROM DIM_TASK_SNAPSHOT
     ),
@@ -4739,7 +4739,7 @@ BEGIN
         ELSE 'Standard DBA review.'
       END AS APPROVAL_PATH,
       'Latest DIM_TASK_SNAPSHOT plus 7-day FACT_TASK_RUN history.' AS SOURCE_FRESHNESS
-    FROM scored;
+    FROM scored);
 
     rows_loaded := rows_loaded + SQLROWCOUNT;
   EXCEPTION
@@ -4869,7 +4869,7 @@ BEGIN
       CREDITS_ADJUSTMENT_CLOUD_SERVICES, CREDITS_BILLED,
       RATE_USD, EST_COST_USD, SOURCE_VIEW
     )
-    WITH period_data AS (
+    (WITH period_data AS (
       SELECT
         DATE(START_TIME) AS USAGE_DATE,
         UPPER(COALESCE(SERVICE_TYPE, 'UNKNOWN')) AS SERVICE_TYPE,
@@ -4929,7 +4929,7 @@ BEGIN
       ROUND(SUM(TOTAL_CREDITS * RATE_USD), 2) AS EST_COST_USD,
       'SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY' AS SOURCE_VIEW
     FROM categorized
-    GROUP BY USAGE_DATE, COMPANY, SERVICE_CATEGORY, SERVICE_TYPE;
+    GROUP BY USAGE_DATE, COMPANY, SERVICE_CATEGORY, SERVICE_TYPE);
 
     rows_loaded := rows_loaded + SQLROWCOUNT;
   EXCEPTION
@@ -5001,7 +5001,7 @@ BEGIN
     LOGIN_DATE, COMPANY, USER_NAME, CLIENT_IP, REPORTED_CLIENT_TYPE,
     REPORTED_CLIENT_VERSION, SUCCESS_COUNT, FAILURE_COUNT
   )
-  WITH user_company AS (
+  (WITH user_company AS (
     SELECT
       GRANTEE_NAME AS USER_NAME,
       MAX(IFF("ROLE" ILIKE '%TRXS%', 1, 0)) AS HAS_TRXS_ROLE,
@@ -5029,7 +5029,7 @@ BEGIN
   FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY lh
   LEFT JOIN user_company uc ON UPPER(uc.USER_NAME) = UPPER(lh.USER_NAME)
   WHERE lh.EVENT_TIMESTAMP >= DATEADD('DAY', -35, CURRENT_TIMESTAMP())
-  GROUP BY 1,2,3,4,5,6;
+  GROUP BY 1,2,3,4,5,6);
 
   rows_loaded := rows_loaded + SQLROWCOUNT;
 
@@ -5039,7 +5039,7 @@ BEGIN
   INSERT INTO FACT_GRANT_DAILY (
     SNAPSHOT_DATE, COMPANY, ROLE_NAME, GRANTEE_NAME, GRANTED_TO, CREATED_ON, DELETED_ON, GRANT_COUNT
   )
-  WITH user_company AS (
+  (WITH user_company AS (
     SELECT
       GRANTEE_NAME AS USER_NAME,
       MAX(IFF("ROLE" ILIKE '%TRXS%', 1, 0)) AS HAS_TRXS_ROLE,
@@ -5066,7 +5066,7 @@ BEGIN
     COUNT(*) AS GRANT_COUNT
   FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS g
   LEFT JOIN user_company uc ON UPPER(uc.USER_NAME) = UPPER(g.GRANTEE_NAME)
-  GROUP BY 1,2,3,4,5,6,7;
+  GROUP BY 1,2,3,4,5,6,7);
 
   rows_loaded := rows_loaded + SQLROWCOUNT;
 
@@ -5111,7 +5111,7 @@ BEGIN
       ARCHIVE_STORAGE_COOL_BYTES, ARCHIVE_STORAGE_COLD_BYTES, EST_STORAGE_TB, EST_COST_USD,
       STANDARD_STORAGE_COST_USD, HYBRID_STORAGE_COST_USD, ARCHIVE_COOL_COST_USD, ARCHIVE_COLD_COST_USD
     )
-    WITH stage_storage AS (
+    (WITH stage_storage AS (
       SELECT
         USAGE_DATE,
         SUM(COALESCE(AVERAGE_STAGE_BYTES, 0)) AS STAGE_STORAGE_BYTES
@@ -5160,7 +5160,7 @@ BEGIN
       ROUND(COALESCE(a.ARCHIVE_STORAGE_COOL_BYTES, 0) / POWER(1024, 4) * 4, 2) AS ARCHIVE_COOL_COST_USD,
       ROUND(COALESCE(a.ARCHIVE_STORAGE_COLD_BYTES, 0) / POWER(1024, 4) * 1, 2) AS ARCHIVE_COLD_COST_USD
     FROM stage_storage s
-    FULL OUTER JOIN account_storage a ON s.USAGE_DATE = a.USAGE_DATE;
+    FULL OUTER JOIN account_storage a ON s.USAGE_DATE = a.USAGE_DATE);
 
     rows_loaded := rows_loaded + SQLROWCOUNT;
   EXCEPTION
@@ -5265,7 +5265,7 @@ BEGIN
     ALLOCATED_CREDITS, EST_COST_USD, ALLOCATION_CONFIDENCE, ALLOCATION_BASIS,
     CHARGEBACK_READY, SCOPE_REVIEW, COST_OWNER, OWNER_SOURCE, OWNER_EVIDENCE
   )
-  WITH query_hour AS (
+  (WITH query_hour AS (
     SELECT
       HOUR_START,
       COMPANY,
@@ -5438,7 +5438,7 @@ BEGIN
   LEFT JOIN warehouse_owners wo
     ON UPPER(c.WAREHOUSE_NAME) = wo.WAREHOUSE_NAME
   LEFT JOIN database_owners dbo
-    ON UPPER(c.DATABASE_NAME) = dbo.DATABASE_NAME;
+    ON UPPER(c.DATABASE_NAME) = dbo.DATABASE_NAME);
 
   rows_loaded := rows_loaded + SQLROWCOUNT;
 
@@ -5453,7 +5453,7 @@ BEGIN
     IMPACT_TELEMETRY_ROWS, OPEN_ACTIONS, OVERDUE_OPEN, FIXED_WITHOUT_VERIFICATION,
     VERIFIED_CLOSURES, OWNER_APPROVAL_GAP_ROWS, NEXT_CONTROL_ACTION, LAST_ACTIVITY_TS
   )
-  WITH query_daily AS (
+  (WITH query_daily AS (
     SELECT
       TO_DATE(HOUR_START) AS SNAPSHOT_DATE,
       COMPANY,
@@ -5646,7 +5646,7 @@ BEGIN
   UNION ALL
   SELECT * FROM setting_rollup
   UNION ALL
-  SELECT * FROM action_rollup;
+  SELECT * FROM action_rollup);
 
   rows_loaded := rows_loaded + SQLROWCOUNT;
 
@@ -5661,7 +5661,7 @@ BEGIN
     OPEN_ACTIONS, OVERDUE_OPEN, FIXED_WITHOUT_VERIFICATION, VERIFIED_CLOSURES,
     OWNER_APPROVAL_GAP_ROWS, NEXT_CONTROL_ACTION, LAST_ACTIVITY_TS
   )
-  WITH access_rollup AS (
+  (WITH access_rollup AS (
     SELECT
       TO_DATE(SNAPSHOT_TS) AS SNAPSHOT_DATE,
       COMPANY,
@@ -5770,7 +5770,7 @@ BEGIN
   )
   SELECT * FROM access_rollup
   UNION ALL
-  SELECT * FROM action_rollup;
+  SELECT * FROM action_rollup);
 
   rows_loaded := rows_loaded + SQLROWCOUNT;
 
@@ -5785,7 +5785,7 @@ BEGIN
     FIXED_WITHOUT_VERIFICATION, VERIFIED_CLOSURES, OWNER_APPROVAL_GAP_ROWS,
     RECOVERY_RISK_ROWS, NEXT_CONTROL_ACTION, LAST_ACTIVITY_TS
   )
-  WITH checklist_rollup AS (
+  (WITH checklist_rollup AS (
     SELECT
       TO_DATE(SNAPSHOT_TS) AS SNAPSHOT_DATE,
       COMPANY,
@@ -5946,7 +5946,7 @@ BEGIN
   UNION ALL
   SELECT * FROM failed_login_rollup
   UNION ALL
-  SELECT * FROM privileged_grant_rollup;
+  SELECT * FROM privileged_grant_rollup);
 
   rows_loaded := rows_loaded + SQLROWCOUNT;
 
@@ -5962,7 +5962,7 @@ BEGIN
     OWNER_APPROVAL_GAP_ROWS, CONTROL_STATE, CONTROL_RANK, NEXT_CONTROL_ACTION,
     LAST_ACTIVITY_TS
   )
-  WITH evidence_rollup AS (
+  (WITH evidence_rollup AS (
     SELECT
       TO_DATE(SNAPSHOT_TS) AS SNAPSHOT_DATE,
       COMPANY,
@@ -6070,7 +6070,7 @@ BEGIN
   )
   SELECT * FROM evidence_rollup
   UNION ALL
-  SELECT * FROM action_rollup;
+  SELECT * FROM action_rollup);
 
   rows_loaded := rows_loaded + SQLROWCOUNT;
 
@@ -6112,7 +6112,7 @@ BEGIN
     QUEUED_MS_24H, CREDITS_24H, COST_24H_USD, CORTEX_COST_7D_USD,
     SECURITY_EVENTS_24H, OBJECT_CHANGES_24H, TOP_RISK
   )
-  WITH companies AS (
+  (WITH companies AS (
     SELECT 'ALFA' AS company UNION ALL SELECT 'Trexis'
   ),
   q AS (
@@ -6192,7 +6192,7 @@ BEGIN
   LEFT JOIN oc ON c.company = oc.company
   LEFT JOIN task_failures ON c.company = task_failures.company
   LEFT JOIN sec ON c.company = sec.company
-  LEFT JOIN cx ON c.company = cx.company;
+  LEFT JOIN cx ON c.company = cx.company);
 
   RETURN 'OVERWATCH control room mart refreshed.';
 END;
@@ -6221,7 +6221,7 @@ BEGIN
     INSERT INTO FACT_CORTEX_DAILY (
       USAGE_DATE, COMPANY, USER_ID, SOURCE, CREDITS_USED, EST_COST_USD, REQUEST_COUNT
     )
-    WITH user_company AS (
+    (WITH user_company AS (
       SELECT
         GRANTEE_NAME AS USER_NAME,
         MAX(IFF("ROLE" ILIKE '%TRXS%', 1, 0)) AS HAS_TRXS_ROLE,
@@ -6258,7 +6258,7 @@ BEGIN
     FROM raw
     LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS u ON raw.USER_ID = u.USER_ID
     LEFT JOIN user_company uc ON UPPER(uc.USER_NAME) = UPPER(u.NAME)
-    GROUP BY 1,2,3,4;
+    GROUP BY 1,2,3,4);
   EXCEPTION
     WHEN OTHER THEN
       INSERT INTO OVERWATCH_LOAD_AUDIT (LOAD_NAME, LOAD_STARTED_AT, LOAD_FINISHED_AT, STATUS, MESSAGE)
@@ -6292,7 +6292,7 @@ BEGIN
     SNAPSHOT_TS, COMPANY, ENVIRONMENT, SIGNAL_TYPE, SEVERITY, ENTITY_TYPE, ENTITY_NAME,
     CONTROL_SURFACE, CONTROL_SCOPE, EVIDENCE, NEXT_ACTION, PROOF_QUERY, VALUE_AT_RISK_USD, SOURCE
   )
-  WITH recent AS (
+  (WITH recent AS (
     SELECT COMPANY, WAREHOUSE_NAME, SUM(COALESCE(CREDITS_USED, 0)) AS CREDITS_7D
     FROM FACT_WAREHOUSE_HOURLY
     WHERE HOUR_START >= DATEADD('DAY', -7, DATE_TRUNC('DAY', CURRENT_TIMESTAMP()))
@@ -6335,7 +6335,7 @@ BEGIN
     'SELECT * FROM FACT_WAREHOUSE_HOURLY WHERE WAREHOUSE_NAME = ''' || WAREHOUSE_NAME || ''' ORDER BY HOUR_START DESC LIMIT 100;',
     ROUND(GREATEST(CREDIT_DELTA, 0) * CREDIT_PRICE_USD, 2),
     'FACT_WAREHOUSE_HOURLY'
-  FROM priced;
+  FROM priced);
 
   INSERT INTO FACT_COST_MONITORING_SIGNAL (
     SNAPSHOT_TS, COMPANY, ENVIRONMENT, SIGNAL_TYPE, SEVERITY, ENTITY_TYPE, ENTITY_NAME,
@@ -6519,7 +6519,7 @@ BEGIN
     SOURCE_CLASS, SURFACE, LATEST_SOURCE_TS, AGE_MINUTES, TARGET_FRESHNESS_MIN,
     STATUS, CONFIDENCE, BUSINESS_IMPACT, OWNER_ROUTE, NEXT_ACTION
   )
-  WITH companies AS (
+  (WITH companies AS (
     SELECT COLUMN1::VARCHAR AS COMPANY
     FROM VALUES ('ALL'), ('ALFA'), ('Trexis')
   ),
@@ -6618,7 +6618,7 @@ BEGIN
        AND DATEDIFF('minute', LATEST_SOURCE_TS, :snapshot_ts) > TARGET_FRESHNESS_MIN THEN 'Refresh this source or disclose stale telemetry before action.'
       ELSE 'Use this source for the current operating model.'
     END AS NEXT_ACTION
-  FROM expanded;
+  FROM expanded);
 
   INSERT INTO MART_DATA_TRUST_SUMMARY (
     SNAPSHOT_TS, COMPANY, ENVIRONMENT, TRUST_DOMAIN, METRIC, SOURCE_NAME, STATUS,
@@ -6649,7 +6649,7 @@ BEGIN
     ROUTED_ITEMS, GAP_ITEMS, COVERAGE_PCT, TRUST_LEVEL, CONFIDENCE,
     TOP_GAP_ENTITY, OWNER_ROUTE, NEXT_ACTION
   )
-  WITH raw_items AS (
+  (WITH raw_items AS (
     SELECT
       COALESCE(COMPANY, 'ALL') AS COMPANY,
       COALESCE(ENVIRONMENT, 'ALL') AS ENVIRONMENT,
@@ -6720,14 +6720,14 @@ BEGIN
       ELSE 'Route is ready for action ownership.'
     END AS NEXT_ACTION
   FROM routed
-  GROUP BY COMPANY, ENVIRONMENT, SURFACE, ENTITY_TYPE;
+  GROUP BY COMPANY, ENVIRONMENT, SURFACE, ENTITY_TYPE);
 
   INSERT INTO MART_OPERATIONAL_OWNER_COVERAGE (
     SNAPSHOT_TS, COMPANY, ENVIRONMENT, SURFACE, ENTITY_TYPE, TOTAL_ITEMS,
     ROUTED_ITEMS, GAP_ITEMS, COVERAGE_PCT, TRUST_LEVEL, CONFIDENCE,
     TOP_GAP_ENTITY, OWNER_ROUTE, NEXT_ACTION
   )
-  WITH companies AS (
+  (WITH companies AS (
     SELECT COLUMN1::VARCHAR AS COMPANY
     FROM VALUES ('ALL'), ('ALFA'), ('Trexis')
   ),
@@ -6763,14 +6763,14 @@ BEGIN
       AND existing.COMPANY = c.COMPANY
       AND existing.SURFACE = b.SURFACE
       AND existing.ENTITY_TYPE = b.ENTITY_TYPE
-  );
+  ));
 
   INSERT INTO MART_EXECUTIVE_VALUE_LEDGER (
     SNAPSHOT_TS, COMPANY, ENVIRONMENT, WINDOW_DAYS, METRIC, STATUS, OWNER_ROUTE,
     EXPECTED_SAVINGS_USD, VERIFIED_SAVINGS_USD, UNVERIFIED_ESTIMATE_USD,
     CONFIDENCE, VALUE_STATE, OPEN_ITEMS, VERIFIED_ITEMS, EVIDENCE, NEXT_ACTION
   )
-  WITH value_items AS (
+  (WITH value_items AS (
     SELECT
       COALESCE(COMPANY, 'ALL') AS COMPANY,
       COALESCE(ENVIRONMENT, 'ALL') AS ENVIRONMENT,
@@ -6846,14 +6846,14 @@ BEGIN
   FROM value_items v
   JOIN windows w
     ON COALESCE(v.UPDATED_AT, CURRENT_TIMESTAMP()) >= DATEADD('DAY', -1 * w.WINDOW_DAYS, CURRENT_TIMESTAMP())
-  GROUP BY v.COMPANY, v.ENVIRONMENT, w.WINDOW_DAYS, COALESCE(v.STATUS, 'Proposed'), v.OWNER_ROUTE, v.CONFIDENCE;
+  GROUP BY v.COMPANY, v.ENVIRONMENT, w.WINDOW_DAYS, COALESCE(v.STATUS, 'Proposed'), v.OWNER_ROUTE, v.CONFIDENCE);
 
   INSERT INTO MART_EXECUTIVE_VALUE_LEDGER (
     SNAPSHOT_TS, COMPANY, ENVIRONMENT, WINDOW_DAYS, METRIC, STATUS, OWNER_ROUTE,
     EXPECTED_SAVINGS_USD, VERIFIED_SAVINGS_USD, UNVERIFIED_ESTIMATE_USD,
     CONFIDENCE, VALUE_STATE, OPEN_ITEMS, VERIFIED_ITEMS, EVIDENCE, NEXT_ACTION
   )
-  WITH companies AS (
+  (WITH companies AS (
     SELECT COLUMN1::VARCHAR AS COMPANY
     FROM VALUES ('ALL'), ('ALFA'), ('Trexis')
   ),
@@ -6886,14 +6886,14 @@ BEGIN
     WHERE existing.SNAPSHOT_TS = :snapshot_ts
       AND existing.COMPANY = c.COMPANY
       AND existing.WINDOW_DAYS = w.WINDOW_DAYS
-  );
+  ));
 
   INSERT INTO OVERWATCH_APP_OBSERVABILITY (
     EVENT_TS, COMPANY, ENVIRONMENT, APP_VERSION, SECTION_NAME, EVENT_TYPE,
     RENDER_MS, QUERY_COUNT, QUERY_FAILURE_COUNT, OVERWATCH_COST_USD,
     VALIDATION_STATUS, DEPLOYMENT_VERSION, LAST_DEPLOYMENT_TS, DETAIL
   )
-  WITH deployment AS (
+  (WITH deployment AS (
     SELECT
       MAX(MIGRATION_VERSION) AS DEPLOYMENT_VERSION,
       MAX(APPLIED_AT) AS LAST_DEPLOYMENT_TS
@@ -6922,14 +6922,14 @@ BEGIN
     COALESCE(l.MESSAGE, l.CACHE_TIER, 'OVERWATCH runtime log') AS DETAIL
   FROM OVERWATCH_USAGE_LOG l
   CROSS JOIN deployment d
-  WHERE l.LOG_TIME >= DATEADD('DAY', -7, CURRENT_TIMESTAMP());
+  WHERE l.LOG_TIME >= DATEADD('DAY', -7, CURRENT_TIMESTAMP()));
 
   INSERT INTO OVERWATCH_APP_OBSERVABILITY (
     EVENT_TS, COMPANY, ENVIRONMENT, APP_VERSION, SECTION_NAME, EVENT_TYPE,
     RENDER_MS, QUERY_COUNT, QUERY_FAILURE_COUNT, OVERWATCH_COST_USD,
     VALIDATION_STATUS, DEPLOYMENT_VERSION, LAST_DEPLOYMENT_TS, DETAIL
   )
-  WITH companies AS (
+  (WITH companies AS (
     SELECT COLUMN1::VARCHAR AS COMPANY
     FROM VALUES ('ALL'), ('ALFA'), ('Trexis')
   ),
@@ -6961,14 +6961,14 @@ BEGIN
     FROM OVERWATCH_APP_OBSERVABILITY existing
     WHERE existing.EVENT_TS >= DATEADD('DAY', -7, CURRENT_TIMESTAMP())
       AND existing.COMPANY = c.COMPANY
-  );
+  ));
 
   INSERT INTO MART_APP_OBSERVABILITY_SUMMARY (
     SNAPSHOT_TS, COMPANY, ENVIRONMENT, APP_VERSION, HEALTH_STATE, SECTION_NAME,
     P95_RENDER_MS, SLOW_SECTION_COUNT, QUERY_FAILURE_COUNT, OVERWATCH_COST_USD,
     VALIDATION_STATUS, LAST_DEPLOYMENT_TS, CONFIDENCE, SOURCE, NEXT_ACTION
   )
-  WITH recent AS (
+  (WITH recent AS (
     SELECT *
     FROM OVERWATCH_APP_OBSERVABILITY
     WHERE EVENT_TS >= DATEADD('DAY', -7, CURRENT_TIMESTAMP())
@@ -7012,7 +7012,7 @@ BEGIN
       WHEN SLOW_SECTION_COUNT > 0 THEN 'Review slow sections and load gates before broadening usage.'
       ELSE 'App telemetry is within the configured operating threshold.'
     END AS NEXT_ACTION
-  FROM section_summary;
+  FROM section_summary);
 
   INSERT INTO OVERWATCH_LOAD_AUDIT (LOAD_NAME, LOAD_STARTED_AT, LOAD_FINISHED_AT, STATUS, MESSAGE)
   VALUES (
@@ -7048,7 +7048,7 @@ BEGIN
     VALIDATION_STATUS, RISK_LEVEL, VALUE, VALUE_DETAIL, SOURCE_OBJECT,
     FRESHNESS_MINUTES, OWNER_ROUTE, RUNBOOK_STEP, CONFIDENCE
   )
-  WITH latest_deployment AS (
+  (WITH latest_deployment AS (
     SELECT MIGRATION_VERSION, APPLIED_AT
     FROM OVERWATCH_SCHEMA_MIGRATION
     QUALIFY ROW_NUMBER() OVER (ORDER BY APPLIED_AT DESC, MIGRATION_VERSION DESC) = 1
@@ -7086,7 +7086,7 @@ BEGIN
     0,
     'DBA / Platform',
     'Run OVERWATCH_MART_VALIDATION.sql after setup and after material refresh changes.',
-    'exact';
+    'exact');
 
   INSERT INTO OVERWATCH_PRODUCTION_VALIDATION_STATUS (
     SNAPSHOT_TS, COMPANY, ENVIRONMENT, CHECK_DOMAIN, CHECK_KEY, CHECK_NAME,
@@ -7161,7 +7161,7 @@ BEGIN
     VALIDATION_STATUS, RISK_LEVEL, VALUE, VALUE_DETAIL, SOURCE_OBJECT,
     FRESHNESS_MINUTES, OWNER_ROUTE, RUNBOOK_STEP, CONFIDENCE
   )
-  WITH latest_load_status AS (
+  (WITH latest_load_status AS (
     SELECT *
     FROM OVERWATCH_LOAD_AUDIT
     WHERE LOAD_STARTED_AT >= DATEADD('DAY', -7, CURRENT_TIMESTAMP())
@@ -7202,14 +7202,14 @@ BEGIN
     'Security / DBA',
     'Open the failed load row, grant the minimum required privilege, rerun the refresh, then rerun validation.',
     IFF(COALESCE(FAILURE_COUNT, 0) > 0, 'estimated', 'fallback')
-  FROM privilege_failures;
+  FROM privilege_failures);
 
   INSERT INTO OVERWATCH_PRODUCTION_VALIDATION_STATUS (
     SNAPSHOT_TS, COMPANY, ENVIRONMENT, CHECK_DOMAIN, CHECK_KEY, CHECK_NAME,
     VALIDATION_STATUS, RISK_LEVEL, VALUE, VALUE_DETAIL, SOURCE_OBJECT,
     FRESHNESS_MINUTES, OWNER_ROUTE, RUNBOOK_STEP, CONFIDENCE
   )
-  WITH latest_load_status AS (
+  (WITH latest_load_status AS (
     SELECT *
     FROM OVERWATCH_LOAD_AUDIT
     WHERE LOAD_STARTED_AT >= DATEADD('DAY', -1, CURRENT_TIMESTAMP())
@@ -7243,14 +7243,14 @@ BEGIN
     'DBA On-Call',
     'Fix failed refreshes before relying on first-paint summaries.',
     'exact'
-  FROM refresh_failures;
+  FROM refresh_failures);
 
   INSERT INTO OVERWATCH_PRODUCTION_VALIDATION_STATUS (
     SNAPSHOT_TS, COMPANY, ENVIRONMENT, CHECK_DOMAIN, CHECK_KEY, CHECK_NAME,
     VALIDATION_STATUS, RISK_LEVEL, VALUE, VALUE_DETAIL, SOURCE_OBJECT,
     FRESHNESS_MINUTES, OWNER_ROUTE, RUNBOOK_STEP, CONFIDENCE
   )
-  WITH summary_marts AS (
+  (WITH summary_marts AS (
     SELECT 'MART_EXECUTIVE_OBSERVABILITY' AS MART_NAME, COUNT(*) AS ROW_COUNT, MAX(SNAPSHOT_TS) AS LATEST_TS FROM MART_EXECUTIVE_OBSERVABILITY
     UNION ALL
     SELECT 'MART_DBA_CONTROL_ROOM', COUNT(*), MAX(SNAPSHOT_TS) FROM MART_DBA_CONTROL_ROOM
@@ -7279,14 +7279,14 @@ BEGIN
     'DBA / Platform',
     'Run the appropriate OVERWATCH refresh procedure and recheck this summary mart.',
     'exact'
-  FROM summary_marts;
+  FROM summary_marts);
 
   INSERT INTO OVERWATCH_PRODUCTION_VALIDATION_STATUS (
     SNAPSHOT_TS, COMPANY, ENVIRONMENT, CHECK_DOMAIN, CHECK_KEY, CHECK_NAME,
     VALIDATION_STATUS, RISK_LEVEL, VALUE, VALUE_DETAIL, SOURCE_OBJECT,
     FRESHNESS_MINUTES, OWNER_ROUTE, RUNBOOK_STEP, CONFIDENCE
   )
-  WITH latest_trust AS (
+  (WITH latest_trust AS (
     SELECT *
     FROM MART_DATA_TRUST_SUMMARY
     WHERE SNAPSHOT_TS >= DATEADD('DAY', -2, CURRENT_TIMESTAMP())
@@ -7323,14 +7323,14 @@ BEGIN
     'DBA / Platform',
     'Refresh stale sources or disclose source lag before action. Trexis is governed with ALFA-equivalent telemetry expectations; missing Trexis rows are true coverage gaps.',
     'allocated'
-  FROM trust;
+  FROM trust);
 
   INSERT INTO OVERWATCH_PRODUCTION_VALIDATION_STATUS (
     SNAPSHOT_TS, COMPANY, ENVIRONMENT, CHECK_DOMAIN, CHECK_KEY, CHECK_NAME,
     VALIDATION_STATUS, RISK_LEVEL, VALUE, VALUE_DETAIL, SOURCE_OBJECT,
     FRESHNESS_MINUTES, OWNER_ROUTE, RUNBOOK_STEP, CONFIDENCE
   )
-  WITH required_settings AS (
+  (WITH required_settings AS (
     SELECT * FROM VALUES
       ('CREDIT_PRICE_USD'),
       ('AI_CREDIT_PRICE_USD'),
@@ -7379,7 +7379,7 @@ BEGIN
     'DBA / Platform',
     'Update OVERWATCH_SETTINGS for pricing, retention, alert delivery, and notification integration values.',
     'exact'
-  FROM drift;
+  FROM drift);
 
   INSERT INTO OVERWATCH_PRODUCTION_VALIDATION_STATUS (
     SNAPSHOT_TS, COMPANY, ENVIRONMENT, CHECK_DOMAIN, CHECK_KEY, CHECK_NAME,
@@ -7414,7 +7414,7 @@ BEGIN
     CONFIG_DRIFT_COUNT, ENVIRONMENT_READINESS, READINESS_SCORE, TOP_RISK,
     CONFIDENCE, NEXT_ACTION
   )
-  WITH latest AS (
+  (WITH latest AS (
     SELECT *
     FROM OVERWATCH_PRODUCTION_VALIDATION_STATUS
     WHERE SNAPSHOT_TS = :snapshot_ts
@@ -7480,7 +7480,7 @@ BEGIN
     END AS NEXT_ACTION
   FROM companies c
   CROSS JOIN aggregate_status a
-  LEFT JOIN deployment d ON TRUE;
+  LEFT JOIN deployment d ON TRUE);
 
   INSERT INTO OVERWATCH_LOAD_AUDIT (LOAD_NAME, LOAD_STARTED_AT, LOAD_FINISHED_AT, STATUS, MESSAGE)
   VALUES (
@@ -7517,7 +7517,7 @@ BEGIN
     OWNER_ROUTE, OWNER_GAP, VALUE_AT_RISK_USD, CONFIDENCE, SOURCE_OBJECTS,
     LAST_REFRESHED_TS
   )
-  WITH companies AS (
+  (WITH companies AS (
     SELECT COLUMN1::VARCHAR AS COMPANY
     FROM VALUES ('ALL'), ('ALFA'), ('Trexis')
   ),
@@ -8003,7 +8003,7 @@ BEGIN
     CONFIDENCE,
     SOURCE_OBJECTS,
     LAST_REFRESHED_TS
-  FROM annotated;
+  FROM annotated);
 
   INSERT INTO MART_EXECUTIVE_SCORECARD_SUMMARY (
     SNAPSHOT_TS, COMPANY, ENVIRONMENT, SCORE_KEY, SCORE_NAME, DISPLAY_ORDER,
@@ -8071,7 +8071,7 @@ BEGIN
     METHODOLOGY, MAIN_DRIVER, RECOMMENDED_ACTION, OWNER_ROUTE, OWNER_GAP,
     VALUE_UNIT, VALUE_AT_RISK_USD, SOURCE_OBJECTS, LAST_REFRESHED_TS
   )
-  WITH companies AS (
+  (WITH companies AS (
     SELECT COLUMN1::VARCHAR AS COMPANY
     FROM VALUES ('ALL'), ('ALFA'), ('Trexis')
   ),
@@ -8480,7 +8480,7 @@ BEGIN
     VALUE_AT_RISK_USD,
     SOURCE_OBJECTS,
     LAST_REFRESHED_TS
-  FROM annotated;
+  FROM annotated);
 
   INSERT INTO MART_EXECUTIVE_FORECAST_SUMMARY (
     SNAPSHOT_TS, COMPANY, ENVIRONMENT, FORECAST_KEY, FORECAST_NAME, DISPLAY_ORDER,
@@ -8555,7 +8555,7 @@ BEGIN
     RISK_LEVEL, BUSINESS_IMPACT, OWNER_ROUTE, OWNER_GAP, RELATED_ALERT_COUNT,
     RELATED_INCIDENTS, CONFIDENCE, SOURCE_OBJECTS, LAST_REFRESHED_TS
   )
-  WITH object_changes AS (
+  (WITH object_changes AS (
     SELECT
       COALESCE(COMPANY, 'ALL') AS COMPANY,
       COALESCE(ENVIRONMENT, 'ALL') AS ENVIRONMENT,
@@ -8699,7 +8699,7 @@ BEGIN
     ON a.CHANGE_TYPE = e.CHANGE_TYPE
    AND a.OBJECT_NAME = e.OBJECT_NAME
    AND a.CHANGE_TS = e.CHANGE_TS
-   AND a.COMPANY = e.COMPANY;
+   AND a.COMPANY = e.COMPANY);
 
   INSERT INTO OVERWATCH_CHANGE_CORRELATION (
     SNAPSHOT_TS, COMPANY, ENVIRONMENT, CHANGE_ID, CHANGE_TYPE, OBJECT_TYPE,
@@ -8708,7 +8708,7 @@ BEGIN
     CORRELATION_STRENGTH, CORRELATION_LABEL, RISK_LEVEL, BUSINESS_IMPACT,
     OWNER_ROUTE, CONFIDENCE, EVIDENCE, LAST_REFRESHED_TS
   )
-  WITH changes AS (
+  (WITH changes AS (
     SELECT *
     FROM OVERWATCH_CHANGE_EVENT
     WHERE SNAPSHOT_TS = :snapshot_ts
@@ -8812,7 +8812,7 @@ BEGIN
   QUALIFY ROW_NUMBER() OVER (
     PARTITION BY CHANGE_ID, CORRELATION_TYPE, RELATED_SIGNAL, RELATED_ENTITY, RELATED_TS
     ORDER BY RELATED_TS DESC
-  ) = 1;
+  ) = 1);
 
   INSERT INTO MART_CHANGE_INTELLIGENCE_SUMMARY (
     SNAPSHOT_TS, COMPANY, ENVIRONMENT, CHANGE_TYPE, CHANGE_CATEGORY, OBJECT_TYPE,
@@ -8820,7 +8820,7 @@ BEGIN
     CORRELATION_CANDIDATE_COUNT, LATEST_CHANGE_TS, TOP_OBJECT_NAME, TOP_CHANGED_BY,
     RISK_LEVEL, BUSINESS_IMPACT, OWNER_ROUTE, CONFIDENCE, LAST_REFRESHED_TS
   )
-  WITH companies AS (
+  (WITH companies AS (
     SELECT COLUMN1::VARCHAR AS COMPANY
     FROM VALUES ('ALL'), ('ALFA'), ('Trexis')
   ),
@@ -8988,7 +8988,7 @@ BEGIN
   LEFT JOIN corr_agg corr
     ON corr.COMPANY = c.COMPANY
    AND corr.CHANGE_TYPE = r.CHANGE_TYPE
-  WHERE r.ENABLED = TRUE;
+  WHERE r.ENABLED = TRUE);
 
   INSERT INTO OVERWATCH_LOAD_AUDIT (LOAD_NAME, LOAD_STARTED_AT, LOAD_FINISHED_AT, STATUS, MESSAGE)
   VALUES (
@@ -9044,7 +9044,7 @@ BEGIN
     VERIFICATION_STATUS, EXPECTED_SAVINGS_USD, ACTUAL_VERIFIED_SAVINGS_USD,
     EVIDENCE, CLOSED_TS, LAST_REFRESHED_TS
   )
-  WITH action_queue AS (
+  (WITH action_queue AS (
     SELECT
       COALESCE(COMPANY, 'ALL') AS COMPANY,
       COALESCE(ENVIRONMENT, 'ALL') AS ENVIRONMENT,
@@ -9251,7 +9251,7 @@ BEGIN
     EVIDENCE,
     CLOSED_TS,
     LAST_REFRESHED_TS
-  FROM all_workflows;
+  FROM all_workflows);
 
   INSERT INTO OVERWATCH_ACTION_APPROVAL (
     SNAPSHOT_TS, WORKFLOW_ID, COMPANY, ENVIRONMENT, ACTION_DOMAIN,
@@ -9367,7 +9367,7 @@ BEGIN
     ACTUAL_VERIFIED_SAVINGS_USD, UNVERIFIED_EXPECTED_USD, TOP_FINDING,
     NEXT_ACTION, CONFIDENCE, LAST_REFRESHED_TS
   )
-  WITH domains AS (
+  (WITH domains AS (
     SELECT COLUMN1::VARCHAR AS ACTION_DOMAIN
     FROM VALUES ('ALL'), ('Cost'), ('Operations'), ('Security'), ('Workload'), ('Alert')
   ),
@@ -9509,7 +9509,7 @@ BEGIN
   CROSS JOIN domains d
   LEFT JOIN agg a
     ON a.COMPANY = c.COMPANY
-   AND a.ACTION_DOMAIN = d.ACTION_DOMAIN;
+   AND a.ACTION_DOMAIN = d.ACTION_DOMAIN);
 
   INSERT INTO OVERWATCH_LOAD_AUDIT (LOAD_NAME, LOAD_STARTED_AT, LOAD_FINISHED_AT, STATUS, MESSAGE)
   VALUES (
@@ -10097,7 +10097,7 @@ BEGIN
     TOP_EVIDENCE_SUMMARY, TOP_RECOMMENDED_ACTION, CONFIDENCE, RISK_LEVEL,
     LAST_REFRESHED_TS
   )
-  WITH ranked AS (
+  (WITH ranked AS (
     SELECT
       f.*,
       ROW_NUMBER() OVER (
@@ -10157,7 +10157,7 @@ BEGIN
     ON r.COMPANY = a.COMPANY
    AND r.ENVIRONMENT = a.ENVIRONMENT
    AND r.INVESTIGATION_TYPE = a.INVESTIGATION_TYPE
-   AND r.RN = 1;
+   AND r.RN = 1);
 
   INSERT INTO OVERWATCH_LOAD_AUDIT (LOAD_NAME, LOAD_STARTED_AT, LOAD_FINISHED_AT, STATUS, MESSAGE)
   VALUES (
@@ -10749,7 +10749,7 @@ BEGIN
       COALESCE(ctrl.DBA_SECURITY_EVENTS, 0) AS DBA_SECURITY_EVENTS,
       COALESCE(driver.DRIVER, 'No cost driver detected') AS TOP_COST_DRIVER,
       COALESCE(ctrl.DBA_TOP_RISK, 'No control-room risk detected') AS DBA_TOP_RISK,
-      COALESCE(a.TOP_ALERT_EVENT_ID, a.TOP_ALERT_KEY) AS TOP_ALERT_EVIDENCE_ID,
+      COALESCE(a.TOP_ALERT_EVENT_ID::VARCHAR, a.TOP_ALERT_KEY) AS TOP_ALERT_EVIDENCE_ID,
       a.TOP_ALERT_KEY AS TOP_ALERT_KEY,
       a.TOP_ALERT_OWNER AS TOP_ALERT_OWNER,
       ac.TOP_ACTION_ID AS TOP_ACTION_ID,
@@ -11100,6 +11100,7 @@ BEGIN
       BRIEF_ID,
       SECTION_NAME,
       COMPANY,
+      ENVIRONMENT,
       WINDOW_DAYS,
       CREDIT_PRICE_USD,
       AI_CREDIT_PRICE_USD,
@@ -11115,6 +11116,7 @@ BEGIN
       s.BRIEF_ID,
       s.SECTION_NAME,
       s.COMPANY,
+      s.ENVIRONMENT,
       s.WINDOW_DAYS,
       s.TREND_DAYS,
       DATEADD('DAY', -1 * (s.TREND_DAYS - 1 - o.DAY_OFFSET), CURRENT_DATE()) AS TREND_DATE
@@ -11412,6 +11414,10 @@ BEGIN
   trend_points AS (
     SELECT
       ds.BRIEF_ID,
+      ds.SECTION_NAME,
+      ds.COMPANY,
+      ds.ENVIRONMENT,
+      ds.WINDOW_DAYS,
       ms.METRIC_KEY,
       ds.TREND_DATE,
       ds.TREND_DAYS,
@@ -11431,6 +11437,10 @@ BEGIN
   )
   SELECT
     BRIEF_ID,
+    SECTION_NAME,
+    COMPANY,
+    ENVIRONMENT,
+    WINDOW_DAYS,
     METRIC_KEY,
     ARRAY_AGG(
       OBJECT_CONSTRUCT_KEEP_NULL(
@@ -11444,7 +11454,7 @@ BEGIN
     MAX(IFF(FILL_ZERO, 'zero_fill_quiet_days', 'null_when_unreported')) AS ZERO_FILL_POLICY
   FROM trend_points
   WHERE TREND_DATE IS NOT NULL
-  GROUP BY BRIEF_ID, METRIC_KEY;
+  GROUP BY BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, METRIC_KEY;
 
   CREATE OR REPLACE TEMPORARY TABLE TMP_SECTION_DECISION_LOGIC AS
   WITH executive_decision AS (
@@ -11973,8 +11983,6 @@ BEGIN
       WHEN TO_DATE(c.DUE_TS) = CURRENT_DATE() THEN 'Due today'
       ELSE 'Due ' || TO_VARCHAR(TO_DATE(c.DUE_TS))
     END AS DECISION_SLA_STATE,
-    c.FIRST_SEEN_TS,
-    c.DUE_TS,
     CASE
       WHEN c.DUE_TS IS NULL THEN IFF(c.FIRST_SEEN_TS IS NULL, 'SLA unavailable', 'No SLA')
       WHEN c.DUE_TS < CURRENT_TIMESTAMP() THEN 'Overdue'
@@ -12103,14 +12111,17 @@ BEGIN
     TREND_DIRECTION, DIRECTIONALITY, IS_AVAILABLE, AVAILABILITY_STATE, UNAVAILABLE_REASON,
     SOURCE_KEY, CONFIDENCE, SORT_ORDER, SNAPSHOT_TS, LOAD_TS
   )
-  SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, METRIC_KEY, METRIC_LABEL,
-         METRIC_VALUE, METRIC_NUMERIC_VALUE, METRIC_TEXT_VALUE, METRIC_FORMAT, METRIC_UNIT,
-         METRIC_DETAIL, METRIC_TONE, TREND_NUMERIC_VALUE, TREND_LABEL,
-         (SELECT tr.TREND_POINTS FROM TMP_SECTION_METRIC_TRENDS tr WHERE tr.BRIEF_ID = metric_candidates.BRIEF_ID AND tr.METRIC_KEY = metric_candidates.METRIC_KEY) AS TREND_POINTS,
-         (SELECT tr.TREND_PERIOD FROM TMP_SECTION_METRIC_TRENDS tr WHERE tr.BRIEF_ID = metric_candidates.BRIEF_ID AND tr.METRIC_KEY = metric_candidates.METRIC_KEY) AS TREND_PERIOD,
-         (SELECT tr.TREND_POINT_COUNT FROM TMP_SECTION_METRIC_TRENDS tr WHERE tr.BRIEF_ID = metric_candidates.BRIEF_ID AND tr.METRIC_KEY = metric_candidates.METRIC_KEY) AS TREND_POINT_COUNT,
-         (SELECT tr.TREND_QUALITY FROM TMP_SECTION_METRIC_TRENDS tr WHERE tr.BRIEF_ID = metric_candidates.BRIEF_ID AND tr.METRIC_KEY = metric_candidates.METRIC_KEY) AS TREND_QUALITY,
-         (SELECT tr.ZERO_FILL_POLICY FROM TMP_SECTION_METRIC_TRENDS tr WHERE tr.BRIEF_ID = metric_candidates.BRIEF_ID AND tr.METRIC_KEY = metric_candidates.METRIC_KEY) AS ZERO_FILL_POLICY,
+  SELECT metric_candidates.BRIEF_ID, metric_candidates.SECTION_NAME, metric_candidates.COMPANY,
+         metric_candidates.ENVIRONMENT, metric_candidates.WINDOW_DAYS, metric_candidates.METRIC_KEY,
+         metric_candidates.METRIC_LABEL, metric_candidates.METRIC_VALUE, metric_candidates.METRIC_NUMERIC_VALUE,
+         metric_candidates.METRIC_TEXT_VALUE, metric_candidates.METRIC_FORMAT, metric_candidates.METRIC_UNIT,
+         metric_candidates.METRIC_DETAIL, metric_candidates.METRIC_TONE, metric_candidates.TREND_NUMERIC_VALUE,
+         metric_candidates.TREND_LABEL,
+         tr.TREND_POINTS,
+         tr.TREND_PERIOD,
+         tr.TREND_POINT_COUNT,
+         tr.TREND_QUALITY,
+         tr.ZERO_FILL_POLICY,
          IFF(METRIC_NUMERIC_VALUE IS NULL OR TREND_NUMERIC_VALUE IS NULL, NULL, METRIC_NUMERIC_VALUE - TREND_NUMERIC_VALUE) AS PRIOR_VALUE,
          TREND_NUMERIC_VALUE AS DELTA_NUMERIC_VALUE,
          IFF(METRIC_NUMERIC_VALUE IS NULL OR TREND_NUMERIC_VALUE IS NULL OR ABS(METRIC_NUMERIC_VALUE - TREND_NUMERIC_VALUE) = 0, NULL,
@@ -12118,8 +12129,8 @@ BEGIN
          ) AS DELTA_PERCENT,
          CASE WHEN TREND_NUMERIC_VALUE > 0 THEN 'Up' WHEN TREND_NUMERIC_VALUE < 0 THEN 'Down' ELSE 'Flat' END AS TREND_DIRECTION,
          CASE
-           WHEN METRIC_KEY IN ('platform_health','production_readiness','data_trust','verified_value','owner_coverage') THEN 'lower_is_worse'
-           WHEN METRIC_KEY IN ('top_cost_driver','hottest_warehouse','top_dba_risk') THEN 'neutral'
+           WHEN metric_candidates.METRIC_KEY IN ('platform_health','production_readiness','data_trust','verified_value','owner_coverage') THEN 'lower_is_worse'
+           WHEN metric_candidates.METRIC_KEY IN ('top_cost_driver','hottest_warehouse','top_dba_risk') THEN 'neutral'
            ELSE 'higher_is_worse'
          END AS DIRECTIONALITY,
          IFF(
@@ -12144,100 +12155,100 @@ BEGIN
            METRIC_DETAIL
          ) AS UNAVAILABLE_REASON,
          CASE
-           WHEN METRIC_KEY IN ('cortex_spend','cortex_predictive_alerts','cortex_spend_share','cortex_risk') THEN 'cortex_daily'
-           WHEN METRIC_KEY IN ('cortex_cost','cost_24h') THEN 'dba_control_room'
-           WHEN METRIC_KEY IN ('total_spend','spend_movement_pct','top_cost_driver') THEN 'cost_daily'
-           WHEN METRIC_KEY IN ('budget_contract_risk') THEN 'forecast'
-           WHEN METRIC_KEY IN ('forecast_run_rate') THEN 'forecast'
-           WHEN METRIC_KEY IN ('verified_savings','unverified_savings') THEN 'value_ledger'
-           WHEN METRIC_KEY IN ('critical_high','critical_high_issues','active_alerts','overdue_alerts','cost_alerts','reliability_alerts','cortex_predictive','unassigned_alerts') THEN 'alert_events'
-           WHEN METRIC_KEY = 'security_alerts' AND SECTION_NAME = 'Security Monitoring' THEN 'security_alerts'
-           WHEN METRIC_KEY = 'security_alerts' THEN 'alert_events'
-           WHEN METRIC_KEY IN ('notification_failures') THEN 'notification_log'
-           WHEN METRIC_KEY IN ('open_actions','open_action_queue','overdue_actions','open_cost_actions') THEN 'action_queue'
-           WHEN METRIC_KEY IN ('overdue_security_actions') THEN 'security_operability'
-           WHEN METRIC_KEY IN ('failed_queries','queue_pressure','queue_blocked_pressure','spill_bytes','long_running_queries','operational_risk') THEN 'query_hourly'
-           WHEN METRIC_KEY IN ('pipeline_failures','sla_risk','suspended_tasks') THEN 'task_runs'
-           WHEN METRIC_KEY IN ('copy_load_failures') THEN 'copy_load'
-           WHEN METRIC_KEY IN ('failed_logins') THEN 'login_daily'
-           WHEN METRIC_KEY IN ('risky_grants','privilege_changes','access_changes') THEN 'grant_daily'
-           WHEN METRIC_KEY IN ('mfa_gaps','sharing_exposure','security_warnings','security_risk') THEN 'security_operability'
-           WHEN METRIC_KEY IN ('owner_coverage','unassigned_findings') THEN 'owner_coverage'
-           WHEN METRIC_KEY IN ('recent_changes','recent_workload_changes') THEN 'change_summary'
-           WHEN METRIC_KEY IN ('platform_health') THEN 'executive_observability'
-           WHEN METRIC_KEY IN ('production_readiness') THEN 'production_readiness'
-           WHEN METRIC_KEY IN ('data_trust') THEN 'data_trust'
-           WHEN METRIC_KEY IN ('verified_value') THEN 'value_ledger'
-           WHEN METRIC_KEY IN ('top_dba_risk') THEN 'dba_control_room'
-           WHEN METRIC_KEY = 'hottest_warehouse' AND SECTION_NAME = 'DBA Control Room' THEN 'dba_control_room'
-           WHEN METRIC_KEY = 'hottest_warehouse' THEN 'query_hourly'
-           WHEN METRIC_KEY IN ('monitoring_overhead') THEN 'app_observability'
+           WHEN metric_candidates.METRIC_KEY IN ('cortex_spend','cortex_predictive_alerts','cortex_spend_share','cortex_risk') THEN 'cortex_daily'
+           WHEN metric_candidates.METRIC_KEY IN ('cortex_cost','cost_24h') THEN 'dba_control_room'
+           WHEN metric_candidates.METRIC_KEY IN ('total_spend','spend_movement_pct','top_cost_driver') THEN 'cost_daily'
+           WHEN metric_candidates.METRIC_KEY IN ('budget_contract_risk') THEN 'forecast'
+           WHEN metric_candidates.METRIC_KEY IN ('forecast_run_rate') THEN 'forecast'
+           WHEN metric_candidates.METRIC_KEY IN ('verified_savings','unverified_savings') THEN 'value_ledger'
+           WHEN metric_candidates.METRIC_KEY IN ('critical_high','critical_high_issues','active_alerts','overdue_alerts','cost_alerts','reliability_alerts','cortex_predictive','unassigned_alerts') THEN 'alert_events'
+           WHEN metric_candidates.METRIC_KEY = 'security_alerts' AND metric_candidates.SECTION_NAME = 'Security Monitoring' THEN 'security_alerts'
+           WHEN metric_candidates.METRIC_KEY = 'security_alerts' THEN 'alert_events'
+           WHEN metric_candidates.METRIC_KEY IN ('notification_failures') THEN 'notification_log'
+           WHEN metric_candidates.METRIC_KEY IN ('open_actions','open_action_queue','overdue_actions','open_cost_actions') THEN 'action_queue'
+           WHEN metric_candidates.METRIC_KEY IN ('overdue_security_actions') THEN 'security_operability'
+           WHEN metric_candidates.METRIC_KEY IN ('failed_queries','queue_pressure','queue_blocked_pressure','spill_bytes','long_running_queries','operational_risk') THEN 'query_hourly'
+           WHEN metric_candidates.METRIC_KEY IN ('pipeline_failures','sla_risk','suspended_tasks') THEN 'task_runs'
+           WHEN metric_candidates.METRIC_KEY IN ('copy_load_failures') THEN 'copy_load'
+           WHEN metric_candidates.METRIC_KEY IN ('failed_logins') THEN 'login_daily'
+           WHEN metric_candidates.METRIC_KEY IN ('risky_grants','privilege_changes','access_changes') THEN 'grant_daily'
+           WHEN metric_candidates.METRIC_KEY IN ('mfa_gaps','sharing_exposure','security_warnings','security_risk') THEN 'security_operability'
+           WHEN metric_candidates.METRIC_KEY IN ('owner_coverage','unassigned_findings') THEN 'owner_coverage'
+           WHEN metric_candidates.METRIC_KEY IN ('recent_changes','recent_workload_changes') THEN 'change_summary'
+           WHEN metric_candidates.METRIC_KEY IN ('platform_health') THEN 'executive_observability'
+           WHEN metric_candidates.METRIC_KEY IN ('production_readiness') THEN 'production_readiness'
+           WHEN metric_candidates.METRIC_KEY IN ('data_trust') THEN 'data_trust'
+           WHEN metric_candidates.METRIC_KEY IN ('verified_value') THEN 'value_ledger'
+           WHEN metric_candidates.METRIC_KEY IN ('top_dba_risk') THEN 'dba_control_room'
+           WHEN metric_candidates.METRIC_KEY = 'hottest_warehouse' AND metric_candidates.SECTION_NAME = 'DBA Control Room' THEN 'dba_control_room'
+           WHEN metric_candidates.METRIC_KEY = 'hottest_warehouse' THEN 'query_hourly'
+           WHEN metric_candidates.METRIC_KEY IN ('monitoring_overhead') THEN 'app_observability'
            ELSE NULL
          END AS SOURCE_KEY,
-         CONFIDENCE,
-         SORT_ORDER, :snapshot_ts, CURRENT_TIMESTAMP()
+         metric_candidates.CONFIDENCE,
+         metric_candidates.SORT_ORDER, :snapshot_ts, CURRENT_TIMESTAMP()
   FROM (
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'total_spend' AS METRIC_KEY, 'Total Spend' AS METRIC_LABEL,
            '$' || TO_VARCHAR(ROUND(COST_USD, 2)) AS METRIC_VALUE, COST_USD AS METRIC_NUMERIC_VALUE, NULL AS METRIC_TEXT_VALUE,
            'currency' AS METRIC_FORMAT, 'USD' AS METRIC_UNIT, 'Selected window spend' AS METRIC_DETAIL, IFF(COST_DELTA_USD > 0, 'warning', 'neutral') AS METRIC_TONE,
-           COST_DELTA_USD AS TREND_NUMERIC_VALUE, IFF(COST_DELTA_USD >= 0, '+$', '-$') || TO_VARCHAR(ABS(ROUND(COST_DELTA_USD, 2))) AS TREND_LABEL, 10 AS SORT_ORDER
+           COST_DELTA_USD AS TREND_NUMERIC_VALUE, IFF(COST_DELTA_USD >= 0, '+$', '-$') || TO_VARCHAR(ABS(ROUND(COST_DELTA_USD, 2))) AS TREND_LABEL, CONFIDENCE, 10 AS SORT_ORDER
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME IN ('Executive Landing', 'Cost & Contract', 'DBA Control Room')
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'cortex_spend', 'Cortex AI Spend',
            '$' || TO_VARCHAR(ROUND(CORTEX_COST_USD, 2)), CORTEX_COST_USD, NULL, 'currency', 'USD',
-           'Cortex AI selected-window spend', IFF(CORTEX_COST_USD > 0, 'info', 'neutral'), NULL, TO_VARCHAR(ROUND(CORTEX_REQUESTS, 0)) || ' requests', 20
+           'Cortex AI selected-window spend', IFF(CORTEX_COST_USD > 0, 'info', 'neutral'), NULL, TO_VARCHAR(ROUND(CORTEX_REQUESTS, 0)) || ' requests', CONFIDENCE, 20
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME IN ('Executive Landing', 'Cost & Contract')
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'critical_high', 'Critical / High',
            TO_VARCHAR(CRITICAL_HIGH_ALERTS), CRITICAL_HIGH_ALERTS, NULL, 'integer', 'alerts',
-           'Open critical and high alert events', IFF(CRITICAL_HIGH_ALERTS > 0, 'critical', 'neutral'), NULL, TO_VARCHAR(ACTIVE_ALERTS) || ' active', 30
+           'Open critical and high alert events', IFF(CRITICAL_HIGH_ALERTS > 0, 'critical', 'neutral'), NULL, TO_VARCHAR(ACTIVE_ALERTS) || ' active', CONFIDENCE, 30
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Alert Center'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'cortex_predictive', 'Cortex Predictive Alerts',
            TO_VARCHAR(CORTEX_ALERTS), CORTEX_ALERTS, NULL, 'integer', 'alerts',
-           'Cortex forecast, anomaly, or run-rate alerts', IFF(CORTEX_ALERTS > 0, 'warning', 'neutral'), NULL, '', 40
+           'Cortex forecast, anomaly, or run-rate alerts', IFF(CORTEX_ALERTS > 0, 'warning', 'neutral'), NULL, '', CONFIDENCE, 40
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Alert Center'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'failed_queries', 'Failed SQL',
            TO_VARCHAR(FAILED_QUERIES), FAILED_QUERIES, NULL, 'integer', 'queries',
-           'Failed query count in selected window', IFF(FAILED_QUERIES > 0, 'warning', 'neutral'), NULL, '', 50
+           'Failed query count in selected window', IFF(FAILED_QUERIES > 0, 'warning', 'neutral'), NULL, '', CONFIDENCE, 50
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME IN ('DBA Control Room', 'Workload Operations')
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'pipeline_failures', 'Pipeline / Task Failures',
            TO_VARCHAR(FAILED_TASKS + FAILED_PROCEDURES + COPY_ERRORS), FAILED_TASKS + FAILED_PROCEDURES + COPY_ERRORS, NULL, 'integer', 'events',
-           'Failed tasks, procedures, and copy/load events', IFF(FAILED_TASKS + FAILED_PROCEDURES + COPY_ERRORS > 0, 'warning', 'neutral'), NULL, '', 60
+           'Failed tasks, procedures, and copy/load events', IFF(FAILED_TASKS + FAILED_PROCEDURES + COPY_ERRORS > 0, 'warning', 'neutral'), NULL, '', CONFIDENCE, 60
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME IN ('DBA Control Room', 'Workload Operations')
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'queue_pressure', 'Queue Pressure',
            TO_VARCHAR(ROUND(QUEUED_MS / 1000, 0)) || ' sec', QUEUED_MS / 1000, NULL, 'duration', 'seconds',
-           'Queued execution pressure', IFF(QUEUED_MS > 0, 'watch', 'neutral'), NULL, '', 70
+           'Queued execution pressure', IFF(QUEUED_MS > 0, 'watch', 'neutral'), NULL, '', CONFIDENCE, 70
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME IN ('DBA Control Room', 'Workload Operations')
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'risky_grants', 'Risky Grants',
            TO_VARCHAR(RISKY_GRANTS), RISKY_GRANTS, NULL, 'integer', 'findings',
-           'Grant/access review blockers', IFF(RISKY_GRANTS > 0, 'warning', 'neutral'), NULL, '', 80
+           'Grant/access review blockers', IFF(RISKY_GRANTS > 0, 'warning', 'neutral'), NULL, '', CONFIDENCE, 80
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Security Monitoring'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'security_alerts', 'Security Alerts',
            TO_VARCHAR(SECURITY_ALERTS + SECURITY_EVENTS), SECURITY_ALERTS + SECURITY_EVENTS, NULL, 'integer', 'signals',
-           'Security alert and operability signals', IFF(SECURITY_ALERTS + SECURITY_EVENTS > 0, 'warning', 'neutral'), NULL, '', 90
+           'Security alert and operability signals', IFF(SECURITY_ALERTS + SECURITY_EVENTS > 0, 'warning', 'neutral'), NULL, '', CONFIDENCE, 90
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Security Monitoring'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'open_actions', 'Open Actions',
            TO_VARCHAR(OPEN_ACTIONS + SECURITY_OPEN_ACTIONS), OPEN_ACTIONS + SECURITY_OPEN_ACTIONS, NULL, 'integer', 'actions',
-           'Open review-gated action items', IFF(OVERDUE_ACTIONS > 0, 'warning', 'neutral'), NULL, TO_VARCHAR(OVERDUE_ACTIONS) || ' overdue', 100
+           'Open review-gated action items', IFF(OVERDUE_ACTIONS > 0, 'warning', 'neutral'), NULL, TO_VARCHAR(OVERDUE_ACTIONS) || ' overdue', CONFIDENCE, 100
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Executive Landing'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'top_cost_driver', 'Top Cost Driver',
            TOP_COST_DRIVER, NULL, TOP_COST_DRIVER, 'text', 'driver',
-           'Largest known cost/service driver', 'neutral', NULL, '', 110
+           'Largest known cost/service driver', 'neutral', NULL, '', CONFIDENCE, 110
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Cost & Contract'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'platform_health', 'Platform Health',
            TO_VARCHAR(ROUND(GREATEST(0, 100 - CRITICAL_HIGH_ALERTS * 10 - RISKY_GRANTS * 8 - (FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES) * 2), 1)) || '%',
            GREATEST(0, 100 - CRITICAL_HIGH_ALERTS * 10 - RISKY_GRANTS * 8 - (FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES) * 2),
            NULL, 'percentage', 'score', 'Composite executive health score from alert, workload, and security signals',
-           IFF(CRITICAL_HIGH_ALERTS > 0 OR RISKY_GRANTS > 0, 'warning', 'neutral'), NULL, '', 1
+           IFF(CRITICAL_HIGH_ALERTS > 0 OR RISKY_GRANTS > 0, 'warning', 'neutral'), NULL, '', CONFIDENCE, 1
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Executive Landing'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'spend_movement_pct', 'Spend Movement',
@@ -12245,31 +12256,31 @@ BEGIN
            IFF(COST_USD = 0, 0, (COST_DELTA_USD / NULLIF(ABS(COST_USD - COST_DELTA_USD), 0)) * 100),
            NULL, 'percentage', 'percent', 'Selected-window spend movement versus prior comparable window',
            IFF(COST_DELTA_USD > 0, 'warning', 'neutral'), COST_DELTA_USD,
-           IFF(COST_DELTA_USD >= 0, '+$', '-$') || TO_VARCHAR(ABS(ROUND(COST_DELTA_USD, 2))), 11
+           IFF(COST_DELTA_USD >= 0, '+$', '-$') || TO_VARCHAR(ABS(ROUND(COST_DELTA_USD, 2))), CONFIDENCE, 11
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME IN ('Executive Landing', 'Cost & Contract')
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'critical_high_issues', 'Critical / High Issues',
            TO_VARCHAR(CRITICAL_HIGH_ALERTS + IFF(RISKY_GRANTS > 0, RISKY_GRANTS, 0)),
            CRITICAL_HIGH_ALERTS + IFF(RISKY_GRANTS > 0, RISKY_GRANTS, 0),
            NULL, 'integer', 'issues', 'Executive critical/high alert and security exposure count',
-           IFF(CRITICAL_HIGH_ALERTS + RISKY_GRANTS > 0, 'critical', 'neutral'), NULL, '', 12
+           IFF(CRITICAL_HIGH_ALERTS + RISKY_GRANTS > 0, 'critical', 'neutral'), NULL, '', CONFIDENCE, 12
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Executive Landing'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'cortex_risk', 'Cortex Risk',
            TO_VARCHAR(CORTEX_ALERTS), CORTEX_ALERTS, NULL, 'integer', 'signals',
-           'Cortex predictive, anomaly, or cost-risk signals', IFF(CORTEX_ALERTS > 0, 'warning', 'neutral'), NULL, '', 21
+           'Cortex predictive, anomaly, or cost-risk signals', IFF(CORTEX_ALERTS > 0, 'warning', 'neutral'), NULL, '', CONFIDENCE, 21
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Executive Landing'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'operational_risk', 'Operational Risk',
            TO_VARCHAR(FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES + COPY_ERRORS),
            FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES + COPY_ERRORS, NULL, 'integer', 'signals',
-           'Workload failure and pipeline risk signals', IFF(FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES + COPY_ERRORS > 0, 'warning', 'neutral'), NULL, '', 22
+           'Workload failure and pipeline risk signals', IFF(FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES + COPY_ERRORS > 0, 'warning', 'neutral'), NULL, '', CONFIDENCE, 22
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Executive Landing'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'security_risk', 'Security Risk',
            TO_VARCHAR(RISKY_GRANTS + SECURITY_ALERTS + SECURITY_EVENTS),
            RISKY_GRANTS + SECURITY_ALERTS + SECURITY_EVENTS, NULL, 'integer', 'signals',
-           'Security alerts, risky grants, and security operability signals', IFF(RISKY_GRANTS + SECURITY_ALERTS + SECURITY_EVENTS > 0, 'warning', 'neutral'), NULL, '', 23
+           'Security alerts, risky grants, and security operability signals', IFF(RISKY_GRANTS + SECURITY_ALERTS + SECURITY_EVENTS > 0, 'warning', 'neutral'), NULL, '', CONFIDENCE, 23
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Executive Landing'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'production_readiness', 'Production Readiness',
@@ -12279,12 +12290,12 @@ BEGIN
            'percentage', 'percent',
            IFF(PRODUCTION_READINESS_SCORE IS NULL, 'Production readiness mart has no current summary row', 'Production readiness score from MART_PRODUCTION_READINESS_SUMMARY'),
            IFF(PRODUCTION_READINESS_SCORE IS NULL, 'neutral', IFF(PRODUCTION_READINESS_SCORE < 85, 'warning', 'positive')),
-           NULL, '', 24
+           NULL, '', CONFIDENCE, 24
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Executive Landing'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'data_trust', 'Data Trust',
            TO_VARCHAR(ROUND(SOURCE_COVERAGE_PCT, 1)) || '%', SOURCE_COVERAGE_PCT, NULL, 'percentage', 'percent',
-           'Required command brief source coverage', IFF(SOURCE_COVERAGE_PCT < 100, 'warning', 'neutral'), NULL, '', 25
+           'Required command brief source coverage', IFF(SOURCE_COVERAGE_PCT < 100, 'warning', 'neutral'), NULL, '', CONFIDENCE, 25
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Executive Landing'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'verified_value', 'Verified Value',
@@ -12293,7 +12304,7 @@ BEGIN
            IFF(VALUE_LEDGER_SOURCE_TS IS NULL, 'Unavailable', NULL),
            'currency', 'USD',
            IFF(VALUE_LEDGER_SOURCE_TS IS NULL, 'Value ledger mart has no current summary row', 'Verified savings from the executive value ledger'),
-           IFF(COALESCE(VERIFIED_SAVINGS_USD, 0) > 0, 'positive', 'neutral'), NULL, '', 26
+           IFF(COALESCE(VERIFIED_SAVINGS_USD, 0) > 0, 'positive', 'neutral'), NULL, '', CONFIDENCE, 26
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Executive Landing'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'monitoring_overhead', 'Monitoring Overhead',
@@ -12302,202 +12313,209 @@ BEGIN
            IFF(MONITORING_OVERHEAD_USD IS NULL, 'Unavailable', NULL),
            'currency', 'USD',
            IFF(MONITORING_OVERHEAD_USD IS NULL, 'App observability mart has no current summary row', 'Observed Overwatch app cost from MART_APP_OBSERVABILITY_SUMMARY'),
-           IFF(COALESCE(MONITORING_OVERHEAD_USD, 0) > 0, 'watch', 'neutral'), NULL, '', 27
+           IFF(COALESCE(MONITORING_OVERHEAD_USD, 0) > 0, 'watch', 'neutral'), NULL, '', CONFIDENCE, 27
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Executive Landing'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'cost_24h', 'Cost 24h',
            '$' || TO_VARCHAR(ROUND(DBA_CREDITS * CREDIT_PRICE_USD, 2)), DBA_CREDITS * CREDIT_PRICE_USD, NULL, 'currency', 'USD',
-           'DBA control-room 24-hour credit cost estimate', IFF(DBA_CREDITS > 0, 'watch', 'neutral'), NULL, TO_VARCHAR(ROUND(DBA_CREDITS, 2)) || ' credits', 71
+           'DBA control-room 24-hour credit cost estimate', IFF(DBA_CREDITS > 0, 'watch', 'neutral'), NULL, TO_VARCHAR(ROUND(DBA_CREDITS, 2)) || ' credits', CONFIDENCE, 71
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'DBA Control Room'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'cortex_cost', 'Cortex Cost',
            '$' || TO_VARCHAR(ROUND(DBA_CORTEX_COST, 2)), DBA_CORTEX_COST, NULL, 'currency', 'USD',
-           'DBA control-room Cortex cost watch', IFF(DBA_CORTEX_COST > 0, 'watch', 'neutral'), NULL, '', 72
+           'DBA control-room Cortex cost watch', IFF(DBA_CORTEX_COST > 0, 'watch', 'neutral'), NULL, '', CONFIDENCE, 72
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'DBA Control Room'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'security_warnings', 'Security Warnings',
            TO_VARCHAR(DBA_SECURITY_EVENTS), DBA_SECURITY_EVENTS, NULL, 'integer', 'warnings',
-           'DBA-coordinated security warning count', IFF(DBA_SECURITY_EVENTS > 0, 'warning', 'neutral'), NULL, '', 73
+           'DBA-coordinated security warning count', IFF(DBA_SECURITY_EVENTS > 0, 'warning', 'neutral'), NULL, '', CONFIDENCE, 73
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'DBA Control Room'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'recent_changes', 'Recent Changes',
            TO_VARCHAR(RECENT_WORKLOAD_CHANGES), RECENT_WORKLOAD_CHANGES, NULL, 'integer', 'changes',
-           'Recent change intelligence rows in the selected window', IFF(RECENT_WORKLOAD_CHANGES > 0, 'watch', 'neutral'), NULL, '', 74
+           'Recent change intelligence rows in the selected window', IFF(RECENT_WORKLOAD_CHANGES > 0, 'watch', 'neutral'), NULL, '', CONFIDENCE, 74
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME IN ('DBA Control Room', 'Workload Operations')
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'overdue_actions', 'Overdue Actions',
            TO_VARCHAR(OVERDUE_ACTIONS), OVERDUE_ACTIONS, NULL, 'integer', 'actions',
-           'Overdue action queue items', IFF(OVERDUE_ACTIONS > 0, 'warning', 'neutral'), NULL, '', 75
+           'Overdue action queue items', IFF(OVERDUE_ACTIONS > 0, 'warning', 'neutral'), NULL, '', CONFIDENCE, 75
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'DBA Control Room'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'hottest_warehouse', 'Hottest Warehouse',
            TOP_COST_DRIVER, NULL, TOP_COST_DRIVER, 'text', 'warehouse',
-           'Highest known cost/warehouse pressure driver', 'neutral', NULL, '', 76
+           'Highest known cost/warehouse pressure driver', 'neutral', NULL, '', CONFIDENCE, 76
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME IN ('DBA Control Room', 'Workload Operations')
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'top_dba_risk', 'Top DBA Risk',
            DBA_TOP_RISK, NULL, DBA_TOP_RISK, 'text', 'risk',
-           'Latest DBA control-room top risk', 'neutral', NULL, '', 77
+           'Latest DBA control-room top risk', 'neutral', NULL, '', CONFIDENCE, 77
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'DBA Control Room'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'active_alerts', 'Active Alerts',
            TO_VARCHAR(ACTIVE_ALERTS), ACTIVE_ALERTS, NULL, 'integer', 'alerts',
-           'Active alert events in selected window', IFF(ACTIVE_ALERTS > 0, 'watch', 'neutral'), NULL, '', 31
+           'Active alert events in selected window', IFF(ACTIVE_ALERTS > 0, 'watch', 'neutral'), NULL, '', CONFIDENCE, 31
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Alert Center'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'overdue_alerts', 'Overdue Alerts',
            TO_VARCHAR(OVERDUE_ACTIONS), OVERDUE_ACTIONS, NULL, 'integer', 'alerts',
-           'Alerts/actions past due date', IFF(OVERDUE_ACTIONS > 0, 'warning', 'neutral'), NULL, '', 32
+           'Alerts/actions past due date', IFF(OVERDUE_ACTIONS > 0, 'warning', 'neutral'), NULL, '', CONFIDENCE, 32
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Alert Center'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'cost_alerts', 'Cost Alerts',
            TO_VARCHAR(COST_ALERTS), COST_ALERTS, NULL, 'integer', 'alerts',
-           'Cost alert family count', IFF(COST_ALERTS > 0, 'warning', 'neutral'), NULL, '', 33
+           'Cost alert family count', IFF(COST_ALERTS > 0, 'warning', 'neutral'), NULL, '', CONFIDENCE, 33
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Alert Center'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'reliability_alerts', 'Reliability Alerts',
            TO_VARCHAR(GREATEST(ACTIVE_ALERTS - COST_ALERTS - SECURITY_ALERTS - CORTEX_ALERTS, 0)),
            GREATEST(ACTIVE_ALERTS - COST_ALERTS - SECURITY_ALERTS - CORTEX_ALERTS, 0), NULL, 'integer', 'alerts',
-           'Reliability and operations alert family count', IFF(GREATEST(ACTIVE_ALERTS - COST_ALERTS - SECURITY_ALERTS - CORTEX_ALERTS, 0) > 0, 'watch', 'neutral'), NULL, '', 34
+           'Reliability and operations alert family count', IFF(GREATEST(ACTIVE_ALERTS - COST_ALERTS - SECURITY_ALERTS - CORTEX_ALERTS, 0) > 0, 'watch', 'neutral'), NULL, '', CONFIDENCE, 34
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Alert Center'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'security_alerts', 'Security Alerts',
            TO_VARCHAR(SECURITY_ALERTS), SECURITY_ALERTS, NULL, 'integer', 'alerts',
-           'Security alert family count', IFF(SECURITY_ALERTS > 0, 'warning', 'neutral'), NULL, '', 35
+           'Security alert family count', IFF(SECURITY_ALERTS > 0, 'warning', 'neutral'), NULL, '', CONFIDENCE, 35
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Alert Center'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'notification_failures', 'Notification Failures',
            TO_VARCHAR(NOTIFICATION_FAILURES), NOTIFICATION_FAILURES, NULL, 'integer', 'events',
-           'Alert notification delivery failures', IFF(NOTIFICATION_FAILURES > 0, 'warning', 'neutral'), NULL, '', 36
+           'Alert notification delivery failures', IFF(NOTIFICATION_FAILURES > 0, 'warning', 'neutral'), NULL, '', CONFIDENCE, 36
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Alert Center'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'unassigned_alerts', 'Unassigned Alerts',
            TO_VARCHAR(UNASSIGNED_ALERTS), UNASSIGNED_ALERTS, NULL, 'integer', 'alerts',
-           'Active alerts without owner routing', IFF(UNASSIGNED_ALERTS > 0, 'warning', 'neutral'), NULL, '', 37
+           'Active alerts without owner routing', IFF(UNASSIGNED_ALERTS > 0, 'warning', 'neutral'), NULL, '', CONFIDENCE, 37
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Alert Center'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'open_action_queue', 'Open Action Queue',
            TO_VARCHAR(OPEN_ACTIONS), OPEN_ACTIONS, NULL, 'integer', 'actions',
-           'Open action queue items linked to alert work', IFF(OPEN_ACTIONS > 0, 'watch', 'neutral'), NULL, '', 38
+           'Open action queue items linked to alert work', IFF(OPEN_ACTIONS > 0, 'watch', 'neutral'), NULL, '', CONFIDENCE, 38
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Alert Center'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'forecast_run_rate', 'Forecast / Run-rate',
            '$' || TO_VARCHAR(ROUND(IFF(FORECAST_VALUE_USD > 0, FORECAST_VALUE_USD, IFF(WINDOW_DAYS = 0, COST_USD, COST_USD / NULLIF(WINDOW_DAYS, 0) * 30)), 2)),
            IFF(FORECAST_VALUE_USD > 0, FORECAST_VALUE_USD, IFF(WINDOW_DAYS = 0, COST_USD, COST_USD / NULLIF(WINDOW_DAYS, 0) * 30)), NULL, 'currency', 'USD',
-           IFF(FORECAST_VALUE_USD > 0, 'Forecast mart value from MART_EXECUTIVE_FORECAST_SUMMARY', 'Run-rate fallback from selected-window spend'), IFF(COST_DELTA_USD > 0, 'warning', 'neutral'), COST_DELTA_USD, IFF(FORECAST_VALUE_USD > 0, 'forecast', 'run-rate fallback'), 12
+           IFF(FORECAST_VALUE_USD > 0, 'Forecast mart value from MART_EXECUTIVE_FORECAST_SUMMARY', 'Run-rate fallback from selected-window spend'), IFF(COST_DELTA_USD > 0, 'warning', 'neutral'), COST_DELTA_USD, IFF(FORECAST_VALUE_USD > 0, 'forecast', 'run-rate fallback'), CONFIDENCE, 12
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Cost & Contract'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'cortex_spend_share', 'Cortex Spend Share',
            TO_VARCHAR(ROUND(CORTEX_COST_USD / NULLIF(COST_USD, 0) * 100, 1)) || '%',
            CORTEX_COST_USD / NULLIF(COST_USD, 0) * 100, NULL, 'percentage', 'percent',
-           'Cortex AI share of selected-window spend', IFF(CORTEX_COST_USD > 0, 'info', 'neutral'), NULL, '', 13
+           'Cortex AI share of selected-window spend', IFF(CORTEX_COST_USD > 0, 'info', 'neutral'), NULL, '', CONFIDENCE, 13
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Cost & Contract'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'cortex_predictive_alerts', 'Cortex Predictive Alerts',
            TO_VARCHAR(CORTEX_ALERTS), CORTEX_ALERTS, NULL, 'integer', 'alerts',
-           'Cortex predictive cost alert count', IFF(CORTEX_ALERTS > 0, 'warning', 'neutral'), NULL, '', 14
+           'Cortex predictive cost alert count', IFF(CORTEX_ALERTS > 0, 'warning', 'neutral'), NULL, '', CONFIDENCE, 14
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Cost & Contract'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'budget_contract_risk', 'Budget / Contract Risk',
            TO_VARCHAR(BUDGET_CONTRACT_RISK), BUDGET_CONTRACT_RISK, NULL, 'integer', 'signals',
-           'Forecast or contract threshold signals from the forecast mart and settings', IFF(BUDGET_CONTRACT_RISK > 0, 'watch', 'neutral'), NULL, '', 15
+           'Forecast or contract threshold signals from the forecast mart and settings', IFF(BUDGET_CONTRACT_RISK > 0, 'watch', 'neutral'), NULL, '', CONFIDENCE, 15
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Cost & Contract'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'verified_savings', 'Verified Savings',
            IFF(VALUE_LEDGER_SOURCE_TS IS NULL, 'Unavailable', '$' || TO_VARCHAR(ROUND(COALESCE(VERIFIED_SAVINGS_USD, 0), 2))),
            IFF(VALUE_LEDGER_SOURCE_TS IS NULL, NULL, COALESCE(VERIFIED_SAVINGS_USD, 0)), IFF(VALUE_LEDGER_SOURCE_TS IS NULL, 'Unavailable', NULL), 'currency', 'USD',
            IFF(VALUE_LEDGER_SOURCE_TS IS NULL, 'Value ledger mart has no current summary row', 'Verified savings from the executive value ledger'),
-           IFF(COALESCE(VERIFIED_SAVINGS_USD, 0) > 0, 'positive', 'neutral'), NULL, '', 16
+           IFF(COALESCE(VERIFIED_SAVINGS_USD, 0) > 0, 'positive', 'neutral'), NULL, '', CONFIDENCE, 16
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Cost & Contract'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'unverified_savings', 'Unverified Savings',
            IFF(VALUE_LEDGER_SOURCE_TS IS NULL, 'Unavailable', '$' || TO_VARCHAR(ROUND(COALESCE(UNVERIFIED_SAVINGS_USD, 0), 2))),
            IFF(VALUE_LEDGER_SOURCE_TS IS NULL, NULL, COALESCE(UNVERIFIED_SAVINGS_USD, 0)), IFF(VALUE_LEDGER_SOURCE_TS IS NULL, 'Unavailable', NULL), 'currency', 'USD',
            IFF(VALUE_LEDGER_SOURCE_TS IS NULL, 'Value ledger mart has no current summary row', 'Savings still awaiting value-ledger verification'),
-           IFF(COALESCE(UNVERIFIED_SAVINGS_USD, 0) > 0, 'warning', 'neutral'), NULL, IFF(VALUE_LEDGER_SOURCE_TS IS NULL, '', TO_VARCHAR(COALESCE(VALUE_OPEN_ITEMS, 0)) || ' open items'), 17
+           IFF(COALESCE(UNVERIFIED_SAVINGS_USD, 0) > 0, 'warning', 'neutral'), NULL, IFF(VALUE_LEDGER_SOURCE_TS IS NULL, '', TO_VARCHAR(COALESCE(VALUE_OPEN_ITEMS, 0)) || ' open items'), CONFIDENCE, 17
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Cost & Contract'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'open_cost_actions', 'Open Cost Actions',
            TO_VARCHAR(OPEN_ACTIONS), OPEN_ACTIONS, NULL, 'integer', 'actions',
-           'Open cost-related action queue items', IFF(OPEN_ACTIONS > 0, 'watch', 'neutral'), NULL, '', 18
+           'Open cost-related action queue items', IFF(OPEN_ACTIONS > 0, 'watch', 'neutral'), NULL, '', CONFIDENCE, 18
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Cost & Contract'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'queue_blocked_pressure', 'Queue / Blocked Pressure',
            TO_VARCHAR(ROUND(QUEUED_MS / 1000, 0)) || ' sec', QUEUED_MS / 1000, NULL, 'duration', 'seconds',
-           'Queued or blocked workload pressure', IFF(QUEUED_MS > 0, 'watch', 'neutral'), NULL, '', 71
+           'Queued or blocked workload pressure', IFF(QUEUED_MS > 0, 'watch', 'neutral'), NULL, '', CONFIDENCE, 71
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Workload Operations'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'sla_risk', 'Pipeline Failure Risk',
            TO_VARCHAR(IFF(FAILED_TASKS + FAILED_PROCEDURES + COPY_ERRORS > 0, FAILED_TASKS + FAILED_PROCEDURES + COPY_ERRORS, 0)),
            IFF(FAILED_TASKS + FAILED_PROCEDURES + COPY_ERRORS > 0, FAILED_TASKS + FAILED_PROCEDURES + COPY_ERRORS, 0), NULL, 'integer', 'items',
-           'Failure proxy from task, procedure, and copy/load facts; SLA due data unavailable', IFF(FAILED_TASKS + FAILED_PROCEDURES + COPY_ERRORS > 0, 'warning', 'neutral'), NULL, 'failure proxy', 72
+           'Failure proxy from task, procedure, and copy/load facts; SLA due data unavailable', IFF(FAILED_TASKS + FAILED_PROCEDURES + COPY_ERRORS > 0, 'warning', 'neutral'), NULL, 'failure proxy', CONFIDENCE, 72
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Workload Operations'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'spill_bytes', 'Spill Bytes',
            TO_VARCHAR(ROUND(SPILL_BYTES, 0)), SPILL_BYTES, NULL, 'bytes', 'bytes',
-           'Bytes spilled by workload queries', IFF(SPILL_BYTES > 0, 'watch', 'neutral'), NULL, '', 73
+           'Bytes spilled by workload queries', IFF(SPILL_BYTES > 0, 'watch', 'neutral'), NULL, '', CONFIDENCE, 73
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Workload Operations'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'long_running_queries', 'Long Running Queries',
            TO_VARCHAR(LONG_RUNNING_QUERIES), LONG_RUNNING_QUERIES, NULL, 'integer', 'queries',
-           'Recent query detail rows still running beyond the long-running threshold', IFF(LONG_RUNNING_QUERIES > 0, 'watch', 'neutral'), NULL, '', 74
+           'Recent query detail rows still running beyond the long-running threshold', IFF(LONG_RUNNING_QUERIES > 0, 'watch', 'neutral'), NULL, '', CONFIDENCE, 74
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Workload Operations'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'recent_workload_changes', 'Recent Workload Changes',
            TO_VARCHAR(RECENT_WORKLOAD_CHANGES), RECENT_WORKLOAD_CHANGES, NULL, 'integer', 'changes',
-           'Recent workload-related change intelligence rows', IFF(RECENT_WORKLOAD_CHANGES > 0, 'watch', 'neutral'), NULL, '', 75
+           'Recent workload-related change intelligence rows', IFF(RECENT_WORKLOAD_CHANGES > 0, 'watch', 'neutral'), NULL, '', CONFIDENCE, 75
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Workload Operations'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'suspended_tasks', 'Suspended Tasks',
            TO_VARCHAR(SUSPENDED_TASKS), SUSPENDED_TASKS, NULL, 'integer', 'tasks',
-           'Suspended tasks observed in the task snapshot', IFF(SUSPENDED_TASKS > 0, 'warning', 'neutral'), NULL, '', 76
+           'Suspended tasks observed in the task snapshot', IFF(SUSPENDED_TASKS > 0, 'warning', 'neutral'), NULL, '', CONFIDENCE, 76
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Workload Operations'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'copy_load_failures', 'Copy / Load Failures',
            TO_VARCHAR(COPY_ERRORS), COPY_ERRORS, NULL, 'integer', 'events',
-           'Copy/load error count', IFF(COPY_ERRORS > 0, 'warning', 'neutral'), NULL, '', 77
+           'Copy/load error count', IFF(COPY_ERRORS > 0, 'warning', 'neutral'), NULL, '', CONFIDENCE, 77
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Workload Operations'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'failed_logins', 'Failed Logins',
            TO_VARCHAR(FAILED_LOGINS), FAILED_LOGINS, NULL, 'integer', 'logins',
-           'Failed login count from login daily facts', IFF(FAILED_LOGINS > 0, 'warning', 'neutral'), NULL, '', 81
+           'Failed login count from login daily facts', IFF(FAILED_LOGINS > 0, 'warning', 'neutral'), NULL, '', CONFIDENCE, 81
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Security Monitoring'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'mfa_gaps', 'MFA Gaps',
            TO_VARCHAR(MFA_GAPS), MFA_GAPS, NULL, 'integer', 'users',
-           'Security controls requiring MFA or identity review', IFF(MFA_GAPS > 0, 'warning', 'neutral'), NULL, '', 82
+           'Security controls requiring MFA or identity review', IFF(MFA_GAPS > 0, 'warning', 'neutral'), NULL, '', CONFIDENCE, 82
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Security Monitoring'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'sharing_exposure', 'Sharing Exposure',
            TO_VARCHAR(SHARING_EXPOSURE), SHARING_EXPOSURE, NULL, 'integer', 'databases',
-           'Sharing or no-database-context exposure rows from security operability facts', IFF(SHARING_EXPOSURE > 0, 'warning', 'neutral'), NULL, '', 83
+           'Sharing or no-database-context exposure rows from security operability facts', IFF(SHARING_EXPOSURE > 0, 'warning', 'neutral'), NULL, '', CONFIDENCE, 83
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Security Monitoring'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'privilege_changes', 'Privilege Changes',
            TO_VARCHAR(ACTIVE_GRANT_ROWS), ACTIVE_GRANT_ROWS, NULL, 'integer', 'changes',
-           'Active grant rows from grant daily facts', IFF(ACTIVE_GRANT_ROWS > 0, 'watch', 'neutral'), NULL, '', 84
+           'Active grant rows from grant daily facts', IFF(ACTIVE_GRANT_ROWS > 0, 'watch', 'neutral'), NULL, '', CONFIDENCE, 84
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Security Monitoring'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'access_changes', 'Access Changes',
            TO_VARCHAR(ACTIVE_GRANT_ROWS), ACTIVE_GRANT_ROWS, NULL, 'integer', 'changes',
-           'Grant/access change rows from grant daily facts', IFF(ACTIVE_GRANT_ROWS > 0, 'watch', 'neutral'), NULL, '', 85
+           'Grant/access change rows from grant daily facts', IFF(ACTIVE_GRANT_ROWS > 0, 'watch', 'neutral'), NULL, '', CONFIDENCE, 85
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Security Monitoring'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'unassigned_findings', 'Unassigned Findings',
            TO_VARCHAR(OWNER_GAP_ITEMS), OWNER_GAP_ITEMS, NULL, 'integer', 'findings',
-           'Owner coverage gaps from the ownership coverage mart', IFF(OWNER_GAP_ITEMS > 0, 'warning', 'neutral'), NULL, '', 86
+           'Owner coverage gaps from the ownership coverage mart', IFF(OWNER_GAP_ITEMS > 0, 'warning', 'neutral'), NULL, '', CONFIDENCE, 86
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Security Monitoring'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'overdue_security_actions', 'Overdue Security Actions',
            TO_VARCHAR(SECURITY_OPEN_ACTIONS), SECURITY_OPEN_ACTIONS, NULL, 'integer', 'actions',
-           'Open security action queue items', IFF(SECURITY_OPEN_ACTIONS > 0, 'watch', 'neutral'), NULL, '', 87
+           'Open security action queue items', IFF(SECURITY_OPEN_ACTIONS > 0, 'watch', 'neutral'), NULL, '', CONFIDENCE, 87
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Security Monitoring'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'owner_coverage', 'Owner Coverage',
            TO_VARCHAR(ROUND(OWNER_COVERAGE_PCT, 1)) || '%', OWNER_COVERAGE_PCT, NULL, 'percentage', 'percent',
-           'Average owner routing coverage across monitored surfaces', IFF(OWNER_COVERAGE_PCT < 100, 'warning', 'neutral'), NULL, '', 88
+           'Average owner routing coverage across monitored surfaces', IFF(OWNER_COVERAGE_PCT < 100, 'warning', 'neutral'), NULL, '', CONFIDENCE, 88
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Security Monitoring'
-  ) metric_candidates;
+  ) metric_candidates
+  LEFT JOIN TMP_SECTION_METRIC_TRENDS tr
+    ON tr.BRIEF_ID = metric_candidates.BRIEF_ID
+   AND tr.SECTION_NAME = metric_candidates.SECTION_NAME
+   AND tr.COMPANY = metric_candidates.COMPANY
+   AND COALESCE(tr.ENVIRONMENT, 'ALL') = COALESCE(metric_candidates.ENVIRONMENT, 'ALL')
+   AND tr.WINDOW_DAYS = metric_candidates.WINDOW_DAYS
+   AND tr.METRIC_KEY = metric_candidates.METRIC_KEY;
 
   INSERT INTO MART_SECTION_COMMAND_EXCEPTION (
     BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS,
@@ -13265,7 +13283,7 @@ BEGIN
     CURRENT_TIMESTAMP()
   FROM FACT_GRANT_DAILY g
   WHERE g.SNAPSHOT_DATE >= DATEADD('day', -7, CURRENT_DATE())
-  QUALIFY ROW_NUMBER() OVER (ORDER BY EVENT_TS DESC, COALESCE(SEVERITY, 'Medium') DESC) <= 5000;
+  QUALIFY ROW_NUMBER() OVER (ORDER BY COALESCE(g.CREATED_ON, TO_TIMESTAMP_NTZ(g.SNAPSHOT_DATE)) DESC, IFF(UPPER(COALESCE(g.ROLE_NAME, '')) IN ('ACCOUNTADMIN', 'SECURITYADMIN', 'SYSADMIN', 'ORGADMIN'), 'Critical', 'Medium') DESC) <= 5000;
 
   DELETE FROM MART_DBA_EVIDENCE_RECENT
    WHERE COALESCE(EVENT_TS, SNAPSHOT_TS) >= DATEADD('day', -7, CURRENT_TIMESTAMP());
@@ -13306,7 +13324,7 @@ BEGIN
     CURRENT_TIMESTAMP()
   FROM FACT_PROCEDURE_RUN p
   WHERE p.START_TIME >= DATEADD('day', -7, CURRENT_TIMESTAMP())
-  QUALIFY ROW_NUMBER() OVER (ORDER BY EVENT_TS DESC, COALESCE(SEVERITY, 'Medium') DESC) <= 5000;
+  QUALIFY ROW_NUMBER() OVER (ORDER BY p.START_TIME DESC, IFF(UPPER(COALESCE(p.STATUS, '')) IN ('FAILED', 'FAILED_WITH_ERROR', 'ERROR'), 'High', 'Medium') DESC) <= 5000;
 
   CREATE OR REPLACE TEMPORARY TABLE TMP_FAST_SOURCE_SNAPSHOT AS
   SELECT 'query_recent' AS SOURCE_KEY, MAX(START_TIME) AS SOURCE_FACT_MAX_TS, COUNT(*) AS SOURCE_ROW_COUNT
@@ -13810,16 +13828,16 @@ BEGIN
                           'stale_command_row_count', :stale_command_rows,
                           'freshness_note_count', (SELECT COUNT_IF(FRESHNESS_NOTE IS NOT NULL) FROM TMP_FAST_COMMAND_FRESHNESS),
                           'command_freshness_modes',
-                            (SELECT OBJECT_AGG(FRESHNESS_MODE, MODE_COUNT)
+                            (SELECT OBJECT_AGG(FRESHNESS_MODE, TO_VARIANT(MODE_COUNT))
                                FROM (
                                  SELECT FRESHNESS_MODE, COUNT(*) AS MODE_COUNT
                                    FROM TMP_FAST_COMMAND_FRESHNESS
                                   GROUP BY FRESHNESS_MODE
                                )),
                           'source_fact_max_ts', (SELECT MAX(SOURCE_FACT_MAX_TS) FROM TMP_FAST_SOURCE_SNAPSHOT),
-                          'source_fact_max_ts_by_source', (SELECT OBJECT_AGG(SOURCE_KEY, SOURCE_FACT_MAX_TS) FROM TMP_FAST_SOURCE_SNAPSHOT),
+                          'source_fact_max_ts_by_source', (SELECT OBJECT_AGG(SOURCE_KEY, TO_VARIANT(SOURCE_FACT_MAX_TS)) FROM TMP_FAST_SOURCE_SNAPSHOT),
                           'command_source_snapshot_ts_by_section',
-                            (SELECT OBJECT_AGG(SECTION_NAME, MAX_SOURCE_SNAPSHOT_TS)
+                            (SELECT OBJECT_AGG(SECTION_NAME, TO_VARIANT(MAX_SOURCE_SNAPSHOT_TS))
                                FROM (
                                  SELECT SECTION_NAME, MAX(COMMAND_SOURCE_SNAPSHOT_TS) AS MAX_SOURCE_SNAPSHOT_TS
                                    FROM TMP_FAST_COMMAND_FRESHNESS
@@ -14358,7 +14376,7 @@ BEGIN
     SNAPSHOT_TS, COMPANY, ENVIRONMENT, WINDOW_DAYS, PANEL, METRIC, DIMENSION,
     PERIOD_START, VALUE, VALUE_USD, UNIT, SORT_ORDER, SOURCE
   )
-  WITH windows AS (
+  (WITH windows AS (
     SELECT COLUMN1::NUMBER AS WINDOW_DAYS
     FROM VALUES (7), (14), (30), (60), (90)
   ),
@@ -14406,7 +14424,7 @@ BEGIN
     r.SOURCE_OBJECT AS SOURCE
   FROM ranked r
   CROSS JOIN windows w
-  WHERE r.RN <= 10;
+  WHERE r.RN <= 10);
 
   CALL SP_OVERWATCH_REFRESH_PRODUCTION_READINESS();
   CALL SP_OVERWATCH_REFRESH_EXECUTIVE_SCORECARD();
@@ -14528,7 +14546,6 @@ BEGIN
   RETURN 'Optional OVERWATCH performance optimization DDL audited per object.';
 END;
 $$;
-
 -- -----------------------------------------------------------------------------
 -- 5. Alert framework
 -- -----------------------------------------------------------------------------

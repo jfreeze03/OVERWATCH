@@ -69,6 +69,12 @@ class LaunchReadinessTests(unittest.TestCase):
             "sql_value_inventory",
             "sql_cost_risk",
             "live_query_history",
+            "snowflake_execution_validation",
+            "procedure_compile_validation",
+            "procedure_smoke_call_validation",
+            "compact_evidence_mart_validation",
+            "packet_publication_validation",
+            "refresh_performance_validation",
             "performance_slo",
             "settings_live_closure",
             "export_case_closure",
@@ -122,6 +128,7 @@ class LaunchReadinessTests(unittest.TestCase):
             "artifacts/launch_readiness/settings_live_closure_results.json",
             "artifacts/launch_readiness/export_case_closure_results.json",
             "artifacts/launch_readiness/cleanup_launch_closure_results.json",
+            "artifacts/launch_readiness/snowflake_validation_gate_results.json",
         ):
             payload = self._read_json(rel)
             self.assertTrue(payload["passed"], payload)
@@ -274,6 +281,27 @@ class LaunchReadinessTests(unittest.TestCase):
                     ),
                 ),
                 "live_query_history",
+            ),
+            (
+                "prod snowflake validation skipped",
+                lambda payloads, launch: (
+                    launch["launch_profile_results"].update(
+                        {
+                            "selected_profile": "prod_candidate",
+                            "browser_proof_required": True,
+                            "live_query_history_required": True,
+                            "passed": True,
+                        }
+                    ),
+                    payloads["artifacts/snowflake_validation/snowflake_validation_summary.json"].update(
+                        {
+                            "live_mode_enabled": False,
+                            "live_status": "skipped",
+                            "passed": True,
+                        }
+                    ),
+                ),
+                "snowflake_execution_validation",
             ),
             (
                 "invalid waiver",
@@ -535,6 +563,26 @@ class LaunchReadinessTests(unittest.TestCase):
                 lambda payloads, launch: launch["export_case_closure_results"].update({"passed": False}),
                 "export_case_closure",
             ),
+            (
+                "snowflake compile",
+                lambda payloads, launch: payloads["artifacts/snowflake_validation/procedure_compile_results.json"][0].update({"status": "failed"}),
+                "procedure_compile_validation",
+            ),
+            (
+                "snowflake fast refresh",
+                lambda payloads, launch: payloads["artifacts/snowflake_validation/refresh_fast_results.json"].update({"passed": False}),
+                "refresh_performance_validation",
+            ),
+            (
+                "compact evidence",
+                lambda payloads, launch: payloads["artifacts/snowflake_validation/compact_evidence_mart_validation_results.json"].update({"passed": False}),
+                "compact_evidence_mart_validation",
+            ),
+            (
+                "packet shape",
+                lambda payloads, launch: payloads["artifacts/snowflake_validation/packet_shape_results.json"].update({"passed": False}),
+                "packet_publication_validation",
+            ),
         ]
         for name, mutator, gate in cases:
             with self.subTest(name=name):
@@ -581,12 +629,17 @@ class LaunchReadinessTests(unittest.TestCase):
     @classmethod
     def _load_payloads(cls):
         from tools.contracts.full_app_gauntlet import REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS
+        from tools.contracts.snowflake_execution_validation import SNOWFLAKE_VALIDATION_DIR
 
-        return {
+        payloads = {
             rel: json.loads((ROOT / rel).read_text(encoding="utf-8"))
             for rel in REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS
             if (ROOT / rel).exists()
         }
+        snowflake_dir = ROOT / SNOWFLAKE_VALIDATION_DIR
+        for path in snowflake_dir.glob("*.json"):
+            payloads[f"{SNOWFLAKE_VALIDATION_DIR}/{path.name}"] = json.loads(path.read_text(encoding="utf-8"))
+        return payloads
 
     @classmethod
     def _load_launch_payloads(cls):

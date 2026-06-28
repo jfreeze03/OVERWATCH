@@ -23,6 +23,7 @@ from tools.contracts.full_app_gauntlet import (
     REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS,
     write_full_app_gauntlet_artifacts,
 )
+from tools.contracts.snowflake_execution_validation import write_snowflake_validation_artifacts
 
 
 LAUNCH_READINESS_DIR = "artifacts/launch_readiness"
@@ -55,6 +56,7 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     f"{LAUNCH_READINESS_DIR}/cleanup_launch_closure_results.json",
     f"{LAUNCH_READINESS_DIR}/delete_first_release_results.json",
     f"{LAUNCH_READINESS_DIR}/docs_readiness_results.json",
+    f"{LAUNCH_READINESS_DIR}/snowflake_validation_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/ci_run_review_results.json",
     f"{LAUNCH_READINESS_DIR}/ci_artifact_review_results.json",
     f"{LAUNCH_READINESS_DIR}/artifact_upload_review_results.json",
@@ -66,6 +68,7 @@ CI_UPLOAD_PATHS = {
     "artifacts/full_app_validation/**",
     "artifacts/full_app_inventory/**",
     "artifacts/cleanup/**",
+    "artifacts/snowflake_validation/**",
     "artifacts/query_*",
     "artifacts/direct_sql_static_scan.json",
     "artifacts/session_open_static_scan.json",
@@ -1736,6 +1739,125 @@ def _ci_metadata() -> dict[str, Any]:
     }
 
 
+def _rows_have_no_failures(rows: Iterable[Any]) -> bool:
+    for row in rows:
+        mapped = _as_mapping(row)
+        if str(mapped.get("status") or "passed") == "failed":
+            return False
+        if mapped.get("passed") is False:
+            return False
+    return True
+
+
+def _component_row(
+    name: str,
+    passed: bool,
+    *,
+    status: str = "",
+    failure_reason: str = "",
+    recommendation: str = "",
+    details: Any = None,
+) -> dict[str, Any]:
+    row = {
+        "gate": name,
+        "passed": bool(passed),
+        "status": status or ("passed" if passed else "failed"),
+        "failure_reason": "" if passed else failure_reason,
+        "recommendation": "" if passed else recommendation or "Run Snowflake validation, fix the named SQL object, and regenerate launch readiness.",
+    }
+    if details is not None:
+        row["details"] = details
+    return row
+
+
+def _snowflake_validation_gate_results(
+    payloads: Mapping[str, Any],
+    profile: str,
+    waivers: Iterable[Mapping[str, Any]],
+) -> dict[str, Any]:
+    summary = _as_mapping(payloads.get("artifacts/snowflake_validation/snowflake_validation_summary.json"))
+    compile_rows = _as_list(payloads.get("artifacts/snowflake_validation/procedure_compile_results.json"))
+    smoke_rows = _as_list(payloads.get("artifacts/snowflake_validation/procedure_smoke_call_results.json"))
+    compact = _as_mapping(payloads.get("artifacts/snowflake_validation/compact_evidence_mart_validation_results.json"))
+    packet_publication = _as_mapping(payloads.get("artifacts/snowflake_validation/packet_publication_validation_results.json"))
+    packet_shape = _as_mapping(payloads.get("artifacts/snowflake_validation/packet_shape_results.json"))
+    packet_size = _as_mapping(payloads.get("artifacts/snowflake_validation/packet_size_results.json"))
+    packet_truth = _as_mapping(payloads.get("artifacts/snowflake_validation/packet_source_truth_results.json"))
+    refresh_perf = _as_mapping(payloads.get("artifacts/snowflake_validation/refresh_performance_results.json"))
+    refresh_fast = _as_mapping(payloads.get("artifacts/snowflake_validation/refresh_fast_results.json"))
+    refresh_full = _as_mapping(payloads.get("artifacts/snowflake_validation/refresh_full_results.json"))
+    live_enabled = bool(summary.get("live_mode_enabled"))
+    live_skipped = str(summary.get("live_status") or "") == "skipped"
+    live_required = profile == "prod_candidate"
+    live_waived = _has_valid_waiver(waivers, "snowflake_execution_validation") or _has_valid_waiver(waivers, "live_snowflake_validation")
+    live_skip_allowed = not live_required or live_waived
+
+    components = [
+        _component_row(
+            "snowflake_execution_validation",
+            bool(summary.get("passed")) and (live_enabled or not live_skipped or live_skip_allowed),
+            status=str(summary.get("live_status") or "missing"),
+            failure_reason="Live Snowflake execution validation is required for prod_candidate unless waived.",
+            recommendation="Set OVERWATCH_SNOWFLAKE_VALIDATION=1 for live validation or add a signed profile-aware waiver.",
+            details={"live_mode_enabled": live_enabled, "live_status": summary.get("live_status"), "live_skip_reason": summary.get("live_skip_reason")},
+        ),
+        _component_row(
+            "procedure_compile_validation",
+            bool(compile_rows) and _rows_have_no_failures(compile_rows),
+            failure_reason="One or more stored procedures failed compile/static validation.",
+            details={"procedure_compile_count": len(compile_rows)},
+        ),
+        _component_row(
+            "procedure_smoke_call_validation",
+            bool(smoke_rows) and _rows_have_no_failures(smoke_rows) and (live_enabled or live_skip_allowed),
+            status="skipped" if live_skipped else "passed",
+            failure_reason="Procedure smoke calls require live Snowflake validation for this profile.",
+            recommendation="Enable live validation or add a signed waiver for Snowflake smoke calls.",
+            details={"procedure_smoke_call_count": len(smoke_rows), "live_mode_enabled": live_enabled},
+        ),
+        _component_row(
+            "compact_evidence_mart_validation",
+            bool(compact.get("passed")),
+            failure_reason="Compact evidence mart validation failed.",
+            details=compact.get("failures"),
+        ),
+        _component_row(
+            "packet_publication_validation",
+            all(bool(row.get("passed")) for row in (packet_publication, packet_shape, packet_size, packet_truth)),
+            failure_reason="Decision packet publication, shape, size, or source-truth validation failed.",
+            details={
+                "publication": packet_publication.get("passed"),
+                "shape": packet_shape.get("passed"),
+                "size": packet_size.get("passed"),
+                "source_truth": packet_truth.get("passed"),
+            },
+        ),
+        _component_row(
+            "refresh_performance_validation",
+            bool(refresh_perf.get("passed")) and bool(refresh_fast.get("passed", True)) and bool(refresh_full.get("passed", True)) and (live_enabled or live_skip_allowed),
+            status="skipped" if live_skipped else "passed",
+            failure_reason="FAST/FULL refresh performance proof requires live Snowflake validation for this profile.",
+            recommendation="Enable live refresh validation or add a signed waiver for the selected launch profile.",
+            details={"refresh_performance": refresh_perf.get("passed"), "fast_status": refresh_fast.get("status"), "full_status": refresh_full.get("status")},
+        ),
+    ]
+    failures = [row for row in components if not row["passed"]]
+    return {
+        "source": "launch_readiness_snowflake_validation_gate",
+        "proof_source": "live_snowflake_execution" if live_enabled else "static_sql_parse",
+        "launch_profile": profile,
+        "passed": not failures,
+        "component_count": len(components),
+        "failure_count": len(failures),
+        "components": components,
+        "failures": failures,
+        "live_mode_enabled": live_enabled,
+        "live_status": summary.get("live_status") or "missing",
+        "live_skip_reason": summary.get("live_skip_reason") or "",
+        "raw_sql_included": False,
+    }
+
+
 def _release_gate_matrix(
     payloads: Mapping[str, Any],
     launch_artifacts: Mapping[str, Any],
@@ -1758,6 +1880,7 @@ def _release_gate_matrix(
     browser_coverage = _as_mapping(launch_artifacts.get("browser_required_coverage"))
     browser_failures = _as_mapping(launch_artifacts.get("browser_or_snapshot_failures"))
     live_query = _as_mapping(launch_artifacts.get("live_query_history_results"))
+    snowflake_gate = _as_mapping(launch_artifacts.get("snowflake_validation_gate_results"))
     rows = [
         {
             "gate": "launch_profile",
@@ -1856,6 +1979,27 @@ def _release_gate_matrix(
             "failure_reason": "" if live_query.get("passed") else "Live query proof is configured but missing.",
         },
     ]
+    snowflake_components = {
+        str(row.get("gate") or ""): _as_mapping(row)
+        for row in _as_list(snowflake_gate.get("components"))
+    }
+    for gate in (
+        "snowflake_execution_validation",
+        "procedure_compile_validation",
+        "procedure_smoke_call_validation",
+        "compact_evidence_mart_validation",
+        "packet_publication_validation",
+        "refresh_performance_validation",
+    ):
+        component = snowflake_components.get(gate, {})
+        rows.append(
+            {
+                "gate": gate,
+                "artifact": f"{LAUNCH_READINESS_DIR}/snowflake_validation_gate_results.json",
+                "passed": bool(component.get("passed")),
+                "failure_reason": "" if component.get("passed") else str(component.get("failure_reason") or f"{gate} failed."),
+            }
+        )
     for gate, artifact_key in {
         "config_sanity": "config_sanity_results",
         "secrets_scan": "secrets_scan_results",
@@ -1905,12 +2049,14 @@ def evaluate_launch_readiness(
     profile_results = _as_mapping(launch_artifacts.get("launch_profile_results"))
     browser_results = _as_mapping(launch_artifacts.get("browser_smoke_results"))
     browser_coverage = _as_mapping(launch_artifacts.get("browser_required_coverage"))
+    profile = str(profile_results.get("selected_profile") or DEFAULT_LAUNCH_PROFILE)
     launch_artifacts = {
         **dict(launch_artifacts),
         "raw_invariant_results": recomputed_raw,
         "raw_invariant_failures": recomputed_raw_failures,
         "profile_gate_failures": _profile_gate_failures(profile_results, launch_waiver_rows),
         "browser_or_snapshot_failures": _browser_or_snapshot_failures(browser_results, browser_coverage),
+        "snowflake_validation_gate_results": _snowflake_validation_gate_results(payloads, profile, launch_waiver_rows),
     }
     failures: list[dict[str, Any]] = []
     missing = sorted(set(missing_artifacts))
@@ -2061,6 +2207,9 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     launch_artifacts["docs_readiness_results"] = _docs_readiness_results(root_path)
     launch_artifacts["secrets_scan_results"] = _secrets_scan_results(root_path)
     launch_artifacts["artifact_review_results"] = _artifact_review_results(root_path, payloads, missing_payloads)
+    snowflake_artifacts = write_snowflake_validation_artifacts(root_path)
+    payloads.update(snowflake_artifacts)
+    launch_artifacts["snowflake_validation_gate_results"] = _snowflake_validation_gate_results(payloads, profile, waivers)
     raw_results, raw_failures = _raw_invariant_artifacts(root_path, payloads)
     launch_artifacts["raw_invariant_results"] = raw_results
     launch_artifacts["raw_invariant_failures"] = raw_failures

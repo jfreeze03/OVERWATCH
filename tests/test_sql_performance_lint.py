@@ -220,6 +220,26 @@ class SqlPerformanceLintTests(unittest.TestCase):
         )
         self.assertFalse([finding for finding in good_related if finding["severity"] == "error"])
 
+    def test_linter_rejects_mixed_type_coalesce_without_cast(self):
+        from tools.contracts.sql_performance_lint import lint_sql_text
+
+        bad = lint_sql_text("SELECT COALESCE(TOP_ALERT_EVENT_ID, TOP_ALERT_KEY) AS TOP_ALERT_EVIDENCE_ID")
+        self.assertIn("COALESCE_MIXED_TYPE_RISK", {finding["code"] for finding in bad})
+        good = lint_sql_text("SELECT COALESCE(TOP_ALERT_EVENT_ID::VARCHAR, TOP_ALERT_KEY) AS TOP_ALERT_EVIDENCE_ID")
+        self.assertNotIn("COALESCE_MIXED_TYPE_RISK", {finding["code"] for finding in good})
+
+    def test_linter_rejects_metric_candidate_shape_failures(self):
+        from tools.contracts.sql_performance_lint import lint_sql_text
+
+        sql = (ROOT / "snowflake/mart_setup/05_load_procedures.sql").read_text(encoding="utf-8")
+        bad_confidence = sql.replace("TREND_LABEL, CONFIDENCE, 10 AS SORT_ORDER", "TREND_LABEL, 10 AS SORT_ORDER", 1)
+        findings = lint_sql_text(bad_confidence, path="snowflake/mart_setup/05_load_procedures.sql")
+        self.assertIn("METRIC_UNION_BRANCH_MISSING_CONFIDENCE", {finding["code"] for finding in findings})
+
+        scalar_trend = sql.replace("tr.TREND_POINTS", "(SELECT tr.TREND_POINTS FROM TMP_SECTION_METRIC_TRENDS tr)", 1)
+        scalar_findings = lint_sql_text(scalar_trend, path="snowflake/mart_setup/05_load_procedures.sql")
+        self.assertIn("SCALAR_TREND_SUBQUERY_PRESENT", {finding["code"] for finding in scalar_findings})
+
     def test_linter_flags_select_star_app_facing_sql(self):
         from tools.contracts.sql_performance_lint import lint_sql_text
 

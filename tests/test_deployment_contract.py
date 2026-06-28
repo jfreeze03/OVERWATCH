@@ -12,6 +12,7 @@ sys.path.insert(0, str(APP_ROOT))
 
 from utils.deployment import (  # noqa: E402
     STREAMLIT_MANIFEST_CONTRACT_VERSION,
+    STREAMLIT_ROOT_MANIFEST_ARTIFACTS,
     STREAMLIT_SNOWFLAKE_ARTIFACTS,
     build_streamlit_deployment_decision,
     build_streamlit_manifest_contract,
@@ -76,6 +77,10 @@ class DeploymentContractTests(unittest.TestCase):
         contract = build_streamlit_manifest_contract(ROOT)
 
         expected_checks = {
+            "Snowsight root manifest file",
+            "Snowsight root entrypoint",
+            "Snowsight compute pool",
+            "Snowsight package artifact mappings",
             "Snowflake manifest file",
             "Snowflake entrypoint",
             "Snowflake runtime warehouse",
@@ -122,7 +127,7 @@ class DeploymentContractTests(unittest.TestCase):
         parsed = yaml.safe_load(manifest)
 
         self.assertIsInstance(parsed, dict)
-        self.assertEqual(parsed["definition_version"], 1)
+        self.assertEqual(parsed["definition_version"], 2)
         self.assertNotIn("streamlit", parsed)
 
         streamlit_app = parsed["entities"]["streamlit_app"]
@@ -135,6 +140,28 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertEqual(streamlit_app["main_file"], "app.py")
         self.assertIsInstance(streamlit_app["artifacts"], list)
         self.assertEqual(streamlit_app["artifacts"], list(STREAMLIT_SNOWFLAKE_ARTIFACTS))
+
+    def test_root_snowflake_manifest_supports_snowsight_git_deploy(self):
+        manifest = (ROOT / "snowflake.yml").read_text(encoding="utf-8")
+        parsed = yaml.safe_load(manifest)
+
+        self.assertIsInstance(parsed, dict)
+        self.assertEqual(parsed["definition_version"], 2)
+        streamlit_app = parsed["entities"]["streamlit_app"]
+        self.assertEqual(streamlit_app["type"], "streamlit")
+        self.assertEqual(streamlit_app["identifier"]["database"], "DBA_MAINT_DB")
+        self.assertEqual(streamlit_app["identifier"]["schema"], "OVERWATCH")
+        self.assertEqual(streamlit_app["identifier"]["name"], "OVERWATCH")
+        self.assertEqual(streamlit_app["query_warehouse"], "COMPUTE_WH")
+        self.assertEqual(streamlit_app["compute_pool"], "SYSTEM_COMPUTE_POOL_CPU")
+        self.assertEqual(streamlit_app["runtime_name"], "SYSTEM$ST_CONTAINER_RUNTIME_PY3_11")
+        self.assertEqual(streamlit_app["execute_as"], "CALLER")
+        self.assertEqual(streamlit_app["main_file"], "app.py")
+        self.assertEqual(streamlit_app["artifacts"], list(STREAMLIT_ROOT_MANIFEST_ARTIFACTS))
+
+        for artifact in STREAMLIT_ROOT_MANIFEST_ARTIFACTS:
+            with self.subTest(artifact=artifact["src"]):
+                self.assertTrue((ROOT / artifact["src"].rstrip("/")).exists())
 
     def test_mart_setup_avoids_dynamic_tables_and_secure_views(self):
         setup_sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8").upper()

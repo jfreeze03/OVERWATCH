@@ -1085,10 +1085,19 @@ class NavigationIntegrityTests(unittest.TestCase):
 
     def test_streamlit_manifest_uses_current_app_warehouse(self):
         manifest = (APP_ROOT / "snowflake.yml").read_text(encoding="utf-8")
+        root_manifest = (ROOT / "snowflake.yml").read_text(encoding="utf-8")
+        self.assertIn("definition_version: 2", manifest)
         self.assertIn("query_warehouse: COMPUTE_WH", manifest)
         self.assertIn("execute_as: CALLER", manifest)
         self.assertIn("main_file: app.py", manifest)
+        self.assertIn("- app.py", manifest)
+        self.assertIn("- environment.yml", manifest)
         self.assertIn('title: "OVERWATCH - Snowflake DBA Monitor"', manifest)
+        self.assertIn("definition_version: 2", root_manifest)
+        self.assertIn("main_file: app.py", root_manifest)
+        self.assertIn("src: .overwatch_final/app.py", root_manifest)
+        self.assertIn("dest: app.py", root_manifest)
+        self.assertIn("compute_pool: SYSTEM_COMPUTE_POOL_CPU", root_manifest)
 
     def test_streamlit_deployment_entrypoints_are_pinned(self):
         wrapper = (ROOT / "streamlit_app.py").read_text(encoding="utf-8")
@@ -1111,6 +1120,7 @@ class NavigationIntegrityTests(unittest.TestCase):
             ROOT / "README.md",
             ROOT / "STREAMLIT_CLOUD_DEPLOY.md",
             ROOT / "OVERWATCH_DOCUMENTATION.md",
+            ROOT / "snowflake.yml",
             APP_ROOT / "snowflake.yml",
         ):
             text = path.read_text(encoding="utf-8")

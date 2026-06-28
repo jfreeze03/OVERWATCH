@@ -12,6 +12,8 @@ python -m unittest tests.test_launch_readiness
 
 The command regenerates the full app gauntlet artifacts, then writes `artifacts/launch_readiness/launch_readiness_summary.json`. A launch is ready only when `all_passed` is true and `launch_readiness_failures.json` has no failures.
 
+Snowflake execution validation is generated as part of the launch gate. Fixture CI always runs static statement splitting, dependency-order, procedure-shape, packet-shape, compact-evidence, and SQL-lint validation, then writes an explicit `artifacts/snowflake_validation/snowflake_validation_SKIPPED.txt` for live execution. Set `OVERWATCH_SNOWFLAKE_VALIDATION=1` for live setup/procedure smoke validation; `prod_candidate` requires that live proof or a signed waiver.
+
 ## Launch profiles
 
 Launch readiness runs under `OVERWATCH_LAUNCH_PROFILE`. The default CI profile is `internal_fixture`, which requires deterministic rendered snapshots and explicit skip reasons for browser and live query-history proof. `internal_live` expects browser proof and live query-history proof when Snowflake is available; skips become visible warnings. `prod_candidate` requires browser screenshots and live query-history proof unless a signed waiver artifact names an owner, reason, and expiration or review note.
@@ -87,7 +89,8 @@ Key launch artifacts:
 - `snowflake_permission_matrix.json`: least-privilege role map.
 - `deployment_readiness_results.json`: setup, validation, and static compile proof.
 - `drop_rollback_results.json`: safe drop and last-known-good fallback proof.
+- `snowflake_validation_gate_results.json`: launch gate view of Snowflake script, procedure, packet, compact evidence, and refresh validation.
 - `sql_value_inventory.json`: purpose and owner for SQL paths.
 - `performance_slo_results.json`: release SLO checks.
 
-The GitHub Actions artifact named `decision-workspace-proof` contains the launch, gauntlet, cleanup, query, direct/session, SQL lint, button, brand, and snapshot proof bundle.
+The GitHub Actions artifact named `decision-workspace-proof` contains the launch, Snowflake validation, gauntlet, cleanup, query, direct/session, SQL lint, button, brand, and snapshot proof bundle.

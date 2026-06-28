@@ -274,8 +274,19 @@ Streamlit Community Cloud settings:
 - Main file path: `streamlit_app.py`
 - Tracked app config: `.streamlit/config.toml`
 
-Streamlit in Snowflake uses `.overwatch_final/snowflake.yml` with
-`main_file: app.py` and `query_warehouse: COMPUTE_WH`.
+Streamlit in Snowflake has two pinned deploy manifests:
+
+- Snowsight/Git deploy uses root `snowflake.yml`. It maps
+  `.overwatch_final/app.py` to deploy-root `app.py`, sets
+  `definition_version: 2`, `main_file: app.py`,
+  `compute_pool: SYSTEM_COMPUTE_POOL_CPU`, and
+  `query_warehouse: COMPUTE_WH`.
+- Package-root CLI deploy uses `.overwatch_final/snowflake.yml` with
+  `definition_version: 2`, `main_file: app.py`, and
+  `query_warehouse: COMPUTE_WH`.
+
+If Snowflake reports `Missing MAIN_FILE`, deploy from the repository root
+manifest or run `snow streamlit deploy --replace` from `.overwatch_final`.
 
 ## Production Validation
 

@@ -11,7 +11,8 @@ The deployment source of truth is intentionally split by runtime:
 
 | Runtime | Entry point | Manifest | Warehouse / execution |
 |---|---|---|---|
-| Streamlit in Snowflake | `.overwatch_final/app.py` | `.overwatch_final/snowflake.yml` | `COMPUTE_WH`, `CALLER` |
+| Streamlit in Snowflake, Snowsight/Git deploy | mapped `app.py` from `.overwatch_final/app.py` | `snowflake.yml` | `SYSTEM_COMPUTE_POOL_CPU`, `COMPUTE_WH`, `CALLER` |
+| Streamlit in Snowflake, package-root CLI deploy | `.overwatch_final/app.py` | `.overwatch_final/snowflake.yml` | `COMPUTE_WH`, `CALLER` |
 | Streamlit Community Cloud | `streamlit_app.py` | `.streamlit/config.toml` | user-provided Snowflake connection |
 | Snowflake setup objects | `snowflake/mart_setup/` ordered files (canonical human path; `snowflake/OVERWATCH_MART_SETUP.sql` is the byte-equivalent single-file artifact) | `utils.deployment` schema contract | setup role, mart task warehouses |
 
@@ -42,19 +43,33 @@ Do not commit secrets:
 
 ## Streamlit In Snowflake
 
-Use `.overwatch_final/snowflake.yml`.
+Use the root `snowflake.yml` for Snowsight/Git deploys. It maps
+`.overwatch_final/app.py` to deploy-root `app.py` and pins `main_file: app.py`,
+which avoids Snowsight emitting `CREATE STREAMLIT` without `MAIN_FILE`.
+
+Use `.overwatch_final/snowflake.yml` only when running `snow streamlit deploy`
+from inside the `.overwatch_final` package directory.
 
 Expected values:
 
 | Setting | Value |
 |---|---|
+| Project definition | `definition_version: 2` |
 | Main file | `app.py` |
+| Snowsight compute pool | `SYSTEM_COMPUTE_POOL_CPU` |
 | Query warehouse | `COMPUTE_WH` |
-| App package root | `.overwatch_final` |
+| Snowsight manifest | `snowflake.yml` |
+| Package-root CLI manifest | `.overwatch_final/snowflake.yml` |
+| App package source | `.overwatch_final` |
 
 `COMPUTE_WH` is the approved current app runtime warehouse until a dedicated
 OVERWATCH warehouse is approved. The current mart task graph also runs on
 `COMPUTE_WH`.
+
+If Snowsight reports `Missing MAIN_FILE`, use the root `snowflake.yml` in the
+Deploy app dialog or recreate the Streamlit object from the repository root.
+The root manifest is the Snowsight source of truth for `MAIN_FILE`, package
+artifact mapping, compute pool, warehouse, and caller-rights execution.
 
 ## Snowflake Setup
 

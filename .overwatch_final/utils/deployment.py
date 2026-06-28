@@ -32,6 +32,13 @@ STREAMLIT_SNOWFLAKE_ARTIFACTS = (
     "utils/",
     "sections/",
 )
+STREAMLIT_ROOT_MANIFEST_ARTIFACTS = tuple(
+    {
+        "src": f".overwatch_final/{artifact}",
+        "dest": artifact,
+    }
+    for artifact in STREAMLIT_SNOWFLAKE_ARTIFACTS
+)
 
 
 def _repo_root(root: str | Path | None = None) -> Path:
@@ -68,6 +75,7 @@ def build_streamlit_manifest_contract(root: str | Path | None = None) -> pd.Data
     repo = _repo_root(root)
     app_root = repo / ".overwatch_final"
     manifest_path = app_root / "snowflake.yml"
+    root_manifest_path = repo / "snowflake.yml"
     wrapper_path = repo / "streamlit_app.py"
     cloud_config_path = repo / ".streamlit" / "config.toml"
     deploy_doc_path = repo / "STREAMLIT_CLOUD_DEPLOY.md"
@@ -75,6 +83,7 @@ def build_streamlit_manifest_contract(root: str | Path | None = None) -> pd.Data
     cortex_path = app_root / "utils" / "cortex.py"
 
     manifest = _read_text(manifest_path)
+    root_manifest = _read_text(root_manifest_path)
     wrapper = _read_text(wrapper_path)
     cloud_config = _read_text(cloud_config_path)
     deploy_doc = _read_text(deploy_doc_path)
@@ -87,8 +96,51 @@ def build_streamlit_manifest_contract(root: str | Path | None = None) -> pd.Data
         exists = (app_root / artifact.rstrip("/")).exists()
         artifact_states.append((artifact, listed, exists))
     missing_artifacts = [name for name, listed, exists in artifact_states if not (listed and exists)]
+    root_missing_artifacts = [
+        artifact["src"]
+        for artifact in STREAMLIT_ROOT_MANIFEST_ARTIFACTS
+        if f"src: {artifact['src']}" not in root_manifest
+        or f"dest: {artifact['dest']}" not in root_manifest
+        or not (repo / artifact["src"].rstrip("/")).exists()
+    ]
 
     rows = [
+        _contract_row(
+            "Snowsight root manifest file",
+            "snowflake.yml exists at repository root",
+            "present" if root_manifest_path.exists() else "missing",
+            root_manifest_path.exists(),
+            "Restore root snowflake.yml so Snowsight/Git deploy can resolve MAIN_FILE.",
+        ),
+        _contract_row(
+            "Snowsight root entrypoint",
+            "main_file: app.py with .overwatch_final/app.py mapped to app.py",
+            "app.py" if "main_file: app.py" in root_manifest else "unknown",
+            "main_file: app.py" in root_manifest
+            and "src: .overwatch_final/app.py" in root_manifest
+            and "dest: app.py" in root_manifest,
+            "Keep root snowflake.yml mapped to the packaged app entrypoint.",
+        ),
+        _contract_row(
+            "Snowsight compute pool",
+            "SYSTEM_COMPUTE_POOL_CPU plus query_warehouse COMPUTE_WH",
+            "configured"
+            if "compute_pool: SYSTEM_COMPUTE_POOL_CPU" in root_manifest
+            and "query_warehouse: COMPUTE_WH" in root_manifest
+            else "unknown",
+            "compute_pool: SYSTEM_COMPUTE_POOL_CPU" in root_manifest
+            and "query_warehouse: COMPUTE_WH" in root_manifest,
+            "Keep Snowsight deploy on the approved compute pool and query warehouse.",
+        ),
+        _contract_row(
+            "Snowsight package artifact mappings",
+            ", ".join(f"{item['src']} -> {item['dest']}" for item in STREAMLIT_ROOT_MANIFEST_ARTIFACTS),
+            "missing: " + ", ".join(root_missing_artifacts)
+            if root_missing_artifacts
+            else "all mapped and present",
+            not root_missing_artifacts,
+            "Update root snowflake.yml whenever the app package artifact list changes.",
+        ),
         _contract_row(
             "Snowflake manifest file",
             ".overwatch_final/snowflake.yml exists",

@@ -1092,11 +1092,18 @@ def _recent_snowflake_fix_results(texts: Mapping[str, str]) -> dict[str, Any]:
         failures.append({"code": "UNQUALIFIED_AMBIGUOUS_METRIC_FIELD"})
     if "LEFT JOIN TMP_SECTION_METRIC_TRENDS TR" not in metric_region:
         failures.append({"code": "TREND_JOIN_MISSING"})
-    child_rows_region = _region(upper, "SELECT\n      (SELECT COUNT(*) FROM MART_SECTION_COMMAND_METRIC", "SYSTEM$LOG_INFO")
-    if "INTO :CHILD_ROWS" in child_rows_region and "FROM (SELECT 1)" not in child_rows_region:
+    child_rows_into_pos = upper.find("INTO :CHILD_ROWS")
+    child_rows_end = upper.find("INSERT INTO OVERWATCH_DECISION_REFRESH_AUDIT", child_rows_into_pos if child_rows_into_pos >= 0 else 0)
+    child_rows_region = upper[max(0, child_rows_into_pos - 700): child_rows_end if child_rows_end >= 0 else len(upper)] if child_rows_into_pos >= 0 else ""
+    if re.search(r"\(\s*SELECT\s+COUNT\(\*\)\s+FROM\s+MART_SECTION_COMMAND_", child_rows_region) or "FROM (SELECT 1)" in child_rows_region:
         failures.append({
             "code": "COMMAND_ROW_COUNT_INTO_CONTEXT_UNSAFE",
-            "recommendation": "Keep the command child-row counter in SELECT ... INTO ... FROM (SELECT 1) form.",
+            "recommendation": "Use a derived UNION ALL row-count table and SELECT SUM(ROW_COUNT) INTO :child_rows so INTO is not parsed inside a scalar subquery context.",
+        })
+    if "COALESCE(SUM(ROW_COUNT), 0)" not in child_rows_region or "UNION ALL" not in child_rows_region:
+        failures.append({
+            "code": "COMMAND_ROW_COUNT_AGGREGATE_MISSING",
+            "recommendation": "Aggregate child command row counts through a derived UNION ALL table before assigning :child_rows.",
         })
     return _failure_result(
         source="recent_snowflake_fix_validation",
@@ -1105,6 +1112,7 @@ def _recent_snowflake_fix_results(texts: Mapping[str, str]) -> dict[str, Any]:
         sla_projection_checked=True,
         metric_candidate_shape_passed=bool(metric_shape.get("passed")),
         trend_join_checked=True,
+        child_row_counter_context_checked=True,
     )
 
 

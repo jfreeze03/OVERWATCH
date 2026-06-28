@@ -306,6 +306,8 @@ class SnowflakeExecutionValidationTests(unittest.TestCase):
         self.assertIn("UNQUALIFIED_AMBIGUOUS_METRIC_FIELD", ambiguous_codes)
 
     def test_recent_fix_manifest_encoding_and_schema_artifacts_pass(self):
+        from tools.contracts import snowflake_execution_validation as validation
+
         recent = self._read_json("artifacts/snowflake_validation/recent_snowflake_fix_validation_results.json")
         metric = self._read_json("artifacts/snowflake_validation/metric_candidate_shape_results.json")
         encoding = self._read_json("artifacts/snowflake_validation/sql_encoding_scan_results.json")
@@ -318,6 +320,24 @@ class SnowflakeExecutionValidationTests(unittest.TestCase):
         self.assertGreater(schema["commented_ddl_count"], 0)
         self.assertTrue(all(row["validation_metadata"] for row in schema["rows"]), schema)
         self.assertTrue(manifest["passed"], manifest)
+        self.assertTrue(recent["child_row_counter_context_checked"])
+
+        sql = (ROOT / "snowflake/mart_setup/05_load_procedures.sql").read_text(encoding="utf-8")
+        block_start = sql.index("  SELECT COALESCE(SUM(ROW_COUNT), 0)\n    INTO :child_rows")
+        block_end = sql.index("\n\n  INSERT INTO OVERWATCH_DECISION_REFRESH_AUDIT", block_start)
+        unsafe_block = """  SELECT
+    (SELECT COUNT(*) FROM MART_SECTION_COMMAND_METRIC WHERE SNAPSHOT_TS = :snapshot_ts)
+    + (SELECT COUNT(*) FROM MART_SECTION_COMMAND_EXCEPTION WHERE SNAPSHOT_TS = :snapshot_ts)
+    + (SELECT COUNT(*) FROM MART_SECTION_COMMAND_ACTION WHERE SNAPSHOT_TS = :snapshot_ts)
+    + (SELECT COUNT(*) FROM MART_SECTION_COMMAND_SOURCE WHERE SNAPSHOT_TS = :snapshot_ts)
+    INTO :child_rows
+    FROM (SELECT 1);"""
+        unsafe_sql = sql[:block_start] + unsafe_block + sql[block_end:]
+        texts = validation._load_script_texts(ROOT)
+        texts["snowflake/mart_setup/05_load_procedures.sql"] = unsafe_sql
+        unsafe_result = validation._recent_snowflake_fix_results(texts)
+        unsafe_codes = {row["code"] for row in unsafe_result["failures"]}
+        self.assertIn("COMMAND_ROW_COUNT_INTO_CONTEXT_UNSAFE", unsafe_codes)
 
     def test_trend_packet_and_refresh_artifacts_are_present(self):
         trend = self._read_json("artifacts/snowflake_validation/trend_cardinality_results.json")

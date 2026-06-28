@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 
 PRIMARY_SUMMARY_SECTIONS = (
@@ -264,7 +264,7 @@ def build_summary_board_rows(payloads: Mapping[str, Any]) -> list[dict[str, Any]
     return rows
 
 
-def build_summary_board_query_budget_results(rows: list[Mapping[str, Any]]) -> dict[str, Any]:
+def build_summary_board_query_budget_results(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     failures = [
         dict(row)
         for row in rows
@@ -287,7 +287,7 @@ def build_summary_board_query_budget_results(rows: list[Mapping[str, Any]]) -> d
     }
 
 
-def build_summary_board_error_inventory(rows: list[Mapping[str, Any]]) -> dict[str, Any]:
+def build_summary_board_error_inventory(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     failures = [dict(row) for row in rows if not bool(row.get("passed"))]
     by_section = {
         str(row.get("section") or ""): list(row.get("failed_checks") or [])
@@ -303,7 +303,7 @@ def build_summary_board_error_inventory(rows: list[Mapping[str, Any]]) -> dict[s
     }
 
 
-def build_summary_board_failure_diagnostics(rows: list[Mapping[str, Any]]) -> dict[str, Any]:
+def build_summary_board_failure_diagnostics(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     failures = [dict(row) for row in rows if not bool(row.get("passed"))]
     return {
         "source": "summary_board_failure_diagnostics",

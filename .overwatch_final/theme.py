@@ -2857,6 +2857,65 @@ _THEME_EXTRAS["carbon"] += """
 
 _THEME_EXTRAS["terminal"] += """
 <style>
+/* Snowflake White: override the later compact sidebar shell variables so the sidebar does not keep dark-mode contrast. */
+:root {
+    --ow-app-bg: #f6fbff;
+    --ow-sidebar-bg: #ffffff;
+    --ow-panel-bg: #ffffff;
+    --ow-panel-elevated: #f8fdff;
+    --ow-border: rgba(0,104,183,0.34);
+    --ow-border-soft: rgba(0,104,183,0.18);
+    --ow-text: #102a43;
+    --ow-text-secondary: #526b7a;
+    --ow-text-muted: #6a7f8d;
+}
+.stApp [data-testid="stSidebar"] {
+    background: #ffffff !important;
+    background-image: none !important;
+    color: #102a43 !important;
+}
+.stApp [data-testid="stSidebarContent"],
+.stApp [data-testid="stSidebarUserContent"] {
+    background: #ffffff !important;
+    color: #102a43 !important;
+}
+.stApp [data-testid="stSidebar"] [data-testid="stCaptionContainer"],
+.stApp [data-testid="stSidebar"] .stCaptionContainer,
+.stApp [data-testid="stSidebar"] label,
+.stApp [data-testid="stSidebar"] p {
+    color: #526b7a !important;
+    -webkit-text-fill-color: #526b7a !important;
+}
+.stApp [data-testid="stSidebar"] .ow-brand-lockup strong,
+.stApp [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] .ow-brand-row,
+.stApp [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] .ow-brand-row span:last-child {
+    color: #102a43 !important;
+    -webkit-text-fill-color: #102a43 !important;
+}
+.stApp [data-testid="stSidebar"] .ow-brand-lockup small,
+.stApp [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] .ow-sidebar-subtitle {
+    color: #526b7a !important;
+    -webkit-text-fill-color: #526b7a !important;
+}
+.stApp div[class*="st-key-"][class*="_decision_workspace_shell"],
+.stApp [data-testid="stVerticalBlock"]:has(.ow-decision-workspace-marker),
+.stApp .ow-decision-workspace {
+    background: #ffffff !important;
+    background-image: none !important;
+    border-color: rgba(0,104,183,0.18) !important;
+    box-shadow: 0 14px 34px rgba(0,82,143,0.10) !important;
+}
+.stApp .ow-setup-health-panel,
+.stApp .ow-decision-metric-ribbon,
+.stApp .ow-decision-attention-panel,
+.stApp .ow-decision-actions-panel,
+.stApp .ow-decision-trend-band,
+.stApp .ow-decision-evidence-panel,
+.stApp .ow-decision-context-strip {
+    background: #f8fdff !important;
+    background-image: none !important;
+    border-color: rgba(0,104,183,0.18) !important;
+}
 /* Snowflake White: match dark-mode selector strength so theme switching cannot leave stale dark button/card rules active. */
 .stApp [data-testid="stMain"] .stButton > button[kind="secondary"],
 .stApp [data-testid="stMain"] [data-testid="stButton"] button[kind="secondary"],
@@ -3828,8 +3887,6 @@ def _get_theme() -> str:
         st.session_state["active_theme"] = theme_key
     if st.session_state.get(_ACTIVE_THEME_KEY) != theme_key:
         st.session_state[_ACTIVE_THEME_KEY] = theme_key
-    if st.session_state.get("theme_picker_radio") not in THEMES:
-        st.session_state["theme_picker_radio"] = theme_key
     return theme_key
 
 
@@ -3843,8 +3900,8 @@ def _combined_theme_css(theme_key: str) -> str:
     vars_block = _VARS.get(theme_key, _VARS[_DEFAULT_THEME])
     combined = (
         _STRUCTURAL_CSS.replace("{vars}", vars_block)
-        + _THEME_EXTRAS.get(theme_key, "")
         + _STREAMLIT_ICON_FIX
+        + _THEME_EXTRAS.get(theme_key, "")
     )
     _COMBINED_CSS_CACHE[theme_key] = combined
     return combined
@@ -3860,11 +3917,15 @@ def inject_theme() -> None:
     st.markdown(_combined_theme_css(theme_key), unsafe_allow_html=True)
 
 
-def _commit_theme_picker_change() -> None:
-    selected = _normalize_theme_key(st.session_state.get("theme_picker_radio"))
+def _commit_theme_selection(selected_theme: str | None) -> None:
+    selected = _normalize_theme_key(selected_theme)
     st.session_state[_ACTIVE_THEME_KEY] = selected
     st.session_state["active_theme"] = selected
     _set_query_param_theme(selected)
+
+
+def _commit_theme_picker_change() -> None:
+    _commit_theme_selection(st.session_state.get("theme_picker_radio"))
 
 
 def render_theme_picker() -> None:
@@ -3878,14 +3939,13 @@ def render_theme_picker() -> None:
     """
     current = _get_theme()
     options = list(THEMES.keys())
-    if st.session_state.get("theme_picker_radio") != current:
-        st.session_state["theme_picker_radio"] = current
     index = options.index(current) if current in options else 0
-    st.selectbox(
+    selected = st.selectbox(
         "Theme",
         options,
         index=index,
         format_func=lambda key: THEMES[key]["label"],
-        key="theme_picker_radio",
-        on_change=_commit_theme_picker_change,
     )
+    selected = _normalize_theme_key(str(selected))
+    if selected != current:
+        _commit_theme_selection(selected)

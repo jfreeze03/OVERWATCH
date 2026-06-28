@@ -2377,6 +2377,7 @@ class NavigationIntegrityTests(unittest.TestCase):
             format_func=None,
             key=None,
             label_visibility="visible",
+            **kwargs,
         ):
             captured.update(
                 {
@@ -2386,8 +2387,11 @@ class NavigationIntegrityTests(unittest.TestCase):
                     "format_func": format_func,
                     "key": key,
                     "label_visibility": label_visibility,
+                    "extra_kwargs": kwargs,
                 }
             )
+            if "required" in kwargs:
+                raise TypeError("unexpected keyword argument 'required'")
             return options[1]
 
         with patch.object(shell_helpers.st, "html"), patch.object(
@@ -2408,6 +2412,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(captured["selection_mode"], "single")
         self.assertEqual(captured["key"], "executive_landing_workflow")
         self.assertEqual(captured["label_visibility"], "collapsed")
+        self.assertEqual(captured["extra_kwargs"], {})
 
     def test_section_first_paint_spec_adds_view_lanes_cta_and_no_query_note(self):
         from sections import shell_helpers

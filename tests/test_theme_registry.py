@@ -85,16 +85,37 @@ class ThemeRegistryTests(unittest.TestCase):
     def test_theme_picker_uses_dropdown_not_radio(self):
         theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")
         self.assertIn("st.selectbox(", theme_text)
+        self.assertIn("def _commit_theme_selection", theme_text)
         self.assertIn("def _commit_theme_picker_change", theme_text)
-        self.assertIn("on_change=_commit_theme_picker_change", theme_text)
         self.assertNotIn("selected = st.radio(", theme_text)
-        self.assertIn('key="theme_picker_radio"', theme_text)
+        self.assertNotIn('key="theme_picker_radio"', theme_text)
+        self.assertNotIn('st.session_state["theme_picker_radio"] = current', theme_text)
         self.assertIn('_THEME_QUERY_PARAM = "overwatch_theme"', theme_text)
         self.assertIn("def _set_query_param_theme", theme_text)
-        self.assertIn("_set_query_param_theme(selected)", theme_text)
+        self.assertIn("_commit_theme_selection(selected)", theme_text)
         self.assertIn("st.experimental_get_query_params()", theme_text)
         self.assertIn("st.experimental_set_query_params(**query_params)", theme_text)
-        self.assertIn('st.session_state.get("theme_picker_radio") != current', theme_text)
+
+    def test_theme_picker_commits_selected_value_without_widget_key_warning(self):
+        previous = dict(st.session_state)
+        try:
+            st.session_state.clear()
+            st.session_state["_overwatch_active_theme"] = "carbon"
+            with patch.object(theme, "_query_param_theme", return_value=None), patch.object(
+                theme,
+                "_set_query_param_theme",
+            ) as set_query_param, patch.object(theme.st, "selectbox", return_value="terminal") as selectbox:
+                theme.render_theme_picker()
+
+            selectbox.assert_called_once()
+            self.assertNotIn("key", selectbox.call_args.kwargs)
+            self.assertNotIn("on_change", selectbox.call_args.kwargs)
+            self.assertEqual(st.session_state["_overwatch_active_theme"], "terminal")
+            self.assertEqual(st.session_state["active_theme"], "terminal")
+            set_query_param.assert_called_once_with("terminal")
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)
 
     def test_theme_version_change_preserves_dark_selection(self):
         previous = dict(st.session_state)
@@ -226,6 +247,17 @@ class ThemeRegistryTests(unittest.TestCase):
             '[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] .ow-brand-row',
             theme._STRUCTURAL_CSS,
         )
+        self.assertIn("--ow-sidebar-bg: #ffffff", theme._THEME_EXTRAS["terminal"])
+        self.assertIn("--ow-panel-bg: #ffffff", theme._THEME_EXTRAS["terminal"])
+        self.assertIn("--ow-text: #102a43", theme._THEME_EXTRAS["terminal"])
+        self.assertIn('.stApp [data-testid="stSidebar"] {', theme._THEME_EXTRAS["terminal"])
+        self.assertIn("background: #ffffff !important", theme._THEME_EXTRAS["terminal"])
+        combined_white_css = theme._combined_theme_css("terminal")
+        self.assertGreater(
+            combined_white_css.rfind("Snowflake White: override the later compact sidebar shell variables"),
+            combined_white_css.rfind("--ow-sidebar-bg: #06111a"),
+        )
+        self.assertIn('.stApp .ow-decision-workspace', theme._THEME_EXTRAS["terminal"])
         combined_shell_css = theme._combined_theme_css("carbon")
         self.assertIn(".ow-sidebar-logo", combined_shell_css)
         self.assertIn(".ow-logo-mark", combined_shell_css)

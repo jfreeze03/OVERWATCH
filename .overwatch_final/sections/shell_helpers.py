@@ -675,11 +675,9 @@ def render_single_choice_navigation(
                 segmented_control,
                 {
                     "selection_mode": "single",
-                    "required": True,
                     "format_func": formatter,
                     "key": key,
                     "label_visibility": "collapsed",
-                    "width": "stretch",
                 },
             ),
         )
@@ -692,7 +690,6 @@ def render_single_choice_navigation(
                 "key": key,
                 "horizontal": True,
                 "label_visibility": "collapsed",
-                "width": "stretch",
             },
         )
         selected = st.radio(

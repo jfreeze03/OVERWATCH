@@ -50,6 +50,7 @@ REQUIRED_RESULT_FILES = {
     "snowflake_validation_summary",
     "live_execution_manifest",
     "live_execution_manifest_reconciliation",
+    "live_execution_manifest_category_coverage",
     "live_validation_environment_results",
     "live_validation_session_results",
     "setup_execution_results",
@@ -102,6 +103,31 @@ REQUIRED_VALIDATION_PHASES = (
     "drop_rollback_static",
     "drop_rollback_live_or_dry_run",
 )
+
+MANIFEST_CATEGORY_ARTIFACTS = {
+    "live_environment": ("live_validation_environment_results.json",),
+    "live_session": ("live_validation_session_results.json",),
+    "procedure_compile": ("procedure_compile_results.json",),
+    "procedure_smoke_call": ("procedure_smoke_call_results.json",),
+    "refresh_fast": ("refresh_fast_results.json",),
+    "refresh_full": ("refresh_full_results.json",),
+    "validation_sql": ("validation_sql_results.json",),
+    "packet_publication": ("packet_publication_validation_results.json",),
+    "packet_shape": ("packet_shape_results.json",),
+    "packet_size": ("packet_size_results.json",),
+    "packet_source_truth": ("packet_source_truth_results.json",),
+    "compact_evidence_mart": (
+        "compact_evidence_mart_validation_results.json",
+        "compact_evidence_mart_detail_results.json",
+    ),
+    "recent_snowflake_fix": ("recent_snowflake_fix_validation_results.json",),
+    "metric_candidate_shape": ("metric_candidate_shape_results.json",),
+    "trend_cardinality": ("trend_cardinality_results.json",),
+    "schema_drift": ("schema_drift_results.json",),
+    "sql_encoding": ("sql_encoding_scan_results.json",),
+    "snowflake_error_sanitization": ("snowflake_error_sanitization_results.json",),
+    "live_query_history": ("query_history_by_tag.json",),
+}
 
 _SECRET_PATTERNS = (
     re.compile(r"(?i)\b(account|user|username|password|token|private[_ -]?key|role|warehouse)\s*[:=]\s*['\"]?[^'\"\s;]+"),
@@ -607,6 +633,13 @@ def _as_mapping(value: Any) -> dict[str, Any]:
 
 def _as_list(value: Any) -> list[Any]:
     return list(value) if isinstance(value, list) else []
+
+
+def _as_int(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _load_script_texts(root: Path) -> dict[str, str]:
@@ -1329,6 +1362,18 @@ def _packet_validation_detail_results(
             "missing_fields": missing_fields,
             "duplicate_arrays": duplicate_arrays,
             "first_paint_impact": first_paint_impact,
+            "evidence_impact": check_name in {
+                "packet_required_fields_present",
+                "source_truth_array_present",
+                "source_truth_required_optional_semantics_valid",
+                "top_alert_evidence_id_string_compatible",
+            },
+            "export_case_impact": check_name in {
+                "packet_required_fields_present",
+                "no_duplicate_metric_rows",
+                "no_duplicate_action_rows",
+                "no_duplicate_source_rows",
+            },
             "affected_sections": sorted(
                 {
                     "Executive Landing",
@@ -1339,7 +1384,7 @@ def _packet_validation_detail_results(
                     "Security Monitoring",
                 }
             )
-            if first_paint_impact
+            if first_paint_impact or not passed
             else [],
             "recommendation": "" if passed else "Repair packet publication SQL or first-paint packet contracts and rerun Snowflake validation.",
             "raw_sql_included": False,
@@ -1443,6 +1488,13 @@ def _compact_evidence_results(root: Path, texts: Mapping[str, str]) -> dict[str,
         )
         max_rows = max([int(row.get("max_rows") or 0) for row in loader_refs] or [0])
         max_rows_limit = int(max_rows or 500)
+        loader_sections = sorted(
+            {
+                str(item.get("section") or "")
+                for item in loader_refs
+                if str(item.get("section") or "")
+            }
+        )
         row = {
             "mart_name": mart,
             "mart": mart,
@@ -1450,13 +1502,13 @@ def _compact_evidence_results(root: Path, texts: Mapping[str, str]) -> dict[str,
             "load_path_exists": bool(re.search(rf"\bINSERT\s+INTO\s+{mart}\b|\bMERGE\s+INTO\s+{mart}\b", setup_text)),
             "validation_exists": mart in validation_text,
             "loader_matrix_references": bool(loader_refs),
-            "loader_matrix_sections": sorted(
-                {
-                    str(item.get("section") or "")
-                    for item in loader_refs
-                    if str(item.get("section") or "")
-                }
-            ),
+            "loader_matrix_sections": loader_sections,
+            "evidence_actions_covered": len(loader_refs),
+            "sections_covered": loader_sections,
+            "missing_loader_actions": [] if loader_refs else [mart],
+            "first_paint_impact": False,
+            "fallback_required": False,
+            "account_usage_fallback_only": True,
             "target_lookup_columns_present": bool(lookup_columns),
             "target_lookup_columns": lookup_columns,
             "missing_target_lookup_columns": [] if lookup_columns else ["target_lookup_columns"],
@@ -1541,6 +1593,12 @@ def _compact_evidence_mart_detail_results(compact_evidence: Mapping[str, Any]) -
             failures.append({"code": "COMPACT_MART_MISSING_TARGET_COLUMN_NAMES", "mart_name": mart})
         if bool(row.get("loader_matrix_references")) and not _as_list(row.get("loader_matrix_sections")):
             failures.append({"code": "COMPACT_MART_MISSING_LOADER_SECTIONS", "mart_name": mart})
+        if bool(row.get("loader_matrix_references")) and _as_int(row.get("evidence_actions_covered")) <= 0:
+            failures.append({"code": "COMPACT_MART_MISSING_ACTION_COVERAGE", "mart_name": mart})
+        if bool(row.get("loader_matrix_references")) and not _as_list(row.get("sections_covered")):
+            failures.append({"code": "COMPACT_MART_MISSING_SECTION_COVERAGE", "mart_name": mart})
+        if _as_list(row.get("missing_loader_actions")):
+            failures.append({"code": "COMPACT_MART_MISSING_LOADER_ACTIONS", "mart_name": mart})
         if bool(row.get("normal_account_usage_used")):
             failures.append({"code": "NORMAL_EVIDENCE_ACCOUNT_USAGE", "mart_name": mart})
         if int(row.get("max_rows") or 0) > 500:
@@ -2067,25 +2125,26 @@ def _attach_manifest_id(
     context: Mapping[str, Any],
     safe_execution_class: str = "safe_read",
     row_key: str = "",
+    row_index: int | None = None,
 ) -> None:
     validation_id = f"{artifact}:{index:04d}"
     row["live_execution_manifest_id"] = validation_id
-    if row_key:
-        row["live_execution_row_key"] = row_key
+    effective_row_key = row_key or str(
+        row.get("smoke_target")
+        or row.get("procedure_name")
+        or row.get("mart_name")
+        or row.get("check_name")
+        or row.get("source")
+        or row.get("phase")
+        or index
+    )
+    row["live_execution_row_key"] = effective_row_key
     status = str(row.get("status") or ("passed" if row.get("passed", True) else "failed"))
     entry = {
         "validation_id": validation_id,
         "artifact": artifact,
-        "row_index": index,
-        "row_key": row_key
-        or str(
-            row.get("smoke_target")
-            or row.get("procedure_name")
-            or row.get("mart_name")
-            or row.get("check_name")
-            or row.get("source")
-            or index
-        ),
+        "row_index": row_index if row_index is not None else index,
+        "row_key": effective_row_key,
         "phase": str(row.get("phase") or row.get("source") or row.get("check_name") or ""),
         "object_name": str(row.get("object_name") or row.get("mart_name") or row.get("check_name") or ""),
         "procedure_name": str(row.get("procedure_name") or ""),
@@ -2133,13 +2192,26 @@ def _live_execution_manifest_results(
     validation_rows: list[dict[str, Any]],
     refresh_fast: dict[str, Any],
     refresh_full: dict[str, Any],
+    packet_publication: dict[str, Any],
+    packet_shape: dict[str, Any],
+    packet_size: dict[str, Any],
+    packet_source_truth: dict[str, Any],
     packet_detail: dict[str, Any],
     compact_evidence: dict[str, Any],
+    compact_detail: dict[str, Any],
+    refresh_detail: dict[str, Any],
+    recent_fixes: dict[str, Any],
+    metric_shape: dict[str, Any],
+    trend_cardinality: dict[str, Any],
+    encoding_scan: dict[str, Any],
+    schema_drift: dict[str, Any],
+    sanitizer_results: dict[str, Any],
 ) -> dict[str, Any]:
     context = _manifest_context(live_enabled)
     entries: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
     artifact_index = 0
+    artifact_row_indexes: dict[str, int] = {}
 
     def add(
         row: dict[str, Any],
@@ -2152,12 +2224,14 @@ def _live_execution_manifest_results(
     ) -> None:
         nonlocal artifact_index
         artifact_index += 1
+        artifact_row_indexes[artifact] = artifact_row_indexes.get(artifact, 0) + 1
         _attach_manifest_id(
             entries,
             failures,
             row,
             artifact=artifact,
             index=artifact_index,
+            row_index=artifact_row_indexes[artifact],
             expected_mode=expected_mode,
             observed_mode=observed_mode,
             context=context,
@@ -2211,6 +2285,16 @@ def _live_execution_manifest_results(
         expected_mode="live" if live_enabled else "static",
         observed_mode="live" if live_enabled and str(refresh_full.get("status") or "") != "skipped" else "skipped",
     )
+    for artifact, payload in (
+        ("packet_publication_validation_results.json", packet_publication),
+        ("packet_shape_results.json", packet_shape),
+        ("packet_size_results.json", packet_size),
+        ("packet_source_truth_results.json", packet_source_truth),
+        ("recent_snowflake_fix_validation_results.json", recent_fixes),
+        ("metric_candidate_shape_results.json", metric_shape),
+        ("trend_cardinality_results.json", trend_cardinality),
+    ):
+        add(payload, artifact=artifact, expected_mode="static", observed_mode="static", row_key=str(payload.get("source") or artifact))
     for item in packet_detail.get("checks", []):
         if isinstance(item, dict):
             add(item, artifact="packet_validation_detail_results.json", expected_mode="static", observed_mode="static")
@@ -2223,6 +2307,21 @@ def _live_execution_manifest_results(
                 expected_mode="live" if live_enabled else "static",
                 observed_mode="live" if live_enabled else "static",
             )
+    for item in compact_detail.get("marts", []):
+        if isinstance(item, dict):
+            add(item, artifact="compact_evidence_mart_detail_results.json", expected_mode="static", observed_mode="static")
+    for item in refresh_detail.get("checks", []):
+        if isinstance(item, dict):
+            add(item, artifact="refresh_detail_results.json", expected_mode="static", observed_mode="static")
+    for item in schema_drift.get("rows", []):
+        if isinstance(item, dict):
+            add(item, artifact="schema_drift_results.json", expected_mode="static", observed_mode="static")
+    for item in encoding_scan.get("rows", []):
+        if isinstance(item, dict):
+            add(item, artifact="sql_encoding_scan_results.json", expected_mode="static", observed_mode="static")
+    for item in sanitizer_results.get("checks", []):
+        if isinstance(item, dict):
+            add(item, artifact="snowflake_error_sanitization_results.json", expected_mode="static", observed_mode="static")
 
     return _failure_result(
         source="live_execution_manifest",
@@ -2287,7 +2386,7 @@ def _live_execution_manifest_reconciliation_results(
     entries_by_id = {str(row.get("validation_id") or ""): row for row in entries}
     failures: list[dict[str, Any]] = []
     consumed_ids: set[str] = set()
-    row_index: dict[tuple[str, str], dict[str, Any]] = {}
+    row_index: dict[tuple[str, str], tuple[dict[str, Any], int]] = {}
     ids_seen: set[str] = set()
 
     required_entry_fields = {
@@ -2349,12 +2448,13 @@ def _live_execution_manifest_reconciliation_results(
 
     artifact_row_counts: dict[str, int] = {}
     manifest_id_counts: dict[str, int] = {}
+    artifact_names = set(artifacts)
     for artifact, payload in artifacts.items():
         if artifact == "live_execution_manifest.json":
             continue
         rows = _artifact_rows_for_manifest_reconciliation(artifact, payload)
         artifact_row_counts[artifact] = len(rows)
-        for row in rows:
+        for ordinal, row in enumerate(rows, start=1):
             manifest_id = str(row.get("live_execution_manifest_id") or "")
             if not manifest_id:
                 if artifact in {
@@ -2364,8 +2464,21 @@ def _live_execution_manifest_reconciliation_results(
                     "procedure_smoke_call_results.json",
                     "refresh_fast_results.json",
                     "refresh_full_results.json",
+                    "validation_sql_results.json",
+                    "packet_publication_validation_results.json",
+                    "packet_shape_results.json",
+                    "packet_size_results.json",
+                    "packet_source_truth_results.json",
                     "packet_validation_detail_results.json",
                     "compact_evidence_mart_validation_results.json",
+                    "compact_evidence_mart_detail_results.json",
+                    "refresh_detail_results.json",
+                    "recent_snowflake_fix_validation_results.json",
+                    "metric_candidate_shape_results.json",
+                    "trend_cardinality_results.json",
+                    "schema_drift_results.json",
+                    "sql_encoding_scan_results.json",
+                    "snowflake_error_sanitization_results.json",
                 }:
                     failures.append({"code": "ARTIFACT_ROW_MISSING_MANIFEST_ID", "artifact": artifact})
                 continue
@@ -2373,16 +2486,40 @@ def _live_execution_manifest_reconciliation_results(
                 failures.append({"code": "ARTIFACT_ROW_UNKNOWN_MANIFEST_ID", "artifact": artifact, "validation_id": manifest_id})
                 continue
             consumed_ids.add(manifest_id)
-            row_index[(artifact, manifest_id)] = row
+            row_index[(artifact, manifest_id)] = (row, ordinal)
             manifest_id_counts[artifact] = manifest_id_counts.get(artifact, 0) + 1
 
     for entry in entries:
         validation_id = str(entry.get("validation_id") or "")
         artifact = str(entry.get("artifact") or "")
-        manifest_row = row_index.get((artifact, validation_id))
-        if not manifest_row:
+        if artifact not in artifact_names:
+            failures.append({"code": "MANIFEST_MISSING_ARTIFACT", "artifact": artifact, "validation_id": validation_id})
+            continue
+        manifest_pair = row_index.get((artifact, validation_id))
+        if not manifest_pair:
             failures.append({"code": "MANIFEST_ORPHAN_ENTRY", "artifact": artifact, "validation_id": validation_id})
             continue
+        manifest_row, ordinal = manifest_pair
+        if _as_int(entry.get("row_index")) != ordinal:
+            failures.append(
+                {
+                    "code": "MANIFEST_ROW_INDEX_MISMATCH",
+                    "artifact": artifact,
+                    "validation_id": validation_id,
+                    "manifest_row_index": entry.get("row_index"),
+                    "artifact_row_index": ordinal,
+                }
+            )
+        if str(entry.get("row_key") or "") != str(manifest_row.get("live_execution_row_key") or ""):
+            failures.append(
+                {
+                    "code": "MANIFEST_ROW_KEY_MISMATCH",
+                    "artifact": artifact,
+                    "validation_id": validation_id,
+                    "manifest_row_key": entry.get("row_key"),
+                    "artifact_row_key": manifest_row.get("live_execution_row_key"),
+                }
+            )
         row_status = _row_status_for_manifest(manifest_row)
         if str(entry.get("status") or "") != row_status:
             failures.append(
@@ -2414,7 +2551,8 @@ def _live_execution_manifest_reconciliation_results(
         "refresh_rows": artifact_row_counts.get("refresh_fast_results.json", 0)
         + artifact_row_counts.get("refresh_full_results.json", 0),
         "packet_rows": artifact_row_counts.get("packet_validation_detail_results.json", 0),
-        "compact_mart_rows": artifact_row_counts.get("compact_evidence_mart_validation_results.json", 0),
+        "compact_mart_rows": artifact_row_counts.get("compact_evidence_mart_validation_results.json", 0)
+        + artifact_row_counts.get("compact_evidence_mart_detail_results.json", 0),
         "validation_sql_rows": artifact_row_counts.get("validation_sql_results.json", 0),
     }
     observed_manifest_counts = {
@@ -2425,7 +2563,8 @@ def _live_execution_manifest_reconciliation_results(
         "refresh_rows": manifest_id_counts.get("refresh_fast_results.json", 0)
         + manifest_id_counts.get("refresh_full_results.json", 0),
         "packet_rows": manifest_id_counts.get("packet_validation_detail_results.json", 0),
-        "compact_mart_rows": manifest_id_counts.get("compact_evidence_mart_validation_results.json", 0),
+        "compact_mart_rows": manifest_id_counts.get("compact_evidence_mart_validation_results.json", 0)
+        + manifest_id_counts.get("compact_evidence_mart_detail_results.json", 0),
         "validation_sql_rows": manifest_id_counts.get("validation_sql_results.json", 0),
     }
     for key, expected_count in expected_manifest_counts.items():
@@ -2450,9 +2589,118 @@ def _live_execution_manifest_reconciliation_results(
         missing_manifest_id_count=sum(1 for row in failures if row.get("code") == "ARTIFACT_ROW_MISSING_MANIFEST_ID"),
         status_mismatch_count=sum(1 for row in failures if row.get("code") == "MANIFEST_STATUS_MISMATCH"),
         mode_mismatch_count=sum(1 for row in failures if row.get("code") == "MANIFEST_MODE_MISMATCH"),
+        row_index_mismatch_count=sum(1 for row in failures if row.get("code") == "MANIFEST_ROW_INDEX_MISMATCH"),
+        row_key_mismatch_count=sum(1 for row in failures if row.get("code") == "MANIFEST_ROW_KEY_MISMATCH"),
         expected_manifest_counts=expected_manifest_counts,
         observed_manifest_counts=observed_manifest_counts,
         artifacts_checked=sorted(artifact_row_counts),
+    )
+
+
+def _raw_sql_or_secret_value(value: Any) -> bool:
+    if isinstance(value, Mapping):
+        return any(_raw_sql_or_secret_value(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_raw_sql_or_secret_value(item) for item in value)
+    if not isinstance(value, str):
+        return False
+    return bool(re.search(r"(?i)(snowflake://|password=|token=|private[_ -]?key=|CREATE\s+OR\s+REPLACE|SELECT\s+\*)", value))
+
+
+def _live_execution_manifest_category_coverage_results(
+    live_manifest: Mapping[str, Any],
+    artifacts: Mapping[str, Any],
+    *,
+    live_enabled: bool,
+) -> dict[str, Any]:
+    entries = [_as_mapping(row) for row in _as_list(live_manifest.get("entries"))]
+    entries_by_id = {str(row.get("validation_id") or ""): row for row in entries}
+    failures: list[dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
+
+    for category, category_artifacts in MANIFEST_CATEGORY_ARTIFACTS.items():
+        category_required = category != "live_query_history" or os.environ.get("OVERWATCH_QUERY_PLAN_PROOF") == "1"
+        category_entries = [row for row in entries if str(row.get("artifact") or "") in category_artifacts]
+        expected_row_count = 0
+        observed_artifact_row_count = 0
+        linked_artifact_row_count = 0
+        unknown_manifest_id_count = 0
+        missing_manifest_id_count = 0
+        status_mismatch_count = 0
+        mode_mismatch_count = 0
+        raw_sql_or_secret_count = 0
+        matched_manifest_ids: set[str] = set()
+
+        for artifact in category_artifacts:
+            payload = artifacts.get(artifact)
+            artifact_rows = _artifact_rows_for_manifest_reconciliation(artifact, payload)
+            expected_row_count += len(artifact_rows)
+            observed_artifact_row_count += len(artifact_rows)
+            for row in artifact_rows:
+                if bool(row.get("raw_sql_included")) or _raw_sql_or_secret_value(row):
+                    raw_sql_or_secret_count += 1
+                manifest_id = str(row.get("live_execution_manifest_id") or "")
+                if not manifest_id:
+                    missing_manifest_id_count += 1
+                    continue
+                entry = entries_by_id.get(manifest_id)
+                if not entry or str(entry.get("artifact") or "") != artifact:
+                    unknown_manifest_id_count += 1
+                    continue
+                linked_artifact_row_count += 1
+                matched_manifest_ids.add(manifest_id)
+                if str(entry.get("status") or "") != _row_status_for_manifest(row):
+                    status_mismatch_count += 1
+                if str(entry.get("observed_mode") or "") != _row_observed_mode_for_manifest(artifact, row, live_enabled):
+                    mode_mismatch_count += 1
+                if bool(entry.get("raw_sql_included")) or _raw_sql_or_secret_value(entry):
+                    raw_sql_or_secret_count += 1
+
+        orphan_manifest_entry_count = sum(1 for row in category_entries if str(row.get("validation_id") or "") not in matched_manifest_ids)
+        manifest_entry_count = len(category_entries)
+        passed = (
+            (not category_required or expected_row_count > 0)
+            and observed_artifact_row_count == expected_row_count
+            and manifest_entry_count == expected_row_count
+            and linked_artifact_row_count == expected_row_count
+            and orphan_manifest_entry_count == 0
+            and unknown_manifest_id_count == 0
+            and missing_manifest_id_count == 0
+            and status_mismatch_count == 0
+            and mode_mismatch_count == 0
+            and raw_sql_or_secret_count == 0
+        )
+        row = {
+            "category": category,
+            "artifacts": list(category_artifacts),
+            "expected_row_count": expected_row_count,
+            "observed_artifact_row_count": observed_artifact_row_count,
+            "manifest_entry_count": manifest_entry_count,
+            "linked_artifact_row_count": linked_artifact_row_count,
+            "orphan_manifest_entry_count": orphan_manifest_entry_count,
+            "unknown_manifest_id_count": unknown_manifest_id_count,
+            "missing_manifest_id_count": missing_manifest_id_count,
+            "status_mismatch_count": status_mismatch_count,
+            "mode_mismatch_count": mode_mismatch_count,
+            "raw_sql_or_secret_count": raw_sql_or_secret_count,
+            "required": category_required,
+            "passed": passed,
+            "recommendation": ""
+            if passed
+            else "Reconcile this manifest category so every expected validation row has one matching sanitized ledger entry.",
+        }
+        rows.append(row)
+        if not passed:
+            failures.append(row)
+
+    return _failure_result(
+        source="live_execution_manifest_category_coverage",
+        proof_source="live_snowflake_execution" if live_enabled else "static_sql_parse",
+        failures=failures,
+        category_count=len(rows),
+        category_failure_count=len(failures),
+        categories=rows,
+        required_categories=sorted(MANIFEST_CATEGORY_ARTIFACTS),
     )
 
 
@@ -2832,9 +3080,14 @@ def write_snowflake_validation_artifacts(root: Path | str = ".") -> dict[str, An
     packet_publication, packet_shape, packet_size, packet_source_truth = _packet_results(texts)
     packet_detail = _packet_validation_detail_results(packet_publication, packet_shape, packet_size, packet_source_truth)
     compact_evidence = _compact_evidence_results(root_path, texts)
+    compact_detail = _compact_evidence_mart_detail_results(compact_evidence)
     smoke_rows = _static_smoke_results(live_enabled, root_path)
     refresh_fast = _refresh_result("refresh_fast_validation", live_enabled, smoke_rows)
     refresh_full = _refresh_result("refresh_full_validation", live_enabled, smoke_rows)
+    refresh_detail = _refresh_detail_results(texts, refresh_fast, refresh_full, live_enabled=live_enabled)
+    encoding_scan = _sql_encoding_scan_results(root_path)
+    schema_drift = _schema_drift_results(texts)
+    sanitizer_results = _snowflake_error_sanitization_results()
     live_execution_manifest = _live_execution_manifest_results(
         live_enabled=live_enabled,
         live_environment=live_environment,
@@ -2845,8 +3098,20 @@ def write_snowflake_validation_artifacts(root: Path | str = ".") -> dict[str, An
         validation_rows=validation_rows,
         refresh_fast=refresh_fast,
         refresh_full=refresh_full,
+        packet_publication=packet_publication,
+        packet_shape=packet_shape,
+        packet_size=packet_size,
+        packet_source_truth=packet_source_truth,
         packet_detail=packet_detail,
         compact_evidence=compact_evidence,
+        compact_detail=compact_detail,
+        refresh_detail=refresh_detail,
+        recent_fixes=recent_fixes,
+        metric_shape=metric_shape,
+        trend_cardinality=trend_cardinality,
+        encoding_scan=encoding_scan,
+        schema_drift=schema_drift,
+        sanitizer_results=sanitizer_results,
     )
     compile_coverage = _procedure_compile_coverage_results(dependency_graph, compile_rows, live_enabled=live_enabled)
     smoke_coverage = _procedure_smoke_call_coverage_results(
@@ -2854,13 +3119,8 @@ def write_snowflake_validation_artifacts(root: Path | str = ".") -> dict[str, An
         live_enabled=live_enabled,
         profile=os.environ.get("OVERWATCH_LAUNCH_PROFILE", "internal_fixture"),
     )
-    compact_detail = _compact_evidence_mart_detail_results(compact_evidence)
-    refresh_detail = _refresh_detail_results(texts, refresh_fast, refresh_full, live_enabled=live_enabled)
     object_inventory_live = _live_object_inventory(live_enabled)
-    encoding_scan = _sql_encoding_scan_results(root_path)
-    schema_drift = _schema_drift_results(texts)
     manifest_validation = _streamlit_manifest_validation(root_path)
-    sanitizer_results = _snowflake_error_sanitization_results()
     phase_validation = _phase_validation_results(
         live_enabled=live_enabled,
         setup_rows=setup_rows,
@@ -2912,12 +3172,27 @@ def write_snowflake_validation_artifacts(root: Path | str = ".") -> dict[str, An
         "validation_sql_results.json": validation_rows,
         "refresh_fast_results.json": refresh_fast,
         "refresh_full_results.json": refresh_full,
+        "packet_publication_validation_results.json": packet_publication,
+        "packet_shape_results.json": packet_shape,
+        "packet_size_results.json": packet_size,
+        "packet_source_truth_results.json": packet_source_truth,
         "packet_validation_detail_results.json": packet_detail,
         "compact_evidence_mart_validation_results.json": compact_evidence,
         "compact_evidence_mart_detail_results.json": compact_detail,
         "refresh_detail_results.json": refresh_detail,
+        "recent_snowflake_fix_validation_results.json": recent_fixes,
+        "metric_candidate_shape_results.json": metric_shape,
+        "trend_cardinality_results.json": trend_cardinality,
+        "schema_drift_results.json": schema_drift,
+        "sql_encoding_scan_results.json": encoding_scan,
+        "snowflake_error_sanitization_results.json": sanitizer_results,
     }
     live_execution_manifest_reconciliation = _live_execution_manifest_reconciliation_results(
+        live_execution_manifest,
+        reconciliation_payloads,
+        live_enabled=live_enabled,
+    )
+    live_execution_manifest_category_coverage = _live_execution_manifest_category_coverage_results(
         live_execution_manifest,
         reconciliation_payloads,
         live_enabled=live_enabled,
@@ -2960,6 +3235,7 @@ def write_snowflake_validation_artifacts(root: Path | str = ".") -> dict[str, An
         "live_validation_session": live_session,
         "live_execution_manifest": live_execution_manifest,
         "live_execution_manifest_reconciliation": live_execution_manifest_reconciliation,
+        "live_execution_manifest_category_coverage": live_execution_manifest_category_coverage,
     }.items():
         if not payload.get("passed"):
             hard_failures.append({"gate": name, "details": payload.get("failures") or payload.get("checks")})
@@ -2987,6 +3263,8 @@ def write_snowflake_validation_artifacts(root: Path | str = ".") -> dict[str, An
         "live_execution_manifest_failure_count": int(live_execution_manifest.get("failure_count") or 0),
         "live_execution_manifest_reconciliation_passed": bool(live_execution_manifest_reconciliation.get("passed")),
         "live_execution_manifest_reconciliation_failure_count": int(live_execution_manifest_reconciliation.get("failure_count") or 0),
+        "live_execution_manifest_category_coverage_passed": bool(live_execution_manifest_category_coverage.get("passed")),
+        "live_execution_manifest_category_failure_count": int(live_execution_manifest_category_coverage.get("failure_count") or 0),
         "script_count": len(texts),
         "expected_script_count": len(EXPECTED_SCRIPT_ORDER),
         "statement_count": sum(row["row_count"] for row in setup_rows),
@@ -3019,6 +3297,7 @@ def write_snowflake_validation_artifacts(root: Path | str = ".") -> dict[str, An
         "snowflake_validation_summary": summary,
         "live_execution_manifest": live_execution_manifest,
         "live_execution_manifest_reconciliation": live_execution_manifest_reconciliation,
+        "live_execution_manifest_category_coverage": live_execution_manifest_category_coverage,
         "live_validation_environment_results": live_environment,
         "live_validation_session_results": live_session,
         "setup_execution_results": setup_rows,

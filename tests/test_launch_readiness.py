@@ -60,11 +60,15 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertTrue(summary["live_execution_manifest_gate_passed"])
         self.assertTrue(summary["live_execution_manifest_reconciliation_passed"])
         self.assertEqual(summary["live_execution_manifest_reconciliation_failure_count"], 0)
+        self.assertTrue(summary["live_execution_manifest_category_coverage_passed"])
+        self.assertEqual(summary["live_execution_manifest_category_failure_count"], 0)
         self.assertEqual(summary["live_execution_manifest_orphan_count"], 0)
         self.assertEqual(summary["live_execution_manifest_unknown_id_count"], 0)
         self.assertEqual(summary["live_execution_manifest_missing_id_count"], 0)
         self.assertEqual(summary["live_execution_manifest_status_mismatch_count"], 0)
         self.assertEqual(summary["live_execution_manifest_mode_mismatch_count"], 0)
+        self.assertEqual(summary["live_execution_manifest_row_index_mismatch_count"], 0)
+        self.assertEqual(summary["live_execution_manifest_row_key_mismatch_count"], 0)
         self.assertGreater(summary["procedure_compile_count"], 0)
         self.assertEqual(summary["procedure_compile_failure_count"], 0)
         self.assertGreater(summary["procedure_smoke_call_count"], 0)
@@ -84,6 +88,8 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertEqual(summary["compact_missing_target_columns"], [])
         self.assertTrue(summary["encoding_hygiene_passed"])
         self.assertEqual(summary["encoding_blocked_count"], 0)
+        self.assertTrue(summary["ci_artifact_reality_passed"])
+        self.assertEqual(summary["ci_artifact_reality_failure_count"], 0)
         self.assertGreaterEqual(summary["required_artifact_count"], len(REQUIRED_LAUNCH_READINESS_ARTIFACTS))
         self.assertIn("decision-workspace-proof", summary["uploaded_artifact_names"])
         self.assertFalse(summary["raw_sql_included"])
@@ -97,6 +103,7 @@ class LaunchReadinessTests(unittest.TestCase):
             "runtime_validation",
             "required_artifacts",
             "artifact_upload_review",
+            "ci_artifact_reality",
             "ci_run_review",
             "browser_or_rendered_snapshot",
             "browser_required_coverage",
@@ -144,8 +151,11 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertGreater(snowflake_gate["live_execution_manifest_entry_count"], 0)
         self.assertTrue(snowflake_gate["live_execution_manifest_reconciliation_passed"])
         self.assertEqual(snowflake_gate["live_execution_manifest_reconciliation_failure_count"], 0)
+        self.assertTrue(snowflake_gate["live_execution_manifest_category_coverage_passed"])
+        self.assertEqual(snowflake_gate["live_execution_manifest_category_failure_count"], 0)
         self.assertTrue(manifest_gate["passed"], manifest_gate)
         self.assertEqual(manifest_gate["failure_count"], 0, manifest_gate)
+        self.assertTrue(manifest_gate["live_execution_manifest_category_coverage_passed"], manifest_gate)
         self.assertEqual(snowflake_gate["compact_mart_count"], 5)
         raw_recheck = self._read_json("artifacts/launch_readiness/snowflake_raw_validation_recheck.json")
         snowflake_failures = self._read_json("artifacts/launch_readiness/snowflake_validation_failures.json")
@@ -157,6 +167,8 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertGreater(raw_recheck["live_execution_manifest_entry_count"], 0)
         self.assertTrue(raw_recheck["live_execution_manifest_reconciliation_passed"])
         self.assertEqual(raw_recheck["live_execution_manifest_reconciliation_failure_count"], 0)
+        self.assertTrue(raw_recheck["live_execution_manifest_category_coverage_passed"])
+        self.assertEqual(raw_recheck["live_execution_manifest_category_failure_count"], 0)
         self.assertEqual(raw_recheck["compact_evidence_validation_status"], "passed")
         self.assertEqual(raw_recheck["compact_mart_count"], 5)
         self.assertEqual(raw_recheck["live_validation_status"], "static_skipped")
@@ -657,6 +669,13 @@ class LaunchReadinessTests(unittest.TestCase):
                 "docs_readiness",
             ),
             (
+                "ci artifact reality",
+                lambda payloads, launch: launch["ci_artifact_reality_results"].update(
+                    {"passed": False, "failure_count": 1, "uploaded_artifact_names": []}
+                ),
+                "ci_artifact_reality",
+            ),
+            (
                 "deploy",
                 lambda payloads, launch: launch["deployment_readiness_results"].update({"passed": False}),
                 "deployment_readiness",
@@ -752,6 +771,13 @@ class LaunchReadinessTests(unittest.TestCase):
                 "live_execution_manifest_gate",
             ),
             (
+                "manifest category coverage artifact",
+                lambda payloads, launch: payloads["artifacts/snowflake_validation/live_execution_manifest_category_coverage.json"].update(
+                    {"passed": False, "failure_count": 1, "category_failure_count": 1}
+                ),
+                "live_execution_manifest_gate",
+            ),
+            (
                 "manifest orphan raw row",
                 lambda payloads, launch: payloads["artifacts/snowflake_validation/live_execution_manifest.json"]["entries"].append(
                     {
@@ -766,6 +792,20 @@ class LaunchReadinessTests(unittest.TestCase):
                 "manifest unknown artifact id",
                 lambda payloads, launch: payloads["artifacts/snowflake_validation/procedure_compile_results.json"][0].update(
                     {"live_execution_manifest_id": "unknown-launch-ledger-entry"}
+                ),
+                "live_execution_manifest_gate",
+            ),
+            (
+                "manifest row index mismatch",
+                lambda payloads, launch: payloads["artifacts/snowflake_validation/live_execution_manifest.json"]["entries"][0].update(
+                    {"row_index": 999}
+                ),
+                "live_execution_manifest_gate",
+            ),
+            (
+                "manifest row key mismatch",
+                lambda payloads, launch: payloads["artifacts/snowflake_validation/live_execution_manifest.json"]["entries"][0].update(
+                    {"row_key": "wrong-row-key"}
                 ),
                 "live_execution_manifest_gate",
             ),

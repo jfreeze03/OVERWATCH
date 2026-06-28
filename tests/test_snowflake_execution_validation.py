@@ -127,6 +127,47 @@ class SnowflakeExecutionValidationTests(unittest.TestCase):
         self.assertFalse(mismatch_result["passed"])
         self.assertIn("MANIFEST_STATUS_MISMATCH", {row["code"] for row in mismatch_result["failures"]})
 
+        bad_index_manifest = json.loads(json.dumps(live_manifest))
+        bad_index_manifest["entries"][0]["row_index"] = 999
+        bad_index_result = validation._live_execution_manifest_reconciliation_results(
+            bad_index_manifest,
+            artifact_payloads,
+            live_enabled=False,
+        )
+        self.assertFalse(bad_index_result["passed"])
+        self.assertIn("MANIFEST_ROW_INDEX_MISMATCH", {row["code"] for row in bad_index_result["failures"]})
+
+        bad_key_manifest = json.loads(json.dumps(live_manifest))
+        bad_key_manifest["entries"][0]["row_key"] = "wrong-row-key"
+        bad_key_result = validation._live_execution_manifest_reconciliation_results(
+            bad_key_manifest,
+            artifact_payloads,
+            live_enabled=False,
+        )
+        self.assertFalse(bad_key_result["passed"])
+        self.assertIn("MANIFEST_ROW_KEY_MISMATCH", {row["code"] for row in bad_key_result["failures"]})
+
+        category_coverage = validation._live_execution_manifest_category_coverage_results(
+            live_manifest,
+            artifact_payloads,
+            live_enabled=False,
+        )
+        self.assertTrue(category_coverage["passed"], category_coverage)
+        self.assertGreaterEqual(category_coverage["category_count"], 18)
+        category_names = {row["category"] for row in category_coverage["categories"]}
+        self.assertIn("procedure_compile", category_names)
+        self.assertIn("compact_evidence_mart", category_names)
+
+        category_gap_payloads = json.loads(json.dumps(artifact_payloads))
+        category_gap_payloads["procedure_compile_results.json"][0]["live_execution_manifest_id"] = "unknown-ledger-row"
+        category_gap = validation._live_execution_manifest_category_coverage_results(
+            live_manifest,
+            category_gap_payloads,
+            live_enabled=False,
+        )
+        self.assertFalse(category_gap["passed"])
+        self.assertGreater(category_gap["category_failure_count"], 0)
+
     def test_procedure_compile_and_dependency_graph_cover_calls(self):
         setup_text = (ROOT / "snowflake/mart_setup/05_load_procedures.sql").read_text(encoding="utf-8")
         expected_proc_count = len(re.findall(r"\bCREATE\s+OR\s+REPLACE\s+PROCEDURE\b", setup_text, flags=re.IGNORECASE))

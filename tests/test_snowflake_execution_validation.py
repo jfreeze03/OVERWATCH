@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 import re
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -17,18 +18,30 @@ class SnowflakeExecutionValidationTests(unittest.TestCase):
         return json.loads((ROOT / rel).read_text(encoding="utf-8"))
 
     def test_fixture_mode_writes_static_validation_and_live_skip(self):
-        from tools.contracts.snowflake_execution_validation import EXPECTED_SCRIPT_ORDER, REQUIRED_RESULT_FILES
+        from tools.contracts.snowflake_execution_validation import (
+            EXPECTED_SCRIPT_ORDER,
+            REQUIRED_RESULT_FILES,
+            REQUIRED_VALIDATION_PHASES,
+        )
 
         summary = self._read_json("artifacts/snowflake_validation/snowflake_validation_summary.json")
         manifest = self._read_json("artifacts/snowflake_validation/artifact_manifest.json")
+        phases = self._read_json("artifacts/snowflake_validation/phase_validation_results.json")
         self.assertTrue(summary["passed"], summary)
         self.assertFalse(summary["live_mode_enabled"])
         self.assertEqual(summary["live_status"], "skipped")
+        self.assertEqual(summary["procedure_compile_failure_count"], 0)
+        self.assertEqual(summary["procedure_smoke_failure_count"], 0)
+        self.assertTrue(summary["recent_snowflake_fix_validation_passed"])
+        self.assertTrue(summary["packet_publication_validation_passed"])
+        self.assertTrue(summary["compact_evidence_mart_validation_passed"])
         self.assertTrue((ROOT / "artifacts/snowflake_validation/snowflake_validation_SKIPPED.txt").exists())
         for name in REQUIRED_RESULT_FILES:
             self.assertIn(f"artifacts/snowflake_validation/{name}.json", manifest["files"])
         for rel in EXPECTED_SCRIPT_ORDER:
             self.assertTrue((ROOT / rel).exists(), rel)
+        self.assertTrue(phases["passed"], phases)
+        self.assertEqual({row["phase"] for row in phases["phases"]}, set(REQUIRED_VALIDATION_PHASES))
 
     def test_statement_splitter_preserves_procedure_bodies(self):
         from tools.contracts.snowflake_execution_validation import split_sql_statements
@@ -86,6 +99,20 @@ class SnowflakeExecutionValidationTests(unittest.TestCase):
         ambiguous_codes = {row["code"] for row in validate_metric_candidate_union_shape(ambiguous)["failures"]}
         self.assertIn("UNQUALIFIED_AMBIGUOUS_METRIC_FIELD", ambiguous_codes)
 
+    def test_recent_fix_manifest_encoding_and_schema_artifacts_pass(self):
+        recent = self._read_json("artifacts/snowflake_validation/recent_snowflake_fix_validation_results.json")
+        metric = self._read_json("artifacts/snowflake_validation/metric_candidate_shape_results.json")
+        encoding = self._read_json("artifacts/snowflake_validation/sql_encoding_scan_results.json")
+        schema = self._read_json("artifacts/snowflake_validation/schema_drift_results.json")
+        manifest = self._read_json("artifacts/snowflake_validation/streamlit_manifest_validation_results.json")
+        self.assertTrue(recent["passed"], recent)
+        self.assertTrue(metric["passed"], metric)
+        self.assertTrue(encoding["passed"], encoding)
+        self.assertTrue(schema["passed"], schema)
+        self.assertGreater(schema["commented_ddl_count"], 0)
+        self.assertTrue(all(row["validation_metadata"] for row in schema["rows"]), schema)
+        self.assertTrue(manifest["passed"], manifest)
+
     def test_trend_packet_and_refresh_artifacts_are_present(self):
         trend = self._read_json("artifacts/snowflake_validation/trend_cardinality_results.json")
         packet = self._read_json("artifacts/snowflake_validation/packet_shape_results.json")
@@ -111,6 +138,17 @@ class SnowflakeExecutionValidationTests(unittest.TestCase):
         self.assertNotIn("secret", sanitized)
         self.assertNotIn("SELECT *", sanitized)
         self.assertNotIn("CREATE OR REPLACE", sanitized)
+
+    def test_live_mode_without_session_fails_instead_of_claiming_runtime_proof(self):
+        from tools.contracts import snowflake_execution_validation as validation
+
+        with patch.object(validation, "_open_live_session", side_effect=RuntimeError("SELECT * FROM secret_table password=hidden")):
+            rows = validation._static_smoke_results(True, ROOT)
+        self.assertTrue(rows)
+        self.assertTrue(all(row["status"] == "failed" for row in rows))
+        self.assertTrue(all(row["raw_sql_included"] is False for row in rows))
+        self.assertTrue(all("SELECT" not in row.get("sanitized_error", "").upper() for row in rows))
+        self.assertTrue(all("hidden" not in row.get("sanitized_error", "") for row in rows))
 
 
 if __name__ == "__main__":

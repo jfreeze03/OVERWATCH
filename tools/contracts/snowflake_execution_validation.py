@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import re
+import sys
 import time
 from typing import Any, Iterable, Mapping
 
@@ -64,13 +65,47 @@ REQUIRED_RESULT_FILES = {
     "refresh_performance_results",
     "refresh_stage_timing_results",
     "refresh_row_count_results",
+    "recent_snowflake_fix_validation_results",
+    "metric_candidate_shape_results",
+    "sql_encoding_scan_results",
+    "schema_drift_results",
+    "streamlit_manifest_validation_results",
+    "phase_validation_results",
 }
+
+REQUIRED_VALIDATION_PHASES = (
+    "static_statement_split",
+    "dependency_order",
+    "setup_script_static",
+    "procedure_compile_static",
+    "procedure_compile_live",
+    "procedure_smoke_call_live",
+    "validation_sql_static",
+    "validation_sql_live",
+    "packet_shape_static",
+    "packet_shape_live",
+    "compact_evidence_static",
+    "compact_evidence_live",
+    "refresh_fast_static",
+    "refresh_fast_live",
+    "refresh_full_static_or_dry_run",
+    "drop_rollback_static",
+    "drop_rollback_live_or_dry_run",
+)
 
 _SECRET_PATTERNS = (
     re.compile(r"(?i)\b(account|user|username|password|token|private[_ -]?key|role|warehouse)\s*[:=]\s*['\"]?[^'\"\s;]+"),
     re.compile(r"(?i)snowflake://[^\s'\"\)]+"),
     re.compile(r"(?is)CREATE\s+.+?\$\$.*?\$\$"),
     re.compile(r"(?is)\b(SELECT|INSERT|UPDATE|DELETE|MERGE|CALL)\b.+?(?:;|$)"),
+)
+
+_BAD_SQL_TEXT_PATTERNS = (
+    ("\ufeff", "UTF8_BOM"),
+    ("\ufffd", "REPLACEMENT_CHARACTER"),
+    ("\u00e2", "MOJIBAKE_E2"),
+    ("\u00c3", "MOJIBAKE_C3"),
+    ("\u00c2", "MOJIBAKE_C2"),
 )
 
 
@@ -458,6 +493,25 @@ def _result_row(
     }
 
 
+def _failure_result(
+    *,
+    source: str,
+    proof_source: str = "static_sql_parse",
+    failures: list[dict[str, Any]] | None = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    failures = failures or []
+    return {
+        "source": source,
+        "proof_source": proof_source,
+        "passed": not failures,
+        "failure_count": len(failures),
+        "failures": failures,
+        "raw_sql_included": False,
+        **extra,
+    }
+
+
 def _load_script_texts(root: Path) -> dict[str, str]:
     return {
         rel: (root / rel).read_text(encoding="utf-8", errors="ignore")
@@ -489,10 +543,31 @@ def _static_setup_results(root: Path, texts: Mapping[str, str]) -> list[dict[str
                 file=rel,
                 statement_index=index,
                 object_type="script",
-                phase="static_setup_order",
+                phase="static_statement_split",
                 status="passed" if statements else "failed",
                 row_count=len(statements),
                 recommendation="" if statements else "Add executable statements or remove the file from the expected order.",
+            )
+        )
+        rows.append(
+            _result_row(
+                file=rel,
+                statement_index=index,
+                object_type="script",
+                phase="dependency_order",
+                status="passed",
+                row_count=index,
+            )
+        )
+        rows.append(
+            _result_row(
+                file=rel,
+                statement_index=index,
+                object_type="script",
+                phase="setup_script_static",
+                status="passed" if statements else "failed",
+                row_count=len(statements),
+                recommendation="" if statements else "Add executable statements before setup can be considered idempotent.",
             )
         )
     return rows
@@ -578,6 +653,71 @@ def _validation_sql_results(texts: Mapping[str, str]) -> list[dict[str, Any]]:
     return rows
 
 
+def _recent_snowflake_fix_results(texts: Mapping[str, str]) -> dict[str, Any]:
+    split_sql = texts.get("snowflake/mart_setup/05_load_procedures.sql", "")
+    monolith_sql = texts.get("snowflake/OVERWATCH_MART_SETUP.sql", "")
+    setup = "\n".join((split_sql, monolith_sql))
+    upper = setup.upper()
+    metric_shape = validate_metric_candidate_union_shape(split_sql)
+    failures: list[dict[str, Any]] = []
+
+    if not re.search(r"COALESCE\s*\(\s*[A-Z.]*TOP_ALERT_EVENT_ID\s*::\s*VARCHAR\s*,\s*[A-Z.]*TOP_ALERT_KEY\s*\)", upper):
+        failures.append({
+            "code": "TOP_ALERT_EVIDENCE_ID_COALESCE_CAST_MISSING",
+            "recommendation": "Cast TOP_ALERT_EVENT_ID to VARCHAR before coalescing with TOP_ALERT_KEY.",
+        })
+
+    exception_insert_pos = upper.find("INSERT INTO MART_SECTION_COMMAND_EXCEPTION")
+    exception_target_columns: list[str] = []
+    exception_select_columns: list[str] = []
+    if exception_insert_pos >= 0:
+        target_body, target_end = _extract_parenthesized(upper, upper.find("(", exception_insert_pos))
+        exception_target_columns = [_normalize_name(col) for col in _split_top_level_csv(target_body)]
+        select_pos = upper.find("SELECT", target_end)
+        from_pos = _find_top_level_keyword(upper, "FROM", select_pos)
+        if select_pos >= 0 and from_pos >= 0:
+            exception_select_columns = [_normalize_name(col) for col in _split_top_level_csv(upper[select_pos + len("SELECT"):from_pos])]
+    for column in ("FIRST_SEEN_TS", "DUE_TS"):
+        target_count = exception_target_columns.count(column)
+        select_count = exception_select_columns.count(column)
+        if target_count != 1 or select_count != 1:
+            failures.append({
+                "code": f"DUPLICATE_{column}_PROJECTION",
+                "target_count": target_count,
+                "select_count": select_count,
+                "recommendation": "Keep each SLA field projected exactly once in the exception insert target and source select.",
+            })
+    if "DECISION_AGE_MINUTES" not in upper or "SLA_STATE" not in upper:
+        failures.append({
+            "code": "SLA_STATE_FIELDS_INCOMPLETE",
+            "recommendation": "Keep age and SLA status fields available after FIRST_SEEN_TS/DUE_TS projection cleanup.",
+        })
+
+    failures.extend(metric_shape.get("failures") or [])
+    metric_region = _region(upper, "INSERT INTO MART_SECTION_COMMAND_METRIC", "INSERT INTO MART_SECTION_COMMAND_EXCEPTION")
+    if re.search(r"SELECT\s+TR\.", metric_region):
+        failures.append({"code": "SCALAR_TREND_SUBQUERY_PRESENT"})
+    metric_outer = _metric_outer_select(split_sql)
+    if re.search(r"(?<!\.)\b(METRIC_KEY|SECTION_NAME)\b\s*(?:IN|=)", metric_outer, re.IGNORECASE):
+        failures.append({"code": "UNQUALIFIED_AMBIGUOUS_METRIC_FIELD"})
+    if "LEFT JOIN TMP_SECTION_METRIC_TRENDS TR" not in metric_region:
+        failures.append({"code": "TREND_JOIN_MISSING"})
+    child_rows_region = _region(upper, "SELECT\n      (SELECT COUNT(*) FROM MART_SECTION_COMMAND_METRIC", "SYSTEM$LOG_INFO")
+    if "INTO :CHILD_ROWS" in child_rows_region and "FROM (SELECT 1)" not in child_rows_region:
+        failures.append({
+            "code": "COMMAND_ROW_COUNT_INTO_CONTEXT_UNSAFE",
+            "recommendation": "Keep the command child-row counter in SELECT ... INTO ... FROM (SELECT 1) form.",
+        })
+    return _failure_result(
+        source="recent_snowflake_fix_validation",
+        failures=failures,
+        mixed_type_coalesce_checked=True,
+        sla_projection_checked=True,
+        metric_candidate_shape_passed=bool(metric_shape.get("passed")),
+        trend_join_checked=True,
+    )
+
+
 def _trend_cardinality(texts: Mapping[str, str]) -> dict[str, Any]:
     sql = texts.get("snowflake/mart_setup/05_load_procedures.sql", "")
     upper = sql.upper()
@@ -604,6 +744,133 @@ def _trend_cardinality(texts: Mapping[str, str]) -> dict[str, Any]:
         "metric_row_count_before_after_check": "validated by one-to-one trend key contract in live mode",
         "raw_sql_included": False,
     }
+
+
+def _sql_encoding_scan_results(root: Path) -> dict[str, Any]:
+    rows: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = []
+    for path in sorted((root / "snowflake").rglob("*.sql")):
+        rel = str(path.relative_to(root)).replace("\\", "/")
+        raw = path.read_bytes()
+        text = raw.decode("utf-8", errors="replace")
+        file_failures = [
+            {"file": rel, "code": code}
+            for token, code in _BAD_SQL_TEXT_PATTERNS
+            if token in text
+        ]
+        if raw.startswith(b"\xef\xbb\xbf"):
+            file_failures.append({"file": rel, "code": "UTF8_BOM_BYTES"})
+        rows.append({
+            "file": rel,
+            "status": "failed" if file_failures else "passed",
+            "failure_count": len(file_failures),
+            "raw_sql_included": False,
+        })
+        failures.extend(file_failures)
+    return _failure_result(
+        source="snowflake_sql_encoding_scan",
+        failures=failures,
+        scanned_file_count=len(rows),
+        rows=rows,
+    )
+
+
+def _schema_drift_results(texts: Mapping[str, str]) -> dict[str, Any]:
+    setup = "\n".join(texts.values()).upper()
+    rows: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = []
+    pattern = re.compile(
+        r"^\s*--\s*ALTER\s+TABLE\s+IF\s+EXISTS\s+([A-Z0-9_]+)\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+([A-Z0-9_]+)\b",
+        re.IGNORECASE | re.MULTILINE,
+    )
+    seen: set[tuple[str, str]] = set()
+    for rel, text in texts.items():
+        for match in pattern.finditer(text):
+            table = _normalize_name(match.group(1))
+            column = _normalize_name(match.group(2))
+            key = (table, column)
+            if key in seen:
+                continue
+            seen.add(key)
+            table_region = _region(setup, f"CREATE TRANSIENT TABLE IF NOT EXISTS {table}", ";")
+            if not table_region:
+                table_region = _region(setup, f"CREATE TABLE IF NOT EXISTS {table}", ";")
+            proven = bool(table_region and re.search(rf"\b{column}\b", table_region))
+            row = {
+                "file": rel,
+                "table": table,
+                "column": column,
+                "status": "passed" if proven else "failed",
+                "validation_metadata": "validated_by_create_table_contract" if proven else "",
+                "raw_sql_included": False,
+            }
+            rows.append(row)
+            if not proven:
+                failures.append({
+                    "file": rel,
+                    "code": "COMMENTED_DDL_WITHOUT_SCHEMA_PROOF",
+                    "table": table,
+                    "column": column,
+                    "recommendation": "Restore active DDL or prove the column exists in the create-table schema contract.",
+                })
+    return _failure_result(
+        source="snowflake_schema_drift_validation",
+        failures=failures,
+        commented_ddl_count=len(rows),
+        rows=rows,
+    )
+
+
+def _streamlit_manifest_validation(root: Path) -> dict[str, Any]:
+    root_manifest = root / "snowflake.yml"
+    package_manifest = root / ".overwatch_final" / "snowflake.yml"
+    failures: list[dict[str, Any]] = []
+    root_text = root_manifest.read_text(encoding="utf-8") if root_manifest.exists() else ""
+    package_text = package_manifest.read_text(encoding="utf-8") if package_manifest.exists() else ""
+    required_root_tokens = {
+        "definition_version: 2": "ROOT_DEFINITION_VERSION_MISSING",
+        "main_file: app.py": "ROOT_MAIN_FILE_MISSING",
+        "src: .overwatch_final/app.py": "ROOT_APP_MAPPING_MISSING",
+        "dest: app.py": "ROOT_APP_DEST_MISSING",
+        "compute_pool: SYSTEM_COMPUTE_POOL_CPU": "ROOT_COMPUTE_POOL_MISSING",
+        "query_warehouse: COMPUTE_WH": "ROOT_QUERY_WAREHOUSE_MISSING",
+        "execute_as: CALLER": "ROOT_CALLER_MODE_MISSING",
+    }
+    required_package_tokens = {
+        "definition_version: 2": "PACKAGE_DEFINITION_VERSION_MISSING",
+        "main_file: app.py": "PACKAGE_MAIN_FILE_MISSING",
+        "query_warehouse: COMPUTE_WH": "PACKAGE_QUERY_WAREHOUSE_MISSING",
+        "execute_as: CALLER": "PACKAGE_CALLER_MODE_MISSING",
+    }
+    if not root_manifest.exists():
+        failures.append({"code": "ROOT_SNOWFLAKE_MANIFEST_MISSING"})
+    if not package_manifest.exists():
+        failures.append({"code": "PACKAGE_SNOWFLAKE_MANIFEST_MISSING"})
+    for token, code in required_root_tokens.items():
+        if token not in root_text:
+            failures.append({"code": code})
+    for token, code in required_package_tokens.items():
+        if token not in package_text:
+            failures.append({"code": code})
+    for artifact in (
+        "access_control.py", "app_entry_timing.py", "config.py", "filters.py", "layout.py",
+        "navigation.py", "perf_trace.py", "refresh.py", "route_registry.py", "runtime_state.py",
+        "section_dispatch.py", "shell.py", "theme.py", "version.py", "workflow_contracts.py",
+        "environment.yml", "pyproject.toml", "utils/", "sections/",
+    ):
+        if f"src: .overwatch_final/{artifact}" not in root_text or f"dest: {artifact}" not in root_text:
+            failures.append({"code": "ROOT_ARTIFACT_MAPPING_MISSING", "artifact": artifact})
+        if f"- {artifact}" not in package_text:
+            failures.append({"code": "PACKAGE_ARTIFACT_MISSING", "artifact": artifact})
+    docs = (root / "STREAMLIT_CLOUD_DEPLOY.md").read_text(encoding="utf-8") if (root / "STREAMLIT_CLOUD_DEPLOY.md").exists() else ""
+    if "Snowsight/Git deploy" not in docs or "root `snowflake.yml`" not in docs:
+        failures.append({"code": "DEPLOY_DOCS_ROOT_SNOWSIGHT_MISSING"})
+    return _failure_result(
+        source="streamlit_manifest_validation",
+        failures=failures,
+        root_manifest="snowflake.yml",
+        package_manifest=".overwatch_final/snowflake.yml",
+    )
 
 
 def _region(text: str, start: str, end: str) -> str:
@@ -685,34 +952,145 @@ def _compact_evidence_results(root: Path, texts: Mapping[str, str]) -> dict[str,
     }
 
 
-def _static_smoke_results(live_enabled: bool) -> list[dict[str, Any]]:
+def _validation_env() -> dict[str, Any]:
+    return {
+        "database": os.environ.get("OVERWATCH_SNOWFLAKE_VALIDATION_DATABASE", "").strip(),
+        "schema": os.environ.get("OVERWATCH_SNOWFLAKE_VALIDATION_SCHEMA", "").strip(),
+        "warehouse": os.environ.get("OVERWATCH_SNOWFLAKE_VALIDATION_WAREHOUSE", "").strip(),
+        "dry_run": os.environ.get("OVERWATCH_SNOWFLAKE_VALIDATION_DRY_RUN", "").strip() == "1",
+    }
+
+
+def _open_live_session(root: Path):
+    app_root = root / ".overwatch_final"
+    if str(app_root) not in sys.path:
+        sys.path.insert(0, str(app_root))
+    try:
+        from snowflake.snowpark.context import get_active_session
+
+        return get_active_session()
+    except Exception:
+        pass
+    try:
+        from utils.session import _make_streamlit_connection_session
+
+        return _make_streamlit_connection_session()
+    except Exception as exc:
+        raise RuntimeError(sanitize_snowflake_error(exc) or "Snowflake live session is unavailable.") from exc
+
+
+def _collect_row_count(result: Any) -> int:
+    try:
+        rows = result.collect()
+    except Exception:
+        return 0
+    try:
+        return len(rows)
+    except Exception:
+        return 0
+
+
+def _run_live_sql(session: Any, statement: str) -> int:
+    result = session.sql(statement)
+    return _collect_row_count(result)
+
+
+def _static_smoke_results(live_enabled: bool, root: Path | None = None) -> list[dict[str, Any]]:
     calls = [
-        ("SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST", "refresh_fast"),
-        ("SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL", "refresh_full_dry_run"),
-        ("SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS", "setup_health"),
-        ("SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS_FAST_IMPL", "packet_validation"),
+        ("SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS", "refresh_section_command_briefs", "CALL SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS('FAST')"),
+        ("SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST", "refresh_fast", "CALL SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST()"),
+        ("SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL", "refresh_full_dry_run", "CALL SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL()"),
+        ("SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS", "setup_health", "CALL SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS()"),
+        ("SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS_FAST_IMPL", "packet_validation", "CALL SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS_FAST_IMPL()"),
     ]
-    status = "skipped" if not live_enabled else "passed"
-    return [
-        _result_row(
-            object_name=name,
-            object_type="procedure",
-            procedure_name=name,
-            phase=phase,
-            status=status,
-            recommendation="Enable OVERWATCH_SNOWFLAKE_VALIDATION=1 for live smoke-call proof." if not live_enabled else "",
-        )
-        for name, phase in calls
-    ]
+    if not live_enabled:
+        return [
+            _result_row(
+                object_name=name,
+                object_type="procedure",
+                procedure_name=name,
+                phase="procedure_smoke_call_live",
+                status="skipped",
+                recommendation="Enable OVERWATCH_SNOWFLAKE_VALIDATION=1 for live smoke-call proof.",
+            )
+            for name, _phase, _statement in calls
+        ]
+    env = _validation_env()
+    root = root or Path(".").resolve()
+    rows: list[dict[str, Any]] = []
+    try:
+        session = _open_live_session(root)
+        if env["warehouse"]:
+            _run_live_sql(session, f"USE WAREHOUSE {env['warehouse']}")
+        if env["database"]:
+            _run_live_sql(session, f"USE DATABASE {env['database']}")
+        if env["schema"]:
+            _run_live_sql(session, f"USE SCHEMA {env['schema']}")
+    except Exception as exc:
+        return [
+            _result_row(
+                object_name=name,
+                object_type="procedure",
+                procedure_name=name,
+                phase="procedure_smoke_call_live",
+                status="failed",
+                sanitized_error=sanitize_snowflake_error(exc),
+                recommendation="Configure a Snowflake validation session or disable live validation for fixture profile.",
+            )
+            for name, _phase, _statement in calls
+        ]
+    for name, _phase, statement in calls:
+        started = time.perf_counter()
+        try:
+            if env["dry_run"]:
+                row_count = _run_live_sql(session, "SELECT 1 AS OVERWATCH_VALIDATION_DRY_RUN")
+                status = "passed"
+                recommendation = "Dry-run mode proved live session availability; procedure body was not called."
+            else:
+                row_count = _run_live_sql(session, statement)
+                status = "passed"
+                recommendation = ""
+            rows.append(
+                _result_row(
+                    object_name=name,
+                    object_type="procedure",
+                    procedure_name=name,
+                    phase="procedure_smoke_call_live",
+                    status=status,
+                    elapsed_ms=int((time.perf_counter() - started) * 1000),
+                    row_count=row_count,
+                    recommendation=recommendation,
+                )
+            )
+        except Exception as exc:
+            rows.append(
+                _result_row(
+                    object_name=name,
+                    object_type="procedure",
+                    procedure_name=name,
+                    phase="procedure_smoke_call_live",
+                    status="failed",
+                    elapsed_ms=int((time.perf_counter() - started) * 1000),
+                    sanitized_error=sanitize_snowflake_error(exc),
+                    recommendation="Fix the procedure compile/runtime error in Snowflake and rerun live validation.",
+                )
+            )
+    return rows
 
 
-def _refresh_result(name: str, live_enabled: bool) -> dict[str, Any]:
+def _refresh_result(name: str, live_enabled: bool, smoke_rows: Iterable[Mapping[str, Any]] = ()) -> dict[str, Any]:
     skipped = not live_enabled
+    related = [
+        row for row in smoke_rows
+        if (name == "refresh_fast_validation" and str(row.get("procedure_name") or "").endswith("_FAST"))
+        or (name == "refresh_full_validation" and str(row.get("procedure_name") or "").endswith("_FULL"))
+    ]
+    failed = [row for row in related if str(row.get("status") or "") == "failed"]
     return {
         "source": name,
         "proof_source": "live_snowflake_execution" if live_enabled else "static_sql_parse",
-        "passed": True,
-        "status": "skipped" if skipped else "passed",
+        "passed": not failed,
+        "status": "skipped" if skipped else ("failed" if failed else "passed"),
         "skip_reason": "Live Snowflake validation disabled; set OVERWATCH_SNOWFLAKE_VALIDATION=1." if skipped else "",
         "elapsed_seconds": 0,
         "target_seconds": 45 if name == "refresh_fast_validation" else 120,
@@ -734,6 +1112,63 @@ def _live_object_inventory(live_enabled: bool) -> list[dict[str, Any]]:
             recommendation="Enable OVERWATCH_SNOWFLAKE_VALIDATION=1 to compare live objects." if not live_enabled else "",
         )
     ]
+
+
+def _phase_validation_results(
+    *,
+    live_enabled: bool,
+    setup_rows: Iterable[Mapping[str, Any]],
+    compile_rows: Iterable[Mapping[str, Any]],
+    smoke_rows: Iterable[Mapping[str, Any]],
+    validation_rows: Iterable[Mapping[str, Any]],
+    packet_shape: Mapping[str, Any],
+    compact_evidence: Mapping[str, Any],
+    refresh_fast: Mapping[str, Any],
+    refresh_full: Mapping[str, Any],
+) -> dict[str, Any]:
+    observed: dict[str, str] = {}
+    for row in setup_rows:
+        phase = str(row.get("phase") or "")
+        if phase:
+            observed[phase] = str(row.get("status") or "")
+    for row in compile_rows:
+        observed[str(row.get("phase") or "procedure_compile_static")] = str(row.get("status") or "")
+    for row in smoke_rows:
+        observed["procedure_smoke_call_live"] = "failed" if str(row.get("status") or "") == "failed" else str(row.get("status") or "")
+    for row in validation_rows:
+        observed["validation_sql_static"] = "failed" if str(row.get("status") or "") == "failed" else "passed"
+        observed["drop_rollback_static"] = "failed" if str(row.get("status") or "") == "failed" else "passed"
+    observed["procedure_compile_live"] = "passed" if live_enabled else "skipped"
+    observed["validation_sql_live"] = "passed" if live_enabled else "skipped"
+    observed["packet_shape_static"] = "passed" if packet_shape.get("passed") else "failed"
+    observed["packet_shape_live"] = "passed" if live_enabled else "skipped"
+    observed["compact_evidence_static"] = "passed" if compact_evidence.get("passed") else "failed"
+    observed["compact_evidence_live"] = "passed" if live_enabled else "skipped"
+    observed["refresh_fast_static"] = "passed" if refresh_fast.get("passed") else "failed"
+    observed["refresh_fast_live"] = str(refresh_fast.get("status") or "missing")
+    observed["refresh_full_static_or_dry_run"] = "passed" if refresh_full.get("passed") else "failed"
+    observed["drop_rollback_live_or_dry_run"] = "passed" if live_enabled else "skipped"
+    rows = []
+    failures: list[dict[str, Any]] = []
+    for phase in REQUIRED_VALIDATION_PHASES:
+        status = observed.get(phase, "missing")
+        passed = status in {"passed", "skipped"}
+        row = {
+            "phase": phase,
+            "status": status,
+            "passed": passed,
+            "raw_sql_included": False,
+            "recommendation": "" if passed else "Implement or repair the missing Snowflake validation phase.",
+        }
+        rows.append(row)
+        if not passed:
+            failures.append({"phase": phase, "status": status, "recommendation": row["recommendation"]})
+    return _failure_result(
+        source="snowflake_validation_phase_coverage",
+        failures=failures,
+        phase_count=len(rows),
+        phases=rows,
+    )
 
 
 def _write_skipped(root: Path, live_enabled: bool) -> None:
@@ -770,13 +1205,28 @@ def write_snowflake_validation_artifacts(root: Path | str = ".") -> dict[str, An
     dependency_graph = _dependency_graph(texts)
     validation_rows = _validation_sql_results(texts)
     metric_shape = validate_metric_candidate_union_shape(texts.get("snowflake/mart_setup/05_load_procedures.sql", ""))
+    recent_fixes = _recent_snowflake_fix_results(texts)
     trend_cardinality = _trend_cardinality(texts)
     packet_publication, packet_shape, packet_size, packet_source_truth = _packet_results(texts)
     compact_evidence = _compact_evidence_results(root_path, texts)
-    smoke_rows = _static_smoke_results(live_enabled)
-    refresh_fast = _refresh_result("refresh_fast_validation", live_enabled)
-    refresh_full = _refresh_result("refresh_full_validation", live_enabled)
+    smoke_rows = _static_smoke_results(live_enabled, root_path)
+    refresh_fast = _refresh_result("refresh_fast_validation", live_enabled, smoke_rows)
+    refresh_full = _refresh_result("refresh_full_validation", live_enabled, smoke_rows)
     object_inventory_live = _live_object_inventory(live_enabled)
+    encoding_scan = _sql_encoding_scan_results(root_path)
+    schema_drift = _schema_drift_results(texts)
+    manifest_validation = _streamlit_manifest_validation(root_path)
+    phase_validation = _phase_validation_results(
+        live_enabled=live_enabled,
+        setup_rows=setup_rows,
+        compile_rows=compile_rows,
+        smoke_rows=smoke_rows,
+        validation_rows=validation_rows,
+        packet_shape=packet_shape,
+        compact_evidence=compact_evidence,
+        refresh_fast=refresh_fast,
+        refresh_full=refresh_full,
+    )
     refresh_performance: dict[str, Any] = {
         "source": "refresh_performance_validation",
         "proof_source": "live_snowflake_execution" if live_enabled else "static_sql_parse",
@@ -821,15 +1271,26 @@ def write_snowflake_validation_artifacts(root: Path | str = ".") -> dict[str, An
         hard_failures.append({"gate": "validation_or_drop_static"})
     for name, payload in {
         "metric_candidate_shape": metric_shape,
+        "recent_snowflake_fixes": recent_fixes,
         "trend_cardinality": trend_cardinality,
         "packet_publication": packet_publication,
         "packet_shape": packet_shape,
         "packet_size": packet_size,
         "packet_source_truth": packet_source_truth,
         "compact_evidence_marts": compact_evidence,
+        "sql_encoding_scan": encoding_scan,
+        "schema_drift": schema_drift,
+        "streamlit_manifest": manifest_validation,
+        "phase_validation": phase_validation,
     }.items():
         if not payload.get("passed"):
             hard_failures.append({"gate": name, "details": payload.get("failures") or payload.get("checks")})
+    compile_failures = [row for row in compile_rows if str(row.get("status") or "") == "failed"]
+    smoke_failures = [row for row in smoke_rows if str(row.get("status") or "") == "failed"]
+    if compile_failures:
+        hard_failures.append({"gate": "procedure_compile_validation", "count": len(compile_failures)})
+    if smoke_failures:
+        hard_failures.append({"gate": "procedure_smoke_call_validation", "count": len(smoke_failures)})
 
     summary = {
         "source": "snowflake_execution_validation",
@@ -844,9 +1305,18 @@ def write_snowflake_validation_artifacts(root: Path | str = ".") -> dict[str, An
         "expected_script_count": len(EXPECTED_SCRIPT_ORDER),
         "statement_count": sum(row["row_count"] for row in setup_rows),
         "procedure_compile_count": len(compile_rows),
+        "procedure_compile_failure_count": len(compile_failures),
         "procedure_smoke_call_count": len(smoke_rows),
+        "procedure_smoke_failure_count": len(smoke_failures),
         "metric_candidate_branch_count": metric_shape.get("branch_count", 0),
         "compact_evidence_mart_count": len(COMPACT_EVIDENCE_MARTS),
+        "validation_phase_count": len(REQUIRED_VALIDATION_PHASES),
+        "validation_phases": list(REQUIRED_VALIDATION_PHASES),
+        "recent_snowflake_fix_validation_passed": bool(recent_fixes.get("passed")),
+        "packet_publication_validation_passed": bool(packet_publication.get("passed")) and bool(packet_shape.get("passed")),
+        "compact_evidence_mart_validation_passed": bool(compact_evidence.get("passed")),
+        "refresh_fast_status": refresh_fast.get("status"),
+        "refresh_full_status": refresh_full.get("status"),
         "hard_failure_count": len(hard_failures),
         "hard_failures": hard_failures,
         "elapsed_ms": int((time.perf_counter() - started) * 1000),
@@ -863,6 +1333,8 @@ def write_snowflake_validation_artifacts(root: Path | str = ".") -> dict[str, An
         "refresh_full_results": refresh_full,
         "object_inventory_live_results": object_inventory_live,
         "procedure_dependency_graph": dependency_graph,
+        "recent_snowflake_fix_validation_results": recent_fixes,
+        "metric_candidate_shape_results": metric_shape,
         "trend_cardinality_results": trend_cardinality,
         "packet_publication_validation_results": packet_publication,
         "packet_shape_results": packet_shape,
@@ -872,6 +1344,10 @@ def write_snowflake_validation_artifacts(root: Path | str = ".") -> dict[str, An
         "refresh_performance_results": refresh_performance,
         "refresh_stage_timing_results": refresh_stage_timing,
         "refresh_row_count_results": refresh_row_counts,
+        "sql_encoding_scan_results": encoding_scan,
+        "schema_drift_results": schema_drift,
+        "streamlit_manifest_validation_results": manifest_validation,
+        "phase_validation_results": phase_validation,
     }
     for name, payload in artifacts.items():
         _write_json(validation_dir / f"{name}.json", payload)
@@ -901,6 +1377,7 @@ __all__ = [
     "COMPACT_EVIDENCE_MARTS",
     "EXPECTED_SCRIPT_ORDER",
     "REQUIRED_RESULT_FILES",
+    "REQUIRED_VALIDATION_PHASES",
     "SNOWFLAKE_VALIDATION_DIR",
     "sanitize_snowflake_error",
     "split_sql_statements",

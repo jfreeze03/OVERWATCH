@@ -4103,7 +4103,7 @@ ALTER TABLE IF EXISTS FACT_CHARGEBACK_DAILY ADD COLUMN IF NOT EXISTS ENVIRONMENT
 ALTER TABLE IF EXISTS FACT_CHARGEBACK_DAILY ADD COLUMN IF NOT EXISTS ENVIRONMENT_ROLLUP VARCHAR(100);
 ALTER TABLE IF EXISTS MART_EXECUTIVE_OBSERVABILITY ADD COLUMN IF NOT EXISTS SOURCE VARCHAR(500);
 
-﻿-- -----------------------------------------------------------------------------
+-- -----------------------------------------------------------------------------
 -- 4. Load procedures
 -- -----------------------------------------------------------------------------
 

@@ -43,6 +43,15 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertEqual(summary["pass_count"], len(matrix))
         self.assertTrue(summary["gauntlet_passed"])
         self.assertTrue(summary["runtime_validation_passed"])
+        self.assertTrue(summary["snowflake_validation_passed"])
+        self.assertFalse(summary["snowflake_live_validation_enabled"])
+        self.assertTrue(summary["snowflake_live_validation_skipped"])
+        self.assertGreater(summary["procedure_compile_count"], 0)
+        self.assertEqual(summary["procedure_compile_failure_count"], 0)
+        self.assertGreater(summary["procedure_smoke_call_count"], 0)
+        self.assertEqual(summary["procedure_smoke_failure_count"], 0)
+        self.assertEqual(summary["refresh_fast_status"], "skipped")
+        self.assertEqual(summary["refresh_full_status"], "skipped")
         self.assertGreaterEqual(summary["required_artifact_count"], len(REQUIRED_LAUNCH_READINESS_ARTIFACTS))
         self.assertIn("decision-workspace-proof", summary["uploaded_artifact_names"])
         self.assertFalse(summary["raw_sql_included"])
@@ -72,6 +81,9 @@ class LaunchReadinessTests(unittest.TestCase):
             "snowflake_execution_validation",
             "procedure_compile_validation",
             "procedure_smoke_call_validation",
+            "recent_snowflake_fix_validation",
+            "streamlit_manifest_validation",
+            "snowflake_phase_validation",
             "compact_evidence_mart_validation",
             "packet_publication_validation",
             "refresh_performance_validation",
@@ -567,6 +579,21 @@ class LaunchReadinessTests(unittest.TestCase):
                 "snowflake compile",
                 lambda payloads, launch: payloads["artifacts/snowflake_validation/procedure_compile_results.json"][0].update({"status": "failed"}),
                 "procedure_compile_validation",
+            ),
+            (
+                "recent snowflake fix",
+                lambda payloads, launch: payloads["artifacts/snowflake_validation/recent_snowflake_fix_validation_results.json"].update({"passed": False}),
+                "recent_snowflake_fix_validation",
+            ),
+            (
+                "snowflake manifest",
+                lambda payloads, launch: payloads["artifacts/snowflake_validation/streamlit_manifest_validation_results.json"].update({"passed": False}),
+                "streamlit_manifest_validation",
+            ),
+            (
+                "snowflake phases",
+                lambda payloads, launch: payloads["artifacts/snowflake_validation/phase_validation_results.json"].update({"passed": False}),
+                "snowflake_phase_validation",
             ),
             (
                 "snowflake fast refresh",

@@ -1779,6 +1779,11 @@ def _snowflake_validation_gate_results(
     compile_rows = _as_list(payloads.get("artifacts/snowflake_validation/procedure_compile_results.json"))
     smoke_rows = _as_list(payloads.get("artifacts/snowflake_validation/procedure_smoke_call_results.json"))
     compact = _as_mapping(payloads.get("artifacts/snowflake_validation/compact_evidence_mart_validation_results.json"))
+    recent_fixes = _as_mapping(payloads.get("artifacts/snowflake_validation/recent_snowflake_fix_validation_results.json"))
+    manifest_validation = _as_mapping(payloads.get("artifacts/snowflake_validation/streamlit_manifest_validation_results.json"))
+    encoding_scan = _as_mapping(payloads.get("artifacts/snowflake_validation/sql_encoding_scan_results.json"))
+    schema_drift = _as_mapping(payloads.get("artifacts/snowflake_validation/schema_drift_results.json"))
+    phase_validation = _as_mapping(payloads.get("artifacts/snowflake_validation/phase_validation_results.json"))
     packet_publication = _as_mapping(payloads.get("artifacts/snowflake_validation/packet_publication_validation_results.json"))
     packet_shape = _as_mapping(payloads.get("artifacts/snowflake_validation/packet_shape_results.json"))
     packet_size = _as_mapping(payloads.get("artifacts/snowflake_validation/packet_size_results.json"))
@@ -1814,6 +1819,28 @@ def _snowflake_validation_gate_results(
             failure_reason="Procedure smoke calls require live Snowflake validation for this profile.",
             recommendation="Enable live validation or add a signed waiver for Snowflake smoke calls.",
             details={"procedure_smoke_call_count": len(smoke_rows), "live_mode_enabled": live_enabled},
+        ),
+        _component_row(
+            "recent_snowflake_fix_validation",
+            bool(recent_fixes.get("passed")) and bool(encoding_scan.get("passed")) and bool(schema_drift.get("passed")),
+            failure_reason="Recent Snowflake correction classes, SQL encoding, or schema-drift proof failed.",
+            details={
+                "recent_fix_failures": recent_fixes.get("failures"),
+                "encoding_failures": encoding_scan.get("failures"),
+                "schema_drift_failures": schema_drift.get("failures"),
+            },
+        ),
+        _component_row(
+            "streamlit_manifest_validation",
+            bool(manifest_validation.get("passed")),
+            failure_reason="Streamlit root/package manifest validation failed.",
+            details=manifest_validation.get("failures"),
+        ),
+        _component_row(
+            "snowflake_phase_validation",
+            bool(phase_validation.get("passed")),
+            failure_reason="One or more required Snowflake validation phases is missing or failed.",
+            details=phase_validation.get("failures"),
         ),
         _component_row(
             "compact_evidence_mart_validation",
@@ -1852,6 +1879,15 @@ def _snowflake_validation_gate_results(
         "components": components,
         "failures": failures,
         "live_mode_enabled": live_enabled,
+        "snowflake_validation_passed": bool(summary.get("passed")),
+        "snowflake_live_validation_enabled": live_enabled,
+        "snowflake_live_validation_skipped": live_skipped,
+        "procedure_compile_count": len(compile_rows),
+        "procedure_compile_failure_count": sum(1 for row in compile_rows if str(_as_mapping(row).get("status") or "") == "failed"),
+        "procedure_smoke_call_count": len(smoke_rows),
+        "procedure_smoke_failure_count": sum(1 for row in smoke_rows if str(_as_mapping(row).get("status") or "") == "failed"),
+        "refresh_fast_status": refresh_fast.get("status") or "",
+        "refresh_full_status": refresh_full.get("status") or "",
         "live_status": summary.get("live_status") or "missing",
         "live_skip_reason": summary.get("live_skip_reason") or "",
         "raw_sql_included": False,
@@ -1987,6 +2023,9 @@ def _release_gate_matrix(
         "snowflake_execution_validation",
         "procedure_compile_validation",
         "procedure_smoke_call_validation",
+        "recent_snowflake_fix_validation",
+        "streamlit_manifest_validation",
+        "snowflake_phase_validation",
         "compact_evidence_mart_validation",
         "packet_publication_validation",
         "refresh_performance_validation",
@@ -2107,6 +2146,7 @@ def evaluate_launch_readiness(
     ci_run_review = _as_mapping(launch_artifacts.get("ci_run_review_results"))
     artifact_upload_review = _as_mapping(launch_artifacts.get("artifact_upload_review_results"))
     artifact_review = _as_mapping(launch_artifacts.get("artifact_review_results"))
+    snowflake_gate = _as_mapping(launch_artifacts.get("snowflake_validation_gate_results"))
     launch_summary = {
         "source": "launch_readiness",
         "proof_source": "runtime_click",
@@ -2139,6 +2179,15 @@ def evaluate_launch_readiness(
         "raw_invariant_failure_count": _as_int(raw_invariants.get("failure_count")),
         "gauntlet_passed": bool(gauntlet.get("passed")),
         "runtime_validation_passed": bool(summary.get("all_passed")),
+        "snowflake_validation_passed": bool(snowflake_gate.get("snowflake_validation_passed")),
+        "snowflake_live_validation_enabled": bool(snowflake_gate.get("snowflake_live_validation_enabled")),
+        "snowflake_live_validation_skipped": bool(snowflake_gate.get("snowflake_live_validation_skipped")),
+        "procedure_compile_count": _as_int(snowflake_gate.get("procedure_compile_count")),
+        "procedure_compile_failure_count": _as_int(snowflake_gate.get("procedure_compile_failure_count")),
+        "procedure_smoke_call_count": _as_int(snowflake_gate.get("procedure_smoke_call_count")),
+        "procedure_smoke_failure_count": _as_int(snowflake_gate.get("procedure_smoke_failure_count")),
+        "refresh_fast_status": str(snowflake_gate.get("refresh_fast_status") or ""),
+        "refresh_full_status": str(snowflake_gate.get("refresh_full_status") or ""),
         "cleanup_unknown_sql_object_count": _as_int(summary.get("cleanup_unknown_sql_object_count")),
         "cleanup_dead_route_count": _as_int(summary.get("cleanup_dead_route_count")),
         "export_count": _as_int(summary.get("total_exports_validated") or summary.get("export_count")),

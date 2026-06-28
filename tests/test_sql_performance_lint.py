@@ -240,6 +240,16 @@ class SqlPerformanceLintTests(unittest.TestCase):
         scalar_findings = lint_sql_text(scalar_trend, path="snowflake/mart_setup/05_load_procedures.sql")
         self.assertIn("SCALAR_TREND_SUBQUERY_PRESENT", {finding["code"] for finding in scalar_findings})
 
+    def test_linter_rejects_sql_encoding_artifacts(self):
+        from tools.contracts.sql_performance_lint import lint_sql_text
+
+        bom = lint_sql_text("\ufeffSELECT 1", path="snowflake/synthetic.sql")
+        self.assertIn("SQL_FILE_BOM", {finding["code"] for finding in bom})
+        replacement = lint_sql_text("SELECT '\ufffd'", path="snowflake/synthetic.sql")
+        self.assertIn("SQL_REPLACEMENT_CHARACTER", {finding["code"] for finding in replacement})
+        mojibake = lint_sql_text("SELECT 'â€™'", path="snowflake/synthetic.sql")
+        self.assertIn("SQL_MOJIBAKE_RISK", {finding["code"] for finding in mojibake})
+
     def test_linter_flags_select_star_app_facing_sql(self):
         from tools.contracts.sql_performance_lint import lint_sql_text
 

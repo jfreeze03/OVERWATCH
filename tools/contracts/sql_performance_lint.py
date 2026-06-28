@@ -191,6 +191,13 @@ def lint_sql_text(
             "raw_sql_included": False,
         })
 
+    if str(sql or "").startswith("\ufeff") or text.startswith("\ufeff"):
+        add("SQL_FILE_BOM", "error", "Snowflake SQL files must be UTF-8 without a byte-order mark.")
+    if "\ufffd" in str(sql or ""):
+        add("SQL_REPLACEMENT_CHARACTER", "error", "Snowflake SQL files must not contain replacement characters.")
+    if any(token in str(sql or "") for token in ("\u00e2", "\u00c3", "\u00c2")):
+        add("SQL_MOJIBAKE_RISK", "error", "Snowflake SQL files must not contain mojibake characters.")
+
     if re.search(r"\bCOALESCE\s*\([^)]*(?<![:])\b[A-Z0-9_]*_ID\b(?!\s*(?:::|AS)\s*VARCHAR)[^)]*\b[A-Z0-9_]*_KEY\b", upper):
         add("COALESCE_MIXED_TYPE_RISK", "error", "COALESCE between identifier and key columns must cast to a common type.")
     if "INSERT INTO MART_SECTION_COMMAND_METRIC" in upper:

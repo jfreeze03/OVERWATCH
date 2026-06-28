@@ -26,6 +26,7 @@ class SnowflakeExecutionValidationTests(unittest.TestCase):
 
         summary = self._read_json("artifacts/snowflake_validation/snowflake_validation_summary.json")
         manifest = self._read_json("artifacts/snowflake_validation/artifact_manifest.json")
+        live_manifest = self._read_json("artifacts/snowflake_validation/live_execution_manifest.json")
         phases = self._read_json("artifacts/snowflake_validation/phase_validation_results.json")
         self.assertTrue(summary["passed"], summary)
         self.assertFalse(summary["live_mode_enabled"])
@@ -38,6 +39,12 @@ class SnowflakeExecutionValidationTests(unittest.TestCase):
         self.assertTrue(summary["live_validation_environment_passed"])
         self.assertTrue(summary["live_validation_session_passed"])
         self.assertEqual(summary["live_validation_session_status"], "skipped")
+        self.assertTrue(summary["live_execution_manifest_passed"])
+        self.assertGreater(summary["live_execution_manifest_entry_count"], 0)
+        self.assertEqual(summary["live_execution_manifest_failure_count"], 0)
+        self.assertTrue(live_manifest["passed"], live_manifest)
+        self.assertGreater(live_manifest["entry_count"], 0)
+        self.assertTrue(all(row["raw_sql_included"] is False for row in live_manifest["entries"]))
         self.assertTrue((ROOT / "artifacts/snowflake_validation/snowflake_validation_SKIPPED.txt").exists())
         for name in REQUIRED_RESULT_FILES:
             self.assertIn(f"artifacts/snowflake_validation/{name}.json", manifest["files"])
@@ -77,6 +84,7 @@ class SnowflakeExecutionValidationTests(unittest.TestCase):
         self.assertTrue(all(row["expected_compile_mode"] == "static" for row in compile_coverage["rows"]))
         self.assertTrue(all(row["normalized_signature"] for row in compile_coverage["rows"]))
         self.assertTrue(all(row["source_line"] > 0 for row in compile_coverage["rows"]))
+        self.assertTrue(all(row["live_execution_manifest_id"] for row in compile_coverage["rows"]))
         self.assertTrue(all(row["raw_sql_included"] is False for row in compile_rows))
 
     def test_procedure_compile_coverage_rejects_gaps(self):
@@ -137,6 +145,7 @@ class SnowflakeExecutionValidationTests(unittest.TestCase):
         self.assertTrue(all(row["target_lookup_columns"] for row in compact_detail["marts"]))
         self.assertTrue(all(row["retention_bounded"] for row in compact_detail["marts"]))
         self.assertTrue(all(row["retention_window"] for row in compact_detail["marts"]))
+        self.assertTrue(all(row["live_execution_manifest_id"] for row in compact_detail["marts"]))
 
     def test_compact_evidence_detail_rejects_policy_gaps(self):
         from tools.contracts import snowflake_execution_validation as validation
@@ -219,11 +228,16 @@ class SnowflakeExecutionValidationTests(unittest.TestCase):
         self.assertEqual(packet_detail["check_count"], 14)
         self.assertEqual(packet_detail["packet_validation_failed_check_count"], 0)
         self.assertTrue(all(row["source_artifact"] for row in packet_detail["checks"]))
+        self.assertTrue(all("launch_summary_field" in row for row in packet_detail["checks"]))
+        self.assertTrue(all(row["live_execution_manifest_id"] for row in packet_detail["checks"]))
         self.assertEqual(refresh_fast["status"], "skipped")
         self.assertEqual(refresh_full["status"], "skipped")
+        self.assertTrue(refresh_fast["live_execution_manifest_id"])
+        self.assertTrue(refresh_full["live_execution_manifest_id"])
         self.assertTrue(refresh_detail["passed"], refresh_detail)
         self.assertTrue(smoke_coverage["passed"], smoke_coverage)
         self.assertEqual(smoke_coverage["expected_smoke_target_count"], 8)
+        self.assertTrue(all(row["live_execution_manifest_id"] for row in smoke_coverage["rows"]))
 
     def test_packet_refresh_and_smoke_detail_reject_gaps(self):
         from tools.contracts import snowflake_execution_validation as validation
@@ -284,6 +298,17 @@ class SnowflakeExecutionValidationTests(unittest.TestCase):
         self.assertIn("max_packet_bytes_under_100kb", names)
         self.assertIn("live_skip_reason_present_when_skipped", names)
 
+        bad_refresh_live = dict(refresh_fast)
+        bad_refresh_live.update({"status": "passed", "live_execution_manifest_id": ""})
+        refresh_detail = validation._refresh_detail_results(
+            validation._load_script_texts(ROOT),
+            bad_refresh_live,
+            refresh_full,
+            live_enabled=True,
+        )
+        self.assertFalse(refresh_detail["passed"])
+        self.assertIn("live_manifest_id_present_when_checked", {row["check_name"] for row in refresh_detail["failures"]})
+
     def test_snowflake_error_sanitizer_removes_sql_and_secrets(self):
         from tools.contracts.snowflake_execution_validation import sanitize_snowflake_error
 
@@ -321,6 +346,28 @@ class SnowflakeExecutionValidationTests(unittest.TestCase):
         self.assertTrue(all(row["status"] == "failed" for row in live_rows))
         self.assertTrue(all(row["raw_sql_included"] is False for row in live_rows))
         self.assertTrue(all("CREATE OR REPLACE" not in row.get("sanitized_error", "").upper() for row in live_rows))
+
+    def test_live_environment_requires_scoped_warehouse_and_sanitizes_values(self):
+        from tools.contracts import snowflake_execution_validation as validation
+
+        with patch.dict("os.environ", {"OVERWATCH_SNOWFLAKE_VALIDATION_WAREHOUSE": ""}, clear=False):
+            result = validation._live_validation_environment_results(True)
+        self.assertFalse(result["passed"])
+        self.assertIn("OVERWATCH_SNOWFLAKE_VALIDATION_WAREHOUSE", result["missing_env_vars"])
+        self.assertIn("LIVE_VALIDATION_WAREHOUSE_MISSING", {row["code"] for row in result["failures"]})
+
+        with patch.dict(
+            "os.environ",
+            {
+                "OVERWATCH_SNOWFLAKE_VALIDATION_DATABASE": "snowflake://acct/user",
+                "OVERWATCH_SNOWFLAKE_VALIDATION_WAREHOUSE": "COMPUTE_WH",
+            },
+            clear=False,
+        ):
+            result = validation._live_validation_environment_results(True)
+        self.assertFalse(result["passed"])
+        self.assertEqual(result["validation_database"], "[redacted]")
+        self.assertIn("LIVE_VALIDATION_ENV_RAW_SECRET_OR_CONNECTION_STRING", {row["code"] for row in result["failures"]})
 
 
 if __name__ == "__main__":

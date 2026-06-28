@@ -12,6 +12,12 @@ python -m unittest tests.test_launch_readiness
 
 The command regenerates the full app gauntlet artifacts, then writes `artifacts/launch_readiness/launch_readiness_summary.json`. A launch is ready only when `all_passed` is true and `launch_readiness_failures.json` has no failures.
 
+## Launch profiles
+
+Launch readiness runs under `OVERWATCH_LAUNCH_PROFILE`. The default CI profile is `internal_fixture`, which requires deterministic rendered snapshots and explicit skip reasons for browser and live query-history proof. `internal_live` expects browser proof and live query-history proof when Snowflake is available; skips become visible warnings. `prod_candidate` requires browser screenshots and live query-history proof unless a signed waiver artifact names an owner, reason, and expiration or review note.
+
+Browser and live proof skip policy: no skipped proof is silent. A skipped browser run or skipped live query-history run must state the profile, the reason, and the owning review path. Production-candidate skips require a waiver; fixture-mode skips are allowed only for CI-style deterministic validation.
+
 ## Required roles
 
 Daily users need read access to current packet tables, last-good packet tables, and compact evidence marts. Daily users do not need Account Usage access.
@@ -35,6 +41,8 @@ Performance artifact SQL text is disabled by default. Raw query text in performa
 ## No raw SQL in daily UI
 
 No raw SQL in daily UI, daily exports, or daily snapshots. Daily surfaces must not show procedure names, internal object names, stack traces, Account Usage details, or raw Snowflake errors. Settings and Admin Setup Health may show technical internals only inside that admin context.
+
+Export privacy policy: daily export and case payloads must contain only user-facing fields, target context, freshness/source summaries, and bounded row data. Default Query Search exports must not include query text, raw SQL text, internal table names, or credentials. Admin exports may include technical internals only when marked admin-only.
 
 ## FAST and FULL refresh
 
@@ -60,6 +68,10 @@ Permission denied, unavailable Snowflake, and timeout states must be sanitized b
 If a daily section is blank, check the current packet table and last-known-good packet fallback first. If evidence is missing, check compact evidence mart load paths before using any admin fallback. If setup validation fails, rerun setup health with an admin role and review launch readiness artifacts.
 
 If live features fail, confirm that the control is gated, explicitly clicked, budgeted, row-limited or timeout-bound, and sanitized. Account Usage fallback requires explicit confirmation.
+
+## Rollback and drop safety
+
+Rollback uses the last-known-good packet path before any destructive operation. Drop scripts are admin-only, exclude active Decision Workspace objects, and are checked against the SQL object inventory and drop plan. Obsolete objects must either be removed from setup or appear in the safe drop plan with an owner and reason.
 
 ## Artifact interpretation
 

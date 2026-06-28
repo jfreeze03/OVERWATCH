@@ -49,10 +49,15 @@ class LaunchReadinessTests(unittest.TestCase):
 
         matrix_by_gate = {row["gate"]: row for row in matrix}
         for gate in (
+            "launch_profile",
+            "raw_invariants",
             "full_app_gauntlet",
             "runtime_validation",
             "required_artifacts",
+            "artifact_upload_review",
+            "ci_run_review",
             "browser_or_rendered_snapshot",
+            "browser_required_coverage",
             "config_sanity",
             "secrets_scan",
             "role_readiness",
@@ -66,6 +71,7 @@ class LaunchReadinessTests(unittest.TestCase):
             "settings_live_closure",
             "export_case_closure",
             "cleanup_closure",
+            "delete_first_release",
             "docs_readiness",
             "ci_upload_paths",
         ):
@@ -126,6 +132,19 @@ class LaunchReadinessTests(unittest.TestCase):
         live_history = self._read_json("artifacts/launch_readiness/live_query_history_results.json")
         self.assertTrue(live_history["passed"], live_history)
         if live_history["skipped"]:
+            self.assertTrue(live_history["skip_reason"], live_history)
+
+    def test_launch_profiles_are_profile_aware(self):
+        profile = self._read_json("artifacts/launch_readiness/launch_profile_results.json")
+        live_history = self._read_json("artifacts/launch_readiness/live_query_history_results.json")
+
+        self.assertEqual(profile["selected_profile"], "internal_fixture")
+        self.assertTrue(profile["passed"], profile)
+        self.assertFalse(profile["browser_proof_required"], profile)
+        self.assertFalse(profile["live_query_history_required"], profile)
+        self.assertTrue(live_history["passed"], live_history)
+        if live_history["skipped"]:
+            self.assertEqual(live_history["status"], "skipped_with_reason")
             self.assertTrue(live_history["skip_reason"], live_history)
 
     def test_launch_readiness_rejects_failed_gauntlet(self):
@@ -193,6 +212,165 @@ class LaunchReadinessTests(unittest.TestCase):
             with self.subTest(name=name):
                 self._assert_launch_failure(mutator, gate)
 
+    def test_launch_readiness_rejects_profile_proof_gaps(self):
+        cases = [
+            (
+                "prod browser skipped",
+                lambda payloads, launch: (
+                    launch["launch_profile_results"].update(
+                        {
+                            "selected_profile": "prod_candidate",
+                            "browser_proof_required": True,
+                            "live_query_history_required": True,
+                            "passed": True,
+                        }
+                    ),
+                    launch["browser_smoke_results"].update(
+                        {
+                            "browser_required": True,
+                            "browser_proof_skipped": True,
+                            "skip_reason": "No browser worker was available for this release candidate.",
+                            "passed": False,
+                        }
+                    ),
+                ),
+                "browser_or_rendered_snapshot",
+            ),
+            (
+                "prod live skipped",
+                lambda payloads, launch: (
+                    launch["launch_profile_results"].update(
+                        {
+                            "selected_profile": "prod_candidate",
+                            "browser_proof_required": True,
+                            "live_query_history_required": True,
+                            "passed": True,
+                        }
+                    ),
+                    launch["live_query_history_results"].update(
+                        {
+                            "launch_profile": "prod_candidate",
+                            "live_query_history_required": True,
+                            "skipped": True,
+                            "status": "missing",
+                            "passed": False,
+                        }
+                    ),
+                ),
+                "live_query_history",
+            ),
+            (
+                "invalid waiver",
+                lambda payloads, launch: launch["launch_profile_results"].update(
+                    {
+                        "selected_profile": "prod_candidate",
+                        "passed": False,
+                        "invalid_waiver_count": 1,
+                        "failures": ["One or more launch waivers is missing owner, reason, or expiration/review note."],
+                    }
+                ),
+                "launch_profile",
+            ),
+        ]
+        for name, mutator, gate in cases:
+            with self.subTest(name=name):
+                self._assert_launch_failure(mutator, gate)
+
+    def test_launch_readiness_recomputes_raw_row_invariants(self):
+        cases = [
+            (
+                "route query leak",
+                lambda payloads, launch: self._mutate_first(
+                    payloads["artifacts/full_app_validation/button_click_results.json"],
+                    lambda row: row.get("action_type") == "route",
+                    {"actual_snowflake_executions": 1, "session_open_count": 0, "direct_sql_event_count": 0},
+                ),
+            ),
+            (
+                "first paint leak",
+                lambda payloads, launch: payloads["artifacts/full_app_validation/view_results.json"][0]["first_paint"].update(
+                    {"observed_non_packet_first_paint_events": 1}
+                ),
+            ),
+            (
+                "warm first paint packet query",
+                lambda payloads, launch: payloads["artifacts/full_app_validation/view_results.json"][0]["first_paint"].update(
+                    {"warm_packet_queries": 1}
+                ),
+            ),
+            (
+                "missing primary section",
+                lambda payloads, launch: payloads.update(
+                    {
+                        "artifacts/full_app_validation/view_results.json": [
+                            row
+                            for row in payloads["artifacts/full_app_validation/view_results.json"]
+                            if row.get("section") != "Security Monitoring"
+                        ]
+                    }
+                ),
+            ),
+            (
+                "normal evidence Account Usage",
+                lambda payloads, launch: payloads["artifacts/full_app_validation/evidence_loader_call_matrix.json"][0].update(
+                    {"account_usage_used": True}
+                ),
+            ),
+            (
+                "export hash mismatch",
+                lambda payloads, launch: payloads["artifacts/full_app_validation/export_results.json"][0].update(
+                    {"sha256": "0" * 64}
+                ),
+            ),
+            (
+                "case missing freshness",
+                lambda payloads, launch: payloads["artifacts/full_app_validation/case_payload_results.json"][0].pop(
+                    "freshness", None
+                ),
+            ),
+            (
+                "unclicked settings action",
+                lambda payloads, launch: payloads["artifacts/full_app_validation/settings_action_results.json"][0].update(
+                    {"clicked": False, "skip_reason": "", "owner": "", "review_note": ""}
+                ),
+            ),
+            (
+                "unclicked live feature",
+                lambda payloads, launch: payloads["artifacts/full_app_validation/live_feature_results.json"][0].update(
+                    {"clicked": False, "skip_reason": "", "owner": "", "review_note": ""}
+                ),
+            ),
+            (
+                "unconfirmed Account Usage cost",
+                lambda payloads, launch: self._mutate_first(
+                    payloads["artifacts/full_app_validation/query_search_results.json"],
+                    lambda row: row.get("case") == "account_usage_fallback_unconfirmed",
+                    {"snowflake_execution_count": 1},
+                ),
+            ),
+            (
+                "forbidden export token",
+                lambda payloads, launch: payloads["artifacts/full_app_validation/forbidden_export_scan.json"].update(
+                    {"blocked_count": 1, "passed": False}
+                ),
+            ),
+            (
+                "stale artifact",
+                lambda payloads, launch: payloads["artifacts/cleanup/cleanup_summary.json"].update(
+                    {"stale_generated_artifact_count": 1}
+                ),
+            ),
+            (
+                "unknown SQL object",
+                lambda payloads, launch: payloads["artifacts/cleanup/sql_object_inventory.json"].setdefault(
+                    "unknown", []
+                ).append({"name": "MART_UNKNOWN_LAUNCH_LEFTOVER"}),
+            ),
+        ]
+        for name, mutator in cases:
+            with self.subTest(name=name):
+                self._assert_launch_failure(mutator, "raw_invariants")
+
     def test_launch_readiness_rejects_release_layer_failures(self):
         cases = [
             (
@@ -247,7 +425,7 @@ class LaunchReadinessTests(unittest.TestCase):
         payloads = self._payload_copy()
         launch = self._launch_payload_copy()
         mutator(payloads, launch)
-        summary, failures, matrix = evaluate_launch_readiness(payloads, launch)
+        summary, failures, matrix = evaluate_launch_readiness(payloads, launch, root=ROOT)
         matched = [row for row in failures["failures"] if row["gate"] == expected_gate]
         self.assertFalse(summary["all_passed"], failures)
         self.assertTrue(matched, failures)
@@ -261,6 +439,13 @@ class LaunchReadinessTests(unittest.TestCase):
 
     def _launch_payload_copy(self):
         return copy.deepcopy(self.launch_payloads)
+
+    def _mutate_first(self, rows, predicate, updates) -> None:
+        for row in rows:
+            if predicate(row):
+                row.update(updates)
+                return
+        self.fail("No matching row found for mutation")
 
     @staticmethod
     def _read_json(rel: str):

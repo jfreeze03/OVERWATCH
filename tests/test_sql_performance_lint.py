@@ -247,7 +247,7 @@ class SqlPerformanceLintTests(unittest.TestCase):
         self.assertIn("SQL_FILE_BOM", {finding["code"] for finding in bom})
         replacement = lint_sql_text("SELECT '\ufffd'", path="snowflake/synthetic.sql")
         self.assertIn("SQL_REPLACEMENT_CHARACTER", {finding["code"] for finding in replacement})
-        mojibake = lint_sql_text("SELECT 'â€™'", path="snowflake/synthetic.sql")
+        mojibake = lint_sql_text("SELECT '" + "\u00e2\u20ac\u2122" + "'", path="snowflake/synthetic.sql")
         self.assertIn("SQL_MOJIBAKE_RISK", {finding["code"] for finding in mojibake})
 
     def test_linter_flags_select_star_app_facing_sql(self):

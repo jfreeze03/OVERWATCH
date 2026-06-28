@@ -947,6 +947,10 @@ class SectionCommandBriefTests(unittest.TestCase):
         self.assertIn("CALL SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS('FULL')", full_impl_block)
         self.assertIn("CALL SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS_FAST_IMPL()", fast_block)
         self.assertIn("CALL SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS_FULL_IMPL()", full_block)
+        self.assertIn(
+            "(SELECT COUNT(*) FROM MART_SECTION_COMMAND_SOURCE WHERE SNAPSHOT_TS = :SNAPSHOT_TS)\n    INTO :CHILD_ROWS\n    FROM (SELECT 1);",
+            procs,
+        )
         self.assertNotRegex(fast_impl_block, r"\b(14|30|60|90)\b")
         self.assertNotIn("DELETE FROM MART_SECTION_DECISION_CURRENT", fast_block)
         self.assertNotIn("OVERWATCH_DECISION_REFRESH_AUDIT", fast_block)

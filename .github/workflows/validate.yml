@@ -88,6 +88,9 @@ jobs:
       - name: Run Snowflake execution validation tests
         run: python -m unittest tests.test_snowflake_execution_validation
 
+      - name: Run encoding hygiene tests
+        run: python -m unittest tests.test_encoding_hygiene
+
       - name: Run cleanup inventory tests
         run: python -m unittest tests.test_cleanup_inventory
 
@@ -108,6 +111,9 @@ jobs:
 
       - name: Regenerate launch readiness proof artifacts
         run: python -m unittest tests.test_launch_readiness
+
+      - name: Run encoding hygiene gate
+        run: python -m tools.contracts.encoding_hygiene
 
       - name: Upload Decision Workspace proof artifacts
         if: always()
@@ -132,6 +138,7 @@ jobs:
             artifacts/full_app_validation/**
             artifacts/full_app_inventory/**
             artifacts/launch_readiness/**
+            artifacts/encoding_hygiene_results.json
             artifacts/snowflake_validation/**
             artifacts/direct_sql_static_scan.json
             artifacts/session_open_static_scan.json
@@ -144,45 +151,3 @@ jobs:
             artifacts/generated_button_artifacts/**
             artifacts/decision_workspace_html_snapshots/**
             artifacts/browser_screenshots/**
-
-      - name: Scan for mojibake characters
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          bad_tokens = tuple(
-              chr(code)
-              for code in (
-                  0x00E2,
-                  0x00F0,
-                  0xFFFD,
-                  0x00C3,
-                  0x00C2,
-                  0x20AC,
-                  0x0153,
-                  0x017D,
-                  0x0178,
-                  0x009D,
-                  0x0090,
-                  0x008D,
-              )
-          ) + (chr(0x20AC) + chr(0x2122),)
-          roots = [Path(".overwatch_final"), Path("tests"), Path(".github")]
-          hits = []
-          for root in roots:
-              if not root.exists():
-                  continue
-              for path in root.rglob("*"):
-                  if path.is_dir() or any(part == "__pycache__" for part in path.parts):
-                      continue
-                  try:
-                      text = path.read_text(encoding="utf-8")
-                  except UnicodeDecodeError:
-                      continue
-                  for line_no, line in enumerate(text.splitlines(), 1):
-                      if any(token in line for token in bad_tokens):
-                          hits.append(f"{path}:{line_no}:{line.strip()}")
-          if hits:
-              print("\n".join(hits))
-              raise SystemExit(1)
-          PY

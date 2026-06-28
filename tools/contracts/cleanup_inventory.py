@@ -516,6 +516,7 @@ def artifact_inventory(root: Path) -> dict[str, Any]:
         "sql_performance_lint_file_inventory.json",
         "button_route_manifest.json",
         "button_route_results.json",
+        "encoding_hygiene_results.json",
     }
     rows = []
     for path in files:

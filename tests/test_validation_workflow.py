@@ -37,11 +37,10 @@ class ValidationWorkflowTests(unittest.TestCase):
             "python -m unittest tests.test_decision_workspace_data_binding",
             "python -m unittest tests.test_theme_registry",
             "python -m unittest tests.test_snowflake_execution_validation",
+            "python -m unittest tests.test_encoding_hygiene",
             "python -m unittest discover -s tests",
-            "any(part == \"__pycache__\" for part in path.parts)",
-            'Path(".overwatch_final")',
-            'Path("tests")',
-            'Path(".github")',
+            "python -m tools.contracts.encoding_hygiene",
+            "artifacts/encoding_hygiene_results.json",
         )
         for fragment in expected_fragments:
             with self.subTest(fragment=fragment):
@@ -82,15 +81,19 @@ class ValidationWorkflowTests(unittest.TestCase):
         decision_index = text.index("python -m unittest tests.test_decision_workspace_data_binding")
         theme_index = text.index("python -m unittest tests.test_theme_registry")
         snowflake_index = text.index("python -m unittest tests.test_snowflake_execution_validation")
+        encoding_test_index = text.index("python -m unittest tests.test_encoding_hygiene")
         discovery_index = text.index("python -m unittest discover -s tests")
-        mojibake_index = text.index("Scan for mojibake characters")
+        encoding_gate_index = text.index("python -m tools.contracts.encoding_hygiene")
+        upload_index = text.index("Upload Decision Workspace proof artifacts")
 
         self.assertLess(deployment_index, discovery_index)
         self.assertLess(cortex_index, discovery_index)
         self.assertLess(decision_index, discovery_index)
         self.assertLess(theme_index, discovery_index)
         self.assertLess(snowflake_index, discovery_index)
-        self.assertLess(discovery_index, mojibake_index)
+        self.assertLess(encoding_test_index, discovery_index)
+        self.assertLess(discovery_index, encoding_gate_index)
+        self.assertLess(encoding_gate_index, upload_index)
 
 
 if __name__ == "__main__":

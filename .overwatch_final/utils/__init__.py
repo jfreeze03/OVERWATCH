@@ -1,4 +1,4 @@
-﻿"""Lazy re-exports for shared OVERWATCH utilities.
+"""Lazy re-exports for shared OVERWATCH utilities.
 
 Keep the historical ``from utils import ...`` API without importing every
 utility module during startup. This matters for Streamlit reruns because the

@@ -52,6 +52,8 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertEqual(summary["procedure_smoke_failure_count"], 0)
         self.assertEqual(summary["refresh_fast_status"], "skipped")
         self.assertEqual(summary["refresh_full_status"], "skipped")
+        self.assertTrue(summary["encoding_hygiene_passed"])
+        self.assertEqual(summary["encoding_blocked_count"], 0)
         self.assertGreaterEqual(summary["required_artifact_count"], len(REQUIRED_LAUNCH_READINESS_ARTIFACTS))
         self.assertIn("decision-workspace-proof", summary["uploaded_artifact_names"])
         self.assertFalse(summary["raw_sql_included"])
@@ -77,6 +79,7 @@ class LaunchReadinessTests(unittest.TestCase):
             "drop_rollback",
             "sql_value_inventory",
             "sql_cost_risk",
+            "encoding_hygiene",
             "live_query_history",
             "snowflake_execution_validation",
             "procedure_compile_validation",
@@ -141,6 +144,7 @@ class LaunchReadinessTests(unittest.TestCase):
             "artifacts/launch_readiness/export_case_closure_results.json",
             "artifacts/launch_readiness/cleanup_launch_closure_results.json",
             "artifacts/launch_readiness/snowflake_validation_gate_results.json",
+            "artifacts/launch_readiness/encoding_hygiene_results.json",
         ):
             payload = self._read_json(rel)
             self.assertTrue(payload["passed"], payload)
@@ -241,6 +245,13 @@ class LaunchReadinessTests(unittest.TestCase):
                     {"severity": "error", "code": "ALWAYS_TRUE_TIME_PREDICATE"}
                 ),
                 "sql_performance_lint",
+            ),
+            (
+                "encoding hygiene block",
+                lambda payloads, launch: launch["encoding_hygiene_results"].update(
+                    {"passed": False, "blocked_count": 1}
+                ),
+                "encoding_hygiene",
             ),
         ]
         for name, mutator, gate in cases:
@@ -609,6 +620,11 @@ class LaunchReadinessTests(unittest.TestCase):
                 "packet shape",
                 lambda payloads, launch: payloads["artifacts/snowflake_validation/packet_shape_results.json"].update({"passed": False}),
                 "packet_publication_validation",
+            ),
+            (
+                "encoding hygiene",
+                lambda payloads, launch: launch["encoding_hygiene_results"].update({"passed": False, "blocked_count": 1}),
+                "encoding_hygiene",
             ),
         ]
         for name, mutator, gate in cases:

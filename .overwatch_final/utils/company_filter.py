@@ -1,4 +1,4 @@
-﻿# utils/company_filter.py - multi-tenant company filtering for ALFA and Trexis.
+# utils/company_filter.py - multi-tenant company filtering for ALFA and Trexis.
 #
 # Warehouse strategy:
 #   ALFA: every warehouse except the exact Trexis allowlist.

@@ -23,6 +23,7 @@ from tools.contracts.full_app_gauntlet import (
     REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS,
     write_full_app_gauntlet_artifacts,
 )
+from tools.contracts.encoding_hygiene import write_encoding_hygiene_artifacts
 from tools.contracts.snowflake_execution_validation import write_snowflake_validation_artifacts
 
 
@@ -56,6 +57,7 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     f"{LAUNCH_READINESS_DIR}/cleanup_launch_closure_results.json",
     f"{LAUNCH_READINESS_DIR}/delete_first_release_results.json",
     f"{LAUNCH_READINESS_DIR}/docs_readiness_results.json",
+    f"{LAUNCH_READINESS_DIR}/encoding_hygiene_results.json",
     f"{LAUNCH_READINESS_DIR}/snowflake_validation_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/ci_run_review_results.json",
     f"{LAUNCH_READINESS_DIR}/ci_artifact_review_results.json",
@@ -65,6 +67,7 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
 
 CI_UPLOAD_PATHS = {
     "artifacts/launch_readiness/**",
+    "artifacts/encoding_hygiene_results.json",
     "artifacts/full_app_validation/**",
     "artifacts/full_app_inventory/**",
     "artifacts/cleanup/**",
@@ -376,6 +379,8 @@ def _workflow_upload_review(root: Path) -> dict[str, Any]:
     required_steps = {
         "python -m unittest tests.test_full_app_gauntlet",
         "python -m unittest tests.test_launch_readiness",
+        "python -m unittest tests.test_encoding_hygiene",
+        "python -m tools.contracts.encoding_hygiene",
         "python -m unittest discover -s tests",
         "python -m ruff check .overwatch_final tests tools",
         "python -m mypy",
@@ -1917,6 +1922,7 @@ def _release_gate_matrix(
     browser_failures = _as_mapping(launch_artifacts.get("browser_or_snapshot_failures"))
     live_query = _as_mapping(launch_artifacts.get("live_query_history_results"))
     snowflake_gate = _as_mapping(launch_artifacts.get("snowflake_validation_gate_results"))
+    encoding_hygiene = _as_mapping(launch_artifacts.get("encoding_hygiene_results"))
     rows = [
         {
             "gate": "launch_profile",
@@ -2009,6 +2015,14 @@ def _release_gate_matrix(
             "failure_reason": "SQL performance linter has error findings." if sql_errors else "",
         },
         {
+            "gate": "encoding_hygiene",
+            "artifact": f"{LAUNCH_READINESS_DIR}/encoding_hygiene_results.json",
+            "passed": bool(encoding_hygiene.get("passed")),
+            "failure_reason": "Repo-wide encoding hygiene scan has blocking findings."
+            if not encoding_hygiene.get("passed")
+            else "",
+        },
+        {
             "gate": "live_query_history",
             "artifact": f"{LAUNCH_READINESS_DIR}/live_query_history_results.json",
             "passed": bool(live_query.get("passed")),
@@ -2096,6 +2110,8 @@ def evaluate_launch_readiness(
         "profile_gate_failures": _profile_gate_failures(profile_results, launch_waiver_rows),
         "browser_or_snapshot_failures": _browser_or_snapshot_failures(browser_results, browser_coverage),
         "snowflake_validation_gate_results": _snowflake_validation_gate_results(payloads, profile, launch_waiver_rows),
+        "encoding_hygiene_results": _as_mapping(payloads.get("artifacts/encoding_hygiene_results.json"))
+        or _as_mapping(launch_artifacts.get("encoding_hygiene_results")),
     }
     failures: list[dict[str, Any]] = []
     missing = sorted(set(missing_artifacts))
@@ -2147,6 +2163,7 @@ def evaluate_launch_readiness(
     artifact_upload_review = _as_mapping(launch_artifacts.get("artifact_upload_review_results"))
     artifact_review = _as_mapping(launch_artifacts.get("artifact_review_results"))
     snowflake_gate = _as_mapping(launch_artifacts.get("snowflake_validation_gate_results"))
+    encoding_hygiene = _as_mapping(launch_artifacts.get("encoding_hygiene_results"))
     launch_summary = {
         "source": "launch_readiness",
         "proof_source": "runtime_click",
@@ -2188,6 +2205,8 @@ def evaluate_launch_readiness(
         "procedure_smoke_failure_count": _as_int(snowflake_gate.get("procedure_smoke_failure_count")),
         "refresh_fast_status": str(snowflake_gate.get("refresh_fast_status") or ""),
         "refresh_full_status": str(snowflake_gate.get("refresh_full_status") or ""),
+        "encoding_hygiene_passed": bool(encoding_hygiene.get("passed")),
+        "encoding_blocked_count": _as_int(encoding_hygiene.get("blocked_count")),
         "cleanup_unknown_sql_object_count": _as_int(summary.get("cleanup_unknown_sql_object_count")),
         "cleanup_dead_route_count": _as_int(summary.get("cleanup_dead_route_count")),
         "export_count": _as_int(summary.get("total_exports_validated") or summary.get("export_count")),
@@ -2258,6 +2277,9 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     launch_artifacts["artifact_review_results"] = _artifact_review_results(root_path, payloads, missing_payloads)
     snowflake_artifacts = write_snowflake_validation_artifacts(root_path)
     payloads.update(snowflake_artifacts)
+    encoding_artifacts = write_encoding_hygiene_artifacts(root_path)
+    payloads.update(encoding_artifacts)
+    launch_artifacts["encoding_hygiene_results"] = encoding_artifacts["artifacts/launch_readiness/encoding_hygiene_results.json"]
     launch_artifacts["snowflake_validation_gate_results"] = _snowflake_validation_gate_results(payloads, profile, waivers)
     raw_results, raw_failures = _raw_invariant_artifacts(root_path, payloads)
     launch_artifacts["raw_invariant_results"] = raw_results

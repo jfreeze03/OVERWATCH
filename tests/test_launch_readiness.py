@@ -47,6 +47,10 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertFalse(summary["snowflake_live_validation_enabled"])
         self.assertTrue(summary["snowflake_live_validation_skipped"])
         self.assertIn("OVERWATCH_SNOWFLAKE_VALIDATION", summary["snowflake_validation_skip_reason"])
+        self.assertEqual(summary["live_validation_status"], "static_skipped")
+        self.assertEqual(summary["live_validation_waiver_id"], "")
+        self.assertEqual(summary["live_validation_waiver_owner"], "")
+        self.assertEqual(summary["live_validation_waiver_expiration"], "")
         self.assertGreater(summary["procedure_compile_count"], 0)
         self.assertEqual(summary["procedure_compile_failure_count"], 0)
         self.assertGreater(summary["procedure_smoke_call_count"], 0)
@@ -84,6 +88,7 @@ class LaunchReadinessTests(unittest.TestCase):
             "sql_cost_risk",
             "encoding_hygiene",
             "live_query_history",
+            "snowflake_raw_validation_recheck",
             "snowflake_execution_validation",
             "procedure_compile_validation",
             "procedure_smoke_call_validation",
@@ -106,8 +111,18 @@ class LaunchReadinessTests(unittest.TestCase):
 
         snowflake_gate = self._read_json("artifacts/launch_readiness/snowflake_validation_gate_results.json")
         self.assertIn("OVERWATCH_SNOWFLAKE_VALIDATION", snowflake_gate["snowflake_validation_skip_reason"])
+        self.assertEqual(snowflake_gate["live_validation_status"], "static_skipped")
         self.assertEqual(snowflake_gate["packet_validation_status"], "passed")
         self.assertEqual(snowflake_gate["compact_evidence_validation_status"], "passed")
+        raw_recheck = self._read_json("artifacts/launch_readiness/snowflake_raw_validation_recheck.json")
+        snowflake_failures = self._read_json("artifacts/launch_readiness/snowflake_validation_failures.json")
+        self.assertTrue(raw_recheck["passed"], raw_recheck)
+        self.assertEqual(raw_recheck["failure_count"], 0, raw_recheck)
+        self.assertEqual(raw_recheck["packet_validation_status"], "passed")
+        self.assertEqual(raw_recheck["compact_evidence_validation_status"], "passed")
+        self.assertEqual(raw_recheck["live_validation_status"], "static_skipped")
+        self.assertTrue(snowflake_failures["passed"], snowflake_failures)
+        self.assertEqual(snowflake_failures["failure_count"], 0, snowflake_failures)
 
         self.assertTrue(REQUIRED_LAUNCH_READINESS_ARTIFACTS.issubset(set(manifest["files"])))
         for rel in REQUIRED_LAUNCH_READINESS_ARTIFACTS:
@@ -333,6 +348,28 @@ class LaunchReadinessTests(unittest.TestCase):
                     ),
                 ),
                 "snowflake_execution_validation",
+            ),
+            (
+                "internal live snowflake validation skipped",
+                lambda payloads, launch: (
+                    launch["launch_profile_results"].update(
+                        {
+                            "selected_profile": "internal_live",
+                            "browser_proof_required": True,
+                            "live_query_history_required": True,
+                            "passed": True,
+                        }
+                    ),
+                    payloads["artifacts/snowflake_validation/snowflake_validation_summary.json"].update(
+                        {
+                            "live_mode_enabled": False,
+                            "live_status": "skipped",
+                            "live_skip_reason": "Set OVERWATCH_SNOWFLAKE_VALIDATION=1 to run controlled live validation.",
+                            "passed": True,
+                        }
+                    ),
+                ),
+                "snowflake_raw_validation_recheck",
             ),
             (
                 "invalid waiver",
@@ -600,9 +637,45 @@ class LaunchReadinessTests(unittest.TestCase):
                 "procedure_compile_validation",
             ),
             (
+                "missing packet raw artifact",
+                lambda payloads, launch: payloads.pop("artifacts/snowflake_validation/packet_publication_validation_results.json", None),
+                "snowflake_raw_validation_recheck",
+            ),
+            (
+                "packet status lies",
+                lambda payloads, launch: payloads["artifacts/snowflake_validation/packet_shape_results.json"].update(
+                    {"passed": True, "failure_count": 0, "checks": {"current_rows_unique": False}}
+                ),
+                "packet_publication_validation",
+            ),
+            (
+                "compact status lies",
+                lambda payloads, launch: payloads["artifacts/snowflake_validation/compact_evidence_mart_validation_results.json"]["marts"][0].update(
+                    {"passed": False}
+                ),
+                "compact_evidence_mart_validation",
+            ),
+            (
                 "recent snowflake fix",
                 lambda payloads, launch: payloads["artifacts/snowflake_validation/recent_snowflake_fix_validation_results.json"].update({"passed": False}),
                 "recent_snowflake_fix_validation",
+            ),
+            (
+                "trend cardinality raw failure",
+                lambda payloads, launch: payloads["artifacts/snowflake_validation/trend_cardinality_results.json"].update({"passed": False, "failure_count": 1}),
+                "snowflake_raw_validation_recheck",
+            ),
+            (
+                "schema drift raw failure",
+                lambda payloads, launch: payloads["artifacts/snowflake_validation/schema_drift_results.json"].update({"passed": False, "failure_count": 1}),
+                "snowflake_raw_validation_recheck",
+            ),
+            (
+                "missing snowflake skip reason",
+                lambda payloads, launch: payloads["artifacts/snowflake_validation/snowflake_validation_summary.json"].update(
+                    {"live_mode_enabled": False, "live_status": "skipped", "live_skip_reason": "", "passed": True}
+                ),
+                "snowflake_raw_validation_recheck",
             ),
             (
                 "snowflake manifest",

@@ -50,6 +50,7 @@ class LaunchReadinessTests(unittest.TestCase):
         matrix_by_gate = {row["gate"]: row for row in matrix}
         for gate in (
             "launch_profile",
+            "profile_gate_failures",
             "raw_invariants",
             "full_app_gauntlet",
             "runtime_validation",
@@ -58,6 +59,7 @@ class LaunchReadinessTests(unittest.TestCase):
             "ci_run_review",
             "browser_or_rendered_snapshot",
             "browser_required_coverage",
+            "browser_or_snapshot_failures",
             "config_sanity",
             "secrets_scan",
             "role_readiness",
@@ -136,13 +138,20 @@ class LaunchReadinessTests(unittest.TestCase):
 
     def test_launch_profiles_are_profile_aware(self):
         profile = self._read_json("artifacts/launch_readiness/launch_profile_results.json")
+        profile_failures = self._read_json("artifacts/launch_readiness/profile_gate_failures.json")
         live_history = self._read_json("artifacts/launch_readiness/live_query_history_results.json")
+        summary = self._read_json("artifacts/launch_readiness/launch_readiness_summary.json")
 
         self.assertEqual(profile["selected_profile"], "internal_fixture")
         self.assertTrue(profile["passed"], profile)
+        self.assertTrue(profile_failures["passed"], profile_failures)
+        self.assertEqual(profile_failures["failure_count"], 0)
         self.assertFalse(profile["browser_proof_required"], profile)
         self.assertFalse(profile["live_query_history_required"], profile)
         self.assertTrue(live_history["passed"], live_history)
+        self.assertTrue(summary["commit_sha"], summary)
+        self.assertTrue(summary["branch_ref"], summary)
+        self.assertIn("ci_metadata_warning", summary)
         if live_history["skipped"]:
             self.assertEqual(live_history["status"], "skipped_with_reason")
             self.assertTrue(live_history["skip_reason"], live_history)
@@ -189,6 +198,13 @@ class LaunchReadinessTests(unittest.TestCase):
                 "stale artifact",
                 lambda payloads, launch: launch["artifact_review_results"].update({"passed": False, "stale_artifact_count": 1}),
                 "required_artifacts",
+            ),
+            (
+                "missing uploaded artifact",
+                lambda payloads, launch: launch["artifact_upload_review_results"].update(
+                    {"passed": False, "missing_upload_paths": ["artifacts/launch_readiness/**"], "missing_upload_path_count": 1}
+                ),
+                "artifact_upload_review",
             ),
             (
                 "direct sql block",
@@ -271,10 +287,121 @@ class LaunchReadinessTests(unittest.TestCase):
                 ),
                 "launch_profile",
             ),
+            (
+                "prod missing ci metadata",
+                lambda payloads, launch: (
+                    launch["launch_profile_results"].update(
+                        {
+                            "selected_profile": "prod_candidate",
+                            "browser_proof_required": True,
+                            "live_query_history_required": True,
+                            "passed": True,
+                        }
+                    ),
+                    launch["ci_run_review_results"].update(
+                        {
+                            "launch_profile": "prod_candidate",
+                            "workflow_metadata_required": True,
+                            "workflow_metadata_missing": True,
+                            "passed": False,
+                        }
+                    ),
+                ),
+                "ci_run_review",
+            ),
         ]
         for name, mutator, gate in cases:
             with self.subTest(name=name):
                 self._assert_launch_failure(mutator, gate)
+
+    def test_launch_readiness_rejects_invalid_profiles_and_waivers(self):
+        cases = [
+            (
+                "invalid profile",
+                lambda payloads, launch: launch["launch_profile_results"].update(
+                    {"selected_profile": "surprise_release", "recognized_profile": False, "passed": False, "failures": ["Unknown profile."]}
+                ),
+                "launch_profile",
+            ),
+            (
+                "waiver without owner",
+                lambda payloads, launch: launch["launch_waivers"].update(
+                    {
+                        "waivers": [
+                            {
+                                "gate": "browser_proof",
+                                "reason": "Browser worker unavailable.",
+                                "expiration_or_review_note": "Review before launch promotion.",
+                                "approving_surface": "Launch review",
+                            }
+                        ]
+                    }
+                ),
+                "profile_gate_failures",
+            ),
+            (
+                "generic waiver reason",
+                lambda payloads, launch: launch["launch_waivers"].update(
+                    {
+                        "waivers": [
+                            {
+                                "gate": "browser_proof",
+                                "owner": "Release captain",
+                                "reason": "todo",
+                                "expiration_or_review_note": "Review before launch promotion.",
+                                "approving_surface": "Launch review",
+                            }
+                        ]
+                    }
+                ),
+                "profile_gate_failures",
+            ),
+            (
+                "expired waiver",
+                lambda payloads, launch: launch["launch_waivers"].update(
+                    {
+                        "waivers": [
+                            {
+                                "gate": "live_query_history",
+                                "owner": "Release captain",
+                                "reason": "Snowflake proof window unavailable.",
+                                "expiration": "2000-01-01T00:00:00+00:00",
+                                "approving_surface": "Launch review",
+                            }
+                        ]
+                    }
+                ),
+                "profile_gate_failures",
+            ),
+        ]
+        for name, mutator, gate in cases:
+            with self.subTest(name=name):
+                self._assert_launch_failure(mutator, gate)
+
+    def test_launch_readiness_rejects_browser_snapshot_failure_rows(self):
+        cases = [
+            (
+                "missing rendered launch coverage",
+                lambda payloads, launch: launch["browser_required_coverage"].update(
+                    {"passed": True, "missing_coverage": ["query_search"], "missing_coverage_count": 1}
+                ),
+            ),
+            (
+                "daily leakage in snapshot",
+                lambda payloads, launch: launch["browser_smoke_results"].update(
+                    {"daily_forbidden_blocked_count": 1, "passed": True}
+                ),
+            ),
+            (
+                "missing deterministic snapshots",
+                lambda payloads, launch: launch["browser_smoke_results"].update(
+                    {"deterministic_snapshots_present": False, "passed": True}
+                ),
+            ),
+        ]
+        for name, mutator in cases:
+            with self.subTest(name=name):
+                self._assert_launch_failure(mutator, "browser_or_snapshot_failures")
 
     def test_launch_readiness_recomputes_raw_row_invariants(self):
         cases = [

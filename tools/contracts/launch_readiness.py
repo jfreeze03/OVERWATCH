@@ -14,6 +14,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -32,10 +33,12 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     f"{LAUNCH_READINESS_DIR}/release_gate_matrix.json",
     f"{LAUNCH_READINESS_DIR}/launch_profile_results.json",
     f"{LAUNCH_READINESS_DIR}/launch_waivers.json",
+    f"{LAUNCH_READINESS_DIR}/profile_gate_failures.json",
     f"{LAUNCH_READINESS_DIR}/raw_invariant_results.json",
     f"{LAUNCH_READINESS_DIR}/raw_invariant_failures.json",
     f"{LAUNCH_READINESS_DIR}/browser_smoke_results.json",
     f"{LAUNCH_READINESS_DIR}/browser_required_coverage.json",
+    f"{LAUNCH_READINESS_DIR}/browser_or_snapshot_failures.json",
     f"{LAUNCH_READINESS_DIR}/config_sanity_results.json",
     f"{LAUNCH_READINESS_DIR}/secrets_scan_results.json",
     f"{LAUNCH_READINESS_DIR}/snowflake_permission_matrix.json",
@@ -130,6 +133,20 @@ def _utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def _git_output(*args: str) -> str:
+    try:
+        proc = subprocess.run(
+            ["git", *args],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return ""
+    return proc.stdout.strip()
+
+
 def _as_list(payload: object) -> list[Any]:
     return list(payload) if isinstance(payload, list) else []
 
@@ -178,16 +195,40 @@ def _normalize_waiver(row: Mapping[str, Any]) -> dict[str, Any]:
     owner = str(row.get("owner") or "").strip()
     reason = str(row.get("reason") or "").strip()
     review = str(row.get("expiration_or_review_note") or row.get("review_note") or row.get("expiration") or "").strip()
-    valid = bool(gate and owner and reason and review)
-    lowered = {owner.lower(), reason.lower(), review.lower()}
+    expiration = str(row.get("expiration") or "").strip()
+    approving_surface = str(row.get("approving_surface") or row.get("approval_surface") or row.get("surface") or "").strip()
+    invalid_reasons: list[str] = []
+    if not gate:
+        invalid_reasons.append("missing_gate")
+    if not owner:
+        invalid_reasons.append("missing_owner")
+    if not reason:
+        invalid_reasons.append("missing_reason")
+    if not review:
+        invalid_reasons.append("missing_expiration_or_review_note")
+    if not approving_surface:
+        invalid_reasons.append("missing_approving_surface")
+    lowered = {owner.lower(), reason.lower(), review.lower(), approving_surface.lower()}
     if lowered & GENERIC_WAIVER_TEXT:
-        valid = False
+        invalid_reasons.append("generic_waiver_text")
+    if expiration:
+        try:
+            expires_at = datetime.fromisoformat(expiration.replace("Z", "+00:00"))
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=UTC)
+            if expires_at < datetime.now(UTC):
+                invalid_reasons.append("expired")
+        except ValueError:
+            invalid_reasons.append("invalid_expiration")
     return {
         "gate": gate,
         "owner": owner,
         "reason": reason,
         "expiration_or_review_note": review,
-        "valid": valid,
+        "expiration": expiration,
+        "approving_surface": approving_surface,
+        "invalid_reasons": sorted(set(invalid_reasons)),
+        "valid": not invalid_reasons,
     }
 
 
@@ -198,7 +239,7 @@ def _has_valid_waiver(waivers: Iterable[Mapping[str, Any]], gate: str) -> bool:
 def _launch_profile_results(profile: str, waivers: list[dict[str, Any]]) -> dict[str, Any]:
     recognized = profile in LAUNCH_PROFILES
     browser_required = profile in {"internal_live", "prod_candidate"}
-    live_required = profile == "prod_candidate"
+    live_required = profile in {"internal_live", "prod_candidate"}
     fixture_enabled = os.environ.get("OVERWATCH_UI_FIXTURE_MODE") == "1"
     fixture_allowed = os.environ.get("OVERWATCH_ALLOW_FIXTURE_MODE") == "1"
     failures: list[str] = []
@@ -210,7 +251,7 @@ def _launch_profile_results(profile: str, waivers: list[dict[str, Any]]) -> dict
         failures.append("Fixture mode requires OVERWATCH_ALLOW_FIXTURE_MODE=1.")
     invalid_waivers = [row for row in waivers if not row.get("valid")]
     if invalid_waivers:
-        failures.append("One or more launch waivers is missing owner, reason, or expiration/review note.")
+        failures.append("One or more launch waivers is missing owner, reason, approving surface, or expiration/review note.")
     return {
         "source": "launch_readiness_profile",
         "proof_source": "inventory_only",
@@ -225,6 +266,38 @@ def _launch_profile_results(profile: str, waivers: list[dict[str, Any]]) -> dict
         "invalid_waiver_count": len(invalid_waivers),
         "failures": failures,
         "passed": not failures,
+        "raw_sql_included": False,
+    }
+
+
+def _profile_gate_failures(profile_results: Mapping[str, Any], waivers: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    failures: list[dict[str, Any]] = []
+    for reason in _as_list(profile_results.get("failures")):
+        failures.append(
+            {
+                "gate": "launch_profile",
+                "reason": str(reason),
+                "recommendation": "Set a recognized launch profile and keep fixture/debug settings compatible with that profile.",
+            }
+        )
+    for waiver in waivers:
+        if waiver.get("valid"):
+            continue
+        failures.append(
+            {
+                "gate": str(waiver.get("gate") or "launch_waiver"),
+                "reason": "Invalid launch waiver.",
+                "invalid_reasons": _as_list(waiver.get("invalid_reasons")),
+                "owner": str(waiver.get("owner") or ""),
+                "recommendation": "Provide owner, reason, approving surface, and a non-expired expiration or review note.",
+            }
+        )
+    return {
+        "source": "launch_readiness_profile_gate_failures",
+        "proof_source": "inventory_only",
+        "passed": not failures,
+        "failure_count": len(failures),
+        "failures": failures,
         "raw_sql_included": False,
     }
 
@@ -321,11 +394,21 @@ def _workflow_upload_review(root: Path) -> dict[str, Any]:
     }
 
 
-def _ci_run_review_results(profile: str) -> dict[str, Any]:
+def _ci_run_review_results(profile: str, waivers: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     meta = _ci_metadata()
     missing_metadata = not bool(meta["workflow_run_id"] and meta["workflow_url"])
-    metadata_required = profile in {"internal_live", "prod_candidate"}
-    passed = not missing_metadata or not metadata_required
+    metadata_required = profile == "prod_candidate"
+    waiver_used = missing_metadata and _has_valid_waiver(waivers, "ci_metadata")
+    passed = not missing_metadata or not metadata_required or waiver_used
+    warning = ""
+    if missing_metadata and profile == "internal_fixture":
+        warning = "Workflow metadata is unavailable outside GitHub Actions; internal_fixture records this as an explicit local-run warning."
+    elif missing_metadata and profile == "internal_live":
+        warning = "Workflow metadata is unavailable outside GitHub Actions; internal_live records this as a warning unless promoted to prod_candidate."
+    elif missing_metadata and waiver_used:
+        warning = "Workflow metadata is waived for this launch profile by an owner-approved waiver."
+    elif missing_metadata:
+        warning = "Workflow metadata is required for this launch profile."
     return {
         "source": "launch_readiness_ci_run_review",
         "proof_source": "inventory_only",
@@ -333,11 +416,16 @@ def _ci_run_review_results(profile: str) -> dict[str, Any]:
         "launch_profile": profile,
         "workflow_run_id": meta["workflow_run_id"],
         "workflow_url": meta["workflow_url"],
+        "commit_sha": meta["commit_sha"],
+        "branch_ref": meta["branch_ref"],
+        "run_attempt": meta["run_attempt"],
         "workflow_name": meta["workflow_name"],
         "github_sha": meta["github_sha"],
         "workflow_metadata_missing": missing_metadata,
         "workflow_metadata_required": metadata_required,
-        "warning": "Workflow metadata is unavailable outside GitHub Actions." if missing_metadata else "",
+        "waiver_used": waiver_used,
+        "artifact_upload_names": ["decision-workspace-proof"],
+        "warning": warning,
         "raw_sql_included": False,
     }
 
@@ -454,6 +542,52 @@ def _browser_smoke_results(
         "daily_forbidden_blocked_count": blocked_count,
         "raw_sql_included": False,
     }, coverage
+
+
+def _browser_or_snapshot_failures(browser: Mapping[str, Any], coverage: Mapping[str, Any]) -> dict[str, Any]:
+    failures: list[dict[str, Any]] = []
+    if not browser.get("deterministic_snapshots_present"):
+        failures.append(
+            {
+                "gate": "deterministic_snapshots",
+                "reason": "Deterministic rendered snapshots are missing.",
+                "recommendation": "Regenerate full app validation snapshots before launch readiness.",
+            }
+        )
+    if browser.get("profile_failure"):
+        failures.append(
+            {
+                "gate": "browser_profile_requirement",
+                "reason": "Browser proof is required for this launch profile and no valid waiver was provided.",
+                "recommendation": "Capture browser screenshots or provide a signed browser_proof waiver.",
+            }
+        )
+    blocked_count = _as_int(browser.get("daily_forbidden_blocked_count"))
+    if blocked_count:
+        failures.append(
+            {
+                "gate": "browser_daily_leak_scan",
+                "reason": "Browser or snapshot output contains daily forbidden tokens.",
+                "count": blocked_count,
+                "recommendation": "Remove raw/internal/test language from daily UI output.",
+            }
+        )
+    for missing in _as_list(coverage.get("missing_coverage")):
+        failures.append(
+            {
+                "gate": "browser_required_coverage",
+                "reason": f"Missing browser/rendered launch coverage: {missing}",
+                "recommendation": "Render or click the missing launch surface in runtime validation.",
+            }
+        )
+    return {
+        "source": "launch_readiness_browser_or_snapshot_failures",
+        "proof_source": "runtime_render",
+        "passed": not failures,
+        "failure_count": len(failures),
+        "failures": failures,
+        "raw_sql_included": False,
+    }
 
 
 def _config_sanity_results(root: Path, profile: str) -> dict[str, Any]:
@@ -983,7 +1117,7 @@ def _live_query_history_results(root: Path, profile: str, waivers: Iterable[Mapp
     live_enabled = os.environ.get("OVERWATCH_QUERY_PLAN_PROOF") == "1"
     live_artifact = root / "artifacts" / "query_history_by_tag.json"
     skipped_artifact = root / "artifacts" / "query_history_by_tag_SKIPPED.txt"
-    live_required = profile == "prod_candidate"
+    live_required = profile in {"internal_live", "prod_candidate"}
     waiver_used = _has_valid_waiver(waivers, "live_query_history")
     if live_enabled:
         passed = live_artifact.exists()
@@ -998,7 +1132,7 @@ def _live_query_history_results(root: Path, profile: str, waivers: Iterable[Mapp
         )
         if not skipped_artifact.exists():
             skipped_artifact.write_text(skip_reason, encoding="utf-8")
-        passed = profile in {"internal_fixture", "internal_live"} or waiver_used
+        passed = (not live_required and profile == "internal_fixture") or waiver_used
     return {
         "source": "launch_readiness_live_query_history",
         "proof_source": "runtime_click" if live_enabled else "inventory_only",
@@ -1246,10 +1380,12 @@ def _docs_readiness_results(root: Path) -> dict[str, Any]:
         "mentions_no_raw_sql_daily_ui": "No raw SQL in daily UI" in text,
         "mentions_fixture_mode_policy": "Fixture mode policy" in text,
         "mentions_required_roles": "Required roles" in text,
+        "mentions_compact_evidence_marts": "compact evidence marts" in text,
         "mentions_daily_no_account_usage": "Daily users do not need Account Usage access" in text,
         "mentions_setup_admin_role_separation": "Setup administrators" in text,
         "mentions_setup_admin_troubleshooting": "Setup and admin troubleshooting" in text,
         "mentions_fast_full_refresh": "FAST and FULL refresh" in text,
+        "mentions_first_paint_slos": "first-paint SLOs" in text,
         "mentions_stale_packet_fallback": "last-known-good" in text,
         "mentions_export_privacy": "export" in text.lower() and "privacy" in text.lower(),
         "mentions_browser_live_skip_policy": "Browser and live proof skip policy" in text,
@@ -1277,6 +1413,7 @@ def _artifact_review_results(root: Path, payloads: Mapping[str, Any], missing_pa
     ) if (root / LAUNCH_READINESS_DIR).exists() else []
     gauntlet_reconciliation = _as_mapping(payloads.get("artifacts/full_app_validation/gauntlet_artifact_reconciliation.json"))
     stale_count = _as_int(gauntlet_reconciliation.get("unlisted_file_count"))
+    stale_artifacts = [str(path) for path in _as_list(gauntlet_reconciliation.get("unlisted_files"))]
     passed = not missing and stale_count == 0
     return {
         "source": "launch_readiness_artifact_review",
@@ -1286,6 +1423,7 @@ def _artifact_review_results(root: Path, payloads: Mapping[str, Any], missing_pa
         "missing_required_gauntlet_artifacts": missing,
         "missing_required_gauntlet_artifact_count": len(missing),
         "stale_artifact_count": stale_count,
+        "stale_artifacts": stale_artifacts,
         "launch_artifact_count": len(launch_files),
         "launch_artifacts_seen": launch_files,
         "raw_sql_included": False,
@@ -1585,11 +1723,16 @@ def _ci_metadata() -> dict[str, Any]:
     repo = os.environ.get("GITHUB_REPOSITORY", "jfreeze03/OVERWATCH")
     run_id = os.environ.get("GITHUB_RUN_ID", "")
     run_url = f"{server}/{repo}/actions/runs/{run_id}" if run_id else ""
+    commit_sha = os.environ.get("GITHUB_SHA", "") or _git_output("rev-parse", "HEAD")
+    branch_ref = os.environ.get("GITHUB_REF_NAME", "") or _git_output("branch", "--show-current")
     return {
         "workflow_run_id": run_id,
         "workflow_url": run_url,
         "workflow_name": os.environ.get("GITHUB_WORKFLOW", ""),
         "github_sha": os.environ.get("GITHUB_SHA", ""),
+        "commit_sha": commit_sha,
+        "branch_ref": branch_ref,
+        "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT", ""),
     }
 
 
@@ -1610,8 +1753,10 @@ def _release_gate_matrix(
     ci_run_review = _as_mapping(launch_artifacts.get("ci_run_review_results"))
     raw_invariants = _as_mapping(launch_artifacts.get("raw_invariant_results"))
     profile_results = _as_mapping(launch_artifacts.get("launch_profile_results"))
+    profile_failures = _as_mapping(launch_artifacts.get("profile_gate_failures"))
     browser = _as_mapping(launch_artifacts.get("browser_smoke_results"))
     browser_coverage = _as_mapping(launch_artifacts.get("browser_required_coverage"))
+    browser_failures = _as_mapping(launch_artifacts.get("browser_or_snapshot_failures"))
     live_query = _as_mapping(launch_artifacts.get("live_query_history_results"))
     rows = [
         {
@@ -1619,6 +1764,12 @@ def _release_gate_matrix(
             "artifact": f"{LAUNCH_READINESS_DIR}/launch_profile_results.json",
             "passed": bool(profile_results.get("passed")),
             "failure_reason": "" if profile_results.get("passed") else "Launch profile is invalid or incompatible with current environment.",
+        },
+        {
+            "gate": "profile_gate_failures",
+            "artifact": f"{LAUNCH_READINESS_DIR}/profile_gate_failures.json",
+            "passed": bool(profile_failures.get("passed")),
+            "failure_reason": "" if profile_failures.get("passed") else "Launch profile or waiver failures are present.",
         },
         {
             "gate": "raw_invariants",
@@ -1673,6 +1824,12 @@ def _release_gate_matrix(
             "artifact": f"{LAUNCH_READINESS_DIR}/browser_required_coverage.json",
             "passed": bool(browser_coverage.get("passed")),
             "failure_reason": "" if browser_coverage.get("passed") else "Browser/rendered proof does not cover all launch surfaces.",
+        },
+        {
+            "gate": "browser_or_snapshot_failures",
+            "artifact": f"{LAUNCH_READINESS_DIR}/browser_or_snapshot_failures.json",
+            "passed": bool(browser_failures.get("passed")),
+            "failure_reason": "" if browser_failures.get("passed") else "Browser/snapshot launch proof failures are present.",
         },
         {
             "gate": "direct_sql_static_scan",
@@ -1741,10 +1898,19 @@ def evaluate_launch_readiness(
 
     root_path = Path(root).resolve() if root is not None else Path(".").resolve()
     recomputed_raw, recomputed_raw_failures = _raw_invariant_artifacts(root_path, payloads)
+    launch_waiver_rows = [
+        _normalize_waiver(_as_mapping(row))
+        for row in _as_list(_as_mapping(launch_artifacts.get("launch_waivers")).get("waivers"))
+    ]
+    profile_results = _as_mapping(launch_artifacts.get("launch_profile_results"))
+    browser_results = _as_mapping(launch_artifacts.get("browser_smoke_results"))
+    browser_coverage = _as_mapping(launch_artifacts.get("browser_required_coverage"))
     launch_artifacts = {
         **dict(launch_artifacts),
         "raw_invariant_results": recomputed_raw,
         "raw_invariant_failures": recomputed_raw_failures,
+        "profile_gate_failures": _profile_gate_failures(profile_results, launch_waiver_rows),
+        "browser_or_snapshot_failures": _browser_or_snapshot_failures(browser_results, browser_coverage),
     }
     failures: list[dict[str, Any]] = []
     missing = sorted(set(missing_artifacts))
@@ -1792,6 +1958,9 @@ def evaluate_launch_readiness(
     ci_meta = _ci_metadata()
     profile_results = _as_mapping(launch_artifacts.get("launch_profile_results"))
     raw_invariants = _as_mapping(launch_artifacts.get("raw_invariant_results"))
+    ci_run_review = _as_mapping(launch_artifacts.get("ci_run_review_results"))
+    artifact_upload_review = _as_mapping(launch_artifacts.get("artifact_upload_review_results"))
+    artifact_review = _as_mapping(launch_artifacts.get("artifact_review_results"))
     launch_summary = {
         "source": "launch_readiness",
         "proof_source": "runtime_click",
@@ -1806,9 +1975,18 @@ def evaluate_launch_readiness(
         "pass_count": sum(1 for row in matrix if row.get("passed")),
         "fail_count": sum(1 for row in matrix if not row.get("passed")),
         "required_artifact_count": len(REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS) + len(REQUIRED_LAUNCH_READINESS_ARTIFACTS),
-        "uploaded_artifact_names": ["decision-workspace-proof"],
+        "uploaded_artifact_names": _as_list(artifact_upload_review.get("uploaded_artifact_names")) or ["decision-workspace-proof"],
         "workflow_run_id": ci_meta["workflow_run_id"],
         "workflow_url": ci_meta["workflow_url"],
+        "commit_sha": ci_meta["commit_sha"],
+        "branch_ref": ci_meta["branch_ref"],
+        "run_attempt": ci_meta["run_attempt"],
+        "ci_metadata_warning": str(ci_run_review.get("warning") or ""),
+        "ci_metadata_required": bool(ci_run_review.get("workflow_metadata_required")),
+        "ci_metadata_missing": bool(ci_run_review.get("workflow_metadata_missing")),
+        "missing_artifacts": _as_list(artifact_review.get("missing_required_gauntlet_artifacts")),
+        "stale_artifacts": _as_list(artifact_review.get("stale_artifacts")),
+        "stale_artifact_count": _as_int(artifact_review.get("stale_artifact_count")),
         "observed_check_count": len(matrix),
         "expected_check_count": len(matrix),
         "raw_invariant_passed": bool(raw_invariants.get("passed")),
@@ -1855,13 +2033,15 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
         "raw_sql_included": False,
     }
     launch_artifacts["launch_profile_results"] = _launch_profile_results(profile, waivers)
-    launch_artifacts["ci_run_review_results"] = _ci_run_review_results(profile)
+    launch_artifacts["profile_gate_failures"] = _profile_gate_failures(launch_artifacts["launch_profile_results"], waivers)
+    launch_artifacts["ci_run_review_results"] = _ci_run_review_results(profile, waivers)
     ci_upload_review = _workflow_upload_review(root_path)
     launch_artifacts["ci_artifact_review_results"] = ci_upload_review
     launch_artifacts["artifact_upload_review_results"] = ci_upload_review
     browser_smoke, browser_coverage = _browser_smoke_results(root_path, payloads, profile, waivers)
     launch_artifacts["browser_smoke_results"] = browser_smoke
     launch_artifacts["browser_required_coverage"] = browser_coverage
+    launch_artifacts["browser_or_snapshot_failures"] = _browser_or_snapshot_failures(browser_smoke, browser_coverage)
     launch_artifacts["config_sanity_results"] = _config_sanity_results(root_path, profile)
     launch_artifacts["snowflake_permission_matrix"] = _permission_matrix(payloads)
     launch_artifacts["role_readiness_results"] = _role_readiness_results(payloads)

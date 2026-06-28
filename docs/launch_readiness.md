@@ -48,6 +48,8 @@ Export privacy policy: daily export and case payloads must contain only user-fac
 
 FAST refresh must use compact recent facts and evidence marts where feasible and preserve freshness truth for fresh, reused, and stale command rows. FULL refresh remains the complete rebuild path. Live SLO proof is recorded when live query history proof is enabled; fixture CI records an explicit skip reason.
 
+first-paint SLOs: each primary section should open from the current packet only, with no first-paint evidence, metadata probe, Account Usage, or route-action query work. Warm first paint should reuse the packet cache without a Snowflake execution.
+
 ## Setup and admin troubleshooting
 
 Use Settings/Admin Setup Health for:

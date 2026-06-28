@@ -660,6 +660,7 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
     def test_initialize_summaries_button_sets_bootstrap_request(self):
         from sections.section_command_brief import SectionCommandBrief
         from sections import section_command_rendering
+        from sections import decision_workspace_bootstrap as bootstrap
 
         state: dict[str, object] = {}
         brief = SectionCommandBrief(
@@ -695,7 +696,54 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 section_command_rendering.render_section_command_brief(brief, key_prefix="bootstrap")
 
-        self.assertTrue(state["_overwatch_decision_bootstrap_requested"])
+        self.assertTrue(state[bootstrap.BOOTSTRAP_REQUEST_KEY])
+
+    def test_initialize_summaries_button_records_admin_setup_budget(self):
+        import performance
+        from sections.section_command_brief import SectionCommandBrief
+        from sections import decision_workspace_bootstrap as bootstrap
+        from sections import section_command_rendering
+
+        state: dict[str, object] = {}
+        brief = SectionCommandBrief(
+            section="Alert Center",
+            company="ALFA",
+            environment="ALL",
+            window_label="8 days",
+            state="Summary not initialized",
+            headline="Summary not initialized",
+            summary="No current packet.",
+            source="Decision packet",
+            freshness_label="Setup required",
+            loaded_at="2026-06-25T10:00:00",
+            fallback_reason="No packet row.",
+            raw_payload={"workspace_mode": "UNINITIALIZED"},
+        )
+
+        def _button(label, *args, **kwargs):
+            return str(label) == "Initialize summaries"
+
+        with patch.dict(os.environ, {"OVERWATCH_TEST_MODE": "1"}), patch.object(
+            section_command_rendering.st,
+            "session_state",
+            state,
+        ), patch.object(section_command_rendering.st, "html"), patch.object(
+            section_command_rendering.st,
+            "columns",
+            return_value=[contextlib.nullcontext(), contextlib.nullcontext()],
+        ), patch.object(section_command_rendering.st, "button", side_effect=_button), patch.object(
+            section_command_rendering.st,
+            "rerun",
+            side_effect=RuntimeError("rerun"),
+        ):
+            performance.clear_query_budget_context_events()
+            with self.assertRaises(RuntimeError):
+                section_command_rendering.render_section_command_brief(brief, key_prefix="bootstrap_budget")
+
+        self.assertTrue(state[bootstrap.BOOTSTRAP_REQUEST_KEY])
+        budget_events = list(state.get("_overwatch_query_budget_context_events", []))
+        self.assertEqual([event["name"] for event in budget_events], ["admin_setup"])
+        self.assertTrue(budget_events[0]["passed_query_budget"])
 
     def test_refresh_lives_in_hero_and_evidence_is_separate(self):
         from sections.section_command_brief import SectionCommandAction, SectionCommandBrief, SectionCommandMetric
@@ -1590,6 +1638,55 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         rendered = "\n".join(str(call.args[0]) for call in html.call_args_list)
         self.assertIn("Ask an administrator", rendered)
 
+    def test_fallback_shows_safe_last_initialization_attempt_note(self):
+        from sections import section_command_rendering
+        from sections.decision_workspace_setup_health import SETUP_HEALTH_KEY
+        from sections.section_command_brief import SectionCommandBrief
+
+        def _columns(spec):
+            count = int(spec) if isinstance(spec, int) else len(spec)
+            return [contextlib.nullcontext() for _ in range(count)]
+
+        state: dict[str, object] = {
+            SETUP_HEALTH_KEY: {
+                "status": "FAILED",
+                "current_packet_count": 0,
+                "selected_scope_status": "FAILED",
+                "admin_detail": "SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS failed for MART_SECTION_DECISION_CURRENT",
+            }
+        }
+        brief = SectionCommandBrief(
+            section="Cost & Contract",
+            company="ALFA",
+            environment="ALL",
+            window_label="8 days",
+            state="Setup required",
+            headline="Summary not initialized",
+            summary="No packet row.",
+            source="MART_SECTION_DECISION_CURRENT",
+            freshness_label="Freshness unavailable",
+            loaded_at="",
+            fallback_reason="No packet row.",
+        )
+        with patch.object(section_command_rendering.st, "session_state", state), patch.object(
+            section_command_rendering.st,
+            "html",
+        ) as html, patch.object(section_command_rendering.st, "columns", side_effect=_columns), patch.object(
+            section_command_rendering.st,
+            "button",
+            return_value=False,
+        ):
+            section_command_rendering.render_decision_workspace(
+                brief,
+                key_prefix="safe_attempt_note",
+                refresh_action=lambda: None,
+            )
+
+        rendered = "\n".join(str(call.args[0]) for call in html.call_args_list)
+        self.assertIn("Last initialization attempt did not create a current Decision packet", rendered)
+        self.assertNotIn("SP_OVERWATCH", rendered)
+        self.assertNotIn("MART_SECTION", rendered)
+
     def test_bootstrap_missing_procedure_shows_clean_setup_message(self):
         from sections import decision_workspace_bootstrap as bootstrap
 
@@ -1622,6 +1719,43 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         self.assertIn("Decision summaries are not initialized", warning_text)
         self.assertNotIn("CALL ", warning_text)
         self.assertNotIn("Unknown function", warning_text)
+
+    def test_bootstrap_uses_admin_setup_budget_even_with_stale_evidence_context(self):
+        import performance
+        from sections import decision_workspace_bootstrap as bootstrap
+
+        class MissingProcedureSession:
+            def __init__(self) -> None:
+                self.sql_calls: list[str] = []
+
+            def sql(self, text: str) -> "MissingProcedureSession":
+                self.sql_calls.append(text)
+                return self
+
+            def collect(self) -> list[object]:
+                return []
+
+        session = MissingProcedureSession()
+        state = {bootstrap.BOOTSTRAP_REQUEST_KEY: True}
+        with patch.object(bootstrap.st, "session_state", state), patch.object(
+            bootstrap,
+            "lazy_util",
+            return_value=lambda *args, **kwargs: session,
+        ), patch.object(bootstrap.st, "warning"):
+            performance.clear_query_budget_context_events()
+            stale_token = performance.begin_query_budget_context(
+                "evidence_click",
+                section="Alert Center",
+                workflow="Active Alerts",
+                budget=1,
+            )
+            bootstrap.maybe_run_decision_workspace_bootstrap("Alert Center")
+            stale_summary = performance.end_query_budget_context(stale_token)
+
+        self.assertTrue(stale_summary["passed_query_budget"])
+        events = list(state.get("_overwatch_query_budget_context_events", []))
+        self.assertEqual([event["name"] for event in events], ["admin_setup", "evidence_click"])
+        self.assertTrue(events[0]["passed_query_budget"])
 
     def test_bootstrap_replays_stored_failure_as_clean_setup_message(self):
         from sections import decision_workspace_bootstrap as bootstrap

@@ -12,6 +12,7 @@ from sections.base import lazy_util
 from sections.decision_workspace_scope import active_decision_window_days
 from sections.decision_workspace_setup_health import record_decision_bootstrap_health
 from sections.section_command_contracts import CANONICAL_COMMAND_BRIEF_SECTIONS
+from performance import ADMIN_CLICK_QUERY_BUDGET, query_budget_context
 from runtime_state import ACTIVE_COMPANY, GLOBAL_ENVIRONMENT
 
 
@@ -25,7 +26,7 @@ BOOTSTRAP_PROCEDURE_FALLBACKS = (
     "SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS",
 )
 BOOTSTRAP_SETUP_MESSAGE = (
-    "Decision summaries are not initialized. Ask an administrator to deploy the latest "
+    "Decision summaries are not initialized. Ask an administrator to deploy the complete "
     "OVERWATCH mart setup and initialize the Decision summary marts."
 )
 BOOTSTRAP_SUCCESS_MESSAGE = "Decision summaries initialized. Refreshing the current command brief."
@@ -884,68 +885,80 @@ def maybe_run_decision_workspace_bootstrap(current_section: str | None = None) -
         st.warning(_clean_bootstrap_failure_message(failure))
     if not bool(st.session_state.pop(BOOTSTRAP_REQUEST_KEY, False)):
         return
-    get_session_for_action = lazy_util("get_session_for_action")
-    session = get_session_for_action(
-        "initialize decision summaries",
-        surface="Decision Workspace",
-        offline_note=BOOTSTRAP_SETUP_MESSAGE,
-    )
-    if session is None:
-        st.warning(BOOTSTRAP_SETUP_MESSAGE)
-        return
-    try:
-        company, environment, window_days = _active_validation_scope()
-        procedure_result = _run_bootstrap_procedure(session)
-        validation = validate_decision_bootstrap_output(
-            session,
-            current_section=current_section,
-            company=company,
-            environment=environment,
-            window_days=window_days,
+    with query_budget_context(
+        "admin_setup",
+        section=current_section or "Decision Workspace",
+        workflow="Decision Summary Initialization",
+        budget=ADMIN_CLICK_QUERY_BUDGET,
+    ):
+        get_session_for_action = lazy_util("get_session_for_action")
+        session = get_session_for_action(
+            "initialize decision summaries",
+            surface="Decision Workspace",
+            offline_note=BOOTSTRAP_SETUP_MESSAGE,
         )
-        if not validation.ok:
-            _clear_command_brief_caches(clear_last_good=False)
-            st.session_state[BOOTSTRAP_FAILURE_KEY] = validation.message or BOOTSTRAP_SETUP_MESSAGE
+        if session is None:
+            st.session_state[BOOTSTRAP_FAILURE_KEY] = BOOTSTRAP_SETUP_MESSAGE
             record_decision_bootstrap_health(
-                status=validation.status.lower(),
+                status="failed",
                 user_message=st.session_state[BOOTSTRAP_FAILURE_KEY],
-                selected_procedure=procedure_result.procedure_name,
-                fallback_used=procedure_result.fallback_used,
-                validation=validation,
-                admin_detail="; ".join(
-                    part for part in (procedure_result.admin_detail, validation.admin_detail) if part
-                ),
-                session=session,
+                admin_detail="No Snowflake session was available for Decision summary initialization.",
             )
             st.warning(st.session_state[BOOTSTRAP_FAILURE_KEY])
             return
-        _clear_command_brief_caches(
-            clear_last_good=True,
-            validated_packet_keys=validation.validated_packet_keys,
-        )
-        _force_current_section_refresh(current_section)
-        st.session_state[BOOTSTRAP_SUCCESS_KEY] = validation.message or BOOTSTRAP_SUCCESS_MESSAGE
-        record_decision_bootstrap_health(
-            status=validation.status.lower(),
-            user_message=st.session_state[BOOTSTRAP_SUCCESS_KEY],
-            selected_procedure=procedure_result.procedure_name,
-            fallback_used=procedure_result.fallback_used,
-            validation=validation,
-            admin_detail="; ".join(part for part in (procedure_result.admin_detail, validation.admin_detail) if part),
-            session=session,
-        )
-    except Exception as exc:
-        _clear_command_brief_caches(clear_last_good=False)
-        st.session_state[BOOTSTRAP_FAILURE_KEY] = _clean_bootstrap_failure_message(exc)
-        record_decision_bootstrap_health(
-            status="failed",
-            user_message=st.session_state[BOOTSTRAP_FAILURE_KEY],
-            admin_detail=getattr(exc, "admin_detail", str(exc)),
-            session=session,
-        )
-        st.warning(st.session_state[BOOTSTRAP_FAILURE_KEY])
-    else:
-        st.rerun()
+        try:
+            company, environment, window_days = _active_validation_scope()
+            procedure_result = _run_bootstrap_procedure(session)
+            validation = validate_decision_bootstrap_output(
+                session,
+                current_section=current_section,
+                company=company,
+                environment=environment,
+                window_days=window_days,
+            )
+            if not validation.ok:
+                _clear_command_brief_caches(clear_last_good=False)
+                st.session_state[BOOTSTRAP_FAILURE_KEY] = validation.message or BOOTSTRAP_SETUP_MESSAGE
+                record_decision_bootstrap_health(
+                    status=validation.status.lower(),
+                    user_message=st.session_state[BOOTSTRAP_FAILURE_KEY],
+                    selected_procedure=procedure_result.procedure_name,
+                    fallback_used=procedure_result.fallback_used,
+                    validation=validation,
+                    admin_detail="; ".join(
+                        part for part in (procedure_result.admin_detail, validation.admin_detail) if part
+                    ),
+                    session=session,
+                )
+                st.warning(st.session_state[BOOTSTRAP_FAILURE_KEY])
+                return
+            _clear_command_brief_caches(
+                clear_last_good=True,
+                validated_packet_keys=validation.validated_packet_keys,
+            )
+            _force_current_section_refresh(current_section)
+            st.session_state[BOOTSTRAP_SUCCESS_KEY] = validation.message or BOOTSTRAP_SUCCESS_MESSAGE
+            record_decision_bootstrap_health(
+                status=validation.status.lower(),
+                user_message=st.session_state[BOOTSTRAP_SUCCESS_KEY],
+                selected_procedure=procedure_result.procedure_name,
+                fallback_used=procedure_result.fallback_used,
+                validation=validation,
+                admin_detail="; ".join(part for part in (procedure_result.admin_detail, validation.admin_detail) if part),
+                session=session,
+            )
+        except Exception as exc:
+            _clear_command_brief_caches(clear_last_good=False)
+            st.session_state[BOOTSTRAP_FAILURE_KEY] = _clean_bootstrap_failure_message(exc)
+            record_decision_bootstrap_health(
+                status="failed",
+                user_message=st.session_state[BOOTSTRAP_FAILURE_KEY],
+                admin_detail=getattr(exc, "admin_detail", str(exc)),
+                session=session,
+            )
+            st.warning(st.session_state[BOOTSTRAP_FAILURE_KEY])
+        else:
+            st.rerun()
 
 
 __all__ = [

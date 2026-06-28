@@ -311,8 +311,8 @@ def _fallback_route_contract(section: str) -> ButtonActionContract:
     return ButtonActionContract(
         section=section,
         workflow=target_workflow,
-        key_pattern=r"_fallback_(?:refresh|initialize|open_setup_health)$",
-        label_pattern=r"\b(Refresh|Initialize|Open Setup Health)\b",
+        key_pattern=r"_fallback_open_setup_health$",
+        label_pattern=r"\bOpen Setup Health\b",
         action_type="route",
         expected_target_section=section,
         expected_target_workflow=target_workflow,
@@ -331,6 +331,37 @@ def _fallback_route_contract(section: str) -> ButtonActionContract:
         expected_snowflake_execution_count=0,
         can_be_absent=True,
         skip_reason="Fallback actions only render for setup/packet recovery states.",
+    )
+
+
+def _fallback_initialize_contract(section: str) -> ButtonActionContract:
+    target_workflow = SECTION_WORKFLOW_CONTRACT.get(section, ("",))[0]
+    return ButtonActionContract(
+        section=section,
+        workflow=target_workflow,
+        key_pattern=r"_fallback_initialize_summaries$",
+        label_pattern=r"\bInitialize summaries\b",
+        action_type="setup_health",
+        expected_target_section=section,
+        expected_target_workflow=target_workflow,
+        expected_state_updates={
+            "nav_section": section,
+            "_overwatch_decision_bootstrap_requested": True,
+        },
+        expected_artifact="decision_summary_bootstrap_request",
+        heavy_query_allowed=True,
+        requires_admin=True,
+        expected_query_boundary="setup_health",
+        expected_query_count=0,
+        expected_query_budget_context="admin_setup",
+        expected_budget=3,
+        expected_actual_boundaries={},
+        expected_session_open_count=0,
+        expected_direct_sql_count=0,
+        expected_metadata_probe_count=0,
+        expected_snowflake_execution_count=0,
+        can_be_absent=True,
+        skip_reason="Initialize summaries only renders for setup/packet recovery states.",
     )
 
 
@@ -574,6 +605,7 @@ def iter_button_action_contracts() -> Iterable[ButtonActionContract]:
         yield _refresh_contract(section)
         yield from _route_contracts_for_source_section(section)
         yield _fallback_route_contract(section)
+        yield _fallback_initialize_contract(section)
         if section in SECTION_EVIDENCE_CONTRACTS:
             yield SECTION_EVIDENCE_CONTRACTS[section]
         yield _account_usage_fallback_contract(section)

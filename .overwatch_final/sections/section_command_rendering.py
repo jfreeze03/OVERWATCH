@@ -10,6 +10,7 @@ import re
 import streamlit as st
 
 from performance import (
+    ADMIN_CLICK_QUERY_BUDGET,
     SECTION_ROUTE_QUERY_BUDGET,
     current_first_paint_render_id,
     end_first_paint,
@@ -23,6 +24,7 @@ from sections.decision_workspace_controls import (
     render_evidence_settings,
 )
 from sections.decision_workspace_setup_health import can_open_decision_setup_health, open_decision_setup_health
+from sections.decision_workspace_bootstrap import BOOTSTRAP_REQUEST_KEY
 from sections.decision_workspace_view_model import (
     DecisionActionView,
     DecisionMetricCell,
@@ -49,6 +51,31 @@ def _public_text(value: object) -> str:
     text = re.sub(r"\b(?:MART|FACT|OVERWATCH|ALERT)_[A-Z0-9_]+\b", "Decision source", text)
     text = re.sub(r"\bsnowflake/[A-Za-z0-9_./-]+\.sql\b", "setup script", text, flags=re.IGNORECASE)
     return text
+
+
+def _bootstrap_attempt_note() -> str:
+    """Return a daily-safe setup-attempt note for uninitialized packet states."""
+    raw = st.session_state.get("_overwatch_decision_setup_health")
+    if not isinstance(raw, dict):
+        return ""
+    status = str(raw.get("status", "") or "").strip().upper()
+    if not status or status in {"SUCCESS", "PASSED"}:
+        return ""
+    packet_count = 0
+    try:
+        packet_count = int(raw.get("current_packet_count") or 0)
+    except Exception:
+        packet_count = 0
+    selected_scope_status = str(raw.get("selected_scope_status", "") or "").strip().upper()
+    if packet_count > 0 and selected_scope_status == "SUCCESS" and status == "DEGRADED":
+        return (
+            "Initialization created Decision summaries with setup warnings. "
+            "Review Setup Health in Settings before relying on this scope."
+        )
+    return (
+        "Last initialization attempt did not create a current Decision packet. "
+        "The table definitions may exist, but the complete setup and refresh step still has to run."
+    )
 
 
 def _close_first_paint_for_user_action() -> None:
@@ -254,6 +281,13 @@ def _render_fallback(
                     "Ask an administrator to review Decision summary setup health."
                     "</p>"
                 )
+        attempt_note = _bootstrap_attempt_note()
+        if attempt_note:
+            st.html(
+                '<p class="ow-decision-admin-note">'
+                f"{_html(attempt_note)}"
+                "</p>"
+            )
         if detail_action is not None and fallback.can_show_evidence:
             actions.append("evidence")
         if not actions:
@@ -277,7 +311,13 @@ def _render_fallback(
                     width="stretch",
                 ):
                     _close_first_paint_for_user_action()
-                    st.session_state["_overwatch_decision_bootstrap_requested"] = True
+                    with query_budget_context(
+                        "admin_setup",
+                        section=model.section,
+                        workflow=model.workflow or "Decision Summary Initialization",
+                        budget=ADMIN_CLICK_QUERY_BUDGET,
+                    ):
+                        st.session_state[BOOTSTRAP_REQUEST_KEY] = True
                     st.rerun()
                 elif action == "setup_health" and st.button(
                     "Open Setup Health",
@@ -287,7 +327,13 @@ def _render_fallback(
                     help="Open Settings to review Decision summary setup health.",
                 ):
                     _close_first_paint_for_user_action()
-                    open_decision_setup_health()
+                    with query_budget_context(
+                        "route_action",
+                        section=model.section,
+                        workflow=model.workflow,
+                        budget=SECTION_ROUTE_QUERY_BUDGET,
+                    ):
+                        open_decision_setup_health()
                     st.rerun()
                 elif action == "evidence":
                     _render_detail_action(key_prefix=key_prefix, detail_action=detail_action)

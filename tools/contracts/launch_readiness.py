@@ -430,6 +430,17 @@ def _artifact_text_contains_raw_sql_or_secret(path: Path) -> bool:
     return bool(re.search(r"(?is)\bCREATE\s+OR\s+REPLACE\b|\bSELECT\s+\*\b|Traceback \(most recent call last\):", text))
 
 
+def _raw_sql_or_secret_value(value: Any) -> bool:
+    if isinstance(value, Mapping):
+        return any(_raw_sql_or_secret_value(item) for item in value.values())
+    if isinstance(value, list | tuple | set):
+        return any(_raw_sql_or_secret_value(item) for item in value)
+    text = str(value or "")
+    if re.search(r"(?i)(snowflake://|password\s*[:=]|private[_ -]?key\s*[:=]|github_pat_|ghp_[A-Za-z0-9]{20,})", text):
+        return True
+    return bool(re.search(r"(?is)\bCREATE\s+OR\s+REPLACE\b|\bSELECT\s+\*\b|Traceback \(most recent call last\):", text))
+
+
 def _release_artifact_category(rel: str) -> str:
     if rel.startswith("artifacts/release_candidate/"):
         return "release_candidate"
@@ -625,6 +636,8 @@ def _release_candidate_ci_context(profile: str, waivers: Iterable[Mapping[str, A
         "github_actions": bool(ci_run.get("github_actions")),
         "commit_sha": str(ci_run.get("commit_sha") or ""),
         "source_commit_sha": str(ci_run.get("source_commit_sha") or ""),
+        "source_tree_sha": str(ci_run.get("source_commit_sha") or ""),
+        "github_sha": str(ci_run.get("github_sha") or ""),
         "commit_sha_matches_source": bool(ci_run.get("commit_sha_matches_source")),
         "branch_ref": str(ci_run.get("branch_ref") or ""),
         "workflow_run_id": str(ci_run.get("workflow_run_id") or ""),
@@ -634,6 +647,8 @@ def _release_candidate_ci_context(profile: str, waivers: Iterable[Mapping[str, A
         "workflow_job": str(ci_run.get("workflow_job") or ""),
         "event_name": str(ci_run.get("event_name") or ""),
         "repository": str(ci_run.get("repository") or ""),
+        "artifact_upload_name": "decision-workspace-proof",
+        "uploaded_artifact_names": ["decision-workspace-proof"],
         "workflow_metadata_missing": bool(ci_run.get("workflow_metadata_missing")),
         "workflow_metadata_required": bool(ci_run.get("workflow_metadata_required")),
         "workflow_url_missing": bool(ci_run.get("workflow_url_missing")),
@@ -691,6 +706,7 @@ def _ci_artifact_reality_results(
     release_hash_mismatch = _as_list(release_reconciliation.get("hash_mismatches"))
     release_missing_categories = _as_list(release_reconciliation.get("missing_required_categories"))
     release_raw = _as_int(release_reconciliation.get("raw_sql_or_secret_count"))
+    release_commit_mismatch = _as_list(release_reconciliation.get("commit_mismatches"))
     workflow_metadata_missing = bool(ci_run_review.get("workflow_metadata_missing"))
     workflow_metadata_required = bool(ci_run_review.get("workflow_metadata_required"))
     if workflow_metadata_missing and workflow_metadata_required:
@@ -717,6 +733,8 @@ def _ci_artifact_reality_results(
         fail("RELEASE_UNLISTED_ARTIFACT", "Generated artifact exists outside the release-candidate manifest.", count=len(release_unlisted), details=release_unlisted)
     if release_hash_mismatch:
         fail("RELEASE_HASH_MISMATCH", "Release-candidate artifact hash mismatch detected.", count=len(release_hash_mismatch), details=release_hash_mismatch)
+    if release_commit_mismatch:
+        fail("RELEASE_ARTIFACT_COMMIT_MISMATCH", "Release-candidate artifact commit mismatch detected.", count=len(release_commit_mismatch), details=release_commit_mismatch)
     if release_missing_categories:
         fail("RELEASE_ARTIFACT_CATEGORY_MISSING", "Required release-candidate artifact category has zero files.", count=len(release_missing_categories), details=release_missing_categories)
     if release_raw:
@@ -752,6 +770,7 @@ def _ci_artifact_reality_results(
         "release_missing_required_categories": release_missing_categories,
         "release_unlisted_artifacts": release_unlisted,
         "release_hash_mismatches": release_hash_mismatch,
+        "release_commit_mismatches": release_commit_mismatch,
         "warning": str(ci_run_review.get("warning") or ""),
         "raw_sql_included": False,
     }
@@ -1892,8 +1911,12 @@ def _release_artifact_reconciliation_results(
     unlisted_files = sorted(path for path in observed_paths - manifest_paths if path not in RELEASE_SELF_REFERENTIAL_FILES)
     hash_mismatches: list[dict[str, Any]] = []
     raw_sql_or_secret_files: list[str] = []
+    commit_mismatches: list[dict[str, Any]] = []
+    deleted_reference_files: list[dict[str, Any]] = []
     category_counts: dict[str, int] = {}
     failures: list[dict[str, Any]] = []
+    expected_commit = str(manifest.get("commit_sha") or "")
+    deleted_tokens = _deleted_artifact_reference_tokens(root)
     for row in manifest_rows:
         rel = str(row.get("path") or "")
         if not rel or rel in missing_files:
@@ -1904,6 +1927,12 @@ def _release_artifact_reconciliation_results(
         contains_raw = bool(row.get("contains_raw_sql")) or bool(row.get("contains_secrets")) or _artifact_text_contains_raw_sql_or_secret(path)
         if contains_raw:
             raw_sql_or_secret_files.append(rel)
+        row_commit = str(row.get("commit_sha") or "")
+        if expected_commit and row_commit != expected_commit:
+            commit_mismatches.append({"path": rel, "expected": expected_commit, "actual": row_commit})
+        deleted_hits = _artifact_deleted_reference_hits(path, rel, deleted_tokens)
+        if deleted_hits:
+            deleted_reference_files.append({"path": rel, "references": deleted_hits})
         hash_row = _as_mapping(hash_rows.get(rel))
         if rel not in RELEASE_SELF_REFERENTIAL_FILES and not bool(row.get("self_referential_hash")):
             actual_hash = _file_sha256(path)
@@ -1921,6 +1950,10 @@ def _release_artifact_reconciliation_results(
         failures.append({"code": "RELEASE_CATEGORY_MISSING", "categories": missing_categories})
     if raw_sql_or_secret_files:
         failures.append({"code": "RELEASE_RAW_SQL_OR_SECRET", "files": raw_sql_or_secret_files})
+    if commit_mismatches:
+        failures.append({"code": "RELEASE_ARTIFACT_COMMIT_MISMATCH", "files": commit_mismatches})
+    if deleted_reference_files:
+        failures.append({"code": "RELEASE_ARTIFACT_REFERENCES_DELETED_ITEM", "files": deleted_reference_files})
     for skipped, proof_pattern in (
         ("artifacts/browser_screenshots/SKIPPED.txt", "artifacts/browser_screenshots/*.png"),
         ("artifacts/query_history_by_tag_SKIPPED.txt", "artifacts/query_history_by_tag.json"),
@@ -1946,9 +1979,68 @@ def _release_artifact_reconciliation_results(
         "missing_required_category_count": len(missing_categories),
         "raw_sql_or_secret_files": raw_sql_or_secret_files,
         "raw_sql_or_secret_count": len(raw_sql_or_secret_files),
+        "commit_mismatches": commit_mismatches,
+        "commit_mismatch_count": len(commit_mismatches),
+        "deleted_reference_files": deleted_reference_files,
+        "deleted_reference_count": len(deleted_reference_files),
         "categories": category_counts,
         "raw_sql_included": False,
     }
+
+
+def _deleted_artifact_reference_tokens(root: Path) -> dict[str, list[str]]:
+    route_module_tokens: set[str] = set()
+    sql_tokens: set[str] = set()
+    for rel in (
+        "artifacts/cleanup/deleted_routes.json",
+        "artifacts/cleanup/deleted_modules.json",
+        "artifacts/cleanup/deleted_sql_objects.json",
+    ):
+        path = root / rel
+        if not path.exists():
+            continue
+        payload = _read_json(path)
+        for row in _as_list(_as_mapping(payload).get("deleted_routes")):
+            mapped = _as_mapping(row)
+            for key in ("route", "route_key", "section", "workflow"):
+                value = str(mapped.get(key) or "").strip()
+                if value:
+                    route_module_tokens.add(value)
+        for row in _as_list(_as_mapping(payload).get("deleted_modules")):
+            mapped = _as_mapping(row)
+            for key in ("module", "path"):
+                value = str(mapped.get(key) or "").strip()
+                if value:
+                    route_module_tokens.add(value)
+        for row in _as_list(_as_mapping(payload).get("deleted_sql_objects")):
+            value = str(_as_mapping(row).get("name") or "").strip()
+            if value:
+                sql_tokens.add(value)
+    return {
+        "route_module": sorted(token for token in route_module_tokens if len(token) >= 4),
+        "sql": sorted(token for token in sql_tokens if len(token) >= 4),
+    }
+
+
+def _artifact_deleted_reference_hits(path: Path, rel: str, deleted_tokens: Mapping[str, list[str]]) -> list[str]:
+    if rel.startswith("artifacts/cleanup/"):
+        return []
+    sql_reference_allowed = (
+        rel.startswith("artifacts/launch_readiness/drop_rollback")
+        or rel.startswith("artifacts/launch_readiness/snowflake_permission_matrix")
+        or rel.startswith("artifacts/launch_readiness/role_readiness")
+        or rel.startswith("artifacts/release_candidate/")
+    )
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return []
+    lowered = text.lower()
+    tokens = list(deleted_tokens.get("route_module") or [])
+    if not sql_reference_allowed:
+        tokens.extend(deleted_tokens.get("sql") or [])
+    hits = [token for token in tokens if token.lower() in lowered]
+    return sorted(set(hits))
 
 
 def _product_gauntlet_release_results(root: Path, payloads: Mapping[str, Any], launch_artifacts: Mapping[str, Any]) -> dict[str, Any]:
@@ -1959,7 +2051,10 @@ def _product_gauntlet_release_results(root: Path, payloads: Mapping[str, Any], l
     query_rows = [_as_mapping(row) for row in _as_list(payloads.get("artifacts/full_app_validation/query_search_results.json"))]
     export_rows = [_as_mapping(row) for row in _as_list(payloads.get("artifacts/full_app_validation/export_results.json"))]
     case_rows = [_as_mapping(row) for row in _as_list(payloads.get("artifacts/full_app_validation/case_payload_results.json"))]
+    settings_rows = [_as_mapping(row) for row in _as_list(payloads.get("artifacts/full_app_validation/settings_action_results.json"))]
+    live_rows = [_as_mapping(row) for row in _as_list(payloads.get("artifacts/full_app_validation/live_feature_results.json"))]
     stress_rows = [_as_mapping(row) for row in _as_list(payloads.get("artifacts/full_app_validation/stress_results.json"))]
+    forbidden_daily = _as_mapping(payloads.get("artifacts/full_app_validation/forbidden_daily_ui_scan.json"))
     checks: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
 
@@ -1978,7 +2073,18 @@ def _product_gauntlet_release_results(root: Path, payloads: Mapping[str, Any], l
     sections = {str(row.get("section") or "") for row in view_rows if row.get("section")}
     route_leaks = [
         row for row in button_rows
-        if bool(row.get("route_action")) and _raw_count(row, "session_count", "query_count", "direct_sql_count", "snowflake_execution_count") > 0
+        if (str(row.get("action_type") or "") == "route" or bool(row.get("route_action")))
+        and _raw_count(
+            row,
+            "session_count",
+            "session_open_count",
+            "query_count",
+            "snowflake_execution_count",
+            "actual_snowflake_executions",
+            "direct_sql_count",
+            "direct_sql_event_count",
+            "metadata_probe_event_count",
+        ) > 0
     ]
     normal_evidence_bad = [
         row for row in evidence_rows
@@ -2008,16 +2114,37 @@ def _product_gauntlet_release_results(root: Path, payloads: Mapping[str, Any], l
         or not bool(row.get("threshold_passed", True))
         or _as_list(row.get("threshold_failures"))
     ]
+    settings_gaps = [
+        row for row in settings_rows
+        if not bool(row.get("admin_or_advanced_gated"))
+        or bool(row.get("raw_error_visible_daily"))
+        or not bool(row.get("sanitized_error_state", True))
+        or not _owner_skipped(row) and not bool(row.get("clicked"))
+    ]
+    live_gaps = [
+        row for row in live_rows
+        if not bool(row.get("admin_or_advanced_gated"))
+        or not bool(row.get("explicit_click_required"))
+        or not bool(row.get("budget_context_observed", bool(_raw_observed_contexts(row))))
+        or bool(row.get("first_paint_invocation"))
+        or bool(row.get("route_invocation"))
+        or bool(row.get("raw_error_visible_daily"))
+        or not bool(row.get("timeout_or_row_limit"))
+        or not _owner_skipped(row) and not bool(row.get("clicked"))
+    ]
     add("six_primary_overviews_rendered", PRIMARY_SECTIONS.issubset(sections), "Render all six launch Decision Workspace sections.", actual=sorted(sections), expected=sorted(PRIMARY_SECTIONS))
     add("first_paint_slo_passed", bool(summary.get("performance_gate_passed", summary.get("all_passed"))), "Fix first-paint packet/query budget failures.", actual=summary.get("performance_gate_passed"), expected=True)
     add("route_actions_zero_query", not route_leaks, "Route actions must not open sessions, run queries, or execute direct SQL.", actual=len(route_leaks), expected=0)
     add("normal_evidence_compact_mart_backed", not normal_evidence_bad, "Normal evidence must use compact marts or exact recent-detail paths only.", actual=len(normal_evidence_bad), expected=0)
+    add("account_usage_explicit_admin_only", all(not bool(row.get("account_usage_used")) for row in evidence_rows if str(row.get("loader_kind") or "") == "normal_evidence"), "Normal evidence cannot use Account Usage.", actual=len([row for row in evidence_rows if str(row.get("loader_kind") or "") == "normal_evidence" and bool(row.get("account_usage_used"))]), expected=0)
     add("query_search_no_click_zero_cost", not no_click, "Query Search render/no-click proof must have zero Snowflake cost.", actual=len(no_click), expected=0)
     add("query_search_export_no_query_text", not query_text_exports, "Default Query Search exports must not include query text.", actual=len(query_text_exports), expected=0)
     add("export_payloads_hash_and_row_valid", not export_failures, "Every export payload must exist and match visible row counts and hash.", actual=len(export_failures), expected=0)
     add("case_payloads_complete", not case_failures, "Case payload rows require section/workflow/scope/target/freshness/source/summary/row_count and visible row agreement.", actual=len(case_failures), expected=0)
-    add("daily_forbidden_token_scans_zero", bool(summary.get("evidence_gate_passed", True)) and _as_int(summary.get("forbidden_ui_token_count")) == 0, "Daily UI/export scans must have zero forbidden tokens.", actual=_as_int(summary.get("forbidden_ui_token_count")), expected=0)
+    add("daily_forbidden_token_scans_zero", bool(summary.get("evidence_gate_passed", True)) and _as_int(summary.get("forbidden_ui_token_count")) == 0 and _as_int(forbidden_daily.get("blocked_count")) == 0, "Daily UI/export scans must have zero forbidden tokens.", actual={"summary": _as_int(summary.get("forbidden_ui_token_count")), "daily_scan": _as_int(forbidden_daily.get("blocked_count"))}, expected=0)
     add("stress_thresholds_pass", not stress_failures, "All stress rows require real thresholds, actuals, and zero threshold failures.", actual=len(stress_failures), expected=0)
+    add("settings_actions_gated", not settings_gaps, "Settings/Admin actions must be clicked or owner-skipped, admin-gated, and sanitized.", actual=len(settings_gaps), expected=0)
+    add("live_features_gated", not live_gaps, "Live features must be click-required, gated, budget-observed, sanitized, and absent from first paint/routes.", actual=len(live_gaps), expected=0)
     add("settings_live_gating_passed", bool(_as_mapping(launch_artifacts.get("settings_live_closure_results")).get("passed")), "Settings/Admin and live features must remain gated, budgeted, and sanitized.", actual=_as_mapping(launch_artifacts.get("settings_live_closure_results")).get("passed"), expected=True)
     add("browser_or_snapshot_passed", bool(_as_mapping(launch_artifacts.get("browser_smoke_results")).get("passed")), "Browser or deterministic snapshot proof must pass for the selected profile.", actual=_as_mapping(launch_artifacts.get("browser_smoke_results")).get("passed"), expected=True)
     return {
@@ -2062,6 +2189,8 @@ def _release_candidate_summary_bundle(
     ci_context: Mapping[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
     matrix_rows = [_as_mapping(row) for row in matrix]
+    uploaded_names = _as_list(launch_summary.get("uploaded_artifact_names"))
+    artifact_bundle_name = uploaded_names[0] if uploaded_names else "decision-workspace-proof"
     release_matrix = [
         {
             "gate": "launch_readiness",
@@ -2102,6 +2231,21 @@ def _release_candidate_summary_bundle(
         }
         for row in matrix_rows
     )
+    notes_preview = _release_notes_payload(
+        launch_summary=launch_summary,
+        product_gauntlet=product_gauntlet,
+        ci_context=ci_context,
+        artifact_bundle_name=artifact_bundle_name,
+        hard_failures=[],
+    )
+    notes_gate = _release_notes_operator_ready(notes_preview, ci_context)
+    release_matrix.append(
+        {
+            "gate": "release_notes_operator_ready",
+            "passed": bool(notes_gate.get("passed")),
+            "artifact": f"{RELEASE_CANDIDATE_DIR}/release_notes.json",
+        }
+    )
     hard_failures = [
         row for row in release_matrix
         if not bool(row.get("passed"))
@@ -2109,14 +2253,26 @@ def _release_candidate_summary_bundle(
     all_passed = not hard_failures
     warning_count = 1 if str(launch_summary.get("ci_metadata_warning") or "") else 0
     waiver_count = 1 if str(launch_summary.get("live_validation_waiver_id") or "") else 0
+    ci_metadata_source = str(ci_context.get("proof_source") or "local_inventory")
+    if bool(ci_context.get("waiver_used")):
+        ci_metadata_source = "waived"
     summary = {
         "source": "release_candidate_summary",
         "proof_source": "runtime_click",
         "generated_at": _utc_now(),
         "commit_sha": str(launch_summary.get("commit_sha") or ci_context.get("commit_sha") or ""),
+        "source_tree_sha": str(ci_context.get("source_commit_sha") or launch_summary.get("commit_sha") or ""),
+        "github_sha": str(ci_context.get("github_sha") or ""),
         "launch_profile": str(launch_summary.get("launch_profile") or DEFAULT_LAUNCH_PROFILE),
         "workflow_url": str(launch_summary.get("workflow_url") or ci_context.get("workflow_url") or ""),
         "workflow_run_id": str(launch_summary.get("workflow_run_id") or ci_context.get("workflow_run_id") or ""),
+        "run_attempt": str(launch_summary.get("run_attempt") or ci_context.get("run_attempt") or ""),
+        "branch_ref": str(launch_summary.get("branch_ref") or ci_context.get("branch_ref") or ""),
+        "workflow_name": str(ci_context.get("workflow_name") or ""),
+        "job_name": str(ci_context.get("workflow_job") or ""),
+        "artifact_upload_name": artifact_bundle_name,
+        "uploaded_artifact_names": uploaded_names,
+        "ci_metadata_source": ci_metadata_source,
         "all_passed": all_passed,
         "hard_gate_failure_count": len(hard_failures),
         "warning_count": warning_count,
@@ -2130,7 +2286,9 @@ def _release_candidate_summary_bundle(
         "live_execution_manifest_passed": bool(launch_summary.get("live_execution_manifest_gate_passed")),
         "encoding_hygiene_passed": bool(launch_summary.get("encoding_hygiene_passed")),
         "cleanup_passed": _gate_passed(matrix_rows, "cleanup_closure"),
+        "artifact_reconciliation_passed": bool(reconciliation.get("passed")),
         "browser_or_snapshot_passed": _gate_passed(matrix_rows, "browser_or_rendered_snapshot"),
+        "product_gauntlet_passed": bool(product_gauntlet.get("passed")),
         "first_paint_slo_passed": bool(_check_passed(product_gauntlet, "first_paint_slo_passed")),
         "route_zero_query_passed": bool(_check_passed(product_gauntlet, "route_actions_zero_query")),
         "normal_evidence_compact_mart_passed": bool(_check_passed(product_gauntlet, "normal_evidence_compact_mart_backed")),
@@ -2139,7 +2297,12 @@ def _release_candidate_summary_bundle(
         "settings_live_gating_passed": _gate_passed(matrix_rows, "settings_live_closure"),
         "deployment_readiness_passed": _gate_passed(matrix_rows, "deployment_readiness"),
         "docs_readiness_passed": _gate_passed(matrix_rows, "docs_readiness"),
-        "artifact_bundle_name": "decision-workspace-proof",
+        "raw_sql_leak_count": _as_int(reconciliation.get("raw_sql_or_secret_count")),
+        "forbidden_daily_token_count": _as_int(launch_summary.get("forbidden_daily_token_count")),
+        "stale_artifact_count": _as_int(launch_summary.get("stale_artifact_count")),
+        "unknown_sql_object_count": _as_int(launch_summary.get("cleanup_unknown_sql_object_count")),
+        "dead_route_count": _as_int(launch_summary.get("cleanup_dead_route_count")),
+        "artifact_bundle_name": artifact_bundle_name,
         "raw_sql_included": False,
     }
     failures = {
@@ -2150,12 +2313,42 @@ def _release_candidate_summary_bundle(
         "failures": hard_failures,
         "raw_sql_included": False,
     }
-    notes = {
+    notes = _release_notes_payload(
+        launch_summary=launch_summary,
+        product_gauntlet=product_gauntlet,
+        ci_context=ci_context,
+        artifact_bundle_name=artifact_bundle_name,
+        hard_failures=hard_failures,
+    )
+    return summary, failures, release_matrix, notes
+
+
+def _release_notes_payload(
+    *,
+    launch_summary: Mapping[str, Any],
+    product_gauntlet: Mapping[str, Any],
+    ci_context: Mapping[str, Any],
+    artifact_bundle_name: str,
+    hard_failures: Iterable[Mapping[str, Any]],
+) -> dict[str, Any]:
+    return {
         "source": "release_candidate_notes",
         "proof_source": "runtime_click",
-        "commit_range": f"HEAD~1..{summary['commit_sha']}",
+        "commit_range": f"HEAD~1..{str(launch_summary.get('commit_sha') or ci_context.get('commit_sha') or '')}",
         "changed_files_summary": "Release-candidate proof bundle, CI context, artifact hashes, and manifest reconciliation.",
-        "launch_profile": summary["launch_profile"],
+        "launch_profile": str(launch_summary.get("launch_profile") or DEFAULT_LAUNCH_PROFILE),
+        "workflow_url": str(launch_summary.get("workflow_url") or ci_context.get("workflow_url") or ""),
+        "artifact_bundle_name": artifact_bundle_name,
+        "validation_commands": [
+            "python -m ruff check .overwatch_final tests tools",
+            "python -m mypy",
+            "python -m compileall .overwatch_final tools tests",
+            "python -m unittest tests.test_snowflake_execution_validation",
+            "python -m unittest tests.test_launch_readiness",
+            "python -m tools.contracts.encoding_hygiene",
+            "python -m unittest discover -s tests",
+        ],
+        "hard_blockers": list(hard_failures),
         "known_skips_or_waivers": [
             value for value in (
                 str(launch_summary.get("snowflake_validation_skip_reason") or ""),
@@ -2163,24 +2356,65 @@ def _release_candidate_summary_bundle(
             )
             if value
         ],
-        "hard_blockers": hard_failures,
-        "artifact_bundle_name": summary["artifact_bundle_name"],
-        "validation_commands": [
-            "python -m unittest tests.test_snowflake_execution_validation",
-            "python -m unittest tests.test_launch_readiness",
-            "python -m tools.contracts.encoding_hygiene",
-            "python -m unittest discover -s tests",
-        ],
+        "live_snowflake_validation_status": str(launch_summary.get("live_validation_status") or ""),
+        "browser_proof_status": "passed" if bool(launch_summary.get("browser_or_snapshot_passed", True)) else "failed",
+        "snowflake_validation_status": "passed" if bool(launch_summary.get("snowflake_validation_passed")) else "failed",
+        "product_gauntlet_status": "passed" if bool(product_gauntlet.get("passed")) else "failed",
+        "rollback_notes": "Use the documented drop/rollback readiness artifact and last-known-good packet path before reverting a release candidate.",
         "operator_next_steps": [
             "Review artifacts/release_candidate/release_candidate_summary.json.",
-            "Confirm CI uploaded decision-workspace-proof for the evaluated commit.",
+            f"Confirm CI uploaded {artifact_bundle_name} for the evaluated commit.",
             "Promote only when live Snowflake proof or signed profile waiver is present for non-fixture profiles.",
         ],
         "waiver_section_present": True,
         "blocker_section_present": True,
         "raw_sql_included": False,
     }
-    return summary, failures, release_matrix, notes
+
+
+def _release_notes_operator_ready(notes: Mapping[str, Any], ci_context: Mapping[str, Any]) -> dict[str, Any]:
+    required = {
+        "commit_range",
+        "changed_files_summary",
+        "launch_profile",
+        "workflow_url",
+        "artifact_bundle_name",
+        "validation_commands",
+        "hard_blockers",
+        "known_skips_or_waivers",
+        "live_snowflake_validation_status",
+        "browser_proof_status",
+        "snowflake_validation_status",
+        "product_gauntlet_status",
+        "rollback_notes",
+        "operator_next_steps",
+    }
+    missing = sorted(key for key in required if key not in notes)
+    empty = sorted(
+        key for key in required
+        if key in notes and key not in {"hard_blockers", "known_skips_or_waivers", "workflow_url"} and not notes.get(key)
+    )
+    if bool(ci_context.get("github_actions")) and not str(notes.get("workflow_url") or ""):
+        empty.append("workflow_url")
+    raw_or_secret = _raw_sql_or_secret_value(notes)
+    failures = []
+    if missing:
+        failures.append({"code": "RELEASE_NOTES_FIELD_MISSING", "fields": missing})
+    if empty:
+        failures.append({"code": "RELEASE_NOTES_FIELD_EMPTY", "fields": sorted(set(empty))})
+    if raw_or_secret:
+        failures.append({"code": "RELEASE_NOTES_RAW_SQL_OR_SECRET"})
+    return {
+        "source": "release_notes_operator_ready",
+        "passed": not failures,
+        "failure_count": len(failures),
+        "failures": failures,
+        "missing_fields": missing,
+        "empty_fields": sorted(set(empty)),
+        "raw_sql_or_secret_count": 1 if raw_or_secret else 0,
+        "recommendation": "" if not failures else "Populate release notes with operator-ready workflow, validation, rollback, blocker, and waiver details.",
+        "raw_sql_included": False,
+    }
 
 
 def _gate_passed(matrix_rows: Iterable[Mapping[str, Any]], gate: str) -> bool:
@@ -2481,10 +2715,10 @@ def _raw_invariant_artifacts(root: Path, payloads: Mapping[str, Any]) -> tuple[d
 
 def _ci_metadata() -> dict[str, Any]:
     github_actions = os.environ.get("GITHUB_ACTIONS", "").lower() == "true"
-    server = os.environ.get("GITHUB_SERVER_URL", "https://github.com").rstrip("/")
-    repo = os.environ.get("GITHUB_REPOSITORY", "jfreeze03/OVERWATCH").strip("/")
+    server = os.environ.get("GITHUB_SERVER_URL", "" if github_actions else "https://github.com").rstrip("/")
+    repo = os.environ.get("GITHUB_REPOSITORY", "" if github_actions else "jfreeze03/OVERWATCH").strip("/")
     run_id = os.environ.get("GITHUB_RUN_ID", "")
-    run_url = f"{server}/{repo}/actions/runs/{run_id}" if run_id else ""
+    run_url = f"{server}/{repo}/actions/runs/{run_id}" if run_id and server and repo else ""
     source_commit_sha = _git_output("rev-parse", "HEAD")
     commit_sha = os.environ.get("GITHUB_SHA", "") or source_commit_sha
     branch_ref = os.environ.get("GITHUB_REF", "") or os.environ.get("GITHUB_REF_NAME", "") or _git_output("branch", "--show-current")
@@ -2499,6 +2733,7 @@ def _ci_metadata() -> dict[str, Any]:
         "github_sha": os.environ.get("GITHUB_SHA", ""),
         "commit_sha": commit_sha,
         "source_commit_sha": source_commit_sha,
+        "source_tree_sha": source_commit_sha,
         "branch_ref": branch_ref,
         "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT", ""),
     }
@@ -3734,8 +3969,12 @@ def evaluate_launch_readiness(
         "workflow_run_id": ci_meta["workflow_run_id"],
         "workflow_url": ci_meta["workflow_url"],
         "commit_sha": ci_meta["commit_sha"],
+        "source_tree_sha": ci_meta["source_tree_sha"],
+        "github_sha": ci_meta["github_sha"],
         "branch_ref": ci_meta["branch_ref"],
         "run_attempt": ci_meta["run_attempt"],
+        "workflow_name": ci_meta["workflow_name"],
+        "job_name": ci_meta["workflow_job"],
         "ci_metadata_warning": str(ci_run_review.get("warning") or ""),
         "ci_metadata_required": bool(ci_run_review.get("workflow_metadata_required")),
         "ci_metadata_missing": bool(ci_run_review.get("workflow_metadata_missing")),
@@ -3745,6 +3984,7 @@ def evaluate_launch_readiness(
         "release_candidate_bundle_failure_count": _as_int(release_candidate_gate.get("failure_count")),
         "release_candidate_artifact_count": _as_int(release_candidate_gate.get("artifact_count")),
         "release_candidate_artifact_hash_count": _as_int(release_candidate_gate.get("artifact_hash_count")),
+        "browser_or_snapshot_passed": _gate_passed(matrix, "browser_or_rendered_snapshot"),
         "missing_artifacts": _as_list(artifact_review.get("missing_required_gauntlet_artifacts")),
         "stale_artifacts": _as_list(artifact_review.get("stale_artifacts")),
         "stale_artifact_count": _as_int(artifact_review.get("stale_artifact_count")),
@@ -3805,6 +4045,8 @@ def evaluate_launch_readiness(
         "compact_missing_target_columns": _as_list(snowflake_gate.get("compact_missing_target_columns")),
         "encoding_hygiene_passed": bool(encoding_hygiene.get("passed")),
         "encoding_blocked_count": _as_int(encoding_hygiene.get("blocked_count")),
+        "forbidden_daily_token_count": _as_int(summary.get("forbidden_daily_ui_token_count"))
+        or _as_int(_as_mapping(payloads.get("artifacts/full_app_validation/forbidden_daily_ui_scan.json")).get("blocked_count")),
         "cleanup_unknown_sql_object_count": _as_int(summary.get("cleanup_unknown_sql_object_count")),
         "cleanup_dead_route_count": _as_int(summary.get("cleanup_dead_route_count")),
         "export_count": _as_int(summary.get("total_exports_validated") or summary.get("export_count")),

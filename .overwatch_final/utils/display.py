@@ -1,4 +1,7 @@
 # utils/display.py - chart and drill-down rendering helpers
+import hashlib
+import re
+
 import streamlit as st
 import pandas as pd
 from config import DAY_WINDOW_OPTIONS, DEFAULT_DAY_WINDOW
@@ -14,6 +17,7 @@ from .helpers import safe_float
 from .workflows import add_cost_companion_columns, prioritize_context_columns
 from .workflows import apply_operator_status_labels
 from .workflows import render_mode_selector, render_priority_dataframe
+from performance import query_budget_context
 
 
 DISPLAY_VERSION = "2026-06-05-chart-drillback-cost-v1"
@@ -358,6 +362,13 @@ def _query_history_detail_exprs(prefix: str = "") -> dict:
 
 # -- Query drill-down -----------------------------------------------------------
 
+def _statement_fingerprint(statement_text: object) -> str:
+    """Return a short, stable statement fingerprint without exposing SQL text."""
+    normalized = re.sub(r"\s+", " ", str(statement_text or "").strip())
+    if not normalized:
+        return ""
+    return hashlib.sha1(normalized.encode("utf-8", errors="ignore")).hexdigest()[:12]
+
 def render_query_drilldown(
     df: pd.DataFrame,
     key: str,
@@ -412,24 +423,29 @@ def render_query_drilldown(
             ("Est. Credits", format_credits(est_cr)),
         ))
 
-        st.markdown("**Statement Text**")
-        st.code(str(row.get("QUERY_TEXT","")), language="text")
-
-        from .session import get_session
-        _session = get_session()
+        fingerprint = _statement_fingerprint(row.get("QUERY_TEXT", ""))
+        st.markdown("**Statement Summary**")
+        if fingerprint:
+            st.caption(
+                f"Statement fingerprint: `{fingerprint}`. "
+                "Full SQL text is hidden in the daily view."
+            )
+        else:
+            st.caption("Statement text is not available for this row.")
 
         if st.button("Load operator stats", key=f"{key}_opstats"):
             try:
-                ops_df = run_query_or_raise(
-                    f"SELECT * FROM TABLE(GET_QUERY_OPERATOR_STATS({sql_literal(qid)}))"
-                )
+                with query_budget_context("advanced_diagnostics", section="Workload Operations", workflow="Query Drilldown", budget=1):
+                    ops_df = run_query_or_raise(
+                        f"SELECT * FROM TABLE(GET_QUERY_OPERATOR_STATS({sql_literal(qid)}))"
+                    )
                 st.dataframe(
                     apply_operator_status_labels(add_cost_companion_columns(ops_df)),
                     width="stretch",
                     height=350,
                 )
             except Exception as e:
-                st.info(f"Operator stats unavailable: {format_snowflake_error(e)}")
+                st.info(f"Operator stats unavailable. {format_snowflake_error(e)}")
 
 
 # -- Warehouse drill-down -------------------------------------------------------

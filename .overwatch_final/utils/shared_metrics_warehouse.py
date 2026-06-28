@@ -863,6 +863,7 @@ def load_shared_warehouse_right_sizing(
                 SELECT
                     q.warehouse_name,
                     q.warehouse_size,
+                    {days} AS lookback_days,
                     q.total_queries,
                     ROUND(q.avg_queue_sec, 2) AS avg_queue_sec,
                     ROUND(q.remote_spill_gb, 2) AS remote_spill_gb,
@@ -887,5 +888,4 @@ def load_shared_warehouse_right_sizing(
             return _empty_result("Warehouse right-sizing advisor", f"Warehouse sizing telemetry unavailable: {exc}")
 
     return _load_or_reuse("shared_warehouse_right_sizing", (company, days), _loader, force=force)
-
 

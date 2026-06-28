@@ -537,23 +537,32 @@ def render_mode_selector(
         return str(st.session_state.get(key, selected))
 
     segmented = getattr(st, "segmented_control", None)
+    widget_has_state = key in st.session_state
     if callable(segmented):
+        segmented_kwargs = {
+            "selection_mode": "single",
+            "key": key,
+            "label_visibility": label_visibility,
+            "width": "stretch",
+        }
+        if not widget_has_state:
+            segmented_kwargs["default"] = selected
         value = segmented(
             label,
             options,
-            selection_mode="single",
-            default=selected,
-            key=key,
-            label_visibility=label_visibility,
-            width="stretch",
+            **segmented_kwargs,
         )
     else:
+        selectbox_kwargs = {
+            "key": key,
+            "label_visibility": label_visibility,
+        }
+        if not widget_has_state:
+            selectbox_kwargs["index"] = options.index(selected)
         value = st.selectbox(
             label,
             options,
-            index=options.index(selected),
-            key=key,
-            label_visibility=label_visibility,
+            **selectbox_kwargs,
         )
     if value not in options:
         return str(selected)

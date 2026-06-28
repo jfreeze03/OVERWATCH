@@ -7986,6 +7986,73 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("guarded controls", decision["EXECUTION_BOUNDARY"])
         self.assertIn("queue, spill, runtime", decision["VERIFY_NEXT"])
 
+    def test_warehouse_sizing_decision_flags_low_pressure_savings_candidates(self):
+        decision = warehouse_sizing_decision(pd.Series({
+            "WAREHOUSE_NAME": "SAVE_WH",
+            "WAREHOUSE_SIZE": "Large",
+            "TOTAL_QUERIES": 450,
+            "TOTAL_CREDITS": 120.0,
+            "LOOKBACK_DAYS": 14,
+            "AVG_QUEUE_SEC": 0.1,
+            "REMOTE_SPILL_GB": 0.0,
+            "AVG_CACHE_PCT": 82.0,
+        }))
+
+        self.assertEqual(decision["DECISION"], "Downsize candidate")
+        self.assertIn("SAVE_WH", decision["EVIDENCE_PACKET"])
+        self.assertIn("/mo run-rate", decision["EVIDENCE_PACKET"])
+        self.assertIn("remote spill", decision["EVIDENCE_PACKET"])
+
+    def test_warehouse_advisor_recommendation_message_shows_savings_and_spill(self):
+        from utils.optimization_advisor import (
+            _right_size_monthly_run_rate_usd,
+            _right_size_monthly_savings_usd,
+            _right_size_recommendation_message,
+        )
+
+        savings_row = pd.Series({
+            "WAREHOUSE_NAME": "SAVE_WH",
+            "WAREHOUSE_SIZE": "Large",
+            "TOTAL_QUERIES": 450,
+            "TOTAL_CREDITS": 120.0,
+            "LOOKBACK_DAYS": 14,
+            "AVG_QUEUE_SEC": 0.1,
+            "REMOTE_SPILL_GB": 0.0,
+            "DECISION": "Downsize candidate",
+            "SAFE_NEXT_ACTION": "Validate one size down.",
+            "PROOF_REQUIRED": "Credits fall without worse queue or spill.",
+        })
+        savings_row["EST_MONTHLY_RUN_RATE_USD"] = _right_size_monthly_run_rate_usd(savings_row, 14, 3.68)
+        savings_row["EST_MONTHLY_SAVINGS_USD"] = _right_size_monthly_savings_usd(savings_row, 14, 3.68)
+
+        savings_message = _right_size_recommendation_message(savings_row)
+
+        self.assertGreater(savings_row["EST_MONTHLY_SAVINGS_USD"], 0)
+        self.assertIn("Estimated savings: $", savings_message)
+        self.assertIn("remote spill: 0.00 GB", savings_message)
+        self.assertIn("window credits: 120.00", savings_message)
+
+        spill_row = pd.Series({
+            "WAREHOUSE_NAME": "SPILL_WH",
+            "WAREHOUSE_SIZE": "Medium",
+            "TOTAL_QUERIES": 300,
+            "TOTAL_CREDITS": 48.0,
+            "LOOKBACK_DAYS": 14,
+            "AVG_QUEUE_SEC": 0.5,
+            "REMOTE_SPILL_GB": 12.5,
+            "DECISION": "Memory pressure: tune query shape first",
+            "SAFE_NEXT_ACTION": "Inspect query profiles.",
+            "PROOF_REQUIRED": "Remote spill falls for the same workload.",
+        })
+        spill_row["EST_MONTHLY_RUN_RATE_USD"] = _right_size_monthly_run_rate_usd(spill_row, 14, 3.68)
+        spill_row["EST_MONTHLY_SAVINGS_USD"] = _right_size_monthly_savings_usd(spill_row, 14, 3.68)
+
+        spill_message = _right_size_recommendation_message(spill_row)
+
+        self.assertEqual(spill_row["EST_MONTHLY_SAVINGS_USD"], 0.0)
+        self.assertIn("Monthly run-rate: $", spill_message)
+        self.assertIn("remote spill: 12.50 GB", spill_message)
+
     def test_automation_readiness_identifies_guided_warehouse_change(self):
         board = build_automation_readiness_board([{
             "Source": "Idle warehouse detector",

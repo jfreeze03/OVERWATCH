@@ -1755,6 +1755,7 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         self.assertTrue(stale_summary["passed_query_budget"])
         events = list(state.get("_overwatch_query_budget_context_events", []))
         self.assertEqual([event["name"] for event in events], ["admin_setup", "evidence_click"])
+        self.assertEqual(events[0]["budget"], performance.DECISION_BOOTSTRAP_QUERY_BUDGET)
         self.assertTrue(events[0]["passed_query_budget"])
 
     def test_bootstrap_replays_stored_failure_as_clean_setup_message(self):

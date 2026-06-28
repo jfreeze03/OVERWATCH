@@ -6,7 +6,7 @@ import re
 
 import pandas as pd
 
-from config import THRESHOLDS
+from config import DEFAULTS, THRESHOLDS, WAREHOUSE_ADVISOR_CONFIG
 
 from .helpers import safe_float, safe_int
 
@@ -680,10 +680,25 @@ def warehouse_sizing_decision(row: Mapping | pd.Series | dict) -> dict:
     queries = safe_int(_row_value(row, "TOTAL_QUERIES", default=0))
     cache_pct = _num(row, "AVG_CACHE_PCT", "Avg Cache Pct")
     spill_threshold = safe_float(THRESHOLDS.get("spill_warning_gb", 5), 5)
+    lookback_days = max(1, safe_int(_row_value(row, "LOOKBACK_DAYS", "WINDOW_DAYS", "DAYS", default=14), 14))
+    advisor_cfg = WAREHOUSE_ADVISOR_CONFIG
+    monthly_run_rate_usd = credits / lookback_days * 30 * safe_float(
+        DEFAULTS.get("credit_price"),
+        3.68,
+    )
+    size_key = size.upper().replace("-", "").replace(" ", "")
+    downsize_candidate = (
+        queries > 0
+        and size_key not in {"", "XSMALL", "UNKNOWN", "UNKNOWNSIZE"}
+        and monthly_run_rate_usd >= safe_float(advisor_cfg.get("downsize_min_monthly_usd"), 100.0)
+        and queue_sec <= safe_float(advisor_cfg.get("downsize_max_queue_sec"), 1.0)
+        and spill <= safe_float(advisor_cfg.get("downsize_max_spill_gb"), 1.0)
+    )
 
     evidence = (
         f"{warehouse} ({size}): {queries:,} queries, {credits:,.2f} credits, "
-        f"{queue_sec:,.2f}s avg queue, {spill:,.2f} GB remote spill, {cache_pct:,.1f}% cache."
+        f"${monthly_run_rate_usd:,.0f}/mo run-rate, {queue_sec:,.2f}s avg queue, "
+        f"{spill:,.2f} GB remote spill, {cache_pct:,.1f}% cache."
     )
 
     def with_contract(result: dict) -> dict:
@@ -730,7 +745,7 @@ def warehouse_sizing_decision(row: Mapping | pd.Series | dict) -> dict:
             "PROOF_REQUIRED": "Queued overload time drops without a matching credit spike outside the target window.",
             "DO_NOT_DO": "Do not upsize just to reduce queueing when the symptom is concurrent demand.",
         })
-    if credits < 1 and size.upper() not in {"", "X-SMALL", "XSMALL", "UNKNOWN SIZE"}:
+    if downsize_candidate:
         return with_contract({
             "DECISION": "Downsize candidate",
             "EVIDENCE_PACKET": evidence,

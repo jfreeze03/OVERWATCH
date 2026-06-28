@@ -91,7 +91,7 @@ def _load_security_brief(
             if not quiet:
                 st.info(
                     "Fast security summary is unavailable for this scope. "
-                    "Load security evidence for bounded live account-history telemetry."
+                    "Review setup health or use the explicit admin fallback if account-history proof is required."
                 )
             return
         try:

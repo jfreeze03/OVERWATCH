@@ -368,14 +368,14 @@ class SecurityPostureSplitTests(unittest.TestCase):
         exception_gate.assert_called_once_with("ALFA", "PROD", 30)
         freshness.assert_called_once()
 
-    def test_overview_refresh_helper_calls_live_fallback_loader(self):
+    def test_overview_refresh_helper_keeps_normal_evidence_on_fast_summary(self):
         with patch("sections.security_posture_overview_view._load_security_brief") as load_brief:
             overview_view._refresh_security_summary("ALFA", "PROD", 30)
         load_brief.assert_called_once_with(
             days=30,
             company="ALFA",
             environment="PROD",
-            allow_live_fallback=True,
+            allow_live_fallback=False,
             quiet=False,
         )
 

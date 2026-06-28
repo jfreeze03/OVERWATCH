@@ -807,7 +807,7 @@ def _refresh_security_summary(company: str, environment: str, days: int) -> None
         days=days,
         company=company,
         environment=environment,
-        allow_live_fallback=True,
+        allow_live_fallback=False,
         quiet=False,
     )
 

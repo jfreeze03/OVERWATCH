@@ -2,7 +2,7 @@
 import pandas as pd
 import streamlit as st
 
-from config import THRESHOLDS
+from config import THRESHOLDS, WAREHOUSE_ADVISOR_CONFIG
 from runtime_state import get_state, set_state
 from sections.shell_helpers import render_shell_snapshot
 
@@ -39,12 +39,59 @@ def _monthly_idle_savings_usd(idle_credits: object, days: int, credit_price: flo
 
 
 def _right_size_monthly_savings_usd(row, days: int, credit_price: float) -> float:
-    decision = str(row.get("DECISION", "") or "").lower()
-    if "downsize candidate" not in decision:
+    if not _right_size_savings_candidate(row, days, credit_price):
         return 0.0
-    lookback_days = max(1, int(days or 14))
-    monthly_run_rate = safe_float(row.get("TOTAL_CREDITS", 0)) / lookback_days * 30
-    return round(credits_to_dollars(monthly_run_rate * 0.40, credit_price), 2)
+    monthly_run_rate = _right_size_monthly_run_rate_usd(row, days, credit_price)
+    return round(monthly_run_rate * safe_float(WAREHOUSE_ADVISOR_CONFIG.get("downsize_recoverable_rate"), 0.40), 2)
+
+
+def _right_size_lookback_days(row, days: int) -> int:
+    value = row.get("LOOKBACK_DAYS", row.get("WINDOW_DAYS", row.get("DAYS", days))) if hasattr(row, "get") else days
+    return max(1, int(safe_float(value, days or 14) or days or 14))
+
+
+def _right_size_monthly_run_rate_usd(row, days: int, credit_price: float) -> float:
+    lookback_days = _right_size_lookback_days(row, days)
+    monthly_credits = safe_float(row.get("TOTAL_CREDITS", 0)) / lookback_days * 30
+    return credits_to_dollars(monthly_credits, credit_price)
+
+
+def _right_size_savings_candidate(row, days: int, credit_price: float) -> bool:
+    decision = str(row.get("DECISION", "") or "").lower()
+    if "downsize candidate" in decision:
+        return True
+    size = str(row.get("WAREHOUSE_SIZE", "") or "").upper().replace("-", "").replace(" ", "")
+    if size in {"", "XSMALL", "UNKNOWN", "UNKNOWNSIZE"}:
+        return False
+    if safe_float(row.get("TOTAL_QUERIES", 0)) <= 0:
+        return False
+    if safe_float(row.get("AVG_QUEUE_SEC", 0)) > safe_float(WAREHOUSE_ADVISOR_CONFIG.get("downsize_max_queue_sec"), 1.0):
+        return False
+    if safe_float(row.get("REMOTE_SPILL_GB", 0)) > safe_float(WAREHOUSE_ADVISOR_CONFIG.get("downsize_max_spill_gb"), 1.0):
+        return False
+    return _right_size_monthly_run_rate_usd(row, days, credit_price) >= safe_float(
+        WAREHOUSE_ADVISOR_CONFIG.get("downsize_min_monthly_usd"),
+        100.0,
+    )
+
+
+def _right_size_recommendation_message(row) -> str:
+    savings = safe_float(row.get("EST_MONTHLY_SAVINGS_USD"))
+    run_rate = safe_float(row.get("EST_MONTHLY_RUN_RATE_USD"))
+    spill = safe_float(row.get("REMOTE_SPILL_GB"))
+    queue = safe_float(row.get("AVG_QUEUE_SEC"))
+    credits = safe_float(row.get("TOTAL_CREDITS"))
+    decision = str(row.get("DECISION", "Review warehouse sizing"))
+    value_phrase = (
+        f"Estimated savings: ${savings:,.0f}/mo"
+        if savings > 0
+        else f"Monthly run-rate: ${run_rate:,.0f}"
+    )
+    return (
+        f"**{row.get('WAREHOUSE_NAME', '')}**: {decision}. {value_phrase}; "
+        f"remote spill: {spill:,.2f} GB; avg queue: {queue:,.2f}s; window credits: {credits:,.2f}. "
+        f"{row.get('SAFE_NEXT_ACTION', '')} Proof: {row.get('PROOF_REQUIRED', '')}"
+    )
 
 
 def _advisor_value_type(row) -> str:
@@ -268,6 +315,10 @@ def render_optimization_advisor():
             df_s = opt_df_sz.copy()
             decision_rows = [warehouse_sizing_decision(row) for _, row in df_s.iterrows()]
             df_s = pd.concat([df_s.reset_index(drop=True), pd.DataFrame(decision_rows)], axis=1)
+            df_s["EST_MONTHLY_RUN_RATE_USD"] = df_s.apply(
+                lambda row: _right_size_monthly_run_rate_usd(row, sz_days, credit_price),
+                axis=1,
+            )
             df_s["EST_MONTHLY_SAVINGS_USD"] = df_s.apply(
                 lambda row: _right_size_monthly_savings_usd(row, sz_days, credit_price),
                 axis=1,
@@ -289,6 +340,7 @@ def render_optimization_advisor():
                 priority_columns=[
                     "DECISION",
                     "VALUE_TYPE",
+                    "EST_MONTHLY_RUN_RATE_USD",
                     "EST_MONTHLY_SAVINGS_USD",
                     "EVIDENCE_PACKET",
                     "SAFE_NEXT_ACTION",
@@ -317,10 +369,7 @@ def render_optimization_advisor():
                 decision = str(row.get("DECISION", ""))
                 if decision == "No sizing change from this evidence":
                     continue
-                message = (
-                    f"**{row.get('WAREHOUSE_NAME', '')}**: {decision}. "
-                    f"{row.get('SAFE_NEXT_ACTION', '')} Proof: {row.get('PROOF_REQUIRED', '')}"
-                )
+                message = _right_size_recommendation_message(row)
                 if "incident" in decision.lower():
                     st.error(message)
                 elif "candidate" in decision.lower():

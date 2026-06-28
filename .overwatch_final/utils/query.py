@@ -716,6 +716,11 @@ def format_snowflake_error(error: Exception, max_len: int = 320) -> str:
         return "Snowflake returned an empty error."
 
     lower = text.lower()
+    if "get_query_operator_stats" in lower or "profile expired" in lower:
+        return (
+            "Operator profile details are not available for this query. "
+            "Choose a newer query or use the summary metrics already shown."
+        )
     if "requested information on the current user is not accessible in stored procedure" in lower:
         return (
             "Snowflake blocked this live metadata call in the Streamlit execution context. "
@@ -729,6 +734,8 @@ def format_snowflake_error(error: Exception, max_len: int = 320) -> str:
         return "The current role cannot access this Snowflake object or operation."
     if "insufficient privileges" in lower or "insufficient privilege" in lower:
         return "The current role does not have the required Snowflake privilege for this action."
+    if "sql compilation error" in lower:
+        return "Snowflake could not run this operation in the current role or object context."
 
     text = re.sub(r"^\(\d+\):\s*[0-9a-f-]+:\s*", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\s+", " ", text)

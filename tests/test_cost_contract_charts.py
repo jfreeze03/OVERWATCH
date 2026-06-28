@@ -134,6 +134,33 @@ class CostContractChartTests(unittest.TestCase):
 
         chart_renderer.assert_called_once_with()
 
+    def test_mode_selector_omits_default_when_session_state_already_has_key(self):
+        from utils import workflows
+
+        state = {"cost_demo_chart_data_mode": "Data"}
+        captured: dict[str, object] = {}
+
+        def _segmented_control(label, options, **kwargs):
+            captured.update(kwargs)
+            return state["cost_demo_chart_data_mode"]
+
+        with patch.object(workflows.st, "session_state", state), patch.object(
+            workflows.st,
+            "segmented_control",
+            side_effect=_segmented_control,
+            create=True,
+        ):
+            selected = workflows.render_mode_selector(
+                "Chart view",
+                "cost_demo_chart_data_mode",
+                ("Chart", "Data"),
+                default="Chart",
+            )
+
+        self.assertEqual(selected, "Data")
+        self.assertNotIn("default", captured)
+        self.assertEqual(captured["key"], "cost_demo_chart_data_mode")
+
     def test_cost_charts_keep_altair_lazy(self):
         chart_text = (APP_ROOT / "sections" / "cost_contract_charts.py").read_text(encoding="utf-8")
 

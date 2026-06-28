@@ -48,6 +48,8 @@ ACTIVE_LAUNCH_OBJECTS = {
 
 REQUIRED_RESULT_FILES = {
     "snowflake_validation_summary",
+    "live_validation_environment_results",
+    "live_validation_session_results",
     "setup_execution_results",
     "procedure_compile_results",
     "procedure_compile_coverage_results",
@@ -115,15 +117,22 @@ _BAD_SQL_TEXT_PATTERNS = (
 )
 
 REQUIRED_SMOKE_TARGETS = (
-    ("refresh_fast", "SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST", "live"),
-    ("refresh_full", "SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL", "dry_run"),
-    ("setup_health", "SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS", "live"),
-    ("compact_evidence_validation", "SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS_FAST_IMPL", "live"),
-    ("current_packet_validation", "SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS_FAST_IMPL", "live"),
-    ("last_known_good_fallback_validation", "SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS", "dry_run"),
-    ("optional_optimization_status", "SP_OVERWATCH_APPLY_OPTIONAL_PERFORMANCE_OPTIMIZATION", "dry_run"),
-    ("validation_sql_smoke", "OVERWATCH_MART_VALIDATION_SQL", "dry_run"),
+    ("fast_refresh_validation", "SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST", "live", "safe_read"),
+    ("full_refresh_validation_or_dry_run", "SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL", "dry_run", "dry_run_required"),
+    ("setup_health_validation", "SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS", "live", "safe_read"),
+    ("compact_evidence_validation", "SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS_FAST_IMPL", "live", "safe_read"),
+    ("current_packet_validation", "SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS_FAST_IMPL", "live", "safe_read"),
+    ("last_known_good_fallback_validation", "SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS", "dry_run", "dry_run_required"),
+    ("validation_sql_smoke", "OVERWATCH_MART_VALIDATION_SQL", "dry_run", "dry_run_required"),
+    (
+        "optional_optimization_status_read_only",
+        "SP_OVERWATCH_APPLY_OPTIONAL_PERFORMANCE_OPTIMIZATION",
+        "dry_run",
+        "destructive_requires_flag",
+    ),
 )
+
+GENERIC_SKIP_TEXT = {"", "n/a", "na", "none", "todo", "tbd", "future", "optional", "unsupported"}
 
 REQUIRED_PACKET_DETAIL_CHECKS = (
     "current_active_unique",
@@ -155,6 +164,14 @@ def _write_json(path: Path, payload: Any) -> None:
 def _normalize_name(name: str) -> str:
     parts = [part.strip('"') for part in str(name or "").split(".") if part.strip()]
     return (parts[-1] if parts else "").upper()
+
+
+def _normalize_signature(signature: str) -> str:
+    return re.sub(r"\s+", " ", str(signature or "").upper()).strip()
+
+
+def _line_number(text: str, offset: int) -> int:
+    return str(text or "")[: max(0, offset)].count("\n") + 1
 
 
 def sanitize_snowflake_error(error: object) -> str:
@@ -455,8 +472,8 @@ def _duplicate_select_projection_count(sql: str) -> int:
     return len(duplicates)
 
 
-def _extract_procedures(sql: str, rel: str) -> list[dict[str, str]]:
-    rows: list[dict[str, str]] = []
+def _extract_procedures(sql: str, rel: str, *, base_line: int = 1) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
     pattern = re.compile(
         r"\bCREATE\s+OR\s+REPLACE\s+PROCEDURE\s+((?:\"[^\"]+\"|[A-Z0-9_]+)(?:\.(?:\"[^\"]+\"|[A-Z0-9_]+))*)\s*(\([^)]*\))",
         re.IGNORECASE,
@@ -467,6 +484,8 @@ def _extract_procedures(sql: str, rel: str) -> list[dict[str, str]]:
                 "file": rel,
                 "procedure_name": _normalize_name(match.group(1)),
                 "signature": re.sub(r"\s+", " ", match.group(2)).strip(),
+                "normalized_signature": _normalize_signature(match.group(2)),
+                "source_line": base_line + _line_number(sql, match.start()) - 1,
             }
         )
     return rows
@@ -637,8 +656,13 @@ def _static_setup_results(root: Path, texts: Mapping[str, str]) -> list[dict[str
 def _procedure_compile_statements(texts: Mapping[str, str]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for rel, text in texts.items():
+        cursor = 0
         for index, statement in enumerate(split_sql_statements(text), 1):
-            procedures = _extract_procedures(statement, rel)
+            statement_offset = text.find(statement, cursor)
+            if statement_offset < 0:
+                statement_offset = cursor
+            cursor = statement_offset + len(statement)
+            procedures = _extract_procedures(statement, rel, base_line=_line_number(text, statement_offset))
             if not procedures:
                 continue
             for proc in procedures:
@@ -648,6 +672,8 @@ def _procedure_compile_statements(texts: Mapping[str, str]) -> list[dict[str, An
                         "statement_index": index,
                         "procedure_name": proc["procedure_name"],
                         "signature": proc["signature"],
+                        "normalized_signature": proc["normalized_signature"],
+                        "source_line": proc["source_line"],
                         "statement": statement,
                     }
                 )
@@ -669,6 +695,13 @@ def _compile_results(texts: Mapping[str, str], *, live_enabled: bool = False, ro
                 status="passed",
                 recommendation="",
             )
+        )
+        rows[-1].update(
+            {
+                "signature": proc.get("signature") or "",
+                "normalized_signature": proc.get("normalized_signature") or "",
+                "source_line": int(proc.get("source_line") or 0),
+            }
         )
     if not live_enabled:
         return rows
@@ -699,6 +732,13 @@ def _compile_results(texts: Mapping[str, str], *, live_enabled: bool = False, ro
                     recommendation="Configure a Snowflake validation session or disable live validation for fixture profile.",
                 )
             )
+            rows[-1].update(
+                {
+                    "signature": proc.get("signature") or "",
+                    "normalized_signature": proc.get("normalized_signature") or "",
+                    "source_line": int(proc.get("source_line") or 0),
+                }
+            )
         return rows
 
     for proc in compile_statements:
@@ -718,6 +758,13 @@ def _compile_results(texts: Mapping[str, str], *, live_enabled: bool = False, ro
                     recommendation="",
                 )
             )
+            rows[-1].update(
+                {
+                    "signature": proc.get("signature") or "",
+                    "normalized_signature": proc.get("normalized_signature") or "",
+                    "source_line": int(proc.get("source_line") or 0),
+                }
+            )
         except Exception as exc:
             rows.append(
                 _result_row(
@@ -732,6 +779,13 @@ def _compile_results(texts: Mapping[str, str], *, live_enabled: bool = False, ro
                     sanitized_error=sanitize_snowflake_error(exc),
                     recommendation="Fix the stored procedure compile error in Snowflake and rerun live validation.",
                 )
+            )
+            rows[-1].update(
+                {
+                    "signature": proc.get("signature") or "",
+                    "normalized_signature": proc.get("normalized_signature") or "",
+                    "source_line": int(proc.get("source_line") or 0),
+                }
             )
     return rows
 
@@ -796,16 +850,18 @@ def _procedure_compile_coverage_results(
     procedures = [_as_mapping(row) for row in dependency_graph.get("procedures", [])] if isinstance(dependency_graph, Mapping) else []
     compile = [_as_mapping(row) for row in compile_rows]
     definitions = {str(row.get("procedure_name") or "") for row in procedures}
-    static_compiled = {
-        str(row.get("procedure_name") or "")
-        for row in compile
-        if str(row.get("phase") or "") == "procedure_compile_static"
-    }
-    live_compiled = {
-        str(row.get("procedure_name") or "")
-        for row in compile
-        if str(row.get("phase") or "") == "procedure_compile_live"
-    }
+    static_status: dict[str, str] = {}
+    live_status: dict[str, str] = {}
+    for row in compile:
+        name = str(row.get("procedure_name") or "")
+        phase = str(row.get("phase") or "")
+        status = str(row.get("status") or "")
+        if phase == "procedure_compile_static":
+            static_status[name] = "failed" if status == "failed" else static_status.get(name, "passed")
+        if phase == "procedure_compile_live":
+            live_status[name] = "failed" if status == "failed" else live_status.get(name, "passed")
+    static_compiled = {name for name, status in static_status.items() if status == "passed"}
+    live_compiled = {name for name, status in live_status.items() if status == "passed"}
     unresolved = [str(name) for name in dependency_graph.get("unresolved_call_targets", [])] if isinstance(dependency_graph, Mapping) else []
     failures: list[dict[str, Any]] = []
     missing_compile = sorted(definitions - static_compiled)
@@ -821,6 +877,26 @@ def _procedure_compile_coverage_results(
                 "procedure_name": row.get("procedure_name"),
                 "wrapper_of": wrapper_target,
             })
+    signature_sources: dict[tuple[str, str, str], set[int]] = defaultdict(set)
+    for row in procedures:
+        signature_sources[
+            (
+                str(row.get("procedure_name") or ""),
+                str(row.get("normalized_signature") or row.get("signature") or ""),
+                str(row.get("file") or ""),
+            )
+        ].add(int(row.get("source_line") or 0))
+    for (name, signature, source_file), source_lines in signature_sources.items():
+        if bool(next((row.get("source_conflict") for row in procedures if row.get("procedure_name") == name), False)) or len(source_lines) > 1:
+            failures.append(
+                {
+                    "code": "DUPLICATE_PROCEDURE_SIGNATURE_CONFLICT",
+                    "procedure_name": name,
+                    "normalized_signature": signature,
+                    "source_file": source_file,
+                    "source_lines": sorted(source_lines),
+                }
+            )
     if live_enabled:
         for name in sorted(definitions - live_compiled):
             failures.append({"code": "LIVE_COMPILE_PROOF_MISSING", "procedure_name": name})
@@ -835,18 +911,21 @@ def _procedure_compile_coverage_results(
     coverage_rows = []
     for row in procedures:
         name = str(row.get("procedure_name") or "")
-        static_status = "passed" if name in static_compiled else "missing"
-        live_status = "passed" if name in live_compiled else ("missing" if live_enabled else "skipped")
+        row_static_status = static_status.get(name) or "missing"
+        row_live_status = live_status.get(name) or ("missing" if live_enabled else "skipped")
         coverage_rows.append({
             "procedure_name": name,
             "signature": row.get("signature") or "",
+            "normalized_signature": row.get("normalized_signature") or row.get("signature") or "",
             "source_file": row.get("file") or "",
+            "source_line": int(row.get("source_line") or 0),
             "wrapper_of": row.get("wrapper_of") or "",
             "called_by_task": bool(row.get("called_by_task")),
             "called_by_procedure": row.get("called_by_procedure") or [],
-            "compile_static_status": static_status,
-            "compile_live_status": live_status,
-            "passed": static_status == "passed" and (not live_enabled or live_status == "passed"),
+            "expected_compile_mode": "live" if live_enabled else "static",
+            "compile_static_status": row_static_status,
+            "compile_live_status": row_live_status,
+            "passed": row_static_status == "passed" and (not live_enabled or row_live_status == "passed"),
             "raw_sql_included": False,
         })
     return _failure_result(
@@ -1177,15 +1256,22 @@ def _packet_validation_detail_results(
         passed = bool(combined_checks.get(check_name))
         actual: Any = combined_checks.get(check_name, "missing")
         expected: Any = True
+        source_artifact = "packet_publication_validation_results.json"
         if check_name == "max_packet_bytes_under_100kb":
             actual = int(packet_size.get("max_packet_bytes") or 0)
             expected = "<=100000"
             passed = bool(combined_checks.get(check_name)) and actual <= 100000
+            source_artifact = "packet_size_results.json"
+        elif check_name.startswith("source_truth"):
+            source_artifact = "packet_source_truth_results.json"
+        elif check_name in {"packet_required_fields_present", "top_alert_evidence_id_string_compatible", "sla_fields_coherent"}:
+            source_artifact = "packet_shape_results.json"
         row = {
             "check_name": check_name,
             "passed": passed,
             "actual": actual,
             "expected": expected,
+            "source_artifact": source_artifact,
             "recommendation": "" if passed else "Repair packet publication SQL or first-paint packet contracts and rerun Snowflake validation.",
             "raw_sql_included": False,
         }
@@ -1196,6 +1282,16 @@ def _packet_validation_detail_results(
         source="packet_validation_detail",
         failures=failures,
         check_count=len(rows),
+        packet_validation_failed_check_count=len(failures),
+        packet_max_bytes=int(packet_size.get("max_packet_bytes") or 0),
+        packet_current_active_row_count=int(packet_publication.get("current_active_row_count") or 0),
+        packet_flat_active_row_count=int(packet_publication.get("packet_flat_active_row_count") or 0),
+        packet_last_good_status="available" if bool(combined_checks.get("last_good_available_or_skipped_with_reason")) else "missing",
+        packet_duplicate_array_count=sum(
+            1
+            for name in ("no_duplicate_metric_rows", "no_duplicate_action_rows", "no_duplicate_source_rows")
+            if not bool(combined_checks.get(name))
+        ),
         checks=rows,
     )
 
@@ -1237,10 +1333,12 @@ def _compact_evidence_results(root: Path, texts: Mapping[str, str]) -> dict[str,
             "target_lookup_columns_present": bool(lookup_columns),
             "target_lookup_columns": lookup_columns,
             "retention_bounded": bool(re.search(rf"\b{mart}\b[\s\S]{{0,2000}}\b(DATEADD|ROW_NUMBER|QUALIFY|LIMIT|RETENTION|RECENT)\b", setup_text)),
+            "retention_window": "bounded_recent_window_or_limit",
             "normal_account_usage_used": normal_account_usage_used,
             "max_rows": max_rows_limit,
             "row_count_static_or_live": 0,
             "failure_reason": "",
+            "recommendation": "",
         }
         row["passed"] = (
             row["ddl_exists"]
@@ -1269,6 +1367,7 @@ def _compact_evidence_results(root: Path, texts: Mapping[str, str]) -> dict[str,
             if max_rows_limit > 500:
                 reasons.append("max_rows_over_500")
             row["failure_reason"] = ", ".join(reasons)
+            row["recommendation"] = "Repair compact evidence mart DDL/load/validation or evidence loader mapping and rerun validation."
         if not row["passed"]:
             failures.append(row)
         mart_rows.append(row)
@@ -1318,6 +1417,11 @@ def _compact_evidence_mart_detail_results(compact_evidence: Mapping[str, Any]) -
         source="compact_evidence_mart_detail",
         failures=failures,
         mart_count=len(rows),
+        compact_mart_count=len(rows),
+        compact_mart_failure_count=len(failures),
+        compact_mart_names=sorted(seen),
+        compact_normal_account_usage_count=sum(1 for row in rows if bool(row.get("normal_account_usage_used"))),
+        compact_missing_target_column_count=sum(1 for row in rows if not bool(row.get("target_lookup_columns_present"))),
         required_marts=sorted(COMPACT_EVIDENCE_MARTS),
         marts=rows,
     )
@@ -1329,7 +1433,105 @@ def _validation_env() -> dict[str, Any]:
         "schema": os.environ.get("OVERWATCH_SNOWFLAKE_VALIDATION_SCHEMA", "").strip(),
         "warehouse": os.environ.get("OVERWATCH_SNOWFLAKE_VALIDATION_WAREHOUSE", "").strip(),
         "dry_run": os.environ.get("OVERWATCH_SNOWFLAKE_VALIDATION_DRY_RUN", "").strip() == "1",
+        "destructive_allowed": os.environ.get("OVERWATCH_ALLOW_DESTRUCTIVE_SNOWFLAKE_VALIDATION", "").strip() == "1",
     }
+
+
+def _live_validation_environment_results(live_enabled: bool) -> dict[str, Any]:
+    env = _validation_env()
+    rows = [
+        {
+            "setting": "OVERWATCH_SNOWFLAKE_VALIDATION",
+            "configured": live_enabled,
+            "required_for_live": True,
+            "raw_value_included": False,
+        },
+        {
+            "setting": "OVERWATCH_SNOWFLAKE_VALIDATION_DATABASE",
+            "configured": bool(env["database"]),
+            "required_for_live": False,
+            "raw_value_included": False,
+        },
+        {
+            "setting": "OVERWATCH_SNOWFLAKE_VALIDATION_SCHEMA",
+            "configured": bool(env["schema"]),
+            "required_for_live": False,
+            "raw_value_included": False,
+        },
+        {
+            "setting": "OVERWATCH_SNOWFLAKE_VALIDATION_WAREHOUSE",
+            "configured": bool(env["warehouse"]),
+            "required_for_live": False,
+            "raw_value_included": False,
+        },
+        {
+            "setting": "OVERWATCH_SNOWFLAKE_VALIDATION_DRY_RUN",
+            "configured": bool(env["dry_run"]),
+            "required_for_live": False,
+            "raw_value_included": False,
+        },
+        {
+            "setting": "OVERWATCH_ALLOW_DESTRUCTIVE_SNOWFLAKE_VALIDATION",
+            "configured": bool(env["destructive_allowed"]),
+            "required_for_live": False,
+            "raw_value_included": False,
+        },
+    ]
+    return _failure_result(
+        source="live_validation_environment",
+        proof_source="live_snowflake_execution" if live_enabled else "static_sql_parse",
+        failures=[],
+        live_mode_enabled=live_enabled,
+        dry_run_enabled=bool(env["dry_run"]),
+        destructive_validation_allowed=bool(env["destructive_allowed"]),
+        controlled_validation_target_configured=bool(env["database"] and env["schema"]),
+        rows=rows,
+    )
+
+
+def _live_validation_session_results(live_enabled: bool, root: Path) -> dict[str, Any]:
+    if not live_enabled:
+        return _failure_result(
+            source="live_validation_session",
+            proof_source="static_sql_parse",
+            failures=[],
+            live_mode_enabled=False,
+            status="skipped",
+            skip_reason="Live Snowflake validation skipped because OVERWATCH_SNOWFLAKE_VALIDATION is not set to 1.",
+            elapsed_ms=0,
+            row_count=0,
+        )
+    started = time.perf_counter()
+    try:
+        session = _open_live_session(root)
+        row_count = _run_live_sql(session, "SELECT 1 AS OVERWATCH_VALIDATION_SESSION_CHECK")
+        return _failure_result(
+            source="live_validation_session",
+            proof_source="live_snowflake_execution",
+            failures=[],
+            live_mode_enabled=True,
+            status="passed",
+            elapsed_ms=int((time.perf_counter() - started) * 1000),
+            row_count=row_count,
+            raw_sql_included=False,
+        )
+    except Exception as exc:
+        sanitized = sanitize_snowflake_error(exc)
+        failure = {
+            "code": "LIVE_VALIDATION_SESSION_UNAVAILABLE",
+            "sanitized_error": sanitized,
+            "recommendation": "Configure a controlled Snowflake validation session or disable live validation for fixture profile.",
+        }
+        return _failure_result(
+            source="live_validation_session",
+            proof_source="live_snowflake_execution",
+            failures=[failure],
+            live_mode_enabled=True,
+            status="failed",
+            elapsed_ms=int((time.perf_counter() - started) * 1000),
+            row_count=0,
+            sanitized_error=sanitized,
+        )
 
 
 def _open_live_session(root: Path):
@@ -1368,18 +1570,24 @@ def _run_live_sql(session: Any, statement: str) -> int:
 
 def _static_smoke_results(live_enabled: bool, root: Path | None = None) -> list[dict[str, Any]]:
     calls = [
-        ("SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST", "refresh_fast", "CALL SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST()", "live"),
-        ("SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL", "refresh_full", "CALL SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL()", "dry_run"),
-        ("SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS", "setup_health", "CALL SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS()", "live"),
-        ("SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS_FAST_IMPL", "compact_evidence_validation", "CALL SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS_FAST_IMPL()", "live"),
-        ("SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS_FAST_IMPL", "current_packet_validation", "CALL SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS_FAST_IMPL()", "live"),
-        ("SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS", "last_known_good_fallback_validation", "CALL SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS('FAST')", "dry_run"),
-        ("SP_OVERWATCH_APPLY_OPTIONAL_PERFORMANCE_OPTIMIZATION", "optional_optimization_status", "CALL SP_OVERWATCH_APPLY_OPTIONAL_PERFORMANCE_OPTIMIZATION()", "dry_run"),
-        ("OVERWATCH_MART_VALIDATION_SQL", "validation_sql_smoke", "SELECT 1 AS OVERWATCH_VALIDATION_SQL_DRY_RUN", "dry_run"),
+        ("SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST", "fast_refresh_validation", "CALL SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FAST()", "live", "safe_read"),
+        ("SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL", "full_refresh_validation_or_dry_run", "CALL SP_OVERWATCH_REFRESH_DECISION_BRIEFS_FULL()", "dry_run", "dry_run_required"),
+        ("SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS", "setup_health_validation", "CALL SP_OVERWATCH_BOOTSTRAP_DECISION_BRIEFS()", "live", "safe_read"),
+        ("SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS_FAST_IMPL", "compact_evidence_validation", "CALL SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS_FAST_IMPL()", "live", "safe_read"),
+        ("SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS_FAST_IMPL", "current_packet_validation", "CALL SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS_FAST_IMPL()", "live", "safe_read"),
+        ("SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS", "last_known_good_fallback_validation", "CALL SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEFS('FAST')", "dry_run", "dry_run_required"),
+        ("OVERWATCH_MART_VALIDATION_SQL", "validation_sql_smoke", "SELECT 1 AS OVERWATCH_VALIDATION_SQL_DRY_RUN", "dry_run", "dry_run_required"),
+        (
+            "SP_OVERWATCH_APPLY_OPTIONAL_PERFORMANCE_OPTIMIZATION",
+            "optional_optimization_status_read_only",
+            "CALL SP_OVERWATCH_APPLY_OPTIONAL_PERFORMANCE_OPTIMIZATION()",
+            "dry_run",
+            "destructive_requires_flag",
+        ),
     ]
     if not live_enabled:
         rows: list[dict[str, Any]] = []
-        for name, smoke_phase, _statement, mode in calls:
+        for name, smoke_phase, _statement, mode, safety_class in calls:
             row = _result_row(
                 object_name=name,
                 object_type="procedure",
@@ -1392,6 +1600,10 @@ def _static_smoke_results(live_enabled: bool, root: Path | None = None) -> list[
                 {
                     "smoke_target": smoke_phase,
                     "mode": "fixture_static",
+                    "safety_class": safety_class,
+                    "skip_reason": "OVERWATCH_SNOWFLAKE_VALIDATION is not set to 1.",
+                    "owner": "release-validation",
+                    "review_note": "Fixture profile skip; live/prod profiles require live validation or waiver.",
                     "failed_section_count": 0,
                     "max_packet_bytes": 0,
                     "compact_mart_count": len(COMPACT_EVIDENCE_MARTS) if smoke_phase == "compact_evidence_validation" else 0,
@@ -1411,7 +1623,7 @@ def _static_smoke_results(live_enabled: bool, root: Path | None = None) -> list[
         if env["schema"]:
             _run_live_sql(session, f"USE SCHEMA {env['schema']}")
     except Exception as exc:
-        for name, smoke_phase, _statement, mode in calls:
+        for name, smoke_phase, _statement, mode, safety_class in calls:
             row = _result_row(
                 object_name=name,
                 object_type="procedure",
@@ -1421,13 +1633,30 @@ def _static_smoke_results(live_enabled: bool, root: Path | None = None) -> list[
                 sanitized_error=sanitize_snowflake_error(exc),
                 recommendation="Configure a Snowflake validation session or disable live validation for fixture profile.",
             )
-            row.update({"smoke_target": smoke_phase, "mode": "dry_run" if mode == "dry_run" else "live"})
+            row.update(
+                {
+                    "smoke_target": smoke_phase,
+                    "mode": "dry_run" if mode == "dry_run" else "live",
+                    "safety_class": safety_class,
+                    "skip_reason": "",
+                    "owner": "",
+                    "review_note": "",
+                }
+            )
             live_rows.append(row)
         return live_rows
-    for name, smoke_phase, statement, mode in calls:
+    for name, smoke_phase, statement, mode, safety_class in calls:
         started = time.perf_counter()
         try:
-            should_dry_run = env["dry_run"] or mode == "dry_run"
+            destructive_live_call = (
+                safety_class == "destructive_requires_flag"
+                and mode == "live"
+                and not env["dry_run"]
+                and not env["destructive_allowed"]
+            )
+            if destructive_live_call:
+                raise RuntimeError("Destructive Snowflake validation requires OVERWATCH_ALLOW_DESTRUCTIVE_SNOWFLAKE_VALIDATION=1.")
+            should_dry_run = env["dry_run"] or mode == "dry_run" or safety_class in {"dry_run_required", "destructive_requires_flag"}
             if should_dry_run:
                 row_count = _run_live_sql(session, "SELECT 1 AS OVERWATCH_VALIDATION_DRY_RUN")
                 status = "passed"
@@ -1450,6 +1679,10 @@ def _static_smoke_results(live_enabled: bool, root: Path | None = None) -> list[
                 {
                     "smoke_target": smoke_phase,
                     "mode": "dry_run" if should_dry_run else "live",
+                    "safety_class": safety_class,
+                    "skip_reason": "",
+                    "owner": "",
+                    "review_note": "",
                     "failed_section_count": 0,
                     "max_packet_bytes": 0,
                     "compact_mart_count": len(COMPACT_EVIDENCE_MARTS) if smoke_phase == "compact_evidence_validation" else 0,
@@ -1467,7 +1700,16 @@ def _static_smoke_results(live_enabled: bool, root: Path | None = None) -> list[
                 sanitized_error=sanitize_snowflake_error(exc),
                 recommendation="Fix the procedure compile/runtime error in Snowflake and rerun live validation.",
             )
-            row.update({"smoke_target": smoke_phase, "mode": "dry_run" if mode == "dry_run" else "live"})
+            row.update(
+                {
+                    "smoke_target": smoke_phase,
+                    "mode": "dry_run" if mode == "dry_run" else "live",
+                    "safety_class": safety_class,
+                    "skip_reason": "",
+                    "owner": "",
+                    "review_note": "",
+                }
+            )
             live_rows.append(row)
     return live_rows
 
@@ -1476,6 +1718,7 @@ def _procedure_smoke_call_coverage_results(
     smoke_rows: Iterable[Mapping[str, Any]],
     *,
     live_enabled: bool,
+    profile: str = "internal_fixture",
 ) -> dict[str, Any]:
     rows = [_as_mapping(row) for row in smoke_rows]
     by_target: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -1483,19 +1726,30 @@ def _procedure_smoke_call_coverage_results(
         by_target[str(row.get("smoke_target") or "")].append(row)
     failures: list[dict[str, Any]] = []
     coverage_rows = []
-    for target, procedure_name, expected_mode in REQUIRED_SMOKE_TARGETS:
+    strict_profile = profile in {"internal_live", "prod_candidate"}
+    for target, procedure_name, expected_mode, safety_class in REQUIRED_SMOKE_TARGETS:
         matches = by_target.get(target, [])
         row = matches[0] if matches else {}
         status = str(row.get("status") or "missing")
         mode = str(row.get("mode") or ("missing" if not row else "fixture_static"))
+        skip_reason = str(row.get("skip_reason") or "")
+        owner = str(row.get("owner") or "")
+        review_note = str(row.get("review_note") or "")
         expected_live = expected_mode in {"live", "dry_run"}
         destructive_without_flag = (
-            target == "optional_optimization_status"
+            safety_class == "destructive_requires_flag"
             and mode == "live"
-            and os.environ.get("OVERWATCH_ALLOW_OPTIONAL_OPTIMIZATION_CALL") != "1"
+            and os.environ.get("OVERWATCH_ALLOW_DESTRUCTIVE_SNOWFLAKE_VALIDATION") != "1"
         )
         passed = bool(matches) and status in {"passed", "skipped"} and not destructive_without_flag
         if live_enabled and expected_live and status == "skipped":
+            passed = False
+        strict_skip_gap = status == "skipped" and strict_profile and (
+            skip_reason.strip().lower() in GENERIC_SKIP_TEXT
+            or owner.strip().lower() in GENERIC_SKIP_TEXT
+            or review_note.strip().lower() in GENERIC_SKIP_TEXT
+        )
+        if strict_skip_gap:
             passed = False
         if not matches:
             failures.append({"code": "SMOKE_TARGET_MISSING", "smoke_target": target})
@@ -1507,18 +1761,24 @@ def _procedure_smoke_call_coverage_results(
             failures.append({"code": "LIVE_SMOKE_TARGET_SKIPPED", "smoke_target": target})
         elif destructive_without_flag:
             failures.append({"code": "DESTRUCTIVE_SMOKE_CALL_WITHOUT_ALLOW_FLAG", "smoke_target": target})
+        elif strict_skip_gap:
+            failures.append({"code": "SMOKE_SKIP_NOT_OWNERED", "smoke_target": target})
         coverage_rows.append(
             {
                 "smoke_target": target,
                 "procedure_name": str(row.get("procedure_name") or procedure_name),
                 "phase": str(row.get("phase") or "procedure_smoke_call_live"),
                 "mode": mode,
+                "safety_class": str(row.get("safety_class") or safety_class),
                 "status": status,
                 "elapsed_ms": int(row.get("elapsed_ms") or 0),
                 "row_count": int(row.get("row_count") or 0),
                 "failed_section_count": int(row.get("failed_section_count") or 0),
                 "max_packet_bytes": int(row.get("max_packet_bytes") or 0),
                 "compact_mart_count": int(row.get("compact_mart_count") or 0),
+                "skip_reason": skip_reason,
+                "owner": owner,
+                "review_note": review_note,
                 "raw_sql_included": bool(row.get("raw_sql_included")),
                 "sanitized_error": str(row.get("sanitized_error") or ""),
                 "recommendation": str(row.get("recommendation") or ""),
@@ -1539,8 +1799,8 @@ def _refresh_result(name: str, live_enabled: bool, smoke_rows: Iterable[Mapping[
     skipped = not live_enabled
     related = [
         row for row in smoke_rows
-        if (name == "refresh_fast_validation" and str(row.get("procedure_name") or "").endswith("_FAST"))
-        or (name == "refresh_full_validation" and str(row.get("procedure_name") or "").endswith("_FULL"))
+        if (name == "refresh_fast_validation" and str(row.get("smoke_target") or "") == "fast_refresh_validation")
+        or (name == "refresh_full_validation" and str(row.get("smoke_target") or "") == "full_refresh_validation_or_dry_run")
     ]
     failed = [row for row in related if str(row.get("status") or "") == "failed"]
     return {
@@ -1554,6 +1814,14 @@ def _refresh_result(name: str, live_enabled: bool, smoke_rows: Iterable[Mapping[
         "failed_section_count": 0,
         "packet_row_count": 0,
         "compact_evidence_row_count": 0,
+        "generated_window_count": 2 if name == "refresh_fast_validation" else 5,
+        "generated_scope_count": 0,
+        "fresh_command_row_count": 0,
+        "reused_command_row_count": 0,
+        "stale_command_row_count": 0,
+        "compact_evidence_row_counts": {mart: 0 for mart in sorted(COMPACT_EVIDENCE_MARTS)},
+        "current_active_row_count": 0,
+        "flat_active_row_count": 0,
         "max_packet_bytes": 0,
         "raw_sql_included": False,
     }
@@ -1576,6 +1844,7 @@ def _refresh_detail_results(
             "passed": "FULL_IMPL" not in fast_region,
             "actual": "FULL_IMPL" in fast_region,
             "expected": False,
+            "source_artifact": "snowflake_setup_sql_static_scan",
         },
         {
             "refresh": "FAST",
@@ -1583,6 +1852,15 @@ def _refresh_detail_results(
             "passed": all(token not in fast_region for token in ("14", "30", "60", "90")) and "1" in fast_region and "7" in fast_region,
             "actual": "static_window_scan",
             "expected": "1/7 only",
+            "source_artifact": "snowflake_setup_sql_static_scan",
+        },
+        {
+            "refresh": "FAST",
+            "check_name": "full_only_windows_absent",
+            "passed": all(token not in fast_region for token in ("14", "30", "60", "90")),
+            "actual": "static_window_scan",
+            "expected": "no 14/30/60/90 windows in FAST path",
+            "source_artifact": "snowflake_setup_sql_static_scan",
         },
         {
             "refresh": "FAST",
@@ -1590,6 +1868,7 @@ def _refresh_detail_results(
             "passed": "SOURCE_FACT_MAX_TS" in setup or "SOURCE_FRESHNESS" in setup,
             "actual": "SOURCE_FACT_MAX_TS/SOURCE_FRESHNESS",
             "expected": "present",
+            "source_artifact": "snowflake_setup_sql_static_scan",
         },
         {
             "refresh": "FAST",
@@ -1597,6 +1876,7 @@ def _refresh_detail_results(
             "passed": all(mart in setup for mart in COMPACT_EVIDENCE_MARTS),
             "actual": "compact_mart_static_scan",
             "expected": "all compact marts referenced",
+            "source_artifact": "snowflake_setup_sql_static_scan",
         },
         {
             "refresh": "FAST",
@@ -1604,6 +1884,7 @@ def _refresh_detail_results(
             "passed": "FULL" not in fast_region or "FAST" in fast_region,
             "actual": "static_branch_scan",
             "expected": "no full-only work in FAST wrapper",
+            "source_artifact": "snowflake_setup_sql_static_scan",
         },
         {
             "refresh": "FAST",
@@ -1611,6 +1892,7 @@ def _refresh_detail_results(
             "passed": int(refresh_fast.get("max_packet_bytes") or 0) <= 100000,
             "actual": int(refresh_fast.get("max_packet_bytes") or 0),
             "expected": "<=100000",
+            "source_artifact": "refresh_fast_results.json",
         },
         {
             "refresh": "FULL",
@@ -1618,6 +1900,7 @@ def _refresh_detail_results(
             "passed": bool(full_region) and ("FULL" in full_region or "FULL_IMPL" in full_region),
             "actual": "static_full_region_scan",
             "expected": "full refresh path explicit",
+            "source_artifact": "snowflake_setup_sql_static_scan",
         },
         {
             "refresh": "FULL",
@@ -1625,6 +1908,7 @@ def _refresh_detail_results(
             "passed": "FAKE" not in full_region and "SYNTHETIC" not in full_region,
             "actual": "static_audit_scan",
             "expected": "no fake/synthetic audit row",
+            "source_artifact": "snowflake_setup_sql_static_scan",
         },
         {
             "refresh": "FULL",
@@ -1632,6 +1916,7 @@ def _refresh_detail_results(
             "passed": int(refresh_full.get("max_packet_bytes") or 0) <= 100000,
             "actual": int(refresh_full.get("max_packet_bytes") or 0),
             "expected": "<=100000",
+            "source_artifact": "refresh_full_results.json",
         },
     ]
     for payload, label, target in ((refresh_fast, "FAST", 45), (refresh_full, "FULL", 120)):
@@ -1643,6 +1928,7 @@ def _refresh_detail_results(
                     "passed": (not live_enabled and str(payload.get("status") or "") == "skipped") or float(payload.get("elapsed_seconds") or 0) <= target,
                     "actual": payload.get("elapsed_seconds") or 0,
                     "expected": f"<={target}s when live",
+                    "source_artifact": f"refresh_{label.lower()}_results.json",
                 },
                 {
                     "refresh": label,
@@ -1650,6 +1936,7 @@ def _refresh_detail_results(
                     "passed": int(payload.get("failed_section_count") or 0) == 0,
                     "actual": int(payload.get("failed_section_count") or 0),
                     "expected": 0,
+                    "source_artifact": f"refresh_{label.lower()}_results.json",
                 },
                 {
                     "refresh": label,
@@ -1657,6 +1944,7 @@ def _refresh_detail_results(
                     "passed": str(payload.get("status") or "") != "skipped" or "OVERWATCH_SNOWFLAKE_VALIDATION" in str(payload.get("skip_reason") or ""),
                     "actual": payload.get("skip_reason") or "",
                     "expected": "skip reason mentions OVERWATCH_SNOWFLAKE_VALIDATION",
+                    "source_artifact": f"refresh_{label.lower()}_results.json",
                 },
             ]
         )
@@ -1666,6 +1954,7 @@ def _refresh_detail_results(
             "check_name": row["check_name"],
             "actual": row["actual"],
             "expected": row["expected"],
+            "source_artifact": row.get("source_artifact") or "",
             "recommendation": "Fix FAST/FULL refresh SQL validation detail and rerun Snowflake validation.",
         }
         for row in checks
@@ -1763,7 +2052,11 @@ def _phase_validation_results(
     for row in validation_rows:
         observed["validation_sql_static"] = "failed" if str(row.get("status") or "") == "failed" else "passed"
         observed["drop_rollback_static"] = "failed" if str(row.get("status") or "") == "failed" else "passed"
-    observed["procedure_compile_live"] = "passed" if live_enabled else "skipped"
+    live_compile_statuses = [str(row.get("status") or "") for row in compile_rows if str(row.get("phase") or "") == "procedure_compile_live"]
+    observed["procedure_compile_live"] = (
+        "failed" if any(status == "failed" for status in live_compile_statuses)
+        else ("passed" if live_enabled and live_compile_statuses else "skipped")
+    )
     observed["validation_sql_live"] = "passed" if live_enabled else "skipped"
     observed["packet_shape_static"] = "passed" if packet_shape.get("passed") else "failed"
     observed["packet_shape_live"] = "passed" if live_enabled else "skipped"
@@ -1825,6 +2118,8 @@ def write_snowflake_validation_artifacts(root: Path | str = ".") -> dict[str, An
     live_enabled = _live_execution_enabled()
     texts = _load_script_texts(root_path)
 
+    live_environment = _live_validation_environment_results(live_enabled)
+    live_session = _live_validation_session_results(live_enabled, root_path)
     setup_rows = _static_setup_results(root_path, texts)
     compile_rows = _compile_results(texts, live_enabled=live_enabled, root=root_path)
     dependency_graph = _dependency_graph(texts)
@@ -1838,7 +2133,11 @@ def write_snowflake_validation_artifacts(root: Path | str = ".") -> dict[str, An
     compact_evidence = _compact_evidence_results(root_path, texts)
     compact_detail = _compact_evidence_mart_detail_results(compact_evidence)
     smoke_rows = _static_smoke_results(live_enabled, root_path)
-    smoke_coverage = _procedure_smoke_call_coverage_results(smoke_rows, live_enabled=live_enabled)
+    smoke_coverage = _procedure_smoke_call_coverage_results(
+        smoke_rows,
+        live_enabled=live_enabled,
+        profile=os.environ.get("OVERWATCH_LAUNCH_PROFILE", "internal_fixture"),
+    )
     refresh_fast = _refresh_result("refresh_fast_validation", live_enabled, smoke_rows)
     refresh_full = _refresh_result("refresh_full_validation", live_enabled, smoke_rows)
     refresh_detail = _refresh_detail_results(texts, refresh_fast, refresh_full, live_enabled=live_enabled)
@@ -1921,6 +2220,8 @@ def write_snowflake_validation_artifacts(root: Path | str = ".") -> dict[str, An
         "streamlit_manifest": manifest_validation,
         "phase_validation": phase_validation,
         "snowflake_error_sanitization": sanitizer_results,
+        "live_validation_environment": live_environment,
+        "live_validation_session": live_session,
     }.items():
         if not payload.get("passed"):
             hard_failures.append({"gate": name, "details": payload.get("failures") or payload.get("checks")})
@@ -1940,6 +2241,9 @@ def write_snowflake_validation_artifacts(root: Path | str = ".") -> dict[str, An
         "live_mode_enabled": live_enabled,
         "live_status": "enabled" if live_enabled else "skipped",
         "live_skip_reason": "" if live_enabled else "OVERWATCH_SNOWFLAKE_VALIDATION is not set to 1.",
+        "live_validation_environment_passed": bool(live_environment.get("passed")),
+        "live_validation_session_passed": bool(live_session.get("passed")),
+        "live_validation_session_status": str(live_session.get("status") or ""),
         "script_count": len(texts),
         "expected_script_count": len(EXPECTED_SCRIPT_ORDER),
         "statement_count": sum(row["row_count"] for row in setup_rows),
@@ -1970,6 +2274,8 @@ def write_snowflake_validation_artifacts(root: Path | str = ".") -> dict[str, An
 
     artifacts: dict[str, Any] = {
         "snowflake_validation_summary": summary,
+        "live_validation_environment_results": live_environment,
+        "live_validation_session_results": live_session,
         "setup_execution_results": setup_rows,
         "procedure_compile_results": compile_rows,
         "procedure_compile_coverage_results": compile_coverage,

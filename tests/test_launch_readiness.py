@@ -51,6 +51,9 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertEqual(summary["live_validation_waiver_id"], "")
         self.assertEqual(summary["live_validation_waiver_owner"], "")
         self.assertEqual(summary["live_validation_waiver_expiration"], "")
+        self.assertFalse(summary["live_validation_required"])
+        self.assertTrue(summary["live_validation_skip_allowed"])
+        self.assertEqual(summary["live_validation_missing_reason"], "")
         self.assertGreater(summary["procedure_compile_count"], 0)
         self.assertEqual(summary["procedure_compile_failure_count"], 0)
         self.assertGreater(summary["procedure_smoke_call_count"], 0)
@@ -58,7 +61,12 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertEqual(summary["refresh_fast_status"], "skipped")
         self.assertEqual(summary["refresh_full_status"], "skipped")
         self.assertEqual(summary["packet_validation_status"], "passed")
+        self.assertEqual(summary["packet_validation_failed_check_count"], 0)
+        self.assertEqual(summary["packet_duplicate_array_count"], 0)
         self.assertEqual(summary["compact_evidence_validation_status"], "passed")
+        self.assertEqual(summary["compact_mart_count"], 5)
+        self.assertEqual(summary["compact_mart_failure_count"], 0)
+        self.assertEqual(summary["compact_normal_account_usage_count"], 0)
         self.assertTrue(summary["encoding_hygiene_passed"])
         self.assertEqual(summary["encoding_blocked_count"], 0)
         self.assertGreaterEqual(summary["required_artifact_count"], len(REQUIRED_LAUNCH_READINESS_ARTIFACTS))
@@ -114,12 +122,16 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertEqual(snowflake_gate["live_validation_status"], "static_skipped")
         self.assertEqual(snowflake_gate["packet_validation_status"], "passed")
         self.assertEqual(snowflake_gate["compact_evidence_validation_status"], "passed")
+        self.assertEqual(snowflake_gate["packet_validation_failed_check_count"], 0)
+        self.assertEqual(snowflake_gate["compact_mart_count"], 5)
         raw_recheck = self._read_json("artifacts/launch_readiness/snowflake_raw_validation_recheck.json")
         snowflake_failures = self._read_json("artifacts/launch_readiness/snowflake_validation_failures.json")
         self.assertTrue(raw_recheck["passed"], raw_recheck)
         self.assertEqual(raw_recheck["failure_count"], 0, raw_recheck)
         self.assertEqual(raw_recheck["packet_validation_status"], "passed")
+        self.assertEqual(raw_recheck["packet_validation_failed_check_count"], 0)
         self.assertEqual(raw_recheck["compact_evidence_validation_status"], "passed")
+        self.assertEqual(raw_recheck["compact_mart_count"], 5)
         self.assertEqual(raw_recheck["live_validation_status"], "static_skipped")
         self.assertTrue(snowflake_failures["passed"], snowflake_failures)
         self.assertEqual(snowflake_failures["failure_count"], 0, snowflake_failures)
@@ -649,6 +661,20 @@ class LaunchReadinessTests(unittest.TestCase):
                     {"passed": False, "failure_count": 1}
                 ),
                 "procedure_smoke_call_validation",
+            ),
+            (
+                "snowflake live session",
+                lambda payloads, launch: payloads["artifacts/snowflake_validation/live_validation_session_results.json"].update(
+                    {"passed": False, "status": "failed", "failure_count": 1}
+                ),
+                "snowflake_raw_validation_recheck",
+            ),
+            (
+                "snowflake live environment",
+                lambda payloads, launch: payloads["artifacts/snowflake_validation/live_validation_environment_results.json"].update(
+                    {"passed": False, "failure_count": 1}
+                ),
+                "snowflake_raw_validation_recheck",
             ),
             (
                 "missing packet raw artifact",

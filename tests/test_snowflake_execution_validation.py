@@ -35,6 +35,9 @@ class SnowflakeExecutionValidationTests(unittest.TestCase):
         self.assertTrue(summary["recent_snowflake_fix_validation_passed"])
         self.assertTrue(summary["packet_publication_validation_passed"])
         self.assertTrue(summary["compact_evidence_mart_validation_passed"])
+        self.assertTrue(summary["live_validation_environment_passed"])
+        self.assertTrue(summary["live_validation_session_passed"])
+        self.assertEqual(summary["live_validation_session_status"], "skipped")
         self.assertTrue((ROOT / "artifacts/snowflake_validation/snowflake_validation_SKIPPED.txt").exists())
         for name in REQUIRED_RESULT_FILES:
             self.assertIn(f"artifacts/snowflake_validation/{name}.json", manifest["files"])
@@ -71,6 +74,9 @@ class SnowflakeExecutionValidationTests(unittest.TestCase):
         self.assertGreaterEqual(compile_coverage["procedure_count"], graph["procedure_count"])
         self.assertEqual(compile_coverage["missing_compile_row_count"], 0)
         self.assertTrue(all(row["compile_static_status"] == "passed" for row in compile_coverage["rows"]))
+        self.assertTrue(all(row["expected_compile_mode"] == "static" for row in compile_coverage["rows"]))
+        self.assertTrue(all(row["normalized_signature"] for row in compile_coverage["rows"]))
+        self.assertTrue(all(row["source_line"] > 0 for row in compile_coverage["rows"]))
         self.assertTrue(all(row["raw_sql_included"] is False for row in compile_rows))
 
     def test_procedure_compile_coverage_rejects_gaps(self):
@@ -111,6 +117,12 @@ class SnowflakeExecutionValidationTests(unittest.TestCase):
         self.assertIn("FAILED_COMPILE_MISSING_SANITIZED_ERROR", codes)
         self.assertIn("PROCEDURE_COMPILE_RAW_SQL_INCLUDED", codes)
 
+        conflict_graph = json.loads(json.dumps(graph))
+        conflict_graph["procedures"][0]["source_conflict"] = True
+        conflict = validation._procedure_compile_coverage_results(conflict_graph, compile_rows, live_enabled=False)
+        self.assertFalse(conflict["passed"])
+        self.assertIn("DUPLICATE_PROCEDURE_SIGNATURE_CONFLICT", {row["code"] for row in conflict["failures"]})
+
     def test_validation_drop_and_compact_evidence_artifacts_pass(self):
         validation = self._read_json("artifacts/snowflake_validation/validation_sql_results.json")
         compact = self._read_json("artifacts/snowflake_validation/compact_evidence_mart_validation_results.json")
@@ -120,9 +132,11 @@ class SnowflakeExecutionValidationTests(unittest.TestCase):
         self.assertTrue(compact_detail["passed"], compact_detail)
         self.assertEqual(compact["mart_count"], 5)
         self.assertEqual(compact_detail["mart_count"], 5)
+        self.assertEqual(compact_detail["compact_mart_count"], 5)
         self.assertEqual(compact["normal_account_usage_count"], 0)
         self.assertTrue(all(row["target_lookup_columns"] for row in compact_detail["marts"]))
         self.assertTrue(all(row["retention_bounded"] for row in compact_detail["marts"]))
+        self.assertTrue(all(row["retention_window"] for row in compact_detail["marts"]))
 
     def test_compact_evidence_detail_rejects_policy_gaps(self):
         from tools.contracts import snowflake_execution_validation as validation
@@ -203,6 +217,8 @@ class SnowflakeExecutionValidationTests(unittest.TestCase):
         self.assertTrue(packet["passed"], packet)
         self.assertTrue(packet_detail["passed"], packet_detail)
         self.assertEqual(packet_detail["check_count"], 14)
+        self.assertEqual(packet_detail["packet_validation_failed_check_count"], 0)
+        self.assertTrue(all(row["source_artifact"] for row in packet_detail["checks"]))
         self.assertEqual(refresh_fast["status"], "skipped")
         self.assertEqual(refresh_full["status"], "skipped")
         self.assertTrue(refresh_detail["passed"], refresh_detail)
@@ -241,11 +257,17 @@ class SnowflakeExecutionValidationTests(unittest.TestCase):
 
         destructive = json.loads(json.dumps(smoke_rows))
         for row in destructive:
-            if row.get("smoke_target") == "optional_optimization_status":
+            if row.get("smoke_target") == "optional_optimization_status_read_only":
                 row.update({"status": "passed", "mode": "live"})
         destructive_result = validation._procedure_smoke_call_coverage_results(destructive, live_enabled=True)
         self.assertFalse(destructive_result["passed"])
         self.assertIn("DESTRUCTIVE_SMOKE_CALL_WITHOUT_ALLOW_FLAG", {row["code"] for row in destructive_result["failures"]})
+
+        generic_skip_rows = json.loads(json.dumps(smoke_rows))
+        generic_skip_rows[0].update({"skip_reason": "todo", "owner": "", "review_note": ""})
+        strict_skip = validation._procedure_smoke_call_coverage_results(generic_skip_rows, live_enabled=False, profile="internal_live")
+        self.assertFalse(strict_skip["passed"])
+        self.assertIn("SMOKE_SKIP_NOT_OWNERED", {row["code"] for row in strict_skip["failures"]})
 
         refresh_fast = self._read_json("artifacts/snowflake_validation/refresh_fast_results.json")
         refresh_full = self._read_json("artifacts/snowflake_validation/refresh_full_results.json")
@@ -281,11 +303,15 @@ class SnowflakeExecutionValidationTests(unittest.TestCase):
 
         with patch.object(validation, "_open_live_session", side_effect=RuntimeError("SELECT * FROM secret_table password=hidden")):
             rows = validation._static_smoke_results(True, ROOT)
+            session_result = validation._live_validation_session_results(True, ROOT)
         self.assertTrue(rows)
         self.assertTrue(all(row["status"] == "failed" for row in rows))
         self.assertTrue(all(row["raw_sql_included"] is False for row in rows))
         self.assertTrue(all("SELECT" not in row.get("sanitized_error", "").upper() for row in rows))
         self.assertTrue(all("hidden" not in row.get("sanitized_error", "") for row in rows))
+        self.assertFalse(session_result["passed"])
+        self.assertEqual(session_result["status"], "failed")
+        self.assertIn("LIVE_VALIDATION_SESSION_UNAVAILABLE", {row["code"] for row in session_result["failures"]})
 
         texts = validation._load_script_texts(ROOT)
         with patch.object(validation, "_open_live_session", side_effect=RuntimeError("CREATE OR REPLACE PROCEDURE SP_X() AS $$ SELECT * FROM secret_table; $$")):

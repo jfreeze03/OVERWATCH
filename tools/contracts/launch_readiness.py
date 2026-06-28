@@ -138,6 +138,8 @@ GENERIC_WAIVER_TEXT = {"", "n/a", "na", "none", "todo", "tbd", "future", "option
 
 SNOWFLAKE_RAW_RECHECK_ARTIFACTS = (
     "artifacts/snowflake_validation/snowflake_validation_summary.json",
+    "artifacts/snowflake_validation/live_validation_environment_results.json",
+    "artifacts/snowflake_validation/live_validation_session_results.json",
     "artifacts/snowflake_validation/procedure_dependency_graph.json",
     "artifacts/snowflake_validation/procedure_compile_results.json",
     "artifacts/snowflake_validation/procedure_compile_coverage_results.json",
@@ -1867,6 +1869,22 @@ def _snowflake_raw_validation_recheck(
                 recommendation="Set OVERWATCH_SNOWFLAKE_VALIDATION=1 or provide a valid snowflake_execution_validation waiver.",
             )
 
+    live_environment_path = "artifacts/snowflake_validation/live_validation_environment_results.json"
+    live_environment = _as_mapping(payloads.get(live_environment_path))
+    if not live_environment or not bool(live_environment.get("passed")):
+        fail("snowflake_live_validation_environment", "Live validation environment artifact is missing or failed.", path=live_environment_path)
+
+    live_session_path = "artifacts/snowflake_validation/live_validation_session_results.json"
+    live_session = _as_mapping(payloads.get(live_session_path))
+    if not live_session or not bool(live_session.get("passed")):
+        fail("snowflake_live_validation_session", "Live validation session artifact is missing or failed.", path=live_session_path)
+    if live_enabled and str(live_session.get("status") or "") != "passed":
+        fail("snowflake_live_validation_session", "Live validation is enabled but session proof did not pass.", path=live_session_path)
+    if not live_enabled and str(live_session.get("status") or "") != "skipped":
+        fail("snowflake_live_validation_session", "Fixture Snowflake validation must explicitly skip live session proof.", path=live_session_path)
+    if not live_enabled and "OVERWATCH_SNOWFLAKE_VALIDATION" not in str(live_session.get("skip_reason") or ""):
+        fail("snowflake_live_validation_session", "Live session skip reason must mention OVERWATCH_SNOWFLAKE_VALIDATION.", path=live_session_path)
+
     compile_path = "artifacts/snowflake_validation/procedure_compile_results.json"
     compile_rows = [_as_mapping(row) for row in _as_list(payloads.get(compile_path))]
     if not compile_rows:
@@ -2032,12 +2050,26 @@ def _snowflake_raw_validation_recheck(
         "live_validation_waiver_id": str(waiver.get("gate") or ""),
         "live_validation_waiver_owner": str(waiver.get("owner") or ""),
         "live_validation_waiver_expiration": str(waiver.get("expiration") or waiver.get("expiration_or_review_note") or ""),
+        "live_validation_required": live_required,
+        "live_validation_skip_allowed": not live_required or waiver_used or profile == "internal_fixture",
+        "live_validation_missing_reason": "" if live_enabled or live_skipped or waiver_used else "Live Snowflake validation artifact status is missing.",
         "procedure_compile_count": len(compile_rows),
         "procedure_compile_failure_count": sum(1 for row in compile_rows if str(row.get("status") or "") == "failed"),
         "procedure_smoke_call_count": len(smoke_rows),
         "procedure_smoke_failure_count": sum(1 for row in smoke_rows if str(row.get("status") or "") == "failed"),
         "packet_validation_status": "passed" if packet_passed else "failed",
+        "packet_validation_failed_check_count": _as_int(packet_detail.get("packet_validation_failed_check_count")),
+        "packet_max_bytes": _as_int(packet_detail.get("packet_max_bytes")),
+        "packet_current_active_row_count": _as_int(packet_detail.get("packet_current_active_row_count")),
+        "packet_flat_active_row_count": _as_int(packet_detail.get("packet_flat_active_row_count")),
+        "packet_last_good_status": str(packet_detail.get("packet_last_good_status") or ""),
+        "packet_duplicate_array_count": _as_int(packet_detail.get("packet_duplicate_array_count")),
         "compact_evidence_validation_status": "passed" if compact_passed else "failed",
+        "compact_mart_count": _as_int(compact_detail.get("compact_mart_count") or compact_detail.get("mart_count")),
+        "compact_mart_failure_count": _as_int(compact_detail.get("compact_mart_failure_count") or compact_detail.get("failure_count")),
+        "compact_mart_names": _as_list(compact_detail.get("compact_mart_names")),
+        "compact_normal_account_usage_count": _as_int(compact_detail.get("compact_normal_account_usage_count")),
+        "compact_missing_target_column_count": _as_int(compact_detail.get("compact_missing_target_column_count")),
         "refresh_fast_status": refresh_statuses.get("refresh_fast_validation", ""),
         "refresh_full_status": refresh_statuses.get("refresh_full_validation", ""),
         "raw_sql_included": False,
@@ -2060,6 +2092,8 @@ def _snowflake_validation_gate_results(
     raw_recheck: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     summary = _as_mapping(payloads.get("artifacts/snowflake_validation/snowflake_validation_summary.json"))
+    live_environment = _as_mapping(payloads.get("artifacts/snowflake_validation/live_validation_environment_results.json"))
+    live_session = _as_mapping(payloads.get("artifacts/snowflake_validation/live_validation_session_results.json"))
     compile_rows = _as_list(payloads.get("artifacts/snowflake_validation/procedure_compile_results.json"))
     compile_coverage = _as_mapping(payloads.get("artifacts/snowflake_validation/procedure_compile_coverage_results.json"))
     smoke_rows = _as_list(payloads.get("artifacts/snowflake_validation/procedure_smoke_call_results.json"))
@@ -2110,11 +2144,20 @@ def _snowflake_validation_gate_results(
         ),
         _component_row(
             "snowflake_execution_validation",
-            bool(summary.get("passed")) and (live_enabled or not live_skipped or live_skip_allowed),
+            bool(summary.get("passed"))
+            and bool(live_environment.get("passed"))
+            and bool(live_session.get("passed"))
+            and (live_enabled or not live_skipped or live_skip_allowed),
             status=str(summary.get("live_status") or "missing"),
             failure_reason="Live Snowflake execution validation is required for this launch profile unless waived.",
             recommendation="Set OVERWATCH_SNOWFLAKE_VALIDATION=1 for live validation or add a signed profile-aware waiver.",
-            details={"live_mode_enabled": live_enabled, "live_status": summary.get("live_status"), "live_skip_reason": summary.get("live_skip_reason")},
+            details={
+                "live_mode_enabled": live_enabled,
+                "live_status": summary.get("live_status"),
+                "live_skip_reason": summary.get("live_skip_reason"),
+                "environment_passed": live_environment.get("passed"),
+                "session_status": live_session.get("status"),
+            },
         ),
         _component_row(
             "procedure_compile_validation",
@@ -2199,6 +2242,9 @@ def _snowflake_validation_gate_results(
         "live_validation_waiver_id": str(raw_recheck.get("live_validation_waiver_id") or (live_waiver.get("gate") if live_waiver else "") or ""),
         "live_validation_waiver_owner": str(raw_recheck.get("live_validation_waiver_owner") or (live_waiver.get("owner") if live_waiver else "") or ""),
         "live_validation_waiver_expiration": str(raw_recheck.get("live_validation_waiver_expiration") or ((live_waiver.get("expiration") or live_waiver.get("expiration_or_review_note")) if live_waiver else "") or ""),
+        "live_validation_required": bool(raw_recheck.get("live_validation_required") or live_required),
+        "live_validation_skip_allowed": bool(raw_recheck.get("live_validation_skip_allowed") if "live_validation_skip_allowed" in raw_recheck else live_skip_allowed),
+        "live_validation_missing_reason": str(raw_recheck.get("live_validation_missing_reason") or ""),
         "procedure_compile_count": len(compile_rows),
         "procedure_compile_failure_count": sum(1 for row in compile_rows if str(_as_mapping(row).get("status") or "") == "failed"),
         "procedure_smoke_call_count": len(smoke_rows),
@@ -2207,6 +2253,17 @@ def _snowflake_validation_gate_results(
         "refresh_full_status": refresh_full.get("status") or "",
         "packet_validation_status": "passed" if packet_validation_passed else "failed",
         "compact_evidence_validation_status": "passed" if compact_validation_passed else "failed",
+        "packet_validation_failed_check_count": _as_int(raw_recheck.get("packet_validation_failed_check_count") or packet_detail.get("packet_validation_failed_check_count")),
+        "packet_max_bytes": _as_int(raw_recheck.get("packet_max_bytes") or packet_detail.get("packet_max_bytes")),
+        "packet_current_active_row_count": _as_int(raw_recheck.get("packet_current_active_row_count") or packet_detail.get("packet_current_active_row_count")),
+        "packet_flat_active_row_count": _as_int(raw_recheck.get("packet_flat_active_row_count") or packet_detail.get("packet_flat_active_row_count")),
+        "packet_last_good_status": str(raw_recheck.get("packet_last_good_status") or packet_detail.get("packet_last_good_status") or ""),
+        "packet_duplicate_array_count": _as_int(raw_recheck.get("packet_duplicate_array_count") or packet_detail.get("packet_duplicate_array_count")),
+        "compact_mart_count": _as_int(raw_recheck.get("compact_mart_count") or compact_detail.get("compact_mart_count") or compact_detail.get("mart_count")),
+        "compact_mart_failure_count": _as_int(raw_recheck.get("compact_mart_failure_count") or compact_detail.get("compact_mart_failure_count") or compact_detail.get("failure_count")),
+        "compact_mart_names": _as_list(raw_recheck.get("compact_mart_names")) or _as_list(compact_detail.get("compact_mart_names")),
+        "compact_normal_account_usage_count": _as_int(raw_recheck.get("compact_normal_account_usage_count") or compact_detail.get("compact_normal_account_usage_count")),
+        "compact_missing_target_column_count": _as_int(raw_recheck.get("compact_missing_target_column_count") or compact_detail.get("compact_missing_target_column_count")),
         "live_status": summary.get("live_status") or "missing",
         "live_skip_reason": summary.get("live_skip_reason") or "",
         "raw_sql_included": False,
@@ -2538,6 +2595,9 @@ def evaluate_launch_readiness(
         "live_validation_waiver_id": str(snowflake_gate.get("live_validation_waiver_id") or ""),
         "live_validation_waiver_owner": str(snowflake_gate.get("live_validation_waiver_owner") or ""),
         "live_validation_waiver_expiration": str(snowflake_gate.get("live_validation_waiver_expiration") or ""),
+        "live_validation_required": bool(snowflake_gate.get("live_validation_required")),
+        "live_validation_skip_allowed": bool(snowflake_gate.get("live_validation_skip_allowed")),
+        "live_validation_missing_reason": str(snowflake_gate.get("live_validation_missing_reason") or ""),
         "procedure_compile_count": _as_int(snowflake_gate.get("procedure_compile_count")),
         "procedure_compile_failure_count": _as_int(snowflake_gate.get("procedure_compile_failure_count")),
         "procedure_smoke_call_count": _as_int(snowflake_gate.get("procedure_smoke_call_count")),
@@ -2545,7 +2605,18 @@ def evaluate_launch_readiness(
         "refresh_fast_status": str(snowflake_gate.get("refresh_fast_status") or ""),
         "refresh_full_status": str(snowflake_gate.get("refresh_full_status") or ""),
         "packet_validation_status": str(snowflake_gate.get("packet_validation_status") or ""),
+        "packet_validation_failed_check_count": _as_int(snowflake_gate.get("packet_validation_failed_check_count")),
+        "packet_max_bytes": _as_int(snowflake_gate.get("packet_max_bytes")),
+        "packet_current_active_row_count": _as_int(snowflake_gate.get("packet_current_active_row_count")),
+        "packet_flat_active_row_count": _as_int(snowflake_gate.get("packet_flat_active_row_count")),
+        "packet_last_good_status": str(snowflake_gate.get("packet_last_good_status") or ""),
+        "packet_duplicate_array_count": _as_int(snowflake_gate.get("packet_duplicate_array_count")),
         "compact_evidence_validation_status": str(snowflake_gate.get("compact_evidence_validation_status") or ""),
+        "compact_mart_count": _as_int(snowflake_gate.get("compact_mart_count")),
+        "compact_mart_failure_count": _as_int(snowflake_gate.get("compact_mart_failure_count")),
+        "compact_mart_names": _as_list(snowflake_gate.get("compact_mart_names")),
+        "compact_normal_account_usage_count": _as_int(snowflake_gate.get("compact_normal_account_usage_count")),
+        "compact_missing_target_column_count": _as_int(snowflake_gate.get("compact_missing_target_column_count")),
         "encoding_hygiene_passed": bool(encoding_hygiene.get("passed")),
         "encoding_blocked_count": _as_int(encoding_hygiene.get("blocked_count")),
         "cleanup_unknown_sql_object_count": _as_int(summary.get("cleanup_unknown_sql_object_count")),

@@ -27,6 +27,9 @@ class SnowflakeExecutionValidationTests(unittest.TestCase):
         summary = self._read_json("artifacts/snowflake_validation/snowflake_validation_summary.json")
         manifest = self._read_json("artifacts/snowflake_validation/artifact_manifest.json")
         live_manifest = self._read_json("artifacts/snowflake_validation/live_execution_manifest.json")
+        reconciliation = self._read_json("artifacts/snowflake_validation/live_execution_manifest_reconciliation.json")
+        live_environment = self._read_json("artifacts/snowflake_validation/live_validation_environment_results.json")
+        live_session = self._read_json("artifacts/snowflake_validation/live_validation_session_results.json")
         phases = self._read_json("artifacts/snowflake_validation/phase_validation_results.json")
         self.assertTrue(summary["passed"], summary)
         self.assertFalse(summary["live_mode_enabled"])
@@ -44,6 +47,15 @@ class SnowflakeExecutionValidationTests(unittest.TestCase):
         self.assertEqual(summary["live_execution_manifest_failure_count"], 0)
         self.assertTrue(live_manifest["passed"], live_manifest)
         self.assertGreater(live_manifest["entry_count"], 0)
+        self.assertTrue(reconciliation["passed"], reconciliation)
+        self.assertEqual(reconciliation["failure_count"], 0, reconciliation)
+        self.assertEqual(reconciliation["manifest_entry_count"], live_manifest["entry_count"])
+        self.assertEqual(reconciliation["orphan_manifest_entry_count"], 0, reconciliation)
+        self.assertEqual(reconciliation["unknown_manifest_id_count"], 0, reconciliation)
+        self.assertEqual(reconciliation["status_mismatch_count"], 0, reconciliation)
+        self.assertTrue(live_environment["live_execution_manifest_id"])
+        self.assertTrue(live_session["live_execution_manifest_id"])
+        self.assertTrue(all("row_index" in row and row["row_key"] for row in live_manifest["entries"]))
         self.assertTrue(all(row["raw_sql_included"] is False for row in live_manifest["entries"]))
         self.assertTrue((ROOT / "artifacts/snowflake_validation/snowflake_validation_SKIPPED.txt").exists())
         for name in REQUIRED_RESULT_FILES:
@@ -67,6 +79,53 @@ class SnowflakeExecutionValidationTests(unittest.TestCase):
         self.assertEqual(len(statements), 2)
         self.assertIn("SELECT 1; SELECT 2", statements[0])
         self.assertTrue(statements[1].startswith("CALL SP_SAMPLE"))
+
+    def test_live_execution_manifest_reconciliation_rejects_drift(self):
+        from tools.contracts import snowflake_execution_validation as validation
+
+        live_manifest = self._read_json("artifacts/snowflake_validation/live_execution_manifest.json")
+        artifact_payloads = {
+            entry["artifact"]: self._read_json(f"artifacts/snowflake_validation/{entry['artifact']}")
+            for entry in live_manifest["entries"]
+        }
+        baseline = validation._live_execution_manifest_reconciliation_results(
+            live_manifest,
+            artifact_payloads,
+            live_enabled=False,
+        )
+        self.assertTrue(baseline["passed"], baseline)
+
+        orphan_manifest = json.loads(json.dumps(live_manifest))
+        orphan = dict(orphan_manifest["entries"][0])
+        orphan.update({"validation_id": "orphan-ledger-row", "artifact": "procedure_compile_results.json"})
+        orphan_manifest["entries"].append(orphan)
+        orphan_result = validation._live_execution_manifest_reconciliation_results(
+            orphan_manifest,
+            artifact_payloads,
+            live_enabled=False,
+        )
+        self.assertFalse(orphan_result["passed"])
+        self.assertIn("MANIFEST_ORPHAN_ENTRY", {row["code"] for row in orphan_result["failures"]})
+
+        unknown_payloads = json.loads(json.dumps(artifact_payloads))
+        unknown_payloads["procedure_compile_results.json"][0]["live_execution_manifest_id"] = "unknown-ledger-row"
+        unknown_result = validation._live_execution_manifest_reconciliation_results(
+            live_manifest,
+            unknown_payloads,
+            live_enabled=False,
+        )
+        self.assertFalse(unknown_result["passed"])
+        self.assertIn("ARTIFACT_ROW_UNKNOWN_MANIFEST_ID", {row["code"] for row in unknown_result["failures"]})
+
+        mismatch_manifest = json.loads(json.dumps(live_manifest))
+        mismatch_manifest["entries"][0]["status"] = "failed"
+        mismatch_result = validation._live_execution_manifest_reconciliation_results(
+            mismatch_manifest,
+            artifact_payloads,
+            live_enabled=False,
+        )
+        self.assertFalse(mismatch_result["passed"])
+        self.assertIn("MANIFEST_STATUS_MISMATCH", {row["code"] for row in mismatch_result["failures"]})
 
     def test_procedure_compile_and_dependency_graph_cover_calls(self):
         setup_text = (ROOT / "snowflake/mart_setup/05_load_procedures.sql").read_text(encoding="utf-8")
@@ -143,6 +202,8 @@ class SnowflakeExecutionValidationTests(unittest.TestCase):
         self.assertEqual(compact_detail["compact_mart_count"], 5)
         self.assertEqual(compact["normal_account_usage_count"], 0)
         self.assertTrue(all(row["target_lookup_columns"] for row in compact_detail["marts"]))
+        self.assertTrue(all("missing_target_lookup_columns" in row for row in compact_detail["marts"]))
+        self.assertTrue(all(row["loader_matrix_sections"] for row in compact_detail["marts"]))
         self.assertTrue(all(row["retention_bounded"] for row in compact_detail["marts"]))
         self.assertTrue(all(row["retention_window"] for row in compact_detail["marts"]))
         self.assertTrue(all(row["live_execution_manifest_id"] for row in compact_detail["marts"]))
@@ -230,11 +291,18 @@ class SnowflakeExecutionValidationTests(unittest.TestCase):
         self.assertTrue(all(row["source_artifact"] for row in packet_detail["checks"]))
         self.assertTrue(all("launch_summary_field" in row for row in packet_detail["checks"]))
         self.assertTrue(all(row["live_execution_manifest_id"] for row in packet_detail["checks"]))
+        self.assertTrue(all("missing_fields" in row for row in packet_detail["checks"]))
+        self.assertTrue(all("duplicate_arrays" in row for row in packet_detail["checks"]))
+        self.assertTrue(all("first_paint_impact" in row for row in packet_detail["checks"]))
+        self.assertTrue(all("affected_sections" in row for row in packet_detail["checks"]))
         self.assertEqual(refresh_fast["status"], "skipped")
         self.assertEqual(refresh_full["status"], "skipped")
         self.assertTrue(refresh_fast["live_execution_manifest_id"])
         self.assertTrue(refresh_full["live_execution_manifest_id"])
         self.assertTrue(refresh_detail["passed"], refresh_detail)
+        self.assertTrue(refresh_detail["checks"])
+        self.assertIn("fresh_reused_stale_counts_present", {row["check_name"] for row in refresh_detail["checks"]})
+        self.assertIn("source_freshness_timestamp_maps_present", {row["check_name"] for row in refresh_detail["checks"]})
         self.assertTrue(smoke_coverage["passed"], smoke_coverage)
         self.assertEqual(smoke_coverage["expected_smoke_target_count"], 8)
         self.assertTrue(all(row["live_execution_manifest_id"] for row in smoke_coverage["rows"]))

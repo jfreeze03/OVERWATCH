@@ -57,6 +57,14 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertTrue(summary["live_execution_manifest_passed"])
         self.assertGreater(summary["live_execution_manifest_entry_count"], 0)
         self.assertEqual(summary["live_execution_manifest_failure_count"], 0)
+        self.assertTrue(summary["live_execution_manifest_gate_passed"])
+        self.assertTrue(summary["live_execution_manifest_reconciliation_passed"])
+        self.assertEqual(summary["live_execution_manifest_reconciliation_failure_count"], 0)
+        self.assertEqual(summary["live_execution_manifest_orphan_count"], 0)
+        self.assertEqual(summary["live_execution_manifest_unknown_id_count"], 0)
+        self.assertEqual(summary["live_execution_manifest_missing_id_count"], 0)
+        self.assertEqual(summary["live_execution_manifest_status_mismatch_count"], 0)
+        self.assertEqual(summary["live_execution_manifest_mode_mismatch_count"], 0)
         self.assertGreater(summary["procedure_compile_count"], 0)
         self.assertEqual(summary["procedure_compile_failure_count"], 0)
         self.assertGreater(summary["procedure_smoke_call_count"], 0)
@@ -67,10 +75,13 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertEqual(summary["packet_validation_failed_check_count"], 0)
         self.assertEqual(summary["packet_duplicate_array_count"], 0)
         self.assertEqual(summary["packet_missing_field_count"], 0)
+        self.assertEqual(summary["packet_duplicate_arrays"], [])
+        self.assertEqual(summary["packet_missing_fields"], [])
         self.assertEqual(summary["compact_evidence_validation_status"], "passed")
         self.assertEqual(summary["compact_mart_count"], 5)
         self.assertEqual(summary["compact_mart_failure_count"], 0)
         self.assertEqual(summary["compact_normal_account_usage_count"], 0)
+        self.assertEqual(summary["compact_missing_target_columns"], [])
         self.assertTrue(summary["encoding_hygiene_passed"])
         self.assertEqual(summary["encoding_blocked_count"], 0)
         self.assertGreaterEqual(summary["required_artifact_count"], len(REQUIRED_LAUNCH_READINESS_ARTIFACTS))
@@ -101,6 +112,7 @@ class LaunchReadinessTests(unittest.TestCase):
             "encoding_hygiene",
             "live_query_history",
             "snowflake_raw_validation_recheck",
+            "live_execution_manifest_gate",
             "snowflake_execution_validation",
             "procedure_compile_validation",
             "procedure_smoke_call_validation",
@@ -122,6 +134,7 @@ class LaunchReadinessTests(unittest.TestCase):
             self.assertTrue(matrix_by_gate[gate]["passed"], matrix_by_gate[gate])
 
         snowflake_gate = self._read_json("artifacts/launch_readiness/snowflake_validation_gate_results.json")
+        manifest_gate = self._read_json("artifacts/launch_readiness/live_execution_manifest_gate_results.json")
         self.assertIn("OVERWATCH_SNOWFLAKE_VALIDATION", snowflake_gate["snowflake_validation_skip_reason"])
         self.assertEqual(snowflake_gate["live_validation_status"], "static_skipped")
         self.assertEqual(snowflake_gate["packet_validation_status"], "passed")
@@ -129,6 +142,10 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertEqual(snowflake_gate["packet_validation_failed_check_count"], 0)
         self.assertTrue(snowflake_gate["live_execution_manifest_passed"])
         self.assertGreater(snowflake_gate["live_execution_manifest_entry_count"], 0)
+        self.assertTrue(snowflake_gate["live_execution_manifest_reconciliation_passed"])
+        self.assertEqual(snowflake_gate["live_execution_manifest_reconciliation_failure_count"], 0)
+        self.assertTrue(manifest_gate["passed"], manifest_gate)
+        self.assertEqual(manifest_gate["failure_count"], 0, manifest_gate)
         self.assertEqual(snowflake_gate["compact_mart_count"], 5)
         raw_recheck = self._read_json("artifacts/launch_readiness/snowflake_raw_validation_recheck.json")
         snowflake_failures = self._read_json("artifacts/launch_readiness/snowflake_validation_failures.json")
@@ -138,6 +155,8 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertEqual(raw_recheck["packet_validation_failed_check_count"], 0)
         self.assertTrue(raw_recheck["live_execution_manifest_passed"])
         self.assertGreater(raw_recheck["live_execution_manifest_entry_count"], 0)
+        self.assertTrue(raw_recheck["live_execution_manifest_reconciliation_passed"])
+        self.assertEqual(raw_recheck["live_execution_manifest_reconciliation_failure_count"], 0)
         self.assertEqual(raw_recheck["compact_evidence_validation_status"], "passed")
         self.assertEqual(raw_recheck["compact_mart_count"], 5)
         self.assertEqual(raw_recheck["live_validation_status"], "static_skipped")
@@ -187,6 +206,7 @@ class LaunchReadinessTests(unittest.TestCase):
             "artifacts/launch_readiness/export_case_closure_results.json",
             "artifacts/launch_readiness/cleanup_launch_closure_results.json",
             "artifacts/launch_readiness/snowflake_validation_gate_results.json",
+            "artifacts/launch_readiness/live_execution_manifest_gate_results.json",
             "artifacts/launch_readiness/encoding_hygiene_results.json",
         ):
             payload = self._read_json(rel)
@@ -725,6 +745,45 @@ class LaunchReadinessTests(unittest.TestCase):
                 "snowflake_raw_validation_recheck",
             ),
             (
+                "manifest reconciliation artifact",
+                lambda payloads, launch: payloads["artifacts/snowflake_validation/live_execution_manifest_reconciliation.json"].update(
+                    {"passed": False, "failure_count": 1, "orphan_manifest_entry_count": 1}
+                ),
+                "live_execution_manifest_gate",
+            ),
+            (
+                "manifest orphan raw row",
+                lambda payloads, launch: payloads["artifacts/snowflake_validation/live_execution_manifest.json"]["entries"].append(
+                    {
+                        **payloads["artifacts/snowflake_validation/live_execution_manifest.json"]["entries"][0],
+                        "validation_id": "orphan-launch-ledger-entry",
+                        "artifact": "procedure_compile_results.json",
+                    }
+                ),
+                "live_execution_manifest_gate",
+            ),
+            (
+                "manifest unknown artifact id",
+                lambda payloads, launch: payloads["artifacts/snowflake_validation/procedure_compile_results.json"][0].update(
+                    {"live_execution_manifest_id": "unknown-launch-ledger-entry"}
+                ),
+                "live_execution_manifest_gate",
+            ),
+            (
+                "manifest status mismatch",
+                lambda payloads, launch: payloads["artifacts/snowflake_validation/live_execution_manifest.json"]["entries"][0].update(
+                    {"status": "failed"}
+                ),
+                "live_execution_manifest_gate",
+            ),
+            (
+                "session missing manifest id",
+                lambda payloads, launch: payloads["artifacts/snowflake_validation/live_validation_session_results.json"].pop(
+                    "live_execution_manifest_id", None
+                ),
+                "snowflake_raw_validation_recheck",
+            ),
+            (
                 "missing packet raw artifact",
                 lambda payloads, launch: payloads.pop("artifacts/snowflake_validation/packet_publication_validation_results.json", None),
                 "snowflake_raw_validation_recheck",
@@ -751,6 +810,20 @@ class LaunchReadinessTests(unittest.TestCase):
                 "packet_publication_validation",
             ),
             (
+                "packet missing field names absent",
+                lambda payloads, launch: payloads["artifacts/snowflake_validation/packet_validation_detail_results.json"].update(
+                    {"packet_missing_field_count": 1, "packet_missing_fields": []}
+                ),
+                "packet_publication_validation",
+            ),
+            (
+                "packet duplicate array names absent",
+                lambda payloads, launch: payloads["artifacts/snowflake_validation/packet_validation_detail_results.json"].update(
+                    {"packet_duplicate_array_count": 1, "packet_duplicate_arrays": []}
+                ),
+                "packet_publication_validation",
+            ),
+            (
                 "compact status lies",
                 lambda payloads, launch: payloads["artifacts/snowflake_validation/compact_evidence_mart_validation_results.json"]["marts"][0].update(
                     {"passed": False}
@@ -761,6 +834,20 @@ class LaunchReadinessTests(unittest.TestCase):
                 "compact detail failure",
                 lambda payloads, launch: payloads["artifacts/snowflake_validation/compact_evidence_mart_detail_results.json"]["marts"][0].update(
                     {"retention_bounded": False, "passed": False}
+                ),
+                "compact_evidence_mart_validation",
+            ),
+            (
+                "compact missing target column names",
+                lambda payloads, launch: payloads["artifacts/snowflake_validation/compact_evidence_mart_detail_results.json"]["marts"][0].update(
+                    {"target_lookup_columns_present": False, "missing_target_lookup_columns": []}
+                ),
+                "compact_evidence_mart_validation",
+            ),
+            (
+                "compact missing loader sections",
+                lambda payloads, launch: payloads["artifacts/snowflake_validation/compact_evidence_mart_detail_results.json"]["marts"][0].update(
+                    {"loader_matrix_references": True, "loader_matrix_sections": []}
                 ),
                 "compact_evidence_mart_validation",
             ),
@@ -807,6 +894,13 @@ class LaunchReadinessTests(unittest.TestCase):
                 "snowflake fast refresh",
                 lambda payloads, launch: payloads["artifacts/snowflake_validation/refresh_fast_results.json"].update({"passed": False}),
                 "refresh_performance_validation",
+            ),
+            (
+                "snowflake refresh missing freshness counts",
+                lambda payloads, launch: payloads["artifacts/snowflake_validation/refresh_fast_results.json"].pop(
+                    "fresh_command_row_count", None
+                ),
+                "snowflake_raw_validation_recheck",
             ),
             (
                 "snowflake refresh detail",

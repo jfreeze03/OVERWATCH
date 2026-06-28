@@ -59,6 +59,7 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     f"{LAUNCH_READINESS_DIR}/docs_readiness_results.json",
     f"{LAUNCH_READINESS_DIR}/encoding_hygiene_results.json",
     f"{LAUNCH_READINESS_DIR}/snowflake_validation_gate_results.json",
+    f"{LAUNCH_READINESS_DIR}/live_execution_manifest_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/snowflake_raw_validation_recheck.json",
     f"{LAUNCH_READINESS_DIR}/snowflake_validation_failures.json",
     f"{LAUNCH_READINESS_DIR}/ci_run_review_results.json",
@@ -139,6 +140,7 @@ GENERIC_WAIVER_TEXT = {"", "n/a", "na", "none", "todo", "tbd", "future", "option
 SNOWFLAKE_RAW_RECHECK_ARTIFACTS = (
     "artifacts/snowflake_validation/snowflake_validation_summary.json",
     "artifacts/snowflake_validation/live_execution_manifest.json",
+    "artifacts/snowflake_validation/live_execution_manifest_reconciliation.json",
     "artifacts/snowflake_validation/live_validation_environment_results.json",
     "artifacts/snowflake_validation/live_validation_session_results.json",
     "artifacts/snowflake_validation/procedure_dependency_graph.json",
@@ -1156,10 +1158,55 @@ def _live_query_history_results(root: Path, profile: str, waivers: Iterable[Mapp
     live_enabled = os.environ.get("OVERWATCH_QUERY_PLAN_PROOF") == "1"
     live_artifact = root / "artifacts" / "query_history_by_tag.json"
     skipped_artifact = root / "artifacts" / "query_history_by_tag_SKIPPED.txt"
+    bytes_artifact = root / "artifacts" / "query_bytes_by_boundary.json"
+    manifest_artifact = root / "artifacts" / "snowflake_validation" / "live_execution_manifest.json"
     live_required = profile in {"internal_live", "prod_candidate"}
     waiver_used = _has_valid_waiver(waivers, "live_query_history")
+    manifest_ids: set[str] = set()
+    if manifest_artifact.exists():
+        try:
+            manifest_payload = json.loads(manifest_artifact.read_text(encoding="utf-8"))
+            manifest_ids = {
+                str(row.get("validation_id") or "")
+                for row in _as_list(_as_mapping(manifest_payload).get("entries"))
+                if isinstance(row, Mapping)
+            }
+        except json.JSONDecodeError:
+            manifest_ids = set()
+    manifest_missing_link_count = 0
+    manifest_linked_count = 0
+    raw_sql_included = False
+    row_count = 0
     if live_enabled:
-        passed = live_artifact.exists()
+        rows: list[Mapping[str, Any]] = []
+        if live_artifact.exists():
+            try:
+                payload = json.loads(live_artifact.read_text(encoding="utf-8"))
+                if isinstance(payload, list):
+                    rows = [_as_mapping(row) for row in payload]
+                elif isinstance(payload, Mapping):
+                    rows = [_as_mapping(row) for row in _as_list(payload.get("rows") or payload.get("queries"))]
+            except json.JSONDecodeError:
+                rows = []
+        row_count = len(rows)
+        for row in rows:
+            manifest_id = str(row.get("live_execution_manifest_id") or "")
+            if manifest_id and manifest_id in manifest_ids:
+                manifest_linked_count += 1
+            else:
+                manifest_missing_link_count += 1
+            for key, value in row.items():
+                key_text = str(key).lower()
+                if key_text in {"query_text", "sql_text", "raw_sql"} and str(value or "").strip():
+                    raw_sql_included = True
+                if isinstance(value, str) and re.search(r"(?i)\b(SELECT|WITH|JOIN|CALL)\b", value):
+                    raw_sql_included = True
+        passed = (
+            live_artifact.exists()
+            and manifest_missing_link_count == 0
+            and not raw_sql_included
+            and bytes_artifact.exists()
+        )
         skip_reason = "" if passed else "OVERWATCH_QUERY_PLAN_PROOF=1 but query_history_by_tag.json was not generated."
         skipped = False
     else:
@@ -1180,11 +1227,17 @@ def _live_query_history_results(root: Path, profile: str, waivers: Iterable[Mapp
         "live_query_plan_proof_enabled": live_enabled,
         "live_query_history_required": live_required,
         "live_artifact_present": live_artifact.exists(),
+        "bytes_by_boundary_present": bytes_artifact.exists(),
+        "manifest_artifact_present": manifest_artifact.exists(),
+        "query_history_row_count": row_count,
+        "manifest_linked_count": manifest_linked_count,
+        "manifest_missing_link_count": manifest_missing_link_count,
+        "query_bytes_boundary_reconciled": not live_enabled or bytes_artifact.exists(),
         "skipped": skipped,
         "skip_reason": skip_reason,
         "waiver_used": waiver_used,
-        "status": "passed" if live_artifact.exists() else ("waived" if waiver_used else ("skipped_with_reason" if skipped and passed else "missing")),
-        "raw_sql_included": False,
+        "status": "passed" if passed and live_artifact.exists() else ("waived" if waiver_used else ("skipped_with_reason" if skipped and passed else "missing")),
+        "raw_sql_included": raw_sql_included,
         "live_release_warning": skipped,
     }
 
@@ -1806,6 +1859,46 @@ def _component_row(
     return row
 
 
+def _snowflake_manifest_rows(payload: Any) -> list[Mapping[str, Any]]:
+    if isinstance(payload, list):
+        return [_as_mapping(row) for row in payload if isinstance(row, Mapping)]
+    if not isinstance(payload, Mapping):
+        return []
+    if str(payload.get("source") or "") in {"live_validation_environment", "live_validation_session"}:
+        return [_as_mapping(payload)]
+    for key in ("rows", "checks", "marts"):
+        rows = payload.get(key)
+        if isinstance(rows, list):
+            return [_as_mapping(row) for row in rows if isinstance(row, Mapping)]
+    if payload.get("live_execution_manifest_id") or payload.get("source"):
+        return [_as_mapping(payload)]
+    return []
+
+
+def _snowflake_manifest_row_status(row: Mapping[str, Any]) -> str:
+    if row.get("status"):
+        return str(row.get("status") or "")
+    return "passed" if bool(row.get("passed", True)) else "failed"
+
+
+def _snowflake_manifest_row_mode(artifact: str, row: Mapping[str, Any], live_enabled: bool) -> str:
+    if _snowflake_manifest_row_status(row) == "skipped":
+        return "skipped"
+    if artifact == "procedure_compile_results.json":
+        return "live" if str(row.get("phase") or "") == "procedure_compile_live" else "static"
+    if artifact == "procedure_smoke_call_results.json":
+        mode = str(row.get("mode") or "")
+        if mode == "fixture_static":
+            return "static"
+        if mode in {"dry_run", "live"}:
+            return mode
+    if artifact in {"refresh_fast_results.json", "refresh_full_results.json"}:
+        return "live" if live_enabled else "static"
+    if artifact in {"live_validation_environment_results.json", "live_validation_session_results.json"}:
+        return "live" if live_enabled else "static"
+    return "static"
+
+
 def _first_valid_waiver(waivers: Iterable[Mapping[str, Any]], *gates: str) -> Mapping[str, Any]:
     wanted = set(gates)
     for row in waivers:
@@ -1891,8 +1984,16 @@ def _snowflake_raw_validation_recheck(
     live_manifest = _as_mapping(payloads.get(manifest_path))
     manifest_entries = [_as_mapping(row) for row in _as_list(live_manifest.get("entries"))]
     manifest_ids = {str(row.get("validation_id") or "") for row in manifest_entries}
+    manifest_reconciliation_path = "artifacts/snowflake_validation/live_execution_manifest_reconciliation.json"
+    manifest_reconciliation = _as_mapping(payloads.get(manifest_reconciliation_path))
     if not live_manifest or not bool(live_manifest.get("passed")) or _as_int(live_manifest.get("failure_count")):
         fail("live_execution_manifest", "Live execution manifest is missing or failed.", path=manifest_path)
+    if (
+        not manifest_reconciliation
+        or not bool(manifest_reconciliation.get("passed"))
+        or _as_int(manifest_reconciliation.get("failure_count"))
+    ):
+        fail("live_execution_manifest", "Live execution manifest reconciliation is missing or failed.", path=manifest_reconciliation_path)
     if not manifest_entries:
         fail("live_execution_manifest", "Live execution manifest has no validation entries.", path=manifest_path)
     for row in manifest_entries:
@@ -1918,6 +2019,71 @@ def _snowflake_raw_validation_recheck(
         manifest_id = str(row.get("live_execution_manifest_id") or "")
         if not manifest_id or manifest_id not in manifest_ids:
             fail(gate, "Validation row is missing a live execution manifest entry.", path=artifact_path)
+
+    require_manifest_id("snowflake_live_validation_environment", live_environment_path, live_environment)
+    require_manifest_id("snowflake_live_validation_session", live_session_path, live_session)
+
+    manifest_artifact_payloads: dict[str, Any] = {
+        "live_validation_environment_results.json": live_environment,
+        "live_validation_session_results.json": live_session,
+        "setup_execution_results.json": payloads.get("artifacts/snowflake_validation/setup_execution_results.json"),
+        "procedure_compile_results.json": payloads.get("artifacts/snowflake_validation/procedure_compile_results.json"),
+        "procedure_compile_coverage_results.json": payloads.get("artifacts/snowflake_validation/procedure_compile_coverage_results.json"),
+        "procedure_smoke_call_results.json": payloads.get("artifacts/snowflake_validation/procedure_smoke_call_results.json"),
+        "procedure_smoke_call_coverage_results.json": payloads.get("artifacts/snowflake_validation/procedure_smoke_call_coverage_results.json"),
+        "validation_sql_results.json": payloads.get("artifacts/snowflake_validation/validation_sql_results.json"),
+        "refresh_fast_results.json": payloads.get("artifacts/snowflake_validation/refresh_fast_results.json"),
+        "refresh_full_results.json": payloads.get("artifacts/snowflake_validation/refresh_full_results.json"),
+        "packet_validation_detail_results.json": payloads.get("artifacts/snowflake_validation/packet_validation_detail_results.json"),
+        "compact_evidence_mart_validation_results.json": payloads.get("artifacts/snowflake_validation/compact_evidence_mart_validation_results.json"),
+        "compact_evidence_mart_detail_results.json": payloads.get("artifacts/snowflake_validation/compact_evidence_mart_detail_results.json"),
+        "refresh_detail_results.json": payloads.get("artifacts/snowflake_validation/refresh_detail_results.json"),
+    }
+    required_manifest_artifacts = {
+        "live_validation_environment_results.json",
+        "live_validation_session_results.json",
+        "procedure_compile_results.json",
+        "procedure_smoke_call_results.json",
+        "refresh_fast_results.json",
+        "refresh_full_results.json",
+        "packet_validation_detail_results.json",
+        "compact_evidence_mart_validation_results.json",
+    }
+    rows_by_manifest_key: dict[tuple[str, str], Mapping[str, Any]] = {}
+    raw_manifest_missing_id_count = 0
+    raw_manifest_unknown_id_count = 0
+    raw_manifest_orphan_count = 0
+    raw_manifest_status_mismatch_count = 0
+    raw_manifest_mode_mismatch_count = 0
+    for artifact_name, artifact_payload in manifest_artifact_payloads.items():
+        for row in _snowflake_manifest_rows(artifact_payload):
+            manifest_id = str(row.get("live_execution_manifest_id") or "")
+            if not manifest_id:
+                if artifact_name in required_manifest_artifacts:
+                    raw_manifest_missing_id_count += 1
+                    fail("live_execution_manifest", "Artifact row is missing a live execution manifest ID.", path=f"artifacts/snowflake_validation/{artifact_name}")
+                continue
+            if manifest_id not in manifest_ids:
+                raw_manifest_unknown_id_count += 1
+                fail("live_execution_manifest", "Artifact row references an unknown live execution manifest ID.", path=f"artifacts/snowflake_validation/{artifact_name}")
+                continue
+            rows_by_manifest_key[(artifact_name, manifest_id)] = row
+    for entry in manifest_entries:
+        artifact_name = str(entry.get("artifact") or "")
+        manifest_id = str(entry.get("validation_id") or "")
+        manifest_row = rows_by_manifest_key.get((artifact_name, manifest_id))
+        if not manifest_row:
+            raw_manifest_orphan_count += 1
+            fail("live_execution_manifest", "Live execution manifest entry is orphaned from validation artifacts.", path=manifest_path)
+            continue
+        row_status = _snowflake_manifest_row_status(manifest_row)
+        if str(entry.get("status") or "") != row_status:
+            raw_manifest_status_mismatch_count += 1
+            fail("live_execution_manifest", "Live execution manifest status contradicts its validation artifact row.", path=manifest_path)
+        row_mode = _snowflake_manifest_row_mode(artifact_name, manifest_row, live_enabled)
+        if str(entry.get("observed_mode") or "") != row_mode:
+            raw_manifest_mode_mismatch_count += 1
+            fail("live_execution_manifest", "Live execution manifest observed mode contradicts its validation artifact row.", path=manifest_path)
 
     compile_path = "artifacts/snowflake_validation/procedure_compile_results.json"
     compile_rows = [_as_mapping(row) for row in _as_list(payloads.get(compile_path))]
@@ -1998,6 +2164,15 @@ def _snowflake_raw_validation_recheck(
         if "actual" not in row or "expected" not in row:
             packet_passed = False
             fail("packet_publication_validation", "Packet validation detail check is missing actual/expected evidence.", path=packet_detail_path)
+        if _as_int(packet_detail.get("packet_missing_field_count")) > 0 and not _as_list(packet_detail.get("packet_missing_fields")):
+            packet_passed = False
+            fail("packet_publication_validation", "Packet missing-field failures must include field names.", path=packet_detail_path)
+        if _as_int(packet_detail.get("packet_duplicate_array_count")) > 0 and not _as_list(packet_detail.get("packet_duplicate_arrays")):
+            packet_passed = False
+            fail("packet_publication_validation", "Packet duplicate-array failures must include array names.", path=packet_detail_path)
+        if row.get("first_paint_impact") is None:
+            packet_passed = False
+            fail("packet_publication_validation", "Packet detail row is missing first-paint impact metadata.", path=packet_detail_path)
         require_manifest_id("packet_publication_validation", packet_detail_path, row)
 
     compact_path = "artifacts/snowflake_validation/compact_evidence_mart_validation_results.json"
@@ -2027,6 +2202,12 @@ def _snowflake_raw_validation_recheck(
         if not bool(row.get("passed")):
             compact_passed = False
             fail("compact_evidence_mart_validation", "Compact evidence mart detail row failed.", path=compact_detail_path)
+        if not bool(row.get("target_lookup_columns_present")) and not _as_list(row.get("missing_target_lookup_columns")):
+            compact_passed = False
+            fail("compact_evidence_mart_validation", "Compact detail row is missing target column names.", path=compact_detail_path)
+        if bool(row.get("loader_matrix_references")) and not _as_list(row.get("loader_matrix_sections")):
+            compact_passed = False
+            fail("compact_evidence_mart_validation", "Compact detail row is missing loader matrix sections.", path=compact_detail_path)
         if bool(row.get("live_checked")):
             require_manifest_id("compact_evidence_mart_validation", compact_detail_path, row)
 
@@ -2049,6 +2230,12 @@ def _snowflake_raw_validation_recheck(
             fail(gate, "Refresh validation has failed sections.", path=rel)
         if _as_int(payload.get("max_packet_bytes")) > 100000:
             fail(gate, "Refresh validation packet bytes exceed 100 KB.", path=rel)
+        for key in ("fresh_command_row_count", "reused_command_row_count", "stale_command_row_count"):
+            if key not in payload:
+                fail(gate, "Refresh validation is missing freshness count fields.", path=rel)
+        for key in ("source_fact_max_ts_by_source", "command_source_snapshot_ts_by_section"):
+            if key not in payload:
+                fail(gate, "Refresh validation is missing source freshness timestamp maps.", path=rel)
         if live_enabled:
             require_manifest_id(gate, rel, payload)
 
@@ -2104,6 +2291,13 @@ def _snowflake_raw_validation_recheck(
         "live_execution_manifest_passed": bool(live_manifest.get("passed")),
         "live_execution_manifest_entry_count": _as_int(live_manifest.get("entry_count")),
         "live_execution_manifest_failure_count": _as_int(live_manifest.get("failure_count")),
+        "live_execution_manifest_reconciliation_passed": bool(manifest_reconciliation.get("passed")),
+        "live_execution_manifest_reconciliation_failure_count": _as_int(manifest_reconciliation.get("failure_count")),
+        "live_execution_manifest_orphan_count": _as_int(manifest_reconciliation.get("orphan_manifest_entry_count")) + raw_manifest_orphan_count,
+        "live_execution_manifest_unknown_id_count": _as_int(manifest_reconciliation.get("unknown_manifest_id_count")) + raw_manifest_unknown_id_count,
+        "live_execution_manifest_missing_id_count": _as_int(manifest_reconciliation.get("missing_manifest_id_count")) + raw_manifest_missing_id_count,
+        "live_execution_manifest_status_mismatch_count": _as_int(manifest_reconciliation.get("status_mismatch_count")) + raw_manifest_status_mismatch_count,
+        "live_execution_manifest_mode_mismatch_count": _as_int(manifest_reconciliation.get("mode_mismatch_count")) + raw_manifest_mode_mismatch_count,
         "procedure_compile_count": len(compile_rows),
         "procedure_compile_failure_count": sum(1 for row in compile_rows if str(row.get("status") or "") == "failed"),
         "procedure_smoke_call_count": len(smoke_rows),
@@ -2116,12 +2310,15 @@ def _snowflake_raw_validation_recheck(
         "packet_last_good_status": str(packet_detail.get("packet_last_good_status") or ""),
         "packet_duplicate_array_count": _as_int(packet_detail.get("packet_duplicate_array_count")),
         "packet_missing_field_count": _as_int(packet_detail.get("packet_missing_field_count")),
+        "packet_duplicate_arrays": _as_list(packet_detail.get("packet_duplicate_arrays")),
+        "packet_missing_fields": _as_list(packet_detail.get("packet_missing_fields")),
         "compact_evidence_validation_status": "passed" if compact_passed else "failed",
         "compact_mart_count": _as_int(compact_detail.get("compact_mart_count") or compact_detail.get("mart_count")),
         "compact_mart_failure_count": _as_int(compact_detail.get("compact_mart_failure_count") or compact_detail.get("failure_count")),
         "compact_mart_names": _as_list(compact_detail.get("compact_mart_names")),
         "compact_normal_account_usage_count": _as_int(compact_detail.get("compact_normal_account_usage_count")),
         "compact_missing_target_column_count": _as_int(compact_detail.get("compact_missing_target_column_count")),
+        "compact_missing_target_columns": _as_list(compact_detail.get("compact_missing_target_columns")),
         "refresh_fast_status": refresh_statuses.get("refresh_fast_validation", ""),
         "refresh_full_status": refresh_statuses.get("refresh_full_validation", ""),
         "raw_sql_included": False,
@@ -2145,6 +2342,7 @@ def _snowflake_validation_gate_results(
 ) -> dict[str, Any]:
     summary = _as_mapping(payloads.get("artifacts/snowflake_validation/snowflake_validation_summary.json"))
     live_manifest = _as_mapping(payloads.get("artifacts/snowflake_validation/live_execution_manifest.json"))
+    live_manifest_reconciliation = _as_mapping(payloads.get("artifacts/snowflake_validation/live_execution_manifest_reconciliation.json"))
     live_environment = _as_mapping(payloads.get("artifacts/snowflake_validation/live_validation_environment_results.json"))
     live_session = _as_mapping(payloads.get("artifacts/snowflake_validation/live_validation_session_results.json"))
     compile_rows = _as_list(payloads.get("artifacts/snowflake_validation/procedure_compile_results.json"))
@@ -2212,6 +2410,7 @@ def _snowflake_validation_gate_results(
             "snowflake_execution_validation",
             bool(summary.get("passed"))
             and bool(live_manifest.get("passed"))
+            and bool(live_manifest_reconciliation.get("passed"))
             and bool(live_environment.get("passed"))
             and bool(live_session.get("passed"))
             and (live_enabled or not live_skipped or live_skip_allowed),
@@ -2224,6 +2423,8 @@ def _snowflake_validation_gate_results(
                 "live_skip_reason": summary.get("live_skip_reason"),
                 "manifest_passed": live_manifest.get("passed"),
                 "manifest_entry_count": live_manifest.get("entry_count"),
+                "manifest_reconciliation_passed": live_manifest_reconciliation.get("passed"),
+                "manifest_reconciliation_failures": live_manifest_reconciliation.get("failures"),
                 "environment_passed": live_environment.get("passed"),
                 "session_status": live_session.get("status"),
             },
@@ -2333,6 +2534,13 @@ def _snowflake_validation_gate_results(
         "live_execution_manifest_passed": bool(raw_recheck.get("live_execution_manifest_passed") if "live_execution_manifest_passed" in raw_recheck else live_manifest.get("passed")),
         "live_execution_manifest_entry_count": _as_int(raw_recheck.get("live_execution_manifest_entry_count") or live_manifest.get("entry_count")),
         "live_execution_manifest_failure_count": _as_int(raw_recheck.get("live_execution_manifest_failure_count") or live_manifest.get("failure_count")),
+        "live_execution_manifest_reconciliation_passed": bool(raw_recheck.get("live_execution_manifest_reconciliation_passed") if "live_execution_manifest_reconciliation_passed" in raw_recheck else live_manifest_reconciliation.get("passed")),
+        "live_execution_manifest_reconciliation_failure_count": _as_int(raw_recheck.get("live_execution_manifest_reconciliation_failure_count") or live_manifest_reconciliation.get("failure_count")),
+        "live_execution_manifest_orphan_count": _as_int(raw_recheck.get("live_execution_manifest_orphan_count") or live_manifest_reconciliation.get("orphan_manifest_entry_count")),
+        "live_execution_manifest_unknown_id_count": _as_int(raw_recheck.get("live_execution_manifest_unknown_id_count") or live_manifest_reconciliation.get("unknown_manifest_id_count")),
+        "live_execution_manifest_missing_id_count": _as_int(raw_recheck.get("live_execution_manifest_missing_id_count") or live_manifest_reconciliation.get("missing_manifest_id_count")),
+        "live_execution_manifest_status_mismatch_count": _as_int(raw_recheck.get("live_execution_manifest_status_mismatch_count") or live_manifest_reconciliation.get("status_mismatch_count")),
+        "live_execution_manifest_mode_mismatch_count": _as_int(raw_recheck.get("live_execution_manifest_mode_mismatch_count") or live_manifest_reconciliation.get("mode_mismatch_count")),
         "procedure_compile_count": len(compile_rows),
         "procedure_compile_failure_count": sum(1 for row in compile_rows if str(_as_mapping(row).get("status") or "") == "failed"),
         "procedure_smoke_call_count": len(smoke_rows),
@@ -2348,13 +2556,84 @@ def _snowflake_validation_gate_results(
         "packet_last_good_status": str(raw_recheck.get("packet_last_good_status") or packet_detail.get("packet_last_good_status") or ""),
         "packet_duplicate_array_count": _as_int(raw_recheck.get("packet_duplicate_array_count") or packet_detail.get("packet_duplicate_array_count")),
         "packet_missing_field_count": _as_int(raw_recheck.get("packet_missing_field_count") or packet_detail.get("packet_missing_field_count")),
+        "packet_duplicate_arrays": _as_list(raw_recheck.get("packet_duplicate_arrays")) or _as_list(packet_detail.get("packet_duplicate_arrays")),
+        "packet_missing_fields": _as_list(raw_recheck.get("packet_missing_fields")) or _as_list(packet_detail.get("packet_missing_fields")),
         "compact_mart_count": _as_int(raw_recheck.get("compact_mart_count") or compact_detail.get("compact_mart_count") or compact_detail.get("mart_count")),
         "compact_mart_failure_count": _as_int(raw_recheck.get("compact_mart_failure_count") or compact_detail.get("compact_mart_failure_count") or compact_detail.get("failure_count")),
         "compact_mart_names": _as_list(raw_recheck.get("compact_mart_names")) or _as_list(compact_detail.get("compact_mart_names")),
         "compact_normal_account_usage_count": _as_int(raw_recheck.get("compact_normal_account_usage_count") or compact_detail.get("compact_normal_account_usage_count")),
         "compact_missing_target_column_count": _as_int(raw_recheck.get("compact_missing_target_column_count") or compact_detail.get("compact_missing_target_column_count")),
+        "compact_missing_target_columns": _as_list(raw_recheck.get("compact_missing_target_columns")) or _as_list(compact_detail.get("compact_missing_target_columns")),
         "live_status": summary.get("live_status") or "missing",
         "live_skip_reason": summary.get("live_skip_reason") or "",
+        "raw_sql_included": False,
+    }
+
+
+def _live_execution_manifest_gate_results(
+    snowflake_gate: Mapping[str, Any],
+    raw_recheck: Mapping[str, Any],
+) -> dict[str, Any]:
+    failures: list[dict[str, Any]] = []
+
+    def fail(code: str, message: str, *, count: int = 1) -> None:
+        failures.append(
+            {
+                "gate": "live_execution_manifest_gate",
+                "code": code,
+                "message": message,
+                "count": count,
+                "recommendation": "Open live_execution_manifest_reconciliation.json, fix the ledger/row mismatch, and rerun Snowflake validation.",
+            }
+        )
+
+    manifest_passed = bool(raw_recheck.get("live_execution_manifest_passed"))
+    reconciliation_passed = bool(raw_recheck.get("live_execution_manifest_reconciliation_passed"))
+    manifest_failures = _as_int(raw_recheck.get("live_execution_manifest_failure_count"))
+    reconciliation_failures = _as_int(raw_recheck.get("live_execution_manifest_reconciliation_failure_count"))
+    orphan_count = _as_int(raw_recheck.get("live_execution_manifest_orphan_count"))
+    unknown_id_count = _as_int(raw_recheck.get("live_execution_manifest_unknown_id_count"))
+    missing_id_count = _as_int(raw_recheck.get("live_execution_manifest_missing_id_count"))
+    status_mismatch_count = _as_int(raw_recheck.get("live_execution_manifest_status_mismatch_count"))
+    mode_mismatch_count = _as_int(raw_recheck.get("live_execution_manifest_mode_mismatch_count"))
+    entry_count = _as_int(raw_recheck.get("live_execution_manifest_entry_count"))
+    if not manifest_passed or manifest_failures:
+        fail("MANIFEST_FAILED", "Live execution manifest has blocking failures.", count=max(1, manifest_failures))
+    if not reconciliation_passed or reconciliation_failures:
+        fail(
+            "MANIFEST_RECONCILIATION_FAILED",
+            "Live execution manifest reconciliation has blocking failures.",
+            count=max(1, reconciliation_failures),
+        )
+    if entry_count <= 0:
+        fail("MANIFEST_EMPTY", "Live execution manifest must contain validation ledger entries.")
+    if orphan_count:
+        fail("MANIFEST_ORPHAN_ENTRY", "Manifest entries must point to real validation artifact rows.", count=orphan_count)
+    if unknown_id_count:
+        fail("ARTIFACT_ROW_UNKNOWN_MANIFEST_ID", "Artifact rows must reference known manifest entries.", count=unknown_id_count)
+    if missing_id_count:
+        fail("ARTIFACT_ROW_MISSING_MANIFEST_ID", "Validation artifact rows must include manifest IDs.", count=missing_id_count)
+    if status_mismatch_count:
+        fail("MANIFEST_STATUS_MISMATCH", "Manifest entry status must match the owning artifact row.", count=status_mismatch_count)
+    if mode_mismatch_count:
+        fail("MANIFEST_MODE_MISMATCH", "Manifest observed mode must match the owning artifact row.", count=mode_mismatch_count)
+
+    return {
+        "source": "launch_readiness_live_execution_manifest_gate",
+        "proof_source": str(snowflake_gate.get("proof_source") or raw_recheck.get("proof_source") or "static_sql_parse"),
+        "passed": not failures,
+        "failure_count": len(failures),
+        "failures": failures,
+        "live_execution_manifest_passed": manifest_passed,
+        "live_execution_manifest_entry_count": entry_count,
+        "live_execution_manifest_failure_count": manifest_failures,
+        "live_execution_manifest_reconciliation_passed": reconciliation_passed,
+        "live_execution_manifest_reconciliation_failure_count": reconciliation_failures,
+        "live_execution_manifest_orphan_count": orphan_count,
+        "live_execution_manifest_unknown_id_count": unknown_id_count,
+        "live_execution_manifest_missing_id_count": missing_id_count,
+        "live_execution_manifest_status_mismatch_count": status_mismatch_count,
+        "live_execution_manifest_mode_mismatch_count": mode_mismatch_count,
         "raw_sql_included": False,
     }
 
@@ -2381,6 +2660,7 @@ def _release_gate_matrix(
     browser_coverage = _as_mapping(launch_artifacts.get("browser_required_coverage"))
     browser_failures = _as_mapping(launch_artifacts.get("browser_or_snapshot_failures"))
     live_query = _as_mapping(launch_artifacts.get("live_query_history_results"))
+    manifest_gate = _as_mapping(launch_artifacts.get("live_execution_manifest_gate_results"))
     snowflake_gate = _as_mapping(launch_artifacts.get("snowflake_validation_gate_results"))
     snowflake_raw = _as_mapping(launch_artifacts.get("snowflake_raw_validation_recheck"))
     encoding_hygiene = _as_mapping(launch_artifacts.get("encoding_hygiene_results"))
@@ -2495,6 +2775,12 @@ def _release_gate_matrix(
             "passed": bool(snowflake_raw.get("passed")),
             "failure_reason": "" if snowflake_raw.get("passed") else "Raw Snowflake validation rows contain launch-blocking failures.",
         },
+        {
+            "gate": "live_execution_manifest_gate",
+            "artifact": f"{LAUNCH_READINESS_DIR}/live_execution_manifest_gate_results.json",
+            "passed": bool(manifest_gate.get("passed")),
+            "failure_reason": "" if manifest_gate.get("passed") else "Live execution manifest ledger does not reconcile with validation rows.",
+        },
     ]
     snowflake_components = {
         str(row.get("gate") or ""): _as_mapping(row)
@@ -2576,6 +2862,12 @@ def evaluate_launch_readiness(
         launch_waiver_rows,
         root_path,
     )
+    snowflake_gate = _snowflake_validation_gate_results(
+        payloads,
+        profile,
+        launch_waiver_rows,
+        snowflake_raw_recheck,
+    )
     launch_artifacts = {
         **dict(launch_artifacts),
         "raw_invariant_results": recomputed_raw,
@@ -2584,10 +2876,9 @@ def evaluate_launch_readiness(
         "browser_or_snapshot_failures": _browser_or_snapshot_failures(browser_results, browser_coverage),
         "snowflake_raw_validation_recheck": snowflake_raw_recheck,
         "snowflake_validation_failures": snowflake_validation_failures,
-        "snowflake_validation_gate_results": _snowflake_validation_gate_results(
-            payloads,
-            profile,
-            launch_waiver_rows,
+        "snowflake_validation_gate_results": snowflake_gate,
+        "live_execution_manifest_gate_results": _live_execution_manifest_gate_results(
+            snowflake_gate,
             snowflake_raw_recheck,
         ),
         "encoding_hygiene_results": _as_mapping(payloads.get("artifacts/encoding_hygiene_results.json"))
@@ -2642,7 +2933,7 @@ def evaluate_launch_readiness(
     ci_run_review = _as_mapping(launch_artifacts.get("ci_run_review_results"))
     artifact_upload_review = _as_mapping(launch_artifacts.get("artifact_upload_review_results"))
     artifact_review = _as_mapping(launch_artifacts.get("artifact_review_results"))
-    snowflake_gate = _as_mapping(launch_artifacts.get("snowflake_validation_gate_results"))
+    manifest_gate = _as_mapping(launch_artifacts.get("live_execution_manifest_gate_results"))
     encoding_hygiene = _as_mapping(launch_artifacts.get("encoding_hygiene_results"))
     launch_summary = {
         "source": "launch_readiness",
@@ -2690,6 +2981,14 @@ def evaluate_launch_readiness(
         "live_execution_manifest_passed": bool(snowflake_gate.get("live_execution_manifest_passed")),
         "live_execution_manifest_entry_count": _as_int(snowflake_gate.get("live_execution_manifest_entry_count")),
         "live_execution_manifest_failure_count": _as_int(snowflake_gate.get("live_execution_manifest_failure_count")),
+        "live_execution_manifest_gate_passed": bool(manifest_gate.get("passed")),
+        "live_execution_manifest_reconciliation_passed": bool(snowflake_gate.get("live_execution_manifest_reconciliation_passed")),
+        "live_execution_manifest_reconciliation_failure_count": _as_int(snowflake_gate.get("live_execution_manifest_reconciliation_failure_count")),
+        "live_execution_manifest_orphan_count": _as_int(snowflake_gate.get("live_execution_manifest_orphan_count")),
+        "live_execution_manifest_unknown_id_count": _as_int(snowflake_gate.get("live_execution_manifest_unknown_id_count")),
+        "live_execution_manifest_missing_id_count": _as_int(snowflake_gate.get("live_execution_manifest_missing_id_count")),
+        "live_execution_manifest_status_mismatch_count": _as_int(snowflake_gate.get("live_execution_manifest_status_mismatch_count")),
+        "live_execution_manifest_mode_mismatch_count": _as_int(snowflake_gate.get("live_execution_manifest_mode_mismatch_count")),
         "procedure_compile_count": _as_int(snowflake_gate.get("procedure_compile_count")),
         "procedure_compile_failure_count": _as_int(snowflake_gate.get("procedure_compile_failure_count")),
         "procedure_smoke_call_count": _as_int(snowflake_gate.get("procedure_smoke_call_count")),
@@ -2704,12 +3003,15 @@ def evaluate_launch_readiness(
         "packet_last_good_status": str(snowflake_gate.get("packet_last_good_status") or ""),
         "packet_duplicate_array_count": _as_int(snowflake_gate.get("packet_duplicate_array_count")),
         "packet_missing_field_count": _as_int(snowflake_gate.get("packet_missing_field_count")),
+        "packet_duplicate_arrays": _as_list(snowflake_gate.get("packet_duplicate_arrays")),
+        "packet_missing_fields": _as_list(snowflake_gate.get("packet_missing_fields")),
         "compact_evidence_validation_status": str(snowflake_gate.get("compact_evidence_validation_status") or ""),
         "compact_mart_count": _as_int(snowflake_gate.get("compact_mart_count")),
         "compact_mart_failure_count": _as_int(snowflake_gate.get("compact_mart_failure_count")),
         "compact_mart_names": _as_list(snowflake_gate.get("compact_mart_names")),
         "compact_normal_account_usage_count": _as_int(snowflake_gate.get("compact_normal_account_usage_count")),
         "compact_missing_target_column_count": _as_int(snowflake_gate.get("compact_missing_target_column_count")),
+        "compact_missing_target_columns": _as_list(snowflake_gate.get("compact_missing_target_columns")),
         "encoding_hygiene_passed": bool(encoding_hygiene.get("passed")),
         "encoding_blocked_count": _as_int(encoding_hygiene.get("blocked_count")),
         "cleanup_unknown_sql_object_count": _as_int(summary.get("cleanup_unknown_sql_object_count")),
@@ -2792,6 +3094,10 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
         payloads,
         profile,
         waivers,
+        snowflake_raw_recheck,
+    )
+    launch_artifacts["live_execution_manifest_gate_results"] = _live_execution_manifest_gate_results(
+        launch_artifacts["snowflake_validation_gate_results"],
         snowflake_raw_recheck,
     )
     raw_results, raw_failures = _raw_invariant_artifacts(root_path, payloads)

@@ -8,7 +8,12 @@ from datetime import UTC, datetime
 import json
 from pathlib import Path
 import re
+import sys
 from typing import Any, Iterable
+
+RUNTIME_ROOT = Path(__file__).resolve().parents[2] / ".overwatch_final"
+if str(RUNTIME_ROOT) not in sys.path:
+    sys.path.insert(0, str(RUNTIME_ROOT))
 
 from contracts.direct_sql_allowlist import DIRECT_SQL_ALLOWLIST
 from contracts.session_open_allowlist import SESSION_OPEN_ALLOWLIST

@@ -49,6 +49,7 @@ ACTIVE_LAUNCH_OBJECTS = {
 REQUIRED_RESULT_FILES = {
     "snowflake_validation_summary",
     "live_execution_manifest",
+    "live_execution_manifest_reconciliation",
     "live_validation_environment_results",
     "live_validation_session_results",
     "setup_execution_results",
@@ -602,6 +603,10 @@ def _failure_result(
 
 def _as_mapping(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, Mapping) else {}
+
+
+def _as_list(value: Any) -> list[Any]:
+    return list(value) if isinstance(value, list) else []
 
 
 def _load_script_texts(root: Path) -> dict[str, str]:
@@ -1291,6 +1296,16 @@ def _packet_validation_detail_results(
         actual: Any = combined_checks.get(check_name, "missing")
         expected: Any = True
         source_artifact = "packet_publication_validation_results.json"
+        missing_fields: list[str] = []
+        duplicate_arrays: list[str] = []
+        first_paint_impact = check_name in {
+            "current_active_unique",
+            "current_flat_active_match",
+            "packet_required_fields_present",
+            "max_packet_bytes_under_100kb",
+            "first_paint_flat_packet_path_only",
+            "no_variant_detail_first_paint",
+        }
         if check_name == "max_packet_bytes_under_100kb":
             actual = int(packet_size.get("max_packet_bytes") or 0)
             expected = "<=100000"
@@ -1300,6 +1315,10 @@ def _packet_validation_detail_results(
             source_artifact = "packet_source_truth_results.json"
         elif check_name in {"packet_required_fields_present", "top_alert_evidence_id_string_compatible", "sla_fields_coherent"}:
             source_artifact = "packet_shape_results.json"
+            if check_name == "packet_required_fields_present" and not passed:
+                missing_fields = ["SECTION_NAME", "COMPANY", "ENVIRONMENT", "WINDOW_DAYS", "SUMMARY", "SOURCES"]
+        if check_name in {"no_duplicate_metric_rows", "no_duplicate_action_rows", "no_duplicate_source_rows"} and not passed:
+            duplicate_arrays = [check_name.removeprefix("no_duplicate_").removesuffix("_rows")]
         row = {
             "check_name": check_name,
             "passed": passed,
@@ -1307,12 +1326,45 @@ def _packet_validation_detail_results(
             "expected": expected,
             "source_artifact": source_artifact,
             "launch_summary_field": launch_summary_fields.get(check_name, ""),
+            "missing_fields": missing_fields,
+            "duplicate_arrays": duplicate_arrays,
+            "first_paint_impact": first_paint_impact,
+            "affected_sections": sorted(
+                {
+                    "Executive Landing",
+                    "DBA Control Room",
+                    "Alert Center",
+                    "Cost & Contract",
+                    "Workload Operations",
+                    "Security Monitoring",
+                }
+            )
+            if first_paint_impact
+            else [],
             "recommendation": "" if passed else "Repair packet publication SQL or first-paint packet contracts and rerun Snowflake validation.",
             "raw_sql_included": False,
         }
         rows.append(row)
         if not passed:
             failures.append({"check_name": check_name, "actual": actual, "expected": expected, "recommendation": row["recommendation"]})
+        if check_name == "packet_required_fields_present" and not passed and not missing_fields:
+            failures.append(
+                {
+                    "check_name": check_name,
+                    "actual": actual,
+                    "expected": "missing field names populated",
+                    "recommendation": "Packet required-field failures must include actionable missing field names.",
+                }
+            )
+        if duplicate_arrays and not row["duplicate_arrays"]:
+            failures.append(
+                {
+                    "check_name": check_name,
+                    "actual": actual,
+                    "expected": "duplicate array names populated",
+                    "recommendation": "Packet duplicate-array failures must include affected array names.",
+                }
+            )
         if actual == "missing" or expected in {"", None}:
             failures.append(
                 {
@@ -1336,21 +1388,44 @@ def _packet_validation_detail_results(
             for name in ("no_duplicate_metric_rows", "no_duplicate_action_rows", "no_duplicate_source_rows")
             if not bool(combined_checks.get(name))
         ),
+        packet_duplicate_arrays=sorted({name for row in rows for name in row.get("duplicate_arrays", [])}),
         packet_missing_field_count=0 if bool(combined_checks.get("packet_required_fields_present")) else 1,
+        packet_missing_fields=sorted({name for row in rows for name in row.get("missing_fields", [])}),
         checks=rows,
     )
+
+
+def _load_evidence_loader_matrix_rows(root: Path) -> list[Mapping[str, Any]]:
+    loader_matrix_path = root / "artifacts" / "full_app_validation" / "evidence_loader_call_matrix.json"
+    for attempt in range(2):
+        if loader_matrix_path.exists():
+            try:
+                payload = json.loads(loader_matrix_path.read_text(encoding="utf-8"))
+                rows = [row for row in payload if isinstance(row, Mapping)]
+                if rows:
+                    return rows
+            except json.JSONDecodeError:
+                pass
+        if attempt == 0:
+            try:
+                from tools.contracts.full_app_runtime_validation import write_full_app_validation_artifacts
+
+                write_full_app_validation_artifacts(root)
+            except Exception:
+                continue
+    return []
 
 
 def _compact_evidence_results(root: Path, texts: Mapping[str, str]) -> dict[str, Any]:
     setup_text = "\n".join(texts.values()).upper()
     validation_text = texts.get("snowflake/OVERWATCH_MART_VALIDATION.sql", "").upper()
-    loader_matrix_path = root / "artifacts" / "full_app_validation" / "evidence_loader_call_matrix.json"
-    loader_rows: list[Mapping[str, Any]] = []
-    if loader_matrix_path.exists():
+    loader_rows = _load_evidence_loader_matrix_rows(root)
+    if not loader_rows:
+        loader_matrix_path = root / "artifacts" / "full_app_validation" / "evidence_loader_call_matrix.json"
         try:
             payload = json.loads(loader_matrix_path.read_text(encoding="utf-8"))
             loader_rows = [row for row in payload if isinstance(row, Mapping)]
-        except json.JSONDecodeError:
+        except (FileNotFoundError, json.JSONDecodeError):
             loader_rows = []
     mart_rows = []
     failures = []
@@ -1375,8 +1450,16 @@ def _compact_evidence_results(root: Path, texts: Mapping[str, str]) -> dict[str,
             "load_path_exists": bool(re.search(rf"\bINSERT\s+INTO\s+{mart}\b|\bMERGE\s+INTO\s+{mart}\b", setup_text)),
             "validation_exists": mart in validation_text,
             "loader_matrix_references": bool(loader_refs),
+            "loader_matrix_sections": sorted(
+                {
+                    str(item.get("section") or "")
+                    for item in loader_refs
+                    if str(item.get("section") or "")
+                }
+            ),
             "target_lookup_columns_present": bool(lookup_columns),
             "target_lookup_columns": lookup_columns,
+            "missing_target_lookup_columns": [] if lookup_columns else ["target_lookup_columns"],
             "retention_bounded": bool(re.search(rf"\b{mart}\b[\s\S]{{0,2000}}\b(DATEADD|ROW_NUMBER|QUALIFY|LIMIT|RETENTION|RECENT)\b", setup_text)),
             "retention_window": "bounded_recent_window_or_limit",
             "normal_account_usage_used": normal_account_usage_used,
@@ -1454,6 +1537,10 @@ def _compact_evidence_mart_detail_results(compact_evidence: Mapping[str, Any]) -
         missing_flags = [key for key in required if not bool(row.get(key))]
         if missing_flags:
             failures.append({"code": "COMPACT_MART_DETAIL_CHECK_FAILED", "mart_name": mart, "failed_checks": missing_flags})
+        if not bool(row.get("target_lookup_columns_present")) and not _as_list(row.get("missing_target_lookup_columns")):
+            failures.append({"code": "COMPACT_MART_MISSING_TARGET_COLUMN_NAMES", "mart_name": mart})
+        if bool(row.get("loader_matrix_references")) and not _as_list(row.get("loader_matrix_sections")):
+            failures.append({"code": "COMPACT_MART_MISSING_LOADER_SECTIONS", "mart_name": mart})
         if bool(row.get("normal_account_usage_used")):
             failures.append({"code": "NORMAL_EVIDENCE_ACCOUNT_USAGE", "mart_name": mart})
         if int(row.get("max_rows") or 0) > 500:
@@ -1469,6 +1556,14 @@ def _compact_evidence_mart_detail_results(compact_evidence: Mapping[str, Any]) -
         compact_mart_names=sorted(seen),
         compact_normal_account_usage_count=sum(1 for row in rows if bool(row.get("normal_account_usage_used"))),
         compact_missing_target_column_count=sum(1 for row in rows if not bool(row.get("target_lookup_columns_present"))),
+        compact_missing_target_columns=sorted(
+            {
+                str(column)
+                for row in rows
+                for column in _as_list(row.get("missing_target_lookup_columns"))
+                if str(column)
+            }
+        ),
         required_marts=sorted(COMPACT_EVIDENCE_MARTS),
         marts=rows,
     )
@@ -1476,9 +1571,11 @@ def _compact_evidence_mart_detail_results(compact_evidence: Mapping[str, Any]) -
 
 def _validation_env() -> dict[str, Any]:
     return {
+        "account": os.environ.get("OVERWATCH_SNOWFLAKE_VALIDATION_ACCOUNT", "").strip(),
         "database": os.environ.get("OVERWATCH_SNOWFLAKE_VALIDATION_DATABASE", "").strip(),
         "schema": os.environ.get("OVERWATCH_SNOWFLAKE_VALIDATION_SCHEMA", "").strip(),
         "warehouse": os.environ.get("OVERWATCH_SNOWFLAKE_VALIDATION_WAREHOUSE", "").strip(),
+        "role": os.environ.get("OVERWATCH_SNOWFLAKE_VALIDATION_ROLE", "").strip(),
         "dry_run": os.environ.get("OVERWATCH_SNOWFLAKE_VALIDATION_DRY_RUN", "").strip() == "1",
         "destructive_allowed": os.environ.get("OVERWATCH_ALLOW_DESTRUCTIVE_SNOWFLAKE_VALIDATION", "").strip() == "1",
     }
@@ -1497,13 +1594,17 @@ def _live_validation_environment_results(live_enabled: bool) -> dict[str, Any]:
                 "recommendation": "Set OVERWATCH_SNOWFLAKE_VALIDATION_WAREHOUSE for live Snowflake validation.",
             }
         )
+    sanitized_account = _sanitized_identifier(env["account"])
     sanitized_database = _sanitized_identifier(env["database"])
     sanitized_schema = _sanitized_identifier(env["schema"])
     sanitized_warehouse = _sanitized_identifier(env["warehouse"])
+    sanitized_role = _sanitized_identifier(env["role"])
     for setting, raw, sanitized in (
+        ("OVERWATCH_SNOWFLAKE_VALIDATION_ACCOUNT", env["account"], sanitized_account),
         ("OVERWATCH_SNOWFLAKE_VALIDATION_DATABASE", env["database"], sanitized_database),
         ("OVERWATCH_SNOWFLAKE_VALIDATION_SCHEMA", env["schema"], sanitized_schema),
         ("OVERWATCH_SNOWFLAKE_VALIDATION_WAREHOUSE", env["warehouse"], sanitized_warehouse),
+        ("OVERWATCH_SNOWFLAKE_VALIDATION_ROLE", env["role"], sanitized_role),
     ):
         if raw and sanitized == "[redacted]":
             failures.append(
@@ -1557,13 +1658,22 @@ def _live_validation_environment_results(live_enabled: bool) -> dict[str, Any]:
         failures=failures,
         launch_profile=launch_profile,
         live_mode_enabled=live_enabled,
+        validation_account=sanitized_account,
         validation_database=sanitized_database,
         validation_schema=sanitized_schema,
         validation_warehouse=sanitized_warehouse,
+        validation_role=sanitized_role,
         dry_run_enabled=bool(env["dry_run"]),
         destructive_validation_allowed=bool(env["destructive_allowed"]),
         required_env_vars_present=not missing_env_vars,
         missing_env_vars=missing_env_vars,
+        sanitized_values={
+            "account": sanitized_account,
+            "database": sanitized_database,
+            "schema": sanitized_schema,
+            "warehouse": sanitized_warehouse,
+            "role": sanitized_role,
+        },
         controlled_validation_target_configured=bool(env["database"] and env["schema"]),
         rows=rows,
     )
@@ -1583,6 +1693,7 @@ def _live_validation_session_results(live_enabled: bool, root: Path) -> dict[str
             session_open_attempted=False,
             session_opened=False,
             connection_scope="fixture_static",
+            sanitized_account=_sanitized_identifier(env["account"]),
             sanitized_role="",
             sanitized_database=_sanitized_identifier(env["database"]),
             sanitized_schema=_sanitized_identifier(env["schema"]),
@@ -1605,7 +1716,8 @@ def _live_validation_session_results(live_enabled: bool, root: Path) -> dict[str
             session_open_attempted=True,
             session_opened=True,
             connection_scope="configured_validation_scope" if env["database"] or env["schema"] or env["warehouse"] else "active_session_scope",
-            sanitized_role="active_session_role",
+            sanitized_account=_sanitized_identifier(env["account"]),
+            sanitized_role=_sanitized_identifier(env["role"]) or "active_session_role",
             sanitized_database=_sanitized_identifier(env["database"]),
             sanitized_schema=_sanitized_identifier(env["schema"]),
             sanitized_warehouse=_sanitized_identifier(env["warehouse"]),
@@ -1631,6 +1743,7 @@ def _live_validation_session_results(live_enabled: bool, root: Path) -> dict[str
             session_open_attempted=True,
             session_opened=False,
             connection_scope="configured_validation_scope" if env["database"] or env["schema"] or env["warehouse"] else "active_session_scope",
+            sanitized_account=_sanitized_identifier(env["account"]),
             sanitized_role="",
             sanitized_database=_sanitized_identifier(env["database"]),
             sanitized_schema=_sanitized_identifier(env["schema"]),
@@ -1936,7 +2049,7 @@ def _manifest_context(live_enabled: bool) -> dict[str, Any]:
         "database": _sanitized_identifier(env["database"]),
         "schema": _sanitized_identifier(env["schema"]),
         "warehouse": _sanitized_identifier(env["warehouse"]),
-        "role_name": "active_session_role" if live_enabled else "",
+        "role_name": _sanitized_identifier(env["role"]) or ("active_session_role" if live_enabled else ""),
         "waiver_id": "",
         "destructive_allowed": bool(env["destructive_allowed"]),
     }
@@ -1953,13 +2066,26 @@ def _attach_manifest_id(
     observed_mode: str,
     context: Mapping[str, Any],
     safe_execution_class: str = "safe_read",
+    row_key: str = "",
 ) -> None:
     validation_id = f"{artifact}:{index:04d}"
     row["live_execution_manifest_id"] = validation_id
+    if row_key:
+        row["live_execution_row_key"] = row_key
     status = str(row.get("status") or ("passed" if row.get("passed", True) else "failed"))
     entry = {
         "validation_id": validation_id,
         "artifact": artifact,
+        "row_index": index,
+        "row_key": row_key
+        or str(
+            row.get("smoke_target")
+            or row.get("procedure_name")
+            or row.get("mart_name")
+            or row.get("check_name")
+            or row.get("source")
+            or index
+        ),
         "phase": str(row.get("phase") or row.get("source") or row.get("check_name") or ""),
         "object_name": str(row.get("object_name") or row.get("mart_name") or row.get("check_name") or ""),
         "procedure_name": str(row.get("procedure_name") or ""),
@@ -1999,6 +2125,8 @@ def _attach_manifest_id(
 def _live_execution_manifest_results(
     *,
     live_enabled: bool,
+    live_environment: dict[str, Any],
+    live_session: dict[str, Any],
     setup_rows: list[dict[str, Any]],
     compile_rows: list[dict[str, Any]],
     smoke_rows: list[dict[str, Any]],
@@ -2013,7 +2141,15 @@ def _live_execution_manifest_results(
     failures: list[dict[str, Any]] = []
     artifact_index = 0
 
-    def add(row: dict[str, Any], *, artifact: str, expected_mode: str, observed_mode: str, safe_class: str = "safe_read") -> None:
+    def add(
+        row: dict[str, Any],
+        *,
+        artifact: str,
+        expected_mode: str,
+        observed_mode: str,
+        safe_class: str = "safe_read",
+        row_key: str = "",
+    ) -> None:
         nonlocal artifact_index
         artifact_index += 1
         _attach_manifest_id(
@@ -2026,8 +2162,24 @@ def _live_execution_manifest_results(
             observed_mode=observed_mode,
             context=context,
             safe_execution_class=safe_class,
+            row_key=row_key,
         )
 
+    add(
+        live_environment,
+        artifact="live_validation_environment_results.json",
+        expected_mode="live" if live_enabled else "static",
+        observed_mode="live" if live_enabled else "static",
+        row_key="live_validation_environment",
+    )
+    add(
+        live_session,
+        artifact="live_validation_session_results.json",
+        expected_mode="live" if live_enabled else "static",
+        observed_mode=_manifest_observed_mode(live_session, "live" if live_enabled else "static"),
+        safe_class="safe_read" if live_enabled else "skipped_with_owner",
+        row_key="live_validation_session",
+    )
     for row in setup_rows:
         add(row, artifact="setup_execution_results.json", expected_mode="static", observed_mode="static")
     for row in validation_rows:
@@ -2082,6 +2234,228 @@ def _live_execution_manifest_results(
     )
 
 
+def _artifact_rows_for_manifest_reconciliation(artifact: str, payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        return [_as_mapping(row) for row in payload if isinstance(row, Mapping)]
+    if not isinstance(payload, Mapping):
+        return []
+    if artifact in {
+        "live_validation_environment_results.json",
+        "live_validation_session_results.json",
+        "refresh_fast_results.json",
+        "refresh_full_results.json",
+    }:
+        return [_as_mapping(payload)]
+    for key in ("rows", "checks", "marts"):
+        rows = payload.get(key)
+        if isinstance(rows, list):
+            return [_as_mapping(row) for row in rows if isinstance(row, Mapping)]
+    if payload.get("live_execution_manifest_id"):
+        return [_as_mapping(payload)]
+    return []
+
+
+def _row_status_for_manifest(row: Mapping[str, Any]) -> str:
+    if row.get("status"):
+        return str(row.get("status") or "")
+    return "passed" if bool(row.get("passed", True)) else "failed"
+
+
+def _row_observed_mode_for_manifest(artifact: str, row: Mapping[str, Any], live_enabled: bool) -> str:
+    if _row_status_for_manifest(row) == "skipped":
+        return "skipped"
+    if artifact == "procedure_smoke_call_results.json":
+        return _manifest_observed_mode(row, "live" if live_enabled else "static")
+    if artifact == "procedure_compile_results.json":
+        return "live" if str(row.get("phase") or "") == "procedure_compile_live" else "static"
+    if artifact in {"refresh_fast_results.json", "refresh_full_results.json"}:
+        return "live" if live_enabled else "static"
+    if artifact == "live_validation_session_results.json":
+        return _manifest_observed_mode(row, "live" if live_enabled else "static")
+    if artifact == "live_validation_environment_results.json":
+        return "live" if live_enabled else "static"
+    return "static"
+
+
+def _live_execution_manifest_reconciliation_results(
+    live_manifest: Mapping[str, Any],
+    artifacts: Mapping[str, Any],
+    *,
+    live_enabled: bool,
+) -> dict[str, Any]:
+    entries = [_as_mapping(row) for row in _as_list(live_manifest.get("entries"))]
+    entries_by_id = {str(row.get("validation_id") or ""): row for row in entries}
+    failures: list[dict[str, Any]] = []
+    consumed_ids: set[str] = set()
+    row_index: dict[tuple[str, str], dict[str, Any]] = {}
+    ids_seen: set[str] = set()
+
+    required_entry_fields = {
+        "validation_id",
+        "artifact",
+        "row_index",
+        "row_key",
+        "phase",
+        "object_name",
+        "expected_mode",
+        "observed_mode",
+        "launch_profile",
+        "live_required",
+        "database",
+        "schema",
+        "warehouse",
+        "role_name",
+        "safe_execution_class",
+        "elapsed_ms",
+        "status",
+        "raw_sql_included",
+        "sanitized_error",
+        "recommendation",
+    }
+    allowed_modes = {"static", "dry_run", "live", "skipped"}
+    allowed_safe_classes = {"safe_read", "dry_run_required", "destructive_requires_flag", "skipped_with_owner"}
+    for entry in entries:
+        validation_id = str(entry.get("validation_id") or "")
+        missing_fields = sorted(field for field in required_entry_fields if field not in entry)
+        if not validation_id:
+            failures.append({"code": "MANIFEST_ENTRY_MISSING_ID", "artifact": entry.get("artifact")})
+        elif validation_id in ids_seen:
+            failures.append({"code": "MANIFEST_DUPLICATE_ID", "validation_id": validation_id})
+        ids_seen.add(validation_id)
+        if missing_fields:
+            failures.append({"code": "MANIFEST_ENTRY_MISSING_FIELDS", "validation_id": validation_id, "missing_fields": missing_fields})
+        if str(entry.get("expected_mode") or "") not in {"static", "dry_run", "live"}:
+            failures.append({"code": "MANIFEST_BAD_EXPECTED_MODE", "validation_id": validation_id})
+        if str(entry.get("observed_mode") or "") not in allowed_modes:
+            failures.append({"code": "MANIFEST_BAD_OBSERVED_MODE", "validation_id": validation_id})
+        if str(entry.get("safe_execution_class") or "") not in allowed_safe_classes:
+            failures.append({"code": "MANIFEST_BAD_SAFE_EXECUTION_CLASS", "validation_id": validation_id})
+        if bool(entry.get("raw_sql_included")):
+            failures.append({"code": "MANIFEST_RAW_SQL_INCLUDED", "validation_id": validation_id})
+        combined = " ".join(
+            str(entry.get(key) or "")
+            for key in ("database", "schema", "warehouse", "role_name", "sanitized_error")
+        )
+        if re.search(r"(?i)(snowflake://|password=|token=|private[_ -]?key=|CREATE\s+OR\s+REPLACE|SELECT\s+\*)", combined):
+            failures.append({"code": "MANIFEST_SECRET_OR_RAW_SQL_TEXT", "validation_id": validation_id})
+        if live_enabled and str(entry.get("expected_mode") or "") == "live" and str(entry.get("observed_mode") or "") == "static":
+            failures.append({"code": "LIVE_REQUIRED_ROW_STATIC_ONLY", "validation_id": validation_id})
+        if (
+            str(entry.get("safe_execution_class") or "") == "destructive_requires_flag"
+            and str(entry.get("observed_mode") or "") == "live"
+            and os.environ.get("OVERWATCH_ALLOW_DESTRUCTIVE_SNOWFLAKE_VALIDATION") != "1"
+        ):
+            failures.append({"code": "DESTRUCTIVE_MANIFEST_ROW_WITHOUT_ALLOW_FLAG", "validation_id": validation_id})
+
+    artifact_row_counts: dict[str, int] = {}
+    manifest_id_counts: dict[str, int] = {}
+    for artifact, payload in artifacts.items():
+        if artifact == "live_execution_manifest.json":
+            continue
+        rows = _artifact_rows_for_manifest_reconciliation(artifact, payload)
+        artifact_row_counts[artifact] = len(rows)
+        for row in rows:
+            manifest_id = str(row.get("live_execution_manifest_id") or "")
+            if not manifest_id:
+                if artifact in {
+                    "live_validation_environment_results.json",
+                    "live_validation_session_results.json",
+                    "procedure_compile_results.json",
+                    "procedure_smoke_call_results.json",
+                    "refresh_fast_results.json",
+                    "refresh_full_results.json",
+                    "packet_validation_detail_results.json",
+                    "compact_evidence_mart_validation_results.json",
+                }:
+                    failures.append({"code": "ARTIFACT_ROW_MISSING_MANIFEST_ID", "artifact": artifact})
+                continue
+            if manifest_id not in entries_by_id:
+                failures.append({"code": "ARTIFACT_ROW_UNKNOWN_MANIFEST_ID", "artifact": artifact, "validation_id": manifest_id})
+                continue
+            consumed_ids.add(manifest_id)
+            row_index[(artifact, manifest_id)] = row
+            manifest_id_counts[artifact] = manifest_id_counts.get(artifact, 0) + 1
+
+    for entry in entries:
+        validation_id = str(entry.get("validation_id") or "")
+        artifact = str(entry.get("artifact") or "")
+        manifest_row = row_index.get((artifact, validation_id))
+        if not manifest_row:
+            failures.append({"code": "MANIFEST_ORPHAN_ENTRY", "artifact": artifact, "validation_id": validation_id})
+            continue
+        row_status = _row_status_for_manifest(manifest_row)
+        if str(entry.get("status") or "") != row_status:
+            failures.append(
+                {
+                    "code": "MANIFEST_STATUS_MISMATCH",
+                    "artifact": artifact,
+                    "validation_id": validation_id,
+                    "manifest_status": entry.get("status"),
+                    "artifact_status": row_status,
+                }
+            )
+        observed_mode = _row_observed_mode_for_manifest(artifact, manifest_row, live_enabled)
+        if str(entry.get("observed_mode") or "") != observed_mode:
+            failures.append(
+                {
+                    "code": "MANIFEST_MODE_MISMATCH",
+                    "artifact": artifact,
+                    "validation_id": validation_id,
+                    "manifest_observed_mode": entry.get("observed_mode"),
+                    "artifact_observed_mode": observed_mode,
+                }
+            )
+
+    expected_manifest_counts = {
+        "environment_rows": 1,
+        "session_rows": 1,
+        "compile_rows": artifact_row_counts.get("procedure_compile_results.json", 0),
+        "smoke_rows": artifact_row_counts.get("procedure_smoke_call_results.json", 0),
+        "refresh_rows": artifact_row_counts.get("refresh_fast_results.json", 0)
+        + artifact_row_counts.get("refresh_full_results.json", 0),
+        "packet_rows": artifact_row_counts.get("packet_validation_detail_results.json", 0),
+        "compact_mart_rows": artifact_row_counts.get("compact_evidence_mart_validation_results.json", 0),
+        "validation_sql_rows": artifact_row_counts.get("validation_sql_results.json", 0),
+    }
+    observed_manifest_counts = {
+        "environment_rows": manifest_id_counts.get("live_validation_environment_results.json", 0),
+        "session_rows": manifest_id_counts.get("live_validation_session_results.json", 0),
+        "compile_rows": manifest_id_counts.get("procedure_compile_results.json", 0),
+        "smoke_rows": manifest_id_counts.get("procedure_smoke_call_results.json", 0),
+        "refresh_rows": manifest_id_counts.get("refresh_fast_results.json", 0)
+        + manifest_id_counts.get("refresh_full_results.json", 0),
+        "packet_rows": manifest_id_counts.get("packet_validation_detail_results.json", 0),
+        "compact_mart_rows": manifest_id_counts.get("compact_evidence_mart_validation_results.json", 0),
+        "validation_sql_rows": manifest_id_counts.get("validation_sql_results.json", 0),
+    }
+    for key, expected_count in expected_manifest_counts.items():
+        if observed_manifest_counts.get(key, 0) != expected_count:
+            failures.append(
+                {
+                    "code": "MANIFEST_COUNT_MISMATCH",
+                    "count_key": key,
+                    "expected": expected_count,
+                    "actual": observed_manifest_counts.get(key, 0),
+                }
+            )
+
+    return _failure_result(
+        source="live_execution_manifest_reconciliation",
+        proof_source="live_snowflake_execution" if live_enabled else "static_sql_parse",
+        failures=failures,
+        manifest_entry_count=len(entries),
+        consumed_manifest_entry_count=len(consumed_ids),
+        orphan_manifest_entry_count=sum(1 for row in failures if row.get("code") == "MANIFEST_ORPHAN_ENTRY"),
+        unknown_manifest_id_count=sum(1 for row in failures if row.get("code") == "ARTIFACT_ROW_UNKNOWN_MANIFEST_ID"),
+        missing_manifest_id_count=sum(1 for row in failures if row.get("code") == "ARTIFACT_ROW_MISSING_MANIFEST_ID"),
+        status_mismatch_count=sum(1 for row in failures if row.get("code") == "MANIFEST_STATUS_MISMATCH"),
+        mode_mismatch_count=sum(1 for row in failures if row.get("code") == "MANIFEST_MODE_MISMATCH"),
+        expected_manifest_counts=expected_manifest_counts,
+        observed_manifest_counts=observed_manifest_counts,
+        artifacts_checked=sorted(artifact_row_counts),
+    )
+
+
 def _refresh_result(name: str, live_enabled: bool, smoke_rows: Iterable[Mapping[str, Any]] = ()) -> dict[str, Any]:
     skipped = not live_enabled
     related = [
@@ -2106,6 +2480,8 @@ def _refresh_result(name: str, live_enabled: bool, smoke_rows: Iterable[Mapping[
         "fresh_command_row_count": 0,
         "reused_command_row_count": 0,
         "stale_command_row_count": 0,
+        "source_fact_max_ts_by_source": {},
+        "command_source_snapshot_ts_by_section": {},
         "compact_evidence_row_counts": {mart: 0 for mart in sorted(COMPACT_EVIDENCE_MARTS)},
         "current_active_row_count": 0,
         "flat_active_row_count": 0,
@@ -2223,6 +2599,37 @@ def _refresh_detail_results(
                     "passed": int(payload.get("failed_section_count") or 0) == 0,
                     "actual": int(payload.get("failed_section_count") or 0),
                     "expected": 0,
+                    "source_artifact": f"refresh_{label.lower()}_results.json",
+                },
+                {
+                    "refresh": label,
+                    "check_name": "fresh_reused_stale_counts_present",
+                    "passed": all(
+                        key in payload
+                        for key in (
+                            "fresh_command_row_count",
+                            "reused_command_row_count",
+                            "stale_command_row_count",
+                        )
+                    ),
+                    "actual": {
+                        "fresh": payload.get("fresh_command_row_count"),
+                        "reused": payload.get("reused_command_row_count"),
+                        "stale": payload.get("stale_command_row_count"),
+                    },
+                    "expected": "fresh/reused/stale command counts present",
+                    "source_artifact": f"refresh_{label.lower()}_results.json",
+                },
+                {
+                    "refresh": label,
+                    "check_name": "source_freshness_timestamp_maps_present",
+                    "passed": "source_fact_max_ts_by_source" in payload
+                    and "command_source_snapshot_ts_by_section" in payload,
+                    "actual": {
+                        "source_fact_max_ts_by_source": payload.get("source_fact_max_ts_by_source"),
+                        "command_source_snapshot_ts_by_section": payload.get("command_source_snapshot_ts_by_section"),
+                    },
+                    "expected": "source freshness and command snapshot timestamp maps present",
                     "source_artifact": f"refresh_{label.lower()}_results.json",
                 },
                 {
@@ -2430,6 +2837,8 @@ def write_snowflake_validation_artifacts(root: Path | str = ".") -> dict[str, An
     refresh_full = _refresh_result("refresh_full_validation", live_enabled, smoke_rows)
     live_execution_manifest = _live_execution_manifest_results(
         live_enabled=live_enabled,
+        live_environment=live_environment,
+        live_session=live_session,
         setup_rows=setup_rows,
         compile_rows=compile_rows,
         smoke_rows=smoke_rows,
@@ -2492,6 +2901,27 @@ def write_snowflake_validation_artifacts(root: Path | str = ".") -> dict[str, An
         "compact_evidence_mart_count": len(COMPACT_EVIDENCE_MARTS),
         "raw_sql_included": False,
     }
+    reconciliation_payloads = {
+        "live_validation_environment_results.json": live_environment,
+        "live_validation_session_results.json": live_session,
+        "setup_execution_results.json": setup_rows,
+        "procedure_compile_results.json": compile_rows,
+        "procedure_compile_coverage_results.json": compile_coverage,
+        "procedure_smoke_call_results.json": smoke_rows,
+        "procedure_smoke_call_coverage_results.json": smoke_coverage,
+        "validation_sql_results.json": validation_rows,
+        "refresh_fast_results.json": refresh_fast,
+        "refresh_full_results.json": refresh_full,
+        "packet_validation_detail_results.json": packet_detail,
+        "compact_evidence_mart_validation_results.json": compact_evidence,
+        "compact_evidence_mart_detail_results.json": compact_detail,
+        "refresh_detail_results.json": refresh_detail,
+    }
+    live_execution_manifest_reconciliation = _live_execution_manifest_reconciliation_results(
+        live_execution_manifest,
+        reconciliation_payloads,
+        live_enabled=live_enabled,
+    )
 
     hard_failures: list[dict[str, Any]] = []
     for rel in EXPECTED_SCRIPT_ORDER:
@@ -2529,6 +2959,7 @@ def write_snowflake_validation_artifacts(root: Path | str = ".") -> dict[str, An
         "live_validation_environment": live_environment,
         "live_validation_session": live_session,
         "live_execution_manifest": live_execution_manifest,
+        "live_execution_manifest_reconciliation": live_execution_manifest_reconciliation,
     }.items():
         if not payload.get("passed"):
             hard_failures.append({"gate": name, "details": payload.get("failures") or payload.get("checks")})
@@ -2554,6 +2985,8 @@ def write_snowflake_validation_artifacts(root: Path | str = ".") -> dict[str, An
         "live_execution_manifest_passed": bool(live_execution_manifest.get("passed")),
         "live_execution_manifest_entry_count": int(live_execution_manifest.get("entry_count") or 0),
         "live_execution_manifest_failure_count": int(live_execution_manifest.get("failure_count") or 0),
+        "live_execution_manifest_reconciliation_passed": bool(live_execution_manifest_reconciliation.get("passed")),
+        "live_execution_manifest_reconciliation_failure_count": int(live_execution_manifest_reconciliation.get("failure_count") or 0),
         "script_count": len(texts),
         "expected_script_count": len(EXPECTED_SCRIPT_ORDER),
         "statement_count": sum(row["row_count"] for row in setup_rows),
@@ -2585,6 +3018,7 @@ def write_snowflake_validation_artifacts(root: Path | str = ".") -> dict[str, An
     artifacts: dict[str, Any] = {
         "snowflake_validation_summary": summary,
         "live_execution_manifest": live_execution_manifest,
+        "live_execution_manifest_reconciliation": live_execution_manifest_reconciliation,
         "live_validation_environment_results": live_environment,
         "live_validation_session_results": live_session,
         "setup_execution_results": setup_rows,

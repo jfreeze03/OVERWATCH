@@ -46,12 +46,15 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertTrue(summary["snowflake_validation_passed"])
         self.assertFalse(summary["snowflake_live_validation_enabled"])
         self.assertTrue(summary["snowflake_live_validation_skipped"])
+        self.assertIn("OVERWATCH_SNOWFLAKE_VALIDATION", summary["snowflake_validation_skip_reason"])
         self.assertGreater(summary["procedure_compile_count"], 0)
         self.assertEqual(summary["procedure_compile_failure_count"], 0)
         self.assertGreater(summary["procedure_smoke_call_count"], 0)
         self.assertEqual(summary["procedure_smoke_failure_count"], 0)
         self.assertEqual(summary["refresh_fast_status"], "skipped")
         self.assertEqual(summary["refresh_full_status"], "skipped")
+        self.assertEqual(summary["packet_validation_status"], "passed")
+        self.assertEqual(summary["compact_evidence_validation_status"], "passed")
         self.assertTrue(summary["encoding_hygiene_passed"])
         self.assertEqual(summary["encoding_blocked_count"], 0)
         self.assertGreaterEqual(summary["required_artifact_count"], len(REQUIRED_LAUNCH_READINESS_ARTIFACTS))
@@ -100,6 +103,11 @@ class LaunchReadinessTests(unittest.TestCase):
         ):
             self.assertIn(gate, matrix_by_gate)
             self.assertTrue(matrix_by_gate[gate]["passed"], matrix_by_gate[gate])
+
+        snowflake_gate = self._read_json("artifacts/launch_readiness/snowflake_validation_gate_results.json")
+        self.assertIn("OVERWATCH_SNOWFLAKE_VALIDATION", snowflake_gate["snowflake_validation_skip_reason"])
+        self.assertEqual(snowflake_gate["packet_validation_status"], "passed")
+        self.assertEqual(snowflake_gate["compact_evidence_validation_status"], "passed")
 
         self.assertTrue(REQUIRED_LAUNCH_READINESS_ARTIFACTS.issubset(set(manifest["files"])))
         for rel in REQUIRED_LAUNCH_READINESS_ARTIFACTS:

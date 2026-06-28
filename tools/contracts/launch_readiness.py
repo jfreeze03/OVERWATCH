@@ -1874,6 +1874,11 @@ def _snowflake_validation_gate_results(
         ),
     ]
     failures = [row for row in components if not row["passed"]]
+    packet_validation_passed = all(
+        bool(row.get("passed"))
+        for row in (packet_publication, packet_shape, packet_size, packet_truth)
+    )
+    compact_validation_passed = bool(compact.get("passed"))
     return {
         "source": "launch_readiness_snowflake_validation_gate",
         "proof_source": "live_snowflake_execution" if live_enabled else "static_sql_parse",
@@ -1887,12 +1892,15 @@ def _snowflake_validation_gate_results(
         "snowflake_validation_passed": bool(summary.get("passed")),
         "snowflake_live_validation_enabled": live_enabled,
         "snowflake_live_validation_skipped": live_skipped,
+        "snowflake_validation_skip_reason": summary.get("live_skip_reason") or "",
         "procedure_compile_count": len(compile_rows),
         "procedure_compile_failure_count": sum(1 for row in compile_rows if str(_as_mapping(row).get("status") or "") == "failed"),
         "procedure_smoke_call_count": len(smoke_rows),
         "procedure_smoke_failure_count": sum(1 for row in smoke_rows if str(_as_mapping(row).get("status") or "") == "failed"),
         "refresh_fast_status": refresh_fast.get("status") or "",
         "refresh_full_status": refresh_full.get("status") or "",
+        "packet_validation_status": "passed" if packet_validation_passed else "failed",
+        "compact_evidence_validation_status": "passed" if compact_validation_passed else "failed",
         "live_status": summary.get("live_status") or "missing",
         "live_skip_reason": summary.get("live_skip_reason") or "",
         "raw_sql_included": False,
@@ -2199,12 +2207,15 @@ def evaluate_launch_readiness(
         "snowflake_validation_passed": bool(snowflake_gate.get("snowflake_validation_passed")),
         "snowflake_live_validation_enabled": bool(snowflake_gate.get("snowflake_live_validation_enabled")),
         "snowflake_live_validation_skipped": bool(snowflake_gate.get("snowflake_live_validation_skipped")),
+        "snowflake_validation_skip_reason": str(snowflake_gate.get("snowflake_validation_skip_reason") or ""),
         "procedure_compile_count": _as_int(snowflake_gate.get("procedure_compile_count")),
         "procedure_compile_failure_count": _as_int(snowflake_gate.get("procedure_compile_failure_count")),
         "procedure_smoke_call_count": _as_int(snowflake_gate.get("procedure_smoke_call_count")),
         "procedure_smoke_failure_count": _as_int(snowflake_gate.get("procedure_smoke_failure_count")),
         "refresh_fast_status": str(snowflake_gate.get("refresh_fast_status") or ""),
         "refresh_full_status": str(snowflake_gate.get("refresh_full_status") or ""),
+        "packet_validation_status": str(snowflake_gate.get("packet_validation_status") or ""),
+        "compact_evidence_validation_status": str(snowflake_gate.get("compact_evidence_validation_status") or ""),
         "encoding_hygiene_passed": bool(encoding_hygiene.get("passed")),
         "encoding_blocked_count": _as_int(encoding_hygiene.get("blocked_count")),
         "cleanup_unknown_sql_object_count": _as_int(summary.get("cleanup_unknown_sql_object_count")),

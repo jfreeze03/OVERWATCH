@@ -2336,6 +2336,13 @@ class DecisionWorkspaceDataBindingTests(unittest.TestCase):
         with patch.object(decision_workspace_scope, "get_state", return_value=None):
             self.assertEqual(decision_workspace_scope.active_decision_window_days(11), 11)
 
+    def test_cost_contract_days_follow_global_decision_window(self):
+        from sections import cost_contract_hierarchy
+
+        with patch.object(cost_contract_hierarchy, "active_decision_window_days", return_value=8) as active_window:
+            self.assertEqual(cost_contract_hierarchy.active_cost_days(), 8)
+        active_window.assert_called_once_with(7)
+
     def test_primary_sections_use_shared_decision_window(self):
         section_files = (
             "executive_landing_shell.py",

@@ -1,7 +1,10 @@
 # utils/cost.py - Credit/dollar formatting + metered credit CTE builder
+from datetime import date, datetime
+
 import pandas as pd
 from config import CREDIT_RATES, CREDIT_SOURCE_LABELS, COMPUTE_CREDIT_CASE, DEFAULTS
 from runtime_state import AI_CREDIT_PRICE, CREDIT_PRICE, STORAGE_COST_PER_TB, get_state
+from .sql_safe import sql_literal
 
 # Re-export for convenience
 __all__ = [
@@ -193,10 +196,27 @@ def build_snowflake_service_cost_lens_sql(
     """
 
 
+def _coerce_service_window_date(value: object) -> str | None:
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return date.fromisoformat(text[:10]).isoformat()
+    except Exception:
+        return None
+
+
 def build_snowflake_service_cost_trend_sql(
     days_back: int = 7,
     credit_price: float = None,
     ai_credit_price: float = None,
+    *,
+    start_date: object = None,
+    end_date: object = None,
 ) -> str:
     """Return daily official Snowflake service cost for the current window."""
     days_back = max(1, int(days_back or 7))
@@ -206,6 +226,31 @@ def build_snowflake_service_cost_trend_sql(
     if ai_credit_price is None:
         ai_credit_price = DEFAULTS["ai_credit_price"]
     ai_credit_price = float(ai_credit_price or DEFAULTS["ai_credit_price"])
+    selected_start = _coerce_service_window_date(start_date)
+    selected_end = _coerce_service_window_date(end_date)
+    if selected_start and selected_end:
+        start_ts = sql_literal(f"{selected_start} 00:00:00", 32)
+        end_ts = sql_literal(f"{selected_end} 00:00:00", 32)
+        source_window_filter = f"""
+            WHERE start_time >= TO_TIMESTAMP_NTZ({start_ts})
+              AND start_time < LEAST(
+                    DATEADD('day', 1, TO_TIMESTAMP_NTZ({end_ts})),
+                    DATEADD('hour', -24, CURRENT_TIMESTAMP())
+              )
+        """
+        period_expr = "'CURRENT' AS period"
+    else:
+        source_window_filter = f"""
+            WHERE start_time >= DATEADD('day', -{days_back * 2}, DATEADD('hour', -24, CURRENT_TIMESTAMP()))
+              AND start_time < DATEADD('hour', -24, CURRENT_TIMESTAMP())
+        """
+        period_expr = f"""
+                CASE
+                    WHEN DATE(start_time) > DATEADD('day', -{days_back}, DATEADD('hour', -24, CURRENT_TIMESTAMP()))
+                        THEN 'CURRENT'
+                    ELSE 'PRIOR'
+                END AS period
+        """
     return f"""
         WITH period_data AS (
             SELECT
@@ -224,14 +269,9 @@ def build_snowflake_service_cost_trend_sql(
                         THEN {ai_credit_price:.4f}
                     ELSE {credit_price:.4f}
                 END AS rate_usd,
-                CASE
-                    WHEN DATE(start_time) > DATEADD('day', -{days_back}, DATEADD('hour', -24, CURRENT_TIMESTAMP()))
-                        THEN 'CURRENT'
-                    ELSE 'PRIOR'
-                END AS period
+                {period_expr}
             FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY
-            WHERE start_time >= DATEADD('day', -{days_back * 2}, DATEADD('hour', -24, CURRENT_TIMESTAMP()))
-              AND start_time < DATEADD('hour', -24, CURRENT_TIMESTAMP())
+            {source_window_filter}
             GROUP BY DATE(start_time), UPPER(COALESCE(service_type, 'UNKNOWN'))
         )
         SELECT

@@ -9,6 +9,7 @@ from collections.abc import Mapping, MutableMapping
 
 import streamlit as st
 
+from config import DEFAULTS
 from sections.base import lazy_pandas
 from sections.navigation import apply_navigation_state
 from sections.shell_helpers import render_shell_kpi_row, render_shell_snapshot
@@ -80,6 +81,7 @@ def build_cortex_signal(
     state_source = state if state is not None else st.session_state
     control_summary = _frame_row(state_source.get("cortex_control_summary") if state_source is not None else None)
     control_exceptions = state_source.get("cortex_control_exceptions") if state_source is not None else None
+    control_daily = state_source.get("cortex_control_daily") if state_source is not None else None
     predictive_data = state_source.get("cm_cc_pred_data") if state_source is not None else None
 
     spend = _first_number(
@@ -101,6 +103,13 @@ def build_cortex_signal(
         forecast = safe_float(control_summary.get("PROJECTED_30D_COST"))
         credits = credits or safe_float(control_summary.get("TOTAL_CREDITS"))
         requests = requests or safe_int(control_summary.get("TOTAL_REQUESTS"))
+    if not spend and control_summary:
+        if isinstance(control_daily, pd.DataFrame) and not control_daily.empty and "COST_USD" in control_daily.columns:
+            spend = safe_float(control_daily["COST_USD"].sum())
+        elif credits:
+            spend = credits * safe_float(DEFAULTS.get("ai_credit_price"), 2.20)
+        elif forecast:
+            spend = forecast / 30.0 * max(safe_int(days, 30), 1)
     if not forecast and spend:
         forecast = spend / max(safe_int(days, 7), 1) * 30.0
 
@@ -122,11 +131,20 @@ def build_cortex_signal(
         ),
         "Not loaded",
     )
+    if top_driver == "Not loaded" and isinstance(control_exceptions, pd.DataFrame) and not control_exceptions.empty:
+        top = control_exceptions.iloc[0].to_dict()
+        top_driver = " / ".join(
+            str(part or "").strip()
+            for part in (top.get("USER_NAME"), top.get("SOURCE"), top.get("SIGNAL"))
+            if str(part or "").strip()
+        ) or "Loaded Cortex usage"
     trend = _first_text(
         source,
         ("cortex_trend", "cortex_cost_trend", "run_rate_state", "RUN_RATE_STATE"),
         "Predictive data not loaded",
     )
+    if trend == "Predictive data not loaded" and control_summary:
+        trend = "Loaded cost control"
     loaded = any(
         (
             spend > 0,

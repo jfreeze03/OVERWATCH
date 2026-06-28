@@ -145,6 +145,33 @@ class GuardrailTests(unittest.TestCase):
         self.assertNotIn("render_admin_mode_control", app_text + filters_text)
         self.assertNotIn('st.session_state["_global_date_range_input"] =', app_text + filters_text)
 
+    def test_global_date_range_preserves_partial_selection(self):
+        import filters
+        from runtime_state import GLOBAL_DATE_RANGE_INPUT, GLOBAL_END_DATE, GLOBAL_START_DATE
+
+        previous = dict(st.session_state)
+        try:
+            st.session_state.clear()
+            st.session_state[GLOBAL_START_DATE] = date(2026, 6, 21)
+            st.session_state[GLOBAL_END_DATE] = date(2026, 6, 28)
+            st.session_state[GLOBAL_DATE_RANGE_INPUT] = (date(2026, 6, 25),)
+
+            with patch.object(filters.st, "date_input", return_value=(date(2026, 6, 25),)):
+                filters.render_global_date_range_control(label="Window")
+
+            self.assertEqual(st.session_state[GLOBAL_DATE_RANGE_INPUT], (date(2026, 6, 25),))
+            self.assertEqual(st.session_state[GLOBAL_START_DATE], date(2026, 6, 21))
+            self.assertEqual(st.session_state[GLOBAL_END_DATE], date(2026, 6, 28))
+
+            with patch.object(filters.st, "date_input", return_value=(date(2026, 6, 20), date(2026, 6, 27))):
+                filters.render_global_date_range_control(label="Window")
+
+            self.assertEqual(st.session_state[GLOBAL_START_DATE], date(2026, 6, 20))
+            self.assertEqual(st.session_state[GLOBAL_END_DATE], date(2026, 6, 27))
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)
+
     def test_query_guardrail_messages_are_hash_deduped(self):
         previous = dict(st.session_state)
         try:

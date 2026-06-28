@@ -1170,6 +1170,66 @@ class DecisionWorkspacePerformanceBudgetTests(unittest.TestCase):
             self.assertIn("query_search_exact", exact_summary["failure_reason"])
             self.assertEqual(len(performance.get_query_budget_context_events()), 5)
 
+    def test_query_budget_context_records_live_failures_without_interrupting_render(self):
+        import performance
+
+        env_off = {
+            "OVERWATCH_TEST_MODE": "",
+            "OVERWATCH_UI_FIXTURE_MODE": "",
+            "OVERWATCH_ALLOW_FIXTURE_MODE": "",
+            "OVERWATCH_STRICT_QUERY_BUDGETS": "",
+        }
+        state: dict[str, object] = {}
+        with patch.object(performance.st, "session_state", state), patch.dict(os.environ, env_off, clear=False):
+            performance.clear_query_budget_context_events()
+            with performance.query_budget_context(
+                "evidence_click",
+                section="DBA Control Room",
+                workflow="Overview",
+                budget=1,
+            ):
+                performance.increment_snowflake_execution_counter(
+                    "evidence",
+                    section="DBA Control Room",
+                    ttl_key="one",
+                    tier="recent",
+                )
+                performance.increment_snowflake_execution_counter(
+                    "evidence",
+                    section="DBA Control Room",
+                    ttl_key="two",
+                    tier="recent",
+                )
+
+            summary = performance.get_query_budget_context_events()[-1]
+            self.assertFalse(summary["passed_budget"])
+            self.assertIn("more than one evidence boundary", summary["failure_reason"])
+
+        with patch.object(performance.st, "session_state", {}), patch.dict(
+            os.environ,
+            {**env_off, "OVERWATCH_STRICT_QUERY_BUDGETS": "1"},
+            clear=False,
+        ):
+            with self.assertRaises(AssertionError):
+                with performance.query_budget_context(
+                    "evidence_click",
+                    section="DBA Control Room",
+                    workflow="Overview",
+                    budget=1,
+                ):
+                    performance.increment_snowflake_execution_counter(
+                        "evidence",
+                        section="DBA Control Room",
+                        ttl_key="one",
+                        tier="recent",
+                    )
+                    performance.increment_snowflake_execution_counter(
+                        "evidence",
+                        section="DBA Control Room",
+                        ttl_key="two",
+                        tier="recent",
+                    )
+
     def test_button_contracts_do_not_grant_account_usage_to_generic_admin(self):
         contracts = list(iter_button_action_contracts())
         fallback_contracts = [contract for contract in contracts if contract.action_type == "account_usage_fallback"]

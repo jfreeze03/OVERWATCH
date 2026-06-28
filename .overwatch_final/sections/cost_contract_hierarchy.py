@@ -19,6 +19,7 @@ from sections.cost_contract_contracts import (
 from sections.cost_contract_helpers import get_credit_price
 from sections.cost_contract_splash import _cached_cost_splash, _cost_splash_summary
 from sections.cortex_signals import build_cortex_signal
+from sections.decision_workspace_scope import active_decision_window_days
 from sections.shell_helpers import render_action_cards, render_primary_section_tabs, render_secondary_lens_pills
 from utils.primitives import safe_float, safe_int
 
@@ -104,7 +105,7 @@ def format_pct(value: object, *, default: str = "On demand") -> str:
 
 
 def active_cost_days() -> int:
-    return safe_int(st.session_state.get("cost_contract_cockpit_window", DEFAULT_DAY_WINDOW), DEFAULT_DAY_WINDOW)
+    return active_decision_window_days(DEFAULT_DAY_WINDOW)
 
 
 def build_cost_hero_metrics(company: str) -> tuple[dict[str, str], ...]:

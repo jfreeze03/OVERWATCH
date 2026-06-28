@@ -114,6 +114,8 @@ def render_global_date_range_control(*, label: str = "Date range", label_visibil
     default_end = datetime.now().date()
     default_start = default_end - timedelta(days=7)
     existing_date_range = get_state(GLOBAL_DATE_RANGE_INPUT)
+    if isinstance(existing_date_range, list):
+        existing_date_range = tuple(existing_date_range)
     if isinstance(existing_date_range, tuple) and len(existing_date_range) == 2:
         clamped_start, clamped_end, was_clamped, max_days = clamp_global_date_range(
             existing_date_range[0],
@@ -125,7 +127,7 @@ def render_global_date_range_control(*, label: str = "Date range", label_visibil
             set_state(GLOBAL_END_DATE, clamped_end)
             clamp_key = f"{clamped_start}|{clamped_end}|{max_days}"
             set_state(GLOBAL_DATE_CLAMP_PENDING_WARNING, (clamp_key, max_days))
-    else:
+    elif not isinstance(existing_date_range, tuple):
         set_state(
             GLOBAL_DATE_RANGE_INPUT,
             (
@@ -138,8 +140,15 @@ def render_global_date_range_control(*, label: str = "Date range", label_visibil
         key=GLOBAL_DATE_RANGE_INPUT,
         label_visibility=label_visibility,
     )
+    if isinstance(date_range, list):
+        date_range = tuple(date_range)
+    if isinstance(date_range, tuple) and len(date_range) == 1:
+        set_state(GLOBAL_DATE_RANGE_INPUT, date_range)
+        return
     if isinstance(date_range, tuple) and len(date_range) == 2:
         clamped_start, clamped_end, was_clamped, max_days = clamp_global_date_range(date_range[0], date_range[1])
+        if was_clamped:
+            set_state(GLOBAL_DATE_RANGE_INPUT, (clamped_start, clamped_end))
         set_state(GLOBAL_START_DATE, clamped_start)
         set_state(GLOBAL_END_DATE, clamped_end)
         pending_clamp_warning = pop_state(GLOBAL_DATE_CLAMP_PENDING_WARNING, None)

@@ -318,6 +318,19 @@ def assert_query_budget_context_passed(summary: dict[str, Any]) -> None:
     raise AssertionError(reason or "Query budget context failed.")
 
 
+def _strict_query_budget_context_mode() -> bool:
+    """Return whether live UI query-budget accounting should interrupt rendering."""
+    return any(
+        str(os.environ.get(name, "")).strip().lower() in {"1", "true", "yes", "on"}
+        for name in (
+            "OVERWATCH_TEST_MODE",
+            "OVERWATCH_UI_FIXTURE_MODE",
+            "OVERWATCH_ALLOW_FIXTURE_MODE",
+            "OVERWATCH_STRICT_QUERY_BUDGETS",
+        )
+    )
+
+
 @contextmanager
 def query_budget_context(
     name: str,
@@ -336,7 +349,8 @@ def query_budget_context(
         yield token
     finally:
         summary = end_query_budget_context(token)
-        assert_query_budget_context_passed(summary)
+        if _strict_query_budget_context_mode():
+            assert_query_budget_context_passed(summary)
 
 
 def get_query_budget_context_events() -> list[dict[str, Any]]:

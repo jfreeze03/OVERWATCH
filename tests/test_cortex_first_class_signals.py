@@ -58,6 +58,33 @@ class CortexFirstClassSignalTests(unittest.TestCase):
         self.assertEqual(signal["top_driver"], "ANALYST_1")
         self.assertEqual(signal["percent_of_total"], "20.0%")
 
+    def test_cortex_signal_uses_loaded_control_summary_when_direct_spend_is_absent(self):
+        from sections.cortex_signals import build_cortex_signal
+
+        state = {
+            "cortex_control_summary": pd.DataFrame(
+                [{
+                    "PROJECTED_30D_COST": 660.0,
+                    "TOTAL_CREDITS": 30.0,
+                    "TOTAL_REQUESTS": 120,
+                }]
+            ),
+            "cortex_control_daily": pd.DataFrame(
+                [{"USAGE_DATE": "2026-06-21", "COST_USD": 44.0}, {"USAGE_DATE": "2026-06-22", "COST_USD": 22.0}]
+            ),
+            "cortex_control_exceptions": pd.DataFrame(
+                [{"USER_NAME": "ANALYST_2", "SOURCE": "CORTEX", "SIGNAL": "Spend Threshold Breach"}]
+            ),
+        }
+
+        signal = build_cortex_signal({"spend": 330.0}, state=state, days=7)
+
+        self.assertEqual(signal["spend_label"], "$66.00")
+        self.assertEqual(signal["forecast_label"], "$660.00")
+        self.assertEqual(signal["requests"], 120)
+        self.assertEqual(signal["top_driver"], "ANALYST_2 / CORTEX / Spend Threshold Breach")
+        self.assertEqual(signal["trend"], "Loaded cost control")
+
     def test_executive_landing_surfaces_cortex_first_class_labels(self):
         source = (APP_ROOT / "sections" / "executive_landing_overview_view.py").read_text(encoding="utf-8")
 

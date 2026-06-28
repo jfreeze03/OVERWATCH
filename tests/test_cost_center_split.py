@@ -1,4 +1,5 @@
 from pathlib import Path
+from datetime import date
 import sys
 import unittest
 from unittest.mock import patch
@@ -170,6 +171,43 @@ class CostCenterSplitTests(unittest.TestCase):
         )
         self.assertIn("WH_O''HARE", verify_sql)
         self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY", verify_sql)
+
+    def test_burn_rate_account_billing_summary_matches_snowsight_source(self):
+        account_daily = pd.DataFrame(
+            {
+                "USAGE_DATE": ["2026-06-21", "2026-06-22"],
+                "DAILY_CREDITS": [10.0, 2.5],
+                "DAILY_SPEND_USD": [36.8, 5.5],
+            }
+        )
+
+        summary = burn_view._account_billing_summary(account_daily, warehouse_credits=9.0, credit_price=3.68)
+
+        self.assertTrue(summary["available"])
+        self.assertAlmostEqual(summary["account_credits"], 12.5)
+        self.assertAlmostEqual(summary["account_cost_usd"], 42.3)
+        self.assertAlmostEqual(summary["service_other_credits"], 3.5)
+
+    def test_account_billing_sql_uses_selected_completed_window(self):
+        from utils.cost import build_snowflake_service_cost_trend_sql
+
+        account_sql = build_snowflake_service_cost_trend_sql(
+            8,
+            credit_price=3.68,
+            ai_credit_price=2.20,
+            start_date=date(2026, 6, 21),
+            end_date=date(2026, 6, 28),
+        ).upper()
+
+        self.assertIn("TO_TIMESTAMP_NTZ('2026-06-21 00:00:00')", account_sql)
+        self.assertIn("TO_TIMESTAMP_NTZ('2026-06-28 00:00:00')", account_sql)
+        self.assertIn("DATEADD('HOUR', -24, CURRENT_TIMESTAMP())", account_sql)
+        self.assertNotIn("DATEADD('DAY', -16", account_sql)
+
+    def test_burn_rate_window_uses_global_decision_window(self):
+        with patch.object(burn_view, "active_decision_window_days", return_value=8) as active_window:
+            self.assertEqual(burn_view._burn_rate_window_days(30), 8)
+        active_window.assert_called_once_with(30)
 
     def test_cost_center_action_queue_remains_review_only(self):
         with self.subTest("empty frames do not upsert"):

@@ -61,6 +61,8 @@ def load_shared_service_cost_trend(
     *,
     credit_price: float = 0.0,
     ai_credit_price: float = 0.0,
+    start_date: object = None,
+    end_date: object = None,
     force: bool = False,
     section: str = "Shared Metrics",
 ) -> SharedMetricResult:
@@ -76,12 +78,16 @@ def load_shared_service_cost_trend(
                 days,
                 credit_price or None,
                 ai_credit_price or None,
+                start_date=start_date,
+                end_date=end_date,
             ),
             ttl_key=get_company_scope_key(
                 "shared_service_cost_trend_official",
                 days,
                 credit_price,
                 ai_credit_price,
+                start_date or "",
+                end_date or "",
             ),
             tier="historical",
             section=section,
@@ -95,7 +101,7 @@ def load_shared_service_cost_trend(
 
     return _load_or_reuse(
         "shared_service_cost_trend",
-        (company, days, credit_price, ai_credit_price),
+        (company, days, credit_price, ai_credit_price, start_date or "", end_date or ""),
         _loader,
         force=force,
     )

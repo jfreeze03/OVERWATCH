@@ -36,7 +36,9 @@ CLI_FORMULA_VALUE_REL = f"{SNOWFLAKE_VALIDATION_DIR}/snowflake_cli_formula_value
 CLI_PACKET_VALUE_REL = f"{SNOWFLAKE_VALIDATION_DIR}/snowflake_cli_packet_value_results.json"
 CLI_SUMMARY_CARD_REL = f"{SNOWFLAKE_VALIDATION_DIR}/snowflake_cli_summary_card_value_results.json"
 CLI_QUERY_BUDGET_REL = f"{SNOWFLAKE_VALIDATION_DIR}/snowflake_cli_query_budget_results.json"
+CLI_MANIFEST_RECONCILIATION_REL = f"{SNOWFLAKE_VALIDATION_DIR}/snowflake_cli_manifest_reconciliation_results.json"
 CLI_LAUNCH_GATE_REL = f"{LAUNCH_READINESS_DIR}/snowflake_cli_live_gate_results.json"
+CLI_FORMULA_VALUE_GATE_REL = f"{LAUNCH_READINESS_DIR}/snowflake_cli_formula_value_gate_results.json"
 CLI_RELEASE_REL = f"{RELEASE_CANDIDATE_DIR}/snowflake_cli_release_results.json"
 
 REQUIRED_CLI_ARTIFACTS = {
@@ -48,7 +50,9 @@ REQUIRED_CLI_ARTIFACTS = {
     CLI_PACKET_VALUE_REL,
     CLI_SUMMARY_CARD_REL,
     CLI_QUERY_BUDGET_REL,
+    CLI_MANIFEST_RECONCILIATION_REL,
     CLI_LAUNCH_GATE_REL,
+    CLI_FORMULA_VALUE_GATE_REL,
     CLI_RELEASE_REL,
 }
 
@@ -92,6 +96,39 @@ CORTEX_SERVICE_TYPES = (
     "FINE_TUNING",
     "AI_SERVICES",
 )
+
+REQUIRED_QUERY_BUDGET_BOUNDARIES = tuple(
+    (section, "summary_board", boundary)
+    for section in PRIMARY_SECTIONS
+    for boundary in ("first_paint_packet", "warm_first_paint", "route_action")
+) + (
+    ("Query Search", "query_search", "query_search_no_click"),
+    ("Cost & Contract", "cost_workbench", "cost_workbench"),
+)
+
+CREDIT_COLUMN_BY_FIELD = {
+    "ACCOUNT_BILLED_CREDITS": "CREDITS_BILLED",
+    "ACCOUNT_BILLED_COST_USD": "CREDITS_BILLED",
+    "ACCOUNT_USED_CREDITS": "CREDITS_USED",
+    "COMPUTE_CREDITS": "CREDITS_USED_COMPUTE",
+    "CLOUD_SERVICES_CREDITS": "CREDITS_USED_CLOUD_SERVICES",
+    "WAREHOUSE_CREDITS": "CREDITS_USED_COMPUTE + CREDITS_USED_CLOUD_SERVICES",
+    "WAREHOUSE_COST_ESTIMATE_USD": "CREDITS_USED_COMPUTE + CREDITS_USED_CLOUD_SERVICES",
+    "WAREHOUSE_COST_USD": "CREDITS_USED_COMPUTE + CREDITS_USED_CLOUD_SERVICES",
+    "SERVICE_OTHER_CREDITS": "CREDITS_BILLED - WAREHOUSE_CREDITS",
+    "SERVICE_OTHER_COST_USD": "CREDITS_BILLED - WAREHOUSE_CREDITS",
+    "BILLING_BRIDGE_DELTA_CREDITS": "CREDITS_BILLED - WAREHOUSE_CREDITS",
+    "BILLING_BRIDGE_DELTA_USD": "CREDITS_BILLED - WAREHOUSE_CREDITS",
+    "CORTEX_AI_CREDITS": "CORTEX_SERVICE_ALLOWLIST_CREDITS",
+    "CORTEX_AI_COST_USD": "CORTEX_SERVICE_ALLOWLIST_CREDITS",
+}
+
+RENDERED_SUMMARY_FIELDS = {
+    "ACCOUNT_BILLED_COST_USD",
+    "CORTEX_AI_COST_USD",
+    "SPEND_MOVEMENT_PCT",
+    "FORECAST_RUN_RATE_USD",
+}
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -165,7 +202,13 @@ def sanitize_text(value: object, *, allow_raw_sql: bool | None = None) -> str:
         r"\1=[REDACTED]",
         text,
     )
+    text = re.sub(
+        r"(?is)\b(private[_-]?key[_-]?file|token[_-]?file[_-]?path)\b\s*[:=]\s*['\"]?[^'\"\r\n]+",
+        r"\1=[REDACTED_PATH]",
+        text,
+    )
     text = re.sub(r"(?i)(https://)[A-Za-z0-9_.-]+\.snowflakecomputing\.com", r"\1[REDACTED_ACCOUNT].snowflakecomputing.com", text)
+    text = re.sub(r"(?is)Traceback \(most recent call last\):.*", "[STACK_TRACE_REDACTED]", text)
     text = re.sub(r'File "[^"]+", line \d+.*', "[STACK_FRAME_REDACTED]", text)
     if allow_raw_sql is None:
         allow_raw_sql = os.environ.get("OVERWATCH_ALLOW_RAW_SQL_PROOF") == "1"
@@ -261,12 +304,38 @@ def _base_row(
     }
 
 
+def _assign_validation_ids(artifacts: Mapping[str, Any]) -> None:
+    counter = 1
+    for rel in (
+        CLI_CAPABILITY_REL,
+        CLI_CONNECTION_REL,
+        CLI_SETUP_REL,
+        CLI_PACKET_VALUE_REL,
+        CLI_FORMULA_VALUE_REL,
+        CLI_SUMMARY_CARD_REL,
+        CLI_QUERY_BUDGET_REL,
+    ):
+        payload = artifacts.get(rel)
+        if not isinstance(payload, dict):
+            continue
+        rows = payload.get("rows")
+        if not isinstance(rows, list):
+            continue
+        for index, row in enumerate(rows):
+            if not isinstance(row, dict):
+                continue
+            row["validation_id"] = row.get("validation_id") or f"snowflake-cli-{counter:04d}"
+            row["artifact"] = Path(rel).name
+            row["row_index"] = index
+            counter += 1
+
+
 def _manifest_from_rows(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     entries: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
     for index, row in enumerate(rows):
         entry = {
-            "validation_id": f"snowflake-cli-{index + 1:04d}",
+            "validation_id": str(row.get("validation_id") or f"snowflake-cli-{index + 1:04d}"),
             "artifact": str(row.get("artifact") or ""),
             "row_index": int(row.get("row_index") or 0),
             "phase": str(row.get("phase") or ""),
@@ -293,6 +362,93 @@ def _manifest_from_rows(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
         "entries": entries,
         "raw_sql_included": False,
     }
+
+
+def _manifest_reconciliation_results(artifacts: Mapping[str, Any], manifest: Mapping[str, Any]) -> dict[str, Any]:
+    entries = manifest.get("entries") if isinstance(manifest.get("entries"), list) else []
+    entry_by_id = {str(entry.get("validation_id")): entry for entry in entries if isinstance(entry, Mapping)}
+    seen_ids: set[str] = set()
+    failures: list[dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
+    for rel in (
+        CLI_CAPABILITY_REL,
+        CLI_CONNECTION_REL,
+        CLI_SETUP_REL,
+        CLI_PACKET_VALUE_REL,
+        CLI_FORMULA_VALUE_REL,
+        CLI_SUMMARY_CARD_REL,
+        CLI_QUERY_BUDGET_REL,
+    ):
+        payload = artifacts.get(rel)
+        payload_rows = payload.get("rows") if isinstance(payload, Mapping) and isinstance(payload.get("rows"), list) else []
+        for index, row in enumerate(payload_rows):
+            if not isinstance(row, Mapping):
+                continue
+            validation_id = str(row.get("validation_id") or "")
+            entry = entry_by_id.get(validation_id)
+            status = "passed"
+            failure_reason = ""
+            if not validation_id:
+                status = "failed"
+                failure_reason = "Artifact row is missing validation_id."
+                failures.append({"code": "SNOWFLAKE_CLI_MANIFEST_ID_MISSING", "artifact": rel, "row_index": index})
+            elif entry is None:
+                status = "failed"
+                failure_reason = "Artifact row points to an unknown manifest validation_id."
+                failures.append({"code": "SNOWFLAKE_CLI_MANIFEST_ID_UNKNOWN", "artifact": rel, "validation_id": validation_id})
+            else:
+                seen_ids.add(validation_id)
+                entry_row_index = entry.get("row_index")
+                if int(entry_row_index if entry_row_index is not None else -1) != index:
+                    status = "failed"
+                    failure_reason = "Manifest row_index does not match artifact row_index."
+                    failures.append({"code": "SNOWFLAKE_CLI_MANIFEST_ROW_INDEX_MISMATCH", "validation_id": validation_id})
+                if str(entry.get("artifact") or "") != Path(rel).name:
+                    status = "failed"
+                    failure_reason = "Manifest artifact does not match source artifact."
+                    failures.append({"code": "SNOWFLAKE_CLI_MANIFEST_ARTIFACT_MISMATCH", "validation_id": validation_id})
+                if str(entry.get("status") or "") != str(row.get("status") or ""):
+                    status = "failed"
+                    failure_reason = "Manifest status contradicts artifact row status."
+                    failures.append({"code": "SNOWFLAKE_CLI_MANIFEST_STATUS_MISMATCH", "validation_id": validation_id})
+            serialized = json.dumps(row, default=str)
+            if bool(row.get("raw_sql_included")):
+                status = "failed"
+                failure_reason = "Artifact row includes raw SQL."
+                failures.append({"code": "SNOWFLAKE_CLI_MANIFEST_RAW_SQL_INCLUDED", "validation_id": validation_id})
+            if re.search(r"(?i)(password|token|private[_-]?key|connection[_-]?string)\s*[:=]", serialized):
+                status = "failed"
+                failure_reason = "Artifact row includes secret-like text."
+                failures.append({"code": "SNOWFLAKE_CLI_MANIFEST_SECRET_LIKE_TEXT", "validation_id": validation_id})
+            rows.append(
+                {
+                    "validation_id": validation_id,
+                    "artifact": Path(rel).name,
+                    "row_index": index,
+                    "status": status,
+                    "failure_reason": failure_reason,
+                    "raw_sql_included": False,
+                }
+            )
+    for validation_id, entry in entry_by_id.items():
+        if validation_id not in seen_ids:
+            failures.append(
+                {
+                    "code": "SNOWFLAKE_CLI_MANIFEST_ORPHAN_ENTRY",
+                    "validation_id": validation_id,
+                    "artifact": entry.get("artifact"),
+                }
+            )
+    return _payload(
+        source="snowflake_cli_manifest_reconciliation_results",
+        rows=rows,
+        failures=failures,
+        extra={
+            "manifest_entry_count": len(entry_by_id),
+            "linked_artifact_row_count": len(seen_ids),
+            "orphan_manifest_entry_count": len(entry_by_id) - len(seen_ids),
+        },
+    )
 
 
 def _payload(
@@ -351,22 +507,29 @@ def _skipped_artifacts(
                 "row_index": 0,
             }
         ]
-    manifest = _manifest_from_rows(row for rows in rows_by_rel.values() for row in rows)
     artifacts: dict[str, Any] = {
         rel: _payload(source=Path(rel).stem, rows=rows, skipped=True, skip_reason=reason)
         for rel, rows in rows_by_rel.items()
     }
+    _assign_validation_ids(artifacts)
+    manifest = _manifest_from_rows(row for rows in rows_by_rel.values() for row in rows)
     artifacts[CLI_MANIFEST_REL] = manifest
+    artifacts[CLI_MANIFEST_RECONCILIATION_REL] = _manifest_reconciliation_results(artifacts, manifest)
+    artifacts[CLI_FORMULA_VALUE_GATE_REL] = _formula_value_gate_results(artifacts.get(CLI_FORMULA_VALUE_REL, {}))
     gate = evaluate_snowflake_cli_live_gate(artifacts, options.profile, [])
     artifacts[CLI_LAUNCH_GATE_REL] = gate
     artifacts[CLI_RELEASE_REL] = {
         "source": "snowflake_cli_release_results",
         "generated_at": _utc_now(),
-        "passed": bool(gate.get("passed")),
+        "passed": bool(gate.get("snowflake_cli_gate_passed")),
         "failure_count": int(gate.get("failure_count") or 0),
         "launch_profile": options.profile,
-        "snowflake_cli_live_validation_passed": bool(gate.get("passed")),
-        "snowflake_cli_live_validation_skipped": True,
+        "snowflake_cli_gate_passed": bool(gate.get("snowflake_cli_gate_passed")),
+        "snowflake_cli_live_required": bool(gate.get("snowflake_cli_live_required")),
+        "snowflake_cli_live_executed": bool(gate.get("snowflake_cli_live_executed")),
+        "snowflake_cli_live_passed": bool(gate.get("snowflake_cli_live_passed")),
+        "snowflake_cli_live_skipped": True,
+        "snowflake_cli_live_waived": bool(gate.get("snowflake_cli_live_waived")),
         "skip_reason": reason,
         "raw_sql_included": False,
     }
@@ -452,17 +615,29 @@ ORDER BY s.section_name
 def _formula_expected_sql(options: SnowflakeCliValidationOptions) -> str:
     start_expr = f"DATEADD('day', -{int(options.window_days)}, CURRENT_DATE())"
     end_expr = "DATEADD('day', -1, CURRENT_DATE())"
+    previous_start_expr = f"DATEADD('day', -{int(options.window_days) * 2}, CURRENT_DATE())"
+    previous_end_expr = f"DATEADD('day', -{int(options.window_days) + 1}, CURRENT_DATE())"
     allowlist = ", ".join(_literal(value) for value in CORTEX_SERVICE_TYPES)
     return f"""
 WITH account_billing AS (
   SELECT
+    COUNT(*) AS account_source_rows,
     SUM(COALESCE(CREDITS_BILLED, CREDITS_USED, 0)) AS account_billed_credits,
-    SUM(COALESCE(CREDITS_USED, 0)) AS account_used_credits
+    SUM(COALESCE(CREDITS_USED, 0)) AS account_used_credits,
+    MAX(USAGE_DATE) AS billing_source_freshness_ts
   FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY
   WHERE USAGE_DATE BETWEEN {start_expr} AND {end_expr}
 ),
+previous_account_billing AS (
+  SELECT
+    COUNT(*) AS previous_source_rows,
+    SUM(COALESCE(CREDITS_BILLED, CREDITS_USED, 0)) AS previous_account_billed_credits
+  FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY
+  WHERE USAGE_DATE BETWEEN {previous_start_expr} AND {previous_end_expr}
+),
 warehouse_bridge AS (
   SELECT
+    COUNT(*) AS warehouse_source_rows,
     SUM(COALESCE(CREDITS_USED_COMPUTE, 0) + COALESCE(CREDITS_USED_CLOUD_SERVICES, 0)) AS warehouse_credits,
     SUM(COALESCE(CREDITS_USED_COMPUTE, 0)) AS compute_credits,
     SUM(COALESCE(CREDITS_USED_CLOUD_SERVICES, 0)) AS cloud_services_credits
@@ -472,17 +647,25 @@ warehouse_bridge AS (
     AND NULLIF(TRIM(WAREHOUSE_NAME), '') IS NOT NULL
 ),
 cortex AS (
-  SELECT SUM(COALESCE(CREDITS_USED, CREDITS_BILLED, 0)) AS cortex_ai_credits
+  SELECT
+    COUNT(*) AS cortex_source_rows,
+    SUM(COALESCE(CREDITS_USED, CREDITS_BILLED, 0)) AS cortex_ai_credits
   FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY
   WHERE USAGE_DATE BETWEEN {start_expr} AND {end_expr}
     AND UPPER(SERVICE_TYPE) IN ({allowlist})
 )
 SELECT OBJECT_CONSTRUCT_KEEP_NULL(
+  'SOURCE_ROWS_PRESENT', COALESCE(a.account_source_rows, 0) > 0 OR COALESCE(w.warehouse_source_rows, 0) > 0 OR COALESCE(c.cortex_source_rows, 0) > 0,
+  'ACCOUNT_SOURCE_ROWS_PRESENT', COALESCE(a.account_source_rows, 0) > 0,
+  'WAREHOUSE_SOURCE_ROWS_PRESENT', COALESCE(w.warehouse_source_rows, 0) > 0,
+  'CORTEX_SOURCE_ROWS_PRESENT', COALESCE(c.cortex_source_rows, 0) > 0,
   'ACCOUNT_BILLED_CREDITS', a.account_billed_credits,
   'ACCOUNT_BILLED_COST_USD', a.account_billed_credits * {float(options.credit_price)},
   'ACCOUNT_USED_CREDITS', a.account_used_credits,
   'COMPUTE_CREDITS', w.compute_credits,
   'CLOUD_SERVICES_CREDITS', w.cloud_services_credits,
+  'CLOUD_SERVICES_ADJUSTMENT', 0,
+  'ACCOUNT_CLOUD_SERVICES_ADJUSTMENT', 0,
   'WAREHOUSE_CREDITS', w.warehouse_credits,
   'WAREHOUSE_COST_ESTIMATE_USD', w.warehouse_credits * {float(options.credit_price)},
   'WAREHOUSE_COST_USD', w.warehouse_credits * {float(options.credit_price)},
@@ -497,24 +680,87 @@ SELECT OBJECT_CONSTRUCT_KEEP_NULL(
     ELSE 'warehouse_higher_than_billed'
   END,
   'CORTEX_AI_CREDITS', c.cortex_ai_credits,
-  'CORTEX_AI_COST_USD', c.cortex_ai_credits * {float(options.credit_price)}
+  'CORTEX_AI_COST_USD', c.cortex_ai_credits * {float(options.credit_price)},
+  'BILLING_RECONCILIATION_STATUS', CASE WHEN a.account_billed_credits IS NULL THEN 'pending' ELSE 'available' END,
+  'BILLING_WINDOW_START', {start_expr},
+  'BILLING_WINDOW_END', {end_expr},
+  'BILLING_WINDOW_COMPLETE', TRUE,
+  'BILLING_SOURCE_FRESHNESS_TS', a.billing_source_freshness_ts,
+  'BILLING_LATENCY_NOTE', CASE WHEN a.account_billed_credits IS NULL THEN 'billing source unavailable' ELSE 'completed billing window' END,
+  'BILLING_RECONCILIATION_WINDOW_START', {start_expr},
+  'BILLING_RECONCILIATION_WINDOW_END', {end_expr},
+  'BILLING_RECONCILIATION_FRESHNESS', a.billing_source_freshness_ts,
+  'SPEND_MOVEMENT_PCT', CASE
+    WHEN COALESCE(p.previous_source_rows, 0) = 0 OR COALESCE(p.previous_account_billed_credits, 0) = 0 THEN NULL
+    ELSE ((COALESCE(a.account_billed_credits, 0) - p.previous_account_billed_credits) / p.previous_account_billed_credits) * 100
+  END,
+  'FORECAST_RUN_RATE_USD', CASE
+    WHEN COALESCE(a.account_source_rows, 0) = 0 THEN NULL
+    ELSE (COALESCE(a.account_billed_credits, 0) * {float(options.credit_price)} / GREATEST({int(options.window_days)}, 1)) * 30
+  END
 ) AS ROW_JSON
-FROM account_billing a, warehouse_bridge w, cortex c
+FROM account_billing a, previous_account_billing p, warehouse_bridge w, cortex c
 """
 
 
 def _query_history_sql(options: SnowflakeCliValidationOptions) -> str:
     prefix = options.query_tag_prefix or "OVERWATCH_VALIDATION"
     return f"""
+WITH tagged AS (
+  SELECT
+    COALESCE(REGEXP_SUBSTR(QUERY_TAG, 'section=([^|]+)', 1, 1, 'e', 1), 'unknown') AS section,
+    COALESCE(REGEXP_SUBSTR(QUERY_TAG, 'workflow=([^|]+)', 1, 1, 'e', 1), 'unknown') AS workflow,
+    COALESCE(REGEXP_SUBSTR(QUERY_TAG, 'boundary=([^|]+)', 1, 1, 'e', 1), 'unknown') AS boundary,
+    BYTES_SCANNED,
+    ROWS_PRODUCED,
+    TOTAL_ELAPSED_TIME,
+    WAREHOUSE_NAME
+  FROM TABLE(INFORMATION_SCHEMA.QUERY_HISTORY(END_TIME_RANGE_START=>DATEADD('hour', -6, CURRENT_TIMESTAMP())))
+  WHERE QUERY_TAG ILIKE {_literal(prefix + '%')}
+)
 SELECT OBJECT_CONSTRUCT_KEEP_NULL(
+  'section', section,
+  'workflow', workflow,
+  'boundary', boundary,
   'query_count', COUNT(*),
   'bytes_scanned', SUM(COALESCE(BYTES_SCANNED, 0)),
+  'rows_produced', SUM(COALESCE(ROWS_PRODUCED, 0)),
   'max_elapsed_ms', MAX(TOTAL_ELAPSED_TIME),
+  'warehouse', ANY_VALUE(WAREHOUSE_NAME),
   'query_tag_prefix', {_literal(prefix)}
 ) AS ROW_JSON
-FROM TABLE(INFORMATION_SCHEMA.QUERY_HISTORY(END_TIME_RANGE_START=>DATEADD('hour', -6, CURRENT_TIMESTAMP())))
-WHERE QUERY_TAG ILIKE {_literal(prefix + '%')}
+FROM tagged
+GROUP BY section, workflow, boundary
 """
+
+
+def _procedure_signature_sql(options: SnowflakeCliValidationOptions) -> str:
+    schema_filter = ""
+    if options.schema:
+        schema_filter = f"AND UPPER(PROCEDURE_SCHEMA)=UPPER({_literal(options.schema)})"
+    return f"""
+SELECT OBJECT_CONSTRUCT_KEEP_NULL(
+  'procedure_name', 'SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEF',
+  'signature_count', COUNT(*),
+  'supports_mode_boolean_signature', COUNT_IF(ARGUMENT_SIGNATURE ILIKE '%VARCHAR%' AND ARGUMENT_SIGNATURE ILIKE '%BOOLEAN%')
+) AS ROW_JSON
+FROM INFORMATION_SCHEMA.PROCEDURES
+WHERE UPPER(PROCEDURE_NAME)=UPPER('SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEF')
+  {schema_filter}
+"""
+
+
+def _detect_json_output_args(help_text: str) -> tuple[str, ...]:
+    text = help_text or ""
+    if re.search(r"--format\b", text, re.IGNORECASE) and re.search(r"\bJSON\b", text, re.IGNORECASE):
+        return ("--format", "JSON")
+    if re.search(r"--output\b", text, re.IGNORECASE) and re.search(r"\bjson\b", text, re.IGNORECASE):
+        return ("--output", "json")
+    return ()
+
+
+def _json_output_args() -> tuple[str, ...]:
+    return ("--format", "JSON")
 
 
 def _parse_json_rows(stdout: str) -> list[dict[str, Any]]:
@@ -531,19 +777,8 @@ def _parse_json_rows(stdout: str) -> list[dict[str, Any]]:
                 return [row for row in data if isinstance(row, dict)]
             return [data] if isinstance(data, dict) else []
     except json.JSONDecodeError:
-        pass
-    objects: list[dict[str, Any]] = []
-    for match in re.finditer(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", text, flags=re.DOTALL):
-        try:
-            value = json.loads(match.group(0))
-        except json.JSONDecodeError:
-            continue
-        if isinstance(value, dict):
-            if "ROW_JSON" in value and isinstance(value["ROW_JSON"], dict):
-                objects.append(value["ROW_JSON"])
-            else:
-                objects.append(value)
-    return objects
+        return []
+    return []
 
 
 def _run_snow_sql_query(
@@ -554,7 +789,7 @@ def _run_snow_sql_query(
     runner: Runner,
     timeout_seconds: int = 180,
 ) -> tuple[list[dict[str, Any]], subprocess.CompletedProcess[str] | None, int]:
-    args = [snow, "sql", *_command_scope(options), "-q", query]
+    args = [snow, "sql", *_json_output_args(), *_command_scope(options), "-q", query]
     proc, elapsed = _run(args, runner=runner, timeout_seconds=timeout_seconds)
     rows = _parse_json_rows(proc.stdout if proc else "")
     return rows, proc, elapsed
@@ -568,7 +803,7 @@ def _run_snow_sql_file(
     runner: Runner,
     timeout_seconds: int = 300,
 ) -> tuple[subprocess.CompletedProcess[str] | None, int]:
-    args = [snow, "sql", *_command_scope(options), "-f", str(filename)]
+    args = [snow, "sql", *_json_output_args(), *_command_scope(options), "-f", str(filename)]
     return _run(args, runner=runner, timeout_seconds=timeout_seconds)
 
 
@@ -580,6 +815,7 @@ def _capability_results(
 ) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
+    sql_help_text = ""
     for phase, args in (
         ("snowflake_cli_version", [snow, "--version"]),
         ("snowflake_cli_sql_help", [snow, "sql", "--help"]),
@@ -588,6 +824,8 @@ def _capability_results(
         ok = proc is not None and proc.returncode == 0
         stdout = proc.stdout if proc else ""
         stderr = proc.stderr if proc else ""
+        if phase == "snowflake_cli_sql_help" and ok:
+            sql_help_text = stdout
         row = _base_row(
             phase=phase,
             command_kind="validation",
@@ -609,7 +847,35 @@ def _capability_results(
         if not ok:
             failures.append({"code": "SNOWFLAKE_CLI_CAPABILITY_FAILED", "phase": phase, "sanitized_error": row["sanitized_error"]})
         rows.append(row)
-    return _payload(source="snowflake_cli_capability_results", rows=rows, failures=failures)
+    json_args = _detect_json_output_args(sql_help_text)
+    json_ok = bool(json_args)
+    json_row = _base_row(
+        phase="snowflake_cli_json_output_detection",
+        command_kind="validation",
+        options=options,
+        status="passed" if json_ok else "failed",
+        sanitized_error="" if json_ok else "Snowflake CLI sql help did not advertise a machine-readable JSON output option.",
+        recommendation="" if json_ok else "Upgrade Snowflake CLI to a version that supports snow sql --format JSON.",
+    )
+    json_row.update(
+        {
+            "artifact": Path(CLI_CAPABILITY_REL).name,
+            "row_index": len(rows),
+            "capability_detected": json_ok,
+            "json_output_supported": json_ok,
+            "json_output_args": list(json_args),
+            "raw_sql_included": False,
+        }
+    )
+    rows.append(json_row)
+    if not json_ok:
+        failures.append({"code": "SNOWFLAKE_CLI_JSON_OUTPUT_UNAVAILABLE", "phase": "snowflake_cli_json_output_detection"})
+    return _payload(
+        source="snowflake_cli_capability_results",
+        rows=rows,
+        failures=failures,
+        extra={"json_output_supported": json_ok, "json_output_args": list(json_args)},
+    )
 
 
 def _connection_results(
@@ -681,6 +947,47 @@ def _setup_validation_results(
     if options.skip_refresh:
         refresh_reason = "Refresh validation skipped because --skip-refresh was provided."
     elif options.run_fast_refresh:
+        signature_rows, signature_proc, signature_elapsed = _run_snow_sql_query(
+            snow,
+            options,
+            _procedure_signature_sql(options),
+            runner=runner,
+            timeout_seconds=120,
+        )
+        signature = _normalize_snow_row(signature_rows[0]) if signature_rows else {}
+        signature_ok = (
+            signature_proc is not None
+            and signature_proc.returncode == 0
+            and int(_as_float(signature.get("supports_mode_boolean_signature")) or 0) > 0
+        )
+        signature_row = _base_row(
+            phase="refresh_procedure_signature_validation",
+            command_kind="sql_query",
+            options=options,
+            elapsed_ms=signature_elapsed,
+            status="passed" if signature_ok else "failed",
+            row_count=len(signature_rows),
+            sanitized_error="" if signature_ok else "Refresh procedure signature is missing or incompatible.",
+            recommendation="" if signature_ok else "Deploy the refresh procedure signature before running CLI refresh validation.",
+        )
+        signature_row.update(
+            {
+                "artifact": Path(CLI_SETUP_REL).name,
+                "row_index": len(rows),
+                "procedure_name": "SP_OVERWATCH_REFRESH_SECTION_COMMAND_BRIEF",
+                "signature_count": int(_as_float(signature.get("signature_count")) or 0),
+                "supports_mode_boolean_signature": int(_as_float(signature.get("supports_mode_boolean_signature")) or 0),
+            }
+        )
+        rows.append(signature_row)
+        if not signature_ok:
+            failures.append({"code": "SNOWFLAKE_CLI_REFRESH_SIGNATURE_INCOMPATIBLE"})
+            return _payload(
+                source="snowflake_cli_setup_validation_results",
+                rows=rows,
+                failures=failures,
+                extra={"refresh_status": "incompatible_signature", "refresh_skip_reason": "Refresh call not executed because procedure signature was incompatible."},
+            )
         rows2, proc2, elapsed2 = _run_snow_sql_query(
             snow,
             options,
@@ -705,6 +1012,24 @@ def _setup_validation_results(
         if refresh_status == "failed":
             failures.append({"code": "SNOWFLAKE_CLI_FAST_REFRESH_FAILED", "sanitized_error": row2["sanitized_error"]})
     if options.run_full_refresh_dry_run:
+        if os.environ.get("OVERWATCH_ALLOW_DESTRUCTIVE_SNOWFLAKE_VALIDATION") != "1":
+            row3 = _base_row(
+                phase="full_refresh_dry_run_validation",
+                command_kind="validation",
+                options=options,
+                status="skipped",
+                sanitized_error="",
+                recommendation="Set OVERWATCH_ALLOW_DESTRUCTIVE_SNOWFLAKE_VALIDATION=1 only when FULL dry-run validation is explicitly approved.",
+            )
+            row3.update({"artifact": Path(CLI_SETUP_REL).name, "row_index": len(rows), "destructive_validation_allowed": False})
+            rows.append(row3)
+            failures.append({"code": "SNOWFLAKE_CLI_FULL_DRY_RUN_BLOCKED_WITHOUT_FLAG"})
+            return _payload(
+                source="snowflake_cli_setup_validation_results",
+                rows=rows,
+                failures=failures,
+                extra={"refresh_status": "blocked", "refresh_skip_reason": "FULL dry-run blocked without destructive validation flag."},
+            )
         rows3, proc3, elapsed3 = _run_snow_sql_query(
             snow,
             options,
@@ -734,6 +1059,12 @@ def _setup_validation_results(
 def _normalize_snow_row(row: Mapping[str, Any]) -> dict[str, Any]:
     if "ROW_JSON" in row and isinstance(row["ROW_JSON"], Mapping):
         return dict(row["ROW_JSON"])
+    if "ROW_JSON" in row and isinstance(row["ROW_JSON"], str):
+        try:
+            parsed = json.loads(row["ROW_JSON"])
+        except json.JSONDecodeError:
+            return {}
+        return dict(parsed) if isinstance(parsed, Mapping) else {}
     return dict(row)
 
 
@@ -837,10 +1168,97 @@ def _section_packet_value(packet_payload: Mapping[str, Any], section: str, field
     return None
 
 
+def _section_flat_value(packet_payload: Mapping[str, Any], section: str, field: str) -> Any:
+    for row in packet_payload.get("rows", []):
+        if not isinstance(row, Mapping):
+            continue
+        if str(row.get("section_name") or "") != section:
+            continue
+        values = row.get("flat_values")
+        if isinstance(values, Mapping):
+            return values.get(field)
+    return None
+
+
+def _load_json_if_exists(root: Path, rel: str) -> dict[str, Any]:
+    path = root / rel
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _rendered_value_by_field(root: Path) -> dict[str, Any]:
+    payload = _load_json_if_exists(root, "artifacts/full_app_validation/rendered_formula_results.json")
+    values: dict[str, Any] = {}
+    for row in payload.get("value_checks", []):
+        if not isinstance(row, Mapping):
+            continue
+        field = str(row.get("packet_field") or "")
+        if field:
+            values[field] = row.get("rendered_value")
+    return values
+
+
+def _values_match(left: Any, right: Any, tolerance: float) -> bool:
+    if left is None or right is None:
+        return left is None and right is None
+    left_float = _as_float(left)
+    right_float = _as_float(right)
+    if left_float is not None and right_float is not None:
+        return abs(left_float - right_float) <= tolerance
+    return str(left) == str(right)
+
+
+def _tolerance_for_field(field: str) -> float:
+    if field.endswith("_USD") or field in {"SPEND_MOVEMENT_PCT", "FORECAST_RUN_RATE_USD"}:
+        return 0.05
+    if field in NUMERIC_FORMULA_FIELDS:
+        return 0.001
+    return 0.0
+
+
+def _field_source_rows_present(field: str, expected: Mapping[str, Any]) -> bool:
+    if field.startswith("CORTEX_AI"):
+        return bool(expected.get("CORTEX_SOURCE_ROWS_PRESENT", expected.get("SOURCE_ROWS_PRESENT", True)))
+    if field.startswith("WAREHOUSE") or field in {"COMPUTE_CREDITS", "CLOUD_SERVICES_CREDITS"}:
+        return bool(expected.get("WAREHOUSE_SOURCE_ROWS_PRESENT", expected.get("SOURCE_ROWS_PRESENT", True)))
+    return bool(expected.get("ACCOUNT_SOURCE_ROWS_PRESENT", expected.get("SOURCE_ROWS_PRESENT", True)))
+
+
+def _source_confirmed_zero(value: Any, source_rows_present: bool) -> bool:
+    value_float = _as_float(value)
+    return source_rows_present and value_float is not None and abs(value_float) <= 0.000001
+
+
+def _formula_value_gate_results(payload: Mapping[str, Any]) -> dict[str, Any]:
+    rows = payload.get("rows") if isinstance(payload.get("rows"), list) else []
+    failures = payload.get("failures") if isinstance(payload.get("failures"), list) else []
+    return {
+        "source": "snowflake_cli_formula_value_gate_results",
+        "generated_at": _utc_now(),
+        "passed": bool(payload.get("passed")),
+        "failure_count": int(payload.get("failure_count") or 0),
+        "failures": failures,
+        "row_count": len(rows),
+        "required_field_count": len(REQUIRED_PACKET_FIELDS),
+        "validated_fields": [
+            str(row.get("formula_field"))
+            for row in rows
+            if isinstance(row, Mapping) and row.get("formula_field")
+        ],
+        "raw_sql_included": False,
+    }
+
+
 def _formula_value_results(
     snow: str,
     options: SnowflakeCliValidationOptions,
     packet_payload: Mapping[str, Any],
+    root: Path,
     *,
     runner: Runner,
 ) -> dict[str, Any]:
@@ -864,21 +1282,42 @@ def _formula_value_results(
             failures=[{"code": "SNOWFLAKE_CLI_FORMULA_QUERY_FAILED", "sanitized_error": row["sanitized_error"]}],
         )
     expected = _normalize_snow_row(rows_raw[0]) if rows_raw else {}
+    rendered_values = _rendered_value_by_field(root)
     executive_total = _section_packet_value(packet_payload, "Executive Landing", "ACCOUNT_BILLED_COST_USD")
     cost_total = _section_packet_value(packet_payload, "Cost & Contract", "ACCOUNT_BILLED_COST_USD")
     executive_cortex = _section_packet_value(packet_payload, "Executive Landing", "CORTEX_AI_COST_USD")
     cost_cortex = _section_packet_value(packet_payload, "Cost & Contract", "CORTEX_AI_COST_USD")
-    comparisons = [
-        ("ACCOUNT_BILLED_COST_USD", cost_total, expected.get("ACCOUNT_BILLED_COST_USD")),
-        ("CORTEX_AI_COST_USD", cost_cortex, expected.get("CORTEX_AI_COST_USD")),
-        ("BILLING_BRIDGE_DELTA_CREDITS", _section_packet_value(packet_payload, "Cost & Contract", "BILLING_BRIDGE_DELTA_CREDITS"), expected.get("BILLING_BRIDGE_DELTA_CREDITS")),
-        ("WAREHOUSE_CREDITS", _section_packet_value(packet_payload, "Cost & Contract", "WAREHOUSE_CREDITS"), expected.get("WAREHOUSE_CREDITS")),
-    ]
-    for index, (field, packet_value, live_expected) in enumerate(comparisons):
-        packet_float = _as_float(packet_value)
-        expected_float = _as_float(live_expected)
-        tolerance = 0.05 if field.endswith("_USD") else 0.001
-        passed = packet_float is not None and expected_float is not None and abs(packet_float - expected_float) <= tolerance
+    if not expected:
+        failures.append({"code": "SNOWFLAKE_CLI_FORMULA_EXPECTED_ROWS_MISSING"})
+    for index, field in enumerate(REQUIRED_PACKET_FIELDS):
+        packet_value = _section_packet_value(packet_payload, "Cost & Contract", field)
+        flat_value = _section_flat_value(packet_payload, "Cost & Contract", field)
+        live_expected = expected.get(field)
+        rendered_value = rendered_values.get(field)
+        tolerance = _tolerance_for_field(field)
+        source_rows_present = _field_source_rows_present(field, expected)
+        source_confirmed_zero = _source_confirmed_zero(live_expected, source_rows_present)
+        selected_credit_column = CREDIT_COLUMN_BY_FIELD.get(field, "")
+        failure_reasons: list[str] = []
+        if source_rows_present and packet_value is None:
+            failure_reasons.append("source rows exist but packet value is null")
+        if source_rows_present and packet_value is not None and _as_float(packet_value) == 0.0 and not source_confirmed_zero:
+            failure_reasons.append("packet value is default zero without source-confirmed zero")
+        if not source_rows_present and _as_float(packet_value) == 0.0:
+            failure_reasons.append("source rows are missing but UI/packet renders numeric zero")
+        if packet_value != flat_value and not _values_match(packet_value, flat_value, tolerance):
+            failure_reasons.append("packet value differs from flat value")
+        if live_expected is None and source_rows_present:
+            failure_reasons.append("live expected value is missing while source rows exist")
+        if live_expected is not None and not _values_match(packet_value, live_expected, tolerance):
+            failure_reasons.append("packet value differs from live expected value")
+        if field in RENDERED_SUMMARY_FIELDS and rendered_value is not None and not _values_match(rendered_value, flat_value, tolerance):
+            failure_reasons.append("rendered summary value differs from flat value")
+        if field in CREDIT_COLUMN_BY_FIELD and not selected_credit_column:
+            failure_reasons.append("selected credit column is missing")
+        if field.endswith("_USD") and options.credit_price <= 0:
+            failure_reasons.append("selected credit price is missing")
+        passed = not failure_reasons
         row = _base_row(
             phase="formula_value_validation",
             command_kind="validation",
@@ -886,7 +1325,7 @@ def _formula_value_results(
             elapsed_ms=elapsed,
             status="passed" if passed else "failed",
             row_count=1,
-            sanitized_error="" if passed else "Live expected formula value differs from packet value.",
+            sanitized_error="" if passed else "; ".join(failure_reasons),
             recommendation="" if passed else "Refresh packet formulas or reconcile COST_DB-authority live formula calculations.",
         )
         row.update(
@@ -894,14 +1333,28 @@ def _formula_value_results(
                 "artifact": Path(CLI_FORMULA_VALUE_REL).name,
                 "row_index": index,
                 "formula_field": field,
+                "source_rows_present": source_rows_present,
+                "source_confirmed_zero": source_confirmed_zero,
                 "packet_value": packet_value,
+                "flat_value": flat_value,
+                "rendered_value": rendered_value,
                 "live_expected_value": live_expected,
+                "selected_credit_column": selected_credit_column,
+                "selected_credit_price": options.credit_price,
                 "tolerance": tolerance,
+                "failure_reason": "" if passed else "; ".join(failure_reasons),
+                "raw_sql_included": False,
             }
         )
         rows.append(row)
         if not passed:
-            failures.append({"code": "SNOWFLAKE_CLI_FORMULA_VALUE_MISMATCH", "formula_field": field})
+            failures.append(
+                {
+                    "code": "SNOWFLAKE_CLI_FORMULA_VALUE_MISMATCH",
+                    "formula_field": field,
+                    "failure_reason": row["failure_reason"],
+                }
+            )
     total_match = _as_float(executive_total) == _as_float(cost_total)
     cortex_match = _as_float(executive_cortex) == _as_float(cost_cortex)
     if not total_match:
@@ -924,20 +1377,45 @@ def _formula_value_results(
     return _payload(source="snowflake_cli_formula_value_results", rows=rows, failures=failures, extra=extra)
 
 
-def _summary_card_results(packet_payload: Mapping[str, Any], options: SnowflakeCliValidationOptions) -> dict[str, Any]:
+def _summary_card_results(packet_payload: Mapping[str, Any], options: SnowflakeCliValidationOptions, root: Path) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
-    for index, field in enumerate(("ACCOUNT_BILLED_COST_USD", "CORTEX_AI_COST_USD")):
+    rendered_values = _rendered_value_by_field(root)
+    rendered_artifact_available = bool(
+        _load_json_if_exists(root, "artifacts/full_app_validation/rendered_formula_results.json")
+    )
+    checks = (
+        ("ACCOUNT_BILLED_COST_USD", "Executive Total Spend = Account Billed Cost"),
+        ("CORTEX_AI_COST_USD", "Executive and Cost Cortex AI Spend = canonical Cortex spend"),
+        ("WAREHOUSE_CREDITS", "Warehouse Credits uses warehouse bridge/breakdown"),
+    )
+    for index, (field, contract) in enumerate(checks):
         executive = _section_packet_value(packet_payload, "Executive Landing", field)
         cost = _section_packet_value(packet_payload, "Cost & Contract", field)
-        passed = executive == cost
+        flat = _section_flat_value(packet_payload, "Cost & Contract", field)
+        rendered = rendered_values.get(field)
+        tolerance = _tolerance_for_field(field)
+        failure_reasons: list[str] = []
+        if field in {"ACCOUNT_BILLED_COST_USD", "CORTEX_AI_COST_USD"} and not _values_match(executive, cost, tolerance):
+            failure_reasons.append("Executive and Cost values differ for same scope/window")
+        if not _values_match(cost, flat, tolerance):
+            failure_reasons.append("Cost packet value differs from flat value")
+        if rendered is not None and not _values_match(rendered, flat, tolerance):
+            failure_reasons.append("Rendered summary value differs from flat value")
+        if field == "ACCOUNT_BILLED_COST_USD" and cost is None:
+            failure_reasons.append("Account billing summary field is missing; UI must render Billing reconciliation pending")
+        if field == "ACCOUNT_BILLED_COST_USD" and _as_float(cost) == 0.0 and _as_float(_section_packet_value(packet_payload, "Cost & Contract", "CORTEX_AI_COST_USD")) not in (None, 0.0):
+            failure_reasons.append("Total Spend renders zero while Cortex spend is nonzero")
+        if field == "CORTEX_AI_COST_USD" and cost is None:
+            failure_reasons.append("Cortex spend summary field is missing; UI must render Cortex spend unavailable")
+        passed = not failure_reasons
         row = _base_row(
             phase="summary_card_value_validation",
             command_kind="validation",
             options=options,
             status="passed" if passed else "failed",
             row_count=1,
-            sanitized_error="" if passed else "Executive and Cost summary card packet values differ.",
+            sanitized_error="" if passed else "; ".join(failure_reasons),
             recommendation="" if passed else "Ensure both sections read the same flat packet field for summary cards.",
         )
         row.update(
@@ -945,14 +1423,31 @@ def _summary_card_results(packet_payload: Mapping[str, Any], options: SnowflakeC
                 "artifact": Path(CLI_SUMMARY_CARD_REL).name,
                 "row_index": index,
                 "formula_field": field,
+                "contract": contract,
                 "executive_value": executive,
                 "cost_value": cost,
+                "flat_value": flat,
+                "rendered_value": rendered,
+                "rendered_artifact_available": rendered_artifact_available,
+                "tolerance": tolerance,
+                "failure_reason": "" if passed else "; ".join(failure_reasons),
             }
         )
         rows.append(row)
         if not passed:
-            failures.append({"code": "SNOWFLAKE_CLI_SUMMARY_CARD_VALUE_MISMATCH", "formula_field": field})
-    return _payload(source="snowflake_cli_summary_card_value_results", rows=rows, failures=failures)
+            failures.append(
+                {
+                    "code": "SNOWFLAKE_CLI_SUMMARY_CARD_VALUE_MISMATCH",
+                    "formula_field": field,
+                    "failure_reason": row["failure_reason"],
+                }
+            )
+    return _payload(
+        source="snowflake_cli_summary_card_value_results",
+        rows=rows,
+        failures=failures,
+        extra={"rendered_artifact_available": rendered_artifact_available},
+    )
 
 
 def _query_budget_results(
@@ -978,27 +1473,86 @@ def _query_budget_results(
             extra={"query_history_required": options.profile in {"internal_live", "prod_candidate"}},
         )
     rows_raw, proc, elapsed = _run_snow_sql_query(snow, options, _query_history_sql(options), runner=runner)
-    ok = proc is not None and proc.returncode == 0 and bool(rows_raw)
-    row = _base_row(
-        phase="query_budget_validation",
-        command_kind="sql_query",
-        options=options,
-        elapsed_ms=elapsed,
-        status="passed" if ok else "failed",
-        row_count=len(rows_raw),
-        sanitized_error="" if ok else sanitize_text((proc.stderr if proc else "") or (proc.stdout if proc else "")),
-        recommendation="" if ok else "Grant query history access or provide a profile-aware waiver.",
+    failures: list[dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
+    if proc is None or proc.returncode != 0:
+        row = _base_row(
+            phase="query_budget_validation",
+            command_kind="sql_query",
+            options=options,
+            elapsed_ms=elapsed,
+            status="failed",
+            row_count=len(rows_raw),
+            sanitized_error=sanitize_text((proc.stderr if proc else "") or (proc.stdout if proc else "")),
+            recommendation="Grant query history access or provide a profile-aware waiver.",
+        )
+        row.update({"artifact": Path(CLI_QUERY_BUDGET_REL).name, "row_index": 0})
+        return _payload(
+            source="snowflake_cli_query_budget_results",
+            rows=[row],
+            failures=[{"code": "SNOWFLAKE_CLI_QUERY_HISTORY_PROOF_FAILED", "sanitized_error": row["sanitized_error"]}],
+        )
+    seen_boundaries: set[tuple[str, str, str]] = set()
+    for index, raw in enumerate(rows_raw):
+        parsed = _normalize_snow_row(raw)
+        section = str(parsed.get("section") or "")
+        workflow = str(parsed.get("workflow") or "")
+        boundary = str(parsed.get("boundary") or "")
+        query_count = int(_as_float(parsed.get("query_count")) or 0)
+        failure_reasons: list[str] = []
+        if not section or not workflow or not boundary or "unknown" in {section.lower(), workflow.lower(), boundary.lower()}:
+            failure_reasons.append("query history proof is missing section/workflow/boundary metadata")
+        if boundary == "first_paint_packet" and query_count > 1:
+            failure_reasons.append("first paint packet query count exceeds one")
+        if boundary in {"warm_first_paint", "route_action", "query_search_no_click"} and query_count > 0:
+            failure_reasons.append(f"{boundary} must run zero queries")
+        seen_boundaries.add((section, workflow, boundary))
+        passed = not failure_reasons
+        row = _base_row(
+            phase="query_budget_validation",
+            command_kind="sql_query",
+            options=options,
+            elapsed_ms=elapsed,
+            status="passed" if passed else "failed",
+            row_count=1,
+            sanitized_error="" if passed else "; ".join(failure_reasons),
+            recommendation="" if passed else "Ensure query tags include section/workflow/boundary and first-paint budgets are honored.",
+        )
+        row.update(
+            {
+                "artifact": Path(CLI_QUERY_BUDGET_REL).name,
+                "row_index": index,
+                "section": section,
+                "workflow": workflow,
+                "boundary": boundary,
+                "query_count": query_count,
+                "bytes_scanned": _as_float(parsed.get("bytes_scanned")) or 0,
+                "rows_produced": _as_float(parsed.get("rows_produced")) or 0,
+                "max_elapsed_ms": _as_float(parsed.get("max_elapsed_ms")) or 0,
+                "warehouse": _safe_label(str(parsed.get("warehouse") or "")),
+                "query_tag_prefix": _safe_label(str(parsed.get("query_tag_prefix") or options.query_tag_prefix)),
+                "failure_reason": "" if passed else "; ".join(failure_reasons),
+                "raw_sql_included": False,
+            }
+        )
+        rows.append(row)
+        if not passed:
+            failures.append({"code": "SNOWFLAKE_CLI_QUERY_BUDGET_BOUNDARY_FAILED", "failure_reason": row["failure_reason"]})
+    missing = [
+        {"section": section, "workflow": workflow, "boundary": boundary}
+        for section, workflow, boundary in REQUIRED_QUERY_BUDGET_BOUNDARIES
+        if (section, workflow, boundary) not in seen_boundaries
+    ]
+    if missing:
+        failures.append({"code": "SNOWFLAKE_CLI_QUERY_BUDGET_BOUNDARY_MISSING", "missing_boundaries": missing[:20]})
+    if not rows:
+        failures.append({"code": "SNOWFLAKE_CLI_QUERY_BUDGET_ROWS_MISSING"})
+    return _payload(
+        source="snowflake_cli_query_budget_results",
+        rows=rows,
+        failures=failures,
+        extra={"required_boundaries": list(REQUIRED_QUERY_BUDGET_BOUNDARIES)},
     )
-    row.update(
-        {
-            "artifact": Path(CLI_QUERY_BUDGET_REL).name,
-            "row_index": 0,
-            "query_history_rows": rows_raw,
-            "raw_sql_included": False,
-        }
-    )
-    failures = [] if ok else [{"code": "SNOWFLAKE_CLI_QUERY_HISTORY_PROOF_FAILED", "sanitized_error": row["sanitized_error"]}]
-    return _payload(source="snowflake_cli_query_budget_results", rows=[row], failures=failures)
 
 
 def _all_rows(artifacts: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -1033,7 +1587,7 @@ def evaluate_snowflake_cli_live_gate(
     }
     waived = bool(waiver_gates & {"snowflake_cli_live_validation", "live_snowflake_validation", "snowflake_execution_validation"})
     live_required = profile in {"internal_live", "prod_candidate"}
-    core_rels = (CLI_CONNECTION_REL, CLI_SETUP_REL, CLI_PACKET_VALUE_REL, CLI_FORMULA_VALUE_REL)
+    core_rels = (CLI_CONNECTION_REL, CLI_SETUP_REL, CLI_PACKET_VALUE_REL, CLI_FORMULA_VALUE_REL, CLI_SUMMARY_CARD_REL)
     skipped = all(bool((artifacts.get(rel) or {}).get("skipped")) for rel in core_rels if isinstance(artifacts.get(rel), Mapping))
     if skipped and live_required and not waived:
         failures.append(
@@ -1043,7 +1597,7 @@ def evaluate_snowflake_cli_live_gate(
                 "recommendation": "Run scripts/run_snowflake_cli_live_validation with a Snowflake CLI connection or provide a signed waiver.",
             }
         )
-    for rel in core_rels + (CLI_SUMMARY_CARD_REL,):
+    for rel in core_rels + (CLI_MANIFEST_RECONCILIATION_REL, CLI_FORMULA_VALUE_GATE_REL):
         payload = artifacts.get(rel)
         if not isinstance(payload, Mapping):
             failures.append({"code": "SNOWFLAKE_CLI_ARTIFACT_MISSING", "artifact": rel})
@@ -1055,6 +1609,9 @@ def evaluate_snowflake_cli_live_gate(
         failures.append({"code": "SNOWFLAKE_CLI_QUERY_BUDGET_PROOF_MISSING", "recommendation": "Enable OVERWATCH_QUERY_PLAN_PROOF=1 or provide a waiver."})
     elif isinstance(query_budget, Mapping) and not bool(query_budget.get("passed")):
         failures.append({"code": "SNOWFLAKE_CLI_QUERY_BUDGET_FAILED"})
+    manifest_reconciliation = artifacts.get(CLI_MANIFEST_RECONCILIATION_REL)
+    if isinstance(manifest_reconciliation, Mapping) and not bool(manifest_reconciliation.get("passed")):
+        failures.append({"code": "SNOWFLAKE_CLI_MANIFEST_RECONCILIATION_FAILED"})
     for row in _all_rows(artifacts):
         serialized = json.dumps(row, default=str)
         if bool(row.get("raw_sql_included")):
@@ -1066,22 +1623,42 @@ def evaluate_snowflake_cli_live_gate(
         payload = artifacts.get(rel)
         return isinstance(payload, Mapping) and bool(payload.get("passed")) and not bool(payload.get("skipped"))
 
+    live_executed = all(passed_not_skipped(rel) for rel in (CLI_CONNECTION_REL, CLI_SETUP_REL, CLI_PACKET_VALUE_REL, CLI_FORMULA_VALUE_REL))
+    live_passed = live_executed and not failures
+    skip_reasons = [
+        str((artifacts.get(rel) or {}).get("skip_reason") or "")
+        for rel in core_rels
+        if isinstance(artifacts.get(rel), Mapping) and bool((artifacts.get(rel) or {}).get("skipped"))
+    ]
+    if live_passed and skipped:
+        failures.append({"code": "SNOWFLAKE_CLI_AMBIGUOUS_LIVE_AND_SKIPPED"})
+        live_passed = False
+
     return {
         "source": "snowflake_cli_live_gate_results",
         "generated_at": _utc_now(),
         "passed": not failures,
+        "snowflake_cli_gate_passed": not failures,
         "failure_count": len(failures),
+        "snowflake_cli_failure_count": len(failures),
         "failures": failures,
         "launch_profile": profile,
         "live_required": live_required,
+        "snowflake_cli_live_required": live_required,
         "skipped": skipped,
+        "snowflake_cli_live_skipped": skipped,
+        "snowflake_cli_skip_reason": "; ".join(reason for reason in skip_reasons if reason),
         "waived": waived,
+        "snowflake_cli_live_waived": waived,
+        "snowflake_cli_live_executed": live_executed,
+        "snowflake_cli_live_passed": live_passed,
         "connection_passed": passed_not_skipped(CLI_CONNECTION_REL),
         "setup_validation_passed": passed_not_skipped(CLI_SETUP_REL),
         "packet_value_passed": passed_not_skipped(CLI_PACKET_VALUE_REL),
         "formula_value_passed": passed_not_skipped(CLI_FORMULA_VALUE_REL),
         "summary_card_value_passed": passed_not_skipped(CLI_SUMMARY_CARD_REL),
         "query_budget_passed": passed_not_skipped(CLI_QUERY_BUDGET_REL),
+        "manifest_reconciliation_passed": isinstance(manifest_reconciliation, Mapping) and bool(manifest_reconciliation.get("passed")),
         "raw_sql_included": False,
     }
 
@@ -1125,8 +1702,8 @@ def run_snowflake_cli_live_validation(
         if bool(artifacts[CLI_CONNECTION_REL].get("passed")):
             artifacts[CLI_SETUP_REL] = _setup_validation_results(root_path, snow, options, runner=runner)
             artifacts[CLI_PACKET_VALUE_REL] = _packet_value_results(snow, options, runner=runner)
-            artifacts[CLI_FORMULA_VALUE_REL] = _formula_value_results(snow, options, artifacts[CLI_PACKET_VALUE_REL], runner=runner)
-            artifacts[CLI_SUMMARY_CARD_REL] = _summary_card_results(artifacts[CLI_PACKET_VALUE_REL], options)
+            artifacts[CLI_FORMULA_VALUE_REL] = _formula_value_results(snow, options, artifacts[CLI_PACKET_VALUE_REL], root_path, runner=runner)
+            artifacts[CLI_SUMMARY_CARD_REL] = _summary_card_results(artifacts[CLI_PACKET_VALUE_REL], options, root_path)
             artifacts[CLI_QUERY_BUDGET_REL] = _query_budget_results(snow, options, runner=runner)
         else:
             for rel in (CLI_SETUP_REL, CLI_PACKET_VALUE_REL, CLI_FORMULA_VALUE_REL, CLI_SUMMARY_CARD_REL, CLI_QUERY_BUDGET_REL):
@@ -1135,21 +1712,30 @@ def run_snowflake_cli_live_validation(
                     rows=[],
                     failures=[{"code": "SNOWFLAKE_CLI_CONNECTION_REQUIRED"}],
                 )
+    artifacts[CLI_FORMULA_VALUE_GATE_REL] = _formula_value_gate_results(artifacts.get(CLI_FORMULA_VALUE_REL, {}))
+    _assign_validation_ids(artifacts)
     artifacts[CLI_MANIFEST_REL] = _manifest_from_rows(_all_rows(artifacts))
+    artifacts[CLI_MANIFEST_RECONCILIATION_REL] = _manifest_reconciliation_results(artifacts, artifacts[CLI_MANIFEST_REL])
     artifacts[CLI_LAUNCH_GATE_REL] = evaluate_snowflake_cli_live_gate(artifacts, options.profile, [])
     artifacts[CLI_RELEASE_REL] = {
         "source": "snowflake_cli_release_results",
         "generated_at": _utc_now(),
-        "passed": bool(artifacts[CLI_LAUNCH_GATE_REL].get("passed")),
+        "passed": bool(artifacts[CLI_LAUNCH_GATE_REL].get("snowflake_cli_gate_passed")),
         "failure_count": int(artifacts[CLI_LAUNCH_GATE_REL].get("failure_count") or 0),
         "launch_profile": options.profile,
-        "snowflake_cli_live_validation_passed": bool(artifacts[CLI_LAUNCH_GATE_REL].get("passed")),
-        "snowflake_cli_live_validation_skipped": bool(artifacts[CLI_LAUNCH_GATE_REL].get("skipped")),
+        "snowflake_cli_gate_passed": bool(artifacts[CLI_LAUNCH_GATE_REL].get("snowflake_cli_gate_passed")),
+        "snowflake_cli_live_required": bool(artifacts[CLI_LAUNCH_GATE_REL].get("snowflake_cli_live_required")),
+        "snowflake_cli_live_executed": bool(artifacts[CLI_LAUNCH_GATE_REL].get("snowflake_cli_live_executed")),
+        "snowflake_cli_live_passed": bool(artifacts[CLI_LAUNCH_GATE_REL].get("snowflake_cli_live_passed")),
+        "snowflake_cli_live_skipped": bool(artifacts[CLI_LAUNCH_GATE_REL].get("snowflake_cli_live_skipped")),
+        "snowflake_cli_live_waived": bool(artifacts[CLI_LAUNCH_GATE_REL].get("snowflake_cli_live_waived")),
+        "snowflake_cli_skip_reason": str(artifacts[CLI_LAUNCH_GATE_REL].get("snowflake_cli_skip_reason") or ""),
         "connection_passed": bool(artifacts[CLI_LAUNCH_GATE_REL].get("connection_passed")),
         "setup_validation_passed": bool(artifacts[CLI_LAUNCH_GATE_REL].get("setup_validation_passed")),
         "packet_value_passed": bool(artifacts[CLI_LAUNCH_GATE_REL].get("packet_value_passed")),
         "formula_value_passed": bool(artifacts[CLI_LAUNCH_GATE_REL].get("formula_value_passed")),
         "query_budget_passed": bool(artifacts[CLI_LAUNCH_GATE_REL].get("query_budget_passed")),
+        "manifest_reconciliation_passed": bool(artifacts[CLI_LAUNCH_GATE_REL].get("manifest_reconciliation_passed")),
         "raw_sql_included": False,
     }
     return artifacts
@@ -1249,14 +1835,17 @@ __all__ = [
     "CLI_CAPABILITY_REL",
     "CLI_CONNECTION_REL",
     "CLI_FORMULA_VALUE_REL",
+    "CLI_FORMULA_VALUE_GATE_REL",
     "CLI_LAUNCH_GATE_REL",
     "CLI_MANIFEST_REL",
+    "CLI_MANIFEST_RECONCILIATION_REL",
     "CLI_PACKET_VALUE_REL",
     "CLI_QUERY_BUDGET_REL",
     "CLI_RELEASE_REL",
     "CLI_SETUP_REL",
     "CLI_SUMMARY_CARD_REL",
     "REQUIRED_CLI_ARTIFACTS",
+    "REQUIRED_QUERY_BUDGET_BOUNDARIES",
     "SnowflakeCliValidationOptions",
     "evaluate_snowflake_cli_live_gate",
     "run_snowflake_cli_live_validation",

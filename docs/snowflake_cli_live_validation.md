@@ -68,15 +68,63 @@ The validator writes:
 - `artifacts/snowflake_validation/snowflake_cli_capability_results.json`
 - `artifacts/snowflake_validation/snowflake_cli_connection_results.json`
 - `artifacts/snowflake_validation/snowflake_cli_execution_manifest.json`
+- `artifacts/snowflake_validation/snowflake_cli_manifest_reconciliation_results.json`
 - `artifacts/snowflake_validation/snowflake_cli_setup_validation_results.json`
 - `artifacts/snowflake_validation/snowflake_cli_formula_value_results.json`
 - `artifacts/snowflake_validation/snowflake_cli_packet_value_results.json`
 - `artifacts/snowflake_validation/snowflake_cli_summary_card_value_results.json`
 - `artifacts/snowflake_validation/snowflake_cli_query_budget_results.json`
+- `artifacts/launch_readiness/snowflake_cli_formula_value_gate_results.json`
 - `artifacts/launch_readiness/snowflake_cli_live_gate_results.json`
 - `artifacts/release_candidate/snowflake_cli_release_results.json`
 
 Pass/fail is summarized in `artifacts/launch_readiness/snowflake_cli_live_gate_results.json`. Launch readiness consumes that artifact and blocks `internal_live` and `prod_candidate` unless live CLI proof passes or a signed waiver exists.
+
+## Recommended Local Sequence
+
+1. Test the configured connection:
+
+```powershell
+snow connection test -c <connection>
+```
+
+2. Run formula-only validation without refresh:
+
+```powershell
+python -m tools.contracts.snowflake_cli_live_validation --connection <connection> --profile internal_live --skip-refresh
+```
+
+3. Run FAST refresh validation only when you want that procedure exercised:
+
+```powershell
+python -m tools.contracts.snowflake_cli_live_validation --connection <connection> --profile internal_live --run-fast-refresh
+```
+
+4. Run query-budget validation with query-history proof:
+
+```powershell
+$env:OVERWATCH_QUERY_PLAN_PROOF = "1"
+$env:OVERWATCH_QUERY_TAG_PREFIX = "OVERWATCH_VALIDATION"
+python -m tools.contracts.snowflake_cli_live_validation --connection <connection> --profile internal_live --skip-refresh
+```
+
+5. Run with the PowerShell wrapper:
+
+```powershell
+.\scripts\run_snowflake_cli_live_validation.ps1 <connection> -SkipRefresh
+```
+
+6. Run with the bash wrapper:
+
+```bash
+scripts/run_snowflake_cli_live_validation.sh <connection>
+```
+
+## Interpreting Pass And Live Proof
+
+`snowflake_cli_gate_passed=true` means the profile-specific gate passed. In `internal_fixture`, a skipped CLI run may pass the gate so CI can run without credentials. That is not live proof. Real live proof requires `snowflake_cli_live_executed=true` and `snowflake_cli_live_passed=true`.
+
+The capability artifact must show JSON output support. The validator uses machine-readable Snowflake CLI output and fails rather than scraping table text. Formula rows compare live expected values, packet values, flat values, and rendered values when rendered summary artifacts are available.
 
 ## Waiver Policy
 

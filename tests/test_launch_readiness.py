@@ -137,6 +137,17 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertTrue(summary["formula_live_validation_passed"])
         self.assertTrue(summary["formula_live_validation_skipped"])
         self.assertFalse(summary["formula_live_validation_required"])
+        self.assertTrue(summary["snowflake_cli_live_validation_passed"])
+        self.assertTrue(summary["snowflake_cli_live_validation_skipped"])
+        self.assertFalse(summary["snowflake_cli_live_validation_required"])
+        self.assertFalse(summary["snowflake_cli_live_validation_waived"])
+        self.assertEqual(summary["snowflake_cli_live_validation_failure_count"], 0)
+        self.assertFalse(summary["snowflake_cli_connection_passed"])
+        self.assertFalse(summary["snowflake_cli_setup_validation_passed"])
+        self.assertFalse(summary["snowflake_cli_packet_value_passed"])
+        self.assertFalse(summary["snowflake_cli_formula_value_passed"])
+        self.assertFalse(summary["snowflake_cli_summary_card_value_passed"])
+        self.assertFalse(summary["snowflake_cli_query_budget_passed"])
         self.assertTrue(summary["metric_semantic_registry_passed"])
         self.assertEqual(summary["metric_semantic_registry_failure_count"], 0)
         self.assertGreater(summary["metric_semantic_registry_row_count"], 0)
@@ -168,6 +179,7 @@ class LaunchReadinessTests(unittest.TestCase):
             "cortex_cost_consistency",
             "cost_chart_workbench",
             "formula_live_validation",
+            "snowflake_cli_live_validation",
             "metric_semantic_registry",
             "workload_formula_semantics",
             "query_budget_recording",
@@ -251,6 +263,7 @@ class LaunchReadinessTests(unittest.TestCase):
         cortex_gate = self._read_json("artifacts/launch_readiness/cortex_cost_consistency_gate_results.json")
         chart_gate = self._read_json("artifacts/launch_readiness/cost_chart_workbench_gate_results.json")
         formula_live_gate = self._read_json("artifacts/launch_readiness/formula_live_gate_results.json")
+        snowflake_cli_gate = self._read_json("artifacts/launch_readiness/snowflake_cli_live_gate_results.json")
         metric_gate = self._read_json("artifacts/launch_readiness/metric_semantic_gate_results.json")
         workload_gate = self._read_json("artifacts/launch_readiness/workload_formula_gate_results.json")
         self.assertTrue(formula_gate["passed"], formula_gate)
@@ -258,6 +271,8 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertTrue(cortex_gate["passed"], cortex_gate)
         self.assertTrue(chart_gate["passed"], chart_gate)
         self.assertTrue(formula_live_gate["passed"], formula_live_gate)
+        self.assertTrue(snowflake_cli_gate["passed"], snowflake_cli_gate)
+        self.assertTrue(snowflake_cli_gate["skipped"], snowflake_cli_gate)
         self.assertTrue(metric_gate["passed"], metric_gate)
         self.assertEqual(metric_gate["failure_count"], 0, metric_gate)
         self.assertTrue(workload_gate["passed"], workload_gate)
@@ -308,6 +323,9 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertTrue(summary["cost_chart_workbench_passed"])
         self.assertTrue(summary["cost_db_formula_authority_passed"])
         self.assertTrue(summary["formula_live_validation_passed"])
+        self.assertTrue(summary["snowflake_cli_live_validation_passed"])
+        self.assertTrue(summary["snowflake_cli_live_validation_skipped"])
+        self.assertFalse(summary["snowflake_cli_live_validation_required"])
         self.assertTrue(summary["formula_value_reconciliation_passed"])
         self.assertEqual(summary["formula_validation_mode"], "fixture_static")
         self.assertTrue(summary["snowflake_formula_value_passed"])
@@ -896,6 +914,30 @@ class LaunchReadinessTests(unittest.TestCase):
                 "snowflake_execution_validation",
             ),
             (
+                "prod snowflake cli validation skipped",
+                lambda payloads, launch: (
+                    launch["launch_profile_results"].update(
+                        {
+                            "selected_profile": "prod_candidate",
+                            "browser_proof_required": True,
+                            "live_query_history_required": True,
+                            "passed": True,
+                        }
+                    ),
+                    launch["snowflake_cli_live_gate_results"].update(
+                        {
+                            "launch_profile": "prod_candidate",
+                            "live_required": True,
+                            "skipped": True,
+                            "passed": False,
+                            "failure_count": 1,
+                            "failures": [{"code": "SNOWFLAKE_CLI_LIVE_PROOF_MISSING"}],
+                        }
+                    ),
+                ),
+                "snowflake_cli_live_validation",
+            ),
+            (
                 "internal live snowflake validation skipped",
                 lambda payloads, launch: (
                     launch["launch_profile_results"].update(
@@ -1470,6 +1512,8 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertIn("artifacts/release_candidate/**", ci_review["required_upload_paths"])
         self.assertIn("artifacts/snowflake_validation/**", ci_review["required_upload_paths"])
         self.assertIn("artifacts/encoding_hygiene_results.json", ci_review["required_upload_paths"])
+        self.assertIn("scripts/run_snowflake_cli_live_validation.ps1", ci_review["required_upload_paths"])
+        self.assertIn("scripts/run_snowflake_cli_live_validation.sh", ci_review["required_upload_paths"])
         self.assertTrue(ci_reality["passed"], ci_reality)
         self.assertIn("decision-workspace-proof", ci_reality["uploaded_artifact_names"])
 

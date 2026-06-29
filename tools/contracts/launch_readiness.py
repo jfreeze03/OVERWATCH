@@ -50,6 +50,18 @@ from tools.contracts.formula_end_to_end_validation import (
     SNOWFLAKE_FORMULA_VALUE_REL,
     write_formula_end_to_end_artifacts,
 )
+from tools.contracts.snowflake_cli_live_validation import (
+    CLI_CONNECTION_REL,
+    CLI_FORMULA_VALUE_REL,
+    CLI_LAUNCH_GATE_REL,
+    CLI_PACKET_VALUE_REL,
+    CLI_QUERY_BUDGET_REL,
+    CLI_RELEASE_REL,
+    CLI_SETUP_REL,
+    REQUIRED_CLI_ARTIFACTS,
+    evaluate_snowflake_cli_live_gate,
+    write_snowflake_cli_live_validation_artifacts,
+)
 
 
 LAUNCH_READINESS_DIR = "artifacts/launch_readiness"
@@ -115,6 +127,7 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     f"{LAUNCH_READINESS_DIR}/release_candidate_ci_context.json",
     f"{LAUNCH_READINESS_DIR}/release_candidate_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/artifact_manifest.json",
+    *(REQUIRED_CLI_ARTIFACTS - {CLI_RELEASE_REL}),
 }
 
 REQUIRED_RELEASE_CANDIDATE_ARTIFACTS = {
@@ -126,6 +139,7 @@ REQUIRED_RELEASE_CANDIDATE_ARTIFACTS = {
     f"{RELEASE_CANDIDATE_DIR}/release_candidate_failures.json",
     f"{RELEASE_CANDIDATE_DIR}/release_gate_matrix.json",
     f"{RELEASE_CANDIDATE_DIR}/release_notes.json",
+    CLI_RELEASE_REL,
 }
 
 
@@ -156,6 +170,8 @@ CI_UPLOAD_PATHS = {
     "artifacts/brand/**",
     "artifacts/decision_workspace_html_snapshots/**",
     "artifacts/browser_screenshots/**",
+    "scripts/run_snowflake_cli_live_validation.ps1",
+    "scripts/run_snowflake_cli_live_validation.sh",
 }
 
 RELEASE_ARTIFACT_ROOTS = (
@@ -618,6 +634,8 @@ def _workflow_upload_review(root: Path) -> dict[str, Any]:
         "python -m tools.contracts.encoding_hygiene",
         "python -m tools.contracts.cost_db_formula_authority",
         "python -m tools.contracts.formula_end_to_end_validation",
+        "python -m unittest tests.test_snowflake_cli_live_validation",
+        "python -m tools.contracts.snowflake_cli_live_validation --profile internal_fixture --skip-refresh",
         "python -m unittest discover -s tests",
         "python -m ruff check .overwatch_final tests tools",
         "python -m mypy",
@@ -2343,6 +2361,11 @@ def _release_candidate_summary_bundle(
             "artifact": FORMULA_VALUE_GATE_REL,
         },
         {
+            "gate": "snowflake_cli_live_validation",
+            "passed": bool(launch_summary.get("snowflake_cli_live_validation_passed")),
+            "artifact": CLI_LAUNCH_GATE_REL,
+        },
+        {
             "gate": "packet_schema_upgrade",
             "passed": bool(launch_summary.get("packet_schema_upgrade_passed")),
             "artifact": PACKET_SCHEMA_GATE_REL,
@@ -2472,6 +2495,12 @@ def _release_candidate_summary_bundle(
         "rendered_formula_passed": bool(launch_summary.get("rendered_formula_passed")),
         "cortex_service_type_gate_passed": bool(launch_summary.get("cortex_service_type_gate_passed")),
         "formula_live_validation_passed": bool(launch_summary.get("formula_live_validation_passed")),
+        "snowflake_cli_live_validation_passed": bool(launch_summary.get("snowflake_cli_live_validation_passed")),
+        "snowflake_cli_live_validation_skipped": bool(launch_summary.get("snowflake_cli_live_validation_skipped")),
+        "snowflake_cli_live_validation_required": bool(launch_summary.get("snowflake_cli_live_validation_required")),
+        "snowflake_cli_formula_value_passed": bool(launch_summary.get("snowflake_cli_formula_value_passed")),
+        "snowflake_cli_packet_value_passed": bool(launch_summary.get("snowflake_cli_packet_value_passed")),
+        "snowflake_cli_query_budget_passed": bool(launch_summary.get("snowflake_cli_query_budget_passed")),
         "metric_semantic_registry_passed": bool(launch_summary.get("metric_semantic_registry_passed")),
         "workload_formula_semantics_passed": bool(launch_summary.get("workload_formula_semantics_passed")),
         "query_budget_gate_passed": bool(launch_summary.get("query_budget_gate_passed")),
@@ -4318,6 +4347,7 @@ def _release_gate_matrix(
     snowflake_formula_gate = _as_mapping(launch_artifacts.get("snowflake_formula_gate_results"))
     cortex_service_type_gate = _as_mapping(launch_artifacts.get("cortex_service_type_gate_results"))
     formula_live_gate = _as_mapping(launch_artifacts.get("formula_live_gate_results"))
+    snowflake_cli_gate = _as_mapping(launch_artifacts.get("snowflake_cli_live_gate_results"))
     metric_semantic_gate = _as_mapping(launch_artifacts.get("metric_semantic_gate_results"))
     query_budget_gate = _as_mapping(launch_artifacts.get("query_budget_gate_results"))
     workload_formula_gate = _as_mapping(launch_artifacts.get("workload_formula_gate_results"))
@@ -4467,6 +4497,14 @@ def _release_gate_matrix(
             "artifact": f"{LAUNCH_READINESS_DIR}/formula_live_gate_results.json",
             "passed": bool(formula_live_gate.get("passed")),
             "failure_reason": "" if formula_live_gate.get("passed") else "Live formula reconciliation is required for this launch profile or needs a signed waiver.",
+        },
+        {
+            "gate": "snowflake_cli_live_validation",
+            "artifact": CLI_LAUNCH_GATE_REL,
+            "passed": bool(snowflake_cli_gate.get("passed")),
+            "failure_reason": ""
+            if snowflake_cli_gate.get("passed")
+            else "Local Snowflake CLI live validation is required for live launch profiles or needs a signed waiver.",
         },
         {
             "gate": "metric_semantic_registry",
@@ -4744,6 +4782,12 @@ def evaluate_launch_readiness(
         ),
         "formula_live_gate_results": _as_mapping(launch_artifacts.get("formula_live_gate_results"))
         or _formula_live_gate_results(profile, launch_waiver_rows),
+        "snowflake_cli_live_gate_results": _as_mapping(launch_artifacts.get("snowflake_cli_live_gate_results"))
+        or evaluate_snowflake_cli_live_gate(
+            {rel: payloads.get(rel) for rel in REQUIRED_CLI_ARTIFACTS},
+            profile,
+            launch_waiver_rows,
+        ),
         "query_budget_gate_results": _query_budget_gate_results(payloads),
         "encoding_hygiene_results": _as_mapping(payloads.get("artifacts/encoding_hygiene_results.json"))
         or _as_mapping(launch_artifacts.get("encoding_hygiene_results")),
@@ -4814,6 +4858,7 @@ def evaluate_launch_readiness(
     snowflake_formula_gate = _as_mapping(launch_artifacts.get("snowflake_formula_gate_results"))
     cortex_service_type_gate = _as_mapping(launch_artifacts.get("cortex_service_type_gate_results"))
     formula_live_gate = _as_mapping(launch_artifacts.get("formula_live_gate_results"))
+    snowflake_cli_gate = _as_mapping(launch_artifacts.get("snowflake_cli_live_gate_results"))
     metric_semantic_gate = _as_mapping(launch_artifacts.get("metric_semantic_gate_results"))
     query_budget_gate = _as_mapping(launch_artifacts.get("query_budget_gate_results"))
     workload_formula_gate = _as_mapping(launch_artifacts.get("workload_formula_gate_results"))
@@ -4907,6 +4952,17 @@ def evaluate_launch_readiness(
         "formula_live_validation_passed": bool(formula_live_gate.get("passed")),
         "formula_live_validation_skipped": bool(formula_live_gate.get("skipped")),
         "formula_live_validation_required": bool(formula_live_gate.get("live_required")),
+        "snowflake_cli_live_validation_passed": bool(snowflake_cli_gate.get("passed")),
+        "snowflake_cli_live_validation_failure_count": _as_int(snowflake_cli_gate.get("failure_count")),
+        "snowflake_cli_live_validation_skipped": bool(snowflake_cli_gate.get("skipped")),
+        "snowflake_cli_live_validation_required": bool(snowflake_cli_gate.get("live_required")),
+        "snowflake_cli_live_validation_waived": bool(snowflake_cli_gate.get("waived")),
+        "snowflake_cli_connection_passed": bool(snowflake_cli_gate.get("connection_passed")),
+        "snowflake_cli_setup_validation_passed": bool(snowflake_cli_gate.get("setup_validation_passed")),
+        "snowflake_cli_packet_value_passed": bool(snowflake_cli_gate.get("packet_value_passed")),
+        "snowflake_cli_formula_value_passed": bool(snowflake_cli_gate.get("formula_value_passed")),
+        "snowflake_cli_summary_card_value_passed": bool(snowflake_cli_gate.get("summary_card_value_passed")),
+        "snowflake_cli_query_budget_passed": bool(snowflake_cli_gate.get("query_budget_passed")),
         "metric_semantic_registry_passed": bool(metric_semantic_gate.get("passed")),
         "metric_semantic_registry_failure_count": _as_int(metric_semantic_gate.get("failure_count")),
         "metric_semantic_registry_row_count": _as_int(metric_semantic_gate.get("registry_row_count")),
@@ -5082,6 +5138,28 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     )
     snowflake_artifacts = write_snowflake_validation_artifacts(root_path)
     payloads.update(snowflake_artifacts)
+    snowflake_cli_artifacts = write_snowflake_cli_live_validation_artifacts(root_path)
+    snowflake_cli_gate = evaluate_snowflake_cli_live_gate(snowflake_cli_artifacts, profile, waivers)
+    snowflake_cli_artifacts[CLI_LAUNCH_GATE_REL] = snowflake_cli_gate
+    snowflake_cli_artifacts[CLI_RELEASE_REL] = {
+        "source": "snowflake_cli_release_results",
+        "generated_at": _utc_now(),
+        "passed": bool(snowflake_cli_gate.get("passed")),
+        "failure_count": _as_int(snowflake_cli_gate.get("failure_count")),
+        "launch_profile": profile,
+        "snowflake_cli_live_validation_passed": bool(snowflake_cli_gate.get("passed")),
+        "snowflake_cli_live_validation_skipped": bool(snowflake_cli_gate.get("skipped")),
+        "connection_passed": bool(snowflake_cli_gate.get("connection_passed")),
+        "setup_validation_passed": bool(snowflake_cli_gate.get("setup_validation_passed")),
+        "packet_value_passed": bool(snowflake_cli_gate.get("packet_value_passed")),
+        "formula_value_passed": bool(snowflake_cli_gate.get("formula_value_passed")),
+        "query_budget_passed": bool(snowflake_cli_gate.get("query_budget_passed")),
+        "raw_sql_included": False,
+    }
+    for rel, payload in snowflake_cli_artifacts.items():
+        _write_json(root_path / rel, payload)
+    payloads.update(snowflake_cli_artifacts)
+    launch_artifacts["snowflake_cli_live_gate_results"] = snowflake_cli_gate
     formula_end_to_end_artifacts = write_formula_end_to_end_artifacts(root_path)
     payloads.update(formula_end_to_end_artifacts)
     launch_artifacts["formula_end_to_end_gate_results"] = formula_end_to_end_artifacts[FORMULA_GATE_REL]

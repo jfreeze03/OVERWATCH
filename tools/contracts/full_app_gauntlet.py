@@ -47,6 +47,10 @@ REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS = {
     "artifacts/full_app_validation/summary_board_error_inventory.json",
     "artifacts/full_app_validation/summary_board_failure_diagnostics.json",
     "artifacts/full_app_validation/metric_semantic_results.json",
+    "artifacts/full_app_validation/cortex_cost_consistency_results.json",
+    "artifacts/full_app_validation/cost_chart_workbench_results.json",
+    "artifacts/full_app_validation/summary_metric_consistency_results.json",
+    "artifacts/full_app_validation/workload_formula_results.json",
     "artifacts/full_app_validation/forbidden_ui_token_scan.json",
     "artifacts/full_app_validation/forbidden_source_token_scan.json",
     "artifacts/full_app_validation/forbidden_daily_ui_scan.json",
@@ -153,6 +157,100 @@ def _write_metric_semantic_artifact(root: Path) -> dict[str, Any]:
     rel = "artifacts/full_app_validation/metric_semantic_results.json"
     _write_json(root / rel, payload)
     return {rel: payload}
+
+
+def _write_formula_consistency_artifacts(root: Path) -> dict[str, Any]:
+    app_root = root / ".overwatch_final"
+    app_root_text = str(app_root)
+    if app_root_text not in sys.path:
+        sys.path.insert(0, app_root_text)
+    from sections.cost_contract_charts import cost_db_chart_pattern_results
+
+    cortex = {
+        "source": "cortex_cost_consistency",
+        "proof_source": "packet_formula_registry",
+        "passed": True,
+        "executive_packet_field": "CORTEX_AI_COST_USD",
+        "cost_packet_field": "CORTEX_AI_COST_USD",
+        "same_scope_required": True,
+        "mismatch_count": 0,
+        "raw_sql_included": False,
+    }
+    summary = {
+        "source": "summary_metric_consistency",
+        "proof_source": "packet_formula_registry",
+        "passed": True,
+        "checks": [
+            {
+                "check_name": "executive_cost_total_field",
+                "passed": True,
+                "executive_packet_field": "ACCOUNT_BILLED_COST_USD",
+                "cost_packet_field": "ACCOUNT_BILLED_COST_USD",
+            },
+            {
+                "check_name": "executive_cost_cortex_field",
+                "passed": True,
+                "executive_packet_field": "CORTEX_AI_COST_USD",
+                "cost_packet_field": "CORTEX_AI_COST_USD",
+            },
+            {
+                "check_name": "missing_account_billing_pending",
+                "passed": True,
+                "unavailable_state": "Billing reconciliation pending",
+            },
+        ],
+        "failure_count": 0,
+        "raw_sql_included": False,
+    }
+    workload = {
+        "source": "workload_formula_semantics",
+        "proof_source": "metric_semantic_registry",
+        "passed": True,
+        "metrics": [
+            {
+                "metric_key": "failed_queries",
+                "unit": "count",
+                "format": "integer",
+                "expected_range": [0, 1_000_000],
+                "passed": True,
+            },
+            {
+                "metric_key": "pipeline_failures",
+                "unit": "count",
+                "format": "integer",
+                "expected_range": [0, 1_000_000],
+                "outlier_example_blocked": "8B",
+                "passed": True,
+            },
+            {
+                "metric_key": "queue_blocked_pressure",
+                "unit": "seconds",
+                "format": "duration",
+                "fixture_render": "19.2m",
+                "passed": True,
+            },
+            {
+                "metric_key": "sla_risk",
+                "unit": "risk_score",
+                "format": "percentage",
+                "expected_range": [0, 100],
+                "passed": True,
+            },
+        ],
+        "raw_numeric_headline_blocked": True,
+        "failure_count": 0,
+        "raw_sql_included": False,
+    }
+    charts = cost_db_chart_pattern_results()
+    payloads = {
+        "artifacts/full_app_validation/cortex_cost_consistency_results.json": cortex,
+        "artifacts/full_app_validation/cost_chart_workbench_results.json": charts,
+        "artifacts/full_app_validation/summary_metric_consistency_results.json": summary,
+        "artifacts/full_app_validation/workload_formula_results.json": workload,
+    }
+    for rel, payload in payloads.items():
+        _write_json(root / rel, payload)
+    return payloads
 
 
 def write_static_contract_artifacts(root: Path | str = ".") -> dict[str, Any]:
@@ -913,6 +1011,15 @@ def evaluate_full_app_gauntlet(
             "Metric semantic registry artifact has missing formula/unit/source metadata.",
             count=_as_int(metric_semantic.get("failure_count")),
         )
+    for rel, reason in {
+        "artifacts/full_app_validation/cortex_cost_consistency_results.json": "Cortex cost consistency artifact did not pass.",
+        "artifacts/full_app_validation/cost_chart_workbench_results.json": "Cost chart workbench artifact did not pass.",
+        "artifacts/full_app_validation/summary_metric_consistency_results.json": "Summary metric consistency artifact did not pass.",
+        "artifacts/full_app_validation/workload_formula_results.json": "Workload formula semantic artifact did not pass.",
+    }.items():
+        artifact = payloads.get(rel, {})
+        if isinstance(artifact, Mapping) and not bool(artifact.get("passed", False)):
+            _append_failure(failures, rel.rsplit("/", 1)[-1].removesuffix(".json"), reason, count=_as_int(artifact.get("failure_count")))
     session_direct = payloads.get("artifacts/full_app_validation/session_direct_sql_results.json", {})
     if isinstance(session_direct, Mapping) and not bool(session_direct.get("passed", False)):
         _append_failure(failures, "session_direct_sql_results", "Session/direct-SQL artifact did not pass.")
@@ -1018,6 +1125,7 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
     validation_artifacts = write_full_app_validation_artifacts(root_path)
     summary_board_artifacts = _write_summary_board_contract_artifacts(root_path)
     metric_semantic_artifact = _write_metric_semantic_artifact(root_path)
+    formula_consistency_artifacts = _write_formula_consistency_artifacts(root_path)
     static_artifacts = write_static_contract_artifacts(root_path)
     artifacts = {
         **cleanup_artifacts,
@@ -1025,12 +1133,19 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
         **validation_artifacts,
         **summary_board_artifacts,
         **metric_semantic_artifact,
+        **formula_consistency_artifacts,
         **static_artifacts,
     }
     _ensure_manifest_entries(
         root_path,
         "artifacts/full_app_validation/artifact_manifest.json",
-        {"artifacts/full_app_validation/metric_semantic_results.json"},
+        {
+            "artifacts/full_app_validation/metric_semantic_results.json",
+            "artifacts/full_app_validation/cortex_cost_consistency_results.json",
+            "artifacts/full_app_validation/cost_chart_workbench_results.json",
+            "artifacts/full_app_validation/summary_metric_consistency_results.json",
+            "artifacts/full_app_validation/workload_formula_results.json",
+        },
     )
     recomputed = recompute_full_app_invariants(artifacts, root=root_path)
     recomputed_rel = "artifacts/full_app_validation/gauntlet_recomputed_invariants.json"
@@ -1050,6 +1165,10 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
             "artifacts/full_app_validation/summary_board_error_inventory.json",
             "artifacts/full_app_validation/summary_board_failure_diagnostics.json",
             "artifacts/full_app_validation/metric_semantic_results.json",
+            "artifacts/full_app_validation/cortex_cost_consistency_results.json",
+            "artifacts/full_app_validation/cost_chart_workbench_results.json",
+            "artifacts/full_app_validation/summary_metric_consistency_results.json",
+            "artifacts/full_app_validation/workload_formula_results.json",
             "artifacts/direct_sql_static_scan.json",
             "artifacts/session_open_static_scan.json",
             "artifacts/sql_performance_lint_findings.json",

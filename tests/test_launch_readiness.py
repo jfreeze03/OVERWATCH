@@ -103,13 +103,22 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertTrue(summary["billing_reconciliation_live_passed"])
         self.assertTrue(summary["billing_reconciliation_live_skipped"])
         self.assertFalse(summary["billing_reconciliation_live_required"])
+        self.assertTrue(summary["cortex_cost_consistency_passed"])
+        self.assertEqual(summary["cortex_cost_consistency_failure_count"], 0)
+        self.assertTrue(summary["cost_chart_workbench_passed"])
+        self.assertEqual(summary["cost_chart_workbench_failure_count"], 0)
         self.assertTrue(summary["cost_db_formula_authority_passed"])
         self.assertEqual(summary["cost_db_formula_authority_failure_count"], 0)
-        self.assertGreaterEqual(summary["cost_db_formula_count"], 6)
+        self.assertGreaterEqual(summary["cost_db_formula_count"], 7)
         self.assertGreaterEqual(summary["overwatch_formula_count"], 4)
+        self.assertTrue(summary["formula_live_validation_passed"])
+        self.assertTrue(summary["formula_live_validation_skipped"])
+        self.assertFalse(summary["formula_live_validation_required"])
         self.assertTrue(summary["metric_semantic_registry_passed"])
         self.assertEqual(summary["metric_semantic_registry_failure_count"], 0)
         self.assertGreater(summary["metric_semantic_registry_row_count"], 0)
+        self.assertTrue(summary["workload_formula_semantics_passed"])
+        self.assertEqual(summary["workload_formula_semantics_failure_count"], 0)
         self.assertTrue(summary["query_budget_gate_passed"])
         self.assertEqual(summary["query_budget_gate_failure_count"], 0)
         self.assertGreaterEqual(summary["required_artifact_count"], len(REQUIRED_LAUNCH_READINESS_ARTIFACTS))
@@ -126,7 +135,11 @@ class LaunchReadinessTests(unittest.TestCase):
             "billing_reconciliation",
             "billing_reconciliation_live",
             "cost_db_formula_authority",
+            "cortex_cost_consistency",
+            "cost_chart_workbench",
+            "formula_live_validation",
             "metric_semantic_registry",
+            "workload_formula_semantics",
             "query_budget_recording",
             "runtime_validation",
             "required_artifacts",
@@ -205,11 +218,19 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertEqual(snowflake_failures["failure_count"], 0, snowflake_failures)
 
         formula_gate = self._read_json("artifacts/launch_readiness/cost_db_formula_authority_gate_results.json")
+        cortex_gate = self._read_json("artifacts/launch_readiness/cortex_cost_consistency_gate_results.json")
+        chart_gate = self._read_json("artifacts/launch_readiness/cost_chart_workbench_gate_results.json")
+        formula_live_gate = self._read_json("artifacts/launch_readiness/formula_live_gate_results.json")
         metric_gate = self._read_json("artifacts/launch_readiness/metric_semantic_gate_results.json")
+        workload_gate = self._read_json("artifacts/launch_readiness/workload_formula_gate_results.json")
         self.assertTrue(formula_gate["passed"], formula_gate)
         self.assertEqual(formula_gate["failure_count"], 0, formula_gate)
+        self.assertTrue(cortex_gate["passed"], cortex_gate)
+        self.assertTrue(chart_gate["passed"], chart_gate)
+        self.assertTrue(formula_live_gate["passed"], formula_live_gate)
         self.assertTrue(metric_gate["passed"], metric_gate)
         self.assertEqual(metric_gate["failure_count"], 0, metric_gate)
+        self.assertTrue(workload_gate["passed"], workload_gate)
 
         self.assertTrue(REQUIRED_LAUNCH_READINESS_ARTIFACTS.issubset(set(manifest["files"])))
         for rel in REQUIRED_LAUNCH_READINESS_ARTIFACTS:
@@ -253,6 +274,11 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertEqual(summary["dead_route_count"], 0)
         self.assertTrue(summary["artifact_reconciliation_passed"])
         self.assertTrue(summary["product_gauntlet_passed"])
+        self.assertTrue(summary["cortex_cost_consistency_passed"])
+        self.assertTrue(summary["cost_chart_workbench_passed"])
+        self.assertTrue(summary["cost_db_formula_authority_passed"])
+        self.assertTrue(summary["formula_live_validation_passed"])
+        self.assertTrue(summary["workload_formula_semantics_passed"])
         self.assertGreater(manifest["artifact_count"], 0)
         self.assertEqual(manifest["artifact_count"], hashes["hash_count"])
         self.assertEqual(manifest["artifact_count"], reconciliation["artifact_count"])

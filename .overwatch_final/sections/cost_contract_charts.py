@@ -18,7 +18,22 @@ from sections.cost_contract_dataframes import (
 )
 from sections.shell_helpers import render_escaped_bold_text
 from utils.workflows import render_mode_selector, render_priority_dataframe
-from utils.cost_formula_authority import credits_to_usd, normalize_numeric_columns, warehouse_bridge_credits
+from utils.cost_formula_authority import (
+    ACCOUNT_CREDIT_COLUMN_ORDER,
+    CORTEX_CREDIT_COLUMN_ORDER,
+    WAREHOUSE_CREDIT_COLUMN_ORDER,
+    choose_credit_column,
+    credits_to_usd,
+    normalize_numeric_columns,
+    warehouse_bridge_credits,
+)
+from utils.cortex_service_types import cortex_service_type_mask
+
+
+def _unavailable_rows(columns: list[str], reason: str) -> pd.DataFrame:
+    rows = pd.DataFrame(columns=columns)
+    rows.attrs["unavailable_reason"] = reason
+    return rows
 
 
 def _date_column(frame: pd.DataFrame) -> str:
@@ -42,26 +57,23 @@ def _cost_db_warehouse_rows(frame: pd.DataFrame) -> pd.DataFrame:
     return data
 
 
-def _numeric_column(frame: pd.DataFrame, column: str) -> pd.Series:
-    if column not in frame.columns:
-        return pd.Series([0.0] * len(frame), index=frame.index, dtype=float)
-    return pd.to_numeric(frame[column], errors="coerce").fillna(0.0)
-
-
 def build_account_billed_cost_trend_rows(account_rows: pd.DataFrame, credit_price: float) -> pd.DataFrame:
     """COST_DB line-trend pattern for account billed cost over time."""
 
     data = normalize_numeric_columns(account_rows)
     if data.empty:
-        return pd.DataFrame(columns=["USAGE_DATE", "ACCOUNT_BILLED_CREDITS", "ACCOUNT_BILLED_COST_USD"])
+        return _unavailable_rows(["USAGE_DATE", "ACCOUNT_BILLED_CREDITS", "ACCOUNT_BILLED_COST_USD"], "No account billing rows available.")
     date_col = _date_column(data)
     if date_col not in data.columns:
-        return pd.DataFrame(columns=["USAGE_DATE", "ACCOUNT_BILLED_CREDITS", "ACCOUNT_BILLED_COST_USD"])
+        return _unavailable_rows(["USAGE_DATE", "ACCOUNT_BILLED_CREDITS", "ACCOUNT_BILLED_COST_USD"], "No date column available for account trend.")
     data["USAGE_DATE"] = pd.to_datetime(data[date_col], errors="coerce").dt.date
-    credit_col = "CREDITS_BILLED" if "CREDITS_BILLED" in data.columns else "TOTAL_CREDITS"
-    rows = data.dropna(subset=["USAGE_DATE"]).groupby("USAGE_DATE", as_index=False)[credit_col].sum()
-    rows = rows.rename(columns={credit_col: "ACCOUNT_BILLED_CREDITS"})
+    choice = choose_credit_column(data, ACCOUNT_CREDIT_COLUMN_ORDER)
+    if not choice.passed:
+        return _unavailable_rows(["USAGE_DATE", "ACCOUNT_BILLED_CREDITS", "ACCOUNT_BILLED_COST_USD"], choice.reason)
+    data["ACCOUNT_BILLED_CREDITS"] = choice.values
+    rows = data.dropna(subset=["USAGE_DATE"]).groupby("USAGE_DATE", as_index=False)["ACCOUNT_BILLED_CREDITS"].sum()
     rows["ACCOUNT_BILLED_COST_USD"] = rows["ACCOUNT_BILLED_CREDITS"].map(lambda value: credits_to_usd(value, credit_price))
+    rows.attrs["credit_column"] = choice.selected_column
     return rows.sort_values("USAGE_DATE", kind="mergesort").reset_index(drop=True)
 
 
@@ -70,11 +82,16 @@ def build_service_type_distribution_rows(service_rows: pd.DataFrame, credit_pric
 
     data = normalize_numeric_columns(service_rows)
     if data.empty or "SERVICE_TYPE" not in data.columns:
-        return pd.DataFrame(columns=["SERVICE_TYPE", "TOTAL_CREDITS", "COST_USD"])
-    credit_col = "CREDITS_BILLED" if "CREDITS_BILLED" in data.columns else "TOTAL_CREDITS"
-    rows = data.groupby("SERVICE_TYPE", as_index=False)[credit_col].sum().rename(columns={credit_col: "TOTAL_CREDITS"})
+        return _unavailable_rows(["SERVICE_TYPE", "TOTAL_CREDITS", "COST_USD"], "No service type rows available.")
+    choice = choose_credit_column(data, ACCOUNT_CREDIT_COLUMN_ORDER)
+    if not choice.passed:
+        return _unavailable_rows(["SERVICE_TYPE", "TOTAL_CREDITS", "COST_USD"], choice.reason)
+    data["TOTAL_CREDITS"] = choice.values
+    rows = data.groupby("SERVICE_TYPE", as_index=False)["TOTAL_CREDITS"].sum()
     rows["COST_USD"] = rows["TOTAL_CREDITS"].map(lambda value: credits_to_usd(value, credit_price))
-    return rows.sort_values("TOTAL_CREDITS", ascending=False, kind="mergesort").head(max(1, int(top_n or 10))).reset_index(drop=True)
+    rows = rows.sort_values("TOTAL_CREDITS", ascending=False, kind="mergesort").head(max(1, int(top_n or 10))).reset_index(drop=True)
+    rows.attrs["credit_column"] = choice.selected_column
+    return rows
 
 
 def build_warehouse_bridge_top_rows(warehouse_rows: pd.DataFrame, credit_price: float, *, top_n: int = 12) -> pd.DataFrame:
@@ -82,16 +99,16 @@ def build_warehouse_bridge_top_rows(warehouse_rows: pd.DataFrame, credit_price: 
 
     data = _cost_db_warehouse_rows(warehouse_rows)
     if data.empty or "WAREHOUSE_NAME" not in data.columns:
-        return pd.DataFrame(columns=["WAREHOUSE_NAME", "WAREHOUSE_CREDITS", "WAREHOUSE_COST_USD"])
-    data["WAREHOUSE_CREDITS"] = data.get("WAREHOUSE_CREDITS", data.get("TOTAL_CREDITS", 0.0))
-    if not pd.to_numeric(data["WAREHOUSE_CREDITS"], errors="coerce").fillna(0).any():
-        data["WAREHOUSE_CREDITS"] = pd.to_numeric(data.get("CREDITS_USED_COMPUTE", 0), errors="coerce").fillna(0) + pd.to_numeric(
-            data.get("CREDITS_USED_CLOUD_SERVICES", 0),
-            errors="coerce",
-        ).fillna(0)
+        return _unavailable_rows(["WAREHOUSE_NAME", "WAREHOUSE_CREDITS", "WAREHOUSE_COST_USD"], "No warehouse bridge rows available.")
+    choice = choose_credit_column(data, WAREHOUSE_CREDIT_COLUMN_ORDER)
+    if not choice.passed:
+        return _unavailable_rows(["WAREHOUSE_NAME", "WAREHOUSE_CREDITS", "WAREHOUSE_COST_USD"], choice.reason)
+    data["WAREHOUSE_CREDITS"] = choice.values
     rows = data.groupby("WAREHOUSE_NAME", as_index=False)["WAREHOUSE_CREDITS"].sum()
     rows["WAREHOUSE_COST_USD"] = rows["WAREHOUSE_CREDITS"].map(lambda value: credits_to_usd(value, credit_price))
-    return rows.sort_values("WAREHOUSE_CREDITS", ascending=False, kind="mergesort").head(max(1, int(top_n or 12))).reset_index(drop=True)
+    rows = rows.sort_values("WAREHOUSE_CREDITS", ascending=False, kind="mergesort").head(max(1, int(top_n or 12))).reset_index(drop=True)
+    rows.attrs["credit_column"] = choice.selected_column
+    return rows
 
 
 def build_weekly_warehouse_cost_rows(warehouse_rows: pd.DataFrame, credit_price: float) -> pd.DataFrame:
@@ -99,17 +116,20 @@ def build_weekly_warehouse_cost_rows(warehouse_rows: pd.DataFrame, credit_price:
 
     data = _cost_db_warehouse_rows(warehouse_rows)
     if data.empty or "WAREHOUSE_NAME" not in data.columns:
-        return pd.DataFrame(columns=["WEEK_START", "WAREHOUSE_NAME", "WAREHOUSE_CREDITS", "WAREHOUSE_COST_USD"])
+        return _unavailable_rows(["WEEK_START", "WAREHOUSE_NAME", "WAREHOUSE_CREDITS", "WAREHOUSE_COST_USD"], "No warehouse bridge rows available.")
     date_col = _date_column(data)
     if date_col not in data.columns:
-        return pd.DataFrame(columns=["WEEK_START", "WAREHOUSE_NAME", "WAREHOUSE_CREDITS", "WAREHOUSE_COST_USD"])
+        return _unavailable_rows(["WEEK_START", "WAREHOUSE_NAME", "WAREHOUSE_CREDITS", "WAREHOUSE_COST_USD"], "No date column available for weekly warehouse cost.")
     data["WEEK_START"] = pd.to_datetime(data[date_col], errors="coerce").dt.to_period("W").apply(lambda period: period.start_time.date() if pd.notna(period) else pd.NaT)
-    data["WAREHOUSE_CREDITS"] = _numeric_column(data, "WAREHOUSE_CREDITS")
-    if not data["WAREHOUSE_CREDITS"].any():
-        data["WAREHOUSE_CREDITS"] = _numeric_column(data, "CREDITS_USED_COMPUTE") + _numeric_column(data, "CREDITS_USED_CLOUD_SERVICES")
+    choice = choose_credit_column(data, WAREHOUSE_CREDIT_COLUMN_ORDER)
+    if not choice.passed:
+        return _unavailable_rows(["WEEK_START", "WAREHOUSE_NAME", "WAREHOUSE_CREDITS", "WAREHOUSE_COST_USD"], choice.reason)
+    data["WAREHOUSE_CREDITS"] = choice.values
     rows = data.dropna(subset=["WEEK_START"]).groupby(["WEEK_START", "WAREHOUSE_NAME"], as_index=False)["WAREHOUSE_CREDITS"].sum()
     rows["WAREHOUSE_COST_USD"] = rows["WAREHOUSE_CREDITS"].map(lambda value: credits_to_usd(value, credit_price))
-    return rows.sort_values(["WEEK_START", "WAREHOUSE_COST_USD"], ascending=[True, False], kind="mergesort").reset_index(drop=True)
+    rows = rows.sort_values(["WEEK_START", "WAREHOUSE_COST_USD"], ascending=[True, False], kind="mergesort").reset_index(drop=True)
+    rows.attrs["credit_column"] = choice.selected_column
+    return rows
 
 
 def build_hourly_usage_pattern_rows(warehouse_rows: pd.DataFrame, credit_price: float) -> pd.DataFrame:
@@ -117,17 +137,20 @@ def build_hourly_usage_pattern_rows(warehouse_rows: pd.DataFrame, credit_price: 
 
     data = _cost_db_warehouse_rows(warehouse_rows)
     if data.empty or "START_TIME" not in data.columns:
-        return pd.DataFrame(columns=["HOUR", "DAY_OF_WEEK", "TOTAL_CREDITS", "COST_USD"])
+        return _unavailable_rows(["HOUR", "DAY_OF_WEEK", "TOTAL_CREDITS", "COST_USD"], "No timestamped warehouse rows available.")
     ts = pd.to_datetime(data["START_TIME"], errors="coerce")
     data = data.loc[ts.notna()].copy()
     data["HOUR"] = ts.loc[ts.notna()].dt.hour
     data["DAY_OF_WEEK"] = ts.loc[ts.notna()].dt.day_name()
-    data["TOTAL_CREDITS"] = _numeric_column(data, "TOTAL_CREDITS")
-    if not data["TOTAL_CREDITS"].any():
-        data["TOTAL_CREDITS"] = _numeric_column(data, "CREDITS_USED_COMPUTE") + _numeric_column(data, "CREDITS_USED_CLOUD_SERVICES")
+    choice = choose_credit_column(data, WAREHOUSE_CREDIT_COLUMN_ORDER)
+    if not choice.passed:
+        return _unavailable_rows(["HOUR", "DAY_OF_WEEK", "TOTAL_CREDITS", "COST_USD"], choice.reason)
+    data["TOTAL_CREDITS"] = choice.values
     rows = data.groupby(["HOUR", "DAY_OF_WEEK"], as_index=False)["TOTAL_CREDITS"].sum()
     rows["COST_USD"] = rows["TOTAL_CREDITS"].map(lambda value: credits_to_usd(value, credit_price))
-    return rows.sort_values(["DAY_OF_WEEK", "HOUR"], kind="mergesort").reset_index(drop=True)
+    rows = rows.sort_values(["DAY_OF_WEEK", "HOUR"], kind="mergesort").reset_index(drop=True)
+    rows.attrs["credit_column"] = choice.selected_column
+    return rows
 
 
 def build_cortex_ai_daily_spend_rows(service_rows: pd.DataFrame, credit_price: float) -> pd.DataFrame:
@@ -135,20 +158,22 @@ def build_cortex_ai_daily_spend_rows(service_rows: pd.DataFrame, credit_price: f
 
     data = normalize_numeric_columns(service_rows)
     if data.empty or "SERVICE_TYPE" not in data.columns:
-        return pd.DataFrame(columns=["USAGE_DATE", "CORTEX_AI_CREDITS", "CORTEX_AI_COST_USD"])
-    mask = data["SERVICE_TYPE"].fillna("").astype(str).str.upper().str.contains("CORTEX", regex=False) | data[
-        "SERVICE_TYPE"
-    ].fillna("").astype(str).str.upper().str.contains("AI", regex=False)
+        return _unavailable_rows(["USAGE_DATE", "CORTEX_AI_CREDITS", "CORTEX_AI_COST_USD"], "No service rows available.")
+    mask = cortex_service_type_mask(data)
     data = data.loc[mask].copy()
     if data.empty:
-        return pd.DataFrame(columns=["USAGE_DATE", "CORTEX_AI_CREDITS", "CORTEX_AI_COST_USD"])
+        return _unavailable_rows(["USAGE_DATE", "CORTEX_AI_CREDITS", "CORTEX_AI_COST_USD"], "No allowlisted Cortex service rows available.")
     date_col = _date_column(data)
     data["USAGE_DATE"] = pd.to_datetime(data[date_col], errors="coerce").dt.date
-    credit_col = "CREDITS_BILLED" if "CREDITS_BILLED" in data.columns else "TOTAL_CREDITS"
-    rows = data.dropna(subset=["USAGE_DATE"]).groupby("USAGE_DATE", as_index=False)[credit_col].sum()
-    rows = rows.rename(columns={credit_col: "CORTEX_AI_CREDITS"})
+    choice = choose_credit_column(data, CORTEX_CREDIT_COLUMN_ORDER)
+    if not choice.passed:
+        return _unavailable_rows(["USAGE_DATE", "CORTEX_AI_CREDITS", "CORTEX_AI_COST_USD"], choice.reason)
+    data["CORTEX_AI_CREDITS"] = choice.values
+    rows = data.dropna(subset=["USAGE_DATE"]).groupby("USAGE_DATE", as_index=False)["CORTEX_AI_CREDITS"].sum()
     rows["CORTEX_AI_COST_USD"] = rows["CORTEX_AI_CREDITS"].map(lambda value: credits_to_usd(value, credit_price))
-    return rows.sort_values("USAGE_DATE", kind="mergesort").reset_index(drop=True)
+    rows = rows.sort_values("USAGE_DATE", kind="mergesort").reset_index(drop=True)
+    rows.attrs["credit_column"] = choice.selected_column
+    return rows
 
 
 def cost_db_chart_pattern_results() -> dict[str, object]:

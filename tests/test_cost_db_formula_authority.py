@@ -32,11 +32,26 @@ class CostDbFormulaAuthorityContractTests(unittest.TestCase):
         self.assertIn("numeric_normalization", by_id)
         self.assertIn("CREDITS_USED_COMPUTE", by_id["numeric_normalization"]["cost_db_columns"])
         self.assertIn("REQUEST_COUNT", by_id["numeric_normalization"]["cost_db_columns"])
+        self.assertIn("SERVERLESS_CREDITS", by_id["numeric_normalization"]["cost_db_columns"])
         self.assertIn("WAREHOUSE_METERING_HISTORY", by_id["warehouse_bridge"]["cost_db_source_view"])
         self.assertIn("CREDITS_USED_COMPUTE + CREDITS_USED_CLOUD_SERVICES", by_id["warehouse_bridge"]["cost_db_formula"])
         self.assertIn("WAREHOUSE_ID > 0", by_id["warehouse_bridge"]["cost_db_formula"])
         self.assertEqual(by_id["credit_price"]["cost_db_formula"], "dollar_amount = credits * credit_price")
+        self.assertIn("MoM", by_id["monthly_mom"]["cost_db_formula"])
         self.assertEqual(by_id["workbench_charts"]["status"], "matched")
+        for row in cost_db_rows:
+            self.assertTrue(row["overwatch_formula"], row)
+            self.assertTrue(row["cost_db_columns"], row)
+            self.assertEqual(row["launch_gate"], "cost_db_formula_authority")
+
+    def test_authority_summary_and_cortex_mapping_are_written(self):
+        summary = self.artifacts["artifacts/formula_authority/cost_db_formula_authority_summary.json"]
+        cortex_mapping = self.artifacts["artifacts/formula_authority/cortex_service_type_mapping.json"]
+
+        self.assertTrue(summary["passed"], summary)
+        self.assertIn("SERVERLESS_CREDITS", summary["numeric_normalization_columns"])
+        self.assertFalse(cortex_mapping["broad_ai_substring_match_enabled"])
+        self.assertIn("CORTEX_AI", cortex_mapping["allowlist"])
 
     def test_gap_results_pass(self):
         gap = self.artifacts["artifacts/formula_authority/formula_gap_results.json"]
@@ -53,6 +68,8 @@ class CostDbFormulaAuthorityContractTests(unittest.TestCase):
             self.artifacts["artifacts/formula_authority/cost_db_formula_mapping.json"],
             [],
             self.artifacts["artifacts/formula_authority/formula_gap_results.json"],
+            self.artifacts["artifacts/formula_authority/cost_db_formula_authority_summary.json"],
+            self.artifacts["artifacts/formula_authority/cortex_service_type_mapping.json"],
         )
 
         self.assertFalse(gate["passed"], gate)
@@ -67,10 +84,28 @@ class CostDbFormulaAuthorityContractTests(unittest.TestCase):
             self.artifacts["artifacts/formula_authority/cost_db_formula_mapping.json"],
             self.artifacts["artifacts/formula_authority/overwatch_formula_mapping.json"],
             {"passed": False, "failure_count": 1},
+            self.artifacts["artifacts/formula_authority/cost_db_formula_authority_summary.json"],
+            self.artifacts["artifacts/formula_authority/cortex_service_type_mapping.json"],
         )
 
         self.assertFalse(gate["passed"], gate)
         self.assertIn("FORMULA_GAP_RESULTS_FAILED", {row["code"] for row in gate["failures"]})
+
+    def test_launch_gate_rejects_symbolic_authority_row(self):
+        from tools.contracts.cost_db_formula_authority import evaluate_cost_db_formula_authority
+
+        rows = [dict(row) for row in self.artifacts["artifacts/formula_authority/cost_db_formula_mapping.json"]]
+        rows[0]["overwatch_formula"] = ""
+        gate = evaluate_cost_db_formula_authority(
+            rows,
+            self.artifacts["artifacts/formula_authority/overwatch_formula_mapping.json"],
+            self.artifacts["artifacts/formula_authority/formula_gap_results.json"],
+            self.artifacts["artifacts/formula_authority/cost_db_formula_authority_summary.json"],
+            self.artifacts["artifacts/formula_authority/cortex_service_type_mapping.json"],
+        )
+
+        self.assertFalse(gate["passed"], gate)
+        self.assertIn("COST_DB_ROW_NOT_LITERAL", {row["code"] for row in gate["failures"]})
 
 
 if __name__ == "__main__":

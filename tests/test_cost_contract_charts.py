@@ -196,6 +196,19 @@ class CostContractChartTests(unittest.TestCase):
 
         self.assertEqual(rows["ACCOUNT_BILLED_CREDITS"].tolist(), [4.0, 1.0])
         self.assertEqual(rows["ACCOUNT_BILLED_COST_USD"].tolist(), [14.72, 3.68])
+        self.assertEqual(rows.attrs["credit_column"], "CREDITS_BILLED")
+
+    def test_account_billed_cost_trend_accepts_daily_credits(self):
+        from sections import cost_contract_charts
+
+        rows = cost_contract_charts.build_account_billed_cost_trend_rows(
+            pd.DataFrame({"USAGE_DATE": ["2026-06-21", "2026-06-22"], "DAILY_CREDITS": ["2.0", "3.0"]}),
+            3.68,
+        )
+
+        self.assertEqual(rows["ACCOUNT_BILLED_CREDITS"].tolist(), [2.0, 3.0])
+        self.assertEqual(rows["ACCOUNT_BILLED_COST_USD"].tolist(), [7.36, 11.04])
+        self.assertEqual(rows.attrs["credit_column"], "DAILY_CREDITS")
 
     def test_service_distribution_and_cortex_rows_use_same_price(self):
         from sections import cost_contract_charts
@@ -204,7 +217,7 @@ class CostContractChartTests(unittest.TestCase):
             {
                 "USAGE_DATE": ["2026-06-21", "2026-06-21", "2026-06-22"],
                 "SERVICE_TYPE": ["WAREHOUSE_METERING", "CORTEX_AI", "CORTEX_AI"],
-                "CREDITS_BILLED": ["1", "2", "3"],
+                "DAILY_CREDITS": ["1", "2", "3"],
             }
         )
         distribution = cost_contract_charts.build_service_type_distribution_rows(service_rows, 3.68)
@@ -212,6 +225,26 @@ class CostContractChartTests(unittest.TestCase):
 
         self.assertEqual(float(distribution.loc[distribution["SERVICE_TYPE"] == "CORTEX_AI", "COST_USD"].iloc[0]), 18.4)
         self.assertEqual(cortex["CORTEX_AI_COST_USD"].tolist(), [7.36, 11.04])
+        self.assertEqual(distribution.attrs["credit_column"], "DAILY_CREDITS")
+        self.assertEqual(cortex.attrs["credit_column"], "DAILY_CREDITS")
+
+    def test_cortex_daily_spend_prefers_cortex_ai_credits_and_allowlist(self):
+        from sections import cost_contract_charts
+
+        service_rows = pd.DataFrame(
+            {
+                "USAGE_DATE": ["2026-06-21", "2026-06-21", "2026-06-21"],
+                "SERVICE_TYPE": ["CORTEX_AI", "MAINTENANCE_AI_HELPER", "AI_SERVICES"],
+                "CORTEX_AI_CREDITS": ["1", "99", "2"],
+                "DAILY_CREDITS": ["10", "99", "20"],
+            }
+        )
+
+        cortex = cost_contract_charts.build_cortex_ai_daily_spend_rows(service_rows, 3.68)
+
+        self.assertEqual(cortex["CORTEX_AI_CREDITS"].tolist(), [3.0])
+        self.assertEqual(cortex["CORTEX_AI_COST_USD"].tolist(), [11.04])
+        self.assertEqual(cortex.attrs["credit_column"], "CORTEX_AI_CREDITS")
 
     def test_warehouse_top_and_weekly_rows_match_compute_plus_cloud(self):
         from sections import cost_contract_charts
@@ -234,6 +267,18 @@ class CostContractChartTests(unittest.TestCase):
         self.assertEqual(top["WAREHOUSE_CREDITS"].tolist(), [4.0, 2.5])
         self.assertEqual(round(float(weekly["WAREHOUSE_COST_USD"].sum()), 2), 23.92)
         self.assertIn("HOUR", hourly.columns)
+        self.assertEqual(top.attrs["credit_column"], "CREDITS_USED_COMPUTE + CREDITS_USED_CLOUD_SERVICES")
+
+    def test_missing_credit_column_returns_unavailable_state(self):
+        from sections import cost_contract_charts
+
+        rows = cost_contract_charts.build_account_billed_cost_trend_rows(
+            pd.DataFrame({"USAGE_DATE": ["2026-06-21"], "NOT_CREDITS": [5]}),
+            3.68,
+        )
+
+        self.assertTrue(rows.empty)
+        self.assertIn("No acceptable credit column", rows.attrs["unavailable_reason"])
 
 
 if __name__ == "__main__":

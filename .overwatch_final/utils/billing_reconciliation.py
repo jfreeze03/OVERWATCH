@@ -8,6 +8,7 @@ from typing import Any, Mapping
 import pandas as pd
 
 from config import DEFAULTS
+from .cortex_service_types import cortex_service_type_mask
 from .sql_safe import sql_literal
 
 
@@ -24,6 +25,9 @@ BILLING_RECONCILIATION_PACKET_FIELDS = (
     "WAREHOUSE_COST_USD",
     "SERVICE_OTHER_CREDITS",
     "SERVICE_OTHER_COST_USD",
+    "BILLING_BRIDGE_DELTA_CREDITS",
+    "BILLING_BRIDGE_DELTA_USD",
+    "BILLING_BRIDGE_STATUS",
     "CORTEX_AI_CREDITS",
     "CORTEX_AI_COST_USD",
     "BILLING_RECONCILIATION_STATUS",
@@ -198,6 +202,7 @@ def build_warehouse_billing_bridge_sql(
           AND COALESCE(warehouse_id, 0) > 0
           AND NULLIF(TRIM(warehouse_name), '') IS NOT NULL
         GROUP BY DATE(start_time), warehouse_name
+        HAVING SUM(COALESCE(credits_used_compute, 0) + COALESCE(credits_used_cloud_services, 0)) > 0
         ORDER BY usage_date, warehouse_credits DESC, warehouse_name
     """
 
@@ -218,22 +223,6 @@ def _numeric_sum_where(frame: pd.DataFrame | None, mask: pd.Series, *columns: st
     if filtered.empty:
         return 0.0
     return _numeric_sum(filtered, *columns)
-
-
-def _service_mask(frame: pd.DataFrame | None, *needles: str) -> pd.Series:
-    if frame is None or frame.empty:
-        return pd.Series(dtype=bool)
-    columns = [column for column in ("SERVICE_TYPE", "SERVICE_CATEGORY", "SOURCE", "service_type") if column in frame.columns]
-    if not columns:
-        return pd.Series([False] * len(frame), index=frame.index)
-    combined = pd.Series([""] * len(frame), index=frame.index)
-    for column in columns:
-        combined = combined.str.cat(frame[column].fillna("").astype(str), sep=" ")
-    upper = combined.str.upper()
-    mask = pd.Series([False] * len(frame), index=frame.index)
-    for needle in needles:
-        mask = mask | upper.str.contains(str(needle).upper(), regex=False)
-    return mask
 
 
 def _first_value(frame: pd.DataFrame | None, *columns: str) -> Any:
@@ -282,7 +271,7 @@ def summarize_billing_reconciliation(
         "ACCOUNT_CLOUD_SERVICES_ADJUSTMENT",
         "CREDITS_ADJUSTMENT_CLOUD_SERVICES",
     )
-    cortex_mask = _service_mask(account_billing, "CORTEX", "AI")
+    cortex_mask = cortex_service_type_mask(account_billing)
     cortex_credits = _numeric_sum_where(account_billing, cortex_mask, "CORTEX_AI_CREDITS", "CREDITS_BILLED", "DAILY_CREDITS")
     cortex_cost = _numeric_sum_where(
         account_billing,
@@ -302,8 +291,10 @@ def summarize_billing_reconciliation(
     warehouse_cost = _numeric_sum(warehouse_bridge, "WAREHOUSE_COST_USD", "DAILY_SPEND_USD")
     if warehouse_cost == 0.0 and warehouse_credits:
         warehouse_cost = round(warehouse_credits * price, 2)
-    service_other = max(account_billed - warehouse_credits, 0.0)
+    bridge_delta = account_billed - warehouse_credits
+    service_other = max(bridge_delta, 0.0)
     service_other_cost = round(service_other * price, 2)
+    bridge_delta_cost = round(bridge_delta * price, 2)
     window_start = _first_value(account_billing, "BILLING_RECONCILIATION_WINDOW_START", "USAGE_DATE", "usage_date")
     window_end = None
     if account_billing is not None and not account_billing.empty:
@@ -316,7 +307,14 @@ def summarize_billing_reconciliation(
     observed_days = int(_numeric_sum(account_billing, "OBSERVED_BILLING_DAYS")) or (
         int(account_billing["USAGE_DATE"].nunique()) if account_billing is not None and "USAGE_DATE" in account_billing.columns else 0
     )
-    status = "passed" if account_billed > 0 or observed_days > 0 else "missing_account_billing_rows"
+    if not (account_billed > 0 or observed_days > 0):
+        status = "pending"
+    elif abs(bridge_delta) <= 0.000001:
+        status = "matched"
+    elif bridge_delta > 0:
+        status = "warehouse_lower_than_billed"
+    else:
+        status = "warehouse_higher_than_billed"
     window_start_text = "" if window_start is None else str(window_start)[:10]
     window_end_text = "" if window_end is None else str(window_end)[:10]
     latency_note = "Completed UTC billing days only; current partial day excluded by default."
@@ -333,6 +331,9 @@ def summarize_billing_reconciliation(
         "WAREHOUSE_COST_USD": round(warehouse_cost, 2),
         "SERVICE_OTHER_CREDITS": round(service_other, 6),
         "SERVICE_OTHER_COST_USD": service_other_cost,
+        "BILLING_BRIDGE_DELTA_CREDITS": round(bridge_delta, 6),
+        "BILLING_BRIDGE_DELTA_USD": bridge_delta_cost,
+        "BILLING_BRIDGE_STATUS": status,
         "CORTEX_AI_CREDITS": round(cortex_credits, 6),
         "CORTEX_AI_COST_USD": round(cortex_cost, 2),
         "BILLING_RECONCILIATION_STATUS": status,
@@ -365,10 +366,22 @@ def billing_reconciliation_contract_results(summary: Mapping[str, Any]) -> dict[
         failures.append({"code": "BILLING_PACKET_FIELD_MISSING", "fields": missing})
     if bool(summary.get("WAREHOUSE_BRIDGE_IS_PRIMARY_TOTAL")):
         failures.append({"code": "WAREHOUSE_TOTAL_USED_AS_ACCOUNT_TOTAL"})
-    if float(summary.get("ACCOUNT_BILLED_COST_USD") or 0) == 0 and float(summary.get("CORTEX_AI_COST_USD") or 0) > 0:
+    status = str(summary.get("BILLING_RECONCILIATION_STATUS") or "")
+    if (
+        float(summary.get("ACCOUNT_BILLED_COST_USD") or 0) == 0
+        and float(summary.get("CORTEX_AI_COST_USD") or 0) > 0
+        and status != "pending"
+    ):
         failures.append({"code": "ACCOUNT_TOTAL_ZERO_WITH_CORTEX_SPEND"})
-    if str(summary.get("BILLING_RECONCILIATION_STATUS") or "") not in {"passed", "missing_account_billing_rows"}:
+    if status not in {
+        "matched",
+        "warehouse_lower_than_billed",
+        "warehouse_higher_than_billed",
+        "pending",
+    }:
         failures.append({"code": "UNKNOWN_BILLING_RECONCILIATION_STATUS"})
+    if str(summary.get("BILLING_BRIDGE_STATUS") or "") != str(summary.get("BILLING_RECONCILIATION_STATUS") or ""):
+        failures.append({"code": "BILLING_BRIDGE_STATUS_MISMATCH"})
     return {
         "source": "billing_reconciliation_contract",
         "proof_source": "formula_recompute",

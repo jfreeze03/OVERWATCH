@@ -298,6 +298,11 @@ _ROWS: tuple[MetricSemantic, ...] = (
         metric_format="percentage",
         expected_min=-100,
         expected_max_reason="Percent changes can spike on small denominators.",
+        packet_field="SPEND_MOVEMENT_PCT",
+        zero_policy="zero requires comparable completed billing windows proving no movement",
+        unavailable_policy="Spend movement pending until comparable billing windows are available",
+        live_validation_source="billing_reconciliation_live_or_fixture",
+        cost_db_mapping="monthly_mom",
     ),
     _sem(
         "Cost & Contract",

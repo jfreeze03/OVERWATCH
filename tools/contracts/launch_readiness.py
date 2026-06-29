@@ -70,9 +70,13 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     f"{LAUNCH_READINESS_DIR}/summary_board_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/billing_reconciliation_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/billing_reconciliation_live_gate_results.json",
+    f"{LAUNCH_READINESS_DIR}/cortex_cost_consistency_gate_results.json",
+    f"{LAUNCH_READINESS_DIR}/cost_chart_workbench_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/cost_db_formula_authority_gate_results.json",
+    f"{LAUNCH_READINESS_DIR}/formula_live_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/metric_semantic_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/query_budget_gate_results.json",
+    f"{LAUNCH_READINESS_DIR}/workload_formula_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/snowflake_raw_validation_recheck.json",
     f"{LAUNCH_READINESS_DIR}/snowflake_validation_failures.json",
     f"{LAUNCH_READINESS_DIR}/ci_run_review_results.json",
@@ -581,7 +585,7 @@ def _workflow_upload_review(root: Path) -> dict[str, Any]:
         "python -m unittest tests.test_full_app_gauntlet",
         "python -m unittest tests.test_launch_readiness",
         "python -m unittest tests.test_encoding_hygiene",
-        "python -m unittest tests.test_cost_db_formula_authority tests.test_cost_formula_authority",
+        "python -m unittest tests.test_cost_db_formula_authority tests.test_cost_formula_authority tests.test_cortex_service_types",
         "python -m tools.contracts.encoding_hygiene",
         "python -m tools.contracts.cost_db_formula_authority",
         "python -m unittest discover -s tests",
@@ -2348,8 +2352,12 @@ def _release_candidate_summary_bundle(
         "summary_board_first_paint_passed": bool(launch_summary.get("summary_board_first_paint_passed")),
         "billing_reconciliation_passed": bool(launch_summary.get("billing_reconciliation_passed")),
         "billing_reconciliation_live_passed": bool(launch_summary.get("billing_reconciliation_live_passed")),
+        "cortex_cost_consistency_passed": bool(launch_summary.get("cortex_cost_consistency_passed")),
+        "cost_chart_workbench_passed": bool(launch_summary.get("cost_chart_workbench_passed")),
         "cost_db_formula_authority_passed": bool(launch_summary.get("cost_db_formula_authority_passed")),
+        "formula_live_validation_passed": bool(launch_summary.get("formula_live_validation_passed")),
         "metric_semantic_registry_passed": bool(launch_summary.get("metric_semantic_registry_passed")),
+        "workload_formula_semantics_passed": bool(launch_summary.get("workload_formula_semantics_passed")),
         "query_budget_gate_passed": bool(launch_summary.get("query_budget_gate_passed")),
         "encoding_hygiene_passed": bool(launch_summary.get("encoding_hygiene_passed")),
         "cleanup_passed": _gate_passed(matrix_rows, "cleanup_closure"),
@@ -2411,7 +2419,7 @@ def _release_notes_payload(
             "python -m mypy",
             "python -m compileall .overwatch_final tools tests",
             "python -m unittest tests.test_snowflake_execution_validation",
-            "python -m unittest tests.test_cost_db_formula_authority tests.test_cost_formula_authority",
+            "python -m unittest tests.test_cost_db_formula_authority tests.test_cost_formula_authority tests.test_cortex_service_types",
             "python -m unittest tests.test_launch_readiness",
             "python -m tools.contracts.encoding_hygiene",
             "python -m tools.contracts.cost_db_formula_authority",
@@ -3796,6 +3804,56 @@ def _metric_semantic_gate_results(payloads: Mapping[str, Any]) -> dict[str, Any]
     }
 
 
+def _full_app_formula_gate_results(
+    payloads: Mapping[str, Any],
+    *,
+    rel: str,
+    source: str,
+    proof_source: str,
+    failure_code: str,
+) -> dict[str, Any]:
+    artifact = _as_mapping(payloads.get(rel))
+    failures: list[dict[str, Any]] = []
+    if not artifact:
+        failures.append({"code": f"{failure_code}_MISSING", "artifact": rel})
+    elif not bool(artifact.get("passed")):
+        failures.extend(_as_list(artifact.get("failures")) or [{"code": f"{failure_code}_FAILED", "artifact": rel}])
+    return {
+        "source": source,
+        "proof_source": proof_source,
+        "passed": not failures,
+        "failure_count": len(failures),
+        "failures": failures,
+        "artifact": rel,
+        "raw_sql_included": False,
+    }
+
+
+def _formula_live_gate_results(profile: str, waivers: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    live_enabled = os.environ.get("OVERWATCH_SNOWFLAKE_VALIDATION") == "1" or os.environ.get("OVERWATCH_BILLING_RECONCILIATION_PROOF") == "1"
+    waiver_valid = _has_valid_waiver(waivers, "formula_live_validation")
+    required = profile in {"internal_live", "prod_candidate"}
+    skipped = not live_enabled
+    failures: list[dict[str, Any]] = []
+    if skipped and profile == "prod_candidate" and not waiver_valid:
+        failures.append({"code": "PROD_FORMULA_LIVE_VALIDATION_MISSING"})
+    if skipped and profile == "internal_live" and not waiver_valid:
+        failures.append({"code": "INTERNAL_LIVE_FORMULA_VALIDATION_SKIPPED_WITHOUT_OWNER"})
+    return {
+        "source": "launch_readiness_formula_live_gate",
+        "proof_source": "profile_gate",
+        "passed": not failures,
+        "failure_count": len(failures),
+        "failures": failures,
+        "live_enabled": live_enabled,
+        "live_required": required,
+        "skipped": skipped,
+        "skip_reason": "" if live_enabled else "OVERWATCH_SNOWFLAKE_VALIDATION/OVERWATCH_BILLING_RECONCILIATION_PROOF not enabled for local fixture run.",
+        "waived": waiver_valid,
+        "raw_sql_included": False,
+    }
+
+
 def _billing_reconciliation_gate_results(root: Path) -> dict[str, Any]:
     _ensure_app_root_on_path(root)
     import pandas as pd
@@ -3854,9 +3912,14 @@ def _billing_reconciliation_gate_results(root: Path) -> dict[str, Any]:
         },
         {
             "check_name": "account_total_not_warehouse_only",
-            "passed": summary["ACCOUNT_BILLED_CREDITS"] != summary["WAREHOUSE_CREDITS"]
-            and not bool(summary["WAREHOUSE_BRIDGE_IS_PRIMARY_TOTAL"]),
+            "passed": not bool(summary["WAREHOUSE_BRIDGE_IS_PRIMARY_TOTAL"])
+            and str(summary.get("BILLING_BRIDGE_STATUS") or "") in {"matched", "warehouse_lower_than_billed", "warehouse_higher_than_billed"},
             "recommendation": "Use warehouse metering as the bridge/breakdown only.",
+        },
+        {
+            "check_name": "signed_bridge_delta_preserved",
+            "passed": "BILLING_BRIDGE_DELTA_CREDITS" in summary and "BILLING_BRIDGE_DELTA_USD" in summary,
+            "recommendation": "Preserve signed account-vs-warehouse bridge deltas for latency/coverage review.",
         },
         {
             "check_name": "daily_labels_are_safe",
@@ -3979,9 +4042,13 @@ def _release_gate_matrix(
     summary_board_gate = _as_mapping(launch_artifacts.get("summary_board_gate_results"))
     billing_gate = _as_mapping(launch_artifacts.get("billing_reconciliation_gate_results"))
     billing_live_gate = _as_mapping(launch_artifacts.get("billing_reconciliation_live_gate_results"))
+    cortex_gate = _as_mapping(launch_artifacts.get("cortex_cost_consistency_gate_results"))
+    cost_chart_gate = _as_mapping(launch_artifacts.get("cost_chart_workbench_gate_results"))
     cost_db_formula_gate = _as_mapping(launch_artifacts.get("cost_db_formula_authority_gate_results"))
+    formula_live_gate = _as_mapping(launch_artifacts.get("formula_live_gate_results"))
     metric_semantic_gate = _as_mapping(launch_artifacts.get("metric_semantic_gate_results"))
     query_budget_gate = _as_mapping(launch_artifacts.get("query_budget_gate_results"))
+    workload_formula_gate = _as_mapping(launch_artifacts.get("workload_formula_gate_results"))
     rows = [
         {
             "gate": "launch_profile",
@@ -4030,6 +4097,30 @@ def _release_gate_matrix(
             "artifact": f"{LAUNCH_READINESS_DIR}/cost_db_formula_authority_gate_results.json",
             "passed": bool(cost_db_formula_gate.get("passed")),
             "failure_reason": "" if cost_db_formula_gate.get("passed") else "COST_DB formula authority mapping has gaps or unmapped OVERWATCH cost formulas.",
+        },
+        {
+            "gate": "cortex_cost_consistency",
+            "artifact": f"{LAUNCH_READINESS_DIR}/cortex_cost_consistency_gate_results.json",
+            "passed": bool(cortex_gate.get("passed")),
+            "failure_reason": "" if cortex_gate.get("passed") else "Executive and Cost Cortex spend formula consistency failed.",
+        },
+        {
+            "gate": "cost_chart_workbench",
+            "artifact": f"{LAUNCH_READINESS_DIR}/cost_chart_workbench_gate_results.json",
+            "passed": bool(cost_chart_gate.get("passed")),
+            "failure_reason": "" if cost_chart_gate.get("passed") else "COST_DB chart workbench proof failed or autoloads on first paint.",
+        },
+        {
+            "gate": "workload_formula_semantics",
+            "artifact": f"{LAUNCH_READINESS_DIR}/workload_formula_gate_results.json",
+            "passed": bool(workload_formula_gate.get("passed")),
+            "failure_reason": "" if workload_formula_gate.get("passed") else "Workload count/duration/risk formula semantics failed.",
+        },
+        {
+            "gate": "formula_live_validation",
+            "artifact": f"{LAUNCH_READINESS_DIR}/formula_live_gate_results.json",
+            "passed": bool(formula_live_gate.get("passed")),
+            "failure_reason": "" if formula_live_gate.get("passed") else "Live formula reconciliation is required for this launch profile or needs a signed waiver.",
         },
         {
             "gate": "metric_semantic_registry",
@@ -4252,6 +4343,32 @@ def evaluate_launch_readiness(
         or _billing_reconciliation_gate_results(root_path),
         "billing_reconciliation_live_gate_results": _as_mapping(launch_artifacts.get("billing_reconciliation_live_gate_results"))
         or _billing_reconciliation_live_gate_results(profile, launch_waiver_rows),
+        "cortex_cost_consistency_gate_results": _as_mapping(launch_artifacts.get("cortex_cost_consistency_gate_results"))
+        or _full_app_formula_gate_results(
+            payloads,
+            rel="artifacts/full_app_validation/cortex_cost_consistency_results.json",
+            source="launch_readiness_cortex_cost_consistency_gate",
+            proof_source="packet_formula_registry",
+            failure_code="CORTEX_COST_CONSISTENCY",
+        ),
+        "cost_chart_workbench_gate_results": _as_mapping(launch_artifacts.get("cost_chart_workbench_gate_results"))
+        or _full_app_formula_gate_results(
+            payloads,
+            rel="artifacts/full_app_validation/cost_chart_workbench_results.json",
+            source="launch_readiness_cost_chart_workbench_gate",
+            proof_source="explicit_action_contract",
+            failure_code="COST_CHART_WORKBENCH",
+        ),
+        "workload_formula_gate_results": _as_mapping(launch_artifacts.get("workload_formula_gate_results"))
+        or _full_app_formula_gate_results(
+            payloads,
+            rel="artifacts/full_app_validation/workload_formula_results.json",
+            source="launch_readiness_workload_formula_gate",
+            proof_source="metric_semantic_registry",
+            failure_code="WORKLOAD_FORMULA",
+        ),
+        "formula_live_gate_results": _as_mapping(launch_artifacts.get("formula_live_gate_results"))
+        or _formula_live_gate_results(profile, launch_waiver_rows),
         "query_budget_gate_results": _query_budget_gate_results(payloads),
         "encoding_hygiene_results": _as_mapping(payloads.get("artifacts/encoding_hygiene_results.json"))
         or _as_mapping(launch_artifacts.get("encoding_hygiene_results")),
@@ -4312,9 +4429,13 @@ def evaluate_launch_readiness(
     summary_board_gate = _as_mapping(launch_artifacts.get("summary_board_gate_results"))
     billing_gate = _as_mapping(launch_artifacts.get("billing_reconciliation_gate_results"))
     billing_live_gate = _as_mapping(launch_artifacts.get("billing_reconciliation_live_gate_results"))
+    cortex_gate = _as_mapping(launch_artifacts.get("cortex_cost_consistency_gate_results"))
+    cost_chart_gate = _as_mapping(launch_artifacts.get("cost_chart_workbench_gate_results"))
     cost_db_formula_gate = _as_mapping(launch_artifacts.get("cost_db_formula_authority_gate_results"))
+    formula_live_gate = _as_mapping(launch_artifacts.get("formula_live_gate_results"))
     metric_semantic_gate = _as_mapping(launch_artifacts.get("metric_semantic_gate_results"))
     query_budget_gate = _as_mapping(launch_artifacts.get("query_budget_gate_results"))
+    workload_formula_gate = _as_mapping(launch_artifacts.get("workload_formula_gate_results"))
     launch_summary = {
         "source": "launch_readiness",
         "proof_source": "runtime_click",
@@ -4356,13 +4477,22 @@ def evaluate_launch_readiness(
         "billing_reconciliation_live_passed": bool(billing_live_gate.get("passed")),
         "billing_reconciliation_live_skipped": bool(billing_live_gate.get("skipped")),
         "billing_reconciliation_live_required": bool(billing_live_gate.get("live_required")),
+        "cortex_cost_consistency_passed": bool(cortex_gate.get("passed")),
+        "cortex_cost_consistency_failure_count": _as_int(cortex_gate.get("failure_count")),
+        "cost_chart_workbench_passed": bool(cost_chart_gate.get("passed")),
+        "cost_chart_workbench_failure_count": _as_int(cost_chart_gate.get("failure_count")),
         "cost_db_formula_authority_passed": bool(cost_db_formula_gate.get("passed")),
         "cost_db_formula_authority_failure_count": _as_int(cost_db_formula_gate.get("failure_count")),
         "cost_db_formula_count": _as_int(cost_db_formula_gate.get("cost_db_formula_count")),
         "overwatch_formula_count": _as_int(cost_db_formula_gate.get("overwatch_formula_count")),
+        "formula_live_validation_passed": bool(formula_live_gate.get("passed")),
+        "formula_live_validation_skipped": bool(formula_live_gate.get("skipped")),
+        "formula_live_validation_required": bool(formula_live_gate.get("live_required")),
         "metric_semantic_registry_passed": bool(metric_semantic_gate.get("passed")),
         "metric_semantic_registry_failure_count": _as_int(metric_semantic_gate.get("failure_count")),
         "metric_semantic_registry_row_count": _as_int(metric_semantic_gate.get("registry_row_count")),
+        "workload_formula_semantics_passed": bool(workload_formula_gate.get("passed")),
+        "workload_formula_semantics_failure_count": _as_int(workload_formula_gate.get("failure_count")),
         "query_budget_gate_passed": bool(query_budget_gate.get("passed")),
         "query_budget_gate_failure_count": _as_int(query_budget_gate.get("failure_count")),
         "browser_or_snapshot_passed": _gate_passed(matrix, "browser_or_rendered_snapshot"),
@@ -4504,6 +4634,8 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
         formula_artifacts.get("artifacts/formula_authority/cost_db_formula_mapping.json"),
         formula_artifacts.get("artifacts/formula_authority/overwatch_formula_mapping.json"),
         formula_artifacts.get("artifacts/formula_authority/formula_gap_results.json"),
+        formula_artifacts.get("artifacts/formula_authority/cost_db_formula_authority_summary.json"),
+        formula_artifacts.get("artifacts/formula_authority/cortex_service_type_mapping.json"),
     )
     launch_artifacts["release_candidate_gate_results"] = {
         "source": "release_candidate_gate",
@@ -4543,6 +4675,28 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     launch_artifacts["summary_board_gate_results"] = _summary_board_gate_results(payloads)
     launch_artifacts["billing_reconciliation_gate_results"] = _billing_reconciliation_gate_results(root_path)
     launch_artifacts["billing_reconciliation_live_gate_results"] = _billing_reconciliation_live_gate_results(profile, waivers)
+    launch_artifacts["cortex_cost_consistency_gate_results"] = _full_app_formula_gate_results(
+        payloads,
+        rel="artifacts/full_app_validation/cortex_cost_consistency_results.json",
+        source="launch_readiness_cortex_cost_consistency_gate",
+        proof_source="packet_formula_registry",
+        failure_code="CORTEX_COST_CONSISTENCY",
+    )
+    launch_artifacts["cost_chart_workbench_gate_results"] = _full_app_formula_gate_results(
+        payloads,
+        rel="artifacts/full_app_validation/cost_chart_workbench_results.json",
+        source="launch_readiness_cost_chart_workbench_gate",
+        proof_source="explicit_action_contract",
+        failure_code="COST_CHART_WORKBENCH",
+    )
+    launch_artifacts["workload_formula_gate_results"] = _full_app_formula_gate_results(
+        payloads,
+        rel="artifacts/full_app_validation/workload_formula_results.json",
+        source="launch_readiness_workload_formula_gate",
+        proof_source="metric_semantic_registry",
+        failure_code="WORKLOAD_FORMULA",
+    )
+    launch_artifacts["formula_live_gate_results"] = _formula_live_gate_results(profile, waivers)
     launch_artifacts["metric_semantic_gate_results"] = _metric_semantic_gate_results(payloads)
     launch_artifacts["query_budget_gate_results"] = _query_budget_gate_results(payloads)
     raw_results, raw_failures = _raw_invariant_artifacts(root_path, payloads)

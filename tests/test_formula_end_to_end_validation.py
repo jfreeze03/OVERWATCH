@@ -26,7 +26,9 @@ class FormulaEndToEndValidationTests(unittest.TestCase):
             FORMULA_CHAIN_REL,
             FORMULA_GATE_REL,
             FORMULA_LIVE_REL,
+            FORMULA_VALUE_GATE_REL,
             FORMULA_VALUE_RECONCILIATION_REL,
+            FORMULA_VALUE_SOURCE_RECONCILIATION_REL,
             PACKET_SCHEMA_GATE_REL,
             PACKET_SCHEMA_UPGRADE_REL,
             PACKET_FORMULA_REL,
@@ -41,6 +43,7 @@ class FormulaEndToEndValidationTests(unittest.TestCase):
         for rel in (
             FORMULA_CHAIN_REL,
             FORMULA_VALUE_RECONCILIATION_REL,
+            FORMULA_VALUE_SOURCE_RECONCILIATION_REL,
             PACKET_FORMULA_REL,
             FLAT_PACKET_FORMULA_REL,
             SNOWFLAKE_FORMULA_STATIC_REL,
@@ -53,6 +56,7 @@ class FormulaEndToEndValidationTests(unittest.TestCase):
             CORTEX_SERVICE_TYPE_LIVE_REL,
             WORKLOAD_FORMULA_LIVE_REL,
             FORMULA_GATE_REL,
+            FORMULA_VALUE_GATE_REL,
             PACKET_SCHEMA_GATE_REL,
             SNOWFLAKE_FORMULA_GATE_REL,
             CORTEX_SERVICE_TYPE_GATE_REL,
@@ -138,16 +142,26 @@ class FormulaEndToEndValidationTests(unittest.TestCase):
         from tools.contracts.formula_end_to_end_validation import REQUIRED_PACKET_FIELDS
 
         value = self.artifacts["artifacts/formula_authority/formula_value_reconciliation_results.json"]
+        source = self.artifacts["artifacts/formula_authority/formula_value_source_reconciliation.json"]
 
         self.assertTrue(value["passed"], value)
+        self.assertTrue(source["passed"], source)
         self.assertEqual(value["formula_validation_mode"], "fixture_static")
         self.assertTrue(value["live_skipped"])
         self.assertFalse(value["live_executed"])
         by_field = {row["decision_packet_field"]: row for row in value["rows"]}
+        source_by_field = {row["decision_packet_field"]: row for row in source["rows"]}
         self.assertEqual(set(REQUIRED_PACKET_FIELDS), set(by_field))
         for field, row in by_field.items():
+            self.assertIn(field, source_by_field)
             self.assertIn("source_rows_present", row, field)
             self.assertIn("source_confirmed_zero", row, field)
+            self.assertIn("packet_value_source", row, field)
+            self.assertIn("flat_value_source", row, field)
+            self.assertIn("rendered_value_source", row, field)
+            self.assertIn("chart_value_source", row, field)
+            self.assertIn("export_value_source", row, field)
+            self.assertIn("case_value_source", row, field)
             self.assertIn("packet_matches_flat", row, field)
             self.assertIn("flat_matches_rendered", row, field)
             self.assertTrue(row["packet_matches_flat"], row)
@@ -156,8 +170,123 @@ class FormulaEndToEndValidationTests(unittest.TestCase):
             self.assertTrue(row["selected_credit_price"], row)
             self.assertTrue(row["passed"], row)
 
+    def test_formula_value_source_reconciliation_rejects_synthetic_only_live_proof(self):
+        from tools.contracts.formula_end_to_end_validation import (
+            FLAT_PACKET_FORMULA_REL,
+            PACKET_FORMULA_REL,
+            RENDERED_FORMULA_REL,
+            build_formula_value_source_reconciliation_results,
+        )
+
+        chain = {
+            "passed": True,
+            "failure_count": 0,
+            "rows": [
+                {
+                    "formula_id": "account_billed_total",
+                    "decision_packet_field": "ACCOUNT_BILLED_COST_USD",
+                    "flat_packet_field": "ACCOUNT_BILLED_COST_USD",
+                    "selected_credit_column": "CREDITS_BILLED",
+                    "selected_credit_price": "CREDIT_PRICE_USD",
+                    "source_rows_present": True,
+                    "source_confirmed_zero": False,
+                    "fixture_expected_value": 36.8,
+                    "tolerance": 0.01,
+                    "raw_sql_included": False,
+                }
+            ],
+        }
+
+        result = build_formula_value_source_reconciliation_results(
+            chain,
+            root=ROOT,
+            launch_profile="internal_live",
+            artifact_payloads={
+                PACKET_FORMULA_REL: {
+                    "rows": [
+                        {
+                            "packet_field": "ACCOUNT_BILLED_COST_USD",
+                            "packet_value": 36.8,
+                            "packet_value_source": "fixture_expected_value",
+                        }
+                    ]
+                },
+                FLAT_PACKET_FORMULA_REL: {
+                    "rows": [
+                        {
+                            "flat_packet_field": "ACCOUNT_BILLED_COST_USD",
+                            "flat_value": 36.8,
+                            "flat_value_source": "fixture_expected_value",
+                        }
+                    ]
+                },
+                RENDERED_FORMULA_REL: {
+                    "value_checks": [
+                        {
+                            "packet_field": "ACCOUNT_BILLED_COST_USD",
+                            "rendered_value": 36.8,
+                            "rendered_value_source": "fixture_expected_value",
+                        }
+                    ]
+                },
+            },
+        )
+
+        self.assertFalse(result["passed"], result)
+        self.assertIn("fixture", result["rows"][0]["failure_reason"])
+
+    def test_formula_value_source_reconciliation_prefers_artifact_values(self):
+        from tools.contracts.formula_end_to_end_validation import (
+            FLAT_PACKET_FORMULA_REL,
+            PACKET_FORMULA_REL,
+            RENDERED_FORMULA_REL,
+            build_formula_value_source_reconciliation_results,
+        )
+
+        chain = {
+            "passed": True,
+            "failure_count": 0,
+            "rows": [
+                {
+                    "formula_id": "account_billed_total",
+                    "decision_packet_field": "ACCOUNT_BILLED_COST_USD",
+                    "flat_packet_field": "ACCOUNT_BILLED_COST_USD",
+                    "selected_credit_column": "CREDITS_BILLED",
+                    "selected_credit_price": "CREDIT_PRICE_USD",
+                    "source_rows_present": True,
+                    "source_confirmed_zero": False,
+                    "fixture_expected_value": 36.8,
+                    "tolerance": 0.01,
+                    "raw_sql_included": False,
+                }
+            ],
+        }
+        payloads = {
+            PACKET_FORMULA_REL: {"rows": [{"packet_field": "ACCOUNT_BILLED_COST_USD", "packet_value": 42.0}]},
+            FLAT_PACKET_FORMULA_REL: {"rows": [{"flat_packet_field": "ACCOUNT_BILLED_COST_USD", "flat_value": 42.0}]},
+            RENDERED_FORMULA_REL: {"value_checks": [{"packet_field": "ACCOUNT_BILLED_COST_USD", "rendered_value": 42.0}]},
+        }
+
+        result = build_formula_value_source_reconciliation_results(
+            chain,
+            root=ROOT,
+            launch_profile="internal_fixture",
+            artifact_payloads=payloads,
+        )
+
+        self.assertTrue(result["passed"], result)
+        row = result["rows"][0]
+        self.assertEqual(row["packet_value"], 42.0)
+        self.assertIn(PACKET_FORMULA_REL, row["packet_value_source"])
+        self.assertIn(RENDERED_FORMULA_REL, row["rendered_value_source"])
+
     def test_formula_value_reconciliation_rejects_missing_source_zero(self):
-        from tools.contracts.formula_end_to_end_validation import build_formula_value_reconciliation_results
+        from tools.contracts.formula_end_to_end_validation import (
+            FLAT_PACKET_FORMULA_REL,
+            PACKET_FORMULA_REL,
+            RENDERED_FORMULA_REL,
+            build_formula_value_reconciliation_results,
+        )
 
         chain = {
             "passed": True,
@@ -182,13 +311,26 @@ class FormulaEndToEndValidationTests(unittest.TestCase):
             ],
         }
 
-        result = build_formula_value_reconciliation_results(chain, launch_profile="internal_fixture")
+        result = build_formula_value_reconciliation_results(
+            chain,
+            launch_profile="internal_fixture",
+            artifact_payloads={
+                PACKET_FORMULA_REL: {"rows": [{"packet_field": "ACCOUNT_BILLED_COST_USD", "packet_value": 0}]},
+                FLAT_PACKET_FORMULA_REL: {"rows": [{"flat_packet_field": "ACCOUNT_BILLED_COST_USD", "flat_value": 0}]},
+                RENDERED_FORMULA_REL: {"value_checks": [{"packet_field": "ACCOUNT_BILLED_COST_USD", "rendered_value": 0}]},
+            },
+        )
 
         self.assertFalse(result["passed"], result)
         self.assertIn("source rows are missing", result["rows"][0]["failure_reason"])
 
     def test_formula_value_reconciliation_rejects_null_packet_with_source_rows(self):
-        from tools.contracts.formula_end_to_end_validation import build_formula_value_reconciliation_results
+        from tools.contracts.formula_end_to_end_validation import (
+            FLAT_PACKET_FORMULA_REL,
+            PACKET_FORMULA_REL,
+            RENDERED_FORMULA_REL,
+            build_formula_value_reconciliation_results,
+        )
 
         chain = {
             "passed": True,
@@ -213,7 +355,15 @@ class FormulaEndToEndValidationTests(unittest.TestCase):
             ],
         }
 
-        result = build_formula_value_reconciliation_results(chain, launch_profile="internal_fixture")
+        result = build_formula_value_reconciliation_results(
+            chain,
+            launch_profile="internal_fixture",
+            artifact_payloads={
+                PACKET_FORMULA_REL: {"rows": [{"packet_field": "ACCOUNT_BILLED_COST_USD", "packet_value": None}]},
+                FLAT_PACKET_FORMULA_REL: {"rows": [{"flat_packet_field": "ACCOUNT_BILLED_COST_USD", "flat_value": None}]},
+                RENDERED_FORMULA_REL: {"value_checks": [{"packet_field": "ACCOUNT_BILLED_COST_USD", "rendered_value": None}]},
+            },
+        )
 
         self.assertFalse(result["passed"], result)
         self.assertIn("FORMULA_VALUE_RECONCILIATION_FAILED", {row["code"] for row in result["failures"]})
@@ -306,13 +456,17 @@ class FormulaEndToEndValidationTests(unittest.TestCase):
 
     def test_formula_gate_recomputes_new_sub_gates(self):
         gate = self.artifacts["artifacts/launch_readiness/formula_end_to_end_gate_results.json"]
+        value_gate = self.artifacts["artifacts/launch_readiness/formula_value_gate_results.json"]
 
         self.assertTrue(gate["passed"], gate)
+        self.assertTrue(value_gate["passed"], value_gate)
         self.assertTrue(gate["packet_formula_sql_passed"])
         self.assertTrue(gate["flat_packet_formula_passed"])
         self.assertTrue(gate["snowflake_formula_static_passed"])
         self.assertTrue(gate["packet_schema_upgrade_passed"])
         self.assertTrue(gate["formula_value_reconciliation_passed"])
+        self.assertTrue(gate["formula_value_source_reconciliation_passed"])
+        self.assertGreaterEqual(gate["formula_value_artifact_sourced_row_count"], 1)
         self.assertEqual(gate["formula_validation_mode"], "fixture_static")
         self.assertFalse(gate["snowflake_formula_live_required"])
         self.assertFalse(gate["snowflake_formula_live_executed"])

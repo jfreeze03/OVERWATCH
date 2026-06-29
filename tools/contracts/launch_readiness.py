@@ -35,7 +35,9 @@ from tools.contracts.formula_end_to_end_validation import (
     CORTEX_SERVICE_TYPE_GATE_REL,
     FLAT_PACKET_FORMULA_REL,
     FORMULA_GATE_REL,
+    FORMULA_VALUE_GATE_REL,
     FORMULA_VALUE_RECONCILIATION_REL,
+    FORMULA_VALUE_SOURCE_RECONCILIATION_REL,
     PACKET_SCHEMA_GATE_REL,
     PACKET_SCHEMA_UPGRADE_REL,
     evaluate_cortex_service_type_gate,
@@ -92,7 +94,9 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     CORTEX_SERVICE_TYPE_GATE_REL,
     f"{LAUNCH_READINESS_DIR}/cost_db_formula_authority_gate_results.json",
     FORMULA_GATE_REL,
+    FORMULA_VALUE_GATE_REL,
     FORMULA_VALUE_RECONCILIATION_REL,
+    FORMULA_VALUE_SOURCE_RECONCILIATION_REL,
     PACKET_SCHEMA_GATE_REL,
     SNOWFLAKE_FORMULA_GATE_REL,
     SNOWFLAKE_FORMULA_VALUE_REL,
@@ -100,6 +104,8 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     f"{LAUNCH_READINESS_DIR}/metric_semantic_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/query_budget_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/workload_formula_gate_results.json",
+    f"{LAUNCH_READINESS_DIR}/cost_advisor_gate_results.json",
+    f"{LAUNCH_READINESS_DIR}/date_widget_regression_results.json",
     f"{LAUNCH_READINESS_DIR}/snowflake_raw_validation_recheck.json",
     f"{LAUNCH_READINESS_DIR}/snowflake_validation_failures.json",
     f"{LAUNCH_READINESS_DIR}/ci_run_review_results.json",
@@ -2327,6 +2333,16 @@ def _release_candidate_summary_bundle(
             "artifact": FORMULA_VALUE_RECONCILIATION_REL,
         },
         {
+            "gate": "formula_value_source_reconciliation",
+            "passed": bool(launch_summary.get("formula_value_source_reconciliation_passed")),
+            "artifact": FORMULA_VALUE_SOURCE_RECONCILIATION_REL,
+        },
+        {
+            "gate": "formula_value_gate",
+            "passed": bool(launch_summary.get("formula_value_source_reconciliation_passed")),
+            "artifact": FORMULA_VALUE_GATE_REL,
+        },
+        {
             "gate": "packet_schema_upgrade",
             "passed": bool(launch_summary.get("packet_schema_upgrade_passed")),
             "artifact": PACKET_SCHEMA_GATE_REL,
@@ -2359,6 +2375,16 @@ def _release_candidate_summary_bundle(
             "gate": "metric_semantic_registry",
             "passed": bool(launch_summary.get("metric_semantic_registry_passed")),
             "artifact": f"{LAUNCH_READINESS_DIR}/metric_semantic_gate_results.json",
+        },
+        {
+            "gate": "cost_advisor_value_at_risk",
+            "passed": bool(launch_summary.get("cost_advisor_value_at_risk_passed")),
+            "artifact": f"{LAUNCH_READINESS_DIR}/cost_advisor_gate_results.json",
+        },
+        {
+            "gate": "date_widget_regression",
+            "passed": bool(launch_summary.get("date_widget_regression_passed")),
+            "artifact": f"{LAUNCH_READINESS_DIR}/date_widget_regression_results.json",
         },
     ]
     release_matrix.extend(
@@ -4012,6 +4038,57 @@ def _full_app_formula_gate_results(
     }
 
 
+def _date_widget_regression_results(root: Path) -> dict[str, Any]:
+    def read_text(path: Path) -> str:
+        try:
+            return path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return ""
+
+    filters_text = read_text(root / ".overwatch_final/filters.py")
+    runtime_state_text = read_text(root / ".overwatch_final/runtime_state.py")
+    checks = [
+        {
+            "check_name": "date_widget_render_tracking_used",
+            "passed": "widget_key_rendered_this_run(GLOBAL_DATE_RANGE_INPUT)" in filters_text
+            and "mark_widget_key_rendered(GLOBAL_DATE_RANGE_INPUT)" in filters_text,
+            "recommendation": "Track the date widget key during a script run before any duplicate render path.",
+        },
+        {
+            "check_name": "list_state_normalized_before_widget",
+            "passed": "isinstance(raw_existing_date_range, list)" in filters_text
+            and "set_state(GLOBAL_DATE_RANGE_INPUT, existing_date_range)" in filters_text,
+            "recommendation": "Normalize list/tuple date state before st.date_input is instantiated.",
+        },
+        {
+            "check_name": "canonical_dates_update_after_widget",
+            "passed": "set_state(GLOBAL_START_DATE, clamped_start)" in filters_text
+            and "set_state(GLOBAL_END_DATE, clamped_end)" in filters_text,
+            "recommendation": "Only canonical start/end state should update after the widget returns a complete range.",
+        },
+        {
+            "check_name": "widget_tracking_resets_per_run",
+            "passed": "def reset_widget_render_tracking" in runtime_state_text
+            and "reset_widget_render_tracking()" in runtime_state_text,
+            "recommendation": "Clear rendered widget key tracking once per Streamlit script run.",
+        },
+    ]
+    failures = [
+        {"code": "DATE_WIDGET_REGRESSION_CHECK_FAILED", "check_name": row["check_name"]}
+        for row in checks
+        if not bool(row.get("passed"))
+    ]
+    return {
+        "source": "date_widget_regression",
+        "proof_source": "static_widget_state_contract",
+        "passed": not failures,
+        "failure_count": len(failures),
+        "failures": failures,
+        "checks": checks,
+        "raw_sql_included": False,
+    }
+
+
 def _formula_live_gate_results(profile: str, waivers: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     live_enabled = os.environ.get("OVERWATCH_SNOWFLAKE_VALIDATION") == "1" or os.environ.get("OVERWATCH_BILLING_RECONCILIATION_PROOF") == "1"
     waiver_valid = _has_valid_waiver(waivers, "formula_live_validation")
@@ -4233,8 +4310,10 @@ def _release_gate_matrix(
     billing_live_gate = _as_mapping(launch_artifacts.get("billing_reconciliation_live_gate_results"))
     cortex_gate = _as_mapping(launch_artifacts.get("cortex_cost_consistency_gate_results"))
     cost_chart_gate = _as_mapping(launch_artifacts.get("cost_chart_workbench_gate_results"))
+    cost_advisor_gate = _as_mapping(launch_artifacts.get("cost_advisor_gate_results"))
     cost_db_formula_gate = _as_mapping(launch_artifacts.get("cost_db_formula_authority_gate_results"))
     formula_end_gate = _as_mapping(launch_artifacts.get("formula_end_to_end_gate_results"))
+    formula_value_gate = _as_mapping(launch_artifacts.get("formula_value_gate_results"))
     packet_schema_gate = _as_mapping(launch_artifacts.get("packet_schema_gate_results"))
     snowflake_formula_gate = _as_mapping(launch_artifacts.get("snowflake_formula_gate_results"))
     cortex_service_type_gate = _as_mapping(launch_artifacts.get("cortex_service_type_gate_results"))
@@ -4242,6 +4321,7 @@ def _release_gate_matrix(
     metric_semantic_gate = _as_mapping(launch_artifacts.get("metric_semantic_gate_results"))
     query_budget_gate = _as_mapping(launch_artifacts.get("query_budget_gate_results"))
     workload_formula_gate = _as_mapping(launch_artifacts.get("workload_formula_gate_results"))
+    date_widget_gate = _as_mapping(launch_artifacts.get("date_widget_regression_results"))
     rows = [
         {
             "gate": "launch_profile",
@@ -4306,6 +4386,15 @@ def _release_gate_matrix(
             else "Formula values do not reconcile through packet, flat, rendered, and expected value surfaces.",
         },
         {
+            "gate": "formula_value_source_reconciliation",
+            "artifact": FORMULA_VALUE_SOURCE_RECONCILIATION_REL,
+            "passed": bool(formula_value_gate.get("passed"))
+            and bool(formula_end_gate.get("formula_value_source_reconciliation_passed")),
+            "failure_reason": ""
+            if formula_value_gate.get("passed")
+            else "Formula values are missing artifact source provenance or rely on synthetic fixture-only proof.",
+        },
+        {
             "gate": "packet_schema_upgrade",
             "artifact": PACKET_SCHEMA_GATE_REL,
             "passed": bool(packet_schema_gate.get("passed")),
@@ -4342,6 +4431,18 @@ def _release_gate_matrix(
             "artifact": CORTEX_SERVICE_TYPE_GATE_REL,
             "passed": bool(cortex_service_type_gate.get("passed")),
             "failure_reason": "" if cortex_service_type_gate.get("passed") else "Cortex spend service-type allowlist or live/static mapping proof failed.",
+        },
+        {
+            "gate": "cost_advisor_value_at_risk",
+            "artifact": f"{LAUNCH_READINESS_DIR}/cost_advisor_gate_results.json",
+            "passed": bool(cost_advisor_gate.get("passed")),
+            "failure_reason": "" if cost_advisor_gate.get("passed") else "Cost Advisor pressure rows must render value at risk and carry queue/spill evidence.",
+        },
+        {
+            "gate": "date_widget_regression",
+            "artifact": f"{LAUNCH_READINESS_DIR}/date_widget_regression_results.json",
+            "passed": bool(date_widget_gate.get("passed")),
+            "failure_reason": "" if date_widget_gate.get("passed") else "Global date widget state can still mutate after widget instantiation.",
         },
         {
             "gate": "cortex_cost_consistency",
@@ -4626,6 +4727,7 @@ def evaluate_launch_readiness(
             _as_mapping(payloads.get("artifacts/snowflake_validation/cortex_service_type_live_results.json")),
             _as_mapping(payloads.get("artifacts/snowflake_validation/workload_formula_live_results.json")),
             _as_mapping(payloads.get(SNOWFLAKE_FORMULA_VALUE_REL)),
+            _as_mapping(payloads.get(FORMULA_VALUE_SOURCE_RECONCILIATION_REL)),
         ),
         "packet_schema_gate_results": _as_mapping(launch_artifacts.get("packet_schema_gate_results"))
         or evaluate_packet_schema_gate(_as_mapping(payloads.get(PACKET_SCHEMA_UPGRADE_REL))),
@@ -4704,8 +4806,10 @@ def evaluate_launch_readiness(
     billing_live_gate = _as_mapping(launch_artifacts.get("billing_reconciliation_live_gate_results"))
     cortex_gate = _as_mapping(launch_artifacts.get("cortex_cost_consistency_gate_results"))
     cost_chart_gate = _as_mapping(launch_artifacts.get("cost_chart_workbench_gate_results"))
+    cost_advisor_gate = _as_mapping(launch_artifacts.get("cost_advisor_gate_results"))
     cost_db_formula_gate = _as_mapping(launch_artifacts.get("cost_db_formula_authority_gate_results"))
     formula_end_gate = _as_mapping(launch_artifacts.get("formula_end_to_end_gate_results"))
+    formula_value_gate = _as_mapping(launch_artifacts.get("formula_value_gate_results"))
     packet_schema_gate = _as_mapping(launch_artifacts.get("packet_schema_gate_results"))
     snowflake_formula_gate = _as_mapping(launch_artifacts.get("snowflake_formula_gate_results"))
     cortex_service_type_gate = _as_mapping(launch_artifacts.get("cortex_service_type_gate_results"))
@@ -4713,6 +4817,7 @@ def evaluate_launch_readiness(
     metric_semantic_gate = _as_mapping(launch_artifacts.get("metric_semantic_gate_results"))
     query_budget_gate = _as_mapping(launch_artifacts.get("query_budget_gate_results"))
     workload_formula_gate = _as_mapping(launch_artifacts.get("workload_formula_gate_results"))
+    date_widget_gate = _as_mapping(launch_artifacts.get("date_widget_regression_results"))
     launch_summary = {
         "source": "launch_readiness",
         "proof_source": "runtime_click",
@@ -4766,6 +4871,14 @@ def evaluate_launch_readiness(
         "formula_end_to_end_failure_count": _as_int(formula_end_gate.get("failure_count")),
         "formula_value_reconciliation_passed": bool(formula_end_gate.get("formula_value_reconciliation_passed")),
         "formula_value_reconciliation_failure_count": _as_int(formula_end_gate.get("formula_value_reconciliation_failure_count")),
+        "formula_value_source_reconciliation_passed": bool(formula_value_gate.get("passed"))
+        and bool(formula_end_gate.get("formula_value_source_reconciliation_passed")),
+        "formula_value_source_reconciliation_failure_count": _as_int(
+            formula_value_gate.get("failure_count")
+            or formula_end_gate.get("formula_value_source_reconciliation_failure_count")
+        ),
+        "formula_value_artifact_sourced_row_count": _as_int(formula_end_gate.get("formula_value_artifact_sourced_row_count")),
+        "formula_value_synthetic_only_row_count": _as_int(formula_end_gate.get("formula_value_synthetic_only_row_count")),
         "formula_validation_mode": str(formula_end_gate.get("formula_validation_mode") or ""),
         "packet_formula_sql_passed": bool(formula_end_gate.get("packet_formula_sql_passed")),
         "flat_packet_formula_passed": bool(formula_end_gate.get("flat_packet_formula_passed")),
@@ -4784,6 +4897,10 @@ def evaluate_launch_readiness(
         "snowflake_formula_gate_passed": bool(snowflake_formula_gate.get("passed")),
         "snowflake_formula_gate_failure_count": _as_int(snowflake_formula_gate.get("failure_count")),
         "rendered_formula_passed": bool(formula_end_gate.get("rendered_formula_passed")),
+        "cost_advisor_value_at_risk_passed": bool(cost_advisor_gate.get("passed")),
+        "cost_advisor_value_at_risk_failure_count": _as_int(cost_advisor_gate.get("failure_count")),
+        "date_widget_regression_passed": bool(date_widget_gate.get("passed")),
+        "date_widget_regression_failure_count": _as_int(date_widget_gate.get("failure_count")),
         "cortex_service_type_gate_passed": bool(cortex_service_type_gate.get("passed")),
         "cortex_service_type_failure_count": _as_int(cortex_service_type_gate.get("failure_count")),
         "cortex_unknown_service_type_count": _as_int(cortex_service_type_gate.get("unknown_service_type_count")),
@@ -4968,6 +5085,7 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     formula_end_to_end_artifacts = write_formula_end_to_end_artifacts(root_path)
     payloads.update(formula_end_to_end_artifacts)
     launch_artifacts["formula_end_to_end_gate_results"] = formula_end_to_end_artifacts[FORMULA_GATE_REL]
+    launch_artifacts["formula_value_gate_results"] = formula_end_to_end_artifacts[FORMULA_VALUE_GATE_REL]
     launch_artifacts["packet_schema_gate_results"] = formula_end_to_end_artifacts[PACKET_SCHEMA_GATE_REL]
     launch_artifacts["snowflake_formula_gate_results"] = formula_end_to_end_artifacts[SNOWFLAKE_FORMULA_GATE_REL]
     launch_artifacts["cortex_service_type_gate_results"] = formula_end_to_end_artifacts[CORTEX_SERVICE_TYPE_GATE_REL]
@@ -5004,6 +5122,13 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
         proof_source="explicit_action_contract",
         failure_code="COST_CHART_WORKBENCH",
     )
+    launch_artifacts["cost_advisor_gate_results"] = _full_app_formula_gate_results(
+        payloads,
+        rel="artifacts/full_app_validation/cost_advisor_value_at_risk_results.json",
+        source="launch_readiness_cost_advisor_value_at_risk_gate",
+        proof_source="advisor_actionability_contract",
+        failure_code="COST_ADVISOR_VALUE_AT_RISK",
+    )
     launch_artifacts["workload_formula_gate_results"] = _full_app_formula_gate_results(
         payloads,
         rel="artifacts/full_app_validation/workload_formula_results.json",
@@ -5012,6 +5137,7 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
         failure_code="WORKLOAD_FORMULA",
     )
     launch_artifacts["formula_live_gate_results"] = _formula_live_gate_results(profile, waivers)
+    launch_artifacts["date_widget_regression_results"] = _date_widget_regression_results(root_path)
     launch_artifacts["metric_semantic_gate_results"] = _metric_semantic_gate_results(payloads)
     launch_artifacts["query_budget_gate_results"] = _query_budget_gate_results(payloads)
     raw_results, raw_failures = _raw_invariant_artifacts(root_path, payloads)

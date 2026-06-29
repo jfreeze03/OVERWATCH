@@ -16,6 +16,7 @@ COST_DB_AUTHORITY_SUMMARY_REL = f"{FORMULA_AUTHORITY_DIR}/cost_db_formula_author
 CORTEX_SERVICE_TYPE_MAPPING_REL = f"{FORMULA_AUTHORITY_DIR}/cortex_service_type_mapping.json"
 FORMULA_CHAIN_REL = f"{FORMULA_AUTHORITY_DIR}/formula_chain_results.json"
 FORMULA_VALUE_RECONCILIATION_REL = f"{FORMULA_AUTHORITY_DIR}/formula_value_reconciliation_results.json"
+FORMULA_VALUE_SOURCE_RECONCILIATION_REL = f"{FORMULA_AUTHORITY_DIR}/formula_value_source_reconciliation.json"
 PACKET_FORMULA_REL = f"{FORMULA_AUTHORITY_DIR}/packet_formula_results.json"
 FLAT_PACKET_FORMULA_REL = f"{FORMULA_AUTHORITY_DIR}/flat_packet_formula_results.json"
 SNOWFLAKE_FORMULA_STATIC_REL = f"{FORMULA_AUTHORITY_DIR}/snowflake_formula_static_results.json"
@@ -26,6 +27,7 @@ REQUIRED_FORMULA_AUTHORITY_ARTIFACTS = {
     FLAT_PACKET_FORMULA_REL,
     FORMULA_CHAIN_REL,
     FORMULA_VALUE_RECONCILIATION_REL,
+    FORMULA_VALUE_SOURCE_RECONCILIATION_REL,
     OVERWATCH_MAPPING_REL,
     PACKET_FORMULA_REL,
     FORMULA_GAP_REL,
@@ -61,6 +63,7 @@ def write_cost_db_formula_authority_artifacts(root: Path | str = ".") -> dict[st
     from tools.contracts.formula_end_to_end_validation import (
         build_formula_chain_results,
         build_formula_value_reconciliation_results,
+        build_formula_value_source_reconciliation_results,
         build_snowflake_formula_static_results,
         evaluate_flat_packet_formula_sql,
         evaluate_packet_formula_sql,
@@ -72,7 +75,12 @@ def write_cost_db_formula_authority_artifacts(root: Path | str = ".") -> dict[st
     authority_summary = cost_formula_authority_results()
     cortex_mapping = cortex_service_type_mapping_results()
     formula_chain = build_formula_chain_results(root_path)
-    formula_value_reconciliation = build_formula_value_reconciliation_results(formula_chain)
+    formula_value_source_reconciliation = build_formula_value_source_reconciliation_results(formula_chain, root=root_path)
+    formula_value_reconciliation = build_formula_value_reconciliation_results(
+        formula_chain,
+        root=root_path,
+        value_source_reconciliation=formula_value_source_reconciliation,
+    )
     packet_formula = evaluate_packet_formula_sql(root_path)
     flat_packet_formula = evaluate_flat_packet_formula_sql(root_path)
     snowflake_formula_static = build_snowflake_formula_static_results(root_path)
@@ -83,6 +91,7 @@ def write_cost_db_formula_authority_artifacts(root: Path | str = ".") -> dict[st
         FLAT_PACKET_FORMULA_REL: flat_packet_formula,
         FORMULA_CHAIN_REL: formula_chain,
         FORMULA_VALUE_RECONCILIATION_REL: formula_value_reconciliation,
+        FORMULA_VALUE_SOURCE_RECONCILIATION_REL: formula_value_source_reconciliation,
         OVERWATCH_MAPPING_REL: overwatch_rows,
         PACKET_FORMULA_REL: packet_formula,
         FORMULA_GAP_REL: gap_results,

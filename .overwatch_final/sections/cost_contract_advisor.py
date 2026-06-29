@@ -661,6 +661,72 @@ def _build_cost_advisor_board(
     }, board
 
 
+def cost_advisor_value_at_risk_results() -> dict[str, object]:
+    """Return launch-proof rows for pressure findings that are not savings estimates."""
+
+    _, board = _build_cost_advisor_board(
+        efficiency_summary=None,
+        warehouse_efficiency=pd.DataFrame({
+            "WAREHOUSE_NAME": ["COMPUTE_WH"],
+            "COST_USD": [280.0],
+            "QUEUE_SECONDS": [1250.0],
+            "REMOTE_SPILL_GB": [14.5],
+            "LOCAL_SPILL_GB": [32.0],
+            "FAILED_QUERY_WASTE_USD": [0.0],
+            "QUERY_COUNT": [44],
+            "AVG_CACHE_PCT": [70.0],
+        }),
+        clustering_cost=None,
+        reconciliation=None,
+        service_lens=None,
+        credit_price=3.0,
+        days=7,
+    )
+    rows = board.to_dict(orient="records") if _looks_like_frame(board) else []
+    required_fields = {
+        "VALUE_AT_RISK_USD",
+        "QUEUE_PRESSURE_SECONDS",
+        "LOCAL_SPILL_BYTES",
+        "REMOTE_SPILL_BYTES",
+        "SAVINGS_ESTIMATE_STATUS",
+        "IMPACT_FORMULA",
+        "IMPACT_REASON",
+    }
+    failures: list[dict[str, object]] = []
+    for row in rows:
+        missing = sorted(field for field in required_fields if field not in row)
+        primary_metric = str(row.get("PRIMARY_METRIC") or "")
+        savings = safe_float(row.get("EST_MONTHLY_SAVINGS_USD"))
+        value_at_risk = safe_float(row.get("VALUE_AT_RISK_USD"))
+        queue = safe_float(row.get("QUEUE_PRESSURE_SECONDS"))
+        local_spill = safe_float(row.get("LOCAL_SPILL_BYTES"))
+        remote_spill = safe_float(row.get("REMOTE_SPILL_BYTES"))
+        if missing:
+            failures.append({"code": "COST_ADVISOR_VALUE_AT_RISK_FIELD_MISSING", "missing_fields": missing})
+        if value_at_risk <= 0:
+            failures.append({"code": "COST_ADVISOR_VALUE_AT_RISK_MISSING", "entity": row.get("ENTITY")})
+        if savings == 0 and primary_metric.strip() == "$0/mo savings":
+            failures.append({"code": "COST_ADVISOR_PRESSURE_RENDERED_AS_ZERO_SAVINGS", "entity": row.get("ENTITY")})
+        if queue <= 0 and local_spill <= 0 and remote_spill <= 0:
+            failures.append({"code": "COST_ADVISOR_PRESSURE_EVIDENCE_MISSING", "entity": row.get("ENTITY")})
+        if str(row.get("SAVINGS_ESTIMATE_STATUS") or "") != "pressure_evidence_no_savings_formula":
+            failures.append({"code": "COST_ADVISOR_SAVINGS_STATUS_MISSING", "entity": row.get("ENTITY")})
+    return {
+        "source": "cost_advisor_value_at_risk",
+        "proof_source": "advisor_fixture_pressure_rows",
+        "passed": not failures,
+        "failure_count": len(failures),
+        "failures": failures,
+        "row_count": len(rows),
+        "required_export_case_fields": sorted(required_fields),
+        "export_case_fields_present": all(not (required_fields - set(row)) for row in rows),
+        "pressure_rows_render_value_at_risk": all("value at risk" in str(row.get("PRIMARY_METRIC") or "").lower() for row in rows),
+        "pressure_rows_render_fake_zero_savings": any(str(row.get("PRIMARY_METRIC") or "").strip() == "$0/mo savings" for row in rows),
+        "rows": rows,
+        "raw_sql_included": False,
+    }
+
+
 def _cost_advisor_category_summary(board: pd.DataFrame | None) -> pd.DataFrame:
     columns = [
         "CATEGORY", "TOP_PRIORITY", "FINDINGS", "HIGH_FINDINGS",

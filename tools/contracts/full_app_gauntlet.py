@@ -51,6 +51,7 @@ REQUIRED_FULL_APP_GAUNTLET_ARTIFACTS = {
     "artifacts/full_app_validation/cortex_cost_consistency_results.json",
     "artifacts/full_app_validation/cost_chart_workbench_results.json",
     "artifacts/full_app_validation/cost_workbench_chart_results.json",
+    "artifacts/full_app_validation/cost_advisor_value_at_risk_results.json",
     "artifacts/full_app_validation/rendered_formula_results.json",
     "artifacts/full_app_validation/summary_metric_consistency_results.json",
     "artifacts/full_app_validation/workload_formula_results.json",
@@ -167,6 +168,7 @@ def _write_formula_consistency_artifacts(root: Path) -> dict[str, Any]:
     app_root_text = str(app_root)
     if app_root_text not in sys.path:
         sys.path.insert(0, app_root_text)
+    from sections.cost_contract_advisor import cost_advisor_value_at_risk_results
     from sections.cost_contract_charts import cost_db_chart_pattern_results
     from tools.contracts.formula_end_to_end_validation import (
         build_rendered_formula_results,
@@ -249,6 +251,7 @@ def _write_formula_consistency_artifacts(root: Path) -> dict[str, Any]:
         "raw_sql_included": False,
     }
     charts = cost_db_chart_pattern_results()
+    advisor_value_at_risk = cost_advisor_value_at_risk_results()
     rendered_formula = build_rendered_formula_results(root)
     workload_live = build_workload_formula_live_results(root)
     workload["live_or_fixture_validation"] = workload_live
@@ -256,6 +259,7 @@ def _write_formula_consistency_artifacts(root: Path) -> dict[str, Any]:
         "artifacts/full_app_validation/cortex_cost_consistency_results.json": cortex,
         "artifacts/full_app_validation/cost_chart_workbench_results.json": charts,
         "artifacts/full_app_validation/cost_workbench_chart_results.json": charts,
+        "artifacts/full_app_validation/cost_advisor_value_at_risk_results.json": advisor_value_at_risk,
         "artifacts/full_app_validation/rendered_formula_results.json": rendered_formula,
         "artifacts/full_app_validation/summary_metric_consistency_results.json": summary,
         "artifacts/full_app_validation/workload_formula_results.json": workload,
@@ -1027,6 +1031,7 @@ def evaluate_full_app_gauntlet(
         "artifacts/full_app_validation/cortex_cost_consistency_results.json": "Cortex cost consistency artifact did not pass.",
         "artifacts/full_app_validation/cost_chart_workbench_results.json": "Cost chart workbench artifact did not pass.",
         "artifacts/full_app_validation/cost_workbench_chart_results.json": "Cost workbench chart artifact did not pass.",
+        "artifacts/full_app_validation/cost_advisor_value_at_risk_results.json": "Cost Advisor value-at-risk artifact did not pass.",
         "artifacts/full_app_validation/rendered_formula_results.json": "Rendered formula artifact did not pass.",
         "artifacts/full_app_validation/summary_metric_consistency_results.json": "Summary metric consistency artifact did not pass.",
         "artifacts/full_app_validation/workload_formula_results.json": "Workload formula semantic artifact did not pass.",
@@ -1158,6 +1163,7 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
             "artifacts/full_app_validation/cortex_cost_consistency_results.json",
             "artifacts/full_app_validation/cost_chart_workbench_results.json",
             "artifacts/full_app_validation/cost_workbench_chart_results.json",
+            "artifacts/full_app_validation/cost_advisor_value_at_risk_results.json",
             "artifacts/full_app_validation/rendered_formula_results.json",
             "artifacts/full_app_validation/summary_metric_consistency_results.json",
             "artifacts/full_app_validation/workload_formula_results.json",
@@ -1184,6 +1190,7 @@ def write_full_app_gauntlet_artifacts(root: Path | str = ".") -> dict[str, Any]:
             "artifacts/full_app_validation/cortex_cost_consistency_results.json",
             "artifacts/full_app_validation/cost_chart_workbench_results.json",
             "artifacts/full_app_validation/cost_workbench_chart_results.json",
+            "artifacts/full_app_validation/cost_advisor_value_at_risk_results.json",
             "artifacts/full_app_validation/rendered_formula_results.json",
             "artifacts/full_app_validation/summary_metric_consistency_results.json",
             "artifacts/full_app_validation/workload_formula_results.json",

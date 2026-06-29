@@ -175,6 +175,22 @@ class CostContractAdvisorTests(unittest.TestCase):
         self.assertIn("value at risk", row["PRIMARY_METRIC"])
         self.assertNotEqual(row["PRIMARY_METRIC"], "$0/mo savings")
 
+    def test_value_at_risk_launch_artifact_carries_export_case_fields(self):
+        from sections.cost_contract_advisor import cost_advisor_value_at_risk_results
+
+        result = cost_advisor_value_at_risk_results()
+
+        self.assertTrue(result["passed"], result)
+        self.assertGreater(result["row_count"], 0)
+        self.assertTrue(result["export_case_fields_present"])
+        self.assertTrue(result["pressure_rows_render_value_at_risk"])
+        self.assertFalse(result["pressure_rows_render_fake_zero_savings"])
+        row = result["rows"][0]
+        for field in result["required_export_case_fields"]:
+            self.assertIn(field, row)
+        self.assertGreater(row["VALUE_AT_RISK_USD"], 0)
+        self.assertGreater(row["QUEUE_PRESSURE_SECONDS"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

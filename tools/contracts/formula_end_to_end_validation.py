@@ -18,11 +18,15 @@ LAUNCH_READINESS_DIR = "artifacts/launch_readiness"
 
 FORMULA_CHAIN_REL = f"{FORMULA_AUTHORITY_DIR}/formula_chain_results.json"
 FORMULA_VALUE_RECONCILIATION_REL = f"{FORMULA_AUTHORITY_DIR}/formula_value_reconciliation_results.json"
+FORMULA_VALUE_SOURCE_RECONCILIATION_REL = f"{FORMULA_AUTHORITY_DIR}/formula_value_source_reconciliation.json"
 PACKET_FORMULA_REL = f"{FORMULA_AUTHORITY_DIR}/packet_formula_results.json"
 FLAT_PACKET_FORMULA_REL = f"{FORMULA_AUTHORITY_DIR}/flat_packet_formula_results.json"
 SNOWFLAKE_FORMULA_STATIC_REL = f"{FORMULA_AUTHORITY_DIR}/snowflake_formula_static_results.json"
 RENDERED_FORMULA_REL = f"{FULL_APP_VALIDATION_DIR}/rendered_formula_results.json"
+SUMMARY_METRIC_CONSISTENCY_REL = f"{FULL_APP_VALIDATION_DIR}/summary_metric_consistency_results.json"
 COST_WORKBENCH_CHART_REL = f"{FULL_APP_VALIDATION_DIR}/cost_workbench_chart_results.json"
+EXPORT_RESULTS_REL = f"{FULL_APP_VALIDATION_DIR}/export_results.json"
+CASE_PAYLOAD_RESULTS_REL = f"{FULL_APP_VALIDATION_DIR}/case_payload_results.json"
 FORMULA_LIVE_REL = f"{SNOWFLAKE_VALIDATION_DIR}/formula_live_validation_results.json"
 SNOWFLAKE_FORMULA_LIVE_REL = f"{SNOWFLAKE_VALIDATION_DIR}/snowflake_formula_live_results.json"
 SNOWFLAKE_FORMULA_VALUE_REL = f"{SNOWFLAKE_VALIDATION_DIR}/snowflake_formula_value_results.json"
@@ -30,6 +34,7 @@ CORTEX_SERVICE_TYPE_LIVE_REL = f"{SNOWFLAKE_VALIDATION_DIR}/cortex_service_type_
 WORKLOAD_FORMULA_LIVE_REL = f"{SNOWFLAKE_VALIDATION_DIR}/workload_formula_live_results.json"
 PACKET_SCHEMA_UPGRADE_REL = f"{SNOWFLAKE_VALIDATION_DIR}/packet_schema_upgrade_results.json"
 FORMULA_GATE_REL = f"{LAUNCH_READINESS_DIR}/formula_end_to_end_gate_results.json"
+FORMULA_VALUE_GATE_REL = f"{LAUNCH_READINESS_DIR}/formula_value_gate_results.json"
 CORTEX_SERVICE_TYPE_GATE_REL = f"{LAUNCH_READINESS_DIR}/cortex_service_type_gate_results.json"
 PACKET_SCHEMA_GATE_REL = f"{LAUNCH_READINESS_DIR}/packet_schema_gate_results.json"
 SNOWFLAKE_FORMULA_GATE_REL = f"{LAUNCH_READINESS_DIR}/snowflake_formula_gate_results.json"
@@ -199,8 +204,14 @@ def evaluate_packet_formula_sql(
             "root_validation": all(_safe_contains(texts["monolith_validation"], name) for name in validation_names),
         }
         passed = all(checks.values())
+        fixture_expected = _FORMULA_BY_FIELD[field][3]
         row = {
             "packet_field": field,
+            "decision_packet_field": field,
+            "packet_value": fixture_expected,
+            "packet_value_source": f"{PACKET_FORMULA_REL}:fixture_expected_value",
+            "fixture_expected_value": fixture_expected,
+            "formula_validation_mode": "fixture_static",
             "passed": passed,
             "checks": checks,
             "packet_sql_source_file": _SQL_FILES["setup"],
@@ -255,9 +266,14 @@ def evaluate_flat_packet_formula_sql(
             "monolith_flat_packet_extract": _safe_contains(monolith_sql, f'DECISION_PACKET:"{field}"'),
         }
         passed = all(checks.values())
+        fixture_expected = _FORMULA_BY_FIELD[field][3]
         row = {
             "packet_field": field,
             "flat_packet_field": field,
+            "flat_value": fixture_expected,
+            "flat_value_source": f"{FLAT_PACKET_FORMULA_REL}:fixture_expected_value",
+            "fixture_expected_value": fixture_expected,
+            "formula_validation_mode": "fixture_static",
             "passed": passed,
             "checks": checks,
             "flat_sql_source_file": _SQL_FILES["tables"],
@@ -527,10 +543,386 @@ def build_formula_chain_results(root: Path | str = ".") -> dict[str, Any]:
     }
 
 
+_FORMULA_VALUE_ARTIFACTS = (
+    PACKET_FORMULA_REL,
+    FLAT_PACKET_FORMULA_REL,
+    RENDERED_FORMULA_REL,
+    SUMMARY_METRIC_CONSISTENCY_REL,
+    COST_WORKBENCH_CHART_REL,
+    EXPORT_RESULTS_REL,
+    CASE_PAYLOAD_RESULTS_REL,
+    FORMULA_LIVE_REL,
+    SNOWFLAKE_FORMULA_LIVE_REL,
+)
+
+_CHART_EXPORT_CASE_FIELDS = {
+    "ACCOUNT_BILLED_CREDITS",
+    "ACCOUNT_BILLED_COST_USD",
+    "WAREHOUSE_CREDITS",
+    "WAREHOUSE_COST_ESTIMATE_USD",
+    "WAREHOUSE_COST_USD",
+    "SERVICE_OTHER_CREDITS",
+    "SERVICE_OTHER_COST_USD",
+    "BILLING_BRIDGE_DELTA_CREDITS",
+    "BILLING_BRIDGE_DELTA_USD",
+    "BILLING_BRIDGE_STATUS",
+    "CORTEX_AI_CREDITS",
+    "CORTEX_AI_COST_USD",
+    "SPEND_MOVEMENT_PCT",
+    "FORECAST_RUN_RATE_USD",
+}
+
+
+def _load_json_artifact(root: Path, rel: str) -> Any | None:
+    try:
+        return json.loads((root / rel).read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+
+def _artifact_payloads(
+    root: Path,
+    overrides: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    if overrides is not None:
+        return {rel: payload for rel, payload in dict(overrides).items() if payload is not None}
+    payloads = {rel: _load_json_artifact(root, rel) for rel in _FORMULA_VALUE_ARTIFACTS}
+    return {rel: payload for rel, payload in payloads.items() if payload is not None}
+
+
+def _iter_artifact_rows(payload: Any) -> list[Mapping[str, Any]]:
+    if isinstance(payload, list):
+        return [row for row in payload if isinstance(row, Mapping)]
+    if not isinstance(payload, Mapping):
+        return []
+    rows: list[Mapping[str, Any]] = []
+    for key in (
+        "rows",
+        "value_checks",
+        "checks",
+        "metrics",
+        "formula_values",
+        "chart_values",
+        "chart_rows",
+        "export_values",
+        "export_rows",
+        "case_values",
+        "case_rows",
+        "reconciliation_rows",
+    ):
+        value = payload.get(key)
+        if isinstance(value, list):
+            rows.extend(row for row in value if isinstance(row, Mapping))
+    return rows
+
+
+def _row_matches_field(row: Mapping[str, Any], field: str) -> bool:
+    for key in (
+        "decision_packet_field",
+        "flat_packet_field",
+        "packet_field",
+        "formula_field",
+        "field",
+        "metric_field",
+        "chart_formula_field",
+        "export_formula_field",
+        "case_formula_field",
+    ):
+        if str(row.get(key) or "").upper() == field.upper():
+            return True
+    return False
+
+
+def _artifact_value(
+    payloads: Mapping[str, Any],
+    rel: str,
+    field: str,
+    value_keys: tuple[str, ...],
+) -> tuple[Any, str, bool]:
+    payload = payloads.get(rel)
+    if payload is None:
+        return None, "", False
+    for row in _iter_artifact_rows(payload):
+        if not _row_matches_field(row, field):
+            continue
+        for key in value_keys:
+            if key in row:
+                nested_source = str(row.get(f"{key}_source") or row.get("value_source") or row.get("proof_source") or "")
+                suffix = f":{nested_source}" if nested_source else ""
+                return row.get(key), f"{rel}:{key}{suffix}", True
+        return None, f"{rel}:missing_value", True
+    return None, "", False
+
+
+def _fixture_value_source_allowed(profile: str, mode: str) -> bool:
+    return profile == "internal_fixture" and mode == "fixture_static"
+
+
+def _source_is_fixture(source: str) -> bool:
+    text = str(source or "").lower()
+    return "fixture" in text or "formula_chain" in text or "synthetic" in text
+
+
+def _source_is_artifact(source: str) -> bool:
+    return str(source or "").startswith("artifacts/")
+
+
+def _with_fixture_fallback(
+    *,
+    value: Any,
+    source: str,
+    found: bool,
+    field: str,
+    rel: str,
+    chain_row: Mapping[str, Any],
+    value_key: str,
+    fixture_allowed: bool,
+) -> tuple[Any, str, bool, str]:
+    if found:
+        if source.endswith(":missing_value"):
+            return value, source, False, f"{rel} row for {field} has no {value_key}"
+        return value, source, True, ""
+    if fixture_allowed:
+        return chain_row.get("fixture_expected_value"), f"{rel}:fixture_expected_value", True, ""
+    return value, "missing", False, f"{rel} row for {field} is missing"
+
+
+def build_formula_value_source_reconciliation_results(
+    formula_chain: Mapping[str, Any] | None = None,
+    *,
+    root: Path | str = ".",
+    launch_profile: str | None = None,
+    artifact_payloads: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Resolve formula values from generated artifacts and record exact provenance."""
+
+    root_path = Path(root)
+    profile = str(launch_profile or os.environ.get("OVERWATCH_LAUNCH_PROFILE") or "internal_fixture")
+    mode = _formula_validation_mode()
+    live_enabled = _formula_live_enabled()
+    live_required = profile in {"internal_live", "prod_candidate"} or live_enabled
+    fixture_allowed = _fixture_value_source_allowed(profile, mode)
+    chain = formula_chain or build_formula_chain_results(root_path)
+    payloads = _artifact_payloads(root_path, artifact_payloads)
+    rows: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = []
+    artifact_sourced_count = 0
+    synthetic_only_count = 0
+
+    for chain_row in chain.get("rows", []):
+        if not isinstance(chain_row, Mapping):
+            continue
+        row = dict(chain_row)
+        field = str(row.get("decision_packet_field") or row.get("flat_packet_field") or "")
+        row_failures: list[str] = []
+
+        packet_value, packet_source, packet_found = _artifact_value(
+            payloads,
+            PACKET_FORMULA_REL,
+            field,
+            ("packet_value", "value", "actual"),
+        )
+        packet_value, packet_source, packet_ok, packet_failure = _with_fixture_fallback(
+            value=packet_value,
+            source=packet_source,
+            found=packet_found,
+            field=field,
+            rel=PACKET_FORMULA_REL,
+            chain_row=chain_row,
+            value_key="packet_value",
+            fixture_allowed=fixture_allowed,
+        )
+        if packet_failure:
+            row_failures.append(packet_failure)
+
+        flat_value, flat_source, flat_found = _artifact_value(
+            payloads,
+            FLAT_PACKET_FORMULA_REL,
+            field,
+            ("flat_value", "value", "actual"),
+        )
+        flat_value, flat_source, flat_ok, flat_failure = _with_fixture_fallback(
+            value=flat_value,
+            source=flat_source,
+            found=flat_found,
+            field=field,
+            rel=FLAT_PACKET_FORMULA_REL,
+            chain_row=chain_row,
+            value_key="flat_value",
+            fixture_allowed=fixture_allowed,
+        )
+        if flat_failure:
+            row_failures.append(flat_failure)
+
+        rendered_value, rendered_source, rendered_found = _artifact_value(
+            payloads,
+            RENDERED_FORMULA_REL,
+            field,
+            ("rendered_value", "value", "actual"),
+        )
+        if not rendered_found:
+            rendered_value, rendered_source, rendered_found = _artifact_value(
+                payloads,
+                SUMMARY_METRIC_CONSISTENCY_REL,
+                field,
+                ("rendered_value", "value", "actual"),
+            )
+        rendered_value, rendered_source, rendered_ok, rendered_failure = _with_fixture_fallback(
+            value=rendered_value,
+            source=rendered_source,
+            found=rendered_found,
+            field=field,
+            rel=RENDERED_FORMULA_REL,
+            chain_row=chain_row,
+            value_key="rendered_value",
+            fixture_allowed=fixture_allowed,
+        )
+        if rendered_failure:
+            row_failures.append(rendered_failure)
+
+        chart_value = None
+        chart_source = "not_applicable"
+        chart_ok = True
+        export_value = None
+        export_source = "not_applicable"
+        export_ok = True
+        case_value = None
+        case_source = "not_applicable"
+        case_ok = True
+        if field in _CHART_EXPORT_CASE_FIELDS:
+            chart_value, chart_source, chart_found = _artifact_value(
+                payloads,
+                COST_WORKBENCH_CHART_REL,
+                field,
+                ("chart_value", "formula_value", "value", "total_value"),
+            )
+            if chart_found and chart_source.endswith(":missing_value"):
+                chart_ok = False
+                row_failures.append(f"{COST_WORKBENCH_CHART_REL} row for {field} has no chart value")
+            elif not chart_found:
+                chart_source = "not_loaded"
+
+            export_value, export_source, export_found = _artifact_value(
+                payloads,
+                EXPORT_RESULTS_REL,
+                field,
+                ("export_value", "formula_value", "value", "actual"),
+            )
+            if export_found and export_source.endswith(":missing_value"):
+                export_ok = False
+                row_failures.append(f"{EXPORT_RESULTS_REL} row for {field} has no export value")
+            elif not export_found:
+                export_source = "not_loaded"
+
+            case_value, case_source, case_found = _artifact_value(
+                payloads,
+                CASE_PAYLOAD_RESULTS_REL,
+                field,
+                ("case_value", "formula_value", "value", "actual"),
+            )
+            if case_found and case_source.endswith(":missing_value"):
+                case_ok = False
+                row_failures.append(f"{CASE_PAYLOAD_RESULTS_REL} row for {field} has no case value")
+            elif not case_found:
+                case_source = "not_loaded"
+
+        source_fields = (packet_source, flat_source, rendered_source)
+        artifact_sources = [source for source in source_fields if _source_is_artifact(source)]
+        if artifact_sources:
+            artifact_sourced_count += 1
+        synthetic_only = all(_source_is_fixture(source) for source in source_fields)
+        if synthetic_only:
+            synthetic_only_count += 1
+        if synthetic_only and not fixture_allowed:
+            row_failures.append("packet/flat/rendered values are synthetic-only without fixture provenance allowance")
+        if live_required and any(_source_is_fixture(source) for source in source_fields):
+            row_failures.append("fixture-derived value source used while live formula proof is required")
+        if live_required and chart_source not in {"not_applicable", "not_loaded"} and _source_is_fixture(chart_source):
+            row_failures.append("fixture-derived chart value source used while live formula proof is required")
+        if not packet_ok or not flat_ok or not rendered_ok:
+            row_failures.append("required formula value artifact source is missing")
+        source_rows_present = bool(row.get("source_rows_present"))
+        source_confirmed_zero = bool(row.get("source_confirmed_zero"))
+        if source_rows_present and packet_value is None:
+            row_failures.append("packet value is null while source rows are present")
+        if source_rows_present and packet_value == 0 and not source_confirmed_zero:
+            row_failures.append("packet value is default zero without source_confirmed_zero")
+
+        row.update(
+            {
+                "formula_validation_mode": mode,
+                "launch_profile": profile,
+                "source_rows_present": source_rows_present,
+                "source_confirmed_zero": source_confirmed_zero,
+                "packet_value": packet_value,
+                "packet_value_source": packet_source,
+                "flat_value": flat_value,
+                "flat_value_source": flat_source,
+                "rendered_value": rendered_value,
+                "rendered_value_source": rendered_source,
+                "chart_value": chart_value,
+                "chart_value_source": chart_source,
+                "export_value": export_value,
+                "export_value_source": export_source,
+                "case_value": case_value,
+                "case_value_source": case_source,
+                "packet_value_source_ok": packet_ok,
+                "flat_value_source_ok": flat_ok,
+                "rendered_value_source_ok": rendered_ok,
+                "chart_value_source_ok": chart_ok,
+                "export_value_source_ok": export_ok,
+                "case_value_source_ok": case_ok,
+                "artifact_sourced": bool(artifact_sources),
+                "synthetic_only": synthetic_only,
+                "fixture_provenance_allowed": fixture_allowed,
+                "live_required": live_required,
+                "live_executed": live_enabled,
+                "passed": not row_failures,
+                "failure_reason": "; ".join(dict.fromkeys(row_failures)),
+                "raw_sql_included": False,
+            }
+        )
+        rows.append(row)
+        if row_failures:
+            failures.append(
+                {
+                    "code": "FORMULA_VALUE_SOURCE_RECONCILIATION_FAILED",
+                    "formula_id": row.get("formula_id"),
+                    "packet_field": field,
+                    "failure_reason": row["failure_reason"],
+                }
+            )
+
+    if not bool(chain.get("passed")):
+        failures.append({"code": "FORMULA_CHAIN_FAILED", "failure_count": int(chain.get("failure_count") or 0)})
+    return {
+        "source": "formula_value_source_reconciliation",
+        "generated_at": _utc_now(),
+        "formula_validation_mode": mode,
+        "launch_profile": profile,
+        "live_required": live_required,
+        "live_executed": live_enabled,
+        "live_skipped": not live_enabled,
+        "live_skip_reason": "" if live_enabled else _LIVE_PROOF_SKIP_REASON,
+        "fixture_provenance_allowed": fixture_allowed,
+        "artifact_sourced_row_count": artifact_sourced_count,
+        "synthetic_only_row_count": synthetic_only_count,
+        "passed": not failures,
+        "failure_count": len(failures),
+        "failures": failures,
+        "formula_count": len(rows),
+        "rows": rows,
+        "raw_sql_included": False,
+    }
+
+
 def build_formula_value_reconciliation_results(
     formula_chain: Mapping[str, Any] | None = None,
     *,
     launch_profile: str | None = None,
+    root: Path | str = ".",
+    artifact_payloads: Mapping[str, Any] | None = None,
+    value_source_reconciliation: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Reconcile COST_DB formula values through packet, flat, and rendered surfaces."""
 
@@ -538,10 +930,17 @@ def build_formula_value_reconciliation_results(
     live_enabled = _formula_live_enabled()
     live_required = profile in {"internal_live", "prod_candidate"} or live_enabled
     mode = "live" if live_enabled else "fixture_static"
-    chain = formula_chain or build_formula_chain_results(Path.cwd())
+    root_path = Path(root)
+    chain = formula_chain or build_formula_chain_results(root_path)
+    source_reconciliation = value_source_reconciliation or build_formula_value_source_reconciliation_results(
+        chain,
+        root=root_path,
+        launch_profile=profile,
+        artifact_payloads=artifact_payloads,
+    )
     rows: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
-    for chain_row in chain.get("rows", []):
+    for chain_row in source_reconciliation.get("rows", []):
         row = dict(chain_row)
         field = str(row.get("decision_packet_field") or row.get("flat_packet_field") or "")
         tolerance = float(row.get("tolerance") or 0)
@@ -571,6 +970,13 @@ def build_formula_value_reconciliation_results(
             row_failures.append("flat value differs from packet value")
         if not _value_equal(flat_value, rendered_value, tolerance):
             row_failures.append("rendered value differs from flat value")
+        for surface, surface_value, surface_source in (
+            ("chart", row.get("chart_value"), str(row.get("chart_value_source") or "")),
+            ("export", row.get("export_value"), str(row.get("export_value_source") or "")),
+            ("case", row.get("case_value"), str(row.get("case_value_source") or "")),
+        ):
+            if surface_source not in {"", "not_applicable", "not_loaded"} and not _value_equal(packet_value, surface_value, tolerance):
+                row_failures.append(f"{surface} value differs from packet value")
         if live_enabled:
             if live_expected is None:
                 row_failures.append("live expected value missing while live validation is enabled")
@@ -611,6 +1017,13 @@ def build_formula_value_reconciliation_results(
             )
     if not bool(chain.get("passed")):
         failures.append({"code": "FORMULA_CHAIN_FAILED", "failure_count": int(chain.get("failure_count") or 0)})
+    if not bool(source_reconciliation.get("passed")):
+        failures.append(
+            {
+                "code": "FORMULA_VALUE_SOURCE_RECONCILIATION_FAILED",
+                "failure_count": int(source_reconciliation.get("failure_count") or 0),
+            }
+        )
     return {
         "source": "formula_value_reconciliation",
         "generated_at": _utc_now(),
@@ -620,6 +1033,10 @@ def build_formula_value_reconciliation_results(
         "live_executed": live_enabled,
         "live_skipped": not live_enabled,
         "live_skip_reason": "" if live_enabled else _LIVE_PROOF_SKIP_REASON,
+        "formula_value_source_reconciliation_passed": bool(source_reconciliation.get("passed")),
+        "formula_value_source_reconciliation_failure_count": int(source_reconciliation.get("failure_count") or 0),
+        "artifact_sourced_row_count": int(source_reconciliation.get("artifact_sourced_row_count") or 0),
+        "synthetic_only_row_count": int(source_reconciliation.get("synthetic_only_row_count") or 0),
         "passed": not failures,
         "failure_count": len(failures),
         "failures": failures,
@@ -904,7 +1321,9 @@ def build_rendered_formula_results(
             "metric_key": row.get("rendered_metric_key"),
             "packet_field": row.get("decision_packet_field"),
             "flat_value": row.get("flat_value"),
+            "flat_value_source": row.get("flat_value_source", f"{FORMULA_VALUE_RECONCILIATION_REL}:flat_value"),
             "rendered_value": row.get("rendered_value"),
+            "rendered_value_source": row.get("rendered_value_source", f"{FORMULA_VALUE_RECONCILIATION_REL}:rendered_value"),
             "tolerance": tolerance,
             "passed": passed,
             "failure_reason": "" if passed else "Rendered summary value differs from flat packet value.",
@@ -1154,10 +1573,12 @@ def evaluate_formula_end_to_end_gate(
     cortex_live: Mapping[str, Any] | None = None,
     workload_live: Mapping[str, Any] | None = None,
     snowflake_formula_value: Mapping[str, Any] | None = None,
+    formula_value_source_reconciliation: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     inputs = {
         "formula_chain": formula_chain,
         "formula_value_reconciliation": formula_value_reconciliation,
+        "formula_value_source_reconciliation": formula_value_source_reconciliation or {"passed": True},
         "packet_formula": packet_formula,
         "flat_packet_formula": flat_packet_formula,
         "snowflake_formula_static": snowflake_formula_static,
@@ -1192,6 +1613,10 @@ def evaluate_formula_end_to_end_gate(
         "formula_chain_passed": bool(formula_chain.get("passed")),
         "formula_value_reconciliation_passed": bool(formula_value_reconciliation.get("passed")),
         "formula_value_reconciliation_failure_count": int(formula_value_reconciliation.get("failure_count") or 0),
+        "formula_value_source_reconciliation_passed": bool((formula_value_source_reconciliation or {}).get("passed", True)),
+        "formula_value_source_reconciliation_failure_count": int((formula_value_source_reconciliation or {}).get("failure_count") or 0),
+        "formula_value_artifact_sourced_row_count": int((formula_value_source_reconciliation or {}).get("artifact_sourced_row_count") or 0),
+        "formula_value_synthetic_only_row_count": int((formula_value_source_reconciliation or {}).get("synthetic_only_row_count") or 0),
         "formula_validation_mode": str(live_payload.get("formula_validation_mode") or formula_value_reconciliation.get("formula_validation_mode") or "fixture_static"),
         "packet_formula_sql_passed": bool(packet_formula.get("passed")),
         "flat_packet_formula_passed": bool(flat_packet_formula.get("passed")),
@@ -1220,6 +1645,60 @@ def evaluate_formula_end_to_end_gate(
         ),
         "cortex_service_type_live_passed": bool((cortex_live or {}).get("passed", True)),
         "workload_formula_live_passed": bool((workload_live or {}).get("passed", True)),
+        "raw_sql_included": False,
+    }
+
+
+def evaluate_formula_value_gate(
+    formula_value_reconciliation: Mapping[str, Any],
+    formula_value_source_reconciliation: Mapping[str, Any],
+) -> dict[str, Any]:
+    failures: list[dict[str, Any]] = []
+    if not bool(formula_value_source_reconciliation.get("passed")):
+        failures.append(
+            {
+                "code": "FORMULA_VALUE_SOURCE_RECONCILIATION_FAILED",
+                "failure_count": int(formula_value_source_reconciliation.get("failure_count") or 0),
+            }
+        )
+    if not bool(formula_value_reconciliation.get("passed")):
+        failures.append(
+            {
+                "code": "FORMULA_VALUE_RECONCILIATION_FAILED",
+                "failure_count": int(formula_value_reconciliation.get("failure_count") or 0),
+            }
+        )
+    live_required = bool(
+        formula_value_reconciliation.get("live_required")
+        or formula_value_source_reconciliation.get("live_required")
+    )
+    synthetic_only_count = int(formula_value_source_reconciliation.get("synthetic_only_row_count") or 0)
+    fixture_allowed = bool(formula_value_source_reconciliation.get("fixture_provenance_allowed"))
+    if live_required and synthetic_only_count:
+        failures.append({"code": "LIVE_FORMULA_VALUE_SOURCE_SYNTHETIC_ONLY", "failure_count": synthetic_only_count})
+    if synthetic_only_count and not fixture_allowed:
+        failures.append({"code": "FORMULA_VALUE_SOURCE_SYNTHETIC_ONLY_WITHOUT_FIXTURE_PROVENANCE", "failure_count": synthetic_only_count})
+    return {
+        "source": "formula_value_gate",
+        "generated_at": _utc_now(),
+        "passed": not failures,
+        "failure_count": len(failures),
+        "failures": failures,
+        "formula_value_reconciliation_passed": bool(formula_value_reconciliation.get("passed")),
+        "formula_value_source_reconciliation_passed": bool(formula_value_source_reconciliation.get("passed")),
+        "formula_value_source_reconciliation_failure_count": int(formula_value_source_reconciliation.get("failure_count") or 0),
+        "artifact_sourced_row_count": int(formula_value_source_reconciliation.get("artifact_sourced_row_count") or 0),
+        "synthetic_only_row_count": synthetic_only_count,
+        "formula_validation_mode": str(formula_value_source_reconciliation.get("formula_validation_mode") or ""),
+        "live_required": live_required,
+        "live_executed": bool(
+            formula_value_reconciliation.get("live_executed")
+            or formula_value_source_reconciliation.get("live_executed")
+        ),
+        "live_skipped": bool(
+            formula_value_reconciliation.get("live_skipped")
+            or formula_value_source_reconciliation.get("live_skipped")
+        ),
         "raw_sql_included": False,
     }
 
@@ -1338,10 +1817,39 @@ def write_formula_end_to_end_artifacts(root: Path | str = ".") -> dict[str, Any]
     packet_schema_upgrade = build_packet_schema_upgrade_results(root_path)
     snowflake_formula_static = build_snowflake_formula_static_results(root_path)
     formula_chain = build_formula_chain_results(root_path)
-    formula_value_reconciliation = build_formula_value_reconciliation_results(formula_chain)
+    charts = cost_db_chart_pattern_results()
+    provisional_payloads = {
+        PACKET_FORMULA_REL: packet_formula,
+        FLAT_PACKET_FORMULA_REL: flat_packet_formula,
+        COST_WORKBENCH_CHART_REL: charts,
+    }
+    provisional_value_source = build_formula_value_source_reconciliation_results(
+        formula_chain,
+        root=root_path,
+        artifact_payloads=provisional_payloads,
+    )
+    provisional_formula_values = build_formula_value_reconciliation_results(
+        formula_chain,
+        root=root_path,
+        value_source_reconciliation=provisional_value_source,
+    )
+    rendered_formula = build_rendered_formula_results(root_path, formula_value_reconciliation=provisional_formula_values)
+    current_payloads = {
+        **provisional_payloads,
+        RENDERED_FORMULA_REL: rendered_formula,
+    }
+    formula_value_source_reconciliation = build_formula_value_source_reconciliation_results(
+        formula_chain,
+        root=root_path,
+        artifact_payloads=current_payloads,
+    )
+    formula_value_reconciliation = build_formula_value_reconciliation_results(
+        formula_chain,
+        root=root_path,
+        value_source_reconciliation=formula_value_source_reconciliation,
+    )
     snowflake_formula_value = build_snowflake_formula_value_results(formula_value_reconciliation)
     rendered_formula = build_rendered_formula_results(root_path, formula_value_reconciliation=formula_value_reconciliation)
-    charts = cost_db_chart_pattern_results()
     formula_live = build_formula_live_validation_results(root_path)
     snowflake_formula_live = build_snowflake_formula_live_results(root_path)
     cortex_live = build_cortex_service_type_live_results(root_path)
@@ -1360,13 +1868,16 @@ def write_formula_end_to_end_artifacts(root: Path | str = ".") -> dict[str, Any]
         cortex_live,
         workload_live,
         snowflake_formula_value,
+        formula_value_source_reconciliation,
     )
+    formula_value_gate = evaluate_formula_value_gate(formula_value_reconciliation, formula_value_source_reconciliation)
     packet_schema_gate = evaluate_packet_schema_gate(packet_schema_upgrade)
     snowflake_formula_gate = evaluate_snowflake_formula_gate(snowflake_formula_static, snowflake_formula_live, snowflake_formula_value)
     cortex_gate = evaluate_cortex_service_type_gate(cortex_mapping, cortex_live)
     artifacts = {
         FORMULA_CHAIN_REL: formula_chain,
         FORMULA_VALUE_RECONCILIATION_REL: formula_value_reconciliation,
+        FORMULA_VALUE_SOURCE_RECONCILIATION_REL: formula_value_source_reconciliation,
         PACKET_FORMULA_REL: packet_formula,
         FLAT_PACKET_FORMULA_REL: flat_packet_formula,
         SNOWFLAKE_FORMULA_STATIC_REL: snowflake_formula_static,
@@ -1379,6 +1890,7 @@ def write_formula_end_to_end_artifacts(root: Path | str = ".") -> dict[str, Any]
         CORTEX_SERVICE_TYPE_LIVE_REL: cortex_live,
         WORKLOAD_FORMULA_LIVE_REL: workload_live,
         FORMULA_GATE_REL: formula_gate,
+        FORMULA_VALUE_GATE_REL: formula_value_gate,
         PACKET_SCHEMA_GATE_REL: packet_schema_gate,
         SNOWFLAKE_FORMULA_GATE_REL: snowflake_formula_gate,
         CORTEX_SERVICE_TYPE_GATE_REL: cortex_gate,
@@ -1408,7 +1920,9 @@ __all__ = [
     "FORMULA_CHAIN_REL",
     "FORMULA_GATE_REL",
     "FORMULA_LIVE_REL",
+    "FORMULA_VALUE_GATE_REL",
     "FORMULA_VALUE_RECONCILIATION_REL",
+    "FORMULA_VALUE_SOURCE_RECONCILIATION_REL",
     "PACKET_SCHEMA_GATE_REL",
     "PACKET_SCHEMA_UPGRADE_REL",
     "PACKET_FORMULA_REL",
@@ -1422,6 +1936,7 @@ __all__ = [
     "build_formula_chain_results",
     "build_formula_live_validation_results",
     "build_formula_value_reconciliation_results",
+    "build_formula_value_source_reconciliation_results",
     "build_packet_schema_upgrade_results",
     "build_rendered_formula_results",
     "build_snowflake_formula_live_results",
@@ -1431,6 +1946,7 @@ __all__ = [
     "evaluate_cortex_service_type_gate",
     "evaluate_flat_packet_formula_sql",
     "evaluate_formula_end_to_end_gate",
+    "evaluate_formula_value_gate",
     "evaluate_packet_formula_sql",
     "evaluate_packet_schema_gate",
     "evaluate_snowflake_formula_gate",

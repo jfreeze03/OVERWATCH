@@ -33,9 +33,17 @@ from tools.contracts.cost_db_formula_authority import (
 )
 from tools.contracts.formula_end_to_end_validation import (
     CORTEX_SERVICE_TYPE_GATE_REL,
+    FLAT_PACKET_FORMULA_REL,
     FORMULA_GATE_REL,
+    PACKET_SCHEMA_GATE_REL,
+    PACKET_SCHEMA_UPGRADE_REL,
     evaluate_cortex_service_type_gate,
     evaluate_formula_end_to_end_gate,
+    evaluate_packet_schema_gate,
+    evaluate_snowflake_formula_gate,
+    SNOWFLAKE_FORMULA_GATE_REL,
+    SNOWFLAKE_FORMULA_LIVE_REL,
+    SNOWFLAKE_FORMULA_STATIC_REL,
     write_formula_end_to_end_artifacts,
 )
 
@@ -82,6 +90,8 @@ REQUIRED_LAUNCH_READINESS_ARTIFACTS = {
     CORTEX_SERVICE_TYPE_GATE_REL,
     f"{LAUNCH_READINESS_DIR}/cost_db_formula_authority_gate_results.json",
     FORMULA_GATE_REL,
+    PACKET_SCHEMA_GATE_REL,
+    SNOWFLAKE_FORMULA_GATE_REL,
     f"{LAUNCH_READINESS_DIR}/formula_live_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/metric_semantic_gate_results.json",
     f"{LAUNCH_READINESS_DIR}/query_budget_gate_results.json",
@@ -594,7 +604,7 @@ def _workflow_upload_review(root: Path) -> dict[str, Any]:
         "python -m unittest tests.test_full_app_gauntlet",
         "python -m unittest tests.test_launch_readiness",
         "python -m unittest tests.test_encoding_hygiene",
-        "python -m unittest tests.test_cost_db_formula_authority tests.test_cost_formula_authority tests.test_cortex_service_types tests.test_formula_end_to_end_validation",
+        "python -m unittest tests.test_cost_db_formula_authority tests.test_cost_formula_authority tests.test_cortex_service_types tests.test_formula_end_to_end_validation tests.test_formula_packet_sql tests.test_packet_schema_upgrade",
         "python -m tools.contracts.encoding_hygiene",
         "python -m tools.contracts.cost_db_formula_authority",
         "python -m tools.contracts.formula_end_to_end_validation",
@@ -2298,6 +2308,16 @@ def _release_candidate_summary_bundle(
             "artifact": FORMULA_GATE_REL,
         },
         {
+            "gate": "packet_schema_upgrade",
+            "passed": bool(launch_summary.get("packet_schema_upgrade_passed")),
+            "artifact": PACKET_SCHEMA_GATE_REL,
+        },
+        {
+            "gate": "snowflake_formula_static_live",
+            "passed": bool(launch_summary.get("snowflake_formula_gate_passed")),
+            "artifact": SNOWFLAKE_FORMULA_GATE_REL,
+        },
+        {
             "gate": "cortex_service_type_mapping",
             "passed": bool(launch_summary.get("cortex_service_type_gate_passed")),
             "artifact": CORTEX_SERVICE_TYPE_GATE_REL,
@@ -2377,6 +2397,11 @@ def _release_candidate_summary_bundle(
         "cost_db_formula_authority_passed": bool(launch_summary.get("cost_db_formula_authority_passed")),
         "formula_end_to_end_passed": bool(launch_summary.get("formula_end_to_end_passed")),
         "packet_formula_sql_passed": bool(launch_summary.get("packet_formula_sql_passed")),
+        "flat_packet_formula_passed": bool(launch_summary.get("flat_packet_formula_passed")),
+        "packet_schema_upgrade_passed": bool(launch_summary.get("packet_schema_upgrade_passed")),
+        "snowflake_formula_static_passed": bool(launch_summary.get("snowflake_formula_static_passed")),
+        "snowflake_formula_live_passed": bool(launch_summary.get("snowflake_formula_live_passed")),
+        "snowflake_formula_gate_passed": bool(launch_summary.get("snowflake_formula_gate_passed")),
         "rendered_formula_passed": bool(launch_summary.get("rendered_formula_passed")),
         "cortex_service_type_gate_passed": bool(launch_summary.get("cortex_service_type_gate_passed")),
         "formula_live_validation_passed": bool(launch_summary.get("formula_live_validation_passed")),
@@ -2443,7 +2468,7 @@ def _release_notes_payload(
             "python -m mypy",
             "python -m compileall .overwatch_final tools tests",
             "python -m unittest tests.test_snowflake_execution_validation",
-            "python -m unittest tests.test_cost_db_formula_authority tests.test_cost_formula_authority tests.test_cortex_service_types tests.test_formula_end_to_end_validation",
+            "python -m unittest tests.test_cost_db_formula_authority tests.test_cost_formula_authority tests.test_cortex_service_types tests.test_formula_end_to_end_validation tests.test_formula_packet_sql tests.test_packet_schema_upgrade",
             "python -m unittest tests.test_launch_readiness",
             "python -m tools.contracts.encoding_hygiene",
             "python -m tools.contracts.cost_db_formula_authority",
@@ -4071,6 +4096,8 @@ def _release_gate_matrix(
     cost_chart_gate = _as_mapping(launch_artifacts.get("cost_chart_workbench_gate_results"))
     cost_db_formula_gate = _as_mapping(launch_artifacts.get("cost_db_formula_authority_gate_results"))
     formula_end_gate = _as_mapping(launch_artifacts.get("formula_end_to_end_gate_results"))
+    packet_schema_gate = _as_mapping(launch_artifacts.get("packet_schema_gate_results"))
+    snowflake_formula_gate = _as_mapping(launch_artifacts.get("snowflake_formula_gate_results"))
     cortex_service_type_gate = _as_mapping(launch_artifacts.get("cortex_service_type_gate_results"))
     formula_live_gate = _as_mapping(launch_artifacts.get("formula_live_gate_results"))
     metric_semantic_gate = _as_mapping(launch_artifacts.get("metric_semantic_gate_results"))
@@ -4130,6 +4157,18 @@ def _release_gate_matrix(
             "artifact": FORMULA_GATE_REL,
             "passed": bool(formula_end_gate.get("passed")),
             "failure_reason": "" if formula_end_gate.get("passed") else "COST_DB formula chain does not reconcile from authority to packet SQL and rendered surfaces.",
+        },
+        {
+            "gate": "packet_schema_upgrade",
+            "artifact": PACKET_SCHEMA_GATE_REL,
+            "passed": bool(packet_schema_gate.get("passed")),
+            "failure_reason": "" if packet_schema_gate.get("passed") else "Existing deployed packet tables are missing idempotent formula-column upgrade coverage.",
+        },
+        {
+            "gate": "snowflake_formula_static_live",
+            "artifact": SNOWFLAKE_FORMULA_GATE_REL,
+            "passed": bool(snowflake_formula_gate.get("passed")),
+            "failure_reason": "" if snowflake_formula_gate.get("passed") else "Snowflake formula static/live validation failed or requested live proof is unavailable.",
         },
         {
             "gate": "cortex_service_type_mapping",
@@ -4410,10 +4449,21 @@ def evaluate_launch_readiness(
         or evaluate_formula_end_to_end_gate(
             _as_mapping(payloads.get("artifacts/formula_authority/formula_chain_results.json")),
             _as_mapping(payloads.get("artifacts/formula_authority/packet_formula_results.json")),
+            _as_mapping(payloads.get(FLAT_PACKET_FORMULA_REL)),
+            _as_mapping(payloads.get(SNOWFLAKE_FORMULA_STATIC_REL)),
+            _as_mapping(payloads.get(PACKET_SCHEMA_UPGRADE_REL)),
             _as_mapping(payloads.get("artifacts/full_app_validation/rendered_formula_results.json")),
             _as_mapping(payloads.get("artifacts/snowflake_validation/formula_live_validation_results.json")),
+            _as_mapping(payloads.get(SNOWFLAKE_FORMULA_LIVE_REL)),
             _as_mapping(payloads.get("artifacts/snowflake_validation/cortex_service_type_live_results.json")),
             _as_mapping(payloads.get("artifacts/snowflake_validation/workload_formula_live_results.json")),
+        ),
+        "packet_schema_gate_results": _as_mapping(launch_artifacts.get("packet_schema_gate_results"))
+        or evaluate_packet_schema_gate(_as_mapping(payloads.get(PACKET_SCHEMA_UPGRADE_REL))),
+        "snowflake_formula_gate_results": _as_mapping(launch_artifacts.get("snowflake_formula_gate_results"))
+        or evaluate_snowflake_formula_gate(
+            _as_mapping(payloads.get(SNOWFLAKE_FORMULA_STATIC_REL)),
+            _as_mapping(payloads.get(SNOWFLAKE_FORMULA_LIVE_REL)),
         ),
         "cortex_service_type_gate_results": _as_mapping(launch_artifacts.get("cortex_service_type_gate_results"))
         or evaluate_cortex_service_type_gate(
@@ -4486,6 +4536,8 @@ def evaluate_launch_readiness(
     cost_chart_gate = _as_mapping(launch_artifacts.get("cost_chart_workbench_gate_results"))
     cost_db_formula_gate = _as_mapping(launch_artifacts.get("cost_db_formula_authority_gate_results"))
     formula_end_gate = _as_mapping(launch_artifacts.get("formula_end_to_end_gate_results"))
+    packet_schema_gate = _as_mapping(launch_artifacts.get("packet_schema_gate_results"))
+    snowflake_formula_gate = _as_mapping(launch_artifacts.get("snowflake_formula_gate_results"))
     cortex_service_type_gate = _as_mapping(launch_artifacts.get("cortex_service_type_gate_results"))
     formula_live_gate = _as_mapping(launch_artifacts.get("formula_live_gate_results"))
     metric_semantic_gate = _as_mapping(launch_artifacts.get("metric_semantic_gate_results"))
@@ -4543,6 +4595,14 @@ def evaluate_launch_readiness(
         "formula_end_to_end_passed": bool(formula_end_gate.get("passed")),
         "formula_end_to_end_failure_count": _as_int(formula_end_gate.get("failure_count")),
         "packet_formula_sql_passed": bool(formula_end_gate.get("packet_formula_sql_passed")),
+        "flat_packet_formula_passed": bool(formula_end_gate.get("flat_packet_formula_passed")),
+        "snowflake_formula_static_passed": bool(formula_end_gate.get("snowflake_formula_static_passed")),
+        "snowflake_formula_live_passed": bool(formula_end_gate.get("snowflake_formula_live_passed")),
+        "snowflake_formula_live_skipped": bool(formula_end_gate.get("snowflake_formula_live_skipped")),
+        "packet_schema_upgrade_passed": bool(packet_schema_gate.get("passed")),
+        "packet_schema_failure_count": _as_int(packet_schema_gate.get("failure_count")),
+        "snowflake_formula_gate_passed": bool(snowflake_formula_gate.get("passed")),
+        "snowflake_formula_gate_failure_count": _as_int(snowflake_formula_gate.get("failure_count")),
         "rendered_formula_passed": bool(formula_end_gate.get("rendered_formula_passed")),
         "cortex_service_type_gate_passed": bool(cortex_service_type_gate.get("passed")),
         "cortex_service_type_failure_count": _as_int(cortex_service_type_gate.get("failure_count")),
@@ -4702,6 +4762,8 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
         formula_artifacts.get("artifacts/formula_authority/cortex_service_type_mapping.json"),
         formula_artifacts.get("artifacts/formula_authority/formula_chain_results.json"),
         formula_artifacts.get("artifacts/formula_authority/packet_formula_results.json"),
+        formula_artifacts.get(FLAT_PACKET_FORMULA_REL),
+        formula_artifacts.get(SNOWFLAKE_FORMULA_STATIC_REL),
     )
     launch_artifacts["release_candidate_gate_results"] = {
         "source": "release_candidate_gate",
@@ -4725,6 +4787,8 @@ def write_launch_readiness_artifacts(root: Path | str = ".") -> dict[str, Any]:
     formula_end_to_end_artifacts = write_formula_end_to_end_artifacts(root_path)
     payloads.update(formula_end_to_end_artifacts)
     launch_artifacts["formula_end_to_end_gate_results"] = formula_end_to_end_artifacts[FORMULA_GATE_REL]
+    launch_artifacts["packet_schema_gate_results"] = formula_end_to_end_artifacts[PACKET_SCHEMA_GATE_REL]
+    launch_artifacts["snowflake_formula_gate_results"] = formula_end_to_end_artifacts[SNOWFLAKE_FORMULA_GATE_REL]
     launch_artifacts["cortex_service_type_gate_results"] = formula_end_to_end_artifacts[CORTEX_SERVICE_TYPE_GATE_REL]
     encoding_artifacts = write_encoding_hygiene_artifacts(root_path)
     payloads.update(encoding_artifacts)

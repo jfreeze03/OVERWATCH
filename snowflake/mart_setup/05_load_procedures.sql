@@ -775,9 +775,11 @@ BEGIN
         USAGE_DATE,
         'Account-Wide' AS COMPANY,
         CASE
-          WHEN SERVICE_TYPE ILIKE '%CORTEX%'
-            OR SERVICE_TYPE ILIKE '%AI%'
-            OR SERVICE_TYPE ILIKE '%INTELLIGENCE%'
+          WHEN SERVICE_TYPE IN (
+              'CORTEX', 'CORTEX_AI', 'CORTEX_FUNCTIONS', 'CORTEX_SEARCH',
+              'CORTEX_ANALYST', 'DOCUMENT_AI', 'FINE_TUNING', 'AI_SERVICES'
+            )
+            OR STARTSWITH(SERVICE_TYPE, 'CORTEX_')
             THEN 'AI / Cortex'
           WHEN SERVICE_TYPE IN (
             'AUTOMATIC_CLUSTERING', 'COPY_FILES', 'MATERIALIZED_VIEW',

@@ -114,6 +114,14 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertTrue(summary["formula_end_to_end_passed"])
         self.assertEqual(summary["formula_end_to_end_failure_count"], 0)
         self.assertTrue(summary["packet_formula_sql_passed"])
+        self.assertTrue(summary["flat_packet_formula_passed"])
+        self.assertTrue(summary["packet_schema_upgrade_passed"])
+        self.assertEqual(summary["packet_schema_failure_count"], 0)
+        self.assertTrue(summary["snowflake_formula_static_passed"])
+        self.assertTrue(summary["snowflake_formula_live_passed"])
+        self.assertTrue(summary["snowflake_formula_live_skipped"])
+        self.assertTrue(summary["snowflake_formula_gate_passed"])
+        self.assertEqual(summary["snowflake_formula_gate_failure_count"], 0)
         self.assertTrue(summary["rendered_formula_passed"])
         self.assertTrue(summary["cortex_service_type_gate_passed"])
         self.assertEqual(summary["cortex_service_type_failure_count"], 0)
@@ -143,6 +151,8 @@ class LaunchReadinessTests(unittest.TestCase):
             "billing_reconciliation_live",
             "cost_db_formula_authority",
             "formula_end_to_end",
+            "packet_schema_upgrade",
+            "snowflake_formula_static_live",
             "cortex_service_type_mapping",
             "cortex_cost_consistency",
             "cost_chart_workbench",

@@ -16,14 +16,18 @@ COST_DB_AUTHORITY_SUMMARY_REL = f"{FORMULA_AUTHORITY_DIR}/cost_db_formula_author
 CORTEX_SERVICE_TYPE_MAPPING_REL = f"{FORMULA_AUTHORITY_DIR}/cortex_service_type_mapping.json"
 FORMULA_CHAIN_REL = f"{FORMULA_AUTHORITY_DIR}/formula_chain_results.json"
 PACKET_FORMULA_REL = f"{FORMULA_AUTHORITY_DIR}/packet_formula_results.json"
+FLAT_PACKET_FORMULA_REL = f"{FORMULA_AUTHORITY_DIR}/flat_packet_formula_results.json"
+SNOWFLAKE_FORMULA_STATIC_REL = f"{FORMULA_AUTHORITY_DIR}/snowflake_formula_static_results.json"
 REQUIRED_FORMULA_AUTHORITY_ARTIFACTS = {
     COST_DB_AUTHORITY_SUMMARY_REL,
     COST_DB_MAPPING_REL,
     CORTEX_SERVICE_TYPE_MAPPING_REL,
+    FLAT_PACKET_FORMULA_REL,
     FORMULA_CHAIN_REL,
     OVERWATCH_MAPPING_REL,
     PACKET_FORMULA_REL,
     FORMULA_GAP_REL,
+    SNOWFLAKE_FORMULA_STATIC_REL,
 }
 
 
@@ -54,6 +58,8 @@ def write_cost_db_formula_authority_artifacts(root: Path | str = ".") -> dict[st
     from utils.cortex_service_types import cortex_service_type_mapping_results
     from tools.contracts.formula_end_to_end_validation import (
         build_formula_chain_results,
+        build_snowflake_formula_static_results,
+        evaluate_flat_packet_formula_sql,
         evaluate_packet_formula_sql,
     )
 
@@ -64,14 +70,18 @@ def write_cost_db_formula_authority_artifacts(root: Path | str = ".") -> dict[st
     cortex_mapping = cortex_service_type_mapping_results()
     formula_chain = build_formula_chain_results(root_path)
     packet_formula = evaluate_packet_formula_sql(root_path)
+    flat_packet_formula = evaluate_flat_packet_formula_sql(root_path)
+    snowflake_formula_static = build_snowflake_formula_static_results(root_path)
     artifacts = {
         COST_DB_AUTHORITY_SUMMARY_REL: authority_summary,
         COST_DB_MAPPING_REL: cost_db_rows,
         CORTEX_SERVICE_TYPE_MAPPING_REL: cortex_mapping,
+        FLAT_PACKET_FORMULA_REL: flat_packet_formula,
         FORMULA_CHAIN_REL: formula_chain,
         OVERWATCH_MAPPING_REL: overwatch_rows,
         PACKET_FORMULA_REL: packet_formula,
         FORMULA_GAP_REL: gap_results,
+        SNOWFLAKE_FORMULA_STATIC_REL: snowflake_formula_static,
     }
     for rel, payload in artifacts.items():
         _write_json(root_path / rel, payload)
@@ -86,6 +96,8 @@ def evaluate_cost_db_formula_authority(
     cortex_service_type_mapping: Any = None,
     formula_chain_results: Any = None,
     packet_formula_results: Any = None,
+    flat_packet_formula_results: Any = None,
+    snowflake_formula_static_results: Any = None,
 ) -> dict[str, Any]:
     cost_db_rows = list(cost_db_mapping or []) if isinstance(cost_db_mapping, list) else []
     overwatch_rows = list(overwatch_mapping or []) if isinstance(overwatch_mapping, list) else []
@@ -94,6 +106,8 @@ def evaluate_cost_db_formula_authority(
     cortex_mapping = dict(_as_mapping(cortex_service_type_mapping))
     formula_chain = dict(_as_mapping(formula_chain_results))
     packet_formula = dict(_as_mapping(packet_formula_results))
+    flat_packet_formula = dict(_as_mapping(flat_packet_formula_results))
+    snowflake_formula_static = dict(_as_mapping(snowflake_formula_static_results))
     failures: list[dict[str, Any]] = []
     if not cost_db_rows:
         failures.append({"code": "COST_DB_MAPPING_MISSING", "artifact": COST_DB_MAPPING_REL})
@@ -112,6 +126,10 @@ def evaluate_cost_db_formula_authority(
         failures.append({"code": "FORMULA_CHAIN_RESULTS_FAILED", "failure_count": int(formula_chain.get("failure_count") or 0)})
     if packet_formula and not bool(packet_formula.get("passed")):
         failures.append({"code": "PACKET_FORMULA_SQL_FAILED", "failure_count": int(packet_formula.get("failure_count") or 0)})
+    if flat_packet_formula and not bool(flat_packet_formula.get("passed")):
+        failures.append({"code": "FLAT_PACKET_FORMULA_SQL_FAILED", "failure_count": int(flat_packet_formula.get("failure_count") or 0)})
+    if snowflake_formula_static and not bool(snowflake_formula_static.get("passed")):
+        failures.append({"code": "SNOWFLAKE_FORMULA_STATIC_FAILED", "failure_count": int(snowflake_formula_static.get("failure_count") or 0)})
 
     authority_ids = {str(row.get("formula_id") or "") for row in cost_db_rows if isinstance(row, Mapping)}
     target_ids = {str(row.get("formula_id") or "") for row in overwatch_rows if isinstance(row, Mapping)}
@@ -170,6 +188,8 @@ def evaluate_cost_db_formula_authority(
         "cortex_service_type_mapping_passed": not bool(cortex_mapping.get("broad_ai_substring_match_enabled")),
         "formula_chain_passed": bool(formula_chain.get("passed", True)),
         "packet_formula_sql_passed": bool(packet_formula.get("passed", True)),
+        "flat_packet_formula_passed": bool(flat_packet_formula.get("passed", True)),
+        "snowflake_formula_static_passed": bool(snowflake_formula_static.get("passed", True)),
         "required_artifacts": sorted(REQUIRED_FORMULA_AUTHORITY_ARTIFACTS),
         "raw_sql_included": False,
     }
@@ -185,6 +205,8 @@ def main() -> None:
         artifacts.get(CORTEX_SERVICE_TYPE_MAPPING_REL),
         artifacts.get(FORMULA_CHAIN_REL),
         artifacts.get(PACKET_FORMULA_REL),
+        artifacts.get(FLAT_PACKET_FORMULA_REL),
+        artifacts.get(SNOWFLAKE_FORMULA_STATIC_REL),
     )
     if not bool(_as_mapping(results).get("passed")):
         raise SystemExit(json.dumps(results, indent=2, sort_keys=True))
@@ -198,12 +220,14 @@ __all__ = [
     "COST_DB_MAPPING_REL",
     "COST_DB_AUTHORITY_SUMMARY_REL",
     "CORTEX_SERVICE_TYPE_MAPPING_REL",
+    "FLAT_PACKET_FORMULA_REL",
     "FORMULA_AUTHORITY_DIR",
     "FORMULA_CHAIN_REL",
     "FORMULA_GAP_REL",
     "OVERWATCH_MAPPING_REL",
     "PACKET_FORMULA_REL",
     "REQUIRED_FORMULA_AUTHORITY_ARTIFACTS",
+    "SNOWFLAKE_FORMULA_STATIC_REL",
     "evaluate_cost_db_formula_authority",
     "write_cost_db_formula_authority_artifacts",
 ]

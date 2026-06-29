@@ -137,9 +137,11 @@ class GuardrailTests(unittest.TestCase):
         self.assertIn("key=GLOBAL_DATE_RANGE_INPUT", filters_text)
         date_input_block = filters_text[
             filters_text.index("date_range = st.date_input"):
-            filters_text.index("if isinstance(date_range, tuple)")
+            filters_text.index("date_range = _normalize_date_range_value(date_range)")
         ]
         self.assertNotIn("value=", date_input_block)
+        after_widget_block = filters_text[filters_text.index("date_range = _normalize_date_range_value(date_range)") :]
+        self.assertNotIn("set_state(GLOBAL_DATE_RANGE_INPUT", after_widget_block)
         self.assertIn("try:\n    from utils.admin import clamp_global_date_range", filters_text)
         self.assertIn("Fallback for Snowflake stages that refresh filters before utils.admin", filters_text)
         self.assertNotIn("render_admin_mode_control", app_text + filters_text)
@@ -168,6 +170,66 @@ class GuardrailTests(unittest.TestCase):
 
             self.assertEqual(st.session_state[GLOBAL_START_DATE], date(2026, 6, 20))
             self.assertEqual(st.session_state[GLOBAL_END_DATE], date(2026, 6, 27))
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)
+
+    def test_global_date_range_does_not_mutate_widget_key_after_instantiation(self):
+        import filters
+        from runtime_state import GLOBAL_DATE_RANGE_INPUT, GLOBAL_END_DATE, GLOBAL_START_DATE
+
+        previous = dict(st.session_state)
+        try:
+            st.session_state.clear()
+            st.session_state[GLOBAL_START_DATE] = date(2026, 6, 21)
+            st.session_state[GLOBAL_END_DATE] = date(2026, 6, 28)
+            widget_created = False
+            post_widget_writes: list[tuple[str, object]] = []
+            original_set_state = filters.set_state
+
+            def fake_date_input(*args, **kwargs):
+                nonlocal widget_created
+                widget_created = True
+                return (date(2026, 1, 1), date(2026, 6, 28))
+
+            def tracked_set_state(key, value):
+                if widget_created and key == GLOBAL_DATE_RANGE_INPUT:
+                    post_widget_writes.append((key, value))
+                return original_set_state(key, value)
+
+            with patch.object(filters.st, "date_input", side_effect=fake_date_input), patch.object(
+                filters, "set_state", side_effect=tracked_set_state
+            ):
+                filters.render_global_date_range_control(label="Window")
+
+            self.assertEqual(post_widget_writes, [])
+            self.assertEqual(st.session_state[GLOBAL_START_DATE], date(2026, 6, 28) - filters.timedelta(days=89))
+            self.assertEqual(st.session_state[GLOBAL_END_DATE], date(2026, 6, 28))
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)
+
+    def test_global_date_range_normalizes_list_before_widget_creation(self):
+        import filters
+        from runtime_state import GLOBAL_DATE_RANGE_INPUT, GLOBAL_END_DATE, GLOBAL_START_DATE
+
+        previous = dict(st.session_state)
+        try:
+            st.session_state.clear()
+            st.session_state[GLOBAL_START_DATE] = date(2026, 6, 21)
+            st.session_state[GLOBAL_END_DATE] = date(2026, 6, 28)
+            st.session_state[GLOBAL_DATE_RANGE_INPUT] = [date(2026, 6, 21), date(2026, 6, 28)]
+
+            def fake_date_input(*args, **kwargs):
+                self.assertIsInstance(st.session_state[GLOBAL_DATE_RANGE_INPUT], tuple)
+                return st.session_state[GLOBAL_DATE_RANGE_INPUT]
+
+            with patch.object(filters.st, "date_input", side_effect=fake_date_input):
+                filters.render_global_date_range_control(label="Window")
+
+            self.assertEqual(st.session_state[GLOBAL_DATE_RANGE_INPUT], (date(2026, 6, 21), date(2026, 6, 28)))
+            self.assertEqual(st.session_state[GLOBAL_START_DATE], date(2026, 6, 21))
+            self.assertEqual(st.session_state[GLOBAL_END_DATE], date(2026, 6, 28))
         finally:
             st.session_state.clear()
             st.session_state.update(previous)

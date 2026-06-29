@@ -5,7 +5,7 @@ signature used to invalidate loaded telemetry.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from html import escape as _escape_html
 
 import streamlit as st
@@ -97,6 +97,32 @@ def global_filter_signature() -> tuple:
     )
 
 
+def _coerce_date_value(value: object) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text[:10]).date()
+    except ValueError:
+        return None
+
+
+def _normalize_date_range_value(value: object) -> tuple[date, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, list):
+        value = tuple(value)
+    if isinstance(value, tuple):
+        normalized = tuple(item for item in (_coerce_date_value(part) for part in value) if item is not None)
+        return normalized[:2]
+    single = _coerce_date_value(value)
+    return (single,) if single is not None else ()
+
+
 def sync_company_environment_state(company: str) -> list[str]:
     """Keep company/environment state valid before section queries hydrate."""
     previous_company = get_state(PREV_ACTIVE_COMPANY, DEFAULT_COMPANY)
@@ -113,10 +139,11 @@ def render_global_date_range_control(*, label: str = "Date range", label_visibil
     """Render the bounded global date range control."""
     default_end = datetime.now().date()
     default_start = default_end - timedelta(days=7)
-    existing_date_range = get_state(GLOBAL_DATE_RANGE_INPUT)
-    if isinstance(existing_date_range, list):
-        existing_date_range = tuple(existing_date_range)
-    if isinstance(existing_date_range, tuple) and len(existing_date_range) == 2:
+    raw_existing_date_range = get_state(GLOBAL_DATE_RANGE_INPUT)
+    existing_date_range = _normalize_date_range_value(raw_existing_date_range)
+    if isinstance(raw_existing_date_range, list) and existing_date_range:
+        set_state(GLOBAL_DATE_RANGE_INPUT, existing_date_range)
+    if len(existing_date_range) == 2:
         clamped_start, clamped_end, was_clamped, max_days = clamp_global_date_range(
             existing_date_range[0],
             existing_date_range[1],
@@ -127,7 +154,7 @@ def render_global_date_range_control(*, label: str = "Date range", label_visibil
             set_state(GLOBAL_END_DATE, clamped_end)
             clamp_key = f"{clamped_start}|{clamped_end}|{max_days}"
             set_state(GLOBAL_DATE_CLAMP_PENDING_WARNING, (clamp_key, max_days))
-    elif not isinstance(existing_date_range, tuple):
+    elif not existing_date_range:
         set_state(
             GLOBAL_DATE_RANGE_INPUT,
             (
@@ -140,15 +167,11 @@ def render_global_date_range_control(*, label: str = "Date range", label_visibil
         key=GLOBAL_DATE_RANGE_INPUT,
         label_visibility=label_visibility,
     )
-    if isinstance(date_range, list):
-        date_range = tuple(date_range)
-    if isinstance(date_range, tuple) and len(date_range) == 1:
-        set_state(GLOBAL_DATE_RANGE_INPUT, date_range)
+    date_range = _normalize_date_range_value(date_range)
+    if len(date_range) == 1:
         return
-    if isinstance(date_range, tuple) and len(date_range) == 2:
+    if len(date_range) == 2:
         clamped_start, clamped_end, was_clamped, max_days = clamp_global_date_range(date_range[0], date_range[1])
-        if was_clamped:
-            set_state(GLOBAL_DATE_RANGE_INPUT, (clamped_start, clamped_end))
         set_state(GLOBAL_START_DATE, clamped_start)
         set_state(GLOBAL_END_DATE, clamped_end)
         pending_clamp_warning = pop_state(GLOBAL_DATE_CLAMP_PENDING_WARNING, None)

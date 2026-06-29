@@ -16,6 +16,7 @@ from performance import (
     end_first_paint,
     query_budget_context,
 )
+from runtime_state import set_state
 from sections.command_brief_routes import COMMAND_BRIEF_ROUTES, apply_command_brief_route
 from sections.decision_workspace_controls import (
     CommandBriefDetailAction,
@@ -379,10 +380,36 @@ def _finding_for_action(model: DecisionWorkspaceViewModel, action: object) -> ob
     return model.findings[0] if model.findings else None
 
 
+def _priority_route_action(model: DecisionWorkspaceViewModel) -> DecisionActionView | None:
+    fallback_routes = {
+        "Executive Landing": "executive_overview",
+        "DBA Control Room": "dba_failures",
+        "Alert Center": "alert_center_active",
+        "Cost & Contract": "cost_contract_overview",
+        "Workload Operations": "workload_query_investigation",
+        "Security Monitoring": "security_overview",
+    }
+    route_key = fallback_routes.get(model.section, "")
+    if route_key in COMMAND_BRIEF_ROUTES:
+        return DecisionActionView(
+            label="View all priorities",
+            cta="View all priorities",
+            action_key="view_all_priorities",
+            route_key=route_key,
+        )
+    return None
+
+
 def _apply_route_action(action: object, *, finding: object | None, section: str, workflow: str) -> bool:
     with query_budget_context("route_action", section=section, workflow=workflow, budget=SECTION_ROUTE_QUERY_BUDGET):
         apply_finding_evidence_target(finding, section, workflow)
         route_key = _action_route_key(action)
+        route = COMMAND_BRIEF_ROUTES.get(route_key)
+        if route is not None:
+            if route.workflow_key and route.workflow:
+                set_state(route.workflow_key, route.workflow)
+            for state_key, state_value in route.state_updates:
+                set_state(state_key, state_value)
         return bool(route_key and apply_command_brief_route(route_key))
 
 
@@ -408,7 +435,7 @@ def _render_model_attention_panel(model: DecisionWorkspaceViewModel) -> str:
         entity_meta = " / ".join(
             part for part in (item.entity_type, item.entity_id or item.entity_name or item.entity) if part
         )
-        age_due = " / ".join(part for part in (item.first_seen_label, item.due_label) if part)
+        age_due = item.first_seen_label
         evidence_hint = f"Evidence {item.evidence_id}" if item.evidence_id else (item.evidence_source or "")
         detail_parts = [item.detail or item.entity, entity_meta, age_due, evidence_hint]
         detail = " | ".join(part for part in detail_parts if part)
@@ -437,7 +464,6 @@ def _render_model_attention_panel(model: DecisionWorkspaceViewModel) -> str:
         '<section class="ow-decision-attention-panel">'
         '<h4>What needs attention</h4>'
         + "".join(rows)
-        + '<a class="ow-decision-view-all">View all priorities &rsaquo;</a>'
         + '</section>'
     )
 
@@ -663,6 +689,22 @@ def render_decision_workspace(
         left, right = st.columns([2.05, 0.95])
         with left:
             st.html(_render_model_attention_panel(model))
+            priority_action = _priority_route_action(model)
+            if priority_action is not None and st.button(
+                "View all priorities",
+                key=f"{key_prefix}_view_all_priorities",
+                type="secondary",
+                width="stretch",
+                help="Open the current section priority list without loading row evidence.",
+            ):
+                _close_first_paint_for_user_action()
+                if _apply_route_action(
+                    priority_action,
+                    finding=_finding_for_action(model, priority_action),
+                    section=model.section,
+                    workflow=model.workflow,
+                ):
+                    st.rerun()
         with right:
             _render_workspace_actions(
                 model,

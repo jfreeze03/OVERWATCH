@@ -11329,7 +11329,7 @@ BEGIN
       s.BRIEF_ID,
       'sla_risk',
       trend_date,
-      SUM(failures)
+      LEAST(100, SUM(failures) * 10)
     FROM trend_scopes s
     JOIN (
       SELECT COMPANY, TO_DATE(SCHEDULED_TIME) AS trend_date,
@@ -11567,7 +11567,7 @@ BEGIN
   dba_decision AS (
     SELECT f.*,
       CASE WHEN SOURCE_SNAPSHOT_TS IS NULL THEN 'Data Gap' WHEN FRESHNESS_MINUTES > TARGET_FRESHNESS_MINUTES THEN 'Stale' WHEN DBA_FAILED_QUERIES + DBA_FAILED_TASKS > 0 OR DBA_QUEUED_MS > 0 THEN 'At Risk' WHEN DBA_SECURITY_EVENTS > 0 OR DBA_CORTEX_COST > 0 THEN 'Watch' ELSE 'Healthy' END AS DECISION_STATE,
-      CASE WHEN SOURCE_SNAPSHOT_TS IS NULL THEN 'Control-room mart has no current decision row.' WHEN DBA_FAILED_QUERIES + DBA_FAILED_TASKS > 0 THEN TO_VARCHAR(DBA_FAILED_QUERIES + DBA_FAILED_TASKS) || ' DBA failure signals need triage.' WHEN DBA_QUEUED_MS > 0 THEN 'Warehouse queue pressure is active.' WHEN DBA_SECURITY_EVENTS > 0 THEN 'Security warnings need DBA coordination.' ELSE 'DBA cockpit is clear for the selected scope.' END AS DECISION_HEADLINE,
+      CASE WHEN SOURCE_SNAPSHOT_TS IS NULL THEN 'Control-room mart has no current decision row.' WHEN DBA_FAILED_QUERIES > 0 THEN 'DBA failed SQL needs triage.' WHEN DBA_FAILED_TASKS > 0 THEN 'DBA pipeline failures need triage.' WHEN DBA_QUEUED_MS > 0 THEN 'Warehouse queue pressure is active.' WHEN DBA_SECURITY_EVENTS > 0 THEN 'Security warnings need DBA coordination.' ELSE 'DBA cockpit is clear for the selected scope.' END AS DECISION_HEADLINE,
       'DBA operating view of failures, queue pressure, cost, Cortex cost, security warnings, changes, and owner action state.' AS DECISION_SUMMARY,
       CASE WHEN DBA_FAILED_QUERIES + DBA_FAILED_TASKS > 0 THEN 'DBA failures' WHEN DBA_QUEUED_MS > 0 THEN 'Queue pressure' WHEN DBA_SECURITY_EVENTS > 0 THEN 'Security warning' WHEN DBA_CORTEX_COST > 0 THEN 'Cortex cost watch' ELSE 'DBA baseline clear' END AS DECISION_TOP_SIGNAL,
       CASE WHEN DBA_TOP_RISK <> '' THEN DBA_TOP_RISK ELSE 'DBA Control Room' END AS DECISION_TOP_ENTITY,
@@ -11681,7 +11681,7 @@ BEGIN
   workload_decision AS (
     SELECT f.*,
       CASE WHEN SOURCE_SNAPSHOT_TS IS NULL THEN 'Data Gap' WHEN FRESHNESS_MINUTES > TARGET_FRESHNESS_MINUTES THEN 'Stale' WHEN FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES + COPY_ERRORS > 0 THEN 'At Risk' WHEN QUEUED_MS > 0 OR SPILL_BYTES > 0 THEN 'Watch' ELSE 'Healthy' END AS DECISION_STATE,
-      CASE WHEN SOURCE_SNAPSHOT_TS IS NULL THEN 'Workload summaries have not reached the decision mart.' WHEN FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES + COPY_ERRORS > 0 THEN TO_VARCHAR(FAILED_QUERIES + FAILED_TASKS + FAILED_PROCEDURES + COPY_ERRORS) || ' workload failure signals need triage.' WHEN QUEUED_MS > 0 THEN 'Queue or blocked pressure is active.' ELSE 'Workload telemetry is inside the current action threshold.' END AS DECISION_HEADLINE,
+      CASE WHEN SOURCE_SNAPSHOT_TS IS NULL THEN 'Workload summaries have not reached the decision mart.' WHEN FAILED_QUERIES > 0 THEN 'Workload failed SQL needs triage.' WHEN FAILED_TASKS + FAILED_PROCEDURES + COPY_ERRORS > 0 THEN 'Pipeline failures need triage.' WHEN QUEUED_MS > 0 OR SPILL_BYTES > 0 THEN 'Workload pressure is elevated.' ELSE 'Workload telemetry is inside the current action threshold.' END AS DECISION_HEADLINE,
       'Operational view of failed SQL, pipelines, tasks, procedures, copy/load, queue pressure, SLA risk, and recent changes.' AS DECISION_SUMMARY,
       CASE WHEN FAILED_QUERIES > 0 THEN 'Failed SQL' WHEN FAILED_TASKS + FAILED_PROCEDURES + COPY_ERRORS > 0 THEN 'Pipeline failures' WHEN QUEUED_MS > 0 THEN 'Queue pressure' WHEN SPILL_BYTES > 0 THEN 'Spill pressure' ELSE 'Workload baseline clear' END AS DECISION_TOP_SIGNAL,
       CASE WHEN QUEUED_MS > 0 THEN 'Warehouse Pressure' WHEN FAILED_TASKS + FAILED_PROCEDURES + COPY_ERRORS > 0 THEN 'Pipeline & Tasks' ELSE 'Query Investigation' END AS DECISION_TOP_ENTITY,
@@ -12439,9 +12439,9 @@ BEGIN
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Workload Operations'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'sla_risk', 'Pipeline Failure Risk',
-           TO_VARCHAR(IFF(FAILED_TASKS + FAILED_PROCEDURES + COPY_ERRORS > 0, FAILED_TASKS + FAILED_PROCEDURES + COPY_ERRORS, 0)),
-           IFF(FAILED_TASKS + FAILED_PROCEDURES + COPY_ERRORS > 0, FAILED_TASKS + FAILED_PROCEDURES + COPY_ERRORS, 0), NULL, 'integer', 'items',
-           'Failure proxy from task, procedure, and copy/load facts; SLA due data unavailable', IFF(FAILED_TASKS + FAILED_PROCEDURES + COPY_ERRORS > 0, 'warning', 'neutral'), NULL, 'failure proxy', CONFIDENCE, 72
+           TO_VARCHAR(ROUND(LEAST(100, (FAILED_TASKS + FAILED_PROCEDURES + COPY_ERRORS) * 10 + IFF(QUEUED_MS > 0, 15, 0)), 1)) || '%',
+           LEAST(100, (FAILED_TASKS + FAILED_PROCEDURES + COPY_ERRORS) * 10 + IFF(QUEUED_MS > 0, 15, 0)), NULL, 'percentage', 'risk_score',
+           'Proxy risk score from task, procedure, copy/load failures, and queue pressure; SLA due data unavailable', IFF(FAILED_TASKS + FAILED_PROCEDURES + COPY_ERRORS > 0 OR QUEUED_MS > 0, 'warning', 'neutral'), NULL, 'proxy risk score', CONFIDENCE, 72
     FROM TMP_SECTION_COMMAND_FACTS_TRUSTED WHERE SECTION_NAME = 'Workload Operations'
     UNION ALL
     SELECT BRIEF_ID, SECTION_NAME, COMPANY, ENVIRONMENT, WINDOW_DAYS, 'spill_bytes', 'Spill Bytes',

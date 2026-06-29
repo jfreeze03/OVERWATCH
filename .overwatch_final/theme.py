@@ -3582,11 +3582,13 @@ div[class*="st-key-"][class*="_decision_workspace_shell"] .ow-decision-workspace
 }
 .ow-decision-attention-row {
     display: grid;
-    grid-template-columns: 34px 58px minmax(0, 1fr) 132px 96px;
-    gap: .75rem;
+    grid-template-columns: 28px 56px minmax(180px, 1fr) minmax(112px, .36fr) minmax(88px, .26fr) minmax(86px, .24fr);
+    gap: .65rem;
     align-items: center;
-    padding: .8rem .25rem;
+    min-height: 70px;
+    padding: .7rem .25rem;
     border-top: 1px solid rgba(170, 188, 200, .13);
+    overflow: hidden;
 }
 .ow-attention-icon {
     width: 22px;
@@ -3607,25 +3609,43 @@ div[class*="st-key-"][class*="_decision_workspace_shell"] .ow-decision-workspace
     font-size: .76rem;
     text-transform: uppercase;
 }
+.ow-attention-copy,
+.ow-attention-meta {
+    min-width: 0;
+}
 .ow-attention-copy b {
     display: block;
     color: var(--ow-text) !important;
     font-size: .96rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 .ow-attention-copy small,
 .ow-attention-meta span {
     color: var(--ow-text-secondary) !important;
 }
+.ow-attention-copy small {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
 .ow-attention-meta b {
     display: block;
     color: var(--ow-text) !important;
     font-size: .83rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
-.ow-decision-view-all {
-    display: inline-flex;
-    margin-top: .55rem;
+.ow-decision-attention-panel + div [data-testid="stButton"] button {
+    min-height: 34px !important;
+    border-radius: 7px !important;
+    border-color: rgba(0, 190, 220, .42) !important;
     color: var(--ow-cyan) !important;
-    text-decoration: none;
+    background: rgba(0, 190, 220, .08) !important;
+    font-weight: 700 !important;
 }
 .ow-decision-actions-panel-label {
     margin: .1rem 0 .75rem;

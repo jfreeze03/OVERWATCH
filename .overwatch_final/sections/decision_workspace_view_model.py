@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Sequence
 
+from sections.metric_semantic_registry import MetricSemantic, get_metric_semantic
+
 
 @dataclass(frozen=True)
 class DecisionMetricCell:
@@ -132,10 +134,15 @@ def _compact_number(value: float, *, decimals: int = 1) -> str:
     return f"{sign}{value:.{decimals}f}"
 
 
-def format_metric_value(metric: object) -> str:
+def format_metric_value(
+    metric: object,
+    *,
+    metric_format: str | None = None,
+    value_unit: str | None = None,
+) -> str:
     numeric = getattr(metric, "numeric_value", None)
-    fmt = str(getattr(metric, "metric_format", "") or "").strip().lower()
-    unit = str(getattr(metric, "unit", "") or "").strip()
+    fmt = str(metric_format if metric_format is not None else getattr(metric, "metric_format", "") or "").strip().lower()
+    unit = str(value_unit if value_unit is not None else getattr(metric, "unit", "") or "").strip()
     if numeric is None:
         return (
             str(getattr(metric, "text_value", "") or "")
@@ -248,17 +255,56 @@ def _preferred_metrics(section: str) -> tuple[str, ...]:
     }.get(str(section or ""), ())
 
 
-def _to_metric_cell(metric: object) -> DecisionMetricCell:
+def _metric_numeric(metric: object) -> float | None:
+    numeric = getattr(metric, "numeric_value", None)
+    if numeric is None:
+        return None
+    try:
+        return float(numeric)
+    except (TypeError, ValueError):
+        return None
+
+
+def _metric_availability_state(metric: object, semantic: MetricSemantic | None, outlier_reason: str = "") -> str:
+    if outlier_reason:
+        return "Formula check required"
+    state = str(getattr(metric, "availability_state", "") or "").strip()
+    if state:
+        return state
+    if semantic is not None:
+        return "Billing reconciliation pending" if semantic.source_family == "account_billing" else "Summary unavailable"
+    return "Available"
+
+
+def _to_metric_cell(section: str, metric: object) -> DecisionMetricCell:
+    key = str(getattr(metric, "key", "") or "")
+    semantic = get_metric_semantic(section, key)
+    numeric = _metric_numeric(metric)
+    outlier_reason = semantic.outlier_reason(numeric) if semantic is not None else ""
+    metric_available = bool(getattr(metric, "available", True)) and not outlier_reason
+    availability_state = _metric_availability_state(metric, semantic, outlier_reason)
+    detail = outlier_reason or _delta_label(metric)
+    if semantic is not None and semantic.proxy_metric:
+        if detail:
+            detail = f"{detail} - proxy" if "proxy" not in detail.lower() else detail
+        else:
+            detail = "proxy risk score"
+    if metric_available:
+        metric_format = semantic.metric_format if semantic is not None else None
+        value_unit = semantic.value_unit if semantic is not None else None
+        value = format_metric_value(metric, metric_format=metric_format, value_unit=value_unit)
+    else:
+        value = availability_state
     trend_points = tuple(getattr(metric, "trend_points", ()) or ())
     return DecisionMetricCell(
-        key=str(getattr(metric, "key", "") or ""),
-        label=str(getattr(metric, "label", "") or "Metric"),
-        value=format_metric_value(metric),
-        detail=_delta_label(metric),
+        key=key,
+        label=semantic.label if semantic is not None else str(getattr(metric, "label", "") or "Metric"),
+        value=value,
+        detail=detail,
         tone=str(getattr(metric, "tone", "") or "neutral").lower(),
         trend_points=trend_points,
-        available=bool(getattr(metric, "available", True)),
-        availability_state=str(getattr(metric, "availability_state", "") or "Available"),
+        available=metric_available,
+        availability_state=availability_state,
         trend_period=str(getattr(metric, "trend_period", "") or ""),
         trend_point_count=int(getattr(metric, "trend_point_count", 0) or len(trend_points)),
         trend_quality=str(getattr(metric, "trend_quality", "") or ("complete" if len(trend_points) >= 7 else "")),
@@ -267,15 +313,21 @@ def _to_metric_cell(metric: object) -> DecisionMetricCell:
 
 
 def _metric_cells(section: str, metrics: Sequence[object]) -> tuple[tuple[DecisionMetricCell, ...], tuple[DecisionMetricCell, ...]]:
-    available = tuple(metric for metric in tuple(metrics or ()) if bool(getattr(metric, "available", True)))
-    by_key = {str(getattr(metric, "key", "") or ""): metric for metric in available}
+    all_metrics = tuple(metrics or ())
+    available = tuple(metric for metric in all_metrics if bool(getattr(metric, "available", True)))
+    by_key = {str(getattr(metric, "key", "") or ""): metric for metric in all_metrics}
     preferred = tuple(by_key[key] for key in _preferred_metrics(section) if key in by_key)
-    selected = preferred or available[:4]
+    selected = preferred or available[:4] or all_metrics[:4]
     if len(selected) < 4:
-        selected = selected + tuple(metric for metric in available if metric not in selected)[: 4 - len(selected)]
-    primary = tuple(_to_metric_cell(metric) for metric in selected[:4])
+        fill_from = available or all_metrics
+        selected = selected + tuple(metric for metric in fill_from if metric not in selected)[: 4 - len(selected)]
+    primary = tuple(_to_metric_cell(section, metric) for metric in selected[:4])
     primary_keys = {cell.key for cell in primary}
-    extra = tuple(_to_metric_cell(metric) for metric in available if str(getattr(metric, "key", "") or "") not in primary_keys)
+    extra = tuple(
+        _to_metric_cell(section, metric)
+        for metric in all_metrics
+        if str(getattr(metric, "key", "") or "") not in primary_keys
+    )
     return primary, extra
 
 
@@ -354,7 +406,7 @@ def _trust_view(brief: object, source_mode: str) -> DecisionTrustView:
         "last_known_good": "Last successful summary",
         "scheduled_mart": "Scheduled mart",
     }.get(source_mode, "Scheduled mart")
-    summary = " · ".join(part for part in (mode_label, age, coverage, quality) if part)
+    summary = " | ".join(part for part in (mode_label, age, coverage, quality) if part)
     return DecisionTrustView(
         summary=summary,
         mode_label=mode_label,
@@ -470,6 +522,22 @@ def _format_ts_label(prefix: str, value: object) -> str:
         return f"{prefix} {text}"
 
 
+def _format_compact_ts_label(prefix: str, value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00")).replace(tzinfo=None)
+        return f"{prefix} {parsed.strftime('%b')} {parsed.day}"
+    except Exception:
+        trimmed = text[:10]
+        try:
+            parsed = datetime.fromisoformat(trimmed)
+            return f"{prefix} {parsed.strftime('%b')} {parsed.day}"
+        except Exception:
+            return f"{prefix} {trimmed or text}"
+
+
 def _first_seen_label(signal: object) -> str:
     age = getattr(signal, "age_minutes", None)
     if age is not None:
@@ -484,9 +552,14 @@ def _first_seen_label(signal: object) -> str:
 
 def _due_label(signal: object) -> str:
     sla = str(getattr(signal, "sla_state", "") or "").strip()
-    due = _format_ts_label("Due", getattr(signal, "due_ts", ""))
+    due = _format_compact_ts_label("Due", getattr(signal, "due_ts", ""))
     if sla and due:
-        return f"{sla} / {due}"
+        normalized = sla.lower()
+        if (normalized.startswith("due") or normalized.startswith("overdue")) and "/" not in sla and len(sla) <= 24:
+            return sla
+        if normalized.startswith("due") or normalized in {"on track", "sla unavailable", "no sla"}:
+            return due
+        return sla
     return sla or due or _sla_label(signal)
 
 

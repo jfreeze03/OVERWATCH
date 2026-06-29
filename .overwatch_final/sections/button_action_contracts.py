@@ -302,6 +302,61 @@ def _route_contracts_for_source_section(section: str) -> Iterable[ButtonActionCo
         )
 
 
+def _priority_route_contract(section: str) -> ButtonActionContract:
+    source_workflow = SECTION_WORKFLOW_CONTRACT.get(section, ("",))[0]
+    workflow_key = WORKFLOW_STATE_KEY_BY_SECTION.get(section, "")
+    route_key = {
+        "Executive Landing": "executive_overview",
+        "DBA Control Room": "dba_failures",
+        "Alert Center": "alert_center_active",
+        "Cost & Contract": "cost_contract_overview",
+        "Workload Operations": "workload_query_investigation",
+        "Security Monitoring": "security_overview",
+    }.get(section, "")
+    route = COMMAND_BRIEF_ROUTES.get(route_key)
+    route_updates: dict[str, Any] = {}
+    if route is not None:
+        if route.workflow_key and route.workflow:
+            route_updates[route.workflow_key] = route.workflow
+        route_updates.update(dict(route.state_updates))
+    if route is not None and route.workflow_key and route.workflow == source_workflow:
+        route_updates.pop(route.workflow_key, None)
+    if workflow_key and source_workflow:
+        route_updates.setdefault(workflow_key, source_workflow)
+    if route is not None and route.workflow_key and route.workflow == source_workflow:
+        route_updates.pop(route.workflow_key, None)
+        route_updates = {key: value for key, value in route_updates.items() if value != source_workflow}
+    return ButtonActionContract(
+        section=section,
+        workflow=source_workflow,
+        key_pattern=r"_view_all_priorities$",
+        label_pattern=r"^View all priorities$",
+        action_type="route",
+        expected_target_section=section,
+        expected_target_workflow=route.workflow if route is not None else source_workflow,
+        expected_lens_state={
+            key: value
+            for key, value in route_updates.items()
+            if key and key not in {workflow_key, "nav_section", "decision_workspace_evidence_target"}
+        },
+        expected_state_updates={
+            "nav_section": section,
+            **route_updates,
+            "decision_workspace_evidence_target": "present",
+        },
+        expected_artifact="priority_navigation_state_delta",
+        exact_route_key=route_key,
+        expected_query_count=0,
+        expected_query_budget_context="route_action",
+        expected_budget=0,
+        expected_actual_boundaries={},
+        expected_session_open_count=0,
+        expected_direct_sql_count=0,
+        expected_metadata_probe_count=0,
+        expected_snowflake_execution_count=0,
+    )
+
+
 def _fallback_route_contract(section: str) -> ButtonActionContract:
     target_workflow = SECTION_WORKFLOW_CONTRACT.get(section, ("",))[0]
     updates: dict[str, Any] = {}
@@ -603,6 +658,7 @@ def _active_detail_action_contracts() -> Iterable[ButtonActionContract]:
 def iter_button_action_contracts() -> Iterable[ButtonActionContract]:
     for section in PRIMARY_SECTION_TITLES:
         yield _refresh_contract(section)
+        yield _priority_route_contract(section)
         yield from _route_contracts_for_source_section(section)
         yield _fallback_route_contract(section)
         yield _fallback_initialize_contract(section)

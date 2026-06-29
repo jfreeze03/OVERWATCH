@@ -89,7 +89,7 @@ jobs:
         run: python -m unittest tests.test_snowflake_execution_validation
 
       - name: Run COST_DB formula authority tests
-        run: python -m unittest tests.test_cost_db_formula_authority tests.test_cost_formula_authority tests.test_cortex_service_types
+        run: python -m unittest tests.test_cost_db_formula_authority tests.test_cost_formula_authority tests.test_cortex_service_types tests.test_formula_end_to_end_validation
 
       - name: Run encoding hygiene tests
         run: python -m unittest tests.test_encoding_hygiene
@@ -120,6 +120,9 @@ jobs:
 
       - name: Run COST_DB formula authority gate
         run: python -m tools.contracts.cost_db_formula_authority
+
+      - name: Run formula end-to-end gate
+        run: python -m tools.contracts.formula_end_to_end_validation
 
       - name: Upload Decision Workspace proof artifacts
         if: always()

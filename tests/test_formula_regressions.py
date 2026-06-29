@@ -522,10 +522,16 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("('STORAGE_COST_PER_TB_USD', '23.00'", setup_sql)
         self.assertIn("credit_price := COALESCE(credit_price, 3.68)", setup_sql)
         self.assertIn("storage_cost_per_tb := COALESCE(storage_cost_per_tb, 23.00)", setup_sql)
-        self.assertIn("ai_credit_price := COALESCE(ai_credit_price, 2.20)", setup_sql)
+        self.assertNotIn("ai_credit_price := COALESCE(ai_credit_price, 2.20)", setup_sql)
         daily_block = setup_sql.split("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_LOAD_DAILY()", 1)[1].split(
             "CREATE OR REPLACE PROCEDURE SP_OVERWATCH_LOAD_CORTEX()", 1
         )[0]
+        cortex_block = setup_sql.split("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_LOAD_CORTEX()", 1)[1].split(
+            "CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_COST_MONITORING()", 1
+        )[0]
+        self.assertIn("WHERE SETTING_NAME = 'CREDIT_PRICE_USD'", cortex_block)
+        self.assertIn("ROUND(SUM(raw.CREDITS_USED) * :credit_price, 2) AS EST_COST_USD", cortex_block)
+        self.assertNotIn("AI_CREDIT_PRICE_USD", cortex_block)
         self.assertIn("storage_cost_per_tb NUMBER(18,4) DEFAULT 23.00", daily_block)
         self.assertIn("SELECT TRY_TO_NUMBER(SETTING_VALUE) INTO :storage_cost_per_tb", daily_block)
         self.assertIn("WHERE SETTING_NAME = 'STORAGE_COST_PER_TB_USD'", daily_block)
@@ -2709,7 +2715,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY", setup_upper)
         self.assertNotIn("SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY", setup_upper)
         self.assertIn("AI_CREDIT_PRICE_USD", setup_upper)
-        self.assertIn("AI_CREDIT_PRICE := COALESCE(AI_CREDIT_PRICE, 2.20)", setup_upper)
+        self.assertNotIn("AI_CREDIT_PRICE := COALESCE(AI_CREDIT_PRICE, 2.20)", setup_upper)
+        self.assertIn("ROUND(SUM(RAW.CREDITS_USED) * :CREDIT_PRICE, 2) AS EST_COST_USD", setup_upper)
         self.assertIn("DATEADD('HOUR', -24, CURRENT_TIMESTAMP())", setup_upper)
         self.assertIn("ROUND(SUM(TOTAL_CREDITS * RATE_USD), 2) AS EST_COST_USD", setup_upper)
         self.assertIn("SERVICE_CATEGORY", setup_upper)

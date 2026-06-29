@@ -14,11 +14,15 @@ OVERWATCH_MAPPING_REL = f"{FORMULA_AUTHORITY_DIR}/overwatch_formula_mapping.json
 FORMULA_GAP_REL = f"{FORMULA_AUTHORITY_DIR}/formula_gap_results.json"
 COST_DB_AUTHORITY_SUMMARY_REL = f"{FORMULA_AUTHORITY_DIR}/cost_db_formula_authority_summary.json"
 CORTEX_SERVICE_TYPE_MAPPING_REL = f"{FORMULA_AUTHORITY_DIR}/cortex_service_type_mapping.json"
+FORMULA_CHAIN_REL = f"{FORMULA_AUTHORITY_DIR}/formula_chain_results.json"
+PACKET_FORMULA_REL = f"{FORMULA_AUTHORITY_DIR}/packet_formula_results.json"
 REQUIRED_FORMULA_AUTHORITY_ARTIFACTS = {
     COST_DB_AUTHORITY_SUMMARY_REL,
     COST_DB_MAPPING_REL,
     CORTEX_SERVICE_TYPE_MAPPING_REL,
+    FORMULA_CHAIN_REL,
     OVERWATCH_MAPPING_REL,
+    PACKET_FORMULA_REL,
     FORMULA_GAP_REL,
 }
 
@@ -48,17 +52,25 @@ def write_cost_db_formula_authority_artifacts(root: Path | str = ".") -> dict[st
         overwatch_formula_mapping,
     )
     from utils.cortex_service_types import cortex_service_type_mapping_results
+    from tools.contracts.formula_end_to_end_validation import (
+        build_formula_chain_results,
+        evaluate_packet_formula_sql,
+    )
 
     cost_db_rows = cost_db_formula_mapping()
     overwatch_rows = overwatch_formula_mapping()
     gap_results = evaluate_formula_gaps(cost_db_rows, overwatch_rows)
     authority_summary = cost_formula_authority_results()
     cortex_mapping = cortex_service_type_mapping_results()
+    formula_chain = build_formula_chain_results(root_path)
+    packet_formula = evaluate_packet_formula_sql(root_path)
     artifacts = {
         COST_DB_AUTHORITY_SUMMARY_REL: authority_summary,
         COST_DB_MAPPING_REL: cost_db_rows,
         CORTEX_SERVICE_TYPE_MAPPING_REL: cortex_mapping,
+        FORMULA_CHAIN_REL: formula_chain,
         OVERWATCH_MAPPING_REL: overwatch_rows,
+        PACKET_FORMULA_REL: packet_formula,
         FORMULA_GAP_REL: gap_results,
     }
     for rel, payload in artifacts.items():
@@ -72,12 +84,16 @@ def evaluate_cost_db_formula_authority(
     formula_gap_results: Any,
     authority_summary: Any = None,
     cortex_service_type_mapping: Any = None,
+    formula_chain_results: Any = None,
+    packet_formula_results: Any = None,
 ) -> dict[str, Any]:
     cost_db_rows = list(cost_db_mapping or []) if isinstance(cost_db_mapping, list) else []
     overwatch_rows = list(overwatch_mapping or []) if isinstance(overwatch_mapping, list) else []
     gap = dict(_as_mapping(formula_gap_results))
     summary = dict(_as_mapping(authority_summary))
     cortex_mapping = dict(_as_mapping(cortex_service_type_mapping))
+    formula_chain = dict(_as_mapping(formula_chain_results))
+    packet_formula = dict(_as_mapping(packet_formula_results))
     failures: list[dict[str, Any]] = []
     if not cost_db_rows:
         failures.append({"code": "COST_DB_MAPPING_MISSING", "artifact": COST_DB_MAPPING_REL})
@@ -92,6 +108,10 @@ def evaluate_cost_db_formula_authority(
             failures.append({"code": "CORTEX_BROAD_AI_SUBSTRING_MATCH_ENABLED"})
         if not cortex_mapping.get("allowlist"):
             failures.append({"code": "CORTEX_SERVICE_ALLOWLIST_MISSING"})
+    if formula_chain and not bool(formula_chain.get("passed")):
+        failures.append({"code": "FORMULA_CHAIN_RESULTS_FAILED", "failure_count": int(formula_chain.get("failure_count") or 0)})
+    if packet_formula and not bool(packet_formula.get("passed")):
+        failures.append({"code": "PACKET_FORMULA_SQL_FAILED", "failure_count": int(packet_formula.get("failure_count") or 0)})
 
     authority_ids = {str(row.get("formula_id") or "") for row in cost_db_rows if isinstance(row, Mapping)}
     target_ids = {str(row.get("formula_id") or "") for row in overwatch_rows if isinstance(row, Mapping)}
@@ -148,6 +168,8 @@ def evaluate_cost_db_formula_authority(
         "overwatch_formula_count": len(overwatch_rows),
         "authority_summary_passed": bool(summary.get("passed", True)),
         "cortex_service_type_mapping_passed": not bool(cortex_mapping.get("broad_ai_substring_match_enabled")),
+        "formula_chain_passed": bool(formula_chain.get("passed", True)),
+        "packet_formula_sql_passed": bool(packet_formula.get("passed", True)),
         "required_artifacts": sorted(REQUIRED_FORMULA_AUTHORITY_ARTIFACTS),
         "raw_sql_included": False,
     }
@@ -155,7 +177,15 @@ def evaluate_cost_db_formula_authority(
 
 def main() -> None:
     artifacts = write_cost_db_formula_authority_artifacts(Path.cwd())
-    results = artifacts[FORMULA_GAP_REL]
+    results = evaluate_cost_db_formula_authority(
+        artifacts.get(COST_DB_MAPPING_REL),
+        artifacts.get(OVERWATCH_MAPPING_REL),
+        artifacts.get(FORMULA_GAP_REL),
+        artifacts.get(COST_DB_AUTHORITY_SUMMARY_REL),
+        artifacts.get(CORTEX_SERVICE_TYPE_MAPPING_REL),
+        artifacts.get(FORMULA_CHAIN_REL),
+        artifacts.get(PACKET_FORMULA_REL),
+    )
     if not bool(_as_mapping(results).get("passed")):
         raise SystemExit(json.dumps(results, indent=2, sort_keys=True))
 
@@ -169,8 +199,10 @@ __all__ = [
     "COST_DB_AUTHORITY_SUMMARY_REL",
     "CORTEX_SERVICE_TYPE_MAPPING_REL",
     "FORMULA_AUTHORITY_DIR",
+    "FORMULA_CHAIN_REL",
     "FORMULA_GAP_REL",
     "OVERWATCH_MAPPING_REL",
+    "PACKET_FORMULA_REL",
     "REQUIRED_FORMULA_AUTHORITY_ARTIFACTS",
     "evaluate_cost_db_formula_authority",
     "write_cost_db_formula_authority_artifacts",

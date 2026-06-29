@@ -75,6 +75,10 @@ REQUIRED_RESULT_FILES = {
     "refresh_stage_timing_results",
     "refresh_row_count_results",
     "refresh_detail_results",
+    "formula_live_validation_results",
+    "cortex_service_type_live_results",
+    "workload_formula_live_results",
+    "packet_formula_results",
     "recent_snowflake_fix_validation_results",
     "metric_candidate_shape_results",
     "sql_encoding_scan_results",
@@ -3190,6 +3194,17 @@ def write_snowflake_validation_artifacts(root: Path | str = ".") -> dict[str, An
     encoding_scan = _sql_encoding_scan_results(root_path)
     schema_drift = _schema_drift_results(texts)
     sanitizer_results = _snowflake_error_sanitization_results()
+    from tools.contracts.formula_end_to_end_validation import (
+        build_cortex_service_type_live_results,
+        build_formula_live_validation_results,
+        build_workload_formula_live_results,
+        evaluate_packet_formula_sql,
+    )
+
+    packet_formula = evaluate_packet_formula_sql(root_path)
+    formula_live = build_formula_live_validation_results(root_path)
+    cortex_service_type_live = build_cortex_service_type_live_results(root_path)
+    workload_formula_live = build_workload_formula_live_results(root_path)
     live_execution_manifest = _live_execution_manifest_results(
         live_enabled=live_enabled,
         live_environment=live_environment,
@@ -3345,6 +3360,10 @@ def write_snowflake_validation_artifacts(root: Path | str = ".") -> dict[str, An
         "streamlit_manifest": manifest_validation,
         "phase_validation": phase_validation,
         "snowflake_error_sanitization": sanitizer_results,
+        "packet_formula_sql": packet_formula,
+        "formula_live_validation": formula_live,
+        "cortex_service_type_live": cortex_service_type_live,
+        "workload_formula_live": workload_formula_live,
         "live_validation_environment": live_environment,
         "live_validation_session": live_session,
         "live_execution_manifest": live_execution_manifest,
@@ -3401,6 +3420,10 @@ def write_snowflake_validation_artifacts(root: Path | str = ".") -> dict[str, An
         "refresh_full_status": refresh_full.get("status"),
         "refresh_detail_passed": bool(refresh_detail.get("passed")),
         "snowflake_error_sanitization_passed": bool(sanitizer_results.get("passed")),
+        "packet_formula_sql_passed": bool(packet_formula.get("passed")),
+        "formula_live_validation_passed": bool(formula_live.get("passed")),
+        "cortex_service_type_live_passed": bool(cortex_service_type_live.get("passed")),
+        "workload_formula_live_passed": bool(workload_formula_live.get("passed")),
         "hard_failure_count": len(hard_failures),
         "hard_failures": hard_failures,
         "elapsed_ms": int((time.perf_counter() - started) * 1000),
@@ -3443,6 +3466,10 @@ def write_snowflake_validation_artifacts(root: Path | str = ".") -> dict[str, An
         "streamlit_manifest_validation_results": manifest_validation,
         "phase_validation_results": phase_validation,
         "snowflake_error_sanitization_results": sanitizer_results,
+        "packet_formula_results": packet_formula,
+        "formula_live_validation_results": formula_live,
+        "cortex_service_type_live_results": cortex_service_type_live,
+        "workload_formula_live_results": workload_formula_live,
     }
     for name, payload in artifacts.items():
         _write_json(validation_dir / f"{name}.json", payload)

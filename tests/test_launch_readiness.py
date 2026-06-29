@@ -111,6 +111,13 @@ class LaunchReadinessTests(unittest.TestCase):
         self.assertEqual(summary["cost_db_formula_authority_failure_count"], 0)
         self.assertGreaterEqual(summary["cost_db_formula_count"], 7)
         self.assertGreaterEqual(summary["overwatch_formula_count"], 4)
+        self.assertTrue(summary["formula_end_to_end_passed"])
+        self.assertEqual(summary["formula_end_to_end_failure_count"], 0)
+        self.assertTrue(summary["packet_formula_sql_passed"])
+        self.assertTrue(summary["rendered_formula_passed"])
+        self.assertTrue(summary["cortex_service_type_gate_passed"])
+        self.assertEqual(summary["cortex_service_type_failure_count"], 0)
+        self.assertEqual(summary["cortex_unknown_service_type_count"], 0)
         self.assertTrue(summary["formula_live_validation_passed"])
         self.assertTrue(summary["formula_live_validation_skipped"])
         self.assertFalse(summary["formula_live_validation_required"])
@@ -135,6 +142,8 @@ class LaunchReadinessTests(unittest.TestCase):
             "billing_reconciliation",
             "billing_reconciliation_live",
             "cost_db_formula_authority",
+            "formula_end_to_end",
+            "cortex_service_type_mapping",
             "cortex_cost_consistency",
             "cost_chart_workbench",
             "formula_live_validation",
